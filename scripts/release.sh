@@ -798,6 +798,11 @@ ship_header_is() {
     [ "$tok" = "$want" ]
 }
 
+# Exit 0 iff scripts/release-notes.sh accepts $1 as the notes of version $2.
+ship_check_notes_format() {
+    (cd "$ROOT_DIR" && bash scripts/release-notes.sh "$2" --file "$1" >/dev/null 2>&1)
+}
+
 # Insert the notes file as the new top section at line index 7 (the 8th
 # line), dropping its trailing blank lines and keeping exactly one blank line
 # before the previous section.
@@ -861,6 +866,12 @@ run_ship() {
     command -v gitleaks >/dev/null 2>&1 || ship_refuse SHIP_NO_GITLEAKS "gitleaks is not on PATH"
     ship_header_is "$notes" 1 "$new" \
         || ship_refuse SHIP_NOTES_HEADER "the first line of $notes must be '## v$new ...'"
+    # FC-RELEASE-NOTES-FORMAT-UNCHECKED-LOCALLY: CI's release-notes.sh rejects a section
+    # with no '### ' subsection AFTER npm has published, skipping the tag and GitHub
+    # release. Run the same validator on the notes before any write. Not bypassable:
+    # LOKI_RELEASE_SKIP_GUARDS covers only the global guard rows, never this.
+    ship_check_notes_format "$notes" "$new" \
+        || ship_refuse SHIP_NOTES_FORMAT "release-notes.sh rejects the notes in $notes (needs '### ' subsections and '- ' bullets)"
     ship_header_is "$ROOT_DIR/CHANGELOG.md" 8 "$current" \
         || ship_refuse SHIP_CHANGELOG_MISMATCH "CHANGELOG.md line 8 is '$(sed -n '8p' "$ROOT_DIR/CHANGELOG.md" 2>/dev/null)', expected '## v$current'"
     # The release commit may hold only HEAD plus this run's own edits. Refuse
@@ -892,6 +903,8 @@ run_ship() {
     ship_write_changelog "$notes" || ship_refuse SHIP_CHANGELOG_WRITE "could not write CHANGELOG.md"
     ship_header_is "$ROOT_DIR/CHANGELOG.md" 8 "$new" \
         || ship_refuse SHIP_CHANGELOG_MISMATCH "CHANGELOG.md line 8 is not '## v$new' after the insert"
+    ship_check_notes_format "$ROOT_DIR/CHANGELOG.md" "$new" \
+        || ship_refuse SHIP_NOTES_FORMAT "release-notes.sh rejects the written CHANGELOG.md section for v$new"
 
     ship_phase "rebuild loki-ts/dist"
     release_rebuild_dist "$new"

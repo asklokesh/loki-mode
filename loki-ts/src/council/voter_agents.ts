@@ -34,7 +34,7 @@
 // (councilEvaluate) catches and falls through to the existing heuristic.
 
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import type { AgentVerdict } from "../runner/council.ts";
 import { judgeJson, sdkJudgeAvailable } from "../runner/sdk_invoker.ts";
 import { withChildLedger } from "../util/child_ledger.ts";
@@ -50,17 +50,30 @@ import type { CitationContext } from "./finding_schema.ts";
 // changedFiles). No resolvable base means no diffFiles, and finding_schema then
 // downgrades nothing on citation grounds.
 // Submodule gitlinks the reviewed work touched: paths whose mode is 160000 on
-// either side of `git diff --raw` (added, bumped, renamed away or deleted).
-function gitlinkPaths(root: string, base: string): string[] {
+// either side of `git diff --raw` (added, bumped, renamed away or deleted), with the
+// old and new commit of each so a file the bump deleted can be named.
+function gitlinkEntries(root: string, base: string): { path: string; oldSha: string; newSha: string }[] {
   try {
     const parts = safeGit(root, ["-c", "core.quotePath=false", "diff", "--raw", "--no-renames", "-z", base]).split("\0");
-    const out: string[] = [];
+    const out: { path: string; oldSha: string; newSha: string }[] = [];
     for (let i = 0; i + 1 < parts.length; i += 2) {
-      const m = /^:(\d+) (\d+) /.exec(parts[i] ?? "");
-      if (m && (m[1] === "160000" || m[2] === "160000")) out.push(parts[i + 1] as string);
+      const m = /^:(\d+) (\d+) ([0-9a-f]+) ([0-9a-f]+) /.exec(parts[i] ?? "");
+      if (m && (m[1] === "160000" || m[2] === "160000")) out.push({ path: parts[i + 1] as string, oldSha: m[3] as string, newSha: m[4] as string });
     }
     return out;
   } catch { return []; }
+}
+
+// Root-relative files the bump deleted inside a checked-out submodule (its old..new diff). A submodule that is absent, or lacks either commit, yields none.
+function gitlinkDeletedFiles(root: string, links: { path: string; oldSha: string; newSha: string }[]): string[] {
+  const out: string[] = [];
+  for (const l of links) {
+    if (/^0+$/.test(l.oldSha) || /^0+$/.test(l.newSha)) continue;
+    try {
+      for (const f of safeGit(join(root, l.path), ["-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=D", "-z", l.oldSha, l.newSha]).split("\0")) if (f) out.push(`${l.path}/${f}`);
+    } catch { /* not checked out or commit unavailable: nothing recognized */ }
+  }
+  return out;
 }
 
 export function citationCtx(cwd: string = process.cwd()): CitationContext {
@@ -72,7 +85,10 @@ export function citationCtx(cwd: string = process.cwd()): CitationContext {
   for (const ref of ["origin/HEAD", "origin/main", "origin/master", "main", "master"]) {
     try {
       const base = safeGit(root, ["merge-base", "HEAD", ref]).trim();
-      if (base) return { root, cwd: here, diffFiles: changedFiles(root, base), gitlinks: gitlinkPaths(root, base) };
+      if (base) {
+        const links = gitlinkEntries(root, base);
+        return { root, cwd: here, diffFiles: changedFiles(root, base), gitlinks: links.map((l) => l.path), gitlinkDeleted: gitlinkDeletedFiles(root, links) };
+      }
     } catch { /* ref absent: try the next */ }
   }
   return { root, cwd: here };

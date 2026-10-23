@@ -564,6 +564,44 @@ describe("#261 judge max_tokens by effort, thinking, streaming", () => {
       rmSync(d, { recursive: true, force: true });
     }
   });
+  test("thinking substitute (#314): sonnet-5-5 disabled is sent as between_tools, adaptive above high, and the ledger names it", async () => {
+    const seen = mock();
+    const dir = mkdtempSync(join(tmpdir(), "sdkj314s-"));
+    try {
+      const m = { prompt: "p", model: "claude-sonnet-5-5", schema: sc, thinking: { type: "disabled" as const }, ledger: { lokiDir: dir, phase: "p" } };
+      await judgeJson({ ...m, effort: "high" });
+      await judgeJson({ ...m, effort: "max" });
+      await judgeJson({ ...m });
+      expect(seen[0]!.body["thinking"]).toEqual({ type: "between_tools" });
+      expect(seen[1]!.body["thinking"]).toEqual({ type: "adaptive" });
+      expect(seen[2]!.body["thinking"]).toEqual({ type: "between_tools" });
+      const recs = readFileSync(join(dir, "metrics", "child-sessions.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+      expect(recs[0].thinking_clamp).toBe("disabled->between_tools@high (max high)");
+      expect(recs[1].thinking_clamp).toBe("disabled->adaptive@max (max high)");
+      expect(recs[2].thinking_clamp).toBe("disabled->between_tools@default (max high)");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  test("thinking substitute (#314): the CLI accepts sonnet-5-5 disabled at max and an invalid value names the catalog limit", async () => {
+    const seen = mock();
+    const d = mkdtempSync(join(tmpdir(), "sdkj314u-"));
+    const pf = join(d, "p.txt");
+    writeFileSync(pf, "p");
+    const errs: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as unknown as { write: (c: string) => boolean }).write = (c: string) => { errs.push(c); return true; };
+    try {
+      expect(await runInternalSdkText(["--prompt-file", pf, "--model", "claude-sonnet-5-5", "--effort", "max", "--thinking", "disabled"])).toBe(0);
+      expect(seen[0]!.body["thinking"]).toEqual({ type: "adaptive" });
+      expect(await runInternalSdkText(["--prompt-file", pf, "--model", "claude-opus-5", "--thinking", "bogus"])).toBe(2);
+      expect(errs.join("")).toContain("for claude-opus-5 disabled is sent as adaptive above --effort high");
+      expect(errs.join("")).not.toContain("cannot combine");
+    } finally {
+      process.stderr.write = orig;
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
   test("the usage note carries output_tokens and max_tokens", async () => {
     mock();
     const dir = mkdtempSync(join(tmpdir(), "sdkj261-"));

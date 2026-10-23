@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { classifyCheck, goRunner } from "./check_result.ts";
 import { listRunIds } from "../commands/run_status.ts";
 import { safeGit } from "./safe_git.ts";
+import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 
 function git(repoDir: string, args: string[], timeout = 20000, extraEnv: Record<string, string> = {}): string | null {
   try {
@@ -197,4 +198,26 @@ export function addedSymlinkNotes(rawDiff: string[], planText: string | null): s
     else if (f[1] === "160000" && (st === "A" || st === "T") && !asks("submodule")) out.push(`submodule pointer added by the change (it can stand in for missing work; the plan did not ask for one): ${p}`);
   }
   return out;
+}
+
+
+const RUN_BRANCH_RE = /^loki\/[A-Za-z0-9._\/-]+$/;
+const tipOf = (repoDir: string, ref: string): string | null => {
+  try { return safeGit(repoDir, ["rev-parse", "--verify", "-q", `${ref}^{commit}`], { stdio: ["ignore", "pipe", "ignore"] }).trim() || null; } catch { return null; }
+};
+
+/**
+ * FC-EMPTY-RUN-BRANCH-LEFT-CHECKED-OUT: a run that ended with its branch tip still at the run base_sha committed nothing. Put the user back on the
+ * branch they started from and delete that empty `loki/` branch. A branch with any commit (the Wall's, a backstop) is never touched, nor is a
+ * branch the user is not on or started from (they switched mid-run: left alone, noted). Returns a note to print, or null when nothing needed saying.
+ */
+export function dropEmptyRunBranch(repoDir: string, orig: string | null, runBranch: unknown, baseSha: string | null): string | null {
+  if (!orig || !baseSha || typeof runBranch !== "string" || !RUN_BRANCH_RE.test(runBranch) || runBranch.includes("..") || runBranch === orig) return null;
+  const tip = tipOf(repoDir, `refs/heads/${runBranch}`);
+  if (tip === null || tip !== tipOf(repoDir, baseSha)) return null;
+  const cur = currentBranch(repoDir);
+  if (cur !== runBranch && cur !== orig) return `engine10: you moved to ${cur ?? "a detached HEAD"} during the run; left there. The run committed nothing; remove the empty branch with: git branch -D ${runBranch}\n`;
+  if (cur === runBranch && !restoreBranch(repoDir, orig)) return null; // restoreBranch already told the user how to return
+  try { safeGit(repoDir, ["update-ref", "-d", `refs/heads/${runBranch}`, tip], { stdio: "ignore" }); } catch { return `engine10: could not delete the empty run branch ${runBranch}: git branch -D ${runBranch}\n`; }
+  return null;
 }

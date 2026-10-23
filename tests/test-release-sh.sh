@@ -255,7 +255,7 @@ for f in $FILES; do
 done
 # Guard-row fixtures (REL-GUARD): the real runner and selector, a stub row list.
 mkdir -p "$REPO2/eval/loki10" "$REPO2/tests"
-cp "$REPO_ROOT/scripts/impacted-gate.sh" "$REPO_ROOT/scripts/select-tests.sh" "$REPO2/scripts/"
+cp "$REPO_ROOT/scripts/impacted-gate.sh" "$REPO_ROOT/scripts/select-tests.sh" "$REPO_ROOT/scripts/release-notes.sh" "$REPO2/scripts/"
 cp "$REPO_ROOT/eval/loki10/lib-tmp.sh" "$REPO2/eval/loki10/"
 printf 'shell_test\ttests/stub-guard.sh\n' > "$REPO2/scripts/global-guards.tsv"
 printf '#!/usr/bin/env bash\nexit "${GUARD_STUB_RC:-0}"\n' > "$REPO2/tests/stub-guard.sh"
@@ -776,6 +776,15 @@ run_ship_case "GH_MODE=tests_red STUB_SHA=$SHIP_BASE"
 rc=$?
 [ "$rc" -eq 3 ] && ok "Tests red at HEAD: exit 3" || bad "expected exit 3, got $rc"
 [ "$(origin_main)" = "$SHIP_BASE" ] && grep -qx 1.2.3 "$SHIP_REPO/VERSION" && ok "gate refusal: nothing written or pushed" || bad "gate refusal wrote or pushed"
+
+echo
+echo "T17d -- notes with no '### ' subsection are refused before any write, even with LOKI_RELEASE_SKIP_GUARDS=1 (FC-RELEASE-NOTES-FORMAT-UNCHECKED-LOCALLY)"
+new_ship_fixture
+printf '## v1.2.4 (2026-10-17)\n\n- bullets but no subsection\n' > "$SHIPW/notes-flat.md"
+ORIG="$(origin_main)"
+run_ship_case "LOKI_RELEASE_SKIP_GUARDS=1" "$SHIPW/notes-flat.md"
+assert_refused "flat notes" $? SHIP_NOTES_FORMAT "$ORIG"
+grep -qx 1.2.3 "$SHIP_REPO/VERSION" && ok "flat notes: nothing written (VERSION unchanged)" || bad "flat notes: VERSION was bumped"
 
 echo
 echo "T26 -- --ship argument validation"

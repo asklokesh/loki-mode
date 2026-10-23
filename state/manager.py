@@ -1863,8 +1863,9 @@ class StateManager:
         self.version_retention = retention
 
 
-# Singleton instance for convenience
-_default_manager: Optional[StateManager] = None
+# One default instance per resolved .loki directory, so a process that changes
+# cwd between projects gets each project's own state.
+_default_managers: Dict[str, StateManager] = {}
 _default_manager_lock = threading.Lock()
 
 
@@ -1872,25 +1873,30 @@ def get_state_manager(
     loki_dir: Optional[Union[str, Path]] = None,
     **kwargs
 ) -> StateManager:
-    """Get the default state manager instance.
+    """Get the default state manager for a project's .loki directory.
+
+    The instance is keyed on the resolved path of loki_dir (default: .loki under
+    the current working directory), so changing cwd switches to that project's
+    manager. kwargs apply only when the instance is first created.
 
     Uses double-checked locking to avoid a race where two threads
     could both create a StateManager simultaneously (BUG-ST-007).
     """
-    global _default_manager
-
-    if _default_manager is None:
+    resolved = Path(loki_dir) if loki_dir else Path(".loki")
+    key = os.path.realpath(str(resolved))
+    mgr = _default_managers.get(key)
+    if mgr is None:
         with _default_manager_lock:
-            if _default_manager is None:
-                _default_manager = StateManager(loki_dir, **kwargs)
-
-    return _default_manager
+            mgr = _default_managers.get(key)
+            if mgr is None:
+                mgr = _default_managers[key] = StateManager(Path(key), **kwargs)
+    return mgr
 
 
 def reset_state_manager() -> None:
-    """Reset the default state manager (for testing)."""
-    global _default_manager
-
-    if _default_manager:
-        _default_manager.stop()
-        _default_manager = None
+    """Stop and drop every default state manager (for testing)."""
+    with _default_manager_lock:
+        managers = list(_default_managers.values())
+        _default_managers.clear()
+    for mgr in managers:
+        mgr.stop()

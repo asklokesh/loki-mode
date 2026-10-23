@@ -609,3 +609,51 @@ describe("TEN-UX-55: repo writable", () => {
     } finally { chmodSync(dir, 0o755); }
   });
 });
+
+describe("CW-14: zero-token auth probe bound into preflight.json", () => {
+  const CANARY = "sk-canary-DO-NOT-LEAK-0123456789";
+  // A fake CLI that records every argv it receives; it can never reach a model endpoint.
+  function argvCli(status: number, say = ""): { cli: string; log: string } {
+    const d = tmpRoot("e10-pf-cw14-"); const log = join(d, "argv.log"); const cli = join(d, "fake-cli");
+    writeFileSync(cli, `#!/bin/sh\necho "$*" >> '${log}'\n${say ? `echo '${say}'\n` : ""}exit ${status}\n`); chmodSync(cli, 0o755); return { cli, log };
+  }
+  const go = (provider: string, envVar: string, cli: string, extra: Record<string, string> = {}) => {
+    const { dir, env } = identifiedRepo(); const runDir = join(dir, ".loki", "runs", "r1");
+    return checkPreflight({ repoDir: dir, provider, pr: false, runDir, env: { ...env, [envVar]: cli, ...extra } }).then((r) => ({ r, runDir }));
+  };
+  const rec = (runDir: string) => JSON.parse(readFileSync(join(runDir, "preflight.json"), "utf8"));
+
+  test("key contract: exactly {provider, auth_path, probe}", async () => {
+    const { cli } = argvCli(0); const { runDir } = await go("codex", "LOKI_CODEX_CLI", cli);
+    expect(Object.keys(rec(runDir)).sort()).toEqual(["auth_path", "probe", "provider"]);
+    expect(rec(runDir)).toEqual({ provider: "codex", auth_path: "cli_login:codex", probe: "ok" });
+  });
+  test("failed probe is fatal within 10s, names the fix, and is recorded", async () => {
+    const { cli } = argvCli(1, "Not logged in"); const t0 = Date.now();
+    const { r, runDir } = await go("codex", "LOKI_CODEX_CLI", cli);
+    expect(Date.now() - t0).toBeLessThan(10000);
+    expect(r.fatal).toContain("run: codex login"); expect(rec(runDir).probe).toBe("failed");
+  });
+  test("LOKI_PREFLIGHT_PROBE=0 skips: the CLI is never called and nothing is fatal", async () => {
+    const { cli, log } = argvCli(1, "Not logged in");
+    const { r, runDir } = await go("codex", "LOKI_CODEX_CLI", cli, { LOKI_PREFLIGHT_PROBE: "0" });
+    expect(r.fatal).toBeNull(); expect(existsSync(log)).toBe(false); expect(rec(runDir).probe).toBe("skipped");
+  });
+  test("zero tokens: only the fixed local status argv is ever run; a key skips the probe and never lands in the record", async () => {
+    const { cli, log } = argvCli(0);
+    await go("codex", "LOKI_CODEX_CLI", cli);
+    expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["login status"]);
+    const k = argvCli(1, "Not logged in");
+    const { r, runDir } = await go("codex", "LOKI_CODEX_CLI", k.cli, { OPENAI_API_KEY: CANARY });
+    expect(r.fatal).toBeNull(); expect(existsSync(k.log)).toBe(false);
+    const raw = readFileSync(join(runDir, "preflight.json"), "utf8");
+    expect(raw).not.toContain(CANARY); expect(rec(runDir)).toEqual({ provider: "codex", auth_path: "api_key:OPENAI_API_KEY", probe: "skipped" });
+  });
+  test("claude logged out records failed", async () => {
+    const d = tmpRoot("e10-pf-cw14c-"); const cli = join(d, "claude");
+    writeFileSync(cli, `#!/bin/sh\necho '{"loggedIn":false}'\nexit 1\n`); chmodSync(cli, 0o755);
+    const { dir, env } = identifiedRepo(); const runDir = join(dir, ".loki", "runs", "r1");
+    const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, runDir, env: { ...env, LOKI_CLAUDE_CLI: cli } });
+    expect(r.fatal).toContain("claude is not logged in"); expect(rec(runDir)).toEqual({ provider: "claude", auth_path: "cli_login:claude", probe: "failed" });
+  });
+});

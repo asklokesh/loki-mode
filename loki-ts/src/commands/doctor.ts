@@ -27,8 +27,9 @@ import { runOwnerAlive } from "../util/run_pid.ts";
 import { getVersion } from "../version.ts";
 import { detectProtocol } from "../cockpit/capability.ts";
 import { rasterAvailable } from "../cockpit/raster.ts";
-import { probeAdvisor } from "../runner/router/advisor_probe.ts";
+import { advisorPair, probeAdvisor } from "../runner/router/advisor_probe.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
+import { classifyFailure } from "../runner/retry_class.ts";
 import { withholdGithubTokens } from "../runner/github_token.ts";
 import { tokenFreeEnv } from "../util/safe_git.ts";
 import { GATEWAY_LANE_LOSS, gatewayLaneLabel } from "../providers/model_routes.ts";
@@ -285,6 +286,8 @@ export type DoctorJson = {
   ai_provider: AiProviderCheck;
   // CLAUDE_CODE_USE_* cloud rows; the same rows the text path prints and tallies.
   cloud_auth: CloudAuthRow[];
+  // CW-14: advisory auth path per provider (names only); excluded from the summary tally.
+  provider_auth: ProviderAuthRow[];
   // Skill-link integrity, counted in the summary tally. See buildDoctorJson.
   skills: SkillJson[];
   sentrux: SentruxCheck;
@@ -595,7 +598,7 @@ export function advisorStatusLine(
   claudeCodeVersion: string,
   runDir: string,
 ): string {
-  const probe = probeAdvisor(env, provider, claudeCodeVersion, runDir);
+  const probe = probeAdvisor(env, provider, claudeCodeVersion, runDir, advisorPair(env));
   return probe.available ? "advisor: available" : `advisor: unavailable (${probe.reason})`;
 }
 
@@ -936,6 +939,117 @@ export function describeCatalogFreshness(): CatalogFreshness {
     : { status: "pass", updated, age_days: ageDays, detail: `Last updated ${updated} (${ageDays} days ago)` };
 }
 
+// Capability drift: the catalog's thinking types and effort levels against what
+// the API reports for the same model (GET /v1/models/{id}, models.retrieve).
+// Only the API-expressible thinking types are compared; the catalog also records
+// loki-side states ("disabled", "between_tools") the API does not list.
+const API_THINKING_TYPES = ["adaptive", "enabled"];
+
+export interface ModelCapabilities {
+  effort: string[];
+  thinking: string[];
+}
+
+export interface CapabilityMismatch {
+  id: string;
+  detail: string;
+}
+
+export type ModelsRetrieve = (id: string, apiKey: string) => Promise<ModelCapabilities | null>;
+
+function supportedKeys(group: unknown): string[] {
+  if (!group || typeof group !== "object") return [];
+  return Object.entries(group as Record<string, unknown>)
+    .filter(([, v]) => !!v && typeof v === "object" && (v as { supported?: unknown }).supported === true)
+    .map(([k]) => k);
+}
+
+/** Parse a models.retrieve body into effort levels and thinking types. Null when the body carries no capabilities object. */
+export function parseModelCapabilities(body: unknown): ModelCapabilities | null {
+  const caps = (body as { capabilities?: Record<string, unknown> } | null)?.capabilities;
+  if (!caps || typeof caps !== "object") return null;
+  const effort = caps["effort"] as Record<string, unknown> | undefined;
+  const thinking = caps["thinking"] as { types?: unknown } | undefined;
+  return { effort: supportedKeys(effort), thinking: supportedKeys(thinking?.types) };
+}
+
+async function fetchModelCapabilities(id: string, apiKey: string): Promise<ModelCapabilities | null> {
+  const res = await fetch(`https://api.anthropic.com/v1/models/${encodeURIComponent(id)}`, {
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) return null;
+  return parseModelCapabilities(await res.json());
+}
+
+const modelsRetrieveImpl: { fn: ModelsRetrieve } = { fn: fetchModelCapabilities };
+export function _setModelsRetrieveForTest(fn: ModelsRetrieve | null): void {
+  modelsRetrieveImpl.fn = fn ?? fetchModelCapabilities;
+}
+
+function sameSet(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((x) => b.includes(x));
+}
+
+/** Pure comparison of one catalog entry against the API capabilities. Empty when they agree. */
+export function compareModelCapabilities(
+  entry: { id: string; thinking?: { types?: string[] }; effort?: { levels?: string[] } },
+  api: ModelCapabilities,
+): CapabilityMismatch[] {
+  const out: CapabilityMismatch[] = [];
+  const levels = entry.effort?.levels;
+  if (Array.isArray(levels) && !sameSet(levels, api.effort)) {
+    out.push({ id: entry.id, detail: `effort levels: catalog [${levels.join(", ")}], API [${api.effort.join(", ")}]` });
+  }
+  const types = entry.thinking?.types;
+  if (Array.isArray(types)) {
+    const cat = types.filter((t) => API_THINKING_TYPES.includes(t));
+    const live = api.thinking.filter((t) => API_THINKING_TYPES.includes(t));
+    if (!sameSet(cat, live)) {
+      out.push({ id: entry.id, detail: `thinking types: catalog [${cat.join(", ")}], API [${live.join(", ")}]` });
+    }
+  }
+  return out;
+}
+
+export interface CapabilityCheck {
+  status: "pass" | "warn";
+  detail: string;
+  mismatches: CapabilityMismatch[];
+}
+
+/** Check every claude catalog id against models.retrieve. Never throws, never fails doctor: no key, offline or an error is a warn. */
+export async function checkModelCapabilities(env: NodeJS.ProcessEnv = process.env): Promise<CapabilityCheck> {
+  const apiKey = env["ANTHROPIC_API_KEY"];
+  if (!apiKey) return { status: "warn", detail: "Skipped: set ANTHROPIC_API_KEY to compare the catalog with models.retrieve", mismatches: [] };
+  let models: Array<{ id: string; thinking?: { types?: string[] }; effort?: { levels?: string[] } }>;
+  try {
+    const path = env["LOKI_MODEL_CATALOG"] || resolve(REPO_ROOT, "providers/model_catalog.json");
+    models = JSON.parse(readFileSync(path, "utf-8")).providers?.claude?.models;
+    if (!Array.isArray(models)) throw new Error("no claude models");
+  } catch {
+    return { status: "warn", detail: "Catalog unreadable, cannot compare capabilities", mismatches: [] };
+  }
+  const mismatches: CapabilityMismatch[] = [];
+  let unreachable = 0;
+  await Promise.all(models.map(async (m) => {
+    try {
+      const api = await modelsRetrieveImpl.fn(m.id, apiKey);
+      if (!api) { unreachable++; return; }
+      mismatches.push(...compareModelCapabilities(m, api));
+    } catch {
+      unreachable++;
+    }
+  }));
+  if (mismatches.length > 0) {
+    return { status: "warn", detail: `Capability mismatch on ${new Set(mismatches.map((x) => x.id)).size} model(s)`, mismatches };
+  }
+  if (unreachable > 0) {
+    return { status: "warn", detail: `models.retrieve unavailable for ${unreachable} of ${models.length} model(s) (offline or unknown id); not compared`, mismatches };
+  }
+  return { status: "pass", detail: `Catalog matches models.retrieve for ${models.length} model(s)`, mismatches };
+}
+
 async function requirementsSection(): Promise<RequirementsReport & { first_task_ready: boolean }> {
   const rep = await evaluateRequirements();
   return { ...rep, first_task_ready: firstTaskReady(rep) };
@@ -1013,6 +1127,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
     disk,
     ai_provider: aiProvider,
     cloud_auth: cloudAuth,
+    provider_auth: providerAuthRows(),
     skills,
     sentrux,
     memory,
@@ -1044,10 +1159,25 @@ export function providerLoginIssue(provider: string, cli: string, env: Record<st
     if (key("OPENAI_API_KEY") || key("CODEX_API_KEY")) return null;
     const r = spawnSync(cli, ["login", "status"], { env: providerProbeEnv(env), encoding: "utf8", timeout: 5000, cwd: tmpdir() }) /* FC-TEST-LEAKS-INTO-REPO: a probe never runs in the caller checkout */;
     if (r.status === 0) return null;
-    return /not logged in/i.test(`${r.stdout}${r.stderr}`) ? { fatal: "codex is not logged in; run: codex login (or set OPENAI_API_KEY)" } : { warn: "could not confirm the Codex login (codex login status gave no answer); continuing" };
+    const said = `${r.stdout}${r.stderr}`; return /not logged in/i.test(said) || classifyFailure(said).reason === "auth" /* CW-14: the one auth pattern set, shared with the run-time classifier */ ? { fatal: "codex is not logged in; run: codex login (or set OPENAI_API_KEY)" } : { warn: "could not confirm the Codex login (codex login status gave no answer); continuing" };
   }
   if (PROVIDER_API_KEY_VARS.some(key) || (provider === "opencode" && existsSync(join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"))) || (provider === "cline" && existsSync(join(home, ".cline")))) return null;
   return provider === "aider" || provider === "opencode" || provider === "cline" ? { warn: `no ${provider} login or API key found (set a provider API key such as ANTHROPIC_API_KEY or OPENAI_API_KEY${provider === "opencode" ? ", or run: opencode auth login" : ""}); continuing` } : null;
+}
+
+// CW-14: which credential a provider would use, by NAME only (never a value). Zero spawns, zero network.
+export type ProviderAuthRow = { provider: string; auth_path: string };
+export const AUTH_PROVIDERS = ["claude", "codex", "cline", "aider", "opencode"] as const;
+export function providerAuthPath(provider: string, env: Record<string, string | undefined>): string {
+  const home = env.HOME || homedir(); const set = (k: string) => !!env[k]?.trim();
+  const own = provider === "claude" ? ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] : provider === "codex" ? ["OPENAI_API_KEY", "CODEX_API_KEY"] : PROVIDER_API_KEY_VARS;
+  const v = own.find(set); if (v) return `${v === "CLAUDE_CODE_OAUTH_TOKEN" ? "oauth_token" : "api_key"}:${v}`;
+  if (provider === "opencode" && existsSync(join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"))) return "cli_login:opencode";
+  if (provider === "cline" && existsSync(join(home, ".cline"))) return "cli_login:cline";
+  return provider === "claude" || provider === "codex" ? `cli_login:${provider}` : "none";
+}
+export function providerAuthRows(env: Record<string, string | undefined> = process.env): ProviderAuthRow[] {
+  return AUTH_PROVIDERS.map((provider) => ({ provider, auth_path: providerAuthPath(provider, env) }));
 }
 
 // v7.104.2 parity with bash doctor: the durable login signal is `claude auth
@@ -1777,6 +1907,14 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
       `         ${YELLOW}Refresh: python3 tools/probe-model-catalog.py${NC} (reports new model IDs from provider docs; you verify and edit the catalog by hand -- never auto-applied)\n`,
     );
   }
+  process.stdout.write(`\n`);
+
+  // Model capabilities: catalog vs models.retrieve. Informational only (never
+  // touches the tally); the only network call here, and only with an API key.
+  process.stdout.write(`${CYAN}Model capabilities:${NC}\n`);
+  const capCheck = await checkModelCapabilities();
+  process.stdout.write(`  ${badge(capCheck.status)}  ${capCheck.detail}\n`);
+  for (const mm of capCheck.mismatches) process.stdout.write(`         ${mm.id}: ${mm.detail}\n`);
   process.stdout.write(`\n`);
 
   // Cockpit capability: what `loki cockpit` will actually do in this terminal.

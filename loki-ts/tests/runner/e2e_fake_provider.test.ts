@@ -17,7 +17,8 @@
 // Hermetic: every test gets a fresh tmp .loki/ via LOKI_DIR. The fake claude
 // shell script is created/torn down per test under /tmp/fake-claude-test/.
 
-import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { setLoadAwareTimeout } from "../preload.ts";
 import {
   chmodSync,
   existsSync,
@@ -45,7 +46,7 @@ import type {
 // WHICH ones fail changes between runs. That is a timeout signature, not a
 // defect, and it reads as a regression. 30s is far beyond the honest worst
 // case while still catching a genuine hang.
-setDefaultTimeout(30_000);
+setLoadAwareTimeout(30_000);
 
 // ---------------------------------------------------------------------------
 // Test doubles. FakeSignals + FakeCouncil drive the loop to exactly one

@@ -12,6 +12,7 @@ import { join, resolve } from "node:path";
 import type { Dag, Unit } from "../decompose.ts";
 import { assignCriteria, freezeGroupContract, groupContractPath, parseContract } from "../contract.ts";
 import { integrate } from "../../engine10/integrate.ts";
+import { unitSpecSha256 } from "./unit_mode.ts";
 import { readSliceJournal, repoCacheDir, repoKey, sliceKey, writeSliceJournal } from "../../engine10/cache.ts";
 import { integrateWithFixes, type FixUnit } from "./fix_units.ts";
 import type { receiptSha256 as ReceiptSha256Fn } from "../../engine10/stages/seal.ts";
@@ -94,6 +95,8 @@ const git = (dir: string, args: string[]): string => {
   return r.status === 0 ? String(r.stdout).trim() : "";
 };
 const SLUG_RE = /[:/]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/;
+/** The owner/repo slug of the origin remote, or undefined. The unit launcher (backlog.py) needs it, so a group run cannot start without one. */
+export const originSlug = (repoDir: string): string | undefined => SLUG_RE.exec(git(repoDir, ["remote", "get-url", "origin"]))?.[1];
 
 /** Repo test command argv: LOKI_GROUP_TEST_CMD (whitespace split) wins; else the repo profile's first test command (runner/repo_profile.ts); else empty (the suite then did not run). */
 export function testCommand(repoDir: string, env: NodeJS.ProcessEnv): string[] {
@@ -142,11 +145,14 @@ async function unitDone(verifyReceipt: SealDeps["verifyReceipt"], repoDir: strin
 }
 
 /** #283: a unit of an earlier group with the same card and base sha, whose receipt still verifies at its branch tip, is adopted into this group (receipt copied, branch ref pointed at the same tip) instead of dispatched. */
-async function adoptJournaled(verifyReceipt: SealDeps["verifyReceipt"], repoDir: string, dir: string, key: string, gid: string, n: number, id: string, task: string, say: (s: string) => void): Promise<boolean> {
+async function adoptJournaled(verifyReceipt: SealDeps["verifyReceipt"], repoDir: string, dir: string, key: string, gid: string, n: number, id: string, task: string, specSha: string, say: (s: string) => void): Promise<boolean> {
   const e = readSliceJournal(dir, key);
   if (!e || e.id !== id || !GID_RE.test(e.gid) || e.gid === gid || !UNIT_ID_RE.test(id)) return false;
   if (!(await unitDone(verifyReceipt, repoDir, e.gid, e.n, id))) return false;
-  const signedTask = ((readJson(join(repoDir, ".loki", "groups", e.gid, "group", "units", id, "receipt.json"))?.["task"] as { sha256?: unknown } | undefined) ?? {}).sha256;
+  const signed = readJson(join(repoDir, ".loki", "groups", e.gid, "group", "units", id, "receipt.json"));
+  const signedTask = ((signed?.["task"] as { sha256?: unknown } | undefined) ?? {}).sha256;
+  const signedSpec = ((signed?.["unit_spec"] as { sha256?: unknown } | undefined) ?? {}).sha256;
+  if (typeof signedSpec !== "string" || signedSpec === "" || signedSpec !== specSha) return false; // #317b: task.sha256 covers items only; the signed unit spec hash also binds acceptance, writeSet and base
   if (typeof signedTask !== "string" || signedTask === "" || signedTask !== sha256(task)) return false; // the journal is unsigned: the signed receipt must name this unit's task text (intake always records it, so absent is foreign or forged)
   const tip = git(repoDir, ["rev-parse", "--verify", "--quiet", `refs/heads/loki/unit-${e.gid}-${e.n}`]);
   if (tip === "" || tip !== e.head) return false;
@@ -184,7 +190,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   const groupId = resumable?.gid ?? `g${Date.now().toString(36)}`;
   const groupDir = join(repoDir, ".loki", "groups", groupId);
   const receiptPath = join(groupDir, "receipt.json");
-  const slugOf = (): string | undefined => SLUG_RE.exec(git(repoDir, ["remote", "get-url", "origin"]))?.[1];
+  const slugOf = (): string | undefined => originSlug(repoDir);
 
   let baseRef: string;
   let startBranch = "";
@@ -248,9 +254,10 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   mkdirSync(specDir, { recursive: true });
   for (const u of units) {
     const spec = join(specDir, `${u.id}.json`);
-    atomicWriteJson(spec, { id: u.id, writeSet: u.writeSet, pack: u.writeSet, tokenBudget: 1e9, acceptance: (u as Partial<FixUnit>).acceptance ?? accOf.get(u.id) ?? [] });
-    u.spec = spec;
-    if (!(u as Partial<FixUnit>).fixKind) u.base = baseRef; // #317: the base the slice journal keys on is the base the unit starts at (backlog.py would otherwise start it at origin/HEAD)
+    const isFix = !!(u as Partial<FixUnit>).fixKind;
+    if (!isFix) u.base = baseRef;
+    atomicWriteJson(spec, { id: u.id, writeSet: u.writeSet, pack: u.writeSet, tokenBudget: 1e9, acceptance: (u as Partial<FixUnit>).acceptance ?? accOf.get(u.id) ?? [], items: u.items ?? [], base: u.base ?? "" }); // items and base are part of the signed unit_spec identity (#317b)
+    u.spec = spec; // #317: the base the slice journal keys on is the base the unit starts at (backlog.py would otherwise start it at origin/HEAD)
   }
   const jdir = repoCacheDir(repoKey(git(repoDir, ["remote", "get-url", "origin"]) || null, repoDir), env.LOKI_CACHE_ROOT ? resolve(env.LOKI_CACHE_ROOT) : undefined);
   const keyOf = (u: StoredUnit): string => sliceKey(JSON.stringify({ id: u.id, items: u.items, writeSet: u.writeSet, acceptance: accOf.get(u.id) ?? [] }), baseRef);
@@ -258,7 +265,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   let doneCount = 0;
   for (const [i, u] of units.entries()) {
     u.done = resumable && !changed.has(u.id) ? await unitDone(verifyReceipt, repoDir, groupId, i + 1, u.id) : false;
-    if (!u.done && !changed.has(u.id) && !(u as Partial<FixUnit>).fixKind) { try { u.done = await adoptJournaled(verifyReceipt, repoDir, jdir, keyOf(u), groupId, i + 1, u.id, (u.items ?? []).join("\n"), say); } catch { u.done = false; } }
+    if (!u.done && !changed.has(u.id) && !(u as Partial<FixUnit>).fixKind) { try { u.done = await adoptJournaled(verifyReceipt, repoDir, jdir, keyOf(u), groupId, i + 1, u.id, (u.items ?? []).join("\n"), unitSpecSha256({ id: u.id, items: u.items, acceptance: accOf.get(u.id) ?? [], writeSet: u.writeSet, base: baseRef }), say); } catch { u.done = false; } }
     if (u.done) { doneCount++; if (revised) say(`loki: unit ${u.id} skipped-unchanged\n`); }
     else if (resumable && UNIT_ID_RE.test(u.id)) rmSync(join(groupDir, "group", "units", u.id), { recursive: true, force: true });
   }

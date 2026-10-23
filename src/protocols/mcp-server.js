@@ -22,6 +22,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { markUntrusted } = require('./untrusted');
 
 // ---------------------------------------------------------------------------
 // Lazy tool/resource loading
@@ -420,7 +421,7 @@ function handleToolsCall(params) {
     // Async tool: return a Promise so the caller (handleRequest) can propagate it
     return rawResult.then((result) => {
       return {
-        content: [{ type: 'text', text: JSON.stringify(result) }]
+        content: [{ type: 'text', text: JSON.stringify(markUntrusted(result, tool.UNTRUSTED_FIELDS || ['*'])) }]
       };
     }).catch((err) => {
       return {
@@ -432,7 +433,7 @@ function handleToolsCall(params) {
 
   // Synchronous tool: return result immediately
   return {
-    content: [{ type: 'text', text: JSON.stringify(rawResult) }]
+    content: [{ type: 'text', text: JSON.stringify(markUntrusted(rawResult, tool.UNTRUSTED_FIELDS || ['*'])) }]
   };
 }
 

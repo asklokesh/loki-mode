@@ -222,4 +222,7 @@ function restoreCheckpoint(lokiDir, checkpointDir, checkpointId) {
   };
 }
 
-module.exports = { TOOL_NAME, schema, execute };
+// Result keys carrying stored text; the server moves them under untrusted_content.
+const UNTRUSTED_FIELDS = ['checkpoints', 'label', 'restoredFiles'];
+
+module.exports = { TOOL_NAME, schema, execute, UNTRUSTED_FIELDS };

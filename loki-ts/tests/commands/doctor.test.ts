@@ -15,10 +15,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { REPO_ROOT } from "../../src/util/paths.ts";
 import { processStartTime } from "../../src/util/run_pid.ts";
+import { providerAuthPath, providerAuthRows } from "../../src/commands/doctor.ts";
 import {
   _setClaudeVersionForTest,
   _setIntegrationProbesForTest,
   _setJsonProbesForTest,
+  _setModelsRetrieveForTest,
+  checkModelCapabilities,
+  compareModelCapabilities,
+  parseModelCapabilities,
   _setPythonImportOkForTest,
   probeIntegrations,
   cmpVersion,
@@ -554,6 +559,48 @@ describe("doctor.runDoctor (end-to-end)", () => {
     } finally {
       if (prev === undefined) delete process.env["ANTHROPIC_API_KEY"];
       else process.env["ANTHROPIC_API_KEY"] = prev;
+    }
+  }, 30_000);
+});
+
+// No doctor unit test may reach api.anthropic.com. Every test starts with the
+// models.retrieve probe stubbed and a fetch trap that records, rejects and (in
+// afterEach) fails the test on any real call to the API host.
+const apiFetchAttempts: string[] = [];
+const realFetch = globalThis.fetch;
+beforeEach(() => {
+  apiFetchAttempts.length = 0;
+  _setModelsRetrieveForTest(async () => null);
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (new URL(url).hostname === "api.anthropic.com") {
+      apiFetchAttempts.push(url);
+      return Promise.reject(new Error(`doctor test made a real fetch to ${url}`));
+    }
+    return realFetch(input, init);
+  }) as typeof fetch;
+});
+afterEach(() => {
+  globalThis.fetch = realFetch;
+  _setModelsRetrieveForTest(null);
+  const attempts = apiFetchAttempts.splice(0);
+  expect(attempts).toEqual([]);
+});
+
+describe("doctor tests never reach the network (guard)", () => {
+  it("the fetch trap records and rejects a real api.anthropic.com call", async () => {
+    await expect(fetch("https://api.anthropic.com/v1/models/x")).rejects.toThrow("real fetch");
+    expect(apiFetchAttempts).toHaveLength(1);
+    apiFetchAttempts.length = 0;
+  });
+  it("runDoctor with a key set makes no real API fetch", async () => {
+    const prev = process.env["ANTHROPIC_API_KEY"];
+    process.env["ANTHROPIC_API_KEY"] = "sk-guard-sentinel";
+    try {
+      await captureStdio(() => runDoctor([]));
+      expect(apiFetchAttempts).toEqual([]);
+    } finally {
+      if (prev === undefined) delete process.env["ANTHROPIC_API_KEY"]; else process.env["ANTHROPIC_API_KEY"] = prev;
     }
   }, 30_000);
 });
@@ -1634,15 +1681,111 @@ describe("evaluateCloudAuth warn path", () => {
     delete process.env["AWS_REGION"];
     delete process.env["AWS_DEFAULT_REGION"];
     try {
-      const j = await buildDoctorJson();
+      const withFlag = await buildDoctorJson();
+      delete process.env["CLAUDE_CODE_USE_BEDROCK"];
+      const base = await buildDoctorJson();
+      process.env["CLAUDE_CODE_USE_BEDROCK"] = "1";
+      const j = withFlag;
+      expect(j.summary.warnings).toBe(base.summary.warnings + 1);
       expect(j.cloud_auth).toHaveLength(1);
       expect(j.cloud_auth[0]!.status).toBe("warn");
       expect(j.cloud_auth[0]!.line).toContain("AWS_REGION");
-      expect(j.summary.warnings).toBeGreaterThanOrEqual(1);
     } finally {
       if (saved === undefined) delete process.env["CLAUDE_CODE_USE_BEDROCK"]; else process.env["CLAUDE_CODE_USE_BEDROCK"] = saved;
       if (savedRegion !== undefined) process.env["AWS_REGION"] = savedRegion;
       if (savedDefault !== undefined) process.env["AWS_DEFAULT_REGION"] = savedDefault;
     }
+  }, 60000);
+});
+
+describe("model capability row (models.retrieve vs the catalog)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "capcat-"));
+  const cat = join(dir, "cat.json");
+  writeFileSync(cat, JSON.stringify({ providers: { claude: { models: [
+    { id: "m-a", thinking: { types: ["adaptive", "between_tools"] }, effort: { levels: ["low", "medium", "high"] } },
+  ] } } }));
+  const env = { ANTHROPIC_API_KEY: "k", LOKI_MODEL_CATALOG: cat } as NodeJS.ProcessEnv;
+  afterEach(() => _setModelsRetrieveForTest(null));
+
+  it("parses supported effort levels and thinking types from a retrieve body", () => {
+    const body = { capabilities: { effort: { supported: true, low: { supported: true }, high: { supported: false } }, thinking: { supported: true, types: { adaptive: { supported: true }, enabled: { supported: false } } } } };
+    expect(parseModelCapabilities(body)).toEqual({ effort: ["low"], thinking: ["adaptive"] });
+    expect(parseModelCapabilities({})).toBeNull();
+  });
+
+  it("prints a mismatch when the API lacks an effort level the catalog lists", async () => {
+    _setModelsRetrieveForTest(async () => ({ effort: ["low", "medium"], thinking: ["adaptive"] }));
+    const r = await checkModelCapabilities(env);
+    expect(r.status).toBe("warn");
+    expect(r.mismatches.map((m) => m.detail).join("|")).toContain("effort levels: catalog [low, medium, high], API [low, medium]");
+  });
+
+  it("flags a thinking type drift but ignores loki-side types the API cannot list", () => {
+    const entry = { id: "m-a", thinking: { types: ["adaptive", "between_tools"] }, effort: { levels: ["low"] } };
+    expect(compareModelCapabilities(entry, { effort: ["low"], thinking: ["adaptive"] })).toEqual([]);
+    expect(compareModelCapabilities(entry, { effort: ["low"], thinking: ["adaptive", "enabled"] })[0]!.detail).toContain("thinking types");
+  });
+
+  it("passes when the API matches the catalog", async () => {
+    _setModelsRetrieveForTest(async () => ({ effort: ["high", "medium", "low"], thinking: ["adaptive"] }));
+    expect((await checkModelCapabilities(env)).status).toBe("pass");
+  });
+
+  it("warns, never throws, without a key and when offline", async () => {
+    let calls = 0;
+    _setModelsRetrieveForTest(async () => { calls++; throw new Error("offline"); });
+    const noKey = await checkModelCapabilities({ LOKI_MODEL_CATALOG: cat } as NodeJS.ProcessEnv);
+    expect(noKey.status).toBe("warn");
+    expect(calls).toBe(0);
+    const offline = await checkModelCapabilities(env);
+    expect(offline.status).toBe("warn");
+    expect(offline.mismatches).toEqual([]);
+  });
+
+  it("runDoctor renders the Model capabilities section without changing the exit code basis", async () => {
+    _setModelsRetrieveForTest(async () => ({ effort: ["low"], thinking: ["adaptive"] }));
+    const saved = { k: process.env["ANTHROPIC_API_KEY"], c: process.env["LOKI_MODEL_CATALOG"] };
+    process.env["ANTHROPIC_API_KEY"] = "k";
+    process.env["LOKI_MODEL_CATALOG"] = cat;
+    const chunks: string[] = [];
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout as { write: unknown }).write = (c: string | Uint8Array) => { chunks.push(String(c)); return true; };
+    try {
+      stubPythonImportOk();
+      await runDoctor([]);
+    } finally {
+      (process.stdout as { write: unknown }).write = orig;
+      if (saved.k === undefined) delete process.env["ANTHROPIC_API_KEY"]; else process.env["ANTHROPIC_API_KEY"] = saved.k;
+      if (saved.c === undefined) delete process.env["LOKI_MODEL_CATALOG"]; else process.env["LOKI_MODEL_CATALOG"] = saved.c;
+    }
+    const out = chunks.join("");
+    expect(out).toContain("Model capabilities:");
+    expect(out).toContain("m-a: effort levels: catalog [low, medium, high], API [low]");
+  });
+});
+
+describe("CW-14: provider_auth rows", () => {
+  const CANARY = "sk-canary-DO-NOT-LEAK-0123456789";
+  it("names the credential source for every provider and never the value", () => {
+    const env = { HOME: "/nonexistent-home", ANTHROPIC_API_KEY: CANARY, OPENAI_API_KEY: CANARY + "2" };
+    const rows = providerAuthRows(env);
+    expect(rows.map((r) => r.provider)).toEqual(["claude", "codex", "cline", "aider", "opencode"]);
+    expect(rows.find((r) => r.provider === "claude")!.auth_path).toBe("api_key:ANTHROPIC_API_KEY");
+    expect(rows.find((r) => r.provider === "codex")!.auth_path).toBe("api_key:OPENAI_API_KEY");
+    expect(JSON.stringify(rows)).not.toContain("canary");
+  });
+  it("no credential: claude and codex defer to their CLI login, others say none", () => {
+    const env = { HOME: "/nonexistent-home" };
+    expect(providerAuthPath("claude", env)).toBe("cli_login:claude");
+    expect(providerAuthPath("codex", env)).toBe("cli_login:codex");
+    expect(providerAuthPath("aider", env)).toBe("none");
+  });
+  it("an oauth token is named as oauth_token", () => {
+    expect(providerAuthPath("claude", { HOME: "/x", CLAUDE_CODE_OAUTH_TOKEN: CANARY })).toBe("oauth_token:CLAUDE_CODE_OAUTH_TOKEN");
+  });
+  it("buildDoctorJson carries provider_auth rows", async () => {
+    const j = await buildDoctorJson();
+    expect(j.provider_auth).toHaveLength(5);
+    expect(JSON.stringify(j.provider_auth)).not.toMatch(/sk-/);
   }, 60000);
 });

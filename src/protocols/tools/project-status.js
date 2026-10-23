@@ -107,4 +107,7 @@ function execute(params) {
   };
 }
 
-module.exports = { TOOL_NAME, schema, execute };
+// Result keys carrying stored text; the server moves them under untrusted_content.
+const UNTRUSTED_FIELDS = ['projectId', 'phase', 'status', 'provider', 'rarvCycle', 'qualityGates', 'startedAt'];
+
+module.exports = { TOOL_NAME, schema, execute, UNTRUSTED_FIELDS };

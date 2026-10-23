@@ -2,7 +2,7 @@
 import { MAX_SCOPE_BYTES, PLAN_SCOPE_FILE, readScopeText } from "../../util/run_cap.ts";
 import { claudeCodeVersionForRoute } from "../providers.ts";
 import { envOverride, parseUnits } from "./decision.ts";
-import { probeAdvisor } from "./advisor_probe.ts";
+import { advisorPair, probeAdvisor, type AdvisorProbe } from "./advisor_probe.ts";
 import { routerEnabled } from "./flag.ts";
 import { buildRouteRecord, writeRouteRecord } from "./route_record.ts";
 import { shapeKeyForRun } from "./history.ts";
@@ -13,6 +13,7 @@ export const ROUTER_UNITS_INSTRUCTION = 'In the same JSON file (<scope>) also ad
 type Pin = { model: string } | Record<string, never>;
 export interface PlanRoute {
   routed: boolean;
+  advisor: AdvisorProbe | null;
   pinOpus: boolean;
   pin: Pin;
   pinFor: (onSonnet: boolean) => Pin;
@@ -29,7 +30,8 @@ const SONNET_PIN: Pin = { model: "sonnet" };
  */
 export async function planRoute(runDir: string, provider: string, env: NodeJS.ProcessEnv = process.env, repoDir = ""): Promise<PlanRoute> {
   const routed = routerEnabled(env);
-  const advisorAvailable = routed ? probeAdvisor(env, provider, await claudeCodeVersionForRoute(env), runDir).available : false;
+  const advisor: AdvisorProbe | null = routed ? probeAdvisor(env, provider, await claudeCodeVersionForRoute(env), runDir, advisorPair(env)) : null;
+  const advisorAvailable = advisor?.available ?? false;
   const pinOpus = routed && provider === "claude" && envOverride(env) === null;
   const shapeKey = routed ? shapeKeyForRun(repoDir, runDir) : null;
   let cached: { units: ReturnType<typeof parseUnits>["units"]; notProven: string[] } | null = null;
@@ -44,6 +46,7 @@ export async function planRoute(runDir: string, provider: string, env: NodeJS.Pr
   };
   const out: PlanRoute = {
     routed,
+    advisor,
     pinOpus,
     pin: pinOpus ? { model: "opus" } : {},
     pinFor: (onSonnet) => (onSonnet ? SONNET_PIN : out.pin),
