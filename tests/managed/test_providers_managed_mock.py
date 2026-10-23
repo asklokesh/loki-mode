@@ -279,6 +279,72 @@ class ProvidersManagedTests(unittest.TestCase):
             else:
                 os.environ["LOKI_EXPERIMENTAL_MANAGED_AGENTS"] = old
 
+    # ---------- SDK 2.x session contract -----------------------------------
+
+    def test_real_session_uses_2x_agent_environment_kwargs(self):
+        from types import SimpleNamespace as NS
+
+        calls = {}
+
+        class _Ns:
+            def __init__(self, name, ret):
+                self._n, self._r = name, ret
+
+            def create(self, **kw):
+                calls[self._n] = kw
+                return self._r
+
+        class _Sessions(_Ns):
+            events = NS(
+                list=lambda sid: [
+                    NS(type="agent.message", content=[NS(text="APPROVE")], session_thread_id="t1")
+                ]
+            )
+            retrieve = staticmethod(lambda sid: NS(status="idle"))
+
+        client = NS(
+            beta=NS(
+                agents=_Ns("agents", NS(id="agent_coord")),
+                environments=_Ns("env", NS(id="env_1")),
+                sessions=_Sessions("sessions", NS(id="sess_1", status="idle")),
+            )
+        )
+        self.managed._set_session_factory_for_tests(None)
+        out = self.managed._RealMultiagentSession(
+            client=client, agent_ids=["agent_aaaa", "agent_bbbb"], context={"q": 1}, timeout_s=5
+        ).run()
+
+        kw = calls["sessions"]
+        self.assertNotIn("callable_agents", kw)
+        self.assertEqual(kw["agent"], {"type": "agent", "id": "agent_coord"})
+        self.assertEqual(kw["environment_id"], "env_1")
+        self.assertEqual(kw["initial_events"][0]["type"], "user.message")
+        self.assertEqual(
+            calls["agents"]["multiagent"],
+            {"type": "coordinator", "agents": ["agent_aaaa", "agent_bbbb"]},
+        )
+        self.assertEqual(out["raw"][0]["text"], "APPROVE")
+        # ids cached: a second run creates no new agent or environment
+        calls.clear()
+        self.managed._RealMultiagentSession(
+            client=client, agent_ids=["agent_aaaa", "agent_bbbb"], context={}, timeout_s=5
+        ).run()
+        self.assertEqual(set(calls), {"sessions"})
+
+        # the same kwargs must bind against the installed SDK's real signatures
+        try:
+            import anthropic
+            import inspect
+        except ImportError:
+            return
+        real = anthropic.Anthropic(api_key="test-key").beta
+        inspect.signature(real.sessions.create).bind(**kw)
+        inspect.signature(real.environments.create).bind(name="loki-council")
+        inspect.signature(real.agents.create).bind(**calls.get("agents", {}) or {
+            "name": "n", "model": "m", "system": "s",
+            "multiagent": {"type": "coordinator", "agents": []},
+        })
+
     # ---------- helpers -----------------------------------------------------
 
     def _read_events(self):

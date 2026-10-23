@@ -62,6 +62,7 @@ Honest caveat:
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -88,6 +89,10 @@ _DEFAULT_CALL_TIMEOUT = 10.0
 
 # Cache file for materialized Managed Agent IDs.
 _CACHE_FILE_REL = ".loki/managed/agent_ids.json"
+_ENVIRONMENT_CACHE_KEY = "__environment__"
+_COORDINATOR_CACHE_PREFIX = "__coordinator__"
+_COORDINATOR_MODEL = "claude-sonnet-5-5"
+_SESSION_POLL_S = 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +300,7 @@ def _session_factory(
 
 class _RealMultiagentSession:
     """
-    Thin adapter over `client.beta.sessions.create(...)` (preview).
+    Thin adapter over `client.beta.sessions.create(...)` (SDK 2.x Managed Agents).
 
     We deliberately keep this adapter tiny and tolerant of SDK shape
     churn; any AttributeError/TypeError is converted to ManagedUnavailable.
@@ -314,17 +319,62 @@ class _RealMultiagentSession:
         self._context = context
         self._timeout_s = timeout_s
 
+    def _cache_get_or_create(self, key: str, create: Any) -> str:
+        """Id cache shared with agents.managed_registry (agent_ids.json)."""
+        try:
+            from agents import managed_registry
+        except ImportError as e:
+            raise ManagedUnavailable(f"agents.managed_registry unavailable: {e}")
+        with managed_registry._cache_lock:
+            cache = managed_registry._load_cache()
+            if cache.get(key):
+                return cache[key]
+            made = str(create())
+            cache[key] = made
+            managed_registry._save_cache(cache)
+            return made
+
+    def _environment_id(self, beta: Any) -> str:
+        envs = getattr(beta, "environments", None)
+        if envs is None or not hasattr(envs, "create"):
+            raise ManagedUnavailable("anthropic.beta.environments.create not available in SDK")
+
+        def _create() -> str:
+            return getattr(envs.create(name="loki-council"), "id")
+
+        return self._cache_get_or_create(_ENVIRONMENT_CACHE_KEY, _create)
+
+    def _coordinator_id(self, beta: Any) -> str:
+        """Single agent that fronts the pool via the 2.x multiagent coordinator."""
+        if len(self._agent_ids) == 1:
+            return self._agent_ids[0]
+        agents = getattr(beta, "agents", None)
+        if agents is None or not hasattr(agents, "create"):
+            raise ManagedUnavailable("anthropic.beta.agents.create not available in SDK")
+        roster = list(self._agent_ids)
+        key = _COORDINATOR_CACHE_PREFIX + hashlib.sha256(
+            "|".join(roster).encode("utf-8")
+        ).hexdigest()[:16]
+
+        def _create() -> str:
+            return getattr(
+                agents.create(
+                    name="Loki council coordinator",
+                    model=_COORDINATOR_MODEL,
+                    system="Ask every rostered agent for its verdict and report each one.",
+                    multiagent={"type": "coordinator", "agents": roster},
+                ),
+                "id",
+            )
+
+        return self._cache_get_or_create(key, _create)
+
     def run(self) -> Dict[str, Any]:
-        """Execute the session. Returns a dict of session payload."""
+        """Execute the session (SDK 2.x Managed Agents). Returns a session payload."""
         beta = getattr(self._client, "beta", None)
         if beta is None:
             raise ManagedUnavailable("anthropic SDK missing `beta` namespace")
-
-        # SDK API under preview: exact attribute may be `sessions` or
-        # `agent_sessions`. Try both, fail-fast if neither.
-        sessions = getattr(beta, "sessions", None) or getattr(
-            beta, "agent_sessions", None
-        )
+        sessions = getattr(beta, "sessions", None)
         if sessions is None or not hasattr(sessions, "create"):
             raise ManagedUnavailable(
                 "anthropic.beta.sessions.create not available in SDK"
@@ -332,21 +382,37 @@ class _RealMultiagentSession:
 
         try:
             session = sessions.create(
-                callable_agents=[{"agent_id": aid} for aid in self._agent_ids],
-                context=self._context,
+                agent={"type": "agent", "id": self._coordinator_id(beta)},
+                environment_id=self._environment_id(beta),
+                initial_events=[
+                    {
+                        "type": "user.message",
+                        "content": [
+                            {"type": "text", "text": json.dumps(self._context, default=str)}
+                        ],
+                    }
+                ],
                 timeout=self._timeout_s,
             )
+            sid = getattr(session, "id", None)
+            deadline = time.monotonic() + float(self._timeout_s)
+            status = getattr(session, "status", "running")
+            while status in ("running", "rescheduling") and time.monotonic() < deadline:
+                time.sleep(_SESSION_POLL_S)
+                status = getattr(sessions.retrieve(sid), "status", "idle")
+            events = list(sessions.events.list(sid)) if status == "idle" else []
         except (AttributeError, TypeError) as e:
             raise ManagedUnavailable(f"SDK session shape mismatch: {e}")
 
-        # Session objects can be streamed or returned whole depending on
-        # SDK version. We treat .messages / .output / .result as the
-        # first-wins path and stop there.
-        for attr in ("messages", "output", "result"):
-            got = getattr(session, attr, None)
-            if got is not None:
-                return {"raw": got, "session_id": getattr(session, "id", None)}
-        return {"raw": None, "session_id": getattr(session, "id", None)}
+        messages = []
+        for ev in events:
+            if getattr(ev, "type", None) != "agent.message":
+                continue
+            text = "".join(getattr(b, "text", "") or "" for b in getattr(ev, "content", []))
+            messages.append(
+                {"agent_id": getattr(ev, "session_thread_id", None) or "", "text": text}
+            )
+        return {"raw": messages or None, "session_id": sid}
 
 
 # ---------------------------------------------------------------------------
