@@ -5,7 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } from "../types.ts";
 import { taskBlock } from "../types.ts";
 import { unitSpec } from "../../features/speed/unit_mode.ts";
@@ -14,7 +14,7 @@ import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallModel } from "../sizing.ts";
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { removeHoldout, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
-import { commandFor } from "./verify.ts"; import { harnessRunners, projectInterpreter } from "../testmap.ts";
+import { commandFor } from "./verify.ts"; import { buildTestMap, harnessRunners, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { baseJobs, classify, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions } from "../../project_model/conventions.ts"; // FC-23
@@ -246,3 +246,11 @@ export const wallStage: Stage = {
 };
 /** WC-01b: the split halves, read by the machine under LOKI_E10_WALL_CONCURRENT=1. */
 export const stage = Object.assign(wallStage, { split: { author: wallAuthor, install: installWall } });
+/** RQ-64: verify --fast runs a repo's loki_wall_* .ts/.js files through this, not a second runner: the Wall install's own runner pick (guessRunner over the detected runners) and RealBaseTestRunner, one file at a time. */
+export function runWallFiles(repoDir: string, files: string[]): { file: string; status: "pass" | "fail" | "not_run" }[] {
+  const runners = harnessRunners(buildTestMap(repoDir).runners, files), base = new RealBaseTestRunner();
+  return files.map((file) => {
+    const runner = guessRunner(basename(file), runners); if (!runner) return { file, status: "not_run" as const };
+    const r = base.run(repoDir, [{ runner, path: file }]); return { file, status: r.fail > 0 ? "fail" as const : r.pass > 0 ? "pass" as const : "not_run" as const };
+  });
+}
