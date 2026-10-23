@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { computeReceiptHash, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
-import { captureVisualEvidence, e2eSpecSource, evidenceSection, playwrightTestPkg, hashScreens, isPageFile, routeFor, sealEvidence } from "../../src/features/visual_evidence.ts";
+import { captureVisualEvidence, deriveFlows, e2eSpecSource, evidenceSection, playwrightTestPkg, hashScreens, isPageFile, routeFor, sealEvidence } from "../../src/features/visual_evidence.ts";
 
 let root = "";
 let RUN = "";
@@ -314,4 +314,29 @@ test("sealEvidence records evidence_failed only when the gate is on and capture 
     process.env["LOKI_VISUAL_GATE"] = "1";
     expect((await sealEvidence(root, RUN, { verify: { changed_files: ["lib/x.ts"] } }, new Set())).evidence_failed).toBeUndefined();
   } finally { if (env === undefined) delete process.env["LOKI_VISUAL_GATE"]; else process.env["LOKI_VISUAL_GATE"] = env; }
+});
+
+// #249 slice (a): spec flows derived from the contract criteria. No selectors are invented; steps are only what the criterion text states.
+const AC = (n: number, text: string) => ({ id: `AC-${n}`, text, source_line: n * 2 });
+test("deriveFlows: an action criterion becomes a flow whose steps carry only the stated words", () => {
+  const r = deriveFlows([AC(1, 'The user clicks "Add task" and types "Buy milk" in the title box, then submits the form')]);
+  expect(r.flows.length).toBe(1);
+  const f = r.flows[0]!;
+  expect(f.id).toBe("AC-1");
+  expect(f.line).toBe(2);
+  expect(f.steps.map((s) => s.action)).toEqual(["click", "type", "submit"]);
+  expect(f.steps[0]!.target).toBe("Add task");
+  expect(f.steps[1]!.value).toBe("Buy milk");
+  expect(JSON.stringify(f)).not.toMatch(/selector|css|xpath|#[a-z]|\[data-/i);
+  expect(r.notProven).toEqual([]);
+});
+test("deriveFlows: a criterion with no stated user action is named NOT PROVEN, never dropped", () => {
+  const r = deriveFlows([AC(1, "Responses are served in under 200 ms"), AC(2, "The user clicks the Save button")]);
+  expect(r.flows.map((f) => f.id)).toEqual(["AC-2"]);
+  expect(r.notProven).toEqual(["AC-1: no user action stated, flow not derived"]);
+});
+test("deriveFlows: empty input and absolute paths in text yield nothing path-like", () => {
+  expect(deriveFlows([])).toEqual({ flows: [], notProven: [] });
+  const r = deriveFlows([AC(1, "The user opens /Users/me/secret.html and clicks Go")]);
+  expect(JSON.stringify(r)).not.toContain("/Users/");
 });

@@ -3,6 +3,7 @@
 // Each screenshot's sha256 goes into receipt.evidence_screens; `loki verify` rechecks it when present.
 import { spawn } from "node:child_process";
 import { isMultiRoot, loadProjectApi } from "../project_model/resolve.ts";
+import type { Criterion } from "./contract.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -118,6 +119,31 @@ async function recordE2eMedia(repoDir: string, runDir: string, relDir: string, b
     walk(join(dir, "out"));
     return rels.length > 0 ? { rels, skipped: null } : { rels, skipped: "playwright e2e video and trace skipped: no video or trace was produced" };
   } catch (e) { return { rels: [], skipped: `playwright e2e video and trace skipped: ${String((e as Error)?.message ?? e).slice(0, 120)}` }; }
+}
+
+export type FlowAction = "click" | "type" | "submit" | "open" | "select";
+export interface FlowStep { action: FlowAction; target: string | null; value?: string } // words from the criterion only; no selector is ever invented
+export interface SpecFlow { id: string; line: number; steps: FlowStep[] }
+const FLOW_VERB = /\b(click|press|tap|type|enter|fill|submit|select|choose|open|visit)(?:s|es|ed)?\b/gi;
+const FLOW_ACTION: Record<string, FlowAction> = { click: "click", press: "click", tap: "click", type: "type", enter: "type", fill: "type", submit: "submit", select: "select", choose: "select", open: "open", visit: "open" };
+const HOME_PATH = /(?:\/Users|\/home)\/\S+/g;
+const stated = (s: string): string | null => { const t = s.replace(HOME_PATH, "<path>").replace(/^(?:the|a|an|on|in|into|to)\s+/i, "").replace(/[\s,.;:]+$/, "").trim(); return t === "" ? null : t.slice(0, 120); };
+/** #249(a): user flows from the contract criteria (features/contract.ts parseContract). A criterion that states no user action is named NOT PROVEN, never dropped. Steps carry only the criterion's own words. */
+export function deriveFlows(criteria: readonly Criterion[]): { flows: SpecFlow[]; notProven: string[] } {
+  const flows: SpecFlow[] = [], notProven: string[] = [];
+  for (const c of criteria) {
+    const hits = [...c.text.matchAll(FLOW_VERB)];
+    const steps: FlowStep[] = hits.map((m, i) => {
+      const rest = c.text.slice(m.index! + m[0].length, hits[i + 1]?.index ?? c.text.length).split(/\s+(?:and|then)\s*$/i)[0]!;
+      const quoted = [...rest.matchAll(/"([^"]{1,120})"/g)].map((q) => q[1]!);
+      const action = FLOW_ACTION[m[1]!.toLowerCase()]!;
+      if (action === "type") { const into = /\b(?:in|into)\s+(.+)$/i.exec(rest.replace(/"[^"]*"/g, "")); return { action, target: into ? stated(into[1]!) : null, ...(quoted[0] ? { value: quoted[0].replace(HOME_PATH, "<path>") } : {}) }; }
+      return { action, target: quoted[0] ? quoted[0].replace(HOME_PATH, "<path>") : stated(rest.replace(/\s+(?:and|then)\b.*$/i, "")) };
+    });
+    if (steps.length === 0) notProven.push(`${c.id}: no user action stated, flow not derived`);
+    else flows.push({ id: c.id, line: c.source_line, steps });
+  }
+  return { flows, notProven };
 }
 
 export interface CaptureOpts { budgetMs?: number; maxRoutes?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv; onServer?: (pgid: number) => void } // onServer: the dev server's own process group, so a supervisor can reap it on a hard kill
