@@ -87,6 +87,18 @@ def visible_suite(clone, spec):
     return "python3 -m pytest -q"
 
 
+NOT_RUN_RC = (124, 126, 127)  # timeout, not executable, not found: the step never confirmed anything
+
+
+def not_run(res):
+    """Names of confirmation steps that did not run. diff_stat is informational and never counts."""
+    return [r[0] for r in res if r[0] != "diff_stat" and r[1] in NOT_RUN_RC]
+
+
+def _steps(res):
+    return [{"step": r[0], "rc": r[1], "seconds": round(r[2], 3)} for r in res]
+
+
 def mechanical(tool, workdir, spec, runner=run_cmd):
     """Returns (seconds, trusted, provenance). trusted is the third party's verdict."""
     with tempfile.TemporaryDirectory(prefix="trust-time-") as tmp:
@@ -102,6 +114,9 @@ def mechanical(tool, workdir, spec, runner=run_cmd):
                      ("check_fresh", [LOKI_BIN, "verify", "--check-fresh"])]
             res = [(n,) + runner(a, clone, env) for n, a in steps]
             trusted = all(r[1] == 0 for r in res)
+            dead = not_run(res)
+            if dead:
+                return None, False, {"steps": _steps(res), "note": "confirmation did not run (rc 124/126/127): %s" % ", ".join(dead)}
         else:
             setup = (spec.get("acceptance") or {}).get("setup_cmd")
             res = []
@@ -110,8 +125,11 @@ def mechanical(tool, workdir, spec, runner=run_cmd):
             res.append(("visible_suite",) + runner(visible_suite(clone, spec), clone, env, shell=True))
             res.append(("diff_stat",) + runner(["git", "diff", "--stat", "HEAD~1"], clone, env))
             trusted = next(r for r in res if r[0] == "visible_suite")[1] == 0
+            dead = not_run(res)
+            if dead:
+                return None, False, {"steps": _steps(res), "note": "confirmation did not run (rc 124/126/127): %s" % ", ".join(dead)}
         secs = sum(r[2] for r in res)
-        return secs, trusted, {"steps": [{"step": r[0], "rc": r[1], "seconds": round(r[2], 3)} for r in res]}
+        return secs, trusted, {"steps": _steps(res)}
 
 
 def judged(tool, workdir, spec, runner=run_cmd):
