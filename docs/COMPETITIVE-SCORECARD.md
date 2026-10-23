@@ -460,6 +460,21 @@ Observed again on 11.55.3 without a new number:
   (`git log main..HEAD` printed 0 commits). Matches the 11.54.0 finding.
   Slice: CW-19 #354.
 
+PR comment commands baseline (issue #360, 2026-10-23). Factory `droid` 0.190.0:
+`droid --help | grep -ciE 'github|pull request|comment'` prints 0 and its
+command list has no GitHub verb, so the CLI itself offers none. Factory's
+published docs (searched 2026-10-23) describe a separate GitHub app and the
+`Factory-AI/droid-action` workflow driven by PR comments: `@droid review`,
+`@droid security`, `@droid security --full`, plus a custom automation that
+applies a requested change and pushes one commit
+([code review](https://docs.factory.ai/guides/droid-exec/code-review),
+[automations](https://docs.factory.ai/software-factory/automations)). No
+complete command list was found. Loki's comparable surface after #360:
+`/loki fix`, `/loki explain`, `/loki reseal` in the issue-to-PR example
+workflow; the fix path is gated on write access and the comment text never
+shares a step with a secret or token. Not measured: Factory's runtime behavior,
+which needs their app installed.
+
 NOT MEASURED on 11.55.3, so the #350 11.54.0 values stand unrefreshed: crash
 recovery and `loki start --resume` (M6), false-done rate (M5, the benchmark task
 did not discriminate), and the bare `claude -p` comparison column. Do not read
