@@ -346,6 +346,47 @@ J3e="$(fvj "$S3" "$NOPROV")"
 if cmp -s "$FV" "$NOPROV"; then bad "provenance mutant did not change fast_verify.py (sed pattern stale)"
 elif [ "$(printf '%s' "$J3e" | jfield "d['verdict']")" = "PASS" ]; then ok "mutant that drops the provenance check turns the untracked-Wall case into PASS (guard bites)"
 else bad "provenance mutant still INCONCLUSIVE; the test does not depend on the check"; fi
+# Provenance is bound to the diff and fails closed (rev-a): a sealed Wall unrelated to the changed files
+# earns no PASS, a git error is never read as "unchanged", and a Wall added after the base is never trusted.
+seal_event() { mkdir -p "$1/.loki/runs/r1"; printf '{"v":1,"seq":1,"ts":"t","run":"r1","type":"wall.sealed","stage":"wall","data":{"files":[{"path":"%s","sha256":"%s"}]}}\n' "$2" "$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$1/$2")" > "$1/.loki/runs/r1/events.jsonl"; }
+fvd() { (cd "$1" && python3 "${3:-$FV}" . --no-cache --json --diff-base "$2" 2>/dev/null); }
+D1="$TMP/diffbind"; mkdir -p "$D1"; git -C "$D1" init -q; GD="git -C $D1 -c user.name=t -c user.email=t@t.invalid"
+printf 'def price(x):\n    return x * 2\n' > "$D1/price.py"; printf 'from price import price\ndef test_price():\n    assert price(2) == 4\n' > "$D1/test_price.py"
+git -C "$D1" add price.py test_price.py; $GD commit -qm base
+printf 'def test_add():\n    assert 1 + 1 == 2\n' > "$D1/loki_wall_add.py"; seal_event "$D1" loki_wall_add.py
+printf 'def price(x):\n    return x * 3\n' > "$D1/price.py"
+git -C "$D1" add price.py loki_wall_add.py; $GD commit -qm "wrong price plus unrelated Wall"
+JD1="$(fvd "$D1" HEAD~1)"
+if [ "$(verdict_trusted "$JD1")" != "('INCONCLUSIVE', 1, 0)" ]; then bad "unrelated Wall earned trust on a wrong-price change: $JD1"
+else ok "a sealed Wall that does not exercise any changed file is INCONCLUSIVE, not PASS"; fi
+JD2="$(fvd "$D1" nosuchref)"
+if [ "$(printf '%s' "$JD2" | jfield "d['verdict']")" = "INCONCLUSIVE" ]; then ok "an unreadable --diff-base fails closed (INCONCLUSIVE), never trusts the Wall"
+else bad "bad diff base still trusted the Wall: $JD2"; fi
+# Wall added after the base, covering the changed module, with a seal matching its bytes: still not trusted (changed vs base).
+printf 'from price import price\ndef test_cover():\n    assert price(1) == 3\n' > "$D1/loki_wall_cover.py"; seal_event "$D1" loki_wall_cover.py
+rm "$D1/loki_wall_add.py"; git -C "$D1" rm -q --cached loki_wall_add.py; git -C "$D1" add loki_wall_cover.py; $GD commit -qm "agent adds covering Wall"
+JD3="$(fvd "$D1" HEAD~2)"
+if [ "$(printf '%s' "$JD3" | jfield "d['verdict']")" = "INCONCLUSIVE" ]; then ok "a Wall added after the diff base is untrusted even when sealed and covering"
+else bad "Wall added after the base was trusted: $JD3"; fi
+NODIFF="$TMP/fv-nodiff.py"
+python3 - "$FV" "$NODIFF" <<'PY'
+import sys
+s = open(sys.argv[1]).read()
+a = '    for ref in {diff_base or "HEAD", "HEAD"}:'
+assert a in s
+open(sys.argv[2], "w").write(s.replace(a, '    for ref in ():', 1))
+PY
+JD4="$(fvd "$D1" HEAD~2 "$NODIFF")"
+if [ "$(printf '%s' "$JD4" | jfield "d['verdict']")" = "PASS" ]; then ok "mutant that drops the changed-vs-base check trusts the post-base Wall (guard bites)"
+else bad "diff-check mutant still INCONCLUSIVE; the fixture does not depend on the check: $JD4"; fi
+# A sealed, committed-at-base Wall that exercises the changed module does earn PASS.
+D2="$TMP/diffbind2"; mkdir -p "$D2"; git -C "$D2" init -q; G2="git -C $D2 -c user.name=t -c user.email=t@t.invalid"
+printf 'def price(x):\n    return x * 2\n' > "$D2/price.py"; printf 'from price import price\ndef test_cover():\n    assert price(1) == 2\n' > "$D2/loki_wall_cover.py"
+seal_event "$D2" loki_wall_cover.py; git -C "$D2" add price.py loki_wall_cover.py; $G2 commit -qm base
+printf 'def price(x):\n    return x * 2  # tweak\n' > "$D2/price.py"; git -C "$D2" add price.py; $G2 commit -qm change
+JD5="$(fvd "$D2" HEAD~1)"
+if [ "$(verdict_trusted "$JD5")" = "('PASS', 1, 1)" ]; then ok "a sealed Wall present at the base that names the changed module earns PASS"
+else bad "covering sealed Wall at the base did not PASS: $JD5"; fi
 [ -z "$(find "$S1" -name .pytest_cache -maxdepth 2)" ] && ok "verify --fast leaves no .pytest_cache in the target repo" || bad ".pytest_cache written into the target repo"
 S2="$TMP/seed-mock"; seed_repo SD-0061 "$S2"
 J4="$(cd "$S2" && python3 "$FV" . --no-cache --json 2>/dev/null)"
