@@ -1,0 +1,67 @@
+[
+  {
+    "case": "temp-file-left-behind",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "        try:\n            os.unlink(tmp)\n        except FileNotFoundError:\n            pass\n        raise",
+        "new": "        raise"
+      }
+    ],
+    "rules": [
+      3
+    ],
+    "file": "atomicwrite.py"
+  },
+  {
+    "case": "failure-swallowed",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "            pass\n        raise",
+        "new": "            pass\n        return total"
+      }
+    ],
+    "rules": [
+      2
+    ],
+    "file": "atomicwrite.py"
+  },
+  {
+    "case": "counts-characters-not-bytes",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "total += len(chunk)",
+        "new": "total += len(chunk.decode(\"utf-8\", \"ignore\"))"
+      }
+    ],
+    "rules": [
+      4
+    ],
+    "file": "atomicwrite.py"
+  },
+  {
+    "case": "empty-chunks-write-no-file",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "        os.replace(tmp, path)",
+        "new": "        if total:\n            os.replace(tmp, path)\n        else:\n            os.unlink(tmp)"
+      }
+    ],
+    "rules": [
+      1
+    ],
+    "file": "atomicwrite.py"
+  },
+  {
+    "case": "writes-in-place",
+    "kind": "other",
+    "source": "def write_atomic(path, chunks):\n    total = 0\n    with open(path, \"wb\") as fh:\n        for chunk in chunks:\n            fh.write(chunk)\n            total += len(chunk)\n    return total\n",
+    "rules": [
+      2
+    ],
+    "file": "atomicwrite.py"
+  }
+]

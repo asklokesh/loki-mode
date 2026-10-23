@@ -1,0 +1,11 @@
+[project]
+name = "ratelimit"
+version = "0.1.0"
+requires-python = ">=3.9"
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100

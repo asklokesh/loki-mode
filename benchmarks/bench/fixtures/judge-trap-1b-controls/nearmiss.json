@@ -1,0 +1,151 @@
+[
+  {
+    "case": "cut-one-char-early-at-max-len",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "t.rfind(\"-\", 0, max_len + 1)",
+        "new": "t.rfind(\"-\", 0, max_len)"
+      }
+    ],
+    "rules": [
+      4
+    ],
+    "file": "slugify.py"
+  },
+  {
+    "case": "exact-fit-truncated",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "len(t) > max_len",
+        "new": "len(t) >= max_len"
+      }
+    ],
+    "rules": [
+      4
+    ],
+    "file": "slugify.py"
+  },
+  {
+    "case": "runs-collapse-only-up-to-two",
+    "kind": "max-length",
+    "edits": [
+      {
+        "old": "[^a-z0-9]+",
+        "new": "[^a-z0-9]{1,2}"
+      }
+    ],
+    "rules": [
+      2
+    ],
+    "file": "slugify.py"
+  },
+  {
+    "case": "leading-dash-not-stripped",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": ".strip(\"-\")\n    if len",
+        "new": ".rstrip(\"-\")\n    if len"
+      }
+    ],
+    "rules": [
+      3
+    ],
+    "file": "slugify.py"
+  },
+  {
+    "case": "hard-cut-one-char-long",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "t[:max_len]",
+        "new": "t[:max_len + 1]"
+      }
+    ],
+    "rules": [
+      4,
+      6
+    ],
+    "file": "slugify.py"
+  },
+  {
+    "case": "cuts-at-first-dash",
+    "kind": "ordering",
+    "edits": [
+      {
+        "old": "t.rfind(\"-\", 0, max_len + 1)",
+        "new": "t.find(\"-\")"
+      }
+    ],
+    "rules": [
+      4
+    ],
+    "file": "slugify.py"
+  },
+  {
+    "case": "empty-result-returned",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "        raise ValueError(\"empty slug\")",
+        "new": "        return t"
+      }
+    ],
+    "rules": [
+      5
+    ],
+    "file": "slugify.py"
+  },
+  {
+    "case": "sharp-s-dropped",
+    "kind": "other",
+    "edits": [
+      {
+        "old": ".replace(\"\\u00df\", \"ss\")",
+        "new": ""
+      }
+    ],
+    "rules": [
+      1
+    ],
+    "file": "slugify.py"
+  },
+  {
+    "case": "ae-ligature-dropped",
+    "kind": "other",
+    "edits": [
+      {
+        "old": ".replace(\"\\u00e6\", \"ae\")",
+        "new": ""
+      }
+    ],
+    "rules": [
+      1
+    ],
+    "file": "slugify.py"
+  },
+  {
+    "case": "max-len-hardcoded",
+    "kind": "max-length",
+    "edits": [
+      {
+        "old": "len(t) > max_len",
+        "new": "len(t) > 40"
+      },
+      {
+        "old": "max_len + 1",
+        "new": "41"
+      },
+      {
+        "old": "t[:max_len]",
+        "new": "t[:40]"
+      }
+    ],
+    "rules": [
+      4
+    ],
+    "file": "slugify.py"
+  }
+]

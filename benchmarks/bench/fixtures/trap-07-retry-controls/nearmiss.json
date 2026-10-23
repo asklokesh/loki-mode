@@ -1,0 +1,108 @@
+[
+  {
+    "case": "attempt-index-wraps-after-two",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "return await fn(attempt);",
+        "new": "return await fn(attempt % 2);"
+      }
+    ],
+    "rules": [
+      1
+    ],
+    "file": "retry.js"
+  },
+  {
+    "case": "one-extra-attempt",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "attempt >= retries",
+        "new": "attempt > retries"
+      }
+    ],
+    "rules": [
+      3
+    ],
+    "file": "retry.js"
+  },
+  {
+    "case": "linear-backoff",
+    "kind": "ordering",
+    "edits": [
+      {
+        "old": "wait *= 2;",
+        "new": "wait += delayMs;"
+      }
+    ],
+    "rules": [
+      2
+    ],
+    "file": "retry.js"
+  },
+  {
+    "case": "sleeps-after-final-failure",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "      if (attempt >= retries) throw err;\n      await sleep(wait);",
+        "new": "      await sleep(wait);\n      if (attempt >= retries) throw err;"
+      }
+    ],
+    "rules": [
+      5
+    ],
+    "file": "retry.js"
+  },
+  {
+    "case": "error-wrapped",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "throw err;",
+        "new": "throw new Error(\"retry failed: \" + err.message);"
+      }
+    ],
+    "rules": [
+      4
+    ],
+    "file": "retry.js"
+  },
+  {
+    "case": "zero-retries-still-retries",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "attempt >= retries",
+        "new": "attempt >= Math.max(1, retries)"
+      }
+    ],
+    "rules": [
+      3
+    ],
+    "file": "retry.js"
+  },
+  {
+    "case": "first-error-thrown-not-last",
+    "kind": "ordering",
+    "edits": [
+      {
+        "old": "let wait = delayMs;",
+        "new": "let wait = delayMs;\n  let first;"
+      },
+      {
+        "old": "} catch (err) {",
+        "new": "} catch (err) {\n      first = first || err;"
+      },
+      {
+        "old": "if (attempt >= retries) throw err;",
+        "new": "if (attempt >= retries) throw first;"
+      }
+    ],
+    "rules": [
+      4
+    ],
+    "file": "retry.js"
+  }
+]
