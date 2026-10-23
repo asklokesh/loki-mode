@@ -14,8 +14,9 @@
 # from the packument: the packument is a CDN-cached document that kept the
 # previous tags for minutes after the writes were applied
 # (FC-DISTTAG-SETTLE-READS-CACHED-PACKUMENT). The run's own version is read from
-# its version document (`npm view pkg@version`), and no tag is written until that
-# document resolves.
+# its version document (an uncached GET of registry/pkg/version; `npm view
+# pkg@version` reads the cached packument and is not that document), and no tag
+# is written until that document returns 200.
 #
 # Usage: npm-dist-tags.sh <version>
 # Env: LOKI_DISTTAG_PKG (default loki-mode; loki-mode-sdk for the SDK), LOKI_DISTTAG_TRIES (default 8),
@@ -28,6 +29,7 @@ PKG="${LOKI_DISTTAG_PKG:-loki-mode}"
 TRIES="${LOKI_DISTTAG_TRIES:-8}"
 NAP="${LOKI_DISTTAG_SLEEP:-15}"
 MATERIALIZE_S="${LOKI_DISTTAG_MATERIALIZE_S:-420}"
+REGISTRY="${LOKI_DISTTAG_REGISTRY:-https://registry.npmjs.org}"
 
 # Highest stable semver among the arguments (prereleases are ignored).
 highest() {
@@ -58,7 +60,7 @@ refuse() {
 # Never write a tag for a version the registry has not materialized. A failed or
 # empty read waits, bounded by MATERIALIZE_S, then refuses with zero writes.
 version_materialized() {
-    [ "$(npm view "$PKG@$VERSION" version --prefer-online 2>/dev/null)" = "$VERSION" ]
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$REGISTRY/$PKG/$VERSION" 2>/dev/null)" = 200 ]
 }
 materialize_deadline=$((SECONDS + MATERIALIZE_S))
 until version_materialized; do
