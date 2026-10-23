@@ -10,8 +10,16 @@
 # re-read after every write; a tag the registry applied late (an overtaken
 # write) is re-asserted until both tags settle or the tries run out.
 #
+# Tags are read with `npm dist-tag ls` (the uncached dist-tags endpoint), never
+# from the packument: the packument is a CDN-cached document that kept the
+# previous tags for minutes after the writes were applied
+# (FC-DISTTAG-SETTLE-READS-CACHED-PACKUMENT). The run's own version is read from
+# its version document (`npm view pkg@version`), and no tag is written until that
+# document resolves.
+#
 # Usage: npm-dist-tags.sh <version>
-# Env: LOKI_DISTTAG_PKG (default loki-mode; loki-mode-sdk for the SDK), LOKI_DISTTAG_TRIES (default 8), LOKI_DISTTAG_SLEEP seconds (default 15)
+# Env: LOKI_DISTTAG_PKG (default loki-mode; loki-mode-sdk for the SDK), LOKI_DISTTAG_TRIES (default 8),
+#   LOKI_DISTTAG_SLEEP seconds (default 15), LOKI_DISTTAG_MATERIALIZE_S wait for the version document (default 420)
 set -uo pipefail
 
 VERSION="${1:-}"
@@ -19,6 +27,7 @@ VERSION="${1:-}"
 PKG="${LOKI_DISTTAG_PKG:-loki-mode}"
 TRIES="${LOKI_DISTTAG_TRIES:-8}"
 NAP="${LOKI_DISTTAG_SLEEP:-15}"
+MATERIALIZE_S="${LOKI_DISTTAG_MATERIALIZE_S:-420}"
 
 # Highest stable semver among the arguments (prereleases are ignored).
 highest() {
@@ -36,7 +45,7 @@ published_versions() {
 
 tag_of() {
     local out
-    out="$(npm view "$PKG" "dist-tags.$1" --prefer-online 2>/dev/null)" || return 1
+    out="$(npm dist-tag ls "$PKG" 2>/dev/null | awk -F': ' -v t="$1" '$1 == t { print $2 }')" || return 1
     [ -n "$out" ] || return 1
     printf '%s\n' "$out"
 }
@@ -45,6 +54,21 @@ refuse() {
     echo "::error::$1; refusing to move latest (fail closed). $VERSION stays published under next."
     exit 1
 }
+
+# Never write a tag for a version the registry has not materialized. A failed or
+# empty read waits, bounded by MATERIALIZE_S, then refuses with zero writes.
+version_materialized() {
+    [ "$(npm view "$PKG@$VERSION" version --prefer-online 2>/dev/null)" = "$VERSION" ]
+}
+materialize_deadline=$((SECONDS + MATERIALIZE_S))
+until version_materialized; do
+    if [ "$SECONDS" -ge "$materialize_deadline" ]; then
+        echo "::error::$PKG@$VERSION has no version document after ${MATERIALIZE_S}s; refusing to write any tag (fail closed)."
+        exit 1
+    fi
+    echo "waiting for the registry to materialize $PKG@$VERSION"
+    sleep "$NAP"
+done
 
 i=0
 while [ "$i" -lt "$TRIES" ]; do
