@@ -82,6 +82,8 @@ done
 # target after it exits non-zero.
 W_next=""
 W_latest=""
+F_next=""
+F_latest=""
 i=0
 while [ "$i" -lt "$TRIES" ]; do
     i=$((i + 1))
@@ -105,9 +107,17 @@ while [ "$i" -lt "$TRIES" ]; do
             continue 2
         fi
         case "$tag" in next) prev="$W_next" ;; *) prev="$W_latest" ;; esac
+        case "$tag" in next) forced="$F_next" ;; *) forced="$F_latest" ;; esac
         if [ -n "$prev" ] && [ "$cur" = "$prev" ]; then
-            echo "waiting: $tag still '${cur}' after an accepted write of $TARGET"
-            continue
+            # Late in the window an accepted write that still has not applied is treated as
+            # lost (11.60.8: latest never applied and later read 11.60.9): rewrite it once,
+            # loudly. A tag that still does not apply fails the job after the window.
+            if [ "$i" -lt $((TRIES - 1)) ] || [ -n "$forced" ]; then
+                echo "waiting: $tag still '${cur}' after an accepted write of $TARGET"
+                continue
+            fi
+            echo "::warning::DISTTAG-WRITE-NOT-APPLIED: $tag still '${cur}' after $i reads; re-writing $TARGET once"
+            case "$tag" in next) F_next=1 ;; *) F_latest=1 ;; esac
         fi
         if [ "$TARGET" != "$VERSION" ]; then
             echo "SKIP: $VERSION is lower than $TARGET; re-asserting $tag=$TARGET (was '${cur}')"
