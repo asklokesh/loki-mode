@@ -200,7 +200,10 @@ def seatbelt_profile(
         # closed.
         lines.append(f'(deny network-bind (local tcp4 "*:{port}"))')
     for regex in secret_regexes:
+        # Deny write as well: a rename or hardlink of a secret would otherwise
+        # move it to a name the read-deny regex does not match.
         lines.append(f"(deny file-read-data {_seatbelt_regex(regex)})")
+        lines.append(f"(deny file-write* {_seatbelt_regex(regex)})")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -251,7 +254,10 @@ def seatbelt_provider_profile(
         '(regex #"^/dev/ttys[0-9]+$"))'
     )
     for regex in secret_regexes:
+        # Deny write as well: a rename or hardlink of a secret would otherwise
+        # move it to a name the read-deny regex does not match.
         lines.append(f"(deny file-read-data {_seatbelt_regex(regex)})")
+        lines.append(f"(deny file-write* {_seatbelt_regex(regex)})")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -301,7 +307,9 @@ def seatbelt_smoke_probe(
         profile_path.write_bytes(profile)
         output_path = workspace / "probe.txt"
         probe_code = """
+import errno
 import os
+import signal
 import socket
 import subprocess
 import sys
