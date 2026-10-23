@@ -7,8 +7,7 @@ import { basename, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyCheck, goRunner } from "./check_result.ts";
 import { listRunIds } from "../commands/run_status.ts";
-import { safeGit } from "./safe_git.ts";
-import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
+import { currentBranch, restoreBranch, safeGit } from "./safe_git.ts";
 
 function git(repoDir: string, args: string[], timeout = 20000, extraEnv: Record<string, string> = {}): string | null {
   try {

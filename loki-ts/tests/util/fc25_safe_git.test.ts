@@ -5,9 +5,8 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveRunCapS } from "../../src/util/run_cap.ts";
-import { tokenFreeEnv, safeGit, safeGitArgs, safeGitSpawn, safeGitRun } from "../../src/util/safe_git.ts";
+import { restoreBranch, tokenFreeEnv, safeGit, safeGitArgs, safeGitSpawn, safeGitRun } from "../../src/util/safe_git.ts";
 import { listRepoFiles } from "../../src/engine10/repomap.ts";
-import { restoreBranch } from "../../src/e10ext/stop_restore.ts";
 
 let root: string, repo: string, runDir: string, hit: string;
 const CANARY = "ghp_fc25canary";

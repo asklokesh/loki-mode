@@ -307,3 +307,23 @@ function walkFiles(root: string): string[] {
 }
 /** Tracked plus untracked-not-ignored files, else a walk; relative, sorted, SKIP_DIRS removed (testmap's runner detection). */
 export const listProjectFiles = (root: string): string[] => gitFiles(root) ?? walkFiles(root);
+
+// D50-F1c: on SIGINT/SIGTERM the supervisor puts the user's checkout back on the branch they started on.
+export function currentBranch(repoDir: string): string | null {
+  try {
+    const b = safeGit(repoDir, ["symbolic-ref", "--short", "-q", "HEAD"]).trim();
+    return b || null;
+  } catch { return null; }
+}
+
+/** Never resets or discards: a plain `git checkout`, which refuses when it would overwrite edits. The run branch and its commits stay. */
+export function restoreBranch(repoDir: string, orig: string | null): boolean {
+  if (!orig) return false;
+  const run = currentBranch(repoDir); if (run === orig) return true;
+  try {
+    // a checkout would carry the run's uncommitted edits onto the user's branch, so switch back only when the tracked tree is clean
+    if (safeGit(repoDir, ["status", "--porcelain", "--untracked-files=no"], { stdio: ["ignore", "pipe", "pipe"] }).trim()) throw new Error("dirty");
+    safeGit(repoDir, ["checkout", orig], { stdio: "ignore" });
+    return true;
+  } catch { process.stderr.write(`engine10: stopped; tree left on run branch ${run ?? "(detached)"}, return with: git checkout ${orig}\n`); return false; }
+}

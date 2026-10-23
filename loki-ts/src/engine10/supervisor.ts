@@ -2,7 +2,7 @@
 // spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal)
 // id; post-PR: detached deep verify, then Slack notify.
 import { routeStartLine } from "../runner/router/route_block.ts";
-import { execFileSync, spawn, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
+import { execFileSync, spawn, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../util/safe_git.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
 import { redactEventData } from "../util/redact.ts"; import { localBranchNote, resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
 import { terminalWidth } from "../util/term_width.ts";

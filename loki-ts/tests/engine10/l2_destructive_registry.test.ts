@@ -28,7 +28,7 @@ const REGISTRY: Record<string, Entry> = {
   "features/speed/run_group.ts|checkout": { count: 2, cls: "trust", why: "resume leaves the stale group branch (one ternary: back to the start branch or detach at base); plain checkout never forces, so it refuses rather than overwrite edits" },
   "util/modernize_unit.ts|checkout": { count: 1, cls: "trust", why: "detaches FETCH_HEAD inside a fresh run-owned temp dir that holds only the fetched repo@ref; no user work exists there" },
   "util/run_outputs.ts|checkout": { count: 1, cls: "trust", why: "resume switches to the run branch only after a dirty-tree check refused uncommitted files; plain checkout never forces, so it refuses rather than overwrite edits" },
-  "e10ext/stop_restore.ts|checkout": { count: 1, cls: "trust", why: "returns the user's checkout to the branch they started on; plain checkout refuses to overwrite edits" },
+  "util/safe_git.ts|checkout": { count: 1, cls: "trust", why: "returns the user's checkout to the branch they started on; plain checkout refuses to overwrite edits" },
 };
 
 function walk(dir: string, out: string[] = []): string[] {
