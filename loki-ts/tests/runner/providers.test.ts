@@ -221,6 +221,17 @@ describe("codexProvider invocation", () => {
     expect(readCodexEnv()["CODEX_MODEL_REASONING_EFFORT"]).toBe("xhigh");
   });
 
+  it("effort reaches codex as -c model_reasoning_effort=<e>, not only env (FC-ENV-PREFIX-SEVERED-BY-COMMENT)", async () => {
+    for (const [tier, want] of [["planning", "xhigh"], ["development", "high"], ["fast", "low"]] as const) {
+      writeCodexStub();
+      await codexProvider().invoke(makeCall({ provider: "codex", tier }));
+      const argv = readFileSync(codexArgvLog, "utf8").split("\n").filter(Boolean);
+      const i = argv.indexOf("-c");
+      expect(i).toBeGreaterThanOrEqual(0);
+      expect(argv[i + 1]).toBe(`model_reasoning_effort=${want}`);
+    }
+  });
+
   it("tier=development maps to effort=high (codex.sh:129)", async () => {
     writeCodexStub();
     const p = codexProvider();

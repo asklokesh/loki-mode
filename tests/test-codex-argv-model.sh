@@ -60,6 +60,14 @@ printf '%s' "$out" | grep -q "EFFORT=low" \
   && ok "fast tier exports effort=low" \
   || bad "fast tier effort wrong: $(printf '%s' "$out" | tail -1)"
 
+# Codex ignores the env var; the effort must ride in argv as -c model_reasoning_effort=<e>.
+for pair in "development:high" "fast:low" "planning:xhigh"; do
+  argv=$(_argv "${pair%%:*}" | head -1)
+  printf '%s' "$argv" | grep -qF -- "-c model_reasoning_effort=${pair##*:}" \
+    && ok "tier=${pair%%:*} argv carries -c model_reasoning_effort=${pair##*:}" \
+    || bad "tier=${pair%%:*} argv lacks -c model_reasoning_effort=${pair##*:}: $argv"
+done
+
 echo
 echo "T3 -- an empty model omits the flag rather than sending an empty string"
 # CODEX_DEFAULT_MODEL is deliberately empty so codex uses its own current

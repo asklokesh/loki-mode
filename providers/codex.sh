@@ -244,7 +244,7 @@ provider_get_tier_param() {
 # an EFFORT LEVEL (xhigh/high/low), not a model name. Codex uses a single model
 # (gpt-5.3-codex) with varying effort. Callers that need the model name should use
 # PROVIDER_MODEL_DEVELOPMENT (or CODEX_DEFAULT_MODEL) directly.
-# The effort value is passed via CODEX_MODEL_REASONING_EFFORT env var at invocation.
+# The effort value is passed as `-c model_reasoning_effort=<e>` at invocation.
 resolve_model_for_tier() {
     local tier="$1"
 
@@ -302,9 +302,11 @@ resolve_model_for_tier() {
 #                                   (default ON; writes the final response
 #                                   to ${LOKI_LOG_FILE}.last-message)
 #
-# Codex CLI uses CODEX_MODEL_REASONING_EFFORT env var for effort control.
-# LOKI_CODEX_REASONING_EFFORT is the canonical namespaced env var (v6.37.1+).
-# CODEX_MODEL_REASONING_EFFORT is supported for backward compatibility.
+# Effort reaches codex as `-c model_reasoning_effort=<e>`. Measured on codex-cli
+# 0.164.0: the exec banner reports "reasoning effort: low" with that flag and
+# the config default ("medium") with CODEX_MODEL_REASONING_EFFORT set, and the
+# binary holds no CODEX_MODEL_REASONING_EFFORT string, so the env var is ignored.
+# The env vars are still exported (log and test visibility only).
 provider_invoke_with_tier() {
     local tier="$1"
     local prompt="$2"
@@ -339,8 +341,6 @@ provider_invoke_with_tier() {
         extra_flags+=(--output-last-message "${LOKI_LOG_FILE}.last-message")
     fi
 
-    LOKI_CODEX_REASONING_EFFORT="$effort" \
-    CODEX_MODEL_REASONING_EFFORT="$effort" \
     # Guard the array expansions: with no web-search / output-last knobs an
     # array is empty, and a bare "${arr[@]}" under `set -u` aborts with
     # "unbound variable" on bash 3.2 (stock macOS /bin/bash). ${arr[@]+...}
@@ -352,11 +352,17 @@ provider_invoke_with_tier() {
         [ -n "$_mf" ] && model_flag+=("$_mf")
     done < <(_codex_model_flag "$model")
 
+    local effort_flag=()
+    [ -n "$effort" ] && effort_flag=(-c "model_reasoning_effort=$effort")
+
+    LOKI_CODEX_REASONING_EFFORT="$effort" \
+    CODEX_MODEL_REASONING_EFFORT="$effort" \
     codex \
         "${pre_exec_flags[@]+"${pre_exec_flags[@]}"}" \
         exec \
         --sandbox workspace-write \
         --skip-git-repo-check \
+        "${effort_flag[@]+"${effort_flag[@]}"}" \
         "${model_flag[@]+"${model_flag[@]}"}" \
         "${extra_flags[@]+"${extra_flags[@]}"}" \
         "$prompt" "$@" < /dev/null
@@ -373,7 +379,7 @@ provider_invoke_argv() {
     # DO NOT pass provider_get_tier_param to --model. For Codex that function
     # returns an EFFORT LEVEL (xhigh/high/low), not a model name -- the note at
     # BUG-PROV-012 above says so explicitly, and provider_invoke() already routes
-    # it correctly via CODEX_MODEL_REASONING_EFFORT.
+    # it correctly via -c model_reasoning_effort.
     #
     # This path passed it to --model anyway, so every argv-based invocation sent
     # `--model high` and the API rejected it outright:
@@ -394,11 +400,11 @@ provider_invoke_argv() {
     effort="$(provider_get_tier_param "$tier" 2>/dev/null || printf '%s' "")"
 
     _LOKI_INVOKE_ARGV=(codex exec --sandbox workspace-write)
+    [ -n "$effort" ] && _LOKI_INVOKE_ARGV+=(-c "model_reasoning_effort=$effort")
     [ -n "$model" ] && _LOKI_INVOKE_ARGV+=(--model "$model")
     _LOKI_INVOKE_ARGV+=("$prompt")
 
-    # Effort travels as an env var, not an argv flag. Exported so it survives
-    # `timeout "${_LOKI_INVOKE_ARGV[@]}"`, which is the whole reason this seam
-    # exists: `timeout` cannot exec a shell function.
+    # Effort rides in argv as -c model_reasoning_effort=<e> (the env var is ignored
+    # by codex). The env export is kept for log and test visibility only.
     [ -n "$effort" ] && export CODEX_MODEL_REASONING_EFFORT="$effort"
 }

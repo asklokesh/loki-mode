@@ -1011,9 +1011,7 @@ export function sdkQueryProvider(): ProviderInvoker {
 // Codex provider (codex.sh:1-190)
 //
 // Maps to provider_invoke_with_tier() at codex.sh:181-189:
-//   LOKI_CODEX_REASONING_EFFORT=$effort \
-//   CODEX_MODEL_REASONING_EFFORT=$effort \
-//   codex exec --sandbox workspace-write --skip-git-repo-check "<prompt>"
+//   codex exec --sandbox workspace-write --skip-git-repo-check -c model_reasoning_effort=$effort "<prompt>"
 //
 // Codex uses a single model with varying reasoning effort (xhigh/high/low)
 // rather than tier->model mapping. Both env vars are set for forward and
@@ -1115,6 +1113,8 @@ export function codexProvider(): ProviderInvoker {
         "--sandbox", "workspace-write",
         "--skip-git-repo-check",
       ];
+      // Effort reaches codex only through -c; the env vars below are ignored by it.
+      if (effort) argv.push("-c", `model_reasoning_effort=${effort}`);
 
       // Optional: web search (codex v0.125 --search).
       if (process.env["LOKI_CODEX_WEB_SEARCH"] === "true") {
@@ -1133,8 +1133,7 @@ export function codexProvider(): ProviderInvoker {
 
       argv.push(withCommitHygiene(call.prompt));
 
-      // Both env vars: LOKI_-namespaced (canonical, v6.37.1+) and
-      // CODEX_MODEL_REASONING_EFFORT (legacy, deprecated but supported).
+      // Env vars kept for log and test visibility only (codex ignores them; the -c flag above is the mechanism).
       const r = await shellRun(argv, {
         cwd: call.cwd,
         env: {
