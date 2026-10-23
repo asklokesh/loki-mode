@@ -472,6 +472,15 @@ rv_any_model="$(grep -v '^[[:space:]]*#' "$RUN_SH" | grep -E '_rv_argv\+?=.*(-mo
 [ "$rv_any_model" = 1 ] \
   && ok "reviewer pin: exactly one _rv_argv assignment names a model, in the allowlist arm" \
   || bad "reviewer pin: $rv_any_model _rv_argv lines name a model (want 1)"
+# The argv claude receives is the _rv_argv build plus the tokens written at each call site, so scan the call sites too.
+# Each invocation is joined from its `claude "${_rv_argv[@]}"` line through its backslash continuations.
+rv_sites="$(grep -v '^[[:space:]]*#' "$RUN_SH" | awk '
+  /claude "\$\{_rv_argv\[@\]\}"/ { cur = $0; while (cur ~ /\\[[:space:]]*$/ && (getline nxt) > 0) cur = cur " " nxt; print cur }')"
+rv_site_count="$(printf '%s\n' "$rv_sites" | grep -c 'claude')"
+rv_site_model="$(printf '%s\n' "$rv_sites" | grep -c -- '--model')"
+[ "$rv_site_count" = 3 ] && [ "$rv_site_model" = 0 ] \
+  && ok "reviewer pin: the 3 claude call sites carry no --model token" \
+  || bad "reviewer pin: call sites=$rv_site_count (want 3) with $rv_site_model naming --model (want 0)"
 rv_model_lines="$(printf '%s\n' "$RV_BLOCK" | grep -v '^[[:space:]]*#' | grep -c -- '"--model"')"
 rv_model_arm="$(printf '%s\n' "$RV_BLOCK" | grep -v '^[[:space:]]*#' | grep -- '"--model"' | grep -c 'haiku|sonnet|opus)')"
 [ "$rv_model_lines" = 1 ] && [ "$rv_model_arm" = 1 ] \
