@@ -19,6 +19,7 @@ echo "=== opencode start routing and dispatch ==="
 # Bun boundaries only record their route; neither runtime nor provider runs.
 mkdir -p "$TMP/pkg/bin" "$TMP/pkg/autonomy" "$TMP/pkg/loki-ts/dist" "$TMP/fake-bin"
 cp "$ROOT/bin/loki" "$TMP/pkg/bin/loki"
+mkdir -p "$TMP/pkg/autonomy/lib"; cp "$ROOT/autonomy/lib/bun-safe.sh" "$TMP/pkg/autonomy/lib/bun-safe.sh"
 printf 'placeholder\n' > "$TMP/pkg/loki-ts/dist/loki.js"
 cat > "$TMP/pkg/autonomy/loki" <<'EOF'
 #!/usr/bin/env bash
