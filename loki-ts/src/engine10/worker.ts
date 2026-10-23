@@ -59,8 +59,10 @@ export async function main(args: string[]): Promise<number> {
       makeRunner: (p) => createSessionRunner({ provider: p, model: resolveModel(p), emit: emit as EmitFn, lokiRoot, remaining }),
       onFailover: (rec) => { failovers.push(rec); emit("provider.failover", rec.stage as StageName, { ...rec }); },
     });
+    const externalPatch = process.env.LOKI_E10_SEAL_EXISTING_PATCH || undefined; // CW-12 B2: only the implement stage may see the diff path; take it here and remove it so no session, check or child inherits it
+    delete process.env.LOKI_E10_SEAL_EXISTING_PATCH;
     const ctx: RunContext = {
-      runId, repoDir, runDir: join(lokiRoot, "runs", runId), branch: `loki/${runId}`, provider, model, deep,
+      externalPatch, runId, repoDir, runDir: join(lokiRoot, "runs", runId), branch: `loki/${runId}`, provider, model, deep,
       baseSha: safeGit(repoDir, ["rev-parse", "HEAD"]).trim(),
       capS: workerCapS(deep, process.env),
       emit, overCap: over,

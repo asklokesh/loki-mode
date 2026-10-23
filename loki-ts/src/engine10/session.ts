@@ -79,6 +79,7 @@ export function sessionEffortFor(opts: SessionRunOptions): { effort: string | un
 }
 export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env["LOKI_E10_SEAL_EXISTING_PATCH"]; // CW-12 B2: defense in depth, no session env ever carries the external diff path
   env["LOKI_ITERATION"] = opts.iterationId;
   env["LOKI_E10_STAGE"] = opts.stage;
   env["LOKI_E10_BRIEF"] = opts.brief;

@@ -653,7 +653,7 @@ _TRUSTED_TOOLS = frozenset({
     "loki_memory_store_pattern", "loki_task_queue_add",
     "loki_memory_capture_session_summary",
     "loki_consolidate_memory", "loki_complete_task", "loki_v10_run",
-    "loki_v10_verify", "loki_start_project", "loki_code_search_stats",
+    "loki_v10_verify", "loki_seal_diff", "loki_start_project", "loki_code_search_stats",
     "loki_memory_redact",
     "loki_magic_stats", "loki_magic_tokens_extract",
     "cp_stats", "cp_cost", "cp_repos_list",
@@ -1897,6 +1897,36 @@ async def loki_v10_verify(receipt_path: str = "", repo_path: str = "") -> str:
     except Exception as e:
         logger.error(f"loki_v10_verify failed: {e}")
         _emit_tool_event_async('loki_v10_verify', 'complete', result_status='error', error=str(e))
+        raise
+
+
+@mcp.tool()
+async def loki_seal_diff(repo_path: str, intent: str) -> str:
+    """
+    Seal changes you already made in a repo into a signed Loki receipt.
+    Use it after editing a repo yourself, to get the same Wall-verified receipt a
+    Loki run gives. The Wall is written from the intent alone, without seeing the
+    diff. Do not use it to build something (use loki_v10_run) or to re-check an
+    existing receipt (use loki_v10_verify).
+
+    Args:
+        repo_path: Git repository with uncommitted changes to seal
+        intent: What the changes are meant to do, in plain words
+
+    Returns:
+        JSON with run_id, verdict, verdict_is_verified (the receipt verdict string, not a signature check), receipt_path, sealed_ref and not_proven
+    """
+    _emit_tool_event_async('loki_seal_diff', 'start', parameters={'repo_path': repo_path, 'intent': intent})
+    try:
+        from mcp import v10_tools
+        result = await asyncio.to_thread(
+            v10_tools.seal_diff, repo_path, intent,
+            lambda p: validate_path(p, allowed_dirs=['.']))
+        _emit_tool_event_async('loki_seal_diff', 'complete', result_status='error' if isinstance(result, dict) and result.get('error') else 'success')
+        return json.dumps(result)
+    except Exception as e:
+        logger.error(f"loki_seal_diff failed: {e}")
+        _emit_tool_event_async('loki_seal_diff', 'complete', result_status='error', error=str(e))
         raise
 
 

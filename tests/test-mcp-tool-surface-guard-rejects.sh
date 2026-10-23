@@ -9,8 +9,8 @@
 # contract broke. Count-based thinking cannot see that mutant. So this asserts,
 # by construction, that the guard fails on each of:
 #
-#   1. same-count rename   (47 -> 47, one name changed)   <- the circularity bug
-#   2. deletion            (47 -> 46, one name gone)
+#   1. same-count rename   (48 -> 48, one name changed)   <- the circularity bug
+#   2. deletion            (48 -> 47, one name gone)
 #   3. npm unavailable     (prerequisite missing)         <- must not SKIP green
 #   4. MCP SDK unavailable (measurement unavailable)      <- must not SKIP green
 #   4b. MCP SDK absent but SHADOWED by the repo's own mcp/ <- run 30991330118
@@ -102,7 +102,7 @@ assert_rejects() {  # $1=label  $2=tree  $3=expected-substring
     return 0
 }
 
-# --- mutant 1: SAME-COUNT RENAME (47 -> 47) ---------------------------------
+# --- mutant 1: SAME-COUNT RENAME (48 -> 48) ---------------------------------
 # The exact mutant a source-derived expectation cannot catch.
 M1="$WORK/m1"; seed_tree "$M1" || { bad "seed m1"; exit 1; }
 python3 - "$M1/mcp/server.py" "$VICTIM" <<'PY'
@@ -112,7 +112,7 @@ s = open(p).read()
 assert f"def {victim}" in s
 open(p, "w").write(s.replace(f"def {victim}", f"def {victim}_renamed"))
 PY
-assert_rejects "same-count rename (47 -> 47)" "$M1" "NOT in the frozen contract: ${VICTIM}_renamed"
+assert_rejects "same-count rename (48 -> 48)" "$M1" "NOT in the frozen contract: ${VICTIM}_renamed"
 
 # The rename must ALSO be reported as the contract name going missing --
 # proving the guard compares sets, not sizes.
@@ -128,7 +128,7 @@ else
     ok "same-count rename: guard withheld the source-match PASS"
 fi
 
-# --- mutant 2: DELETION (47 -> 46) ------------------------------------------
+# --- mutant 2: DELETION (48 -> 47) ------------------------------------------
 M2="$WORK/m2"; seed_tree "$M2" || { bad "seed m2"; exit 1; }
 python3 - "$M2/mcp/server.py" "$VICTIM" <<'PY'
 import ast, sys
@@ -148,7 +148,7 @@ else:
     sys.exit("victim not found")
 open(p, "w").write("".join(lines))
 PY
-assert_rejects "deletion (47 -> 46)" "$M2" "contract tool MISSING: ${VICTIM}"
+assert_rejects "deletion (48 -> 47)" "$M2" "contract tool MISSING: ${VICTIM}"
 
 # --- mutant 3: npm UNAVAILABLE ----------------------------------------------
 # Prerequisite absent. Must fail closed, not SKIP with exit 0.
@@ -347,7 +347,7 @@ if ! seed_full_tree "$M5"; then
 else
     M5T="$M5/package"
     # Append a stale count to an otherwise VALID current README. The correct
-    # "47 tools" line is left intact, so the presence check still passes and the
+    # "48 tools" line is left intact, so the presence check still passes and the
     # only thing that can fail is the residual scan.
     printf '\nThe MCP server exposes 34 tools over stdio.\n' >> "$M5T/README.md"
 
@@ -355,15 +355,15 @@ else
 
     # Proof of ARRIVAL at the docs arm. Without this, any nonzero exit for any
     # unrelated reason would satisfy the rejection assertion below.
-    if grep -qE "^PASS: README\.md states the frozen tool count \(47\)" "$M5T/out.txt"; then
-        ok "contradictory doc: guard reached the docs arm (47 still present in README)"
+    if grep -qE "^PASS: README\.md states the frozen tool count \(48\)" "$M5T/out.txt"; then
+        ok "contradictory doc: guard reached the docs arm (48 still present in README)"
     else
         bad "contradictory doc: guard never reached the docs arm -- unrelated earlier failure"
         tail -12 "$M5T/out.txt" | sed 's/^/    /'
     fi
 
     # Proof of REJECTION, naming the stale count.
-    if [ "$M5RC" -ne 0 ] && grep -q "README.md states a tool count other than the frozen 47" "$M5T/out.txt"; then
+    if [ "$M5RC" -ne 0 ] && grep -q "README.md states a tool count other than the frozen 48" "$M5T/out.txt"; then
         ok "contradictory doc: guard exited $M5RC and named the stale count"
     else
         bad "contradictory doc: guard exited $M5RC (expected nonzero + stale-count report)"
@@ -396,7 +396,7 @@ else
 
     # And every OTHER current surface must still have passed both arms, so the
     # refactored one-list/two-assertion loop is exercised in full by this mutant.
-    if grep -q "^PASS: docs/WANG-PRINCIPLES-PLAN.md states no tool count other than the frozen 47" "$M5T/out.txt"; then
+    if grep -q "^PASS: docs/WANG-PRINCIPLES-PLAN.md states no tool count other than the frozen 48" "$M5T/out.txt"; then
         ok "contradictory doc: the loop ran to the last surface (all 9 checked)"
     else
         bad "contradictory doc: the loop did not reach the last surface"
@@ -408,7 +408,7 @@ fi
 # lists the tools a read-only server registers and rejects any known write tool.
 # Positive control first (unmutated copy passes), then the mutant (a write tool
 # added to READ_ONLY_TOOL_ALLOWLIST) must be rejected with exit 1.
-RO_WRITE_TOOLS="loki_memory_store_pattern loki_task_queue_add loki_task_queue_update loki_memory_capture_session_summary loki_consolidate_memory loki_complete_task loki_v10_run loki_v10_verify loki_start_project loki_checkpoint_restore loki_verify_fast loki_graph_query"
+RO_WRITE_TOOLS="loki_memory_store_pattern loki_task_queue_add loki_task_queue_update loki_memory_capture_session_summary loki_consolidate_memory loki_complete_task loki_v10_run loki_v10_verify loki_seal_diff loki_start_project loki_checkpoint_restore loki_verify_fast loki_graph_query"
 RO_CHECK_PY="$WORK/ro_check.py"
 cat > "$RO_CHECK_PY" <<'PY'
 import asyncio, sys
