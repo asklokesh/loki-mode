@@ -9,7 +9,7 @@
   "acceptance": {
     "cmd": "python3 check_acceptance.py",
     "timeout_s": 30,
-    "overlay": "../fixtures/simple-2-fizzbuzz-overlay"
+    "overlay": "../fixtures/judge-trap-1-overlay"
   },
   "default_model": "claude-sonnet-5",
   "agent_timeout_s": 600
