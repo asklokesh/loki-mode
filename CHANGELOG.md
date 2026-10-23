@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.63.8 (2026-10-23)
+
+### Fixed
+- The full suite runs under the project interpreter and the repo-identity note names its fix (FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER); the full-suite baseline run line quotes each word so a spaced repo path still runs (FC-SUITE-RUN-LINE-BREAKS-ON-SPACED-PATH); a Python repo with no ruff and a repo with no UI no longer end PARTIAL (FC-LINT-TOOL-NEVER-USED-BY-PROJECT, FC-VISUAL-EVIDENCE-NA-READ-AS-NOT-PROVEN). Approval: "Ship approved for A-r5+C-r4 (pd/partial-harness-ac-r5), head e6bc96d84. The range over origin/main is 7e7a30f7e, e409e4b91, 8e5dc5028 and e6bc96d84, the merge of origin/main 1b36976dc. tsc gives rc=0, verify.test.ts plus visual_evidence.test.ts give 85 pass and 0 fail, and merge-tree against origin/main 5bc5f4dd0 gives rc=0. Merge by SHA e6bc96d84." (rev-c, only assigned HIGH reviewer per CoS ruling)
+
 ## v11.63.7 (2026-10-23)
 
 ### Fixed
