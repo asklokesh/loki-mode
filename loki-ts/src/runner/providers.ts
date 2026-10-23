@@ -175,7 +175,7 @@ export function selectClaudeInvokerKind(
 // default, empty counting as unset (bash `${VAR:-default}`). Defaults are
 // sonnet for every tier (v7.104.0), except fast -> haiku under LOKI_ALLOW_HAIKU.
 // An explicit per-tier pin beats the haiku gate, as it does on bash.
-function claudeTierToModel(tier: SessionTier): string {
+export function claudeTierToModel(tier: SessionTier): string {
   // fable unavailable, collapse to opus. Claude Fable 5 is not available at the
   // Claude API ("use Opus 4.8"). Per-tier pins do not apply, matching the bash
   // resolver's `fable) model="opus"` arm (v7.39.1).
