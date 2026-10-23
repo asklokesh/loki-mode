@@ -88,6 +88,8 @@ R.agents=function(b,d){var c=h("div",{"class":"cards"});
   else{card.appendChild(h("div",null,"model: "+show(s.model)));card.appendChild(h("div",null,"doing: "+show(s.doing)));
    card.appendChild(h("div",null,"slice: "+show(s.slice)));card.appendChild(h("div",null,"updated: "+show(s.updated_min_ago)+" min ago"));
    if(s.blocked_on)card.appendChild(h("div",{"class":"VIOLATION"},"blocked on: "+s.blocked_on));}
+  var tk=s.tick||{};card.appendChild(h("div",null,"last tick: "+show(tk.last_tick)+" ("+show(tk.outcome)+")"));
+  card.appendChild(h("div",null,"next due: "+show(tk.next_due)+(tk.state==="STALE"?" STALE (no tick in 2x "+tk.interval_min+" min)":"")));
   (s.root_causes||[]).forEach(function(r){card.appendChild(h("div",{"class":"mute"},r));});c.appendChild(card);});
  b.appendChild(c);};
 R.board=function(b,d){var f=h("div",{"class":"flow"});var cs=d.counts||{};

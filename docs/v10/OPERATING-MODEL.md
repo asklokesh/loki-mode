@@ -52,3 +52,8 @@ Spawned per slice, not standing seats:
 - Every incident becomes a guard with a test (docs/v10/GUARDS.md, D26).
 - The pulse block (scripts/v10-pulse.sh) is injected every turn. Act on the top VIOLATION first.
 - Never kill by name or pattern, force-push, git add -A, or bypass branch protection.
+
+## Always-on seats (headless)
+- `loki trigger install` seeds one `seat <name>` schedule per .claude/agents/*.md (autonomy/company-seats.json) and installs the LaunchAgent dev.autonomi.loki-company, which runs `loki trigger daemon --loop`. `loki trigger uninstall` removes it. Linux prints a systemd user unit.
+- A tick is `claude -p --agent <name> --dangerously-skip-permissions --output-format json` in the repo root, 20 min cap (LOKI_SEAT_TIMEOUT_SECS). The seat writes .loki/company/<name>/last.json and log.jsonl.
+- Skips: .loki/company/PAUSE, 1-min load above 28, usage governor max engineers 0, a live PID in .loki/v10-leader (chief-of-staff and release-reliability-lead only), or a live per-seat lock. Only the tick's own process group is ever stopped.

@@ -21326,9 +21326,15 @@ print(json.loads(p.read_text()).get('port', 7373) if p.exists() else 7373)
             python3 "$trigger_schedule_script" remove "$name"
             ;;
         daemon)
-            local dry_run_flag=""
-            [[ "${1:-}" == "--dry-run" ]] && dry_run_flag="--dry-run"
-            python3 "$trigger_schedule_script" daemon $dry_run_flag
+            local daemon_flag=""
+            [[ "${1:-}" == "--dry-run" ]] && daemon_flag="--dry-run"
+            [[ "${1:-}" == "--loop" ]] && daemon_flag="--loop"
+            python3 "$trigger_schedule_script" daemon $daemon_flag
+            ;;
+        install|uninstall)
+            # Always-on company seats: LaunchAgent running the daemon loop
+            LOKI_BIN="${LOKI_BIN:-$(readlink -f "${BASH_SOURCE[0]}")}" \
+                python3 "$trigger_schedule_script" "$subcmd" "$@"
             ;;
         test)
             local event_type="${1:-issues}"
@@ -21439,7 +21445,11 @@ for line in sys.stdin:
             echo "  add schedule <name> <cron_expr> <action> [args...]"
             echo "                        Add a cron-based schedule trigger"
             echo "  remove <name>         Remove a schedule trigger"
-            echo "  daemon [--dry-run]    Run one pass of schedule checks (call from cron)"
+            echo "  daemon [--dry-run|--loop]"
+            echo "                        Run one pass of schedule checks (call from cron), or loop once a minute"
+            echo "  install [--no-load]   Seed the ten company-seat schedules and install the always-on"
+            echo "                        LaunchAgent (dev.autonomi.loki-company; macOS)"
+            echo "  uninstall [--no-load] Remove the always-on LaunchAgent"
             echo "  test <event-type> [--repo owner/repo] [--issue NUM]"
             echo "                        Send a test webhook event (event-types: issues, pull_request, workflow_run)"
             echo "  logs [--tail N]       Show recent trigger event log (default: last 50)"

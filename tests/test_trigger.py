@@ -13,6 +13,8 @@ import hashlib
 import hmac
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -690,6 +692,250 @@ class TestScheduleFileIO(unittest.TestCase):
         self.assertEqual(len(loaded), 1)
         self.assertEqual(loaded[0]["cron_expr"], "0 9 * * *")
         self.assertEqual(loaded[0]["action"], "quality-review")
+
+
+class TestCompanySeats(unittest.TestCase):
+    """Always-on company seats: `seat <name>` action, guards, plist, defaults."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.root = os.path.join(self.tmp, "repo")
+        os.makedirs(os.path.join(self.root, ".claude", "agents"))
+        os.makedirs(os.path.join(self.root, ".loki"))
+        for n in ("chief-of-staff", "cto", "release-reliability-lead"):
+            with open(os.path.join(self.root, ".claude", "agents", n + ".md"), "w") as f:
+                f.write("---\nname: %s\n---\nbody\n" % n)
+        self.argv_log = os.path.join(self.tmp, "argv.log")
+        self.fake = os.path.join(self.tmp, "claude")
+        with open(self.fake, "w") as f:
+            f.write("#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '" + self.argv_log + "'; done\n"
+                    "printf 'CWD=%s\\n' \"$PWD\" >> '" + self.argv_log + "'\n"
+                    "echo '{\"result\":\"ok\"}'\n")
+        os.chmod(self.fake, 0o755)
+        self.env = patch.dict(os.environ, {
+            "LOKI_COMPANY_ROOT": self.root,
+            "LOKI_CLAUDE_BIN": self.fake,
+            "LOKI_COMPANY_MAX_LOAD": "1000000",
+            "LOKI_COMPANY_GOVERNOR_CMD": "echo " + "'{\"governor\":{\"max_engineers_next_hour\":5}}'",
+            "LOKI_SEAT_TIMEOUT_SECS": "30",
+        })
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def argv(self):
+        if not os.path.exists(self.argv_log):
+            return []
+        return open(self.argv_log).read().splitlines()
+
+    def cdir(self, *p):
+        return os.path.join(self.root, ".loki", "company", *p)
+
+    def test_seat_action_builds_tick_command(self):
+        cmd = tsc.build_seat_command({"action": "seat cto"})
+        self.assertEqual(cmd[-2:], ["tick", "cto"])
+        self.assertIn("trigger-schedule.py", cmd[1])
+
+    def test_tick_invokes_claude_with_agent_flags(self):
+        status, _ = tsc.tick_seat("cto")
+        self.assertEqual(status, "ran")
+        a = self.argv()
+        self.assertEqual(a[:6], ["-p", "--agent", "cto", "--dangerously-skip-permissions",
+                                 "--output-format", "json"])
+        self.assertIn("standing loop", a[6])
+        self.assertIn(".loki/company/cto/last.json", a[6])
+        cwd = [x for x in a if x.startswith("CWD=")][0][4:]
+        self.assertEqual(os.path.realpath(cwd), os.path.realpath(self.root))
+        self.assertTrue(os.path.exists(self.cdir("cto", "last.json")))
+        self.assertTrue(os.path.exists(self.cdir("cto", "log.jsonl")))
+        self.assertFalse(os.path.exists(self.cdir("cto", "lock")))
+
+    def test_unknown_seat_rejected(self):
+        status, _ = tsc.tick_seat("../etc")
+        self.assertEqual(status, "error")
+        status, _ = tsc.tick_seat("nope")
+        self.assertEqual(status, "error")
+        self.assertEqual(self.argv(), [])
+
+    def test_live_lock_blocks_overlap(self):
+        os.makedirs(self.cdir("cto"))
+        with open(self.cdir("cto", "lock"), "w") as f:
+            f.write(str(os.getpid()))
+        status, why = tsc.tick_seat("cto")
+        self.assertEqual(status, "skipped")
+        self.assertIn("lock", why)
+        self.assertEqual(self.argv(), [])
+
+    def test_stale_lock_is_replaced(self):
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        os.makedirs(self.cdir("cto"))
+        with open(self.cdir("cto", "lock"), "w") as f:
+            f.write(str(dead.pid))
+        status, _ = tsc.tick_seat("cto")
+        self.assertEqual(status, "ran")
+
+    def test_pause_file_skips(self):
+        os.makedirs(self.cdir())
+        open(self.cdir("PAUSE"), "w").close()
+        status, why = tsc.tick_seat("cto")
+        self.assertEqual((status, why), ("skipped", "paused"))
+        self.assertEqual(self.argv(), [])
+
+    def test_high_load_skips(self):
+        with patch.dict(os.environ, {"LOKI_COMPANY_MAX_LOAD": "-1"}):
+            status, why = tsc.tick_seat("cto")
+        self.assertEqual(status, "skipped")
+        self.assertIn("load", why)
+        self.assertEqual(self.argv(), [])
+
+    def test_governor_zero_engineers_skips(self):
+        cmd = "echo " + "'{\"governor\":{\"max_engineers_next_hour\":0}}'"
+        with patch.dict(os.environ, {"LOKI_COMPANY_GOVERNOR_CMD": cmd}):
+            status, why = tsc.tick_seat("cto")
+        self.assertEqual(status, "skipped")
+        self.assertIn("governor", why)
+        self.assertEqual(self.argv(), [])
+
+    def test_governor_unreadable_does_not_skip(self):
+        with patch.dict(os.environ, {"LOKI_COMPANY_GOVERNOR_CMD": "echo not-json"}):
+            status, _ = tsc.tick_seat("cto")
+        self.assertEqual(status, "ran")
+
+    def test_live_leader_skips_chief_and_release_only(self):
+        leader = subprocess.Popen(["sleep", "30"])
+        try:
+            with open(os.path.join(self.root, ".loki", "v10-leader"), "w") as f:
+                f.write("%d 1700000000\n" % leader.pid)
+            for seat in ("chief-of-staff", "release-reliability-lead"):
+                status, why = tsc.tick_seat(seat)
+                self.assertEqual(status, "skipped", seat)
+                self.assertIn("leader", why)
+            self.assertEqual(self.argv(), [])
+            status, _ = tsc.tick_seat("cto")
+            self.assertEqual(status, "ran")
+        finally:
+            leader.terminate()
+            leader.wait()
+
+    def test_dead_leader_does_not_skip(self):
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        with open(os.path.join(self.root, ".loki", "v10-leader"), "w") as f:
+            f.write("%d 1700000000\n" % dead.pid)
+        status, _ = tsc.tick_seat("chief-of-staff")
+        self.assertEqual(status, "ran")
+
+    def test_timeout_stops_only_started_pid(self):
+        with open(self.fake, "w") as f:
+            f.write("#!/bin/sh\nsleep 60\n")
+        bystander = subprocess.Popen(["sleep", "30"])
+        try:
+            with patch.dict(os.environ, {"LOKI_SEAT_TIMEOUT_SECS": "1"}):
+                status, why = tsc.tick_seat("cto")
+            self.assertEqual(status, "ran")
+            self.assertIn("timeout", why)
+            self.assertIsNone(bystander.poll())
+            last = json.load(open(self.cdir("cto", "last.json")))
+            self.assertEqual(last["outcome"], "timeout")
+        finally:
+            bystander.terminate()
+            bystander.wait()
+
+    def test_default_schedules_cover_ten_seats(self):
+        defaults = tsc.default_seat_schedules()
+        agents = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".claude", "agents")
+        names = sorted(f[:-3] for f in os.listdir(agents) if f.endswith(".md"))
+        self.assertEqual(sorted(d["action"].split()[1] for d in defaults), names)
+        self.assertEqual(len(names), 10)
+        by = {d["action"].split()[1]: d for d in defaults}
+        iv = lambda n: tsc.interval_minutes(by[n]["cron_expr"])
+        self.assertEqual(iv("chief-of-staff"), 15)
+        self.assertEqual(iv("release-reliability-lead"), 15)
+        for n in ("verification-scientist", "platform-lead", "security-lead"):
+            self.assertEqual(iv(n), 30)
+        for n in names:
+            if n not in ("chief-of-staff", "release-reliability-lead", "verification-scientist",
+                         "platform-lead", "security-lead"):
+                self.assertEqual(iv(n), 60)
+        starts = [tsc.parse_cron_field(d["cron_expr"].split()[0], 0, 59) for d in defaults]
+        flat = [m for s in starts for m in s]
+        self.assertEqual(len(flat), len(set(flat)), "tick minutes must not collide")
+
+    def test_seed_merges_without_overwrite(self):
+        old = os.getcwd()
+        os.chdir(self.root)
+        try:
+            tsc.save_schedules([{"name": "chief-of-staff", "cron_expr": "9 * * * *",
+                                 "action": "seat chief-of-staff", "args": [], "enabled": True}])
+            added = tsc.seed_default_schedules()
+            sched = {s["name"]: s for s in tsc.load_schedules()}
+            self.assertEqual(sched["chief-of-staff"]["cron_expr"], "9 * * * *")
+            self.assertEqual(len(sched), 10)
+            self.assertEqual(added, 9)
+        finally:
+            os.chdir(old)
+
+    def test_plist_valid_in_temp_home(self):
+        home = os.path.join(self.tmp, "home")
+        os.makedirs(home)
+        path = tsc.write_launchagent(home, self.root, "/usr/local/bin/loki")
+        self.assertEqual(path, os.path.join(home, "Library", "LaunchAgents", "dev.autonomi.loki-company.plist"))
+        import plistlib
+        d = plistlib.load(open(path, "rb"))
+        self.assertEqual(d["Label"], "dev.autonomi.loki-company")
+        self.assertEqual(d["ProgramArguments"], ["/usr/local/bin/loki", "trigger", "daemon", "--loop"])
+        self.assertTrue(d["RunAtLoad"])
+        self.assertTrue(d["KeepAlive"])
+        self.assertEqual(d["WorkingDirectory"], self.root)
+        self.assertEqual(d["EnvironmentVariables"]["LOKI_COMPANY_ROOT"], self.root)
+        self.assertTrue(d["StandardOutPath"].startswith(os.path.join(home, ".loki", "logs")))
+        if shutil.which("plutil"):
+            r = subprocess.run(["plutil", "-lint", path], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(tsc.remove_launchagent(home))
+        self.assertFalse(os.path.exists(path))
+        self.assertFalse(tsc.remove_launchagent(home))
+
+    def test_systemd_unit_text(self):
+        unit = tsc.systemd_unit(self.root, "/usr/local/bin/loki")
+        self.assertIn("ExecStart=/usr/local/bin/loki trigger daemon --loop", unit)
+        self.assertIn("Restart=always", unit)
+
+    def test_install_cli_writes_plist_in_temp_home_only(self):
+        home = os.path.join(self.tmp, "home2")
+        os.makedirs(home)
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "autonomy", "trigger-schedule.py")
+        env = dict(os.environ, HOME=home)
+        r = subprocess.run([sys.executable, script, "install", "--no-load"], cwd=self.root,
+                           env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        if sys.platform == "darwin":
+            self.assertTrue(os.path.exists(tsc.launchagent_path(home)))
+        sched = json.load(open(os.path.join(self.root, ".loki", "triggers", "schedules.json")))
+        self.assertEqual(len(sched), 10)
+        r = subprocess.run([sys.executable, script, "uninstall", "--no-load"], cwd=self.root,
+                           env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(tsc.launchagent_path(home)))
+
+    def test_daemon_loop_single_pass_exits(self):
+        old = os.getcwd()
+        os.chdir(self.root)
+        try:
+            tsc.run_daemon_loop(max_passes=1)
+        finally:
+            os.chdir(old)
+
+    def test_run_schedule_spawns_tick_not_loki(self):
+        with patch("trigger_schedule.subprocess.Popen") as popen:
+            popen.return_value.pid = 1
+            tsc.run_schedule({"name": "cto", "action": "seat cto"})
+        cmd = popen.call_args[0][0]
+        self.assertEqual(cmd[-2:], ["tick", "cto"])
+        self.assertNotEqual(cmd[0], "loki")
 
 
 if __name__ == "__main__":

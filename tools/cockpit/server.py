@@ -53,6 +53,8 @@ class Ctx:
         self.readings = e("USAGE_READINGS_TSV") or os.path.join(root, "docs/v10/usage-readings.tsv")
         self.cost_file = e("COST_HISTORY_FILE") or os.path.join(root, ".loki/cost-history.jsonl")
         self.status_dir = e("COCKPIT_STATUS_DIR") or os.path.join(root, ".loki/company/status")
+        self.company_dir = e("COCKPIT_COMPANY_DIR") or os.path.join(root, ".loki/company")
+        self.schedules = e("COCKPIT_SCHEDULES_JSON") or os.path.join(root, ".loki/triggers/schedules.json")
         self.okrs = e("COCKPIT_OKRS_JSON") or os.path.join(root, ".loki/company/okrs.json")
         self.scoreboard = e("COCKPIT_SCOREBOARD_DIR") or os.path.join(root, ".loki/company/scoreboard")
         self.agents_dir = e("COCKPIT_AGENTS_DIR") or os.path.join(root, ".claude/agents")
@@ -356,15 +358,62 @@ def root_causes(path):
     return out
 
 
+def seat_cadence(ctx):
+    """{seat: cron_expr} for `seat <name>` entries, plus the cron helpers (shared with the daemon)."""
+    import importlib.util
+    mod_path = os.path.join(HERE, "..", "..", "autonomy", "trigger-schedule.py")
+    spec = importlib.util.spec_from_file_location("trigger_schedule_cockpit", mod_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception:
+        return {}, None
+    data, _ = read_json(ctx.schedules)
+    rows = data if isinstance(data, list) else (data or {}).get("schedules", []) if isinstance(data, dict) else []
+    out = {}
+    for r in rows:
+        parts = str(r.get("action", "")).split()
+        if len(parts) == 2 and parts[0] == "seat" and r.get("enabled", True):
+            out[parts[1]] = r.get("cron_expr")
+    return out, mod
+
+
+def seat_tick(ctx, slug, cadence, mod):
+    """Last tick, outcome, next due and staleness for one seat (2x interval = STALE)."""
+    d, err = read_json(os.path.join(ctx.company_dir, slug, "last.json"))
+    t = {"last_tick": None, "outcome": None, "interval_min": None, "next_due": None,
+         "state": "NO-TICK", "age_min": None}
+    if isinstance(d, dict):
+        t["last_tick"], t["outcome"] = d.get("ts"), d.get("outcome")
+        t["age_min"] = age_min(ctx, d.get("ts"))
+    cron = cadence.get(slug)
+    if cron and mod:
+        try:
+            t["interval_min"] = mod.interval_minutes(cron)
+            local = ctx.now().astimezone()
+            nxt = mod.next_fire(cron, local.replace(tzinfo=None))
+            if nxt:
+                t["next_due"] = nxt.astimezone().astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            pass
+    if t["last_tick"] is not None:
+        t["state"] = "OK"
+        if t["interval_min"] and (t["age_min"] is None or t["age_min"] > 2 * t["interval_min"]):
+            t["state"] = "STALE"
+    return t
+
+
 def collect_agents(ctx):
     src = "read %s/<slug>.json for slugs in %s" % (ctx.status_dir, ctx.agents_dir)
     slugs, err = agent_slugs(ctx)
     if err or not slugs:
         return unknown(ctx, src, err or "no agent files in " + ctx.agents_dir)
     seats, have = [], 0
+    cadence, mod = seat_cadence(ctx)
     for slug in slugs:
         seat = {"slug": slug, "state": "UNKNOWN", "root_causes":
                 root_causes(os.path.join(ctx.agents_dir, slug + ".md"))}
+        seat["tick"] = tick = seat_tick(ctx, slug, cadence, mod)
         d, e = read_json(os.path.join(ctx.status_dir, slug + ".json"))
         if e or not isinstance(d, dict):
             seat["error"] = e or "status file is not an object"
@@ -377,6 +426,12 @@ def collect_agents(ctx):
             seat["updated_min_ago"] = a
             seat["state"] = "STALE" if (a is None or a > STALE_SEAT_MIN) else "OK"
             seat["blocked"] = bool(d.get("blocked_on"))
+        if tick["state"] == "STALE":
+            seat["state"] = "STALE"
+        elif seat["state"] == "UNKNOWN" and tick["state"] == "OK":
+            seat["state"] = "OK"
+            seat.pop("error", None)
+            have += 1
         seats.append(seat)
     data = {"seats": seats, "reporting": have, "total": len(slugs)}
     if have == 0:

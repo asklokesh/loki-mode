@@ -194,6 +194,7 @@ base_env() {
         RETRO_MD="$FIX/RETRO.md" USAGE_READINGS_TSV="$FIX/readings.tsv" \
         COST_HISTORY_FILE="$FIX/missing-cost.jsonl" COCKPIT_STATUS_DIR="$FIX/status" \
         COCKPIT_OKRS_JSON="$FIX/missing-okrs.json" COCKPIT_SCOREBOARD_DIR="$FIX/missing-sb" \
+        COCKPIT_COMPANY_DIR="$FIX/company" COCKPIT_SCHEDULES_JSON="$FIX/schedules.json" \
         COCKPIT_RUNTIME_DIR="$FIX/rt" COCKPIT_NPM_CMD="bash $FIX/sb/npm.sh" \
         COCKPIT_GH_CMD="bash $FIX/sb/ghok.sh" COCKPIT_PULSE_CMD="bash $FIX/sb/pulse0.sh" \
         COCKPIT_USAGE_CMD="bash $FIX/sb/usage.sh" COCKPIT_CMD_TIMEOUT=5 COCKPIT_FIRST_WAIT=20
@@ -246,6 +247,20 @@ printf '{"1":{"value":5,"target":9,"status":"x","source_cmd":"cmd","as_of":"%s"}
 python3 "$SERVER" --once --json --panel agents >"$FIX/pc-agents.json" 2>/dev/null
 check "agent seat with a file is OK" "OK" "$(pj "$FIX/pc-agents.json" '[s for s in d["panels"]["agents"]["data"]["seats"] if s["slug"]=="cto"][0]["state"]')"
 check "agent blocked_on flagged" "True" "$(pj "$FIX/pc-agents.json" '[s for s in d["panels"]["agents"]["data"]["seats"] if s["slug"]=="cto"][0]["blocked"]')"
+# Company seat ticks: .loki/company/<seat>/last.json plus the seat's schedule
+mkdir -p "$FIX/company/cto" "$FIX/company/security-lead" "$FIX/company/platform-lead"
+printf '[{"name":"cto","cron_expr":"*/30 * * * *","action":"seat cto","enabled":true},{"name":"security-lead","cron_expr":"*/30 * * * *","action":"seat security-lead","enabled":true},{"name":"platform-lead","cron_expr":"*/30 * * * *","action":"seat platform-lead","enabled":true}]\n' >"$FIX/schedules.json"
+printf '{"ts":"2026-10-23T11:50:00Z","seat":"cto","outcome":"dispatched 2 slices","actions":[],"evidence":"x"}\n' >"$FIX/company/cto/last.json"
+printf '{"ts":"2026-10-23T10:30:00Z","seat":"security-lead","outcome":"clean","actions":[],"evidence":"x"}\n' >"$FIX/company/security-lead/last.json"
+python3 "$SERVER" --once --json --panel agents >"$FIX/pc-tick.json" 2>/dev/null
+seatq() { pj "$FIX/pc-tick.json" '[s for s in d["panels"]["agents"]["data"]["seats"] if s["slug"]=="'"$1"'"][0]'"$2"; }
+check "tick: last tick time read from last.json" "2026-10-23T11:50:00Z" "$(seatq cto '["tick"]["last_tick"]')"
+check "tick: outcome read from last.json" "dispatched 2 slices" "$(seatq cto '["tick"]["outcome"]')"
+check "tick: interval from the seat schedule" "30" "$(seatq cto '["tick"]["interval_min"]')"
+check "tick: next due is the next 30-minute mark" "2026-10-23T12:30:00Z" "$(seatq cto '["tick"]["next_due"]')"
+check "tick: 10 min old with 30 min interval is OK" "OK" "$(seatq cto '["tick"]["state"]')"
+check "tick: 90 min old with 30 min interval is STALE" "STALE" "$(seatq security-lead '["state"]')"
+check "tick: seat that never ticked is NO-TICK, not STALE" "NO-TICK" "$(seatq platform-lead '["tick"]["state"]')"
 COCKPIT_OKRS_JSON="$FIX/okrs.json" python3 "$SERVER" --once --json --panel okrs >"$FIX/pc-okrs.json" 2>/dev/null
 check "OKR with cited value is MEASURED" "MEASURED" "$(pj "$FIX/pc-okrs.json" 'd["panels"]["okrs"]["data"]["items"][0]["state"]')"
 check "OKR value without source_cmd is UNCITED" "UNCITED" "$(pj "$FIX/pc-okrs.json" 'd["panels"]["okrs"]["data"]["items"][1]["state"]')"
