@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.67.1 (2026-10-23)
+
+### Fixed
+- The codex.py scoped-out line is now pinned by the P12-26b guard test and its failure class is recorded (rq-59). Approval: "tl-2 APPROVE pd/rq59a 7bf99e440 (MEDIUM, P0)".
+
 ## v11.67.0 (2026-10-23)
 
 ### Added
