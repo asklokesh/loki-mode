@@ -1601,6 +1601,14 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: extract_invocations also reads `loki <word> [--flag ...]` from the text left after backticked spans are removed. A plain hit with a --flag is checked exactly like a backticked one. A bare `loki <word>` could be prose, so it is checked only when the word is already a literal command in loki.bash main_commands; measured on the newest 30 sections the plain extractor finds 4 distinct invocations and no prose false positive.
 - Fixture: tests/test-help-changelog-drift.sh self-test: plain-prose real flag passes, plain-prose unknown flag is reported by name, bare prose naming no command passes, and a window with no invocation still reports broken extraction. With the plain branch removed the first and third fixtures and the real run go red.
 
+## FC-ZSH-START-RESUME-COMPLETION `loki start --resume` shipped in help and bash completion but not in the zsh completion
+- User-visible vs raw: user-visible (Tab after `loki start --` in zsh never offered --resume).
+- Law: HELP-DRIFT (FC-72): a flag the CHANGELOG names must be in help and in both completions.
+- Cause (measured): `LOKI_HELP_DRIFT_SECTIONS=30 bash tests/test-help-changelog-drift.sh` gave "FAIL: '--resume' (CHANGELOG, loki start) is absent from completions/_loki" (13 passed, 1 failed) while the same flag is in the loki.bash start arm and in `loki start --help`. The default window never reached the note that names it, so the gap went unseen.
+- Siblings swept: completions/ holds only loki.bash and _loki (no fish file); every other flag named in the newest 30 CHANGELOG sections passes all four completion checks (the same run, 14 passed after the fix).
+- Mechanism: completions/_loki start block gains `--resume[...]::run id:` (optional run id, matching `--resume [RUN_ID]` in help).
+- Fixture: tests/test-help-changelog-drift.sh runs the real CHANGELOG over a 30-section window and requires it drift-free; red before the change, green after.
+
 ## FC-COMMIT-STAGES-USER-UNTRACKED A commit publishes the user's untracked files that were present before the run (FC-42 family)
 - Law: only what the run changed is published; a pre-run user file the run left untouched is never staged into a Loki commit (the same rule dropSet already applies to pre-run tracked dirt).
 - Cause (measured, #353 CW-18 test): intake records preexisting_untracked_blobs for every untracked file, but only discardIfSatisfied read it. The commit stage and the supervisor backstop run `git add -A` and dropSet excluded only untouched pre-run tracked dirt, so a normal VERIFIED run committed the user's untracked notes.

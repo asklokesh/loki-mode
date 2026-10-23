@@ -37,7 +37,7 @@ mkdir -p "$WORK/home" "$WORK/cwd"
 export HOME="$WORK/home"
 
 # Self-test of the window logic against fixture CHANGELOGs (skipped when this run is itself a fixture run).
-if [ -z "${LOKI_HELP_DRIFT_CHANGELOG:-}" ]; then
+if [ -z "${LOKI_HELP_DRIFT_CHANGELOG:-}" ] && [ -z "${LOKI_HELP_DRIFT_NESTED:-}" ]; then
     mkdir -p "$WORK/fx"
     printf '## v9.0.3\n- Security fix, no commands.\n## v9.0.2\n- Docs only.\n## v9.0.1\n- Adds `loki start --spec`.\n' > "$WORK/fx/late.md"
     printf '## v9.0.3\n- a\n## v9.0.2\n- b\n## v9.0.1\n- c\n## v9.0.0\n- d\n## v8.9.9\n- e\n## v8.9.8\n- f `loki start --spec`\n' > "$WORK/fx/none.md"
@@ -65,6 +65,15 @@ if [ -z "${LOKI_HELP_DRIFT_CHANGELOG:-}" ]; then
         ok "fixture: bare prose naming no command passes without a false drift report"
     else
         bad "fixture: bare prose must not become a command"
+    fi
+    # The real CHANGELOG over a 30-section window: older notes name flags too (loki start --resume
+    # was missing from completions/_loki there, FC-ZSH-START-RESUME-COMPLETION).
+    if [ -z "${LOKI_HELP_DRIFT_NESTED:-}" ]; then
+        if LOKI_HELP_DRIFT_NESTED=1 LOKI_HELP_DRIFT_SECTIONS=30 bash "${BASH_SOURCE[0]}" >/dev/null 2>&1; then
+            ok "the real CHANGELOG is drift-free over a 30-section window"
+        else
+            bad "the real CHANGELOG has help or completion drift inside its newest 30 sections"
+        fi
     fi
     out="$(LOKI_HELP_DRIFT_CHANGELOG="$WORK/fx/none.md" bash "${BASH_SOURCE[0]}" 2>&1)"
     if [ $? -ne 0 ] && grep -q "extraction is broken" <<< "$out"; then
