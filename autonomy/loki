@@ -2996,6 +2996,7 @@ cmd_start() {
                 echo "  --ship                Worktree + PR + auto-merge"
                 echo "  --detach, -d          Run in background (implies --worktree)"
                 echo "  --resume [RUN_ID]     Resume an interrupted run at the stage it stopped in"
+                echo "                        Exit 4 means the run cannot be resumed OR the resumed run ended BLOCKED; read the printed line to tell them apart."
                 echo ""
                 echo "Preview without spending (any input mode):"
                 echo "  loki plan <PRD>       Analyze a spec WITHOUT executing: complexity,"

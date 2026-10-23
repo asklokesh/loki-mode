@@ -198,7 +198,7 @@ if command -v bun >/dev/null 2>&1; then
         *"STUB-ARGV:engine10 --resume e10-abc"*) pass "start --resume passes the run id through" ;;
         *) fail "start --resume dropped the run id: $out" ;;
     esac
-    [ "$rc" -eq 4 ] && pass "a run that cannot resume (4) exits 4, never 0" || fail "rc=$rc, expected 4: the resume was reported as success but resumed nothing"
+    [ "$rc" -eq 4 ] && pass "an engine exit 4 (cannot resume, or a resumed run that ended BLOCKED; EXIT.BLOCKED is also 4) is returned unchanged, never 0" || fail "rc=$rc, expected 4: the resume was reported as success but resumed nothing"
     out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start "fix the login bug" --resume 2>&1)"; rc=$?
     [ "$rc" -eq 2 ] && pass "start <task> --resume is refused with exit 2" || fail "start <task> --resume rc=$rc, expected 2"
     case "$out" in
