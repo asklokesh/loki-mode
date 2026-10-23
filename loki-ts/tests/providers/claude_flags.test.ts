@@ -1091,6 +1091,8 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     expect(JSON.parse(run())).toEqual(["--permission-mode", "plan"]);
     mkdirSync(join(lay, "src", "policies"), { recursive: true });
     copyFileSync(join(root, "src/policies/claude_permissions.js"), join(lay, "src", "policies", "claude_permissions.js"));
+    mkdirSync(join(lay, "autonomy", "lib"), { recursive: true }); // the compiler reads the shared secret-path list at load
+    copyFileSync(join(root, "autonomy/lib/secret-paths.json"), join(lay, "autonomy", "lib", "secret-paths.json"));
     expect(JSON.parse(run())).toEqual(["--permission-mode", "acceptEdits", "--disallowedTools", "Bash(rm:*)"]);
   });
 });
