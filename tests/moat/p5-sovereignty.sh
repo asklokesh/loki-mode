@@ -608,7 +608,10 @@ sc_setup() {
         printf 'case " $* " in *" -p "*) ;; *)\n'
         printf '    case "$1" in --version) echo "2.1.999 (Claude Code)" ;; *) echo "--agents --json-schema --output-format --bare --model -p --print" ;; esac\n'
         printf '    exit 0 ;;\nesac\n'
-        printf 'printf "CALL %%s\\n" "$(printf "%%s " "$@" | tr "\\n" " " | cut -c1-160)" >> %q\n' "$SC_CL"
+        # Log the prompt argument itself (the one after -p), not the flag prefix:
+        # lean child flags precede it and would push the marker past any cut.
+        printf 'pr=""; prev=""; for a in "$@"; do [ "$prev" = "-p" ] && pr="$a"; prev="$a"; done\n'
+        printf 'printf "CALL %%s\\n" "$(printf "%%s" "$pr" | tr "\\n" " " | cut -c1-160)" >> %q\n' "$SC_CL"
         printf 'for a in "$@"; do last="$a"; done\n'
         printf '[ "$last" = "-" ] && cat >/dev/null\n'
         printf 'echo "# stub"\n'
