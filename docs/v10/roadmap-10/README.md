@@ -1357,7 +1357,7 @@ Rule: each hot-spot file has exactly one live writer. The next issue in a lane s
 
 - `loki-ts/src/commands/start.ts`: #357, then #339, then #396, then #372.
 - `loki-ts/src/commands/status.ts`: #361, then #359, then #370, then #372, then #395, then #406.
-- `loki-ts/src/engine10/machine.ts`: #345, then #358, then #235. #358 also waits for branch pd/cw04d, which edits `blocked_answer.ts`.
+- `loki-ts/src/engine10/machine.ts`: #345, then #358, then #235. #345 waits for live branches pd/cw12 and pd/cw12-r2, which edit `machine.ts`, `cli.ts` and `mcp/server.py`. #358 also waits for branch pd/cw04d, which edits `blocked_answer.ts`.
 - `autonomy/loki` function `cmd_deploy`: #359, then #370, then #382, then #383, then #384, then #385, then #386.
 - `.github/actions/issue-to-pr/action.yml`: #360, then #365.
 
@@ -1415,10 +1415,20 @@ Different functions in `autonomy/loki` can be edited in parallel, because each l
 
 ### Waves
 
-Wave 1 can start now. No two of these issues share a file, and each one heads every lane it is in. Dispatch them in this order as seats free up: #357, #345, #361, #360, #342, #362, #364, #249, #367, #368, #369, #371.
+Wave 1 can start now. Each issue heads every lane it is in, and no two share a file. Each one was checked against every live branch (remote pd/* and local branches with a commit in the last 48 hours) with `git cherry origin/main <branch>` and `git log origin/main..<branch> --name-only`, on 2026-10-23. Dispatch in this order as seats free up:
 
-Wave 2 (top 20). Each issue starts after the merges named:
+- #357: already dispatched (pd/r100-001). `doctor_fix.ts` is touched only by its own branch. `doctor.ts` is also touched by 14 live branches (pd/286, pd/315, pd/316, pd/316-rb, pd/329, pd/330, pd/bunentry, pd/bunentry-rb, pd/bunsib, pd/mcpchain, pd/mcpchain-r2, pd/mcpchain-r3, pd/rq04, pd/w2-33), so rebase before review.
+- #342, #360, #364, #368, #231, #422: no live branch touches any of their files.
+- #361: no file overlap. Its card names `autonomy/loki` only as existing behavior (`cmd_cockpit`); its edits are in `status.ts` and `events.ts`.
+- #362: the only overlap is `autonomy/loki`. The live branches there edit `_loki_airgap_audit`, `cmd_bench` and `_loki_start_optval_consumes`. #362 adds dispatch rows and reads `cmd_projects`, so the hunks do not overlap.
 
+Wave 2. Each issue starts after the merges named:
+
+- #345: after pd/cw12 and pd/cw12-r2 (`machine.ts`, `cli.ts`, `mcp/server.py`), pd/328 (`cli.ts`), and pd/257p2, pd/257rb, pd/319e, pd/319fix (`mcp/server.py`).
+- #249: after the live `stages/verify.ts` branches: pd/237r10, pd/237r9, pd/partial-harness, pd/wallfile, pd/wallfile-r2, pd/wallgo, pd/wallgo-r2, pd/wallnorunner, pd/wallrust, pd/wallrust-r2, pd/weaktest.
+- #367: after the live `benchmarks/bench/run.sh` and `runner.py` branches: pd/246fix2, pd/claim, pd/claim-100x, pd/cw15, pd/fd1b, pd/resumecost, pd/resumecost2, pd/resumecost3, pd/traptasks2, pd/trusttime, pd/trusttime-r2, pd/verifyh2h.
+- #369: after pd/cw01b and pd/cw01c (`release.yml`).
+- #371: after pd/252b and pd/252b-r (`metrics/kpis.ts`).
 - #358: after #345, #361 and branch pd/cw04d.
 - #359: after #361 and #342.
 - #365: after #360.
@@ -1427,5 +1437,9 @@ Wave 2 (top 20). Each issue starts after the merges named:
 - #235: after #358.
 - #363: after #358.
 - #372: after #369, #357 and #370.
+
+Held: #398 depends on open issue #188 (dashboard authn/authz), so it is not a wave-1 head.
+
+Before dispatching any wave-2 issue, re-run the live-branch check for its files; branches named above may have merged or new ones may have started.
 
 After wave 2, pull any issue whose lanes are free, following the lane orders above.
