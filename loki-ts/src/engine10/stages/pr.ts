@@ -121,7 +121,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
   const env = pushEnv(ctx.repoDir, pinnedOrigin);
   const pr = runOnce({ dir: ctx.runDir, key: idempotencyKey("pr", ctx.runId, ctx.branch), keep: (r) => r.ok, post: () => runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath, gitlabScriptPath: opts.gitlabPushScriptPath, env }) }); // P12-36: push-pr reuses an existing PR, so a pending replay is duplicate-safe
-  if (!pr.ok) return { status: "failed", data: {}, reason: pr.reason + publishFallback(ctx.runDir, ctx.branch, base) };
+  if (!pr.ok) return { status: "failed", data: {}, reason: pr.reason + publishFallback(ctx.runDir, ctx.repoDir, ctx.branch, base) };
   const { url, localOk, existing } = pr;
   ctx.emit("pr.opened", "pr", { url, draft, existing });
   const headSha = safeGit(ctx.repoDir, ["rev-parse", "HEAD"]).trim();
