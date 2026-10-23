@@ -211,7 +211,7 @@ jobs:
   verify-npm-registry:
     needs: publish-npm
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -230,40 +230,37 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Prove the registry serves this version
-        run: |
-          set -uo pipefail
-          VERSION="$(tr -d '\n' < VERSION)"
-          # Version document AND tarball, both read uncached: 11.59.0 had a 200 version
-          # document while its tarball stayed 404 for 15+ minutes (FC-DISTTAG-SETTLE-READS-CACHED-PACKUMENT).
-          tgz="https://registry.npmjs.org/loki-mode/-/loki-mode-${VERSION}.tgz"
-          for i in $(seq 1 60); do
-            got="$(npm view "loki-mode@${VERSION}" version --prefer-online 2>/dev/null || true)"
-            code="$(curl -s -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$tgz" || true)"
-            if [ "$got" = "$VERSION" ] && [ "$code" = 200 ]; then
-              echo "registry serves loki-mode@${VERSION} and its tarball (poll $i)"; exit 0
-            fi
-            sleep 15
-          done
-          echo "::error::registry never served loki-mode@${VERSION} (version '${got:-none}', tarball HTTP ${code:-none}) within 15 minutes"
-          exit 1
-
-      # The registry applies a publish 3 to 6 minutes after the client prints
-      # "+ loki-mode@X". A dist-tag write made inside publish-npm can be
-      # overtaken by an earlier version materializing late, leaving latest
-      # below the max (latest=11.54.1 next=11.54.2 at 04:41Z on 2026-10-23).
-      # Converge again now that this version is served. The script only ever
-      # moves tags to the max stable semver of its fresh reads and re-reads
-      # instead of writing when a tag is already higher, so it is convergent and
-      # safe to run outside the release-npm lock. npm has no compare-and-set, so
-      # a window of milliseconds between its last read and a write remains.
-      - name: Converge dist-tags after the version resolves
+      - name: Prove the registry serves this version, then converge dist-tags
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -uo pipefail
           VERSION="$(tr -d '\n' < VERSION)"
-          bash scripts/npm-dist-tags.sh "$VERSION"
+          # Version document AND tarball, both read uncached (Cache-Control: no-cache).
+          # `npm view` reads the CDN-cached packument and is not proof
+          # (FC-DISTTAG-SETTLE-READS-CACHED-PACKUMENT). 11.59.0 had a 200 version
+          # document while its tarball stayed 404 for 15+ minutes.
+          base="https://registry.npmjs.org/loki-mode"
+          served=0
+          for i in $(seq 1 60); do
+            vcode="$(curl -s -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$base/${VERSION}" || true)"
+            tcode="$(curl -s -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$base/-/loki-mode-${VERSION}.tgz" || true)"
+            if [ "$vcode" = 200 ] && [ "$tcode" = 200 ]; then
+              served=1; echo "registry serves loki-mode@${VERSION} and its tarball (poll $i)"; break
+            fi
+            sleep 15
+          done
+          # Converge always runs, so a version that lands after the poll still gets
+          # its tags (the script writes nothing while the version document is absent).
+          # The settle window starts here, after the tarball 200, not before the poll.
+          if [ "$served" = 1 ]; then mat=60; else mat=300; fi
+          LOKI_DISTTAG_MATERIALIZE_S="$mat" bash scripts/npm-dist-tags.sh "$VERSION"
+          rc=$?
+          if [ "$served" != 1 ]; then
+            echo "::error::registry never served loki-mode@${VERSION} (version doc HTTP ${vcode:-none}, tarball HTTP ${tcode:-none}) within the poll window"
+            exit 1
+          fi
+          exit "$rc"
 
   # Tag and GitHub Release. Needs nothing, so it runs in parallel with npm.
   release:
@@ -567,7 +564,7 @@ jobs:
   verify-sdk-registry:
     needs: publish-ts-sdk
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -586,28 +583,38 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Prove the registry serves this SDK version
-        run: |
-          set -uo pipefail
-          VERSION="$(tr -d '\n' < VERSION)"
-          for i in $(seq 1 90); do
-            got="$(npm view "loki-mode-sdk@${VERSION}" version --prefer-online 2>/dev/null || true)"
-            if [ "$got" = "$VERSION" ]; then
-              echo "registry serves loki-mode-sdk@${VERSION} (poll $i)"; exit 0
-            fi
-            sleep 10
-          done
-          echo "::error::registry never served loki-mode-sdk@${VERSION} within about 15 minutes"
-          exit 1
-
-      - name: Converge SDK dist-tags after the version resolves
+      - name: Prove the registry serves this SDK version, then converge dist-tags
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           LOKI_DISTTAG_PKG: loki-mode-sdk
         run: |
           set -uo pipefail
           VERSION="$(tr -d '\n' < VERSION)"
-          bash scripts/npm-dist-tags.sh "$VERSION"
+          # Version document AND tarball, both read uncached (Cache-Control: no-cache).
+          # `npm view` reads the CDN-cached packument and is not proof
+          # (FC-DISTTAG-SETTLE-READS-CACHED-PACKUMENT). 11.59.0 had a 200 version
+          # document while its tarball stayed 404 for 15+ minutes.
+          base="https://registry.npmjs.org/loki-mode-sdk"
+          served=0
+          for i in $(seq 1 90); do
+            vcode="$(curl -s -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$base/${VERSION}" || true)"
+            tcode="$(curl -s -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$base/-/loki-mode-sdk-${VERSION}.tgz" || true)"
+            if [ "$vcode" = 200 ] && [ "$tcode" = 200 ]; then
+              served=1; echo "registry serves loki-mode-sdk@${VERSION} and its tarball (poll $i)"; break
+            fi
+            sleep 10
+          done
+          # Converge always runs, so a version that lands after the poll still gets
+          # its tags (the script writes nothing while the version document is absent).
+          # The settle window starts here, after the tarball 200, not before the poll.
+          if [ "$served" = 1 ]; then mat=60; else mat=300; fi
+          LOKI_DISTTAG_MATERIALIZE_S="$mat" bash scripts/npm-dist-tags.sh "$VERSION"
+          rc=$?
+          if [ "$served" != 1 ]; then
+            echo "::error::registry never served loki-mode-sdk@${VERSION} (version doc HTTP ${vcode:-none}, tarball HTTP ${tcode:-none}) within the poll window"
+            exit 1
+          fi
+          exit "$rc"
 
   # Native per-arch build (no QEMU), pushed by digest; needs nothing, so it
   # starts at t=0. The docker job assembles the multi-arch manifest.
