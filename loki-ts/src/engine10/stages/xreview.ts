@@ -17,9 +17,9 @@ const RANK: Record<Verdict, number> = { FAILED: 0, SPEC_CONFLICT: 0, PARTIAL: 1,
 const MAX_DIFF = 60_000, MAX_NOTES = 5;
 /** The never-upgrade rule: returns the lower of the verdict and the review's ceiling. A review can only lower a verdict. */
 export function minVerdict(verdict: Verdict, review: CrossReview | null): Verdict {
-  const ceiling: Verdict = review?.level === "block" ? "PARTIAL" : verdict;
-  return RANK[ceiling] < RANK[verdict] ? ceiling : verdict;
+  return capVerdict(verdict, review?.level === "block" ? "PARTIAL" : verdict);
 }
+export const capVerdict = (verdict: Verdict, ceiling: Verdict): Verdict => (RANK[ceiling] < RANK[verdict] ? ceiling : verdict);
 const asProvider = (v: string | undefined): ReviewProvider | null => { const s = v?.trim().toLowerCase(); return s === "codex" || s === "claude" ? s : null; }; const isOff = (v: string | undefined): boolean => /^(off|none|false|0)$/i.test(v?.trim() ?? "");
 /** Explicit setting: env wins over loki.yaml top-level `review:`. A provider, "off", or undefined (nothing set). */
 function explicitReview(repoDir: string, env: NodeJS.ProcessEnv): ReviewProvider | "off" | undefined {

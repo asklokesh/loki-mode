@@ -57,6 +57,83 @@ export function seededCorpusBlock(env: NodeJS.ProcessEnv = process.env): { seede
   } catch { return {}; }
 }
 
+/** CW-04: optional signed receipt blocks, each read from one run-dir file written by its owning card. The key names below are the
+ *  reader-writer contract (tests write each file with exactly these keys). An absent file omits the block; a malformed one omits it and
+ *  adds a not_proven line, never a crash. Blocks sit in the signed body, so editing one breaks receipt_sha256 (TAMPERED). */
+export interface CwBlocks {
+  confinement?: { kind: string; profile_sha256: string | null; kernel_probe_sha256: string | null; known_limitations: string[]; provider: string | null; unconfined_calls: string[] };
+  spec_trace?: { clauses: { id: string; anchor: { file: string; page: number | null; line: number | null }; text_sha256: string; status: "proven" | "judged" | "unproven"; evidence: string[] }[] };
+  mcp?: { servers: { name: string; tool_list_sha256: string }[]; calls: { server: string; tool: string; count: number; untrusted: boolean }[] };
+  params?: { stages: Record<string, { provider: string; model: string; effort: string | null; thinking: string | null; clamped_from: string | null }> };
+  preflight?: { provider: string; auth_path: string; probe: "ok" | "failed" | "skipped" };
+}
+const isRec = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+const strOrNull = (v: unknown): string | null | undefined => (v === undefined || v === null ? null : typeof v === "string" ? v : undefined);
+const strList = (v: unknown): string[] | undefined => (Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]) : undefined);
+const numOrNull = (v: unknown): number | null | undefined => (v === undefined || v === null ? null : typeof v === "number" && Number.isFinite(v) ? v : undefined);
+type CwParse<K extends keyof CwBlocks> = (j: unknown) => CwBlocks[K] | null;
+const CW_PARSERS: { [K in keyof CwBlocks]-?: { file: string; parse: CwParse<K> } } = {
+  confinement: { file: "confinement.json", parse: (j) => {
+    if (!isRec(j) || typeof j["kind"] !== "string") return null;
+    const profile = strOrNull(j["profile_sha256"]), probe = strOrNull(j["kernel_probe_sha256"]), prov = strOrNull(j["provider"]), lim = strList(j["known_limitations"] ?? []), un = strList(j["unconfined_calls"] ?? []);
+    return profile === undefined || probe === undefined || prov === undefined || !lim || !un ? null : { kind: j["kind"], profile_sha256: profile, kernel_probe_sha256: probe, known_limitations: lim, provider: prov, unconfined_calls: un };
+  } },
+  spec_trace: { file: "spec-trace.json", parse: (j) => {
+    if (!isRec(j) || !Array.isArray(j["clauses"])) return null;
+    const clauses: NonNullable<CwBlocks["spec_trace"]>["clauses"] = [];
+    for (const c of j["clauses"]) {
+      if (!isRec(c) || typeof c["id"] !== "string" || !isRec(c["anchor"]) || typeof c["anchor"]["file"] !== "string" || typeof c["text_sha256"] !== "string") return null;
+      const st = c["status"], page = numOrNull(c["anchor"]["page"]), line = numOrNull(c["anchor"]["line"]), ev = strList(c["evidence"] ?? []);
+      if ((st !== "proven" && st !== "judged" && st !== "unproven") || page === undefined || line === undefined || !ev) return null;
+      clauses.push({ id: c["id"], anchor: { file: c["anchor"]["file"], page, line }, text_sha256: c["text_sha256"], status: st, evidence: ev });
+    }
+    return { clauses };
+  } },
+  mcp: { file: "mcp-calls.json", parse: (j) => {
+    if (!isRec(j) || !Array.isArray(j["servers"]) || !Array.isArray(j["calls"])) return null;
+    const servers = j["servers"].map((x) => (isRec(x) && typeof x["name"] === "string" && typeof x["tool_list_sha256"] === "string" ? { name: x["name"], tool_list_sha256: x["tool_list_sha256"] } : null));
+    const calls = j["calls"].map((x) => (isRec(x) && typeof x["server"] === "string" && typeof x["tool"] === "string" && typeof x["count"] === "number" && Number.isFinite(x["count"]) && typeof x["untrusted"] === "boolean" ? { server: x["server"], tool: x["tool"], count: x["count"], untrusted: x["untrusted"] } : null));
+    return servers.includes(null) || calls.includes(null) ? null : { servers: servers as { name: string; tool_list_sha256: string }[], calls: calls as { server: string; tool: string; count: number; untrusted: boolean }[] };
+  } },
+  params: { file: "params.json", parse: (j) => {
+    if (!isRec(j) || !isRec(j["stages"])) return null;
+    const stages: NonNullable<CwBlocks["params"]>["stages"] = {};
+    for (const [name, v] of Object.entries(j["stages"])) {
+      if (!isRec(v) || typeof v["provider"] !== "string" || typeof v["model"] !== "string") return null;
+      const effort = strOrNull(v["effort"]), thinking = strOrNull(v["thinking"]), from = strOrNull(v["clamped_from"]);
+      if (effort === undefined || thinking === undefined || from === undefined) return null;
+      stages[name] = { provider: v["provider"], model: v["model"], effort, thinking, clamped_from: from };
+    }
+    return { stages };
+  } },
+  preflight: { file: "preflight.json", parse: (j) => (isRec(j) && typeof j["provider"] === "string" && typeof j["auth_path"] === "string" && (j["probe"] === "ok" || j["probe"] === "failed" || j["probe"] === "skipped") ? { provider: j["provider"], auth_path: j["auth_path"], probe: j["probe"] } : null) },
+};
+const clauseAt = (c: { id: string; anchor: { file: string; page: number | null; line: number | null } }): string => `${c.id} (${c.anchor.file}${c.anchor.page !== null ? ` p${c.anchor.page}` : ""}${c.anchor.line !== null ? `:${c.anchor.line}` : ""})`;
+export function cwReceiptBlocks(runDir: string, env: NodeJS.ProcessEnv = process.env): { blocks: CwBlocks; notProven: string[]; ceiling: "FAILED" | "PARTIAL" | null } {
+  const blocks: Record<string, unknown> = {}, notProven: string[] = [];
+  for (const [key, { file, parse }] of Object.entries(CW_PARSERS) as [keyof CwBlocks, { file: string; parse: (j: unknown) => unknown }][]) {
+    const path = join(runDir, file);
+    if (!existsSync(path)) continue;
+    let block: unknown = null;
+    try { block = parse(JSON.parse(readFileSync(path, "utf8"))); } catch { /* unreadable or not JSON: same as malformed */ }
+    if (block === null) notProven.push(`${file} is malformed or unreadable; the ${key} block is not recorded in this receipt`); else blocks[key] = block;
+  }
+  const b = blocks as CwBlocks;
+  const unproven = (b.spec_trace?.clauses ?? []).filter((c) => c.status === "unproven");
+  for (const c of unproven) notProven.push(`spec clause ${clauseAt(c)} is unproven`);
+  let ceiling: "FAILED" | "PARTIAL" | null = null;
+  if (env["LOKI_SPEC_STRICT"] === "1" && unproven.length > 0) ceiling = "PARTIAL";
+  if (env["LOKI_OS_SANDBOX"] === "on" && b.confinement?.kind === "none") { ceiling = "FAILED"; notProven.push("confinement.kind is none under LOKI_OS_SANDBOX=on, which cannot happen when the sandbox is enforced; sealing fails closed"); }
+  return { blocks: b, notProven, ceiling };
+}
+/** receipt.md lines for the CW-04 blocks: a confinement line and a spec clause table. A judged clause is labelled judged, never proof. */
+export function cwReceiptLines(r: CwBlocks): string[] {
+  const out: string[] = [];
+  if (r.confinement) out.push(`- Confinement: ${r.confinement.kind}${r.confinement.provider ? ` (${r.confinement.provider})` : ""}; ${r.confinement.known_limitations.length} known limitation(s), ${r.confinement.unconfined_calls.length} unconfined call(s)`);
+  if (r.spec_trace && r.spec_trace.clauses.length > 0) out.push("", "### Spec clauses", "| Clause | Anchor | Status |", "| --- | --- | --- |", ...r.spec_trace.clauses.map((c) => `| ${c.id} | ${c.anchor.file}${c.anchor.line !== null ? `:${c.anchor.line}` : ""} | ${c.status}${c.status === "judged" ? " (judged, not executed proof)" : ""} |`));
+  return out;
+}
+
 const REVERTED = "unrelated edit reverted:";
 export type StageOutputs = Partial<Record<string, Record<string, unknown>>>;
 
