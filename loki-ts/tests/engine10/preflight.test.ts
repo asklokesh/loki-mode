@@ -672,38 +672,40 @@ describe("R100-022: publish capability at intake", () => {
     const { dir, env } = identifiedRepo(); execFileSync("git", ["-C", dir, "remote", "add", "origin", `https://github.com/${OWNER}/${NAME}.git`]);
     const runDir = join(dir, ".loki", "runs", "r1");
     const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: true, runDir, env: { ...env, PATH: ghApi(body, apiExit), LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k" } });
-    return { r, file: readFileSync(join(runDir, "preflight.json"), "utf8") };
+    const file = readFileSync(join(runDir, "preflight.json"), "utf8");
+    return { r, file, mode: (JSON.parse(file).publish ?? null) as string | null, compare: (JSON.parse(file).publish_compare ?? null) as string | null }; // an absent field means a direct PR (or no claim)
   }
   const repo = (extra: Record<string, unknown>) => JSON.stringify({ permissions: { push: false }, has_pull_requests: true, allow_forking: true, ...extra });
   test("collaborators-only policy without push: warns at intake and records fork_branch", async () => {
     const { r, file } = await go(repo({ pull_request_creation_policy: "collaborators_only" }));
-    expect(r.fatal).toBeNull(); expect(r.publish?.mode).toBe("fork_branch");
+    expect(r.fatal).toBeNull();
     expect(r.warnings.join("\n")).toContain(`a PR cannot be opened on ${OWNER}/${NAME}`); expect(r.warnings.join("\n")).toContain("collaborators only");
     expect(JSON.parse(file).publish).toBe("fork_branch"); expect(JSON.parse(file).publish_compare).toBe(`https://github.com/${LOGIN}/${NAME}/compare`);
     expect(r.warnings.join("\n")).toContain(`${LOGIN}/${NAME}/compare`);
   });
   test("pull requests disabled: with push is branch, without push is fork_branch", async () => {
-    expect((await go(repo({ has_pull_requests: false, permissions: { push: true } }))).r.publish?.mode).toBe("branch");
-    expect((await go(repo({ has_pull_requests: false, permissions: { push: true } }))).r.publish?.compare).toBe(`https://github.com/${OWNER}/${NAME}/compare`);
-    expect((await go(repo({ has_pull_requests: false }))).r.publish?.mode).toBe("fork_branch");
+    expect((await go(repo({ has_pull_requests: false, permissions: { push: true } }))).mode).toBe("branch");
+    expect((await go(repo({ has_pull_requests: false, permissions: { push: true } }))).compare).toBe(`https://github.com/${OWNER}/${NAME}/compare`);
+    expect((await go(repo({ has_pull_requests: false }))).mode).toBe("fork_branch");
   });
   test("archived repo and no-fork repo keep the result local", async () => {
-    expect((await go(repo({ archived: true }))).r.publish?.mode).toBe("local_branch");
-    expect((await go(repo({ allow_forking: false }))).r.publish?.mode).toBe("local_branch");
+    expect((await go(repo({ archived: true }))).mode).toBe("local_branch");
+    expect((await go(repo({ allow_forking: false }))).mode).toBe("local_branch");
   });
   test("full access is silent and leaves preflight.json byte-identical to a no-API run", async () => {
     const full = await go(repo({ permissions: { push: true }, pull_request_creation_policy: "all" }));
     const none = await go("", 1);
-    expect(full.r.warnings.filter((w) => w.startsWith("publish:"))).toEqual([]); expect(full.r.publish?.mode).toBe("pr");
-    expect(full.file).toBe(none.file); expect(none.r.publish).toBeUndefined();
+    expect(full.r.warnings.filter((w) => w.startsWith("publish:"))).toEqual([]); expect(full.mode).toBeNull();
+    expect(full.file).toBe(none.file); expect(none.mode).toBeNull();
+    expect(classifyPublish("o/r", JSON.parse(repo({ permissions: { push: true } })))?.mode).toBe("pr"); // pure form still reports pr
   });
   test("push-less repo that accepts all PRs is fork_pr with no warning (existing fork path)", async () => {
     const { r } = await go(repo({ pull_request_creation_policy: "all" }));
-    expect(r.publish?.mode).toBe("fork_pr"); expect(r.warnings.filter((w) => w.startsWith("publish:"))).toEqual([]);
+    expect(classifyPublish("o/r", JSON.parse(repo({ pull_request_creation_policy: "all" })))?.mode).toBe("fork_pr"); expect(r.warnings.filter((w) => w.startsWith("publish:"))).toEqual([]);
   });
   test("unreadable or permission-less API body makes no claim", async () => {
-    expect((await go("{not json")).r.publish).toBeUndefined();
-    expect((await go(JSON.stringify({ name: "widget" }))).r.publish).toBeUndefined();
+    expect((await go("{not json")).mode).toBeNull(); expect((await go("{not json")).r.warnings.filter((w) => w.startsWith("publish:"))).toEqual([]);
+    expect((await go(JSON.stringify({ name: "x" }))).mode).toBeNull();
     expect(classifyPublish("a/b", {})).toBeNull();
   });
 });
