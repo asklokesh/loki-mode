@@ -54,8 +54,8 @@ expect("hash inside value kept", "k = a # b", {"k": "a # b"})
 expect_err("missing equals", "a=1\nbad", "line 2")
 expect_err("missing equals after blanks and comments", "# c\n\n\nbad", "line 4")
 expect_err("empty key", "a=1\n= x", "line 2")
-expect_err("duplicate key", "a=1\nb=2\na=3", "a", "line 3")
-expect_err("duplicate key after comment", "# c\nk=1\n\nk=2", "k", "line 4")
+expect_err("duplicate key", "zq9a=1\nb=2\nzq9a=3", "zq9a", "line 3")
+expect_err("duplicate key after comment", "# c\nzq9k=1\n\nzq9k=2", "zq9k", "line 4")
 
 if fails:
     print("FAIL kvparse:")
