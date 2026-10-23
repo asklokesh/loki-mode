@@ -55,7 +55,8 @@ mkdir -p "$FAKE_REPO"
     git config user.name "test"
     mkdir -p tests/moat
     printf 'P1.case-a milestone reason\nP2.case-b milestone reason\n' > tests/moat/pending.txt
-    git add tests/moat/pending.txt
+    echo 1.0.0 > VERSION
+    git add tests/moat/pending.txt VERSION
     GIT_AUTHOR_DATE="2026-09-20T00:00:00Z" GIT_COMMITTER_DATE="2026-09-20T00:00:00Z" \
         git commit -q -m "initial"
     git tag v1.0.0
@@ -249,8 +250,9 @@ COMMON_ARGS=(
     # exact-VIOLATION assertions depend on host state instead of the
     # fixture (a real stray container or a loaded CI box would fire them
     # unpredictably). Dedicated tests (T34-T36) override these explicitly.
-    # No PULSE_RELEASE_TESTS default needed: FAKE_REPO never touches VERSION,
-    # so RELEASE_ON_RED reads n/a rather than UNKNOWN (see resolve_version_bump_sha).
+    # FAKE_REPO carries VERSION (last_release_point reads it), so RELEASE_ON_RED
+    # needs a green Tests result for the release SHA or it reads UNKNOWN.
+    "PULSE_RELEASE_TESTS=[{\"status\":\"completed\",\"conclusion\":\"success\",\"workflowName\":\"Tests\"}]"
     "PULSE_LOADAVG=1.00 1.00 1.00"
     "PULSE_PS_OUTPUT=  PID  PPID     ELAPSED COMMAND"
     "PULSE_DOCKER_PS="
@@ -959,7 +961,8 @@ echo "T14 -- finding 1: git-derived metrics pin to PULSE_MAIN_REF, not the calli
 (
     cd "$FAKE_REPO" || exit 1
     printf '' > tests/moat/pending.txt
-    git add tests/moat/pending.txt
+    echo 2.0.0 > VERSION
+    git add tests/moat/pending.txt VERSION
     GIT_AUTHOR_DATE="2026-09-25T00:00:00Z" GIT_COMMITTER_DATE="2026-09-25T00:00:00Z" \
         git commit -q -m "close out remaining moat properties"
     git tag v2.0.0
@@ -1128,7 +1131,8 @@ mkdir -p "$NO_PENDING_REPO"
     git config user.email "test@example.com"
     git config user.name "test"
     echo "no moat dir here" > README.md
-    git add README.md
+    echo 1.0.0 > VERSION
+    git add README.md VERSION
     GIT_AUTHOR_DATE="2026-09-27T00:00:00Z" GIT_COMMITTER_DATE="2026-09-27T00:00:00Z" \
         git commit -q -m "no tests/moat/pending.txt on this repo"
     git tag v1.0.0
@@ -1580,7 +1584,8 @@ mkdir -p "$TRAIN_REMOTE_REPO"
     git config user.email "test@example.com"
     git config user.name "test"
     echo init > f.txt
-    git add f.txt
+    echo 1.0.0 > VERSION
+    git add f.txt VERSION
     GIT_AUTHOR_DATE="2026-09-20T00:00:00Z" GIT_COMMITTER_DATE="2026-09-20T00:00:00Z" \
         git commit -q -m "initial"
     git tag v1.0.0
@@ -2199,8 +2204,30 @@ else
     printf '%s\n' "$OUT"
 fi
 if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}")"; then rc=0; else rc=$?; fi
-if printf '%s\n' "$OUT" | grep -qF "Release-on-red (newest VERSION bump on main): n/a (no commit has ever touched VERSION)"; then
-    ok "FAKE_REPO has no VERSION history: RELEASE_ON_RED reads n/a, never UNKNOWN, never a false violation"
+if printf '%s\n' "$OUT" | grep -qE "^Release-on-red \(newest VERSION bump on main, [0-9a-f]{8}\): Tests SUCCESS"; then
+    ok "FAKE_REPO carries VERSION history: RELEASE_ON_RED reads the COMMON_ARGS green Tests result"
+else
+    bad "T37b version-history case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+NO_VERSION_REPO="$WORK/no-version-repo"
+mkdir -p "$NO_VERSION_REPO"
+(
+    cd "$NO_VERSION_REPO" || exit 1
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "test"
+    echo seed > f.txt
+    git add f.txt
+    GIT_AUTHOR_DATE="2026-09-20T00:00:00Z" GIT_COMMITTER_DATE="2026-09-20T00:00:00Z" git commit -q -m "no VERSION"
+)
+if run_pulse "${COMMON_ARGS[@]}" "PULSE_REPO_ROOT=$NO_VERSION_REPO" "BOARD_MD=$BOARD_CLEAN" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$NO_VERSION_REPO" "${WT_CLEAN[@]}")"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "Release-on-red (newest VERSION bump on main): n/a (no commit has ever touched VERSION)" \
+    && printf '%s\n' "$OUT" | grep -qF "Merged-but-unreleased age: UNKNOWN (VERSION history on main could not be read)" \
+    && printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*unreleased_merge_age" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: \(UNRELEASED_MERGE\|TRAIN_LATE\|RELEASE_CADENCE\)"; then
+    ok "no VERSION history: release state is UNKNOWN (no release point), RELEASE_ON_RED n/a, no release verdict fires"
 else
     bad "T37b no-version-history case: rc=$rc output follows"
     printf '%s\n' "$OUT"
@@ -2273,8 +2300,8 @@ else
     printf '%s\n' "$OUT"
 fi
 
-echo "T40 -- S-139/BACKLOG 136: unreleased-merge age reports UNKNOWN, not a confident"
-echo "      'N commit(s) since', when the local release tag disagrees with npm's latest version"
+echo "T40 -- S-139/BACKLOG 136 (reworked for last_release_point): when the VERSION release commit"
+echo "      disagrees with npm next, the pulse names the pending/lagging state, never UNKNOWN"
 # A dedicated, isolated repo (like RELEASE_REPO/CLAIM_REPO_FLAGGED above) so
 # this never touches FAKE_REPO's shared v1.0.0 tag history. Exact repro of
 # the red-case bullet: local tag v9.54.2, npm's latest published version
@@ -2287,7 +2314,8 @@ mkdir -p "$TAG_MISMATCH_REPO"
     git config user.email "test@example.com"
     git config user.name "test"
     echo "seed" > file.txt
-    git add file.txt
+    echo 9.54.2 > VERSION
+    git add file.txt VERSION
     GIT_AUTHOR_DATE="2026-09-27T00:00:00Z" GIT_COMMITTER_DATE="2026-09-27T00:00:00Z" \
         git commit -q -m "seed"
     git tag v9.54.2
@@ -2308,11 +2336,10 @@ print(json.dumps({
 if run_pulse "${COMMON_ARGS[@]}" "PULSE_REPO_ROOT=$TAG_MISMATCH_REPO" "PULSE_MAIN_REF=main" \
     "BOARD_MD=$BOARD_CLEAN" "PULSE_NPM_CMD=cat $NPM_MISMATCH_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
     "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$TAG_MISMATCH_REPO" "${WT_CLEAN[@]}")"; then rc=0; else rc=$?; fi
-if printf '%s\n' "$OUT" | grep -qF "Merged-but-unreleased age: UNKNOWN (local tag v9.54.2 disagrees with npm next 9.55.0)" \
-    && printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*unreleased_merge_age" \
-    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: UNRELEASED_MERGE" \
-    && ! printf '%s\n' "$OUT" | grep -q "commit(s) since v9.54.2"; then
-    ok "tag/npm-latest disagreement reports UNKNOWN, never the confident 'N commit(s) since' line"
+if printf '%s\n' "$OUT" | grep -qE "^Release point: v9.54.2 at [0-9a-f]{8}; npm next is 9.55.0 \(publish pending or lagging" \
+    && ! printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*unreleased_merge_age" \
+    && printf '%s\n' "$OUT" | grep -qF "Merged-but-unreleased age: 60.0 min (1 commit(s) since v9.54.2, oldest"; then
+    ok "VERSION-vs-npm-next disagreement is reported as an explicit pending/lagging state, count still taken from the VERSION release commit"
 else
     bad "T40 tag-vs-npm-mismatch case: rc=$rc output follows"
     printf '%s\n' "$OUT"
@@ -3242,6 +3269,10 @@ mkdir -p "$MNS_REPO"
     git checkout -q main
     GIT_AUTHOR_DATE="2026-09-20T00:10:00Z" GIT_COMMITTER_DATE="2026-09-20T00:10:00Z" \
         git merge -q --no-ff -m "merge slice-S-01" feature-s01
+    echo 1.0.0 > VERSION
+    git add VERSION
+    GIT_AUTHOR_DATE="2026-09-20T00:11:00Z" GIT_COMMITTER_DATE="2026-09-20T00:11:00Z" \
+        git commit -q -m "release: v1.0.0"
     git tag v1.0.0
     git checkout -q -b feature-s02
     echo "s02" > s02.txt
@@ -3308,7 +3339,8 @@ echo "       a regex-shaped ID is matched literally, and slice-S-0 never resolve
 # Move the tag to main's tip so BOTH S-01 and S-02 merges are released: a
 # prefix-matching lookup for the S-0 row would then resolve to a released
 # merge and flag it, which the literal-boundary lookup must not.
-(cd "$MNS_REPO" && git tag -f v1.0.0 main >/dev/null 2>&1)
+(cd "$MNS_REPO" && echo 1.0.1 > VERSION && git add VERSION \
+    && GIT_AUTHOR_DATE="2026-09-27T01:10:00Z" GIT_COMMITTER_DATE="2026-09-27T01:10:00Z" git commit -q -m "release: v1.0.1")
 CALL_LOG="$WORK/merges-calls.log"
 : > "$CALL_LOG"
 COUNT_GIT_DIR="$WORK/fake-git-count"
@@ -3653,7 +3685,7 @@ RQ98_LOCAL_SHA="$(git -C "$RQ98_BEHIND" rev-parse refs/heads/main)"
 rq98_run "$RQ98_BEHIND"
 if printf '%s\n' "$OUT" | grep -qF "Main CI (refs/remotes/origin/main @ ${RQ98_ORIGIN_SHA:0:8}): GREEN" \
     && printf '%s\n' "$OUT" | grep -qF "VIOLATION: STALE_MAIN_REF: local main is 2 commits behind origin/main; measuring origin/main" \
-    && ! printf '%s\n' "$OUT" | grep -qF "${RQ98_LOCAL_SHA:0:8}"; then
+    && ! printf '%s\n' "$OUT" | grep -F "Main CI" | grep -qF "${RQ98_LOCAL_SHA:0:8}"; then
     ok "RQ-98: local main 2 behind: Main CI measures origin/main's SHA and STALE_MAIN_REF names N=2"
 else
     bad "RQ-98 behind case"; printf '%s\n' "$OUT" | grep -E "Main CI|STALE_MAIN_REF"
@@ -3706,19 +3738,65 @@ else
 fi
 PULSE_SH="$RQ98_SAVE_SH"
 
-echo "FC-VERDICT-FROM-UNKNOWN-INPUT -- TRAIN_LATE stays UNKNOWN when the unreleased count is UNKNOWN (tag disagrees with npm next)"
-# Reuses the T40 tag-mismatch repo (tag v9.54.2, npm next 9.55.0, one commit after the tag)
-# with a push time 26 min old: base fired TRAIN_LATE off the count the same run marked UNKNOWN.
-if run_pulse "${COMMON_ARGS[@]}" "PULSE_REPO_ROOT=$TAG_MISMATCH_REPO" "PULSE_MAIN_REF=main" \
-    "BOARD_MD=$BOARD_CLEAN" "PULSE_NPM_CMD=cat $NPM_MISMATCH_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
-    "PULSE_LAST_TRAIN_PUSH=1790472840" \
-    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$TAG_MISMATCH_REPO" "${WT_CLEAN[@]}")"; then rc=0; else rc=$?; fi
+echo "FC-VERDICT-FROM-UNKNOWN-INPUT -- release state comes from last_release_point (VERSION), never a stale local tag"
+# Local tag v1.0.0 lags VERSION by three releases (1.0.3), npm next = 1.0.3.
+# Push time 26 min old. Base counted commits since the stale tag, saw a tag/npm
+# mismatch and went UNKNOWN, so the 1-commit case below could not fire TRAIN_LATE.
+STALE_TAG_A="$WORK/stale-tag-a"
+mkdir -p "$STALE_TAG_A"
+(
+    cd "$STALE_TAG_A" || exit 1
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "test"
+    echo seed > file.txt
+    echo 1.0.0 > VERSION
+    git add file.txt VERSION
+    GIT_AUTHOR_DATE="2026-09-26T00:00:00Z" GIT_COMMITTER_DATE="2026-09-26T00:00:00Z" git commit -q -m "release: v1.0.0"
+    git tag v1.0.0
+    for v in 1.0.1 1.0.2 1.0.3; do
+        echo "$v" > VERSION
+        echo "$v" >> file.txt
+        git add VERSION file.txt
+        GIT_AUTHOR_DATE="2026-09-27T01:0${v##*.}:00Z" GIT_COMMITTER_DATE="2026-09-27T01:0${v##*.}:00Z" \
+            git commit -q -m "release: v$v"
+    done
+)
+STALE_TAG_B="$WORK/stale-tag-b"
+cp -R "$STALE_TAG_A" "$STALE_TAG_B"
+(
+    cd "$STALE_TAG_B" || exit 1
+    echo post > post.txt
+    git add post.txt
+    GIT_AUTHOR_DATE="2026-09-27T01:30:00Z" GIT_COMMITTER_DATE="2026-09-27T01:30:00Z" git commit -q -m "unreleased change after v1.0.3"
+)
+NPM_STALE_JSON="$WORK/npm-stale.json"
+python3 -c "
+import json
+print(json.dumps({'created': '2020-01-01T00:00:00.000Z', 'modified': '2026-09-27T01:03:00.000Z', '1.0.3': '2026-09-27T01:03:00.000Z'}))
+" > "$NPM_STALE_JSON"
+stale_tag_run() {  # repo
+    if run_pulse "${COMMON_ARGS[@]}" "PULSE_REPO_ROOT=$1" "PULSE_MAIN_REF=main" \
+        "BOARD_MD=$BOARD_CLEAN" "PULSE_NPM_CMD=cat $NPM_STALE_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+        "PULSE_LAST_TRAIN_PUSH=1790472840" \
+        "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$1" "${WT_CLEAN[@]}")"; then rc=0; else rc=$?; fi
+}
+stale_tag_run "$STALE_TAG_A"
 if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: TRAIN_LATE" \
-    && printf '%s\n' "$OUT" | grep -qF "Train push cadence: UNKNOWN (merged-but-unreleased count is UNKNOWN" \
-    && printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*train_late"; then
-    ok "TRAIN_LATE reports UNKNOWN, never a VIOLATION, when the unreleased count is UNKNOWN"
+    && printf '%s\n' "$OUT" | grep -qF "Merged-but-unreleased age: none (all commits released at v1.0.3)" \
+    && ! printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*unreleased_merge_age"; then
+    ok "tag 3 releases stale, 0 commits after the VERSION commit, push 26 min old: released at v1.0.3, no TRAIN_LATE"
 else
-    bad "FC-VERDICT-FROM-UNKNOWN-INPUT TRAIN_LATE case: output follows"
+    bad "FC-VERDICT-FROM-UNKNOWN-INPUT 0-commit case: output follows"
+    printf '%s\n' "$OUT"
+fi
+stale_tag_run "$STALE_TAG_B"
+if printf '%s\n' "$OUT" | grep -q "^VIOLATION: TRAIN_LATE" \
+    && printf '%s\n' "$OUT" | grep -qF "(1 commit(s) since v1.0.3, oldest" \
+    && ! printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*train_late"; then
+    ok "tag 3 releases stale, 1 commit after the VERSION commit, push 26 min old: TRAIN_LATE fires"
+else
+    bad "FC-VERDICT-FROM-UNKNOWN-INPUT 1-commit case: output follows"
     printf '%s\n' "$OUT"
 fi
 

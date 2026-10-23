@@ -1658,25 +1658,60 @@ else:
 # merge age cross-checks git instead of trusting a table cell.
 
 
-# --- 4b. merged-but-unreleased age, cross-checked against git --------------
-def check_unreleased_merge_age():
-    # Pin to MAIN_REF explicitly: with no ref argument, `git describe` walks
-    # from the CALLING PROCESS'S OWN HEAD, which is wrong whenever this script
-    # runs from a builder worktree checked out somewhere other than main (the
-    # documented, and intended, way to run it) -- see PULSE_MAIN_REF's header
-    # comment. Reviewer-reproduced from a scratch checkout at an older tag.
-    rc, out, _ = git(["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", MAIN_REF])
+# --- 4b. merged-but-unreleased age, from the last release point -------------
+# ONE resolver for release state (FC-VERDICT-FROM-UNKNOWN-INPUT). A local
+# v* tag is NOT release truth: the main checkout does not fetch tags, so the
+# newest local tag goes stale by whole minors. The release point is the last
+# commit on MAIN_REF's first-parent chain that changed VERSION, plus the
+# VERSION value at that commit (every release is a VERSION push, D96/D102).
+# That is cross-checked against npm `next` from the SAME npm_result (no second
+# network call). A mismatch is a state, not an unknown: npm lagging VERSION
+# means the publish is pending or lagging; npm ahead of VERSION means the
+# local main is behind. Both are reported explicitly; the commit count after
+# the release commit stays valid either way. Only an unreadable VERSION
+# history is UNKNOWN. --first-parent: without it the walk enters a merged
+# branch's own history and reads pre-merge authorship times, which produced a
+# false UNRELEASED_MERGE on ordinary swarm `merge:` commits.
+_VERSION_SHA_UNKNOWN = object()  # the git call itself failed, distinct from
+                                  # "it succeeded and VERSION has no history"
+
+
+def resolve_version_bump_sha():
+    rc, out, _ = git(["log", "-1", "--format=%H", MAIN_REF, "--", "VERSION"])
     if rc != 0:
+        return _VERSION_SHA_UNKNOWN
+    sha = out.strip()
+    return sha or None  # None: no commit ever touched VERSION on this ref -- n/a, not unknown
+
+
+def last_release_point():
+    sha = resolve_version_bump_sha()
+    if sha is _VERSION_SHA_UNKNOWN or sha is None:
         return None
-    tag = out.strip()
-    # --first-parent: without it, this walks INTO a merged branch's own
-    # history and finds commits' ORIGINAL authorship/commit timestamps, which
-    # can be much older than when they actually landed on MAIN_REF via merge.
-    # That produced a false UNRELEASED_MERGE positive on ordinary swarm
-    # `merge:` commits whose source branch had older pre-merge commits.
-    # --first-parent restricts the walk to MAIN_REF's own direct history, so
-    # "oldest commit since the tag" reflects real merge order/time.
-    rc, out, _ = git(["log", "--first-parent", "%s..%s" % (tag, MAIN_REF), "--format=%H %ct"])
+    rc, out, _ = git(["show", "-s", "--format=%ct", sha])
+    if rc != 0 or not out.strip():
+        return None
+    ct = float(out.strip())
+    rc, out, _ = git(["show", "%s:VERSION" % sha])
+    version = out.strip()
+    if rc != 0 or not version:
+        return None
+    npm_next = npm_result.get("next_version") if npm_result is not None else None
+    return {
+        "sha": sha,
+        "version": version,
+        "label": "v" + version,
+        "time": ct,
+        "npm_next": npm_next,
+        "npm_mismatch": npm_next is not None and npm_next != version,
+    }
+
+
+def check_unreleased_merge_age():
+    point = last_release_point()
+    if point is None:
+        return None
+    rc, out, _ = git(["log", "--first-parent", "%s..%s" % (point["sha"], MAIN_REF), "--format=%H %ct"])
     if rc != 0:
         return None
     commits = []
@@ -1684,53 +1719,29 @@ def check_unreleased_merge_age():
         parts = line.split()
         if len(parts) == 2:
             commits.append((parts[0], float(parts[1])))
-    if not commits:
-        return {"tag": tag, "unreleased_commits": 0, "oldest_age_min": None, "oldest_sha": None}
-    oldest_sha, oldest_t = min(commits, key=lambda pair: pair[1])
-    return {
-        "tag": tag,
-        "unreleased_commits": len(commits),
-        "oldest_age_min": (NOW - oldest_t) / 60.0,
-        "oldest_sha": oldest_sha,
+    result = {
+        "tag": point["label"], "sha": point["sha"], "time": point["time"],
+        "npm_next": point["npm_next"], "npm_mismatch": point["npm_mismatch"],
+        "unreleased_commits": len(commits), "oldest_age_min": None, "oldest_sha": None,
     }
+    if commits:
+        oldest_sha, oldest_t = min(commits, key=lambda pair: pair[1])
+        result["oldest_age_min"] = (NOW - oldest_t) / 60.0
+        result["oldest_sha"] = oldest_sha
+    return result
 
 
 unreleased = safe(check_unreleased_merge_age)
 
-
-def _unreleased_count_unknown():
-    """True when the unreleased count/tag is UNKNOWN: the check failed, or
-    the local tag disagrees with npm next (set below, before any caller runs)."""
-    return unreleased is None or _npm_tag_mismatch is not None
-
-
-# S-139 / BACKLOG 136: the "N commit(s) since <tag>" report below trusts
-# `unreleased["tag"]` (the newest local v* tag) as ground truth for "what was
-# last released". When npm's own latest published version (from the SAME
-# npm_result computed above -- no second network call) disagrees with that
-# tag, the tag is stale (a fetch is missing, or the release process tagged
-# something npm never got), and "N commits since v9.54.2" is a confident
-# answer built on a basis known to be wrong. Report UNKNOWN instead of
-# either sub-case (0 or >0 unreleased commits) -- `unreleased` itself is left
-# untouched; every verdict check gates on _unreleased_count_unknown() so none
-# emits a VIOLATION off this UNKNOWN input (FC-VERDICT-FROM-UNKNOWN-INPUT).
-_npm_tag_mismatch = None
-if unreleased is not None and npm_result is not None:
-    _local_tag_version = unreleased["tag"][1:] if unreleased["tag"].startswith("v") else unreleased["tag"]
-    _npm_latest_version = npm_result.get("next_version")
-    if _npm_latest_version is not None and _local_tag_version != _npm_latest_version:
-        _npm_tag_mismatch = (unreleased["tag"], _npm_latest_version)
-
 if unreleased is None:
     mark_unknown("unreleased_merge_age")
-    emit("Merged-but-unreleased age: UNKNOWN (git tag/log check failed)")
-elif _npm_tag_mismatch is not None:
-    mark_unknown("unreleased_merge_age")
-    emit(
-        "Merged-but-unreleased age: UNKNOWN (local tag %s disagrees with npm next %s)"
-        % _npm_tag_mismatch
-    )
+    emit("Merged-but-unreleased age: UNKNOWN (VERSION history on %s could not be read)" % MAIN_REF)
 else:
+    if unreleased["npm_mismatch"]:
+        emit(
+            "Release point: %s at %s; npm next is %s (publish pending or lagging, or main behind npm)"
+            % (unreleased["tag"], unreleased["sha"][:8], unreleased["npm_next"])
+        )
     if unreleased["unreleased_commits"] == 0:
         emit("Merged-but-unreleased age: none (all commits released at %s)" % unreleased["tag"])
         merged_rows = [rid for rid, tok, _ in board_rows if tok == "merged"]
@@ -1827,10 +1838,9 @@ _TRAIN_LATE_THRESHOLD_MIN = 25
 
 
 def check_train_late():
-    # FC-VERDICT-FROM-UNKNOWN-INPUT: one shared rule. A check whose input
-    # (the unreleased count) this run already marked UNKNOWN reports UNKNOWN,
-    # never a VIOLATION. `_unreleased_count_unknown()` is the shared test.
-    if _unreleased_count_unknown():
+    # FC-VERDICT-FROM-UNKNOWN-INPUT: a check whose input (the release point)
+    # could not be read reports UNKNOWN, never a VIOLATION.
+    if unreleased is None:
         return None
     if unreleased["unreleased_commits"] == 0:
         return {"applicable": False}
@@ -1894,9 +1904,8 @@ else:
 # merge commit, `git show` prints a combined diff that comes back EMPTY for
 # a clean merge, which would silently misclassify a real (non-docs) slice
 # merge -- see T47b. `^1` diff works identically for an ordinary
-# non-merge commit (its only parent). Reuses `unreleased["tag"]` /
-# `_npm_tag_mismatch` (same "newest v* tag whose version equals npm's
-# next dist-tag" definition, same npm lookup, no second network call)
+# non-merge commit (its only parent). Reuses `unreleased` (the
+# last_release_point() resolver, same npm lookup, no second network call)
 # and `ci_status` (same main-CI result, with its own Tests-run-list
 # fallback already built in) rather than re-deriving either.
 def _docs_only_path(path):
@@ -1904,10 +1913,10 @@ def _docs_only_path(path):
 
 
 def check_release_cadence_d37():
-    if _unreleased_count_unknown() or npm_result is None:
+    if unreleased is None or npm_result is None:
         return None
     tag = unreleased["tag"]
-    rc, out, _ = git(["log", "--first-parent", "--format=%H %ct", "%s..%s" % (tag, MAIN_REF)])
+    rc, out, _ = git(["log", "--first-parent", "--format=%H %ct", "%s..%s" % (unreleased["sha"], MAIN_REF)])
     if rc != 0:
         return None
     commits = []
@@ -1924,10 +1933,7 @@ def check_release_cadence_d37():
         if paths and all(_docs_only_path(p) for p in paths):
             continue
         qualifying.append((sha, ct))
-    rc3, tag_out, _ = git(["log", "-1", "--format=%ct", tag])
-    if rc3 != 0 or not tag_out.strip():
-        return None
-    return {"tag": tag, "tag_time": float(tag_out.strip()), "qualifying": qualifying}
+    return {"tag": tag, "tag_time": unreleased["time"], "qualifying": qualifying}
 
 
 _RELEASE_CADENCE_THRESHOLD_MIN = 25
@@ -1990,7 +1996,7 @@ def _head_version_only():
 
 
 def check_d44():
-    if main_sha is None or _unreleased_count_unknown():
+    if main_sha is None or unreleased is None:
         return None
     runs = _tier_b_push_runs()
     if runs is None:
@@ -2014,7 +2020,7 @@ else:
         >= set(_TIER_B)
     )
     _d44_done = [parse_time_value(r.get("updatedAt") or "") for r in _d44_runs]
-    _rc2, _tag_sha, _ = git(["rev-parse", "%s^{commit}" % unreleased["tag"]])
+    _rc2, _tag_sha, _ = git(["rev-parse", "%s^{commit}" % unreleased["sha"]])
     if _d44_green and None not in _d44_done and _rc2 == 0 and _tag_sha.strip() != main_sha:
         _d44_age = (NOW - max(_d44_done)) / 60.0
         emit("Green unreleased main %s: green for %.1f min since %s" % (main_sha[:8], _d44_age, unreleased["tag"]))
@@ -2094,7 +2100,7 @@ def find_cited_merge_sha(row_text):
 
 
 def check_merged_not_released_stale():
-    if _unreleased_count_unknown():
+    if unreleased is None:
         return None
     tag = unreleased["tag"]
     try:
@@ -2126,7 +2132,7 @@ def check_merged_not_released_stale():
         # anything else (128: bad revision, a timeout under load, ...) is a
         # git failure, not "not an ancestor", and must not be swallowed the
         # same way -- same reasoning as find_merge_commit_for_id above.
-        rc, _, err = git(["merge-base", "--is-ancestor", merge_sha, tag])
+        rc, _, err = git(["merge-base", "--is-ancestor", merge_sha, unreleased["sha"]])
         if rc not in (0, 1):
             raise RuntimeError("git merge-base --is-ancestor failed for %s (%s): rc=%s: %s"
                                 % (row_id, merge_sha, rc, err.strip()))
@@ -3214,6 +3220,7 @@ else:
         )
 
 
+# resolve_version_bump_sha() lives with last_release_point() above (shared).
 # --- 13. RELEASE_ON_RED: the newest VERSION bump on main has red Tests -----
 # (D28 rule 2 / S-108's own release-time guard; this is the pulse-side
 # early-warning companion.) Reuses S-104's gh_ci cache -- keyed by the SHA
@@ -3223,18 +3230,6 @@ else:
 # SHA. A different SHA (VERSION bumped, then more commits landed) means the
 # cache cannot answer this question, so it reports UNKNOWN rather than a
 # stale or wrong guess -- never a false clean.
-_VERSION_SHA_UNKNOWN = object()  # the git call itself failed, distinct from
-                                  # "it succeeded and VERSION has no history"
-
-
-def resolve_version_bump_sha():
-    rc, out, _ = git(["log", "-1", "--format=%H", MAIN_REF, "--", "VERSION"])
-    if rc != 0:
-        return _VERSION_SHA_UNKNOWN
-    sha = out.strip()
-    return sha or None  # None: no commit ever touched VERSION on this ref -- n/a, not unknown
-
-
 def _tests_conclusion_from_runs(runs_json):
     """Parse a gh-run-list JSON array (status, conclusion, workflowName) and
     return the Tests workflow's conclusion for its most recent completed
