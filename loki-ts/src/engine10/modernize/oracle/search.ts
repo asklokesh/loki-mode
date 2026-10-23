@@ -8,11 +8,13 @@
 // with a stub provider (section 13). `realCaptureRunner` shells out to M-09's py_capture.py. Wiring
 // a real ProposeInputs (a read-only model session) is the oracle-capture orchestrator's job.
 import { spawnSync } from "node:child_process";
+import type { SpawnSyncReturns } from "node:child_process";
 import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { REPO_ROOT } from "../../../util/paths.ts";
 import { tokenFreeEnv } from "../../../util/safe_git.ts";
+import { freshPycache } from "../../../util/python.ts";
 import { oracleDir } from "../types.ts";
 import { alreadySealedInLog } from "./seal.ts";
 
@@ -168,9 +170,13 @@ export function realCaptureRunner(unitPath: string, cases: readonly CaseSpec[], 
     const lines = cases.map((c) => JSON.stringify({ entry: c.entry, args: c.args, kwargs: c.kwargs }));
     writeFileSync(casesFile, lines.length ? lines.join("\n") + "\n" : "");
 
-    const r = spawnSync(py, [
-      PY_CAPTURE_SCRIPT, "--unit", unitPath, "--cases", casesFile, "--out", outFile, "--coverage", covFile,
-    ], { encoding: "utf8", env: tokenFreeEnv(), cwd: dir });
+    const pyc = freshPycache(); // FC-PYTEST-READS-STALE-BYTECODE: the captured oracle comes from the unit's source, never a cached .pyc
+    let r: SpawnSyncReturns<string>;
+    try {
+      r = spawnSync(py, [
+        PY_CAPTURE_SCRIPT, "--unit", unitPath, "--cases", casesFile, "--out", outFile, "--coverage", covFile,
+      ], { encoding: "utf8", env: { ...tokenFreeEnv(), ...pyc.env }, cwd: dir });
+    } finally { pyc.dispose(); }
     if (r.status !== 0) {
       const firstErrLine = (r.stderr ?? "").split("\n").find((l) => l.trim().length > 0) ?? "(no stderr)";
       return captureFailed(`py_capture.py exit ${r.status}: ${firstErrLine}`);

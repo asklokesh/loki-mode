@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
-import { detectWaveCommands, nextWaveGate, verifyWave, WAVE_STEPS } from "../../../src/engine10/modernize/wave.ts";
+import { detectWaveCommands, nextWaveGate, spawnStepRunner, verifyWave, WAVE_STEPS } from "../../../src/engine10/modernize/wave.ts";
 import type { InventoryResult } from "../../../src/engine10/modernize/inventory.ts";
 import type { StepCommand, StepRun, StepRunner } from "../../../src/engine10/modernize/wave.ts";
 
@@ -223,5 +223,13 @@ describe("verifyWave optional steps (M-27E, D2)", () => {
     const b = verifyWave({ repoDir: "/x", wave: 1, commands: { ...all, build: null }, optional: ["integration"], run: ok });
     expect(b.verified).toBe(false);
     expect(b.failedStep).toBe("build");
+  });
+});
+
+describe("FC-PYTEST-READS-STALE-BYTECODE: the wave step runner", () => {
+  it("runs a python step under a fresh pycache prefix and a plain step without one", () => {
+    const probe = "import os,sys; sys.exit(0 if os.environ.get('PYTHONPYCACHEPREFIX') and os.environ.get('PYTHONDONTWRITEBYTECODE') == '1' else 3)";
+    expect(spawnStepRunner("build", { argv: ["python3", "-c", probe] }, tmpdir()).status).toBe(0);
+    expect(spawnStepRunner("build", { argv: ["/bin/sh", "-c", 'test -z "$PYTHONPYCACHEPREFIX"'] }, tmpdir()).status).toBe(0);
   });
 });

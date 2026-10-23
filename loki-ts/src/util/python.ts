@@ -396,6 +396,12 @@ export function freshPycache(): { env: Record<string, string>; dispose: () => vo
   return { env: { PYTHONDONTWRITEBYTECODE: "1", PYTHONPYCACHEPREFIX: prefix }, dispose: () => rmSync(prefix, { recursive: true, force: true }) };
 }
 
+/** True for a python or pytest child (by command or by a pytest argument such as `python3 -m pytest`). */
+export function isPythonCommand(cmd: string, args: readonly string[]): boolean {
+  const b = (x: string) => x.slice(x.lastIndexOf("/") + 1);
+  return /^(?:python[\d.]*|pytest|py\.test)$/.test(b(cmd)) || args.some((a) => /^(?:pytest|py\.test)$/.test(b(a)));
+}
+
 /** One pytest child under the pinned configuration. Bytecode must never answer for source: no in-tree .pyc
  *  is read (fresh empty PYTHONPYCACHEPREFIX) or written (PYTHONDONTWRITEBYTECODE), pytest's cache plugin is
  *  off, and xfail is strict (-rX lists the rest). The junit file lives in a fresh mkdtemp dir so no stale
