@@ -36,10 +36,15 @@ const KILLED: Res = { ...DONE, exit: 124, killed: true };
 const CRASH: Res = { ...DONE, exit: 1 };
 
 function makeCtx(run: string, outputs: () => Outputs, results: Res[], rig: Rig, runDir: string, onRun?: () => void) {
+  // Stages create <runDir>/repo/.loki, and an existing non-git directory makes every safeGit call spawn real git (60-90ms each
+  // under load; the machine cases made ~600 such calls and exceeded the 120s test budget). A missing directory fails the spawn in
+  // ~2ms with the same null result, and the matrix judges models, not git, so the directory is cleared at each stage boundary.
+  const noRepo = (): void => { rmSync(join(runDir, "repo"), { recursive: true, force: true }); };
+  noRepo();
   return {
     runId: "e10-mx", repoDir: join(runDir, "repo"), runDir, baseSha: "x", branch: "b", provider: "claude", model: run, deep: false, capS: 900,
-    emit: (type: string, _s: unknown, data: Record<string, unknown>) => { rig.events.push({ type, data }); },
-    sessions: { async run(o: { stage: string; model?: string }) { rig.calls.push({ stage: o.stage, model: o.model }); onRun?.(); return results[Math.min(rig.calls.length - 1, results.length - 1)]!; } },
+    emit: (type: string, _s: unknown, data: Record<string, unknown>) => { rig.events.push({ type, data }); if (type === "stage.started") noRepo(); },
+    sessions: { async run(o: { stage: string; model?: string }) { noRepo(); rig.calls.push({ stage: o.stage, model: o.model }); onRun?.(); return results[Math.min(rig.calls.length - 1, results.length - 1)]!; } },
     tests: { async detect() { return { runners: [], tests: [] }; }, impacted: () => [] },
     cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
     clock: { now: () => 0 }, outputs,

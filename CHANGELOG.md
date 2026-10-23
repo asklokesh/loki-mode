@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - The OS sandbox now denies writes to the workspace git pointer (the `.git` file or directory) and to the linked-worktree `commondir`, `gitdir` and `config.worktree` files, and to hooks and config in a primary checkout, so confined code can no longer repoint git at a planted config that runs a command in the next unconfined git call. Per-worktree commit state (HEAD, index, logs) stays writable. Every unconfined git call in the harness now runs with `core.fsmonitor` and `core.hooksPath` neutralised and, in the TypeScript safe-git wrapper, a pinned GIT_DIR (FC-SANDBOX-GIT-REDIRECT).
+## v11.65.4 (2026-10-23)
+
+### Fixed
+- The first-run gate test now matches the real context trigger in loki-ts/src/e10ext/context.ts, so its stub gate no longer passes cases the real gate fails (357c3-r2). Approval: "tl-324: APPROVE pd/357c3-r2 46bf09fbe29754ff65f46e4cdc61d8748c865b6d. Single commit on origin/main (no stacked parents)".
+
+## v11.65.3 (2026-10-23)
+
+### Fixed
+- The stale-dist guard in bin/loki and autonomy/loki now compares every loki-ts/src file, not cli.ts alone, so an edited source file triggers a rebuild (dist-freshness-guard). Approval: "APPROVE pd/dist-freshness-guard b8c98f864e2df03898addd7682de73a7b8a42771 (tl-2, MEDIUM)".
+
+## v11.65.2 (2026-10-23)
+
+
+
+### Fixed
+- loki verify --fast and its flags appear in help and in the bash and zsh completions, pinned by the drift test (pd/fastcomp). Approval: "APPROVE pd/fastcomp d5798c76f (tl-2, LOW)", full SHA d5798c76fc4e4e21f4b5d9d81b8a1fa997a98bbe.
+
+## v11.65.1 (2026-10-23)
+
+
+
+### Fixed
+- The supervisor_backstop and route_matrix test bounds scale with machine load, the SIGTERM to SIGKILL gap is measured from the worker's own signal timestamp, and the fake repo dir is cleared at each stage boundary (pd/loadaware). Approval: "APPROVE (LOW, tl-324): pd/loadaware branch head at full SHA 00b2a89160fba583be733074a1f74b0ef1175b49 (merge commit; second parent d8fec54ac is origin/main)". Shipped by merging that head; it contains 2264accef, 7385f1da5, 8722d92ae and 28b795fd1.
+
+## v11.65.0 (2026-10-23)
+
+
+
+### Added
+- The engine10 machine journals a per-stage diff stat for stages that change the tree, and the wall stage journals its own diff stat (pd/stage-diffstat). Approval: "APPROVE (MEDIUM, tl-324): pd/stage-diffstat branch head at full SHA c7a5f00f7b869e227062afe4529a8f11be19409d (merge commit, parents f365f4e2a and origin/main 5cae48655)". Shipped by merging that head.
+
+## v11.64.0 (2026-10-23)
+
+
+
+### Added
+- The dashboard run replay scrubber shows one position per stage with the journal's diff, tests and cost (#422, R100-082). Approval: "APPROVE (LOW, tl-324): #422 / R100-082 run replay scrubber, pd/r422 at full SHA 6f10c92797677550c191e9bf115f5d1aa4f89ff7".
+
+## v11.63.10 (2026-10-23)
+
+### Fixed
+- The dashboard derives the child LOKI_* env allowlist from one data file and guards every runner env read (FC-CHILD-ENV-HAND-ALLOWLIST-DRIFT, #305). Approval: "APPROVE pd/rq51-child-env2 c38467306 (tl-2, MEDIUM). 41 passed, two mutants red and restored, FC row present, merge-tree rc=0, no dashes or emoji."
+
 ## v11.63.9 (2026-10-23)
 
 ### Fixed

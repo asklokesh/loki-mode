@@ -13,6 +13,8 @@ export interface TimelineLine {
   outcome: string;
   detail?: string;
   files?: number; // Wall: how many acceptance-check files it sealed
+  changed_files?: string[]; // the stage's own changed_files, as the journal recorded them (verify)
+  tests?: { pass: number; fail: number }; // the stage's own checks, counted from the journal (verify)
 }
 
 const obj = (d: unknown): Record<string, unknown> => (d && typeof d === "object" ? (d as Record<string, unknown>) : {});
@@ -62,7 +64,10 @@ export function buildTimeline(events: RunEvent[]): TimelineLine[] {
       const reason = str(d.skipped_reason) ?? str(d.reason);
       const outcome = d.skipped === true ? "skipped" : "completed";
       const files = Array.isArray(d.files) ? d.files.length : undefined;
-      if (line) Object.assign(line, { duration_s: dur, outcome, model: models.get(e.stage) ?? line.model, cost_usd: costOf(e.stage), detail: reason ?? undefined, files });
+      const changed_files = Array.isArray(d.changed_files) ? d.changed_files.filter((f): f is string => typeof f === "string") : undefined;
+      const checks = Array.isArray(d.checks) ? d.checks.map(obj) : undefined;
+      const tests = checks ? { pass: checks.filter((c) => c.result === "pass").length, fail: checks.filter((c) => c.result === "fail").length } : undefined;
+      if (line) Object.assign(line, { duration_s: dur, outcome, model: models.get(e.stage) ?? line.model, cost_usd: costOf(e.stage), detail: reason ?? undefined, files, changed_files, tests });
       else lines.push({ key: `s${e.seq}`, ts: e.ts ?? null, kind: "stage", label: e.stage, duration_s: dur, model: models.get(e.stage) ?? null, cost_usd: costOf(e.stage), outcome, detail: reason ?? undefined, files });
       open.delete(e.stage);
     } else if (e.type === "pr.opened") {
@@ -74,4 +79,17 @@ export function buildTimeline(events: RunEvent[]): TimelineLine[] {
     }
   }
   return lines;
+}
+
+export interface ScrubStep {
+  stage: string;
+  outcome: string;
+  changed_files: string[] | null; // null: the journal recorded no file list for this stage
+  tests: { pass: number; fail: number } | null;
+  cost_usd: number | null | "no-session";
+}
+
+/** One scrubber position per stage line; every value is what the journal recorded for that stage, null otherwise. */
+export function buildScrubber(events: RunEvent[]): ScrubStep[] {
+  return buildTimeline(events).filter((l) => l.kind === "stage").map((l) => ({ stage: l.label, outcome: l.outcome, changed_files: l.changed_files ?? null, tests: l.tests ?? null, cost_usd: l.cost_usd }));
 }

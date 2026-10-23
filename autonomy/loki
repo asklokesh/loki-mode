@@ -1856,7 +1856,7 @@ show_help_all() {
     echo "  steer \"<note>\"    Nudge a running build (Loki 10 engine; legacy loop needs LOKI_PROMPT_INJECTION=true)"
     echo ""
     echo "Verify / trust:"
-    echo "  verify [base]    Deterministic PR verification (CI-gate exit codes)"
+    echo "  verify [base] [--fast]  Deterministic PR verification (CI-gate exit codes; --fast: no model, no network)"
     echo "  verify-pr <pr>   Verify a PR against its linked issue; 'verify-pr respond <pr>' fixes review comments"
     echo "  keys export     Print the public receipt-signing key (JWK) for third-party verify --pubkey"
     echo "  review [opts]    Standalone code review with quality gates"
@@ -15471,7 +15471,7 @@ _loki_bun_delegate() {
     elif [ -f "$root/loki-ts/dist/loki.js" ]; then
         cli="$root/loki-ts/dist/loki.js"
         # Dev checkout: a gitignored dist older than src is stale (same rule as bin/loki).
-        if [ -f "$root/loki-ts/src/cli.ts" ] && [ "$root/loki-ts/src/cli.ts" -nt "$cli" ]; then
+        if [ -f "$root/loki-ts/src/cli.ts" ] && [ -n "$(find "$root/loki-ts/src" -type f -newer "$cli" -print -quit 2>/dev/null)" ]; then
             cli="$root/loki-ts/src/cli.ts"
         fi
     elif [ -f "$root/loki-ts/src/cli.ts" ]; then
