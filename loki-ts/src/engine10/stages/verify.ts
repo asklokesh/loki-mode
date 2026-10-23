@@ -6,6 +6,7 @@
 import { installOwned } from "../../project_model/install.ts";
 import { scopedOutOf } from "../../project_model/scope.ts";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { freshPycache } from "../../util/python.ts";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative } from "node:path";
 import { testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
@@ -66,13 +67,13 @@ export { ran, skipped } from "../../util/check_result.ts"; // FC-16: the one sha
 export { testConfigChanged } from "../../features/runner_config.ts"; // D86 FC-09r: the one runner-config registry lives in features/
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
  *  never retried (a hung check must not burn 2x its timeout). `out` is a 64 KB tail, unread when cut. The result comes from exit + timeout, never pipe EOF (an orphaned grandchild may hold the pipes). */
-/** FC-PYTEST-READS-STALE-BYTECODE: a python or pytest child must never answer from an in-tree .pyc (same size and mtime second as an edited source, or one an agent planted). Same pinning as util/python.ts spawnPytest: a fresh empty PYTHONPYCACHEPREFIX and no bytecode written. */
+/** FC-PYTEST-READS-STALE-BYTECODE: a python or pytest child must never answer from an in-tree .pyc (same size and mtime second as an edited source, or one an agent planted). Shared pin: freshPycache in util/python.ts. */
 const isPythonRun = (cmd: string, args: string[]): boolean => /^(?:python[\d.]*|pytest|py\.test)$/.test(basename(cmd)) || args.some((a) => /^(?:pytest|py\.test)$/.test(basename(a)));
 async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string }> {
   if (!Bun.which(cmd, { PATH: opts.path ?? process.env["PATH"] ?? "" })) return { ok: false, missing: true, cut: false, out: "" };
   if (isPythonRun(cmd, args)) {
-    const pyc = mkdtempSync(join(tmpdir(), "loki-pyc-"));
-    try { return await spawnOnce(cmd, args, cwd, signal, opts, { PYTHONDONTWRITEBYTECODE: "1", PYTHONPYCACHEPREFIX: pyc }); } finally { rmSync(pyc, { recursive: true, force: true }); }
+    const pyc = freshPycache();
+    try { return await spawnOnce(cmd, args, cwd, signal, opts, pyc.env); } finally { pyc.dispose(); }
   }
   return spawnOnce(cmd, args, cwd, signal, opts, {});
 }

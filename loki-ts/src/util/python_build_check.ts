@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { commandExists, run } from "./shell.ts";
+import { freshPycache } from "./python.ts";
 import type { ShellOpts, ShellResult } from "./shell.ts";
 
 export type PyExec = (argv: readonly string[], opts: ShellOpts) => Promise<ShellResult>;
@@ -94,7 +95,8 @@ export async function runPythonTests(
   };
   const timed = async (argv: readonly string[]): Promise<{ exitCode: number; output: string }> => {
     const t0 = Date.now();
-    const r = await exec(argv, { cwd, timeoutMs, env: {} });
+    const pyc = freshPycache(); // FC-PYTEST-READS-STALE-BYTECODE
+    let r: ShellResult; try { r = await exec(argv, { cwd, timeoutMs, env: pyc.env }); } finally { pyc.dispose(); }
     const timedOut = r.exitCode !== 0 && Date.now() - t0 >= timeoutMs;
     return { exitCode: timedOut ? 124 : r.exitCode, output: joinOut(r) };
   };
