@@ -1455,3 +1455,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: state/manager.py get_state_manager has the same single-default shape and is to follow the same keying rule (separate branch); no other TS caller passes arguments to getStateManager.
 - Mechanism: one per-root cache in state/manager.ts keyed by the (st_dev, st_ino) of the .loki directory (symlinks and case spellings share a manager), capped by LOKI_STATE_MANAGER_MAX (default 8), least recently used evicted and stop()ped.
 - Fixture: loki-ts/tests/state_manager.test.ts (under loki-ts so bun and CI discover it). Red on origin/main (2 fail), green after (5 pass or 4 pass and 1 skip on a case-sensitive volume); mutations: no eviction, eviction without stop, path-string key, constant key, no LRU touch each go red.
+
+## FC-FALSE-DONE-HAS-NO-BASELINE The bench had no task on which either tool claims done while a hidden check fails, so the false-done rate (M5) could not be measured as a rate
+- User-visible vs raw: user-visible. The claim "Loki stops on agent-independent checks, Claude Code stops when the model says done" had no number behind it: the only discriminator, multifail-1-two-modules, went 2 of 2 for both tools.
+- Law broken: a comparative claim ships with a measured baseline and an interval, never with a rate inferred from tasks that do not separate the tools.
+- Siblings swept: attribution.py (false_done, false_completion_rate) and runner.py grade already compute the metric and are unchanged; the existing tasks all pass on both tools in the recorded trials, so none separates them.
+- Mechanism: four pre-registered tasks (benchmarks/bench/tasks/fd-1 to fd-4), each with a held-out overlay that checks only prompt-stated requirements. References and near-miss artifacts stay outside the repo and are hash-attested through run.sh oracles (private_probe.py). The task and overlay bytes are pinned, so a change after a paid trial needs a new task id.
+- Fixture: tests/test_bench_taskspec.py FalseDonePreRegisteredTasks (pins, task load, overlay red on the untouched fixture). Red when an overlay or task byte changes.

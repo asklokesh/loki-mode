@@ -370,5 +370,65 @@ class TestPinnedManifest(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class FalseDonePreRegisteredTasks(unittest.TestCase):
+    """CW-20 (#355): four pre-registered false-done tasks (benchmarks/bench/tasks/fd-*.json).
+
+    The pins are the pre-registration: a task or its held-out overlay may not change after a paid
+    trial has seen it. Changing one means a new task id, not an edit. The reference and near-miss
+    solutions stay outside the repo (private_probe.py, private_attestation.json).
+    """
+
+    PINS = {
+        "fd-1-kv-parser": (
+            "f48ae668b4bffe200e983454ffaf9aee65618aadec540c1a0550fe4827c565fa",
+            "192ebb13cda52c447adcf95f67eb91b2e2e41a88573296837db92bc7ee942f24",
+        ),
+        "fd-2-two-module-untested": (
+            "4ebf9799514ed80dd7908c2884cc7387ffb7a9e9223b85721ce9f731c56998c4",
+            "fd0e10d484df1bdb3ff13973e8d656b171a243d098aa227b7df667ead2134379",
+        ),
+        "fd-3-refactor-invariant": (
+            "db96e1f64d9e105b589058cb3c18fc0a5d806086e455a1b8694b753703640039",
+            "c7ea290e32e582dfcca09aa81a1c44c45ebfe8e908d8150132619c7dfd0bac59",
+        ),
+        "fd-4-cli-exit-codes": (
+            "fc378ec7523cec64be5adaee238210198039f3d955e1bf1501928cec59a00f5d",
+            "caa8f523c7f3682ca8f9fa7503e9f6a736a06028ce8b0c5d3a0034f8f5c25d7e",
+        ),
+    }
+
+    def _bench(self, *p):
+        return _REPO_ROOT.joinpath("benchmarks", "bench", *p)
+
+    def test_task_and_overlay_are_pre_registered(self):
+        import hashlib
+        for tid, (task_sha, overlay_sha) in self.PINS.items():
+            with self.subTest(tid):
+                got_task = hashlib.sha256(self._bench("tasks", tid + ".json").read_bytes()).hexdigest()
+                got_overlay = hashlib.sha256(self._bench("fixtures", tid + "-overlay", "check_acceptance.py").read_bytes()).hexdigest()
+                self.assertEqual(got_task, task_sha, "task changed after pre-registration")
+                self.assertEqual(got_overlay, overlay_sha, "overlay changed after pre-registration")
+
+    def test_each_task_loads_and_names_its_overlay(self):
+        for tid in self.PINS:
+            with self.subTest(tid):
+                spec = runner.load_task(str(self._bench("tasks", tid + ".json")))
+                self.assertEqual(spec["id"], tid)
+                self.assertTrue(self._bench("tasks", spec["acceptance"]["overlay"]).joinpath("check_acceptance.py").is_file())
+
+    def test_overlay_fails_on_the_untouched_fixture(self):
+        import subprocess
+        for tid in self.PINS:
+            with self.subTest(tid):
+                tmp = tempfile.mkdtemp()
+                try:
+                    shutil.copytree(self._bench("fixtures", tid), tmp, dirs_exist_ok=True)
+                    r = subprocess.run([sys.executable, str(self._bench("fixtures", tid + "-overlay", "check_acceptance.py"))],
+                                       cwd=tmp, capture_output=True, text=True, timeout=60)
+                    self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                finally:
+                    shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()
