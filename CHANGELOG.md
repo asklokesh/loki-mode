@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.67.8 (2026-10-23)
+
+### Fixed
+- The trust-core detector test now anchors its six mutation probes on single-line finds, with checks for stale, no-op and non-unique anchors (#214). Approval: "tl-324 APPROVE (LOW/MEDIUM, test file only) pd/rq57 single commit 68d8429607cdf119e0e913b38d19947762af5b4d".
+
 ## v11.67.7 (2026-10-23)
 
 ### Fixed
