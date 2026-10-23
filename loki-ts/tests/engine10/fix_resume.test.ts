@@ -728,6 +728,8 @@ describe("FC-AUTORESUME-DROPS-START-FLAGS: the typed start flags reach both resu
         expect(await startRecovery(dir, "t", true, { ...deps, flags })).toBeNull();
         expect(say.join("")).toContain(named);
         expect(say.join("")).toContain("LOKI_NO_AUTO_RESUME");
+        expect(say.join("")).toContain("not resuming interrupted run");
+        expect(say.join("")).not.toContain("--resume refused");
       }
       expect(seen.length).toBe(0);
       expect(await startRecovery(dir, "t", true, { ...deps, flags: { provider: "claude" } })).toBe(0);
