@@ -366,6 +366,9 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
   // its own web and credential deny list ahead of the voter guard, so the flag
   // can appear more than once; the guard is judged on the union, never on the
   // first occurrence.
+  // Measured on claude 2.1.309: repeated --disallowedTools flags merge (both orders
+  // drop WebFetch and Edit from the init tool list; a single --disallowedTools Edit
+  // keeps WebFetch), so two flags on one argv lose no deny entry.
   function denyValues(argv: string[]): string[] {
     return argv.flatMap((a, i) => (a === "--disallowedTools" ? [argv[i + 1] ?? ""] : []));
   }
