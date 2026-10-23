@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.9 (2026-10-23)
+
+### Fixed
+- The cline version probe now spawns with a token-free environment instead of the full parent environment, so the provider version check no longer exposes secrets to the child process. Approval: "Ship line: pd/p0-envspawn-rc f5aee29de APPROVED by rev-c (HIGH). Range 42404106a..f5aee29de, a single commit f5aee29de".
+
 ## v11.60.8 (2026-10-23)
 
 ### Fixed
