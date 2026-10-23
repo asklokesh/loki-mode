@@ -148,6 +148,43 @@ else
     _loki_bash_or_refuse "$@"
 fi
 
+# FC-REPO-BUNFIG-AND-ENV-REACH-ORCHESTRATOR: bun resolves bunfig.toml (preload = code) and .env
+# from the CURRENT directory, which is the user's repo, not Loki's. Every bun that runs the Loki
+# CLI therefore gets --config=/dev/null (no bunfig anywhere, so no repo preload) and --no-env-file
+# (no .env). One flag list, one exec function: no route may call bun any other way.
+# A project .env is OFF by default. LOKI_ALLOW_PROJECT_ENV=1 opts in: bash reads the cwd .env
+# itself and exports only plain names, never LOKI_*, BUN_*, NODE_*, loader, shell or PATH
+# names, and never over a variable already set (the real environment wins, as in bun).
+_LOKI_BUN_SAFE_FLAGS=(--config=/dev/null --no-env-file)
+_loki_apply_project_env() {
+    [ "${LOKI_ALLOW_PROJECT_ENV:-}" = "1" ] && [ -f ./.env ] || return 0
+    local _line _k _v
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        _line="${_line#"${_line%%[![:space:]]*}"}"
+        _line="${_line#export }"
+        case "$_line" in ''|'#'*) continue ;; esac
+        _k="${_line%%=*}"; _v="${_line#*=}"
+        [ "$_k" != "$_line" ] || continue
+        _k="${_k%"${_k##*[![:space:]]}"}"
+        case "$_k" in
+            ''|[0-9]*|*[!A-Za-z0-9_]*) continue ;;
+            LOKI_*|BUN_*|NODE_*|LD_*|DYLD_*|PATH|HOME|SHELL|IFS|ENV|BASH_ENV|BASH_*|PS4|CDPATH|GLOBIGNORE|SHELLOPTS|PROMPT_COMMAND) continue ;;
+        esac
+        [ -z "${!_k+x}" ] || continue
+        case "$_v" in
+            \"*\") _v="${_v#\"}"; _v="${_v%\"}" ;;
+            \'*\') _v="${_v#\'}"; _v="${_v%\'}" ;;
+        esac
+        export "$_k=$_v"
+    done < ./.env
+}
+# _loki_exec_bun <bun> <args...>: exec the Loki CLI entry under <bun> with repo config disabled.
+_loki_exec_bun() {
+    local _bun="$1"; shift
+    _loki_apply_project_env
+    exec "$_bun" "${_LOKI_BUN_SAFE_FLAGS[@]}" "$BUN_CLI" "$@"
+}
+
 # FC-30: an install artifact must not outlive the install that made it. If a provider
 # skill link Loki created is dangling or points at another Loki install, repoint it
 # to this one. A few lstat/readlink calls, no network, silent when already correct.
@@ -164,7 +201,7 @@ if [ -t 1 ] && [ -z "${CI:-}" ] && [ "${LOKI_NO_COMPLETIONS:-}" != "1" ] \
    && [ "${1:-}" != "completion" ] && [ "${1:-}" != "__complete" ] \
    && [ "$(cat "${HOME}/.loki/completions-version" 2>/dev/null)" != "$(cat "$REPO_ROOT/VERSION" 2>/dev/null)" ] \
    && command -v bun >/dev/null 2>&1; then
-    bun "$BUN_CLI" completion --auto </dev/null || true
+    ( _loki_exec_bun bun completion --auto </dev/null ) || true
 fi
 
 # v7.88.1 covert-path fix (council cF_r2 + cG_r2 sentinel edge): under on-by-default
@@ -492,7 +529,7 @@ if [ "${1:-}" = "modernize" ]; then
         if [ "$_loki_mod_a" = "--to" ] || [ "${2:-}" = "unit" ]; then
             _lb=$(_loki_bun)
             [ -n "$_lb" ] || { echo "Error: loki modernize needs bun." >&2; exit 1; }
-            exec "$_lb" "$BUN_CLI" engine10 "$@"
+            _loki_exec_bun "$_lb" engine10 "$@"
         fi
     done
     unset _loki_mod_a
@@ -584,7 +621,7 @@ if [ "${1:-}" = "start" ]; then
                 _lb=$(_loki_bun)
                 [ -n "$_lb" ] || { echo "loki: --attempts $_loki_att_n needs bun (install from https://bun.sh); refusing to run a single attempt silently." >&2; exit 1; }
                 _loki_attempts_refuse "${@:2}"
-                exec "$_lb" "$BUN_CLI" "$@"
+                _loki_exec_bun "$_lb" "$@"
                 ;;
             *) echo "loki: --attempts must be an integer from 1 to 5, got '$_loki_att_n'." >&2; exit 2 ;;
         esac
@@ -600,7 +637,7 @@ if [ "${1:-}" = "start" ]; then
             --spec|--spec=*|--spec-first)
                 _lb=$(_loki_bun)
                 [ -n "$_lb" ] || { echo "loki: --spec needs bun (install from https://bun.sh)." >&2; exit 1; }
-                exec "$_lb" "$BUN_CLI" "$@"
+                _loki_exec_bun "$_lb" "$@"
                 ;;
         esac
     done
@@ -615,7 +652,7 @@ if [ "${1:-}" = "start" ]; then
     for _loki_da in "${@:2}"; do [ "$_loki_da" = "--dry-run" ] && _loki_dry=1; done
     if [ "$_loki_dry" = "1" ] && ! _loki_start_needs_bash "${@:2}"; then
         _loki_dry_bun="$(_loki_bun)"
-        [ -n "$_loki_dry_bun" ] && exec "$_loki_dry_bun" "$BUN_CLI" "$@"
+        [ -n "$_loki_dry_bun" ] && _loki_exec_bun "$_loki_dry_bun" "$@"
     fi
     unset _loki_dry _loki_da _loki_dry_bun
 fi
@@ -770,7 +807,7 @@ case "v10" in
                     unset _e10_v
                     ;;
             esac
-            exec "$_lb" "$BUN_CLI" engine10 "${_e10_args[@]}"
+            _loki_exec_bun "$_lb" engine10 "${_e10_args[@]}"
         fi
         unset _e10 _e10_args _e10_hard
         ;;
@@ -812,13 +849,13 @@ fi
 # legacy route honored, or a provider engine10 cannot invoke, is refused loudly instead.
 if [ "${1:-}" = "start" ] && [ "$_LOKI_START_ATTEMPTS" = "1" ]; then
     _loki_attempts_refuse "${@:2}"
-    exec bun "$BUN_CLI" "$@"
+    _loki_exec_bun bun "$@"
 fi
 if [ "${1:-}" = "start" ] && { [ "${LOKI_SDK_LOOP:-}" = "1" ] || [ "${LOKI_SDK_LOOP:-}" = "true" ]; }; then
     if _loki_start_needs_bash "${@:2}"; then
         exec "$BASH_CLI" "$@"
     fi
-    exec bun "$BUN_CLI" "$@"
+    _loki_exec_bun bun "$@"
 fi
 
 # CLI consolidation (Phase A): `trust detail` is the grouped form of the
@@ -860,9 +897,9 @@ if [ "${1:-}" = "doctor" ]; then
     fi
     _doctor_t=$(command -v timeout || command -v gtimeout || true)
     if [ -n "$_doctor_t" ]; then
-        "$_doctor_t" -k 1 5 "$_doctor_bun" "$BUN_CLI" version >/dev/null 2>&1 || exec "$BASH_CLI" "$@"
+        "$_doctor_t" -k 1 5 "$_doctor_bun" "${_LOKI_BUN_SAFE_FLAGS[@]}" "$BUN_CLI" version >/dev/null 2>&1 || exec "$BASH_CLI" "$@"
     else
-        "$_doctor_bun" "$BUN_CLI" version >/dev/null 2>&1 || exec "$BASH_CLI" "$@"
+        "$_doctor_bun" "${_LOKI_BUN_SAFE_FLAGS[@]}" "$BUN_CLI" version >/dev/null 2>&1 || exec "$BASH_CLI" "$@"
     fi
 fi
 
@@ -908,7 +945,7 @@ if [ "${1:-}" = "report" ]; then
             ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=$(_loki_known_command "${1:-}")" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
             disown 2>/dev/null || true
         fi
-        exec bun "$BUN_CLI" "$@"
+        _loki_exec_bun bun "$@"
     fi
 fi
 
@@ -950,7 +987,7 @@ case "${1:-}" in
             ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=$(_loki_known_command "${1:-}")" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
             disown 2>/dev/null || true
         fi
-        exec bun "$BUN_CLI" "$@"
+        _loki_exec_bun bun "$@"
         ;;
     *)
         exec "$BASH_CLI" "$@"
