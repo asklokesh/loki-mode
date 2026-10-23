@@ -126,20 +126,31 @@ export interface FlowStep { action: FlowAction; target: string | null; value?: s
 export interface SpecFlow { id: string; line: number; steps: FlowStep[] }
 const FLOW_VERB = /\b(click|press|tap|type|enter|fill|submit|select|choose|open|visit)(?:s|es|ed)?\b/gi;
 const FLOW_ACTION: Record<string, FlowAction> = { click: "click", press: "click", tap: "click", type: "type", enter: "type", fill: "type", submit: "submit", select: "select", choose: "select", open: "open", visit: "open" };
+// A verb is a user action only as an imperative at clause start, after a user subject, or chained to an earlier action ("clicks X and types Y"); "returns 400 when the type field", "open source", "Select queries" are nouns and adjectives.
+const FLOW_CLAUSE_START = /(?:^|[.;:!?]\s+)\s*$/;
+// An imperative takes an object: a determiner, a quote, a path or a capitalised name, not a bare lowercase noun ("Select queries use the index").
+const FLOW_OBJECT_START = /^\s+(?:(?:the|a|an|on|in|into|to|your|this|that|each|every|my|its|all)\b|["'`/]|[A-Z0-9])/;
+const FLOW_USER_SUBJECT = /\b(?:user|users|they|you|visitor|visitors|admin|admins|I)\s+(?:(?:can|may|must|should|will|then|also|first|next)\s+)*$/i;
+const FLOW_CHAIN = /(?:,|\band|\bthen)\s+(?:(?:and|then)\s+)?$/i;
 const HOME_PATH = /(?:\/Users|\/home)\/\S+/g;
 const stated = (s: string): string | null => { const t = s.replace(HOME_PATH, "<path>").replace(/^(?:the|a|an|on|in|into|to)\s+/i, "").replace(/[\s,.;:]+$/, "").trim(); return t === "" ? null : t.slice(0, 120); };
 /** #249(a): user flows from the contract criteria (features/contract.ts parseContract). A criterion that states no user action is named NOT PROVEN, never dropped. Steps carry only the criterion's own words. */
 export function deriveFlows(criteria: readonly Criterion[]): { flows: SpecFlow[]; notProven: string[] } {
   const flows: SpecFlow[] = [], notProven: string[] = [];
   for (const c of criteria) {
-    const hits = [...c.text.matchAll(FLOW_VERB)];
+    const hits: RegExpMatchArray[] = [];
+    for (const m of c.text.matchAll(FLOW_VERB)) {
+      const before = c.text.slice(0, m.index!);
+      const chained = hits.length > 0 && FLOW_CHAIN.test(before);
+      if (chained || (FLOW_CLAUSE_START.test(before) && FLOW_OBJECT_START.test(c.text.slice(m.index! + m[0].length))) || FLOW_USER_SUBJECT.test(before)) hits.push(m);
+    }
     const steps: FlowStep[] = hits.map((m, i) => {
       const rest = c.text.slice(m.index! + m[0].length, hits[i + 1]?.index ?? c.text.length).split(/\s+(?:and|then)\s*$/i)[0]!;
       const quoted = [...rest.matchAll(/"([^"]{1,120})"/g)].map((q) => q[1]!);
       const action = FLOW_ACTION[m[1]!.toLowerCase()]!;
       if (action === "type") { const into = /\b(?:in|into)\s+(.+)$/i.exec(rest.replace(/"[^"]*"/g, "")); return { action, target: into ? stated(into[1]!) : null, ...(quoted[0] ? { value: quoted[0].replace(HOME_PATH, "<path>") } : {}) }; }
       return { action, target: quoted[0] ? quoted[0].replace(HOME_PATH, "<path>") : stated(rest.replace(/\s+(?:and|then)\b.*$/i, "")) };
-    });
+    }).filter((st) => st.target !== null);
     if (steps.length === 0) notProven.push(`${c.id}: no user action stated, flow not derived`);
     else flows.push({ id: c.id, line: c.source_line, steps });
   }
