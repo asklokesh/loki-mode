@@ -15471,7 +15471,7 @@ _loki_bun_delegate() {
     elif [ -f "$root/loki-ts/dist/loki.js" ]; then
         cli="$root/loki-ts/dist/loki.js"
         # Dev checkout: a gitignored dist older than src is stale (same rule as bin/loki).
-        if [ -f "$root/loki-ts/src/cli.ts" ] && [ "$root/loki-ts/src/cli.ts" -nt "$cli" ]; then
+        if [ -f "$root/loki-ts/src/cli.ts" ] && [ -n "$(find "$root/loki-ts/src" -type f -newer "$cli" -print -quit 2>/dev/null)" ]; then
             cli="$root/loki-ts/src/cli.ts"
         fi
     elif [ -f "$root/loki-ts/src/cli.ts" ]; then
