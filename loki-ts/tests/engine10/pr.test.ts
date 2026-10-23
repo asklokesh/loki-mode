@@ -467,6 +467,23 @@ describe("RECOVERY: interrupted run resume", () => {
     expect(prCalls).toBe(0);
   });
 
+  test("FC-CRASH-WORK-READ-AS-PREEXISTING: a run branch with 0 commits ahead is never called preserved; the loose files are named", async () => {
+    gitOut(repo, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"]);
+    const base = gitOut(repo, ["rev-parse", "HEAD"]);
+    gitOut(repo, ["branch", `loki/${RUN}`]);
+    const l2 = new EventLog(evPath() + ".2", RUN); l2.append("run.started", null, {}); l2.append("stage.completed", "intake", { task: "fix the bug", base_sha: base });
+    writeFileSync(evPath(), readFileSync(evPath() + ".2", "utf8")); rmSync(evPath() + ".2");
+    writeFileSync(join(repo, "mul.js"), "x\n");
+    const cwd = process.cwd(); process.chdir(repo);
+    try { expect(await resumeMain([], { runPr, out: say })).toBe(4); } finally { process.chdir(cwd); }
+    expect(out.join("")).not.toContain("preserved on branch");
+    expect(out.join("")).toContain("uncommitted files in the working tree: mul.js");
+    gitOut(repo, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]); gitOut(repo, ["branch", "-f", `loki/${RUN}`, "HEAD"]);
+    out.length = 0; const c2 = process.cwd(); process.chdir(repo);
+    try { await resumeMain([], { runPr, out: say }); } finally { process.chdir(c2); }
+    expect(out.join("")).toContain(`preserved on branch loki/${RUN} (1 commit)`);
+  });
+
   test("interrupted in verify: reported with the phase name", async () => {
     log.append("stage.completed", "implement", {});
     const cwd = process.cwd(); process.chdir(repo);

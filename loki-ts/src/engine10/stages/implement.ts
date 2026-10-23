@@ -66,6 +66,12 @@ function treeIsEmpty(ctx: RunContext): boolean {
   try { return changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created)).length === 0; } catch { return false; }
 }
 
+/** FC-CRASH-WORK-READ-AS-PREEXISTING: the files an earlier crashed run of this task left untracked (intake.crash_written) that are still on disk. "Already done" cannot rest on them: they are not on the base. */
+function crashRecovered(ctx: RunContext): string[] {
+  const w = ctx.outputs().intake?.crash_written;
+  return Array.isArray(w) ? (w as string[]).filter((f) => existsSync(join(ctx.repoDir, f))) : [];
+}
+
 /** INJECT: top relevant learnings (.loki/state/relevant-learnings.json) as a fenced untrusted block. Missing or malformed file means "". Confidence is a fixed 0.50 because the writer records none: never claim more than ran. */
 export function learningsBlock(repoDir: string, limit = 5): string {
   let items: unknown[] = [];
@@ -155,7 +161,7 @@ export const implementStage: Stage = {
       exit = "killed";
     } else if (session.markers.specConflict) {
       exit = "spec_conflict";
-    } else if (session.markers.alreadyDone) {
+    } else if (session.markers.alreadyDone && crashRecovered(ctx).length === 0) {
       exit = "already_done";
     } else if (session.exit !== 0) {
       exit = "error";
@@ -165,7 +171,8 @@ export const implementStage: Stage = {
 
     const data: Record<string, unknown> = {
       exit,
-      already_done_evidence: session.markers.alreadyDone,
+      already_done_evidence: exit === "done" ? null : session.markers.alreadyDone, // FC-CRASH-WORK-READ-AS-PREEXISTING: crash-written files are this run's change, not base evidence
+      ...(crashRecovered(ctx).length > 0 && session.markers.alreadyDone && exit === "done" ? { crash_recovered: crashRecovered(ctx) } : {}),
       spec_conflict_reason: session.markers.specConflict,
       tests_reverted: testsReverted,
       impacted_tests: impacted,

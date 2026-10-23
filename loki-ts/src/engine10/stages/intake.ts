@@ -13,7 +13,7 @@ import { type AlreadyDoneResult, buildAlreadyDoneCommentArgv, checkAlreadyDone, 
 import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_done_async.ts";
 import { snapshotContract } from "../../features/contract.ts";
 import { probeZeroChecks } from "./verify.ts"; import { stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
-import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
+import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked, crashWrittenFiles } from "../../e10ext/preexisting_dirty.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { ensureProfile, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 export interface IntakeOptions {
   taskText?: string;
@@ -84,9 +84,10 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   } else {
     return { status: "failed", data: {}, reason: "no task text and no issue.json: nothing to intake" };
   }
+  const crashed = crashWrittenFiles(ctx.repoDir, ctx.runId, task); // FC-CRASH-WORK-READ-AS-PREEXISTING
   const origin = readOriginUrl(ctx.repoDir);
   // resumed is constant false: the engine has no resume.
-  const common = { ...(stacked ? { stacked_loki_skip: stacked } : {}), task, title: task.split("\n")[0]!.slice(0, 72), repo: githubRepoFromUrl(origin) ?? origin, resumed: false, contract_snapshot: snapshotContract(ctx.repoDir), preexisting_untracked: untrackedAtIntake(ctx.repoDir), preexisting_untracked_blobs: snapshotUntracked(ctx.repoDir), ...(Object.keys(preexisting).length > 0 ? { preexisting_dirty: preexisting } : {}) };
+  const common = { ...(stacked ? { stacked_loki_skip: stacked } : {}), task, title: task.split("\n")[0]!.slice(0, 72), repo: githubRepoFromUrl(origin) ?? origin, resumed: false, contract_snapshot: snapshotContract(ctx.repoDir), crash_written: crashed, preexisting_untracked: untrackedAtIntake(ctx.repoDir).filter((f) => !crashed.includes(f)), preexisting_untracked_blobs: Object.fromEntries(Object.entries(snapshotUntracked(ctx.repoDir)).filter(([f]) => !crashed.includes(f))), ...(Object.keys(preexisting).length > 0 ? { preexisting_dirty: preexisting } : {}) };
   if (alreadySatisfied) {
     // Deterministic exit: no repo/test map needed, and never a session/LLM call.
     return { status: "completed", data: { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true } };
