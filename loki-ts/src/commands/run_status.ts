@@ -229,7 +229,7 @@ export function registeredProjects(env: NodeJS.ProcessEnv): Array<{ name: string
 export function collectRuns(env: NodeJS.ProcessEnv, nowMs: number): RunRow[] {
   const rows: RunRow[] = [];
   for (const proj of registeredProjects(env)) {
-    const root = runsRoot(env, proj.path);
+    const root = join(proj.path, ".loki", "runs"); // never LOKI_DIR: one env path cannot name N projects
     for (const id of listRunIds(root)) {
       const events = readEvents(eventsPath(root, id));
       if (events.length === 0) continue;

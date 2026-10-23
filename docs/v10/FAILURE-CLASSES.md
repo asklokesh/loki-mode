@@ -1576,3 +1576,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: one line in FIXED_RULES (cache-stable lead of the implement brief) naming the exact invocation and forbidding files or links under tests/ to satisfy imports.
 - Fixture: tests/e10ext/full_job_brief.test.ts "FC-PYTEST-IMPORT-SYMLINK-UNDER-TESTS" and the implement-brief golden.
 - Open: confirm by grepping the loki implement transcripts of the fd-1 and fd-4 grid trials for `ln -s` and bare `pytest` (eng-303c); update this row with the result. Not covered: an agent that links anyway is still only flagged, not blocked.
+
+## FC-RUNS-ENV-LEAKS-ACROSS-PROJECTS `loki runs` applied the caller's LOKI_DIR to every registered project, so one run list was reported once per project (repo "a" and repo "b")
+- User-visible vs raw: user-visible. `loki runs --json` returned the same run twice under two repo labels.
+- Law broken: a row's repo label names the project whose runs directory it was read from; a per-process env knob that points at one directory cannot be applied to N projects.
+- Cause (measured, rev-b probe m309/p008/probe.ts): collectRuns called runsRoot(env, proj.path), and runsRoot honors LOKI_DIR (absolute or relative to the repo dir) for any repo dir it is given.
+- Siblings swept: runsRoot callers in run_status.ts (status, intent, pause/cancel) act on the current repo, where LOKI_DIR is correct; collectRuns is the only multi-project reader.
+- Mechanism: collectRuns reads join(proj.path, ".loki", "runs") for each registered project and ignores LOKI_DIR.
+- Fixture: loki-ts/tests/commands/run_status.test.ts "LOKI_DIR set across 2 projects lists each run once under its own repo"; a mutant restoring runsRoot(env, proj.path) turns it red.
