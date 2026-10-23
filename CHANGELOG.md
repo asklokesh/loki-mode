@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.13 (2026-10-23)
+
+### Fixed
+- The cost-cache test loader keeps the helper functions the calculator calls, so cost-cache tests exercise the real calculator instead of a loader that drops its helpers. Approval: "ship pd/p0-costcache2 9dc4242bf822ec70c85519639131a21fe5dec4d8 ... rev-b HIGH reviewer verdict: APPROVE".
+
 ## v11.60.12 (2026-10-23)
 
 ### Fixed
