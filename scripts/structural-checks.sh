@@ -177,7 +177,9 @@ INTERPS = (
     (r"deno", r"eval(?=\s|$)"),
     (r"bun", r"(?:-e|--eval|-p|--print)(?=\s|$)"),
     (r"lua(?:jit)?[\d.]*", r"-e(?=\s|$)"),
-    (r"(?:[gmn]?awk)", r"""['"]"""),
+    # awk: options (-F, -v x=1) may precede an inline program; only -f - and
+    # -f /dev/stdin, or no program at all, make it read code from stdin.
+    (r"(?:[gmn]?awk)", r"""(?:-(?:[Fv]\s*\S+|(?!f)[A-Za-z-]+)\s+)*['"]"""),
     (r"source", None),
     (r"(?<![\w./-])\.", None),
 )
@@ -195,26 +197,91 @@ SRCPFX = r"(?:(?:time|command|builtin|exec)\s+(?:-\S+\s+)*)?"
 # quoted and hold spaces. Piped, source and . also execute stdin (source
 # /dev/stdin), with no code-flag exemption.
 ENV = r"""(?:\w+=(?:"[^"]*"|'[^']*'|\S*)\s+)*"""
-PIPE_RUN = "(?:" + ENV + WRAP + ENV + RUN + "|" + ENV + SRCPFX + SRC + ")"
+SHVAR = r"""["']?\$(?:\{(?:SHELL|BASH|ZSH)\}|(?:SHELL|BASH|ZSH)(?!\w))["']?(?!\s+-[A-Za-z]*c(?=\s|$))"""
+PIPE_RUN = ("(?:" + ENV + WRAP + ENV + r"""["']?""" + RUN + "|" + ENV + WRAP + ENV + SHVAR
+            + "|" + ENV + SRCPFX + SRC + ")")
 SUBST = r"(?:\$\(|`)\s*(?:" + FETCH + r"|cat\b|<)"
 # A local file run: an interpreter or builtin with a file operand, or a path.
-FILE_RUN = (
-    r"(?:" + WRAP + ENV + RUN + r"(?:\s+-\S+)*\s+[^\s-]\S*"
-    + r"|" + SRCPFX + SRC + r"\s+\S+|" + WRAP + ENV + r"(?:\.{0,2}/|~/)\S+)"
-)
+def file_run(cap):
+    g = (lambda p: "(" + p + ")") if cap else (lambda p: "(?:" + p + ")")
+    return (
+        r"(?:" + WRAP + ENV + RUN + r"(?:\s+-\S+)*\s+" + g(r"[^\s-]\S*")
+        + r"|" + SRCPFX + SRC + r"\s+" + g(r"\S+")
+        + r"|" + WRAP + ENV + g(r"(?:\.{0,2}/|~/)\S+") + ")"
+    )
+FILE_RUN = file_run(False)
+# Every interpreter code flag followed by a command or process substitution
+# (python3 -c "$(curl ...)"), built from the same table.
+SUBST_FLAG = "(?:" + "|".join(
+    r"(?:/\S*/)?%s(?![\w.-])\s+(?:-\S+\s+)*?%s\s*[\"']?\s*" % (n, f) for n, f in INTERPS if f
+) + ")" + SUBST
+# xargs that hands the fetched bytes to an interpreter code flag as its program:
+# the flag ends the command or takes {} as its argument.
+XARGS_C = (r"(?:(?:/\S*/)?(?:sudo|doas|env)\b[^|;&\n]*?\s)?xargs\b[^|;&\n]*?\s(?:" + "|".join(
+    r"(?:/\S*/)?%s(?![\w.-])\s+%s\s*[\"']?(?:$|[|;&)}]|\{\})" % (n, f) for n, f in INTERPS if f) + ")")
 pipe = re.compile(
     r"\b" + FETCH + r"[^\n|]*(?:\|[^\n|]*)*?\|&?\s*(?:[({]\s*)?" + PIPE_RUN
+    + r"|\b" + FETCH + r"[^\n|]*(?:\|[^\n|]*)*?\|&?\s*(?:[({]\s*)?" + XARGS_C
+    + r"|(?:(?<=\s)|^)" + SUBST_FLAG
     + r"|(?:(?<=\s)|^)(?:" + SH + r"|source|eval|\.)\s[^\n]*<\(\s*" + FETCH
     + r"|(?:(?<=\s)|^)(?:" + SH + r"|eval)\s[^\n]*" + SUBST
     + r"|\b(?:curl|wget)\b[^\n]*?(?:&&|;|\|\|)\s*(?:chmod\b[^\n;&]*(?:&&|;)\s*)?" + FILE_RUN
 )
 # The same download-then-run across lines of one fenced block: the fetch line
-# opens the statement (an optional shell prompt aside) and the run line follows
-# within three lines.
-split = re.compile(
-    r"^[ \t]*(?:\$[ \t]+)?(?:curl|wget)\b[^\n]*\n(?:[^\n]*\n){0,3}?[ \t]*(?:\$[ \t]+)?" + FILE_RUN,
-    re.M,
-)
+# opens the statement (an optional shell prompt and a sudo style wrapper aside)
+# and the run line follows within eight lines. Only a run of the file that fetch
+# wrote counts (named by -o, -O, a redirect, tee, or the URL basename for wget
+# and curl -O), so a data download followed by a script that merely reads it
+# (wget data.csv, then python3 analyze.py data.csv) stays clean, as does a
+# tarball fetch followed by ./configure (the extracted file is not the download;
+# not flagged, an accepted gap that cannot be told apart from a build step).
+split_fetch = re.compile(
+    r"^[ \t]*(?:\$[ \t]+)?(?:(?:sudo|doas|env|exec|command|time|nohup|nice|setsid|stdbuf)\b[^\n|;&]*?\s)?(?P<cmd>curl|wget)\b(?P<rest>[^\n]*)$")
+split_run = re.compile(r"^[ \t]*(?:\$[ \t]+)?(?:[^\n]*?(?:&&|;)\s*)?" + file_run(True), re.M)
+SPLIT_WINDOW = 8
+
+def fetched_names(cmd, rest):
+    toks = rest.replace(">", " > ").split()
+    names = set()
+    for k, t in enumerate(toks):
+        nxt = toks[k + 1] if k + 1 < len(toks) else ""
+        if t in ("--output", "--output-document", ">", ">>", "tee") and nxt:
+            names.add(nxt)
+        elif t.startswith("--output=") or t.startswith("--output-document="):
+            names.add(t.split("=", 1)[1])
+        elif t == "--remote-name" or re.fullmatch(r"-[A-Za-z]*[oO]", t):
+            if (cmd == "curl" and t[-1] == "o") or (cmd == "wget" and t[-1] == "O"):
+                if nxt:
+                    names.add(nxt)
+            elif cmd == "curl" and t[-1] == "O" or t == "--remote-name":
+                names.add("@url")
+    if cmd == "wget" and not names:
+        names.add("@url")
+    out = set()
+    for n in names:
+        if n == "@url":
+            for t in toks:
+                if re.match(r"https?://", t):
+                    out.add(re.sub(r"[?#].*", "", t).rstrip("/").rsplit("/", 1)[-1] or "index.html")
+        else:
+            out.add(n.strip("\"'").rsplit("/", 1)[-1])
+    return out
+
+def split_flagged(block):
+    for k, ln in enumerate(block):
+        m = split_fetch.match(ln)
+        if not m:
+            continue
+        names = fetched_names(m.group("cmd"), m.group("rest"))
+        if not names:
+            continue
+        for run in block[k + 1:k + 1 + SPLIT_WINDOW]:
+            r = split_run.search(run)
+            if r:
+                op = next((g for g in r.groups() if g), "").strip("\"'").rsplit("/", 1)[-1]
+                if op in names:
+                    return True
+    return False
 key = re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)")
 for f in sys.argv[1:]:
     text = open(f, encoding="utf-8", errors="replace").read()
@@ -262,14 +329,16 @@ for f in sys.argv[1:]:
             if rx.search(ln):
                 bad.append("%s:%d: %s" % (f, i, what))
     # Fenced blocks as multi-line snippets for the cross-line download-then-run.
-    fence, block, bstart = False, [], 0
+    fence, block, bstart, mark = False, [], 0, ""
     for i, ln in enumerate(text.split("\n"), 1):
-        if ln.lstrip().startswith("```"):
+        st = ln.lstrip()
+        fm_ = st[:3] if st[:3] in ("```", "~~~") else ""
+        if fm_ and (not fence or fm_ == mark):
             if fence and any("skill-lint-ok" in b for b in block):
                 block = []
-            if fence and block and split.search("\n".join(block) + "\n"):
+            if fence and block and split_flagged(block):
                 bad.append("%s:%d: download piped into a shell" % (f, bstart))
-            fence, block, bstart = not fence, [], i + 1
+            fence, block, bstart, mark = not fence, [], i + 1, fm_
         elif fence:
             block.append(ln)
 print("\n".join(bad))
