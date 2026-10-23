@@ -262,7 +262,7 @@ class ModeTest(unittest.TestCase):
             status = os_sandbox.build_confinement(
                 self.ws, self.run_dir, "claude", mode="on", platform="linux")
         text = " ".join(status["known_limitations"])
-        for needle in ("masks-only-aws-ssh", "skips-node_modules", "200000", "preexisting-cross-boundary-hardlinks"):
+        for needle in ("bwrap path untested on Linux", "masks-only-aws-ssh", "skips-node_modules", "200000", "preexisting-cross-boundary-hardlinks"):
             self.assertIn(needle, text)
 
     def test_cli_off_prints_json(self):
