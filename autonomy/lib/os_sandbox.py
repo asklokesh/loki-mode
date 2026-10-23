@@ -266,30 +266,39 @@ def git_read_paths(workspace: Path) -> list[Path]:
 
 
 def git_write_paths(workspace: Path) -> list[Path]:
-    """Writable git state of a LINKED worktree: its own gitdir plus the shared
-    objects, refs, logs and packed-refs. Never the common hooks or config, so a
-    confined process cannot plant a hook that runs outside the sandbox."""
-    def rev(flag: str) -> Path | None:
+    """Writable git state of a LINKED worktree: its own gitdir, the shared
+    objects, and ONLY the ref and reflog of the branch checked out here
+    (refs/heads/<branch>, its .lock, logs/refs/heads/<branch>). The rest of
+    refs, logs and packed-refs, the hooks and the config stay read-only, so a
+    confined process can neither move another branch (main) nor create a tag
+    or plant a hook that runs outside the sandbox."""
+    def rev(*args: str) -> str | None:
         try:
-            res = subprocess.run(["git", "-C", str(workspace), "rev-parse", flag],
+            res = subprocess.run(["git", "-C", str(workspace), *args],
                                  capture_output=True, text=True, timeout=10)
         except (OSError, subprocess.SubprocessError):
             return None
         if res.returncode != 0 or not res.stdout.strip():
             return None
-        out = Path(res.stdout.strip())
-        return (out if out.is_absolute() else workspace / out).resolve()
+        return res.stdout.strip()
 
-    gitdir, common = rev("--git-dir"), rev("--git-common-dir")
+    def path_of(flag: str) -> Path | None:
+        out = rev("rev-parse", flag)
+        if out is None:
+            return None
+        return (Path(out) if Path(out).is_absolute() else workspace / out).resolve()
+
+    gitdir, common = path_of("--git-dir"), path_of("--git-common-dir")
     if not gitdir or not common or gitdir == common:
         return []
     paths = [gitdir]
-    for name in ("objects", "refs", "logs"):
-        if (common / name).is_dir():
-            paths.append(common / name)
-    if (common / "packed-refs").exists():
-        paths.append(common / "packed-refs")
-    paths.append(common / "packed-refs.lock")
+    if (common / "objects").is_dir():
+        paths.append(common / "objects")
+    branch = rev("symbolic-ref", "-q", "--short", "HEAD")
+    if branch and ".." not in branch.split("/") and not branch.startswith("/"):
+        ref = common / "refs" / "heads" / branch
+        log = common / "logs" / "refs" / "heads" / branch
+        paths += [ref, Path(f"{ref}.lock"), log]
     return paths
 
 
@@ -664,7 +673,10 @@ def build_confinement(
     rules = load_secret_rules()
     regexes = secret_path_regexes(rules)
     if confine_reads is None:
-        confine_reads = os.environ.get("LOKI_OS_SANDBOX_CONFINE_READS", "0") == "1"
+        # Default on (macOS): AC6 needs a symlink out of the workspace to be unreadable
+        # without a flag. LOKI_OS_SANDBOX_CONFINE_READS=0 opts out for a provider whose
+        # login needs a wider read set.
+        confine_reads = os.environ.get("LOKI_OS_SANDBOX_CONFINE_READS", "1") != "0"
     confine_reads = bool(confine_reads) and platform == "darwin"
     limitations = ["unrestricted-outbound-network",
                    "preexisting-cross-boundary-hardlinks"]
@@ -690,6 +702,7 @@ def build_confinement(
         prefix = [str(SANDBOX_EXEC), "-p", profile.decode("utf-8")]
         kind = "macos-seatbelt"
         limitations.append("deprecated-macos-sandbox-exec")
+        limitations.append("git-objects-writable-not-create-only-in-linked-worktree")
         builder = lambda: prefix
     elif platform.startswith("linux"):
         bwrap = shutil.which("bwrap")

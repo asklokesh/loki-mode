@@ -483,12 +483,105 @@ class SeatbeltConfineReadsTest(unittest.TestCase):
         res = self._sh(f'echo "[x]" >> "{self.main_repo}/.git/config"')
         self.assertNotEqual(res.returncode, 0)
 
+    def test_default_mode_refuses_symlink_out_read(self):
+        # No confine_reads argument and no env: AC6 must hold by default.
+        saved = os.environ.pop("LOKI_OS_SANDBOX_CONFINE_READS", None)
+        self.addCleanup(lambda: saved is None or os.environ.__setitem__("LOKI_OS_SANDBOX_CONFINE_READS", saved))
+        status = os_sandbox.build_confinement(self.ws, self.run_dir, "claude", mode="on", home=self.home)
+        self.assertNotIn("reads-outside-workspace-allowed-except-secret-paths", status["known_limitations"])
+        res = subprocess.run([*status["argv_prefix"], "/bin/cat", str(self.ws / "link-to-outside")],
+                             capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("outside", res.stdout)
+
+    def test_env_zero_opts_out_of_read_confinement(self):
+        os.environ["LOKI_OS_SANDBOX_CONFINE_READS"] = "0"
+        self.addCleanup(os.environ.pop, "LOKI_OS_SANDBOX_CONFINE_READS", None)
+        status = os_sandbox.build_confinement(self.ws, self.run_dir, "claude", mode="on", home=self.home)
+        self.assertIn("reads-outside-workspace-allowed-except-secret-paths", status["known_limitations"])
+
     def test_default_off_keeps_reads_open(self):
         status = os_sandbox.build_confinement(
             self.ws, self.run_dir, "claude", mode="on", home=self.home, confine_reads=False)
         res = subprocess.run([*status["argv_prefix"], "/bin/cat", str(self.ws / "link-to-outside")],
                              capture_output=True, text=True, timeout=30)
         self.assertEqual(res.stdout.strip(), "outside")
+
+
+@unittest.skipUnless(HAVE_SEATBELT, "macOS sandbox-exec is required (not macOS or binary missing)")
+class SeatbeltGitRefWriteTest(unittest.TestCase):
+    """B1: a linked-worktree process may advance its own branch only; it cannot
+    move another branch (main) or create a tag, in either read mode."""
+
+    def _git(self, *args, cwd):
+        env = {**os.environ, "HOME": str(self.home), "GIT_CONFIG_NOSYSTEM": "1"}
+        return subprocess.run(["git", *args], cwd=cwd, env=env, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def setUp(self):
+        raw = tempfile.mkdtemp(prefix="os-sandbox-gr-", dir="/private/var/tmp")
+        self.addCleanup(shutil.rmtree, raw, True)
+        self.base = Path(raw).resolve()
+        self.home = self.base / "h"
+        self.main_repo, self.ws, self.run_dir = self.base / "main", self.base / "wt", self.base / "r"
+        for d in (self.home, self.main_repo, self.run_dir):
+            d.mkdir()
+        (self.home / ".gitconfig").write_text("[user]\n\tname = t\n\temail = t@t.test\n")
+        self._git("init", "-q", "-b", "main", cwd=self.main_repo)
+        (self.main_repo / "a.txt").write_text("plain\n")
+        self._git("add", "a.txt", cwd=self.main_repo)
+        self._git("commit", "-q", "-m", "init", cwd=self.main_repo)
+        self._git("worktree", "add", "-q", "-b", "loki/run", str(self.ws), cwd=self.main_repo)
+        self.base_sha = self._git("rev-parse", "main", cwd=self.main_repo)
+
+    def _sh(self, status, script):
+        env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+        return subprocess.run([*status["argv_prefix"], "/bin/sh", "-c", script],
+                              capture_output=True, text=True, timeout=60, cwd=self.ws, env=env)
+
+    def test_write_paths_are_only_own_branch_ref_log_objects_gitdir(self):
+        common = (self.main_repo / ".git").resolve()
+        got = {str(p) for p in os_sandbox.git_write_paths(self.ws)}
+        self.assertIn(str(common / "objects"), got)
+        self.assertIn(str(common / "refs" / "heads" / "loki" / "run"), got)
+        self.assertIn(str(common / "refs" / "heads" / "loki" / "run.lock"), got)
+        self.assertIn(str(common / "logs" / "refs" / "heads" / "loki" / "run"), got)
+        for forbidden in ("refs", "logs", "packed-refs", "hooks", "config"):
+            self.assertNotIn(str(common / forbidden), got)
+        self.assertNotIn(str(common / "refs" / "heads"), got)
+        self.assertNotIn(str(common / "refs" / "tags"), got)
+
+    def test_cannot_move_main_or_create_tags_in_either_mode(self):
+        evil = ("git commit -q --allow-empty -m evil; "
+                "git update-ref refs/heads/main HEAD; "
+                "git update-ref refs/tags/v1 HEAD; git tag v2 HEAD; git branch other HEAD; "
+                "git update-ref refs/heads/main2 HEAD")
+        for confine in (False, True):
+            with self.subTest(confine_reads=confine):
+                status = os_sandbox.build_confinement(
+                    self.ws, self.run_dir, "claude", mode="on", home=self.home, confine_reads=confine)
+                self._sh(status, evil)
+                self.assertEqual(self._git("rev-parse", "main", cwd=self.main_repo), self.base_sha)
+                tags = self._git("tag", "--list", cwd=self.main_repo)
+                self.assertEqual(tags, "")
+                heads = self._git("for-each-ref", "--format=%(refname:short)", "refs/heads", cwd=self.main_repo)
+                self.assertEqual(sorted(heads.split()), ["loki/run", "main"])
+
+    def test_own_branch_still_advances_in_either_mode(self):
+        for confine in (False, True):
+            with self.subTest(confine_reads=confine):
+                status = os_sandbox.build_confinement(
+                    self.ws, self.run_dir, "claude", mode="on", home=self.home, confine_reads=confine)
+                before = self._git("rev-parse", "loki/run", cwd=self.main_repo)
+                res = self._sh(status, "git commit -q --allow-empty -m mine")
+                self.assertEqual(res.returncode, 0, res.stderr)
+                self.assertNotEqual(self._git("rev-parse", "loki/run", cwd=self.main_repo), before)
+
+    def test_object_writes_listed_as_known_limitation(self):
+        status = os_sandbox.build_confinement(
+            self.ws, self.run_dir, "claude", mode="on", home=self.home, confine_reads=False)
+        self.assertIn("git-objects-writable-not-create-only-in-linked-worktree",
+                      status["known_limitations"])
 
 
 @unittest.skipUnless(HAVE_SEATBELT, "macOS sandbox-exec is required (not macOS or binary missing)")
