@@ -311,6 +311,11 @@ class Claim100(unittest.TestCase):
 
 
 class Grid(unittest.TestCase):
+    def test_trial_timeout_derives_from_the_task(self):
+        self.assertEqual(fd.trial_timeout_s({"agent_timeout_s": 900, "acceptance": {"timeout_s": 60}}),
+                         900 + 240 + fd.GRADING_SLACK_S)
+        self.assertEqual(fd.trial_timeout_s({}), 1800 + 4 * 300 + fd.GRADING_SLACK_S)
+
     def test_timeout_kills_the_whole_process_group_and_marks_unmeasured(self):
         import signal
         with tempfile.TemporaryDirectory() as d:
@@ -321,16 +326,15 @@ class Grid(unittest.TestCase):
                 "c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
                 "open(%r, 'w').write(str(c.pid))\n"
                 "time.sleep(600)\n" % pidfile)
-            m = {"name": "m", "tasks": {"a": {}}}
-            old_t, old_h = fd.TRIAL_TIMEOUT_S, fd._HERE
-            fd.TRIAL_TIMEOUT_S, fd._HERE = 3, d
             os.makedirs(os.path.join(d, "tasks"))
-            open(os.path.join(d, "tasks", "a.json"), "w").write("{}")
-            os.rename(fake, os.path.join(d, "runner.py"))
+            json.dump({"agent_timeout_s": 3}, open(os.path.join(d, "tasks", "a.json"), "w"))
+            m = {"name": "m", "tasks": {"a": {}}}
+            old_t, old_h, old_g = fd.trial_timeout_s, fd._HERE, fd.GRADING_SLACK_S
+            fd.trial_timeout_s, fd._HERE = lambda spec: spec["agent_timeout_s"], d
             try:
                 res = fd.run_grid(m, ["loki"], 1, os.path.join(d, "out"), parallel=1, load=lambda: 0.0)
             finally:
-                fd.TRIAL_TIMEOUT_S, fd._HERE = old_t, old_h
+                fd.trial_timeout_s, fd._HERE, fd.GRADING_SLACK_S = old_t, old_h, old_g
             self.assertEqual(res[0][1], 124)
             child = int(open(pidfile).read())
             time.sleep(0.5)
