@@ -98,7 +98,7 @@ function wallTargetDir(repoDir: string, existingTests: TestRef[]): string {
   return first ? join(repoDir, dirname(first.path)) : join(repoDir, "tests");
 }
 /** Runner for a generated file: extension decides for Python/Go, a JS/TS file takes the repo's detected JS runner; anything else never guesses (unselectable). */
-function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null {
+export function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null {
   if (fileName.endsWith(".py")) return "pytest";
   if (fileName.endsWith(".go")) return "go";
   return /\.[cm]?[jt]sx?$/.test(fileName) ? (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r)) ?? null : null; // a JS runner only ever runs a JS/TS file
