@@ -8,10 +8,12 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EXIT } from "../../src/engine10/output.ts";
-import { loadAwareTimeoutMs } from "../preload.ts";
+import { loadAwareTimeoutMs, setLoadAwareTimeout } from "../preload.ts";
 import { softCapS } from "../../src/engine10/machine.ts";
 import { runPr, type PrContext } from "../../src/engine10/stages/pr.ts";
 import { backstopS, BACKSTOP_NOT_PROVEN, runSupervisor, type CommentStep, type PrStep } from "../../src/engine10/supervisor.ts";
+
+setLoadAwareTimeout(5_000); // bun default; the tests without their own budget (A-110 ladder runs 3 supervisors) scale with load
 
 const roots: string[] = [];
 afterAll(() => { for (const r of roots) execFileSync("rm", ["-rf", r]); });
@@ -92,10 +94,10 @@ describe("E-67 rework: supervisor backstop", () => {
     // min(graceS, capS/30) so the backstop still clears the worker's own soft cap (1.867s here);
     // that puts the kill at ~1.933s instead of the old, unclamped (cap - grace) = 1000ms. The bound
     // below stays well under the old 3000ms while leaving slack for a loaded CI box.
-    expect(wallMs).toBeLessThan(2900);
+    expect(wallMs).toBeLessThan(loadAwareTimeoutMs(2900));
     expect(r.verdict).toBe("FAILED");
     expect(r.notProven).toContain(BACKSTOP_NOT_PROVEN);
-  }, 10_000);
+  }, loadAwareTimeoutMs(10_000));
 
   test("hung worker with a diff and a remote: backstop commit lands locally, nothing is pushed (FC-NO-PUSH-UNVERIFIED)", async () => {
     const { dir, baseSha } = repoWithCommit();
@@ -111,7 +113,7 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.verdict).toBe("FAILED");
     expect(pr.calls.length).toBe(0);
     expect(r.prUrl).toBeNull();
-  }, 10_000);
+  }, loadAwareTimeoutMs(10_000));
 
   test("FC-19: a sealed PARTIAL after a failed implement stage, with a diff, does not push (FC-NO-PUSH-UNVERIFIED)", async () => {
     const { dir, baseSha } = repoWithCommit();
@@ -127,7 +129,7 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.verdict).toBe("PARTIAL");
     expect(pr.calls.length).toBe(0);
     expect(r.prUrl).toBeNull();
-  }, 15_000);
+  }, loadAwareTimeoutMs(15_000));
 
   test("P1: a sealed SPEC_CONFLICT or PARTIAL with no net diff never calls pr (no empty branch), and the blocked run still comments", async () => {
     for (const verdict of ["SPEC_CONFLICT", "PARTIAL"]) {
@@ -145,7 +147,7 @@ describe("E-67 rework: supervisor backstop", () => {
       expect(r.prUrl).toBeNull();
       if (verdict === "SPEC_CONFLICT") expect(comment.calls.length).toBe(1);
     }
-  }, 20_000);
+  }, loadAwareTimeoutMs(20_000));
 
   test("FC-NO-PUSH-UNVERIFIED: a sealed SPEC_CONFLICT, PARTIAL or FAILED with a real diff never calls pr (branch stays local); VERIFIED still does", async () => {
     for (const verdict of ["SPEC_CONFLICT", "PARTIAL", "FAILED", "VERIFIED"]) {
@@ -160,7 +162,7 @@ describe("E-67 rework: supervisor backstop", () => {
       await runSupervisor({ runId: `e10-nopush-${verdict.toLowerCase()}`, repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step });
       expect(pr.calls.length).toBe(verdict === "VERIFIED" ? 1 : 0);
     }
-  }, 40_000);
+  }, loadAwareTimeoutMs(40_000));
 
   test("P1: a comment step reporting skipped lands skipped:true on the issue.commented event", async () => {
     const { dir } = repoWithCommit();
@@ -169,7 +171,7 @@ describe("E-67 rework: supervisor backstop", () => {
     const ev = readFileSync(join(dir, ".loki", "runs", "e10-p1-skip", "events.jsonl"), "utf8").split("\n").filter((l) => l.includes('"issue.commented"'));
     expect(ev.length).toBe(1);
     expect(JSON.parse(ev[0]!).data.skipped).toBe(true);
-  }, 10_000);
+  }, loadAwareTimeoutMs(10_000));
 
   test("hung worker with no diff, on an issue run: posts an issue comment with the exact reason", async () => {
     const { dir } = repoWithCommit(); // no extra commit: base_sha stays HEAD, so there is no diff
@@ -188,7 +190,7 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(comment.calls[0]!.issueRef).toBe("acme/widget#42");
     expect(comment.calls[0]!.reason).toContain(BACKSTOP_NOT_PROVEN);
     expect(r.prUrl).toBeNull();
-  }, 10_000);
+  }, loadAwareTimeoutMs(10_000));
 
   test("the issue backstop comment body starts with the loki-backstop marker so the steer webhook ignores it", () => {
     const src = readFileSync(join(import.meta.dir, "../../src/engine10/supervisor.ts"), "utf8");
@@ -208,7 +210,7 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.workerExit).toBe(1);
     expect(pr.calls.length).toBe(0);
     expect(r.prUrl).toBeNull();
-  }, 10_000);
+  }, loadAwareTimeoutMs(10_000));
 
   test("worker exits non-zero with no diff, no issue: prints a reason instead of vanishing", async () => {
     const { dir } = repoWithCommit();
@@ -226,7 +228,7 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.prUrl).toBeNull();
     expect(err).toContain("e10-bs5");
     expect(err).toContain("FAILED");
-  }, 10_000);
+  }, loadAwareTimeoutMs(10_000));
 
   // Opus REJECT findings 2+3: `git diff` alone never sees an untracked file, and nothing pushes a
   // working tree that was never committed. Observed red on the pre-fix merge (old hasPushableDiff,
@@ -255,7 +257,7 @@ describe("E-67 rework: supervisor backstop", () => {
     const changed = execFileSync("git", ["diff", "--name-only", baseSha, "HEAD"], { cwd: dir, encoding: "utf8" }).trim().split("\n").sort();
     expect(changed).toEqual(["a.txt", "untracked.txt"]);
     expect(existsSync(join(workDir, "push-calls.log"))).toBe(false);
-  }, 10_000);
+  }, loadAwareTimeoutMs(10_000));
 
   // Finding 2 in isolation (no tracked change at all): on the pre-fix merge, hasPushableDiff's
   // `git diff` sees nothing, so opts.pr is never even called (0 calls) -- the run just prints and
@@ -277,7 +279,7 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.prUrl).toBeNull();
     const changed = execFileSync("git", ["diff", "--name-only", baseSha, "HEAD"], { cwd: dir, encoding: "utf8" }).trim().split("\n").sort();
     expect(changed).toEqual(["untracked.txt"]);
-  }, 10_000);
+  }, loadAwareTimeoutMs(10_000));
 
   // E-67 finding 1, small non-default capS with the DEFAULT grace (no graceS override, unlike
   // every test above): pre-fix, backstopMs = max(0, capS - 30) * 1000 was 0 at capS=5, so the
@@ -289,7 +291,7 @@ describe("E-67 rework: supervisor backstop", () => {
     const r = await runSupervisor({ runId: "e10-bs8", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 5 });
     expect(r.workerExit).toBe(0);
     expect(r.notProven).not.toContain(BACKSTOP_NOT_PROVEN);
-  }, 10_000);
+  }, loadAwareTimeoutMs(10_000));
 
   /** Polls until pid is gone (reaped after SIGKILL), returning elapsed ms from t0, or -1 on timeout.
    *  Measures the worker's actual death, not total supervisor wall time (which also includes
@@ -311,14 +313,14 @@ describe("E-67 rework: supervisor backstop", () => {
     const code = `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`;
     const t0 = Date.now();
     const done = runSupervisor({ runId: "e10-bs9", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 5 });
-    const deathMs = await pollDeathMs(t0, pidFile, 6000);
+    const deathMs = await pollDeathMs(t0, pidFile, loadAwareTimeoutMs(6000));
     const r = await done;
     expect(deathMs).toBeGreaterThan(0);
     expect(deathMs).toBeGreaterThan(backstopS(5) * 1000 - 300); // fires near its computed instant, not at spawn
-    expect(deathMs).toBeLessThan(6000); // green ~4.97s; the old fixed-2s-escalation red would be ~6.8s+ (unaffected here, but keep headroom under load)
+    expect(deathMs).toBeLessThan(loadAwareTimeoutMs(6000)); // green ~4.97s; the old fixed-2s-escalation red would be ~6.8s+ (unaffected here, but keep headroom under load)
     expect(r.verdict).toBe("FAILED");
     expect(r.notProven).toContain(BACKSTOP_NOT_PROVEN);
-  }, 10_000);
+  }, loadAwareTimeoutMs(10_000));
 
   // E-67 finding 1 follow-up: the SIGTERM->SIGKILL escalation used to be a fixed 2s regardless of
   // the cap, so a worker that traps SIGTERM (ignores it, only SIGKILL ends it) at a small capS still
@@ -335,12 +337,12 @@ describe("E-67 rework: supervisor backstop", () => {
     `;
     const t0 = Date.now();
     const done = runSupervisor({ runId: "e10-bs10", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 5 });
-    const deathMs = await pollDeathMs(t0, pidFile, 8000);
+    const deathMs = await pollDeathMs(t0, pidFile, loadAwareTimeoutMs(8000));
     const r = await done;
     expect(deathMs).toBeGreaterThan(0);
-    expect(deathMs).toBeLessThan(6000); // green ~5.1s; the old fixed-2s-escalation red was ~6.9-7.0s (measured above)
+    expect(deathMs).toBeLessThan(loadAwareTimeoutMs(6000)); // green ~5.1s; the old fixed-2s-escalation red was ~6.9-7.0s (measured above)
     expect(r.verdict).toBe("FAILED");
-  }, 15_000);
+  }, loadAwareTimeoutMs(15_000));
 
   // E-67 round 5 REJECT finding 1: below ~capS=24.83 (24s tail vs a smaller backstop window),
   // softCapS's fallback to the plain 14/15 point left as little as 0.17-0.8s between the worker's
@@ -360,7 +362,7 @@ describe("E-67 rework: supervisor backstop", () => {
       const r = await runSupervisor({ runId: `e10-bs-softcap-${capS}`, repoDir: dir, env: ENV, workerArgv: worker(code), capS });
       expect(r.workerExit).toBe(0);
       expect(r.notProven).not.toContain(BACKSTOP_NOT_PROVEN);
-    }, 30_000);
+    }, loadAwareTimeoutMs(30_000));
   }
 });
 
@@ -451,7 +453,7 @@ describe("A-110 exit ladder", () => {
     expect(head).toBe(baseSha);
     expect(pr.calls.length).toBe(0);
     expect(r.prUrl).toBeNull();
-  }, 10_000);
+  }, loadAwareTimeoutMs(10_000));
 
   test("intake refused (dirty tree): no backstop commit lands the user's files on their branch", async () => {
     const { dir } = repoWithCommit();
@@ -465,5 +467,5 @@ describe("A-110 exit ladder", () => {
     expect(git("log", "--all", "--format=%s")).not.toContain("backstop");
     expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("user edit\n");
     expect(git("status", "--porcelain", "--", "a.txt", "notes.txt")).toBe(" M a.txt\n?? notes.txt\n");
-  }, 10_000);
+  }, loadAwareTimeoutMs(10_000));
 });
