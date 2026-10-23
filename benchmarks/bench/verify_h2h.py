@@ -123,7 +123,7 @@ def _verdict_from_rc(rc):
 
 
 def arm_loki_cli(root, files, ctx):
-    rc, out, ms = _run([os.path.join(REPO, "bin", "loki"), "verify", "--fast"], root, 120)
+    rc, out, ms = _run([os.path.join(ctx.get("repo", REPO), "bin", "loki"), "verify", "--fast"], root, 120)
     return _verdict_from_rc(rc), ms, 0.0, "rc=%d" % rc
 
 
@@ -185,9 +185,9 @@ ARM_FUNCS = {"loki-cli": arm_loki_cli, "loki-mcp": arm_loki_mcp, "visible": arm_
 ARM_BIN = {"claude-review": "claude", "codex-review": "codex"}
 
 
-def tool_version(arm):
+def tool_version(arm, repo=REPO):
     if arm.startswith("loki"):
-        with open(os.path.join(REPO, "VERSION")) as fh:
+        with open(os.path.join(repo, "VERSION")) as fh:
             return fh.read().strip()
     if arm in ARM_BIN:
         rc, out, _ = _run([ARM_BIN[arm], "--version"], None, 30)
@@ -195,19 +195,19 @@ def tool_version(arm):
     return "python" + sys.version.split()[0] if arm == "visible" else "stub"
 
 
-def run_arm(arm, inputs, trials, manifest, model, mcp, tmp, log=lambda *_: None):
+def run_arm(arm, inputs, trials, manifest, model, mcp, tmp, log=lambda *_: None, repo=REPO):
     rows = []
-    version = tool_version(arm)
+    version = tool_version(arm, repo)
     fn = ARM_FUNCS[arm]
     for did, variant, category, files in inputs:
         root = os.path.join(tmp, "%s-%s-%s" % (arm, did, variant))
         materialize(root, files, git=arm.startswith("loki"))
         truth = grade(root)
         for trial in range(1, trials + 1):
-            verdict, ms, spend, prov = fn(root, files, {"model": model, "mcp": mcp})
+            verdict, ms, spend, prov = fn(root, files, {"model": model, "mcp": mcp, "repo": repo})
             rows.append({"axis": AXIS, "tool": arm, "tool_version": version, "model": model if arm in ARM_BIN else None,
                          "task_id": did if variant == "seeded" else did + "-control", "task_hash": task_hash(files),
-                         "trial": trial, "value": round(ms, 3), "unit": UNIT, "correct": verdict == truth,
+                         "trial": trial, "value": round(ms, 3), "unit": UNIT, "correct": verdict == truth, "verdict": verdict, "category": category,
                          "grader_verdict": truth, "provenance": "%s verdict=%s category=%s" % (prov, verdict, category),
                          "spend_usd": round(spend, 6), "manifest": manifest["name"]})
         log(arm, did, variant, truth)
@@ -218,7 +218,13 @@ def summarize(rows):
     seeded = [r for r in rows if r["grader_verdict"] == "FAIL"]
     ctrl = [r for r in rows if r["grader_verdict"] == "PASS"]
     caught = sum(1 for r in seeded if r["correct"])
-    false_alarm = sum(1 for r in ctrl if not r["correct"])
+    false_alarm = sum(1 for r in ctrl if r.get("verdict") == "FAIL" or (r.get("verdict") is None and not r["correct"]))
+    abstained = sum(1 for r in rows if r.get("verdict") == "INCONCLUSIVE")
+    by_cat = {}
+    for r in seeded:
+        c = by_cat.setdefault(r.get("category", "?"), {"n": 0, "caught": 0})
+        c["n"] += 1
+        c["caught"] += 1 if r["correct"] else 0
     lat = [r["value"] for r in rows if r["correct"]]
     is_stub = bool(rows) and rows[0]["tool"] in STUB_ARMS
     headline = statistics.median(lat) if lat and caught > 0 and not is_stub else None
@@ -227,6 +233,7 @@ def summarize(rows):
             "catch_rate": caught / len(seeded) if seeded else None, "catch_ci": fd.wilson(caught, len(seeded)),
             "control_n": len(ctrl), "false_alarms": false_alarm,
             "false_alarm_rate": false_alarm / len(ctrl) if ctrl else None, "false_alarm_ci": fd.wilson(false_alarm, len(ctrl)),
+            "abstained_inconclusive": abstained, "caught_by_category": by_cat,
             "correct_rows": len(lat), "median_ms_correct_only": headline,
             "latency_note": None if headline is not None else "no headline latency: stub control, or arm caught no seeded defect, or no correct row",
             "median_ms_all_rows_informational": statistics.median(all_ms) if all_ms else None,
@@ -250,6 +257,7 @@ def main(argv=None):
     ap.add_argument("--trials", type=int, default=1)
     ap.add_argument("--sample-per-category", type=int, default=0, help="0 = all cases")
     ap.add_argument("--model", default="claude-sonnet-5-5")
+    ap.add_argument("--repo", default=REPO, help="loki checkout whose bin/loki and mcp/server.py are measured")
     a = ap.parse_args(argv)
     arms = [x for x in a.arms.replace(",", " ").split() if x]
     unknown = [x for x in arms if x not in ARM_FUNCS]
@@ -264,7 +272,7 @@ def main(argv=None):
     inputs = build_inputs(ids)
     mcp = None
     try:
-        spec = importlib.util.spec_from_file_location("loki_mcp_server", os.path.join(REPO, "mcp", "server.py"))
+        spec = importlib.util.spec_from_file_location("loki_mcp_server", os.path.join(a.repo, "mcp", "server.py"))
         mcp = importlib.util.module_from_spec(spec)
         sys.modules.setdefault("loki_mcp_server", mcp)
         spec.loader.exec_module(mcp)
@@ -282,7 +290,7 @@ def main(argv=None):
             if arm == "loki-mcp" and mcp is None:
                 summary[arm] = {"tool": arm, "status": "UNMEASURED", "reason": "mcp/server.py not importable"}
                 continue
-            rows = run_arm(arm, inputs, a.trials, manifest, a.model, mcp, tmp)
+            rows = run_arm(arm, inputs, a.trials, manifest, a.model, mcp, tmp, repo=a.repo)
             with open(os.path.join(a.out, arm + ".jsonl"), "w") as fh:
                 for r in rows:
                     fh.write(json.dumps(r, sort_keys=True) + "\n")
