@@ -5,6 +5,74 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.67.10 (2026-10-23)
+
+### Fixed
+- Tests pin the LOKI_STATE_MANAGER_MAX fallback and the lock-free eviction stop in state/test_manager.py (rq74). Approval: "APPROVE pd/rq74 214f4a509 (tl-2, LOW). merge-tree vs origin/main = 0 conflicts. Only state/test_manager.py changed (+27)."
+
+## v11.67.9 (2026-10-23)
+
+### Fixed
+- The allowed-paths sandbox-mount test is corrected (rq-60). Approval: "ship pd/rq60 a8acf9478d31e7b5a7edba62a87291ccbac88d02. rev-b HIGH verdict: APPROVE".
+
+## v11.67.8 (2026-10-23)
+
+### Fixed
+- The trust-core detector test now anchors its six mutation probes on single-line finds, with checks for stale, no-op and non-unique anchors (#214). Approval: "tl-324 APPROVE (LOW/MEDIUM, test file only) pd/rq57 single commit 68d8429607cdf119e0e913b38d19947762af5b4d".
+
+## v11.67.7 (2026-10-23)
+
+### Fixed
+- The trap-task fixtures now keep judge-trap-1 pinned to its paid-trial hash and add judge-trap-1b as a new task id. Approval: "tl-324 APPROVE (MEDIUM) pd/traptasks3 single commit 10c94b836ae9006dd51bf09a8a6bda2fbe09d6d7".
+
+## v11.67.6 (2026-10-23)
+
+### Fixed
+- The MCP server fix from pd/rq56 is now in the release. Approval: "APPROVE pd/rq56 b50a02b5b (tl-2, LOW)".
+
+## v11.67.5 (2026-10-23)
+
+### Fixed
+- One codex effort resolver in claude_flags.ts now serves every caller, and a parity test pins it to codex.sh so the two cannot drift (#255). Approval: "APPROVE pd/rq62 88794a707 (tl-2, MEDIUM)".
+
+## v11.67.4 (2026-10-23)
+
+### Fixed
+- The FC-55 20,050-file test fixture and its cleanup now set explicit timeouts, so they no longer fail on slow machines at the default limit. Approval: "tl-324 approval line: ship range origin/main..6bff668ce2b277376d94b8e69a6875ba3d746338 (pd/fc55b-timeout, 2 commits: 7b9745530f28df2cc89efb89256e7d1c7a4447cd, 6bff668ce2b277376d94b8e69a6875ba3d746338, LOW, merge-tree rc 0)".
+
+## v11.67.3 (2026-10-23)
+
+### Fixed
+- The codex.py scoped-out line is now pinned by the P12-26b guard test and its failure class is recorded (rq-59). Approval: "tl-2 APPROVE pd/rq59a 7bf99e440 (MEDIUM, P0)".
+
+## v11.67.2 (2026-10-23)
+
+### Fixed
+- The e10ext line budget guard is green again: code moved out of the over-budget e10ext file, with cache and full_job_brief tests unchanged (main-red-e10ext, merge head 3bc340b548bffdfcab977e232cc7f6393f93dc3e, stack 85979c3af806bca7a4680a60472c8413c024674f then 3bc340b548bffdfcab977e232cc7f6393f93dc3e). Approval: "APPROVE (MEDIUM, tl-324): pd/main-red-e10ext branch head 3bc340b548bffdfcab977e232cc7f6393f93dc3e (merge commit, second parent a0b492c2b is origin/main)".
+
+## v11.67.1 (2026-10-23)
+
+### Fixed
+- The codex.py scoped-out line is now pinned by the P12-26b guard test and its failure class is recorded (rq-59). Approval: "tl-2 APPROVE pd/rq59a 7bf99e440 (MEDIUM, P0)".
+
+## v11.67.0 (2026-10-23)
+
+### Added
+- loki_seal_diff seals changes a client already made into a signed receipt (CW-12, #345); --seal-existing is registered in route.sh.
+
+### Fixed
+- A run with no Wall file is VERIFIED only if a passing test references a changed symbol; an external diff never takes the lean Wall skip; the lean symbol rule ignores local variables and strips comments over the whole added hunk (cw12-r11). Approval: "cw12-r11 720796a3b now has both HIGH approvals (rev-a and rev-c), so it is clear to merge by SHA 720796a3b." (rev-c; rev-a APPROVE also on 720796a3b)
+
+## v11.66.2 (2026-10-23)
+
+### Fixed
+- Go and cargo test ids are attributed to the base only when the change cannot own them (FC-FULLSUITE-GO-CARGO-IDS, rq02b-r6). Approval: "Ship rq02b-r6: one commit, de98e00583e0f0c5f48baf5c2e6fd7b9aa7e1b68, which is based on origin/main a7162f1f3, and merge-tree exits 0. rev-c is the sole HIGH reviewer and approves it. This supersedes the r5 SHA 5e51076f7, so do not merge r5." (rev-c)
+
+## v11.66.1 (2026-10-23)
+
+### Fixed
+- The release approval gate approves a range by exact SHA, fails closed on a bad range, reuses release.sh RELEASE_DIST_FILES and denies a rowless approval by name (FC-RELEASE-UNNAMED-STACKED-PARENT, #436). Approval: "ship pd/rag436-r3 ff7fb1a8efc85d1d80e98cb4e0ebdb943426c803. It is 3 commits over origin/main 69ea3491d, with an FC-only conflict. Pick in order: 525f46cb81d83a2e7da167bda33e9d0550443ece, 21910793e94f70129f689456d2252f324f96852e, ff7fb1a8efc85d1d80e98cb4e0ebdb943426c803. APPROVE ff7fb1a8efc85d1d80e98cb4e0ebdb943426c803" (rev-b)
+
 ## v11.66.0 (2026-10-23)
 
 ### Added

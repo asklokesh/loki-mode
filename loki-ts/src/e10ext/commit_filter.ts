@@ -1,6 +1,6 @@
 // Shared by the commit stage and the supervisor backstop: which staged paths a run must never publish.
 import { dirname } from "node:path";
-import { untouchedSinceIntake, untouchedUntracked } from "./preexisting_dirty.ts";
+import { untouchedSinceIntake } from "./preexisting_dirty.ts"; import { untouchedUntracked } from "../features/untouched_untracked.ts";
 import { installOwned } from "../project_model/install.ts";
 import { runFormatters } from "../runner/repo_profile.ts";
 import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";

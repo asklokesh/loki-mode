@@ -1,0 +1,100 @@
+[
+  {
+    "case": "tie-break-reversed",
+    "kind": "ordering",
+    "edits": [
+      {
+        "old": "return all[i].Word < all[j].Word",
+        "new": "return all[i].Word > all[j].Word"
+      }
+    ],
+    "rules": [
+      2
+    ],
+    "file": "wordfreq.go"
+  },
+  {
+    "case": "nonpositive-n-returns-nil",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "return []Entry{}",
+        "new": "return nil"
+      }
+    ],
+    "rules": [
+      3
+    ],
+    "file": "wordfreq.go"
+  },
+  {
+    "case": "minus-one-not-treated-as-nonpositive",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "if n <= 0 {",
+        "new": "if n < -1 {"
+      }
+    ],
+    "rules": [
+      3
+    ],
+    "file": "wordfreq.go"
+  },
+  {
+    "case": "n-above-distinct-panics",
+    "kind": "max-length",
+    "edits": [
+      {
+        "old": "\tif n < len(all) {\n\t\tall = all[:n]\n\t}",
+        "new": "\tall = all[:n]"
+      }
+    ],
+    "rules": [
+      3
+    ],
+    "file": "wordfreq.go"
+  },
+  {
+    "case": "ascii-letters-only",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "!unicode.IsLetter(r) && !unicode.IsDigit(r)",
+        "new": "!(r < 128 && unicode.IsLetter(r)) && !unicode.IsDigit(r)"
+      }
+    ],
+    "rules": [
+      1
+    ],
+    "file": "wordfreq.go"
+  },
+  {
+    "case": "case-folds-ascii-only",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "strings.ToLower(w)",
+        "new": "strings.Map(func(r rune) rune { if r >= 'A' && r <= 'Z' { return r + 32 }; return r }, w)"
+      }
+    ],
+    "rules": [
+      1
+    ],
+    "file": "wordfreq.go"
+  },
+  {
+    "case": "apostrophe-joins-word",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "!unicode.IsLetter(r) && !unicode.IsDigit(r)",
+        "new": "!unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\\''"
+      }
+    ],
+    "rules": [
+      1
+    ],
+    "file": "wordfreq.go"
+  }
+]

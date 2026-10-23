@@ -7,6 +7,7 @@ import { join as _join } from "node:path";
 const CATALOG_OPUS: string = JSON.parse(_rf(_join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers.claude.cli_aliases.opus;
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 import {
@@ -106,6 +107,30 @@ describe("rarv.getProviderTierParam -- legacy fallback table", () => {
     expect(getProviderTierParam("planning", "codex")).toBe("xhigh");
     expect(getProviderTierParam("development", "codex")).toBe("high");
     expect(getProviderTierParam("fast", "codex")).toBe("low");
+  });
+
+  it("codex arm equals providers/codex.sh provider_get_tier_param per tier (#255 parity)", () => {
+    const sh = join(import.meta.dir, "../../../providers/codex.sh");
+    const env = { ...process.env };
+    for (const k of ["PROVIDER_EFFORT_PLANNING", "PROVIDER_EFFORT_DEVELOPMENT", "PROVIDER_EFFORT_FAST"]) delete env[k];
+    for (const tier of ["planning", "development", "fast", "unknown"]) {
+      const r = spawnSync("bash", ["-c", `source "${sh}"; provider_get_tier_param "${tier}"`], { env, encoding: "utf8" });
+      expect(r.status).toBe(0);
+      expect(getProviderTierParam(tier, "codex")).toBe(r.stdout.trim());
+    }
+  });
+
+  it("codex PROVIDER_EFFORT_* env override wins in TS via the shared resolver", () => {
+    process.env["PROVIDER_EFFORT_FAST"] = "medium";
+    try {
+      expect(getProviderTierParam("fast", "codex")).toBe("medium");
+      expect(getProviderTierParam("development", "codex")).toBe("high");
+    } finally { delete process.env["PROVIDER_EFFORT_FAST"]; }
+  });
+
+  it("rarv.ts holds no codex effort table or env read of its own (#255 criterion 2)", () => {
+    const src = _rf(_join(import.meta.dir, "../../src/runner/rarv.ts"), "utf8");
+    expect(src).not.toContain("PROVIDER_EFFORT_");
   });
 
   it("cline default", () => {

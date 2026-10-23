@@ -3,8 +3,7 @@
 import { briefCtx, buildImplementBrief, impactedTests } from "./implement.ts";
 import { routedFix, routerActive } from "../../runner/router/unit_model.ts";
 import { cascadeDowngrade, escalationModel } from "../sizing.ts";
-import { MAX_FIX_ROUNDS } from "../types.ts";
-import type { RunContext, Stage, StageResult } from "../types.ts";
+import { MAX_FIX_ROUNDS, type RunContext, type Stage, type StageResult } from "../types.ts";
 import type { FailureGroup } from "../failures.ts";
 import { hooks } from "../hooks.ts";
 import { treeFingerprint } from "../../util/anti_loop.ts";

@@ -14,8 +14,7 @@ import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv } from "../../project_model/package_suite.ts";
 import { classifyCheck, failureExcerpt, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
-import type { PushArgs, ReceiptCheck, RunContext, RunnerName, SessionRunner, Stage, StageResult } from "../types.ts";
-import { pushArgv, STAGE_BUDGETS } from "../types.ts";
+import { type PushArgs, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, pushArgv, STAGE_BUDGETS } from "../types.ts";
 import { REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
 import { DEFAULT_PUSH_SH, SHA_RE } from "./pr.ts";
@@ -108,8 +107,7 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);
   }
 }
-/** ENGINE.md section 4 app boot: util/app_probe.ts boots via autonomy/app-runner.sh, probes health and always stops the PID it
- *  recorded. Its checks land as-is; a not_run (no app, missing runtime, throw) is NOT PROVEN, never fail and never pass. */
+/** ENGINE.md section 4 app boot: util/app_probe.ts boots via autonomy/app-runner.sh, probes health and always stops the PID it  recorded. Its checks land as-is; a not_run (no app, missing runtime, throw) is NOT PROVEN, never fail and never pass. */
 async function runAppBoot(ctx: RunContext, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
   let r: AppProbeResult;
   try { r = await (opts.appProbe ?? appProbe)(ctx.repoDir, join(ctx.repoDir, ".loki")); } catch (err) { r = { checks: [{ name: "app boot", cmd: "autonomy/app-runner.sh", result: "not_run", duration_s: 0, reason: `app probe threw: ${(err as Error).message}` }], pid: null, url: null }; }
@@ -144,8 +142,7 @@ async function secureScanChanged(repoDir: string, changed: string[], opts: DeepO
     return await runSecureScan(dir, { ...(opts.secureScanPath ? { scriptPath: opts.secureScanPath } : {}), timeoutMs: 60_000 });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
-/** One "security scan" check over the changed files: secret-scan.sh's two matchers (sourced, never edited) plus secure-scan.py.
- *  A secret hit or a HIGH secure-scan finding is fail; else a missing or broken scanner is not_run (NOT PROVEN), never pass. */
+/** One "security scan" check over the changed files: secret-scan.sh's two matchers (sourced, never edited) plus secure-scan.py.  A secret hit or a HIGH secure-scan finding is fail; else a missing or broken scanner is not_run (NOT PROVEN), never pass. */
 async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
   const scriptPath = opts.secretScanShPath ?? DEFAULT_SECRET_SCAN_SH, name = "security scan", cmd = "secret-scan.sh + secure-scan.py";
   if (!existsSync(scriptPath)) { checks.push({ name, cmd, result: "not_run", duration_s: 0 }); notProven.add(`not run: ${name} (secret-scan.sh not found)`); return; }

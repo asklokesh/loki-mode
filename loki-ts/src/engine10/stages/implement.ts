@@ -14,8 +14,8 @@ import { resumeAfterConflict, resumeAfterEmptyDone } from "../../util/conflict_r
 import { planChain, readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
 import { routerActive } from "../../runner/router/unit_model.ts";
-import type { ImplementExit, RunContext, SessionRunOptions, Stage, StageResult, TestMap } from "../types.ts";
-import { taskBlock } from "../types.ts";
+import { type ImplementExit, type RunContext, type SessionRunOptions, type Stage, type StageResult, type TestMap, taskBlock } from "../types.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { sha256 } from "./seal.ts";
 import { loadSpecFile, specBriefBlock, type LoadedSpec } from "../../util/spec_file.ts";
 
 /** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
@@ -92,6 +92,13 @@ function specFor(ctx: RunContext): LoadedSpec | null {
   try { return loadSpecFile(join(ctx.runDir, "spec.snapshot.md")); } catch { return null; }
 }
 
+/** CW-12: the changes were made by an external client and arrive as a patch. Apply it to the tree the Wall already sealed against; no session runs and the exit is "external". */
+export function applyExternalPatch(ctx: RunContext, patchPath: string): StageResult {
+  try { safeGit(ctx.repoDir, ["apply", "--binary", "--whitespace=nowarn", patchPath]); } catch (e) { return { status: "failed", data: { exit: "error", external: true }, reason: `external patch does not apply: ${(e as Error).message.split("\n")[0]}` }; }
+  const testsReverted = restoreReadOnly((ctx.outputs().wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? []);
+  return { status: "completed", data: { exit: "external", external: true, patch_sha256: sha256(readFileSync(patchPath, "utf8")), tests_reverted: testsReverted, impacted_tests: impactedTests(ctx), iteration_ids: [] } };
+}
+
 export const implementStage: Stage = {
   name: "implement",
   targetS: 180,
@@ -99,6 +106,7 @@ export const implementStage: Stage = {
 
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     rmSync(join(ctx.repoDir, ".loki", "supply-declared.json"), { force: true }); // T10 B3: never judge this run by a stale declaration
+    if (ctx.externalPatch) return applyExternalPatch(ctx, ctx.externalPatch);
     const prior = ctx.outputs();
     const task = (prior.intake?.task as string | undefined) ?? "";
     const plan = (prior.plan?.plan as string | undefined) ?? null;

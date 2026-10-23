@@ -2,8 +2,8 @@
 // Reads never throw (missing or corrupt = miss) and write nothing; callers time writes after the PR.
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, relative, resolve } from "node:path";
-import { homeLokiDir } from "../util/paths.ts";
+import { basename, resolve } from "node:path";
+import { homeLokiDir } from "../util/paths.ts"; import { producerFingerprint } from "../util/producer_fingerprint.ts";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap } from "./types.ts";
 /** sha256 of the pinned origin URL, or of the absolute repo path when there  is no origin (ENGINE.md section 13). */
@@ -18,8 +18,8 @@ export function defaultCacheRoot(): string {
 export function repoCacheDir(key: string, cacheRoot: string = defaultCacheRoot()): string {
   return resolve(cacheRoot, key);
 }
-// Parses fine but is the wrong shape (e.g. `null`, `{}`, a bare number) is just as much a corrupt cache entry as unparseable text: both are a miss, never a throw. `isValid` lets each caller state its
-// own shape; callers that skip it accept anything JSON.parse produces, same as before.
+// Parses fine but is the wrong shape (e.g. `null`, `{}`, a bare number) is just as much a corrupt cache entry as unparseable text: both are a miss, never a throw. `isValid` lets each caller state its own shape; callers that skip
+// it accept anything JSON.parse produces, same as before.
 export function readJson<T>(path: string, isValid: (v: unknown) => v is T = (_v): _v is T => true): T | null {
   if (!existsSync(path)) return null;
   try {
@@ -35,30 +35,6 @@ function isRepoMap(v: unknown): v is RepoMap {
 }
 function isTestMap(v: unknown): v is TestMap {
   return typeof v === "object" && v !== null && Array.isArray((v as TestMap).runners) && Array.isArray((v as TestMap).tests);
-}
-/** sha256 over the relative path and bytes of every .ts file under `root`, in sorted order. Hashing the whole tree (not a  hand-picked builder list) means any code the builders import changes the key too. */
-export function sourceFingerprint(root: string): string {
-  const h = createHash("sha256");
-  const walk = (dir: string): void => {
-    for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
-      const p = resolve(dir, e.name);
-      if (e.isDirectory()) { if (e.name !== "node_modules") walk(p); }
-      else if (e.isFile() && e.name.endsWith(".ts")) h.update(`${relative(root, p)}\0`).update(readFileSync(p)).update("\0");
-    }
-  };
-  walk(root);
-  return h.digest("hex");
-}
-declare global { var __LOKI_PRODUCER_FP__: string | undefined; }
-let producerFp: string | null = null;
-/** The producer fingerprint stored maps are bound to. A bundle gets it generated in by scripts/build.ts (the bundle has no  source path to hash); a source run hashes src/ itself. When neither is
- *  possible it is a per-process random value, so  nothing stored can ever match: a cache that cannot name its producer misses, it never serves an unbound map. */
-export function computeProducerFingerprint(root: string = resolve(import.meta.dir, ".."), injected: unknown = globalThis.__LOKI_PRODUCER_FP__): string {
-  if (typeof injected === "string" && /^[0-9a-f]{64}$/.test(injected)) return injected;
-  try { return sourceFingerprint(root); } catch { return createHash("sha256").update(`unbound:${process.pid}:${Date.now()}:${Math.random()}`).digest("hex"); }
-}
-export function producerFingerprint(): string {
-  return (producerFp ??= computeProducerFingerprint());
 }
 let tmpSeq = 0;
 /** Cache files are private (dir 0700, file 0600, re-applied when the dir pre-existed loose) and land through a temp file plus rename, so a reader never sees a partial file and no temp file outlives a failed write. */

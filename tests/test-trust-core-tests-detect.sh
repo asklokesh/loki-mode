@@ -25,6 +25,15 @@
 # marker, when set), with the same substring semantics as scripts/mutation-probe.sh,
 # and fails naming every stale anchor. A stale anchor otherwise exits 65 in the
 # probe and surfaces only in CI. scripts/local-ci.sh runs this mode.
+#
+# ANCHOR STYLE (issue #214, option 2). Anchor on a unique nearby token, not a
+# copy of a multi-line block. A probe whose find-string repeats a block fails
+# the day an unrelated line lands inside it. Where the smallest span carrying
+# the invariant (say a bare `return 20`) is not unique, set MUTPROBE_AFTER to a
+# short unique token just above it (a function name, a log line, a marker
+# comment): the probe then mutates the first match after that token. Anchors
+# mode requires the token to occur exactly once in its file, or, with no token,
+# the find-string to occur exactly once.
 
 set -uo pipefail
 
@@ -331,10 +340,10 @@ probe_case "the in-loop iteration valve stays wired" \
 # blocking check that stops blocking lets a doomed build burn a paid call before
 # failing deep inside the loop, and an advisory check that starts blocking locks
 # working users out over an optional toolchain.
+MUTPROBE_AFTER='Git is required (the build initializes a repo)' \
 probe_case "a missing git still blocks the build" \
     "autonomy/run.sh" \
-    'log_error "Git is required (the build initializes a repo). Install: https://git-scm.com/downloads"
-        return 1' \
+    'return 1' \
     'return 0' \
     bash tests/test-preflight-checks.sh
 
@@ -376,12 +385,11 @@ probe_case "the debate gate's enforcement stays opt-in" \
     'LOKI_GATE_MAGIC_DEBATE_BLOCKING:-true' \
     bash tests/test-magic-debate-gate.sh
 
+MUTPROBE_AFTER='"$debate_out" | tail -3 >&2' \
 probe_case "a missing provider degrades the debate gate, never blocks" \
     "autonomy/run.sh" \
-    'printf '"'"'%s\n'"'"' "$debate_out" | tail -3 >&2
-        return 0' \
-    'printf '"'"'%s\n'"'"' "$debate_out" | tail -3 >&2
-        return 1' \
+    'return 0' \
+    'return 1' \
     bash tests/test-magic-debate-gate.sh
 
 # The production-build gate. Its test extracted enforce_build_check and verified
@@ -551,12 +559,11 @@ probe_case "the mutation detector is packaged" \
     "package.json" '"tests/detect-test-mutations.sh",' '' \
     bash tests/test-detectors-are-packaged.sh
 
+MUTPROBE_AFTER='detector not found -- BLOCK (fail-closed)' \
 probe_case "a missing detector still fail-closes" \
     "autonomy/run.sh" \
-    'log_warn "Mutation integrity gate: detector not found -- BLOCK (fail-closed)"
-        return 1' \
-    'log_warn "Mutation integrity gate: detector not found"
-        return 0' \
+    'return 1' \
+    'return 0' \
     bash tests/test-detectors-are-packaged.sh
 
 # Generalised packaging check: ANY runtime dependency, not only detectors.
@@ -629,14 +636,11 @@ probe_case "a changed failure reason keeps iterating" \
 #
 # Anchoring on the emit line above it pins the mutation_integrity site the
 # target test actually drives.
+MUTPROBE_AFTER='emit_completion_summary gate_stuck_mutation_integrity' \
 probe_case "a stuck gate never reports success" \
     "autonomy/run.sh" \
-    '                        save_state "${retry:-0}" "gate_stuck_mutation_integrity" 20 2>/dev/null || true
-                        emit_completion_summary gate_stuck_mutation_integrity
-                        return 20' \
-    '                        save_state "${retry:-0}" "gate_stuck_mutation_integrity" 20 2>/dev/null || true
-                        emit_completion_summary gate_stuck_mutation_integrity
-                        return 0' \
+    'return 20' \
+    'return 0' \
     bash tests/test-gate-stuck-abort.sh
 
 probe_case "the mutation gate still consults the stuck check" \
@@ -704,9 +708,10 @@ probe_case "the stuck check compares a finding, not the banner" \
 # W1: codex cost. The first probe guards the property the whole feature exists
 # for -- an unpriced model must record UNKNOWN, never 0, because "free" is a
 # different claim from "we could not price it".
+MUTPROBE_AFTER='"free" are different claims and only one of them is honest.' \
 probe_case "an unpriced codex model records unknown, not zero" \
     "autonomy/lib/codex-usage.py" \
-    '    cost = ""' '    cost = "0.000000"' \
+    'cost = ""' 'cost = "0.000000"' \
     bash tests/test-codex-usage-cost.sh
 
 probe_case "cached tokens are not double-counted as uncached input" \
@@ -753,9 +758,7 @@ probe_case "the cost check actually gates the verdict" \
 # redirection is applied.
 probe_case "no raw shell error when .loki/config is a directory" \
     "autonomy/crash.sh" \
-    '    if [ -d "$config" ]; then
-        return 0
-    fi' '    :' \
+    'if [ -d "$config" ]; then' 'if false; then' \
     bash tests/test-disclosure-config-directory.sh
 
 # The dashboard reported a LIVE build as STOPPED. Liveness was computed twice
@@ -854,16 +857,21 @@ probe_case "a syntax error in the embedded stream parser is caught" \
 if [[ "$mode" == "anchors" ]]; then
     echo "TEST: trust-core probe anchors still match their files"
     # Fixture hook for the wall checks: append one synthetic case. "noop" has
-    # find == repl (must be reported NOOP); "real" has find != repl (must pass).
+    # find == repl (must be reported NOOP); "real" has find != repl and a unique
+    # find (must pass); "dup" has a find that occurs more than once (must be
+    # reported NONUNIQUE). The "noop" and "real" finds are split so this file
+    # holds that string only where it is meant to be counted.
     case "${TRUST_CORE_ANCHORS_SELFTEST:-}" in
-        noop) a_args+=("selftest noop" "tests/test-trust-core-tests-detect.sh" "set -uo pipefail" "set -uo pipefail" "") ;;
-        real) a_args+=("selftest real" "tests/test-trust-core-tests-detect.sh" "set -uo pipefail" "set -u" "") ;;
+        noop) a_args+=("selftest noop" "tests/test-trust-core-tests-detect.sh" 'PROBE="$REPO_RO''OT/scripts/mutation-probe.sh"' 'PROBE="$REPO_RO''OT/scripts/mutation-probe.sh"' "") ;;
+        real) a_args+=("selftest real" "tests/test-trust-core-tests-detect.sh" 'PROBE="$REPO_RO''OT/scripts/mutation-probe.sh"' 'PROBE=""' "") ;;
+        dup) a_args+=("selftest dup" "tests/test-trust-core-tests-detect.sh" 'exit 1' 'exit 0' "") ;;
     esac
     python3 - "$REPO_ROOT" ${a_args[@]+"${a_args[@]}"} <<'PY'
 import sys
 root, rest = sys.argv[1], sys.argv[2:]
 stale = []
 noop = []
+nonunique = []
 total = len(rest) // 5
 for name, file, find, repl, after in (rest[i:i + 5] for i in range(0, len(rest), 5)):
     try:
@@ -872,6 +880,7 @@ for name, file, find, repl, after in (rest[i:i + 5] for i in range(0, len(rest),
     except OSError as err:
         stale.append((name, file, "unreadable: %s" % err))
         continue
+    whole = text
     if after:
         idx = text.find(after)
         if idx == -1:
@@ -882,14 +891,21 @@ for name, file, find, repl, after in (rest[i:i + 5] for i in range(0, len(rest),
         stale.append((name, file, "find-string missing: %r" % find))
     elif find == repl:
         noop.append((name, file))
+    elif after and whole.count(after) != 1:
+        nonunique.append((name, file, "marker occurs %d times: %r" % (whole.count(after), after)))
+    elif not after and whole.count(find) != 1:
+        nonunique.append((name, file, "find-string occurs %d times: %r" % (whole.count(find), find)))
 for name, file, why in stale:
     print("  STALE: %s" % name)
     print("        %s: %s" % (file, why))
 for name, file in noop:
     print("  NOOP: %s" % name)
     print("        %s: find == replace, scripts/mutation-probe.sh would exit 65" % file)
-print("  %d anchors checked, %d stale anchors, %d no-op cases" % (total, len(stale), len(noop)))
-sys.exit(1 if stale or noop else 0)
+for name, file, why in nonunique:
+    print("  NONUNIQUE: %s" % name)
+    print("        %s: %s; scripts/mutation-probe.sh replaces the first one" % (file, why))
+print("  %d anchors checked, %d stale anchors, %d no-op cases, %d non-unique" % (total, len(stale), len(noop), len(nonunique)))
+sys.exit(1 if stale or noop or nonunique else 0)
 PY
     exit $?
 fi

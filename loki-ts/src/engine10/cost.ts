@@ -1,15 +1,10 @@
-// loki-ts/src/engine10/cost.ts
-//
-// E-06: harvest result-cost side files (`<lokiRoot>/metrics/result-cost-<iter>.json`, the exact shape writeResultCost in src/runner/sdk_stream_parser.ts writes: {total_cost_usd, input_tokens, output_tokens, cache_read_tokens,
-// cache_creation_tokens, model}) into cost-event data. Absent/unreadable/no-total_cost_usd, or a dollar figure with all-zero usage (E-69, the EV-8 failure mode), all mean UNKNOWN: usd null, never 0.
-//
-// E-06b: also writes `<lokiRoot>/metrics/efficiency/iteration-<N>.json`, the shape ENGINE.md section 10 and autonomy/lib/cost-summary.py read (not ours to change). Unlike the legacy bash writer
-// (autonomy/run.sh), which always writes cost_usd (defaulting to 0 when unknown), this omits cost_usd when there is no dollar figure.
+// E-06: harvest result-cost side files (`<lokiRoot>/metrics/result-cost-<iter>.json`, the exact shape writeResultCost in src/runner/sdk_stream_parser.ts writes: {total_cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, model}) into
+// cost-event data. Absent/unreadable/no-total_cost_usd, or a dollar figure with all-zero usage (E-69, the EV-8 failure mode), all mean UNKNOWN: usd null, never 0. E-06b: also writes `<lokiRoot>/metrics/efficiency/iteration-<N>.json`, the shape ENGINE.md section 10 and
+// autonomy/lib/cost-summary.py read (not ours to change). Unlike the legacy bash writer (autonomy/run.sh), which always writes cost_usd (defaulting to 0 when unknown), this omits cost_usd when there is no dollar figure.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"; import type { CostRecords, CostTotals } from "./types.ts"; import { hooks } from "./hooks.ts"; import { type CostBreakdown, costBreakdown } from "../util/cost_breakdown.ts";
 import { join } from "node:path"; import { sessionPlanEnabled } from "../runner/router/flag.ts";
 
-/** D48: marker on a result-cost file and the cost event/receipt for a CLI-invoker session (LOKI_E10_INVOKER=cli, e.g. the
- *  stub provider) that has no provider-reported dollars. Recorded as 0, never null, and always disclosed in NOT PROVEN. */
+/** D48: marker on a result-cost file and the cost event/receipt for a CLI-invoker session (LOKI_E10_INVOKER=cli, e.g. the  stub provider) that has no provider-reported dollars. Recorded as 0, never null, and always disclosed in NOT PROVEN. */
 export const UNMETERED = "cli-invoker-unmetered";
 
 export interface RouterUsage {
@@ -51,8 +46,7 @@ export interface CostResult {
   missing: string[]; // iterations with no dollar figure: no file, a file with no total_cost_usd, or all-zero usage (see noUsage below)
 }
 
-/** R1-08: router telemetry is recorded only when the router flag is on (1/true/on, same as the router flag readers), so LOKI_ROUTER unset or 0
- *  leaves the result-cost file and CostResult byte-identical to pre-router. Shared by the stream parser. */
+/** R1-08: router telemetry is recorded only when the router flag is on (1/true/on, same as the router flag readers), so LOKI_ROUTER unset or 0  leaves the result-cost file and CostResult byte-identical to pre-router. Shared by the stream parser. */
 export function routerTelemetryOn(env: Record<string, string | undefined> = process.env): boolean {
   return sessionPlanEnabled(env); // the router, or the advisor alone (#246: a parity run must show the advisor attached)
 }
@@ -65,8 +59,7 @@ export function resultCostPath(lokiRoot: string, iteration: string): string {
   return join(lokiRoot, "metrics", `result-cost-${iteration}.json`);
 }
 
-// Sum across sessions. Any missing session makes usd null: a partial sum would understate the run's cost. Tokens still sum what was measured. `context` are other iterations of the same run, read only
-// to find a resumed session's predecessor (never summed).
+// Sum across sessions. Any missing session makes usd null: a partial sum would understate the run's cost. Tokens still sum what was measured. `context` are other iterations of the same run, read only to find a resumed session's predecessor (never summed).
 export function sumResultCosts(lokiRoot: string, iterations: string[], context: string[] = []): CostResult {
   const out: CostResult = {
     usd: null, partialUsd: 0, measuredCount: 0, totalCount: iterations.length,
@@ -167,8 +160,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
 export { type EfficiencySessionInfo, liveArchivedCosts, nextEfficiencyIteration, tokensUnmeasured, writeEfficiencyRecord } from "../providers/provider_cost.ts";
 import { type EfficiencySessionInfo, writeEfficiencyRecord } from "../providers/provider_cost.ts";
 
-// What a provider session calls once it ends: reads its own result-cost file and writes the derived efficiency record
-// in the same step. Returns the CostResult so the caller can also emit the `cost` event (section 5) from the same numbers.
+// What a provider session calls once it ends: reads its own result-cost file and writes the derived efficiency record in the same step. Returns the CostResult so the caller can also emit the `cost` event (section 5) from the same numbers.
 export function recordSessionCost(lokiRoot: string, iterationId: string, info: EfficiencySessionInfo): CostResult {
   // The predecessor of a resumed session is another file of the same run: look it up so a provably separate resume is not blanked.
   let siblings: string[] = [];

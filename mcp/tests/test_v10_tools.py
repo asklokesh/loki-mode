@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -244,3 +245,214 @@ class VerifyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+_FAKE_LOKI = """#!/bin/sh
+# stand-in engine: records what it was handed, writes a receipt with the verdict in $FAKE_VERDICT
+[ "$2" = "--seal-existing" ] || exit 9
+[ -z "$(git status --porcelain)" ] || exit 8
+cp "$3" "$FAKE_OUT/patch"
+printf '%s' "$1" > "$FAKE_OUT/intent"
+RID="${FAKE_RUN_ID:-e10-fake}"
+mkdir -p ".loki/runs/$RID"
+printf '{"run_id":"%s"}' "$RID" > .loki/engine.json
+printf '{"verdict":"%s","not_proven":["x"],"head_sha":"%s"}' "${FAKE_VERDICT:-VERIFIED}" "$(git rev-parse HEAD)" > ".loki/runs/$RID/receipt.json"
+"""
+
+
+def _git(cwd, *args):
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout
+
+
+class SealDiffTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="loki-test-seal-")
+        self.addCleanup(__import__("shutil").rmtree, self.tmp, True)
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        _git(self.repo, "init", "-q", "-b", "main")
+        _git(self.repo, "config", "user.name", "t")
+        _git(self.repo, "config", "user.email", "t@example.invalid")
+        with open(os.path.join(self.repo, "a.txt"), "w") as f:
+            f.write("base\n")
+        _git(self.repo, "add", "a.txt")
+        _git(self.repo, "commit", "-q", "-m", "base")
+        self.out = os.path.join(self.tmp, "out")
+        os.makedirs(self.out)
+        self.fake = os.path.join(self.tmp, "loki")
+        with open(self.fake, "w") as f:
+            f.write(_FAKE_LOKI)
+        os.chmod(self.fake, 0o755)
+        env = mock.patch.dict(os.environ, {"FAKE_OUT": self.out})
+        env.start()
+        self.addCleanup(env.stop)
+        bin_patch = mock.patch.object(v10_tools, "LOKI_BIN", self.fake)
+        bin_patch.start()
+        self.addCleanup(bin_patch.stop)
+
+    def _edit(self):
+        with open(os.path.join(self.repo, "a.txt"), "a") as f:
+            f.write("changed line\n")
+        with open(os.path.join(self.repo, "new.txt"), "w") as f:
+            f.write("brand new\n")
+
+    def test_seals_working_tree_diff_and_leaves_user_repo_untouched(self):
+        self._edit()
+        before = (_git(self.repo, "status", "--porcelain"), _git(self.repo, "rev-parse", "HEAD"),
+                  _git(self.repo, "rev-parse", "--abbrev-ref", "HEAD"), _git(self.repo, "diff", "--cached"))
+        r = v10_tools.seal_diff(self.repo, "add a line", _ok)
+        self.assertNotIn("error", r)
+        self.assertEqual((r["verdict"], r["verdict_is_verified"], r["run_id"]), ("VERIFIED", True, "e10-fake"))
+        self.assertTrue(os.path.isfile(r["receipt_path"]))
+        patch = open(os.path.join(self.out, "patch")).read()
+        self.assertIn("+changed line", patch)
+        self.assertIn("+brand new", patch)
+        self.assertEqual(open(os.path.join(self.out, "intent")).read(), "add a line")
+        after = (_git(self.repo, "status", "--porcelain"), _git(self.repo, "rev-parse", "HEAD"),
+                 _git(self.repo, "rev-parse", "--abbrev-ref", "HEAD"), _git(self.repo, "diff", "--cached"))
+        self.assertEqual(before[1:], after[1:])
+        self.assertEqual(before[3], "")
+        self.assertEqual(after[0].replace("?? .loki/\n", ""), before[0])
+
+    def test_run_id_from_the_clone_is_validated_before_any_path_join(self):
+        self._edit()
+        escape = os.path.join(self.tmp, "escaped")
+        for bad in (escape, "../../escaped", "a/../b", ".hidden/.."):
+            with mock.patch.dict(os.environ, {"FAKE_RUN_ID": bad}):
+                r = v10_tools.seal_diff(self.repo, "add a line", _ok)
+            self.assertIn("error", r, bad)
+            self.assertIn("run_id", r["error"], bad)
+        self.assertFalse(os.path.exists(os.path.join(self.repo, ".loki", "runs", "escaped")))
+        self.assertFalse(os.path.exists(os.path.join(self.repo, "escaped")))
+
+    def test_sealed_commit_lands_under_a_non_branch_ref_and_branches_are_untouched(self):
+        self._edit()
+        branches = _git(self.repo, "branch", "--list")
+        r = v10_tools.seal_diff(self.repo, "add a line", _ok)
+        self.assertEqual(r["sealed_ref"], "refs/loki/seal/e10-fake")
+        # the fake seals at the clone HEAD, which is the user's HEAD; the ref must resolve in the USER repo
+        self.assertEqual(_git(self.repo, "rev-parse", r["sealed_ref"]), _git(self.repo, "rev-parse", "HEAD"))
+        self.assertEqual(_git(self.repo, "branch", "--list"), branches)
+        self.assertIn(".loki/", r["note"])
+
+    def test_result_does_not_call_the_verdict_string_a_checked_signature(self):
+        self._edit()
+        r = v10_tools.seal_diff(self.repo, "add a line", _ok)
+        self.assertNotIn("verified", r)
+        self.assertIn("verdict_is_verified", r)
+
+    def test_failed_wall_is_not_verified(self):
+        self._edit()
+        with mock.patch.dict(os.environ, {"FAKE_VERDICT": "FAILED"}):
+            r = v10_tools.seal_diff(self.repo, "add a line", _ok)
+        self.assertEqual((r["verdict"], r["verdict_is_verified"]), ("FAILED", False))
+
+    def test_rejects_bad_input_and_empty_diff(self):
+        self.assertIn("error", v10_tools.seal_diff(self.repo, "", _ok))
+        self.assertIn("error", v10_tools.seal_diff(self.repo, "--help", _ok))
+        self.assertIn("error", v10_tools.seal_diff(self.repo, "x", _deny))
+        r = v10_tools.seal_diff(self.repo, "x", _ok)
+        self.assertIn("no changes to seal", r["error"])
+
+    def test_scratch_dir_removed(self):
+        self._edit()
+        made = []
+        real = tempfile.mkdtemp
+        def spy(*a, **k):
+            d = real(*a, **k)
+            made.append(d)
+            return d
+        with mock.patch("tempfile.mkdtemp", spy):
+            v10_tools.seal_diff(self.repo, "add a line", _ok)
+        self.assertEqual(len(made), 1)
+        self.assertFalse(os.path.exists(made[0]))
+
+
+_E2E = os.path.join(_REPO_ROOT, "loki-ts", "tests", "engine10", "fixtures", "e2e")
+
+
+@unittest.skipUnless(shutil.which("bun") and shutil.which("git"), "needs bun and git")
+class RealEngineSealDiffTests(unittest.TestCase):
+    """FC-ENGINE-ROUTE-UNMOCKED: seal_diff through the REAL bin/loki under v10_tools._env() (LOKI_ENGINE=v10), so
+    autonomy/route.sh must accept --seal-existing. Only the claude CLI is a stub (no billed call)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="loki-test-real-seal-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.repo = os.path.join(self.tmp, "repo")
+        shutil.copytree(os.path.join(_E2E, "repo"), self.repo)
+        _git(self.repo, "init", "-q", "-b", "main")
+        _git(self.repo, "config", "user.name", "t")
+        _git(self.repo, "config", "user.email", "t@example.invalid")
+        _git(self.repo, "add", "calc.ts", "calc.test.ts", "bunfig.toml")
+        _git(self.repo, "commit", "-q", "-m", "base")
+        with open(os.path.join(self.repo, "calc.ts"), "a") as f:
+            f.write("\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n")
+        patches = [
+            mock.patch.object(v10_tools, "LOKI_BIN", os.path.join(_REPO_ROOT, "bin", "loki")),
+            mock.patch.dict(os.environ, {
+                "LOKI_E10_INVOKER": "cli", "LOKI_CLAUDE_CLI": os.path.join(_E2E, "bin", "claude"),
+                "PATH": os.path.join(_E2E, "bin") + os.pathsep + os.environ.get("PATH", ""),
+                "E2E_STUB_MODE": "wallcolor", "LOKI_NO_BROWSER": "1",
+                "LOKI_RECEIPT_SIGNING_KEY_FILE": os.path.join(self.tmp, "k.pem"),
+                "LOKI_TS_ENTRY": os.path.join(_REPO_ROOT, "loki-ts", "src", "cli.ts")}),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        for k in ("LOKI_LEGACY_BASH", "LOKI_MODEL_OVERRIDE", "LOKI_RECEIPT_SIGNING_KEY", "LOKI_ENGINE", "LOKI_E10_PLAN"): # no plan mode: the shipped path
+            os.environ.pop(k, None)
+
+    def _loki(self, *args):
+        return subprocess.run([v10_tools.LOKI_BIN, *args], cwd=self.repo, env=v10_tools._env(), capture_output=True,
+                              text=True, stdin=subprocess.DEVNULL, timeout=120)
+
+    def _seal(self):
+        r = v10_tools.seal_diff(self.repo, "add a multiply(a, b) function to calc.ts", _ok)
+        self.assertNotIn("error", r, r)
+        return r
+
+    def test_route_accepts_seal_existing_and_receipt_names_no_implementing_model(self):
+        r = self._seal()
+        self.assertEqual(r["verdict"], "VERIFIED")
+        receipt = json.load(open(r["receipt_path"]))
+        self.assertEqual(receipt["implement"]["exit"], "external")
+        self.assertEqual(receipt["model"], "external (no Loki implement session)")
+        self.assertIn("Wall author not filesystem-isolated from the external diff", r["not_proven"])
+
+    def test_wrong_external_body_never_seals_verified_on_the_shipped_path(self):
+        """FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED: no LOKI_E10_PLAN, wrong multiply body, default env through the tool."""
+        calc = os.path.join(self.repo, "calc.ts")
+        _git(self.repo, "checkout", "--", "calc.ts")
+        with open(calc, "a") as f:
+            f.write("\nexport function multiply(a: number, b: number): number {\n  return a + b + 1;\n}\n")
+        self.assertNotIn("LOKI_E10_PLAN", v10_tools._env())
+        r = v10_tools.seal_diff(self.repo, "add a multiply(a, b) function to calc.ts", _ok)
+        self.assertNotIn("error", r, r)
+        self.assertNotEqual(r["verdict"], "VERIFIED", r)
+        self.assertFalse(r["verdict_is_verified"])
+
+    def test_user_repo_verifies_strictly_with_no_drift_override(self):
+        before = (_git(self.repo, "rev-parse", "HEAD"), _git(self.repo, "diff", "--cached"), _git(self.repo, "branch", "--list"))
+        r = self._seal()
+        self.assertEqual(r["sealed_ref"], "refs/loki/seal/" + r["run_id"])
+        self.assertEqual((_git(self.repo, "rev-parse", "HEAD"), _git(self.repo, "diff", "--cached"), _git(self.repo, "branch", "--list")), before)
+        env = v10_tools._env()
+        self.assertNotIn("LOKI_VERIFY_ALLOW_HEAD_DRIFT", env)
+        # Before the user commits, HEAD is still the base and the sealed path is uncommitted: verify honestly says UNCHECKED.
+        pre = self._loki("verify", r["run_id"])
+        self.assertEqual(pre.returncode, 2, pre.stdout + pre.stderr)
+        self.assertIn("head drift", pre.stdout)
+        # After the user commits the sealed change, the fetched sealed head makes the drift computable: strict VERIFIED.
+        _git(self.repo, "add", "calc.ts")
+        _git(self.repo, "commit", "-q", "-m", "user commit of the sealed change")
+        p = self._loki("verify", r["run_id"])
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("verdict: VERIFIED", p.stdout)
+        # Negative control: without the fetched ref the same verify cannot compute the drift and is UNCHECKED again.
+        _git(self.repo, "update-ref", "-d", r["sealed_ref"])
+        _git(self.repo, "reflog", "expire", "--expire=now", "--all")
+        _git(self.repo, "gc", "-q", "--prune=now")
+        gone = self._loki("verify", r["run_id"])
+        self.assertEqual(gone.returncode, 2, gone.stdout + gone.stderr)
+        self.assertIn("head drift", gone.stdout)

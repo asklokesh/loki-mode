@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "preregistered_before_any_paid_run": true,
+  "tasks": {
+    "trap-01-dedupe": {
+      "sha256": "5dd37dfb4ae03e4476fbb3e3913a08b0fcbdf1c55b44faebc2343dc8e84640c8",
+      "language": "python"
+    },
+    "trap-02-ratelimit": {
+      "sha256": "ccf45885d1f766fdf55d5460eef2681c0d49d53fbacf75c7e6489c00137ec4c6",
+      "language": "python"
+    },
+    "trap-03-duration": {
+      "sha256": "42343ae675d555c9ce36cf764996b745408a513b598bf77c39be1c3c704ca2a6",
+      "language": "python"
+    },
+    "trap-04-atomicwrite": {
+      "sha256": "4465ced426704ec5390229c88021d1ad71212eb8add591c11b4e76dc48234fcb",
+      "language": "python"
+    },
+    "trap-05-lru": {
+      "sha256": "0649b66d1e684473650c077affa3e862d581c63125e1daa4ac19d3ceca4231bd",
+      "language": "python"
+    },
+    "trap-06-deepmerge": {
+      "sha256": "7891b2459db214befa161181a70e4b39a9fdb48ec884d6eb63b8550f6fe3c040",
+      "language": "node"
+    },
+    "trap-07-retry": {
+      "sha256": "568c1bdb5567e72ca65f6052133ca0ec317e7cce45900cedf387f141fbc07370",
+      "language": "node"
+    },
+    "trap-08-csvline": {
+      "sha256": "1c7556562883f89a77dd0e26ad7d77b1d8823b1aaa9d8151e5374c8c7942f182",
+      "language": "node"
+    },
+    "trap-09-wordfreq": {
+      "sha256": "3e71a3f05f6549b4d9619f2d631cabbe09661f8e52d8e5bb6943af7bf31db9e9",
+      "language": "go"
+    },
+    "trap-10-parmap": {
+      "sha256": "9746ec5f0a9d61c5ef79b8510e2d74791e4758701afc4bbfb4c6bc24df542bf8",
+      "language": "go"
+    },
+    "judge-trap-1b": {
+      "sha256": "71abbd15bbfeb85ef7160f2f92f0cb26f297523feff56bf925458121aeb73392",
+      "language": "python"
+    }
+  }
+}

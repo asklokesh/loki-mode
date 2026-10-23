@@ -3,8 +3,7 @@
 // Intake ever claims already-done. Reuses the LOKI_ALREADY_DONE marker session.ts already parses (implement.ts's contract), so there is no new marker to teach the provider.
 import { wallModel } from "./sizing.ts";
 import type { RepoMap } from "./repomap.ts";
-import { buildAlreadyDoneCommentArgv, buildConfirmBrief, citesRealHit, evidenceLines, findEvidence, renderAlreadyDoneComment } from "../util/already_done_evidence.ts";
-import type { EvidenceHit } from "../util/already_done_evidence.ts";
+import { buildAlreadyDoneCommentArgv, buildConfirmBrief, citesRealHit, evidenceLines, findEvidence, renderAlreadyDoneComment, type EvidenceHit } from "../util/already_done_evidence.ts";
 import type { RunContext, TestMap } from "./types.ts";
 export { buildAlreadyDoneCommentArgv, buildConfirmBrief, evidenceLines, findEvidence, renderAlreadyDoneComment };
 export type { EvidenceHit };
@@ -15,8 +14,7 @@ export interface AlreadyDoneResult {
   paths: string[]; // the hits' file paths (FC-15: checked against the PR target)
 }
 
-/** Runs the deterministic search, then, only on a candidate, one short confirmation session  (fast tier pinned to wallModel(), the same cheap-model pin E-45 uses for Wall). No candidate,  no
- *  session call: findEvidence's own gate is what keeps this off the hot path. */
+/** Runs the deterministic search, then, only on a candidate, one short confirmation session  (fast tier pinned to wallModel(), the same cheap-model pin E-45 uses for Wall). No candidate,  no  session call: findEvidence's own gate is what keeps this off the hot path. */
 export async function checkAlreadyDone(
   ctx: RunContext,
   signal: AbortSignal,

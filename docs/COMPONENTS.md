@@ -247,7 +247,7 @@ search) to MCP clients.
 **Purpose:** Make Loki's memory, tools, and search available over MCP.
 
 **Key files:**
-- `server.py` - MCP server (47 tools: 31 in-file + magic + gated managed + 8 cp; plus
+- `server.py` - MCP server (48 tools: 32 in-file + magic + gated managed + 8 cp; plus
   3 resources, 2 prompts).
 - `magic_tools.py` - Magic Modules tools.
 - `cp_tools.py` - Read-only Control Plane data tools (`cp_*`, GET only; the CP URL

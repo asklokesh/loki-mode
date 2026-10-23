@@ -49,7 +49,7 @@ export interface EventEnvelope<D extends Record<string, unknown> = Record<string
   data: D;
 }
 export type Verdict = "VERIFIED" | "PARTIAL" | "ALREADY_SATISFIED" | "SPEC_CONFLICT" | "FAILED";
-export type ImplementExit = "done" | "already_done" | "spec_conflict" | "killed";
+export type ImplementExit = "done" | "already_done" | "spec_conflict" | "killed" | "external";
 export interface StageResult {
   status: "completed" | "failed" | "skipped";
   /** Becomes stage.completed.data (or stage.failed / stage.skipped data). */
@@ -126,6 +126,7 @@ export interface CostReader { // implemented by cost.ts (E-06)
 }
 export interface Clock { now(): number; sleep?(ms: number, signal?: AbortSignal): Promise<void>; } // epoch ms; sleep is optional so tests can fake the quota wait
 export interface RunContext {
+  externalPatch?: string; // CW-12: path of the patch an external client made (--seal-existing); read only by the implement stage, absent from every child env
   timeline?: { stage: StageName; startMs: number; endMs: number }[]; // every stage the machine ran (any outcome), for the receipt's time buckets
   sessionIds?: () => string[]; // iteration ids of every session the machine started, recorded at launch; seal unions them into the cost read
   wallSealed?: boolean; // P12-13c: set when wall.sealed is emitted, so steer staleness holds even if outputs.wall never lands
@@ -167,6 +168,7 @@ export interface Receipt {
   diff_sha256: string;
   wall: { files: { path: string; sha256: string }[]; passed: boolean | null };
   checks: ReceiptCheck[];
+  implement?: { exit: "external"; patch_sha256: string }; // CW-12 B3: present only when no Loki session wrote the code; the receipt names no implementing model
   not_proven: string[]; not_applicable?: string[]; // FC-SEAL-NA-AS-UNPROVEN: informational notes (package without tests, no app to boot, not selected by risk tier); never part of any verdict
   unit_spec?: { sha256: string }; // #317b: present only for a unit run; the sha256 of its canonical spec (id, items, acceptance, writeSet, base)
   spec?: { path: string; sha256: string }; intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[]; // P12-02 (omitted when none); SPEC-FIRST-INTENT: present only when a user spec file drove the run
@@ -185,12 +187,10 @@ export interface Receipt {
   implement_limit?: { limit_s: number; elapsed_s: number };
   /** T9: provider failovers (stage, from, to, reason, evidence). Omitted when none happened so other receipts stay byte-stable. */
   failover?: import("../runner/provider_failover.ts").FailoverRecord[];
-  /** E-120: implement's reason for a SPEC_CONFLICT exit, sanitized (newlines/control chars  collapsed to spaces, capped at 500 chars). Key is omitted entirely, never null, when  implement did not
-   *  record one, so receipt_sha256 for every other run stays byte-stable. */
+  /** E-120: implement's reason for a SPEC_CONFLICT exit, sanitized (newlines/control chars  collapsed to spaces, capped at 500 chars). Key is omitted entirely, never null, when  implement did not  record one, so receipt_sha256 for every other run stays byte-stable. */
   spec_conflict_reason?: string;
-  /** E-66: the deterministic search hits plus the model's own citation, carried into the receipt so  an evidence-confirmed ALREADY_SATISFIED verdict is not a bare claim. Empty on every other 
-   *  verdict, and also empty on the OTHER ways a run seals ALREADY_SATISFIED (an issue already  closed, Wall already green on the base tree, or implement's own LOKI_ALREADY_DONE marker):  none of
-   *  those goes through this search, so none of them has search hits to carry. */
+  /** E-66: the deterministic search hits plus the model's own citation, carried into the receipt so  an evidence-confirmed ALREADY_SATISFIED verdict is not a bare claim. Empty on every other   verdict, and also empty on the OTHER ways a run seals
+   *  ALREADY_SATISFIED (an issue already  closed, Wall already green on the base tree, or implement's own LOKI_ALREADY_DONE marker):  none of  those goes through this search, so none of them has search hits to carry. */
   evidence: string[]; pre_existing_dirty?: string[]; // E-164: lockfiles modified at intake by setup, never attributed to the run; omitted when none
   cost: {
     usd: number | null;

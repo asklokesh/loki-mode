@@ -1,11 +1,9 @@
-// E-11 (TS half): PR stage (ENGINE.md sections 4, 6, 7). Runs in the SUPERVISOR (P0), never the worker: the only stage touching GitHub credentials, only through the credentialed push child
-// engine10-push.sh (P4); no LLM, no untrusted text read here. Supervisor calls runPr after the worker exits, passing pinnedOrigin (section 6). push-pr prints a "reused" or "created" marker line
-// before the PR URL; `existing` is true/false from it, and null when the script printed none (local origin, older script).
+// E-11 (TS half): PR stage (ENGINE.md sections 4, 6, 7). Runs in the SUPERVISOR (P0), never the worker: the only stage touching GitHub credentials, only through the credentialed push child engine10-push.sh (P4); no LLM, no untrusted text read here. Supervisor calls
+// runPr after the worker exits, passing pinnedOrigin (section 6). push-pr prints a "reused" or "created" marker line before the PR URL; `existing` is true/false from it, and null when the script printed none (local origin, older script).
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { PushArgs, RunContext, Stage, StageResult, Verdict } from "../types.ts";
-import { pushArgv } from "../types.ts";
+import { type PushArgs, type RunContext, type Stage, type StageResult, type Verdict, pushArgv } from "../types.ts";
 import { renderBrief, reviewerBriefEnabled } from "../../util/reviewer_brief.ts";
 import { hooks } from "../hooks.ts";
 import { renderReviewerBody } from "../../e10ext/reviewer_body.ts";
@@ -90,8 +88,7 @@ function briefSection(ctx: PrContext): string {
   const base = String((o.intake as { base_sha?: unknown } | undefined)?.base_sha ?? ctx.baseSha ?? "");
   try { return "\n" + renderBrief({ repoDir: ctx.repoDir, baseSha: base, plan: (o.plan as { plan?: string } | undefined)?.plan ?? null, facts: hooks.briefFacts?.(ctx.outputs(), ctx.runId, ctx.runDir) }); } catch { return ""; }
 }
-/** MASS-1: name the issue this run worked, so GitHub links the PR and `loki issues run` reruns find it. Only a strict
- *  owner/repo and an integer number from the supervisor-fetched issue.json reach the body; VERIFIED closes on merge. */
+/** MASS-1: name the issue this run worked, so GitHub links the PR and `loki issues run` reruns find it. Only a strict  owner/repo and an integer number from the supervisor-fetched issue.json reach the body; VERIFIED closes on merge. */
 export function issueLink(runDir: string, verdict: Verdict): string {
   try {
     const i = JSON.parse(readFileSync(join(runDir, "issue.json"), "utf8")) as { repo?: unknown; number?: unknown };

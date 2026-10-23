@@ -131,6 +131,22 @@ export function thinkingUsageError(tool: string, model: string): string {
   return `${base}, and disabled cannot combine with --effort xhigh or max for ${model}`;
 }
 
+// Codex effort per tier. Codex has one model and varies reasoning effort, so this table is NOT the Claude one above
+// (fast stays "low", not "medium"). Mirrors provider_get_tier_param in providers/codex.sh (pinned by a parity test);
+// unlike the bash function, an explicit PROVIDER_EFFORT_{PLANNING,DEVELOPMENT,FAST} env value wins here.
+export function codexEffortForTier(tier: string | undefined): string {
+  switch (tier) {
+    case "planning":
+      return process.env["PROVIDER_EFFORT_PLANNING"] ?? "xhigh";
+    case "development":
+      return process.env["PROVIDER_EFFORT_DEVELOPMENT"] ?? "high";
+    case "fast":
+      return process.env["PROVIDER_EFFORT_FAST"] ?? "low";
+    default:
+      return "high";
+  }
+}
+
 // Complexity-aware MODEL routing (net-new; effort routing already exists in
 // effortForTier). ENV VAR: LOKI_TIER_ROUTING (DEFAULT "0" = OFF = current flat
 // resolution, zero change to stock runs). Byte-mirror of loki_tier_route_model in

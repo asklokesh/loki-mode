@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.asklokesh/loki-mode",
-  "description": "Autonomous spec-to-product coding-agent CLI with an MCP server exposing 47 tools over stdio.",
+  "description": "Autonomous spec-to-product coding-agent CLI with an MCP server exposing 48 tools over stdio.",
   "repository": {
     "url": "https://github.com/asklokesh/loki-mode",
     "source": "github"
   },
-  "version": "11.66.0",
+  "version": "11.67.10",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "loki-mode",
-      "version": "11.66.0",
+      "version": "11.67.10",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

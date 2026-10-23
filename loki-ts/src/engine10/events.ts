@@ -51,8 +51,7 @@ export function readEvents(path: string): EventEnvelope[] {
   return out;
 }
 
-/** The single writer. Opens with O_APPEND and writes each line in one write(2).
- *  The constructor may append a "\n" to terminate a torn last line, so a tamper hash (E-03) must be seeded from the file AFTER construction, not before. */
+/** The single writer. Opens with O_APPEND and writes each line in one write(2).  The constructor may append a "\n" to terminate a torn last line, so a tamper hash (E-03) must be seeded from the file AFTER construction, not before. */
 export class EventLog {
   private nextSeq: number;
   constructor(readonly path: string, readonly run: string, private readonly now: () => string = () => new Date().toISOString()) {
@@ -99,8 +98,7 @@ export interface Folded {
     tampered: boolean;
     verdict: Verdict | null;
   };
-  /** usd is null if no cost event or any cost event was unmeasured; never a fake 0.
-   *  cacheReadTokens/cacheCreationTokens (E-50): output.ts's foldCostTokens() sums these independently from raw events, so it never double-counts this field. */
+  /** usd is null if no cost event or any cost event was unmeasured; never a fake 0.  cacheReadTokens/cacheCreationTokens (E-50): output.ts's foldCostTokens() sums these independently from raw events, so it never double-counts this field. */
   cost: { usd: number | null; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number };
   lastSeq: number;
 }
