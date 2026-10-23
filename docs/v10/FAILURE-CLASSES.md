@@ -1717,3 +1717,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: loki-ts/src/engine10 neither writes nor reads the pointer (`git grep -n last-proof-id -- loki-ts/src/engine10` returns nothing). The readers (run.sh, loki, run-summary.sh, trigger-server.py) are route-agnostic and unchanged.
 - Mechanism: clearStaleProofPointer in runner/proof.ts, called once from runAutonomous right after makeContext.
 - Fixture: loki-ts/tests/runner/autonomous.test.ts "#211 Bun-route sibling" seeds run-A, stops the run before proof with LOKI_PROOF=0, expects the pointer absent. Mutant: remove the call in runAutonomous; the test goes red.
+
+## FC-STDERR-WIRE-TEXT-READ-AS-AUTH Status: OPEN. Agent-printed provider wire text such as "Invalid API key" or "authentication_error" on an argv provider's stderr is classified as an auth failure by classifyFailure, so text the agent wrote can stand in for a real provider error
+
+- User-visible vs raw: user-visible (the run reports an auth failure and the key-cause hint for a run whose provider never failed to authenticate).
+- Law: a failure class must come from a signal the agent cannot author (exit code or a structured field), never from text the agent can print.
+- Cause (measured by rev-c on pd/ux-keycause-re f7487bfc9): a bare 401 classifies as unrecognized, but wire text such as "Invalid API key" or "authentication_error" classifies as auth through classifyFailure's NON_RETRYABLE_PATTERNS in loki-ts/src/runner/retry_class.ts, a separate mechanism from the [sdk-loop error: ...] marker that neutralizeEngineMarkers handles.
+- Siblings swept: not yet. neutralizeEngineMarkers (FC-AGENT-TEXT-FORGES-ENGINE-MARKER) covers only the sdk-loop marker, not these patterns.
+- Mechanism: OPEN. The fix needs an exit-code or structured signal from the provider route instead of pattern-matching stderr text.
+- Fixture: agent-printed "Invalid API key" on an argv-provider's stderr must not classify as auth; not written yet.
