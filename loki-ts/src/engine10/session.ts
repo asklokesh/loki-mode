@@ -1,7 +1,7 @@
 // E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be
 // killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
 import { createWatchdog, stallKillS, stallThresholdS } from "../runner/watchdog.ts";
-import { sdkAuthCause } from "../runner/retry_class.ts";
+import { neutralizeEngineMarkers, sdkAuthCause } from "../runner/retry_class.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
@@ -288,7 +288,7 @@ export async function sessionChildMain(): Promise<never> {
     iterationOutputPath: `.loki/iteration-${process.env["LOKI_ITERATION"] ?? "0"}.log`,
     mainLoop: true,
   });
-  if (result.stderr) writeSync(2, result.stderr); process.exit(result.exitCode); // the CLI invoker's own in-memory stderr, never a file the agent can write
+  if (result.stderr) writeSync(2, neutralizeEngineMarkers(result.stderr)); process.exit(result.exitCode); // the CLI invoker's own in-memory stderr, never a file the agent can write
 }
 // cli.ts routes `engine10 session` here (section 11); it exits the process itself.
 export const main = sessionChildMain;
