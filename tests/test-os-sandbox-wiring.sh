@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # #334 AC6: the run.sh provider launch is wrapped by autonomy/lib/os_sandbox.py.
 # Sources the real _loki_os_confine_init out of run.sh, then proves (1) the
-# provider launch sites carry the prefix, (2) on macOS the prefix refuses a
+# provider launch sites carry the prefix, (2) on macOS and Linux the prefix refuses a
 # symlink read out of the workspace, (3) LOKI_OS_SANDBOX=off leaves the argv bare.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -44,8 +44,14 @@ if [ "$(uname)" = "Darwin" ] && [ -x /usr/bin/sandbox-exec ]; then
     if "${_LOKI_CONFINE_PREFIX[@]}" /bin/cat "$WS/link.txt" >/dev/null 2>&1; then bad "symlink read out of the workspace succeeded"; else ok "symlink read out of the workspace refused"; fi
     if "${_LOKI_CONFINE_PREFIX[@]}" /bin/sh -c "echo hi > '$WS/inside.txt'" 2>/dev/null; then ok "workspace write allowed"; else bad "workspace write refused"; fi
     if grep -q 'seatbelt' "$WS/.loki/state/os-sandbox.json"; then ok "status file records seatbelt"; else bad "status file lacks seatbelt"; fi
+elif [ "$(uname)" = "Linux" ] && command -v bwrap >/dev/null 2>&1 && bwrap --ro-bind / / true >/dev/null 2>&1; then
+    _LOKI_CONFINE_READY=""; LOKI_OS_SANDBOX=auto _loki_os_confine_init
+    case "${_LOKI_CONFINE_PREFIX[0]:-}" in */bwrap) ok "launch prefix is bwrap" ;; *) bad "prefix[0]=${_LOKI_CONFINE_PREFIX[0]:-none}" ;; esac
+    if "${_LOKI_CONFINE_PREFIX[@]}" /bin/cat "$WS/link.txt" >/dev/null 2>&1; then bad "symlink read out of the workspace succeeded"; else ok "symlink read out of the workspace refused"; fi
+    if "${_LOKI_CONFINE_PREFIX[@]}" /bin/sh -c "echo hi > '$WS/inside.txt'" 2>/dev/null; then ok "workspace write allowed"; else bad "workspace write refused"; fi
+    if grep -q 'bwrap' "$WS/.loki/state/os-sandbox.json"; then ok "status file records bwrap"; else bad "status file lacks bwrap"; fi
 else
-    echo "SKIP: kernel probes need macOS sandbox-exec"
+    echo "SKIP: kernel probes need macOS sandbox-exec or Linux bwrap"
 fi
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = "0" ]

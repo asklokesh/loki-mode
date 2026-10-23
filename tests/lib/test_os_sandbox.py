@@ -296,7 +296,7 @@ class ModeTest(unittest.TestCase):
             status = os_sandbox.build_confinement(
                 self.ws, self.run_dir, "claude", mode="on", platform="linux")
         text = " ".join(status["known_limitations"])
-        for needle in ("bwrap path untested on Linux", "masks-only-aws-ssh", "skips-node_modules", "200000", "preexisting-cross-boundary-hardlinks"):
+        for needle in ("masks-only-aws-ssh", "skips-node_modules", "200000", "preexisting-cross-boundary-hardlinks"):
             self.assertIn(needle, text)
 
     def test_cli_off_prints_json(self):
@@ -439,6 +439,59 @@ class SeatbeltKernelTest(KernelMixin, unittest.TestCase):
 @unittest.skipUnless(HAVE_BWRAP, "bwrap is required and must work (not Linux, or bwrap missing or user namespaces blocked)")
 class BwrapKernelTest(KernelMixin, unittest.TestCase):
     kind = "linux-bwrap"
+
+
+@unittest.skipUnless(HAVE_BWRAP, "bwrap is required and must work (not Linux, or bwrap missing or user namespaces blocked)")
+class BwrapConfineReadsTest(unittest.TestCase):
+    """AC6 on Linux: bwrap binds an allow-list, so a symlink out of W is unreadable."""
+
+    def setUp(self):
+        # Under the real home, not /tmp: bwrap replaces /tmp with a tmpfs.
+        raw = tempfile.mkdtemp(prefix="os-sandbox-bw-", dir=os.path.expanduser("~"))
+        self.addCleanup(shutil.rmtree, raw, True)
+        self.base = Path(raw).resolve()
+        self.home = self.base / "h"
+        self.ws, self.run_dir = self.base / "wt", self.base / "r"
+        for d in (self.home, self.ws, self.run_dir):
+            d.mkdir()
+        (self.ws / "a.txt").write_text("plain\n")
+        (self.base / "outside.txt").write_text("outside\n")
+        os.symlink(self.base / "outside.txt", self.ws / "link-to-outside")
+        os.symlink("../outside.txt", self.ws / "rel-link-to-outside")
+        self.status = os_sandbox.build_confinement(
+            self.ws, self.run_dir, "claude", mode="on", home=self.home, confine_reads=True)
+
+    def _sh(self, script: str) -> subprocess.CompletedProcess:
+        env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+        return subprocess.run([*self.status["argv_prefix"], "/bin/sh", "-c", script],
+                              capture_output=True, text=True, timeout=30, cwd=self.ws, env=env)
+
+    def test_root_is_not_bound_wholesale(self):
+        argv = self.status["argv_prefix"]
+        for i in range(len(argv) - 2):
+            self.assertNotEqual(argv[i:i + 3], ["--ro-bind", "/", "/"])
+
+    def test_symlink_out_read_refused(self):
+        for link in ("link-to-outside", "rel-link-to-outside"):
+            res = self._sh(f'cat "{self.ws}/{link}"')
+            self.assertNotEqual(res.returncode, 0, link)
+            self.assertNotIn("outside", res.stdout)
+
+    def test_symlink_out_write_refused(self):
+        res = self._sh(f'echo x > "{self.ws}/link-to-outside"')
+        self.assertNotEqual(res.returncode, 0)
+        self.assertEqual((self.base / "outside.txt").read_text(), "outside\n")
+
+    def test_other_home_file_denied_workspace_read_allowed(self):
+        (self.home / "notes.txt").write_text("private\n")
+        self.assertNotEqual(self._sh(f'cat "{self.home}/notes.txt"').returncode, 0)
+        self.assertEqual(self._sh(f'cat "{self.ws}/a.txt"').stdout.strip(), "plain")
+
+    def test_opt_out_keeps_blanket_read(self):
+        status = os_sandbox.build_confinement(
+            self.ws, self.run_dir, "claude", mode="on", home=self.home, confine_reads=False)
+        self.assertIn("reads-outside-workspace-allowed-except-secret-paths",
+                      status["known_limitations"])
 
 
 @unittest.skipUnless(HAVE_SEATBELT, "macOS sandbox-exec is required (not macOS or binary missing)")
