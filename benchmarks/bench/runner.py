@@ -767,6 +767,7 @@ def _current_tool_version(tool: str) -> Optional[str]:
         "loki": ["loki", "version"],
         "aider": ["aider", "--version"],
         "claude_code": ["claude", "--version"],
+        "codex": ["codex", "--version"],
         "claude": ["claude", "--version"],
         "manual": None,  # externally supplied; nothing to query
     }
