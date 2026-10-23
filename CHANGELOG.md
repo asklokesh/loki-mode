@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.67.5 (2026-10-23)
+
+### Fixed
+- One codex effort resolver in claude_flags.ts now serves every caller, and a parity test pins it to codex.sh so the two cannot drift (#255). Approval: "APPROVE pd/rq62 88794a707 (tl-2, MEDIUM)".
+
 ## v11.67.4 (2026-10-23)
 
 ### Fixed
