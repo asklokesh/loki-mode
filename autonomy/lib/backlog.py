@@ -57,7 +57,7 @@ def redact(text, token):
 
 
 def git(*args, cwd=None):
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    return subprocess.run(["git", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", *args], cwd=cwd, capture_output=True, text=True)
 
 
 def origin_slug(cwd):

@@ -1,6 +1,6 @@
 // FC-25: a git call from the token-holding supervisor must never run a core.fsmonitor plant in the agent's repo.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -291,4 +291,23 @@ test("hung git config: driverKeys and netCommandOverrides time out and fail clos
     process.env.PATH = saved.p; if (saved.t === undefined) delete process.env.LOKI_SAFE_GIT_CONFIG_TIMEOUT_MS; else process.env.LOKI_SAFE_GIT_CONFIG_TIMEOUT_MS = saved.t;
     rmSync(d, { recursive: true, force: true });
   }
+});
+
+// FC-SANDBOX-GIT-REDIRECT: confined code can repoint ws/.git at a copy of the common dir. With a gitPin recorded before the agent ran,
+// every safeGit entry point keeps reading the original git dir and never follows the repointed .git file.
+test("gitPin: a repointed .git file is not followed by safeGit, safeGitSpawn or safeGitRun", async () => {
+  const wt = join(root, "wt-pin");
+  g("worktree", "add", "-q", "-b", "feat", wt);
+  const pin = { gitDir: join(repo, ".git", "worktrees", "wt-pin"), commonDir: join(repo, ".git") };
+  const evil = join(wt, ".evilgit");
+  cpSync(join(repo, ".git"), evil, { recursive: true });
+  writeFileSync(join(evil, "HEAD"), "ref: refs/heads/other\n");
+  writeFileSync(join(wt, ".git"), `gitdir: ${evil}\n`);
+  const head = ["rev-parse", "--abbrev-ref", "HEAD"];
+  expect(safeGit(wt, head).trim()).toBe("other"); // control: unpinned follows the repoint
+  reset();
+  expect(safeGit(wt, head, { gitPin: pin }).trim()).toBe("feat");
+  expect(safeGitSpawn(wt, head, { gitPin: pin, encoding: "utf8" }).stdout.trim()).toBe("feat");
+  expect((await safeGitRun(wt, head, { gitPin: pin })).stdout.trim()).toBe("feat");
+  expect(fired()).toBe(false);
 });

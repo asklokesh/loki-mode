@@ -1173,7 +1173,7 @@ def _ti_run(repo, *args):
     """Run a read-only git command; returns text decoded from bytes (so a lone
     CR is never a line break; callers split on \\n only), or None on failure."""
     try:
-        r = subprocess.run(["git", "-c", "core.quotePath=false", *args], cwd=repo,
+        r = subprocess.run(["git", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "core.quotePath=false", *args], cwd=repo,
                            capture_output=True, timeout=30)
     except Exception:
         return None

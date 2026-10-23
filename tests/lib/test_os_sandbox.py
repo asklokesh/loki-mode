@@ -585,6 +585,140 @@ class SeatbeltGitRefWriteTest(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_SEATBELT, "macOS sandbox-exec is required (not macOS or binary missing)")
+class SeatbeltGitRedirectTest(unittest.TestCase):
+    """FC-SANDBOX-GIT-REDIRECT (rev-a BLOCK on 23bafacf4): confined code must not repoint
+    ws/.git or gitdir/commondir at a copy with core.fsmonitor planted, because the harness's
+    next unconfined git (`git status`) would run it. escape.py's two variants, run as kernel tests."""
+
+    def _git(self, *args, cwd):
+        env = {**os.environ, "HOME": str(self.home), "GIT_CONFIG_NOSYSTEM": "1"}
+        return subprocess.run(["git", *args], cwd=cwd, env=env, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def setUp(self):
+        raw = tempfile.mkdtemp(prefix="os-sandbox-gx-", dir="/private/var/tmp")
+        self.addCleanup(shutil.rmtree, raw, True)
+        self.base = Path(raw).resolve()
+        self.home = self.base / "h"
+        self.main_repo, self.ws, self.run_dir = self.base / "main", self.base / "wt", self.base / "r"
+        for d in (self.home, self.main_repo, self.run_dir):
+            d.mkdir()
+        (self.home / ".gitconfig").write_text("[user]\n\tname = t\n\temail = t@t.test\n")
+        self._git("init", "-q", "-b", "main", cwd=self.main_repo)
+        (self.main_repo / "a.txt").write_text("plain\n")
+        self._git("add", "a.txt", cwd=self.main_repo)
+        self._git("commit", "-q", "-m", "init", cwd=self.main_repo)
+        self.pwn = self.base / "PWNED"
+
+    def _linked(self):
+        self._git("worktree", "add", "-q", "-b", "feat", str(self.ws), cwd=self.main_repo)
+        return self.main_repo / ".git" / "worktrees" / "wt"
+
+    def _status(self, ws=None):
+        return os_sandbox.build_confinement(ws or self.ws, self.run_dir, "claude", mode="on", home=self.home)
+
+    def _confined(self, status, script):
+        env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+        return subprocess.run([*status["argv_prefix"], "/bin/sh", "-c", script],
+                              capture_output=True, text=True, timeout=60, cwd=self.ws, env=env)
+
+    def _unconfined_status_pwned(self) -> bool:
+        env = {**os.environ, "HOME": str(self.home), "GIT_CONFIG_NOSYSTEM": "1"}
+        subprocess.run(["git", "status", "-s"], cwd=self.ws, env=env, capture_output=True, timeout=60)
+        return self.pwn.exists()
+
+    def _attack_script(self, variant, gitdir):
+        evil = self.ws / ".evilgit"
+        if variant == "commondir":
+            point = f'printf "%s\\n" "{evil}" > "{gitdir}/commondir"'
+        else:
+            point = f'printf "gitdir: %s\\n" "{evil}" > "{self.ws}/.git"'
+        return (f'cp -R "{self.main_repo}/.git" "{evil}" && '
+                f'printf "[core]\\n\\tfsmonitor = touch {self.pwn}\\n" >> "{evil}/config" && '
+                f'cp "{gitdir}/HEAD" "{evil}/HEAD"; cp "{gitdir}/index" "{evil}/index"; {point}')
+
+    def _escape(self, variant, status=None):
+        gitdir = self._linked()
+        self._confined(status or self._status(), self._attack_script(variant, gitdir))
+        return self._unconfined_status_pwned()
+
+    def test_commondir_repoint_cannot_plant_fsmonitor(self):
+        self.assertFalse(self._escape("commondir"))
+
+    def test_dotgit_repoint_cannot_plant_fsmonitor(self):
+        self.assertFalse(self._escape("dotgit"))
+
+    def test_pointer_files_are_unwritable_and_unchanged(self):
+        gitdir = self._linked()
+        before = {n: (gitdir / n).read_text() for n in ("commondir", "gitdir")}
+        dotgit = (self.ws / ".git").read_text()
+        status = self._status()
+        for target in (gitdir / "commondir", gitdir / "gitdir", gitdir / "config.worktree", self.ws / ".git"):
+            res = self._confined(status, f'echo x > "{target}"')
+            self.assertNotEqual(res.returncode, 0, target)
+            existed = target.exists()
+            self._confined(status, f'rm -f "{target}"')
+            self.assertEqual(target.exists(), existed, target)
+        self.assertEqual({n: (gitdir / n).read_text() for n in before}, before)
+        self.assertEqual((self.ws / ".git").read_text(), dotgit)
+        self.assertFalse((gitdir / "config.worktree").exists())
+
+    def test_linked_worktree_still_commits(self):
+        self._linked()
+        res = self._confined(self._status(), "echo n > n.txt && git add n.txt && git commit -q -m c && git log --oneline | head -1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+    def test_primary_checkout_hooks_and_config_denied_commit_allowed(self):
+        self.ws = self.main_repo
+        status = self._status(self.ws)
+        for script in (f'echo "#!/bin/sh" > "{self.ws}/.git/hooks/post-commit"',
+                       f'echo "[core]" >> "{self.ws}/.git/config"',
+                       f'rm -rf "{self.ws}/.git/hooks"',
+                       f'mv "{self.ws}/.git" "{self.ws}/.git2"'):
+            self.assertNotEqual(self._confined(status, script).returncode, 0, script)
+        self.assertFalse((self.ws / ".git" / "hooks" / "post-commit").exists())
+        self.assertNotIn("[core]\n[core]", (self.ws / ".git" / "config").read_text())
+        res = self._confined(status, "echo n > n.txt && git add n.txt && git commit -q -m c && git log --oneline | head -1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+    def test_deny_paths_listed(self):
+        gitdir = self._linked()
+        got = {(k, str(p)) for k, p in os_sandbox.git_deny_paths(self.ws)}
+        for name in ("commondir", "gitdir", "config.worktree"):
+            self.assertIn(("literal", str(gitdir.resolve() / name)), got)
+        self.assertIn(("literal", str(self.ws / ".git")), got)
+
+    def test_git_pin_records_dirs(self):
+        gitdir = self._linked()
+        pin = os_sandbox.git_pin(self.ws)
+        self.assertEqual(pin["git_dir"], str(gitdir.resolve()))
+        self.assertEqual(pin["git_common_dir"], str((self.main_repo / ".git").resolve()))
+        self.assertEqual(self._status()["git_pin"], pin)
+
+    def _mutant_status(self, drop_name):
+        real = os_sandbox.git_deny_paths
+        with mock.patch.object(
+                os_sandbox, "git_deny_paths",
+                lambda ws: [(k, p) for k, p in real(ws) if p.name != drop_name] if drop_name else []):
+            return self._status()
+
+    def test_mutant_drop_dotgit_deny_is_exploitable(self):
+        self.assertTrue(self._mutant_escape("dotgit", ".git"))
+
+    def test_mutant_drop_commondir_deny_is_exploitable(self):
+        self.assertTrue(self._mutant_escape("commondir", "commondir"))
+
+    def test_mutant_drop_all_denies_is_exploitable(self):
+        self.assertTrue(self._mutant_escape("commondir", None))
+
+    def _mutant_escape(self, variant, drop_name):
+        gitdir = self._linked()
+        status = self._mutant_status(drop_name)
+        self._confined(status, self._attack_script(variant, gitdir))
+        return self._unconfined_status_pwned()
+
+
+@unittest.skipUnless(HAVE_SEATBELT, "macOS sandbox-exec is required (not macOS or binary missing)")
 class SeatbeltSmokeProbeTest(unittest.TestCase):
     def test_real_smoke_probe_passes(self):
         # workspace_root must be short and outside tmp: an AF_UNIX path under $TMPDIR is too long.

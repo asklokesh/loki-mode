@@ -265,41 +265,79 @@ def git_read_paths(workspace: Path) -> list[Path]:
     return found
 
 
+def _git_out(workspace: Path, *args: str) -> str | None:
+    try:
+        res = subprocess.run(["git", "-C", str(workspace), "-c", "core.fsmonitor=",
+                              "-c", "core.hooksPath=/dev/null", *args],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if res.returncode != 0 or not res.stdout.strip():
+        return None
+    return res.stdout.strip()
+
+
+def _git_path(workspace: Path, flag: str) -> Path | None:
+    out = _git_out(workspace, "rev-parse", flag)
+    if out is None:
+        return None
+    return (Path(out) if Path(out).is_absolute() else workspace / out).resolve()
+
+
 def git_write_paths(workspace: Path) -> list[Path]:
     """Writable git state of a LINKED worktree: its own gitdir, the shared
     objects, and ONLY the ref and reflog of the branch checked out here
     (refs/heads/<branch>, its .lock, logs/refs/heads/<branch>). The rest of
     refs, logs and packed-refs, the hooks and the config stay read-only, so a
     confined process can neither move another branch (main) nor create a tag
-    or plant a hook that runs outside the sandbox."""
-    def rev(*args: str) -> str | None:
-        try:
-            res = subprocess.run(["git", "-C", str(workspace), *args],
-                                 capture_output=True, text=True, timeout=10)
-        except (OSError, subprocess.SubprocessError):
-            return None
-        if res.returncode != 0 or not res.stdout.strip():
-            return None
-        return res.stdout.strip()
-
-    def path_of(flag: str) -> Path | None:
-        out = rev("rev-parse", flag)
-        if out is None:
-            return None
-        return (Path(out) if Path(out).is_absolute() else workspace / out).resolve()
-
-    gitdir, common = path_of("--git-dir"), path_of("--git-common-dir")
+    or plant a hook that runs outside the sandbox. The gitdir is writable as a
+    whole (HEAD, index, logs/HEAD, ORIG_HEAD), so the pointers inside it that
+    redirect git to an attacker-chosen directory are denied separately by
+    git_deny_paths; a caller must apply both."""
+    gitdir, common = _git_path(workspace, "--git-dir"), _git_path(workspace, "--git-common-dir")
     if not gitdir or not common or gitdir == common:
         return []
     paths = [gitdir]
     if (common / "objects").is_dir():
         paths.append(common / "objects")
-    branch = rev("symbolic-ref", "-q", "--short", "HEAD")
+    branch = _git_out(workspace, "symbolic-ref", "-q", "--short", "HEAD")
     if branch and ".." not in branch.split("/") and not branch.startswith("/"):
         ref = common / "refs" / "heads" / branch
         log = common / "logs" / "refs" / "heads" / branch
         paths += [ref, Path(f"{ref}.lock"), log]
     return paths
+
+
+def git_deny_paths(workspace: Path) -> list[tuple[str, Path]]:
+    """(kind, path) write denies that keep confined code from repointing the
+    git metadata the harness's next unconfined git reads (FC-SANDBOX-GIT-REDIRECT).
+    kind is "literal" or "subpath". Linked worktree: ws/.git (the pointer file) and
+    gitdir/{commondir,gitdir,config.worktree}. Primary checkout: ws/.git itself,
+    ws/.git/hooks and ws/.git/config{,.worktree}. HEAD, index, logs/HEAD and
+    ORIG_HEAD stay writable so a commit still works. Empty outside a git repo."""
+    gitdir, common = _git_path(workspace, "--git-dir"), _git_path(workspace, "--git-common-dir")
+    if not gitdir or not common:
+        return []
+    dotgit = workspace / ".git"
+    denies: list[tuple[str, Path]] = [("literal", dotgit)]
+    if gitdir == common:
+        if gitdir != dotgit.resolve():
+            return denies
+        denies += [("subpath", gitdir / "hooks"), ("literal", gitdir / "config"),
+                   ("literal", gitdir / "config.worktree")]
+    else:
+        denies += [("literal", gitdir / name) for name in ("commondir", "gitdir", "config.worktree")]
+    return denies
+
+
+def git_pin(workspace: Path) -> dict[str, str] | None:
+    """The git dir and common dir as they are NOW, before the confined process
+    runs. The harness passes these to safeGit (gitDir) so a repointed .git or
+    commondir is never followed. None when the workspace is not a git repo."""
+    gitdir, common = _git_path(workspace, "--git-dir"), _git_path(workspace, "--git-common-dir")
+    if not gitdir or not common:
+        return None
+    return {"git_dir": str(gitdir), "git_common_dir": str(common)}
 
 
 def read_allow_paths(
@@ -374,6 +412,8 @@ def seatbelt_provider_profile(
     for target in sorted({*secret_targets}, key=str):
         lines.append(f"(deny file-read-data {seatbelt_path_filter(target)})")
         lines.append(f"(deny file-write* {seatbelt_path_filter(target)})")
+    for kind, path in git_deny_paths(workspace):
+        lines.append(f"(deny file-write* ({kind} {quote(path)}))")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -577,6 +617,12 @@ def bwrap_argv_prefix(
             argv += ["--tmpfs", str(path)]
         else:
             argv += ["--ro-bind", "/dev/null", str(path)]
+    # FC-SANDBOX-GIT-REDIRECT: the git pointers inside the writable bind stay read-only.
+    for _kind, path in git_deny_paths(workspace):
+        # A whole primary .git dir stays writable (commits); a mount on its hooks and config entries
+        # already makes them, and so .git, impossible to rename away.
+        if path.exists() and not (path.name == ".git" and path.is_dir()):
+            argv += ["--ro-bind", str(path), str(path)]
     argv += ["--die-with-parent", "--"]
     return argv
 
@@ -732,6 +778,7 @@ def build_confinement(
     return {
         "kind": kind, "argv_prefix": prefix, "profile_sha256": sha,
         "kernel_probe_sha256": probe_sha, "known_limitations": limitations,
+        "git_pin": git_pin(workspace),
     }
 
 

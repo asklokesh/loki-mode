@@ -42,7 +42,12 @@ export function tokenFreeEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proce
  *  so LFS, clean filters and eol/text rules still shape what gets committed. userHooks: keep the user's hooks and commit signing
  *  (enterprise pre-commit scanners, "require signed commits"). The token is still stripped; fsmonitor, sshCommand and ext:: stay off.
  *  userHooks with allowToken is refused: a call holding a credential never runs a hook. */
-export interface SafeGitKeep { repoDrivers?: boolean; userHooks?: boolean }
+export interface SafeGitKeep { repoDrivers?: boolean; userHooks?: boolean; gitPin?: GitPin }
+
+/** FC-SANDBOX-GIT-REDIRECT: the git dir (and common dir of a linked worktree) as recorded BEFORE the confined agent ran
+ *  (os_sandbox git_pin: git_dir, git_common_dir). With it set, every git child gets GIT_DIR, GIT_COMMON_DIR and GIT_WORK_TREE=repoDir, so a
+ *  repointed ws/.git file or gitdir/commondir is never followed. */
+export interface GitPin { gitDir: string; commonDir?: string }
 
 export interface SafeGitOpts extends Omit<ExecFileSyncOptions, "cwd" | "env" | "encoding">, SafeGitKeep {
   env?: NodeJS.ProcessEnv; // base env (default process.env); the token family is still stripped unless allowToken
@@ -51,8 +56,13 @@ export interface SafeGitOpts extends Omit<ExecFileSyncOptions, "cwd" | "env" | "
 
 /** Env for a safe git child: token-free unless allowToken, no system config. GIT_ATTR_SOURCE is removed: pointing it at the empty tree
  *  hides the in-tree .gitattributes (LFS routing), so repo-local drivers are blanked by key instead. */
-export const safeGitEnv = (base: NodeJS.ProcessEnv = process.env, allowToken = false): NodeJS.ProcessEnv => {
+export const safeGitEnv = (base: NodeJS.ProcessEnv = process.env, allowToken = false, pin?: GitPin, workTree?: string): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...(allowToken ? base : tokenFreeEnv(base)), GIT_CONFIG_NOSYSTEM: "1" };
+  if (pin) {
+    env.GIT_DIR = pin.gitDir;
+    if (pin.commonDir) env.GIT_COMMON_DIR = pin.commonDir; else delete env.GIT_COMMON_DIR;
+    if (workTree) env.GIT_WORK_TREE = workTree;
+  }
   delete env.GIT_ATTR_SOURCE;
   delete env.GIT_EXTERNAL_DIFF; // overrides diff.external and would run an arbitrary program
   return env;
@@ -62,9 +72,9 @@ export const safeGitEnv = (base: NodeJS.ProcessEnv = process.env, allowToken = f
  *  include.path reports local). Global and system keys are the user's own (e.g. `git lfs install`) and stay live: blanking them breaks LFS
  *  (the global-scope residual is FC-25c). Enumeration runs hardened and token-free. Fails closed: an unreadable config throws. */
 const configEnumTimeoutMs = (): number => { const n = Number(process.env.LOKI_SAFE_GIT_CONFIG_TIMEOUT_MS); return Number.isFinite(n) && n > 0 ? n : 30_000; };
-export const driverKeys = (repoDir: string): string[] => repoKeysMatching(repoDir, DRIVER_KEY_RE);
-export function repoKeysMatching(repoDir: string, keyRe: string): string[] {
-  const r = spawnSync("git", [...SAFE_GIT_CONFIG, "config", "--includes", "--show-scope", "-z", "--get-regexp", keyRe], { cwd: repoDir, env: safeGitEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: configEnumTimeoutMs(), killSignal: "SIGKILL" });
+export const driverKeys = (repoDir: string, pin?: GitPin): string[] => repoKeysMatching(repoDir, DRIVER_KEY_RE, pin);
+export function repoKeysMatching(repoDir: string, keyRe: string, pin?: GitPin): string[] {
+  const r = spawnSync("git", [...SAFE_GIT_CONFIG, "config", "--includes", "--show-scope", "-z", "--get-regexp", keyRe], { cwd: repoDir, env: safeGitEnv(process.env, false, pin, repoDir), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: configEnumTimeoutMs(), killSignal: "SIGKILL" });
   if (r.error) throw r.error; // a timeout surfaces as ETIMEDOUT here, so a hung git config fails closed // a timeout surfaces as ETIMEDOUT here, so a hung git config fails closed
   if (r.status === 1) return []; // no match
   if (r.status !== 0) throw new Error(`safeGit: cannot enumerate git config drivers (status ${r.status})`);
@@ -143,8 +153,8 @@ const PACK_OPTS: ReadonlyArray<{ re: RegExp; dflt: string; flag: string; cmds: R
  *  list, so the user's global helper is re-added after it. For remote.*.uploadpack/receivepack: `opts` are command-line options (see
  *  PACK_OPTS) carrying the user's global value or the stock program. A key with no repo-scope value is left alone.
  *  Fails closed: an unreadable config throws. */
-function netCommandOverrides(repoDir: string, env: NodeJS.ProcessEnv): { cfg: string[]; opts: { flag: string; cmds: ReadonlySet<string> }[] } {
-  const r = spawnSync("git", [...CREDENTIAL_CONFIG, "config", "--includes", "--show-scope", "-z", "--get-regexp", NET_CMD_KEY_RE], { cwd: repoDir, env: safeGitEnv(env, true), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: configEnumTimeoutMs(), killSignal: "SIGKILL" });
+function netCommandOverrides(repoDir: string, env: NodeJS.ProcessEnv, pin?: GitPin): { cfg: string[]; opts: { flag: string; cmds: ReadonlySet<string> }[] } {
+  const r = spawnSync("git", [...CREDENTIAL_CONFIG, "config", "--includes", "--show-scope", "-z", "--get-regexp", NET_CMD_KEY_RE], { cwd: repoDir, env: safeGitEnv(env, true, pin, repoDir), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: configEnumTimeoutMs(), killSignal: "SIGKILL" });
   if (r.error) throw r.error; // a timeout surfaces as ETIMEDOUT here, so a hung git config fails closed // a timeout surfaces as ETIMEDOUT here, so a hung git config fails closed
   if (r.status === 1) return { cfg: [], opts: [] };
   if (r.status !== 0) throw new Error(`safeGit: cannot enumerate git network config (status ${r.status})`);
@@ -194,8 +204,8 @@ export function safeGitArgs(args: readonly string[], allowToken = false, repoDir
   const off = new Set([...(keep.repoDrivers ? [ATTRS_OFF] : []), ...(keep.userHooks ? [HOOKS_OFF, SIGN_OFF] : [])]);
   const cfg = [...(allowToken ? CREDENTIAL_CONFIG : SAFE_GIT_CONFIG), ...DRIVER_CONFIG];
   const flags = cfg.flatMap((v, i) => (i % 2 === 1 && !off.has(v) ? [cfg[i - 1]!, v] : []));
-  const net = allowToken && repoDir ? netCommandOverrides(repoDir, env) : { cfg: [], opts: [] };
-  return [...flags, ...net.cfg, ...(repoDir && !keep.repoDrivers ? driverKeys(repoDir).flatMap((k) => ["-c", `${k}=`]) : []), ...(allowToken ? noSubmoduleRecursion(injectPackOpts(noExtDiff(args), net.opts)) : injectPackOpts(noExtDiff(args), net.opts))];
+  const net = allowToken && repoDir ? netCommandOverrides(repoDir, env, keep.gitPin) : { cfg: [], opts: [] };
+  return [...flags, ...net.cfg, ...(repoDir && !keep.repoDrivers ? driverKeys(repoDir, keep.gitPin).flatMap((k) => ["-c", `${k}=`]) : []), ...(allowToken ? noSubmoduleRecursion(injectPackOpts(noExtDiff(args), net.opts)) : injectPackOpts(noExtDiff(args), net.opts))];
 }
 
 /** allowToken fetch and pull: a submodule has its own repo-local config (core.sshCommand, proxy, TLS keys) that the superproject-only
@@ -221,8 +231,8 @@ function noExtDiff(args: readonly string[]): string[] {
 
 /** git run in repoDir, hardened, token-free unless allowToken. Returns stdout. Throws like execFileSync. */
 export function safeGit(repoDir: string, args: readonly string[], opts: SafeGitOpts = {}): string {
-  const { env, allowToken, repoDrivers, userHooks, ...rest } = opts;
-  const out = execFileSync("git", safeGitArgs(args, allowToken, repoDir, { repoDrivers, userHooks }, env ?? process.env), { stdio: ["ignore", "pipe", "ignore"], ...rest, cwd: repoDir, env: safeGitEnv(env ?? process.env, allowToken), encoding: "utf8" });
+  const { env, allowToken, repoDrivers, userHooks, gitPin, ...rest } = opts;
+  const out = execFileSync("git", safeGitArgs(args, allowToken, repoDir, { repoDrivers, userHooks, gitPin }, env ?? process.env), { stdio: ["ignore", "pipe", "ignore"], ...rest, cwd: repoDir, env: safeGitEnv(env ?? process.env, allowToken, gitPin, repoDir), encoding: "utf8" });
   return typeof out === "string" ? out : "";
 }
 
@@ -236,12 +246,12 @@ export interface SafeGitSpawnOpts extends Omit<SpawnSyncOptions, "cwd" | "env">,
 export function safeGitSpawn(repoDir: string, args: readonly string[], opts: SafeGitSpawnOpts & { encoding: BufferEncoding }): SpawnSyncReturns<string>;
 export function safeGitSpawn(repoDir: string, args: readonly string[], opts?: SafeGitSpawnOpts): SpawnSyncReturns<Buffer>;
 export function safeGitSpawn(repoDir: string, args: readonly string[], opts: SafeGitSpawnOpts = {}): SpawnSyncReturns<string | Buffer> {
-  const { env, allowToken, repoDrivers, userHooks, ...rest } = opts;
+  const { env, allowToken, repoDrivers, userHooks, gitPin, ...rest } = opts;
   let argv: string[];
-  try { argv = safeGitArgs(args, allowToken, repoDir, { repoDrivers, userHooks }, env ?? process.env); } catch (e) {
+  try { argv = safeGitArgs(args, allowToken, repoDir, { repoDrivers, userHooks, gitPin }, env ?? process.env); } catch (e) {
     return { pid: 0, output: [], stdout: "", stderr: "", status: null, signal: null, error: e as Error };
   }
-  return spawnSync("git", argv, { ...rest, cwd: repoDir, env: safeGitEnv(env ?? process.env, allowToken) });
+  return spawnSync("git", argv, { ...rest, cwd: repoDir, env: safeGitEnv(env ?? process.env, allowToken, gitPin, repoDir) });
 }
 
 export interface SafeGitRunOpts extends SafeGitKeep {
@@ -252,10 +262,10 @@ export interface SafeGitRunOpts extends SafeGitKeep {
  *  overlays its env on process.env, so handing it safeGitEnv() kept the token. Never throws; a spawn failure is exitCode 127. */
 export async function safeGitRun(repoDir: string, args: readonly string[], opts: SafeGitRunOpts = {}): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   let argv: string[];
-  try { argv = safeGitArgs(args, opts.allowToken, repoDir, { repoDrivers: opts.repoDrivers, userHooks: opts.userHooks }, opts.env ?? process.env); } catch (e) { return { stdout: "", stderr: String(e), exitCode: 128 }; }
+  try { argv = safeGitArgs(args, opts.allowToken, repoDir, { repoDrivers: opts.repoDrivers, userHooks: opts.userHooks, gitPin: opts.gitPin }, opts.env ?? process.env); } catch (e) { return { stdout: "", stderr: String(e), exitCode: 128 }; }
   let proc: ReturnType<typeof Bun.spawn>;
   try {
-    proc = Bun.spawn({ cmd: ["git", ...argv], cwd: repoDir, env: safeGitEnv(opts.env ?? process.env, opts.allowToken) as Record<string, string>, stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: opts.signal });
+    proc = Bun.spawn({ cmd: ["git", ...argv], cwd: repoDir, env: safeGitEnv(opts.env ?? process.env, opts.allowToken, opts.gitPin, repoDir) as Record<string, string>, stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: opts.signal });
   } catch (e) { return { stdout: "", stderr: String(e), exitCode: 127 }; }
   let timer: ReturnType<typeof setTimeout> | undefined;
   if (opts.timeoutMs && opts.timeoutMs > 0) timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* exited */ } }, opts.timeoutMs);

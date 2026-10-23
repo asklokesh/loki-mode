@@ -62,7 +62,7 @@ COMPARE_REASONS = {
 
 def _git(args, cwd, timeout=60):
     try:
-        p = subprocess.run(["git"] + list(args), cwd=cwd,
+        p = subprocess.run(["git", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null"] + list(args), cwd=cwd,
                            capture_output=True, text=True, timeout=timeout)
         return p.returncode, p.stdout
     except (subprocess.TimeoutExpired, OSError):

@@ -73,7 +73,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m pytest -q -p no:cacheprovider -rs tests/lib/test_os_sandbox.py | tee "$RUNNER_TEMP/os-sandbox.txt"
-          if grep -E '^SKIPPED' "$RUNNER_TEMP/os-sandbox.txt" | grep -qi bwrap; then
+          bwrap_skips="$(grep -E '^SKIPPED' "$RUNNER_TEMP/os-sandbox.txt" | grep -ci bwrap || true)"
+          if [ "${bwrap_skips:-0}" -gt 0 ]; then
             echo "bwrap tests skipped on Linux" >&2; exit 1
           fi
 
