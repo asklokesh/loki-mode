@@ -5,6 +5,28 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.69.2 (2026-10-23)
+
+
+
+### Fixed
+- The resume documentation states that exit 4 from start --resume is shared by cannot-resume and a BLOCK (rc4-docs). Approval: "APPROVE pd/rc4-docs 013caf664 stacked on pd/cw17b 686f52fb2 (tl-2, LOW)". Ships after cw17b, whose commit 8c06913ff released earlier; only the docs commit 013caf664 is picked here, the parent merge 686f52fb2 only merges main.
+
+## v11.69.1 (2026-10-23)
+
+### Fixed
+- The loki help all command footer now lists runs (FC-72 recurrence, #362). Approval: "APPROVE pd/help-runs c6c3b1dfbe51f862930a472611f93eacd70f6eca (tl-2, LOW). Footer-only fix plus FC-72 recurrence entry".
+
+## v11.69.0 (2026-10-23)
+
+### Added
+- A scheduled 15-minute dist-tag converge job for loki-mode and loki-mode-sdk, so npm latest and next converge even when a publish settle step fails (RQ-103). Approval: "ship pd/rq103 e1a27e2c2dfd84d4494c0850b9f336cd870ee70f ... APPROVE e1a27e2c2dfd84d4494c0850b9f336cd870ee70f" (rev-b, HIGH). Picks 5ba7e0f6f and e1a27e2c2.
+
+## v11.68.1 (2026-10-23)
+
+### Fixed
+- docker/Dockerfile pins @anthropic-ai/sdk@0.124.0, the bun.lock version, so the docker-build job no longer fails with E404 on the agent SDK's open-ended peer sdk-1.2.0 published at 13:13:52Z (pd/docker-sdk-pin). Approval: CoS and founder-directed hotfix on 5a89260431df5c7c1f40fe4dee8096f29fd29814, ship on the team-lead GO line.
+
 ## v11.68.0 (2026-10-23)
 
 ### Added

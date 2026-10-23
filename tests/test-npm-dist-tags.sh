@@ -156,6 +156,36 @@ for pair in "publish-npm verify-npm-registry" "publish-ts-sdk verify-sdk-registr
         && ok "$pub tag step is non-fatal (guarded, LOKI_DISTTAG_TRIES=2)" || bad "$pub tag step: '$tagline'"
 done
 
+# RQ-103: a late lower dist-tag write after the verify job exits is healed by a
+# scheduled converge of both packages that reuses npm-dist-tags.sh (no tag logic of its own).
+CW="${CONVERGE_YML:-$ROOT/.github/workflows/converge-dist-tags.yml}"
+if [ -f "$CW" ]; then
+    grep -qE "^    - cron: '\*/15 \* \* \* \*'" "$CW" && grep -q '^  schedule:' "$CW" \
+        && ok "converge workflow runs on a 15 minute schedule" || bad "converge workflow has no 15 minute schedule"
+    grep -qE 'pkg: \[loki-mode, loki-mode-sdk\]' "$CW" \
+        && ok "converge covers loki-mode and loki-mode-sdk" || bad "converge does not cover both packages"
+    ! grep -qE 'npm dist-tag (add|rm)' "$CW" \
+        && ok "converge writes no tags itself" || bad "converge writes tags itself"
+    # Behavioral: run the converge step's own script against the stub registry with an
+    # unpublished main VERSION and next below latest. Both tags must end at the max published.
+    CS="$WORK/converge-step.sh"
+    awk '/- name: Converge dist-tags/{f=1} f&&/^        run: \|/{r=1;next} r{ if ($0 ~ /^          /) print substr($0,11); else if ($0 ~ /^$/) print ""; else exit }' "$CW" > "$CS"
+    for cpkg in loki-mode loki-mode-sdk; do
+        CD="$WORK/convdir-$cpkg"; mkdir -p "$CD/scripts"; cp "$SCRIPT" "$CD/scripts/npm-dist-tags.sh"
+        ST="$WORK/conv-$cpkg"; mkdir -p "$ST"
+        printf '%s\n' 11.67.9 11.67.10 > "$ST/versions"; echo 11.67.10 > "$ST/latest"; echo 11.67.9 > "$ST/next"; : > "$ST/log"
+        printf '%s\n' 11.67.11 > "$CD/VERSION"
+        COUT="$(cd "$CD" && env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_PKG="$cpkg" LOKI_DISTTAG_PKG="$cpkg" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$CS" 2>&1)"; crc=$?
+        { [ $crc -eq 0 ] && [ "$(cat "$ST/latest")" = 11.67.10 ] && [ "$(cat "$ST/next")" = 11.67.10 ]; } \
+            && ok "converge step heals next below latest for $cpkg while VERSION is unpublished" || bad "converge step $cpkg: rc=$crc latest=$(cat "$ST/latest") next=$(cat "$ST/next") $COUT"
+    done
+    ST="$WORK/conv-outage"; mkdir -p "$ST"; : > "$ST/versions"; echo x > "$ST/latest"; echo x > "$ST/next"
+    COUT="$(cd "$WORK/convdir-loki-mode" && env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_OUTAGE=empty LOKI_DISTTAG_PKG=loki-mode LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=2 bash "$CS" 2>&1)"; crc=$?
+    [ $crc -ne 0 ] && ok "converge step fails red when the registry cannot be read" || bad "converge step passed on an unreadable registry"
+else
+    bad "converge workflow missing: $CW"
+fi
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

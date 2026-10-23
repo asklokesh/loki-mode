@@ -66,8 +66,8 @@ esac
 # 3. GUARD AGAINST VACUITY. A scan that found no workflows would report nothing
 #    wrong. An empty corpus is an absent measurement, not a pass.
 NWF="$(ls .github/workflows/*.yml 2>/dev/null | wc -l | tr -d ' ')"
-# release.yml is the only workflow now (minimal publish set), so one file is
-# a real corpus; zero is still an absent measurement.
+# release.yml plus converge-dist-tags.yml are the only workflows (minimal publish set), so a
+# couple of files are a real corpus; zero is still an absent measurement.
 if [ "${NWF:-0}" -ge 1 ]; then
     pass "the scan examined $NWF workflow files"
 else
