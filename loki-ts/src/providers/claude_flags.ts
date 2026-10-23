@@ -133,15 +133,15 @@ export function thinkingUsageError(tool: string, model: string): string {
 
 // Codex effort per tier. Codex has one model and varies reasoning effort, so this table is NOT the Claude one above
 // (fast stays "low", not "medium"). Mirrors provider_get_tier_param in providers/codex.sh (pinned by a parity test);
-// unlike the bash function, an explicit PROVIDER_EFFORT_{PLANNING,DEVELOPMENT,FAST} env value wins here.
+// an explicit non-empty PROVIDER_EFFORT_{PLANNING,DEVELOPMENT,FAST} env value wins in both routes (empty counts as unset, like bash ${VAR:-default}).
 export function codexEffortForTier(tier: string | undefined): string {
   switch (tier) {
     case "planning":
-      return process.env["PROVIDER_EFFORT_PLANNING"] ?? "xhigh";
+      return process.env["PROVIDER_EFFORT_PLANNING"] || "xhigh";
     case "development":
-      return process.env["PROVIDER_EFFORT_DEVELOPMENT"] ?? "high";
+      return process.env["PROVIDER_EFFORT_DEVELOPMENT"] || "high";
     case "fast":
-      return process.env["PROVIDER_EFFORT_FAST"] ?? "low";
+      return process.env["PROVIDER_EFFORT_FAST"] || "low";
     default:
       return "high";
   }

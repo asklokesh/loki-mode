@@ -147,6 +147,18 @@ describe("rarv.getProviderTierParam -- legacy fallback table", () => {
     expect(r.stdout.trim()).toBe("medium");
   });
 
+  it("codex empty PROVIDER_EFFORT_* counts as unset in bash and TS (#255 62b)", () => {
+    const sh = join(import.meta.dir, "../../../providers/codex.sh");
+    const defaults: Record<string, [string, string]> = { planning: ["PROVIDER_EFFORT_PLANNING", "xhigh"], development: ["PROVIDER_EFFORT_DEVELOPMENT", "high"], fast: ["PROVIDER_EFFORT_FAST", "low"] };
+    for (const [tier, [name, dflt]] of Object.entries(defaults)) {
+      const env = { ...process.env, [name]: "" };
+      const r = spawnSync("bash", ["-c", `source "${sh}"; provider_get_tier_param "${tier}"`], { env, encoding: "utf8" });
+      expect(r.stdout.trim()).toBe(dflt);
+      process.env[name] = "";
+      try { expect(getProviderTierParam(tier, "codex")).toBe(dflt); } finally { delete process.env[name]; }
+    }
+  });
+
   it("rarv.ts holds no codex effort table or env read of its own (#255 criterion 2)", () => {
     const src = _rf(_join(import.meta.dir, "../../src/runner/rarv.ts"), "utf8");
     expect(src).not.toContain("PROVIDER_EFFORT_");
