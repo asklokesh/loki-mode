@@ -9,14 +9,16 @@ import { join } from "node:path";
 const TS_ROOT = join(import.meta.dir, "..", "..");
 const left = (d: string): string[] => readdirSync(d).filter((n) => n.startsWith("loki-already-done-"));
 const own = (): string => realpathSync(mkdtempSync(join(tmpdir(), "e10-ad-cleanup-")));
+/** Nested bun run. bun ignores SIGTERM while spinning, so the default kill signal leaves an orphan burning a core
+ *  after the timeout fires (FC-NESTED-BUN-TIMEOUT-LEAVES-ORPHAN); SIGKILL cannot be ignored. */
+const nestedBun = (args: string[], tmp: string, timeout: number, cwd?: string) =>
+  spawnSync("bun", args, { cwd, env: { ...process.env, TMPDIR: tmp }, encoding: "utf8", timeout, killSignal: "SIGKILL" });
 
 describe("already-done pinned tree cleanup (D61-04-F)", () => {
   test("race tests leave zero loki-already-done-* entries", () => {
     const tmp = own();
     try {
-      const r = spawnSync("bun", ["test", "tests/engine10/already_done.test.ts", "-t", "race with implement"], {
-        cwd: TS_ROOT, env: { ...process.env, TMPDIR: tmp }, encoding: "utf8", timeout: 120_000,
-      });
+      const r = nestedBun(["test", "tests/engine10/already_done.test.ts", "-t", "race with implement"], tmp, 120_000, TS_ROOT);
       expect(r.status).toBe(0);
       expect(left(tmp)).toEqual([]);
     } finally { rmSync(tmp, { recursive: true, force: true }); }
@@ -48,9 +50,19 @@ const poll = setInterval(() => {
   if (Date.now() - t0 > 20000) { clearInterval(poll); process.exit(2); }
 }, 20);
 `);
-      const r = spawnSync("bun", [script], { env: { ...process.env, TMPDIR: tmp }, encoding: "utf8", timeout: 60_000 });
+      const r = nestedBun([script], tmp, 60_000);
       expect(r.status).toBe(143);
       expect(left(tmp)).toEqual([]);
     } finally { rmSync(tmp, { recursive: true, force: true }); rmSync(repo, { recursive: true, force: true }); }
   });
+
+  test("a nested bun that ignores SIGTERM is still killed at its timeout", () => {
+    const tmp = own();
+    try {
+      const t0 = Date.now();
+      const r = nestedBun(["-e", "process.on('SIGTERM', () => {}); for (;;) {}"], tmp, 1500);
+      expect(r.signal).toBe("SIGKILL");
+      expect(Date.now() - t0).toBeLessThan(15_000);
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  }, 30_000);
 });

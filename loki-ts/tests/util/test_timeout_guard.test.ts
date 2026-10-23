@@ -37,7 +37,7 @@ describe("the real setLoadAwareTimeout path under bun test", () => {
   const file = join(dir, "child.test.ts");
   const run = (env: Record<string, string>, sleepMs: number) => {
     writeFileSync(file, `import { it } from "bun:test";\nimport { setLoadAwareTimeout } from ${JSON.stringify(preload)};\nsetLoadAwareTimeout(100);\nit("sleeps", async () => { await new Promise((r) => setTimeout(r, ${sleepMs})); });\n`);
-    return spawnSync(process.execPath, ["test", file], { env: { ...process.env, ...env }, encoding: "utf8", timeout: 60_000 });
+    return spawnSync(process.execPath, ["test", file], { env: { ...process.env, ...env }, encoding: "utf8", timeout: 60_000, killSignal: "SIGKILL" });
   };
   const base = { LOKI_TEST_TIMEOUT_SCALE: "1" };
   it("the env floor lets a slow test pass; without it, a 500ms sleep under a 100ms budget fails", () => {
