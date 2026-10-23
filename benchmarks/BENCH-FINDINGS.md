@@ -572,15 +572,15 @@ per task:
 
 | task | arm | n | grader pass | wall s (sum) | usd (sum) | claimed done | false-pass |
 |---|---|---|---|---|---|---|---|
-| judge-trap-1 | loki | 3 | 0/3 | 595.8 | 0.6200 | 0 (PARTIAL, FAILED, PARTIAL) | not captured (no claim) |
-| judge-trap-1 | claude_code | 3 | 0/3 | 106.6 | 0.6203 | 3 | 3/3 |
+| judge-trap-1 | loki | 3 | INVALID | 595.8 | 0.6200 | 0 (PARTIAL, FAILED, PARTIAL) | INVALID |
+| judge-trap-1 | claude_code | 3 | INVALID | 106.6 | 0.6203 | 3 | INVALID |
 | hard-1-order-api | loki | 3 | 2/3 | 245.1 | 0.3185 | 0 (PARTIAL x3) | not captured (no claim) |
 | hard-1-order-api | claude_code | 3 | 3/3 | 131.6 | 0.4998 | 3 | 0/3 |
 
-* Loki passed 0/3 on judge-trap-1: it declined to claim the task, it did not
-  solve it.
-* Positive control: the judge-trap-1 hidden grader exits 0 on a reference
-  slugify and 1 on a naive one. The metric code has fake-adapter controls in
-  benchmarks/bench/tests/test_trial_metrics.py.
+* RETRACTED: the judge-trap-1 rows above are invalid. The task spec pointed at
+  the fizzbuzz overlay, so every trial failed on a missing classify.py. The
+  earlier "grader verified" claim covered only check_acceptance.py, not the
+  spec wiring. Wiring fixed and pinned by tests; a rerun is pending. The
+  hard-1-order-api rows used the correct overlay and stand.
 * Council cache share and journal reuse are emitted per trial but NOT yet
   measured live (null in this run); they stay open on #348.
