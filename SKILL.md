@@ -3,7 +3,7 @@ name: loki-mode
 description: Runs an autonomous software factory that knows what it is supposed to deliver and proves it did, with a signed receipt. Use when the user says Loki Mode or asks to build, fix or verify software autonomously.
 ---
 
-# Loki Mode v11.60.15
+# Loki Mode v11.63.3
 
 **Current entry points (Loki 10 engine):** `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"` run the Loki 10 engine and end with a signed receipt (`loki verify`). `loki backlog owner/repo --all` runs many issues in parallel. Guide: `docs/v10/GUIDE.md`. The skill instructions below, and `loki start`, describe the previous bash loop. PRD-file starts (`loki start ./prd.md`) and the opencode provider still run on it until FC38-SWEEP ports them; the legacy-engine command and the LOKI_ENGINE switch remain removed. Prefer `loki owner/repo#N` for issues.
 
@@ -228,7 +228,7 @@ Pick modules from this table, one hop from here. Each module over 100 lines open
 <!-- generated:commands -->
 Commands (generated from `loki-ts/src/cli/registry.ts`; full reference in `docs/CLI-REFERENCE.md`):
 
-`version`, `status`, `doctor`, `provider`, `memory`, `rollback`, `backup`, `restore`, `proof`, `wiki`, `control`, `intent`, `kpis`, `report`, `trust`, `crash`, `contract`, `start`, `slack`, `queue`, `issues`, `undo`, `verify-pr`, `answer`, `engine10`, `help`, `chat`, `edit`, `diff`, `models`, `setup`, `quick`, `quickstart`, `init`, `template`, `verify`, `keys`, `review`, `dashboard`, `config`, `mcp`, `acp`, `stop`, `pause`, `resume`, `cancel`, `why`, `next`, `logs`, `ship`, `deploy`, `import`, `github`, `issue`, `ci`, `modernize`, `share`, `assets`, `export`, `notify`, `tour`, `wow`, `factory`, `welcome`, `onboard`, `setup-skill`, `self-update`, `remote`, `cockpit`, `code`, `context`, `secrets`, `api`, `sandbox`, `docker`, `web`, `preview`, `telemetry`, `syslog`, `explain`, `docs`, `test`, `bench`, `voice`, `own`, `secure`, `compliance`, `enterprise`, `projects`, `audit`, `cost`, `metrics`, `sentrux`, `magic`, `steer`
+`version`, `status`, `doctor`, `provider`, `memory`, `rollback`, `backup`, `restore`, `proof`, `wiki`, `control`, `runs`, `intent`, `kpis`, `report`, `trust`, `crash`, `contract`, `start`, `slack`, `queue`, `issues`, `undo`, `verify-pr`, `answer`, `engine10`, `help`, `chat`, `edit`, `diff`, `models`, `setup`, `quick`, `quickstart`, `init`, `template`, `verify`, `keys`, `review`, `dashboard`, `config`, `mcp`, `acp`, `stop`, `pause`, `resume`, `cancel`, `why`, `next`, `logs`, `ship`, `deploy`, `import`, `github`, `issue`, `ci`, `modernize`, `share`, `assets`, `export`, `notify`, `tour`, `wow`, `factory`, `welcome`, `onboard`, `setup-skill`, `self-update`, `remote`, `cockpit`, `code`, `context`, `secrets`, `api`, `sandbox`, `docker`, `web`, `preview`, `telemetry`, `syslog`, `explain`, `docs`, `test`, `bench`, `voice`, `own`, `secure`, `compliance`, `enterprise`, `projects`, `audit`, `cost`, `metrics`, `sentrux`, `magic`, `steer`
 <!-- /generated -->
 
 ---
@@ -476,4 +476,4 @@ Implemented, planned and deprecated items, with the version each landed in: `ski
 
 ---
 
-**v11.60.15 | [Autonomi](https://www.autonomi.dev/) flagship product | core skill**
+**v11.63.3 | [Autonomi](https://www.autonomi.dev/) flagship product | core skill**

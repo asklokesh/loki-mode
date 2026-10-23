@@ -154,6 +154,7 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("status", "Show control plane reachability", { flags: [bool("--json", "Print one JSON object")] }),
     ],
   }),
+  cmd("runs", "KEEP-MODERN", "bun", "List runs across registered projects", "R100-008: one list over the loki projects registry", { flags: [json] }),
   cmd("intent", "KEEP-MODERN", "bun", "Show a past run's intent card", "Read-only intent view", { subcommands: [sub("show", "Print the intent card and answer", { positionals: [runId] })] }),
   cmd("kpis", "KEEP-MODERN", "bun", "KPI snapshot (alias of report kpis)", "Bun-native KPI report", { flags: [json, str("--since", "<Nd|YYYY-MM-DD>", "Limit iteration totals to a window")] }),
   cmd("report", "UPDATE", "both", "Reporting: kpis, session, metrics, cost, export, share, dogfood", "Mixed route; only kpis is Bun", {

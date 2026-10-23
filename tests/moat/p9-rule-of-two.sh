@@ -2143,6 +2143,18 @@ function stripComments({ text, sf }) {
   }
   return out + text.slice(at);
 }
+// await import("...safe_git...") bound by a plain object destructuring whose elements are
+// identifier properties that are not opt-in helpers (no rest, computed or string key, nested
+// pattern): the names are visible, so it is the dynamic spelling of a static named import.
+function plainDestructure(call) {
+  const aw = call.parent;
+  if (!aw || !ts.isAwaitExpression(aw)) return false;
+  const d = aw.parent;
+  if (!ts.isVariableDeclaration(d) || d.initializer !== aw || !ts.isObjectBindingPattern(d.name)) return false;
+  const els = d.name.elements;
+  return els.length > 0 && els.every((b) => !b.dotDotDotToken && ts.isIdentifier(b.name) && !H.has(b.name.text)
+    && (!b.propertyName || (ts.isIdentifier(b.propertyName) && !H.has(b.propertyName.text))));
+}
 function scan(P) {
   const flags = new Set();
   let dynLoader = false, strMention = false;
@@ -2167,7 +2179,7 @@ function scan(P) {
       if (loader && n.arguments.length > 0) {
         const a0 = lit(n.arguments[0]);
         if (a0 === null) dynLoader = true;
-        else if (sg(a0)) flags.add("import");
+        else if (sg(a0) && !(e.kind === K.ImportKeyword && plainDestructure(n))) flags.add("import");
       }
     }
     if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n)
@@ -2341,7 +2353,7 @@ allowtoken_controls() {
     local src="$REPO_ROOT/loki-ts/src" name body t saved_fails real_bg real_mu ext
     real_bg="$(cat "$src/util/base_guard.ts")"
     real_mu="$(cat "$src/util/modernize_unit.ts")"
-    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse elem-access-dyn-import elem-access-dyn-require elem-access-param dyn-loader-keyvar import-alias import-namespace loader-literal reexport-local reexport-star import-equals loader-wrapped-require loader-call-require loader-create-require comma-prop-call dyn-import-template loader-template-literal loader-aliased-spec ext-js ext-mjs ext-cjs ext-mts ext-cts ext-jsx allowtoken-core allowtoken-quoted allowtoken-escaped-ident allowtoken-escaped-string import-alias-config optional-call optional-prop-head optional-prop-call fetch-pin-widened escape-template export-rename-barrel import-rename-barrel indirect-template-key strmention-tail strmention-middle strmention-nosub json-escaped-key"
+    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse elem-access-dyn-import elem-access-dyn-require elem-access-param dyn-loader-keyvar import-alias import-namespace loader-literal reexport-local reexport-star import-equals dyn-destructure-rest dyn-destructure-computed dyn-destructure-helper dyn-destructure-allowtoken loader-wrapped-require loader-call-require loader-create-require comma-prop-call dyn-import-template loader-template-literal loader-aliased-spec ext-js ext-mjs ext-cjs ext-mts ext-cts ext-jsx allowtoken-core allowtoken-quoted allowtoken-escaped-ident allowtoken-escaped-string import-alias-config optional-call optional-prop-head optional-prop-call fetch-pin-widened escape-template export-rename-barrel import-rename-barrel indirect-template-key strmention-tail strmention-middle strmention-nosub json-escaped-key"
     for name in $names; do
         t="$T_AT/$name"; ext=ts
         mkdir -p "$t/util"
@@ -2406,6 +2418,14 @@ const e = <div>{"//"}</div>; safeGitEnv(process.env /* '\'' */, true);' ;;
                             body='export * from "./util/safe_git.ts";' ;;
             import-equals)  # import rule alone: import = require
                             body='import m = require("./util/safe_git.ts"); const k = ["safe", "GitEnv"].join(""); (m as any)[k](process.env, true);' ;;
+            dyn-destructure-rest) # import rule alone: rest element keeps the whole module reachable
+                            body='const k = ["safe", "GitEnv"].join(""); const { reviewerGitEnv, ...m } = await import("./util/safe_git.ts"); m[k](process.env, true); void reviewerGitEnv;' ;;
+            dyn-destructure-computed) # import rule alone: computed key hides the helper name
+                            body='const k = ["safe", "GitEnv"].join(""); const { [k]: f } = await import("./util/safe_git.ts"); f(process.env, true);' ;;
+            dyn-destructure-helper) # indirect rule alone: opt-in helper renamed in the pattern
+                            body='const { safeGitEnv: f } = await import("./util/safe_git.ts"); f(process.env, true);' ;;
+            dyn-destructure-allowtoken) # core grep alone: a destructured safeGit carrying allowToken
+                            body='const { safeGit } = await import("./util/safe_git.ts"); safeGit(".", ["fetch"], { allowToken: true });' ;;
             loader-wrapped-require) # literal-outside-specifier rule alone: aliased require
                             body='const r = require; const k = ["safe", "GitEnv"].join(""); const m = r("./util/safe_git.ts"); m[k](process.env, true);' ;;
             loader-call-require) # literal-outside-specifier rule alone: require.call
@@ -2467,6 +2487,19 @@ safeGitEnv(;' ;;
         [ -n "$CASE_FAILS" ] || { CASE_FAILS="$saved_fails"; nok "positive control '$name' was not flagged (allowToken guard is blind to it)"; continue; }
         CASE_FAILS="$saved_fails"
     done
+    # A shorthand helper binding in a dynamic-import destructuring ({ safeGitEnv }) must be
+    # flagged by the import rule AND the indirect rule: ident() alone also flags it, so the
+    # plainDestructure helper-name check is only pinned by requiring the import message.
+    t="$T_AT/dyn-destructure-shorthand"
+    mkdir -p "$t/util"
+    cp "$src/util/safe_git.ts" "$src/util/base_guard.ts" "$src/util/modernize_unit.ts" "$t/util/"
+    printf '%s\n' 'const { safeGitEnv } = await import("./util/safe_git.ts"); void safeGitEnv;' > "$t/offender.ts"
+    saved_fails="$CASE_FAILS"; CASE_FAILS=""
+    allowtoken_scan "$t"
+    case "$CASE_FAILS" in
+        *"safe_git imported by alias"*"used indirectly"*|*"used indirectly"*"safe_git imported by alias"*) CASE_FAILS="$saved_fails" ;;
+        *) CASE_FAILS="$saved_fails"; nok "positive control 'dyn-destructure-shorthand' must be flagged by both the import and the indirect rule" ;;
+    esac
     # A BOM-prefixed JSON module defeats node JSON.parse but loads in bun: an
     # unparseable *.json must fail closed, not be skipped.
     t="$T_AT/json-parse"
@@ -2500,6 +2533,8 @@ const s = "safeGitEnv(process.env, true)";
 const re = /safeGitEnv\(a, b\)/;
 const half = (4) / 2;
 export const env = safeGitEnv(process.env);
+const { reviewerGitEnv } = await import("./util/safe_git.ts");
+export const rev = reviewerGitEnv(".", process.env);
 EOF_CLEAN
     saved_fails="$CASE_FAILS"; CASE_FAILS=""
     allowtoken_scan "$t"
