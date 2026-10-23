@@ -384,6 +384,22 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     }
   });
 
+  it("refuses characters outside RFC 3986 that leave the host intact (only the RFC check catches these)", () => {
+    const orig = console.warn;
+    console.warn = () => {};
+    try {
+      for (const u of ["https://co.example.com/mcp path", "https://co.example.com/m\u00e9", "https://co.example.com/a{b}"]) {
+        process.env["LOKI_MCP_ACME_URL"] = u;
+        process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
+        const b = bundle();
+        expect(b.mcpServers["acme"]).toBeUndefined();
+        expect(JSON.stringify(b)).not.toContain(TOKEN);
+      }
+    } finally {
+      console.warn = orig;
+    }
+  });
+
   it("refuses a backslash url whose host differs between WHATWG and Python urlsplit", () => {
     const orig = console.warn;
     console.warn = () => {};

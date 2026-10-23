@@ -301,6 +301,9 @@ refused_case "backslash before userinfo, evil host (WHATWG evil)" 'http://evil.e
 refused_case "backslash userinfo on 127.0.0.1" 'http://evil\@127.0.0.1/' "$TOKEN_D"
 refused_case "backslash userinfo on localhost" 'http://evil\@localhost/' "$TOKEN_D"
 refused_case "backslash in an https url" 'https://co.example.com\@127.0.0.1/mcp' "$TOKEN_D"
+# Characters outside RFC 3986 that leave the host intact: only the RFC 3986 check refuses these on both routes.
+refused_case "a space in the url path" 'https://co.example.com/mcp path' "$TOKEN_D"
+refused_case "a non-ASCII byte in the url path" "$(printf 'https://co.example.com/m\303\251')" "$TOKEN_D"
 refused_case "a percent-encoded host (WHATWG decodes it)" 'https://ex%61mple.com/mcp' "$TOKEN_D"
 refused_case "a decimal-integer IPv4 host" 'https://2130706433/mcp' "$TOKEN_D"
 # One accept/reject contract (#315): an empty authority, a non-canonical loopback spelling

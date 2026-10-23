@@ -171,6 +171,12 @@ case "$mcp_bs" in
     *evil.example*|*"remote MCP server bslash"*) bad "the audit listed a backslash URL the runner refuses" ;;
     *) ok "a backslash URL is refused by the runner and not listed" ;;
 esac
+# The model-endpoint row goes through the same origin sanitizer: a backslash value must show as unparseable, never as 127.0.0.1.
+mcp_model="$(ANTHROPIC_BASE_URL='http://evil.example\@127.0.0.1/x' LOKI_PROVIDER=claude blocked "$LOKI" doctor --airgap 2>&1 || true)"
+case "$mcp_model" in
+    *"model inference -> (unparseable value, not shown)"*) ok "a backslash model endpoint is shown as unparseable" ;;
+    *) bad "a backslash model endpoint was resolved to a host by the audit" ;;
+esac
 case "$(blocked "$LOKI" doctor --airgap 2>&1 || true)" in
     *"remote MCP server"*)
         bad "the MCP row appeared with no LOKI_MCP_*_URL set" ;;
