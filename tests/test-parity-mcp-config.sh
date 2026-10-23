@@ -254,9 +254,9 @@ run_both "$TMP_BASH_D" "$TMP_BUN_D"
 bash_canon_d=$(canon_of "$TMP_BASH_D")
 bun_canon_d=$(canon_of "$TMP_BUN_D")
 if [ -n "$bash_canon_d" ] && [ "$bash_canon_d" = "$bun_canon_d" ] \
-   && printf '%s' "$bash_canon_d" | grep -q "\"Authorization\":\"Bearer $TOKEN_D\"" \
+   && printf '%s' "$bash_canon_d" | grep -qF '"Authorization":"Bearer ${LOKI_MCP_ACME_CO_AUTH}"' \
    && printf '%s' "$bash_canon_d" | grep -q '"acme-co"'; then
-    ok "parity D: bash and Bun emit the same remote entry with an Authorization header"
+    ok "parity D: bash and Bun emit the same remote entry with an Authorization placeholder"
 else
     bad "parity D remote entry mismatch: bash=[$bash_canon_d] bun=[$bun_canon_d]"
 fi
@@ -337,7 +337,8 @@ chmod 644 "$bd/.loki/mcp-config.json" "$bu/.loki/mcp-config.json"
 ib=$(ino_of "$bd/.loki/mcp-config.json"); iu=$(ino_of "$bu/.loki/mcp-config.json")
 LOKI_MCP_ACME_CO_URL="https://co.example.com/mcp" LOKI_MCP_ACME_CO_AUTH="$TOKEN_D" run_both "$bd" "$bu"
 if [ "$(mode_of "$bd/.loki/mcp-config.json")" = "600" ] && [ "$(mode_of "$bu/.loki/mcp-config.json")" = "600" ] \
-   && grep -q "$TOKEN_D" "$bd/.loki/mcp-config.json" && grep -q "$TOKEN_D" "$bu/.loki/mcp-config.json" \
+   && grep -qF '${LOKI_MCP_ACME_CO_AUTH}' "$bd/.loki/mcp-config.json" && grep -qF '${LOKI_MCP_ACME_CO_AUTH}' "$bu/.loki/mcp-config.json" \
+   && ! grep -rqF "$TOKEN_D" "$bd" "$bu" \
    && [ "$ib" != "$(ino_of "$bd/.loki/mcp-config.json")" ] && [ "$iu" != "$(ino_of "$bu/.loki/mcp-config.json")" ]; then
     ok "parity D: adding a secret to a 644 bundle replaces the file at 600 on both routes"
 else
@@ -352,15 +353,17 @@ auth_case() {
     bd=$(mktemp -d -t loki-parity-bash-a-XXXX); bu=$(mktemp -d -t loki-parity-bun-a-XXXX)
     LOKI_MCP_ACME_CO_URL="https://co.example.com/mcp" LOKI_MCP_ACME_CO_AUTH="$2" run_both "$bd" "$bu"
     cb=$(canon_of "$bd"); cu=$(canon_of "$bu")
-    if [ -n "$cb" ] && [ "$cb" = "$cu" ] && printf '%s' "$cb" | grep -qF "\"Authorization\":\"$3\""; then
+    # Canary: the auth value must appear nowhere in either workspace (FC-MCP-AUTH-TOKEN-WRITTEN-INTO-WORKSPACE).
+    if [ -n "$cb" ] && [ "$cb" = "$cu" ] && printf '%s' "$cb" | grep -qF "\"Authorization\":\"$3\"" \
+       && ! grep -rqF "$2" "$bd" "$bu"; then
         ok "parity D: $1"
     else
         bad "parity D $1: bash=[$cb] bun=[$cu]"
     fi
     rm -rf "$bd" "$bu"
 }
-auth_case "bare token gets the Bearer prefix on both routes" "$TOKEN_D" "Bearer $TOKEN_D"
-auth_case "a value naming a scheme is sent verbatim on both routes" "Basic abc123" "Basic abc123"
+auth_case "bare token gets the Bearer prefix on both routes" "$TOKEN_D" 'Bearer ${LOKI_MCP_ACME_CO_AUTH}'
+auth_case "a value naming a scheme gets no Bearer prefix on both routes" "Basic abc123" '${LOKI_MCP_ACME_CO_AUTH}'
 
 # A remote named loki-mode must not replace the builtin server on either route.
 bd=$(mktemp -d -t loki-parity-bash-b-XXXX); bu=$(mktemp -d -t loki-parity-bun-b-XXXX)
@@ -426,7 +429,7 @@ BUNEOF
         else
             [ -f "$side/.loki/mcp-config.json" ] && [ ! -L "$side/.loki/mcp-config.json" ] || leak="$leak cfg-not-regular:$side"
             [ "$(mode_of "$side/.loki/mcp-config.json")" = 600 ] || leak="$leak cfg-mode:$side"
-            [ "$(grep -rlF "$TOKEN_D" "$side" 2>/dev/null)" = "$side/.loki/mcp-config.json" ] || leak="$leak token-elsewhere:$side"
+            grep -rlF "$TOKEN_D" "$side" >/dev/null 2>&1 && leak="$leak token-written:$side"
         fi
     done
     if [ "$kind" = file ]; then
@@ -439,7 +442,7 @@ BUNEOF
         { [ "$rb" -eq 0 ] && [ "$ru" -eq 0 ]; } || leak="$leak rc-bash=$rb-rc-bun=$ru-expected-zero"
     fi
     if [ -z "$leak" ]; then
-        ok "parity F: a $kind planted at the tmp path or target is never followed, token only in the bundle (both routes)"
+        ok "parity F: a $kind planted at the tmp path or target is never followed, token nowhere in the workspace (both routes)"
     else
         bad "parity F $kind:$leak"
     fi

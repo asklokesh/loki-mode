@@ -119,7 +119,9 @@ for key in sorted(os.environ):
         sys.stderr.write('[mcp_config] ignoring %s: LOKI_MCP_%s_AUTH contains control characters.\n' % (key, m.group(1)))
         continue
     if auth:
-        value = auth if re.match(r'^[A-Za-z][A-Za-z0-9-]*\s+\S', auth) else 'Bearer ' + auth
+        # The bundle lives in the workspace: write the variable reference, never the token (the CLI expands it).
+        ref = '${LOKI_MCP_%s_AUTH}' % m.group(1)
+        value = ref if re.match(r'^[A-Za-z][A-Za-z0-9-]*\s+\S', auth) else 'Bearer ' + ref
         entry['headers'] = {'Authorization': value}
         secret = True
     name = m.group(1).lower().replace('_', '-')

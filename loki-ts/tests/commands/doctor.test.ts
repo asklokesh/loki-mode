@@ -1897,6 +1897,34 @@ describe("doctor MCP tool-list drift", () => {
     expect(cap.out).not.toContain("sekret-token-xyz");
   }, 60000);
 
+  it("the drift probe sends the expanded auth value, since the bundle holds only the placeholder", async () => {
+    const seen: string[] = [];
+    const srv = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        seen.push(String(req.headers["authorization"] ?? ""));
+        if (!body) { res.writeHead(202).end(); return; }
+        const m = JSON.parse(body);
+        res.setHeader("content-type", "application/json");
+        res.setHeader("mcp-session-id", "s");
+        if (m.method === "initialize") res.end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: "2025-03-26", capabilities: {}, serverInfo: { name: "x", version: "1" } } }));
+        else if (m.method === "tools/list") res.end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { tools: [] } }));
+        else res.writeHead(202).end();
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    try {
+      const url = `http://127.0.0.1:${(srv.address() as { port: number }).port}/mcp`;
+      const out = await probeMcpToolHashes({ LOKI_MCP_PROBED_URL: url, LOKI_MCP_PROBED_AUTH: "tok_PROBE_9" } as NodeJS.ProcessEnv, 4000);
+      expect(out["probed"]).toMatch(/^[0-9a-f]{64}$/);
+      expect(seen.includes("Bearer tok_PROBE_9")).toBe(true);
+      expect(seen.some((h) => h.includes("${"))).toBe(false);
+    } finally {
+      srv.close();
+    }
+  }, 60000);
+
   it("runDoctor prints no drift row when every served hash matches", async () => {
     mkdirSync(join(lokiDir, "state"), { recursive: true });
     writeFileSync(recordFile(), JSON.stringify({ "loki-mode": "aaa" }));

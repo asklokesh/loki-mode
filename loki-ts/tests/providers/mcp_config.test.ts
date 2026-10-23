@@ -343,13 +343,13 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     expect(warns.join("\n")).not.toContain("registry.example.com");
   });
 
-  it("an env auth var produces an Authorization header on its remote server", () => {
+  it("an env auth var produces an Authorization placeholder on its remote server, never the value", () => {
     process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
     process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
     expect(bundle().mcpServers["acme"]).toEqual({
       type: "http",
       url: "https://mcp.example.com/mcp",
-      headers: { Authorization: `Bearer ${TOKEN}` },
+      headers: { Authorization: "Bearer ${LOKI_MCP_ACME_AUTH}" },
     });
   });
 
@@ -440,8 +440,9 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
     mcpConfigPath(td);
     expect(statSync(cfg).mode & 0o777).toBe(0o600);
-    expect(readFileSync(cfg, "utf8")).toContain(TOKEN);
-    // A new inode proves the token never went into the world-readable file.
+    expect(readFileSync(cfg, "utf8")).toContain("${LOKI_MCP_ACME_AUTH}");
+    expect(readFileSync(cfg, "utf8")).not.toContain(TOKEN);
+    // A new inode proves the 644 file is never rewritten in place.
     expect(statSync(cfg).ino).not.toBe(before);
     expect(readdirSync(join(td, ".loki")).filter((f) => f.includes(".tmp"))).toEqual([]);
   });
@@ -458,7 +459,8 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     // A stale regular file from a crashed run with the same pid.
     writeFileSync(tmp, "STALE");
     mcpConfigPath(td);
-    expect(readFileSync(cfg, "utf8")).toContain(TOKEN);
+    expect(readFileSync(cfg, "utf8")).toContain("${LOKI_MCP_ACME_AUTH}");
+    expect(readFileSync(cfg, "utf8")).not.toContain(TOKEN);
     expect(statSync(cfg).mode & 0o777).toBe(0o600);
     // A symlink planted at the tmp path is replaced, never followed.
     rmSync(cfg);
@@ -467,7 +469,8 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     expect(readFileSync(victim, "utf8")).toBe("VICTIM");
     expect(statSync(victim).mode & 0o777).toBe(0o644);
     expect(lstatSync(cfg).isSymbolicLink()).toBe(false);
-    expect(readFileSync(cfg, "utf8")).toContain(TOKEN);
+    expect(readFileSync(cfg, "utf8")).toContain("${LOKI_MCP_ACME_AUTH}");
+    expect(readFileSync(cfg, "utf8")).not.toContain(TOKEN);
     expect(readdirSync(join(td, ".loki")).filter((f) => f.includes(".tmp"))).toEqual([]);
   });
 
@@ -569,10 +572,26 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     expect(bundle().mcpServers["loop"]).toEqual({ type: "http", url: "http://[::1]:8080/mcp" });
   });
 
-  it("a value that already names a scheme is used verbatim", () => {
+  it("a value that names a scheme gets no Bearer prefix and is still only a placeholder", () => {
     process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
     process.env["LOKI_MCP_ACME_AUTH"] = "Basic abc123";
-    expect(bundle().mcpServers["acme"].headers).toEqual({ Authorization: "Basic abc123" });
+    expect(bundle().mcpServers["acme"].headers).toEqual({ Authorization: "${LOKI_MCP_ACME_AUTH}" });
+  });
+
+  it("canary: the auth value appears nowhere in the workspace (FC-MCP-AUTH-TOKEN-WRITTEN-INTO-WORKSPACE)", () => {
+    process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
+    process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
+    process.env["LOKI_MCP_ACME_CO_URL"] = "https://co.example.com/mcp";
+    process.env["LOKI_MCP_ACME_CO_AUTH"] = "Basic " + TOKEN;
+    mcpConfigPath(td);
+    mcpConfigPath(td);
+    const walk = (d: string): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]));
+    const files = walk(td);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.filter((f) => readFileSync(f, "utf8").includes(TOKEN))).toEqual([]);
+    const b = JSON.parse(readFileSync(mcpConfigPath(td), "utf8"));
+    expect(b.mcpServers["acme-co"].headers).toEqual({ Authorization: "${LOKI_MCP_ACME_CO_AUTH}" });
   });
 
   it("multi-word server names map to lowercase hyphenated keys", () => {
