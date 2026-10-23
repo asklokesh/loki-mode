@@ -3229,7 +3229,7 @@ async def loki_verify_fast(path: str = ".", diff_base: str = "") -> str:
     Use it for an immediate, deterministic check of a repo or its diff against a git
     ref. It detects mock-abuse tests, assertionless/skipped tests, hardcoded mock data
     and failing loki_wall_* Wall files (.py under pytest; .ts and .js through the engine10 Wall runner, which needs bun, else they are counted skipped); it does not detect logic, spec or security
-    defects. With no Wall file it returns INCONCLUSIVE (static_clean=true), never PASS. Do not use it to verify a finished run's receipt (use loki_v10_verify) or
+    defects. With no Wall file it returns INCONCLUSIVE (static_clean=true), never PASS. A Wall file earns PASS only if it is tracked, unchanged and its sha256 matches a wall.sealed event in .loki/runs/*/events.jsonl; that match is attestation, not proof (an agent that can write the repo could forge the event), so an untrusted Wall can FAIL but never PASS. Do not use it to verify a finished run's receipt (use loki_v10_verify) or
     to review code quality (use loki_quality_report).
 
     This is the embeddable verification primitive: an IDE, another agent, a CI
