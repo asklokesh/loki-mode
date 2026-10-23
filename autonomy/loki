@@ -37351,6 +37351,63 @@ cmd_report() {
         export)   shift; cmd_export "$@";  return $? ;;
         share)    shift; cmd_share "$@";   return $? ;;
         dogfood)  shift; cmd_dogfood "$@"; return $? ;;
+        release-notes)
+            shift
+            # User release notes (#391): every commit in <from>..<to> is listed under
+            # "changes" when its Loki-Run trailer names a run whose receipt.json
+            # (schema loki.v10.receipt/1) exists under .loki/runs, else under "not sealed".
+            local _rn_range="" _rn_fmt="text" _rn_a
+            while [ $# -gt 0 ]; do
+                _rn_a="$1"; shift
+                case "$_rn_a" in
+                    --format) _rn_fmt="${1:-}"; [ $# -gt 0 ] && shift ;;
+                    --format=*) _rn_fmt="${_rn_a#--format=}" ;;
+                    -*) _rn_range="!"; break ;;
+                    *) [ -z "$_rn_range" ] && _rn_range="$_rn_a" || _rn_range="!" ;;
+                esac
+            done
+            case "$_rn_fmt" in text|json) ;; *) _rn_range="!" ;; esac
+            case "$_rn_range" in
+                ?*..?*) ;;
+                *) echo "Usage: loki report release-notes <from>..<to> [--format text|json]" >&2; return 2 ;;
+            esac
+            local _rn_log
+            _rn_log="$(git log --format='%H%x1f%s%x1f%(trailers:key=Loki-Run,valueonly,separator=%x2c)%x1e' "$_rn_range" 2>/dev/null)" || {
+                echo "Usage: loki report release-notes <from>..<to> [--format text|json]" >&2
+                echo "release-notes: cannot resolve range: $_rn_range" >&2
+                return 2
+            }
+            _RN_LOG="$_rn_log" python3 - "$_rn_fmt" "${LOKI_DIR:-.loki}" <<'PYRN'
+import json, os, sys
+fmt, loki_dir = sys.argv[1], sys.argv[2]
+changes, unsealed = [], []
+for rec in os.environ.get("_RN_LOG", "").split("\x1e"):
+    rec = rec.strip("\n")
+    if not rec:
+        continue
+    sha, subject, run = (rec.split("\x1f") + ["", ""])[:3]
+    run = run.strip().split(",")[0].strip()
+    receipt = ""
+    if run and "/" not in run and ".." not in run:
+        try:
+            with open(os.path.join(loki_dir, "runs", run, "receipt.json")) as fh:
+                if json.load(fh).get("schema") == "loki.v10.receipt/1":
+                    receipt = run
+        except (OSError, ValueError, AttributeError):
+            pass
+    row = {"commit": sha[:12], "subject": subject}
+    (changes if receipt else unsealed).append(dict(row, receipt=receipt) if receipt else row)
+if fmt == "json":
+    print(json.dumps({"changes": changes, "not_sealed": unsealed}, indent=2))
+else:
+    print("changes (%d)" % len(changes))
+    for r in changes:
+        print("  %s  %s  [receipt %s]" % (r["commit"], r["subject"], r["receipt"]))
+    print("not sealed (%d)" % len(unsealed))
+    for r in unsealed:
+        print("  %s  %s" % (r["commit"], r["subject"]))
+PYRN
+            return $? ;;
     esac
     cmd_report_legacy "$@"
 }
