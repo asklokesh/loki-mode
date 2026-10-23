@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { EventLog, readEvents } from "../../src/engine10/events.ts";
 import { controlRunLink, issueStatusBody, issueStatusProjector, STATUS_MARKER, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../../src/util/run_outputs.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
-import { NO_RUN_HINT, render, runIntentShow, runModernStatus, summarize } from "../../src/commands/run_status.ts";
+import { NO_RUN_HINT, render, runIntentShow, runModernStatus, runRunsList, summarize } from "../../src/commands/run_status.ts";
 import { DEFAULT_PUSH_SH } from "../../src/engine10/stages/pr.ts";
 
 let dir: string;
@@ -445,5 +445,73 @@ describe("pickRun mtime", () => {
     mkdirSync(join(dir, ".loki", "runs", "e10-20261005T000000Z-bbbb"), { recursive: true });
     const { out } = await run([]);
     expect(out).toContain("e10-20261001T000000Z-aaaa");
+  });
+});
+
+describe("loki runs (R100-008)", () => {
+  function mkProject(name: string, runs: Array<{ id: string; done: boolean }>): string {
+    const path = join(dir, name);
+    mkdirSync(path, { recursive: true });
+    for (const r of runs) {
+      const log = new EventLog(join(path, ".loki", "runs", r.id, "events.jsonl"), r.id);
+      log.append("run.started", null, { task_source: "text" });
+      log.append("cost", "implement", { session_id: "s1", usd: 0.5 });
+      if (r.done) log.append("run.completed", null, { verdict: "VERIFIED", cost_usd: 0.5 });
+    }
+    return path;
+  }
+  function register(projects: Record<string, string>, extra: Record<string, unknown> = {}): void {
+    mkdirSync(join(dir, ".loki", "dashboard"), { recursive: true });
+    const reg: Record<string, unknown> = { ...extra };
+    for (const [name, path] of Object.entries(projects)) reg[name] = { name, path };
+    writeFileSync(join(dir, ".loki", "dashboard", "projects.json"), JSON.stringify({ version: "1.0", projects: reg }));
+  }
+  function runs(args: string[]): { code: number; out: string } {
+    const orig = process.stdout.write.bind(process.stdout);
+    let out = "";
+    process.stdout.write = ((c: string | Uint8Array) => { out += String(c); return true; }) as typeof process.stdout.write;
+    try { return { code: runRunsList(args, env()), out }; } finally { process.stdout.write = orig; }
+  }
+
+  test("3 registered projects with 4 runs list 4 rows, each with exactly id, repo, state, usd, verdict", () => {
+    const a = mkProject("alpha", [{ id: "e10-20261023T010000Z-aaaa", done: true }, { id: "e10-20261023T020000Z-bbbb", done: false }]);
+    const b = mkProject("beta", [{ id: "e10-20261023T030000Z-cccc", done: true }]);
+    const c = mkProject("gamma", [{ id: "e10-20261023T040000Z-dddd", done: true }]);
+    register({ alpha: a, beta: b, gamma: c });
+    const { code, out } = runs(["--json"]);
+    expect(code).toBe(0);
+    const rows = JSON.parse(out) as Array<Record<string, unknown>>;
+    expect(rows.length).toBe(4);
+    for (const r of rows) expect(Object.keys(r).sort()).toEqual(["id", "repo", "state", "usd", "verdict"]);
+    expect(rows.map((r) => r.id)).toEqual(["e10-20261023T040000Z-dddd", "e10-20261023T030000Z-cccc", "e10-20261023T020000Z-bbbb", "e10-20261023T010000Z-aaaa"]);
+    expect(rows.find((r) => r.id === "e10-20261023T010000Z-aaaa")).toMatchObject({ repo: "alpha", usd: 0.5, verdict: "VERIFIED" });
+    expect(rows.find((r) => r.id === "e10-20261023T020000Z-bbbb")).toMatchObject({ repo: "alpha", verdict: null });
+  });
+
+  test("a project registered twice, a missing dir and a run with no events add no rows", () => {
+    const a = mkProject("alpha", [{ id: "e10-20261023T010000Z-aaaa", done: true }]);
+    mkdirSync(join(a, ".loki", "runs", "e10-20261023T050000Z-empty"), { recursive: true });
+    register({ alpha: a, alias: a, ghost: join(dir, "does-not-exist") });
+    expect((JSON.parse(runs(["--json"]).out) as unknown[]).length).toBe(1);
+  });
+
+  test("a run with no cost event reports usd null, not 0", () => {
+    const path = join(dir, "nocost");
+    const id = "e10-20261023T060000Z-ffff";
+    new EventLog(join(path, ".loki", "runs", id, "events.jsonl"), id).append("run.started", null, { task_source: "text" });
+    register({ nocost: path });
+    expect(JSON.parse(runs(["--json"]).out)).toEqual([{ id, repo: "nocost", state: "received", usd: null, verdict: null }]);
+  });
+
+  test("no registry prints a hint, and --json prints an empty array", () => {
+    expect(runs([]).out).toContain("loki projects add");
+    expect(runs(["--json"]).out.trim()).toBe("[]");
+  });
+
+  test("the text list shows one line per run and an unknown flag exits 1", () => {
+    register({ alpha: mkProject("alpha", [{ id: "e10-20261023T010000Z-aaaa", done: true }]) });
+    const t = runs([]);
+    expect(t.out.trim().split("\n")).toEqual(["e10-20261023T010000Z-aaaa  alpha  completed  $0.50  VERIFIED"]);
+    expect(runs(["--nope"]).code).toBe(1);
   });
 });
