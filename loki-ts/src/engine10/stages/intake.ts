@@ -13,7 +13,8 @@ import { type AlreadyDoneResult, buildAlreadyDoneCommentArgv, checkAlreadyDone, 
 import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_done_async.ts";
 import { snapshotContract } from "../../features/contract.ts";
 import { probeZeroChecks } from "./verify.ts"; import { stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
-import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked, crashWrittenFiles } from "../../e10ext/preexisting_dirty.ts";
+import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
+import { crashWrittenFiles } from "../../features/crash_work.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { ensureProfile, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 export interface IntakeOptions {
   taskText?: string;
