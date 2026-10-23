@@ -178,5 +178,70 @@ else
     bad "real bun not found; hostile-repo part cannot run"
 fi
 
+# Part 4 (TS children): a child spawned with process.execPath does NOT inherit the parent's
+# --config/--no-env-file, so every spawn of process.execPath in loki-ts/src must go through
+# bunSafeArgv (runner/worker_proc.ts). The gate reads each process.execPath occurrence together with
+# the text before it on the same statement; a mutant per site class must turn it red.
+exec_gate() { # exec_gate <src-root>; prints offending file:line, returns 1 on any
+    python3 - "$1" <<'PY'
+import os, re, sys
+bad = []
+for d, _, fs in os.walk(sys.argv[1]):
+    for f in fs:
+        if not f.endswith(".ts"): continue
+        p = os.path.join(d, f)
+        s = open(p).read()
+        for m in re.finditer(r"process\.execPath", s):
+            line = s.count("\n", 0, m.start()) + 1
+            text = s.splitlines()[line - 1].lstrip()
+            if text.startswith("//") or text.startswith("*"): continue
+            head = s[max(0, m.start() - 160):m.start()]
+            if "bunSafeArgv(" not in head and not p.endswith("worker_proc.ts"):
+                bad.append("%s:%d" % (p, line))
+print(" ".join(bad)); sys.exit(1 if bad else 0)
+PY
+}
+TS_SRC="$REPO/loki-ts/src"
+g="$(exec_gate "$TS_SRC")" && ok "every process.execPath spawn in loki-ts/src goes through bunSafeArgv" || bad "unsafe process.execPath spawn: $g"
+for site in commands/start.ts engine10/session.ts engine10/supervisor.ts util/modernize_unit.ts util/run_outputs.ts; do
+    rm -rf "$T/mut"; mkdir -p "$T/mut"; cp -R "$TS_SRC/." "$T/mut/"
+    python3 - "$T/mut/$site" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+open(p, "w").write(s.replace("bunSafeArgv(", "(", 1) if "bunSafeArgv(" in s else s)
+PY
+    if exec_gate "$T/mut" >/dev/null; then bad "mutant ($site): unwrapping one site was not caught"; else ok "mutant ($site): unwrapped spawn is caught"; fi
+done
+# Parity: the bash and TS flag lists are one list.
+bash_flags="$(sed -n 's/^_LOKI_BUN_SAFE_FLAGS=(\(.*\))$/\1/p' "$REPO/autonomy/lib/bun-safe.sh")"
+ts_flags="$(sed -n 's/^export const BUN_SAFE_FLAGS[^=]*= \[\(.*\)\];$/\1/p' "$TS_SRC/runner/worker_proc.ts" | tr -d '",' | tr -s ' ')"
+{ [ -n "$bash_flags" ] && [ "$bash_flags" = "$ts_flags" ]; } && ok "bash and TS safe flag lists are identical ($bash_flags)" || bad "flag lists differ: bash='$bash_flags' ts='$ts_flags'"
+# Project-env denylist covers the endpoint, proxy, git-exec and interpreter-path names.
+for n in ANTHROPIC_BASE_URL HTTPS_PROXY HTTP_PROXY GIT_SSH_COMMAND GIT_EXEC_PATH PYTHONPATH PERL5OPT; do
+    mkdir -p "$T/dl"; printf '%s=evil\nPLAIN_OK=1\n' "$n" >"$T/dl/.env"
+    got="$(cd "$T/dl" && env -i PATH=/usr/bin:/bin LOKI_ALLOW_PROJECT_ENV=1 bash -c 'source "$1"; _loki_apply_project_env; printf "%s|%s" "${'"$n"':-unset}" "${PLAIN_OK:-unset}"' _ "$REPO/autonomy/lib/bun-safe.sh")"
+    [ "$got" = "unset|1" ] && ok "opt-in .env: $n is never applied (plain names still are)" || bad "opt-in .env: $n got '$got'"
+done
+
+if command -v bun >/dev/null 2>&1; then
+    # Real bun: a parent started safely spawns a worker child through bunSafeArgv in the hostile repo.
+    cat >"$T/driver.ts" <<TS
+import { spawnSync } from "node:child_process";
+import { bunSafeArgv } from "$TS_SRC/runner/worker_proc.ts";
+const argv = process.env.DRIVER_RAW === "1" ? [process.execPath, "$ENTRY"] : bunSafeArgv([process.execPath, "$ENTRY"]);
+spawnSync(argv[0]!, argv.slice(1), { cwd: process.cwd(), env: process.env, stdio: "ignore" });
+TS
+    drv() { # drv <marker-dir> [DRIVER_RAW=1]
+        (cd "$T/hostile" && env -i HOME="$T/home" PATH="$REAL_BUN_DIR:/usr/bin:/bin" MARKER_DIR="$1" ${2:+"$2"} \
+            ${TO[@]+"${TO[@]}"} bun --config=/dev/null --no-env-file "$T/driver.ts") >/dev/null 2>&1
+    }
+    Mr="$T/m-drv-raw"; mkdir -p "$Mr"; drv "$Mr" DRIVER_RAW=1
+    { [ -f "$Mr/preload-ran" ] && [ -f "$Mr/env-evil" ]; } \
+        && ok "control: a raw process.execPath child of a safe parent runs the repo preload and reads .env" || bad "control: raw child did not reproduce the hole (preload=$([ -f "$Mr/preload-ran" ] && echo y || echo n))"
+    Ms="$T/m-drv-safe"; mkdir -p "$Ms"; drv "$Ms"
+    { [ -f "$Ms/entry-ran" ] && [ ! -e "$Ms/preload-ran" ] && [ ! -e "$Ms/env-evil" ] && [ ! -e "$Ms/env-loki" ] && [ ! -e "$Ms/env-bun" ]; } \
+        && ok "worker child via bunSafeArgv in a hostile repo: entry ran, no preload, no .env" || bad "safe child leaked (entry=$([ -f "$Ms/entry-ran" ] && echo y || echo n) preload=$([ -e "$Ms/preload-ran" ] && echo RAN || echo n) env=$([ -e "$Ms/env-evil" ] && echo APPLIED || echo n))"
+fi
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
