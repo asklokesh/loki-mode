@@ -325,6 +325,16 @@ function findingSchemaContent(): string {
   return readFileSync(findingSchemaPath(), "utf8");
 }
 
+// The permission argv can already carry --disallowedTools (secret and web denies, #303); a second flag
+// would shadow one list, so the guard list is merged into the existing value.
+const REVIEW_GUARD_DENYLIST =
+  "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)";
+function addDisallowedTools(argv: string[], list: string): void {
+  const i = argv.indexOf("--disallowedTools");
+  if (i >= 0 && i + 1 < argv.length) argv[i + 1] = `${argv[i + 1]},${list}`;
+  else argv.push("--disallowedTools", list);
+}
+
 // Single-shot Claude invocation that declares all 3 base voters and asks for
 // a schema-validated multi-finding response. Throws on any failure so the
 // caller (councilEvaluate) can fall through to the existing heuristic.
@@ -434,10 +444,7 @@ export async function dispatchClaudeAgents(
     process.env["LOKI_REVIEW_TOOL_GUARD"] !== "0" &&
     claudeFlagSupported("--disallowedTools")
   ) {
-    argv.push(
-      "--disallowedTools",
-      "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)",
-    );
+    addDisallowedTools(argv, REVIEW_GUARD_DENYLIST);
   }
   // EMBED 3b (v7.35.0, #167): positive --allowedTools least-privilege grant.
   // DEFAULT OFF (opt-in LOKI_REVIEW_ALLOWLIST=1). Emitted ALONGSIDE the denylist:
@@ -531,10 +538,7 @@ export async function dispatchDevilsAdvocate(
     process.env["LOKI_REVIEW_TOOL_GUARD"] !== "0" &&
     claudeFlagSupported("--disallowedTools")
   ) {
-    argv.push(
-      "--disallowedTools",
-      "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)",
-    );
+    addDisallowedTools(argv, REVIEW_GUARD_DENYLIST);
   }
   argv.push(...reviewAllowlistArgv());
   argv.push("-p", topPrompt);

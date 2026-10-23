@@ -369,6 +369,7 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
     const cap = { argv: [] as string[] };
     try {
       await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
+      expect(cap.argv.filter((a) => a === "--disallowedTools")).toHaveLength(1); // merged, never a second flag
       const idx = cap.argv.indexOf("--disallowedTools");
       expect(idx).toBeGreaterThanOrEqual(0);
       const denyList = cap.argv[idx + 1] ?? "";
@@ -412,7 +413,8 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
     const cap = { argv: [] as string[] };
     try {
       await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
-      expect(cap.argv.includes("--disallowedTools")).toBe(false);
+      expect(cap.argv.join(" ")).not.toContain("Bash(git reset:*)"); // the permission denies may remain; the review guard list must not
+      expect(cap.argv.filter((a) => a === "--disallowedTools").length).toBeLessThanOrEqual(1);
     } finally {
       if (savedGuard === undefined) delete process.env["LOKI_REVIEW_TOOL_GUARD"];
       else process.env["LOKI_REVIEW_TOOL_GUARD"] = savedGuard;
@@ -426,7 +428,8 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
     const cap = { argv: [] as string[] };
     try {
       await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
-      expect(cap.argv.includes("--disallowedTools")).toBe(false);
+      expect(cap.argv.join(" ")).not.toContain("Bash(git reset:*)"); // the permission denies may remain; the review guard list must not
+      expect(cap.argv.filter((a) => a === "--disallowedTools").length).toBeLessThanOrEqual(1);
       // The voter still functions (agents + schema + prompt present).
       expect(cap.argv.includes("--agents")).toBe(true);
       expect(cap.argv[cap.argv.length - 2]).toBe("-p");
