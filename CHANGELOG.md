@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.65.4 (2026-10-23)
+
+### Fixed
+- The first-run gate test now matches the real context trigger in loki-ts/src/e10ext/context.ts, so its stub gate no longer passes cases the real gate fails (357c3-r2). Approval: "tl-324: APPROVE pd/357c3-r2 46bf09fbe29754ff65f46e4cdc61d8748c865b6d. Single commit on origin/main (no stacked parents)".
+
 ## v11.65.3 (2026-10-23)
 
 ### Fixed
