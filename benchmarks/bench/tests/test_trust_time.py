@@ -24,7 +24,7 @@ def _world(tmp, grader=True, tools=("loki", "claude_code")):
     tasks, res, wds = tmp / "tasks", tmp / "res", tmp / "wd"
     tasks.mkdir(), res.mkdir()
     (tasks / "t1.json").write_text(json.dumps({"id": "t1", "prompt": "do it", "acceptance": {"cmd": "true"}, "visible_cmd": "true"}))
-    (tmp / "m.json").write_text(json.dumps({"name": "stub-manifest", "tasks": ["t1"]}))
+    (tmp / "m.json").write_text(json.dumps({"name": "stub-manifest", "tasks": {"t1": {"sha256": "x", "language": "js"}}}))
     for tool in tools:
         (res / (tool + ".json")).write_text(json.dumps({"tool": tool, "task_id": "t1", "trials": [
             {"trial": 1, "success": grader, "measured": True, "adapter": {"tool_version": "1.0", "model": "m"}}]}))
