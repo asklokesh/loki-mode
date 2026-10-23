@@ -56,7 +56,7 @@
           "tier": "development",
           "context_window": 1000000,
           "max_output": 128000,
-          "thinking": {"types": ["adaptive", "between_tools"], "max_effort": {"between_tools": "high"}},
+          "thinking": {"types": ["adaptive", "between_tools"], "max_effort": {"between_tools": "high"}, "substitute": {"disabled": "between_tools"}},
           "effort": {"levels": ["low", "medium", "high", "xhigh", "max"], "default": "high"},
           "notes": "Id confirmed 2026-10-07 by a real call (claude -p --model sonnet, Claude Code 2.1.293, modelUsage key claude-sonnet-5-5); the CLI sonnet alias resolves to it. ROUTER-1 R1-03."
         },
