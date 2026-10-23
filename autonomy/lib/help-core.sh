@@ -20,7 +20,7 @@ help_core_screen() {
     echo ""
     echo "Check:"
     echo "  status [--json|--badge|--probe]  What is running and where it stands"
-    echo "  verify [--json]  Deterministic verification (CI-gate exit codes)"
+    echo "  verify [--json|--fast]  Deterministic verification (CI-gate exit codes; --fast: no model, no network)"
     echo "  receipt          Inspect the proof-of-run receipt (alias of: proof)"
     echo "  diff / undo      See what a run changed; undo <run> to plan or apply a rollback"
     echo ""

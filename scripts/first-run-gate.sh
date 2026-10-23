@@ -97,9 +97,17 @@ case " $* " in *" --help "*|*" --version "*) echo "claude stub 2.1.285 --setting
 case " $* " in *" auth status "*) echo '{"loggedIn": true, "authMethod": "stub"}'; exit 0;; esac
 if [ -n "${FRG_SKIP:-}" ]; then # G8: skip the target test instead of fixing it (the node equivalent of a conftest skip; this repo has no pytest)
     sed -i.bak "s/'sums all numbers', /'sums all numbers', { skip: true }, /" sum.test.js && rm -f sum.test.js.bak
+elif [ -f task.md ] && grep -q 'prints hello' task.md 2>/dev/null; then # start-empty Wall author (its cwd holds only task.md): an agent-independent test, the only exogenous proof an empty folder can have
+    cat > loki_wall_hello.test.js <<'WALL'
+const test = require('node:test');
+const assert = require('node:assert');
+const { execFileSync } = require('node:child_process');
+test('hello.js prints hello', () => { assert.strictEqual(execFileSync('node', ['hello.js']).toString().trim(), 'hello'); });
+test('hello.js prints nothing else', () => { assert.strictEqual(execFileSync('node', ['hello.js']).toString().trim().split('\n').length, 1); });
+WALL
 elif [ -f sum.js ]; then
     sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
-else # start-empty leg: an empty folder, so build the tiny hello CLI the brief asks for
+elif case "$*" in *"Loki 10 implement stage"*) true ;; *) false ;; esac; then # start-empty leg: an empty folder, so only the implement session builds the tiny hello CLI the brief asks for (project-model and plan sessions run in the repo and must not write, or the Wall base run is no longer the empty base)
     printf 'console.log("hello");\n' > hello.js
     printf "const test = require('node:test');\nconst assert = require('node:assert');\nconst { execFileSync } = require('node:child_process');\ntest('prints hello', () => { assert.strictEqual(execFileSync('node', ['hello.js']).toString().trim(), 'hello'); });\n" > hello.test.js
 fi

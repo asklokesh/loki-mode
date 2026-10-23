@@ -10,6 +10,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `verify --fast` now exits 3 (INCONCLUSIVE) instead of 0 on a repo where no behavioral signal ran (no `loki_wall_*` file that ran), even when the static checks are clean. Exit 0 now means a Wall file executed and passed. Scripts that treated any non-zero exit as failure now see 3 on such repos; the Stop hook and `loki_verify_fast` already treat INCONCLUSIVE as not-a-pass, and `loki edit --verify` reports it as INCONCLUSIVE and does not commit. The fast tier detects mock-abuse tests and failing Python Wall files only; `.ts` and `.js` Wall files run through the same runner the engine10 verify stage uses (the internal `wall-run` subcommand), so a failing one flips the verdict to FAIL; with no bun or no runner they are counted as skipped, not run. `verify --fast` executes `loki_wall_*` files, which are repo code (60 s total budget, no `.pytest_cache` written into the repo). Only a Wall file that is tracked, unchanged against the diff base or HEAD, and whose sha256 matches an engine10 `wall.sealed` event under `.loki/runs/` can supply the behavioral signal; with a diff base the Wall must also come from a run whose changed files (the intake base_sha to commit head_sha diff in the same events.jsonl) cover every file in the verified diff, and name a changed module (a sealed Wall from an unrelated run earns no PASS; with no such run record the result is INCONCLUSIVE with a NOT PROVEN line), and any git error fails closed to INCONCLUSIVE. The wall.sealed event is a local attestation an agent with write access to .loki/ can forge; it is not proof. Any other Wall file can FAIL a run but never earn a PASS. On the 100-case seeded corpus the measured result is 20 of 100 caught (all mock-abuse) with 20 FAIL on the 100 old controls, which carry the same vacuous test as the seeded cases (FC-FAST-VERIFY-PASS-WITHOUT-DETECTION).
 
+## v11.65.5 (2026-10-23)
+
+### Fixed
+- Proof-verify parity and MCP config tests use a load-aware time budget, with measured sibling sweep counts and the sibling mutant recorded for FC-SUBPROCESS-TEST-DEFAULT-TIMEOUT. Approval: "rev-b APPROVE: ship pd/loadaware c471eda6168dcd3c30de627aa45a6c459bc7fcd1. 2 commits over origin/main. Pick in order: 11493942d4c4e253fc03a384c560a3407c878e75, c471eda6168dcd3c30de627aa45a6c459bc7fcd1. FC-only conflict. APPROVE c471eda6168dcd3c30de627aa45a6c459bc7fcd1"
+
+## v11.65.4 (2026-10-23)
+
+### Fixed
+- The first-run gate test now matches the real context trigger in loki-ts/src/e10ext/context.ts, so its stub gate no longer passes cases the real gate fails (357c3-r2). Approval: "tl-324: APPROVE pd/357c3-r2 46bf09fbe29754ff65f46e4cdc61d8748c865b6d. Single commit on origin/main (no stacked parents)".
+
+## v11.65.3 (2026-10-23)
+
+### Fixed
+- The stale-dist guard in bin/loki and autonomy/loki now compares every loki-ts/src file, not cli.ts alone, so an edited source file triggers a rebuild (dist-freshness-guard). Approval: "APPROVE pd/dist-freshness-guard b8c98f864e2df03898addd7682de73a7b8a42771 (tl-2, MEDIUM)".
+
+## v11.65.2 (2026-10-23)
+
+
+
+### Fixed
+- loki verify --fast and its flags appear in help and in the bash and zsh completions, pinned by the drift test (pd/fastcomp). Approval: "APPROVE pd/fastcomp d5798c76f (tl-2, LOW)", full SHA d5798c76fc4e4e21f4b5d9d81b8a1fa997a98bbe.
+
+## v11.65.1 (2026-10-23)
+
+
+
+### Fixed
+- The supervisor_backstop and route_matrix test bounds scale with machine load, the SIGTERM to SIGKILL gap is measured from the worker's own signal timestamp, and the fake repo dir is cleared at each stage boundary (pd/loadaware). Approval: "APPROVE (LOW, tl-324): pd/loadaware branch head at full SHA 00b2a89160fba583be733074a1f74b0ef1175b49 (merge commit; second parent d8fec54ac is origin/main)". Shipped by merging that head; it contains 2264accef, 7385f1da5, 8722d92ae and 28b795fd1.
+
+## v11.65.0 (2026-10-23)
+
+
+
+### Added
+- The engine10 machine journals a per-stage diff stat for stages that change the tree, and the wall stage journals its own diff stat (pd/stage-diffstat). Approval: "APPROVE (MEDIUM, tl-324): pd/stage-diffstat branch head at full SHA c7a5f00f7b869e227062afe4529a8f11be19409d (merge commit, parents f365f4e2a and origin/main 5cae48655)". Shipped by merging that head.
+
 ## v11.64.0 (2026-10-23)
 
 
