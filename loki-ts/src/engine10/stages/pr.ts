@@ -37,6 +37,8 @@ export type PrContext = RunContext & {
   draft?: boolean;
 };
 export interface PrOptions {
+  /** Injectable for tests: the gh login a fork_branch compare URL is built under. */
+  login?: () => string | null;
   /** Injectable for tests; defaults to the real script next to this checkout. */
   pushScriptPath?: string; gitlabPushScriptPath?: string; // the GitLab twin (TEN-ADOPTION-09), same injection rule
 }
@@ -121,7 +123,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
   const env = pushEnv(ctx.repoDir, pinnedOrigin);
   const pr = runOnce({ dir: ctx.runDir, key: idempotencyKey("pr", ctx.runId, ctx.branch), keep: (r) => r.ok, post: () => runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath, gitlabScriptPath: opts.gitlabPushScriptPath, env }) }); // P12-36: push-pr reuses an existing PR, so a pending replay is duplicate-safe
-  if (!pr.ok) return { status: "failed", data: {}, reason: pr.reason + publishFallback(ctx.runDir, ctx.repoDir, ctx.branch, base) };
+  if (!pr.ok) return { status: "failed", data: {}, reason: pr.reason + publishFallback(ctx.runDir, pinnedOrigin, ctx.branch, base, opts.login) };
   const { url, localOk, existing } = pr;
   ctx.emit("pr.opened", "pr", { url, draft, existing });
   const headSha = safeGit(ctx.repoDir, ["rev-parse", "HEAD"]).trim();

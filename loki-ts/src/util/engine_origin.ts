@@ -57,22 +57,25 @@ export function recordPublish(runDir: string, plan: PublishPlan): void {
   if (plan.mode === "pr") return;
   try { const f = join(runDir, "preflight.json"); const j = existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : {}; writeFileSync(f, JSON.stringify({ ...j, publish: plan.mode, ...(plan.reason ? { publish_reason: plan.reason } : {}), ...(plan.compare ? { publish_compare: plan.compare } : {}) }) + "\n"); } catch { /* evidence, never a gate */ }
 }
-/** R100-022: what preflight recorded about publishing, read back from <runDir>/preflight.json. The file is agent-writable (FC-AGENT-WRITABLE-FILE-SIGNED-INTO-RECEIPT), so only closed-set values come back: the mode from PublishMode minus pr and fork_pr, the reason from PUBLISH_REASONS, the compare URL only when it is a github.com compare base for the origin repo name (and the origin owner for mode branch). Null for a normal run, a missing key, an unknown mode or an unreadable file. */
-export function readPublish(runDir: string, repoDir: string): { mode: PublishMode; reason?: string; compare?: string } | null {
+/** The caller's GitHub login, one bounded gh read; null when gh is missing, unauthenticated (the worker has its tokens withheld) or answers anything but a login. */
+export function ghLogin(env: NodeJS.ProcessEnv = process.env): string | null {
+  try { const l = execFileSync("gh", ["api", "user", "--jq", ".login"], { env, encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "ignore"] }).trim(); return /^[A-Za-z0-9-]+$/.test(l) ? l : null; } catch { return null; }
+}
+/** R100-022: what preflight recorded about publishing, read back from <runDir>/preflight.json. The file is agent-writable (FC-AGENT-WRITABLE-FILE-SIGNED-INTO-RECEIPT), so nothing in it is rendered as text: the mode comes only from branch|fork_branch|local_branch, the reason only from PUBLISH_REASONS, and the compare URL is rebuilt from the run's PINNED origin (mode branch: that repo; mode fork_branch: the repo name under a live gh login, else none), never taken from the file or the live remote. Null for a normal run, a missing key, an unknown mode or an unreadable file. */
+export function readPublish(runDir: string, pinnedOrigin: string | null, login: () => string | null = ghLogin): { mode: PublishMode; reason?: string; compare?: string } | null {
   try {
-    const j = JSON.parse(readFileSync(join(runDir, "preflight.json"), "utf8")) as { publish?: unknown; publish_reason?: unknown; publish_compare?: unknown };
+    const j = JSON.parse(readFileSync(join(runDir, "preflight.json"), "utf8")) as { publish?: unknown; publish_reason?: unknown };
     const mode = (["branch", "fork_branch", "local_branch"] as const).find((m) => m === j.publish); if (!mode) return null;
-    const reason = PUBLISH_REASONS.find((r) => r === j.publish_reason);
-    const slug = githubRepoFromUrl(readOriginUrl(repoDir)), cm = typeof j.publish_compare === "string" ? j.publish_compare.match(/^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([^/\s]+)\/compare$/) : null;
-    const compare = cm && slug && cm[2] === slug.split("/")[1] && (mode === "fork_branch" || cm[1] === slug.split("/")[0]) ? cm[0] : undefined;
+    const reason = PUBLISH_REASONS.find((r) => r === j.publish_reason), slug = githubRepoFromUrl(pinnedOrigin);
+    const who = mode === "fork_branch" && slug ? login() : null, compare = slug && mode === "branch" ? `https://github.com/${slug}/compare` : slug && who ? `https://github.com/${who}/${slug.split("/")[1]}/compare` : undefined;
     return { mode, ...(reason ? { reason } : {}), ...(compare ? { compare } : {}) };
   } catch { return null; }
 }
 /** R100-022: the receipt body's additive `publish` block. Empty for a full-access run, so its receipt_sha256 is unchanged. */
-export const publishReceiptBlock = (runDir: string, repoDir: string): { publish?: { mode: string; reason?: string; compare?: string } } => { const p = readPublish(runDir, repoDir); return p ? { publish: p } : {}; };
+export const publishReceiptBlock = (runDir: string, pinnedOrigin: string | null, login?: () => string | null): { publish?: { mode: string; reason?: string; compare?: string } } => { const p = readPublish(runDir, pinnedOrigin, login); return p ? { publish: p } : {}; };
 /** R100-022: when preflight recorded that a PR cannot open here, say what the run delivers instead (the branch, plus a compare URL when the owner is known). Empty for a normal run or an unreadable file. */
-export function publishFallback(runDir: string, repoDir: string, branch: string, base?: string | null): string {
-  const p = readPublish(runDir, repoDir);
+export function publishFallback(runDir: string, pinnedOrigin: string | null, branch: string, base?: string | null, login?: () => string | null): string {
+  const p = readPublish(runDir, pinnedOrigin, login);
   if (!p) return "";
   const cmp = p.compare ? ` Compare: ${p.compare}/${base ? `${base}...` : ""}${branch}` : "";
   return ` | publish expectation set at intake (${p.mode}${p.reason ? `: ${p.reason}` : ""}). The work is on branch ${branch}.${cmp}`;
