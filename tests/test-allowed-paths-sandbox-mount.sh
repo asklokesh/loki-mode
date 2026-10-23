@@ -181,8 +181,7 @@ echo "$out" | sed -n '/----LOG----/,$p' | grep -qx "run"; ck "$?" "1" "(g) IP li
 
 # --- (h) proxy decision function: allowed host passes; link-local, private,
 #         loopback, v6 link-local, unlisted host and rebinding are refused.
-#         Resolver is injected, so no network is touched. A live egress probe
-#         needs real docker + network and is not run here.
+#         Resolver is injected, so no network is touched. The live probe is (m).
 # bash 3.2 cannot source a process substitution, so the filtered script goes through a file.
 grep -v '^main "\$@"$' "$SBX" > "$WORK/sbx-lib.sh"
 # shellcheck disable=SC1090,SC1091
@@ -268,6 +267,58 @@ mkdir -p "$WORK/tmpl2"
 out="$(unset LOKI_RUN_TMP; TMPDIR="$WORK/tmpl2/" ALLOW_HOSTS_FOR_TEST="github.com" run_start "$WORK/outside/project" "$WORK/allowed")"
 echo "$out" | grep -q "loki-egress\.[A-Za-z0-9]*/egress-proxy.py"; ck "$?" "0" "(l) trailing-slash TMPDIR: proxy script mounted from the mktemp dir"
 ! ls -d "$WORK"/tmpl2/loki-egress.* >/dev/null 2>&1; ck "$?" "0" "(l) trailing-slash TMPDIR: dir removed by teardown"
+
+# --- (m) live egress probe (real docker, real network; #258 criterion 1). A client on the internal network
+#         reaches an allowed host through the proxy, and the link-local metadata address is refused both
+#         through the proxy and directly. Skips by name when docker, the network or a python3 sandbox
+#         image is missing. Every container and network it starts is named ${CN}-* and removed by name.
+live_egress() {
+    local CN="loki-live-egress-$$" img="${LOKI_SANDBOX_IMAGE:-loki-mode:sandbox}" net out
+    command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
+        || { echo "  [SKIP] (m) live egress: docker daemon not reachable"; return 0; }
+    python3 -c 'import socket; socket.create_connection(("example.com", 443), 5).close()' >/dev/null 2>&1 \
+        || { echo "  [SKIP] (m) live egress: network not reachable"; return 0; }
+    docker run --rm --name "${CN}-imgcheck" --entrypoint python3 "$img" --version >/dev/null 2>&1 \
+        || { echo "  [SKIP] (m) live egress: sandbox image $img missing or has no python3 (set LOKI_SANDBOX_IMAGE)"; return 0; }
+    mkdir -p "$WORK/live" && chmod 700 "$WORK/live"
+    out="$(
+        export LOKI_SANDBOX_IMAGE="$img" LOKI_PROJECT_DIR="$WORK/allowed/project" LOKI_SANDBOX_STATE_DIR="$WORK/state" LOKI_RUN_TMP="$WORK/live"
+        # shellcheck disable=SC1090
+        source "$WORK/sandbox_src.sh" >/dev/null 2>&1
+        CONTAINER_NAME="$CN"
+        trap '_sandbox_egress_down; docker rm -f "${CN}-probe" >/dev/null 2>&1' EXIT
+        if ! net="$(_sandbox_egress_up example.com)"; then echo "SETUP_FAILED"; exit 0; fi
+        sleep 2
+        args=(); while IFS= read -r l; do args+=("$l"); done < <(_sandbox_egress_container_args "$net")
+        docker run --rm --name "${CN}-probe" "${args[@]}" --entrypoint python3 "$img" -c '
+import socket, urllib.request, urllib.error
+def get(u):
+    try:
+        return str(urllib.request.urlopen(u, timeout=20).status)
+    except urllib.error.HTTPError as e:
+        return "deny%d" % e.code
+    except Exception as e:
+        return "err"
+def direct(h, p):
+    try:
+        socket.create_connection((h, p), 5).close(); return "open"
+    except Exception:
+        return "closed"
+print("allowed", get("https://example.com/"))
+print("meta_proxy", get("http://169.254.169.254/latest/meta-data/"))
+print("meta_direct", direct("169.254.169.254", 80))
+print("public_direct", direct("1.1.1.1", 443))
+' 2>&1
+    )"
+    echo "$out" | grep -qx "SETUP_FAILED" && { echo "  [FAIL] (m) live egress: proxy sidecar or internal network did not start"; fail=$((fail+1)); return 0; }
+    echo "$out" | grep -qE '^allowed [23][0-9][0-9]$'; ck "$?" "0" "(m) allowed host reached through the proxy (2xx/3xx)"
+    echo "$out" | grep -qE '^meta_proxy deny403$'; ck "$?" "0" "(m) metadata address through the proxy is refused"
+    echo "$out" | grep -qx 'meta_direct closed'; ck "$?" "0" "(m) metadata address direct from the internal network is unreachable"
+    echo "$out" | grep -qx 'public_direct closed'; ck "$?" "0" "(m) a public address direct (bypassing the proxy) is unreachable"
+    docker ps -a --format '{{.Names}}' | grep -q "^${CN}"; ck "$?" "1" "(m) no sidecar or probe container left behind"
+    docker network ls --format '{{.Name}}' | grep -q "^${CN}"; ck "$?" "1" "(m) no internal network left behind"
+}
+live_egress
 
 echo
 echo "Results: $pass passed, $fail failed"
