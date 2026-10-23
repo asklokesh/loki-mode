@@ -41,9 +41,9 @@ class _FakeAgents:
     def __init__(self):
         self.create_calls = []
 
-    def create(self, name, system, metadata):  # noqa: D401 - SDK shape
+    def create(self, name, system, metadata, model=None):  # noqa: D401 - SDK shape
         self.create_calls.append(
-            {"name": name, "system": system, "metadata": metadata}
+            {"name": name, "system": system, "metadata": metadata, "model": model}
         )
         pool = metadata.get("loki_pool") if isinstance(metadata, dict) else "unknown"
         return {"id": f"agent_{pool}_fake"}

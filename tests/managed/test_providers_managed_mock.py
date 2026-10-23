@@ -297,7 +297,14 @@ class ProvidersManagedTests(unittest.TestCase):
         class _Sessions(_Ns):
             events = NS(
                 list=lambda sid: [
-                    NS(type="agent.message", content=[NS(text="APPROVE")], session_thread_id="t1")
+                    NS(type="agent.message", content=[NS(text="APPROVE")], session_thread_id="t1"),
+                    NS(type="agent.message", content=[NS(text="REJECT")], session_thread_id="t2"),
+                ]
+            )
+            threads = NS(
+                list=lambda sid: [
+                    NS(id="t1", agent=NS(id="agent_aaaa")),
+                    NS(id="t2", agent=NS(id="agent_bbbb")),
                 ]
             )
             retrieve = staticmethod(lambda sid: NS(status="idle"))
@@ -323,7 +330,11 @@ class ProvidersManagedTests(unittest.TestCase):
             calls["agents"]["multiagent"],
             {"type": "coordinator", "agents": ["agent_aaaa", "agent_bbbb"]},
         )
-        self.assertEqual(out["raw"][0]["text"], "APPROVE")
+        self.assertEqual(
+            {m["agent_id"]: m["text"] for m in out["raw"]},
+            {"agent_aaaa": "APPROVE", "agent_bbbb": "REJECT"},
+        )
+        self.assertEqual(calls["agents"]["model"], self.managed.agent_model())
         # ids cached: a second run creates no new agent or environment
         calls.clear()
         self.managed._RealMultiagentSession(
@@ -344,6 +355,54 @@ class ProvidersManagedTests(unittest.TestCase):
             "name": "n", "model": "m", "system": "s",
             "multiagent": {"type": "coordinator", "agents": []},
         })
+
+    def _client_with_events(self, events, threads):
+        from types import SimpleNamespace as NS
+
+        class _C:
+            def __init__(self, ret):
+                self._r = ret
+
+            def create(self, **kw):
+                return self._r
+
+        sessions = _C(NS(id="s", status="idle"))
+        sessions.retrieve = lambda sid: NS(status="idle")
+        sessions.events = NS(list=lambda sid: events)
+        sessions.threads = NS(list=lambda sid: threads)
+        return NS(
+            beta=NS(
+                agents=_C(NS(id="agent_coord")),
+                environments=_C(NS(id="env_1")),
+                sessions=sessions,
+            )
+        )
+
+    def test_incomplete_council_reply_is_unavailable_not_fewer_votes(self):
+        from types import SimpleNamespace as NS
+
+        msg = lambda text, tid: NS(  # noqa: E731
+            type="agent.message", content=[NS(text=text)], session_thread_id=tid
+        )
+        threads = [
+            NS(id="t1", agent=NS(id="agent_aaaa")),
+            NS(id="t2", agent=NS(id="agent_bbbb")),
+            NS(id="t3", agent=NS(id="agent_cccc")),
+        ]
+        cases = {
+            "fewer": [msg("APPROVE", "t1"), msg("APPROVE", "t2")],
+            "merged_unattributed": [msg("a: APPROVE, b: APPROVE, c: REJECT", None)],
+            "duplicated": [msg("APPROVE", "t1"), msg("APPROVE", "t1"), msg("APPROVE", "t2")],
+        }
+        for label, events in cases.items():
+            sess = self.managed._RealMultiagentSession(
+                client=self._client_with_events(events, threads),
+                agent_ids=["agent_aaaa", "agent_bbbb", "agent_cccc"],
+                context={},
+                timeout_s=5,
+            )
+            with self.assertRaises(self.managed.ManagedUnavailable, msg=label):
+                sess.run()
 
     # ---------- helpers -----------------------------------------------------
 
