@@ -38,6 +38,8 @@ TIMEOUT_SECS="${LOKI_BENCH_TIMEOUT:-3600}"   # hard wall-clock cap per task run
 # EXIST + are mock-tested but are NOT executed for paid runs in R2 unless the
 # operator opts in. manual.py records externally-supplied (unverified) numbers.
 VS_TOOLS="${LOKI_BENCH_VS_TOOLS:-loki}"
+# Commas are accepted as separators; the loop below splits on whitespace.
+VS_TOOLS="${VS_TOOLS//,/ }"
 
 usage() {
     cat <<'EOF'
