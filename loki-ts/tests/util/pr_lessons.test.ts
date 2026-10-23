@@ -807,6 +807,19 @@ describe("human edits on a Loki PR (R100-011)", () => {
     expect(loadLessons(d)).toEqual([]);
   });
 
+  it("a secret in a human patch is redacted before it is stored or briefed", async () => {
+    const token = "ghp_" + "Ab1".repeat(10); // built at runtime, not a literal token
+    const client: GhClient = async (args) => {
+      const url = args[args.length - 1]!;
+      if (/\/commits\/[bc]{40}$/.test(url)) return { code: 0, stdout: JSON.stringify({ html_url: "https://github.com/o/r/pull/7/commits/x", files: [{ filename: "src/a.ts", patch: PATCH + `+const t = "${token}";\n` }] }), stderr: "" };
+      return gh([loki, human])(args);
+    };
+    const d = mk();
+    expect((await learnFromPr(d, "o/r#7", client)).added).toBe(1);
+    const l = loadLessons(d)[0]!;
+    expect(l.text).not.toContain(token); expect(l.text).toContain("[REDACTED:GITHUB_TOKEN]");
+    expect(formatLessonsForBrief(retrieveLessons(d, "rename userName in src/a.ts"))).not.toContain(token);
+  });
   it("forget removes the edit lesson from the next brief", async () => {
     const d = mk();
     await learnFromPr(d, "o/r#7", gh([loki, human]));

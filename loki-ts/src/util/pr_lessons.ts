@@ -2,6 +2,7 @@
 // Stored in the existing per-repo memory tree (.loki/memory/semantic/pr-lessons.json). Lesson text is
 // the comment body verbatim; nothing is paraphrased. Each lesson carries its source (PR + comment URL)
 // and use tags (run id + that run's final verdict) so the list can show whether a lesson helps.
+import { redactSecrets } from "./redact.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -164,7 +165,7 @@ async function humanEditItem(gh: GhClient, repo: string, c: Record<string, any>)
   }
   if (!first) return null;
   const subject = String(c.commit?.message ?? "").split("\n")[0]!.trim();
-  const body = `A human edited this Loki PR in ${first.path} at ${first.hunk} (commit "${subject}"):\n${parts.join("\n")}`.slice(0, MAX_EDIT_TEXT);
+  const body = redactSecrets(`A human edited this Loki PR in ${first.path} at ${first.hunk} (commit "${subject}"):\n${parts.join("\n")}`).slice(0, MAX_EDIT_TEXT); // patch text reaches future briefs: redact before the cap so a token is never cut in half
   return { url: String(detail.html_url ?? c.html_url ?? ""), body, author: String(c.author?.login ?? c.commit?.author?.name ?? ""), ...first };
 }
 
