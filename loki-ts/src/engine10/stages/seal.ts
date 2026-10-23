@@ -11,7 +11,7 @@ import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, 
 import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
 import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutation_proof.ts";
 import { RealBaseTestRunner } from "./wall.ts";
-import { assertDeltaNotes, testFileWeakened } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
+import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes, testFileWeakened } from "../../features/runner_config.ts";
 import { discardIfSatisfied } from "../../e10ext/discard.ts";
 import { dropSet, formatChanged, parseStaged } from "../../e10ext/commit_filter.ts";
 import { flagOutsideScope } from "../../e10ext/scope.ts";

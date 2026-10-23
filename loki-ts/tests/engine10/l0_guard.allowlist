@@ -40,6 +40,7 @@ src/engine10/testmap.ts	vitest
 # TEN-CORE-TRIM moved the package.json jest/vitest runner detection out of engine10/testmap.ts unchanged; same reviewed knowledge, new file. Goes away with Project Model sourcing of runner knowledge (11.3.3 L4).
 src/util/test_file_text.ts	jest
 src/util/test_file_text.ts	package.json
+src/util/test_file_text.ts	pytest
 src/util/test_file_text.ts	vitest
 src/engine10/types.ts	jest
 src/engine10/types.ts	pytest

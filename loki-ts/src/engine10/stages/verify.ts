@@ -8,7 +8,7 @@ import { scopedOutOf } from "../../project_model/scope.ts";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative } from "node:path";
-import { testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes, testFileWeakened } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
+import { testConfigChanged, testFileWeakened } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst } from "../../e10ext/select.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { harnessRunners, isTestFile } from "../testmap.ts";

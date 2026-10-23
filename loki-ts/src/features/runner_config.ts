@@ -1,9 +1,10 @@
 // D86 FC-09r: the one registry of files that steer how tests run or resolve code. A run that changes the runner-relevant part of one
 // cannot seal VERIFIED (the agent could be mocking the code under test). Shared files (package.json, go.mod, Cargo.toml, ...) are
 // compared base vs head by section, so a dependency bump is not config but a pretest edit, a go.mod replace or a tsconfig path is.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { safeGit } from "../util/safe_git";
+import { AnalyzerError, shadowedAutoFixtures, testEditWeakens } from "../util/test_file_text";
 type Sections = RegExp | readonly string[] | "go" | "tsconfig" | "cargo"; interface Spec { re: RegExp; shared?: Sections }
 const PKG_KEYS = ["scripts", "jest", "overrides", "resolutions", "imports", "pnpm", "mocha", "vitest", "ava", "c8", "nyc", "babel", "bun", "patchedDependencies"] as const; // scripts is compared whole: pretest, posttest and test:* all count
 // FC-09w: macOS filesystems are case-insensitive, so PNPM-Workspace.yaml is read by pnpm. Every row is forced case-insensitive below, in one place.
@@ -136,4 +137,30 @@ export function runnerConfigNotes(repoDir: string, baseSha: string, head: string
     for (const r of [...refs].sort()) if (ch.has(r)) notes.add(`runner setup file changed: ${r} (loaded by ${cfg} as a preload, setup or mapper target)`);
   }
   return [...notes];
+}
+export const SHARED_FIXTURE = /(?:^|\/)(?:conftest\.py|(?:jest|vitest)\.setup\.\w+|setupTests\.\w+|setup[-_]tests\.\w+)$/;
+/** The self-undoing pytest fixture names that a conftest.py on the path from the repo root to `path` rebinds, read at base AND head (rev-237 r9). A conftest that cannot be read throws, so the caller stays fail-safe. */
+export function conftestShadows(repoDir: string, baseSha: string, headRef: string | null, path: string): Set<string> {
+  const out = new Set<string>(), parts = path.split("/").slice(0, -1);
+  for (let k = 0; k <= parts.length; k++) {
+    const f = [...parts.slice(0, k), "conftest.py"].join("/"), texts: string[] = [];
+    if (safeGit(repoDir, ["ls-tree", "--name-only", baseSha, "--", f]).trim()) texts.push(safeGit(repoDir, ["show", `${baseSha}:${f}`]));
+    if (headRef) { if (safeGit(repoDir, ["ls-tree", "--name-only", headRef, "--", f]).trim()) texts.push(safeGit(repoDir, ["show", `${headRef}:${f}`])); }
+    else if (existsSync(join(repoDir, f))) texts.push(readFileSync(join(repoDir, f), "utf8"));
+    for (const t of texts) for (const n of shadowedAutoFixtures(t)) out.add(n);
+  }
+  return out;
+}
+/** testEditWeakens on a pre-existing test file read from git (headRef null reads the worktree); any read failure weakens. */
+export function testFileWeakened(repoDir: string, baseSha: string, headRef: string | null, path: string): boolean {
+  let step = "read_error";
+  try {
+    const head = headRef ? safeGit(repoDir, ["show", `${headRef}:${path}`]) : readFileSync(join(repoDir, path), "utf8"), base = safeGit(repoDir, ["show", `${baseSha}:${path}`]);
+    step = "read_error conftest"; const shadowedFixtures = conftestShadows(repoDir, baseSha, headRef, path);
+    step = "analyzer_error";
+    return testEditWeakens(base, head, { sharedFixture: SHARED_FIXTURE.test(path), shadowedFixtures });
+  } catch (e) {
+    process.stderr.write(`assert_delta: ${e instanceof AnalyzerError ? e.message : `${step}: ${e instanceof Error ? e.message : String(e)}`} (${path}); treated as not verified, not as a finding about the test\n`);
+    return true;
+  }
 }

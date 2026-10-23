@@ -4,7 +4,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AnalyzerError, classifyAssertDelta, classifyTestEdit, testEditWeakens, testFileWeakened } from "../../src/e10ext/assert_delta.ts";
+import { classifyAssertDelta, classifyTestEdit } from "../../src/e10ext/assert_delta.ts";
+import { testFileWeakened } from "../../src/features/runner_config.ts";
+import { AnalyzerError, testEditWeakens } from "../../src/util/test_file_text.ts";
 
 const BASE = `import pytest
 from humanize import naturaldelta, naturalsize
