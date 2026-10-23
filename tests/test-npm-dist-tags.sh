@@ -18,6 +18,10 @@ mkdir -p "$WORK/bin"
 cat > "$WORK/bin/npm" <<'STUB'
 #!/usr/bin/env bash
 ST="$STUB_STATE"
+if [ "$1" = view ] && [ -n "${STUB_OUTAGE:-}" ]; then
+    [ "$STUB_OUTAGE" = empty ] && exit 0
+    echo "npm error code E503" >&2; exit 1
+fi
 case "$1 $2 $3" in
     "view loki-mode versions")
         printf '['; paste -sd, "$ST/versions" | sed 's/\([0-9.]*\)/"\1"/g'; printf ']\n' ;;
@@ -39,7 +43,7 @@ chmod +x "$WORK/bin/npm"
 run_case() {
     ST="$WORK/$1"; mkdir -p "$ST"
     printf '%s\n' $2 > "$ST/versions"; echo "$3" > "$ST/latest"; echo "$4" > "$ST/next"; : > "$ST/log"
-    CASE_OUT="$(PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_OVERTAKE="${6:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$SCRIPT" "$5" 2>&1)"
+    CASE_OUT="$(PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$SCRIPT" "$5" 2>&1)"
     CASE_RC=$?
     CASE_ST="$ST"
 }
@@ -65,6 +69,14 @@ run_case over "11.53.0 11.53.1 11.54.0" 11.53.0 11.53.0 11.54.0 11.53.1
 run_case pre "11.54.0 11.55.0-rc.1" 11.54.0 11.54.0 11.54.0
 { [ $CASE_RC -eq 0 ] && [ ! -s "$CASE_ST/log" ]; } \
     && ok "prereleases are ignored; settled tags are not rewritten" || bad "pre: rc=$CASE_RC log=$(cat "$CASE_ST/log")"
+
+# FC-DIST-TAG-MOVED-BACKWARDS review: a registry view outage must fail closed, zero writes.
+for mode in error empty; do
+    STUB_OUTAGE=$mode run_case "out-$mode" "11.54.0" 11.54.0 11.54.0 11.53.1
+    { [ $CASE_RC -ne 0 ] && [ ! -s "$CASE_ST/log" ] && [ "$(cat "$CASE_ST/latest")" = 11.54.0 ] \
+        && grep -q "refusing to move latest (fail closed)" <<<"$CASE_OUT"; } \
+        && ok "view outage ($mode) refuses with zero writes" || bad "outage $mode: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
+done
 
 echo
 echo "Results: $PASS passed, $FAIL failed"
