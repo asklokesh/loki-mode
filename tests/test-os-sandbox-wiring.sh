@@ -53,17 +53,36 @@ rc=0; ( PROVIDER_NAME=codex; _LOKI_CONFINE_READY=""; LOKI_OS_SANDBOX=auto _loki_
 [ "$rc" = "0" ] && ok "auto + codex stays unconfined (rc 0)" || bad "auto + codex rc=$rc, want 0"
 unset -f python3
 
-# with confinement active, git on the agent tree ignores a planted fsmonitor
+# with confinement active, git on the agent tree ignores a planted fsmonitor and a repointed
+# .git/commondir that carries a clean filter (rev-c repro on 8f8a5b51f). The plant is written
+# directly here, as a Linux bwrap run could, so this proves the GIT_DIR/GIT_COMMON_DIR pin
+# independently of the kernel deny.
 git_escape_check() {
-    local repo="$TMPD/gitws" marker="$TMPD/fsmonitor-fired"
-    rm -rf "$repo" "$marker"; mkdir -p "$repo"
+    local repo="$TMPD/gitws" marker="$TMPD/fsmonitor-fired" fmark="$TMPD/filter-fired"
+    python3 -c "import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)" "$repo"
+    rm -f "$marker" "$fmark"; mkdir -p "$repo"
     command git -C "$repo" init -q . 2>/dev/null
+    printf 'x\n' > "$repo/g.txt"; printf '* filter=pwn\n' > "$repo/.gitattributes"
     command git -C "$repo" config core.fsmonitor "touch '$marker'; true"
     ( cd "$repo" && command git status >/dev/null 2>&1 )
     if [ -e "$marker" ]; then ok "positive control: a planted fsmonitor fires under plain git"; else bad "positive control did not fire (probe is blind)"; return; fi
     rm -f "$marker"
+    # re-initialise confinement on this repo so the pin records its real git dir
+    TARGET_DIR="$repo" _LOKI_CONFINE_READY="" LOKI_OS_SANDBOX=auto _loki_os_confine_init
     ( cd "$repo" && git status >/dev/null 2>&1 )
     if [ -e "$marker" ]; then bad "planted fsmonitor fired through the hardened git"; else ok "hardened git ignores a planted fsmonitor"; fi
+    # repoint commondir at a copy whose config defines a clean filter
+    cp -R "$repo/.git" "$repo/.evil"
+    command git config --file "$repo/.evil/config" filter.pwn.clean "touch '$fmark'; cat"
+    command git config --file "$repo/.evil/config" --unset core.fsmonitor
+    printf '../.evil\n' > "$repo/.git/commondir"
+    ( cd "$repo" && command git -c core.fsmonitor= -c core.hooksPath=/dev/null add g.txt >/dev/null 2>&1 )
+    if [ -e "$fmark" ]; then ok "positive control: a repointed commondir runs its clean filter under unpinned git"; else bad "commondir positive control did not fire (probe is blind)"; return; fi
+    rm -f "$fmark"; command git -C "$repo" reset -q 2>/dev/null
+    ( cd "$repo" && git add g.txt >/dev/null 2>&1 )
+    ( cd "$repo" && git -C "$repo" add g.txt >/dev/null 2>&1 )
+    if [ -e "$fmark" ]; then bad "repointed commondir filter fired through the pinned git"; else ok "pinned git ignores a repointed .git/commondir and its clean filter"; fi
+    export TARGET_DIR="$WS"
 }
 
 if [ "$(uname)" = "Darwin" ] && [ -x /usr/bin/sandbox-exec ]; then

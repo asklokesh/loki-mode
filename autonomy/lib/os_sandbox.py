@@ -325,7 +325,7 @@ def git_deny_paths(workspace: Path) -> list[tuple[str, Path]]:
     git metadata the harness's next unconfined git reads (FC-SANDBOX-GIT-REDIRECT).
     kind is "literal" or "subpath". Linked worktree: ws/.git (the pointer file) and
     gitdir/{commondir,gitdir,config.worktree}. Primary checkout: ws/.git itself,
-    ws/.git/hooks and ws/.git/config{,.worktree}. HEAD, index, logs/HEAD and
+    ws/.git/hooks, ws/.git/config{,.worktree} and ws/.git/{commondir,gitdir}. HEAD, index, logs/HEAD and
     ORIG_HEAD stay writable so a commit still works. Empty outside a git repo."""
     gitdir, common = _git_path(workspace, "--git-dir"), _git_path(workspace, "--git-common-dir")
     if not gitdir or not common:
@@ -335,8 +335,13 @@ def git_deny_paths(workspace: Path) -> list[tuple[str, Path]]:
     if gitdir == common:
         if gitdir != dotgit.resolve():
             return denies
+        # commondir and gitdir normally do not exist in a primary .git; a literal deny on the
+        # missing path still stops confined code creating one to repoint the next git
+        # (Seatbelt matches by path; bwrap cannot mount over a missing path, so the Linux
+        # guard for it is the GIT_DIR/GIT_COMMON_DIR pin the harness applies).
         denies += [("subpath", gitdir / "hooks"), ("literal", gitdir / "config"),
-                   ("literal", gitdir / "config.worktree")]
+                   ("literal", gitdir / "config.worktree"),
+                   ("literal", gitdir / "commondir"), ("literal", gitdir / "gitdir")]
     else:
         denies += [("literal", gitdir / name) for name in ("commondir", "gitdir", "config.worktree")]
     return denies
@@ -851,6 +856,8 @@ def build_confinement(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python3 -m autonomy.lib.os_sandbox")
     sub = parser.add_subparsers(dest="command", required=True)
+    pn = sub.add_parser("pin")
+    pn.add_argument("--workspace", required=True)
     p = sub.add_parser("argv")
     p.add_argument("--workspace", required=True)
     p.add_argument("--run-dir", required=True)
@@ -859,6 +866,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--status-file")
     p.add_argument("--format", choices=("json", "b64"), default="json")
     args = parser.parse_args(argv)
+    if args.command == "pin":
+        # b64 lines: git dir, then common dir. Empty output outside a git repo.
+        import base64
+        pin = git_pin(Path(args.workspace).resolve())
+        for key in ("git_dir", "git_common_dir") if pin else ():
+            print(base64.b64encode(pin[key].encode("utf-8")).decode("ascii"))
+        return 0
     try:
         status = build_confinement(Path(args.workspace), Path(args.run_dir), args.provider,
                                    extra_read=[Path(x) for x in args.extra_read])

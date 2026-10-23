@@ -1144,6 +1144,7 @@ _loki_snapshot_workspace_tree() {
 # tree): it is never evidence, and no Seal, verify or gate reader may consume it.
 _LOKI_CONFINE_READY=""
 _LOKI_CONFINE_PREFIX=()
+_LOKI_GIT_PIN_WS=""; _LOKI_GIT_PIN_DIR=""; _LOKI_GIT_PIN_COMMON=""
 _loki_os_confine_init() {
     [ -n "$_LOKI_CONFINE_READY" ] && return 0
     _LOKI_CONFINE_READY="1"
@@ -1176,7 +1177,32 @@ EOF_CONFINE
         # The confined agent can plant .git/config (fsmonitor, hooksPath) or repoint
         # commondir; every git this script runs on that tree must ignore them
         # (FC-SANDBOX-GIT-REDIRECT, same flags as the Python libs).
-        eval 'git() { command git -c core.fsmonitor= -c core.hooksPath=/dev/null "$@"; }'
+        # The git dir and common dir are pinned as recorded now, before any agent ran, for git
+        # runs aimed at the workspace itself (cwd or a leading -C): a repointed ws/.git or
+        # .git/commondir is then never followed. Other repos (worktrees, clones) are untouched,
+        # so GIT_DIR is not exported globally.
+        local pin_lines pin_dir="" pin_common="" pl
+        pin_lines="$(cd "${SCRIPT_DIR}/.." 2>/dev/null && python3 -m autonomy.lib.os_sandbox pin --workspace "$work" 2>/dev/null)" || pin_lines=""
+        while IFS= read -r pl; do
+            [ -n "$pl" ] || continue
+            pl="$(printf '%s' "$pl" | base64 -d 2>/dev/null || printf '%s' "$pl" | base64 -D)"
+            if [ -z "$pin_dir" ]; then pin_dir="$pl"; else pin_common="$pl"; fi
+        done <<EOF_PIN
+$pin_lines
+EOF_PIN
+        _LOKI_GIT_PIN_WS="$(cd -P "$work" 2>/dev/null && pwd)" || _LOKI_GIT_PIN_WS=""
+        _LOKI_GIT_PIN_DIR="$pin_dir"; _LOKI_GIT_PIN_COMMON="$pin_common"
+        eval 'git() {
+            local d="$PWD"
+            [ "${1:-}" = "-C" ] && d="${2:-}"
+            d="$(cd -P "$d" 2>/dev/null && pwd)" || d=""
+            if [ -n "$_LOKI_GIT_PIN_DIR" ] && [ -n "$d" ] && [ "$d" = "$_LOKI_GIT_PIN_WS" ]; then
+                GIT_DIR="$_LOKI_GIT_PIN_DIR" GIT_COMMON_DIR="${_LOKI_GIT_PIN_COMMON:-$_LOKI_GIT_PIN_DIR}" GIT_WORK_TREE="$d" \
+                    command git -c core.fsmonitor= -c core.hooksPath=/dev/null "$@"
+            else
+                command git -c core.fsmonitor= -c core.hooksPath=/dev/null "$@"
+            fi
+        }'
     elif [ "${LOKI_OS_SANDBOX:-off}" != "off" ]; then
         log_warn "OS sandbox not active: provider runs unconfined (see .loki/state/os-sandbox.json)"
     fi

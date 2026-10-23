@@ -786,10 +786,14 @@ class SeatbeltGitRedirectTest(unittest.TestCase):
         status = self._status(self.ws)
         for script in (f'echo "#!/bin/sh" > "{self.ws}/.git/hooks/post-commit"',
                        f'echo "[core]" >> "{self.ws}/.git/config"',
+                       f'echo "{self.ws}/.evil" > "{self.ws}/.git/commondir"',
+                       f'echo "gitdir: {self.ws}/.evil" > "{self.ws}/.git/gitdir"',
                        f'rm -rf "{self.ws}/.git/hooks"',
                        f'mv "{self.ws}/.git" "{self.ws}/.git2"'):
             self.assertNotEqual(self._confined(status, script).returncode, 0, script)
         self.assertFalse((self.ws / ".git" / "hooks" / "post-commit").exists())
+        self.assertFalse((self.ws / ".git" / "commondir").exists())
+        self.assertFalse((self.ws / ".git" / "gitdir").exists())
         self.assertNotIn("[core]\n[core]", (self.ws / ".git" / "config").read_text())
         res = self._confined(status, "echo n > n.txt && git add n.txt && git commit -q -m c && git log --oneline | head -1")
         self.assertEqual(res.returncode, 0, res.stderr)
@@ -800,6 +804,20 @@ class SeatbeltGitRedirectTest(unittest.TestCase):
         for name in ("commondir", "gitdir", "config.worktree"):
             self.assertIn(("literal", str(gitdir.resolve() / name)), got)
         self.assertIn(("literal", str(self.ws / ".git")), got)
+
+    def test_primary_deny_paths_include_commondir_and_gitdir(self):
+        got = {(k, str(p)) for k, p in os_sandbox.git_deny_paths(self.main_repo)}
+        for name in ("commondir", "gitdir", "config", "config.worktree"):
+            self.assertIn(("literal", str(self.main_repo.resolve() / ".git" / name)), got)
+
+    def test_pin_subcommand_prints_git_dirs(self):
+        import base64
+        res = subprocess.run([sys.executable, "-m", "autonomy.lib.os_sandbox", "pin", "--workspace", str(self.main_repo)],
+                             cwd=REPO, capture_output=True, text=True, timeout=30)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        lines = [base64.b64decode(x).decode() for x in res.stdout.split()]
+        git = str((self.main_repo / ".git").resolve())
+        self.assertEqual(lines, [git, git])
 
     def test_git_pin_records_dirs(self):
         gitdir = self._linked()
