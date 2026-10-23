@@ -2073,19 +2073,29 @@ describe("CW-04 receipt blocks", () => {
     process.env["LOKI_OS_SANDBOX"] = "on";
     const { s, r } = await sealWith("cw-none-on", { "confinement.json": none });
     expect(s.data.verdict).toBe("FAILED");
-    expect(r.not_proven.some((l) => l.includes("confinement.kind is none"))).toBe(true);
+    expect(r.not_proven.some((l) => l.includes("is not an allowlisted sandbox"))).toBe(true);
     expect((await sealWith("cw-seatbelt-on", { "confinement.json": CONF })).s.data.verdict).toBe("VERIFIED");
   });
-  test("fail closed: LOKI_OS_SANDBOX=on with confinement.json absent or malformed seals FAILED; On/ON and None are normalized", async () => {
+  test("fail closed: LOKI_OS_SANDBOX=on, absent confinement.json is PARTIAL with confinement not recorded; malformed or non-allowlisted kind is FAILED; On/ON and None are normalized", async () => {
     process.env["LOKI_OS_SANDBOX"] = "on";
     const absent = await sealWith("cw-sbx-absent", {});
-    expect(absent.s.data.verdict).toBe("FAILED");
-    expect(absent.r.not_proven.some((l) => l.includes("confinement.json is absent or malformed"))).toBe(true);
+    expect(absent.s.data.verdict).toBe("PARTIAL");
+    expect(absent.r.not_proven.some((l) => l.includes("confinement not recorded"))).toBe(true);
     expect((await sealWith("cw-sbx-bad", { "confinement.json": "{nope" })).s.data.verdict).toBe("FAILED");
     expect((await sealWith("cw-sbx-None", { "confinement.json": { ...CONF, kind: "None" } })).s.data.verdict).toBe("FAILED");
-    process.env["LOKI_OS_SANDBOX"] = "ON";
+    expect((await sealWith("cw-sbx-weird", { "confinement.json": { ...CONF, kind: "pretend" } })).s.data.verdict).toBe("FAILED");
+    process.env["LOKI_OS_SANDBOX"] = " ON ";
     expect((await sealWith("cw-sbx-ON", { "confinement.json": { ...CONF, kind: "none" } })).s.data.verdict).toBe("FAILED");
+    expect((await sealWith("cw-sbx-ON-absent", {})).s.data.verdict).toBe("PARTIAL");
     expect((await sealWith("cw-sbx-ON-ok", { "confinement.json": CONF })).s.data.verdict).toBe("VERIFIED");
+  });
+  test("B1: every present block is labelled unverified run-dir input in receipt.json and receipt.md and adds a not_proven line; a forged seatbelt claim is never signed as fact", async () => {
+    const forged = { kind: "seatbelt", profile_sha256: "forged", kernel_probe_sha256: null, known_limitations: [], provider: null, unconfined_calls: [] };
+    const { ctx, r } = await sealWith("cw-prov", { "confinement.json": forged, "params.json": PARAMS });
+    expect(r.cw_provenance).toEqual({ confinement: "unverified_run_dir", params: "unverified_run_dir" } as never);
+    expect(r.not_proven.some((l) => l.includes("confinement.json is unverified run-dir input"))).toBe(true);
+    expect(r.not_proven.some((l) => l.includes("params.json is unverified run-dir input"))).toBe(true);
+    expect(readFileSync(join(ctx.runDir, "receipt.md"), "utf8")).toContain("CW block provenance: unverified run-dir input, not proven (confinement, params)");
   });
   test("fail closed: LOKI_SPEC_STRICT=1 with spec-trace.json absent or malformed caps at PARTIAL; unset it does not", async () => {
     expect((await sealWith("cw-st-absent-off", {})).s.data.verdict).toBe("VERIFIED");

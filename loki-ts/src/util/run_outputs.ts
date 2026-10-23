@@ -109,33 +109,49 @@ const CW_PARSERS: { [K in keyof CwBlocks]-?: { file: string; parse: CwParse<K> }
   preflight: { file: "preflight.json", parse: (j) => (isRec(j) && typeof j["provider"] === "string" && typeof j["auth_path"] === "string" && (j["probe"] === "ok" || j["probe"] === "failed" || j["probe"] === "skipped") ? { provider: j["provider"], auth_path: j["auth_path"], probe: j["probe"] } : null) },
 };
 const clauseAt = (c: { id: string; anchor: { file: string; page: number | null; line: number | null } }): string => `${c.id} (${c.anchor.file}${c.anchor.page !== null ? ` p${c.anchor.page}` : ""}${c.anchor.line !== null ? `:${c.anchor.line}` : ""})`;
-export function cwReceiptBlocks(runDir: string, env: NodeJS.ProcessEnv = process.env): { blocks: CwBlocks; notProven: string[]; ceiling: "FAILED" | "PARTIAL" | null } {
-  const blocks: Record<string, unknown> = {}, notProven: string[] = [];
+/** Sandbox kinds a confinement block may claim under LOKI_OS_SANDBOX=on; anything else (including "none") fails closed. */
+const SANDBOX_KINDS = new Set(["seatbelt", "bwrap", "bubblewrap", "landlock", "container", "docker"]);
+export type CwBodyBlocks = CwBlocks & { cw_provenance?: Record<string, "unverified_run_dir"> };
+export function cwReceiptBlocks(runDir: string, env: NodeJS.ProcessEnv = process.env): { blocks: CwBodyBlocks; notProven: string[]; ceiling: "FAILED" | "PARTIAL" | null } {
+  const blocks: Record<string, unknown> = {}, notProven: string[] = [], provenance: Record<string, "unverified_run_dir"> = {}, malformed = new Set<string>();
   for (const [key, { file, parse }] of Object.entries(CW_PARSERS) as [keyof CwBlocks, { file: string; parse: (j: unknown) => unknown }][]) {
     const path = join(runDir, file);
     if (!existsSync(path)) continue;
     let block: unknown = null;
     try { block = parse(JSON.parse(readFileSync(path, "utf8"))); } catch { /* unreadable or not JSON: same as malformed */ }
-    if (block === null) notProven.push(`${file} is malformed or unreadable; the ${key} block is not recorded in this receipt`); else blocks[key] = block;
+    if (block === null) { malformed.add(key); notProven.push(`${file} is malformed or unreadable; the ${key} block is not recorded in this receipt`); continue; }
+    blocks[key] = block;
+    // The run dir is agent-writable and no engine writer exists yet, so a present block is a claim, never a proven fact.
+    provenance[key] = "unverified_run_dir";
+    notProven.push(`${file} is unverified run-dir input (agent-writable, no engine-recorded hash); the ${key} block is a claim, not proven`);
   }
-  const b = blocks as CwBlocks;
+  if (Object.keys(provenance).length > 0) blocks["cw_provenance"] = provenance;
+  const b = blocks as CwBodyBlocks;
   const unproven = (b.spec_trace?.clauses ?? []).filter((c) => c.status === "unproven");
   for (const c of unproven) notProven.push(`spec clause ${clauseAt(c)} is unproven`);
   let ceiling: "FAILED" | "PARTIAL" | null = null;
+  const cap = (c: "FAILED" | "PARTIAL") => { if (ceiling !== "FAILED") ceiling = c; };
   // Fail closed: under a strict switch a missing or corrupt file is never a way out of the cap.
   if (env["LOKI_SPEC_STRICT"] === "1") {
-    if (!b.spec_trace) { ceiling = "PARTIAL"; notProven.push("LOKI_SPEC_STRICT=1 but spec-trace.json is absent or malformed; no clause is proven"); }
-    else if (unproven.length > 0) ceiling = "PARTIAL";
+    if (!b.spec_trace) { cap("PARTIAL"); notProven.push("LOKI_SPEC_STRICT=1 but spec-trace.json is absent or malformed; no clause is proven"); }
+    else if (unproven.length > 0) cap("PARTIAL");
   }
+  // Same normalization as os_sandbox.resolve_mode (.strip().lower()).
   if ((env["LOKI_OS_SANDBOX"] ?? "").trim().toLowerCase() === "on") {
     const kind = b.confinement?.kind.trim().toLowerCase();
-    if (kind === undefined || kind === "none") { ceiling = "FAILED"; notProven.push(kind === undefined ? "LOKI_OS_SANDBOX=on but confinement.json is absent or malformed; confinement is unproven, sealing fails closed" : "confinement.kind is none under LOKI_OS_SANDBOX=on, which cannot happen when the sandbox is enforced; sealing fails closed"); }
+    if (b.confinement === undefined && !malformed.has("confinement")) {
+      // TODO(FC-CW-BLOCKS-AGENT-WRITABLE-SIGNED-AS-FACT follow-up): absent becomes FAILED once the cw01 confinement writer lands.
+      cap("PARTIAL"); notProven.push("confinement not recorded under LOKI_OS_SANDBOX=on (no confinement.json); confinement is unproven");
+    } else if (kind === undefined || !SANDBOX_KINDS.has(kind)) {
+      cap("FAILED"); notProven.push(kind === undefined ? "LOKI_OS_SANDBOX=on but confinement.json is malformed; confinement is unproven, sealing fails closed" : `confinement.kind "${kind}" is not an allowlisted sandbox under LOKI_OS_SANDBOX=on; sealing fails closed`);
+    }
   }
   return { blocks: b, notProven, ceiling };
 }
 /** receipt.md lines for the CW-04 blocks: a confinement line and a spec clause table. A judged clause is labelled judged, never proof. */
-export function cwReceiptLines(r: CwBlocks): string[] {
+export function cwReceiptLines(r: CwBodyBlocks): string[] {
   const out: string[] = [];
+  if (r.cw_provenance) out.push(`- CW block provenance: unverified run-dir input, not proven (${Object.keys(r.cw_provenance).join(", ")})`);
   if (r.confinement) out.push(`- Confinement: ${r.confinement.kind}${r.confinement.provider ? ` (${r.confinement.provider})` : ""}; ${r.confinement.known_limitations.length} known limitation(s), ${r.confinement.unconfined_calls.length} unconfined call(s)`);
   if (r.spec_trace && r.spec_trace.clauses.length > 0) out.push("", "### Spec clauses", "| Clause | Anchor | Status |", "| --- | --- | --- |", ...r.spec_trace.clauses.map((c) => `| ${c.id} | ${c.anchor.file}${c.anchor.line !== null ? `:${c.anchor.line}` : ""} | ${c.status}${c.status === "judged" ? " (judged, not executed proof)" : ""} |`));
   return out;
