@@ -22,10 +22,27 @@ emitting it for a run with no data would send someone hunting a caching problem
 that does not exist.
 """
 
+import ast
+import json
+import os
 import pathlib
 import unittest
 
 _SERVER = pathlib.Path(__file__).resolve().parents[2] / "dashboard" / "server.py"
+
+
+def _slice_start(src):
+    """Start of the exec slice: the earliest module-level helper that
+    _calculate_model_cost calls, so a helper defined above it is never dropped
+    (FC-TEST-SLICE-LOADER-DROPS-HELPER)."""
+    tree = ast.parse(src)
+    funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    calc = funcs["_calculate_model_cost"]
+    used = {n.id for n in ast.walk(calc) if isinstance(n, ast.Name)}
+    helpers = [f for name, f in funcs.items()
+               if name in used and name != "_get_model_pricing" and f.lineno < calc.lineno]
+    first = min([calc] + helpers, key=lambda f: f.lineno)
+    return src.index("def " + first.name)
 
 
 def _load_calculator():
@@ -35,9 +52,9 @@ def _load_calculator():
     arithmetic is what is under test.
     """
     src = _SERVER.read_text(encoding="utf-8")
-    start = src.index("def _calculate_model_cost")
+    start = _slice_start(src)
     end = src.index('@app.get("/api/cost"')
-    ns = {}
+    ns = {"os": os, "json": json, "_Path": pathlib.Path, "__file__": str(_SERVER)}
     stub = (
         "def _get_model_pricing():\n"
         "    return {'sonnet': {'input': 3.0, 'output': 15.0,\n"
@@ -53,6 +70,11 @@ INP, OUT, CREAD, CWRITE = 10272, 6164, 797496, 79769
 
 
 class ApiCostCacheTests(unittest.TestCase):
+    def test_slice_includes_every_helper_the_calculator_calls(self):
+        src = _SERVER.read_text(encoding="utf-8")
+        self.assertLessEqual(_slice_start(src), src.index("def _inference_geo_multiplier"))
+        self.assertEqual(self.calc("sonnet", 1_000_000, 0), 3.0)
+
     def setUp(self):
         self.calc = _load_calculator()
 
