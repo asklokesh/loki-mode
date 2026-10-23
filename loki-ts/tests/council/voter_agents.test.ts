@@ -24,7 +24,7 @@ import {
   type ClaudeRunner,
 } from "../../src/council/voter_agents.ts";
 import { recordFromClaudeResult, recordFromUsage, withChildLedger } from "../../src/util/child_ledger.ts";
-import { __resetSdkClientForTests } from "../../src/runner/sdk_invoker.ts";
+import { __resetSdkClientForTests, __setSdkClientForTests } from "../../src/runner/sdk_invoker.ts";
 import { _resetClaudeHelpCacheForTest } from "../../src/providers/claude_flags.ts";
 import type { CouncilEvaluateContext, AgentVerdict } from "../../src/runner/council.ts";
 import type { RunnerContext } from "../../src/runner/types.ts";
@@ -284,6 +284,32 @@ describe("COST-WALL child-session ledger", () => {
       __resetSdkClientForTests(); _resetClaudeHelpCacheForTest(); rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // #318: a non-ok SDK judge outcome is named in the error the council records, never lost to the claude fall-through.
+  for (const [stop, extra, name] of [
+    ["max_tokens", {}, "truncated"],
+    ["refusal", { stop_details: { category: "cyber" } }, "refused:cyber"],
+    ["model_context_window_exceeded", {}, "context_exceeded"],
+  ] as const) {
+    it(`SDK voter ${stop} outcome appears by name (${name}) in the thrown reason`, async () => {
+      const dir = mkdtempSync(join(tmpdir(), "loki-318-v-")), loki = join(dir, ".loki"), bin = join(dir, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$1" in --help) echo "  --agents  --json-schema"; exit 0;; esac\nexit 1\n`, { mode: 0o755 });
+      const body = JSON.stringify({ id: "m", type: "message", role: "assistant", model: "claude-haiku-5-5", stop_reason: stop, content: [], usage: { input_tokens: 1, output_tokens: 1 }, ...extra });
+      const keys = ["PATH", "LOKI_SDK_VOTER_AGENTS", "LOKI_SDK_COUNCIL_MODEL"] as const;
+      const savedEnv: Record<string, string | undefined> = {};
+      for (const k of keys) savedEnv[k] = process.env[k];
+      process.env["PATH"] = `${bin}:${savedEnv["PATH"]}`; process.env["LOKI_SDK_VOTER_AGENTS"] = "1";
+      process.env["LOKI_SDK_COUNCIL_MODEL"] = "claude-haiku-5-5";
+      __setSdkClientForTests({ messages: { create: async () => JSON.parse(body), stream: () => ({ finalMessage: async () => JSON.parse(body) }) } }); _resetClaudeHelpCacheForTest();
+      try {
+        await expect(dispatchClaudeAgents(ctxIn(loki))).rejects.toThrow(`sdk judge outcome: ${name}`);
+      } finally {
+        for (const k of keys) { if (savedEnv[k] === undefined) delete process.env[k]; else process.env[k] = savedEnv[k]; }
+        __resetSdkClientForTests(); _resetClaudeHelpCacheForTest(); rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
 
   it("negative review timeout falls back to 600s and the SDK vote still lands", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-neg-to-")), loki = join(dir, ".loki"), bin = join(dir, "bin");

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - The OS sandbox now denies writes to the workspace git pointer (the `.git` file or directory) and to the linked-worktree `commondir`, `gitdir` and `config.worktree` files, and to hooks and config in a primary checkout, so confined code can no longer repoint git at a planted config that runs a command in the next unconfined git call. Per-worktree commit state (HEAD, index, logs) stays writable. Every unconfined git call in the harness now runs with `core.fsmonitor` and `core.hooksPath` neutralised and, in the TypeScript safe-git wrapper, a pinned GIT_DIR (FC-SANDBOX-GIT-REDIRECT).
+## v11.65.6 (2026-10-23)
+
+### Fixed
+- The python leg of the two model-override parity matrices is batched, 445s to 103s (FC-MODEL-OVERRIDE-TEST-TOO-SLOW). Approval: "rev-b APPROVE: ship pd/318r-r4 706028a9188c9f6337b1f4b05fe25292cccca77f. 5 commits over origin/main. Pick in order: 868a96c9f0e5ea87e26a3df971b0cd47465a0d20, 529d4f9d5de3329c34cb193753d48c2dba0693f8, 584689c0f8a867b7e4fcca03754db1e9f514c97f, bf99fa38b25e3ab91c37a01d7d71dd55dc59b812, 706028a9188c9f6337b1f4b05fe25292cccca77f. FC-only conflict. APPROVE 706028a9188c9f6337b1f4b05fe25292cccca77f"
+
+## v11.65.5 (2026-10-23)
+
+### Fixed
+- Proof-verify parity and MCP config tests use a load-aware time budget, with measured sibling sweep counts and the sibling mutant recorded for FC-SUBPROCESS-TEST-DEFAULT-TIMEOUT. Approval: "rev-b APPROVE: ship pd/loadaware c471eda6168dcd3c30de627aa45a6c459bc7fcd1. 2 commits over origin/main. Pick in order: 11493942d4c4e253fc03a384c560a3407c878e75, c471eda6168dcd3c30de627aa45a6c459bc7fcd1. FC-only conflict. APPROVE c471eda6168dcd3c30de627aa45a6c459bc7fcd1"
+
 ## v11.65.4 (2026-10-23)
 
 ### Fixed
