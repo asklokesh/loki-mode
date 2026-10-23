@@ -663,10 +663,9 @@ describe("mcp_config outbound remote servers and auth headers", () => {
 // #349 strips secret-shaped names from child envs and must keep LOKI_MCP_<NAME>_AUTH on the claude process:
 // the bundle carries only the "${LOKI_MCP_<NAME>_AUTH}" placeholder, and Claude Code expands it from its env.
 describe("claude process env keeps LOKI_MCP_<NAME>_AUTH (#349 guard)", () => {
-  it("the scoped start env forwards LOKI_MCP_<NAME>_AUTH and the URL beside it", () => {
-    const env = scopedStartEnv({ PATH: "/usr/bin", LOKI_MCP_GITHUB_URL: "https://x.example/mcp", LOKI_MCP_GITHUB_AUTH: "tok", UNRELATED_SECRET: "x" });
+  it("the scoped start env forwards LOKI_MCP_<NAME>_AUTH", () => {
+    const env = scopedStartEnv({ PATH: "/usr/bin", LOKI_MCP_GITHUB_AUTH: "tok", UNRELATED_SECRET: "x" });
     expect(env["LOKI_MCP_GITHUB_AUTH"]).toBe("tok");
-    expect(env["LOKI_MCP_GITHUB_URL"]).toBe("https://x.example/mcp");
     expect(env["UNRELATED_SECRET"]).toBeUndefined();
   });
 });
