@@ -424,6 +424,37 @@ PY
 JD4="$(fvd "$D3" "$C0" "$NODIFF")"
 if [ "$(printf '%s' "$JD4" | jfield "d['verdict']")" = "PASS" ]; then ok "mutant that drops the changed-vs-base check trusts the post-base Wall (guard bites)"
 else bad "diff-check mutant still INCONCLUSIVE; the fixture does not depend on the check: $JD4"; fi
+# The run record must be a real ancestry: head not descending from base (amend/rebase after the seal) or an
+# unreachable SHA is never trusted.
+D5="$TMP/diffbind5"; mkdir -p "$D5"; git -C "$D5" init -q; G5="git -C $D5 -c user.name=t -c user.email=t@t.invalid"
+printf '# base\n' > "$D5/README.md"; git -C "$D5" add README.md; $G5 commit -qm base
+F0="$(sha_of "$D5" HEAD)"
+printf 'def price(x):\n    return x * 2\n' > "$D5/price.py"; printf 'from price import price\ndef test_cover():\n    assert price(1) == 2\n' > "$D5/loki_wall_cover.py"
+git -C "$D5" add price.py loki_wall_cover.py; $G5 commit -qm "run output"
+F1="$(sha_of "$D5" HEAD)"
+printf 'def price(x):\n    return x * 2  # tweak\n' > "$D5/price.py"; git -C "$D5" add price.py; $G5 commit -qm change
+git -C "$D5" checkout -q -b side "$F0"; printf 'x\n' > "$D5/other.txt"; git -C "$D5" add other.txt; $G5 commit -qm side
+F2="$(sha_of "$D5" HEAD)"; git -C "$D5" checkout -q -
+seal_event "$D5" loki_wall_cover.py "$F0" "$F1"
+JD6="$(fvd "$D5" HEAD~1)"
+[ "$(verdict_trusted "$JD6")" = "('PASS', 1, 1)" ] && ok "ancestry control: base..head that descends from the base earns PASS" || bad "ancestry control did not PASS: $JD6"
+seal_event "$D5" loki_wall_cover.py "$F2" "$F1"
+JD7="$(fvd "$D5" HEAD~1)"
+[ "$(verdict_trusted "$JD7")" = "('INCONCLUSIVE', 1, 0)" ] && ok "a run whose head does not descend from its base is INCONCLUSIVE" || bad "non-descendant head was trusted: $JD7"
+seal_event "$D5" loki_wall_cover.py "$F0" "0123456789012345678901234567890123456789"
+JD8="$(fvd "$D5" HEAD~1)"
+[ "$(verdict_trusted "$JD8")" = "('INCONCLUSIVE', 1, 0)" ] && ok "a run record with an unreachable SHA is INCONCLUSIVE" || bad "unreachable SHA was trusted: $JD8"
+NOANC="$TMP/fv-noanc.py"
+python3 - "$FV" "$NOANC" <<'PY'
+import sys
+s = open(sys.argv[1]).read()
+a = 'if _git_strict(["merge-base", "--is-ancestor", base, head], root) is None:'
+assert a in s
+open(sys.argv[2], "w").write(s.replace(a, "if False:", 1))
+PY
+seal_event "$D5" loki_wall_cover.py "$F2" "$F1"
+JD9="$(fvd "$D5" HEAD~1 "$NOANC")"
+[ "$(verdict_trusted "$JD9")" = "('PASS', 1, 1)" ] && ok "mutant that drops the ancestry check trusts a non-descendant head (guard bites)" || bad "ancestry mutant still INCONCLUSIVE; fixture does not depend on the check: $JD9"
 # Positive control: Wall present at the base, sealed by a run that changed the verified file, naming it, earns PASS.
 D2="$TMP/diffbind2"; mkdir -p "$D2"; git -C "$D2" init -q; G2="git -C $D2 -c user.name=t -c user.email=t@t.invalid"
 printf '# base\n' > "$D2/README.md"; git -C "$D2" add README.md; $G2 commit -qm base
