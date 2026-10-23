@@ -153,7 +153,7 @@ export function deriveFlows(criteria: readonly Criterion[]): { flows: SpecFlow[]
     });
     const bare = steps.find((st) => st.target === null);
     if (steps.length === 0) notProven.push(`${c.id}: no user action stated, flow not derived`);
-    else if (bare) notProven.push(`${c.id}: step "${bare.action}" states no target, flow not derived`);
+    else if (bare) notProven.push(`${c.id}: ${bare.action} step has no stated target, flow not derived`);
     else flows.push({ id: c.id, line: c.source_line, steps: steps as FlowStep[] });
   }
   return { flows, notProven };
