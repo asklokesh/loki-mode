@@ -9,7 +9,7 @@
 // is the honest test of "a secret in a changed file sets the status to
 // failure".
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +21,7 @@ import {
   type DeepContext,
   type DeepOptions,
 } from "../../src/engine10/stages/deep.ts";
+import { fullSuiteSpecs } from "../../src/project_model/package_suite.ts";
 import type { EventType, StageName, TestMap, TestRef } from "../../src/engine10/types.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "deep");
@@ -372,6 +373,17 @@ describe("engine10 deep: full suite", () => {
     const full = (result.data.checks as { name: string; result: string; cmd: string }[]).find((c) => c.name === "full suite: pytest");
     expect(full?.result).toBe("pass");
     expect(full?.cmd).toContain(join(".venv", "bin", "python"));
+  });
+
+  test("FC-SUITE-RUN-LINE-BREAKS-ON-SPACED-PATH: the baseline run line keeps an absolute .venv python under a path with a space as one word; plain words stay unquoted", () => {
+    const root = mkdtempSync(join(tmpdir(), "loki-spacepath-")), dir = join(root, "My Projects", "app");
+    try {
+      mkdirSync(join(dir, ".venv", "bin"), { recursive: true });
+      writeFileSync(join(dir, ".venv", "bin", "python"), '#!/bin/sh\necho "1 passed in 0.01s"\n'); chmodSync(join(dir, ".venv", "bin", "python"), 0o755);
+      const spec = fullSuiteSpecs(dir, ["pytest"])[0]!, r = spawnSync("bash", ["-c", spec.run], { cwd: dir, encoding: "utf8" });
+      expect(r.status).toBe(0); expect(r.stdout).toContain("1 passed"); // the same line ran as `.../My` and exited 127 before the quoting
+      expect(fullSuiteSpecs(dir, ["go"])[0]?.run).toBe("go test -json ./..."); // a plain command line is byte-identical to its display cmd
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   test("no detected runner is N/A (FC-SEAL-NA-AS-UNPROVEN), listed not hidden", async () => {
