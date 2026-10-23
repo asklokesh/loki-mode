@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - The OS sandbox now denies writes to the workspace git pointer (the `.git` file or directory) and to the linked-worktree `commondir`, `gitdir` and `config.worktree` files, and to hooks and config in a primary checkout, so confined code can no longer repoint git at a planted config that runs a command in the next unconfined git call. Per-worktree commit state (HEAD, index, logs) stays writable. Every unconfined git call in the harness now runs with `core.fsmonitor` and `core.hooksPath` neutralised and, in the TypeScript safe-git wrapper, a pinned GIT_DIR (FC-SANDBOX-GIT-REDIRECT).
+
+## v11.63.1 (2026-10-23)
+
+### Fixed
+- The Bun route clears the previous run's proof pointer at run start (rq25; FC-PROOF-POINTER-STALE). Approval: "APPROVE pd/rq25 66de3ec0b (tl-2, MEDIUM), ships after race-impl-hang e59771e33". CoS ruled it independent of race-impl-hang (separate files), so it ships on its own.
+
 ## v11.63.0 (2026-10-23)
 
 
