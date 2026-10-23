@@ -47,6 +47,14 @@ async function check(label, fn) {
     assert.strictEqual(caught, errors[3], "rule 4: must reject with the last attempt's error object");
   });
 
+  // Rule 1: fn gets the attempt number from 0 upward and the success value comes back.
+  await check("rule 1 attempt numbers", async () => {
+    const seen = [];
+    const out = await retry(async (n) => { seen.push(n); if (n < 4) throw new Error("x"); return "ok-" + n; }, { retries: 5, delayMs: 1, sleep: async () => {} });
+    assert.deepStrictEqual(seen, [0, 1, 2, 3, 4], "rule 1: attempt numbers were " + JSON.stringify(seen));
+    assert.strictEqual(out, "ok-4", "rule 1: must resolve with the success value");
+  });
+
   // Rule 3 and 5: retries 0 means one call and no wait.
   await check("rule 3 retries 0", async () => {
     let calls = 0;

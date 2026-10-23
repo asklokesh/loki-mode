@@ -22,6 +22,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -177,7 +178,7 @@ def run_nearmisses():
                 rc = grade(wd, spec, task_dir=TASKS_DIR)["acceptance_exit_code"]
             finally:
                 shutil.rmtree(wd, ignore_errors=True)
-            rows.append((spec["id"], case["case"], case["kind"], vis, rc))
+            rows.append((spec["id"], case["case"], ",".join(str(r) for r in case["rules"]), case["kind"], vis, rc))
     return rows
 
 
@@ -190,10 +191,25 @@ def test_every_task_has_boundary_near_misses():
         assert len({c["case"] for c in cases}) == len(cases), spec["id"]
 
 
+def _prompt_rules(spec):
+    return {int(m) for m in re.findall(r"(?m)^(\d+)\. ", spec["prompt"])}
+
+
+def test_every_numbered_prompt_rule_has_a_near_miss():
+    for _, spec in _specs():
+        rules = _prompt_rules(spec)
+        assert rules, spec["id"]
+        covered = set()
+        for c in _load_nearmisses(spec):
+            assert c["rules"] and set(c["rules"]) <= rules, (spec["id"], c["case"], c["rules"])
+            covered |= set(c["rules"])
+        assert covered == rules, (spec["id"], "rules without a near-miss", sorted(rules - covered))
+
+
 def test_grader_rejects_every_near_miss_with_rc_1():
     rows = run_nearmisses()
     assert rows
-    bad = [r for r in rows if r[3] != 0 or r[4] != 1]
+    bad = [r for r in rows if r[4] != 0 or r[5] != 1]
     assert not bad, "near-miss must pass the visible tests (rc 0) and fail the grader (rc 1): %r" % (bad,)
 
 
@@ -229,9 +245,9 @@ def write_manifest():
 
 if __name__ == "__main__":
     if "--table" in sys.argv:
-        print("%-22s %-40s %-11s %-3s %s" % ("task", "near-miss", "kind", "vis", "rc"))
+        print("%-22s %-40s %-5s %-11s %-3s %s" % ("task", "near-miss", "rule", "kind", "vis", "rc"))
         for row in run_nearmisses():
-            print("%-22s %-40s %-11s %-3s %s" % row)
+            print("%-22s %-40s %-5s %-11s %-3s %s" % row)
     elif "--write-manifest" in sys.argv:
         write_manifest()
         print("wrote " + MANIFEST)

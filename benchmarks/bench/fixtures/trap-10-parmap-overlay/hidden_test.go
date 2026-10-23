@@ -34,6 +34,27 @@ func seqItems(n int) []int {
 	return s
 }
 
+func TestHiddenResultIndexMatchesItemIndex(t *testing.T) { // rule 1
+	for _, workers := range []int{1, 3, 8, 64} {
+		items := make([]int, 40)
+		for i := range items {
+			items[i] = (i * 7) % 11
+		}
+		got := Map(items, workers, func(x int) int {
+			time.Sleep(time.Duration(x) * time.Millisecond)
+			return x*3 + 1
+		})
+		if len(got) != len(items) {
+			t.Fatalf("workers %d: len %d want %d", workers, len(got), len(items))
+		}
+		for i, v := range items {
+			if got[i] != v*3+1 {
+				t.Fatalf("workers %d: result[%d] = %d want %d", workers, i, got[i], v*3+1)
+			}
+		}
+	}
+}
+
 func TestHiddenAtMostWorkersConcurrent(t *testing.T) { // rule 2
 	max, got := peak(seqItems(12), 3)
 	if max > 3 {

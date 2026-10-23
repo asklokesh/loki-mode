@@ -3,47 +3,47 @@
   "preregistered_before_any_paid_run": true,
   "tasks": {
     "trap-01-dedupe": {
-      "sha256": "b32838e3e1e0c0769aeb6000df932ddeec8563b1ef660ddf892e62659e55e17a",
+      "sha256": "5dd37dfb4ae03e4476fbb3e3913a08b0fcbdf1c55b44faebc2343dc8e84640c8",
       "language": "python"
     },
     "trap-02-ratelimit": {
-      "sha256": "dcc2aa26568df13d2e8c168bb76ef3e96e004d2545fdafb95f423c7230ad37c5",
+      "sha256": "ccf45885d1f766fdf55d5460eef2681c0d49d53fbacf75c7e6489c00137ec4c6",
       "language": "python"
     },
     "trap-03-duration": {
-      "sha256": "a7b7659265586afca1e8a64f21e800c9485a93edc90e4d533f9e8ec7ebc33dec",
+      "sha256": "42343ae675d555c9ce36cf764996b745408a513b598bf77c39be1c3c704ca2a6",
       "language": "python"
     },
     "trap-04-atomicwrite": {
-      "sha256": "563c2c7cfeaec3fa9748638a9178d44c5d881418fad6c2954336f5703ce50e9a",
+      "sha256": "4465ced426704ec5390229c88021d1ad71212eb8add591c11b4e76dc48234fcb",
       "language": "python"
     },
     "trap-05-lru": {
-      "sha256": "fef4ceb8ac20f97fed02a85758c369d603c8dfee966ee8316ee890e58b39471b",
+      "sha256": "0649b66d1e684473650c077affa3e862d581c63125e1daa4ac19d3ceca4231bd",
       "language": "python"
     },
     "trap-06-deepmerge": {
-      "sha256": "5ed28815c45160ba1327132d85c1757e76d771ec97bc7d21a855401be079677f",
+      "sha256": "7891b2459db214befa161181a70e4b39a9fdb48ec884d6eb63b8550f6fe3c040",
       "language": "node"
     },
     "trap-07-retry": {
-      "sha256": "51c7d45734d5f50b62d5b712a93230babffa73c44cdbb81742913c845ed7433d",
+      "sha256": "568c1bdb5567e72ca65f6052133ca0ec317e7cce45900cedf387f141fbc07370",
       "language": "node"
     },
     "trap-08-csvline": {
-      "sha256": "d0fb5dba3c92d9001da42217d246dc06788d10008156e5a765e7ef4130a9211d",
+      "sha256": "1c7556562883f89a77dd0e26ad7d77b1d8823b1aaa9d8151e5374c8c7942f182",
       "language": "node"
     },
     "trap-09-wordfreq": {
-      "sha256": "80d923d05b9a6c3c56df96e808205a200396ac35f7d66ff235b4405d308a3b12",
+      "sha256": "3e71a3f05f6549b4d9619f2d631cabbe09661f8e52d8e5bb6943af7bf31db9e9",
       "language": "go"
     },
     "trap-10-parmap": {
-      "sha256": "611aba5d7bfd5b47b1aec719e180d1816e3d9feac691eae9efa8431d57c61a9e",
+      "sha256": "9746ec5f0a9d61c5ef79b8510e2d74791e4758701afc4bbfb4c6bc24df542bf8",
       "language": "go"
     },
     "judge-trap-1": {
-      "sha256": "51dcd20a071794198d2aa6acf8ee25033f8a73b999f336d61eab227aecde9def",
+      "sha256": "1f1df97a60ed9a2808741d1067a8c46caf0f36246ed414dd04d5dc5133dceb35",
       "language": "python"
     }
   }

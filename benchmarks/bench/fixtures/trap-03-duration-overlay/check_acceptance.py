@@ -41,6 +41,10 @@ def bad(rule, s):
 ok("10s", 10)
 ok("90m", 5400)
 ok("1d", 86400)
+ok("120m", 7200)
+ok("100s", 100)
+ok("365d", 365 * 86400)
+ok("0s", 0)
 # Rule 2: each unit at most once.
 bad(2, "1h1h")
 bad(2, "5m10m")

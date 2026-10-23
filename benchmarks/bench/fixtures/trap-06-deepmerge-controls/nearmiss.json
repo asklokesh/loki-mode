@@ -8,6 +8,9 @@
         "new": "  for (const k of Object.keys(b)) {\n"
       }
     ],
+    "rules": [
+      4
+    ],
     "file": "merge.js"
   },
   {
@@ -18,6 +21,9 @@
         "old": "if (Array.isArray(v)) return v.map(clone);",
         "new": "if (Array.isArray(v)) return v;"
       }
+    ],
+    "rules": [
+      3
     ],
     "file": "merge.js"
   },
@@ -30,6 +36,9 @@
         "new": "else if (b[k] !== null) out[k] = clone(b[k]);"
       }
     ],
+    "rules": [
+      1
+    ],
     "file": "merge.js"
   },
   {
@@ -40,6 +49,9 @@
         "old": "const out = {};",
         "new": "const out = a;"
       }
+    ],
+    "rules": [
+      3
     ],
     "file": "merge.js"
   },
@@ -60,6 +72,9 @@
         "new": "else if (depth > 0 && Array.isArray(b[k]) && Array.isArray(out[k])) out[k] = out[k].concat(clone(b[k]));\n  else out[k] = clone(b[k]);"
       }
     ],
+    "rules": [
+      2
+    ],
     "file": "merge.js"
   },
   {
@@ -70,6 +85,9 @@
         "old": "if (isPlain(v)) return deepMerge({}, v);",
         "new": "if (isPlain(v)) return v;"
       }
+    ],
+    "rules": [
+      3
     ],
     "file": "merge.js"
   }

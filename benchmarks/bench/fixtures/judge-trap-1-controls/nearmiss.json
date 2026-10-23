@@ -8,6 +8,9 @@
         "new": "t.rfind(\"-\", 0, max_len)"
       }
     ],
+    "rules": [
+      4
+    ],
     "file": "slugify.py"
   },
   {
@@ -18,6 +21,37 @@
         "old": "len(t) > max_len",
         "new": "len(t) >= max_len"
       }
+    ],
+    "rules": [
+      4
+    ],
+    "file": "slugify.py"
+  },
+  {
+    "case": "runs-collapse-only-up-to-two",
+    "kind": "max-length",
+    "edits": [
+      {
+        "old": "[^a-z0-9]+",
+        "new": "[^a-z0-9]{1,2}"
+      }
+    ],
+    "rules": [
+      2
+    ],
+    "file": "slugify.py"
+  },
+  {
+    "case": "leading-dash-not-stripped",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": ".strip(\"-\")\n    if len",
+        "new": ".rstrip(\"-\")\n    if len"
+      }
+    ],
+    "rules": [
+      3
     ],
     "file": "slugify.py"
   },
@@ -30,6 +64,10 @@
         "new": "t[:max_len + 1]"
       }
     ],
+    "rules": [
+      4,
+      6
+    ],
     "file": "slugify.py"
   },
   {
@@ -40,6 +78,9 @@
         "old": "t.rfind(\"-\", 0, max_len + 1)",
         "new": "t.find(\"-\")"
       }
+    ],
+    "rules": [
+      4
     ],
     "file": "slugify.py"
   },
@@ -52,6 +93,9 @@
         "new": "        return t"
       }
     ],
+    "rules": [
+      5
+    ],
     "file": "slugify.py"
   },
   {
@@ -63,6 +107,9 @@
         "new": ""
       }
     ],
+    "rules": [
+      1
+    ],
     "file": "slugify.py"
   },
   {
@@ -73,6 +120,9 @@
         "old": ".replace(\"\\u00e6\", \"ae\")",
         "new": ""
       }
+    ],
+    "rules": [
+      1
     ],
     "file": "slugify.py"
   },
@@ -92,6 +142,9 @@
         "old": "t[:max_len]",
         "new": "t[:40]"
       }
+    ],
+    "rules": [
+      4
     ],
     "file": "slugify.py"
   }

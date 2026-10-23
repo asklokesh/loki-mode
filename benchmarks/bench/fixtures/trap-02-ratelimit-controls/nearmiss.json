@@ -8,6 +8,9 @@
         "new": "now - calls[0] > self.window_s"
       }
     ],
+    "rules": [
+      2
+    ],
     "file": "ratelimit.py"
   },
   {
@@ -18,6 +21,9 @@
         "old": "if len(calls) >= self.max_calls:",
         "new": "if self.max_calls and len(calls) >= self.max_calls:"
       }
+    ],
+    "rules": [
+      1
     ],
     "file": "ratelimit.py"
   },
@@ -30,6 +36,9 @@
         "new": "calls = self._calls[None]"
       }
     ],
+    "rules": [
+      3
+    ],
     "file": "ratelimit.py"
   },
   {
@@ -40,6 +49,9 @@
         "old": "        if len(calls) >= self.max_calls:\n            return False\n        calls.append(now)\n        return True",
         "new": "        calls.append(now)\n        if len(calls) > self.max_calls:\n            return False\n        return True"
       }
+    ],
+    "rules": [
+      4
     ],
     "file": "ratelimit.py"
   }

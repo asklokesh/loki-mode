@@ -8,6 +8,9 @@
         "new": "    if (cur !== \"\") fields.push(cur);"
       }
     ],
+    "rules": [
+      4
+    ],
     "file": "csv.js"
   },
   {
@@ -18,6 +21,37 @@
         "old": "    if (i >= line.length) break;\n    i += 1;\n",
         "new": "    i += 1;\n    if (i >= line.length) break;\n"
       }
+    ],
+    "rules": [
+      4
+    ],
+    "file": "csv.js"
+  },
+  {
+    "case": "quote-ignored-on-first-field",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "while (true) {\n    if (line[i] === '\"') {",
+        "new": "while (true) {\n    if (line[i] === '\"' && fields.length > 0) {"
+      }
+    ],
+    "rules": [
+      2
+    ],
+    "file": "csv.js"
+  },
+  {
+    "case": "semicolon-also-separates",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "line[i] !== \",\"",
+        "new": "line[i] !== \",\" && line[i] !== \";\""
+      }
+    ],
+    "rules": [
+      1
     ],
     "file": "csv.js"
   },
@@ -30,6 +64,9 @@
         "new": ""
       }
     ],
+    "rules": [
+      3
+    ],
     "file": "csv.js"
   },
   {
@@ -40,6 +77,9 @@
         "old": "if (!closed) throw new SyntaxError(\"unterminated quote\");",
         "new": ""
       }
+    ],
+    "rules": [
+      6
     ],
     "file": "csv.js"
   },
@@ -52,6 +92,9 @@
         "new": "new Error("
       }
     ],
+    "rules": [
+      6
+    ],
     "file": "csv.js"
   },
   {
@@ -63,6 +106,9 @@
         "new": "    fields.push(cur.trim());"
       }
     ],
+    "rules": [
+      7
+    ],
     "file": "csv.js"
   },
   {
@@ -73,6 +119,9 @@
         "old": "function parseCsvLine(line) {\n",
         "new": "function parseCsvLine(line) {\n  if (line === \"\") return [];\n"
       }
+    ],
+    "rules": [
+      5
     ],
     "file": "csv.js"
   }

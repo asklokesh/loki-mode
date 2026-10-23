@@ -1,5 +1,19 @@
 [
   {
+    "case": "results-reversed-beyond-six-items",
+    "kind": "ordering",
+    "edits": [
+      {
+        "old": "out[i] = f(v)",
+        "new": "if len(items) > 6 {\n\t\t\t\tout[len(items)-1-i] = f(v)\n\t\t\t} else {\n\t\t\t\tout[i] = f(v)\n\t\t\t}"
+      }
+    ],
+    "rules": [
+      1
+    ],
+    "file": "parmap.go"
+  },
+  {
     "case": "default-workers-two",
     "kind": "off-by-one",
     "edits": [
@@ -7,6 +21,9 @@
         "old": "workers = 1",
         "new": "workers = 2"
       }
+    ],
+    "rules": [
+      4
     ],
     "file": "parmap.go"
   },
@@ -19,6 +36,9 @@
         "new": "make(chan struct{}, workers+1)"
       }
     ],
+    "rules": [
+      2
+    ],
     "file": "parmap.go"
   },
   {
@@ -30,6 +50,9 @@
         "new": "\tif len(items) == 0 {\n\t\treturn nil\n\t}\n\tout := make([]int, len(items))\n"
       }
     ],
+    "rules": [
+      5
+    ],
     "file": "parmap.go"
   },
   {
@@ -40,6 +63,9 @@
         "old": "make(chan struct{}, workers)",
         "new": "make(chan struct{}, 1)"
       }
+    ],
+    "rules": [
+      3
     ],
     "file": "parmap.go"
   },
@@ -56,6 +82,9 @@
         "new": ""
       }
     ],
+    "rules": [
+      2
+    ],
     "file": "parmap.go"
   },
   {
@@ -66,6 +95,9 @@
         "old": "if workers <= 0 {",
         "new": "if workers == 0 {"
       }
+    ],
+    "rules": [
+      4
     ],
     "file": "parmap.go"
   }

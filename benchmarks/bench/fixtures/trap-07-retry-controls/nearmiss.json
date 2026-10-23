@@ -1,5 +1,19 @@
 [
   {
+    "case": "attempt-index-wraps-after-two",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "return await fn(attempt);",
+        "new": "return await fn(attempt % 2);"
+      }
+    ],
+    "rules": [
+      1
+    ],
+    "file": "retry.js"
+  },
+  {
     "case": "one-extra-attempt",
     "kind": "off-by-one",
     "edits": [
@@ -7,6 +21,9 @@
         "old": "attempt >= retries",
         "new": "attempt > retries"
       }
+    ],
+    "rules": [
+      3
     ],
     "file": "retry.js"
   },
@@ -19,6 +36,9 @@
         "new": "wait += delayMs;"
       }
     ],
+    "rules": [
+      2
+    ],
     "file": "retry.js"
   },
   {
@@ -29,6 +49,9 @@
         "old": "      if (attempt >= retries) throw err;\n      await sleep(wait);",
         "new": "      await sleep(wait);\n      if (attempt >= retries) throw err;"
       }
+    ],
+    "rules": [
+      5
     ],
     "file": "retry.js"
   },
@@ -41,6 +64,9 @@
         "new": "throw new Error(\"retry failed: \" + err.message);"
       }
     ],
+    "rules": [
+      4
+    ],
     "file": "retry.js"
   },
   {
@@ -51,6 +77,9 @@
         "old": "attempt >= retries",
         "new": "attempt >= Math.max(1, retries)"
       }
+    ],
+    "rules": [
+      3
     ],
     "file": "retry.js"
   },
@@ -70,6 +99,9 @@
         "old": "if (attempt >= retries) throw err;",
         "new": "if (attempt >= retries) throw first;"
       }
+    ],
+    "rules": [
+      4
     ],
     "file": "retry.js"
   }

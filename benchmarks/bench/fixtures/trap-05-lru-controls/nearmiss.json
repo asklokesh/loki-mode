@@ -8,6 +8,9 @@
         "new": "        if len(self._d) >= self.capacity:\n            self._d.popitem(last=False)\n        self._d[key] = value\n        self._d.move_to_end(key)"
       }
     ],
+    "rules": [
+      1
+    ],
     "file": "lru.py"
   },
   {
@@ -19,6 +22,9 @@
         "new": "        if key in self._d:\n            pass\n"
       }
     ],
+    "rules": [
+      2
+    ],
     "file": "lru.py"
   },
   {
@@ -29,6 +35,9 @@
         "old": "        self._d.move_to_end(key)\n        return self._d[key]",
         "new": "        if self._d[key]:\n            self._d.move_to_end(key)\n        return self._d[key]"
       }
+    ],
+    "rules": [
+      2
     ],
     "file": "lru.py"
   },
@@ -45,6 +54,9 @@
         "new": "len(self._d) > max(1, self.capacity)"
       }
     ],
+    "rules": [
+      3
+    ],
     "file": "lru.py"
   },
   {
@@ -55,6 +67,9 @@
         "old": "        if key not in self._d:\n            return default",
         "new": "        if key not in list(self._d):\n            return default"
       }
+    ],
+    "rules": [
+      4
     ],
     "file": "lru.py"
   }

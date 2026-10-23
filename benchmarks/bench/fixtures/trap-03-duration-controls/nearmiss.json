@@ -1,5 +1,31 @@
 [
   {
+    "case": "numbers-capped-at-two-digits",
+    "kind": "max-length",
+    "edits": [
+      {
+        "old": "([0-9]+)d",
+        "new": "([0-9]{1,2})d"
+      },
+      {
+        "old": "([0-9]+)h",
+        "new": "([0-9]{1,2})h"
+      },
+      {
+        "old": "([0-9]+)m",
+        "new": "([0-9]{1,2})m"
+      },
+      {
+        "old": "([0-9]+)s",
+        "new": "([0-9]{1,2})s"
+      }
+    ],
+    "rules": [
+      1
+    ],
+    "file": "duration.py"
+  },
+  {
     "case": "empty-string-accepted",
     "kind": "empty-input",
     "edits": [
@@ -7,6 +33,9 @@
         "old": "if m is None or not s:",
         "new": "if m is None:"
       }
+    ],
+    "rules": [
+      4
     ],
     "file": "duration.py"
   },
@@ -19,6 +48,9 @@
         "new": "(?:([0-9]+)s?)?\")"
       }
     ],
+    "rules": [
+      5
+    ],
     "file": "duration.py"
   },
   {
@@ -30,6 +62,9 @@
         "new": "(?:(-?[0-9]+)s)?\")"
       }
     ],
+    "rules": [
+      4
+    ],
     "file": "duration.py"
   },
   {
@@ -40,6 +75,9 @@
         "old": "(?:([0-9]+)s)?\")",
         "new": "(?:([0-9]+)s)*\")"
       }
+    ],
+    "rules": [
+      2
     ],
     "file": "duration.py"
   },
@@ -56,6 +94,9 @@
         "new": "float(g)"
       }
     ],
+    "rules": [
+      4
+    ],
     "file": "duration.py"
   },
   {
@@ -71,12 +112,18 @@
         "new": "int(g or 0)"
       }
     ],
+    "rules": [
+      4
+    ],
     "file": "duration.py"
   },
   {
     "case": "units-in-any-order",
     "kind": "ordering",
     "source": "import re\n\n_SECONDS = {\"d\": 86400, \"h\": 3600, \"m\": 60, \"s\": 1}\n\n\ndef parse_duration(s):\n    if not s or not re.fullmatch(r\"(?:[0-9]+[dhms])+\", s):\n        raise ValueError(\"invalid duration: %r\" % (s,))\n    units = re.findall(r\"([0-9]+)([dhms])\", s)\n    if len({u for _, u in units}) != len(units):\n        raise ValueError(\"duplicate unit\")\n    return sum(int(n) * _SECONDS[u] for n, u in units)\n",
+    "rules": [
+      3
+    ],
     "file": "duration.py"
   }
 ]

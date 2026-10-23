@@ -24,6 +24,11 @@ function eq(rule, line, want) {
   }
 }
 
+// Rule 1: fields are separated by commas, and only by commas.
+eq(1, "a,b,c", ["a", "b", "c"]);
+eq(1, "a,b,c,d,e,f", ["a", "b", "c", "d", "e", "f"]);
+eq(1, "a;b,c", ["a;b", "c"]);
+eq(1, "a\tb|c,d", ["a\tb|c", "d"]);
 // Rule 3: inside a quoted field, "" is one literal quote.
 eq(3, '"he said ""hi"""', ['he said "hi"']);
 eq(3, 'a,"x""y",b', ["a", 'x"y', "b"]);
