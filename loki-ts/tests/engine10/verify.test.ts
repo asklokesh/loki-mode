@@ -726,6 +726,15 @@ describe("FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER: verify runs every sealed Wall p
     const names = ((await verifyStage.run(ctx, sig())).data.checks as VerifyCheck[]).map((c) => c.name);
     expect(names.filter((n) => n.includes("loki_wall_x.rs"))).toEqual([]);
   }, 60_000);
+  // FC-WALL-GO-FILE-RUNS-WHOLE-PACKAGE: a Go Wall file runs only its own Test functions, never the package's
+  test("a Go Wall file is run with -run for its own tests; a red sibling test does not decide the Wall check", async () => {
+    const { repoDir, sha } = wallRepo({ "go.mod": "module wallx\n\ngo 1.20\n", "a_test.go": 'package wallx\n\nimport "testing"\n\nfunc TestSibling(t *testing.T) { t.Fatal("sibling is red") }\n', "loki_wall_x_test.go": 'package wallx\n\nimport "testing"\n\nfunc TestMain(m *testing.M) { m.Run() }\n\nfunc TestWall(t *testing.T) {}\n' });
+    const { ctx } = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: ["go"], tests: [] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "loki_wall_x_test.go") }] } } });
+    const c = ((await verifyStage.run(ctx, sig())).data.checks as VerifyCheck[]).find((k) => k.name.includes("loki_wall_x_test.go"));
+    expect(c?.cmd).toContain("-run ^(TestWall)$");
+    expect(c?.result).not.toBe("fail");
+    expect(c?.result).not.toBe("pass"); // FC-16b: a Go exit 0 is never a pass
+  }, 120_000);
   // FC-WALL-RUST-FILE-HAS-NO-RUNNER: a sealed Rust Wall file is run by name or reported NOT PROVEN
   const crate = { "Cargo.toml": '[package]\nname = "wallx"\nversion = "0.1.0"\nedition = "2021"\n', "src/lib.rs": "pub fn one() -> u32 { 1 }\n" };
   test("a file under tests/ runs as `cargo test --test <stem>` and the Wall result is recorded", async () => {
