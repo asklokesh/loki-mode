@@ -459,6 +459,27 @@ class SeatbeltConfineReadsTest(unittest.TestCase):
         self.assertNotEqual(res.returncode, 0)
         self.assertNotIn("SECRET", res.stdout)
 
+    def test_symlinked_secret_denied_with_confine_reads_off(self):
+        # With CONFINE_READS=0 the per-target deny is the only guard on a symlinked secret.
+        real = self.base / "dotfiles" / "ssh"
+        real.mkdir(parents=True)
+        (real / "id_t1").write_text("t1key\n")
+        os.symlink(real, self.home / ".ssh")
+        status = os_sandbox.build_confinement(
+            self.ws, self.run_dir, "claude", mode="on", home=self.home, confine_reads=False)
+        self.assertIn("reads-outside-workspace-allowed-except-secret-paths",
+                      status["known_limitations"])
+        (self.base / "plain.txt").write_text("openread\n")
+        env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+        run = lambda sh: subprocess.run([*status["argv_prefix"], "/bin/sh", "-c", sh],
+                                        capture_output=True, text=True, timeout=30,
+                                        cwd=self.ws, env=env)
+        self.assertEqual(run(f'cat "{self.base}/plain.txt"').stdout.strip(), "openread")
+        for path in (f"{self.home}/.ssh/id_t1", f"{real}/id_t1"):
+            res = run(f'cat "{path}"')
+            self.assertNotEqual(res.returncode, 0, path)
+            self.assertNotIn("t1key", res.stdout)
+
     def test_symlink_to_nonsecret_outside_file_denied(self):
         res = self._sh(f'cat "{self.ws}/link-to-outside"')
         self.assertNotEqual(res.returncode, 0)
