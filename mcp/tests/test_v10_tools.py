@@ -393,14 +393,14 @@ class RealEngineSealDiffTests(unittest.TestCase):
             mock.patch.dict(os.environ, {
                 "LOKI_E10_INVOKER": "cli", "LOKI_CLAUDE_CLI": os.path.join(_E2E, "bin", "claude"),
                 "PATH": os.path.join(_E2E, "bin") + os.pathsep + os.environ.get("PATH", ""),
-                "E2E_STUB_MODE": "wallcolor", "LOKI_E10_PLAN": "1", "LOKI_NO_BROWSER": "1",
+                "E2E_STUB_MODE": "wallcolor", "LOKI_NO_BROWSER": "1",
                 "LOKI_RECEIPT_SIGNING_KEY_FILE": os.path.join(self.tmp, "k.pem"),
                 "LOKI_TS_ENTRY": os.path.join(_REPO_ROOT, "loki-ts", "src", "cli.ts")}),
         ]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
-        for k in ("LOKI_LEGACY_BASH", "LOKI_MODEL_OVERRIDE", "LOKI_RECEIPT_SIGNING_KEY", "LOKI_ENGINE"):
+        for k in ("LOKI_LEGACY_BASH", "LOKI_MODEL_OVERRIDE", "LOKI_RECEIPT_SIGNING_KEY", "LOKI_ENGINE", "LOKI_E10_PLAN"): # no plan mode: the shipped path
             os.environ.pop(k, None)
 
     def _loki(self, *args):
@@ -419,6 +419,18 @@ class RealEngineSealDiffTests(unittest.TestCase):
         self.assertEqual(receipt["implement"]["exit"], "external")
         self.assertEqual(receipt["model"], "external (no Loki implement session)")
         self.assertIn("Wall author not filesystem-isolated from the external diff", r["not_proven"])
+
+    def test_wrong_external_body_never_seals_verified_on_the_shipped_path(self):
+        """FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED: no LOKI_E10_PLAN, wrong multiply body, default env through the tool."""
+        calc = os.path.join(self.repo, "calc.ts")
+        _git(self.repo, "checkout", "--", "calc.ts")
+        with open(calc, "a") as f:
+            f.write("\nexport function multiply(a: number, b: number): number {\n  return a + b + 1;\n}\n")
+        self.assertNotIn("LOKI_E10_PLAN", v10_tools._env())
+        r = v10_tools.seal_diff(self.repo, "add a multiply(a, b) function to calc.ts", _ok)
+        self.assertNotIn("error", r, r)
+        self.assertNotEqual(r["verdict"], "VERIFIED", r)
+        self.assertFalse(r["verdict_is_verified"])
 
     def test_user_repo_verifies_strictly_with_no_drift_override(self):
         before = (_git(self.repo, "rev-parse", "HEAD"), _git(self.repo, "diff", "--cached"), _git(self.repo, "branch", "--list"))
