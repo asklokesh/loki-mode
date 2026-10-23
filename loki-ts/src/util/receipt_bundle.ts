@@ -82,16 +82,16 @@ export const PAGE_VERIFIER_JS = String.raw`async function lokiVerifyBundle(b, su
     return walk(x).replace(/[\u0080-￿]/g, function (c) { return "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"); });
   };
   var isPlain = function (v) { return v !== null && typeof v === "object" && !Array.isArray(v); };
-  var R = function (verdict, reasons) { return { verdict: verdict, reasons: reasons }; };
-  var receipt;
+  var R = function (verdict, reasons) { return { verdict: verdict, reasons: reasons, kid: kid, hash: computed, run: isPlain(receipt) ? receipt.run_id : undefined }; };
+  var receipt, kid, computed;
   try { receipt = JSON.parse(b.receipt); } catch (e) { return R("UNCHECKED", ["receipt.json is not valid JSON"]); }
   if (!isPlain(receipt)) return R("UNCHECKED", ["receipt.json is not a JSON object"]);
-  var jwk = b.pubkey, kid;
+  var jwk = b.pubkey;
   try { kid = b64u(await subtle.digest("SHA-256", enc.encode('{"crv":"Ed25519","kty":"OKP","x":"' + jwk.x + '"}'))); } catch (e) { return R("UNCHECKED", ["the embedded public key is unusable"]); }
   if (typeof receipt.payloadType === "string" && typeof receipt.payload === "string" && Array.isArray(receipt.signatures)) return R("UNCHECKED", ["this is a DSSE envelope; the page cannot check it, run: npx loki-mode verify --pubkey pubkey.jwk receipt.json"]);
   if (receipt.schema === "loki.v10.composite/1") return R("UNCHECKED", ["this is a composite receipt; the page cannot check it, run: npx loki-mode verify --pubkey pubkey.jwk receipt.json"]);
   var unsupported = [];
-  var computed = await sha(canon((function () { var o = {}; Object.keys(receipt).forEach(function (k) { if (k !== "verification" && k !== "receipt_sha256") o[k] = receipt[k]; }); return o; })()));
+  computed = await sha(canon((function () { var o = {}; Object.keys(receipt).forEach(function (k) { if (k !== "verification" && k !== "receipt_sha256") o[k] = receipt[k]; }); return o; })()));
   if (typeof receipt.receipt_sha256 !== "string" || receipt.receipt_sha256 !== computed) return R("TAMPERED", ["receipt_sha256 mismatch: recorded " + JSON.stringify(receipt.receipt_sha256 === undefined ? null : receipt.receipt_sha256) + ", computed " + computed]);
   if (receipt.schema !== "loki.v10.receipt/1" && receipt.schema !== "loki.v10.group/1") return R("TAMPERED", ["unrecognized receipt schema " + JSON.stringify(receipt.schema === undefined ? null : receipt.schema) + "; a renamed or removed schema would downgrade the receipt past its checks"]);
   if (receipt.schema === "loki.v10.group/1" && !isPlain(receipt.group)) return R("TAMPERED", ["a loki.v10.group/1 receipt has no group section; it was edited or renamed from another schema"]);
@@ -166,7 +166,6 @@ export const PAGE_VERIFIER_JS = String.raw`async function lokiVerifyBundle(b, su
   return unsupported.length ? R("UNCHECKED", unsupported) : R("VERIFIED", []);
 }`;
 
-const esc = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const jsonForScript = (v: unknown): string => JSON.stringify(v).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 const PAGE_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; form-action 'none'; base-uri 'none'";
 
@@ -187,10 +186,10 @@ export async function buildReceiptHtml(runDir: string): Promise<HtmlResult> {
 <p>This page re-checks one sealed receipt in your browser. It holds the receipt, its event log and the signer's public key, and makes no network request.</p>
 <div id="verdict" role="status">Checking...</div>
 <ul id="reasons"></ul>
-<p>Run: <code id="run">${esc(String((JSON.parse(data.receipt) as { run_id?: unknown }).run_id ?? ""))}</code></p>
+<p>Run: <code id="run"></code></p>
 <p>Receipt hash: <code id="hash"></code></p>
-<p>Signer key id: <code id="kid">${esc(pre.kid)}</code></p>
-<p>The key is embedded in this page, so a match proves the receipt was not edited after signing. It does not prove who signed: compare the key id above with one you trust.</p>
+<p>Signer key id: <code id="kid"></code></p>
+<p>The key is embedded in this page, so a match proves the receipt was not edited after signing. It does not prove who signed: compare the key id above (computed by this page from the embedded key) with one you trust.</p>
 <script type="application/json" id="bundle">${jsonForScript(data)}</script>
 <script>
 ${PAGE_VERIFIER_JS}
@@ -203,7 +202,7 @@ ${PAGE_VERIFIER_JS}
   out.textContent = r.verdict; out.className = r.verdict;
   document.documentElement.setAttribute("data-verdict", r.verdict);
   r.reasons.forEach(function (t) { var li = document.createElement("li"); li.textContent = t; why.appendChild(li); });
-  try { document.getElementById("hash").textContent = JSON.parse(JSON.parse(document.getElementById("bundle").textContent).receipt).receipt_sha256 || ""; } catch (e) { /* shown blank */ }
+  ["run", "kid", "hash"].forEach(function (k) { document.getElementById(k).textContent = r[k] === undefined || r[k] === null ? "" : String(r[k]); });
 })();
 </script>
 </body></html>

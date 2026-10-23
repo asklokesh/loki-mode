@@ -652,7 +652,13 @@ async function exportProof(argv: readonly string[]): Promise<number> {
     process.stderr.write(`${RED}Export refused:${NC} ${r.error}\n`);
     return 1;
   }
-  writeFileSync(outFile, r.html);
+  try {
+    writeFileSync(outFile, r.html, { flag: "wx" });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    process.stderr.write(`${RED}Export refused:${NC} ${outFile} already exists; remove it or pass --out.\n`);
+    return 1;
+  }
   process.stdout.write(`${GREEN}Page written: ${outFile}${NC}\nOpen it in a browser; it checks the receipt offline. Signer key id: ${r.kid}\n`);
   return 0;
 }

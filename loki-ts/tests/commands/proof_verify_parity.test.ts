@@ -49,6 +49,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createHash, createPublicKey, generateKeyPairSync, sign as cryptoSign, type KeyObject } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 
 import { run } from "../../src/util/shell.ts";
@@ -557,12 +558,12 @@ describe("loki proof export --html: offline page parity with verifyReceipt", () 
   });
 
   const sha = (b: Buffer): string => new Bun.CryptoHasher("sha256").update(b).digest("hex");
-  function signedRun(id: string): string {
+  function signedRun(id: string, extra: Record<string, unknown> = {}): string {
     const dir = join(lokiScratch, "runs", id), ev = join(dir, "events.jsonl");
     mkdirSync(dir, { recursive: true });
     const log = new SupervisorLog(ev, id);
     log.append("run.started", null, { provider: "claude" });
-    const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sha(readFileSync(ev)), time: { wall_s: 0, stages: {} }, log_seal: true };
+    const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sha(readFileSync(ev)), time: { wall_s: 0, stages: {} }, log_seal: true, ...extra };
     const hash = receiptSha256(body as never);
     writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signReceipt(id, hash) }, null, 2));
     log.append("receipt.sealed", "seal", { receipt_sha256: hash });
@@ -573,8 +574,8 @@ describe("loki proof export --html: offline page parity with verifyReceipt", () 
   }
 
   type Bundle = { receipt: string; events: string; pubkey: { kty: string; crv: string; x: string; kid: string } };
-  async function sample(id: string): Promise<{ dir: string; bundle: Bundle; html: string }> {
-    const dir = signedRun(id);
+  async function sample(id: string, extra: Record<string, unknown> = {}): Promise<{ dir: string; bundle: Bundle; html: string }> {
+    const dir = signedRun(id, extra);
     const r = await buildReceiptHtml(dir);
     if (!r.ok) throw new Error(r.error);
     const b = await buildReceiptBundle(dir, join(lokiScratch, `b-${id}`));
@@ -600,7 +601,31 @@ describe("loki proof export --html: offline page parity with verifyReceipt", () 
     ["signature flipped", (b) => ({ ...b, receipt: b.receipt.replace(/("jwt": ")([^"]+)"/, (_m, a, j) => `${a}${flipLast(j)}"`) })],
     ["jwt stripped", (b) => ({ ...b, receipt: b.receipt.replace(/"jwt": "[^"]+"/, '"jwt": null') })],
     ["events dropped", (b) => ({ ...b, events: "" })],
+    ["log.sealed line dropped", (b) => ({ ...b, events: b.events.trimEnd().split("\n").slice(0, -1).join("\n") + "\n" })],
+    ["log.sealed signature flipped", (b) => ({ ...b, events: b.events.replace(/("sig":")([^"]+)"/, (_m, a, s) => `${a}${s.slice(0, 8)}${s[8] === "A" ? "B" : "A"}${s.slice(9)}"`) })],
+    ["verification kid edited", (b) => editReceipt(b, (r) => { (r["verification"] as Record<string, unknown>)["kid"] = "forged-kid"; })],
+    ["header kid differs from the embedded key", (b) => resign(b, generateKeyPairSync("ed25519").privateKey)],
+    ["schema renamed, re-hashed and re-signed", (b) => resign(b, undefined, { schema: "loki.v10.receipt/9", log_seal: undefined })],
   ];
+  const editReceipt = (b: Bundle, f: (r: Record<string, unknown>) => void): Bundle => {
+    const r = JSON.parse(b.receipt) as Record<string, unknown>;
+    f(r);
+    return { ...b, receipt: JSON.stringify(r, null, 2) };
+  };
+  // Re-signs the receipt with another key (header kid then differs from the embedded key) or with the run's key after editing body fields.
+  const resign = (b: Bundle, key?: KeyObject, edit: Record<string, unknown> = {}): Bundle =>
+    editReceipt(b, (r) => {
+      Object.assign(r, edit);
+      const { verification, receipt_sha256, ...body } = r;
+      void verification; void receipt_sha256;
+      const hash = receiptSha256(JSON.parse(JSON.stringify(body)) as never);
+      r["receipt_sha256"] = hash;
+      if (!key) { r["verification"] = signReceipt(String(r["run_id"]), hash); return; }
+      const b64u = (x: Buffer | string): string => Buffer.from(x).toString("base64url");
+      const kid = createHash("sha256").update(`{"crv":"Ed25519","kty":"OKP","x":"${(createPublicKey(key).export({ format: "jwk" }) as { x: string }).x}"}`).digest("base64url");
+      const input = `${b64u(JSON.stringify({ alg: "EdDSA", typ: "JWT", kid }))}.${b64u(JSON.stringify({ job_id: r["run_id"], run_id: r["run_id"], receipt_sha256: hash, iat: Math.floor(Date.now() / 1000) }))}`;
+      r["verification"] = { jwt: `${input}.${b64u(cryptoSign(null, Buffer.from(input), key))}`, kid };
+    });
 
   it("one file under 1 MB with CSP connect-src none and no external URL", async () => {
     const { html } = await sample("r368-size");
@@ -682,5 +707,18 @@ describe("loki proof export --html: offline page parity with verifyReceipt", () 
     } finally {
       srv.stop(true);
     }
+  }, 180000);
+
+  (hasChrome ? it : it.skip)("headless Chrome: a receipt field that closes the script tag cannot run code or change the verdict", async () => {
+    const payload = '</script><script>document.documentElement.setAttribute("data-injected","1");document.documentElement.setAttribute("data-verdict","VERIFIED")</script><!--';
+    const { html } = await sample("r368-inject", { note: payload });
+    const clean = await headless(html, "inj-clean");
+    expect(clean).toContain('data-verdict="VERIFIED"');
+    expect(clean).not.toMatch(/<html[^>]*data-injected/);
+    // Tamper at the text level so the page's own escaping of the payload stays in place.
+    const tampered = inject(html, '\\"verdict\\": \\"VERIFIED\\"', '\\"verdict\\": \\"FAILED\\"');
+    const bad = await headless(tampered, "inj-bad");
+    expect(bad).toContain('data-verdict="TAMPERED"');
+    expect(bad).not.toMatch(/<html[^>]*data-injected/);
   }, 180000);
 });
