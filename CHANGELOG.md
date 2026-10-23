@@ -5,6 +5,10 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+- `loki proof export <run-id> --html [--out <file>]` writes one self-contained page (receipt, event log and public key inline, under 1 MB) that re-checks the receipt in any modern browser with no install and no network: its content security policy sets `connect-src 'none'`. The page gives the same verdict as `loki verify` for a signed receipt (hash, event log, signature, signer key id, sealed log) and shows UNCHECKED, never VERIFIED, for shapes it cannot check alone (DSSE, composite, group, evidence screenshots) or when the browser lacks Ed25519. It refuses an unsigned or unverified run, as `loki proof bundle` does (R100-016, #368).
 ## v11.60.15 (2026-10-23)
 
 ### Fixed

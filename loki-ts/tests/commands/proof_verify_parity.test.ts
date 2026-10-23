@@ -47,13 +47,18 @@
 // divergences cannot corrupt the fixture.
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { run } from "../../src/util/shell.ts";
 import { noBashResultCode, runProof } from "../../src/commands/proof.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
+import { SupervisorLog } from "../../src/engine10/supervisor.ts";
+import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
+import { takePubkey } from "../../src/engine10/keys_cmd.ts";
+import { verifyReceipt } from "../../src/engine10/verify_cmd.ts";
+import { PAGE_VERIFIER_JS, buildReceiptBundle, buildReceiptHtml } from "../../src/util/receipt_bundle.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const VERIFIER = resolve(REPO_ROOT, "autonomy", "lib", "proof-verify.py");
@@ -532,4 +537,150 @@ describe("proofFallthroughToBash: no exit code from bash is never a tamper verdi
     expect(r.stderr).toContain("NOT CHECKED");
     expect(r.stdout).toBe("");
   });
+});
+
+// R100-016: `loki proof export --html` writes one offline page whose verdicts equal `loki verify`.
+describe("loki proof export --html: offline page parity with verifyReceipt", () => {
+  const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+  const hasChrome = existsSync(CHROME);
+  let savedKey: string | undefined;
+  let savedKeyFile: string | undefined;
+  beforeEach(() => {
+    savedKey = process.env["LOKI_RECEIPT_SIGNING_KEY"];
+    savedKeyFile = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(lokiScratch, "k.pem");
+  });
+  afterEach(() => {
+    if (savedKey === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY"]; else process.env["LOKI_RECEIPT_SIGNING_KEY"] = savedKey;
+    if (savedKeyFile === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; else process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = savedKeyFile;
+  });
+
+  const sha = (b: Buffer): string => new Bun.CryptoHasher("sha256").update(b).digest("hex");
+  function signedRun(id: string): string {
+    const dir = join(lokiScratch, "runs", id), ev = join(dir, "events.jsonl");
+    mkdirSync(dir, { recursive: true });
+    const log = new SupervisorLog(ev, id);
+    log.append("run.started", null, { provider: "claude" });
+    const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sha(readFileSync(ev)), time: { wall_s: 0, stages: {} }, log_seal: true };
+    const hash = receiptSha256(body as never);
+    writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signReceipt(id, hash) }, null, 2));
+    log.append("receipt.sealed", "seal", { receipt_sha256: hash });
+    log.verify();
+    log.append("run.completed", null, {});
+    log.sealLog();
+    return dir;
+  }
+
+  type Bundle = { receipt: string; events: string; pubkey: { kty: string; crv: string; x: string; kid: string } };
+  async function sample(id: string): Promise<{ dir: string; bundle: Bundle; html: string }> {
+    const dir = signedRun(id);
+    const r = await buildReceiptHtml(dir);
+    if (!r.ok) throw new Error(r.error);
+    const b = await buildReceiptBundle(dir, join(lokiScratch, `b-${id}`));
+    if (!b.ok) throw new Error(b.error);
+    const jwk = JSON.parse(readFileSync(join(b.outDir, "pubkey.jwk"), "utf8")) as Bundle["pubkey"];
+    return { dir, bundle: { receipt: readFileSync(join(dir, "receipt.json"), "utf8"), events: readFileSync(join(dir, "events.jsonl"), "utf8"), pubkey: jwk }, html: r.html };
+  }
+  const pageVerify = (src: string): ((b: Bundle, s: SubtleCrypto) => Promise<{ verdict: string; reasons: string[] }>) =>
+    new Function(`${src}; return lokiVerifyBundle;`)() as never;
+  // The verdict `loki verify` gives the same bytes: write them next to a pubkey and call verifyReceipt.
+  async function cliVerdict(b: Bundle, tag: string): Promise<string> {
+    const d = join(lokiScratch, `cli-${tag}`);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, "receipt.json"), b.receipt);
+    writeFileSync(join(d, "events.jsonl"), b.events);
+    writeFileSync(join(d, "pubkey.jwk"), JSON.stringify(b.pubkey));
+    return (await verifyReceipt(join(d, "receipt.json"), { pubkey: takePubkey(["--pubkey", join(d, "pubkey.jwk")]).pubkey })).verdict;
+  }
+  const flipLast = (t: string): string => t.slice(0, -1) + (t.endsWith("A") ? "B" : "A");
+  const mutations: [string, (b: Bundle) => Bundle][] = [
+    ["field edited", (b) => ({ ...b, receipt: b.receipt.replace('"verdict": "VERIFIED"', '"verdict": "FAILED"') })],
+    ["event edited", (b) => ({ ...b, events: b.events.replace('"claude"', '"codex"') })],
+    ["signature flipped", (b) => ({ ...b, receipt: b.receipt.replace(/("jwt": ")([^"]+)"/, (_m, a, j) => `${a}${flipLast(j)}"`) })],
+    ["jwt stripped", (b) => ({ ...b, receipt: b.receipt.replace(/"jwt": "[^"]+"/, '"jwt": null') })],
+    ["events dropped", (b) => ({ ...b, events: "" })],
+  ];
+
+  it("one file under 1 MB with CSP connect-src none and no external URL", async () => {
+    const { html } = await sample("r368-size");
+    expect(Buffer.byteLength(html)).toBeLessThan(1_000_000);
+    expect(html).toContain("connect-src 'none'");
+    expect(html).not.toMatch(/(?:src|href)\s*=/i);
+    expect(html).not.toMatch(/https?:\/\//);
+  });
+
+  it("page verifier matches verifyReceipt on the sample and every tampered copy", async () => {
+    const { bundle } = await sample("r368-parity");
+    const verify = pageVerify(PAGE_VERIFIER_JS);
+    expect((await verify(bundle, crypto.subtle)).verdict).toBe("VERIFIED");
+    expect(await cliVerdict(bundle, "ok")).toBe("VERIFIED");
+    for (const [name, mut] of mutations) {
+      const b = mut(bundle);
+      expect(b.receipt + b.events).not.toBe(bundle.receipt + bundle.events);
+      const page = (await verify(b, crypto.subtle)).verdict, cli = await cliVerdict(b, name.replace(/ /g, "-"));
+      expect([name, page]).toEqual([name, cli]);
+      expect(page).not.toBe("VERIFIED");
+    }
+  });
+
+  it("the parity test catches a verifier that skips the signature or the hash check", async () => {
+    const { bundle } = await sample("r368-mutant");
+    const sig = mutations[2]![1](bundle), field = mutations[3]![1](mutations[0]![1](bundle));
+    const noSig = pageVerify(PAGE_VERIFIER_JS.replace("if (!sigOk) return", "if (false) return"));
+    const noHash = pageVerify(PAGE_VERIFIER_JS.replace("receipt.receipt_sha256 !== computed) return R", "false) return R"));
+    expect(PAGE_VERIFIER_JS).toContain("if (!sigOk) return");
+    expect((await noSig(sig, crypto.subtle)).verdict).toBe("VERIFIED");
+    expect((await pageVerify(PAGE_VERIFIER_JS)(field, crypto.subtle)).verdict).toBe("TAMPERED");
+    expect((await noHash(field, crypto.subtle)).verdict).toBe("UNSIGNED");
+  });
+
+  it("export writes the page, refuses an unsigned run and an existing file", async () => {
+    const { dir } = await sample("r368-cli");
+    process.env["LOKI_DIR"] = lokiScratch;
+    const out = join(lokiScratch, "page.html");
+    expect(await runProof(["export", "r368-cli", "--html", "--out", out])).toBe(0);
+    expect(statSync(out).size).toBeLessThan(1_000_000);
+    expect(await runProof(["export", "r368-cli", "--html", "--out", out])).toBe(1);
+    expect(await runProof(["export", "r368-cli", "--out", join(lokiScratch, "x.html")])).toBe(2);
+    expect(await runProof(["export", "no-such-run", "--html", "--out", join(lokiScratch, "y.html")])).toBe(1);
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  async function headless(html: string, tag: string): Promise<string> {
+    const f = join(lokiScratch, `${tag}.html`);
+    writeFileSync(f, html);
+    const r = await run([CHROME, "--headless=new", "--disable-gpu", "--no-first-run", `--user-data-dir=${join(lokiScratch, `ud-${tag}`)}`, "--virtual-time-budget=3000", "--dump-dom", `file://${f}`], { timeoutMs: 60000 });
+    return r.stdout;
+  }
+  const inject = (html: string, from: string, to: string): string => {
+    expect(html).toContain(from);
+    return html.replace(from, to);
+  };
+
+  (hasChrome ? it : it.skip)("headless Chrome: PASS for the sample, FAIL for a tampered copy, 0 network requests", async () => {
+    const hits: string[] = [];
+    const srv = Bun.serve({ port: 0, fetch(req) { hits.push(req.url); return new Response("x"); } });
+    try {
+      const { html, bundle } = await sample("r368-headless");
+      const good = await headless(html, "good");
+      expect(good).toContain('data-verdict="VERIFIED"');
+      const tampered = JSON.stringify({ ...bundle, receipt: bundle.receipt.replace('"verdict": "VERIFIED"', '"verdict": "FAILED"') }).replace(/</g, "\\u003c");
+      const bad = await headless(html.replace(/(<script type="application\/json" id="bundle">)[\s\S]*?(<\/script>)/, (_m, a, b) => `${a}${tampered}${b}`), "bad");
+      expect(bad).toContain('data-verdict="TAMPERED"');
+      expect(good).not.toContain('data-csp-violations="');
+      // Positive control: the same CSP blocks a fetch to a live local server; without the CSP the fetch lands.
+      const probe = `<script>fetch("http://127.0.0.1:${srv.port}/probe").catch(function(){});</script>`;
+      const csp = html.match(/<meta http-equiv="Content-Security-Policy"[^>]*>/)![0];
+      await headless(`<!doctype html>${csp}${probe}`, "blocked");
+      expect(hits.length).toBe(0);
+      await headless(`<!doctype html>${probe}`, "open");
+      expect(hits.length).toBeGreaterThan(0);
+      hits.length = 0;
+      await headless(html, "good2");
+      expect(hits.length).toBe(0);
+    } finally {
+      srv.stop(true);
+    }
+  }, 180000);
 });
