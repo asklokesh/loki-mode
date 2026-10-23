@@ -5,17 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+- `verify --fast` now exits 3 (INCONCLUSIVE) instead of 0 on a repo where no behavioral signal ran (no `loki_wall_*` file that ran), even when the static checks are clean. Exit 0 now means a Wall file executed and passed. Scripts that treated any non-zero exit as failure now see 3 on such repos; the Stop hook and `loki_verify_fast` already treat INCONCLUSIVE as not-a-pass, and `loki edit --verify` reports it as INCONCLUSIVE and does not commit. The fast tier detects mock-abuse tests and failing Python Wall files only; `.ts` and `.js` Wall files run through the same runner the engine10 verify stage uses (the internal `wall-run` subcommand), so a failing one flips the verdict to FAIL; with no bun or no runner they are counted as skipped, not run. `verify --fast` executes `loki_wall_*` files, which are repo code (60 s total budget, no `.pytest_cache` written into the repo). Only a Wall file that is tracked, unchanged against the diff base or HEAD, and whose sha256 matches an engine10 `wall.sealed` event under `.loki/runs/` can supply the behavioral signal; with a diff base the Wall must also come from a run whose changed files (the intake base_sha to commit head_sha diff in the same events.jsonl) cover every file in the verified diff, and name a changed module (a sealed Wall from an unrelated run earns no PASS; with no such run record the result is INCONCLUSIVE with a NOT PROVEN line), and any git error fails closed to INCONCLUSIVE. The wall.sealed event is a local attestation an agent with write access to .loki/ can forge; it is not proof. Any other Wall file can FAIL a run but never earn a PASS. On the 100-case seeded corpus the measured result is 20 of 100 caught (all mock-abuse) with 20 FAIL on the 100 old controls, which carry the same vacuous test as the seeded cases (FC-FAST-VERIFY-PASS-WITHOUT-DETECTION).
+
 ## v11.61.0 (2026-10-23)
 
 
 
 ### Added
 - Preflight reads the PR publish capability from the GitHub API at intake, names the fallback for collaborators-only and no-fork repositories, and records the publish plan without changing PreflightResult (R100-022, #231). Approval: "tl-324: APPROVE pd/231, a stack of two commits on origin/main; ship both in order: 70c6a399cf2f93ab7c8ce7e7ebeba1ee8f200ca8 then 31d866a55a73f26a54dff0523c186f49907f1978 (head)". The receipt criterion is a separate HIGH slice and is not covered.
-## Unreleased
-
-### Changed
-- `verify --fast` now exits 3 (INCONCLUSIVE) instead of 0 on a repo where no behavioral signal ran (no `loki_wall_*` file that ran), even when the static checks are clean. Exit 0 now means a Wall file executed and passed. Scripts that treated any non-zero exit as failure now see 3 on such repos; the Stop hook and `loki_verify_fast` already treat INCONCLUSIVE as not-a-pass, and `loki edit --verify` reports it as INCONCLUSIVE and does not commit. The fast tier detects mock-abuse tests and failing Python Wall files only; `.ts` and `.js` Wall files run through the same runner the engine10 verify stage uses (the internal `wall-run` subcommand), so a failing one flips the verdict to FAIL; with no bun or no runner they are counted as skipped, not run. `verify --fast` executes `loki_wall_*` files, which are repo code (60 s total budget, no `.pytest_cache` written into the repo). Only a Wall file that is tracked, unchanged against the diff base or HEAD, and whose sha256 matches an engine10 `wall.sealed` event under `.loki/runs/` can supply the behavioral signal; with a diff base the Wall must also come from a run whose changed files (the intake base_sha to commit head_sha diff in the same events.jsonl) cover every file in the verified diff, and name a changed module (a sealed Wall from an unrelated run earns no PASS; with no such run record the result is INCONCLUSIVE with a NOT PROVEN line), and any git error fails closed to INCONCLUSIVE. The wall.sealed event is a local attestation an agent with write access to .loki/ can forge; it is not proof. Any other Wall file can FAIL a run but never earn a PASS. On the 100-case seeded corpus the measured result is 20 of 100 caught (all mock-abuse) with 20 FAIL on the 100 old controls, which carry the same vacuous test as the seeded cases (FC-FAST-VERIFY-PASS-WITHOUT-DETECTION).
-
 ## v11.60.17 (2026-10-23)
 
 
