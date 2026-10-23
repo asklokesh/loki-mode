@@ -5,6 +5,56 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.8 (2026-10-23)
+
+### Fixed
+- The P12-12d bulk-file test fixture now sets an explicit timeout, so it no longer fails on slow machines at the default limit. Approval: "tl-324 approval line: ship range origin/main..29593679a9329eb94e9f2c4e5e57a5d220934d4e (pd/p12-12d-timeout, 1 commit, LOW, merge-tree rc 0)".
+
+## v11.60.7 (2026-10-23)
+
+### Fixed
+- A run's commit stage and backstop now leave out untracked files that existed before the run and that the run did not touch, so your own untracked files are no longer swept into the run's commit. Approval: "rev-c APPROVE pd/commitdrop 18e91429a + b40659541 (HIGH)".
+
+## v11.60.6 (2026-10-23)
+
+### Fixed
+- The help-drift guard reads plain-prose release notes, which clears the test-help-changelog-drift red that blocked several contributors. Approval: "tl-324 approval line: ship range origin/main..2dd3ec556c9b409e4567a7db64d135f6f23a7f09 (pd/p0-helpdrift-rc, 1 commit, MEDIUM, merge-tree rc 0)".
+
+## v11.60.5 (2026-10-23)
+
+### Fixed
+- The shard-coverage guard now watches the five heaviest suites from the duration table instead of a stale name list, so a slow suite can no longer slip out of its shard unnoticed. Approval: "tl-324 approval line: ship range origin/main..03300fe6705af3b03649ddc735101e673a8b5876 (pd/shardfix, 1 commit, MEDIUM, merge-tree rc 0 vs d9a7fe07e)".
+
+## v11.60.4 (2026-10-23)
+
+### Fixed
+- One advisor pair is now used for every advisor probe caller, so an invalid advisor pair is reported the same way by plan route and by doctor (RQ-04, #304). Approval: "tl-324 APPROVE pd/rq04, ship range origin/main..4f4627426e3e37a084c09363c5f110f4a76abeb3 = exactly 1 commit 4f4627426".
+
+## v11.60.3 (2026-10-23)
+
+### Fixed
+- The benchmark runner drains stderr while waiting for the stop marker, so heavy logging can no longer fake a timeout; the resume-cost instrument and engine SHA recording ship with it. Approval: "tl-324 APPROVE ... pd/resumecost3: ship range origin/main..e43a2ea45fe37217caa7446450e9e6e3e0cc63c4 = 7 commits".
+
+## v11.60.2 (2026-10-23)
+
+### Fixed
+- A failed session that committed nothing now returns to your original branch and removes its empty loki/session branch, instead of leaving you checked out on it. Approval: "tl-324 APPROVE ... pd/ux-branchrestore-sh: ship range origin/main..051a879d35ada6591907f827ce06ca6bbda883df = exactly 1 commit 051a879d3".
+
+## v11.60.1 (2026-10-23)
+
+### Fixed
+- The implement lead brief names python -m pytest and forbids files or symlinks in a test directory, so an agent no longer works around a bare pytest import error by committing a tests/<mod>.py symlink. Approval: "ship pd/pytesthint-r2 f0115bb7e (tl-324 APPROVE, MEDIUM)".
+
+## v11.60.0 (2026-10-23)
+
+### Added
+- loki doctor --json gains advisory provider_auth rows (credential source by name, never the value), and preflight records a zero-token auth probe per provider in preflight.json. A failed probe stays fatal; LOKI_PREFLIGHT_PROBE=0 skips it. Approval: "cw14-rb pd/cw14-rb 7ddde458b: APPROVE (rev-b, HIGH re-review scoped to the rebase)".
+
+## v11.59.0 (2026-10-23)
+
+### Added
+- Bench: a Codex adapter, the second arm for the false-done instrument.
+
 ## v11.58.3 (2026-10-23)
 
 ### Fixed

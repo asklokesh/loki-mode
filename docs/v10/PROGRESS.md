@@ -2723,3 +2723,13 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 - 05:52Z: #204 closed (test-memory-cli 25/0 on clean origin/main, log ~/loki-ci-logs/cos-204.log); RQ-07 eng-313r, RQ-08 eng-cw12, RQ-06 eng-h2h, RQ-02 eng-303c, loadaware eng-351; paid resume-cost pair GO (eng-npm, D108).
 - P0 open: publish-npm red on release.yml runs for v11.56.5 and v11.57.0 to v11.57.4 (run 39908304065 log: "dist-tags did not settle on the highest version after 8 tries"). `curl registry.npmjs.org/loki-mode/11.57.4` returned 404 at 05:58:11Z and 200 at 06:01:10Z (published 05:54:57Z), so propagation exceeded the settle loop. Dist-tags read at 06:08:16Z: latest 11.57.6, next 11.57.5. Fix owner eng-npm, HIGH review rev-a; no tag is ever written by hand.
 - Live exposure: v11.57.0 (cw01 sandbox, default LOKI_OS_SANDBOX=off) shipped before rev-b's 4 blocking findings; fix-forward cw01b and cw01c in review.
+
+
+## 2026-10-23T06:32Z (CoS) checkpoint, v11.57.x..v11.60.1
+- origin/main 42404106a = v11.60.1 (pytesthint-r2 8b439ee51, GUARDS row daf6cfde4 for unnamed stacked parents and the exact-SHA approval rule).
+- npm: `npm dist-tag ls loki-mode` at 06:31Z reads latest 11.60.0, next 11.60.0. The packument (registry.npmjs.org/loki-mode, modified 06:22:41) still shows latest 11.58.3, next 11.57.5.
+- Every publish-npm failure from v11.57.4 on is a false failure. The tag writes succeed. scripts/npm-dist-tags.sh:32 and :39 read the CDN-cached packument through `npm view --prefer-online` and never see the new tags. Fix owner: eng-324 (HIGH, rev-a). GET /loki-mode/11.59.0 returned 404 at 06:31Z while 11.60.0 returned 200; re-check before calling 11.59.0 lost.
+- bun test survives SIGTERM: 3 engine10 runs under bare `timeout 590` lived 28-50 min. Rule now: `timeout -k 15 <s>`, at most 2 full engine10 runs company-wide.
+- Wall mechanism: a single one lands. eng-cw12 a1c07ce3c is the base. eng-314f splits bed40cfb4 into A (fullSuiteCmd plus seal wording) and B (rev-c rules B covered or delta).
+- Roadmap-100: lanes defined by arch-100, one live slice per hot-spot file. None of the 100 items has shipped yet.
+- 06:39Z: 11.60.1 tgz 200 (publish 06:30:51, so 4-8 min lag, variable). dist-tag ls latest=next=11.60.1. 11.59.0 version doc /loki-mode/11.59.0 returns 200, signed, shasum 71ae74c5; its tgz and `npm pack loki-mode@11.59.0` still 404. Not called lost. Interim rule: no VERSION push until the previous tgz is 200.

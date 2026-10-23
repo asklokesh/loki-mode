@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { guardedBackstop, validBase } from "../../src/e10ext/commit_filter.ts";
+import { backstopCommit, guardedBackstop, validBase } from "../../src/e10ext/commit_filter.ts";
 
 let dir = "";
 let env: NodeJS.ProcessEnv = {};
@@ -51,7 +51,7 @@ function sh(argv: string[], cwd: string): string {
 }
 let n = 0;
 /** Repo with `base` files committed, a fake `ruff` first on PATH (rewrites each file arg to "FORMATTED"), then `edit` applied and commitStage run. */
-async function commitRun(base: Record<string, string>, edit: Record<string, string>): Promise<{ repo: string; show: (f: string) => string; files: string[] }> {
+async function commitRun(base: Record<string, string>, edit: Record<string, string>, seed: Record<string, string> = {}, preEdit: Record<string, string> = {}): Promise<{ repo: string; show: (f: string) => string; files: string[] }> {
   const repo = join(dir, `r${n++}`), bin = join(dir, `bin${n}`);
   mkdirSync(repo, { recursive: true }); mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, "ruff"), `#!/bin/sh\necho "$@" >> "${repo}/../ruff.calls"\nshift\nfor f in "$@"; do echo FORMATTED > "$f"; done\n`); chmodSync(join(bin, "ruff"), 0o755);
@@ -59,9 +59,15 @@ async function commitRun(base: Record<string, string>, edit: Record<string, stri
   for (const [f, c] of Object.entries(base)) writeFileSync(join(repo, f), c);
   sh(["git", "add", "-A"], repo); sh(["git", "commit", "-q", "-m", "base"], repo);
   const baseSha = sh(["git", "rev-parse", "HEAD"], repo).trim();
+  const blobs: Record<string, string> = {};
+  for (const [f, c] of Object.entries(seed)) {
+    writeFileSync(join(repo, f), c);
+    blobs[f] = `${sh(["git", "hash-object", f], repo).trim()} ${(statSync(join(repo, f)).mode & 0o777).toString(8)}`;
+  }
+  for (const [f, c] of Object.entries(preEdit)) writeFileSync(join(repo, f), c);
   for (const [f, c] of Object.entries(edit)) { if (c === "DELETE") { rmSync(join(repo, f)); continue; } mkdirSync(dirname(join(repo, f)), { recursive: true }); writeFileSync(join(repo, f), c); }
   mkdirSync(join(repo, ".loki/runs/r1"), { recursive: true });
-  const outputs = { intake: { title: "t" } };
+  const outputs = { intake: { title: "t", preexisting_untracked: Object.keys(seed), preexisting_untracked_blobs: blobs } };
   const ctx = { runId: "r1", repoDir: repo, runDir: join(repo, ".loki/runs/r1"), baseSha, branch: "loki/r1", provider: "claude", model: "m", deep: false, capS: 900, emit: () => {}, sessions: { run: async () => { throw new Error("none"); } }, tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] }, cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) }, clock: { now: () => 0 }, outputs: () => outputs } as unknown as RunContext;
   const pre = process.env["PATH"];
   process.env["PATH"] = `${bin}:${pre}`;
@@ -102,4 +108,34 @@ test("T16 real gofmt via go.mod formats the run's go file", async () => {
   if (!Bun.which("gofmt")) return; // no Go toolchain (macOS runners): spawnSync throws ENOENT there rather than returning no exit code
   const r = await commitRun({ "go.mod": "module x\n" }, { "m.go": "package main\nfunc  main( ){\n}\n" });
   expect(r.show("m.go")).toBe("package main\n\nfunc main() {\n}\n");
+});
+
+// FC-COMMIT-STAGES-USER-UNTRACKED: a pre-run untracked file the run did not touch is never committed.
+test("FC-COMMIT-STAGES-USER-UNTRACKED an untouched pre-run untracked file is left out of the commit", async () => {
+  const r = await commitRun({ "README.md": "r\n" }, { "a.txt": "x\n" }, { "user-notes.txt": "mine\n" });
+  expect(r.files).toEqual(["a.txt"]);
+  expect(readFileSync(join(r.repo, "user-notes.txt"), "utf8")).toBe("mine\n");
+});
+
+test("FC-COMMIT-STAGES-USER-UNTRACKED a pre-run untracked file the run edited is the run's change and is committed", async () => {
+  const r = await commitRun({ "README.md": "r\n" }, { "a.txt": "x\n" }, { "user-notes.txt": "mine\n" }, { "user-notes.txt": "mine plus run\n" });
+  expect(r.files.sort()).toEqual(["a.txt", "user-notes.txt"]);
+});
+
+test("FC-COMMIT-STAGES-USER-UNTRACKED a file not in the intake snapshot (crash-written) is still committed", async () => {
+  const r = await commitRun({ "README.md": "r\n" }, { "a.txt": "x\n", "crash.txt": "c\n" }, { "user-notes.txt": "mine\n" });
+  expect(r.files.sort()).toEqual(["a.txt", "crash.txt"]);
+});
+
+test("FC-COMMIT-STAGES-USER-UNTRACKED the supervisor backstop also leaves an untouched pre-run untracked file out", () => {
+  const repo = join(dir, "bs");
+  mkdirSync(repo, { recursive: true });
+  sh(["git", "init", "-q", "-b", "main"], repo); sh(["git", "config", "user.name", "t"], repo); sh(["git", "config", "user.email", "t@test.invalid"], repo);
+  writeFileSync(join(repo, "README.md"), "r\n"); sh(["git", "add", "-A"], repo); sh(["git", "commit", "-q", "-m", "base"], repo);
+  const base = sh(["git", "rev-parse", "HEAD"], repo).trim();
+  writeFileSync(join(repo, "user-notes.txt"), "mine\n");
+  const blobs = { "user-notes.txt": `${sh(["git", "hash-object", "user-notes.txt"], repo).trim()} ${(statSync(join(repo, "user-notes.txt")).mode & 0o777).toString(8)}` };
+  writeFileSync(join(repo, "a.txt"), "x\n");
+  backstopCommit(repo, { ...process.env }, "r1", base, undefined, undefined, blobs);
+  expect(sh(["git", "show", "--name-only", "--format=", "HEAD"], repo).split("\n").filter(Boolean)).toEqual(["a.txt"]);
 });
