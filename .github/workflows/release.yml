@@ -8,6 +8,7 @@ name: Release
 #   update-homebrew              asklokesh/homebrew-tap formula (needs the release asset)
 #   notify-slack                 release announcement
 #   publish-ts-sdk               npm loki-mode-sdk under latest AND next
+#   verify-sdk-registry          converges loki-mode-sdk dist-tags once the version resolves
 #   publish-python-sdk           PyPI loki-mode-sdk
 #   docker-build -> docker       Docker Hub asklokesh/loki-mode multi-arch, cosign keyless signature
 #   sanity                       seconds-long syntax/version check; nothing depends on it
@@ -545,6 +546,54 @@ jobs:
           # Same highest-version guard, fail-closed reads and overtaken-tag restore as
           # loki-mode (FC-DIST-TAG-MOVED-BACKWARDS).
           LOKI_DISTTAG_PKG=loki-mode-sdk bash ../../scripts/npm-dist-tags.sh "$VERSION"
+
+  # Same late-materialization converge as verify-npm-registry, for loki-mode-sdk
+  # (FC-DIST-TAG-MOVED-BACKWARDS). Nothing waits on it and it holds no lock: the
+  # script only moves tags to the max stable semver, never lower.
+  verify-sdk-registry:
+    needs: publish-ts-sdk
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout (VERSION and dist-tag script)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            VERSION
+            scripts/npm-dist-tags.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Prove the registry serves this SDK version
+        run: |
+          set -uo pipefail
+          VERSION="$(tr -d '\n' < VERSION)"
+          for i in $(seq 1 90); do
+            got="$(npm view "loki-mode-sdk@${VERSION}" version --prefer-online 2>/dev/null || true)"
+            if [ "$got" = "$VERSION" ]; then
+              echo "registry serves loki-mode-sdk@${VERSION} (poll $i)"; exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::registry never served loki-mode-sdk@${VERSION} within about 15 minutes"
+          exit 1
+
+      - name: Converge SDK dist-tags after the version resolves
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          LOKI_DISTTAG_PKG: loki-mode-sdk
+        run: |
+          set -uo pipefail
+          VERSION="$(tr -d '\n' < VERSION)"
+          bash scripts/npm-dist-tags.sh "$VERSION"
 
   # Native per-arch build (no QEMU), pushed by digest; needs nothing, so it
   # starts at t=0. The docker job assembles the multi-arch manifest.

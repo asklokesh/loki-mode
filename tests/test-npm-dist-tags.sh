@@ -103,6 +103,12 @@ second_out="$(PATH="$WORK/bin:$PATH" STUB_STATE="$CASE_ST" LOKI_DISTTAG_SLEEP=0 
 { [ $first_rc -eq 0 ] && [ $second_rc -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 11.54.1 ] && [ "$(cat "$CASE_ST/next")" = 11.54.1 ]; } \
     && ok "latest dragged down after the first settle is restored by a second run" || bad "late: rc=$first_rc/$second_rc latest=$(cat "$CASE_ST/latest") $second_out"
 
+STUB_PKG=loki-mode-sdk run_case sdk-late "1.0.0 1.0.1 1.0.2" 1.0.1 1.0.1 1.0.2
+printf '%s\n' 1.0.1 > "$CASE_ST/latest"; printf '%s\n' 1.0.2 > "$CASE_ST/next"
+sdk_out="$(PATH="$WORK/bin:$PATH" STUB_STATE="$CASE_ST" STUB_PKG=loki-mode-sdk LOKI_DISTTAG_PKG=loki-mode-sdk LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$SCRIPT" 1.0.2 2>&1)"; sdk_rc=$?
+{ [ $sdk_rc -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 1.0.2 ]; } \
+    && ok "sdk: latest dragged down after the first settle is restored by a second run" || bad "sdk-late: rc=$sdk_rc $sdk_out"
+
 run_case idem "11.54.0 11.54.1" 11.54.1 11.54.1 11.54.1
 { [ $CASE_RC -eq 0 ] && [ ! -s "$CASE_ST/log" ]; } \
     && ok "a converge run on settled tags writes nothing" || bad "idem: rc=$CASE_RC log=$(cat "$CASE_ST/log")"
