@@ -494,13 +494,14 @@ function goIdTouched(repoDir: string, id: string, changed: string[]): boolean {
     try { return /^module\s+(\S+)/m.exec(readFileSync(join(repoDir, dir, "go.mod"), "utf8"))?.[1] ?? null; } catch { return null; }
   };
   return changed.some((f) => {
-    if (!f.endsWith(".go")) return false;
+    const isMod = /(?:^|\/)go\.(?:mod|sum)$/.test(f);
+    if (!f.endsWith(".go") && !isMod) return false;
     const dir = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : ".";
     // nearest enclosing go.mod (nested modules, go.work): the package path is that module path plus the file's directory below it
     const parts = dir === "." ? [] : dir.split("/");
     for (let n = parts.length; n >= 0; n--) {
       const modDir = parts.slice(0, n).join("/") || ".", mod = modOf(modDir);
-      if (mod) { const rel = parts.slice(n).join("/"); return pkg === (rel ? `${mod}/${rel}` : mod); }
+      if (mod) { if (isMod) return pkg === mod || pkg.startsWith(mod + "/"); const rel = parts.slice(n).join("/"); return pkg === (rel ? `${mod}/${rel}` : mod); }
     }
     return dir !== "." && (pkg === dir || pkg.endsWith("/" + dir));
   });

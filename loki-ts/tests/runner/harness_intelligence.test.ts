@@ -904,6 +904,11 @@ describe("repo baseline profile (REPOMEM)", () => {
         expect(at(fail("example.com/other/foo"), ["sub/foo/README.md"])).toEqual(["full"]);
         expect(at(fail("example.com/other/foo"), ["bar/x.go"])).toEqual(["full"]);
         expect(at(fail("example.com/other/foo"), ["sub/bar/x.go"])).toEqual(["full"]);
+        // a go.mod or go.sum edit (dependency bump) touches every package of its module, not another module's
+        for (const f of ["go.mod", "go.sum"]) expect(at(fail("example.com/root/foo"), [f])).toEqual([]);
+        expect(at(bfail("example.com/root"), ["go.mod"])).toEqual([]);
+        expect(at(fail("example.com/other/foo"), ["sub/go.sum"])).toEqual([]);
+        expect(at(fail("example.com/other/foo"), ["go.sum"])).toEqual(["full"]);
         // the root module package with a changed foo/x.go is blocked
         expect(at(fail("example.com/root/foo"), ["foo/x.go"])).toEqual([]);
       });
