@@ -173,7 +173,7 @@ import { execFileSync } from "node:child_process";
 import { makeEvent, readEvents } from "../../src/engine10/events.ts";
 import { DEEP_CAP_S, DEFAULT_CAP_S } from "../../src/engine10/types.ts";
 import { workerCapS } from "../../src/engine10/worker.ts";
-import { firstIncompleteStage, resumeFlag, resumeMachineOpts, resumePoint, seedResumeCtx, stageCheckpoints } from "../../src/util/run_outputs.ts";
+import { firstIncompleteStage, resumeFlag, resumeMachineOpts, resumePoint, seedResumeCtx, stageCheckpoints, startRecovery } from "../../src/util/run_outputs.ts";
 import { applyCapEnv, runSupervisor, SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { readAliveBeat, writeAliveBeat } from "../../src/util/run_pid.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -343,6 +343,46 @@ describe("resume from stage (P12-07)", () => {
       expect(say.join("")).toContain("refused");
       expect(seen.length).toBe(1);
     } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("FC-CRASH-WORK-READ-AS-PREEXISTING: a same-task start after a crash auto-resumes with the announced line; a different task, LOKI_NO_AUTO_RESUME=1 and a refusal start fresh", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-cw18c-"));
+    const cwd = process.cwd(), keep = process.env["LOKI_NO_AUTO_RESUME"];
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: dir });
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"], { cwd: dir });
+      execFileSync("git", ["branch", `loki/${RID}`], { cwd: dir });
+      mkdirSync(join(dir, ".loki", "runs", RID), { recursive: true });
+      const p = join(dir, ".loki", "runs", RID, "events.jsonl");
+      const say: string[] = [], out = (s: string): void => { say.push(s); }, seen: { resume?: boolean }[] = [];
+      const supervise = async (o: { resume?: boolean }): Promise<{ outcome: "VERIFIED" }> => { seen.push(o); return { outcome: "VERIFIED" }; };
+      const deps = { out, supervise: supervise as never };
+      process.chdir(dir);
+      writeFileSync(p, text(killedAfterImplement()));
+      delete process.env["LOKI_NO_AUTO_RESUME"];
+      expect(await startRecovery(dir, "other task", true, deps)).toBeNull();
+      expect(seen.length).toBe(0);
+      process.env["LOKI_NO_AUTO_RESUME"] = "1";
+      expect(await startRecovery(dir, "t", true, deps)).toBeNull();
+      expect(seen.length).toBe(0);
+      expect(say.join("")).not.toContain("resuming interrupted run");
+      delete process.env["LOKI_NO_AUTO_RESUME"];
+      say.length = 0;
+      writeFileSync(join(dir, "mine.txt"), "x"); // a user file that would ride onto the run branch: resumeFlag refuses (exit 2), the start falls back to a new run
+      expect(await startRecovery(dir, "t", true, deps)).toBeNull();
+      expect(say.join("")).toContain("could not resume; starting a new run");
+      expect(seen.length).toBe(0);
+      rmSync(join(dir, "mine.txt"));
+      say.length = 0;
+      expect(await startRecovery(dir, "t", true, deps)).toBe(0);
+      expect(say.join("")).toContain(`resuming interrupted run ${RID} from stage verify`);
+      expect(seen.length).toBe(1);
+      expect(seen[0]!.resume).toBe(true);
+      writeFileSync(p, text(killedAfterImplement()) + '{"v":1,"seq":5,"ty'); // torn log: resumePoint refuses, nothing is announced, a new run starts
+      say.length = 0;
+      expect(await startRecovery(dir, "t", true, deps)).toBeNull();
+      expect(say.join("")).not.toContain("resuming interrupted run");
+      expect(seen.length).toBe(1);
+    } finally { process.chdir(cwd); if (keep === undefined) delete process.env["LOKI_NO_AUTO_RESUME"]; else process.env["LOKI_NO_AUTO_RESUME"] = keep; rmSync(dir, { recursive: true, force: true }); }
   });
   test("P12-07i: resumeMachineOpts seeds ctx, runMachine runs only unsettled stages and later stages see restored outputs", async () => {
     const { ctx, events } = fakeCtx();

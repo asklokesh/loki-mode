@@ -272,7 +272,7 @@ An interrupted run has an `events.jsonl` with neither `run.completed` nor `pr.op
 - Push is skipped when the remote branch is already at the local commit (GitHub: `gh api .../git/ref/heads/<branch>`; local bare origin: `git ls-remote`). A newer commit is a new revision and is pushed.
 - PR creation checks `gh pr list --head <branch> --state open` first and reuses an open PR, so any number of publish attempts yields one PR.
 
-For implement and verify, `loki resume` prints the phase, whether branch `loki/<run-id>` holds preserved work, and exits 4. `loki start` prints a one-line note and starts a new run. `LOKI_NO_RESUME=1` disables the `loki start` check.
+For implement and verify, `loki resume` prints the phase, whether branch `loki/<run-id>` holds preserved work, and exits 4. `loki start` for the same task prints `resuming interrupted run <id> from stage <s>` and re-enters the run at its first unsettled stage; `LOKI_NO_AUTO_RESUME=1` starts a new run instead, and a resume refusal falls back to a new run. A different task prints a one-line note and starts a new run. `LOKI_NO_RESUME=1` disables the `loki start` check.
 
 Exit codes of `loki-ts engine10 resume`: 0 resumed, 3 no interrupted run, 4 phase reported but not auto-resumable, 5 publish attempted and failed (the run stays resumable), 2 not in a git repository or no origin.
 

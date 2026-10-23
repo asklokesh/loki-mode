@@ -348,13 +348,23 @@ export async function resumePublish(repoDir: string, it: Interrupted, deps: Resu
 }
 
 /** Called by `loki start` before it opens a new run. Returns an exit code when it resumed, null to start fresh.
- *  Only a publish-phase run whose recorded task equals this task is resumed; any other interrupted run is just announced. */
+ *  An interrupted run whose recorded task equals this task is resumed (publish phase via resumePublish, any earlier phase via resumeFlag unless LOKI_NO_AUTO_RESUME=1); any other interrupted run is just announced. */
 export async function startRecovery(repoDir: string, task: string, noPr: boolean, deps: ResumeDeps = {}): Promise<number | null> {
   if (process.env["LOKI_NO_RESUME"] === "1") return null;
   const it = findInterrupted(repoDir);
   if (!it) return null;
   if (it.phase === "publish" && !noPr && it.task !== null && it.task === task.trim()) return resumePublish(repoDir, it, deps);
   const note = deps.out ?? ((s: string) => { process.stderr.write(s); });
+  if (it.phase !== "publish" && it.task !== null && it.task === task.trim() && process.env["LOKI_NO_AUTO_RESUME"] !== "1") { // FC-CRASH-WORK-READ-AS-PREEXISTING: same task after a crash re-enters at the first unsettled stage
+    let raw = ""; try { raw = readFileSync(join(repoDir, eventsRelPath(it.runId)), "utf8"); } catch { /* resumePoint refuses an unreadable log below */ }
+    const rp = resumePoint(it.events, raw);
+    if (rp.ok) {
+      note(`resuming interrupted run ${it.runId} from stage ${rp.stage} (LOKI_NO_AUTO_RESUME=1 starts a new run)\n`);
+      let refusal = ""; const rc = await resumeFlag(it.runId, noPr, { ...deps, out: (m: string) => { if (/--resume refused/.test(m)) refusal = m; note(m); } });
+      if (rc !== 2 || !refusal) return rc;
+      note("could not resume; starting a new run.\n"); return null; // a refusal happens before any stage runs, so a new run loses nothing
+    }
+  }
   note(`note: run ${it.runId} was interrupted in phase ${it.phase}; "loki resume" ${it.phase === "publish" ? "finishes it" : "reports what is preserved"}. Starting a new run.\n`);
   return null;
 }
