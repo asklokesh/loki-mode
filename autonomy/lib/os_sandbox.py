@@ -8,9 +8,13 @@ src/policies/claude_permissions.js compiles into Claude read-deny rules.
 
 CLI:
   python3 -m autonomy.lib.os_sandbox argv --workspace W --run-dir R --provider P
+      [--extra-read PATH ...] [--status-file F]
 prints {kind, argv_prefix, profile_sha256, kernel_probe_sha256, known_limitations}.
-LOKI_OS_SANDBOX=off|auto|on (default off). Under on, an unavailable sandbox or a
-failed kernel probe exits 2. auto falls back to kind none with a reason.
+--status-file also writes the same object without argv_prefix, for `loki status --json`.
+LOKI_OS_SANDBOX=off|auto|on (default off; auto is opt-in). Under on, an unavailable sandbox or a
+failed kernel probe exits 2. auto falls back to kind none with a reason and says so.
+off opts out. The launch paths of `loki start` (run.sh and the engine10 session host)
+call this module; there is no second profile builder.
 """
 from __future__ import annotations
 
@@ -341,10 +345,12 @@ def git_pin(workspace: Path) -> dict[str, str] | None:
 
 
 def read_allow_paths(
-    workspace: Path, run_dir: Path, provider: str, home: Path
+    workspace: Path, run_dir: Path, provider: str, home: Path,
+    extra_read: Iterable[Path] = (),
 ) -> list[Path]:
     paths = [Path(p) for p in SYSTEM_READ_ROOTS if Path(p).exists()]
     paths += [workspace, run_dir, *provider_write_paths(provider, home)]
+    paths += [Path(p) for p in extra_read if Path(p).exists()]
     paths += [(home / rel) for rel in HOME_TOOLCHAIN if (home / rel).exists()]
     paths += git_read_paths(workspace)
     return paths
@@ -358,6 +364,7 @@ def seatbelt_provider_profile(
     home: Path | None = None,
     confine_reads: bool = False,
     secret_targets: Iterable[Path] = (),
+    extra_read: Iterable[Path] = (),
 ) -> bytes:
     """Provider-CLI profile: writes confined, secrets denied.
 
@@ -388,7 +395,7 @@ def seatbelt_provider_profile(
     if confine_reads:
         lines.append("(allow file-read-metadata)")
         lines.append('(allow file-read-data (literal "/"))')
-        for path in sorted({*read_allow_paths(workspace, run_dir, provider, home)}, key=str):
+        for path in sorted({*read_allow_paths(workspace, run_dir, provider, home, extra_read)}, key=str):
             lines.append(f"(allow file-read* {seatbelt_path_filter(path)})")
         lines.append(
             "(allow file-read* (regex #\"^" + re.escape(str(home)) + "/\\.gitconfig[^/]*$\"))"
@@ -700,6 +707,7 @@ def build_confinement(
     home: Path | None = None,
     platform: str | None = None,
     confine_reads: bool | None = None,
+    extra_read: Iterable[Path] = (),
 ) -> dict[str, Any]:
     """Return the typed confinement status for wrapping a provider CLI argv.
 
@@ -714,6 +722,10 @@ def build_confinement(
     }
     if mode == "off":
         return none("LOKI_OS_SANDBOX=off")
+    if provider == "codex":
+        # codex exec --sandbox workspace-write applies its own Seatbelt/Landlock; a second
+        # sandbox_apply inside ours is refused by the kernel, so codex is not wrapped.
+        return none("codex runs its own OS sandbox (--sandbox workspace-write); nesting is refused by the kernel")
     workspace = workspace.resolve(strict=True)
     run_dir = run_dir.resolve(strict=True)
     rules = load_secret_rules()
@@ -742,7 +754,7 @@ def build_confinement(
         targets = secret_symlink_targets(
             [workspace, run_dir], rules, home or Path(os.path.expanduser("~")))
         profile = seatbelt_provider_profile(workspace, run_dir, provider, regexes, home,
-                                          confine_reads, targets)
+                                          confine_reads, targets, extra_read)
         # Inline -p: a profile file under a writable path could be rewritten by
         # the confined process and read by the next launch.
         prefix = [str(SANDBOX_EXEC), "-p", profile.decode("utf-8")]
@@ -789,9 +801,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--workspace", required=True)
     p.add_argument("--run-dir", required=True)
     p.add_argument("--provider", required=True)
+    p.add_argument("--extra-read", action="append", default=[])
+    p.add_argument("--status-file")
+    p.add_argument("--format", choices=("json", "b64"), default="json")
     args = parser.parse_args(argv)
     try:
-        status = build_confinement(Path(args.workspace), Path(args.run_dir), args.provider)
+        status = build_confinement(Path(args.workspace), Path(args.run_dir), args.provider,
+                                   extra_read=[Path(x) for x in args.extra_read])
     except SandboxUnavailable as exc:
         print(f"os_sandbox: LOKI_OS_SANDBOX=on but confinement is unavailable: {exc}",
               file=sys.stderr)
@@ -801,6 +817,22 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if status["kind"] == "none" and status.get("reason") != "LOKI_OS_SANDBOX=off":
         print(f"os_sandbox: running unconfined: {status['reason']}", file=sys.stderr)
+    if args.status_file:
+        record = {k: v for k, v in status.items() if k != "argv_prefix"}
+        record["provider"] = args.provider
+        record["mode"] = resolve_mode()
+        target = Path(args.status_file)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+        except OSError as exc:
+            print(f"os_sandbox: cannot write status file: {exc}", file=sys.stderr)
+    if args.format == "b64":
+        # One base64 line per argv element: lets a bash 3.2 caller rebuild the array without NUL handling.
+        import base64
+        for item in status["argv_prefix"]:
+            print(base64.b64encode(item.encode("utf-8")).decode("ascii"))
+        return 0
     print(json.dumps(status, sort_keys=True))
     return 0
 
