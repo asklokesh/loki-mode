@@ -24,6 +24,7 @@ import { mkdirSync, existsSync, readFileSync, realpathSync, appendFileSync, writ
 import { delimiter, dirname, join, isAbsolute, relative, resolve, sep } from "node:path";
 import { run as shellRun } from "../util/shell.ts";
 import { REPO_ROOT } from "../util/paths.ts";
+import { neutralizeEngineMarkers } from "./retry_class.ts"; // FC-AGENT-TEXT-FORGES-ENGINE-MARKER: a provider CLI stdout is agent text
 import {
   buildAutoFlags,
   claudeFlagSupported,
@@ -571,7 +572,7 @@ export function claudeProvider(): ProviderInvoker {
         env: { ...otelPassthroughEnv(process.env), ...cavemanEnv, ...modelRouteEnv(process.env), ...engine10CacheTtlEnv(process.env) },
         timeoutMs: _callTimeoutMs,
       });
-      await writeCaptured(call.iterationOutputPath, r.stdout, r.stderr);
+      await writeCaptured(call.iterationOutputPath, neutralizeEngineMarkers(r.stdout), r.stderr);
 
       return {
         exitCode: r.exitCode,
@@ -1142,7 +1143,7 @@ export function codexProvider(): ProviderInvoker {
           CODEX_MODEL_REASONING_EFFORT: effort,
         },
       });
-      await writeCaptured(call.iterationOutputPath, r.stdout, r.stderr);
+      await writeCaptured(call.iterationOutputPath, neutralizeEngineMarkers(r.stdout), r.stderr);
 
       return {
         exitCode: r.exitCode,
@@ -1187,7 +1188,7 @@ export function clineProvider(): ProviderInvoker {
       argv.push(withCommitHygiene(call.prompt));
 
       const r = await shellRun(argv, { cwd: call.cwd });
-      await writeCaptured(call.iterationOutputPath, r.stdout, r.stderr);
+      await writeCaptured(call.iterationOutputPath, neutralizeEngineMarkers(r.stdout), r.stderr);
 
       return {
         exitCode: r.exitCode,
@@ -1248,7 +1249,7 @@ export function aiderProvider(): ProviderInvoker {
       }
 
       const r = await shellRun(argv, { cwd: call.cwd });
-      await writeCaptured(call.iterationOutputPath, r.stdout, r.stderr);
+      await writeCaptured(call.iterationOutputPath, neutralizeEngineMarkers(r.stdout), r.stderr);
 
       return {
         exitCode: r.exitCode,
