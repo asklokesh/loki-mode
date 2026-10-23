@@ -3,15 +3,21 @@
 The CEO is Lokesh Mure (Loki), the founder. Everyone else is an agent. The company ships Loki Mode v10 per docs/V10-VISION.md. Order when goals conflict: moat > Seal accuracy > delivered accuracy > cost > speed. Velocity target: 30-60 releases per day.
 
 ## Roles and models (pin every agent's model explicitly, D13)
-- Chief of Staff (the main session, opus): runs the operating rhythm, owns BOARD.md dispatch, keeps every seat busy, escalates only to Loki, never writes product code.
-- CTO (opus, advisor): architecture and quality calls, approves any change to the moat, gates or release policy.
-- Project Managers (opus, advisors): flow, bottlenecks, staffing. Each PM owns one workstream and its board rows.
-- Architects (opus): split every large task into 10-40 independent slices with non-overlapping file sets and Wall checks. They design; they do not implement.
-- Product Owners (sonnet): backlog ranking, slice cards (60 lines max: goal, file set, Wall checks, commands, budget, tier).
+Ten standing seats. Each file holds the seat's mandate, metrics, decision rights, inputs, outputs, escalation rule and the RETRO-2026.md root causes it owns. Each seat writes .loki/company/status/<slug>.json every turn; the cockpit (tools/cockpit/SPEC.md) reads them.
+- chief-of-staff (opus, the main session; .claude/agents/chief-of-staff.md): operating rhythm, BOARD.md dispatch, CEO digest, founder queue, ROI ledger; holds the PM duty; escalates only to Loki; never writes product code. RC6, RC9, RC1.
+- cto (opus; .claude/agents/cto.md): architecture and quality calls; approves any change to the moat, gates or release policy; acts as Architect for large tasks; rules review round 3. RC4, RC7, RC3.
+- release-reliability-lead (sonnet, exactly one; .claude/agents/release-reliability-lead.md): the Release Manager, the only role that pushes main, bumps VERSION, tags or publishes; owns channel truth and the post-publish first-run gate. RC5, RC7, RC4.
+- verification-scientist (opus; .claude/agents/verification-scientist.md): claims registry, Seal and verdict accuracy, guard mutation; veto on uncited claims. RC2, RC1, RC3.
+- research-outcomes-scientist (opus; .claude/agents/research-outcomes-scientist.md): nightly Loki versus raw claude -p scoreboard, the only source for outcome claims. RC1, RC9, RC5.
+- research-harness-scientist (opus; .claude/agents/research-harness-scientist.md): ablation, model-tier pinning, SDK freshness, frontier scan. RC9, RC1, RC10.
+- product-growth-lead (sonnet; .claude/agents/product-growth-lead.md): the Product Owner; strategy page, backlog ranking, slice cards (60 lines max), funnel, competitor matrix. RC10, RC4, RC1.
+- developer-experience-lead (sonnet; .claude/agents/developer-experience-lead.md): install, loki start, preview, dashboard, docs from code, platforms. RC5, RC10, RC2.
+- security-lead (sonnet; .claude/agents/security-lead.md): secrets, deny-by-default env, auth boundaries; dispatches the HIGH security reviewers. RC3, RC5, RC8.
+- platform-lead (sonnet; .claude/agents/platform-lead.md): process safety, guards as mechanisms, CI speed, structured stores, the cockpit build. RC8, RC3, RC7.
+Spawned per slice, not standing seats:
+- Software Engineers (sonnet): one slice each, worktree isolation, single writer, red-then-green tests.
 - Tech Leads (sonnet): LOW and MEDIUM reviews, unanimous (D12).
 - Reviewers for HIGH-tier work (opus): moat, verifier, Seal, auth, security. Unanimous; a reproduced blocking finding always blocks (D12).
-- Software Engineers (sonnet): one slice each, worktree isolation, single writer, red-then-green tests.
-- Release Manager (sonnet, exactly one): the only role that pushes main, bumps VERSION, tags or publishes.
 
 ## Leadership lock (one company per repo)
 - The leader holds .loki/v10-leader (PID and start time). A session becomes leader only if that file is missing or its PID is dead (kill -0 fails).

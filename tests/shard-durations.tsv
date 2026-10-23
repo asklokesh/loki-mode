@@ -766,3 +766,4 @@ loki verify <run receipt path> routes to the v10 verifier (CW-17 #352)	10
 npm-dist-tags.sh never moves a tag backwards and restores an overtaken one (FC-DIST-TAG-MOVED-BACKWARDS)	8
 release-approval-gate.sh approves a range by SHA: stacked parents, patch-id, holds, exemptions (FC-RELEASE-UNNAMED-STACKED-PARENT)	30
 loki report release-notes lists sealed and unsealed commits (#391)	5
+CEO cockpit: headless server, panels, queue append, security (tools/cockpit)	40

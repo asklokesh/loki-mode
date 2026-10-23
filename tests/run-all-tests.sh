@@ -1611,6 +1611,7 @@ run_test "State versioning (SYN-015)" "$SCRIPT_DIR/test-state-versioning.sh"
 run_test "Welcome opener (terminal + browser)" "$SCRIPT_DIR/test-welcome-opener.sh"
 
 run_test "Browser-open guard (tests never open a browser, S-103)" "$SCRIPT_DIR/test-browser-open-guard.sh"
+run_test "CEO cockpit: headless server, panels, queue append, security (tools/cockpit)" "timeout -k 15 300 bash $SCRIPT_DIR/test-cockpit.sh"
 run_test "Eval results archive: redaction and dirty-check exclude (E-101)" "$SCRIPT_DIR/test-eval-archive.sh"
 run_test "run_test missing or empty argument does not stop the runner (S-174)" "$SCRIPT_DIR/test-run-all-missing-arg.sh"
 run_test "proof headline ignores a stale test-results.json (S-176)" "python3 -m pytest -q $SCRIPT_DIR/test_proof_tests_freshness.py"

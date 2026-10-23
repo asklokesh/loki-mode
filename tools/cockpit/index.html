@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loki Cockpit</title>
+<style>
+:root{--bg:#f4f5f8;--card:#fff;--ink:#14161c;--mute:#5b6270;--line:#d9dde6;--ok:#17653a;--bad:#a4161a;--warn:#8a5a00;--unk:#4a4f6a;--badbg:#fde8e8;--accent:#2b4ed8}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--ink:#e8eaf0;--mute:#9aa3b5;--line:#2a2f3a;--ok:#5fd08f;--bad:#ff8083;--warn:#f0b955;--unk:#9fa6c8;--badbg:#3a1618;--accent:#8aa2ff}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;padding:12px 16px;border-bottom:1px solid var(--line)}
+header h1{font-size:16px;margin:0}
+#refreshed{color:var(--mute);font-size:12px}
+main{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:12px;padding:12px 16px}
+section{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;min-height:160px;overflow:hidden}
+section.wide{grid-column:1/-1}
+h2{font-size:13px;margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em;display:flex;gap:8px;align-items:center}
+.badge{font-size:11px;padding:1px 6px;border-radius:10px;border:1px solid currentColor}
+.OK{color:var(--ok)}.VIOLATION{color:var(--bad)}.UNKNOWN,.UNMEASURED,.UNCITED{color:var(--unk)}.STALE{color:var(--warn)}
+.src{margin-top:8px;color:var(--mute);font:11px ui-monospace,Menlo,monospace;word-break:break-all}
+.err{color:var(--warn);font-size:12px;margin:4px 0}
+.band{background:var(--badbg);color:var(--bad);border:1px solid var(--bad);border-radius:6px;padding:8px;margin-bottom:8px}
+.band .top{font-size:16px;font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:12px}
+td,th{text-align:left;padding:3px 6px 3px 0;border-bottom:1px solid var(--line);vertical-align:top;word-break:break-word}
+.flow{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.flow div{border:1px solid var(--line);border-radius:6px;padding:4px 8px;min-width:78px}
+.flow b{display:block;font-size:18px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+.card{border:1px solid var(--line);border-radius:6px;padding:8px;font-size:12px}
+.card.blocked{border-color:var(--bad)}
+.mute{color:var(--mute)}
+textarea,input[type=text]{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:8px;font:inherit}
+button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 14px;font:inherit;cursor:pointer}
+button:disabled{opacity:.5}
+#qres{margin-top:8px;font-size:12px;min-height:18px;word-break:break-word}
+</style>
+</head>
+<body>
+<header><h1>Loki Cockpit</h1><span id="refreshed">loading</span><span class="mute" id="fail"></span></header>
+<main>
+<section class="wide" id="p-pulse"><h2>Pulse</h2><div class="body">loading</div></section>
+<section class="wide" id="p-agents"><h2>Agents</h2><div class="body">loading</div></section>
+<section id="p-board"><h2>BOARD flow</h2><div class="body">loading</div></section>
+<section id="p-releases"><h2>Releases</h2><div class="body">loading</div></section>
+<section class="wide" id="p-okrs"><h2>OKRs</h2><div class="body">loading</div></section>
+<section class="wide" id="p-roi"><h2>ROI</h2><div class="body">loading</div></section>
+<section class="wide" id="p-queue"><h2>Founder command box</h2><div class="body">loading</div>
+<div>
+<textarea id="item" rows="3" maxlength="2000" placeholder="Command or decision for the chief of staff (max 2000 characters)"></textarea>
+<input type="text" id="why" maxlength="500" placeholder="Why only you (optional)">
+<p><button id="send">Append to FOUNDER-QUEUE</button> <span class="mute" id="count">0/2000</span></p>
+<div id="qres"></div>
+</div>
+</section>
+</main>
+<script>
+(function(){
+"use strict";
+var TOKEN="__COCKPIT_TOKEN__";
+function h(tag,attrs){var e=document.createElement(tag);if(attrs){for(var k in attrs){if(k==="class")e.className=attrs[k];else if(k==="title")e.title=attrs[k];else e.setAttribute(k,attrs[k]);}}
+ for(var i=2;i<arguments.length;i++){var c=arguments[i];if(c===null||c===undefined)continue;e.appendChild(typeof c==="object"?c:document.createTextNode(String(c)));}return e;}
+function show(v){return v===null||v===undefined?"UNKNOWN":String(v);}
+function badge(s){return h("span",{"class":"badge "+s},s);}
+function src(p){return h("div",{"class":"src",title:"as of "+p.as_of},"source: "+p.source_cmd+"  as of "+p.as_of+(p.cache_age_s!==undefined?"  cached "+p.cache_age_s+"s":""));}
+function err(p){return p.error?h("div",{"class":"err"},p.error):null;}
+function table(rows,head){var t=h("table");if(head){var tr=h("tr");head.forEach(function(x){tr.appendChild(h("th",null,x));});t.appendChild(tr);}
+ rows.forEach(function(r){var tr=h("tr");r.forEach(function(c){tr.appendChild(h("td",null,c));});t.appendChild(tr);});return t;}
+function fill(id,p,build){var s=document.getElementById("p-"+id);var b=s.querySelector(".body");var h2=s.querySelector("h2");
+ while(h2.childNodes.length>1)h2.removeChild(h2.lastChild);h2.appendChild(badge(p.status));
+ var nb=h("div",{"class":"body"});try{build(nb,p.data||{},p);}catch(e){nb.appendChild(h("div",{"class":"err"},"render error: "+e));}
+ nb.appendChild(err(p));nb.appendChild(src(p));s.replaceChild(nb,b);}
+
+var R={};
+R.pulse=function(b,d){
+ var v=d.violations||[];
+ if(v.length){var band=h("div",{"class":"band"});band.appendChild(h("div",{"class":"top"},v[0]));
+  v.slice(1).forEach(function(x){band.appendChild(h("div",null,x));});b.appendChild(band);}
+ else if(d.exit_code===0)b.appendChild(h("div",{"class":"OK"},"No violations."));
+ var m=d.metrics||{};b.appendChild(table(Object.keys(m).map(function(k){return [k,m[k]];})));
+ if((d.unknown_metrics||[]).length)b.appendChild(h("p",{"class":"mute"},"UNKNOWN metrics: "+d.unknown_metrics.join(", ")));
+ (d.stale||[]).forEach(function(x){b.appendChild(h("p",{"class":"STALE"},x));});};
+R.agents=function(b,d){var c=h("div",{"class":"cards"});
+ (d.seats||[]).forEach(function(s){var card=h("div",{"class":"card"+(s.blocked?" blocked":"")});
+  card.appendChild(h("div",null,h("b",null,s.slug)," ",badge(s.state)));
+  if(s.state==="UNKNOWN"){card.appendChild(h("div",{"class":"mute"},s.error||"no status file"));}
+  else{card.appendChild(h("div",null,"model: "+show(s.model)));card.appendChild(h("div",null,"doing: "+show(s.doing)));
+   card.appendChild(h("div",null,"slice: "+show(s.slice)));card.appendChild(h("div",null,"updated: "+show(s.updated_min_ago)+" min ago"));
+   if(s.blocked_on)card.appendChild(h("div",{"class":"VIOLATION"},"blocked on: "+s.blocked_on));}
+  (s.root_causes||[]).forEach(function(r){card.appendChild(h("div",{"class":"mute"},r));});c.appendChild(card);});
+ b.appendChild(c);};
+R.board=function(b,d){var f=h("div",{"class":"flow"});var cs=d.counts||{};
+ ["ready","building","review","approved","merged","released"].forEach(function(t){f.appendChild(h("div",null,h("b",null,show(cs[t])),t));});b.appendChild(f);
+ if(d.ready_below_30)b.appendChild(h("div",{"class":"err"},"ready queue below "+d.ready_target+" (D91)"));
+ b.appendChild(table((d.active||[]).map(function(r){return [r.id,r.owner,r.tier,r.token,show(r.age_min)+" / "+show(r.budget_min)+" min"+(r.over_budget?" OVER":"")];}),["ID","Owner","Tier","Status","Age / budget"]));
+ if((d.unparsed||[]).length)b.appendChild(h("p",{"class":"mute"},"Unparsed rows: "+d.unparsed.join(", ")));};
+R.releases=function(b,d){
+ b.appendChild(table([["npm latest",show(d.latest)],["npm next",show(d.next)],["VERSION",show(d.version_file)],["last tag",show(d.last_tag)],
+  ["minutes since last publish",show(d.last_publish_minutes_ago)],["releases last hour",show(d.releases_last_hour)],["releases last 24h",show(d.releases_last_24h)]]));
+ b.appendChild(h("p",{"class":"mute"},d.npm_label));
+ (d.flags||[]).forEach(function(x){b.appendChild(h("div",{"class":"VIOLATION"},x));});
+ b.appendChild(table((d.runs||[]).slice(0,8).map(function(r){var a=h("a",{href:r.url||"#",rel:"noreferrer",target:"_blank"},String(r.databaseId));return [a,show(r.conclusion||r.status),(r.headSha||"").slice(0,8)];}),["Run","Result","SHA"]));
+ b.appendChild(table((d.versions||[]).slice(0,10).map(function(v){return [v.version,v.published];}),["Version","Published"]));};
+R.okrs=function(b,d){b.appendChild(table((d.items||[]).map(function(i){
+ var cur=i.current?(show(i.current.value)+(i.current.target!==undefined?" / "+i.current.target:"")):"";
+ return [i.n,i.title,show(i.owner),h("span",{"class":i.state},i.state),cur];}),["#","Item","Owner","State","Value / target"]));};
+R.roi=function(b,d){var c=d.cost||{},v=d.value||{},r=d.roi||{},m=c.metered||{},u=c.usage||{};
+ b.appendChild(h("h3",null,"Agent cost ("+c.label+")"));
+ b.appendChild(table([["plan USD per month",show(c.plan_usd_per_month)],["plan USD per day (ESTIMATE)",show(c.plan_usd_per_day)],["daily budget USD",show(c.daily_budget_usd)],
+  ["weekly plan-usage percent",show(u.weekly_percent)],["5h window percent",show(u.window_percent)],
+  ["metered run cost",m.state==="MEASURED"?("USD "+m.total_usd+" over "+m.measured_runs+" runs ("+m.unmeasured_runs+" unmeasured)"):("UNMEASURED: "+show(m.reason))]]));
+ b.appendChild(h("p",{"class":"mute"},c.label_note+". Usage numbers are plan percentages, not tokens or dollars."));
+ b.appendChild(h("h3",null,"Human-equivalent value ("+show(v.state||"standing payroll only")+")"));
+ var pr=v.standing_payroll_equivalent;
+ b.appendChild(table([["standing payroll equivalent per day",pr?("USD "+pr.per_day_usd+" for "+pr.seats+" seats, "+pr.label):"UNKNOWN"],
+  ["human-equivalent value",v.human_equivalent_usd===null||v.human_equivalent_usd===undefined?"UNMEASURED":"USD "+v.human_equivalent_usd],["ROI multiple",r.multiple===null?"not printed ("+r.note+")":r.multiple+"x ("+r.weaker_side_label+")"],
+  ["cost per verified outcome",(d.scoreboard||{}).cost_per_verified_outcome_usd===null?"UNMEASURED":"USD "+d.scoreboard.cost_per_verified_outcome_usd]]));
+ b.appendChild(h("p",{"class":"mute"},"Formula: "+v.formula));
+ var bs=d.basis||{};b.appendChild(h("p",{"class":"mute"},"Basis: "+bs.path+" at "+show(bs.git_sha)+", snapshot "+show(bs.snapshot_date)+(bs.stale?" (STALE: "+bs.stale_note+")":"")+", source "+show(bs.source_url)));
+ (d.notes||[]).forEach(function(x){b.appendChild(h("div",{"class":"err"},x));});};
+R.queue=function(b,d){b.appendChild(h("p",null,"Rows: "+show(d.rows_total)+", last number "+show(d.max_number)+", from cockpit "+show(d.cockpit_rows)));
+ b.appendChild(table((d.last||[]).map(function(r){return [r.n,r.date,r.item];}),["#","Date","Item"]));};
+
+function render(snap){var ps=snap.panels||{};Object.keys(R).forEach(function(k){if(ps[k])fill(k,ps[k],R[k]);});
+ document.getElementById("refreshed").textContent="last refreshed "+new Date().toLocaleTimeString()+" (generated "+snap.generated_at+")";
+ document.getElementById("fail").textContent="";}
+function poll(){fetch("/api/snapshot",{cache:"no-store"}).then(function(r){return r.json();}).then(render)
+ .catch(function(e){document.getElementById("fail").textContent="refresh failed: "+e;});}
+poll();setInterval(poll,15000);
+
+var item=document.getElementById("item");
+item.addEventListener("input",function(){document.getElementById("count").textContent=item.value.length+"/2000";});
+document.getElementById("send").addEventListener("click",function(){
+ var btn=this,res=document.getElementById("qres");btn.disabled=true;res.textContent="sending";
+ fetch("/api/queue",{method:"POST",headers:{"Content-Type":"application/json","X-Cockpit-Token":TOKEN},
+  body:JSON.stringify({item:item.value,why:document.getElementById("why").value})})
+ .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+ .then(function(x){res.textContent=x.ok?("Appended row "+x.j.row+": "+x.j.line):("Rejected: "+x.j.error);if(x.ok){item.value="";poll();}})
+ .catch(function(e){res.textContent="Failed: "+e;}).then(function(){btn.disabled=false;});});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+{
+  "source_url": "https://www.levels.fyi/companies/anthropic/salaries/software-engineer",
+  "snapshot_date": "2026-09-24",
+  "refetched_on": "2026-10-23",
+  "annual_total_comp_usd": {
+    "entry": 483000,
+    "senior": 621000,
+    "lead": 865000,
+    "staff": 1410000,
+    "median": 883000
+  },
+  "research_scientist_median_usd": {"value": null, "status": "UNVERIFIED"},
+  "research_engineer_usd": {"value": null, "status": "NOT FOUND"},
+  "overhead_multiplier": {"value": 1.25, "status": "ASSUMPTION"},
+  "work_hours_per_year": {"value": 2000, "status": "ASSUMPTION"},
+  "default_tier": "senior",
+  "seat_tier_status": "ASSUMPTION",
+  "seat_tier": {
+    "chief-of-staff": "lead",
+    "cto": "staff",
+    "developer-experience-lead": "lead",
+    "platform-lead": "lead",
+    "product-growth-lead": "lead",
+    "release-reliability-lead": "lead",
+    "research-harness-scientist": "lead",
+    "research-outcomes-scientist": "lead",
+    "security-lead": "lead",
+    "verification-scientist": "lead"
+  },
+  "hours_per_outcome": {"verified_slice": {"value": null, "status": "ASSUMPTION, unset"}},
+  "plan_usd_per_month": 200,
+  "daily_budget_usd": 50
+}
