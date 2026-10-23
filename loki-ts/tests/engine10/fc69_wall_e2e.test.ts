@@ -72,4 +72,15 @@ describe("RQ-64 verify --fast runs a real engine10-written .ts Wall file", () =>
     const green = fast(repo);
     expect({ v: green.verdict, w: green.wall }).toEqual({ v: "PASS", w: 1 });
   }, 180_000);
+  test("an agent-added untracked .ts Wall with a trivial pass is INCONCLUSIVE, and a failing one still FAILs", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "loki-rq64-untracked-")); temps.push(tmp);
+    cpSync(join(FIX, "repo"), tmp, { recursive: true });
+    git(tmp, "init", "-q", "-b", "main"); git(tmp, "add", "calc.ts", "calc.test.ts", "bunfig.toml");
+    git(tmp, "-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "commit", "-q", "-m", "base");
+    writeFileSync(join(tmp, "loki_wall_trivial.test.ts"), 'import { expect, test } from "bun:test";\ntest("t", () => { expect(1).toBe(1); });\n');
+    const trivial = fast(tmp);
+    expect({ v: trivial.verdict, w: trivial.wall }).toEqual({ v: "INCONCLUSIVE", w: 1 });
+    writeFileSync(join(tmp, "loki_wall_trivial.test.ts"), 'import { expect, test } from "bun:test";\ntest("t", () => { expect(1).toBe(2); });\n');
+    expect(fast(tmp).verdict).toBe("FAIL");
+  }, 120_000);
 });
