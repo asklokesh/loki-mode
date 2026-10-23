@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.56.1 (2026-10-23)
+
+### Fixed
+- The voter_agents tests judge the --disallowedTools guard on every flag value and record that the claude CLI merges a repeated --disallowedTools flag, so they are green on main again.
+
 ## v11.56.0 (2026-10-23)
 
 ### Added
