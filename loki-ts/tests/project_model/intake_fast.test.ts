@@ -111,7 +111,7 @@ describe("FC-55 single-directory repo", () => {
     git(d, "init", "-q");
     git(d, "add", "-A", "-f");
     expect(await sessionsFor(d)).toBeGreaterThan(0);
-  });
+  }, 120_000); // 20,050 file writes plus a git add exceed bun's 5s default on a loaded host (FC-TEST-BULK-FIXTURE-DEFAULT-TIMEOUT)
   test("an empty repo (no tracked files) is not single-directory", async () => {
     const d = mkdtempSync(join(tmpdir(), "pm-fast-e-"));
     dirs.push(d);
