@@ -1,7 +1,10 @@
 // E-164: a task's own setup step (npm install) can rewrite a tracked lockfile before the run starts.
 // Lockfile-only modifications are allowed at intake and recorded as pre-existing; any other dirty tracked file still refuses. Lives outside engine10 core to keep it under its line cap.
-import { lstatSync } from "node:fs"; import { join } from "node:path";
+import { existsSync, lstatSync, readdirSync, statSync } from "node:fs"; import { join } from "node:path";
 import { safeGit } from "../util/safe_git.ts";
+import { readEvents } from "../engine10/events.ts";
+import { eventsRelPath } from "../util/engine_origin.ts";
+import { runOwnerAlive } from "../util/run_pid.ts";
 
 // FC-42: the machine-written lockfile family by name, not a hand-kept list of seven: *.lock, *.lockb, *.lockfile, *-lock.{json,yaml,yml}, go.sum, npm-shrinkwrap.json, Package.resolved.
 const LOCKFILE = /(^|\/)([^/]+\.lockb?|[^/]*\.lockfile|lockfile|[^/]+-lock\.(json|ya?ml)|go\.sum|npm-shrinkwrap\.json|Package\.resolved)$/;
@@ -51,6 +54,24 @@ export function untouchedUntracked(repoDir: string, recorded: unknown, env: Node
       return st.isFile() && blob(repoDir, p, env) === sha && (st.mode & 0o777).toString(8) === mode;
     } catch { return false; }
   }).map(([p]) => p);
+}
+
+/** FC-CRASH-WORK-READ-AS-PREEXISTING: untracked files an earlier run of the SAME task wrote before it crashed. The latest unsealed, ownerless run whose intake
+ *  settled and recorded its own pre-existing untracked set; a file untracked now, absent from that set and not older than that run's start is the crashed run's work.
+ *  A file that was untracked before the crashed run began is in its set, so it is never attributed. A prior intake's own crash_written list is not pre-existing for it. */
+export function crashWrittenFiles(repoDir: string, selfId: string, task: string): string[] {
+  const root = join(repoDir, ".loki", "runs"); let ids: string[] = [];
+  try { ids = readdirSync(root); } catch { return []; }
+  const rows = ids.filter((id) => id !== selfId && /^e10-[A-Za-z0-9-]+$/.test(id) && existsSync(join(repoDir, eventsRelPath(id)))).map((id) => ({ id, m: statSync(join(repoDir, eventsRelPath(id))).mtimeMs })).sort((a, b) => b.m - a.m);
+  for (const { id } of rows) {
+    const ev = readEvents(join(repoDir, eventsRelPath(id)));
+    if (ev.length === 0 || runOwnerAlive(join(root, id)) || ev.some((e) => e.type === "receipt.sealed" || e.type === "run.completed")) continue;
+    const d = ev.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data;
+    if (!d || d["already_satisfied"] === true || typeof d["task"] !== "string" || d["task"].trim() !== task.trim() || !Array.isArray(d["preexisting_untracked"])) return []; // newest candidate only: an older run is not "the" crash
+    const prior = new Set(d["preexisting_untracked"] as string[]), startMs = Date.parse(ev[0]!.ts);
+    return untrackedAtIntake(repoDir).filter((f) => !f.startsWith(".loki/") && !prior.has(f) && (() => { try { return !(startMs > 0) || lstatSync(join(repoDir, f)).mtimeMs >= startMs; } catch { return false; } })());
+  }
+  return [];
 }
 
 export function untouchedSinceIntake(repoDir: string, recorded: unknown, env: NodeJS.ProcessEnv = process.env): string[] {
