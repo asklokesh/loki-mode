@@ -18,6 +18,7 @@ import type { NewCaseRunner } from "../engine10/modernize/equiv.ts";
 import { safeGit, tokenFreeEnv } from "./safe_git.ts";
 import { childEnv } from "../engine10/session.ts";
 import { REPO_ROOT } from "./paths.ts";
+import { bunSafeArgv } from "../runner/worker_proc.ts";
 import type { CaseRecord, NewCaseOutcome } from "../engine10/modernize/equiv.ts";
 
 export const UNIT_USAGE = "loki modernize unit --repo <owner/name> --ref <ref> --unit <id> [--mid <mid>] [--target <target>]";
@@ -124,7 +125,8 @@ export function makeUnitRunners(o: UnitRunnerOpts): { implement: Implementer; ru
 export function makeSessionRunner(o: Pick<UnitRunnerOpts, "session" | "sessionLimitS">): NonNullable<UnitRunnerOpts["session"]> {
   const limitS = o.sessionLimitS ?? SESSION_LIMIT_S;
   const cli = import.meta.path.endsWith("modernize_unit.ts") ? join(import.meta.dir, "..", "cli.ts") : import.meta.path;
-  return o.session ?? ((_brief, cwd, env) => spawnSync(process.execPath, [cli, "engine10", "session"], { cwd, env, stdio: ["ignore", "ignore", "pipe"], timeout: limitS * 1000 }));
+  const [cmd, ...cmdArgs] = bunSafeArgv([process.execPath, cli, "engine10", "session"]);
+  return o.session ?? ((_brief, cwd, env) => spawnSync(cmd!, cmdArgs, { cwd, env, stdio: ["ignore", "ignore", "pipe"], timeout: limitS * 1000 }));
 }
 
 /** The unit id read as a repo-relative path. Null (so the caller reports "cannot locate") unless the id is safe and

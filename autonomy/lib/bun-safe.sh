@@ -9,7 +9,8 @@
 #                                   command substitution and background jobs
 # A project .env is OFF by default. LOKI_ALLOW_PROJECT_ENV=1 opts in: bash reads the cwd .env
 # itself and exports only plain names, never LOKI_*, BUN_*, NODE_*, loader, shell or PATH
-# names, and never over a variable already set (the real environment wins, as in bun).
+# names, nor endpoint, proxy, git-exec or interpreter-path names (ANTHROPIC_BASE_URL, HTTP(S)_PROXY, GIT_SSH_COMMAND,
+# GIT_EXEC_PATH, PYTHONPATH, PERL5OPT), and never over a variable already set (the real environment wins, as in bun).
 _LOKI_BUN_SAFE_FLAGS=(--config=/dev/null --no-env-file)
 _loki_apply_project_env() {
     [ "${LOKI_ALLOW_PROJECT_ENV:-}" = "1" ] && [ -f ./.env ] || return 0
@@ -24,6 +25,7 @@ _loki_apply_project_env() {
         case "$_k" in
             ''|[0-9]*|*[!A-Za-z0-9_]*) continue ;;
             LOKI_*|BUN_*|NODE_*|LD_*|DYLD_*|PATH|HOME|SHELL|IFS|ENV|BASH_ENV|BASH_*|PS4|CDPATH|GLOBIGNORE|SHELLOPTS|PROMPT_COMMAND) continue ;;
+            ANTHROPIC_BASE_URL|HTTPS_PROXY|HTTP_PROXY|https_proxy|http_proxy|GIT_SSH_COMMAND|GIT_EXEC_PATH|PYTHONPATH|PERL5OPT) continue ;;
         esac
         [ -z "${!_k+x}" ] || continue
         case "$_v" in
