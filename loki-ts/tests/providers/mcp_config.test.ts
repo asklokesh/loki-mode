@@ -13,6 +13,7 @@ import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SECRET_TMP_GRACE_MS } from "../../src/util/atomic.ts";
+import { scopedStartEnv } from "../../src/commands/start.ts";
 import { mcpConfigPath, userMcpConfigPath, buildMcpConfigArgv, mcpLaunchFor } from "../../src/providers/mcp_config.ts";
 
 describe("mcp_config.mcpConfigPath", () => {
@@ -656,5 +657,16 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     expect(bundle()).toEqual({
       mcpServers: { "loki-mode": { command: "python3", args: ["-m", "mcp.server"] } },
     });
+  });
+});
+
+// #349 strips secret-shaped names from child envs and must keep LOKI_MCP_<NAME>_AUTH on the claude process:
+// the bundle carries only the "${LOKI_MCP_<NAME>_AUTH}" placeholder, and Claude Code expands it from its env.
+describe("claude process env keeps LOKI_MCP_<NAME>_AUTH (#349 guard)", () => {
+  it("the scoped start env forwards LOKI_MCP_<NAME>_AUTH and the URL beside it", () => {
+    const env = scopedStartEnv({ PATH: "/usr/bin", LOKI_MCP_GITHUB_URL: "https://x.example/mcp", LOKI_MCP_GITHUB_AUTH: "tok", UNRELATED_SECRET: "x" });
+    expect(env["LOKI_MCP_GITHUB_AUTH"]).toBe("tok");
+    expect(env["LOKI_MCP_GITHUB_URL"]).toBe("https://x.example/mcp");
+    expect(env["UNRELATED_SECRET"]).toBeUndefined();
   });
 });
