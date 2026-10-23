@@ -1219,7 +1219,7 @@ export function providerAutodetected(checks: { command: string; found: boolean; 
     const c = checks.find((x) => x.command === p);
     if (!c?.found) return false;
     const cli = c.path ?? p;
-    if (p === "claude") return PROVIDER_API_KEY_VARS.some((k) => !!env[k]?.trim()) || claudeAuthStatusLoggedIn(cli, env) === "yes";
+    if (p === "claude") return !providerAuthPath(p, env).startsWith("cli_login") || claudeAuthStatusLoggedIn(cli, env) === "yes"; // the preflight condition: only claude's own key or token counts, else a confirmed login
     return providerLoginIssue(p, cli, env) === null;
   });
 }
