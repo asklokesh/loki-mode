@@ -479,13 +479,15 @@ def trial_metrics(adapter_out: Dict[str, Any], grader_success: bool,
     """The three #348 metrics for one trial, from adapter output plus the
     grader's verdict. Pure: the adapter never judges, the grader does.
 
-    claimed_done: loki only when its own verdict is VERIFIED (PARTIAL and
-    FAILED are honest non-claims); any other tool when it ended cleanly.
+    claimed_done: loki only when its own verdict is VERIFIED or
+    ALREADY_SATISFIED (PARTIAL and FAILED are honest non-claims; an
+    already-satisfied claim on a task that needed work is a false-done too);
+    any other tool when it ended cleanly.
     false_pass: claimed_done while the hidden grader failed; None without a
     claim or for an unmeasured trial."""
     prov = adapter_out.get("provenance") or {}
     if adapter_out.get("tool") == "loki":
-        claimed = prov.get("verify_verdict") == "VERIFIED"
+        claimed = prov.get("verify_verdict") in ("VERIFIED", "ALREADY_SATISFIED")
     else:
         claimed = str(adapter_out.get("exit_status", "")).lower() == "completed"
     reuse = prov.get("journal_reuse_wall_s")
