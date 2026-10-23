@@ -449,7 +449,9 @@ launch_slot
 unit_init
 echo -e "${YELLOW}=== help-structure assertions (route: $ROUTE) ===${NC}"
 
-HELP_OUT="$(run_loki help 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
+# Plain `loki help` is the core page (Start/Check/Configure, 826deafd2); the full
+# grouped table these assertions pin lives behind `loki help all`.
+HELP_OUT="$(run_loki help all 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
 
 # Usage contract line still present (test-cli-commands.sh pins on "Usage").
 if echo "$HELP_OUT" | grep -q "Usage:"; then
@@ -484,12 +486,16 @@ done
 # next, steer, verify, keys, ultracode, acp, plan, trust, undo); no decision caps the
 # page below its current 28 entries, so the bound tracks the shipped surface.
 # Growth past 28 still requires a deliberate edit here.
+# Measured on `loki help all` at b2fc64eca: 32 entry lines (30 distinct verbs;
+# start --workspace and undo --list are second-form lines).
+# Since 826deafd2 plain `loki help` is the core page with no Commands: block
+# (count 0), so the count is read from `help all`; the bound is 32 to match it.
 CMD_BLOCK="$(echo "$HELP_OUT" | awk '/^Commands:/{f=1;next} /^Options for/{f=0} f')"
 ENTRY_COUNT="$(echo "$CMD_BLOCK" | grep -E '^  [a-z]' | grep -vE '^  [a-z].*:$' | wc -l | tr -d ' ')"
-if [ "$ENTRY_COUNT" -le 28 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
-    log_pass "help: front-page entry count in [12,28] ($ENTRY_COUNT)"
+if [ "$ENTRY_COUNT" -le 32 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
+    log_pass "help: front-page entry count in [12,32] ($ENTRY_COUNT)"
 else
-    log_fail "help: front-page entry count in [12,28]" "got $ENTRY_COUNT"
+    log_fail "help: front-page entry count in [12,32]" "got $ENTRY_COUNT"
 fi
 
 # Deprecated alias tokens must NOT appear as command entries in the Commands
