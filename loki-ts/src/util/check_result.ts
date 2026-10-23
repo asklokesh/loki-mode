@@ -264,6 +264,43 @@ export function checkProvenance(name: string, ctx: ProvenanceCtx): CheckProvenan
 /** True when some executed check (pass, n>0) is not backed solely by agent-authored or LLM-judge evidence. */
 export const hasExogenousProof = (checks: ReadonlyArray<{ name?: string; result?: unknown; n?: unknown }>, ctx: ProvenanceCtx): boolean =>
   checks.some((c) => isExecutedProof(c) && ((p) => p !== "agent_authored" && p !== "llm_judge")(checkProvenance(c.name ?? "", ctx)));
+/** FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: the extensions testmap.ts maps (JS/TS, Python, Go); verify and seal share it. */
+export const CODE_FILE_EXT = /\.(?:[cm]?[jt]sx?|py|go)$/;
+const DECL_RE = /\b(?:function\*?|def|class|fn|func|fun|const|let|var|type|interface|struct|enum|trait|object|val)\s+([A-Za-z_$][\w$]*)/g;
+const GO_METHOD_RE = /\bfunc\s*\([^)]*\)\s*([A-Za-z_]\w*)/g;
+const METHOD_RE = /^\s*(?:(?:public|private|protected|static|async|export|override|final|abstract)\s+)*([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::\s*[^{=]+)?\{\s*$/;
+const NOT_A_NAME = new Set(["if", "for", "while", "switch", "catch", "function", "return", "else", "with", "constructor"]);
+const declNames = (line: string): string[] => {
+  const out: string[] = [];
+  for (const re of [DECL_RE, GO_METHOD_RE]) for (const m of line.matchAll(re)) out.push(m[1]!);
+  const m = METHOD_RE.exec(line);
+  if (m) out.push(m[1]!);
+  return out.filter((n) => !NOT_A_NAME.has(n));
+};
+/** Names a `git diff -U0` declares or modifies: declarations on added lines, plus the hunk's enclosing declaration (the @@ context) when the hunk removes lines or declares nothing itself. */
+export function changedSymbols(diffU0: string): string[] {
+  const out = new Set<string>();
+  let ctx = "", added: string[] = [], removed = 0;
+  const flush = (): void => {
+    const own = added.flatMap(declNames);
+    for (const n of own) out.add(n);
+    if (removed > 0 || own.length === 0) for (const n of declNames(ctx)) out.add(n);
+    added = []; removed = 0;
+  };
+  for (const line of diffU0.split("\n")) {
+    if (line.startsWith("@@")) { flush(); ctx = line.replace(/^@@[^@]*@@\s?/, ""); }
+    else if (line.startsWith("+") && !line.startsWith("+++")) added.push(line.slice(1));
+    else if (line.startsWith("-") && !line.startsWith("---")) removed++;
+  }
+  flush();
+  return [...out];
+}
+/** Symbols that no test source references as a whole word; every symbol when none is referenced, or when the diff declared none (then "(no declared symbol)"). Empty means some passing test source mentions a changed symbol. */
+export function symbolGap(symbols: readonly string[], testSources: readonly string[]): string[] {
+  if (symbols.length === 0) return ["(no declared symbol)"];
+  const ref = (sym: string, src: string): boolean => new RegExp(`(?<![\\w$])${sym.replace(/[$]/g, "\\$")}(?![\\w$])`).test(src);
+  return testSources.some((src) => symbols.some((sym) => ref(sym, src))) ? [] : [...symbols];
+}
 /** TEN-GATES-14: per-gate legibility for `loki verify --explain`. exogenous/independent evidence is exogenous; agent_authored and llm_judge are agent-influenced; absent or unknown provenance is unrecorded, never exogenous. */
 export interface ExplainGate { name: string; class: "exogenous" | "agent-influenced" | "unrecorded"; provenance: string | null; result: string; n: number | null; evidence: string }
 export function explainGates(receiptPath: string): ExplainGate[] {

@@ -32,12 +32,13 @@ interface Run {
   runDir: string; key: string; stubCalls: string[]; stubEnv: string; origin: string;
 }
 
-function runEngine(mode: "done" | "already" | "tamper" | "nochange", withPr = false, extra: string[] = []): Run {
+function runEngine(mode: "done" | "already" | "tamper" | "nochange", withPr = false, extra: string[] = [], lean?: { testBody?: string }): Run {
   if (!existsSync(ENTRY)) throw new Error(`engine entry missing: ${ENTRY}`); // never fall through to the legacy bash route
   const tmp = mkdtempSync(join(tmpdir(), "loki-e2e-"));
   temps.push(tmp);
   const repo = join(tmp, "repo");
   cpSync(join(FIX, "repo"), repo, { recursive: true });
+  if (lean?.testBody) writeFileSync(join(repo, "calc.test.ts"), lean.testBody);
   git(repo, "init", "-q", "-b", "main");
   git(repo, "config", "user.name", "e2e");
   git(repo, "config", "user.email", "e2e@example.invalid");
@@ -64,6 +65,7 @@ function runEngine(mode: "done" | "already" | "tamper" | "nochange", withPr = fa
     LOKI_E10_PLAN: "1", // E-45: this fixture's task sizes "small" by default; force plan so the pipeline shape below still holds.
     GH_TOKEN: CANARY,
   };
+  if (lean) delete env.LOKI_E10_PLAN; // the default user path: no forced plan, so a small task with a relevant test takes the lean skip
   delete env.LOKI_ALLOW_AGENT_GITHUB_TOKEN;
   delete env.LOKI_MODEL_OVERRIDE;
   delete env.LOKI_LEGACY_BASH; // bin/loki would skip the engine10 block
@@ -199,6 +201,24 @@ describe("engine10 e2e (stub claude)", () => {
     expect(receipt.model).toBe("claude (provider default)"); // EL-W0-06: no model configured, the provider default runs
     expect(r.out).toContain("Outcome:    VERIFIED");
     expect(r.out).toContain("PR:         none");
+  }, 90_000);
+
+  test("FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: a lean-skip run whose only passing test never references the new function is PARTIAL, not VERIFIED", () => {
+    const addOnly = 'import { expect, test } from "bun:test";\nimport { add } from "./calc";\n\ntest("add", () => {\n  expect(add(2, 3)).toBe(5);\n});\n';
+    const r = runEngine("done", false, [], { testBody: addOnly });
+    expect(r.events.some((e) => e.type === "stage.skipped" && e.stage === "wall")).toBe(true);
+    const receipt = JSON.parse(readFileSync(join(r.runDir, "receipt.json"), "utf8"));
+    expect(receipt.verdict).toBe("PARTIAL");
+    expect((receipt.not_proven as string[]).some((n) => n.includes("no passing check references a changed symbol") && n.includes("multiply"))).toBe(true);
+    expect(r.out).not.toContain("Outcome:    VERIFIED");
+  }, 90_000);
+
+  test("FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: a lean-skip run whose passing test calls the new function stays VERIFIED", () => {
+    const body = 'import { expect, test } from "bun:test";\nimport { add, multiply } from "./calc";\n\ntest("add", () => {\n  expect(add(2, 3)).toBe(5);\n});\n\ntest("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n';
+    const r = runEngine("done", false, [], { testBody: body });
+    expect(r.events.some((e) => e.type === "stage.skipped" && e.stage === "wall")).toBe(true);
+    const receipt = JSON.parse(readFileSync(join(r.runDir, "receipt.json"), "utf8"));
+    expect(receipt.verdict).toBe("VERIFIED");
   }, 90_000);
 
   test("already-done run with no executed check is NOT PROVEN (FC-16), with no second implement session", () => {
