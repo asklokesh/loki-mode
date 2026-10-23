@@ -14,6 +14,7 @@ trap 'rm -rf -- "$T"' EXIT
 
 mkdir -p "$T/root/bin" "$T/root/autonomy" "$T/fakebin" "$T/home" "$T/cwd"
 cp "$REPO/bin/loki" "$T/root/bin/loki"
+mkdir -p "$T/root/autonomy/lib"; cp "$REPO/autonomy/lib/bun-safe.sh" "$T/root/autonomy/lib/bun-safe.sh"
 cp "$REPO/autonomy/telemetry.sh" "$T/root/autonomy/telemetry.sh"
 printf '#!/usr/bin/env bash\nprintf "BASH %%s\\n" "$*" >"%s/out"\n' "$T" >"$T/root/autonomy/loki"
 chmod +x "$T/root/autonomy/loki" "$T/root/bin/loki"

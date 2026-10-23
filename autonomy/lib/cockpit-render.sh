@@ -235,9 +235,18 @@ cockpit_render() {
     [ "$no_image" = "1" ] && args+=(--no-image)
 
     # Gather -> render. Preserve the TS exit code (0 image / 3 fallback).
-    cockpit_gather_state "$skill_dir" "$focus_repo" | bun "$entry" "${args[@]}"
+    cockpit_gather_state "$skill_dir" "$focus_repo" | loki_bun_run "$entry" "${args[@]}"
 }
 
+# FC-REPO-BUNFIG-AND-ENV-REACH-ORCHESTRATOR: bun runs only through lib/bun-safe.sh. Fail closed.
+if ! declare -F loki_bun_run >/dev/null 2>&1; then
+    if [ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bun-safe.sh" ]; then
+        # shellcheck source=bun-safe.sh
+        source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bun-safe.sh"
+    else
+        loki_bun_run() { echo "loki: missing lib/bun-safe.sh (broken install); refusing to run bun" >&2; return 127; }
+    fi
+fi
 #===============================================================================
 # E3: keyboard interactivity for `loki cockpit --follow`.
 # These live here (sourced by cmd_cockpit) so they can be extracted + unit

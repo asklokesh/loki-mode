@@ -942,7 +942,7 @@ verify_gate_static() {
                 if [ "$tschecker" = "tsc" ]; then
                     (cd "$tree" && tsc --noEmit --allowJs --jsx preserve --target esnext "$f") >/dev/null 2>&1 || ok=1
                 else
-                    (cd "$tree" && bun --check "$f") >/dev/null 2>&1 || ok=1
+                    (cd "$tree" && loki_bun_run --check "$f") >/dev/null 2>&1 || ok=1
                 fi
                 if [ "$ok" -ne 0 ]; then
                     findings=$((findings + 1))
@@ -2903,6 +2903,15 @@ PYEOF
 # empty/unparseable engine output, evidence.json unreadable, or python3 absent.
 # It NEVER promotes or alters the verdict, and NEVER turns an unusable engine
 # into a silent pass -- the deterministic verdict already stands.
+# FC-REPO-BUNFIG-AND-ENV-REACH-ORCHESTRATOR: bun runs only through lib/bun-safe.sh. Fail closed.
+if ! declare -F loki_bun_run >/dev/null 2>&1; then
+    if [ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/bun-safe.sh" ]; then
+        # shellcheck source=bun-safe.sh
+        source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/bun-safe.sh"
+    else
+        loki_bun_run() { echo "loki: missing lib/bun-safe.sh (broken install); refusing to run bun" >&2; return 127; }
+    fi
+fi
 # ---------------------------------------------------------------------------
 verify_hosted_enrich() {
     local out_dir="$1"
@@ -2946,9 +2955,9 @@ verify_hosted_enrich() {
     [ -z "$engine_base" ] && engine_base="$base_ref"
     local engine_out engine_rc
     if [ -n "$engine_base" ]; then
-        engine_out="$(bun "$bundle" --dir . --base "$engine_base" 2>/dev/null)"; engine_rc=$?
+        engine_out="$(loki_bun_run "$bundle" --dir . --base "$engine_base" 2>/dev/null)"; engine_rc=$?
     else
-        engine_out="$(bun "$bundle" --dir . 2>/dev/null)"; engine_rc=$?
+        engine_out="$(loki_bun_run "$bundle" --dir . 2>/dev/null)"; engine_rc=$?
     fi
     if [ "$engine_rc" -ne 0 ] || [ -z "$engine_out" ]; then
         _verify_log "hosted: embedded engine unusable (rc=$engine_rc); keeping deterministic verdict (fail-open)"
