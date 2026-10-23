@@ -911,5 +911,5 @@ FC-AGENT-PROOF: a run whose only executed passing check is a test file the same 
 
 ## D115 (2026-10-23, founder standing rule, CoS records, RQ-106): SDKs are never more than 7 days behind
 1. @anthropic-ai/sdk, @anthropic-ai/claude-agent-sdk and the PyPI anthropic package are never pinned behind the newest release that is older than 7 days.
-2. Dependabot (daily, group anthropic-sdks) opens the bump; `python3 scripts/dep-inventory.py --sdk-freshness` runs daily from release.yml (schedule) and goes red naming the package.
+2. Dependabot (daily, group anthropic-sdks) opens the bump; `python3 scripts/dep-inventory.py --sdk-freshness` runs daily from .github/workflows/sdk-freshness.yml and goes red naming the package.
 3. A red caused by an SDK release is never cleared by a plain rerun: bump the pin and fix forward.

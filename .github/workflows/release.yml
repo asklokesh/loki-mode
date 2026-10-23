@@ -22,8 +22,6 @@ on:
       - 'VERSION'
     branches:
       - main
-  schedule:
-    - cron: '17 6 * * *'
   workflow_dispatch:
     inputs:
       force_republish:
@@ -36,21 +34,8 @@ on:
           - 'true'
 
 jobs:
-  # Scheduled daily: the only job that runs on the cron trigger (D115).
-  sdk-freshness:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - name: Anthropic SDK pins are within 7 days of the newest release
-        run: python3 scripts/dep-inventory.py --sdk-freshness
-
   # Fix-forward signal only: no job needs this one.
   sanity:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -69,7 +54,6 @@ jobs:
   # The tarball is built ONCE here, with no secret and no write token.
   # publish-npm recomputes its sha256 and publishes exactly those bytes.
   pack-npm:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -287,7 +271,6 @@ jobs:
 
   # Tag and GitHub Release. Needs nothing, so it runs in parallel with npm.
   release:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -514,7 +497,6 @@ jobs:
 
   # Idempotent (--skip-existing), so it needs nothing and starts at t=0.
   publish-python-sdk:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -543,7 +525,6 @@ jobs:
 
   # Idempotent, so it needs nothing and starts at t=0.
   publish-ts-sdk:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
@@ -642,7 +623,6 @@ jobs:
   # Native per-arch build (no QEMU), pushed by digest; needs nothing, so it
   # starts at t=0. The docker job assembles the multi-arch manifest.
   docker-build:
-    if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:

@@ -1405,6 +1405,14 @@ def self_test() -> int:
               "@anthropic-ai/sdk" in red_lines[0] and "pin=1.1.0" in red_lines[0]
               and "latest=1.2.0" in red_lines[0] and "age=8d" in red_lines[0])
 
+        for label, req, want in (("== exact", "anthropic==2.2.0\n", "2.2.0"),
+                                 (">= floor", "anthropic>=0.40,<1.0.0\n", "0.40")):
+            rdir = tmp / ("req-" + want)
+            (rdir / "mcp").mkdir(parents=True)
+            (rdir / "mcp" / "requirements.txt").write_text(req)
+            got = collect_sdk_pins(rdir, ["mcp/requirements.txt"])
+            check(f"freshness: requirements {label} pin parsed", got == [("pypi", "mcp/requirements.txt", "anthropic", want)])
+
     print()
     if failures:
         print(f"{len(failures)} check(s) FAILED: {failures}")
