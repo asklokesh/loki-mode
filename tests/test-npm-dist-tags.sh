@@ -58,6 +58,8 @@ case "$1 $2 $3" in
         echo "add $ver $tag" >> "$ST/log"
         # A write for a version the registry has not materialized is accepted and dropped.
         if [ -n "${STUB_HIDE_VER:-}" ] && [ "$ver" = "$STUB_HIDE_VER" ] && [ "$(cat "$ST/dcalls" 2>/dev/null || echo 0)" -le "${STUB_MATERIALIZE_AFTER:-0}" ]; then echo "dropped $ver $tag" >> "$ST/log"; exit 0; fi
+        # STUB_DROP_FIRST=1: the first accepted write of each tag is lost (never applies).
+        if [ -n "${STUB_DROP_FIRST:-}" ] && [ ! -e "$ST/dropped.$tag" ]; then : > "$ST/dropped.$tag"; exit 0; fi
         if [ -n "${STUB_TAG_LAG:-}" ]; then echo "$ver $STUB_TAG_LAG" > "$ST/pend.$tag"; exit 0; fi
         printf '%s\n' "$ver" > "$ST/$tag"
         if [ "$tag" = latest ] && [ -n "${STUB_OVERTAKE:-}" ] && [ ! -e "$ST/overtook" ]; then
@@ -85,7 +87,7 @@ chmod +x "$WORK/bin/curl"
 run_case() {
     ST="$WORK/$1"; mkdir -p "$ST"
     printf '%s\n' $2 > "$ST/versions"; echo "$3" > "$ST/latest"; echo "$4" > "$ST/next"; : > "$ST/log"
-    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" STUB_HIDE_VER="${STUB_HIDE_VER:-}" STUB_MATERIALIZE_AFTER="${STUB_MATERIALIZE_AFTER:-}" STUB_TAG_LAG="${STUB_TAG_LAG:-}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 LOKI_DISTTAG_MATERIALIZE_S="${STUB_MAT_S:-1}" bash "$SCRIPT" "$5" 2>&1)"
+    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" STUB_HIDE_VER="${STUB_HIDE_VER:-}" STUB_MATERIALIZE_AFTER="${STUB_MATERIALIZE_AFTER:-}" STUB_TAG_LAG="${STUB_TAG_LAG:-}" STUB_DROP_FIRST="${STUB_DROP_FIRST:-}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 LOKI_DISTTAG_MATERIALIZE_S="${STUB_MAT_S:-1}" bash "$SCRIPT" "$5" 2>&1)"
     CASE_RC=$?
     CASE_ST="$ST"
 }
@@ -205,6 +207,14 @@ STUB_TAG_LAG=9 run_case lag "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
 STUB_TAG_LAG=999 run_case nolag "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
 { [ $CASE_RC -ne 0 ] && grep -q "did not settle" <<<"$CASE_OUT"; } \
     && ok "a tag that never applies fails the job" || bad "nolag: rc=$CASE_RC $CASE_OUT"
+
+# 11.60.8 evidence: an accepted latest write never applied. Late in the window it is
+# rewritten once with a named warning, and the run then settles.
+STUB_DROP_FIRST=1 run_case drop "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
+{ [ $CASE_RC -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 11.56.1 ] && [ "$(cat "$CASE_ST/next")" = 11.56.1 ] \
+    && grep -q "DISTTAG-WRITE-NOT-APPLIED" <<<"$CASE_OUT" \
+    && [ "$(grep -c '^add .* latest' "$CASE_ST/log")" = 2 ]; } \
+    && ok "a lost tag write is rewritten once with a named warning" || bad "drop: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
 
 echo
 echo "Results: $PASS passed, $FAIL failed"
