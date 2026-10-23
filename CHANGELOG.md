@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.67.10 (2026-10-23)
+
+### Fixed
+- Tests pin the LOKI_STATE_MANAGER_MAX fallback and the lock-free eviction stop in state/test_manager.py (rq74). Approval: "APPROVE pd/rq74 214f4a509 (tl-2, LOW). merge-tree vs origin/main = 0 conflicts. Only state/test_manager.py changed (+27)."
+
 ## v11.67.9 (2026-10-23)
 
 ### Fixed
