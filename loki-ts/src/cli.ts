@@ -344,6 +344,14 @@ async function dispatch(argv: readonly string[]): Promise<number> {
         const { runInternalExecManifest } = await import("./commands/internal_exec_manifest.ts");
         return runInternalExecManifest(rest.slice(1));
       }
+      if (subcmd === "wall-run") {
+        // RQ-64: verify --fast runs loki_wall_* .ts/.js files through the engine10 Wall runner. Prints one JSON array of {file,status}.
+        const [repoDir, ...files] = rest.slice(1);
+        if (!repoDir || files.length === 0) { process.stderr.write("Usage: loki internal wall-run <repoDir> <file...>\n"); return 2; }
+        const { runWallFiles } = await import("./engine10/stages/wall.ts");
+        process.stdout.write(`${JSON.stringify(runWallFiles(repoDir, files))}\n`);
+        return 0;
+      }
       process.stderr.write(`Unknown internal subcommand: ${subcmd}\n`);
       process.stderr.write(`Run 'loki internal --help' for the supported list.\n`);
       return 2;
