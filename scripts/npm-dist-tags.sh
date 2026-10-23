@@ -9,12 +9,12 @@
 # write) is re-asserted until both tags settle or the tries run out.
 #
 # Usage: npm-dist-tags.sh <version>
-# Env: LOKI_DISTTAG_TRIES (default 8), LOKI_DISTTAG_SLEEP seconds (default 15)
+# Env: LOKI_DISTTAG_PKG (default loki-mode; loki-mode-sdk for the SDK), LOKI_DISTTAG_TRIES (default 8), LOKI_DISTTAG_SLEEP seconds (default 15)
 set -uo pipefail
 
 VERSION="${1:-}"
 [ -n "$VERSION" ] || { echo "usage: npm-dist-tags.sh <version>" >&2; exit 1; }
-PKG="loki-mode"
+PKG="${LOKI_DISTTAG_PKG:-loki-mode}"
 TRIES="${LOKI_DISTTAG_TRIES:-8}"
 NAP="${LOKI_DISTTAG_SLEEP:-15}"
 

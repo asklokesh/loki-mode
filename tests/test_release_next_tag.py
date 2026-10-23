@@ -47,39 +47,35 @@ class ReleasePublishesLatestAndNext(unittest.TestCase):
             self.assertNotIn("--tag latest", ln, ln)
 
     def test_latest_and_next_both_moved_for_both_packages(self):
+        # Both npm packages move tags only through scripts/npm-dist-tags.sh
+        # (FC-DIST-TAG-MOVED-BACKWARDS); no job carries its own dist-tag add.
         jobs = _doc()["jobs"]
-        sdk = "\n".join(_runs(jobs["publish-ts-sdk"]))
-        for tag in ("latest", "next"):
-            self.assertRegex(sdk, r'npm dist-tag add "loki-mode-sdk@\$\{VERSION\}" %s' % tag)
-        # loki-mode tags move through scripts/npm-dist-tags.sh (FC-DIST-TAG-MOVED-BACKWARDS)
         main = "\n".join(_runs(jobs["publish-npm"]))
         self.assertIn('bash scripts/npm-dist-tags.sh "$VERSION"', main)
-        self.assertNotIn("dist-tag add", main)
+        sdk = "\n".join(_runs(jobs["publish-ts-sdk"]))
+        self.assertIn('LOKI_DISTTAG_PKG=loki-mode-sdk bash ../../scripts/npm-dist-tags.sh "$VERSION"', sdk)
+        for name in ("publish-npm", "publish-ts-sdk"):
+            r = "\n".join(_runs(jobs[name]))
+            self.assertNotIn("dist-tag add", r, name)
+            self.assertNotIn('"$CUR"', r, name)
         script = (_WF.parents[1] / "scripts" / "npm-dist-tags.sh").read_text(encoding="utf-8")
         self.assertIn("for tag in latest next", script)
         self.assertIn('npm dist-tag add "$PKG@$TARGET" "$tag"', script)
 
     def test_never_backwards_guard(self):
-        jobs = _doc()["jobs"]
-        r = "\n".join(_runs(jobs["publish-ts-sdk"]))
-        self.assertIn("sort -V", r)
-        self.assertLess(r.index("sort -V"), r.index("dist-tag add"))
         script = (_WF.parents[1] / "scripts" / "npm-dist-tags.sh").read_text(encoding="utf-8")
         self.assertIn("sort -V", script)
         self.assertLess(script.index("sort -V"), script.index("npm dist-tag add"))
-        self.assertIn("never backwards", script)
 
-    def test_empty_current_latest_fails_closed(self):
-        jobs = _doc()["jobs"]
-        for name in ("publish-ts-sdk",):
-            r = "\n".join(_runs(jobs[name]))
-            m = re.search(r'if \[ -z "\$CUR" \]; then\n(.*?)\n\s*fi\n', r, re.S)
-            self.assertIsNotNone(m, name)
-            self.assertIn("::error::", m.group(1), name)
-            self.assertIn("exit 1", m.group(1), name)
-            self.assertNotIn("dist-tag add", m.group(1), name)
-            self.assertNotRegex(r, r'-z "\$CUR" \]\s*\|\|', name)
-            self.assertLess(r.index("npm publish"), r.index('-z "$CUR"'), name)
+    def test_registry_read_failure_fails_closed(self):
+        script = (_WF.parents[1] / "scripts" / "npm-dist-tags.sh").read_text(encoding="utf-8")
+        self.assertIn("refusing to move latest (fail closed)", script)
+        for read in ("tag_of latest", "tag_of next", "published_versions"):
+            self.assertRegex(script, r'\$\(%s\)" \|\| refuse' % read)
+        self.assertLess(script.index("|| refuse"), script.index("npm dist-tag add"))
+        for name in ("publish-npm", "publish-ts-sdk"):
+            r = "\n".join(_runs(_doc()["jobs"][name]))
+            self.assertLess(r.index("npm publish"), r.index("npm-dist-tags.sh"), name)
 
     def test_rerun_never_retags_without_the_guard(self):
         r = "\n".join(_runs(_doc()["jobs"]["publish-npm"]))
