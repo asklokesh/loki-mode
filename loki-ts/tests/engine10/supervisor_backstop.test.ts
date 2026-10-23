@@ -317,7 +317,7 @@ describe("E-67 rework: supervisor backstop", () => {
     const r = await done;
     expect(deathMs).toBeGreaterThan(0);
     expect(deathMs).toBeGreaterThan(backstopS(5) * 1000 - 300); // fires near its computed instant, not at spawn
-    expect(deathMs).toBeLessThan(loadAwareTimeoutMs(6000)); // green ~4.97s; the old fixed-2s-escalation red would be ~6.8s+ (unaffected here, but keep headroom under load)
+    expect(deathMs).toBeLessThan(loadAwareTimeoutMs(6000)); // headroom only (scaled with load); the regression guard is the lower bound above, the SIGTERM->SIGKILL gap is guarded in bs10
     expect(r.verdict).toBe("FAILED");
     expect(r.notProven).toContain(BACKSTOP_NOT_PROVEN);
   }, loadAwareTimeoutMs(10_000));
@@ -330,8 +330,9 @@ describe("E-67 rework: supervisor backstop", () => {
   test("small capS, default grace: a SIGTERM-trapping worker still dies at or before the cap", async () => {
     const { dir } = repoWithCommit();
     const pidFile = join(dir, "worker.pid");
+    const termFile = join(dir, "sigterm.ms");
     const code = `
-      process.on("SIGTERM", () => {});
+      process.on("SIGTERM", () => { require("node:fs").writeFileSync(${JSON.stringify(termFile)}, String(Date.now())); });
       require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
       setInterval(() => {}, 1000);
     `;
@@ -340,7 +341,11 @@ describe("E-67 rework: supervisor backstop", () => {
     const deathMs = await pollDeathMs(t0, pidFile, loadAwareTimeoutMs(8000));
     const r = await done;
     expect(deathMs).toBeGreaterThan(0);
-    expect(deathMs).toBeLessThan(loadAwareTimeoutMs(6000)); // green ~5.1s; the old fixed-2s-escalation red was ~6.9-7.0s (measured above)
+    // Load independent: the SIGTERM->SIGKILL gap is measured from the worker's own signal timestamp,
+    // so machine load shifts both ends together. Clamped escalateMs is ~170ms at capS=5; the pre-fix
+    // fixed 2000ms escalation can never measure below 2000ms, so a 1000ms bound separates them at any load.
+    const gapMs = t0 + deathMs - Number(readFileSync(termFile, "utf8"));
+    expect(gapMs).toBeLessThan(1000);
     expect(r.verdict).toBe("FAILED");
   }, loadAwareTimeoutMs(15_000));
 
