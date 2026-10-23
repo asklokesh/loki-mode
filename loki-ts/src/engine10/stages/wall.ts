@@ -122,11 +122,11 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
 
   // E-64: skip Wall too on the lean path (plan.ts, which always runs, logs this same decision on "variant").
   // LOKI_E10_PLAN=always forces a plan even for a small task, so the lean path never applies: a forced plan
-  // still gets the Wall's independent acceptance tests.
+  // still gets the Wall's independent acceptance tests. An external diff (CW-12) never takes the lean skip: the Wall is its only independent proof.
   const repoMap = loadRepoMap(repomapRef);
   const runners: RunnerName[] = testMap ? harnessRunners(testMap.runners, repoMap?.files ?? []) : [];
   const sz = sizeTask(task, repoMap, testMap);
-  if (planMode() !== "always" && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean") {
+  if (!ctx.externalPatch && planMode() !== "always" && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean") {
     return done({ status: "skipped", data: { size: sz.size }, reason: "small task with a relevant test: cascade skips Wall" });
   }
 
