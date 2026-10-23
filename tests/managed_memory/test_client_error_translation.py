@@ -188,3 +188,43 @@ class ClientErrorTranslationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RealSdkContractTests(unittest.TestCase):
+    """Wrapper kwargs must bind against the installed anthropic SDK (no network)."""
+
+    def setUp(self):
+        try:
+            import anthropic
+        except ImportError:
+            self.skipTest("anthropic SDK not installed")
+        self.anthropic = anthropic
+        mc = ManagedClient.__new__(ManagedClient)
+        mc._client = anthropic.Anthropic(api_key="test-key")  # type: ignore[attr-defined]
+        mc._anthropic = anthropic  # type: ignore[attr-defined]
+        mc._timeout = 10.0  # type: ignore[attr-defined]
+        self.mc = mc
+
+    def test_memories_resolve_to_nested_namespace(self):
+        import inspect
+
+        ns, id_kw = self.mc._memories()
+        self.assertIs(ns, self.mc._client.beta.memory_stores.memories)
+        for name in ("create", "retrieve", "list"):
+            params = inspect.signature(getattr(ns, name)).parameters
+            self.assertIn(id_kw, params, f"memories.{name} lacks {id_kw}")
+
+    def test_sdk_calls_bind_without_network(self):
+        from unittest import mock
+
+        ns, _ = self.mc._memories()
+        stores = self.mc._client.beta.memory_stores
+        with mock.patch.object(ns, "create") as create, mock.patch.object(
+            stores, "list", return_value=[]
+        ), mock.patch.object(stores, "create") as screate:
+            self.mc.memory_create("s1", "/a.md", "x", sha256_precondition="abc")
+            self.mc.stores_get_or_create("n", scope="user")
+        self.assertEqual(create.call_args.kwargs["memory_store_id"], "s1")
+        self.assertNotIn("if_match_sha256", create.call_args.kwargs)
+        self.assertEqual(screate.call_args.kwargs["metadata"], {"scope": "user"})
+        self.assertNotIn("scope", screate.call_args.kwargs)
