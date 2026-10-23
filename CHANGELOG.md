@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.63.9 (2026-10-23)
+
+### Fixed
+- A rejected API key ends the run naming its cause and the fix (FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG); engine markers are neutralized in child and CLI stderr as well as stdout (FC-AGENT-TEXT-FORGES-ENGINE-MARKER); a forged sdk-loop auth line on CLI stderr is not fatal:auth end to end. Approval: "SHIP keycause-final2: rev-c APPROVES 11a9fffe4, e0a417163, c939d0786 and e324c350c (head e324c350c). merge-tree against fresh origin/main gives rc=0. tsc rc=0. fatal_e2e, session_dispatch, providers, sdk_stream_parser and output give 196 pass and 0 fail." rev-c is the only assigned HIGH reviewer (CoS ruling).
+
 ## v11.63.8 (2026-10-23)
 
 ### Fixed
