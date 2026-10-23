@@ -1,5 +1,4 @@
-// Typed hook slots filled at startup by the extension layer (registerContrib). Core never imports it; an empty slot
-// means the feature is absent and core falls back to its pre-feature behavior.
+// Typed hook slots filled at startup by the extension layer (registerContrib). Core never imports it; an empty slot means the feature is absent and core falls back to its pre-feature behavior.
 import type { BriefFacts } from "../util/reviewer_brief.ts";
 import type { CostRecords, Obj, ReceiptTime, RunContext, StageName } from "./types.ts";
 type Rec = Record<string, unknown>;

@@ -6,24 +6,20 @@ import { basename, relative, resolve } from "node:path";
 import { homeLokiDir } from "../util/paths.ts";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap } from "./types.ts";
-/** sha256 of the pinned origin URL, or of the absolute repo path when there
- *  is no origin (ENGINE.md section 13). */
+/** sha256 of the pinned origin URL, or of the absolute repo path when there  is no origin (ENGINE.md section 13). */
 export function repoKey(originUrl: string | null, repoDir: string): string {
   const basis = originUrl && originUrl.trim() !== "" ? originUrl : resolve(repoDir);
   return createHash("sha256").update(basis).digest("hex");
 }
-/** ~/.loki/cache/v10 (ENGINE.md section 13). Callers may pass their own root
- *  (tests do, to stay off the real home directory). */
+/** ~/.loki/cache/v10 (ENGINE.md section 13). Callers may pass their own root  (tests do, to stay off the real home directory). */
 export function defaultCacheRoot(): string {
   return resolve(homeLokiDir(), "cache", "v10");
 }
 export function repoCacheDir(key: string, cacheRoot: string = defaultCacheRoot()): string {
   return resolve(cacheRoot, key);
 }
-// Parses fine but is the wrong shape (e.g. `null`, `{}`, a bare number) is
-// just as much a corrupt cache entry as unparseable text: both are a miss,
-// never a throw. `isValid` lets each caller state its own shape; callers
-// that skip it accept anything JSON.parse produces, same as before.
+// Parses fine but is the wrong shape (e.g. `null`, `{}`, a bare number) is just as much a corrupt cache entry as unparseable text: both are a miss, never a throw. `isValid` lets each caller state its
+// own shape; callers that skip it accept anything JSON.parse produces, same as before.
 export function readJson<T>(path: string, isValid: (v: unknown) => v is T = (_v): _v is T => true): T | null {
   if (!existsSync(path)) return null;
   try {
@@ -40,8 +36,7 @@ function isRepoMap(v: unknown): v is RepoMap {
 function isTestMap(v: unknown): v is TestMap {
   return typeof v === "object" && v !== null && Array.isArray((v as TestMap).runners) && Array.isArray((v as TestMap).tests);
 }
-/** sha256 over the relative path and bytes of every .ts file under `root`, in sorted order. Hashing the whole tree (not a
- *  hand-picked builder list) means any code the builders import changes the key too. */
+/** sha256 over the relative path and bytes of every .ts file under `root`, in sorted order. Hashing the whole tree (not a  hand-picked builder list) means any code the builders import changes the key too. */
 export function sourceFingerprint(root: string): string {
   const h = createHash("sha256");
   const walk = (dir: string): void => {
@@ -56,9 +51,8 @@ export function sourceFingerprint(root: string): string {
 }
 declare global { var __LOKI_PRODUCER_FP__: string | undefined; }
 let producerFp: string | null = null;
-/** The producer fingerprint stored maps are bound to. A bundle gets it generated in by scripts/build.ts (the bundle has no
- *  source path to hash); a source run hashes src/ itself. When neither is possible it is a per-process random value, so
- *  nothing stored can ever match: a cache that cannot name its producer misses, it never serves an unbound map. */
+/** The producer fingerprint stored maps are bound to. A bundle gets it generated in by scripts/build.ts (the bundle has no  source path to hash); a source run hashes src/ itself. When neither is
+ *  possible it is a per-process random value, so  nothing stored can ever match: a cache that cannot name its producer misses, it never serves an unbound map. */
 export function computeProducerFingerprint(root: string = resolve(import.meta.dir, ".."), injected: unknown = globalThis.__LOKI_PRODUCER_FP__): string {
   if (typeof injected === "string" && /^[0-9a-f]{64}$/.test(injected)) return injected;
   try { return sourceFingerprint(root); } catch { return createHash("sha256").update(`unbound:${process.pid}:${Date.now()}:${Math.random()}`).digest("hex"); }

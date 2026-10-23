@@ -1,8 +1,6 @@
-// E-04: the P1 fetch child (ENGINE.md section 6). Credentialed, deterministic, no LLM: wraps
-// autonomy/issue-providers.sh's `fetch_issue()` for the normalized title/body/labels, then
-// (GitHub only) reads `state` and `closedByPullRequestsReferences` so Intake's already-done check
-// (section 4 step 6) has real data to decide ALREADY_SATISFIED on. NormalizedIssue and Execer are
-// local (types.ts declares neither); exec is injected so tests run with no gh/bash/network dependency.
+// E-04: the P1 fetch child (ENGINE.md section 6). Credentialed, deterministic, no LLM: wraps autonomy/issue-providers.sh's `fetch_issue()` for the normalized title/body/labels, then (GitHub only)
+// reads `state` and `closedByPullRequestsReferences` so Intake's already-done check (section 4 step 6) has real data to decide ALREADY_SATISFIED on. NormalizedIssue and Execer are local (types.ts
+// declares neither); exec is injected so tests run with no gh/bash/network dependency.
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -22,8 +20,7 @@ export interface NormalizedIssue {
 }
 export type Execer = (cmd: string, args: string[]) => string;
 const ISSUE_PROVIDERS_SH = join(REPO_ROOT, "autonomy/issue-providers.sh");
-// A hung gh or network stall must not block Intake: execFileSync kills the child on timeout and
-// throws (ETIMEDOUT), the existing fetch failure. 60s default; env override is for tests.
+// A hung gh or network stall must not block Intake: execFileSync kills the child on timeout and throws (ETIMEDOUT), the existing fetch failure. 60s default; env override is for tests.
 export function defaultExec(cmd: string, args: string[]): string {
   const ms = Number(process.env.LOKI_FETCH_ISSUE_TIMEOUT_MS) || 60_000;
   return execFileSync(cmd, args, { encoding: "utf8", env: process.env, timeout: ms, killSignal: "SIGKILL" });
@@ -32,9 +29,7 @@ interface GithubExtra {
   state?: string;
   closedByPullRequestsReferences?: { merged?: boolean }[];
 }
-/** Fetches and normalizes one issue. Never runs an LLM; a failed GitHub
- *  extra-fields lookup leaves state null (NOT PROVEN), never a false
- *  already-done. */
+/** Fetches and normalizes one issue. Never runs an LLM; a failed GitHub  extra-fields lookup leaves state null (NOT PROVEN), never a false  already-done. */
 export function fetchIssue(ref: string, execer: Execer = defaultExec): NormalizedIssue {
   const raw = execer("bash", ["-c", `source "${ISSUE_PROVIDERS_SH}" && fetch_issue "$1"`, "--", ref]);
   const base = JSON.parse(raw) as Omit<NormalizedIssue, "state" | "closed_by_merged_pr">;
@@ -54,8 +49,7 @@ export function fetchIssue(ref: string, execer: Execer = defaultExec): Normalize
   }
   return { ...base, state, closed_by_merged_pr: closedByMergedPr };
 }
-/** CLI/child-process entry point for the future P1 wiring (E-03/E-11): writes
- *  the normalized issue to `outFile` (Intake then reads it from `<runDir>/issue.json`). */
+/** CLI/child-process entry point for the future P1 wiring (E-03/E-11): writes  the normalized issue to `outFile` (Intake then reads it from `<runDir>/issue.json`). */
 export function fetchIssueToFile(ref: string, outFile: string, exec: Execer = defaultExec): NormalizedIssue {
   const issue = fetchIssue(ref, exec);
   writeFileSync(outFile, JSON.stringify(issue));

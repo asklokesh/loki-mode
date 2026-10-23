@@ -1,7 +1,5 @@
-// engine10/testmap.ts -- runner detection and the impacted-test map (E-05). Runners come from
-// real files only (ENGINE.md section 8). Each changed file maps to tests that import/reference
-// it, unioned with a same-stem floor so Go or import-free tests never drop to zero (under-selecting
-// is unsafe). Pure read. EngineTestMap extends types.ts TestMap without editing it.
+// engine10/testmap.ts -- runner detection and the impacted-test map (E-05). Runners come from real files only (ENGINE.md section 8). Each changed file maps to tests that import/reference it, unioned
+// with a same-stem floor so Go or import-free tests never drop to zero (under-selecting is unsafe). Pure read. EngineTestMap extends types.ts TestMap without editing it.
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
 import { listProjectFiles } from "../util/safe_git.ts";
@@ -10,9 +8,8 @@ import { attachScope, scopeRefs } from "../project_model/scope.ts";
 import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
 import { GO_TEST_RE, JS_SPEC_RE, JS_TEST_RE, PY_TEST_RE, coveredStem, detectFromPackageJson, isTestFile, referencedBasenames } from "../util/test_file_text.ts";
 export { isTestFile };
-/** One command shape per runner (ENGINE.md section 8 table). `<files>` is a placeholder the
- *  caller (E-09 verify) fills with the selected paths. `coarse: true` means the command always
- *  runs the whole suite: npm and cargo have no reliable per-file selection. */
+/** One command shape per runner (ENGINE.md section 8 table). `<files>` is a placeholder the  caller (E-09 verify) fills with the selected paths. `coarse: true` means the command always  runs the
+ *  whole suite: npm and cargo have no reliable per-file selection. */
 export interface CommandSpec {
   cmd: string;
   coarse: boolean;
@@ -36,8 +33,7 @@ const COMMANDS: Record<RunnerName, CommandSpec> = {
   go: { cmd: "go test ./<pkg dirs>", coarse: false },
   cargo: { cmd: "cargo test", coarse: true },
 };
-/** Repo's own interpreter first (E-53): `<root>/.venv/bin/python`, then
- *  `<root>/venv/bin/python`, else bare `python` on PATH. */
+/** Repo's own interpreter first (E-53): `<root>/.venv/bin/python`, then  `<root>/venv/bin/python`, else bare `python` on PATH. */
 function pytestPython(root: string): string {
   for (const venv of [".venv", "venv"]) {
     const bin = join(root, venv, "bin", "python");
@@ -87,9 +83,7 @@ export function buildTestMap(root: string): EngineTestMap {
     else if (name === "go.mod" || GO_TEST_RE.test(name)) mark("go", rel);
     else if (name === "Cargo.toml") mark("cargo", rel);
   }
-  // Per-file test entries exist only for narrowly-selectable runners: npm
-  // and cargo run the whole suite (coarse), so no individual file earns a
-  // TestRef for them.
+  // Per-file test entries exist only for narrowly-selectable runners: npm and cargo run the whole suite (coarse), so no individual file earns a TestRef for them.
   const jsRunner: RunnerName | null = evidence["vitest"] ? "vitest" : evidence["jest"] ? "jest" : evidence["bun"] ? "bun" : evidence["node"] ? "node" : null;
   const tests: TestRef[] = [];
   for (const rel of files) {
@@ -98,8 +92,7 @@ export function buildTestMap(root: string): EngineTestMap {
     else if (PY_TEST_RE.test(name) && evidence["pytest"]) tests.push({ runner: "pytest", path: rel });
     else if (GO_TEST_RE.test(name) && evidence["go"]) tests.push({ runner: "go", path: rel });
   }
-  // Object.create(null): keys come from grep'd file content, so a source
-  // named e.g. "constructor" must not collide with Object.prototype.
+  // Object.create(null): keys come from grep'd file content, so a source named e.g. "constructor" must not collide with Object.prototype.
   const sourceRefs: Record<string, string[]> = Object.create(null);
   const specs: Record<string, string[]> = Object.create(null);
   for (const t of tests) {
@@ -118,8 +111,7 @@ export function buildTestMap(root: string): EngineTestMap {
   attachScope(map, loadProjectApi(root), specs);
   return map;
 }
-/** Test refs impacted by `changedFiles`: a changed test maps to itself; a changed source maps
- *  to every test that imports/references its basename (built by `buildTestMap`'s grep, read back from `map.sourceRefs`). */
+/** Test refs impacted by `changedFiles`: a changed test maps to itself; a changed source maps  to every test that imports/references its basename (built by `buildTestMap`'s grep, read back from `map.sourceRefs`). */
 export function impactedRefs(map: TestMap, changedFiles: readonly string[]): TestRef[] {
   // `map` is always what buildTestMap/detect() returned; sourceRefs is this file's own addition to the shared TestMap contract (see EngineTestMap).
   const sourceRefs = (map as EngineTestMap).sourceRefs ?? {};

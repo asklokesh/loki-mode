@@ -21,8 +21,7 @@ import { loadSpecFile, specBriefBlock, type LoadedSpec } from "../../util/spec_f
 /** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
 export interface ReadOnlyFile { path: string; content: string; }
 
-/** Impacted tests: the intake test map narrowed to plan's relevant files, falling back to the task's named
- *  files when Plan was skipped or found none (E-64's lean path; E-98c), plus the sealed Wall tests. */
+/** Impacted tests: the intake test map narrowed to plan's relevant files, falling back to the task's named  files when Plan was skipped or found none (E-64's lean path; E-98c), plus the sealed Wall tests. */
 export function impactedTests(ctx: RunContext): string[] {
   const o = ctx.outputs();
   const map = o.intake?.testmap as TestMap | undefined;

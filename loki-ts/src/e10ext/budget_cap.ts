@@ -1,6 +1,5 @@
 // D60-5 (INTEL-2): the per-run dollar cap. Resolution order: --max-cost, then LOKI_BUDGET_LIMIT, then loki.yaml budgets.per_run, then the default.
-// D82-COSTCAP: the default is $100 when an API key is set in the env, and NO dollar cap on a subscription run (no key).
-// Only whether the key variable is SET is checked; its value is never read or printed.
+// D82-COSTCAP: the default is $100 when an API key is set in the env, and NO dollar cap on a subscription run (no key); only whether the key variable is SET is checked, never its value.
 // Enforced in the worker (worker.ts -> machine.ts overCap): once priced cost reaches the cap no further stage starts and the
 // run ends BUDGET_STOP (exit 3). Unpriced sessions (usd null) never count, so an unmetered run is not stopped by a guess.
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts"; import { loadDefaultMaxCostUsd } from "../runner/budget.ts";

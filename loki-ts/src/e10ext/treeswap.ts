@@ -1,9 +1,6 @@
-// loki-ts/src/e10ext/treeswap.ts
-//
 // Tree swap helper (docs/v10/SCORECARD-PLAN.md S41-12, docs/v10/DECISIONS.md D42(1)). Pure file-tree mechanics for merging a chosen parallel-attempt
 // tree into the run's primary working tree so core verify and Seal run on the final tree. Returns/performs data moves only: no test runs, no
 // pass/fail, no Wall or Seal writes, no verdict logic.
-//
 // D42(1) binds this module: it may not import stages/, seal.ts, verify.ts, wall.ts or verify_cmd.ts (except `import type`), and it never computes a verdict.
 //
 // Base is a git commit (the primary's HEAD before attempts started), not a filesystem snapshot: "clean" is defined by `git status`, and diffing
@@ -277,11 +274,10 @@ function gitPath(root: string, name: string): string {
 }
 
 // Merges attemptRoot's departure from `base` into primaryRoot. The primary must have no staged, unstaged or unmerged change to a tracked file
-// (refused otherwise, so the index and tracked edits never need restoring). An exclusive lock file under the git dir serialises swaps into one
-// primary. Reads happen first: any failure there throws before primaryRoot is touched. Before any write, an undo record is created (O_EXCL, 0600) at
-// <runDir>/treeswap-undo.json holding the primary's untracked files and its current content at EVERY path the winner will write (ignored or not). If
-// the write phase fails, restoreFromUndo rolls primaryRoot back from that record (a compensating action, not filesystem atomicity); the record is
-// deleted after a success or a clean rollback, and kept if rollback fails.
+// (refused otherwise). An exclusive lock file under the git dir serialises swaps into one primary. Reads happen first: any failure there throws
+// before primaryRoot is touched. Before any write, an undo record is created (O_EXCL, 0600) at <runDir>/treeswap-undo.json holding the primary's
+// untracked files and its current content at EVERY path the winner will write. If the write phase fails, restoreFromUndo rolls primaryRoot back
+// from it (a compensating action, not filesystem atomicity); the record is deleted after a success or clean rollback, kept if rollback fails.
 export function swapAttemptIntoWorkingTree(opts: SwapOptions): void {
   const excludes = opts.excludes ?? DEFAULT_EXCLUDES;
   const lockPath = gitPath(opts.primaryRoot, "loki-treeswap.lock");

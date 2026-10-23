@@ -1,8 +1,6 @@
-// E-09 Fast verify (ENGINE.md 4 "Fast verify", 16 E-09). Runs impacted + changed test files + Wall tests,
-// plus lint/typecheck of changed files, each under one per-check timeout. A missing tool is NOT PROVEN
-// ("not_run"), never a failure; a failing check gets one rerun, fail-then-pass is "flaky". An empty diff with
-// the already_done marker seals ALREADY_SATISFIED; without it, FAILED (ENGINE.md 2). Reaches testmap.ts/
-// machine.ts only through RunContext's `tests: TestMapProvider`, injected as a fake in tests, never imported here.
+// E-09 Fast verify (ENGINE.md 4 "Fast verify", 16 E-09). Runs impacted + changed test files + Wall tests, plus lint/typecheck of changed files, each under one per-check timeout. A missing tool is NOT
+// PROVEN ("not_run"), never a failure; a failing check gets one rerun, fail-then-pass is "flaky". An empty diff with the already_done marker seals ALREADY_SATISFIED; without it, FAILED (ENGINE.md 2).
+// Reaches testmap.ts/ machine.ts only through RunContext's `tests: TestMapProvider`, injected as a fake in tests, never imported here.
 import { installOwned } from "../../project_model/install.ts";
 import { scopedOutOf } from "../../project_model/scope.ts";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -19,13 +17,11 @@ import { STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { isZeroRun, zeroOnBase } from "../../util/base_guard.ts"; import { rmNewUntracked, untracked, attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
-/** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one
- *  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
+/** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
 interface ImplementOutput {
   exit?: ImplementExit;
 }
-/** wall.ts's full output isn't in the contract either; only the sealed file list, shaped like
- *  Receipt["wall"].files, is needed here. */
+/** wall.ts's full output isn't in the contract either; only the sealed file list, shaped like  Receipt["wall"].files, is needed here. */
 interface WallOutput {
   files?: { path: string }[];
   holdout_dir?: string; // P12-05: private store of the held-out Wall tests
@@ -84,8 +80,7 @@ async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSi
   const cut = timeout.aborted || signal.aborted;
   return { ok: exitCode === 0 && !cut, missing: false, cut, out: cut ? "" : stripAnsi(tail) }; // FC-69
 }
-/** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, a
- *  timed-out/aborted run, or a run that executed 0 tests is recorded once as not_run and never retried. */
+/** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, a  timed-out/aborted run, or a run that executed 0 tests is recorded once as not_run and never retried. */
 export async function runCheck(
   ctx: RunContext, name: string, cmd: string, args: string[], signal: AbortSignal,
   checks: VerifyCheck[], opts: RunOpts = {},
@@ -129,16 +124,13 @@ export async function probeZeroChecks(repoDir: string, tests: TestRef[], signal:
   rmNewUntracked(repoDir, before); // a probed test's cache or report must not look like an agent change
   return { measured: measured.sort(), zero: zero.sort() };
 }
-/** A-112: a test check red on head, in a file the diff did not touch, whose every failing id is also red on a pristine detached base
- *  worktree (never a reset of the implement tree, D42 (2)) is pre_red: ids go to NOT PROVEN, seal skips it in the verdict, the check stays
- *  "fail" and in the fix loop unless the TARGET progressed: a passing Wall test, or a relevant test (`rel`: impacted tests of the task-named
- *  files, the lean-path Wall stand-in) that failed on base, now passes and ran no fewer tests (absent or skipped is not green). Relevant checks
- *  are never pre_red. Base reruns get no node_modules or .venv: a dependency-only failure yields no ids (failIds needs the count covered).
- *  A-115: a relevant check that passes with more skipped or deselected tests than base is `weak`: no progress, and the caller lists it in
- *  NOT PROVEN (a skipped target is not a fixed target). Weak also means it ran FEWER tests than base (pytest.exit, xfail, a deleted test):
- *  every relevant pass is compared with its base run, and xfailed counts as skipped, never passed.
- *  FC-ZERO-ON-BASE + FC-REPO-SKIPPED-TEST-DOWNGRADES: an untouched, non-Wall, non-holdout check (relevant ones included) that ran zero tests and also runs zero on base (`zeroOk`: no test config edit; zeroOnBase withholds when the linked dependency dirs can see head, depsSeeHead) is out.zero; seal keeps it in the receipt as repo_skipped and out of the verdict.
- *  ponytail: bun/go/cargo/npm yield no ids and no skip count, so they are never subtracted or judged weak. */
+/** A-112: a test check red on head, in a file the diff did not touch, whose every failing id is also red on a pristine detached base  worktree (never a reset of the implement tree, D42 (2)) is  pre_red: ids go to NOT PROVEN,
+ *  seal skips it in the verdict, the check stays  "fail" and in the fix loop unless the TARGET progressed: a passing Wall test, or a relevant test (`rel`: impacted  tests of the task-named  files, the lean-path Wall stand-in)
+ *  that failed on base, now passes and ran no fewer tests (absent or skipped is not green). Relevant checks  are never pre_red. Base  reruns get no node_modules or .venv: a dependency-only failure yields no ids (failIds needs
+ *  the count covered).  A-115: a relevant check that passes with more skipped or deselected tests than  base is `weak`: no progress, and the caller lists it in  NOT PROVEN (a skipped target is not a fixed target). Weak also
+ *  means it ran FEWER tests than base (pytest.exit, xfail, a deleted test):  every relevant pass is compared with its base run, and xfailed counts as skipped, never passed.  FC-ZERO-ON-BASE + FC-REPO-SKIPPED-TEST-DOWNGRADES:
+ *  an untouched, non-Wall, non-holdout check  (relevant ones included) that ran zero tests and also runs zero on base (`zeroOk`: no test config edit; zeroOnBase withholds when the linked dependency dirs can see head,
+ *  depsSeeHead) is  out.zero; seal keeps it in the receipt as repo_skipped and out of the verdict.  ponytail: bun/go/cargo/npm yield no ids and no skip count, so they are never subtracted or judged weak. */
 async function subtractBase(
   ctx: RunContext, api: ProjectApi | null, checks: VerifyCheck[], tests: TestRef[], changed: string[],
   wall: Set<string>, rel: Set<string>, signal: AbortSignal, zeroOk = true, zeroIntake: ReadonlySet<string> = new Set(),
@@ -169,8 +161,7 @@ async function subtractBase(
     for (const { c } of sus) {
       out.cnt[c.name] = { b: { run: base.get(c)!.n, skipped: base.get(c)!.sk }, h: { run: c.n ?? 0, skipped: c.sk ?? 0 } };
     }
-    // A-115b: sus includes an EDITED relevant file (its base-red ids now pass;
-    // the caller's `weakened test:` note keeps it PARTIAL)
+    // A-115b: sus includes an EDITED relevant file (its base-red ids now pass; the caller's `weakened test:` note keeps it PARTIAL)
     const progress = checks.some((c) => wall.has(c.name) && c.result === "pass")
       || sus.some(({ c }) => !out.weak.includes(c.name) && base.get(c)!.red.length > 0 && (c.n ?? 0) >= base.get(c)!.n);
     if (progress) {
@@ -189,15 +180,13 @@ async function subtractBase(
   return out;
 }
 
-// ponytail: existence of our own selector script is a strong enough marker
-// that repoDir IS the loki-mode repo; a build target repo will not carry it.
+// ponytail: existence of our own selector script is a strong enough marker that repoDir IS the loki-mode repo; a build target repo will not carry it.
 function isLokiModeRepo(repoDir: string): boolean {
   return existsSync(join(repoDir, "scripts", "select-tests.sh"));
 }
 const ESLINT_CONFIGS = [".eslintrc", ".eslintrc.json", ".eslintrc.js", ".eslintrc.cjs", "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"];
-/** ENGINE.md section 4's named tool per language: bash -n + shellcheck for shell, tsc + eslint
- *  (when configured) for TS/JS, ruff for Python. Every named tool that applies to the changed set
- *  gets a check entry: a missing tool is not_run, never silently absent (section 9 NOT PROVEN). */
+/** ENGINE.md section 4's named tool per language: bash -n + shellcheck for shell, tsc + eslint  (when configured) for TS/JS, ruff for Python. Every named tool that applies to the changed set  gets
+ *  a check entry: a missing tool is not_run, never silently absent (section 9 NOT PROVEN). */
 /** TEN-QUALITY-03: a failed ruff/shellcheck/eslint check whose every diagnostic is also on the base content (git show, fed on stdin, same per-check timeout) is pre-existing. */
 const excuseLint = (ctx: RunContext, signal: AbortSignal, c: VerifyCheck, tool: StaticTool, cmd: string, prefix: string[], cwd: string, rel: string[], opts: RunOpts): Promise<boolean> => c.result !== "fail" || signal.aborted ? Promise.resolve(false) : staticPreExisting(tool, prefix, rel, { run: async (a, stdin) => { if (signal.aborted) return null; const r = await runOnce(cmd, a, cwd, AbortSignal.any([signal, AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS)]), { ...opts, ...(stdin !== undefined ? { stdin } : {}) }); return r.missing || r.cut ? null : r; }, base: (f) => { try { return safeGit(ctx.repoDir, ["show", `${ctx.baseSha}:${relative(ctx.repoDir, join(cwd, f))}`], { stdio: ["ignore", "pipe", "ignore"] }); } catch { return null; } } });
 /** The project names ruff itself: a [tool.ruff] table, a ruff config file, or ruff in a dependency or tooling manifest. Config detection only, never an install. */
@@ -255,8 +244,7 @@ export const verifyStage: Stage = {
     const impacted = ctx.tests.impacted(map, changed);
     const changedTestFiles = map.tests.filter((t) => changed.includes(t.path));
     const wall = (ctx.outputs().wall as WallOutput | undefined) ?? {};
-    // E-56: wall.ts seals files under an absolute targetDir; normalize to repo-relative so an
-    // absolute Wall path still matches and runs in fast verify.
+    // E-56: wall.ts seals files under an absolute targetDir; normalize to repo-relative so an absolute Wall path still matches and runs in fast verify.
     const wallPaths = new Set(
       (wall.files ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)),
     );
@@ -304,8 +292,7 @@ export const verifyStage: Stage = {
     const covered = (f: string): boolean => ctx.tests.impacted(map, [f]).some((t) => checks.some((c) => c.name === testCheckName(t) && hasExecutedProof([c])));
     const uncoveredChanged = changed.filter((f) => CODE_EXT.test(f) && !isTestFile(f) && !wallPaths.has(f) && !cfgChanged.includes(f) && !covered(f)); // FC-21b: changed code no passing impacted check ran; seal denies VERIFIED after a limit
     const flaky = checks.filter((c) => c.result === "flaky").map((c) => (isHold(c) ? "holdout" : c.name));
-    // ponytail: real clustering is failures.ts, which depends on this stage; a naive 1:1
-    // placeholder keeps the section-4 output key populated until that slice lands.
+    // ponytail: real clustering is failures.ts, which depends on this stage; a naive 1:1 placeholder keeps the section-4 output key populated until that slice lands.
     let excerptLeft = EXCERPT_TOTAL_CAP; // TEN-QUALITY-01: sample = rerun cmd + redacted excerpt, 6 KB across all groups
     const failuresGrouped = checks
       .filter((c) => c.result === "fail" && !preRed.names.includes(c.name) && !isHold(c))

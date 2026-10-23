@@ -1,9 +1,6 @@
 // loki-ts/src/engine10/stages/deep.ts -- E-23 Deep verify (ENGINE.md section 4). Runs after Seal
-// + PR: full suite, app-boot probe, council, secret scan; reports via engine10-push.sh (comment +
-// addendum + status). A refused or unavailable check is NOT PROVEN, never red; only a failing full
-// suite or a secret match is failure. Rule of Two: assertWorkerEnv asserts no real GitHub token,
-// since the deep worker runs repo code and reads untrusted diffs. Council goes through the
-// injectable CouncilRunner; unwired, it is NOT PROVEN, never passing.
+// + PR: full suite, app-boot probe, council, secret scan; reports via engine10-push.sh (comment + addendum + status). A refused or unavailable check is NOT PROVEN, never red; only a failing full suite or a secret match is
+// failure. Rule of Two: assertWorkerEnv asserts no real GitHub token, since the deep worker runs repo code and reads untrusted diffs. Council goes through the injectable CouncilRunner; unwired, it is NOT PROVEN, never passing.
 import { installOwned } from "../../project_model/install.ts";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,8 +19,7 @@ import { pushArgv, STAGE_BUDGETS } from "../types.ts";
 import { REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
 import { DEFAULT_PUSH_SH, SHA_RE } from "./pr.ts";
-/** RunContext plus the value this stage needs that E-03 will eventually
- *  inject (same local-extension pattern pr.ts's PrContext already uses). */
+/** RunContext plus the value this stage needs that E-03 will eventually  inject (same local-extension pattern pr.ts's PrContext already uses). */
 export type DeepContext = RunContext & {
   pinnedOrigin?: string;
 };
@@ -56,9 +52,7 @@ export function sessionCouncil(sessions: SessionRunner): CouncilRunner {
     } finally { rmSync(cwd, { recursive: true, force: true }); }
   } };
 }
-/** ReceiptCheck (types.ts) plus a `reason` field the contract does not carry,
- *  the same disclosed-extra-field pattern testmap.ts's EngineTestMap and
- *  verify.ts's VerifyCheck already use. */
+/** ReceiptCheck (types.ts) plus a `reason` field the contract does not carry,  the same disclosed-extra-field pattern testmap.ts's EngineTestMap and  verify.ts's VerifyCheck already use. */
 export interface DeepCheck extends ReceiptCheck {
   reason?: string; ids?: string[]; excerpt?: string; // excerpt: redacted failure text for the fix brief; ids: failing test ids of the real run (failIds), read by verify's baseline attribution
 }
@@ -79,8 +73,7 @@ const MAX_COUNCIL_DIFF_BYTES = 400_000; // ENGINE.md section 2 cause 4: a 431361
 const COUNCIL_LIMIT_S = 600;
 const FULL_SUITE_TIMEOUT_MS = 300_000; // 5 min per runner; deep's own stage limit (2700s) is the outer bound
 const PR_NUMBER_RE = /\/pull\/(\d+)$/;
-/** One check per detected runner, run to completion (no retry: flaky-rerun
- *  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
+/** One check per detected runner, run to completion (no retry: flaky-rerun  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
 export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
   if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), changed: opts.changed, proofFiles: opts.proofFiles, wallBaseRed: opts.wallBaseRed }, checks, notProven)) return;
   const map = await ctx.tests.detect(ctx.repoDir);

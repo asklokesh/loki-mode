@@ -1,6 +1,5 @@
-// Loki 10 worker (P2, ENGINE.md 6): the token-withheld process that runs intake..seal. It never writes
-// events.jsonl; each event is one JSON line {type, stage, data} on stdout, and the supervisor validates,
-// stamps seq and appends. Its own diagnostics go to stderr.
+// Loki 10 worker (P2, ENGINE.md 6): the token-withheld process that runs intake..seal. It never writes events.jsonl; each event is one JSON line {type, stage, data} on stdout, and the supervisor
+// validates, stamps seq and appends. Its own diagnostics go to stderr.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readEvents } from "./events.ts";

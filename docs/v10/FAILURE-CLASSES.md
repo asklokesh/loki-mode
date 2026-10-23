@@ -1882,3 +1882,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept (`grep -n "group:" docs/examples/loki-issue-to-pr.yml.example`): four jobs carry a group; only the two publish jobs shared one.
 - Mechanism: the stub records its subcommand and the tests require `reseal` for fix and `explain` for explain; groups are now `loki-issue-`, `loki-issue-publish-`, `loki-pr-fix-`, `loki-pr-publish-`, and a guard requires four distinct groups.
 - Fixture: tests/test-issue-to-pr-action.sh; mutants: drop `SUB="reseal"` (2 failures), make the publish group equal the agent group (guard red).
+
+## FC-LINE-CAP-GATED-AFTER-MERGE Main went red on core engine10 5091 >= 5000 and e10ext 1513 >= 1500 because the line caps are enforced only by budget.test.ts and structural-checks line_budgets, not before a slice merges
+
+- User-visible vs raw: raw (a red structural gate on main; no user-facing behavior).
+- Law: a cap that blocks main must also block the slice that crosses it; a slice may not merge on a gate that does not run the cap.
+- Cause (measured): `bash scripts/structural-checks.sh` on origin/main 736a43939 printed "core engine10 5091 >= 5000" and "e10ext 1513 >= 1500". Commits 62f946e19 and 484752c3b touched the wall and testmap files in those dirs most recently; whether a slice gate ran line_budgets before merge is not measured here.
+- Siblings swept: modernize 4000, contrib 1200 and SKILL.md 500 are under their caps in the same run (only the two lines above failed).
+- Mechanism: this slice restores headroom without changing a cap or any behavior: comment paragraphs and doc comments in engine10 are reflowed to 230 columns (code unchanged; comment text identical once whitespace and comment markers are stripped), and in e10ext redundant header and doc-comment lines are tightened and one unused import line is removed. Running line_budgets before merge is a separate change, not made here.
+- Fixture: tests/engine10/budget.test.ts and scripts/structural-checks.sh line_budgets are the existing guards; both must exit 0 on this branch.

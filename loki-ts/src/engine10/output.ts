@@ -1,8 +1,6 @@
-// E-13: live stage lines, the 60s heartbeat line, and the 5-line final summary (ENGINE.md section
-// 11). Pure formatting: callers feed in already-folded numbers (events.ts fold(), section 5), this
-// module never reads events.jsonl itself. Null is never rendered as 0 (section 5, section 10): a
-// missing cost reads "not measured", a partially-priced run reads "partial: $X for N of M
-// sessions" (E-69), and a priced-but-zero-usage session is never shown as a real $0.00.
+// E-13: live stage lines, the 60s heartbeat line, and the 5-line final summary (ENGINE.md section 11). Pure formatting: callers feed in already-folded numbers (events.ts fold(), section 5), this
+// module never reads events.jsonl itself. Null is never rendered as 0 (section 5, section 10): a missing cost reads "not measured", a partially-priced run reads "partial: $X for N of M sessions"
+// (E-69), and a priced-but-zero-usage session is never shown as a real $0.00.
 import type { EventEnvelope, Verdict } from "./types.ts";
 import { clipWords, collapseNotProven, formatClock, formatDuration, formatTokens } from "../util/term_width.ts";
 export { formatClock, formatDuration, formatTokens }; // one owner: util/term_width.ts
@@ -93,9 +91,8 @@ export interface SummaryInput {
     tokens: number | null;
     /** Shown in parens when usd is null, e.g. "codex reports tokens only". */
     note?: string | null;
-    /** E-69: some sessions priced, some not (usd above is null because the run isn't FULLY
-     *  measured). Renders "partial: $X for N of M sessions" instead of "not measured". Omit,
-     *  or leave measuredSessions 0, for a run with no priced sessions at all. */
+    /** E-69: some sessions priced, some not (usd above is null because the run isn't FULLY  measured). Renders "partial: $X for N of M sessions" instead of "not measured". Omit,  or leave
+     *  measuredSessions 0, for a run with no priced sessions at all. */
     partialUsd?: number;
     measuredSessions?: number;
     totalSessions?: number; stageShares?: string | null; /* TEN-COST-28: stageShareText line, printed as Spend */ capUsd?: number; // Q17-02: run cap USD when set; the measured Cost line adds "N% of cap $X"

@@ -1,6 +1,5 @@
-// D61 slice 12: integrate passing parallel unit branches onto loki/group-<id> in DAG order, run the repo test command once, and
-// report per-unit outcomes. A conflict stops the merge and names the unit; the merge is aborted so no partial merge is left (fix
-// units are deferred). Moat: ok is true only when every unit passed its own run, merged cleanly and the suite ran and exited 0.
+// D61 slice 12: integrate passing parallel unit branches onto loki/group-<id> in DAG order, run the repo test command once, and report per-unit outcomes. A conflict stops the merge and names the
+// unit; the merge is aborted so no partial merge is left (fix units are deferred). Moat: ok is true only when every unit passed its own run, merged cleanly and the suite ran and exited 0.
 import { spawnSync } from "node:child_process";
 import type { Dag } from "../features/decompose.ts";
 import { safeGitSpawn } from "../util/safe_git.ts";

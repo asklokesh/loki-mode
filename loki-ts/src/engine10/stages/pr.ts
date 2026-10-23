@@ -1,8 +1,6 @@
-// E-11 (TS half): PR stage (ENGINE.md sections 4, 6, 7). Runs in the SUPERVISOR (P0), never the
-// worker: the only stage touching GitHub credentials, only through the credentialed push child
-// engine10-push.sh (P4); no LLM, no untrusted text read here. Supervisor calls runPr after the
-// worker exits, passing pinnedOrigin (section 6). push-pr prints a "reused" or "created" marker line before the
-// PR URL; `existing` is true/false from it, and null when the script printed none (local origin, older script).
+// E-11 (TS half): PR stage (ENGINE.md sections 4, 6, 7). Runs in the SUPERVISOR (P0), never the worker: the only stage touching GitHub credentials, only through the credentialed push child
+// engine10-push.sh (P4); no LLM, no untrusted text read here. Supervisor calls runPr after the worker exits, passing pinnedOrigin (section 6). push-pr prints a "reused" or "created" marker line
+// before the PR URL; `existing` is true/false from it, and null when the script printed none (local origin, older script).
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

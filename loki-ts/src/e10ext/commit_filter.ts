@@ -1,5 +1,4 @@
 // Shared by the commit stage and the supervisor backstop: which staged paths a run must never publish.
-import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
 import { untouchedSinceIntake, untouchedUntracked } from "./preexisting_dirty.ts";
 import { installOwned } from "../project_model/install.ts";

@@ -1,5 +1,4 @@
-// Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6, 10): eval marker first, origin pinned once, worker
-// spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal)
+// Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6, 10): eval marker first, origin pinned once, worker spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal)
 // id; post-PR: detached deep verify, then Slack notify.
 import { routeStartLine } from "../runner/router/route_block.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
@@ -182,8 +181,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   let prUrl: string | null = null;
   const intact = log.verify(); // unconditional re-check before the PR
   if (!intact) notProven.push(TAMPER_NOT_PROVEN);
-  // E-66: already-satisfied opens no PR. E-67: FAILED (including a backstop kill) does not block the
-  // PR outright; backstopCommit lands what the kill left uncommitted so the diff below (against
+  // E-66: already-satisfied opens no PR. E-67: FAILED (including a backstop kill) does not block the PR outright; backstopCommit lands what the kill left uncommitted so the diff below (against
   // intake's base_sha) sees it. No diff falls to the comment/print branch below.
   let hasDiff = false; // P1: every verdict needs a net diff to publish; a SPEC_CONFLICT or PARTIAL that changed nothing must not push an empty branch
   if (!cancelled) {

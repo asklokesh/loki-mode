@@ -1,7 +1,5 @@
-// E-17: Fix rounds (ENGINE.md 4, 16). One fix round is one provider session with the same brief rules as
-// implement, plus grouped verify failures, plan and diff stat. The machine loops [Fix -> Fast verify],
-// calling this stage again after each failure; MAX_FIX_ROUNDS caps rounds itself (a 3rd call is a no-op
-// stage.skipped, moving to Seal/PARTIAL). Depends on session.ts/verify.ts only through types.ts shapes.
+// E-17: Fix rounds (ENGINE.md 4, 16). One fix round is one provider session with the same brief rules as implement, plus grouped verify failures, plan and diff stat. The machine loops [Fix -> Fast verify], calling this stage
+// again after each failure; MAX_FIX_ROUNDS caps rounds itself (a 3rd call is a no-op stage.skipped, moving to Seal/PARTIAL). Depends on session.ts/verify.ts only through types.ts shapes.
 import { briefCtx, buildImplementBrief, impactedTests } from "./implement.ts";
 import { routedFix, routerActive } from "../../runner/router/unit_model.ts";
 import { cascadeDowngrade, escalationModel } from "../sizing.ts";
