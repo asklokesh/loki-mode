@@ -82,7 +82,9 @@ while [ "$i" -lt "$TRIES" ]; do
     # shellcheck disable=SC2086 # versions are plain tokens
     TARGET="$(highest "$VERSION" "$LATEST_NOW" "$NEXT_NOW" $ALL)"
     [ -n "$TARGET" ] || { echo "::error::cannot determine the highest version"; exit 1; }
-    for tag in latest next; do
+    # next first: it is the tag users on @next read, and a run that dies between the
+    # two writes must leave next at the new version, never behind latest.
+    for tag in next latest; do
         cur="$(tag_of "$tag")"
         if [ "$cur" = "$TARGET" ]; then continue; fi
         # A fresh read above the target means another run moved the tag since the
