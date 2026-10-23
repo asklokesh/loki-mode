@@ -208,13 +208,15 @@ RULES = (_rule_mock_render, _rule_toothless_test, _rule_mock_target)
 # The Wall is authored per run by an LLM (engine10 stages/wall.ts) and cannot be
 # authored here. When loki_wall_* files are present in the working tree they are
 # run (this EXECUTES repo code): a failing one is a FAIL. .py runs under pytest;
-# ts/js are counted as skipped, not as a pass. Only a file whose
+# ts/js go through the engine10 Wall runner (RQ-64). A file with no real result
+# (no bun, no runner) is counted as skipped, not as a pass. Only a file whose
 # provenance checks out (_wall_trusted) can earn the behavioral signal: an agent can
 # write `assert True` into an untracked loki_wall_ok.py, so an unattested Wall can
 # FAIL a run but never PASS one.
 
 WALL_PREFIX = "loki_wall_"
 WALL_TIMEOUT_S = 20
+WALL_JS_TIMEOUT_S = 60  # per file, the engine10 Wall runner's own BASE_RUN_TIMEOUT_MS
 WALL_TOTAL_BUDGET_S = 60  # whole Wall stage
 
 
@@ -230,6 +232,14 @@ def _wall_files(root: str) -> list:
             names.extend(os.path.relpath(os.path.join(dirpath, fn), root) for fn in filenames)
     return [n for n in names
             if os.path.basename(n).startswith(WALL_PREFIX) and not EXCLUDE_RE.search(n)]
+
+
+def _lokits_entries() -> list:
+    """argv prefixes that run `loki internal ...` in bun: the shipped dist, then the source tree. Empty when bun is absent."""
+    bun = shutil.which("bun")
+    ts = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "loki-ts")
+    return [[bun, os.path.join(ts, rel)] for rel in ("dist/loki.js", "src/cli.ts")
+            if bun and os.path.exists(os.path.join(ts, rel))]
 
 
 def _sealed_wall_hashes(root: str) -> set:
@@ -272,9 +282,26 @@ def _wall_trusted(root: str, rel: str, diff_base: str, sealed: set) -> bool:
     return (os.path.basename(rel), digest) in sealed
 
 
+def _run_wall_js(root: str, rels: list, budget_s: float) -> dict:
+    """RQ-64: .ts/.js Wall files go through the engine10 Wall runner (`loki internal wall-run`), not a second runner.
+    Returns {rel: "pass"|"fail"}; a file with no real result (no bun, no runner, crash, over budget) is absent.
+    An entry that does not know the subcommand (a stale dist) yields no JSON, so the next entry is tried."""
+    results = None
+    for entry in _lokits_entries():
+        try:
+            p = subprocess.run(entry + ["internal", "wall-run", root] + rels, cwd=root, capture_output=True, text=True,
+                               timeout=max(1.0, min(WALL_JS_TIMEOUT_S * len(rels), budget_s)))
+            results = json.loads(p.stdout.strip().splitlines()[-1])
+            break
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            continue
+    return {r["file"]: r["status"] for r in (results if isinstance(results, list) else [])
+            if isinstance(r, dict) and r.get("file") in rels and r.get("status") in ("pass", "fail")}
+
+
 def _run_wall(root: str, diff_base: str = "") -> tuple:
     """Returns (findings, ran, skipped, trusted). EXECUTES loki_wall_* files, which are repo code: .py under
-    pytest (no cache dir written); .ts/.js are counted skipped. Any executed file can FAIL; only a
+    pytest (no cache dir written), .ts/.js through the engine10 Wall runner. Any executed file can FAIL; only a
     trusted one (see _wall_trusted) counts toward `trusted`, the behavioral signal. WALL_TOTAL_BUDGET_S caps the
     whole stage; files left when it runs out are counted skipped."""
     findings, ran, skipped, trusted = [], 0, 0, 0
@@ -282,9 +309,10 @@ def _run_wall(root: str, diff_base: str = "") -> tuple:
     files = _wall_files(root)
     sealed = _sealed_wall_hashes(root) if files else set()
     status = {}
+    js = [r for r in files if not r.endswith(".py")]
     for rel in files:
-        if not rel.endswith(".py"):
-            continue  # ts/js Wall files are counted skipped, not run
+        if rel in js:
+            continue
         left = deadline - time.monotonic()
         if left <= 0:
             continue
@@ -302,6 +330,11 @@ def _run_wall(root: str, diff_base: str = "") -> tuple:
                                         message="Wall test fails: " + (out.strip().splitlines() or [""])[-1][:160]))
         except (OSError, subprocess.SubprocessError):
             pass
+    if js and deadline - time.monotonic() > 0:
+        for rel, st in _run_wall_js(root, js, deadline - time.monotonic()).items():
+            status[rel] = st
+            if st == "fail":
+                findings.append(Finding(rule="wall_failed", path=rel, line=1, message="Wall test fails (engine10 Wall runner)"))
     for rel in files:
         if rel not in status:
             skipped += 1
