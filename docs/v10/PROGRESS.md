@@ -2708,3 +2708,12 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 - Reboot wiped the scratchpad clones and reviewer state; release clone rebuilt at ~/git/lm-wt/lm-rel, worktrees now under ~/git/lm-wt.
 - Re-review of lost verdicts: #318 BLOCK (orphaned run.sh test anchor, voter_agents.ts conflict; rework pd/318r). Security batch BLOCK on #303b (unredacted input_summary in events.jsonl), #315 (backslash authority bypass sends MCP auth over http), #325e (doctor --airgap prints webhook secrets), #329 (dashboard _write_secret unswept, receipt sweep untested); rework pd/303c and pd/mcpchain. #305fix-rb pending full bun test.
 - Founder 2026-10-23: act as CTO and CoS without asking; 10/10 versus competitors in every category and measured 100x UX. Head-to-head bench (loki 11.54.0 vs bare claude -p, 8 hidden-test tasks, n=2) running on pd/h2h; codex not installed (UNMEASURED), droid unauthenticated. Architect filing win-category slices plus the UX scorecard tracking issue.
+
+
+## 2026-10-23T05:37Z (CoS) checkpoint, v11.54.0..v11.56.5 shipped
+- origin/main 39fd953b5 = v11.56.5 (cw17: start --resume reaches stage resume, Refs #352). npm at 05:36Z: latest 11.56.4, next 11.56.3 (propagation window; re-check).
+- #352 criterion 5 (resume outcome within 21s) NOT MET: 3x3 healthy resume 21-31s, posted at issue comment 6358142565. Ruling on the 21s target goes to the founder. cw17b (honest exit 4 only for runs that truly cannot resume) assigned to eng-314f.
+- P0 harness PARTIAL root-caused (one paid run, about $0.08, D108): full suite uses bare `python` (check_result.ts FULL_SUITE_CMD) and ignores .venv; Wall files `loki_wall_*.py` are never in pytest discovery, so verify never runs them; "one reviewer" is a consequence; "repo not recorded" is a no-origin fixture plus wording. Three slices: eng-314f interpreter, eng-cw12 Wall discovery (verify.ts), eng-318r wording.
+- Blocked in review: cw04 e220a18ff (rev-a B1 signed blocks read from agent-writable run-dir files with no engine writer; B2 strict bypass; B3 sandbox fails open). Ruling: label unverified, strict absent/malformed = PARTIAL, sandbox on with malformed or non-allowlisted kind = FAILED, absent = PARTIAL until the cw01 writer lands. cw18 c1def44f5 (4 blockers incl. e10ext 1520 > 1500 lines).
+- Approved: skilllink 32890c693 (tl-324 MEDIUM, 19/0, mutant red). In review: #328 bef58ca69 (rev-c), #332 c5a6d4d2b (tl-324), #309 f230e3fce (rev-b).
+- Founder machine: global loki and ~/.claude/skills/loki-mode still at 11.17.103 (left untouched).
