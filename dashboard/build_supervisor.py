@@ -12,7 +12,6 @@ import json
 import os
 import re
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
@@ -24,6 +23,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from autonomy.lib import deadline as process_deadline
+from autonomy.lib import os_sandbox
 
 
 SCHEMA_VERSION = 1
@@ -821,97 +821,15 @@ def _host_confinement_config(
     return {**config, "workspace": workspace, "spec": spec}
 
 
-def _seatbelt_path_filter(path: Path) -> str:
-    kind = "subpath" if path.is_dir() else "literal"
-    return f"({kind} {json.dumps(str(path), ensure_ascii=True)})"
-
-
 def _host_seatbelt_profile(
     workspace: Path,
     run_sh: Path,
     spec: Path,
 ) -> bytes:
     """Build the macOS local-acceptance sandbox profile for one workspace."""
-    config = _host_confinement_config(workspace, run_sh, spec)
-    quote = lambda value: json.dumps(str(value), ensure_ascii=True)
-    lines = [
-        "(version 1)",
-        "(deny default)",
-        "(allow process-fork process-exec*)",
-        "(allow signal (target same-sandbox))",
-        "(allow process-info* (target same-sandbox))",
-        "(allow sysctl-read)",
-        "(allow mach-lookup)",
-        "(allow ipc-posix-shm ipc-posix-sem)",
-        "(allow network-outbound (remote ip))",
-        "(allow network-bind (local ip))",
-        "(deny network-outbound (remote unix-socket))",
-        '(allow network-outbound (literal "/private/var/run/mDNSResponder"))',
-        ";; Preexisting cross-boundary hardlinks share one kernel inode.",
-        ";; This path policy cannot prove which directory originally created it.",
-    ]
-    read_paths = {
-        *config["system_read_paths"],
-        *config["runtime_read_paths"],
-        config["engine_source"],
-        config["workspace"],
-        config["spec"],
-    }
-    metadata_paths = {Path("/"), Path("/var"), Path("/tmp"), Path("/etc"), Path("/dev")}
-    for path in (*read_paths, *config["runtime_write_paths"]):
-        metadata_paths.update(path.parents)
-    lines.append('(allow file-read-metadata file-read-data (literal "/"))')
-    for path in sorted(metadata_paths - {Path("/")}, key=str):
-        lines.append(
-            f"(allow file-read-metadata (literal {quote(path)}))"
-        )
-    for path in sorted(read_paths, key=str):
-        lines.append(
-            f"(allow file-read* file-map-executable {_seatbelt_path_filter(path)})"
-        )
-    write_paths = {*config["runtime_write_paths"], config["workspace"]}
-    for path in sorted(write_paths, key=str):
-        lines.append(
-            f"(allow file-read* file-write* file-map-executable "
-            f"{_seatbelt_path_filter(path)})"
-        )
-    for device in ("/dev/null", "/dev/random", "/dev/urandom", "/dev/zero"):
-        if Path(device).exists():
-            lines.append(
-                f"(allow file-read* file-write* (literal {quote(device)}))"
-            )
-    if Path("/dev/fd").exists():
-        lines.append('(allow file-read* file-write* (subpath "/dev/fd"))')
-    for port in config["ports"]:
-        lines.append(
-            f'(deny network-outbound (remote tcp "*:{port}"))'
-        )
-        # network-bind uses "tcp4", not "tcp": confirmed on macOS 27.0 (26A428)
-        # that sandbox-exec's (local tcp "*:PORT") filter on network-bind never
-        # matches an actual bind (a bind to 127.0.0.1 or 0.0.0.0 on the denied
-        # port succeeds), while (local tcp4 "*:PORT") correctly denies it with
-        # a clean PermissionError. network-outbound's "tcp" filter above is
-        # unaffected (verified separately: an outbound connect to a denied
-        # port is still refused), so only this line changes.
-        #
-        # Known residual gap, same platform bug family, found while fixing
-        # the above (not introduced by it -- reproduced identically against
-        # the un-patched "tcp" rule too): on this same macOS 27.0 build, EVERY
-        # port-qualified network-bind filter for IPv6 ("tcp6 \"*:PORT\"" and
-        # "ip6 \"*:PORT\"") also fails to match, so an IPv6 bind to the
-        # reserved port (e.g. "::1"/"::") still succeeds even with a "tcp6"
-        # deny added. Only a port-unqualified "(deny network-bind (local
-        # ip6))" was confirmed to actually block IPv6 binds, which would deny
-        # ALL IPv6 binding (not just the reserved ports) -- a materially wider
-        # behavior change than this port-scoping fix, and nothing in this
-        # codebase binds IPv6 today (grepped: no AF_INET6/IPv6 usage). Left
-        # unfixed here to keep this change scoped to the failing test; the
-        # reserved ports remain enforced for IPv4 (the only family in active
-        # use), and a confined build could still self-expose a reserved port
-        # over IPv6 loopback/wildcard. Tracked as a follow-up, not silently
-        # closed.
-        lines.append(f'(deny network-bind (local tcp4 "*:{port}"))')
-    return ("\n".join(lines) + "\n").encode("utf-8")
+    return os_sandbox.seatbelt_profile(
+        _host_confinement_config(workspace, run_sh, spec)
+    )
 
 
 def _child_environment(workspace: Path, loki_dir: Path) -> dict[str, str]:
@@ -1041,7 +959,7 @@ def confined_provider_auth_status(
     workspace = workspace.resolve(strict=True)
     run_sh = run_sh.resolve(strict=True)
     spec = spec.resolve(strict=True)
-    sandbox_exec = Path("/usr/bin/sandbox-exec")
+    sandbox_exec = os_sandbox.SANDBOX_EXEC
     if sys.platform != "darwin" or not sandbox_exec.is_file():
         return {
             "provider": provider,
@@ -1164,125 +1082,20 @@ def smoke_probe_host_seatbelt(workspace_root: Path, run_sh: Path) -> dict[str, s
     """Prove the configured kernel profile before advertising confinement."""
     if sys.platform != "darwin":
         raise RuntimeError("LOKI host Seatbelt is available only on macOS")
-    sandbox_exec = Path("/usr/bin/sandbox-exec")
-    if not sandbox_exec.is_file() or not os.access(sandbox_exec, os.X_OK):
-        raise RuntimeError("LOKI host Seatbelt requires /usr/bin/sandbox-exec")
-
     workspace_root = _required_path(
         "workspace_root", str(workspace_root), directory=True
     )
-    with tempfile.TemporaryDirectory(
-        prefix=".seatbelt-probe-workspace-", dir=workspace_root
-    ) as workspace_raw, tempfile.TemporaryDirectory(
-        prefix=".seatbelt-probe-sibling-", dir=workspace_root
-    ) as sibling_raw:
-        workspace = Path(workspace_raw).resolve()
-        sibling = Path(sibling_raw).resolve()
-        spec = workspace / "spec.md"
-        spec.write_text("seatbelt probe", encoding="utf-8")
-        secret = sibling / "secret.txt"
-        secret.write_text("must remain unreadable", encoding="utf-8")
-        unix_socket_path = workspace / "probe.sock"
-
-        config = _host_confinement_config(workspace, run_sh, spec)
-        probe_port = 0
-        for port in config["ports"]:
-            with socket.socket() as candidate:
-                try:
-                    candidate.bind(("127.0.0.1", port))
-                except OSError:
-                    continue
-                probe_port = port
-                break
-        if not probe_port:
-            raise RuntimeError("no reserved port was free for the Seatbelt probe")
-
-        profile = _host_seatbelt_profile(workspace, run_sh, spec)
-        profile_path = workspace / "probe.sb"
-        profile_path.write_bytes(profile)
-        output_path = workspace / "probe.txt"
-        probe_code = """
-import errno
-import os
-import signal
-import socket
-import subprocess
-import sys
-
-output, sibling, unix_path, port = sys.argv[1:]
-open(output, "w", encoding="utf-8").write("confined")
-open("/etc/hosts", encoding="utf-8").read(1)
-child = subprocess.Popen(
-    ["/bin/sh", "-c", "/bin/sleep 5 & wait"],
-    stdin=subprocess.DEVNULL,
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL,
-    preexec_fn=os.setpgrp,
-)
-os.killpg(child.pid, signal.SIGKILL)
-child.wait(timeout=2)
-try:
-    open(sibling, encoding="utf-8").read(1)
-except OSError:
-    pass
-else:
-    raise SystemExit(41)
-with socket.socket(socket.AF_UNIX) as client:
-    try:
-        client.connect(unix_path)
-    except OSError:
-        pass
-    else:
-        raise SystemExit(42)
-with socket.socket() as listener:
-    try:
-        listener.bind(("127.0.0.1", int(port)))
-    except OSError as exc:
-        if exc.errno not in (errno.EACCES, errno.EPERM):
-            raise
-    else:
-        raise SystemExit(43)
-"""
-        with socket.socket(socket.AF_UNIX) as unix_server:
-            unix_server.bind(str(unix_socket_path))
-            unix_server.listen(1)
-            try:
-                result = subprocess.run(
-                    [
-                        str(sandbox_exec),
-                        "-f",
-                        str(profile_path),
-                        "/usr/bin/python3",
-                        "-c",
-                        probe_code,
-                        str(output_path),
-                        str(secret),
-                        str(unix_socket_path),
-                        str(probe_port),
-                    ],
-                    cwd=str(workspace),
-                    env={
-                        "HOME": os.environ.get("HOME", "/var/empty"),
-                        "LANG": os.environ.get("LANG", "C"),
-                        "PATH": os.environ.get(
-                            "LOKI_HOST_CHILD_PATH", "/usr/bin:/bin:/usr/sbin:/sbin"
-                        ),
-                        "TMPDIR": str(workspace),
-                    },
-                    capture_output=True,
-                    text=True,
-                    timeout=15,
-                )
-            except subprocess.SubprocessError as exc:
-                raise RuntimeError("Seatbelt kernel smoke probe did not finish") from exc
-        if result.returncode != 0 or output_path.read_text(encoding="utf-8") != "confined":
-            raise RuntimeError(
-                f"Seatbelt kernel smoke probe failed with exit {result.returncode}"
-            )
-        return {
-            **host_confinement_identity(workspace_root, run_sh),
-            "probe_sha256": sha256_bytes(profile),
-        }
+    ports = _host_boundary_config(run_sh)["ports"]
+    probe_sha256 = os_sandbox.seatbelt_smoke_probe(
+        workspace_root,
+        lambda workspace, spec: _host_seatbelt_profile(workspace, run_sh, spec),
+        ports,
+        os.environ.get("LOKI_HOST_CHILD_PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
+    )
+    return {
+        **host_confinement_identity(workspace_root, run_sh),
+        "probe_sha256": probe_sha256,
+    }
 
 
 def _host_confined_args(
@@ -1297,7 +1110,7 @@ def _host_confined_args(
         return args, None
     if sys.platform != "darwin":
         raise RuntimeError("LOKI host Seatbelt is available only on macOS")
-    sandbox_exec = Path("/usr/bin/sandbox-exec")
+    sandbox_exec = os_sandbox.SANDBOX_EXEC
     if not sandbox_exec.is_file() or not os.access(sandbox_exec, os.X_OK):
         raise RuntimeError("LOKI host Seatbelt requires /usr/bin/sandbox-exec")
 

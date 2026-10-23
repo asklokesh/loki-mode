@@ -30,6 +30,7 @@ Bootstrap Tests	0
 Task Queue Tests	0
 Circuit Breaker Tests	1
 Timeout & Stuck Process Tests	7
+OS sandbox module: Seatbelt and bwrap confinement, one secret-path list (#334)	5
 State Recovery Tests	0
 Wrapper Script Tests	0
 Memory Engine Tests	1
