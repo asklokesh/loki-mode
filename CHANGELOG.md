@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.75.0 (2026-10-23)
+
+### Added
+- Executive HQ cockpit (tools/cockpit): a live SSE stream, per-seat character cards with 3D avatars from a vendored, pinned three.js (no CDN in the CSP), member drawers, and panels for releases, work, ROI, compare, health and OKRs. Every BOARD-derived number carries provenance and a STALE flag. The usage cap is read from scripts/usage-cap.py and shown in the KPI strip. A cockpit LaunchAgent starts it with a port probe and KeepAlive SuccessfulExit false. Approval: "APPROVE range 046bd53b7..ed9c36b15e6c6f32202ccf7d196fdd4d4637a71c. The approval covers all four commits: 658d9af28, cfdab0a0d, ec1697c89 and ed9c36b15e6c6f32202ccf7d196fdd4d4637a71c" (rev-execdash, HIGH). Shipped as a no-ff merge of the approved head; the merged tree is the reviewed tree 99215c0fd0b52f2b4a89e5902c76e939fc9b994f. Known gap: tests/test-select-tests.sh fails FC-89 on main independently of this change (loki-ts/tests/engine10/cache.test.ts and loki-ts/tests/runner/advisor_probe.test.ts lack a select annotation); the files are not touched here.
+
 ## v11.74.2 (2026-10-23)
 
 ### Fixed
