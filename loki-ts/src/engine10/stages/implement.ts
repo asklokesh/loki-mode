@@ -17,6 +17,7 @@ import { routerActive } from "../../runner/router/unit_model.ts";
 import type { ImplementExit, RunContext, SessionRunOptions, Stage, StageResult, TestMap } from "../types.ts";
 import { taskBlock } from "../types.ts";
 import { loadSpecFile, specBriefBlock, type LoadedSpec } from "../../util/spec_file.ts";
+import { untrackedAtIntake } from "../../e10ext/preexisting_dirty.ts";
 
 /** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
 export interface ReadOnlyFile { path: string; content: string; }
@@ -68,8 +69,12 @@ function treeIsEmpty(ctx: RunContext): boolean {
 
 /** FC-CRASH-WORK-READ-AS-PREEXISTING: the files an earlier crashed run of this task left untracked (intake.crash_written) that are still on disk. "Already done" cannot rest on them: they are not on the base. */
 function crashRecovered(ctx: RunContext): string[] {
-  const w = ctx.outputs().intake?.crash_written;
-  return Array.isArray(w) ? (w as string[]).filter((f) => existsSync(join(ctx.repoDir, f))) : [];
+  const intake = ctx.outputs().intake, w = intake?.crash_written;
+  const own = Array.isArray(w) ? (w as string[]) : [];
+  // FC-RESUME-IMPLEMENT-READS-OWN-CRASH-WORK: a resumed run restores the crashed run's intake, which predates its own writes; any file untracked now that intake did not record as pre-existing is this run's own work.
+  const prior = intake?.preexisting_untracked;
+  const resumed = process.env.LOKI_E10_RESUME === "1" && Array.isArray(prior) ? untrackedAtIntake(ctx.repoDir).filter((f) => !f.startsWith(".loki/") && !(prior as string[]).includes(f)) : [];
+  return [...new Set([...own, ...resumed])].filter((f) => existsSync(join(ctx.repoDir, f)));
 }
 
 /** INJECT: top relevant learnings (.loki/state/relevant-learnings.json) as a fenced untrusted block. Missing or malformed file means "". Confidence is a fixed 0.50 because the writer records none: never claim more than ran. */
