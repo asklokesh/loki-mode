@@ -29,7 +29,7 @@ import { repoKey } from "../../src/engine10/cache.ts";
 import { readOriginUrl } from "../../src/util/engine_origin.ts";
 import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
 import { EXIT, formatSummary, outcomeOf } from "../../src/engine10/output.ts";
-import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes } from "../../src/util/base_guard.ts"; import { commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
+import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes } from "../../src/util/base_guard.ts"; import { commitStage, receiptSha256, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
@@ -205,6 +205,36 @@ describe("engine10 seal", () => {
     expect(r.cost.total_sessions).toBe(2);
     expect(r.cost.partial_usd).toBe(0.125);
   }, 30000);
+
+  test("R100-022 receipt: a publish expectation in preflight.json reaches the signed receipt body and receipt.md; a full-access run's hash is unchanged", async () => {
+    const seal = async (name: string, preflight: Record<string, unknown> | null) => {
+      noKey();
+      const { repo, base } = makeRepo(name);
+      const { ctx } = ctxFor(repo, base);
+      mkdirSync(ctx.runDir, { recursive: true });
+      if (preflight) writeFileSync(join(ctx.runDir, "preflight.json"), JSON.stringify(preflight) + "\n");
+      await commitStage.run(ctx, new AbortController().signal);
+      const s = await sealStage.run(ctx, new AbortController().signal);
+      return { ctx, path: s.data.receipt_path as string, r: receiptOf(s) };
+    };
+    const cmp = "https://github.com/acme/widgets/compare";
+    const lim = await seal("pub-branch", { publish: "branch", publish_reason: "no push access", publish_compare: cmp });
+    expect(lim.r.publish).toEqual({ mode: "branch", reason: "no push access", compare: cmp });
+    expect(receiptSha256(lim.r)).toBe(lim.r.receipt_sha256); // the block is covered by the hash
+    expect(readFileSync(join(lim.ctx.runDir, "receipt.md"), "utf8")).toContain(`- Publish: branch (no push access), compare ${cmp}`);
+    const forged = { ...lim.r, publish: { mode: "pr" } };
+    expect(receiptSha256(forged)).not.toBe(lim.r.receipt_sha256);
+    // Full-access runs: no preflight, an old preflight without the key, and mode pr/fork_pr add nothing.
+    for (const [name, pf] of [["pub-none", null], ["pub-old", { cwd: "x" }], ["pub-pr", { publish: "pr" }], ["pub-fork", { publish: "fork_pr", publish_compare: cmp }]] as const) {
+      const full = await seal(name, pf);
+      expect("publish" in full.r).toBe(false);
+      expect(receiptSha256(full.r)).toBe(full.r.receipt_sha256);
+      expect(readFileSync(join(full.ctx.runDir, "receipt.md"), "utf8")).not.toContain("- Publish:");
+    }
+    // A compare URL that is not a github.com compare base is dropped, never signed.
+    const bad = await seal("pub-bad", { publish: "branch", publish_compare: "https://evil.example/x" });
+    expect(bad.r.publish).toEqual({ mode: "branch" });
+  }, 60000);
 
   test("TEN-COST-11 r3: ctx.sessionIds feeds the cost read and clears the cost-not-measured note", async () => {
     noKey();
