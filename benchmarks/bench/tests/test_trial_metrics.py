@@ -274,5 +274,54 @@ class ResumeCostTest(unittest.TestCase):
         self.assertTrue(rc["killed"] and rc["reached_done"])
 
 
+class KeptWorkdirTest(unittest.TestCase):
+    """LOKI_BENCH_WORKDIRS keeps <root>/<tool>/<task>/<label>/ for trust_time."""
+
+    def setUp(self):
+        self.fix = tempfile.mkdtemp(prefix="loki-bench-fixture-")
+        open(os.path.join(self.fix, "seed"), "w").close()
+        self.root = tempfile.mkdtemp(prefix="loki-bench-kept-")
+        self._old = os.environ.pop("LOKI_BENCH_WORKDIRS", None)
+
+    def tearDown(self):
+        os.environ.pop("LOKI_BENCH_WORKDIRS", None)
+        if self._old is not None:
+            os.environ["LOKI_BENCH_WORKDIRS"] = self._old
+        shutil.rmtree(self.fix, ignore_errors=True)
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_kept_at_tool_task_trial_when_env_set(self):
+        os.environ["LOKI_BENCH_WORKDIRS"] = self.root
+        runner.run_trial(_fake("claude_code", writes=True), _SPEC, self.fix, "m", "claude_code", 2)
+        kept = os.path.join(self.root, "claude_code", "t", "2")
+        self.assertTrue(os.path.isfile(os.path.join(kept, "ok")))
+        self.assertTrue(os.path.isfile(os.path.join(kept, "seed")))
+
+    def test_nothing_kept_without_env(self):
+        # Negative control: the default still cleans up, nothing lands in root.
+        runner.run_trial(_fake("claude_code", writes=True), _SPEC, self.fix, "m", "claude_code", 1)
+        self.assertEqual(os.listdir(self.root), [])
+
+    def test_existing_kept_dir_is_refused(self):
+        os.environ["LOKI_BENCH_WORKDIRS"] = self.root
+        runner.run_trial(_fake("loki", writes=True), _SPEC, self.fix, "m", "loki", 1)
+        with self.assertRaises(ValueError):
+            runner.run_trial(_fake("loki", writes=True), _SPEC, self.fix, "m", "loki", 1)
+
+    def test_resume_pair_keeps_control_and_interrupted_apart(self):
+        os.environ["LOKI_BENCH_WORKDIRS"] = self.root
+        task = tempfile.mkdtemp(prefix="loki-bench-task-")
+        with open(os.path.join(task, "t.json"), "w") as fh:
+            json.dump({**_SPEC, "fixture": self.fix, "agent_timeout_s": 5,
+                       "source": "test", "default_model": "m"}, fh)
+        try:
+            runner.run_resume_pair(os.path.join(task, "t.json"), "claude_code",
+                                   interrupt=30, adapter=_fake("claude_code", writes=True))
+        finally:
+            shutil.rmtree(task, ignore_errors=True)
+        base = os.path.join(self.root, "claude_code", "t")
+        self.assertEqual(sorted(os.listdir(base)), ["1", "control-1"])
+
+
 if __name__ == "__main__":
     unittest.main()
