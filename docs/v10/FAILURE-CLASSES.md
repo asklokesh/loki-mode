@@ -1708,3 +1708,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: runsRoot callers in run_status.ts (status, intent, pause/cancel) act on the current repo, where LOKI_DIR is correct; collectRuns is the only multi-project reader.
 - Mechanism: collectRuns reads join(proj.path, ".loki", "runs") for each registered project and ignores LOKI_DIR.
 - Fixture: loki-ts/tests/commands/run_status.test.ts "LOKI_DIR set across 2 projects lists each run once under its own repo"; a mutant restoring runsRoot(env, proj.path) turns it red.
+
+## FC-PROOF-POINTER-STALE-ON-BUN-ROUTE The Bun route never cleared .loki/state/last-proof-id.txt at run start, so a run that stopped before proof generation left the previous run's id and every reader showed a receipt for different work
+
+- User-visible vs raw: user-visible (receipt and summary sections name the wrong run).
+- Law: absent reads as "no data"; a stale pointer reads as evidence, so a run must never inherit a prior run's pointer.
+- Cause (measured): #211 was fixed on the bash route only (autonomy/run.sh:7665). `git grep -n last-proof-id origin/main -- loki-ts/src` returned only the writer in runner/proof.ts.
+- Siblings swept: loki-ts/src/engine10 neither writes nor reads the pointer (`git grep -n last-proof-id -- loki-ts/src/engine10` returns nothing). The readers (run.sh, loki, run-summary.sh, trigger-server.py) are route-agnostic and unchanged.
+- Mechanism: clearStaleProofPointer in runner/proof.ts, called once from runAutonomous right after makeContext.
+- Fixture: loki-ts/tests/runner/autonomous.test.ts "#211 Bun-route sibling" seeds run-A, stops the run before proof with LOKI_PROOF=0, expects the pointer absent. Mutant: remove the call in runAutonomous; the test goes red.
