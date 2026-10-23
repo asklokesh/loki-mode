@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.15 (2026-10-23)
+
+### Fixed
+- The P12-07n resume test gets an explicit 60000 ms timeout so it no longer fails under load (fixresume-timeout). Approval: "APPROVE pd/p0-fixresume-timeout cc6432c9b (tl-2, LOW)".
+
 ## v11.60.14 (2026-10-23)
 
 ### Fixed
