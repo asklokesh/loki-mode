@@ -561,7 +561,6 @@ every summary of this result, and must stay there.
 * Acceptance here is `greet.js_exists`, a file-existence assertion. It shows the
   engine finished the job. It is NOT a judgment of output quality, and must not
   be reported as one.
-
 ## #348 (CW-15): false-pass on judge-trap-1 and hard-1-order-api, 2026-10-23
 
 Live run, bin/loki v11.56.0 (equals VERSION), claude_code adapter, sonnet,
@@ -584,3 +583,57 @@ per task:
   benchmarks/bench/tests/test_trial_metrics.py.
 * Council cache share and journal reuse are emitted per trial but NOT yet
   measured live (null in this run); they stay open on #348.
+
+## Head-to-head: loki vs bare claude -p (measured 2026-10-23)
+
+Harness: `benchmarks/bench/attribution.py --execute`, 8 hidden-test tasks in
+`benchmarks/attribution/tasks`, n=2 per task per arm (16 cells per arm). Model
+pinned to claude-sonnet-5-5 for all arms. Acceptance is the held-out command
+exit code, run outside the agent. Versions: `loki --version` printed
+`Loki Mode v11.54.0` (bin/loki from origin/main 0b0a211bd); claude 2.1.309.
+Raw results: `benchmarks/attribution/results/h2h-20261023-*.json`.
+
+| Arm | Accepted | N | Median wall per cell | Median cost per cell | Total cost |
+|---|---|---|---|---|---|
+| raw-configured (`claude -p`, operator config) | 16 | 16 | 16.0 s | $0.137 | $2.21 |
+| raw-lean (`claude -p`, project settings, no MCP) | 16 | 16 | 13.6 s | $0.045 | $0.79 |
+| loki (`loki start`, v11.54.0) | 16 | 16 | 54.0 s | $0.114 | $2.11 |
+| codex | UNMEASURED: `codex` not installed (`which -a codex` empty) | | | | |
+| droid | UNMEASURED: installed (0.190.0) but unauthenticated (no FACTORY_API_KEY) | | | | |
+
+Per-task (accepted/2, wall s range, usd per cell range; loki / raw-configured / raw-lean):
+
+| Task | loki | raw-configured | raw-lean |
+|---|---|---|---|
+| bugfix-1-pagination | 2/2, 44-48, 0.08-0.11 | 2/2, 13-138, 0.13-0.14 | 2/2, 14-18, 0.04-0.05 |
+| bugfix-2-dedupe | 2/2, 53-57, 0.11-0.14 | 2/2, 16-17, 0.13-0.14 | 2/2, 14-15, 0.04-0.05 |
+| feature-1-slugify | 2/2, 48-52, 0.09-0.11 | 2/2, 14-15, 0.13-0.14 | 2/2, 8-13, 0.04 |
+| feature-2-top-flag | 2/2, 53-55, 0.11-0.12 | 2/2, 14-16, 0.13-0.14 | 2/2, 12, 0.04 |
+| integration-1-retry-client | 2/2, 53-57, 0.11-0.14 | 2/2, 13-17, 0.14 | 2/2, 13-14, 0.05-0.06 |
+| refactor-1-pricing | 2/2, 53-57, 0.08-0.11 | 2/2, 15-21, 0.14 | 2/2, 13-19, 0.04-0.06 |
+| longspec-1-three-units | 2/2, 72-80, 0.18-0.22 | 2/2, 23-24, 0.15-0.17 | 2/2, 19-24, 0.06-0.08 |
+| coord-1-api-web | 2/2, 77-106, 0.17-0.22 | 2/2, 15-19, 0.13-0.14 | 2/2, 12-15, 0.04-0.05 |
+
+Reading:
+* Accuracy: all three arms 16/16. The task set is at ceiling, so it cannot
+  separate the arms. No accuracy advantage for loki is claimed (NOT PROVEN).
+* Wall time: loki median 54.0 s vs 13.6 s (raw-lean) and 16.0 s (raw-configured),
+  roughly 3.3x to 4x slower. Loki was slower on every task.
+* Cost: loki $0.114 per cell vs raw-lean $0.045 (about 2.5x) and raw-configured
+  $0.137 (loki about 17% lower). raw-configured carries the operator's
+  hooks/skills/CLAUDE.md context, so its cost is config-dependent; raw-lean is
+  the like-for-like floor. With n=2 per task the loki vs raw-configured cost
+  difference is within per-task spread and NOT PROVEN.
+* Loki cost source is `loki.efficiency_cost` (measured, not null) for all 16
+  cells; no cell reports an unmeasured cost.
+* All 16 loki rows report `status=error_rc_1` and `verify_verdict=PARTIAL` even
+  though held-out acceptance passed in every cell. The engine's own Wall verdict
+  cites items such as "weakened test", "not run: full suite" and "only
+  agent-authored tests executed". So loki's self-reported completion is 0/16
+  while acceptance is 16/16. Also, `model_used` is claude-opus-5-5 for all 16
+  loki cells although the arm pins claude-sonnet-5-5; cause not investigated.
+* Adapter caveat: the loki bench adapter has been observed recording cost_usd
+  null with measured:true while the run prints a cost. Costs above come from the
+  attribution row's `loki.efficiency_cost`; a null is never treated as $0.
+
+next: harder discriminating tasks (multi-file, hidden edge cases) needed.
