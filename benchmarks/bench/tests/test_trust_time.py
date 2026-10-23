@@ -143,3 +143,37 @@ def test_judge_env_has_no_loki_vars_and_emits_token_row(tmp_path, monkeypatch):
     assert units == ["s", "tok"] and all(r["spend_usd"] == 0.05 for r in rows)
     tok = [r for r in rows if r["unit"] == "tok" and r["tool"] == "loki"][0]
     assert tok["value"] == 120 and tok["provenance"]["prompt_hash"] == tt.PROMPT_HASH
+
+
+def test_loki_cli_missing_is_skipped_not_a_fast_correct_row(tmp_path, monkeypatch, capsys):
+    w = _world(tmp_path, grader=False, tools=("loki",))
+    monkeypatch.setattr(tt, "LOKI_BIN", "/nonexistent/loki")
+    secs, trusted, prov = tt.mechanical("loki", str(w / "wd" / "loki" / "t1" / "1"), {"acceptance": {}})
+    assert secs is None and trusted is False and "did not run" in prov["note"]
+    rows, skipped = _rows(w, mech=lambda tool, wd_, s: tt.mechanical(tool, wd_, s))
+    assert rows == [] and len(skipped) == 1
+
+
+def test_competitor_command_not_found_is_skipped(tmp_path):
+    w = _world(tmp_path, grader=False, tools=("claude_code",))
+    wd = str(w / "wd" / "claude_code" / "t1" / "1")
+    secs, _, prov = tt.mechanical("claude_code", wd, {"visible_cmd": "definitely-not-a-command-xyz", "acceptance": {}})
+    assert secs is None and "visible_suite" in prov["note"]
+    secs, _, prov = tt.mechanical("claude_code", wd, {"visible_cmd": "true", "acceptance": {"setup_cmd": "definitely-not-a-command-xyz"}})
+    assert secs is None and "install" in prov["note"]
+
+
+@pytest.mark.parametrize("rc", [124, 126, 127])
+def test_timeout_or_unrunnable_step_is_skipped_but_diff_stat_is_informational(tmp_path, rc):
+    w = _world(tmp_path, grader=True, tools=("claude_code",))
+    wd = str(w / "wd" / "claude_code" / "t1" / "1")
+
+    def runner(argv, cwd, env, timeout=0, shell=False):
+        return (rc, 300.0, "") if shell else (rc, 0.1, "")  # shell steps are install/suite; the list step is diff_stat
+    secs, _, _ = tt.mechanical("claude_code", wd, {"visible_cmd": "true", "acceptance": {}}, runner=runner)
+    assert secs is None
+
+    def only_diff_dead(argv, cwd, env, timeout=0, shell=False):
+        return (0, 1.0, "") if shell else (rc, 0.1, "")
+    secs, trusted, _ = tt.mechanical("claude_code", wd, {"visible_cmd": "true", "acceptance": {}}, runner=only_diff_dead)
+    assert secs is not None and trusted is True
