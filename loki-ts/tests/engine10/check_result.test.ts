@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkProvenance, classifyCheck, failureExcerpt, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, testCount } from "../../src/util/check_result.ts";
+import { changedSymbols, checkProvenance, classifyCheck, failureExcerpt, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, symbolGap, testCount } from "../../src/util/check_result.ts";
 import { firstError, runCheck, testCheckName, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -356,5 +356,31 @@ describe("TEN-QUALITY-01 failureExcerpt", () => {
   test("unknown shape falls back to the last lines; empty stays empty", () => {
     expect(failureExcerpt("a\nb\nboom\n")).toContain("boom");
     expect(failureExcerpt("")).toBe("");
+  });
+});
+
+describe("FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL changedSymbols and symbolGap", () => {
+  const append = "@@ -3,0 +4,4 @@ export function add(a: number, b: number): number {\n+\n+export function multiply(a: number, b: number): number {\n+  return a * b;\n+}\n";
+  const edit = "@@ -2 +2 @@ export function add(a: number, b: number): number {\n-  return a + b;\n+  return a - b;\n";
+  const guard = "@@ -2,0 +3,3 @@ def total(items):\n+    if not items:\n+        return 0\n";
+  test("an appended function names itself, not the enclosing hunk context", () => expect(changedSymbols(append)).toEqual(["multiply"]));
+  test("a body edit names the enclosing declaration", () => expect(changedSymbols(edit)).toEqual(["add"]));
+  test("a pure addition with no declaration falls back to the hunk context", () => expect(changedSymbols(guard)).toEqual(["total"]));
+  test("class methods and Go receivers count; control flow does not", () => {
+    expect(changedSymbols("@@ -1,0 +2,3 @@\n+  async run(x) {\n+    if (x) {\n+func (s *Store) Put(k string) error {\n")).toEqual(["run", "Put"]);
+  });
+  test("a test source naming the symbol closes the gap; an unrelated one does not", () => {
+    expect(symbolGap(["multiply"], ['import { add } from "./calc"; test("add", () => add(1, 2));'])).toEqual(["multiply"]);
+    expect(symbolGap(["multiply"], ["expect(multiply(3, 4)).toBe(12)"])).toEqual([]);
+    expect(symbolGap(["add"], ["expect(multiply(3, 4)).toBe(12)", "const padded = 1"])).toEqual(["add"]);
+  });
+  test("no declared symbol, or no passing test source, is a gap", () => {
+    expect(symbolGap([], ["anything"])).toEqual(["(no declared symbol)"]);
+    expect(symbolGap(["multiply"], [])).toEqual(["multiply"]);
+  });
+  test("verdictOf: a non-empty leanGap is PARTIAL even with a passing exogenous check", () => {
+    const checks = [{ name: "bun:calc.test.ts", cmd: "bun test", result: "pass" as const, duration_s: 1, n: 1 }];
+    expect(verdictOf({ implement: { exit: "ok" } } as never, checks as never, false, false, false, true, false, [], [])).toBe("VERIFIED");
+    expect(verdictOf({ implement: { exit: "ok" } } as never, checks as never, false, false, false, true, false, [], ["multiply"])).toBe("PARTIAL");
   });
 });
