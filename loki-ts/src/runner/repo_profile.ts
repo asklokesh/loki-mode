@@ -501,6 +501,12 @@ function goIdTouched(repoDir: string, id: string, changed: string[]): boolean {
   });
 }
 
+/** FC-CARGO-ID-CHANGED-CRATE: a cargo test id is a module path ("tests::adds") with no crate or file in it, so no changed-file guard can match it.
+ *  A cargo check is never excused when the diff touches Rust source or a Cargo manifest, since the failing test may live in the edited crate. */
+function cargoTouched(cmd: string, changed: string[]): boolean {
+  return /\bcargo\b/.test(cmd) && changed.some((f) => /\.rs$|(?:^|\/)(?:Cargo\.(?:toml|lock)|build\.rs)$/.test(f));
+}
+
 /** REPOMEM for the RISKTIER full suite: the same `attribute`, fed the ids the REAL run's check carries (`ids`, from failIds). Nothing is re-run.
  *  Fail-closed, per command (FC-BASELINE-PER-PACKAGE): each failing check is compared only with the baseline that ran its own command (the main one
  *  or a `suites` entry); a check no baseline ran makes the ids not comparable and nothing is excused (the reason is returned in `line`), an
@@ -515,9 +521,10 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: { nam
   const known = new Set(bad.flatMap((c) => ids(c.cmd))), block = new Set(blocked);
   if (known.size === 0) return none;
   const unproven = [...new Set(bad.flatMap((c) => c.ids ?? []).filter((i) => !i.includes("::") && goIdTouched(repoDir, i, changed)))];
-  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => i.includes(f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
-  if (!unproven.length) return res;
-  const np = unproven.map((u) => `NOT PROVEN: package ${u} did not build on base or head; its tests ran on neither`).join("; ");
+  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(c.cmd, changed) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => i.includes(f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
+  const rust = bad.filter((c) => cargoTouched(c.cmd, changed)).map((c) => `NOT PROVEN: ${c.name} is a cargo test run and the diff edits Rust source or a manifest; its test ids carry no crate path, so a failure cannot be shown pre-existing`);
+  if (!unproven.length && !rust.length) return res;
+  const np = [...unproven.map((u) => `NOT PROVEN: package ${u} did not build on base or head; its tests ran on neither`), ...rust].join("; ");
   return { ...res, line: [res.line, np].filter(Boolean).join("; ") };
 }
 

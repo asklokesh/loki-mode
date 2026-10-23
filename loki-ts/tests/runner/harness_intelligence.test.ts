@@ -831,6 +831,44 @@ describe("repo baseline profile (REPOMEM)", () => {
           rmSync(join(d, "go.mod"));
         }
       });
+      test("FC-GO-PACKAGE-ID-CHANGED-FILE: the module-root package is touched only by a root .go file, and only a .go file touches a package", () => {
+        const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]), cmd = "go test -json ./...";
+        mkdirSync(join(d, ".loki", "state"), { recursive: true });
+        writeFileSync(join(d, "go.mod"), "module example.com/m\n\ngo 1.22\n");
+        const j = (o: object) => JSON.stringify(o);
+        const rootFail = [j({ Action: "start", Package: "example.com/m" }), j({ Action: "output", Package: "example.com/m", Output: "FAIL\texample.com/m [build failed]\n" }), j({ Action: "fail", Package: "example.com/m", Elapsed: 0, FailedBuild: "example.com/m [example.com/m.test]" })].join("\n");
+        const ids = failIds(rootFail);
+        expect(ids.length).toBe(1);
+        writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ids, attributable: true } }));
+        const head = [{ name: "full suite: x", cmd, result: "fail", ids }];
+        // M2: a changed root .go file is the root package, so the root failure is not pre-existing
+        expect(attributeFullSuite(d, base, head, [], ["main.go"]).preExistingChecks).toEqual([]);
+        // a changed file in a sub-package does not touch the root package
+        expect(attributeFullSuite(d, base, head, [], ["foo/foo.go"]).preExistingChecks).toEqual(["full suite: x"]);
+        // M4: a non-.go file inside a package directory does not touch the package
+        const sub = [j({ Action: "start", Package: "example.com/m/foo" }), j({ Action: "output", Package: "example.com/m/foo", Output: "FAIL\texample.com/m/foo [build failed]\n" }), j({ Action: "fail", Package: "example.com/m/foo", Elapsed: 0, FailedBuild: "example.com/m/foo [example.com/m/foo.test]" })].join("\n");
+        const sids = failIds(sub);
+        writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: sids, attributable: true } }));
+        const shead = [{ name: "full suite: x", cmd, result: "fail", ids: sids }];
+        expect(attributeFullSuite(d, base, shead, [], ["foo/README.md"]).preExistingChecks).toEqual(["full suite: x"]);
+        expect(attributeFullSuite(d, base, shead, [], ["foo/foo.go"]).preExistingChecks).toEqual([]);
+      });
+      test("FC-CARGO-ID-CHANGED-CRATE: a cargo full-suite failure is not excused when the diff edits Rust source or a manifest; it is named NOT PROVEN", () => {
+        const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]), cmd = "cargo test";
+        mkdirSync(join(d, ".loki", "state"), { recursive: true });
+        const out = "test tests::adds ... FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s";
+        const ids = failIds(out);
+        expect(ids.length).toBe(1);
+        writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ids, attributable: true } }));
+        const head = [{ name: "full suite: cargo", cmd, result: "fail", ids }];
+        for (const f of ["src/lib.rs", "crates/a/Cargo.toml", "Cargo.lock", "build.rs"]) {
+          const r = attributeFullSuite(d, base, head, [], [f]);
+          expect(`${f} ${r.preExistingChecks}`).toBe(`${f} `);
+          expect(r.line).toContain("NOT PROVEN: full suite: cargo is a cargo test run");
+        }
+        expect(attributeFullSuite(d, base, head, [], ["README.md"]).preExistingChecks).toEqual(["full suite: cargo"]);
+        expect(attributeFullSuite(d, base, head, [], []).preExistingChecks).toEqual(["full suite: cargo"]);
+      });
       test("FC-FULL-SUITE-EXIT-CODED-SCRIPT: an exit-coded script failing on base and head is pre-existing only when its failing output is the same (paths and numbers aside); a new line, a changed script or a new command is introduced", () => {
         const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]);
         mkdirSync(join(d, ".loki", "state"), { recursive: true });
