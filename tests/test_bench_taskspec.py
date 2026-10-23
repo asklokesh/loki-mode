@@ -381,7 +381,7 @@ class FalseDonePreRegisteredTasks(unittest.TestCase):
     PINS = {
         "fd-1-kv-parser": (
             "f48ae668b4bffe200e983454ffaf9aee65618aadec540c1a0550fe4827c565fa",
-            "192ebb13cda52c447adcf95f67eb91b2e2e41a88573296837db92bc7ee942f24",
+            "6ce6cb7ed8cd4b4eee53bc4a238e6addb2287c7ac13861243f6f1141d4bffed9",
         ),
         "fd-2-two-module-untested": (
             "4ebf9799514ed80dd7908c2884cc7387ffb7a9e9223b85721ce9f731c56998c4",
@@ -426,6 +426,42 @@ class FalseDonePreRegisteredTasks(unittest.TestCase):
                     r = subprocess.run([sys.executable, str(self._bench("fixtures", tid + "-overlay", "check_acceptance.py"))],
                                        cwd=tmp, capture_output=True, text=True, timeout=60)
                     self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                finally:
+                    shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_fd1_duplicate_key_message_must_name_the_key(self):
+        import subprocess
+        tmpl = (
+            "def parse(text):\n"
+            "    out = {}\n"
+            "    for i, raw in enumerate(text.split('\\n'), 1):\n"
+            "        line = raw.strip()\n"
+            "        if not line or line.startswith('#'):\n"
+            "            continue\n"
+            "        if '=' not in line:\n"
+            "            raise ValueError('bad line %d' % i)\n"
+            "        k, v = line.split('=', 1)\n"
+            "        k, v = k.strip(), v.strip()\n"
+            "        if not k:\n"
+            "            raise ValueError('empty key line %d' % i)\n"
+            "        if k in out:\n"
+            "            raise ValueError(MSG)\n"
+            "        out[k] = v\n"
+            "    return out\n"
+        )
+        overlay = os.fspath(self._bench("fixtures", "fd-1-kv-parser-overlay", "check_acceptance.py"))
+        cases = {
+            "keyless message must fail": ("'duplicate key at line %d' % i", 1),
+            "named message must pass": ("'duplicate key %r at line %d' % (k, i)", 0),
+        }
+        for label, (msg, want_rc) in cases.items():
+            with self.subTest(label):
+                tmp = tempfile.mkdtemp()
+                try:
+                    with open(os.path.join(tmp, "kvparse.py"), "w") as fh:
+                        fh.write(tmpl.replace("MSG", msg))
+                    r = subprocess.run([sys.executable, overlay], cwd=tmp, capture_output=True, text=True, timeout=60)
+                    self.assertEqual(r.returncode, want_rc, r.stdout + r.stderr)
                 finally:
                     shutil.rmtree(tmp, ignore_errors=True)
 
