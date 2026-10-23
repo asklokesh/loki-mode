@@ -98,6 +98,30 @@ describe("FC-43 empty-diff done resume", () => {
     expect(r.data.crash_recovered).toEqual(["mul.js"]);
     expect(r.data.already_done_evidence).toBeNull();
   });
+  test("FC-RESUME-IMPLEMENT-READS-OWN-CRASH-WORK: a resumed run's already_done over files untracked since its own intake is done", async () => {
+    writeFileSync(join(repo, "mul.js"), "x\n");
+    const s = new Seq([already("mul.js:1 exists")]);
+    const c = { ...ctxOf(s), outputs: () => ({ intake: { crash_written: [], preexisting_untracked: [] } }) } as unknown as RunContext;
+    process.env.LOKI_E10_RESUME = "1";
+    try {
+      const r = await implementStage.run(c, new AbortController().signal);
+      expect(r.data.exit).toBe("done");
+      expect(r.data.crash_recovered).toEqual(["mul.js"]);
+    } finally { delete process.env.LOKI_E10_RESUME; }
+  });
+  test("resume positive control: a file intake recorded as pre-existing untracked still lets already_done stand", async () => {
+    writeFileSync(join(repo, "mine.js"), "x\n");
+    const s = new Seq([already("mine.js:1 exists")]);
+    const c = { ...ctxOf(s), outputs: () => ({ intake: { crash_written: [], preexisting_untracked: ["mine.js"] } }) } as unknown as RunContext;
+    process.env.LOKI_E10_RESUME = "1";
+    try { expect((await implementStage.run(c, new AbortController().signal)).data.exit).toBe("already_done"); } finally { delete process.env.LOKI_E10_RESUME; }
+  });
+  test("a fresh run (no LOKI_E10_RESUME) is unchanged by an untracked file intake did not record", async () => {
+    writeFileSync(join(repo, "mul.js"), "x\n");
+    const s = new Seq([already("mul.js:1 exists")]);
+    const c = { ...ctxOf(s), outputs: () => ({ intake: { crash_written: [], preexisting_untracked: [] } }) } as unknown as RunContext;
+    expect((await implementStage.run(c, new AbortController().signal)).data.exit).toBe("already_done");
+  });
   test("positive control: already_done with no crash-written file stays already_done", async () => {
     const s = new Seq([already("a.txt:1 already one")]);
     const r = await implementStage.run(ctxOf(s), new AbortController().signal);
