@@ -12,8 +12,9 @@
 // probe never hangs the CLI. Secret env vars are checked for presence only --
 // the value is never read or echoed.
 import { PROVIDER_INSTALL } from "./provider.ts";
-import { appendFileSync, writeFileSync, mkdirSync, accessSync, constants as fsConstants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, statfsSync } from "node:fs";
+import { appendFileSync, writeFileSync, mkdirSync, accessSync, constants as fsConstants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, statfsSync } from "node:fs";
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
+import { createHash } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
@@ -1220,6 +1221,27 @@ export function claudeLoginProbeCached(cli: string, env: NodeJS.ProcessEnv = pro
   let li = claudeAuthStatusLoggedIn(cli, env); if (li === "") li = claudeAuthStatusLoggedIn(cli, env); // one retry, as doctor does
   if (li === "yes") { try { mkdirSync(join(file, ".."), { recursive: true }); writeFileSync(file, JSON.stringify({ cli, at: now })); } catch { /* best effort */ } }
   return li;
+}
+
+// RQ-11 (#351): zero-token key probe. One GET /v1/models (Models list endpoint, no tokens spent) with the key in x-api-key.
+// "rejected" needs 401/403 AND the Anthropic error envelope {"type":"error","error":{"type":"authentication_error"|"permission_error"}}: a gateway or proxy that
+// answers 401/403 on a route it does not serve says nothing about the key. Anything else that is not 200 (network error, timeout, 429, 5xx, a bare 401/403, a redirect) is "unknown".
+// Only "ok" is cached, 10 min, keyed by sha256 of the key plus the base URL; the key itself is never stored, logged or returned.
+export type AnthropicKeyProbe = { result: "ok" | "rejected" | "unknown"; status?: number };
+export async function anthropicKeyProbeCached(env: NodeJS.ProcessEnv, now = Date.now()): Promise<AnthropicKeyProbe> {
+  const key = (env.ANTHROPIC_API_KEY ?? "").trim(); const base = (env.ANTHROPIC_BASE_URL?.trim() || "https://api.anthropic.com").replace(/\/+$/, "");
+  const id = createHash("sha256").update(`${base}\n${key}`).digest("hex"); const file = join(env.HOME || homedir(), ".loki", "anthropic-key-ok.json");
+  try { const c = JSON.parse(readFileSync(file, "utf8")); if (c?.id === id && typeof c.at === "number" && now - c.at >= 0 && now - c.at < CLAUDE_LOGIN_TTL_MS) return { result: "ok" }; } catch { /* no usable cache */ }
+  try {
+    const res = await fetch(`${base}/v1/models?limit=1`, { headers: { "x-api-key": key, "anthropic-version": "2023-06-01" }, signal: AbortSignal.timeout(5000), redirect: "manual" }); // manual: the key header is never forwarded to a redirect target
+    if (res.status === 401 || res.status === 403) {
+      let t: unknown; try { const b = JSON.parse((await res.text()).slice(0, 4096)); t = b?.type === "error" ? b?.error?.type : undefined; } catch { /* not the Anthropic envelope */ }
+      return t === "authentication_error" || t === "permission_error" ? { result: "rejected", status: res.status } : { result: "unknown", status: res.status };
+    }
+    if (res.status !== 200) return { result: "unknown", status: res.status };
+    try { mkdirSync(join(file, ".."), { recursive: true }); const tmp = `${file}.${process.pid}.tmp`; writeFileSync(tmp, JSON.stringify({ id, at: now }), { mode: 0o600 }); renameSync(tmp, file); } catch { /* best effort */ }
+    return { result: "ok", status: 200 };
+  } catch { return { result: "unknown" }; }
 }
 
 // TEN-SPEED-08: same 10-minute reuse for the PR-run `gh auth status` probe.

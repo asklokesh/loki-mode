@@ -421,9 +421,9 @@ describe("first run (TEN-UX-01)", () => {
     expectWithheldLike(input, parseEnv(raw));
   }, 90000);
 
-  test("ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN skips the probe", async () => {
+  test("CLAUDE_CODE_OAUTH_TOKEN skips the probe (an ANTHROPIC_API_KEY gets the RQ-11 key probe instead)", async () => {
     const { dir, env } = identifiedRepo();
-    for (const k of ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) {
+    for (const k of ["CLAUDE_CODE_OAUTH_TOKEN"]) {
       const f = fakeClaude('{"loggedIn":false}');
       const r = await checkPreflight(opts(dir, { ...env, [k]: "x", LOKI_CLAUDE_CLI: f.cli }));
       expect(r.fatal).toBeNull();
@@ -482,7 +482,7 @@ describe("TEN-STABILITY-36: low disk", () => {
   const mb = (n: number) => () => ({ bavail: n * 1024, bsize: 1024 });
   const mk = (statfs: ((p: string) => { bavail: number; bsize: number }) | undefined, extra: Record<string, string> = {}) => {
     const { dir, env } = identifiedRepo();
-    return checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { ...env, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k", ...extra }, statfs });
+    return checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { ...env, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k", LOKI_PREFLIGHT_PROBE: "0", ...extra }, statfs });
   };
   test("under 2 GB warns naming the volume path", async () => {
     const r = await mk(mb(1500)); expect(r.fatal).toBeNull(); expect(r.warnings.join("\n")).toMatch(/low disk: 1500 MB free on the volume holding .*e10-pf-repo-/);
@@ -499,7 +499,7 @@ describe("TEN-STABILITY-36: low disk", () => {
   });
   test("real preflight() entry exits 2 on a full volume", () => {
     const { dir, env } = identifiedRepo();
-    const r = spawnSync("bun", ["-e", `import {preflight} from ${JSON.stringify(PREFLIGHT_TS)}; await preflight({repoDir:${JSON.stringify(dir)},provider:"claude",pr:false,env:${JSON.stringify({ ...env, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k", LOKI_MIN_FREE_MB: "999999999" })}});`], { encoding: "utf8" });
+    const r = spawnSync("bun", ["-e", `import {preflight} from ${JSON.stringify(PREFLIGHT_TS)}; await preflight({repoDir:${JSON.stringify(dir)},provider:"claude",pr:false,env:${JSON.stringify({ ...env, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k", LOKI_PREFLIGHT_PROBE: "0", LOKI_MIN_FREE_MB: "999999999" })}});`], { encoding: "utf8" });
     expect(r.status).toBe(2); expect(r.stderr).toContain("MB free on the volume holding");
   });
 });
@@ -514,7 +514,7 @@ describe("TEN-SPEED-08: gh auth probe reuse", () => {
   function prRepo(g: { path: string }) {
     const { dir, env } = identifiedRepo();
     execFileSync("git", ["-C", dir, "remote", "add", "origin", "https://github.com/acme/widget.git"]);
-    return { dir, env: { ...env, PATH: g.path, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k" } };
+    return { dir, env: { ...env, PATH: g.path, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k", LOKI_PREFLIGHT_PROBE: "0" } };
   }
   const o = (dir: string, env: Record<string, string>) => ({ repoDir: dir, provider: "claude", pr: true, env });
   const cacheFile = (env: Record<string, string>) => join(env.HOME ?? "", ".loki", "gh-auth-ok.json");
@@ -604,7 +604,7 @@ describe("TEN-ADOPTION-34: provider login probe", () => {
 
 describe("TEN-UX-55: repo writable", () => {
   const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
-  const env = (e: Record<string, string>) => ({ ...e, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k" });
+  const env = (e: Record<string, string>) => ({ ...e, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k", LOKI_PREFLIGHT_PROBE: "0" });
   test.skipIf(isRoot)("read-only repo dir is fatal with a one-line fix", async () => {
     const { dir, env: e } = identifiedRepo(); chmodSync(dir, 0o555);
     try { const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: env(e) }); expect(r.fatal).toMatch(/is not writable; run: chmod u\+w/); expect(r.fatal).not.toContain("\n"); } finally { chmodSync(dir, 0o755); }
@@ -681,7 +681,7 @@ describe("R100-022: publish capability at intake", () => {
   async function go(body: string, apiExit = 0) {
     const { dir, env } = identifiedRepo(); execFileSync("git", ["-C", dir, "remote", "add", "origin", `https://github.com/${OWNER}/${NAME}.git`]);
     const runDir = join(dir, ".loki", "runs", "r1");
-    const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: true, runDir, env: { ...env, PATH: ghApi(body, apiExit), LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k" } });
+    const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: true, runDir, env: { ...env, PATH: ghApi(body, apiExit), LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k", LOKI_PREFLIGHT_PROBE: "0" } });
     const file = readFileSync(join(runDir, "preflight.json"), "utf8");
     return { r, file, mode: (JSON.parse(file).publish ?? null) as string | null, compare: (JSON.parse(file).publish_compare ?? null) as string | null }; // an absent field means a direct PR (or no claim)
   }
@@ -717,5 +717,90 @@ describe("R100-022: publish capability at intake", () => {
     expect((await go("{not json")).mode).toBeNull(); expect((await go("{not json")).r.warnings.filter((w) => w.startsWith("publish:"))).toEqual([]);
     expect((await go(JSON.stringify({ name: "x" }))).mode).toBeNull();
     expect(classifyPublish("a/b", {})).toBeNull();
+  });
+});
+
+describe("RQ-11 (#351): zero-token ANTHROPIC_API_KEY probe", () => {
+  const KEY = "sk-ant-canary-RQ11-DO-NOT-LEAK-0123456789";
+  type Seen = { method: string; path: string; key: string | null }[];
+  const ENVELOPE = (t: string) => JSON.stringify({ type: "error", error: { type: t, message: "x" } });
+  function stub(status: number, delayMs = 0, body?: string): { url: string; seen: Seen; stop: () => void } {
+    const seen: Seen = [];
+    const srv = Bun.serve({ port: 0, async fetch(req) { seen.push({ method: req.method, path: new URL(req.url).pathname, key: req.headers.get("x-api-key") }); if (delayMs) await Bun.sleep(delayMs); return new Response(body ?? (status === 401 ? ENVELOPE("authentication_error") : status === 403 ? ENVELOPE("permission_error") : "{}"), { status }); } });
+    return { url: `http://127.0.0.1:${srv.port}`, seen, stop: () => srv.stop(true) };
+  }
+  async function go(base: string, extra: Record<string, string> = {}) {
+    const { dir, env } = identifiedRepo(); const runDir = join(dir, ".loki", "runs", "r1"); const out: string[] = [];
+    const ow = process.stdout.write.bind(process.stdout), ew = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((c: unknown) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
+    process.stderr.write = ((c: unknown) => { out.push(String(c)); return true; }) as typeof process.stderr.write;
+    let thrown = ""; let r: Awaited<ReturnType<typeof checkPreflight>>;
+    const e = { ...env, ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: base, LOKI_CLAUDE_CLI: stubCli(), ...extra };
+    try { r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, runDir, env: e }); try { await assertPreflight({ repoDir: dir, provider: "claude", pr: false, env: e }); } catch (x) { thrown = String((x as Error).message); } }
+    finally { process.stdout.write = ow; process.stderr.write = ew; }
+    const files: string[] = []; const walk = (p: string) => { try { for (const n of require("node:fs").readdirSync(p)) { const q = join(p, n); try { require("node:fs").statSync(q).isDirectory() ? walk(q) : files.push(readFileSync(q, "utf8")); } catch { /* skip */ } } } catch { /* skip */ } };
+    walk(join(dir, ".loki")); walk(join(env.HOME!, ".loki"));
+    const leaked = [...out, thrown, r.fatal ?? "", ...r.warnings, ...files].some((t) => t.includes(KEY));
+    return { r, runDir, leaked, home: env.HOME };
+  }
+  const rec = (runDir: string) => JSON.parse(readFileSync(join(runDir, "preflight.json"), "utf8"));
+
+  test("401 is fatal with the fix line, recorded failed, and the key never appears anywhere", async () => {
+    const s = stub(401); const { r, runDir, leaked } = await go(s.url); s.stop();
+    expect(r.fatal).toBe("ANTHROPIC_API_KEY was rejected (HTTP 401); fix the key or unset it to use claude login");
+    expect(rec(runDir)).toEqual({ provider: "claude", auth_path: "api_key:ANTHROPIC_API_KEY", probe: "failed" });
+    expect(leaked).toBe(false);
+    expect(s.seen.every((x) => x.method === "GET" && x.path === "/v1/models" && x.key === KEY)).toBe(true);
+    expect(s.seen.some((x) => x.path === "/v1/messages")).toBe(false);
+  });
+  test("403 is fatal too", async () => {
+    const s = stub(403); const { r } = await go(s.url); s.stop(); expect(r.fatal).toContain("(HTTP 403)");
+  });
+  test("a bare 401 or 403 from a gateway (no Anthropic error envelope) is unknown: a warning, never fatal", async () => {
+    for (const [st, body] of [[401, ""], [403, "forbidden"], [403, "{}"], [401, JSON.stringify({ error: "nope" })]] as [number, string][]) {
+      const s = stub(st, 0, body); const { r, runDir, leaked } = await go(s.url); s.stop();
+      expect(r.fatal).toBeNull(); expect(r.warnings.join("\n")).toContain("could not confirm the ANTHROPIC_API_KEY"); expect(rec(runDir).probe).toBe("unknown"); expect(leaked).toBe(false);
+    }
+  });
+  test("the ok cache is written 0600 through a rename (no .tmp left behind)", async () => {
+    const s = stub(200); const { dir, env } = identifiedRepo();
+    await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { ...env, ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: s.url, LOKI_CLAUDE_CLI: stubCli() } }); s.stop();
+    const d = join(env.HOME!, ".loki"); expect(require("node:fs").statSync(join(d, "anthropic-key-ok.json")).mode & 0o777).toBe(0o600);
+    expect(require("node:fs").readdirSync(d).filter((n: string) => n.endsWith(".tmp"))).toEqual([]);
+  });
+  test("200 records ok, caches for 10 min (one request across two starts), never leaks the key or stores it", async () => {
+    const s = stub(200); const { dir, env } = identifiedRepo(); const runDir = join(dir, ".loki", "runs", "r1");
+    const e: Record<string, string> = { ...env, ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: s.url, LOKI_CLAUDE_CLI: stubCli() };
+    const a = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, runDir, env: e }); const b = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: e }); s.stop();
+    expect(a.fatal).toBeNull(); expect(b.fatal).toBeNull(); expect(rec(runDir).probe).toBe("ok"); expect(s.seen.length).toBe(1);
+    expect(readFileSync(join(e.HOME!, ".loki", "anthropic-key-ok.json"), "utf8")).not.toContain(KEY);
+  });
+  test("a rejected key is never cached, and a different key re-probes", async () => {
+    const s = stub(401); const { dir, env } = identifiedRepo(); const e: Record<string, string> = { ...env, ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: s.url, LOKI_CLAUDE_CLI: stubCli() };
+    await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: e }); await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: e }); s.stop();
+    expect(s.seen.length).toBe(2); expect(existsSync(join(e.HOME!, ".loki", "anthropic-key-ok.json"))).toBe(false);
+  });
+  test("a timeout warns, records unknown, and is not fatal", async () => {
+    const s = stub(200, 7000); const t0 = Date.now(); const { r, runDir, leaked } = await go(s.url); s.stop();
+    expect(r.fatal).toBeNull(); expect(r.warnings.join("\n")).toContain("could not confirm the ANTHROPIC_API_KEY"); expect(rec(runDir).probe).toBe("unknown"); expect(leaked).toBe(false);
+    expect(Date.now() - t0).toBeLessThan(20000);
+  }, 30000);
+  test("a network error and a 500 are unknown, not fatal", async () => {
+    const dead = await go("http://127.0.0.1:9"); expect(dead.r.fatal).toBeNull(); expect(rec(dead.runDir).probe).toBe("unknown");
+    const s = stub(500); const five = await go(s.url); s.stop(); expect(five.r.fatal).toBeNull(); expect(rec(five.runDir).probe).toBe("unknown");
+  });
+  test("LOKI_PREFLIGHT_PROBE=0, LOKI_AIRGAP and an OAuth token send no request and record skipped", async () => {
+    for (const extra of [{ LOKI_PREFLIGHT_PROBE: "0" }, { LOKI_AIRGAP: "true" }] as Record<string, string>[]) {
+      const s = stub(401); const { r, runDir } = await go(s.url, extra); s.stop();
+      expect(r.fatal).toBeNull(); expect(s.seen.length).toBe(0); expect(rec(runDir).probe).toBe("skipped");
+    }
+    const s = stub(401); const { dir, env } = identifiedRepo(); const runDir = join(dir, ".loki", "runs", "r1");
+    const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, runDir, env: { ...env, CLAUDE_CODE_OAUTH_TOKEN: "t", ANTHROPIC_BASE_URL: s.url, LOKI_CLAUDE_CLI: stubCli() } }); s.stop();
+    expect(r.fatal).toBeNull(); expect(s.seen.length).toBe(0);
+  });
+  test("a redirect is never followed (the key header would leave the host) and is unknown", async () => {
+    const target = stub(200); const srv = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 302, headers: { location: `${target.url}/v1/models` } }) });
+    const { r, runDir } = await go(`http://127.0.0.1:${srv.port}`); srv.stop(true); target.stop();
+    expect(target.seen.length).toBe(0); expect(r.fatal).toBeNull(); expect(rec(runDir).probe).toBe("unknown");
   });
 });

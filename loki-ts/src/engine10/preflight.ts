@@ -2,7 +2,7 @@ import { accessSync, constants as fsc, mkdirSync, statfsSync, writeFileSync } fr
 import { join } from "node:path";
 import { truthy } from "../runner/providers.ts"; // E-36 first-run preflight (docs/v10/ENGINE.md); see preflight.test.ts for cases. Terse: engine10's own budget test caps this dir at 5,000 lines.
 import { safeGitRun } from "../util/safe_git.ts"; import { canonicalSessionPin } from "../util/claude_model.ts";
-import { claudeLoginProbeCached, ghAuthProbeCached, providerAuthPath, providerLoginIssue, requirementFix } from "../commands/doctor.ts";
+import { anthropicKeyProbeCached, claudeLoginProbeCached, ghAuthProbeCached, providerAuthPath, providerLoginIssue, requirementFix } from "../commands/doctor.ts";
 import { initEmptyRepo, NOT_A_REPO } from "../util/first_run_repo.ts";
 import { probePublish, recordPublish } from "../util/engine_origin.ts";
 import { run, type ShellOpts, type ShellResult } from "../util/shell.ts";
@@ -35,13 +35,18 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
   if (free !== null && free < minMb) return { fatal: `only ${Math.floor(free)} MB free on the volume holding ${o.repoDir} (need ${minMb} MB); free disk space, or lower LOKI_MIN_FREE_MB`, warnings };
   if (free !== null && free < Math.max(2048, minMb)) warnings.push(`low disk: ${Math.floor(free)} MB free on the volume holding ${o.repoDir}; a long run may fail mid-way (warns under 2 GB)`);
   // CW-14: zero-token auth probe (a local CLI status command only, never a model endpoint); LOKI_PREFLIGHT_PROBE=0 skips it. The outcome is bound into <runDir>/preflight.json.
-  const auth_path = providerAuthPath(o.provider, env); let probe: "ok" | "failed" | "skipped" = "skipped"; let authFatal: string | undefined; const keyed = !auth_path.startsWith("cli_login") && auth_path !== "none";
+  const auth_path = providerAuthPath(o.provider, env); let probe: "ok" | "failed" | "skipped" | "unknown" = "skipped"; let authFatal: string | undefined; const keyed = !auth_path.startsWith("cli_login") && auth_path !== "none";
   if (env["LOKI_PREFLIGHT_PROBE"] !== "0" && !keyed) {
     if (o.provider === "claude") { // TEN-UX-01: a logged-out CLI fails before any spend; unknown stays a warning
       const li = claudeLoginProbeCached(cli, env); // TEN-UX-12 retry + TEN-SPEED-05 10-min cache of a successful probe live in doctor.ts
       if (li === "no") { probe = "failed"; authFatal = "claude is not logged in; run: claude login (or set ANTHROPIC_API_KEY)"; }
       else if (li === "") warnings.push("could not confirm the Claude login (claude auth status gave no answer); continuing"); else probe = "ok";
     } else { const pl = providerLoginIssue(o.provider, cli, env); if (pl?.fatal) { probe = "failed"; authFatal = pl.fatal; } else if (pl?.warn) warnings.push(pl.warn); else if (o.provider === "codex") probe = "ok"; } // TEN-ADOPTION-34
+  }
+  else if (env["LOKI_PREFLIGHT_PROBE"] !== "0" && o.provider === "claude" && auth_path === "api_key:ANTHROPIC_API_KEY" && !truthy(env["LOKI_AIRGAP"]) && !truthy(env["CLAUDE_CODE_USE_BEDROCK"]) && !truthy(env["CLAUDE_CODE_USE_VERTEX"])) { // RQ-11 (#351): a set key is checked once, with no tokens spent; the key is never printed
+    const kp = await anthropicKeyProbeCached(env);
+    if (kp.result === "rejected") { probe = "failed"; authFatal = `ANTHROPIC_API_KEY was rejected (HTTP ${kp.status}); fix the key or unset it to use claude login`; }
+    else if (kp.result === "ok") probe = "ok"; else { probe = "unknown"; warnings.push("could not confirm the ANTHROPIC_API_KEY (the key probe got no usable answer); continuing"); }
   }
   if (o.runDir) { try { mkdirSync(o.runDir, { recursive: true }); writeFileSync(join(o.runDir, "preflight.json"), JSON.stringify({ provider: o.provider, auth_path, probe }) + "\n"); } catch { /* the record is evidence, never a gate */ } }
   if (authFatal) return { fatal: authFatal, warnings };

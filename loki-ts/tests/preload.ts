@@ -57,6 +57,19 @@ if (!process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]) {
   });
 }
 
+// FC-UNIT-TEST-REACHES-LIVE-API: the RQ-11 key probe sends a real GET to api.anthropic.com, so a unit test with a fake ANTHROPIC_API_KEY would
+// depend on egress (401 fatal with it, silent warning without). Probes are off by default under bun test (spawned CLIs inherit this); the
+// key-probe tests opt in with an explicit env. Any in-process fetch to api.anthropic.com is refused and fails the file.
+if (process.env["LOKI_PREFLIGHT_PROBE"] === undefined) process.env["LOKI_PREFLIGHT_PROBE"] = "0";
+const liveApiHits: string[] = [];
+const realFetch = globalThis.fetch;
+globalThis.fetch = Object.assign(((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+  if (/^https?:\/\/api\.anthropic\.com(?::\d+)?(?:\/|$)/i.test(url)) { liveApiHits.push(url); return Promise.reject(new Error("tests must not reach api.anthropic.com; stub ANTHROPIC_BASE_URL")); }
+  return realFetch(input, init);
+}) as typeof fetch, realFetch);
+afterAll(() => { if (liveApiHits.length) { const h = liveApiHits.splice(0).join(", "); throw new Error(`a unit test reached the live Anthropic API: ${h}`); } });
+
 // FC-TEST-TIMEOUT-OVERRIDES-CLI: the one place a test file sets its time budget. A file-level setDefaultTimeout literal
 // beats the `bun test --timeout` flag (which bun does not expose to the process) and ignores load. This scales the base by
 // machine load: factor = clamp(ceil(2 * load1 / cpus), 1, 10). Operator knobs: LOKI_TEST_TIMEOUT_SCALE (positive number,
