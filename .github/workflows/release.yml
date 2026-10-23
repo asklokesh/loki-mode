@@ -144,7 +144,7 @@ jobs:
   publish-npm:
     needs: pack-npm
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     concurrency:
       group: release-npm
       cancel-in-progress: false
@@ -196,7 +196,11 @@ jobs:
           fi
           # Highest-version guard, post-write re-read and overtaken-tag restore live in
           # scripts/npm-dist-tags.sh (FC-DIST-TAG-MOVED-BACKWARDS).
-          bash scripts/npm-dist-tags.sh "$VERSION"
+          # This job holds the release-npm lock, so it writes each tag once and reads for at
+          # most 120 s; a tag that has not applied yet is a warning. verify-npm-registry
+          # (off the lock) runs the long read window and fails if the tags never settle.
+          LOKI_DISTTAG_LAG_FATAL=0 LOKI_DISTTAG_SETTLE_S=120 LOKI_DISTTAG_MATERIALIZE_S=240 \
+              bash scripts/npm-dist-tags.sh "$VERSION"
           echo "PUBLISHED loki-mode@${VERSION} latest+next" >> "$GITHUB_STEP_SUMMARY"
 
   # FC-RELEASE-GREEN-WITHOUT-REGISTRY-PROOF: "+ loki-mode@X" in the publish log is
@@ -207,7 +211,7 @@ jobs:
   verify-npm-registry:
     needs: publish-npm
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -518,7 +522,7 @@ jobs:
   # Idempotent, so it needs nothing and starts at t=0.
   publish-ts-sdk:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 10
     concurrency:
       group: release-npm-sdk
       cancel-in-progress: false
@@ -552,7 +556,8 @@ jobs:
           fi
           # Same highest-version guard, fail-closed reads and overtaken-tag restore as
           # loki-mode (FC-DIST-TAG-MOVED-BACKWARDS).
-          LOKI_DISTTAG_PKG=loki-mode-sdk bash ../../scripts/npm-dist-tags.sh "$VERSION"
+          LOKI_DISTTAG_LAG_FATAL=0 LOKI_DISTTAG_SETTLE_S=120 LOKI_DISTTAG_MATERIALIZE_S=180 \
+              LOKI_DISTTAG_PKG=loki-mode-sdk bash ../../scripts/npm-dist-tags.sh "$VERSION"
 
   # Same late-materialization converge as verify-npm-registry, for loki-mode-sdk
   # (FC-DIST-TAG-MOVED-BACKWARDS). Nothing waits on it and it holds no lock: the
@@ -562,7 +567,7 @@ jobs:
   verify-sdk-registry:
     needs: publish-ts-sdk
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:

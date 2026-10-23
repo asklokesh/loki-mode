@@ -18,9 +18,16 @@
 # pkg@version` reads the cached packument and is not that document), and no tag
 # is written until that document returns 200.
 #
+# Two callers (FC-DISTTAG-SETTLE-READS-CACHED-PACKUMENT). publish-npm holds the
+# release-npm lock, so it runs LOKI_DISTTAG_LAG_FATAL=0 with a short window: one
+# write per tag, a rejected write fails, a tag that has not applied yet is a named
+# ::warning:: and exit 0. verify-npm-registry runs outside the lock with the
+# default LAG_FATAL=1: the long read window, the single rewrite, exit 1 if unsettled.
+#
 # Usage: npm-dist-tags.sh <version>
 # Env: LOKI_DISTTAG_PKG (default loki-mode; loki-mode-sdk for the SDK), LOKI_DISTTAG_SETTLE_S (read window, default 840),
-#   LOKI_DISTTAG_TRIES (default SETTLE_S / SLEEP + 1), LOKI_DISTTAG_SLEEP seconds (default 15), LOKI_DISTTAG_MATERIALIZE_S wait for the version document (default 420)
+#   LOKI_DISTTAG_TRIES (default SETTLE_S / SLEEP + 1), LOKI_DISTTAG_SLEEP seconds (default 15), LOKI_DISTTAG_MATERIALIZE_S wait for the version document (default 420),
+#   LOKI_DISTTAG_LAG_FATAL (default 1; 0 = warn and exit 0 on lag, one write per tag, rejected write still fails)
 set -uo pipefail
 
 VERSION="${1:-}"
@@ -30,6 +37,7 @@ SETTLE_S="${LOKI_DISTTAG_SETTLE_S:-840}"
 NAP="${LOKI_DISTTAG_SLEEP:-15}"
 TRIES="${LOKI_DISTTAG_TRIES:-$((SETTLE_S / (NAP > 0 ? NAP : 1) + 1))}"
 MATERIALIZE_S="${LOKI_DISTTAG_MATERIALIZE_S:-420}"
+LAG_FATAL="${LOKI_DISTTAG_LAG_FATAL:-1}"
 REGISTRY="${LOKI_DISTTAG_REGISTRY:-https://registry.npmjs.org}"
 
 # Highest stable semver among the arguments (prereleases are ignored).
@@ -66,6 +74,10 @@ version_materialized() {
 materialize_deadline=$((SECONDS + MATERIALIZE_S))
 until version_materialized; do
     if [ "$SECONDS" -ge "$materialize_deadline" ]; then
+        if [ "$LAG_FATAL" = 0 ]; then
+            echo "::warning::DISTTAG-VERSION-NOT-MATERIALIZED: $PKG@$VERSION has no version document after ${MATERIALIZE_S}s; wrote no tag (fail closed), verify-npm-registry converges it."
+            exit 0
+        fi
         echo "::error::$PKG@$VERSION has no version document after ${MATERIALIZE_S}s; refusing to write any tag (fail closed)."
         exit 1
     fi
@@ -108,6 +120,11 @@ while [ "$i" -lt "$TRIES" ]; do
         fi
         case "$tag" in next) prev="$W_next" ;; *) prev="$W_latest" ;; esac
         case "$tag" in next) forced="$F_next" ;; *) forced="$F_latest" ;; esac
+        if [ "$LAG_FATAL" = 0 ] && [ -n "$prev" ]; then
+            # Lock-holding caller: one write per tag; never write again, only read.
+            echo "waiting: $tag still '${cur}' after an accepted write of $TARGET"
+            continue
+        fi
         if [ -n "$prev" ] && [ "$cur" = "$prev" ]; then
             # Late in the window an accepted write that still has not applied is treated as
             # lost (11.60.8: latest never applied and later read 11.60.9): rewrite it once,
@@ -126,6 +143,10 @@ while [ "$i" -lt "$TRIES" ]; do
             case "$tag" in next) W_next="$cur" ;; *) W_latest="$cur" ;; esac
         else
             echo "dist-tag add $tag failed (try $i)"
+            if [ "$LAG_FATAL" = 0 ]; then
+                echo "::error::dist-tag add $PKG@$TARGET $tag was rejected"
+                exit 1
+            fi
         fi
     done
     # Settled only when both tags read the target.
@@ -141,5 +162,9 @@ while [ "$i" -lt "$TRIES" ]; do
         sleep "$NAP"
     fi
 done
+if [ "$LAG_FATAL" = 0 ]; then
+    echo "::warning::DISTTAG-NOT-SETTLED-YET: latest='$(tag_of latest)' next='$(tag_of next)' after ${SETTLE_S}s; verify-npm-registry keeps reading and fails if they never settle"
+    exit 0
+fi
 echo "::error::dist-tags did not settle on the highest version within ${SETTLE_S}s ($TRIES reads)"
 exit 1
