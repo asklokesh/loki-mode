@@ -3,7 +3,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { discoverControlUrl } from "../../../packages/control-plane/src/shipper/discover.ts";
-import { fold, readEvents } from "../engine10/events.ts";
+import { fold, readEvents, tail } from "../engine10/events.ts";
 import { formatDuration } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
 import { STALE_S, controlRunLink, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../util/run_outputs.ts";
@@ -132,14 +132,60 @@ async function probeConfiguredControl(env: NodeJS.ProcessEnv): Promise<string | 
   } catch { return null; }
 }
 
+// R100-007 `loki status --follow`: one line (or JSONL envelope) per progress event of one run, read from the same events.jsonl the engine writes.
+// Read-only: detaching (SIGINT) stops only this reader, never the run.
+const FOLLOW_TYPES = new Set(["run.started", "stage.started", "stage.completed", "stage.failed", "stage.skipped", "test.result", "cost", "pr.opened", "cap.hit", "escalated", "tamper.detected", "run.completed"]);
+
+/** One human line for a followed event. `usdSoFar` is the measured cost total through this event, null when none is measured. */
+export function followLine(e: EventEnvelope, usdSoFar: number | null): string {
+  const t = e.ts.slice(11, 19);
+  const st = e.stage ?? "run";
+  const d = e.data;
+  switch (e.type) {
+    case "cost": return `${t} cost ${typeof d.usd === "number" ? `$${d.usd.toFixed(4)}` : "unmeasured"} (total ${usdSoFar === null ? "unmeasured" : `$${usdSoFar.toFixed(4)}`}) ${st}`;
+    case "test.result": return `${t} test ${String(d.result ?? "?")} ${String(d.name ?? d.cmd ?? "")}`.trimEnd();
+    case "run.completed": return `${t} run completed ${typeof d.verdict === "string" ? d.verdict : ""}`.trimEnd();
+    default: return `${t} ${e.type} ${st}`;
+  }
+}
+
+/** Streams a run's progress until run.completed. Resolves 0 on completion or on SIGINT (detach). */
+export function followRun(root: string, wanted: string | null, json: boolean, out: (s: string) => void = (s) => void process.stdout.write(s)): Promise<number> {
+  return new Promise((resolveDone) => {
+    let stop: (() => void) | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let usd: number | null = null;
+    const finish = (): void => { if (timer) clearTimeout(timer); stop?.(); process.removeListener("SIGINT", onSigint); resolveDone(0); };
+    const onSigint = (): void => { if (!json) process.stderr.write("detached; the run keeps going\n"); finish(); };
+    process.once("SIGINT", onSigint);
+    const attach = (): void => {
+      const id = wanted ?? pickRun(root, Date.now())?.id ?? latestRunId(root);
+      if (id === null || !existsSync(eventsPath(root, id))) { timer = setTimeout(attach, 250); return; }
+      stop = tail(eventsPath(root, id), (e) => {
+        if (!FOLLOW_TYPES.has(e.type)) return;
+        let ev = e;
+        if (e.type === "cost") {
+          if (typeof e.data.usd === "number") usd = (usd ?? 0) + e.data.usd;
+          ev = { ...e, data: { ...e.data, usd_so_far: usd } };
+        }
+        out(json ? `${JSON.stringify(ev)}\n` : `${followLine(e, usd)}\n`);
+        if (e.type === "run.completed") setImmediate(finish);
+      });
+    };
+    attach();
+  });
+}
+
 export async function runModernStatus(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   if (argv.includes("--badge")) return (await import("./status.ts")).runStatus(["--badge"]);
   if (argv.includes("--probe")) return (await import("./status.ts")).runStatus(["--probe"]);
   let json = false;
+  let follow = false;
   let wanted: string | null = null;
-  const usage = "Usage: loki status [run-id] [--json|--badge|--probe]\n";
+  const usage = "Usage: loki status [run-id] [--json|--badge|--probe|--follow]\n";
   for (const a of argv) {
     if (a === "--json") json = true;
+    else if (a === "--follow") follow = true;
     else if (!a.startsWith("-") && wanted === null) wanted = a;
     else if (!a.startsWith("-")) { process.stderr.write(`loki status: too many arguments: expected one run id\n${usage}`); return 1; }
     else if (a === "--help" || a === "-h") { process.stdout.write(`${usage}  Shows the current or latest Loki 10 run.\n`); return 0; }
@@ -147,6 +193,10 @@ export async function runModernStatus(argv: readonly string[], env: NodeJS.Proce
   }
   const repoDir = env.LOKI_E10_REPO_DIR ?? process.cwd();
   const root = runsRoot(env, repoDir);
+  if (follow) {
+    if (wanted !== null && !isRunId(wanted)) { process.stderr.write(`loki status: invalid run id '${wanted}'\n`); return 2; }
+    return followRun(root, wanted, json);
+  }
   const now = Date.now();
   let hit = pickRun(root, now);
   if (wanted !== null) {

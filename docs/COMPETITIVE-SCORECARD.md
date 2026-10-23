@@ -460,6 +460,14 @@ Observed again on 11.55.3 without a new number:
   (`git log main..HEAD` printed 0 commits). Matches the 11.54.0 finding.
   Slice: CW-19 #354.
 
+- Live run view (R100-007, #361): `loki status --follow --json` streams one JSONL
+  event per stage, test and cost event from the engine10 event log, with a
+  running `usd_so_far`. Factory baseline cell, probed 2026-10-23 with
+  `droid exec --help | grep -iE 'json|stream'`: `droid exec` documents
+  `-o, --output-format <format>` (default text), `--input-format stream-json`
+  and a Stream JSON-RPC mode; the help text names no stage-level progress feed
+  and no running cost field, which is a statement about the help text only.
+
 NOT MEASURED on 11.55.3, so the #350 11.54.0 values stand unrefreshed: crash
 recovery and `loki start --resume` (M6), false-done rate (M5, the benchmark task
 did not discriminate), and the bare `claude -p` comparison column. Do not read

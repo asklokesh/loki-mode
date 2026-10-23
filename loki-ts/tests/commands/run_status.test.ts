@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { EventLog, readEvents } from "../../src/engine10/events.ts";
 import { controlRunLink, issueStatusBody, issueStatusProjector, STATUS_MARKER, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../../src/util/run_outputs.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
-import { NO_RUN_HINT, render, runIntentShow, runModernStatus, summarize } from "../../src/commands/run_status.ts";
+import { NO_RUN_HINT, followLine, followRun, render, runIntentShow, runModernStatus, summarize } from "../../src/commands/run_status.ts";
+import { fold } from "../../src/engine10/events.ts";
 import { DEFAULT_PUSH_SH } from "../../src/engine10/stages/pr.ts";
 
 let dir: string;
@@ -78,7 +79,7 @@ describe("loki status (Loki 10)", () => {
     } finally { process.stderr.write = orig; }
     expect(err).toContain("too many arguments: expected one run id");
     expect(err).not.toContain("unknown flag");
-    expect(err).toContain("Usage: loki status [run-id] [--json|--badge|--probe]");
+    expect(err).toContain("Usage: loki status [run-id] [--json|--badge|--probe|--follow]");
   });
 
   test("a truly unknown flag still reports unknown flag with the full usage", async () => {
@@ -90,7 +91,7 @@ describe("loki status (Loki 10)", () => {
       expect(code).toBe(1);
     } finally { process.stderr.write = orig; }
     expect(err).toContain("unknown flag --bogus");
-    expect(err).toContain("Usage: loki status [run-id] [--json|--badge|--probe]");
+    expect(err).toContain("Usage: loki status [run-id] [--json|--badge|--probe|--follow]");
   });
 
   test("--badge is routed to the deploy badge, not rejected as an unknown flag", async () => {
@@ -445,5 +446,93 @@ describe("pickRun mtime", () => {
     mkdirSync(join(dir, ".loki", "runs", "e10-20261005T000000Z-bbbb"), { recursive: true });
     const { out } = await run([]);
     expect(out).toContain("e10-20261001T000000Z-aaaa");
+  });
+});
+
+// R100-007: `loki status --follow` streams a run's progress from events.jsonl; detaching never touches the run.
+describe("loki status --follow (R100-007)", () => {
+  const STAGES = ["intake", "plan", "wall", "implement", "verify", "seal", "pr"] as const;
+  const RUN = "e10-20261023T000000Z-ffff";
+  const root = (): string => join(dir, ".loki", "runs");
+  const mkLog = (): EventLog => new EventLog(join(root(), RUN, "events.jsonl"), RUN);
+  const stageRun = (log: EventLog, finish: boolean): void => {
+    log.append("run.started", null, {});
+    STAGES.forEach((st, i) => {
+      log.append("stage.started", st, {});
+      log.append("cost", st, { session_id: `s${i}`, usd: 0.1 * (i + 1) });
+      log.append("test.result", st, { name: `t${i}`, result: "pass" });
+      log.append("stage.completed", st, {});
+    });
+    if (finish) log.append("run.completed", null, { verdict: "VERIFIED" });
+  };
+
+  test("--json emits at least one stage event per stage (7 stages) and ends at run.completed", async () => {
+    stageRun(mkLog(), true);
+    const lines: string[] = [];
+    expect(await followRun(root(), null, true, (l) => void lines.push(l))).toBe(0);
+    const evs = lines.map((l) => JSON.parse(l) as EventEnvelope);
+    const stageEvents = evs.filter((e) => e.type.startsWith("stage."));
+    expect(new Set(stageEvents.map((e) => e.stage))).toEqual(new Set(STAGES));
+    expect(stageEvents.length).toBeGreaterThanOrEqual(7);
+    expect(evs[evs.length - 1]?.type).toBe("run.completed");
+  });
+
+  test("every cost event carries usd_so_far and the last one equals the ledger total within 1%", async () => {
+    const log = mkLog();
+    stageRun(log, true);
+    const lines: string[] = [];
+    await followRun(root(), null, true, (l) => void lines.push(l));
+    const costs = lines.map((l) => JSON.parse(l) as EventEnvelope).filter((e) => e.type === "cost");
+    expect(costs.length).toBe(7);
+    for (const c of costs) expect(typeof c.data.usd_so_far).toBe("number");
+    const ledger = fold(readEvents(join(root(), RUN, "events.jsonl"))).cost.usd as number;
+    const last = costs[costs.length - 1]!.data.usd_so_far as number;
+    expect(Math.abs(last - ledger) / ledger).toBeLessThan(0.01);
+  });
+
+  test("an event appended after the follower starts prints within 2s", async () => {
+    const lines: string[] = [];
+    const t0 = Date.now();
+    const done = followRun(root(), null, true, (l) => void lines.push(l));
+    await Bun.sleep(300);
+    const log = mkLog();
+    log.append("run.started", null, {});
+    while (lines.length === 0 && Date.now() - t0 < 2000) await Bun.sleep(25);
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    log.append("run.completed", null, { verdict: "VERIFIED" });
+    await done;
+  });
+
+  test("SIGINT detaches the follower and loki status --json still reports the run as running", async () => {
+    const log = mkLog();
+    log.append("run.started", null, {});
+    log.append("stage.started", "implement", {});
+    const lines: string[] = [];
+    const done = followRun(root(), null, true, (l) => void lines.push(l));
+    await Bun.sleep(400);
+    process.emit("SIGINT");
+    expect(await done).toBe(0);
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    const { out } = await run(["--json"]);
+    const st = JSON.parse(out) as { state: string; outcome: string };
+    expect(st.outcome).toBe("running");
+    expect(st.state).toBe("executing");
+    log.append("stage.completed", "implement", {}); // the run is still writable and the follower is gone
+    expect(readEvents(join(root(), RUN, "events.jsonl")).length).toBe(3);
+  });
+
+  test("text mode is one line per event with a running cost total", async () => {
+    stageRun(mkLog(), true);
+    const lines: string[] = [];
+    await followRun(root(), null, false, (l) => void lines.push(l));
+    expect(lines.some((l) => l.includes("stage.started implement"))).toBe(true);
+    expect(lines.some((l) => l.includes("test pass t3"))).toBe(true);
+    expect(followLine({ v: 1, seq: 0, ts: "2026-10-23T01:02:03Z", run: RUN, type: "cost", stage: "plan", data: { usd: 0.5 } }, 1.25)).toBe("01:02:03 cost $0.5000 (total $1.2500) plan");
+  });
+
+  test("--follow is an accepted flag and rejects a bad run id", async () => {
+    const { code } = await run(["--follow", "../x"]);
+    expect(code).toBe(2);
   });
 });
