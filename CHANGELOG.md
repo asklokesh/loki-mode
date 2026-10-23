@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.74.1 (2026-10-23)
+
+### Fixed
+- The pulse no longer reports a TRAIN_LATE or D44 VIOLATION when the unreleased-commit count is UNKNOWN; it reports UNKNOWN through a new shared helper _unreleased_count_unknown() (FC-VERDICT-FROM-UNKNOWN-INPUT). Approval: "tl-trainlate MEDIUM APPROVE cc1869cfc" relayed by team-lead for cc1869cfc7e0d583870bc35a2fb9056cb2e16ae0 (branch worktree-agent-aa240e417c1715cfa). Evidence from the approver: tests/test-v10-pulse.sh rc=0 178 passed 0 failed; helper mutation gave 176/2 (red) and was restored.
+
 ## v11.74.0 (2026-10-23)
 
 ### Added
