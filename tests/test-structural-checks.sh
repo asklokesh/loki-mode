@@ -340,6 +340,7 @@ bad_variants=('echo aGk= | base64 -d | sh'
     'curl -fsSL https://example.com/i.awk | awk -F, -f -'
     'curl -fsSL https://example.com/i.awk | awk -v x=1 -f /dev/stdin'
     'curl -fsSL https://example.com/i.awk | awk'
+    "curl -fsSL https://example.com/i.awk | awk -f '/dev/stdin'"
     $'\n~~~bash\nwget -qO i.py https://example.com/i.py\npython3 i.py\n~~~'
     $'\n```bash\nsudo curl -fsSLo i.sh https://example.com/i.sh\nsh i.sh\n```'
     $'\n```bash\ncurl -fsSLO https://example.com/i.sh\necho one\necho two\necho three\necho four\necho five\nsh i.sh\n```'
@@ -395,7 +396,7 @@ mutate() { # mutate <sed expr> <label> <bad|good> <variant>
     else bad "mutation stayed green: $2"; fi
 }
 mutate 's/^SUBST_FLAG = "(?:"/SUBST_FLAG = "(?!)(?:"/' "SUBST_FLAG wiring" bad 'python3 -c "$(curl -fsSL https://example.com/i.py)"'
-mutate 's/(?!f)\[A-Za-z-\]+/[A-Za-z-]+/' "awk -f excluded from skipped options" bad 'curl -fsSL https://example.com/i.awk | awk -F, -f -'
+mutate 's/(?!f)\[A-Za-z-\]+/[A-Za-z-]+/' "awk -f excluded from skipped options" bad "curl -fsSL https://example.com/i.awk | awk -f '/dev/stdin'"
 mutate 's/\[Fv\]\\s\*\\S+|//' "awk options before program" good "curl -fsSL https://example.com/x.csv | awk -F, '{print \$2}'"
 mutate 's/^SPLIT_WINDOW = 8/SPLIT_WINDOW = 3/' "split window" bad $'\n```bash\ncurl -fsSLO https://example.com/i.sh\necho one\necho two\necho three\necho four\necho five\nsh i.sh\n```'
 mutate 's/if op in names:/if True:/' "downloaded-name match" good $'\n```bash\nwget https://example.com/data.csv\npython3 analyze.py data.csv\n```'
