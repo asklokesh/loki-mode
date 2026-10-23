@@ -4,11 +4,16 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { taskBlock } from "../engine10/types.ts";
+import { stripTemplate } from "./intent_card.ts";
 import type { SessionRunner } from "../engine10/types.ts";
 
 export const SPEC_MARKER = "<!-- loki-spec v1: edit the intent and criteria; keep the three headings. -->";
 export const SPEC_DIR = join(".loki", "specs");
 const MAX_CRITERIA = 20;
+export const MAX_CLAUSES = 40;
+const CLAUSE_TEXT_MAX = 380;
+const DROPPED_RE = /^<!-- clauses-dropped: (\d+) -->$/;
+const CLAUSE_LINE_RE = /^C(\d+): (.+?)(?: \[((?:p\d+:)?l\d+)\])?$/;
 const MAX_FIELD = 400;
 const H_TASK = "## Task", H_INTENT = "## Intent", H_CRIT = "## Acceptance criteria";
 
@@ -19,7 +24,9 @@ export class SpecError extends Error {
   }
 }
 
-export interface SpecCriteria { intent: string; criteria: string[] }
+/** CW-07: one numbered acceptance clause. `anchor` is `p<page>:l<line>` (page from a form feed) or `l<line>`; absent for model-added criteria. */
+export interface Clause { id: string; text: string; anchor?: string; text_sha256: string }
+export interface SpecCriteria { intent: string; criteria: string[]; clauses?: Clause[]; clausesDropped?: number }
 export interface ParsedSpec extends SpecCriteria { task: string }
 export interface LoadedSpec extends ParsedSpec { sha256: string; path: string; raw: string }
 
@@ -43,9 +50,79 @@ export function checkCriteriaJson(x: unknown): string | null {
   return null;
 }
 
+const mkClause = (n: string, text: string, anchor?: string): Clause => ({ id: `C${n}`, text, ...(anchor ? { anchor } : {}), text_sha256: sha256Hex(text) });
+/** `C3: <text> [p3:l12]`, the one rendering shared by the locked spec and the Wall brief. */
+export const clauseLine = (k: Clause): string => `${k.id}: ${k.text}${k.anchor ? ` [${k.anchor}]` : ""}`;
+
+const normClause = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const ACCEPT_KEY = /accept|criteria|requirement|must/i, NOT_REQ_HEAD = /steps|reproduc|install|setup|example|environment/i;
+const ITEM = /^([-*+]|\d+[.)])\s+(\[[ xX]\]\s*)?/, CHECK = /^[-*+]\s+\[[ xX]\]\s*/, NUMBERED = /^\d+[.)]\s+/, RFC = /\b(MUST|SHALL)(\s+NOT)?\b/;
+const clipClause = (t: string): string => (t.length > CLAUSE_TEXT_MAX ? `${t.slice(0, CLAUSE_TEXT_MAX - 3)}...` : t);
+
+/**
+ * CW-07: acceptance clauses from any spec text (Markdown, PDF or DOCX extracted text, an issue body). A clause is a line under an
+ * accept/criteria/requirement/must heading, a checklist item, a numbered requirement line, or an RFC 2119 (MUST/SHALL) sentence.
+ * Issue-template boilerplate is dropped through stripTemplate. Ids C1..Cn follow source order and are a pure function of the text;
+ * duplicates (normalized) are kept once. Beyond MAX_CLAUSES the rest is counted in `dropped`, never silently lost.
+ * Anchors: `l<line>`, or `p<page>:l<line>` when the text has form feeds (pdftotext page breaks).
+ */
+export function extractClauses(text: string): { clauses: Clause[]; dropped: number } {
+  const raw = text.replace(/\r\n/g, "\n").split("\n");
+  let page = 1, pageLine = 0, paged = false;
+  const rows = raw.map((l) => {
+    const parts = l.split("\f");
+    if (parts.length > 1) { paged = true; page += parts.length - 1; pageLine = 0; }
+    pageLine++;
+    return { t: new String((parts[parts.length - 1] ?? "").trim()) as String, page, line: pageLine };
+  });
+  // stripTemplate keeps the same element objects, so line positions survive the filter.
+  const kept = new Set(stripTemplate(rows.map((r) => r.t as unknown as string)) as unknown as object[]);
+  const seen = new Set<string>(), all: { text: string; anchor: string }[] = [];
+  const add = (t: string, r: { page: number; line: number }): void => {
+    const text1 = clipClause(t.replace(/\s+/g, " ").trim()), key = normClause(text1);
+    if (key === "" || seen.has(key)) return;
+    seen.add(key); all.push({ text: text1, anchor: `${paged ? `p${r.page}:` : ""}l${r.line}` });
+  };
+  let sect: "none" | "accept" | "plain" | "skip" = "none", got = false;
+  for (const r of rows) {
+    if (!kept.has(r.t)) continue;
+    const l = String(r.t);
+    if (l === "") { if (sect === "plain" && got) sect = "none"; continue; }
+    const md = /^#{1,6}\s*(.*)$/.exec(l);
+    const plainHead = !md && l.length <= 60 && !ITEM.test(l) && !/[.;!?]$/.test(l.replace(/:$/, "")) && ACCEPT_KEY.test(l) && !RFC.test(l);
+    if (md || plainHead) {
+      const title = md ? md[1]! : l;
+      sect = ACCEPT_KEY.test(title) ? (md ? "accept" : "plain") : NOT_REQ_HEAD.test(title) ? "skip" : "none"; got = false;
+      continue;
+    }
+    if (sect === "accept" || sect === "plain") { add(l.replace(ITEM, ""), r); got = true; continue; }
+    if (CHECK.test(l)) { add(l.replace(CHECK, ""), r); continue; }
+    if (NUMBERED.test(l) && sect !== "skip") { add(l.replace(NUMBERED, ""), r); continue; }
+    for (const sentence of l.replace(ITEM, "").split(/(?<=[.!?])\s+/)) if (RFC.test(sentence)) add(sentence, r);
+  }
+  return {
+    clauses: all.slice(0, MAX_CLAUSES).map((c, i) => mkClause(String(i + 1), c.text, c.anchor)),
+    dropped: Math.max(0, all.length - MAX_CLAUSES),
+  };
+}
+
+/** Task clauses first (anchored), then the model's criteria as further clauses without an anchor; capped at MAX_CLAUSES, overflow counted; empty when the task has no clauses. */
+export function lockClauses(task: string, modelCriteria: string[]): { clauses: Clause[]; dropped: number } {
+  const ex = extractClauses(task);
+  if (ex.clauses.length === 0) return { clauses: [], dropped: 0 }; // no task clauses: the spec stays exactly as before
+  const seen = new Set(ex.clauses.map((c) => normClause(c.text)));
+  const extra = modelCriteria.filter((c) => { const k = normClause(c); if (seen.has(k)) return false; seen.add(k); return true; });
+  const room = MAX_CLAUSES - ex.clauses.length;
+  const more = extra.slice(0, Math.max(0, room)).map((t, i) => mkClause(String(ex.clauses.length + i + 1), clipClause(t)));
+  return { clauses: [...ex.clauses, ...more], dropped: ex.dropped + Math.max(0, extra.length - Math.max(0, room)) };
+}
+
+/** The clause lines a spec contributes to the Wall: tagged `C<n>:` criteria only, so an untagged spec leaves the brief untouched. */
+export const specClauseLines = (s: ParsedSpec | null | undefined): string[] => (s?.clauses ?? []).map(clauseLine);
+
 export function renderSpec(task: string, c: SpecCriteria): string {
   const quoted = task.split("\n").map((l) => `> ${l}`.trimEnd());
-  return [SPEC_MARKER, "", H_TASK, "", ...quoted, "", H_INTENT, "", c.intent.trim(), "", H_CRIT, "", ...c.criteria.map((x) => `- ${x.trim()}`), ""].join("\n");
+  return [SPEC_MARKER, "", H_TASK, "", ...quoted, "", H_INTENT, "", c.intent.trim(), "", H_CRIT, "", ...(c.clauses?.length ? [...c.clauses.map((k) => `- ${clauseLine(k)}`), ...(c.clausesDropped ? [`<!-- clauses-dropped: ${c.clausesDropped} -->`] : [])] : c.criteria.map((x) => `- ${x.trim()}`)), ""].join("\n");
 }
 
 export function parseSpec(text: string, file?: string): ParsedSpec {
@@ -72,9 +149,12 @@ export function parseSpec(text: string, file?: string): ParsedSpec {
   for (let i = n.from; i < n.to; i++) { const l = lines[i]!.trim(); if (l !== "") intentLines.push(l); }
   if (intentLines.length === 0) fail(at[H_INTENT]! + 1, "the Intent section is empty");
   const c = body(H_CRIT), criteria: string[] = [];
+  let dropped = 0;
   for (let i = c.from; i < c.to; i++) {
     const l = lines[i]!;
     if (l.trim() === "") continue;
+    const dm = DROPPED_RE.exec(l.trim());
+    if (dm) { dropped = Number(dm[1]); continue; }
     if (!/^[-*]\s/.test(l) && !/^[-*]$/.test(l.trim())) fail(i + 1, "criteria must be bullet lines starting with \"- \"");
     const v = l.replace(/^[-*]\s*/, "").trim();
     if (v === "") fail(i + 1, "empty criterion");
@@ -82,8 +162,14 @@ export function parseSpec(text: string, file?: string): ParsedSpec {
     criteria.push(v);
   }
   if (criteria.length === 0) fail(at[H_CRIT]! + 1, "no acceptance criteria");
-  if (criteria.length > MAX_CRITERIA) fail(at[H_CRIT]! + 1, `more than ${MAX_CRITERIA} criteria`);
-  return { task: taskLines.join("\n"), intent: intentLines.join(" "), criteria };
+  const clauses = criteria.map((x) => CLAUSE_LINE_RE.exec(x));
+  const tagged = clauses.every((m) => m !== null); // CW-07: a fully clause-tagged spec may hold up to MAX_CLAUSES lines
+  if (criteria.length > (tagged ? MAX_CLAUSES : MAX_CRITERIA)) fail(at[H_CRIT]! + 1, `more than ${tagged ? MAX_CLAUSES : MAX_CRITERIA} criteria`);
+  return {
+    task: taskLines.join("\n"), intent: intentLines.join(" "), criteria,
+    ...(tagged ? { clauses: clauses.map((m) => mkClause(m![1]!, m![2]!, m![3])) } : {}),
+    ...(tagged && dropped ? { clausesDropped: dropped } : {}),
+  };
 }
 
 /** Reads and parses a spec file; the sha256 is over the exact bytes read. Throws SpecError (line 1 for an unreadable file). */
@@ -146,7 +232,8 @@ export async function generateSpec(o: GenerateOpts): Promise<GeneratedSpec> {
   try { parsed = JSON.parse(readFileSync(jsonPath, "utf8")); } catch { throw new Error("the model did not write valid JSON (schema check failed)"); }
   const bad = checkCriteriaJson(parsed);
   if (bad) throw new Error(`the model output failed the schema check: ${bad}`);
-  const text = renderSpec(o.task, parsed as SpecCriteria);
+  const crit = parsed as SpecCriteria, lk = lockClauses(o.task, crit.criteria);
+  const text = renderSpec(o.task, lk.clauses.length > 0 ? { ...crit, clauses: lk.clauses, clausesDropped: lk.dropped } : crit);
   mkdirSync(join(o.repoDir, SPEC_DIR), { recursive: true });
   writeFileSync(path, text, "utf8");
   return { path, sha256: sha256Hex(text) };
