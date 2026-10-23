@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.63.6 (2026-10-23)
+
+### Fixed
+- The PAUSED.md parity comment in loki-ts anchors on the shared no-TTY wording, not run.sh line numbers (#212 criterion 2). Approval: "APPROVE pd/rq72 5a26e8f50 (tl-2, LOW): comment-only in intervention.ts; merge-tree clean; "PAUSED.md resume wording" tests 2/0; the anchor string exists at run.sh:28721, 28743 and intervention.ts:375."
+
 ## v11.63.5 (2026-10-23)
 
 ### Fixed
