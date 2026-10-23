@@ -260,6 +260,53 @@ class AblateEndToEndTest(unittest.TestCase):
         with open(os.path.join(self.repo, "calc.py"), "rb") as f:
             self.assertEqual(f.read(), before)
 
+    def _signal_mid_run(self, signum):
+        import time
+        _write(self.repo, "calc.py", "def add(a, b):\n    return b + a\n")
+        ready = os.path.join(self.loki, "ready")
+        _write(self.repo, "check_calc.py",
+               "import time\nopen(%r, 'w').close()\ntime.sleep(1.5)\n"
+               "open('calc.py', 'a').write('# late write from orphaned check\\n')\n" % ready)
+        path = os.path.join(self.repo, "calc.py")
+        os.chmod(path, 0o640)
+        os.utime(path, ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
+        with open(path, "rb") as f:
+            before = f.read()
+        before_st = os.stat(path)
+        self.record_tests()
+        proc = subprocess.Popen(
+            [sys.executable, _SCRIPT, "--repo", self.repo, "--base", self.base,
+             "--loki-dir", self.loki],
+            cwd=self.repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        try:
+            deadline = time.time() + 20
+            while not os.path.exists(ready) and time.time() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(os.path.exists(ready), "check never started")
+            with open(path, "rb") as f:
+                self.assertNotEqual(f.read(), before, "tree was not ablated")
+            proc.send_signal(signum)
+            proc.communicate(timeout=30)
+            time.sleep(2.5)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), before)
+        st = os.stat(path)
+        self.assertEqual(st.st_mode, before_st.st_mode)
+        self.assertEqual(st.st_mtime_ns, before_st.st_mtime_ns)
+
+    def test_signal_restore_sigint(self):
+        import signal
+        self._signal_mid_run(signal.SIGINT)
+
+    def test_signal_restore_sigterm(self):
+        import signal
+        self._signal_mid_run(signal.SIGTERM)
+
 
 if __name__ == "__main__":
     unittest.main()

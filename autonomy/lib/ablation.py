@@ -299,6 +299,15 @@ def _run_command(repo, command, timeout):
             pass
         proc.wait()
         return None, True
+    except BaseException:
+        # SIGINT/SIGTERM mid-run: stop the check's whole group and reap it
+        # before the caller restores the tree, so nothing writes afterwards.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.wait()
+        raise
 
 
 def ablate(repo, base, loki_dir, timeout=DEFAULT_TIMEOUT_SEC):
@@ -382,7 +391,17 @@ def ablate(repo, base, loki_dir, timeout=DEFAULT_TIMEOUT_SEC):
                 f.write(new_source.encode("utf-8"))
         exit_code, timed_out = _run_command(repo, command, timeout)
     finally:
+        # A second signal must not abort the restore half way.
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            try:
+                signal.signal(sig, signal.SIG_IGN)
+            except (ValueError, OSError):
+                pass
         errors = snap.restore()
+        try:
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+        except (ValueError, OSError):
+            pass
         for sig, handler in old.items():
             signal.signal(sig, handler)
     if errors:
