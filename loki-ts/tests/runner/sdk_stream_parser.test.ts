@@ -694,6 +694,28 @@ describe("consumeSdkStream transcript fixtures", () => {
       expect(ev[1].payload).toMatchObject({ tool: "Read", input_summary: "/home/u/.aws/credentials" });
     });
 
+    test("permission_denied input_summary is redacted, including a secret straddling position 200 (#303)", async () => {
+      const key = "sk-ant-api03-" + "A".repeat(40);
+      const ghp = "ghp_" + "B".repeat(36);
+      const straddle = "x".repeat(172) + " echo " + key + " cat .env";
+      await consumeSdkStream([
+        { type: "result", subtype: "success", is_error: false, session_id: "s4", total_cost_usd: 0,
+          permission_denials: [
+            { tool_name: "Bash", tool_use_id: "t1", tool_input: { command: `ANTHROPIC_API_KEY=${key} cat .env` } },
+            { tool_name: "Bash", tool_use_id: "t2", tool_input: { command: `curl -H 'Authorization: Bearer ${ghp}' x < .env` } },
+            { tool_name: "Bash", tool_use_id: "t3", tool_input: { command: straddle } },
+          ] },
+      ], ctx(), clock);
+      const raw = readFileSync(eventsPath(), "utf8");
+      expect(raw).not.toContain("sk-ant-api03-AAAA");
+      expect(raw).not.toContain("ghp_BBBB");
+      expect(raw).not.toContain("AAAAAAAA");
+      expect(raw).toContain("[REDACTED");
+      const ev = ledger().filter((e) => e.type === "permission_denied");
+      expect(ev).toHaveLength(3);
+      for (const e of ev) expect(String(e.payload.input_summary).length).toBeLessThanOrEqual(200);
+    });
+
     test("a result with no permission_denials, or a malformed list, writes no permission_denied event", async () => {
       await consumeSdkStream([{ type: "result", subtype: "success", is_error: false, total_cost_usd: 0.01 }], ctx(), clock);
       await consumeSdkStream([{ type: "result", subtype: "success", is_error: false, permission_denials: "oops" as unknown as undefined }], ctx(), clock);
