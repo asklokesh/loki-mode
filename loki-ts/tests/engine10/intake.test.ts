@@ -4,7 +4,7 @@
 // the slice's contract: machine.ts (E-02) and testmap.ts (E-05) do not exist
 // yet on main, and this stage codes against types.ts's interfaces only.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
@@ -746,12 +746,13 @@ describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
 // FC-CRASH-WORK-READ-AS-PREEXISTING: a file a crashed run of the same task wrote is the run's change; a file untracked before that run began never is.
 describe("engine10 intake crash-written work", () => {
   const TASK = "do a thing";
-  const writePrior = (id: string, over: { task?: string; pre?: string[]; sealed?: boolean; startTs?: string } = {}): void => {
+  const writePrior = (id: string, over: { task?: string; pre?: string[]; sealed?: boolean; startTs?: string; eventsAgeMs?: number } = {}): void => {
     mkdirSync(join(repoDir, ".loki", "runs", id), { recursive: true });
     const ev = (seq: number, type: string, stage: string | null, data: Record<string, unknown>, ts = over.startTs ?? new Date(Date.now() - 60000).toISOString()) => JSON.stringify({ v: 1, seq, ts, run: id, type, stage, data });
     const lines = [ev(1, "run.started", null, {}), ev(2, "stage.completed", "intake", { task: over.task ?? TASK, preexisting_untracked: over.pre ?? [] })];
     if (over.sealed) lines.push(ev(3, "receipt.sealed", "seal", {}));
     writeFileSync(join(repoDir, ".loki", "runs", id, "events.jsonl"), lines.join("\n") + "\n");
+    if (over.eventsAgeMs) { const t = new Date(Date.now() - over.eventsAgeMs); utimesSync(join(repoDir, ".loki", "runs", id, "events.jsonl"), t, t); }
   };
   const intake = async (): Promise<Record<string, unknown>> => { const r = await runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { taskText: TASK }); expect(r.status).toBe("completed"); return r.data; };
 
@@ -776,6 +777,18 @@ describe("engine10 intake crash-written work", () => {
   test("a file older than the crashed run's start is not attributed", async () => {
     writeFileSync(join(repoDir, "old.js"), "x\n");
     writePrior("e10-crashed", { startTs: new Date(Date.now() + 3600000).toISOString() });
+    expect((await intake()).crash_written).toEqual([]);
+  });
+  test("a newer sealed same-task run ends the scan: a user file written after it is not crash work", async () => {
+    writePrior("e10-crashed", { eventsAgeMs: 600000 });
+    writePrior("e10-sealed", { sealed: true });
+    writeFileSync(join(repoDir, "secret-notes.txt"), "mine\n");
+    expect((await intake()).crash_written).toEqual([]);
+  });
+  test("a 30-day-old crash does not claim a file written today", async () => {
+    const old = new Date(Date.now() - 30 * 86400000).toISOString();
+    writePrior("e10-crashed", { startTs: old, eventsAgeMs: 30 * 86400000 });
+    writeFileSync(join(repoDir, ".env"), "SECRET=1\n");
     expect((await intake()).crash_written).toEqual([]);
   });
   test("the crash-written file is committed with the run", async () => {
