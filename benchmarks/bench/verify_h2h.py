@@ -81,6 +81,33 @@ def build_inputs(ids=None):
             continue
         for variant, src in (("seeded", case["buggy"]), ("control", case["fixed"])):
             out.append((did, variant, category, gen.render(case, did, category, src, control=variant == "control")))
+    if ids is None or "EW-0001" in ids:
+        out.extend(engine_wall_inputs())
+    return out
+
+
+# Engine-written Wall case, outside the 100-case seeded corpus (generate.py --check stays byte-identical).
+# The Wall file and its wall.sealed event are verbatim output of a real engine10 stub run (fc69 e2e fixture,
+# `loki "add a multiply(a, b) function to calc.ts"`); only the sealed path was shortened to the basename.
+ENGINE_WALL = ('import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\n'
+               'test("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n')
+ENGINE_WALL_SEAL = ('{"v":1,"seq":10,"type":"wall.sealed","stage":"wall","data":{"files":[{"path":"loki_wall_multiply.test.ts",'
+                    '"sha256":"%s"}]}}\n' % hashlib.sha256(ENGINE_WALL.encode()).hexdigest())
+ENGINE_WALL_CALC = "export function add(a: number, b: number): number {\n  return a + b;\n}\n"
+ENGINE_WALL_MULTIPLY = "\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n"
+ENGINE_WALL_CHECK = ("import sys\nsrc = open('calc.ts').read()\nsys.exit(0 if 'function multiply' in src else 1)\n")
+ENGINE_WALL_VISIBLE = "import sys\nsys.exit(0)\n"
+
+
+def engine_wall_inputs():
+    """[(task_id, variant, category, files)] for the engine-written failing-Wall case: the seeded repo lacks multiply
+    and ships the engine-written, sealed, committed Wall; the control has multiply and the same Wall."""
+    out = []
+    for variant, calc in (("seeded", ENGINE_WALL_CALC), ("control", ENGINE_WALL_CALC + ENGINE_WALL_MULTIPLY)):
+        out.append(("EW-0001", variant, "engine-wall", {
+            "calc.ts": calc, "loki_wall_multiply.test.ts": ENGINE_WALL, "bunfig.toml": "[test]\n",
+            ".loki/runs/e10-bench/events.jsonl": ENGINE_WALL_SEAL, "check.py": ENGINE_WALL_CHECK,
+            "test_visible.py": ENGINE_WALL_VISIBLE}))
     return out
 
 
@@ -94,6 +121,7 @@ def task_hash(files):
 def materialize(root, files, git=False):
     os.makedirs(root, exist_ok=True)
     for name, body in files.items():
+        os.makedirs(os.path.dirname(os.path.join(root, name)), exist_ok=True)
         with open(os.path.join(root, name), "w", newline="\n") as fh:
             fh.write(body)
     if git:

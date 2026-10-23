@@ -134,6 +134,17 @@ class Cli(unittest.TestCase):
         m = v.seeded_manifest()
         self.assertEqual(len(v.stratified_sample(m, 4)), 20)
 
+    def test_engine_wall_case_seal_matches_wall_and_grader_splits(self):
+        seeded, control = v.engine_wall_inputs()
+        self.assertEqual((seeded[1], control[1]), ("seeded", "control"))
+        files = seeded[3]
+        seal = json.loads(files[".loki/runs/e10-bench/events.jsonl"])
+        import hashlib
+        self.assertEqual(seal["data"]["files"][0]["sha256"], hashlib.sha256(files["loki_wall_multiply.test.ts"].encode()).hexdigest())
+        self.assertNotIn("function multiply", files["calc.ts"])
+        self.assertIn("function multiply", control[3]["calc.ts"])
+        self.assertEqual(len(v.build_inputs()), 2 * 100 + 2)
+
 
 if __name__ == "__main__":
     unittest.main()
