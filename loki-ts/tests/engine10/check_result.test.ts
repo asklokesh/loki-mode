@@ -383,6 +383,11 @@ describe("FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL changedSymbols and symbolGap",
     expect(changedSymbols(loop)).toEqual(["sum"]);
     expect(symbolGap(changedSymbols(loop), ["let t = 0; for (let i = 0; i < 3; i++) t += i;"])).toEqual(["sum"]);
   });
+  test("a block comment spanning added lines hides the code inside it (rev-a B2)", () => {
+    const blk = "@@ -1,0 +2,6 @@\n+/*\n+function add(a, b) { return a + b; }\n+*/\n+export function multiply(a: number, b: number): number {\n+  return a * b;\n+}\n";
+    expect(changedSymbols(blk)).toEqual(["multiply"]);
+    expect(symbolGap(changedSymbols(blk), ["expect(add(1, 2)).toBe(3)"])).toEqual(["multiply"]);
+  });
   test("module-level and exported const, let, var still name a symbol", () => {
     expect(changedSymbols("@@ -1,0 +2,3 @@\n+export const TAX = 0.2;\n+let cache = 1;\n+var legacy = 2;\n")).toEqual(["TAX", "cache", "legacy"]);
   });

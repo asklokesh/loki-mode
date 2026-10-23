@@ -289,7 +289,7 @@ export function changedSymbols(diffU0: string): string[] {
   const out = new Set<string>();
   let ctx = "", added: string[] = [], removed = 0;
   const flush = (): void => {
-    const own = added.flatMap(declNames);
+    const own = stripComments(added.join("\n")).split("\n").flatMap(declNames); // strip over the whole hunk: a block comment can span added lines
     for (const n of own) out.add(n);
     if (removed > 0 || own.length === 0) for (const n of declNames(ctx)) out.add(n);
     added = []; removed = 0;
