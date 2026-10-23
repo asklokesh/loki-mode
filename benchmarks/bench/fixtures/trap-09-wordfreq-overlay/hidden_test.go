@@ -47,3 +47,19 @@ func TestHiddenEmptyText(t *testing.T) { // rule 3
 		t.Fatalf("got %#v want empty non-nil slice", got)
 	}
 }
+
+func TestHiddenCaseFoldsNonASCII(t *testing.T) { // rule 1
+	got := Top("\u00c9cole \u00e9cole \u00c9COLE", 1)
+	want := []Entry{{"\u00e9cole", 3}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+func TestHiddenNBoundaryAroundDistinct(t *testing.T) { // rule 3
+	for n, wantLen := range map[int]int{2: 2, 3: 3, 4: 3} {
+		if got := Top("a b b c c c", n); len(got) != wantLen {
+			t.Fatalf("n=%d: got %d entries want %d", n, len(got), wantLen)
+		}
+	}
+}

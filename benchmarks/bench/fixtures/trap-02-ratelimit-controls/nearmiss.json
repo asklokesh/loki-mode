@@ -1,0 +1,46 @@
+[
+  {
+    "case": "window-expiry-off-by-one",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "now - calls[0] >= self.window_s",
+        "new": "now - calls[0] > self.window_s"
+      }
+    ],
+    "file": "ratelimit.py"
+  },
+  {
+    "case": "zero-limit-allows-calls",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "if len(calls) >= self.max_calls:",
+        "new": "if self.max_calls and len(calls) >= self.max_calls:"
+      }
+    ],
+    "file": "ratelimit.py"
+  },
+  {
+    "case": "shared-bucket-across-keys",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "calls = self._calls[key]",
+        "new": "calls = self._calls[None]"
+      }
+    ],
+    "file": "ratelimit.py"
+  },
+  {
+    "case": "rejected-call-recorded",
+    "kind": "ordering",
+    "edits": [
+      {
+        "old": "        if len(calls) >= self.max_calls:\n            return False\n        calls.append(now)\n        return True",
+        "new": "        calls.append(now)\n        if len(calls) > self.max_calls:\n            return False\n        return True"
+      }
+    ],
+    "file": "ratelimit.py"
+  }
+]

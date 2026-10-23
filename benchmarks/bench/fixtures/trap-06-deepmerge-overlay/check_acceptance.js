@@ -75,6 +75,13 @@ check("rule 1 null replaces", () => {
   assert.deepStrictEqual(deepMerge({ n: { x: 1 } }, { n: null }), { n: null });
 });
 
+// Rule 2: arrays replace at any depth and are never concatenated.
+check("rule 2 nested arrays replace", () => {
+  assert.deepStrictEqual(deepMerge({ n: { l: [1, 2] } }, { n: { l: [3] } }), { n: { l: [3] } });
+  assert.deepStrictEqual(deepMerge({ l: [1] }, { l: [2, 3] }), { l: [2, 3] });
+  assert.deepStrictEqual(deepMerge({ l: [1] }, { l: [] }), { l: [] });
+});
+
 if (fails.length) {
   for (const f of fails) console.log("FAIL: " + f);
   process.exit(1);

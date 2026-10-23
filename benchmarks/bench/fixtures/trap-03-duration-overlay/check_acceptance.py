@@ -58,6 +58,14 @@ bad(1, "1h junk")
 # Rule 5: a bare number has no unit.
 bad(5, "5")
 bad(5, "1h30")
+# Rules 2 and 4 hold for every unit, not just the one the examples use.
+for unit in "dhms":
+    bad(2, "1%s1%s" % (unit, unit))
+    bad(4, "-1%s" % unit)
+    bad(4, "1.5%s" % unit)
+    bad(4, unit)
+bad(2, "1d2d")
+bad(2, "1s2s")
 
 if fails:
     for f in fails:

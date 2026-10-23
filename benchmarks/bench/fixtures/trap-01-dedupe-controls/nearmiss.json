@@ -1,0 +1,46 @@
+[
+  {
+    "case": "unhashable-keys-compared-by-identity",
+    "kind": "ordering",
+    "edits": [
+      {
+        "old": "if k in seen_other:",
+        "new": "if any(k is s for s in seen_other):"
+      }
+    ],
+    "file": "dedupe.py"
+  },
+  {
+    "case": "unhashable-keys-all-collapse",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "if k in seen_other:",
+        "new": "if seen_other:"
+      }
+    ],
+    "file": "dedupe.py"
+  },
+  {
+    "case": "mutates-input",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "    return out",
+        "new": "    items[:] = out\n    return out"
+      }
+    ],
+    "file": "dedupe.py"
+  },
+  {
+    "case": "empty-input-returns-none",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "    out = []\n",
+        "new": "    if not items:\n        return None\n    out = []\n"
+      }
+    ],
+    "file": "dedupe.py"
+  }
+]

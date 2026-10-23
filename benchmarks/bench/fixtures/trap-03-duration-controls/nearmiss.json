@@ -1,0 +1,82 @@
+[
+  {
+    "case": "empty-string-accepted",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "if m is None or not s:",
+        "new": "if m is None:"
+      }
+    ],
+    "file": "duration.py"
+  },
+  {
+    "case": "bare-number-accepted",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "(?:([0-9]+)s)?\")",
+        "new": "(?:([0-9]+)s?)?\")"
+      }
+    ],
+    "file": "duration.py"
+  },
+  {
+    "case": "negative-accepted",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "(?:([0-9]+)s)?\")",
+        "new": "(?:(-?[0-9]+)s)?\")"
+      }
+    ],
+    "file": "duration.py"
+  },
+  {
+    "case": "duplicate-unit-accepted",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "(?:([0-9]+)s)?\")",
+        "new": "(?:([0-9]+)s)*\")"
+      }
+    ],
+    "file": "duration.py"
+  },
+  {
+    "case": "decimal-returns-float",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "(?:([0-9]+)s)?\")",
+        "new": "(?:([0-9.]+)s)?\")"
+      },
+      {
+        "old": "int(g)",
+        "new": "float(g)"
+      }
+    ],
+    "file": "duration.py"
+  },
+  {
+    "case": "part-without-number-accepted",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "(?:([0-9]+)h)?",
+        "new": "(?:([0-9]*)h)?"
+      },
+      {
+        "old": "int(g)",
+        "new": "int(g or 0)"
+      }
+    ],
+    "file": "duration.py"
+  },
+  {
+    "case": "units-in-any-order",
+    "kind": "ordering",
+    "source": "import re\n\n_SECONDS = {\"d\": 86400, \"h\": 3600, \"m\": 60, \"s\": 1}\n\n\ndef parse_duration(s):\n    if not s or not re.fullmatch(r\"(?:[0-9]+[dhms])+\", s):\n        raise ValueError(\"invalid duration: %r\" % (s,))\n    units = re.findall(r\"([0-9]+)([dhms])\", s)\n    if len({u for _, u in units}) != len(units):\n        raise ValueError(\"duplicate unit\")\n    return sum(int(n) * _SECONDS[u] for n, u in units)\n",
+    "file": "duration.py"
+  }
+]

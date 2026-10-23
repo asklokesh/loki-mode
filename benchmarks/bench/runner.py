@@ -173,9 +173,12 @@ def _git_baseline(workdir: str) -> None:
     """Commit the copied fixture as a git baseline. loki start (engine10) refuses a
     folder that is not a git work tree and exits rc 2 in under a second, which a
     bench run would otherwise record as a measured failure of the tool under test.
-    Local identity only; the fixture is the baseline so a diff shows what the agent changed."""
+    Local identity only; the fixture is the baseline so a diff shows what the agent changed.
+    A dummy origin remote is set so repo identity resolves for every tool alike; nothing is
+    ever fetched or pushed to it (the .invalid TLD never resolves)."""
     git = ["git", "-c", "user.name=bench", "-c", "user.email=bench@localhost"]
-    for argv in (["git", "init", "-q"], ["git", "add", "-A"], git + ["commit", "-q", "-m", "baseline", "--allow-empty"]):
+    for argv in (["git", "init", "-q"], ["git", "remote", "add", "origin", "https://git.invalid/bench/fixture.git"],
+                 ["git", "add", "-A"], git + ["commit", "-q", "-m", "baseline", "--allow-empty"]):
         subprocess.run(argv, cwd=workdir, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 

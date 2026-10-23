@@ -1,0 +1,72 @@
+[
+  {
+    "case": "default-workers-two",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "workers = 1",
+        "new": "workers = 2"
+      }
+    ],
+    "file": "parmap.go"
+  },
+  {
+    "case": "limit-is-workers-plus-one",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "make(chan struct{}, workers)",
+        "new": "make(chan struct{}, workers+1)"
+      }
+    ],
+    "file": "parmap.go"
+  },
+  {
+    "case": "empty-input-returns-nil",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "\tout := make([]int, len(items))\n",
+        "new": "\tif len(items) == 0 {\n\t\treturn nil\n\t}\n\tout := make([]int, len(items))\n"
+      }
+    ],
+    "file": "parmap.go"
+  },
+  {
+    "case": "never-concurrent",
+    "kind": "max-length",
+    "edits": [
+      {
+        "old": "make(chan struct{}, workers)",
+        "new": "make(chan struct{}, 1)"
+      }
+    ],
+    "file": "parmap.go"
+  },
+  {
+    "case": "no-concurrency-limit",
+    "kind": "max-length",
+    "edits": [
+      {
+        "old": "\t\tsem <- struct{}{}\n",
+        "new": "\t\t_ = sem\n"
+      },
+      {
+        "old": "\t\t\t<-sem\n",
+        "new": ""
+      }
+    ],
+    "file": "parmap.go"
+  },
+  {
+    "case": "negative-workers-panics",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "if workers <= 0 {",
+        "new": "if workers == 0 {"
+      }
+    ],
+    "file": "parmap.go"
+  }
+]

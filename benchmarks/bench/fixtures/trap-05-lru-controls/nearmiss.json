@@ -1,0 +1,61 @@
+[
+  {
+    "case": "put-existing-at-full-evicts",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "        if key in self._d:\n            self._d.move_to_end(key)\n        self._d[key] = value\n        if len(self._d) > self.capacity:\n            self._d.popitem(last=False)",
+        "new": "        if len(self._d) >= self.capacity:\n            self._d.popitem(last=False)\n        self._d[key] = value\n        self._d.move_to_end(key)"
+      }
+    ],
+    "file": "lru.py"
+  },
+  {
+    "case": "put-existing-not-refreshed",
+    "kind": "ordering",
+    "edits": [
+      {
+        "old": "        if key in self._d:\n            self._d.move_to_end(key)\n",
+        "new": "        if key in self._d:\n            pass\n"
+      }
+    ],
+    "file": "lru.py"
+  },
+  {
+    "case": "get-skips-refresh-for-falsy-value",
+    "kind": "ordering",
+    "edits": [
+      {
+        "old": "        self._d.move_to_end(key)\n        return self._d[key]",
+        "new": "        if self._d[key]:\n            self._d.move_to_end(key)\n        return self._d[key]"
+      }
+    ],
+    "file": "lru.py"
+  },
+  {
+    "case": "capacity-zero-holds-one",
+    "kind": "max-length",
+    "edits": [
+      {
+        "old": "self.capacity <= 0",
+        "new": "self.capacity < 0"
+      },
+      {
+        "old": "len(self._d) > self.capacity",
+        "new": "len(self._d) > max(1, self.capacity)"
+      }
+    ],
+    "file": "lru.py"
+  },
+  {
+    "case": "get-scans-all-keys",
+    "kind": "max-length",
+    "edits": [
+      {
+        "old": "        if key not in self._d:\n            return default",
+        "new": "        if key not in list(self._d):\n            return default"
+      }
+    ],
+    "file": "lru.py"
+  }
+]

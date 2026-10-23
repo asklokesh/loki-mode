@@ -28,6 +28,23 @@ if c.get("a") != 10:
     fails.append("rule 2: put of an existing key did not update the value: %r" % (c.get("a"),))
 if len(c) != 2:
     fails.append("rule 1: len %r want 2" % (len(c),))
+# Rule 1: putting an existing key into a full cache evicts nothing.
+f = LRUCache(2)
+f.put("a", 1)
+f.put("b", 2)
+f.put("b", 3)
+if len(f) != 2 or f.get("a") != 1 or f.get("b") != 3:
+    fails.append("rule 1: put of an existing key into a full cache evicted an entry")
+
+# Rule 2: get of a present key refreshes it even when its value is falsy.
+g = LRUCache(2)
+g.put("a", 0)
+g.put("b", 1)
+g.get("a")
+g.put("c", 2)
+if g.get("b") is not None or g.get("a") != 0:
+    fails.append("rule 2: get of a falsy value did not refresh it")
+
 
 # Rule 3: capacity 0 stores nothing.
 z = LRUCache(0)

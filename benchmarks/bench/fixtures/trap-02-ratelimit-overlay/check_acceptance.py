@@ -46,6 +46,8 @@ seq("keys", 1, 10, [(0, "a", True), (0, "b", True), (1, "a", False), (1, "b", Fa
 seq("rejected-not-recorded", 1, 10, [(0, "a", True), (5, "a", False), (10, "a", True)])
 # Rule 1: exactly max_calls are allowed inside one window.
 seq("count", 3, 10, [(0, "a", True), (1, "a", True), (2, "a", True), (3, "a", False)])
+# Rule 1: fewer than max_calls calls are allowed, so max_calls 0 never allows.
+seq("zero-limit", 0, 10, [(0, "a", False), (100, "a", False)])
 
 if fails:
     for f in fails:

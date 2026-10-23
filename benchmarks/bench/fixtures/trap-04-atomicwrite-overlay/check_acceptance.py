@@ -73,6 +73,22 @@ with tempfile.TemporaryDirectory() as d:
         fails.append("rule 1: contents %r" % read(p))
     if sorted(os.listdir(d)) != ["h"]:
         fails.append("rule 3 (after success): directory holds %r" % sorted(os.listdir(d)))
+# Rule 1: the concatenation of zero chunks is empty, so the file is created or emptied.
+with tempfile.TemporaryDirectory() as d:
+    p = os.path.join(d, "e")
+    n = write_atomic(p, [])
+    if n != 0 or not os.path.exists(p) or read(p) != b"":
+        fails.append("rule 1 (no chunks, absent): returned %r, exists=%r" % (n, os.path.exists(p)))
+    write_atomic(p, [b"something"])
+    write_atomic(p, [])
+    if read(p) != b"":
+        fails.append("rule 1 (no chunks, existing): contents %r" % read(p))
+# Rule 4: the count is bytes, so multi-byte and binary chunks count by byte length.
+with tempfile.TemporaryDirectory() as d:
+    p = os.path.join(d, "m")
+    n = write_atomic(p, [b"\xc3\xa9", b"\x00\xff"])
+    if n != 4 or read(p) != b"\xc3\xa9\x00\xff":
+        fails.append("rule 4 (binary): returned %r contents %r" % (n, read(p)))
 
 if fails:
     for f in fails:

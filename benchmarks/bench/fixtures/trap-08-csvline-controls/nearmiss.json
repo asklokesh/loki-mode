@@ -1,0 +1,79 @@
+[
+  {
+    "case": "empty-fields-dropped",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "    fields.push(cur);",
+        "new": "    if (cur !== \"\") fields.push(cur);"
+      }
+    ],
+    "file": "csv.js"
+  },
+  {
+    "case": "trailing-empty-field-dropped",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "    if (i >= line.length) break;\n    i += 1;\n",
+        "new": "    i += 1;\n    if (i >= line.length) break;\n"
+      }
+    ],
+    "file": "csv.js"
+  },
+  {
+    "case": "quote-escape-missing",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "if (line[i + 1] === '\"') { cur += '\"'; i += 2; continue; }",
+        "new": ""
+      }
+    ],
+    "file": "csv.js"
+  },
+  {
+    "case": "unterminated-quote-accepted",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "if (!closed) throw new SyntaxError(\"unterminated quote\");",
+        "new": ""
+      }
+    ],
+    "file": "csv.js"
+  },
+  {
+    "case": "unterminated-quote-plain-error",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "new SyntaxError(",
+        "new": "new Error("
+      }
+    ],
+    "file": "csv.js"
+  },
+  {
+    "case": "fields-trimmed",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "    fields.push(cur);",
+        "new": "    fields.push(cur.trim());"
+      }
+    ],
+    "file": "csv.js"
+  },
+  {
+    "case": "empty-line-gives-no-fields",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "function parseCsvLine(line) {\n",
+        "new": "function parseCsvLine(line) {\n  if (line === \"\") return [];\n"
+      }
+    ],
+    "file": "csv.js"
+  }
+]
