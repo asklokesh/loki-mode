@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.65.0 (2026-10-23)
+
+
+
+### Added
+- The engine10 machine journals a per-stage diff stat for stages that change the tree, and the wall stage journals its own diff stat (pd/stage-diffstat). Approval: "APPROVE (MEDIUM, tl-324): pd/stage-diffstat branch head at full SHA c7a5f00f7b869e227062afe4529a8f11be19409d (merge commit, parents f365f4e2a and origin/main 5cae48655)". Shipped by merging that head.
+
 ## v11.64.0 (2026-10-23)
 
 
