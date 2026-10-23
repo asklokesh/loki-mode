@@ -130,6 +130,40 @@ _r="$(_run "" "")"
     && ok "nothing installed -> claude, so the error names a real provider" \
     || bad "nothing installed produced '$_r' (an empty provider is unactionable)"
 
+# --- R100-001: zero-question first run with an already logged-in provider -----
+# Clean HOME, only a stub claude (logged in) on PATH: `loki start` must reach its first stage event with no
+# prompt and no call to `loki setup`, and `loki doctor --json` must report provider_autodetected true.
+if command -v bun >/dev/null 2>&1; then
+    Z="$SCRATCH/zero"; mkdir -p "$Z/home" "$Z/bin" "$Z/proj"
+    cat > "$Z/bin/claude" <<'STUB'
+#!/bin/bash
+case "$1" in --version) echo "2.1.309 (Claude Code)";; auth) echo '{"loggedIn":true}';; *) exit 1;; esac
+STUB
+    chmod +x "$Z/bin/claude"
+    BASEPATH="/usr/bin:/bin:/opt/homebrew/bin:$(dirname "$(command -v bun)")"
+    (cd "$Z/proj" && git init -q . && git config user.name t && git config user.email t@t.invalid && echo hi > README.md && git add README.md && git -c user.name=t -c user.email=t@t commit -qm init)
+    _out="$(cd "$Z/proj" && env -i HOME="$Z/home" PATH="$Z/bin:$BASEPATH" LOKI_NO_TELEMETRY=1 timeout -k 5 120 "$REPO_ROOT/bin/loki" start "add one line to README" </dev/null 2>&1)"; _rc=$?
+    case "$_out" in
+        *"engine10: run e10-"*) ok "clean HOME + logged-in claude: loki start reached its run with stdin closed (rc=$_rc)" ;;
+        *) bad "loki start did not reach a run in a clean HOME with a logged-in claude (rc=$_rc): $(printf '%s' "$_out" | head -3)" ;;
+    esac
+    printf '%s' "$_out" | grep -qiE 'loki setup|\[y/N\]|\(y/n\)|press enter|choose a provider' \
+        && bad "loki start prompted or pointed at loki setup on a logged-in machine" \
+        || ok "loki start asked no question and did not call loki setup"
+    _j="$(cd "$Z/proj" && env -i HOME="$Z/home" PATH="$Z/bin:$BASEPATH" LOKI_NO_TELEMETRY=1 timeout -k 5 60 "$REPO_ROOT/bin/loki" doctor --json 2>/dev/null)"
+    printf '%s' "$_j" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("provider_autodetected") is True else 1)' \
+        && ok "doctor --json reports provider_autodetected true for the logged-in claude" \
+        || bad "doctor --json did not report provider_autodetected true"
+    # Positive control reversed: the same stub reporting loggedIn false must NOT count as autodetected.
+    sed -i.bak 's/"loggedIn":true/"loggedIn":false/' "$Z/bin/claude" && rm -f "$Z/bin/claude.bak"
+    _j2="$(cd "$Z/proj" && env -i HOME="$Z/home" PATH="$Z/bin:$BASEPATH" LOKI_NO_TELEMETRY=1 timeout -k 5 60 "$REPO_ROOT/bin/loki" doctor --json 2>/dev/null)"
+    printf '%s' "$_j2" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("provider_autodetected") is False else 1)' \
+        && ok "doctor --json reports provider_autodetected false for a logged-out claude" \
+        || bad "doctor --json counted a logged-out claude as autodetected"
+else
+    ok "bun absent: zero-question start section skipped"
+fi
+
 echo ""
 echo "  Passed:     $PASS"
 echo "  Failed:     $FAIL"
