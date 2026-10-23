@@ -46,7 +46,7 @@ import { LEAN_PREFIX } from "../features/lean_prefix.ts";
 import { consumeSdkStream, type StreamMsg } from "./sdk_stream_parser.ts";
 import { writeSessionId } from "./session_resume.ts";
 import { createTrimHook } from "./trim.ts";
-import { probeAdvisor } from "./router/advisor_probe.ts";
+import { advisorPair, probeAdvisor, ROUTER_ADVISOR_MODEL } from "./router/advisor_probe.ts";
 import { advisorOnlyEnabled, routerEnabled, sessionPlanEnabled } from "./router/flag.ts";
 import type {
   ProviderInvocation,
@@ -357,7 +357,6 @@ export function hostGuardSettingsJson(): string {
 // not top-level Options. Flag off (the default until R1-19) adds nothing, so the
 // options and argv stay byte-identical to the pre-router build.
 // ---------------------------------------------------------------------------
-const ROUTER_ADVISOR_MODEL = "opus";
 const ROUTER_AUTO_COMPACT_WINDOW = 100000; // SDK minimum; keeps requests under the 100K price cliff
 // Only Haiku 5.5 has the cliff. Sonnet/Opus 5.5 have a 1M window at flat price, so compacting them at 100K only
 // loses context. Unknown models fail safe to the ceiling.
@@ -414,7 +413,7 @@ export function planRouterSession(args: {
   const env = args.env ?? process.env;
   const routed = routerEnabled(env);
   if (!routed && !advisorOnlyEnabled(env)) return null;
-  const probe = probeAdvisor(env, "claude", args.claudeCodeVersion, args.runDir, { executor: args.model, advisor: ROUTER_ADVISOR_MODEL });
+  const probe = probeAdvisor(env, "claude", args.claudeCodeVersion, args.runDir, advisorPair(env, args.model));
   // Advisor alone (#246): the advisor and nothing else. No executor swap, no compact window, so the only variable is the advisor.
   if (!routed) return probe.available ? { model: args.model, settings: { advisorModel: ROUTER_ADVISOR_MODEL } } : null;
   if (probe.available) {
