@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.7 (2026-10-23)
+
+### Fixed
+- A run's commit stage and backstop now leave out untracked files that existed before the run and that the run did not touch, so your own untracked files are no longer swept into the run's commit. Approval: "rev-c APPROVE pd/commitdrop 18e91429a + b40659541 (HIGH)".
+
 ## v11.60.6 (2026-10-23)
 
 ### Fixed
