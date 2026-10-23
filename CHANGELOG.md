@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.63.10 (2026-10-23)
+
+### Fixed
+- The dashboard derives the child LOKI_* env allowlist from one data file and guards every runner env read (FC-CHILD-ENV-HAND-ALLOWLIST-DRIFT, #305). Approval: "APPROVE pd/rq51-child-env2 c38467306 (tl-2, MEDIUM). 41 passed, two mutants red and restored, FC row present, merge-tree rc=0, no dashes or emoji."
+
 ## v11.63.9 (2026-10-23)
 
 ### Fixed
