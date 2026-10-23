@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.66.2 (2026-10-23)
+
+### Fixed
+- Go and cargo test ids are attributed to the base only when the change cannot own them (FC-FULLSUITE-GO-CARGO-IDS, rq02b-r6). Approval: "Ship rq02b-r6: one commit, de98e00583e0f0c5f48baf5c2e6fd7b9aa7e1b68, which is based on origin/main a7162f1f3, and merge-tree exits 0. rev-c is the sole HIGH reviewer and approves it. This supersedes the r5 SHA 5e51076f7, so do not merge r5." (rev-c)
+
 ## v11.66.1 (2026-10-23)
 
 ### Fixed
