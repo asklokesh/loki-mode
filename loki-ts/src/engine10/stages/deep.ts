@@ -16,7 +16,7 @@ import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv } from "../../project_model/package_suite.ts";
-import { classifyCheck, failureExcerpt, FULL_SUITE_CMD, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
+import { classifyCheck, failureExcerpt, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
 import type { PushArgs, ReceiptCheck, RunContext, RunnerName, SessionRunner, Stage, StageResult } from "../types.ts";
 import { pushArgv, STAGE_BUDGETS } from "../types.ts";
 import { REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
@@ -89,7 +89,7 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
     return;
   }
   for (const runner of map.runners) {
-    const spec = FULL_SUITE_CMD[runner];
+    const spec = fullSuiteCmd(runner, ctx.repoDir);
     const name = `full suite: ${runner}`;
     if (!Bun.which(spec.cmd, opts.path ? { PATH: opts.path } : undefined)) {
       checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: 0 });

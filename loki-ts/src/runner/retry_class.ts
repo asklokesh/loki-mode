@@ -15,6 +15,7 @@
 // stops early. So a bad guess costs a retry (cheap, the status quo); it can
 // never abandon a build that would have succeeded. Never invert this default.
 
+import { redactSecrets } from "../util/redact.ts";
 export type RetryClass = "transient" | "non_retryable";
 
 // Positively-identified PERMANENT failures. Every pattern here must describe a
@@ -103,6 +104,15 @@ export function shouldStopRetrying(
 // P12-09: quota exhaustion is a bounded wait-then-rerun of the SAME provider call, not a fatal stop.
 // Only the call is repeated (never the stage), so no stage side effect runs twice. Auth stays fatal.
 const SDK_ERR = /\[sdk-loop error: [^\n]*?(?:(Failed to authenticate|API key is invalid|Not logged in)|(credit balance))/; // the SDK's real wording, matched only on its own error line
+/** FC-AGENT-TEXT-FORGES-ENGINE-MARKER: the marker readers (SDK_ERR, sdkAuthCause, session.ts) trust `[sdk-loop error: ...` as engine-written. Every piece of agent-controlled text (assistant blocks, result text, a provider CLI's stdout) passes through here before it reaches the iteration log, so only the parser and the SDK catch path can write that marker. */
+export function neutralizeEngineMarkers(text: string): string {
+  return text.replaceAll("[sdk-loop error:", "[agent-text sdk-loop error:");
+}
+/** The provider's own text from a `Failed to authenticate (...)` sdk-loop line, or null; the one reader of the line the stream parser writes. */
+export function sdkAuthCause(text: string): string | null {
+  const m = /^\[sdk-loop error: Failed to authenticate(?: \([a-z_]+\))?(?:: ([^\n]*))?\]$/m.exec(text);
+  return m ? redactSecrets((m[1] ?? "").trim()) : null; // provider_error lands in events.jsonl unredacted, so redact here
+}
 export const QUOTA_WAIT_BASE_MS = 30_000;
 export const QUOTA_WAIT_MAX_MS = 300_000;
 
