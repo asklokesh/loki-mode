@@ -90,17 +90,23 @@ Pins (exact, all sites): `@anthropic-ai/sdk` 0.124.0 -> 1.2.0 (loki-ts/package.j
 
 | Change | Status |
 |---|---|
-| sdk 1.0.0 BREAKING "new API version 2026-10-21" | WIRED: loki-ts/src/runner/sdk_invoker.ts:19,311 (messages.create, output_config) compiles unchanged under tsc rc=0 and sdk_invoker tests pass; no code change needed |
+| sdk 1.0.0 BREAKING "new API version 2026-10-21" | WIRED at compile level only: loki-ts/src/runner/sdk_invoker.ts:19,311 (messages.create, output_config) compiles unchanged under tsc rc=0 and sdk_invoker tests pass. Live behavior at API version 2026-10-21 is NOT PROVEN (no API key, no paid run) |
 | sdk 0.129.0 `claude-sonnet-5-5`, 0.128.0 `claude-opus-5-5`, 0.132.0 `claude-haiku-5-5` model ids | WIRED: model ids are passed through as strings by sdk_invoker.ts; no allowlist to change |
 | sdk 0.135.0 `speed` param and `usage.speed` | NOT ADOPTED: the cost ledger (util/child_ledger.ts:54) has no fast-mode price table; adopting speed without pricing would misreport cost |
 | sdk 0.134.0 native OpenTelemetry tracing (auto-on with a global tracer provider) | NOT ADOPTED: Loki registers no global tracer provider, so the SDK stays inert; no opt-in needed |
 | sdk 0.126.0 compaction param, 0.127.0 `compactBeforeNextTurn()`, 0.129.0 tool-call-while-streaming, tool runner fixes (0.128.0, 1.2.0) | NOT ADOPTED: sdk_invoker is a one-shot messages.create judge, not a tool runner or multi-turn loop |
-| sdk 0.129.0 cache diagnostics on Message, 0.129.0 `between_tools` thinking | NOT ADOPTED: judge path clamps thinking by effort (sdk_invoker.ts clampThinkingForEffort); between_tools is not offered to judges |
+| sdk 0.129.0 cache diagnostics on Message | NOT ADOPTED: Loki already accounts cache tokens from usage (util/child_ledger.ts cache_creation_tokens, cache_read_tokens; cost_breakdown); diagnostics would add a second source of truth |
+| sdk 0.129.0 `between_tools` thinking | NOT ADOPTED: judge path clamps thinking by effort (sdk_invoker.ts clampThinkingForEffort); between_tools is not offered to judges |
 | sdk 0.135.0/0.136.0 streaming fixes (unread stream close, unknown SSE events) | NOT ADOPTED: sdk_invoker does not stream |
 | sdk 0.130.0-1.2.0 Admin API (analytics, spend limits, RBAC, plugins, webhooks, message threads, usage/cost reports), Managed Agents additions | NOT ADOPTED: no Loki feature calls these APIs |
-| agent-sdk 0.3.302 refused structured output now an error with no payload | WIRED: no Loki code reads `structured_output` (grep of loki-ts/src returns none); refusals already handled by sdk_stream_parser.ts refusal frames |
+| agent-sdk 0.3.302 refused structured output now an error with no payload | NOT AFFECTED: quality_gates.ts:1616 reads `e["structured_output"]` and fails closed to null when it is absent or not an object (falls back to parsing `result`); a refusal with no payload therefore yields null, the same outcome as before. Refusals are also handled by sdk_stream_parser.ts refusal frames |
 | agent-sdk 0.3.300 `thinking: disabled` runs adaptive on models that cannot disable | NOT ADOPTED: providers.ts:846 query() options pass no thinking setting |
-| agent-sdk 0.3.302 fork subagents on by default in SDK sessions | NOT ADOPTED: accepted default; `CLAUDE_CODE_FORK_SUBAGENT=0` is the opt-out if a run must disable it |
+| agent-sdk 0.3.302 fork subagents on by default in SDK sessions | NOT ADOPTED: accepted default, effect on Loki runs unmeasured; `CLAUDE_CODE_FORK_SUBAGENT=0` is the opt-out |
+| agent-sdk 0.3.302 omitted `permissionMode` defaults to `default` on third-party providers | N/A: Loki always passes an explicit permissionMode (providers/claude_flags.ts:1052) |
+| agent-sdk 0.3.301 full-disk login refresh error is `invalid_request`, not `authentication_failed` | NOT ADOPTED: sdk_stream_parser.ts:278 keys only on `authentication_failed`; a full-disk refresh failure surfaces as a generic error, accepted until observed |
+| agent-sdk 0.3.300 PreToolUse/PermissionRequest `updatedInput` validated, unknown keys dropped | N/A: runSdkHostGuard (providers.ts:784) returns no updatedInput |
+| agent-sdk 0.3.296 `claude_code_version` in the initialize control response | NOT ADOPTED: SDK_BUNDLED_CLAUDE_CODE (providers.ts:364) is read before any session starts and is guarded by a test against the installed SDK claudeCodeVersion; the initialize value only exists after spawn |
+| agent-sdk 0.3.295 SDK passes option values as `--flag=value` | N/A: Loki consumes the SDK options API, not CLI argv, on the SDK route |
 | agent-sdk 0.3.301 `BUILTIN_TOOL_NAMES`, sdk MCP `permission_policy`; 0.3.304 `suspendSseStream` (browser); 0.3.296 `autoCompactWindow`; 0.3.307 `wakeup_source`; 0.3.305 `startup()` timeout fix | NOT ADOPTED: no existing Loki feature maps to these options |
 | agent-sdk 0.3.309 `extractFromBunfs()` per-user temp dir | NOT ADOPTED: Loki does not run the SDK from a Bun-compiled binary |
 
