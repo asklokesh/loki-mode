@@ -235,6 +235,10 @@ function _loki {
                         '--explain[List each gate as exogenous or agent-influenced with the evidence it read]' \
                         '--json[Print the verdict and gates as JSON on stdout]' \
                         '--seal-composite[Sign a workspace composite]:run dir:_directories' \
+                        '--fast[Deterministic checks only: no model call, no network]' \
+                        '--path[With --fast: repo root to check]:dir:_directories' \
+                        '--diff-base[With --fast: scope the checks to the diff against REF]:ref:' \
+                        '--no-cache[With --fast: ignore the result cache]' \
                         '--help[Show help]' \
                         '*:receipt or deploy record:_files'
                     ;;

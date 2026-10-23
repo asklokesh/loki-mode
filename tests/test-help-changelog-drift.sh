@@ -207,5 +207,20 @@ while IFS= read -r line; do
     done
 done < "$WORK/inv.txt"
 
+# Standing pins (FC-VERIFY-FAST-MISSING-FROM-HELP-AND-COMPLETIONS): `loki verify --fast` and its
+# flags must stay in the verify help, the loki.bash verify arm and the _loki verify arm. These do
+# not depend on the newest CHANGELOG sections naming the invocation.
+printf '%s\n' "$(bash_arm "$BASH_COMP" verify)" > "$WORK/verify-arm.txt"
+awk '/^                verify\)/{f=1} f{print} f&&/^                    ;;/{exit}' "$ZSH_COMP" > "$WORK/verify-zsh.txt"
+VERIFY_HELP="$(bash "$LOKI" verify --help </dev/null 2>&1 || true)"
+for flag in --fast --path --diff-base --no-cache; do
+    if printf '%s\n' "$VERIFY_HELP" | grep -qE -- "^ +${flag} "; then ok "'loki verify $flag' appears in help"; else bad "'loki verify $flag' is absent from help"; fi
+    if has_token "$WORK/verify-arm.txt" "$flag"; then ok "'$flag' is in the loki.bash verify arm"; else bad "'$flag' is absent from the loki.bash verify arm"; fi
+    if grep -qF -- "'${flag}[" "$WORK/verify-zsh.txt"; then ok "'$flag' is in the _loki verify arm"; else bad "'$flag' is absent from the _loki verify arm"; fi
+done
+if printf '%s\n' "$HELP_ALL" | grep -qE 'verify \[base\] \[--fast\]'; then ok "'loki help all' lists verify --fast"; else bad "'loki help all' does not list verify --fast"; fi
+HELP_SHORT="$(bash "$LOKI" help </dev/null 2>&1 || true)"
+if printf '%s\n' "$HELP_SHORT" | grep -qE 'verify [[]--json[|]--fast[]]'; then ok "'loki help' lists verify --fast"; else bad "'loki help' does not list verify --fast"; fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
