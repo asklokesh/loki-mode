@@ -1,5 +1,6 @@
 // HANDOFF: render from fixture state. Unmeasured spend is never $0.00; a skipped check is never "passed".
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -228,4 +229,24 @@ test("FC-OUTCOME-FLOOD: a pre-red flood does not consume the Not checked lines",
     const md = renderHandoff({ ...base, notProven: [...nb, "perf"] });
     expect(md).toContain("pre red: 150 tests already failing on base");
     expect(md).toContain("NOT PROVEN: perf");
+});
+
+test("FC-EMPTY-RUN-BRANCH-LEFT-CHECKED-OUT: 0 files offers nothing to accept; the cleanup line shows only while the branch exists", () => {
+  const repo = mkdtempSync(join(tmpdir(), "loki-handoff-"));
+  try {
+    execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "--allow-empty", "-m", "b"]);
+    const events = [ev("run.started", undefined, { branch: "loki/e10-1" })];
+    const f: HandoffFacts = { repoDir: repo, runId: "e10-1", events, outcome: "FAILED", usd: null, elapsedS: 5, notProven: [], task: "t", requirements: null, stats: { files: 0, ins: 0, del: 0 } };
+    const gone = renderHandoff(composeHandoff(f));
+    expect(gone).toContain("Nothing to accept: the run committed no change.");
+    expect(gone).not.toContain("Accept: git merge");
+    expect(gone).not.toContain("Cleanup:");
+    execFileSync("git", ["-C", repo, "branch", "loki/e10-1"]);
+    const kept = renderHandoff(composeHandoff(f));
+    expect(kept).toContain("Cleanup: git branch -D loki/e10-1");
+    expect(kept).not.toContain("Accept: git merge");
+    const withFiles = renderHandoff(composeHandoff({ ...f, stats: { files: 2, ins: 3, del: 1 } }));
+    expect(withFiles).toContain("Accept: git merge --no-ff loki/e10-1");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
 });
