@@ -647,8 +647,8 @@ _PROBE_SCRIPT = (
 
 def _outside_probe_dir(workspace: Path, platform: str) -> Path | None:
     """A writable-by-user dir outside the workspace that the sandbox must refuse."""
-    roots = TMP_ROOTS.get(platform, ())
-    for candidate in (workspace.parent, Path(os.path.expanduser("~"))):
+    roots = tuple(r.resolve() for r in TMP_ROOTS.get(platform, ()))
+    for candidate in (workspace.resolve().parent, Path(os.path.expanduser("~")).resolve()):
         if candidate.is_dir() and os.access(candidate, os.W_OK) and not any(
             candidate == r or r in candidate.parents for r in roots
         ):

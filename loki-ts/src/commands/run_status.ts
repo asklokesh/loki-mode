@@ -15,6 +15,16 @@ import { INTENT_ANSWER_FILE, renderIntent } from "../util/intent_card.ts";
 export const NO_RUN_HINT = "No Loki 10 runs here yet. Start one with: loki \"<task>\" or loki owner/repo#N";
 const TERMINAL = new Set(["stage.completed", "stage.failed", "stage.skipped"]);
 
+/** #334 AC6: what the launch recorded in <repo>/.loki/state/os-sandbox.json. kind "none" means the provider ran unconfined. */
+export interface SandboxStatus { kind: string; mode: string | null; provider: string | null; reason: string | null }
+export function readSandboxStatus(repoDir: string): SandboxStatus | null {
+  try {
+    const j = JSON.parse(readFileSync(join(repoDir, ".loki", "state", "os-sandbox.json"), "utf8")) as Record<string, unknown>;
+    const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+    return typeof j["kind"] === "string" ? { kind: j["kind"], mode: str(j["mode"]), provider: str(j["provider"]), reason: str(j["reason"]) } : null;
+  } catch { return null; }
+}
+
 export interface ModernStatus {
   engine: "loki10";
   run_id: string | null;
@@ -32,6 +42,7 @@ export interface ModernStatus {
   last_event_ago_s: number | null;
   last_event_seq: number | null;
   control_plane_run_url?: string | null;
+  sandbox?: SandboxStatus | null;
 }
 
 export function runsRoot(env: NodeJS.ProcessEnv, repoDir: string): string {
@@ -164,7 +175,7 @@ export async function runModernStatus(argv: readonly string[], env: NodeJS.Proce
       : `${NO_RUN_HINT}\n${cp ? `  Control Plane: ${cp}\n` : ""}`);
     return 0;
   }
-  const s: ModernStatus = { ...summarize(hit.id, hit.events, root, now), control_plane_url: cp, control_plane_run_url: controlRunLink(cp, repoDir, hit.id) };
+  const s: ModernStatus = { ...summarize(hit.id, hit.events, root, now), control_plane_url: cp, control_plane_run_url: controlRunLink(cp, repoDir, hit.id), sandbox: readSandboxStatus(repoDir) };
   process.stdout.write(json ? `${JSON.stringify(s)}\n` : `${render(s)}\n`);
   return 0;
 }
