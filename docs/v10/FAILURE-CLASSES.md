@@ -2008,3 +2008,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: all six hits plus both stale rows, decided per hit: 3 comment-only hits reworded away (repo_profile.ts, util/shell.ts) or kept as output-parser rows (failures.ts go and cargo, same role as the listed jest, pytest, vitest rows); verify.ts manifests allowlisted with a reason (lint tool detection of the target repo as data); 2 stale wall.ts rows removed.
 - Mechanism: the allowlist stays reviewed one row at a time; no regeneration.
 - Fixture: tests/engine10/l0_guard.test.ts 3 pass; mutation: re-adding a removed probe makes "no unlisted manifest probe" red.
+
+## FC-PULSE-MEASURES-STALE-LOCAL-MAIN The pulse measured the local `main` branch, which releases pushed from worktrees never fast-forward, so seven metrics read UNKNOWN or stale with no line saying why (RQ-98)
+- User-visible vs raw: user-visible. The pulse printed `Main CI (main @ 37f4d4f3): UNKNOWN` while `git rev-list --count main..origin/main` printed 288.
+- Law broken: a status report never describes a main that is behind origin/main without saying so, and it measures the real main.
+- Siblings swept: every MAIN_REF consumer (Main CI, unreleased-merge age, release cadence, moat baseline, unevidenced-claim scan, release-on-red) shares one resolved ref; the `gh --branch` streak call keeps the branch name `main`.
+- Mechanism: one resolution in scripts/v10-pulse.sh. PULSE_MAIN_REF unset and local main a strict ancestor of refs/remotes/origin/main: MAIN_REF becomes the remote-tracking ref and STALE_MAIN_REF fires with N. Diverged: STALE_MAIN_REF says diverged and the ref is unchanged. An explicit PULSE_MAIN_REF wins. No fetch.
+- Fixture: tests/test-v10-pulse.sh "RQ-98" (behind by 2, equal, diverged, explicit pin; two mutants).
