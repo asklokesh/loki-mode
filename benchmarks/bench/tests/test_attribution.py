@@ -1248,7 +1248,7 @@ class LeanCostTableTest(unittest.TestCase):
                 for t in "abc":
                     r = row(arm, True, True, cost=usd + 0.01 * rep)
                     r.update(task=t, repeat=rep + 1, engine="v10", loki_version="1.0.0", model_used="m1",
-                             lever_env={})
+                             lever_env={}, cost_source="claude_json.total_cost_usd")
                     rows.append(r)
         self._write(rows)
         text = A.render_cost_table(self.d)
