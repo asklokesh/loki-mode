@@ -4,7 +4,7 @@
 // is always a fake TestMapProvider here, never a real import of testmap.ts.
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventType, RunContext, StageName, TestMap, TestRef } from "../../src/engine10/types.ts";
@@ -235,6 +235,21 @@ describe("engine10 verify: test selection and select-tests.sh", () => {
     writeFileSync(join(repoDir, "loki_wall_mods.py"), "def test_w():\n    assert 1 == 2\n");
     const bad = await verifyStage.run(mk(["pytest"]), sig());
     expect(bad.data.wall_passed).toBe(false); expect(bad.data.not_proven as string[]).not.toContain(NAMED); // a failing Wall file is a failure, never silently absent
+  }, 60_000);
+
+  test("FC-PYTEST-READS-STALE-BYTECODE: a planted same-size same-mtime .pyc of a passing Wall file never decides the verdict of the failing source", async () => {
+    const repoDir = mkRepo("bun-target");
+    mkdirSync(join(repoDir, ".venv", "bin"), { recursive: true });
+    writeFileSync(join(repoDir, ".venv", "bin", "python"), '#!/bin/sh\nexec python3 "$@"\n'); chmodSync(join(repoDir, ".venv", "bin", "python"), 0o755);
+    const sha = baseSha(repoDir), f = join(repoDir, "loki_wall_pyc.py");
+    writeFileSync(join(repoDir, "src.txt"), "changed\n"); writeFileSync(f, "def test_w():\n    assert 1 == 1\n");
+    const when = new Date(Math.floor(Date.now() / 1000) * 1000); utimesSync(f, when, when);
+    const warm = Bun.spawnSync(["python3", "-m", "pytest", "-q", "loki_wall_pyc.py"], { cwd: repoDir, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "", PYTHONPYCACHEPREFIX: "" } }); // plants the in-tree bytecode
+    expect(warm.exitCode).toBe(0); expect(existsSync(join(repoDir, "__pycache__"))).toBe(true);
+    writeFileSync(f, "def test_w():\n    assert 1 == 2\n"); utimesSync(f, when, when); // same size, same mtime second: the planted pyc still validates
+    const ctx = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: ["pytest"], tests: [] }), impacted: () => [], outputs: { wall: { files: [{ path: f }] } } }).ctx;
+    const out = await verifyStage.run(ctx, sig());
+    expect(out.data.wall_passed).toBe(false); expect((out.data.checks as VerifyCheck[]).find((x) => x.name === "pytest:loki_wall_pyc.py")?.result).not.toBe("pass");
   }, 60_000);
 
   test("FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER: a Wall file the runner's own discovery never selects stays on the NOT PROVEN line and is never charged another test's verdict", async () => {
