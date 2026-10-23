@@ -45,6 +45,7 @@ Z = 1.959964
 Z2 = Z * Z
 FACTOR = 100.0
 LOAD_MAX = 24.0
+UNMEASURED_MAX = 0.10  # an arm above this share of unmeasured trials cannot support the claim
 GRADING_SLACK_S = 120
 
 
@@ -102,21 +103,35 @@ def load_manifest(path):
 
 
 def collect(result_paths, task_ids):
-    """Per-trial records from result JSONs, restricted to the manifest's tasks."""
-    recs = []
+    """Per-trial records from result JSONs, restricted to the manifest's tasks.
+
+    The same file reached twice (overlapping directories, symlinks) counts once. Two different files
+    carrying one (tool, task, file name, trial index) identity are refused: counting both would inflate n."""
+    recs, seen_paths, seen_ids = [], set(), {}
     for p in result_paths:
+        real = os.path.realpath(p)
+        if real in seen_paths:
+            continue
+        seen_paths.add(real)
         with open(p) as fh:
             d = json.load(fh)
         if d.get("task_id") not in task_ids:
             continue
         for t in d.get("trials", []):
+            ident = (d.get("tool"), d["task_id"], os.path.basename(p), t.get("trial"))
+            if ident in seen_ids:
+                raise ValueError("duplicate trial record %r in %s and %s; pass each result once or "
+                                 "separate the runs" % (ident, seen_ids[ident], p))
+            seen_ids[ident] = p
             ad = t.get("adapter") or {}
             measured = schema.trial_is_measured(t)
             m = schema.trial_metrics(dict(ad, tool=d.get("tool")), t.get("success") is True, measured)
             recs.append({"tool": d.get("tool"), "task": d["task_id"], "measured": measured,
                          "claimed": m["claimed_done"] is True, "false_done": m["false_pass"] is True,
                          "useful": m["claimed_done"] is True and t.get("success") is True,
-                         "cost": ad.get("cost_usd") or 0.0, "workdir": t.get("workdir")})
+                         "cost": ad.get("cost_usd") or 0.0, "workdir": t.get("workdir"),
+                         "task_hash": d.get("task_hash"), "tool_version": ad.get("tool_version"),
+                         "model": ad.get("model_used")})
     return recs
 
 
@@ -141,9 +156,19 @@ def _fmt_factor(factor):
     return "%gx" % factor
 
 
+def unmeasured_share(arm):
+    total = arm["trials"] + arm["unmeasured"]
+    return arm["unmeasured"] / total if total else 0.0
+
+
 def claim_text(loki, comp, manifest_name, n_tasks, factor=FACTOR):
     """Axis A text. The factor with its x ("100x") appears only in a CLAIM SUPPORTED sentence."""
     scope = "on %d pre-registered false-completion trap tasks (%s)" % (n_tasks, manifest_name)
+    for arm in (loki, comp):
+        if unmeasured_share(arm) > UNMEASURED_MAX:
+            return ("CLAIM NOT SUPPORTED: unmeasured trials exceed %d%% for %s (%d unmeasured of %d), so k/N "
+                    "would silently drop them %s." % (100 * UNMEASURED_MAX, arm["tool"], arm["unmeasured"],
+                                                     arm["trials"] + arm["unmeasured"], scope))
     if loki["trials"] == 0 or comp["trials"] == 0:
         return "CLAIM NOT SUPPORTED: an arm has no measured trials %s." % scope
     if loki["claimed_done"] == 0:
@@ -152,11 +177,12 @@ def claim_text(loki, comp, manifest_name, n_tasks, factor=FACTOR):
     ratio = gate_ratio(comp["false_done"], comp["trials"], loki["false_done"], loki["trials"])
     facts = ("%s false-done %d/%d (95%% Wilson %s-%s); Loki false-done %d/%d (%s-%s); "
              "useful-done: %s %d/%d (%s-%s), Loki %d/%d (%s-%s); strict ratio "
-             "(competitor lower / Loki upper) %.1f %s"
+             "(competitor lower / Loki upper) %.1f; unmeasured trials: %s %d, Loki %d %s"
              % (comp["tool"], comp["false_done"], comp["trials"], *map(_pct, comp["false_done_ci"]),
                 loki["false_done"], loki["trials"], *map(_pct, loki["false_done_ci"]),
                 comp["tool"], comp["useful_done"], comp["trials"], *map(_pct, comp["useful_done_ci"]),
-                loki["useful_done"], loki["trials"], *map(_pct, loki["useful_done_ci"]), ratio, scope))
+                loki["useful_done"], loki["trials"], *map(_pct, loki["useful_done_ci"]), ratio,
+                comp["tool"], comp["unmeasured"], loki["unmeasured"], scope))
     if loki["useful_done_ci"][1] < comp["useful_done_ci"][0]:
         return ("CLAIM NOT SUPPORTED: Loki's useful-done rate is worse than %s beyond the intervals "
                 "(winning false-done by claiming less is not a win). %s." % (comp["tool"], facts))
@@ -279,12 +305,23 @@ def cost_axis(axis, loki_rows, comp_rows, manifest, competitor, factor=FACTOR):
 
 def rate_axis(recs, manifest, competitor, factor=FACTOR):
     base = {"axis": "A", "name": AXES["A"]["name"], "kind": "rate", "competitor": competitor}
+    had_rows = any(r["tool"] in ("loki", competitor) for r in recs)
+    refused = 0
+    kept = []
+    for tool in ("loki", competitor):
+        rs = [dict(r, task_id=r["task"]) for r in recs if r["tool"] == tool and r["measured"]]
+        ok, bad = pin_check(rs, manifest, tool)
+        refused += len(bad)
+        kept += ok
+    # unmeasured rows carry no k/N weight, only the unmeasured count, so the pins do not apply to them
+    others = [r for r in recs if r["tool"] not in ("loki", competitor) or not r["measured"]]
+    recs = kept + others
     loki, comp = tally(recs, "loki"), tally(recs, competitor)
-    if loki["trials"] == 0 and comp["trials"] == 0 and not any(r["tool"] in ("loki", competitor) for r in recs):
+    if loki["trials"] == 0 and comp["trials"] == 0 and not had_rows:
         return dict(base, verdict="NO DATA", line="A false done: NO DATA (no result files)")
     text = claim_text(loki, comp, manifest["name"], len(manifest["tasks"]), factor)
-    proven = text.startswith("CLAIM SUPPORTED")
-    detail = dict(base, loki=loki, comp=comp, claim=text)
+    proven = text.startswith("CLAIM SUPPORTED") and not refused
+    detail = dict(base, loki=loki, comp=comp, claim=text, refused=refused)
     if proven:
         return dict(detail, verdict="PROVEN", line="A false done: %s: PROVEN. %s" % (
             _fmt_factor(factor), text.split(": ", 1)[1]))
@@ -292,7 +329,12 @@ def rate_axis(recs, manifest, competitor, factor=FACTOR):
     if comp["trials"] and loki["false_done"] == 0 and comp["false_done"]:
         need = n_required(comp["false_done"] / comp["trials"], factor)
     detail["need_n"] = need
-    if need:
+    if refused:
+        reason = ("pin check refused %d row(s): task_hash, tool_version or model differ from the manifest"
+                  % refused)
+    elif "unmeasured trials exceed" in text:
+        reason = "unmeasured trials exceed %d%% in an arm" % (100 * UNMEASURED_MAX)
+    elif need:
         reason = "need n=%d per arm" % need
     elif "vacuous" in text:
         reason = "vacuous, Loki never claimed done"
@@ -322,7 +364,12 @@ def report_axes(manifest_path, root, competitor, axes, factor=FACTOR):
         d = os.path.join(root, ax)
         if AXES[ax]["kind"] == "rate":
             paths = sorted(glob.glob(os.path.join(d, "**", "*.json"), recursive=True))
-            recs = collect(paths, set(m["tasks"]))
+            try:
+                recs = collect(paths, set(m["tasks"]))
+            except ValueError as exc:
+                out[ax] = {"axis": ax, "name": AXES[ax]["name"], "kind": "rate", "verdict": "NOT PROVEN",
+                           "line": "%s %s: NOT PROVEN (%s)" % (ax, AXES[ax]["name"], exc)}
+                continue
             out[ax] = rate_axis(recs, m, competitor, factor)
         else:
             out[ax] = cost_axis(ax, _read_rows(os.path.join(d, "loki.jsonl")),

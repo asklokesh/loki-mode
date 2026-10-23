@@ -1,6 +1,7 @@
 """False-done claim: statistics, vacuity guard, useful-done guard, grid gating. No model calls.
 Run: python3 -m pytest benchmarks/bench/tests/test_false_done_claim.py"""
 import json
+import shutil
 import os
 import sys
 import tempfile
@@ -11,15 +12,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import false_done_claim as fd  # noqa: E402
 
 
-def arm(tool, trials, claimed, false_done, useful):
+def arm(tool, trials, claimed, false_done, useful, unmeasured=0):
     ci = fd.wilson
     return {"tool": tool, "trials": trials, "claimed_done": claimed, "false_done": false_done,
-            "useful_done": useful, "false_done_ci": ci(false_done, trials), "useful_done_ci": ci(useful, trials)}
+            "useful_done": useful, "unmeasured": unmeasured, "false_done_ci": ci(false_done, trials), "useful_done_ci": ci(useful, trials)}
 
 
 def result_file(d, tool, task, verdict, exit_status, ok, name):
     adapter = {"exit_status": exit_status, "cost_usd": 0.1, "provenance": {"verify_verdict": verdict}}
-    row = {"tool": tool, "task_id": task,
+    if tool == "loki":
+        adapter.update(tool_version="11.0", model_used="sonnet")
+    row = {"tool": tool, "task_id": task, "task_hash": (MANIFEST["tasks"].get(task) or {}).get("sha256"),
            "trials": [{"adapter": adapter, "success": ok, "acceptance_exit_code": 0 if ok else 1}]}
     with open(os.path.join(d, name), "w") as fh:
         json.dump(row, fh)
@@ -118,6 +121,61 @@ class Report(unittest.TestCase):
             self.assertEqual(out["loki"]["claimed_done"], 1)
             self.assertEqual(out["loki"]["false_done"], 1)
             self.assertEqual(out["competitor"]["false_done"], 1)
+
+    def _overlap_dirs(self, d):
+        sub = os.path.join(d, "run1")
+        os.makedirs(sub)
+        mp = os.path.join(d, "m.json")
+        json.dump({"name": "m", "tasks": {"t": {}}}, open(mp, "w"))
+        for i in range(60):
+            result_file(sub, "claude_code", "t", None, "completed", i % 2 == 0, "c%03d.json" % i)
+        for i in range(400):
+            result_file(sub, "loki", "t", "VERIFIED", "completed", True, "l%04d.json" % i)
+        return mp, sub
+
+    def test_overlapping_directories_do_not_double_count(self):
+        with tempfile.TemporaryDirectory() as d:
+            mp, sub = self._overlap_dirs(d)
+            one = fd.report(mp, [sub], "claude_code")
+            two = fd.report(mp, [d, sub, sub + "/../run1"], "claude_code")
+            self.assertEqual(two["loki"]["trials"], one["loki"]["trials"])
+            self.assertEqual(two["competitor"]["trials"], 60)
+            self.assertEqual(two["claim"], one["claim"])
+
+    def test_duplicate_trial_record_in_two_files_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            mp, sub = self._overlap_dirs(d)
+            copy = os.path.join(d, "copy")
+            os.makedirs(copy)
+            shutil.copy(os.path.join(sub, "l0000.json"), copy)
+            with self.assertRaises(ValueError) as cm:
+                fd.report(mp, [sub, copy], "claude_code")
+            self.assertIn("duplicate trial record", str(cm.exception))
+
+    def test_unmeasured_share_over_ten_percent_is_not_supported_and_named(self):
+        with tempfile.TemporaryDirectory() as d:
+            mp, sub = self._overlap_dirs(d)
+            for i in range(60):
+                result_file(sub, "loki", "t", None, "timeout", False, "u%04d.json" % i)
+            out = fd.report(mp, [sub], "claude_code")
+            self.assertEqual(out["loki"]["unmeasured"], 60)
+            self.assertTrue(out["claim"].startswith("CLAIM NOT SUPPORTED"), out["claim"])
+            self.assertIn("unmeasured", out["claim"])
+
+    def test_all_trials_timed_out_is_not_supported_and_names_unmeasured(self):
+        with tempfile.TemporaryDirectory() as d:
+            mp = os.path.join(d, "m.json")
+            json.dump({"name": "m", "tasks": {"t": {}}}, open(mp, "w"))
+            for i in range(1100):
+                result_file(d, "loki", "t", None, "timeout", False, "u%04d.json" % i)
+            result_file(d, "claude_code", "t", None, "completed", True, "c.json")
+            out = fd.report(mp, [d], "claude_code")
+            self.assertTrue(out["claim"].startswith("CLAIM NOT SUPPORTED"), out["claim"])
+            self.assertIn("unmeasured", out["claim"])
+
+    def test_supported_claim_states_the_unmeasured_count_per_arm(self):
+        t = fd.claim_text(arm("loki", 400, 400, 0, 400, 20), arm("claude_code", 60, 60, 30, 30, 3), "m", 11)
+        self.assertIn("unmeasured trials: claude_code 3, Loki 20", t)
 
     def test_manifest_requires_tasks_object(self):
         with tempfile.TemporaryDirectory() as d:
@@ -224,6 +282,77 @@ class CostAxis(unittest.TestCase):
         lk = [crow("loki", "t1", 10.0)]
         cp = [crow("claude_code", "t2", 2000.0)]
         self.assertEqual(self.verdict(lk, cp)["verdict"], "NOT PROVEN")
+
+
+class AxisAIntegrity(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+        self.mp = os.path.join(self.d, "m.json")
+        json.dump(MANIFEST, open(self.mp, "w"))
+        self.A = os.path.join(self.d, "A", "run1")
+        os.makedirs(self.A)
+
+    def res(self, tool, verdict, ok, name, task_hash="h1", model="sonnet", ver="11.0", task="t1"):
+        ad = {"exit_status": "completed", "cost_usd": 0.1, "tool_version": ver, "model_used": model,
+              "provenance": {"verify_verdict": verdict}}
+        json.dump({"tool": tool, "task_id": task, "task_hash": task_hash,
+                   "trials": [{"adapter": ad, "success": ok, "acceptance_exit_code": 0 if ok else 1}]},
+                  open(os.path.join(self.A, name), "w"))
+
+    def fill(self, n_loki, n_comp=60, **loki_kw):
+        for i in range(n_comp):
+            self.res("claude_code", None, i % 2 == 0, "c%03d.json" % i)
+        for i in range(n_loki):
+            self.res("loki", "VERIFIED", True, "l%04d.json" % i, **loki_kw)
+
+    def axis(self):
+        return fd.report_axes(self.mp, self.d, "claude_code", ["A"])["axes"]["A"]
+
+    def test_clean_rows_are_proven(self):
+        self.fill(900, n_comp=300)
+        self.assertEqual(self.axis()["verdict"], "PROVEN", self.axis()["line"])
+
+    def test_axis_a_refuses_pin_mismatched_loki_rows(self):
+        for kw in ({"task_hash": "EDITED"}, {"model": "opus"}, {"ver": "9.9"}):
+            for f in os.listdir(self.A):
+                os.remove(os.path.join(self.A, f))
+            self.fill(900, **kw)
+            a = self.axis()
+            self.assertEqual(a["verdict"], "NOT PROVEN", kw)
+            self.assertEqual(a["refused"], 900, kw)
+            self.assertIn("pin check refused", a["line"])
+
+    def test_report_axes_fails_closed_on_a_copied_result_dir(self):
+        self.fill(900)
+        shutil.copytree(self.A, os.path.join(self.d, "A", "backup", "run1"))
+        a = self.axis()
+        self.assertEqual(a["verdict"], "NOT PROVEN", a["line"])
+        self.assertIn("duplicate trial record", a["line"])
+
+    def test_unmeasured_over_ten_percent_is_not_proven_and_named(self):
+        self.fill(900)
+        for i in range(1100):
+            json.dump({"tool": "loki", "task_id": "t1", "trials": [{"adapter": {"exit_status": "timeout"}}]},
+                      open(os.path.join(self.A, "u%04d.json" % i), "w"))
+        a = self.axis()
+        self.assertEqual(a["verdict"], "NOT PROVEN", a["line"])
+        self.assertIn("unmeasured", a["line"])
+        self.assertEqual(a["loki"]["unmeasured"], 1100)
+
+
+class CostBoundary(unittest.TestCase):
+    def test_point_above_gate_with_lower_bound_below_is_not_proven(self):
+        lk, cp = [], []
+        for task, ratio in zip(list(MANIFEST["tasks"]), (300, 30)):
+            for i in range(1, 5):
+                lk.append(crow("loki", task, 10.0, True, i))
+                cp.append(crow("claude_code", task, 10.0 * ratio, True, i))
+        v = fd.cost_axis("C", lk, cp, MANIFEST, "claude_code")
+        self.assertGreaterEqual(v["ratio"]["point"], 100)
+        self.assertLess(v["ratio"]["lo"], 100)
+        self.assertEqual(v["verdict"], "NOT PROVEN", v["line"])
+        self.assertNotIn("100x", v["line"])
 
 
 class Claim100(unittest.TestCase):
