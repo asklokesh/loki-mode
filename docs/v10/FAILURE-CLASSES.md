@@ -1423,3 +1423,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: every registered MCP tool and resource, via the runtime-derived guard in tests/mcp/test_phase1_tools.py (seeds this cache with the marker; the observer now also sees os.scandir, os.stat, Path.iterdir and glob); the JS mirror declares its fields in src/protocols and counts them in tests/protocols/mcp-server.test.js.
 - Mechanism: part 1 (this change) moves loki_verify_fast findings under untrusted_content via _UNTRUSTED_FIELDS. The verdict-suppression half is open in #319 (cache entries must be authenticated or re-derived, then the row is closed).
 - Fixture: tests/mcp/test_phase1_tools.py test_stored_text_appears_only_inside_untrusted_content (red with loki_verify_fast trusted: leaks ['loki_verify_fast']; green after).
+
+## FC-FALSE-DONE-HAS-NO-BASELINE The bench had no task on which either tool claims done while a hidden check fails, so the false-done rate (M5) could not be measured as a rate
+- User-visible vs raw: user-visible. The claim "Loki stops on agent-independent checks, Claude Code stops when the model says done" had no number behind it: the only discriminator, multifail-1-two-modules, went 2 of 2 for both tools.
+- Law broken: a comparative claim ships with a measured baseline and an interval, never with a rate inferred from tasks that do not separate the tools.
+- Siblings swept: attribution.py (false_done, false_completion_rate) and runner.py grade already compute the metric and are unchanged; the existing tasks all pass on both tools in the recorded trials, so none separates them.
+- Mechanism: four pre-registered tasks (benchmarks/bench/tasks/fd-1 to fd-4), each with a held-out overlay that checks only prompt-stated requirements. References and near-miss artifacts stay outside the repo and are hash-attested through run.sh oracles (private_probe.py). The task and overlay bytes are pinned, so a change after a paid trial needs a new task id.
+- Fixture: tests/test_bench_taskspec.py FalseDonePreRegisteredTasks (pins, task load, overlay red on the untouched fixture). Red when an overlay or task byte changes.
