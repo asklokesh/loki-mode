@@ -196,7 +196,7 @@ run_case stale "11.55.0 11.55.1" 11.55.0 11.55.0 11.55.1
 # Measured 2026-10-23 (07:17Z): each accepted tag write applies on its own, minutes later
 # (next read 11.60.8 while latest still read 11.60.7). A lagging tag is waited on, never
 # rewritten: exactly one write per tag, and both end at the published version.
-STUB_TAG_LAG=5 run_case lag "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
+STUB_TAG_LAG=9 run_case lag "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
 { [ $CASE_RC -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 11.56.1 ] && [ "$(cat "$CASE_ST/next")" = 11.56.1 ] \
     && [ "$(grep -c '^add .* latest' "$CASE_ST/log")" = 1 ] && [ "$(grep -c '^add .* next' "$CASE_ST/log")" = 1 ]; } \
     && ok "a tag that applies late is waited on with one write per tag" || bad "lag: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
