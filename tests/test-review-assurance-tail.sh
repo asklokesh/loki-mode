@@ -45,6 +45,18 @@ cat > "$FAKE_BIN/claude" <<'FAKE_CLAUDE'
 #!/usr/bin/env bash
 set -u
 
+# Barriers wait on the wall clock, never a spin count: under CI load each spin
+# takes longer, so a counted loop gives up before sibling shards have started.
+wait_for_count() {
+    local dir="$1" glob="$2" want="$3" limit="$4" start="$SECONDS"
+    while :; do
+        WAIT_COUNT=$(find "$dir" -name "$glob" -type f | wc -l | tr -d ' ')
+        [ "$WAIT_COUNT" -ge "$want" ] && return 0
+        [ $((SECONDS - start)) -ge "$limit" ] && return 1
+        sleep 0.01
+    done
+}
+
 prompt=""
 structured=false
 previous=""
@@ -186,13 +198,8 @@ PY
         requirements-shards-parallel|requirements-shard-invalid|requirements-shard-fail-fast)
             mkdir -p "$REVIEW_TEST_SHARD_STATE"
             : > "$REVIEW_TEST_SHARD_STATE/started-$shard_index"
-            for _attempt in $(seq 1 500); do
-                started_count=$(find "$REVIEW_TEST_SHARD_STATE" \
-                    -name 'started-*' -type f | wc -l | tr -d ' ')
-                [ "$started_count" -ge "$REVIEW_TEST_SHARD_EXPECTED" ] && break
-                sleep 0.01
-            done
-            [ "${started_count:-0}" -ge "$REVIEW_TEST_SHARD_EXPECTED" ] || exit 125
+            wait_for_count "$REVIEW_TEST_SHARD_STATE" 'started-*' \
+                "$REVIEW_TEST_SHARD_EXPECTED" 60 || exit 125
             ;;
     esac
     case "${REVIEW_TEST_MODE:-}" in
@@ -210,13 +217,8 @@ PY
             ;;
         requirements-shard-fail-fast)
             if [ "$shard_index" -eq 2 ]; then
-                for _attempt in $(seq 1 500); do
-                    child_count=$(find "$REVIEW_TEST_SHARD_STATE" \
-                        -name 'child-*.pid' -type f | wc -l | tr -d ' ')
-                    [ "$child_count" -ge $((REVIEW_TEST_SHARD_EXPECTED - 1)) ] && break
-                    sleep 0.01
-                done
-                [ "${child_count:-0}" -ge $((REVIEW_TEST_SHARD_EXPECTED - 1)) ] || exit 125
+                wait_for_count "$REVIEW_TEST_SHARD_STATE" 'child-*.pid' \
+                    $((REVIEW_TEST_SHARD_EXPECTED - 1)) 60 || exit 125
                 REVIEW_TEST_MODE=requirements-miss emit_requirements_json
                 exit $?
             fi
