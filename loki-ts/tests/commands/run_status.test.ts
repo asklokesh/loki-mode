@@ -606,6 +606,7 @@ describe("loki status --follow (R100-007)", () => {
 });
 
 // R100-007 AC2: the first followed event arrives within 2 s of `loki start`, timed from the start command (not from the follower), headless, stub provider.
+// Measured 1515 ms at 1-min load 25 (margin 485 ms under the 2000 ms limit); the limit stays 2000.
 describe("loki status --follow first event from loki start (R100-007 AC2)", () => {
   const BIN_LOKI = resolve(import.meta.dir, "../../../bin/loki");
   const FIX = resolve(import.meta.dir, "../engine10/fixtures/e2e/repo");
