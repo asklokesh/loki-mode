@@ -317,8 +317,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## v11.62.0 (2026-10-23)
 
-### Changed
-- Maintenance release.
+### Added
+- PR lessons are learned only from human commits: bot authors and merge commits yield no lesson, at most MAX_HUMAN_COMMITS commits are read, commits without a patch are skipped, secrets are redacted before storage, and loki memory promote shares a lesson across repos.
 
 ## v11.61.2 (2026-10-23)
 

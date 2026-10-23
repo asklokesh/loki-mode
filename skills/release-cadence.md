@@ -52,7 +52,7 @@ each citation also names a string or label to grep.
 
 **The FAST tier is the release gate. The FULL tier is not a blocker.**
 
-That is the founder decision of 2026-07-31, recorded in CLAUDE.md under a
+That is the project policy of 2026-07-31, recorded in CLAUDE.md under a
 header that says so explicitly: "Local CI Before Every Push (2026-07-31 mandate
 -- SUPERSEDES 2026-04-26)".
 

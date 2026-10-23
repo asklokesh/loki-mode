@@ -1,6 +1,6 @@
 # Market program slice cards (source: autonomi-dev/research/2026-10-08-market/MARKET.md)
 
-Owner: Product Owner. Not committed to BOARD.md. Cards are at most 60 lines each. Shared Wall checks on every card: tsc clean (loki-ts), only the file set listed is touched, bash -n on touched shell, no emoji or dash characters, SKILL.md untouched, dist rebuilt when loki-ts/src changes (memory: ts edit needs dist rebuild), new test files registered in the runner and shard table (structural guards). Budgets: LOW 15 min, MEDIUM 30 min, HIGH 30 min build plus live pair review (D91-8). Every flag is default OFF unless the card says otherwise. Staffing order is the section order.
+Cards are at most 60 lines each. Shared Wall checks on every card: tsc clean (loki-ts), only the file set listed is touched, bash -n on touched shell, no emoji or dash characters, SKILL.md untouched, dist rebuilt when loki-ts/src changes, new test files registered in the runner and shard table (structural guards). Budgets: LOW 15 min, MEDIUM 30 min, HIGH 30 min build plus live pair review. Every flag is default OFF unless the card says otherwise. Staffing order is the section order.
 
 # STANDARDS
 

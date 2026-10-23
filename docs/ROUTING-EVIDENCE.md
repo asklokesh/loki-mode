@@ -16,8 +16,7 @@ or in any external claim until it is re-derived (issue 210).
 - Claude Opus 4.6: resolved 75.6 at $275.76 total.
 - Derived: an open model matching frontier accuracy at ~7.5x lower cost.
 - Source: cited from the cost-context comment that previously lived in
-  providers/opencode.sh; competitive context in docs/COMPETITIVE-INTEL-2026-09.md
-  item 3.
+  providers/opencode.sh.
 
 ## opencode viability
 

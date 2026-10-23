@@ -4680,7 +4680,7 @@ except Exception:
     # Where the time went, per stage. Same "written but never read" story as
     # first-preview above: emit_stage_complete (run.sh:2413) has appended a
     # stage_complete record -- stage, status, duration_s, iteration -- to
-    # events.jsonl since v7.91.x, and NOTHING consumed it. A founder watching a
+    # events.jsonl since v7.91.x, and NOTHING consumed it. A user watching a
     # 322-word issue take 25+ minutes inside iteration 1 had no way to see which
     # step ate it, because the measurement existed and was never surfaced.
     #
@@ -12610,7 +12610,7 @@ COMPOUND_SCRIPT
 # every project -- a CLI with no build step read identically to a skipped real
 # build, and both dragged the receipt to "WITH GAPS". This is the missing writer.
 #
-# The distinction the receipt needs (and the founder demanded, no fabrication) is
+# The distinction the receipt needs (and the receipt must never fabricate) is
 # THREE-WAY, not two (a council review caught the two-way version laundering
 # "unrecognized build system" into a fake N/A):
 #   - a build command WE RUN exists (npm "build" / go / cargo) -> RUN it, record
@@ -12677,7 +12677,7 @@ enforce_build_check() {
     # an allowlist of build systems -> the allowlist is structurally leaky). The
     # two error directions are NOT equal: a REAL build read as N/A -> VERIFIED is
     # DISHONEST over-claim (the cardinal fake-green sin); a no-build CLI read as a
-    # not_run gap is an HONEST under-claim (merely the founder's original UX nit).
+    # not_run gap is an HONEST under-claim (merely an original UX nit).
     # So not_run is the SAFE CATCH-ALL and N/A requires a POSITIVE proof-of-no-build.
     # A forgotten stack (Bazel, meson, autotools, Zig, Nix...) now falls to not_run
     # (honest), never to fake N/A -- fixing the whole CLASS, not each instance.
@@ -12718,7 +12718,7 @@ enforce_build_check() {
         # N/A fires on POSITIVE proof-of-no-build, which we can only assert for a
         # package.json project: it EXISTS and its scripts are build-ish-free and no
         # foreign manifest / build-tool devDep is present -> a JS CLI/lib that
-        # genuinely has no build step (the founder's invoice case). CRITICAL (the
+        # genuinely has no build step (an invoice-CLI case). CRITICAL (the
         # council's convergence line): a project with NO package.json is "I don't
         # recognize a build here" = IGNORANCE, not proof-of-no-build. Ignorance must
         # map to not_run (honest gap), NEVER N/A -- else Zig/autotools/bare-C/meson/
@@ -12801,7 +12801,7 @@ enforce_build_check() {
         fi
     else
         # build_class="none": a POSITIVE proof-of-no-build determination -> honest
-        # N/A (the founder's CLI). applicable already false; status not_applicable.
+        # N/A (a CLI project). applicable already false; status not_applicable.
         applicable="false"; ran="false"; status="not_applicable"
         log_info "Build check: no build step for this stack (N/A)"
     fi
@@ -14561,7 +14561,7 @@ sys.stdout.write(t.strip())
                 -not -path '*/.venv/*' -not -path '*/venv/*' \
                 -print -quit 2>/dev/null | grep -q .; then
             # #139: a ROOT-LEVEL (or shallow) test_*.py / *_test.py with NO tests/
-            # dir and NO config file. The founder's invoice CLI had exactly this
+            # dir and NO config file. An invoice CLI had exactly this
             # shape (test_invoice_cli.py at the root) -> was missed -> tests read
             # "not run" on a genuinely-passing 16-test unittest suite. This is the
             # same false-negative class as #79 (validated work reads as unvalidated).
@@ -16540,7 +16540,7 @@ _dispatch_reviewer() {
             # pass NO --model by default (unchanged behavior: they run on the
             # account default). When the operator/user sets LOKI_ADVISOR_MODEL to
             # an allowlisted alias, pin the trust-gate reviewer to it for a
-            # stronger/consistent judge - the founder's "advisor will be opus if
+            # stronger/consistent judge - the documented "advisor will be opus if
             # needed or user opted". Only the tier aliases haiku|sonnet|opus are
             # honored; any other value is ignored with no --model.
             if [ -n "${LOKI_ADVISOR_MODEL:-}" ]; then
@@ -22367,7 +22367,7 @@ def extract_tasks(filepath, prefix):
         # This was `tasks[:3]`, applied SEPARATELY to in-progress.json and
         # pending.json. A release doc decomposed into 5 tasks silently lost 2
         # from each file: the agent received a plan it was never told was
-        # truncated, and the founder-facing case ("hand it a release doc") was
+        # truncated, and the user-facing case ("hand it a release doc") was
         # quietly capped at 3.
         #
         # A count is the wrong bound anyway: one rich PRD task with a 300-char

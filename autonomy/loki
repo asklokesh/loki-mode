@@ -2017,7 +2017,6 @@ show_help_all() {
     echo "Cost controls (budget, iteration and wall-clock caps): docs/cost-controls.md"
     echo "Already have a codebase? Start read-only: docs/brownfield.md"
     echo "No egress allowed? What runs disconnected: docs/air-gapped.md"
-    echo "Where this is going: docs/STRATEGY-2026-2028.md"
     echo ""
     echo "Scripting Loki? Exit codes for every command are documented in"
     echo "docs/exit-codes.md. Severity rises with the code, and 'loki start'"

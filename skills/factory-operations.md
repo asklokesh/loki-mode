@@ -70,7 +70,7 @@ coordination failure in this repo has been a role acting outside its column.
 
 | Role | DECIDES (binding) | ADVISES (non-binding) |
 |---|---|---|
-| **Coordinator** (the integrator session) | Work partition and file ownership; WIP admission; when to escalate to the founder; integration of parallel outputs | Implementation approach inside a team's slice |
+| **Coordinator** (the integrator session) | Work partition and file ownership; WIP admission; when to escalate to the project owner; integration of parallel outputs | Implementation approach inside a team's slice |
 | **PM** (per workstream) | Scope and acceptance criteria for its workstream; accepts or rejects the delivered slice against those criteria | Sequencing relative to other workstreams (the CoS decides that) |
 | **Dev Fleet** (3-5 engineers, parallel) | Implementation detail within an owned file set | Scope changes; anything touching a file it does not own |
 | **SDET** | Whether a test actually exercises the acceptance criterion | Whether the feature ships (that is the council's call) |
@@ -393,7 +393,7 @@ procedure and its recovery paths.
 
 Several agent processes run against this checkout at once. On 2026-08-07 a
 parallel process force-reset main to a different lineage and five commits
-vanished from the remote, including one already reported to the founder as
+vanished from the remote, including one already reported as
 landed with CI running against it.
 
 - Before claiming a push landed, check ANCESTRY, not equality:
@@ -431,7 +431,7 @@ harder.
 | 6 | `grep -rn ... --include=*.sh` for a precedent | no output, `rc=0` | the search never ran | zsh expanded `--include=*.sh` as a glob, found no match, and aborted the command before grep started |
 
 Instance 5 is the most dangerous of the set: it nearly shipped a false release
-announcement to the founder. It was caught only because the operator fetched
+announcement. It was caught only because the operator fetched
 origin and compared SHAs instead of trusting the exit code. See section 4.2.
 
 Instance 6 is instructive because it is the cheapest possible version of the
