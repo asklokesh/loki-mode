@@ -140,13 +140,26 @@ class PublishIsInstant(unittest.TestCase):
         job = jobs["verify-npm-registry"]
         self.assertEqual(_needs(job), ["publish-npm"])
         self.assertNotIn("concurrency", job)  # never holds the release-npm lock
-        r = "\n".join(_runs(job))
-        self.assertIn('npm view "loki-mode@${VERSION}" version --prefer-online', r)
-        self.assertRegex(r, r"seq 1 \d+")
-        self.assertRegex(r, r"(?s)exit 1\s*$")
+        poll = next(s["run"] for s in job["steps"] if "seq 1 " in s.get("run", ""))
+        self.assertIn('npm view "loki-mode@${VERSION}" version --prefer-online', poll)
+        self.assertRegex(poll, r"seq 1 \d+")
+        self.assertRegex(poll, r"(?s)exit 1\s*$")
         self.assertGreaterEqual(job["timeout-minutes"], 16)
         for name, other in jobs.items():
             self.assertNotIn("verify-npm-registry", _needs(other), name)
+
+    def test_dist_tags_converge_after_the_version_resolves(self):
+        # FC-DIST-TAG-MOVED-BACKWARDS late materialization: the converge call
+        # must follow the resolve poll and carry the publish token.
+        job = _doc()["jobs"]["verify-npm-registry"]
+        steps = job["steps"]
+        poll = next(i for i, s in enumerate(steps) if "seq 1 " in s.get("run", ""))
+        conv = [i for i, s in enumerate(steps) if "npm-dist-tags.sh" in s.get("run", "")]
+        self.assertEqual(len(conv), 1)
+        self.assertGreater(conv[0], poll)
+        self.assertIn("NPM_TOKEN", steps[conv[0]].get("env", {}).get("NODE_AUTH_TOKEN", ""))
+        sparse = next(s for s in steps if "checkout" in s.get("uses", ""))["with"]["sparse-checkout"]
+        self.assertIn("scripts/npm-dist-tags.sh", sparse)
 
     def test_docker_latest_and_homebrew_ship_with_the_release(self):
         text = _RELEASE.read_text(encoding="utf-8")
