@@ -277,7 +277,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--json] [--verbose] [--quiet] [--max-cost N] [--provider P] [--spec F] [--resume] [-- <task>]\n`); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
     else words.push(a);
   }
-  const givenCap = maxCost === null ? null : parseCapUsd(maxCost); if (resume && maxCost !== null) { const c = resolveCap(maxCost, process.cwd()); if ("error" in c) { process.stderr.write(`engine10: ${c.error}\n`); return 2; } } // 0 stays valid (no cap); a bad value never silently drops on --resume
+  const givenCap = maxCost === null ? null : parseCapUsd(maxCost); if (maxCost !== null) { const c = resolveCap(maxCost, process.cwd()); if ("error" in c) { process.stderr.write(`engine10: ${c.error}\n`); return 2; } } // 0 stays valid (no cap); a bad value exits 2 before either resume entry can drop it
   const flags = { maxCostUsd: givenCap, provider: providerExplicit ? provider : null, deep, spec: specFile !== null }; // FC-AUTORESUME-DROPS-START-FLAGS: both resume entries get the typed flags
   let task = words.join(" ").trim(); if (resume) return (await import("../util/run_outputs.ts")).resumeFlag(words[0], noPr, { flags });
   let spec: LoadedSpec | null = null;

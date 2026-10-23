@@ -1,7 +1,7 @@
 // MW-2 / CH-03: LOKI_E10_FIX_RESUME (default off; =1 opts in; CH-03 flips the default after RECEIPT-TRUTH). A fix round resumes the implement session; every failure path
 // starts fresh and records why. Mocked sessions only: no real model, no query().
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fixStage } from "../../src/engine10/stages/fix.ts";
@@ -169,7 +169,7 @@ describe("fix resume trust and mutation (MW-2)", () => {
 });
 
 // P12-07: per-stage checkpoints and resume-from-stage. Resume fails closed on any torn or inconsistent log.
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { makeEvent, readEvents } from "../../src/engine10/events.ts";
 import { DEEP_CAP_S, DEFAULT_CAP_S } from "../../src/engine10/types.ts";
 import { workerCapS } from "../../src/engine10/worker.ts";
@@ -705,6 +705,33 @@ describe("FC-AUTORESUME-DROPS-START-FLAGS: the typed start flags reach both resu
       await body(dir, seen, say, { out: (x: string) => { say.push(x); }, supervise });
     } finally { process.chdir(cwd); if (keep === undefined) delete process.env["LOKI_NO_AUTO_RESUME"]; else process.env["LOKI_NO_AUTO_RESUME"] = keep; rmSync(dir, { recursive: true, force: true }); }
   };
+  // main() level: the typed flags must travel through the real entry, not only through startRecovery called directly
+  const driveMain = (args: string[], crashed: boolean): { rc: number | null; cap: string | null | undefined } => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-flags-main-")), repo = join(dir, "repo"), out = join(dir, "w.json");
+    try {
+      execFileSync("git", ["init", "-q", "-b", "main", repo]);
+      execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"]);
+      if (crashed) { execFileSync("git", ["-C", repo, "branch", `loki/${RID}`]); mkdirSync(join(repo, ".loki", "runs", RID), { recursive: true }); writeFileSync(join(repo, ".loki", "runs", RID, "events.jsonl"), text(crashed_()));
+      }
+      const sup = join(import.meta.dir, "../../src/engine10/supervisor.ts");
+      writeFileSync(join(dir, "drive.ts"), `import { writeFileSync } from "node:fs";
+if (process.argv[2] === "engine10") { writeFileSync(${JSON.stringify(out)}, JSON.stringify({ cap: process.env.LOKI_E10_MAX_COST_USD ?? null })); process.exit(0); }
+const { main } = await import(${JSON.stringify(sup)});
+process.exit(await main(${JSON.stringify(args)}));
+`);
+      const r = spawnSync(process.execPath, [join(dir, "drive.ts")], { cwd: repo, env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true", LOKI_SPEED: "0", LOKI_CONTROL: "0", LOKI_NO_BROWSER: "1", LOKI_BUDGET_LIMIT: "" }, encoding: "utf8", timeout: 60000 });
+      return { rc: r.status, cap: existsSync(out) ? (JSON.parse(readFileSync(out, "utf8")) as { cap: string | null }).cap : undefined };
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+  const crashed_ = () => crashed({ provider: "claude", model: "m" });
+  test("main(): a malformed --max-cost exits 2 on a fresh start, on --resume and on auto-resume, and never reaches a worker", () => {
+    expect(driveMain(["--no-pr", "--quiet", "--max-cost", "5O", "t"], false)).toEqual({ rc: 2, cap: undefined });
+    expect(driveMain(["--no-pr", "--quiet", "--max-cost", "5O", "--resume", RID], true)).toEqual({ rc: 2, cap: undefined });
+    expect(driveMain(["--no-pr", "--quiet", "--max-cost", "5O", "t"], true)).toEqual({ rc: 2, cap: undefined });
+  }, 200000);
+  test("main(): a valid --max-cost typed on a same-task start reaches the auto-resumed worker", () => {
+    expect(driveMain(["--no-pr", "--quiet", "--max-cost", "0.5", "t"], true).cap).toBe("0.5");
+  }, 100000);
   test("resumeCapUsd only tightens: given below recorded wins, given above recorded loses, no recorded cap takes the given one", () => {
     expect(resumeCapUsd(5, 0.5)).toBe(0.5);
     expect(resumeCapUsd(0.3, 2)).toBe(0.3);
