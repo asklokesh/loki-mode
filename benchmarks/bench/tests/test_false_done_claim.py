@@ -323,6 +323,15 @@ class AxisAIntegrity(unittest.TestCase):
             self.assertEqual(a["refused"], 900, kw)
             self.assertIn("pin check refused", a["line"])
 
+    def test_one_refused_false_done_row_blocks_a_claim_the_kept_rows_support(self):
+        self.fill(1100, n_comp=1700)
+        self.assertEqual(self.axis()["verdict"], "PROVEN", "kept rows alone must support the claim")
+        self.res("loki", "VERIFIED", False, "lbad.json", task_hash="EDITED-AFTER-RESULTS")
+        a = self.axis()
+        self.assertEqual(a["verdict"], "NOT PROVEN", a["line"])
+        self.assertEqual(a["refused"], 1)
+        self.assertIn("pin check refused", a["line"])
+
     def test_report_axes_fails_closed_on_a_copied_result_dir(self):
         self.fill(900)
         shutil.copytree(self.A, os.path.join(self.d, "A", "backup", "run1"))
