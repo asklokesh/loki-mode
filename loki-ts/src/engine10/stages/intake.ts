@@ -1,8 +1,6 @@
 // loki-ts/src/engine10/stages/intake.ts -- E-04 Intake (ENGINE.md section 4). Deterministic:
-// dirty-tree refusal, branch creation, .git/info/exclude, the issue already-done check, repo map /
-// test map build, plus one cached Project Model discovery session (EL-W1-01). No PRD. Task arrives as literal text (LOKI_E10_TASK_TEXT) or
-// issue.json (LOKI_E10_ISSUE_JSON, default <runDir>/issue.json); outputs task text, title, repo,
-// resumed for later stages.
+// dirty-tree refusal, branch creation, .git/info/exclude, the issue already-done check, repo map / test map build, plus one cached Project Model discovery session (EL-W1-01). No PRD. Task arrives as
+// literal text (LOKI_E10_TASK_TEXT) or issue.json (LOKI_E10_ISSUE_JSON, default <runDir>/issue.json); outputs task text, title, repo, resumed for later stages.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { STAGE_BUDGETS, type RunContext, type Stage, type StageResult } from "../types.ts";
@@ -102,15 +100,11 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   const rd = built ? repoReadiness(built.profile) : null, readiness = rd ? `Readiness: ${rd.score}/100 (${rd.grade})${rd.findings.length ? ` - run \`loki doctor --repo\` for ${rd.findings.length} fix(es)` : ""}` : null;
   if (readiness && process.env.LOKI_E10_READINESS_FOLD === "1") held.fold = readiness;
   else if (readiness) process.stderr.write(`${readiness}\n`); // FV-readiness-env-3; D48 default mode: the supervisor folds it into the last line instead
-  // E-66: "already implemented" as a first-class outcome. A deterministic evidence search over
-  // repoMap/testmap/CHANGELOG, confirmed by one short cheap-model session that must cite files;
-  // no candidate evidence means no session call (checkAlreadyDone's own gate).
+  // E-66: "already implemented" as a first-class outcome. A deterministic evidence search over repoMap/testmap/CHANGELOG, confirmed by one short cheap-model session that must cite files; no candidate evidence means no session call (checkAlreadyDone's own gate).
   const already = speedEnabled() ? null : await checkAlreadyDone(ctx, signal, task, repoMap, testmap); // D61-04: LOKI_SPEED=1 defers it past intake
   const alreadyData = (already: AlreadyDoneResult): Record<string, unknown> => {
-    // The comment always exists (there is always something to tell the operator once evidence
-    // confirms no change is needed); only an issue run has somewhere to post it, so only that case
-    // gets an argv. A text run gets the same body, but printed by the CLI (main(), below) instead --
-    // posting an issue comment for a run with no issue would be meaningless.
+    // The comment always exists (there is always something to tell the operator once evidence confirms no change is needed); only an issue run has somewhere to post it, so only that case gets an
+    // argv. A text run gets the same body, but printed by the CLI (main(), below) instead -- posting an issue comment for a run with no issue would be meaningless.
     const comment = renderAlreadyDoneComment(already.evidence);
     const bodyFile = join(ctx.runDir, "already-done-comment.md");
     writeFileSync(bodyFile, comment, "utf8");

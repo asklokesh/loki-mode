@@ -1,5 +1,4 @@
-// Loki 10 engine shared contract (docs/v10/ENGINE.md). Every engine module codes against these types; siblings
-// are injected through RunContext so each module can be unit-tested with fakes.
+// Loki 10 engine shared contract (docs/v10/ENGINE.md). Every engine module codes against these types; siblings are injected through RunContext so each module can be unit-tested with fakes.
 import type { SessionTier } from "../runner/types.ts";
 export type Obj = Record<string, unknown>;
 export type StageName = "intake" | "plan" | "wall" | "implement" | "verify" | "fix" | "commit" | "seal" | "pr" | "deep";
@@ -116,8 +115,7 @@ export interface CostTotals {
   records?: CostRecords; // COST-RECORDS / FIX-RESUME
   durationMs?: number; // SDK result-line duration_ms, summed
   cacheCreationTokens?: number; // optional so existing CostReader fakes still typecheck; absent reads NOT RECORDED in the receipt
-  // E-69: optional so every existing CostReader test fake (only usd/tokens) still typechecks;
-  // seal.ts falls back to 0 when a fake omits them. See cost.ts's CostResult for the real ones.
+  // E-69: optional so every existing CostReader test fake (only usd/tokens) still typechecks; seal.ts falls back to 0 when a fake omits them. See cost.ts's CostResult for the real ones.
   measuredCount?: number;
   totalCount?: number;
   partialUsd?: number;
@@ -189,15 +187,10 @@ export interface Receipt {
   implement_limit?: { limit_s: number; elapsed_s: number };
   /** T9: provider failovers (stage, from, to, reason, evidence). Omitted when none happened so other receipts stay byte-stable. */
   failover?: import("../runner/provider_failover.ts").FailoverRecord[];
-  /** E-120: implement's reason for a SPEC_CONFLICT exit, sanitized (newlines/control chars
-   *  collapsed to spaces, capped at 500 chars). Key is omitted entirely, never null, when
-   *  implement did not record one, so receipt_sha256 for every other run stays byte-stable. */
+  /** E-120: implement's reason for a SPEC_CONFLICT exit, sanitized (newlines/control chars  collapsed to spaces, capped at 500 chars). Key is omitted entirely, never null, when  implement did not  record one, so receipt_sha256 for every other run stays byte-stable. */
   spec_conflict_reason?: string;
-  /** E-66: the deterministic search hits plus the model's own citation, carried into the receipt so
-   *  an evidence-confirmed ALREADY_SATISFIED verdict is not a bare claim. Empty on every other
-   *  verdict, and also empty on the OTHER ways a run seals ALREADY_SATISFIED (an issue already
-   *  closed, Wall already green on the base tree, or implement's own LOKI_ALREADY_DONE marker):
-   *  none of those goes through this search, so none of them has search hits to carry. */
+  /** E-66: the deterministic search hits plus the model's own citation, carried into the receipt so  an evidence-confirmed ALREADY_SATISFIED verdict is not a bare claim. Empty on every other   verdict, and also empty on the OTHER ways a run seals
+   *  ALREADY_SATISFIED (an issue already  closed, Wall already green on the base tree, or implement's own LOKI_ALREADY_DONE marker):  none of  those goes through this search, so none of them has search hits to carry. */
   evidence: string[]; pre_existing_dirty?: string[]; // E-164: lockfiles modified at intake by setup, never attributed to the run; omitted when none
   cost: {
     usd: number | null;
@@ -209,8 +202,7 @@ export interface Receipt {
     tokens_scope?: "all-models" | "main-loop"; per_model?: Record<string, ModelRecord>; turns?: number; cache_creation_main_loop?: { ephemeral_5m_tokens: number; ephemeral_1h_tokens: number }; resume?: "ambiguous" | "separate"; // COST-RECORDS / FIX-RESUME, additive
     sdk_duration_ms?: number; // SDK result line duration_ms, summed; absent = NOT RECORDED
     tokens_measured?: { k: number; n: number }; // present only when k < n: input_tokens/output_tokens sum k of n sessions (a missing or ambiguous-resume session is left out), so they are partial
-    // E-69: sessions with a provider-sourced dollar figure, out of the sessions this run recorded;
-    // partial_usd is their dollar sum even when usd above is null (some sessions unpriced).
+    // E-69: sessions with a provider-sourced dollar figure, out of the sessions this run recorded; partial_usd is their dollar sum even when usd above is null (some sessions unpriced).
     measured_sessions: number;
     total_sessions: number;
     partial_usd: number;

@@ -39,9 +39,8 @@ function refName(t: TestRef): string {
   return `${t.runner}:${t.path}`;
 }
 
-/** Added + deleted non-blank lines of a unified diff. The `+++`/`---` file headers are skipped
- *  only outside a hunk: inside one, a deleted `-- sql comment` line is a real `---` line. Hunk
- *  extents come from the `@@ -a,b +c,d @@` counts. */
+/** Added + deleted non-blank lines of a unified diff. `+++`/`---` file headers are skipped only outside a hunk
+ *  (inside one, a deleted `-- sql comment` line is a real `---` line); hunk extents come from the `@@` counts. */
 function diffChangedLines(diff: string): number {
   let n = 0;
   let oldLeft = 0;
@@ -76,8 +75,7 @@ function isDisqualified(a: AttemptCandidate): boolean {
   return false;
 }
 
-/** The rank tuple for one attempt, each entry already oriented so lower is better
- *  (section 4 "Rank lexicographically", keys 1-7). */
+/** The rank tuple for one attempt, each entry oriented so lower is better (section 4 "Rank lexicographically", keys 1-7). */
 function rankTuple(a: AttemptCandidate, sNames: Set<string>, wallNames: Set<string>): number[] {
   let wallPasses = 0;
   let deterministicFails = 0;
@@ -116,12 +114,10 @@ function compareTuples(x: number[], y: number[]): number {
 
 const RANK_LABELS = ["wallPasses", "deterministicFails", "passesInS", "flakyInS", "lintFails", "diffLines", "index"];
 
-/** Section 4 "Early accept": true only when S is non-empty and every check named in S or in
- *  `wall` has a "pass" entry in this one attempt's checks. The caller (S41-13) uses this to
- *  decide whether to accept a finished attempt and kill the other session before it even
- *  finishes. selectAttempt itself does not implement early accept: called with a single,
- *  all-failing attempt it still returns that attempt's index (nothing better was offered), so the
- *  caller must check isEarlyAccept before deciding to call selectAttempt with just one attempt. */
+/** Section 4 "Early accept": true only when S is non-empty and every check named in S or in `wall` has a "pass" entry
+ *  in this one attempt's checks. The caller (S41-13) uses it to accept a finished attempt and kill the other session
+ *  early. selectAttempt does not implement early accept (one all-failing attempt still returns its index), so the
+ *  caller must check isEarlyAccept first. */
 export function isEarlyAccept(attempt: AttemptCandidate, S: TestRef[], wall: TestRef[]): boolean {
   if (S.length === 0) return false;
   const required = new Set([...S.map(refName), ...wall.map(refName)]);
@@ -132,11 +128,9 @@ export function isEarlyAccept(attempt: AttemptCandidate, S: TestRef[], wall: Tes
   return true;
 }
 
-/** Section 4 "Attempt selection (two attempts)". `S` is the shared set (sealed Wall tests plus
- *  impacted(changed_A + changed_B), already filtered to tests existing at baseSha); `wall` is its
- *  sealed-Wall subset, used for rank key 1. This function only ranks and disqualifies -- it never
- *  decides early accept (see isEarlyAccept above): given one all-failing attempt it still returns
- *  that attempt, since nothing better is on offer in this call. */
+/** Section 4 "Attempt selection (two attempts)". `S` is the shared set (sealed Wall tests plus impacted(changed_A +
+ *  changed_B), already filtered to tests existing at baseSha); `wall` is its sealed-Wall subset, used for rank key 1.
+ *  This function only ranks and disqualifies; it never decides early accept (see isEarlyAccept above). */
 export function selectAttempt(attempts: AttemptCandidate[], S: TestRef[], wall: TestRef[]): SelectResult {
   if (attempts.length === 0) throw new Error("selectAttempt: no attempts given");
   const sNames = new Set(S.map(refName));
@@ -162,9 +156,8 @@ export function selectAttempt(attempts: AttemptCandidate[], S: TestRef[], wall: 
   return { index: winner.a.index, reason: `rank: ${decidedBy}` };
 }
 
-/** TEN-SPEED-07: a fix round's verify runs the tests that failed last round first, so a still-red file is reported early and
- *  the order of the rest is untouched (stable partition). Order only: every test still runs, no runner flag changes, so a
- *  runner this does not know about behaves exactly as before. `prior` is the previous verify output's checks. */
+/** TEN-SPEED-07: a fix round's verify runs the tests that failed last round first, so a still-red file is reported early and the
+ *  rest keep their order (stable partition). Order only: every test still runs and no runner flag changes. `prior` is the previous verify output's checks. */
 export function failedFirst<T extends TestRef>(tests: T[], prior: ReadonlyArray<{ name?: unknown; result?: unknown }> | undefined): T[] {
   const red = new Set((prior ?? []).filter((c) => c.result === "fail" && typeof c.name === "string").map((c) => c.name as string));
   if (red.size === 0) return tests;

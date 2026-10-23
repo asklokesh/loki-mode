@@ -201,8 +201,8 @@ export function classifyAssertDelta(inp: AssertDeltaInput): AssertDeltaResult {
   }
 }
 type Counts = { run: number; skipped: number };
-/** Receipt lines for an edited pre-existing test: `assertion value changed (not shown to be required by the task): file:line old -> new` per entry on a labelled value-change, else null; callers keep `weakened test` beside them
- *  (the caller keeps `weakened test`). headRef null reads the worktree. Missing counts or any failure is null (fail closed). */
+/** Receipt lines for an edited pre-existing test: `assertion value changed (not shown to be required by the task): file:line old -> new` per entry on a labelled value-change, else null; callers keep `weakened test` beside them.
+ *  headRef null reads the worktree. Missing counts or any failure is null (fail closed). */
 export function assertDeltaNotes(repoDir: string, baseSha: string, headRef: string | null, path: string, task: string, baseCounts?: Counts, headCounts?: Counts): string[] | null {
   if (!baseCounts || !headCounts) return null;
   try {
@@ -215,8 +215,7 @@ export function assertDeltaNotes(repoDir: string, baseSha: string, headRef: stri
   }
 }
 export interface TestEdit { kind: "literal-only" | "weakened"; file: string; line: number; old: string; new: string; inTask: boolean }
-/** D53 gate: pure. One "literal-only" entry per changed expected-value literal (each appears verbatim in the task), else a single "weakened" entry. Any doubt is "weakened".
- *  old and new are Python reprs. Counts are required. */
+/** D53 gate: pure. One "literal-only" entry per changed expected-value literal (each appears verbatim in the task), else a single "weakened" entry. Any doubt is "weakened". old and new are Python reprs; counts are required. */
 export function classifyTestEdit(file: string, oldText: string, newText: string, taskText: string, baseCounts: Counts, headCounts: Counts): TestEdit[] {
   const weak: TestEdit[] = [{ kind: "weakened", file, line: 0, old: "", new: "", inTask: false }];
   const r = classifyAssertDelta({ path: file, base: oldText, head: newText, task: taskText, baseCounts, headCounts });

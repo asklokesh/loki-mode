@@ -12,12 +12,10 @@ function failCount(out: string): number | null {
   const l = out.split("\n").reverse().map((x) => x.trim()).find((x) => /^(?:=+ )?\d+ \w+.* in [\d.]+s|^Tests?:?\s+\d/.test(x)), m = /^(?:#|\u2139) fail (\d+)$/m.exec(out);
   return l ? n(l, /(\d+) failed/) + n(l, /(\d+) errors?/) : m ? +m[1]! : null;
 }
-/** A-112: failing test ids (pytest `FAILED|ERROR path::name`, jest `bullet Suite > name` or `bullet name`, node TAP `not ok N - name` or its
- *  spec cross line, vitest `FAIL name`). [] unless the ids cover the runner's reported count: a partial extraction (collection or install
- *  failure, "Tests: 0 total") can never be subtracted. */
-/** go test (-json or plain) and cargo test ids, each with an independently counted failure total so a partial extraction stays fail-closed.
- *  go -json: id "pkg::Test" per Action=fail with a Test, or the package for a package-only fail; the count is the "--- FAIL:" output lines plus package-only fails.
- *  go plain: id is the "--- FAIL:" name, or the package of a "FAIL\tpkg" line that no test in that package explains. cargo: "test x ... FAILED" against the summed "N failed". */
+/** A-112: failing test ids (pytest `FAILED|ERROR path::name`, jest `bullet Suite > name` or `bullet name`, node TAP `not ok N - name` or its  spec cross line, vitest `FAIL name`). [] unless the ids cover the runner's reported
+ *  count: a partial extraction (collection or install  failure, "Tests: 0 total") can never be subtracted. */
+/** go test (-json or plain) and cargo test ids, each with an independently counted failure total so a partial extraction stays fail-closed.  go -json: id "pkg::Test" per Action=fail with a Test, or the package for a package-only fail; the count
+ *  is the "--- FAIL:" output lines plus package-only fails.  go plain: id is the "--- FAIL:" name, or the package of a "FAIL\tpkg" line that no test in that package explains. cargo: "test x ... FAILED" against the summed "N failed". */
 function goCargoIds(output: string): string[] | null {
   const lines = output.split("\n").map((l) => l.trim()), ids: string[] = [];
   const cargo = lines.filter((l) => /^test result: /.test(l));

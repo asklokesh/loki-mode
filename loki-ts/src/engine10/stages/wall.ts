@@ -1,13 +1,10 @@
-// E-15: Wall author (ENGINE.md 4). One provider session, cwd a fresh temp dir holding only task.md and repomap.txt
-// (never sees the code), writes loki_wall_* tests, copied into the repo (never on abort/kill/timeout, E-54) and
-// sealed under <runDir>/wall/ (sha256 each); wall.sealed before Implement; clean base-tree pass short-circuits to
-// already_satisfied. E-64: skipped outright on the small-task lean path (plan.ts logs the same decision).
+// E-15: Wall author (ENGINE.md 4). One provider session, cwd a fresh temp dir holding only task.md and repomap.txt (never sees the code), writes loki_wall_* tests, copied into the repo (never on abort/kill/timeout, E-54) and
+// sealed under <runDir>/wall/ (sha256 each); wall.sealed before Implement; clean base-tree pass short-circuits to already_satisfied. E-64: skipped outright on the small-task lean path (plan.ts logs the same decision).
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
-import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } from "../types.ts";
-import { taskBlock } from "../types.ts";
+import { type RunContext, type RunnerName, type Stage, type StageResult, type TestMap, type TestRef, taskBlock } from "../types.ts";
 import { unitSpec } from "../../features/speed/unit_mode.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
@@ -23,14 +20,12 @@ const WALL_PREFIX = "loki_wall_";
 
 export interface WallSealedFile { path: string; sha256: string; } // path: absolute, in the repo working tree
 
-// Runs the sealed Wall tests on the base tree; local since types.ts has no "execute tests" contract yet.
-// not_run (D42 (3)): no real result; counts toward neither pass nor fail. Optional for pre-D42(3) fakes.
+// Runs the sealed Wall tests on the base tree; local since types.ts has no "execute tests" contract yet. not_run (D42 (3)): no real result; counts toward neither pass nor fail. Optional for pre-D42(3) fakes.
 export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run?: number }; /** FC-69: why each not_run file of the LAST run was not executed */ lastNotRunFiles?: { file: string; reason: string }[]; /** TEN-SPEED-19: one result per file, input order, at most `jobs` processes at once */ runEach?(repoDir: string, files: TestRef[], jobs: number): Promise<BaseEachResult[]>; }
 export const BASE_RUN_TIMEOUT_MS = 60_000; // same per-check budget as verify.ts's CHECK_TIMEOUT_MS
 export { classify, notRunReason, pytestCollectionIsRed } from "../../util/check_result.ts"; // moved to util/check_result.ts (core line budget)
-// One process per file, through verify's own interpreter resolution (E-98a) so a missing `python` is never
-// misread as a failing test. env is explicit, matching verify.ts's runOnce (its default PATH lookup can
-// otherwise resolve a snapshot from process start, not the live env).
+// One process per file, through verify's own interpreter resolution (E-98a) so a missing `python` is never misread as a failing test. env is explicit, matching verify.ts's runOnce (its default PATH lookup can otherwise resolve a
+// snapshot from process start, not the live env).
 export class RealBaseTestRunner implements BaseTestRunner {
   lastNotRunFiles: { file: string; reason: string }[] = [];
   constructor(private readonly api?: ProjectApi | null, private readonly timeoutMs: number = BASE_RUN_TIMEOUT_MS) {} // FC-01: undefined = load the repo's cached Project Model per run
@@ -115,9 +110,8 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const testMap = (prior.intake?.testmap as TestMap | undefined) ?? null;
   const existingTests: TestRef[] = testMap?.tests ?? [];
 
-  // E-64: skip Wall too on the lean path (plan.ts, which always runs, logs this same decision on "variant").
-  // LOKI_E10_PLAN=always forces a plan even for a small task, so the lean path never applies: a forced plan
-  // still gets the Wall's independent acceptance tests. An external diff (CW-12) never takes the lean skip: the Wall is its only independent proof.
+  // E-64: skip Wall too on the lean path (plan.ts, which always runs, logs this same decision on "variant"). LOKI_E10_PLAN=always forces a plan even for a small task, so the lean path never applies: a forced plan still gets the
+  // Wall's independent acceptance tests. An external diff (CW-12) never takes the lean skip: the Wall is its only independent proof.
   const repoMap = loadRepoMap(repomapRef);
   const runners: RunnerName[] = testMap ? harnessRunners(testMap.runners, repoMap?.files ?? []) : [];
   const sz = sizeTask(task, repoMap, testMap);

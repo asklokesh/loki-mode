@@ -1,6 +1,4 @@
-// Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6, 10): eval marker first, origin pinned once, worker
-// spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal)
-// id; post-PR: detached deep verify, then Slack notify.
+// Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6, 10): eval marker first, origin pinned once, worker spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal) id; post-PR: detached deep verify, then Slack notify.
 import { routeStartLine } from "../runner/router/route_block.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
@@ -31,8 +29,7 @@ import { cleanTreeId, failedCheckNames, recordFingerprints } from "../util/failu
 import { modelDowngrades } from "../runner/model_downgrades.ts";
 import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
-import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
-import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, pushArgv, STAGE_BUDGETS } from "./types.ts";
+import { type EventEnvelope, type PushEnv, type StageName, type Verdict, backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, pushArgv, STAGE_BUDGETS } from "./types.ts";
 import { baseLine, dropEmptyRunBranch } from "../util/base_guard.ts";
 import { alreadyDoneTextComment, policyGate, prGate, runIntent, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
 
@@ -182,9 +179,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   let prUrl: string | null = null;
   const intact = log.verify(); // unconditional re-check before the PR
   if (!intact) notProven.push(TAMPER_NOT_PROVEN);
-  // E-66: already-satisfied opens no PR. E-67: FAILED (including a backstop kill) does not block the
-  // PR outright; backstopCommit lands what the kill left uncommitted so the diff below (against
-  // intake's base_sha) sees it. No diff falls to the comment/print branch below.
+  // E-66: already-satisfied opens no PR. E-67: FAILED (including a backstop kill) does not block the PR outright; backstopCommit lands what the kill left uncommitted so the diff below (against intake's base_sha) sees it. No diff falls to the comment/print branch below.
   let hasDiff = false; // P1: every verdict needs a net diff to publish; a SPEC_CONFLICT or PARTIAL that changed nothing must not push an empty branch
   if (!cancelled) {
     const stages = fold(readEvents(log.path)).stages; // A-104c: a failed commit stage already chose what to exclude (Wall files, lockfiles, pre-run dirt); a blanket `add -A` would undo it

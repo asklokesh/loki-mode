@@ -1,9 +1,5 @@
-// loki-ts/src/engine10/stages/seal.ts
-//
-// E-10: commit and Seal (docs/v10/ENGINE.md sections 4, 9). Writes receipt.json
-// and receipt.md, computes receipt_sha256, and signs natively with node:crypto Ed25519
-// (A-121; no python, no `cryptography`). The key is the A-120 local key, created on first
-// use. An empty token means UNSIGNED, never presented as attested.
+// E-10: commit and Seal (docs/v10/ENGINE.md sections 4, 9). Writes receipt.json and receipt.md, computes receipt_sha256, and signs natively with node:crypto Ed25519 (A-121; no python, no
+// `cryptography`). The key is the A-120 local key, created on first use. An empty token means UNSIGNED, never presented as attested.
 import { sanitizeReason } from "../../util/redact.ts";
 import { specReceiptBlock } from "../../util/spec_file.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock } from "../../util/run_outputs.ts";
 import { createHash } from "node:crypto"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
@@ -20,7 +16,7 @@ import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts";
 import { crossReview, minVerdict, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
-import { STAGE_BUDGETS } from "../types.ts";
+import { STAGE_BUDGETS, type Obj, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type Verdict } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
 import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
@@ -33,7 +29,6 @@ import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_gu
 import { hooks } from "../hooks.ts";
 import { atomicWriteText } from "../../util/atomic.ts";
 import { collapseNotProven } from "../../util/term_width.ts";
-import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes } from "../../util/base_guard.ts";
 
 export const SIGNING_UNAVAILABLE = "receipt signing unavailable (no usable signing key: invalid key or unwritable ~/.loki/keys)", AGENT_ONLY_REASON = "only agent-authored tests executed (no agent-independent proof)", WALL_GREEN_ON_BASE_REASON = "Wall green on base: no Wall test discriminates the change"; // TEN-GATES-02
@@ -66,9 +61,8 @@ export function receiptSha256(r: Omit<Receipt, "receipt_sha256" | "verification"
 
 export { canonicalJson, kidOf, loadSigningKey, signReceipt }; // moved to util/receipt_signer.ts (core line budget)
 
-// Worker side (token withheld, the agent already has exec): the seal add keeps the repo's content drivers, and the seal commit
-// also keeps the user's hooks and commit signing, so pre-commit scanners and "require signed commits" still apply. safeGitRun
-// strips the token from the env either way.
+// Worker side (token withheld, the agent already has exec): the seal add keeps the repo's content drivers, and the seal commit also keeps the user's hooks and commit signing, so pre-commit scanners
+// and "require signed commits" still apply. safeGitRun strips the token from the env either way.
 const g = (ctx: RunContext) => (a: string[]): Promise<{ out: string; code: number }> => git(ctx, a);
 async function git(ctx: RunContext, args: string[], keep: SafeGitKeep = {}): Promise<{ out: string; code: number }> {
   const r = await safeGitRun(ctx.repoDir, args, { timeoutMs: 20000, ...keep });
@@ -102,9 +96,7 @@ export const commitStage: Stage = {
   },
 };
 
-// Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus duration_s
-// from section 5) are trusted; any other key seal reads puts a "not recorded" entry on
-// NOT PROVEN when absent, so a producer cannot silently shape the receipt.
+// Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus duration_s from section 5) are trusted; any other key seal reads puts a "not recorded" entry on NOT PROVEN when absent, so a producer cannot silently shape the receipt.
 export const wallGreenOnBaseOf = (o: Partial<Record<StageName, Obj>>): boolean => { const b = (o.wall?.base_run ?? {}) as Obj; return typeof b.pass === "number" && b.pass > 0 && b.fail === 0 && (typeof b.not_run === "number" ? b.not_run : 0) === 0; }; // D42 (3)/B1 (r2): green only with real passes, no failure, no not_run; shared by seal, wall.ts runWall
 export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean, proof: boolean, targetProof = false, uncovered: string[] = [], leanGap: string[] = []): Verdict {
   const exit = o.implement?.exit;
@@ -179,9 +171,7 @@ export const sealStage: Stage = {
     const top = (await git(ctx, ["rev-parse", "HEAD"])).out.trim(), wallDone = await wallChild(g(ctx), ctx.runId, ctx.repoDir, o.wall?.files); // FC-VERIFIED-PR-WITHOUT-ITS-TEST: a re-seal after the Wall child commit binds the product head again
     const head = wallDone ? (await git(ctx, ["rev-parse", "HEAD^"])).out.trim() : top;
     const tree = (await git(ctx, ["rev-parse", `${head}^{tree}`])).out.trim();
-    // Plumbing, so repo/global config (diff.noprefix, color, textconv, ext diff, quotepath) cannot
-    // change the hash. A verifier recomputes it with exactly: git diff-tree -r -z --raw --no-renames
-    // --no-abbrev -O/dev/null <base> <head> -- . ':(exclude).loki'
+    // Plumbing, so repo/global config (diff.noprefix, color, textconv, ext diff, quotepath) cannot change the hash. A verifier recomputes it with exactly: git diff-tree -r -z --raw --no-renames --no-abbrev -O/dev/null <base> <head> -- . ':(exclude).loki'
     const diff = await safeGitRun(ctx.repoDir, ["diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", "-O/dev/null", ctx.baseSha, head, "--", ".", EXCLUDE_LOKI], { timeoutMs: 20000 });
     const diffOk = diff.exitCode === 0 && /^[0-9a-f]{40,64}$/.test(head);
     const verifyNotProven = strs(o.verify?.not_proven); // E-98a B1: a section 4 key, trusted like checks/flaky below
@@ -270,8 +260,7 @@ export const sealStage: Stage = {
     const wallPassed = typeof o.verify?.wall_passed === "boolean" ? o.verify.wall_passed : null;
     if (wallFiles.length > 0 && wallPassed === null) notProven.add("wall result not recorded by verify");
 
-    // R1-15: router route block. Null (key omitted, hash stable) unless LOKI_ROUTER is on. Route facts come from the implement
-    // output when R1-11 records them; token telemetry from the R1-08 result-cost fields (the cost reader's own `router`, else the files).
+    // R1-15: router route block. Null (key omitted, hash stable) unless LOKI_ROUTER is on. Route facts come from the implement output when R1-11 records them; token telemetry from the R1-08 result-cost fields (the cost reader's own `router`, else the files).
     const routeBlock = buildRouteBlock(process.env, ctx.provider, (o.implement?.route ?? o.plan?.route_record ?? (routerEnabled(process.env) ? loadRouteRecord(ctx.runDir) : undefined)) as Record<string, unknown> | undefined,
       (cost as { router?: Record<string, number> }).router ?? (routerEnabled(process.env) ? sumResultCosts(join(ctx.repoDir, ".loki"), liveArchivedCosts(join(ctx.repoDir, ".loki"), iterIds, UNMETERED)).router : undefined), ctx.model);
     if (routeBlock) for (const l of routeNotProven(routeBlock)) notProven.add(l);

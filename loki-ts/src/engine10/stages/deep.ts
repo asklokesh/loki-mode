@@ -1,9 +1,6 @@
 // loki-ts/src/engine10/stages/deep.ts -- E-23 Deep verify (ENGINE.md section 4). Runs after Seal
-// + PR: full suite, app-boot probe, council, secret scan; reports via engine10-push.sh (comment +
-// addendum + status). A refused or unavailable check is NOT PROVEN, never red; only a failing full
-// suite or a secret match is failure. Rule of Two: assertWorkerEnv asserts no real GitHub token,
-// since the deep worker runs repo code and reads untrusted diffs. Council goes through the
-// injectable CouncilRunner; unwired, it is NOT PROVEN, never passing.
+// + PR: full suite, app-boot probe, council, secret scan; reports via engine10-push.sh (comment + addendum + status). A refused or unavailable check is NOT PROVEN, never red; only a failing full suite or a secret match is
+// failure. Rule of Two: assertWorkerEnv asserts no real GitHub token, since the deep worker runs repo code and reads untrusted diffs. Council goes through the injectable CouncilRunner; unwired, it is NOT PROVEN, never passing.
 import { installOwned } from "../../project_model/install.ts";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,13 +14,11 @@ import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv } from "../../project_model/package_suite.ts";
 import { classifyCheck, failureExcerpt, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
-import type { PushArgs, ReceiptCheck, RunContext, RunnerName, SessionRunner, Stage, StageResult } from "../types.ts";
-import { pushArgv, STAGE_BUDGETS } from "../types.ts";
+import { type PushArgs, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, pushArgv, STAGE_BUDGETS } from "../types.ts";
 import { REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
 import { DEFAULT_PUSH_SH, SHA_RE } from "./pr.ts";
-/** RunContext plus the value this stage needs that E-03 will eventually
- *  inject (same local-extension pattern pr.ts's PrContext already uses). */
+/** RunContext plus the value this stage needs that E-03 will eventually  inject (same local-extension pattern pr.ts's PrContext already uses). */
 export type DeepContext = RunContext & {
   pinnedOrigin?: string;
 };
@@ -56,9 +51,7 @@ export function sessionCouncil(sessions: SessionRunner): CouncilRunner {
     } finally { rmSync(cwd, { recursive: true, force: true }); }
   } };
 }
-/** ReceiptCheck (types.ts) plus a `reason` field the contract does not carry,
- *  the same disclosed-extra-field pattern testmap.ts's EngineTestMap and
- *  verify.ts's VerifyCheck already use. */
+/** ReceiptCheck (types.ts) plus a `reason` field the contract does not carry,  the same disclosed-extra-field pattern testmap.ts's EngineTestMap and  verify.ts's VerifyCheck already use. */
 export interface DeepCheck extends ReceiptCheck {
   reason?: string; ids?: string[]; excerpt?: string; // excerpt: redacted failure text for the fix brief; ids: failing test ids of the real run (failIds), read by verify's baseline attribution
 }
@@ -79,8 +72,7 @@ const MAX_COUNCIL_DIFF_BYTES = 400_000; // ENGINE.md section 2 cause 4: a 431361
 const COUNCIL_LIMIT_S = 600;
 const FULL_SUITE_TIMEOUT_MS = 300_000; // 5 min per runner; deep's own stage limit (2700s) is the outer bound
 const PR_NUMBER_RE = /\/pull\/(\d+)$/;
-/** One check per detected runner, run to completion (no retry: flaky-rerun
- *  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
+/** One check per detected runner, run to completion (no retry: flaky-rerun  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
 export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
   if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), changed: opts.changed, proofFiles: opts.proofFiles, wallBaseRed: opts.wallBaseRed }, checks, notProven)) return;
   const map = await ctx.tests.detect(ctx.repoDir);
@@ -115,8 +107,7 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);
   }
 }
-/** ENGINE.md section 4 app boot: util/app_probe.ts boots via autonomy/app-runner.sh, probes health and always stops the PID it
- *  recorded. Its checks land as-is; a not_run (no app, missing runtime, throw) is NOT PROVEN, never fail and never pass. */
+/** ENGINE.md section 4 app boot: util/app_probe.ts boots via autonomy/app-runner.sh, probes health and always stops the PID it  recorded. Its checks land as-is; a not_run (no app, missing runtime, throw) is NOT PROVEN, never fail and never pass. */
 async function runAppBoot(ctx: RunContext, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
   let r: AppProbeResult;
   try { r = await (opts.appProbe ?? appProbe)(ctx.repoDir, join(ctx.repoDir, ".loki")); } catch (err) { r = { checks: [{ name: "app boot", cmd: "autonomy/app-runner.sh", result: "not_run", duration_s: 0, reason: `app probe threw: ${(err as Error).message}` }], pid: null, url: null }; }
@@ -151,8 +142,7 @@ async function secureScanChanged(repoDir: string, changed: string[], opts: DeepO
     return await runSecureScan(dir, { ...(opts.secureScanPath ? { scriptPath: opts.secureScanPath } : {}), timeoutMs: 60_000 });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
-/** One "security scan" check over the changed files: secret-scan.sh's two matchers (sourced, never edited) plus secure-scan.py.
- *  A secret hit or a HIGH secure-scan finding is fail; else a missing or broken scanner is not_run (NOT PROVEN), never pass. */
+/** One "security scan" check over the changed files: secret-scan.sh's two matchers (sourced, never edited) plus secure-scan.py.  A secret hit or a HIGH secure-scan finding is fail; else a missing or broken scanner is not_run (NOT PROVEN), never pass. */
 async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
   const scriptPath = opts.secretScanShPath ?? DEFAULT_SECRET_SCAN_SH, name = "security scan", cmd = "secret-scan.sh + secure-scan.py";
   if (!existsSync(scriptPath)) { checks.push({ name, cmd, result: "not_run", duration_s: 0 }); notProven.add(`not run: ${name} (secret-scan.sh not found)`); return; }

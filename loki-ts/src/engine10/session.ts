@@ -1,15 +1,13 @@
-// E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be
-// killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
+// E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
 import { createWatchdog, stallKillS, stallThresholdS } from "../runner/watchdog.ts";
 import { neutralizeEngineMarkers, sdkAuthCause } from "../runner/retry_class.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { archivePriorCosts, writeProviderCost } from "../providers/provider_cost.ts";
+import { archivePriorCosts, writeProviderCost, stageMedianGapMs } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
 import { canonicalSessionPin, PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
-import { stageMedianGapMs } from "../providers/provider_cost.ts";
 import { idleGapMs } from "../util/cost_breakdown.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
@@ -40,11 +38,8 @@ export interface SessionRunnerConfig {
 }
 /** Recorded when a claude run has no configured model: the provider CLI runs its own default, exactly like raw `claude -p` (L1). */
 export { PROVIDER_DEFAULT_MODEL }; // label lives in util/claude_model.ts (a leaf the runner can import without a cycle)
-/**
- * The model a LOKI_SESSION_MODEL pin names for a claude run (undefined when unset). Throws on an unrecognized value (never the provider default).
- * opus|sonnet|haiku are themselves, fable collapses to opus as the bash resolver does, and a tier name takes that tier's configured model.
- * An explicit haiku pin is honored without LOKI_ALLOW_HAIKU: the user asked for it; bash would dispatch sonnet there.
- */
+/** The model a LOKI_SESSION_MODEL pin names for a claude run (undefined when unset). Throws on an unrecognized value (never the provider default). opus|sonnet|haiku are themselves, fable collapses to opus as the bash resolver does, and a tier
+ *  name takes that tier's configured model. An explicit haiku pin is honored without LOKI_ALLOW_HAIKU: the user asked for it; bash would dispatch sonnet there. */
 export function sessionPinModel(e: NodeJS.ProcessEnv = process.env): string | undefined {
   const pin = canonicalSessionPin(e["LOKI_SESSION_MODEL"]);
   if (!pin) return undefined;
@@ -163,9 +158,8 @@ function exitKind(exit: number | null, killed: boolean, markers: SessionMarkers)
   if (exit === 0) return "done";
   return "error";
 }
-// E-68 (augmentiq #52 P0): every exit code a provider call can produce, named. 125 and 143 are
-// explicitly in scope (a container runtime or the shell itself can emit either). A code outside
-// this table still names the number: classifyExitCause never falls back to an un-named string.
+// E-68 (augmentiq #52 P0): every exit code a provider call can produce, named. 125 and 143 are explicitly in scope (a container runtime or the shell itself can emit either). A code outside this table
+// still names the number: classifyExitCause never falls back to an un-named string.
 const EXIT_CAUSES: Readonly<Record<number, string>> = {
   0: "exit 0 (success)",
   1: "exit 1 (general error)",
@@ -178,8 +172,7 @@ const EXIT_CAUSES: Readonly<Record<number, string>> = {
   137: "exit 137 (SIGKILL)",
   143: "exit 143 (SIGTERM)",
 };
-// E-68: a session child traps SIGTERM and exits 143, so classify from what the ENGINE knows (it sent the kill), never the child's code:
-// killed always wins. killCause names which kill fired; it defaults to "limit".
+// E-68: a session child traps SIGTERM and exits 143, so classify from what the ENGINE knows (it sent the kill), never the child's code: killed always wins. killCause names which kill fired; it defaults to "limit".
 export function classifyExitCause(exit: number | null, killed: boolean, killCause?: "limit" | "aborted" | "stalled"): string {
   if (killed) return killCause ?? "limit";
   if (exit === null) return "external kill";
@@ -250,9 +243,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
         if (stderrTail.length > STDERR_TAIL_BYTES) stderrTail = stderrTail.subarray(stderrTail.length - STDERR_TAIL_BYTES);
       });
       let killed = false;
-      // Which kill fired, from the engine's own point of view -- never guessed from the
-      // child's exit code. First one wins: the limit timer and an external abort cannot
-      // both be the cause of the same kill.
+      // Which kill fired, from the engine's own point of view -- never guessed from the child's exit code. First one wins: the limit timer and an external abort cannot both be the cause of the same kill.
       let killCause: "limit" | "aborted" | "stalled" | null = null;
       const kill = (cause: "limit" | "aborted" | "stalled") => {
         if (killed) return;

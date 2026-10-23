@@ -1,6 +1,4 @@
-// Loki 10 worker (P2, ENGINE.md 6): the token-withheld process that runs intake..seal. It never writes
-// events.jsonl; each event is one JSON line {type, stage, data} on stdout, and the supervisor validates,
-// stamps seq and appends. Its own diagnostics go to stderr.
+// Loki 10 worker (P2, ENGINE.md 6): the token-withheld process that runs intake..seal. It never writes events.jsonl; each event is one JSON line {type, stage, data} on stdout, and the supervisor validates, stamps seq and appends. Its own diagnostics go to stderr.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readEvents } from "./events.ts";
@@ -13,8 +11,7 @@ import { FLOW, runMachine } from "./machine.ts";
 import { withFailover, type FailoverRecord } from "../runner/provider_failover.ts";
 import { cancelSessions, createSessionRunner, resolveModel, type EmitFn } from "./session.ts";
 import { RealTestMapProvider } from "./testmap.ts";
-import { DEEP_CAP_S, DEFAULT_CAP_S, envCapS } from "./types.ts";
-import type { EventType, RunContext, StageName } from "./types.ts";
+import { DEEP_CAP_S, DEFAULT_CAP_S, envCapS, type EventType, type RunContext, type StageName } from "./types.ts";
 import { safeGit } from "../util/safe_git.ts";
 export type WorkerEmit = (type: EventType, stage: StageName | null, data: Record<string, unknown>) => void;
 /** The stage driver; `main` below passes machine.ts. */

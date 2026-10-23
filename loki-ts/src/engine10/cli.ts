@@ -1,13 +1,6 @@
-// Loki 10 engine subcommand router (ENGINE.md section 11, slice E-12).
-// Reached only through `loki-ts/src/cli.ts` case "engine10", which bin/loki
-// selects. Every target module is loaded lazily, and no
-// sibling module (types.ts included) is imported statically, so this file
-// works before its siblings exist: a missing module prints
-// "engine10: <module> not built yet" and exits 2.
-//
-// Module contract: each target exports `main(args: string[])` returning an
-// exit code (or void for 0); stages/deep.ts exports `deepSupervise` and
-// `deepWorker` instead.
+// Loki 10 engine subcommand router (ENGINE.md section 11, slice E-12). Reached only through `loki-ts/src/cli.ts` case "engine10", which bin/loki selects. Every target module is loaded lazily, and no
+// sibling module (types.ts included) is imported statically, so this file works before its siblings exist: a missing module prints "engine10: <module> not built yet" and exits 2.
+// Module contract: each target exports `main(args: string[])` returning an exit code (or void for 0); stages/deep.ts exports `deepSupervise` and `deepWorker` instead.
 const DEFAULT_MAX_COST_USD = (require("../e10ext/budget_cap.ts") as typeof import("../e10ext/budget_cap.ts")).DEFAULT_MAX_COST_USD; // LM-002: help text states the real default (require, not a static import: this router imports nothing statically)
 export interface Route {
   module: string; // path relative to this directory
@@ -52,8 +45,7 @@ export function route(args: string[]): Route | null {
   return { module: "supervisor.ts", fn: "main", args };
 }
 export type Loader = (specifier: string) => Promise<Record<string, unknown>>;
-// A non-literal specifier keeps `bun build` from trying to bundle modules
-// that do not exist yet. Production already switched to literal imports (registry.ts, E-32).
+// A non-literal specifier keeps `bun build` from trying to bundle modules that do not exist yet. Production already switched to literal imports (registry.ts, E-32).
 const defaultLoader: Loader = (spec) => import(spec);
 function isMissing(err: unknown, spec: string): boolean {
   const e = err as { code?: string; message?: string } | null;
@@ -62,9 +54,7 @@ function isMissing(err: unknown, spec: string): boolean {
     e?.code === "ERR_MODULE_NOT_FOUND" ||
     e?.code === "MODULE_NOT_FOUND" ||
     /Cannot find module|Module not found/i.test(msg);
-  // Only the target itself counts: Bun names the specifier ("./status.ts"),
-  // while a missing import inside it names that import plus the importer's
-  // absolute path, which never contains "./<module>".
+  // Only the target itself counts: Bun names the specifier ("./status.ts"), while a missing import inside it names that import plus the importer's absolute path, which never contains "./<module>".
   return notFound && msg.includes(spec);
 }
 export async function runEngine10(args: string[], load: Loader = defaultLoader): Promise<number> {

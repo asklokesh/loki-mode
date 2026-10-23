@@ -1,7 +1,6 @@
 // Thin delegate over util/relevance.ts. Lives outside stages/ so features/ may import it (D66 fence); plan.ts re-exports it.
 import type { RepoMap } from "./repomap.ts";
-import { rankRelevant } from "../util/relevance.ts";
-import type { PickedFile } from "../util/relevance.ts";
+import { rankRelevant, type PickedFile } from "../util/relevance.ts";
 
 export type { PickedFile };
 export const MAX_RELEVANT_FILES = 8;

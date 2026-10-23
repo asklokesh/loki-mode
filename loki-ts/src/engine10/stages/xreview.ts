@@ -1,6 +1,5 @@
-// B4: opt-in cross-lab review between verify and seal. A second provider reads the committed diff
-// read-only and may only DOWNGRADE the verdict (flag adds NOT PROVEN, block caps at PARTIAL).
-// Off unless loki.yaml `review:`, LOKI_REVIEW_PROVIDER or LOKI_XVENDOR_DEFAULT is set; a medium-tier run with none of these reviews with its own CLI (LOKI_REVIEW_PROVIDER=off|none opts out).
+// B4: opt-in cross-lab review between verify and seal. A second provider reads the committed diff read-only and may only DOWNGRADE the verdict (flag adds NOT PROVEN, block caps at PARTIAL). Off
+// unless loki.yaml `review:`, LOKI_REVIEW_PROVIDER or LOKI_XVENDOR_DEFAULT is set; a medium-tier run with none of these reviews with its own CLI (LOKI_REVIEW_PROVIDER=off|none opts out).
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadReviewStageAgent } from "../../council/role_agents.ts";

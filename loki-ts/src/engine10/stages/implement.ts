@@ -14,16 +14,14 @@ import { resumeAfterConflict, resumeAfterEmptyDone } from "../../util/conflict_r
 import { planChain, readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
 import { routerActive } from "../../runner/router/unit_model.ts";
-import type { ImplementExit, RunContext, SessionRunOptions, Stage, StageResult, TestMap } from "../types.ts";
-import { taskBlock } from "../types.ts";
+import { type ImplementExit, type RunContext, type SessionRunOptions, type Stage, type StageResult, type TestMap, taskBlock } from "../types.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { sha256 } from "./seal.ts";
 import { loadSpecFile, specBriefBlock, type LoadedSpec } from "../../util/spec_file.ts";
 
 /** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
 export interface ReadOnlyFile { path: string; content: string; }
 
-/** Impacted tests: the intake test map narrowed to plan's relevant files, falling back to the task's named
- *  files when Plan was skipped or found none (E-64's lean path; E-98c), plus the sealed Wall tests. */
+/** Impacted tests: the intake test map narrowed to plan's relevant files, falling back to the task's named  files when Plan was skipped or found none (E-64's lean path; E-98c), plus the sealed Wall tests. */
 export function impactedTests(ctx: RunContext): string[] {
   const o = ctx.outputs();
   const map = o.intake?.testmap as TestMap | undefined;

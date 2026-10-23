@@ -1931,6 +1931,15 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: the stub records its subcommand and the tests require `reseal` for fix and `explain` for explain; groups are now `loki-issue-`, `loki-issue-publish-`, `loki-pr-fix-`, `loki-pr-publish-`, and a guard requires four distinct groups.
 - Fixture: tests/test-issue-to-pr-action.sh; mutants: drop `SUB="reseal"` (2 failures), make the publish group equal the agent group (guard red).
 
+## FC-LINE-CAP-GATED-AFTER-MERGE Main went red on core engine10 5091 >= 5000 and e10ext 1513 >= 1500 because the line caps are enforced only by budget.test.ts and structural-checks line_budgets, not before a slice merges
+
+- User-visible vs raw: raw (a red structural gate on main; no user-facing behavior).
+- Law: a cap that blocks main must also block the slice that crosses it; a slice may not merge on a gate that does not run the cap.
+- Cause (measured): `bash scripts/structural-checks.sh` on origin/main 736a43939 printed "core engine10 5091 >= 5000" and "e10ext 1513 >= 1500". Commits 62f946e19 and 484752c3b touched the wall and testmap files in those dirs most recently; whether a slice gate ran line_budgets before merge is not measured here.
+- Siblings swept: modernize 4000, contrib 1200 and SKILL.md 500 are under their caps in the same run (only the two lines above failed).
+- Mechanism: this slice restores headroom without changing a cap or any behavior: comment paragraphs and doc comments in engine10 are reflowed to 230 columns (code unchanged; comment text identical once whitespace and comment markers are stripped), and in e10ext redundant header and doc-comment lines are tightened and one unused import line is removed. Running line_budgets before merge is a separate change, not made here.
+- Fixture: tests/engine10/budget.test.ts and scripts/structural-checks.sh line_budgets are the existing guards; both must exit 0 on this branch.
+
 ## FC-RELEASE-UNNAMED-STACKED-PARENT A release merge shipped stacked parent commits that no reviewer had approved by SHA, including slices on hold, because the approval gate only checked the VERSION line (#436)
 - User-visible vs raw: users received v11.58.0 containing cw20-r2 parents e4c445b73 and 13b46699d, plus cw15/ux350/roadmap100 parents 9bf08f534, dc2e16314, 64e9f1a09 and cf177adf5, while the slice hold stood. Raw: the range held commits no TL or HIGH APPROVE line named; a rebase had also changed f8f263627 after approval.
 - Law broken: D12/D13 (a release carries only what a named reviewer approved); a hold is a block (OPERATING-MODEL.md, Release Manager).

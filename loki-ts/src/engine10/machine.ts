@@ -1,6 +1,4 @@
-// Loki 10 state machine (ENGINE.md section 4): stage table, Plan || Wall, optional() loader,
-// stage limits, global cap, stop reasons (stalled, fatal). Siblings arrive only through
-// RunContext; stages come from ./stages/<name>.ts.
+// Loki 10 state machine (ENGINE.md section 4): stage table, Plan || Wall, optional() loader, stage limits, global cap, stop reasons (stalled, fatal). Siblings arrive only through RunContext; stages come from ./stages/<name>.ts.
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
@@ -9,9 +7,8 @@ import { safeGit } from "../util/safe_git.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
-import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS } from "./types.ts";
+import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
 import { repeatedNoopFix } from "../util/anti_loop.ts";
-import type { EventType, Obj, RunContext, Stage, StageName, StageResult } from "./types.ts";
 
 /** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
 interface WallSplit {
@@ -63,8 +60,7 @@ function defaultLoader(dir: string) {
   };
 }
 export const hasFailures = (d: Obj | undefined): boolean => (Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0) || (typeof d?.holdout_failed === "number" && d.holdout_failed > 0); // C-C4b: a held-out failure is only an opaque count
-// Only already_satisfied short-circuits to the tail. spec_conflict still runs verify (E-98b) but no
-// fix round (FC-FIX-OVER-CONFLICT); seal reads implement.exit off outputs for the verdict.
+// Only already_satisfied short-circuits to the tail. spec_conflict still runs verify (E-98b) but no fix round (FC-FIX-OVER-CONFLICT); seal reads implement.exit off outputs for the verdict.
 const earlyExit = (d: Obj): boolean => d.already_satisfied === true;
 /** After a cap or limit kill, how long the machine waits for the aborted stage to settle before moving on. */
 const KILL_GRACE_MS = 2000;

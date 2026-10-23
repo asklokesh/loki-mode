@@ -5,9 +5,8 @@ import type { RepoMap } from "../repomap.ts";
 import { selectRelevantFiles } from "../relevant_files.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import { cascadeEnabled, hasRelevantTests, loadRepoMap, planMode, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
-import type { RunContext, Stage, StageResult, TestMap } from "../types.ts";
+import { type RunContext, type Stage, type StageResult, type TestMap, taskBlock } from "../types.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
-import { taskBlock } from "../types.ts";
 import { PLAN_SCOPE_FILE, outOfRepoInstruction, planOutOfRepo } from "../../util/run_cap.ts";
 import { loadTaskText } from "./wall.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
@@ -93,8 +92,7 @@ export const planStage: Stage = {
       session = await runPlan(true);
     }
 
-    // E-61: a non-killed error exit fails this stage (never read as an empty plan); mustJump (machine.ts)
-    // still lets the flow continue: implement falls back to planning the change itself.
+    // E-61: a non-killed error exit fails this stage (never read as an empty plan); mustJump (machine.ts) still lets the flow continue: implement falls back to planning the change itself.
     if (!session.killed && session.exit !== 0) {
       pr.record({ planModel, planModelNote, skipReason: `plan session failed (exit ${session.exit})` });
       mkdirSync(ctx.runDir, { recursive: true });

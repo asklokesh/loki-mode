@@ -1,18 +1,10 @@
-// loki-ts/src/engine10/cost.ts
-//
-// E-06: harvest result-cost side files (`<lokiRoot>/metrics/result-cost-<iter>.json`, the exact shape writeResultCost in
-// src/runner/sdk_stream_parser.ts writes: {total_cost_usd, input_tokens, output_tokens, cache_read_tokens,
-// cache_creation_tokens, model}) into cost-event data. Absent/unreadable/no-total_cost_usd, or a dollar figure with
-// all-zero usage (E-69, the EV-8 failure mode), all mean UNKNOWN: usd null, never 0.
-//
-// E-06b: also writes `<lokiRoot>/metrics/efficiency/iteration-<N>.json`, the shape ENGINE.md section 10 and
-// autonomy/lib/cost-summary.py read (not ours to change). Unlike the legacy bash writer (autonomy/run.sh), which
-// always writes cost_usd (defaulting to 0 when unknown), this omits cost_usd when there is no dollar figure.
+// E-06: harvest result-cost side files (`<lokiRoot>/metrics/result-cost-<iter>.json`, the exact shape writeResultCost in src/runner/sdk_stream_parser.ts writes: {total_cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, model}) into
+// cost-event data. Absent/unreadable/no-total_cost_usd, or a dollar figure with all-zero usage (E-69, the EV-8 failure mode), all mean UNKNOWN: usd null, never 0. E-06b: also writes `<lokiRoot>/metrics/efficiency/iteration-<N>.json`, the shape ENGINE.md section 10 and
+// autonomy/lib/cost-summary.py read (not ours to change). Unlike the legacy bash writer (autonomy/run.sh), which always writes cost_usd (defaulting to 0 when unknown), this omits cost_usd when there is no dollar figure.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"; import type { CostRecords, CostTotals } from "./types.ts"; import { hooks } from "./hooks.ts"; import { type CostBreakdown, costBreakdown } from "../util/cost_breakdown.ts";
 import { join } from "node:path"; import { sessionPlanEnabled } from "../runner/router/flag.ts";
 
-/** D48: marker on a result-cost file and the cost event/receipt for a CLI-invoker session (LOKI_E10_INVOKER=cli, e.g. the
- *  stub provider) that has no provider-reported dollars. Recorded as 0, never null, and always disclosed in NOT PROVEN. */
+/** D48: marker on a result-cost file and the cost event/receipt for a CLI-invoker session (LOKI_E10_INVOKER=cli, e.g. the  stub provider) that has no provider-reported dollars. Recorded as 0, never null, and always disclosed in NOT PROVEN. */
 export const UNMETERED = "cli-invoker-unmetered";
 
 export interface RouterUsage {
@@ -31,8 +23,7 @@ export interface CostResult {
   estimated?: boolean; // PARITY-COST: some session in this sum was priced from the price table (estimated=true), not provider dollars
   unmetered?: boolean; // some session in this sum carried the UNMETERED marker
   usd: number | null;
-  // E-69: dollars actually reported by the measured sessions even when usd above is null (some OTHER
-  // session in this call wasn't priced). Lets a caller render "partial: $X for N of M" instead of "not measured".
+  // E-69: dollars actually reported by the measured sessions even when usd above is null (some OTHER session in this call wasn't priced). Lets a caller render "partial: $X for N of M" instead of "not measured".
   partialUsd: number;
   measuredCount: number; // sessions with a provider-sourced dollar figure and real usage (see noUsage below)
   totalCount: number; // iterations.length, so a caller can report "N of M"
@@ -47,17 +38,15 @@ export interface CostResult {
   records?: CostRecords; // COST-RECORDS / FIX-RESUME: per-model, scope, turns, resume verdict; absent when no file was read
   duration_ms?: number; // sum of the SDK result line duration_ms over the files that carried one; absent when none did
   breakdown?: CostBreakdown; // P12-21: per-stage and retry attribution; usd null exactly when the run's is
-  // R1-08: summed router telemetry. over_100k_* are the input/output tokens of requests strictly over
-  // 100K prompt tokens, so a caller can apply the pricing over_100k tier (budget.ts); not applied here.
-  // Optional so other CostResult producers (budget.ts) need no change; sumResultCosts always sets it.
+  // R1-08: summed router telemetry. over_100k_* are the input/output tokens of requests strictly over 100K prompt tokens, so a caller can apply the pricing over_100k tier (budget.ts); not applied
+  // here. Optional so other CostResult producers (budget.ts) need no change; sumResultCosts always sets it.
   router?: RouterUsage;
   model: string | null; // E-50: provider-reported model from the result-cost file itself, never a guess
   source: string; // comma-joined result-cost file paths that were read
   missing: string[]; // iterations with no dollar figure: no file, a file with no total_cost_usd, or all-zero usage (see noUsage below)
 }
 
-/** R1-08: router telemetry is recorded only when the router flag is on (1/true/on, same as the router flag readers), so LOKI_ROUTER unset or 0
- *  leaves the result-cost file and CostResult byte-identical to pre-router. Shared by the stream parser. */
+/** R1-08: router telemetry is recorded only when the router flag is on (1/true/on, same as the router flag readers), so LOKI_ROUTER unset or 0  leaves the result-cost file and CostResult byte-identical to pre-router. Shared by the stream parser. */
 export function routerTelemetryOn(env: Record<string, string | undefined> = process.env): boolean {
   return sessionPlanEnabled(env); // the router, or the advisor alone (#246: a parity run must show the advisor attached)
 }
@@ -70,9 +59,7 @@ export function resultCostPath(lokiRoot: string, iteration: string): string {
   return join(lokiRoot, "metrics", `result-cost-${iteration}.json`);
 }
 
-// Sum across sessions. Any missing session makes usd null: a partial sum
-// would understate the run's cost. Tokens still sum what was measured.
-// `context` are other iterations of the same run, read only to find a resumed session's predecessor (never summed).
+// Sum across sessions. Any missing session makes usd null: a partial sum would understate the run's cost. Tokens still sum what was measured. `context` are other iterations of the same run, read only to find a resumed session's predecessor (never summed).
 export function sumResultCosts(lokiRoot: string, iterations: string[], context: string[] = []): CostResult {
   const out: CostResult = {
     usd: null, partialUsd: 0, measuredCount: 0, totalCount: iterations.length,
@@ -84,8 +71,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
   const sources: string[] = [];
   const recs: { iter: string; rec: Record<string, unknown> }[] = [];
   let usd = 0, readSeen = 0, creationSeen = 0, durSeen = 0, tokenSessions = 0;
-  // FIX-RESUME: decide ambiguity over every parsed file first; an ambiguous file (a resumed total that may already
-  // include its predecessor) is excluded from EVERY summed figure, not just dollars (R3-2).
+  // FIX-RESUME: decide ambiguity over every parsed file first; an ambiguous file (a resumed total that may already include its predecessor) is excluded from EVERY summed figure, not just dollars (R3-2).
   const parsed = new Map<string, Record<string, unknown>>();
   for (const iter of iterations) {
     try { parsed.set(iter, JSON.parse(readFileSync(resultCostPath(lokiRoot, iter), "utf8")) as Record<string, unknown>); } catch { /* counted missing below */ }
@@ -110,8 +96,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
       sources.push(path);
       continue;
     }
-    // The file parsed, so its tokens are real even when total_cost_usd is absent (a codex/tokens-only
-    // session): capture them regardless of a dollar figure below (dropping them was the E-06 bug).
+    // The file parsed, so its tokens are real even when total_cost_usd is absent (a codex/tokens-only session): capture them regardless of a dollar figure below (dropping them was the E-06 bug).
     tokenSessions++;
     const inTok = num(rec["input_tokens"]);
     const outTok = num(rec["output_tokens"]);
@@ -136,8 +121,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
     sources.push(path);
     recs.push({ iter, rec });
     const c = rec["total_cost_usd"];
-    // E-69 (EV-8 failure mode "Cost: $0.00 (claude, 0 tokens)"): a dollar figure with all-zero usage
-    // is a session that never really ran, so it's unmeasured like a missing file, never a real $0.00.
+    // E-69 (EV-8 failure mode "Cost: $0.00 (claude, 0 tokens)"): a dollar figure with all-zero usage is a session that never really ran, so it's unmeasured like a missing file, never a real $0.00.
     const unmetered = rec["source"] === UNMETERED; // D48: an explicit marker, so the zero is disclosed, not a fake provider figure
     if (unmetered) out.unmetered = true;
     if (rec["estimated"] === true) out.estimated = true;
@@ -176,8 +160,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
 export { type EfficiencySessionInfo, liveArchivedCosts, nextEfficiencyIteration, tokensUnmeasured, writeEfficiencyRecord } from "../providers/provider_cost.ts";
 import { type EfficiencySessionInfo, writeEfficiencyRecord } from "../providers/provider_cost.ts";
 
-// What a provider session calls once it ends: reads its own result-cost file and writes the derived efficiency record
-// in the same step. Returns the CostResult so the caller can also emit the `cost` event (section 5) from the same numbers.
+// What a provider session calls once it ends: reads its own result-cost file and writes the derived efficiency record in the same step. Returns the CostResult so the caller can also emit the `cost` event (section 5) from the same numbers.
 export function recordSessionCost(lokiRoot: string, iterationId: string, info: EfficiencySessionInfo): CostResult {
   // The predecessor of a resumed session is another file of the same run: look it up so a provably separate resume is not blanked.
   let siblings: string[] = [];
