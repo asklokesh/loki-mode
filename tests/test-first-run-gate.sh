@@ -203,5 +203,20 @@ for pat in 'the Loki 10 engine cannot run on this machine: no working bun' 'Runn
     else bad "gate and bin/loki disagree on fallback text: $pat"; fi
 done
 
+# FC-STUB-SESSION-WRITES-OUTSIDE-ITS-STAGE (#357 c3): the stub claude must act only in the session it models. A stub that
+# wrote hello.js in the project-model and plan sessions made the Wall base run green (a non-empty base) and left the empty-folder
+# run with no agent-independent proof, so it sealed PARTIAL.
+STUBF="$T/stub-claude"; sed -n "/^    cat > \"\$T\/bin\/claude\" <<'STUB'$/,/^STUB$/p" "$GATE" | sed '1d;$d' > "$STUBF"
+if [ -s "$STUBF" ]; then
+    stub_in() { # stub_in <dir> <prompt words>: run the stub in <dir>, list what it created there
+        ( cd "$1" && bash "$STUBF" -p "$2" >/dev/null 2>&1; /bin/ls -A | grep -v '^\.loki$' | tr '\n' ' ' )
+    }
+    mkdir -p "$T/st-plan" "$T/st-wall" "$T/st-impl"; echo "a tiny node CLI that prints hello" > "$T/st-wall/task.md"
+    [ -z "$(stub_in "$T/st-plan" "You are the Loki 10 plan stage")" ] && ok "stub: a plan session in the empty repo writes nothing" || bad "stub: a plan session wrote into the empty repo"
+    [ -z "$(stub_in "$T/st-plan" "Project Model: read the repo")" ] && ok "stub: a project-model session writes nothing" || bad "stub: a project-model session wrote into the repo"
+    [ "$(stub_in "$T/st-wall" "You are the Loki 10 Wall author")" = "loki_wall_hello.test.js task.md " ] && ok "stub: the Wall author writes only an agent-independent loki_wall_ test" || bad "stub: the Wall author wrote the wrong files"
+    case "$(stub_in "$T/st-impl" "You are the Loki 10 implement stage")" in *"hello.js "*"hello.test.js "*) ok "stub: the implement session builds hello.js and its test" ;; *) bad "stub: the implement session did not build the CLI" ;; esac
+else bad "stub: could not extract the stub claude from the gate"; fi
+
 echo "first-run-gate tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
