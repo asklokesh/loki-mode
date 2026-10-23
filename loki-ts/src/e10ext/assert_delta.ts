@@ -2,7 +2,7 @@
 // Structure (decorators, parametrize row counts, assert counts, everything else) must be identical once every literal is normalised to its Python type, and the run and skip counts
 // must be exactly equal to base. Never keyed on collected test ids (parametrize ids move).
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { basename } from "node:path";
@@ -740,16 +740,41 @@ function pythonLaunderRisk(b: string[], addedCode: number[]): boolean {
   }
   return rootsOf.some((r) => !rootUsed.get(r)); // a repo or third-party package none of whose imported names the file uses is imported for its side effects
 }
-/** True when an added Python test or fixture pulls state in from outside the file: a fixture parameter (other than the self-undoing ones and parametrize names), usefixtures, pytestmark, indirect parametrization or getfixturevalue. The fixture body lives in a conftest the lexical scan cannot see. */
-function pythonFixtureLaunder(b: string[], addedCode: number[]): boolean {
-  const param = new Set<string>();
+/**
+ * The names in PY_AUTO_FIXTURES that the text rebinds (rev-237 r9). pytest resolves a fixture name from the nearest definition, so a
+ * def, class, assignment, import, name= argument or star import of `caplog` in the test file or in any conftest.py above it replaces the
+ * builtin with code the lexical scan did not see. One mechanism for both: the HEAD test file and every conftest on its path go through it,
+ * and a pytest_plugins list or a star import can supply any name.
+ */
+function shadowedAutoFixtures(text: string): Set<string> {
+  const code = text.split("\n").map((l) => l.replace(/#.*$/, "")).join("\n");
+  if (/\bpytest_plugins\b|^\s*from\s+[\w.]+\s+import\s+\*/m.test(code)) return new Set(PY_AUTO_FIXTURES);
+  const out = new Set<string>();
+  for (const n of PY_AUTO_FIXTURES) {
+    if (new RegExp(String.raw`\b(?:def|class)\s+${n}\b|\bname\s*=\s*["']${n}["']|^\s*${n}\s*(?:=(?!=)|,\s*$|\)?\s*$)|\bimport\b[^\n]*\b${n}\b`, "m").test(code)) out.add(n);
+  }
+  return out;
+}
+/** Attribute reads of `request` that cannot reach another fixture, the config or the session (rev-237 r9). */
+const REQUEST_READ = /^\s*\.\s*(?:param|param_index|fixturename|scope|node\s*\.\s*(?:name|nodeid)|function\s*\.\s*__name__)\s*(?:[,)\]}:]|==|!=|<=?|>=?|\b(?:and|or|in|is|not)\b|$)/;
+/** True when `line` uses `request` other than as a read of an allowlisted attribute: a getattr, an alias, a call through it, a write, any other attribute. */
+function requestUsedBeyondReads(line: string): boolean {
+  const code = line.replace(/^\s*(?:async\s+)?def\s+\w+\s*\([^)]*\)/, "def _()");
+  for (const m of code.matchAll(/(?<![\w$.])request(?![\w$])/g)) if (!REQUEST_READ.test(code.slice(m.index! + m[0].length))) return true;
+  return false;
+}
+/** True when an added Python test or fixture pulls state in from outside the file: a fixture parameter (other than the self-undoing ones that nothing shadows, and parametrize names), usefixtures, pytestmark, indirect parametrization, getfixturevalue, or any use of `request` beyond reading an allowlisted attribute. The fixture body lives in a conftest the lexical scan cannot see. `shadowed` holds the self-undoing names a conftest rebinds. */
+function pythonFixtureLaunder(b: string[], addedCode: number[], shadowed: ReadonlySet<string>): boolean {
+  const param = new Set<string>(), mine = shadowedAutoFixtures(b.join("\n"));
   for (const l of b) for (const m of l.matchAll(/parametrize\s*\(\s*(\([^)]*\)|\[[^\]]*\]|["'][^"']*["'])/g)) for (const q of m[1]!.matchAll(/["']([^"']*)["']/g)) for (const n of q[1]!.split(",")) param.add(n.trim());
+  const trusted = (n: string): boolean => PY_AUTO_FIXTURES.has(n) && !mine.has(n) && !shadowed.has(n);
   for (const i of addedCode) {
     const l = stripStrings(b[i]!);
     if (/\b(?:usefixtures|pytestmark|getfixturevalue|getfuncargvalue)\b|\bindirect\s*=/.test(l)) return true;
+    if (requestUsedBeyondReads(l)) return true;
     const m = /^\s*(?:async\s+)?def\s+(\w+)\s*\(([^)]*)\)/.exec(b[i]!); if (!m) continue;
     if (!/^test/i.test(m[1]!) && !/^\s*@(?:pytest\.)?fixture\b/.test(b[i - 1] ?? "")) continue; // a helper's parameters are ordinary arguments
-    for (const n of idents(m[2]!)) if (!PY_AUTO_FIXTURES.has(n) && !param.has(n)) return true;
+    for (const n of idents(m[2]!)) if (!trusted(n) && !param.has(n)) return true;
   }
   return false;
 }
@@ -798,14 +823,14 @@ function reachesOwned(st: string, own: Set<string>, mods: Set<string>, bound: Se
   return false;
 }
 /** True when the edit from baseText to headText removes or loosens a test (a removed non-import line, a dropped imported name, an added skip/only/todo marker). Doubt is true. */
-export function testEditWeakens(baseText: string, headText: string, opts?: { sharedFixture?: boolean }): boolean {
+export function testEditWeakens(baseText: string, headText: string, opts?: { sharedFixture?: boolean; shadowedFixtures?: ReadonlySet<string> }): boolean {
   try { return analyzeEdit(baseText, headText, opts); } catch (e) { throw new AnalyzerError(e); }
 }
 /** A throw inside the analyzer: the caller stays fail-safe (not verified) but must label it, so a crash is never read as a finding about the test. */
 export class AnalyzerError extends Error {
   constructor(readonly cause0: unknown) { super(`analyzer_error: ${cause0 instanceof Error ? cause0.message : String(cause0)}`); this.name = "AnalyzerError"; }
 }
-function analyzeEdit(baseText: string, headText: string, opts?: { sharedFixture?: boolean }): boolean {
+function analyzeEdit(baseText: string, headText: string, opts?: { sharedFixture?: boolean; shadowedFixtures?: ReadonlySet<string> }): boolean {
   const a = baseText.split("\n"), b = headText.split("\n");
   const d = lineDelta(a, b);
   if (!d) return true;
@@ -820,7 +845,7 @@ function analyzeEdit(baseText: string, headText: string, opts?: { sharedFixture?
   for (const n of derived) locals.delete(n); // a name bound from an owned object is not a free local: a write through it is a write to the owned object
   const bound = pythonLaunderRisk(b, addedCode) ? null : boundNames(b);
   if (stmts.some((st) => reachesOwned(st, owned, mods, bound))) return true;
-  if (pythonFixtureLaunder(b, addedCode)) return true;
+  if (pythonFixtureLaunder(b, addedCode, opts?.shadowedFixtures ?? new Set())) return true;
   for (const i of addedCode) {
     const l = stripAutoUndone(b[i]!);
     if (COMMENT_OPENER.test(l)) return true;
@@ -841,6 +866,18 @@ function analyzeEdit(baseText: string, headText: string, opts?: { sharedFixture?
   return false;
 }
 const SHARED_FIXTURE = /(?:^|\/)(?:conftest\.py|(?:jest|vitest)\.setup\.\w+|setupTests\.\w+|setup[-_]tests\.\w+)$/;
+/** The self-undoing pytest fixture names that a conftest.py on the path from the repo root to `path` rebinds, read at base AND head (rev-237 r9). A conftest that cannot be read throws, so the caller stays fail-safe. */
+function conftestShadows(repoDir: string, baseSha: string, headRef: string | null, path: string): Set<string> {
+  const out = new Set<string>(), parts = path.split("/").slice(0, -1);
+  for (let k = 0; k <= parts.length; k++) {
+    const f = [...parts.slice(0, k), "conftest.py"].join("/"), texts: string[] = [];
+    if (safeGit(repoDir, ["ls-tree", "--name-only", baseSha, "--", f]).trim()) texts.push(safeGit(repoDir, ["show", `${baseSha}:${f}`]));
+    if (headRef) { if (safeGit(repoDir, ["ls-tree", "--name-only", headRef, "--", f]).trim()) texts.push(safeGit(repoDir, ["show", `${headRef}:${f}`])); }
+    else if (existsSync(join(repoDir, f))) texts.push(readFileSync(join(repoDir, f), "utf8"));
+    for (const t of texts) for (const n of shadowedAutoFixtures(t)) out.add(n);
+  }
+  return out;
+}
 /** testEditWeakens on a pre-existing test file read from git (headRef null reads the worktree); any read failure weakens. */
 export function testFileWeakened(repoDir: string, baseSha: string, headRef: string | null, path: string): boolean {
   let head: string, base: string;
@@ -851,8 +888,15 @@ export function testFileWeakened(repoDir: string, baseSha: string, headRef: stri
     process.stderr.write(`assert_delta: read_error ${path}: ${e instanceof Error ? e.message : String(e)}\n`);
     return true;
   }
+  let shadowedFixtures: Set<string>;
   try {
-    return testEditWeakens(base, head, { sharedFixture: SHARED_FIXTURE.test(path) });
+    shadowedFixtures = conftestShadows(repoDir, baseSha, headRef, path);
+  } catch (e) {
+    process.stderr.write(`assert_delta: read_error conftest for ${path}: ${e instanceof Error ? e.message : String(e)}\n`);
+    return true;
+  }
+  try {
+    return testEditWeakens(base, head, { sharedFixture: SHARED_FIXTURE.test(path), shadowedFixtures });
   } catch (e) {
     process.stderr.write(`assert_delta: ${e instanceof AnalyzerError ? e.message : `analyzer_error: ${String(e)}`} (${path}); treated as not verified, not as a finding about the test\n`);
     return true;
