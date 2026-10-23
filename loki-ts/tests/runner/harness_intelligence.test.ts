@@ -795,6 +795,118 @@ describe("repo baseline profile (REPOMEM)", () => {
         expect(attributeFullSuite(d, base, f("npm test"), [], []).preExistingChecks).toEqual([]);
         expect(attributeFullSuite(d, base, f("npm test", []), [], []).preExistingChecks).toEqual([]);
       });
+      test("FC-FULLSUITE-GO-CARGO-IDS: a go or cargo full suite red on base is excused for the same failing id, not for a new one", () => {
+        const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]);
+        mkdirSync(join(d, ".loki", "state"), { recursive: true });
+        const goOut = (...t: string[]) => t.map((x) => JSON.stringify({ Action: "output", Package: "m/p", Test: x, Output: `--- FAIL: ${x} (0.00s)\n` }) + "\n" + JSON.stringify({ Action: "fail", Package: "m/p", Test: x })).join("\n");
+        const cargoOut = (...t: string[]) => t.map((x) => `test ${x} ... FAILED`).join("\n") + `\ntest result: FAILED. 0 passed; ${t.length} failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s`;
+        for (const [cmd, mk] of [["go test -json ./...", goOut], ["cargo test", cargoOut]] as const) {
+          const baseIds = failIds(mk("TestAdd"));
+          expect(baseIds.length).toBe(1);
+          writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: baseIds, attributable: true } }));
+          const head = (out: string) => [{ name: "full suite: x", cmd, result: "fail", ids: failIds(out) }];
+          expect(attributeFullSuite(d, base, head(mk("TestAdd")), [], []).preExistingChecks).toEqual(["full suite: x"]);
+          expect(attributeFullSuite(d, base, head(mk("TestAdd", "TestNew")), [], []).preExistingChecks).toEqual([]);
+        }
+      });
+      test("FC-GO-PACKAGE-ID-CHANGED-FILE: a go package id (build failure or test id) in a package whose directory holds a changed .go file is never excused, with or without go.mod", () => {
+        const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]), cmd = "go test -json ./...";
+        mkdirSync(join(d, ".loki", "state"), { recursive: true });
+        const j = (o: object) => JSON.stringify(o);
+        const buildFail = [j({ Action: "start", Package: "example.com/m/foo" }), j({ Action: "output", Package: "example.com/m/foo", Output: "FAIL\texample.com/m/foo [build failed]\n" }), j({ Action: "fail", Package: "example.com/m/foo", Elapsed: 0, FailedBuild: "example.com/m/foo [example.com/m/foo.test]" })].join("\n");
+        const testFail = [j({ Action: "output", Package: "example.com/m/foo", Test: "TestAdd", Output: "--- FAIL: TestAdd (0.00s)\n" }), j({ Action: "fail", Package: "example.com/m/foo", Test: "TestAdd" })].join("\n");
+        for (const [out, name] of [[buildFail, "build failure"], [testFail, "test id"]] as const) {
+          const ids = failIds(out);
+          expect(ids.length).toBe(1);
+          writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ids, attributable: true } }));
+          const head = [{ name: "full suite: x", cmd, result: "fail", ids }];
+          for (const mod of [false, true]) {
+            if (mod) writeFileSync(join(d, "go.mod"), "module example.com/m\n\ngo 1.22\n");
+            const touched = attributeFullSuite(d, base, head, [], ["foo/foo.go"]);
+            expect(`${name} mod=${mod} ${touched.preExistingChecks}`).toBe(`${name} mod=${mod} `);
+            if (name === "build failure") expect(touched.line).toContain("NOT PROVEN: package example.com/m/foo did not build on base or head; its tests ran on neither");
+            expect(attributeFullSuite(d, base, head, [], ["bar/bar.go"]).preExistingChecks).toEqual(["full suite: x"]);
+            expect(attributeFullSuite(d, base, head, [], ["README.md"]).preExistingChecks).toEqual(["full suite: x"]);
+          }
+          rmSync(join(d, "go.mod"));
+        }
+      });
+      test("FC-GO-PACKAGE-ID-CHANGED-FILE: the module-root package is touched only by a root .go file, and only a .go file touches a package", () => {
+        const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]), cmd = "go test -json ./...";
+        mkdirSync(join(d, ".loki", "state"), { recursive: true });
+        writeFileSync(join(d, "go.mod"), "module example.com/m\n\ngo 1.22\n");
+        const j = (o: object) => JSON.stringify(o);
+        const rootFail = [j({ Action: "start", Package: "example.com/m" }), j({ Action: "output", Package: "example.com/m", Output: "FAIL\texample.com/m [build failed]\n" }), j({ Action: "fail", Package: "example.com/m", Elapsed: 0, FailedBuild: "example.com/m [example.com/m.test]" })].join("\n");
+        const ids = failIds(rootFail);
+        expect(ids.length).toBe(1);
+        writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ids, attributable: true } }));
+        const head = [{ name: "full suite: x", cmd, result: "fail", ids }];
+        // M2: a changed root .go file is the root package, so the root failure is not pre-existing
+        expect(attributeFullSuite(d, base, head, [], ["main.go"]).preExistingChecks).toEqual([]);
+        // a changed file in a sub-package does not touch the root package
+        expect(attributeFullSuite(d, base, head, [], ["foo/foo.go"]).preExistingChecks).toEqual(["full suite: x"]);
+        // M4: a non-.go file inside a package directory does not touch the package
+        const sub = [j({ Action: "start", Package: "example.com/m/foo" }), j({ Action: "output", Package: "example.com/m/foo", Output: "FAIL\texample.com/m/foo [build failed]\n" }), j({ Action: "fail", Package: "example.com/m/foo", Elapsed: 0, FailedBuild: "example.com/m/foo [example.com/m/foo.test]" })].join("\n");
+        const sids = failIds(sub);
+        writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: sids, attributable: true } }));
+        const shead = [{ name: "full suite: x", cmd, result: "fail", ids: sids }];
+        expect(attributeFullSuite(d, base, shead, [], ["foo/README.md"]).preExistingChecks).toEqual(["full suite: x"]);
+        expect(attributeFullSuite(d, base, shead, [], ["foo/foo.go"]).preExistingChecks).toEqual([]);
+      });
+      test("FC-CARGO-ID-CHANGED-CRATE: a cargo full-suite failure is not excused when the diff edits Rust source or a manifest; it is named NOT PROVEN", () => {
+        const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]), cmd = "cargo test";
+        mkdirSync(join(d, ".loki", "state"), { recursive: true });
+        const out = "test tests::adds ... FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s";
+        const ids = failIds(out);
+        expect(ids.length).toBe(1);
+        writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ids, attributable: true } }));
+        const head = [{ name: "full suite: cargo", cmd, result: "fail", ids }];
+        for (const f of ["src/lib.rs", "crates/a/Cargo.toml", "Cargo.lock", "build.rs"]) {
+          const r = attributeFullSuite(d, base, head, [], [f]);
+          expect(`${f} ${r.preExistingChecks}`).toBe(`${f} `);
+          expect(r.line).toContain("NOT PROVEN: full suite: cargo may run cargo tests");
+        }
+        expect(attributeFullSuite(d, base, head, [], ["README.md"]).preExistingChecks).toEqual(["full suite: cargo"]);
+        expect(attributeFullSuite(d, base, head, [], []).preExistingChecks).toEqual(["full suite: cargo"]);
+      });
+      test("FC-CARGO-ID-CHANGED-CRATE: a wrapper command (make test, npm test) running cargo is blocked on a Rust edit too", () => {
+        const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]);
+        mkdirSync(join(d, ".loki", "state"), { recursive: true });
+        const ids = failIds("test tests::adds ... FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s");
+        expect(ids.length).toBe(1);
+        for (const cmd of ["make test", "npm test"]) {
+          writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ids, attributable: true } }));
+          const head = [{ name: "full", cmd, result: "fail", ids }];
+          expect(`${cmd} ${attributeFullSuite(d, base, head, [], ["src/lib.rs"]).preExistingChecks}`).toBe(`${cmd} `);
+          expect(attributeFullSuite(d, base, head, [], ["README.md"]).preExistingChecks).toEqual(["full"]);
+        }
+      });
+      test("FC-GO-PACKAGE-ID-CHANGED-FILE: a nested or go.work module whose path does not end with its directory resolves through the nearest go.mod", () => {
+        const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]), cmd = "go test -json ./...";
+        mkdirSync(join(d, ".loki", "state"), { recursive: true });
+        mkdirSync(join(d, "sub"), { recursive: true });
+        writeFileSync(join(d, "go.mod"), "module example.com/root\n\ngo 1.22\n");
+        writeFileSync(join(d, "sub", "go.mod"), "module example.com/other\n\ngo 1.22\n");
+        const j = (o: object) => JSON.stringify(o);
+        const fail = (pkg: string) => [j({ Action: "output", Package: pkg, Test: "TestX", Output: "--- FAIL: TestX (0.00s)\n" }), j({ Action: "fail", Package: pkg, Test: "TestX" })].join("\n");
+        const bfail = (pkg: string) => [j({ Action: "start", Package: pkg }), j({ Action: "output", Package: pkg, Output: `FAIL\t${pkg} [build failed]\n` }), j({ Action: "fail", Package: pkg, Elapsed: 0, FailedBuild: `${pkg} [${pkg}.test]` })].join("\n");
+        const at = (out: string, files: string[]) => {
+          const ids = failIds(out);
+          expect(ids.length).toBe(1);
+          writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ids, attributable: true } }));
+          return attributeFullSuite(d, base, [{ name: "full", cmd, result: "fail", ids }], [], files).preExistingChecks;
+        };
+        // B2 / P6: nested module package id, changed file in that package
+        expect(at(fail("example.com/other/foo"), ["sub/foo/x.go"])).toEqual([]);
+        // P7: nested module-root package, changed file at the nested module root
+        expect(at(bfail("example.com/other"), ["sub/x.go"])).toEqual([]);
+        // controls: a README, a file in the root module, and a different nested package stay excusable
+        expect(at(fail("example.com/other/foo"), ["sub/foo/README.md"])).toEqual(["full"]);
+        expect(at(fail("example.com/other/foo"), ["bar/x.go"])).toEqual(["full"]);
+        expect(at(fail("example.com/other/foo"), ["sub/bar/x.go"])).toEqual(["full"]);
+        // the root module package with a changed foo/x.go is blocked
+        expect(at(fail("example.com/root/foo"), ["foo/x.go"])).toEqual([]);
+      });
       test("FC-FULL-SUITE-EXIT-CODED-SCRIPT: an exit-coded script failing on base and head is pre-existing only when its failing output is the same (paths and numbers aside); a new line, a changed script or a new command is introduced", () => {
         const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]);
         mkdirSync(join(d, ".loki", "state"), { recursive: true });

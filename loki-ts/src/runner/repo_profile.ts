@@ -485,6 +485,33 @@ function split(failing: { name: string; ids?: string[]; eligible: boolean; base:
     line: `baseline: ${pre.length} pre-existing failing check(s) (not blocking), ${introduced.length} introduced${introduced.length ? " (blocking)" : ""}` };
 }
 
+/** FC-GO-PACKAGE-ID-CHANGED-FILE: a go id is "pkg" (package-only fail, build failure) or "pkg::Test", pkg an import path, so the
+ *  changed-file substring guard can never match it. True when a changed .go file sits in the id's package directory: the import path
+ *  resolved through the go.mod module path, else its trailing segments against the file's dirname. */
+function goIdTouched(repoDir: string, id: string, changed: string[]): boolean {
+  const pkg = id.split("::")[0] ?? "";
+  const modOf = (dir: string): string | null => {
+    try { return /^module\s+(\S+)/m.exec(readFileSync(join(repoDir, dir, "go.mod"), "utf8"))?.[1] ?? null; } catch { return null; }
+  };
+  return changed.some((f) => {
+    if (!f.endsWith(".go")) return false;
+    const dir = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : ".";
+    // nearest enclosing go.mod (nested modules, go.work): the package path is that module path plus the file's directory below it
+    const parts = dir === "." ? [] : dir.split("/");
+    for (let n = parts.length; n >= 0; n--) {
+      const modDir = parts.slice(0, n).join("/") || ".", mod = modOf(modDir);
+      if (mod) { const rel = parts.slice(n).join("/"); return pkg === (rel ? `${mod}/${rel}` : mod); }
+    }
+    return dir !== "." && (pkg === dir || pkg.endsWith("/" + dir));
+  });
+}
+
+/** FC-CARGO-ID-CHANGED-CRATE: a cargo test id is a module path ("tests::adds") with no crate or file in it, so no changed-file guard can match it.
+ *  A failing full-suite check is never excused when the diff touches Rust source or a Cargo manifest, whatever its command (make test and npm test wrap cargo), since the failing test may live in the edited crate. */
+function cargoTouched(changed: string[]): boolean {
+  return changed.some((f) => /\.rs$|(?:^|\/)(?:Cargo\.(?:toml|lock)|build\.rs)$/.test(f));
+}
+
 /** REPOMEM for the RISKTIER full suite: the same `attribute`, fed the ids the REAL run's check carries (`ids`, from failIds). Nothing is re-run.
  *  Fail-closed, per command (FC-BASELINE-PER-PACKAGE): each failing check is compared only with the baseline that ran its own command (the main one
  *  or a `suites` entry); a check no baseline ran makes the ids not comparable and nothing is excused (the reason is returned in `line`), an
@@ -498,7 +525,12 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: { nam
   if (miss) return { ...none, line: `baseline: ran ${runs.map((b) => `"${b.command}"`).join(", ") || "nothing"}, not the full suite command "${miss.cmd}", ids not comparable, full suite failures not excused` };
   const known = new Set(bad.flatMap((c) => ids(c.cmd))), block = new Set(blocked);
   if (known.size === 0) return none;
-  return split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => i.includes(f))), base: new Set(ids(c.cmd)) })), known.size);
+  const unproven = [...new Set(bad.flatMap((c) => c.ids ?? []).filter((i) => !i.includes("::") && goIdTouched(repoDir, i, changed)))];
+  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => i.includes(f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
+  const rust = (cargoTouched(changed) ? bad : []).map((c) => `NOT PROVEN: ${c.name} may run cargo tests and the diff edits Rust source or a manifest; cargo test ids carry no crate path, so a failure cannot be shown pre-existing`);
+  if (!unproven.length && !rust.length) return res;
+  const np = [...unproven.map((u) => `NOT PROVEN: package ${u} did not build on base or head; its tests ran on neither`), ...rust].join("; ");
+  return { ...res, line: [res.line, np].filter(Boolean).join("; ") };
 }
 
 /** Static-diagnostic attribution (TEN-QUALITY-02): lint output of head vs base as multisets keyed path/code/message, line and column dropped so shifts do not count.
