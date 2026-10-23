@@ -17,18 +17,18 @@ mkdir -p "$WORK/bin"
 # a late write that sets latest to <ver> (the registry applying an older run's write late).
 cat > "$WORK/bin/npm" <<'STUB'
 #!/usr/bin/env bash
-ST="$STUB_STATE"
+ST="$STUB_STATE"; PKGN="${STUB_PKG:-loki-mode}"
 if [ "$1" = view ] && [ -n "${STUB_OUTAGE:-}" ]; then
     [ "$STUB_OUTAGE" = empty ] && exit 0
     echo "npm error code E503" >&2; exit 1
 fi
 case "$1 $2 $3" in
-    "view loki-mode versions")
+    "view $PKGN versions")
         printf '['; paste -sd, "$ST/versions" | sed 's/\([0-9.]*\)/"\1"/g'; printf ']\n' ;;
-    "view loki-mode dist-tags.latest") cat "$ST/latest" ;;
-    "view loki-mode dist-tags.next") cat "$ST/next" ;;
-    "dist-tag add loki-mode@"*)
-        spec="$3"; tag="$4"; ver="${spec#loki-mode@}"
+    "view $PKGN dist-tags.latest") cat "$ST/latest" ;;
+    "view $PKGN dist-tags.next") cat "$ST/next" ;;
+    "dist-tag add $PKGN@"*)
+        spec="$3"; tag="$4"; ver="${spec#"$PKGN"@}"
         echo "add $ver $tag" >> "$ST/log"
         printf '%s\n' "$ver" > "$ST/$tag"
         if [ "$tag" = latest ] && [ -n "${STUB_OVERTAKE:-}" ] && [ ! -e "$ST/overtook" ]; then
@@ -43,7 +43,7 @@ chmod +x "$WORK/bin/npm"
 run_case() {
     ST="$WORK/$1"; mkdir -p "$ST"
     printf '%s\n' $2 > "$ST/versions"; echo "$3" > "$ST/latest"; echo "$4" > "$ST/next"; : > "$ST/log"
-    CASE_OUT="$(PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$SCRIPT" "$5" 2>&1)"
+    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$SCRIPT" "$5" 2>&1)"
     CASE_RC=$?
     CASE_ST="$ST"
 }
@@ -69,6 +69,20 @@ run_case over "11.53.0 11.53.1 11.54.0" 11.53.0 11.53.0 11.54.0 11.53.1
 run_case pre "11.54.0 11.55.0-rc.1" 11.54.0 11.54.0 11.54.0
 { [ $CASE_RC -eq 0 ] && [ ! -s "$CASE_ST/log" ]; } \
     && ok "prereleases are ignored; settled tags are not rewritten" || bad "pre: rc=$CASE_RC log=$(cat "$CASE_ST/log")"
+
+# The SDK package goes through the same script (LOKI_DISTTAG_PKG); the stub knows only that package.
+STUB_PKG=loki-mode-sdk run_case sdk-up "1.0.0 1.0.1" 1.0.0 1.0.0 1.0.1
+{ [ $CASE_RC -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 1.0.1 ] && [ "$(cat "$CASE_ST/next")" = 1.0.1 ]; } \
+    && ok "sdk: highest version moves latest and next" || bad "sdk-up: rc=$CASE_RC $CASE_OUT"
+STUB_PKG=loki-mode-sdk run_case sdk-low "1.0.0 1.0.1" 1.0.1 1.0.1 1.0.0
+{ [ $CASE_RC -eq 0 ] && ! grep -q 'add 1.0.0' "$CASE_ST/log"; } \
+    && ok "sdk: a lower version never moves a tag backwards" || bad "sdk-low: rc=$CASE_RC log=$(cat "$CASE_ST/log")"
+STUB_PKG=loki-mode-sdk run_case sdk-over "1.0.0 1.0.1 1.0.2" 1.0.0 1.0.0 1.0.2 1.0.1
+{ [ $CASE_RC -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 1.0.2 ]; } \
+    && ok "sdk: an overtaken latest is restored" || bad "sdk-over: rc=$CASE_RC $CASE_OUT"
+STUB_PKG=loki-mode-sdk STUB_OUTAGE=error run_case sdk-out "1.0.1" 1.0.1 1.0.1 1.0.0
+{ [ $CASE_RC -ne 0 ] && [ ! -s "$CASE_ST/log" ]; } \
+    && ok "sdk: view outage refuses with zero writes" || bad "sdk-out: rc=$CASE_RC log=$(cat "$CASE_ST/log")"
 
 # FC-DIST-TAG-MOVED-BACKWARDS review: a registry view outage must fail closed, zero writes.
 for mode in error empty; do
