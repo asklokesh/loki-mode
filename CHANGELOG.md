@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.69.2 (2026-10-23)
+
+
+
+### Fixed
+- The resume documentation states that exit 4 from start --resume is shared by cannot-resume and a BLOCK (rc4-docs). Approval: "APPROVE pd/rc4-docs 013caf664 stacked on pd/cw17b 686f52fb2 (tl-2, LOW)". Ships after cw17b, whose commit 8c06913ff released earlier; only the docs commit 013caf664 is picked here, the parent merge 686f52fb2 only merges main.
+
 ## v11.69.1 (2026-10-23)
 
 ### Fixed
