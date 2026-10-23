@@ -1,0 +1,72 @@
+[
+  {
+    "case": "unhashable-keys-compared-by-identity",
+    "kind": "ordering",
+    "edits": [
+      {
+        "old": "if k in seen_other:",
+        "new": "if any(k is s for s in seen_other):"
+      }
+    ],
+    "rules": [
+      3
+    ],
+    "file": "dedupe.py"
+  },
+  {
+    "case": "unhashable-keys-all-collapse",
+    "kind": "off-by-one",
+    "edits": [
+      {
+        "old": "if k in seen_other:",
+        "new": "if seen_other:"
+      }
+    ],
+    "rules": [
+      3
+    ],
+    "file": "dedupe.py"
+  },
+  {
+    "case": "key-ignored-for-non-string-items",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "k = item if key is None else key(item)",
+        "new": "k = item if key is None or not isinstance(item, str) else key(item)"
+      }
+    ],
+    "rules": [
+      2
+    ],
+    "file": "dedupe.py"
+  },
+  {
+    "case": "mutates-input",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "    return out",
+        "new": "    items[:] = out\n    return out"
+      }
+    ],
+    "rules": [
+      4
+    ],
+    "file": "dedupe.py"
+  },
+  {
+    "case": "empty-input-returns-none",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "    out = []\n",
+        "new": "    if not items:\n        return None\n    out = []\n"
+      }
+    ],
+    "rules": [
+      1
+    ],
+    "file": "dedupe.py"
+  }
+]
