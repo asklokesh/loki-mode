@@ -149,6 +149,40 @@ REL2="$(git rev-parse HEAD)"
 run_gate "$GATE" "$BASE..$REL2" "$T/none.md" LOKI_RELEASE_APPROVED=1
 expect "release commit touching src.txt is not exempt" '[ "$RC" = 1 ] && line_has "${REL2:0:9}" "unnamed"'
 
+# Case 8 (rev-b B1): an indentation-only edit has the same --stable patch-id
+# but different content; --verbatim must deny it as changed content.
+git checkout -q -b ws "$BASE2"
+git cherry-pick "$A" >/dev/null 2>&1
+printf '  a\n' > a.txt && git add a.txt && git commit -q --amend --no-edit
+AWS="$(git rev-parse HEAD)"
+board "$T/a-only.md" ready "" "$A"
+run_gate "$GATE" "$BASE2..$AWS" "$T/a-only.md"
+expect "indentation-only rebase: denied as changed content" '[ "$RC" = 1 ] && line_has "${AWS:0:9}" "rebase changed content"'
+
+# Case 9 (rev-b B2): an unreadable range fails closed, never ALLOWED.
+run_gate "$GATE" "nosuchref..$C" "$T/abc.md"
+expect "bad range: rc 1, DENIED, no ALLOWED line" '[ "$RC" = 1 ] && has "DENIED: cannot list commits" && ! has "ALLOWED"'
+
+# Case 10 (rev-b B3): hold parsing reads status from the second-last column,
+# so a 6-column row (no File set column) with status parked still holds.
+printf '| ID | Owner | Branch | Tier | Status | Notes |\n| S1 | eng | pd/s1 | HIGH | parked | rev-b APPROVE %s |\n' "$A" > "$T/six.md"
+run_gate "$GATE" "$BASE..$A" "$T/six.md"
+expect "6-column parked row: denied, A named hold on S1" '[ "$RC" = 1 ] && line_has "${A:0:9}" "hold on S1"'
+
+# Case 11 (rev-b N1): only loki-ts/dist/loki.js and its map are exempt.
+git checkout -q -b rel3 "$BASE"
+commit VERSION 1.2.5 'release: v1.2.5' >/dev/null
+mkdir -p loki-ts/dist && printf 'x\n' > loki-ts/dist/loki.js && git add loki-ts/dist/loki.js && git commit -q --amend --no-edit
+REL3="$(git rev-parse HEAD)"
+run_gate "$GATE" "$BASE..$REL3" "$T/none.md" LOKI_RELEASE_APPROVED=1
+expect "release commit with dist/loki.js is exempt" '[ "$RC" = 0 ]'
+git checkout -q -b rel4 "$BASE"
+commit VERSION 1.2.6 'release: v1.2.6' >/dev/null
+mkdir -p loki-ts/dist && printf 'x\n' > loki-ts/dist/evil.js && git add loki-ts/dist/evil.js && git commit -q --amend --no-edit
+REL4="$(git rev-parse HEAD)"
+run_gate "$GATE" "$BASE..$REL4" "$T/none.md" LOKI_RELEASE_APPROVED=1
+expect "release commit with dist/evil.js is not exempt" '[ "$RC" = 1 ] && line_has "${REL4:0:9}" "unnamed"'
+
 # Case 7: replay of the real incident range, when the commits are present.
 cd "$REPO_ROOT" || exit 1
 if git cat-file -e "9556d6f16^{commit}" 2>/dev/null && git cat-file -e "8aad0307f^{commit}" 2>/dev/null; then
@@ -182,6 +216,23 @@ fi
 if mutate bypass 's/if \[ -s "\$WORK\/denied.txt" \]; then/if [ -s "$WORK\/denied.txt" ] \&\& [ "${LOKI_RELEASE_APPROVED:-}" != 1 ]; then/'; then
     run_gate "$M/gate.sh" "$BASE..$C" "$T/c-only.md" LOKI_RELEASE_APPROVED=1
     expect "mutant env-bypass: bypass case goes red" '[ "$RC" = 0 ]'
+fi
+
+if mutate stable 's/--verbatim/--stable/'; then
+    run_gate "$M/gate.sh" "$BASE2..$AWS" "$T/a-only.md"
+    expect "mutant stable-patch-id: indentation case goes red" '[ "$RC" = 0 ]'
+fi
+if mutate failopen 's/^if ! range_shas=\(.*\); then$/range_shas=\1; if false; then/'; then
+    run_gate "$M/gate.sh" "nosuchref..$C" "$T/abc.md"
+    expect "mutant fail-open: bad-range case goes red" '[ "$RC" = 0 ]'
+fi
+if mutate holdcol 's/st=\$(NF-2)/st=$7/'; then
+    run_gate "$M/gate.sh" "$BASE..$A" "$T/six.md"
+    expect "mutant hold-column: 6-column case goes red" '[ "$RC" = 0 ]'
+fi
+if mutate distglob 's/loki-ts\/dist\/loki.js|loki-ts\/dist\/loki.js.map/loki-ts\/dist\/*/'; then
+    run_gate "$M/gate.sh" "$BASE..$REL4" "$T/none.md" LOKI_RELEASE_APPROVED=1
+    expect "mutant dist-glob: evil.js case goes red" '[ "$RC" = 0 ]'
 fi
 
 echo "Passed: $PASS Failed: $FAIL"
