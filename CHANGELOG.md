@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.62.0 (2026-10-23)
+
+
+
+### Added
+- PR lessons are learned only from human commits: bot authors and merge commits yield no lesson, at most MAX_HUMAN_COMMITS commits are read, commits without a patch are skipped, secrets are redacted before storage, and loki memory promote shares a lesson across repos (pd/364a-r2 and pd/364b-r2). Approval: "tl-324: APPROVE pd/364b-r2 a511d4159a0c06216a3744d77f2267fc968424f8, a stack of four commits on origin/main; ship all four in order: fee344a42cc0f3869c5cfa80f3c6213061203423, dba9b20f32a73ab9c99eb3f6db7fbe184795a480 (364a-r2), 8a7073c953bc92a6f04d4218e99168e334ab29b7, a511d4159a0c06216a3744d77f2267fc968424f8 (364b-r2)".
+
 ## v11.61.2 (2026-10-23)
 
 
