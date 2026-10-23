@@ -1,6 +1,6 @@
 // v8 Phase 4: consume the Agent SDK's query() AsyncGenerator<SDKMessage> and
 // write the SAME .loki state the embedded bash stream-json parser writes
-// (autonomy/run.sh:17475-17829). This is a faithful TRANSLATION of that Python
+// (autonomy/run.sh). This is a faithful TRANSLATION of that Python
 // parser, not a new design -- the .loki contract must stay byte-compatible so
 // every downstream consumer (dashboard, efficiency writer, event bus, council)
 // is unchanged whether the loop ran on the bash `claude` binary or the SDK.

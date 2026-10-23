@@ -8,8 +8,8 @@
 //
 // State file format (.loki/metrics/budget.json) is byte-identical to bash:
 // the JSON object is written via cat-heredoc with no JSON encoder, but the
-// fields and ordering here match the heredoc layout in run.sh:7913-7921 and
-// run.sh:7931-7938.
+// fields and ordering here match the heredoc layout in run.sh and
+// run.sh.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -45,7 +45,7 @@ export function loadDefaultMaxCostUsd(dataDirs: string[][] = [["..", "..", "data
 // preserved in `_FALLBACK_PRICING` for the case where the JSON file is
 // missing (e.g. broken install, bundle stripped). Both bash route and
 // Bun route still read the same pricing values (bash uses the hardcoded
-// values in run.sh:7870-7876 since shell-side JSON parsing is heavier
+// values in run.sh since shell-side JSON parsing is heavier
 // than the maintenance gain). The JSON file is the source of truth for
 // the Bun route; bash will catch up when it next ports cost calc.
 type PricingEntry = {
@@ -154,14 +154,14 @@ export interface BudgetState {
   created_at?: string;
 }
 
-// Per-iteration efficiency record produced elsewhere (run.sh:3921-3936).
+// Per-iteration efficiency record produced elsewhere (run.sh).
 // Either cost_usd is present (use directly) or input/output_tokens + model.
 export interface EfficiencyRecord {
   cost_usd?: number;
   model?: string;
   input_tokens?: number;
   output_tokens?: number;
-  // Cache tiers. Writers have emitted these since v6.82.0 (run.sh:7484) and
+  // Cache tiers. Writers have emitted these since v6.82.0 (run.sh) and
   // they dominate real traffic -- a measured iteration shows 797,496 cache-read
   // against 10,272 plain input tokens. Omitting them from this type is what
   // made the fallback price them at zero.
@@ -202,13 +202,13 @@ export interface CheckBudgetOptions {
 // Cost calculation
 // ---------------------------------------------------------------------------
 
-// Round to 4 decimals (matches Python `round(total, 4)` at run.sh:7891).
+// Round to 4 decimals (matches Python `round(total, 4)` at run.sh).
 // Uses Number.EPSILON-style rounding via toFixed for consistency.
 function round4(n: number): number {
   return Math.round((n + Number.EPSILON) * 10000) / 10000;
 }
 
-// Resolve pricing for a model name, defaulting to sonnet (run.sh:7886).
+// Resolve pricing for a model name, defaulting to sonnet (run.sh).
 function pricingFor(model: string | undefined): {
   input: number;
   output: number;
@@ -234,7 +234,7 @@ function exactIdKey(m: string): string | undefined {
 }
 
 // Calculate total cost from a list of efficiency records.
-// Mirrors run.sh:7867-7892 Python block.
+// Mirrors run.sh Python block.
 export function calculateCostFromRecords(records: readonly EfficiencyRecord[], env: Record<string, string | undefined> = process.env): number {
   let total = 0;
   // LOKI_INFERENCE_GEO=us bills 1.1x. Applies to token-priced records only; a recorded cost_usd is the provider's own figure.
@@ -266,7 +266,7 @@ export function calculateCostFromRecords(records: readonly EfficiencyRecord[], e
 }
 
 // Read all .loki/metrics/efficiency/*.json files; bad files are skipped
-// (matches Python `except: pass` at run.sh:7890). Pass `stats` to learn how
+// (matches Python `except: pass` at run.sh). Pass `stats` to learn how
 // many were skipped.
 export function readEfficiencyDir(dir: string, stats?: { skipped: number }): EfficiencyRecord[] {
   if (!existsSync(dir)) return [];
@@ -384,7 +384,7 @@ function isoNow(d: Date = new Date()): string {
 // ---------------------------------------------------------------------------
 
 // Parse BUDGET_LIMIT input. Bash strips non-numeric chars then float()-checks
-// (run.sh:10889 -- `python3 -c "float('${BUDGET_LIMIT//[^0-9.]/}')"`). Returns
+// (run.sh -- `python3 -c "float('${BUDGET_LIMIT//[^0-9.]/}')"`). Returns
 // null when no limit set / invalid.
 //
 // Parity (bug-hunt): bash validates the CLEANED string with python `float()`,
@@ -409,7 +409,7 @@ function parseBudgetLimit(v: number | string | null | undefined): number | null 
 
 // Equivalent of check_budget_limit() in bash. Returns whether the budget was
 // exceeded plus the computed cost. When exceeded, writes PAUSE/BUDGET_EXCEEDED
-// signals and updates budget.json (run.sh:7907-7926).
+// signals and updates budget.json (run.sh).
 //
 // NOTE: this is a pure side-effecting helper; orchestrator decides what to do
 // with the result. It does NOT emit events (event bus is C1's surface).
@@ -438,15 +438,15 @@ export function checkBudgetLimit(opts: CheckBudgetOptions = {}): CheckBudgetResu
     return { exceeded: false, warn: true, current_cost: 0, limit, measured: false };
   }
 
-  // Greater-than-OR-equal (run.sh:7902).
+  // Greater-than-OR-equal (run.sh).
   const exceeded = current >= limit;
 
   if (exceeded) {
     const ts = isoNow(now());
-    // PAUSE marker (run.sh:7909).
+    // PAUSE marker (run.sh).
     mkdirSync(dirname(pauseFile), { recursive: true });
     writeFileSync(pauseFile, "");
-    // Signal payload (run.sh:7910-7911).
+    // Signal payload (run.sh).
     mkdirSync(signalsDir, { recursive: true });
     const signal = {
       type: "BUDGET_EXCEEDED",
@@ -468,7 +468,7 @@ export function checkBudgetLimit(opts: CheckBudgetOptions = {}): CheckBudgetResu
     return { exceeded: true, warn: false, current_cost: current, limit, measured: true };
   }
 
-  // Update budget.json with current usage when non-zero (run.sh:7930).
+  // Update budget.json with current usage when non-zero (run.sh).
   if (current > 0) {
     writeBudgetState(
       {
@@ -490,15 +490,15 @@ export function checkBudgetLimit(opts: CheckBudgetOptions = {}): CheckBudgetResu
 // Rate-limit detection
 // ---------------------------------------------------------------------------
 
-// Generic patterns from run.sh:7678 (case-insensitive grep -E).
+// Generic patterns from run.sh (case-insensitive grep -E).
 const RATE_LIMIT_PATTERN = /(429|rate.?limit|too many requests|quota exceeded|request limit|retry.?after)/i;
-// Claude-specific reset format (run.sh:7683).
+// Claude-specific reset format (run.sh).
 const CLAUDE_RESET_PATTERN = /resets [0-9]+[ap]m/;
 // Retry-After header (case-insensitive).
 const RETRY_AFTER_PATTERN = /retry.?after:?\s*([0-9]+)/gi;
 
 // Test stdout/stderr text for any rate-limit indicator. Mirrors is_rate_limited
-// (run.sh:7668-7688). Accepts a single string or an array (we'll concat).
+// (run.sh). Accepts a single string or an array (we'll concat).
 export function isRateLimited(text: string | readonly string[]): boolean {
   const haystack = Array.isArray(text) ? text.join("\n") : (text as string);
   if (!haystack) return false;
@@ -507,7 +507,7 @@ export function isRateLimited(text: string | readonly string[]): boolean {
   return false;
 }
 
-// Parse Retry-After value (seconds) from log text (run.sh:7738-7750).
+// Parse Retry-After value (seconds) from log text (run.sh).
 // Returns the LAST match (bash uses `tail -1`).
 export function parseRetryAfter(text: string): number {
   if (!text) return 0;
@@ -524,7 +524,7 @@ export function parseRetryAfter(text: string): number {
   return last;
 }
 
-// Calculate fallback backoff from provider RPM (run.sh:7755-7772).
+// Calculate fallback backoff from provider RPM (run.sh).
 // Formula: (120 * 60) / rpm, clamped to [60, 300] seconds.
 export function calculateRateLimitBackoff(retryAfter?: number, providerRpm?: number): number {
   // If a retry-after value was supplied and is positive, prefer it directly.

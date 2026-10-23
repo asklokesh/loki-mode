@@ -20,7 +20,7 @@
 //     policy (feature 8) does NOT own merges.
 //   - The manifest READS the repo-profile snapshot (feature 6) and never writes
 //     learned memory. This matters concretely: create_worktree
-//     (autonomy/run.sh:5205) does `cp -r .loki` into each worktree, so a
+//     (autonomy/run.sh) does `cp -r .loki` into each worktree, so a
 //     worktree-local profile write would fork the profile per stream.
 //
 // DEFAULT OFF (LOKI_EXEC_MANIFEST). With the flag unset, planManifest() returns

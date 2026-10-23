@@ -16,7 +16,7 @@
 // Default off: only fires when LOKI_HANDOFF_MD=1.
 //
 // Scope note: this is the Bun route only. The bash sites that also write
-// PAUSE (autonomy/run.sh:7953,11018,11280,11590; autonomy/loki:1901) are
+// PAUSE (autonomy/run.sh; autonomy/loki:1901) are
 // intentionally NOT touched -- they remain on the legacy bare-PAUSE path
 // under LOKI_LEGACY_BASH=1. That is a Phase 6-of-Part-A concern.
 

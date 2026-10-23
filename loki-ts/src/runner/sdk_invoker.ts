@@ -24,7 +24,7 @@ import { oauthDevEnabled, readFreshOauthToken, OAUTH_BETA_HEADER } from "./oauth
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
 // The marker build_prompt() emits between the static <loki_system> prefix and
-// the volatile <dynamic_context> tail (build_prompt.ts:1375, run.sh:15404). On
+// the volatile <dynamic_context> tail (build_prompt.ts:1375, run.sh). On
 // the SDK route (in-process) we can split on it and mark the prefix as a cache
 // breakpoint so multi-iteration runs re-read cached prefix tokens instead of
 // re-billing them. The bash route shells out per iteration, so its copy of this

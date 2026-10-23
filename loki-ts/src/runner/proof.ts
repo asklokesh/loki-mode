@@ -30,7 +30,7 @@ function generatorPath(): string {
 }
 
 // Mint a run id the same shape bash mints when no persisted trust run-id
-// exists (run.sh:6988): "proof-<utc-timestamp>-<pid>-<rand>". Kept
+// exists (run.sh): "proof-<utc-timestamp>-<pid>-<rand>". Kept
 // deliberately similar so a human reading .loki/proofs/ cannot tell which
 // route produced an entry.
 function mintRunId(): string {
@@ -182,7 +182,7 @@ export async function maybeGenerateProof(ctx: RunnerContext, deps: ProofDeps = {
       /* keep "unknown" */
     }
 
-    // Pass an EXPLICIT --run-id, exactly as bash does (run.sh:6998). Without
+    // Pass an EXPLICIT --run-id, exactly as bash does (run.sh). Without
     // it the generator mints its own id internally and nothing upstream ever
     // learns which run was written, so the proof lands on disk but is
     // unreachable: no last-proof-id.txt, so the PR receipt sites and any
@@ -220,7 +220,7 @@ export async function maybeGenerateProof(ctx: RunnerContext, deps: ProofDeps = {
 
     await shellRun([py, ...args], { cwd: ctx.cwd, env, timeoutMs: 30_000 });
 
-    // Persist the resolved run id atomically, mirroring run.sh:7000-7007, so
+    // Persist the resolved run id atomically, mirroring run.sh, so
     // downstream readers get the exact run the generator wrote rather than an
     // mtime guess.
     //

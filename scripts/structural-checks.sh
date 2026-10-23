@@ -210,6 +210,13 @@ typecheck() {
     (cd loki-ts && bun run typecheck)
 }
 
+# FC-RUNSH-LINE-CITE-DRIFT: loki-ts/src comments name run.sh by function or literal, never by line.
+runsh_line_cites() {
+    local hits
+    hits="$(grep -rnE 'run\.sh[: (~]+[0-9]{4,}' loki-ts/src 2>/dev/null)" || return 0
+    printf '%s\n' "$hits" | head -10
+    return 1
+}
 check "shard-durations drift"   bash tests/test-shard-durations-drift.sh
 check "no hardcoded paths"      bash tests/test-no-hardcoded-paths.sh
 check "test registration"       bash tests/test-registration-coverage.sh
@@ -219,6 +226,7 @@ check "readme no stale version" bash tests/test-readme-no-stale-version.sh
 check "emoji/dash on changes"   changed_chars
 check "unmeasured Nx claims"    unmeasured_claims
 check "SKILL.md lint"           skill_lint
+check "no run.sh line cites"     runsh_line_cites
 check "loki-ts typecheck"       typecheck
 
 if [ "$FAILED" -gt 0 ]; then echo "structural-checks: $FAILED failed"; exit 1; fi

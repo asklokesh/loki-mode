@@ -783,7 +783,7 @@ export function cavemanSupported(): boolean {
 
 // Activation knob: default ON (LOKI_CAVEMAN unset or != "0"). Disabled when the
 // legacy completion-prose match is active (compressing the main loop would break
-// the run.sh:9641 grep), mirroring loki_caveman_enabled's cross-coupling guard.
+// the run.sh grep), mirroring loki_caveman_enabled's cross-coupling guard.
 export function cavemanEnabled(): boolean {
   if (process.env["LOKI_CAVEMAN"] === "0") return false;
   if (process.env["LOKI_LEGACY_COMPLETION_MATCH"] === "true") return false;

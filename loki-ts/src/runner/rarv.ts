@@ -26,14 +26,14 @@ export type Provider = "claude" | "codex" | "cline" | "aider" | "opencode";
 
 export interface GetRarvTierOptions {
   // When set and `legacy` is false, the session-pinned model overrides the
-  // RARV cycle (matches run.sh:10417-10423).
+  // RARV cycle (matches run.sh).
   sessionModel?: string;
   // When true, force RARV-driven rotation (LOKI_LEGACY_TIER_SWITCHING=true).
   legacy?: boolean;
 }
 
 // Pure RARV cycle (iteration % 4) -> tier. Always available regardless of
-// session-pinning behaviour. Mirrors run.sh:1484-1505.
+// session-pinning behaviour. Mirrors run.sh.
 function rarvCycleTier(iteration: number): RarvTier {
   // Bash is `(iteration % 4)` over a non-negative iteration counter.
   // Normalize negatives just in case (((n % 4) + 4) % 4).
@@ -88,7 +88,7 @@ export function getRarvTier(iteration: number, options: GetRarvTierOptions = {})
   return sessionModelToTier(sessionModel);
 }
 
-// Phase name for logging (mirrors run.sh:1508-1519). Always the RARV cycle
+// Phase name for logging (mirrors run.sh). Always the RARV cycle
 // phase (independent of session pinning).
 export function getRarvPhaseName(iteration: number): RarvPhase {
   const step = ((Math.trunc(iteration) % 4) + 4) % 4;
@@ -108,7 +108,7 @@ export function getRarvPhaseName(iteration: number): RarvPhase {
 }
 
 // Provider-specific tier parameter (legacy fallback table from
-// run.sh:1535-1570). Production code prefers resolve_model_for_tier from
+// run.sh). Production code prefers resolve_model_for_tier from
 // providers/*.sh, but the static table is what dashboards/tests rely on.
 export function getProviderTierParam(tier: RarvTier | string, provider: Provider | string): string {
   switch (provider) {
@@ -180,7 +180,7 @@ export interface ComplexityDetails {
   hasMicroservices: boolean;
 }
 
-// Source-file extensions counted by run.sh:1351-1353.
+// Source-file extensions counted by run.sh.
 const SOURCE_EXTS: ReadonlySet<string> = new Set([
   ".ts",
   ".tsx",
@@ -196,7 +196,7 @@ const SOURCE_EXTS: ReadonlySet<string> = new Set([
   ".kt",
 ]);
 
-// Directory components excluded by `! -path "*/X/*"` in run.sh:1354-1355.
+// Directory components excluded by `! -path "*/X/*"` in run.sh.
 const EXCLUDED_DIRS: ReadonlySet<string> = new Set([
   "node_modules",
   ".git",
@@ -206,9 +206,9 @@ const EXCLUDED_DIRS: ReadonlySet<string> = new Set([
   "__pycache__",
 ]);
 
-// Substrings detected by `grep -rq` for external integrations (run.sh:1363).
+// Substrings detected by `grep -rq` for external integrations (run.sh).
 const EXTERNAL_PATTERN = /oauth|SAML|OIDC|stripe|twilio|aws-sdk|@google-cloud|azure/i;
-// File globs scanned for external integrations: *.json, *.ts, *.js (run.sh:1364).
+// File globs scanned for external integrations: *.json, *.ts, *.js (run.sh).
 const EXTERNAL_SCAN_EXTS: ReadonlySet<string> = new Set([".json", ".ts", ".js"]);
 
 interface WalkResult {
@@ -314,15 +314,15 @@ function analyzePrd(prdPath: string): PrdAnalysis {
         }
       }
     } catch {
-      // Fallback: count occurrences of key fields by regex (run.sh:1393).
+      // Fallback: count occurrences of key fields by regex (run.sh).
       const m = raw.match(/"title"|"name"|"feature"|"requirement"/g);
       featureCount = m ? m.length : 0;
     }
   } else {
-    // Markdown: count h2 headers and checklist items (run.sh:1397).
+    // Markdown: count h2 headers and checklist items (run.sh).
     const featMatches = raw.match(/^(##|- \[)/gm);
     featureCount = featMatches ? featMatches.length : 0;
-    // Section count uses h2 + h3 headers (run.sh:1403).
+    // Section count uses h2 + h3 headers (run.sh).
     const sectionMatches = raw.match(/^(##|###)/gm);
     sectionCount = sectionMatches ? sectionMatches.length : 0;
   }
@@ -339,7 +339,7 @@ function analyzePrd(prdPath: string): PrdAnalysis {
   return { prdComplexity };
 }
 
-// Detect project complexity. Mirrors detect_complexity (run.sh:1338-1428).
+// Detect project complexity. Mirrors detect_complexity (run.sh).
 // Returns a structured details object so callers can log/debug; the primary
 // value is `details.complexity`.
 export function detectComplexity(opts: DetectComplexityOptions = {}): ComplexityDetails {
@@ -385,7 +385,7 @@ export function detectComplexity(opts: DetectComplexityOptions = {}): Complexity
     prdComplexity = analyzePrd(opts.prdPath).prdComplexity;
   }
 
-  // Final decision tree (run.sh:1417-1425).
+  // Final decision tree (run.sh).
   let complexity: Complexity;
   if (fileCount <= 5 && prdComplexity === "simple" && !hasExternal && !hasMicroservices) {
     complexity = "simple";

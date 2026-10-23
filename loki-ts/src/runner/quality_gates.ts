@@ -1,12 +1,12 @@
 // Quality-gate orchestration for the autonomous loop.
 //
 // Bash sources of truth:
-//   enforce_static_analysis()    autonomy/run.sh:5498  (real gate, Phase 5+)
-//   enforce_test_coverage()      autonomy/run.sh:5704  (real gate, Phase 5+)
-//   run_code_review()            autonomy/run.sh:4935  (real gate, Phase 5+)
-//   run_doc_staleness_check()    autonomy/run.sh:5852
-//   run_doc_quality_gate()       autonomy/run.sh:5884
-//   run_magic_debate_gate()      autonomy/run.sh:5941
+//   enforce_static_analysis()    autonomy/run.sh  (real gate, Phase 5+)
+//   enforce_test_coverage()      autonomy/run.sh  (real gate, Phase 5+)
+//   run_code_review()            autonomy/run.sh  (real gate, Phase 5+)
+//   run_doc_staleness_check()    autonomy/run.sh
+//   run_doc_quality_gate()       autonomy/run.sh
+//   run_magic_debate_gate()      autonomy/run.sh
 //   track_gate_failure()         autonomy/run.sh
 //   clear_gate_failure()         autonomy/run.sh
 //   gate orchestration block     autonomy/run.sh
@@ -195,7 +195,7 @@ function writeCounts(base: string, counts: Record<string, number>): void {
 }
 
 // Increment and persist. Returns the new count for that gate.
-// Mirror of bash track_gate_failure() (autonomy/run.sh:5639).
+// Mirror of bash track_gate_failure() (autonomy/run.sh).
 //
 // v7.5.5 (#201): cross-process advisory lock around the read-modify-write so
 // parallel in-process / parallel-worktree invocations of THIS function cannot
@@ -226,7 +226,7 @@ export function trackGateFailure(name: string, lokiDirOverride?: string): number
 }
 
 // Reset a single gate counter to 0. Mirror of bash clear_gate_failure()
-// (autonomy/run.sh:5660). When the file does not exist this is a no-op so
+// (autonomy/run.sh). When the file does not exist this is a no-op so
 // successful gates on a fresh repo do not create empty files.
 export function clearGateFailure(name: string, lokiDirOverride?: string): void {
   const base = resolveBase(lokiDirOverride);
@@ -298,7 +298,7 @@ function listFilesBySuffix(dir: string, suffix: string): string[] {
 }
 
 // Phase 5 real implementation. Mirrors the bash `enforce_static_analysis`
-// shell-script + JS branches at autonomy/run.sh:5540-5654. Targets are
+// shell-script + JS branches at autonomy/run.sh. Targets are
 // derived from the git diff (HEAD~1 -> --cached fallback -> all tracked
 // files on shallow clones / first commit) so the gate works on ANY user
 // repo, not just loki-mode's own layout. Pre-v7.5.12 this hardcoded
@@ -317,7 +317,7 @@ export async function runStaticAnalysis(ctx?: RunnerContext): Promise<GateResult
   const root = ctx?.cwd ?? process.cwd();
 
   // Diff-based file enumeration. Order matches the bash chain at
-  // autonomy/run.sh:5547-5549, with an extra fallback to `git ls-files` so
+  // autonomy/run.sh, with an extra fallback to `git ls-files` so
   // shallow clones / first commits (no HEAD~1, no staged changes) still
   // get a meaningful scan instead of "0 files clean". Triage #13 covers
   // the missing-HEAD~1 case; without the ls-files fallback this gate
@@ -390,7 +390,7 @@ export async function runStaticAnalysis(ctx?: RunnerContext): Promise<GateResult
   // Defensive: even though listFilesBySuffix is scoped to ".js", filter out
   // any .ts/.tsx that may have slipped in (e.g. if a future caller changes
   // enumeration). `node --check` crashes with ERR_UNKNOWN_FILE_EXTENSION on
-  // TypeScript/TSX; see autonomy/run.sh:5566 for the same guard.
+  // TypeScript/TSX; see autonomy/run.sh for the same guard.
   const safeJsFiles = jsFiles.filter((f) => !f.endsWith(".ts") && !f.endsWith(".tsx"));
   const checks: Check[] = [
     ...shFiles.map((f): Check => ({ kind: "bash", file: f })),
@@ -436,7 +436,7 @@ export async function runStaticAnalysis(ctx?: RunnerContext): Promise<GateResult
 }
 
 // Shape the bash gate writes to .loki/quality/test-results.json (see
-// enforce_test_coverage at autonomy/run.sh:5704). When that artifact is
+// enforce_test_coverage at autonomy/run.sh). When that artifact is
 // already present we trust it -- this lets the bash gate (still running in
 // production) hand off to the TS orchestrator without re-running the suite.
 type TestResultsArtifact = {
@@ -574,7 +574,7 @@ export function summaryFailedCount(output: string): number | null {
 
 // Phase 5 real implementation. First checks .loki/quality/test-results.json
 // (written by the bash gate or any prior TS run); falls back to `npm test
-// --silent` with the 5-minute timeout the bash gate uses (autonomy/run.sh:5718).
+// --silent` with the 5-minute timeout the bash gate uses (autonomy/run.sh).
 //
 // Honors LOKI_STUB_GATE_TEST_COVERAGE so existing orchestration tests can keep
 // using the stub escape hatch.
@@ -711,7 +711,7 @@ function hasSeverityToken(body: string, token: "HIGH" | "CRITICAL"): boolean {
   return new RegExp(`\\[${token}\\]`, "i").test(body);
 }
 
-// --- semantic-findings.txt persistence (parity with bash, run.sh:8362-8383) ---
+// --- semantic-findings.txt persistence (parity with bash, run.sh) ---
 //
 // The bash route writes <lokiDir>/quality/semantic-findings.txt by piping the
 // detector's `2>&1` output through `grep -E '\[(...)\]'`. These helpers mirror
@@ -724,7 +724,7 @@ function semanticFindingsPath(base: string): string {
 }
 
 // Invariant findings file path (parity with bash enforce_invariant_integrity,
-// run.sh:8444). build_prompt.ts buildInvariantFindingsBlock reads this exact
+// run.sh). build_prompt.ts buildInvariantFindingsBlock reads this exact
 // path, so the surfacing-default-on invariant arm writes it here.
 function invariantFindingsPath(base: string): string {
   return join(base, "quality", "invariant-findings.txt");
@@ -740,7 +740,7 @@ function grepSeverities(output: string, re: RegExp): string[] {
 
 // Write a findings file: a header line then the matched severity lines, with a
 // trailing newline (mirrors the bash `{ echo ...; echo "$lines"; } > file`).
-// mkdir -p the quality dir first (bash run.sh:8338 does `mkdir -p`).
+// mkdir -p the quality dir first (bash run.sh does `mkdir -p`).
 function persistFindings(path: string, header: string, lines: string[]): void {
   mkdirSync(dirname(path), { recursive: true });
   const body = `${header}\n${lines.join("\n")}\n`;
@@ -842,8 +842,8 @@ export async function runMutationIntegrity(ctx?: RunnerContext): Promise<GateRes
 
 // --- Semantic test-authenticity gate (P1-3 Bun mirror) -------------------
 //
-// Bash source of truth: enforce_semantic_integrity (autonomy/run.sh:8335) +
-// the completion-promise gate arm (autonomy/run.sh:15460), driven by the
+// Bash source of truth: enforce_semantic_integrity (autonomy/run.sh) +
+// the completion-promise gate arm (autonomy/run.sh), driven by the
 // detector tests/detect-semantic-test-problems.sh.
 //
 // PRECEDENT -- why this gate SPAWNS the detector (NOT the artifact-reading
@@ -877,8 +877,8 @@ export async function runMutationIntegrity(ctx?: RunnerContext): Promise<GateRes
 // rely on run()'s own timeoutMs. Whatever code a kill yields still falls into
 // the "any other rc -> PASS" branch, so the deny-filter holds regardless.
 //
-// DEFAULT-ON SURFACING + OPT-IN BLOCKING (mirrors bash run.sh:15290 advisory
-// arm + run.sh:15644 opt-in completion-blocking elif):
+// DEFAULT-ON SURFACING + OPT-IN BLOCKING (mirrors bash run.sh advisory
+// arm + run.sh opt-in completion-blocking elif):
 //   LOKI_GATE_SEMANTIC_TESTS       default TRUE  -> run + SURFACE (advisory,
 //                                                   passed:true, writes findings)
 //   LOKI_GATE_SEMANTIC_TESTS_BLOCK default FALSE -> a CRITICAL/HIGH (rc 2)
@@ -894,13 +894,13 @@ export async function runMutationIntegrity(ctx?: RunnerContext): Promise<GateRes
 // code (the same style runStaticAnalysis tests use a hermetic scratch repo).
 //
 // FINDINGS PERSISTENCE (parity with bash enforce_semantic_integrity,
-// run.sh:8362-8383): the bash route captures the detector's FULL output and
+// run.sh): the bash route captures the detector's FULL output and
 // writes per-finding text to <lokiDir>/quality/semantic-findings.txt -- the
 // CRITICAL/HIGH/MED/LOW lines on a block (rc 2), the MED/LOW advisory lines on
 // a clean-but-advisory pass (rc 0), and REMOVES the file when there is nothing
 // to report (deny-filter: clean with no advisory, timeout, detector absent).
 // The bash build_prompt then surfaces that file into the next iteration's
-// prompt (run.sh:12343, independent of gate-failures.txt). This mirror persists
+// prompt (run.sh, independent of gate-failures.txt). This mirror persists
 // the SAME file at the SAME path with the SAME byte-shape (header line + the
 // grepped severity lines) so the actionable near-miss feedback is captured on
 // the Bun route too.
@@ -909,7 +909,7 @@ export async function runMutationIntegrity(ctx?: RunnerContext): Promise<GateRes
 // (build_prompt.ts buildSemanticFindingsBlock, called from
 // buildGateFailureContext) READS this file and injects the severity-tagged
 // lines into the next-iteration prompt, independent of gate-failures.txt --
-// byte-parity with the bash route (run.sh:12349-12353). The semantic
+// byte-parity with the bash route (run.sh). The semantic
 // completion-promise arm writes no gate token, which is why the consumer
 // surfaces this file independently of gate-failures.txt rather than nesting it.
 // Writer (here) and reader (build_prompt.ts) are both wired: NOT dead output,
@@ -930,7 +930,7 @@ export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult>
 
   // Detector absent -> nothing to run. Mirror the bash `if [ ! -f ... ]`
   // skip; never fabricate a verdict from a missing script. Bash also clears any
-  // stale findings file here (run.sh:8345); mirror that deny-filter.
+  // stale findings file here (run.sh); mirror that deny-filter.
   if (!existsSync(detector)) {
     clearFindings(semanticFindingsPath(base));
     return {
@@ -964,7 +964,7 @@ export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult>
       timeoutMs: TIMEOUT_MS,
     });
     exitCode = r.exitCode;
-    // Bash captures the detector with `2>&1` (run.sh:8351-8352); mirror that by
+    // Bash captures the detector with `2>&1` (run.sh); mirror that by
     // concatenating stdout + stderr before grepping severity lines.
     output = `${r.stdout}${r.stderr}`;
   } catch {
@@ -978,8 +978,8 @@ export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult>
     };
   }
 
-  // SURFACING vs BLOCKING (parity with bash, run.sh:15290 advisory arm +
-  // run.sh:15644 opt-in completion-blocking elif). LOKI_GATE_SEMANTIC_TESTS
+  // SURFACING vs BLOCKING (parity with bash, run.sh advisory arm +
+  // run.sh opt-in completion-blocking elif). LOKI_GATE_SEMANTIC_TESTS
   // (default true) runs the gate and SURFACES findings to the next prompt via
   // semantic-findings.txt; it does NOT make passed:false on its own (the
   // orchestrator pushes a passed:true gate to passed[] + clears the failure
@@ -992,7 +992,7 @@ export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult>
   const blockOnHigh = blockEnv === "true" || blockEnv === "1";
 
   // ONLY an exact exit code of 2 is a CRITICAL/HIGH finding. Persist ALL
-  // severity lines regardless of the block flag (mirrors run.sh:8362-8367:
+  // severity lines regardless of the block flag (mirrors run.sh:
   // the blocking-header variant is written every iteration so the surfacing
   // channel always carries the near-miss feedback). passed:false only when
   // the opt-in _BLOCK flag is set; otherwise surfacing (passed:true).
@@ -1014,7 +1014,7 @@ export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult>
     };
   }
   // rc 124 (timeout) is named for clarity; every other code collapses to PASS.
-  // Bash clears the findings file on timeout (run.sh:8358); mirror that.
+  // Bash clears the findings file on timeout (run.sh); mirror that.
   if (exitCode === 124) {
     clearFindings(semanticFindingsPath(base));
     return {
@@ -1024,7 +1024,7 @@ export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult>
     };
   }
   // rc 0 (clean) and any other non-2/non-124 code -> PASS (deny-filter). Route
-  // any MED/LOW advisory findings to the findings file (mirrors run.sh:8374-8383:
+  // any MED/LOW advisory findings to the findings file (mirrors run.sh:
   // the advisory-header variant), else clear it. This is the near-miss feedback
   // the council flagged as missing on the Bun route.
   const medLow = grepSeverities(output, /\[(MEDIUM|LOW)\]/);
@@ -1044,7 +1044,7 @@ export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult>
 //
 // Bash source of truth (to be wired by the run.sh owner in the same wave):
 // enforce_invariant_integrity -> tests/detect-invariant-violations.sh, modeled
-// on enforce_semantic_integrity (autonomy/run.sh:8335). The detector asserts a
+// on enforce_semantic_integrity (autonomy/run.sh). The detector asserts a
 // small set of invariants that hold regardless of the spec (no committed
 // secrets, no PII in logs), so it catches the "spec was silent and the model
 // guessed wrong" failure mode.
@@ -1075,7 +1075,7 @@ export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult>
 // redesign the detector from here.
 //
 // FINDINGS PERSISTENCE -- mirrored (parity with bash enforce_invariant_integrity,
-// run.sh:8467-8488). build_prompt.ts now has a reader
+// run.sh). build_prompt.ts now has a reader
 // (buildInvariantFindingsBlock, build_prompt.ts:727) that injects the
 // severity-tagged lines from .loki/quality/invariant-findings.txt into the next
 // iteration's prompt. Because the default-on surfacing arm returns passed:true
@@ -1092,8 +1092,8 @@ export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult>
 // run()'s timeoutMs; a kill's exit code falls into the "any other rc -> PASS"
 // branch, so the deny-filter holds.
 //
-// DEFAULT-ON SURFACING + OPT-IN BLOCKING (mirrors bash run.sh:15313 advisory
-// arm + run.sh:15661 opt-in completion-blocking elif):
+// DEFAULT-ON SURFACING + OPT-IN BLOCKING (mirrors bash run.sh advisory
+// arm + run.sh opt-in completion-blocking elif):
 //   LOKI_GATE_INVARIANTS       default TRUE  -> run + SURFACE (advisory,
 //                                               passed:true, writes findings)
 //   LOKI_GATE_INVARIANTS_BLOCK default FALSE -> a CRITICAL/HIGH (rc 1) finding
@@ -1114,7 +1114,7 @@ export async function runInvariants(ctx?: RunnerContext): Promise<GateResult> {
 
   const cwd = ctx?.cwd ?? process.cwd();
   // Findings file lives at the SAME path the bash route uses
-  // (run.sh:8444) and build_prompt.ts buildInvariantFindingsBlock reads.
+  // (run.sh) and build_prompt.ts buildInvariantFindingsBlock reads.
   const base = ctx?.lokiDir ?? lokiDir();
   const detector =
     process.env["LOKI_INVARIANT_DETECTOR"] ??
@@ -1122,7 +1122,7 @@ export async function runInvariants(ctx?: RunnerContext): Promise<GateResult> {
 
   // Detector absent -> nothing to run. Mirror the bash `if [ ! -f ... ]` skip;
   // never fabricate a verdict from a missing script. Bash clears any stale
-  // findings file here (run.sh:8450); mirror that deny-filter.
+  // findings file here (run.sh); mirror that deny-filter.
   if (!existsSync(detector)) {
     clearFindings(invariantFindingsPath(base));
     return {
@@ -1152,7 +1152,7 @@ export async function runInvariants(ctx?: RunnerContext): Promise<GateResult> {
       timeoutMs: TIMEOUT_MS,
     });
     exitCode = r.exitCode;
-    // Bash captures the detector with `2>&1` (run.sh:8456-8457); mirror that by
+    // Bash captures the detector with `2>&1` (run.sh); mirror that by
     // concatenating stdout + stderr before grepping severity lines.
     output = `${r.stdout}${r.stderr}`;
   } catch {
@@ -1166,8 +1166,8 @@ export async function runInvariants(ctx?: RunnerContext): Promise<GateResult> {
     };
   }
 
-  // SURFACING vs BLOCKING (parity with bash, run.sh:15313 advisory arm +
-  // run.sh:15661 opt-in completion-blocking elif). LOKI_GATE_INVARIANTS
+  // SURFACING vs BLOCKING (parity with bash, run.sh advisory arm +
+  // run.sh opt-in completion-blocking elif). LOKI_GATE_INVARIANTS
   // (default true) runs the gate and SURFACES findings to the next prompt via
   // invariant-findings.txt; it does NOT make passed:false on its own (a
   // passed:true gate is pushed to passed[] + has its failure counter cleared,
@@ -1180,7 +1180,7 @@ export async function runInvariants(ctx?: RunnerContext): Promise<GateResult> {
 
   // ONLY an exact exit code of 1 is a CRITICAL/HIGH violation (under --strict).
   // Persist ALL severity lines regardless of the block flag (mirrors
-  // run.sh:8469-8472: the blocking-header variant is written every iteration so
+  // run.sh: the blocking-header variant is written every iteration so
   // the surfacing channel always carries the feedback). passed:false only when
   // the opt-in _BLOCK flag is set; otherwise surfacing (passed:true). Every
   // other code (0 clean, 124 timeout, any other) is deny-filtered to PASS so the
@@ -1211,7 +1211,7 @@ export async function runInvariants(ctx?: RunnerContext): Promise<GateResult> {
     };
   }
   // rc 0 (clean) and any other non-1/non-124 code -> PASS (deny-filter). Route
-  // any MED/LOW advisory findings to the findings file (mirrors run.sh:8478-8488:
+  // any MED/LOW advisory findings to the findings file (mirrors run.sh:
   // the advisory-header variant), else clear it.
   const medLow = grepSeverities(output, /\[(MEDIUM|LOW)\]/);
   if (medLow.length > 0) {
@@ -1230,7 +1230,7 @@ export async function runInvariants(ctx?: RunnerContext): Promise<GateResult> {
 // (v7.114.0 rank 9: 4 reviewers -- architecture-strategist + maintainer-
 //  mergeability always on, plus up to 2 keyword-scored specialists.)
 //
-// Bash source: autonomy/run.sh:6234-6646 (run_code_review, ~413 LOC).
+// Bash source: autonomy/run.sh (run_code_review, ~413 LOC).
 //
 // Faithful TS port of the SELECTION + DISPATCH + AGGREGATION pipeline. The
 // reviewer dispatch (claudeReviewer) is real: it shells out to `claude -p` with
@@ -1288,7 +1288,7 @@ type Specialist = {
   priority: number;
 };
 
-// Mirror of SPECIALISTS dict in autonomy/run.sh:6318-6349. Order preserved so
+// Mirror of SPECIALISTS dict in autonomy/run.sh. Order preserved so
 // the priority field acts as the same tie-breaker the bash code uses.
 const SPECIALISTS: Readonly<Record<string, Specialist>> = {
   "security-sentinel": {
@@ -1338,7 +1338,7 @@ const MAINTAINER_MERGEABILITY: Reviewer = {
   checks: "scope creep (changes unrelated to the stated task, drive-by edits, unrequested refactors), dead code (unreachable, unused, commented-out, leftover debug), duplicated logic that should reuse an existing helper, non-conformance to the surrounding code's conventions (naming, error handling, structure, formatting), and anything a careful human reviewer would ask to be changed before merging",
 };
 
-// Port of the Python keyword scorer at autonomy/run.sh:6396-6409. Returns
+// Port of the Python keyword scorer at autonomy/run.sh. Returns
 // architecture-strategist always first, then 2 specialists. When no keywords
 // match, defaults to security-sentinel + test-coverage-auditor to match the
 // bash behavior.
@@ -1530,7 +1530,7 @@ export function selectReviewers(
   return { reviewers, scores, pool_size: Object.keys(pool).length + installedSelected.length };
 }
 
-// Port of the BUILD_PROMPT block at autonomy/run.sh:6486-6505.
+// Port of the BUILD_PROMPT block at autonomy/run.sh.
 // #270: the shared Files and Diff block comes FIRST and the per-reviewer role last, so parallel reviewers of
 // one gate share a byte-identical cacheable prefix. Nothing reviewer-specific may precede the Diff.
 export function buildReviewerPrompt(reviewer: Reviewer, diff: string, files: string): string {
@@ -1836,7 +1836,7 @@ FINDINGS:
 
 // Parse a reviewer output blob into a structured verdict. Mirrors the bash
 // `grep -i "^VERDICT:"` + `grep -qiE "\[(Critical|High)\]"` checks at
-// autonomy/run.sh:6577-6594.
+// autonomy/run.sh.
 export function parseVerdict(reviewer: string, output: string): ReviewerVerdict {
   const trimmed = output.trim();
   if (trimmed.length === 0) {
@@ -1919,7 +1919,7 @@ export function computeMergeabilityScore(
   return score < 0 ? 0 : score;
 }
 
-// Port of the diff-fetching block at autonomy/run.sh:6243. Tries `git diff
+// Port of the diff-fetching block at autonomy/run.sh. Tries `git diff
 // HEAD~1` first; falls back to `git diff --cached`; returns "" on both
 // failures (matches the bash `2>/dev/null || ... || echo ""` chain).
 // RUN-25 iter 19 (Wave C #2, self-contained part): derive the changed-file list
@@ -1974,7 +1974,7 @@ export type CodeReviewOpts = {
 };
 
 // Aggregated artifact written to .loki/quality/reviews/<id>/aggregate.json.
-// Shape mirrors the bash AGG_SCRIPT block (autonomy/run.sh:6605-6617).
+// Shape mirrors the bash AGG_SCRIPT block (autonomy/run.sh).
 export type AggregateArtifact = {
   review_id: string;
   iteration: number;
@@ -2046,7 +2046,7 @@ export async function runCodeReview(
   });
   atomicWriteText(join(reviewDir, "selection.json"), `${JSON.stringify(selection, null, 2)}\n`);
 
-  // Dispatch the battery in parallel (parity with the bash backgrounding-and-wait loop at run.sh:6516-6556), but
+  // Dispatch the battery in parallel (parity with the bash backgrounding-and-wait loop at run.sh), but
   // #270: launch reviewer 1 alone first and hold the rest until its first response event (or its completion, or
   // LOKI_REVIEW_STAGGER_MS, default 3000, 0 = launch together) so reviewers 2..N read the prompt cache entry
   // reviewer 1 wrote instead of each writing their own.
@@ -2182,7 +2182,7 @@ export async function runCodeReview(
     }
   }
 
-  // Anti-sycophancy / Devil's Advocate (P0-4 parity with bash run.sh:8316+).
+  // Anti-sycophancy / Devil's Advocate (P0-4 parity with bash run.sh+).
   //
   // Pre-P0-4 this block ONLY wrote anti-sycophancy.txt and was otherwise inert:
   // a unanimous PASS sailed through with no adversarial re-check. P0-4 makes the
@@ -2194,7 +2194,7 @@ export async function runCodeReview(
   // Gated behind LOKI_GATE_DEVILS_ADVOCATE (default on); set to "false" or "0"
   // to disable. Uses the same truthiness convention as the other LOKI_GATE_*
   // toggles (readToggles' flag helper) so the Bun route matches the bash gate
-  // guard at autonomy/run.sh:8473 ([ "${LOKI_GATE_DEVILS_ADVOCATE:-true}" =
+  // guard at autonomy/run.sh ([ "${LOKI_GATE_DEVILS_ADVOCATE:-true}" =
   // "true" ]): default-on, disabled by =false (not only =0).
   //
   // The DA call below uses the SAME resolved reviewer as the base council, so in
@@ -2291,7 +2291,7 @@ export async function runCodeReview(
   // approvals (fail-OPEN): passCount + failCount === 0, hasBlocking === false.
   // A review that produced no usable verdict cannot stand in for a real review.
   //
-  // Placement mirrors bash ordering (autonomy/run.sh:9484-9502): the
+  // Placement mirrors bash ordering (autonomy/run.sh): the
   // has_blocking decision runs first, then the inconclusive block, then the
   // pass. That ordering is moot here by construction: `blocking` is only true
   // when some verdict === "FAIL" (parseVerdict sets blocking = verdict ===
@@ -2639,7 +2639,7 @@ async function maybeRunOverrideCouncil(args: {
 
 // Phase 5 real implementation. Doc quality gate scans the canonical project
 // docs (README.md, CLAUDE.md, SKILL.md, docs/**/*.md) for three classes of
-// problem mirrored from `run_doc_quality_gate` (autonomy/run.sh:5884-5933):
+// problem mirrored from `run_doc_quality_gate` (autonomy/run.sh):
 //
 //   1. Minimum length -- a doc that is empty / near-empty is treated the same
 //      as the bash gate's "README missing or empty" check.
@@ -2747,7 +2747,7 @@ export async function runDocQualityGate(ctx?: RunnerContext): Promise<GateResult
 }
 
 // Phase 5 real implementation. Magic-modules debate gate, modeled after
-// `run_magic_debate_gate` (autonomy/run.sh:5941-5979) but specialized to a
+// `run_magic_debate_gate` (autonomy/run.sh) but specialized to a
 // cheap structural heuristic instead of spawning the `loki magic debate`
 // subprocess: every spec under .loki/magic/specs/*.md must contain at least
 // one "Pros" header and one "Cons" header (case-insensitive ATX header).
@@ -2850,7 +2850,7 @@ export async function runMagicDebateGate(ctx?: RunnerContext): Promise<GateResul
 //   cheap and deterministic and avoids duplicating the diff-enumeration that
 //   runStaticAnalysis already does.
 //
-// BLOCK POLICY -- ADVISORY ONLY (parity with bash run.sh:15214). The bash route
+// BLOCK POLICY -- ADVISORY ONLY (parity with bash run.sh). The bash route
 // has NO blocking arm for LSP: its error case only calls track_gate_failure,
 // never PAUSE / never the completion-promise reject. There is therefore NO
 // _BLOCK flag for LSP (none ever existed on the bash route). Mirror that:
@@ -2988,7 +2988,7 @@ export async function runLSPDiagnostics(ctx?: RunnerContext): Promise<GateResult
     : diags.filter((d) => d.severity === 2).length;
 
   // ADVISORY ONLY: an LSP error is recorded (artifact + detail/log) but NEVER
-  // blocks -- the bash route has no LSP blocking arm (run.sh:15214). So
+  // blocks -- the bash route has no LSP blocking arm (run.sh). So
   // errorCount > 0 returns passed:true with an advisory detail. See the
   // SURFACING ASYMMETRY note in this gate's header comment: the Bun route does
   // not yet inject this advisory into the next prompt (no build_prompt reader
@@ -3064,7 +3064,7 @@ export async function runSecurityScan(ctx: RunnerContext): Promise<GateResult> {
 // --- Orchestrator ---------------------------------------------------------
 
 // Per-iteration toggles read from env. These mirror the bash gate-block guards
-// at autonomy/run.sh:10851-10941 so the TS loop honors the same operator
+// at autonomy/run.sh so the TS loop honors the same operator
 // switches without re-reading them in every gate body.
 type GateToggles = {
   hardGates: boolean;
@@ -3140,7 +3140,7 @@ export function readToggles(): GateToggles {
 
 // Apply the escalation ladder for one failed gate. Returns the bookkeeping
 // outcome the orchestrator needs without touching the loop's mutable state
-// directly. Mirrors autonomy/run.sh:10904-10921.
+// directly. Mirrors autonomy/run.sh.
 type EscalationOutcome = {
   // True when ESCALATE_LIMIT or PAUSE_LIMIT was hit.
   escalated: boolean;
@@ -3247,7 +3247,7 @@ function writeEscalationGuidance(
   );
 }
 
-// Match autonomy/run.sh:10906-10908. Two-line file: action then reason.
+// Match autonomy/run.sh. Two-line file: action then reason.
 function writeEscalationSignal(base: string, gate: string, count: number, action: "PAUSE" | "ESCALATE"): void {
   const target = join(base, "signals", "GATE_ESCALATION");
   mkdirSync(dirname(target), { recursive: true });
@@ -3257,14 +3257,14 @@ function writeEscalationSignal(base: string, gate: string, count: number, action
 
 function writePauseSignal(base: string, gate: string, count: number): void {
   writeEscalationSignal(base, gate, count, "PAUSE");
-  // Bash: `touch "${TARGET_DIR:-.}/.loki/PAUSE"` (run.sh:10908).
+  // Bash: `touch "${TARGET_DIR:-.}/.loki/PAUSE"` (run.sh).
   const pause = join(base, "PAUSE");
   mkdirSync(dirname(pause), { recursive: true });
   writeFileSync(pause, "");
 }
 
 // Persist the comma-trailing failure list for prompt injection. Mirrors the
-// `gate-failures.txt` write at autonomy/run.sh:10952-10955: write when there
+// `gate-failures.txt` write at autonomy/run.sh: write when there
 // is at least one entry, delete otherwise.
 function persistFailureList(base: string, failed: string[]): void {
   const target = join(base, "quality", "gate-failures.txt");
@@ -3295,7 +3295,7 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
   const durations: Record<string, number> = {};
   let escalated = false;
 
-  // Soft-gates path matches autonomy/run.sh:10957-10961: only code_review runs
+  // Soft-gates path matches autonomy/run.sh: only code_review runs
   // (advisory) and the failure list is not persisted. We honor that in the
   // structured outcome by leaving `blocked` false even on advisory failures.
   if (!toggles.hardGates) {

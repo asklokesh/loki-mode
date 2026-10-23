@@ -1,8 +1,8 @@
 // Human-intervention signal handling for the autonomous runner.
 //
 // Source-of-truth (bash):
-//   check_human_intervention()  autonomy/run.sh:11120-11256  (5-signal state machine)
-//   handle_pause()              autonomy/run.sh:11259-11326  (waits for resume)
+//   check_human_intervention()  autonomy/run.sh  (5-signal state machine)
+//   handle_pause()              autonomy/run.sh  (waits for resume)
 //
 // The runner polls these files between iterations and acts on whichever is
 // present. Order of checks is preserved exactly; the ordering matters because
@@ -36,7 +36,7 @@ export type InterventionAction = "continue" | "pause" | "stop" | "input";
 export interface InterventionResult {
   action: InterventionAction;
   // For action="input", the contents of HUMAN_INPUT.md (post-validation).
-  // Bash exports this as $LOKI_HUMAN_INPUT (run.sh:11213).
+  // Bash exports this as $LOKI_HUMAN_INPUT (run.sh).
   payload?: string;
   // Human-readable reason for the action (suitable for log lines / dashboard
   // notifications). Mirrors the log_warn / log_info messages in bash.
@@ -49,7 +49,7 @@ export interface CheckOptions {
   // not perpetual, not checkpoint.
   autonomyMode?: "perpetual" | "checkpoint" | "standard";
   // Whether prompt injection is enabled. Defaults to false (bash default at
-  // run.sh:11189: LOKI_PROMPT_INJECTION env, false unless explicitly true).
+  // run.sh: LOKI_PROMPT_INJECTION env, false unless explicitly true).
   promptInjectionEnabled?: boolean;
   // Override "now" for hermetic tests (used only for the rejected-file
   // timestamp suffix).
@@ -58,7 +58,7 @@ export interface CheckOptions {
 
 // --- constants -------------------------------------------------------------
 
-// Bash limit at run.sh:11199. 1 MiB.
+// Bash limit at run.sh. 1 MiB.
 const HUMAN_INPUT_SIZE_LIMIT_BYTES = 1024 * 1024;
 
 // --- path helpers ----------------------------------------------------------
@@ -103,7 +103,7 @@ function rmIfExists(path: string): void {
 }
 
 // Format a YYYYMMDD-HHMMSS UTC timestamp for log filenames -- matches the
-// bash `$(date +%Y%m%d-%H%M%S)` calls in run.sh:11194/11202/11211.
+// bash `$(date +%Y%m%d-%H%M%S)` calls in run.sh.
 // Note: bash uses local time for these filenames; we use UTC to keep tests
 // deterministic. The on-disk shape is identical, only the wall-clock differs.
 function tsForFilename(d: Date): string {
@@ -115,7 +115,7 @@ function tsForFilename(d: Date): string {
 }
 
 // Move `src` to `<logsDir>/<prefix>-<ts>.md`. Falls back to deletion if the
-// move fails -- matches bash `mv ... 2>/dev/null || rm -f` (run.sh:11194).
+// move fails -- matches bash `mv ... 2>/dev/null || rm -f` (run.sh).
 function quarantineHumanInput(src: string, logsDir: string, prefix: string, now: Date): string {
   try {
     mkdirSync(logsDir, { recursive: true });
@@ -138,13 +138,13 @@ function quarantineHumanInput(src: string, logsDir: string, prefix: string, now:
 // fails the bash safety checks (symlink, oversize). Does NOT delete the
 // file -- that's checkHumanIntervention's job.
 //
-// Source: run.sh:11187-11222 (the security branch is what we mirror here).
+// Source: run.sh (the security branch is what we mirror here).
 export function readHumanInput(opts: { lokiDirOverride?: string } = {}): string | null {
   const dir = resolveLokiDir(opts.lokiDirOverride);
   const path = signalPaths(dir).humanInput;
   if (!existsSync(path)) return null;
 
-  // Reject symlinks (run.sh:11187 ! -L check, 11218 explicit reject).
+  // Reject symlinks (run.sh ! -L check, 11218 explicit reject).
   let lst: ReturnType<typeof lstatSync>;
   try {
     lst = lstatSync(path);
@@ -153,7 +153,7 @@ export function readHumanInput(opts: { lokiDirOverride?: string } = {}): string 
   }
   if (lst.isSymbolicLink()) return null;
 
-  // Reject files exceeding 1 MiB (run.sh:11199).
+  // Reject files exceeding 1 MiB (run.sh).
   let st: ReturnType<typeof statSync>;
   try {
     st = statSync(path);
@@ -178,14 +178,14 @@ export function readHumanInput(opts: { lokiDirOverride?: string } = {}): string 
 //
 // Bash returns 0/1/2 (continue/pause/stop). We expand "0" into either
 // "continue" or "input" depending on whether HUMAN_INPUT was successfully
-// captured (run.sh:11214 returns 0 with $LOKI_HUMAN_INPUT exported).
+// captured (run.sh returns 0 with $LOKI_HUMAN_INPUT exported).
 export function checkHumanIntervention(opts: CheckOptions = {}): InterventionResult {
   const dir = resolveLokiDir(opts.lokiDirOverride);
   const sp = signalPaths(dir);
   const mode = opts.autonomyMode ?? "standard";
   const now = opts.now ?? new Date();
 
-  // 1. PAUSE (run.sh:11127-11162). In perpetual mode, auto-clear unless
+  // 1. PAUSE (run.sh). In perpetual mode, auto-clear unless
   //    BUDGET_EXCEEDED forced the pause.
   if (existsSync(sp.pause)) {
     if (mode === "perpetual") {
@@ -212,7 +212,7 @@ export function checkHumanIntervention(opts: CheckOptions = {}): InterventionRes
     };
   }
 
-  // 2. PAUSE_AT_CHECKPOINT (run.sh:11165-11183). Only honored in checkpoint
+  // 2. PAUSE_AT_CHECKPOINT (run.sh). Only honored in checkpoint
   //    mode; otherwise stale and removed.
   if (existsSync(sp.pauseAtCheckpoint)) {
     if (mode === "checkpoint") {
@@ -233,7 +233,7 @@ export function checkHumanIntervention(opts: CheckOptions = {}): InterventionRes
     rmIfExists(sp.pauseAtCheckpoint);
   }
 
-  // 3. HUMAN_INPUT.md (run.sh:11187-11222). Symlink + size + injection-enabled
+  // 3. HUMAN_INPUT.md (run.sh). Symlink + size + injection-enabled
   //    checks come first; on success the file is moved into logs/.
   //
   // L1#5 + L1#9: The validate-then-consume sequence (lstat -> stat -> read ->
@@ -257,7 +257,7 @@ export function checkHumanIntervention(opts: CheckOptions = {}): InterventionRes
         lst = null;
       }
       if (lst && lst.isSymbolicLink()) {
-        // run.sh:11218-11222 -- reject and remove.
+        // run.sh -- reject and remove.
         rmIfExists(sp.humanInput);
         return {
           action: "continue",
@@ -265,14 +265,14 @@ export function checkHumanIntervention(opts: CheckOptions = {}): InterventionRes
         };
       }
       if (!opts.promptInjectionEnabled) {
-        // run.sh:11189-11194 -- quarantine to logs/ as REJECTED.
+        // run.sh -- quarantine to logs/ as REJECTED.
         quarantineHumanInput(sp.humanInput, sp.logsDir, "human-input-REJECTED", now);
         return {
           action: "continue",
           reason: "HUMAN_INPUT.md detected but prompt injection is DISABLED",
         };
       }
-      // Size check (run.sh:11199).
+      // Size check (run.sh).
       let size = 0;
       try {
         size = statSync(sp.humanInput).size;
@@ -296,7 +296,7 @@ export function checkHumanIntervention(opts: CheckOptions = {}): InterventionRes
           return { action: "continue", reason: "HUMAN_INPUT.md unreadable" };
         }
         if (body.length > 0) {
-          // run.sh:11211 moves the consumed file into logs/ for the audit trail.
+          // run.sh moves the consumed file into logs/ for the audit trail.
           quarantineHumanInput(sp.humanInput, sp.logsDir, "human-input", now);
           return {
             action: "input",
@@ -311,7 +311,7 @@ export function checkHumanIntervention(opts: CheckOptions = {}): InterventionRes
     if (humanResult !== null) return humanResult;
   }
 
-  // 4. COUNCIL_REVIEW_REQUESTED (run.sh:11225-11246). The bash version may
+  // 4. COUNCIL_REVIEW_REQUESTED (run.sh). The bash version may
   //    invoke a council vote and stop on approval; we surface this as a
   //    "continue" with the signal removed because the council subsystem is
   //    not yet ported. Future work: wire this to the TS council module.
@@ -323,7 +323,7 @@ export function checkHumanIntervention(opts: CheckOptions = {}): InterventionRes
     };
   }
 
-  // 5. STOP (run.sh:11249-11253). Highest-priority terminal signal.
+  // 5. STOP (run.sh). Highest-priority terminal signal.
   if (existsSync(sp.stop)) {
     rmIfExists(sp.stop);
     return {
@@ -339,7 +339,7 @@ export function checkHumanIntervention(opts: CheckOptions = {}): InterventionRes
 
 export interface HandlePauseOptions {
   lokiDirOverride?: string;
-  // Poll interval in ms; bash uses `sleep 1` (run.sh:11318).
+  // Poll interval in ms; bash uses `sleep 1` (run.sh).
   pollIntervalMs?: number;
   // Hard ceiling on total wait time. The bash version waits indefinitely;
   // tests must override this to keep the suite bounded. Default: no ceiling.
@@ -365,7 +365,7 @@ export interface HandlePauseResult {
 }
 
 // Default contents of .loki/PAUSED.md. Mirrors the bash writer in
-// autonomy/run.sh (~28272-28275): Press-Enter wording on a TTY, otherwise the
+// autonomy/run.sh: Press-Enter wording on a TTY, otherwise the
 // no-TTY wording shared with the console banner (~28252), so a --bg / CI
 // operator is never promised a keypress.
 function defaultPausedMd(isTTY: boolean): string {
@@ -466,7 +466,7 @@ export function recordActiveSeconds(seconds: number, opts: { lokiDirOverride?: s
   }
 }
 
-// Async loop equivalent of handle_pause (run.sh:11259-11326). Writes
+// Async loop equivalent of handle_pause (run.sh). Writes
 // .loki/PAUSED.md, then polls until either PAUSE is removed (resume) or
 // STOP appears (stop). Does NOT read stdin -- the caller is expected to
 // drive resume from outside (signal, file removal, dashboard).
@@ -488,7 +488,7 @@ export async function handlePause(opts: HandlePauseOptions = {}): Promise<Handle
     //
     // Swallowing is deliberate -- every consumer treats PAUSED.md as a
     // human-readable notice (autonomous.ts::cleanStaleSignalFiles only
-    // unlinks it; run.sh:4900 only points the user at it), and a pause that
+    // unlinks it; run.sh only points the user at it), and a pause that
     // HANGS because a lockfile was contended is worse than a pause with no
     // notice file. But the write goes through withFileLockSync
     // (util/atomic.ts), which THROWS when it cannot acquire the lock within
@@ -539,7 +539,7 @@ export async function handlePause(opts: HandlePauseOptions = {}): Promise<Handle
 
   try {
     for (;;) {
-      // STOP escalates immediately (run.sh:11298-11303).
+      // STOP escalates immediately (run.sh).
       if (existsSync(sp.stop)) {
         rmIfExists(sp.stop);
         rmIfExists(sp.pausedMd);

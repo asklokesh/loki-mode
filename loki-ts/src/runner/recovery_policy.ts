@@ -5,8 +5,8 @@
 //
 // The loop already classifies provider-wire failures (classifyFailure in
 // retry_class.ts) and already persists them (LAST_ERROR.json, schema at
-// autonomy/run.sh:1800, archived append-only and bounded to 50 entries by
-// _loki_archive_last_error at autonomy/run.sh:1845). What did not exist was a
+// autonomy/run.sh, archived append-only and bounded to 50 entries by
+// _loki_archive_last_error at autonomy/run.sh). What did not exist was a
 // single table saying what to DO. Scattered ad-hoc retry decisions are how a
 // build burns its whole budget re-running a failure that could never succeed.
 //
@@ -122,7 +122,7 @@ export function recoveryEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 
 // Read the append-only failure history bash already maintains at
 // .loki/state/failure-history.jsonl (written by _loki_archive_last_error,
-// autonomy/run.sh:1954 and :26124; bounded to the most recent 50 entries).
+// autonomy/run.sh and :26124; bounded to the most recent 50 entries).
 // Each line is a LAST_ERROR record. A malformed line is skipped, never fatal.
 export function readFailureHistory(lokiDirOverride?: string): Array<{ error_class: string }> {
   const p = resolve(lokiDirOverride ?? lokiDir(), "state", "failure-history.jsonl");
@@ -165,7 +165,7 @@ export function signatureRepeated(
   return streak >= threshold;
 }
 
-// The history file stores BASH error_class values (autonomy/run.sh:1800 schema:
+// The history file stores BASH error_class values (autonomy/run.sh schema:
 // provider_empty_output | build_timeout | rate_limited | auth_error | unknown),
 // while classifyFailure() reports its own rule names. Comparing the two
 // directly would never match, so the breaker would silently never trip -- a
