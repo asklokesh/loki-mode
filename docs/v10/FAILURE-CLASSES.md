@@ -1708,3 +1708,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: runsRoot callers in run_status.ts (status, intent, pause/cancel) act on the current repo, where LOKI_DIR is correct; collectRuns is the only multi-project reader.
 - Mechanism: collectRuns reads join(proj.path, ".loki", "runs") for each registered project and ignores LOKI_DIR.
 - Fixture: loki-ts/tests/commands/run_status.test.ts "LOKI_DIR set across 2 projects lists each run once under its own repo"; a mutant restoring runsRoot(env, proj.path) turns it red.
+
+## FC-MODEL-OVERRIDE-TEST-TOO-SLOW tests/test-model-override.sh took 445s at load 20-29 and exceeded the 300s shard budget, so a reviewer could not run it to completion
+- User-visible vs raw: raw (a guard nobody can finish running is a guard nobody trusts; no user message).
+- Law: a guard script finishes inside the shard budget at the documented load, or it is split; a slow guard is not a skipped guard.
+- Cause (measured, per-line $SECONDS stamps): two parity matrices took 181s and 249s of the 445s. Each of their 224 cells started a fresh python3 that imported dashboard.server (0.75s per import at load 28), so 448 imports cost about 340s.
+- Siblings swept: the resolver matrix (section 7) and the session-pin matrix (section 9) both used the per-cell python leg. The estimator leg (`loki plan`) and the bash legs are different processes by design and stay per cell. Other python3 -c calls in the file run once.
+- Mechanism: one `py_batch` helper resolves every cell in a single interpreter. Each cell runs against a fresh copy of the ambient environment plus its own exports, the same input the per-cell `env "$@" python3` gave. Cell counts stay at 224 and 224.
+- Fixture: after the change the file finishes in 103s with 71 passed, 0 failed (before: 445s, 71 passed). Mutant: dashboard/server.py `_clamp_to_max_tier` opus arm returning the alias unchanged makes the resolver matrix report PARITY MISMATCH on the fable cells; restored and re-run green.
