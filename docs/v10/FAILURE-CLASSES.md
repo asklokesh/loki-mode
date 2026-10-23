@@ -1607,3 +1607,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept (every site that stages files): commit stage (seal.ts) and backstopCommit (commit_filter.ts, via supervisor) both go through dropSet and are fixed together; attempts.ts, modernize/scheduler.ts and verify.ts stage inside fresh worktrees that hold no user untracked files; check_result.ts and pr_lessons.ts add explicit run-owned paths only; discard.ts already protects them.
 - Mechanism: untouchedUntracked (e10ext/preexisting_dirty.ts) returns the intake-untracked files whose bytes and mode still match the snapshot; dropSet resets them from the staged set. A file the run edited stays the run's change. Crash-written files are not in the snapshot (see FC-CRASH-WORK-READ-AS-PREEXISTING).
 - Fixture: loki-ts/tests/e10ext/commit_filter_guard.test.ts (commit stage and backstop); red before the change, green after; mutants: ignore the snapshot, treat an edited file as untouched.
+
+## FC-SUBPROCESS-TEST-DEFAULT-TIMEOUT A test that spawns several CLIs ran against bun's 5s default timeout and failed on a loaded host with no logic fault
+- User-visible vs raw: raw (a red test on main, no user message).
+- Law: a test that spawns child processes states its own timeout; the 5s default is for in-process tests only.
+- Cause (measured): "header [1] and a dict attestation exit 1 with attestation: FAILED" in loki-ts/tests/commands/proof_verify_parity.test.ts runs 2 forged shapes x (1 in-process verify + 2 spawned CLIs) plus signing. On origin/main a78f48031 at load about 24 it failed with "this test timed out after 5000ms" (5033ms); the same test with `--timeout 60000` passed (1 pass, 0 fail, 5.44s).
+- Siblings swept: the other spawning tests in proof_verify_parity.test.ts (lines 349, 363, 376, 400, 416, 431, 514, 521) have no explicit timeout. In a full-file run after this change all 17 tests passed at the default timeout, so none exceeded 5s at that load. Per-test durations were not recorded, so near-limit siblings are not ruled out. Other test files were not swept.
+- Mechanism: the test passes an explicit 60000 ms timeout as the third argument of `it`.
+- Fixture: the test itself; red at the default timeout under load, green with the explicit one.

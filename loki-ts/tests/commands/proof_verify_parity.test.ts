@@ -477,7 +477,7 @@ describe("loki proof verify: malformed attestation is refused on both entry poin
         expect(r.stderr).not.toContain("NOT CHECKED");
       }
     }
-  });
+  }, 60000); // 2 forged shapes x (1 in-process verify + 2 spawned CLIs) plus signing: about 5s idle, over bun's 5s default under load
 });
 
 describe("proofFallthroughToBash: no exit code from bash is never a tamper verdict", () => {
