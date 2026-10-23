@@ -271,10 +271,10 @@ if command -v bun >/dev/null 2>&1; then
     real="$WORK/real_resume"; mkdir -p "$real/.loki/runs/e10-seeded"
     git -C "$real" init -q . 2>/dev/null; git -C "$real" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base 2>/dev/null
     git -C "$real" branch loki/e10-seeded 2>/dev/null
-    python3 - "$real/.loki/runs/e10-seeded/events.jsonl" <<'PY'
+    python3 - "$real/.loki/runs/e10-seeded/events.jsonl" "$(git -C "$real" rev-parse HEAD)" <<'PY'
 import json, sys
 rows = [("run.started", None, {"provider": "claude", "model": ""}),
-        ("stage.completed", "intake", {"base_sha": "a" * 40, "source": "text", "task": "t"}),
+        ("stage.completed", "intake", {"base_sha": sys.argv[2], "source": "text", "task": "t"}),
         ("stage.completed", "plan", {}), ("stage.completed", "wall", {}), ("cap.hit", None, {})]
 with open(sys.argv[1], "w") as f:
     for i, (t, st, d) in enumerate(rows):
@@ -286,6 +286,10 @@ PY
         *) fail "start --resume did not reach resumeFlag on a seeded interrupted run: $out" ;;
     esac
     [ "$rc" -eq 2 ] && pass "a refused stage resume exits non-zero (2), not 0" || fail "real route rc=$rc, expected 2: $out"
+    # cw17b: a run whose base commit is gone cannot resume; the real route exits 4 with the new-run action, not 2.
+    sed -i.bak "s/$(git -C "$real" rev-parse HEAD)/$(printf 'b%.0s' $(seq 40))/" "$real/.loki/runs/e10-seeded/events.jsonl" && rm -f "$real/.loki/runs/e10-seeded/events.jsonl.bak"
+    out="$(cd "$real" && env -u LOKI_ENGINE -u LOKI_TS_ENTRY BUN_FROM_SOURCE=1 LOKI_LEGACY_BASH=1 LOKI_TELEMETRY_DISABLED=1 timeout -k 5 120 bash "$LOKI_BIN" start --resume 2>&1)"; rc=$?
+    if [ "$rc" -eq 4 ] && [[ "$out" == *"cannot be resumed (its base commit bbbbbbbbbbbb is gone from this repo); its work is on branch loki/e10-seeded. Start a new run: loki start <task>"* ]]; then pass "a run whose base commit is gone exits 4 with the new-run action"; else fail "gone base commit rc=$rc, expected 4: $out"; fi
 else
     fail "bun unavailable: start --resume route was NOT measured (unmeasured, not clean)"
 fi

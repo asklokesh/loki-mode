@@ -1939,3 +1939,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: bench adapters register in SCOPED_OUT when added. The layout test copy set follows the compiler's declared dependencies (pd/303d, not this row).
 - Fixture: claude_flags.test.ts "P12-26b" goes red for any new unlisted benchmarks/ file carrying the flag.
 - Open: the dist-layout half (secret-paths.json copy) is owned by pd/303d 1be1e118d.
+
+## FC-VERIFY-PATH-REROOTED-UNDER-RUNS A `loki verify` argument that is a path to a missing receipt was treated as a run id, so the error named a path that never existed
+- User-visible vs raw: user-visible. `loki verify .loki/runs/e10-nope/receipt.json` printed `receipt not found: .loki/runs/.loki/runs/e10-nope/receipt.json/receipt.json`.
+- Law: a path the user typed is reported as given; the reporter never invents a location.
+- Cause (measured): engine10/verify_cmd.ts treated only an EXISTING file as a path, so a missing one fell through to `join(runsRoot, runId, "receipt.json")`.
+- Siblings swept: run id form (unchanged), absolute path, a receipt copied elsewhere, a non-receipt .json (diff verifier).
+- Mechanism: an argument containing a path separator or ending in .json is a path whether or not the file exists.
+- Fixture: tests/test-verify-receipt-route.sh "a missing receipt at a run path is UNCHECKED rc 2 with the path as given" (red before, green after).

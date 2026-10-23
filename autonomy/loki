@@ -2614,10 +2614,11 @@ _loki_start_optval_consumes() { [[ -n "${1:-}" && "${1:-}" != --* ]]; }
 # Same message and exit code as the cmd_start parser's catch-all arm.
 _loki_start_unknown_flag() { echo -e "${RED}Unknown option: $1${NC}"; exit 64; }
 
-# One exit-code mapping for an engine10 resume, shared by cmd_resume and
-# `loki start --resume`. 0 and 4 (phase reported) -> 0, 5 (publish failed) -> 1.
+# Exit-code mapping for the engine10 resume REPORTER, used only by cmd_resume.
+# 0 and 4 (phase reported) -> 0, 5 (publish failed) -> 1. `loki start --resume`
+# runs the stage resume (engine10 --resume) and returns its code unchanged.
 # Sets _LOKI_E10_RC and returns 0 when handled; any other code returns 1 with
-# _LOKI_E10_RC set to the raw code (cmd_resume falls through, start returns it).
+# _LOKI_E10_RC set to the raw code (cmd_resume falls through).
 _loki_e10_resume_map() {
     case "$1" in
         0 | 4) _LOKI_E10_RC=0 ;;
