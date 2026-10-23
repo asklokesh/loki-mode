@@ -152,6 +152,7 @@ cat > "$T10/bin/loki" <<'SH'
 # verify-pr: report the head the remote has NOW (FAKE_REMOTE) so a stale constant cannot pass.
 # anything else: the fix agent. It records its argv, edits a.txt and commits.
 if [ "${1:-}" = "verify-pr" ]; then
+    printf '%s\n' "${2:-}" >> "${LOKI_VERB_LOG:-/dev/null}"
     out=""; while [ $# -gt 0 ]; do [ "$1" = "--out" ] && out="$2"; shift; done
     sha="${FAKE_SHA:-0123456789abcdef0123456789abcdef01234567}"
     [ -n "${FAKE_REMOTE:-}" ] && sha="$(git --git-dir "$FAKE_REMOTE" rev-parse "$FAKE_BRANCH")"
@@ -255,15 +256,16 @@ run_verify() { # verb
     wipe "$T10/v"; mkdir -p "$T10/v"; : > "$T10/v/gh.log"; : > "$T10/v/gh.log.bodies"
     step_run pr-verify "Prove the PR and report" > "$T10/v/s.sh"
     ( cd "$T10/v" && env -i PATH="$T10/bin:$PATH" HOME="$T10/v" RUNNER_TEMP="$T10/v" GH_LOG="$T10/v/gh.log" \
-        GH_TOKEN=t VERB="$1" REPO=o/r PR=7 LOKI_VERIFY_PR=1 FAKE_REMOTE="${FAKE_REMOTE:-}" FAKE_BRANCH="${FAKE_BRANCH:-}" FAKE_STATUS_SHA="${FAKE_STATUS_SHA:-}" bash s.sh ) >/dev/null 2>&1
+        GH_TOKEN=t VERB="$1" REPO=o/r PR=7 LOKI_VERB_LOG="$T10/v/verb.log" LOKI_VERIFY_PR=1 FAKE_REMOTE="${FAKE_REMOTE:-}" FAKE_BRANCH="${FAKE_BRANCH:-}" FAKE_STATUS_SHA="${FAKE_STATUS_SHA:-}" bash s.sh ) >/dev/null 2>&1
 }
 run_verify fix
 if grep -q '^api repos/o/r/statuses/0123456789abcdef0123456789abcdef01234567 .*context=loki/receipt' "$T10/v/gh.log" \
-    && grep -q 'state=success' "$T10/v/gh.log"; then
+    && grep -q 'state=success' "$T10/v/gh.log" && [ "$(cat "$T10/v/verb.log")" = "reseal" ]; then
     pass "after a fix the verify job posts a fresh loki/receipt status on the head sha"
 else fail "no loki/receipt status after /loki fix (criterion 1)"; fi
 run_verify explain
-if [ "$(grep -c '^pr comment' "$T10/v/gh.log")" -eq 1 ] && ! grep -q 'statuses' "$T10/v/gh.log" && grep -q 'verdict: VERIFIED' "$T10/v/gh.log.bodies" && ! grep -q 'stderr-noise' "$T10/v/gh.log.bodies"; then
+if [ "$(grep -c '^pr comment' "$T10/v/gh.log")" -eq 1 ] && ! grep -q 'statuses' "$T10/v/gh.log" && grep -q 'verdict: VERIFIED' "$T10/v/gh.log.bodies" && ! grep -q 'stderr-noise' "$T10/v/gh.log.bodies" \
+    && [ "$(cat "$T10/v/verb.log")" = "explain" ]; then
     pass "explain posts the verify-pr stdout as 1 comment (no stderr) and sets no status"
 else fail "explain path wrong (criterion 3 wiring)"; fi
 
@@ -309,6 +311,9 @@ for job in ("agent", "publish", "pr-fix", "pr-publish"):
     c = d["jobs"][job]["concurrency"]
     assert c["cancel-in-progress"] is False and "github.event.issue.number" in c["group"], job
 assert "concurrency" not in d["jobs"]["pr-command"]
+# a publish job never shares a group with the job that feeds it (a newer pending run replaces an older one)
+groups = [d["jobs"][j]["concurrency"]["group"] for j in ("agent", "publish", "pr-fix", "pr-publish")]
+assert len(set(groups)) == 4, groups
 PY
 then pass "plain push, checkout by sha, <> strip and per-job concurrency are pinned"
 else fail "a static guard (push, checkout ref, strip, concurrency) regressed"; fi
@@ -359,10 +364,11 @@ NEWCOUNT="$(git --git-dir "$C/remote.git" rev-list --count feature/x)"
 # pr-verify: the stub reports the remote head NOW; the status must carry that exact sha
 step_run pr-verify "Prove the PR and report" > "$C/ver.sh"
 : > "$C/vgh.log"; : > "$C/vgh.log.bodies"
-( cd "$C" && env -i PATH="$T10/bin:$PATH" HOME="$C" RUNNER_TEMP="$C/vr" GH_LOG="$C/vgh.log" GH_TOKEN=t VERB=fix REPO=o/r PR=7 \
+( cd "$C" && env -i PATH="$T10/bin:$PATH" HOME="$C" RUNNER_TEMP="$C/vr" GH_LOG="$C/vgh.log" GH_TOKEN=t VERB=fix REPO=o/r PR=7 LOKI_VERB_LOG="$C/verb.log" \
     LOKI_VERIFY_PR=1 FAKE_REMOTE="$C/remote.git" FAKE_BRANCH=feature/x bash ver.sh ) >/dev/null 2>&1
 if [ "$((NEWCOUNT-STARTCOUNT))" -eq 1 ] && [ "$NEW" != "$START" ] && [ "$(git --git-dir "$C/remote.git" show feature/x:a.txt)" = "bar" ] \
-    && grep -q "^api repos/o/r/statuses/$NEW .*context=loki/receipt" "$C/vgh.log" && ! grep -q "statuses/$START" "$C/vgh.log"; then
+    && grep -q "^api repos/o/r/statuses/$NEW .*context=loki/receipt" "$C/vgh.log" && ! grep -q "statuses/$START" "$C/vgh.log" \
+    && [ "$(cat "$C/verb.log" 2>/dev/null)" = "reseal" ]; then
     pass "chain: /loki fix comment -> +1 commit on the PR branch -> loki/receipt status on that exact new sha"
 else fail "chain broken: +$((NEWCOUNT-STARTCOUNT)) commits, new=$NEW start=$START, status log: $(grep statuses "$C/vgh.log" | cut -c1-120)"; fi
 

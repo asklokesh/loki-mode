@@ -1576,3 +1576,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: one line in FIXED_RULES (cache-stable lead of the implement brief) naming the exact invocation and forbidding files or links under tests/ to satisfy imports.
 - Fixture: tests/e10ext/full_job_brief.test.ts "FC-PYTEST-IMPORT-SYMLINK-UNDER-TESTS" and the implement-brief golden.
 - Open: confirm by grepping the loki implement transcripts of the fd-1 and fd-4 grid trials for `ln -s` and bare `pytest` (eng-303c); update this row with the result. Not covered: an agent that links anyway is still only flagged, not blocked.
+
+## FC-WORKFLOW-STUB-IGNORES-SUBCOMMAND-AND-SHARED-PUBLISH-GROUP (#360, rev-b BLOCK on 6252fe625)
+- User-visible: if the fix-to-reseal verb mapping were dropped, `/loki fix` would call `loki verify-pr fix`, which takes the non-reseal path, and no receipt would be posted; the suite stayed green. Separately, a queued publish job could be dropped when a newer run arrived.
+- Law: a test double must assert the contract it stands in for (the subcommand), and a job that consumes another job's output must not share its concurrency group.
+- Cause: the verify-pr stub in tests/test-issue-to-pr-action.sh wrote the status for any argv; `publish` and `pr-publish` shared groups with `agent` and `pr-fix`, and GitHub keeps one running and one pending run per group, a newer pending run replacing the older.
+- Siblings swept (`grep -n "group:" docs/examples/loki-issue-to-pr.yml.example`): four jobs carry a group; only the two publish jobs shared one.
+- Mechanism: the stub records its subcommand and the tests require `reseal` for fix and `explain` for explain; groups are now `loki-issue-`, `loki-issue-publish-`, `loki-pr-fix-`, `loki-pr-publish-`, and a guard requires four distinct groups.
+- Fixture: tests/test-issue-to-pr-action.sh; mutants: drop `SUB="reseal"` (2 failures), make the publish group equal the agent group (guard red).
