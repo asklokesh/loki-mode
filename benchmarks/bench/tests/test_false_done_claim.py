@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -62,6 +63,23 @@ class Claim(unittest.TestCase):
         comp = arm("claude_code", 300, 300, 200, 100)
         self.assertTrue(fd.claim_text(loki, comp, "m", 11).startswith("CLAIM SUPPORTED"))
 
+    def test_abstention_does_not_pass(self):
+        # Loki claims done once in 1000 trials; the competitor is falsely done on all 1000. The per-trial
+        # ratio alone is 260.3, but Loki's per-claim evidence is one claim, so it must not be SUPPORTED.
+        loki = arm("loki", 1000, 1, 0, 1)
+        comp = arm("claude_code", 1000, 1000, 1000, 0)
+        self.assertGreaterEqual(fd.gate_ratio(1000, 1000, 0, 1000), fd.FACTOR)
+        t = fd.claim_text(loki, comp, "m", 11)
+        self.assertTrue(t.startswith("CLAIM NOT SUPPORTED"), t)
+        self.assertIn("rarely claims done", t)
+
+    def test_competitor_lower_bound_not_point_estimate(self):
+        # Competitor 30/30 false-done: point estimate 1.0 over Loki upper at 0/381 is 100.18 (would pass),
+        # the Wilson lower bound gives 88.8 (must not).
+        self.assertAlmostEqual(fd.gate_ratio(30, 30, 0, 381), 88.809, places=2)
+        t = fd.claim_text(arm("loki", 381, 381, 0, 381), arm("claude_code", 30, 30, 30, 0), "m", 11)
+        self.assertTrue(t.startswith("CLAIM NOT SUPPORTED"), t)
+
 
 class Report(unittest.TestCase):
     def test_report_reads_results_and_filters_to_manifest(self):
@@ -87,6 +105,30 @@ class Report(unittest.TestCase):
 
 
 class Grid(unittest.TestCase):
+    def test_timeout_kills_the_whole_process_group_and_marks_unmeasured(self):
+        with tempfile.TemporaryDirectory() as d:
+            pidfile = os.path.join(d, "child.pid")
+            open(os.path.join(d, "runner.py"), "w").write(
+                "import subprocess, sys, time\n"
+                "c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
+                "open(%r, 'w').write(str(c.pid))\n"
+                "time.sleep(600)\n" % pidfile)
+            os.makedirs(os.path.join(d, "tasks"))
+            m = {"name": "m", "tasks": {"a": {}}}
+            old_t, old_h = fd.TRIAL_TIMEOUT_S, fd._HERE
+            fd.TRIAL_TIMEOUT_S, fd._HERE = 3, d
+            try:
+                res = fd.run_grid(m, ["loki"], 1, os.path.join(d, "out"), parallel=1, load=lambda: 0.0)
+            finally:
+                fd.TRIAL_TIMEOUT_S, fd._HERE = old_t, old_h
+            self.assertEqual(res[0][1], 124)
+            child = int(open(pidfile).read())
+            time.sleep(0.5)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(child, 0)
+            row = json.load(open(os.path.join(d, "out", "a__loki__001.json")))
+            self.assertFalse(fd.schema.trial_is_measured(row["trials"][0]))
+
     def test_plan_size_and_load_gate_and_resume(self):
         m = {"name": "m", "tasks": ["a", "b"]}
         self.assertEqual(len(fd.plan(m, ["loki", "claude_code"], 3)), 12)

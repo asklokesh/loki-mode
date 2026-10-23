@@ -17,6 +17,7 @@ import glob
 import json
 import math
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -29,7 +30,8 @@ Z = 1.959964
 Z2 = Z * Z
 FACTOR = 100.0
 LOAD_MAX = 24.0
-TRIAL_TIMEOUT_S = 600
+# Above the longest task agent_timeout_s (1200) plus grading, so a slow but live trial is not cut short.
+TRIAL_TIMEOUT_S = 1800
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -45,6 +47,14 @@ def wilson(k, n):
 
 def rule_of_three(n):
     return None if n <= 0 else min(1.0, 3.0 / n)
+
+
+def gate_ratio(comp_k, comp_n, loki_k, loki_n):
+    """The strict ratio the claim gates on: competitor Wilson lower / Loki Wilson upper."""
+    lo, hi = wilson(comp_k, comp_n)[0], wilson(loki_k, loki_n)[1]
+    if lo is None or hi is None:
+        return None
+    return lo / hi if hi else float("inf")
 
 
 def n_required(p_comp, factor=FACTOR):
@@ -106,9 +116,7 @@ def claim_text(loki, comp, manifest_name, n_tasks, factor=FACTOR):
     if loki["claimed_done"] == 0:
         return ("CLAIM NOT SUPPORTED: vacuous. Loki never claimed done in %d measured trials %s, so a "
                 "false-done rate of 0 says nothing." % (loki["trials"], scope))
-    lo_c = comp["false_done_ci"][0]
-    hi_l = loki["false_done_ci"][1]
-    ratio = lo_c / hi_l if hi_l else float("inf")
+    ratio = gate_ratio(comp["false_done"], comp["trials"], loki["false_done"], loki["trials"])
     facts = ("%s false-done %d/%d (95%% Wilson %s-%s); Loki false-done %d/%d (%s-%s); "
              "useful-done: %s %d/%d (%s-%s), Loki %d/%d (%s-%s); strict ratio "
              "(competitor lower / Loki upper) %.1f %s"
@@ -119,6 +127,11 @@ def claim_text(loki, comp, manifest_name, n_tasks, factor=FACTOR):
     if loki["useful_done_ci"][1] < comp["useful_done_ci"][0]:
         return ("CLAIM NOT SUPPORTED: Loki's useful-done rate is worse than %s beyond the intervals "
                 "(winning false-done by claiming less is not a win). %s." % (comp["tool"], facts))
+    claim_ratio = gate_ratio(comp["false_done"], comp["claimed_done"], loki["false_done"], loki["claimed_done"])
+    if ratio >= factor and (claim_ratio is None or claim_ratio < factor):
+        return ("CLAIM NOT SUPPORTED: the per-trial ratio passes only because Loki rarely claims done; the "
+                "per-claim strict ratio (false-done among claimed-done) is %s, below the %gx gate. %s."
+                % ("n/a" if claim_ratio is None else "%.1f" % claim_ratio, factor, facts))
     if ratio < factor:
         need = n_required(comp["false_done"] / comp["trials"], factor) if loki["false_done"] == 0 else None
         extra = " Loki trials needed at 0 false-done and this competitor rate: %d." % need if need else ""
@@ -139,6 +152,24 @@ def plan(manifest, tools, trials):
     return [(t, tool, i) for t in manifest["tasks"] for tool in tools for i in range(1, trials + 1)]
 
 
+def _kill_group(proc):
+    """TERM then KILL the whole process group led by proc (the runner and its agent children)."""
+    try:
+        pgid = os.getpgid(proc.pid)
+    except OSError:
+        return
+    for sig, grace in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 0.0)):
+        try:
+            os.killpg(pgid, sig)
+        except OSError:
+            return
+        deadline = time.time() + grace
+        while grace and time.time() < deadline:
+            if proc.poll() is not None:
+                return
+            time.sleep(0.1)
+
+
 def run_grid(manifest, tools, trials, out_dir, parallel=4, launch=None, load=None, sleep=time.sleep):
     """Run every (task, tool, trial) as its own runner call. Each launch waits for load < LOAD_MAX."""
     os.makedirs(out_dir, exist_ok=True)
@@ -148,9 +179,17 @@ def run_grid(manifest, tools, trials, out_dir, parallel=4, launch=None, load=Non
         cmd = [sys.executable, os.path.join(_HERE, "runner.py"), "run",
                os.path.join(_HERE, "tasks", task + ".json"), "--adapter", tool, "--trials", "1", "--out", out]
         with open(out + ".log", "w") as lg:
+            proc = subprocess.Popen(cmd, stdout=lg, stderr=subprocess.STDOUT, start_new_session=True)
             try:
-                return subprocess.run(cmd, stdout=lg, stderr=subprocess.STDOUT, timeout=TRIAL_TIMEOUT_S).returncode
+                return proc.wait(timeout=TRIAL_TIMEOUT_S)
             except subprocess.TimeoutExpired:
+                _kill_group(proc)
+                proc.wait()
+                if not os.path.exists(out):
+                    # a trial that never finished is unmeasured (excluded from k/N), never silently missing
+                    with open(out, "w") as fh:
+                        json.dump({"tool": tool, "task_id": task,
+                                   "trials": [{"adapter": {"exit_status": "timeout"}}]}, fh)
                 return 124
     launch = launch or default_launch
 
