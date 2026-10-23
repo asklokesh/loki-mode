@@ -503,6 +503,20 @@ describe("loki runs (R100-008)", () => {
     expect(JSON.parse(runs(["--json"]).out)).toEqual([{ id, repo: "nocost", state: "received", usd: null, verdict: null }]);
   });
 
+  test("LOKI_DIR set across 2 projects lists each run once under its own repo", () => {
+    const a = mkProject("alpha", [{ id: "e10-20261023T010000Z-aaaa", done: true }]);
+    const b = mkProject("beta", [{ id: "e10-20261023T030000Z-cccc", done: true }]);
+    register({ alpha: a, beta: b });
+    for (const lokiDir of [join(a, ".loki"), ".loki"]) {
+      const orig = process.stdout.write.bind(process.stdout);
+      let out = "";
+      process.stdout.write = ((c: string | Uint8Array) => { out += String(c); return true; }) as typeof process.stdout.write;
+      try { runRunsList(["--json"], { ...env(), LOKI_DIR: lokiDir }); } finally { process.stdout.write = orig; }
+      const rows = JSON.parse(out) as Array<{ id: string; repo: string }>;
+      expect(rows.map((r) => `${r.repo}:${r.id}`).sort()).toEqual(["alpha:e10-20261023T010000Z-aaaa", "beta:e10-20261023T030000Z-cccc"]);
+    }
+  });
+
   test("no registry prints a hint, and --json prints an empty array", () => {
     expect(runs([]).out).toContain("loki projects add");
     expect(runs(["--json"]).out.trim()).toBe("[]");

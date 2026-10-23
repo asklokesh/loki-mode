@@ -1700,3 +1700,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: cli.ts:330 is the only dynamic import of safe_git outside loki-ts/src/util (git grep). Static named imports of safe_git were already accepted; the dynamic destructured form is the same shape.
 - Mechanism: in the P9 AST scan, a literal `await import("...safe_git...")` is accepted only as the initializer of an object destructuring whose every element is a plain identifier property (no rest, no computed key, no string key, no nested pattern) and none of whose names is an opt-in helper. Any other dynamic or require form still flags. A destructured safeGit with allowToken is still caught by the raw allowToken grep outside the two fetch callers.
 - Fixture: tests/moat/p9-rule-of-two.sh positive controls for a rest destructure, a computed-key destructure, a renamed opt-in helper and a destructured safeGit carrying allowToken (each must be flagged), and a negative control for the real `{ reviewerGitEnv }` form (must not flag). Mutant: accept any destructure shape; the rest and computed controls must go red.
+
+## FC-RUNS-ENV-LEAKS-ACROSS-PROJECTS `loki runs` applied the caller's LOKI_DIR to every registered project, so one run list was reported once per project (repo "a" and repo "b")
+- User-visible vs raw: user-visible. `loki runs --json` returned the same run twice under two repo labels.
+- Law broken: a row's repo label names the project whose runs directory it was read from; a per-process env knob that points at one directory cannot be applied to N projects.
+- Cause (measured, rev-b probe m309/p008/probe.ts): collectRuns called runsRoot(env, proj.path), and runsRoot honors LOKI_DIR (absolute or relative to the repo dir) for any repo dir it is given.
+- Siblings swept: runsRoot callers in run_status.ts (status, intent, pause/cancel) act on the current repo, where LOKI_DIR is correct; collectRuns is the only multi-project reader.
+- Mechanism: collectRuns reads join(proj.path, ".loki", "runs") for each registered project and ignores LOKI_DIR.
+- Fixture: loki-ts/tests/commands/run_status.test.ts "LOKI_DIR set across 2 projects lists each run once under its own repo"; a mutant restoring runsRoot(env, proj.path) turns it red.
