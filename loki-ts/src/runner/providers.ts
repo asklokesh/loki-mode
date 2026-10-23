@@ -578,7 +578,7 @@ export function claudeProvider(): ProviderInvoker {
       return {
         exitCode: r.exitCode,
         capturedOutputPath: call.iterationOutputPath,
-        stderr: r.stderr,
+        stderr: neutralizeEngineMarkers(r.stderr), // session.ts writes this to fd 2 and the parent classifies it: a forged engine line must not read as auth
       };
     },
   };
