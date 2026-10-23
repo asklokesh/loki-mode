@@ -216,12 +216,23 @@ done
 bash_flags="$(sed -n 's/^_LOKI_BUN_SAFE_FLAGS=(\(.*\))$/\1/p' "$REPO/autonomy/lib/bun-safe.sh")"
 ts_flags="$(sed -n 's/^export const BUN_SAFE_FLAGS[^=]*= \[\(.*\)\];$/\1/p' "$TS_SRC/runner/worker_proc.ts" | tr -d '",' | tr -s ' ')"
 { [ -n "$bash_flags" ] && [ "$bash_flags" = "$ts_flags" ]; } && ok "bash and TS safe flag lists are identical ($bash_flags)" || bad "flag lists differ: bash='$bash_flags' ts='$ts_flags'"
-# Project-env denylist covers the endpoint, proxy, git-exec and interpreter-path names.
-for n in ANTHROPIC_BASE_URL HTTPS_PROXY HTTP_PROXY GIT_SSH_COMMAND GIT_EXEC_PATH PYTHONPATH PERL5OPT; do
+# Project-env denylist is by class (git, ssh, proxy, endpoint, interpreter startup, editor/pager).
+for n in ANTHROPIC_BASE_URL OPENAI_BASE_URL HTTPS_PROXY HTTP_PROXY ALL_PROXY NO_PROXY https_proxy GIT_SSH_COMMAND GIT_EXEC_PATH GIT_ASKPASS GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_GLOBAL SSH_ASKPASS PYTHONPATH PYTHONSTARTUP PERL5OPT PERL5LIB RUBYOPT RUBYLIB EDITOR VISUAL PAGER NPM_CONFIG_USERCONFIG; do
     mkdir -p "$T/dl"; printf '%s=evil\nPLAIN_OK=1\n' "$n" >"$T/dl/.env"
     got="$(cd "$T/dl" && env -i PATH=/usr/bin:/bin LOKI_ALLOW_PROJECT_ENV=1 bash -c 'source "$1"; _loki_apply_project_env; printf "%s|%s" "${'"$n"':-unset}" "${PLAIN_OK:-unset}"' _ "$REPO/autonomy/lib/bun-safe.sh")"
     [ "$got" = "unset|1" ] && ok "opt-in .env: $n is never applied (plain names still are)" || bad "opt-in .env: $n got '$got'"
 done
+
+# rev-a B1: the hostile .env must plant no core.fsmonitor command that the next git call runs.
+fsm() { # fsm <bun-safe.sh>
+    rm -rf "$T/fsm"; mkdir -p "$T/fsm"; git -C "$T/fsm" init -q; printf 'x\n' >"$T/fsm/a.txt"
+    printf 'GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=core.fsmonitor\nGIT_CONFIG_VALUE_0=touch %s/PWNED; false\n' "$T/fsm" >"$T/fsm/.env"
+    (cd "$T/fsm" && env -i PATH=/usr/bin:/bin HOME="$T/home" LOKI_ALLOW_PROJECT_ENV=1 bash -c 'source "$1"; _loki_apply_project_env; git status --porcelain >/dev/null 2>&1' _ "$1")
+    [ ! -e "$T/fsm/PWNED" ]
+}
+fsm "$REPO/autonomy/lib/bun-safe.sh" && ok "opt-in .env with GIT_CONFIG_COUNT plants no core.fsmonitor command" || bad "opt-in .env planted a core.fsmonitor command"
+sed 's/            GIT_\*|SSH_\*|/            SSH_*|/' "$REPO/autonomy/lib/bun-safe.sh" >"$T/bs-mut.sh"
+fsm "$T/bs-mut.sh" && bad "mutant: dropping the GIT_* class was not caught" || ok "mutant: dropping the GIT_* class lets fsmonitor run and is caught"
 
 if command -v bun >/dev/null 2>&1; then
     # Real bun: a parent started safely spawns a worker child through bunSafeArgv in the hostile repo.
