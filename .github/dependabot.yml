@@ -1,0 +1,32 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+    allow:
+      - dependency-name: "@anthropic-ai/*"
+    groups:
+      anthropic-sdks:
+        patterns:
+          - "@anthropic-ai/*"
+  - package-ecosystem: npm
+    directory: /loki-ts
+    schedule:
+      interval: daily
+    allow:
+      - dependency-name: "@anthropic-ai/*"
+    groups:
+      anthropic-sdks:
+        patterns:
+          - "@anthropic-ai/*"
+  - package-ecosystem: pip
+    directory: /mcp
+    schedule:
+      interval: daily
+    allow:
+      - dependency-name: "anthropic"
+    groups:
+      anthropic-sdks:
+        patterns:
+          - "anthropic"

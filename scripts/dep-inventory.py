@@ -25,7 +25,7 @@ import sys
 import tempfile
 import urllib.request
 import urllib.error
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 try:
@@ -1387,12 +1387,101 @@ def self_test() -> int:
         loki_row = next(r for r in helm_rows if r.file == "helm/loki-mode/Chart.yaml" and r.name == "appVersion")
         check("helm: appVersion drift is reported for the second chart too", loki_row.bump == "drifted")
 
+        # ---- SDK freshness (RQ-106): offline stubbed registry responses
+        now = datetime(2026, 10, 23, tzinfo=timezone.utc)
+
+        def stub(releases: dict):
+            return {"npm": lambda _n: {v: now - timedelta(days=d) for v, d in releases.items()}}
+
+        def fresh(pin: str, releases: dict):
+            return sdk_freshness([("npm", "package.json", "@anthropic-ai/sdk", pin)], now, stub(releases))
+
+        check("freshness: pin current -> pass", fresh("1.2.0", {"1.1.0": 30, "1.2.0": 2})[1] == 0)
+        check("freshness: pin behind a 3-day-old release -> pass",
+              fresh("1.1.0", {"1.1.0": 30, "1.2.0": 3})[1] == 0)
+        red_lines, red_rc = fresh("1.1.0", {"1.1.0": 30, "1.2.0": 8})
+        check("freshness: pin behind an 8-day-old release -> red", red_rc == 1)
+        check("freshness: red output names package, pin, latest and age",
+              "@anthropic-ai/sdk" in red_lines[0] and "pin=1.1.0" in red_lines[0]
+              and "latest=1.2.0" in red_lines[0] and "age=8d" in red_lines[0])
+
     print()
     if failures:
         print(f"{len(failures)} check(s) FAILED: {failures}")
         return 1
     print("All self-test checks passed.")
     return 0
+
+
+# --------------------------------------------------------------------------
+# SDK freshness guard (RQ-106, D115): never more than 7 days behind
+# --------------------------------------------------------------------------
+
+FRESHNESS_WINDOW_DAYS = 7
+FRESHNESS_PACKAGES = SDK_PACKAGE_NAMES | {"anthropic"}
+_PLAIN_VERSION = re.compile(r"^\d+(\.\d+)+$")
+
+
+def _parse_time(ts: str) -> datetime:
+    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def fetch_npm_times(pkg: str) -> dict:
+    data = _fetch_json(f"https://registry.npmjs.org/{pkg}")
+    return {v: _parse_time(t) for v, t in data.get("time", {}).items() if _PLAIN_VERSION.match(v)}
+
+
+def fetch_pypi_times(pkg: str) -> dict:
+    data = _fetch_json(f"https://pypi.org/pypi/{pkg}/json")
+    out = {}
+    for v, files in data.get("releases", {}).items():
+        live = [f for f in files if not f.get("yanked") and f.get("upload_time_iso_8601")]
+        if live and _PLAIN_VERSION.match(v):
+            out[v] = min(_parse_time(f["upload_time_iso_8601"]) for f in live)
+    return out
+
+
+def collect_sdk_pins(repo_root: Path, files: list[str]) -> list[tuple[str, str, str, str]]:
+    """(ecosystem, file, name, pinned version) for every freshness package."""
+    pins = []
+
+    def add(eco: str, f: str, name: str, spec: str) -> None:
+        m = re.search(r"\d+(\.\d+)+", spec.split(",")[0])
+        if name in FRESHNESS_PACKAGES and m:
+            pins.append((eco, f, name, m.group(0)))
+
+    for f in files:
+        if f.endswith("package.json"):
+            data = json.loads((repo_root / f).read_text())
+            for sect in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+                for name, spec in data.get(sect, {}).items():
+                    add("npm", f, name, spec)
+        elif re.search(r"requirements.*\.txt$", f):
+            for name, spec in parse_requirements((repo_root / f).read_text()):
+                add("pypi", f, name, spec)
+        elif f.endswith("pyproject.toml"):
+            for name, spec in parse_pyproject_deps((repo_root / f).read_text(), repo_root / f):
+                add("pypi", f, name, spec)
+    return pins
+
+
+def sdk_freshness(pins: list, now: datetime, fetch_times=None) -> tuple[list[str], int]:
+    """Red when the newest release older than the window is newer than the pin."""
+    fetch_times = fetch_times or {"npm": fetch_npm_times, "pypi": fetch_pypi_times}
+    cutoff = now - timedelta(days=FRESHNESS_WINDOW_DAYS)
+    lines, rc = [], 0
+    for eco, f, name, pin in sorted(pins):
+        times = fetch_times[eco](name)
+        newest = max(times, key=version_tuple)
+        due = [v for v, t in times.items() if t <= cutoff]
+        target = max(due, key=version_tuple) if due else None
+        age = (now - times[newest]).days
+        stale = target is not None and version_tuple(target) > version_tuple(pin)
+        rc = rc or int(stale)
+        lines.append(f"{'STALE' if stale else 'ok'} {name} ({f}) pin={pin} latest={newest} "
+                     f"age={age}d due={target or 'none'} window={FRESHNESS_WINDOW_DAYS}d")
+    return lines, rc
 
 
 # --------------------------------------------------------------------------
@@ -1406,10 +1495,18 @@ def main() -> int:
     parser.add_argument("--output", default=None, help="Output path (default: docs/v10/DEPS.md under repo root)")
     parser.add_argument("--self-test", action="store_true",
                          help="Run offline fixture checks (no network, no repo scan) and exit")
+    parser.add_argument("--sdk-freshness", action="store_true",
+                         help="Exit non-zero when a pinned Anthropic SDK is behind a release older than 7 days")
     args = parser.parse_args()
 
     if args.self_test:
         return self_test()
+
+    if args.sdk_freshness:
+        root = Path(args.repo_root) if args.repo_root else Path(__file__).resolve().parent.parent
+        lines, rc = sdk_freshness(collect_sdk_pins(root, git_ls_files(root)), datetime.now(timezone.utc))
+        print("\n".join(lines))
+        return rc
 
     repo_root = Path(args.repo_root) if args.repo_root else Path(__file__).resolve().parent.parent
     cache_dir = Path(args.cache) if args.cache else Path(tempfile.mkdtemp(prefix="loki-dep-inventory-"))

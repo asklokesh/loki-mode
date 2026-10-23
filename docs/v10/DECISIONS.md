@@ -908,3 +908,8 @@ FC-AGENT-PROOF: a run whose only executed passing check is a test file the same 
 ## D114 (2026-10-23, CoS records, #343): Codex MCP secrets never go on argv
 1. Secret names are passed to Codex through env_vars; secret values travel only in the process environment.
 2. No secret value appears in a command line, where ps and shell history can read it.
+
+## D115 (2026-10-23, founder standing rule, CoS records, RQ-106): SDKs are never more than 7 days behind
+1. @anthropic-ai/sdk, @anthropic-ai/claude-agent-sdk and the PyPI anthropic package are never pinned behind the newest release that is older than 7 days.
+2. Dependabot (daily, group anthropic-sdks) opens the bump; `python3 scripts/dep-inventory.py --sdk-freshness` runs daily from release.yml (schedule) and goes red naming the package.
+3. A red caused by an SDK release is never cleared by a plain rerun: bump the pin and fix forward.
