@@ -58,7 +58,7 @@ _loki_completion() {
             ;;
 
         memory)
-            local memory_cmds="list show search stats export clear dedupe index timeline consolidate economics retrieve lessons learn forget episode pattern skill vectors brief help"
+            local memory_cmds="list show search stats export clear dedupe index timeline consolidate economics retrieve lessons learn promote forget episode pattern skill vectors brief help"
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--task --recent --repo --help" -- "$cur") )
                 return 0

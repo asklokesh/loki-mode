@@ -512,6 +512,7 @@ function _loki_memory {
         'vectors:Vector search'
         'lessons:List PR lessons (--json)'
         'learn:Learn from a merged PR'
+        'promote:Share a PR lesson with every repo'
         'forget:Delete a PR lesson'
         'help:Memory help'
     )

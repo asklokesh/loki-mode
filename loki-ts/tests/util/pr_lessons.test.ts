@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "nod
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
-import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, loadLessons, respondToReview, defaultRespondPush, recordRunVerdict, recordUse, removeLesson, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
+import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, loadLessons, respondToReview, defaultRespondPush, recordRunVerdict, recordUse, promoteLesson, removeLesson, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
 
 const dirs: string[] = [];
 const mk = (): string => { const d = mkdtempSync(join(tmpdir(), "t6-lessons-")); dirs.push(d); return d; };
@@ -776,5 +776,29 @@ describe("human edits on a Loki PR (R100-011)", () => {
     expect(formatLessonsForBrief(retrieveLessons(d, "rename userName in src/a.ts"))).toContain("userName");
     expect(removeLesson(d, id)?.id).toBe(id);
     expect(retrieveLessons(d, "rename userName in src/a.ts")).toEqual([]);
+  });
+});
+
+describe("lesson scope across repos (R100-011 criterion 4)", () => {
+  const seed = (d: string): string => {
+    mkdirSync(dirname(lessonsPath(d)), { recursive: true });
+    const l: Lesson = { id: "prl-aaaaaaaaaaaa", text: "Always validate the pagination cursor", source: { pr: "o/a#1", pr_url: "", comment_url: "", kind: "review_comment", author: "rev" }, learned_at: "2026-10-01T00:00:00Z", uses: [] };
+    writeFileSync(lessonsPath(d), JSON.stringify({ version: 2, lessons: [l] }));
+    return l.id;
+  };
+  it("repo A lesson is in 0 briefs for repo B until promoted; forget withdraws it everywhere", () => {
+    const home = mk(); process.env["LOKI_PROMOTED_DIR"] = home;
+    try {
+      const a = mk(), b = mk(); const id = seed(a);
+      expect(retrieveLessons(a, "validate pagination cursor").length).toBe(1);
+      expect(retrieveLessons(b, "validate pagination cursor")).toEqual([]);
+      expect(promoteLesson(a, id)?.id).toBe(id);
+      expect(promoteLesson(a, id)?.id).toBe(id);
+      expect(promoteLesson(a, "prl-nope")).toBeNull();
+      expect(retrieveLessons(b, "validate pagination cursor").map((l) => l.id)).toEqual([id]);
+      expect(retrieveLessons(a, "validate pagination cursor").length).toBe(1);
+      expect(removeLesson(a, id)?.id).toBe(id);
+      expect(retrieveLessons(b, "validate pagination cursor")).toEqual([]);
+    } finally { delete process.env["LOKI_PROMOTED_DIR"]; }
   });
 });
