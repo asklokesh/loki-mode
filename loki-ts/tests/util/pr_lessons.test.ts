@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "nod
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
-import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, loadLessons, respondToReview, defaultRespondPush, recordRunVerdict, recordUse, removeLesson, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
+import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, MAX_HUMAN_COMMITS, learnRecent, loadLessons, respondToReview, defaultRespondPush, recordRunVerdict, recordUse, removeLesson, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
 
 const dirs: string[] = [];
 const mk = (): string => { const d = mkdtempSync(join(tmpdir(), "t6-lessons-")); dirs.push(d); return d; };
@@ -767,6 +767,44 @@ describe("human edits on a Loki PR (R100-011)", () => {
       expect(r.added).toBe(1);
       expect(loadLessons(d)[0]!.kind).toBe("rejected");
     } finally { delete process.env["LOKI_LESSONS_REJECTED"]; }
+  });
+
+  // humanCommits / humanEditItem guards: each clause below is pinned by a test that goes red when the clause is removed.
+  const edited = (over: Record<string, unknown>) => ({ ...human, ...over });
+  it("bot commits yield no lesson, by author type and by [bot] login separately", async () => {
+    for (const author of [{ login: "dependabot[bot]", type: "Bot" }, { login: "dev", type: "Bot" }, { login: "renovate[bot]", type: "User" }]) {
+      const d = mk();
+      expect((await learnFromPr(d, "o/r#7", gh([loki, edited({ author })]))).added).toBe(0);
+      expect(loadLessons(d)).toEqual([]);
+    }
+    expect((await learnFromPr(mk(), "o/r#7", gh([loki, human]))).added).toBe(1); // positive control: same shape, human author
+  });
+  it("a merge commit (two parents) yields no lesson; one parent still does", async () => {
+    const d = mk();
+    expect((await learnFromPr(d, "o/r#7", gh([loki, edited({ parents: [{}, {}] })]))).added).toBe(0);
+    expect((await learnFromPr(mk(), "o/r#7", gh([loki, edited({ parents: [{}] })]))).added).toBe(1);
+  });
+  it("at most MAX_HUMAN_COMMITS human commits are read, 11 distinct ones give exactly the cap", async () => {
+    const sha = (i: number) => i.toString(2).padStart(40, "0").replace(/0/g, "b").replace(/1/g, "c");
+    const commits = Array.from({ length: MAX_HUMAN_COMMITS + 1 }, (_, i) => edited({ sha: sha(i + 1), commit: { message: `edit ${i}` } }));
+    const client: GhClient = async (args) => {
+      const url = args[args.length - 1]!;
+      if (/\/commits\/[bc]{40}$/.test(url)) { const n = parseInt(url.slice(-40).replace(/b/g, "0").replace(/c/g, "1"), 2); return { code: 0, stdout: JSON.stringify({ html_url: `https://github.com/o/r/pull/7/commits/${url.slice(-40)}`, files: [{ filename: `src/f${n}.ts`, patch: PATCH.replace(/tempValue/g, `tempValue${n}`) }] }), stderr: "" }; }
+      return gh([loki, ...commits])(args);
+    };
+    const d = mk();
+    expect((await learnFromPr(d, "o/r#7", client)).added).toBe(MAX_HUMAN_COMMITS);
+    expect(loadLessons(d)).toHaveLength(MAX_HUMAN_COMMITS);
+  });
+  it("a commit whose files carry no patch (binary or oversized) yields no lesson", async () => {
+    const client: GhClient = async (args) => {
+      const url = args[args.length - 1]!;
+      if (/\/commits\/[bc]{40}$/.test(url)) return { code: 0, stdout: JSON.stringify({ html_url: "https://github.com/o/r/pull/7/commits/x", files: [{ filename: "assets/logo.png", status: "added" }] }), stderr: "" };
+      return gh([loki, human])(args);
+    };
+    const d = mk();
+    expect((await learnFromPr(d, "o/r#7", client)).added).toBe(0);
+    expect(loadLessons(d)).toEqual([]);
   });
 
   it("forget removes the edit lesson from the next brief", async () => {
