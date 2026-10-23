@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.14 (2026-10-23)
+
+### Fixed
+- The cost-cache test now clears LOKI_INFERENCE_GEO and its cache state so it passes regardless of the environment (costcache3). Approval: "APPROVE pd/p0-costcache3 b75336e3b7c10cb9bfe5ab7704fb4b1a0010668d (tl-2, LOW), stacked on parent 9dc4242bf822ec70c85519639131a21fe5dec4d8 (costcache2, previously approved)".
+
 ## v11.60.13 (2026-10-23)
 
 ### Fixed
