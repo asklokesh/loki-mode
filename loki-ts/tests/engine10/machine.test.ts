@@ -716,6 +716,15 @@ describe("engine10 machine: per-stage diff stat (pd/stage-diffstat)", () => {
     expect(done("intake").diff_stat).toBeUndefined();
   });
 
+  it("the wall stage journals its own diff_stat too", async () => {
+    const repo = gitRepo();
+    const { ctx, events } = fakeCtx();
+    ctx.repoDir = repo;
+    const wall = stage("wall", async () => { writeFileSync(join(repo, "w.test.ts"), "t\n"); return { status: "completed", data: {} }; });
+    await runMachine(ctx, { load: loaderOf(all({ wall })) });
+    expect(events.find((e) => e.type === "stage.completed" && e.stage === "wall")!.data.diff_stat).toEqual({ files: 1, added: 1, removed: 0, paths: [{ path: "w.test.ts", added: 1, removed: 0 }] });
+  });
+
   it("an unreadable repo leaves diff_stat absent (unmeasured), never zero", async () => {
     const { ctx, events } = fakeCtx(); // repoDir is /nonexistent
     await runMachine(ctx, { load: loaderOf(all()) });
