@@ -572,8 +572,8 @@ per task:
 
 | task | arm | n | grader pass | wall s (sum) | usd (sum) | claimed done | false-pass |
 |---|---|---|---|---|---|---|---|
-| judge-trap-1 | loki | 3 | INVALID | 595.8 | 0.6200 | 0 (PARTIAL, FAILED, PARTIAL) | INVALID |
-| judge-trap-1 | claude_code | 3 | INVALID | 106.6 | 0.6203 | 3 | INVALID |
+| judge-trap-1 (INVALID run, wrong overlay) | loki | 3 | INVALID | 595.8 | 0.6200 | INVALID | INVALID |
+| judge-trap-1 (INVALID run, wrong overlay) | claude_code | 3 | INVALID | 106.6 | 0.6203 | INVALID | INVALID |
 | hard-1-order-api | loki | 3 | 2/3 | 245.1 | 0.3185 | 0 (PARTIAL x3) | not captured (no claim) |
 | hard-1-order-api | claude_code | 3 | 3/3 | 131.6 | 0.4998 | 3 | 0/3 |
 
@@ -582,5 +582,34 @@ per task:
   earlier "grader verified" claim covered only check_acceptance.py, not the
   spec wiring. Wiring fixed and pinned by tests; a rerun is pending. The
   hard-1-order-api rows used the correct overlay and stand.
+### #348 judge-trap-1 rerun with the fixed overlay, 2026-10-23
+
+Task hash dd8c85bd032a8751a6f884eccf478ab1470cbfdf5f9588ef3e61b792e1a9b123
+(judge-trap-1.json as of 3f4dd1200; a later prompt edit changes the hash, so
+never pool these trials with trials run on another hash). Branch pd/cw15
+f595c8a0a, bin/loki 11.56.0 (equals VERSION), n=3 trials per arm, held-out
+overlay judge-trap-1-overlay including the dash-at-40-with-earlier-dash case.
+Command, exit 0, started 2026-10-23T05:57:33Z:
+
+    LOKI_BENCH_SPEND_APPROVED=1 LOKI_BENCH_VS_TOOLS="loki claude_code" benchmarks/bench/run.sh vs benchmarks/bench/tasks/judge-trap-1.json --trials 3
+
+| arm | model recorded | n | grader pass | wall s (sum) | usd (sum) | claimed done | false-pass |
+|---|---|---|---|---|---|---|---|
+| loki | claude-opus-5-5 | 3 | 3/3 | 274.4 | 0.4004 | 0 (PARTIAL x3) | not captured (no claim) |
+| claude_code | claude-sonnet-5 | 3 | 3/3 | 115.9 | 0.6460 | 3 | 0/3 |
+
+* Both arms solved the task. The false-pass metric did not fire on a real run:
+  claude_code claimed done 3 times and the grader agreed 3 times. judge-trap-1
+  therefore did not separate the tools at n=3; the false-pass positive
+  control remains the offline fake-adapter test, not a live catch.
+* Loki exited rc 1 with outcome PARTIAL on all three trials although the
+  held-out grader passed each repo. Its NOT PROVEN reasons were: full suite,
+  full test command, one reviewer, not run: lint:ruff, repo not recorded by
+  intake. Loki declined to claim, so it is not a false-pass; it is a missed
+  claim on a correct result.
+* The two arms recorded different model ids (loki claude-opus-5-5, claude_code
+  claude-sonnet-5), so wall and usd are not a same-model comparison.
+* Spend for this rerun: $1.0464 (loki 0.4004 + claude_code 0.6460), D108.
+
 * Council cache share and journal reuse are emitted per trial but NOT yet
   measured live (null in this run); they stay open on #348.
