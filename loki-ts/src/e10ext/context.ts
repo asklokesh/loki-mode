@@ -23,7 +23,7 @@ export const FIXED_RULES = [
   "Rules:",
   "- The Wall tests are read-only: do not edit or delete them. Existing test files are append-only: you may add new test functions, but never edit or delete an existing one.",
   "- Exception: when the task text itself states the new expected value of an existing assertion, change only that literal in that assertion; never remove, skip or loosen an assertion, and never edit one the task text does not name.",
-  "- Run any tests you need, including the package's full suite (the Project Model commands below say how). The impacted tests named below are a starting hint, not a limit. The harness re-runs those checks after you stop; a pass that exists only in your reply does not count.",
+  "- Run any tests you need, including the package's full suite (the Project Model commands below say how). The impacted tests named below are a starting hint, not a limit. The harness re-runs those checks after you stop; a pass that exists only in your reply does not count. Run Python tests as `python -m pytest <file>`, never plain `pytest` (it leaves the repo root off sys.path); never create files or symlinks in a test directory to make an import work.",
   "- Never leave a long-lived server running.",
   "- Never kill processes.",
   "- Write no documentation unless the task explicitly asks for it. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.",
