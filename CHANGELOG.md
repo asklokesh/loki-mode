@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.3 (2026-10-23)
+
+### Fixed
+- The benchmark runner drains stderr while waiting for the stop marker, so heavy logging can no longer fake a timeout; the resume-cost instrument and engine SHA recording ship with it. Approval: "tl-324 APPROVE ... pd/resumecost3: ship range origin/main..e43a2ea45fe37217caa7446450e9e6e3e0cc63c4 = 7 commits".
+
 ## v11.60.2 (2026-10-23)
 
 ### Fixed
