@@ -29,7 +29,12 @@
 #                       CI status, unreleased-merge age and the moat baseline,
 #                       so this script gives an honest answer about the swarm's
 #                       main line even when run from a builder worktree whose
-#                       own HEAD is a feature branch.
+#                       own HEAD is a feature branch. When unset and local
+#                       main is a strict ancestor of refs/remotes/origin/main
+#                       (releases push from worktrees, so it goes stale), the
+#                       remote-tracking ref is measured instead and
+#                       STALE_MAIN_REF fires; no fetch is ever run. An
+#                       explicit value always wins.
 #   PULSE_NPM_CMD       npm command to run (default: npm view loki-mode time dist-tags --json)
 #   PULSE_GH_CMD        gh command to run (default: gh run list --branch main
 #                       --commit <main-sha> --json status,conclusion,workflowName --limit 20)
@@ -208,6 +213,10 @@ PULSE_PROGRESS_MD="${PULSE_PROGRESS_MD:-$DEFAULT_REPO_ROOT/docs/v10/PROGRESS.md}
 export PULSE_REPO_ROOT BOARD_MD CONTROL_MD PULSE_PROGRESS_MD
 export PULSE_TRANSCRIPT_DIR="${PULSE_TRANSCRIPT_DIR:-}"
 export PULSE_LOOP_MARKER="${PULSE_LOOP_MARKER:-}"
+# Whether the caller pinned the ref: only an unset PULSE_MAIN_REF may be
+# upgraded to origin/main when local main is stale (RQ-98).
+if [ -n "${PULSE_MAIN_REF:-}" ]; then PULSE_MAIN_REF_SET=1; else PULSE_MAIN_REF_SET=0; fi
+export PULSE_MAIN_REF_SET
 export PULSE_MAIN_REF="${PULSE_MAIN_REF:-main}"
 export PULSE_NPM_CMD="${PULSE_NPM_CMD:-}"
 export PULSE_GH_CMD="${PULSE_GH_CMD:-}"
@@ -269,6 +278,10 @@ BOARD_MD = os.environ["BOARD_MD"]
 CONTROL_MD = os.environ["CONTROL_MD"]
 PROGRESS_MD = os.environ["PULSE_PROGRESS_MD"]
 MAIN_REF = os.environ.get("PULSE_MAIN_REF", "main") or "main"
+# Branch name handed to `gh --branch`; stays "main" when MAIN_REF is upgraded
+# to the remote-tracking ref below.
+GH_BRANCH = MAIN_REF
+_MAIN_REF_PINNED = os.environ.get("PULSE_MAIN_REF_SET") == "1"
 
 # Two deadlines, not one shared pool. A single pool meant a hung npm call
 # alone (with nothing else slow) spent the ENTIRE budget and left every
@@ -412,6 +425,35 @@ def git(args):
     return _GIT_MEMO[key]
 
 
+_ORIGIN_MAIN_REF = "refs/remotes/origin/main"
+
+
+def resolve_stale_main_ref():
+    """(kind, n) when local main trails origin/main, else None. kind is
+    "behind" (local main is a strict ancestor: n commits) or "diverged"
+    (neither is an ancestor of the other). Reads the remote-tracking ref as
+    it is; never fetches. Equal, ahead, absent origin/main: None."""
+    if _MAIN_REF_PINNED or MAIN_REF != "main":
+        return None
+    rc, _, _ = git(["rev-parse", "--verify", "--quiet", _ORIGIN_MAIN_REF + "^{commit}"])
+    if rc != 0:
+        return None
+    rc, _, _ = git(["rev-parse", "--verify", "--quiet", "refs/heads/main^{commit}"])
+    if rc != 0:
+        return None
+    rc, _, _ = git(["merge-base", "--is-ancestor", "refs/heads/main", _ORIGIN_MAIN_REF])
+    if rc == 0:
+        rc, out, _ = git(["rev-list", "--count", "refs/heads/main.." + _ORIGIN_MAIN_REF])
+        if rc != 0 or not out.strip().isdigit():
+            return None
+        n = int(out.strip())
+        return ("behind", n) if n > 0 else None
+    rc, _, _ = git(["merge-base", "--is-ancestor", _ORIGIN_MAIN_REF, "refs/heads/main"])
+    if rc == 0:
+        return None
+    return ("diverged", 0)
+
+
 def parse_time_value(raw):
     """Accept an epoch-seconds string or an ISO8601 'YYYY-MM-DDTHH:MMZ'
     (the BOARD.md timestamp format) and return epoch seconds, or None."""
@@ -473,7 +515,7 @@ NOW = now_epoch()
 # the TOP violation -- an accidental ordering-by-discovery would misrank it.
 VIOLATION_PRIORITY = [
     "SESSION_STALLED", "CI_RED", "CI_CANCELLED_STREAK", "RELEASE_ON_RED", "HIGH_LOAD",
-    "BUDGET_BURN", "OPUS_SHARE",
+    "BUDGET_BURN", "OPUS_SHARE", "STALE_MAIN_REF",
     "MOAT_REGRESSION", "MAIN_RED_BY_MERGE", "UNRELEASED_MERGE", "RELEASE_CADENCE", "TRAIN_LATE", "REVIEW_STALE",
     "AGENT_OVER_BUDGET", "STALE_PROGRESS", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM", "PROMOTION_LAG",
     "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER", "STRAY_WORKTREE",
@@ -515,6 +557,21 @@ _CI_FAILURE_CONCLUSIONS = ("failure", "timed_out", "startup_failure")
 _CI_OK_CONCLUSIONS = ("success", "skipped", "neutral")
 
 
+_STALE_MAIN = safe(resolve_stale_main_ref)
+if _STALE_MAIN is not None and _STALE_MAIN[0] == "behind":
+    MAIN_REF = _ORIGIN_MAIN_REF
+    add_violation(
+        "STALE_MAIN_REF",
+        "local main is %d commit%s behind origin/main; measuring origin/main"
+        % (_STALE_MAIN[1], "" if _STALE_MAIN[1] == 1 else "s"),
+    )
+elif _STALE_MAIN is not None:
+    add_violation(
+        "STALE_MAIN_REF",
+        "local main has diverged from origin/main; measuring local main",
+    )
+
+
 def resolve_main_sha():
     rc, out, _ = git(["rev-parse", MAIN_REF])
     if rc != 0:
@@ -540,7 +597,7 @@ if main_sha is not None:
         ]
 
 _gh_streak_argv = shlex.split(os.environ["PULSE_GH_STREAK_CMD"]) if os.environ.get("PULSE_GH_STREAK_CMD") else [
-    "gh", "run", "list", "--branch", MAIN_REF, "--workflow", "Tests",
+    "gh", "run", "list", "--branch", GH_BRANCH, "--workflow", "Tests",
     "--json", "status,conclusion", "--limit", "10",
 ]
 
@@ -3343,6 +3400,7 @@ _NEXT_ACTION_TEXT = {
     "TRAIN_LATE": "push a release train now, merged-unreleased commits exist and cadence has slipped past the 25-minute budget",
     "REVIEW_STALE": "escalate or finish review for the named slice(s), they have exceeded the 45-minute budget",
     "AGENT_OVER_BUDGET": "check in on the named agent(s), they have exceeded their role/tier time budget",
+    "STALE_MAIN_REF": "fast-forward local main from origin/main (git fetch, then git merge --ff-only origin/main in a checkout on main), or export PULSE_MAIN_REF to pin the ref",
     "STALE_PROGRESS": "append a PROGRESS.md entry: Part 1 gate numbers, Part 2 slices done, top blocker",
     "UNEVIDENCED_CLAIM": "add a command/output citation to the named line(s) or retract the claim (D26 guard 4)",
     "PROMOTION_LAG": "clear the named PROMOTE-BLOCK (usually a red Nightly step) so promote.yml can move latest",

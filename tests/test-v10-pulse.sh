@@ -3621,6 +3621,91 @@ else
     bad "gh failure case wrong"; printf '%s\n' "$OUT"
 fi
 
+echo "RQ-98 -- an unpinned pulse measures origin/main when local main is behind it, and says so"
+mk_rq98_repo() { # dir n [diverge]: main = FAKE_REPO main; origin/main = main + n commits; diverge adds a local-only commit
+    local d="$1" n="$2" mode="${3:-}" i
+    rm -rf "$d"; git clone -q "$FAKE_REPO" "$d" 2>/dev/null
+    (
+        cd "$d" || exit 1
+        git config user.email t@example.com; git config user.name t
+        git checkout -q -B main "$(git -C "$FAKE_REPO" rev-parse main)"
+        git checkout -q -B tmp
+        i=0; while [ "$i" -lt "$n" ]; do
+            echo "$i" > "f$i"; git add "f$i"; git commit -q -m "o$i"; i=$((i+1))
+        done
+        git update-ref refs/remotes/origin/main "$(git rev-parse HEAD)"
+        git checkout -q main; git branch -q -D tmp
+        if [ "$mode" = diverge ]; then echo l > local-only; git add local-only; git commit -q -m local; fi
+    )
+}
+RQ98_ARGS=()
+for a in "${COMMON_ARGS[@]}"; do
+    case "$a" in PULSE_MAIN_REF=*) ;; *) RQ98_ARGS+=("$a") ;; esac
+done
+rq98_run() { # repo [extra env...]
+    local repo="$1"; shift
+    run_pulse -u PULSE_MAIN_REF "${RQ98_ARGS[@]}" "PULSE_REPO_ROOT=$repo" "BOARD_MD=$BOARD_CLEAN" \
+        "PULSE_GH_CMD=cat $GH_GREEN_JSON" "$@" || true
+}
+RQ98_BEHIND="$WORK/rq98-behind"; mk_rq98_repo "$RQ98_BEHIND" 2
+RQ98_ORIGIN_SHA="$(git -C "$RQ98_BEHIND" rev-parse refs/remotes/origin/main)"
+RQ98_LOCAL_SHA="$(git -C "$RQ98_BEHIND" rev-parse refs/heads/main)"
+rq98_run "$RQ98_BEHIND"
+if printf '%s\n' "$OUT" | grep -qF "Main CI (refs/remotes/origin/main @ ${RQ98_ORIGIN_SHA:0:8}): GREEN" \
+    && printf '%s\n' "$OUT" | grep -qF "VIOLATION: STALE_MAIN_REF: local main is 2 commits behind origin/main; measuring origin/main" \
+    && ! printf '%s\n' "$OUT" | grep -qF "${RQ98_LOCAL_SHA:0:8}"; then
+    ok "RQ-98: local main 2 behind: Main CI measures origin/main's SHA and STALE_MAIN_REF names N=2"
+else
+    bad "RQ-98 behind case"; printf '%s\n' "$OUT" | grep -E "Main CI|STALE_MAIN_REF"
+fi
+RQ98_EQUAL="$WORK/rq98-equal"; mk_rq98_repo "$RQ98_EQUAL" 0
+rq98_run "$RQ98_EQUAL"
+if printf '%s\n' "$OUT" | grep -qE "^Main CI \(main @ [0-9a-f]{8}\): GREEN" && ! printf '%s\n' "$OUT" | grep -q "STALE_MAIN_REF"; then
+    ok "RQ-98: equal refs: no violation, local main still measured"
+else
+    bad "RQ-98 equal case"; printf '%s\n' "$OUT" | grep -E "Main CI|STALE_MAIN_REF"
+fi
+RQ98_DIV="$WORK/rq98-div"; mk_rq98_repo "$RQ98_DIV" 1 diverge
+rq98_run "$RQ98_DIV"
+if printf '%s\n' "$OUT" | grep -qE "^Main CI \(main @ [0-9a-f]{8}\): GREEN" \
+    && printf '%s\n' "$OUT" | grep -qF "VIOLATION: STALE_MAIN_REF: local main has diverged from origin/main; measuring local main"; then
+    ok "RQ-98: diverged refs: violation says diverged, ref unchanged"
+else
+    bad "RQ-98 diverged case"; printf '%s\n' "$OUT" | grep -E "Main CI|STALE_MAIN_REF"
+fi
+rq98_run "$RQ98_BEHIND" "PULSE_MAIN_REF=main"
+if printf '%s\n' "$OUT" | grep -qF "Main CI (main @ ${RQ98_LOCAL_SHA:0:8}): GREEN" && ! printf '%s\n' "$OUT" | grep -q "STALE_MAIN_REF"; then
+    ok "RQ-98: explicit PULSE_MAIN_REF=main wins, no switch"
+else
+    bad "RQ-98 explicit pin case"; printf '%s\n' "$OUT" | grep -E "Main CI|STALE_MAIN_REF"
+fi
+# Mutants run against copies of the script so the file under test is never touched.
+RQ98_MUT_A="$WORK/pulse-mut-a.sh"; RQ98_MUT_B="$WORK/pulse-mut-b.sh"
+python3 - "$PULSE_SH" "$RQ98_MUT_A" "$RQ98_MUT_B" <<'PYEOF'
+import sys
+s = open(sys.argv[1]).read()
+a = 'if _STALE_MAIN is not None and _STALE_MAIN[0] == "behind":\n    MAIN_REF = _ORIGIN_MAIN_REF\n'
+assert a in s
+open(sys.argv[2], "w").write(s.replace(a, 'if _STALE_MAIN is not None and _STALE_MAIN[0] == "behind":\n    pass\n', 1))
+b = 'elif _STALE_MAIN is not None:\n'
+assert b in s
+open(sys.argv[3], "w").write(s.replace(b, 'elif _STALE_MAIN is not None:\n    MAIN_REF = _ORIGIN_MAIN_REF\n', 1))
+PYEOF
+RQ98_SAVE_SH="$PULSE_SH"
+PULSE_SH="$RQ98_MUT_A"; rq98_run "$RQ98_BEHIND"
+if ! printf '%s\n' "$OUT" | grep -qF "Main CI (refs/remotes/origin/main @ ${RQ98_ORIGIN_SHA:0:8})"; then
+    ok "RQ-98 mutant: always measuring local main turns the behind check red"
+else
+    bad "RQ-98 mutant A survived"
+fi
+PULSE_SH="$RQ98_MUT_B"; rq98_run "$RQ98_DIV"
+if printf '%s\n' "$OUT" | grep -qE "^Main CI \(refs/remotes/origin/main @"; then
+    ok "RQ-98 mutant: switching when diverged turns the diverged check red"
+else
+    bad "RQ-98 mutant B survived"
+fi
+PULSE_SH="$RQ98_SAVE_SH"
+
 TOTAL=$((PASS + FAIL))
 echo "Results: $PASS passed, $FAIL failed, $TOTAL total"
 [ "$FAIL" -eq 0 ]
