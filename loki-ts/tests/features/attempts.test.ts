@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // S41-13 Wall check (docs/v10/SCORECARD-PLAN.md S41-13): gate, scrubbed-env guard, early accept, full ranking,
 // both-disqualified fallback, killed-attempt accounting. Every session and tree op is a fake.
 import { describe, expect, it } from "bun:test";

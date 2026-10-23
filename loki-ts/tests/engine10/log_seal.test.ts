@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // A-117 round 2: the signed log.sealed line after run.completed makes deleting the post-seal tail (or the line) a TAMPERED verdict.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";

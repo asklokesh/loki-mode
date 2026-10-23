@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Test-gap follow-up for E-07/E-12 (docs/v10/ENGINE.md section 11).
 //
 // session.test.ts's own "exports main matching cli.ts's routing contract"

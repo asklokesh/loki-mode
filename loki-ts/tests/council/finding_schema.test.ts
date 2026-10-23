@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/council/finding_schema.test.ts -- Phase C (v7.5.20) tests.
 //
 // Covers:

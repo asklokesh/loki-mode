@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // P12-38: the host-guard hook timeout is the same on the TS runner and the bash runner.
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";

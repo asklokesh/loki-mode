@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/providers/claude_flags.test.ts -- Phase B (v7.5.19) regression tests.
 //
 // Bun-route mirror of tests/test-claude-flags.sh. Covers:

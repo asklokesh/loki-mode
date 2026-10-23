@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-02 B2/R1 (HIGH review): a base load error counts as harness-owned only when it is head's own error; the base run is bounded.
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";

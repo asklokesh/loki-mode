@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // T4: reviewer brief. Ranking, not-measured path, with-coverage path (lcov produced by a real
 // `bun test --coverage` run in a fixture repo), and the opt-out flag.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";

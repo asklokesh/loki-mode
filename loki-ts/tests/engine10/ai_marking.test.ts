@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // MARK-1: machine-readable AI trailers on the Loki commit and a single marker line in the PR body. Off by default (LOKI_AI_MARKING=1).
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";

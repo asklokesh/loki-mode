@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // TEN-QUALITY-31: a non-numeric LOKI_E10_SNAPSHOT_MAX must fall back to the 50MB default, not disable the size cap.
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";

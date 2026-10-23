@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D61 slice 12 Wall: two clean units merge and the suite runs once; a planted conflict names its unit and leaves no partial merge;
 // a suite failure yields fail and never ok. git runs through a helper with an explicit env.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";

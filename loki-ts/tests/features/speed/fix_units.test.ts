@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../../preload.ts";
+setSpawnTimeout();
 // select: walk-all-src
 // TEN-QUALITY-36: characterization of fix_units (effectiveDag, fixEnabled, integrateWithFixes, MAX_FIX_UNITS).
 import { expect, test } from "bun:test";

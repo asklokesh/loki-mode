@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // CP-02: the shipper hook never changes a run. With LOKI_CONTROL_URL unset: no ship.json and no network. With it set to a live stub:
 // the same result and an identical events.jsonl (timestamps aside), and the events arrive.
 import { afterAll, expect, test } from "bun:test";

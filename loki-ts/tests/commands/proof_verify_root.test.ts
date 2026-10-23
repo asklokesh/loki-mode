@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-29 sweep: the Bun verifier route must resolve the verified tree the same
 // way as loki_verify_root in autonomy/loki, never default to the ambient cwd.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";

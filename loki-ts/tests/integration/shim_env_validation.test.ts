@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // v7.5.1 regression test for B18 (LOKI_TS_ENTRY shim validation).
 //
 // Pre-v7.5.1, setting LOKI_TS_ENTRY=/typo produced a raw Bun

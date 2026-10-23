@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Regression tests for the Bun runner's proof-of-run generation hook
 // (src/runner/proof.ts maybeGenerateProof).
 //

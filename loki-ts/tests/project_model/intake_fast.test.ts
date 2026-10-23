@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-55 (INTAKE-FAST): a no-UI answer validates, a single-directory repo spends no model session, and a
 // hung discovery session becomes a recorded fallback. The model call is always a stub.
 import { afterEach, describe, expect, test } from "bun:test";

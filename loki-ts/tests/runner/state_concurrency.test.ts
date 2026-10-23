@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // select: not-src-walker (tmp dir only)
 // Multi-process concurrency tests for atomicWriteFileSync.
 //

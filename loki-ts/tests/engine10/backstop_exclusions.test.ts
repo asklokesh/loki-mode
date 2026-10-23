@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D50-F4: the supervisor backstop commit must honor the commit stage's exclusions (pre-existing
 // dirt, Wall files, stray lockfiles). Otherwise a FAILED run publishes the user's setup dirt as a PR.
 import { afterAll, describe, expect, test } from "bun:test";

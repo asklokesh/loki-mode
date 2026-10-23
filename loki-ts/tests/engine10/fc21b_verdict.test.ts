@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-21b S4: VERIFIED earned after an implement time limit, A1 (a limit that did not kill never seals VERIFIED), A2 (a resumed implement gets only the
 // budget left, both briefs end with FINISH_LINE), a killed session's Wall edit restored before verify, L7 (one outcome), and the post-plan cap resize.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";

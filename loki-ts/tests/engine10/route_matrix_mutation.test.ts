@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // select: not-src-walker (reads its own tests dir)
 // Proof that the semantic route matrix bites: each mutation edits a COPY of src/ and the matrix must report violations.
 // The first ten entries are the bypass forms that defeated the old line-regex guard; the rest are the standing mutation list.

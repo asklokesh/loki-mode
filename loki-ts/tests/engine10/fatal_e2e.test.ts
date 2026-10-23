@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // A-113b: end to end through bin/loki, the real worker and the CLI invoker with a stub claude.
 // (1) The provider child's own stderr reaches the fatal classifier; the same text on stdout never does.
 // (2) A crashed verify is not a repeat of the previous failure signature (a preload replaces only verify's run).

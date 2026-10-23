@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // T3 Intent card v1: parsing, plan brief off-identity, plan stage output, PR body inclusion, LOKI_CONFIRM y/n/no-TTY.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";

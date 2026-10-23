@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D60-5 (INTEL-2): visible per-run cost cap. Resolution (--max-cost > loki.yaml budgets.per_run > default),
 // the start line, and enforcement: cost over the cap ends the run BUDGET_STOP with exit code 3.
 import { describe, expect, test } from "bun:test";

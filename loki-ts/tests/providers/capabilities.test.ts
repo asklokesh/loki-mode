@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // LM-004: the capability table covers every supported provider, docs/cost-controls.md carries its engine10 rows,
 // and the disclosure line is empty for claude and names the gap for the others.
 import { describe, expect, test } from "bun:test";

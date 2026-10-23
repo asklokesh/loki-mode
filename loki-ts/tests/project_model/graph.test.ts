@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/project_model/graph.test.ts -- FC-22a (S1) wall checks: dependsOn schema, dependentsOf, model-rev salt.
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
