@@ -3263,7 +3263,11 @@ async def loki_verify_fast(path: str = ".", diff_base: str = "") -> str:
         rule/path/line/message/severity, files_scanned, files_from_cache,
         elapsed_ms, signals (rules, wall_files_run, wall_files_skipped,
         tests_run, behavioral), static_clean, and exogenous=true. PASS requires a
-        Wall file that ran and passed.
+        loki_wall_* file that ran and passed AND is tracked, unchanged against the
+        diff base and HEAD, sealed (its sha256 matches a wall.sealed event under
+        .loki/runs/), and, with a diff base, names a module the change touches.
+        The seal is a local attestation that anything able to write .loki/ can
+        forge, not proof. Any git error fails closed to INCONCLUSIVE.
     """
     _emit_tool_event_async('loki_verify_fast', 'start',
                            parameters={'path': path, 'diff_base': diff_base})
