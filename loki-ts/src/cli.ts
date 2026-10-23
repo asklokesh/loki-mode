@@ -35,6 +35,7 @@ Bun-native commands:
   doctor [--json]        System prerequisites health check
   rollback <subcmd>      Restore .loki/ state from a checkpoint
                          (subcmds: list | show <id> | to <id> | latest)
+  runs [--json]          List runs across the projects registered with: loki projects add <path>
   undo <run-id> [--plan|--dry-run] Plan or apply (LOKI_UNDO=1) an undo of a run; verifies the receipt first
   proof <subcmd>         Inspect/share proof-of-run artifacts
                          (subcmds: list | show <id> | open <id> | share <id>)
@@ -95,6 +96,11 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       // CLI-MODERN-2: `loki status` shows Loki 10 runs only; the legacy box is gone from this path.
       const { runModernStatus } = await import("./commands/run_status.ts");
       return runModernStatus(rest);
+    }
+
+    case "runs": {
+      const { runRunsList } = await import("./commands/run_status.ts");
+      return runRunsList(rest);
     }
 
     case "intent": {

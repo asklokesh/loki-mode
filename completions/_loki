@@ -343,6 +343,7 @@ function _loki_commands {
         'verify-pr:Verify a PR against its linked issue in a sandbox'
         'queue:Overnight issue queue with a morning digest'
         'issues:Run every open issue in a repo and open PRs'
+        'runs:List runs across the projects registered with loki projects add'
         'undo:Show what undoing a run would do (read-only plan; --dry-run adds the diffstat; --list shows recent runs)'
         'chat:Interactive chat session (run, attach)'
         'route:Print the engine, provider and model route without running'

@@ -23124,6 +23124,11 @@ main() {
         mcp)
             cmd_mcp "$@"
             ;;
+        runs)
+            # R100-008: Bun-only; bin/loki routes here only when bun is absent.
+            echo "loki runs needs the Bun runtime (install bun, then re-run: loki runs)" >&2
+            exit 2
+            ;;
         undo)
             # UNDO-1: Bun-only (verifies the receipt with the Bun verifier); bin/loki routes here only when bun is absent.
             echo "loki undo needs the Bun runtime (install bun, then re-run: loki undo <run-id> --plan)" >&2
