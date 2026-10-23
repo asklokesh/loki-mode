@@ -2701,3 +2701,10 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
   1. Re-run `loki start asklokesh/loki-mode#233` in a fresh clone, using an engine built from the candidate fix. The installed engine cannot verify a fix to its own runner selection.
   2. Before any #233 release, require the full loki-ts `bun test` and an opus HIGH review.
   3. Then work #238, #236, #237, #234, #235 and #230-#232 under #229.
+
+## 2026-10-23T04:25Z (CoS) checkpoint after reboot, v11.36.0..v11.54.0 shipped
+- 61 releases in 26h (v11.36.0 to v11.54.0). npm latest re-promoted to 11.54.0 via release.yml force_republish run 39898474372 after it moved backwards to 11.53.1.
+- v11.53.0, v11.53.1 and v11.54.0 release jobs failed on release-notes.sh (no `### ` subsection); fixed in 0b0a211bd, tags and GitHub releases created by hand. Guard slice pd/npmskip (FC-RELEASE-NOTES-FORMAT-UNCHECKED-LOCALLY, FC-DIST-TAG-MOVED-BACKWARDS, FC-RELEASE-GREEN-WITHOUT-REGISTRY-PROOF) in build.
+- Reboot wiped the scratchpad clones and reviewer state; release clone rebuilt at ~/git/lm-wt/lm-rel, worktrees now under ~/git/lm-wt.
+- Re-review of lost verdicts: #318 BLOCK (orphaned run.sh test anchor, voter_agents.ts conflict; rework pd/318r). Security batch BLOCK on #303b (unredacted input_summary in events.jsonl), #315 (backslash authority bypass sends MCP auth over http), #325e (doctor --airgap prints webhook secrets), #329 (dashboard _write_secret unswept, receipt sweep untested); rework pd/303c and pd/mcpchain. #305fix-rb pending full bun test.
+- Founder 2026-10-23: act as CTO and CoS without asking; 10/10 versus competitors in every category and measured 100x UX. Head-to-head bench (loki 11.54.0 vs bare claude -p, 8 hidden-test tasks, n=2) running on pd/h2h; codex not installed (UNMEASURED), droid unauthenticated. Architect filing win-category slices plus the UX scorecard tracking issue.
