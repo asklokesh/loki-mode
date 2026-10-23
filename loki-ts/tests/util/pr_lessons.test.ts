@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "nod
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
-import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, loadLessons, respondToReview, defaultRespondPush, recordRunVerdict, recordUse, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
+import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, loadLessons, respondToReview, defaultRespondPush, recordRunVerdict, recordUse, removeLesson, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
 
 const dirs: string[] = [];
 const mk = (): string => { const d = mkdtempSync(join(tmpdir(), "t6-lessons-")); dirs.push(d); return d; };
@@ -722,5 +722,59 @@ describe("respondToReview", () => {
     const e = mkEnv([C(1, "x"), C(2, "reply", { in_reply_to_id: 1 }), C(4, "y"), C(5, "Addressed in abc <!-- loki-respond -->", { in_reply_to_id: 4 })]);
     const r = await respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: e.vcs, push: e.push, fix: e.edit });
     expect(r.fixed).toBe(1);
+  });
+});
+
+describe("human edits on a Loki PR (R100-011)", () => {
+  const PATCH = "@@ -1,3 +1,3 @@\n-const usrNm = 1;\n+const userName = 1;\n-const cnt = 2;\n+const count = 2;\n-const tmpV = 3;\n+const tempValue = 3;\n";
+  const loki = { sha: "a".repeat(40), commit: { message: "feat: x\n\nLoki-Run: run-9" }, author: { login: "loki-bot", type: "User" } };
+  const human = { sha: "b".repeat(40), commit: { message: "rename identifiers" }, author: { login: "dev", type: "User" } };
+  const respond = { sha: "c".repeat(40), commit: { message: "Address review comment\n\nReview-Comment: https://x/1" }, author: { login: "dev", type: "User" } };
+  const gh = (commits: unknown[], extra: Partial<PrOver> = {}): GhClient => async (args) => {
+    const url = args[args.length - 1]!;
+    if (url.endsWith("/commits")) return { code: 0, stdout: JSON.stringify(commits), stderr: "" };
+    if (/\/commits\/[bc]{40}$/.test(url)) return { code: 0, stdout: JSON.stringify({ html_url: `https://github.com/o/r/pull/7/commits/${url.slice(-40)}`, files: [{ filename: "src/a.ts", patch: PATCH }] }), stderr: "" };
+    if (url.endsWith("/comments") || url.endsWith("/reviews")) return { code: 0, stdout: "[]", stderr: "" };
+    return { code: 0, stdout: JSON.stringify({ ...PR, ...extra }), stderr: "" };
+  };
+  type PrOver = { merged_at: string | null; state: string; closed_at: string };
+
+  it("a human rename commit on a Loki PR becomes one lesson citing the PR, file and hunk", async () => {
+    const d = mk();
+    const r = await learnFromPr(d, "o/r#7", gh([loki, human, respond]));
+    expect(r.added).toBe(1);
+    const l = loadLessons(d)[0]!;
+    expect(l.source).toMatchObject({ pr: "o/r#7", kind: "human_edit", path: "src/a.ts", hunk: "@@ -1,3 +1,3 @@", author: "dev" });
+    expect(l.text).toContain("-const usrNm = 1;");
+    expect(l.text).toContain("+const tempValue = 3;");
+    expect(retrieveLessons(d, "rename userName identifiers in src/a.ts")[0]!.id).toBe(l.id);
+  });
+
+  it("a second learn adds nothing; a PR with no Loki-Run trailer yields no edit lesson", async () => {
+    const d = mk();
+    await learnFromPr(d, "o/r#7", gh([loki, human]));
+    expect((await learnFromPr(d, "o/r#7", gh([loki, human]))).added).toBe(0);
+    const e = mk();
+    expect((await learnFromPr(e, "o/r#7", gh([human]))).added).toBe(0);
+    expect(loadLessons(e)).toEqual([]);
+  });
+
+  it("a closed-unmerged Loki PR with a human commit is learned as rejected", async () => {
+    const d = mk();
+    process.env["LOKI_LESSONS_REJECTED"] = "1";
+    try {
+      const r = await learnFromPr(d, "o/r#7", gh([loki, human], { merged_at: null, state: "closed", closed_at: "2026-10-02T00:00:00Z" }));
+      expect(r.added).toBe(1);
+      expect(loadLessons(d)[0]!.kind).toBe("rejected");
+    } finally { delete process.env["LOKI_LESSONS_REJECTED"]; }
+  });
+
+  it("forget removes the edit lesson from the next brief", async () => {
+    const d = mk();
+    await learnFromPr(d, "o/r#7", gh([loki, human]));
+    const id = loadLessons(d)[0]!.id;
+    expect(formatLessonsForBrief(retrieveLessons(d, "rename userName in src/a.ts"))).toContain("userName");
+    expect(removeLesson(d, id)?.id).toBe(id);
+    expect(retrieveLessons(d, "rename userName in src/a.ts")).toEqual([]);
   });
 });
