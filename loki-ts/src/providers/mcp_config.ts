@@ -15,6 +15,17 @@
 //   mcpConfigPath(targetDir) -> absolute path to Loki bundle (idempotent write)
 //   userMcpConfigPath() -> absolute path to ~/.claude/mcp.json if readable, else null
 //   buildMcpConfigArgv(targetDir) -> ["--mcp-config", "<loki>", "<user?>"]
+//   mcpLaunchFor(provider, targetDir) -> {argv, env, reason?} per-provider launch:
+//     claude   -> buildMcpConfigArgv (byte-identical to the pre-CW-10 argv)
+//     codex    -> `-c mcp_servers.<n>.command=..` / `.args=[..]` / `.env={..}` overrides
+//                 (never writes ~/.codex/config.toml)
+//     opencode -> env OPENCODE_CONFIG_CONTENT = {"mcp":{<n>:{type:"local",command:[..],enabled:true}}}
+//     cline    -> empty launch + reason (no per-invocation MCP path; global settings untouched)
+//     aider    -> empty launch + reason (no MCP support)
+//   Servers for the non-claude providers: Loki bundle, then the project
+//   <targetDir>/.mcp.json ONLY under LOKI_MCP_PROJECT=1 (an untrusted repo must not
+//   start commands by default), then the ~/.claude/mcp.json overlay; the bundle wins
+//   a name collision, then project over overlay. Bash mirror: loki_mcp_launch_for.
 //
 // Design notes:
 // - Bundle shape is hardcoded (no runtime read of project .mcp.json) to prevent
@@ -24,6 +35,7 @@
 // - Variadic emission: separate argv elements per Commander `<configs...>` syntax
 //   verified via `claude --help` (v2.1.34).
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { resolve as resolvePath, join, delimiter } from "node:path";
 
 // Phase G: supported LSP binaries. Match autonomy/lib/mcp-config.sh exactly so
@@ -152,4 +164,123 @@ export function buildMcpConfigArgv(targetDir: string): string[] {
     argv.push(user);
   }
   return argv;
+}
+
+export interface McpLaunch {
+  argv: string[];
+  env: Record<string, string>;
+  reason?: string;
+}
+
+interface McpServer {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
+const MAX_MCP_FILE_BYTES = 1024 * 1024;
+const SERVER_NAME_RE = /^[A-Za-z0-9_-]+$/;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+// Keeps only stdio servers (string command, string-array args, string env values).
+// Values stay literal: `${...}` is never expanded.
+function normalizeServers(raw: unknown): Record<string, McpServer> {
+  const out: Record<string, McpServer> = {};
+  if (!isPlainObject(raw)) return out;
+  for (const [name, entry] of Object.entries(raw)) {
+    if (!SERVER_NAME_RE.test(name) || !isPlainObject(entry)) continue;
+    const command = entry["command"];
+    if (typeof command !== "string" || command.length === 0) continue;
+    const rawArgs = entry["args"];
+    if (rawArgs !== undefined && !(Array.isArray(rawArgs) && rawArgs.every((a) => typeof a === "string"))) continue;
+    const rawEnv = entry["env"];
+    const env: Record<string, string> = {};
+    if (rawEnv !== undefined) {
+      if (!isPlainObject(rawEnv) || !Object.values(rawEnv).every((v) => typeof v === "string")) continue;
+      for (const [k, v] of Object.entries(rawEnv)) env[k] = v as string;
+    }
+    out[name] = { command, args: (rawArgs as string[] | undefined) ?? [], env };
+  }
+  return out;
+}
+
+function readServersFile(p: string): Record<string, McpServer> {
+  try {
+    const s = statSync(p);
+    if (!s.isFile() || s.size > MAX_MCP_FILE_BYTES) return {};
+    const parsed: unknown = JSON.parse(readFileSync(p, "utf8"));
+    return isPlainObject(parsed) ? normalizeServers(parsed["mcpServers"]) : {};
+  } catch {
+    return {};
+  }
+}
+
+function collectServers(targetDir: string): Record<string, McpServer> {
+  const merged: Record<string, McpServer> = {};
+  const user = userMcpConfigPath();
+  if (user !== null) Object.assign(merged, readServersFile(user));
+  if (process.env["LOKI_MCP_PROJECT"] === "1") {
+    Object.assign(merged, readServersFile(join(resolvePath(targetDir), ".mcp.json")));
+  }
+  const bundle = buildBundle(detectLsp()) as { mcpServers: Record<string, unknown> };
+  Object.assign(merged, normalizeServers(bundle.mcpServers));
+  // Order: bundle first, then project/overlay, for a stable argv.
+  const ordered: Record<string, McpServer> = {};
+  for (const k of Object.keys(bundle.mcpServers)) ordered[k] = merged[k] as McpServer;
+  for (const k of Object.keys(merged)) if (!(k in ordered)) ordered[k] = merged[k] as McpServer;
+  return ordered;
+}
+
+function clineVersion(): string {
+  try {
+    const r = spawnSync("cline", ["--version"], { encoding: "utf8", timeout: 5000, env: process.env });
+    if (r.status === 0) {
+      const line = (r.stdout ?? "").split("\n")[0]?.trim() ?? "";
+      if (line) return line;
+    }
+  } catch {
+    // fall through
+  }
+  return "unknown";
+}
+
+export function mcpLaunchFor(provider: string, targetDir: string): McpLaunch {
+  switch (provider) {
+    case "claude":
+      return { argv: buildMcpConfigArgv(targetDir), env: {} };
+    case "codex": {
+      const argv: string[] = [];
+      for (const [name, srv] of Object.entries(collectServers(targetDir))) {
+        argv.push("-c", `mcp_servers.${name}.command=${JSON.stringify(srv.command)}`);
+        argv.push("-c", `mcp_servers.${name}.args=${JSON.stringify(srv.args)}`);
+        const envPairs = Object.entries(srv.env)
+          .filter(([k]) => SERVER_NAME_RE.test(k))
+          .map(([k, v]) => `${k}=${JSON.stringify(v)}`);
+        if (envPairs.length > 0) argv.push("-c", `mcp_servers.${name}.env={${envPairs.join(",")}}`);
+      }
+      return { argv, env: {} };
+    }
+    case "opencode": {
+      const mcp: Record<string, unknown> = {};
+      for (const [name, srv] of Object.entries(collectServers(targetDir))) {
+        const entry: Record<string, unknown> = {
+          type: "local",
+          command: [srv.command, ...srv.args],
+          enabled: true,
+        };
+        if (Object.keys(srv.env).length > 0) entry["environment"] = srv.env;
+        mcp[name] = entry;
+      }
+      return { argv: [], env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ mcp }) } };
+    }
+    case "cline":
+      return { argv: [], env: {}, reason: `mcp: unsupported (cline ${clineVersion()})` };
+    case "aider":
+      return { argv: [], env: {}, reason: "mcp: unsupported (aider has no MCP support)" };
+    default:
+      return { argv: [], env: {}, reason: `mcp: unsupported (provider ${provider})` };
+  }
 }
