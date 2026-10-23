@@ -33,6 +33,7 @@ export interface SessionRunnerConfig {
   emit?: EmitFn; // ENGINE.md section 5: heartbeat, session.started, session.ended
   heartbeatMs?: number; // default 30_000 (E-68: at least every 30s); tests use a smaller value
   childCommand?: [string, string[]]; // test-only: replaces the self-respawn
+  runDir?: string; // CW-11: this run's dir; the session child records its MCP tool calls in <runDir>/mcp-calls.json
   lokiRoot?: string; remaining?: () => number | null; // lokiRoot: where efficiency records and result-cost files live (the repo's .loki); remaining: dollars left under the run cap, null or absent = no cap
   /** ROUTER-1 R1-09: advisor availability for this run (R1-06 probe). Only read under LOKI_ROUTER=1. */
   advisor?: { available: boolean; reason?: string };
@@ -66,6 +67,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   const env: NodeJS.ProcessEnv = { ...process.env };
   env["LOKI_ITERATION"] = opts.iterationId;
   env["LOKI_E10_STAGE"] = opts.stage;
+  if (cfg.runDir) env["LOKI_E10_RUN_DIR"] = cfg.runDir; else delete env["LOKI_E10_RUN_DIR"];
   env["LOKI_E10_BRIEF"] = opts.brief;
   const gap = cfg.lokiRoot ? stageMedianGapMs(cfg.lokiRoot, opts.stage) : null; // #244: the persisted median call gap of this stage picks the cache TTL in engine10CacheTtlEnv
   if (gap !== null) env["LOKI_E10_CACHE_GAP_MS"] = String(gap); else delete env["LOKI_E10_CACHE_GAP_MS"];

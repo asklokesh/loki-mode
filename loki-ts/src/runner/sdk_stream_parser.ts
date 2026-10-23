@@ -24,7 +24,9 @@
 // (providers.ts) owns query(); this only consumes what it yields.
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
+import { atomicWriteJson } from "../util/atomic.ts";
 import { num, routerTelemetryOn } from "../engine10/cost.ts";
 import { modelOutcome } from "../util/run_identity.ts";
 import { partialUsagePath } from "./budget.ts";
@@ -92,10 +94,56 @@ export interface ParserContext {
   cwd: string; // repo root under which .loki lives
   iteration: string; // LOKI_ITERATION stamp for the result-cost file
   hookEventsEnabled: boolean; // LOKI_HOOK_EVENTS != "off"
+  runDir?: string; // CW-11: the engine10 run dir; with it, MCP tool calls are recorded in <runDir>/mcp-calls.json
   requestedModel?: string; // the model the runner resolved for this call (P12-23); absent = no requested/downgrade fields
   // Live-output sink. The caller tees the same text to the terminal +
   // iterationOutputPath + captured log (mirroring the bash `tee`). Default: stdout.
   write?: (s: string) => void;
+}
+
+// CW-11: Loki's own MCP tools whose payload Loki computes itself (mcp/server.py _TRUSTED_TOOLS; a test pins the two lists equal).
+// Every other MCP tool, on any server, returns text from outside and is recorded untrusted.
+export const TRUSTED_LOKI_MCP_TOOLS: ReadonlySet<string> = new Set([
+  "loki_memory_store_pattern", "loki_task_queue_add", "loki_memory_capture_session_summary", "loki_consolidate_memory", "loki_complete_task",
+  "loki_v10_run", "loki_v10_verify", "loki_start_project", "loki_code_search_stats", "loki_memory_redact", "loki_magic_stats",
+  "loki_magic_tokens_extract", "cp_stats", "cp_cost", "cp_repos_list",
+]);
+interface McpUse { server: string; tool: string; args: string; result: string | null }
+interface McpCallRow { server: string; tool: string; count: number; untrusted: boolean; invocations: { args_sha256: string; result_sha256: string | null }[] }
+const sha256 = (v: unknown): string => createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(v) ?? "").digest("hex");
+/** `mcp__<server>__<tool>` -> its parts; null for any non-MCP tool. */
+function mcpParts(name: string): { server: string; tool: string } | null {
+  if (!name.startsWith("mcp__")) return null;
+  const rest = name.slice(5), i = rest.indexOf("__");
+  return i > 0 && i + 2 < rest.length ? { server: rest.slice(0, i), tool: rest.slice(i + 2) } : null;
+}
+/** Merge this session's MCP calls into <runDir>/mcp-calls.json (one record per run, many sessions). Hashes and counts only, never argument or result text. */
+function recordMcpCalls(runDir: string, lokiDir: string, uses: Map<string, McpUse>): void {
+  if (uses.size === 0) return;
+  try {
+    const file = join(runDir, "mcp-calls.json");
+    const rows = new Map<string, McpCallRow>(), servers = new Map<string, string>();
+    try {
+      const prior = JSON.parse(readFileSync(file, "utf8")) as { calls?: McpCallRow[]; servers?: { name: string; tool_list_sha256: string }[] };
+      for (const c of prior.calls ?? []) rows.set(`${c.server}\u0000${c.tool}`, c);
+      for (const v of prior.servers ?? []) servers.set(v.name, v.tool_list_sha256);
+    } catch { /* absent or unreadable: start a fresh record */ }
+    let pinned: Record<string, unknown> = {};
+    try { pinned = JSON.parse(readFileSync(join(lokiDir, "state", "mcp-tools.json"), "utf8")) as Record<string, unknown>; } catch { /* the doctor has pinned nothing: no tool-list hash is recorded */ }
+    for (const u of uses.values()) {
+      const key = `${u.server}\u0000${u.tool}`;
+      const row = rows.get(key) ?? { server: u.server, tool: u.tool, count: 0, untrusted: true, invocations: [] };
+      row.count++; row.untrusted = !(u.server === "loki-mode" && TRUSTED_LOKI_MCP_TOOLS.has(u.tool));
+      row.invocations.push({ args_sha256: u.args, result_sha256: u.result });
+      rows.set(key, row);
+      const h = pinned[u.server];
+      if (typeof h === "string" && h) servers.set(u.server, h);
+    }
+    mkdirSync(runDir, { recursive: true });
+    atomicWriteJson(file, { servers: [...servers].map(([name, tool_list_sha256]) => ({ name, tool_list_sha256 })), calls: [...rows.values()] });
+  } catch {
+    // best-effort: a record-write failure must never break the loop
+  }
 }
 
 interface AgentInfo {
@@ -244,6 +292,7 @@ export async function consumeSdkStream(
     };
   };
 
+  const mcpUses = new Map<string, McpUse>(); // CW-11: tool_use id -> hashes, paired with its tool_result by id
   const guard = { truncated: false };
   for await (const data of asAsync(messages, guard)) {
     const msgType = data.type ?? "";
@@ -314,6 +363,8 @@ export async function consumeSdkStream(
           const mod = typeof readPath === "string" ? /(?:^|\/)((?:skills|references)\/[^/]+\.md)$/.exec(readPath)?.[1] : undefined;
           if (mod && !skillReads.includes(mod)) skillReads.push(mod);
           bumpOrchestratorTool(agents, tool, toolDesc(tool, input));
+          const mp = ctx.runDir ? mcpParts(tool) : null;
+          if (mp) mcpUses.set(toolId || `anon-mcp${mcpUses.size}`, { ...mp, args: sha256(input), result: null });
 
           if (tool === "Task") {
             const toolIdShort = toolId.slice(0, 8);
@@ -365,6 +416,8 @@ export async function consumeSdkStream(
         if (item["type"] === "tool_result") {
           toolResults++; if (item["is_error"] === true) toolErrors++;
           const toolId = (item["tool_use_id"] as string) ?? "";
+          const mu = mcpUses.get(toolId);
+          if (mu) mu.result = sha256(item["content"] ?? "");
           const a = agents[toolId];
           if (a) {
             a.status = "completed";
@@ -480,6 +533,7 @@ export async function consumeSdkStream(
     }
   }
 
+  if (ctx.runDir) recordMcpCalls(ctx.runDir, lokiDirFor(ctx.cwd), mcpUses);
   return { exitCode, sessionId: sessionId ?? seenSessionId, totalCostUsd, capturedText: captured, rateLimit, sawResult, truncated: guard.truncated || !sawResult, refused, refusedNoFallback };
 }
 

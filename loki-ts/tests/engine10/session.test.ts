@@ -681,3 +681,16 @@ describe("TEN-SPEED-21 heartbeat single ls-files", () => {
     } finally { process.env["PATH"] = oldPath; rmSync(d, { recursive: true, force: true }); }
   });
 });
+
+describe("CW-11 run dir reaches the session child", () => {
+  const o = { iterationId: "i", stage: "plan", brief: "b", tier: "development" } as Parameters<typeof childEnv>[0];
+  test("cfg.runDir sets LOKI_E10_RUN_DIR, and an inherited value is cleared when cfg has none", () => {
+    const saved = process.env["LOKI_E10_RUN_DIR"];
+    try {
+      delete process.env["LOKI_E10_RUN_DIR"];
+      expect(childEnv(o, { provider: "claude", runDir: "/r/run1" })["LOKI_E10_RUN_DIR"]).toBe("/r/run1");
+      process.env["LOKI_E10_RUN_DIR"] = "/stale";
+      expect(childEnv(o, { provider: "claude" })["LOKI_E10_RUN_DIR"]).toBeUndefined();
+    } finally { if (saved === undefined) delete process.env["LOKI_E10_RUN_DIR"]; else process.env["LOKI_E10_RUN_DIR"] = saved; }
+  });
+});

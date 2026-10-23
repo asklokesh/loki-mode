@@ -941,6 +941,7 @@ export function sdkQueryProvider(): ProviderInvoker {
           cwd: call.cwd,
           iteration: process.env["LOKI_ITERATION"] ?? "0",
           hookEventsEnabled: process.env["LOKI_HOOK_EVENTS"] !== "off",
+          ...(process.env["LOKI_E10_RUN_DIR"] ? { runDir: process.env["LOKI_E10_RUN_DIR"] } : {}), // CW-11
           requestedModel: defaultModel ? PROVIDER_DEFAULT_MODEL : (extra.model ?? model), // P12-23: the exact value resolved for this call, never an inherited env var
           write: (s) => process.stdout.write(s),
         });

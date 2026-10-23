@@ -47,20 +47,21 @@ export async function main(args: string[]): Promise<number> {
   const repoDir = process.cwd();
   const lokiRoot = join(repoDir, ".loki");
   const deep = mode === "deep";
+  const runDir = join(lokiRoot, "runs", runId);
   // Supervisor cancel (SIGINT/SIGTERM): stop every live session so each records its partial usage, then exit.
   (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = true; // cli.ts's blanket exit(130/143) stands down: the handler below owns the stop
   for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { void cancelSessions().finally(() => process.exit(sig === "SIGINT" ? 130 : 143)); });
   await runWorker(async (rawEmit) => {
     const { emit, over, remaining } = capMeter(rawEmit, process.env);
-    const base = createSessionRunner({ provider, model, emit: emit as EmitFn, lokiRoot, remaining });
+    const base = createSessionRunner({ provider, model, emit: emit as EmitFn, lokiRoot, runDir, remaining });
     const failovers: FailoverRecord[] = [];
     const sessions = withFailover({
       provider, base,
-      makeRunner: (p) => createSessionRunner({ provider: p, model: resolveModel(p), emit: emit as EmitFn, lokiRoot, remaining }),
+      makeRunner: (p) => createSessionRunner({ provider: p, model: resolveModel(p), emit: emit as EmitFn, lokiRoot, runDir, remaining }),
       onFailover: (rec) => { failovers.push(rec); emit("provider.failover", rec.stage as StageName, { ...rec }); },
     });
     const ctx: RunContext = {
-      runId, repoDir, runDir: join(lokiRoot, "runs", runId), branch: `loki/${runId}`, provider, model, deep,
+      runId, repoDir, runDir, branch: `loki/${runId}`, provider, model, deep,
       baseSha: safeGit(repoDir, ["rev-parse", "HEAD"]).trim(),
       capS: workerCapS(deep, process.env),
       emit, overCap: over,

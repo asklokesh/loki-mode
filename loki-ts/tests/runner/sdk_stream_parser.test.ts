@@ -11,6 +11,8 @@ import { consumeSdkStream, type StreamMsg } from "../../src/runner/sdk_stream_pa
 import { partialUsagePath, recordPartialStreamCost } from "../../src/runner/budget.ts";
 import { computeKpis } from "../../src/metrics/kpis.ts";
 import { lokiDir } from "../../src/util/paths.ts";
+import { createHash } from "node:crypto";
+import { TRUSTED_LOKI_MCP_TOOLS } from "../../src/runner/sdk_stream_parser.ts";
 
 let scratch: string;
 const FIXED = "2026-07-13T00:00:00.000Z";
@@ -741,5 +743,88 @@ describe("consumeSdkStream transcript fixtures", () => {
     await consumeSdkStream(msgs, ctx("10"), clock);
     const cost = readJson(costPath("10"));
     for (const k of ["tools_per_turn", "tool_error_rate", "mcp_tool_count", "skill_module_read"]) expect(k in cost).toBe(false);
+  });
+});
+
+// CW-11: every MCP tool call is recorded as hashes, counts and an untrusted flag in <runDir>/mcp-calls.json, the file the Seal block reads.
+describe("consumeSdkStream MCP call record (CW-11)", () => {
+  const sha = (v: unknown) => createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(v)).digest("hex");
+  const use = (id: string, name: string, input: Record<string, unknown>): StreamMsg => ({ type: "assistant", message: { id: `m-${id}`, content: [{ type: "tool_use", id, name, input }] } });
+  const res = (id: string, content: unknown): StreamMsg => ({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content }] } });
+  const done: StreamMsg = { type: "result", is_error: false, result: "ok", session_id: "s" } as StreamMsg;
+  const runDir = () => join(scratch, ".loki", "runs", "r1");
+  const mctx = (over: Record<string, unknown> = {}) => ({ ...ctx(), runDir: runDir(), ...over });
+  const file = () => join(runDir(), "mcp-calls.json");
+  const CANARY = "CANARY-SECRET-9f3a";
+  const STREAM: StreamMsg[] = [
+    use("t1", "mcp__loki-mode__loki_memory_retrieve", { query: CANARY }), res("t1", `found ${CANARY}`),
+    use("t2", "mcp__github__create_issue", { title: CANARY }), res("t2", [{ type: "text", text: `made ${CANARY}` }]),
+    use("t3", "mcp__github__create_issue", { title: "second" }), res("t3", "ok"),
+    use("t4", "mcp__loki-mode__cp_stats", {}), res("t4", "stats"),
+    done,
+  ];
+
+  test("two servers, four calls: exact counts and untrusted flags", async () => {
+    await consumeSdkStream(STREAM, mctx(), clock);
+    const j = readJson(file());
+    const row = (server: string, tool: string) => j.calls.find((c: { server: string; tool: string }) => c.server === server && c.tool === tool);
+    expect(row("github", "create_issue")).toMatchObject({ count: 2, untrusted: true });
+    expect(row("loki-mode", "loki_memory_retrieve")).toMatchObject({ count: 1, untrusted: true });
+    expect(row("loki-mode", "cp_stats")).toMatchObject({ count: 1, untrusted: false });
+    expect(j.calls.length).toBe(3);
+  });
+  test("a loki-mode tool the server classifies trusted is untrusted:false; the same tool name on another server is untrusted", async () => {
+    await consumeSdkStream([use("a", "mcp__other__cp_stats", {}), res("a", "x"), done], mctx(), clock);
+    expect(readJson(file()).calls[0]).toMatchObject({ server: "other", tool: "cp_stats", untrusted: true });
+  });
+  test("no MCP calls: no file is written", async () => {
+    await consumeSdkStream([use("a", "Read", { file_path: "x" }), res("a", "y"), done], mctx(), clock);
+    expect(existsSync(file())).toBe(false);
+  });
+  test("no runDir in the context: nothing is written", async () => {
+    await consumeSdkStream(STREAM, ctx(), clock);
+    expect(existsSync(file())).toBe(false);
+    expect(existsSync(join(scratch, ".loki", "mcp-calls.json"))).toBe(false);
+  });
+  test("an unpaired tool_use is counted with result_sha256 null, never dropped", async () => {
+    await consumeSdkStream([use("a", "mcp__github__create_issue", { n: 1 }), done], mctx(), clock);
+    const c = readJson(file()).calls[0];
+    expect(c.count).toBe(1);
+    expect(c.invocations).toEqual([{ args_sha256: sha({ n: 1 }), result_sha256: null }]);
+  });
+  test("paired calls carry the sha256 of the arguments and of the result", async () => {
+    await consumeSdkStream([use("a", "mcp__github__create_issue", { n: 1 }), res("a", "reply"), done], mctx(), clock);
+    expect(readJson(file()).calls[0].invocations).toEqual([{ args_sha256: sha({ n: 1 }), result_sha256: sha("reply") }]);
+  });
+  test("no argument or result text appears in the file (canary)", async () => {
+    await consumeSdkStream(STREAM, mctx(), clock);
+    expect(readFileSync(file(), "utf8")).not.toContain(CANARY);
+  });
+  test("servers carry the pinned tool-list hash when the doctor recorded one, and omit a server with none", async () => {
+    mkdirSync(join(scratch, ".loki", "state"), { recursive: true });
+    writeFileSync(join(scratch, ".loki", "state", "mcp-tools.json"), JSON.stringify({ github: "ab".repeat(32) }));
+    await consumeSdkStream(STREAM, mctx(), clock);
+    expect(readJson(file()).servers).toEqual([{ name: "github", tool_list_sha256: "ab".repeat(32) }]);
+  });
+  test("a second session in the same run adds to the record instead of replacing it", async () => {
+    await consumeSdkStream([use("a", "mcp__github__create_issue", { n: 1 }), res("a", "r"), done], mctx(), clock);
+    await consumeSdkStream([use("b", "mcp__github__create_issue", { n: 2 }), res("b", "r"), use("c", "mcp__x__y", {}), done], mctx(), clock);
+    const j = readJson(file());
+    expect(j.calls.find((c: { server: string }) => c.server === "github").count).toBe(2);
+    expect(j.calls.find((c: { server: string }) => c.server === "x").count).toBe(1);
+  });
+  test("existing outputs are unchanged: the same stream with and without runDir yields the same result and agents file", async () => {
+    const a = await consumeSdkStream(STREAM, ctx("7"), clock);
+    const agentsA = readFileSync(agentsPath(), "utf8");
+    rmSync(join(scratch, ".loki"), { recursive: true, force: true });
+    const b = await consumeSdkStream(STREAM, mctx({ iteration: "7" }), clock);
+    expect(b).toEqual(a);
+    expect(readFileSync(agentsPath(), "utf8")).toBe(agentsA);
+  });
+  test("the TS trusted list equals the server's _TRUSTED_TOOLS (no second drifting copy)", () => {
+    const py = readFileSync(join(import.meta.dir, "..", "..", "..", "mcp", "server.py"), "utf8");
+    const block = /_TRUSTED_TOOLS = frozenset\(\{([\s\S]*?)\}\)/.exec(py)![1]!;
+    const names = [...block.matchAll(/"([a-z_0-9]+)"/g)].map((m) => m[1]!).sort();
+    expect([...TRUSTED_LOKI_MCP_TOOLS].sort()).toEqual(names);
   });
 });
