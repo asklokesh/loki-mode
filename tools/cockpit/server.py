@@ -8,7 +8,10 @@ Every data source degrades to an explicit UNKNOWN (or UNMEASURED) with the
 reason in `error`; a missing value is None, never 0.
 """
 import argparse
+import errno
 import fcntl
+import glob
+import hashlib
 import json
 import os
 import re
@@ -24,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PANELS = ["pulse", "releases", "board", "agents", "okrs", "roi", "queue"]
+PANELS = ["pulse", "releases", "board", "agents", "work", "compare", "health", "okrs", "roi", "queue"]
 BOARD_TOKENS = ["ready", "building", "review", "review-blocked", "approved",
                 "merged", "released", "blocked", "rejected", "parked"]
 ACTIVE_TOKENS = ["building", "review", "review-blocked", "approved", "blocked"]
@@ -35,6 +38,11 @@ QUEUE_CAP = 2000
 BODY_CAP = 8192
 STALE_SEAT_MIN = 60
 BASIS_STALE_DAYS = 90
+# usage-governor.py takes ~36 s per run; a short TTL at a 15 s poll burned about
+# half a core per open tab (rev-execdash N1). Floor 300 s.
+GOVERNOR_TTL_S = max(300, int(os.environ.get("COCKPIT_GOVERNOR_TTL_S") or 300))
+# The 24h token window starts at the top of the hour 24h ago (hourly buckets).
+HOUR_FLOOR_NOTE = "24h window is hour-floored: it starts at the top of the hour 24h ago, so it spans 24 to 25 hours"
 ENV_ALLOW = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TMPDIR",
              "NPM_CONFIG_USERCONFIG", "NPM_CONFIG_GLOBALCONFIG",
              "GH_CONFIG_DIR", "XDG_CONFIG_HOME")
@@ -71,6 +79,24 @@ class Ctx:
                                      "%s scripts/usage-governor.py --json" % sys.executable)
         self.cost_cmd = [sys.executable, "tools/cost-history.py", "report", "--json",
                          "--file", self.cost_file]
+        self.git_root = e("COCKPIT_GIT_ROOT") or root
+        self.git_days = int(e("COCKPIT_GIT_DAYS") or 15)
+        self.gh_runs_cmd = shlex.split(e("COCKPIT_GH_RUNS_CMD") or (
+            "gh run list --limit 100 --json "
+            "databaseId,workflowName,status,conclusion,headSha,headBranch,createdAt,event"))
+        self.gh_issues_cmd = shlex.split(e("COCKPIT_GH_ISSUES_CMD") or (
+            "gh issue list --state all --limit 300 --json number,title,state,createdAt,closedAt,labels"))
+        self.gh_open_issues_cmd = shlex.split(e("COCKPIT_GH_OPEN_ISSUES_CMD") or (
+            "gh issue list --state open --limit 1000 --json number,title,state,labels"))
+        self.gh_prs_cmd = shlex.split(e("COCKPIT_GH_PRS_CMD") or (
+            "gh pr list --state merged --limit 200 --json number,title,mergedAt,author"))
+        self.transcript_root = e("COCKPIT_TRANSCRIPT_ROOT")
+        self.token_cache = e("COCKPIT_TOKEN_CACHE") or os.path.join(self.runtime, "token-cache.json")
+        self.pricing = e("COCKPIT_PRICING_JSON") or os.path.join(root, "loki-ts/data/model-pricing.json")
+        self.usage_cap_cmd = shlex.split(e("COCKPIT_USAGE_CAP_CMD") or
+                                         "%s scripts/usage-cap.py check --json --no-refresh" % sys.executable)
+        self.leader = e("COCKPIT_LEADER_FILE") or os.path.join(root, ".loki/v10-leader")
+        self.ds = Datasets(self)
 
     def now(self):
         v = os.environ.get("COCKPIT_NOW")
@@ -170,6 +196,307 @@ def val(x):
     return x.get("value") if isinstance(x, dict) else x
 
 
+# ------------------------------------------------------------- datasets
+# Shared, TTL-cached raw sources. Each fetcher returns (value, error, as_of);
+# a failed source is (None, reason, as_of) and every panel that needs it shows
+# UNKNOWN with that reason. Nothing here ever substitutes a default number.
+class Datasets:
+    def __init__(self, ctx):
+        self.ctx, self.lock = ctx, threading.Lock()
+        self.cache, self.locks = {}, {}
+
+    def get(self, name, ttl, fn):
+        with self.lock:
+            e = self.cache.get(name)
+            if e and time.time() - e[0] < ttl:
+                return e[1]
+            lk = self.locks.setdefault(name, threading.Lock())
+        with lk:
+            with self.lock:
+                e = self.cache.get(name)
+                if e and time.time() - e[0] < ttl:
+                    return e[1]
+            try:
+                v = fn(self.ctx)
+            except Exception as ex:  # a fetcher bug is a source failure, not a 500
+                v = (None, "%s fetch crashed: %r" % (name, ex), iso(self.ctx.now()))
+            with self.lock:
+                self.cache[name] = (time.time(), v)
+            return v
+
+
+class Src:
+    """Per-section source ledger: data["sources"][section] = {status, source, as_of, error}."""
+
+    def __init__(self, ctx):
+        self.ctx, self.m = ctx, {}
+
+    def ok(self, key, source, as_of=None, keys=None):
+        self.m[key] = {"status": "OK", "source": source, "as_of": as_of or iso(self.ctx.now()),
+                       "error": None, "keys": keys or [key]}
+
+    def bad(self, key, source, error, keys=None):
+        self.m[key] = {"status": "UNKNOWN", "source": source, "as_of": iso(self.ctx.now()),
+                       "error": error, "keys": keys or [key]}
+
+    def finish(self, src_cmd, data, violation=False):
+        data["sources"] = self.m
+        sts = [v["status"] for v in self.m.values()]
+        errs = ["%s: %s" % (k, v["error"]) for k, v in self.m.items() if v["status"] != "OK"]
+        if sts and all(s == "UNKNOWN" for s in sts):
+            return panel(self.ctx, "UNKNOWN", src_cmd, data, "; ".join(errs))
+        if violation:
+            return panel(self.ctx, "VIOLATION", src_cmd, data, "; ".join(errs) or None)
+        if errs:
+            return panel(self.ctx, "PARTIAL", src_cmd, data, "; ".join(errs))
+        return panel(self.ctx, "OK", src_cmd, data, None)
+
+
+COMMIT_TYPES = {"feat", "fix", "docs", "release", "chore", "test", "refactor", "perf", "ci", "build", "style"}
+
+
+def commit_type(subject):
+    m = re.match(r"^([A-Za-z]+)(\([^)]*\))?!?:", subject)
+    if m and m.group(1).lower() in COMMIT_TYPES:
+        return m.group(1).lower()
+    return "merge" if subject.lower().startswith("merge") else "other"
+
+
+def ds_git(ctx):
+    since = iso(ctx.now() - timedelta(days=ctx.git_days))
+    argv = ["git", "-C", ctx.git_root, "log", "--since=" + since, "--numstat",
+            "--format=%x1e%H%x1f%aI%x1f%an%x1f%s"]
+    rc, out, err = run_cmd(ctx, argv, ctx.timeout * 3)
+    as_of = iso(ctx.now())
+    if rc != 0:
+        return None, "git log: " + (err or "exit %s" % rc), as_of
+    commits = []
+    for chunk in out.split("\x1e")[1:]:
+        head, _, rest = chunk.partition("\n")
+        p = head.split("\x1f")
+        d = parse_iso(p[1]) if len(p) >= 4 else None
+        if d is None:
+            continue
+        add = dele = files = 0
+        for line in rest.splitlines():
+            m = re.match(r"^(\d+|-)\t(\d+|-)\t", line)
+            if m:
+                files += 1
+                if m.group(1) != "-":
+                    add += int(m.group(1))
+                    dele += int(m.group(2))
+        commits.append({"sha": p[0], "ts": d, "author": p[2], "subject": p[3],
+                        "type": commit_type(p[3]), "added": add, "deleted": dele, "files": files})
+    return commits, None, as_of
+
+
+def ds_json_cmd(ctx, argv, label, want, timeout=None):
+    rc, out, err = run_cmd(ctx, argv, timeout or ctx.timeout)
+    as_of = iso(ctx.now())
+    if rc != 0:
+        return None, "%s: %s" % (label, err or "exit %s" % rc), as_of
+    try:
+        v = json.loads(out)
+    except ValueError as ex:
+        return None, "%s: invalid JSON: %s" % (label, ex), as_of
+    if not isinstance(v, want):
+        return None, "%s: unexpected JSON shape" % label, as_of
+    return v, None, as_of
+
+
+def ds_runs(ctx):
+    return ds_json_cmd(ctx, ctx.gh_runs_cmd, "gh run list", list)
+
+
+def ds_issues(ctx):
+    return ds_json_cmd(ctx, ctx.gh_issues_cmd, "gh issue list", list)
+
+
+def ds_open_issues(ctx):
+    """Open issues only, so open_now and open P0 are not capped by the newest-300 window (N2)."""
+    return ds_json_cmd(ctx, ctx.gh_open_issues_cmd, "gh issue list --state open", list)
+
+
+def ds_prs(ctx):
+    return ds_json_cmd(ctx, ctx.gh_prs_cmd, "gh pr list", list)
+
+
+def ds_npm(ctx):
+    return ds_json_cmd(ctx, ctx.npm_cmd, "npm", dict)
+
+
+def ds_governor(ctx):
+    return ds_json_cmd(ctx, ctx.usage_cmd, "usage governor", dict, ctx.pulse_timeout)
+
+
+def _load_module(name, path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _transcript_roots(ctx):
+    if ctx.transcript_root:
+        return [ctx.transcript_root]
+    base = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+    real = ctx.root.split("/.claude/worktrees/")[0]
+    prefix = re.sub(r"[^A-Za-z0-9]", "-", real)
+    try:
+        return [os.path.join(base, d) for d in sorted(os.listdir(base)) if d.startswith(prefix)]
+    except OSError:
+        return []
+
+
+def _price_tier(model):
+    m = (model or "").lower()
+    for t in ("opus", "sonnet", "haiku", "fable"):
+        if t in m:
+            return t
+    return None
+
+
+def _agent_setting(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f):
+                if i > 30:
+                    break
+                if '"agent-setting"' in line:
+                    try:
+                        return json.loads(line).get("agentSetting")
+                    except ValueError:
+                        return None
+    except OSError:
+        return None
+    return None
+
+
+def ds_tokens(ctx):
+    """Hourly token buckets by (seat, price tier) from Claude Code transcripts.
+
+    Reuses scripts/usage-governor.py iter_records (message.id dedup plus its
+    per-file cache). USD is tokens x the shared price table: an ESTIMATE.
+    """
+    as_of = iso(ctx.now())
+    prices, perr = read_json(ctx.pricing)
+    table = prices.get("pricing") if isinstance(prices, dict) else None
+    if not isinstance(table, dict):
+        return None, "price table: " + (perr or "no 'pricing' object in " + ctx.pricing), as_of
+    roots = [r for r in _transcript_roots(ctx) if os.path.isdir(r)]
+    if not roots:
+        return None, "no transcript directory found (COCKPIT_TRANSCRIPT_ROOT or ~/.claude/projects) for " + ctx.root, as_of
+    try:
+        from pathlib import Path
+        gov = _load_module("usage_governor_cockpit", os.path.join(HERE, "..", "..", "scripts", "usage-governor.py"))
+    except Exception as ex:
+        return None, "cannot load usage-governor.py: %r" % (ex,), as_of
+    slugs, _ = agent_slugs(ctx)
+    since = ctx.now() - timedelta(days=ctx.git_days)
+    settings, buckets, unpriced, nfiles = {}, {}, {}, set()
+    try:
+        os.makedirs(os.path.dirname(ctx.token_cache), exist_ok=True)
+    except OSError:
+        pass
+    for root in roots:
+        try:
+            recs = list(gov.iter_records(Path(root), min_mtime=since.timestamp(), cache_path=Path(ctx.token_cache)))
+        except Exception as ex:
+            return None, "transcript scan failed in %s: %r" % (root, ex), as_of
+        for path, role, ts, model, usage in recs:
+            if ts < since or ts > ctx.now() + timedelta(minutes=5):
+                continue
+            ps = str(path)
+            if ps not in settings:
+                settings[ps] = _agent_setting(ps)
+            st = settings[ps]
+            seat = st if st in slugs else ("main-session" if role == "chief-of-staff" else "spawned-agent")
+            tier = _price_tier(model)
+            cc = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
+            cw5 = int(cc.get("ephemeral_5m_input_tokens") or 0)
+            cw1 = int(cc.get("ephemeral_1h_input_tokens") or 0)
+            if not (cw5 or cw1):
+                cw5 = int(usage.get("cache_creation_input_tokens") or 0)
+            tin, tout, tcr = (int(usage.get(k) or 0) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens"))
+            usd = None
+            pr = table.get(tier) if tier else None
+            if isinstance(pr, dict):
+                usd = (tin * pr.get("input", 0) + tout * pr.get("output", 0) + tcr * pr.get("cache_read", 0)
+                       + cw5 * pr.get("cache_write_5m", pr.get("cache_write", 0))
+                       + cw1 * pr.get("cache_write_1h", pr.get("cache_write", 0))) / 1e6
+            else:
+                unpriced[model] = unpriced.get(model, 0) + 1
+            hour = ts.strftime("%Y-%m-%dT%H:00:00Z")
+            k = (hour, seat, tier or "unpriced", path.stem)
+            b = buckets.setdefault(k, {"in": 0, "out": 0, "cache_read": 0, "cache_write": 0, "usd": 0.0, "msgs": 0})
+            b["in"] += tin
+            b["out"] += tout
+            b["cache_read"] += tcr
+            b["cache_write"] += cw5 + cw1
+            b["usd"] += usd or 0.0
+            b["msgs"] += 1
+            nfiles.add(ps)
+    if not buckets:
+        return None, "no transcript records in the last %d days under %s" % (ctx.git_days, ", ".join(roots)), as_of
+    rows = [{"hour": parse_iso(k[0]), "seat": k[1], "tier": k[2], "session": k[3], **v} for k, v in buckets.items()]
+    return {"rows": rows, "unpriced_models": unpriced, "files": len(nfiles), "roots": roots,
+            "price_updated": prices.get("_updated")}, None, as_of
+
+
+def tok_sum(rows, a, b, seat=None, tier=None):
+    out = {"in": 0, "out": 0, "cache_read": 0, "cache_write": 0, "usd": 0.0, "msgs": 0}
+    sess = set()
+    a = a.replace(minute=0, second=0, microsecond=0)  # buckets are whole hours
+    for r in rows:
+        if a <= r["hour"] < b and (seat is None or r["seat"] == seat) and (tier is None or r["tier"] == tier):
+            for k in out:
+                out[k] += r[k]
+            sess.add(r["session"])
+    out["usd"] = round(out["usd"], 2)
+    out["sessions"] = len(sess)
+    return out
+
+
+def owner_group(owner, slugs):
+    o = (owner or "").lower()
+    for s in slugs:
+        if s in o:
+            return s
+    if "review" in o or "tech lead" in o or "tech-lead" in o:
+        return "reviewer"
+    if "engineer" in o or "builder" in o:
+        return "engineer"
+    return "unattributed"
+
+
+def read_log(ctx, slug):
+    """Parsed log.jsonl entries for a seat: (entries with a dt field, error)."""
+    txt, err = read_text(os.path.join(ctx.company_dir, slug, "log.jsonl"))
+    if err:
+        return None, err
+    out = []
+    for line in txt.splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        d = parse_iso(e.get("ts")) if isinstance(e, dict) else None
+        if d:
+            out.append({**e, "dt": d})
+    return out, None
+
+
+def pct_change(a, b):
+    return round((a - b) * 100.0 / b, 1) if isinstance(a, (int, float)) and isinstance(b, (int, float)) and b else None
+
+
+def pair(a, b, source, unit):
+    return {"this_7d": a, "prev_7d": b, "delta": (round(a - b, 2) if a is not None and b is not None else None),
+            "pct": pct_change(a, b), "unit": unit, "source": source}
+
+
 # ---------------------------------------------------------------- pulse
 def collect_pulse(ctx):
     src = " ".join(ctx.pulse_cmd)
@@ -208,38 +535,68 @@ def collect_pulse(ctx):
 
 
 # ------------------------------------------------------------- releases
+def percentile(vals, q):
+    if not vals:
+        return None
+    v = sorted(vals)
+    i = min(len(v) - 1, max(0, int(round(q * (len(v) - 1)))))
+    return round(v[i], 1)
+
+
+def ci_state(runs):
+    if not runs:
+        return None
+    if any(r.get("conclusion") == "failure" for r in runs):
+        return "red"
+    if any(r.get("status") in ("in_progress", "queued", "waiting", "pending") for r in runs):
+        return "pending"
+    if all(r.get("conclusion") in ("success", "skipped", "neutral") for r in runs):
+        return "green"
+    return "mixed"
+
+
 def collect_releases(ctx):
-    src = "%s ; %s ; VERSION ; git describe" % (" ".join(ctx.npm_cmd), " ".join(ctx.gh_cmd))
-    errors, data = [], {"npm_label": "registry view (not proof a tarball is fetchable)"}
+    src = "%s ; %s ; %s ; VERSION ; git describe ; git log ; git tag" % (
+        " ".join(ctx.npm_cmd), " ".join(ctx.gh_cmd), " ".join(ctx.gh_runs_cmd))
+    errors, data, S = [], {"npm_label": "registry view (not proof a tarball is fetchable)"}, Src(ctx)
     now = ctx.now()
 
-    rc, out, err = run_cmd(ctx, ctx.npm_cmd, ctx.timeout)
-    npm = None
-    if rc != 0:
-        errors.append("npm: " + (err or "exit %s" % rc))
+    npm, nerr, nas = ctx.ds.get("npm", 55, ds_npm)
+    vers = []
+    if nerr:
+        errors.append("npm: " + nerr)
+        S.bad("npm", " ".join(ctx.npm_cmd), nerr, keys=["versions", "latest", "next", "last_publish_minutes_ago",
+                                                        "releases_last_hour", "releases_last_24h", "rates", "timeline"])
     else:
-        try:
-            npm = json.loads(out)
-        except ValueError as ex:
-            errors.append("npm: invalid JSON: %s" % ex)
-    if isinstance(npm, dict):
         tags = npm.get("dist-tags") or {}
         times = npm.get("time") or {}
-        vers = []
         for v, t in times.items():
             d = parse_iso(t) if v not in ("created", "modified") else None
             if d:
                 vers.append((d, v))
         vers.sort()
-        last = vers[-20:]
         data["latest"], data["next"] = tags.get("latest"), tags.get("next")
-        data["versions"] = [{"version": v, "published": iso(d)} for d, v in reversed(last)]
+        data["versions"] = [{"version": v, "published": iso(d)} for d, v in reversed(vers[-20:])]
         if vers:
             data["last_publish_minutes_ago"] = round((now - vers[-1][0]).total_seconds() / 60.0, 1)
         data["releases_last_hour"] = sum(1 for d, _ in vers if now - d <= timedelta(hours=1))
         data["releases_last_24h"] = sum(1 for d, _ in vers if now - d <= timedelta(hours=24))
-    elif npm is not None:
-        errors.append("npm: unexpected JSON shape")
+        hours = []
+        for h in range(23, -1, -1):
+            a = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=h)
+            hours.append({"hour": iso(a), "count": sum(1 for d, _ in vers if a <= d < a + timedelta(hours=1))})
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        days = []
+        for k in range(13, -1, -1):
+            a = today - timedelta(days=k)
+            days.append({"day": a.strftime("%Y-%m-%d"), "count": sum(1 for d, _ in vers if a <= d < a + timedelta(days=1))})
+        w_this = sum(1 for d, _ in vers if now - d <= timedelta(days=7))
+        w_prev = sum(1 for d, _ in vers if timedelta(days=7) < now - d <= timedelta(days=14))
+        data["rates"] = {"per_hour_last_24h": hours, "per_day_last_14d": days,
+                         "last_7d": w_this, "prev_7d": w_prev, "week_over_week_pct": pct_change(w_this, w_prev),
+                         "per_hour_avg_last_24h": round(data["releases_last_24h"] / 24.0, 2)}
+        S.ok("npm", " ".join(ctx.npm_cmd), nas, keys=["versions", "latest", "next", "last_publish_minutes_ago",
+                                                    "releases_last_hour", "releases_last_24h", "rates"])
 
     rc, out, err = run_cmd(ctx, ctx.gh_cmd, ctx.timeout)
     runs = None
@@ -254,8 +611,15 @@ def collect_releases(ctx):
         data["runs"] = [{k: r.get(k) for k in ("databaseId", "status", "conclusion", "headSha",
                                                 "createdAt", "displayTitle", "url")}
                         for r in runs if isinstance(r, dict)]
-    elif runs is not None:
-        errors.append("gh: unexpected JSON shape")
+        failed = [r for r in data["runs"] if r.get("conclusion") == "failure"]
+        data["failed_release_runs"] = {"last_20_runs": len(failed), "last_24h": sum(
+            1 for r in failed if (age_min(ctx, r.get("createdAt")) or 1e9) <= 1440)}
+        S.ok("gh_release_runs", " ".join(ctx.gh_cmd), keys=["runs", "failed_release_runs"])
+    else:
+        if runs is not None:
+            errors.append("gh: unexpected JSON shape")
+        S.bad("gh_release_runs", " ".join(ctx.gh_cmd), errors[-1] if errors else "no data",
+              keys=["runs", "failed_release_runs"])
 
     vtxt, verr = read_text(os.path.join(ctx.root, "VERSION"))
     data["version_file"] = vtxt.strip() if vtxt is not None else None
@@ -266,6 +630,50 @@ def collect_releases(ctx):
     rc, out, _ = run_cmd(ctx, ["git", "-C", ctx.root, "log", "-1", "--format=%H", "--", "VERSION"], ctx.timeout)
     vsha = out.strip() if rc == 0 else ""
     data["version_sha"] = vsha or None
+
+    # Timeline: npm publish time joined to the release commit and its CI runs.
+    commits, gerr, gas = ctx.ds.get("git", 120, ds_git)
+    allruns, rerr, ras = ctx.ds.get("runs", 90, ds_runs)
+    if npm is not None and vers:
+        relmap = {}
+        for c in commits or []:
+            m = re.match(r"^release: v?(\d+\.\d+\.\d+\S*)", c["subject"])
+            if m and m.group(1) not in relmap:
+                relmap[m.group(1)] = c
+        rc2, tout, terr = run_cmd(ctx, ["git", "-C", ctx.git_root, "for-each-ref", "--sort=-creatordate",
+                                        "--count=60", "--format=%(refname:short)", "refs/tags"], ctx.timeout)
+        tagset = set(tout.split()) if rc2 == 0 else None
+        tl, leads = [], []
+        for d, v in reversed(vers[-20:]):
+            c = relmap.get(v)
+            lead = round((d - c["ts"]).total_seconds() / 60.0, 1) if c else None
+            ci = None
+            if c and isinstance(allruns, list):
+                mine = [r for r in allruns if isinstance(r, dict) and (r.get("headSha") or "").startswith(c["sha"][:12])]
+                ci = {"state": ci_state(mine), "runs": len(mine),
+                      "red": sorted({r.get("workflowName") for r in mine if r.get("conclusion") == "failure"})}
+                if not mine:
+                    ci["note"] = "no run for this SHA in the last 100 runs"
+            tl.append({"version": v, "published": iso(d), "sha": c["sha"][:10] if c else None,
+                       "commit_time": iso(c["ts"]) if c else None, "lead_time_min": lead,
+                       "local_tag_exists": (("v" + v) in tagset) if tagset is not None else None, "ci": ci})
+        for d, v in vers:
+            c = relmap.get(v)
+            if c and now - d <= timedelta(days=7):
+                leads.append((d - c["ts"]).total_seconds() / 60.0)
+        data["timeline"] = tl
+        data["lead_time"] = {"n": len(leads), "median_min": percentile(leads, 0.5), "p90_min": percentile(leads, 0.9),
+                             "definition": "npm publish time minus the author time of the 'release: vX' commit, last 7d"}
+        if gerr:
+            S.bad("timeline", "git log + npm time", gerr, keys=["timeline", "lead_time"])
+        else:
+            S.ok("timeline", "git log --format=%aI 'release: vX' commits joined to npm time", gas, keys=["timeline", "lead_time"])
+        if rerr:
+            S.bad("ci_per_release", " ".join(ctx.gh_runs_cmd), rerr, keys=[])
+        else:
+            S.ok("ci_per_release", " ".join(ctx.gh_runs_cmd), ras, keys=[])
+    else:
+        S.bad("timeline", "git log + npm time", "npm versions unavailable", keys=["timeline", "lead_time"])
 
     flags, violation = [], False
     if data.get("version_file") and data.get("next") and data["version_file"] != data["next"]:
@@ -279,6 +687,7 @@ def collect_releases(ctx):
                 flags.append("release run %s failed on the newest VERSION SHA %s" % (r.get("databaseId"), vsha[:8]))
                 break
     data["flags"] = flags
+    data["sources"] = S.m
     if violation:
         return panel(ctx, "VIOLATION", src, data, "; ".join(errors) or None)
     if errors:
@@ -291,6 +700,22 @@ def split_row(line):
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
+# Status cell forms seen in BOARD.md: "token@TS", "released vX@TS",
+# "released@TS vX", "released vX" and a bare "token", each optionally followed
+# by a ": note" or " (note)". A row without a timestamp keeps since=None and is
+# counted as unknown-time; it is never dropped and never given a time.
+STATUS_RE = re.compile(r"^([a-z-]+)(?:\s+(v?\d+\.\d+\.\d+\S*?))?(?:@(\d{4}-\d\d-\d\dT\d\d:\d\dZ))?"
+                       r"(?:\s+(v?\d+\.\d+\.\d+\S*))?(?:\s*[:(].*)?$")
+
+
+def parse_status_cell(cell):
+    """(token, since or None, version or None) or None when the cell is not a status."""
+    m = STATUS_RE.match(cell or "")
+    if not m or m.group(1) not in BOARD_TOKENS:
+        return None
+    return m.group(1), m.group(3), m.group(2) or m.group(4)
+
+
 def parse_board(text):
     rows, unparsed = [], []
     for line in text.splitlines():
@@ -299,15 +724,71 @@ def parse_board(text):
         cells = split_row(line)
         if not cells or cells[0] in ("ID", "") or set(cells[0]) <= set("-: "):
             continue
-        status_cell = cells[5] if len(cells) >= 7 else ""
-        m = re.match(r"^([a-z-]+)@(\d{4}-\d\d-\d\dT\d\d:\d\dZ)$", status_cell)
-        if len(cells) >= 7 and m and m.group(1) in BOARD_TOKENS:
+        st = parse_status_cell(cells[5]) if len(cells) >= 7 else None
+        if st:
             rows.append({"id": cells[0], "owner": cells[1], "tier": cells[4].upper(),
-                         "token": m.group(1), "since": m.group(2),
+                         "token": st[0], "since": st[1], "version": st[2],
                          "notes": "|".join(cells[6:])[:300]})
         else:
             unparsed.append(cells[0])
     return rows, unparsed
+
+
+_FILE_AS_OF = {}
+
+
+def file_as_of(ctx, path):
+    """When a file source last changed: its last commit time when tracked and
+    clean, else its mtime. Returns (iso or None, basis). Cached 60 s."""
+    hit = _FILE_AS_OF.get(path)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1]
+    res = (None, "missing")
+    try:
+        mtime = datetime.fromtimestamp(os.path.getmtime(path), timezone.utc)
+        res = (iso(mtime), "mtime")
+        d = os.path.dirname(os.path.abspath(path))
+        rc, out, _ = run_cmd(ctx, ["git", "-C", d, "log", "-1", "--format=%cI", "--", path], 10)
+        ct = parse_iso(out.strip()) if rc == 0 and out.strip() else None
+        if ct:
+            rc2, dirty, _ = run_cmd(ctx, ["git", "-C", d, "status", "--porcelain", "--", path], 10)
+            if rc2 == 0 and not dirty.strip():
+                res = (iso(ct.astimezone(timezone.utc)), "last commit")
+    except OSError:
+        pass
+    _FILE_AS_OF[path] = (time.time(), res)
+    return res
+
+
+def board_freshness(ctx):
+    """{as_of, basis, age_h, stale, threshold_h} for BOARD.md (STALE past COCKPIT_BOARD_STALE_HOURS, default 24)."""
+    thr = float(os.environ.get("COCKPIT_BOARD_STALE_HOURS") or 24)
+    a, basis = file_as_of(ctx, ctx.board)
+    age = age_min(ctx, a)
+    age_h = round(age / 60.0, 1) if age is not None else None
+    return {"as_of": a, "basis": basis, "age_h": age_h, "threshold_h": thr,
+            "stale": age_h is not None and age_h > thr}
+
+
+def board_stale_note(ctx, f):
+    return "STALE: %s last changed %s (%s), %sh ago, over %sh" % (
+        ctx.board, f["as_of"], f["basis"], f["age_h"], f["threshold_h"])
+
+
+def board_mark(S, ctx, key, f=None):
+    """Mark an already recorded section STALE when any of its numbers derive from a stale BOARD.md."""
+    f = f or board_freshness(ctx)
+    if f["stale"] and key in S.m and S.m[key]["status"] == "OK":
+        S.m[key]["status"] = "STALE"
+        S.m[key]["error"] = board_stale_note(ctx, f)
+    return f
+
+
+def board_source(S, ctx, key, keys=None):
+    """Record a BOARD.md-backed section with the file's own as_of, STALE past the threshold."""
+    f = board_freshness(ctx)
+    S.ok(key, "read %s (as of %s: %s)" % (ctx.board, f["basis"], f["as_of"]), f["as_of"], keys=keys)
+    return board_mark(S, ctx, key, f)
 
 
 def collect_board(ctx):
@@ -326,11 +807,19 @@ def collect_board(ctx):
             budget = TIER_BUDGET_MIN.get(r["tier"])
             active.append({**r, "age_min": a, "budget_min": budget,
                            "over_budget": (a is not None and budget is not None and a > budget)})
+    fr = board_freshness(ctx)
     data = {"counts": counts, "active": active, "unparsed": unparsed, "rows_parsed": len(rows),
-            "ready_below_30": counts["ready"] < 30, "ready_target": 30}
+            "unknown_time": {t: sum(1 for r in rows if r["token"] == t and r["since"] is None)
+                             for t in BOARD_TOKENS if any(r["token"] == t and r["since"] is None for r in rows)},
+            "ready_below_30": counts["ready"] < 30, "ready_target": 30, "freshness": fr}
     if not rows:
         return unknown(ctx, src, "no BOARD rows parsed from " + ctx.board)
-    return panel(ctx, "OK", src, data, None)
+    p = panel(ctx, "STALE" if fr["stale"] else "OK", src, data,
+              ("STALE: %s last changed %s (%s), %sh ago" % (ctx.board, fr["as_of"], fr["basis"], fr["age_h"]))
+              if fr["stale"] else None)
+    if fr["as_of"]:
+        p["as_of"] = fr["as_of"]
+    return p
 
 
 # --------------------------------------------------------------- agents
@@ -356,6 +845,57 @@ def root_causes(path):
         elif cur is not None and line.startswith("  ") and line.strip():
             out[-1] += " " + line.strip()
     return out
+
+
+def md_section(txt, title):
+    """Body of one '## <title>' section of a seat .md file, or None."""
+    m = re.search(r"^## " + re.escape(title) + r"[^\n]*\n(.*?)(?=^## |\Z)", txt or "", re.S | re.M)
+    return m.group(1).strip() if m else None
+
+
+def md_bullets(body, cap=8):
+    """Bullets of a section; a markdown table yields 'cell1: cell2' per body row."""
+    out = []
+    for line in (body or "").splitlines():
+        if line.startswith("|"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) >= 2 and not set(cells[0]) <= set("-: ") and cells[0].lower() not in ("metric", "name"):
+                out.append("%s: %s" % (cells[0], cells[1]))
+        elif line.startswith("- "):
+            out.append(line[2:].strip())
+        elif out and line.startswith("  ") and line.strip():
+            out[-1] += " " + line.strip()
+    return out[:cap]
+
+
+def seat_profile(ctx, slug):
+    """Display name, role, persona line and mandate, all quoted from .claude/agents/<slug>.md.
+    Nothing here is invented: every field is a substring of the file, or None."""
+    path = os.path.join(ctx.agents_dir, slug + ".md")
+    txt, err = read_text(path)
+    prof = {"source": "read " + path, "display_name": None, "role": None, "persona": None,
+            "mandate": None, "description": None, "decision_rights": [], "metrics": [], "escalation": None}
+    if err or not txt:
+        prof["error"] = err or "empty file"
+        return prof
+    fm = re.match(r"^---\n(.*?)\n---\n", txt, re.S)
+    if fm:
+        d = re.search(r"^description:\s*(.+)$", fm.group(1), re.M)
+        prof["description"] = d.group(1).strip() if d else None
+    h1 = re.search(r"^# (.+)$", txt, re.M)
+    if h1:
+        t = h1.group(1).strip()
+        m = re.match(r"^(.*?)\s*\((.*)\)\s*$", t)
+        prof["display_name"], prof["role"] = (m.group(1), m.group(2)) if m else (t, None)
+    mand = md_section(txt, "Mandate")
+    if mand:
+        prof["mandate"] = re.sub(r"\s+", " ", mand)
+        prof["persona"] = re.split(r"(?<=[.!?])\s", prof["mandate"], maxsplit=1)[0]
+    prof["decision_rights"] = md_bullets(md_section(txt, "Decision rights"))
+    prof["metrics"] = md_bullets(md_section(txt, "Owned metrics and targets"))
+    esc = md_section(txt, "Escalation rule")
+    prof["escalation"] = re.sub(r"\s+", " ", esc) if esc else None
+    return prof
 
 
 def seat_cadence(ctx):
@@ -403,17 +943,61 @@ def seat_tick(ctx, slug, cadence, mod):
     return t
 
 
+def agent_model(ctx, slug):
+    txt, _ = read_text(os.path.join(ctx.agents_dir, slug + ".md"))
+    m = re.search(r"^model:\s*(\S+)", (txt or "")[:2000], re.M)
+    return m.group(1) if m else None
+
+
+def seat_activity(ctx, slug, now):
+    """Tick counts and the last skip reason from .loki/company/<slug>/log.jsonl, plus last.out cost."""
+    a = {"ticks_24h": None, "ticks_7d": None, "ran_24h": None, "skipped_24h": None,
+         "last_skip_reason": None, "last_skip_at": None, "last_tick_cost_usd": None,
+         "source": "read %s/%s/{log.jsonl,last.out}" % (ctx.company_dir, slug)}
+    entries, err = read_log(ctx, slug)
+    if entries is None:
+        a["log_error"] = err
+    else:
+        w24 = [e for e in entries if now - e["dt"] <= timedelta(hours=24)]
+        w7 = [e for e in entries if now - e["dt"] <= timedelta(days=7)]
+        a["ticks_24h"], a["ticks_7d"] = len(w24), len(w7)
+        a["skipped_24h"] = sum(1 for e in w24 if e.get("outcome") == "skipped")
+        a["ran_24h"] = len(w24) - a["skipped_24h"]
+        sk = [e for e in entries if e.get("outcome") == "skipped"]
+        if sk:
+            a["last_skip_reason"], a["last_skip_at"] = sk[-1].get("detail"), iso(sk[-1]["dt"])
+    o, _ = read_json(os.path.join(ctx.company_dir, slug, "last.out"))
+    if isinstance(o, dict) and isinstance(o.get("total_cost_usd"), (int, float)):
+        a["last_tick_cost_usd"] = round(o["total_cost_usd"], 4)
+        a["last_tick_cost_label"] = "as reported by claude -p (list-price equivalent), last tick"
+    return a
+
+
 def collect_agents(ctx):
-    src = "read %s/<slug>.json for slugs in %s" % (ctx.status_dir, ctx.agents_dir)
+    src = "read %s/<slug>.json for slugs in %s ; log.jsonl ; transcripts" % (ctx.status_dir, ctx.agents_dir)
     slugs, err = agent_slugs(ctx)
     if err or not slugs:
         return unknown(ctx, src, err or "no agent files in " + ctx.agents_dir)
+    S, now = Src(ctx), ctx.now()
+    toks, terr, tas = ctx.ds.get("tokens", 300, ds_tokens)
+    rows = toks["rows"] if toks else None
     seats, have = [], 0
     cadence, mod = seat_cadence(ctx)
     for slug in slugs:
-        seat = {"slug": slug, "state": "UNKNOWN", "root_causes":
-                root_causes(os.path.join(ctx.agents_dir, slug + ".md"))}
+        seat = {"slug": slug, "state": "UNKNOWN", "model_file": agent_model(ctx, slug),
+                "root_causes": root_causes(os.path.join(ctx.agents_dir, slug + ".md")),
+                "profile": seat_profile(ctx, slug)}
         seat["tick"] = tick = seat_tick(ctx, slug, cadence, mod)
+        seat["activity"] = seat_activity(ctx, slug, now)
+        if rows is not None:
+            t24, t7 = tok_sum(rows, now - timedelta(hours=24), now + timedelta(hours=1), seat=slug), \
+                tok_sum(rows, now - timedelta(days=7), now + timedelta(hours=1), seat=slug)
+            seat["cost"] = {"label": "ESTIMATE (list-price equivalent, not billed spend)", "source": "transcripts x price table", "as_of": tas,
+                            "window_note": HOUR_FLOOR_NOTE,
+                            "usd_24h": t24["usd"], "usd_7d": t7["usd"], "output_tokens_24h": t24["out"],
+                            "output_tokens_7d": t7["out"], "messages_7d": t7["msgs"]}
+        else:
+            seat["cost"] = {"state": "UNKNOWN", "error": terr, "source": "transcripts x price table"}
         d, e = read_json(os.path.join(ctx.status_dir, slug + ".json"))
         if e or not isinstance(d, dict):
             seat["error"] = e or "status file is not an object"
@@ -434,9 +1018,161 @@ def collect_agents(ctx):
             have += 1
         seats.append(seat)
     data = {"seats": seats, "reporting": have, "total": len(slugs)}
+    S.ok("seats", "read %s, %s/<slug>/last.json, log.jsonl, last.out; cadence from %s" % (
+        ctx.status_dir, ctx.company_dir, ctx.schedules), keys=["seats", "reporting", "total"])
+
+    if rows is not None:
+        def blk(h=None, d=None):
+            a = now - (timedelta(hours=h) if h else timedelta(days=d))
+            return {"spawned": tok_sum(rows, a, now + timedelta(hours=1), seat="spawned-agent"),
+                    "main_session": tok_sum(rows, a, now + timedelta(hours=1), seat="main-session")}
+        data["transcripts"] = {"last_24h": blk(h=24), "last_7d": blk(d=7), "files_scanned": toks["files"],
+                               "label": "ESTIMATE, list-price equivalent not billed spend (tokens x price table dated %s)" % toks.get("price_updated"),
+                               "unpriced_models": toks["unpriced_models"], "window_note": HOUR_FLOOR_NOTE}
+        S.ok("transcripts", "Claude Code transcripts under %s via scripts/usage-governor.py iter_records" % (
+            ", ".join(toks["roots"]),), tas)
+    else:
+        S.bad("transcripts", "Claude Code transcripts", terr)
+        data["transcripts"] = None
+    btext, berr = read_text(ctx.board)
+    if berr:
+        S.bad("slice_owners", "read " + ctx.board, berr)
+        data["slice_owners"] = None
+    else:
+        brows, _ = parse_board(btext)
+        own = {}
+        for label, hrs in (("last_24h", 24), ("last_7d", 168)):
+            c = {}
+            for r in brows:
+                if (age_min(ctx, r["since"]) or 1e9) <= hrs * 60:
+                    g = owner_group(r["owner"], slugs)
+                    c[g] = c.get(g, 0) + 1
+            own[label] = c
+        active = [{"id": r["id"], "owner": r["owner"], "status": r["token"], "age_min": age_min(ctx, r["since"])}
+                  for r in brows if r["token"] in ("building", "review", "review-blocked", "approved")]
+        data["slice_owners"] = {**own, "in_flight": active,
+                                "note": "BOARD owner column is free text; unmatched owners are 'unattributed'"}
+        board_source(S, ctx, "slice_owners")
     if have == 0:
+        data["sources"] = S.m
         return panel(ctx, "UNKNOWN", src, data, "no seat has written a status file in " + ctx.status_dir)
-    return panel(ctx, "OK", src, data, None)
+    return S.finish(src, data)
+
+
+MEMBER_LOG_CAP = 200
+
+
+def tick_kind(outcome):
+    o = str(outcome or "").lower()
+    if o == "skipped":
+        return "skipped"
+    if o.startswith(("error", "fail", "timeout", "killed")):
+        return "error"
+    return "ran"
+
+
+def collect_member(ctx, slug, roi_panel=None):
+    """Detail for one seat: profile, live status, last tick, tick history, cost, slices, ROI.
+    Returns None for a slug that is not a .claude/agents/*.md file (the caller answers 404)."""
+    slugs, _ = agent_slugs(ctx)
+    if slug not in slugs:
+        return None
+    S, now = Src(ctx), ctx.now()
+    seat_dir = os.path.join(ctx.company_dir, slug)
+    src = "read %s/%s.md, %s/%s.json, %s/{last.json,log.jsonl,last.out}" % (
+        ctx.agents_dir, slug, ctx.status_dir, slug, seat_dir)
+    data = {"slug": slug, "profile": seat_profile(ctx, slug), "model_file": agent_model(ctx, slug),
+            "root_causes": root_causes(os.path.join(ctx.agents_dir, slug + ".md"))}
+    S.ok("profile", data["profile"]["source"], keys=["slug", "profile", "model_file", "root_causes"])
+    st, e = read_json(os.path.join(ctx.status_dir, slug + ".json"))
+    if isinstance(st, dict):
+        data["status"] = {k: st.get(k) for k in ("model", "doing", "slice", "since", "next", "blocked_on", "updated")}
+        data["status"]["updated_min_ago"] = age_min(ctx, st.get("updated"))
+        S.ok("status", "read %s/%s.json" % (ctx.status_dir, slug), st.get("updated"))
+    else:
+        data["status"] = None
+        S.bad("status", "read %s/%s.json" % (ctx.status_dir, slug), e or "status file is not an object")
+    cadence, mod = seat_cadence(ctx)
+    data["tick"] = seat_tick(ctx, slug, cadence, mod)
+    S.ok("tick", "read %s/last.json ts; cadence from %s" % (seat_dir, ctx.schedules))
+    lj, e = read_json(os.path.join(seat_dir, "last.json"))
+    if isinstance(lj, dict):
+        data["last_tick"] = {k: lj.get(k) for k in ("ts", "outcome", "actions", "evidence", "escalations", "untested")}
+        S.ok("last_tick", "read %s/last.json" % seat_dir, lj.get("ts"))
+    else:
+        data["last_tick"] = None
+        S.bad("last_tick", "read %s/last.json" % seat_dir, e or "last.json is not an object")
+    o, e = read_json(os.path.join(seat_dir, "last.out"))
+    if isinstance(o, dict):
+        mu = o.get("modelUsage") if isinstance(o.get("modelUsage"), dict) else {}
+        data["last_run"] = {"duration_ms": o.get("duration_ms"), "num_turns": o.get("num_turns"),
+                            "total_cost_usd": o.get("total_cost_usd"), "is_error": o.get("is_error"),
+                            "terminal_reason": o.get("terminal_reason"), "models": sorted(mu),
+                            "label": "as reported by claude -p (list-price equivalent), last tick only"}
+        S.ok("last_run", "read %s/last.out (claude -p --output-format json)" % seat_dir)
+    else:
+        data["last_run"] = None
+        S.bad("last_run", "read %s/last.out" % seat_dir, e or "last.out is not an object")
+    entries, e = read_log(ctx, slug)
+    if entries is None:
+        data["history"] = None
+        S.bad("history", "read %s/log.jsonl" % seat_dir, e)
+    else:
+        tail = entries[-MEMBER_LOG_CAP:]
+        w7 = [x for x in entries if now - x["dt"] <= timedelta(days=7)]
+        outcomes = {}
+        for x in w7:
+            k = tick_kind(x.get("outcome"))
+            outcomes[k] = outcomes.get(k, 0) + 1
+        data["history"] = {
+            "ticks": [{"ts": iso(x["dt"]), "kind": tick_kind(x.get("outcome")), "outcome": x.get("outcome"),
+                       "detail": x.get("detail")} for x in reversed(tail)],
+            "shown": len(tail), "total": len(entries),
+            "ticks_24h": sum(1 for x in entries if now - x["dt"] <= timedelta(hours=24)),
+            "ticks_7d": len(w7), "outcomes_7d": outcomes,
+            "per_tick_cost": "no data: log.jsonl records ts, outcome and detail only; "
+                             "duration and cost exist for the last tick only (last.out)"}
+        S.ok("history", "read %s/log.jsonl (newest %d of %d)" % (seat_dir, len(tail), len(entries)),
+             iso(entries[-1]["dt"]) if entries else None)
+    toks, terr, tas = ctx.ds.get("tokens", 300, ds_tokens)
+    if toks:
+        t24 = tok_sum(toks["rows"], now - timedelta(hours=24), now + timedelta(hours=1), seat=slug)
+        t7 = tok_sum(toks["rows"], now - timedelta(days=7), now + timedelta(hours=1), seat=slug)
+        data["cost"] = {"usd_24h": t24["usd"], "usd_7d": t7["usd"], "output_tokens_24h": t24["out"],
+                        "output_tokens_7d": t7["out"], "messages_7d": t7["msgs"],
+                        "label": "ESTIMATE (list-price equivalent, not billed spend)", "window_note": HOUR_FLOOR_NOTE}
+        S.ok("cost", "transcripts x price table", tas)
+    else:
+        data["cost"] = None
+        S.bad("cost", "transcripts x price table", terr)
+    btext, berr = read_text(ctx.board)
+    if berr:
+        data["slices"] = None
+        S.bad("slices", "read " + ctx.board, berr)
+    else:
+        brows, _ = parse_board(btext)
+        mine = [r for r in brows if owner_group(r["owner"], slugs) == slug]
+        mine.sort(key=lambda r: r["since"] or "", reverse=True)
+        data["slices"] = {"rows": [{"id": r["id"], "status": r["token"], "since": r["since"], "version": r.get("version")}
+                                   for r in mine[:40]],
+                          "total": len(mine), "released": sum(1 for r in mine if r["token"] == "released"),
+                          "note": "attributed by seat slug in the BOARD owner column (free text)"}
+        board_source(S, ctx, "slices")
+    data["commits"] = "no data: the commit author is the repo identity, not the seat, so commits cannot be attributed to a seat"
+    roi = None
+    if isinstance(roi_panel, dict):
+        for r in (((roi_panel.get("data") or {}).get("by_seat") or {}).get("seats") or []):
+            if r.get("seat") == slug:
+                roi = dict(r)
+    if roi is not None:
+        roi["formula"] = ("usd_per_slice = cost_7d_usd (transcripts x price table, ESTIMATE) / slices_released_7d "
+                          "(BOARD released rows owned by this seat in the last 7d); withheld when the count is 0")
+        data["roi"] = roi
+        S.ok("roi", "roi panel by_seat", roi_panel.get("as_of"))
+    else:
+        data["roi"] = None
+        S.bad("roi", "roi panel by_seat", (roi_panel or {}).get("error") or "no by_seat row for this seat")
+    return S.finish(src, data)
 
 
 # ----------------------------------------------------------------- okrs
@@ -522,15 +1258,11 @@ def collect_roi(ctx):
     if uerr:
         notes.append("usage readings: " + uerr)
     gov = None
-    rc, out, err = run_cmd(ctx, ctx.usage_cmd, ctx.timeout)
-    if rc == 0:
-        try:
-            g = json.loads(out)
-            gov = {k: g.get(k) for k in ("weekly", "window") if isinstance(g, dict)}
-        except ValueError:
-            notes.append("usage governor: invalid JSON")
+    g, gerr, _gas = ctx.ds.get("governor", GOVERNOR_TTL_S, ds_governor)
+    if gerr:
+        notes.append(gerr)
     else:
-        notes.append("usage governor: " + (err or "exit %s" % rc))
+        gov = {k: g.get(k) for k in ("weekly", "window")}
     rc, out, err = run_cmd(ctx, ctx.cost_cmd, ctx.timeout)
     metered = {"state": "UNMEASURED", "reason": err or "no output"}
     if out.strip():
@@ -616,6 +1348,87 @@ def collect_roi(ctx):
                       "stale_note": "snapshot older than %d days" % BASIS_STALE_DAYS if basis_stale else None},
             "notes": notes}
     measured = metered["state"] == "MEASURED"
+
+    # Cost versus output per seat and for the company, 7 day window.
+    S = Src(ctx)
+    S.ok("cost", "%s ; %s ; read %s" % (" ".join(ctx.cost_cmd), " ".join(ctx.usage_cmd), ctx.readings),
+         keys=["cost", "roi", "scoreboard"])
+    S.ok("value", "read %s ; read %s (ASSUMPTION basis %s)" % (ctx.basis, ctx.board, basis.get("snapshot_date")),
+         keys=["value", "basis"])
+    bfr = board_mark(S, ctx, "value")
+    toks, terr, tas = ctx.ds.get("tokens", 300, ds_tokens)
+    commits, cerr, cas = ctx.ds.get("git", 120, ds_git)
+    npm, nerr, nas = ctx.ds.get("npm", 55, ds_npm)
+    issues, ierr, ias = ctx.ds.get("issues", 120, ds_issues)
+    btext, berr = read_text(ctx.board)
+    brows = parse_board(btext)[0] if btext else None
+    w7 = now - timedelta(days=7)
+    parts, miss = {}, []
+    if toks:
+        parts["cost_7d_usd"] = tok_sum(toks["rows"], w7, now + timedelta(hours=1))["usd"]
+    else:
+        miss.append("cost: " + (terr or ""))
+    if npm:
+        parts["releases_7d"] = sum(1 for v, t in (npm.get("time") or {}).items()
+                                   if v not in ("created", "modified") and parse_iso(t) and parse_iso(t) >= w7)
+    else:
+        miss.append("releases: " + (nerr or ""))
+    if brows is not None:
+        rel = [r for r in brows if r["token"] == "released" and (age_min(ctx, r["since"]) or 1e9) <= 7 * 1440]
+        parts["slices_released_7d"] = len(rel)
+    else:
+        rel = []
+        miss.append("slices: " + (berr or "no BOARD rows"))
+    if commits is not None:
+        parts["bug_fix_commits_7d"] = sum(1 for c in commits if c["type"] == "fix" and c["ts"] >= w7)
+    else:
+        miss.append("fix commits: " + (cerr or ""))
+    if issues is not None:
+        parts["issues_closed_7d"] = sum(1 for i in issues if isinstance(i, dict) and parse_iso(i.get("closedAt"))
+                                        and parse_iso(i.get("closedAt")) >= w7)
+    else:
+        miss.append("issues closed: " + (ierr or ""))
+
+    def per(num, den):
+        return round(num / den, 2) if isinstance(num, (int, float)) and den else None
+
+    cost7 = parts.get("cost_7d_usd")
+    data["company"] = {
+        "window": "last 7 days", "label": "ESTIMATE cost (list-price equivalent, not billed spend) vs MEASURED counts",
+        "cost_7d_usd": cost7,
+        "plan_proration_7d_usd": round(per_day * 7, 2) if per_day is not None else None,
+        "plan_proration_label": "ASSUMPTION (plan_usd_per_month in roi-basis.json x 12 / 365 x 7)",
+        "releases_7d": parts.get("releases_7d"), "slices_released_7d": parts.get("slices_released_7d"),
+        "bug_fix_commits_7d": parts.get("bug_fix_commits_7d"), "issues_closed_7d": parts.get("issues_closed_7d"),
+        "usd_per_release": per(cost7, parts.get("releases_7d")),
+        "usd_per_slice": per(cost7, parts.get("slices_released_7d")),
+        "usd_per_bug_fix": per(cost7, parts.get("bug_fix_commits_7d")),
+        "formula": "usd_per_X = transcript token cost (tokens x price table) in 7d / count of X in 7d; "
+                   "X = npm releases, BOARD released slices, 'fix' commits; a ratio is withheld when its count is 0 or a source is UNKNOWN",
+        "unknown_inputs": miss}
+    data["by_seat"] = None
+    slugs, _ = agent_slugs(ctx)
+    if toks and brows is not None:
+        out = []
+        for slug in slugs:
+            t7 = tok_sum(toks["rows"], w7, now + timedelta(hours=1), seat=slug)
+            n = sum(1 for r in rel if owner_group(r["owner"], slugs) == slug)
+            out.append({"seat": slug, "cost_7d_usd": t7["usd"], "output_tokens_7d": t7["out"],
+                        "slices_released_7d": n, "usd_per_slice": per(t7["usd"], n)})
+        other = {k: tok_sum(toks["rows"], w7, now + timedelta(hours=1), seat=k) for k in ("main-session", "spawned-agent")}
+        data["by_seat"] = {"seats": out, "non_seat_cost_7d_usd": {k: v["usd"] for k, v in other.items()},
+                           "slices_unattributed_7d": sum(1 for r in rel if owner_group(r["owner"], slugs) not in slugs),
+                           "label": "ESTIMATE cost; slices attributed by seat slug in the BOARD owner text (free text)"}
+        S.ok("by_seat", "transcripts x price table ; read " + ctx.board, tas)
+        board_mark(S, ctx, "by_seat", bfr)
+    else:
+        S.bad("by_seat", "transcripts x price table ; read " + ctx.board, "; ".join(miss) or "unavailable")
+    S.ok("company", "transcripts, git log, npm time, BOARD, gh issue list (per-input status in unknown_inputs)", tas)
+    if brows is not None:
+        board_mark(S, ctx, "company", bfr)
+    data["sources"] = S.m
+    if measured and multiple is not None and bfr["stale"]:
+        return panel(ctx, "STALE", src, data, "ROI multiple uses BOARD released rows; " + board_stale_note(ctx, bfr))
     return panel(ctx, "OK" if (measured and multiple is not None) else "UNMEASURED", src, data,
                  None if multiple is not None else "ROI multiple withheld: " + (
                      "value side unmeasured" if value["state"] == "UNMEASURED" else "cost side unmeasured"))
@@ -643,8 +1456,375 @@ def collect_queue(ctx):
     return panel(ctx, "OK", src, data, None)
 
 
+# ------------------------------------------------------------ work made
+def day_buckets(ctx, n=14):
+    today = ctx.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return [today - timedelta(days=k) for k in range(n - 1, -1, -1)]
+
+
+def label_names(item):
+    return [str(l.get("name", "")).lower() for l in (item.get("labels") or []) if isinstance(l, dict)]
+
+
+def title_type(title):
+    return commit_type(title or "")
+
+
+def collect_work(ctx):
+    src = "git log --numstat ; read BOARD.md ; gh pr list ; gh issue list"
+    S, now, data = Src(ctx), ctx.now(), {}
+    slugs, _ = agent_slugs(ctx)
+    d1, d7, d14 = now - timedelta(hours=24), now - timedelta(days=7), now - timedelta(days=14)
+
+    commits, err, as_of = ctx.ds.get("git", 120, ds_git)
+    if err:
+        data["commits"] = None
+        S.bad("commits", "git log --numstat --since", err)
+    else:
+        c7 = [c for c in commits if c["ts"] >= d7]
+        by_type = {}
+        for c in c7:
+            by_type[c["type"]] = by_type.get(c["type"], 0) + 1
+        nonrel = [c for c in c7 if c["type"] != "release"]
+        data["commits"] = {
+            "last_24h": sum(1 for c in commits if c["ts"] >= d1), "last_7d": len(c7),
+            "prev_7d": sum(1 for c in commits if d14 <= c["ts"] < d7),
+            "by_type_7d": by_type,
+            "lines_added_7d": sum(c["added"] for c in c7), "lines_deleted_7d": sum(c["deleted"] for c in c7),
+            "lines_changed_excl_release_7d": sum(c["added"] + c["deleted"] for c in nonrel),
+            "files_touched_7d": sum(c["files"] for c in c7),
+            "authors_7d": len({c["author"] for c in c7}),
+            "per_day_14d": [{"day": a.strftime("%Y-%m-%d"),
+                             "commits": sum(1 for c in commits if a <= c["ts"] < a + timedelta(days=1)),
+                             "feat": sum(1 for c in commits if a <= c["ts"] < a + timedelta(days=1) and c["type"] == "feat"),
+                             "fix": sum(1 for c in commits if a <= c["ts"] < a + timedelta(days=1) and c["type"] == "fix")}
+                            for a in day_buckets(ctx)],
+            "note": "author is the git identity, not the seat; per-seat attribution comes from the BOARD owner column"}
+        S.ok("commits", "git -C %s log --numstat --since=%d days" % (ctx.git_root, ctx.git_days), as_of)
+
+    btext, berr = read_text(ctx.board)
+    if berr:
+        data["slices"] = None
+        S.bad("slices", "read " + ctx.board, berr)
+    else:
+        rows, unparsed = parse_board(btext)
+        rel = [r for r in rows if r["token"] == "released"]
+
+        def inwin(r, a, b=None):
+            d = parse_iso(r["since"])
+            return d is not None and d >= a and (b is None or d < b)
+
+        by_tier, by_owner = {}, {}
+        for r in rel:
+            if inwin(r, d7):
+                tier = r["tier"] if r["tier"] in TIER_BUDGET_MIN else "unparsed"
+                by_tier[tier] = by_tier.get(tier, 0) + 1
+                g = owner_group(r["owner"], slugs)
+                by_owner[g] = by_owner.get(g, 0) + 1
+        counts = {t: sum(1 for r in rows if r["token"] == t) for t in BOARD_TOKENS}
+        data["slices"] = {
+            "counts": counts, "rows_parsed": len(rows), "unparsed_rows": len(unparsed),
+            "released_24h": sum(1 for r in rel if inwin(r, d1)), "released_7d": sum(1 for r in rel if inwin(r, d7)),
+            "released_unknown_time": sum(1 for r in rel if r["since"] is None),
+            "released_prev_7d": sum(1 for r in rel if inwin(r, d14, d7)),
+            "released_by_tier_7d": by_tier, "released_by_owner_7d": by_owner,
+            "released_per_day_14d": [{"day": a.strftime("%Y-%m-%d"),
+                                      "count": sum(1 for r in rel if inwin(r, a, a + timedelta(days=1)))}
+                                     for a in day_buckets(ctx)],
+            "note": "the BOARD status stamp for a released row is its release time; a released row without a stamp "
+                    "(for example 'released v11.17.47') is counted in released_unknown_time and in no window; owner is free text"}
+        board_source(S, ctx, "slices")
+
+    prs, perr, pas = ctx.ds.get("prs", 120, ds_prs)
+    if perr:
+        data["pull_requests"] = None
+        S.bad("pull_requests", " ".join(ctx.gh_prs_cmd), perr)
+    else:
+        m7 = [p for p in prs if isinstance(p, dict) and parse_iso(p.get("mergedAt")) and parse_iso(p.get("mergedAt")) >= d7]
+        by_author, by_type = {}, {}
+        for p in m7:
+            a = (p.get("author") or {}).get("login") if isinstance(p.get("author"), dict) else None
+            by_author[a or "unknown"] = by_author.get(a or "unknown", 0) + 1
+            t = title_type(p.get("title"))
+            by_type[t] = by_type.get(t, 0) + 1
+        data["pull_requests"] = {"merged_24h": sum(1 for p in m7 if parse_iso(p["mergedAt"]) >= d1), "merged_7d": len(m7),
+                                 "merged_by_author_7d": by_author, "merged_by_type_7d": by_type}
+        S.ok("pull_requests", " ".join(ctx.gh_prs_cmd), pas)
+
+    issues, ierr, ias = ctx.ds.get("issues", 120, ds_issues)
+    if ierr:
+        data["issues"] = None
+        S.bad("issues", " ".join(ctx.gh_issues_cmd), ierr)
+    else:
+        it = [i for i in issues if isinstance(i, dict)]
+        closed7 = [i for i in it if parse_iso(i.get("closedAt")) and parse_iso(i["closedAt"]) >= d7]
+        data["issues"] = {"opened_7d": sum(1 for i in it if parse_iso(i.get("createdAt")) and parse_iso(i["createdAt"]) >= d7),
+                          "closed_7d": len(closed7),
+                          "bugs_closed_7d": sum(1 for i in closed7 if "bug" in label_names(i)),
+                          "open_now": None,
+                          "window_note": "opened/closed: newest 300 issues; open_now: every open issue (limit 1000)"}
+        oi, oerr, _oas = ctx.ds.get("open_issues", 120, ds_open_issues)
+        if oerr:
+            data["issues"]["open_now_error"] = oerr
+        else:
+            data["issues"]["open_now"] = sum(1 for i in oi if isinstance(i, dict) and str(i.get("state", "OPEN")).upper() == "OPEN")
+        S.ok("issues", " ".join(ctx.gh_issues_cmd) + " ; " + " ".join(ctx.gh_open_issues_cmd), ias)
+    return S.finish(src, data)
+
+
+# --------------------------------------------------------------- compare
+def collect_compare(ctx):
+    src = "git log ; npm time ; BOARD.md ; transcripts x price table ; scoreboard dir"
+    S, now, data = Src(ctx), ctx.now(), {}
+    slugs, _ = agent_slugs(ctx)
+    d1, d7, d14 = now - timedelta(hours=24), now - timedelta(days=7), now - timedelta(days=14)
+    horizon = now + timedelta(hours=1)
+    commits, cerr, cas = ctx.ds.get("git", 120, ds_git)
+    npm, nerr, nas = ctx.ds.get("npm", 55, ds_npm)
+    toks, terr, tas = ctx.ds.get("tokens", 300, ds_tokens)
+    btext, berr = read_text(ctx.board)
+    brows = parse_board(btext)[0] if btext else None
+
+    def cc(pred):
+        if commits is None:
+            return None, None
+        return (sum(1 for c in commits if d7 <= c["ts"] and pred(c)),
+                sum(1 for c in commits if d14 <= c["ts"] < d7 and pred(c)))
+
+    def rl(a, b):
+        if npm is None:
+            return None
+        return sum(1 for v, t in (npm.get("time") or {}).items() if v not in ("created", "modified")
+                   and parse_iso(t) and a <= parse_iso(t) < b)
+
+    def sl(a, b):
+        if brows is None:
+            return None
+        return sum(1 for r in brows if r["token"] == "released" and a <= (parse_iso(r["since"]) or d14 - timedelta(days=1)) < b)
+
+    def tk(a, b, key):
+        return None if toks is None else tok_sum(toks["rows"], a, b)[key]
+
+    mets = {}
+    cn = cc(lambda c: True)
+    mets["commits"] = pair(cn[0], cn[1], "git log", "commits")
+    ft = cc(lambda c: c["type"] == "feat")
+    mets["feat_commits"] = pair(ft[0], ft[1], "git log", "commits")
+    fx = cc(lambda c: c["type"] == "fix")
+    mets["fix_commits"] = pair(fx[0], fx[1], "git log", "commits")
+    if commits is not None:
+        a = sum(c["added"] + c["deleted"] for c in commits if c["ts"] >= d7 and c["type"] != "release")
+        b = sum(c["added"] + c["deleted"] for c in commits if d14 <= c["ts"] < d7 and c["type"] != "release")
+        mets["lines_changed_excl_release"] = pair(a, b, "git log --numstat", "lines")
+    else:
+        mets["lines_changed_excl_release"] = pair(None, None, "git log --numstat", "lines")
+    mets["npm_releases"] = pair(rl(d7, horizon), rl(d14, d7), "npm view time", "releases")
+    mets["slices_released"] = pair(sl(d7, horizon), sl(d14, d7), "BOARD.md released stamps", "slices")
+    mets["token_cost_usd"] = pair(tk(d7, horizon, "usd"), tk(d14, d7, "usd"), "transcripts x price table (ESTIMATE)", "USD")
+    mets["output_tokens"] = pair(tk(d7, horizon, "out"), tk(d14, d7, "out"), "transcripts", "tokens")
+    errs = [e for e in (cerr, nerr, terr, berr) if e]
+    data["week_over_week"] = {"metrics": mets, "window": "this = last 7d, prev = the 7d before; hour-aligned for tokens",
+                              "unknown_inputs": errs}
+    if all(m["this_7d"] is None for m in mets.values()):
+        S.bad("week_over_week", src, "; ".join(errs) or "no input available")
+        data["week_over_week"] = None
+    else:
+        S.ok("week_over_week", src)
+        if brows is not None:
+            board_mark(S, ctx, "week_over_week")
+
+    days = day_buckets(ctx)
+    series = []
+    for a in days:
+        b = a + timedelta(days=1)
+        series.append({"day": a.strftime("%Y-%m-%d"),
+                       "commits": None if commits is None else sum(1 for c in commits if a <= c["ts"] < b),
+                       "npm_releases": rl(a, b), "slices_released": sl(a, b),
+                       "token_cost_usd": tk(a, b, "usd")})
+    if all(all(v is None for k, v in row.items() if k != "day") for row in series):
+        data["day_over_day"] = None
+        S.bad("day_over_day", src, "; ".join(errs) or "no input available")
+    else:
+        today, yest = series[-1], series[-2]
+        data["day_over_day"] = {"series": series,
+                                "today_vs_yesterday": {k: pair(today[k], yest[k], k, "count" if k != "token_cost_usd" else "USD")
+                                                       for k in ("commits", "npm_releases", "slices_released", "token_cost_usd")},
+                                "note": "today is a partial UTC day (%d hours elapsed)" % now.hour}
+        S.ok("day_over_day", src)
+        if brows is not None:
+            board_mark(S, ctx, "day_over_day")
+
+    if toks is None:
+        data["seat_vs_seat"] = data["model_mix"] = None
+        S.bad("seat_vs_seat", "transcripts x price table", terr)
+        S.bad("model_mix", "transcripts x price table", terr)
+    else:
+        names = list(slugs) + ["main-session", "spawned-agent"]
+        seats = []
+        tot = tok_sum(toks["rows"], d7, horizon)
+        for n in names:
+            t = tok_sum(toks["rows"], d7, horizon, seat=n)
+            seats.append({"seat": n, "usd_7d": t["usd"], "output_tokens_7d": t["out"], "messages_7d": t["msgs"],
+                          "sessions_7d": t["sessions"], "usd_share_pct": round(t["usd"] * 100.0 / tot["usd"], 1) if tot["usd"] else None,
+                          "slices_released_7d": (sum(1 for r in brows if r["token"] == "released"
+                                                      and (parse_iso(r["since"]) or d14) >= d7
+                                                      and owner_group(r["owner"], slugs) == n) if brows is not None and n in slugs else None)})
+        seats.sort(key=lambda x: -x["usd_7d"])
+        data["seat_vs_seat"] = {"seats": seats, "total_usd_7d": tot["usd"], "label": "ESTIMATE, list-price equivalent not billed spend (tokens x price table)"}
+        S.ok("seat_vs_seat", "Claude Code transcripts x " + ctx.pricing + (
+            " ; read " + ctx.board if brows is not None else ""), tas)
+        if brows is not None:
+            board_mark(S, ctx, "seat_vs_seat")
+        mix = {}
+        for label, a in (("last_24h", d1), ("last_7d", d7)):
+            t_all = tok_sum(toks["rows"], a, horizon)
+            tiers = sorted({r["tier"] for r in toks["rows"]})
+            mix[label] = [{"tier": t, **{k: v for k, v in tok_sum(toks["rows"], a, horizon, tier=t).items()
+                                          if k in ("usd", "out", "msgs")},
+                           "usd_share_pct": round(tok_sum(toks["rows"], a, horizon, tier=t)["usd"] * 100.0 / t_all["usd"], 1) if t_all["usd"] else None,
+                           "out_share_pct": round(tok_sum(toks["rows"], a, horizon, tier=t)["out"] * 100.0 / t_all["out"], 1) if t_all["out"] else None}
+                          for t in tiers]
+        data["model_mix"] = {**mix, "unpriced_models": toks["unpriced_models"],
+                             "label": "ESTIMATE; tier from the model id in each transcript message"}
+        S.ok("model_mix", "Claude Code transcripts x " + ctx.pricing, tas)
+
+    try:
+        files = sorted(f for f in os.listdir(ctx.scoreboard) if f.endswith(".json"))
+    except OSError:
+        files = []
+    if not files:
+        data["scoreboard"] = None
+        S.bad("scoreboard", "read %s/*.json (research-outcomes nightly Loki vs raw claude -p)" % ctx.scoreboard,
+              "no scoreboard files in %s" % ctx.scoreboard)
+    else:
+        d, e = read_json(os.path.join(ctx.scoreboard, files[-1]))
+        if not isinstance(d, dict):
+            data["scoreboard"] = None
+            S.bad("scoreboard", "read " + os.path.join(ctx.scoreboard, files[-1]), e or "latest scoreboard file is not an object")
+        else:
+            flat = {k: v for k, v in d.items() if isinstance(v, (int, float, str, bool)) and not isinstance(v, bool)}
+            data["scoreboard"] = {"file": files[-1], "files_total": len(files), "fields": dict(list(flat.items())[:30]),
+                                  "note": "fields shown verbatim from the file; this panel does not interpret them"}
+            S.ok("scoreboard", "read " + os.path.join(ctx.scoreboard, files[-1]))
+    return S.finish(src, data)
+
+
+# ---------------------------------------------------------------- health
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def collect_health(ctx):
+    src = "gh run list ; gh issue list ; BOARD.md ; usage-governor ; .loki files"
+    S, now, data = Src(ctx), ctx.now(), {}
+    runs, rerr, ras = ctx.ds.get("runs", 90, ds_runs)
+    if rerr:
+        data["ci"] = None
+        S.bad("ci", " ".join(ctx.gh_runs_cmd), rerr)
+    else:
+        rs = [r for r in runs if isinstance(r, dict)]
+
+        def rate(sub):
+            ok = sum(1 for r in sub if r.get("conclusion") == "success")
+            bad = sum(1 for r in sub if r.get("conclusion") == "failure")
+            return {"success": ok, "failure": bad, "cancelled": sum(1 for r in sub if r.get("conclusion") == "cancelled"),
+                    "green_rate_pct": round(ok * 100.0 / (ok + bad), 1) if ok + bad else None}
+        wf = {}
+        for r in rs:
+            wf.setdefault(r.get("workflowName") or "?", []).append(r)
+        main = [r for r in rs if r.get("headBranch") == "main"]
+        data["ci"] = {"runs_considered": len(rs), "all": rate(rs), "main_branch": rate(main),
+                      "by_workflow": {k: rate(v) for k, v in sorted(wf.items())},
+                      "note": "last 100 runs; green rate = success / (success + failure), cancelled excluded"}
+        S.ok("ci", " ".join(ctx.gh_runs_cmd), ras)
+
+    issues, ierr, ias = ctx.ds.get("open_issues", 120, ds_open_issues)
+    if ierr:
+        data["p0"] = None
+        S.bad("p0", " ".join(ctx.gh_open_issues_cmd), ierr)
+    else:
+        p0 = [i for i in issues if isinstance(i, dict) and str(i.get("state", "OPEN")).upper() == "OPEN"
+              and any(n in ("p0", "priority: p0", "priority/p0") for n in label_names(i))]
+        data["p0"] = {"open_p0_issues": len(p0), "items": [{"number": i.get("number"), "title": str(i.get("title"))[:120]}
+                                                           for i in p0[:10]]}
+        S.ok("p0", " ".join(ctx.gh_open_issues_cmd), ias)
+
+    btext, berr = read_text(ctx.board)
+    if berr:
+        data["blocked"] = None
+        S.bad("blocked", "read " + ctx.board, berr)
+    else:
+        rows, _ = parse_board(btext)
+        bl = [r for r in rows if r["token"] in ("blocked", "review-blocked")]
+        data["blocked"] = {"blocked": sum(1 for r in rows if r["token"] == "blocked"),
+                           "review_blocked": sum(1 for r in rows if r["token"] == "review-blocked"),
+                           "parked": sum(1 for r in rows if r["token"] == "parked"),
+                           "rejected": sum(1 for r in rows if r["token"] == "rejected"),
+                           "ready": sum(1 for r in rows if r["token"] == "ready"),
+                           "p0_rows_open": sum(1 for r in rows if r["token"] not in ("released", "rejected", "parked", "merged")
+                                               and re.search(r"\bP0\b", r["id"] + " " + r["notes"])),
+                           "blocked_rows": [{"id": r["id"], "owner": r["owner"][:40], "age_min": age_min(ctx, r["since"]),
+                                             "notes": r["notes"][:140]} for r in bl[:10]]}
+        board_source(S, ctx, "blocked")
+
+    g, gerr, gas = ctx.ds.get("governor", GOVERNOR_TTL_S, ds_governor)
+    pause_file = os.path.join(ctx.company_dir, "PAUSE")
+    if gerr:
+        data["usage"] = None
+        S.bad("usage", " ".join(ctx.usage_cmd), gerr)
+    else:
+        gv = g.get("governor") if isinstance(g.get("governor"), dict) else {}
+        wk, wd = g.get("weekly") or {}, g.get("window") or {}
+        usage = {"weekly_percent": wk.get("current_pct"), "window_5h_percent": wd.get("current_pct"),
+                 "weekly_resets": wk.get("resets_text"), "window_resets": wd.get("resets_text"),
+                 "max_engineers_next_hour": gv.get("max_engineers_next_hour"),
+                 "active_engineers_last_hour": gv.get("active_engineers_last_hour"),
+                 "cap_basis": gv.get("cap_basis"), "measured_age_secs": (g.get("measured") or {}).get("age_secs"),
+                 "paused_file_present": os.path.exists(pause_file)}
+        data["usage"] = usage
+        S.ok("usage", "%s ; stat %s" % (" ".join(ctx.usage_cmd), pause_file), gas)
+
+    cap, cerr, cas = ds_json_cmd(ctx, ctx.usage_cap_cmd, "usage cap", dict)
+    if cap is not None and cap.get("state") not in ("OK", "PAUSED"):
+        cap, cerr = None, "usage cap: state is %r, expected OK or PAUSED" % (cap.get("state"),)
+    if cerr:
+        data["usage_cap"] = None
+        S.bad("usage_cap", " ".join(ctx.usage_cap_cmd), cerr)
+    else:
+        data["usage_cap"] = {"paused": cap["state"] == "PAUSED", "state": cap["state"], "reason": cap.get("reason"),
+                             "week_pct": cap.get("week_pct"), "ceiling": cap.get("ceiling"),
+                             "override": cap.get("override"), "reading_at": cap.get("reading_at"),
+                             "cache_age_secs": cap.get("cache_age_secs"), "message": cap.get("message")}
+        S.ok("usage_cap", " ".join(ctx.usage_cap_cmd), cas)
+
+    leader_txt, lerr = read_text(ctx.leader)
+    holder = None
+    if leader_txt is not None:
+        m = re.match(r"\s*(\d+)", leader_txt)
+        if m:
+            holder = {"pid": int(m.group(1)), "alive": pid_alive(int(m.group(1))),
+                      "raw_first_line": leader_txt.splitlines()[0][:80] if leader_txt.splitlines() else ""}
+    try:
+        load1 = round(os.getloadavg()[0], 2)
+        lerr2 = None
+    except OSError as ex:
+        load1, lerr2 = None, "os.getloadavg: %s" % ex
+    data["system"] = {"load_1min": load1, "load_error": lerr2, "leader_file": ctx.leader,
+                      "leader": holder, "leader_error": lerr if holder is None else None,
+                      "company_paused": os.path.exists(pause_file)}
+    S.ok("system", "os.getloadavg ; read %s ; stat %s" % (ctx.leader, pause_file))
+    return S.finish(src, data)
+
+
 COLLECTORS = {"pulse": (collect_pulse, 90), "releases": (collect_releases, 60),
               "board": (collect_board, 5), "agents": (collect_agents, 5),
+              "work": (collect_work, 60), "compare": (collect_compare, 60), "health": (collect_health, 30),
               "okrs": (collect_okrs, 15), "roi": (collect_roi, 60), "queue": (collect_queue, 3)}
 
 
@@ -711,6 +1891,121 @@ class Store:
         for n in names:
             out[n] = self.get(n, max(0.0, deadline - time.time()))
         return {"generated_at": iso(self.ctx.now()), "repo_root": self.ctx.root, "panels": out}
+
+
+# ------------------------------------------------------------ live push
+SSE_MAX_CLIENTS = 8
+SSE_HEARTBEAT_S = 15
+SSE_WRITE_TIMEOUT_S = 10  # a stalled reader cannot hold one of the SSE_MAX_CLIENTS slots
+
+
+def file_sig(path):
+    try:
+        st = os.stat(path)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+class Watcher:
+    """One shared thread, alive only while an /api/stream client is connected.
+    Every interval it fingerprints the source files (mtime and size) and the
+    release and usage-cap state of the cached panels; a change invalidates the
+    affected panels and wakes every stream with the changed group names."""
+
+    def __init__(self, ctx, store, interval=None):
+        self.ctx, self.store = ctx, store
+        self.interval = float(interval or os.environ.get("COCKPIT_WATCH_INTERVAL_S") or 2)
+        self.cond = threading.Condition()
+        self.seq, self.changed, self.at = 0, [], None
+        self.clients, self.thread, self.sigs = 0, None, None
+        self.degraded, self.dseq = None, 0
+
+    def groups(self):
+        c = self.ctx
+        seat = []
+        for d in sorted(glob.glob(os.path.join(c.company_dir, "*", ""))):
+            for f in ("last.json", "log.jsonl"):
+                seat.append((d + f, file_sig(d + f)))
+        for f in sorted(glob.glob(os.path.join(c.status_dir, "*.json"))):
+            seat.append((f, file_sig(f)))
+        return {"agents": tuple(seat), "board": file_sig(c.board), "queue": file_sig(c.queue),
+                "usage": file_sig(c.readings), "pause": file_sig(os.path.join(c.company_dir, "PAUSE")),
+                "releases": self.panel_sig("releases", ("latest", "next", "last_publish_minutes_ago")),
+                "usage_cap": self.panel_sig("health", ("usage_cap",))}
+
+    def panel_sig(self, name, keys):
+        self.store.kick(name)  # TTL-bounded: reruns only when the cached entry is older than the panel TTL
+        with self.store.lock:
+            e = self.store.entries.get(name)
+        if not e:
+            return None
+        d = e[1].get("data") or {}
+        return json.dumps([d.get(k) for k in keys], sort_keys=True, default=str)
+
+    PANELS_FOR = {"agents": ["agents", "roi"], "board": ["board", "work", "agents", "roi", "compare"], "queue": ["queue"],
+                  "usage": ["health", "roi"], "pause": ["health"], "releases": ["releases", "compare"],
+                  "usage_cap": []}
+
+    def step(self):
+        new = self.groups()
+        if self.sigs is None:
+            self.sigs = new
+            return []
+        diff = [k for k in new if new[k] != self.sigs.get(k)]
+        self.sigs = new
+        if diff:
+            for k in diff:
+                for p in self.PANELS_FOR.get(k, []):
+                    if k not in ("releases", "usage_cap"):
+                        self.store.invalidate(p)
+            with self.cond:
+                self.seq += 1
+                self.changed, self.at = diff, iso(self.ctx.now())
+                self.cond.notify_all()
+        return diff
+
+    def tick(self):
+        """One watch step. A failure is logged and marks the stream degraded (clients fall back to
+        their safety refresh); the next good step clears it. Both transitions wake every stream."""
+        try:
+            diff = self.step()
+        except Exception as ex:
+            sys.stderr.write("cockpit watcher: step failed: %r\n" % (ex,))
+            with self.cond:
+                self.degraded = {"at": iso(self.ctx.now()), "error": repr(ex)[:300]}
+                self.dseq += 1
+                self.cond.notify_all()
+            return None
+        if self.degraded is not None:
+            with self.cond:
+                self.degraded = None
+                self.dseq += 1
+                self.cond.notify_all()
+        return diff
+
+    def _loop(self):
+        while True:
+            with self.cond:
+                if self.clients <= 0:
+                    self.thread, self.sigs = None, None
+                    return
+            self.tick()
+            time.sleep(self.interval)
+
+    def attach(self):
+        with self.cond:
+            if self.clients >= SSE_MAX_CLIENTS:
+                return False
+            self.clients += 1
+            if self.thread is None:
+                self.thread = threading.Thread(target=self._loop, daemon=True)
+                self.thread.start()
+            return True
+
+    def detach(self):
+        with self.cond:
+            self.clients -= 1
 
 
 # --------------------------------------------------------- queue append
@@ -780,10 +2075,34 @@ def append_queue(ctx, item, why):
 
 
 # ----------------------------------------------------------------- http
-def make_handler(ctx, store, token, port, index_html):
+# three@0.160.0 build/three.module.js, verified against the npm dist.integrity (SPEC.md section 3).
+THREE_VENDOR = os.path.join(HERE, "vendor", "three.module.js")
+THREE_SHA256 = "76dea8151bc9352aef3528b4262e249b2604f62543828328db978d060d61a495"
+CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+       "img-src 'self' data:; connect-src 'self'")
+
+
+def load_vendor(path=THREE_VENDOR, want=THREE_SHA256):
+    """(bytes, None) when the vendored module matches its pin, else (None, error). Read once at startup."""
+    try:
+        with open(path, "rb") as f:
+            body = f.read()
+    except OSError as ex:
+        return None, "cannot read %s: %s" % (path, ex.strerror or ex)
+    got = hashlib.sha256(body).hexdigest()
+    if got != want:
+        return None, "sha256 mismatch for %s: got %s, pinned %s" % (path, got, want)
+    return body, None
+
+
+def make_handler(ctx, store, token, port, index_html, watcher=None):
     hosts = {"127.0.0.1:%d" % port, "localhost:%d" % port, "[::1]:%d" % port}
     origins = {"http://" + h for h in hosts}
-    csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+    csp = CSP
+    vendor_body, vendor_err = load_vendor()
+    if vendor_err:
+        sys.stderr.write("cockpit: avatars disabled: %s\n" % vendor_err)
+    watcher = watcher or Watcher(ctx, store)
 
     class H(BaseHTTPRequestHandler):
         server_version = "cockpit"
@@ -810,6 +2129,14 @@ def make_handler(ctx, store, token, port, index_html):
             self.send(403, {"error": "bad Host header"})
             return False
 
+        def origin_ok(self):
+            # A browser sends Origin on cross-origin reads; absent is a same-origin or non-browser client.
+            o = self.headers.get("Origin")
+            if o is None or o in origins:
+                return True
+            self.send(403, {"error": "origin not allowed"})
+            return False
+
         def do_GET(self):
             if not self.host_ok():
                 return
@@ -819,6 +2146,10 @@ def make_handler(ctx, store, token, port, index_html):
                 return self.send(200, page.encode("utf-8"), "text/html")
             if path == "/healthz":
                 return self.send(200, {"ok": True, "pid": os.getpid()})
+            if path == "/vendor/three.module.js":
+                if vendor_body is None:
+                    return self.send(500, {"error": vendor_err})
+                return self.send(200, vendor_body, "text/javascript")
             if path == "/api/snapshot":
                 return self.send(200, store.snapshot(PANELS, ctx.first_wait))
             if path.startswith("/api/panel/"):
@@ -826,16 +2157,73 @@ def make_handler(ctx, store, token, port, index_html):
                 if name not in COLLECTORS:
                     return self.send(404, {"error": "unknown panel"})
                 return self.send(200, store.get(name, ctx.first_wait))
+            if path.startswith("/api/member/"):
+                if not self.origin_ok():
+                    return
+                slug = path[len("/api/member/"):]
+                if not re.match(r"^[a-z0-9][a-z0-9-]{0,63}$", slug) or slug not in agent_slugs(ctx)[0]:
+                    return self.send(404, {"error": "unknown member"})
+                res = collect_member(ctx, slug, store.get("roi", ctx.first_wait))
+                if res is None:
+                    return self.send(404, {"error": "unknown member"})
+                return self.send(200, res)
+            if path == "/api/stream":
+                if not self.origin_ok():
+                    return
+                return self.stream()
             if path == "/api/queue":
                 return self.send(405, {"error": "method not allowed"})
             self.send(404, {"error": "not found"})
+
+        def stream(self):
+            if not watcher.attach():
+                return self.send(503, {"error": "too many live streams (max %d)" % SSE_MAX_CLIENTS})
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Content-Security-Policy", csp)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                self.connection.settimeout(SSE_WRITE_TIMEOUT_S)
+                with watcher.cond:
+                    seen, dseen, deg = watcher.seq, watcher.dseq, watcher.degraded
+                hello = {"at": iso(ctx.now()), "interval_s": watcher.interval, "degraded": deg}
+                self.wfile.write(("retry: 3000\nevent: hello\ndata: %s\n\n" % json.dumps(hello)).encode())
+                self.wfile.flush()
+                last_beat = time.time()
+                while True:
+                    with watcher.cond:
+                        watcher.cond.wait(1.0)
+                        seq, changed, at = watcher.seq, list(watcher.changed), watcher.at
+                        dseq, deg = watcher.dseq, watcher.degraded
+                    if dseq != dseen:
+                        dseen = dseq
+                        self.wfile.write(("event: degraded\ndata: %s\n\n" % json.dumps({"degraded": deg})).encode())
+                        self.wfile.flush()
+                    if seq != seen:
+                        seen = seq
+                        msg = json.dumps({"changed": changed, "at": at, "seq": seq})
+                        self.wfile.write(("event: change\ndata: %s\n\n" % msg).encode())
+                        self.wfile.flush()
+                    elif time.time() - last_beat >= SSE_HEARTBEAT_S:
+                        self.wfile.write((": beat %s\n\n" % iso(ctx.now())).encode())
+                        self.wfile.flush()
+                        last_beat = time.time()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                watcher.detach()
 
         def do_POST(self):
             if not self.host_ok():
                 return
             path = self.path.split("?", 1)[0]
             if path != "/api/queue":
-                known = path in ("/", "/healthz", "/api/snapshot") or path.startswith("/api/panel/")
+                known = path in ("/", "/healthz", "/api/snapshot", "/api/stream", "/vendor/three.module.js") or \
+                    path.startswith(("/api/panel/", "/api/member/"))
                 return self.send(405 if known else 404, {"error": "method not allowed" if known else "not found"})
             tok = self.headers.get("X-Cockpit-Token") or ""
             if not secrets.compare_digest(tok, token) or self.headers.get("Origin") not in origins:
@@ -888,7 +2276,16 @@ def serve(ctx, host, port):
     # Bind first: the handler's Host allow-list needs the real port.
     httpd = srv_cls((host, port), BaseHTTPRequestHandler, bind_and_activate=False)
     httpd.daemon_threads = True
-    httpd.server_bind()
+    try:
+        httpd.server_bind()
+    except OSError as ex:
+        httpd.server_close()
+        if ex.errno == errno.EADDRINUSE:
+            # A second launch (launchd restart, a manual run) must not crash-loop: report and exit 0.
+            print("cockpit: port %d on %s is already in use; another cockpit or listener holds it, "
+                  "not starting a second server (check http://%s:%d/healthz)" % (port, host, host, port), flush=True)
+            return 0
+        raise
     real_port = httpd.server_address[1]
     httpd.RequestHandlerClass = make_handler(ctx, store, token, real_port, index_html)
     httpd.server_activate()

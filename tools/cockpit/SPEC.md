@@ -29,7 +29,22 @@ Non-goals:
    `ThreadingHTTPServer`, `json`, `subprocess`, `fcntl`, `secrets`). No pip
    dependency.
 2. Client: one static file `tools/cockpit/index.html` with inline CSS and JS.
-   No build step, no CDN, no framework. Works offline.
+   No build step, no framework, no CDN, no third-party origin in the CSP.
+   One vendored asset: `tools/cockpit/vendor/three.module.js` is
+   `three@0.160.0` `build/three.module.js` (MIT), taken from the npm registry
+   tarball after its sha512 matched the registry `dist.integrity`, and pinned
+   by sha256 `76dea8151bc9352aef3528b4262e249b2604f62543828328db978d060d61a495`
+   (`THREE_SHA256` in server.py, asserted by tests/test-cockpit.sh). The
+   server reads it once at startup from that fixed path, serves it at
+   `/vendor/three.module.js` from 'self', and answers 500 if the hash does not
+   match. `vendor/` exists because no existing file owns third-party assets.
+   When WebGL or the import fails, every avatar falls back to an inline 2D
+   SVG portrait; every number still renders. One cached scene per seat; a
+   mood change disposes the old scene's geometries and materials; one shared
+   renderer. All DOM writes go through one `add()` helper (the only
+   `appendChild` call) that turns non-Node values into text nodes, and each
+   panel and the member drawer render inside their own try/catch, so one bad
+   field shows "render error in <panel>" in that panel only.
 3. Bind 127.0.0.1 only. The `--host` flag accepts only `127.0.0.1` or `::1`;
    any other value exits 64 with a message. Never `0.0.0.0`.
 4. Read-only except `POST /api/queue`, which only appends to FOUNDER-QUEUE.md.
@@ -60,18 +75,30 @@ python3 tools/cockpit/server.py [--port 8787] [--host 127.0.0.1]
   is UNKNOWN, mirroring the pulse contract 0 clean, 1 violation, 2 unknown;
   exit 1 if the pulse reports a VIOLATION).
 - `--panel NAME`: restrict `--once` to one panel (pulse, releases, board,
-  agents, okrs, roi, queue).
+  agents, okrs, roi, queue, work, compare, health).
 - Env overrides (for tests and fixtures): `COCKPIT_NPM_CMD`, `COCKPIT_GH_CMD`,
   `COCKPIT_PULSE_CMD`, `BOARD_MD`, `FOUNDER_QUEUE_MD`, `RETRO_MD`,
   `USAGE_READINGS_TSV`, `COST_HISTORY_FILE`, `COCKPIT_STATUS_DIR`,
-  `COCKPIT_NOW` (ISO8601 UTC, for deterministic ages).
+  `COCKPIT_NOW` (ISO8601 UTC, for deterministic ages). Executive panels add
+  `COCKPIT_GIT_ROOT`, `COCKPIT_GIT_DAYS` (default 15), `COCKPIT_GH_RUNS_CMD`,
+  `COCKPIT_GH_ISSUES_CMD`, `COCKPIT_GH_PRS_CMD`, `COCKPIT_TRANSCRIPT_ROOT`,
+  `COCKPIT_TOKEN_CACHE`, `COCKPIT_PRICING_JSON`, `COCKPIT_USAGE_CAP_CMD`,
+  `COCKPIT_LEADER_FILE`, `COCKPIT_SCOREBOARD_DIR`. HQ adds
+  `COCKPIT_GH_OPEN_ISSUES_CMD` (default `gh issue list --state open --limit
+  1000 --json number,title,state,labels`, the source of open_now and open P0 counts),
+  `COCKPIT_BOARD_STALE_HOURS` (default 24), `COCKPIT_GOVERNOR_TTL_S` (cache
+  TTL of the usage governor, floored at 300 s because one run takes about
+  36 s) and `COCKPIT_WATCH_INTERVAL_S` (stream watcher poll, default 2 s).
+- A second launch on a port already in use prints "already in use" and exits
+  0, so the KeepAlive LaunchAgent (`SuccessfulExit` false) does not crash
+  loop while another cockpit holds the port.
 - On start the server prints `cockpit: http://127.0.0.1:<port>/` and its PID,
   and writes the PID to `.loki/cockpit/server.pid` so it is stopped by
   recorded PID only.
 
 ## 5. Panels and data sources
 Each panel in the snapshot has the shape
-`{status: OK|VIOLATION|UNKNOWN|UNMEASURED, as_of, source_cmd, data, error}`.
+`{status: OK|VIOLATION|UNKNOWN|UNMEASURED|PARTIAL|STALE, as_of, source_cmd, data, error}`.
 `source_cmd` is the exact command or file read, shown on the page under each
 panel (evidence rule, retro 3.1.1).
 
@@ -110,6 +137,18 @@ panel (evidence rule, retro 3.1.1).
   approved, blocked) with age in minutes against their tier budget (LOW 15,
   MEDIUM 30, HIGH 60 per OPERATING-MODEL.md), and an "unparsed rows" list.
   Ready count below 30 is flagged (D91).
+- Status cell forms parsed: `released@<time>`, `released v1.2.3@<time>`,
+  `released@<time> v1.2.3`, `released v1.2.3`, bare `released`, each with an
+  optional `: note` or `(note)`. A row without a time counts in
+  `released_unknown_time`, never in the 24 h or 7 d windows.
+- Freshness: the board `as_of` is the file time (last commit time when the
+  file is tracked and clean, else its mtime; `freshness.basis` says which).
+  Older than `COCKPIT_BOARD_STALE_HOURS` the board panel and every section
+  that reads BOARD.md are STALE with the age; their numbers are still shown.
+  This covers every BOARD-derived number: board, work, agents slice owners,
+  health blocked, roi value, by_seat and company (and the roi panel when its
+  multiple uses BOARD rows), compare week_over_week, day_over_day and
+  seat_vs_seat.
 
 ### 5.4 Agents
 - Source: `.loki/company/status/<slug>.json` for the 10 slugs in
@@ -189,6 +228,64 @@ Human-equivalent value (right side):
 - Every assumption is editable only in `roi-basis.json`; the page shows its
   path and git SHA, never an inline editor.
 
+### 5.8 Executive panels (work, compare, health) and extended team, releases, ROI
+Data rule for every executive number: it comes from a real source, the
+panel lists that source and its as-of time per section, a missing source is
+UNKNOWN with the error (never 0 or a guess), and every assumption is labelled
+ASSUMPTION. Each panel carries `data.sources[section] = {status, source,
+as_of, error, keys}`; `keys` names the data keys that section produced. A
+panel is OK when all sections are OK, PARTIAL when some are UNKNOWN, UNKNOWN
+when all are.
+- agents (team): the 10 seats with model, last tick, outcome, skip reason,
+  ticks/day, cost/day, STALE at 2x cadence, plus spawned engineers and
+  reviewers seen in 24h and 7d. Cost is tokens from Claude transcripts
+  (`scripts/usage-governor.py iter_records`) times
+  `loki-ts/data/model-pricing.json` by tier. It is an ESTIMATE at list price,
+  not billed spend. A model without a price is listed under `unpriced_models`,
+  never priced at 0. The 24 h window is hour-floored (it spans 24 to 25 h);
+  `transcripts.window_note` says so and the page shows it. `data.total` is the
+  seat count.
+- releases: timeline with lead time (npm publish minus release commit time;
+  None when the commit is not found), rates, failures, dist-tags, and CI state
+  per release SHA from the last 100 runs of `gh run list`. Each row carries
+  `local_tag_exists`; the page labels that column "local tag" (a tag in this
+  clone, not proof of a GitHub release).
+- work: commits by conventional type (24h, 7d, previous 7d, lines changed),
+  slices released from BOARD stamps, merged PRs by type, issues opened and
+  closed (commit log, `gh pr list`, `gh issue list`, BOARD.md).
+- compare: week over week and day over day (pct is None when the previous
+  value is 0), seat versus seat, model mix by tier, and the Loki versus raw
+  `claude -p` scoreboard from `.loki/company/scoreboard/*.json` (fields shown
+  verbatim, UNKNOWN with the path looked for if absent).
+- health: CI green rate overall and per workflow, open P0 issues (label p0),
+  blocked, review-blocked and parked rows, usage percents and the governor
+  cap, PAUSED state, load, and the leader lock holder. The usage cap comes from
+  `COCKPIT_USAGE_CAP_CMD` (default `python3 scripts/usage-cap.py check --json
+  --no-refresh`), mapped to `usage_cap` {paused, state, reason, week_pct,
+  ceiling, override, reading_at}. A missing script, non-zero exit, bad JSON or
+  a state other than OK or PAUSED gives UNKNOWN with the error, never OK. The
+  KPI strip shows PAUSED in red with the reason and week_pct against ceiling.
+- roi: company cost 7d, cost per release, per released slice and per fix
+  commit, per-seat cost, plan proration labelled ASSUMPTION. The ROI multiple
+  stays withheld while `hours_per_outcome.verified_slice` is unset.
+- Always running: `loki trigger install` also installs the LaunchAgent
+  `dev.autonomi.loki-cockpit` (`server.py --port 8787 --repo-root <root>`,
+  KeepAlive, RunAtLoad, plist mode 0600, logs under `~/.loki/logs/`);
+  `loki trigger uninstall` removes it. The plist resolves `server.py` from
+  the location of `autonomy/trigger-schedule.py`, install skips the cockpit
+  with a message when that file is missing, and before bootstrap it probes
+  the port: a listener answering `/healthz` with a pid is an existing
+  cockpit; any other listener is reported as foreign and never signalled.
+- Member detail (`GET /api/member/<slug>`): one seat's agent-file persona
+  (mandate, decision rights, metrics, escalation, root causes), status file,
+  last tick, tick history from `.loki/company/<slug>/log.jsonl` (bad lines
+  skipped; counts 24 h and 7 d by outcome), last run from `last.out`
+  (as reported by claude -p: duration, turns, models; cost is the claude -p
+  `total_cost_usd`, a list-price equivalent, not billed spend), transcript cost (ESTIMATE),
+  BOARD slices owned by the slug, and the seat ROI row with its formula.
+  Per-tick cost and per-seat commits have no source yet and are "no data:
+  <reason>" strings, never numbers. Each part has its own source entry.
+
 ### 5.7 Founder command box
 - UI: one textarea (max 2000 characters), one "Why only you" optional field,
   one submit button. After submit, the page shows the appended row number
@@ -216,7 +313,10 @@ Human-equivalent value (right side):
 |---|---|---|
 | GET | `/` | index.html |
 | GET | `/api/snapshot` | all panels |
-| GET | `/api/panel/<name>` | one panel |
+| GET | `/api/panel/<name>` | one panel (pulse, releases, board, agents, okrs, roi, queue, work, compare, health) |
+| GET | `/api/member/<slug>` | one seat's detail; slug must match `^[a-z0-9][a-z0-9-]{0,63}$` and a `.claude/agents/<slug>.md` file (checked before any panel is read), else 404 |
+| GET | `/api/stream` | server-sent events: `retry: 3000`, `event: hello` (with `degraded`), then `event: change` with `{changed: [panel names], at, seq}` when a watched source signature changes, and `event: degraded` with `{degraded: {at, error} or null}` when a watcher step fails or recovers (the failure is also logged to stderr). Each write has a 10 s socket timeout |
+| GET | `/vendor/three.module.js` | the vendored three.js module, only when its sha256 matches `THREE_SHA256`, else 500 |
 | GET | `/healthz` | `{"ok": true, "pid": N}` |
 | POST | `/api/queue` | append result |
 Every other method or path returns 405 or 404.
@@ -228,9 +328,12 @@ Security:
   random token (`secrets.token_urlsafe(32)`), written to
   `.loki/cockpit/token` with mode 600 and injected into the served page; and
   an `Origin` equal to the served origin. Missing or wrong: 403.
+- `GET /api/stream` and `GET /api/member/<slug>` answer 403 when an `Origin`
+  header is present and is not the served origin; no `Origin` is allowed.
 - Request body capped at 8 KB. Responses set `Cache-Control: no-store`,
   `X-Content-Type-Options: nosniff` and a CSP of `default-src 'self';
-  script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'`.
+  script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';
+  img-src 'self' data:; connect-src 'self'`. It names no third-party origin.
 - Subprocesses run with an argument list (never `shell=True`) and an env built
   deny-by-default (PATH, HOME, USER, LOGNAME, LANG, gh and npm config paths
   only), per security-lead rule 3.9.2.
@@ -238,12 +341,20 @@ Security:
   env.
 
 ## 7. Page behaviour
-- Polls `/api/snapshot` every 15 s; panels update in place without layout
-  shift (fixed card heights, skeleton rows); a "last refreshed" time and the
-  age of each source are always visible.
+- Subscribes to `/api/stream`; on a change event it refetches the named
+  panels. The header shows Live, Polling every 15 s (stream lost; polls
+  `/api/snapshot`), Live stream degraded (watcher failing; polls) or
+  Offline. While Live it also refetches every 60 s as a safety refresh. A
+  malformed `#member/` hash is ignored. Panels update in place without layout shift;
+  a "last refreshed" time and the age of each source are always visible.
+- Dark first with a light toggle; a KPI strip; SVG charts; the 10 seats as
+  cards with persona, mandate, color and avatar. Clicking a seat opens the
+  member drawer (`#member/<slug>`, deep-linkable).
+- A missing value renders "no data: <reason>", never a blank or 0.
 - Order: pulse violations band, agents, BOARD flow, releases, OKRs, ROI,
   command box.
-- Light and dark from `prefers-color-scheme`; readable at 1280 px and 390 px.
+- Light and dark from `prefers-color-scheme`, overridable by the toggle;
+  readable at 1280 px and 390 px.
 - Every number has a hover or caption with its `source_cmd` and `as_of`.
 
 ## 8. Headless test (`tests/test-cockpit.sh`)
@@ -261,12 +372,33 @@ recorded PID only, sets `LOKI_NO_BROWSER=1`. Fixtures under the run tmp dir:
 - `--host 0.0.0.0` exits 64. POST without token: 403. Bad Host: 403.
 - `--once --json` output parses and its exit code matches the pulse stub's
   exit code mapping.
+- Executive fixtures: a real repo with dated commits, stubbed gh runs,
+  issues and PRs, transcripts, a price table, a scoreboard dir, a leader file.
+  Assert exact values (commit counts by window and type, lead time, CI per
+  release SHA, cost, ROI ratios), the UNKNOWN path for each source (commits,
+  gh, BOARD, transcripts, price table, usage, leader, scoreboard), the
+  usage-cap command cases (OK, PAUSED cap, PAUSED stale, override, missing script, bad rc, bad JSON), and a walker that fails when any panel number
+  lacks a source claim or an UNKNOWN source still carries numbers (with two
+  mutation controls). `tests/test_trigger.py` covers the cockpit plist.
+- HQ: member endpoint (values, missing files, 404 cases), the stream (hello,
+  change after a status write, retry), the in-use exit 0, BOARD forms and
+  STALE, open issues from the separate call, governor TTL floor, and a node
+  fake-DOM run of the page script (appendChild throws on non-Nodes) over
+  null, empty, garbage and fixture inputs. Each has a mutation the suite
+  kills.
+- Hardening: the vendored three.js sha256 pin (file, constant, served body;
+  a tampered copy answers 500), a CSP with no third-party origin (header and
+  constant), every BOARD-derived source STALE under a stale BOARD (with the
+  required reader set), watcher step failure degrading the stream, foreign
+  Origin 403 on stream and member, governor loaded from the server checkout,
+  a malformed `#member/` hash, and scene reuse with disposal on mood change.
+  Each has a mutation the suite kills.
 - Positive control for every absence assertion (retro 3.1.6): the same probe
   run on a fixture that does contain the value must find it.
 
 ## 9. Acceptance (Wall checks)
 1. `python3 tools/cockpit/server.py --once --json | python3 -m json.tool`
-   exits 0 or 2 on a clean checkout, with all 7 panels present.
+   exits 0 or 2 on a clean checkout, with all 10 panels present.
 2. `bash tests/test-cockpit.sh` passes, and fails when the append sanitizer
    or the Host check is removed (mutation).
 3. `lsof -nP -iTCP:<port> -sTCP:LISTEN` shows 127.0.0.1 only.
