@@ -71,7 +71,7 @@ refuse() {
 # Never write a tag for a version the registry has not materialized. A failed or
 # empty read waits, bounded by MATERIALIZE_S, then refuses with zero writes.
 version_materialized() {
-    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$REGISTRY/$PKG/$VERSION" 2>/dev/null)" = 200 ]
+    [ "$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$REGISTRY/$PKG/$VERSION" 2>/dev/null)" = 200 ]
 }
 materialize_deadline=$((SECONDS + MATERIALIZE_S))
 until version_materialized; do
@@ -165,8 +165,8 @@ while [ "$i" -lt "$TRIES" ]; do
     fi
 done
 if [ "$LAG_FATAL" = 0 ]; then
-    echo "::warning::DISTTAG-NOT-SETTLED-YET: latest='$(tag_of latest)' next='$(tag_of next)' after ${SETTLE_S}s; verify-npm-registry keeps reading and fails if they never settle"
+    echo "::warning::DISTTAG-NOT-SETTLED-YET: latest='$(tag_of latest)' next='$(tag_of next)' after $TRIES reads (about ${SETTLE_S}s plus call time); verify-npm-registry keeps reading and fails if they never settle"
     exit 0
 fi
-echo "::error::dist-tags did not settle on the highest version within ${SETTLE_S}s ($TRIES reads)"
+echo "::error::dist-tags did not settle on the highest version within $TRIES reads (about ${SETTLE_S}s plus call time)"
 exit 1

@@ -59,6 +59,7 @@ case "$1 $2 $3" in
         # A write for a version the registry has not materialized is accepted and dropped.
         if [ -n "${STUB_HIDE_VER:-}" ] && [ "$ver" = "$STUB_HIDE_VER" ] && [ "$(cat "$ST/dcalls" 2>/dev/null || echo 0)" -le "${STUB_MATERIALIZE_AFTER:-0}" ]; then echo "dropped $ver $tag" >> "$ST/log"; exit 0; fi
         # STUB_DROP_FIRST=1: the first accepted write of each tag is lost (never applies).
+        if [ -n "${STUB_REJECT_FIRST:-}" ] && [ ! -e "$ST/rejected.$tag" ]; then : > "$ST/rejected.$tag"; echo "npm error E403" >&2; exit 1; fi
         if [ -n "${STUB_REJECT_ADD:-}" ]; then echo "npm error E403" >&2; exit 1; fi
         if [ -n "${STUB_DROP_FIRST:-}" ] && [ ! -e "$ST/dropped.$tag" ]; then : > "$ST/dropped.$tag"; exit 0; fi
         if [ -n "${STUB_TAG_LAG:-}" ]; then echo "$ver $STUB_TAG_LAG" > "$ST/pend.$tag"; exit 0; fi
@@ -90,7 +91,7 @@ chmod +x "$WORK/bin/curl"
 run_case() {
     ST="$WORK/$1"; mkdir -p "$ST"
     printf '%s\n' $2 > "$ST/versions"; echo "$3" > "$ST/latest"; echo "$4" > "$ST/next"; : > "$ST/log"
-    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" STUB_HIDE_VER="${STUB_HIDE_VER:-}" STUB_MATERIALIZE_AFTER="${STUB_MATERIALIZE_AFTER:-}" STUB_TAG_LAG="${STUB_TAG_LAG:-}" STUB_DROP_FIRST="${STUB_DROP_FIRST:-}" STUB_REJECT_ADD="${STUB_REJECT_ADD:-}" LOKI_DISTTAG_LAG_FATAL="${LAG_FATAL_T:-1}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES="${TRIES_T:-4}" LOKI_DISTTAG_MATERIALIZE_S="${STUB_MAT_S:-1}" bash "$SCRIPT" "$5" 2>&1)"
+    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" STUB_HIDE_VER="${STUB_HIDE_VER:-}" STUB_MATERIALIZE_AFTER="${STUB_MATERIALIZE_AFTER:-}" STUB_TAG_LAG="${STUB_TAG_LAG:-}" STUB_DROP_FIRST="${STUB_DROP_FIRST:-}" STUB_REJECT_ADD="${STUB_REJECT_ADD:-}" STUB_REJECT_FIRST="${STUB_REJECT_FIRST:-}" LOKI_DISTTAG_LAG_FATAL="${LAG_FATAL_T:-1}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES="${TRIES_T:-4}" LOKI_DISTTAG_MATERIALIZE_S="${STUB_MAT_S:-1}" bash "$SCRIPT" "$5" 2>&1)"
     CASE_RC=$?
     CASE_ST="$ST"
 }
@@ -228,6 +229,23 @@ TRIES_T=40 STUB_DROP_FIRST=1 run_case half "11.56.0 11.56.1" 11.56.0 11.56.0 11.
 cp "$SCRIPT" "$WORK/late.sh"; sed -i.bak 's|\$((TRIES / 2))|$((TRIES - 1))|' "$WORK/late.sh"
 TRIES_T=40 STUB_DROP_FIRST=1 SCRIPT="$WORK/late.sh" run_case halfmut "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
 grep -q "after 20 reads; re-writing" <<<"$CASE_OUT" && bad "mutant: rewrite at the last read not caught" || ok "mutant: rewrite at the last read is caught"
+
+# A rejected add is not an accepted write: the next read writes again with no lost-write
+# warning (the write is not recorded as written until npm accepts it).
+STUB_REJECT_FIRST=1 run_case rfirst "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
+{ [ $CASE_RC -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 11.56.1 ] && ! grep -q "DISTTAG-WRITE-NOT-APPLIED" <<<"$CASE_OUT" \
+    && [ "$(grep -c '^add .* latest' "$CASE_ST/log")" = 2 ]; } \
+    && ok "verify mode: a rejected first add is retried as a fresh write, not a lost one" || bad "rfirst: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
+python3 - "$SCRIPT" "$WORK/x3.sh" <<'PY4'
+import sys
+s = open(sys.argv[1]).read()
+a = "        if npm dist-tag add \"$PKG@$TARGET\" \"$tag\"; then\n            case \"$tag\" in next) W_next=\"$cur\" ;; *) W_latest=\"$cur\" ;; esac\n"
+assert a in s
+b = "        case \"$tag\" in next) W_next=\"$cur\" ;; *) W_latest=\"$cur\" ;; esac\n        if npm dist-tag add \"$PKG@$TARGET\" \"$tag\"; then\n            :\n"
+open(sys.argv[2], 'w').write(s.replace(a, b))
+PY4
+SCRIPT="$WORK/x3.sh" STUB_REJECT_FIRST=1 run_case rfirstmut "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
+grep -q "DISTTAG-WRITE-NOT-APPLIED" <<<"$CASE_OUT" && ok "mutant: recording the write before npm accepts it is caught" || bad "mutant: write recorded before acceptance not caught"
 
 # Lock-holding mode (publish-npm): lag is a named warning with exit 0 and one write
 # per tag; a rejected write still fails; an unmaterialized version writes nothing.

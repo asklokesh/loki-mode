@@ -196,8 +196,8 @@ jobs:
           fi
           # Highest-version guard, post-write re-read and overtaken-tag restore live in
           # scripts/npm-dist-tags.sh (FC-DIST-TAG-MOVED-BACKWARDS).
-          # This job holds the release-npm lock, so it writes each tag once and reads for at
-          # most 120 s; a tag that has not applied yet is a warning. verify-npm-registry
+          # This job holds the release-npm lock, so it writes each tag once and reads for
+          # about 120 s (a bounded number of reads, plus call time); a tag that has not applied yet is a warning. verify-npm-registry
           # (off the lock) runs the long read window and fails if the tags never settle.
           LOKI_DISTTAG_LAG_FATAL=0 LOKI_DISTTAG_SETTLE_S=120 LOKI_DISTTAG_MATERIALIZE_S=240 \
               bash scripts/npm-dist-tags.sh "$VERSION"
@@ -243,8 +243,8 @@ jobs:
           base="https://registry.npmjs.org/loki-mode"
           served=0
           for i in $(seq 1 60); do
-            vcode="$(curl -s -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$base/${VERSION}" || true)"
-            tcode="$(curl -s -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$base/-/loki-mode-${VERSION}.tgz" || true)"
+            vcode="$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$base/${VERSION}" || true)"
+            tcode="$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$base/-/loki-mode-${VERSION}.tgz" || true)"
             if [ "$vcode" = 200 ] && [ "$tcode" = 200 ]; then
               served=1; echo "registry serves loki-mode@${VERSION} and its tarball (poll $i)"; break
             fi
@@ -598,8 +598,8 @@ jobs:
           base="https://registry.npmjs.org/loki-mode-sdk"
           served=0
           for i in $(seq 1 90); do
-            vcode="$(curl -s -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$base/${VERSION}" || true)"
-            tcode="$(curl -s -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$base/-/loki-mode-sdk-${VERSION}.tgz" || true)"
+            vcode="$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$base/${VERSION}" || true)"
+            tcode="$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$base/-/loki-mode-sdk-${VERSION}.tgz" || true)"
             if [ "$vcode" = 200 ] && [ "$tcode" = 200 ]; then
               served=1; echo "registry serves loki-mode-sdk@${VERSION} and its tarball (poll $i)"; break
             fi
