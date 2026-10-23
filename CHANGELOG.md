@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.4 (2026-10-23)
+
+### Fixed
+- One advisor pair is now used for every advisor probe caller, so an invalid advisor pair is reported the same way by plan route and by doctor (RQ-04, #304). Approval: "tl-324 APPROVE pd/rq04, ship range origin/main..4f4627426e3e37a084c09363c5f110f4a76abeb3 = exactly 1 commit 4f4627426".
+
 ## v11.60.3 (2026-10-23)
 
 ### Fixed
