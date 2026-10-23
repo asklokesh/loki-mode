@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.67.12 (2026-10-23)
+
+### Fixed
+- Release verify jobs now converge npm dist-tags even when the publish tag settle step fails, and are gated with !cancelled() instead of always() (RQ-102, FC-DIST-TAG-MOVED-BACKWARDS recurrence). Approval: "ship pd/rq102 af4a35332a3c9eac67ffa642a8f720b867c49bcc ... APPROVE af4a35332a3c9eac67ffa642a8f720b867c49bcc" (rev-b, HIGH). Stack c186812e3, e7330ad64, 60281448a, af4a35332.
+
 ## v11.67.11 (2026-10-23)
 
 ### Fixed
