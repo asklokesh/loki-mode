@@ -3225,7 +3225,7 @@ async def loki_graph_query(question: str, budget: int = 1500, path: str = ".") -
 
 @mcp.tool()
 async def loki_verify_fast(path: str = ".", diff_base: str = "") -> str:
-    """Run deterministic static checks (and existing Wall tests) in milliseconds. No model call, no network.
+    """Run deterministic static checks and execute existing loki_wall_* files (repo code) in milliseconds. No model call, no network.
     Use it for an immediate, deterministic check of a repo or its diff against a git
     ref. It detects mock-abuse tests, assertionless/skipped tests, hardcoded mock data
     and failing loki_wall_* Python files; it does not detect logic, spec or security
