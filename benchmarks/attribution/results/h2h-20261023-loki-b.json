@@ -1,0 +1,674 @@
+{
+  "schema_version": "1.0",
+  "generated_utc": "2026-10-23T04:47:32Z",
+  "plan": {
+    "model": "claude-sonnet-5-5",
+    "budget_usd": 5.0,
+    "timeout_s": 900,
+    "repeats": 2,
+    "arms": [
+      "loki"
+    ],
+    "loki_env": {},
+    "tasks": [
+      {
+        "id": "coord-1-api-web",
+        "class": "integration",
+        "seed_sha256": "c67692813b6b55f382af27129a05cb0ade0e379c73af2e171ebaafcfb24003d1",
+        "acceptance_sha256": "7625d80f45e37c603511c53bbffe4b0d3d5a217890fb27773fe9b0e27f6c11f8",
+        "prompt_sha256": "5400a3b8d9d5d435c1747f993d34860a148daba3adc72b8b3a60d39fb9581a58"
+      },
+      {
+        "id": "integration-1-retry-client",
+        "class": "integration",
+        "seed_sha256": "68200044ca1a21d56ddbb503b6c7e5c0c158d4d88022c0c6ce64cc157bf2a37c",
+        "acceptance_sha256": "9599d6e603129325273d15838efeaee27d396b2e6c4cc6df292a0af083a4eaa1",
+        "prompt_sha256": "d7b7cbeee7e567a7de733057252f4ce10a8aacf081d509a53049d24d69918f2c"
+      },
+      {
+        "id": "longspec-1-three-units",
+        "class": "feature",
+        "seed_sha256": "63eab8a3ab0b7464bbac9e00f1b0870ef6bb52404c0c49ce2aeb7ecbe0d131cb",
+        "acceptance_sha256": "d0aef662423f0f36ca360722c12c6a4f20a7bba2a7a388f42cf32d6081281eb5",
+        "prompt_sha256": "7023c0df5d3c91acc55b71e2b10ac8eed1c1afe0b2f1a02fea8d398914ae3aca"
+      },
+      {
+        "id": "refactor-1-pricing",
+        "class": "refactor",
+        "seed_sha256": "c44f69588141cff7b476e8dce74321b14481358767297d89d8cb8e5c77ab2b8b",
+        "acceptance_sha256": "aec95229310d1a11850297730644e85ef8870802c88fc7b707d3a713e1285976",
+        "prompt_sha256": "6913aa0c96da54afdf49b8fecb88ebaffb0d7fa2d53684811ddba2eda5b7f3b9"
+      }
+    ],
+    "cells": [
+      {
+        "task": "coord-1-api-web",
+        "class": "integration",
+        "arm": "loki",
+        "repeat": 1,
+        "cost_profile": "off",
+        "lever_env": {}
+      },
+      {
+        "task": "integration-1-retry-client",
+        "class": "integration",
+        "arm": "loki",
+        "repeat": 1,
+        "cost_profile": "off",
+        "lever_env": {}
+      },
+      {
+        "task": "longspec-1-three-units",
+        "class": "feature",
+        "arm": "loki",
+        "repeat": 1,
+        "cost_profile": "off",
+        "lever_env": {}
+      },
+      {
+        "task": "refactor-1-pricing",
+        "class": "refactor",
+        "arm": "loki",
+        "repeat": 1,
+        "cost_profile": "off",
+        "lever_env": {}
+      },
+      {
+        "task": "coord-1-api-web",
+        "class": "integration",
+        "arm": "loki",
+        "repeat": 2,
+        "cost_profile": "off",
+        "lever_env": {}
+      },
+      {
+        "task": "integration-1-retry-client",
+        "class": "integration",
+        "arm": "loki",
+        "repeat": 2,
+        "cost_profile": "off",
+        "lever_env": {}
+      },
+      {
+        "task": "longspec-1-three-units",
+        "class": "feature",
+        "arm": "loki",
+        "repeat": 2,
+        "cost_profile": "off",
+        "lever_env": {}
+      },
+      {
+        "task": "refactor-1-pricing",
+        "class": "refactor",
+        "arm": "loki",
+        "repeat": 2,
+        "cost_profile": "off",
+        "lever_env": {}
+      }
+    ],
+    "model_calls_planned": 8,
+    "droid_cells_planned": 0
+  },
+  "environment": {
+    "probed": true,
+    "claude_version": "2.1.309",
+    "loki_version": "Loki Mode v11.54.0",
+    "loki_bin": "/Users/lokesh/git/lm-wt/h2h-wt/bin/loki",
+    "loki_repo_sha": "0b0a211bdf39d8fd3c60c461bb5178b160409793",
+    "python_version": "3.14.6",
+    "loki_session_model_effective": "claude-sonnet-5-5",
+    "loki_session_model_parent_env": null,
+    "droid": null,
+    "raw_bare": null
+  },
+  "warnings": [],
+  "max_spend_usd": 9.0,
+  "true_spend_usd": 1.2325,
+  "true_spend_is_lower_bound": false,
+  "rows": [
+    {
+      "task": "coord-1-api-web",
+      "class": "integration",
+      "arm": "loki",
+      "repeat": 1,
+      "accepted": true,
+      "reported_success": false,
+      "cost_profile": "off",
+      "lever_env": {},
+      "status": "error_rc_1",
+      "rc": 1,
+      "elapsed_s": 76.769,
+      "stderr_tail": "loki: sequential (reason: decomposer returned 1 unit)\nWhat I think you want: Cursor-paginated orders API with a web client that transparently collects all pages.\nAcceptance: list_orders returns items/next_cursor with correct id>cursor paging, and ValueError for limit outside 1..100 or non-int.\nAcceptance: fetch_all_orders returns all orders in order via list_orders only, and total_amount equals 150 for seed data.\nAcceptance: Replacing ORDERS at runtime is reflected in both list_orders and fetch_all_orders.\nOut of scope: Editing tests or adding new files.\n",
+      "stdout_tail": "Loki 10 engine, PR target: main, base: main, cap $5.00 (env); downgrade: plan sonnet (fast tier), wall claude-sonnet-5-5 (Wall pin), already_done claude-sonnet-5-5 (already-done check pin); estimate: NOT AVAILABLE (no project shape recorded for this repo)\n[intake] reading the task  3s\n[wall] writing acceptance checks  4s  (intake done 21s)\n[implement] implementing  3s  (wall done 25s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:a5bd2ba068b966233a0c2eb0848cbf6837c43b941ff6352a246df5eade19818f\nNOT PROVEN: council, security scan, no tests executed, not run: lint:ruff, full suite: package api defines no test command, full suite: package web defines no test command, wall result not recorded by verify, visual evidence skipped: no package.json\nCost:       $0.17 (claude, 154k tokens)\nSpend:      intake 21%, plan 23%, wall 3%, implement 53%; top: implement\nTime:       1m15s (intake 21s, plan 15s, wall 25s, implement 26s, verify 1s, commit 0s, seal 1s; slowest: implement 35%); next: loki verify; 10 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 45/100 (F) - run `loki doctor --repo` for 4 fix(es)\n",
+      "cost_usd": 0.1668,
+      "cost_partial": false,
+      "cost_source": "loki.efficiency_cost",
+      "tokens_in": 10649,
+      "tokens_out": 10295,
+      "model_used": "claude-opus-5-5",
+      "iterations": 4,
+      "verify_verdict": "PARTIAL",
+      "failure_reason": null,
+      "honesty": {
+        "headline": "PARTIAL",
+        "degraded": [
+          "council",
+          "security scan",
+          "no tests executed",
+          "not run: lint:ruff",
+          "full suite: package api defines no test command",
+          "full suite: package web defines no test command",
+          "wall result not recorded by verify",
+          "visual evidence skipped: no package.json"
+        ]
+      },
+      "engine": "v10",
+      "loki_version": "11.54.0",
+      "cache_tokens_by_phase": {
+        "total": {
+          "cache_read": 99294,
+          "cache_creation": 33742
+        }
+      },
+      "cost_by_phase": {
+        "total": 0.1668
+      },
+      "group_cost": null,
+      "ledger": "absent",
+      "command": "/Users/lokesh/git/lm-wt/h2h-wt/bin/loki start /Users/lokesh/git/lm-wt/h2h/loki-run.oJ4u6sFd/loki-attr-upfu5_mo/coord-1-api-web-1.prd.md --provider claude --no-dashboard --yes --no-pr",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 5 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "integration-1-retry-client",
+      "class": "integration",
+      "arm": "loki",
+      "repeat": 1,
+      "accepted": true,
+      "reported_success": false,
+      "cost_profile": "off",
+      "lever_env": {},
+      "status": "error_rc_1",
+      "rc": 1,
+      "elapsed_s": 56.916,
+      "stderr_tail": "",
+      "stdout_tail": "Loki 10 engine, PR target: main, base: main, cap $5.00 (env); downgrade: plan sonnet (fast tier), wall claude-sonnet-5-5 (Wall pin), already_done claude-sonnet-5-5 (already-done check pin); estimate: NOT AVAILABLE (no project shape recorded for this repo)\n[intake] reading the task  3s\n[implement] implementing  4s  (intake done 17s)\n[verify] verifying  3s  (implement done 30s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:8115d110203890417bceb4e7690f62010e45392e810e5bea3365b7c76e22def6\nNOT PROVEN: full suite, full test command, one reviewer, not run: lint:ruff, not run: full suite: pytest, scope not determined; all edits committed, visual evidence skipped: no package.json\nCost:       $0.14 (claude, 112k tokens)\nSpend:      intake 34%, implement 66%; top: implement\nTime:       53s (intake 17s, implement 30s, verify 4s, commit 0s, seal 1s; slowest: implement 55%); next: loki verify; 5 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 45/100 (F) - run `loki doctor --repo` for 4 fix(es)\n",
+      "cost_usd": 0.1432,
+      "cost_partial": false,
+      "cost_source": "loki.efficiency_cost",
+      "tokens_in": 7127,
+      "tokens_out": 3662,
+      "model_used": "claude-opus-5-5",
+      "iterations": 3,
+      "verify_verdict": "PARTIAL",
+      "failure_reason": null,
+      "honesty": {
+        "headline": "PARTIAL",
+        "degraded": [
+          "full suite",
+          "full test command",
+          "one reviewer",
+          "not run: lint:ruff",
+          "not run: full suite: pytest",
+          "scope not determined; all edits committed",
+          "visual evidence skipped: no package.json"
+        ]
+      },
+      "engine": "v10",
+      "loki_version": "11.54.0",
+      "cache_tokens_by_phase": {
+        "total": {
+          "cache_read": 81634,
+          "cache_creation": 19717
+        }
+      },
+      "cost_by_phase": {
+        "total": 0.1432
+      },
+      "group_cost": null,
+      "ledger": "absent",
+      "command": "/Users/lokesh/git/lm-wt/h2h-wt/bin/loki start /Users/lokesh/git/lm-wt/h2h/loki-run.oJ4u6sFd/loki-attr-upfu5_mo/integration-1-retry-client-1.prd.md --provider claude --no-dashboard --yes --no-pr",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 5 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "longspec-1-three-units",
+      "class": "feature",
+      "arm": "loki",
+      "repeat": 1,
+      "accepted": true,
+      "reported_success": false,
+      "cost_profile": "off",
+      "lever_env": {},
+      "status": "error_rc_1",
+      "rc": 1,
+      "elapsed_s": 72.393,
+      "stderr_tail": "loki: sequential (reason: decomposer returned 1 unit)\nWhat I think you want: working implementations of all three stubbed units that meet the spec contract exactly.\nAcceptance: parse/format duration round-trip and all error cases (duplicates, missing unit, negatives, bad chars) behave per spec.\nAcceptance: format_cents and split_cents give the spec examples ($12,345.67, -$2.50, [34,33,33]) and raise the specified error types.\nAcceptance: wrap_text never exceeds width except for single long words, and returns [] for blank text.\n",
+      "stdout_tail": "Loki 10 engine, PR target: main, base: main, cap $5.00 (env); downgrade: plan sonnet (fast tier), wall claude-sonnet-5-5 (Wall pin), already_done claude-sonnet-5-5 (already-done check pin); estimate: NOT AVAILABLE (no project shape recorded for this repo)\n[intake] reading the task  3s\n[wall] writing acceptance checks  3s  (intake done 19s)\n[implement] implementing  4s  (wall done 17s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:9473c6d213b018759b86dfbe0727f2d94c8ba92801d58c7cdc7191b37ca465da\nNOT PROVEN: full suite, full test command, one reviewer, no tests executed, not run: lint:ruff, not run: full suite: pytest, wall result not recorded by verify, visual evidence skipped: no package.json\nCost:       $0.18 (claude, 175k tokens)\nSpend:      intake 20%, plan 20%, wall 2%, implement 58%; top: implement\nTime:       1m11s (intake 19s, plan 15s, wall 17s, implement 32s, verify 1s, commit 0s, seal 1s; slowest: implement 45%); next: loki verify; 27 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 45/100 (F) - run `loki doctor --repo` for 4 fix(es)\n",
+      "cost_usd": 0.1829,
+      "cost_partial": false,
+      "cost_source": "loki.efficiency_cost",
+      "tokens_in": 12411,
+      "tokens_out": 8676,
+      "model_used": "claude-opus-5-5",
+      "iterations": 4,
+      "verify_verdict": "PARTIAL",
+      "failure_reason": null,
+      "honesty": {
+        "headline": "PARTIAL",
+        "degraded": [
+          "full suite",
+          "full test command",
+          "one reviewer",
+          "no tests executed",
+          "not run: lint:ruff",
+          "not run: full suite: pytest",
+          "wall result not recorded by verify",
+          "visual evidence skipped: no package.json"
+        ]
+      },
+      "engine": "v10",
+      "loki_version": "11.54.0",
+      "cache_tokens_by_phase": {
+        "total": {
+          "cache_read": 122048,
+          "cache_creation": 32335
+        }
+      },
+      "cost_by_phase": {
+        "total": 0.1829
+      },
+      "group_cost": null,
+      "ledger": "absent",
+      "command": "/Users/lokesh/git/lm-wt/h2h-wt/bin/loki start /Users/lokesh/git/lm-wt/h2h/loki-run.oJ4u6sFd/loki-attr-upfu5_mo/longspec-1-three-units-1.prd.md --provider claude --no-dashboard --yes --no-pr",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 9 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "refactor-1-pricing",
+      "class": "refactor",
+      "arm": "loki",
+      "repeat": 1,
+      "accepted": true,
+      "reported_success": false,
+      "cost_profile": "off",
+      "lever_env": {},
+      "status": "error_rc_1",
+      "rc": 1,
+      "elapsed_s": 56.86,
+      "stderr_tail": "",
+      "stdout_tail": "Loki 10 engine, PR target: main, base: main, cap $5.00 (env); downgrade: plan sonnet (fast tier), wall claude-sonnet-5-5 (Wall pin), already_done claude-sonnet-5-5 (already-done check pin); estimate: NOT AVAILABLE (no project shape recorded for this repo)\n[intake] reading the task  3s\n[implement] implementing  3s  (intake done 20s)\n[verify] verifying  3s  (implement done 29s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:08bbad4384584e6938955b564d9dee43193fe9f22bdfe833fd4510cbfa8c471c\nNOT PROVEN: full suite, council, security scan, full test command, not run: lint:ruff, not run: full suite: pytest, scope not determined; all edits committed, visual evidence skipped: no package.json\nCost:       $0.11 (claude, 91k tokens)\nSpend:      intake 29%, implement 71%; top: implement\nTime:       55s (intake 20s, implement 29s, verify 4s, commit 1s, seal 1s; slowest: implement 53%); next: loki verify; 3 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 45/100 (F) - run `loki doctor --repo` for 4 fix(es)\n",
+      "cost_usd": 0.1127,
+      "cost_partial": false,
+      "cost_source": "loki.efficiency_cost",
+      "tokens_in": 5184,
+      "tokens_out": 2788,
+      "model_used": "claude-opus-5-5",
+      "iterations": 2,
+      "verify_verdict": "PARTIAL",
+      "failure_reason": null,
+      "honesty": {
+        "headline": "PARTIAL",
+        "degraded": [
+          "full suite",
+          "council",
+          "security scan",
+          "full test command",
+          "not run: lint:ruff",
+          "not run: full suite: pytest",
+          "scope not determined; all edits committed",
+          "visual evidence skipped: no package.json"
+        ]
+      },
+      "engine": "v10",
+      "loki_version": "11.54.0",
+      "cache_tokens_by_phase": {
+        "total": {
+          "cache_read": 68868,
+          "cache_creation": 13806
+        }
+      },
+      "cost_by_phase": {
+        "total": 0.1127
+      },
+      "group_cost": null,
+      "ledger": "absent",
+      "command": "/Users/lokesh/git/lm-wt/h2h-wt/bin/loki start /Users/lokesh/git/lm-wt/h2h/loki-run.oJ4u6sFd/loki-attr-upfu5_mo/refactor-1-pricing-1.prd.md --provider claude --no-dashboard --yes --no-pr",
+      "acceptance": {
+        "rc": 0,
+        "tail": "ResourceWarning: Enable tracemalloc to get the object allocation traceback\n/Users/lokesh/git/lm-wt/h2h/loki-run.oJ4u6sFd/loki-attr-upfu5_mo/refactor-1-pricing-loki-1/acceptance_test.py:22: ResourceWarning: unclosed file <_io.TextIOWrapper name='quote.py' mode='r' encoding='UTF-8'>\n  tree = ast.parse(open(path).read())\nResourceWarning: Enable tracemalloc to get the object allocation traceback\n----------------------------------------------------------------------\nRan 3 tests in 0.011s\n\nOK"
+      }
+    },
+    {
+      "task": "coord-1-api-web",
+      "class": "integration",
+      "arm": "loki",
+      "repeat": 2,
+      "accepted": true,
+      "reported_success": false,
+      "cost_profile": "off",
+      "lever_env": {},
+      "status": "error_rc_1",
+      "rc": 1,
+      "elapsed_s": 106.487,
+      "stderr_tail": "loki: sequential (reason: decomposer returned 1 unit)\nWhat I think you want: Switch the orders API to cursor pagination and keep the web client returning every order and the correct total.\nAcceptance: list_orders returns items/next_cursor with id > cursor, limit validation 1..100 raising ValueError, and reads ORDERS at call time.\nAcceptance: fetch_all_orders returns all orders in id order across pages via list_orders only, including when ORDERS is replaced.\nAcceptance: total_amount equals the sum of all amounts (150 for the seed data) and the baseline tests still pass.\nOut of scope: adding tests, new dependencies, or changing the ORDERS data shape.\n",
+      "stdout_tail": "Loki 10 engine, PR target: main, base: main, cap $5.00 (env); downgrade: plan sonnet (fast tier), wall claude-sonnet-5-5 (Wall pin), already_done claude-sonnet-5-5 (already-done check pin); estimate: NOT AVAILABLE (no project shape recorded for this repo)\n[intake] reading the task  3s\n[wall] writing acceptance checks  4s  (intake done 30s)\n[implement] implementing  4s  (wall done 47s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:a355f41fc610d3ae2a21df0f3bee76e264051b8341f0ecdc13b28d4ebd66c1f7\nNOT PROVEN: full suite, council, security scan, full test command, no tests executed, not run: lint:ruff, not run: full suite: pytest, wall result not recorded by verify, visual evidence skipped: no package.json\nCost:       $0.22 (claude, 200k tokens)\nSpend:      intake 20%, plan 18%, wall 24%, implement 38%; top: implement\nTime:       1m44s (intake 30s, plan 18s, wall 47s, implement 22s, verify 2s, commit 1s, seal 1s; slowest: wall 46%); next: loki verify; 10 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 45/100 (F) - run `loki doctor --repo` for 4 fix(es)\n",
+      "cost_usd": 0.218,
+      "cost_partial": false,
+      "cost_source": "loki.efficiency_cost",
+      "tokens_in": 12841,
+      "tokens_out": 13126,
+      "model_used": "claude-opus-5-5",
+      "iterations": 5,
+      "verify_verdict": "PARTIAL",
+      "failure_reason": null,
+      "honesty": {
+        "headline": "PARTIAL",
+        "degraded": [
+          "full suite",
+          "council",
+          "security scan",
+          "full test command",
+          "no tests executed",
+          "not run: lint:ruff",
+          "not run: full suite: pytest",
+          "wall result not recorded by verify",
+          "visual evidence skipped: no package.json"
+        ]
+      },
+      "engine": "v10",
+      "loki_version": "11.54.0",
+      "cache_tokens_by_phase": {
+        "total": {
+          "cache_read": 137482,
+          "cache_creation": 36792
+        }
+      },
+      "cost_by_phase": {
+        "total": 0.218
+      },
+      "group_cost": null,
+      "ledger": "absent",
+      "command": "/Users/lokesh/git/lm-wt/h2h-wt/bin/loki start /Users/lokesh/git/lm-wt/h2h/loki-run.oJ4u6sFd/loki-attr-upfu5_mo/coord-1-api-web-2.prd.md --provider claude --no-dashboard --yes --no-pr",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 5 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "integration-1-retry-client",
+      "class": "integration",
+      "arm": "loki",
+      "repeat": 2,
+      "accepted": true,
+      "reported_success": false,
+      "cost_profile": "off",
+      "lever_env": {},
+      "status": "error_rc_1",
+      "rc": 1,
+      "elapsed_s": 53.067,
+      "stderr_tail": "",
+      "stdout_tail": "Loki 10 engine, PR target: main, base: main, cap $5.00 (env); downgrade: plan sonnet (fast tier), wall claude-sonnet-5-5 (Wall pin), already_done claude-sonnet-5-5 (already-done check pin); estimate: NOT AVAILABLE (no project shape recorded for this repo)\n[intake] reading the task  3s\n[implement] implementing  3s  (intake done 17s)\n[verify] verifying  4s  (implement done 27s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:1f7b5e073b63db51b2568d433a16834a2cf613450bab0935168352402bbace36\nNOT PROVEN: full suite, full test command, one reviewer, not run: lint:ruff, not run: full suite: pytest, scope not determined; all edits committed, visual evidence skipped: no package.json\nCost:       $0.11 (claude, 100k tokens)\nSpend:      intake 38%, implement 62%; top: implement\nTime:       50s (intake 17s, implement 27s, verify 4s, commit 0s, seal 1s; slowest: implement 54%); next: loki verify; 5 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 45/100 (F) - run `loki doctor --repo` for 4 fix(es)\n",
+      "cost_usd": 0.1082,
+      "cost_partial": false,
+      "cost_source": "loki.efficiency_cost",
+      "tokens_in": 7126,
+      "tokens_out": 3580,
+      "model_used": "claude-opus-5-5",
+      "iterations": 3,
+      "verify_verdict": "PARTIAL",
+      "failure_reason": null,
+      "honesty": {
+        "headline": "PARTIAL",
+        "degraded": [
+          "full suite",
+          "full test command",
+          "one reviewer",
+          "not run: lint:ruff",
+          "not run: full suite: pytest",
+          "scope not determined; all edits committed",
+          "visual evidence skipped: no package.json"
+        ]
+      },
+      "engine": "v10",
+      "loki_version": "11.54.0",
+      "cache_tokens_by_phase": {
+        "total": {
+          "cache_read": 78218,
+          "cache_creation": 11126
+        }
+      },
+      "cost_by_phase": {
+        "total": 0.1082
+      },
+      "group_cost": null,
+      "ledger": "absent",
+      "command": "/Users/lokesh/git/lm-wt/h2h-wt/bin/loki start /Users/lokesh/git/lm-wt/h2h/loki-run.oJ4u6sFd/loki-attr-upfu5_mo/integration-1-retry-client-2.prd.md --provider claude --no-dashboard --yes --no-pr",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 5 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "longspec-1-three-units",
+      "class": "feature",
+      "arm": "loki",
+      "repeat": 2,
+      "accepted": true,
+      "reported_success": false,
+      "cost_profile": "off",
+      "lever_env": {},
+      "status": "error_rc_1",
+      "rc": 1,
+      "elapsed_s": 80.45,
+      "stderr_tail": "loki: sequential (reason: decomposer returned 1 unit)\nWhat I think you want: working implementations of all three unit modules matching the spec exactly, including edge-case errors.\nAcceptance: parse/format duration round-trips and rejects dup units, bad chars, empty, negatives.\nAcceptance: format_cents gives $12,345.67, $0.05, -$2.50; split_cents(100,3) == [34,33,33]; bool raises TypeError.\nAcceptance: wrap_text never exceeds width except single long words, and returns [] for blank text.\n",
+      "stdout_tail": "Loki 10 engine, PR target: main, base: main, cap $5.00 (env); downgrade: plan sonnet (fast tier), wall claude-sonnet-5-5 (Wall pin), already_done claude-sonnet-5-5 (already-done check pin); estimate: NOT AVAILABLE (no project shape recorded for this repo)\n[intake] reading the task  3s\n[wall] writing acceptance checks  3s  (intake done 26s)\n[implement] implementing  4s  (wall done 17s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:8e3ede3293503dbe082f5d9a06571cd0ff90e8b897a4ba062c1a37459f0e7a2e\nNOT PROVEN: full suite, full test command, one reviewer, no tests executed, not run: lint:ruff, not run: full suite: pytest, wall result not recorded by verify, visual evidence skipped: no package.json\nCost:       $0.22 (claude, 220k tokens)\nSpend:      intake 24%, plan 17%, wall 1%, implement 58%; top: implement\nTime:       1m19s (intake 26s, plan 16s, wall 17s, implement 33s, verify 1s, commit 0s, seal 1s; slowest: implement 42%); next: loki verify; 27 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 45/100 (F) - run `loki doctor --repo` for 4 fix(es)\n",
+      "cost_usd": 0.2195,
+      "cost_partial": false,
+      "cost_source": "loki.efficiency_cost",
+      "tokens_in": 12416,
+      "tokens_out": 10024,
+      "model_used": "claude-opus-5-5",
+      "iterations": 4,
+      "verify_verdict": "PARTIAL",
+      "failure_reason": null,
+      "honesty": {
+        "headline": "PARTIAL",
+        "degraded": [
+          "full suite",
+          "full test command",
+          "one reviewer",
+          "no tests executed",
+          "not run: lint:ruff",
+          "not run: full suite: pytest",
+          "wall result not recorded by verify",
+          "visual evidence skipped: no package.json"
+        ]
+      },
+      "engine": "v10",
+      "loki_version": "11.54.0",
+      "cache_tokens_by_phase": {
+        "total": {
+          "cache_read": 165844,
+          "cache_creation": 31336
+        }
+      },
+      "cost_by_phase": {
+        "total": 0.2195
+      },
+      "group_cost": null,
+      "ledger": "absent",
+      "command": "/Users/lokesh/git/lm-wt/h2h-wt/bin/loki start /Users/lokesh/git/lm-wt/h2h/loki-run.oJ4u6sFd/loki-attr-upfu5_mo/longspec-1-three-units-2.prd.md --provider claude --no-dashboard --yes --no-pr",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 9 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "refactor-1-pricing",
+      "class": "refactor",
+      "arm": "loki",
+      "repeat": 2,
+      "accepted": true,
+      "reported_success": false,
+      "cost_profile": "off",
+      "lever_env": {},
+      "status": "error_rc_1",
+      "rc": 1,
+      "elapsed_s": 53.059,
+      "stderr_tail": "",
+      "stdout_tail": "Loki 10 engine, PR target: main, base: main, cap $5.00 (env); downgrade: plan sonnet (fast tier), wall claude-sonnet-5-5 (Wall pin), already_done claude-sonnet-5-5 (already-done check pin); estimate: NOT AVAILABLE (no project shape recorded for this repo)\n[intake] reading the task  3s\n[implement] implementing  3s  (intake done 17s)\n[verify] verifying  4s  (implement done 27s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:e6240a0e31d967b97b4b8afb55653ee321e18a4c22d8fbddb8b4a861d9a0b894\nNOT PROVEN: full suite, council, security scan, full test command, not run: lint:ruff, not run: full suite: pytest, scope not determined; all edits committed, visual evidence skipped: no package.json\nCost:       $0.08 (claude, 68k tokens)\nSpend:      intake 34%, implement 66%; top: implement\nTime:       51s (intake 17s, implement 27s, verify 4s, commit 1s, seal 1s; slowest: implement 54%); next: loki verify; 3 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 45/100 (F) - run `loki doctor --repo` for 4 fix(es)\n",
+      "cost_usd": 0.0812,
+      "cost_partial": false,
+      "cost_source": "loki.efficiency_cost",
+      "tokens_in": 5180,
+      "tokens_out": 2510,
+      "model_used": "claude-opus-5-5",
+      "iterations": 2,
+      "verify_verdict": "PARTIAL",
+      "failure_reason": null,
+      "honesty": {
+        "headline": "PARTIAL",
+        "degraded": [
+          "full suite",
+          "council",
+          "security scan",
+          "full test command",
+          "not run: lint:ruff",
+          "not run: full suite: pytest",
+          "scope not determined; all edits committed",
+          "visual evidence skipped: no package.json"
+        ]
+      },
+      "engine": "v10",
+      "loki_version": "11.54.0",
+      "cache_tokens_by_phase": {
+        "total": {
+          "cache_read": 52054,
+          "cache_creation": 8737
+        }
+      },
+      "cost_by_phase": {
+        "total": 0.0812
+      },
+      "group_cost": null,
+      "ledger": "absent",
+      "command": "/Users/lokesh/git/lm-wt/h2h-wt/bin/loki start /Users/lokesh/git/lm-wt/h2h/loki-run.oJ4u6sFd/loki-attr-upfu5_mo/refactor-1-pricing-2.prd.md --provider claude --no-dashboard --yes --no-pr",
+      "acceptance": {
+        "rc": 0,
+        "tail": "ResourceWarning: Enable tracemalloc to get the object allocation traceback\n/Users/lokesh/git/lm-wt/h2h/loki-run.oJ4u6sFd/loki-attr-upfu5_mo/refactor-1-pricing-loki-2/acceptance_test.py:22: ResourceWarning: unclosed file <_io.TextIOWrapper name='quote.py' mode='r' encoding='UTF-8'>\n  tree = ast.parse(open(path).read())\nResourceWarning: Enable tracemalloc to get the object allocation traceback\n----------------------------------------------------------------------\nRan 3 tests in 0.013s\n\nOK"
+      }
+    }
+  ],
+  "summary": {
+    "by_arm": {
+      "loki": {
+        "assigned": 8,
+        "accepted": 8,
+        "unmeasured_runs": 0,
+        "acceptance_rate": 1.0,
+        "acceptance_rate_ci95": [
+          0.6756,
+          1.0
+        ],
+        "reported_success": 0,
+        "false_completions": 0,
+        "false_completion_rate": null,
+        "completion_rate": 0.0,
+        "timeouts": 0,
+        "errors": 8,
+        "spend_measured_usd": 1.2325,
+        "runs_with_unmeasured_cost": 0,
+        "cost_status": "measured",
+        "cost_per_accepted_usd": 0.154062,
+        "cost_per_accepted_lower_bound_usd": null,
+        "elapsed_median_accepted_s": 64.654,
+        "elapsed_median_all_s": 64.654
+      }
+    },
+    "by_class": {
+      "feature": {
+        "loki": {
+          "assigned": 2,
+          "accepted": 2,
+          "unmeasured_runs": 0,
+          "acceptance_rate": 1.0,
+          "acceptance_rate_ci95": [
+            0.3424,
+            1.0
+          ],
+          "reported_success": 0,
+          "false_completions": 0,
+          "false_completion_rate": null,
+          "completion_rate": 0.0,
+          "timeouts": 0,
+          "errors": 2,
+          "spend_measured_usd": 0.4024,
+          "runs_with_unmeasured_cost": 0,
+          "cost_status": "measured",
+          "cost_per_accepted_usd": 0.2012,
+          "cost_per_accepted_lower_bound_usd": null,
+          "elapsed_median_accepted_s": 76.422,
+          "elapsed_median_all_s": 76.422
+        }
+      },
+      "refactor": {
+        "loki": {
+          "assigned": 2,
+          "accepted": 2,
+          "unmeasured_runs": 0,
+          "acceptance_rate": 1.0,
+          "acceptance_rate_ci95": [
+            0.3424,
+            1.0
+          ],
+          "reported_success": 0,
+          "false_completions": 0,
+          "false_completion_rate": null,
+          "completion_rate": 0.0,
+          "timeouts": 0,
+          "errors": 2,
+          "spend_measured_usd": 0.1939,
+          "runs_with_unmeasured_cost": 0,
+          "cost_status": "measured",
+          "cost_per_accepted_usd": 0.09695,
+          "cost_per_accepted_lower_bound_usd": null,
+          "elapsed_median_accepted_s": 54.959,
+          "elapsed_median_all_s": 54.959
+        }
+      },
+      "integration": {
+        "loki": {
+          "assigned": 4,
+          "accepted": 4,
+          "unmeasured_runs": 0,
+          "acceptance_rate": 1.0,
+          "acceptance_rate_ci95": [
+            0.5101,
+            1.0
+          ],
+          "reported_success": 0,
+          "false_completions": 0,
+          "false_completion_rate": null,
+          "completion_rate": 0.0,
+          "timeouts": 0,
+          "errors": 4,
+          "spend_measured_usd": 0.6362,
+          "runs_with_unmeasured_cost": 0,
+          "cost_status": "measured",
+          "cost_per_accepted_usd": 0.15905,
+          "cost_per_accepted_lower_bound_usd": null,
+          "elapsed_median_accepted_s": 66.843,
+          "elapsed_median_all_s": 66.843
+        }
+      }
+    },
+    "attribution_cells": []
+  }
+}
