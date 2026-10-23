@@ -61,6 +61,8 @@ agent cannot author or influence. A verdict you can re-derive is a <b>fact</b>; 
 produced is an <b>opinion</b>. That constraint is what lets this be embedded in someone else's
 product: they need to trust our arithmetic, not our model choices.</p>
 
+<p class=note>The 579x is a self-baseline (our old shell path against our new engine), not a competitor ratio. Cross-tool latency, counted over correct verdicts only, is in <code>benchmarks/bench/verify_h2h.py</code>.</p>
+
 <footer>Baseline: <code>tests/detect-mock-problems.sh</code> 11,040&nbsp;ms and
 <code>tests/detect-test-mutations.sh</code> 12,361&nbsp;ms on the same machine. Correctness is
 asserted alongside speed in <code>tests/test-fast-verify.sh</code> (10/10), including
