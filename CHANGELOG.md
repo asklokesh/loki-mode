@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.74.2 (2026-10-23)
+
+### Fixed
+- Pulse release truth is now one resolver, last_release_point(): the last VERSION commit on main cross-checked against npm next. Local git tags are no longer used for release state, which removes the "local tag disagrees with npm next" UNKNOWN and the stale-tag TRAIN_LATE and unreleased-age readings (FC-VERDICT-FROM-UNKNOWN-INPUT sibling). Approval: the TL APPROVE naming f054b75520ff52b95af39d9fb820880728f294eb (MEDIUM), relayed by team-lead. Evidence on the cherry-picked tree: tests/test-v10-pulse.sh rc=0 with 180 passed, 0 failed; bash -n scripts/v10-pulse.sh rc=0; help-drift 29/0 rc=0; sigpipe guard 4/0 rc=0.
+- Open sibling, not fixed here: moat_baseline_at_last_release is still tag-based.
+
 ## v11.74.1 (2026-10-23)
 
 ### Fixed
