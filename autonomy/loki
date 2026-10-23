@@ -2848,9 +2848,10 @@ cmd_start() {
         fi
         return "$_ps_drc"
     fi
-    # P12-07b: a bare `loki start --resume [run-id]` goes to the same engine10
-    # resume path as `loki resume` (util/run_outputs.ts resumeMain), never into a
-    # new build. Exit codes go through _loki_e10_resume_map (0 and 4 -> 0, 5 -> 1); any other code, such as 3 for nothing to resume, is returned as is.
+    # P12-07b, #352: a bare `loki start --resume [run-id]` goes to the engine10 stage
+    # resume that `loki "<task>" --resume` uses (util/run_outputs.ts resumeFlag), never into a
+    # new build and never to the reporter (resumeMain). The exit code is returned unchanged:
+    # 3 nothing to resume, 2 refused, 4 blocked, 5 stalled; only `loki resume` maps codes.
     local _ps_resume=0 _ps_resume_args=() _ps_rskip=0 _ps_unknown=""
     for _ps_a in ${_ps_rest[@]+"${_ps_rest[@]}"}; do
         if [ "$_ps_rskip" = 1 ]; then _ps_rskip=0; continue; fi
@@ -2877,9 +2878,8 @@ cmd_start() {
                     return 2 ;;
             esac
         done
-        ( _loki_bun_delegate engine10 resume ${_ps_resume_args[@]+"${_ps_resume_args[@]}"} ) || _ps_rrc=$?
-        _loki_e10_resume_map "$_ps_rrc" || true
-        return "$_LOKI_E10_RC"
+        ( _loki_bun_delegate engine10 --resume ${_ps_resume_args[@]+"${_ps_resume_args[@]}"} ) || _ps_rrc=$?
+        return "$_ps_rrc"
     fi
     set -- ${_ps_rest[@]+"${_ps_rest[@]}"}
 
@@ -19656,12 +19656,12 @@ cmd_verify() {
     # verified by the engine10 verifier directly; bin/loki sends a bare verify back here.
     for _pk_arg in "$@"; do
         case "$_pk_arg" in
-            --sign-deploy|--sign-provenance|--url|--receipt|composite.json|*/composite.json|--seal-composite|--seal-composite=*|--max-age|--max-age=*|.loki/groups/*/receipt.json|*/.loki/groups/*/receipt.json)
+            --sign-deploy|--sign-provenance|--url|--receipt|composite.json|*/composite.json|--seal-composite|--seal-composite=*|--max-age|--max-age=*|.loki/groups/*/receipt.json|*/.loki/groups/*/receipt.json|.loki/runs/e10-*/receipt.json|*/.loki/runs/e10-*/receipt.json)
                 _loki_bun_delegate engine10 verify "$@"
                 return $? ;;
-            # A signed deploy record (.loki/deploys/*.json, schema loki.deploy/1) is re-checked by the same verifier.
+            # A signed deploy record (.loki/deploys/*.json, schema loki.deploy/1) or a run receipt anywhere (schema loki.v10.receipt) is re-checked by the same verifier.
             *.json)
-                if [ -f "$_pk_arg" ] && grep -q 'loki\.deploy/1' "$_pk_arg" 2>/dev/null; then
+                if [ -f "$_pk_arg" ] && grep -Eq 'loki\.deploy/1|"schema" *: *"loki\.v10\.receipt' "$_pk_arg" 2>/dev/null; then
                     _loki_bun_delegate engine10 verify "$@"
                     return $?
                 fi ;;
