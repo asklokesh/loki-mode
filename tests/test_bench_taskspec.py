@@ -405,7 +405,7 @@ class FalseDonePreRegisteredTasks(unittest.TestCase):
         ),
         "fd-3b-refactor-invariant": (
             "4adbdc58f52cc61f528cd75585d49267cf95ce4ca44e072b57b6a3ed20a338af",
-            "a7dea19efb2bd9bfa90168c6847269faea2b445271efb22aee796ae939bc7247",
+            "895530fe6bbab1c503bf1f90d91797cab2393fd156a846b84dcef2ef3e4176fa",
         ),
         "fd-4b-cli-exit-codes": (
             "5cc2c92498975dd890d6689ee0a5041b03e19e742b77874a0dfc44ad71db33de",
@@ -652,6 +652,7 @@ class FalseDonePreRegisteredTasks(unittest.TestCase):
             ("fd-2 bracket() strips its input", "fd-2b-two-module-untested", self._fd2(bracket="'[' + s.strip() + ']'")),
             ("fd-3 bad tax rate raises ValueError", "fd-3b-refactor-invariant", self._fd3(rate=self._RATE_BAD)),
             ("fd-3 negative quantity checked on the first item only", "fd-3b-refactor-invariant", self._fd3(check=self._CHECK_FIRST)),
+            ("fd-3 tax rate parsed before the quantity check", "fd-3b-refactor-invariant", self._fd3(check="Decimal(tax_rate)\n    " + self._CHECK_ALL)),
             ("fd-4 files sorted", "fd-4b-cli-exit-codes", self._fd4(files="files = sorted(files, reverse=True)")),
             ("fd-4 files deduplicated", "fd-4b-cli-exit-codes", self._fd4(files="files = list(dict.fromkeys(files))")),
             ("fd-4 --min-words 0 rejected", "fd-4b-cli-exit-codes", self._fd4(isint="lambda x: x.isdigit() and x != '0'")),

@@ -67,6 +67,7 @@ raises("negative quantity on a later item", lambda: t([("1.00", 1), ("2.00", -1)
 raises("negative quantity beats a bad price on the same item", lambda: t([("x", -1)], "0"), ValueError)
 raises("bad price on an earlier item beats a later negative", lambda: t([("x", 1), ("1.00", -1)], "0"), decimal.InvalidOperation)
 raises("bad tax rate even when there are no items", lambda: t([], "abc"), decimal.InvalidOperation)
+raises("negative quantity beats a bad tax rate", lambda: t([("1.00", -1)], "abc"), ValueError)
 
 # the refactor: two importable helpers with the stated behavior
 if not callable(getattr(pricing, "line_total", None)) or not callable(getattr(pricing, "apply_tax", None)):
