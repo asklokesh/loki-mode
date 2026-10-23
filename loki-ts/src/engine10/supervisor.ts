@@ -23,7 +23,7 @@ import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_in
 import { formatHeartbeatLine, formatStageLine, formatSummary, formatPreModelLine, preModelTiming, type PreModelTiming, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
 import { renderProofCard } from "../util/receipt_surface.ts";
 import { LiveLine } from "../e10ext/liveline.ts";
-import { killGroup, spawnWorker } from "../runner/worker_proc.ts";
+import { bunSafeArgv, killGroup, spawnWorker } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
@@ -357,7 +357,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const statusStep = noPr || !ISSUE_RE.test(task) ? undefined : (await import("../util/run_outputs.ts")).issueStatusProjector({ pushSh: (await import("./stages/pr.ts")).DEFAULT_PUSH_SH, env, origin: readOriginUrl(repoDir), repoDir, runDir, runId, issueRef: task, eventsPath }), stopPlan = statusStep ? tail(eventsPath, (e) => { if (e.type === "stage.completed" && e.stage === "plan") void statusStep(); }, { intervalMs: 500 }) : () => {};
   const res = await runSupervisor({
     runId, repoDir, env, capS, capCeilingS: sized?.ceilingS,
-    workerArgv: [process.execPath, resolve(process.argv[1]!), "engine10", "worker", runId, provider, model, deep ? "deep" : "fast"], deepArgv: noPr ? undefined : [process.execPath, resolve(process.argv[1]!), "engine10", "deep-worker", runId, provider, model], status: statusStep,
+    workerArgv: bunSafeArgv([process.execPath, resolve(process.argv[1]!), "engine10", "worker", runId, provider, model, deep ? "deep" : "fast"]), deepArgv: noPr ? undefined : bunSafeArgv([process.execPath, resolve(process.argv[1]!), "engine10", "deep-worker", runId, provider, model]), status: statusStep,
     started: {
       task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, provider, model, deep, cap_s: capS, cap_ceiling_s: sized?.ceilingS ?? capS, max_cost_usd: cap.usd,
       model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`, ...runIntent(repoDir),

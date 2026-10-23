@@ -27,6 +27,10 @@ function hermeticLoki(root: string): string {
   mkdirSync(dir, { recursive: true });
   const dest = join(dir, "loki");
   writeFileSync(dest, readFileSync(join(REPO, "bin/loki")), { mode: 0o755 });
+  // bin/loki sources autonomy/lib/bun-safe.sh from its REPO_ROOT (FC-REPO-BUNFIG-AND-ENV-REACH-ORCHESTRATOR).
+  const lib = join(root, "hermetic", "autonomy", "lib");
+  mkdirSync(lib, { recursive: true });
+  writeFileSync(join(lib, "bun-safe.sh"), readFileSync(join(REPO, "autonomy/lib/bun-safe.sh")));
   return dest;
 }
 

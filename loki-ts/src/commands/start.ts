@@ -511,8 +511,9 @@ async function runEngine10(cwd: string, o: ParsedStartOpts, env: NodeJS.ProcessE
 
 async function spawnEngine(cwd: string, argv: string[], env: NodeJS.ProcessEnv): Promise<number> {
   const { spawn } = await import("node:child_process");
+  const [cmd, ...cmdArgs] = (await import("../runner/worker_proc.ts")).bunSafeArgv([process.execPath, ...argv]);
   return await new Promise<number>((resolveExit) => {
-    const child = spawn(process.execPath, argv, { cwd, env, stdio: ["ignore", "inherit", "inherit"] });
+    const child = spawn(cmd!, cmdArgs, { cwd, env, stdio: ["ignore", "inherit", "inherit"] });
     child.on("error", () => resolveExit(1));
     child.on("close", (code) => resolveExit(code ?? 1));
   });
