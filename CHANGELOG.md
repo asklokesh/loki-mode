@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.70.3 (2026-10-23)
+
+### Fixed
+- The air-gap command registry check is now enforced in the loki CLI and pinned by tests/test-airgap-commands.sh (airgapreg-r4). Approval: "tl-324: APPROVE pd/airgapreg-r4 333ba9db5 ... Single commit on origin/main debc7e843 (no stacked parents)".
+
 ## v11.70.2 (2026-10-23)
 
 ### Fixed
