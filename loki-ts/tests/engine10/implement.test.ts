@@ -98,8 +98,8 @@ describe("engine10 implement brief", () => {
 
 describe("engine10 implement brief: LOKI_E10_REPRO (TEN-QUALITY-08)", () => {
   const SENT = "If the task reports a bug, first add a new test function that reproduces it, run it and see it fail, then fix the code and run that test again.";
-  // Golden with the flag unset: length 2781, sha256 below (re-captured for FC-PYTEST-IMPORT-SYMLINK-UNDER-TESTS: the FIXED_RULES pytest invocation and no-symlink rule).
-  const GOLDEN = { len: 2781, sha: "69f60d9ca144ee58517c600abf102e6ce17d91e4a844759c5c4f9e0615a82181" };
+  // Golden with the flag unset: length 2791, sha256 below (re-captured for FC-MERGED-SLICE-BROKE-REPO-WIDE-ENGINE10-GUARD: the stack-neutral FIXED_RULES test-command rule from 85979c3af).
+  const GOLDEN = { len: 2791, sha: "55cb50f6396f4069a64582608e9074e9048775fb4c5c28930d1ec500c9731370" };
   const withRepro = <T>(v: string | undefined, fn: () => T): T => { const old = process.env.LOKI_E10_REPRO; if (v === undefined) delete process.env.LOKI_E10_REPRO; else process.env.LOKI_E10_REPRO = v; try { return fn(); } finally { if (old === undefined) delete process.env.LOKI_E10_REPRO; else process.env.LOKI_E10_REPRO = old; } };
   const lean = () => buildImplementBrief("fix the bug", null, ["tests/x.test.ts"]);
   test("flag on: lean brief contains the sentence once", () => {
