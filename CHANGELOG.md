@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.61.2 (2026-10-23)
+
+
+
+### Fixed
+- The bench retires the fd-1 to fd-4 overlays that passed a stated-rule near-miss, adds fd-1b to fd-4b, and fd-3b checks a negative quantity before a bad tax rate (pd/fd1b). Approval: "tl-324: APPROVE pd/fd1b head b7d91e38382250c508bc09308ed8b63d2614fdf0. The branch holds a merge commit, so ship by fast-forwarding or merging this head". Shipped by merging that head.
+
 ## v11.61.1 (2026-10-23)
 
 
