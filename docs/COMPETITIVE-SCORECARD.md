@@ -519,6 +519,20 @@ done
 bash autonomy/loki deploy --execute       # refuses, naming each failed check
 ```
 
+### 3f. Run replay baseline, measured 2026-10-23 (issue #422, R100-082)
+
+Question: can a user step through a finished run stage by stage and see the diff, tests and cost at each step?
+
+| Product | Replay or step-through | Evidence |
+|---|---|---|
+| Loki Mode | Yes: run page scrubber, one position per stage, values read from the run journal (`--` where the journal recorded none) | `[measured]` `cd packages/control-plane && bun test ./test/ui/timeline.test.ts ./test/ui/run.test.tsx` |
+| Claude Code 2.1.309 | None found in help; session resume only | `[measured]` `claude --help \| grep -iE 'resume\|history'` printed only `--resume <session-id>` and `--continue` lines |
+| Codex CLI | UNKNOWN: `codex` is not installed on the measuring machine, so no help output was read | probe not run |
+| Factory droid 0.190.0 | None found in help; session resume and fork only | `[measured]` `droid --help \| grep -iE 'resume\|history'` printed `-r, --resume [sessionId]` and `--fork <sessionId>` |
+| Devin | Session Insights page | `[sourced: https://docs.devin.ai/product-guides/session-insights.md]` not tested |
+
+"None found in help" is weaker than "does not exist"; see section 4.
+
 ## 4. What we do NOT know
 
 This section is mandatory and is not empty.
