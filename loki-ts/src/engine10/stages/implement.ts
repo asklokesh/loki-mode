@@ -108,7 +108,7 @@ export const implementStage: Stage = {
 
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     rmSync(join(ctx.repoDir, ".loki", "supply-declared.json"), { force: true }); // T10 B3: never judge this run by a stale declaration
-    if (process.env.LOKI_E10_SEAL_EXISTING_PATCH) return applyExternalPatch(ctx, process.env.LOKI_E10_SEAL_EXISTING_PATCH);
+    if (ctx.externalPatch) return applyExternalPatch(ctx, ctx.externalPatch);
     const prior = ctx.outputs();
     const task = (prior.intake?.task as string | undefined) ?? "";
     const plan = (prior.plan?.plan as string | undefined) ?? null;
