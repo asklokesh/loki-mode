@@ -1443,3 +1443,22 @@ Held: #398 depends on open issue #188 (dashboard authn/authz), so it is not a wa
 Before dispatching any wave-2 issue, re-run the live-branch check for its files; branches named above may have merged or new ones may have started.
 
 After wave 2, pull any issue whose lanes are free, following the lane orders above.
+
+### Wave-1 assignments
+
+Checked on 2026-10-23 at 06:50Z against `gh issue view` comments and origin branches. None of these issues has a GitHub assignee, so claims come from issue comments or team-lead dispatch. "Behind" counts commits on origin/main that the branch lacks.
+
+| Issue | Item | Engineer | Branch | Reviewer | Tier | State |
+|---|---|---|---|---|---|---|
+| #357 | R100-001 | eng-mcpchain | pd/r100-001 9feace648 (1 ahead, 16 behind) | unset | MEDIUM | Needs rebase. Criterion 3 NOT MET on both the branch and its base 3f6e07547 (issue comment 06:39Z); the PARTIAL predates the change. |
+| #342 | R100-006 | eng-r237 | none | unset | HIGH | Waiting on CW-04 (#337), which is OPEN with no commit on main. Ruling comment 06:39Z. |
+| #360 | R100-005 | unowned | none | unset | HIGH | No claim comment, no branch. Free to assign. |
+| #364 | R100-011 | eng-tmo | pd/364a fee344a42 (1 ahead, 8 behind); pd/364b 808c40cab stacked on (a) | tl-324 | MEDIUM | In review. Criteria tally comment 06:45Z; merge-tree rc=0 against origin/main 0a6ae7cb6. |
+| #368 | R100-016 | eng-318r | none | rev-b | HIGH | Dispatched by team-lead. No claim comment or branch yet. |
+| #231 | R100-022 | eng-tmo | none | tl-324 | MEDIUM | Dispatched by team-lead. Only the slice card comment (06:14Z); no claim comment or branch yet. |
+| #422 | R100-082 | eng-351 | none | unset | LOW | Starts after the loadaware fix. No claim comment or branch yet. |
+| #361 | R100-007 | eng-cw01 | pd/361 ece154741 (1 ahead, 11 behind) | tl-324 | LOW | In review. No claim comment on the issue. |
+| #362 | R100-008 slice (a) | eng-mcpchain | pd/r100-008a 861656d44 (1 ahead, 8 behind) | unset | MEDIUM | Claimed in comment 06:46Z after eng-r237 released it. Slice (b) unowned. |
+| #249 | R100-013 slice (a) | eng-r237 | pd/249a 721db86f3 (1 ahead, 0 behind) | rev-c | HIGH | In review. Slice (a) edits only `visual_evidence.ts`, which team-lead cleared out of wave 2. Slice (b) stays in wave 2 behind the `stages/verify.ts` branches. |
+
+Unowned: #360, #362 slice (b) and #249 slice (b). No reviewer yet: #357, #342, #360, #362 and #422.
