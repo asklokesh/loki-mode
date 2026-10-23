@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.68.1 (2026-10-23)
+
+### Fixed
+- docker/Dockerfile pins @anthropic-ai/sdk@0.124.0, the bun.lock version, so the docker-build job no longer fails with E404 on the agent SDK's open-ended peer sdk-1.2.0 published at 13:13:52Z (pd/docker-sdk-pin). Approval: CoS and founder-directed hotfix on 5a89260431df5c7c1f40fe4dee8096f29fd29814, ship on the team-lead GO line.
+
 ## v11.68.0 (2026-10-23)
 
 ### Added
