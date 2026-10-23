@@ -1,2 +1,4 @@
 [test]
 preload = ["./tests/preload.ts"]
+# Spawning tests (bash and TS CLIs side by side) need 5-6s idle and exceed bun's 5000ms default under CI load.
+timeout = 60000
