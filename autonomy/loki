@@ -2002,7 +2002,7 @@ show_help_all() {
     echo "  issue keys kpis logs magic mcp memory metrics migrate modernize monitor"
     echo "  next notify onboard open optimize otel outcomes own (handoff) pause plan preview"
     echo "  projects proof (receipt) provider quick quickstart rc remote report reset"
-    echo "  merge restore resume review rollback run sandbox secrets secure self-update sentrux"
+    echo "  merge restore resume review rollback run runs sandbox secrets secure self-update sentrux"
     echo "  serve setup setup-skill share ship spec start state stats status steer stop"
     echo "  syslog telemetry template test tour trigger trust trust-metrics"
     echo "  ultracode undo update verify version voice watch watchdog web welcome why"
