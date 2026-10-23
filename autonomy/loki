@@ -56,6 +56,14 @@ log_debug() { echo -e "${CYAN}[DEBUG]${NC} $*"; }
 
 # Source TUI library if available (spinners, progress bars, tables, diffs)
 _LOKI_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# FC-REPO-BUNFIG-AND-ENV-REACH-ORCHESTRATOR: every bun goes through bun-safe.sh. Fail closed.
+if [ -f "$_LOKI_SCRIPT_DIR/lib/bun-safe.sh" ]; then
+    # shellcheck source=lib/bun-safe.sh
+    source "$_LOKI_SCRIPT_DIR/lib/bun-safe.sh"
+else
+    loki_bun_run() { echo "loki: missing lib/bun-safe.sh (broken install); refusing to run bun" >&2; return 127; }
+    loki_bun_run_detached() { loki_bun_run "$@"; }
+fi
 if [ -f "$_LOKI_SCRIPT_DIR/tui.sh" ]; then
     # shellcheck source=tui.sh
     source "$_LOKI_SCRIPT_DIR/tui.sh"
@@ -2168,7 +2176,7 @@ _loki_control_ui() {
         local cli="$SKILL_DIR/loki-ts/dist/loki.js" cdir="${HOME}/.loki/control" spid
         [ -f "$cli" ] || cli="$SKILL_DIR/loki-ts/src/cli.ts"
         mkdir -p "$cdir" && chmod 700 "$cdir" 2>/dev/null || true
-        LOKI_CONTROL=1 LOKI_NO_BROWSER=1 nohup bun "$cli" control serve >"$cdir/serve.log" 2>&1 </dev/null &
+        LOKI_CONTROL=1 LOKI_NO_BROWSER=1 loki_bun_run_detached "$cli" control serve >"$cdir/serve.log" 2>&1 </dev/null &
         spid=$!
         echo "$spid" > "$cdir/serve.pid" 2>/dev/null || true
         for i in $(seq 1 100); do
@@ -29955,7 +29963,7 @@ cmd_estimate() {
         echo "Install Bun (https://bun.sh) or remove LOKI_LEGACY_BASH=1." >&2
         return 1
     fi
-    bun "$entry" estimate "$@"
+    loki_bun_run "$entry" estimate "$@"
 }
 
 # Transparent cost view (R3): per-run + per-project spend, model routing, and
@@ -35494,7 +35502,8 @@ cmd_control() {
         return 1
     fi
     [ -f "$cli" ] || cli="$SKILL_DIR/loki-ts/src/cli.ts"
-    exec bun "$cli" control "$@"
+    loki_bun_run "$cli" control "$@"
+    exit $?
 }
 
 cmd_wiki() {

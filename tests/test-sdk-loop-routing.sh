@@ -40,6 +40,7 @@ run_start() {
     local root="$WORK/repo"
     rm -rf "$root"; mkdir -p "$root/bin" "$root/autonomy" "$root/loki-ts/dist"
     cp "$REPO_ROOT/bin/loki" "$root/bin/loki"
+    mkdir -p "$root/autonomy/lib"; cp "$REPO_ROOT/autonomy/lib/bun-safe.sh" "$root/autonomy/lib/bun-safe.sh"
     # stub bash CLI (autonomy/loki) -> prints BASH marker
     printf '#!/usr/bin/env bash\necho "ROUTE=BASH args=$*"\nexit 0\n' > "$root/autonomy/loki"
     chmod +x "$root/autonomy/loki"

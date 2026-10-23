@@ -27,6 +27,7 @@ exit 0
 STUB
 chmod +x "$WORK/bin/bun"
 cp "$REPO_ROOT/bin/loki" "$ROOT/bin/loki"
+mkdir -p "$ROOT/autonomy/lib"; cp "$REPO_ROOT/autonomy/lib/bun-safe.sh" "$ROOT/autonomy/lib/bun-safe.sh"
 printf '#!/usr/bin/env bash\necho "ROUTE=BASH args=$*"\nexit 0\n' > "$ROOT/autonomy/loki"
 chmod +x "$ROOT/autonomy/loki"
 printf '// stub\n' > "$ROOT/loki-ts/dist/loki.js"
