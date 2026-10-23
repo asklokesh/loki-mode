@@ -30,6 +30,7 @@ import { modelOutcome } from "../util/run_identity.ts";
 import { partialUsagePath } from "./budget.ts";
 import { recordAdvisorError } from "./router/advisor_probe.ts";
 import { lokiDirFor } from "../util/paths.ts";
+import { redactSecrets } from "../util/redact.ts";
 
 // A structural subset of the Agent SDK's SDKMessage union -- only the fields the
 // parser reads. Kept local (not imported from the SDK) so the parser is pure and
@@ -578,7 +579,7 @@ function recordPermissionDenials(eventsJsonl: string, data: StreamMsg, clock?: (
     appendRunEvent(eventsJsonl, "permission_denied", {
       tool: typeof d["tool_name"] === "string" ? d["tool_name"] : null,
       tool_use_id: typeof d["tool_use_id"] === "string" ? d["tool_use_id"] : null,
-      input_summary: String(raw).slice(0, 200),
+      input_summary: redactSecrets(String(raw)).slice(0, 200), // redact before the cut so a key split at 200 cannot leak
       rule: null,
       session_id: data.session_id ?? null,
     }, clock);

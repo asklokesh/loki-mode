@@ -1252,6 +1252,23 @@ describe("claude_flags web and credential default deny (w2-07)", () => {
     }
   });
 
+  it("every secret Bash deny rule is pinned literally, so dropping any one turns this red (#303)", () => {
+    // Independent of the generator: spelled out here so a removed reader, operand form or redirect is caught.
+    const readers = ["cat", "head", "tail", "sed", "grep", "egrep", "fgrep", "rg", "awk", "less", "more", "nl", "tac", "strings", "xxd", "od", "base64", "cp", "source", "."];
+    const operands = [".env*", "* .env*", "*/.env*", ".aws/*", "* .aws/*", "*/.aws/*", ".ssh/*", "* .ssh/*", "*/.ssh/*", "*.pem*"];
+    const want: string[] = [];
+    for (const o of operands) { for (const r of readers) want.push(`Bash(${r} ${o})`); want.push(`Bash(* < ${o})`); }
+    const compiled = perms.compile(repo, baseEnv({ LOKI_PERMISSION_POLICY: "compiled" })).args;
+    const legacy = permissionArgv(repo, baseEnv({ LOKI_PERMISSION_POLICY: "legacy" }), () => {});
+    for (const argv of [compiled, legacy]) {
+      const d = denied(argv);
+      for (const rule of want) expect(d).toContain(rule);
+      expect(d.filter((r) => r.startsWith("Bash(")).length).toBe(want.length);
+    }
+    expect(want).toContain("Bash(cat * .env*)");
+    for (const c of ["cat -A .env", "cat foo .env", "cat .env", "cat a/b/.env.prod"]) expect(bashDenied(legacy, c)).toBe(true);
+  });
+
   it("LOKI_WEB_POLICY=off drops the Bash secret denies together with the Read ones (#303)", () => {
     const off = permissionArgv(repo, baseEnv({ LOKI_PERMISSION_POLICY: "legacy", LOKI_WEB_POLICY: "off" }), () => {});
     expect(off).toEqual(["--dangerously-skip-permissions"]);
