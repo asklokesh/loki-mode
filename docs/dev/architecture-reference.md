@@ -126,7 +126,7 @@ extract_learnings_from_session (autonomy/run.sh) mirrors learnings and decisions
 | Memories nested at `beta.memory_stores.memories` (`memory_store_id`) | WIRED | `memory/managed_memory/client.py:96`; legacy `beta.memories` kept for fakes/preview |
 | Memory create precondition | NOT ADOPTED | 2.x `memories.create` has no sha256 precondition (only `update(precondition=)`); dropped on the 2.x path, no caller depends on a 409 |
 | Memory versions (`memory_stores.memory_versions`) | NOT ADOPTED | `redact` path still reads the legacy shape; separate slice, behind ManagedDisabled fallback |
-| Managed Agents sessions (`beta.sessions.create`) | NOT ADOPTED | 2.x requires `agent` + `environment_id`; `callable_agents`/`context` shape in `providers/managed.py:334` raises TypeError, converted to ManagedUnavailable (fail-safe fallback) |
-| Managed Agents agents, environments, vaults, deployments, dreams, webhooks | NOT ADOPTED | no Loki consumer; research preview |
+| Managed Agents sessions, environments, multiagent coordinator | WIRED | `providers/managed.py` `_RealMultiagentSession.run`: coordinator agent (`multiagent={"type":"coordinator"}`) + cached environment, then `sessions.create(agent=, environment_id=, initial_events=)`; ids cached in `.loki/managed/agent_ids.json`; contract test binds kwargs to the real SDK signatures. Live event shape (per-agent `session_thread_id`) unverified without a key |
+| Vaults, deployments, dreams, webhooks | NOT ADOPTED | no Loki consumer; research preview |
 | Tool runner (`beta.messages.tool_runner`), compaction, structured outputs, adaptive thinking, advisor tool, citations, files API, web search / code execution, prompt cache TTL | NOT ADOPTED | Loki drives models through provider CLIs and the TS Agent SDK; the Python SDK is only the managed-agents bridge |
 | Bedrock / Vertex clients | NOT ADOPTED | no use |
