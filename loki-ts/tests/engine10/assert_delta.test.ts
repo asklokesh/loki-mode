@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyAssertDelta, classifyTestEdit } from "../../src/e10ext/assert_delta.ts";
+import { AnalyzerError, classifyAssertDelta, classifyTestEdit, testEditWeakens, testFileWeakened } from "../../src/e10ext/assert_delta.ts";
 
 const BASE = `import pytest
 from humanize import naturaldelta, naturalsize
@@ -188,5 +188,422 @@ describe("assert_delta classifier", () => {
   });
   it("r3-3. a shadowed duplicate test def is weakened", () => {
     W("def test_d():\n    assert f(1) == 4000\n\n\ndef test_d():\n    assert f(2) == 4000\n", "== 4000\n\n\ndef", "== 5000\n\n\ndef", "f 5000");
+  });
+});
+
+describe("testEditWeakens (FC-WEAKENED-TEST-IMPORT-WIDENING)", () => {
+  const JS = `import { test, expect } from "bun:test";
+import { sum } from "./sum";
+// covers sum
+test("adds", () => {
+  expect(sum(1, 2)).toBe(3);
+});
+`;
+  const PY = "import pytest\nfrom calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n";
+  it("widened import list plus an added test is not weakened (js)", () => {
+    const head = JS.replace('import { test, expect } from "bun:test";', 'import { test, expect, describe } from "bun:test";') + 'test("adds more", () => {\n  expect(sum(2, 2)).toBe(4);\n});\n';
+    expect(testEditWeakens(JS, head)).toBe(false);
+  });
+  it("widened multi-line import plus an added test is not weakened (python)", () => {
+    const head = PY.replace("from calc import add", "from calc import (\n    add,\n    sub,\n)") + "\n\ndef test_sub():\n    assert sub(3, 1) == 2\n";
+    expect(testEditWeakens(PY, head)).toBe(false);
+  });
+  it("pure addition, a comment edit and a blank-line change are not weakened", () => {
+    expect(testEditWeakens(JS, JS + 'test("more", () => {\n  expect(1).toBe(1);\n});\n')).toBe(false);
+    expect(testEditWeakens(JS, JS.replace("// covers sum", "// covers the sum helper"))).toBe(false);
+    expect(testEditWeakens(JS, JS.replace("// covers sum\n", "\n"))).toBe(false);
+  });
+  it("a dropped expect is weakened", () => {
+    expect(testEditWeakens(JS, JS.replace("  expect(sum(1, 2)).toBe(3);\n", ""))).toBe(true);
+    expect(testEditWeakens(PY, PY.replace("    assert add(1, 2) == 3\n", "    pass\n"))).toBe(true);
+  });
+  it("a removed test case is weakened even when an import is widened in the same edit", () => {
+    const head = JS.replace('import { test, expect } from "bun:test";', 'import { test, expect, describe } from "bun:test";').replace(/test\("adds"[\s\S]*$/, "");
+    expect(testEditWeakens(JS, head)).toBe(true);
+  });
+  it("an added skip, only, todo or xit marker is weakened", () => {
+    for (const m of ['test.skip("adds"', 'test.only("adds"', 'test.todo("adds"', 'xit("adds"']) expect(testEditWeakens(JS, JS + `${m}, () => {});\n`)).toBe(true);
+    expect(testEditWeakens(PY, PY + "\n\n@pytest.mark.skip\ndef test_later():\n    assert True\n")).toBe(true);
+  });
+  it("an import narrowed to drop a previously imported name is weakened, even when a module path shares its name", () => {
+    expect(testEditWeakens(JS, JS.replace('import { test, expect } from "bun:test";', 'import { test } from "bun:test";'))).toBe(true);
+    expect(testEditWeakens(JS, JS.replace('import { test, expect } from "bun:test";', 'import { expect } from "bun:test";'))).toBe(true);
+    expect(testEditWeakens(PY, PY.replace("from calc import add", "from calc import sub"))).toBe(true);
+  });
+  it("an addition that neutralises the base asserts is weakened (rev-237 repros)", () => {
+    const at = (line: string) => JS.replace("  expect(sum(1, 2)).toBe(3);", `${line}\n  expect(sum(1, 2)).toBe(3);`);
+    expect(testEditWeakens(JS, at("  return;"))).toBe(true);
+    expect(testEditWeakens(JS, at("  if (process.env.CI) return;"))).toBe(true);
+    expect(testEditWeakens(JS, JS + "if (process.env.CI) return;\n")).toBe(true); // top level, so only the early-exit rule catches it
+    expect(testEditWeakens(JS, at("  const ready = true;"))).toBe(true); // an unknown added line inside a base body fails closed
+    expect(testEditWeakens(JS, JS.replace("  expect(sum(1, 2)).toBe(3);", "  /*\n  expect(sum(1, 2)).toBe(3);\n  */"))).toBe(true);
+    expect(testEditWeakens(JS, JS.replace("// covers sum", '// covers sum\njest.mock("./sum");'))).toBe(true);
+    expect(testEditWeakens(JS, JS.replace("// covers sum", "// covers sum\nconst expect = (_v: unknown) => ({ toBe: (_x: unknown) => {} });"))).toBe(true);
+    expect(testEditWeakens(JS, at("  const expect = () => ({ toBe() {} });"))).toBe(true);
+    expect(testEditWeakens(PY, PY + "\n\ndef test_add():\n    pass\n")).toBe(true);
+    expect(testEditWeakens(JS, JS + 'test("adds", () => {});\n')).toBe(true);
+    expect(testEditWeakens(PY, PY.replace("    assert add(1, 2) == 3", "    return\n    assert add(1, 2) == 3"))).toBe(true);
+  });
+  it("a new test block between or after base tests, and an import widening, stay unflagged", () => {
+    const two = JS + 'test("second", () => {\n  expect(sum(2, 2)).toBe(4);\n});\n';
+    // a new block goes only after the last base test: inserted before a base test it can change that test's outcome
+    expect(testEditWeakens(two, JS + 'test("first extra", () => {\n  expect(sum(0, 0)).toBe(0);\n});\ntest("second", () => {\n  expect(sum(2, 2)).toBe(4);\n});\n')).toBe(true);
+    expect(testEditWeakens(two, two + 'test("third", () => {\n  expect(sum(0, 0)).toBe(0);\n});\n')).toBe(false);
+    expect(testEditWeakens(PY, PY + "\n\ndef test_add_zero():\n    assert add(0, 0) == 0\n")).toBe(false);
+  });
+  it("an added top-level run that does not open a test is weakened (rev-237 allowlist bypasses)", () => {
+    const sut = 'import * as sut from "./sum";\n';
+    const bypasses: Array<[string, string]> = [
+      ["js", JS + "sut.f = () => 2;\n"],
+      ["js", JS + 'beforeEach(() => {\n  globalThis.Math = { max: () => 0 };\n});\n'],
+      ["js", JS + "expect.extend({ toBe: () => ({ pass: true }) });\n"],
+      ["py", PY + "\n\nsut.f = lambda x: x * 2\n"],
+      ["py", PY + "\n\n@pytest.fixture(autouse=True)\ndef zero():\n    sut.FACTOR = 0\n"],
+      ["py", PY + '\n\nsetattr(sut, "f", lambda x: x)\n'],
+      ["py", PY + "\n\nTestA.test_a = lambda self: None\n"],
+    ];
+    void sut;
+    for (const [lang, head] of bypasses) expect(testEditWeakens(lang === "js" ? JS : PY, head)).toBe(true);
+  });
+  it("legit new blocks stay unflagged: parametrize, a Test class, describe, jest.fn inside a new test", () => {
+    expect(testEditWeakens(PY, PY + '\n\n@pytest.mark.parametrize("a, b", [(1, 2)])\ndef test_p(a, b):\n    assert add(a, 0) == a\n')).toBe(false);
+    expect(testEditWeakens(PY, PY + "\n\nclass TestMore:\n    def test_x(self):\n        assert add(0, 0) == 0\n")).toBe(false);
+    expect(testEditWeakens(JS, JS + 'describe("more", () => {\n  test("x", () => {\n    expect(sum(0, 0)).toBe(0);\n  });\n});\n')).toBe(false);
+    expect(testEditWeakens(JS, JS + 'test("cb", () => {\n  const f = jest.fn();\n  f();\n  expect(f).toHaveBeenCalled();\n});\n')).toBe(false);
+  });
+  const PYS = "import pytest\nimport sut\n\n\ndef test_add():\n    assert sut.add(1, 2) == 3\n";
+  const JSS = 'import { test, expect } from "bun:test";\nimport * as sut from "./sum";\n\ntest("adds", () => {\n  expect(sut.add(1, 2)).toBe(3);\n});\n';
+  it("a write to a non-local target inside the body of an allowed block is weakened (rev-254 repros)", () => {
+    const cases: Array<[string, string]> = [
+      [PYS, PYS.replace("def test_add", "class TestX:\n    sut.add = lambda a, b: a + b\n\n\ndef test_add")],
+      [PYS, PYS + "\n\nclass TestY:\n    sut.add = lambda a, b: a + b\n"],
+      [JSS, JSS.replace('test("adds"', 'describe("x", () => {\n  sut.add = () => 3;\n});\ntest("adds"')],
+      [JSS, JSS + 'describe.each([1, 2])("x", (n) => {\n  sut.add = () => 3;\n});\n'],
+      [JSS, JSS.replace('test("adds"', 'test("first", () => {\n  Object.defineProperty(sut, "add", { value: () => 3 });\n});\ntest("adds"')],
+      [JSS, JSS.replace('test("adds"', 'test("first", () => {\n  Object.assign(sut, { add: () => 3 });\n});\ntest("adds"')],
+      [JSS, JSS.replace('test("adds"', 'test("first", () => {\n  Reflect.set(sut, "add", () => 3);\n});\ntest("adds"')],
+      [JSS, JSS.replace('test("adds"', 'test("first", () => {\n  Object.setPrototypeOf(sut, {});\n});\ntest("adds"')],
+      [PYS, PYS + '\n\ndef test_first():\n    setattr(sut, "add", lambda a, b: 3)\n'],
+      [PYS, PYS + '\n\ndef test_first():\n    delattr(sut, "add")\n'],
+      [PYS, PYS + "\n\nclass TestZ:\n    @pytest.fixture(scope=\"session\", autouse=True)\n    def f(self):\n        pass\n"],
+      [PYS, PYS + "\n\n@pytest.fixture(autouse=True)\ndef f():\n    pass\n"],
+      [PYS, PYS + "\n\ndef test_b():\n    import builtins\n    builtins.AssertionError = Exception\n"],
+      [JSS, JSS + 'test("g", () => {\n  globalThis.expect = () => ({ toBe() {} });\n});\n'],
+      [JSS, JSS + 'test("g", () => {\n  process.env.X = "1";\n});\n'],
+      [JSS, JSS + 'test("g", () => {\n  delete sut.add;\n});\n'],
+      [JSS, JSS + 'test("g", () => { sut.add = () => 3; });\n'],
+      [PYS, PYS + "\n\ndef test_g():\n    sut.add.__code__ = (lambda a, b: 3).__code__\n"],
+    ];
+    cases.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, true]));
+  });
+  it("conftest and global setup edits are weakened through testFileWeakened's shared-fixture rule", () => {
+    expect(testEditWeakens("import pytest\n", "import pytest\n\n\ndef helper():\n    return 1\n", { sharedFixture: true })).toBe(true);
+    expect(testEditWeakens("import pytest\n", "import pytest\nimport os\n", { sharedFixture: true })).toBe(false);
+  });
+  it("locals, helpers and legit openers stay unflagged (rev-254 false positives)", () => {
+    const ok: Array<[string, string]> = [
+      [JSS, JSS + 'test.concurrent("c", async () => {\n  const o = {};\n  o.x = 1;\n  expect(o.x).toBe(1);\n});\n'],
+      [JSS, JSS + 'test.each([[1, 2]])("e %i", (a, b) => {\n  expect(sut.add(a, 0)).toBe(a);\n});\n'],
+      [JSS, JSS + 'it.concurrent("c2", () => {\n  expect(sut.add(0, 0)).toBe(0);\n});\n'],
+      [PYS, PYS + "\n\n@pytest.mark.asyncio\nasync def test_async():\n    assert sut.add(0, 0) == 0\n"],
+      [PYS, PYS + "\n\nclass TestN:\n    def test_x(self):\n        self.v = 1\n        assert sut.add(self.v, 0) == 1\n"],
+      [PYS, PYS + "\n\ndef test_patched(monkeypatch):\n    monkeypatch.setenv('X', '1')\n    assert sut.add(0, 0) == 0\n"],
+      [JSS, JSS + 'test("local assign", () => {\n  let total = 0;\n  total += sut.add(1, 1);\n  expect(total).toBe(2);\n});\n'],
+    ];
+    ok.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, false]));
+  });
+  it("collection-time and non-test top-level code is weakened (rev-237 structural evasions)", () => {
+    const bad: Array<[string, string]> = [
+      [JSS, JSS + "const _x = sut.f = () => 2;\n"],
+      [JSS, JSS + "const _y = [sut.f = () => 2];\n"],
+      [JSS, JSS + 'const _z = Object["assign"](sut, {f:()=>2});\n'],
+      [JSS, JSS + "const _m = sut.cache.set(1,2);\n"],
+      [JSS, JSS + "const helper = (n) => {\n  const r = { n };\n  return r;\n};\n"],
+      [JSS, JSS + "const CASES = [[1, 2]];\n"],
+      [JSS, 'test("pre", () => {\n  sut.cache.set(1, 2);\n  expect(1).toBe(1);\n});\n' + JSS],
+      [PYS, PYS + "\n\nclass Helper:\n    vars(sut)['f'] = lambda x: 2\n"],
+      [PYS, PYS + "\n\nclass Helper:\n    sut.CONFIG.update(factor=0)\n"],
+      [PYS, PYS + "\n\n@pytest.mark.usefixtures(sut.CONFIG.clear())\ndef test_x():\n    assert sut.add(0, 0) == 0\n"],
+      [PYS, PYS + "\n\ndef helper(x):\n    return x\n"],
+      [PYS, PYS + "\n\n@pytest.fixture\ndef data():\n    return []\n"],
+      [PYS, PYS + "\n\nclass TestN:\n    sut.CONFIG.update(factor=0)\n\n    def test_x(self):\n        assert sut.add(0, 0) == 0\n"],
+      [PYS, PYS + "\n\ndef test_a():\n    assert sut.add(0, 0) == 0\n# (\nsetup_noop()\n# )\n"],
+      [PYS, PYS + "\n\n# (\nsut.CONFIG.update(factor=0)\n\ndef test_x():\n    assert sut.add(0, 0) == 0\n"],
+    ];
+    bad.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, true]));
+  });
+  it("collection-time arguments and base-affecting appends are weakened (rev-237 round 2)", () => {
+    const T = (body: string): string => `test("t", () => {\n  ${body}\n  expect(1).toBe(1);\n});\n`;
+    const DJ = 'import { test, expect, describe } from "bun:test";\nimport * as sut from "./sum";\n\ndescribe("g", () => {\n  test("a", () => {\n    expect(sut.add(1, 2)).toBe(3);\n  });\n});\n';
+    const SU = DJ.replace('describe("g"', 'suite("g"');
+    const PK = PYS.replace("def test_add():\n    assert sut.add(1, 2) == 3\n", "class Suite:\n    def test_add(self):\n        assert sut.add(1, 2) == 3\n");
+    const PC = PYS.replace("def test_add():\n    assert sut.add(1, 2) == 3\n", "class TestAdd:\n    def test_add(self):\n        assert sut.add(1, 2) == 3\n");
+    const bad: Array<[string, string]> = [
+      [JSS, JSS + 'test("n" + (sut.check = () => false), () => {\n  expect(1).toBe(1);\n});\n'],
+      [JSS, JSS + 'test("n" + sut.check(), () => {\n  expect(1).toBe(1);\n});\n'],
+      [JSS, JSS + 'test.each([[sut.rules.splice(0)]])("e", (a) => {\n  expect(1).toBe(1);\n});\n'],
+      [JSS, JSS + 'test("a", () => {}, sut.f());\n'],
+      [JSS, JSS + 'test("a", (x = sut.f()) => {});\n'],
+      [JSS, JSS + 'test("a", () => {\n  expect(1).toBe(1);\n}, sut.f(), () => {\n  expect(1).toBe(1);\n});\n'],
+      [JSS, JSS + 'test("a", () => {\n  const r = /{/.test("x"); }, sut.f(), () => { const q = /}/;\n  expect(1).toBe(1);\n});\n'],
+      [JSS, JSS + 'test.each([[sut.rules()]])("e", (a) => {\n  expect(1).toBe(1);\n});\n'],
+      [SU, SU.replace(/\}\);\n$/, '  test("b", () => {\n    expect(sut.add(0, 0)).toBe(0);\n  });\n});\n')],
+      [PK, PK + "\n    def test_zero(self):\n        assert sut.add(0, 0) == 0\n"],
+      [JSS, JSS + T("sut.cache.set(1, 2);")],
+      [JSS, JSS + T("sut.rules.splice(0);")],
+      [PYS, PYS + "\n\n@pytest.mark.order(1)\ndef test_x():\n    sut.RULES.clear()\n    assert sut.add(0, 0) == 0\n"],
+      [PYS, PYS + "\n\n@pytest.mark.xfail(reason='known')\ndef test_x():\n    assert sut.add(0, 0) == 0\n"],
+      [PYS, PYS + "\n\n@pytest.mark.first\ndef test_x():\n    assert sut.add(0, 0) == 0\n"],
+      [PYS, PYS + "\n\n@pytest.mark.run(order=1)\ndef test_x():\n    assert sut.add(0, 0) == 0\n"],
+      [PYS, PYS + "\n\n@pytest.mark.usefixtures('db')\ndef test_x():\n    assert sut.add(0, 0) == 0\n"],
+      [PYS, PYS + "\n\n@pytest.mark.parametrize('a', [sut.RULES.clear()])\ndef test_x(a):\n    assert sut.add(0, 0) == 0\n"],
+      [PYS, PYS + "\n\ndef test_x(a=sut.RULES.clear()):\n    assert sut.add(0, 0) == 0\n"],
+      [PYS, PYS + "\n\ndef test_x():\n    sut.RULES.clear()\n    assert sut.add(0, 0) == 0\n"],
+      [PC, PC + "    def setup_method(self):\n        self.v = 1\n"],
+      [PC, PC + "    def helper(self):\n        return 1\n"],
+      [DJ, DJ.replace("  });\n});\n", "  });\n  beforeEach(() => {});\n});\n")],
+      [DJ, DJ.replace(/\}\);\n$/, '  test("b", () => {\n    sut.cache.set(1, 2);\n  });\n});\n')],
+    ];
+    bad.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, true]));
+    const ok: Array<[string, string]> = [
+      [DJ, DJ.replace(/\}\);\n$/, '  test("b", () => {\n    expect(sut.add(0, 0)).toBe(0);\n  });\n});\n')],
+      [PC, PC + "\n    def test_zero(self):\n        assert sut.add(0, 0) == 0\n"],
+      [PYS, PYS + "\n\n@pytest.mark.parametrize('a', [1, 2])\ndef test_p(a):\n    assert sut.add(a, 0) == a\n"],
+      [JSS, JSS + 'test("t", () => {\n  expect(sut.add(0, 0)).toBe(0);\n}, 5000);\n'],
+      [JSS, JSS + 'test("t", () => expect(sut.add(0, 0)).toBe(0));\n'],
+      [JSS, JSS + 'test("t", () => {\n  expect(() => sut.add()).toThrow(/bad/);\n});\n'],
+    ];
+    ok.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, false]));
+  });
+  it("an owned mutable object handed to code that can mutate it, and a one-line describe, are weakened (rev-237 round 3)", () => {
+    const PYI = "import pytest\nfrom sut import RULES, add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n";
+    const JSI = 'import { test, expect } from "bun:test";\nimport { rules } from "./sum";\n\ntest("adds", () => {\n  expect(rules.length).toBe(1);\n});\n';
+    const PT = (body: string): string => `\n\ndef test_zz():\n    ${body}\n    assert 1 == 1\n`;
+    const bad: Array<[string, string]> = [
+      [JSS, JSS + 'describe("n", () => { [].push.call(sut.rules, (s: string) => s !== "bad"); });\n'],
+      [JSS, JSS + 'describe("n", () => { test["on"+"ly"]("x", () => { expect(1).toBe(1); }); });\n'],
+      [JSS, JSS + 'describe("n", () => { test("x", () => { expect(1).toBe(1); }); });\n'],
+      [JSI, JSI + 'test("z", () => {\n  rules.splice(0);\n  expect(1).toBe(1);\n});\n'],
+      [JSS, JSS + 'test("z", () => {\n  Array.prototype.push.call(sut.rules, 1);\n  expect(1).toBe(1);\n});\n'],
+      [JSS, JSS + 'test("z", () => {\n  const r = sut.rules;\n  r.length = 0;\n  expect(1).toBe(1);\n});\n'],
+      [PYS, PYS + PT('list.append(sut.RULES, lambda s: s != "bad")')],
+      [PYS, PYS + PT('list.clear(sut.RULES)')],
+      [PYS, PYS + PT('vars(sut).update({"RULES": []})')],
+      [PYS, PYS + PT('sut.CONFIG.__setitem__("a", 1)')],
+      [PYS, PYS + PT('r = sut.RULES\n    r.clear()')],
+      [PYS, PYS + PT('list.append(\n        sut.RULES,\n        1,\n    )')],
+      [PYI, PYI + PT('RULES.clear()')],
+      [PYI, PYI + PT('getattr(RULES, "clear")()')],
+      // r6: an owned value passed to an owned callee is a write; no owned-callee skip
+      [PYS, PYS + PT("sut.add(sut.ONE, 2)")],
+      [JSS, JSS + 'test("z", () => {\n  sut.add(sut.rules, 1);\n  expect(1).toBe(1);\n});\n'],
+    ];
+    bad.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, true]));
+    const ok: Array<[string, string]> = [
+      [PYS, PYS + "\n\ndef test_n():\n    assert len(sut.RULES) == 2\n    assert sorted(sut.RULES) == sut.RULES\n    assert sut.add(1, 2) == 3\n"],
+      [PYI, PYI + "\n\ndef test_n():\n    assert add(1, 1) == 2\n    assert len(RULES) == 0\n"],
+      [JSS, JSS + 'test("n", () => {\n  expect(sut.rules.length).toBe(2);\n  expect(sut.add(1, 1)).toBe(2);\n});\n'],
+      [JSS, JSS + 'describe("n", () => {\n  test("x", () => {\n    expect(sut.add(1, 1)).toBe(2);\n  });\n});\n'],
+    ];
+    ok.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, false]));
+  });
+  it("removing an import statement entirely is weakened; a block that merely starts like an import keyword is not exempt", () => {
+    expect(testEditWeakens(JS, JS.replace('import { sum } from "./sum";\n', ""))).toBe(true);
+    const CS = "using System;\nusing (var f = Open())\n{\n    Assert.Equal(1, f.Count);\n}\n";
+    expect(testEditWeakens(CS, CS.replace("    Assert.Equal(1, f.Count);\n", ""))).toBe(true);
+  });
+});
+
+describe("testEditWeakens taint class (FC-WEAKENED-TEST-TAINT-LEAK)", () => {
+  const JS = `import { sut, rules } from "./sut";\n\ntest("validates", () => {\n  expect(sut.check("bad")).toBe(false);\n});\n`;
+  const PY = `from app import sut\nfrom app.sut import RULES\n\n\ndef test_validates():\n    assert sut.check("bad") is False\n`;
+  const T = (body: string) => JS + `\ntest("zz", () => {\n  ${body}\n});\n`;
+  const Y = (body: string) => PY + `\n\ndef test_zz():\n    ${body}\n`;
+  it("flags a write reaching an owned object through a derived value", () => {
+    const bad: Array<[string, string]> = [
+      [JS, T('sut.rules.forEach((r, i, a) => { a[i] = (s) => s !== "bad"; });')],
+      [JS, T('require("./sut").sut.rules.push((s) => s !== "bad");')],
+      [JS, T('import("./sut").then((m) => m.sut.rules.push((s) => s !== "bad"));')],
+      [PY, Y("for r in RULES:\n        r.enabled = False")],
+      [PY, Y('sut.CONFIG.get("rules").clear()')],
+      [PY, Y('globals()["sut"].check = lambda s: False')],
+      [PY, Y('sut.get_rules().append(lambda s: s != "bad")')],
+      [PY, Y("RULES.__init__([])")],
+    ];
+    bad.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, true]));
+  });
+  it("a mutator referenced as a value is a write (bound, mapped, filtered, partial)", () => {
+    const bad: Array<[string, string]> = [
+      [PY, Y("list(map(sut.RULES.__init__, [[lambda s: s != 'bad']]))")],
+      [PY, Y("import functools\n    functools.partial(sut.RULES.append, lambda s: s != 'bad')()")],
+      [PY, Y("list(filter(sut.RULES.append, [lambda s: s != 'bad']))")],
+      [PY, Y("list(map(sut.RULES.append, [lambda s: s != 'bad']))")],
+      [JS, T('const p = sut.rules.push.bind(sut.rules); p((s) => s !== "bad");')],
+      [JS, T('[[(s) => s !== "bad"]].map(sut.rules.push, sut.rules);')],
+      [PY, Y("len(sut.RULES.append)")],
+      [PY, Y("list(map(list.clear, [sut.RULES]))")],
+      [PY, Y("list(filter(list.pop, [sut.RULES]))")],
+    ];
+    bad.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, true]));
+  });
+  it("a $-prefixed owned identifier is matched literally (escapeRe pin)", () => {
+    const base = 'import { $sut } from "./sut";\n\ntest("v", () => {\n  expect($sut.check("bad")).toBe(false);\n});\n';
+    expect(testEditWeakens(base, base + 'test("zz", () => {\n  [[(s) => s !== "bad"]].map($sut.rules.push, $sut.rules);\n});\n')).toBe(true);
+  });
+  it("an analyzer crash surfaces as AnalyzerError, never a bare throw or a verdict (rethrow pin)", () => {
+    expect(() => testEditWeakens(null as unknown as string, "x")).toThrow(AnalyzerError);
+    try { testEditWeakens(null as unknown as string, "x"); } catch (e) { expect((e as Error).message.startsWith("analyzer_error:")).toBe(true); }
+  });
+  it("monkeypatch and mocker receivers are auto-undone, so they are not weakening", () => {
+    expect(testEditWeakens(PY, Y('monkeypatch.setattr(sut, "check", lambda s: True)'))).toBe(false);
+    expect(testEditWeakens(PY, Y('mocker.patch.object(sut, "check", return_value=True)'))).toBe(false);
+  });
+  it("an analyzer throw is an explicit analyzer_error, not a weakened verdict", () => {
+    const err = new AnalyzerError(new Error("boom"));
+    expect(err.message).toBe("analyzer_error: boom");
+    expect(err).toBeInstanceOf(Error);
+  });
+  it("module specifiers with regex specials in the new imports do not crash the analyzer", () => {
+    const base = 'import { a } from "./sut";\n\ntest("x", () => {\n  expect(a(1)).toBe(1);\n});\n';
+    const head = base.replace('import { a } from "./sut";', 'import { a } from "./sut";\nimport z from "@scope/pkg+x(1)";\nimport q from "../lib[0]/m.js";') + 'test("y", () => {\n  expect(a(2)).toBe(2);\n});\n';
+    expect(testEditWeakens(base, head)).toBe(false);
+  });
+  it("testFileWeakened stays fail-safe on an unreadable path", () => {
+    expect(testFileWeakened("/nonexistent-repo-dir", "HEAD", null, "x.test.ts")).toBe(true);
+  });
+});
+
+describe("testEditWeakens fail-safe owned arguments (FC-WEAKENED-TEST-TAINT-LEAK r6)", () => {
+  const JS = `import { sut, rules } from "./sut";\n\ntest("validates", () => {\n  expect(sut.check("bad")).toBe(false);\n});\n`;
+  const PY = `from app import sut\nfrom app.sut import RULES\n\n\ndef test_validates():\n    assert sut.check("bad") is False\n`;
+  const T = (body: string) => JS + `\ntest("zz", () => {\n  ${body}\n});\n`;
+  const Y = (body: string) => PY + `\n\ndef test_zz():\n    ${body}\n`;
+  it("an owned argument to any call outside the pure allowlist is a write, whatever the callee or an in-body import says", () => {
+    const bad: Array<[string, string]> = [
+      [PY, Y('import operator\n    operator.iadd(sut.RULES, [lambda s: s != "bad"])')],
+      [PY.replace("from app import sut", "import operator\nfrom app import sut"), Y("operator.iadd(sut.RULES, [1])")],
+      [PY, Y("from operator import iadd\n    iadd(sut.RULES, [1])")],
+      [PY, Y("import heapq\n    heapq.heappop(sut.RULES)")],
+      [PY, Y("import random\n    random.shuffle(sut.RULES)")],
+      [PY, Y("from operator import iadd as len\n    len(sut.RULES, [1])")],
+      [PY, Y("sut.apply(sut.RULES)")],
+      [JS, T("sut.apply(sut.rules);")],
+      [JS, T("Reflect.apply(Array.prototype.pop, sut.rules, []);")],
+    ];
+    for (const [a, b] of bad) expect(testEditWeakens(a, b)).toBe(true);
+  });
+  it("++ and -- on an owned chain, and a call through a computed bracket key, are writes", () => {
+    const bad = [
+      "sut.count++;", "sut.rules.length--;", "--sut.rules.length;", "++sut.count;",
+      'const k = "spl" + "ice"; sut.rules[k](1);', 'sut.rules["splice"](1);', "sut.rules[k].call(sut.rules, 1);",
+    ];
+    for (const b of bad) expect(testEditWeakens(JS, T(b))).toBe(true);
+  });
+  it("a line starting with -- or ; is code, not a comment", () => {
+    expect(testEditWeakens(JS, JS + 'test("zz", () => {\n  --sut.rules.length;\n});\n')).toBe(true);
+    expect(testEditWeakens(JS, JS + 'test("zz", () => {\n  ;sut.rules.length--;\n});\n')).toBe(true);
+  });
+  it("the pure allowlist still passes read-only use of owned values", () => {
+    expect(testEditWeakens(PY, Y("assert len(sut.RULES) == 1\n    assert isinstance(sut.RULES, list)"))).toBe(false);
+    expect(testEditWeakens(JS, T("expect(sut.rules).toEqual(sut.rules);"))).toBe(false);
+    expect(testEditWeakens(JS, T('expect(Object.keys(sut)).toContain("check");'))).toBe(false);
+  });
+});
+
+describe("testEditWeakens pure allowlist is trusted only for names the file never binds (FC-WEAKENED-TEST-IMPORT-WIDENING r7)", () => {
+  const JS = `import { sut, rules } from "./sut";\n\ntest("validates", () => {\n  expect(sut.check("bad")).toBe(false);\n});\n`;
+  const PY = `from app import sut\nfrom app.sut import RULES\n\n\ndef test_validates():\n    assert sut.check("bad") is False\n`;
+  const T = (body: string) => JS + `\ntest("zz", () => {\n  ${body}\n});\n`;
+  const Y = (body: string) => PY + `\n\ndef test_zz():\n    ${body}\n`;
+  it("a local rebinding of an allowlisted name keeps the call a write", () => {
+    const bad: Array<[string, string]> = [
+      [PY, Y('sorted = lambda r: r.append(lambda s: s != "bad")\n    sorted(sut.RULES)')],
+      [PY, PY + '\n\ndef sorted(r):\n    r.clear()\n\n\ndef test_zz():\n    sorted(sut.RULES)\n'],
+      [PY, Y('def print(r):\n        r.append(lambda s: s != "bad")\n    print(sut.RULES)')],
+      [PY, "from helpers import len\n" + Y("len(sut.RULES)")],
+      [PY, PY + "\n\ndef test_zz(sorted):\n    sorted(sut.RULES)\n"],
+      [PY, Y("for sorted in [sut.RULES.clear]:\n        sorted()\n    sorted(sut.RULES)")],
+      [PY, Y("(sorted := (lambda r: r.clear()))\n    sorted(sut.RULES)")],
+      [JS, T("const from = (r: any) => r.splice(0); from(sut.rules);")],
+      [JS, T("const { len } = helpers; len(sut.rules);")],
+      [JS, T("function keys(r: any) { r.length = 0; }\n  keys(sut.rules);")],
+      [JS, T("const h = { toReset: (r: any) => r.splice(0) }; h.toReset(sut.rules);")],
+      [JS, T("const assertClean = { assertOk: (r: any) => r.splice(0) }; assertClean.assertOk(sut.rules);")],
+    ];
+    bad.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, true]));
+  });
+  it("a matcher is pure only on an expect() or assert receiver; unrebound builtins and runner imports stay pure", () => {
+    const ok: Array<[string, string]> = [
+      [PY, Y("assert len(sut.RULES) == 1\n    assert sorted(sut.RULES) == sut.RULES")],
+      [JS, T("expect(sut.rules.length).toBe(1);\n  expect(sorted(sut.rules)).not.toEqual([]);".replace("sorted(sut.rules)", "sut.rules.length"))],
+      [`import { expect, test } from "bun:test";\n` + JS, `import { expect, test } from "bun:test";\n` + T("expect(sut.rules.length).toBe(1);")],
+      [PY, "import pytest\n" + Y("with pytest.raises(ValueError):\n        sut.check(None)")],
+    ];
+    ok.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, false]));
+  });
+});
+
+describe("testEditWeakens python import and fixture laundering (FC-WEAKENED-TEST-IMPORT-WIDENING r8)", () => {
+  const PY = `from app import sut\nfrom app.sut import RULES\n\n\ndef test_validates():\n    assert sut.check("bad") is False\n`;
+  const Y = (body: string, base = PY) => base + `\n\ndef test_zz():\n    ${body}\n`;
+  it("an import that can rebind a pure name turns pure-callee trust off", () => {
+    const bad: Array<[string, string]> = [
+      [PY, "from helpers import *\n" + Y("assert sorted(sut.RULES)")],
+      [PY, "import helpers.patch\n" + Y("assert sorted(sut.RULES)")],
+      ["import helpers.patch\n" + PY, "import helpers.patch\n" + Y("assert sorted(sut.RULES)", "import helpers.patch\n" + PY)],
+      [PY, "import builtins\n" + Y("assert sorted(sut.RULES)")],
+      [PY, "import importlib\n" + Y("assert sorted(sut.RULES)")],
+      [PY, Y("__import__('helpers.patch')\n    assert sorted(sut.RULES)")],
+    ];
+    bad.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, true]));
+  });
+  it("stdlib, runner and owned-SUT imports keep pure-callee trust", () => {
+    const ok: Array<[string, string]> = [
+      [PY, "import os\nimport re\n" + Y("assert sorted(sut.RULES, key=id) is not None")],
+      [PY, "import pytest\n" + Y("assert len(sut.RULES) == 1")],
+      [PY, Y("assert sorted(sut.RULES, key=id) is not None")],
+    ];
+    ok.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, false]));
+  });
+  it("an added test that takes a fixture, usefixtures, indirect or getfixturevalue is weakened", () => {
+    const bad: Array<[string, string]> = [
+      [PY, PY + "\n\ndef test_zz(laundry):\n    assert sut.check('x')\n"],
+      [PY, PY + "\n\nclass TestZ:\n    def test_zz(self, laundry):\n        assert sut.check('x')\n"],
+      [PY, PY + "\n\n@pytest.mark.usefixtures('laundry')\ndef test_zz():\n    assert sut.check('x')\n"],
+      [PY, "pytestmark = pytest.mark.usefixtures('laundry')\n" + PY],
+      [PY, PY + "\n\ndef test_zz(request):\n    request.getfixturevalue('laundry')\n    assert sut.check('x')\n"],
+      [PY, PY + "\n\n@pytest.mark.parametrize('laundry', [1], indirect=True)\ndef test_zz(laundry):\n    assert sut.check('x')\n"],
+    ];
+    bad.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, true]));
+  });
+  it("builtin pytest fixtures and parametrize names stay unflagged", () => {
+    const ok: Array<[string, string]> = [
+      [PY, PY + "\n\ndef test_zz(monkeypatch):\n    assert sut.check('x') is False\n"],
+      [PY, PY + "\n\ndef test_zz(tmp_path, capsys):\n    assert sut.check('x') is False\n"],
+      [PY, PY + "\n\n@pytest.mark.parametrize('v', [1, 2])\ndef test_zz(v):\n    assert sut.check(v) is False\n"],
+    ];
+    ok.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, false]));
+  });
+});
+
+describe("testEditWeakens ten reviewer-reported weakening edits are all flagged (FC-WEAKENED-TEST-IMPORT-WIDENING r8)", () => {
+  const js = `import { sut } from "./sut";\n\ntest("validates", () => {\n  const r = sut.check("bad");\n  expect(r).toEqual(false);\n  expect(sut.rules.length).toBe(2);\n});\n`;
+  const py = `from app import sut\n\n\ndef test_validates():\n    result = sut.check("bad")\n    assert result == 3\n    assert sut.ok\n`;
+  const go = `package sut\n\nimport "testing"\n\nfunc TestValidates(t *testing.T) {\n\tr := Check("bad")\n\tif r != 3 {\n\t\tt.Fatalf("bad %v", r)\n\t}\n}\n`;
+  const sh = `#!/bin/sh\n. ./helpers.sh\n\ntest_validates() {\n  r=$(check bad)\n  [ "$r" = 3 ] || fail "bad"\n}\n`;
+  it("flags return, try/catch, matcher weakening, shadowed expect, env-gated return, self-compare and redefined fail", () => {
+    const bad: Array<[string, string]> = [
+      [js, js.replace("  expect(r)", "  return;\n  expect(r)")],
+      [js, js.replace("  expect(r).toEqual(false);\n  expect(sut.rules.length).toBe(2);", "  try {\n  expect(r).toEqual(false);\n  expect(sut.rules.length).toBe(2);\n  } catch (e) {}")],
+      [js, js.replace("toEqual(false)", "toBeDefined()")],
+      [js, js.replace("  const r =", "  const expect = (..._: any[]) => ({ toBe() {}, toEqual() {} });\n  const r =")],
+      [js, js.replace("  expect(r)", "  if (process.env.CI) return;\n  expect(r)")],
+      [py, py.replace("result == 3", "result == result")],
+      [py, py.replace("    assert result == 3", "    return\n    assert result == 3")],
+      [py, py.replace("    assert result == 3\n    assert sut.ok\n", "    try:\n        assert result == 3\n        assert sut.ok\n    except AssertionError:\n        pass\n")],
+      [go, go.replace("\tif r != 3", "\treturn\n\tif r != 3")],
+      [sh, sh.replace("test_validates() {", "fail() { :; }\ntest_validates() {")],
+    ];
+    bad.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, true]));
   });
 });
