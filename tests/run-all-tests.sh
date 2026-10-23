@@ -1543,6 +1543,7 @@ run_test "release.sh --bump-only never leaves dist deleted on build failure (E-1
 run_test "release.sh --bump-only refuses dist maps with absolute or repo-escaping sources (E-133)" "$SCRIPT_DIR/test-release-dist-guard.sh"
 run_test "web-app python modules ship in the npm package and Docker image by glob (132-E2)" "$SCRIPT_DIR/test-webapp-modules-packaged.sh"
 run_test "release publishes npm latest and next at once (D102)" "python3 -m pytest -q $SCRIPT_DIR/test_release_next_tag.py"
+run_test "npm-dist-tags.sh never moves a tag backwards and restores an overtaken one (FC-DIST-TAG-MOVED-BACKWARDS)" "$SCRIPT_DIR/test-npm-dist-tags.sh"
 run_test "release-notes.sh extraction/validation + pre-push VERSION-bump gate (E-88)" "$SCRIPT_DIR/test-release-notes.sh"
 run_test "no hardcoded far-future latest a release can overtake (E-73)" "$SCRIPT_DIR/test-no-stale-future-version.sh"
 run_test "timeout launches of run.sh/autonomy/loki escalate with -k (E-00)" "$SCRIPT_DIR/test-timeout-escalates.sh"
