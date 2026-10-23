@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.72.5 (2026-10-23)
+
+### Changed
+- RQ-104: upgrade @anthropic-ai/sdk to 1.2.0 and claude-agent-sdk to 0.3.309, pinned exactly in package.json, loki-ts/package.json, the lockfiles, docker/Dockerfile and tests/test-sdk-version-sync.sh, with the capability matrix in docs/dev/architecture-reference.md corrected per HIGH review (structured_output reader, cache diagnostics, API version not proven, missing agent-sdk rows) and the package-lock.json top-level version kept at main's value. Approval: "APPROVE pd/rq104 06851c7404695ea470b70f9835754e7b96eefcef" (rev-b, HIGH). Commits 509203015 (deps), e18a1f0a6 (docs(arch)) and 06851c740 (deps). Shipped as a no-ff merge of the approved head because a plain cherry-pick of the three commits conflicts in docker/Dockerfile.
+
 ## v11.72.4 (2026-10-23)
 
 ### Fixed
