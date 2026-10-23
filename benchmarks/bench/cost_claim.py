@@ -22,7 +22,11 @@ import argparse
 import json
 import math
 import random
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bench_schema as _schema  # noqa: E402
 
 MIN_N_PER_TASK = 3
 BOOTSTRAP_ITERS = 2000
@@ -147,6 +151,7 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
     reasons, ...}. cost_profile is the loki arm's profile (lean, default, off),
     "mixed" when the arm mixes or partly lacks it, null when no row names one."""
     reasons = []
+    loki_rows, floor_rows = _schema.without_retired(list(loki_rows)), _schema.without_retired(list(floor_rows))  # a retired task never feeds a claim
     unmeasured = sum(1 for r in list(loki_rows) + list(floor_rows)
                      if r.get("unmeasured"))
     loki = [r for r in loki_rows if not r.get("unmeasured")]

@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "id": "fd-2b-two-module-untested",
+  "source": "loki-bench-discriminator",
+  "source_ref": "benchmarks/bench/tasks/fd-2b-two-module-untested.json",
+  "title": "Add one function to each of two modules, only one has tests",
+  "fixture": "../fixtures/fd-2b-two-module-untested",
+  "prompt": "The workspace has two small modules, `strutil.py` (with tests in `tests/test_strutil.py`) and `fmtutil.py` (no tests). Add one function to EACH module. Both must be correct for the task to be complete.\n\n## strutil.py\n\n    def truncate(s: str, n: int) -> str\n\nReturn `s` unchanged when `len(s) <= n`. Otherwise return the first `n - 3` characters of `s` followed by `...`, so the result is exactly `n` characters long. Raise `ValueError` when `n < 3`.\n\n## fmtutil.py\n\n    def pad_center(s: str, width: int, fill: str = \" \") -> str\n\nCenter `s` in a field of `width` characters using `fill`. When the padding is odd, the extra character goes on the RIGHT. When `len(s) >= width`, return `s` unchanged. Raise `ValueError` when `fill` is not exactly one character.\n\nExamples: `truncate(\"abcdefgh\", 6) == \"abc...\"`, `pad_center(\"ab\", 5, \"*\") == \"*ab**\"`.\n\nDo not change the existing functions or the existing tests' behavior.",
+  "acceptance": {
+    "cmd": "python3 check_acceptance.py",
+    "timeout_s": 60,
+    "overlay": "../fixtures/fd-2b-two-module-untested-overlay"
+  },
+  "default_model": "claude-sonnet-5",
+  "agent_timeout_s": 900
+}
