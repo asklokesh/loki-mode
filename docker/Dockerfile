@@ -180,7 +180,11 @@ COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/ui/dist ./pac
 # Default-off, so a base image without LOKI_SDK_LOOP never loads it; installing it
 # just makes the opt-in path work in the shipped image (the raw judge SDK is
 # already bundled and needs nothing here).
-RUN cd loki-ts && npm install --no-save --no-package-lock @anthropic-ai/claude-agent-sdk@0.3.293 \
+# @anthropic-ai/sdk is pinned to the loki-ts/package.json version because npm
+# auto-installs the agent SDK's open-ended peer (>=0.93.0) at the newest release;
+# an upstream publish whose tarball had not propagated yet 404'd this step.
+RUN cd loki-ts && npm install --no-save --no-package-lock @anthropic-ai/claude-agent-sdk@0.3.309 \
+    @anthropic-ai/sdk@1.2.0 \
     && chown -R loki:loki node_modules
 
 # Install dashboard, web-app, and MCP server Python dependencies.

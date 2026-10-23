@@ -84,6 +84,26 @@ Observability: SDK failures emit a structured `capability_degraded` record to
 `.loki/events.jsonl`; `.loki/app-runner/first-preview.json` records
 time-to-first-preview write-once (bash route only).
 
+## Anthropic SDK upgrade capability matrix (RQ-104, 2026-10-23)
+
+Pins (exact, all sites): `@anthropic-ai/sdk` 0.124.0 -> 1.2.0 (loki-ts/package.json, loki-ts/bun.lock, docker/Dockerfile peer pin); `@anthropic-ai/claude-agent-sdk` 0.3.293 -> 0.3.309 (loki-ts/package.json, package.json, package-lock.json, bun.lock, docker/Dockerfile). `tests/test-sdk-version-sync.sh` asserts both. Sources: sdk CHANGELOG 0.125.0..1.2.0, agent-sdk CHANGELOG 0.3.294..0.3.309.
+
+| Change | Status |
+|---|---|
+| sdk 1.0.0 BREAKING "new API version 2026-10-21" | WIRED: loki-ts/src/runner/sdk_invoker.ts:19,311 (messages.create, output_config) compiles unchanged under tsc rc=0 and sdk_invoker tests pass; no code change needed |
+| sdk 0.129.0 `claude-sonnet-5-5`, 0.128.0 `claude-opus-5-5`, 0.132.0 `claude-haiku-5-5` model ids | WIRED: model ids are passed through as strings by sdk_invoker.ts; no allowlist to change |
+| sdk 0.135.0 `speed` param and `usage.speed` | NOT ADOPTED: the cost ledger (util/child_ledger.ts:54) has no fast-mode price table; adopting speed without pricing would misreport cost |
+| sdk 0.134.0 native OpenTelemetry tracing (auto-on with a global tracer provider) | NOT ADOPTED: Loki registers no global tracer provider, so the SDK stays inert; no opt-in needed |
+| sdk 0.126.0 compaction param, 0.127.0 `compactBeforeNextTurn()`, 0.129.0 tool-call-while-streaming, tool runner fixes (0.128.0, 1.2.0) | NOT ADOPTED: sdk_invoker is a one-shot messages.create judge, not a tool runner or multi-turn loop |
+| sdk 0.129.0 cache diagnostics on Message, 0.129.0 `between_tools` thinking | NOT ADOPTED: judge path clamps thinking by effort (sdk_invoker.ts clampThinkingForEffort); between_tools is not offered to judges |
+| sdk 0.135.0/0.136.0 streaming fixes (unread stream close, unknown SSE events) | NOT ADOPTED: sdk_invoker does not stream |
+| sdk 0.130.0-1.2.0 Admin API (analytics, spend limits, RBAC, plugins, webhooks, message threads, usage/cost reports), Managed Agents additions | NOT ADOPTED: no Loki feature calls these APIs |
+| agent-sdk 0.3.302 refused structured output now an error with no payload | WIRED: no Loki code reads `structured_output` (grep of loki-ts/src returns none); refusals already handled by sdk_stream_parser.ts refusal frames |
+| agent-sdk 0.3.300 `thinking: disabled` runs adaptive on models that cannot disable | NOT ADOPTED: providers.ts:846 query() options pass no thinking setting |
+| agent-sdk 0.3.302 fork subagents on by default in SDK sessions | NOT ADOPTED: accepted default; `CLAUDE_CODE_FORK_SUBAGENT=0` is the opt-out if a run must disable it |
+| agent-sdk 0.3.301 `BUILTIN_TOOL_NAMES`, sdk MCP `permission_policy`; 0.3.304 `suspendSseStream` (browser); 0.3.296 `autoCompactWindow`; 0.3.307 `wakeup_source`; 0.3.305 `startup()` timeout fix | NOT ADOPTED: no existing Loki feature maps to these options |
+| agent-sdk 0.3.309 `extractFromBunfs()` per-user temp dir | NOT ADOPTED: Loki does not run the SDK from a Bun-compiled binary |
+
 ## Phase 1 / RARV-C Closure Env Vars
 
 Default-on in the Bun runner (see `CHANGELOG.md` v7.x entries; documented in `skills/quality-gates.md:88-110`). Set to `0` to disable; set to `1` to force-enable on the bash route.
