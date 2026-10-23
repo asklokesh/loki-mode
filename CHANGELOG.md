@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.63.1 (2026-10-23)
+
+
+
+### Fixed
+- The Bun route clears the previous run's proof pointer at run start (rq25; FC-PROOF-POINTER-STALE). Approval: "APPROVE pd/rq25 66de3ec0b (tl-2, MEDIUM), ships after race-impl-hang e59771e33". CoS ruled it independent of race-impl-hang (separate files), so it ships on its own.
+
 ## v11.63.0 (2026-10-23)
 
 
