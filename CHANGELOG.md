@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.63.5 (2026-10-23)
+
+### Fixed
+- The alias-forwarding test reads the full grouped help from loki help all and tracks its 32 entries (FC-TEST-ALIAS-FWD-HELP-PAGE-DRIFT). Approval: "APPROVE pd/alias-help-groups2 a1dcdf113 stacked on pd/rq53-alias-spawns 8c97e1ab1 (tl-2, LOW): 211/0 on bash and bun routes, 154 spawns; repoint-to-plain-help mutant red (202/9) and restored; only conflict is docs/v10/FAILURE-CLASSES.md (keep-both; both rows append at EOF); ships after rq53."
+
 ## v11.63.4 (2026-10-23)
 
 ### Fixed
