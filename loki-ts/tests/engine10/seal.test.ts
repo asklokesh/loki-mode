@@ -463,9 +463,14 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.task.source).toBe("issue");
     expect(r.not_proven).toContain("not run: ruff");
     expect(r.not_proven).toContain("tests ran on the system interpreter");
-    for (const n of ["repo not recorded by intake", "resume state not recorded by intake", "wall result not recorded by verify",
+    for (const n of ["repo identity unknown: no origin remote; run git remote add origin <url>", "resume state not recorded by intake", "wall result not recorded by verify",
       "cost not measured (no iteration ids recorded)"]) expect(r.not_proven).toContain(n);
+    expect(r.not_proven).not.toContain("repo not recorded by intake");
     expect(r.verdict).toBe("PARTIAL");
+    const noIntake = ctxFor(repo, base, "claude", { intake: undefined as unknown as Record<string, unknown> });
+    const ni = receiptOf(await sealStage.run(noIntake.ctx, new AbortController().signal)).not_proven;
+    expect(ni).toContain("repo not recorded by intake"); // no intake record at all: the origin was never read
+    expect(ni).not.toContain("repo identity unknown: no origin remote; run git remote add origin <url>");
     const noSrc = ctxFor(repo, base, "claude", { intake: { task_sha256: "ab".repeat(32) } });
     expect(receiptOf(await sealStage.run(noSrc.ctx, new AbortController().signal)).not_proven).toContain("task source not recorded by intake");
   }, 30000);

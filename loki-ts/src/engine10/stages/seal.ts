@@ -233,7 +233,8 @@ export const sealStage: Stage = {
     // Keys below are outside the section 4 table: absent means NOT PROVEN, never a default claim.
     const repo = str(o.intake?.repo);
     if (mp?.outcome === "no") notProven.add(`Wall tests passed without the fix (mutation proof)${verdict !== verdict2 ? "; verdict downgraded to PARTIAL (LOKI_MUTATION_STRICT=1, declared behavior change)" : ""}`);
-    if (repo === null) notProven.add("repo not recorded by intake");
+    // intake ran and found no origin remote, versus no intake record at all
+    if (repo === null) notProven.add(o.intake ? "repo identity unknown: no origin remote; run git remote add origin <url>" : "repo not recorded by intake");
     if (typeof o.intake?.resumed !== "boolean") notProven.add("resume state not recorded by intake");
 
     const stages: Partial<Record<StageName, number>> = {};
