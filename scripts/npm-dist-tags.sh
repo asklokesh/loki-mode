@@ -19,15 +19,16 @@
 # is written until that document returns 200.
 #
 # Usage: npm-dist-tags.sh <version>
-# Env: LOKI_DISTTAG_PKG (default loki-mode; loki-mode-sdk for the SDK), LOKI_DISTTAG_TRIES (default 8),
-#   LOKI_DISTTAG_SLEEP seconds (default 15), LOKI_DISTTAG_MATERIALIZE_S wait for the version document (default 420)
+# Env: LOKI_DISTTAG_PKG (default loki-mode; loki-mode-sdk for the SDK), LOKI_DISTTAG_SETTLE_S (read window, default 840),
+#   LOKI_DISTTAG_TRIES (default SETTLE_S / SLEEP + 1), LOKI_DISTTAG_SLEEP seconds (default 15), LOKI_DISTTAG_MATERIALIZE_S wait for the version document (default 420)
 set -uo pipefail
 
 VERSION="${1:-}"
 [ -n "$VERSION" ] || { echo "usage: npm-dist-tags.sh <version>" >&2; exit 1; }
 PKG="${LOKI_DISTTAG_PKG:-loki-mode}"
-TRIES="${LOKI_DISTTAG_TRIES:-8}"
+SETTLE_S="${LOKI_DISTTAG_SETTLE_S:-840}"
 NAP="${LOKI_DISTTAG_SLEEP:-15}"
+TRIES="${LOKI_DISTTAG_TRIES:-$((SETTLE_S / (NAP > 0 ? NAP : 1) + 1))}"
 MATERIALIZE_S="${LOKI_DISTTAG_MATERIALIZE_S:-420}"
 REGISTRY="${LOKI_DISTTAG_REGISTRY:-https://registry.npmjs.org}"
 
@@ -72,6 +73,15 @@ until version_materialized; do
     sleep "$NAP"
 done
 
+# Each tag write applies on its own with a lag of minutes (measured 2026-10-23: next
+# read 11.60.8 while latest still read 11.60.7, nine minutes after both writes were
+# accepted). A tag is therefore written once, then only read until it moves; it is
+# written again only when it changed to something other than the value read just
+# before our write (an overtaking write), or when the write itself was rejected.
+# The window is bounded by TRIES (default SETTLE_S / NAP); a tag still below the
+# target after it exits non-zero.
+W_next=""
+W_latest=""
 i=0
 while [ "$i" -lt "$TRIES" ]; do
     i=$((i + 1))
@@ -94,12 +104,21 @@ while [ "$i" -lt "$TRIES" ]; do
             sleep "$NAP"
             continue 2
         fi
+        case "$tag" in next) prev="$W_next" ;; *) prev="$W_latest" ;; esac
+        if [ -n "$prev" ] && [ "$cur" = "$prev" ]; then
+            echo "waiting: $tag still '${cur}' after an accepted write of $TARGET"
+            continue
+        fi
         if [ "$TARGET" != "$VERSION" ]; then
             echo "SKIP: $VERSION is lower than $TARGET; re-asserting $tag=$TARGET (was '${cur}')"
         fi
-        npm dist-tag add "$PKG@$TARGET" "$tag" || echo "dist-tag add $tag failed (try $i)"
+        if npm dist-tag add "$PKG@$TARGET" "$tag"; then
+            case "$tag" in next) W_next="$cur" ;; *) W_latest="$cur" ;; esac
+        else
+            echo "dist-tag add $tag failed (try $i)"
+        fi
     done
-    # Re-read after the writes; settled only when both tags read the target.
+    # Settled only when both tags read the target.
     if [ "$(tag_of latest)" = "$TARGET" ] && [ "$(tag_of next)" = "$TARGET" ]; then
         # A late-applied lower write can land after this read, so confirm once more.
         sleep "$NAP"
@@ -112,5 +131,5 @@ while [ "$i" -lt "$TRIES" ]; do
         sleep "$NAP"
     fi
 done
-echo "::error::dist-tags did not settle on the highest version after $TRIES tries"
+echo "::error::dist-tags did not settle on the highest version within ${SETTLE_S}s ($TRIES reads)"
 exit 1
