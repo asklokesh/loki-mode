@@ -68,6 +68,12 @@ describe("A-113b fatal classification through the CLI invoker", () => {
       expect(run({ STUB_OUT: text, STUB_EXIT: "1" }).json.stop ?? "").not.toMatch(/^fatal/);
     }, 120_000);
   }
+  test("FC-FAILED-RUN-LEAVES-EMPTY-BRANCH-CHECKED-OUT: a failed run returns to main and leaves no empty loki/ branch", () => {
+    const r = run({ STUB_ERR: "Invalid API key. API key is invalid", STUB_EXIT: "1" });
+    const gt = (...a: string[]) => Bun.spawnSync(["git", ...a], { cwd: r.repo }).stdout.toString().trim();
+    expect(gt("branch", "--show-current")).toBe("main");
+    expect(gt("branch", "--list", "loki/*")).toBe("");
+  }, 120_000);
   test("a .stderr file the agent plants is overwritten, never classified (forgery guard)", () => {
     expect(run({ STUB_PLANT: "Your credit balance is too low", STUB_EXIT: "1" }).json.stop ?? "").not.toMatch(/^fatal/);
   }, 120_000);

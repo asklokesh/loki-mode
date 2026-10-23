@@ -2,7 +2,7 @@
 // spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal)
 // id; post-PR: detached deep verify, then Slack notify.
 import { routeStartLine } from "../runner/router/route_block.ts";
-import { execFileSync, spawn, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
+import { execFileSync, spawn, spawnSync } from "node:child_process"; import { currentBranch, restoreAfterRun, restoreBranch } from "../e10ext/stop_restore.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
 import { redactEventData } from "../util/redact.ts"; import { localBranchNote, resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
 import { terminalWidth } from "../util/term_width.ts";
@@ -228,6 +228,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     pc = partialCost(allEvents, log.tampered),
     summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, outcome, notProven, flaky: recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "flaky", folded.stages["verify"]?.data.flaky, cleanTreeId(opts.repoDir)), wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: summaryTokens(folded, allEvents.some((e) => e.type === "cost")), partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total, stageShares: log.tampered ? null : stageShareText(allEvents), capUsd: Number(opts.started?.["max_cost_usd"]) > 0 ? Number(opts.started?.["max_cost_usd"]) : undefined } };
   await slackEvent(env, "finished", { summary: formatSummary(summary), outcome: String(outcome), cost: summary.cost.usd != null ? `$${summary.cost.usd.toFixed(2)}` : "not measured", time: `${Math.round(wallS)}s`, receipt: log.tampered ? "TAMPERED" : receiptVerdict ? verdict : undefined }); rmRunPid(); process.off("exit", rmRunPid); // D51-A4, replaces E-48 adapters/slack.ts call
+  { const ib = allEvents.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha; restoreAfterRun(opts.repoDir, origBranch, `loki/${opts.runId}`, typeof ib === "string" ? ib : null, verdict === "FAILED" || outcome === "CANCELLED"); } // FC-FAILED-RUN-LEAVES-EMPTY-BRANCH-CHECKED-OUT
   return { verdict, outcome, stop: stop ?? (receiptVerdict && allEvents.some((e) => e.type === "cap.hit") ? "cap" : null), receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
 }
 export { alreadyDoneTextComment, policyGate, prGate, unmergedLokiWorkNote, type PolicyGate }; // moved to util/run_outputs.ts (line budget); re-exported for existing callers

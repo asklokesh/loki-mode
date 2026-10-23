@@ -2003,6 +2003,38 @@ _loki_surface_why_hint() {
     return 0
 }
 
+# _loki_restore_base_branch (FC-FAILED-RUN-LEAVES-EMPTY-BRANCH-CHECKED-OUT): at
+# the end of a session that failed (result != 0) or committed nothing, put the
+# checkout back on the branch it started from, then delete the session branch
+# only when its tip is still the recorded start commit. A branch with commits is
+# never deleted. A dirty tracked tree keeps the branch and prints the way back.
+# Best-effort: never changes the exit code.
+_loki_restore_base_branch() {
+    local result="${1:-0}" td="${TARGET_DIR:-.}"
+    local base_file="$td/.loki/state/base-branch.txt" sha_file="$td/.loki/state/session-start-sha" br_file="$td/.loki/state/agent-branch.txt"
+    [ -s "$base_file" ] && [ -s "$sha_file" ] && [ -s "$br_file" ] || return 0
+    local base branch start tip cur
+    base="$(cat "$base_file" 2>/dev/null)"; branch="$(cat "$br_file" 2>/dev/null)"; start="$(cat "$sha_file" 2>/dev/null)"
+    case "$branch" in loki/session-*) ;; *) return 0 ;; esac
+    [ -n "$base" ] && [ "$base" != "$branch" ] || return 0
+    git -C "$td" rev-parse --verify -q "refs/heads/$branch" >/dev/null 2>&1 || return 0
+    tip="$(git -C "$td" rev-parse --verify -q "refs/heads/$branch" 2>/dev/null)"
+    cur="$(git -C "$td" symbolic-ref --short -q HEAD 2>/dev/null || true)"
+    if [ "$cur" = "$branch" ]; then
+        [ "$result" != "0" ] || [ "$tip" = "$start" ] || return 0
+        if [ -n "$(git -C "$td" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+            printf 'loki: tree left on %s, return with: git checkout %s\n' "$branch" "$base" >&2
+            return 0
+        fi
+        git -C "$td" checkout -q "$base" 2>/dev/null || { printf 'loki: tree left on %s, return with: git checkout %s\n' "$branch" "$base" >&2; return 0; }
+        cur="$base"
+    fi
+    if [ "$tip" = "$start" ] && [ "$cur" = "$base" ]; then
+        git -C "$td" branch -d "$branch" >/dev/null 2>&1 && rm -f "$br_file" 2>/dev/null
+    fi
+    return 0
+}
+
 # _loki_write_last_error (T2.5): write a durable, classified failure record to
 # .loki/state/LAST_ERROR.json. Schema:
 #   {
@@ -30198,6 +30230,8 @@ except (json.JSONDecodeError, OSError): pass
     if [ "$result" != "0" ]; then
         _loki_surface_why_hint || true
     fi
+
+    _loki_restore_base_branch "$result" || true
 
     # OC-OUTPUT: unified run summary (same format as engine10); best-effort, never changes the exit code.
     if [ -f "$SCRIPT_DIR/lib/run-summary.sh" ]; then
