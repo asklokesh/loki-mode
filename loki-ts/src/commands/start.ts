@@ -14,6 +14,7 @@
 // artifacts/ITER1-FLAG-RECONCILE.md.
 
 import { accessSync, constants as fsConstants, existsSync as pathExists, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { spawnSync } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { DEFAULT_MAX_COST_USD } from "../e10ext/budget_cap.ts"; // LM-002: help states the real default
@@ -498,7 +499,7 @@ async function runEngine10(cwd: string, o: ParsedStartOpts, env: NodeJS.ProcessE
 async function spawnEngine(cwd: string, argv: string[], env: NodeJS.ProcessEnv): Promise<number> {
   const { spawn } = await import("node:child_process");
   return await new Promise<number>((resolveExit) => {
-    const child = spawn(process.execPath, argv, { cwd, env, stdio: ["ignore", "inherit", "inherit"] });
+    const child = spawn(process.execPath, [...SAFE_BUN_FLAGS, ...argv], { cwd, env, stdio: ["ignore", "inherit", "inherit"] });
     child.on("error", () => resolveExit(1));
     child.on("close", (code) => resolveExit(code ?? 1));
   });

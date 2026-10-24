@@ -146,6 +146,18 @@ export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 CI=tru
 
 MOAT_START=$(date +%s)
 MOAT_MAIN_PID=$$
+# Run-owned temp dir from the shared helpers. LOKI_RUN_TMP is not left set for
+# the child runs below (the loki code under test reads it), so the case
+# behaviour is unchanged; an outer value is restored.
+# shellcheck source=../../eval/loki10/lib-tmp.sh disable=SC1091
+source "$REPO_ROOT/eval/loki10/lib-tmp.sh"
+MOAT_OUTER_RUN_TMP="${LOKI_RUN_TMP:-}"
+unset LOKI_RUN_TMP
+loki_run_tmp_create || { echo "p9: run-owned temp dir failed" >&2; exit 1; }
+MOAT_TMP="$LOKI_RUN_TMP"
+unset LOKI_RUN_TMP
+[ -z "$MOAT_OUTER_RUN_TMP" ] || export LOKI_RUN_TMP="$MOAT_OUTER_RUN_TMP"
+MOAT_IDS="P9.issue-workflows-separate-untrusted-from-push P9.comment-trigger-author-gate P9.injection-cannot-reach-token P9.checkout-no-persisted-credentials P9.no-pr-target-head-checkout P9.allowtoken-only-fetch-callers P9.bun-ignores-repo-config"
 MOAT_EMITTED=" "
 MOAT_PGIDS=""
 
@@ -2750,6 +2762,35 @@ case_allowtoken() {
     rm -rf -- "$T_AT"
 }
 
+# Static half of P9.bun-ignores-repo-config. A Bun launched from the user's repo cwd reads the repo's
+# bunfig.toml and .env unless it is started with --no-env-file --config=/dev/null.
+# Shell: a bun token directly followed by an entry-looking argument (no flags between) is a flagless launch.
+# TypeScript: a process.execPath or "bun" spawn needs SAFE_BUN_FLAGS on the same line or within the next 4 lines.
+bun_flagless_sites() {
+    local root="$1" f
+    for f in "$root/bin/loki" "$root/autonomy/loki" "$root"/autonomy/*.sh "$root"/autonomy/lib/*.sh; do
+        [ -f "$f" ] || continue
+        grep -nE '(^|[^A-Za-z_./-])(bun|"?\$bun_bin"?|"?\$_lb"?|"?\$_loki_dry_bun"?|"?\$_doctor_bun"?)[[:space:]]+"?(\$BUN_CLI|\$\{?cli\b|\$\{?entry\b|\$\{?bundle\b|\$\{SCRIPT_DIR\}/\.\./loki-ts/dist/loki\.js)' "$f" 2>/dev/null \
+            | grep -vE '^[0-9]+:[[:space:]]*#' | sed "s|^|${f#"$root"/}:|"
+    done
+}
+bun_flagless_ts_sites() {
+    local root="$1" f
+    while IFS= read -r f; do
+        awk -v F="${f#"$root"/}" '
+            { line[NR] = $0 }
+            END {
+                for (i = 1; i <= NR; i++) {
+                    if (line[i] !~ /process\.execPath|\["bun", (bundled|"--install)/) continue
+                    if (line[i] ~ /^[[:space:]]*(\/\/|\*)/ || line[i] ~ /isBun|process\.versions|spawnSync\(process\.execPath, \["--version"/) continue
+                    need = gsub(/process\.execPath|\["bun", (bundled|"--install)/, "&", line[i]); have = 0
+                    for (j = i; j <= i + 4 && j <= NR; j++) have += gsub(/SAFE_BUN_FLAGS/, "&", line[j])
+                    if (have < need) print F ":" i ": " substr(line[i], 1, 120)
+                }
+            }' "$f"
+    done < <(find "$root/loki-ts/src" -name '*.ts' -type f 2>/dev/null)
+}
+
 # bin/loki must start Bun so that the hostile repo's bunfig.toml (preload) and .env are
 # never loaded: LOKI_TS_ENTRY points every Bun route at a probe that records what the
 # Bun process saw. A bare `bun probe` run in the same repo is the positive control.
@@ -2778,6 +2819,30 @@ case_bun_isolation() {
     [ ! -e "$d/MARK" ] || nok "repo bunfig.toml preload ran inside the Loki Bun process"
     if grep -q 'canary=leaked' "$out" 2>/dev/null; then nok "repo .env reached the Loki Bun process"; fi
     if [ -f "$out" ] && grep 'args=[a-z]' "$out" | grep -qv "cwd=$(cd "$r" && pwd -P)\$"; then nok "Bun entry no longer sees the user's repo as cwd"; fi
+    # autonomy/loki delegate (_loki_bun_delegate, reached by `provider matrix`) from the same hostile repo
+    rm -f "$d/MARK" "$out"
+    ( cd "$r" && env HOME="$d/home" LOKI_TS_ENTRY="$probe" bash "$REPO_ROOT/autonomy/loki" provider matrix ) >/dev/null 2>&1 </dev/null
+    grep -q 'args=provider matrix' "$out" 2>/dev/null || nok "autonomy/loki delegate never reached the Bun entry (probe line missing)"
+    [ ! -e "$d/MARK" ] || nok "repo bunfig.toml preload ran inside the autonomy/loki delegate Bun process"
+    if grep -q 'canary=leaked' "$out" 2>/dev/null; then nok "repo .env reached the autonomy/loki delegate Bun process"; fi
+    # Static sweep of every shell and TypeScript launch site (children respawned from the repo cwd included)
+    local bad
+    bad="$(bun_flagless_sites "$REPO_ROOT" | head -5 | tr '\n' ' ')"
+    [ -z "$bad" ] || nok "Bun launched without --no-env-file --config=/dev/null: $bad"
+    bad="$(bun_flagless_ts_sites "$REPO_ROOT" | head -5 | tr '\n' ' ')"
+    [ -z "$bad" ] || nok "TypeScript Bun spawn without SAFE_BUN_FLAGS: $bad"
+    # Positive controls: the scanners must flag flagless fixtures and pass flagged ones
+    mkdir -p "$d/fx/bin" "$d/fx/autonomy" "$d/fx/loki-ts/src"
+    printf 'exec bun "$BUN_CLI" "$@"\n' > "$d/fx/bin/loki"
+    printf 'x() { "$bun_bin" "$cli" version; }\n' > "$d/fx/autonomy/loki"
+    printf 'y=$(bun "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal x)\n' > "$d/fx/autonomy/run.sh"
+    printf 'spawn(process.execPath, argv, { cwd });\n' > "$d/fx/loki-ts/src/a.ts"
+    [ "$(bun_flagless_sites "$d/fx" | wc -l | tr -d ' ')" = "3" ] || nok "positive control: shell scan did not flag the 3 flagless fixtures"
+    [ "$(bun_flagless_ts_sites "$d/fx" | wc -l | tr -d ' ')" = "1" ] || nok "positive control: TypeScript scan did not flag the flagless spawn"
+    printf 'exec bun "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" "$@"\n' > "$d/fx/bin/loki"
+    printf 'spawn(process.execPath, [...SAFE_BUN_FLAGS, ...argv], { cwd });\n' > "$d/fx/loki-ts/src/a.ts"
+    [ "$(bun_flagless_ts_sites "$d/fx" | wc -l | tr -d ' ')" = "0" ] || nok "negative control: TypeScript scan flagged a flagged spawn"
+    bun_flagless_sites "$d/fx" | grep -q '^bin/loki' && nok "negative control: shell scan flagged a flagged launch"
     rm -rf -- "$d"
 }
 

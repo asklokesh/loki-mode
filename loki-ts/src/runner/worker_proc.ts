@@ -40,6 +40,8 @@ export function clampBashTimeoutEnv(env: NodeJS.ProcessEnv, limitS: number): voi
 export function envWithPwd<T extends Record<string, string | undefined>>(env: T, cwd: string | undefined): T {
   return cwd === undefined ? env : { ...env, PWD: resolve(cwd) };
 }
+/** Bun reads bunfig.toml (preload) and .env from its cwd, which for a respawn is the user repo. Every Bun respawn from that cwd starts with these flags. */
+export const SAFE_BUN_FLAGS = ["--no-env-file", "--config=/dev/null"] as const;
 export const ULIMIT_REFUSED_EXIT = 97;
 const ULIMIT_KNOBS = [["LOKI_ULIMIT_VMEM_KB", "-v"], ["LOKI_ULIMIT_NPROC", "-u"]] as const;
 // Opt-in process limits (#265 slice B). Node cannot set rlimits, so a set knob wraps argv in a shell that applies them

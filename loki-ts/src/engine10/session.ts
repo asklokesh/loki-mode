@@ -1,5 +1,6 @@
 // E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
 import { createWatchdog, stallKillS, stallThresholdS } from "../runner/watchdog.ts";
+import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { neutralizeEngineMarkers, sdkAuthCause } from "../runner/retry_class.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { diffShortstat, diffSignature, untrackedList } from "../util/anti_loop.ts"; export { diffShortstat, diffSignature, untrackedList }; // watchdog diff signature lives with the other tree-change detectors
@@ -174,7 +175,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       const [cmd, args] = cfg.childCommand ?? [
         process.execPath,
         // Through the cli `engine10 session` route: import.meta.path is dist/loki.js in a bundle, session.ts from source.
-        [import.meta.path.endsWith("session.ts") ? `${import.meta.dir}/../cli.ts` : import.meta.path, "engine10", "session"],
+        [...SAFE_BUN_FLAGS, import.meta.path.endsWith("session.ts") ? `${import.meta.dir}/../cli.ts` : import.meta.path, "engine10", "session"],
       ];
       const sessionId = opts.iterationId;
       // stderr is piped and kept (tail only, E-61) for stage.failed diagnostics; always drained via the "data" listener below so a full pipe can never stall the child.

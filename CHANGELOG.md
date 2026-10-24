@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A few pre-existing failures remain in the wider test suite (review assurance tail, receipt signing discoverability and build analytics opt-in tests); they reproduce on the previous release and do not affect the shipped CLI.
 
+## Unreleased
+
+### Security
+
+- A .env or bunfig.toml (with a preload script) in the repo Loki runs in no longer loads into Loki's own Bun processes, top-level or respawned children. Every Bun launch from the repo directory now starts with `--no-env-file --config=/dev/null`; the working directory is unchanged. Variables you relied on from a repo .env must now be exported in your shell.
+
 ## v11.77.0 (2026-10-24)
 
 ### Added

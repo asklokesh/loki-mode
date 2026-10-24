@@ -7,6 +7,7 @@
 //   verify.changed_files / checks   <- verify stage.completed (the diff and the evidence)
 //   wall.files / wall.base_run      <- wall stage.completed
 import { execFile, spawnSync } from "node:child_process";
+import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -318,7 +319,7 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   };
   const supervise = deps.supervise ?? (async (o) => (await import("../engine10/supervisor.ts")).runSupervisor(o));
   const { EXIT } = await import("../engine10/output.ts");
-  const res = await supervise({ runId: it.runId, repoDir, env, resume: true, capS: capS === undefined ? undefined : Math.floor(capS), capCeilingS: ceilS === undefined ? undefined : Math.floor(ceilS), restoreBranch: origBranch, workerArgv: [process.execPath, resolve(process.argv[1] ?? ""), "engine10", "worker", it.runId, provider, model, deep ? "deep" : "fast"], started: { ...st, resumed_from: rp.stage }, pr });
+  const res = await supervise({ runId: it.runId, repoDir, env, resume: true, capS: capS === undefined ? undefined : Math.floor(capS), capCeilingS: ceilS === undefined ? undefined : Math.floor(ceilS), restoreBranch: origBranch, workerArgv: [process.execPath, ...SAFE_BUN_FLAGS, resolve(process.argv[1] ?? ""), "engine10", "worker", it.runId, provider, model, deep ? "deep" : "fast"], started: { ...st, resumed_from: rp.stage }, pr });
   out(`engine10: resumed run ${it.runId}: ${res.outcome}\n`);
   return EXIT[res.outcome];
 }

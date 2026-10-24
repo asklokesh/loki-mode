@@ -2,6 +2,7 @@
 // serve runs the bundled service (packages/control-plane/dist/server.js, or the TypeScript source in a checkout) on
 // 127.0.0.1. backfill ships .loki/runs through the same shipper the live hook uses. status probes /health.
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { instancePath } from "../../../packages/control-plane/src/shipper/discover.ts";
@@ -46,11 +47,11 @@ function missingValue(args: string[], name: string): boolean {
 
 function serverCmd(): string[] | null {
   const bundled = join(REPO_ROOT, "packages/control-plane/dist/server.js");
-  if (existsSync(bundled)) return ["bun", bundled];
+  if (existsSync(bundled)) return ["bun", ...SAFE_BUN_FLAGS, bundled];
   const src = join(REPO_ROOT, "packages/control-plane/src/server/serve.ts");
   // --install=fallback: a checkout whose packages/control-plane has no node_modules still resolves hono and drizzle-orm. Bare
   // auto-install switches OFF as soon as ANY ancestor has a node_modules (CI's repo-root npm install), which killed serve on Linux.
-  return existsSync(src) ? ["bun", "--install=fallback", "run", src] : null;
+  return existsSync(src) ? ["bun", ...SAFE_BUN_FLAGS, "--install=fallback", "run", src] : null;
 }
 
 const pidAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };

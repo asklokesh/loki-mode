@@ -2972,9 +2972,9 @@ verify_hosted_enrich() {
     [ -z "$engine_base" ] && engine_base="$base_ref"
     local engine_out engine_rc
     if [ -n "$engine_base" ]; then
-        engine_out="$(bun "$bundle" --dir . --base "$engine_base" 2>/dev/null)"; engine_rc=$?
+        engine_out="$(bun --no-env-file --config=/dev/null "$bundle" --dir . --base "$engine_base" 2>/dev/null)"; engine_rc=$?
     else
-        engine_out="$(bun "$bundle" --dir . 2>/dev/null)"; engine_rc=$?
+        engine_out="$(bun --no-env-file --config=/dev/null "$bundle" --dir . 2>/dev/null)"; engine_rc=$?
     fi
     if [ "$engine_rc" -ne 0 ] || [ -z "$engine_out" ]; then
         _verify_log "hosted: embedded engine unusable (rc=$engine_rc); keeping deterministic verdict (fail-open)"

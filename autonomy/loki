@@ -15941,9 +15941,9 @@ _loki_bun_delegate() {
 
     t="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
     if [ -n "$t" ]; then
-        "$t" -k 1 5 "$bun_bin" "$cli" version >/dev/null 2>&1
+        "$t" -k 1 5 "$bun_bin" --no-env-file --config=/dev/null "$cli" version >/dev/null 2>&1
     else
-        "$bun_bin" "$cli" version >/dev/null 2>&1
+        "$bun_bin" --no-env-file --config=/dev/null "$cli" version >/dev/null 2>&1
     fi
     rc=$?
     if [ "$rc" -ne 0 ]; then
@@ -15952,7 +15952,7 @@ _loki_bun_delegate() {
         return 1
     fi
 
-    exec "$bun_bin" "$cli" "$cmd" "$@"
+    exec "$bun_bin" --no-env-file --config=/dev/null "$cli" "$cmd" "$@"
 }
 
 # One-line fix for a requirement id (a provider name is an id), read from the shared

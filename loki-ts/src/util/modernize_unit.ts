@@ -2,6 +2,7 @@
 // D33 line cap; modernize/cli.ts only routes here. One unit runs through the existing runUnit (M-15) inside a
 // run-owned temp checkout of repo@ref, fetched with safe_git (hooks, fsmonitor, ext:: off). Exit 0 only on PROVEN.
 import { spawnSync } from "node:child_process";
+import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -124,7 +125,7 @@ export function makeUnitRunners(o: UnitRunnerOpts): { implement: Implementer; ru
 export function makeSessionRunner(o: Pick<UnitRunnerOpts, "session" | "sessionLimitS">): NonNullable<UnitRunnerOpts["session"]> {
   const limitS = o.sessionLimitS ?? SESSION_LIMIT_S;
   const cli = import.meta.path.endsWith("modernize_unit.ts") ? join(import.meta.dir, "..", "cli.ts") : import.meta.path;
-  return o.session ?? ((_brief, cwd, env) => spawnSync(process.execPath, [cli, "engine10", "session"], { cwd, env, stdio: ["ignore", "ignore", "pipe"], timeout: limitS * 1000 }));
+  return o.session ?? ((_brief, cwd, env) => spawnSync(process.execPath, [...SAFE_BUN_FLAGS, cli, "engine10", "session"], { cwd, env, stdio: ["ignore", "ignore", "pipe"], timeout: limitS * 1000 }));
 }
 
 /** The unit id read as a repo-relative path. Null (so the caller reports "cannot locate") unless the id is safe and
