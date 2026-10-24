@@ -24,7 +24,5 @@
 #
 # Entries:
 P3.check-author-context-excludes-implementation M2 build autonomy/lib/check_author.py context per interface A in the script header
-P3.checks-frozen-before-eval M2 add checklist-verify.py --freeze plus a definition digest check that rejects edits with 'hash mismatch' (interface B)
 P3.implementer-prompt-has-no-check-authoring M2 remove PRD_CHECKLIST_INIT from both builders (run.sh build_prompt, build_prompt.ts buildChecklistStatus) and move check authoring to a walled step
 P4.floor-does-not-raise-wrong-pass M0 no corpus and no recorded top or floor wrong-pass run
-P4.three-setups-resolve M0 bash and Bun both honor the opus session pin and the per-tier LOKI_CLAUDE_MODEL_* variables now; high and small still resolve to sonnet on both routes, matching D10's documented default

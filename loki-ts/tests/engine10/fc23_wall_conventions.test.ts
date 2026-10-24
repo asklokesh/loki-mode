@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWall, buildWallBrief, WALL_OUTPUT_BUDGET, WALL_REPO_PATHS } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
-import { conventionViolation, conventionsBrief, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions } from "../../src/project_model/conventions.ts";
+import { conventionViolation, conventionsBrief, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, vacuousCheck } from "../../src/project_model/conventions.ts";
 import { wallOwnedFailure } from "../../src/util/wall_owned.ts";
 import { withoutStaleWall } from "../../src/util/check_result.ts";
 import { RealTestMapProvider } from "../../src/engine10/testmap.ts";
@@ -233,6 +233,79 @@ describe("FC-WALL-OUT-OF-REPO-TARGET", () => {
       expect(n > 0).toBe(!over); // counts only the -oor rewrite sessions
       expect(JSON.stringify(r.data.discarded)).toContain("outside the repo");
     }
+  });
+});
+
+describe("TEN-MOAT-26 vacuous check", () => {
+  const VACUOUS = "import { foo } from '../src/a';\ntest('x', () => { expect(true).toBe(true); });\n";
+  const REAL = "import { foo } from '../src/a';\ntest('x', () => { expect(foo()).toBe(1); });\n";
+  test("vacuous check rejected: detector flags assertion-free and tautological files, passes real ones", () => {
+    expect(vacuousCheck("loki_wall_a.test.ts", VACUOUS)).toContain("asserts nothing");
+    expect(vacuousCheck("loki_wall_a.test.ts", "test('x', () => {});\n")).toContain("asserts nothing");
+    expect(vacuousCheck("loki_wall_a.test.ts", "test('x', () => { foo(); });\n")).toBeNull(); // no assertion but a real call: can be red by throwing
+    expect(vacuousCheck("loki_wall_a.test.ts", "test('x', () => { assert(true); });\n")).toContain("asserts nothing");
+    expect(vacuousCheck("loki_wall_a.test.ts", "// expect(foo()).toBe(1)\ntest('x', () => {});\n")).toContain("asserts nothing");
+    expect(vacuousCheck("loki_wall_a.test.ts", REAL)).toBeNull();
+    expect(vacuousCheck("loki_wall_a.test.ts", "test('x', () => { expect(p).toBeTruthy(); });\n")).toBeNull();
+    expect(vacuousCheck("loki_wall_a.sh", "#!/bin/bash\nset -e\ntrue\nexit 0\n")).toContain("asserts nothing");
+    expect(vacuousCheck("loki_wall_a.sh", "#!/bin/bash\nset -e\n[ \"$(foo)\" = 1 ] || exit 1\nexit 0\n")).toBeNull();
+    expect(vacuousCheck("loki_wall_a.py", "def test_x():\n    assert True\n")).toContain("asserts nothing");
+    expect(vacuousCheck("loki_wall_a.py", "def test_x():\n    assert foo() == 1\n")).toBeNull();
+    expect(vacuousCheck("loki_wall_a_test.go", "func TestX(t *testing.T) {}\n")).toContain("asserts nothing");
+    expect(vacuousCheck("loki_wall_a_test.go", "func TestX(t *testing.T) { if foo() != 1 { t.Errorf(\"bad\") } }\n")).toBeNull();
+    expect(vacuousCheck("loki_wall_a.txt", "anything")).toBeNull();
+  });
+  const SH = (body: string): string | null => vacuousCheck("loki_wall_a.sh", `#!/bin/bash\nset -e\n${body}\n`);
+  test("vacuous shell: always-true forms are rejected", () => {
+    for (const body of ["echo ok", "echo \"all good\"", "printf 'ok\\n'", "test 1", "[ 1 ]", "[[ 1 ]]", "[ \"x\" ]", "test foo", "true && true", ": ; exit 0", "/bin/true", "/usr/bin/true", "echo ok && exit 0", "echo a\necho b"]) expect([body, SH(body)]).toEqual([body, expect.stringContaining("asserts nothing")]);
+  });
+  test("vacuous shell: any real command is never flagged", () => {
+    for (const body of ["grep -q foo src/a.ts", "test -f src/a.ts", "test -f a && grep -q x a", "[ -d src ]", "[ \"$(foo)\" = 1 ]", "[ \"$X\" ]", "echo ok && grep -q x a", "echo ok | grep -q y", "echo ok > out.txt", "echo $(foo)", "bun test tests/a.test.ts", "diff a b", "cmp a b", "node a.js", "python a.py", "pytest t", "npm test", "curl -f http://x", "./scripts/check.sh", "true && test -f a", "test 1 -eq 2", "[ 1 -eq 2 ]", "exit 1", "false"]) expect([body, SH(body)]).toEqual([body, null]);
+  });
+  test("vacuous other languages: truthy-literal and trivial forms are rejected, real ones kept", () => {
+    expect(vacuousCheck("a.test.ts", "test('x', () => { expect(1).toBeTruthy(); });\n")).toContain("asserts nothing");
+    expect(vacuousCheck("a.test.ts", "test('x', () => { expect('ok').toBeDefined(); });\n")).toContain("asserts nothing");
+    expect(vacuousCheck("a.test.ts", "test('x', () => { expect(foo()).toBeTruthy(); });\n")).toBeNull();
+    expect(vacuousCheck("a.py", "def test_x():\n    assert 1 == 1\n")).toContain("asserts nothing");
+    expect(vacuousCheck("a.py", "def test_x():\n    assert \"ok\"\n")).toContain("asserts nothing");
+    expect(vacuousCheck("a.py", "def test_x(self):\n    self.assertEqual(1, 1)\n")).toContain("asserts nothing");
+    expect(vacuousCheck("a.py", "def test_x():\n    assert foo() == 1\n")).toBeNull();
+    expect(vacuousCheck("a.py", "def test_x(self):\n    self.assertEqual(foo(), 1)\n")).toBeNull();
+    expect(vacuousCheck("a_test.go", "func TestX(t *testing.T) { t.Log(\"ok\") }\n")).toContain("asserts nothing");
+    expect(vacuousCheck("a_test.go", "func TestX(t *testing.T) { if foo() != 1 { t.Log(\"x\") } }\n")).toBeNull();
+  });
+  test("vacuous go: judged per file, mixed files are kept", () => {
+    expect(vacuousCheck("a_test.go", "func TestA(t *testing.T) { t.Skip(\"x\") }\nfunc TestB(t *testing.T) { if foo() != 1 { t.Fatal(\"x\") } }\n")).toBeNull();
+    expect(vacuousCheck("a_test.go", "func TestA(t *testing.T) { t.Log(\"x\") }\nfunc TestB(t *testing.T) { if foo() != 1 { t.Errorf(\"x\") } }\n")).toBeNull();
+    expect(vacuousCheck("a_test.go", "func TestA(t *testing.T) { t.Log(\"x\") }\nfunc TestB(t *testing.T) { t.Skip() }\n")).toContain("asserts nothing");
+    expect(vacuousCheck("a_test.go", "func TestA(t *testing.T) { foo() }\n")).toBeNull();
+    expect(vacuousCheck("a_test.go", "func TestA(t *testing.T) { t.Skip() }\nfunc TestB(t *testing.T) { t.Fatal(\"x\") }\n")).toBeNull(); // a brace-free failing body
+    expect(vacuousCheck("a_test.go", "func helper(t *testing.T) { t.Fatal(\"x\") }\nfunc TestA(t *testing.T) { t.Log(\"x\") }\n")).toBeNull(); // a failing helper in the file keeps it
+  });
+  test("vacuous: pathological whitespace stays linear (64KB under 200ms)", () => {
+    const sp = " ".repeat(32000);
+    for (const [name, body] of [["a_test.go", `func TestA(t *testing.T) {${sp}t.Log("x")${sp}x}\n`], ["a.sh", `${sp}echo${sp}\n`], ["a.py", `def test_x():\n    assert${sp}True${sp}\n`], ["a.py", `assert 1${sp}x\n`], ["a.py", `assert 1${sp},${sp}x\n`], ["a.test.ts", `test('x', () => {${sp}expect(1)${sp}.toBe(1)${sp}});\n`]] as const) {
+      const t0 = performance.now(); vacuousCheck(name, body); expect([name, performance.now() - t0 < 200]).toEqual([name, true]);
+    }
+  });
+  test("vacuous js: tautology and real expect on one line is kept", () => {
+    expect(vacuousCheck("a.test.ts", "test('x', () => { expect(true).toBe(true); expect(foo()).toBe(1); });\n")).toBeNull();
+    expect(vacuousCheck("a.test.ts", "test('x', () => { expect(true).toBe(true); expect(1).toBe(1); });\n")).toContain("asserts nothing");
+  });
+  test("vacuous check rejected: a vacuous Wall file is re-asked once with the reason; the rewrite is kept", async () => {
+    const repoDir = cjsRepo(); const briefs: string[] = [];
+    const ctx = wallCtx(repoDir, (o) => { briefs.push(o.brief); writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), briefs.length === 1 ? VACUOUS : REAL); });
+    const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(briefs.length).toBe(2);
+    expect(briefs[1]).toContain("asserts nothing");
+    expect(r.data.discarded).toBeUndefined();
+  });
+  test("vacuous check rejected: still vacuous after the rewrite is discarded, never installed", async () => {
+    const repoDir = cjsRepo();
+    const ctx = wallCtx(repoDir, (o) => { writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), VACUOUS); });
+    const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 1, fail: 0 }) } });
+    expect(existsSync(join(repoDir, "tests", "loki_wall_a.test.ts"))).toBe(false);
+    expect(JSON.stringify(r.data.discarded)).toContain("asserts nothing");
   });
 });
 

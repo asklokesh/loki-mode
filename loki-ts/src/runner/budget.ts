@@ -265,6 +265,26 @@ export function calculateCostFromRecords(records: readonly EfficiencyRecord[], e
   return round4(total);
 }
 
+/**
+ * Cache read tokens and the dollars they saved versus billing them at the plain input rate
+ * (tokens times the model's input minus cache_read price, from model-pricing.json). Returns null
+ * unless EVERY record carries a numeric cache_read_tokens: a missing key is unmeasured, never 0,
+ * and a partial sum is not the run total. A measured 0 returns {0, 0}.
+ */
+export function cacheSavings(records: readonly Pick<EfficiencyRecord, "model" | "cache_read_tokens">[]): { readTokens: number; savedUsd: number } | null {
+  if (records.length === 0) return null;
+  let readTokens = 0;
+  let saved = 0;
+  for (const d of records) {
+    const t = d.cache_read_tokens;
+    if (typeof t !== "number" || !Number.isFinite(t)) return null;
+    const p = pricingFor(d.model);
+    readTokens += t;
+    saved += (t / 1_000_000) * (p.input - (p.cache_read ?? p.input));
+  }
+  return { readTokens, savedUsd: round4(saved) };
+}
+
 // Read all .loki/metrics/efficiency/*.json files; bad files are skipped
 // (matches Python `except: pass` in run.sh check_budget_limit()). Pass `stats` to learn how
 // many were skipped.

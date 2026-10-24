@@ -26,7 +26,7 @@ GEN="$ROOT/autonomy/lib/proof-generator.py"
 export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 \
     CI=true LOKI_DELEGATE_PR=0 LOKI_DASHBOARD=false
 
-IDS="P1.signed-proof-carries-attestation P1.offline-verify-bash P1.offline-verify-bun P1.different-tree-fails P1.modified-field-fails P1.wrong-key-fails P1.stripped-signature-fails P1.empty-jwks-value-fails P1.verification-metadata-signed"
+IDS="P1.signed-proof-carries-attestation P1.offline-verify-bash P1.offline-verify-bun P1.different-tree-fails P1.modified-field-fails P1.wrong-key-fails P1.stripped-signature-fails P1.empty-jwks-value-fails P1.verification-metadata-signed P1.jwks-dup-kid-or-alg-none-fails"
 
 # Newlines in a reason (a python traceback, say) are folded so every case stays
 # exactly one stdout line.
@@ -84,6 +84,26 @@ json.dump(rj.build_jwks(private_key=attacker), open(k + "/attacker-jwks.json", "
 swap = rj.build_jwks(private_key=attacker)
 swap["keys"][0]["kid"] = vkid
 json.dump(swap, open(k + "/kidswap-jwks.json", "w"))
+# Ambiguous key sets: the genuine key first, then a second entry with the same
+# kid (first-match selection would verify), and the genuine key tagged alg none.
+dup = rj.build_jwks(private_key=victim)
+dup["keys"].append(dict(dup["keys"][0]))
+json.dump(dup, open(k + "/dupkid-jwks.json", "w"))
+none = rj.build_jwks(private_key=victim)
+none["keys"][0]["alg"] = "none"
+json.dump(none, open(k + "/algnone-jwks.json", "w"))
+# Mixed sets are normal at /.well-known/jwks.json: the genuine key plus entries
+# for other kids must still verify (an RS256 key, an unrelated duplicate pair,
+# and an entry whose kid is a list).
+mix = rj.build_jwks(private_key=victim)
+mix["keys"].append({"kty": "RSA", "alg": "RS256", "kid": "oidc-1", "n": "AQAB", "e": "AQAB"})
+json.dump(mix, open(k + "/mixrsa-jwks.json", "w"))
+mix = rj.build_jwks(private_key=victim)
+mix["keys"] += [dict(mix["keys"][0], kid="other"), dict(mix["keys"][0], kid="other")]
+json.dump(mix, open(k + "/mixdup-jwks.json", "w"))
+mix = rj.build_jwks(private_key=victim)
+mix["keys"].append(dict(mix["keys"][0], kid=["x"]))
+json.dump(mix, open(k + "/mixlist-jwks.json", "w"))
 PY
 
 # --- fixture: a git repo with a real diff, sealed by the real generator -------
@@ -489,6 +509,30 @@ else
     done
 fi
 finish P1.verification-metadata-signed "$_meta_desc"
+
+# --- P1.jwks-dup-kid-or-alg-none-fails ---------------------------------------------
+# Only the entries whose kid equals the token kid count. Unrelated entries
+# (another RS256 key, an unrelated duplicate pair, a list-valued kid) never
+# change the verdict: exit 0, VERIFIED. Two entries for the token kid, or alg
+# none on the token's key, are a key-set problem, never an accusation against the
+# receipt: exit 2, NOT CHECKED naming the key set, never VERIFIED or FAILED.
+for route in bash bun; do
+    precheck "$route" || continue
+    for _mix in mixrsa mixdup mixlist; do
+        verify "$route" "$_mix-$route" "$R" p1 --jwks "$W/keys/$_mix-jwks.json"
+        if [ "$RC" -ne 0 ] || ! verified "$_mix-$route"; then
+            why="$why $route/$_mix: exit $RC, expected 0 with attestation: VERIFIED;"
+        fi
+    done
+    refuse_exact 2 "attestation: NOT CHECKED -- the key set is ambiguous for kid" "$route" "dupkid-$route" "$R" p1 --jwks "$W/keys/dupkid-jwks.json"
+    refuse_exact 2 "attestation: NOT CHECKED -- the key set marks kid" "$route" "algnone-$route" "$R" p1 --jwks "$W/keys/algnone-jwks.json"
+    for _t in dupkid algnone; do
+        if grep -qF "does not cover these bytes" "$W/out/$_t-$route.err"; then
+            why="$why $route/$_t: accused the receipt;"
+        fi
+    done
+done
+finish P1.jwks-dup-kid-or-alg-none-fails "unrelated JWKS entries (RS256 oidc-1, a duplicate pair, a list kid) still verify; two entries for the token kid, or alg none on its key, exit 2 NOT CHECKED naming the key set, never VERIFIED ($ROUTES)"
 
 echo "p1: runtime $(( $(date +%s) - T0 ))s" >&2
 exit 0

@@ -8,6 +8,7 @@ import {
   otelPassthroughEnv,
   applyAliasPin,
   inferenceGeoMultiplier,
+  inferenceGeoParam,
 } from "../../src/providers/model_routes.ts";
 
 describe("gatewayLaneLabel", () => {
@@ -74,5 +75,24 @@ describe("inferenceGeoMultiplier (LOKI_INFERENCE_GEO)", () => {
     expect(inferenceGeoMultiplier({})).toBe(1);
     expect(inferenceGeoMultiplier({ LOKI_INFERENCE_GEO: "global" })).toBe(1);
     expect(inferenceGeoMultiplier({ LOKI_INFERENCE_GEO: "eu" })).toBe(1);
+  });
+});
+
+describe("inference geo request parameter", () => {
+  it("geo billed only when requested", () => {
+    for (const geo of ["us", " US ", "global"]) {
+      expect(inferenceGeoParam({ LOKI_INFERENCE_GEO: geo })).toBe(geo.trim().toLowerCase());
+    }
+    for (const geo of [undefined, "", "eu", "bogus"]) {
+      const env = geo === undefined ? {} : { LOKI_INFERENCE_GEO: geo };
+      expect(inferenceGeoParam(env)).toBeUndefined();
+      expect(inferenceGeoMultiplier(env)).toBe(1);
+    }
+    expect(inferenceGeoMultiplier({ LOKI_INFERENCE_GEO: "us" })).toBeGreaterThan(1);
+    expect(inferenceGeoParam({ LOKI_INFERENCE_GEO: "us" })).toBe("us");
+  });
+  it("the judge request body carries the geo", () => {
+    const src = require("node:fs").readFileSync(new URL("../../src/runner/sdk_invoker.ts", import.meta.url), "utf8");
+    expect(src).toContain("inference_geo: inferenceGeoParam()");
   });
 });

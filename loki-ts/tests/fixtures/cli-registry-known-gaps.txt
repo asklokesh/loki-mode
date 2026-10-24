@@ -164,3 +164,7 @@ template installed
 template list
 version help
 web help
+cost release-notes
+export release-notes
+metrics release-notes
+share release-notes

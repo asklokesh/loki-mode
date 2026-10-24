@@ -15,6 +15,7 @@
 // REJECT / block). It NEVER throws for a normal failure. judgeJsonOutcome()
 // returns the same call as a typed JudgeOutcome naming the cause.
 
+import { inferenceGeoParam } from "../providers/model_routes.ts";
 import { assertStaticSchema } from "../council/finding_schema.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { appendChildLedger, recordFromUsage, unmeasuredRecord } from "../util/child_ledger.ts";
@@ -308,6 +309,8 @@ async function runJudge(params: JudgeParams | TextParams, schema: Record<string,
       ...(system ? { system } : {}),
       ...(thinking ? { thinking: thinking as Anthropic.ThinkingConfigParam } : {}),
       messages: [{ role: "user", content: buildUserContent(prompt) }],
+      // LOKI_INFERENCE_GEO is billed at 1.1x (us) only if the request carries it.
+      ...(inferenceGeoParam() ? { inference_geo: inferenceGeoParam() } : {}),
       // messages.create with output_config.format = { type: 'json_schema', schema }
       // constrains the model to emit JSON matching the schema. Verified against
       // @anthropic-ai/sdk@0.111.0 (JSONOutputFormat, OutputConfig). Free-form

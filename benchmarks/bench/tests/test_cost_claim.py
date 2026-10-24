@@ -109,9 +109,23 @@ def _attr_rows(arm, cost, ntask=8, nrep=3, prefix="t"):
             for t in range(ntask) for _ in range(nrep)]
 
 
-def _write(path, rows):
+_GOOD_ENV = {"environment": {"identity_env": {"USER": True, "LOGNAME": True,
+                                              "HOME": True}}}
+
+
+def _control_rows(arms):
+    return [{"task": "pc0", "arm": a, "accepted": True, "cost_usd": 0.01,
+             "status": "completed", "engine": "e1", "loki_version": "11.0.0",
+             "model_used": "m1", "cost_source": "claude_json.total_cost_usd"}
+            for a in arms for _ in range(3)]
+
+
+def _write(path, rows, control=True):
+    """Write rows; a passing positive control (task pc0) rides along per arm."""
+    arms = sorted({r.get("arm") for r in rows if isinstance(r, dict) and r.get("arm")})
+    extra = _control_rows(arms) if control else []
     with open(path, "w") as f:
-        for r in rows:
+        for r in list(rows) + extra:
             f.write(json.dumps(r) + "\n")
 
 
@@ -121,9 +135,17 @@ def _run(*args):
     return p.returncode, p.stdout
 
 
-def _base_args(f):
+def _env_file(d, env=None):
+    p = os.path.join(str(d), "env.json")
+    with open(p, "w") as fh:
+        json.dump(_GOOD_ENV if env is None else env, fh)
+    return p
+
+
+def _base_args(f, env=None):
     return ["--rows", str(f), "--loki-arm", "loki", "--floor-arm", "raw-lean",
-            "--target", "0.5"]
+            "--target", "0.5", "--env-record", _env_file(os.path.dirname(str(f)), env),
+            "--control-task", "pc0"]
 
 
 def test_cli_proven_exit_0(tmp_path):
@@ -206,11 +228,12 @@ def test_non_object_rows_skipped_with_count(tmp_path, capsys):
     for r in floor:
         r.update(task=r["task_id"], arm="F")
     f = tmp_path / "rows.jsonl"
-    lines = [json.dumps(r) for r in loki + floor]
+    lines = [json.dumps(r) for r in loki + floor + _control_rows(["L", "F"])]
     lines[1:1] = ["[1, 2]", "7", "\"s\"", "null"]
     f.write_text("\n".join(lines) + "\n")
     rc = cc.main(["--rows", str(f), "--loki-arm", "L", "--floor-arm", "F",
-                  "--target", "0.5"])
+                  "--target", "0.5", "--env-record", _env_file(tmp_path),
+                  "--control-task", "pc0"])
     cap = capsys.readouterr()
     out = json.loads(cap.out)
     assert rc == 0, cap
@@ -542,3 +565,82 @@ def test_bad_cost_row_cli_not_proven(tmp_path):
     rc, out = _run(*_base_args(f))
     v = json.loads(out)
     assert rc == 1 and any(r.startswith("cost:") for r in v["reasons"]), out
+
+
+# ---- INVALID: identity env record and positive control (retro 3.8.7) ----
+
+def test_identity_var_dropped_is_invalid():
+    loki, floor = _tight(0.4)
+    for k in ("USER", "LOGNAME", "HOME"):
+        env = {"identity_env": {"USER": True, "LOGNAME": True, "HOME": True}}
+        env["identity_env"][k] = False
+        v = cc.cost_claim_verdict(loki, floor, 0.5, environment=env)
+        assert v["verdict"] == "INVALID", (k, v)
+        assert any(k in r for r in v["reasons"]), (k, v["reasons"])
+
+
+def test_absent_identity_record_is_invalid():
+    loki, floor = _tight(0.4)
+    for env in ({}, {"identity_env": None}, {"identity_env": {"USER": True}}):
+        v = cc.cost_claim_verdict(loki, floor, 0.5, environment=env)
+        assert v["verdict"] == "INVALID", (env, v)
+
+
+def test_good_identity_and_control_keep_proven():
+    loki, floor = _tight(0.4)
+    v = cc.cost_claim_verdict(loki, floor, 0.5,
+                              environment=_GOOD_ENV["environment"],
+                              control_rows=[{"accepted": True}] * 3)
+    assert v["verdict"] == "PROVEN_AT(0.5)", v
+    assert v["identity_checked"] and v["control_checked"]
+
+
+def test_failed_or_empty_control_is_invalid():
+    loki, floor = _tight(0.4)
+    for ctl in ([], [{"accepted": True}, {"accepted": False}],
+                [{"accepted": True, "unmeasured": True}]):
+        v = cc.cost_claim_verdict(loki, floor, 0.5, control_rows=ctl)
+        assert v["verdict"] == "INVALID", (ctl, v)
+
+
+def test_invalid_beats_not_proven():
+    loki, floor = _tight(0.9)
+    v = cc.cost_claim_verdict(loki, floor, 0.5, control_rows=[])
+    assert v["verdict"] == "INVALID"
+    assert any(r.startswith("ci:") for r in v["reasons"])
+
+
+def test_cli_without_env_or_control_never_proven(tmp_path):
+    f = tmp_path / "a.jsonl"
+    _write(f, _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0))
+    bare = ["--rows", str(f), "--loki-arm", "loki", "--floor-arm", "raw-lean",
+            "--target", "0.5"]
+    rc, out = _run(*bare)
+    j = json.loads(out)
+    assert rc == 1 and j["verdict"] == "NOT PROVEN", out
+    assert any("--env-record" in r for r in j["reasons"])
+    assert any("--control-task" in r for r in j["reasons"])
+    rc, out = _run(*bare, "--env-record", _env_file(tmp_path))
+    assert rc == 1 and json.loads(out)["verdict"] == "NOT PROVEN", out
+
+
+def test_cli_logname_dropped_exit_3(tmp_path):
+    f = tmp_path / "a.jsonl"
+    _write(f, _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0))
+    env = {"environment": {"identity_env": {"USER": True, "LOGNAME": False,
+                                            "HOME": True}}}
+    rc, out = _run(*_base_args(f, env))
+    assert rc == 3 and json.loads(out)["verdict"] == "INVALID", out
+
+
+def test_cli_failed_control_exit_3_and_control_not_in_claim(tmp_path):
+    f = tmp_path / "a.jsonl"
+    rows = _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0)
+    rows += [dict(r, accepted=False) for r in _control_rows(["loki"])]
+    _write(f, rows, control=False)
+    rc, out = _run(*_base_args(f))
+    assert rc == 3 and json.loads(out)["verdict"] == "INVALID", out
+    _write(f, _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0))
+    rc, out = _run(*_base_args(f))
+    assert rc == 0, out
+    assert "pc0" not in json.dumps(json.loads(out)["reasons"])

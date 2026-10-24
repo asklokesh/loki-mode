@@ -113,6 +113,9 @@ interface AgentInfo {
 }
 
 const ORCHESTRATOR_ID = "orchestrator-main";
+// The API reports no per-tool token cost, so tool-definition cost is an estimate (labelled as one everywhere it appears).
+const MCP_TOOL_DEF_TOKENS_EST = 150;
+const MCP_TOOL_TOKEN_WARN_DEFAULT = 10000;
 
 // nowIso: the parser stamps timestamps like the Python parser
 // (datetime.now(timezone.utc).isoformat() with a trailing Z). Injectable for
@@ -235,13 +238,13 @@ export async function consumeSdkStream(
   // S1-W2-26: tool-use and skill-navigation telemetry, merged into the result-cost record. A turn is one assistant message id (the SDK may stream its blocks as several messages).
   const toolsByTurn = new Map<string, Set<string>>();
   const skillReads: string[] = [];
-  let toolResults = 0, toolErrors = 0, mcpToolCount: number | undefined, anonTurn = 0;
+  let toolResults = 0, toolErrors = 0, mcpToolCount: number | undefined, anonTurn = 0, mcpToolWarned = false;
   const toolTelemetry = (): Record<string, unknown> => {
     const perTurn = [...toolsByTurn.values()].map((t) => t.size);
     return {
       ...(perTurn.length ? { tools_per_turn: Math.max(...perTurn), tool_turns: perTurn.length, tool_calls: perTurn.reduce((a, b) => a + b, 0) } : {}),
       ...(toolResults ? { tool_results: toolResults, tool_errors: toolErrors, tool_error_rate: toolErrors / toolResults } : {}),
-      ...(mcpToolCount !== undefined ? { mcp_tool_count: mcpToolCount } : {}),
+      ...(mcpToolCount !== undefined ? { mcp_tool_count: mcpToolCount, mcp_tool_def_tokens_estimated: mcpToolCount * MCP_TOOL_DEF_TOKENS_EST } : {}),
       ...(skillReads.length ? { skill_module_read: skillReads } : {}),
     };
   };
@@ -397,7 +400,11 @@ export async function consumeSdkStream(
     // --- system/init: the provider's own model report (E-59), captured for writeResultCost below.
     if (msgType === "system" && data.subtype === "init" && typeof data.model === "string" && data.model) {
       sessionModel = data.model;
-      if (Array.isArray(data.tools)) mcpToolCount = data.tools.filter((t) => typeof t === "string" && t.startsWith("mcp__")).length;
+      if (Array.isArray(data.tools)) {
+        mcpToolCount = data.tools.filter((t) => typeof t === "string" && t.startsWith("mcp__")).length;
+        const est = mcpToolCount * MCP_TOOL_DEF_TOKENS_EST, limit = Number(process.env["LOKI_MCP_TOOL_TOKEN_WARN"] ?? MCP_TOOL_TOKEN_WARN_DEFAULT);
+        if (!mcpToolWarned && Number.isFinite(limit) && est > limit) { mcpToolWarned = true; write(`[loki] warning: ${mcpToolCount} MCP tools attached, MCP tool definitions cost ~${est} tokens (estimated at ${MCP_TOOL_DEF_TOKENS_EST} per tool, not measured) on every request; detach unused MCP servers or raise LOKI_MCP_TOOL_TOKEN_WARN (currently ${limit}).\n`); }
+      }
       continue;
     }
 

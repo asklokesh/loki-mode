@@ -151,6 +151,14 @@ export function partialCost(events: EventEnvelope[], tampered = false): { measur
   return { measured, total, usd };
 }
 
+/** The summary Cost inputs for a run's events. A run whose every cost event is the CLI invoker's unmetered marker (a recorded 0, no provider dollars) has no measured cost: usd null and zero measured sessions, so the Cost line reads "not measured", never "$0.00". A tampered log reports no trusted figure. */
+export function summaryCost(events: EventEnvelope[], tampered: boolean): { usd: number | null; pc: { measured: number; total: number; usd: number }; allUnmetered: boolean } {
+  const costs = events.filter((e) => e.type === "cost"), allUnmetered = costs.length > 0 && costs.every((e) => e.data.source === "cli-invoker-unmetered");
+  const pc = partialCost(events, tampered);
+  if (allUnmetered && !tampered) return { usd: null, pc: { measured: 0, total: pc.total, usd: 0 }, allUnmetered };
+  return { usd: tampered ? null : fold(events).cost.usd, pc, allUnmetered };
+}
+
 /** Replays existing events synchronously, then polls for appended ones. An incomplete trailing line is held until its newline arrives. Returns stop(). */
 export function tail(path: string, onEvent: (e: EventEnvelope) => void, opts: { intervalMs?: number } = {}): () => void {
   let offset = 0;

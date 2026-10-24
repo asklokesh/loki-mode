@@ -250,3 +250,33 @@ describe("runKpis --since window (TEN-COST-31)", () => {
     }
   });
 });
+
+describe("runKpis cache saved", () => {
+  function seed(records: object[]): void {
+    const dir = join(td, ".loki", "metrics", "efficiency");
+    mkdirSync(dir, { recursive: true });
+    records.forEach((r, i) => writeFileSync(join(dir, `iteration-${i + 1}.json`), JSON.stringify({ iteration: i + 1, status: "success", ...r })));
+  }
+  function run(args: string[]): string {
+    const io = captureIO();
+    try { runKpis(args); } finally { io.restore(); }
+    return io.get().stdout;
+  }
+  it("cache saved: reports cache read tokens and saved dollars (tokens times the price delta)", () => {
+    seed([{ model: "sonnet", input_tokens: 10, output_tokens: 1, cache_read_tokens: 1_000_000 }]);
+    const e = (JSON.parse(run(["--json"])) as { efficiency: { total_cache_read_tokens: number | null; cache_saved_usd: number | null } }).efficiency;
+    expect(e.total_cache_read_tokens).toBe(1_000_000);
+    expect(e.cache_saved_usd).toBe(1.9);
+    expect(run([])).toContain("Cache saved USD:");
+  });
+  it("cache saved: measured 0 shows 0, a record without the key shows not measured", () => {
+    seed([{ model: "sonnet", input_tokens: 10, output_tokens: 1, cache_read_tokens: 0 }]);
+    const z = (JSON.parse(run(["--json"])) as { efficiency: { cache_saved_usd: number | null } }).efficiency;
+    expect(z.cache_saved_usd).toBe(0);
+    seed([{ model: "sonnet", input_tokens: 10, output_tokens: 1 }]);
+    const u = (JSON.parse(run(["--json"])) as { efficiency: { cache_saved_usd: number | null; total_cache_read_tokens: number | null } }).efficiency;
+    expect(u.cache_saved_usd).toBeNull();
+    expect(u.total_cache_read_tokens).toBeNull();
+    expect(run([])).toContain("Cache saved USD:      not measured");
+  });
+});

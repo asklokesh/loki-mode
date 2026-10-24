@@ -16,10 +16,12 @@ Timeout = item stays 'pending' (not 'failed') to prevent false failures.
 Atomic writes: temp file + os.replace() to never produce partial JSON.
 
 Usage:
-    python3 checklist-verify.py [--checklist PATH] [--timeout SECS]
+    python3 checklist-verify.py [--checklist PATH] [--timeout SECS] (--freeze | --expect-digest SHA256)
 """
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -422,6 +424,27 @@ def determine_item_status(verifications: list) -> str:
     return "pending"
 
 
+_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+
+# Result fields the verifier writes back; never part of a check definition.
+_RESULT_FIELDS = ("passed", "output", "status", "verified_at")
+
+
+def definition_digest(checklist: dict) -> str:
+    """SHA-256 over check definitions only (item ids + verification specs)."""
+    defs = []
+    for category in checklist.get("categories", []):
+        for item in category.get("items", []):
+            checks = [
+                {k: v for k, v in c.items() if k not in _RESULT_FIELDS}
+                for c in item.get("verification", [])
+                if isinstance(c, dict)
+            ]
+            defs.append({"id": item.get("id", ""), "verification": checks})
+    blob = json.dumps(defs, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 def atomic_write_json(path: str, data: dict) -> None:
     """Write JSON atomically via temp file + os.replace()."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -454,6 +477,17 @@ def main():
         default=30,
         help="Timeout per check in seconds (default: 30)",
     )
+    parser.add_argument(
+        "--freeze",
+        action="store_true",
+        help="Print the digest of the check definitions and exit; writes nothing",
+    )
+    parser.add_argument(
+        "--expect-digest",
+        default=None,
+        help="Required to verify: the definition digest the harness froze; "
+        "a mismatch, or a missing or malformed value, fails closed",
+    )
     args = parser.parse_args()
 
     checklist_path = args.checklist
@@ -467,6 +501,26 @@ def main():
     except (json.JSONDecodeError, OSError) as e:
         print(f"Failed to read checklist: {e}", file=sys.stderr)
         sys.exit(1)
+
+    if args.freeze:
+        print(definition_digest(checklist))
+        sys.exit(0)
+
+    expected = args.expect_digest
+    if expected is None or not _DIGEST_RE.match(expected):
+        print(
+            "Refusing to verify: --expect-digest is missing or not a sha256 hex "
+            "digest (fail closed)",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if not hmac.compare_digest(expected, definition_digest(checklist)):
+        print(
+            "Checklist hash mismatch: check definitions differ from the frozen "
+            "digest; refusing to verify",
+            file=sys.stderr,
+        )
+        sys.exit(3)
 
     project_dir = os.getcwd()
     now = datetime.now(timezone.utc).isoformat()

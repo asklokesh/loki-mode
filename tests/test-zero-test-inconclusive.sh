@@ -596,6 +596,47 @@ else
     _no "H: go-test branch wrong: empty=$H_E(want zero) real=$H_R mixed=$H_M fail=$H_F (want has)"
 fi
 
+# ---- Case H2: cargo ("running 0 tests") and mocha ("0 passing") zero-test output -
+# Both runners exit 0 on an empty suite, so without a positive arm the gate reads
+# a pass. Checked against BOTH detector copies (run.sh and verify.sh). A real
+# cargo/mocha run, a mixed cargo run (one binary with tests) and a failing mocha
+# run must NOT be downgraded.
+CARGO_ZERO=$'running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n'
+CARGO_REAL=$'running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n'
+CARGO_MIXED=$'running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\nrunning 1 test\ntest a ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n'
+MOCHA_ZERO=$'\n\n  0 passing (2ms)\n'
+MOCHA_REAL=$'\n\n  3 passing (5ms)\n'
+MOCHA_FAILING=$'\n\n  1 passing (5ms)\n  1 failing\n'
+(
+    # shellcheck source=/dev/null
+    source "$HARNESS"
+    # shellcheck source=/dev/null
+    source "$VERIFY_HELPER"
+    for _fn in _loki_zero_tests_executed _verify_zero_tests_executed; do
+        _z() { if "$_fn" "$1" "$2"; then echo "H2-$_fn-$3:zero"; else echo "H2-$_fn-$3:has"; fi; }
+        _z cargo-test "$CARGO_ZERO" cargo-zero
+        _z cargo-test "$CARGO_REAL" cargo-real
+        _z cargo-test "$CARGO_MIXED" cargo-mixed
+        _z mocha "$MOCHA_ZERO" mocha-zero
+        _z mocha "$MOCHA_REAL" mocha-real
+        _z mocha "$MOCHA_FAILING" mocha-failing
+    done
+) > "$TMP_ROOT/H2.out" 2>/dev/null
+H2_BAD=""
+for _fn in _loki_zero_tests_executed _verify_zero_tests_executed; do
+    for _c in cargo-zero mocha-zero; do
+        grep -qx "H2-$_fn-$_c:zero" "$TMP_ROOT/H2.out" || H2_BAD="$H2_BAD $_fn/$_c(want zero)"
+    done
+    for _c in cargo-real cargo-mixed mocha-real mocha-failing; do
+        grep -qx "H2-$_fn-$_c:has" "$TMP_ROOT/H2.out" || H2_BAD="$H2_BAD $_fn/$_c(want has)"
+    done
+done
+if [ -z "$H2_BAD" ]; then
+    _ok "H2: cargo-test and mocha zero-test output is zero in both detectors; real, mixed and failing runs are not downgraded"
+else
+    _no "H2: cargo/mocha zero-test detection wrong:$H2_BAD"
+fi
+
 # ---- Case I: exit 0 with failures in the runner's own summary (BACKLOG 73) --
 # `npm test` runs `sh ./t.sh`, which prints a canned runner output and exits 0
 # (a script that swallows the runner's status, e.g. `jest || true`). The gate

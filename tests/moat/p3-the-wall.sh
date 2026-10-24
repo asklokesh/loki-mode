@@ -79,14 +79,16 @@ set -uo pipefail
 #      spec must be among them; no file of the repo's implementation may be.
 #
 #   B. Freeze (P3.checks-frozen-before-eval):
-#        python3 autonomy/checklist-verify.py --checklist <path> --freeze
-#      Records a digest of the check DEFINITIONS (ids and verification specs,
-#      never the result fields the verifier writes back: passed, output,
-#      status, verified_at, summary, last_verified_at). Exit 0 on success.
-#      Afterwards a plain verify run (no --freeze) recomputes the digest; on a
-#      mismatch it exits non-zero, prints a reason containing "hash mismatch"
-#      to stdout or stderr, and does not report the edited checks as verified.
-#      The verifier's own write-back must NOT trip the digest on a re-run.
+#        harness: checklist_freeze_once (autonomy/prd-checklist.sh) runs
+#        python3 -I autonomy/checklist-verify.py --checklist <path> --freeze,
+#        which prints the digest of the check DEFINITIONS (ids and verification
+#        specs, never the result fields the verifier writes back) and writes
+#        nothing. The harness keeps the digest in its own memory.
+#        Every harness verify passes --expect-digest <sha>. The verifier fails
+#        closed (non-zero) when it is missing, empty or malformed, and prints
+#        "hash mismatch" and exits non-zero when it differs; it does not report
+#        edited checks as verified. The verifier's own write-back must NOT trip
+#        the digest on a re-run.
 #
 # Contract: one "CASE <ID> PASS|FAIL <desc>" stdout line per case; diagnostics
 # on stderr; exit 0 when the script ran to completion. Hermetic, no network.
@@ -584,7 +586,9 @@ PY
 
 #-------------------------------------------------------------------------------
 case_checks_frozen() {
-    local proj="$MOAT_TMP/frozen" cl out rc
+    # Drives the harness path (autonomy/prd-checklist.sh): the harness freezes the
+    # check definitions in its own memory and passes the digest to every verify.
+    local proj="$MOAT_TMP/frozen" cl out
     mkdir -p "$proj/.loki/checklist"
     printf 'present\n' > "$proj/present.txt"
     cl="$proj/.loki/checklist/checklist.json"
@@ -610,11 +614,20 @@ for c in d.get("categories", []):
 print("absent")
 PY
     }
-    verify() {  # <log> ; sets rc
-        ( cd "$proj" && python3 "$VERIFIER" --checklist "$cl" ) >"$1" 2>&1
-    }
-    tamper() {  # rewrite a DEFINITION field so the failing check trivially passes
-        python3 - "$cl" <<'PY'
+    cat > "$MOAT_TMP/frozen-driver.sh" <<DRV
+log_info() { :; }
+log_step() { :; }
+log_warn() { printf '%s\n' "\$*" >> "$MOAT_TMP/frozen-harness.log"; }
+export CHECKLIST_ENABLED=true CHECKLIST_TIMEOUT=5
+. "$REPO_ROOT/autonomy/prd-checklist.sh"
+checklist_init ""
+checklist_select_heldout() { :; }
+checklist_oracle_triangulate() { :; }
+checklist_freeze_once || echo "freeze-failed"
+checklist_verify; c1=\$?
+checklist_verify; c2=\$?
+if [ "\${1:-}" = tamper ]; then
+    python3 - "$cl" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 for c in d["categories"]:
@@ -623,41 +636,28 @@ for c in d["categories"]:
             i["verification"][0]["path"] = "present.txt"
 json.dump(d, open(sys.argv[1], "w"), indent=2)
 PY
-    }
-
-    cp "$cl" "$MOAT_TMP/frozen-pristine.json"
-    ( cd "$proj" && python3 "$VERIFIER" --checklist "$cl" --freeze ) >"$MOAT_TMP/freeze.log" 2>&1
-    rc=$?
-    if [ "$rc" -ne 0 ]; then
-        # Measure what the gap costs today: a tampered checklist on the current
-        # verifier. Same probe that must go red once the freeze exists.
-        cp "$MOAT_TMP/frozen-pristine.json" "$cl"
-        tamper
-        verify "$MOAT_TMP/tamper-today.log"
-        local trc=$?
-        nok "freeze interface absent (checklist-verify.py --freeze rc=$rc: $(tail -1 "$MOAT_TMP/freeze.log")); today a checklist edited after authoring verifies with no integrity check (tampered item B status=$(item_status "$cl" B), verifier rc=$trc)"
-        return
-    fi
-
-    # Positive controls: clean runs are honest, and the verifier's own
-    # write-back does not trip the digest on a second run.
-    local pass_no
-    for pass_no in 1 2; do
-        verify "$MOAT_TMP/clean-$pass_no.log"
-        if grep -qi 'hash mismatch' "$MOAT_TMP/clean-$pass_no.log"; then
-            nok "clean verify run $pass_no reported a hash mismatch (digest covers result fields, or is unstable)"
-        fi
-        [ "$(item_status "$cl" A)" = "verified" ] || nok "clean run $pass_no: item A not verified ($(item_status "$cl" A))"
-        [ "$(item_status "$cl" B)" = "failing" ] || nok "clean run $pass_no: item B not failing ($(item_status "$cl" B))"
-    done
+fi
+checklist_freeze_once
+checklist_verify; fin=\$?
+echo "clean1=\$c1 clean2=\$c2 final=\$fin"
+DRV
+    : > "$MOAT_TMP/frozen-harness.log"
+    out="$( cd "$proj" && bash "$MOAT_TMP/frozen-driver.sh" 2>/dev/null )"
+    case "$out" in
+        *"clean1=0 clean2=0 final=0") ;;
+        *) nok "clean harness verifies did not all succeed ($out)"; return ;;
+    esac
+    grep -qi 'hash mismatch' "$MOAT_TMP/frozen-harness.log" && nok "clean harness run reported a hash mismatch (digest unstable across the verifier's own write-back)"
+    [ "$(item_status "$cl" A)" = "verified" ] || nok "clean run: item A not verified ($(item_status "$cl" A))"
+    [ "$(item_status "$cl" B)" = "failing" ] || nok "clean run: item B not failing ($(item_status "$cl" B))"
     [ -z "$CASE_FAILS" ] || return
 
-    tamper
-    out="$MOAT_TMP/tampered.log"
-    verify "$out"
-    rc=$?
-    [ "$rc" -ne 0 ] || nok "verifier exited 0 on a checklist edited after freezing"
-    grep -qi 'hash mismatch' "$out" || nok "no 'hash mismatch' reason in verifier output: $(tail -1 "$out")"
+    : > "$MOAT_TMP/frozen-harness.log"
+    out="$( cd "$proj" && bash "$MOAT_TMP/frozen-driver.sh" tamper 2>/dev/null )"
+    case "$out" in
+        *"final=0") nok "harness verify returned 0 on a checklist edited after freezing" ;;
+    esac
+    grep -qi 'hash mismatch' "$MOAT_TMP/frozen-harness.log" || nok "no 'hash mismatch' reason from the harness: $(tail -1 "$MOAT_TMP/frozen-harness.log")"
     [ "$(item_status "$cl" B)" != "verified" ] || nok "the edited check B was reported verified"
 }
 

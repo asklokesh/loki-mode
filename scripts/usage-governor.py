@@ -702,6 +702,10 @@ def seat_formula(session_pct, week_pct, minutes_to_session_reset, hours_to_weekl
     week_seats = max(int(week_head // (wb * horizon_h)), 0) if wb > 0 else SEAT_CEILING_MEASURED
     ceiling = SEAT_CEILING_MEASURED if burn["source"] == "measured" else SEAT_CEILING_DEFAULT
     seats = min(ceiling, sess_seats, week_seats)
+    # Positive headroom on both windows always leaves one seat; only a window
+    # at its ceiling (measured_cap over_ceiling) takes the cap to zero.
+    if seats < 1 and sess_head > 0 and week_head > 0:
+        seats = 1
     binding = "seat_ceiling"
     if seats == sess_seats and sess_seats < ceiling:
         binding = "session"
@@ -735,7 +739,9 @@ def measured_cap(session_pct, week_pct, active_engineers, formula=None):
         return 0, "over_ceiling"
     top = formula["max_seats"] if formula else MEASURE_MAX_SEATS
     if session_pct > MEASURE_HOLD_ABOVE_SESSION_PCT:
-        return min(active_engineers, top), "hold_above_70_session"
+        # Never hold below one seat while both windows are under ceiling and
+        # the formula allows one, or an empty company stays frozen at zero.
+        return min(max(active_engineers, 1 if top >= 1 else 0), top), "hold_above_70_session"
     return top, "ok"
 
 

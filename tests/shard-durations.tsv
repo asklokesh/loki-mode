@@ -752,3 +752,6 @@ cost capture: result-line cost, budget breaker, slug, context-window tracker	5
 loki verify <run receipt path> routes to the v10 verifier (CW-17 #352)	10
 npm-dist-tags.sh never moves a tag backwards and restores an overtaken one (FC-DIST-TAG-MOVED-BACKWARDS)	8
 loki report release-notes lists sealed and unsealed commits (#391)	5
+Checklist Freeze	85
+loki edit --commit untracked file	2
+seeded-defect measure writes the results contract	5

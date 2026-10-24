@@ -80,6 +80,34 @@ PYEOF
 )"
 if [ "$got" = "14 6 (2, 'hold_above_70_session') (0, 'over_ceiling')" ]; then ok "$got"; else bad "T5 got: $got"; fi
 
+echo "T6 -- positive headroom on both windows never yields 0 seats; weekly at 90 still 0"
+got="$(python3 - "$TOOL" <<'PYEOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ug", sys.argv[1])
+ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
+burn = {"seats_assumed": 1, "weekly_pct_per_seat_hour": 5.0, "session_pct_per_seat_hour": 1.0,
+        "source": "measured", "session_source": "measured", "readings_used": 4, "span_hours": 3.0}
+f = ug.seat_formula(17, 68, 300, 150, burn)
+print(ug.measured_cap(17, 68, 0, f)[0] >= 1, ug.measured_cap(17, 90, 0, ug.seat_formula(17, 90, 300, 150, burn))[0])
+PYEOF
+)"
+if [ "$got" = "True 0" ]; then ok "$got"; else bad "T6 got: $got"; fi
+
+echo "T7 -- hold above 70 session never freezes at 0 under ceilings; ceilings and active hold unchanged"
+got="$(python3 - "$TOOL" <<'PYEOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ug", sys.argv[1])
+ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
+burn = {"seats_assumed": 1, "weekly_pct_per_seat_hour": 1.0, "session_pct_per_seat_hour": 1.0,
+        "source": "measured", "session_source": "measured", "readings_used": 4, "span_hours": 3.0}
+def cap(s, w, a):
+    return ug.measured_cap(s, w, a, ug.seat_formula(s, w, 120, 150, burn))
+top = ug.seat_formula(75, 40, 120, 150, burn)["max_seats"]
+print(cap(84.9, 89.9, 0)[0] >= 1, cap(85, 50, 0)[0], cap(50, 90, 0)[0], cap(75, 40, 3)[0] == min(3, top))
+PYEOF
+)"
+if [ "$got" = "True 0 0 True" ]; then ok "$got"; else bad "T7 got: $got"; fi
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

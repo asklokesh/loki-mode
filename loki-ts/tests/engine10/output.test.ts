@@ -14,6 +14,9 @@ import {
   outcomeOf,
   reasonOf,
 } from "../../src/engine10/output.ts";
+import { summaryCost } from "../../src/engine10/events.ts";
+import type { EventEnvelope } from "../../src/engine10/types.ts";
+import { cacheSavings } from "../../src/runner/budget.ts";
 import { clipWords } from "../../src/util/term_width.ts";
 import { reset as resetEta } from "../../src/contrib/eta.ts";
 
@@ -120,6 +123,21 @@ describe("formatHeartbeatLine (golden, ENGINE.md section 11)", () => {
 });
 
 describe("formatSummary (golden, ENGINE.md section 11)", () => {
+  test("cache saved: Cost line shows cache read tokens and saved dollars; measured 0 is 0.00, unmeasured is not measured", () => {
+    const base = { pr: null, verdict: "VERIFIED", notProven: [], flaky: [], wallS: 60, stages: [] };
+    const c = (extra: object): string => formatSummary({ ...base, cost: { usd: 0.84, provider: "claude", tokens: 212000, ...extra } } as never);
+    expect(c({ cacheReadTokens: 1_000_000, cacheSavedUsd: 1.9 })).toContain("cache read 1000k tokens, saved $1.90");
+    expect(c({ cacheReadTokens: 0, cacheSavedUsd: 0 })).toContain("cache read 0 tokens, saved $0.00");
+    expect(c({ cacheReadTokens: null, cacheSavedUsd: null })).toContain("cache not measured");
+    expect(c({})).not.toContain("cache");
+  });
+  test("cache saved: cacheSavings equals tokens times the price delta and is null when any record lacks the key", () => {
+    // sonnet: input 2.0, cache_read 0.1 per MTok -> delta 1.9
+    expect(cacheSavings([{ model: "sonnet", cache_read_tokens: 2_000_000 }])).toEqual({ readTokens: 2_000_000, savedUsd: 3.8 });
+    expect(cacheSavings([{ model: "sonnet", cache_read_tokens: 0 }])).toEqual({ readTokens: 0, savedUsd: 0 });
+    expect(cacheSavings([{ model: "sonnet", cache_read_tokens: 1000 }, { model: "sonnet" }])).toBeNull();
+    expect(cacheSavings([])).toBeNull();
+  });
   test("Q17-02: cost line shows cap use only when a cap is set", () => {
     const base = { pr: null, verdict: "VERIFIED", notProven: [], flaky: [], wallS: 60, stages: [] };
     const capped = formatSummary({ ...base, cost: { usd: 0.84, provider: "claude", tokens: 212000, capUsd: 2 } } as never);
@@ -320,6 +338,9 @@ describe("reasonOf (A-130 round 4)", () => {
     expect(reasonOf([v(["lint:shellcheck"])], false, null, "PARTIAL")).toBe("bun:x failed: boom");
     expect(reasonOf([v([])], false, null, "PARTIAL")).toBe("lint:shellcheck failed");
   });
+  test("failing check reason names the file:line anchor", () => {
+    expect(reasonOf([vfy([{ name: "bun:x", result: "fail", first_error: "boom", anchor: "src/a.ts:42" }])], false, null, "PARTIAL")).toBe("bun:x failed: boom (at src/a.ts:42)");
+  });
   test("success has no reason", () => expect(reasonOf([], false, null, "VERIFIED")).toBeUndefined());
   test("tamper wins over everything", () => expect(reasonOf([ev("stage.failed", "verify", { reason: "x" })], true, "stalled", "FAILED")).toBe("event log modified outside the engine"));
   test("fatal stops are named", () => {
@@ -401,5 +422,37 @@ describe("collapseNotProven (FC-OUTCOME-FLOOD)", () => {
     expect(out).not.toContain("has gray background");
     expect(out.length).toBeLessThan(1500);
     expect(formatSummary({ ...base, notProven: [], flaky: Array.from({ length: 40 }, (_, i) => `f${i}`) } as never)).toContain("flaky 40 tests (listed in receipt.json)");
+  });
+});
+
+describe("summary cost of a CLI-invoker (unmetered) run", () => {
+  const cost = (seq: number, data: Record<string, unknown>): EventEnvelope => ({ v: 1, seq, ts: "2026-01-01T00:00:00Z", run: "r", type: "cost", stage: "implement", data });
+  const render = (events: EventEnvelope[]): string => {
+    const { usd, pc } = summaryCost(events, false);
+    return formatSummary({ pr: null, verdict: "VERIFIED", notProven: [], flaky: [], wallS: 10, stages: [],
+      cost: { usd, provider: "claude", tokens: 0, note: usd === null ? "CLI invoker records no cost" : null, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total } } as never);
+  };
+  test("every cost event unmetered prints not measured, never $0.00", () => {
+    const out = render([cost(1, { usd: 0, source: "cli-invoker-unmetered" }), cost(2, { usd: 0, source: "cli-invoker-unmetered" })]);
+    expect(out).toContain("Cost:       not measured (CLI invoker records no cost)");
+    expect(out).not.toContain("$0.00");
+    expect(out).not.toContain("partial");
+  });
+  test("a metered run still prints its dollar figure", () => {
+    const out = render([cost(1, { usd: 0.3, input_tokens: 500 }), cost(2, { usd: 0.2, input_tokens: 500 })]);
+    expect(out).toContain("Cost:       $0.50");
+  });
+  test("a measured zero is still $0.00", () => {
+    expect(render([cost(1, { usd: 0, input_tokens: 10 })])).toContain("Cost:       $0.00");
+  });
+});
+
+describe("summaryCache", () => {
+  const ev = (data: Record<string, unknown>) => ({ type: "cost", data }) as never;
+  test("cache saved: derived from cost events, null when a session lacks the key or the log is tampered", async () => {
+    const { summaryCache } = await import("../../src/engine10/supervisor.ts");
+    expect(summaryCache([ev({ model: "sonnet", cache_read_tokens: 1_000_000 })], false)).toEqual({ cacheReadTokens: 1_000_000, cacheSavedUsd: 1.9 });
+    expect(summaryCache([ev({ model: "sonnet", cache_read_tokens: 5 }), ev({ model: "sonnet" })], false)).toEqual({ cacheReadTokens: null, cacheSavedUsd: null });
+    expect(summaryCache([ev({ model: "sonnet", cache_read_tokens: 5 })], true).cacheSavedUsd).toBeNull();
   });
 });

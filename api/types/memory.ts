@@ -9,10 +9,11 @@
 // -----------------------------------------------------------------------------
 
 export interface TokenMetrics {
-  discoveryTokens: number;
-  readTokens: number;
-  ratio: number;
-  savingsPercent: number;
+  // null until the session recorded token usage; never a fabricated 0 or 100
+  discoveryTokens: number | null;
+  readTokens: number | null;
+  ratio: number | null;
+  savingsPercent: number | null;
 }
 
 export interface ThresholdAction {

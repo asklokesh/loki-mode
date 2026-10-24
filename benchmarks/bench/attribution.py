@@ -208,7 +208,7 @@ def _git_sha(path: str) -> Optional[str]:
 
 
 def _scoped_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-    keep = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "SHELL",
+    keep = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SHELL",
             "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "LOKI_NO_BROWSER")
     env = {k: os.environ[k] for k in keep if k in os.environ}
     env["GIT_TERMINAL_PROMPT"] = "0"
@@ -226,7 +226,8 @@ def pin_environment(probe: bool, runner: Optional[Callable] = None,
                 "loki_bin": _loki_adapter.loki_bin(),
                 "loki_repo_sha": None, "python_version": sys.version.split()[0],
                 "loki_session_model_effective": model,
-                "loki_session_model_parent_env": os.environ.get("LOKI_SESSION_MODEL")}
+                "loki_session_model_parent_env": os.environ.get("LOKI_SESSION_MODEL"),
+                "identity_env": _schema.identity_env_record()}
     return {
         "probed": True,
         "claude_version": _claude_adapter._detect_claude_version(runner=runner),
@@ -236,6 +237,7 @@ def pin_environment(probe: bool, runner: Optional[Callable] = None,
         "python_version": sys.version.split()[0],
         "loki_session_model_effective": model,
         "loki_session_model_parent_env": os.environ.get("LOKI_SESSION_MODEL"),
+        "identity_env": _schema.identity_env_record(),
     }
 
 
@@ -1196,6 +1198,11 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
         if not args.dry_run:
             print("  pass --execute to run these cells for real (spends API budget)")
         return 0
+    identity = _schema.identity_env_problems(env)
+    if identity:
+        print("INVALID environment, refusing to spend: %s" % "; ".join(identity),
+              file=sys.stderr)
+        return 2
     if set(arms) & set(LOKI_ARMS):
         mismatch = _loki_adapter.version_mismatch_error(env.get("loki_version"))
         if mismatch:

@@ -356,6 +356,47 @@ def sign_attestation(private_key, kid, *, job_id, run_id, receipt_hash,
     return signing_input + "." + _b64url(sig)
 
 
+def select_signing_key(kid, jwks):
+    """Pick the one key set entry whose kid equals the token kid.
+
+    Returns (entry, None), or (None, message) when the key set cannot give a
+    single usable key for that kid: no entry (a plain mismatch, FAILED), several
+    entries, an alg other than EdDSA (alg none included), or a kty/crv that is not OKP/Ed25519. Every
+    other entry in the set is ignored. A message here is a key-set problem,
+    never an accusation against the receipt: callers report NOT CHECKED (see
+    keyset_problem, which leaves the no-entry case to verify_attestation).
+    """
+    entries = [j for j in jwks.get("keys", []) if isinstance(j, dict) and j.get("kid") == kid]
+    if not entries:
+        return None, "no published key with kid %s" % kid
+    if len(entries) != 1:
+        return None, "the key set is ambiguous for kid %s: %d entries" % (kid, len(entries))
+    e = entries[0]
+    if "alg" in e and e["alg"] != "EdDSA":
+        return None, "the key set marks kid %s with alg %s, not EdDSA" % (kid, e["alg"])
+    if e.get("kty") != "OKP" or e.get("crv") != "Ed25519":
+        return None, "the key set entry for kid %s is not an Ed25519 key (kty OKP, crv Ed25519)" % kid
+    return e, None
+
+
+def keyset_problem(token, jwks):
+    """Message when the key set cannot serve this token's kid, else None.
+
+    A token that is itself malformed, not EdDSA or without a kid returns None:
+    verify_attestation judges the token, this judges only the key set.
+    """
+    try:
+        header = json.loads(_b64url_decode(token.split(".")[0]))
+    except Exception:
+        return None
+    if not isinstance(header, dict) or header.get("alg") != "EdDSA" or not header.get("kid"):
+        return None
+    entry, problem = select_signing_key(header["kid"], jwks)
+    if problem and not problem.startswith("no published key"):
+        return problem
+    return None
+
+
 def verify_attestation(token: str, jwks: dict):
     """Verify a compact JWT against a JWKS. Returns (ok, claims_or_reason).
 
@@ -393,13 +434,9 @@ def verify_attestation(token: str, jwks: dict):
     kid = header.get("kid", "")
     if not kid:
         return False, "token carries no kid"
-    match = None
-    for jwk in jwks.get("keys", []):
-        if jwk.get("kid") == kid:
-            match = jwk
-            break
+    match, problem = select_signing_key(kid, jwks)
     if match is None:
-        return False, "no published key with kid %s" % kid
+        return False, problem
     try:
         pub = Ed25519PublicKey.from_public_bytes(_b64url_decode(match["x"]))
         pub.verify(sig, (parts[0] + "." + parts[1]).encode("ascii"))

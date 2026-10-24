@@ -103,7 +103,5 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
     const r = await withChildLedger(run, join(ctx.repoDir, ".loki"), "xreview")(reviewArgv(p, prompt, process.env, p === "claude" ? agent?.model : undefined), { cwd: ctx.repoDir, timeoutMs: boxFor(ctx) * 1000, group: true, signal });
     if (r.exitCode !== 0) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: ${p} exited ${r.exitCode}`] });
     return tag(parseReview(p, r.stdout));
-  } catch {
-    return tag({ provider: p, level: "not_run", notes: [`cross-review not run: ${p} CLI unavailable`] });
-  }
+  } catch { return tag({ provider: p, level: "not_run", notes: [`cross-review not run: ${p} CLI unavailable`] }); }
 }

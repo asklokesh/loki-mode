@@ -21,7 +21,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { type EfficiencyRecord, readEfficiencyDir, calculateCostFromRecords } from "../runner/budget.ts";
+import { type EfficiencyRecord, readEfficiencyDir, calculateCostFromRecords, cacheSavings } from "../runner/budget.ts";
 
 export type CouncilRound = {
   iteration?: number;
@@ -54,6 +54,9 @@ export type KpiSnapshot = {
     // able to tell "emitted no output tokens" from "nothing was recorded".
     total_input_tokens: number | null;
     total_output_tokens: number | null;
+    // Cache reads and what they saved vs the plain input rate. null == NOT MEASURED (any record without the key); a measured 0 stays 0.
+    total_cache_read_tokens: number | null;
+    cache_saved_usd: number | null;
     // Present only when > 0: sessions whose usage could not be recorded (FC-44). Absent on every complete run.
     unmeasured_iterations?: number;
     // NOT part of the measured predicate, and Python does not null it either.
@@ -198,6 +201,8 @@ function makeEmptyEfficiency(): KpiSnapshot["efficiency"] {
     total_cost_usd: null,
     avg_cost_per_iteration: null,
     total_input_tokens: null,
+    total_cache_read_tokens: null,
+    cache_saved_usd: null,
     total_output_tokens: null,
     total_duration_ms: 0,
     avg_duration_ms_per_iteration: null,
@@ -267,6 +272,9 @@ function deriveEfficiency(records: readonly EfficiencyRecord[]): KpiSnapshot["ef
   // count as unmeasured, which is the same dishonesty pointed the other way.
   out.total_input_tokens = measured ? inputTokens : null;
   out.total_output_tokens = measured ? outputTokens : null;
+  const cs = measured ? cacheSavings(records.filter((r) => !isGroupCostRecord(r))) : null;
+  out.total_cache_read_tokens = cs ? cs.readTokens : null;
+  out.cache_saved_usd = cs ? cs.savedUsd : null;
   // Explicit null check, never falsy: a measured total of 0 must still yield a
   // measured average of 0. `if (!total)` would turn that into "not measured".
   out.avg_cost_per_iteration =
@@ -435,6 +443,12 @@ export function formatKpisHuman(snap: KpiSnapshot): string {
   );
   lines.push(
     `  Total output tokens:  ${snap.efficiency.total_output_tokens ?? "UNKNOWN (not measured)"}`,
+  );
+  lines.push(
+    `  Cache read tokens:    ${snap.efficiency.total_cache_read_tokens ?? "not measured"}`,
+  );
+  lines.push(
+    `  Cache saved USD:      ${snap.efficiency.cache_saved_usd ?? "not measured"}`,
   );
   lines.push(`  Total duration (ms):  ${snap.efficiency.total_duration_ms}`);
   lines.push(

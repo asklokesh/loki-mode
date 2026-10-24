@@ -13,7 +13,8 @@ import { loadSpecFile, type LoadedSpec } from "../util/spec_file.ts";
 import { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker } from "../util/engine_origin.ts";
 export { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker }; // re-exported: callers and tests import these from here
 import { withholdGithubTokens } from "../runner/github_token.ts"; import { readAliveBeat, writeAliveBeat, writeRunPid } from "../util/run_pid.ts";
-import { EventLog, conflictReasonOf, fold, partialCost, readEvents, tail, type Folded } from "./events.ts"; import { stageShareText } from "../util/cost_breakdown.ts";
+import { EventLog, conflictReasonOf, fold, partialCost, summaryCost, readEvents, tail, type Folded } from "./events.ts"; import { stageShareText } from "../util/cost_breakdown.ts";
+import { cacheSavings } from "../runner/budget.ts";
 import { disclosureLine } from "../providers/provider_guard.ts";
 import { budgetNext, capNote, groupEnv, parseCapUsd, priorSpend, resolveCap, SUBSCRIPTION_NOTE, unenforceableNote, writeBudgetStop } from "../e10ext/budget_cap.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
@@ -221,7 +222,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   log.sealLog(); recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "failed", failedCheckNames(folded.stages["verify"]?.data.checks, folded.stages["verify"]?.data.pre_red_checks as string[] | undefined), cleanTreeId(opts.repoDir)); // Q17-03/FC-LINT-PRE-RED: real failing checks minus base-red, read by decideRecovery so a flaky check does not mask them
   const stages = allEvents.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number").map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })), // E-48 notify: Slack when configured, no-op otherwise
     pc = partialCost(allEvents, log.tampered),
-    summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, outcome, notProven, flaky: recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "flaky", folded.stages["verify"]?.data.flaky, cleanTreeId(opts.repoDir)), wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: summaryTokens(folded, allEvents.some((e) => e.type === "cost")), partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total, stageShares: log.tampered ? null : stageShareText(allEvents), capUsd: Number(opts.started?.["max_cost_usd"]) > 0 ? Number(opts.started?.["max_cost_usd"]) : undefined } };
+    summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, outcome, notProven, flaky: recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "flaky", folded.stages["verify"]?.data.flaky, cleanTreeId(opts.repoDir)), wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: summaryTokens(folded, allEvents.some((e) => e.type === "cost")), ...summaryCache(allEvents, log.tampered), partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total, stageShares: log.tampered ? null : stageShareText(allEvents), capUsd: Number(opts.started?.["max_cost_usd"]) > 0 ? Number(opts.started?.["max_cost_usd"]) : undefined } };
   await slackEvent(env, "finished", { summary: formatSummary(summary), outcome: String(outcome), cost: summary.cost.usd != null ? `$${summary.cost.usd.toFixed(2)}` : "not measured", time: `${Math.round(wallS)}s`, receipt: log.tampered ? "TAMPERED" : receiptVerdict ? verdict : undefined }); rmRunPid(); process.off("exit", rmRunPid); // D51-A4, replaces E-48 adapters/slack.ts call
   return { verdict, outcome, stop: stop ?? (receiptVerdict && allEvents.some((e) => e.type === "cap.hit") ? "cap" : null), receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
 }
@@ -249,6 +250,11 @@ const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$
 // E-59: every token field the provider reported, cache included (E-50 found "1k shown for 372k used" when this summed only input+output). The sole place tokens are computed for the Cost line.
 export function summaryTokens(f: Folded, sawCost: boolean): number | null {
   return sawCost ? f.cost.inputTokens + f.cost.outputTokens + f.cost.cacheReadTokens + f.cost.cacheCreationTokens : null;
+}
+/** Summary cache fields from the cost events: tokens times the input minus cache-read price delta; null (printed "cache not measured") unless every cost event carried the key, and for a tampered log. */
+export function summaryCache(events: ReturnType<typeof readEvents>, tampered: boolean): { cacheReadTokens: number | null; cacheSavedUsd: number | null } {
+  const cs = tampered ? null : cacheSavings(events.filter((e) => e.type === "cost").map((e) => ({ model: typeof e.data.model === "string" ? e.data.model : undefined, cache_read_tokens: typeof e.data.cache_read_tokens === "number" ? e.data.cache_read_tokens : undefined })));
+  return { cacheReadTokens: cs ? cs.readTokens : null, cacheSavedUsd: cs ? cs.savedUsd : null };
 }
 export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
@@ -394,12 +400,12 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
 
   const events = readEvents(eventsPath), f = fold(events);
   const sawCost = events.some((e) => e.type === "cost"), cli = process.env.LOKI_E10_INVOKER === "cli";
-  const pc = partialCost(events, res.tampered), usd = res.tampered ? null : f.cost.usd; // E-69: same tamper guard as costUsd elsewhere -- a TAMPERED run never prints a trusted dollar figure
+  const { usd, pc } = summaryCost(events, res.tampered); // E-69: same tamper guard as costUsd elsewhere -- a TAMPERED run never prints a trusted dollar figure
   const out = json ? `${JSON.stringify({ ok: EXIT[res.outcome] === 0, outcome: res.outcome, stop: res.stop, run_id: runId, receipt_sha256: res.receiptSha })}\n` : renderMainOutput(events, {
     pr: res.prUrl ? { url: res.prUrl, draft: res.verdict !== "VERIFIED" } : null,
     verdict: res.verdict, outcome: res.outcome, reason: reasonOf(events, res.tampered, res.stop, res.outcome), receipt: { sha: res.tampered ? null : res.receiptSha, tampered: res.tampered, signed: res.tampered ? null : (events.findLast((e) => e.type === "receipt.sealed")?.data.signed as boolean | undefined) ?? null }, notProven: res.notProven, flaky: ((f.stages["verify"]?.data.flaky as unknown[] | undefined) ?? []).filter((n): n is string => typeof n === "string"),
     cost: {
-      usd, provider, tokens: summaryTokens(f, sawCost), note: !res.tampered && cli && (usd === null || events.some((e) => e.type === "cost" && e.data.source === "cli-invoker-unmetered")) ? "CLI invoker records no cost" : null,
+      usd, provider, tokens: summaryTokens(f, sawCost), ...summaryCache(events, res.tampered), note: !res.tampered && cli && (usd === null || events.some((e) => e.type === "cost" && e.data.source === "cli-invoker-unmetered")) ? "CLI invoker records no cost" : null,
       partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total, stageShares: res.tampered ? null : stageShareText(events),
     },
     wallS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000),

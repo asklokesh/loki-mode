@@ -888,28 +888,34 @@ done
   && ok "session-pin parity matrix: estimator == dashboard == runner across $sp_cells cells (no-override tier route)" \
   || bad "session-pin parity matrix had $sp_fail mismatches (of $sp_cells cells)"
 
-# Explicit tier-name headline cells (the v7.32 cost-agreement HIGH). pin=fast on
-# stock config MUST resolve to sonnet on all three readers: before the fix the
-# estimator + dashboard quoted opus (allowlist reject -> development tier) while
-# the runner dispatched sonnet (fast tier). This is the regression vs main.
+# Explicit tier-name headline cells. An explicit planning pin dispatches opus and
+# an explicit fast pin dispatches haiku (explicit top / floor setup); the
+# estimator, dashboard and runner must all report that same dispatched model.
 tn_e="$(est_quoted LOKI_SESSION_MODEL=fast)"
 tn_d="$(dash_session_pin fast LOKI_SESSION_MODEL=fast)"
 tn_r="$(resolve_session_iter fast 2 LOKI_SESSION_MODEL=fast)"
-[ "$tn_e" = "sonnet" ] && [ "$tn_d" = "sonnet" ] && [ "$tn_r" = "sonnet" ] \
-  && ok "tier-name pin: LOKI_SESSION_MODEL=fast resolves to sonnet on all three (est=$tn_e dash=$tn_d runner=$tn_r; was opus-quote regression)" \
-  || bad "pin=fast mismatch: est='$tn_e' dash='$tn_d' runner='$tn_r' (expected all sonnet)"
+[ "$tn_e" = "haiku" ] && [ "$tn_d" = "haiku" ] && [ "$tn_r" = "haiku" ] \
+  && ok "tier-name pin: LOKI_SESSION_MODEL=fast resolves to haiku on all three (est=$tn_e dash=$tn_d runner=$tn_r)" \
+  || bad "pin=fast mismatch: est='$tn_e' dash='$tn_d' runner='$tn_r' (expected all haiku)"
 
-# pin=planning + LOKI_ALLOW_HAIKU=true (Cell B): must resolve to sonnet on all
-# three (planning tier -> PROVIDER_MODEL_PLANNING=sonnet on v7.104.0, unaffected by ALLOW_HAIKU).
-# v7.104.0: CLAUDE_DEFAULT_PLANNING=sonnet, so the runner dispatches sonnet. If this fails
-# with est/dash='opus' and runner='sonnet', the server.py _resolve_session_pin and estimator
-# still use the old opus planning default and need updating (Lane D/F owners).
 tnp_e="$(est_quoted LOKI_SESSION_MODEL=planning LOKI_ALLOW_HAIKU=true)"
 tnp_d="$(dash_session_pin planning LOKI_SESSION_MODEL=planning LOKI_ALLOW_HAIKU=true)"
 tnp_r="$(resolve_session_iter planning 2 LOKI_SESSION_MODEL=planning LOKI_ALLOW_HAIKU=true)"
-[ "$tnp_e" = "sonnet" ] && [ "$tnp_d" = "sonnet" ] && [ "$tnp_r" = "sonnet" ] \
-  && ok "tier-name pin: planning + ALLOW_HAIKU resolves to sonnet on all three (est=$tnp_e dash=$tnp_d runner=$tnp_r; v7.104.0 planning=sonnet)" \
-  || bad "pin=planning+ALLOW_HAIKU mismatch: est='$tnp_e' dash='$tnp_d' runner='$tnp_r' (expected all sonnet; server.py/estimator may need sonnet5-default update)"
+[ "$tnp_e" = "opus" ] && [ "$tnp_d" = "opus" ] && [ "$tnp_r" = "opus" ] \
+  && ok "tier-name pin: planning + ALLOW_HAIKU resolves to opus on all three (est=$tnp_e dash=$tnp_d runner=$tnp_r)" \
+  || bad "pin=planning+ALLOW_HAIKU mismatch: est='$tnp_e' dash='$tnp_d' runner='$tnp_r' (expected all opus)"
+
+# Explicit LOKI_ALLOW_HAIKU=false (or any non-true value) forbids haiku: a fast /
+# small setup falls back to the sonnet fast-tier default on all three readers.
+for hv in false 0 no; do
+  hf_e="$(est_quoted LOKI_SESSION_MODEL=fast LOKI_ALLOW_HAIKU=$hv)"
+  hf_d="$(dash_session_pin fast LOKI_SESSION_MODEL=fast LOKI_ALLOW_HAIKU=$hv)"
+  hf_r="$(resolve_session_iter fast 2 LOKI_SESSION_MODEL=fast LOKI_ALLOW_HAIKU=$hv)"
+  hf_s="$(bash -c 'export LOKI_SESSION_MODEL=small LOKI_ALLOW_HAIKU='"$hv"'; source "'"$CLAUDE_SH"'" 2>/dev/null; resolve_model_for_tier fast')"
+  [ "$hf_e" = "sonnet" ] && [ "$hf_d" = "sonnet" ] && [ "$hf_r" = "sonnet" ] && [ "$hf_s" = "sonnet" ] \
+    && ok "explicit LOKI_ALLOW_HAIKU=$hv: fast/small never dispatch haiku (est=$hf_e dash=$hf_d runner=$hf_r small=$hf_s)" \
+    || bad "LOKI_ALLOW_HAIKU=$hv still dispatches haiku: est='$hf_e' dash='$hf_d' runner='$hf_r' small='$hf_s' (expected all sonnet)"
+done
 
 # Miscased / whitespace session pins (the folded pre-existing LOW): run.sh now
 # trim+lowercases the pin before the case, so OPUS and " opus " resolve like the

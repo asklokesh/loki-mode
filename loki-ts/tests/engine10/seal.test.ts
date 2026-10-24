@@ -28,7 +28,7 @@ import { readRunHistory, type RunOutcome } from "../../src/runner/router/history
 import { repoKey } from "../../src/engine10/cache.ts";
 import { readOriginUrl } from "../../src/util/engine_origin.ts";
 import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
-import { EXIT, formatSummary, outcomeOf } from "../../src/engine10/output.ts";
+import { EXIT, formatSummary, outcomeOf, reasonOf } from "../../src/engine10/output.ts";
 import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes } from "../../src/util/base_guard.ts"; import { commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage, EXTERNAL_NO_WALL } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
@@ -931,6 +931,31 @@ describe("engine10 receipt not_proven rendering (D50-F2r3)", () => {
     expect(md).toContain("- a 'b' ## Loki receipt: VERIFIED");
     expect(md).not.toContain("\n## Loki receipt");
     expect(md).not.toContain("\x07");
+  });
+});
+describe("not sealed verdict text", () => {
+  test("not sealed names check", async () => {
+    const { firstFileLineAnchor } = await import("../../src/util/check_result.ts");
+    const out = "FAIL src/a.test.ts\n  at src/a.ts:42:7\n";
+    const anchor = firstFileLineAnchor(out) ?? undefined;
+    const ev = [{ v: 1, seq: 0, ts: "t", run: "r", type: "stage.completed", stage: "verify", data: { checks: [{ name: "bun:unit", result: "fail", first_error: "FAIL src/a.test.ts", anchor }] } }] as never;
+    const reason = reasonOf(ev, false, null, "PARTIAL");
+    expect(reason).toBe("bun:unit failed: FAIL src/a.test.ts (at src/a.ts:42)");
+    expect(formatSummary({ pr: null, verdict: "PARTIAL", reason, notProven: [], flaky: [], cost: { usd: 0, provider: "claude", tokens: 0 }, wallS: 1, stages: [] })).toContain("bun:unit failed");
+  });
+});
+
+describe("failing-check anchor is linear", () => {
+  test("64KB of pathological path-like output returns fast and a normal anchor still resolves", async () => {
+    const { firstFileLineAnchor } = await import("../../src/util/check_result.ts");
+    const bad = "a/".repeat(32768);
+    let t0 = performance.now();
+    expect(firstFileLineAnchor(bad)).toBeNull();
+    expect(performance.now() - t0).toBeLessThan(200);
+    const mixed = bad.slice(0, 65000) + "\nsrc/a.ts:12\n";
+    t0 = performance.now();
+    expect(firstFileLineAnchor(mixed)).toBe("src/a.ts:12");
+    expect(performance.now() - t0).toBeLessThan(200);
   });
 });
 describe("FC-PR-BODY-PUBLIC-HYGIENE receipt.md base-red label", () => {
@@ -1911,7 +1936,7 @@ describe("medium default review at seal", () => {
 });
 
 describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST a VERIFIED run publishes the sealed Wall that passed", () => {
-  const REL = "tests/loki_wall_x.test.ts", NAME = `bun:${REL}`, SEALED = "// sealed wall\n", AGENT = "// agent edited it\n";
+  const REL = "tests/loki_wall_x.test.ts", NAME = `bun:${REL}`, SEALED = 'import { test, expect } from "bun:test"; test("ok", () => expect(1).toBe(1));\n', AGENT = "// agent edited it\n";
   const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
   const git = (repo: string, ...a: string[]): string => sh(["git", ...a], repo);
   /** Repo with a product change (a.txt), the Wall file in the tree (agent bytes), its sealed copy under runDir/wall, and verify outputs for it. */
@@ -1984,7 +2009,7 @@ describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST a VERIFIED run publishes the sealed Wa
 });
 
 describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST review block: hooks, sealed bytes, forged trailer, drift", () => {
-  const REL = "tests/loki_wall_x.test.ts", NAME = `bun:${REL}`, SEALED = "// sealed wall\n";
+  const REL = "tests/loki_wall_x.test.ts", NAME = `bun:${REL}`, SEALED = 'import { test, expect } from "bun:test"; test("ok", () => expect(1).toBe(1));\n';
   const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
   const git = (repo: string, ...a: string[]): string => sh(["git", ...a], repo);
   const hook = (repo: string, body: string): void => { const h = join(repo, ".git/hooks/pre-commit"); mkdirSync(dirname(h), { recursive: true }); writeFileSync(h, `#!/bin/sh\n${body}\n`); chmodSync(h, 0o755); };
@@ -2033,4 +2058,36 @@ describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST review block: hooks, sealed bytes, for
     git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "child", "-m", `Loki-Wall-Publish: ${ctx.runId}`);
     expect(sealDrift(rp, r as unknown as Record<string, unknown>)?.verdict).toBe("UNCHECKED");
   });
+});
+
+describe("#238 wall proven at committed path", () => {
+  const REL = "tests/loki_wall_loc.test.ts", NAME = `bun:${REL}`;
+  const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
+  // resolves its fixture from its own dir: passes only where loc_fixture.txt sits beside it
+  const SEALED = 'import { test, expect } from "bun:test"; import { readFileSync } from "node:fs"; test("loc", () => expect(readFileSync(`${import.meta.dir}/loc_fixture.txt`, "utf8")).toBe("ok\\n"));\n';
+  async function run(name: string, fixtureAtCommitted: boolean) {
+    noKey();
+    const { repo, base } = makeRepo(name);
+    mkdirSync(join(repo, "tests"), { recursive: true }); writeFileSync(join(repo, REL), "// agent\n");
+    writeFileSync(join(repo, "loc_fixture.txt"), "ok\n"); // proven where the fixture is: the repo root
+    if (fixtureAtCommitted) writeFileSync(join(repo, "tests/loc_fixture.txt"), "ok\n");
+    const { ctx } = ctxFor(repo, base, "claude", {
+      wall: { files: [{ path: join(repo, REL), sha256: sha(SEALED) }], base_run: { pass: 0, fail: 1, not_run: 0 } },
+      verify: { checks: [{ name: NAME, cmd: `bun test ${REL}`, result: "pass", n: 1, duration_s: 1 }], target_checks: [NAME], flaky: [], wall_passed: true, duration_s: 1 },
+    });
+    mkdirSync(join(ctx.runDir, "wall"), { recursive: true }); writeFileSync(join(ctx.runDir, "wall/loki_wall_loc.test.ts"), SEALED);
+    await commitStage.run(ctx, new AbortController().signal);
+    const productHead = sh(["git", "rev-parse", "HEAD"], repo).trim(), s = await sealStage.run(ctx, new AbortController().signal);
+    return { repo, s, r: receiptOf(s), productHead, head: sh(["git", "rev-parse", "HEAD"], repo).trim() };
+  }
+  test("a Wall test that only passes away from its committed path is PARTIAL, named, and not published", async () => {
+    const x = await run("loc-bad", false);
+    expect(x.s.data.verdict).toBe("PARTIAL");
+    expect(x.r.not_proven).toContain(`Wall test fails at its committed path: ${REL}`);
+    expect(x.head).toBe(x.productHead); expect(x.s.data.wall_published).toBeUndefined();
+  }, 60000);
+  test("the same test with its fixture at the committed path still seals VERIFIED and publishes", async () => {
+    const x = await run("loc-ok", true);
+    expect(x.s.data.verdict).toBe("VERIFIED"); expect(x.s.data.wall_published).toBeDefined();
+  }, 60000);
 });

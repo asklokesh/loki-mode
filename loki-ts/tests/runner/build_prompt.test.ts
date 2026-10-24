@@ -204,3 +204,31 @@ describe("quick-PRD USAGE_DOC gate via buildPromptForRunner", () => {
     expect(await run("prd.md")).toBe("has-usage");
   });
 });
+
+describe("untrusted framing in prefix", () => {
+  it("emits the untrusted-data framing inside the cache-stable prefix and mirrors it in run.sh", async () => {
+    const { buildPromptForRunner, _internals: bp } = await import(
+      "../../src/runner/build_prompt.ts"
+    );
+    const { readFileSync } = await import("node:fs");
+    const ctx = {
+      cwd: workDir,
+      retryCount: 0,
+      iterationCount: 1,
+      prdPath: "prd.md",
+      statePrdPath: "prd.md",
+    } as unknown as Parameters<typeof buildPromptForRunner>[0];
+    const out = await buildPromptForRunner(ctx);
+    const text = (bp as Record<string, unknown>).UNTRUSTED_DATA_INSTRUCTION as string;
+    expect(typeof text).toBe("string");
+    const at = out.indexOf(text);
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(out.indexOf("[CACHE_BREAKPOINT]"));
+    const out2 = await buildPromptForRunner({ ...ctx, iterationCount: 7 } as typeof ctx);
+    expect(out2.slice(0, out2.indexOf("[CACHE_BREAKPOINT]"))).toBe(
+      out.slice(0, out.indexOf("[CACHE_BREAKPOINT]")),
+    );
+    const sh = readFileSync(resolve(import.meta.dir, "../../../autonomy/run.sh"), "utf8");
+    expect(sh.includes(text)).toBe(true);
+  });
+});

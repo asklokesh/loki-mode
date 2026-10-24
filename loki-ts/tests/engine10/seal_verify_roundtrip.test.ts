@@ -127,7 +127,7 @@ describe("seal then verify round-trip", () => {
 
 // TEN-GATES-15: the corpus version and catch rate ride in the signed receipt body.
 const sh = (cwd: string, ...a: string[]): string => execFileSync(a[0]!, a.slice(1), { cwd, encoding: "utf8" });
-async function realSeal(name: string, planted: Record<string, unknown> | null, results: ((v: string) => unknown) | null, manifest = '{"defects":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"}]}', started: number | null = Date.now() - 60_000): Promise<{ receipt: Record<string, unknown>; path: string; runsRoot: string; version: string }> {
+async function realSeal(name: string, planted: Record<string, unknown> | null, results: ((v: string) => unknown) | null, manifest = '{"defects":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"}]}', started: number | null = Date.now() - 60_000, wallOut: Record<string, unknown> = {}): Promise<{ receipt: Record<string, unknown>; path: string; runsRoot: string; version: string }> {
   const repo = join(root, name), corpus = join(root, name + "-corpus"), runDir = join(repo, ".loki/runs/r1");
   mkdirSync(runDir, { recursive: true });
   mkdirSync(join(corpus, "results"), { recursive: true });
@@ -148,7 +148,7 @@ async function realSeal(name: string, planted: Record<string, unknown> | null, r
   writeFileSync(join(repo, "a.txt"), "two\n");
   sh(repo, "git", "commit", "-q", "-am", "work");
   const outputs = {
-    intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", resumed: false }, wall: { files: [] }, implement: { exit: "done" },
+    intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", resumed: false }, wall: { files: [], ...wallOut }, implement: { exit: "done" },
     verify: { checks: [{ name: "bun:w.test.ts", cmd: "bun test", result: "pass", n: 2, duration_s: 1 }], flaky: [], wall_passed: true, target_checks: [] },
   } as Partial<Record<StageName, Obj>>;
   const ctx: RunContext = {
@@ -225,6 +225,33 @@ describe("receipt records the seeded-defect corpus (TEN-GATES-15)", () => {
   test("an unreadable or empty manifest leaves the key out or reports zero defects with no rate", async () => {
     expect("seeded_corpus" in (await realSeal("g15g", null, measured, "{not json")).receipt).toBe(false);
     expect(corpusOf(await realSeal("g15o", null, measured, '{"defects":[]}'))).toMatchObject({ corpus_defects: 0, catch_rate: null });
+  });
+  test("receipt.wall.manifest_sha256 is bound only for a 64-char lowercase hex string", async () => {
+    const wallOf = (s: { receipt: Record<string, unknown> }): Obj => s.receipt["wall"] as Obj;
+    const good = "ab12".repeat(16);
+    const kept = wallOf(await realSeal("mw0", null, measured, undefined, undefined, { manifest_sha256: good }));
+    expect(kept["manifest_sha256"]).toBe(good);
+    const bad: [string, unknown][] = [["mw1", "a".repeat(63)], ["mw2", "a".repeat(65)], ["mw3", "A".repeat(64)], ["mw4", "z".repeat(64)], ["mw5", 12345], ["mw6", null]];
+    for (const [n, v] of bad) expect("manifest_sha256" in wallOf(await realSeal(n, null, measured, undefined, undefined, { manifest_sha256: v }))).toBe(false);
+    expect("manifest_sha256" in wallOf(await realSeal("mw7", null, measured))).toBe(false);
+  });
+  test("wall tamper: a sealed wall file edited after the seal is TAMPERED, a clean wall verifies", async () => {
+    const mk = (name: string, body: string) => {
+      const dir = join(root, name), sealed = join(dir, "wall");
+      mkdirSync(sealed, { recursive: true });
+      writeFileSync(join(sealed, "a.test.ts"), body);
+      const sha = createHash("sha256").update(body).digest("hex");
+      return { sealed, p: seal({ verdict: "VERIFIED", wall: { files: [{ path: "/repo/tests/a.test.ts", sha256: sha }], passed: true, manifest_sha256: "c".repeat(64) } }, dir) };
+    };
+    const m = mk("wt1", "expect(1).toBe(1)\n");
+    expect((await verifyReceipt(m.p)).verdict).toBe("UNSIGNED");
+    writeFileSync(join(m.sealed, "a.test.ts"), "expect(1).toBe(2)\n");
+    const bad = await verifyReceipt(m.p);
+    expect(bad.verdict).toBe("TAMPERED");
+    expect(bad.reasons[0]).toContain("a.test.ts");
+    const moved = mk("wt2", "x\n");
+    rmSync(moved.sealed, { recursive: true, force: true });
+    expect((await verifyReceipt(moved.p)).verdict).toBe("UNSIGNED"); // no sealed dir beside the receipt: nothing to compare
   });
   test("the shipped corpus is what an unconfigured seal signs", async () => {
     const prev = process.env["LOKI_SEEDED_DEFECTS_DIR"];

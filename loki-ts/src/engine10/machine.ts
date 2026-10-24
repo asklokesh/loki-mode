@@ -11,10 +11,7 @@ import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, type 
 import { repeatedNoopFix } from "../util/anti_loop.ts";
 
 /** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
-interface WallSplit {
-  author(ctx: RunContext, signal: AbortSignal): Promise<{ kind: string } & Record<string, unknown>>;
-  install(ctx: RunContext, a: never, baseDir: string): StageResult;
-}
+interface WallSplit { author(ctx: RunContext, signal: AbortSignal): Promise<{ kind: string } & Record<string, unknown>>; install(ctx: RunContext, a: never, baseDir: string): StageResult; }
 const wallConcurrent = (): boolean => process.env.LOKI_E10_WALL_CONCURRENT === "1";
 /** Run order. An array is a parallel group. fix is driven by the verify loop, deep is detached (supervisor). */
 export const FLOW: readonly (StageName | readonly StageName[])[] = [
@@ -23,9 +20,7 @@ export const FLOW: readonly (StageName | readonly StageName[])[] = [
 /** Stages that still run after the cap or an early exit. */
 const TAIL: readonly StageName[] = ["commit", "seal", "pr"];
 /** Local extension of RunContext (not in types.ts): lets seal and pr see that the cap fired. */
-export interface MachineRunContext extends RunContext {
-  capHit(): boolean;
-}
+export interface MachineRunContext extends RunContext { capHit(): boolean; }
 export interface MachineOptions {
   /** Resolves a stage; default imports <stagesDir>/<name>.ts and takes its `stage` (or default) export. */
   load?: (name: StageName) => Promise<Stage | null>;

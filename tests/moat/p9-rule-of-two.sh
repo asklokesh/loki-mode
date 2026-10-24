@@ -2184,7 +2184,11 @@ function scan(P) {
         else if (sg(a0) && !(e.kind === K.ImportKeyword && plainDestructure(n))) flags.add("import");
       }
     }
-    if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n)
+    // A static module specifier (import/export declaration, import = require) is a visible
+    // mention whose bindings the import rules already check; it is not a hidden one.
+    const specStr = n.parent && ((ts.isImportDeclaration(n.parent) || ts.isExportDeclaration(n.parent)) && n.parent.moduleSpecifier === n
+      || ts.isExternalModuleReference(n.parent));
+    if (!specStr && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n)
         || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) && (sg(n.text) || [...H].some((h) => n.text.includes(h)))) strMention = true;
     if (ts.isElementAccessExpression(n) && H.has(lit(n.argumentExpression))) flags.add("indirect");
     // allowToken spelled so the raw grep cannot see it: an identifier, property
@@ -2275,7 +2279,7 @@ allowtoken_scan() {
 $hits
 EOF_HITS
     local ts_js code kind rest f2
-    ts_js="$(p9_ts_path)" || { nok "prerequisite missing: typescript not found in loki-ts/node_modules or web-app/node_modules (bun install in loki-ts); allowToken scan cannot parse (fail closed)"; return; }
+    ts_js="$(p9_ts_path)" || { nok "prerequisite missing: typescript not found in loki-ts/node_modules or web-app/node_modules (tests/moat/run.sh installs web-app deps first; direct runs: cd web-app && npm ci); allowToken scan cannot parse (fail closed)"; return; }
     command -v node >/dev/null 2>&1 || { nok "prerequisite missing: node"; return; }
     # Per-file scans parse with the real TypeScript grammar and fail closed on a
     # parse diagnostic.
@@ -2541,6 +2545,22 @@ EOF_CLEAN
     saved_fails="$CASE_FAILS"; CASE_FAILS=""
     allowtoken_scan "$t"
     [ -z "$CASE_FAILS" ] || { local why="$CASE_FAILS"; CASE_FAILS="$saved_fails"; nok "negative control flagged a clean tree: $why"; return; }
+    CASE_FAILS="$saved_fails"
+    # Negative control (false-positive shape): a plain named import of safe_git whose
+    # module specifier is the file's only safe_git string, next to an unrelated computed
+    # dynamic import (engine10/machine.ts shape). The visible specifier is not a hidden
+    # mention, so the dynLoader+strMention rule must not fire.
+    t="$T_AT/clean-specifier-dyn"
+    mkdir -p "$t/util"
+    cp "$src/util/safe_git.ts" "$src/util/base_guard.ts" "$src/util/modernize_unit.ts" "$t/util/"
+    cat > "$t/clean-specifier-dyn.ts" <<'EOF_CLEAN2'
+import { safeGit } from "./util/safe_git.ts";
+export async function load<T>(abs: string): Promise<T> { return (await import(abs)) as T; }
+export const head = safeGit(".", ["rev-parse", "HEAD"]);
+EOF_CLEAN2
+    saved_fails="$CASE_FAILS"; CASE_FAILS=""
+    allowtoken_scan "$t"
+    [ -z "$CASE_FAILS" ] || { local why3="$CASE_FAILS"; CASE_FAILS="$saved_fails"; nok "negative control flagged a plain safe_git import beside a computed import: $why3"; return; }
     CASE_FAILS="$saved_fails"
     # A comment (with a quote and slashes) inside the real pin must not hide it: the
     # stripped text is what the fetch-only pin is matched against.

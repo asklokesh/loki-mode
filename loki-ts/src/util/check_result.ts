@@ -542,13 +542,13 @@ export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process
 /** FC-WALL-LOCATION-BLIND: a loki_wall_* file in the tree that this run's Wall did not install (an earlier run left it untracked, or this run discarded it) is not a change of this run: verifying it would credit an exogenous pass for a test the receipt lists as discarded. `own` holds the paths this run installed (absolute or repo-relative). */
 export const withoutStaleWall = <T extends string | { path: string }>(items: T[], own: string[], repoDir: string): T[] => { const mine = new Set(own.map((p) => (isAbsolute(p) ? relative(repoDir, p) : p))); return items.filter((it) => { const f = typeof it === "string" ? it : it.path; return !/(^|\/)loki_wall_[^/]*$/.test(f) || mine.has(f); }); };
 /** FC-VERIFIED-PR-WITHOUT-ITS-TEST: the Wall files verify ran and passed (target_checks + executed proof), as their SEALED bytes: the runDir/wall copy must hash to wall.files[].sha256, else a NOT PROVEN note and no file. LOKI_COMMIT_WALL=0: none. */
-export function publishableWall(repoDir: string, runDir: string, o: Partial<Record<string, Record<string, unknown>>>, env: NodeJS.ProcessEnv = process.env): { files: { rel: string; bytes: Buffer; cmd: string }[]; notes: string[] } {
-  const out = { files: [] as { rel: string; bytes: Buffer; cmd: string }[], notes: [] as string[] }, arr = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []), tgt = new Set(Array.isArray(o.verify?.["target_checks"]) ? (o.verify["target_checks"] as unknown[]).map(String) : []);
+export function publishableWall(repoDir: string, runDir: string, o: Partial<Record<string, Record<string, unknown>>>, env: NodeJS.ProcessEnv = process.env): { files: { rel: string; bytes: Buffer; cmd: string; runner: string }[]; notes: string[] } {
+  const out = { files: [] as { rel: string; bytes: Buffer; cmd: string; runner: string }[], notes: [] as string[] }, arr = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []), tgt = new Set(Array.isArray(o.verify?.["target_checks"]) ? (o.verify["target_checks"] as unknown[]).map(String) : []);
   if (env["LOKI_COMMIT_WALL"] === "0") return out;
   for (const w of arr(o.wall?.["files"])) {
     const rel = relative(repoDir, String(w["path"])), hit = arr(o.verify?.["checks"]).find((c) => tgt.has(String(c["name"])) && String(c["name"]).slice(String(c["name"]).indexOf(":") + 1) === rel && hasExecutedProof([c]));
     if (!hit || rel.startsWith("..") || isAbsolute(rel) || rel.startsWith(".loki/") || !basename(rel).startsWith("loki_wall_")) continue; // stale, failed, not-run or outside the repo: stays dropped
-    try { const bytes = readFileSync(join(runDir, "wall", basename(rel))); if (createHash("sha256").update(bytes).digest("hex") !== w["sha256"]) throw new Error("hash"); out.files.push({ rel, bytes, cmd: String(hit["cmd"]) }); } catch { out.notes.push(`Wall test not published: ${rel} (sealed copy missing or not the sealed bytes)`); }
+    try { const bytes = readFileSync(join(runDir, "wall", basename(rel))); if (createHash("sha256").update(bytes).digest("hex") !== w["sha256"]) throw new Error("hash"); out.files.push({ rel, bytes, cmd: String(hit["cmd"]), runner: String(hit["name"]).slice(0, String(hit["name"]).indexOf(":")) }); } catch { out.notes.push(`Wall test not published: ${rel} (sealed copy missing or not the sealed bytes)`); }
   }
   return out;
 }
@@ -828,3 +828,16 @@ export async function publishWall(git: G, runId: string, repoDir: string, files:
   return false;
 }
 
+
+/** The council file:line anchor grammar (src/a.ts:42, a.ts:L42, a.ts#L42, a.ts (line 42)); one owner, shared by the council finding schema and the failing-check anchor. */
+export const URL_RE = /\b[a-z][a-z0-9+.-]{0,63}:\/\/\S+/gi; // bounded scheme: linear (TEN-SECURITY-26)
+export const ANCHOR_RE = /(?<![\w./@-])([\w./@-]{1,512})[`'"]?(?::L?|#L|\s*\(line\s+)([1-9]\d*)(?!\d)/g;
+export const EXTENSIONLESS = /^(?:.*\/)?(?:Makefile|GNUmakefile|Dockerfile|Jenkinsfile|Rakefile|Gemfile|Procfile|Vagrantfile)$/;
+/** The first file:line anchor in a text, normalized to file:line; null when none. */
+export function firstFileLineAnchor(desc: string): string | null {
+  for (const m of desc.replace(URL_RE, " ").matchAll(ANCHOR_RE)) {
+    const tok = m[1] as string;
+    if (/\.[A-Za-z][A-Za-z0-9]*$/.test(tok) || tok.includes("/") || EXTENSIONLESS.test(tok)) return `${tok}:${m[2]}`;
+  }
+  return null;
+}

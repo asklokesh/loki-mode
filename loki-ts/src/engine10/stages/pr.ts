@@ -142,8 +142,5 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   return { status: "completed", data: { pr_url: url, draft, existing, ...(notProvenOut.length ? { not_proven: notProvenOut } : {}) } };
 }
 export const stage: Stage = {
-  name: "pr",
-  targetS: 15,
-  limitS: 60,
-  run: (ctx, signal) => runPr(ctx as PrContext, signal),
+  name: "pr", targetS: 15, limitS: 60, run: (ctx, signal) => runPr(ctx as PrContext, signal),
 };

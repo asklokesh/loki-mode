@@ -989,7 +989,7 @@ import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys, hashlib, urllib.request
 sys.path.insert(0, sys.argv[3])
 try:
-    from receipt_jwt import verify_attestation, check_seal_meta, _CRYPTO_AVAILABLE
+    from receipt_jwt import verify_attestation, keyset_problem, check_seal_meta, _CRYPTO_AVAILABLE
 except ImportError:
     sys.exit(1)          # -> "" : cannot check, never a verdict
 proof = json.load(open(sys.argv[1]))
@@ -1009,7 +1009,8 @@ except Exception:
 # A key set that is not {"keys": [{...}, ...]} -- INCLUDING an empty list -- is
 # a key-set problem: UNCHECKED, never an accusation against the receipt. An
 # empty keyset is an inability to check (no key was published to check
-# against), not evidence of tampering. Checked BEFORE anything below can print
+# against), not evidence of tampering. The same holds below for a set that
+# gives zero or several entries, or a non-EdDSA alg, for the token's kid. Checked BEFORE anything below can print
 # "bad", so a bad or empty key set can never read as TAMPERED.
 _keys = jwks.get("keys") if isinstance(jwks, dict) else None
 if not isinstance(_keys, list) or not _keys or not all(isinstance(k, dict) for k in _keys):
@@ -1024,9 +1025,16 @@ if not isinstance(tok, str):
 # dependency is UNCHECKED. Same guard in loki_proof_attestation_check below.
 if not _CRYPTO_AVAILABLE:
     sys.exit(1)
-# The key set is known-good here, so any crash inside verification comes from
-# the token: refuse it. Letting it propagate read as UNCHECKED, which let a
-# forger turn TAMPERED into "install python3 cryptography".
+# A key set that cannot give exactly one usable key for the token's kid is a
+# key-set problem, not an accusation: UNCHECKED.
+try:
+    if keyset_problem(tok, jwks):
+        sys.exit(1)
+except Exception:
+    print("bad"); sys.exit(0)
+# Any other crash inside verification comes from the token: refuse it.
+# Letting it propagate read as UNCHECKED, which let a forger turn TAMPERED
+# into "install python3 cryptography".
 try:
     ok, claims = verify_attestation(tok, jwks)
 except Exception:
@@ -1127,7 +1135,7 @@ import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys, os, hashlib, urllib.request
 sys.path.insert(0, sys.argv[3])
 try:
-    from receipt_jwt import verify_attestation, check_seal_meta, _CRYPTO_AVAILABLE
+    from receipt_jwt import verify_attestation, keyset_problem, check_seal_meta, _CRYPTO_AVAILABLE
 except ImportError:
     sys.exit(1)                      # "" : cannot check
 try:
@@ -1164,7 +1172,8 @@ except Exception:
 # a key-set problem: NOT CHECKED, never an accusation. An empty keyset is an
 # inability to check (no key was published to check against), not evidence of
 # tampering. Checked BEFORE anything below can print "bad", so a bad or empty
-# key set can never read as FAILED. Same order in loki_remote_attestation_status
+# key set (or one that is ambiguous or wrongly tagged for the token's kid, see
+# keyset_problem) can never read as FAILED. Same order in loki_remote_attestation_status
 # above -- change both.
 _keys = jwks.get("keys") if isinstance(jwks, dict) else None
 if not isinstance(_keys, list) or not _keys or not all(isinstance(k, dict) for k in _keys):
@@ -1180,9 +1189,17 @@ if not isinstance(tok, str):
 # loki_remote_attestation_status above -- change both.
 if not _CRYPTO_AVAILABLE:
     sys.exit(1)                      # "" : cannot check
-# The key set is known-good here, so any crash inside verification comes from
-# the token: refuse it. Letting it propagate read as NOT CHECKED (exit 2), which
-# let a forger turn FAILED into "could not check".
+# A key set that cannot give exactly one usable key for the token's kid is a
+# key-set problem, never an accusation: NOT CHECKED, with the reason on stdout.
+try:
+    _ksp = keyset_problem(tok, jwks)
+except Exception:
+    _ksp = None
+if _ksp:
+    print("keyset: " + _ksp); sys.exit(0)
+# Any other crash inside verification comes from the token: refuse it.
+# Letting it propagate read as NOT CHECKED (exit 2), which let a forger turn
+# FAILED into "could not check".
 try:
     ok, claims = verify_attestation(tok, jwks)
 except Exception:
@@ -15196,8 +15213,9 @@ EOF
 
 # FC-EGRESS-AUDIT-HAND-LISTED: the registry of every env var that names an outbound
 # host. _loki_airgap_audit walks it, so a configured webhook, tracker, remote or model
-# gateway is named in the audit. tests/test-airgap-commands.sh greps autonomy/ and
-# loki-ts/src for LOKI_*_(URL|HOST|ENDPOINT|WEBHOOK) readers and fails on any name that
+# gateway is named in the audit. tests/test-airgap-commands.sh greps autonomy/,
+# loki-ts/src, providers, dashboard and web-app for LOKI_*_(URL|HOST|ENDPOINT|WEBHOOK|ISSUER)
+# and DATABASE_URL readers and fails on any name that
 # is in neither list. Entry: NAME|what it reaches.
 _LOKI_AIRGAP_EGRESS_ENV=(
     "LOKI_WEBHOOK_URL|custom webhook notifications"
@@ -15216,6 +15234,9 @@ _LOKI_AIRGAP_EGRESS_ENV=(
     "JIRA_BASE_URL|Jira write-back (alias of LOKI_JIRA_URL)"
     "LOKI_LINEAR_URL|Linear write-back"
     "LOKI_MODEL_BASE_URL|model route base URL"
+    "LOKI_AUDIT_SYSLOG_HOST|dashboard audit log forwarding to a remote syslog server"
+    "LOKI_OIDC_ISSUER|dashboard OIDC sign-in (fetches the issuer discovery document and JWKS keys)"
+    "DATABASE_URL|web-app Postgres database server (unset to use local file storage)"
 )
 # Names the guard skips because they never name an outbound host. NAME|reason.
 _LOKI_AIRGAP_EGRESS_NOT=(
@@ -15242,6 +15263,14 @@ _LOKI_AIRGAP_EGRESS_NOT=(
     "LOKI_LAST_GIST_URL|internal variable carrying a gist link this run already created"
     "LOKI_HOSTED_BODY|internal temp-file path"
     "LOKI_HOSTED_EP|internal copy of LOKI_HOSTED_ENDPOINT"
+    "LOKI_DASHBOARD_ALLOWED_HOSTS|the dashboard's own inbound Host-header allowlist, not a destination"
+    "LOKI_HOST_CHILD_PATH|a filesystem path for the host-guard sandbox, not a host"
+    "LOKI_HOST_PROTECTED_ROOT|a filesystem path for the host-guard sandbox, not a host"
+    "LOKI_HOST_RESERVED_PORTS|local ports the host-guard sandbox reserves, not a destination"
+    "LOKI_HOST_RUNTIME_READ_PATHS|filesystem paths for the host-guard sandbox, not a host"
+    "LOKI_HOST_RUNTIME_WRITE_PATHS|filesystem paths for the host-guard sandbox, not a host"
+    "LOKI_HOST_SEATBELT|a boolean switch for the host-guard sandbox, not a host"
+    "LOKI_HOST_SEATBELT_PROBE_SHA|a hash of the host-guard sandbox probe, not a host"
 )
 
 # _loki_airgap_configured_egress -- one TSV line per configured outbound host that is
@@ -21913,6 +21942,18 @@ def _resolve_session_pin(alias):
         _m = 'opus'
     else:  # development (and the '*' fallthrough)
         _m = _provider_model_development()
+    # Explicit top / floor setup, mirrors claude.sh resolve_model_for_tier: a
+    # planning pin dispatches opus, a fast pin haiku (skipped when
+    # LOKI_ALLOW_HAIKU is explicitly set to anything but 'true'), unless legacy
+    # tier switching or an explicit per-tier pin applies.
+    if os.environ.get('LOKI_LEGACY_TIER_SWITCHING') != 'true':
+        if (_pin_tier == 'planning' and alias == 'planning'
+                and not (os.environ.get('LOKI_CLAUDE_MODEL_PLANNING') or os.environ.get('LOKI_MODEL_PLANNING'))):
+            _m = 'opus'
+        elif (_pin_tier == 'fast' and alias == 'fast'
+                and not (os.environ.get('LOKI_CLAUDE_MODEL_FAST') or os.environ.get('LOKI_MODEL_FAST'))
+                and os.environ.get('LOKI_ALLOW_HAIKU', 'true') == 'true'):
+            _m = 'haiku'
     # Apply the shared LOKI_MAX_TIER clamp with the REAL tier and resolved model
     # (loki_apply_max_tier_clamp(model, tier)), NOT the alias==alias override
     # convention. This is the one place where the two paths legitimately diverge
@@ -23515,12 +23556,13 @@ main() {
 #   - Non-TTY/CI without --yes (and no LOKI_ULTRAREVIEW=1): REFUSE with exit 2
 #     and ZERO ultrareview calls (the no-silent-bill guard). Never hang on read.
 #   - --yes or LOKI_ULTRAREVIEW=1 proceeds without prompting (this command only).
-# Args: <format> <assume_yes> <timeout_minutes> <target>
+# Args: <format> <assume_yes> <timeout_minutes> <target> <trust_workspace>
 _review_ultra() {
     local fmt="${1:-text}"
     local assume_yes="${2:-false}"
     local timeout_min="${3:-}"
     local target="${4:-}"
+    local trust_ws="${5:-false}"
 
     # Make the ultrareview gate predicates available even though autonomy/loki
     # does not source claude-flags.sh globally (same on-demand pattern as
@@ -23605,14 +23647,31 @@ _review_ultra() {
     if [ -n "$timeout_min" ]; then
         ur_argv+=("--timeout" "$timeout_min")
     fi
+    # Claude Code 2.1.309+ needs --trust-workspace for scripted runs. Forward it
+    # only when the user passed it AND the CLI lists it; never trust by default.
+    local ur_trust_ok=false
+    if { claude ultrareview --help 2>&1; claude --help 2>&1; } | grep -q -- '--trust-workspace'; then
+        ur_trust_ok=true
+    fi
+    if [ "$trust_ws" = true ]; then
+        if [ "$ur_trust_ok" = true ]; then
+            ur_argv+=("--trust-workspace")
+        else
+            echo "Note: this claude CLI does not list --trust-workspace; not forwarding it." >&2
+        fi
+    fi
     if [ -n "$target" ]; then
         ur_argv+=("$target")
     fi
 
     echo -e "${DIM}Running: claude ${ur_argv[*]}${NC}" >&2
     echo "" >&2
-    claude "${ur_argv[@]}"
-    return $?
+    local ur_rc=0
+    claude "${ur_argv[@]}" || ur_rc=$?
+    if [ "$ur_rc" -ne 0 ] && [ "$trust_ws" != true ] && [ "$ur_trust_ok" = true ]; then
+        echo "If claude reported an untrusted folder, re-run: loki review --ultra --yes --trust-workspace" >&2
+    fi
+    return "$ur_rc"
 }
 
 # v7.38.0: optional native Claude Code Dynamic Workflow passthrough
@@ -23800,6 +23859,7 @@ cmd_review() {
     local review_format="text"
     local review_severity="all"
     local review_ultra=false
+    local review_trust_ws=false
     local review_assume_yes=false
     local review_timeout=""
     local review_risk=false
@@ -23836,6 +23896,8 @@ cmd_review() {
                 echo "                       'loki review <pr-number> --risk' also works. Use --json"
                 echo "  --yes, -y            Skip the --ultra confirmation prompt"
                 echo "  --timeout <minutes>  --ultra: max minutes to wait (default 30)"
+                echo "  --trust-workspace    --ultra: forward claude's --trust-workspace (needed for"
+                echo "                       scripted runs in an untrusted folder; never default)"
                 echo "  --help, -h           Show this help"
                 echo ""
                 echo "Exit codes:"
@@ -23857,6 +23919,7 @@ cmd_review() {
                 return 0
                 ;;
             --ultra) review_ultra=true; shift ;;
+            --trust-workspace) review_trust_ws=true; shift ;;
             --risk) review_risk=true; shift ;;
             --json) review_format="json"; shift ;;
             --yes|-y) review_assume_yes=true; shift ;;
@@ -23910,7 +23973,7 @@ cmd_review() {
     # below: --ultra is a different operation (paid cloud), not a flag that
     # augments the local static analysis.
     if [ "$review_ultra" = true ]; then
-        _review_ultra "$review_format" "$review_assume_yes" "$review_timeout" "$review_target"
+        _review_ultra "$review_format" "$review_assume_yes" "$review_timeout" "$review_target" "$review_trust_ws"
         return $?
     fi
 
@@ -39217,6 +39280,13 @@ print(json.dumps(json.load(open(os.environ['LOKI_PROOF_JSON'])), indent=2))
                         echo "  Not verified: a key set was supplied, but the receipt is unsigned (exit 1)." >&2
                         _pv_rc=1
                         _pv_attestation_field="ABSENT"
+                        ;;
+                    keyset:*)
+                        echo -e "${YELLOW}attestation: NOT CHECKED -- ${_pv_att#keyset: }.${NC}" >&2
+                        echo "  The key set at ${_pv_jwks} cannot give one usable key for this receipt." >&2
+                        echo "  This is not a failure of the receipt. Nothing was proven either way (exit 2)." >&2
+                        if [ "$_pv_rc" -eq 0 ]; then _pv_rc=2; fi
+                        _pv_attestation_field="NOT CHECKED"
                         ;;
                     *)
                         # Unreachable key set, unreadable file, missing python

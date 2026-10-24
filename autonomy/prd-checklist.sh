@@ -106,6 +106,10 @@ fi
 # Internal state
 CHECKLIST_DIR=""
 CHECKLIST_FILE=""
+# Digest of the check definitions, frozen by the harness the first time it sees
+# the checklist and held only in this process's memory (never on disk, where an
+# agent could rewrite it). Every verify passes it as --expect-digest.
+CHECKLIST_FROZEN_DIGEST=""
 CHECKLIST_RESULTS_FILE=""
 CHECKLIST_LAST_VERIFY_ITERATION=0
 # Path to the spec/PRD that drove this checklist. Used by the acceptance-oracle
@@ -1009,6 +1013,27 @@ except Exception:
 # Verification
 #===============================================================================
 
+# Freeze the check definitions once. Idempotent: a second call keeps the first
+# digest, so an edit made after the freeze can never become the new baseline.
+checklist_freeze_once() {
+    [ "$CHECKLIST_ENABLED" = "true" ] || return 0
+    [ -z "$CHECKLIST_FROZEN_DIGEST" ] || return 0
+    [ -n "$CHECKLIST_FILE" ] && [ -f "$CHECKLIST_FILE" ] || return 0
+
+    local script_dir verify_script _cl_py digest
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    verify_script="${script_dir}/checklist-verify.py"
+    [ -f "$verify_script" ] || return 1
+    _cl_py="$(_loki_snapshot_py_tool)" || return 1
+    digest="$("$_cl_py" -I -S "$verify_script" --checklist "$CHECKLIST_FILE" --freeze 2>/dev/null)" || return 1
+    case "$digest" in
+        *[!0-9a-f]* | "") return 1 ;;
+    esac
+    [ "${#digest}" -eq 64 ] || return 1
+    CHECKLIST_FROZEN_DIGEST="$digest"
+    return 0
+}
+
 checklist_verify() {
     if [ "$CHECKLIST_ENABLED" != "true" ]; then
         return 0
@@ -1045,11 +1070,22 @@ checklist_verify() {
         return 1
     fi
 
+    if ! checklist_freeze_once; then
+        log_warn "checklist verification skipped: could not freeze the check definitions (fail closed)"
+        return 1
+    fi
+
     log_step "Running PRD checklist verification..."
 
-    "$_cl_py" -I -S "$verify_script" \
+    local _cl_rc=0 _cl_err
+    _cl_err="$("$_cl_py" -I -S "$verify_script" \
         --checklist "$CHECKLIST_FILE" \
-        --timeout "$CHECKLIST_TIMEOUT" 2>/dev/null || true
+        --expect-digest "$CHECKLIST_FROZEN_DIGEST" \
+        --timeout "$CHECKLIST_TIMEOUT" 2>&1 >/dev/null)" || _cl_rc=$?
+    if [ "$_cl_rc" -ne 0 ]; then
+        log_warn "checklist verification refused (rc=$_cl_rc): ${_cl_err##*$'\n'}"
+        return "$_cl_rc"
+    fi
 
     CHECKLIST_LAST_VERIFY_ITERATION="${ITERATION_COUNT:-0}"
 

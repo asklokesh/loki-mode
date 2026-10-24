@@ -184,15 +184,23 @@ us_raw="$(printf '%s' "$us_json" | python3 -c 'import json,re,sys; d=json.load(s
 #     registry or the non-egress list. A fixture copy with a new reader must make it red.
 guard_missing() {
     local root="$1" n
-    for n in $(cd "$root" && grep -rhoE 'LOKI_[A-Z_]*(URL|HOST|ENDPOINT|WEBHOOK)[A-Z_]*' --exclude='*.md' --exclude-dir=node_modules --exclude-dir=dist autonomy loki-ts/src providers 2>/dev/null | sort -u); do
+    for n in $(cd "$root" && grep -rhoE 'LOKI_[A-Z_]*(URL|HOST|ENDPOINT|WEBHOOK|ISSUER)[A-Z_]*|DATABASE_URL' --exclude='*.md' --exclude-dir=node_modules --exclude-dir=dist autonomy loki-ts/src providers dashboard web-app 2>/dev/null | sort -u); do
         printf '%s\n%s\n' "$registry" "$notegress" | grep -qx "$n" || printf '%s ' "$n"
     done
 }
 unlisted="$(guard_missing "$REPO_ROOT")"
 [ -z "$unlisted" ] && ok "guard: every egress-looking env reader is registered or marked non-egress" || bad "guard: unlisted egress-looking names: $unlisted"
-mkdir -p "$WORK/fx/autonomy" "$WORK/fx/loki-ts/src"
+mkdir -p "$WORK/fx/autonomy" "$WORK/fx/loki-ts/src" "$WORK/fx/dashboard"
 printf 'const u = process.env.LOKI_FOO_URL;\n' > "$WORK/fx/loki-ts/src/foo.ts"
 [ "$(guard_missing "$WORK/fx")" = "LOKI_FOO_URL " ] && ok "guard mutation: a new LOKI_FOO_URL reader in a fixture goes red" || bad "guard mutation: the guard missed a new LOKI_FOO_URL reader"
+printf 'import os\nx = os.environ.get("LOKI_FOO_HOST")\ny = os.environ.get("LOKI_BAR_ISSUER")\n' > "$WORK/fx/dashboard/foo.py"
+[ "$(guard_missing "$WORK/fx")" = "LOKI_BAR_ISSUER LOKI_FOO_HOST LOKI_FOO_URL " ] && ok "guard mutation: a new LOKI_FOO_HOST reader under dashboard goes red" || bad "guard mutation: the guard missed a dashboard LOKI_FOO_HOST reader"
+audit_syslog="$(cd "$WORK/proj3" && env -i PATH="$PATH" HOME="$WORK" LOKI_AUDIT_SYSLOG_HOST=syslog.example.invalid bash "$LOKI" doctor --airgap 2>&1 || true)"
+printf '%s' "$audit_syslog" | grep -q 'syslog.example.invalid' && printf '%s' "$audit_syslog" | grep -q 'unset LOKI_AUDIT_SYSLOG_HOST' && ok "doctor --airgap names LOKI_AUDIT_SYSLOG_HOST host and its disable step" || bad "doctor --airgap does not name LOKI_AUDIT_SYSLOG_HOST: $audit_syslog"
+oidc_out="$(cd "$WORK/proj3" && env -i PATH="$PATH" HOME="$WORK" LOKI_OIDC_ISSUER=https://sso.example.invalid/realm bash "$LOKI" doctor --airgap 2>&1 || true)"
+printf '%s' "$oidc_out" | grep -q 'sso.example.invalid' && printf '%s' "$oidc_out" | grep -q 'unset LOKI_OIDC_ISSUER' && ok "doctor --airgap names LOKI_OIDC_ISSUER host and its disable step" || bad "doctor --airgap does not name LOKI_OIDC_ISSUER: $oidc_out"
+db_out="$(cd "$WORK/proj3" && env -i PATH="$PATH" HOME="$WORK" DATABASE_URL=postgresql+asyncpg://u:pw@db.example.invalid:5432/x bash "$LOKI" doctor --airgap 2>&1 || true)"
+printf '%s' "$db_out" | grep -q 'db.example.invalid' && printf '%s' "$db_out" | grep -q 'unset DATABASE_URL' && ! printf '%s' "$db_out" | grep -q ':pw@' && ok "doctor --airgap names DATABASE_URL host without credentials" || bad "doctor --airgap DATABASE_URL row wrong: $db_out"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

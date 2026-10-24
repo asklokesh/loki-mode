@@ -469,7 +469,7 @@ def results(manifest, res):
         return "runs must be a list of objects"
     for run in r["runs"]:
         runs.setdefault(run.get("setup"), []).append(run)
-    got = {}
+    got, verifiers = {}, {}
     for setup in ("top", "floor"):
         rs = runs.get(setup) or []
         if len(rs) != 1:
@@ -492,7 +492,18 @@ def results(manifest, res):
         for key, want in (("n", n), ("wrong_pass", wp)):
             if key in run and run[key] != want:
                 return f"{setup} run states {key}={run[key]!r} but its outcomes give {want}"
+        route = run.get("route")
+        if route not in ("default", "custom"):
+            return f"{setup} run records no route (default or custom): provenance is missing"
+        if route == "default":
+            return (f"{setup} run used the default route (loki verify --no-llm), which ignores the model: "
+                    f"it cannot back a per-model wrong-pass claim")
+        if not (isinstance(run.get("verifier"), str) and run["verifier"].strip()):
+            return f"{setup} run is a custom-route run with no recorded verifier command"
         got[setup] = wp
+        verifiers[setup] = run["verifier"]
+    if verifiers["top"] != verifiers["floor"]:
+        return "top and floor runs came from different verifiers; the comparison is not like for like"
     if got["floor"] > got["top"]:
         return f"floor wrong-pass {got['floor']}/{n} exceeds top {got['top']}/{n}"
     return f"OK floor {got['floor']}/{n} <= top {got['top']}/{n}"
@@ -548,7 +559,8 @@ def results(manifest, out):
     raw = open(manifest, "rb").read()
     sha, ids = hashlib.sha256(raw).hexdigest(), [x["id"] for x in json.loads(raw)["defects"]]
     def run(setup, sealed, **kw):
-        r = {"setup": setup, "model": setup + "-model",
+        r = {"setup": setup, "model": setup + "-model", "route": "custom", "verifier": "stub-verifier",
+             "loki_version": None,
              "outcomes": {i: ("SEALED" if k < sealed else "NOT_SEALED") for k, i in enumerate(ids)}}
         r.update(kw)
         return r
@@ -570,6 +582,11 @@ def results(manifest, out):
         "disagree": doc([run("top", 2), run("floor", 1, wrong_pass=0)]),
         "one-run": doc([run("top", 0)]),
         "no-model": doc([run("top", 1), run("floor", 0, model="")]),
+        "default-route": doc([run("top", 1, route="default", verifier=None),
+                              run("floor", 0, route="default", verifier=None)]),
+        "no-route": doc([run("top", 1), run("floor", 0, route=None)]),
+        "no-verifier": doc([run("top", 1), run("floor", 0, verifier="")]),
+        "mixed-verifier": doc([run("top", 1), run("floor", 0, verifier="other-verifier")]),
     }
     os.makedirs(out)
     for name, body in variants.items():
@@ -611,7 +628,11 @@ extra-id|not in the manifest, first SD-9999
 bad-value|want SEALED or NOT_SEALED
 disagree|states wrong_pass=0 but its outcomes give 1
 one-run|need exactly one floor run
-no-model|floor run names no model'
+no-model|floor run names no model
+default-route|ignores the model
+no-route|records no route
+no-verifier|no recorded verifier command
+mixed-verifier|different verifiers'
 
 build_controls() {
     local c="$MOAT_TMP/ctl"

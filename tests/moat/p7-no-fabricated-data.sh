@@ -18,6 +18,12 @@ export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps de
 #                                     falls back to hardcoded or generated sample
 #                                     data, no Math.random() feeds a metric, and
 #                                     no metric prop is fed a hardcoded number
+#   P7.cli-unmetered-cost-not-dollar-zero  an all-unmetered CLI-invoker run prints
+#                                     Cost: not measured, never $0.00
+#   P7.unmeasured-tokens-never-zero   api/routes/memory.ts (summary, retrieve,
+#                                     economics) sends null, never 0 or a 100%
+#                                     saving, for token metrics nobody recorded;
+#                                     api/types/memory.ts types them nullable
 #   P7.cp-unmeasured-never-fabricated the Control Plane (loki control serve) never
 #                                     invents spend or run data: see the CP leg
 #                                     block (case_cp_unmeasured) for the route map
@@ -4787,7 +4793,7 @@ if scenario == 'mixed':
 client = TestClient(server.app, raise_server_exceptions=False)
 got = {}
 for path in ('/api/cost', '/api/budget', '/api/cost/timeline', '/api/fleet/runs', '/api/fleet/summary',
-             '/api/context', '/api/memory/economics', '/api/learning/metrics', '/api/council/gate'):
+             '/api/context', '/api/memory/economics', '/api/memory/summary', '/api/learning/metrics', '/api/council/gate'):
     r = client.get(path)
     if r.status_code != 200:
         print(f'FATAL GET {path} -> HTTP {r.status_code}')
@@ -4901,6 +4907,9 @@ UNKNOWNS = [
     ('/api/memory/economics total_tokens', ['total_tokens'], 2000),
     ('/api/memory/economics hit_rate', ['hit_rate'], 0.7),
     ('/api/memory/economics savings_percent', ['savings_percent'], 62.5),
+    ('/api/memory/summary tokenEconomics.discoveryTokens', ['tokenEconomics', 'discoveryTokens'], 1200),
+    ('/api/memory/summary tokenEconomics.readTokens', ['tokenEconomics', 'readTokens'], 800),
+    ('/api/memory/summary tokenEconomics.savingsPercent', ['tokenEconomics', 'savingsPercent'], 62.5),
     ('/api/learning/metrics avgConfidence', ['avgConfidence'], 0.8),
 ]
 for label, keys, want in UNKNOWNS:
@@ -5211,6 +5220,49 @@ case_cp_unmeasured() {
 }
 
 # ---------------------------------------------------------------------------
+# P7.cli-unmetered-cost-not-dollar-zero
+# A run whose every cost event is the CLI invoker's unmetered marker (a recorded
+# 0, no provider dollars) must print "Cost: not measured", never "$0.00 (claude,
+# 0 tokens; ...)". Drives the real summaryCost() and formatSummary() from
+# loki-ts/src, and checks the supervisor summary path calls summaryCost(). The
+# controls: a metered run keeps its dollar figure, a measured zero stays $0.00.
+# ---------------------------------------------------------------------------
+case_cli_unmetered_cost() {
+    local d="$MOAT_TMP/unmetered" out rc=0
+    command -v bun >/dev/null 2>&1 || { echo "FAIL|prerequisite missing: bun"; return 0; }
+    mkdir -p "$d"
+    cat > "$d/probe.ts" <<'TS'
+import { summaryCost } from "@ts/engine10/events.ts";
+import { formatSummary } from "@ts/engine10/output.ts";
+const ev = (seq: number, data: Record<string, unknown>) => ({ v: 1 as const, seq, ts: "2026-01-01T00:00:00Z", run: "r", type: "cost", stage: "implement", data });
+const line = (events: ReturnType<typeof ev>[]): string => {
+  const { usd, pc } = summaryCost(events, false);
+  const out = formatSummary({ pr: null, verdict: "VERIFIED", notProven: [], flaky: [], wallS: 10, stages: [],
+    cost: { usd, provider: "claude", tokens: 0, note: usd === null ? "CLI invoker records no cost" : null, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total } } as never);
+  return out.split("\n").find((l) => l.startsWith("Cost:")) ?? "";
+};
+const bad: string[] = [];
+const un = line([ev(1, { usd: 0, source: "cli-invoker-unmetered" }), ev(2, { usd: 0, source: "cli-invoker-unmetered" })]);
+if (!/^Cost: +not measured/.test(un)) bad.push(`unmetered run printed: ${un}`);
+const metered = line([ev(1, { usd: 0.3, input_tokens: 5 }), ev(2, { usd: 0.2, input_tokens: 5 })]);
+if (!/^Cost: +\$0\.50/.test(metered)) bad.push(`metered run printed: ${metered}`);
+const zero = line([ev(1, { usd: 0, input_tokens: 5 })]);
+if (!/^Cost: +\$0\.00/.test(zero)) bad.push(`measured zero printed: ${zero}`);
+for (const b of bad) console.log("BAD " + b);
+process.exit(bad.length ? 1 : 0);
+TS
+    sed -i.bak "s#@ts/#$REPO_ROOT/loki-ts/src/#g" "$d/probe.ts" && rm -f "$d/probe.ts.bak"
+    out="$(cd "$d" && bun "$d/probe.ts" 2> "$d/probe.err")" || rc=$?
+    if [ "$rc" != 0 ] && ! grep -q '^BAD ' <<<"$out"; then
+        echo "FAIL|probe did not run (rc=$rc): $(tail -c 200 "$d/probe.err" | tr '\n' ' ')"; return 0
+    fi
+    if [ "$rc" != 0 ]; then echo "FAIL|$(grep '^BAD ' <<<"$out" | sed 's/^BAD //' | tr '\n' ';')"; return 0; fi
+    grep -q 'summaryCost(events, res.tampered)' "$REPO_ROOT/loki-ts/src/engine10/supervisor.ts" \
+        || { echo "FAIL|supervisor.ts summary no longer derives its cost through summaryCost()"; return 0; }
+    echo "PASS|an all-unmetered CLI run prints Cost: not measured, a metered run keeps its dollar figure, a measured zero stays \$0.00, and the supervisor summary uses summaryCost()"
+}
+
+# ---------------------------------------------------------------------------
 # Runner: exactly one CASE line per case, even when a case function dies.
 # ---------------------------------------------------------------------------
 EMITTED=""
@@ -5236,14 +5288,77 @@ run_case() {
     EMITTED="$EMITTED $id"
 }
 
+# ---------------------------------------------------------------------------
+# P7.unmeasured-tokens-never-zero: api/routes/memory.ts (summary, retrieve and
+# economics) and api/types/memory.ts. Unrecorded token metrics are null, never
+# 0, a 0 ratio or a 100% saving. Source scan with a positive control.
+# ---------------------------------------------------------------------------
+cat > "$MOAT_TMP/tokens-zero.py" <<'PY'
+import re, sys
+FIELD = r'(?:discoveryTokens|readTokens|ratio|savingsPercent|discovery_tokens|read_tokens|savings_percent)'
+LIT = re.compile(r"""['"]?\b""" + FIELD + r"""\b['"]?\s*:\s*(?:0|100)\b(?!\.)""")
+GET = re.compile(r"""\.get\(\s*['"]""" + FIELD + r"""['"]\s*,\s*(?:0|100)\s*\)""")
+TYPED = re.compile(r'^\s*(discoveryTokens|readTokens|ratio|savingsPercent)\s*:\s*(.*?);')
+mode, path = sys.argv[1], sys.argv[2]
+hits = 0
+for n, line in enumerate(open(path, encoding='utf-8'), 1):
+    if line.lstrip().startswith(('//', '#', '*')):
+        continue
+    if mode == 'routes' and (LIT.search(line) or GET.search(line)):
+        print('HIT %s:%d: %s' % (path, n, line.strip())); hits += 1
+    m = TYPED.match(line) if mode == 'types' else None
+    if m and 'null' not in m.group(2):
+        print('HIT %s:%d: %s' % (path, n, line.strip())); hits += 1
+sys.exit(1 if hits else 0)
+PY
+
+case_tokens_zero() {
+    command -v python3 >/dev/null 2>&1 || { echo "FAIL|prerequisite missing: python3"; return 0; }
+    local ctl="$MOAT_TMP/tokens-ctl" n rc out
+    mkdir -p "$ctl"
+    n=0
+    while IFS= read -r snippet; do
+        n=$((n + 1))
+        printf '%s\n' "$snippet" > "$ctl/bad$n.ts"
+        rc=0; python3 "$MOAT_TMP/tokens-zero.py" routes "$ctl/bad$n.ts" >/dev/null 2>&1 || rc=$?
+        [ "$rc" = 1 ] || { echo "FAIL|positive control: synthetic bad line not flagged: $snippet"; return 0; }
+    done <<'EOF'
+        discoveryTokens: 0,
+    'savingsPercent': summary.get('savings_percent', 100),
+    'ratio': summary.get('ratio', 0),
+        'readTokens': 0,
+      savingsPercent: 100,
+EOF
+    [ "$n" = 5 ] || { echo "FAIL|positive control read $n of 5 synthetic lines"; return 0; }
+    printf '%s\n' "        discoveryTokens: null," "    'ratio': summary.get('ratio')," "// savingsPercent: 100 once" > "$ctl/good.ts"
+    rc=0; out="$(python3 "$MOAT_TMP/tokens-zero.py" routes "$ctl/good.ts" 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "FAIL|positive control: a correct line was flagged: $out"; return 0; }
+    printf '%s\n' "  ratio: number;" > "$ctl/bad-type.ts"
+    rc=0; python3 "$MOAT_TMP/tokens-zero.py" types "$ctl/bad-type.ts" >/dev/null 2>&1 || rc=$?
+    [ "$rc" = 1 ] || { echo "FAIL|positive control: non-nullable metric type not flagged"; return 0; }
+
+    local rts="$REPO_ROOT/api/routes/memory.ts" typ="$REPO_ROOT/api/types/memory.ts"
+    [ -f "$rts" ] && [ -f "$typ" ] || { echo "FAIL|api/routes/memory.ts or api/types/memory.ts missing"; return 0; }
+    rc=0; out="$(python3 "$MOAT_TMP/tokens-zero.py" routes "$rts" 2>&1)" || rc=$?
+    out2=""; rc2=0; out2="$(python3 "$MOAT_TMP/tokens-zero.py" types "$typ" 2>&1)" || rc2=$?
+    if [ "$rc" != 0 ] || [ "$rc2" != 0 ]; then
+        printf '%s\n%s\n' "$out" "$out2" | sed "s#$REPO_ROOT/##" >&2
+        echo "FAIL|$(printf '%s\n%s\n' "$out" "$out2" | grep -c '^HIT') unmeasured-token-metric-as-zero site(s) in api/routes/memory.ts or api/types/memory.ts: $(printf '%s\n%s\n' "$out" "$out2" | grep '^HIT' | sed "s#^HIT $REPO_ROOT/##; s/: .*//" | tr '\n' ' ')"
+        return 0
+    fi
+    echo "PASS|api memory summary, retrieve and economics routes default no token metric to 0, 0 ratio or 100% saving, and the types allow null; positive controls flag 5 bad lines and a non-nullable type"
+}
+
 START_S=$SECONDS
+run_case P7.unmeasured-tokens-never-zero "api memory routes send null, never 0 or a 100% saving, for token metrics nobody recorded" case_tokens_zero
 run_case P7.webapp-client-routes-exist "web-app client paths resolve to real web-app/server.py routes" case_webapp_routes
 run_case P7.dashboard-client-routes-exist "Control Plane UI /v1 paths resolve to real createApp() routes" case_dashboard_routes
 run_case P7.no-sample-data-panels "no production page reaches sample, random or hardcoded-metric data panels" case_sample_panels
 run_case P7.unmeasured-cost-never-zero "no cost path, client or server, turns unmeasured cost into 0 or \$0.00" case_cost_zero
+run_case P7.cli-unmetered-cost-not-dollar-zero "an all-unmetered CLI run prints Cost: not measured, never \$0.00" case_cli_unmetered_cost
 run_case P7.cp-unmeasured-never-fabricated "Control Plane (loki control serve): an empty database and unmeasured runs read null, 0 with zero measured sessions or an empty list, never an invented number; measured-zero stays 0 and a mixed run is a lower bound, not a total" case_cp_unmeasured
 
-for id in P7.webapp-client-routes-exist P7.dashboard-client-routes-exist P7.no-sample-data-panels P7.unmeasured-cost-never-zero P7.cp-unmeasured-never-fabricated; do
+for id in P7.unmeasured-tokens-never-zero P7.webapp-client-routes-exist P7.dashboard-client-routes-exist P7.no-sample-data-panels P7.unmeasured-cost-never-zero P7.cli-unmetered-cost-not-dollar-zero P7.cp-unmeasured-never-fabricated; do
     case " $EMITTED " in *" $id "*) ;; *) printf 'CASE %s FAIL runner did not emit this case\n' "$id" ;; esac
 done
 diag "runtime $((SECONDS - START_S))s"

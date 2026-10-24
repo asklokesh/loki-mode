@@ -1,6 +1,6 @@
 // Loki 10 engine subcommand router (ENGINE.md section 11, slice E-12). Reached only through `loki-ts/src/cli.ts` case "engine10", which bin/loki selects. Every target module is loaded lazily, and no
 // sibling module (types.ts included) is imported statically, so this file works before its siblings exist: a missing module prints "engine10: <module> not built yet" and exits 2.
-// Module contract: each target exports `main(args: string[])` returning an exit code (or void for 0); stages/deep.ts exports `deepSupervise` and `deepWorker` instead.
+// Module contract: each target exports `main(args: string[])` returning an exit code (or void for 0); stages/deep.ts exports `deepWorker` instead.
 const DEFAULT_MAX_COST_USD = (require("../e10ext/budget_cap.ts") as typeof import("../e10ext/budget_cap.ts")).DEFAULT_MAX_COST_USD; // LM-002: help text states the real default (require, not a static import: this router imports nothing statically)
 export interface Route {
   module: string; // path relative to this directory
@@ -19,7 +19,6 @@ const TABLE: Record<string, { module: string; fn: string }> = {
   // Hidden subcommands spawned by the supervisor.
   worker: { module: "worker.ts", fn: "main" },
   session: { module: "session.ts", fn: "main" },
-  "deep-supervise": { module: "stages/deep.ts", fn: "deepSupervise" },
   "deep-worker": { module: "stages/deep.ts", fn: "deepWorker" },
 };
 export const USAGE = `Usage:

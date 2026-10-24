@@ -617,6 +617,29 @@ resolve_model_for_tier() {
         *)           model="$PROVIDER_MODEL_DEVELOPMENT" ;;
     esac
 
+    # Explicit top / floor setup (LOKI_SESSION_MODEL high|planning or
+    # small|fast): dispatch the top (opus) or floor (haiku) alias. Default
+    # routing is untouched: it only fires when that session value is set, never
+    # under legacy tier switching, and never over an explicit per-tier pin. The
+    # LOKI_MAX_TIER clamp below still bounds it. The haiku arm is skipped when
+    # LOKI_ALLOW_HAIKU is explicitly set to anything but "true". No bash subcall
+    # (council judge, helper) passes a planning/fast session value here, so this
+    # needs no main-loop gate; the Bun route gates on mainLoop. Mirrored in
+    # loki-ts providers.ts, autonomy/loki and dashboard/server.py.
+    if [ "${LOKI_LEGACY_TIER_SWITCHING:-false}" != "true" ]; then
+        local _sess
+        _sess="$(printf '%s' "${LOKI_SESSION_MODEL:-}" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        case "$tier:$_sess" in
+            planning:high|planning:planning)
+                [ -z "${LOKI_CLAUDE_MODEL_PLANNING:-}${LOKI_MODEL_PLANNING:-}" ] && model="opus" ;;
+            fast:small|fast:fast)
+                if [ -z "${LOKI_CLAUDE_MODEL_FAST:-}${LOKI_MODEL_FAST:-}" ] \
+                   && { [ -z "${LOKI_ALLOW_HAIKU+x}" ] || [ "$LOKI_ALLOW_HAIKU" = "true" ]; }; then
+                    model="haiku"
+                fi ;;
+        esac
+    fi
+
     # Architect opt-in (LOKI_FABLE_ARCHITECT) is NOT applied here. It is applied
     # in run.sh, scoped to the FIRST iteration only (the architecture pass), so
     # a session pinned to opus does not silently route every iteration to fable.

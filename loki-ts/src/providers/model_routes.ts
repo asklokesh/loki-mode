@@ -117,6 +117,15 @@ export function inferenceGeoMultiplier(env: Env = process.env): number {
   return typeof m === "number" && Number.isFinite(m) && m > 0 ? m : 1;
 }
 
+/**
+ * The request-level `inference_geo` body parameter (typed in @anthropic-ai/sdk MessageCreateParams). Only the
+ * values that name a region are sent, so the 1.1x multiplier above is billed only when the request asked for it.
+ */
+export function inferenceGeoParam(env: Env = process.env): string | undefined {
+  const geo = (env["LOKI_INFERENCE_GEO"] ?? "").trim().toLowerCase();
+  return geo === "us" || geo === "global" ? geo : undefined;
+}
+
 /** Label for a non-Anthropic model behind the claude CLI (D99 item 1). */
 export const GATEWAY_LANE_LABEL = "gateway lane (unqualified)";
 export const GATEWAY_LANE_LOSS =

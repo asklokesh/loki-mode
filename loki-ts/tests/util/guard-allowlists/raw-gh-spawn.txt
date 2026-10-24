@@ -6,3 +6,4 @@ loki-ts/src/commands/proof.ts | proof gist publish by the operator CLI; user-inv
 loki-ts/src/commands/issues_run.ts | lists issues and PRs and, only with --comment, posts issue comments (the triage reason and the epic plan) using the user's pre-withhold gh auth; operator-invoked, no push, no pr create, no model session
 loki-ts/src/commands/undo_apply.ts | gh pr close behind --close-pr, LOKI_UNDO=1 and a confirmed prompt; allowlisted env keys only, needs the gh credential to close
 loki-ts/src/commands/verify_pr.ts | read-only gh pr view for PR metadata and closing issues; operator CLI, no mutation
+loki-ts/src/util/engine_origin.ts | read-only gh api GET of repos/<slug> and the login (publish-mode probe), explicit env, 10s bound, no mutation, no push

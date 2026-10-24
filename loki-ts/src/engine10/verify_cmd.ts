@@ -49,6 +49,17 @@ function checkAttestation(jwt: string, expectedHash: string, given?: KeyObject):
 const isPlain = (v: unknown): boolean => v !== null && typeof v === "object" && !Array.isArray(v);
 /** A-117: the worker seals before the supervisor can detect a log tamper, so the receipt alone cannot say so. Bind it to events.jsonl: the log must exist, hold a  prefix hashing to receipt.events_sha256, contiguous seq from 0
  *  and no tamper.detected. Removing the evidence breaks these too.  Deleting the post-seal tail is closed by checkLogSeal (signed receipts); an unsigned receipt carries no key, so it stays exposed to that. */
+/** A sealed Wall copy under <run dir>/wall that no longer hashes to the sha256 the receipt recorded was edited after the seal. A moved receipt (no wall dir beside it) or a copy absent on disk has nothing to compare. */
+function wallTamperProblem(receiptPath: string, receipt: Record<string, unknown>): string | null {
+  const wall = receipt["wall"] as { files?: unknown } | null | undefined, files = Array.isArray(wall?.files) ? (wall!.files as { path?: unknown; sha256?: unknown }[]) : [];
+  for (const f of files) {
+    if (typeof f?.path !== "string" || typeof f.sha256 !== "string") continue;
+    const copy = join(dirname(receiptPath), "wall", basename(f.path));
+    let cur: string; try { cur = createHash("sha256").update(readFileSync(copy)).digest("hex"); } catch { continue; }
+    if (cur !== f.sha256) return `sealed Wall file ${basename(f.path)} changed after the seal: receipt recorded sha256 ${f.sha256}, on disk ${cur}`;
+  }
+  return null;
+}
 function checkEventLog(receiptPath: string, receipt: Record<string, unknown>): string | null {
   const bound = receipt["events_sha256"];
   if (receipt["schema"] === "loki.v10.receipt/1") { // P12-01c: seal.ts always writes these, so absence means an edit (other receipt kinds are not gated)
@@ -98,6 +109,8 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   if (receipt["schema"] === "loki.v10.group/1" && !isPlain(receipt["group"])) return { verdict: "TAMPERED", reasons: ["a loki.v10.group/1 receipt has no group section, which composeGroupReceipt always writes; it was edited or renamed from another schema"] }; // P12-01d
   const logProblem = checkEventLog(receiptPath, receipt);
   if (logProblem) return { verdict: "TAMPERED", reasons: [logProblem] };
+  const wallProblem = receipt["schema"] === "loki.v10.receipt/1" ? wallTamperProblem(receiptPath, receipt) : null;
+  if (wallProblem) return { verdict: "TAMPERED", reasons: [wallProblem] };
   const gp = await verifyGroup(receiptPath, receipt, computeReceiptHash, verifyReceipt, deps); // D61-13
   if (gp?.verdict === "TAMPERED") return { verdict: "TAMPERED", reasons: [gp.reason] }; // UNCHECKED is held: a forged combined receipt must read TAMPERED before it can read UNCHECKED
   const shot = receiptScreensProblem(receiptPath, receipt); if (shot) return { verdict: "TAMPERED", reasons: [shot] };

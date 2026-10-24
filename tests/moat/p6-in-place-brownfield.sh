@@ -31,7 +31,7 @@ pass() { printf 'CASE %s PASS %s\n' "$1" "$2"; }
 fail() { printf 'CASE %s FAIL %s\n' "$1" "$2"; }
 note() { printf '%s\n' "$*" >&2; }
 
-ALL_CASES="P6.same-path-and-history P6.user-files-intact P6.change-landed-in-place P6.proof-produced-and-verifies P6.no-gate-artifacts-committed P6.untracked-not-swept P6.resume-does-not-sweep P6.ignored-files-not-swept P6.preexisting-edit-disclosed P6.resume-keeps-ignored-user-file P6.resume-after-interrupt-commits-agent-files P6.agent-self-commit-does-not-lose-user-file"
+ALL_CASES="P6.same-path-and-history P6.user-files-intact P6.change-landed-in-place P6.proof-produced-and-verifies P6.no-gate-artifacts-committed P6.untracked-not-swept P6.resume-does-not-sweep P6.ignored-files-not-swept P6.preexisting-edit-disclosed P6.resume-keeps-ignored-user-file P6.resume-after-interrupt-commits-agent-files P6.agent-self-commit-does-not-lose-user-file P6.user-file-mode-and-symlink-intact"
 
 # Caller-inherited knobs that would test something other than the default a
 # user gets. Unset so the run exercises the shipped defaults.
@@ -216,6 +216,13 @@ elif [ "$kind" = build ] && [ "${MOAT_STUB_MODE:-}" = intr2 ]; then
     printf 'import helper\nprint(helper.greet())\n' > app.py
     mkdir -p .loki/signals
     printf 'app.py uses helper\n' > .loki/signals/COMPLETION_REQUESTED
+elif [ "$kind" = build ] && [ "${MOAT_STUB_MODE:-}" = modes ]; then
+    # Sixth fixture: append to the user's tracked executable script (in place,
+    # so its mode stays), create a new file, and signal completion.
+    printf 'echo agent-edit\n' >> scripts/tool.sh
+    printf 'def made():\n    return 1\n' > agent_made.py
+    mkdir -p .loki/signals
+    printf 'added agent_made.py\n' > .loki/signals/COMPLETION_REQUESTED
 elif [ "$kind" = build ] && [ "${MOAT_STUB_MODE:-}" = selfcommit ]; then
     # Fourth fixture: un-ignore everything and commit it all itself, the
     # user's untracked and ignored files included; record the commit.
@@ -1121,6 +1128,57 @@ if [ -z "$why" ]; then
 fi
 if [ -z "$why" ]; then
     pass "$id" "the agent's own git add -A commit put the user's untracked and ignored files on $SELF_BRANCH; the session took them off the branch tip (feature.py kept), warned naming them, and all three are byte-identical after checkout of main; with a base left by an earlier session from a deleted feature/x, the mint recorded main and the user's PRECIOUS.txt came off the tip of $STALE_BRANCH and is byte-identical after checkout of main"
+else
+    fail "$id" "$why"
+fi
+
+# ============================================================================
+# P6.user-file-mode-and-symlink-intact (sixth fixture, one session)
+# ============================================================================
+# The user's tracked executable script and tracked symlink, plus an untracked
+# executable and an untracked symlink, must keep their mode and link target
+# across the session commit, both on disk and in the committed tree. The
+# agent's own new file is committed (positive control).
+id=P6.user-file-mode-and-symlink-intact
+why=""
+M="$T/modes/repo"
+gm() { git -C "$M" "$@"; }
+{
+    mkdir -p "$M/scripts" && git init -q "$M" \
+    && gm symbolic-ref HEAD refs/heads/main \
+    && gm config user.email moat@example.invalid \
+    && gm config user.name "moat p6" \
+    && gm config commit.gpgsign false \
+    && printf '#!/bin/sh\necho tool\n' > "$M/scripts/tool.sh" && chmod 755 "$M/scripts/tool.sh" \
+    && printf 'data\n' > "$M/data.txt" \
+    && ln -s data.txt "$M/link-tracked" \
+    && gm add scripts/tool.sh data.txt link-tracked && gm commit -qm "c1: tool and link" \
+    && printf '#!/bin/sh\necho mine\n' > "$M/mine.local.sh" && chmod 750 "$M/mine.local.sh" \
+    && ln -s data.txt "$M/link-untracked"
+} >"$T/log/modes-fixture.log" 2>&1 || why="sixth fixture setup failed: $(tr '\n' ' ' < "$T/log/modes-fixture.log" | cut -c1-200); "
+MODES_LOG="$T/log/modes-stub.log"
+: > "$MODES_LOG"
+mode_of() { python3 -c 'import os,sys; print("%o" % (os.lstat(sys.argv[1]).st_mode & 0o7777))' "$1"; }
+if [ -z "$why" ]; then
+    run_pipeline modes "$MODES_LOG" modes "$M"
+    rc=$?
+    echo "INFO P6 mode-and-symlink session run.sh rc=$rc"
+    kill_leftovers
+    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$MODES_LOG")" -ge 1 ] \
+        || why="${why}vacuous: the session never reached the provider build step (run.sh rc=$rc); "
+    tail -n 25 "$T/log/modes.err" >&2; tail -n 10 "$T/log/modes.out" >&2; gm log --oneline --all >&2; gm status --short >&2; gm ls-tree -r HEAD >&2
+    gm ls-tree -r HEAD > "$T/log/modes-head-tree.txt" 2>/dev/null
+    grep -q '[[:space:]]agent_made.py$' "$T/log/modes-head-tree.txt" || why="${why}the agent's new file is not committed; "
+    grep -q '^100755 .*[[:space:]]scripts/tool.sh$' "$T/log/modes-head-tree.txt" || why="${why}committed scripts/tool.sh is not mode 100755; "
+    grep -q '^120000 .*[[:space:]]link-tracked$' "$T/log/modes-head-tree.txt" || why="${why}committed link-tracked is not a symlink; "
+    [ "$(mode_of "$M/scripts/tool.sh")" = 755 ] || why="${why}scripts/tool.sh mode on disk is $(mode_of "$M/scripts/tool.sh"); "
+    grep -q 'agent-edit' "$M/scripts/tool.sh" || why="${why}vacuous: the agent did not edit scripts/tool.sh; "
+    [ -L "$M/link-tracked" ] && [ "$(readlink "$M/link-tracked")" = data.txt ] || why="${why}link-tracked is not a symlink to data.txt; "
+    [ -L "$M/link-untracked" ] && [ "$(readlink "$M/link-untracked")" = data.txt ] || why="${why}link-untracked is not a symlink to data.txt; "
+    [ -f "$M/mine.local.sh" ] && [ "$(mode_of "$M/mine.local.sh")" = 750 ] || why="${why}mine.local.sh missing or mode is not 750; "
+fi
+if [ -z "$why" ]; then
+    pass "$id" "tracked executable and symlink keep mode 100755 and 120000 in the committed tree; untracked executable keeps 750 and untracked symlink keeps its target; the agent's new file is committed"
 else
     fail "$id" "$why"
 fi

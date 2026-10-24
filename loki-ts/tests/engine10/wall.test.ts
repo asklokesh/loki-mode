@@ -157,6 +157,33 @@ describe("engine10 wall stage", () => {
     rmSync(repoDir, { recursive: true, force: true });
   });
 
+  test("default route: author input holds the spec and no implementation file or body (P3)", async () => {
+    const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
+    mkdirSync(join(repoDir, "src"), { recursive: true });
+    writeFileSync(join(repoDir, "src", "a.ts"), 'export function foo(): string {\n  return "IMPL_BODY_CANARY_4417";\n}\n', "utf8");
+    const seen: Record<string, string> = {};
+    let cwdSeen = "";
+    const sessions = new FakeSessionRunner((opts) => {
+      for (const f of readdirSync(opts.cwd!)) seen[f] = readFileSync(join(opts.cwd!, f), "utf8");
+      cwdSeen = opts.cwd!;
+    });
+    const ctx = fakeCtx(repoDir, runDir, sessions, { intake: { task: "SPEC_MARKER add x", testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, []);
+    const prev = process.env.LOKI_E10_WALL_MANIFEST;
+    delete process.env.LOKI_E10_WALL_MANIFEST;
+    try { await wallStage.run(ctx, new AbortController().signal); }
+    finally { if (prev !== undefined) process.env.LOKI_E10_WALL_MANIFEST = prev; }
+
+    expect(Object.keys(seen).sort()).toEqual(["repomap.txt", "task.md"]);
+    expect(seen["task.md"]).toContain("SPEC_MARKER add x");
+    expect(cwdSeen.startsWith(repoDir)).toBe(false);
+    const brief = sessions.lastOpts!.brief;
+    for (const text of [brief, ...Object.values(seen)]) {
+      expect(text).not.toContain("IMPL_BODY_CANARY_4417");
+      expect(text).not.toContain("export function foo");
+    }
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
   test("seals the generated files (sha256) and emits wall.sealed before implement's session starts", async () => {
     const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
     const events: string[] = [];
@@ -693,10 +720,11 @@ describe("engine10 wall manifest wiring, D77", () => {
     ctx.emit = (type, _stage, data) => { events.push({ type, data: (data ?? {}) as Record<string, unknown> }); };
     const prev = process.env.LOKI_E10_WALL_MANIFEST;
     if (flag === undefined) delete process.env.LOKI_E10_WALL_MANIFEST; else process.env.LOKI_E10_WALL_MANIFEST = flag;
-    try { await runWall(ctx, new AbortController().signal, { baseRunner: new FakeBaseTestRunner({ pass: 0, fail: 1 }) }); }
+    let result: { data: Record<string, unknown> } | undefined;
+    try { result = (await runWall(ctx, new AbortController().signal, { baseRunner: new FakeBaseTestRunner({ pass: 0, fail: 1 }) })) as unknown as { data: Record<string, unknown> }; }
     finally { if (prev === undefined) delete process.env.LOKI_E10_WALL_MANIFEST; else process.env.LOKI_E10_WALL_MANIFEST = prev; }
     rmSync(s.repoDir, { recursive: true, force: true });
-    return { listing, files, brief, sealed: events.find((e) => e.type === "wall.sealed")!.data };
+    return { listing, files, brief, data: result!.data, sealed: events.find((e) => e.type === "wall.sealed")!.data };
   }
 
   test("flag on: cwd holds only task.md, repomap.txt and wall_manifest.txt", async () => {
@@ -716,6 +744,13 @@ describe("engine10 wall manifest wiring, D77", () => {
   test("flag on: wall.sealed carries manifest_sha256 equal to sha256 of wall_manifest.txt", async () => {
     const r = await wall("1");
     expect(r.sealed.manifest_sha256).toBe(sha256(r.files["wall_manifest.txt"]!));
+  });
+
+  test("flag on: stage result data.manifest_sha256 equals sha256 of wall_manifest.txt; flag off: absent", async () => {
+    const on = await wall("1");
+    expect(on.data["manifest_sha256"]).toBe(sha256(on.files["wall_manifest.txt"]!));
+    expect(on.data["manifest_sha256"]).toMatch(/^[0-9a-f]{64}$/);
+    expect("manifest_sha256" in (await wall(undefined)).data).toBe(false);
   });
 
   test("flag off or unset: no manifest file, no manifest_sha256, brief byte-identical to the no-manifest brief", async () => {

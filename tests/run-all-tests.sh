@@ -739,6 +739,7 @@ run_test "the verification-cost page stays honest" "$SCRIPT_DIR/test-verificatio
 run_test "outcome ledger anchors before it measures" "$SCRIPT_DIR/test-outcome-ledger.sh"
 run_test "intent ledger detects spec-drifted-from-intent" "$SCRIPT_DIR/test-intent-ledger.sh"
 run_test "pre-edit snapshot separates agent from human rescue" "$SCRIPT_DIR/test-preedit-snapshot.sh"
+run_test "loki edit --commit untracked file" "$SCRIPT_DIR/test-edit-commit-untracked.sh"
 run_test "server.json tracks VERSION (MCP registry not stale)" "$SCRIPT_DIR/test-server-json-current.sh"
 # The published registry entry must not fall behind what we ship. The guard
 # above compares server.json to VERSION, both LOCAL, so they agree with each
@@ -1215,6 +1216,7 @@ run_test "Checkpoint Prune Sort" "$SCRIPT_DIR/test-checkpoint-prune-sort.sh"
 
 # Batch 2 of the orphaned-suite registration (2026-07-27).
 run_test "Checkpoint Ref Prune Wave9" "$SCRIPT_DIR/test-checkpoint-ref-prune-wave9.sh"
+run_test "Checklist Freeze" "$SCRIPT_DIR/test-checklist-freeze.sh"
 run_test "Claude Flags" "$SCRIPT_DIR/test-claude-flags.sh"
 run_test "Claude Login State" "$SCRIPT_DIR/test-claude-login-state.sh"
 run_test "Cli Allow Haiku Flag" "$SCRIPT_DIR/test-cli-allow-haiku-flag.sh"
@@ -1532,6 +1534,7 @@ run_test "web-app CommandPalette file-search failure is not no-results (node --t
 # registered here: it ratchets against the last release tag, which a depth-1
 # shard checkout does not have. It runs in its own "Moat rules (no regression)" job instead.
 run_test "the moat runner enforces every ratchet rule" "$SCRIPT_DIR/test-moat-runner.sh"
+run_test "seeded-defect measure writes the results contract" "$SCRIPT_DIR/test-seeded-defects-measure.sh"
 run_test "legacy dashboard stays deleted: dirs, package files, npm pack, references (CPE24-L7)" "$SCRIPT_DIR/test-legacy-dashboard-removed.sh && $SCRIPT_DIR/test-legacy-dashboard-removed.sh --self-test"
 run_test "Control Plane starts from a fresh npm pack install and serves /health and its UI (CPE24-L7)" "$SCRIPT_DIR/test-cp-fresh-install-smoke.sh"
 run_test "release.sh --bump-only restores debugId-only dist churn (E-72)" "$SCRIPT_DIR/test-release-bump-only.sh"

@@ -16,9 +16,7 @@ import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPa
 import { safeGit } from "../../util/safe_git.ts"; import { isZeroRun, zeroOnBase } from "../../util/base_guard.ts"; import { rmNewUntracked, untracked, attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
-interface ImplementOutput {
-  exit?: ImplementExit;
-}
+interface ImplementOutput { exit?: ImplementExit; }
 /** wall.ts's full output isn't in the contract either; only the sealed file list, shaped like  Receipt["wall"].files, is needed here. */
 interface WallOutput {
   files?: { path: string }[];
@@ -30,12 +28,12 @@ export interface VerifyCheck {
   cmd: string;
   result: "pass" | "fail" | "not_run" | "flaky"; // ENGINE.md section 5 test.result enum
   duration_s: number;
-  reason?: string; n?: number; count?: string; sk?: number; ids?: string[]; first_error?: string; // A-112: failing test ids; A-113: first failing output line, normalized; feeds the stall signature
+  reason?: string; n?: number; count?: string; sk?: number; ids?: string[]; first_error?: string; anchor?: string; /* file:line of the first failure, council anchor grammar */ // A-112: failing test ids; A-113: first failing output line, normalized; feeds the stall signature
   interpreter?: Interpreter; // E-98a: which python/ruff this check actually ran on
   owner?: "harness"; // FC-02: the runner could not load or collect; not_run, never a code failure
 }
 export { runnerCmd, commandFor, firstError } from "../../util/check_result.ts"; // one owner: check_result.ts (test invocation resolver and failure-line normalizer)
-import { runnerCmd, commandFor, firstError, resolveTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
+import { firstFileLineAnchor, runnerCmd, commandFor, firstError, resolveTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
 /** TEN-QUALITY-01: stage-local failure excerpts keyed by check object; never on VerifyCheck, never emitted, never set for a held-out check. */
 const excerpts = new WeakMap<object, string>();
 const isHold = (c: { name: string }): boolean => isHoldoutCheck(c.name); // C-C4b-c: pubHold is the one public shape of a held-out check: result and counts only
@@ -103,7 +101,8 @@ export async function runCheck(
     result = c.result === "not_run" ? "not_run" : c.result === "pass" ? "flaky" : "fail";
   }
   const reason = c.reason;
-  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out) } : result === "pass" && kind === "test" ? { n: c.n ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(c.owner ? { owner: "harness" as const } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
+  const anchor = result === "fail" ? firstFileLineAnchor(attempt.out.slice(-65536)) : null;
+  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out), ...(anchor ? { anchor } : {}) } : result === "pass" && kind === "test" ? { n: c.n ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(c.owner ? { owner: "harness" as const } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
   if (result === "fail" && !opts.opaque && !isHold(check)) excerpts.set(check, failureExcerpt(attempt.out, ctx.repoDir));
   checks.push(check); if (opts.opaque && check.result !== "pass" && check.reason) recordHoldoutTriage(ctx.runDir, { check: name, result: check.result, reason: check.reason }); // C-C4b-c-b: real reason stays out of the event below
   ctx.emit("test.result", "verify", opts.opaque ? { ...pubHold(check) } : { ...check });
@@ -177,9 +176,7 @@ async function subtractBase(
 }
 
 // ponytail: existence of our own selector script is a strong enough marker that repoDir IS the loki-mode repo; a build target repo will not carry it.
-function isLokiModeRepo(repoDir: string): boolean {
-  return existsSync(join(repoDir, "scripts", "select-tests.sh"));
-}
+function isLokiModeRepo(repoDir: string): boolean { return existsSync(join(repoDir, "scripts", "select-tests.sh")); }
 const ESLINT_CONFIGS = [".eslintrc", ".eslintrc.json", ".eslintrc.js", ".eslintrc.cjs", "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"];
 /** ENGINE.md section 4's named tool per language: bash -n + shellcheck for shell, tsc + eslint  (when configured) for TS/JS, ruff for Python. Every named tool that applies to the changed set  gets
  *  a check entry: a missing tool is not_run, never silently absent (section 9 NOT PROVEN). */
@@ -241,9 +238,7 @@ export const verifyStage: Stage = {
     const changedTestFiles = map.tests.filter((t) => changed.includes(t.path));
     const wall = (ctx.outputs().wall as WallOutput | undefined) ?? {};
     // E-56: wall.ts seals files under an absolute targetDir; normalize to repo-relative so an absolute Wall path still matches and runs in fast verify.
-    const wallPaths = new Set(
-      (wall.files ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)),
-    );
+    const wallPaths = new Set((wall.files ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)));
     // A-114: the relevant tests of the task-named files are always selected, whatever the diff touches.
     const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string; deps_not_proven?: string[] } | undefined, repoMap = loadRepoMap(intake?.repomap_ref), relevant = ctx.tests.impacted(map, namedFiles(intake?.task ?? "", repoMap));
     const harness = map.runners.length === 0 ? harnessRunners(map.runners, repoMap?.files ?? [])[0] : undefined, wallRunners = harness ? [harness] : map.runners;

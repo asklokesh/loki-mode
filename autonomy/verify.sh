@@ -605,6 +605,25 @@ ZT_MATCHES_EOF
             fi
             return 1
             ;;
+        cargo-test)
+            # `cargo test` on a crate with no tests prints "running 0 tests" and
+            # EXITS 0. POSITIVE detection: a "running 0 tests" header and no
+            # "running N tests" header with N >= 1 (a mixed workspace stays a pass).
+            if printf '%s' "$_zt_out" | grep -qE '^running 0 tests?' 2>/dev/null \
+               && ! printf '%s' "$_zt_out" | grep -qE '^running [1-9][0-9]* tests?' 2>/dev/null; then
+                return 0
+            fi
+            return 1
+            ;;
+        mocha)
+            # mocha on an empty suite prints "0 passing" and EXITS 0. POSITIVE
+            # detection: a "0 passing" summary and no non-zero passing or any failing count.
+            if printf '%s' "$_zt_out" | grep -qE '^[[:space:]]*0 passing' 2>/dev/null \
+               && ! printf '%s' "$_zt_out" | grep -qE '^[[:space:]]*([1-9][0-9]* passing|[0-9]+ failing)' 2>/dev/null; then
+                return 0
+            fi
+            return 1
+            ;;
         unittest)
             # #139: `python3 -m unittest discover` on ZERO discovered tests prints
             # "Ran 0 tests" + "NO TESTS RAN". On older Python it EXITS 0 (a silent

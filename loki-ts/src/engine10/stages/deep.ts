@@ -14,7 +14,7 @@ import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv } from "../../project_model/package_suite.ts";
 import { classifyCheck, failureExcerpt, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
-import { type PushArgs, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, pushArgv, STAGE_BUDGETS } from "../types.ts";
+import { DEEP_CAP_S, type PushArgs, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, pushArgv, STAGE_BUDGETS } from "../types.ts";
 import { REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
 import { DEFAULT_PUSH_SH, SHA_RE } from "./pr.ts";
@@ -237,3 +237,30 @@ export const deepStage: Stage = {
   run: (ctx, signal) => runDeep(ctx as DeepContext, signal, { council: sessionCouncil(ctx.sessions) }),
 };
 export const stage = deepStage;
+/** `engine10 deep-worker <run-id> <provider> <model> <origin>`: the detached post-PR deep verify the supervisor spawns (origin is appended at spawn time). Stage outputs and base sha come from the run's event log; events go nowhere (the child's stdio is ignored and only the supervisor writes events.jsonl), results are posted by runDeep. Exit 0 once a verdict was posted or recorded, 1 when deep verify failed to run, 2 on bad args. */
+export async function deepWorker(args: string[], deps: { sessions?: SessionRunner; opts?: DeepOptions } = {}): Promise<number> {
+  const [runId, provider = "claude", model = "", origin = ""] = args;
+  if (!runId) { process.stderr.write("engine10 deep-worker: missing run id\n"); return 2; }
+  const repoDir = process.cwd(), lokiRoot = join(repoDir, ".loki"), runDir = join(lokiRoot, "runs", runId);
+  const { readEvents } = await import("../events.ts"), { eventsRelPath } = await import("../../util/engine_origin.ts"), { outputsFromEvents } = await import("../../util/run_outputs.ts");
+  let outputs: ReturnType<typeof outputsFromEvents>;
+  try { outputs = outputsFromEvents(readEvents(join(repoDir, eventsRelPath(runId)))); } catch (err) { process.stderr.write(`engine10 deep-worker: cannot read run events: ${(err as Error).message}\n`); return 1; }
+  const baseSha = outputs["intake"]?.["base_sha"];
+  if (typeof baseSha !== "string" || !baseSha) { process.stderr.write("engine10 deep-worker: run has no recorded base sha\n"); return 1; }
+  const { createSessionRunner, resolveModel } = await import("../session.ts");
+  const resolved = model || resolveModel(provider);
+  const sessions = deps.sessions ?? createSessionRunner({ provider, model: resolved, emit: () => {}, lokiRoot, remaining: () => null });
+  const ctx: DeepContext = {
+    runId, repoDir, runDir, baseSha, branch: `loki/${runId}`, provider, model: resolved, deep: true, capS: DEEP_CAP_S,
+    emit: () => {}, sessions, failovers: () => [],
+    tests: new (await import("../testmap.ts")).RealTestMapProvider(),
+    cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
+    clock: { now: () => Date.now() }, outputs: () => outputs as never,
+    ...(origin ? { pinnedOrigin: origin } : {}),
+  };
+  const ac = new AbortController();
+  for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => ac.abort());
+  const r = await runDeep(ctx, ac.signal, { council: sessionCouncil(sessions), ...deps.opts });
+  if (r.status !== "completed") { process.stderr.write(`engine10 deep-worker: ${r.reason ?? r.status}\n`); return 1; }
+  return 0;
+}

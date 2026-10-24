@@ -3,6 +3,7 @@ No model call is made anywhere in this file.
 Run: python3 benchmarks/bench/tests/test_attribution.py"""
 import contextlib
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -521,6 +522,34 @@ class LokiModelPinTest(unittest.TestCase):
     def test_pinned_environment_records_effective_model(self):
         env = A.pin_environment(False, model="claude-sonnet-5")
         self.assertEqual(env["loki_session_model_effective"], "claude-sonnet-5")
+
+    def test_pinned_environment_records_identity_presence_only(self):
+        saved = os.environ.get("LOGNAME")
+        try:
+            os.environ["LOGNAME"] = "secret-name-not-recorded"
+            env = A.pin_environment(False)
+            self.assertEqual(env["identity_env"]["LOGNAME"], True)
+            self.assertNotIn("secret-name-not-recorded", json.dumps(env))
+            os.environ.pop("LOGNAME")
+            env = A.pin_environment(False)
+            self.assertEqual(env["identity_env"]["LOGNAME"], False)
+            self.assertTrue(A._schema.identity_env_problems(env))
+        finally:
+            if saved is None:
+                os.environ.pop("LOGNAME", None)
+            else:
+                os.environ["LOGNAME"] = saved
+
+    def test_scoped_env_keeps_logname(self):
+        saved = os.environ.get("LOGNAME")
+        try:
+            os.environ["LOGNAME"] = "u"
+            self.assertEqual(A._scoped_env().get("LOGNAME"), "u")
+        finally:
+            if saved is None:
+                os.environ.pop("LOGNAME", None)
+            else:
+                os.environ["LOGNAME"] = saved
 
 
 class CostHarnRealOutcomeTest(unittest.TestCase):

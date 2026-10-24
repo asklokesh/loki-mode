@@ -1166,12 +1166,16 @@ components:
           properties:
             discoveryTokens:
               type: integer
+              nullable: true
             readTokens:
               type: integer
+              nullable: true
             ratio:
               type: number
+              nullable: true
             savingsPercent:
               type: number
+              nullable: true
 
     RetrieveResponse:
       type: object
@@ -1194,12 +1198,16 @@ components:
           properties:
             discoveryTokens:
               type: integer
+              nullable: true
             readTokens:
               type: integer
+              nullable: true
             ratio:
               type: number
+              nullable: true
             savingsPercent:
               type: number
+              nullable: true
 
 security:
   - {}

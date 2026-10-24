@@ -51,13 +51,9 @@ export function routerTelemetryOn(env: Record<string, string | undefined> = proc
   return sessionPlanEnabled(env); // the router, or the advisor alone (#246: a parity run must show the advisor attached)
 }
 
-export function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
-}
+export function num(v: unknown): number { return typeof v === "number" && Number.isFinite(v) ? v : 0; }
 
-export function resultCostPath(lokiRoot: string, iteration: string): string {
-  return join(lokiRoot, "metrics", `result-cost-${iteration}.json`);
-}
+export function resultCostPath(lokiRoot: string, iteration: string): string { return join(lokiRoot, "metrics", `result-cost-${iteration}.json`); }
 
 // Sum across sessions. Any missing session makes usd null: a partial sum would understate the run's cost. Tokens still sum what was measured. `context` are other iterations of the same run, read only to find a resumed session's predecessor (never summed).
 export function sumResultCosts(lokiRoot: string, iterations: string[], context: string[] = []): CostResult {

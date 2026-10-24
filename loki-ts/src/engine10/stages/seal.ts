@@ -16,7 +16,7 @@ import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts";
 import { crossReview, minVerdict, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
-import { STAGE_BUDGETS, type Obj, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type Verdict } from "../types.ts";
+import { STAGE_BUDGETS, type RunnerName, type Obj, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type Verdict } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
 import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
@@ -180,7 +180,7 @@ export const sealStage: Stage = {
     const wallNotRun = typeof base.not_run === "number" ? base.not_run : 0;
     const wallGreenOnBase = wallGreenOnBaseOf(o);
     // An uncomputable diff is treated like an empty one: nothing is proven changed.
-    const preRedChecks = strs(o.verify?.pre_red_checks); // A-112: recorded as fail, skipped by the verdict
+    const preRedChecks = strs(o.verify?.pre_red_checks).filter((n) => n !== "holdout" && !n.startsWith("holdout:")); // A-112: recorded as fail, skipped by the verdict; a held-out Wall check is never excused as pre-existing red
     const wallRel = (Array.isArray(o.wall?.files) ? (o.wall.files as Obj[]) : []).map((f) => String(f.path)), repoSkipped = strs(o.verify?.skipped_on_base).filter((n) => !wallRel.some((w) => w === n.slice(n.indexOf(":") + 1) || w.endsWith(`/${n.slice(n.indexOf(":") + 1)}`))); // FC-REPO-SKIPPED-TEST-DOWNGRADES: verify measured zero tests on base and head for an untouched file; a Wall file is never excused, even if listed
     // A-119: any edit, delete or rename (--no-renames shows D plus A) of a pre-existing test file is NOT VERIFIED, same as verify's own notes.
     const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [], pctx: ProvenanceCtx = { addedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() === "A" && rawDiff[i + 1] ? [rawDiff[i + 1]!] : [])), wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as Obj[]).map((f) => String(f.path)) : [], modifiedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() !== "A" && rawDiff[i + 1] && isTestFile(rawDiff[i + 1]!) ? [rawDiff[i + 1]!] : [])) }, checks = checksOf(o.verify?.checks, pctx, preRedChecks, repoSkipped); // TEN-GATES-02: A = added in this run
@@ -199,10 +199,15 @@ export const sealStage: Stage = {
     const xr = await crossReview(ctx, verdict1, head, signal), verdict2 = minVerdict(verdict1, xr); // B4: opt-in second-provider review, downgrade only
     // T2: mutation proof always runs after VERIFIED. "no" (Wall passed without the fix) warns; it downgrades to PARTIAL only with LOKI_MUTATION_STRICT=1 AND a plan-declared behavior change (never a harness heuristic). "yes" and inconclusive never change the verdict.
     const mp = verdict2 === "VERIFIED" && mutationEnabled() ? mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as { path: string }[]) : [], checks: Array.isArray(o.verify?.checks) ? (o.verify.checks as { name: string }[]) : [], runner: (ms: number) => new RealBaseTestRunner(undefined, ms) }) : null;
-    const verdict: Verdict = (mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true) ? "PARTIAL" : verdict2; // FC-69: a Wall test that did not execute is disclosed (not_proven), never a verdict downgrade (CTO ruling; D95 THIN)
+    const verdict3: Verdict = (mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true) ? "PARTIAL" : verdict2; // FC-69: a Wall test that did not execute is disclosed (not_proven), never a verdict downgrade (CTO ruling; D95 THIN)
     const deepG = deepGaps(o.verify?.risk, vraw, Array.isArray(o.deep?.checks) ? (o.deep.checks as Obj[]) : [], !!xr && xr.level !== "not_run"), notProven = new Set<string>([...deepG.notProven, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? []), ...reviewReceipt(ctx.provider, xr).notProven]);
-    const wp = verdict === "VERIFIED" ? publishableWall(ctx.repoDir, ctx.runDir, o) : { files: [], notes: [] }; for (const n of wp.notes) notProven.add(n); // FC-VERIFIED-PR-WITHOUT-ITS-TEST: only on VERIFIED, after the receipt's head, tree and diff are fixed
-    const wallPub = wp.files.length > 0 ? await publishWall(g(ctx), ctx.runId, ctx.repoDir, wp.files, wallDone) : false; if (wp.files.length > 0 && !wallPub) notProven.add("Wall tests not published (child commit failed or committed bytes differ from the sealed copy)");
+    const wp = verdict3 === "VERIFIED" ? publishableWall(ctx.repoDir, ctx.runDir, o) : { files: [], notes: [] }; for (const n of wp.notes) notProven.add(n); // FC-VERIFIED-PR-WITHOUT-ITS-TEST: only on VERIFIED, after the receipt's head, tree and diff are fixed
+    const wallPub0 = wp.files.length > 0 ? await publishWall(g(ctx), ctx.runId, ctx.repoDir, wp.files, wallDone) : false; if (wp.files.length > 0 && !wallPub0) notProven.add("Wall tests not published (child commit failed or committed bytes differ from the sealed copy)");
+    // #238: the Wall proof counts only at the committed path: re-run each published file where the tree holds it, with the runner that owns it. A failure there is NOT PROVEN, named by path, and the verdict is PARTIAL.
+    const reproved = wallPub0 ? new RealBaseTestRunner().runEach(ctx.repoDir, wp.files.map((f) => ({ runner: f.runner as RunnerName, path: f.rel })), 2) : null, reprovedBad = reproved ? (await reproved).flatMap((r, i) => (r.pass === 1 ? [] : [wp.files[i]!.rel])) : [];
+    for (const rel of reprovedBad) notProven.add(`Wall test fails at its committed path: ${rel}`);
+    if (reprovedBad.length > 0 && !wallDone) { await g(ctx)(["update-ref", "HEAD", "HEAD^"]); await g(ctx)(["read-tree", "HEAD"]); } // drop the child: nothing unproven is published
+    const wallPub = wallPub0 && reprovedBad.length === 0, verdict: Verdict = reprovedBad.length > 0 ? "PARTIAL" : verdict3;
     if (wallGreenOnBase && verdict === "PARTIAL" && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done") notProven.add(WALL_GREEN_ON_BASE_REASON);
     if (!proof && !(wallGreenOnBase && verdict === "ALREADY_SATISFIED") && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = vraw; notProven.add(executed ? AGENT_ONLY_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
@@ -274,7 +279,7 @@ export const sealStage: Stage = {
       head_sha: head,
       tree,
       diff_sha256: sha256(diffOk ? diff.stdout : ""),
-      wall: { files: wallFiles.map((f) => ({ path: String(f.path), sha256: String(f.sha256) })), passed: wallPassed },
+      wall: { files: wallFiles.map((f) => ({ path: String(f.path), sha256: String(f.sha256) })), passed: wallPassed, ...(typeof o.wall?.manifest_sha256 === "string" && /^[0-9a-f]{64}$/.test(o.wall.manifest_sha256) ? { manifest_sha256: o.wall.manifest_sha256 } : {}) },
       checks,
       not_proven: [],
       verdict, ...(typeof o.implement?.limit_s === "number" ? { implement_limit: { limit_s: o.implement.limit_s, elapsed_s: typeof o.implement.elapsed_s === "number" ? o.implement.elapsed_s : 0 } } : {}), ...(grp.section ? { group: grp.section } : {}), ...(ctx.failovers && ctx.failovers().length > 0 ? { failover: ctx.failovers() } : {}),

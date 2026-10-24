@@ -315,6 +315,41 @@ assert f["sensitive_paths"] == 10 and f["deleted_tests"] >= 5 and f["test_delta"
     exit 0
 ) && pass || fail "risk score"
 
+# --- Test: --trust-workspace forwarded only when passed AND CLI lists it ---
+TRUST_DIR="$TEST_DIR/stub-trust"
+mkdir -p "$TRUST_DIR"
+sed 's|^    echo "Commands:"|    echo "Commands:"; echo "  --trust-workspace  Trust the workspace"|' "$STUB_DIR/claude" > "$TRUST_DIR/claude"
+chmod +x "$TRUST_DIR/claude"
+
+run_test "--ultra --trust-workspace forwarded when CLI lists it"
+(
+    cd "$TEST_DIR"
+    rm -f "$STUB_LOG"
+    PATH="$TRUST_DIR:$PATH" STUB_CLAUDE_LOG="$STUB_LOG" "$LOKI" review --ultra --yes --trust-workspace </dev/null >/dev/null 2>&1 || true
+    grep -qx -- "--trust-workspace" "$STUB_LOG" || { echo "flag absent: $(cat "$STUB_LOG" 2>&1)" >&2; exit 1; }
+    exit 0
+) && pass || fail "expected --trust-workspace in argv"
+
+run_test "--ultra without --trust-workspace never adds it"
+(
+    cd "$TEST_DIR"
+    rm -f "$STUB_LOG"
+    PATH="$TRUST_DIR:$PATH" STUB_CLAUDE_LOG="$STUB_LOG" "$LOKI" review --ultra --yes </dev/null >/dev/null 2>&1 || true
+    [ -f "$STUB_LOG" ] || { echo "no call" >&2; exit 1; }
+    grep -q -- "--trust-workspace" "$STUB_LOG" && { echo "flag leaked" >&2; exit 1; }
+    exit 0
+) && pass || fail "flag must be user-opt-in only"
+
+run_test "--trust-workspace absent on older CLI that does not list it"
+(
+    cd "$TEST_DIR"
+    rm -f "$STUB_LOG"
+    PATH="$STUB_DIR:$PATH" STUB_CLAUDE_LOG="$STUB_LOG" "$LOKI" review --ultra --yes --trust-workspace </dev/null >/dev/null 2>&1 || true
+    [ -f "$STUB_LOG" ] || { echo "no call" >&2; exit 1; }
+    grep -q -- "--trust-workspace" "$STUB_LOG" && { echo "flag forwarded to old CLI" >&2; exit 1; }
+    exit 0
+) && pass || fail "capability gate"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed, $TOTAL total ==="
 

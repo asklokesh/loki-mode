@@ -157,7 +157,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("runs", "KEEP-MODERN", "bun", "List runs across registered projects", "R100-008: one list over the loki projects registry", { flags: [json] }),
   cmd("intent", "KEEP-MODERN", "bun", "Show a past run's intent card", "Read-only intent view", { subcommands: [sub("show", "Print the intent card and answer", { positionals: [runId] })] }),
   cmd("kpis", "KEEP-MODERN", "bun", "KPI snapshot (alias of report kpis)", "Bun-native KPI report", { flags: [json, str("--since", "<Nd|YYYY-MM-DD>", "Limit iteration totals to a window")] }),
-  cmd("report", "UPDATE", "both", "Reporting: kpis, session, metrics, cost, export, share, dogfood", "Mixed route; only kpis is Bun", {
+  cmd("report", "UPDATE", "both", "Reporting: kpis, session, metrics, cost, export, share, dogfood, release-notes", "Mixed route; only kpis is Bun", {
     subcommands: [
       sub("kpis", "Canonical KPI snapshot", { flags: [json, str("--since", "<Nd|YYYY-MM-DD>", "Limit iteration totals to a window")] }),
       sub("session", "Session report", { flags: [bool("--efficiency", "Token and cost stats")] }),
@@ -166,6 +166,7 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("export", "Export session", { positionals: [{ name: "format", type: "enum", values: ["json", "markdown", "csv", "timeline", "vibe-kanban"] }] }),
       sub("share", "Share a report"),
       sub("dogfood", "Dogfood report"),
+      sub("release-notes", "Changes in a <from>..<to> range", { flags: [str("--format", "<text|json>", "Output format")] }),
     ],
   }),
   cmd("trust", "KEEP-MODERN", "both", "Trust trajectory from proof history", "Trust moat surface", { flags: [bool("--json", "Print the trust trajectory as JSON")], subcommands: [sub("detail", "Trust metrics detail")] }),

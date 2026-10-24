@@ -26,6 +26,7 @@ P1.wrong-key-fails
 P1.stripped-signature-fails
 P1.empty-jwks-value-fails
 P1.verification-metadata-signed
+P1.jwks-dup-kid-or-alg-none-fails
 P2.advisory-only-never-verified
 P2.unknown-gate-fails-closed
 P2.model-looks-good-cannot-pass
@@ -55,6 +56,7 @@ P7.webapp-client-routes-exist
 P7.dashboard-client-routes-exist
 P7.no-sample-data-panels
 P7.unmeasured-cost-never-zero
+P7.unmeasured-tokens-never-zero
 P8.ablation-runtime-change-load-bearing
 P8.ablation-dead-code-not-sealed
 P8.ablation-na-docs-only
@@ -75,6 +77,7 @@ P2.zero-test-never-affirmative
 P6.resume-keeps-ignored-user-file
 P6.resume-after-interrupt-commits-agent-files
 P6.agent-self-commit-does-not-lose-user-file
+P6.user-file-mode-and-symlink-intact
 P2.exit-zero-with-failures-not-pass
 P2.console-verdict-needs-computed-result
 P5.airgap-audit-effective-provider
@@ -85,3 +88,4 @@ P5.claude-sidecall-opt-in-audited
 P5.airgap-no-update-check-egress
 P2.cp-verdict-honest-never-upgraded
 P7.cp-unmeasured-never-fabricated
+P7.cli-unmetered-cost-not-dollar-zero

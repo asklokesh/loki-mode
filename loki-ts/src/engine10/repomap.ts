@@ -27,11 +27,7 @@ const PY_SYMBOL_RE = /^(?:(?:async\s+)?def\s+(\w+)|class\s+(\w+))|^([ \t]+)(?:as
 /** git ls-files, capped. Returns [] (never throws) outside a git repo. */
 export function listRepoFiles(repoDir: string, maxFiles: number = maxFilesCap()): { files: string[]; truncated: boolean } {
   let out: string;
-  try {
-    out = safeGit(repoDir, ["ls-files"], { stdio: ["ignore", "pipe", "pipe"] });
-  } catch {
-    return { files: [], truncated: false };
-  }
+  try { out = safeGit(repoDir, ["ls-files"], { stdio: ["ignore", "pipe", "pipe"] }); } catch { return { files: [], truncated: false }; }
   let all = out.split("\n").filter((l) => l.length > 0); if (all.length > maxFiles) { const junk = (f: string): boolean => /(^|\/)(vendor|node_modules|dist|build|third_party)\//.test(f); all = [...all.filter((f) => !junk(f)), ...all.filter(junk)]; }
   return { files: all.slice(0, maxFiles), truncated: all.length > maxFiles };
 }

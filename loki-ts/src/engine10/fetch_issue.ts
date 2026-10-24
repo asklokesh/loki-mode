@@ -24,10 +24,7 @@ export function defaultExec(cmd: string, args: string[]): string {
   const ms = Number(process.env.LOKI_FETCH_ISSUE_TIMEOUT_MS) || 60_000;
   return execFileSync(cmd, args, { encoding: "utf8", env: process.env, timeout: ms, killSignal: "SIGKILL" });
 }
-interface GithubExtra {
-  state?: string;
-  closedByPullRequestsReferences?: { merged?: boolean }[];
-}
+interface GithubExtra { state?: string; closedByPullRequestsReferences?: { merged?: boolean }[]; }
 /** Fetches and normalizes one issue. Never runs an LLM; a failed GitHub  extra-fields lookup leaves state null (NOT PROVEN), never a false  already-done. */
 export function fetchIssue(ref: string, execer: Execer = defaultExec): NormalizedIssue {
   const raw = execer("bash", ["-c", `source "${ISSUE_PROVIDERS_SH}" && fetch_issue "$1"`, "--", ref]);

@@ -26,6 +26,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve as resolvePath, dirname, relative, isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { URL_RE, ANCHOR_RE, EXTENSIONLESS } from "../util/check_result.ts";
 import type { AgentVerdict, Severity } from "../runner/council.ts";
 
 // Resolve loki-ts/data relative to this module. The data dir is ../../data from src/council and ../data from the bundled dist/loki.js (the package
@@ -110,9 +111,6 @@ const BLOCKING_SEVERITY = new Set(["CRITICAL", "HIGH"]);
 const ANCHOR_EXEMPT_ROLES = new Set(["requirements-verifier", "test-auditor", "convergence-voter"]);
 export const UNANCHORED_TAG = "[unanchored]";
 const NO_FILE_MARKER = /\(no file\)|\[no-file\]/i;
-const URL_RE = /\b[a-z][a-z0-9+.-]{0,63}:\/\/\S+/gi; // bounded scheme: linear (TEN-SECURITY-26)
-const ANCHOR_RE = /([\w./@-]+)[`'"]?(?::L?|#L|\s*\(line\s+)([1-9]\d*)(?!\d)/g;
-const EXTENSIONLESS = /^(?:.*\/)?(?:Makefile|GNUmakefile|Dockerfile|Jenkinsfile|Rakefile|Gemfile|Procfile|Vagrantfile)$/;
 
 export function hasFileLineAnchor(desc: string): boolean {
   if (NO_FILE_MARKER.test(desc)) return true;

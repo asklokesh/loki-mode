@@ -14,7 +14,7 @@ import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { removeHoldout, s
 import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { baseJobs, classify, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
-import { conventionViolation, conventionsBrief, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions } from "../../project_model/conventions.ts"; // FC-23
+import { conventionViolation, conventionsBrief, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
 const WALL_PREFIX = "loki_wall_";
 
@@ -148,7 +148,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   if (session.killed || session.exit === null) { rmSync(cwd, { recursive: true, force: true }); return done({ status: "failed", data: { iteration_ids: [iterationId], model }, reason: "wall session aborted, killed, or timed out", killed: true }); } // E-54: also covers killed-from-outside (exit:null, "killed before exiting" per types.ts)
 
   const planText = typeof prior.plan?.plan === "string" ? prior.plan.plan : null, repoFiles = repoMap?.files ?? [];
-  const oor = (): { name: string; why: string }[] => readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)).flatMap((name) => { const text = readFileSync(join(cwd, name), "utf8"), why = outOfRepoTarget(text) ?? phantomReason(phantomRepoPaths(text, name, targetDir, ctx.repoDir, planText), repoFiles, relative(ctx.repoDir, targetDir), pkg?.root ?? ""); return why ? [{ name, why }] : []; });
+  const oor = (): { name: string; why: string }[] => readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)).flatMap((name) => { const text = readFileSync(join(cwd, name), "utf8"), why = outOfRepoTarget(text) ?? vacuousCheck(name, text) ?? phantomReason(phantomRepoPaths(text, name, targetDir, ctx.repoDir, planText), repoFiles, relative(ctx.repoDir, targetDir), pkg?.root ?? ""); return why ? [{ name, why }] : []; });
   const bad1 = oor(); if (bad1.length > 0 && !signal.aborted && !ctx.overCap?.()) await ctx.sessions.run({ stage: "wall", brief: withStagePrefix(outOfRepoReask("Rewrite these Wall files in place, keeping the same names and acceptance coverage.", bad1)), tier: "development", model, iterationId: `${iterationId}-oor`, limitS: wallLimitS(sz.size), signal, cwd }); // FC-WALL-OUT-OF-REPO-TARGET: re-ask once in the same directory with the precise reason
   const oorBad = new Map(oor().map((b) => [b.name, b.why])), all = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)), held = stashHoldout({ runId: ctx.runId, repoDir: ctx.repoDir, srcDir: cwd, targetDir, names: all.filter((n) => !oorBad.has(n) && !conventionViolation(conv, n, readFileSync(join(cwd, n), "utf8"))), runnerOf: (n) => guessRunner(n, runners) }), generated = all.filter((n) => !held?.names.has(n)); // P12-05: the held-out subset never reaches the repo, runDir or the implementer
   const sealedDir = join(ctx.runDir, "wall");
@@ -195,6 +195,7 @@ function* installCore(ctx: RunContext, a: WallAuthored, baseDir: string, opts: W
     status: "completed",
     data: {
       files: sealedFiles,
+      ...(a.manifestSha256 ? { manifest_sha256: a.manifestSha256 } : {}),
       readOnlyFiles,
       base_run: baseRun,
       ...(notRunFiles.length ? { not_run_files: notRunFiles } : {}),

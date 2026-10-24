@@ -60,8 +60,8 @@ export function outcomeOf(verdict: Verdict, capHit: boolean, stop: string | null
   return capHit && !sealed ? "BUDGET_STOP" : verdict === "SPEC_CONFLICT" ? "BLOCKED" : stop === "stalled" ? "STALLED" : verdict === "PARTIAL" ? "PARTIAL" : "FAILED"; // FC-21 (d): the Outcome line names the receipt verdict; BUDGET_STOP/STALLED/BLOCKED stay the explicit stop reasons
 }
 export function reasonOf(ev: EventEnvelope[], tampered: boolean, stop: string | null, outcome: Outcome): string | undefined { // A-130: one-line cause, first match wins
-  const done = (s: string) => ev.findLast((e) => e.type === "stage.completed" && e.stage === s)?.data, v = done("verify"), checks = (v?.checks ?? []) as { name: string; result: string; first_error?: string }[], pre = (v?.pre_red_checks ?? []) as string[], bad = checks.find((c) => isBlockingFail(c, pre)); const authCause = stop === "fatal:auth" ? String(ev.findLast((e) => e.type === "session.ended" && typeof e.data?.provider_error === "string" && e.data.provider_error !== "")?.data.provider_error ?? "") : ""; // FC-LINT-PRE-RED: a check excused as failing on base is never the reason
-  const r = EXIT[outcome] === 0 ? "" : tampered ? "event log modified outside the engine" : outcome === "CANCELLED" ? "cancelled by signal; usage recorded so far is kept" : stop?.startsWith("fatal:") ? ({ "fatal:quota_exhausted": "provider credit exhausted", "fatal:auth": `provider authentication failed${authCause ? `: ${authCause}` : ""}` } as Record<string, string>)[stop] ?? stop : outcome === "BLOCKED" ? `spec conflict: ${conflictReasonOf(ev) ?? "see the receipt"}` : stop === "stalled" ? "stalled: same failure 3 times" : bad ? `${bad.name} failed${bad.first_error ? `: ${bad.first_error}` : ""}` : (ev.some((e) => e.type === "cap.hit") ? "cost/time cap reached" : undefined) ?? ev.find((e) => e.type === "stage.failed")?.data.reason ?? (v && !checks.length ? "no tests to run" : stop ?? (ev.some((e) => e.type === "receipt.sealed") ? "" : "engine ended before sealing a receipt"));
+  const done = (s: string) => ev.findLast((e) => e.type === "stage.completed" && e.stage === s)?.data, v = done("verify"), checks = (v?.checks ?? []) as { name: string; result: string; first_error?: string; anchor?: string }[], pre = (v?.pre_red_checks ?? []) as string[], bad = checks.find((c) => isBlockingFail(c, pre)); const authCause = stop === "fatal:auth" ? String(ev.findLast((e) => e.type === "session.ended" && typeof e.data?.provider_error === "string" && e.data.provider_error !== "")?.data.provider_error ?? "") : ""; // FC-LINT-PRE-RED: a check excused as failing on base is never the reason
+  const r = EXIT[outcome] === 0 ? "" : tampered ? "event log modified outside the engine" : outcome === "CANCELLED" ? "cancelled by signal; usage recorded so far is kept" : stop?.startsWith("fatal:") ? ({ "fatal:quota_exhausted": "provider credit exhausted", "fatal:auth": `provider authentication failed${authCause ? `: ${authCause}` : ""}` } as Record<string, string>)[stop] ?? stop : outcome === "BLOCKED" ? `spec conflict: ${conflictReasonOf(ev) ?? "see the receipt"}` : stop === "stalled" ? "stalled: same failure 3 times" : bad ? `${bad.name} failed${bad.first_error ? `: ${bad.first_error}` : ""}${bad.anchor ? ` (at ${bad.anchor})` : ""}` : (ev.some((e) => e.type === "cap.hit") ? "cost/time cap reached" : undefined) ?? ev.find((e) => e.type === "stage.failed")?.data.reason ?? (v && !checks.length ? "no tests to run" : stop ?? (ev.some((e) => e.type === "receipt.sealed") ? "" : "engine ended before sealing a receipt"));
   return clipWords(redactSecrets(String(r ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").trim()), 200) || undefined;
 }
 export interface PreModelTiming { span_s: number; stages: Record<string, number> } // D61-1: startMs to first session.started, self-time per stage ("setup" = none open); sums to span_s
@@ -87,6 +87,9 @@ export interface SummaryInput {
     usd: number | null; // null is unmeasured, never 0 (section 10)
     provider: string;
     tokens: number | null;
+    /** Cache read tokens and dollars saved vs the plain input rate. undefined: not reported by this caller; null: unmeasured ("cache not measured"); 0 is a real measured zero. */
+    cacheReadTokens?: number | null;
+    cacheSavedUsd?: number | null;
     /** Shown in parens when usd is null, e.g. "codex reports tokens only". */
     note?: string | null;
     /** E-69: some sessions priced, some not (usd above is null because the run isn't FULLY  measured). Renders "partial: $X for N of M sessions" instead of "not measured". Omit,  or leave  measuredSessions 0, for a run with no priced sessions at all. */
@@ -97,8 +100,10 @@ export interface SummaryInput {
   wallS: number;
   stages: { label: string; seconds: number }[]; firstSealed?: boolean; // TEN-UX-11: first sealed PR in repo (METRICS row 14); only literal true marks Time
 }
-function labelCol(text: string): string {
-  return `${text}:`.padEnd(LABEL_WIDTH);
+function labelCol(text: string): string { return `${text}:`.padEnd(LABEL_WIDTH); }
+function cacheText(c: SummaryInput["cost"]): string {
+  if (c.cacheReadTokens === undefined && c.cacheSavedUsd === undefined) return "";
+  return c.cacheReadTokens == null || c.cacheSavedUsd == null ? "; cache not measured" : `; cache read ${formatTokens(c.cacheReadTokens)} tokens, saved $${c.cacheSavedUsd.toFixed(2)}`;
 }
 /** The final summary (Outcome first, A-130), section 11. Joined by "\n", no trailing newline. */
 export function formatSummary(input: SummaryInput): string {
@@ -112,7 +117,7 @@ export function formatSummary(input: SummaryInput): string {
   if (input.flaky.length > 0) notProvenLine += input.flaky.length > 8 ? `; flaky ${input.flaky.length} tests (listed in receipt.json)` : `; flaky ${input.flaky.join(", ")}`; // FC-OUTCOME-FLOOD
   const costLine =
     input.cost.usd != null
-      ? `${labelCol("Cost")}$${input.cost.usd.toFixed(2)} (${input.cost.provider}, ${input.cost.tokens != null ? `${formatTokens(input.cost.tokens)} tokens` : "tokens not measured"}${input.cost.note ? `; ${input.cost.note}` : ""}${input.cost.capUsd ? `; ${Math.round((input.cost.usd / input.cost.capUsd) * 100)}% of cap $${input.cost.capUsd.toFixed(2)}` : ""})`
+      ? `${labelCol("Cost")}$${input.cost.usd.toFixed(2)} (${input.cost.provider}, ${input.cost.tokens != null ? `${formatTokens(input.cost.tokens)} tokens` : "tokens not measured"}${cacheText(input.cost)}${input.cost.note ? `; ${input.cost.note}` : ""}${input.cost.capUsd ? `; ${Math.round((input.cost.usd / input.cost.capUsd) * 100)}% of cap $${input.cost.capUsd.toFixed(2)}` : ""})`
       : input.cost.measuredSessions
         ? `${labelCol("Cost")}partial: $${(input.cost.partialUsd ?? 0).toFixed(2)} for ${input.cost.measuredSessions} of ${input.cost.totalSessions ?? input.cost.measuredSessions} sessions`
         : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;

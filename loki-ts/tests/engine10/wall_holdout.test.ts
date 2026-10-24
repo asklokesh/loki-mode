@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { commitStage, sealStage } from "../../src/engine10/stages/seal.ts";
 import { runWall } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
 import { buildFixBrief } from "../../src/engine10/stages/fix.ts";
@@ -245,4 +246,20 @@ describe("holdout-only red never escalates", () => {
     const groups: { signature: string }[] = [];
     expect(routedFix("claude-sonnet-4-5", {}, { repeated: true, stall: true, groups, reason: "" }).climbed).toBeNull();
   });
+});
+
+describe("holdout fail blocks seal", () => {
+  const seal = async (holdout: Record<string, unknown>, preRed: string[]): Promise<{ verdict: string }> => {
+    const { repoDir, base } = mkRepo(); writeFileSync(join(repoDir, "src", "impl.ts"), "export const f0 = () => 1;\n");
+    const ctx = mkCtx(repoDir, base, []), out = ctx.outputs();
+    const pass1 = { name: "bun:tests/loki_wall_f1.test.ts", cmd: "bun test", result: "pass", n: 1, duration_s: 1 };
+    Object.assign(out, { implement: { exit: "done", tests_reverted: [], duration_s: 1 }, wall: { files: [{ path: "tests/loki_wall_f1.test.ts", sha256: "cd".repeat(32) }] }, verify: { checks: [pass1, holdout], flaky: [], wall_passed: false, pre_red_checks: preRed, duration_s: 1 } });
+    ctx.outputs = () => out; process.env["LOKI_RECEIPT_SIGNING_KEY"] = ""; process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(repoDir, "k.pem");
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    return JSON.parse(readFileSync(s.data["receipt_path"] as string, "utf8"));
+  };
+  const hold = { name: "holdout", cmd: "held-out wall checks", result: "fail", n: 1, duration_s: 1 };
+  test("a failing holdout seals FAILED", async () => { expect((await seal(hold, [])).verdict).toBe("FAILED"); }, 60_000);
+  test("a failing holdout seals FAILED even when pre_red_checks names it", async () => { expect((await seal(hold, ["holdout"])).verdict).toBe("FAILED"); }, 60_000);
 });

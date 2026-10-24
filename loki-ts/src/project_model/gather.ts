@@ -22,6 +22,10 @@ export interface Gathered {
   files: { path: string; text: string }[];
 }
 
+/** Agent instruction files other tools read; inlined first (still untrusted data, still within the caps). */
+export const AGENT_RULE_FILES = ["AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules", ".windsurfrules", ".github/copilot-instructions.md"] as const;
+const isRuleFile = (p: string): boolean => (AGENT_RULE_FILES as readonly string[]).includes(p) || /^\.cursor\/rules\/[^/]+$/.test(p);
+
 const depthOf = (p: string): number => p.split("/").length;
 
 /** Tracked paths within maxDepth (NUL-separated, so no path is ever quoted or split), never throws. */
@@ -57,7 +61,7 @@ export function gather(repoDir: string): Gathered {
       if (st.isFile() && st.size <= GATHER_CAPS.maxFileBytes) sized.push({ path, size: st.size });
     } catch { /* unreadable: skip */ }
   }
-  sized.sort((a, b) => depthOf(a.path) - depthOf(b.path) || a.size - b.size || a.path.localeCompare(b.path));
+  sized.sort((a, b) => Number(isRuleFile(b.path)) - Number(isRuleFile(a.path)) || depthOf(a.path) - depthOf(b.path) || a.size - b.size || a.path.localeCompare(b.path));
   const files: Gathered["files"] = [];
   let total = 0;
   for (const { path, size } of sized) {

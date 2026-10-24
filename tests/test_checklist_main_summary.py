@@ -83,8 +83,13 @@ def test_main_summary_counts():
             json.dump(_build_checklist(), f)
 
         # Invoke the real main() as the runner does: CLI subprocess, cwd=project.
+        digest = subprocess.run(
+            [sys.executable, SCRIPT, "--checklist", checklist_path, "--freeze"],
+            cwd=project, capture_output=True, text=True, timeout=60,
+        ).stdout.strip()
         proc = subprocess.run(
-            [sys.executable, SCRIPT, "--checklist", checklist_path, "--timeout", "5"],
+            [sys.executable, SCRIPT, "--checklist", checklist_path,
+             "--expect-digest", digest, "--timeout", "5"],
             cwd=project,
             capture_output=True,
             text=True,

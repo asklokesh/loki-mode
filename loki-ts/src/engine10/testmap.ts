@@ -9,10 +9,7 @@ import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
 import { GO_TEST_RE, JS_SPEC_RE, JS_TEST_RE, PY_TEST_RE, coveredStem, detectFromPackageJson, isTestFile, referencedBasenames } from "../util/test_file_text.ts";
 export { isTestFile };
 /** One command shape per runner (ENGINE.md section 8 table). `<files>` is a placeholder the  caller (E-09 verify) fills with the selected paths. `coarse: true` means the command always  runs the  whole suite: npm and cargo have no reliable per-file selection. */
-export interface CommandSpec {
-  cmd: string;
-  coarse: boolean;
-}
+export interface CommandSpec { cmd: string; coarse: boolean; }
 /** Extra fields beyond E-01's TestMap. `sourceRefs` is read back by `impacted()` and is not meant for callers outside this file. */
 export interface EngineTestMap extends TestMap {
   /** Repo-relative file that proved each detected runner. */
@@ -62,9 +59,7 @@ const normalizeRel = (raw: string): string => raw.split(sep).join("/").replace(/
 export function buildTestMap(root: string): EngineTestMap {
   const files = listProjectFiles(root);
   const evidence: Partial<Record<RunnerName, string>> = {};
-  const mark = (r: RunnerName, file: string): void => {
-    if (!(r in evidence)) evidence[r] = file;
-  };
+  const mark = (r: RunnerName, file: string): void => { if (!(r in evidence)) evidence[r] = file; };
   const jsText = new Map<string, string>();
   for (const rel of files) {
     const name = basename(rel);
@@ -99,9 +94,7 @@ export function buildTestMap(root: string): EngineTestMap {
     specs[t.path] = [...text.matchAll(JS_SPEC_RE)].map((m) => m[1] ?? "");
     const names = referencedBasenames(text);
     names.add(coveredStem(t.path));
-    for (const n of names) {
-      (sourceRefs[n] ??= []).push(t.path);
-    }
+    for (const n of names) { (sourceRefs[n] ??= []).push(t.path); }
   }
   const runners = RUNNER_ORDER.filter((r) => r in evidence);
   const commands: Partial<Record<RunnerName, CommandSpec>> = {};
@@ -140,10 +133,6 @@ export function impactedRefs(map: TestMap, changedFiles: readonly string[]): Tes
 }
 /** Implements the E-01 contract so RunContext can inject this as `tests`. */
 export class RealTestMapProvider implements TestMapProvider {
-  async detect(repoDir: string): Promise<TestMap> {
-    return buildTestMap(repoDir);
-  }
-  impacted(map: TestMap, changedFiles: string[]): TestRef[] {
-    return impactedRefs(map, changedFiles);
-  }
+  async detect(repoDir: string): Promise<TestMap> { return buildTestMap(repoDir); }
+  impacted(map: TestMap, changedFiles: string[]): TestRef[] { return impactedRefs(map, changedFiles); }
 }

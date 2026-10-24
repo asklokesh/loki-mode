@@ -27,7 +27,6 @@ describe("route", () => {
     expect(route(["dashboard"])?.module).toBe("../runner/engine10_dashboard.ts");
     expect(route(["worker", "x"])).toEqual({ module: "worker.ts", fn: "main", args: ["x"] });
     expect(route(["session"])?.module).toBe("session.ts");
-    expect(route(["deep-supervise"])).toEqual({ module: "stages/deep.ts", fn: "deepSupervise", args: [] });
     expect(route(["deep-worker"])?.fn).toBe("deepWorker");
   });
   test("tasks, issue refs and flags go to the supervisor with every arg", () => {
@@ -126,5 +125,26 @@ describe("static shape", () => {
     const reg = arm.indexOf('(await import("./contrib/index.ts")).registerContrib();');
     expect(reg).toBeGreaterThan(-1);
     expect(reg).toBeLessThan(arm.indexOf("return runIssues(rest);"));
+  });
+
+  test("every route export exists", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { existsSync } = await import("node:fs");
+    const src = readFileSync(`${SRC}/engine10/cli.ts`, "utf8");
+    const rows = [...src.matchAll(/\{ module: "([^"]+)", fn: "([^"]+)" \}/g)];
+    expect(rows.length).toBeGreaterThan(5);
+    const missing: string[] = [];
+    for (const [, module, fn] of rows) {
+      if (!existsSync(`${SRC}/engine10/${module}`)) continue; // an absent module is the router's explicit "not built yet" path, not a missing export
+      const mod = (await import(`${SRC}/engine10/${module}`)) as Record<string, unknown>;
+      if (typeof mod[fn!] !== "function") missing.push(`${module} does not export ${fn}`);
+    }
+    expect(missing).toEqual([]);
+  });
+
+  test("deep-worker exits 2 without a run id and 1 when the run has no event log", async () => {
+    const { deepWorker } = await import(`${SRC}/engine10/stages/deep.ts`);
+    expect(await captureStderr(() => deepWorker([]))).toMatchObject({ value: 2 });
+    expect((await captureStderr(() => deepWorker(["no-such-run-pg"]))).value).toBe(1);
   });
 });

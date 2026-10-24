@@ -7,7 +7,7 @@ import { join, relative } from "node:path";
 import { installWall, wallAuthor, wallStage, type BaseTestRunner } from "../../src/engine10/stages/wall.ts";
 import type { RunContext, SessionResult, SessionRunOptions, SessionRunner } from "../../src/engine10/types.ts";
 
-const BODY = (n: string): string => `import { test, expect } from "bun:test";\ntest("${n}", () => { expect(1).toBe(1); });\n`;
+const BODY = (n: string): string => `import { test, expect } from "bun:test";\ntest("${n}", () => { expect("${n}".length).toBe(1); });\n`;
 
 class WriteSession implements SessionRunner {
   cwdListing: string[] = [];

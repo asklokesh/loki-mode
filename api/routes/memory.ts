@@ -41,6 +41,24 @@ import {
 // Base path for memory storage
 const MEMORY_BASE_PATH = ".loki/memory";
 
+// Python helper shared by the token-economics scripts. A session that recorded
+// nothing (all counters zero) is unmeasured: every metric is null, never 0 or
+// a 100% saving. Once anything is recorded the measured values pass through.
+const PY_TOKEN_METRICS = `
+def token_metrics_from(summary):
+    m = summary.get('metrics', {})
+    keys = ('discovery_tokens', 'read_tokens', 'layer1_loads', 'layer2_loads',
+            'layer3_loads', 'cache_hits', 'cache_misses')
+    if not any((m.get(k) or 0) > 0 for k in keys):
+        return {'discoveryTokens': None, 'readTokens': None, 'ratio': None, 'savingsPercent': None}
+    return {
+        'discoveryTokens': m.get('discovery_tokens'),
+        'readTokens': m.get('read_tokens'),
+        'ratio': summary.get('ratio'),
+        'savingsPercent': summary.get('savings_percent')
+    }
+`;
+
 // Default subprocess timeout (30 seconds)
 const SUBPROCESS_TIMEOUT_MS = 30000;
 
@@ -181,6 +199,7 @@ import json
 sys.path.insert(0, '.')
 from memory.engine import MemoryEngine
 from memory.token_economics import TokenEconomics
+${PY_TOKEN_METRICS}
 
 engine = MemoryEngine('${MEMORY_BASE_PATH}')
 stats = engine.get_stats()
@@ -195,12 +214,7 @@ try:
     te = TokenEconomics('api-session', '${MEMORY_BASE_PATH}')
     te.load()
     summary = te.get_summary()
-    token_metrics = {
-        'discoveryTokens': summary['metrics'].get('discovery_tokens', 0),
-        'readTokens': summary['metrics'].get('read_tokens', 0),
-        'ratio': summary.get('ratio', 0),
-        'savingsPercent': summary.get('savings_percent', 100)
-    }
+    token_metrics = token_metrics_from(summary)
 except:
     token_metrics = None
 
@@ -746,6 +760,7 @@ from memory.engine import MemoryEngine
 from memory.retrieval import MemoryRetrieval
 from memory.storage import MemoryStorage
 from memory.token_economics import TokenEconomics
+${PY_TOKEN_METRICS}
 
 storage = MemoryStorage('${MEMORY_BASE_PATH}')
 engine = MemoryEngine(storage=storage, base_path='${MEMORY_BASE_PATH}')
@@ -775,19 +790,9 @@ try:
     te = TokenEconomics('retrieve-session', '${MEMORY_BASE_PATH}')
     te.load()
     summary = te.get_summary()
-    token_metrics = {
-        'discoveryTokens': summary['metrics'].get('discovery_tokens', 0),
-        'readTokens': summary['metrics'].get('read_tokens', 0),
-        'ratio': summary.get('ratio', 0),
-        'savingsPercent': summary.get('savings_percent', 100)
-    }
+    token_metrics = token_metrics_from(summary)
 except:
-    token_metrics = {
-        'discoveryTokens': 0,
-        'readTokens': 0,
-        'ratio': 0,
-        'savingsPercent': 100
-    }
+    token_metrics = token_metrics_from({})
 
 result = {
     'memories': memories,
@@ -840,10 +845,10 @@ print(json.dumps(result, default=str))
     const emptyResponse: RetrieveResponse = {
       memories: [],
       tokenMetrics: {
-        discoveryTokens: 0,
-        readTokens: 0,
-        ratio: 0,
-        savingsPercent: 100,
+        discoveryTokens: null,
+        readTokens: null,
+        ratio: null,
+        savingsPercent: null,
       },
     };
     return successResponse(emptyResponse);
@@ -949,6 +954,7 @@ import sys
 import json
 sys.path.insert(0, '.')
 from memory.token_economics import TokenEconomics
+${PY_TOKEN_METRICS}
 
 te = TokenEconomics('api-session', '${MEMORY_BASE_PATH}')
 te.load()
@@ -957,10 +963,7 @@ summary = te.get_summary()
 result = {
     'sessionId': summary.get('session_id', 'unknown'),
     'startedAt': summary.get('started_at', ''),
-    'discoveryTokens': summary['metrics'].get('discovery_tokens', 0),
-    'readTokens': summary['metrics'].get('read_tokens', 0),
-    'ratio': summary.get('ratio', 0),
-    'savingsPercent': summary.get('savings_percent', 100),
+    **token_metrics_from(summary),
     'layer1Loads': summary['metrics'].get('layer1_loads', 0),
     'layer2Loads': summary['metrics'].get('layer2_loads', 0),
     'layer3Loads': summary['metrics'].get('layer3_loads', 0),
@@ -991,10 +994,10 @@ print(json.dumps(result))
     const defaultEconomics: TokenEconomicsDetail = {
       sessionId: "none",
       startedAt: new Date().toISOString(),
-      discoveryTokens: 0,
-      readTokens: 0,
-      ratio: 0,
-      savingsPercent: 100,
+      discoveryTokens: null,
+      readTokens: null,
+      ratio: null,
+      savingsPercent: null,
       layer1Loads: 0,
       layer2Loads: 0,
       layer3Loads: 0,

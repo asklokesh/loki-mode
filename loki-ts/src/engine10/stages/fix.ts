@@ -12,9 +12,7 @@ import { resumeAfterConflict } from "../../util/conflict_resume.ts";
 import { installOwned } from "../../project_model/install.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
-function isTestFailure(g: FailureGroup): boolean {
-  return !g.signature.startsWith("lint:") && g.signature !== "select-tests";
-}
+function isTestFailure(g: FailureGroup): boolean { return !g.signature.startsWith("lint:") && g.signature !== "select-tests"; }
 
 export function buildFixBrief(
   task: string,

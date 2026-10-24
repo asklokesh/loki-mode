@@ -73,6 +73,14 @@ cmd_edit() {
     return "$_rc"
 }
 
+# One "<content-hash> <path>" line per untracked, non-ignored file.
+_loki_edit_untracked_hashes() {
+    local f
+    git ls-files --others --exclude-standard | while IFS= read -r f; do
+        [ -f "$f" ] && printf '%s %s\n' "$(git hash-object -- "$f" 2>/dev/null)" "$f"
+    done
+}
+
 _cmd_edit_run() {
     local do_verify=false do_receipt=false do_commit=false dry=false
     local paths=() change=""
@@ -125,6 +133,8 @@ _cmd_edit_run() {
     local before_head before_status
     before_head="$(git rev-parse HEAD 2>/dev/null || echo none)"
     before_status="$(git status --porcelain)"
+    local before_untracked
+    before_untracked="$(_loki_edit_untracked_hashes)"
 
     local prompt scope=""
     if [ "${#paths[@]}" -gt 0 ]; then
@@ -184,6 +194,13 @@ print("%s|%s|%s" % (c,err,(d.get("result") or "").strip().replace("\n"," ")[:400
     # Files touched by this pass: status delta against the pre-run snapshot.
     local touched
     touched="$(git status --porcelain | grep -vxF -f <(printf '%s\n' "$before_status") 2>/dev/null | sed 's/^...//' || true)"
+    # A file untracked before the run keeps the same porcelain line when edited,
+    # so also pick up untracked files whose content hash changed.
+    local changed_untracked
+    changed_untracked="$(_loki_edit_untracked_hashes | grep -vxF -f <(printf '%s\n' "$before_untracked") 2>/dev/null | sed 's/^[^ ]* //' || true)"
+    if [ -n "$changed_untracked" ]; then
+        touched="$(printf '%s\n%s\n' "$touched" "$changed_untracked" | sed '/^$/d' | sort -u)"
+    fi
     [ -n "$touched" ] || touched="$(git diff --name-only)"
 
     if [ -z "$touched" ]; then

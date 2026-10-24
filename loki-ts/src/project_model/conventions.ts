@@ -89,6 +89,53 @@ export function outOfRepoTarget(content: string): string | null {
   return null;
 }
 
+/** Go: true when the file has Test funcs, every body is empty or only t.Log/t.Skip calls, and nothing in the file can fail a test. Linear brace scan, no backtracking regex over the body. */
+function goVacuous(code: string): boolean {
+  if (/\b\w+\.(?:Fatal|Fatalf|Error|Errorf|Fail|FailNow|Run)\b/.test(code)) return false;
+  const head = /func\s+Test\w*\(\s*\w+\s+\*testing\.T\s*\)\s*\{/g, trivialStmt = /^\w+\.(?:Log|Logf|Skip|Skipf|SkipNow)\(.*\)$/;
+  let m: RegExpExecArray | null, n = 0;
+  while ((m = head.exec(code))) {
+    let d = 1, i = head.lastIndex, q = "";
+    for (; i < code.length && d > 0; i++) { const c = code[i]!; if (q) { if (c === "\\" && q !== "`") i++; else if (c === q) q = ""; } else if (c === '"' || c === "'" || c === "`") q = c; else if (c === "{") d++; else if (c === "}") d--; }
+    if (d > 0) return false;
+    const body = code.slice(head.lastIndex, i - 1);
+    if (/[{}]/.test(body.replace(/"(?:\\.|[^"\\\n])*"|`[^`]*`|'(?:\\.|[^'\\\n])*'/g, ""))) return false;
+    if (!body.split(/[\n;]/).map((x) => x.trim()).filter(Boolean).every((x) => trivialStmt.test(x))) return false;
+    head.lastIndex = i; n++;
+  }
+  return n > 0;
+}
+
+/** TEN-MOAT-26: a generated Wall file that asserts nothing: its only assertions are tautologies (expect(true).toBe(true), assert True), its tests have empty bodies, or a shell file holds only true / exit 0 / ":". Such a file can never fail, so it proves nothing about the change. A JS/Python file with no tautology and no assertion but real calls is NOT flagged (it can still be red by throwing); a file that holds a tautology and no real assertion is flagged even if it also calls code. Go is judged per file: flagged only when every Test func body is empty or only t.Log/t.Skip and nothing can fail a test. Comments are ignored. Returns the reason, or null when the file is acceptable or its language is not recognised. */
+export function vacuousCheck(fileName: string, content: string): string | null {
+  const reason = "asserts nothing (no assertion, or only an always-true one such as true or exit 0); write a check that fails when the behavior is absent";
+  const strip = (re: RegExp): string => content.replace(/\/\*[\s\S]*?\*\//g, "").replace(re, "$1");
+  if (/\.[cm]?[jt]sx?$/.test(fileName)) {
+    const code = strip(/(^|[^:])\/\/.*$/gm);
+    const lit = String.raw`(?:true|false|null|undefined|\d+(?:\.\d+)?|"[^"\n]*"|'[^'\n]*')`;
+    const taut = new RegExp(String.raw`\b(?:expect\(\s*(${lit})\s*\)\s*\.\s*(?:toBe|toEqual|toStrictEqual)\(\s*\1\s*\)|expect\(\s*(?:true|[1-9]\d*|"[^"\n]+"|'[^'\n]+')\s*\)\s*\.\s*(?:toBeTruthy|toBeDefined)\(\s*\)|expect\(\s*false\s*\)\s*\.\s*toBeFalsy\(\s*\)|(?:assert|assert\.ok|assert\.equal|assert\.strictEqual)\(\s*(?:true|1|(${lit})\s*,\s*\2)\s*\))`);
+    const tautAll = new RegExp(taut.source, "g"); // judged per assertion: a tautology is removed and what remains on the line must still hold a real assertion
+    const real = code.split("\n").some((l) => /\b(?:expect|assert\w*|should|fail)\s*[(.]|\bt\.(?:is|true|ok|equal|deepEqual|throws)\b|\bthrow\b/.test(l.replace(tautAll, "")));
+    return !real && (code.split("\n").some((l) => taut.test(l)) || /(?:=>|function\s*\([^)]*\))\s*\{\s*\}\s*\)/.test(code)) ? reason : null;
+  }
+  if (/\.py$/.test(fileName)) {
+    const code = strip(/(^|\s)#.*$/gm);
+    const pylit = String.raw`(?:True|[1-9]\d*|"[^"\n]+"|'[^'\n]+')`;
+    const PYTAUT0 = new RegExp(String.raw`^(?:assert\s+(?:${pylit}|([1-9]\d*)\s*==\s*\1)(?:\s*,.*)?|(?:self\.)?assertTrue\(\s*${pylit}\s*\)|(?:self\.)?assertEqual\(\s*(${pylit})\s*,\s*\2\s*\))$`);
+    const PYTAUT = { test: (l: string): boolean => PYTAUT0.test(l.trim()) }; // lines are trimmed first so no pattern carries adjacent whitespace quantifiers (quadratic on a near-miss)
+    const real = code.split("\n").some((l) => /\bassert\b|\bself\.assert\w*\(|\bpytest\.(?:raises|fail)\b|\braise\b|\bfail\(/.test(l) && !PYTAUT.test(l));
+    return !real && (code.split("\n").some((l) => PYTAUT.test(l)) || /def\s+test\w*\([^)]*\):\s*(?:pass|\.\.\.)\s*$/m.test(code)) ? reason : null;
+  }
+  if (/\.(?:sh|bash)$/.test(fileName)) {
+    const lines = strip(/(^|\s)#.*$/gm).split("\n").map((l) => l.trim()).filter((l) => l && !/^set\s+-/.test(l));
+    const tok = String.raw`(?:"[^"$\x60\\\n]*"|'[^'\n]*'|[^\s"'$\x60\\|&;<>(){}*?~-][^\s"'$\x60\\|&;<>(){}*?]*)`; // one quoted or bare literal word: no expansion, glob, redirect or option
+    const trivial = new RegExp(String.raw`^(?:true|:|exit\s+0|return\s+0|(?:/usr)?/bin/true|(?:echo|printf)(?:\s+${tok})*|test\s+(?:[1-9]\d*|${tok})|\[\[?\s+(?:[1-9]\d*|${tok})\s+\]\]?)$`);
+    return lines.length === 0 || lines.every((l) => l.split(/&&|\|\||;/).map((x) => x.trim()).every((x) => x === "" || trivial.test(x))) ? reason : null;
+  }
+  if (/_test\.go$/.test(fileName)) return goVacuous(strip(/(^|[^:])\/\/.*$/gm)) ? reason : null;
+  return null;
+}
+
 /** The shared re-ask text for files rejected by the out-of-repo checks (Wall and the implement repro test): the lead says what to rewrite, then each rejected name with its reason. */
 export const outOfRepoReask = (lead: string, bad: { name: string; why: string }[]): string => [`${lead} Each was rejected:\n${bad.map((b) => `- ${b.name}: ${b.why}`).join("\n")}`, `Point every reference at the repository code with repo-relative paths (for example join(import.meta.dir, "..", "<repo path>") or the equivalent for this runner). Do not read the home directory, $HOME or an environment variable that falls back to one. Write nothing else.`].join("\n\n");
 

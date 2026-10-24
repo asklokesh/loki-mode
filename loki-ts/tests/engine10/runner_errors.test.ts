@@ -195,7 +195,7 @@ describe("TEN-COST-09 Wall skipped when no project interpreter", () => {
       const ref = join(runDir, "repomap.json");
       writeFileSync(ref, JSON.stringify({ files, entries: [], truncated: false }));
       let called = 0;
-      const sessions: SessionRunner = { async run(o) { called++; for (let i = 1; i <= nFiles; i++) writeFileSync(join(o.cwd!, `loki_wall_f${i}.py`), `def test_f${i}():\n    assert True\n`); return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false }; } };
+      const sessions: SessionRunner = { async run(o) { called++; for (let i = 1; i <= nFiles; i++) writeFileSync(join(o.cwd!, `loki_wall_f${i}.py`), `def test_f${i}():\n    assert ${i} + 1 == ${i + 1}\n`); return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false }; } };
       const tm = { runners: ["pytest"], tests: [{ runner: "pytest", path: "tests/test_app.py" }] };
       const ctx = { ...ctxFor(repoDir, []), runId: "r1", runDir, sessions, tests: { async detect() { return tm; }, impacted: () => [] }, outputs: () => ({ intake: { task: "add a feature to the app with new behavior across modules", testmap: tm, repomap_ref: ref } }) } as unknown as RunContext;
       process.env["LOKI_E10_PLAN"] = "always"; process.env["LOKI_E10_WALL_FIRST"] = "0"; // single rung: these assert one session, and the trivial always-green tests would otherwise escalate (COST-11)

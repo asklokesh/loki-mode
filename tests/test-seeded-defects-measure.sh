@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# Hermetic test for benchmarks/seeded-defects/measure.py with a stub verifier.
+# No model or network call. The output is validated with the p4 results contract.
+set -uo pipefail
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+M="$REPO_ROOT/benchmarks/seeded-defects/measure.py"
+MANIFEST="$REPO_ROOT/benchmarks/seeded-defects/manifest.json"
+P4="$REPO_ROOT/tests/moat/p4-model-freedom.sh"
+T="$(mktemp -d "${TMPDIR:-/tmp}/sd-measure-test.XXXXXX")"
+trap 'rm -rf "$T"' EXIT
+PASS=0; FAIL=0
+ok() { PASS=$((PASS+1)); echo "PASS: $1"; }
+bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
+
+# Stub: seal the ids listed in $T/seal, else NOT_SEALED.
+STUB="grep -qx \"\$SD_ID\" $T/seal && echo SEALED || echo NOT_SEALED"
+: > "$T/seal"
+OUT="$T/wrong-pass.json"
+
+if python3 "$M" --setup top --model stub-top --verifier "$STUB" --out "$OUT" >/dev/null 2>&1 && [ -f "$OUT" ]; then
+  ok "writes results file"
+else
+  bad "writes results file"
+fi
+echo SD-0001 > "$T/seal"
+if python3 "$M" --setup floor --model stub-floor --verifier "$STUB" --out "$OUT" >/dev/null 2>&1; then
+  ok "second setup merges"
+else
+  bad "second setup merges"
+fi
+
+if python3 - "$OUT" "$MANIFEST" <<'PY'
+import hashlib, json, sys
+r = json.load(open(sys.argv[1])); mb = open(sys.argv[2], "rb").read()
+ids = {d["id"] for d in json.loads(mb)["defects"]}
+assert r["schema"] == "loki.seeded-defects.results/v2"
+assert r["manifest_sha256"] == hashlib.sha256(mb).hexdigest()
+assert [x["setup"] for x in r["runs"]] == ["top", "floor"]
+for x in r["runs"]:
+    assert set(x["outcomes"]) == ids and set(x["outcomes"].values()) <= {"SEALED", "NOT_SEALED"}
+    assert x["wrong_pass"] == sum(v == "SEALED" for v in x["outcomes"].values()) and x["n"] == len(ids)
+assert r["runs"][0]["wrong_pass"] == 0 and r["runs"][1]["wrong_pass"] == 1
+PY
+then ok "schema, sha, ids, derived counts"; else bad "schema, sha, ids, derived counts"; fi
+
+# Bad verifier output aborts and leaves the file untouched.
+before="$(shasum "$OUT")"
+python3 "$M" --setup top --model x --verifier "echo MAYBE" --out "$OUT" >/dev/null 2>&1
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$before" = "$(shasum "$OUT")" ]; then ok "invalid verdict aborts, nothing written"; else bad "invalid verdict aborts, nothing written"; fi
+python3 "$M" --setup top --model x --verifier "exit 3" --out "$OUT" >/dev/null 2>&1
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$before" = "$(shasum "$OUT")" ]; then ok "crashing verifier aborts"; else bad "crashing verifier aborts"; fi
+
+# Re-measuring a setup replaces only that run.
+: > "$T/seal"
+python3 "$M" --setup floor --model stub-floor2 --verifier "$STUB" --out "$OUT" >/dev/null 2>&1
+if python3 -c "
+import json,sys
+r=json.load(open(sys.argv[1])); assert len(r['runs'])==2 and r['runs'][1]['model']=='stub-floor2' and r['runs'][0]['model']=='stub-top'" "$OUT"; then
+  ok "re-measure replaces one run"
+else
+  bad "re-measure replaces one run"
+fi
+
+# The p4 results checker accepts this file (corpus + results rules).
+sed -n "/^cat > \"\$MOAT_TMP\/corpus.py\" <<'PY'/,/^PY\$/p" "$P4" | sed '1d;$d' > "$T/corpus.py"
+if [ -s "$T/corpus.py" ]; then
+  res="$(python3 "$T/corpus.py" results "$MANIFEST" "$OUT" 2>&1)"
+  case "$res" in OK*) ok "passes p4 results contract ($res)" ;; *) bad "p4 contract: $res" ;; esac
+else
+  bad "could not extract p4 checker"
+fi
+
+# Default route (loki verify): only a positive verdict is an outcome. A stub loki
+# on PATH stands in for the real verifier; no model call.
+mkdir -p "$T/bin"
+D1="$(python3 -c "import json;print(json.load(open('$MANIFEST'))['defects'][0]['id'])")"
+stub_loki() { printf '#!/bin/sh\n[ "$1" = --version ] && { echo loki-stub-1.2.3; exit 0; }\n%s\n' "$1" > "$T/bin/loki"; chmod +x "$T/bin/loki"; }
+run_default() { PATH="$T/bin:$PATH" python3 "$M" --setup top --model x --only "$D1" --out "$2" >/dev/null 2>&1; }
+for case_ in 'ERROR verdict|echo '"'"'{"verdict":"ERROR"}'"'" 'garbage output|echo not-json' 'rc1 empty output|exit 1' 'unknown verdict|echo '"'"'{"verdict":"WEIRD"}'"'" \
+  'A CONCERNS exit 3|echo '"'"'{"verdict":"CONCERNS","exit_code":3}'"'"'; exit 3' \
+  'B CONCERNS exit 2|echo '"'"'{"verdict":"CONCERNS","exit_code":2}'"'"'; exit 2' \
+  'C VERIFIED exit 3|echo '"'"'{"verdict":"VERIFIED"}'"'"'; exit 3' \
+  'D VERIFIED then signal|echo '"'"'{"verdict":"VERIFIED"}'"'"'; kill -SEGV $$' \
+  'E json exit_code mismatch|echo '"'"'{"verdict":"VERIFIED","exit_code":1}'"'"'; exit 0' \
+  'F VERIFIED exit 1|echo '"'"'{"verdict":"VERIFIED","exit_code":1}'"'"'; exit 1' \
+  'G exit_code missing|echo '"'"'{"verdict":"VERIFIED"}'"'"'; exit 0' \
+  'H exit_code false|echo '"'"'{"verdict":"VERIFIED","exit_code":false}'"'"'; exit 0' \
+  'I exit_code true CONCERNS|echo '"'"'{"verdict":"CONCERNS","exit_code":true}'"'"'; exit 1' \
+  'J exit_code 0.0|echo '"'"'{"verdict":"VERIFIED","exit_code":0.0}'"'"'; exit 0'; do
+  name="${case_%%|*}"; stub_loki "${case_#*|}"; rm -f "$T/d.json"
+  run_default x "$T/d.json"; rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$T/d.json" ]; then ok "default route: $name aborts, nothing written"; else bad "default route: $name aborts, nothing written (rc=$rc)"; fi
+done
+for pair in 'VERIFIED|SEALED|0' 'BLOCKED|NOT_SEALED|2' 'CONCERNS|NOT_SEALED|1'; do
+  rcx="${pair##*|}"; pair="${pair%|*}"
+  stub_loki "echo '{\"verdict\":\"${pair%%|*}\",\"exit_code\":$rcx}'; exit $rcx"; rm -f "$T/d.json"
+  run_default x "$T/d.json"
+  if python3 -c "
+import json,sys
+r=json.load(open(sys.argv[1]))['runs'][0]; assert list(r['outcomes'].values())==[sys.argv[2]] and r['loki_version']=='loki-stub-1.2.3' and r['route']=='default' and r['verifier'] is None" "$T/d.json" "${pair##*|}" 2>/dev/null; then
+    ok "default route: ${pair%%|*} exit $rcx gives ${pair##*|}"; else bad "default route: ${pair%%|*} gives ${pair##*|}"; fi
+done
+
+# Provenance: the custom route records its verifier and no loki_version; the p4
+# checker refuses a default-route file (model-independent) for a per-model claim.
+if python3 - "$OUT" <<'PY'
+import json, sys
+for r in json.load(open(sys.argv[1]))["runs"]:
+    assert r["route"] == "custom" and r["verifier"] and r["loki_version"] is None
+PY
+then ok "custom route records route and verifier, loki_version null"; else bad "custom route provenance"; fi
+if [ -s "$T/corpus.py" ]; then
+  stub_loki "echo '{\"verdict\":\"VERIFIED\",\"exit_code\":0}'; exit 0"
+  for st in top floor; do PATH="$T/bin:$PATH" python3 "$M" --setup $st --model x --out "$T/def.json" >/dev/null 2>&1; done
+  res="$(python3 "$T/corpus.py" results "$MANIFEST" "$T/def.json" 2>&1)"
+  case "$res" in *"default route"*) ok "p4 refuses a default-route file for a per-model claim" ;; *) bad "p4 default-route refusal: $res" ;; esac
+fi
+
+# A floor run from another route or verifier is never merged; an unreadable prior aborts.
+before="$(shasum "$OUT")"
+python3 "$M" --setup floor --model x --verifier "echo NOT_SEALED" --out "$OUT" >/dev/null 2>&1; rc=$?
+if [ "$rc" -ne 0 ] && [ "$before" = "$(shasum "$OUT")" ]; then ok "different verifier is not merged"; else bad "different verifier is not merged"; fi
+printf '{broken' > "$T/unreadable.json"
+python3 "$M" --setup top --model x --verifier "$STUB" --out "$T/unreadable.json" >/dev/null 2>&1; rc=$?
+if [ "$rc" -ne 0 ] && [ "$(cat "$T/unreadable.json")" = '{broken' ]; then ok "unreadable prior aborts, left untouched"; else bad "unreadable prior aborts"; fi
+if ls "$OUT".tmp "$(dirname "$OUT")"/.wrong-pass-*.tmp >/dev/null 2>&1; then bad "no tmp leftovers"; else ok "no tmp leftovers"; fi
+
+echo "Results: $PASS passed, $FAIL failed"
+[ "$FAIL" -eq 0 ]

@@ -12,12 +12,8 @@ export function repoKey(originUrl: string | null, repoDir: string): string {
   return createHash("sha256").update(basis).digest("hex");
 }
 /** ~/.loki/cache/v10 (ENGINE.md section 13). Callers may pass their own root  (tests do, to stay off the real home directory). */
-export function defaultCacheRoot(): string {
-  return resolve(homeLokiDir(), "cache", "v10");
-}
-export function repoCacheDir(key: string, cacheRoot: string = defaultCacheRoot()): string {
-  return resolve(cacheRoot, key);
-}
+export function defaultCacheRoot(): string { return resolve(homeLokiDir(), "cache", "v10"); }
+export function repoCacheDir(key: string, cacheRoot: string = defaultCacheRoot()): string { return resolve(cacheRoot, key); }
 // Parses fine but is the wrong shape (e.g. `null`, `{}`, a bare number) is just as much a corrupt cache entry as unparseable text: both are a miss, never a throw. `isValid` lets each caller state its own shape; callers that skip
 // it accept anything JSON.parse produces, same as before.
 export function readJson<T>(path: string, isValid: (v: unknown) => v is T = (_v): _v is T => true): T | null {

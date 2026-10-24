@@ -3626,6 +3626,18 @@ def _resolve_session_pin(alias: str) -> str:
         model = "opus"
     else:  # development (and the unknown-alias '*' fallthrough)
         model = _provider_model_development()
+    # Explicit top / floor setup, mirrors claude.sh resolve_model_for_tier: a
+    # planning pin dispatches opus, a fast pin haiku (skipped when
+    # LOKI_ALLOW_HAIKU is explicitly set to anything but "true"), unless legacy
+    # tier switching or an explicit per-tier pin applies.
+    if os.environ.get("LOKI_LEGACY_TIER_SWITCHING") != "true":
+        if (pin_tier == "planning" and _alias_norm == "planning"
+                and not (os.environ.get("LOKI_CLAUDE_MODEL_PLANNING") or os.environ.get("LOKI_MODEL_PLANNING"))):
+            model = "opus"
+        elif (pin_tier == "fast" and _alias_norm == "fast"
+                and not (os.environ.get("LOKI_CLAUDE_MODEL_FAST") or os.environ.get("LOKI_MODEL_FAST"))
+                and os.environ.get("LOKI_ALLOW_HAIKU", "true") == "true"):
+            model = "haiku"
     max_tier = (os.environ.get("LOKI_MAX_TIER") or "").strip().lower()
     if not max_tier:
         return model
@@ -6286,6 +6298,34 @@ def _memory_skill_files(skills_dir) -> list:
         return []
 
 
+def _memory_token_economics() -> dict:
+    """Token economics for /api/memory/summary: null fields until recorded.
+
+    token_economics.json is written snake_case (metrics.discovery_tokens,
+    metrics.read_tokens, savings_percent); a missing or empty file means
+    nothing was measured, so every field is null, never a measured 0.
+    """
+    unrecorded = {"discoveryTokens": None, "readTokens": None, "savingsPercent": None}
+    econ_file = _get_loki_dir() / "memory" / "token_economics.json"
+    try:
+        raw = json.loads(econ_file.read_text())
+    except Exception:
+        return unrecorded
+    if not isinstance(raw, dict):
+        return unrecorded
+    metrics = raw.get("metrics")
+    if isinstance(metrics, dict) and metrics:
+        disc, read = metrics.get("discovery_tokens"), metrics.get("read_tokens")
+        savings = raw.get("savings_percent")
+    else:
+        disc, read, savings = raw.get("discoveryTokens"), raw.get("readTokens"), raw.get("savingsPercent")
+
+    def num(v):
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    return {"discoveryTokens": num(disc), "readTokens": num(read), "savingsPercent": num(savings)}
+
+
 @app.get("/api/memory/summary", dependencies=[Depends(auth.require_scope("read"))])
 async def get_memory_summary():
     """Get memory system summary from .loki/memory/."""
@@ -6320,19 +6360,7 @@ async def get_memory_summary():
                     if ep:
                         summary["episodic"]["latestDate"] = ep.get("timestamp", "")
                 # Token economics from JSON (not in SQLite)
-                econ_file = _get_loki_dir() / "memory" / "token_economics.json"
-                if econ_file.exists():
-                    try:
-                        econ = json.loads(econ_file.read_text())
-                        summary["tokenEconomics"] = {
-                            "discoveryTokens": econ.get("discoveryTokens", 0),
-                            "readTokens": econ.get("readTokens", 0),
-                            "savingsPercent": econ.get("savingsPercent", 0),
-                        }
-                    except Exception:
-                        summary["tokenEconomics"] = {"discoveryTokens": 0, "readTokens": 0, "savingsPercent": 0}
-                else:
-                    summary["tokenEconomics"] = {"discoveryTokens": 0, "readTokens": 0, "savingsPercent": 0}
+                summary["tokenEconomics"] = _memory_token_economics()
                 return summary
         except Exception:
             pass
@@ -6343,7 +6371,7 @@ async def get_memory_summary():
         "episodic": {"count": 0, "latestDate": None},
         "semantic": {"patterns": 0, "antiPatterns": 0},
         "procedural": {"skills": 0},
-        "tokenEconomics": {"discoveryTokens": 0, "readTokens": 0, "savingsPercent": 0},
+        "tokenEconomics": _memory_token_economics(),
         "backend": "json",
     }
 
@@ -6391,18 +6419,6 @@ async def get_memory_summary():
     skills_dir = memory_dir / "skills"
     if skills_dir.exists():
         summary["procedural"]["skills"] = len(_memory_skill_files(skills_dir))
-
-    econ_file = memory_dir / "token_economics.json"
-    if econ_file.exists():
-        try:
-            econ = json.loads(econ_file.read_text())
-            summary["tokenEconomics"] = {
-                "discoveryTokens": econ.get("discoveryTokens", 0),
-                "readTokens": econ.get("readTokens", 0),
-                "savingsPercent": econ.get("savingsPercent", 0),
-            }
-        except Exception:
-            pass
 
     return summary
 

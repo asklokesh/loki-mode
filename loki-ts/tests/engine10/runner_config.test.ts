@@ -383,7 +383,7 @@ function sealCtx(repo: string, base: string): RunContext {
     intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "fix", resumed: false },
     wall: { files: [] },
     implement: { exit: "done", tests_reverted: [], duration_s: 3, iteration_id: "e10-r1-impl" },
-    verify: { checks: [{ name: "bun test", cmd: "bun test", result: "pass", duration_s: 1, n: 1 }], flaky: [], wall_passed: true, duration_s: 2 },
+    verify: { checks: [{ name: "bun test:calc.test.ts", cmd: "bun test", result: "pass", duration_s: 1, n: 1 }], flaky: [], wall_passed: true, duration_s: 2 },
   };
   return {
     runId: "r1", repoDir: repo, runDir: join(repo, ".loki/runs/r1"), baseSha: base, branch: "loki/r1", provider: "claude", model: "m", deep: false, capS: 900,
@@ -397,7 +397,7 @@ async function sealRun(baseFiles: Record<string, string>, edits: Record<string, 
   const { repo, base } = sealRepo(baseFiles, edits), ctx = sealCtx(repo, base);
   await commitStage.run(ctx, new AbortController().signal);
   const s = await sealStage.run(ctx, new AbortController().signal);
-  return JSON.parse(readFileSync(s.data.receipt_path as string, "utf8")) as Receipt;
+  const rr = JSON.parse(readFileSync(s.data.receipt_path as string, "utf8")) as Receipt; return rr;
 }
 const cappedOn = (r: Receipt, file: string): void => {
   expect(["PARTIAL", "NOT PROVEN"]).toContain(r.verdict);

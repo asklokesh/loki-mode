@@ -790,4 +790,31 @@ describe("consumeSdkStream transcript fixtures", () => {
     const cost = readJson(costPath("10"));
     for (const k of ["tools_per_turn", "tool_error_rate", "mcp_tool_count", "skill_module_read"]) expect(k in cost).toBe(false);
   });
+
+  describe("MCP tool-definition cost warning", () => {
+    const toolNames = (n: number) => ["Read", ...Array.from({ length: n }, (_, k) => `mcp__srv__t${k}`)];
+    const run = async (n: number, iter: string) => {
+      const out: string[] = [];
+      const msgs: StreamMsg[] = [
+        { type: "system", subtype: "init", model: "m", tools: toolNames(n) },
+        { type: "system", subtype: "init", model: "m", tools: toolNames(n) },
+        { type: "result", subtype: "success", is_error: false, total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 1 } },
+      ];
+      await consumeSdkStream(msgs, { ...ctx(iter), write: (s: string) => out.push(s) }, clock);
+      return { out: out.join(""), cost: readJson(costPath(iter)) };
+    };
+    test("over the threshold: one warning line with the estimated token count, recorded in result-cost", async () => {
+      const { out, cost } = await run(80, "21");
+      const lines = out.split("\n").filter((l) => l.includes("MCP tool definitions"));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("80 MCP tools");
+      expect(lines[0]).toContain("~12000 tokens (estimated");
+      expect(cost.mcp_tool_def_tokens_estimated).toBe(12000);
+    });
+    test("under the threshold: no warning", async () => {
+      const { out, cost } = await run(10, "22");
+      expect(out).not.toContain("MCP tool definitions");
+      expect(cost.mcp_tool_def_tokens_estimated).toBe(1500);
+    });
+  });
 });

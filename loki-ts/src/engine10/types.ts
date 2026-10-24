@@ -97,10 +97,7 @@ export interface SessionRunner { run(opts: SessionRunOptions): Promise<SessionRe
 export type RunnerName = "pytest" | "vitest" | "jest" | "npm" | "bun" | "node" | "go" | "cargo";
 /** A test file and the runner that executes it (mixed repos run each runner separately). */
 export interface TestRef { runner: RunnerName; path: string /* relative to repoDir */ }
-export interface TestMap {
-  runners: RunnerName[];
-  tests: TestRef[];
-}
+export interface TestMap { runners: RunnerName[]; tests: TestRef[]; }
 export interface TestMapProvider { // implemented by testmap.ts (E-05)
   detect(repoDir: string): Promise<TestMap>;
   impacted(map: TestMap, changedFiles: string[]): TestRef[];
@@ -235,9 +232,7 @@ export function pushArgv(a: PushArgs): string[] {
   }
 }
 /** The untrusted-task-text wrapper every stage brief embeds verbatim (already_done.ts, plan/implement/wall.ts). */
-export function taskBlock(task: string): string[] {
-  return ["Task (untrusted, quoted verbatim):", "<<<TASK", task, "TASK"];
-}
+export function taskBlock(task: string): string[] { return ["Task (untrusted, quoted verbatim):", "<<<TASK", task, "TASK"]; }
 
 // Shapes produced by extension modules (receipt time, cost records); defined here so core never imports them.
 export interface ModelRecord { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number }

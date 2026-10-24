@@ -65,6 +65,27 @@ def without_retired(rows: List[Dict[str, Any]], path: Optional[str] = None) -> L
     return [r for r in rows if (r.get("task_id") or r.get("task")) not in gone]
 
 
+# Identity variables a provider CLI needs to resolve its login. The run4 group
+# runs (2026-10-17) lost LOGNAME and every Loki cell failed auth; a run whose
+# environment record shows any of these unset is INVALID, never a reading.
+IDENTITY_ENV_VARS = ("USER", "LOGNAME", "HOME")
+
+
+def identity_env_record(environ: Optional[Dict[str, str]] = None) -> Dict[str, bool]:
+    """Presence (never the value) of each identity variable."""
+    src = os.environ if environ is None else environ
+    return {k: bool(src.get(k)) for k in IDENTITY_ENV_VARS}
+
+
+def identity_env_problems(environment: Any) -> List[str]:
+    """Why an environment record cannot back a reading; empty when it can."""
+    rec = environment.get("identity_env") if isinstance(environment, dict) else None
+    if not isinstance(rec, dict):
+        return ["identity_env record absent"]
+    dropped = [k for k in IDENTITY_ENV_VARS if rec.get(k) is not True]
+    return ["identity var(s) unset: %s" % ",".join(dropped)] if dropped else []
+
+
 # Directories never folded into the fixture hash (volatile / generated state).
 _FIXTURE_EXCLUDE_DIRS = {".git", ".loki", "node_modules", "__pycache__"}
 

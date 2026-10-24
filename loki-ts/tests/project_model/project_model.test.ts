@@ -7,7 +7,7 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { projectApi } from "../../src/project_model/api.ts";
-import { discoverProjectModel, loadCached, PROJECT_FILE } from "../../src/project_model/discover.ts";
+import { buildBrief, discoverProjectModel, loadCached, PROJECT_FILE } from "../../src/project_model/discover.ts";
 import { GATHER_CAPS, gather } from "../../src/project_model/gather.ts";
 import { validateAnswer } from "../../src/project_model/schema.ts";
 import { fastTierModel } from "../../src/runner/model_downgrades.ts";
@@ -212,6 +212,22 @@ describe("intake wiring", () => {
       if (prev === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = prev;
       if (prevInstall === undefined) delete process.env["LOKI_E10_INSTALL"]; else process.env["LOKI_E10_INSTALL"] = prevInstall;
     }
+  });
+});
+
+describe("other agent rule files", () => {
+  const RULES = ["AGENTS.md", "CLAUDE.md", ".cursorrules", ".cursor/rules/style.mdc", ".github/copilot-instructions.md", ".windsurfrules", "GEMINI.md"];
+  test("all are inlined as sources even when many small files crowd the caps; a repo with none adds nothing", () => {
+    const d = repo();
+    const before = gather(d).files.map((f) => f.path).filter((p) => RULES.includes(p));
+    expect(before).toEqual([]);
+    for (let i = 0; i < 100; i++) writeFileSync(join(d, `a${i}.txt`), "x");
+    execFileSync("mkdir", ["-p", join(d, ".cursor", "rules"), join(d, ".github")], { env: process.env });
+    for (const r of RULES) writeFileSync(join(d, r), `rules for ${r}`.padEnd(3000, "."));
+    execFileSync("git", ["add", "-A", "-f"], { cwd: d, stdio: "pipe", env: process.env });
+    const got = gather(d).files.map((f) => f.path);
+    for (const r of RULES) expect(got).toContain(r);
+    expect(buildBrief(gather(d), "/x/answer.json", null)).toContain(".cursorrules");
   });
 });
 

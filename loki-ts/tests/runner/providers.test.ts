@@ -681,6 +681,57 @@ describe("claude model resolution (per-tier pins, opus session pin)", () => {
     expect(await dispatched({ tier: "planning", mainLoop: true }, { ...pin, LOKI_MAX_TIER: "opus" })).toBe("opus");
   });
 
+  it("explicit top and floor setups dispatch opus and haiku; default routing stays sonnet", async () => {
+    const claudeSh = join(import.meta.dir, "..", "..", "..", "providers", "claude.sh");
+    const bash = (tier: string, env: Record<string, string>): string =>
+      execFileSync("bash", ["-c", `. "${claudeSh}" >/dev/null 2>&1; resolve_model_for_tier "${tier}"`], {
+        env: { HOME: process.env["HOME"] ?? "/tmp", PATH: process.env["PATH"] ?? "", ...env },
+      }).toString().trim();
+    // Default routing unchanged: no session value, or sonnet/medium, stays sonnet on every tier, both routes.
+    const defaultEnvs: Record<string, string>[] = [{}, { LOKI_SESSION_MODEL: "sonnet" }, { LOKI_SESSION_MODEL: "development" }];
+    for (const env of defaultEnvs) {
+      for (const tier of ["planning", "development", "fast"] as const) {
+        expect(await dispatched({ tier, mainLoop: true }, env)).toBe("sonnet");
+        expect(bash(tier, env)).toBe("sonnet");
+      }
+    }
+    // Explicit top (high is translated to planning before dispatch) and floor.
+    for (const v of ["planning", "high", " HIGH "]) {
+      expect(await dispatched({ tier: "planning", mainLoop: true }, { LOKI_SESSION_MODEL: v })).toBe("opus");
+    }
+    for (const v of ["fast", "small"]) {
+      expect(await dispatched({ tier: "fast", mainLoop: true }, { LOKI_SESSION_MODEL: v })).toBe("haiku");
+    }
+    expect(bash("planning", { LOKI_SESSION_MODEL: "planning" })).toBe("opus");
+    expect(bash("fast", { LOKI_SESSION_MODEL: "fast" })).toBe("haiku");
+    // Explicit per-tier pin, ceiling and legacy switching still win.
+    expect(await dispatched({ tier: "planning", mainLoop: true }, { LOKI_SESSION_MODEL: "planning", LOKI_CLAUDE_MODEL_PLANNING: "sonnet" })).toBe("sonnet");
+    expect(await dispatched({ tier: "planning", mainLoop: true }, { LOKI_SESSION_MODEL: "planning", LOKI_MAX_TIER: "sonnet" })).toBe("sonnet");
+    expect(await dispatched({ tier: "planning", mainLoop: true }, { LOKI_SESSION_MODEL: "planning", LOKI_LEGACY_TIER_SWITCHING: "true" })).toBe("sonnet");
+    expect(bash("planning", { LOKI_SESSION_MODEL: "planning", LOKI_MAX_TIER: "sonnet" })).toBe("sonnet");
+    expect(bash("fast", { LOKI_SESSION_MODEL: "fast", LOKI_CLAUDE_MODEL_FAST: "sonnet" })).toBe("sonnet");
+  });
+
+  it("explicit LOKI_ALLOW_HAIKU other than true blocks the haiku arm on both routes", async () => {
+    const claudeSh = join(import.meta.dir, "..", "..", "..", "providers", "claude.sh");
+    const bash = (tier: string, env: Record<string, string>): string =>
+      execFileSync("bash", ["-c", `. "${claudeSh}" >/dev/null 2>&1; resolve_model_for_tier "${tier}"`], {
+        env: { HOME: process.env["HOME"] ?? "/tmp", PATH: process.env["PATH"] ?? "", ...env },
+      }).toString().trim();
+    for (const allow of ["false", "0", "no", ""]) {
+      for (const v of ["small", "fast"]) {
+        const env = { LOKI_SESSION_MODEL: v, LOKI_ALLOW_HAIKU: allow };
+        expect(await dispatched({ tier: "fast", mainLoop: true }, env)).toBe("sonnet");
+        expect(bash("fast", env)).toBe("sonnet");
+      }
+    }
+    // Unset or true still reaches haiku; opus arm is not gated by ALLOW_HAIKU.
+    expect(bash("fast", { LOKI_SESSION_MODEL: "small" })).toBe("haiku");
+    expect(await dispatched({ tier: "fast", mainLoop: true }, { LOKI_SESSION_MODEL: "small", LOKI_ALLOW_HAIKU: "true" })).toBe("haiku");
+    expect(await dispatched({ tier: "planning", mainLoop: true }, { LOKI_SESSION_MODEL: "high", LOKI_ALLOW_HAIKU: "false" })).toBe("opus");
+    expect(bash("planning", { LOKI_SESSION_MODEL: "planning", LOKI_ALLOW_HAIKU: "false" })).toBe("opus");
+  });
+
   it("the opus pin does not apply to subcalls, legacy tier switching, or a tier the router moved", async () => {
     const pin = { LOKI_SESSION_MODEL: "opus" };
     expect(await dispatched({ tier: "planning" }, pin)).toBe("sonnet");
