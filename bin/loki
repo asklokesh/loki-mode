@@ -103,6 +103,11 @@ fi
 # v7.4.2 fix (BUG-1): BUN_FROM_SOURCE=1 used to hard-fail on npm/Docker/brew
 # installs because src/ is excluded by .npmignore. Now we warn once and fall
 # back to dist if src/cli.ts is missing.
+# Bun auto-loads bunfig.toml (preload scripts) and .env from its cwd, and the cwd is the
+# user's repo, which may be hostile. Every Bun entry below passes these flags: no .env, and
+# an empty config (/dev/null) instead of the repo's bunfig.toml. The cwd itself is unchanged,
+# so commands still operate on the user's repo.
+_LOKI_BUN_SAFE=(--no-env-file --config=/dev/null)
 if [ -n "${LOKI_TS_ENTRY:-}" ]; then
     # v7.5.1 fix B18: validate that the explicit override actually exists.
     # Pre-v7.5.1 a typo (LOKI_TS_ENTRY=/nonexistent) produced a raw Bun
@@ -166,7 +171,7 @@ if [ -t 1 ] && [ -z "${CI:-}" ] && [ "${LOKI_NO_COMPLETIONS:-}" != "1" ] \
    && [ "${1:-}" != "completion" ] && [ "${1:-}" != "__complete" ] \
    && [ "$(cat "${HOME}/.loki/completions-version" 2>/dev/null)" != "$(cat "$REPO_ROOT/VERSION" 2>/dev/null)" ] \
    && command -v bun >/dev/null 2>&1; then
-    bun "$BUN_CLI" completion --auto </dev/null || true
+    bun "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" completion --auto </dev/null || true
 fi
 
 # v7.88.1 covert-path fix (council cF_r2 + cG_r2 sentinel edge): under on-by-default
@@ -494,7 +499,7 @@ if [ "${1:-}" = "modernize" ]; then
         if [ "$_loki_mod_a" = "--to" ] || [ "${2:-}" = "unit" ]; then
             _lb=$(_loki_bun)
             [ -n "$_lb" ] || { echo "Error: loki modernize needs bun." >&2; exit 1; }
-            exec "$_lb" "$BUN_CLI" engine10 "$@"
+            exec "$_lb" "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" engine10 "$@"
         fi
     done
     unset _loki_mod_a
@@ -586,7 +591,7 @@ if [ "${1:-}" = "start" ]; then
                 _lb=$(_loki_bun)
                 [ -n "$_lb" ] || { echo "loki: --attempts $_loki_att_n needs bun (install from https://bun.sh); refusing to run a single attempt silently." >&2; exit 1; }
                 _loki_attempts_refuse "${@:2}"
-                exec "$_lb" "$BUN_CLI" "$@"
+                exec "$_lb" "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" "$@"
                 ;;
             *) echo "loki: --attempts must be an integer from 1 to 5, got '$_loki_att_n'." >&2; exit 2 ;;
         esac
@@ -602,7 +607,7 @@ if [ "${1:-}" = "start" ]; then
             --spec|--spec=*|--spec-first)
                 _lb=$(_loki_bun)
                 [ -n "$_lb" ] || { echo "loki: --spec needs bun (install from https://bun.sh)." >&2; exit 1; }
-                exec "$_lb" "$BUN_CLI" "$@"
+                exec "$_lb" "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" "$@"
                 ;;
         esac
     done
@@ -617,7 +622,7 @@ if [ "${1:-}" = "start" ]; then
     for _loki_da in "${@:2}"; do [ "$_loki_da" = "--dry-run" ] && _loki_dry=1; done
     if [ "$_loki_dry" = "1" ] && ! _loki_start_needs_bash "${@:2}"; then
         _loki_dry_bun="$(_loki_bun)"
-        [ -n "$_loki_dry_bun" ] && exec "$_loki_dry_bun" "$BUN_CLI" "$@"
+        [ -n "$_loki_dry_bun" ] && exec "$_loki_dry_bun" "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" "$@"
     fi
     unset _loki_dry _loki_da _loki_dry_bun
 fi
@@ -772,7 +777,7 @@ case "v10" in
                     unset _e10_v
                     ;;
             esac
-            exec "$_lb" "$BUN_CLI" engine10 "${_e10_args[@]}"
+            exec "$_lb" "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" engine10 "${_e10_args[@]}"
         fi
         unset _e10 _e10_args _e10_hard
         ;;
@@ -814,13 +819,13 @@ fi
 # legacy route honored, or a provider engine10 cannot invoke, is refused loudly instead.
 if [ "${1:-}" = "start" ] && [ "$_LOKI_START_ATTEMPTS" = "1" ]; then
     _loki_attempts_refuse "${@:2}"
-    exec bun "$BUN_CLI" "$@"
+    exec bun "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" "$@"
 fi
 if [ "${1:-}" = "start" ] && { [ "${LOKI_SDK_LOOP:-}" = "1" ] || [ "${LOKI_SDK_LOOP:-}" = "true" ]; }; then
     if _loki_start_needs_bash "${@:2}"; then
         exec "$BASH_CLI" "$@"
     fi
-    exec bun "$BUN_CLI" "$@"
+    exec bun "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" "$@"
 fi
 
 # CLI consolidation (Phase A): `trust detail` is the grouped form of the
@@ -862,9 +867,9 @@ if [ "${1:-}" = "doctor" ]; then
     fi
     _doctor_t=$(command -v timeout || command -v gtimeout || true)
     if [ -n "$_doctor_t" ]; then
-        "$_doctor_t" -k 1 5 "$_doctor_bun" "$BUN_CLI" version >/dev/null 2>&1 || exec "$BASH_CLI" "$@"
+        "$_doctor_t" -k 1 5 "$_doctor_bun" "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" version >/dev/null 2>&1 || exec "$BASH_CLI" "$@"
     else
-        "$_doctor_bun" "$BUN_CLI" version >/dev/null 2>&1 || exec "$BASH_CLI" "$@"
+        "$_doctor_bun" "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" version >/dev/null 2>&1 || exec "$BASH_CLI" "$@"
     fi
 fi
 
@@ -910,7 +915,7 @@ if [ "${1:-}" = "report" ]; then
             ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=$(_loki_known_command "${1:-}")" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
             disown 2>/dev/null || true
         fi
-        exec bun "$BUN_CLI" "$@"
+        exec bun "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" "$@"
     fi
 fi
 
@@ -952,7 +957,7 @@ case "${1:-}" in
             ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=$(_loki_known_command "${1:-}")" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
             disown 2>/dev/null || true
         fi
-        exec bun "$BUN_CLI" "$@"
+        exec bun "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" "$@"
         ;;
     *)
         exec "$BASH_CLI" "$@"

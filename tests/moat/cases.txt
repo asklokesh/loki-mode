@@ -69,6 +69,7 @@ P9.injection-cannot-reach-token
 P9.checkout-no-persisted-credentials
 P9.no-pr-target-head-checkout
 P9.allowtoken-only-fetch-callers
+P9.bun-ignores-repo-config
 P6.no-gate-artifacts-committed
 P2.bun-inconclusive-not-pass
 P2.council-readers-not-shadowed

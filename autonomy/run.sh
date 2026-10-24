@@ -6386,7 +6386,7 @@ ${_del_receipt}"
 # legacy parallel workflow remains byte-for-byte on its old path.
 _loki_exec_manifest() {
     [ "${LOKI_EXEC_MANIFEST:-0}" = "1" ] || return 0
-    bun "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal exec-manifest "$@"
+    bun --no-env-file --config=/dev/null "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal exec-manifest "$@"
 }
 
 init_exec_manifest() {
@@ -27454,7 +27454,7 @@ EOF
                     local _phase1_overrode=false
                     if [ "${LOKI_OVERRIDE_COUNCIL:-1}" != "0" ] && command -v bun >/dev/null 2>&1; then
                         local _override_out
-                        _override_out=$(bun "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal phase1-hooks override "$ITERATION_COUNT" 2>/dev/null || true)
+                        _override_out=$(bun --no-env-file --config=/dev/null "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal phase1-hooks override "$ITERATION_COUNT" 2>/dev/null || true)
                         case "$_override_out" in
                             *"override: LIFTED"*)
                                 log_info "Phase 1 override council lifted code_review BLOCK"
@@ -27486,7 +27486,7 @@ EOF
                         # v7.5.3 Phase 1 hook: structured handoff doc before
                         # bare PAUSE. Embedded; opt out LOKI_HANDOFF_MD=0.
                         if [ "${LOKI_HANDOFF_MD:-1}" != "0" ] && command -v bun >/dev/null 2>&1; then
-                            bun "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal phase1-hooks handoff code_review "$cr_count" "$ITERATION_COUNT" 2>/dev/null || true
+                            bun --no-env-file --config=/dev/null "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal phase1-hooks handoff code_review "$cr_count" "$ITERATION_COUNT" 2>/dev/null || true
                         fi
                         touch "${TARGET_DIR:-.}/.loki/PAUSE"
                         gate_failures="${gate_failures}code_review_PAUSED,"
@@ -27507,7 +27507,7 @@ EOF
                     # Best-effort; never fails the main loop.
                     if [ "${LOKI_INJECT_FINDINGS:-1}" != "0" ]; then
                         if command -v bun >/dev/null 2>&1; then
-                            bun "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal phase1-hooks reflect "$ITERATION_COUNT" 2>/dev/null || true
+                            bun --no-env-file --config=/dev/null "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal phase1-hooks reflect "$ITERATION_COUNT" 2>/dev/null || true
                         else
                             # DEGRADED, and said so. Findings injection is what
                             # tells the next iteration WHAT to fix; without it the

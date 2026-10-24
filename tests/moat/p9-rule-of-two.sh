@@ -146,18 +146,6 @@ export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 CI=tru
 
 MOAT_START=$(date +%s)
 MOAT_MAIN_PID=$$
-# Run-owned temp dir from the shared helpers. LOKI_RUN_TMP is not left set for
-# the child runs below (the loki code under test reads it), so the case
-# behaviour is unchanged; an outer value is restored.
-# shellcheck source=../../eval/loki10/lib-tmp.sh disable=SC1091
-source "$REPO_ROOT/eval/loki10/lib-tmp.sh"
-MOAT_OUTER_RUN_TMP="${LOKI_RUN_TMP:-}"
-unset LOKI_RUN_TMP
-loki_run_tmp_create || { echo "p9: run-owned temp dir failed" >&2; exit 1; }
-MOAT_TMP="$LOKI_RUN_TMP"
-unset LOKI_RUN_TMP
-[ -z "$MOAT_OUTER_RUN_TMP" ] || export LOKI_RUN_TMP="$MOAT_OUTER_RUN_TMP"
-MOAT_IDS="P9.issue-workflows-separate-untrusted-from-push P9.comment-trigger-author-gate P9.injection-cannot-reach-token P9.checkout-no-persisted-credentials P9.no-pr-target-head-checkout P9.allowtoken-only-fetch-callers"
 MOAT_EMITTED=" "
 MOAT_PGIDS=""
 
@@ -2762,6 +2750,37 @@ case_allowtoken() {
     rm -rf -- "$T_AT"
 }
 
+# bin/loki must start Bun so that the hostile repo's bunfig.toml (preload) and .env are
+# never loaded: LOKI_TS_ENTRY points every Bun route at a probe that records what the
+# Bun process saw. A bare `bun probe` run in the same repo is the positive control.
+case_bun_isolation() {
+    local d r probe out cmd n
+    d="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.p9bun.XXXXXXXX")" || { nok "cannot create control dir"; return; }
+    command -v bun >/dev/null 2>&1 || { nok "prerequisite missing: bun"; rm -rf -- "$d"; return; }
+    r="$d/repo"; probe="$d/probe.js"; out="$d/out.txt"
+    mkdir -p "$r" "$d/home"
+    printf 'preload = ["./pre.js"]\n' > "$r/bunfig.toml"
+    printf 'require("fs").writeFileSync("%s", "ran")\n' "$d/MARK" > "$r/pre.js"
+    printf 'CANARY=leaked\n' > "$r/.env"
+    printf 'const fs = require("fs"); fs.appendFileSync("%s", "args=" + process.argv.slice(2).join(" ") + " canary=" + process.env.CANARY + " cwd=" + fs.realpathSync(process.cwd()) + "\\n");\n' "$out" > "$probe"
+    ( cd "$r" && bun "$probe" ctl ) >/dev/null 2>&1
+    if [ ! -f "$d/MARK" ] || ! grep -q 'canary=leaked' "$out" 2>/dev/null; then
+        nok "positive control: bare bun in the repo did not load the preload and .env"
+        rm -rf -- "$d"; return
+    fi
+    rm -f "$d/MARK" "$out"
+    for cmd in "status" "version" "completion"; do
+        # shellcheck disable=SC2086
+        ( cd "$r" && env HOME="$d/home" LOKI_TS_ENTRY="$probe" "$LOKI_BIN" $cmd ) >/dev/null 2>&1 </dev/null
+        n="$(grep -c "args=${cmd} " "$out" 2>/dev/null || true)"
+        [ "${n:-0}" -ge 1 ] || nok "'loki $cmd' never reached the Bun entry (probe line missing)"
+    done
+    [ ! -e "$d/MARK" ] || nok "repo bunfig.toml preload ran inside the Loki Bun process"
+    if grep -q 'canary=leaked' "$out" 2>/dev/null; then nok "repo .env reached the Loki Bun process"; fi
+    if [ -f "$out" ] && grep 'args=[a-z]' "$out" | grep -qv "cwd=$(cd "$r" && pwd -P)\$"; then nok "Bun entry no longer sees the user's repo as cwd"; fi
+    rm -rf -- "$d"
+}
+
 moat_run "P9.issue-workflows-separate-untrusted-from-push" \
     "no workflow job or shipped action that untrusted text can reach combines it with write access or secrets and push/PR" \
     case_rule2
@@ -2780,4 +2799,7 @@ moat_run "P9.no-pr-target-head-checkout" \
 moat_run "P9.allowtoken-only-fetch-callers" \
     "allowToken is passed to safeGit only by base_guard.ts and modernize_unit.ts (plus its definition in safe_git.ts)" \
     case_allowtoken
+moat_run "P9.bun-ignores-repo-config" \
+    "bin/loki starts Bun with the repo bunfig.toml and .env disabled, so a hostile repo cannot run a preload or plant env inside the Loki process; the user's repo stays the cwd" \
+    case_bun_isolation
 exit 0

@@ -21,7 +21,7 @@ mkdir -p "$WORK/bin" "$WORK/home" "$ROOT/bin" "$ROOT/autonomy" "$ROOT/loki-ts/di
 cat > "$WORK/bin/bun" <<'STUB'
 #!/usr/bin/env bash
 case "${1:-}" in --version) echo "1.0.0"; exit 0 ;; esac
-echo "ROUTE=BUN args=$*"
+a="$*"; echo "ROUTE=BUN args=${a#--no-env-file --config=/dev/null }"
 exit 0
 STUB
 chmod +x "$WORK/bin/bun"

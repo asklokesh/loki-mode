@@ -235,7 +235,7 @@ cockpit_render() {
     [ "$no_image" = "1" ] && args+=(--no-image)
 
     # Gather -> render. Preserve the TS exit code (0 image / 3 fallback).
-    cockpit_gather_state "$skill_dir" "$focus_repo" | bun "$entry" "${args[@]}"
+    cockpit_gather_state "$skill_dir" "$focus_repo" | bun --no-env-file --config=/dev/null "$entry" "${args[@]}"
 }
 
 #===============================================================================

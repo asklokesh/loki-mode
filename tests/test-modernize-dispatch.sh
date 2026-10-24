@@ -19,7 +19,7 @@ mkdir -p "$T/root/bin" "$T/root/autonomy" "$T/fakebin" "$T/home" "$T/cwd"
 cp "$REPO/bin/loki" "$T/root/bin/loki"
 cp "$REPO/autonomy/telemetry.sh" "$T/root/autonomy/telemetry.sh"
 printf '#!/usr/bin/env bash\nprintf "BASH %%s\\n" "$*" >"%s/out"\n' "$T" >"$T/root/autonomy/loki"
-printf '#!/usr/bin/env bash\nprintf "BUN %%s\\n" "$*" >"%s/out"\n' "$T" >"$T/fakebin/bun"
+printf '#!/usr/bin/env bash\na="$*"; a="${a#--no-env-file --config=/dev/null }"; printf "BUN %%s\\n" "$a" >"%s/out"\n' "$T" >"$T/fakebin/bun"
 chmod +x "$T/root/autonomy/loki" "$T/fakebin/bun" "$T/root/bin/loki"
 ENTRY="$T/entry.ts"
 : >"$ENTRY"
@@ -68,7 +68,7 @@ expect "[--help] falls through to legacy" "BASH modernize --help" "$(run_loki "$
 #    it and exits non-zero; the shim's job is only to route, not validate).
 #    Simulate the CLI's own rejection by having the bun stub exit 2.
 # The bun resolver probes --version first; answer it so only the real call exits 2.
-printf '#!/usr/bin/env bash\n[ "$1" = --version ] && { echo 1.4.2; exit 0; }\nprintf "BUN %%s\\n" "$*" >"%s/out"\nexit 2\n' "$T" >"$T/fakebin/bun"
+printf '#!/usr/bin/env bash\n[ "$1" = --version ] && { echo 1.4.2; exit 0; }\na="$*"; a="${a#--no-env-file --config=/dev/null }"; printf "BUN %%s\\n" "$a" >"%s/out"\nexit 2\n' "$T" >"$T/fakebin/bun"
 chmod +x "$T/fakebin/bun"
 run_loki "$WITH_BUN" -- modernize repo --to python3 --bogus-flag >/dev/null
 expect "[unknown flag] routes to engine10" "BUN $ENTRY engine10 modernize repo --to python3 --bogus-flag" \
