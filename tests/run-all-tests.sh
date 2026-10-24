@@ -767,6 +767,7 @@ run_test "project-graph bash/bun parity (members discovery default)" "$SCRIPT_DI
 run_test "opencode provider (model-agnostic route, 75+ providers)" "$SCRIPT_DIR/test-opencode-provider.sh"
 run_test "opencode start routing and main-loop dispatch" "$SCRIPT_DIR/test-opencode-start.sh"
 run_test "fast_verify: millisecond deterministic verification" "$SCRIPT_DIR/test-fast-verify.sh"
+run_test "check_author context: spec and runner config only, no implementation" "$SCRIPT_DIR/test-check-author-context.sh"
 run_test "provider_invoke_argv timeout seam (judges keep their timeout)" "$SCRIPT_DIR/test-provider-invoke-argv.sh"
 run_test "Test Mutation Detector (Gate #9)" "$SCRIPT_DIR/detect-test-mutations.sh"
 run_test "Harness False-Green Regression and Mutation" "$SCRIPT_DIR/test-harness-false-green.sh"

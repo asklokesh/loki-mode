@@ -86,6 +86,7 @@ function _loki {
                         '--json[Output machine-readable JSON]' \
                         '--badge[Print verified deploy badge]' \
                         '--probe[Re-probe last deploy health URL]' \
+                        '--follow[Print one line per run event until the run ends]' \
                         '--help[Show help]'
                     ;;
                 doctor)
@@ -202,6 +203,15 @@ function _loki {
                     ;;
                 code)
                     _loki_code
+                    ;;
+                github)
+                    _arguments \
+                        '1:subcommand:(status sync export pr publish protect)' \
+                        '--dry-run[protect: show the branch-protection read, change nothing]' \
+                        '--off[protect: restore the saved branch protection]' \
+                        '--public[publish: create a public repository]' \
+                        '--private[publish: create a private repository]' \
+                        '--dir[publish: project directory]:directory:_directories'
                     ;;
                 deploy)
                     _arguments \

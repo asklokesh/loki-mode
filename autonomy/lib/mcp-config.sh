@@ -59,6 +59,37 @@ __LOKI_MCP_CONFIG_SH_LOADED=1
 # stdio MCP server backed by `python3 -m mcp.server`. Caller may extend
 # this in the future without API breakage; consumers should treat the
 # bundle as opaque JSON.
+# Remove stale temp files left by a writer killed between temp write and rename.
+# Mirrors sweepStaleTmp in loki-ts/src/util/atomic.ts. A temp is
+# removed only when it is named mcp-config.json.tmp.<pid>, is a regular file
+# (not a symlink) in the same directory, is owned by the current uid, is not
+# ours, and either its pid is dead or it is older than 60 minutes (pid reuse).
+_loki_mcp_sweep_stale_tmp() {
+    local dir="$1" f base pid sig alive
+    # Iterate the glob, never find output: a filename holding a newline must
+    # stay ONE entry, not become a second cwd-relative path.
+    for f in "$dir"/mcp-config.json.tmp.*; do
+        [ -L "$f" ] && continue
+        [ -f "$f" ] && [ -O "$f" ] || continue
+        base="${f##*/}"
+        pid="${base#mcp-config.json.tmp.}"
+        case "$pid" in '' | *[!0-9]*) continue ;; esac
+        [ "$pid" = "$$" ] && continue
+        alive=0
+        if sig="$(LC_ALL=C kill -0 "$pid" 2>&1)"; then
+            alive=1
+        else
+            # EPERM means the process exists under another uid: alive, as in the TS route.
+            case "$sig" in *"not permitted"*) alive=1 ;; esac
+        fi
+        if [ "$alive" = 1 ]; then
+            # Live pid: keep unless older than 60 minutes.
+            [ -n "$(find "$f" -maxdepth 0 -mmin +60 2>/dev/null)" ] || continue
+        fi
+        rm -f -- "$f" 2>/dev/null
+    done
+}
+
 loki_mcp_config_path() {
     local base="${TARGET_DIR:-.}"
     local mcp_dir="${base}/.loki"
@@ -88,7 +119,9 @@ loki_mcp_config_path() {
     # This makes the helper idempotent: identical bundle bytes -> no write,
     # mtime stable. python3 is used so JSON encoding is canonical.
     local tmp_bundle
+    _loki_mcp_sweep_stale_tmp "$mcp_dir"
     tmp_bundle="${mcp_path}.tmp.$$"
+    rm -f -- "$tmp_bundle" 2>/dev/null  # our pid left over from a reused pid
     if ! _MCP_OUT="$tmp_bundle" _MCP_LSP="$lsp_detected" python3 -c "
 import json, os
 out = os.environ['_MCP_OUT']
@@ -105,11 +138,18 @@ if lsp:
         'args': ['-m', 'mcp.lsp_proxy'],
     }
 bundle = {'mcpServers': servers}
-with open(out, 'w') as f:
+# O_EXCL|O_NOFOLLOW, 0600: never write through a planted symlink or file.
+fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+with os.fdopen(fd, 'w') as f:
     json.dump(bundle, f, indent=2)
 " 2>/dev/null; then
         rm -f "$tmp_bundle" 2>/dev/null
         return 1
+    fi
+
+    # Test hook, test-mode only (LOKI_TEST): die between the temp write and the rename.
+    if [ -n "${LOKI_TEST:-}" ] && [ "${LOKI_TEST_DIE_AFTER_MCP_TMP:-}" = "1" ]; then
+        kill -9 $$
     fi
 
     # Idempotent write: only replace the file when bytes differ. cmp -s

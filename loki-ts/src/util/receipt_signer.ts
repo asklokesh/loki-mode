@@ -5,11 +5,29 @@ import { chmodSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, 
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { plainTestEnv } from "./check_result.ts";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { sweepStaleTmp } from "./atomic.ts";
 import type { Obj } from "../engine10/types.ts";
 
 export const RECEIPT_SIGNER_BASENAME = "receipt-ed25519.pem";
 
+/** Max JSON nesting a receipt may have; real receipts are under 20 deep. Checked iteratively, so a hostile file never reaches the recursive canonicalJson walk. */
+export const MAX_RECEIPT_DEPTH = 256;
+export function jsonTooDeep(v: unknown): boolean {
+  const stack: Array<[unknown, number]> = [[v, 1]];
+  while (stack.length > 0) {
+    const [node, depth] = stack.pop()!;
+    if (node === null || typeof node !== "object") continue;
+    if (depth > MAX_RECEIPT_DEPTH) return true;
+    for (const child of Array.isArray(node) ? node : Object.values(node)) if (child !== null && typeof child === "object") stack.push([child, depth + 1]);
+  }
+  return false;
+}
+/** The shape and depth gate every verify entry shares: null, non-object (array, number, string) or over-nested input is damaged, not a tamper finding. */
+export function receiptShapeProblem(v: unknown): string | null {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return "receipt.json is not a JSON object"; // same contract as proof-verify.py
+  return jsonTooDeep(v) ? "receipt.json cannot be hashed (nested too deeply)" : null;
+}
 /** Python json.dumps(obj, sort_keys=True, separators=(",", ":")), ensure_ascii=True
  *  default, the convention of proof-generator.py _canonical, so a Python verifier recomputes the same bytes. */
 export function canonicalJson(x: unknown): string {
@@ -48,6 +66,7 @@ export function loadSigningKey(generate = true): KeyObject | null {
         if ((e as NodeJS.ErrnoException).code !== "ENOENT" || !generate) return null;
         mkdirSync(dirname(dirname(file)), { recursive: true, mode: 0o700 });
         mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+        sweepStaleTmp(dirname(file), new RegExp(`${basename(file).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.[0-9a-f]{12}\\.tmp`)); // a killed generator's key temp, age-judged
         const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`; // random, so a stale temp never blocks creation
         writeFileSync(tmp, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }), { flag: "wx", mode: 0o600 });
         try { linkSync(tmp, file); } catch (l) { if ((l as NodeJS.ErrnoException).code !== "EEXIST") throw l; } finally { unlinkSync(tmp); }
@@ -169,6 +188,7 @@ const deployBody = (r: Obj): Obj => Object.fromEntries(Object.entries(r).filter(
 export function signDeployRecord(rec: Obj): Obj | null {
   const key = loadSigningKey();
   if (!key) return null;
+  if (jsonTooDeep(rec)) return null; // hostile nesting: never reach the recursive walk
   const body = deployBody(rec);
   return { ...body, signature: { alg: "EdDSA", kid: kidOf(createPublicKey(key)), sig: b64u(sign(null, Buffer.from(canonicalJson(body)), key)) } };
 }
@@ -192,6 +212,7 @@ function citedReceipt(recPath: string, hash: string, explicit: string | null): s
 }
 async function checkCited(path: string, hash: string, deps: DeployDeps): Promise<DeployResult> {
   const doc = JSON.parse(readFileSync(path, "utf8")) as Obj;
+  if (jsonTooDeep(doc)) return { verdict: "UNCHECKED", reasons: ["cited receipt cannot be hashed (nested too deeply)"] };
   if (doc["receipt_sha256"] !== undefined) {
     if (doc["receipt_sha256"] !== hash) return { verdict: "TAMPERED", reasons: ["the cited receipt has a different receipt_sha256"] };
     const r = await deps.verifyReceipt(path);
@@ -208,6 +229,7 @@ async function checkCited(path: string, hash: string, deps: DeployDeps): Promise
 function checkBodySignature(doc: Obj, deps: DeployDeps, noun: string, edited: string): DeployResult | null {
   const sig = doc["signature"] as { alg?: unknown; kid?: unknown; sig?: unknown } | undefined;
   const w = noun.split(" ")[0];
+  if (jsonTooDeep(doc)) return { verdict: "UNCHECKED", reasons: [`${noun} cannot be hashed (nested too deeply)`] };
   if (!sig || typeof sig !== "object") return { verdict: "UNCHECKED", reasons: [`${noun} is unsigned (no signature)`] };
   if (sig.alg !== "EdDSA" || typeof sig.sig !== "string") return { verdict: "TAMPERED", reasons: [`malformed ${w} signature`] };
   const pub = deps.pubFor(sig.kid);
@@ -288,6 +310,7 @@ async function provenanceCmd(args: readonly string[], env: Parameters<typeof dep
     const f = sp.value;
     let rec: Obj;
     try { rec = JSON.parse(readFileSync(f, "utf8")) as Obj; } catch { return (process.stderr.write(`loki verify: cannot read provenance input ${f}\n`), 2); }
+    if (jsonTooDeep(rec)) return (process.stderr.write(`loki verify: provenance input ${f} cannot be signed (nested too deeply)\n`), 2);
     const str = (k: string): string | null => (typeof rec[k] === "string" && rec[k] ? (rec[k] as string) : null);
     const [h, t, r, id, at] = ["head_sha", "tree_sha", "receipt_sha256", "run_id", "built_at"].map(str);
     if (!h || !t || !r || !id || !at) return (process.stderr.write("loki verify: provenance input needs head_sha, tree_sha, receipt_sha256, run_id and built_at\n"), 2);
@@ -326,6 +349,7 @@ export async function deployAttestCmd(args: readonly string[], env: { takePubkey
   if (si < 0 && env.maxAge) return (process.stdout.write(`deploy: ${file}\nverdict: UNCHECKED\n  --max-age is not supported on a ${DEPLOY_SCHEMA} record (no signed iat); freshness was not checked\n`), 2);
   if (si < 0 && pk.args.length > 1) return (process.stderr.write(`loki verify: unexpected arguments after the deploy record: ${pk.args.slice(1).join(" ")}\n`), 2);
   if (si >= 0) {
+    if (jsonTooDeep(rec)) return (process.stderr.write(`loki verify: deploy record ${file} cannot be signed (nested too deeply)\n`), 2);
     const signed = signDeployRecord(rec);
     if (!signed) return (process.stdout.write("deploy record: UNSIGNED (no signing key)\n"), 2);
     writeFileSync(`${file}.tmp`, JSON.stringify(signed, null, 2) + "\n");

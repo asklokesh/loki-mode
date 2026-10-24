@@ -1,0 +1,228 @@
+name: atk
+on: pull_request_target
+jobs:
+  repo_only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+  ghco:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh pr checkout "${{ github.event.number }}"
+  pullhead:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git fetch origin pull/${{ github.event.number }}/head:pr && git checkout pr
+  pullmerge:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git fetch origin refs/pull/${{ github.event.pull_request.number }}/merge
+  ghenv:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "PRSHA=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
+      - run: git fetch origin "$PRSHA" && git checkout "$PRSHA"
+  ghenv_checkout:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "PRSHA=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PRSHA }}
+  stepout:
+    runs-on: ubuntu-latest
+    steps:
+      - id: s
+        run: echo "sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.s.outputs.sha }}
+  localvar:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          SHA=${{ github.event.pull_request.head.sha }}
+          git fetch origin "$SHA"
+          git checkout "$SHA"
+  contline:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          git fetch origin \
+            ${{ github.event.pull_request.head.sha }}
+          git checkout FETCH_HEAD
+  headref:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git checkout ${{ github.head_ref }}
+  ws:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git   checkout   ${{github.event.pull_request.head.sha}}
+  tabs:
+    runs-on: ubuntu-latest
+    steps:
+      - run: "git\tfetch\torigin\t${{ github.event.pull_request.head.sha }}"
+  folded:
+    runs-on: ubuntu-latest
+    steps:
+      - run: >
+          git fetch origin
+          ${{ github.event.pull_request.head.sha }}
+  jqevent:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          SHA=$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")
+          git fetch origin "$SHA" && git checkout "$SHA"
+  ghrepoclone:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh repo clone ${{ github.event.pull_request.head.repo.full_name }} pr
+  curltar:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -L https://github.com/${{ github.event.pull_request.head.repo.full_name }}/archive/${{ github.event.pull_request.head.sha }}.tar.gz | tar xz
+  matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ref: ["${{ github.event.pull_request.head.sha }}"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+  reusable:
+    uses: ./.github/workflows/callee.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+  checkoutfmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ format('{0}', github.event.pull_request.head.sha) }}
+  eventbracket:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head['sha'] }}
+  jobenvlower:
+    runs-on: ubuntu-latest
+    env:
+      sha: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - run: git checkout $sha
+  needsout:
+    runs-on: ubuntu-latest
+    needs: prep
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prep.outputs.sha }}
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - run: echo hi
+  gitworktree:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git worktree add pr ${{ github.event.pull_request.head.sha }}
+  shellpipe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ${{ github.event.pull_request.head.sha }} | xargs git checkout
+  envquoted:
+    runs-on: ubuntu-latest
+    env:
+      SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - run: git fetch origin "${SHA:-main}"
+  envchain:
+    runs-on: ubuntu-latest
+    env:
+      A: ${{ github.event.pull_request.head.sha }}
+      B: $A
+    steps:
+      - run: git checkout $B
+  stepenv:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git -c advice.detachedHead=false checkout "$HEAD_SHA"
+  gs_payload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: core.setOutput('sha', context.payload.pull_request.head.sha)
+  gs_pulls:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const r = await github.rest.pulls.get({owner: 'o', repo: 'r', pull_number: 1})
+            core.setOutput('sha', r.data.head.sha)
+  co_after:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.after }}
+  patch_apply:
+    runs-on: ubuntu-latest
+    steps:
+      - run: wget -qO- "${{ github.event.pull_request.patch_url }}" | git apply
+  curl_jq_url:
+    runs-on: ubuntu-latest
+    steps:
+      - run: wget -qO- "$PR_URL" | jq -r .head.sha
+        env:
+          PR_URL: ${{ github.event.pull_request.url }}
+  runner_event:
+    runs-on: ubuntu-latest
+    steps:
+      - run: jq -r .pull_request.head.sha "$RUNNER_TEMP/_github_workflow/event.json"
+  local_node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/pr-head
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.m.outputs.sha }}
+    steps:
+      - id: m
+        run: echo "sha=abc" >> "$GITHUB_OUTPUT"
+  needs_out:
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - run: git checkout ${{ needs.meta.outputs.sha }}
+  needs_json:
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo '${{ toJSON(fromJSON(toJSON(needs.meta))) }}' | jq -r .outputs.sha
+  # loki-p9-allow: base commit only no pr data
+  marker_pull:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git pull origin pull/1/head
+  # loki-p9-allow: base commit only no pr data
+  marker_apply:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git apply change.patch
+  # loki-p9-allow: base commit only no pr data
+  marker_exec:
+    runs-on: ubuntu-latest
+    steps:
+      - run: exec gh pr checkout 1

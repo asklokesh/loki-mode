@@ -1,0 +1,7 @@
+name: scope-ext
+on: pull_request_target
+jobs:
+  yamlext:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi

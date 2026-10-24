@@ -51,7 +51,7 @@ export function renderReviewerBody(i: ReviewerBodyInput, env: NodeJS.ProcessEnv 
   L.push("## Receipt", `- Digest: ${i.receiptSha256 ? `sha256:${i.receiptSha256}` : "not recorded"}${i.signed === null ? "" : i.signed ? " (signed)" : " (UNSIGNED)"}`);
   const rel = /(?:^|\/)(\.loki\/runs\/[^/]+\/receipt\.json)$/.exec(i.receiptPath ?? "")?.[1]; if (rel) L.push(`- File: ${rel}`); // repo-relative only: an absolute local path never goes into a public PR
   L.push(`- Verify: \`loki verify ${i.runId}\``);
-  L.push(`- On another machine: the author runs \`loki proof bundle ${i.runId}\`; the reviewer runs \`npx loki-mode verify --pubkey pubkey.jwk receipt.json\`${/^\d+\.\d+\.\d+/.test(version) ? " or adds this step to a workflow:" : " or adds the receipt-check action"}`);
+  L.push(`- On another machine: the author runs \`loki proof bundle ${i.runId}\`; the reviewer runs \`loki verify --pubkey pubkey.jwk receipt.json\`${/^\d+\.\d+\.\d+/.test(version) ? " or adds this step to a workflow:" : " or adds the receipt-check action"}`);
   if (/^\d+\.\d+\.\d+/.test(version)) L.push(`- \`uses: asklokesh/loki-mode/.github/actions/receipt-check@v${version}\``);
   if (env["LOKI_PR_FOOTER"] !== "0") L.push("", `${i.verdict === "VERIFIED" && !i.draftReason ? "Built and verified with" : "Built with"} Loki Mode: https://github.com/asklokesh/loki-mode`); // static text, no network call, no telemetry
   return `${L.join("\n")}\n`;

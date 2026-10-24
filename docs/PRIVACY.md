@@ -68,15 +68,48 @@ paths, keys, or repo names -- only anonymous diagnostics.
 
 - Endpoint: `https://us.i.posthog.com/capture/` (override with
   `LOKI_TELEMETRY_ENDPOINT`). The PostHog project key is a public ingest key.
-- Events: `install` (on `npm install`), `session_start`, `session_end`,
-  `cli_command`, and `dashboard_start`.
-- Exact payload (every event): `os` (uname system), `arch` (CPU arch),
-  `version` (Loki Mode version), `channel` (npm / docker / homebrew / skill /
-  source), and a random per-machine `distinct_id` (a uuid4 stored in
-  `~/.loki-telemetry-id`, never an email or name). The `install` event also adds
-  `node_version` and `providers_installed` (which provider CLIs were detected,
-  e.g. "claude,codex"). Some events add a small free-of-PII property such as the
-  command name. No code, prompts, paths, keys, repo names, emails, or IPs.
+- One allowlisted schema, enforced in the send path of every sender (the bash
+  sender in `autonomy/telemetry.sh`, the dashboard sender in
+  `dashboard/telemetry.py`, and the build-outcome reader
+  `autonomy/lib/proof-analytics-props.py`). The schema is
+  `autonomy/lib/telemetry-schema.json`. An event that is not listed there is not
+  sent. A property that is not listed is dropped. A value outside its enum, type
+  or range is dropped, never truncated or forwarded. The opt-out check runs
+  before any of this, so `LOKI_TELEMETRY=off` and `DO_NOT_TRACK=1` make zero
+  network calls.
+- Exactly what is sent. Every event carries a random per-machine `distinct_id`
+  (a uuid4 stored in `~/.loki-telemetry-id`, never an email or name) and these
+  common properties:
+
+  | Property | Values |
+  |---|---|
+  | `os_family` | linux, darwin, windows, other (a raw uname such as `MINGW64_NT-10.0-19045` is folded to `windows`) |
+  | `arch` | x64, arm64, other |
+  | `version` | the Loki Mode semver |
+  | `channel` | npm, docker, homebrew, skill, source, unknown |
+  | `traffic` | user, ci, internal (derived from CI environment variables, a non-interactive session, or an internal marker, so analytics can filter automation and our own use) |
+  | `introspective` | true or false, present on every event (false unless the event carries a command; true for version, help, completion, memory and internal commands, so they are flagged rather than counted as usage) |
+
+  Per-event properties, and nothing else:
+
+  | Event | Fires | Extra properties |
+  |---|---|---|
+  | `installed` | first command ever run | `first_command` (a known loki subcommand, else `other`) |
+  | `cli_command` | each command | `command` (a known loki subcommand, else `other`) |
+  | `session_start` | a run starts (legacy engine) | `provider` (claude, codex, cline, aider, opencode), `complexity` (simple, standard, complex), `parallel` (true or false) |
+  | `session_end` | a run ends (legacy engine) | `provider`, `duration` (seconds), `iterations` (count), `result` (exit code 0 to 255) |
+  | `dashboard_start` | the dashboard starts | none |
+  | `first_start_attempted` | first `loki start`, strict opt-in (section 4) | `entry` (a known loki subcommand, else `other`) |
+  | `first_run_blocked` | first run stopped, strict opt-in (section 5) | `blocker` (fixed enum, section 5) |
+  | `build_verified` | a build finishes, strict opt-in (section 4) | see section 4 |
+
+  The `install` event of older versions is now `installed`. The npm postinstall
+  script sends nothing. There are no `node_version` or `providers_installed`
+  properties.
+- Never sent, by construction (nothing in the schema can carry them): prompts,
+  PRD or issue text, code or diffs, file paths or names, repo names or URLs,
+  branch names, raw error text or stack traces, environment variable values,
+  secrets, emails, usernames, hostnames, or IP addresses.
 
 ### 3. Welcome page form (anonymous, explicit submit, opt-in)
 
@@ -105,9 +138,12 @@ field not named there is never read, so a schema change cannot silently start
 sending something new. Fields sent:
 
 - headline (a bounded enum: VERIFIED / VERIFIED WITH GAPS / NOT VERIFIED)
-- evidence_gate_verdict, final_verdict (bounded verdict strings)
+- evidence_gate_verdict (PASS, BLOCK) and final_verdict (APPROVED, REJECTED,
+  APPROVE, REJECT, COMPLETE, CONTINUE); any other string is dropped. A test
+  pins both lists to the values the producers write.
 - iterations, files_changed_count (a COUNT -- never the file paths)
 - wall_clock_sec, gates_passed, gates_total, gate_pass_rate
+- route (engine10 only: the default engine sends just headline=VERIFIED and route)
 
 It NEVER sends your spec/PRD text, file paths or names, code, or diffs. Because
 it sits below the base telemetry gate, every telemetry opt-out (`loki telemetry
@@ -129,7 +165,7 @@ provider, no key and no spend). Nobody could see that happening.
 
 The ONLY field is `blocker`, clamped to this fixed enum:
 
-    no_provider | node | python3 | jq | git | curl | disk | skill_symlink | other
+    no_provider | not_logged_in | not_a_repo | git_identity | node | python3 | jq | git | curl | disk | skill_symlink | other
 
 Anything not on that list becomes `other`. It is deliberately coarse: `node` is
 enough to act on, and a version string or an install path would be a leak. It

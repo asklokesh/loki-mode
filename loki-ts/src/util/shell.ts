@@ -2,7 +2,7 @@
 // Foundation for every command port that needs to call out to system tools
 // (claude, codex, jq, git, docker, curl, etc.).
 import { $ } from "bun";
-import { killGroup } from "../runner/worker_proc.ts";
+import { envWithPwd, killGroup } from "../runner/worker_proc.ts";
 
 export type ShellResult = {
   stdout: string;
@@ -103,7 +103,7 @@ export async function run(
     cmd: [...argv],
     stdout: "pipe",
     stderr: "pipe",
-    env: opts.env ? { ...process.env, ...opts.env } : process.env,
+    env: envWithPwd(opts.env ? { ...process.env, ...opts.env } : process.env, opts.cwd),
     cwd: opts.cwd,
     ...(opts.group ? { detached: true } : {}),
   });

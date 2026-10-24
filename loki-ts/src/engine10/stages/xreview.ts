@@ -1,17 +1,24 @@
 // B4: opt-in cross-lab review between verify and seal. A second provider reads the committed diff read-only and may only DOWNGRADE the verdict (flag adds NOT PROVEN, block caps at PARTIAL). Off
 // unless loki.yaml `review:`, LOKI_REVIEW_PROVIDER or LOKI_XVENDOR_DEFAULT is set; a medium-tier run with none of these reviews with its own CLI (LOKI_REVIEW_PROVIDER=off|none opts out).
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadReviewStageAgent } from "../../council/role_agents.ts";
+import { asProvider, isOff, loadReviewStageAgent, reviewCli, reviewProvider, xvendorDefault, type ReviewProvider } from "../../council/role_agents.ts";
+export { reviewProvider, xvendorDefault, type ReviewProvider } from "../../council/role_agents.ts"; // re-exported: callers and tests import the review provider pick from here
 import { run } from "../../util/shell.ts";
 import { withChildLedger } from "../../util/child_ledger.ts";
 import { claudeFlagSupported, ensureClaudeHelpCache, leanReviewerFlags, REVIEW_ALLOWLIST_NO_GIT, REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
-import { safeGitRun } from "../../util/safe_git.ts"; import { acceptanceLines, acceptancePromptBlock } from "../../util/intent_card.ts";
+import { ignoredPaths, safeGitRun } from "../../util/safe_git.ts"; export { ignoredPaths }; import { acceptanceLines, acceptancePromptBlock } from "../../util/intent_card.ts";
 import { readRiskRecord } from "../../util/run_summary.ts"; import { capWhole, reviewFlagLines } from "../../util/reviewer_brief.ts";
+import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { backstopS, type RunContext, type Verdict } from "../types.ts";
-export type ReviewProvider = "codex" | "claude";
 export type ReviewLevel = "pass" | "flag" | "block" | "not_run";
-export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; same_vendor_default?: boolean; }
+export type ReviewedBy = "model" | "deterministic" | "none";
+export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; same_vendor_default?: boolean; hygiene?: string[]; reviewed_by?: ReviewedBy; reviewer_model?: string; }
+/** True only when a model reviewer really returned a verdict; a deterministic-only result never credits "one reviewer". */
+export const modelReviewRan = (xr: CrossReview | null | undefined): xr is CrossReview => !!xr && xr.level !== "not_run" && xr.reviewed_by !== "deterministic" && xr.reviewed_by !== "none"; // a hygiene flag can lift level off not_run with no model call (reviewed_by none)
+// Compiled or bytecode cache files by extension or dir (generic across stacks). Any other run-added path counts only when the repo's own ignore rules ignore it (it was force-added); legit source such as src/build/index.ts never counts.
+const COMPILED_PATHS: RegExp[] = [/(^|\/)__pycache__\//, /\.py[co]$/, /\.class$/, /\.(o|obj)$/];
+/** Deterministic hygiene check over paths ADDED by the run (so artifacts already tracked never count). `ignored` = the subset the repo's ignore rules ignore. No model call. */
+export const hygieneFindings = (paths: string[], ignored: ReadonlySet<string> = new Set()): string[] => paths.filter((f) => !f.startsWith(".loki/") && (COMPILED_PATHS.some((re) => re.test(f)) || ignored.has(f)));
 const RANK: Record<Verdict, number> = { FAILED: 0, SPEC_CONFLICT: 0, PARTIAL: 1, ALREADY_SATISFIED: 2, VERIFIED: 2 };
 const MAX_DIFF = 60_000, MAX_NOTES = 5;
 /** The never-upgrade rule: returns the lower of the verdict and the review's ceiling. A review can only lower a verdict. */
@@ -19,38 +26,15 @@ export function minVerdict(verdict: Verdict, review: CrossReview | null): Verdic
   const ceiling: Verdict = review?.level === "block" ? "PARTIAL" : verdict;
   return RANK[ceiling] < RANK[verdict] ? ceiling : verdict;
 }
-const asProvider = (v: string | undefined): ReviewProvider | null => { const s = v?.trim().toLowerCase(); return s === "codex" || s === "claude" ? s : null; }; const isOff = (v: string | undefined): boolean => /^(off|none|false|0)$/i.test(v?.trim() ?? "");
-/** Explicit setting: env wins over loki.yaml top-level `review:`. A provider, "off", or undefined (nothing set). */
-function explicitReview(repoDir: string, env: NodeJS.ProcessEnv): ReviewProvider | "off" | undefined {
-  const flag = xvendorDefault(env); // explicit off is only meaningful (and only honoured) with the flag on; off keeps the pre-XV-1 behaviour
-  const ev = env["LOKI_REVIEW_PROVIDER"], e = asProvider(ev); if (e) return e; if (flag && isOff(ev)) return "off";
-  for (const f of ["loki.yaml", "loki.yml"]) {
-    const p = join(repoDir, f); if (!existsSync(p)) continue;
-    try { const m = /^review:[ \t]*["']?([A-Za-z]+)["']?[ \t]*(?:#.*)?$/m.exec(readFileSync(p, "utf8")); const v = asProvider(m?.[1]); if (v) return v; if (flag && isOff(m?.[1])) return "off"; } catch { /* unreadable: nothing set */ }
-  }
-  return undefined;
-}
-/** XV-1 flag: LOKI_XVENDOR_DEFAULT=1 turns on the other-vendor default. Off keeps the opt-in behaviour. */
-export const xvendorDefault = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|true|yes|on)$/i.test(env["LOKI_XVENDOR_DEFAULT"]?.trim() ?? "");
-/** The CLI for a provider is on PATH (same resolution as engine10/preflight.ts: LOKI_<NAME>_CLI override, else the provider name). */
-export const reviewCli = (p: ReviewProvider, env: NodeJS.ProcessEnv = process.env): string => env[`LOKI_${p.toUpperCase()}_CLI`]?.trim() || p;
-export function vendorAvailable(p: ReviewProvider, env: NodeJS.ProcessEnv = process.env): boolean {
-  const cli = reviewCli(p, env);
-  return !!Bun.which(cli, { PATH: env["PATH"] ?? process.env["PATH"] ?? "" });
-}
-/** Explicit setting always wins (including `off`). With LOKI_XVENDOR_DEFAULT=1 and nothing set, the other vendor than the builder when its CLI is installed. Else null (off). */
-export function reviewProvider(repoDir: string, env: NodeJS.ProcessEnv = process.env, builder?: string): ReviewProvider | null {
-  const x = explicitReview(repoDir, env); if (x) return x === "off" ? null : x;
-  if (!xvendorDefault(env)) return null;
-  const other: ReviewProvider | null = builder === "claude" ? "codex" : builder === "codex" ? "claude" : null;
-  return other && vendorAvailable(other, env) ? other : null;
-}
+/** Exactly what review ran, for the receipt: a model verdict (fast-tier when pinned), the deterministic check alone, or none. */
+export const reviewRanWording = (xr: CrossReview | null | undefined): string => (modelReviewRan(xr) ? (xr.reviewer_model ? `reviewer (${xr.reviewer_model})` : "reviewer") : (xr as CrossReview | null | undefined)?.reviewed_by === "deterministic" ? "deterministic check" : "none"); // the guard's false branch narrows xr to never, so the cast restores the real type
 /** Receipt review block plus the NOT PROVEN line, only when the flag is on. vendor_differs compares the judge to the builder. */
-export function reviewReceipt(builder: string, xr: CrossReview | null, env: NodeJS.ProcessEnv = process.env): { review?: { provider: string | null; vendor_differs: boolean; same_vendor?: boolean; defaulted?: boolean; level?: ReviewLevel }; notProven: string[] } {
-  if (xr?.same_vendor_default && !xvendorDefault(env)) return { review: { provider: xr.provider, vendor_differs: false, same_vendor: true, defaulted: true, level: xr.level }, notProven: [] }; // medium default review: same-vendor, disclosed on the receipt
-  if (!xvendorDefault(env)) return { notProven: [] };
-  const differs = !!xr && xr.level !== "not_run" && xr.provider !== builder && (builder === "claude" || builder === "codex"); // a review that did not run is not cross-vendor evidence
-  return { review: { provider: xr?.provider ?? null, vendor_differs: differs }, notProven: differs ? [] : ["judge shares builder vendor or none configured"] };
+export function reviewReceipt(builder: string, xr: CrossReview | null, env: NodeJS.ProcessEnv = process.env): { review?: { provider: string | null; vendor_differs: boolean; same_vendor?: boolean; defaulted?: boolean; level?: ReviewLevel; ran?: string; reviewer_model?: string; observations?: string[] }; notProven: string[] } {
+  const obs = xr?.hygiene?.length ? { observations: xr.hygiene.map((f) => `committed build or cache artifact: ${f}`) } : {}; // an observation, never a not-proven claim
+  if (xr?.same_vendor_default && !xvendorDefault(env)) return { review: { provider: xr.provider, vendor_differs: false, same_vendor: true, defaulted: true, level: xr.level, ran: reviewRanWording(xr), ...obs }, notProven: [] }; // medium default review: same-vendor, disclosed on the receipt
+  if (!xvendorDefault(env)) return xr ? { review: { provider: xr.provider, vendor_differs: false, level: xr.level, ran: reviewRanWording(xr), ...obs }, notProven: [] } : { notProven: [] };
+  const differs = modelReviewRan(xr) && xr.provider !== builder && (builder === "claude" || builder === "codex"); // a review that did not run is not cross-vendor evidence
+  return { review: { provider: xr?.provider ?? null, vendor_differs: differs, ran: reviewRanWording(xr), ...(xr?.reviewer_model ? { reviewer_model: xr.reviewer_model } : {}), ...obs }, notProven: differs ? [] : ["judge shares builder vendor or none configured"] };
 }
 /** Read-only argv: codex runs in its read-only sandbox; claude gets the shared read-only inspect allowlist and mutation denylist (FC-XREVIEW-BLIND-TOOLS: a blanket Bash deny left it reviewing blind). */
 export function reviewArgv(p: ReviewProvider, prompt: string, env: NodeJS.ProcessEnv = process.env, model?: string, flagSupported: (f: string) => boolean = (f) => claudeFlagSupported(f)): string[] {
@@ -89,9 +73,17 @@ const MIN_REVIEW_S = 30, roomS = (ctx: RunContext): number => backstopS(ctx.capS
 export const reviewExtraLimitS = (ctx: RunContext): number => (pickReviewer(ctx, configuredReviewer(ctx.repoDir)).p && roomS(ctx) >= MIN_REVIEW_S ? boxFor(ctx) + 30 : 0);
 /** Runs the reviewer when enabled. Null when off. A missing CLI, a failure or a timeout is not_run with a NOT PROVEN note, never PASS. */
 export async function crossReview(ctx: RunContext, verdict: Verdict, head: string, signal?: AbortSignal): Promise<CrossReview | null> {
-  const agent = configuredReviewer(ctx.repoDir), { p, dflt } = pickReviewer(ctx, agent); if (!p) return null; const tag = <T extends CrossReview>(r: T): T => (dflt ? { ...r, same_vendor_default: true } : r); // a configured reviewer/council agent turns the default review on
+  const agent = configuredReviewer(ctx.repoDir), { p, dflt } = pickReviewer(ctx, agent); if (!p) return null; // a configured reviewer/council agent turns the default review on
   if (verdict !== "VERIFIED" && verdict !== "ALREADY_SATISFIED") return null; // nothing a review could downgrade
-  if (readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier === "low") return tag({ provider: p, level: "not_run", notes: [`cross-review skipped: low risk (${p} not run)`] }); // COST-4: low risk records the skip, never a pass
+  const tier = readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier, medium = tier === "medium";
+  let hy: string[] = [], hyOk = false, hyNote = ""; // medium: the deterministic hygiene scan of files the run added (no model call); it can only add a flag, never lift a verdict
+  if (medium) { const a = await safeGitRun(ctx.repoDir, ["diff", "--no-color", "--name-only", "-z", "--diff-filter=A", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null); if (a && a.exitCode === 0) { hyOk = true; const added = a.stdout.split("\0").filter(Boolean); const box = Number(process.env["LOKI_E10_HYGIENE_BOX_MS"]), ig = await ignoredPaths(ctx.repoDir, added, box > 0 ? box : 20000); if (ig) hy = hygieneFindings(added, ig); else { hy = hygieneFindings(added, new Set()); hyOk = false; hyNote = "hygiene scan unavailable (git check-ignore did not complete): NOT PROVEN that run-added files are free of ignored or build artifacts"; } } }
+  const pin = medium && p === "claude" ? fastTierModel(process.env) : undefined; // medium reviews on the fast tier (same mapping as the plan session); an agent-configured model wins (agent?.model || pin, so an empty one falls back to the pin); high and low are unchanged
+  const tag = <T extends CrossReview>(r: T): T => {
+    const modelRan = r.level !== "not_run", level = hy.length && (r.level === "pass" || r.level === "not_run") ? "flag" : r.level;
+    return { ...r, level, notes: hyNote ? [...r.notes, hyNote] : r.notes, ...(hy.length ? { hygiene: hy } : {}), reviewed_by: modelRan ? "model" : hyOk ? "deterministic" : "none", ...(modelRan && p === "claude" && (agent?.model || pin) ? { reviewer_model: (agent?.model || pin)! } : {}), ...(dflt ? { same_vendor_default: true } : {}) };
+  };
+  if (tier === "low") return tag({ provider: p, level: "not_run", notes: [`cross-review skipped: low risk (${p} not run)`] }); // COST-4: low risk records the skip, never a pass
   if (roomS(ctx) < MIN_REVIEW_S) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: insufficient run time for ${p}`] });
   const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] });
@@ -100,7 +92,7 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
     "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...acceptancePromptBlock(acceptanceLines((ctx.outputs?.() ?? {}).plan)), "", "```diff", d.stdout.slice(0, MAX_DIFF), "```"].join("\n");
   try {
     if (p === "claude") await ensureClaudeHelpCache();
-    const r = await withChildLedger(run, join(ctx.repoDir, ".loki"), "xreview")(reviewArgv(p, prompt, process.env, p === "claude" ? agent?.model : undefined), { cwd: ctx.repoDir, timeoutMs: boxFor(ctx) * 1000, group: true, signal });
+    const r = await withChildLedger(run, join(ctx.repoDir, ".loki"), "xreview")(reviewArgv(p, prompt, process.env, p === "claude" ? agent?.model || pin : undefined), { cwd: ctx.repoDir, timeoutMs: boxFor(ctx) * 1000, group: true, signal });
     if (r.exitCode !== 0) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: ${p} exited ${r.exitCode}`] });
     return tag(parseReview(p, r.stdout));
   } catch { return tag({ provider: p, level: "not_run", notes: [`cross-review not run: ${p} CLI unavailable`] }); }

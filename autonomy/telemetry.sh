@@ -52,6 +52,12 @@ _loki_telemetry_auto_off() {
     return 1
 }
 
+# BASH_SOURCE is empty when sourced under zsh: skip the lookup rather than
+# resolve dirname "" to the current directory.
+_LOKI_TELEMETRY_SELF_DIR=""
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+    _LOKI_TELEMETRY_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)" || _LOKI_TELEMETRY_SELF_DIR=""
+fi
 LOKI_POSTHOG_HOST="${LOKI_TELEMETRY_ENDPOINT:-https://us.i.posthog.com}"
 LOKI_POSTHOG_KEY="phc_ya0vGBru41AJWtGNfZZ8H9W4yjoZy4KON0nnayS7s87"
 
@@ -208,48 +214,81 @@ _loki_known_blocker() {
     esac
 }
 
+# _loki_os_family: raw `uname -s` collapsed to a fixed enum (MINGW64_NT-10.0-19045
+# and friends are one family, not one value per Windows build).
+_loki_os_family() {
+    case "${1:-}" in
+        Linux*) printf 'linux' ;;
+        Darwin*) printf 'darwin' ;;
+        MINGW*|MSYS*|CYGWIN*|Windows*) printf 'windows' ;;
+        *) printf 'other' ;;
+    esac
+}
+
+_loki_arch_family() {
+    case "${1:-}" in
+        x86_64|amd64|x64) printf 'x64' ;;
+        arm64|aarch64) printf 'arm64' ;;
+        *) printf 'other' ;;
+    esac
+}
+
+# _loki_traffic: who is driving this process, as the enum user | ci | internal,
+# so analytics can filter bots and our own seats. internal wins, then ci (CI env
+# vars or a non-interactive session), else user. Mirrors _traffic in
+# dashboard/telemetry.py.
+_loki_traffic() {
+    if [ "${LOKI_INTERNAL:-}" = "1" ] || [ "${LOKI_SEAT_TICK:-}" = "1" ] || [ -n "${LOKI_SEAT:-}" ] || [ -n "${LOKI_COMPANY_SEAT:-}" ]; then
+        printf 'internal'; return
+    fi
+    if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ] || [ -n "${GITLAB_CI:-}" ] \
+        || [ -n "${BUILDKITE:-}" ] || [ -n "${JENKINS_URL:-}" ] \
+        || [ -n "${TEAMCITY_VERSION:-}" ] || [ -n "${CONTINUOUS_INTEGRATION:-}" ]; then
+        printf 'ci'; return
+    fi
+    if [ -n "${LOKI_TTY_INTERACTIVE:-}" ]; then
+        [ "${LOKI_TTY_INTERACTIVE}" = "1" ] && printf 'user' || printf 'ci'
+        return
+    fi
+    if [ ! -t 1 ] && [ ! -t 0 ]; then printf 'ci'; return; fi
+    printf 'user'
+}
+
+# loki_telemetry <event> [key=value...]: the ONE send path of the bash senders.
+# Order is load-bearing: the opt-out gate runs before anything else, so with
+# LOKI_TELEMETRY=off or DO_NOT_TRACK=1 no python, no curl and no network code is
+# reached. Then every key and value is filtered through
+# autonomy/lib/telemetry-schema.json (unlisted event: nothing is sent; unknown
+# key or out-of-enum value: dropped). Callers' pairs are untrusted by design;
+# the trusted base properties are appended last so a caller cannot override them.
 loki_telemetry() {
     _loki_telemetry_enabled || return 0
-    local event="$1"; shift
+    local event="${1:-}"; shift
+    [ -n "$event" ] || return 0
+    # The schema sits next to this file; prefer that over SCRIPT_DIR, which some
+    # callers leave unset when they only source this file.
+    local _lib="${_LOKI_TELEMETRY_SELF_DIR:-}/lib"
+    [ -f "$_lib/telemetry-schema.json" ] || _lib="${SCRIPT_DIR:-${SKILL_DIR:-}}/lib"
+    [ -f "$_lib/telemetry-schema.json" ] && [ -f "$_lib/proof-analytics-props.py" ] || return 0
     local distinct_id
     distinct_id=$(_loki_telemetry_id 2>/dev/null) || return 0
     local version
-    version=$(cat "${SCRIPT_DIR:-${SKILL_DIR:-}}/VERSION" 2>/dev/null || cat "${SCRIPT_DIR:-${SKILL_DIR:-}}/../VERSION" 2>/dev/null || echo "unknown")
+    version=$(cat "${SCRIPT_DIR:-${SKILL_DIR:-}}/VERSION" 2>/dev/null || cat "${SCRIPT_DIR:-${SKILL_DIR:-}}/../VERSION" 2>/dev/null || cat "${_LOKI_TELEMETRY_SELF_DIR:-}/../VERSION" 2>/dev/null || echo "unknown")
     version=$(echo "$version" | tr -d '[:space:]')
     local channel
     channel=$(_loki_detect_channel 2>/dev/null || echo "unknown")
-    local os_name arch
-    os_name=$(uname -s 2>/dev/null || echo "unknown")
-    arch=$(uname -m 2>/dev/null || echo "unknown")
+    local os_family arch
+    os_family=$(_loki_os_family "$(uname -s 2>/dev/null)")
+    arch=$(_loki_arch_family "$(uname -m 2>/dev/null)")
 
-    # Build JSON payload safely using Python to prevent injection.
     # The extra key=value pairs are forwarded as "$@" -- one argv slot per pair,
-    # QUOTED. They used to be joined into a single space-delimited string and
-    # then re-split by an unquoted expansion, which broke two ways: a value
-    # containing a space was truncated (`prd=my file.md` -> `prd=my`, rest
-    # dropped) or, if a fragment itself contained `=`, forged an extra PostHog
-    # property KEY; and the unquoted expansion also globbed, so `spec=*.md`
-    # expanded against the cwd and injected file names into the payload. Callers
-    # already pass each pair as its own quoted word, so "$@" is the array and no
-    # caller signature changes.
+    # QUOTED, so a value with spaces or glob characters is neither split nor
+    # expanded. The python side splits on the first "=" only.
     local payload
-    payload=$(python3 -c "
-import json, sys
-props = {'os': sys.argv[1], 'arch': sys.argv[2], 'version': sys.argv[3], 'channel': sys.argv[4]}
-for arg in sys.argv[5:]:
-    if '=' in arg:
-        k, v = arg.split('=', 1)
-        props[k] = v
-print(json.dumps({'api_key': '$LOKI_POSTHOG_KEY', 'event': sys.argv[5] if len(sys.argv) > 5 else '', 'distinct_id': '$distinct_id', 'properties': props}))
-" "$os_name" "$arch" "$version" "$channel" "$@" 2>/dev/null) || return 0
-    # Re-inject event and distinct_id properly
-    payload=$(python3 -c "
-import json, sys
-d = json.loads(sys.argv[1])
-d['event'] = sys.argv[2]
-d['distinct_id'] = sys.argv[3]
-print(json.dumps(d))
-" "$payload" "$event" "$distinct_id" 2>/dev/null) || return 0
+    payload=$(python3 "$_lib/proof-analytics-props.py" --payload "$event" "$distinct_id" "$LOKI_POSTHOG_KEY" \
+        "$@" "os_family=$os_family" "arch=$arch" "version=$version" "channel=$channel" \
+        "traffic=$(_loki_traffic)" 2>/dev/null) || return 0
+    [ -n "$payload" ] || return 0
 
     (curl -sS --max-time 3 -X POST "${LOKI_POSTHOG_HOST}/capture/" \
         -H "Content-Type: application/json" \

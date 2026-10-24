@@ -44,8 +44,10 @@ export function groupEnv(env: NodeJS.ProcessEnv, capUsd: number, repoDir?: strin
 export function ledgerSum(path: string): number | null {
   try { let t = 0, seeded = false; for (const l of readFileSync(path, "utf8").split("\n")) { if (!l) continue; const r = JSON.parse(l) as { usd?: unknown; seed?: unknown }, u = r.usd; if (r.seed === true) { if (seeded) continue; seeded = true; } /* first seed wins when units carry different seeds */ if (typeof u === "number" && Number.isFinite(u) && u > 0) t += u; } return t; } catch { return null; }
 }
-/** Worker side: wraps the emit fn so every cost event feeds the meter; `over` is RunContext.overCap. */
-export function capMeter<E extends (type: never, stage: never, data: Record<string, unknown>) => void>(raw: E, env: NodeJS.ProcessEnv): { emit: E; over: () => boolean; remaining: () => number | null } {
+export const BUDGET_THRESHOLDS = [0.5, 0.8, 1] as const;
+export interface BudgetCrossing { threshold_pct: number; threshold_usd: number; usd_so_far: number; cap_usd: number }
+/** Worker side: wraps the emit fn so every cost event feeds the meter; `over` is RunContext.overCap. Emits one `budget` event per 50/80/100 percent threshold of the cap. */
+export function capMeter<E extends (type: never, stage: never, data: Record<string, unknown>) => void>(raw: E, env: NodeJS.ProcessEnv, onBudget?: (b: BudgetCrossing) => void): { emit: E; over: () => boolean; remaining: () => number | null } {
   const capUsd = parseCapUsd(env.LOKI_E10_MAX_COST_USD) ?? 0, seed = Number(env.LOKI_E10_SPENT_USD);
   const m = costMeter(capUsd, seed); // LOKI_E10_SPENT_USD: prior spend on this task, so kill-and-rerun cannot reset the cap
   const ledger = env.LOKI_BUDGET_LEDGER ? resolve(env.LOKI_BUDGET_LEDGER) : "";
@@ -54,9 +56,19 @@ export function capMeter<E extends (type: never, stage: never, data: Record<stri
   const base = Number.isFinite(seed) && seed > 0 ? seed : 0;
   if (ledger && !broken && base > 0) { try { if (!((ledgerSum(ledger) ?? 0) > 0)) appendFileSync(ledger, JSON.stringify({ pid: process.pid, usd: base, seed: true }) + "\n"); } catch { broken = true; } } // P12-22s: the rerun seed is recorded once in the ledger (first seed line counts), never added on top of spend it already holds
   const spent = (): number | null => ledgerSum(ledger);
+  const so_far = (): number => { const l = ledger && !broken ? spent() : null; return l !== null ? l : m.total(); };
+  const fired = new Set<number>(); // each threshold once; a rerun seeded past one does not repeat it
+  const crossed = (s: number, t: number): boolean => capUsd > 0 && s >= capUsd * t - 1e-9;
+  if (capUsd > 0) for (const t of BUDGET_THRESHOLDS) if (crossed(so_far(), t)) fired.add(t);
   const emit = ((type: string, stage: never, data: Record<string, unknown>) => {
     if (type === "cost") { m.add(data.usd); if (ledger && typeof data.usd === "number" && data.usd > 0) { try { appendFileSync(ledger, JSON.stringify({ pid: process.pid, usd: data.usd }) + "\n"); } catch { broken = true; } } }
     (raw as unknown as (...a: unknown[]) => void)(type, stage, data);
+    if (type === "cost" && capUsd > 0) for (const t of BUDGET_THRESHOLDS) {
+      const s = so_far(); if (fired.has(t) || !crossed(s, t)) continue; fired.add(t);
+      const b: BudgetCrossing = { threshold_pct: Math.round(t * 100), threshold_usd: Math.round(capUsd * t * 1e6) / 1e6, usd_so_far: s, cap_usd: capUsd };
+      (raw as unknown as (...a: unknown[]) => void)("budget", stage, { ...b });
+      try { onBudget?.(b); } catch { /* notification is best-effort */ }
+    }
   }) as unknown as E;
   if (!ledger) return { emit, over: m.over, remaining: m.remaining };
   const over = (): boolean => { if (broken) return true; const s = spent(); if (s === null) { broken = true; return true; } return capUsd > 0 && s >= capUsd; };
@@ -64,9 +76,9 @@ export function capMeter<E extends (type: never, stage: never, data: Record<stri
   return { emit, over, remaining };
 }
 /** Running priced total for the worker; call with each emitted cost event's usd. */
-export function costMeter(capUsd: number, seedUsd = 0): { add(usd: unknown): void; over(): boolean; remaining(): number | null } {
+export function costMeter(capUsd: number, seedUsd = 0): { add(usd: unknown): void; total(): number; over(): boolean; remaining(): number | null } {
   let sum = Number.isFinite(seedUsd) && seedUsd > 0 ? seedUsd : 0;
-  return { add: (u) => { if (typeof u === "number" && Number.isFinite(u) && u > 0) sum += u; }, over: () => capUsd > 0 && sum >= capUsd, remaining: () => (capUsd > 0 ? Math.max(capUsd - sum, 0) : null) };
+  return { total: () => sum, add: (u) => { if (typeof u === "number" && Number.isFinite(u) && u > 0) sum += u; }, over: () => capUsd > 0 && sum >= capUsd, remaining: () => (capUsd > 0 ? Math.max(capUsd - sum, 0) : null) };
 }
 /** LOKI_BUDGET_LIMIT for one session child: what is left of the cap, floored so a spent cap still reads as a (tiny) limit. null = no dollar cap. */
 export function childBudgetLimit(remaining: number | null): string | null { return remaining === null ? null : String(Math.round(Math.max(remaining, 0.01) * 100) / 100); }

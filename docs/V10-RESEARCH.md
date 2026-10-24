@@ -50,7 +50,7 @@ Vendor figures are vendor claims. Re-check a source before quoting it publicly.
 - **Scale verification depth by risk.** Meta's Diff Risk Score does this. Source: [VEN].
 
 ### 6. Adoption: sell verified outcomes and reclaimed review time
-- **Perceived speed is not real speed.** METR RCT: experienced developers were 19% slower with AI while believing they were 20% faster. The 2026 follow-up is inconclusive. Source: [research org].
+- **Perceived speed is not real speed.** METR RCT: experienced developers were 19% slower with AI while believing they were 20% faster. The 2026 follow-up is inconclusive. Source: METR RCT, arXiv 2507.09089 [PRE]. <!-- claim-ok -->
 - **Review is where the gains are lost.** AI raised PRs 98%, review time 91% and PR size 154%. Source: Faros 2025 [VEN].
 - **Developers do not check what they distrust.** 96% do not fully trust AI code; only 48% always verify it. Source: Sonar 2026 [VEN].
 - **Acceptance depends on task type.** Agent PR acceptance runs from 82.1% for docs to 66.1% for new features. Source: MSR 2026 [PR].

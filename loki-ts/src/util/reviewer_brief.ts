@@ -2,8 +2,8 @@
 // graph and an lcov file if one exists, and never runs tests or a provider. Opt out with
 // LOKI_REVIEWER_BRIEF=0 (the PR body is then byte-identical to before). Coverage is reported only
 // from a real lcov file that is not older than the changed files; nothing is inferred from names.
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, normalize } from "node:path";
+import { closeSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { dirname, join, normalize, sep } from "node:path";
 import { listRepoFiles } from "../engine10/repomap.ts";
 import { buildTestMap, impactedRefs } from "../engine10/testmap.ts";
 import { safeGit } from "./safe_git.ts";
@@ -272,4 +272,69 @@ export function withAiMarker(body: string, line: string | null): string {
   if (i < 0) return body;
   lines.splice(i + 1, 0, line);
   return lines.join("\n");
+}
+
+// PG-23: fill the target repo's PR template from the rendered body. The template is untrusted text: size-limited, never executed.
+const TPL_MAX = 32768, TPL_DIRS = [".github", "", "docs"]; // the locations GitHub documents
+export function readPrTemplate(repoDir: string): string | null {
+  let top: string; try { top = realpathSync(repoDir); } catch { return null; }
+  const inside = (q: string): boolean => q === top || q.startsWith(top.endsWith(sep) ? top : top + sep);
+  for (const d of TPL_DIRS) {
+    try { if (!inside(realpathSync(join(repoDir, d)))) continue; } catch { continue; } // a symlinked directory could point outside the repo
+    let names: string[]; try { names = readdirSync(join(repoDir, d)); } catch { continue; }
+    const hit = names.filter((n) => n.toLowerCase() === "pull_request_template.md").sort()[0]; if (hit === undefined) continue; // GitHub matches the name case-insensitively
+    const p = join(repoDir, d, hit);
+    try {
+      if (!lstatSync(p).isFile()) continue; // a symlink could point outside the repo
+      if (!inside(realpathSync(p))) continue;
+      const fd = openSync(p, "r");
+      try { const buf = Buffer.alloc(Math.min(fstatSync(fd).size, TPL_MAX)); const n = readSync(fd, buf, 0, buf.length, 0); return buf.toString("utf8", 0, n); } finally { closeSync(fd); }
+    } catch { continue; }
+  }
+  return null;
+}
+export interface ReceiptProof { testsPassed: boolean; testsAdded: boolean; receipt: boolean; verified: boolean }
+/** What the receipt proves; a checkbox is ticked only when its claim is true here. */
+export function receiptProof(verdict: string, outputs: Partial<Record<string, Record<string, unknown>>>, digest: string | null): ReceiptProof {
+  const checks = Array.isArray(outputs.verify?.["checks"]) ? (outputs.verify["checks"] as { result?: string }[]) : [];
+  const wall = outputs.seal?.["wall_published"] as { files?: unknown } | undefined;
+  return { testsPassed: checks.length > 0 && checks.every((c) => c.result === "pass"), testsAdded: Array.isArray(wall?.files) && wall.files.length > 0, receipt: !!digest, verified: verdict === "VERIFIED" };
+}
+const SECTION_MAP: [RegExp, string[]][] = [
+  [/\b(tests?|testing|tested|verif\w*|validat\w*|checks?)\b/, ["How it was tested", "Acceptance tests"]], [/risk|not proven|caveat|limitation|known issue/, ["NOT PROVEN"]], [/receipt|evidence|proof/, ["Receipt"]],
+  [/chang|file|implement/, ["What changed and why"]], [/summary|descri|overview|why|context|motivation|issue|what/, ["What the issue asked", "What changed and why"]],
+];
+function tick(line: string, p: ReceiptProof): string {
+  const m = /^(\s*[-*+]\s+)\[[ xX]\](\s+.*)$/.exec(line); if (!m) return line; // pre-ticked boxes are reset: only the receipt may tick
+  const off = `${m[1]}[ ]${m[2]}`;
+  const t = (m[2] ?? "").toLowerCase(), need: boolean[] = [];
+  if (/pass|green/.test(t) && /test/.test(t)) need.push(p.testsPassed);
+  if (/\b(added|add|new|written)\b/.test(t) && /test/.test(t)) need.push(p.testsAdded);
+  if (/receipt|loki verify/.test(t)) need.push(p.receipt);
+  if (/\bverified\b/.test(t)) need.push(p.verified);
+  return need.length > 0 && need.every(Boolean) ? `${m[1]}[x]${m[2]}` : off; // unknown or unproven items stay unticked
+}
+function sections(text: string): { head: string | null; lines: string[] }[] {
+  const out: { head: string | null; lines: string[] }[] = [{ head: null, lines: [] }]; let fence = false, cmt = false;
+  for (const l of text.split("\n")) {
+    const wasCmt = cmt;
+    if (!fence) { if (!cmt && l.includes("<!--") && !l.includes("-->", l.indexOf("<!--"))) cmt = true; else if (cmt && l.includes("-->")) cmt = false; }
+    if (!cmt && !wasCmt && /^\s*(```|~~~)/.test(l)) fence = !fence;
+    if (!fence && !cmt && !wasCmt && /^#{1,3}\s+\S/.test(l)) out.push({ head: l, lines: [] }); else out[out.length - 1]?.lines.push(l);
+  }
+  return out;
+}
+/** Fills each template heading from the body's sections by keyword; unmapped headings keep the template text. */
+export function applyPrTemplate(body: string, template: string, proof: ReceiptProof): string {
+  const src = sections(body).filter((s) => s.head !== null).map((s) => ({ name: (s.head ?? "").replace(/^#+\s*/, ""), lines: s.lines.join("\n").trim() })), used = new Set<string>(), out: string[] = [];
+  for (const s of sections(template)) {
+    if (s.head === null) { out.push(...s.lines.map((l) => tick(l, proof))); continue; }
+    const key = s.head.replace(/^#+\s*/, "").toLowerCase(), names = SECTION_MAP.find(([re]) => re.test(key))?.[1], got = names ? src.filter((x) => names.includes(x.name)) : [];
+    out.push(s.head);
+    if (got.length === 0) { out.push(...s.lines.map((l) => tick(l, proof))); continue; }
+    for (const g of got) { used.add(g.name); out.push(g.lines); }
+    out.push(...s.lines.filter((l) => /^\s*[-*+]\s+\[[ xX]\]/.test(l)).map((l) => tick(l, proof)), ""); // checklists survive; template prose is replaced
+  }
+  const rest = src.filter((x) => !used.has(x.name)).map((x) => `## ${x.name}\n${x.lines}\n`); // NOT PROVEN and Receipt are never dropped
+  return `${[...out, ...rest].join("\n").replace(/\n{3,}/g, "\n\n").trim()}\n`;
 }

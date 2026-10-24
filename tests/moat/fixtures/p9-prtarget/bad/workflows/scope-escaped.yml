@@ -1,0 +1,8 @@
+name: scope-escaped
+on:
+  "pull_request_\x74arget": {}
+jobs:
+  esc:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi

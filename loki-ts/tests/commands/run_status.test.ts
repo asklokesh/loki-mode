@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { EventLog, readEvents } from "../../src/engine10/events.ts";
 import { controlRunLink, issueStatusBody, issueStatusProjector, STATUS_MARKER, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../../src/util/run_outputs.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
-import { NO_RUN_HINT, render, runIntentShow, runModernStatus, runRunsList, summarize } from "../../src/commands/run_status.ts";
+import { NO_RUN_HINT, followRun, render, runIntentShow, runModernStatus, runRunsList, summarize } from "../../src/commands/run_status.ts";
 import { DEFAULT_PUSH_SH } from "../../src/engine10/stages/pr.ts";
 
 let dir: string;
@@ -78,7 +78,7 @@ describe("loki status (Loki 10)", () => {
     } finally { process.stderr.write = orig; }
     expect(err).toContain("too many arguments: expected one run id");
     expect(err).not.toContain("unknown flag");
-    expect(err).toContain("Usage: loki status [run-id] [--json|--badge|--probe]");
+    expect(err).toContain("Usage: loki status [run-id] [--json|--badge|--probe|--follow]");
   });
 
   test("a truly unknown flag still reports unknown flag with the full usage", async () => {
@@ -90,7 +90,7 @@ describe("loki status (Loki 10)", () => {
       expect(code).toBe(1);
     } finally { process.stderr.write = orig; }
     expect(err).toContain("unknown flag --bogus");
-    expect(err).toContain("Usage: loki status [run-id] [--json|--badge|--probe]");
+    expect(err).toContain("Usage: loki status [run-id] [--json|--badge|--probe|--follow]");
   });
 
   test("--badge is routed to the deploy badge, not rejected as an unknown flag", async () => {
@@ -527,5 +527,82 @@ describe("loki runs (R100-008)", () => {
     const t = runs([]);
     expect(t.out.trim().split("\n")).toEqual(["e10-20261023T010000Z-aaaa  alpha  completed  $0.50  VERIFIED"]);
     expect(runs(["--nope"]).code).toBe(1);
+  });
+});
+
+describe("status usd_so_far and usd_projected", () => {
+  const mk = (...rows: [string, string | null, Record<string, unknown>?][]): EventEnvelope[] =>
+    rows.map(([type, stage, data], seq) => ({ v: 1, seq, ts: "2026-10-15T00:00:00Z", run: "e10-x", type, stage, data: data ?? {} }));
+  const sum = (ev: EventEnvelope[]) => summarize("e10-x", ev, "/nonexistent", Date.now()) as unknown as Record<string, unknown>;
+  test("projection is spend over the completed stage share (2 of 8 stages done, $0.50 spent gives $2.00)", () => {
+    const s = sum(mk(["run.started", null], ["stage.completed", "intake"], ["stage.completed", "plan"], ["cost", "plan", { session_id: "a", usd: 0.5 }]));
+    expect(s.usd_so_far).toBe(0.5); expect(s.usd_projected).toBeCloseTo(2, 9);
+  });
+  test("unmeasured spend is null, never 0", () => {
+    const s = sum(mk(["run.started", null], ["stage.completed", "intake"], ["cost", "intake", { session_id: "a", usd: null }]));
+    expect(s.usd_so_far).toBeNull(); expect(s.usd_projected).toBeNull();
+    expect(sum(mk(["run.started", null], ["stage.completed", "intake"])).usd_so_far).toBeNull();
+  });
+  test("zero completed stages projects null, not Infinity or NaN", () => {
+    const s = sum(mk(["run.started", null], ["stage.started", "intake"], ["cost", "intake", { session_id: "a", usd: 0.2 }]));
+    expect(s.usd_so_far).toBe(0.2); expect(s.usd_projected).toBeNull();
+  });
+});
+
+describe("loki status --follow", () => {
+  const id = "e10-20261024T000000Z-ffff";
+  const evPath = (): string => join(dir, ".loki", "runs", id, "events.jsonl");
+  function seven(): EventLog {
+    const log = new EventLog(evPath(), id);
+    log.append("run.started", null, { task_source: "text" });
+    for (const st of ["intake", "plan", "implement"] as const) { log.append("stage.started", st, {}); log.append("cost", st, { session_id: "s", usd: 0.5 }); log.append("stage.completed", st, {}); }
+    log.append("stage.started", "verify", {});
+    log.append("test.result", "verify", { name: "bun:a.test.ts", result: "pass", cmd: "x", duration_s: 1 });
+    return log;
+  }
+  async function follow(json: boolean, ms: number): Promise<string[]> {
+    const ac = new AbortController();
+    const out: string[] = [];
+    setTimeout(() => ac.abort(), ms);
+    await followRun(evPath(), json, ac.signal, (s) => out.push(s), 20);
+    return out;
+  }
+
+  test("--json emits one stage line per stage event, cost lines carry usd_so_far, abort leaves the run running", async () => {
+    seven();
+    const before = workItemState(readEvents(evPath()), Date.now());
+    const lines = (await follow(true, 150)).map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.filter((l) => l.type === "stage")).toHaveLength(7);
+    expect(lines.filter((l) => l.type === "cost").map((l) => l.usd_so_far)).toEqual([0.5, 1, 1.5]);
+    expect(lines.find((l) => l.type === "test")).toMatchObject({ name: "bun:a.test.ts", result: "pass" });
+    const events = readEvents(evPath());
+    expect(events.some((e) => e.type === "run.completed")).toBe(false);
+    expect(workItemState(events, Date.now())).toBe(before);
+    expect(["completed", "cancelled", "failed", "stalled"]).not.toContain(before);
+  });
+
+  test("human mode prints one readable line per shown event and stops at run.completed", async () => {
+    const log = seven();
+    log.append("run.completed", null, { verdict: "VERIFIED" });
+    const out = await follow(false, 2000);
+    expect(out).toContain("stage plan started\n");
+    expect(out).toContain("cost +$0.50, $1.00 so far\n");
+    expect(out).toContain("test bun:a.test.ts: pass\n");
+    expect(out[out.length - 1]).toBe("run completed: VERIFIED\n");
+  });
+
+  test("picks up events appended while following", async () => {
+    const log = seven();
+    const p = follow(true, 400);
+    setTimeout(() => log.append("stage.completed", "verify", {}), 100);
+    const lines = (await p).map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.filter((l) => l.type === "stage")).toHaveLength(8);
+  });
+
+  test("runModernStatus --follow on a finished run prints its events and exits 0", async () => {
+    writeRun("e10-20261003T000000Z-aaaa", { done: true });
+    const { code, out } = await run(["--follow", "--json"]);
+    expect(code).toBe(0);
+    expect(out.trim().split("\n").map((l) => JSON.parse(l).type)).toEqual(["stage", "cost", "stage", "run"]);
   });
 });

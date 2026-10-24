@@ -286,3 +286,74 @@ def test_unknown_provider_400_and_no_file(env, tmp_path, monkeypatch):
     assert m._read_secret("../evil") is None
     assert not (tmp_path / ".loki" / "evil").exists()
     assert not [p for p in (tmp_path / ".loki" / "credentials").glob("*")]
+
+
+def _killed_secret_writer(home, name, value):
+    """Run _write_secret in a child that is SIGKILLed instead of renaming."""
+    import subprocess
+    code = (
+        "import os, signal, sys\n"
+        "sys.path.insert(0, %r)\n"
+        "from dashboard import api_start as m\n"
+        "os.replace = lambda *a, **k: os.kill(os.getpid(), signal.SIGKILL)\n"
+        "m._write_secret(%r, %r)\n" % (os.path.dirname(os.path.dirname(os.path.abspath(__file__))), name, value)
+    )
+    return subprocess.run([sys.executable, "-c", code], env={**os.environ, "HOME": str(home), "PYTHONPATH": os.pathsep.join(sys.path)})
+
+
+def test_secret_writer_killed_before_rename_leaves_no_secret_after_next_write(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from dashboard import api_start as m
+    r = _killed_secret_writer(tmp_path, "github", "ghp_LEAKEDTOKEN1234567890")
+    cdir = tmp_path / ".loki" / "credentials"
+    leaked = list(cdir.glob(".github.*.tmp"))
+    assert r.returncode != 0 and len(leaked) == 1
+    m._write_secret("github", "ghp_NEWTOKEN1234567890xx")
+    assert not list(cdir.glob(".*.tmp"))
+    assert not any("LEAKEDTOKEN" in p.read_text() for p in cdir.iterdir())
+    assert (cdir / "github").read_text().strip() == "ghp_NEWTOKEN1234567890xx"
+
+
+def test_secret_sweep_keeps_live_symlink_foreign_and_never_writes_through_symlink(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from dashboard import api_start as m
+    cdir = m._creds_dir()
+    live = subprocess.Popen(["sleep", "30"])
+    try:
+        (cdir / (".github.%d.tmp" % live.pid)).write_text("live")
+        (cdir / ".github.999999.tmp").symlink_to("/nonexistent")
+        (cdir / "notes.txt").write_text("keep")
+        # a planted symlink at our own temp name must not be written through
+        target = tmp_path / "victim"
+        (cdir / (".github.%d.tmp" % os.getpid())).symlink_to(target)
+        m._write_secret("github", "ghp_NEWTOKEN1234567890xx")
+        assert not target.exists()
+        assert (cdir / (".github.%d.tmp" % live.pid)).exists()
+        assert (cdir / ".github.999999.tmp").is_symlink()
+        assert (cdir / "notes.txt").exists()
+        assert stat.S_IMODE((cdir / "github").stat().st_mode) == 0o600
+    finally:
+        live.terminate()
+        live.wait()
+
+
+def test_secret_sweep_skips_huge_pid_name_and_write_succeeds(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from dashboard import api_start as m
+    cdir = m._creds_dir()
+    huge = cdir / ".github.99999999999999999999.tmp"
+    huge.write_text("planted")
+    m._write_secret("github", "ghp_NEWTOKEN1234567890xx")
+    assert huge.exists()
+    assert (cdir / "github").read_text().strip() == "ghp_NEWTOKEN1234567890xx"
+
+
+def test_secret_sweep_keeps_fresh_temp_of_pid_1_eperm_means_alive(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from dashboard import api_start as m
+    cdir = m._creds_dir()
+    t = cdir / ".github.1.tmp"
+    t.write_text("other")
+    m._write_secret("github", "ghp_NEWTOKEN1234567890xx")
+    assert t.exists()

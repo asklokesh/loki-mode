@@ -138,6 +138,7 @@
       "notes": "Codex uses a single model with effort level (xhigh/high/low) for tier differentiation, so development and fast declare an explicit tier_fallback to planning rather than naming separate models."
     },
     "cline": {
+      "effort": {"flag": null, "levels": [], "unsupported": true, "cli": "cline (not installed here; its documented flags -y and -m include no effort or reasoning option)", "_comment": "Cline exposes no effort or reasoning flag, so LOKI_EFFORT is recorded as unsupported and no flag is emitted."},
       "latest_planning": "openrouter/deepseek/deepseek-v3.2",
       "latest_development": "openrouter/deepseek/deepseek-v3.2",
       "latest_fast": "openrouter/deepseek/deepseek-chat",
@@ -165,6 +166,7 @@
       ]
     },
     "aider": {
+      "effort": {"flag": "--reasoning-effort", "levels": ["low", "medium", "high"], "default": "medium", "cli": "aider 0.86.2", "_comment": "Verified from aider --help (--reasoning-effort sets the reasoning_effort API parameter). A model entry may carry its own effort block, which wins over this provider default."},
       "latest_planning": "openrouter/deepseek/deepseek-v3.2",
       "latest_development": "openrouter/deepseek/deepseek-v3.2",
       "latest_fast": "openrouter/deepseek/deepseek-chat",
@@ -197,6 +199,7 @@
       ]
     },
     "opencode": {
+      "effort": {"flag": "--variant", "levels": ["low", "medium", "high"], "default": "medium", "cli": "opencode 1.18.9", "_comment": "Verified from opencode run --help (--variant: provider-specific reasoning effort). A model entry may carry its own effort block, which wins over this provider default."},
       "latest_planning": "openrouter/deepseek/deepseek-v3.2",
       "latest_development": "openrouter/deepseek/deepseek-v3.2",
       "latest_fast": "openrouter/deepseek/deepseek-chat",

@@ -45,6 +45,30 @@ function groupExtra(dir: string): Record<string, unknown> {
   return { group: sealGroup(dir, receiptSha256 as never).section };
 }
 
+describe("loadSigningKey stale key temp sweep", () => {
+  test("a key temp left by a killed generator is removed once old; a fresh one is kept", async () => {
+    const { loadSigningKey } = await import("../../src/util/receipt_signer.ts");
+    const { utimesSync } = await import("node:fs");
+    const dir = mkdtempSync(join(tmpdir(), "loki-signer-sweep-"));
+    const prev = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
+    const keyFile = join(dir, "k.pem");
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+    try {
+      const oldTmp = join(dir, "k.pem.0123456789ab.tmp"), freshTmp = join(dir, "k.pem.ba9876543210.tmp");
+      writeFileSync(oldTmp, "PRIVATE-LEAK");
+      writeFileSync(freshTmp, "PRIVATE-FRESH");
+      const old = new Date(Date.now() - 2 * 3600 * 1000);
+      utimesSync(oldTmp, old, old);
+      expect(loadSigningKey(true)).not.toBeNull();
+      expect(existsSync(oldTmp)).toBe(false);
+      expect(existsSync(freshTmp)).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; else process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = prev;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("buildReceiptBundle", () => {
   test("receipt with evidence_screens bundles its screenshots and verifies", async () => {
     const dir = run(true, (d) => {
@@ -79,7 +103,7 @@ describe("buildReceiptBundle", () => {
     const pk = takePubkey(["--pubkey", join(out, "pubkey.jwk")]);
     expect(pk.error).toBeUndefined();
     expect((await verifyReceipt(join(out, "receipt.json"), { pubkey: pk.pubkey })).verdict).toBe("VERIFIED");
-    expect(readFileSync(join(out, "VERIFY.md"), "utf8")).toContain("npx loki-mode verify --pubkey pubkey.jwk receipt.json");
+    expect(readFileSync(join(out, "VERIFY.md"), "utf8")).toContain("loki verify --pubkey pubkey.jwk receipt.json");
     const p = join(out, "receipt.json"), t = readFileSync(p, "utf8");
     writeFileSync(p, t.replace('"VERIFIED"', '"VERIFIEX"'));
     expect((await verifyReceipt(p, { pubkey: pk.pubkey })).verdict).toBe("TAMPERED");

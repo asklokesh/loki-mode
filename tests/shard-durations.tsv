@@ -123,6 +123,7 @@ project-graph bash/bun parity (members discovery default)	0
 opencode provider (model-agnostic route, 75+ providers)	0
 opencode start routing and main-loop dispatch	0
 fast_verify: millisecond deterministic verification	1
+check_author context: spec and runner config only, no implementation	1
 provider_invoke_argv timeout seam (judges keep their timeout)	2
 Test Mutation Detector (Gate #9)	1
 Harness False-Green Regression and Mutation	0

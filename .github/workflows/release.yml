@@ -13,7 +13,8 @@ name: Release
 #   publish-python-sdk           PyPI loki-mode-sdk
 #   docker-build -> docker       Docker Hub asklokesh/loki-mode multi-arch, cosign keyless signature
 #   sanity                       seconds-long syntax/version check; nothing depends on it
-# Tests, nightly, security audit, SBOM and smoke workflows were deleted: run
+#   attach-sbom                  SPDX SBOMs (npm tarball, image) attached to the GitHub Release; provenance attested; all continue-on-error
+# Tests, nightly, security audit and smoke workflows were deleted: run
 # them locally (bash scripts/local-ci.sh). Every publish job is idempotent on
 # rerun; npm is never unpublished (npm deprecate is allowed).
 
@@ -59,6 +60,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      id-token: write
+      attestations: write
     outputs:
       tgz_sha256: ${{ steps.digest.outputs.sha256 }}
     steps:
@@ -136,6 +139,43 @@ jobs:
           name: npm-tarball
           overwrite: true
           path: ${{ runner.temp }}/npm-tarball/*.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attest build provenance for the tarball
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/npm-tarball/*.tgz
+
+      - name: Unpack the tarball for the SBOM scan
+        continue-on-error: true
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sbom-src"
+          tar -xzf "$RUNNER_TEMP"/npm-tarball/*.tgz -C "$RUNNER_TEMP/sbom-src"
+
+      - name: Generate the npm SBOM (SPDX JSON)
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: ${{ runner.temp }}/sbom-src
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom-out/loki-mode-npm.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload the npm SBOM
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-npm
+          overwrite: true
+          path: ${{ runner.temp }}/sbom-out/loki-mode-npm.spdx.json
           if-no-files-found: error
           retention-days: 14
 
@@ -704,6 +744,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      attestations: write
     steps:
       - name: Checkout (VERSION only)
         uses: actions/checkout@v4
@@ -760,3 +801,71 @@ jobs:
           set -euo pipefail
           test -n "$DIGEST" || { echo "FATAL: manifest step produced no digest"; exit 1; }
           cosign sign --yes "asklokesh/loki-mode@${DIGEST}"
+
+      - name: Attest build provenance for the image digest
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: index.docker.io/asklokesh/loki-mode
+          subject-digest: ${{ steps.build.outputs.digest }}
+
+      - name: Generate the image SBOM (SPDX JSON)
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: asklokesh/loki-mode@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom-out/loki-mode-image.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload the image SBOM
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-image
+          overwrite: true
+          path: ${{ runner.temp }}/sbom-out/loki-mode-image.spdx.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # Additive: nothing depends on this job and it never fails the run.
+  attach-sbom:
+    needs: [release, pack-npm, docker]
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (VERSION only)
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: VERSION
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Download the SBOMs
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: ${{ runner.temp }}/sbom
+          pattern: sbom-*
+          merge-multiple: true
+
+      - name: Attach the SBOMs to the GitHub release
+        continue-on-error: true
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '\n' < VERSION)"
+          gh release upload "v${VERSION}" "$RUNNER_TEMP"/sbom/*.spdx.json --clobber

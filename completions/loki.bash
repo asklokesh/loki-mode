@@ -134,7 +134,7 @@ _loki_completion() {
 
         status)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--json --badge --probe --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--json --badge --probe --follow --help" -- "$cur") )
                 return 0
             fi
             ;;
@@ -150,6 +150,15 @@ _loki_completion() {
                 COMPREPLY=( $(compgen -W "--json --quiet --fix --yes --repo --requirements --help" -- "$cur") )
                 return 0
             fi
+            ;;
+
+        github)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--dry-run --off --public --private --dir --help" -- "$cur") )
+                return 0
+            fi
+            COMPREPLY=( $(compgen -W "status sync export pr publish protect" -- "$cur") )
+            return 0
             ;;
 
         deploy)

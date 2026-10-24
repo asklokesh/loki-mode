@@ -8,6 +8,7 @@ import { runMachine } from "../../src/engine10/machine.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { readFileSync } from "node:fs";
 import { loadRepoMap, cascadeImplementModel, modelRank, planMode, wallLimitS, resolveModelAlias, sizeTask, smallMaxChars, smallTaskPath, wallFirstModel, wallModel } from "../../src/engine10/sizing.ts";
+import { readPlanScope, planOutOfRepo } from "../../src/util/run_cap.ts";
 import { planStage } from "../../src/engine10/stages/plan.ts";
 import { wallStage, buildWallBrief, WALL_MAP_MAX_LINES } from "../../src/engine10/stages/wall.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
@@ -25,14 +26,14 @@ const files = (n: number) => Array.from({ length: n }, (_, i) => `src/mod${i}.ts
 // A relevant-tests fake: every changed file maps to one impacted test, so the E-64 lean path applies.
 const impactedOne: (m: TestMap, f: string[]) => TestRef[] = (_m, f) => (f.length ? [{ runner: "bun", path: "tests/a.test.ts" }] : []);
 
-async function run(task: string, repoFiles: string[], opts: { impacted?: (m: TestMap, f: string[]) => TestRef[]; model?: string } = {}) {
+async function run(task: string, repoFiles: string[], opts: { impacted?: (m: TestMap, f: string[]) => TestRef[]; model?: string; testmap?: TestMap } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "loki-e45-"));
   dirs.push(dir);
   const repomapRef = join(dir, "repomap.json");
   writeFileSync(repomapRef, JSON.stringify({ files: repoFiles, entries: [], truncated: false }));
   const calls: SessionRunOptions[] = [];
   const events: { type: string; stage: string | null; data: Record<string, unknown> }[] = [];
-  const intake: Stage = { name: "intake", targetS: 1, limitS: 5, run: async () => ({ status: "completed", data: { task, repomap_ref: repomapRef, testmap: TM } }) };
+  const intake: Stage = { name: "intake", targetS: 1, limitS: 5, run: async () => ({ status: "completed", data: { task, repomap_ref: repomapRef, testmap: opts.testmap ?? TM } }) };
   const stages: Partial<Record<StageName, Stage>> = { intake, plan: planStage, wall: wallStage, implement: implementStage };
   const ctx: RunContext = {
     runId: "e10-e45", repoDir: dir, runDir: dir, baseSha: "abc", branch: "loki/e10-e45", provider: "claude", model: opts.model ?? "run-model",
@@ -45,7 +46,7 @@ async function run(task: string, repoFiles: string[], opts: { impacted?: (m: Tes
     outputs: () => ({}),
   };
   await runMachine(ctx, { load: async (n) => stages[n] ?? null });
-  return { calls, events };
+  return { calls, events, runDir: dir };
 }
 
 describe("engine10 E-45 sizing", () => {
@@ -372,9 +373,9 @@ describe("engine10 TEN-COST-26 sizing knobs", () => {
   const map = { files: ["a.ts"], entries: [], truncated: false };
   const long = "fix a.ts " + "x".repeat(691); // 700 chars
   const noRunner: TestMap = { runners: [], tests: [] };
-  it("defaults are unchanged: 700 chars and no runner both size normal", () => {
+  it("defaults: 700 chars sizes normal; a missing runner no longer disqualifies small", () => {
     expect(sizeTask(long, map, TM).size).toBe("normal");
-    expect(sizeTask("fix a.ts", map, noRunner).size).toBe("normal");
+    expect(sizeTask("fix a.ts", map, noRunner).size).toBe("small");
     expect(sizeTask("fix a.ts " + "x".repeat(591), map, TM).size).toBe("small"); // exactly 600
   });
   it("LOKI_E10_SMALL_MAX_CHARS=800 sizes a 700-char task small; 699 keeps it normal (numeric, not string compare)", () => {
@@ -387,13 +388,23 @@ describe("engine10 TEN-COST-26 sizing knobs", () => {
     expect(sizeTask(long, map, TM).size).toBe("small");
     for (const bad of ["abc", "0", "-5", ""]) { process.env.LOKI_E10_SMALL_MAX_CHARS = bad; expect(sizeTask(long, map, TM).size).toBe("normal"); }
   });
-  it("LOKI_E10_SMALL_NO_RUNNER=1 sizes a no-runner task small; other values and a missing map still normal", () => {
+  it("LOKI_E10_SMALL_NO_RUNNER=0 opts out (no-runner is normal); a missing map is always normal", () => {
     process.env.LOKI_E10_SMALL_NO_RUNNER = "1";
     expect(sizeTask("fix a.ts", map, noRunner).size).toBe("small");
-    expect(sizeTask("fix a.ts", map, null).size).toBe("small");
     expect(sizeTask("fix a.ts", null, noRunner).size).toBe("normal");
     process.env.LOKI_E10_SMALL_NO_RUNNER = "0";
     expect(sizeTask("fix a.ts", map, noRunner).size).toBe("normal");
+  });
+  it("through the machine: a no-runner one-file task skips plan and writes the plan-scope.json the guard reads; a multi-file task still plans; the opt-out plans", async () => {
+    const noRun: TestMap = { runners: [], tests: [] };
+    const one = await run("fix the off-by-one in mod1.ts", files(10), { testmap: noRun });
+    expect(one.calls.map((c) => c.stage)).not.toContain("plan");
+    expect(readPlanScope(one.runDir)).toEqual(["src/mod1.ts"]);
+    expect(planOutOfRepo(one.runDir)).toBeNull();
+    const multi = await run("fix mod1.ts mod2.ts mod3.ts together", files(10), { testmap: noRun });
+    expect(multi.calls.map((c) => c.stage)).toContain("plan");
+    process.env.LOKI_E10_SMALL_NO_RUNNER = "0";
+    expect((await run("fix the off-by-one in mod1.ts", files(10), { testmap: noRun })).calls.map((c) => c.stage)).toContain("plan");
   });
   it("a no-runner small task still routes to wall, never lean", () => {
     process.env.LOKI_E10_SMALL_NO_RUNNER = "1";

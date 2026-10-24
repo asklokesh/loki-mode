@@ -137,7 +137,9 @@ provider_invoke() {
     [ -n "$prompt" ] || return 1
     prompt="$PROVIDER_COMMIT_HYGIENE"$'\n\n'"$prompt"
     command -v opencode >/dev/null 2>&1 || return 127
-    opencode run --auto --model "$PROVIDER_MODEL_DEVELOPMENT" "$prompt" "$@" < /dev/null
+    _LOKI_EFFORT_ARGV=()
+    type loki_effort_argv >/dev/null 2>&1 && loki_effort_argv opencode "$PROVIDER_MODEL_DEVELOPMENT" development
+    opencode run --auto --model "$PROVIDER_MODEL_DEVELOPMENT" ${_LOKI_EFFORT_ARGV[@]+"${_LOKI_EFFORT_ARGV[@]}"} "$prompt" "$@" < /dev/null
 }
 
 # provider_invoke_with_tier <tier> <prompt>
@@ -153,7 +155,9 @@ provider_invoke_with_tier() {
     command -v opencode >/dev/null 2>&1 || return 127
     local model
     model="$(provider_get_tier_param "$tier")"
-    opencode run --auto --model "$model" "$prompt" "$@" < /dev/null
+    _LOKI_EFFORT_ARGV=()
+    type loki_effort_argv >/dev/null 2>&1 && loki_effort_argv opencode "$model" "$tier"
+    opencode run --auto --model "$model" ${_LOKI_EFFORT_ARGV[@]+"${_LOKI_EFFORT_ARGV[@]}"} "$prompt" "$@" < /dev/null
 }
 
 # provider_invoke_argv <tier> <prompt> -- see providers/claude.sh for rationale.
@@ -163,5 +167,7 @@ provider_invoke_argv() {
     prompt="$PROVIDER_COMMIT_HYGIENE"$'\n\n'"$prompt"
     local model
     model="$(provider_get_tier_param "$tier")"
-    _LOKI_INVOKE_ARGV=(opencode run --auto --model "$model" "$prompt")
+    _LOKI_EFFORT_ARGV=()
+    type loki_effort_argv >/dev/null 2>&1 && loki_effort_argv opencode "$model" "$tier"
+    _LOKI_INVOKE_ARGV=(opencode run --auto --model "$model" ${_LOKI_EFFORT_ARGV[@]+"${_LOKI_EFFORT_ARGV[@]}"} "$prompt")
 }

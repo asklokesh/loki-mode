@@ -35,7 +35,7 @@ import { findIsolatedPython3 } from "../util/python.ts";
 import { BOLD, CYAN, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 import { tierGate } from "../util/tier.ts";
 import { verifyReceipt } from "../engine10/verify_cmd.ts";
-import { buildReceiptBundle } from "../util/receipt_bundle.ts";
+import { buildAuditBundle, buildReceiptBundle, commitsInRange, receiptsInRange } from "../util/receipt_bundle.ts";
 import { runSecureScan } from "../util/secure_scan.ts";
 
 const HELP = `${BOLD}loki proof${NC} - inspect and share proof-of-run artifacts
@@ -55,6 +55,13 @@ Subcommands:
   badge <id>           Print a copy-paste "Verified by Loki" markdown badge
   bundle <run-id>      Write a portable receipt bundle for offline verification
                        [--out <dir>] (default ./loki-bundle-<run-id>)
+  bundle --audit <from>..<to>
+                       One .tgz with every run receipt whose head commit is in the range,
+                       an index.csv (run_id,commit,verdict,date) and a verify.sh that
+                       cross-checks the index against the signed receipts and prints key ids
+                       (pin with --expect-kid)
+                       [--out <file.tgz>] (default ./loki-audit-<from>..<to>.tgz). Evidence
+                       export only; it makes no certification claim.
 
 For a 'loki start' run with no .loki/proofs/<id>, badge, bundle and share read
 .loki/runs/<id>/receipt.json. badge prints only when the signature verifies and
@@ -578,9 +585,16 @@ async function printRunBadge(receiptPath: string): Promise<number> {
 async function bundleProof(argv: readonly string[]): Promise<number> {
   let id = "";
   let out = "";
+  let audit = "";
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
-    if (a === "--out") {
+    if (a === "--audit") {
+      audit = argv[++i] ?? "";
+      if (!audit) {
+        process.stderr.write(`${RED}--audit needs <from>..<to>.${NC}\n`);
+        return 2;
+      }
+    } else if (a === "--out") {
       out = argv[++i] ?? "";
       if (!out) {
         process.stderr.write(`${RED}--out needs a directory.${NC}\n`);
@@ -590,6 +604,30 @@ async function bundleProof(argv: readonly string[]): Promise<number> {
       process.stderr.write(`${RED}Unknown option: ${a}${NC}\n`);
       return 1;
     } else id = a;
+  }
+  if (audit) {
+    if (id) {
+      process.stderr.write(`${RED}--audit takes a range, not a run id.${NC}\n`);
+      return 2;
+    }
+    const range = commitsInRange(process.cwd(), audit);
+    if (!range.ok) {
+      process.stderr.write(`${RED}Audit bundle refused:${NC} ${range.error}\n`);
+      return 2;
+    }
+    const outFile = resolve(out || join(process.cwd(), `loki-audit-${audit.replace(/[^A-Za-z0-9._-]/g, "_")}.tgz`));
+    const { runs, unreadable } = receiptsInRange(join(lokiDir(), "runs"), range.commits);
+    if (unreadable.length > 0) {
+      process.stderr.write(`${RED}Audit bundle refused:${NC} ${unreadable.length} run receipt(s) cannot be read or mapped to a commit, so the archive would silently omit them:\n${unreadable.map((u) => `  ${u.runId}: ${u.reason}`).join("\n")}\nFix or move those run directories, then retry.\n`);
+      return 1;
+    }
+    const r = await buildAuditBundle(runs, range.commits, outFile);
+    if (!r.ok) {
+      process.stderr.write(`${RED}Audit bundle refused:${NC} ${r.error}\n`);
+      return 1;
+    }
+    process.stdout.write(`${GREEN}Audit archive written: ${r.outDir}${NC} (${runs.length} receipts)\nSigning key id: ${r.kid}\nExtract it and run verify.sh (needs the Loki CLI) to re-check each receipt. Pass --expect-kid <id> with a key id you got from the signer out of band;\nwithout a pinned key id the check proves the archive is internally consistent only.\n`);
+    return 0;
   }
   if (!id) {
     process.stderr.write(`${RED}Missing run id.${NC}\n`);

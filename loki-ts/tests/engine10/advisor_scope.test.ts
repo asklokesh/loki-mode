@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createSessionRunner } from "../../src/engine10/session.ts";
-import { probeAdvisor } from "../../src/runner/router/advisor_probe.ts";
+import { advisorPair, probeAdvisor } from "../../src/runner/router/advisor_probe.ts";
 import { planRouterSession } from "../../src/runner/providers.ts";
 import { advisorOnlyEnabled } from "../../src/runner/router/flag.ts";
 import { routerTelemetryOn } from "../../src/engine10/cost.ts";
@@ -45,10 +45,10 @@ describe("CH-02 child env scope", () => {
 describe("CH-02 probe", () => {
   const base = { LOKI_ADVISOR_SCOPE: "off" };
   test("scope=off is unavailable with the exact reason", () => {
-    expect(probeAdvisor(base, "claude", "2.1.300", "/nonexistent")).toEqual({ available: false, reason: "advisor not marked for this stage" });
+    expect(probeAdvisor(base, "claude", "2.1.300", "/nonexistent", advisorPair({}))).toEqual({ available: false, reason: "advisor not marked for this stage" });
   });
   test("scope unset stays available", () => {
-    expect(probeAdvisor({}, "claude", "2.1.300", "/nonexistent").available).toBe(true);
+    expect(probeAdvisor({}, "claude", "2.1.300", "/nonexistent", advisorPair({})).available).toBe(true);
   });
   test("an unmarked stage gets Sonnet, never Haiku, with no advisor settings", () => {
     const p = planRouterSession({ model: "haiku", runDir: "/nonexistent", claudeCodeVersion: "2.1.300", env: { LOKI_ROUTER: "1", ...base } });

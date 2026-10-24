@@ -37,7 +37,7 @@ describe("renderReviewerBody", () => {
     expect(body).toContain("sha256:ab12 (signed)");
     expect(body).toContain("- Verify: `loki verify run-1`");
     expect(body).toContain("`loki proof bundle run-1`");
-    expect(body).toContain("`npx loki-mode verify --pubkey pubkey.jwk receipt.json`");
+    expect(body).toContain("`loki verify --pubkey pubkey.jwk receipt.json`");
   });
   it("adds the footer, LOKI_PR_FOOTER=0 removes it and keeps the verify lines", () => {
     expect(body.trimEnd().split("\n").pop()).toBe("Built with Loki Mode: https://github.com/asklokesh/loki-mode");

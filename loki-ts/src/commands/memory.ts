@@ -1,13 +1,15 @@
 // Port of autonomy/loki cmd_memory() -- subset for Phase 2:
 // `list` / `ls` and `index` only. Other subcommands (show, consolidate,
 // timeline, etc.) defer to bash via execLegacyBash.
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { suggestWord } from "../cli/registry.ts";
 import { BOLD, GREEN, YELLOW, CYAN, NC } from "../util/colors.ts";
 import { homeLokiDir, lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { runInline } from "../util/python.ts";
+import { redactSecrets } from "../util/redact.ts";
 import { run } from "../util/shell.ts";
 import { GhError, type Lesson, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, MAX_RECENT, defaultGh, loadLessons, promoteLesson, removeLesson, retrieveLessons } from "../util/pr_lessons.ts";
 import { learningsBlock } from "../engine10/stages/implement.ts";
@@ -99,6 +101,76 @@ print(f'Index rebuilt: {total} memories indexed')
   return 0;
 }
 
+export interface MemoryHit { run_id: string; date: string; file: string; line: number; text: string }
+
+const SEARCH_USAGE = "Usage: loki memory search <text> [--json]";
+
+const MAX_LINE_CHARS = 1024 * 1024;
+
+// Calls onLine as each line completes, reading 64 KB chunks. A line keeps at most MAX_LINE_CHARS (the rest is dropped), so memory stays bounded. Returns false when the file holds a NUL byte (binary).
+export function eachLine(abs: string, onLine: (line: string, no: number) => void): boolean {
+  const fd = openSync(abs, "r");
+  try {
+    const buf = Buffer.alloc(64 * 1024);
+    const dec = new StringDecoder("utf8");
+    let carry = "";
+    let no = 0;
+    const push = (piece: string): void => {
+      if (carry.length < MAX_LINE_CHARS) carry += piece.length > MAX_LINE_CHARS - carry.length ? piece.slice(0, MAX_LINE_CHARS - carry.length) : piece;
+    };
+    for (;;) {
+      const n = readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      if (buf.subarray(0, n).includes(0)) return false;
+      const parts = dec.write(buf.subarray(0, n)).split("\n");
+      for (let i = 0; i < parts.length; i++) {
+        push(parts[i] ?? "");
+        if (i < parts.length - 1) { onLine(carry, ++no); carry = ""; }
+      }
+    }
+    push(dec.end());
+    if (carry !== "") onLine(carry, ++no);
+    return true;
+  } finally { closeSync(fd); }
+}
+
+// Case-insensitive substring search over run files, decisions and semantic memory under <root>/.loki. Nothing is read through a symlink: a symlinked .loki is refused
+// (no hits), and every directory and file must resolve to its own lexical path under the real .loki. Hardlinks are not detected.
+// Printed fields pass through the shared secret redactor; a multi-line PEM body is redacted on its BEGIN line only. The Bun route covers decisions, runs and semantic memory only.
+export function searchMemory(root: string, text: string): MemoryHit[] {
+  const needle = text.toLowerCase();
+  const hits: MemoryHit[] = [];
+  let base: string;
+  try {
+    const lexical = resolve(root, ".loki");
+    if (!lstatSync(lexical).isDirectory()) return hits;
+    base = realpathSync(lexical);
+  } catch { return hits; }
+  const inside = (abs: string): boolean => {
+    try { return realpathSync(abs) === abs; } catch { return false; }
+  };
+  const red = (v: string): string => redactSecrets(v);
+  const scan = (abs: string, rel: string, runId: string): void => {
+    try {
+      const st = lstatSync(abs);
+      if (st.isSymbolicLink() || !st.isFile() || !inside(abs)) return;
+      const date = st.mtime.toISOString().slice(0, 10);
+      eachLine(abs, (ln, no) => {
+        if (ln.toLowerCase().includes(needle)) hits.push({ run_id: red(runId), date, file: red(rel), line: no, text: red(ln.trim()).slice(0, 200) });
+      });
+    } catch { /* unreadable file: no hits */ }
+  };
+  const names = (dir: string): string[] => {
+    try { return lstatSync(dir).isDirectory() && inside(dir) ? readdirSync(dir).sort() : []; } catch { return []; }
+  };
+  for (const id of names(resolve(base, "runs"))) {
+    for (const f of names(resolve(base, "runs", id))) scan(resolve(base, "runs", id, f), `.loki/runs/${id}/${f}`, id);
+  }
+  for (const f of names(resolve(base, "decisions"))) scan(resolve(base, "decisions", f), `.loki/decisions/${f}`, "-");
+  for (const f of names(resolve(base, "memory", "semantic"))) scan(resolve(base, "memory", "semantic", f), `.loki/memory/semantic/${f}`, "-");
+  return hits;
+}
+
 // verified_ratio is VERIFIED uses over uses with a settled verdict; null while none has settled.
 function lessonJson(l: Lesson): Record<string, unknown> {
   const settled = l.uses.filter((u) => u.verdict !== null);
@@ -147,6 +219,19 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
       const task = i >= 0 ? (argv[i + 1] ?? "") : "";
       if (i >= 0 && (task === "" || task.startsWith("--"))) { process.stderr.write("Usage: loki memory brief [--task <text>]\n"); return 2; }
       process.stdout.write((formatLessonsForBrief(retrieveLessons(process.cwd(), task)) + learningsBlock(process.cwd())).trimStart());
+      return 0;
+    }
+    case "search": {
+      if (unknownFlag("search", argv.slice(1), ["--json"], SEARCH_USAGE)) return 2;
+      const text = argv.slice(1).filter((a) => !a.startsWith("-")).join(" ").trim();
+      if (!text) { process.stderr.write(`${SEARCH_USAGE}\n`); return 2; }
+      const hits = searchMemory(process.cwd(), text);
+      if (argv.slice(1).includes("--json")) {
+        process.stdout.write(`${JSON.stringify(hits, null, 2)}\n`);
+        return 0;
+      }
+      if (hits.length === 0) process.stdout.write(`No matches for '${text}'\n`);
+      for (const h of hits) process.stdout.write(`${h.run_id}  ${h.date}  ${h.file}:${h.line}: ${h.text}\n`);
       return 0;
     }
     case "promote": {

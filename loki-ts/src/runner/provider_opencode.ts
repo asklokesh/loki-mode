@@ -7,6 +7,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { run as shellRun } from "../util/shell.ts";
+import { effortArgv } from "../providers/model_routes.ts";
 import { PROVIDER_COMMIT_HYGIENE } from "./providers.ts";
 import type { ProviderInvocation, ProviderInvoker, ProviderResult } from "./types.ts";
 
@@ -29,6 +30,7 @@ export function buildOpencodeArgv(prompt: string, env: Record<string, string | u
   // Provider-scoped model only: opencode ids are "provider/model"; the global tier vars carry Claude aliases.
   const model = (env["LOKI_OPENCODE_MODEL"] ?? "").trim();
   if (model.length > 0) argv.push("-m", model);
+  argv.push(...effortArgv("opencode", model, "development", env)); // LOKI_EFFORT -> --variant (catalog-clamped)
   for (const tok of (env["LOKI_OPENCODE_FLAGS"] ?? "").split(/\s+/)) if (tok.length > 0) argv.push(tok);
   argv.push(`${PROVIDER_COMMIT_HYGIENE}\n\n${prompt}`);
   return argv;

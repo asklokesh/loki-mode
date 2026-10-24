@@ -541,6 +541,16 @@ case_check_author_context() {
     printf 'MARKER = "%s"\n\ndef greet(name):\n    return "hello " + name\n' "$impl_canary" > "$repo/src/app.py"
     printf 'from src.app import greet, MARKER  # %s\n\ndef test_greet():\n    assert greet("a") == "hello a"\n' \
         "$impl_canary" > "$repo/tests/test_app.py"
+    printf '{"name":"fixture"}\n' > "$repo/package.json"
+    printf 'export const impl = "%s";\n' "$impl_canary" > "$repo/src/vitest.config.ts"
+    # Tracked fixture: check_author.py selects from git ls-files, so a plain dir would
+    # take its non-git spec-only path and pass with the CONFIG/TESTISH filter removed.
+    if ! { git -C "$repo" init -q \
+        && git -C "$repo" add prd.md package.json src/app.py src/vitest.config.ts tests/test_app.py \
+        && git -C "$repo" -c user.name=moat -c user.email=moat@example.invalid -c commit.gpgsign=false commit -q -m fixture; }; then
+        nok "fixture git setup failed"
+        return
+    fi
     # Canary positive control: the probe can see the canary in the implementation.
     if ! grep -rqF "$impl_canary" "$repo/src" "$repo/tests"; then
         nok "canary positive control failed: fixture implementation lacks the canary"
@@ -575,7 +585,9 @@ if sys.argv[2] not in str(d.get("prompt", "")):
 paths = [str(i.get("path", "")) for i in (d.get("inputs") or []) if isinstance(i, dict)]
 if not any(p.endswith("prd.md") for p in paths):
     bad.append("spec not listed in inputs")
-leaked = [p for p in paths if p.endswith(("src/app.py", "tests/test_app.py"))]
+if "package.json" not in paths:
+    bad.append("tracked root runner config package.json not listed (git path not exercised)")
+leaked = [p for p in paths if p.endswith(("src/app.py", "tests/test_app.py", "src/vitest.config.ts"))]
 if leaked:
     bad.append("implementation files in inputs: %s" % ",".join(leaked))
 print("; ".join(bad))

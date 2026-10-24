@@ -8,18 +8,15 @@ import { dirname, join } from "node:path";
 import { archivePriorCosts, writeProviderCost, stageMedianGapMs } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
 import { canonicalSessionPin, PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
-import { idleGapMs } from "../util/cost_breakdown.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
-import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
 import { hooks } from "./hooks.ts";
 import { readSessionId } from "../runner/session_resume.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
-import { safeGit } from "../util/safe_git.ts"; import { claudeTierToModel } from "../runner/providers.ts"; import { prefixParts, prefixSha } from "../util/cost_breakdown.ts"; import { engine10StaticPrefix } from "../runner/providers.ts";
+import { clampBashTimeoutEnv, envWithPwd, killGroupWithGrace, reapLiveGroup } from "../runner/worker_proc.ts"; import { safeGit } from "../util/safe_git.ts"; import { claudeTierToModel, engine10StaticPrefix } from "../runner/providers.ts"; import { idleGapMs, prefixParts, prefixSha } from "../util/cost_breakdown.ts";
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
-import { calculateCostFromRecords, readEfficiencyDir } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
-const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
+import { calculateCostFromRecords, partialUsagePath, readEfficiencyDir, recordPartialStreamCost } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
 export const HEARTBEAT_MS_DEFAULT = 30_000; // E-68 (augmentiq #52 P0): a provider call emits progress at least every 30s
 /** CH-02: stages Opus marks for the advisor. Wall is never marked (Rule of Two). */
@@ -90,6 +87,8 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
     if (process.env["LOKI_E10_INVOKER"] === "cli") delete env["LOKI_SDK_LOOP"];
     else env["LOKI_SDK_LOOP"] = "1";
     env["LOKI_HOST_GUARD"] = "1";
+    env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"; // an engine stage never needs background work; a Bash at its timeout stops instead of auto-backgrounding and pinning a finished session
+    clampBashTimeoutEnv(env, opts.limitS);
     if (env["LOKI_E10_PREFIX"] === undefined) env["LOKI_E10_PREFIX"] = "lean"; // TEN-COST-13: lean cache-stable prefix by default; an explicit user value (including off) wins
     const override = process.env["LOKI_MODEL_OVERRIDE"];
     if (override) {
@@ -178,13 +177,6 @@ export function classifyExitCause(exit: number | null, killed: boolean, killCaus
   if (exit === null) return "external kill";
   return EXIT_CAUSES[exit] ?? `exit ${exit} (unrecognized code)`;
 }
-// SIGTERM now, SIGKILL after the grace, against the whole group; shared by the limit timeout and an external abort.
-function killGroupWithGrace(pgid: number | undefined): void {
-  if (!pgid) return;
-  const send = (signal: NodeJS.Signals) => { try { process.kill(-pgid, signal); } catch { /* already exited */ } };
-  send("SIGTERM");
-  setTimeout(() => send("SIGKILL"), KILL_GRACE_MS);
-}
 const lastStageEnd = new WeakMap<SessionRunnerConfig, Map<string, number>>(); // per run: runner config -> stage -> last session end (epoch ms)
 /** Efficiency record plus cost event for one session; a run in another cwd (wall's temp dir) has its result-cost file copied into lokiRoot first, so seal can price it after that dir is gone. */
 function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: string, durationS: number, outText = ""): void {
@@ -232,7 +224,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       const sessionId = opts.iterationId;
       // stderr is piped and kept (tail only, E-61) for stage.failed diagnostics; always drained via the "data" listener below so a full pipe can never stall the child.
       const guardSnap = isGuarded(cfg.provider) && cfg.lokiRoot ? beginGuard(opts.cwd ?? process.cwd(), cfg.lokiRoot) : null; // PARITY-ENFORCE
-      const child: ChildProcess = spawn(cmd, args, { cwd: opts.cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+      const child: ChildProcess = spawn(cmd, args, { cwd: opts.cwd, env: envWithPwd(env, opts.cwd), detached: true, stdio: ["ignore", "pipe", "pipe"] });
       const pgid = child.pid;
       let stdout = "";
       child.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
@@ -258,12 +250,15 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       const watchdog = createWatchdog(Date.now), stallKill = stallKillS(); // FC-17: 0 (default) never kills
       const heartbeatTimer = setInterval(() => {
         const un = untrackedList(opts.cwd), diff = diffShortstat(opts.cwd, un), w = watchdog.tick(stdout.length + errBytes, diffSignature(opts.cwd, diff, un)); // one ls-files per tick, shared (TEN-SPEED-21)
-        cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff, progress: w.cls });
+        const live = readSessionId(opts.cwd ?? process.cwd(), opts.iterationId); // mirrors the provider session id into the append-only log so a SIGKILL cannot lose it; key absent until known
+        cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff, progress: w.cls, ...(live ? { provider_session_id: live } : {}) });
         if (w.stalledNow) cfg.emit?.("session.stalled", opts.stage, { session_id: sessionId, idle_s: w.idleS, threshold_s: stallThresholdS() }); if (stallKill > 0 && w.idleS >= stallKill) kill("stalled");
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);
       opts.signal.addEventListener("abort", onAbort, { once: true });
       const untrack = trackSession(() => kill("aborted"));
       return new Promise<SessionResult & { stderrTail: string }>((resolve) => {
+        // A background grandchild holding the stdout pipe delays "close" indefinitely: on "exit" reap the session's own group.
+        child.on("exit", () => reapLiveGroup(pgid, () => cfg.emit?.("session.group_reaped", opts.stage, { session_id: sessionId, pgid })));
         // "close", not "exit": stdout may still be draining, and the marker is usually last.
         child.on("close", (code) => {
           clearTimeout(limitTimer);

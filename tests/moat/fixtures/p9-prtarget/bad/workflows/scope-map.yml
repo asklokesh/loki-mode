@@ -1,0 +1,10 @@
+name: scope-map
+on:
+  push:
+  workflow_run:
+    workflows: [ci]
+jobs:
+  map:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi

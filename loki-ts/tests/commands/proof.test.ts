@@ -15,12 +15,16 @@
 // autonomy/loki:37) so the colored "No proofs found" line is byte-comparable.
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { SupervisorLog } from "../../src/engine10/supervisor.ts";
+import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { run } from "../../src/util/shell.ts";
 import { runProof } from "../../src/commands/proof.ts";
+import { buildReceiptBundle } from "../../src/util/receipt_bundle.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const BUN_CLI = resolve(REPO_ROOT, "loki-ts", "src", "cli.ts");
@@ -397,5 +401,411 @@ describe("loki proof list --json", () => {
     const r = await bunRoute(["proof", "list", "--json"]);
     expect(r.exitCode).toBe(0);
     expect(JSON.parse(r.stdout)).toEqual([]);
+  });
+});
+
+describe("loki proof bundle --audit <from>..<to>", () => {
+  const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
+  let repo = "";
+  let prevCwd = "";
+  const saved: Record<string, string | undefined> = {};
+  const heads: string[] = [];
+
+  beforeEach(() => {
+    prevCwd = process.cwd();
+    for (const k of ["LOKI_DIR", "LOKI_RECEIPT_SIGNING_KEY_FILE", "LOKI_RECEIPT_SIGNING_KEY"]) saved[k] = process.env[k];
+    repo = mkdtempSync(join(tmpdir(), "loki-audit-"));
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(repo, "k.pem");
+    process.env["LOKI_DIR"] = join(repo, ".loki");
+    git(repo, ["init", "-q", "-b", "main"]);
+    heads.length = 0;
+    for (let i = 0; i <= 6; i++) {
+      writeFileSync(join(repo, "f.txt"), `v${i}\n`);
+      git(repo, ["add", "f.txt"]);
+      git(repo, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", `c${i}`]);
+      heads.push(git(repo, ["rev-parse", "HEAD"]).stdout.trim());
+      if (i === 0) git(repo, ["tag", "base"]);
+    }
+    for (let i = 1; i <= 6; i++) seedRun(`run-${i}`, heads[i]!);
+    process.chdir(repo);
+  });
+  afterEach(() => {
+    process.chdir(prevCwd);
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  function seedRun(id: string, head: string | null, verdict = "VERIFIED", lokiRoot = ".loki"): void {
+    const dir = join(repo, lokiRoot, "runs", id);
+    const ev = join(dir, "events.jsonl");
+    mkdirSync(dir, { recursive: true });
+    const log = new SupervisorLog(ev, id);
+    log.append("run.started", null, { provider: "claude" });
+    const evSha = new Bun.CryptoHasher("sha256").update(readFileSync(ev)).digest("hex");
+    const body = { schema: "loki.v10.receipt/1", run_id: id, verdict, ...(head === null ? {} : { head_sha: head }), events_sha256: evSha, time: { wall_s: 0, stages: {} }, log_seal: true };
+    const hash = receiptSha256(body as never);
+    writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signReceipt(id, hash) }, null, 2));
+    log.append("receipt.sealed", "seal", { receipt_sha256: hash });
+    log.verify();
+    log.append("run.completed", null, {});
+    log.sealLog();
+  }
+
+  const bundle = (out: string, range = "base..main"): Promise<number> => runProof(["bundle", "--audit", range, "--out", out]);
+  function extract(archive: string): string {
+    const dest = join(repo, "x");
+    mkdirSync(dest, { recursive: true });
+    expect(spawnSync("tar", ["-xzf", archive, "-C", dest]).status).toBe(0);
+    return dest;
+  }
+  const runScript = (dest: string, args: string[] = [], env: Record<string, string> = {}) =>
+    spawnSync("sh", [join(dest, "verify.sh"), ...args], { encoding: "utf8", env: { ...process.env, LOKI_AUDIT_VERIFIER: `bun ${BUN_CLI} engine10 verify`, ...env } });
+  const kidOfRun = (dest: string, id: string): string => JSON.parse(readFileSync(join(dest, "receipts", id, "pubkey.jwk"), "utf8")).kid as string;
+
+  it("archive holds 6 receipts and a 6-row CSV index", async () => {
+    const out = join(repo, "audit.tgz");
+    expect(await bundle(out)).toBe(0);
+    const dest = extract(out);
+    const rows = readFileSync(join(dest, "index.csv"), "utf8").trim().split("\n");
+    expect(rows[0]).toBe("run_id,commit,verdict,date");
+    expect(rows.length).toBe(7);
+    for (let i = 1; i <= 6; i++) {
+      expect(existsSync(join(dest, "receipts", `run-${i}`, "receipt.json"))).toBe(true);
+      expect(rows.some((r) => r.startsWith(`run-${i},${heads[i]},VERIFIED,`))).toBe(true);
+    }
+    expect(existsSync(join(dest, "verify.sh"))).toBe(true);
+  });
+
+  it("bundled verify.sh exits 0 with an explicit verifier", async () => {
+    const out = join(repo, "audit.tgz");
+    expect(await bundle(out)).toBe(0);
+    const r = runScript(extract(out));
+    expect(r.stdout).toContain("6 receipt(s) checked");
+    expect(r.status).toBe(0);
+  }, 60000);
+
+  it("tampering with one receipt makes verify.sh exit non-zero and name it", async () => {
+    const out = join(repo, "audit.tgz");
+    expect(await bundle(out)).toBe(0);
+    const dest = extract(out);
+    const rp = join(dest, "receipts", "run-3", "receipt.json");
+    writeFileSync(rp, readFileSync(rp, "utf8").replace('"VERIFIED"', '"FAILED"'));
+    const r = runScript(dest);
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).toContain("FAIL run-3");
+    expect(r.stdout).not.toContain("FAIL run-2");
+  }, 60000);
+
+  it("range refs are data: option-like and malformed ranges are refused, no archive written", async () => {
+    for (const bad of ["--output=x..main", "base..main;touch pwned", "base", "..main", "base..$(id)"]) {
+      expect(await bundle(join(repo, "bad.tgz"), bad)).not.toBe(0);
+    }
+    expect(existsSync(join(repo, "bad.tgz"))).toBe(false);
+    expect(existsSync(join(repo, "pwned"))).toBe(false);
+  });
+
+  it("index.csv carries each receipt's own signed verdict and verify.sh prints its verifier first", async () => {
+    seedRun("run-7", heads[6]!, "PARTIAL");
+    const out = join(repo, "audit.tgz");
+    expect(await bundle(out)).toBe(0);
+    const dest = extract(out);
+    expect(readFileSync(join(dest, "index.csv"), "utf8")).toContain(`run-7,${heads[6]},PARTIAL,`);
+    const r = runScript(dest);
+    expect(r.stdout.split("\n")[0]).toContain("verifier: ");
+    expect(r.stdout).toContain("OUTCOME run-7: integrity OK, run outcome not verified");
+    expect(r.stdout).not.toContain("FAIL run-7");
+    expect(r.status).toBe(4);
+  }, 60000);
+
+  it("editing an index.csv verdict or commit makes verify.sh exit non-zero", async () => {
+    const out = join(repo, "audit.tgz");
+    expect(await bundle(out)).toBe(0);
+    const dest = extract(out);
+    const idx = join(dest, "index.csv");
+    const orig = readFileSync(idx, "utf8");
+    writeFileSync(idx, orig.replace(`run-2,${heads[2]},VERIFIED`, `run-2,${heads[2]},FAILED`));
+    let r = runScript(dest);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("run-2: index verdict 'FAILED' differs from signed verdict 'VERIFIED'");
+    writeFileSync(idx, orig.replace(`run-2,${heads[2]}`, `run-2,${heads[3]}`));
+    r = runScript(dest);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("run-2: index commit");
+  }, 60000);
+
+  it("a deleted receipt directory fails, with or without its index row; an unlisted one fails too", async () => {
+    const out = join(repo, "audit.tgz");
+    expect(await bundle(out)).toBe(0);
+    const dest = extract(out);
+    const idx = join(dest, "index.csv");
+    const orig = readFileSync(idx, "utf8");
+    rmSync(join(dest, "receipts", "run-4"), { recursive: true });
+    let r = runScript(dest);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("run-4: receipt missing");
+    writeFileSync(idx, orig.split("\n").filter((l) => !l.startsWith("run-4,")).join("\n"));
+    r = runScript(dest);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("archive was built with 6");
+    mkdirSync(join(dest, "receipts", "run-ghost"), { recursive: true });
+    writeFileSync(idx, orig);
+    r = runScript(dest);
+    expect(r.stdout).toContain("run-ghost: receipt directory has no index.csv row");
+    expect(r.status).toBe(1);
+  }, 60000);
+
+  it("prints each key id; a forged receipt under a second key in a genuine archive fails; pinning works", async () => {
+    const out = join(repo, "audit.tgz");
+    expect(await bundle(out)).toBe(0);
+    const dest = extract(out);
+    const good = kidOfRun(dest, "run-1");
+    let r = runScript(dest);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(`OK   run-1 (kid ${good})`);
+    expect(r.stdout).toContain("internally consistent only");
+    r = runScript(dest, ["--expect-kid", good]);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(`key id pinned to ${good}`);
+    r = runScript(dest, [], { LOKI_AUDIT_EXPECT_KID: "not-the-key" });
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("is not the pinned key id");
+    // forge run-2 under a second key, valid on its own
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(repo, "k2.pem");
+    seedRun("run-2", heads[2]!, "VERIFIED", ".loki2");
+    const forged = join(repo, "forged");
+    expect((await buildReceiptBundle(join(repo, ".loki2", "runs", "run-2"), forged)).ok).toBe(true);
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(repo, "k.pem");
+    rmSync(join(dest, "receipts", "run-2"), { recursive: true });
+    cpSync(forged, join(dest, "receipts", "run-2"), { recursive: true });
+    r = runScript(dest);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("mixes 2 different signing keys");
+  }, 60000);
+
+  it("refuses, listing every run whose receipt cannot be read (unparseable or DSSE), writing no archive", async () => {
+    mkdirSync(join(repo, ".loki", "runs", "run-bad"), { recursive: true });
+    writeFileSync(join(repo, ".loki", "runs", "run-bad", "receipt.json"), "{ not json");
+    mkdirSync(join(repo, ".loki", "runs", "run-dsse"), { recursive: true });
+    writeFileSync(join(repo, ".loki", "runs", "run-dsse", "receipt.json"), JSON.stringify({ payloadType: "application/vnd.in-toto+json", payload: "e30=", signatures: [] }));
+    const errs: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((c: string | Uint8Array) => (errs.push(String(c)), true)) as typeof process.stderr.write;
+    let rc: number;
+    try { rc = await bundle(join(repo, "audit.tgz")); } finally { process.stderr.write = orig; }
+    expect(rc).not.toBe(0);
+    expect(errs.join("")).toContain("run-bad");
+    expect(errs.join("")).toContain("run-dsse");
+    expect(existsSync(join(repo, "audit.tgz"))).toBe(false);
+  });
+
+  describe("forged archives the sed-based verify.sh accepted", () => {
+    // A genuine same-key receipt for a commit outside base..main (heads[0] is base itself).
+    async function outsideBundle(): Promise<string> {
+      seedRun("run-x", heads[0]!, "VERIFIED", ".lokix");
+      const dir = join(repo, "outside");
+      rmSync(dir, { recursive: true, force: true });
+      expect((await buildReceiptBundle(join(repo, ".lokix", "runs", "run-x"), dir)).ok).toBe(true);
+      return dir;
+    }
+    const swapIn = (dest: string, id: string, src: string) => { rmSync(join(dest, "receipts", id), { recursive: true }); cpSync(src, join(dest, "receipts", id), { recursive: true }); };
+    const insertBefore = (file: string, needle: string, text: string) => { const t = readFileSync(file, "utf8"); expect(t).toContain(needle); writeFileSync(file, t.replace(needle, `${text}\n${needle}`)); };
+    const archive = async () => { const out = join(repo, "audit.tgz"); expect(await bundle(out)).toBe(0); return extract(out); };
+
+    it("B5: a retry receipt copied over a sibling run that shares its commit is refused", async () => {
+      seedRun("run-2b", heads[2]!, "VERIFIED");
+      const dest = await archive();
+      expect(readFileSync(join(dest, "index.csv"), "utf8")).toContain("run-2b,");
+      swapIn(dest, "run-2", join(dest, "receipts", "run-2b"));
+      const r = runScript(dest, ["--expect-kid", kidOfRun(dest, "run-1")]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain("run-2: signed run_id 'run-2b' differs from the index run id");
+      expect(r.stdout).toContain("two rows hold the same signed receipt");
+      expect(r.stdout).not.toContain("RESULT: OK");
+    }, 60000);
+
+    it("B6: a genuine same-key receipt of another run id cannot replace an in-range row", async () => {
+      const dest = await archive();
+      seedRun("run-ci", heads[2]!, "VERIFIED", ".lokix");
+      const foreign = join(repo, "foreign");
+      expect((await buildReceiptBundle(join(repo, ".lokix", "runs", "run-ci"), foreign)).ok).toBe(true);
+      swapIn(dest, "run-2", foreign);
+      const r = runScript(dest, ["--expect-kid", kidOfRun(dest, "run-1")]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain("run-2: signed run_id 'run-ci' differs from the index run id");
+      expect(r.stdout).toContain("run-2: signed receipt hash");
+      expect(r.stdout).not.toContain("RESULT: OK");
+    }, 60000);
+
+    it("B5: coverage of the baked receipt hash set must equal its size", async () => {
+      const dest = await archive();
+      const vs = join(dest, "verify.sh");
+      const t = readFileSync(vs, "utf8");
+      expect(t).toContain("NSHAS=6");
+      writeFileSync(vs, t.replace("NSHAS=6", "NSHAS=7"));
+      const r = runScript(dest, ["--expect-kid", kidOfRun(dest, "run-1")]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain("rows hold 6 distinct signed receipt(s), archive was built with 7");
+    }, 60000);
+
+    it("a bundled pubkey.jwk that does not verify its receipt is FAILED, not UNCHECKED", async () => {
+      const dest = await archive();
+      process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(repo, "k4.pem");
+      seedRun("run-2", heads[2]!, "VERIFIED", ".loki4");
+      const other = join(repo, "other");
+      expect((await buildReceiptBundle(join(repo, ".loki4", "runs", "run-2"), other)).ok).toBe(true);
+      process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(repo, "k.pem");
+      cpSync(join(other, "pubkey.jwk"), join(dest, "receipts", "run-2", "pubkey.jwk"));
+      const r = runScript(dest);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain("run-2: the bundled pubkey.jwk does not verify this receipt");
+      expect(r.stdout).not.toContain("RESULT: UNCHECKED");
+    }, 60000);
+
+    it("B1: a duplicate head_sha line placed before the signed one is refused", async () => {
+      const dest = await archive();
+      swapIn(dest, "run-2", await outsideBundle());
+      insertBefore(join(dest, "receipts", "run-2", "receipt.json"), '  "head_sha"', `  "head_sha": "${heads[2]}",`);
+      const r = runScript(dest, ["--expect-kid", kidOfRun(dest, "run-1")]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain("run-2");
+      expect(r.stdout).not.toContain("RESULT: OK");
+    }, 60000);
+
+    it("B1: a duplicate verdict line placed before the signed one is refused", async () => {
+      const dest = await archive();
+      seedRun("run-p", heads[2]!, "PARTIAL", ".lokix");
+      const pd = join(repo, "partial");
+      expect((await buildReceiptBundle(join(repo, ".lokix", "runs", "run-p"), pd)).ok).toBe(true);
+      swapIn(dest, "run-2", pd);
+      insertBefore(join(dest, "receipts", "run-2", "receipt.json"), '  "verdict"', '  "verdict": "VERIFIED",');
+      const r = runScript(dest, ["--expect-kid", kidOfRun(dest, "run-1")]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain("run-2: index verdict 'VERIFIED' differs from signed verdict 'PARTIAL'");
+    }, 60000);
+
+    it("B2: an attacker-key receipt with a spoofed kid line and a spoofed pubkey.jwk kid field is refused", async () => {
+      const dest = await archive();
+      const legit = kidOfRun(dest, "run-1");
+      process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(repo, "k3.pem");
+      seedRun("run-2", heads[2]!, "VERIFIED", ".loki3");
+      const evil = join(repo, "evil");
+      expect((await buildReceiptBundle(join(repo, ".loki3", "runs", "run-2"), evil)).ok).toBe(true);
+      process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(repo, "k.pem");
+      swapIn(dest, "run-2", evil);
+      insertBefore(join(dest, "receipts", "run-2", "receipt.json"), '  "verification": {', `  "verification": {\n    "kid": "${legit}"\n  },`);
+      const jwk = join(dest, "receipts", "run-2", "pubkey.jwk");
+      writeFileSync(jwk, `${JSON.stringify({ ...JSON.parse(readFileSync(jwk, "utf8")), kid: legit })}\n`);
+      const r = runScript(dest, ["--expect-kid", legit]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).not.toContain("RESULT: OK");
+      expect(r.stdout).toMatch(/thumbprint|not the pinned key id/);
+    }, 60000);
+
+    it("B3: a genuine receipt for a commit outside the range cannot replace an in-range row", async () => {
+      const dest = await archive();
+      swapIn(dest, "run-2", await outsideBundle());
+      const idx = join(dest, "index.csv");
+      writeFileSync(idx, readFileSync(idx, "utf8").replace(`run-2,${heads[2]}`, `run-2,${heads[0]}`));
+      const r = runScript(dest, ["--expect-kid", kidOfRun(dest, "run-1")]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain("run-2: commit");
+      expect(r.stdout).toContain("not in the audited range");
+      expect(r.stdout).not.toMatch(/^OK   run-2/m);
+    }, 60000);
+
+    it("a verifier reporting a signing kid that is not the bundled key's thumbprint is refused", async () => {
+      const dest = await archive();
+      const wrap = join(repo, "wrap.sh");
+      writeFileSync(wrap, `#!/bin/sh\nbun ${BUN_CLI} engine10 verify "$@" | sed 's/"signing_kid":"[^"]*"/"signing_kid":"zzz"/'\n`, { mode: 0o755 });
+      const r = runScript(dest, [], { LOKI_AUDIT_VERIFIER: wrap });
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain("signing key id 'zzz' is not the bundled key");
+    }, 60000);
+
+    it("a pubkey.jwk whose kid is not the RFC 7638 thumbprint of its key is refused", async () => {
+      const dest = await archive();
+      const jwk = join(dest, "receipts", "run-3", "pubkey.jwk");
+      writeFileSync(jwk, `${JSON.stringify({ ...JSON.parse(readFileSync(jwk, "utf8")), kid: "not-the-thumbprint" })}\n`);
+      const r = runScript(dest);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain("run-3: pubkey.jwk kid");
+      expect(r.stdout).not.toMatch(/^OK   run-3/m);
+    }, 60000);
+
+    it("a receipt with no head_sha is refused and listed, not silently skipped", async () => {
+      seedRun("run-nohead", null);
+      const errs: string[] = [];
+      const orig = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((c: string | Uint8Array) => (errs.push(String(c)), true)) as typeof process.stderr.write;
+      let rc: number;
+      try { rc = await bundle(join(repo, "audit.tgz")); } finally { process.stderr.write = orig; }
+      expect(rc).not.toBe(0);
+      expect(errs.join("")).toContain("run-nohead");
+      expect(errs.join("")).toContain("head_sha");
+      expect(existsSync(join(repo, "audit.tgz"))).toBe(false);
+    });
+
+    it("an unlisted dot directory under receipts/ fails", async () => {
+      const dest = await archive();
+      mkdirSync(join(dest, "receipts", ".hidden"), { recursive: true });
+      const r = runScript(dest);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain(".hidden: receipt directory has no index.csv row");
+    }, 60000);
+
+    it("a malformed receipt prints FAIL only, never an OK line for the same run", async () => {
+      const dest = await archive();
+      writeFileSync(join(dest, "receipts", "run-1", "receipt.json"), "{ not json");
+      const r = runScript(dest);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain("FAIL run-1");
+      expect(r.stdout).not.toMatch(/^OK   run-1/m);
+    }, 60000);
+  });
+
+  describe("default verifier path (no LOKI_AUDIT_VERIFIER)", () => {
+    function fakeBin(name: string): { dir: string; log: string } {
+      const dir = join(repo, `fakebin-${name}`);
+      mkdirSync(dir, { recursive: true });
+      const log = join(dir, "calls.log");
+      writeFileSync(join(dir, name), `#!/bin/sh\necho "${name} $*" >> "${log}"\nexit 0\n`, { mode: 0o755 });
+      return { dir, log };
+    }
+    const noOverride = (dest: string, bin: string) => {
+      const env: Record<string, string | undefined> = { ...process.env, PATH: `${bin}:/usr/bin:/bin` };
+      delete env["LOKI_AUDIT_VERIFIER"];
+      return spawnSync("sh", [join(dest, "verify.sh")], { encoding: "utf8", env: env as NodeJS.ProcessEnv });
+    };
+    it("uses an installed loki when present", async () => {
+      const out = join(repo, "audit.tgz");
+      expect(await bundle(out)).toBe(0);
+      const f = fakeBin("loki");
+      const r = noOverride(extract(out), f.dir);
+      expect(r.status).toBe(2); // a verifier that prints no --json identity cannot back the index: UNCHECKED, never OK
+      expect(r.stdout.split("\n")[0]).toBe('verifier: "loki verify"');
+      expect(readFileSync(f.log, "utf8")).toContain("loki verify --json --pubkey pubkey.jwk receipt.json");
+    }, 60000);
+    it("has no npx fallback: without an installed loki the result is UNCHECKED (exit 2) and nothing is fetched", async () => {
+      const out = join(repo, "audit.tgz");
+      expect(await bundle(out)).toBe(0);
+      const dest = extract(out);
+      const f = fakeBin("npx");
+      const r = noOverride(dest, f.dir);
+      expect(r.status).toBe(2);
+      expect(r.stdout).toContain("RESULT: UNCHECKED");
+      expect(existsSync(f.log)).toBe(false);
+      expect(readFileSync(join(dest, "verify.sh"), "utf8")).not.toMatch(/npx|offline|registry/i);
+    }, 60000);
+    it("a verifier that exits 2 is UNCHECKED, not FAILED", async () => {
+      const out = join(repo, "audit.tgz");
+      expect(await bundle(out)).toBe(0);
+      const f = fakeBin("loki");
+      writeFileSync(join(f.dir, "loki"), "#!/bin/sh\nexit 2\n", { mode: 0o755 });
+      const r = noOverride(extract(out), f.dir);
+      expect(r.status).toBe(2);
+      expect(r.stdout).toContain("RESULT: UNCHECKED");
+      expect(r.stdout).not.toContain("RESULT: FAILED");
+    }, 60000);
   });
 });

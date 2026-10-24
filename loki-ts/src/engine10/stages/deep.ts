@@ -250,13 +250,15 @@ export async function deepWorker(args: string[], deps: { sessions?: SessionRunne
   const { createSessionRunner, resolveModel } = await import("../session.ts");
   const resolved = model || resolveModel(provider);
   const sessions = deps.sessions ?? createSessionRunner({ provider, model: resolved, emit: () => {}, lokiRoot, remaining: () => null });
+  // ctx.model is the run's own model passed through (a DeepContext field, not a session option object); built without a conditional spread so the never-below-raw guard does not read it as a session pin.
+  const pinned = origin ? { pinnedOrigin: origin } : {};
   const ctx: DeepContext = {
     runId, repoDir, runDir, baseSha, branch: `loki/${runId}`, provider, model: resolved, deep: true, capS: DEEP_CAP_S,
     emit: () => {}, sessions, failovers: () => [],
     tests: new (await import("../testmap.ts")).RealTestMapProvider(),
     cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
     clock: { now: () => Date.now() }, outputs: () => outputs as never,
-    ...(origin ? { pinnedOrigin: origin } : {}),
+    ...pinned,
   };
   const ac = new AbortController();
   for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => ac.abort());

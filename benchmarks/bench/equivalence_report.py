@@ -267,7 +267,20 @@ def _declared_complete_structured(trial: Dict[str, Any]) -> Optional[bool]:
     return verdict.strip().upper() == "VERIFIED"
 
 
-def _false_green(rows: List[Dict[str, Any]], declared_fn) -> Any:
+FALSE_GREEN_CLAIM_RULE = (
+    "claimed done = clean exit and non-empty diff (reported_success); "
+    "false green = claimed done and the held-out grader did not accept"
+)
+
+
+FALSE_GREEN_STRUCTURED_CLAIM_RULE = (
+    "claimed done = verify_verdict == VERIFIED; "
+    "false green = claimed done and the held-out grader did not accept"
+)
+
+
+def _false_green(rows: List[Dict[str, Any]], declared_fn,
+                 claim_rule: str = FALSE_GREEN_CLAIM_RULE) -> Any:
     """FALSE-GREEN RATE: of the trials where the tool CLAIMED completion, the
     fraction the held-out grader says did NOT actually pass.
 
@@ -293,12 +306,26 @@ def _false_green(rows: List[Dict[str, Any]], declared_fn) -> Any:
             claimed += 1
             if not t.get("success"):
                 false_green += 1
-    if claimed == 0:
+    return false_green_block(claimed, false_green, claim_rule)
+
+
+def false_green_block(n_claimed: int, n_false_green: int,
+                      claim_rule: str = FALSE_GREEN_CLAIM_RULE) -> Any:
+    """The one false-green record shape, used by every scoreboard and report.
+
+    {n_claimed, n_false_green, rate, ci95 (Wilson 95%), claim_rule}, or the
+    string "not_captured" when nothing was claimed (n_claimed <= 0): a silent
+    0 would read as a perfect score on a run that measured nothing.
+    """
+    if n_claimed <= 0:
         return "not_captured"
+    _p, low, high = wilson_interval(n_false_green, n_claimed)
     return {
-        "n_claimed": claimed,
-        "n_false_green": false_green,
-        "rate": round(false_green / claimed, 4),
+        "n_claimed": n_claimed,
+        "n_false_green": n_false_green,
+        "rate": round(n_false_green / n_claimed, 4),
+        "ci95": [round(low, 4), round(high, 4)],
+        "claim_rule": claim_rule,
     }
 
 
@@ -365,7 +392,8 @@ def cell_axes(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         # receipt verdict, reported as a secondary column and never as the
         # headline -- see _declared_complete_normalized for why.
         "false_green": _false_green(rows, _declared_complete_normalized),
-        "false_green_structured": _false_green(rows, _declared_complete_structured),
+        "false_green_structured": _false_green(
+            rows, _declared_complete_structured, FALSE_GREEN_STRUCTURED_CLAIM_RULE),
         "design": "not_captured",
         "cost_usd_median": _median(costs),
         # COST PER VERIFIED TASK: total spend divided by GRADER-CONFIRMED

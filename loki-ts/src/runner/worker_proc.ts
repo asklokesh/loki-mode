@@ -2,12 +2,43 @@
 // spawn the worker in its own process group, drain its stdout, and kill the group on a backstop or stop.
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { resolve } from "node:path";
 
 const CANCEL_GRACE_MS = Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) > 0 ? Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) : 10000; // SIGINT/SIGTERM: time the worker gets to stop sessions and record usage before SIGKILL
 const DRAIN_MS = 2000; // after the worker exits, how long P0 waits for stdout to drain before closing it
 export function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
   if (!pid) return;
   try { process.kill(-pid, sig); } catch { /* group already gone */ }
+}
+const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
+// SIGTERM now, SIGKILL after the grace, against the whole group; shared by the limit timeout and an external abort.
+export function killGroupWithGrace(pgid: number | undefined): void {
+  if (!pgid) return;
+  const send = (signal: NodeJS.Signals) => { try { process.kill(-pgid, signal); } catch { /* already exited */ } };
+  send("SIGTERM");
+  // Re-check before SIGKILL: a group that is gone may have its pgid reused by an unrelated process.
+  setTimeout(() => { try { process.kill(-pgid, 0); } catch { return; } send("SIGKILL"); }, KILL_GRACE_MS);
+}
+/** On a child's exit, reap its own group (recorded pgid only) when anything is still alive in it; onReap runs first, only then. */
+export function reapLiveGroup(pgid: number | undefined, onReap: () => void): void {
+  if (!pgid) return;
+  try { process.kill(-pgid, 0); } catch { return; }
+  onReap();
+  killGroupWithGrace(pgid);
+}
+const BASH_CLAMP_FLOOR_MS = 30_000, BASH_CLAMP_MARGIN_MS = 10_000;
+/** Clamp Claude Code's Bash timeouts to the stage budget (minus a margin, floored) so one command cannot outlive the stage; a smaller user value wins. */
+export function clampBashTimeoutEnv(env: NodeJS.ProcessEnv, limitS: number): void {
+  const budget = Math.max(BASH_CLAMP_FLOOR_MS, Math.floor(limitS * 1000) - BASH_CLAMP_MARGIN_MS);
+  for (const [k, dflt] of [["BASH_DEFAULT_TIMEOUT_MS", 120_000], ["BASH_MAX_TIMEOUT_MS", 600_000]] as const) {
+    const cur = Number(env[k]);
+    env[k] = String(Math.min(Number.isFinite(cur) && cur > 0 ? cur : dflt, budget));
+  }
+}
+// A spawn with cwd D must give the child PWD=D: node/bun set the cwd but inherit the parent PWD, so a non-shell
+// child (opencode, node tools) resolves "." against the parent. Only PWD changes; cwd undefined leaves env untouched.
+export function envWithPwd<T extends Record<string, string | undefined>>(env: T, cwd: string | undefined): T {
+  return cwd === undefined ? env : { ...env, PWD: resolve(cwd) };
 }
 export const ULIMIT_REFUSED_EXIT = 97;
 const ULIMIT_KNOBS = [["LOKI_ULIMIT_VMEM_KB", "-v"], ["LOKI_ULIMIT_NPROC", "-u"]] as const;
@@ -36,7 +67,7 @@ export function spawnWorker(
     let wrapped: string[];
     try { wrapped = ulimitArgv(argv, env); } catch (e) { process.stderr.write(`${(e as Error).message}\n`); return resolve({ code: ULIMIT_REFUSED_EXIT, killed: false }); }
     const [cmd, ...args] = wrapped as [string, ...string[]];
-    const child = spawn(cmd, args, { cwd, env, stdio: ["ignore", "pipe", "inherit"], detached: true });
+    const child = spawn(cmd, args, { cwd, env: envWithPwd(env, cwd), stdio: ["ignore", "pipe", "inherit"], detached: true });
     const rl = createInterface({ input: child.stdout! });
     rl.on("line", onLine);
     let killed = false;

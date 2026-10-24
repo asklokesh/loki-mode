@@ -27,11 +27,13 @@ P1.stripped-signature-fails
 P1.empty-jwks-value-fails
 P1.verification-metadata-signed
 P1.jwks-dup-kid-or-alg-none-fails
+P1.damaged-receipt-fails
 P2.advisory-only-never-verified
 P2.unknown-gate-fails-closed
 P2.model-looks-good-cannot-pass
 P2.missing-pass-key-not-pass
 P2.proof-verify-exit-contract
+P2.malformed-proof-not-zero
 P2.proof-chain-exit-contract
 P2.verify-exit-contract
 P2.fast-verify-inconclusive-not-zero
@@ -64,6 +66,7 @@ P9.issue-workflows-separate-untrusted-from-push
 P9.comment-trigger-author-gate
 P9.injection-cannot-reach-token
 P9.checkout-no-persisted-credentials
+P9.no-pr-target-head-checkout
 P9.allowtoken-only-fetch-callers
 P6.no-gate-artifacts-committed
 P2.bun-inconclusive-not-pass

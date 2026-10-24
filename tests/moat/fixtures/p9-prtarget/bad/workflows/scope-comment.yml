@@ -1,0 +1,8 @@
+name: scope-comment
+# this once ran on pull_request_target
+on: push
+jobs:
+  commentjob:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi

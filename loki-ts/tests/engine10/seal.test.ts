@@ -1867,7 +1867,7 @@ describe("medium default review at seal", () => {
       const r = await sealed(ctx, 1);
       expect(r.outputs.seal).toBeDefined();
       const rc = receiptOf({ data: r.outputs.seal as Record<string, unknown> }) as unknown as { review?: Record<string, unknown> };
-      expect(rc.review).toEqual({ provider: "claude", vendor_differs: false, same_vendor: true, defaulted: true, level: "pass" });
+      expect(rc.review).toEqual({ provider: "claude", vendor_differs: false, same_vendor: true, defaulted: true, level: "pass", ran: "reviewer (sonnet)" });
     });
   }, 60000);
   test("slow reviewer keeps receipt: a review past its box is not_run, seal still writes the receipt", async () => {
@@ -1909,6 +1909,19 @@ describe("medium default review at seal", () => {
     const notProven = async (c: typeof a, env: Record<string, string>) => { let np: string[] = []; await withEnv(c.stub, env, async () => { const s = await sealStage.run(c.ctx, new AbortController().signal); np = receiptOf(s).not_proven; }); return np.join(" | "); };
     expect(await notProven(a, {})).not.toContain("one reviewer");
     expect(await notProven(b, { LOKI_REVIEW_PROVIDER: "none" })).toContain("one reviewer");
+  }, 60000);
+  test("a failed model review plus a hygiene finding keeps the reviewer in NOT PROVEN; the artifact is an observation, never a not-proven claim", async () => {
+    const c = setup("hyg-seal", 0), repo = join(c.stub, "..", "hyg-seal");
+    mkdirSync(join(repo, "__pycache__"), { recursive: true }); writeFileSync(join(repo, "__pycache__", "m.pyc"), "b");
+    sh(["git", "add", "-f", "__pycache__/m.pyc"], repo); sh(["git", "commit", "-q", "-m", "art"], repo);
+    writeFileSync(c.stub, "#!/bin/sh\nexit 1\n");
+    await withEnv(c.stub, {}, async () => {
+      const s = await sealStage.run(c.ctx, new AbortController().signal), rc = receiptOf(s) as unknown as { not_proven: string[]; review?: Record<string, unknown> };
+      expect(rc.not_proven.join(" | ")).toContain("one reviewer"); // deterministic hygiene never earns reviewer credit
+      expect(rc.not_proven.join(" | ")).not.toContain("committed build or cache artifact");
+      expect(rc.review?.observations).toEqual(["committed build or cache artifact: __pycache__/m.pyc"]);
+      expect(rc.review?.ran).toBe("deterministic check");
+    });
   }, 60000);
   // FC-FULL-SUITE-EXIT-CODED-SCRIPT: claude-code#81826 sealed PARTIAL on a proven change because the full suite was a CI checker script
   const seal2 = async (name: string, full: Record<string, unknown>) => {

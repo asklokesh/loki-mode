@@ -10,7 +10,7 @@ afterAll(() => { for (const r of roots) execFileSync("rm", ["-rf", r]); });
 const git = (dir: string, ...a: string[]): string => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" }).trim();
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const SUP = join(import.meta.dir, "../../src/engine10/supervisor.ts");
-import { dropEmptyRunBranch } from "../../src/util/base_guard.ts";
+import { baseLine, dropEmptyRunBranch } from "../../src/util/base_guard.ts";
 
 // Fake worker: creates the run branch (as intake does), starts a detached session-like sleeper, reports its pgid, then sleeps.
 const WORKER = (dirty: boolean): string => `
@@ -103,6 +103,11 @@ describe("supervisor: a run that committed nothing", () => {
     const { dir } = await emptyRun("empty");
     expect(git(dir, "branch", "--show-current")).toBe("main");
     expect(git(dir, "branch", "--list", "loki/*")).toBe("");
+  }, 30000);
+  test("a second run after a failed zero-commit run starts with base: main", async () => {
+    const { dir } = await emptyRun("empty");
+    expect(baseLine(dir)).toContain("base: main");
+    expect(baseLine(dir)).not.toContain("loki/e10-empty");
   }, 30000);
   test("positive control: a run branch with a commit is kept, HEAD stays on it", async () => {
     const { dir } = await emptyRun("commit");
@@ -371,4 +376,40 @@ describe("supervisor main flag values", () => {
       expect(err).toContain(`${flag} needs a value`);
     }
   }, 60_000);
+});
+
+describe("stuck-run alert (LOKI_STUCK_MIN)", () => {
+  const MIN = 60_000;
+  test("silent run: 0 alerts before threshold, exactly 1 after, names last stage", async () => {
+    const { createStuckWatch } = await import("../../src/util/slack_events.ts");
+    const alerts: { stage?: string; lastEventAt?: string; action?: string }[] = [];
+    const w = createStuckWatch(15, 0, (f) => alerts.push(f));
+    w.event("implement", 1 * MIN);
+    w.tick(15 * MIN); expect(alerts.length).toBe(0);
+    w.tick(16 * MIN); w.tick(20 * MIN); w.tick(40 * MIN);
+    expect(alerts.length).toBe(1);
+    expect(alerts[0]?.stage).toBe("implement");
+    expect(alerts[0]?.lastEventAt).toBe(new Date(1 * MIN).toISOString());
+    expect(alerts[0]?.action).toBeTruthy();
+  });
+  test("new event clears the alert; a later silence alerts again", async () => {
+    const { createStuckWatch } = await import("../../src/util/slack_events.ts");
+    const alerts: { stage?: string }[] = [];
+    const w = createStuckWatch(15, 0, (f) => alerts.push(f));
+    w.tick(16 * MIN); expect(alerts.length).toBe(1);
+    w.event("verify", 17 * MIN);
+    w.tick(20 * MIN); expect(alerts.length).toBe(1);
+    w.tick(33 * MIN); expect(alerts.length).toBe(2);
+    expect(alerts[1]?.stage).toBe("verify");
+  });
+  test("LOKI_STUCK_MIN 0, negative or invalid falls back to 15; valid value honored", async () => {
+    const { stuckMinutes } = await import("../../src/util/slack_events.ts");
+    for (const v of ["0", "-3", "abc", "", "NaN"]) expect(stuckMinutes({ LOKI_STUCK_MIN: v })).toBe(15);
+    expect(stuckMinutes({})).toBe(15);
+    expect(stuckMinutes({ LOKI_STUCK_MIN: "2" })).toBe(2);
+  });
+  test("stuck slack payload carries stage and action", async () => {
+    const { slackPayload } = await import("../../src/util/slack_events.ts");
+    expect(slackPayload("stuck", { stage: "verify", lastEventAt: "t", action: "act" }).text).toContain("verify");
+  });
 });

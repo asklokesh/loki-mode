@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { buildMcpConfigArgv } from "./mcp_config.ts";
+import { recordEffort } from "./model_routes.ts";
 import { claudeEffortLevels, claudeThinkingAccepted, claudeThinkingHasAdaptive, claudeThinkingMaxEffort, claudeThinkingSubstitute } from "../util/claude_model.ts";
 
 // --disallowedTools tree-mutation guard for reviewer sessions. Byte-identical to
@@ -58,8 +59,13 @@ export function effortForTier(tier: string | undefined, complexity?: string, mod
       effort = "high";
       break;
   }
+  // LOKI_EFFORT is the one cross-provider knob: an explicit level replaces the tier-derived one
+  // (no complexity bump) and is still clamped to the model's catalog levels below.
+  const explicit = process.env["LOKI_EFFORT"] as EffortLevel | undefined;
+  const hasExplicit = explicit !== undefined && EFFORT_ORDER.includes(explicit);
+  if (hasExplicit) effort = explicit!;
   const cx = complexity ?? process.env["LOKI_COMPLEXITY"] ?? "standard";
-  if (cx === "complex") {
+  if (cx === "complex" && !hasExplicit) {
     switch (effort) {
       case "low":
         effort = "medium";
@@ -305,8 +311,10 @@ export function buildAutoFlags(args: AutoFlagsArgs): string[] {
   const out: string[] = [];
 
   if (claudeFlagSupported("--effort")) {
-    const e = process.env["LOKI_E10_EFFORT"] || effortForTier(args.tier, args.complexity); // EL-W0-06: engine10 SessionRunOptions.effort
-    out.push("--effort", e);
+    // EL-W0-06: engine10 SessionRunOptions.effort. With an explicit LOKI_EFFORT the primary model clamps it from the catalog (null = no effort param).
+    const e = process.env["LOKI_E10_EFFORT"] || (process.env["LOKI_EFFORT"] && args.primary ? effortForTier(args.tier, args.complexity, args.primary) : effortForTier(args.tier, args.complexity));
+    if (process.env["LOKI_EFFORT"]) recordEffort("claude", args.tier ?? "development", args.primary ?? "", e ?? "unsupported", EFFORT_ORDER.includes(process.env["LOKI_EFFORT"] as EffortLevel) && e !== process.env["LOKI_EFFORT"] ? process.env["LOKI_EFFORT"]! : ""); // clamped_from only for a valid level that was clamped
+    if (e) out.push("--effort", e);
   }
   if (claudeFlagSupported("--max-budget-usd")) {
     const rb = remainingBudget(args.targetDir);

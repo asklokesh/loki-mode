@@ -32,7 +32,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from . import auth
+from . import auth, secure_tmp
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["start"])
@@ -85,15 +85,7 @@ def _creds_dir() -> Path:
 
 
 def _write_secret(name: str, value: str) -> None:
-    dest = _secret_path(name)
-    tmp = dest.with_name(".%s.%d.tmp" % (dest.name, os.getpid()))
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.fchmod(fd, 0o600)
-        os.write(fd, (value + "\n").encode())
-    finally:
-        os.close(fd)
-    os.replace(tmp, dest)
+    secure_tmp.write_secret_atomic(_secret_path(name), (value + "\n").encode())
 
 
 def _read_secret(name: str) -> Optional[str]:

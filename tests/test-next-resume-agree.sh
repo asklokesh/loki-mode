@@ -294,5 +294,25 @@ else
     fail "bun unavailable: start --resume route was NOT measured (unmeasured, not clean)"
 fi
 
+# PG-25: `loki next --suggest` with no run proposes up to 3 small tasks; est_usd comes from `loki estimate` only (L0).
+sg="$WORK/suggest"; mkdir -p "$sg/bin"; git -C "$sg" init -q . 2>/dev/null
+printf '%s\n' '#!/bin/sh' 'case "$1" in auth) exit 0 ;; issue) echo "[{\"number\":1,\"title\":\"first bug\"},{\"number\":2,\"title\":\"second bug\"}]" ;; esac' > "$sg/bin/gh"; chmod +x "$sg/bin/gh"
+for i in 1 2 3 4 5; do printf '// TODO item %s\n' "$i" > "$sg/f$i.txt"; done
+git -C "$sg" add . 2>/dev/null
+out="$(cd "$sg" && PATH="$sg/bin:$PATH" LOKI_TELEMETRY_DISABLED=1 bash "$LOKI_BIN" next --suggest 2>&1)"; rc=$?
+n="$(printf '%s\n' "$out" | grep -c 'est_usd')"
+if [ "$rc" -eq 0 ] && [ "$n" -eq 3 ] && [[ "$out" == *"est_usd NOT AVAILABLE ("* ]] && ! printf '%s' "$out" | grep -Eq 'est_usd [0-9$]' && [[ "$out" == *"[issue] #1 first bug"* ]]; then pass "next --suggest prints 3 suggestions with source; no history means NOT AVAILABLE and no fabricated number"; else fail "next --suggest rc=$rc n=$n: $out"; fi
+out="$(cd "$sg" && PATH="$sg/bin:$PATH" LOKI_TELEMETRY_DISABLED=1 bash "$LOKI_BIN" next --suggest --json 2>&1)"
+if printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin)["suggestions"]; assert len(d)==3 and all("source" in x and x["est_usd"] is None for x in d)' 2>/dev/null; then pass "next --suggest --json is valid JSON with 3 suggestions and est_usd null without history"; else fail "next --suggest --json invalid: $out"; fi
+printf '%s\n' '#!/bin/sh' 'exit 1' > "$sg/bin/gh"
+out="$(cd "$sg" && PATH="$sg/bin:$PATH" LOKI_TELEMETRY_DISABLED=1 bash "$LOKI_BIN" next --suggest 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && [[ "$out" == *"issues skipped"* ]] && [ "$(printf '%s\n' "$out" | grep -c 'est_usd')" -eq 3 ]; then pass "gh failure skips issues with a note and still yields 3"; else fail "gh failure rc=$rc: $out"; fi
+# est_usd is passed through from the estimator when it has a number (stub entry stands in for loki-ts).
+printf '%s\n' 'console.log(JSON.stringify({ok:true,est:{shape:"s",runs:3,usd:[0.5,1.5],wall_s:null}}))' > "$sg/est.js"
+out="$(cd "$sg" && LOKI_TS_ENTRY="$sg/est.js" PATH="$sg/bin:$PATH" LOKI_TELEMETRY_DISABLED=1 bash "$LOKI_BIN" next --suggest --json 2>&1)"
+if printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin)["suggestions"]; assert d and all(x["est_usd"]==[0.5,1.5] for x in d)' 2>/dev/null; then pass "est_usd is the estimator's range when it has history"; else fail "est_usd passthrough: $out"; fi
+out="$(cd "$WORK" && mkdir -p empty && cd empty && git init -q . 2>/dev/null; PATH="$sg/bin:$PATH" LOKI_TELEMETRY_DISABLED=1 bash "$LOKI_BIN" next --suggest 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && [[ "$out" == *"No suggestions"* ]]; then pass "an empty repo yields no suggestions (up to 3, not exactly 3)"; else fail "empty repo rc=$rc: $out"; fi
+
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

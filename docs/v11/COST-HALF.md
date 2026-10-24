@@ -28,7 +28,8 @@ see, read earlier, or edit the Wall checks. No slice skips wall, verify, commit,
 | Haiku 5.5, prompt <= 100K | 0.10 | 0.125 | 0.01 | 0.50 |
 | Haiku 5.5, prompt > 100K | 0.50 | 0.625 | 0.05 | 2.50 |
 
-- Sonnet is 2x cheaper than Opus. Haiku is 20x cheaper than Sonnet, but only under 100K.
+- From the table: Sonnet costs half of Opus on every column. Under 100K, Haiku input, cache write and
+  output cost 1/20 of Sonnet's, and Haiku cache reads cost 1/10.
 - Cache reads cost 0.05x input on Opus and Sonnet.
 - The advisor tool definition alone is about 1,000 prompt tokens per request.
 - Drift found: loki-ts/data/model-pricing.json says Opus is 5/25/0.5/6.25 and Sonnet's cache read is

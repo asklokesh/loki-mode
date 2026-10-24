@@ -1,0 +1,52 @@
+{
+ "_comment": "Single allowlist for every telemetry sender (autonomy/telemetry.sh, dashboard/telemetry.py, autonomy/lib/proof-analytics-props.py). An event not listed here is never sent. A key not listed is dropped. A value outside its type, range or enum is dropped. Documented in docs/PRIVACY.md.",
+ "schema_version": 1,
+ "common": {
+  "os_family": {"type": "enum", "values": ["linux", "darwin", "windows", "other"]},
+  "arch": {"type": "enum", "values": ["x64", "arm64", "other"]},
+  "version": {"type": "semver"},
+  "channel": {"type": "enum", "values": ["npm", "docker", "homebrew", "skill", "source", "unknown"]},
+  "traffic": {"type": "enum", "values": ["user", "ci", "internal"]},
+  "introspective": {"type": "bool"}
+ },
+ "introspective_commands": ["--help", "--version", "-h", "-v", "completion", "completions", "help", "internal", "memory", "version"],
+ "introspective_source": {"cli_command": "command", "installed": "first_command"},
+ "events": {
+  "installed": {
+   "first_command": {"type": "enum", "values": ["--help", "--version", "-h", "-v", "agent", "analyze", "api", "assets", "audit", "bench", "checkpoint", "ci", "cleanup", "cluster", "cockpit", "code", "completion", "completions", "compliance", "compound", "config", "context", "control", "cost", "council", "cp", "crash", "ctx", "dashboard", "demo", "deploy", "docker", "docs", "doctor", "dogfood", "enterprise", "explain", "export", "factory", "failover", "github", "grill", "handoff", "heal", "help", "import", "init", "internal", "issue", "kpis", "logs", "magic", "mcp", "memory", "metrics", "migrate", "modernize", "monitor", "next", "notify", "onboard", "open", "optimize", "otel", "own", "pause", "plan", "preview", "projects", "proof", "provider", "quick", "quickstart", "rc", "receipt", "remote", "report", "reset", "resume", "review", "rollback", "run", "sandbox", "secrets", "secure", "self_update", "self-update", "sentrux", "serve", "setup-skill", "share", "ship", "spec", "start", "state", "stats", "status", "steer", "stop", "syslog", "telemetry", "template", "test", "tour", "trigger", "trust", "trust-metrics", "ultracode", "update", "verify", "version", "voice", "watch", "watchdog", "web", "welcome", "why", "wiki", "worktree", "wow", "wt", "other"]}
+  },
+  "cli_command": {
+   "command": {"type": "enum", "values": ["--help", "--version", "-h", "-v", "agent", "analyze", "api", "assets", "audit", "bench", "checkpoint", "ci", "cleanup", "cluster", "cockpit", "code", "completion", "completions", "compliance", "compound", "config", "context", "control", "cost", "council", "cp", "crash", "ctx", "dashboard", "demo", "deploy", "docker", "docs", "doctor", "dogfood", "enterprise", "explain", "export", "factory", "failover", "github", "grill", "handoff", "heal", "help", "import", "init", "internal", "issue", "kpis", "logs", "magic", "mcp", "memory", "metrics", "migrate", "modernize", "monitor", "next", "notify", "onboard", "open", "optimize", "otel", "own", "pause", "plan", "preview", "projects", "proof", "provider", "quick", "quickstart", "rc", "receipt", "remote", "report", "reset", "resume", "review", "rollback", "run", "sandbox", "secrets", "secure", "self_update", "self-update", "sentrux", "serve", "setup-skill", "share", "ship", "spec", "start", "state", "stats", "status", "steer", "stop", "syslog", "telemetry", "template", "test", "tour", "trigger", "trust", "trust-metrics", "ultracode", "update", "verify", "version", "voice", "watch", "watchdog", "web", "welcome", "why", "wiki", "worktree", "wow", "wt", "other"]}
+  },
+  "session_start": {
+   "provider": {"type": "enum", "values": ["claude", "codex", "cline", "aider", "opencode"]},
+   "complexity": {"type": "enum", "values": ["simple", "standard", "complex"]},
+   "parallel": {"type": "bool"}
+  },
+  "session_end": {
+   "provider": {"type": "enum", "values": ["claude", "codex", "cline", "aider", "opencode"]},
+   "duration": {"type": "int", "min": 0, "max": 31536000},
+   "iterations": {"type": "int", "min": 0, "max": 100000},
+   "result": {"type": "int", "min": 0, "max": 255}
+  },
+  "dashboard_start": {},
+  "first_start_attempted": {
+   "entry": {"type": "enum", "values": ["--help", "--version", "-h", "-v", "agent", "analyze", "api", "assets", "audit", "bench", "checkpoint", "ci", "cleanup", "cluster", "cockpit", "code", "completion", "completions", "compliance", "compound", "config", "context", "control", "cost", "council", "cp", "crash", "ctx", "dashboard", "demo", "deploy", "docker", "docs", "doctor", "dogfood", "enterprise", "explain", "export", "factory", "failover", "github", "grill", "handoff", "heal", "help", "import", "init", "internal", "issue", "kpis", "logs", "magic", "mcp", "memory", "metrics", "migrate", "modernize", "monitor", "next", "notify", "onboard", "open", "optimize", "otel", "own", "pause", "plan", "preview", "projects", "proof", "provider", "quick", "quickstart", "rc", "receipt", "remote", "report", "reset", "resume", "review", "rollback", "run", "sandbox", "secrets", "secure", "self_update", "self-update", "sentrux", "serve", "setup-skill", "share", "ship", "spec", "start", "state", "stats", "status", "steer", "stop", "syslog", "telemetry", "template", "test", "tour", "trigger", "trust", "trust-metrics", "ultracode", "update", "verify", "version", "voice", "watch", "watchdog", "web", "welcome", "why", "wiki", "worktree", "wow", "wt", "other"]}
+  },
+  "first_run_blocked": {
+   "blocker": {"type": "enum", "values": ["no_provider", "not_logged_in", "not_a_repo", "git_identity", "node", "python3", "jq", "git", "curl", "disk", "skill_symlink", "other"]}
+  },
+  "build_verified": {
+   "headline": {"type": "enum", "values": ["VERIFIED", "VERIFIED WITH GAPS", "NOT VERIFIED"]},
+   "route": {"type": "enum", "values": ["engine10"]},
+   "evidence_gate_verdict": {"type": "enum", "fold": "upper", "values": ["PASS", "BLOCK"]},
+   "final_verdict": {"type": "enum", "fold": "upper", "values": ["APPROVED", "REJECTED", "APPROVE", "REJECT", "COMPLETE", "CONTINUE"]},
+   "iterations": {"type": "int", "min": 0, "max": 100000},
+   "files_changed_count": {"type": "int", "min": 0, "max": 10000000},
+   "wall_clock_sec": {"type": "number", "min": 0, "max": 31536000},
+   "gates_passed": {"type": "int", "min": 0, "max": 1000},
+   "gates_total": {"type": "int", "min": 0, "max": 1000},
+   "gate_pass_rate": {"type": "number", "min": 0, "max": 1}
+  }
+ }
+}

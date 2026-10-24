@@ -2,6 +2,7 @@
 // Ed25519 receipt key (the key type DSSE expresses natively: PureEdDSA over the PAE bytes). Reads seal.ts only.
 import { createPublicKey, sign, verify, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { jsonTooDeep } from "../util/receipt_signer.ts";
 
 export const DSSE_PAYLOAD_TYPE = "application/vnd.in-toto+json";
 export const STATEMENT_TYPE = "https://in-toto.io/Statement/v1";
@@ -50,6 +51,7 @@ export function verifyEnvelope(env: DsseEnvelope, pubFor: (kid: string) => KeyOb
   try { st = JSON.parse(body.toString("utf8")); } catch { return { ok: false, reason: "payload is not JSON" }; }
   if (st["_type"] !== STATEMENT_TYPE) return { ok: false, reason: "payload is not an in-toto Statement v1" };
   if (st["predicateType"] !== PREDICATE_TYPE) return { ok: false, reason: `unexpected predicateType: ${String(st["predicateType"])}` };
+  if (jsonTooDeep(st)) return { ok: false, unchecked: true, reason: "DSSE payload cannot be hashed (nested too deeply)" }; // signed but hostile: damaged, not tampered; checked before the receipt hash
   const receipt = st["predicate"] as Record<string, unknown> | undefined;
   if (!receipt || typeof receipt !== "object") return { ok: false, reason: "statement has no predicate" };
   const dig = ((st["subject"] as { digest?: Record<string, unknown> }[] | undefined)?.[0]?.digest) ?? {};

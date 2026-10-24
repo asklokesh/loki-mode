@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { run, runOrThrow, commandExists, commandVersion, ShellError } from "../../src/util/shell.ts";
+import { envWithPwd } from "../../src/runner/worker_proc.ts";
 
 describe("shell.run", () => {
   it("captures stdout from echo", async () => {
@@ -95,5 +99,32 @@ describe("shell.run onFirstStdout", () => {
     let n = 0;
     await run(["true"], { onFirstStdout: () => { n++; } });
     expect(n).toBe(0);
+  });
+});
+
+describe("shell.run PWD follows cwd (FC-PROVIDER-SPAWN-INHERITS-PARENT-PWD)", () => {
+  const probe = ["-e", "process.stdout.write(JSON.stringify({ pwd: process.env.PWD ?? null, cwd: process.cwd() }))"];
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "pwd-")));
+  const withParentPwd = async <T>(fn: () => Promise<T>): Promise<T> => {
+    const saved = process.env["PWD"];
+    process.env["PWD"] = "/parent-pwd-not-the-cwd";
+    try { return await fn(); } finally { if (saved === undefined) delete process.env["PWD"]; else process.env["PWD"] = saved; }
+  };
+  it("gives the child PWD equal to cwd, not the parent PWD", async () => {
+    const r = await withParentPwd(() => run([process.execPath, ...probe], { cwd: dir }));
+    expect(JSON.parse(r.stdout)).toEqual({ pwd: dir, cwd: dir });
+  });
+  it("leaves PWD untouched when cwd is undefined", async () => {
+    const r = await withParentPwd(() => run([process.execPath, ...probe]));
+    expect(JSON.parse(r.stdout).pwd).toBe("/parent-pwd-not-the-cwd");
+  });
+  it("keeps opts.env vars alongside the PWD fix", async () => {
+    const r = await run([process.execPath, "-e", "process.stdout.write(process.env.SB10_X ?? '')"], { cwd: dir, env: { SB10_X: "1" } });
+    expect(r.stdout).toBe("1");
+  });
+  it("envWithPwd changes only PWD", () => {
+    expect(envWithPwd({ A: "1", PWD: "/p" }, dir)).toEqual({ A: "1", PWD: dir });
+    const e = { A: "1" };
+    expect(envWithPwd(e, undefined)).toBe(e);
   });
 });

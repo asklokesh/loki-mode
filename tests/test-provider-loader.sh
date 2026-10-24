@@ -492,6 +492,83 @@ else
     log_fail "orphan guard missed the planted knob: [$_pd_planted]"
 fi
 
+# #346 slice 2: LOKI_EFFORT reaches claude, aider, opencode and cline through the catalog,
+# clamped per provider/model, with the effective effort recorded per stage.
+_ef_argv() {
+    local prov="$1" req="$2" ldir="$3"
+    LOKI_DIR="$ldir" LOKI_EFFORT="$req" bash -c '
+        source "$1/loader.sh"; load_provider "$2" >/dev/null 2>&1; provider_invoke_argv development "p"
+        printf "%s\n" "${_LOKI_INVOKE_ARGV[@]}"' _ "$PROVIDERS_DIR" "$prov"
+}
+_ef_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.ef.XXXXXX")"
+_ef_flag() { _ef_argv "$1" "$2" "$_ef_dir" | grep -A1 -x -e "$3" | tail -1; }
+[ "$(_ef_flag aider high --reasoning-effort)" = "high" ] \
+    && log_pass "LOKI_EFFORT=high -> aider --reasoning-effort high" \
+    || log_fail "aider effort flag missing: [$(_ef_flag aider high --reasoning-effort)]"
+[ "$(_ef_flag opencode high --variant)" = "high" ] \
+    && log_pass "LOKI_EFFORT=high -> opencode --variant high" \
+    || log_fail "opencode effort flag missing: [$(_ef_flag opencode high --variant)]"
+[ "$(_ef_flag aider max --reasoning-effort)" = "high" ] \
+    && log_pass "LOKI_EFFORT=max clamps to high for aider" \
+    || log_fail "aider max not clamped: [$(_ef_flag aider max --reasoning-effort)]"
+if _ef_argv cline high "$_ef_dir" | grep -qiE -e '^--(effort|variant|reasoning-effort|thinking)'; then
+    log_fail "cline emitted an invented effort flag"
+else
+    log_pass "cline emits no effort flag (unsupported)"
+fi
+if _ef_argv aider "" "$_ef_dir" | grep -q -e '--reasoning-effort'; then
+    log_fail "aider emitted an effort flag with LOKI_EFFORT unset"
+else
+    log_pass "no LOKI_EFFORT, no effort flag"
+fi
+_ef_ledger="$_ef_dir/state/effort.jsonl"
+if grep -q '"provider":"aider".*"effort":"high".*"clamped_from":"max"' "$_ef_ledger" 2>/dev/null \
+   && grep -q '"provider":"cline".*"effort":"unsupported"' "$_ef_ledger" 2>/dev/null \
+   && grep -q '"provider":"opencode".*"effort":"high"' "$_ef_ledger" 2>/dev/null; then
+    log_pass "effective effort recorded per stage (clamped_from and unsupported included)"
+else
+    log_fail "effort ledger incomplete: $(tr '\n' ' ' < "$_ef_ledger" 2>/dev/null)"
+fi
+_ef_claude="$(LOKI_EFFORT=low bash -c 'source "$1/../autonomy/lib/claude-flags.sh"; loki_effort_for_tier development standard ""' _ "$PROVIDERS_DIR" 2>/dev/null)"
+_ef_claude_max="$(LOKI_EFFORT=max bash -c 'source "$1/../autonomy/lib/claude-flags.sh"; loki_effort_for_tier development standard claude-opus-5-5' _ "$PROVIDERS_DIR" 2>/dev/null)"
+[ "$_ef_claude" = "low" ] && log_pass "LOKI_EFFORT overrides the claude tier effort" \
+    || log_fail "claude LOKI_EFFORT ignored: [$_ef_claude]"
+[ "$_ef_claude_max" = "max" ] && log_pass "claude LOKI_EFFORT=max kept on a model whose catalog allows max" \
+    || log_fail "claude clamp wrong: [$_ef_claude_max]"
+rm -rf "$_ef_dir"
+
+
+# PG-19 review: the claude route records clamped_from only for a valid level that was clamped, and every
+# ledger line is valid JSON whatever LOKI_EFFORT holds.
+_ef2_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.ef2.XXXXXX")"
+_ef2_claude() {
+    LOKI_DIR="$_ef2_dir" LOKI_EFFORT="$1" bash -c '
+        source "$1/loader.sh"; load_provider claude >/dev/null 2>&1
+        source "$1/../autonomy/lib/claude-flags.sh"
+        loki_claude_flag_supported() { return 0; }
+        _loki_build_claude_auto_flags development standard claude-opus-5-5' _ "$PROVIDERS_DIR" >/dev/null 2>&1
+}
+_ef2_claude 'a"b'
+_ef2_claude HIGH
+_ef2_claude garbage
+_ef2_claude max
+_ef2_claude low
+_ef2_bad=""
+while IFS= read -r _l; do
+    printf '%s' "$_l" | python3 -c 'import json,sys; json.loads(sys.stdin.read())' 2>/dev/null || _ef2_bad="$_ef2_bad [$_l]"
+done < "$_ef2_dir/state/effort.jsonl"
+[ -z "$_ef2_bad" ] && [ "$(wc -l < "$_ef2_dir/state/effort.jsonl" | tr -d ' ')" = "5" ] \
+    && log_pass "every effort ledger line is valid JSON, hostile LOKI_EFFORT included" \
+    || log_fail "invalid or missing effort ledger lines:$_ef2_bad"
+_ef2_cf="$(python3 -c '
+import json,sys
+print(",".join(json.loads(l)["clamped_from"] for l in open(sys.argv[1])))' "$_ef2_dir/state/effort.jsonl")"
+[ "$_ef2_cf" = ",,,,"  ] \
+    && log_pass "claude records no clamped_from for invalid values or an unclamped level" \
+    || log_fail "claude clamped_from wrong: [$_ef2_cf]"
+rm -rf "$_ef2_dir"
+
+
 echo ""
 echo "========================================"
 echo "Test Summary"

@@ -244,8 +244,9 @@ templates/                 21 PRD templates (saas, cli, discord-bot, ...)
 agents/                    Agent registry: types.json, hub install, managed registry
 benchmarks/                SWE-bench and HumanEval harnesses
 plugins/                   Claude Code plugin packaging
-.github/workflows/         CI: tests, release, sbom,
-                           security-audit, post-release-smoke, ...
+.github/workflows/         release.yml, converge-dist-tags.yml,
+                           sdk-freshness.yml (the pre-push gate is
+                           scripts/local-ci.sh, run locally)
 SKILL.md                   Slim core skill (progressive disclosure entry)
 CLAUDE.md                  Project + agent operating instructions
 VERSION / package.json     Single source of version truth
@@ -324,8 +325,9 @@ docker/                            Container distribution (Dockerfiles, compose)
   TS providers module.
 - **Docker / Docker Compose** for distribution and for the multi-service,
   12-factor stacks Loki generates (web + database + cache with healthchecks).
-- **GitHub Actions** for CI/CD: test suites, SBOM and security audits,
-  multi-channel release (npm, Docker, Homebrew), and post-release smoke tests.
+- **GitHub Actions** (`.github/workflows/`): `release.yml` (multi-channel
+  release), `converge-dist-tags.yml` and `sdk-freshness.yml`. The test suites
+  run locally through `scripts/local-ci.sh`, not in a workflow.
 
 ---
 

@@ -60,8 +60,9 @@ USED=""
 while IFS=$'\t' read -r path line rule token; do
     [ -z "${path:-}" ] && continue
     key="$path	$token"
-    if printf '%s\n' "$ALLOW_KEYS" | grep -qxF -- "$key"; then
-        USED="$USED$key"$'\n'
+    if printf '%s\n' "$ALLOW_KEYS" | grep -qxF -- "$key" ||
+        { [ "$rule" = "claim" ] && printf '%s\n' "$ALLOW_KEYS" | grep -qxF -- "$path	claim:*"; }; then
+        USED="$USED$key"$'\n'"$path	claim:*"$'\n'
     else
         bad "$path:$line $rule '$token' is not on main (fix the doc, or allowlist a historical mention)"
         UNALLOWED=$((UNALLOWED + 1))
@@ -85,6 +86,20 @@ fi
 # (for example README.md under DOC-01) must not break this check.
 STALE_ENTRIES="$(comm -23 <(printf '%s\n' "$ALLOW_KEYS") <(printf '%s' "$USED" | sort -u))"
 [ -n "$STALE_ENTRIES" ] && echo "  [WARN] $(printf '%s\n' "$STALE_ENTRIES" | wc -l | tr -d ' ') allowlist entr(ies) no longer needed"
+
+echo
+echo "T3b -- R4 claim rule: positive control and receipt exemption"
+CLAIM_OUT="$(DOCS_DRIFT_FILES="tests/fixtures/docs-drift/claim.md" python3 "$SCAN" "$REPO_ROOT" 2>/dev/null)"
+CLAIM_RC=$?
+[ "$CLAIM_RC" -eq 1 ] && ok "claim fixture exits 1" || bad "claim fixture exit $CLAIM_RC, want 1"
+printf '%s\n' "$CLAIM_OUT" | grep -qF "claim:3x faster" && ok "'3x faster' reported" || bad "'3x faster' not reported"
+printf '%s\n' "$CLAIM_OUT" | grep -qF "claim:99 specialized agents" && ok "'99 specialized agents' reported" || bad "'99 specialized agents' not reported"
+printf '%s\n' "$CLAIM_OUT" | grep -qF "claim:40% cheaper" && bad "line with a receipt link was reported" || ok "line with a receipt link passes"
+if grep -rnE '41 (Specialized )?Agent' "$REPO_ROOT/docs/COMPARISON.md" | grep -qiE 'vs generic|more (organized|rigorous)|better|exceeds|Loki Mode \*\*'; then
+    bad "COMPARISON.md frames the 41 roles as an advantage"
+else
+    ok "COMPARISON.md states the 41 roles without advantage framing"
+fi
 
 echo
 echo "T4 -- S6: docs generate honors tier and lean flags"

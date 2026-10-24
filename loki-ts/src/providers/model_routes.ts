@@ -6,8 +6,9 @@
 // module never mutates process.env and never logs a token.
 // Plain Claude ids (opus, sonnet, claude-*) resolve to null: behavior unchanged.
 
-import { readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { REPO_ROOT } from "../util/paths.ts";
 import { fileURLToPath } from "node:url";
 
 export interface ModelRoute {
@@ -167,4 +168,62 @@ export function otelPassthroughEnv(env: Env = process.env): Record<string, strin
     if (v !== undefined) out[k] = v;
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// LOKI_EFFORT knob (#346 slice 2). Mirror of loki_provider_effort / loki_effort_argv /
+// loki_effort_record in providers/models.sh: the catalog row (models[].effort, else
+// providers.<p>.effort) clamps the request, and a row with no flag is "unsupported"
+// so no flag is ever invented.
+// ---------------------------------------------------------------------------
+
+const EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max"];
+
+export interface ProviderEffort {
+  effort: string;
+  flag: string;
+  clampedFrom: string;
+}
+
+/** Null when no valid effort is requested or the catalog has no row. */
+export function providerEffortParam(provider: string, model: string, env: Env = process.env, requested?: string): ProviderEffort | null {
+  const req = requested ?? env["LOKI_EFFORT"] ?? "";
+  if (!EFFORT_ORDER.includes(req)) return null;
+  try {
+    const path = env["LOKI_MODEL_CATALOG"] || resolve(REPO_ROOT, "providers/model_catalog.json");
+    type Row = { flag?: string | null; levels?: string[]; unsupported?: boolean };
+    const p = JSON.parse(readFileSync(path, "utf8")).providers?.[provider] as { effort?: Row; models?: Array<{ id?: string; alias?: string; effort?: Row }> } | undefined;
+    const m = p?.models?.find((x) => model && (x.id === model || x.alias === model));
+    const e = m?.effort ?? p?.effort;
+    if (!e) return null;
+    const levels = EFFORT_ORDER.filter((l) => (e.levels ?? []).includes(l));
+    if (e.unsupported || !e.flag || levels.length === 0) return { effort: "unsupported", flag: "", clampedFrom: req };
+    let eff = req;
+    if (!levels.includes(eff)) {
+      const below = levels.filter((l) => EFFORT_ORDER.indexOf(l) <= EFFORT_ORDER.indexOf(req));
+      eff = below.length > 0 ? below[below.length - 1]! : levels[0]!;
+    }
+    return { effort: eff, flag: e.flag, clampedFrom: eff !== req ? req : "" };
+  } catch {
+    return null;
+  }
+}
+
+/** One JSON line per stage in ${LOKI_DIR:-.loki}/state/effort.jsonl. Never throws. */
+export function recordEffort(provider: string, stage: string, model: string, effort: string, clampedFrom: string, env: Env = process.env): void {
+  try {
+    const dir = resolve(env["LOKI_DIR"] || ".loki", "state");
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(resolve(dir, "effort.jsonl"), JSON.stringify({ provider, stage, model, effort, clamped_from: clampedFrom }) + "\n");
+  } catch {
+    // an audit line must never fail a run
+  }
+}
+
+/** The provider's own effort argv (empty when unrequested or unsupported), recorded per stage. */
+export function effortArgv(provider: string, model: string, stage: string, env: Env = process.env): string[] {
+  const r = providerEffortParam(provider, model, env);
+  if (!r) return [];
+  recordEffort(provider, stage, model, r.effort, r.clampedFrom, env);
+  return r.flag ? [r.flag, r.effort] : [];
 }

@@ -154,3 +154,62 @@ for m in p.get("models", []):
     print(f"{m.get('id','')}\t{m.get('tier','')}\t{alias}")
 PY
 }
+
+# LOKI_EFFORT knob (#346 slice 2). loki_provider_effort <provider> [model] [requested]
+# prints "<effort>|<flag>|<clamped_from>" and nothing when no effort is requested.
+# The catalog row (models[].effort, else providers.<p>.effort) decides: levels clamp
+# the request to the highest allowed level not above it (else the lowest allowed),
+# and a row with no flag prints "unsupported" so no flag is ever invented.
+# Mirror of providerEffortParam in loki-ts/src/providers/model_routes.ts.
+loki_provider_effort() {
+    local provider="${1:-}" model="${2:-}" req="${3:-${LOKI_EFFORT:-}}"
+    [ -n "$req" ] && [ -f "$LOKI_MODEL_CATALOG" ] || return 0
+    python3 - "$LOKI_MODEL_CATALOG" "$provider" "$model" "$req" <<'PY'
+import json, sys
+path, provider, model, req = sys.argv[1:5]
+order = ["low", "medium", "high", "xhigh", "max"]
+if req not in order:
+    sys.exit(0)
+p = json.load(open(path)).get("providers", {}).get(provider, {})
+m = next((x for x in p.get("models", []) if model and (x.get("id") == model or x.get("alias") == model)), {})
+e = m.get("effort") or p.get("effort")
+if not e:
+    sys.exit(0)
+flag = e.get("flag")
+levels = [l for l in order if l in e.get("levels", [])]
+if e.get("unsupported") or not flag or not levels:
+    print("unsupported||" + req)
+    sys.exit(0)
+eff = req
+if eff not in levels:
+    below = [l for l in levels if order.index(l) <= order.index(req)]
+    eff = below[-1] if below else levels[0]
+print("%s|%s|%s" % (eff, flag, req if eff != req else ""))
+PY
+}
+
+# loki_effort_record <provider> <stage> <model> <effort> <clamped_from>: one JSON line per
+# stage in ${LOKI_DIR:-.loki}/state/effort.jsonl so the effective effort is auditable.
+loki_effort_record() {
+    local dir="${LOKI_DIR:-.loki}/state"
+    mkdir -p "$dir" 2>/dev/null || return 0
+    # json.dumps escapes every field (no sourceable bash escape helper exists in the providers layer);
+    # compact separators and raw unicode match Bun's JSON.stringify byte for byte.
+    python3 -c 'import json,sys
+k=["provider","stage","model","effort","clamped_from"]
+print(json.dumps(dict(zip(k,sys.argv[1:6])),separators=(",",":"),ensure_ascii=False))' \
+        "$1" "$2" "$3" "$4" "$5" >> "$dir/effort.jsonl" 2>/dev/null || true
+}
+
+# loki_effort_argv <provider> <model> <stage>: fills _LOKI_EFFORT_ARGV with the provider's
+# own effort flag (empty when unrequested or unsupported) and records the outcome.
+loki_effort_argv() {
+    _LOKI_EFFORT_ARGV=()
+    local out eff flag from
+    out="$(loki_provider_effort "$1" "$2")" || return 0
+    [ -n "$out" ] || return 0
+    IFS='|' read -r eff flag from <<<"$out"
+    if [ "$eff" != "unsupported" ] && [ -n "$flag" ]; then _LOKI_EFFORT_ARGV=("$flag" "$eff"); fi
+    loki_effort_record "$1" "${3:-}" "$2" "$eff" "$from"
+    return 0
+}

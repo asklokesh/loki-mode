@@ -16,10 +16,16 @@ delivers is worse than none, because it is exactly what an auditor will test.
 | Container image (`asklokesh/loki-mode`) | first release after v8.5.2 | first release after v8.5.2 through v11.17.98 |
 | npm tarball (`loki-mode`) | v7.4.10 and later | v7.4.10 through v11.17.98 |
 
-**Releases after v11.17.98 ship no SBOM.** The release workflow was cut to the
-minimum that publishes (so every channel is live within minutes of a version
-bump), and SBOM generation and attestation were removed with it. The image is
-still signed. Generate an SBOM yourself with `syft` (see below) if you need one.
+**Releases after v11.17.98 carry no CycloneDX image attestation.** The release
+workflow was cut to the minimum that publishes, and that attestation was removed
+with it. Releases from the first one that includes the `attach-sbom` job carry
+two replacements, both produced by steps marked `continue-on-error` so a failure
+never blocks a distribution channel: SPDX JSON SBOMs
+(`loki-mode-npm.spdx.json`, `loki-mode-image.spdx.json`) attached to the GitHub
+Release by the `attach-sbom` job, and GitHub build provenance attestations
+(`actions/attest-build-provenance`) for the npm tarball and the image digest.
+Because those steps are best effort, a given release can lack them: check the
+release assets before relying on one. The image is still signed.
 
 **Images published up to and including v8.5.2 are not signed and have no SBOM.** A signing
 workflow existed from v7.4.10 but was triggered on `release: published`, and
@@ -66,9 +72,10 @@ name `release.yml` in this repository.
 
 ## Verify and read the SBOM
 
-Applies to images through v11.17.98 only; later images carry no SBOM
-attestation, so this command fails for them by design. For those, run `syft`
-against the digest (shown at the end of this section).
+The CycloneDX attestation below applies to images through v11.17.98 only;
+later images carry no such attestation, so that command fails for them by
+design. For later releases, download the SPDX JSON SBOM from the GitHub Release
+assets, or run `syft` against the digest (shown at the end of this section).
 
 The SBOM is attached to the image as a CycloneDX attestation. Note this is a
 *separate* artifact from the npm SBOM published on the GitHub Release: the
@@ -104,6 +111,24 @@ syft "asklokesh/loki-mode:${VERSION}" --platform linux/arm64 -o cyclonedx-json
 
 Feed `image-sbom.cdx.json` to Grype, Trivy, Dependency-Track or any other
 CycloneDX consumer for CVE scanning.
+
+## Verify build provenance
+
+Releases that carry the attestations (see the coverage section) can be checked
+with the GitHub CLI against the public attestation store:
+
+```sh
+# npm tarball, downloaded with: npm pack loki-mode@<version>
+gh attestation verify loki-mode-<version>.tgz --repo asklokesh/loki-mode
+
+# container image, by digest
+gh attestation verify "oci://index.docker.io/asklokesh/loki-mode@${DIGEST}" \
+  --repo asklokesh/loki-mode
+```
+
+A pass confirms the artifact was built by this repository's release workflow.
+A failure on a release that predates the attestation step, or on one where the
+best effort step did not run, is expected.
 
 ## Air-gapped environments
 

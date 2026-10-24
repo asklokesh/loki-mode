@@ -11,7 +11,7 @@ import { attemptsGate, runAttemptsOnCtx } from "../../features/attempts.ts"; // 
 import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import { resumeAfterConflict, resumeAfterEmptyDone } from "../../util/conflict_resume.ts";
-import { planChain, readSessionId } from "../../runner/session_resume.ts";
+import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
 import { routerActive } from "../../runner/router/unit_model.ts";
 import { type ImplementExit, type RunContext, type SessionRunOptions, type Stage, type StageResult, type TestMap, taskBlock } from "../types.ts";
@@ -123,11 +123,14 @@ export const implementStage: Stage = {
     const spec = specFor(ctx);
     // CH-03: resume plan's session on the same model (never when routed: per-unit models differ). Wall, verify and seal never join the chain. planChain owns eligibility; `!plan` here only keeps plan_chain out of the data when plan was skipped.
     const chain = routed || !plan ? null : planChain(ctx, downgrade?.to ?? ctx.model, fastTierModel(process.env));
-    const resumeId = chain && "id" in chain ? chain.id : undefined;
-    let planChainMode: string | undefined = chain ? (resumeId ? "resumed" : `fresh (${(chain as { why: string }).why})`) : undefined;
+    const own = routed || process.env.LOKI_E10_ATTEMPTS === "2" ? null : interruptedSession(ctx, `${ctx.runId}-impl`); // a rerun continues its own killed session before any plan link
+    const ownId = own && "id" in own ? own.id : undefined;
+    const resumeId = ownId ?? (chain && "id" in chain ? chain.id : undefined);
+    let planChainMode: string | undefined = ownId ? "resumed (interrupted session)" : chain ? (resumeId ? "resumed" : `fresh (${(chain as { why: string }).why})`) : undefined;
+    let sessionResume: string | undefined = own ? (ownId ? "resumed" : `fresh (${(own as { why: string }).why})`) : undefined;
     const first: SessionRunOptions = {
       stage: "implement",
-      brief: buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec)),
+      brief: ownId ? INTERRUPTED_BRIEF : buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec)),
       tier: "development",
       iterationId: `${ctx.runId}-impl`,
       limitS: implementStage.limitS,
@@ -136,7 +139,7 @@ export const implementStage: Stage = {
       ...(downgrade ? { model: downgrade.to } : {}),
       ...(resumeId ? { resumeSessionId: resumeId } : {}),
     };
-    const unchained = (): SessionRunOptions => { const { resumeSessionId: _chained, ...rest } = first; return rest; }; // read at call time: the router may rewrite first.model; retries and conflict reruns never inherit the chain link
+    const unchained = (): SessionRunOptions => { const { resumeSessionId: _chained, ...rest } = first; return ownId ? { ...rest, brief: buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec)) } : rest; }; // read at call time: the router may rewrite first.model; retries and conflict reruns never inherit the chain link
     // ROUTER-1: per-unit ladder from the plan's route record (runner/router/unit_model.ts). Flag off: none of this runs.
     const rt = routed ? routeStart(ctx, first, prior.plan) : null;
     // S41-13: LOKI_E10_ATTEMPTS=2 on a normal-size task with a non-empty predicted S runs two attempts; the worker env is already token-scrubbed (asserted inside).
@@ -146,6 +149,7 @@ export const implementStage: Stage = {
     const ids = two ? two.ids : [first.iterationId];
     if (resumeId && !session.killed && session.exit !== 0) { // a failed resume reruns fresh with the same full brief
       planChainMode = "fallback (resume failed)";
+      if (ownId) { sessionResume = "fallback (resume failed)"; process.stderr.write(`implement: recorded session ${ownId} was not resumable, starting a fresh session\n`); }
       const retry = `${first.iterationId}f`; ids.push(retry);
       session = await ctx.sessions.run({ ...unchained(), iterationId: retry });
     }
@@ -181,6 +185,7 @@ export const implementStage: Stage = {
       iteration_ids: ids, model: rt ? rt.current : downgrade?.to ?? ctx.model, ...(rt ? { route_model: rt.current, route_escalations: rt.escalations } : {}), session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
       duration_s: session.durationS,
       ...(planChainMode ? { plan_chain: planChainMode } : {}),
+      ...(sessionResume ? { session_resume: sessionResume } : {}),
       ...(two ? { attempts: two.summary } : {}),
     };
 

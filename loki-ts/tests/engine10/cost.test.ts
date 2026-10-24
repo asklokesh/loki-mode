@@ -14,6 +14,7 @@ import {
   sumResultCosts,
   writeEfficiencyRecord,
 } from "../../src/engine10/cost.ts";
+import { costBreakdown, stageShareText, topTierRate } from "../../src/util/cost_breakdown.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../../src/runner/budget.ts";
 import { consumeSdkStream } from "../../src/runner/sdk_stream_parser.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
@@ -570,14 +571,14 @@ describe("TEN-COST-28 per-stage spend share in the summary", () => {
   test("shares sum to 100 and the top stage is named", async () => {
     const { stageShareText } = await import("../../src/util/cost_breakdown.ts");
     const t = stageShareText([ev("plan", 1), ev("implement", 1), ev("fix", 1), ev("implement", 1)])!;
-    expect(t).toBe("plan 25%, implement 50%, fix 25%; top: implement");
+    expect(t).toBe("plan 25%, implement 50%, fix 25%; top: implement; savings not measured");
     const odd = stageShareText([ev("plan", 1), ev("wall", 1), ev("fix", 1)])!;
     expect(odd.match(/(\d+)%/g)!.reduce((a, p) => a + parseInt(p, 10), 0)).toBe(100);
   });
   test("unpriced or unmetered stages say unmetered, never 0; nothing metered is null", async () => {
     const { stageShareText } = await import("../../src/util/cost_breakdown.ts");
     expect(stageShareText([ev("plan", 3), ev("xreview", null), ev("fix", 0, "cli-invoker-unmetered"), ev("implement", 1)]))
-      .toBe("plan 75%, xreview unmetered, fix unmetered, implement 25%; top: plan");
+      .toBe("plan 75%, xreview unmetered, fix unmetered, implement 25%; top: plan; savings not measured");
     expect(stageShareText([ev("plan", null), ev("fix", null)])).toBeNull();
     expect(stageShareText([ev("plan", 2)])).toBeNull();
   });
@@ -591,5 +592,78 @@ describe("TEN-COST-28 per-stage spend share in the summary", () => {
     expect(withS).toContain("plan 25%, fix 75%; top: fix");
     expect(withS.indexOf("Cost:")).toBeLessThan(withS.indexOf("Spend:"));
     expect(renderMainOutput(events, { ...base, cost: { usd: 4, provider: "claude", tokens: 1 } } as never)).not.toContain("Spend:");
+  });
+});
+
+// #409: savings vs the top Claude tier, derived from model-pricing.json
+describe("savings_usd (#409)", () => {
+  const stages = [["plan", 1200, 300, 40000, 2000, 0.31], ["implement", 9000, 4000, 120000, 15000, 0.9], ["verify", 500, 200, 9000, 0, 0.05], ["review", 3000, 800, 30000, 1000, 0.2]] as const;
+  const recs = stages.map(([stage, i, o, r, w, usd]) => ({ iter: stage, rec: { stage, total_cost_usd: usd, input_tokens: i, output_tokens: o, cache_read_tokens: r, cache_creation_tokens: w } }));
+  const events = stages.map(([stage, i, o, r, w, usd]) => ({ type: "cost", stage, data: { usd, source: "x", input_tokens: i, output_tokens: o, cache_read_tokens: r, cache_creation_tokens: w } }));
+  const top = topTierRate()!;
+  const cf = stages.reduce((a, [, i, o, r, w]) => a + (i * top.input + o * top.output + r * top.read + w * top.write) / 1e6, 0);
+  const actual = stages.reduce((a, s) => a + s[5], 0);
+  test("top tier is derived from the pricing table, with its own cache rates", () => {
+    expect(top.output).toBeGreaterThan(20);
+    expect(top.read).toBeLessThan(top.input);
+  });
+  test("savings_usd equals counterfactual minus actual and text agrees", () => {
+    const b = costBreakdown(recs);
+    expect(Math.abs(b.savings_usd! - (cf - actual))).toBeLessThan(0.01);
+    expect(cf - actual).toBeLessThan(0);
+    expect(b.savings_usd!).toBeLessThan(0);
+    const t = stageShareText(events);
+    expect(t).toContain(`cost $${(actual - cf).toFixed(2)} more than top tier`);
+    expect(t).not.toContain("saved $");
+    expect(t).not.toContain("no savings");
+  });
+  const one = (usd: number, input: number) => ({ type: "cost", stage: "plan", data: { usd, source: "x", input_tokens: input, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } });
+  const two = (usd: number, input: number) => [one(usd, input), { ...one(0, 0), stage: "fix" }];
+  const oneRec = (usd: number, input: number) => [{ iter: "plan", rec: { stage: "plan", total_cost_usd: usd, input_tokens: input, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } }];
+  test("actual above top-tier price keeps signed JSON and renders no savings, never saved $-X", () => {
+    const input = 1_000_000, cfv = top.input;
+    expect(costBreakdown(oneRec(cfv + 3, input)).savings_usd!).toBeLessThan(0);
+    const t = stageShareText(two(cfv + 3, input));
+    expect(t).toContain("cost $3.00 more than top tier");
+    expect(t).not.toContain("saved $-");
+    expect(t).not.toContain("no savings");
+  });
+  test("a tiny negative or zero value never renders $-0.00 or saved $0.00", () => {
+    const input = 1_000_000, cfv = top.input;
+    for (const usd of [cfv + 0.004, cfv + 0.0049, cfv]) {
+      const t = stageShareText(two(usd, input));
+      expect(t).not.toContain("$-0.00");
+      expect(t).not.toContain("saved $0.00");
+      expect(t).not.toContain("more than top tier");
+      expect(t).toContain("no difference vs top tier");
+    }
+  });
+  test("a cheaper counterfactual is a cost increase, never positive savings", () => {
+    const t = stageShareText(two(top.input + 0.5, 1_000_000))!;
+    expect(t).toContain("cost $0.50 more than top tier");
+    expect(t).not.toContain("saved");
+  });
+  test("unknown cost renders as not measured, never 0 or no difference", () => {
+    const unk = { ...one(0, 1000), data: { usd: 0, source: "cli-invoker-unmetered", input_tokens: 1000, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } };
+    const u = stageShareText([unk, { ...one(1, 1000), stage: "fix" }]) ?? "";
+    expect(u).toContain("savings not measured");
+    expect(u).not.toContain("no difference");
+    expect(u).not.toContain("no savings");
+    const nan = stageShareText([one(NaN, 1000), { ...one(1, 1000), stage: "fix" }]) ?? "";
+    expect(nan).not.toContain("no difference");
+    expect(nan).not.toContain("$0.00");
+  });
+  test("positive savings render exactly saved $X.XX vs top tier", () => {
+    const input = 1_000_000, cfv = top.input;
+    const usd = Math.max(0, cfv - 2.5);
+    expect(costBreakdown(oneRec(usd, input)).savings_usd!).toBeCloseTo(cfv - usd, 3);
+    expect(stageShareText(two(usd, input))).toContain(`saved $${(cfv - usd).toFixed(2)} vs top tier`);
+  });
+  test("an unmeasured stage makes savings null and the text says not measured, never 0", () => {
+    const bad = recs.map((r, i) => (i === 2 ? { ...r, rec: { stage: "verify", total_cost_usd: 0.05 } } : r));
+    expect(costBreakdown(bad).savings_usd).toBeNull();
+    const ev = events.map((e, i) => (i === 2 ? { ...e, data: { usd: 0.05, source: "x" } } : e));
+    expect(stageShareText(ev)).toContain("savings not measured");
+    expect(costBreakdown(recs, ["it-9"]).savings_usd).toBeNull();
   });
 });

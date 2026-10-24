@@ -1,0 +1,7 @@
+name: scope-noext
+on: pull_request_target
+jobs:
+  noext:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi

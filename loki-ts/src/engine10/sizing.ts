@@ -14,7 +14,7 @@ export function namedFiles(task: string, map: RepoMap | null): string[] {
 
 /** P12-46: "large" = names more than LARGE_NAMED_FILES repo files; never lean, routed to decompose (a large unit never runs in parallel). */
 export type TaskSize = "small" | "normal" | "large"; export const LARGE_NAMED_FILES = 8;
-/** C-F1 run4 knobs: LOKI_E10_SMALL_MAX_CHARS (positive number, default 600); LOKI_E10_SMALL_NO_RUNNER=1 stops a missing runner forcing normal. */
+/** C-F1 run4 knobs: LOKI_E10_SMALL_MAX_CHARS (positive number, default 600); a missing runner no longer forces normal (default); LOKI_E10_SMALL_NO_RUNNER=0 restores that disqualifier. */
 const noted = new Set<string>(); // one stderr note per name=value; a setting that was not honored must be visible, the returned number never changes
 const noteOnce = (name: string, raw: string | undefined, why: string): void => { if (raw === undefined || !raw.trim() || noted.has(name + raw)) return; noted.add(name + raw); process.stderr.write(`loki: ${name}="${raw}" ${why}\n`); };
 export const smallMaxChars = (env = process.env): number => { const n = Number(env.LOKI_E10_SMALL_MAX_CHARS); if (n > 0) return n; noteOnce("LOKI_E10_SMALL_MAX_CHARS", env.LOKI_E10_SMALL_MAX_CHARS, "is not a positive number; using 600"); return 600; };
@@ -25,7 +25,7 @@ export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | nul
     !task.trim() && "no task text", task.length > smallMaxChars() && `task ${task.length} chars > ${smallMaxChars()}`,
     !map && "no repo map", (map?.files.length ?? 0) > 3000 && `repo ${map?.files.length} files > 3000`,
     map?.truncated && "repo map truncated at the file cap", // buildRepoMap caps files at 2000, so the >3000 rule alone never fires
-    !tests?.runners.length && process.env.LOKI_E10_SMALL_NO_RUNNER !== "1" && "no test runner detected", named > 2 && `task names ${named} files > 2`,
+    (!tests || (!tests.runners.length && process.env.LOKI_E10_SMALL_NO_RUNNER === "0")) && "no test runner detected", named > 2 && `task names ${named} files > 2`,
   ].filter((w): w is string => typeof w === "string");
   return why.length ? { size: "normal", reasons: why } : { size: "small", reasons: [`task ${task.length} chars, names ${named} files`] };
 }

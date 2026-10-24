@@ -1,0 +1,49 @@
+name: atkwr
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+jobs:
+  wrsha:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git fetch origin ${{ github.event.workflow_run.head_sha }}
+  wrbranch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+  wrrepo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+  wrprs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.pull_requests[0].head.sha }}
+  wrcommit:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git checkout ${{ github.event.workflow_run.head_commit.id }}
+  dawidd6_artifact:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: dawidd6/action-download-artifact@v6
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+      - run: ./artifact/build.sh
+  gh_run_view:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh run view ${{ github.event.workflow_run.id }} --json headSha
+  artifacts_url:
+    runs-on: ubuntu-latest
+    steps:
+      - run: wget -qO- "${{ github.event.workflow_run.artifacts_url }}"
+  local_reusable:
+    uses: ./.github/workflows/callee.yml

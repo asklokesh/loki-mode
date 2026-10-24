@@ -1,0 +1,8 @@
+name: orphan
+on: pull_request_target
+# loki-p9-allow: this marker is not above any job key
+jobs:
+  base:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi

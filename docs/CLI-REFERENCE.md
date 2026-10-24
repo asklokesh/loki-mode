@@ -21,7 +21,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki memory lessons` | List PR review lessons with uses and outcomes |
 | `loki memory brief` | Print the lessons and learnings block an engine10 run injects |
 | `loki memory show` | Show one learning |
-| `loki memory search` | Search learnings |
+| `loki memory search` | Search runs, decisions and semantic memory (run id, date, file, line; `--json`); hardlinks are not detected and a PEM body is redacted on its BEGIN line only; the bash route also covers episodic, skills, handoffs and vector |
 | `loki memory stats` | Memory statistics |
 | `loki memory consolidate` | Episodic-to-semantic pipeline |
 | `loki memory compound` | Compound learnings |
@@ -40,7 +40,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki proof share` | Share a receipt |
 | `loki proof badge` | Print the Verified by Loki badge |
 | `loki proof md` | Print badge markdown for a README |
-| `loki proof bundle` | Write a self-verifying receipt bundle |
+| `loki proof bundle` | Write a self-verifying receipt bundle; `--audit <from>..<to>` writes one .tgz of every receipt in a commit range with index.csv and a verify.sh that takes each receipt's head_sha, verdict and verifying key id from `loki verify --json` (never a text scan), requires every row's commit to be in the baked range each pubkey.jwk kid to be its key thumbprint, each signed run_id to equal its row, and each signed receipt hash to be one of the exported set (no duplicates, full coverage); a bundled pubkey.jwk that does not verify its receipt is FAILED. It prints key ids (pin with `--expect-kid`; evidence export only; needs an installed `loki`, nothing is fetched; exit 0 OK, 1 FAILED, 2 UNCHECKED when no verifier or it cannot decide, 4 run outcome not verified); a receipt with no head_sha refuses the export |
 | `loki wiki` | Cited codebase wiki and Q&A |
 | `loki wiki generate` | Generate the wiki |
 | `loki wiki show` | Show a section |
@@ -135,7 +135,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki ship` | Ship the verified result |
 | `loki deploy` | Deploy the built product |
 | `loki import` | Import issues or specs |
-| `loki github` | GitHub integration |
+| `loki github` | GitHub integration (`sync`, `export`, `pr`, `status`, `publish`, `protect [--dry-run] [--off]`) |
 | `loki issue` | Work an issue |
 | `loki ci` | CI helpers |
 | `loki modernize` | Code modernization |

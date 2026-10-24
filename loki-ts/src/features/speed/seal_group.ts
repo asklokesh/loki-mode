@@ -12,7 +12,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { signReceipt } from "../../util/receipt_signer.ts";
+import { jsonTooDeep, signReceipt } from "../../util/receipt_signer.ts";
 import type { Verdict } from "../../engine10/types.ts";
 import type { VerifyDeps } from "../../engine10/verify_cmd.ts";
 
@@ -68,6 +68,7 @@ export function sealGroup(runDir: string, rh: RecHash): GroupSeal {
     let bytes: Buffer;
     try { bytes = readFileSync(rp); } catch { return fail(`unit ${id} sub-receipt missing`); }
     const sub = readJson(rp);
+    if (jsonTooDeep(sub)) return fail(`unit ${id} sub-receipt cannot be hashed (nested too deeply)`);
     if (!isObj(sub) || typeof sub["receipt_sha256"] !== "string" || rh(sub) !== sub["receipt_sha256"]) return fail(`unit ${id} sub-receipt unreadable or its hash does not recompute`);
     const verdict = String(sub["verdict"] ?? "");
     if (!PASSING.has(verdict)) { allUnitsPass = false; notProven.push(`group: unit ${id} verdict ${verdict || "unknown"}`); }
@@ -108,6 +109,7 @@ export async function verifyGroup(receiptPath: string, receipt: Record<string, u
     const evSha = existsSync(ep) ? sha(readFileSync(ep)) : null;
     if (evSha !== (e["events_file_sha256"] ?? null)) return bad(`unit ${id} events.jsonl does not match its recorded hash`);
     const sub = readJson(rp);
+    if (jsonTooDeep(sub)) return { verdict: "UNCHECKED", reason: `group: unit ${id} sub-receipt cannot be hashed (nested too deeply)` }; // damaged, not a tamper finding; checked before any hash
     if (!isObj(sub) || sub["receipt_sha256"] !== e["receipt_sha256"] || rh(sub) !== e["receipt_sha256"]) return bad(`unit ${id} sub-receipt hash does not recompute`);
     if (String(sub["verdict"] ?? "") !== e["verdict"]) return bad(`unit ${id} verdict differs from the combined receipt`);
     const r = await verifyOne(rp, deps);

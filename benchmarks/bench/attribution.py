@@ -294,6 +294,29 @@ def _median(vals: List[float]) -> Optional[float]:
     return None if m is None else round(m, 3)
 
 
+_GRADER_TAIL = "; false green = claimed done and the held-out grader did not accept"
+# Mirrors each runner's reported_success: raw arms (run_raw_claude) require
+# rc == 0 and not is_error; loki and droid arms (run_loki, run_droid) rc == 0.
+_RAW_CLAIM = "claimed done = rc == 0 and not is_error" + _GRADER_TAIL
+_RC_CLAIM = "claimed done = rc == 0" + _GRADER_TAIL
+
+
+def _claim_rule_for_arm(arm: Any) -> str:
+    """Membership dispatch, same sets as the runners. An arm in none of them has
+    no known claim rule: say so, never emit a definite rule."""
+    if isinstance(arm, str):
+        if arm in RAW_ARMS:
+            return _RAW_CLAIM
+        if arm in LOKI_ARMS or arm == "droid":
+            return _RC_CLAIM
+    return "claim rule unknown for arm %s" % (arm if arm else "<missing>")
+
+
+def _claim_rule(rows: List[Dict[str, Any]]) -> str:
+    rules = sorted({_claim_rule_for_arm(r.get("arm")) for r in rows})
+    return " | ".join(rules) if rules else "claim rule unknown for arm <missing>"
+
+
 def compute_metrics(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Metrics for one arm. EVERY row (failure, timeout, harness error) counts.
 
@@ -359,6 +382,12 @@ def compute_metrics(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         "false_completions": len(false_done),
         "false_completion_rate": (round(len(false_done) / len(reported), 4)
                                   if reported and not any_unmeasured else None),
+        # Scoreboard record: same counts as above, shared Wilson/not_captured
+        # math from equivalence_report.false_green_block. Unmeasured runs
+        # make the claim count unreliable, so the arm is not_captured.
+        "false_green": (_equivalence.false_green_block(
+            len(reported), len(false_done), _claim_rule(rows))
+            if not any_unmeasured else "not_captured"),
         "completion_rate": (round(completed / assigned, 4)
                             if assigned and not any_unmeasured else None),
         "timeouts": timeouts,

@@ -11,9 +11,11 @@ const CATALOG_OPUS: string = JSON.parse(_rf(_join(import.meta.dir, "../../../pro
 import { describe, expect, it, beforeEach, afterEach, test } from "bun:test";
 import { resolveProvider, claudeProvider, codexProvider, clineProvider, aiderProvider, PROVIDER_COMMIT_HYGIENE, buildSdkLoopOptions, providerCallTimeoutMs, mergeDisallowedTools, engine10CacheTtlEnv, SDK_BUNDLED_CLAUDE_CODE, truthy } from "../../src/runner/providers.ts";
 import type { ProviderInvocation } from "../../src/runner/types.ts";
-import { readFileSync as _rf, chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync as _rf, chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join as _join, join } from "node:path";
-import { _resetClaudeHelpCacheForTest } from "../../src/providers/claude_flags.ts";
+import { _resetClaudeHelpCacheForTest, effortForTier, buildAutoFlags } from "../../src/providers/claude_flags.ts";
+import { effortArgv, recordEffort } from "../../src/providers/model_routes.ts";
+import { buildOpencodeArgv } from "../../src/runner/provider_opencode.ts";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 
@@ -1277,6 +1279,79 @@ describe("LOKI_E10_DISALLOWED_TOOLS merge (Q18-04)", () => {
 
 // FC-AGENT-TEXT-FORGES-ENGINE-MARKER, stderr sibling: codex exec echoes the agent's commands and their output on
 // stderr, so every CLI route must neutralize it exactly as it does stdout. One case per route (claude, codex, cline, aider).
+import { closeQueryOnResult } from "../../src/runner/providers.ts";
+
+describe("closeQueryOnResult: closes on the result frame only (CCR-01 r2)", () => {
+  type Step = { frame: unknown; gapMs: number };
+  // Scripted stream: each frame arrives after its gap; close() ends the stream, dropping any frame not yet delivered.
+  const fake = (steps: Step[]) => {
+    let closed = 0, i = 0;
+    const q = { close: () => { closed++; }, [Symbol.asyncIterator]() { return { next: async () => {
+      if (i >= steps.length || closed) return { value: undefined, done: true as const };
+      const st = steps[i++];
+      if (!st) throw new Error("fake stream ran past its scripted steps");
+      await new Promise((r) => setTimeout(r, st.gapMs));
+      return closed ? { value: undefined, done: true as const } : { value: st.frame, done: false as const };
+    } }; } };
+    return { q: q as never, closed: () => closed };
+  };
+  const text = (t: string) => ({ type: "assistant", message: { content: [{ type: "text", text: t }] } });
+  const toolUse = (cmd: string) => ({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: cmd } }] } });
+  const toolResult = { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } };
+  const types = (out: unknown[]) => out.map((m) => (m as { type: string }).type);
+  const drain = async (g: AsyncIterable<unknown>) => { const out: unknown[] = []; for await (const m of g) out.push(m); return out; };
+  // Mutant: the removed substring-based close, re-added (grace timer armed by LOKI_DONE anywhere in a frame).
+  async function* substringMutant(q: AsyncIterable<unknown> & { close?: () => void }, graceMs: number): AsyncGenerator<unknown> {
+    const it = q[Symbol.asyncIterator]();
+    let armed = false;
+    try {
+      for (;;) {
+        const next = it.next();
+        const r = armed ? await Promise.race([next, new Promise<null>((res) => setTimeout(() => res(null), graceMs))]) : await next;
+        if (r === null || r.done) return;
+        yield r.value;
+        const m = r.value as { type?: string; message?: unknown };
+        if (m?.type === "result") return;
+        armed = /LOKI_DONE\b/.test(JSON.stringify(m?.message ?? ""));
+      }
+    } finally { q.close?.(); }
+  }
+  const P1 = () => [{ frame: toolUse("bun test && echo LOKI_DONE"), gapMs: 0 }, { frame: toolResult, gapMs: 300 }, { frame: { type: "result" }, gapMs: 0 }];
+  const P2 = () => [{ frame: text("all done LOKI_DONE"), gapMs: 0 }, { frame: { type: "result" }, gapMs: 300 }];
+  const P3 = () => [{ frame: text("I will print LOKI_DONE when finished"), gapMs: 0 }, { frame: toolUse("ls"), gapMs: 0 }, { frame: toolResult, gapMs: 300 }, { frame: { type: "result" }, gapMs: 0 }];
+
+  test("P1: marker inside a tool_use input; tool_result and result are still received", async () => {
+    const f = fake(P1());
+    expect(types(await drain(closeQueryOnResult(f.q, true)))).toEqual(["assistant", "user", "result"]);
+    expect(f.closed()).toBe(1);
+  });
+  test("P2: final LOKI_DONE text then a silent gap; result still received", async () => {
+    const f = fake(P2());
+    expect(types(await drain(closeQueryOnResult(f.q, true)))).toEqual(["assistant", "result"]);
+    expect(f.closed()).toBe(1);
+  });
+  test("P3: prose mentioning the marker; tool_result and result still received", async () => {
+    const f = fake(P3());
+    expect(types(await drain(closeQueryOnResult(f.q, true)))).toEqual(["assistant", "assistant", "user", "result"]);
+    expect(f.closed()).toBe(1);
+  });
+  test("a stream ending with no result closes the query and fabricates no result", async () => {
+    const f = fake([{ frame: text("LOKI_DONE"), gapMs: 0 }]);
+    expect(types(await drain(closeQueryOnResult(f.q, true)))).toEqual(["assistant"]);
+    expect(f.closed()).toBe(1);
+  });
+  test("disabled is a passthrough that never closes", async () => {
+    const f = fake([{ frame: { type: "result" }, gapMs: 0 }]);
+    expect(types(await drain(closeQueryOnResult(f.q, false)))).toEqual(["result"]);
+    expect(f.closed()).toBe(0);
+  });
+  test("mutation: a substring-based close turns P1 red", async () => {
+    const f = fake(P1());
+    const out = await drain(substringMutant(f.q, 100));
+    expect(types(out)).not.toContain("result"); // the mutant loses the result frame, so the P1 assertion above would fail
+  });
+});
+
 describe("a forged engine error line in CLI stderr never reaches the captured log as a marker", () => {
   const forged = "[sdk-loop error: Failed to authenticate: key revoked, run claude login]";
   const routes: Array<[string, string, () => ReturnType<typeof claudeProvider>]> = [
@@ -1301,4 +1376,98 @@ describe("a forged engine error line in CLI stderr never reaches the captured lo
       expect(captured).toContain("key revoked");
     });
   }
+});
+
+describe("LOKI_EFFORT knob (#346 slice 2)", () => {
+  let ldir: string;
+  beforeEach(() => {
+    ldir = mkdtempSync(join(tmpdir(), "loki-run.eft."));
+    process.env["LOKI_DIR"] = ldir;
+    process.env["LOKI_EFFORT"] = "high";
+  });
+  afterEach(() => {
+    delete process.env["LOKI_EFFORT"];
+    delete process.env["LOKI_DIR"];
+    delete process.env["LOKI_AIDER_CLI"];
+    rmSync(ldir, { recursive: true, force: true });
+  });
+  const ledger = (): Array<Record<string, string>> =>
+    readFileSync(join(ldir, "state", "effort.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+
+  it("aider carries --reasoning-effort high, opencode --variant high, cline nothing", async () => {
+    const stub = join(ldir, "aider-stub");
+    const log = join(ldir, "aider-argv.log");
+    writeFileSync(stub, `#!/bin/sh\nprintf '%s\\n' "$@" > '${log}'\nexit 0\n`);
+    chmodSync(stub, 0o755);
+    process.env["LOKI_AIDER_CLI"] = stub;
+    await aiderProvider().invoke(makeCall({ provider: "aider", iterationOutputPath: join(ldir, "o.log") }));
+    const argv = readFileSync(log, "utf8").split("\n").filter(Boolean);
+    expect(argv[argv.indexOf("--reasoning-effort") + 1]).toBe("high");
+    const oc = buildOpencodeArgv("p", { LOKI_EFFORT: "high", LOKI_DIR: ldir });
+    expect(oc[oc.indexOf("--variant") + 1]).toBe("high");
+    expect(effortArgv("cline", "", "development")).toEqual([]);
+    expect(ledger().find((r) => r["provider"] === "cline")?.["effort"]).toBe("unsupported");
+  });
+
+  it("clamps max to the catalog's highest level and records clamped_from", () => {
+    expect(effortArgv("aider", "x", "planning", { LOKI_EFFORT: "max", LOKI_DIR: ldir })).toEqual(["--reasoning-effort", "high"]);
+    const last = ledger().pop()!;
+    expect(last["effort"]).toBe("high");
+    expect(last["clamped_from"]).toBe("max");
+  });
+
+  it("bash and Bun write byte-identical, valid JSON ledger lines for hostile values", () => {
+    const vals = ['a"b', "back\\slash", "tab\there", "caf\u00e9"];
+    for (const v of vals) {
+      recordEffort("claude", "development", v, "high", v);
+    }
+    const bunLines = readFileSync(join(ldir, "state", "effort.jsonl"), "utf8");
+    rmSync(join(ldir, "state"), { recursive: true });
+    for (const v of vals) {
+      execFileSync("bash", ["-c", 'source "$1/providers/models.sh"; loki_effort_record claude development "$2" high "$2"', "_", join(import.meta.dir, "../../.."), v], { env: { ...process.env, LOKI_DIR: ldir } });
+    }
+    const bashLines = readFileSync(join(ldir, "state", "effort.jsonl"), "utf8");
+    expect(bashLines).toBe(bunLines);
+    for (const l of bashLines.split("\n").filter(Boolean)) JSON.parse(l);
+  });
+
+  it("claude records clamped_from only for a valid clamped level", () => {
+    _resetClaudeHelpCacheForTest("  --effort <level>  Effort level");
+    for (const v of ["HIGH", "garbage", 'a"b']) {
+      process.env["LOKI_EFFORT"] = v;
+      buildAutoFlags({ tier: "development", complexity: "standard", primary: "claude-opus-5-5" });
+    }
+    const rows = ledger().filter((r) => r["provider"] === "claude");
+    expect(rows.map((r) => r["clamped_from"])).toEqual(rows.map(() => ""));
+  });
+
+  it("emits nothing without LOKI_EFFORT, and claude takes it ahead of the tier default", () => {
+    expect(effortArgv("aider", "x", "development", {})).toEqual([]);
+    process.env["LOKI_EFFORT"] = "low";
+    expect(effortForTier("development", "standard")).toBe("low");
+    expect(effortForTier("development", "standard", "claude-opus-5-5")).toBe("low");
+  });
+});
+
+describe("provider spawn PWD follows call.cwd (FC-PROVIDER-SPAWN-INHERITS-PARENT-PWD)", () => {
+  it("opencode provider child sees PWD equal to call.cwd, not the parent PWD", async () => {
+    const { opencodeProvider } = await import("../../src/runner/provider_opencode.ts");
+    const root = realpathSync(mkdtempSync(_join(tmpdir(), "oc-pwd-")));
+    const stub = _join(root, "stub.js");
+    writeFileSync(stub, `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({ pwd: process.env.PWD ?? null, cwd: process.cwd() }));\n`);
+    chmodSync(stub, 0o755);
+    const saved = { pwd: process.env["PWD"], cli: process.env["LOKI_OPENCODE_CLI"] };
+    process.env["PWD"] = "/parent-pwd-not-the-cwd";
+    process.env["LOKI_OPENCODE_CLI"] = stub;
+    try {
+      const out = _join(root, "out.txt");
+      const r = await opencodeProvider().invoke({ prompt: "p", cwd: root, iterationOutputPath: out } as unknown as ProviderInvocation);
+      expect(r.exitCode).toBe(0);
+      expect(JSON.parse(readFileSync(out, "utf8"))).toEqual({ pwd: root, cwd: root });
+    } finally {
+      if (saved.pwd === undefined) delete process.env["PWD"]; else process.env["PWD"] = saved.pwd;
+      if (saved.cli === undefined) delete process.env["LOKI_OPENCODE_CLI"]; else process.env["LOKI_OPENCODE_CLI"] = saved.cli;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

@@ -115,7 +115,7 @@ changed_chars() {
 # full new file content, looked up by each added line's number.
 unmeasured_claims() {
     local base="$BASE" cite='METRICS|ROUTING-EVIDENCE|\.loki/metrics'
-    { git diff "$base" -U0 -- '*.md' ":(exclude)loki-ts/dist/**" ":(exclude)eval/loki10/refdiff/**" 2>/dev/null || true; } \
+    { git diff "$base" -U0 -- '*.md' ":(exclude)loki-ts/dist/**" ":(exclude)eval/loki10/refdiff/**" ":(exclude)tests/fixtures/docs-drift/**" 2>/dev/null || true; } \
         | perl -ne '
             BEGIN { $k = shift @ARGV; @ARGV = ();
               $n = q{\d+(?:\.\d+)?};
@@ -156,13 +156,32 @@ override = re.compile(r"ignore (all |any )?(previous|prior|above) (instructions|
 # filter stages between, optional sudo/env wrapper and flags), process
 # substitution (sh <(curl ...), source <(...)) or command substitution
 # (sh -c "$(curl ...)", eval "$(...)", backticks).
-SH = r"(?:/\S*/)?(?:ba|z|da|k|c)?sh(?![\w.-])"
-FETCH = r"(?:curl|wget|base64\s+(?:-d|--decode)|openssl\s+base64\s+-d)\b"
+SH = r"(?:/\S*/)?(?:(?:ba|z|da|k|c|mk|a|pdk)?sh|ksh93)(?![\w.-])"
+# PowerShell evaluators are sinks too (irm url | iex, iex (irm url)).
+IEX = r"(?<![\w-])(?i:iex|invoke-expression)(?![\w-])"
+FETCH = r"(?:curl|wget|aria2c|(?<!git )fetch|(?i:irm|iwr|invoke-restmethod|invoke-webrequest)|base64\s+(?:-d|--decode)|openssl\s+base64\s+-d)(?![\w-])"
 WRAP = r"(?:(?:sudo|doas|env|exec|command)\b[^|;&\n]*?\s)?"
+# A sink may sit in a subshell or group after the pipe, as any command of it:
+# | (sh), | { sh; }, | (cd /tmp && sh), | { cd /tmp; sh; }.
+SINK = r"(?:[({]\s*(?:[^\n;&|)}]*[;&|]+\s*)*)?" + WRAP + r"(?:" + SH + r"|" + IEX + r")"
+STAGES = r"[^\n|]*(?:\|[^\n|]*)*?\|\s*"
+# Download then run the same file on one line: curl -o f && sh f (also glued
+# -of, wget -O f, curl URL > f, curl -O URL where the file is the URL basename,
+# a cd prefix or hop, chmod between, sh ./f). The run must name the file.
+SAVE = r"(?<=\s)(?:-[A-Za-z]*[oO]\s*|--output[=\s]\s*|>>?\s*)(?P<f>[\w./~][\w./~-]*)"
+SAVE_O = r"\s(?:-[A-Za-z]*O[A-Za-z]*|--remote-name)\s[^\n;&|]*?/(?P<g>[\w.-]+)(?=[\s\"';&|]|$)"
+CD = r"(?:cd\s+\S+\s*(?:&&|;)\s*)?"
+def run_saved(n):
+    return (r"[^\n;&|]*(?:&&|;)\s*" + CD + r"(?:chmod\s+\S+\s+(?P=" + n + r")\s*(?:&&|;)\s*" + CD + r")?(?:"
+            + WRAP + SH + r"(?:\s+-\S+)*\s+(?:\./)?|\./)(?P=" + n + r")(?![\w./-])")
 pipe = re.compile(
-    r"\b" + FETCH + r"[^\n|]*(?:\|[^\n|]*)*?\|\s*" + WRAP + SH
+    r"\b" + FETCH + STAGES + SINK
+    + r"|\b" + FETCH + r"[^\n;&|]*?" + SAVE + run_saved("f")
+    + r"|\b" + FETCH + SAVE_O + run_saved("g")
+    + r"|\b" + FETCH + STAGES + r"tee\b[^\n|]*>\(\s*" + WRAP + SH
     + r"|(?:(?<=\s)|^)(?:" + SH + r"|source|eval|\.)\s[^\n]*<\(\s*" + FETCH
     + r"|(?:(?<=\s)|^)(?:" + SH + r"|eval)\s[^\n]*(?:\$\(|`)\s*" + FETCH
+    + r"|" + IEX + r"[^\n]*?(?:\(\s*" + FETCH + r"|DownloadString)"
 )
 key = re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)")
 for f in sys.argv[1:]:

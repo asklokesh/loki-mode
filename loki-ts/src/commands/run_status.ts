@@ -6,7 +6,7 @@ import { discoverControlUrl } from "../../../packages/control-plane/src/shipper/
 import { fold, readEvents } from "../engine10/events.ts";
 import { formatDuration } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
-import { STALE_S, controlRunLink, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../util/run_outputs.ts";
+import { STALE_S, STAGE_ORDER, controlRunLink, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../util/run_outputs.ts";
 import { readRunControl, writeRunControl, type RunControlAction } from "../util/run_control.ts";
 import { readRunPid, runOwnerAlive } from "../util/run_pid.ts";
 import { isRunId } from "./undo.ts";
@@ -25,6 +25,8 @@ export interface ModernStatus {
   stage: string | null;
   elapsed_s: number | null;
   cost_usd: number | null;
+  usd_so_far: number | null; // null = not measured, never 0 (moat P7)
+  usd_projected: number | null; // spend so far over the completed stage share; null when unmeasured or no stage has completed
   outcome: string | null;
   pr_url: string | null;
   receipt_path: string | null;
@@ -55,6 +57,13 @@ export function eventsPath(root: string, runId: string): string {
 
 const lastTs = (ev: EventEnvelope[]): number => (ev.length ? Date.parse(ev[ev.length - 1]!.ts) : 0);
 
+/** Projected total spend: spend so far divided by the share of pipeline stages completed. null (never Infinity or NaN) when spend is unmeasured or nothing has completed. */
+export function projectUsd(soFar: number | null, completedStages: number, runDone: boolean): number | null {
+  if (soFar === null || !Number.isFinite(soFar)) return null;
+  if (runDone) return soFar;
+  return completedStages > 0 ? soFar / (completedStages / STAGE_ORDER.length) : null;
+}
+
 /** Pure: the status record for one run's events. */
 export function summarize(runId: string, events: EventEnvelope[], root: string, nowMs: number): Omit<ModernStatus, "control_plane_url" | "control_plane_run_url"> {
   const f = fold(events);
@@ -82,6 +91,8 @@ export function summarize(runId: string, events: EventEnvelope[], root: string, 
     stage: !done && open.size ? [...open].sort().join("+") : null,
     elapsed_s: Math.max(0, (endMs - startMs) / 1000),
     cost_usd: f.cost.usd,
+    usd_so_far: f.cost.usd,
+    usd_projected: projectUsd(f.cost.usd, STAGE_ORDER.filter((n) => f.completed.includes(n)).length, done),
     outcome: state === "cancelled" ? "cancelled" : f.run.verdict ?? (done ? "completed" : state === "stalled" ? "stalled (no events for 30m+)" : "running"),
     pr_url: typeof pr === "string" && pr ? pr : null,
     last_event_ago_s: events.length && Number.isFinite(lastTs(events)) ? Math.max(0, Math.round((nowMs - lastTs(events)) / 1000)) : null,
@@ -132,17 +143,59 @@ async function probeConfiguredControl(env: NodeJS.ProcessEnv): Promise<string | 
   } catch { return null; }
 }
 
+export interface FollowLine { type: "stage" | "test" | "cost" | "run"; seq: number; ts: string; text: string; json: Record<string, unknown> }
+
+/** Pure: the follow line for one event, or null for event types follow does not show. cost carries usd_so_far, the sum of measured cost events up to and including this one. */
+export function followLine(e: EventEnvelope, usdSoFar: number): FollowLine | null {
+  const base = { seq: e.seq, ts: e.ts };
+  if (e.type.startsWith("stage.") && e.stage !== null) {
+    const what = e.type.slice(6);
+    return { type: "stage", ...base, text: `stage ${e.stage} ${what}`, json: { type: "stage", ...base, stage: e.stage, event: what } };
+  }
+  if (e.type === "test.result") {
+    const name = String(e.data.name ?? "test"), result = String(e.data.result ?? "unknown");
+    return { type: "test", ...base, text: `test ${name}: ${result}`, json: { type: "test", ...base, name, result } };
+  }
+  if (e.type === "cost") {
+    const usd = typeof e.data.usd === "number" ? e.data.usd : null;
+    return { type: "cost", ...base, text: usd === null ? `cost not measured, $${usdSoFar.toFixed(2)} so far` : `cost +$${usd.toFixed(2)}, $${usdSoFar.toFixed(2)} so far`, json: { type: "cost", ...base, usd, usd_so_far: usdSoFar } };
+  }
+  if (e.type === "run.completed") {
+    const verdict = typeof e.data.verdict === "string" ? e.data.verdict : "completed";
+    return { type: "run", ...base, text: `run completed: ${verdict}`, json: { type: "run", ...base, verdict } };
+  }
+  return null;
+}
+
+/** `loki status --follow`: print one line per new event until run.completed or the signal aborts. Read-only: it never signals or writes the run, so detaching leaves the run untouched. */
+export async function followRun(path: string, json: boolean, signal: AbortSignal, write: (s: string) => void = (s) => { process.stdout.write(s); }, pollMs = 500): Promise<void> {
+  let last = 0, usd = 0;
+  while (!signal.aborted) {
+    for (const e of readEvents(path)) {
+      if (e.seq <= last) continue;
+      last = e.seq;
+      if (e.type === "cost" && typeof e.data.usd === "number") usd += e.data.usd;
+      const l = followLine(e, usd);
+      if (l) write(json ? `${JSON.stringify(l.json)}\n` : `${l.text}\n`);
+      if (e.type === "run.completed") return;
+    }
+    await new Promise<void>((r) => { const t = setTimeout(r, pollMs); signal.addEventListener("abort", () => { clearTimeout(t); r(); }, { once: true }); });
+  }
+}
+
 export async function runModernStatus(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   if (argv.includes("--badge")) return (await import("./status.ts")).runStatus(["--badge"]);
   if (argv.includes("--probe")) return (await import("./status.ts")).runStatus(["--probe"]);
   let json = false;
+  let follow = false;
   let wanted: string | null = null;
-  const usage = "Usage: loki status [run-id] [--json|--badge|--probe]\n";
+  const usage = "Usage: loki status [run-id] [--json|--badge|--probe|--follow]\n";
   for (const a of argv) {
     if (a === "--json") json = true;
+    else if (a === "--follow") follow = true;
     else if (!a.startsWith("-") && wanted === null) wanted = a;
     else if (!a.startsWith("-")) { process.stderr.write(`loki status: too many arguments: expected one run id\n${usage}`); return 1; }
-    else if (a === "--help" || a === "-h") { process.stdout.write(`${usage}  Shows the current or latest Loki 10 run.\n`); return 0; }
+    else if (a === "--help" || a === "-h") { process.stdout.write(`${usage}  Shows the current or latest Loki 10 run.\n  --follow  Print one line per event (stage, test, cost) until the run ends; Ctrl-C detaches and never stops the run.\n`); return 0; }
     else { process.stderr.write(`loki status: unknown flag ${a}\n${usage}`); return 1; }
   }
   const repoDir = env.LOKI_E10_REPO_DIR ?? process.cwd();
@@ -155,12 +208,19 @@ export async function runModernStatus(argv: readonly string[], env: NodeJS.Proce
     if (events.length === 0) { process.stderr.write(`loki status: no events for run ${wanted}\n`); return 1; }
     hit = { id: wanted, events };
   }
+  if (follow && hit) {
+    const ac = new AbortController();
+    const onInt = (): void => ac.abort();
+    process.once("SIGINT", onInt);
+    try { await followRun(eventsPath(root, hit.id), json, ac.signal); } finally { process.off("SIGINT", onInt); }
+    return 0;
+  }
   let cp: string | null = null;
   try { cp = await discoverControlUrl(env); } catch { cp = null; }
   if (cp === null) cp = await probeConfiguredControl(env);
   if (!hit) {
     process.stdout.write(json
-      ? `${JSON.stringify({ engine: "loki10", run_id: null, ref: null, state: null, stage: null, elapsed_s: null, cost_usd: null, outcome: null, pr_url: null, receipt_path: null, control_plane_url: cp, last_event_ago_s: null, last_event_seq: null, control_plane_run_url: null, hint: NO_RUN_HINT })}\n`
+      ? `${JSON.stringify({ engine: "loki10", run_id: null, ref: null, state: null, stage: null, elapsed_s: null, cost_usd: null, usd_so_far: null, usd_projected: null, outcome: null, pr_url: null, receipt_path: null, control_plane_url: cp, last_event_ago_s: null, last_event_seq: null, control_plane_run_url: null, hint: NO_RUN_HINT })}\n`
       : `${NO_RUN_HINT}\n${cp ? `  Control Plane: ${cp}\n` : ""}`);
     return 0;
   }

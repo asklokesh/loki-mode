@@ -1,0 +1,7 @@
+name: scope-list
+on: [push, pull_request_target]
+jobs:
+  lst:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi

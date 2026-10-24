@@ -120,6 +120,11 @@ Default-on in the Bun runner (see `CHANGELOG.md` v7.x entries; documented in `sk
 
 These knobs together implement the RARV-C (closure) loop: findings -> override council -> learnings -> handoff. Reference: `skills/quality-gates.md`, `CHANGELOG.md` entries from v7.x for default-on flip and override-council semantics.
 
+## engine10 sizing knobs (`loki-ts/src/engine10/sizing.ts`)
+
+- `LOKI_E10_SMALL_NO_RUNNER` -- default on: a missing test runner no longer disqualifies a task from "small". A small task skips the plan session (the implementer plans) and the skipped plan writes `plan-scope.json` from the files the task names. Set to `0` to make a missing runner force "normal".
+- `LOKI_E10_SMALL_MAX_CHARS` -- task text length above which a task is not small (positive number, default 600; an invalid value falls back to 600 with a stderr note).
+
 ## Worktree substrate (autonomy/lib/worktree_prep.py)
 
 `prepare_worktree(source_repo, dest, branch, setup=None, base=None)` creates an isolated git worktree and returns `{path, base_sha, deps, left_out_changes}`. The start point is `origin/HEAD` after a fetch (when a remote exists), else HEAD. Uncommitted edits in the source checkout are never carried or stashed; their count is reported as `left_out_changes`. An fcntl lock at `~/.loki/repos/<slug>.lock` covers fetch and worktree add. Dependencies: a `setup` command run in the worktree, else a copy-on-write copy of ignored top-level `node_modules`, `.venv`, `venv`, `vendor` (refused as "copy unsafe, declare setup" if it holds absolute symlinks or editable finders), else `none`. CLI: `python3 autonomy/lib/worktree_prep.py SRC DEST BRANCH [--setup CMD] [--base REF]` prints the result as JSON. Not yet wired into backlog or the UI.

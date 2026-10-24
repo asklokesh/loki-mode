@@ -124,6 +124,7 @@ provider_invoke() {
     local model="${LOKI_CLINE_MODEL:-}"
     local model_args=()
     [[ -n "$model" ]] && model_args=("-m" "$model")
+    type loki_effort_argv >/dev/null 2>&1 && loki_effort_argv cline "$model" development
     # Guard the model_args array expansion: when LOKI_CLINE_MODEL is unset the
     # array is empty, and a bare "${arr[@]}" under `set -u` aborts with "unbound
     # variable" on bash 3.2 (stock macOS /bin/bash). ${arr[@]+...} expands to
@@ -160,6 +161,8 @@ provider_invoke_argv() {
     model="$(provider_get_tier_param "$tier" 2>/dev/null || printf '%s' "")"
     _LOKI_INVOKE_ARGV=(cline -y)
     [ -n "$model" ] && _LOKI_INVOKE_ARGV+=(-m "$model")
+    # Cline has no effort flag: LOKI_EFFORT is recorded as unsupported, never invented.
+    type loki_effort_argv >/dev/null 2>&1 && loki_effort_argv cline "$model" "$tier"
     _LOKI_INVOKE_ARGV+=("$prompt")
 }
 

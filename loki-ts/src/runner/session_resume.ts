@@ -43,6 +43,16 @@ export function readSessionId(repoDir: string, iterationId: string): string | nu
   } catch { return null; }
 }
 
+/** A rerun of a stage (resume from implement or fix) continues the session its killed first attempt recorded under the SAME iteration id.
+ *  Only that exact id is read, so an id from another stage, round or run is never reused. Provider rejection is handled by the caller's fresh fallback. */
+export const INTERRUPTED_BRIEF = "The previous turn was interrupted before you finished. Check the working tree for the work already done, then continue the task and finish it.";
+export function interruptedSession(ctx: RunContext, iterationId: string): { id: string } | { why: string } {
+  if (process.env["LOKI_E10_FIX_RESUME"] === "0") return { why: "LOKI_E10_FIX_RESUME=0" };
+  if (ctx.provider !== "claude" || process.env["LOKI_E10_INVOKER"] === "cli") return { why: "provider is not the SDK" };
+  const id = readSessionId(ctx.repoDir, iterationId);
+  return id ? { id } : { why: "no session id recorded" };
+}
+
 /** Counterpart of readSessionId: record the session id a finished iteration can be resumed from. A truncated turn is
  *  still resumable (partial work lives in the session). A model_refusal_no_fallback turn is not: the refusal sits in
  *  that session's history, so any stale id is removed and the next iteration starts fresh. Best-effort. */
@@ -50,6 +60,7 @@ export function writeSessionId(repoDir: string, iterationId: string, res: { sess
   const file = join(repoDir, ".loki", `e10-session-${iterationId}.json`);
   try {
     if (res.refusedNoFallback || !res.sessionId) { if (res.refusedNoFallback) rmSync(file, { force: true }); return; }
+    if (readSessionId(repoDir, iterationId) === res.sessionId) return; // idempotent: first frame and stream end write the same id
     mkdirSync(join(repoDir, ".loki"), { recursive: true });
     writeFileSync(file, JSON.stringify({ session_id: res.sessionId }));
   } catch { /* best-effort */ }
@@ -92,8 +103,10 @@ export async function runFixSession(
   ctx: RunContext, base: Omit<SessionRunOptions, "iterationId" | "brief">, iterationId: string, priorIds: string[],
   chain: { sessionId: string | null; model: string }, actualModel: string, fullBrief: string, resumeBrief: string,
 ): Promise<FixSessionOutcome> {
-  let mode = "fresh", why: string | undefined, resumeId: string | undefined;
-  if (chainEnabled()) {
+  let mode = "fresh", why: string | undefined, resumeId: string | undefined, interrupted = false;
+  const own = interruptedSession(ctx, iterationId);
+  if ("id" in own) { mode = "resumed (interrupted session)"; resumeId = own.id; interrupted = true; }
+  else if (chainEnabled()) {
     if (ctx.provider !== "claude" || process.env["LOKI_E10_INVOKER"] === "cli") mode = "fallback (provider is not the SDK)";
     else if (!chain.sessionId) mode = "fallback (no session id recorded)";
     else if (actualModel !== chain.model) why = `model changed ${chain.model} -> ${actualModel}`; // L1: escalation or downgrade never keeps the old model
@@ -106,9 +119,10 @@ export async function runFixSession(
   }
   let iterId = iterationId;
   const ids = [...priorIds, iterId];
-  let session = await ctx.sessions.run({ ...base, iterationId: iterId, brief: resumeId ? resumeBrief : fullBrief, ...(resumeId ? { resumeSessionId: resumeId } : {}) });
+  let session = await ctx.sessions.run({ ...base, iterationId: iterId, brief: interrupted ? INTERRUPTED_BRIEF : resumeId ? resumeBrief : fullBrief, ...(resumeId ? { resumeSessionId: resumeId } : {}) });
   if (resumeId && !session.killed && session.exit !== 0) { // never blocks: a failed resume reruns fresh with the original brief
     const err = (session as unknown as { stderrTail?: string }).stderrTail ?? "";
+    if (interrupted) process.stderr.write(`fix: recorded session ${resumeId} was not resumable, starting a fresh session\n`);
     mode = `fallback (${(/sdk-loop error: ([^\]\n]*)/.exec(err)?.[1] ?? classifyExitCause(session.exit, false)).slice(0, 120)})`;
     iterId = `${iterId}f`; ids.push(iterId);
     session = await ctx.sessions.run({ ...base, iterationId: iterId, brief: fullBrief });

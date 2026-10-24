@@ -190,13 +190,26 @@ def measure(setup, model, verifier=None, only=None, timeout=600, out=DEFAULT_OUT
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--setup", required=True, choices=("top", "floor"))
-    ap.add_argument("--model", required=True)
-    ap.add_argument("--verifier")
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog="Output: results/wrong-pass.json (schema " + SCHEMA +
+                                 "), wrong_pass = count of SEALED outcomes over n defects. "
+                                 "The default route runs `loki verify --no-llm`, which ignores "
+                                 "the model (no LLM spend); only a --verifier route is per-model.")
+    ap.add_argument("--setup", required=True, choices=("top", "floor"),
+                    help="which setup this run records; re-measuring a setup replaces only that run")
+    ap.add_argument("--model", required=True,
+                    help="NAME of the model under test. Exported as LOKI_MODEL on the default route "
+                         "and as SD_MODEL to --verifier; recorded in the run. Required, non-empty. "
+                         "A per-model claim needs a --verifier run, because the default route is "
+                         "model-independent")
+    ap.add_argument("--verifier",
+                    help="shell command run per defect in a scratch copy of the case; last stdout "
+                         "line must be SEALED or NOT_SEALED (env SD_ID, SD_MODEL, SD_CATEGORY)")
     ap.add_argument("--only", help="comma list of defect ids (partial run; fails the full-coverage contract)")
-    ap.add_argument("--timeout", type=int, default=600)
-    ap.add_argument("--out", default=DEFAULT_OUT)
+    ap.add_argument("--timeout", type=int, default=600, help="per-defect timeout in seconds (default 600)")
+    ap.add_argument("--out", default=DEFAULT_OUT,
+                    help="results file written (default results/wrong-pass.json beside this script)")
     a = ap.parse_args(argv)
     if not a.model.strip():
         print("measure: --model must be non-empty", file=sys.stderr)

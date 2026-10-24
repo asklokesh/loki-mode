@@ -26,7 +26,7 @@ GEN="$ROOT/autonomy/lib/proof-generator.py"
 export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 \
     CI=true LOKI_DELEGATE_PR=0 LOKI_DASHBOARD=false
 
-IDS="P1.signed-proof-carries-attestation P1.offline-verify-bash P1.offline-verify-bun P1.different-tree-fails P1.modified-field-fails P1.wrong-key-fails P1.stripped-signature-fails P1.empty-jwks-value-fails P1.verification-metadata-signed P1.jwks-dup-kid-or-alg-none-fails"
+IDS="P1.signed-proof-carries-attestation P1.offline-verify-bash P1.offline-verify-bun P1.different-tree-fails P1.modified-field-fails P1.wrong-key-fails P1.stripped-signature-fails P1.empty-jwks-value-fails P1.verification-metadata-signed P1.jwks-dup-kid-or-alg-none-fails P1.damaged-receipt-fails"
 
 # Newlines in a reason (a python traceback, say) are folded so every case stays
 # exactly one stdout line.
@@ -533,6 +533,28 @@ for route in bash bun; do
     done
 done
 finish P1.jwks-dup-kid-or-alg-none-fails "unrelated JWKS entries (RS256 oidc-1, a duplicate pair, a list kid) still verify; two entries for the token kid, or alg none on its key, exit 2 NOT CHECKED naming the key set, never VERIFIED ($ROUTES)"
+
+# --- P1.damaged-receipt-fails -------------------------------------------------------
+# A truncated, empty or trailing-junk copy of the genuine signed receipt is
+# damaged input: verify exits 2 (could not check) without --jwks, and with
+# --jwks exits 1 or 2, never 0 and never "attestation: VERIFIED". The intact
+# receipt (the precheck control) still verifies on the same route.
+for _d in trunc empty junk; do
+    mkdir -p "$R/.loki/proofs/p1dmg-$_d"
+done
+head -c "$(( $(wc -c <"$PJ") / 2 ))" "$PJ" >"$R/.loki/proofs/p1dmg-trunc/proof.json"
+: >"$R/.loki/proofs/p1dmg-empty/proof.json"
+{ cat "$PJ"; printf '\ngarbage{'; } >"$R/.loki/proofs/p1dmg-junk/proof.json"
+for route in bash bun; do
+    precheck "$route" || continue
+    for _d in trunc empty junk; do
+        refuse_exact 2 "" "$route" "dmg-$_d-$route" "$R" "p1dmg-$_d"
+        verify "$route" "dmgj-$_d-$route" "$R" "p1dmg-$_d" --jwks "$W/keys/jwks.json"
+        { [ "$RC" -eq 1 ] || [ "$RC" -eq 2 ]; } || why="$why $route/dmgj-$_d: --jwks exit $RC, expected 1 or 2;"
+        verified "dmgj-$_d-$route" && why="$why $route/dmgj-$_d: printed attestation: VERIFIED;"
+    done
+done
+finish P1.damaged-receipt-fails "truncated, empty and trailing-junk signed receipts exit 2 without --jwks and 1 or 2 with it, never 0 or VERIFIED ($ROUTES)"
 
 echo "p1: runtime $(( $(date +%s) - T0 ))s" >&2
 exit 0

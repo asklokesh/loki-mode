@@ -40,7 +40,22 @@ wfdir = sys.argv[1]
 # (file, job, step name or None for the job itself) -> justification.
 # Empty since release.yml became the main workflow (converge-dist-tags.yml only schedules the dist-tag script); add a row only with a
 # written justification.
-COE_ALLOW = {}
+# D123: SBOM and provenance steps are additive supply-chain evidence. A failure in
+# one must never block or drop a distribution channel, so exactly these steps
+# (and no others) may carry continue-on-error: true.
+_SBOM_WHY = "additive SBOM/provenance step; must not block a publish channel"
+COE_ALLOW = {("release.yml", _j, _s): _SBOM_WHY for _j, _ss in {
+    "pack-npm": ["Attest build provenance for the tarball",
+                 "Unpack the tarball for the SBOM scan",
+                 "Generate the npm SBOM (SPDX JSON)",
+                 "Upload the npm SBOM"],
+    "docker": ["Attest build provenance for the image digest",
+               "Generate the image SBOM (SPDX JSON)",
+               "Upload the image SBOM"],
+    "attach-sbom": ["Checkout (VERSION only)",
+                    "Download the SBOMs",
+                    "Attach the SBOMs to the GitHub release"],
+}.items() for _s in _ss}
 ALWAYS_ALLOW = {}
 TEST_CMD = re.compile(
     r"(bun test|npm test|npm run test|pytest|node --test|bash tests/|run-all-tests|"
@@ -324,8 +339,11 @@ def masked(lines, i):
 
 ALWAYS_COND = re.compile(r"\b(always|failure)\(\)")
 
+allow_seen = {}
+parsed_files = set()
 for path in sorted(glob.glob(os.path.join(wfdir, "*.yml"))):
     fn = os.path.basename(path)
+    parsed_files.add(fn)
     try:
         doc = yaml.safe_load(open(path))
     except yaml.YAMLError as e:
@@ -340,6 +358,8 @@ for path in sorted(glob.glob(os.path.join(wfdir, "*.yml"))):
         for st in job.get("steps") or []:
             sname = st.get("name") or st.get("id") or "?"
             check_coe(f"{fn}:{jname}: step {sname!r}", st.get("continue-on-error"), matrix, (fn, jname, sname))
+            if (fn, jname, sname) in COE_ALLOW:
+                allow_seen[(fn, jname, sname)] = st
             run = st.get("run")
             if not isinstance(run, str) or not TEST_CMD.search(run):
                 continue
@@ -352,6 +372,21 @@ for path in sorted(glob.glob(os.path.join(wfdir, "*.yml"))):
                     fail(f"{fn}:{jname}: step {sname!r}: test command masked by '||': {s[:90]} (R3)")
                 if re.search(r"\|\s*(tee|head|grep|sed|awk|cat)\b", s) and not pipefail:
                     fail(f"{fn}:{jname}: step {sname!r}: test command piped without pipefail: {s[:90]} (R4)")
+
+# Every allowlisted best-effort step must really exist, really carry
+# continue-on-error: true (a dropped flag would let a supply-chain step block a
+# publish channel) and be time-boxed.
+if "release.yml" in parsed_files:
+    for key in COE_ALLOW:
+        st = allow_seen.get(key)
+        where = f"{key[0]}:{key[1]}: step {key[2]!r}"
+        if st is None:
+            fail(f"{where}: allowlisted step not found in the workflow (D123)")
+            continue
+        if not truthy_literal(st.get("continue-on-error")):
+            fail(f"{where}: allowlisted best-effort step lacks continue-on-error: true (D123)")
+        if str(st.get("timeout-minutes")) != "3":
+            fail(f"{where}: allowlisted best-effort step lacks timeout-minutes: 3 (D123)")
 
 # Positive control: the files this guard exists for were actually parsed.
 want = ["release.yml"]

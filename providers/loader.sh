@@ -83,6 +83,11 @@ load_provider() {
         return 1
     fi
 
+    # The catalog helpers (loki_effort_argv for LOKI_EFFORT) must live in this shell, not in a
+    # command substitution, so source them here once.
+    # shellcheck source=./models.sh
+    type loki_effort_argv >/dev/null 2>&1 || source "$PROVIDERS_DIR/models.sh" 2>/dev/null || true
+
     loki_otel_passthrough_export
     return 0
 }

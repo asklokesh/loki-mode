@@ -31,7 +31,7 @@
 
 | Feature | **Loki Mode** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
 |---------|--------------|-----------|-----------|------------|----------|-----------------|--------------|--------------|
-| **Multi-Agent** | 41 prompt-defined agent roles in 8 domains adopted per phase; parallel review council + optional worktree streams (Claude), sequential elsewhere | Single | Single | Up to 8 parallel | Background | Manager Surface | Multiple types | 4 built-in |
+| **Multi-Agent** | Role inventory: 41 prompt-defined roles in 8 domains (`agents/types.json`), adopted per phase; parallel review council + optional worktree streams (Claude), sequential elsewhere | Single | Single | Up to 8 parallel | Background | Manager Surface | Multiple types | 4 built-in |
 | **Orchestration** | Full orchestrator | N/A | N/A | Git worktree | Hooks | Manager view | Workflow | Subagents |
 | **Parallel Exec** | 10+ Haiku, 4 impl (worktree) | No | No | 8 max | Yes | Yes | Yes | Yes |
 | **Agent Domains** | Eng, Ops, Business, Data, Product, Growth, Review | N/A | N/A | N/A | N/A | N/A | 3 types | N/A |
@@ -145,7 +145,7 @@
 | **Multi-Agent Verification** | Model diversity (Claude vs OpenAI, 54% improvement) | 3 blind reviewers + devil's advocate | Different approach (N/A for Claude Code - only Claude models) |
 | **Quality Gates** | Built-in verification loops | 8 explicit gates + anti-sycophancy | **Loki Mode** |
 | **Memory System** | Not documented | 3-tier episodic/semantic/procedural | **Loki Mode** |
-| **Agent Specialization** | Custom Zen Agents | 41 pre-defined specialized agent roles | **Loki Mode** |
+| **Agent Specialization** | Custom Zen Agents | Role inventory: 41 prompt-defined roles in `agents/types.json` (a count of definitions, not a measured advantage) | Different approach |
 | **CI Failure Analysis** | Explicit pattern with auto-fix | DevOps agent only | **ADOPTED from Zencoder** |
 | **Review Comment Resolution** | Auto-apply simple changes | Manual review | **ADOPTED from Zencoder** |
 | **Dependency Management** | Scheduled PRs, one group at a time | Mentioned only | **ADOPTED from Zencoder** |
@@ -174,10 +174,9 @@
 
 1. **Quality Control**: 8 explicit gates + blind review + devil's advocate vs built-in loops
 2. **Memory System**: 3-tier (episodic/semantic/procedural) with cross-project learning
-3. **Agent Specialization**: 41 pre-defined specialized agent roles across 8 domains
-4. **Anti-Sycophancy**: CONSENSAGENT patterns prevent reviewer groupthink
-5. **Autonomy Design**: Minimal human intervention from PRD to production
-6. **Research Foundation**: 10+ academic papers integrated vs proprietary
+3. **Anti-Sycophancy**: CONSENSAGENT patterns prevent reviewer groupthink
+4. **Autonomy Design**: Minimal human intervention from PRD to production
+5. **Research Foundation**: 10+ academic papers integrated vs proprietary
 
 ### Where Zencoder EXCEEDS Loki Mode
 
@@ -230,7 +229,6 @@ These are patterns from competing projects that are **practically and scientific
 | **Constitutional AI Integration** | Principles-based self-critique from Anthropic research | None have this |
 | **Anti-Sycophancy (CONSENSAGENT)** | Blind review + devil's advocate prevents groupthink | None have this |
 | **Provider Abstraction Layer** | Clean degradation from full-featured to sequential-only | Claude-only projects can't degrade |
-| **41 Specialized Agent Roles** | Purpose-built role definitions in 8 domains vs generic; Loki gates every role's output through blind review + council | agents (108) has more but less organized |
 | **Research Foundation** | 10+ academic papers integrated with citations | Most have no research backing |
 
 ### Superpowers Deep-Dive (35K+ Stars)
@@ -352,7 +350,7 @@ Tiered agent architecture with explicit escalation:
 | Dimension | Loki Mode Advantage |
 |-----------|-------------------|
 | **Autonomy** | Designed for high autonomy with minimal human intervention |
-| **Multi-Agent** | 41 prompt-defined agent roles in 8 domains adopted per phase (parallel review council + optional worktree streams on Claude, sequential elsewhere) vs 1-8 in competitors, with all output gated by blind review + council |
+| **Multi-Agent** | Role inventory: 41 prompt-defined roles in 8 domains (`agents/types.json`), adopted per phase; parallel review council + optional worktree streams on Claude, sequential elsewhere. Output is gated by blind review + council |
 | **Quality** | 8 gates + blind review + devil's advocate + property-based testing |
 | **Research** | 10+ academic papers integrated vs proprietary/undisclosed |
 | **Anti-Sycophancy** | Only agent with CONSENSAGENT-based blind review |

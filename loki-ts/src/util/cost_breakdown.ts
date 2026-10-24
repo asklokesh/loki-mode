@@ -4,6 +4,9 @@
 // Logic lives here because engine10/cost.ts is at the core line cap. Fails closed: a record whose dollar figure is
 // missing, non-finite, negative or all-zero-usage (E-69, same rule as sumResultCosts) makes its stage's usd (and the total) null, never a silent 0.
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 export interface StageCost {
   usd: number | null;
   sessions: number;
@@ -16,6 +19,45 @@ export interface CostBreakdown {
   per_stage: Record<string, StageCost>;
   retry_usd: number | null; // dollars spent in retry sessions (a subset of usd, not added on top)
   retry_sessions: number;
+  savings_usd: number | null; // #409: same tokens at the top Claude tier minus actual usd; null when any session's dollars or tokens are unmeasured
+}
+
+type Rate = { input: number; output: number; read: number; write: number };
+let topRate: Rate | null | undefined;
+/** #409: the top Claude tier's per-MTok rates, derived from data/model-pricing.json (highest output rate among non-gpt rows), never a hardcoded id.
+ *  null when the table is unreadable: savings then reads "not measured". */
+export function topTierRate(): Rate | null {
+  if (topRate !== undefined) return topRate;
+  topRate = null;
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const rel of [["..", "..", "data"], ["..", "data"]]) {
+    try {
+      const rows = (JSON.parse(readFileSync(resolve(here, ...rel, "model-pricing.json"), "utf8")) as { pricing?: Record<string, Record<string, unknown>> }).pricing ?? {};
+      let best: Rate | null = null;
+      for (const [k, v] of Object.entries(rows)) {
+        const n = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+        if (k.startsWith("gpt-") || !n(v["input"]) || !n(v["output"])) continue;
+        if (!best || v["output"] > best.output) best = { input: v["input"], output: v["output"], read: n(v["cache_read"]) ? v["cache_read"] : v["input"], write: n(v["cache_write_5m"]) ? v["cache_write_5m"] : n(v["cache_write"]) ? v["cache_write"] : v["input"] };
+      }
+      if (best) return (topRate = best);
+    } catch { /* try next location */ }
+  }
+  return topRate;
+}
+const TOKEN_KEYS = ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"] as const;
+/** Savings = cost of every session's tokens at the top tier minus the actual dollars. null (never 0) when any session lacks a valid dollar figure
+ *  or any of the four token counts, or the pricing table gives no top tier. Rounded to 4 places. */
+export function savingsUsd(rows: { usd: unknown; tokens: Record<string, unknown>; unmetered?: boolean }[]): number | null {
+  const r = topTierRate();
+  if (!r || rows.length === 0) return null;
+  let actual = 0, cf = 0;
+  for (const { usd, tokens, unmetered } of rows) {
+    if (unmetered || !validUsd(usd) || TOKEN_KEYS.some((k) => typeof tokens[k] !== "number" || !Number.isFinite(tokens[k]) || (tokens[k] as number) < 0)) return null;
+    const t = (k: (typeof TOKEN_KEYS)[number]): number => tokens[k] as number;
+    actual += usd;
+    cf += (t("input_tokens") * r.input + t("output_tokens") * r.output + t("cache_read_tokens") * r.read + t("cache_creation_tokens") * r.write) / 1_000_000;
+  }
+  return Math.round((cf - actual) * 1e4) / 1e4;
 }
 
 /** #306: the components of the cached prefix. prefixParts hashes each one; prefixSha is the hash of all of them, so a change to ANY component moves it
@@ -39,7 +81,7 @@ const add = (a: number | null, c: number | null): number | null => (a === null |
 
 /** `missing` are the run's iterations without a usable dollar figure (absent file, ambiguous resume): any one makes every total unknown. */
 export function costBreakdown(recs: { iter: string; rec: Record<string, unknown> }[], missing: string[] = []): CostBreakdown {
-  const out: CostBreakdown = { usd: missing.length > 0 ? null : 0, per_stage: {}, retry_usd: missing.length > 0 ? null : 0, retry_sessions: 0 };
+  const out: CostBreakdown = { usd: missing.length > 0 ? null : 0, per_stage: {}, retry_usd: missing.length > 0 ? null : 0, retry_sessions: 0, savings_usd: null };
   for (const { rec } of recs) {
     const stage = typeof rec["stage"] === "string" && rec["stage"] ? rec["stage"] : UNATTRIBUTED;
     const s = (out.per_stage[stage] ??= { usd: 0, sessions: 0, cache_read_tokens: 0, cache_creation_tokens: 0, cache_hit_ratio: null });
@@ -56,6 +98,7 @@ export function costBreakdown(recs: { iter: string; rec: Record<string, unknown>
       out.retry_usd = add(out.retry_usd, c);
     }
   }
+  if (missing.length === 0) out.savings_usd = savingsUsd(recs.map(({ rec }) => ({ usd: validUsd(rec["total_cost_usd"]) && !noUsage(rec) ? rec["total_cost_usd"] : null, tokens: rec, unmetered: rec["source"] === "cli-invoker-unmetered" })));
   return out;
 }
 
@@ -63,7 +106,7 @@ export function costBreakdown(recs: { iter: string; rec: Record<string, unknown>
  *  exactly 100 (largest remainder); a stage with an unpriced or unmetered session says "unmetered", never 0. null when nothing was metered
  *  or only one stage exists (a share of 100% says nothing). */
 export function stageShareText(events: { type: string; stage: string | null; ts?: string; data: Record<string, unknown> }[]): string | null {
-  const shares = shareLine(events), hints = [cacheColdText(events), cacheTtlText(events)].filter((h): h is string => h !== null);
+  const line = shareLine(events), shares = line && `${line}; ${savingsText(events)}`, hints = [cacheColdText(events), cacheTtlText(events)].filter((h): h is string => h !== null);
   return [...(shares ? [shares] : []), ...hints].join(`\n${" ".repeat(12)}`) || null; // 12 = output.ts LABEL_WIDTH: the hints line up under the Spend value
 }
 function shareLine(events: { type: string; stage: string | null; ts?: string; data: Record<string, unknown> }[]): string | null {
@@ -84,6 +127,15 @@ function shareLine(events: { type: string; stage: string | null; ts?: string; da
   const top = metered.reduce((a, s) => (usd.get(s)! > usd.get(a)! ? s : a), metered[0]!);
   const parts = order.map((s) => { const i = metered.indexOf(s); return i >= 0 ? `${s} ${pct[i]}%` : `${s} unmetered`; });
   return `${parts.join(", ")}; top: ${top}`;
+}
+
+/** #409: "saved $X vs top tier" (or "cost $X more than top tier" when negative, "no difference vs top tier" when it rounds to 0.00) from the cost events, or "savings not measured" when any session is unmetered or lacks tokens. Same math as CostBreakdown.savings_usd. */
+function savingsText(events: { type: string; data: Record<string, unknown> }[]): string {
+  const v = savingsUsd(events.filter((e) => e.type === "cost").map((e) => ({ usd: e.data["usd"], tokens: e.data, unmetered: e.data["source"] === "cli-invoker-unmetered" })));
+  if (v === null) return "savings not measured";
+  const r = Number(v.toFixed(2));
+  if (r > 0) return `saved $${r.toFixed(2)} vs top tier`;
+  return r < 0 ? `cost $${(-r).toFixed(2)} more than top tier` : "no difference vs top tier";
 }
 
 /** TEN-COST-29: stages whose prefix cache ran cold (cache read under 30 percent of input-side tokens) as one "cache cold: a, b" line, for the

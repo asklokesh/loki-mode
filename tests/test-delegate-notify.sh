@@ -319,6 +319,33 @@ else
     bad "wiring: LOKI_DELEGATE_BRANCH isolation missing"
 fi
 
+# --- loki notify desktop channel (stub only, never a real notification) -----
+LOKI_BIN="$REPO_ROOT/autonomy/loki"
+: > "$NOTIFY_LOG"
+d_out="$(cd "$WORK" && env LOKI_NOTIFY_CHANNELS= "$BASH" "$LOKI_BIN" notify test --channel desktop 2>&1)"; d_rc=$?
+d_calls="$(grep -c '^osascript \|^notify-send ' "$NOTIFY_LOG" 2>/dev/null || true)"
+if [ "$d_rc" -eq 0 ] && [ "${d_calls:-0}" -eq 1 ]; then
+    ok "loki notify test --channel desktop exits 0 and records one stub call"
+else
+    bad "loki notify test --channel desktop" "rc=$d_rc calls=${d_calls:-0} out=$d_out"
+fi
+
+# Notifier absent: PATH holds only symlinks to the basics, no stub, no real one.
+ISO_BIN="$WORK/isobin"
+mkdir -p "$ISO_BIN"
+for t in sed grep awk cat dirname basename tr head tail cut sort uname date mkdir rm cp mv ls wc env id python3 git; do
+    tp="$(command -v "$t" 2>/dev/null || true)"
+    [ -n "$tp" ] && ln -sf "$tp" "$ISO_BIN/$t"
+done
+: > "$NOTIFY_LOG"
+n_out="$(cd "$WORK" && env -i HOME="$WORK" PATH="$ISO_BIN" "$BASH" "$LOKI_BIN" notify test --channel desktop 2>&1)"; n_rc=$?
+n_calls="$(grep -c . "$NOTIFY_LOG" 2>/dev/null || true)"
+if [ "$n_rc" -ne 0 ] && [ "${n_calls:-0}" -eq 0 ] && [ ! -e "$ISO_BIN/osascript" ]; then
+    ok "loki notify desktop with no notifier: non-zero exit, no call"
+else
+    bad "loki notify desktop with no notifier" "rc=$n_rc calls=${n_calls:-0} out=$n_out"
+fi
+
 # --- isolation: sourcing run.sh must never touch the shared checkout -------
 # Positive control: WORK must show its own provider file did get written.
 # Without this, disabling the mkdir entirely (or the probe silently no-op-ing)

@@ -1,0 +1,7 @@
+name: scope-quoted-on
+"on": pull_request_target
+jobs:
+  qon:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi

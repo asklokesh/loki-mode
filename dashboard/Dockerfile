@@ -50,6 +50,10 @@ COPY dashboard/*.py ./dashboard/
 # stubbing or duplicating it inside the dashboard package.
 COPY autonomy/lib/deadline.py ./autonomy/lib/
 
+# dashboard.telemetry loads the shared allowlist filter and schema from
+# autonomy/lib; without them it fails closed and dashboard_start is never sent.
+COPY autonomy/lib/proof-analytics-props.py autonomy/lib/telemetry-schema.json ./autonomy/lib/
+
 # Create data directories with correct ownership
 RUN mkdir -p /home/appuser/.loki/dashboard/audit && \
     chown -R appuser:appuser /home/appuser/.loki && \

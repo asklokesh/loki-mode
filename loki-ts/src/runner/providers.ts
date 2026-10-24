@@ -23,6 +23,7 @@
 import { mkdirSync, existsSync, readFileSync, realpathSync, appendFileSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join, isAbsolute, relative, resolve, sep } from "node:path";
 import { run as shellRun, shellQuote } from "../util/shell.ts";
+import { envWithPwd } from "./worker_proc.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { neutralizeEngineMarkers } from "./retry_class.ts"; // FC-AGENT-TEXT-FORGES-ENGINE-MARKER: a provider CLI stdout is agent text
 import {
@@ -57,7 +58,7 @@ import type {
   SessionTier,
 } from "./types.ts";
 import { PROVIDER_DEFAULT_MODEL, resolveClaudeModel } from "../util/claude_model.ts";
-import { applyAliasPin, modelRouteEnv, modelRouteModel, otelPassthroughEnv } from "../providers/model_routes.ts";
+import { applyAliasPin, effortArgv, modelRouteEnv, modelRouteModel, otelPassthroughEnv } from "../providers/model_routes.ts";
 import { opencodeProvider } from "./provider_opencode.ts";
 import { cacheTtlFor } from "../util/cost_breakdown.ts";
 
@@ -218,6 +219,18 @@ export function claudeTierToModel(tier: SessionTier): string {
 // #244: an explicit LOKI_E10_CACHE_TTL wins (1h opts out of the 5m force; any other value keeps it). Unset, the stage's
 // persisted median call gap (LOKI_E10_CACHE_GAP_MS, set by childEnv from the efficiency records) between the 5m and 60m TTLs
 // (cacheTtlFor) chooses 1h for that stage; at 60m or more neither cache hits, so 5m stays. No data keeps 5m.
+/** Ends the message stream after the SDK result frame and close()s the query so the SDK subprocess goes; a live background child must never hold a finished session. Closes on the result frame only: no marker text, timer or tool state is trusted, so a running tool or a slow Stop hook is never cut off. enabled false = passthrough. A missing result stays fail-closed, so verdict logic is untouched. */
+export async function* closeQueryOnResult(q: AsyncIterable<StreamMsg> & { close?: () => void }, enabled: boolean): AsyncGenerator<StreamMsg> {
+  if (!enabled) { yield* q; return; }
+  try {
+    for await (const m of q) {
+      yield m;
+      if ((m as { type?: string })?.type === "result") return;
+    }
+  } finally {
+    try { q.close?.(); } catch { /* already closed */ }
+  }
+}
 export function engine10CacheTtlEnv(env: Record<string, string | undefined>): Record<string, string> {
   if (!env["LOKI_E10_STAGE"]) return {};
   const ttl = env["LOKI_E10_CACHE_TTL"];
@@ -807,11 +820,11 @@ async function runSdkHostGuard(input: unknown, cwd: string) {
     const proc = Bun.spawn({
       cmd: ["bash", hookPath],
       cwd,
-      env: {
+      env: envWithPwd({
         ...process.env,
         LOKI_HOST_GUARD: "1",
         LOKI_TARGET_DIR: cwd,
-      },
+      }, cwd),
       stdin: "pipe",
       stdout: "pipe",
       stderr: "ignore",
@@ -872,6 +885,7 @@ export function sdkQueryProvider(): ProviderInvoker {
         // E-65: the session's own Bash tool inherits this env; a `loki start` run inside an engine session
         // must not pick up the lean engine10 shape. The host-guard hook runs in this process, so it is unaffected.
         for (const k of Object.keys(env)) if (k.startsWith("LOKI_E10_")) delete env[k];
+        if (process.env["LOKI_E10_STAGE"]) env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"; // engine10 stage: no auto-backgrounded Bash (the BASH_* timeout clamp arrives via session.ts childEnv)
 
         // T3(b): compose the MCP/effort/budget/fallback options the loop was
         // missing vs the shell route (see buildSdkLoopOptions). Only fields that
@@ -953,12 +967,13 @@ export function sdkQueryProvider(): ProviderInvoker {
           // biome-ignore lint/suspicious/noExplicitAny: SDK Options type is broader than our subset
         } as any);
 
-        const res = await consumeSdkStream(q as AsyncIterable<StreamMsg>, {
+        const res = await consumeSdkStream(closeQueryOnResult(q as AsyncIterable<StreamMsg> & { close?: () => void }, !!process.env["LOKI_E10_STAGE"]), {
           cwd: call.cwd,
           iteration: process.env["LOKI_ITERATION"] ?? "0",
           hookEventsEnabled: process.env["LOKI_HOOK_EVENTS"] !== "off",
           requestedModel: defaultModel ? PROVIDER_DEFAULT_MODEL : (extra.model ?? model), // P12-23: the exact value resolved for this call, never an inherited env var
           write: (s) => process.stdout.write(s),
+          ...(process.env["LOKI_E10_STAGE"] ? { onSessionId: (id: string) => writeSessionId(call.cwd, process.env["LOKI_ITERATION"] ?? "0", { sessionId: id }) } : {}),
         });
         captured = res.capturedText;
         // MW-2: engine10 reads this id to resume the session later. Best-effort; a miss only means a fresh fix session.
@@ -1200,6 +1215,8 @@ export function clineProvider(): ProviderInvoker {
         // names with spaces survive without word-splitting.
         argv.push("-m", model);
       }
+      // Cline has no effort flag: LOKI_EFFORT is recorded as unsupported, never invented.
+      argv.push(...effortArgv("cline", model, call.tier));
       // cline.sh:35,114: PROVIDER_PROMPT_POSITIONAL=true -- prompt last.
       argv.push(withCommitHygiene(call.prompt));
 
@@ -1255,6 +1272,8 @@ export function aiderProvider(): ProviderInvoker {
         // aider.sh:119: model selected via litellm string.
         "--model",
         model,
+        // LOKI_EFFORT (catalog-clamped); mirrors aider.sh loki_effort_argv.
+        ...effortArgv("aider", model, call.tier),
       ];
 
       const extraFlags = process.env["LOKI_AIDER_FLAGS"] ?? "";

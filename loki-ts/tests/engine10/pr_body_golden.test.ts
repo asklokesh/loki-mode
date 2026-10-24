@@ -2,7 +2,8 @@
 // L7 "Outputs are contracts": golden test from the real FireLater#17 recording (sanitised subset in tests/fixtures/pr-body-firelater17).
 // The recorded PR body printed "not recorded" for the issue, why, files in scope and tests although every one was in the run dir.
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { applyPrTemplate, readPrTemplate, receiptProof } from "../../src/engine10/pr_body.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderReviewerBody } from "../../src/e10ext/reviewer_body.ts";
@@ -125,4 +126,68 @@ it("FC-VERIFIED-PR-WITHOUT-ITS-TEST: the body lists the published acceptance tes
   expect(body).toContain("- tests/loki_wall_x.test.ts");
   expect(body).toContain("`bun test tests/loki_wall_x.test.ts`");
   expect(renderReviewerBody({ ...input, outputs: {} })).not.toContain("## Acceptance tests");
+});
+
+describe("pr template", () => {
+  const TPL = "<!-- describe -->\n## Summary\nWhat does this do?\n\n## Changes\n- list\n\n## Testing\n- [ ] Tests pass\n- [ ] Tests added\n- [ ] Docs updated\n\n## Reviewer notes\nanything else\n";
+  const full = loadRunOutputs(FIX, events);
+  const base = render(full);
+  const proof = receiptProof("VERIFIED", full, "abc");
+  it("fills each of 4 headings, keeps unmapped template text, ticks only proven boxes", () => {
+    const out = applyPrTemplate(base, TPL, proof);
+    for (const h of ["## Summary", "## Changes", "## Testing", "## Reviewer notes"]) expect(out).toContain(h);
+    expect(out).toContain("- Why: Create Unified Request Validation and Sanitization Middleware");
+    expect(out).toContain("- backend/src/middleware/sanitization.ts");
+    expect(out).toContain("Checks:");
+    expect(out).toContain("anything else");
+    expect(out).toContain("- [x] Tests pass");
+    expect(out).toContain("- [ ] Docs updated");
+    expect(out).toContain("## NOT PROVEN");
+    expect(out).toContain("## Receipt");
+  });
+  it("ticks nothing when the receipt proves nothing", () => {
+    expect(applyPrTemplate(base, TPL, receiptProof("FAILED", {}, null))).not.toContain("[x]");
+  });
+  it("resets pre-ticked boxes and ticks only what the receipt proves", () => {
+    const T = "## Testing\n- [x] All tests pass\n- [X] Verified by loki\n- [x] Receipt attached\n- [x] Docs updated\n";
+    const failed = applyPrTemplate(base, T, receiptProof("FAILED", {}, null));
+    expect(failed).not.toMatch(/\[[xX]\]/);
+    const ok = applyPrTemplate(base, T, proof);
+    expect(ok).toContain("- [x] All tests pass");
+    expect(ok).toContain("- [x] Verified by loki");
+    expect(ok).toContain("- [x] Receipt attached");
+    expect(ok).toContain("- [ ] Docs updated");
+    const U = "## Notes\n- [x] Receipt attached\n";
+    expect(applyPrTemplate(base, U, receiptProof("FAILED", {}, null))).not.toMatch(/\[[xX]\]/);
+  });
+  it("heading matchers use whole words and skip HTML comments", () => {
+    const out = applyPrTemplate(base, "## Checklist\nkeep me\n\n## Latest\nkeep too\n\n<!--\n## Testing\nhidden\n-->\n", proof);
+    expect(out).toContain("keep me");
+    expect(out).toContain("keep too");
+    expect(out).toContain("hidden");
+  });
+  it("rejects a template reached through a symlinked directory or file", () => {
+    const d = mkdtempSync(join(tmpdir(), "prt-")), o = mkdtempSync(join(tmpdir(), "prt-out-"));
+    try {
+      writeFileSync(join(o, "pull_request_template.md"), "## Evil\n");
+      symlinkSync(o, join(d, ".github"));
+      expect(readPrTemplate(d)).toBeNull();
+      rmSync(join(d, ".github"));
+      mkdirSync(join(d, ".github"));
+      symlinkSync(join(o, "pull_request_template.md"), join(d, ".github", "pull_request_template.md"));
+      expect(readPrTemplate(d)).toBeNull();
+      rmSync(join(d, ".github", "pull_request_template.md"));
+      writeFileSync(join(d, ".github", "pull_request_template.md"), "## Ok\n");
+      expect(readPrTemplate(d)).toBe("## Ok\n");
+    } finally { rmSync(d, { recursive: true, force: true }); rmSync(o, { recursive: true, force: true }); }
+  });
+  it("reads only documented paths, caps size, and returns null with no template", () => {
+    const d = mkdtempSync(join(tmpdir(), "prt-"));
+    try {
+      expect(readPrTemplate(d)).toBeNull();
+      mkdirSync(join(d, ".github"));
+      writeFileSync(join(d, ".github", "PULL_REQUEST_TEMPLATE.md"), "## A\nx\n".repeat(20000));
+      expect((readPrTemplate(d) ?? "").length).toBeLessThanOrEqual(32768);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
 });

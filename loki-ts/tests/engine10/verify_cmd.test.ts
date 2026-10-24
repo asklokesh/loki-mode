@@ -13,6 +13,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, s
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { DSSE_PAYLOAD_TYPE, PREDICATE_TYPE, STATEMENT_TYPE, pae } from "../../src/features/receipt_dsse.ts";
+import { sealGroup } from "../../src/features/speed/seal_group.ts";
+import { compositeHash } from "../../src/util/composite_seal.ts";
 import { computeReceiptHash, main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
@@ -361,6 +364,110 @@ describe("verifyReceipt: unusable input", () => {
       writeFileSync(path, "{not json");
       const result = await verifyReceipt(path);
       expect(result.verdict).toBe("UNCHECKED");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a JSON root that is not an object, or is nested too deeply to hash, is UNCHECKED and never throws", async () => {
+    const dir = tmpDir();
+    try {
+      const runDir = join(dir, "runs", "e10-bad-root");
+      mkdirSync(runDir, { recursive: true });
+      const path = join(runDir, "receipt.json");
+      for (const body of ["null", "[]", "5", '"x"', "[".repeat(100000) + "]".repeat(100000),
+        `{"schema":"loki.v10.receipt/1","a":${"[".repeat(100000)}${"]".repeat(100000)}}`,
+        `{"schema":"loki.v10.receipt/1","time":{"stages":{"x":${"[".repeat(100000)}${"]".repeat(100000)}}}}`,
+        `{"schema":"loki.v10.composite/1","a":${"[".repeat(100000)}${"]".repeat(100000)}}`,
+        `{"schema":"loki.v10.envelope/1","a":${"{\"a\":".repeat(5000)}1${"}".repeat(5000)}}`]) {
+        writeFileSync(path, body);
+        const result = await verifyReceipt(path);
+        expect(result.verdict).toBe("UNCHECKED");
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("verifyReceipt: over-nested files a composite reads", () => {
+  // The composite path hashes each child receipt and integration.json; the depth gate must see them before any hash.
+  for (const mode of ["child", "heads"] as const) {
+    test(`an over-nested ${mode === "child" ? "child receipt" : "integration.json heads"} is UNCHECKED (exit 2), never a stack overflow`, async () => {
+      const dir = tmpDir();
+      try {
+        const sha = (b: string) => createHash("sha256").update(b).digest("hex");
+        const runDir = join(dir, "wsrun1");
+        mkdirSync(join(runDir, "worktrees/r/.loki/runs/x"), { recursive: true });
+        const deep = "[".repeat(100000) + "]".repeat(100000);
+        const child = mode === "child" ? `{"receipt_sha256":"z","a":${deep}}` : `{"receipt_sha256":"z"}`;
+        writeFileSync(join(runDir, "worktrees/r/.loki/runs/x/receipt.json"), child);
+        const integ = mode === "heads" ? `{"outcomes":{"r":"ok"},"order":["r"],"heads":{"r":"h","q":${deep}}}` : `{"outcomes":{"r":"ok"},"order":["r"]}`;
+        writeFileSync(join(runDir, "integration.json"), integ);
+        const body: Record<string, unknown> = { schema: "loki.v10.composite/1", run_id: "wsrun1", integration_sha256: sha(integ),
+          children: [{ repo: "r", receipt_path: "worktrees/r/.loki/runs/x/receipt.json", receipt_file_sha256: sha(child), receipt_sha256: "z", head_sha: "h", verdict: "VERIFIED" }], verdict: "VERIFIED" };
+        if (mode === "heads") body["integration"] = { status: null, exit_code: null, log_sha256: null, heads: {} };
+        body["composite_sha256"] = compositeHash(body);
+        const path = join(runDir, "composite.json");
+        writeFileSync(path, JSON.stringify(body));
+        const result = await verifyReceipt(path);
+        expect(result.verdict).toBe("UNCHECKED");
+        expect(result.reasons.join(" ")).toContain("nested too deeply");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+describe("verifyReceipt: over-nested group unit and DSSE payload", () => {
+  test("a group/1 unit sub-receipt nested 100000 deep is UNCHECKED, never a stack overflow", async () => {
+    const dir = tmpDir();
+    try {
+      const sha = (b: string) => createHash("sha256").update(b).digest("hex");
+      const runDir = join(dir, "e10-x");
+      mkdirSync(join(runDir, "group/units/u1"), { recursive: true });
+      const child = `{"receipt_sha256":"z","verdict":"VERIFIED","a":${"[".repeat(100000)}${"]".repeat(100000)}}`;
+      writeFileSync(join(runDir, "group/units/u1/receipt.json"), child);
+      const body: Record<string, unknown> = { schema: "loki.v10.group/1", group: { group_id: "g1", units: [{ index: 0, unit_id: "u1", sub_receipt_sha256: sha(child), events_file_sha256: null, receipt_sha256: "z", verdict: "VERIFIED" }] }, verdict: "VERIFIED" };
+      body["receipt_sha256"] = computeReceiptHash(body);
+      const path = join(runDir, "receipt.json");
+      writeFileSync(path, JSON.stringify(body));
+      const result = await verifyReceipt(path);
+      expect(result.verdict).toBe("UNCHECKED");
+      expect(result.reasons.join(" ")).toContain("nested too deeply");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("sealGroup records a problem (no group section) for a unit sub-receipt nested 100000 deep, never throws a stack overflow", () => {
+    const dir = tmpDir();
+    try {
+      mkdirSync(join(dir, "group/units/u1"), { recursive: true });
+      writeFileSync(join(dir, "group/manifest.json"), JSON.stringify({ group_id: "g1", units: [{ unit_id: "u1" }] }));
+      writeFileSync(join(dir, "group/units/u1/receipt.json"), `{"receipt_sha256":"z","a":${"[".repeat(100000)}${"]".repeat(100000)}}`);
+      const g = sealGroup(dir, computeReceiptHash);
+      expect(g.problems).toBeGreaterThan(0);
+      expect(g.section).toBeUndefined();
+      expect(g.notProven.join(" ")).toContain("nested too deeply");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a correctly signed DSSE envelope whose predicate is nested 100000 deep is UNCHECKED, never a stack overflow", async () => {
+    const dir = tmpDir();
+    try {
+      const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+      const predicate = `{"head_sha":"h","a":${"[".repeat(100000)}${"]".repeat(100000)}}`;
+      const payload = Buffer.from(`{"_type":"${STATEMENT_TYPE}","predicateType":"${PREDICATE_TYPE}","subject":[{"digest":{"gitCommit":"h"}}],"predicate":${predicate}}`);
+      const env = { payloadType: DSSE_PAYLOAD_TYPE, payload: payload.toString("base64"), signatures: [{ keyid: kidOf(publicKey), sig: nodeSign(null, pae(DSSE_PAYLOAD_TYPE, payload), privateKey).toString("base64") }] };
+      const path = join(dir, "env.json");
+      writeFileSync(path, JSON.stringify(env));
+      const result = await verifyReceipt(path, { pubkey: publicKey });
+      expect(result.verdict).toBe("UNCHECKED");
+      expect(result.reasons.join(" ")).toContain("nested too deeply");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -896,6 +1003,22 @@ describe("loki.deploy/1 signed deploy records", () => {
     writeFileSync(rec, JSON.stringify({ schema: "loki.deploy/1", receipt_sha256: hash, head_sha: "abc123", target: "vercel", command: "vercel --prod", health_status: "HEALTHY", health_url: "http://x/ok", rollback_attempted: false, rollback_exit: null, started_at: "2026-01-01T00:00:00Z", finished_at: "2026-01-01T00:00:05Z" }));
     return { rec, proof };
   }
+  test("a deploy record with a matching kid nested 100000 deep is UNCHECKED rc 2, never a stack overflow", async () => {
+    const { loadSigningKey } = await import("../../src/util/receipt_signer.ts");
+    const { createPublicKey } = await import("node:crypto");
+    const kid = kidOf(createPublicKey(loadSigningKey()!));
+    mkdirSync(join(dir, ".loki", "deploys"), { recursive: true });
+    const rec = join(dir, ".loki", "deploys", "deep.json");
+    writeFileSync(rec, `{"schema":"loki.deploy/1","receipt_sha256":"abc","x":${"[".repeat(100000)}${"]".repeat(100000)},"signature":{"alg":"EdDSA","kid":"${kid}","sig":"AAAA"}}`);
+    const r = await run([rec]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("verdict: UNCHECKED");
+    expect(r.out).toContain("nested too deeply");
+    expect(r.err).not.toContain("RangeError");
+    const s = await run(["--sign-deploy", rec]);
+    expect(s.code).toBe(2);
+    expect(s.err).toContain("nested too deeply");
+  });
   test("sign then verify is VERIFIED and leaves the receipt unchanged", async () => {
     const { rec, proof } = await fixture();
     const before = readFileSync(proof, "utf8");
@@ -1013,6 +1136,15 @@ describe("loki.provenance/1 live provenance doc", () => {
     const r = await run(["--url", url(), "--pubkey", pub]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("verdict: VERIFIED");
+  });
+  test("a provenance doc with a matching kid nested 30000 deep is UNCHECKED rc 2, never a stack overflow", async () => {
+    const d = await signed();
+    body = () => new Response(`{"schema":"${String(d["schema"])}","x":${"[".repeat(30000)}${"]".repeat(30000)},"signature":${JSON.stringify(d["signature"])}}`);
+    const r = await run(["--url", url(), "--pubkey", pub]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("verdict: UNCHECKED");
+    expect(r.out).toContain("nested too deeply");
+    expect(r.err).not.toContain("RangeError");
   });
   test("--sign-provenance FILE signs in place and the result verifies", async () => {
     const f = join(dir, "p.json");
@@ -1461,7 +1593,7 @@ describe("main() agent-independent evidence (TEN-GATES-03)", () => {
       expect(r.out).not.toContain("gate typecheck");
       const j = await runBoth(["gx9", "--json"], s.runs);
       expect(j.code).toBe(1);
-      expect(JSON.parse(j.out)).toEqual({ run_id: "gx9", run: "gx9", verdict: "TAMPERED", exit_code: 1, receipt_sha256: null, reasons: expect.any(Array), agent_independent: null, gates: null });
+      expect(JSON.parse(j.out)).toEqual({ run_id: "gx9", run: "gx9", verdict: "TAMPERED", exit_code: 1, receipt_sha256: null, reasons: expect.any(Array), agent_independent: null, gates: null, signing_kid: null, key_kid: null, head_sha: null, receipt_verdict: null, signed_run_id: null, signed_sha256: null });
     } finally { done(s.dir, s.home); }
   });
 

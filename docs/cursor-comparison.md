@@ -125,7 +125,7 @@ BOOTSTRAP -> DISCOVERY -> ARCHITECTURE -> INFRASTRUCTURE
      -> DEVELOPMENT -> QA -> DEPLOYMENT -> GROWTH (continuous)
 ```
 
-**41 Specialized Agent Roles across 8 domains** (prompt-defined specifications the orchestrator adopts per phase; parallel review council and optional worktree streams on Claude Code, sequential on other providers):
+**Role inventory: 41 prompt-defined roles across 8 domains** (`agents/types.json`; specifications the orchestrator adopts per phase; parallel review council and optional worktree streams on Claude Code, sequential on other providers):
 - Engineering (8 types)
 - Operations (8 types)
 - Business (8 types)

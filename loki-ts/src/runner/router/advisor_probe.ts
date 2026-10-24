@@ -60,7 +60,7 @@ export function probeAdvisor(
   provider: string,
   claudeCodeVersion: string,
   runDir: string,
-  pair?: { executor?: string; advisor?: string },
+  pair: { executor?: string; advisor?: string },
 ): AdvisorProbe {
   const no = (reason: string): AdvisorProbe => ({ available: false, reason });
 
@@ -81,10 +81,10 @@ export function probeAdvisor(
   if ((env["LOKI_ROUTER_ADVISOR"] ?? "").trim().toLowerCase() === "off") {
     return no("LOKI_ROUTER_ADVISOR=off");
   }
-  const ex = pair?.executor && pair.advisor ? claudeTierRank(pair.executor) : null;
-  const ad = pair?.executor && pair.advisor ? claudeTierRank(pair.advisor) : null;
+  const ex = pair.executor && pair.advisor ? claudeTierRank(pair.executor) : null;
+  const ad = pair.executor && pair.advisor ? claudeTierRank(pair.advisor) : null;
   // A lower rank is a stronger tier: an advisor weaker than its executor adds cost and no judgment.
-  if (ex !== null && ad !== null && ad > ex) return no(`invalid_pair: advisor ${pair?.advisor} ranks below executor ${pair?.executor}`);
+  if (ex !== null && ad !== null && ad > ex) return no(`invalid_pair: advisor ${pair.advisor} ranks below executor ${pair.executor}`);
   const sticky = readMarker(runDir);
   if (sticky !== null) return no(`advisor error earlier in this run: ${sticky}`);
   return { available: true, reason: "" };

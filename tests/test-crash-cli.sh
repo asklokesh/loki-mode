@@ -439,7 +439,7 @@ def fake_urlopen(req, *a, **k):
 # Replace the symbol the module actually calls (it imported urlopen by name).
 mod.urlopen = fake_urlopen
 
-mod.send_telemetry("test_event", {"k": "v"})
+mod.send_telemetry("cli_command", {"command": "status"})
 # send runs in a daemon thread; give it a moment to either fire or be gated out.
 time.sleep(0.5)
 print("CALLS=%d" % len(calls))

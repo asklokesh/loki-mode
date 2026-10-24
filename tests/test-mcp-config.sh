@@ -254,6 +254,59 @@ fi
 
 unset __LOKI_CLAUDE_HELP_CACHE
 
+# ---------- stale temp sweep (writer dies mid-write) ----------
+SW=$(mktemp -d -t loki-mcp-sweep-XXXX)
+mkdir -p "$SW/.loki"
+# Writer dies (SIGKILL) between the temp write and the rename.
+( TARGET_DIR="$SW" LOKI_TEST=1 LOKI_TEST_DIE_AFTER_MCP_TMP=1 bash -c ". '$HELPER'; loki_mcp_config_path" ) >/dev/null 2>&1
+stale=$(find "$SW/.loki" -maxdepth 1 -name 'mcp-config.json.tmp.*' | head -1)
+if [ -n "$stale" ]; then ok "sweep: setup, dead writer left a temp"; else bad "sweep: setup, no temp left by dead writer"; fi
+
+# Live writer (real PID), a symlink, and an unrelated file must survive.
+sleep 60 & LIVE_PID=$!
+echo '{}' > "$SW/.loki/mcp-config.json.tmp.$LIVE_PID"
+ln -s /nonexistent "$SW/.loki/mcp-config.json.tmp.999999"
+echo keep > "$SW/.loki/mcp-config.json.bak"
+
+TARGET_DIR="$SW" loki_mcp_config_path >/dev/null
+if [ -n "$stale" ] && [ ! -e "$stale" ]; then ok "sweep: next write removes the dead writer's temp"; else bad "sweep: stale temp still present [$stale]"; fi
+if [ -e "$SW/.loki/mcp-config.json.tmp.$LIVE_PID" ]; then ok "sweep: live writer's temp survives"; else bad "sweep: live writer's temp was removed"; fi
+if [ -L "$SW/.loki/mcp-config.json.tmp.999999" ]; then ok "sweep: symlink temp survives"; else bad "sweep: symlink temp was removed"; fi
+if [ -e "$SW/.loki/mcp-config.json.bak" ]; then ok "sweep: non-matching file survives"; else bad "sweep: non-matching file removed"; fi
+kill "$LIVE_PID" 2>/dev/null; wait "$LIVE_PID" 2>/dev/null
+rm -rf "$SW"
+
+# Newline in a filename must stay one entry; the cwd-relative second line must not be removed.
+NL=$(mktemp -d -t loki-mcp-nl-XXXX)
+mkdir -p "$NL/.loki" "$NL/cwd"
+: > "$NL/.loki/$(printf 'mcp-config.json.tmp.\nvictim.tmp.99999')"
+: > "$NL/cwd/victim.tmp.99999"
+( cd "$NL/cwd" && TARGET_DIR="$NL" bash -c ". '$HELPER'; loki_mcp_config_path" ) >/dev/null 2>&1
+if [ -e "$NL/cwd/victim.tmp.99999" ]; then ok "sweep: newline filename does not delete a cwd-relative file"; else bad "sweep: cwd-relative victim deleted via newline filename"; fi
+rm -rf "$NL"
+
+# The die hook is inert without LOKI_TEST.
+NH=$(mktemp -d -t loki-mcp-nohook-XXXX)
+mkdir -p "$NH/.loki"
+( unset LOKI_TEST; TARGET_DIR="$NH" LOKI_TEST_DIE_AFTER_MCP_TMP=1 bash -c ". '$HELPER'; loki_mcp_config_path" ) >/dev/null 2>&1
+if [ -f "$NH/.loki/mcp-config.json" ]; then ok "hook: die hook ignored without LOKI_TEST"; else bad "hook: die hook fired without LOKI_TEST"; fi
+rm -rf "$NH"
+
+# EPERM from kill -0 means alive: a fresh temp named for pid 1 (root-owned, not killable) is kept.
+EP=$(mktemp -d -t loki-mcp-eperm-XXXX)
+mkdir -p "$EP/.loki"
+echo '{}' > "$EP/.loki/mcp-config.json.tmp.1"
+TARGET_DIR="$EP" loki_mcp_config_path >/dev/null
+if [ -e "$EP/.loki/mcp-config.json.tmp.1" ]; then ok "sweep: EPERM pid treated as alive, temp kept"; else bad "sweep: EPERM pid temp removed"; fi
+rm -rf "$EP"
+
+# A symlink planted at our own temp name is not written through.
+SL=$(mktemp -d -t loki-mcp-sym-XXXX)
+mkdir -p "$SL/.loki"
+( TARGET_DIR="$SL" bash -c ". '$HELPER'; ln -s '$SL/victim' \"$SL/.loki/mcp-config.json.tmp.\$\$\"; loki_mcp_config_path" ) >/dev/null 2>&1
+if [ ! -e "$SL/victim" ]; then ok "write: planted symlink at own temp name not followed"; else bad "write: wrote through planted symlink"; fi
+rm -rf "$SL"
+
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

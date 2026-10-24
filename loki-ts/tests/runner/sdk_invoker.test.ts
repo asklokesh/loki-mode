@@ -6,7 +6,7 @@ import { cliLedger, parseThinking, parsePosInt, runInternalSdkJudge, runInternal
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EFFORT_MAX_TOKENS, judgeJson, judgeJsonOutcome, judgeText, judgeTextOutcome, noteJudgeUsage, sdkJudgeAvailable, __resetSdkClientForTests, __setSdkClientForTests } from "../../src/runner/sdk_invoker.ts";
+import { EFFORT_MAX_TOKENS, judgeJson, judgeJsonOutcome, judgeText, judgeTextOutcome, noteJudgeUsage, estimatePromptTokens, sdkJudgeAvailable, __setTokenCounterForTests, __resetSdkClientForTests, __setSdkClientForTests } from "../../src/runner/sdk_invoker.ts";
 
 const SCHEMA = {
   type: "object",
@@ -268,6 +268,7 @@ describe("judge stop_reason classification and recovery (stub API)", () => {
     srv = Bun.serve({
       port: 0,
       async fetch(req) {
+        if (new URL(req.url).pathname.endsWith("/count_tokens")) return Response.json({ input_tokens: 7 });
         seen.push({ body: (await req.json()) as Record<string, unknown>, beta: req.headers.get("anthropic-beta") });
         const b = bodies[Math.min(i++, bodies.length - 1)]!;
         return new Response(b, { status: 200, headers: { "content-type": "application/json" } });
@@ -725,5 +726,82 @@ describe("#261 judge max_tokens by effort, thinking, streaming", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// #272: judge prompt tokens are measured via count_tokens when available, else a calibrated estimate labelled "estimated".
+describe("judge prompt token measurement (count_tokens)", () => {
+  let dir = "";
+  const okMsg = { content: [{ type: "text", text: '{"verdict":"done"}' }], stop_reason: "end_turn", model: "claude-sonnet-5-5", usage: { input_tokens: 10, output_tokens: 5 } };
+  const lines = (): Record<string, unknown>[] => readFileSync(join(dir, "metrics", "child-sessions.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const run = () => judgeJson({ prompt: "x".repeat(400), schema: SCHEMA as unknown as Record<string, unknown>, model: "claude-sonnet-5-5", ledger: { lokiDir: dir, phase: "council" } });
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "loki-ct-"));
+    process.env["ANTHROPIC_API_KEY"] = "sk-test";
+    delete process.env["ANTHROPIC_BASE_URL"];
+    __setSdkClientForTests({ messages: { create: async () => okMsg } });
+  });
+  afterEach(() => { __setTokenCounterForTests(null); delete process.env["ANTHROPIC_BASE_URL"]; rmSync(dir, { recursive: true, force: true }); });
+
+  test("gateway base URL plus API key: counter never called, estimated", async () => {
+    process.env["ANTHROPIC_BASE_URL"] = "https://gateway.example.com";
+    let calls = 0;
+    __setTokenCounterForTests(async () => { calls++; return 200; });
+    await run();
+    expect(calls).toBe(0);
+    expect(lines()[0]!["prompt_tokens_source"]).toBe("estimated");
+  });
+
+  test("hanging counter: judge proceeds, estimated, one attempt, bounded wall time", async () => {
+    let calls = 0;
+    __setTokenCounterForTests(() => { calls++; return new Promise<number>(() => {}); }, 50);
+    const t0 = Date.now();
+    expect(await run()).toEqual({ verdict: "done" });
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(calls).toBe(1);
+    expect(lines()[0]!["prompt_tokens_source"]).toBe("estimated");
+  });
+
+  test("real counter path: one attempt (maxRetries 0), short timeout, measured", async () => {
+    const seenOpts: Record<string, unknown>[] = [];
+    __setSdkClientForTests({ baseURL: "https://api.anthropic.com", messages: { create: async () => okMsg, countTokens: async (_b: unknown, o: Record<string, unknown>) => { seenOpts.push(o); return { input_tokens: 150 }; } } });
+    await run();
+    expect(seenOpts.length).toBe(1);
+    expect(seenOpts[0]!["maxRetries"]).toBe(0);
+    expect(seenOpts[0]!["timeout"] as number).toBeLessThanOrEqual(3000);
+    expect(lines()[0]!["prompt_tokens"]).toBe(150);
+    expect(lines()[0]!["prompt_tokens_source"]).toBe("measured");
+  });
+
+  test("real counter path on a gateway client: countTokens never called", async () => {
+    let calls = 0;
+    __setSdkClientForTests({ baseURL: "https://gateway.example.com", messages: { create: async () => okMsg, countTokens: async () => { calls++; return { input_tokens: 150 }; } } });
+    await run();
+    expect(calls).toBe(0);
+    expect(lines()[0]!["prompt_tokens_source"]).toBe("estimated");
+  });
+
+  test("count_tokens available: records measured count and ratio", async () => {
+    __setTokenCounterForTests(async () => 200);
+    await run();
+    const rec = lines()[0]!;
+    expect(rec["prompt_tokens"]).toBe(200);
+    expect(rec["prompt_tokens_source"]).toBe("measured");
+    expect(rec["token_ratio"]).toBe(2); // 200 measured / 100 estimated (400 chars / 4)
+  });
+
+  test("measured ratio calibrates later estimates", async () => {
+    __setTokenCounterForTests(async () => 200);
+    await run();
+    expect(estimatePromptTokens("y".repeat(400))).toBe(200);
+  });
+
+  test("counter error falls back to an estimate labelled estimated", async () => {
+    __setTokenCounterForTests(async () => { throw new Error("boom"); });
+    await run();
+    const rec = lines()[0]!;
+    expect(rec["prompt_tokens_source"]).toBe("estimated");
+    expect(rec["prompt_tokens"]).toBe(100);
+    expect(rec["token_ratio"]).toBeUndefined();
   });
 });

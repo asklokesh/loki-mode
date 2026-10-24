@@ -23,3 +23,8 @@ docs/v11/MARKET-SLICES.md	--predicate	future slice card, flag not shipped yet
 docs/v11/MARKET-SLICES.md	--evidence-pack	future slice card, flag not shipped yet
 docs/v11/MARKET-SLICES.md	loki verify-pr	future slice card, command not shipped yet
 docs/v11/MARKET-SLICES.md	loki undo	future slice card, command not shipped yet
+docs/COMPARISON.md	claim:11 agents	third-party project agent count, not a Loki claim
+docs/COMPARISON.md	claim:108 agents	third-party project agent count, not a Loki claim
+docs/COMPARISON.md	claim:32 agents	third-party project agent count, not a Loki claim
+docs/SPEED-DIAGNOSIS-2026-07-01.md	claim:*	dated diagnosis measured from build telemetry (events.jsonl), method stated in the doc
+docs/architecture/ADR-001-runtime-migration.md	claim:*	ADR whose remaining multiples are its hyperfine and bench.ts tables (unmeasured projections reworded)

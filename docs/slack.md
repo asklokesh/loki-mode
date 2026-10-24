@@ -33,3 +33,5 @@ Bot token scopes: `app_mentions:read`, `chat:write`, `channels:history` (and `gr
 Subscribe to bot events: `app_mention`, `message.channels` (plus `message.groups` for private channels).
 
 Outbound notifications (PR opened, BLOCKED, finished) are separate and use `LOKI_SLACK_WEBHOOK_URL`.
+
+Stuck-run alert: if a live run writes no event for `LOKI_STUCK_MIN` minutes (default 15), one alert names the last stage, its event time and a suggested action. It always prints to stderr and also goes to Slack when a webhook is set. A new event clears the alert, and a later silence can alert again. Checked on the 15-second supervisor beat. A value of 0, a negative number or a non-number falls back to 15.

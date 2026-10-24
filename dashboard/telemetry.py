@@ -13,6 +13,7 @@ Force-on:  LOKI_TELEMETRY=on  OR  ~/.loki/config: TELEMETRY_ENABLED=true
 All calls are fire-and-forget, silent on failure, non-blocking.
 """
 
+import importlib.util
 import json
 import os
 import platform
@@ -153,27 +154,92 @@ def _get_version():
         return "unknown"
 
 
+_LIB = Path(__file__).resolve().parent.parent / "autonomy" / "lib"
+
+
+def _load_schema_module():
+    """The one filter and schema live in autonomy/lib (shared with the bash
+    sender). Missing files mean nothing is sent: fail closed."""
+    spec = importlib.util.spec_from_file_location(
+        "loki_telemetry_schema", str(_LIB / "proof-analytics-props.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _os_family():
+    name = platform.system().lower()
+    if name in ("linux", "darwin"):
+        return name
+    if name.startswith(("windows", "mingw", "msys", "cygwin")):
+        return "windows"
+    return "other"
+
+
+def _arch_family():
+    m = platform.machine().lower()
+    if m in ("x86_64", "amd64", "x64"):
+        return "x64"
+    if m in ("arm64", "aarch64"):
+        return "arm64"
+    return "other"
+
+
+def _traffic():
+    """user | ci | internal. Mirrors _loki_traffic in autonomy/telemetry.sh."""
+    env = os.environ
+    if env.get("LOKI_INTERNAL") == "1" or env.get("LOKI_SEAT_TICK") == "1" or env.get("LOKI_SEAT") or env.get("LOKI_COMPANY_SEAT"):
+        return "internal"
+    for var in ("CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "JENKINS_URL",
+                "TEAMCITY_VERSION", "CONTINUOUS_INTEGRATION"):
+        if env.get(var):
+            return "ci"
+    sig = env.get("LOKI_TTY_INTERACTIVE")
+    if sig:
+        return "user" if sig == "1" else "ci"
+    try:
+        if not sys.stdout.isatty() and not sys.stdin.isatty():
+            return "ci"
+    except Exception:
+        pass
+    return "user"
+
+
+def build_payload(event, properties=None):
+    """Return the schema-filtered capture body, or None when the event is not
+    listed. Caller properties are untrusted; trusted base properties win."""
+    mod = _load_schema_module()
+    raw = dict(properties or {})
+    raw.update({
+        "os_family": _os_family(),
+        "arch": _arch_family(),
+        "version": _get_version(),
+        "channel": _detect_channel(),
+        "traffic": _traffic(),
+    })
+    props = mod.sanitize(mod.load_schema(), event, raw)
+    if props is None:
+        return None
+    return {
+        "api_key": _POSTHOG_KEY,
+        "event": event,
+        "distinct_id": _get_distinct_id(),
+        "properties": props,
+    }
+
+
 def send_telemetry(event, properties=None):
-    """Send anonymous telemetry event. Non-blocking, silent on failure."""
+    """Send anonymous telemetry event. Non-blocking, silent on failure.
+    The opt-out gate runs first, before any schema or network code."""
     if not _is_enabled():
         return
 
     def _send():
         try:
-            props = {
-                "os": platform.system(),
-                "arch": platform.machine(),
-                "version": _get_version(),
-                "channel": _detect_channel(),
-            }
-            if properties:
-                props.update(properties)
-            payload = json.dumps({
-                "api_key": _POSTHOG_KEY,
-                "event": event,
-                "distinct_id": _get_distinct_id(),
-                "properties": props,
-            }).encode()
+            body = build_payload(event, properties)
+            if body is None:
+                return
+            payload = json.dumps(body).encode()
             req = Request(
                 f"{_POSTHOG_HOST}/capture/",
                 data=payload,

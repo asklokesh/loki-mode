@@ -102,6 +102,18 @@ set -uo pipefail
 #       trigger and in every job or action that runs an agent. Plain
 #       pull_request jobs without an agent are out: fork runs get a read-only
 #       token, and a same-repo PR author already has push access.
+#   P9.no-pr-target-head-checkout
+#       no workflow may use the pull_request_target or workflow_run trigger
+#       (D121). Every file under .github/workflows (any extension) and every
+#       docs/examples/*.example is in scope when its raw bytes mention either
+#       trigger (any case, comments included), its parsed `on` holds one, or
+#       its YAML does not parse (fail closed). Every job of an in-scope file is
+#       a violation, reported as file:job (file:(workflow) when no job parses).
+#       The allowlist is empty and there is no marker: any loki-p9-allow token
+#       in an in-scope file is itself a violation. The planted set is asserted
+#       by exact equality against fixtures/p9-prtarget/expected-bad.txt, and one
+#       mutation per clause must turn it red. Residual, out of scope: comment
+#       and issue_comment workflows that reach PR head (their own property).
 #
 # Heuristics used by the workflow scan (documented so a reviewer can argue
 # with them): (a) = a step's run/with/env interpolates
@@ -134,8 +146,18 @@ export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 CI=tru
 
 MOAT_START=$(date +%s)
 MOAT_MAIN_PID=$$
-MOAT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/moat-p9.XXXXXX")" || { echo "p9: mktemp failed" >&2; exit 1; }
-MOAT_IDS="P9.issue-workflows-separate-untrusted-from-push P9.comment-trigger-author-gate P9.injection-cannot-reach-token P9.checkout-no-persisted-credentials P9.allowtoken-only-fetch-callers"
+# Run-owned temp dir from the shared helpers. LOKI_RUN_TMP is not left set for
+# the child runs below (the loki code under test reads it), so the case
+# behaviour is unchanged; an outer value is restored.
+# shellcheck source=../../eval/loki10/lib-tmp.sh disable=SC1091
+source "$REPO_ROOT/eval/loki10/lib-tmp.sh"
+MOAT_OUTER_RUN_TMP="${LOKI_RUN_TMP:-}"
+unset LOKI_RUN_TMP
+loki_run_tmp_create || { echo "p9: run-owned temp dir failed" >&2; exit 1; }
+MOAT_TMP="$LOKI_RUN_TMP"
+unset LOKI_RUN_TMP
+[ -z "$MOAT_OUTER_RUN_TMP" ] || export LOKI_RUN_TMP="$MOAT_OUTER_RUN_TMP"
+MOAT_IDS="P9.issue-workflows-separate-untrusted-from-push P9.comment-trigger-author-gate P9.injection-cannot-reach-token P9.checkout-no-persisted-credentials P9.no-pr-target-head-checkout P9.allowtoken-only-fetch-callers"
 MOAT_EMITTED=" "
 MOAT_PGIDS=""
 
@@ -165,7 +187,7 @@ moat_cleanup() {
         esac
     done
     moat_reap
-    rm -rf "$MOAT_TMP"
+    LOKI_RUN_TMP="$MOAT_TMP" loki_run_tmp_cleanup || echo "p9: run-owned temp cleanup refused: $MOAT_TMP" >&2
     echo "p9 runtime: $(( $(date +%s) - MOAT_START ))s" >&2
 }
 trap moat_cleanup EXIT
@@ -175,9 +197,10 @@ nok() { CASE_FAILS="${CASE_FAILS:+$CASE_FAILS; }$1"; }
 moat_run() {
     local id="$1" desc="$2" fn="$3"
     CASE_FAILS=""
+    CASE_NOTE=""
     "$fn"
     if [ -z "$CASE_FAILS" ]; then
-        moat_emit "$id" PASS "$desc"
+        moat_emit "$id" PASS "$desc${CASE_NOTE:+ ($CASE_NOTE)}"
     else
         moat_emit "$id" FAIL "$desc - $CASE_FAILS"
     fi
@@ -201,7 +224,7 @@ run_owned() {
 # Workflow scanner
 #===============================================================================
 cat > "$MOAT_TMP/wfscan.py" <<'PY'
-"""Usage: wfscan.py <root> <rule2|gate|checkout>
+"""Usage: wfscan.py <root> <rule2|gate|checkout|prtarget>
 
 Scans every workflow under .github/workflows (*.yml, *.yaml) and every
 composite action Loki ships (action.yml|yaml at the root and under
@@ -349,7 +372,7 @@ def cca_cannot_push(st, perms):
     than GITHUB_TOKEN or the model credential passed to it."""
     if level(perms, "id-token") == "write" or level(perms, "contents") == "write":
         return False
-    for k, v in (st.get("with") or {}).items():
+    for k, v in (st.get("with") if isinstance(st.get("with"), dict) else {}).items():
         if k in ("claude_code_oauth_token", "anthropic_api_key"):
             continue
         if re.search(r"secrets\.(?!GITHUB_TOKEN\b)", str(v)):
@@ -369,7 +392,7 @@ def cache_restores(steps):
     can poison, since it shares the default branch's cache scope)."""
     out = []
     for st in steps:
-        uses, w = str(st.get("uses") or ""), st.get("with") or {}
+        uses, w = str(st.get("uses") or ""), (st.get("with") if isinstance(st.get("with"), dict) else {})
         name, ver = (uses.split("@") + [""])[:2]
         major = re.match(r"v(\d+)", ver)
         if name == "oven-sh/setup-bun" and str(w.get("no-cache", False)).strip().lower() != "true":
@@ -392,6 +415,84 @@ def cache_restores(steps):
 units, errors, scanned_files = [], [], set()
 wfdir = os.path.join(root, ".github", "workflows")
 exdir = os.path.join(root, "docs", "examples")
+# prtarget (D121): pull_request_target and workflow_run workflows are banned.
+# A file is in scope when ANY holds: its raw bytes mention either trigger
+# (case-insensitive, comments included), its parsed `on` holds one, or YAML
+# parsing fails. Every job of an in-scope file is a violation and the
+# allowlist is empty. Scanned: every file under .github/workflows (any
+# extension, any depth) and every docs/examples/*.example. This block runs
+# before the unit loader below because an unparseable file is a violation here,
+# not an ERROR.
+PRIV = {"pull_request_target", "workflow_run"}
+TRIGGER_RX = re.compile("|".join(sorted(PRIV)), re.I)
+RETIRED_MARKER = re.compile(r"loki-p9-allow", re.I)
+
+
+def parsed_triggers(doc):
+    out = set()
+    for k, v in doc.items():
+        if k is not True and str(k).lower() != "on":
+            continue
+        if isinstance(v, str):
+            out.add(v.lower())
+        elif isinstance(v, (list, dict)):
+            out.update(str(n).lower() for n in v)
+    return out
+
+
+def prtarget_files():
+    found = []
+    for dp, _dns, fns in os.walk(wfdir):
+        found += [os.path.join(dp, fn) for fn in fns]
+    found += glob.glob(os.path.join(exdir, "*.example"))
+    return sorted(found)
+
+
+def prtarget_scan():
+    scanned, viols, nfiles = 0, [], 0
+    for wf in prtarget_files():
+        rel = os.path.relpath(wf, root)
+        nfiles += 1
+        try:
+            with open(wf, "rb") as f:
+                raw = f.read().decode("utf-8", "replace")
+        except OSError as e:
+            scanned += 1
+            viols.append(("%s:(workflow)" % rel, "unreadable, fail closed: %s" % e))
+            continue
+        doc, why = None, []
+        try:
+            doc = yaml.safe_load(raw)
+        except Exception:
+            why.append("unparseable, fail closed")
+        if TRIGGER_RX.search(raw):
+            why.append("raw bytes mention a privileged trigger")
+        if isinstance(doc, dict) and parsed_triggers(doc) & PRIV:
+            why.append("parsed on: holds a privileged trigger")
+        if not why:
+            continue
+        jobs = []
+        if isinstance(doc, dict):
+            for k, v in doc.items():
+                if str(k).lower() == "jobs" and isinstance(v, dict):
+                    jobs += [str(j) for j in v]
+        for n in jobs or ["(workflow)"]:
+            scanned += 1
+            viols.append(("%s:%s" % (rel, n), "privileged-trigger workflow is banned (%s)" % "; ".join(why)))
+        if RETIRED_MARKER.search(raw):
+            scanned += 1
+            viols.append(("%s:(retired-marker)" % rel, "marker retired by D121"))
+    return scanned, viols, nfiles
+
+
+if check == "prtarget":
+    n_jobs, pv, n_files = prtarget_scan()
+    print("FILES %d" % n_files)
+    print("SCANNED %d" % n_jobs)
+    for where, why in pv:
+        print("VIOLATION %s %s" % (where, why))
+    raise SystemExit(0)
+
 for wf in sorted(glob.glob(os.path.join(wfdir, "*.yml")) + glob.glob(os.path.join(wfdir, "*.yaml"))
                  + glob.glob(os.path.join(exdir, "*.yml.example"))):
     rel = os.path.relpath(wf, root)
@@ -469,7 +570,8 @@ for u in units:
         scanned += 1
         for st in u["steps"]:
             if str(st.get("uses") or "").startswith("actions/checkout@"):
-                pc = (st.get("with") or {}).get("persist-credentials", True)
+                cw = st.get("with")
+                pc = cw.get("persist-credentials", True) if isinstance(cw, dict) else True
                 if pc not in (False, "false"):
                     violations.append((where, "actions/checkout without persist-credentials: false"))
         continue
@@ -577,6 +679,17 @@ SYN_BAD="$MOAT_TMP/syn-bad"
 SYN_GOOD="$MOAT_TMP/syn-good"
 mkdir -p "$SYN_BAD/.github/workflows" "$SYN_BAD/.github/actions/issue-to-pr" \
          "$SYN_GOOD/.github/workflows" "$SYN_GOOD/.github/actions/agent-only"
+# prtarget fixtures live as files in their own roots (an unparseable fixture is
+# a violation there but an ERROR for the other scans): workflows/ is copied to
+# .github/workflows, examples/ to docs/examples. The flagged set under bad/ must
+# equal expected-bad.txt exactly; good/ must flag nothing.
+PRT_FIX="$SCRIPT_DIR/fixtures/p9-prtarget"
+PRT_BAD="$MOAT_TMP/prt-bad"
+PRT_GOOD="$MOAT_TMP/prt-good"
+mkdir -p "$PRT_BAD/.github/workflows" "$PRT_BAD/docs/examples" "$PRT_GOOD/.github/workflows"
+cp "$PRT_FIX"/bad/workflows/* "$PRT_BAD/.github/workflows/"
+cp "$PRT_FIX"/bad/examples/* "$PRT_BAD/docs/examples/"
+cp "$PRT_FIX"/good/workflows/* "$PRT_GOOD/.github/workflows/"
 cat > "$SYN_BAD/.github/workflows/bad.yml" <<'YML'
 name: bad
 on:
@@ -1082,11 +1195,12 @@ scan() {  # <root> <check> <out>
 
 # Runs one static check: controls first, then the real repo.
 static_case() {  # <check> <unit the positive controls must flag>...
-    local check="$1" n w v
+    local check="$1" n w v bad_root="$SYN_BAD" good_root="$SYN_GOOD"
     shift
     if ! command -v python3 >/dev/null 2>&1; then nok "prerequisite missing: python3"; return; fi
-    scan "$SYN_BAD" "$check" "$MOAT_TMP/$check.bad"
-    scan "$SYN_GOOD" "$check" "$MOAT_TMP/$check.good"
+    if [ "$check" = prtarget ]; then bad_root="$PRT_BAD"; good_root="$PRT_GOOD"; fi
+    scan "$bad_root" "$check" "$MOAT_TMP/$check.bad"
+    scan "$good_root" "$check" "$MOAT_TMP/$check.good"
     scan "$REPO_ROOT" "$check" "$MOAT_TMP/$check.repo"
     if grep -q '^ERROR' "$MOAT_TMP/$check.bad" "$MOAT_TMP/$check.good" "$MOAT_TMP/$check.repo"; then
         nok "$(grep -h -m1 '^ERROR' "$MOAT_TMP/$check.bad" "$MOAT_TMP/$check.good" "$MOAT_TMP/$check.repo" | head -1 | sed 's/^ERROR //')"
@@ -1094,8 +1208,17 @@ static_case() {  # <check> <unit the positive controls must flag>...
     fi
     # The negative controls only mean something if their scan actually
     # completed (a crash prints no VIOLATION either).
-    grep -q '^SCANNED [1-9]' "$MOAT_TMP/$check.good" \
-        || nok "negative control: the look-alike scan did not complete"
+    grep -q '^SCANNED [0-9]' "$MOAT_TMP/$check.bad" \
+        || nok "positive control: the scan of the planted workflows crashed before judging any unit"
+    if [ "$check" = prtarget ]; then
+        # The look-alike is out of scope by design (no unit is judged), so
+        # prove the scan read it: FILES counts every file examined.
+        grep -q '^FILES [1-9]' "$MOAT_TMP/$check.good" \
+            || nok "negative control: the look-alike scan read no file"
+    else
+        grep -q '^SCANNED [1-9]' "$MOAT_TMP/$check.good" \
+            || nok "negative control: the look-alike scan did not complete"
+    fi
     for w in "$@"; do
         grep -qF "VIOLATION $w " "$MOAT_TMP/$check.bad" \
             || nok "positive control: $w was not flagged"
@@ -1105,15 +1228,16 @@ static_case() {  # <check> <unit the positive controls must flag>...
     fi
     [ -z "$CASE_FAILS" ] || return
     n="$(sed -n 's/^SCANNED //p' "$MOAT_TMP/$check.repo")"
-    if [ -z "$n" ] || [ "$n" -eq 0 ]; then
+    if [ -z "$n" ] || { [ "$check" != prtarget ] && [ "$n" -eq 0 ]; }; then
         nok "vacuous: no unit in scope for the $check check"
         return
     fi
     log "$check: judged $n units"
+    CASE_NOTE="judged $n units on this repo"
     while IFS= read -r v; do
         nok "a shipped workflow or action was not scanned: ${v#UNSCANNED }"
     done < <(grep '^UNSCANNED' "$MOAT_TMP/$check.repo")
-    grep '^SITE' "$MOAT_TMP/$check.repo" | sed 's/^/p9: /' >&2
+    grep -E '^SITE' "$MOAT_TMP/$check.repo" | sed 's/^/p9: /' >&2
     while IFS= read -r v; do
         nok "${v#VIOLATION }"
     done < <(grep '^VIOLATION' "$MOAT_TMP/$check.repo")
@@ -1133,6 +1257,64 @@ case_gate() {
 case_checkout() {
     static_case checkout "bad.yml:agent" "pre-issue-to-pr.yml:resolve" "pre-claude.yml:claude" \
         "pre-enterprise.yml:loki-run" "pre-enterprise.yml:report" "pre-review.yml:claude-review"
+}
+# One scanner run -> sorted flagged unit names. Returns 1 when the run did not
+# finish (no SCANNED line, or an ERROR line).
+# shellcheck disable=SC2329
+prt_flagged() {  # <scanner> <root>
+    local out
+    out="$(python3 "$1" "$2" prtarget 2>&1)" || return 1
+    printf '%s\n' "$out" | grep -q '^SCANNED [0-9]' || return 1
+    if printf '%s\n' "$out" | grep -q '^ERROR'; then return 1; fi
+    printf '%s\n' "$out" | sed -n 's/^VIOLATION \([^ ]*\) .*/\1/p' | LC_ALL=C sort
+}
+# Applies each sed expression to a copy of the scanner. Every expression must
+# change the file by itself (a multi-expression mutation where one expression
+# matched nothing is not applied). The mutated scanner must still finish, lose
+# at least one flagged bad unit, and flag no good unit.
+# shellcheck disable=SC2329
+prt_mutate() {  # <label> <sed expr>...
+    local label="$1" m="$MOAT_TMP/prt-mut.py" e lost gv
+    shift
+    cp "$MOAT_TMP/wfscan.py" "$m"
+    cp "$m" "$m.prev"
+    for e in "$@"; do
+        sed -e "$e" "$m.prev" >"$m"
+        if cmp -s "$m" "$m.prev"; then
+            nok "mutation '$label': expression did not change the scanner: $e"
+            return
+        fi
+        cp "$m" "$m.prev"
+    done
+    prt_flagged "$m" "$PRT_BAD" >"$MOAT_TMP/prt-m.bad" \
+        || { nok "mutation '$label': the mutated scan did not finish (SCANNED missing or ERROR)"; return; }
+    gv="$(prt_flagged "$m" "$PRT_GOOD")" \
+        || { nok "mutation '$label': the mutated good-root scan did not finish"; return; }
+    lost="$(comm -23 "$MOAT_TMP/prt-base.bad" "$MOAT_TMP/prt-m.bad" | tr '\n' ' ')"
+    if [ -z "$lost" ] || [ -n "$gv" ]; then
+        nok "mutation '$label' survived (lost=[$lost] good-violations=[$gv])"
+        return
+    fi
+    printf 'p9: prtarget mutation %-34s caught, lost %s units\n' "$label" "$(printf '%s\n' "$lost" | wc -w | tr -d ' ')" >&2
+}
+case_prtarget() {
+    static_case prtarget
+    # Exact set equality on file:job: every bad unit and nothing else. A miss
+    # is a scanner regression; an extra is an unreviewed new rule.
+    prt_flagged "$MOAT_TMP/wfscan.py" "$PRT_BAD" >"$MOAT_TMP/prt-base.bad" \
+        || { nok "positive control: the planted-workflow scan did not finish"; return; }
+    if ! diff "$PRT_FIX/expected-bad.txt" "$MOAT_TMP/prt-base.bad" >"$MOAT_TMP/prt-set.diff"; then
+        nok "flagged units differ from expected-bad.txt: $(head -6 "$MOAT_TMP/prt-set.diff" | tr '\n' ';')"
+        return
+    fi
+    # One mutation per clause of the D121 invariant; each must lose a bad unit.
+    prt_mutate "no raw-byte scope" 's#if TRIGGER_RX.search(raw):#if False and TRIGGER_RX.search(raw):#'
+    prt_mutate "no parsed scope" 's#if isinstance(doc, dict) and parsed_triggers#if False and parsed_triggers#'
+    prt_mutate "parse failure skipped" 's#why.append("unparseable, fail closed")#pass#'
+    prt_mutate "case-sensitive match" 's#sorted(PRIV)), re.I)#sorted(PRIV)))#' 's#out.add(v.lower())#out.add(v)#' 's#str(n).lower() for n#str(n) for n#'
+    prt_mutate "yml-only glob" 's#for fn in fns\]#for fn in fns if fn.endswith(".yml")]#'
+    prt_mutate "docs/examples skipped" 's#found += glob.glob(os.path.join(exdir, "\*.example"))#found += []#'
+    prt_mutate "retired marker accepted" 's#if RETIRED_MARKER.search(raw):#if False and RETIRED_MARKER.search(raw):#'
 }
 
 #===============================================================================
@@ -2592,6 +2774,9 @@ moat_run "P9.injection-cannot-reach-token" \
 moat_run "P9.checkout-no-persisted-credentials" \
     "actions/checkout sets persist-credentials: false in issue/comment/review-triggered and agent-running jobs" \
     case_checkout
+moat_run "P9.no-pr-target-head-checkout" \
+    "no workflow under .github/workflows or docs/examples/*.example uses pull_request_target or workflow_run: a file is in scope when its raw bytes mention either trigger (any case), its parsed on holds one, or its YAML does not parse; every job of an in-scope file is a violation, the allowlist is empty and any loki-p9-allow marker is itself a violation" \
+    case_prtarget
 moat_run "P9.allowtoken-only-fetch-callers" \
     "allowToken is passed to safeGit only by base_guard.ts and modernize_unit.ts (plus its definition in safe_git.ts)" \
     case_allowtoken

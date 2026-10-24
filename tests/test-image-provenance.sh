@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Image provenance: signing must run in the job that PUBLISHES the image
-# manifest, and the docs must not overclaim (the image SBOM was dropped after
-# v11.17.98 when release.yml was cut to the minimal publish set).
+# manifest, and the docs must not overclaim (SBOM and provenance are best effort
+# steps restored by D123).
 #
 # WHY THIS TEST EXISTS. provenance.yml carried a header comment stating it
 # "signs npm tarball + Docker image digests". That comment was true of the YAML
@@ -107,12 +107,25 @@ if [ -f "$DOC" ]; then
         bad "doc does not disclose that earlier images are unsigned"
     fi
 
-    # The SBOM was dropped from the release workflow. The doc must say so, or
-    # an auditor chases an attestation that newer images do not carry.
-    if tr '\n' ' ' < "$DOC" | tr -s ' ' | grep -q 'ship no SBOM'; then
-        ok "doc discloses that releases after v11.17.98 ship no SBOM"
+    # D123 restored SBOMs and provenance (best effort). The doc must say so,
+    # and must not keep claiming that later releases ship no SBOM.
+    flat="$(tr '\n' ' ' < "$DOC" | tr -s ' ')"
+    if printf '%s' "$flat" | grep -q 'ship no SBOM'; then
+        bad "doc still claims releases ship no SBOM"
+    elif printf '%s' "$flat" | grep -q 'attach-sbom' \
+        && printf '%s' "$flat" | grep -q 'gh attestation verify' \
+        && printf '%s' "$flat" | grep -q 'continue-on-error'; then
+        ok "doc describes attach-sbom, continue-on-error and gh attestation verify"
     else
-        bad "doc implies newer images still carry an SBOM attestation"
+        bad "doc does not describe the SBOM attach job, best-effort status and gh attestation verify"
+    fi
+
+    # The workflow must actually carry what the doc promises.
+    if grep -q 'anchore/sbom-action@' "$REL" && grep -q 'actions/attest-build-provenance@' "$REL" \
+        && grep -q '^  attach-sbom:' "$REL"; then
+        ok "release.yml has the SBOM, attestation and attach-sbom steps"
+    else
+        bad "release.yml lacks the SBOM, attestation or attach-sbom steps the doc describes"
     fi
 else
     bad "docs/image-provenance.md missing -- verification nobody can find is not verification"

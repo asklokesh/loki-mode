@@ -14,6 +14,13 @@ every user doc. Rules, each checked against the code at scan time:
               header in a file's first 15 lines, or "current version ... vX.Y")
               must not be older than VERSION's major.minor.
 
+  R4 claim    an unevidenced performance or inventory claim in README.md or
+              docs/ (not docs/v10, docs/history): "Nx faster|cheaper", "N%
+              faster|cheaper", or "N agents|agent roles|agent types". The line
+              passes only if it carries a receipt: a markdown link, a METRICS
+              or arXiv reference, a backticked path, or a backticked `loki`
+              command. Token is `claim:<matched text, lowercased>`.
+
 Known limits (ponytail: lenient on purpose, tighten when a real miss shows up):
 R2 accepts any flag literal in the sources (help strings included), so it does
 not prove a flag is valid for that particular command. R1 checks only the
@@ -101,6 +108,11 @@ def doc_files():
 # `loki owner/repo#1` and `loki https://...` are positional args, not commands).
 INVOKE = re.compile(r"(?<![\w/.\-$])loki ([a-z][a-z0-9_-]*)(?![/:.\w-])([^|;&#>`)]*)")
 FLAG = re.compile(r"(?<![\w-])(--[a-z][a-z0-9-]*)")
+CLAIM = re.compile(
+    r"\b\d+(?:\.\d+)?x (?:faster|cheaper)\b|\b\d+(?:\.\d+)?%\+? (?:faster|cheaper)\b"
+    r"|\b\d+\+? (?:(?:specialized|pre-defined|prompt-defined|built-in) ){0,2}(?:agents|agent roles|agent types)\b", re.I)
+RECEIPT = re.compile(r"\]\([^)]+\)|METRICS|arXiv|`[^`]*/[^`]*`|`loki [^`]*`")
+CLAIM_SKIP = ("docs/v10/", "docs/history/")
 HEADER_VER = re.compile(r"(?:Version|Loki Mode)\**:?\**\s*v(\d+)\.(\d+)")
 CURRENT_VER = re.compile(r"current version[^.\n]{0,20}?v(\d+)\.(\d+)", re.I)
 
@@ -125,6 +137,11 @@ def main():
             for vm in ([HEADER_VER.search(line)] if n <= 15 else []) + [CURRENT_VER.search(line)]:
                 if vm and (int(vm.group(1)), int(vm.group(2))) < cur:
                     findings.append((rel, n, "version", f"v{vm.group(1)}.{vm.group(2)}"))
+            in_scope = os.environ.get("DOCS_DRIFT_FILES") or rel == "README.md" or rel.startswith("docs/")
+            if in_scope and not rel.startswith(CLAIM_SKIP):
+                for cm in CLAIM.finditer(line):
+                    if not RECEIPT.search(line):
+                        findings.append((rel, n, "claim", "claim:" + cm.group(0).lower()))
             if line.lstrip().startswith(("```", "~~~")):
                 fence = not fence
                 continue

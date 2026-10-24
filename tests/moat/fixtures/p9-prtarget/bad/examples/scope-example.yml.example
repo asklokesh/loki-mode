@@ -1,0 +1,7 @@
+name: scope-example
+on: pull_request_target
+jobs:
+  exjob:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi

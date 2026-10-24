@@ -712,3 +712,84 @@ describe("resume review fixes (P12-07)", () => {
     } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
   });
 });
+
+describe("early session id (FC-IMPLEMENT-RESUME-STARTS-OVER)", () => {
+  test("a SIGKILLed session leaves its provider session id in the heartbeat event", async () => {
+    const iter = "r1-implement1", events: Record<string, unknown>[] = [];
+    const stub = `mkdir -p .loki; printf '{"session_id":"sess-early"}' > .loki/e10-session-${iter}.json; sleep 30`;
+    const ac = new AbortController();
+    const runner = createSessionRunner({ provider: "claude", heartbeatMs: 100, childCommand: ["bash", ["-c", stub]], emit: (t: string, _s: unknown, d: Record<string, unknown>) => { if (t === "heartbeat" && d.provider_session_id) { events.push(d); ac.abort(); } } } as never);
+    const r = await runner.run({ stage: "implement", brief: "x", tier: "dev", iterationId: iter, limitS: 30, signal: ac.signal, cwd: repo } as never);
+    expect(r.killed).toBe(true);
+    expect(events[0]?.provider_session_id).toBe("sess-early");
+  });
+  test("writeSessionId is idempotent for the same id", async () => {
+    const { writeSessionId, readSessionId } = await import("../../src/runner/session_resume.ts");
+    writeSessionId(repo, "i1", { sessionId: "a" }); writeSessionId(repo, "i1", { sessionId: "a" });
+    expect(readSessionId(repo, "i1")).toBe("a");
+  });
+  test("consumeSdkStream reports the id at the first frame, before the stream ends", async () => {
+    const { consumeSdkStream } = await import("../../src/runner/sdk_stream_parser.ts");
+    const got: string[] = []; let atCall = false;
+    async function* gen() { yield { type: "system", subtype: "init", session_id: "s-1" } as never; atCall = got.length === 1; yield { type: "system", session_id: "s-1" } as never; }
+    await consumeSdkStream(gen(), { cwd: repo, iteration: "i", hookEventsEnabled: false, write: () => {}, onSessionId: (id) => got.push(id) });
+    expect(got).toEqual(["s-1"]); expect(atCall).toBe(true);
+  });
+});
+
+describe("interrupted stage resume (FC-IMPLEMENT-RESUME-STARTS-OVER)", () => {
+  const runImpl = async (c: RunContext) => (await import("../../src/engine10/stages/implement.ts")).implementStage.run(c, new AbortController().signal);
+  const outs = { intake: { task: "do it" } };
+  test("implement rerun passes the recorded id to the provider with a short continue brief, one session", async () => {
+    writeId("r1-impl", "sess-killed");
+    const s = new Fake(() => ok);
+    const r = await runImpl(ctxFor(s, outs));
+    expect(s.calls).toHaveLength(1);
+    expect(s.calls[0]!.resumeSessionId).toBe("sess-killed");
+    expect(s.calls[0]!.brief).toContain("interrupted");
+    expect(r.data.session_resume).toBe("resumed");
+    expect(r.data.iteration_ids).toEqual(["r1-impl"]);
+  });
+  test("implement: missing id starts fresh and says so", async () => {
+    const s = new Fake(() => ok);
+    const r = await runImpl(ctxFor(s, outs));
+    expect("resumeSessionId" in s.calls[0]!).toBe(false);
+    expect(r.data.session_resume).toBe("fresh (no session id recorded)");
+  });
+  test("implement: rejected id reruns fresh with the full brief and says so", async () => {
+    writeId("r1-impl", "sess-bad");
+    const s = new Fake((_o, n) => (n === 1 ? { ...ok, exit: 1 } : ok));
+    const r = await runImpl(ctxFor(s, outs));
+    expect(s.calls).toHaveLength(2);
+    expect("resumeSessionId" in s.calls[1]!).toBe(false);
+    expect(s.calls[1]!.brief).toContain("do it");
+    expect(r.data.session_resume).toBe("fallback (resume failed)");
+  });
+  test("implement: an id recorded under another iteration is never reused", async () => {
+    writeId("r1-impl-other", "sess-x"); writeId("r0-impl", "sess-y"); writeId("r1-fix1", "sess-z");
+    const s = new Fake(() => ok);
+    await runImpl(ctxFor(s, outs));
+    expect("resumeSessionId" in s.calls[0]!).toBe(false);
+  });
+  test("fix rerun resumes its own killed round session, even with the chain flag off", async () => {
+    writeId("r1-fix1", "sess-fixkilled");
+    const s = new Fake(() => ok);
+    const r = await run(ctxFor(s, { intake: { task: "do it" }, verify: { failures_grouped: groups }, implement: impl }));
+    expect(s.calls).toHaveLength(1);
+    expect(s.calls[0]!.resumeSessionId).toBe("sess-fixkilled");
+    expect(r.data.fix_resume).toBe("resumed (interrupted session)");
+  });
+  test("fix: rejected id falls back fresh with the full brief; another round's id is not reused", async () => {
+    writeId("r1-fix1", "sess-bad"); writeId("r1-fix2", "sess-other");
+    const s = new Fake((_o, n) => (n === 1 ? { ...ok, exit: 1 } : ok));
+    const r = await run(ctxFor(s, { intake: { task: "do it" }, verify: { failures_grouped: groups }, implement: impl }));
+    expect(s.calls).toHaveLength(2);
+    expect("resumeSessionId" in s.calls[1]!).toBe(false);
+    expect(String(r.data.fix_resume)).toContain("fallback");
+    const s2 = new Fake(() => ok);
+    rmSync(join(repo, ".loki", "e10-session-r1-fix1.json"));
+    const r2 = await run(ctxFor(s2, { intake: { task: "do it" }, verify: { failures_grouped: groups }, implement: impl }));
+    expect("resumeSessionId" in s2.calls[0]!).toBe(false);
+    expect(r2.data.fix_resume).toBe("fresh");
+  });
+});

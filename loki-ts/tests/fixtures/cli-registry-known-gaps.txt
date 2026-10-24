@@ -50,6 +50,7 @@ export share
 github export
 github help
 github pr
+github protect
 github publish
 github status
 github sync

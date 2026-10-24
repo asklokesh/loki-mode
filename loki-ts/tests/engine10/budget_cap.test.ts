@@ -432,3 +432,29 @@ describe("route key cap", () => {
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });
+
+describe("budget threshold events (50, 80, 100 percent of the cap)", () => {
+  type Em = (t: string, s: string, d: Record<string, unknown>) => void;
+  const drive = (costs: unknown[], env: Record<string, string> = { LOKI_E10_MAX_COST_USD: "1.00" }) => {
+    const events: Array<[string, Record<string, unknown>]> = [], notified: Array<Record<string, unknown>> = [];
+    const m = capMeter(((t: string, _s: never, d: Record<string, unknown>) => { events.push([t, d]); }) as never, env as NodeJS.ProcessEnv, (b) => { notified.push(b as never); });
+    for (const usd of costs) (m.emit as unknown as Em)("cost", "implement", { usd });
+    return { budget: events.filter(([t]) => t === "budget").map(([, d]) => d), notified };
+  };
+  test("cap 1.00 with 0.30, 0.25, 0.30, 0.20 gives exactly three budget events at 0.50, 0.80, 1.00", () => {
+    const { budget, notified } = drive([0.3, 0.25, 0.3, 0.2]);
+    expect(budget.map((b) => b.threshold_usd)).toEqual([0.5, 0.8, 1]);
+    expect(budget.map((b) => b.threshold_pct)).toEqual([50, 80, 100]);
+    expect(notified.length).toBe(3);
+  });
+  test("one cost event crossing two thresholds emits both, each once", () => {
+    expect(drive([0.85, 0.05, 0.05]).budget.map((b) => b.threshold_pct)).toEqual([50, 80]);
+  });
+  test("no cap, or unmeasured (null) cost, emits nothing", () => {
+    expect(drive([0.9], {}).budget).toEqual([]);
+    expect(drive([null, undefined]).budget).toEqual([]);
+  });
+  test("a rerun seeded past a threshold does not re-emit it", () => {
+    expect(drive([0.25], { LOKI_E10_MAX_COST_USD: "1.00", LOKI_E10_SPENT_USD: "0.6" }).budget.map((b) => b.threshold_pct)).toEqual([80]);
+  });
+});

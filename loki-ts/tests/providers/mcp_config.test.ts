@@ -7,7 +7,7 @@
 // - buildMcpConfigArgv emits both paths when user file present (variadic)
 // - No env-var-shaped string (${...}) appears in the written file (no shell expansion)
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync, chmodSync, readdirSync, existsSync, symlinkSync, utimesSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -87,6 +87,82 @@ describe("mcp_config.mcpConfigPath", () => {
     } finally {
       rmSync(fakeBinDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("mcp_config.mcpConfigPath stale temp sweep", () => {
+  let td: string;
+  const tmps = (d: string) => readdirSync(join(d, ".loki")).filter((n) => n.startsWith("mcp-config.json.tmp."));
+  beforeEach(() => {
+    td = mkdtempSync(join(tmpdir(), "loki-mcp-sweep-"));
+    mkdirSync(join(td, ".loki"), { recursive: true });
+  });
+  afterEach(() => rmSync(td, { recursive: true, force: true }));
+
+  // The writer SIGKILLs itself between the temp write and the rename.
+  const dyingWriter = () =>
+    spawnSync(
+      process.execPath,
+      ["-e", `import { mcpConfigPath } from ${JSON.stringify(resolve(import.meta.dir, "../../src/providers/mcp_config.ts"))}; mcpConfigPath(${JSON.stringify(td)});`],
+      { env: { ...process.env, LOKI_TEST: "1", LOKI_TEST_DIE_AFTER_MCP_TMP: "1" } },
+    );
+
+  it("next write removes the temp left by a SIGKILLed writer", () => {
+    dyingWriter();
+    expect(tmps(td).length).toBe(1);
+    mcpConfigPath(td);
+    expect(tmps(td)).toEqual([]);
+    expect(existsSync(join(td, ".loki", "mcp-config.json"))).toBe(true);
+  });
+
+  it("keeps a live writer's temp, a symlink temp, a non-numeric lookalike and a foreign file", () => {
+    const live = spawnSync("sh", ["-c", "sleep 30 >/dev/null 2>&1 & echo $!"]);
+    const livePid = Number(String(live.stdout).trim());
+    const liveTmp = join(td, ".loki", `mcp-config.json.tmp.${livePid}`);
+    writeFileSync(liveTmp, "{}");
+    symlinkSync("/nonexistent", join(td, ".loki", "mcp-config.json.tmp.999999"));
+    writeFileSync(join(td, ".loki", "mcp-config.json.bak"), "keep");
+    writeFileSync(join(td, ".loki", "mcp-config.json.tmp.abc"), "keep");
+    try {
+      mcpConfigPath(td);
+      expect(existsSync(liveTmp)).toBe(true);
+      expect(tmps(td).sort()).toEqual([`mcp-config.json.tmp.${livePid}`, "mcp-config.json.tmp.999999", "mcp-config.json.tmp.abc"].sort());
+      expect(existsSync(join(td, ".loki", "mcp-config.json.bak"))).toBe(true);
+      // A live pid's temp older than 60 minutes is treated as stale (pid reuse).
+      const old = new Date(Date.now() - 2 * 3600 * 1000);
+      utimesSync(liveTmp, old, old);
+      mcpConfigPath(td);
+      expect(existsSync(liveTmp)).toBe(false);
+    } finally {
+      try { process.kill(livePid, "SIGTERM"); } catch { /* already gone */ }
+    }
+  });
+
+  it("does not write through a symlink planted at its own temp name", () => {
+    const victim = join(td, "victim");
+    symlinkSync(victim, join(td, ".loki", `mcp-config.json.tmp.${process.pid}`));
+    mcpConfigPath(td);
+    expect(existsSync(victim)).toBe(false);
+    expect(statSync(join(td, ".loki", "mcp-config.json")).mode & 0o777).toBe(0o600);
+  });
+
+  it("treats EPERM from kill(pid,0) as alive: a fresh temp named for pid 1 is kept", () => {
+    const t = join(td, ".loki", "mcp-config.json.tmp.1");
+    writeFileSync(t, "{}");
+    mcpConfigPath(td);
+    expect(existsSync(t)).toBe(true);
+  });
+
+  it("the die hook is inert without LOKI_TEST", () => {
+    const env: Record<string, string | undefined> = { ...process.env, LOKI_TEST_DIE_AFTER_MCP_TMP: "1" };
+    delete env["LOKI_TEST"];
+    const r = spawnSync(
+      process.execPath,
+      ["-e", `import { mcpConfigPath } from ${JSON.stringify(resolve(import.meta.dir, "../../src/providers/mcp_config.ts"))}; mcpConfigPath(${JSON.stringify(td)});`],
+      { env },
+    );
+    expect(r.status).toBe(0);
+    expect(existsSync(join(td, ".loki", "mcp-config.json"))).toBe(true);
   });
 });
 

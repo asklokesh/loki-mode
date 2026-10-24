@@ -21,7 +21,7 @@ Usage: loki <command> [args...]
 
 Bun-native commands:
   version [--json]       Print Loki Mode version (--json: version, runtime, install_path)
-  status [--json|--badge|--probe]  Show current orchestrator status
+  status [--json|--badge|--probe|--follow]  Show current orchestrator status
   stats [--json] [--efficiency]   Session statistics
   pause | resume | cancel  Ask the active Loki 10 run to pause, resume or cancel at the next stage boundary
   intent show <run>      Print a past run's intent card and answer
@@ -31,6 +31,7 @@ Bun-native commands:
   memory lessons [--json] PR review lessons with their uses and outcomes
   memory forget <prl-id> Delete one PR lesson and print its text
   memory learn <o/r#PR>  Learn lessons from a merged PR's review comments (or --recent N, max 20)
+  memory search <text> [--json] Search runs, decisions and semantic memory (bash route also: episodic, skills, handoffs, vector)
   memory index [rebuild] Show or rebuild memory index
   doctor [--json]        System prerequisites health check
   rollback <subcmd>      Restore .loki/ state from a checkpoint

@@ -18,7 +18,8 @@
 import { inferenceGeoParam } from "../providers/model_routes.ts";
 import { assertStaticSchema } from "../council/finding_schema.ts";
 import Anthropic from "@anthropic-ai/sdk";
-import { appendChildLedger, recordFromUsage, unmeasuredRecord } from "../util/child_ledger.ts";
+import { estimateTokens } from "../providers/price_table.ts";
+import { appendChildLedger, type LedgerRecord,recordFromUsage, unmeasuredRecord } from "../util/child_ledger.ts";
 import { clampThinkingForEffort } from "../providers/claude_flags.ts";
 import { oauthDevEnabled, readFreshOauthToken, OAUTH_BETA_HEADER } from "./oauth_dev.js";
 
@@ -86,16 +87,68 @@ async function sendJudge(c: Anthropic, body: Anthropic.MessageCreateParamsNonStr
   return body.max_tokens > STREAM_ABOVE_TOKENS ? c.messages.stream(body, { ...opts, signal: AbortSignal.timeout(timeoutMs) }).finalMessage() : c.messages.create(body, opts);
 }
 
+export interface PromptTokens { tokens: number; source: "measured" | "estimated"; ratio?: number }
+type TokenCounter = (req: { model: string; system?: string; prompt: string }) => Promise<number>;
+
+// Running measured/estimated ratio for this process: calibrates the chars/4 estimator for later calls.
+let calib = { sum: 0, n: 0 };
+let counterOverride: TokenCounter | null = null;
+// The count runs before the judge call, so it must never add more than this: one attempt, hard-bounded.
+const COUNT_TIMEOUT_MS = 3_000;
+let countTimeoutMs = COUNT_TIMEOUT_MS;
+
+/** TEST SEAM: inject a fake count_tokens counter (null restores the real one) and reset calibration. Production code must never call this. */
+export function __setTokenCounterForTests(fn: TokenCounter | null, timeoutMs = COUNT_TIMEOUT_MS): void { counterOverride = fn; countTimeoutMs = timeoutMs; calib = { sum: 0, n: 0 }; }
+
+/** chars/4 scaled by the mean measured ratio so far (1 before any measurement). */
+export function estimatePromptTokens(text: string): number {
+  return Math.ceil(estimateTokens(text) * (calib.n ? calib.sum / calib.n : 1));
+}
+
+/** Measure judge prompt tokens with messages.countTokens (API key present); on absence or error fall back to the calibrated estimate, labelled "estimated". Never throws. */
+export async function measurePromptTokens(c: Anthropic, model: string, prompt: string, system?: string): Promise<PromptTokens> {
+  const text = `${system ?? ""}${prompt}`;
+  const est = estimateTokens(text);
+  try {
+    let n: number | null = null;
+    // Only the first-party endpoint serves count_tokens: a gateway/proxy base URL never receives it.
+    if (process.env["ANTHROPIC_API_KEY"] && onDefaultEndpoint(c)) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const bound = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error("count_tokens timeout")), countTimeoutMs); });
+      try {
+        const count = counterOverride
+          ? counterOverride({ model, prompt, ...(system ? { system } : {}) })
+          : c.messages.countTokens({ model, ...(system ? { system } : {}), messages: [{ role: "user", content: buildUserContent(prompt) }] }, { timeout: countTimeoutMs, maxRetries: 0 }).then((r) => r.input_tokens);
+        n = await Promise.race([count, bound]);
+      } finally { clearTimeout(timer); }
+    }
+    if (typeof n === "number" && Number.isFinite(n) && n > 0 && est > 0) {
+      const ratio = n / est;
+      calib.sum += ratio; calib.n++;
+      return { tokens: n, source: "measured", ratio };
+    }
+  } catch { /* unavailable or errored: fall through to the estimate */ }
+  return { tokens: estimatePromptTokens(text), source: "estimated" };
+}
+
+function withPromptTokens<T extends LedgerRecord>(rec: T, pt?: PromptTokens): T {
+  if (!pt) return rec;
+  rec.prompt_tokens = pt.tokens;
+  rec.prompt_tokens_source = pt.source;
+  if (pt.ratio !== undefined) rec.token_ratio = pt.ratio;
+  return rec;
+}
+
 /** COST-WALL: a judge call that threw may still have spent (timeout after the request was accepted): record an unmeasured line, a lower bound never a zero. No-op without params.ledger. */
-export function noteJudgeFailure(ledger: JudgeParams["ledger"], model: string, outcome = "transport", maxTokens?: number): void {
+export function noteJudgeFailure(ledger: JudgeParams["ledger"], model: string, outcome = "transport", maxTokens?: number, pt?: PromptTokens): void {
   if (!ledger) return;
-  appendChildLedger(ledger.lokiDir, { ...unmeasuredRecord(ledger.phase, model, "sdk-judge"), outcome, ...(maxTokens === undefined ? {} : { max_tokens: maxTokens }), ...(ledger.thinkingClamp ? { thinking_clamp: ledger.thinkingClamp } : {}) });
+  appendChildLedger(ledger.lokiDir, { ...withPromptTokens(unmeasuredRecord(ledger.phase, model, "sdk-judge"), pt), outcome, ...(maxTokens === undefined ? {} : { max_tokens: maxTokens }), ...(ledger.thinkingClamp ? { thinking_clamp: ledger.thinkingClamp } : {}) });
 }
 
 /** COST-WALL: one ledger line per SDK judge call, priced from the response usage (the API returns tokens, not dollars). No-op without params.ledger. */
-export function noteJudgeUsage(ledger: JudgeParams["ledger"], model: string, msg: { usage?: unknown } | null | undefined, outcome?: string, maxTokens?: number): void {
+export function noteJudgeUsage(ledger: JudgeParams["ledger"], model: string, msg: { usage?: unknown } | null | undefined, outcome?: string, maxTokens?: number, pt?: PromptTokens): void {
   if (!ledger) return;
-  const rec = recordFromUsage(ledger.phase, model, (msg?.usage ?? null) as Record<string, unknown> | null);
+  const rec = withPromptTokens(recordFromUsage(ledger.phase, model, (msg?.usage ?? null) as Record<string, unknown> | null), pt);
   if (outcome) rec.outcome = outcome;
   if (ledger.thinkingClamp) rec.thinking_clamp = ledger.thinkingClamp;
   if (maxTokens !== undefined) rec.max_tokens = maxTokens; // output_tokens against max_tokens shows a cap that truncated the answer
@@ -298,6 +351,7 @@ async function runJudge(params: JudgeParams | TextParams, schema: Record<string,
   const { thinking, clamp } = clampThinkingForEffort(model, params.thinking, effort);
   const ledger = params.ledger && clamp ? { ...params.ledger, thinkingClamp: `${clamp.from}->${clamp.to}@${clamp.effort} (max ${clamp.max})` } : params.ledger;
 
+  const pt = ledger ? await measurePromptTokens(c, model, prompt, system) : undefined;
   let max = judgeMaxTokens(effort, params.maxTokens);
   let retriedTruncation = false;
   let usedFallback = false;
@@ -328,19 +382,19 @@ async function runJudge(params: JudgeParams | TextParams, schema: Record<string,
       // A throw, unlike a stop_reason. If the fallback retry threw after a
       // refusal, the refusal is the real answer; do not downgrade it to transport.
       if (usedFallback && refused) {
-        noteJudgeFailure(ledger, model, describeJudgeOutcome(refused), max);
+        noteJudgeFailure(ledger, model, describeJudgeOutcome(refused), max, pt);
         return refused;
       }
       if (isContextOverflow(err)) {
-        noteJudgeFailure(ledger, model, "context_exceeded", max);
+        noteJudgeFailure(ledger, model, "context_exceeded", max, pt);
         return { kind: "context_exceeded" };
       }
-      noteJudgeFailure(ledger, model, "transport", max);
+      noteJudgeFailure(ledger, model, "transport", max, pt);
       return { kind: "transport" };
     }
     const outcome = classifyStop(msg);
     const billed = typeof msg.model === "string" && msg.model ? msg.model : model;
-    noteJudgeUsage(ledger, billed, msg, describeJudgeOutcome(outcome), max);
+    noteJudgeUsage(ledger, billed, msg, describeJudgeOutcome(outcome), max, pt);
 
     if (outcome.kind === "truncated" && !retriedTruncation && Math.min(max * 2, TRUNCATION_RETRY_CAP) > max) {
       retriedTruncation = true;

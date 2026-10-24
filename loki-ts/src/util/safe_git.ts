@@ -307,3 +307,14 @@ function walkFiles(root: string): string[] {
 }
 /** Tracked plus untracked-not-ignored files, else a walk; relative, sorted, SKIP_DIRS removed (testmap's runner detection). */
 export const listProjectFiles = (root: string): string[] => gitFiles(root) ?? walkFiles(root);
+/** Paths git ignores, tracked or not (`git check-ignore --no-index`): the repo's .gitignore files plus .git/info/exclude and the global core.excludesFile. Exit 0 or 1 means the scan completed (1 = nothing ignored);
+ *  a spawn error, a timeout kill or any other code (e.g. 128 with partial stdout) returns null = unavailable, never a partial or empty set. */
+export async function ignoredPaths(repoDir: string, paths: string[], timeoutMs = 20000): Promise<Set<string> | null> {
+  const out = new Set<string>(); if (!paths.length) return out;
+  try { // stdin + -z: NUL-separated in and out, so unusual names are never quoted; a ./ prefix keeps a name like ":(exclude)x" from being read as pathspec magic (check-ignore rejects magic and --literal-pathspecs)
+    const proc = Bun.spawn({ cmd: ["git", ...safeGitArgs(["check-ignore", "--no-index", "--stdin", "-z"], false, repoDir)], cwd: repoDir, env: safeGitEnv() as Record<string, string>, stdin: Buffer.from(paths.map((p) => `./${p}`).join("\0") + "\0"), stdout: "pipe", stderr: "ignore" });
+    const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* exited */ } }, timeoutMs);
+    try { const txt = await new Response(proc.stdout as ReadableStream).text(), code = await proc.exited; if (code !== 0 && code !== 1) return null; for (const f of txt.split("\0").filter(Boolean)) out.add(f.startsWith("./") ? f.slice(2) : f); } finally { clearTimeout(timer); }
+  } catch { return null; }
+  return out;
+}

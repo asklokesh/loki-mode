@@ -2,7 +2,7 @@
 // line caps, and util/ is uncapped. Reuses seal_group's exported helpers; no second sealer.
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { canonicalJson, collectToolchain, TOOLCHAIN_KEYS, type Toolchain } from "./receipt_signer.ts";
+import { canonicalJson, collectToolchain, jsonTooDeep, TOOLCHAIN_KEYS, type Toolchain } from "./receipt_signer.ts";
 import { compositeVerdict, dirNames, ID_RE, isObj, readJson, sha, text, type RecHash, type VerifyOne } from "../features/speed/seal_group.ts";
 import type { VerifyDeps } from "../engine10/verify_cmd.ts";
 
@@ -43,6 +43,7 @@ export function composeComposite(runDir: string, rh: RecHash, toolchain: Toolcha
   let ibytes: Buffer;
   try { ibytes = readFileSync(ip); } catch { throw new Error("integration.json missing; the workspace run did not finish"); }
   const integ = readJson(ip);
+  if (jsonTooDeep(integ)) throw new Error("integration.json cannot be hashed (nested too deeply); no composite");
   if (!isObj(integ) || !isObj(integ["outcomes"])) throw new Error("integration.json has no outcomes");
   const iprob = integrationProblem(integ);
   if (iprob) throw new Error(`${iprob}; no composite`);
@@ -60,6 +61,7 @@ export function composeComposite(runDir: string, rh: RecHash, toolchain: Toolcha
     const id = ids[ids.length - 1];
     if (!id) throw new Error(`repo ${text(repo, 80)} has no receipt.json under worktrees/${slugOf(repo)}/.loki/runs`);
     const rp = join(runsDir, id, "receipt.json"), bytes = readFileSync(rp), r = readJson(rp);
+    if (jsonTooDeep(r)) throw new Error(`repo ${text(repo, 80)} receipt cannot be hashed (nested too deeply); no composite`);
     if (!isObj(r) || typeof r["receipt_sha256"] !== "string" || rh(r) !== r["receipt_sha256"]) throw new Error(`repo ${text(repo, 80)} receipt is unreadable or its hash does not recompute`);
     const head = String(r["head_sha"] ?? "");
     if (!head) throw new Error(`repo ${text(repo, 80)} receipt has no head_sha`);
@@ -77,12 +79,14 @@ export async function verifyComposite(receiptPath: string, receipt: Record<strin
   const runDir = dirname(receiptPath);
   const signed = isObj(receipt["verification"]) && typeof receipt["verification"]["jwt"] === "string";
   const bad = (reason: string): { problem: { verdict: "TAMPERED"; reason: string }; verdict: string } => ({ problem: { verdict: "TAMPERED", reason: `composite: ${reason}` }, verdict: "FAILED" });
+  const deep = (what: string): { problem: { verdict: "UNCHECKED"; reason: string }; verdict: string } => ({ problem: { verdict: "UNCHECKED", reason: `composite: ${what} cannot be hashed (nested too deeply)` }, verdict: "FAILED" }); // damaged, not a tamper finding; checked before any hash
   const kids = receipt["children"];
   if (!Array.isArray(kids) || kids.length === 0 || !ID_RE.test(String(receipt["run_id"] ?? ""))) return bad("body malformed");
   let ibytes: Buffer;
   try { ibytes = readFileSync(join(runDir, "integration.json")); } catch { return bad("integration.json missing"); }
   if (sha(ibytes) !== receipt["integration_sha256"]) return bad("integration.json does not match its recorded hash");
   const integ = readJson(join(runDir, "integration.json"));
+  if (jsonTooDeep(integ)) return deep("integration.json");
   if (!isObj(integ) || !isObj(integ["outcomes"])) return bad("integration.json has no outcomes");
   const iprob = integrationProblem(integ);
   if (iprob) return bad(iprob);
@@ -110,6 +114,7 @@ export async function verifyComposite(receiptPath: string, receipt: Record<strin
     try { bytes = readFileSync(rp); } catch { return bad(`child ${repo} receipt missing`); }
     if (sha(bytes) !== c["receipt_file_sha256"]) return bad(`child ${repo} receipt does not match its recorded hash (swapped or edited)`);
     const sub = readJson(rp);
+    if (jsonTooDeep(sub)) return deep(`child ${repo} receipt`);
     if (!isObj(sub) || sub["receipt_sha256"] !== c["receipt_sha256"] || rh(sub) !== c["receipt_sha256"]) return bad(`child ${repo} receipt hash does not recompute`);
     if (String(sub["verdict"] ?? "") !== c["verdict"]) return bad(`child ${repo} verdict differs from the composite`);
     if (String(sub["head_sha"] ?? "") !== c["head_sha"] || !c["head_sha"]) return bad(`child ${repo} head_sha differs from the composite`);

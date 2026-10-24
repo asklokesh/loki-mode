@@ -17,6 +17,8 @@
 
 import {
   closeSync,
+  constants as fsConstants,
+  readdirSync,
   fstatSync,
   fsyncSync,
   lstatSync,
@@ -75,6 +77,70 @@ export function fsyncParentDir(target: string): void {
       } catch {
         // ignore
       }
+    }
+  }
+}
+
+// Secret/config temp files: shared create + stale sweep. A writer killed
+// between the temp write and the rename would otherwise leave the temp (and
+// any secret in it) on disk forever. Mirrors dashboard/secure_tmp.py and
+// _loki_mcp_sweep_stale_tmp in autonomy/lib/mcp-config.sh.
+const STALE_TMP_MS = 60 * 60 * 1000;
+
+/** Create `tmp` O_CREAT|O_EXCL|O_NOFOLLOW (never through a planted symlink), mode 0600, write body, fsync. */
+export function writeExclusiveTmp(tmp: string, body: string | Uint8Array, mode = 0o600): void {
+  try {
+    unlinkSync(tmp); // our own name left over from a reused pid
+  } catch {
+    // absent
+  }
+  const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0);
+  const fd = openSync(tmp, flags, mode);
+  try {
+    writeSync(fd, body as never);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Remove temps in `dir` (not recursive) whose whole name matches `re`. Group 1,
+ * when present, is the writer pid. Removed only when a regular file (not a
+ * symlink), owned by this uid, not ours, and either its pid is dead or its
+ * mtime is over 60 minutes (a name with no pid is judged by age alone). A live
+ * pid's recent temp, EPERM included, is kept.
+ */
+export function sweepStaleTmp(dir: string, re: RegExp): void {
+  const uid = typeof process.getuid === "function" ? process.getuid() : -1;
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const m = re.exec(name);
+    if (!m || m[0] !== name) continue;
+    const pid = m[1] === undefined ? null : Number(m[1]);
+    if (pid === process.pid) continue;
+    const p = `${dir}/${name}`;
+    try {
+      const st = lstatSync(p);
+      if (!st.isFile() || st.isSymbolicLink()) continue;
+      if (uid !== -1 && st.uid !== uid) continue;
+      let alive = true;
+      if (pid !== null) {
+        try {
+          process.kill(pid, 0);
+        } catch (e) {
+          alive = (e as NodeJS.ErrnoException).code === "EPERM";
+        }
+      }
+      if (alive && Date.now() - st.mtimeMs <= STALE_TMP_MS) continue;
+      unlinkSync(p);
+    } catch {
+      // raced with another sweeper or unreadable: skip
     }
   }
 }

@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { childEnv, classifyExitCause, createSessionRunner, diffShortstat, diffSignature, HEARTBEAT_MS_DEFAULT, untrackedList } from "../../src/engine10/session.ts";
+import { clampBashTimeoutEnv, killGroupWithGrace } from "../../src/runner/worker_proc.ts";
 import { resultCostPath, sumResultCosts, UNMETERED } from "../../src/engine10/cost.ts";
 import { liveArchivedCosts, withArchivedCosts } from "../../src/providers/provider_cost.ts";
 const archivedCostIds = (root: string, ids: string[]): string[] => liveArchivedCosts(root, ids, UNMETERED);
@@ -681,4 +682,79 @@ describe("TEN-SPEED-21 heartbeat single ls-files", () => {
       expect(readFileSync(log, "utf8").trim().split("\n").length).toBe(beats.length);
     } finally { process.env["PATH"] = oldPath; rmSync(d, { recursive: true, force: true }); }
   });
+  test("background-task guard: claude session env disables background tasks and clamps Bash timeouts to the stage budget", () => {
+    const saved = { d: process.env["BASH_DEFAULT_TIMEOUT_MS"], m: process.env["BASH_MAX_TIMEOUT_MS"] };
+    delete process.env["BASH_DEFAULT_TIMEOUT_MS"]; delete process.env["BASH_MAX_TIMEOUT_MS"];
+    try {
+      const small = childEnv(baseOpts({ limitS: 20 }), { provider: "claude" });
+      expect(small["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"]).toBe("1");
+      expect(small["BASH_DEFAULT_TIMEOUT_MS"]).toBe("30000"); // floor
+      expect(small["BASH_MAX_TIMEOUT_MS"]).toBe("30000");
+      const big = childEnv(baseOpts({ limitS: 600 }), { provider: "claude" });
+      expect(big["BASH_DEFAULT_TIMEOUT_MS"]).toBe("120000"); // already under the budget: unchanged
+      expect(big["BASH_MAX_TIMEOUT_MS"]).toBe("590000"); // 600s stage minus the 10s margin
+      expect(childEnv(baseOpts({ limitS: 600 }), { provider: "codex" })["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"]).toBeUndefined();
+      const e: NodeJS.ProcessEnv = { BASH_DEFAULT_TIMEOUT_MS: "5000" };
+      clampBashTimeoutEnv(e, 600);
+      expect(e["BASH_DEFAULT_TIMEOUT_MS"]).toBe("5000"); // a smaller user value wins
+    } finally {
+      if (saved.d !== undefined) process.env["BASH_DEFAULT_TIMEOUT_MS"] = saved.d;
+      if (saved.m !== undefined) process.env["BASH_MAX_TIMEOUT_MS"] = saved.m;
+    }
+  });
+
+  test("fixture A: a Bash-like call past the clamped timeout ends inside the stage cap and never reports a background move", async () => {
+    // Stub honoring the same two env contracts as Claude Code (timeout stops the command; background only when not disabled).
+    const script = 'ms=${BASH_DEFAULT_TIMEOUT_MS:-120000}; timeout $((ms/1000)) sleep 60; if [ "${CLAUDE_CODE_DISABLE_BACKGROUND_TASKS:-}" = 1 ]; then echo "command stopped at its timeout"; else echo "moved to the background"; sleep 60; fi; echo LOKI_DONE';
+    const saved = process.env["BASH_DEFAULT_TIMEOUT_MS"]; process.env["BASH_DEFAULT_TIMEOUT_MS"] = "1000";
+    try {
+      const t0 = Date.now();
+      const runner = createSessionRunner({ provider: "claude", childCommand: ["bash", ["-c", script]] });
+      const res = await runner.run(baseOpts({ limitS: 20 }));
+      expect(Date.now() - t0).toBeLessThan(10_000);
+      expect(res.killed).toBe(false);
+      expect(res.summary).not.toContain("moved to the background");
+      expect(res.summary).toContain("stopped at its timeout");
+    } finally { if (saved === undefined) delete process.env["BASH_DEFAULT_TIMEOUT_MS"]; else process.env["BASH_DEFAULT_TIMEOUT_MS"] = saved; }
+  }, 20_000);
+
+  test("fixture B: a live background child after LOKI_DONE ends the session within 10s and its process group is gone", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-e10-bg-"));
+    const pidFile = join(dir, "bg.pid");
+    const events: string[] = [];
+    try {
+      const runner = createSessionRunner({ provider: "claude", childCommand: ["bash", ["-c", `sleep 300 & echo $! > "${pidFile}"; echo LOKI_DONE; exit 0`]], emit: (type) => events.push(type) });
+      const t0 = Date.now();
+      const res = await runner.run(baseOpts({ limitS: 120 }));
+      expect(Date.now() - t0).toBeLessThan(10_000);
+      expect(res.markers.done).toBe(true);
+      expect(events).toContain("session.group_reaped");
+      const bg = Number(readFileSync(pidFile, "utf8").trim());
+      await new Promise((r) => setTimeout(r, 300));
+      expect(isAlive(bg)).toBe(false);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 20_000);
+});
+
+describe("killGroupWithGrace re-checks the group before SIGKILL (CCR-01 r2 N1)", () => {
+  const run = async (groupSurvivesTerm: boolean): Promise<string[]> => {
+    const sent: string[] = [];
+    const real = process.kill;
+    let termSent = false;
+    process.kill = ((pid: number, sig?: string | number) => {
+      if (pid !== -424242) return real.call(process, pid, sig as never);
+      if (sig === 0) { if (termSent && !groupSurvivesTerm) throw new Error("ESRCH"); return true; }
+      sent.push(String(sig));
+      if (sig === "SIGTERM") termSent = true;
+      return true;
+    }) as typeof process.kill;
+    try { killGroupWithGrace(424242); await new Promise((r) => setTimeout(r, 2400)); } finally { process.kill = real; }
+    return sent;
+  };
+  test("group gone after SIGTERM: no SIGKILL, so a reused pgid is never hit", async () => {
+    expect(await run(false)).toEqual(["SIGTERM"]);
+  }, 10_000);
+  test("group still alive after the grace: SIGKILL follows", async () => {
+    expect(await run(true)).toEqual(["SIGTERM", "SIGKILL"]);
+  }, 10_000);
 });

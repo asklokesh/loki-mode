@@ -1,12 +1,12 @@
 // XV-1: default to a different vendor when one is installed (LOKI_XVENDOR_DEFAULT=1). Vendor CLIs are stubbed on a temp PATH; no real CLI runs.
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, utimesSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, symlinkSync, utimesSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync as rmTree } from "node:fs";
 import { acceptanceLines, acceptancePromptBlock } from "../../src/util/intent_card.ts";
 import { REVIEW_ALLOWLIST_NO_GIT, REVIEW_ALLOWLIST_TOKEN, REVIEW_GUARD_DENYLIST } from "../../src/providers/claude_flags.ts";
-import { crossReview, minVerdict, parseReview, reviewArgv, reviewProvider, reviewReceipt } from "../../src/engine10/stages/xreview.ts";
+import { crossReview, hygieneFindings, ignoredPaths, minVerdict, modelReviewRan, parseReview, reviewArgv, reviewProvider, reviewReceipt } from "../../src/engine10/stages/xreview.ts";
 
 const root = mkdtempSync(join(tmpdir(), "xv1-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -35,19 +35,20 @@ describe("reviewReceipt XV-1", () => {
   const env = { LOKI_XVENDOR_DEFAULT: "1" };
   it("different vendor records vendor_differs true and no NOT PROVEN", () => {
     const r = reviewReceipt("claude", { provider: "codex", level: "pass", notes: [] }, env);
-    expect(r.review).toEqual({ provider: "codex", vendor_differs: true }); expect(r.notProven).toEqual([]);
+    expect(r.review).toEqual({ provider: "codex", vendor_differs: true, ran: "reviewer" }); expect(r.notProven).toEqual([]);
+    expect(reviewReceipt("claude", { provider: "codex", level: "pass", notes: [], reviewed_by: "model", reviewer_model: "opus" }, env).review).toEqual({ provider: "codex", vendor_differs: true, ran: "reviewer (opus)", reviewer_model: "opus" });
   });
   it("explicit same vendor is flagged false with NOT PROVEN", () => {
     const r = reviewReceipt("claude", { provider: "claude", level: "pass", notes: [] }, env);
-    expect(r.review).toEqual({ provider: "claude", vendor_differs: false }); expect(r.notProven).toEqual(["judge shares builder vendor or none configured"]);
+    expect(r.review).toEqual({ provider: "claude", vendor_differs: false, ran: "reviewer" }); expect(r.notProven).toEqual(["judge shares builder vendor or none configured"]);
   });
   it("no judge gives provider null and NOT PROVEN", () => {
     const r = reviewReceipt("claude", null, env);
-    expect(r.review).toEqual({ provider: null, vendor_differs: false }); expect(r.notProven.length).toBe(1);
+    expect(r.review).toEqual({ provider: null, vendor_differs: false, ran: "none" }); expect(r.notProven.length).toBe(1);
   });
   it("a not_run review is not cross-vendor: vendor_differs false plus NOT PROVEN", () => {
     const r = reviewReceipt("claude", { provider: "codex", level: "not_run", notes: [] }, env);
-    expect(r.review).toEqual({ provider: "codex", vendor_differs: false }); expect(r.notProven).toEqual(["judge shares builder vendor or none configured"]);
+    expect(r.review).toEqual({ provider: "codex", vendor_differs: false, ran: "none" }); expect(r.notProven).toEqual(["judge shares builder vendor or none configured"]);
   });
   it("unknown builder is never vendor_differs true", () => {
     const r = reviewReceipt("cline", { provider: "codex", level: "pass", notes: [] }, env);
@@ -215,7 +216,7 @@ describe("medium default review", () => {
     await withEnv(stub, {}, async () => {
       const r = await crossReview(ctx, "VERIFIED", "HEAD");
       expect(r?.level).toBe("pass"); expect(r?.provider).toBe("claude"); expect(r?.same_vendor_default).toBe(true);
-      expect(reviewReceipt("claude", r).review).toEqual({ provider: "claude", vendor_differs: false, same_vendor: true, defaulted: true, level: "pass" });
+      expect(reviewReceipt("claude", r).review).toEqual({ provider: "claude", vendor_differs: false, same_vendor: true, defaulted: true, level: "pass", ran: "reviewer (sonnet)" });
     });
   });
   it("medium default review: a BLOCK caps the verdict at PARTIAL", async () => {
@@ -283,5 +284,194 @@ describe("medium default review", () => {
     await withEnv(stub, {}, async () => { await crossReview(ctx, "VERIFIED", "HEAD"); });
     const p = readFileSync(out, "utf8");
     expect(p).toContain("cannot edit files or run project code or tests"); expect(p).toContain("say so plainly"); expect(p).toContain("No git commands are available"); expect(p).not.toContain("never report");
+  });
+});
+
+describe("medium hygiene check and fast-tier pin", () => {
+  const mkRepo = (tier: string, files: Record<string, string>, baseFiles: Record<string, string> = {}) => {
+    const d = mkdtempSync(join(root, "hyg-")), bd = mkdtempSync(join(root, "hygbin-")), argvOut = join(bd, "argv.txt");
+    const git = (...a: string[]) => Bun.spawnSync(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
+    git("init", "-q"); writeFileSync(join(d, "a"), "1"); git("add", "a");
+    for (const [f, c] of Object.entries(baseFiles)) { mkdirSync(join(d, f, ".."), { recursive: true }); writeFileSync(join(d, f), c); git("--literal-pathspecs", "add", "-f", f); }
+    git("commit", "-qm", "base");
+    const base = new TextDecoder().decode(git("rev-parse", "HEAD").stdout).trim();
+    for (const [f, c] of Object.entries(files)) { mkdirSync(join(d, f, ".."), { recursive: true }); writeFileSync(join(d, f), c); git("--literal-pathspecs", "add", "-f", f); }
+    git("commit", "-qm", "work");
+    mkdirSync(join(d, ".loki", "state"), { recursive: true }); writeFileSync(join(d, ".loki", "state", "risk-tier.json"), JSON.stringify({ tier }));
+    const stub = join(bd, "claude"); writeFileSync(stub, `#!/bin/sh\nprintf '%s\\n' "$*" > '${argvOut}'\nprintf '%s\\n' '{"type":"result","result":"VERDICT: PASS"}'\n`); chmodSync(stub, 0o755);
+    return { ctx: { repoDir: d, provider: "claude", baseSha: base, runDir: d } as never, stub, argvOut };
+  };
+  const withStub = async (stub: string, extra: Record<string, string>, f: () => Promise<void>) => {
+    const keys = ["LOKI_REVIEW_PROVIDER", "LOKI_XVENDOR_DEFAULT", "LOKI_CLAUDE_CLI", "LOKI_MODEL_FAST", "LOKI_CLAUDE_MODEL_FAST", "LOKI_MODEL_OVERRIDE", "LOKI_ALLOW_HAIKU", "LOKI_CODEX_CLI", "LOKI_AGENTS_USER_DIR"], saved = keys.map((k) => process.env[k]);
+    for (const k of keys) delete process.env[k];
+    process.env["LOKI_CLAUDE_CLI"] = stub; Object.assign(process.env, extra);
+    try { await f(); } finally { keys.forEach((k, i) => { const v = saved[i]; if (v === undefined) delete process.env[k]; else process.env[k] = v; }); }
+  };
+  it("hygieneFindings flags cache and build artifacts by path, generic across stacks", () => {
+    const f = hygieneFindings(["src/a.py", "pkg/__pycache__/a.cpython-311.pyc", "x.pyc", "y.pyo", "app/Main.class", "lib/a.o", "lib/a.obj", "src/build/index.ts", "pkg/build/build.go", "docs/build/conf.py", ".loki/state/x.pyc"]);
+    expect(f).toEqual(["pkg/__pycache__/a.cpython-311.pyc", "x.pyc", "y.pyo", "app/Main.class", "lib/a.o", "lib/a.obj"]);
+    expect(hygieneFindings(["src/a.py", "README.md"])).toEqual([]);
+    expect(hygieneFindings(["web/dist/bundle.js", "src/build/index.ts"], new Set(["web/dist/bundle.js"]))).toEqual(["web/dist/bundle.js"]); // ignored by the repo's own rules
+  });
+  it(".class files are flagged (compiled artifact pattern)", () => expect(hygieneFindings(["out/Main.class"])).toEqual(["out/Main.class"]));
+  it("legit src/build/index.ts is not flagged but an ignored dist/index.js force-added is", async () => {
+    const legit = mkRepo("medium", { "src/build/index.ts": "export {}", "pkg/build/build.go": "package b" });
+    const forced = mkRepo("medium", { ".gitignore": "dist/\n", "dist/index.js": "x", "src/ok.ts": "y" });
+    await withStub(legit.stub, {}, async () => { const r = await crossReview(legit.ctx, "VERIFIED", "HEAD"); expect(r?.hygiene).toBeUndefined(); expect(r?.level).toBe("pass"); });
+    await withStub(forced.stub, {}, async () => { const r = await crossReview(forced.ctx, "VERIFIED", "HEAD"); expect(r?.hygiene).toEqual(["dist/index.js"]); expect(r?.level).toBe("flag"); });
+  });
+  it("ignored files with a pathspec-magic name or a non-ASCII name are still detected, and one bad name never drops the batch", async () => {
+    const { ctx, stub } = mkRepo("medium", { ".gitignore": "unicode-*\n:(exclude)x\n.env\n", ":(exclude)x": "m", "unicode-é.log": "u", ".env": "SECRET=1", "src/ok.ts": "y" });
+    await withStub(stub, {}, async () => {
+      const r = await crossReview(ctx, "VERIFIED", "HEAD");
+      expect([...(r?.hygiene ?? [])].sort()).toEqual([":(exclude)x", ".env", "unicode-é.log"].sort()); expect(r?.level).toBe("flag");
+    });
+  });
+  it("pre-existing tracked artifacts do not count as run-added", async () => {
+    const { ctx, stub } = mkRepo("medium", { "old/x.pyc": "b2", "Old.class": "c2" }, { "old/x.pyc": "b", "Old.class": "c" }); // modified, not added, by the run
+    await withStub(stub, {}, async () => {
+      const r = await crossReview(ctx, "VERIFIED", "HEAD"); expect(r?.hygiene).toBeUndefined(); expect(r?.level).toBe("pass");
+    });
+  });
+  it("hygiene observations never land in notes (so never in NOT PROVEN); the receipt carries them as observations", async () => {
+    const { ctx, stub } = mkRepo("medium", { "m.pyc": "b" });
+    await withStub(stub, {}, async () => {
+      const r = await crossReview(ctx, "VERIFIED", "HEAD");
+      expect(r?.notes.join(" ")).not.toContain("committed build"); expect(reviewReceipt("claude", r).review?.observations).toEqual(["committed build or cache artifact: m.pyc"]);
+    });
+  });
+  const withAgent = (ctx: unknown, body: string) => { const d = (ctx as { repoDir: string }).repoDir; mkdirSync(join(d, ".loki", "agents"), { recursive: true }); writeFileSync(join(d, ".loki", "agents", "reviewer.md"), body); };
+  const agentEnv = { LOKI_AGENTS_USER_DIR: "/nonexistent/agents" };
+  it("an agent-configured reviewer model beats the fast-tier pin and is named on the receipt", async () => {
+    const { ctx, stub, argvOut } = mkRepo("medium", { "m.py": "x=1" }); withAgent(ctx, "---\nmodel: opus\n---\nReview carefully.\n");
+    await withStub(stub, agentEnv, async () => {
+      const r = await crossReview(ctx, "VERIFIED", "HEAD"); const argv = readFileSync(argvOut, "utf8");
+      expect(argv).toContain("--model opus"); expect(argv).not.toContain("--model sonnet"); expect(reviewReceipt("claude", r).review?.ran).toBe("reviewer (opus)");
+    });
+  });
+  it("an agent reviewer with an empty model falls back to the pin, never to an empty model", async () => {
+    const { ctx, stub, argvOut } = mkRepo("medium", { "m.py": "x=1" }); withAgent(ctx, "---\nname: rev\nmodel:\n---\nReview carefully.\n");
+    await withStub(stub, agentEnv, async () => {
+      const r = await crossReview(ctx, "VERIFIED", "HEAD");
+      expect(readFileSync(argvOut, "utf8")).toContain("--model sonnet"); expect(r?.reviewer_model).toBe("sonnet"); expect(reviewReceipt("claude", r).review?.ran).toBe("reviewer (sonnet)");
+    });
+  });
+  it("the receipt names an overridden reviewer model (LOKI_ALLOW_HAIKU, LOKI_MODEL_OVERRIDE)", async () => {
+    const { ctx, stub } = mkRepo("medium", { "m.py": "x=1" });
+    await withStub(stub, { LOKI_ALLOW_HAIKU: "true" }, async () => { expect(reviewReceipt("claude", await crossReview(ctx, "VERIFIED", "HEAD")).review?.ran).toBe("reviewer (haiku)"); });
+    await withStub(stub, { LOKI_MODEL_OVERRIDE: "opus" }, async () => { expect(reviewReceipt("claude", await crossReview(ctx, "VERIFIED", "HEAD")).review?.ran).toBe("reviewer (opus)"); });
+  });
+  describe("cross-vendor receipt never credits a review no model finished", () => {
+    for (const [name, script] of [["codex exits 1", "#!/bin/sh\nexit 1\n"], ["codex returns no VERDICT line", "#!/bin/sh\necho no verdict here\n"]] as const) {
+      it(name + " after a hygiene flag: vendor_differs false and the NOT PROVEN line stays", async () => {
+        const { ctx } = mkRepo("medium", { "x.pyc": "b" }), cx = join(mkdtempSync(join(root, "cxbin-")), "codex"); writeFileSync(cx, script); chmodSync(cx, 0o755);
+        await withStub(cx, { LOKI_XVENDOR_DEFAULT: "1", LOKI_CODEX_CLI: cx, LOKI_CLAUDE_CLI: "/nonexistent/claude" }, async () => {
+          const r = await crossReview(ctx, "VERIFIED", "HEAD"), rr = reviewReceipt("claude", r, process.env);
+          expect(r?.provider).toBe("codex"); expect(r?.level).toBe("flag"); expect(r?.reviewed_by).toBe("deterministic");
+          expect(rr.review?.vendor_differs).toBe(false); expect(rr.notProven).toEqual(["judge shares builder vendor or none configured"]);
+        });
+      });
+    }
+  });
+  it("a committed .pyc is flagged with zero model calls", async () => {
+    const { ctx, stub, argvOut } = mkRepo("medium", { "m.py": "x=1", "__pycache__/m.cpython-311.pyc": "bin" });
+    await withStub(stub, { LOKI_CLAUDE_CLI: "/nonexistent/claude" }, async () => {
+      const r = await crossReview(ctx, "VERIFIED", "HEAD");
+      expect(r?.level).toBe("flag"); expect(r?.notes.join(" ")).not.toContain("__pycache__");
+      expect(r?.hygiene).toEqual(["__pycache__/m.cpython-311.pyc"]);
+    });
+    await withStub(stub, {}, async () => { await crossReview(ctx, "VERIFIED", "HEAD"); });
+    expect(existsSync(argvOut)).toBe(true); // control: a real stub is called only by the model path
+  });
+  it("medium review requests the fast tier model and a clean diff passes", async () => {
+    const { ctx, stub, argvOut } = mkRepo("medium", { "m.py": "x=1" });
+    await withStub(stub, {}, async () => {
+      const r = await crossReview(ctx, "VERIFIED", "HEAD");
+      expect(r?.level).toBe("pass"); expect(readFileSync(argvOut, "utf8")).toContain("--model sonnet");
+    });
+    await withStub(stub, { LOKI_CLAUDE_MODEL_FAST: "haiku" }, async () => { await crossReview(ctx, "VERIFIED", "HEAD"); expect(readFileSync(argvOut, "utf8")).toContain("--model haiku"); });
+  });
+  it("high tier review is not pinned to the fast tier", async () => {
+    const { ctx, stub, argvOut } = mkRepo("high", { "m.py": "x=1" });
+    await withStub(stub, { LOKI_REVIEW_PROVIDER: "claude" }, async () => { await crossReview(ctx, "VERIFIED", "HEAD"); expect(readFileSync(argvOut, "utf8")).not.toContain("--model"); });
+  });
+  it("receipt wording states what ran: model review, deterministic only, none", async () => {
+    const clean = mkRepo("medium", { "m.py": "x=1" }), dirty = mkRepo("medium", { "m.py": "x=1", "a.pyc": "b" });
+    await withStub(clean.stub, {}, async () => { expect(reviewReceipt("claude", await crossReview(clean.ctx, "VERIFIED", "HEAD")).review?.ran).toBe("reviewer (sonnet)"); });
+    await withStub(dirty.stub, { LOKI_CLAUDE_CLI: "/nonexistent/claude" }, async () => {
+      const r = await crossReview(dirty.ctx, "VERIFIED", "HEAD");
+      expect(r?.level).toBe("flag"); expect(reviewReceipt("claude", r).review?.ran).toBe("deterministic check");
+      expect(modelReviewRan(r)).toBe(false);
+    });
+    expect(reviewReceipt("claude", { provider: "claude", level: "not_run", notes: [], same_vendor_default: true }).review?.ran).toBe("none");
+  });
+  it("hygiene never upgrades a verdict", () => {
+    expect(minVerdict("VERIFIED", { provider: "claude", level: "flag", notes: ["x"], hygiene: ["a.pyc"] })).toBe("VERIFIED");
+    expect(minVerdict("PARTIAL", { provider: "claude", level: "flag", notes: [], hygiene: [] })).toBe("PARTIAL");
+  });
+  it("LOKI_REVIEW_PROVIDER=off still opts out of everything", async () => {
+    const { ctx, stub } = mkRepo("medium", { "a.pyc": "b" });
+    await withStub(stub, { LOKI_REVIEW_PROVIDER: "off" }, async () => { expect(await crossReview(ctx, "VERIFIED", "HEAD")).toBeNull(); });
+  });
+  // An incomplete check-ignore scan must never be credited as a deterministic hygiene pass.
+  const symlinkRepo = () => {
+    const r = mkRepo("medium", { ".gitignore": "*.env\n*.o\n", "a.o": "1", "lnk/x.o": "2", "zz-secret.env": "S=1" }), d = (r.ctx as { repoDir: string }).repoDir;
+    rmTree(join(d, "lnk"), { recursive: true }); symlinkSync(tmpdir(), join(d, "lnk")); // working tree replaces the committed dir with a symlink
+    return r;
+  };
+  const NP = /NOT PROVEN/;
+  it("zz_c3r4_ symlink fixture: check-ignore rc=128 is unavailable, not deterministic, NOT PROVEN noted", async () => {
+    const { ctx, stub } = symlinkRepo();
+    await withStub(stub, { LOKI_CLAUDE_CLI: "/nonexistent/claude" }, async () => {
+      const r = await crossReview(ctx, "VERIFIED", "HEAD");
+      expect(r?.reviewed_by).toBe("none"); expect(r?.notes.some((n) => NP.test(n))).toBe(true);
+      expect(reviewReceipt("claude", r).review?.ran).toBe("none");
+    });
+  });
+  it("zz_c3r4_ symlink fixture with a model review: reviewed_by model, NOT PROVEN note kept", async () => {
+    const { ctx, stub } = symlinkRepo();
+    await withStub(stub, {}, async () => {
+      const r = await crossReview(ctx, "VERIFIED", "HEAD");
+      expect(r?.reviewed_by).toBe("model"); expect(r?.notes.some((n) => NP.test(n))).toBe(true);
+    });
+  });
+  it("zz_c3r4_ path outside the repo: partial stdout with rc=128 is null", async () => {
+    const { ctx } = mkRepo("medium", { ".gitignore": "*.o\n", "a.o": "1" }), d = (ctx as { repoDir: string }).repoDir;
+    expect(await ignoredPaths(d, ["a.o"])).toEqual(new Set(["a.o"]));
+    expect(await ignoredPaths(d, ["a.o", "../zz_c3r4_outside.o"])).toBeNull();
+  });
+  it("zz_c3r4_ spawn error (missing cwd) is null, not an empty set", async () => {
+    expect(await ignoredPaths(join(root, "zz_c3r4_missing"), ["a.o"])).toBeNull();
+  });
+  it("zz_c3r4_ exit 1 (nothing ignored) is a complete empty result", async () => {
+    const { ctx } = mkRepo("medium", { "src/ok.ts": "y" }), d = (ctx as { repoDir: string }).repoDir;
+    expect(await ignoredPaths(d, ["src/ok.ts"])).toEqual(new Set());
+  });
+  it("zz_c3r4_ timeout kill is unavailable, reviewed_by none, NOT PROVEN", async () => {
+    const { ctx, stub } = mkRepo("medium", { "a.pyc": "b" }), real = new TextDecoder().decode(Bun.spawnSync(["which", "git"]).stdout).trim(), gd = mkdtempSync(join(root, "zz_c3r4_git-"));
+    writeFileSync(join(gd, "git"), `#!/bin/sh\ncase "$*" in *check-ignore*) exec sleep 30;; esac\nexec '${real}' "$@"\n`); chmodSync(join(gd, "git"), 0o755);
+    const savedPath = process.env["PATH"];
+    try {
+      process.env["PATH"] = `${gd}:${savedPath}`;
+      await withStub(stub, { LOKI_CLAUDE_CLI: "/nonexistent/claude", LOKI_E10_HYGIENE_BOX_MS: "300" }, async () => {
+        const t0 = Date.now(), r = await crossReview(ctx, "VERIFIED", "HEAD");
+        expect(Date.now() - t0).toBeLessThan(10000); expect(r?.reviewed_by).toBe("none"); expect(r?.notes.some((n) => NP.test(n))).toBe(true);
+      });
+    } finally { process.env["PATH"] = savedPath; delete process.env["LOKI_E10_HYGIENE_BOX_MS"]; }
+  });
+  it("zz_c3r5_ scan unavailable still lists a regex-caught added .pyc and stays NOT PROVEN", async () => {
+    const { ctx, stub } = mkRepo("medium", { "a.pyc": "b" }), real = new TextDecoder().decode(Bun.spawnSync(["which", "git"]).stdout).trim(), gd = mkdtempSync(join(root, "zz_c3r5_git-"));
+    writeFileSync(join(gd, "git"), `#!/bin/sh\ncase "$*" in *check-ignore*) exit 128;; esac\nexec '${real}' "$@"\n`); chmodSync(join(gd, "git"), 0o755);
+    const savedPath = process.env["PATH"];
+    try {
+      process.env["PATH"] = `${gd}:${savedPath}`;
+      await withStub(stub, { LOKI_CLAUDE_CLI: "/nonexistent/claude" }, async () => {
+        const r = await crossReview(ctx, "VERIFIED", "HEAD");
+        expect(r?.hygiene).toContain("a.pyc"); expect(r?.reviewed_by).toBe("none"); expect(r?.notes.some((n) => NP.test(n))).toBe(true);
+      });
+    } finally { process.env["PATH"] = savedPath; }
+  });
+  it("zz_c3r4_ LOKI_XVENDOR_DEFAULT=1 with no reviewer states ran none explicitly", () => {
+    expect(reviewReceipt("claude", null, { LOKI_XVENDOR_DEFAULT: "1" }).review?.ran).toBe("none");
   });
 });

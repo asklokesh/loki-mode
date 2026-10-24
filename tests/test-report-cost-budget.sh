@@ -111,5 +111,70 @@ else
     fail "absent budget_used produced used=${NB%%|*}"
 fi
 
+# 8. `report cost --month YYYY-MM --csv`: one row per run, 6 columns, usd sum
+#    equals the ledger total, unmeasured is a word never 0, fields escaped, and
+#    no prompt or secret from the proof leaks into the export.
+CWS="$WORK/csvws"
+python3 - "$CWS" <<'PYEOF'
+import json, os, sys
+ws = sys.argv[1]
+for i in range(12):
+    rid = 'run-%02d' % i
+    if i == 3:
+        rid = 'run,03 "q"\nx'
+    d = os.path.join(ws, '.loki', 'proofs', 'dir%02d' % i)
+    os.makedirs(d)
+    proof = {'run_id': rid, 'generated_at': '2026-09-%02dT10:00:00Z' % (i + 1),
+             'council': {'final_verdict': 'APPROVE' if i % 2 else 'REJECT'},
+             'prompt': 'SECRET-PROMPT-TEXT', 'token': 'LEAKME-credential'}
+    if i not in (5, 9):
+        proof['cost'] = {'usd': round(0.1 * (i + 1), 4)}
+    json.dump(proof, open(os.path.join(d, 'proof.json'), 'w'))
+d = os.path.join(ws, '.loki', 'proofs', 'aug')
+os.makedirs(d)
+json.dump({'run_id': 'aug-run', 'generated_at': '2026-08-30T10:00:00Z', 'cost': {'usd': 9.0}},
+          open(os.path.join(d, 'proof.json'), 'w'))
+PYEOF
+CSV="$(LOKI_DIR="$CWS/.loki" bash "$REPO_ROOT/autonomy/loki" report cost --month 2026-09 --csv 2>/dev/null)"
+CHK="$(printf '%s' "$CSV" | python3 -c "
+import csv, io, sys
+rows = list(csv.reader(io.StringIO(sys.stdin.read())))
+hdr, body = rows[0], rows[1:]
+ok_cols = all(len(r) == 6 for r in rows)
+tot = sum(float(r[2]) for r in body if r[2] != 'unmeasured')
+unm = sum(1 for r in body if r[2] == 'unmeasured')
+zero = sum(1 for r in body if r[2] in ('0', '0.0', '0.000000'))
+esc = any(r[4] == 'run,03 \"q\"\nx' for r in body)
+print('%s|%d|%s|%.4f|%d|%d|%s' % (','.join(hdr), len(body), ok_cols, tot, unm, zero, esc))
+")"
+LEDGER="$(LOKI_DIR="$CWS/.loki" bash "$REPO_ROOT/autonomy/loki" report cost --month 2026-09 --json 2>/dev/null \
+    | python3 -c "import json,sys; print(json.load(sys.stdin)['project_total_usd'])")"
+IFS='|' read -r C_HDR C_N C_COLS C_SUM C_UNM C_ZERO C_ESC <<EOF
+$CHK
+EOF
+if [ "$C_HDR" = "repo,user,usd,verdict,run_id,date" ] && [ "$C_N" = "12" ]; then
+    pass "csv has header and 12 rows (month filter drops the August run)"
+else
+    fail "csv shape: hdr=$C_HDR rows=$C_N"
+fi
+[ "$C_COLS" = "True" ] && pass "every csv row has 6 columns" || fail "csv column count broke"
+if python3 -c "import sys; sys.exit(0 if abs(float('$C_SUM') - float('${LEDGER:-x}')) <= 0.01 else 1)" 2>/dev/null; then
+    pass "csv usd sum $C_SUM equals ledger total $LEDGER"
+else
+    fail "csv usd sum $C_SUM != ledger $LEDGER"
+fi
+if [ "$C_UNM" = "2" ] && [ "$C_ZERO" = "0" ]; then
+    pass "2 unmeasured runs print 'unmeasured', none print 0"
+else
+    fail "unmeasured=$C_UNM zero=$C_ZERO"
+fi
+[ "$C_ESC" = "True" ] && pass "comma, quote and newline in a field round-trip through csv quoting" \
+    || fail "csv escaping lost the special-character run id"
+if printf '%s' "$CSV" | grep -qE 'SECRET-PROMPT-TEXT|LEAKME'; then
+    fail "csv leaked a prompt or secret"
+else
+    pass "redaction: 0 prompts or secrets in the csv"
+fi
+
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

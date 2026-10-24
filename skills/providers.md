@@ -339,6 +339,7 @@ aider --message "$prompt" --yes-always --no-auto-commits --model model_name
 |----------|-------------|
 | `LOKI_AIDER_MODEL` | Model to use. Default comes from `providers/model_catalog.json` (`aider.latest_development`), not a hardcoded string. The global `LOKI_MODEL_*` tier vars do NOT apply to aider. |
 | `LOKI_AIDER_FLAGS` | Extra aider flags (e.g., --architect) |
+| `LOKI_EFFORT` | One effort level (low, medium, high, xhigh, max) for claude, aider (`--reasoning-effort`), opencode (`--variant`); clamped per catalog row, cline has no flag (recorded unsupported). Effective effort per stage: `.loki/state/effort.jsonl` |
 
 ---
 

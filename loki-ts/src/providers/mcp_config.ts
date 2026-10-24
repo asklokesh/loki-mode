@@ -35,7 +35,8 @@
 //   and short-circuits before fs.writeFileSync when equal, preserving mtime.
 // - Variadic emission: separate argv elements per Commander `<configs...>` syntax
 //   verified via `claude --help` (v2.1.34).
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, statSync, renameSync } from "node:fs";
+import { sweepStaleTmp, writeExclusiveTmp } from "../util/atomic.ts";
 import { spawnSync } from "node:child_process";
 import { tokenFreeEnv } from "../util/safe_git.ts";
 import { resolve as resolvePath, join, delimiter } from "node:path";
@@ -95,6 +96,8 @@ export function mcpConfigPath(targetDir: string): string {
   const lokiDir = resolvePath(targetDir, ".loki");
   const cfgPath = join(lokiDir, "mcp-config.json");
   const desired = stableStringify(buildBundle(detectLsp()));
+  // Drop temps left by a writer killed between temp write and rename.
+  sweepStaleTmp(lokiDir, /mcp-config\.json\.tmp\.([0-9]+)/);
 
   let existing: string | null = null;
   if (existsSync(cfgPath)) {
@@ -111,7 +114,11 @@ export function mcpConfigPath(targetDir: string): string {
   }
 
   mkdirSync(lokiDir, { recursive: true });
-  writeFileSync(cfgPath, desired, "utf8");
+  const tmp = `${cfgPath}.tmp.${process.pid}`;
+  writeExclusiveTmp(tmp, desired);
+  // Test hook, test-mode only (LOKI_TEST): die between the temp write and the rename.
+  if (process.env["LOKI_TEST"] && process.env["LOKI_TEST_DIE_AFTER_MCP_TMP"] === "1") process.kill(process.pid, "SIGKILL");
+  renameSync(tmp, cfgPath);
   return cfgPath;
 }
 

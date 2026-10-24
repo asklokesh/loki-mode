@@ -4,6 +4,12 @@ All notable changes to Loki Mode will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- engine10: a repo with no detected test runner can now size a task "small" (the default), so a small no-runner task skips the separate plan session and the implementer plans. The skipped plan still writes `plan-scope.json` from the files the task names, so the scope guard keeps its input. Set `LOKI_E10_SMALL_NO_RUNNER=0` to restore the old behavior (no runner forces "normal"). An unknown test map still sizes normal.
+
 ## v11.76.0 (2026-10-24)
 
 ### Added
@@ -65,7 +71,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## v11.75.1 (2026-10-23)
 
 ### Removed
-- Removed `loki trigger install`, `loki trigger uninstall` and `loki trigger daemon --loop`.
+- Removed the always-on company-seat scheduler: the trigger install and uninstall subcommands and the daemon loop mode are gone. The trigger daemon subcommand itself remains for cron use.
 - Removed internal planning documents from the package.
 
 ### Changed

@@ -111,7 +111,7 @@ All three viable options (Bun runtime, Bun compiled, Go binary) keep the `npm in
 **Pro:**
 - **Anthropic owns Bun.** Strategic alignment with the company that owns the model we depend on.
 - Native shell built in (`Bun.$\`echo hello\``) - minimal friction porting bash idioms.
-- Bun's `npm install` is 20-40x faster than npm - every CI run faster.
+- Bun's package install is faster than npm's (a vendor claim, not measured in this ADR).
 - TypeScript: types catch bugs bash can't.
 - Anthropic-funded development means Bun improvements specifically target AI agent workloads.
 - 98% Node.js compatibility - npm packages work directly.
@@ -150,7 +150,7 @@ Reasons:
 4. **Hybrid is now harder to justify.** When bash loses by 8.6x on the actual workload, keeping it for 3 ms theoretical wins on hello-world is bad engineering.
 5. **Go would still be 2-4x faster than Bun** in absolute cold-start, but: zero existing Go in the codebase, no Anthropic alignment, larger rewrite cost, no JS ecosystem reuse. Unless Loki specifically targets the sub-millisecond CLI category (which it doesn't - every command runs in a multi-second/minute autonomous loop), the absolute speed delta doesn't justify the strategic cost.
 
-**If user explicitly wants the absolute fastest:** Go (Option A) is 2.5x faster than Bun. But for orchestrator-heavy work where most time is spent waiting on Claude API calls, the difference is invisible.
+**If user explicitly wants the absolute fastest:** Go (Option A) starts in 1.8 ms against Bun's 6.9-7.6 ms (Layer 1 table). But for orchestrator-heavy work where most time is spent waiting on Claude API calls, the difference is invisible.
 
 ## Migration plan (Option C)
 
@@ -168,7 +168,7 @@ Reasons:
 
 ### Phase 3: Build/release tooling
 - Replace npm publish with `bun publish` in CI
-- Replace legacy-ui esbuild with `bun build` (already 4-5x faster)
+- Replace legacy-ui esbuild with `bun build`
 - Replace pytest where possible with `bun test` for non-Python tests
 - Measure: full CI wall time, npm install time
 
@@ -193,10 +193,10 @@ Reasons:
 
 | Today | Tomorrow | Win |
 |---|---|---|
-| `npm publish` (45-60 sec) | `bun publish` | ~5x faster CI publish |
-| `npm install -g loki-mode` for users | Same UX, `bun install` under the hood when available | 20-40x faster install (verified) |
-| Tests via `npm test` (Node 20-25 sec) | `bun test` for non-Python | ~10x faster test runs |
-| Dashboard build with esbuild (122 ms) | `bun build` | 2-4x faster |
+| `npm publish` (45-60 sec) | `bun publish` | Faster CI publish (projected, not measured) |
+| `npm install -g loki-mode` for users | Same UX, `bun install` under the hood when available | Faster install (vendor claim, not measured here) |
+| Tests via `npm test` (Node 20-25 sec) | `bun test` for non-Python | Faster test runs (projected, not measured) |
+| Dashboard build with esbuild (122 ms) | `bun build` | Faster build (projected, not measured) |
 | Per-iteration cold start in run.sh: bash 4.5ms × N | Compiled Bun start once, run 100s | Net negative if iteration count low; net positive for sessions >5 iterations |
 | Python `mcp/server.py` | Stays Python (already good) | No change |
 

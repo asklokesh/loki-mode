@@ -1,6 +1,6 @@
 // FC-21b (2): the run wall-clock cap scales with the plan's scope, not the task text. Pure; the CLI gathers the signals.
 // An explicit cap (LOKI_E10_CAP_S or loki.yaml budgets.run_cap_s) is fixed: never shrunk or grown, and it wins over the ceiling.
-import { lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_CAP_S, envCapS, warnBadCap } from "../engine10/types.ts";
 import { dependentsOf } from "../project_model/graph.ts";
@@ -34,6 +34,11 @@ export function readScopeText(runDir: string): ScopeRead {
     if (st.size > MAX_SCOPE_BYTES) return { status: "too_big" };
     return { status: "ok", text: readFileSync(p, "utf8") };
   } catch { return { status: "unreadable" }; }
+}
+/** A skipped small plan still gives the scope guard its plan-scope.json: the files the task names, never an empty list (that reads as out-of-repo). An existing file is kept. */
+export function seedPlanScope(runDir: string, files: string[]): void {
+  if (!files.length || existsSync(join(runDir, PLAN_SCOPE_FILE))) return;
+  mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, PLAN_SCOPE_FILE), JSON.stringify({ files }), "utf8");
 }
 /** The files the plan session named in <runDir>/plan-scope.json ({"files":[...]}); empty when missing, rejected by the guarded reader, or malformed. Never reads model prose. */
 export function readPlanScope(runDir: string): string[] {

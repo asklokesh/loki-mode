@@ -1,0 +1,11 @@
+name: good-pr
+on: pull_request
+jobs:
+  pr_checkout:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh pr checkout "${{ github.event.number }}"
+      - run: git apply change.patch
+      - uses: actions/github-script@v7
+        with:
+          script: core.setOutput('sha', context.payload.pull_request.head.sha)

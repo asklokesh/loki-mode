@@ -22,6 +22,9 @@ export interface LedgerRecord {
   cost_status?: "unmeasured";
   outcome?: string; // judge calls: ok | truncated | refused:<category> | context_exceeded | malformed | transport
   max_tokens?: number; // judge calls only: the request cap, to read against output_tokens
+  prompt_tokens?: number; // judge calls: prompt size, see prompt_tokens_source
+  prompt_tokens_source?: "measured" | "estimated"; // measured = count_tokens endpoint; estimated = calibrated chars/4, never a measurement
+  token_ratio?: number; // judge calls: measured/estimated for this prompt (only when measured)
   thinking_clamp?: string; // judge calls only: "<from>-><to>@<effort> (max <level>)" when the thinking type was clamped for the effort
 }
 

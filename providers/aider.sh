@@ -125,11 +125,14 @@ provider_invoke() {
     prompt="$PROVIDER_COMMIT_HYGIENE"$'\n\n'"$prompt"
     local model="$AIDER_DEFAULT_MODEL"
     local extra_flags="${LOKI_AIDER_FLAGS:-}"
+    _LOKI_EFFORT_ARGV=()
+    type loki_effort_argv >/dev/null 2>&1 && loki_effort_argv aider "$model" development
     # shellcheck disable=SC2086
     aider --message "$prompt" \
           --yes-always \
           --no-auto-commits \
           --model "$model" \
+          ${_LOKI_EFFORT_ARGV[@]+"${_LOKI_EFFORT_ARGV[@]}"} \
           $extra_flags "$@" < /dev/null 2>&1
 }
 
@@ -162,6 +165,10 @@ provider_invoke_argv() {
     model="$(provider_get_tier_param "$tier" 2>/dev/null || printf '%s' "")"
     _LOKI_INVOKE_ARGV=(aider --yes-always --no-auto-commits)
     [ -n "$model" ] && _LOKI_INVOKE_ARGV+=(--model "$model")
+    if type loki_effort_argv >/dev/null 2>&1; then
+        loki_effort_argv aider "$model" "$tier"
+        _LOKI_INVOKE_ARGV+=(${_LOKI_EFFORT_ARGV[@]+"${_LOKI_EFFORT_ARGV[@]}"})
+    fi
     # LOKI_AIDER_FLAGS is a documented operator knob (CLI --aider-flags) that
     # provider_invoke honours. Dropping it here would make the timeout-safe path
     # silently ignore operator config that the normal path applies. Deliberately

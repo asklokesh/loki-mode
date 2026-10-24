@@ -578,6 +578,24 @@ class ProofLoadError(Exception):
     """Raised for a missing file / malformed JSON / unusable proof shape."""
 
 
+MAX_PROOF_DEPTH = 256  # mirrors MAX_RECEIPT_DEPTH in loki-ts verify_cmd.ts; real proofs are under 20 deep
+
+
+def _too_deep(data):
+    """Iterative nesting check, so every interpreter version gives the same answer."""
+    stack = [(data, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if not isinstance(node, (dict, list)):
+            continue
+        if depth > MAX_PROOF_DEPTH:
+            return True
+        for child in (node.values() if isinstance(node, dict) else node):
+            if isinstance(child, (dict, list)):
+                stack.append((child, depth + 1))
+    return False
+
+
 def _load_proof(proof_path):
     if not os.path.isfile(proof_path):
         raise ProofLoadError("proof file not found: %s" % proof_path)
@@ -586,10 +604,14 @@ def _load_proof(proof_path):
             data = json.load(f)
     except json.JSONDecodeError as exc:
         raise ProofLoadError("malformed JSON in %s: %s" % (proof_path, exc))
+    except RecursionError:
+        raise ProofLoadError("proof nested too deeply: %s" % proof_path)
     except OSError as exc:
         raise ProofLoadError("could not read %s: %s" % (proof_path, exc))
     if not isinstance(data, dict):
         raise ProofLoadError("proof root is not a JSON object: %s" % proof_path)
+    if _too_deep(data):
+        raise ProofLoadError("proof nested too deeply: %s" % proof_path)
     return data
 
 

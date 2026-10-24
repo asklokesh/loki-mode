@@ -38,8 +38,12 @@ loki_effort_for_tier() {
         cheap)       effort="low" ;;
         *)           effort="high" ;;
     esac
+    # LOKI_EFFORT is the one cross-provider knob: an explicit level replaces the tier-derived one
+    # (no complexity bump) and is still clamped to the model's catalog levels below.
+    local explicit=""
+    case "${LOKI_EFFORT:-}" in low|medium|high|xhigh|max) effort="$LOKI_EFFORT"; explicit=1 ;; esac
     # Complex projects get one bump up. "max" is the ceiling and only for explicit user override (not auto-bumped to from xhigh).
-    if [ "$complexity" = "complex" ]; then
+    if [ "$complexity" = "complex" ] && [ -z "$explicit" ]; then
         case "$effort" in
             low)    effort="medium" ;;
             medium) effort="high" ;;

@@ -169,7 +169,14 @@ _loki_build_claude_auto_flags() {
     # --effort: default-on derived from tier + complexity.
     if type loki_effort_for_tier >/dev/null 2>&1 && loki_claude_flag_supported "--effort"; then
         local effort
-        effort=$(loki_effort_for_tier "$tier" "$complexity")
+        # With an explicit LOKI_EFFORT the primary model clamps it from the catalog.
+        effort=$(loki_effort_for_tier "$tier" "$complexity" "${LOKI_EFFORT:+$primary}")
+        if [ -n "${LOKI_EFFORT:-}" ] && type loki_effort_record >/dev/null 2>&1; then
+            # clamped_from only for a valid level that was actually clamped; an ignored value records none.
+            local clamped_from=""
+            case "$LOKI_EFFORT" in low|medium|high|xhigh|max) [ "$effort" = "$LOKI_EFFORT" ] || clamped_from="$LOKI_EFFORT" ;; esac
+            loki_effort_record claude "$tier" "$primary" "${effort:-unsupported}" "$clamped_from"
+        fi
         if [ -n "$effort" ]; then
             _LOKI_CLAUDE_AUTO_FLAGS+=("--effort" "$effort")
         fi

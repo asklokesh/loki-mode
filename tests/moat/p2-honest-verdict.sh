@@ -649,6 +649,113 @@ PY
     if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
 }
 
+case_malformed_proof_not_zero() {
+    need python3 git bun || return
+    local ws="$RUN/mp-ws" route rc id err sub bad="" i=0
+    chain_ws "$ws" "" >/dev/null 2>&1 || { _why="receipt fixture could not be built"; return; }
+    # Parseable-but-wrong-shape and pathological JSON roots, written as both a
+    # proof and a run receipt. A damaged file is "could not check" (2): never
+    # 0, and never a crash that reads as a tamper finding (1).
+    for id in null arr num str deep deepobj deepfield deepcomp deepnest; do
+        i=$((i + 1)); sub="e10-2026010${i}T000000Z-aa"
+        mkdir -p "$ws/.loki/proofs/mp-$id" "$ws/.loki/runs/$sub"
+        case "$id" in
+            null) printf 'null' > "$ws/.loki/proofs/mp-$id/proof.json" ;;
+            arr) printf '[]' > "$ws/.loki/proofs/mp-$id/proof.json" ;;
+            num) printf '5' > "$ws/.loki/proofs/mp-$id/proof.json" ;;
+            str) printf '"x"' > "$ws/.loki/proofs/mp-$id/proof.json" ;;
+            deep) python3 -c 'import sys; sys.stdout.write("[" * 100000 + "]" * 100000)' > "$ws/.loki/proofs/mp-$id/proof.json" ;;
+            # Object roots that pass the not-an-object guard: only the depth gate stops them (before any receipt-kind dispatch)
+            deepobj) python3 -c 'import sys; sys.stdout.write("{\"schema\":\"loki.v10.receipt/1\",\"a\":" + "[" * 100000 + "]" * 100000 + "}")' > "$ws/.loki/proofs/mp-$id/proof.json" ;;
+            deepfield) python3 -c 'import sys; sys.stdout.write("{\"schema\":\"loki.v10.receipt/1\",\"time\":{\"stages\":{\"x\":" + "[" * 100000 + "]" * 100000 + "}}}")' > "$ws/.loki/proofs/mp-$id/proof.json" ;;
+            deepcomp) python3 -c 'import sys; sys.stdout.write("{\"schema\":\"loki.v10.composite/1\",\"a\":" + "[" * 100000 + "]" * 100000 + "}")' > "$ws/.loki/proofs/mp-$id/proof.json" ;;
+            # Shallow enough for python 3.14 to parse, too deep for 3.9: both interpreters must agree on exit 2
+            deepnest) python3 -c 'import sys; sys.stdout.write("{\"a\":" * 5000 + "1" + "}" * 5000)' > "$ws/.loki/proofs/mp-$id/proof.json" ;;
+        esac
+        cp "$ws/.loki/proofs/mp-$id/proof.json" "$ws/.loki/runs/$sub/receipt.json"
+    done
+    # Composite whose child receipt, or integration.json heads, is nested 100000 deep: hashed only after the depth gate
+    # (composite_seal.ts verifyComposite), so it must read could-not-check, never a stack overflow.
+    for id in cchild cheads; do
+        mkdir -p "$ws/.loki/runs/e10-20260109T000000Z-$id"
+        python3 - "$ws/.loki/runs/e10-20260109T000000Z-$id" "$id" <<'PY'
+import hashlib, json, os, sys
+d, mode = sys.argv[1], sys.argv[2]
+sha = lambda b: hashlib.sha256(b if isinstance(b, bytes) else b.encode()).hexdigest()
+deep = "[" * 100000 + "]" * 100000
+os.makedirs(os.path.join(d, "worktrees/r/.loki/runs/x"))
+child = '{"receipt_sha256":"z","a":%s}' % deep if mode == "cchild" else '{"receipt_sha256":"z"}'
+open(os.path.join(d, "worktrees/r/.loki/runs/x/receipt.json"), "w").write(child)
+integ = '{"outcomes":{"r":"ok"},"order":["r"],"heads":{"r":"h","q":%s}}' % deep if mode == "cheads" else '{"outcomes":{"r":"ok"},"order":["r"]}'
+open(os.path.join(d, "integration.json"), "w").write(integ)
+body = {"schema": "loki.v10.composite/1", "run_id": "wsrun1", "integration_sha256": sha(integ),
+        "children": [{"repo": "r", "receipt_path": "worktrees/r/.loki/runs/x/receipt.json", "receipt_file_sha256": sha(child),
+                      "receipt_sha256": "z", "head_sha": "h", "verdict": "VERIFIED"}], "verdict": "VERIFIED"}
+if mode == "cheads":
+    body["integration"] = {"status": None, "exit_code": None, "log_sha256": None, "heads": {}}
+body["composite_sha256"] = sha(json.dumps(body, sort_keys=True, separators=(",", ":")))
+json.dump(body, open(os.path.join(d, "composite.json"), "w"))
+PY
+        for form in ".loki/runs/e10-20260109T000000Z-$id/composite.json" "$ws/.loki/runs/e10-20260109T000000Z-$id/composite.json"; do
+            err="$RUN/mp-errc-$id"; rc=0
+            (cd "$ws" && LOKI_DIR="$ws/.loki" TARGET_DIR="$ws" loki_route bun verify "$form") >/dev/null 2>"$err" || rc=$?
+            [ "$rc" = 2 ] || bad="$bad [bun verify composite $id ($form): got $rc want 2]"
+            ! grep -q '^ *at ' "$err" || bad="$bad [bun verify composite $id: crashed with a stack trace]"
+        done
+        rc=0; (cd "$ws" && LOKI_DIR="$ws/.loki" TARGET_DIR="$ws" loki_route bash verify "$ws/.loki/runs/e10-20260109T000000Z-$id/composite.json") >/dev/null 2>&1 || rc=$?
+        [ "$rc" != 0 ] || bad="$bad [bash verify composite $id: exit 0]"
+    done
+    # loki.v10.group/1 whose unit sub-receipt is nested 100000 deep: seal_group.ts hashes it only after the depth gate.
+    mkdir -p "$ws/.loki/runs/e10-20260109T000000Z-gunit"
+    python3 - "$ws/.loki/runs/e10-20260109T000000Z-gunit" <<'PY'
+import hashlib, json, os, sys
+d = sys.argv[1]
+sha = lambda b: hashlib.sha256(b.encode()).hexdigest()
+child = '{"receipt_sha256":"z","verdict":"VERIFIED","a":%s}' % ("[" * 100000 + "]" * 100000)
+os.makedirs(os.path.join(d, "group/units/u1"))
+open(os.path.join(d, "group/units/u1/receipt.json"), "w").write(child)
+body = {"schema": "loki.v10.group/1", "verdict": "VERIFIED",
+        "group": {"group_id": "g1", "units": [{"index": 0, "unit_id": "u1", "sub_receipt_sha256": sha(child),
+                                               "events_file_sha256": None, "receipt_sha256": "z", "verdict": "VERIFIED"}]}}
+body["receipt_sha256"] = sha(json.dumps(body, sort_keys=True, separators=(",", ":")))
+json.dump(body, open(os.path.join(d, "receipt.json"), "w"))
+PY
+    err="$RUN/mp-errg"; rc=0
+    (cd "$ws" && LOKI_DIR="$ws/.loki" TARGET_DIR="$ws" loki_route bun verify "e10-20260109T000000Z-gunit") >/dev/null 2>"$err" || rc=$?
+    [ "$rc" = 2 ] || bad="$bad [bun verify group unit: got $rc want 2]"
+    ! grep -q '^ *at ' "$err" || bad="$bad [bun verify group unit: crashed with a stack trace]"
+    rc=0; (cd "$ws" && LOKI_DIR="$ws/.loki" TARGET_DIR="$ws" loki_route bash verify "e10-20260109T000000Z-gunit") >/dev/null 2>&1 || rc=$?
+    [ "$rc" != 0 ] || bad="$bad [bash verify group unit: exit 0]"
+    # Positive control: the intact receipt exits 0 on both routes.
+    for route in bun bash; do
+        rc=0; (cd "$ws" && LOKI_DIR="$ws/.loki" TARGET_DIR="$ws" loki_route "$route" proof verify r1) >/dev/null 2>&1 || rc=$?
+        [ "$rc" = 0 ] || bad="$bad [$route control r1: got $rc want 0]"
+    done
+    i=0
+    for id in null arr num str deep deepobj deepfield deepcomp deepnest; do
+        i=$((i + 1)); sub="e10-2026010${i}T000000Z-aa"
+        for route in bun bash; do
+            rc=0; (cd "$ws" && LOKI_DIR="$ws/.loki" TARGET_DIR="$ws" loki_route "$route" proof verify "mp-$id") >/dev/null 2>&1 || rc=$?
+            [ "$rc" = 2 ] || bad="$bad [$route proof verify mp-$id: got $rc want 2]"
+        done
+        # Bun route: the run-receipt verifier. Exactly 2, and no stack trace.
+        err="$RUN/mp-err-$id"; rc=0
+        (cd "$ws" && LOKI_DIR="$ws/.loki" TARGET_DIR="$ws" loki_route bun verify "$sub") >/dev/null 2>"$err" || rc=$?
+        [ "$rc" = 2 ] || bad="$bad [bun verify $id receipt: got $rc want 2]"
+        ! grep -q '^ *at ' "$err" || bad="$bad [bun verify $id receipt: crashed with a stack trace]"
+        rc=0; (cd "$ws" && LOKI_DIR="$ws/.loki" TARGET_DIR="$ws" loki_route bash verify "$sub") >/dev/null 2>&1 || rc=$?
+        [ "$rc" != 0 ] || bad="$bad [bash verify $id receipt: exit 0]"
+        # Every verify entry form (run id and file path) gives 2, no stack trace, for the nested kinds
+        case "$id" in deepobj|deepfield|deepcomp|deepnest)
+            err="$RUN/mp-errp-$id"; rc=0
+            (cd "$ws" && LOKI_DIR="$ws/.loki" TARGET_DIR="$ws" loki_route bun verify "$ws/.loki/runs/$sub/receipt.json") >/dev/null 2>"$err" || rc=$?
+            [ "$rc" = 2 ] || bad="$bad [bun verify path $id receipt: got $rc want 2]"
+            ! grep -q '^ *at ' "$err" || bad="$bad [bun verify path $id receipt: crashed with a stack trace]" ;;
+        esac
+    done
+    if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
+}
+
 case_proof_chain_contract() {
     need python3 git bun || return
     local route rc want ws bad=""
@@ -1560,6 +1667,7 @@ run_case P2.missing-pass-key-not-pass "evidence gate: test-results with no pass 
 run_case P2.bun-inconclusive-not-pass "Bun test gate (runTestCoverage): pass:\"inconclusive\" and a missing pass key read as inconclusive, never an affirmative pass (passed && !inconclusive); pass:true does" case_bun_inconclusive
 run_case P2.zero-test-never-affirmative "a zero-test run leaves no unit-tests.pass and no evidence-gate tests.pass:true (bash), and neither a stale test-results.json nor a zero-test npm test reads as passed (Bun); real passes do on both; a new session at iteration 0 drops the previous session's freshness marker, unit-tests.pass and test-results.json (both routes)" case_zero_test_never_affirmative
 run_case P2.proof-verify-exit-contract "loki proof verify exits 0 clean, 1 tampered, 64 no id, 66 unknown id (both routes)" case_proof_verify_contract
+run_case P2.malformed-proof-not-zero "a proof or run receipt whose JSON root is null, an array, a number, a string or nested 100000 deep exits 2 (could not check) on loki proof verify (both routes) and loki verify <run> (Bun route, no stack trace; bash route non-zero), never 0 or a crash" case_malformed_proof_not_zero
 run_case P2.proof-chain-exit-contract "loki proof chain exits 0/1/2/3/64/66, -h/--help is 64 not 0, and a hostile PYTHONPATH cannot shadow a stage (both entry points)" case_proof_chain_contract
 run_case P2.verify-exit-contract "loki verify maps nothing-to-check to 3, could-not-check to 2, usage to 64 (bash-only command, both entry points)" case_verify_contract
 run_case P2.fast-verify-inconclusive-not-zero "loki verify --fast with nothing scanned, a nonexistent root or an unknown flag does not exit 0 (bash-only command, both entry points)" case_fast_verify
