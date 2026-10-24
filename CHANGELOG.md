@@ -4,11 +4,45 @@ All notable changes to Loki Mode will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v11.77.0 (2026-10-24)
+
+### Added
+
+- `loki status` can follow a run live, printing one line per stage, test and cost event until the run completes; interrupting it only detaches and never signals the run. Plain or JSON output.
+- A live run that writes no event for LOKI_STUCK_MIN minutes (default 15) raises one stuck-run alert naming the last stage, its event time and a suggested action; it always prints to stderr and goes to Slack when a webhook is set, and a new event clears it so a later silence can alert again.
+- `loki github protect` requires the loki/receipt status check on the default branch while preserving the branch's existing protection in full, and its off mode refuses to run when the repo slug, branch, protection drift or receipt does not match.
+- `loki next` can suggest three small tasks drawn from open issues, TODO and FIXME comments and failing tests, with the estimated cost taken from the one cost estimator and the gh call bounded by a timeout.
+- `loki cost --month YYYY-MM --csv` exports one row per run (repo, user, usd, verdict, run id, date); unmeasured runs print unmeasured.
+- `loki notify desktop` sends a native desktop notification using osascript on macOS or notify-send where it is installed, and fails with a clear message when neither is available.
+- A run with a spend cap now emits a budget event when spend reaches 50, 80 and 100 percent of the cap (once each), sends it to Slack when Slack events are configured, and run status JSON output gains usd_so_far and usd_projected (projected total from the share of stages completed; null when spend is unmeasured).
+- The pull request body now fills the target repository's own PR template from the run receipt and plan; pre-ticked boxes are reset so only verified items are checked, and template files are read only from inside the repository (symlinks that leave it are ignored).
+- `loki proof bundle` can now write an audit bundle: one archive of every receipt in a commit range, with an index.csv and a verify.sh that checks each receipt against its own head commit and fails if any receipt, key or id has been swapped.
+- The PR fast tier now runs as its own workflow on pull requests only, and releases generate SPDX software bills of materials for the npm tarball and the Docker image, attest build provenance for both, and attach the bills of materials to the GitHub release. Every new release step is non-blocking, so no distribution channel is gated or reordered.
+- The benchmark measurer now records a false-green rate with a Wilson 95 percent confidence interval for both arms, reports not captured when nothing was claimed, and attributes each claim by arm-set membership; an unknown or missing arm reports unknown.
+- A medium-tier run scans the files it added for committed build or cache artifacts (bytecode caches, node_modules, DS_Store, target, dist, build) by path with no model call, and the default claude cross-review is pinned to the fast tier; the receipt review block names what ran, and a hygiene-only review no longer earns cross-vendor credit.
+- Telemetry: every sender now filters events and properties through one allowlisted schema before anything leaves the machine. An event not in the schema is not sent, unknown or out-of-range values are dropped, and the opt-out gate still runs first. Events carry a traffic class (user, ci or internal) and an introspective flag so automated traffic can be filtered out of usage counts, operating system and architecture are reduced to enums, and verdict values are pinned to the values the writers actually emit.
 
 ### Changed
 
-- engine10: a repo with no detected test runner can now size a task "small" (the default), so a small no-runner task skips the separate plan session and the implementer plans. The skipped plan still writes `plan-scope.json` from the files the task names, so the scope guard keeps its input. Set `LOKI_E10_SMALL_NO_RUNNER=0` to restore the old behavior (no runner forces "normal"). An unknown test map still sizes normal.
+- Documentation no longer states the agent count as an advantage: it is described as a role inventory of the entries in agents/types.json, the CI statements and the workflow list match the workflows that exist, and the docs-drift guard gains a rule that any speed, cost or agent-count claim needs a receipt on the same line.
+- engine10: a repo with no detected test runner can now size a task "small" (the default), so a small no-runner task skips the separate plan session and the implementer plans. The skipped plan still writes plan-scope.json from the files the task names, so the scope guard keeps its input. Set LOKI_E10_SMALL_NO_RUNNER=0 to restore the old behavior (no runner forces "normal"). An unknown test map still sizes normal.
+
+### Fixed
+
+- Provider CLIs and the engine session child now see PWD equal to their working directory instead of the parent's.
+- The author-context check now runs git with safe configuration overrides and without inherited GIT_DIR, GIT_WORK_TREE or GIT_INDEX_FILE, so a stray environment cannot redirect which repository it lists.
+- A rerun of an implement or fix step now continues the killed claude provider session with a short continue brief; a missing or rejected session id starts a fresh session with the full brief and says so in the resume event and on stderr, and ids from other stages, rounds or runs are never read.
+- `loki memory search` refuses a memory directory reached through a symlinked parent, reads files with a 1 MB per-line cap so one huge line cannot exhaust memory, and redacts file and run id fields in its output.
+- The cost breakdown no longer prints a negative saving: when the run cost more than the top tier it says how much more, when the difference rounds to zero it says no difference vs top tier, and when savings cannot be measured it says savings not measured; the signed value stays in the JSON output.
+- Effort ledger lines are now always valid JSON, and the claude route records the clamped level only when a valid effort level was actually clamped, in both the shell and Bun paths; the effort setting is documented in the providers guide.
+- Judge token counting is skipped when a gateway base URL is configured, and on the first-party endpoint it makes one attempt with a 3 second bound before falling back to the labelled estimate, so a slow or missing count no longer stalls a run.
+- A run killed before its stream ends no longer loses the provider session id: it is recorded at the first stream frame and included in each heartbeat event, so implement and fix steps resume instead of restarting from scratch.
+- A stale temporary file with an oversized process id no longer makes every later secret write fail; the sweep skips out-of-range ids and treats a permission error as a live owner.
+- Portable proof verification now exits non-zero when a proof bundle cannot be loaded, rejects duplicate key ids in a signer key set, and covers both cases in the proof checks.
+- engine10 closes the SDK query on the result frame only. The earlier grace timer matched the done marker inside tool inputs and prose and could cut off running tools or slow stop hooks; auto-backgrounded shell commands no longer pin a finished session, and a recycled process group is re-checked before it is killed.
+- Cross-vendor review credit is now withheld when the check-ignore scan is incomplete, and ignore detection handles unusual file names.
+- The reviewer body text names the same verify command that receipt bundles ship, and the CLI registry lists loki notify desktop so the command inventory document matches it.
+- The telemetry sender in the dashboard image now has the shared filter and schema copied in, so dashboard start events are sent again.
 
 ## v11.76.0 (2026-10-24)
 
