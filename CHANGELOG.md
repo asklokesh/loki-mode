@@ -4,6 +4,39 @@ All notable changes to Loki Mode will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.76.0 (2026-10-24)
+
+### Added
+
+- The run summary and `loki kpis` now show cache read tokens and cache savings; savings show as not measured until a run records them.
+- Loki warns once when attached MCP tools add a heavy tool-definition token cost.
+- Project model detection now reads Cursor, Copilot, Windsurf and Gemini rule files alongside AGENTS.md and CLAUDE.md.
+- Fetched pages, tool results and retrieved memory are now framed as untrusted data in the prompt prefix.
+- Ultra-mode code review accepts a trust-workspace option and forwards it only when you pass it and the installed claude CLI supports it. Untrusted-folder failures print the one-line fix.
+- The checklist verifier accepts `--freeze`: checklist checks are frozen after each iteration and verified against that digest, and an edited check is rejected.
+
+### Fixed
+
+- Model tier selection now resolves the same way in the plan estimator, the dashboard and the runner, on both the bash and Bun routes. A `high` or `planning` session pin now uses opus for planning; `small` or `fast` with no pin uses haiku for fast work. Setting LOKI_ALLOW_HAIKU to any value other than `true` (including `false`, `0` or empty) keeps haiku off and uses sonnet instead. Explicit model pins and legacy mode are unchanged.
+- Offline proof verification against a key set no longer fails a genuine receipt when the key set holds unrelated keys, and reports an ambiguous or non-Ed25519 key-set entry for the token key id as NOT CHECKED (exit 2) instead of a signature failure.
+- A candidate that fails the held-out Wall checks is never sealed as verified.
+- The seal re-proves each published acceptance test at its committed path; a test that passes only where it was first proven is no longer sealed VERIFIED, and the verdict drops to PARTIAL.
+- Cargo and mocha runs that execute zero tests are treated as inconclusive, not passing.
+- The post-PR deep verify now runs instead of exiting on a missing export, so the deep-verify commit status no longer stays pending.
+- `loki edit --commit` now commits edits to files that were untracked before the run.
+- Judge requests now send `inference_geo` when LOKI_INFERENCE_GEO is set, so the 1.1x price multiplier is billed only for requests that asked for it.
+- The run summary prints Cost as not measured when the CLI invoker records no cost.
+- Air-gap egress audit covers dashboard and web-app outbound hosts, including LOKI_OIDC_ISSUER and DATABASE_URL.
+- Benchmark cost claims report INVALID when an identity environment variable was dropped or the positive control failed.
+- `loki report release-notes` is now listed in the command registry and generated CLI reference.
+- Moat checks: P9.allowtoken-only-fetch-callers no longer treats module specifiers as helper mentions, removing a false FAIL on machine.ts; new case P6.user-file-mode-and-symlink-intact guards file modes and symlinks across in-place runs.
+- Test fixtures: the issue-mode fixture covers subtract so e2e checks reflect the lean-path proof rule; the Wall author input is asserted to hold the spec and no implementation file.
+- `loki verify` now reports TAMPERED when a sealed Wall file beside the receipt is edited after the seal, and the receipt now records the Wall manifest sha256.
+- Wall check authoring rejects a check that asserts nothing (true, exit 0, echo ok, literal assert or expect) and asks again; Go files are judged per file.
+- The seeded-defect benchmark now binds each outcome to an integer exit code and records the route, verifier and loki version of every run; results from different routes are not merged.
+- Memory token metrics (discovery, read, ratio, savings) now report null until measured instead of 0 and 100% in the API and dashboard.
+- When a run does not seal, the verdict now names each failing check and the first file:line it points at, and anchor extraction stays fast on very large check output.
+
 ## v11.75.6 (2026-10-24)
 
 ### Fixed
