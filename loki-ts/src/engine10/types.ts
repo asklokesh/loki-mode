@@ -197,7 +197,7 @@ export interface Receipt {
     // RECEIPT-TRUTH: additive; absent (older receipts, fake readers) means NOT RECORDED, never 0.
     cache_read_tokens?: number;
     cache_creation_tokens?: number;
-    tokens_scope?: "all-models" | "main-loop"; per_model?: Record<string, ModelRecord>; turns?: number; cache_creation_main_loop?: { ephemeral_5m_tokens: number; ephemeral_1h_tokens: number }; resume?: "ambiguous" | "separate"; // COST-RECORDS / FIX-RESUME, additive
+    tokens_scope?: "all-models" | "main-loop"; per_model?: Record<string, ModelRecord>; turns?: number; cache_creation_main_loop?: { ephemeral_5m_tokens: number; ephemeral_1h_tokens: number }; resume?: "ambiguous" | "separate" | "delta"; // COST-RECORDS / FIX-RESUME, additive
     sdk_duration_ms?: number; // SDK result line duration_ms, summed; absent = NOT RECORDED
     tokens_measured?: { k: number; n: number }; // present only when k < n: input_tokens/output_tokens sum k of n sessions (a missing or ambiguous-resume session is left out), so they are partial
     // E-69: sessions with a provider-sourced dollar figure, out of the sessions this run recorded; partial_usd is their dollar sum even when usd above is null (some sessions unpriced).
@@ -237,5 +237,5 @@ export function taskBlock(task: string): string[] { return ["Task (untrusted, qu
 
 // Shapes produced by extension modules (receipt time, cost records); defined here so core never imports them.
 export interface ModelRecord { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number }
-export interface CostRecords { tokens_scope?: "all-models" | "main-loop"; per_model?: Record<string, ModelRecord>; turns?: number; cache_creation_main_loop?: { ephemeral_5m_tokens: number; ephemeral_1h_tokens: number }; resume?: "ambiguous" | "separate" }
+export interface CostRecords { tokens_scope?: "all-models" | "main-loop"; per_model?: Record<string, ModelRecord>; turns?: number; cache_creation_main_loop?: { ephemeral_5m_tokens: number; ephemeral_1h_tokens: number }; resume?: "ambiguous" | "separate" | "delta" }
 export interface ReceiptTime { wall_s: number; total_s?: number; stages: Record<string, number>; stage_s?: Record<string, number> }

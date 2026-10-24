@@ -164,6 +164,16 @@ def test_usage_detail_records_every_token_class():
     assert d["models_ran"] == ["claude-haiku-4-5", "claude-sonnet-4-6"]
 
 
+def test_usage_detail_keeps_the_raw_usage_block_and_native_total():
+    from adapters import claude_code
+    d = claude_code.parse_usage_detail(RAW_JSON)
+    assert d["usage"]["output_tokens"] == 300
+    assert d["usage"]["cache_creation"]["ephemeral_1h_input_tokens"] == 3000
+    assert d["total_cost_usd"] == 0.5
+    d = claude_code.parse_usage_detail('{"num_turns":2}')
+    assert d["usage"] is None and d["total_cost_usd"] is None  # absent stays None, never 0
+
+
 def test_usage_detail_total_only_and_absent():
     from adapters import claude_code
     d = claude_code.parse_usage_detail(

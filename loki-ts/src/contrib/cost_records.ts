@@ -11,24 +11,43 @@ type Rec = Record<string, unknown>;
 
 /** Decide per resumed file whether it is separate or ambiguous. A cumulative total is never below its predecessor's, so a
  *  lower total proves separate; an equal-or-higher total fits both cases, so it is ambiguous (the SDK states cumulative is conditional). */
-export function resumeVerdicts(recs: { iter: string; rec: Rec }[]): { ambiguous: string[]; separate: string[] } {
-  const ambiguous: string[] = [], separate: string[] = [];
+export function resumeVerdicts(recs: { iter: string; rec: Rec }[]): { ambiguous: string[]; separate: string[]; delta: Record<string, Rec> } {
+  const ambiguous: string[] = [], separate: string[] = [], delta: Record<string, Rec> = {};
   for (const { iter, rec } of recs) {
     const from = rec["resumed_from"];
     if (typeof from !== "string" || !from) continue;
     const prev = recs.find((o) => o.iter !== iter && o.rec["session_id"] === from);
     const a = prev ? rec_cost(prev.rec) : null, b = rec_cost(rec);
-    if (a !== null && b !== null && b < a) separate.push(iter); else ambiguous.push(iter);
+    const d = prev ? cumulativeDelta(prev.rec, rec) : null;
+    if (a !== null && b !== null && b < a) separate.push(iter); else if (d) delta[iter] = d; else ambiguous.push(iter);
   }
-  return { ambiguous, separate };
+  return { ambiguous, separate, delta };
+}
+/** A resumed file whose total is PROVABLY cumulative gets billed for its own call only. Proof: its model_usage output tokens equal the
+ *  predecessor's model_usage output plus its own top-level output_tokens (the call-only figure), and its total is not below the predecessor's.
+ *  Returns the rec with total_cost_usd and model_usage reduced to the delta against the predecessor (keyed by session id, so a parent is never counted twice), or null when it cannot be proven (stays ambiguous, usd unknown). */
+export function cumulativeDelta(prev: Rec, rec: Rec): Rec | null {
+  const a = rec_cost(prev), b = rec_cost(rec), pm = prev["model_usage"], rm = rec["model_usage"];
+  if (a === null || b === null || b < a) return null;
+  const isMap = (m: unknown): m is Record<string, Record<string, unknown>> => typeof m === "object" && m !== null && !Array.isArray(m);
+  if (!isMap(pm) || !isMap(rm) || typeof rec["output_tokens"] !== "number") return null;
+  const outSum = (m: Record<string, Record<string, unknown>>): number => Object.values(m).reduce((t, v) => t + num(v?.["output_tokens"]), 0);
+  if (outSum(rm) !== outSum(pm) + num(rec["output_tokens"])) return null;
+  const mu: Record<string, Record<string, unknown>> = {};
+  for (const [k, v] of Object.entries(rm)) {
+    const p0 = pm[k] ?? {}, d: Record<string, unknown> = { ...v };
+    for (const f of ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "cost_usd"]) d[f] = Math.max(0, num(v[f]) - num(p0[f]));
+    mu[k] = d;
+  }
+  return { ...rec, total_cost_usd: b - a, model_usage: mu };
 }
 const rec_cost = (r: Rec): number | null => (typeof r["total_cost_usd"] === "number" && Number.isFinite(r["total_cost_usd"]) ? r["total_cost_usd"] : null);
 
 /** `recs` are the non-ambiguous parsed files; `expected` is the number of sessions in the run. Every aggregate below needs all of
  *  them, so a missing or ambiguous session leaves per_model, turns and the cache split out (NOT RECORDED), never a partial sum. */
-export function buildRecords(recs: { iter: string; rec: Rec }[], expected: number, ambiguous: string[], separate: string[]): CostRecords {
+export function buildRecords(recs: { iter: string; rec: Rec }[], expected: number, ambiguous: string[], separate: string[], delta: string[] = []): CostRecords {
   const out: CostRecords = {};
-  if (ambiguous.length > 0) out.resume = "ambiguous"; else if (separate.length > 0) out.resume = "separate";
+  if (ambiguous.length > 0) out.resume = "ambiguous"; else if (separate.length > 0) out.resume = "separate"; else if (delta.length > 0) out.resume = "delta";
   if (recs.length === 0 || recs.length !== expected) return out;
   const turns = recs.map((r) => r.rec["num_turns"]);
   if (turns.every((t) => typeof t === "number")) out.turns = (turns as number[]).reduce((a, b) => a + b, 0);

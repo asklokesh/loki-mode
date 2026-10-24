@@ -4,7 +4,7 @@ import type { CostRecords, Obj, ReceiptTime, RunContext, StageName } from "./typ
 type Rec = Record<string, unknown>;
 export interface Hooks {
   time?: { build(ctx: RunContext, stages: Partial<Record<StageName, number>>, firstMs: number | null): ReceiptTime; firstEventMs(path: string): number | null; reconciled(t: ReceiptTime | undefined): number | null };
-  costRecords?: { resumeVerdicts(r: { iter: string; rec: Rec }[]): { ambiguous: string[]; separate: string[] }; build(r: { iter: string; rec: Rec }[], expected: number, ambiguous: string[], separate: string[]): CostRecords };
+  costRecords?: { resumeVerdicts(r: { iter: string; rec: Rec }[]): { ambiguous: string[]; separate: string[]; delta: Record<string, Rec> }; build(r: { iter: string; rec: Rec }[], expected: number, ambiguous: string[], separate: string[], delta?: string[]): CostRecords };
   effort?: { resolve(stage: string, optsEffort: string | undefined): string | undefined; fix(round: number, codeOwned: boolean): string | undefined };
   wall?: { snapshotTree(repoDir: string, signal: AbortSignal): Promise<string | null>; changedSinceBase(repoDir: string, baseSha: string): string[] | null; manifests: RegExp };
   briefFacts?(o: Partial<Record<string, Obj>>, runId: string, runDir: string): BriefFacts; sealed?(runDir: string, receipt: { run_id: string; provider: string; model: string; receipt_sha256: string; cost?: { per_model?: Record<string, unknown> } }): void; // after the receipt files are final; failures never reach the seal

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { readEvents } from "./events.ts";
 import { eventsRelPath } from "../util/engine_origin.ts";
 import { GITHUB_TOKEN_VARS, SENTINEL_PREFIX } from "../util/credential_env.ts";
-import { costTotalsOf, liveArchivedCosts, sumResultCosts, UNMETERED } from "./cost.ts";
+import { costTotalsOf, liveArchivedCosts, sumRunCosts, UNMETERED } from "./cost.ts";
 import { capMeter } from "../e10ext/budget_cap.ts";
 import { resizeCap } from "../util/run_cap.ts"; import { loadProjectApi } from "../project_model/resolve.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
 import { FLOW, runMachine } from "./machine.ts";
@@ -42,7 +42,7 @@ export async function main(args: string[]): Promise<number> {
   const [runId, provider = "claude", model = resolveModel(provider), mode = "fast"] = args;
   if (!runId) { process.stderr.write("engine10 worker: missing run id\n"); return 2; }
   const repoDir = process.cwd();
-  const lokiRoot = join(repoDir, ".loki");
+  const lokiRoot = join(repoDir, ".loki"); process.env["LOKI_E10_RUN_ID"] = runId; // child-ledger lines carry the run id
   const deep = mode === "deep";
   // Supervisor cancel (SIGINT/SIGTERM): stop every live session so each records its partial usage, then exit.
   (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = true; // cli.ts's blanket exit(130/143) stands down: the handler below owns the stop
@@ -67,7 +67,7 @@ export async function main(args: string[]): Promise<number> {
       tests: new RealTestMapProvider(),
       cost: {
         read(dir, ids) {
-          const c = sumResultCosts(join(dir, ".loki"), liveArchivedCosts(join(dir, ".loki"), ids, UNMETERED));
+          const c = sumRunCosts(join(dir, ".loki"), liveArchivedCosts(join(dir, ".loki"), ids, UNMETERED), [], runId);
           return costTotalsOf(c);
         },
       },

@@ -11,7 +11,9 @@ import {
   costTotalsOf,
   nextEfficiencyIteration,
   recordSessionCost,
+  sumChildLedger,
   sumResultCosts,
+  sumRunCosts,
   writeEfficiencyRecord,
 } from "../../src/engine10/cost.ts";
 import { costBreakdown, stageShareText, topTierRate } from "../../src/util/cost_breakdown.ts";
@@ -665,5 +667,57 @@ describe("savings_usd (#409)", () => {
     const ev = events.map((e, i) => (i === 2 ? { ...e, data: { usd: 0.05, source: "x" } } : e));
     expect(stageShareText(ev)).toContain("savings not measured");
     expect(costBreakdown(recs, ["it-9"]).savings_usd).toBeNull();
+  });
+});
+
+describe("one cost ledger: per-session deltas, child sessions, fail closed", () => {
+  const write = (dir: string, iter: string, rec: Record<string, unknown>): void => {
+    mkdirSync(join(dir, "metrics"), { recursive: true });
+    writeFileSync(join(dir, "metrics", `result-cost-${iter}.json`), JSON.stringify(rec));
+  };
+  const mu = (cost: number, out: number) => ({ "m-main": { input_tokens: 10, output_tokens: out, cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: cost } });
+  // run5 shape: the resumed file's total_cost_usd and model_usage are cumulative (plan + implement), its top-level output_tokens are the implement call only.
+  const plan = { total_cost_usd: 0.0233, input_tokens: 10, output_tokens: 1261, session_id: "P1", model_usage: mu(0.0233, 1261) };
+  const impl = { total_cost_usd: 0.0366, input_tokens: 10, output_tokens: 300, session_id: "P1", resumed_from: "P1", model_usage: mu(0.0366, 1561) };
+  test("a resumed implement after plan counts only its own delta, never the parent again", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "plan", plan); write(d, "impl", impl);
+      const c = sumResultCosts(d, ["plan", "impl"]);
+      expect(c.usd).toBeCloseTo(0.0366, 10); // plan 0.0233 + implement delta 0.0133, not 0.0599 and not null
+      expect(c.missing).toEqual([]);
+      expect(c.records?.resume).toBe("delta");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a resumed total that is not provably cumulative stays unknown, never guessed", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "plan", plan); write(d, "impl", { ...impl, model_usage: undefined });
+      const c = sumResultCosts(d, ["plan", "impl"]);
+      expect(c.usd).toBeNull();
+      expect(c.missing).toEqual(["impl"]);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a cross-review child session is included in the run total", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "plan", plan); write(d, "impl", impl);
+      writeFileSync(join(d, "metrics", "child-sessions.jsonl"), `${JSON.stringify({ phase: "xreview", model: "m", usd: 0.0349, run_id: "R1", source: "x" })}\n${JSON.stringify({ phase: "xreview", model: "m", usd: 9, run_id: "OTHER", source: "x" })}\n`);
+      const c = sumRunCosts(d, ["plan", "impl"], [], "R1");
+      expect(c.usd).toBeCloseTo(0.0715, 10);
+      expect(c.measuredCount).toBe(3);
+      expect(c.totalCount).toBe(3);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a child line with no dollar figure makes the run total unknown, with the measured part kept", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "plan", plan);
+      writeFileSync(join(d, "metrics", "child-sessions.jsonl"), `${JSON.stringify({ phase: "wall", model: "m", cost_status: "unmeasured", run_id: "R1", source: "x" })}\n`);
+      expect(sumChildLedger(d, "R1")).toEqual({ usd: null, partialUsd: 0, measured: 0, total: 1 });
+      const c = sumRunCosts(d, ["plan"], [], "R1");
+      expect(c.usd).toBeNull();
+      expect(c.partialUsd).toBeCloseTo(0.0233, 10);
+    } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });

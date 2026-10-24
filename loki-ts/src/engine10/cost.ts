@@ -2,7 +2,7 @@
 // cost-event data. Absent/unreadable/no-total_cost_usd, or a dollar figure with all-zero usage (E-69, the EV-8 failure mode), all mean UNKNOWN: usd null, never 0. E-06b: also writes `<lokiRoot>/metrics/efficiency/iteration-<N>.json`, the shape ENGINE.md section 10 and
 // autonomy/lib/cost-summary.py read (not ours to change). Unlike the legacy bash writer (autonomy/run.sh), which always writes cost_usd (defaulting to 0 when unknown), this omits cost_usd when there is no dollar figure.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"; import type { CostRecords, CostTotals } from "./types.ts"; import { hooks } from "./hooks.ts"; import { type CostBreakdown, costBreakdown } from "../util/cost_breakdown.ts";
-import { join } from "node:path"; import { sessionPlanEnabled } from "../runner/router/flag.ts";
+import { join } from "node:path"; import { sumChildLedger } from "../util/child_ledger.ts"; export { sumChildLedger }; import { sessionPlanEnabled } from "../runner/router/flag.ts";
 
 /** D48: marker on a result-cost file and the cost event/receipt for a CLI-invoker session (LOKI_E10_INVOKER=cli, e.g. the  stub provider) that has no provider-reported dollars. Recorded as 0, never null, and always disclosed in NOT PROVEN. */
 export const UNMETERED = "cli-invoker-unmetered";
@@ -78,7 +78,8 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
     if (own.has(iter)) continue;
     try { lookup.push({ iter, rec: JSON.parse(readFileSync(resultCostPath(lokiRoot, iter), "utf8")) as Record<string, unknown> }); } catch { /* absent predecessor stays ambiguous */ }
   }
-  const verdicts = hooks.costRecords?.resumeVerdicts(lookup) ?? { ambiguous: [], separate: [] };
+  const verdicts = hooks.costRecords?.resumeVerdicts(lookup) ?? { ambiguous: [], separate: [], delta: {} };
+  const deltaIters = Object.keys(verdicts.delta).filter((i) => own.has(i)); for (const i of deltaIters) parsed.set(i, verdicts.delta[i]!); // resumed and provably cumulative: billed its own delta vs its predecessor
   const rv = { ambiguous: verdicts.ambiguous.filter((i) => own.has(i)), separate: verdicts.separate.filter((i) => own.has(i)) };
   for (const iter of iterations) {
     const path = resultCostPath(lokiRoot, iter);
@@ -137,7 +138,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
   if (iterations.length > 0 && tokenSessions < iterations.length) out.tokens_measured = { k: tokenSessions, n: iterations.length };
   if (durSeen !== iterations.length) delete out.duration_ms; // a partial duration is not the run's
   if (hooks.costRecords && (rv.ambiguous.length > 0 || recs.length > 0)) {
-    const r = hooks.costRecords.build(recs, iterations.length, rv.ambiguous, rv.separate);
+    const r = hooks.costRecords.build(recs, iterations.length, rv.ambiguous, rv.separate, deltaIters);
     // whole-pipeline tokens replace the main-loop-only usage figures only when EVERY session carried modelUsage (R3-1)
     if (r.tokens_scope === "all-models" && r.per_model) {
       const v = Object.values(r.per_model);
@@ -164,6 +165,11 @@ export function recordSessionCost(lokiRoot: string, iterationId: string, info: E
   const cost = sumResultCosts(lokiRoot, [iterationId], siblings);
   writeEfficiencyRecord(lokiRoot, info, cost, cost.unmetered ? UNMETERED : cost.estimated ? "estimated" : "provider");
   return cost;
+}
+
+export function sumRunCosts(lokiRoot: string, iterations: string[], context: string[] = [], runId?: string): CostResult { // the run's one cost: stage deltas plus this run's child sessions; unknown if any part is unknown
+  const c = sumResultCosts(lokiRoot, iterations, context), k = runId ? sumChildLedger(lokiRoot, runId) : null;
+  return !k || k.total === 0 ? c : { ...c, usd: c.usd !== null && k.usd !== null ? c.usd + k.usd : null, partialUsd: c.partialUsd + k.partialUsd, measuredCount: c.measuredCount + k.measured, totalCount: c.totalCount + k.total };
 }
 
 /** Map the file-summed CostResult to the machine's CostTotals; a cache key no file carried stays unseen (NOT RECORDED), never 0. */

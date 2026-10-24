@@ -6,7 +6,7 @@
 // cost_status "unmeasured" is an extra, reader-ignored marker on such lines.
 // Not for engine10 stage sessions (SessionRunner): those already write efficiency/iteration-N.json,
 // and a ledger line as well would count them twice.
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { calculateCostFromRecords } from "../runner/budget.ts";
 
@@ -18,6 +18,7 @@ export interface LedgerRecord {
   cache_creation_tokens: number;
   cache_read_tokens: number;
   usd?: number;
+  run_id?: string; // the engine10 run that spawned this child; the run total sums only its own lines
   source: string;
   cost_status?: "unmeasured";
   outcome?: string; // judge calls: ok | truncated | refused:<category> | context_exceeded | malformed | transport
@@ -67,7 +68,8 @@ export function appendChildLedger(lokiDir: string, rec: LedgerRecord): boolean {
   try {
     const dir = join(lokiDir, "metrics");
     mkdirSync(dir, { recursive: true });
-    appendFileSync(join(dir, "child-sessions.jsonl"), `${JSON.stringify(rec)}\n`);
+    const runId = process.env["LOKI_E10_RUN_ID"];
+    appendFileSync(join(dir, "child-sessions.jsonl"), `${JSON.stringify(runId && !rec.run_id ? { ...rec, run_id: runId } : rec)}\n`);
     return true;
   } catch { return false; }
 }
@@ -82,4 +84,19 @@ export function withChildLedger<A extends unknown[], R extends { stdout: string 
     appendChildLedger(lokiDir, recordFromClaudeResult(phase, parsed, "ts-spawn") ?? unmeasuredRecord(phase, model, "ts-spawn"));
     return r;
   };
+}
+
+// Child sessions (cross-review, project model, wall, council) append to metrics/child-sessions.jsonl. Only this run's lines count (run_id), and a line with no dollar figure is UNKNOWN, never 0.
+export function sumChildLedger(lokiRoot: string, runId: string): { usd: number | null; partialUsd: number; measured: number; total: number } {
+  let lines: string[] = [];
+  try { lines = readFileSync(join(lokiRoot, "metrics", "child-sessions.jsonl"), "utf8").split("\n"); } catch { /* no ledger: no children */ }
+  let partialUsd = 0, measured = 0, total = 0;
+  for (const l of lines) {
+    let r: Record<string, unknown>;
+    try { r = JSON.parse(l) as Record<string, unknown>; } catch { continue; }
+    if (!r || typeof r !== "object" || r["run_id"] !== runId) continue;
+    total++;
+    if (typeof r["usd"] === "number" && Number.isFinite(r["usd"])) { partialUsd += r["usd"]; measured++; }
+  }
+  return { usd: total === measured ? partialUsd : null, partialUsd, measured, total };
 }

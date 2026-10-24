@@ -92,6 +92,8 @@ def parse_usage_detail(stdout):
         "cache_creation_1h": hour,
         "cache_creation_total": total,
         "num_turns": _int_or_none(obj.get("num_turns")),
+        "usage": usage or None,
+        "total_cost_usd": obj.get("total_cost_usd") if isinstance(obj.get("total_cost_usd"), (int, float)) and not isinstance(obj.get("total_cost_usd"), bool) else None,
         "models_ran": sorted(str(k) for k in mu) if isinstance(mu, dict) else [],
     }
 
