@@ -4,6 +4,11 @@ All notable changes to Loki Mode will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.75.4 (2026-10-24)
+
+### Fixed
+- Moat checks: the air-gap telemetry probe now expects the configured telemetry host rather than a full URL.
+
 ## v11.75.3 (2026-10-24)
 
 ### Fixed
