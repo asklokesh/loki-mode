@@ -9,6 +9,18 @@ import type { CostRecords, ModelRecord } from "../engine10/types.ts";
 export type { CostRecords, ModelRecord };
 type Rec = Record<string, unknown>;
 
+/** The IMMEDIATE predecessor of a resumed link. A resume chain can share one session id across several files, so the id alone does not name the parent.
+ *  Cumulative totals only grow along a chain, so the parent is the candidate with the highest total not above this link's. Two candidates tied at that total cannot be told apart: undefined (ambiguous). When every candidate is above this link, the nearest one is returned (the "lower total proves separate" test). */
+function immediatePredecessor(recs: { iter: string; rec: Rec }[], iter: string, from: string, b: number | null): { iter: string; rec: Rec } | undefined {
+  const c = recs.filter((o) => o.iter !== iter && o.rec["session_id"] === from);
+  if (c.length <= 1) return c[0];
+  const cost = (o: { rec: Rec }): number | null => rec_cost(o.rec), known = c.filter((o) => cost(o) !== null);
+  if (known.length !== c.length) return undefined;
+  const below = b === null ? [] : known.filter((o) => cost(o)! <= b), pool = below.length > 0 ? below : known;
+  const best = below.length > 0 ? Math.max(...pool.map((o) => cost(o)!)) : Math.min(...pool.map((o) => cost(o)!));
+  const top = pool.filter((o) => cost(o) === best);
+  return top.length === 1 ? top[0] : undefined;
+}
 /** Decide per resumed file whether it is separate or ambiguous. A cumulative total is never below its predecessor's, so a
  *  lower total proves separate; an equal-or-higher total fits both cases, so it is ambiguous (the SDK states cumulative is conditional). */
 export function resumeVerdicts(recs: { iter: string; rec: Rec }[]): { ambiguous: string[]; separate: string[]; delta: Record<string, Rec> } {
@@ -16,7 +28,7 @@ export function resumeVerdicts(recs: { iter: string; rec: Rec }[]): { ambiguous:
   for (const { iter, rec } of recs) {
     const from = rec["resumed_from"];
     if (typeof from !== "string" || !from) continue;
-    const prev = recs.find((o) => o.iter !== iter && o.rec["session_id"] === from);
+    const prev = immediatePredecessor(recs, iter, from, rec_cost(rec));
     const a = prev ? rec_cost(prev.rec) : null, b = rec_cost(rec);
     const d = prev ? cumulativeDelta(prev.rec, rec) : null;
     if (a !== null && b !== null && b < a) separate.push(iter); else if (d) delta[iter] = d; else ambiguous.push(iter);
@@ -25,10 +37,11 @@ export function resumeVerdicts(recs: { iter: string; rec: Rec }[]): { ambiguous:
 }
 /** A resumed file whose total is PROVABLY cumulative gets billed for its own call only. Proof: its model_usage output tokens equal the
  *  predecessor's model_usage output plus its own top-level output_tokens (the call-only figure), and its total is not below the predecessor's.
- *  Returns the rec with total_cost_usd and model_usage reduced to the delta against the predecessor (keyed by session id, so a parent is never counted twice), or null when it cannot be proven (stays ambiguous, usd unknown). */
+ *  Returns the rec with total_cost_usd and model_usage reduced to the delta against the predecessor (taken against its immediate predecessor in the chain, see immediatePredecessor, so each link bills only its own increment and no parent is counted twice), or null when it cannot be proven (stays ambiguous, usd unknown). */
 export function cumulativeDelta(prev: Rec, rec: Rec): Rec | null {
   const a = rec_cost(prev), b = rec_cost(rec), pm = prev["model_usage"], rm = rec["model_usage"];
   if (a === null || b === null || b < a) return null;
+  if (b > a && num(rec["output_tokens"]) === 0) return null; // dollars with no output of its own cannot be attributed to this call: ambiguous
   const isMap = (m: unknown): m is Record<string, Record<string, unknown>> => typeof m === "object" && m !== null && !Array.isArray(m);
   if (!isMap(pm) || !isMap(rm) || typeof rec["output_tokens"] !== "number") return null;
   const outSum = (m: Record<string, Record<string, unknown>>): number => Object.values(m).reduce((t, v) => t + num(v?.["output_tokens"]), 0);

@@ -2,7 +2,7 @@
 // cost-event data. Absent/unreadable/no-total_cost_usd, or a dollar figure with all-zero usage (E-69, the EV-8 failure mode), all mean UNKNOWN: usd null, never 0. E-06b: also writes `<lokiRoot>/metrics/efficiency/iteration-<N>.json`, the shape ENGINE.md section 10 and
 // autonomy/lib/cost-summary.py read (not ours to change). Unlike the legacy bash writer (autonomy/run.sh), which always writes cost_usd (defaulting to 0 when unknown), this omits cost_usd when there is no dollar figure.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"; import type { CostRecords, CostTotals } from "./types.ts"; import { hooks } from "./hooks.ts"; import { type CostBreakdown, costBreakdown } from "../util/cost_breakdown.ts";
-import { join } from "node:path"; import { sumChildLedger } from "../util/child_ledger.ts"; export { sumChildLedger }; import { sessionPlanEnabled } from "../runner/router/flag.ts";
+import { join } from "node:path"; import { addChildren, sumChildLedger } from "../util/child_ledger.ts"; export { sumChildLedger }; import { sessionPlanEnabled } from "../runner/router/flag.ts";
 
 /** D48: marker on a result-cost file and the cost event/receipt for a CLI-invoker session (LOKI_E10_INVOKER=cli, e.g. the  stub provider) that has no provider-reported dollars. Recorded as 0, never null, and always disclosed in NOT PROVEN. */
 export const UNMETERED = "cli-invoker-unmetered";
@@ -167,9 +167,11 @@ export function recordSessionCost(lokiRoot: string, iterationId: string, info: E
   return cost;
 }
 
-export function sumRunCosts(lokiRoot: string, iterations: string[], context: string[] = [], runId?: string): CostResult { // the run's one cost: stage deltas plus this run's child sessions; unknown if any part is unknown
-  const c = sumResultCosts(lokiRoot, iterations, context), k = runId ? sumChildLedger(lokiRoot, runId) : null;
-  return !k || k.total === 0 ? c : { ...c, usd: c.usd !== null && k.usd !== null ? c.usd + k.usd : null, partialUsd: c.partialUsd + k.partialUsd, measuredCount: c.measuredCount + k.measured, totalCount: c.totalCount + k.total };
+// The run's one cost: stage deltas plus this run's child sessions (addChildren, the same rule events.ts uses for run.completed and the console); unknown if any part is unknown.
+// usd, partialUsd, measuredCount, totalCount and breakdown.usd include the children. Tokens, per_model, records, router and breakdown.per_stage are STAGE-SESSION ONLY (the same figures the cost events fold to).
+export function sumRunCosts(lokiRoot: string, iterations: string[], context: string[] = [], runId?: string): CostResult {
+  const c = sumResultCosts(lokiRoot, iterations, context), r = addChildren(c, runId ? sumChildLedger(lokiRoot, runId) : null);
+  return r.breakdown ? { ...r, breakdown: { ...r.breakdown, usd: r.usd } } : r;
 }
 
 /** Map the file-summed CostResult to the machine's CostTotals; a cache key no file carried stays unseen (NOT RECORDED), never 0. */

@@ -3,7 +3,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { discoverControlUrl } from "../../../packages/control-plane/src/shipper/discover.ts";
-import { fold, readEvents } from "../engine10/events.ts";
+import { fold, readEvents, runCostUsd } from "../engine10/events.ts";
 import { formatDuration } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
 import { STALE_S, STAGE_ORDER, controlRunLink, statusNextStep, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../util/run_outputs.ts";
@@ -66,7 +66,7 @@ export function projectUsd(soFar: number | null, completedStages: number, runDon
 
 /** Pure: the status record for one run's events. */
 export function summarize(runId: string, events: EventEnvelope[], root: string, nowMs: number): Omit<ModernStatus, "control_plane_url" | "control_plane_run_url"> {
-  const f = fold(events);
+  const f = fold(events), usdNow = runCostUsd(events, false, dirname(root));
   const done = f.run.completed !== null;
   const startMs = f.run.started ? Date.parse(f.run.started.ts) : (events[0] ? Date.parse(events[0].ts) : nowMs);
   const endMs = f.run.completed ? Date.parse(f.run.completed.ts) : nowMs;
@@ -90,9 +90,9 @@ export function summarize(runId: string, events: EventEnvelope[], root: string, 
     blockers: workItemBlockers(events),
     stage: !done && open.size ? [...open].sort().join("+") : null,
     elapsed_s: Math.max(0, (endMs - startMs) / 1000),
-    cost_usd: f.cost.usd,
-    usd_so_far: f.cost.usd,
-    usd_projected: projectUsd(f.cost.usd, STAGE_ORDER.filter((n) => f.completed.includes(n)).length, done),
+    cost_usd: usdNow,
+    usd_so_far: usdNow,
+    usd_projected: projectUsd(usdNow, STAGE_ORDER.filter((n) => f.completed.includes(n)).length, done),
     outcome: state === "cancelled" ? "cancelled" : f.run.verdict ?? (done ? "completed" : state === "stalled" ? "stalled (no events for 30m+)" : "running"),
     pr_url: typeof pr === "string" && pr ? pr : null,
     last_event_ago_s: events.length && Number.isFinite(lastTs(events)) ? Math.max(0, Math.round((nowMs - lastTs(events)) / 1000)) : null,

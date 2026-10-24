@@ -86,17 +86,27 @@ export function withChildLedger<A extends unknown[], R extends { stdout: string 
   };
 }
 
-// Child sessions (cross-review, project model, wall, council) append to metrics/child-sessions.jsonl. Only this run's lines count (run_id), and a line with no dollar figure is UNKNOWN, never 0.
+// Child sessions append to metrics/child-sessions.jsonl: the cross-review, reviewer, council, grill, docs and enrich calls and the SDK judge (see the appendChildLedger / withChildLedger / loki_child_ledger_append callers). Project-model and wall are NOT ledger writers.
+// Only this run's lines count (run_id). A line with no dollar figure, or a $0 line with zero usage (E-69), is UNKNOWN, never 0.
+// A ledger that exists but cannot be read, or a torn line that names this run, is one UNKNOWN part: the total is null, never an undercount.
 export function sumChildLedger(lokiRoot: string, runId: string): { usd: number | null; partialUsd: number; measured: number; total: number } {
-  let lines: string[] = [];
-  try { lines = readFileSync(join(lokiRoot, "metrics", "child-sessions.jsonl"), "utf8").split("\n"); } catch { /* no ledger: no children */ }
-  let partialUsd = 0, measured = 0, total = 0;
+  let lines: string[] = [], unreadable = false;
+  try { lines = readFileSync(join(lokiRoot, "metrics", "child-sessions.jsonl"), "utf8").split("\n"); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") unreadable = true; /* no ledger file: no children */ }
+  let partialUsd = 0, measured = 0, total = unreadable ? 1 : 0;
   for (const l of lines) {
+    if (!l.trim()) continue;
     let r: Record<string, unknown>;
-    try { r = JSON.parse(l) as Record<string, unknown>; } catch { continue; }
+    try { r = JSON.parse(l) as Record<string, unknown>; } catch { if (l.includes(runId)) total++; continue; } // torn line naming this run: cannot be attributed or priced
     if (!r || typeof r !== "object" || r["run_id"] !== runId) continue;
     total++;
-    if (typeof r["usd"] === "number" && Number.isFinite(r["usd"])) { partialUsd += r["usd"]; measured++; }
+    const usage = ["input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens"].reduce((t, k) => t + (isNum(r[k]) ? r[k] : 0), 0);
+    if (isNum(r["usd"]) && r["usd"] >= 0 && !(r["usd"] === 0 && usage === 0)) { partialUsd += r["usd"]; measured++; }
   }
   return { usd: total === measured ? partialUsd : null, partialUsd, measured, total };
+}
+
+/** The ONE rule that adds a run's child sessions to its stage-session dollars. Receipt, run.completed, the console Cost line, Slack, status and handoff all go through it. Unknown on either side makes the total null; partial figures and counts keep the measured part. */
+export function addChildren<T extends { usd: number | null; partialUsd: number; measuredCount: number; totalCount: number }>(c: T, k: ReturnType<typeof sumChildLedger> | null): T {
+  if (!k || k.total === 0) return c;
+  return { ...c, usd: c.usd !== null && k.usd !== null ? c.usd + k.usd : null, partialUsd: c.partialUsd + k.partialUsd, measuredCount: c.measuredCount + k.measured, totalCount: c.totalCount + k.total };
 }

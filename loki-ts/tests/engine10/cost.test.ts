@@ -20,6 +20,7 @@ import { costBreakdown, stageShareText, topTierRate } from "../../src/util/cost_
 import { partialUsagePath, recordPartialStreamCost } from "../../src/runner/budget.ts";
 import { consumeSdkStream } from "../../src/runner/sdk_stream_parser.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
+import { makeEvent, partialCost, runCostUsd, summaryCost } from "../../src/engine10/events.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "cost");
 const REPO_ROOT = join(import.meta.dir, "..", "..", "..");
@@ -718,6 +719,65 @@ describe("one cost ledger: per-session deltas, child sessions, fail closed", () 
       const c = sumRunCosts(d, ["plan"], [], "R1");
       expect(c.usd).toBeNull();
       expect(c.partialUsd).toBeCloseTo(0.0233, 10);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  // F1 run5 replay: stage cost events (plan 0.0233, implement delta 0.0133) plus one reviewer child line of 0.0286235.
+  const child = (extra: Record<string, unknown> = {}) => `${JSON.stringify({ phase: "reviewer", model: "m", input_tokens: 5, output_tokens: 7, usd: 0.0286235, run_id: "R1", source: "x", ...extra })}\n`;
+  const costEvents = [makeEvent("R1", 0, "cost", "plan", { session_id: "plan", usd: 0.0233 }), makeEvent("R1", 1, "cost", "implement", { session_id: "impl", usd: 0.0133 })];
+  test("F1: run.completed total equals the receipt total and includes the child ledger", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "plan", plan); write(d, "impl", impl);
+      writeFileSync(join(d, "metrics", "child-sessions.jsonl"), child());
+      const receipt = sumRunCosts(d, ["plan", "impl"], [], "R1").usd;
+      expect(receipt).toBeCloseTo(0.0366 + 0.0286235, 10);
+      expect(runCostUsd(costEvents, false, d)).toBe(receipt);
+      expect(summaryCost(costEvents, false, d).usd).toBe(receipt);
+      expect(partialCost(costEvents, false, d).total).toBe(3);
+      expect(runCostUsd(costEvents, true, d)).toBeNull();
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("F1: a child line that cannot be priced, read or attributed makes the run total null, never an undercount", () => {
+    for (const ledger of [child({ usd: undefined, cost_status: "unmeasured" }), child({ usd: 0, input_tokens: 0, output_tokens: 0 }), `${child()}{"run_id":"R1","usd":\n`]) {
+      const d = tmpCheckout();
+      try {
+        mkdirSync(join(d, "metrics"), { recursive: true });
+        writeFileSync(join(d, "metrics", "child-sessions.jsonl"), ledger);
+        expect(runCostUsd(costEvents, false, d)).toBeNull();
+      } finally { rmSync(d, { recursive: true, force: true }); }
+    }
+    const d = tmpCheckout();
+    try {
+      mkdirSync(join(d, "metrics", "child-sessions.jsonl"), { recursive: true });
+      expect(runCostUsd(costEvents, false, d)).toBeNull();
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("F1: sumRunCosts breakdown.usd agrees with usd", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "plan", plan); write(d, "impl", impl);
+      writeFileSync(join(d, "metrics", "child-sessions.jsonl"), child());
+      const c = sumRunCosts(d, ["plan", "impl"], [], "R1");
+      expect(c.breakdown?.usd).toBe(c.usd);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  // F2: plan, middle and impl all carry session P1 (the SDK keeps the id across resumes); totals are cumulative.
+  const link = (usd: number, ownOut: number, cumOut: number, from?: string) => ({ total_cost_usd: usd, input_tokens: 10, output_tokens: ownOut, session_id: "P1", ...(from ? { resumed_from: from } : {}), model_usage: mu(usd, cumOut) });
+  test("F2: a 3-link chain subtracts the immediate predecessor, so the parent is counted once", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "plan", link(0.02, 100, 100)); write(d, "mid", link(0.03, 50, 150, "P1")); write(d, "impl", link(0.05, 50, 200, "P1"));
+      const c = sumResultCosts(d, ["plan", "mid", "impl"]);
+      expect(c.usd).toBeCloseTo(0.05, 10); // not 0.06
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("F2: a link with zero output but nonzero cost is ambiguous, total null", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "plan", link(0.02, 100, 100)); write(d, "mid", link(0.03, 0, 100, "P1")); write(d, "impl", link(0.05, 50, 150, "P1"));
+      const c = sumResultCosts(d, ["plan", "mid", "impl"]);
+      expect(c.usd).toBeNull();
+      expect(c.missing).toContain("mid");
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });

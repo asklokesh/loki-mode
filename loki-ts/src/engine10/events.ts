@@ -1,6 +1,7 @@
 // Loki 10 event log (docs/v10/ENGINE.md "Event log"): append-only JSONL at <repo>/.loki/runs/<run-id>/events.jsonl, written only by the supervisor.
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, truncateSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
+import { addChildren, sumChildLedger } from "../util/child_ledger.ts";
 import type { EventEnvelope, EventType, Obj, StageName, Verdict } from "./types.ts";
 
 const isObj = (x: unknown): x is Obj => typeof x === "object" && x !== null && !Array.isArray(x);
@@ -140,7 +141,8 @@ export function fold(events: EventEnvelope[]): Folded {
 
 // E-69: per-session measured/total counts and dollar sum from the raw cost events (not fold()'s cost.usd, which is null once any session is
 // unpriced). Lives next to fold() so a pure reader (the dashboard) need not import the supervisor. A TAMPERED log reports no measured cost.
-export function partialCost(events: EventEnvelope[], tampered = false): { measured: number; total: number; usd: number } {
+// With lokiRoot, this run's child-session ledger lines join the counts and dollars (the same addChildren rule the receipt uses).
+export function partialCost(events: EventEnvelope[], tampered = false, lokiRoot?: string): { measured: number; total: number; usd: number } {
   if (tampered) return { measured: 0, total: 0, usd: 0 };
   let measured = 0, total = 0, usd = 0;
   for (const e of events) {
@@ -148,15 +150,24 @@ export function partialCost(events: EventEnvelope[], tampered = false): { measur
     total++;
     if (typeof e.data.usd === "number") { measured++; usd += e.data.usd; }
   }
-  return { measured, total, usd };
+  const r = addChildren({ usd: null, partialUsd: usd, measuredCount: measured, totalCount: total }, childPart(events, lokiRoot));
+  return { measured: r.measuredCount, total: r.totalCount, usd: r.partialUsd };
+}
+
+const childPart = (events: EventEnvelope[], lokiRoot?: string): ReturnType<typeof sumChildLedger> | null => (lokiRoot && events[0] ? sumChildLedger(lokiRoot, events[0].run) : null);
+
+/** THE run dollar total: the stage-session cost events (fold) plus this run's child ledger via addChildren, exactly what the receipt's sumRunCosts reports. run.completed, the console Cost line, Slack, handoff and status all read this. Null when tampered or any part is unknown (a ledger line that cannot be read or priced), never an undercount. */
+export function runCostUsd(events: EventEnvelope[], tampered = false, lokiRoot?: string): number | null {
+  if (tampered) return null;
+  return addChildren({ usd: fold(events).cost.usd, partialUsd: 0, measuredCount: 0, totalCount: 0 }, childPart(events, lokiRoot)).usd;
 }
 
 /** The summary Cost inputs for a run's events. A run whose every cost event is the CLI invoker's unmetered marker (a recorded 0, no provider dollars) has no measured cost: usd null and zero measured sessions, so the Cost line reads "not measured", never "$0.00". A tampered log reports no trusted figure. */
-export function summaryCost(events: EventEnvelope[], tampered: boolean): { usd: number | null; pc: { measured: number; total: number; usd: number }; allUnmetered: boolean } {
+export function summaryCost(events: EventEnvelope[], tampered: boolean, lokiRoot?: string): { usd: number | null; pc: { measured: number; total: number; usd: number }; allUnmetered: boolean } {
   const costs = events.filter((e) => e.type === "cost"), allUnmetered = costs.length > 0 && costs.every((e) => e.data.source === "cli-invoker-unmetered");
-  const pc = partialCost(events, tampered);
+  const pc = partialCost(events, tampered, lokiRoot);
   if (allUnmetered && !tampered) return { usd: null, pc: { measured: 0, total: pc.total, usd: 0 }, allUnmetered };
-  return { usd: tampered ? null : fold(events).cost.usd, pc, allUnmetered };
+  return { usd: runCostUsd(events, tampered, lokiRoot), pc, allUnmetered };
 }
 
 /** Replays existing events synchronously, then polls for appended ones. An incomplete trailing line is held until its newline arrives. Returns stop(). */

@@ -1,7 +1,8 @@
 // loki-ts/src/runner/engine10_dashboard.ts (moved from engine10/dashboard/server.ts to keep the core under its line cap, D29/D33) -- E-24 local dashboard over SSE (ENGINE.md section
 // 12). Binds 127.0.0.1 only, never opens a browser. Reuses events.ts fold()/tail(): runs are
 // folded read-only from .loki/runs/*/events.jsonl; the per-run stream is tail()'s replay-then-poll.
-import { fold, partialCost, readEvents, tail } from "../engine10/events.ts";
+import { dirname } from "node:path";
+import { fold, partialCost, readEvents, runCostUsd, tail } from "../engine10/events.ts";
 import { eventsPath, listRunIds, runsRoot } from "../commands/run_status.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
 import { getVersion } from "../version.ts";
@@ -48,7 +49,7 @@ export function summarizeRun(repoDir: string, runId: string, nowMs: number = Dat
   const wallS =
     folded.run.completed && startedMs != null ? (Date.parse(folded.run.completed.ts) - startedMs) / 1000 : null;
   const prUrl = prData?.url ?? prData?.pr_url ?? null;
-  const pc = partialCost(events, folded.run.tampered);
+  const lokiRoot = dirname(runsRoot(process.env, repoDir)), pc = partialCost(events, folded.run.tampered, lokiRoot);
   const running = !folded.run.completed;
   let reason: string | null = null;
   let next: string | null = null;
@@ -70,7 +71,7 @@ export function summarizeRun(repoDir: string, runId: string, nowMs: number = Dat
     currentStage: folded.run.completed ? null : (lastEvent?.stage ?? null),
     pr: prUrl ? { url: prUrl, draft: prData?.draft === true } : null,
     notProven: sealData?.not_proven ?? null,
-    costUsd: folded.run.tampered ? null : folded.cost.usd,
+    costUsd: runCostUsd(events, folded.run.tampered, lokiRoot),
     partialUsd: pc.usd,
     measuredSessions: pc.measured,
     totalSessions: pc.total,
