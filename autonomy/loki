@@ -493,6 +493,8 @@ _loki_latest_published_version() {
 maybe_print_update_hint() {
     # Opt-out / non-interactive / CI: do nothing, touch neither disk nor network.
     [ "${LOKI_NO_UPDATE_CHECK:-}" = "1" ] && return 0
+    # Air-gap: no outbound attempt of any kind, independent of the opt-out above.
+    [ "${LOKI_AIRGAP:-}" = "true" ] && return 0
     [ -n "${CI:-}" ] && return 0
     [ ! -t 1 ] && return 0
 

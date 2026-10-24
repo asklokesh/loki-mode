@@ -104,7 +104,7 @@ export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 CI=tru
 MOAT_START=$(date +%s)
 MOAT_MAIN_PID=$$
 MOAT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/moat-p5.XXXXXX")" || { echo "p5: mktemp failed" >&2; exit 1; }
-MOAT_IDS="P5.egress-blocked-start-seal-verify P5.airgap-audit-honest P5.airgap-audit-default-route P5.airgap-audit-per-provider-model P5.airgap-audit-effective-provider P5.airgap-audit-telemetry-state P5.airgap-audit-ollama-cloud-not-local P5.local-provider-no-claude-sidecalls P5.claude-sidecall-opt-in-audited"
+MOAT_IDS="P5.egress-blocked-start-seal-verify P5.airgap-audit-honest P5.airgap-audit-default-route P5.airgap-audit-per-provider-model P5.airgap-audit-effective-provider P5.airgap-audit-telemetry-state P5.airgap-audit-ollama-cloud-not-local P5.local-provider-no-claude-sidecalls P5.claude-sidecall-opt-in-audited P5.airgap-no-update-check-egress"
 MOAT_EMITTED=" "
 MOAT_PGIDS=""
 
@@ -783,6 +783,72 @@ case_airgap_ollama_cloud() {
     done
 }
 
+# Air-gap on: `loki start` and `loki version` on an interactive host must make
+# no outbound connection attempt at all, update check included, on BOTH routes.
+# LOKI_NO_UPDATE_CHECK is left unset so only the air-gap setting can stop the
+# check. Recorders: a stub curl first on PATH (bash route) and a preloaded fetch
+# wrapper (Bun route, run from source via BUN_FROM_SOURCE=1, no dist needed).
+# A pty (script) makes stdout a TTY so the check is otherwise eligible to run.
+# Each route has a control run (LOKI_AIRGAP unset) that must record an attempt,
+# proving its recorder sees the update check.
+ag_upd_run() {  # <dir> <route: bash|bun> <subcommand> <log> <airgap: 0|1>
+    local d="$1" route="$2" sub="$3" log="$4" ag="$5" home="$1/home-$2-$3-$5" extra="" routeenv
+    mkdir -p "$home/.loki"
+    touch "$home/.loki/.welcomed"
+    : > "$log"
+    [ "$ag" = "1" ] && extra="LOKI_AIRGAP=true"
+    if [ "$route" = "bash" ]; then routeenv="LOKI_LEGACY_BASH=1"
+    else routeenv="BUN_FROM_SOURCE=1 BUN_OPTIONS=--preload=$d/rec.ts"; fi
+    # shellcheck disable=SC2086  # $extra and $routeenv are VAR=value word lists
+    env -i HOME="$home" PATH="$d/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.bun/bin" TERM=xterm \
+        D="$d" LOKI_BIN="$LOKI_BIN" SUB="$sub" CURL_LOG="$log" FETCH_LOG="$log" LOKI_TTY_INTERACTIVE=1 LOKI_DASHBOARD=false \
+        LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_COMPLETIONS=1 LOKI_PROVIDER=claude $routeenv $extra \
+        $DEADLINE_CMD 60 bash "$d/run.sh" > "$d/out-$route-$sub-$ag.txt" 2>&1 </dev/null
+}
+case_airgap_no_update_check_egress() {
+    command -v script >/dev/null 2>&1 || { nok "prerequisite missing: script (pty for the TTY-gated update check)"; return; }
+    command -v bun >/dev/null 2>&1 || { nok "prerequisite missing: bun (the default route)"; return; }
+    local d="$MOAT_TMP/ag-upd" route sub log
+    mkdir -p "$d/bin" "$d/proj"
+    printf '# PRD: Greeter\n' > "$d/proj/prd.md"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$CURL_LOG"\nexit 7\n' > "$d/bin/curl"
+    chmod +x "$d/bin/curl"
+    cat > "$d/rec.ts" <<'REC'
+import { appendFileSync } from "node:fs";
+const log = process.env["FETCH_LOG"];
+globalThis.fetch = (async (input: unknown) => {
+  if (log) appendFileSync(log, `fetch ${String((input as { url?: string })?.url ?? input)}\n`);
+  throw new Error("recorded, not sent");
+}) as unknown as typeof fetch;
+REC
+    cat > "$d/run.sh" <<'RUN'
+#!/bin/bash
+cd "$D/proj" || exit 1
+ARGS="$SUB"
+[ "$SUB" = "start" ] && ARGS="start ./prd.md"
+if [ "$(uname -s)" = "Darwin" ]; then
+    # shellcheck disable=SC2086
+    exec script -q /dev/null "$LOKI_BIN" $ARGS </dev/null
+else
+    exec script -qec "$LOKI_BIN $ARGS" /dev/null </dev/null
+fi
+RUN
+    for route in bash bun; do
+        for sub in start version; do
+            log="$d/rec-$route-$sub.log"
+            ag_upd_run "$d" "$route" "$sub" "$log" 1
+            [ ! -s "$log" ] || nok "air-gap on: $route route '$sub' made $(wc -l < "$log" | tr -d ' ') outbound attempt(s): $(head -1 "$log")"
+        done
+    done
+    # Controls: bash start and bun version are where each route runs its check.
+    log="$d/rec-control-bash.log"
+    ag_upd_run "$d" bash start "$log" 0
+    [ -s "$log" ] || nok "control: bash route start recorded no attempt without LOKI_AIRGAP, recorder does not see the check"
+    log="$d/rec-control-bun.log"
+    ag_upd_run "$d" bun version "$log" 0
+    [ -s "$log" ] || nok "control: bun route version recorded no attempt without LOKI_AIRGAP, recorder does not see the check"
+}
+
 moat_run "P5.egress-blocked-start-seal-verify" \
     "start -> proof -> proof verify (both routes) completes with remote egress really blocked" \
     case_egress_pipeline
@@ -810,4 +876,7 @@ moat_run "P5.local-provider-no-claude-sidecalls" \
 moat_run "P5.claude-sidecall-opt-in-audited" \
     "LOKI_ALLOW_CLAUDE_SIDECALLS=1 (exact) restores the claude side-calls under opencode, and doctor --airgap (both routes) then reports them as required egress" \
     case_sidecall_opt_in
+moat_run "P5.airgap-no-update-check-egress" \
+    "with LOKI_AIRGAP=true, loki start and loki version (bash and Bun routes) make zero outbound connection attempts, update check included" \
+    case_airgap_no_update_check_egress
 exit 0

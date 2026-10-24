@@ -64,6 +64,9 @@ export function isNewer(latest: string, current: string): boolean {
 export function shouldSkipUpdateCheck(): boolean {
   const optOut = (process.env["LOKI_NO_UPDATE_CHECK"] ?? "").trim().toLowerCase();
   if (optOut === "1" || optOut === "true" || optOut === "yes") return true;
+  // Air-gap: no outbound attempt of any kind (same exact-"true" rule as the
+  // bash route, autonomy/loki maybe_print_update_hint).
+  if (process.env["LOKI_AIRGAP"] === "true") return true;
   // Common CI signal: most CI providers set CI=true/1/anything non-empty.
   if (process.env["CI"]) return true;
   // Only nudge interactive users; never in pipes, redirects, or daemons.

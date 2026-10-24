@@ -94,6 +94,23 @@ describe("shouldSkipUpdateCheck", () => {
       expect(shouldSkipUpdateCheck()).toBe(false);
     });
   });
+  it("skips under LOKI_AIRGAP=true even on an interactive host", async () => {
+    const prev = process.env["LOKI_AIRGAP"];
+    try {
+      await withTTY(true, async () => {
+        delete process.env["LOKI_AIRGAP"];
+        expect(shouldSkipUpdateCheck()).toBe(false);
+        process.env["LOKI_AIRGAP"] = "true";
+        expect(shouldSkipUpdateCheck()).toBe(true);
+        // Same rule as the bash side: exactly "true".
+        process.env["LOKI_AIRGAP"] = "1";
+        expect(shouldSkipUpdateCheck()).toBe(false);
+      });
+    } finally {
+      if (prev === undefined) delete process.env["LOKI_AIRGAP"];
+      else process.env["LOKI_AIRGAP"] = prev;
+    }
+  });
   it("skips in CI", () => {
     process.env["CI"] = "true";
     expect(shouldSkipUpdateCheck()).toBe(true);
