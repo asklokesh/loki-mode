@@ -1854,3 +1854,106 @@ describe("doctor.providerAutodetected (R100-001)", () => {
     expect(typeof j.provider_autodetected).toBe("boolean");
   });
 });
+
+describe("checkAgentSdkPin", () => {
+  const SDK = "@anthropic-ai/claude-agent-sdk";
+  function fixture(pin: string | null, installed: string | null): string {
+    const root = mkdtempSync(join(tmpdir(), "doctor-sdkpin-"));
+    mkdirSync(join(root, "loki-ts"), { recursive: true });
+    const deps = pin === null ? {} : { [SDK]: pin };
+    writeFileSync(join(root, "loki-ts/package.json"), JSON.stringify({ dependencies: deps }));
+    writeFileSync(join(root, "loki-ts/bun.lock"), "");
+    if (installed !== null) {
+      const d = join(root, "loki-ts/node_modules", SDK);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, "package.json"), JSON.stringify({ name: SDK, version: installed }));
+    }
+    return root;
+  }
+
+  it("warns with the fix command when installed differs from the pin", async () => {
+    const { checkAgentSdkPin } = await import("../../src/commands/doctor.ts");
+    const root = fixture("0.3.309", "0.3.300");
+    try {
+      const r = checkAgentSdkPin(root, {});
+      expect(r.status).toBe("warn");
+      expect(r.detail).toContain("0.3.300");
+      expect(r.detail).toContain("0.3.309");
+      expect(r.detail).toContain("Fix: cd loki-ts && bun install");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fix text per install layout", async () => {
+    const { agentSdkFixText } = await import("../../src/commands/doctor.ts");
+    const base = mkdtempSync(join(tmpdir(), "doctor-sdkfix-"));
+    try {
+      const checkout = join(base, "checkout");
+      mkdirSync(join(checkout, "loki-ts"), { recursive: true });
+      writeFileSync(join(checkout, "loki-ts/bun.lock"), "");
+      expect(agentSdkFixText(checkout)).toBe("cd loki-ts && bun install");
+      const global = join(base, "prefix/lib/node_modules/loki-mode");
+      mkdirSync(global, { recursive: true });
+      expect(agentSdkFixText(global)).toBe("npm install -g loki-mode@latest");
+      const local = join(base, "proj/node_modules/loki-mode");
+      mkdirSync(local, { recursive: true });
+      expect(agentSdkFixText(local)).toBe("npm install loki-mode@latest");
+      const other = join(base, "elsewhere");
+      mkdirSync(other, { recursive: true });
+      expect(agentSdkFixText(other)).toContain("npm install -g loki-mode@latest");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("reads the installed version from a hoisted layout (root/.. and root/../..)", async () => {
+    const { checkAgentSdkPin } = await import("../../src/commands/doctor.ts");
+    for (const depth of [1, 2]) {
+      const base = mkdtempSync(join(tmpdir(), "doctor-sdkhoist-"));
+      try {
+        const nm = join(base, "node_modules");
+        const root = depth === 1 ? join(nm, "loki-mode") : join(nm, "wrap", "loki-mode");
+        mkdirSync(join(root, "loki-ts"), { recursive: true });
+        writeFileSync(join(root, "loki-ts/package.json"), JSON.stringify({ dependencies: { [SDK]: "0.3.309" } }));
+        const d = join(nm, SDK);
+        mkdirSync(d, { recursive: true });
+        writeFileSync(join(d, "package.json"), JSON.stringify({ name: SDK, version: "0.3.300" }));
+        const r = checkAgentSdkPin(root, {});
+        expect(r.installed).toBe("0.3.300");
+        expect(r.status).toBe("warn");
+        expect(r.detail).toContain("npm install");
+      } finally {
+        rmSync(base, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("passes when installed equals the pin", async () => {
+    const { checkAgentSdkPin } = await import("../../src/commands/doctor.ts");
+    const root = fixture("0.3.309", "0.3.309");
+    try {
+      expect(checkAgentSdkPin(root, {}).status).toBe("pass");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports unknown, never pass, when the SDK is not installed or the pin is absent", async () => {
+    const { checkAgentSdkPin } = await import("../../src/commands/doctor.ts");
+    const missing = fixture("0.3.309", null);
+    const nopin = fixture(null, "0.3.309");
+    try {
+      expect(checkAgentSdkPin(missing, {}).status).toBe("unknown");
+      expect(checkAgentSdkPin(nopin, {}).status).toBe("unknown");
+    } finally {
+      rmSync(missing, { recursive: true, force: true });
+      rmSync(nopin, { recursive: true, force: true });
+    }
+  });
+
+  it("buildDoctorJson carries agent_sdk", async () => {
+    const j = await buildDoctorJson();
+    expect(["pass", "warn", "unknown"]).toContain(j.agent_sdk.status);
+  });
+});

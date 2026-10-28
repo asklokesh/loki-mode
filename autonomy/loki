@@ -16031,7 +16031,7 @@ cmd_doctor_json() {
         reqs="$(loki_requirements_json 2>/dev/null | jq -c . 2>/dev/null)" || reqs=null
         [ -n "$reqs" ] || reqs=null
     fi
-    printf '{"loki_mode_version":"%s","checks":[],"provider_availability":null,"disk":null,"ai_provider":null,"skills":[],"sentrux":null,"memory":null,"model_catalog":null,"requirements":%s,"summary":{"passed":0,"failed":1,"warnings":0,"ok":false},"route":"unavailable","reason":"%s","fix":"%s"}\n' "$ver" "$reqs" "$why" "$fix"
+    printf '{"loki_mode_version":"%s","checks":[],"provider_availability":null,"disk":null,"ai_provider":null,"skills":[],"sentrux":null,"memory":null,"model_catalog":null,"agent_sdk":{"status":"unknown","pinned":null,"installed":null,"detail":"not checked: the Bun doctor is unavailable"},"requirements":%s,"summary":{"passed":0,"failed":1,"warnings":0,"ok":false},"route":"unavailable","reason":"%s","fix":"%s"}\n' "$ver" "$reqs" "$why" "$fix"
 }
 
 # Architectural-drift gate (v7.5.14, opt-in).

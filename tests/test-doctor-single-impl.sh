@@ -89,6 +89,11 @@ esac
 run LOKI_TS_ENTRY=/nonexistent "$REPO_ROOT/bin/loki" doctor --json >"$T/iv.out" 2>/dev/null; rc=$?
 if [ "$rc" = "1" ] && jq -e '.summary.ok == false and .summary.failed == 1 and .route == "unavailable"' "$T/iv.out" >/dev/null 2>&1; then
     ok "(iv) --json parses, summary.ok=false, route=unavailable"
+    if jq -e '.agent_sdk | (keys == ["detail","installed","pinned","status"]) and .status == "unknown" and .pinned == null and .installed == null' "$T/iv.out" >/dev/null 2>&1; then
+        ok "(iv) --json carries agent_sdk in the same shape as the Bun doctor (status unknown)"
+    else
+        bad "(iv) --json agent_sdk key missing or wrong shape"; head -c 400 "$T/iv.out"
+    fi
 else
     bad "(iv) --json rc=$rc or not parseable"
     head -c 400 "$T/iv.out"

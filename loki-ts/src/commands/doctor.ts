@@ -15,7 +15,7 @@ import { PROVIDER_INSTALL } from "./provider.ts";
 import { appendFileSync, writeFileSync, mkdirSync, accessSync, constants as fsConstants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, statfsSync } from "node:fs";
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
 import { commandExists, run } from "../util/shell.ts";
 import { findPython3, runInline } from "../util/python.ts";
@@ -296,6 +296,7 @@ export type DoctorJson = {
   sentrux: SentruxCheck;
   memory: MemoryHealth;
   model_catalog: CatalogFreshness;
+  agent_sdk: AgentSdkPinCheck;
   // Requirements grouped by execution path from the shared table (autonomy/lib/setup-requirements.json).
   requirements: RequirementsReport & { first_task_ready: boolean };
   summary: {
@@ -897,6 +898,64 @@ async function checkMemoryHealth(): Promise<MemoryHealth> {
   };
 }
 
+export interface AgentSdkPinCheck {
+  status: "pass" | "warn" | "unknown";
+  pinned: string | null;
+  installed: string | null;
+  detail: string;
+}
+
+// Installed Agent SDK version against the exact pin in loki-ts/package.json.
+// Local reads only. A missing install or unreadable pin is "unknown", never a
+// pass: a drifted install changes the bundled Claude Code binary silently.
+export function agentSdkFixText(root: string): string {
+  // Repo checkout: loki-ts has bun.lock only. Packaged install: the package
+  // lives under a node_modules directory (global when that is <prefix>/lib/node_modules).
+  if (existsSync(resolve(root, "loki-ts/bun.lock"))) return "cd loki-ts && bun install";
+  const parent = resolve(root, "..");
+  if (basename(parent) === "node_modules") {
+    return basename(resolve(parent, "..")) === "lib"
+      ? "npm install -g loki-mode@latest"
+      : "npm install loki-mode@latest";
+  }
+  return "reinstall loki-mode (npm install -g loki-mode@latest)";
+}
+
+export function checkAgentSdkPin(
+  root: string = REPO_ROOT,
+  env: Record<string, string | undefined> = process.env as Record<string, string | undefined>,
+): AgentSdkPinCheck {
+  const name = "@anthropic-ai/claude-agent-sdk";
+  const readJson = (p: string): Record<string, unknown> | null => {
+    try {
+      return JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  };
+  const deps = readJson(resolve(root, "loki-ts/package.json"))?.["dependencies"] as Record<string, string> | undefined;
+  const pinned = typeof deps?.[name] === "string" ? deps[name] : null;
+  let installed: string | null = null;
+  for (const nm of sdkSearchRoots(env, root)) {
+    const v = readJson(resolve(nm, name, "package.json"))?.["version"];
+    if (typeof v === "string" && v !== "") {
+      installed = v;
+      break;
+    }
+  }
+  if (!pinned) return { status: "unknown", pinned, installed, detail: "Agent SDK pin not found in loki-ts/package.json" };
+  if (!installed) return { status: "unknown", pinned, installed, detail: `Agent SDK not installed (pinned ${pinned})` };
+  if (installed !== pinned) {
+    return {
+      status: "warn",
+      pinned,
+      installed,
+      detail: `Agent SDK ${installed} installed but ${pinned} is pinned. Fix: ${agentSdkFixText(root)}`,
+    };
+  }
+  return { status: "pass", pinned, installed, detail: `Agent SDK ${installed} matches the pin` };
+}
+
 // Days after which a hand-maintained catalog is called stale. The upstream
 // probe workflow runs weekly, so a catalog untouched for a quarter means the
 // probe PRs are going unread. Mirrored in autonomy/loki:cmd_doctor.
@@ -1138,6 +1197,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
     // Advisory only: deliberately excluded from the passed/failed/warnings
     // tally and from `ok`, so a stale catalog can never flip the exit code.
     model_catalog: describeCatalogFreshness(),
+    agent_sdk: checkAgentSdkPin(),
     requirements,
     summary: summarizeStatuses(statuses),
   };
@@ -1925,6 +1985,13 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
       `         ${YELLOW}Refresh: python3 tools/probe-model-catalog.py${NC} (reports new model IDs from provider docs; you verify and edit the catalog by hand -- never auto-applied)\n`,
     );
   }
+  process.stdout.write(`\n`);
+
+  // Agent SDK install vs pin. Advisory: never touches the tally.
+  process.stdout.write(`${CYAN}Agent SDK:${NC}\n`);
+  const sdkPin = checkAgentSdkPin();
+  if (sdkPin.status === "unknown") process.stdout.write(`  ${DIM}  ??  ${NC}  ${sdkPin.detail}\n`);
+  else process.stdout.write(`  ${badge(sdkPin.status)}  ${sdkPin.detail}\n`);
   process.stdout.write(`\n`);
 
   // Model capabilities: catalog vs models.retrieve. Informational only (never
