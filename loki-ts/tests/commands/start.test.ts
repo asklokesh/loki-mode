@@ -5,7 +5,7 @@
 // existing loki_start_e2e.test.ts.
 import { describe, expect, it } from "bun:test";
 import { setLoadAwareTimeout } from "../preload.ts";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -15,7 +15,7 @@ import { SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { offerInterruptedRun, runStart, startRecoveryHooks } from "../../src/commands/start.ts";
 import { VALID_PROVIDERS } from "../../src/runner/router/cost_preview.ts";
 
@@ -905,6 +905,74 @@ describe("FC-BINARY-SPEC-READ-AS-UTF8 pdf and docx specs read as text", () => {
     const r = extractSpecText(f, { PATH: b });
     expect("error" in r && r.error).toContain("no extractable text");
     for (const n of ["a.md", "a.txt", "a.json", "a.yaml"]) { const p = join(d, n); writeFileSync(p, "x"); expect(textSpecPath(p, d)).toBeNull(); }
+  });
+});
+
+describe("spec extraction page and line anchors", () => {
+  const have = (c: string): boolean => spawnSync("which", [c]).status === 0;
+  const dirs: string[] = [];
+  const tmp = (): string => { const d = mkdtempSync(join(tmpdir(), "spec-anc-")); dirs.push(d); return d; };
+  const fakeBin = (d: string, scripts: Record<string, string>): string => { const b = join(d, "bin"); mkdirSync(b, { recursive: true }); for (const [n, body] of Object.entries(scripts)) { writeFileSync(join(b, n), `#!/bin/sh\n${body}\n`); chmodSync(join(b, n), 0o755); } return b; };
+  const twoPage = (pages: string[]): Buffer => {
+    const objs: string[] = ["<</Type/Catalog/Pages 2 0 R>>", `<</Type/Pages/Kids[${pages.map((_, i) => `${4 + i * 2} 0 R`).join(" ")}]/Count ${pages.length}>>`, "<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>"];
+    pages.forEach((t, i) => { const c = `BT /F1 12 Tf 10 100 Td 14 TL ${t.split("|").map((l) => `(${l}) Tj T*`).join(" ")} ET`; objs.push(`<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 150]/Contents ${5 + i * 2} 0 R/Resources<</Font<</F1 3 0 R>>>>>>`, `<</Length ${c.length}>>stream\n${c}\nendstream`); });
+    return Buffer.from(`%PDF-1.4\n${objs.map((o, i) => `${i + 1} 0 obj${o}endobj\n`).join("")}trailer<</Root 1 0 R>>\n%%EOF\n`, "latin1");
+  };
+  it.skipIf(!have("pdftotext"))("a 2-page PDF: every clause line carries page and line, matching the .txt pages", () => {
+    const d = tmp(), f = join(d, "s.pdf"); writeFileSync(f, twoPage(["Alpha clause|Beta clause", "Gamma clause"]));
+    const t = textSpecPath(f, d); expect(t && "path" in t).toBe(true);
+    const a = JSON.parse(readFileSync(join(d, ".loki", "spec-extracted", "s.pdf.anchors.json"), "utf8")) as { page: number; line: number; text: string }[];
+    expect(a.map((x) => [x.page, x.line, x.text.trim()])).toEqual([[1, 1, "Alpha clause"], [1, 2, "Beta clause"], [2, 1, "Gamma clause"]]);
+    const pages = readFileSync(join(d, ".loki", "spec-extracted", "s.pdf.txt"), "utf8").split("\f");
+    for (const x of a) expect(pages[x.page - 1]!.split("\n")[x.line - 1]).toBe(x.text);
+  });
+  it("page 3 of a 3-page PDF is page 3 and the .txt stays the raw pdftotext bytes", () => {
+    const d = tmp(), f = join(d, "s.pdf"); writeFileSync(f, "%PDF");
+    const b = fakeBin(d, { pdfinfo: "echo 'Encrypted: no'", pdftotext: "printf 'p1a\\np1b\\n\\fp2\\n\\fp3a\\n\\n p3c\\n\\f'" });
+    const r = extractSpecText(f, { PATH: b });
+    if (!("anchors" in r)) throw new Error("no anchors");
+    expect(r.text).toBe("p1a\np1b\n\fp2\n\fp3a\n\n p3c\n\f");
+    expect(r.anchors.map((x) => [x.page, x.line])).toEqual([[1, 1], [1, 2], [2, 1], [3, 1], [3, 3]]);
+    expect(r.anchors.some((x) => x.ocr)).toBe(false);
+  });
+  it("a scanned page with no OCR tool: whole-doc scan exits with the install hint; a mixed doc warns and names the page", () => {
+    const d = tmp(), f = join(d, "s.pdf"); writeFileSync(f, "%PDF");
+    const b = fakeBin(d, { pdfinfo: "echo 'Encrypted: no'", pdftotext: "printf '\\n\\f\\n\\f'" });
+    const r = extractSpecText(f, { PATH: b });
+    expect("error" in r && r.error).toMatch(/ocrmypdf.*tesseract/);
+    const b2 = fakeBin(tmp(), { pdfinfo: "echo 'Encrypted: no'", pdftotext: "printf 'text\\n\\f\\n\\f'" });
+    const m = extractSpecText(f, { PATH: b2 });
+    expect("warnings" in m && m.warnings.join("")).toContain("page 2 had no text layer");
+  });
+  it("with an OCR tool on PATH the scanned page is read and its anchors carry ocr: true", () => {
+    const d = tmp(), f = join(d, "s.pdf"); writeFileSync(f, "%PDF");
+    const b = fakeBin(d, { pdfinfo: "echo 'Encrypted: no'", pdftotext: 'if [ "$1" = "-f" ]; then printf "scanned clause\\n"; else printf "typed\\n\\f\\n\\f"; fi', ocrmypdf: 'for l; do o="$l"; done; : > "$o"' });
+    const r = extractSpecText(f, { PATH: b });
+    if (!("anchors" in r)) throw new Error("no anchors");
+    expect(r.anchors.map((x) => [x.page, x.text, x.ocr ?? false])).toEqual([[1, "typed", false], [2, "scanned clause", true]]);
+    expect(r.warnings).toEqual([]);
+  });
+  it("encrypted PDFs still error", () => {
+    const d = tmp(), f = join(d, "e.pdf"); writeFileSync(f, "%PDF");
+    const r = extractSpecText(f, { PATH: fakeBin(d, { pdfinfo: "echo 'Encrypted: yes'" }) });
+    expect("error" in r && r.error).toContain("encrypted");
+  });
+  const docxFile = (f: string): void => { expect(spawnSync("python3", ["-c", "import sys,zipfile;z=zipfile.ZipFile(sys.argv[1],'w');z.writestr('word/document.xml','<w:document><w:p><w:r><w:t>One</w:t></w:r></w:p><w:p><w:r><w:t>Two</w:t></w:r></w:p></w:document>');z.close()", f]).status).toBe(0); };
+  it.skipIf(!have("python3"))("DOCX stdlib path numbers paragraphs", () => {
+    const d = tmp(), f = join(d, "s.docx"); docxFile(f);
+    const b = fakeBin(d, {}); symlinkSync(spawnSync("which", ["python3"], { encoding: "utf8" }).stdout.trim(), join(b, "python3"));
+    const r = extractSpecText(f, { PATH: b });
+    if (!("anchors" in r)) throw new Error("no anchors");
+    expect(r.anchors).toEqual([{ paragraph: 1, text: "One" }, { paragraph: 2, text: "Two" }]);
+  });
+  it("DOCX pandoc path joins wrapped lines into one paragraph; textutil path is one per line", () => {
+    const d = tmp(), f = join(d, "s.docx"); writeFileSync(f, "PK");
+    const p = extractSpecText(f, { PATH: fakeBin(d, { pandoc: "printf 'wrapped\\nline\\n\\nsecond\\n'" }) });
+    if (!("anchors" in p)) throw new Error("no anchors");
+    expect(p.anchors).toEqual([{ paragraph: 1, text: "wrapped line" }, { paragraph: 2, text: "second" }]);
+    const t = extractSpecText(f, { PATH: fakeBin(tmp(), { textutil: "printf 'a\\nb\\n'" }) });
+    if (!("anchors" in t)) throw new Error("no anchors");
+    expect(t.anchors).toEqual([{ paragraph: 1, text: "a" }, { paragraph: 2, text: "b" }]);
   });
 });
 

@@ -13,8 +13,9 @@
 // (--compliance, mirofish) are rejected loudly and documented. See
 // artifacts/ITER1-FLAG-RECONCILE.md.
 
-import { accessSync, constants as fsConstants, existsSync as pathExists, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
+import { accessSync, constants as fsConstants, existsSync as pathExists, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { DEFAULT_MAX_COST_USD } from "../e10ext/budget_cap.ts"; // LM-002: help states the real default
@@ -409,7 +410,43 @@ export const SPEC_MAX_BYTES = 32 * 1024 * 1024;
 const DOCX_PY = "import sys,zipfile,re,html\nx=zipfile.ZipFile(sys.argv[1]).read('word/document.xml').decode('utf8')\nx=re.sub(r'</w:p>','\\n',x)\nx=re.sub(r'<w:tab/>','\\t',x)\nprint(html.unescape(re.sub(r'<[^>]+>','',x)))";
 
 /** FC-BINARY-SPEC-READ-AS-UTF8: a .pdf or .docx spec is converted to text before any reader sees it. Returns the text, or an error message (missing extractor naming the install, encrypted, over 32 MB, or no text layer). Never returns binary bytes. */
-export function extractSpecText(path: string, env: NodeJS.ProcessEnv = process.env): { text: string } | { error: string } {
+export interface SpecAnchor { page?: number; line?: number; paragraph?: number; text: string; ocr?: true }
+const OCR_HINT = "install ocrmypdf (brew install ocrmypdf, or apt install ocrmypdf) or tesseract (brew install tesseract, or apt install tesseract-ocr)";
+
+/** Page and line anchors for a PDF: pages split on form feed, line numbers count every line on the page (blank ones too) so they match a viewer of the .txt page. Blank lines emit no anchor. */
+export function pdfAnchors(pages: readonly string[], ocrPages: ReadonlySet<number> = new Set()): SpecAnchor[] {
+  const out: SpecAnchor[] = [];
+  pages.forEach((pg, pi) => pg.split("\n").forEach((t, li) => { if (t.trim() !== "") out.push({ page: pi + 1, line: li + 1, text: t, ...(ocrPages.has(pi + 1) ? { ocr: true as const } : {}) }); }));
+  return out;
+}
+
+/** Paragraph anchors for a DOCX: pandoc wraps a paragraph over several lines, so its paragraphs are the blank-line separated blocks; textutil and the stdlib reader emit one paragraph per line. */
+export function docxAnchors(text: string, byBlock: boolean): SpecAnchor[] {
+  const parts = byBlock ? text.split(/\n[ \t]*\n/) : text.split("\n");
+  const out: SpecAnchor[] = [];
+  for (const raw of parts) { const t = byBlock ? raw.split("\n").map((l) => l.trim()).filter(Boolean).join(" ") : raw; if (t.trim() !== "") out.push({ paragraph: out.length + 1, text: t }); }
+  return out;
+}
+
+/** OCR one PDF page (1-based) with ocrmypdf (preferred) or pdftoppm+tesseract, when installed. Returns null when no OCR tool works. */
+function ocrPage(path: string, n: number, env: NodeJS.ProcessEnv): string | null {
+  const dir = mkdtempSync(join(tmpdir(), "spec-ocr-"));
+  const sp = (cmd: string, argv: string[]) => spawnSync(cmd, argv, { env, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, timeout: 300_000 });
+  try {
+    const o = join(dir, "ocr.pdf");
+    if ((sp("ocrmypdf", ["--force-ocr", "--pages", String(n), path, o]).status ?? 1) === 0) {
+      const t = sp("pdftotext", ["-f", String(n), "-l", String(n), "-layout", o, "-"]);
+      if (t.status === 0) return t.stdout;
+    }
+    if ((sp("pdftoppm", ["-f", String(n), "-l", String(n), "-r", "300", "-png", path, join(dir, "pg")]).status ?? 1) === 0) {
+      const img = readdirSync(dir).find((f) => f.endsWith(".png"));
+      if (img) { const t = sp("tesseract", [join(dir, img), "stdout"]); if (t.status === 0) return t.stdout; }
+    }
+    return null;
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+export function extractSpecText(path: string, env: NodeJS.ProcessEnv = process.env): { text: string; anchors: SpecAnchor[]; warnings: string[] } | { error: string } {
   const ext = /\.(pdf|docx)$/i.exec(path)?.[1]?.toLowerCase();
   if (!ext) return { error: `start: not a binary spec: ${path}\n` };
   if (statSync(path).size > SPEC_MAX_BYTES) return { error: `start: ${path} is over the 32 MB spec limit\n` };
@@ -417,7 +454,8 @@ export function extractSpecText(path: string, env: NodeJS.ProcessEnv = process.e
     const r = spawnSync(cmd, argv, { env, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, timeout: 120_000 });
     return { ok: r.status === 0, missing: (r.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT", out: r.stdout ?? "", err: r.stderr ?? "" };
   };
-  let text = "";
+  let text = "", anchors: SpecAnchor[] = [], byBlock = false;
+  const warnings: string[] = [];
   if (ext === "pdf") {
     const info = run("pdfinfo", [path]);
     if (/^Encrypted:\s+yes/im.test(info.out)) return { error: `start: ${path} is an encrypted PDF; remove the encryption and retry\n` };
@@ -425,15 +463,24 @@ export function extractSpecText(path: string, env: NodeJS.ProcessEnv = process.e
     if (r.missing) return { error: "start: reading a PDF spec needs pdftotext (install poppler: brew install poppler, or apt install poppler-utils)\n" };
     if (!r.ok) return { error: /password|encrypt/i.test(r.err) ? `start: ${path} is an encrypted PDF; remove the encryption and retry\n` : `start: pdftotext failed on ${path}: ${r.err.trim().split("\n")[0] ?? ""}\n` };
     text = r.out;
+    const pages = text.split("\f");
+    if (pages.length > 1 && pages[pages.length - 1]!.trim() === "") pages.pop();
+    const blank = pages.flatMap((pg, i) => (pg.trim() === "" ? [i + 1] : []));
+    const ocrd = new Set<number>(), missed: number[] = [];
+    for (const n of blank) { const o = ocrPage(path, n, env); if (o !== null && o.trim() !== "") { pages[n - 1] = o; ocrd.add(n); } else missed.push(n); }
+    if (ocrd.size > 0) text = pages.join("\f") + (r.out.endsWith("\f") ? "\f" : "");
+    if (missed.length > 0 && missed.length < pages.length) warnings.push(`start: ${path}: page${missed.length > 1 ? "s" : ""} ${missed.join(", ")} had no text layer and were not read; ${OCR_HINT}\n`);
+    anchors = pdfAnchors(pages, ocrd);
   } else {
     const tries: [string, string[]][] = [["pandoc", ["-t", "plain", path]], ["textutil", ["-convert", "txt", "-stdout", path]], ["python3", ["-c", DOCX_PY, path]]];
     let last: ReturnType<typeof run> | null = null;
-    for (const [cmd, argv] of tries) { const r = run(cmd, argv); if (r.missing) continue; last = r; if (r.ok) { text = r.out; break; } }
+    for (const [cmd, argv] of tries) { const r = run(cmd, argv); if (r.missing) continue; last = r; if (r.ok) { text = r.out; byBlock = cmd === "pandoc"; break; } }
     if (last === null) return { error: "start: reading a DOCX spec needs pandoc (brew install pandoc, or apt install pandoc)\n" };
     if (!last.ok) return { error: `start: could not read ${path} as DOCX: ${last.err.trim().split("\n")[0] ?? ""}\n` };
   }
-  if (text.replace(/\s/g, "") === "") return { error: `start: ${path} has no extractable text (a scanned document needs OCR first)\n` };
-  return { text };
+  if (text.replace(/\s/g, "") === "") return { error: `start: ${path} has no extractable text (a scanned document needs OCR first; ${OCR_HINT})\n` };
+  if (ext === "docx") anchors = docxAnchors(text, byBlock);
+  return { text, anchors, warnings };
 }
 
 /** Extracts a .pdf/.docx spec to <cwd>/.loki/spec-extracted/<name>.txt so every downstream reader sees text; returns the new path, null for a non-binary or absent spec, or an error. */
@@ -443,6 +490,8 @@ export function textSpecPath(spec: string, cwd: string, env: NodeJS.ProcessEnv =
   if ("error" in r) return r;
   const dir = join(cwd, ".loki", "spec-extracted"), out = join(dir, `${basename(spec)}.txt`);
   mkdirSync(dir, { recursive: true }); writeFileSync(out, r.text);
+  writeFileSync(join(dir, `${basename(spec)}.anchors.json`), JSON.stringify(r.anchors, null, 1) + "\n");
+  for (const w of r.warnings) process.stderr.write(w);
   return { path: resolve(out) };
 }
 
