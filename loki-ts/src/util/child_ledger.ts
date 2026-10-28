@@ -6,7 +6,7 @@
 // cost_status "unmeasured" is an extra, reader-ignored marker on such lines.
 // Not for engine10 stage sessions (SessionRunner): those already write efficiency/iteration-N.json,
 // and a ledger line as well would count them twice.
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { calculateCostFromRecords } from "../runner/budget.ts";
 import { neverRan, UNMETERED } from "../providers/provider_cost.ts";
@@ -69,9 +69,11 @@ export function appendChildLedger(lokiDir: string, rec: LedgerRecord): boolean {
   try {
     const dir = join(lokiDir, "metrics");
     mkdirSync(dir, { recursive: true });
-    const runId = process.env["LOKI_E10_RUN_ID"];
+    const file = join(dir, "child-sessions.jsonl"), runId = process.env["LOKI_E10_RUN_ID"];
+    let lead = "";
+    try { const fd = openSync(file, "r"); try { const sz = fstatSync(fd).size, b = Buffer.alloc(1); if (sz > 0 && readSync(fd, b, 0, 1, sz - 1) === 1 && b[0] !== 10) lead = "\n"; } finally { closeSync(fd); } } catch { /* no file yet */ } // a torn earlier write leaves no newline: start on a fresh line so it can never glue onto this record
     // run_id is the FIRST key, so a line cut short mid-write still names its run (sumChildLedger fails closed on any line it cannot parse).
-    appendFileSync(join(dir, "child-sessions.jsonl"), `${JSON.stringify(runId && !rec.run_id ? { run_id: runId, ...rec } : rec.run_id ? { run_id: rec.run_id, ...rec } : rec)}\n`);
+    appendFileSync(file, `${lead}${JSON.stringify(runId && !rec.run_id ? { run_id: runId, ...rec } : rec.run_id ? { run_id: rec.run_id, ...rec } : rec)}\n`);
     return true;
   } catch { return false; }
 }
@@ -90,19 +92,25 @@ export function withChildLedger<A extends unknown[], R extends { stdout: string 
 
 // Child sessions append to metrics/child-sessions.jsonl: the cross-review, reviewer, council, grill, docs and enrich calls and the SDK judge (see the appendChildLedger / withChildLedger / loki_child_ledger_append callers). Project-model and wall are NOT ledger writers.
 // Only this run's lines count (run_id). A line with no dollar figure, or a $0 line with zero usage (E-69), is UNKNOWN, never 0.
-// A ledger that exists but cannot be read, or ANY line that cannot be parsed (a torn write), is one UNKNOWN part: the total is null, never an undercount. The one unparsable line that is skipped is one whose first key is another run's complete run_id.
-const OTHER_RUN = /^\{"run_id":"([^"]*)"[,}]/;
+// A ledger that exists but cannot be read is one UNKNOWN part. So is an unparseable line (a torn write) that could hold this run's record: one that names this run (or a prefix of its id, or carries a glued `{"run_id":` record start that does), one after this run's first own record, or a bare fragment at the end of the file (a write possibly still in flight). A torn fragment that names another run, or an unattributable one that ends before this run's first record, cannot contain this run's cost and is skipped. The writer always starts on a fresh line, so a later append never glues onto a fragment.
+const RUN_START = /\{"run_id":"([^"]*)("?)/g;
+function mayHoldRun(line: string, runId: string, seenOwn: boolean, isLast: boolean): boolean {
+  let any = false;
+  for (const m of line.matchAll(RUN_START)) { any = true; if (m[2] === '"' ? m[1] === runId : runId.startsWith(m[1] ?? "")) return true; }
+  return any ? false : seenOwn || isLast;
+}
 export interface ChildSums { usd: number | null; partialUsd: number; measured: number; total: number; inputTokens: number; outputTokens: number }
 export function sumChildLedger(lokiRoot: string, runId: string): ChildSums {
   let lines: string[] = [], unreadable = false;
   try { lines = readFileSync(join(lokiRoot, "metrics", "child-sessions.jsonl"), "utf8").split("\n"); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") unreadable = true; /* no ledger file: no children */ }
-  let partialUsd = 0, measured = 0, inputTokens = 0, outputTokens = 0, total = unreadable ? 1 : 0;
-  for (const l of lines) {
+  let partialUsd = 0, measured = 0, inputTokens = 0, outputTokens = 0, total = unreadable ? 1 : 0, seenOwn = false, last = lines.length - 1;
+  while (last >= 0 && !lines[last]!.trim()) last--;
+  for (const [i, l] of lines.entries()) {
     if (!l.trim()) continue;
     let r: Record<string, unknown>;
-    try { r = JSON.parse(l) as Record<string, unknown>; } catch { const o = OTHER_RUN.exec(l); if (!o || o[1] === runId) total++; continue; } // torn line: cannot be attributed or priced unless it provably names another run
+    try { r = JSON.parse(l) as Record<string, unknown>; } catch { if (mayHoldRun(l, runId, seenOwn, i === last)) total++; continue; } // torn line: unknown unless it provably cannot hold this run's record
     if (!r || typeof r !== "object" || r["run_id"] !== runId) continue;
-    total++;
+    total++; seenOwn = true;
     const usage = ["input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens"].reduce((t, k) => t + (isNum(r[k]) ? r[k] : 0), 0);
     inputTokens += isNum(r["input_tokens"]) ? r["input_tokens"] : 0; outputTokens += isNum(r["output_tokens"]) ? r["output_tokens"] : 0;
     if (isNum(r["usd"]) && r["usd"] >= 0 && !(r["usd"] === 0 && usage === 0)) { partialUsd += r["usd"]; measured++; }

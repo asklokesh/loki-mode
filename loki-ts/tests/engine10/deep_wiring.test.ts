@@ -9,7 +9,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readEvents, summaryCost } from "../../src/engine10/events.ts";
-import { runSupervisor, type PrStep } from "../../src/engine10/supervisor.ts";
+import { runSummaryCost, runSupervisor, type PrStep } from "../../src/engine10/supervisor.ts";
 import { childEnv } from "../../src/engine10/session.ts";
 import { REVIEW_GUARD_DENYLIST } from "../../src/providers/claude_flags.ts";
 import { deepStage } from "../../src/engine10/stages/deep.ts";
@@ -291,6 +291,8 @@ describe("child session spend reaches every run-total surface", () => {
     const { usd, pc } = summaryCost(events, false, join(dir, ".loki"));
     expect(usd).toBeCloseTo(0.5, 10);
     expect(pc.usd).toBeCloseTo(0.5, 10);
-    expect(readFileSync(new URL("../../src/engine10/supervisor.ts", import.meta.url), "utf8")).toMatch(/summaryCost\(events, res\.tampered, join\(repoDir, "\.loki"\)\)/); // M7: main() prints through summaryCost with the run's .loki root
+    const printed = runSummaryCost(events, false, dir); // the exact call main() prints through, given the repo dir
+    expect(printed.usd).toBeCloseTo(0.5, 10); // M7: dropping the run's .loki root makes this the stage-only 0.3
+    expect(printed.pc.usd).toBeCloseTo(0.5, 10);
   });
 });

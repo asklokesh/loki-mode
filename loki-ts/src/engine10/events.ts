@@ -141,7 +141,7 @@ export function partialCost(events: EventEnvelope[], tampered = false, lokiRoot?
   return { measured: r?.measuredCount ?? 0, total: r?.totalCount ?? 0, usd: r?.partialUsd ?? 0 };
 }
 
-/** THE run dollar total (run.completed, console Cost line, Slack, handoff, status, dashboard): runCost, which is exactly what the receipt's sumRunCosts reports. Null when tampered or any part is unknown, never an undercount. */
+/** THE run dollar total (run.completed, console Cost line, Slack, handoff, status, dashboard): runCost: live stage cost events plus this run's child sessions. Null when tampered or any part is unknown, never an undercount. */
 export const runCostUsd = (events: EventEnvelope[], tampered = false, lokiRoot?: string): number | null => (tampered ? null : runCost(events, lokiRoot).usd);
 
 /** The summary Cost inputs for a run's events. A run whose every cost event is the CLI invoker's unmetered marker (a recorded 0, no provider dollars) has no measured cost: usd null and zero measured sessions, so the Cost line reads "not measured", never "$0.00". A tampered log reports no trusted figure. */

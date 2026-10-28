@@ -230,6 +230,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
 export { alreadyDoneTextComment, policyGate, prGate, renderMainOutput, summaryCache, summaryTokens, unmergedLokiWorkNote, type PolicyGate }; // moved to util/run_outputs.ts (line budget); re-exported for existing callers
 const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
 export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
+/** The end-of-run summary cost inputs, read with the run's .loki root so child sessions join. */
+export const runSummaryCost = (events: EventEnvelope[], tampered: boolean, repoDir: string): ReturnType<typeof summaryCost> => summaryCost(events, tampered, join(repoDir, ".loki"));
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
   let eoo = false, resume = false, fresh = false, quiet = false, specFile: string | null = null, maxCost: string | null = null, noPr = false, sealPatch: string | null = null, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
@@ -376,7 +378,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
 
   const events = readEvents(eventsPath), f = fold(events); noteRefusalFromEvents(events); // AN-08: an intake refusal (dirty tracked tree) is named by the failed intake event
   const sawCost = events.some((e) => e.type === "cost"), cli = process.env.LOKI_E10_INVOKER === "cli";
-  const { usd, pc } = summaryCost(events, res.tampered, join(repoDir, ".loki")); // E-69: same tamper guard as costUsd elsewhere -- a TAMPERED run never prints a trusted dollar figure
+  const { usd, pc } = runSummaryCost(events, res.tampered, repoDir); // E-69: same tamper guard as costUsd elsewhere -- a TAMPERED run never prints a trusted dollar figure
   const out = json ? `${JSON.stringify({ ok: EXIT[res.outcome] === 0, outcome: res.outcome, stop: res.stop, run_id: runId, receipt_sha256: res.receiptSha })}\n` : renderMainOutput(events, {
     pr: res.prUrl ? { url: res.prUrl, draft: res.verdict !== "VERIFIED" } : null,
     verdict: res.verdict, outcome: res.outcome, reason: reasonOf(events, res.tampered, res.stop, res.outcome), receipt: { sha: res.tampered ? null : res.receiptSha, tampered: res.tampered, signed: res.tampered ? null : (events.findLast((e) => e.type === "receipt.sealed")?.data.signed as boolean | undefined) ?? null }, notProven: res.notProven, flaky: ((f.stages["verify"]?.data.flaky as unknown[] | undefined) ?? []).filter((n): n is string => typeof n === "string"),

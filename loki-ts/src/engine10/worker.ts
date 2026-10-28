@@ -37,6 +37,9 @@ export async function runWorker(
 /** P12-07l: deep honors the same cap env as fast (remaining cap on resume; the supervisor sets the full cap otherwise). */
 export function workerCapS(deep: boolean, env: NodeJS.ProcessEnv): number { return envCapS(env.LOKI_E10_CAP_S) ?? (deep ? DEEP_CAP_S : DEFAULT_CAP_S); }
 
+/** The receipt's cost reader: stage sessions plus this run's child sessions (the run id selects the ledger lines). */
+export const workerCostReader = (runId: string): RunContext["cost"] => ({ read: (dir, ids) => costTotalsOf(sumRunCosts(join(dir, ".loki"), liveArchivedCosts(join(dir, ".loki"), ids, UNMETERED), [], runId)) });
+
 /** `engine10 worker <run-id> <provider> <model> <fast|deep>`, spawned by the supervisor through cli.ts. */
 export async function main(args: string[]): Promise<number> {
   const [runId, provider = "claude", model = resolveModel(provider), mode = "fast"] = args;
@@ -65,12 +68,7 @@ export async function main(args: string[]): Promise<number> {
       emit, overCap: over,
       sessions, failovers: () => failovers,
       tests: new RealTestMapProvider(),
-      cost: {
-        read(dir, ids) {
-          const c = sumRunCosts(join(dir, ".loki"), liveArchivedCosts(join(dir, ".loki"), ids, UNMETERED), [], runId);
-          return costTotalsOf(c);
-        },
-      },
+      cost: workerCostReader(runId),
       clock: { now: () => Date.now() },
       outputs: () => ({}), // replaced by the machine
     };
