@@ -188,6 +188,77 @@ test_v10_tools() {
     fi
 }
 
+# Test 14: VS Code reaches the server through the config `loki mcp install` writes.
+# Generates .vscode/mcp.json in a scratch project, requires docs/INSTALLATION.md to
+# show exactly that file, then launches the server from the written command/args
+# (npx is shimmed to this checkout, since the published package is not under test)
+# and finds the three v10 tools in tools/list.
+test_vscode_mcp_config_smoke() {
+    log_test "VS Code mcp.json written by 'loki mcp install' launches a server that lists the v10 tools"
+    local proj="$TEST_DIR/vscode-proj" shim="$TEST_DIR/vscode-shim" cfg out rc
+    mkdir -p "$proj" "$shim"
+    cfg="$proj/.vscode/mcp.json"
+    if ! (cd "$proj" && "$PROJECT_ROOT/autonomy/loki" mcp install --client vscode --project >/dev/null 2>&1) || [ ! -f "$cfg" ]; then
+        fail "loki mcp install --client vscode --project did not write .vscode/mcp.json"
+        return
+    fi
+    out=$(python3 - "$cfg" "$PROJECT_ROOT/docs/INSTALLATION.md" <<'PY'
+import json, re, sys
+written = json.load(open(sys.argv[1]))
+doc = open(sys.argv[2]).read()
+blocks = re.findall(r"```json\n(.*?)```", doc, re.S)
+for b in blocks:
+    try:
+        if json.loads(b) == written:
+            print("doc-match")
+            break
+    except ValueError:
+        pass
+else:
+    print("doc-missing")
+PY
+)
+    if [ "$out" != "doc-match" ]; then
+        fail "docs/INSTALLATION.md does not show the .vscode/mcp.json that loki mcp install writes"
+        return
+    fi
+    # Stand-in for the published package: `npx -y loki-mode mcp` runs this checkout.
+    printf '#!/usr/bin/env bash\nwhile [ "${1:-}" = "-y" ] || [ "${1:-}" = "loki-mode" ]; do shift; done\nexec "%s/autonomy/loki" "$@"\n' "$PROJECT_ROOT" > "$shim/npx"
+    chmod +x "$shim/npx"
+    out=$(cd "$proj" && PATH="$shim:$PATH" LOKI_NO_INSTALL_OFFER=1 LOKI_NO_BROWSER=1 python3 - "$cfg" <<'PY'
+import json, subprocess, sys, threading
+entry = json.load(open(sys.argv[1]))["servers"]["loki-mode"]
+proc = subprocess.Popen([entry["command"]] + entry.get("args", []), stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+threading.Timer(60, proc.kill).start()
+def send(m):
+    proc.stdin.write(json.dumps(m) + "\n"); proc.stdin.flush()
+def recv(want):
+    for line in proc.stdout:
+        try:
+            m = json.loads(line)
+        except ValueError:
+            continue
+        if m.get("id") == want:
+            return m
+    return {}
+send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+    "protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "vscode-smoke", "version": "0"}}})
+recv(1)
+send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+names = sorted(t["name"] for t in recv(2).get("result", {}).get("tools", []))
+proc.kill()
+print(" ".join(n for n in names if n.startswith("loki_v10_")))
+PY
+)
+    if [ "$out" = "loki_v10_run loki_v10_status loki_v10_verify" ]; then
+        pass "server launched from the written config lists loki_v10_run, loki_v10_status, loki_v10_verify"
+    else
+        fail "tools/list from the written config returned: '${out:-nothing}'"
+    fi
+}
+
 # Run tests
 setup
 test_mcp_import
@@ -201,6 +272,7 @@ test_server_tools
 test_server_resources
 test_server_prompts
 test_v10_tools
+test_vscode_mcp_config_smoke
 
 # Summary
 echo ""
