@@ -40,7 +40,7 @@ import {
   isIntegrationOwner,
   type ExecManifest,
 } from "../../src/runner/exec_manifest.ts";
-import { decideRecovery, signatureRepeated } from "../../src/runner/recovery_policy.ts";
+import { decideRecovery, signatureRepeated, type RecoverySignals } from "../../src/runner/recovery_policy.ts";
 import { recordFingerprints, readFingerprints, failureFingerprint, flakyRerunSignal, cleanTreeId, failedCheckNames, failedChecksSignal, FINGERPRINT_MAX } from "../../src/util/failure_memory.ts";
 
 const tmps: string[] = [];
@@ -1320,5 +1320,117 @@ describe("P12-11b flaky rerun producer and summary wiring", () => {
     expect(au).not.toMatch(/rerun: buildExitCode === 1/);
     const sv = readFileSync(new URL("../../src/engine10/supervisor.ts", import.meta.url), "utf8");
     expect(sv).not.toMatch(/notProven: res\.notProven, flaky: \[\]/);
+  });
+});
+
+// Seeded flaky-vs-regression corpus fed to the decideRecovery signals. Ground truth is known by
+// construction: a flaky or order-dependent case fails then passes on one identical tree; a true
+// regression never has that evidence. The KPI that must stay 0 is regressions masked as flaky.
+describe("recovery policy: flaky-vs-regression corpus", () => {
+  type Label = "flaky" | "regression" | "order_dependent";
+  interface Case { readonly id: string; readonly label: Label; readonly sig: RecoverySignals }
+
+  function rng(seed: number): () => number {
+    let s = seed >>> 0;
+    return () => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function buildCorpus(seed: number): Case[] {
+    const r = rng(seed);
+    const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(r() * xs.length)] as T;
+    const tree = (): string => `tree${Math.floor(r() * 1e9).toString(16)}`;
+    const cases: Case[] = [];
+    const flakyModes = [
+      "timeout waiting for selector", "ETIMEDOUT on localhost fixture", "race: expected 3 received 2",
+      "port 4173 already in use", "snapshot mismatch on timestamp", "intermittent ENOENT in tmp dir",
+      "clock skew: expected 100ms got 101ms", "network blip fetching fixture", "unhandled promise rejection once",
+      "retry budget exceeded in mock server",
+    ];
+    for (let i = 0; i < 20; i++) {
+      const t = tree();
+      const test = `flaky-${i}`;
+      cases.push({
+        id: `flaky-${i}`, label: "flaky",
+        sig: {
+          output: pick(flakyModes), buildExitCode: pick([1, 2, 124, undefined]),
+          rerun: { test, failTree: t, passTree: t },
+          ...(r() < 0.5 ? { failedChecks: [test] } : {}),
+        },
+      });
+    }
+    const orderModes = ["shared global state leaked", "db row left by earlier test", "env var not reset", "cache primed by sibling", "singleton reused"];
+    for (let i = 0; i < 10; i++) {
+      const t = tree();
+      const test = `order-${i}`;
+      cases.push({
+        id: `order-${i}`, label: "order_dependent",
+        sig: {
+          output: pick(orderModes), buildExitCode: 1,
+          rerun: { test, failTree: t, passTree: t }, failedChecks: [test],
+        },
+      });
+    }
+    const regKinds = ["diff_tree", "diff_tree_build", "no_rerun_build", "empty_fail_tree", "empty_pass_tree", "empty_test", "other_failed_check", "other_check_only"] as const;
+    for (let i = 0; i < 24; i++) {
+      const kind = regKinds[i % regKinds.length] as (typeof regKinds)[number];
+      const test = `reg-${i}`;
+      const a = tree();
+      const b = tree() + "x";
+      let sig: RecoverySignals;
+      switch (kind) {
+        case "diff_tree": sig = { output: "assertion failed", buildExitCode: 1, rerun: { test, failTree: a, passTree: b } }; break;
+        case "diff_tree_build": sig = { output: "TypeError", buildExitCode: 2, rerun: { test, failTree: a, passTree: b } }; break;
+        case "no_rerun_build": sig = { output: pick(flakyModes), buildExitCode: 1 }; break;
+        case "empty_fail_tree": sig = { output: "x", buildExitCode: 1, rerun: { test, failTree: "", passTree: "" } }; break;
+        case "empty_pass_tree": sig = { output: "x", buildExitCode: 1, rerun: { test, failTree: a, passTree: "" } }; break;
+        case "empty_test": sig = { output: "x", buildExitCode: 1, rerun: { test: "", failTree: a, passTree: a } }; break;
+        case "other_failed_check": sig = { output: "x", buildExitCode: 1, rerun: { test, failTree: a, passTree: a }, failedChecks: [test, `real-${i}`] }; break;
+        default: sig = { output: "x", buildExitCode: 1, rerun: { test, failTree: a, passTree: a }, failedChecks: [`real-${i}`] }; break;
+      }
+      cases.push({ id: `regression-${i}-${kind}`, label: "regression", sig });
+    }
+    return cases;
+  }
+
+  function score(cases: readonly Case[]) {
+    let tp = 0, fp = 0, fn = 0, masked = 0;
+    const maskedIds: string[] = [];
+    for (const c of cases) {
+      const d = decideRecovery(c.sig, { env: ON.recovery, history: [] });
+      const calledFlaky = d.reason === "flaky";
+      const isNonRegression = c.label !== "regression";
+      if (calledFlaky && isNonRegression) tp++;
+      if (calledFlaky && !isNonRegression) { fp++; masked++; maskedIds.push(c.id); }
+      if (!calledFlaky && isNonRegression) fn++;
+    }
+    return { tp, fp, fn, masked, maskedIds, precision: tp / Math.max(1, tp + fp), recall: tp / Math.max(1, tp + fn) };
+  }
+
+  it("corpus has the required shape", () => {
+    const cases = buildCorpus(20261028);
+    expect(cases.filter((c) => c.label === "flaky").length).toBeGreaterThanOrEqual(20);
+    expect(cases.filter((c) => c.label === "regression").length).toBeGreaterThanOrEqual(20);
+    expect(cases.filter((c) => c.label === "order_dependent").length).toBeGreaterThanOrEqual(10);
+  });
+
+  it("masks zero regressions and reports precision and recall", () => {
+    for (const seed of [1, 20261028, 987654321]) {
+      const cases = buildCorpus(seed);
+      const s = score(cases);
+      console.log(`flaky-vs-regression corpus seed=${seed} n=${cases.length} precision=${s.precision.toFixed(3)} recall=${s.recall.toFixed(3)} regressions_masked=${s.masked}`);
+      expect(s.maskedIds).toEqual([]);
+      expect(s.masked).toBe(0);
+      expect(s.precision).toBe(1);
+      expect(s.recall).toBe(1);
+      for (const c of cases.filter((x) => x.label === "regression")) {
+        expect(decideRecovery(c.sig, { env: ON.recovery, history: [] }).action).toBe("revise");
+      }
+    }
   });
 });
