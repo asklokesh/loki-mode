@@ -101,3 +101,38 @@ NOT yet ship a full paid cross-tool leaderboard: CI runs are fully mocked (zero
 paid API calls) and the full paid head-to-head across tools is deferred until a
 budget is authorized. The cross-tool numbers in a full leaderboard come later;
 what ships now is the credible frame and the means to reproduce it.
+
+### Terminal-Bench protocol (retrieved 2026-10-28, no paid run yet)
+
+Adapter: benchmarks/bench/adapters/terminal_bench.py (harbor-style, one record
+per trial: agent, agent_version, model, cost_usd, tokens, duration, exit_status,
+cost cap). Records never carry success; Terminal-Bench's verifier decides.
+
+Retrieved facts (each fetched 2026-10-28):
+- Current version: leaderboard page shows "TERMINAL-BENCH 4.0"; the run page pins
+  dataset `terminal-bench/terminal-bench@4.0.0` and example flag `-k 5`.
+  Sources: https://www.tbench.ai/leaderboard and https://www.tbench.ai/run
+- Trial count: "Each task must be evaluated with a minimum of five trials"
+  (`-k 5` recommended). Source, which covers the 2.0 leaderboard repo only:
+  https://huggingface.co/datasets/harborframework/terminal-bench-2-leaderboard
+  The 4.0 pages do not state a minimum; we use 5.
+- Submission channel: pull request to the Hugging Face dataset repo above, under
+  `submissions/terminal-bench/2.0/<agent>__<model(s)>/`, bot-validated then
+  maintainer-merged. Contact: an issue on that repo, or the maintainer email on
+  that page. `harbor upload` only uploads to Harbor Hub (private by default) and
+  is not documented as a leaderboard route.
+- Community submissions: CLOSED. The repo page says "SUBMISSIONS CLOSED", a new
+  process is in development, "check back by end of June" (no year given). We
+  could not find a published 4.0 submission process. Treat as not open until a
+  tbench.ai page says otherwise; re-check before any paid run.
+- https://www.tbench.ai/docs/submitting-to-leaderboard returned HTTP 404.
+
+Spend forecast for a 5-trial-per-task run (USD, no spend incurred):
+- Task count 89 is an assumption taken from third-party reporting of the 2.0
+  set; the 4.0 count was not retrieved. Trials n = 89 x 5 = 445.
+- Per-trial cap: 10.00 USD. Hard ceiling = 445 x 10.00 = 4450.00 USD.
+- Expected: no measured Loki per-trial cost on this suite exists in the repo, so
+  no measured figure is claimed. Illustration only, at an ASSUMED 3.00 USD per
+  trial: 1335.00 USD. Replace with the measured mean from a 2-task paid pilot.
+- Compute with `adapters.terminal_bench.forecast(n_tasks, trials, expected_usd,
+  cap_usd)`. Paid trials are refused unless LOKI_BENCH_SPEND_APPROVED=1.
