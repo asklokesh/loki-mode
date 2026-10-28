@@ -223,3 +223,21 @@ describe("intake skips discovery when the deterministic signals resolve", () => 
     expect(calls).toBeGreaterThan(0);
   });
 });
+
+describe("project-model discovery follows the run tier", () => {
+  const KEYS = ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_FAST", "LOKI_MODEL_FAST", "LOKI_ALLOW_HAIKU"];
+  const first = async (runModel: string, env: Record<string, string> = {}): Promise<string | undefined> => {
+    const saved = KEYS.map((k) => process.env[k]);
+    for (const k of KEYS) delete process.env[k];
+    Object.assign(process.env, env);
+    const d = multiRepo();
+    let model: string | undefined, seen = false;
+    try {
+      await discoverProjectModel({ ...ctxFor(d, async (o) => { if (!seen) { seen = true; model = o.model; } return ok; }), model: runModel } as RunContext, sig, { hardTimeoutMs: 2000 });
+    } finally { KEYS.forEach((k, i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]!; }); }
+    return model;
+  };
+  test("a haiku run discovers on haiku", async () => { expect(await first("haiku")).toBe("haiku"); });
+  test("a sonnet run is unchanged", async () => { expect(await first("sonnet")).toBe("sonnet"); });
+  test("an explicit LOKI_CLAUDE_MODEL_FAST pin is honored on a haiku run", async () => { expect(await first("haiku", { LOKI_CLAUDE_MODEL_FAST: "sonnet" })).toBe("sonnet"); });
+});

@@ -12,6 +12,7 @@ import {
   findEvidence,
   renderAlreadyDoneComment,
 } from "../../src/engine10/already_done.ts";
+import { resolveModelAlias, wallModel } from "../../src/engine10/sizing.ts";
 import { runIntake, stage as intakeStage } from "../../src/engine10/stages/intake.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { hitsUnchangedFromBase } from "../../src/features/speed/already_done_async.ts";
@@ -754,4 +755,19 @@ describe("deferred confirmation reads a base-pinned tree (D61-04 r3 B2)", () => 
       expect(r.already).toBe(false);
     });
   }
+});
+
+describe("checkAlreadyDone follows the run tier", () => {
+  const run = async (runModel: string, env: Record<string, string> = {}): Promise<string> => {
+    const dir = freshRepo(), saved = process.env["LOKI_E10_WALL_TIER"];
+    if (env["LOKI_E10_WALL_TIER"]) process.env["LOKI_E10_WALL_TIER"] = env["LOKI_E10_WALL_TIER"]; else delete process.env["LOKI_E10_WALL_TIER"];
+    let model = "";
+    const sessions: SessionRunner = { run: async (o) => { model = String(o.model); return { exit: 0, durationS: 0.1, killed: false, markers: { done: true, alreadyDone: null, specConflict: null } }; } };
+    try { await checkAlreadyDone({ ...ctxWith(sessions, dir), model: runModel }, new AbortController().signal, TASK, buildRepoMap(dir), buildTestMap(dir)); }
+    finally { if (saved === undefined) delete process.env["LOKI_E10_WALL_TIER"]; else process.env["LOKI_E10_WALL_TIER"] = saved; rmSync(dir, { recursive: true, force: true }); }
+    return model;
+  };
+  test("a haiku run confirms on haiku", async () => { expect(await run(resolveModelAlias("haiku"))).toBe(resolveModelAlias("haiku")); });
+  test("a sonnet run is unchanged", async () => { expect(await run(resolveModelAlias("sonnet"))).toBe(wallModel()); });
+  test("an explicit LOKI_E10_WALL_TIER pin is honored on a haiku run", async () => { expect(await run(resolveModelAlias("haiku"), { LOKI_E10_WALL_TIER: "opus" })).toBe(resolveModelAlias("opus")); });
 });

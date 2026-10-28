@@ -1205,3 +1205,33 @@ describe("LOKI_E10_WALL_MAX_TOKENS", () => {
   test("knob unset: the user's inherited CLAUDE_CODE_MAX_OUTPUT_TOKENS is left alone (no bound passed)", async () => { expect(await seen(undefined, "5000")).toEqual([undefined]); });
   test("knob set: the knob wins over an inherited CLAUDE_CODE_MAX_OUTPUT_TOKENS", async () => { expect(await seen("6000", "5000")).toEqual([6000]); });
 });
+
+describe("Wall re-author follows the run tier", () => {
+  const ENV = ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE", "LOKI_E10_WALL_FIRST", "LOKI_E10_WALL_CONCURRENT"];
+  const HAIKU = resolveModelAlias("haiku"), SONNET = wallModel();
+  const run = async (runModel: string, env: Record<string, string> = {}) => {
+    for (const k of ENV) delete process.env[k];
+    Object.assign(process.env, env);
+    const s = setup({ runners: ["vitest"], tests: [] }), models: string[] = [], reauthor: Record<string, unknown>[] = [];
+    const sessions = new FakeSessionRunner((opts) => { models.push(String(opts.model)); writeFileSync(join(opts.cwd!, "loki_wall_sample.test.ts"), SAMPLE, "utf8"); });
+    const base = fakeCtx(s.repoDir, s.runDir, sessions, { intake: { task: "add x", testmap: s.testmap, repomap_ref: join(s.runDir, "repomap.json") } }, []);
+    const ctx = { ...base, model: runModel, emit: (t: string, st: unknown, d: Record<string, unknown>) => { if (t === "wall.reauthor") reauthor.push(d); base.emit(t as never, st as never, d); } } as typeof base;
+    const baseRunner = new (class implements BaseTestRunner { lastNotRunFiles: { file: string; reason: string }[] = []; run() { return { pass: 0, fail: 0, not_run: 1 }; } })();
+    try { await runWall(ctx, new AbortController().signal, { baseRunner }); return { models, reauthor }; }
+    finally { for (const k of ENV) delete process.env[k]; rmSync(s.repoDir, { recursive: true, force: true }); }
+  };
+  test("a haiku run re-authors on haiku and records haiku", async () => {
+    const r = await run(HAIKU);
+    expect(r.models).toEqual([HAIKU, HAIKU]);
+    expect(r.reauthor[0]?.["to_model"]).toBe(HAIKU);
+  });
+  test("a sonnet run is unchanged: the re-author runs on sonnet", async () => {
+    const r = await run(resolveModelAlias("sonnet"));
+    expect(r.models).toEqual([HAIKU, SONNET]);
+    expect(r.reauthor[0]?.["to_model"]).toBe(SONNET);
+  });
+  test("an explicit LOKI_E10_WALL_TIER pin is honored on a haiku run", async () => {
+    const r = await run(HAIKU, { LOKI_E10_WALL_TIER: "sonnet" });
+    expect(r.models).toEqual([SONNET]);
+  });
+});

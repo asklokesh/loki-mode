@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fastTierModel } from "../runner/model_downgrades.ts";
 import { MAX_TURNS_EXIT } from "../runner/worker_proc.ts";
 import { defaultCacheRoot, readJson, writeJson } from "../engine10/cache.ts";
+import { capToRunTier } from "../runner/model_rank.ts";
 import { STAGE_BUDGETS, type RunContext, type SessionResult } from "../engine10/types.ts";
 import { MANIFESTS } from "../runner/repo_profile.ts";
 import { safeGit } from "../util/safe_git.ts";
@@ -172,7 +173,7 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
     if (limitS < MIN_SESSION_S) return { model: unknownModel("", "no stage budget left for discovery"), cached: false, attempts: attempt - 1, owner: "harness" };
     rmSync(answerPath, { force: true });
     // TEN-COST-07: attempt 1 on the fast tier; the retry escalates to the run model (an explicit override stays).
-    const attemptModel = attempt === 1 ? fastTierModel() : process.env["LOKI_MODEL_OVERRIDE"] || undefined;
+    const attemptModel = attempt === 1 ? capToRunTier(fastTierModel(), ctx.model, ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_FAST", "LOKI_MODEL_FAST"]) : process.env["LOKI_MODEL_OVERRIDE"] || undefined;
     lastModel = attemptModel ?? "run";
     const hardMs = opts.hardTimeoutMs ?? limitS * 1000 + HARD_GRACE_MS;
     const abort = new AbortController();
