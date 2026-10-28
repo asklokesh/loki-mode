@@ -414,6 +414,41 @@ describe("stuck-run alert (LOKI_STUCK_MIN)", () => {
     expect(stuckMinutes({})).toBe(15);
     expect(stuckMinutes({ LOKI_STUCK_MIN: "2" })).toBe(2);
   });
+  test("supervisor wiring: the real beat interval ticks and every ingested event feeds the watch", async () => {
+    const base = mkdtempSync(join(tmpdir(), "e10-stuckwire-"));
+    roots.push(base);
+    const dir = join(base, "repo");
+    execFileSync("git", ["init", "-q", "-b", "main", dir]);
+    git(dir, "config", "user.name", "t"); git(dir, "config", "user.email", "t@example.com");
+    writeFileSync(join(dir, "a.txt"), "base\n");
+    git(dir, "add", "a.txt"); git(dir, "commit", "-q", "-m", "base");
+    writeFileSync(join(base, "worker.js"), `
+const out = (stage) => console.log(JSON.stringify({ type: "stage.started", stage, data: {} }));
+out("implement");
+setTimeout(() => out("verify"), 1200);
+setTimeout(() => process.exit(0), 2200);
+`);
+    // Fake clock: Date.now is offset by a variable and the supervisor's own 15s beat callback is captured, then fired by hand.
+    writeFileSync(join(base, "drive.ts"), `import { runSupervisor } from ${JSON.stringify(SUP)};
+const realNow = Date.now.bind(Date), realSet = globalThis.setTimeout;
+let offset = 0, beat: (() => void) | null = null;
+Date.now = () => realNow() + offset;
+const origInterval = globalThis.setInterval;
+(globalThis as any).setInterval = (fn: () => void, ms: number, ...a: unknown[]) => { if (ms === 15000) { beat = fn; return { unref() {}, ref() {} }; } return (origInterval as any)(fn, ms, ...a); };
+const fire = (n: number) => { for (let i = 0; i < n; i++) beat?.(); };
+realSet(() => { offset += 16 * 60_000; fire(3); }, 600); // silence after "implement": exactly one alert
+realSet(() => { fire(2); }, 1800); // "verify" arrived at 1200ms of fake time after the jump, so nothing is stale yet
+await runSupervisor({ runId: "e10-stuckwire", repoDir: ${JSON.stringify(dir)}, env: process.env, capS: 600, workerArgv: [process.execPath, ${JSON.stringify(join(base, "worker.js"))}], started: {} });
+process.stdout.write("BEAT_CAPTURED=" + (beat !== null) + "\\n");
+process.exit(0);`);
+    const p = Bun.spawn([process.execPath, join(base, "drive.ts")], { cwd: dir, env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true", LOKI_CONTROL: "0", LOKI_STUCK_MIN: "15" }, stdout: "pipe", stderr: "pipe" });
+    const [err, out] = [await new Response(p.stderr).text(), await new Response(p.stdout).text()];
+    await p.exited;
+    expect(out).toContain("BEAT_CAPTURED=true");
+    const lines = err.split("\n").filter((l) => l.startsWith("engine10: no event for"));
+    expect(lines.length).toBe(1);
+    expect(lines[0]).toContain("last stage implement");
+  }, 60_000);
   test("stuck slack payload carries stage and action", async () => {
     const { slackPayload } = await import("../../src/util/slack_events.ts");
     expect(slackPayload("stuck", { stage: "verify", lastEventAt: "t", action: "act" }).text).toContain("verify");
