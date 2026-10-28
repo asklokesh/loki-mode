@@ -45,6 +45,22 @@ def test_provider_label_default_does_not_pin():
     assert "LOKI_SESSION_MODEL" not in env
 
 
+def test_collected_model_used_is_the_pinned_sonnet_id():
+    """Every efficiency record of a sonnet-pinned run names a sonnet id; the
+    adapter reports it as model_used (never opus)."""
+    import json
+    loki_dir = tempfile.mkdtemp()
+    eff = os.path.join(loki_dir, "metrics", "efficiency")
+    os.makedirs(eff)
+    for n, stage in enumerate(("intake", "implement", "fix"), 1):
+        with open(os.path.join(eff, "iteration-%d.json" % n), "w") as fh:
+            json.dump({"iteration": n, "stage": stage, "model": "claude-sonnet-5-5",
+                       "cost_usd": 0.01, "input_tokens": 10, "output_tokens": 5,
+                       "cache_read_tokens": 0, "cache_creation_tokens": 0}, fh)
+    _cost, model_used, _cache = loki_adapter._collect_cost(loki_dir)
+    assert model_used and "sonnet" in model_used and "opus" not in model_used, model_used
+
+
 def _claude_cmd(**kw):
     from adapters import claude_code
     cap = {}

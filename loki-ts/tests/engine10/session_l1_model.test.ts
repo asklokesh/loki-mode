@@ -143,6 +143,13 @@ describe("EL-W0-06 fix rounds never leak the label and never go below the defaul
     expect(env).toMatch(/^LOKI_CLAUDE_MODEL_DEVELOPMENT=.*opus/m);
     expect(env).not.toContain("LOKI_E10_MODEL_DEFAULT=1");
   }, 20_000);
+  test("repeated failure under LOKI_SESSION_MODEL=sonnet stays on sonnet: an explicit pin is never escalated to opus", async () => {
+    process.env["LOKI_SESSION_MODEL"] = "sonnet";
+    const env = await fixEnv({ fix: { round: 1, signatures: "bun:a.test.ts", diagnosis: "d" } });
+    expect(env).toMatch(/^LOKI_CLAUDE_MODEL_DEVELOPMENT=sonnet$/m);
+    expect(env).toMatch(/^LOKI_CLAUDE_MODEL_PLANNING=sonnet$/m);
+    expect(env).not.toMatch(/opus/);
+  }, 20_000);
 });
 
 describe("EL-W0-06 auxiliary pins are listed", () => {
