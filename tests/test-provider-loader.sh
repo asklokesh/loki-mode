@@ -568,6 +568,23 @@ print(",".join(json.loads(l)["clamped_from"] for l in open(sys.argv[1])))' "$_ef
     || log_fail "claude clamped_from wrong: [$_ef2_cf]"
 rm -rf "$_ef2_dir"
 
+# Effort knob startup cost: loki_effort_argv must start python3 exactly once per call (resolve and
+# ledger write share one process). A python3 shim on PATH counts starts deterministically.
+_lat_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.lat.XXXXXX")"
+_lat_real_py="$(command -v python3)"
+mkdir -p "$_lat_dir/bin"
+printf '#!/bin/sh\necho x >> "%s/count"\nexec "%s" "$@"\n' "$_lat_dir" "$_lat_real_py" > "$_lat_dir/bin/python3"
+chmod 755 "$_lat_dir/bin/python3"
+for _lat_p in opencode aider cline; do
+    PATH="$_lat_dir/bin:$PATH" LOKI_DIR="$_lat_dir/ldir" LOKI_EFFORT=high bash -c '
+        source "$1/models.sh"; : > "$3/count"; loki_effort_argv "$2" "" development' _ "$PROVIDERS_DIR" "$_lat_p" "$_lat_dir"
+    _lat_n="$(wc -l < "$_lat_dir/count" | tr -d ' ')"
+    [ "$_lat_n" = "1" ] \
+        && log_pass "$_lat_p loki_effort_argv starts python3 exactly once" \
+        || log_fail "$_lat_p loki_effort_argv started python3 $_lat_n times (expected 1)"
+done
+rm -rf "$_lat_dir"
+
 
 echo ""
 echo "========================================"

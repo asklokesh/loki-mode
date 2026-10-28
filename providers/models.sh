@@ -160,13 +160,26 @@ PY
 # The catalog row (models[].effort, else providers.<p>.effort) decides: levels clamp
 # the request to the highest allowed level not above it (else the lowest allowed),
 # and a row with no flag prints "unsupported" so no flag is ever invented.
+# Optional 4th/5th args <ledger_file> <stage> make the same python process append the ledger
+# line, so loki_effort_argv costs one interpreter start, not two.
 # Mirror of providerEffortParam in loki-ts/src/providers/model_routes.ts.
 loki_provider_effort() {
     local provider="${1:-}" model="${2:-}" req="${3:-${LOKI_EFFORT:-}}"
     [ -n "$req" ] && [ -f "$LOKI_MODEL_CATALOG" ] || return 0
-    python3 - "$LOKI_MODEL_CATALOG" "$provider" "$model" "$req" <<'PY'
-import json, sys
+    python3 - "$LOKI_MODEL_CATALOG" "$provider" "$model" "$req" "${4:-}" "${5:-}" <<'PY'
+import json, os, sys
 path, provider, model, req = sys.argv[1:5]
+ledger, stage = sys.argv[5], sys.argv[6]
+def emit(eff, flag, frm):
+    print("%s|%s|%s" % (eff, flag, frm))
+    if ledger:
+        try:
+            os.makedirs(os.path.dirname(ledger), exist_ok=True)
+            with open(ledger, "a") as fh:
+                fh.write(json.dumps(dict(zip(["provider","stage","model","effort","clamped_from"],
+                    [provider, stage, model, eff, frm])), separators=(",", ":"), ensure_ascii=False) + "\n")
+        except OSError:
+            pass
 order = ["low", "medium", "high", "xhigh", "max"]
 if req not in order:
     sys.exit(0)
@@ -178,13 +191,13 @@ if not e:
 flag = e.get("flag")
 levels = [l for l in order if l in e.get("levels", [])]
 if e.get("unsupported") or not flag or not levels:
-    print("unsupported||" + req)
+    emit("unsupported", "", req)
     sys.exit(0)
 eff = req
 if eff not in levels:
     below = [l for l in levels if order.index(l) <= order.index(req)]
     eff = below[-1] if below else levels[0]
-print("%s|%s|%s" % (eff, flag, req if eff != req else ""))
+emit(eff, flag, req if eff != req else "")
 PY
 }
 
@@ -205,11 +218,11 @@ print(json.dumps(dict(zip(k,sys.argv[1:6])),separators=(",",":"),ensure_ascii=Fa
 # own effort flag (empty when unrequested or unsupported) and records the outcome.
 loki_effort_argv() {
     _LOKI_EFFORT_ARGV=()
-    local out eff flag from
-    out="$(loki_provider_effort "$1" "$2")" || return 0
+    local out eff flag dir="${LOKI_DIR:-.loki}/state" ledger=""
+    [ -n "${LOKI_EFFORT:-}" ] && ledger="$dir/effort.jsonl"
+    out="$(loki_provider_effort "$1" "$2" "${LOKI_EFFORT:-}" "$ledger" "${3:-}")" || return 0
     [ -n "$out" ] || return 0
-    IFS='|' read -r eff flag from <<<"$out"
+    IFS='|' read -r eff flag _ <<<"$out"
     if [ "$eff" != "unsupported" ] && [ -n "$flag" ]; then _LOKI_EFFORT_ARGV=("$flag" "$eff"); fi
-    loki_effort_record "$1" "${3:-}" "$2" "$eff" "$from"
     return 0
 }
