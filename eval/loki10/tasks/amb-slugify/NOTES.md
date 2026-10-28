@@ -1,0 +1,6 @@
+# amb-slugify provenance (not given to arms)
+
+- stratum: ambiguous one-line brief. The brief leaves one decision open on purpose (options: ascii-fold the accents vs keep them as unicode letters). Authored for the held-out harder set; not drawn from any task used to tune the harness.
+- scoring rule (identical for every arm): PASS if either (1) the repo records the assumption (a line containing an assumption word such as assumed, interpreted, ambiguous, decided, chose, in a text or code file the seed did not already contain) AND that record names exactly one of the options AND the behavior matches the recorded option AND the option-independent invariants hold; or (2) the repo contains a .md/.txt/.rst file that asks a question (contains a question mark) and names every option. Option names are picked by earliest keyword match in the 4 lines starting at the record line.
+- limits: the asking path only counts here if the arm still pushes a branch (the harness grades pushed branches only); a run that stops with a question and pushes nothing is graded not completed, which the scoreboard must report separately from a wrong answer. Path (2) passes without behavior by design; compare arms only on the same rule.
+- seed files are written by setup. red on base: seeds only, hidden test exits 1 (see hidden/RED.txt).

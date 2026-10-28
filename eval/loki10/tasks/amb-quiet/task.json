@@ -1,0 +1,18 @@
+{
+  "id": "amb-quiet",
+  "kind": "quickstart",
+  "prompt": "Add a --quiet flag to tool.py.",
+  "issue_ref": null,
+  "repo": {
+    "source": "fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "python3 -c \"import base64,json,os;d=json.loads(base64.b64decode('eyJSRUFETUUubWQiOiAiIyBsaW5lY2hlY2tcblxudG9vbC5weSBGSUxFIHJlcG9ydHMgb24gdGhlIGxpbmVzIG9mIGEgZmlsZS5cbiIsICJ0b29sLnB5IjogImltcG9ydCBzeXNcblxuXG5kZWYgbWFpbihhcmd2KTpcbiAgICB0cnk6XG4gICAgICAgIHdpdGggb3Blbihhcmd2WzBdKSBhcyBmOlxuICAgICAgICAgICAgbGluZXMgPSBmLnJlYWQoKS5zcGxpdGxpbmVzKClcbiAgICBleGNlcHQgKE9TRXJyb3IsIEluZGV4RXJyb3IpOlxuICAgICAgICBwcmludChcImVycm9yOiBjYW5ub3QgcmVhZCBpbnB1dFwiLCBmaWxlPXN5cy5zdGRlcnIpXG4gICAgICAgIHJldHVybiAyXG4gICAgZm9yIGksIGxpbmUgaW4gZW51bWVyYXRlKGxpbmVzLCAxKTpcbiAgICAgICAgaWYgbm90IGxpbmUuc3RyaXAoKTpcbiAgICAgICAgICAgIHByaW50KFwid2FybmluZzogYmxhbmsgbGluZSAlZFwiICUgaSwgZmlsZT1zeXMuc3RkZXJyKVxuICAgICAgICBlbHNlOlxuICAgICAgICAgICAgcHJpbnQoXCJsaW5lICVkOiBva1wiICUgaSlcbiAgICBwcmludChcImRvbmU6ICVkIGxpbmVzXCIgJSBsZW4obGluZXMpKVxuICAgIHJldHVybiAwXG5cblxuaWYgX19uYW1lX18gPT0gXCJfX21haW5fX1wiOlxuICAgIHN5cy5leGl0KG1haW4oc3lzLmFyZ3ZbMTpdKSlcbiJ9'));[(os.makedirs(os.path.dirname(p) or '.',exist_ok=True),(open(p,'w').write(c) if not os.path.exists(p) else None),(os.chmod(p,0o755) if p.endswith('.sh') else None)) for p,c in d.items()]\"",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_amb_quiet.py"
+    ],
+    "run": "python3 tests_hidden/test_amb_quiet.py"
+  },
+  "timeout_s": 900
+}

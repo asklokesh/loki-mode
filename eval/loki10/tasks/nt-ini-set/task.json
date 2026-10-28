@@ -1,0 +1,18 @@
+{
+  "id": "nt-ini-set",
+  "kind": "quickstart",
+  "prompt": "cfg.py can only `get`. Add `python3 cfg.py FILE set SECTION KEY VALUE` that edits the file in place without rewriting anything it does not need to: comments, blank lines, ordering and the spacing and delimiter (`=` or `:`) of every other line stay byte-identical. Setting an existing key (key match is case-insensitive, section match is case-sensitive) replaces everything after its delimiter and the whitespace following it, keeping the original `key<ws><delim><ws>` prefix of that line. A new key in an existing section is appended as `key = value` right after the last non-blank line of that section; a new section is appended at the end of the file after one blank line as `[section]` then `key = value`. If FILE does not exist it is created with just that section. `set` prints nothing and exits 0. Usage errors still exit 64, and `get` keeps working.",
+  "issue_ref": null,
+  "repo": {
+    "source": "fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "python3 -c \"import base64,json,os;d=json.loads(base64.b64decode('eyJSRUFETUUubWQiOiAiIyBjZmd0b29sXG5cbmNmZy5weSByZWFkcyB2YWx1ZXMgZnJvbSBJTkkgZmlsZXMuXG4iLCAiY2ZnLnB5IjogIiMhL3Vzci9iaW4vZW52IHB5dGhvbjNcbmltcG9ydCBjb25maWdwYXJzZXJcbmltcG9ydCBzeXNcblxuXG5kZWYgbWFpbihhcmd2KTpcbiAgICBpZiBsZW4oYXJndikgPT0gNCBhbmQgYXJndlsxXSA9PSBcImdldFwiOlxuICAgICAgICBjcCA9IGNvbmZpZ3BhcnNlci5Db25maWdQYXJzZXIoKVxuICAgICAgICBjcC5yZWFkKGFyZ3ZbMF0pXG4gICAgICAgIHRyeTpcbiAgICAgICAgICAgIHByaW50KGNwW2FyZ3ZbMl1dW2FyZ3ZbM11dKVxuICAgICAgICBleGNlcHQgS2V5RXJyb3I6XG4gICAgICAgICAgICBwcmludChcIm5vdCBmb3VuZFwiLCBmaWxlPXN5cy5zdGRlcnIpXG4gICAgICAgICAgICByZXR1cm4gMVxuICAgICAgICByZXR1cm4gMFxuICAgIHByaW50KFwidXNhZ2U6IGNmZy5weSBGSUxFIGdldCBTRUNUSU9OIEtFWVwiLCBmaWxlPXN5cy5zdGRlcnIpXG4gICAgcmV0dXJuIDY0XG5cblxuaWYgX19uYW1lX18gPT0gXCJfX21haW5fX1wiOlxuICAgIHN5cy5leGl0KG1haW4oc3lzLmFyZ3ZbMTpdKSlcbiJ9'));[(os.makedirs(os.path.dirname(p) or '.',exist_ok=True),(open(p,'w').write(c) if not os.path.exists(p) else None),(os.chmod(p,0o755) if p.endswith('.sh') else None)) for p,c in d.items()]\"",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_nt_ini_set.py"
+    ],
+    "run": "python3 tests_hidden/test_nt_ini_set.py"
+  },
+  "timeout_s": 900
+}

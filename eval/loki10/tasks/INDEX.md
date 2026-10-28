@@ -75,3 +75,11 @@ Notes:
 - S41-20l (2026-09-30): fourth mining pass (layered libraries), nothing kept; Counts unchanged (28 public, 14 quickstart, 1 augmentiq, 43 dirs). Near miss for a coordinator decision: h2 PR #1314 (two-file flow-control fix, but no linked issue). Everything else is in CANDIDATES.md.
 
 - S41-20m (2026-09-30): application-scale mining pass (httpie, pipx, tox, cookiecutter, pre-commit, coveragepy, black, isort, pylint), nothing kept, medium tier stays at 14 and Counts is unchanged (recounted from disk: 1 augmentiq, 28 public, 14 quickstart, 43 dirs). Dropped: tox#3127/#3736 (merge 69c0b42654cc; built, RED 2 failed, but an of_type.py-only change merging alias overrides passes tests/config/test_main.py with 23 passed). Others rejected from the diff are in CANDIDATES.md.
+
+## Harder held-out strata (multi-file, no test suite, ambiguous brief)
+
+Twelve authored quickstart-kind tasks, 4 per stratum, built on `fixtures/empty-repo/empty-repo.bundle`; `setup` writes the seed files (never overwriting an existing one). Each check was written before any solution and fails on the seeds alone (`hidden/RED.txt`); `hidden/GREEN.txt` is a positive control against a throwaway reference implementation that is not committed. Not drawn from any task used to tune the harness. Provenance and scoring rules are in each task's NOTES.md.
+
+- multi-file change (3 or more source files must change): mf-order-currency, mf-error-codes, mf-pagination, mf-rename-api
+- repo with no test suite (executable acceptance check drives the real entry point): nt-csv-summarize, nt-shell-rotate, nt-router-params, nt-ini-set
+- ambiguous one-line brief (check passes on a recorded assumption that matches the behavior, or on a written question naming the options): amb-slugify, amb-retry, amb-quiet, amb-dedupe

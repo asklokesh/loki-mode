@@ -1,0 +1,18 @@
+{
+  "id": "amb-slugify",
+  "kind": "quickstart",
+  "prompt": "slugify drops accented letters, fix it.",
+  "issue_ref": null,
+  "repo": {
+    "source": "fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "python3 -c \"import base64,json,os;d=json.loads(base64.b64decode('eyJSRUFETUUubWQiOiAiIyB0ZXh0a2l0XG5cblNtYWxsIHRleHQgaGVscGVycy5cbiIsICJ0ZXh0a2l0LnB5IjogImltcG9ydCByZVxuXG5cbmRlZiBzbHVnaWZ5KHMpOlxuICAgIHMgPSBzLmxvd2VyKClcbiAgICBzID0gcmUuc3ViKHJcIlteYS16MC05XStcIiwgXCItXCIsIHMpXG4gICAgcmV0dXJuIHMuc3RyaXAoXCItXCIpXG4ifQ=='));[(os.makedirs(os.path.dirname(p) or '.',exist_ok=True),(open(p,'w').write(c) if not os.path.exists(p) else None),(os.chmod(p,0o755) if p.endswith('.sh') else None)) for p,c in d.items()]\"",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_amb_slugify.py"
+    ],
+    "run": "python3 tests_hidden/test_amb_slugify.py"
+  },
+  "timeout_s": 900
+}

@@ -1,0 +1,5 @@
+# base (seed files only): hidden.run exit code 1
+FAIL repo: AttributeError: module 'catalog.repo' has no attribute 'count'
+FAIL routes: KeyError: 'page'
+FAIL empty: KeyError: 'pages'
+FAIL render: AssertionError: ['item-01', 'item-02', 'item-03', 'item-04', 'item-05', 'item-06', 'item-07', 'item-08', 'item-09', 'item-10', 'item-11', 'item-12', 'item-13', 'item-14', 'item-15', 'item-16', 'item-17', 'item-18', 'item-19', 'item-20', 'item-21', 'item-22', 'item-23']

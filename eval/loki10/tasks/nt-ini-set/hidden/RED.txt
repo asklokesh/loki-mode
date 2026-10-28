@@ -1,0 +1,7 @@
+# base (seed files only): hidden.run exit code 1
+FAIL replace: AssertionError: (64, '', 'usage: cfg.py FILE get SECTION KEY\n')
+FAIL prefix: AssertionError: 
+FAIL append_key: AssertionError: 
+FAIL new_section: AssertionError: 
+FAIL created: AssertionError: 
+FAIL section_case: AssertionError: 

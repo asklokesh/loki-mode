@@ -1,0 +1,6 @@
+# base (seed files only): hidden.run exit code 1
+FAIL shapes: AssertionError: {'status': 404, 'error': 'no such user 9'}
+FAIL classes: AttributeError: type object 'NotFound' has no attribute 'code'
+FAIL generic_dispatch: AssertionError: {'status': 500, 'error': 'short and stout'}
+FAIL conflict: AssertionError: {'status': 200, 'body': {'user': {'name': 'bob'}}}
+FAIL audit: AssertionError: []

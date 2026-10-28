@@ -1,0 +1,18 @@
+{
+  "id": "amb-dedupe",
+  "kind": "quickstart",
+  "prompt": "Make dedupe actually remove the duplicates.",
+  "issue_ref": null,
+  "repo": {
+    "source": "fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "python3 -c \"import base64,json,os;d=json.loads(base64.b64decode('eyJSRUFETUUubWQiOiAiIyBsaXN0a2l0XG5cbkxpc3QgaGVscGVycy5cbiIsICJsaXN0a2l0LnB5IjogImRlZiBkZWR1cGUoaXRlbXMpOlxuICAgIHJldHVybiBsaXN0KGl0ZW1zKVxuIn0='));[(os.makedirs(os.path.dirname(p) or '.',exist_ok=True),(open(p,'w').write(c) if not os.path.exists(p) else None),(os.chmod(p,0o755) if p.endswith('.sh') else None)) for p,c in d.items()]\"",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_amb_dedupe.py"
+    ],
+    "run": "python3 tests_hidden/test_amb_dedupe.py"
+  },
+  "timeout_s": 900
+}

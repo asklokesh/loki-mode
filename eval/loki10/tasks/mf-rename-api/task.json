@@ -1,0 +1,18 @@
+{
+  "id": "mf-rename-api",
+  "kind": "quickstart",
+  "prompt": "Rename acct.users.fetch_user to get_user everywhere. billing, notifications and reports must call users.get_user through the module attribute (so patching users.get_user affects them). Keep fetch_user as a deprecated alias: calling it emits a DeprecationWarning (attributed to the caller) and delegates to users.get_user, resolved at call time. No internal caller may still go through fetch_user, so none of the existing functions may emit a DeprecationWarning. Behavior and return values are otherwise unchanged.",
+  "issue_ref": null,
+  "repo": {
+    "source": "fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "python3 -c \"import base64,json,os;d=json.loads(base64.b64decode('eyJhY2N0L19faW5pdF9fLnB5IjogIiIsICJhY2N0L3VzZXJzLnB5IjogIkRCID0ge1xuICAgIFwiMVwiOiB7XCJpZFwiOiBcIjFcIiwgXCJuYW1lXCI6IFwiQWRhXCIsIFwiZW1haWxcIjogXCJhZGFAZXhhbXBsZS5jb21cIn0sXG4gICAgXCIyXCI6IHtcImlkXCI6IFwiMlwiLCBcIm5hbWVcIjogXCJCb2JcIiwgXCJlbWFpbFwiOiBcImJvYkBleGFtcGxlLmNvbVwifSxcbn1cblxuXG5kZWYgZmV0Y2hfdXNlcih1aWQpOlxuICAgIGlmIHVpZCBub3QgaW4gREI6XG4gICAgICAgIHJhaXNlIEtleUVycm9yKHVpZClcbiAgICByZXR1cm4gZGljdChEQlt1aWRdKVxuIiwgImFjY3QvYmlsbGluZy5weSI6ICJmcm9tIGFjY3QgaW1wb3J0IHVzZXJzXG5cblxuZGVmIGludm9pY2VfZm9yKHVpZCwgY2VudHMpOlxuICAgIHUgPSB1c2Vycy5mZXRjaF91c2VyKHVpZClcbiAgICByZXR1cm4gXCJJbnZvaWNlIGZvciAlczogJWRcIiAlICh1W1wibmFtZVwiXSwgY2VudHMpXG4iLCAiYWNjdC9ub3RpZmljYXRpb25zLnB5IjogImZyb20gYWNjdCBpbXBvcnQgdXNlcnNcblxuXG5kZWYgd2VsY29tZSh1aWQpOlxuICAgIHUgPSB1c2Vycy5mZXRjaF91c2VyKHVpZClcbiAgICByZXR1cm4gXCJ0bz0lcyBzdWJqZWN0PVdlbGNvbWUgJXNcIiAlICh1W1wiZW1haWxcIl0sIHVbXCJuYW1lXCJdKVxuIiwgImFjY3QvcmVwb3J0cy5weSI6ICJmcm9tIGFjY3QgaW1wb3J0IHVzZXJzXG5cblxuZGVmIHJvc3RlcihpZHMpOlxuICAgIHJldHVybiBbdXNlcnMuZmV0Y2hfdXNlcihpKVtcIm5hbWVcIl0gZm9yIGkgaW4gaWRzXVxuIn0='));[(os.makedirs(os.path.dirname(p) or '.',exist_ok=True),(open(p,'w').write(c) if not os.path.exists(p) else None),(os.chmod(p,0o755) if p.endswith('.sh') else None)) for p,c in d.items()]\"",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_mf_rename_api.py"
+    ],
+    "run": "python3 tests_hidden/test_mf_rename_api.py"
+  },
+  "timeout_s": 900
+}

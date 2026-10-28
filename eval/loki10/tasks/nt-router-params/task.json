@@ -1,0 +1,18 @@
+{
+  "id": "nt-router-params",
+  "kind": "quickstart",
+  "prompt": "router.py has exact-match routes only. Add path parameters: a pattern segment written `<name>` matches exactly one non-empty path segment and the handler is called with keyword arguments for the captured values, percent-decoded (a route without parameters is still called with no arguments). Dispatch ignores a query string (`?...`) and a single trailing slash on the request path. Routes are tried in registration order, first match wins. No matching path returns None as before; when the path matches a route but not for this method, raise router.MethodNotAllowed (add it as an Exception subclass) whose `.allowed` attribute is the sorted list of methods registered for that path. A path that matches for the method wins over an earlier route that only matched the path for another method.",
+  "issue_ref": null,
+  "repo": {
+    "source": "fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "python3 -c \"import base64,json,os;d=json.loads(base64.b64decode('eyJSRUFETUUubWQiOiAiIyBtaW5pcm91dGVyXG5cbkEgdGlueSByZXF1ZXN0IHJvdXRlci5cbiIsICJyb3V0ZXIucHkiOiAiY2xhc3MgUm91dGVyOlxuICAgIGRlZiBfX2luaXRfXyhzZWxmKTpcbiAgICAgICAgc2VsZi5yb3V0ZXMgPSBbXVxuXG4gICAgZGVmIGFkZChzZWxmLCBtZXRob2QsIHBhdHRlcm4sIGhhbmRsZXIpOlxuICAgICAgICBzZWxmLnJvdXRlcy5hcHBlbmQoKG1ldGhvZCwgcGF0dGVybiwgaGFuZGxlcikpXG5cbiAgICBkZWYgZGlzcGF0Y2goc2VsZiwgbWV0aG9kLCBwYXRoKTpcbiAgICAgICAgZm9yIG0sIHAsIGggaW4gc2VsZi5yb3V0ZXM6XG4gICAgICAgICAgICBpZiBtID09IG1ldGhvZCBhbmQgcCA9PSBwYXRoOlxuICAgICAgICAgICAgICAgIHJldHVybiBoKClcbiAgICAgICAgcmV0dXJuIE5vbmVcbiJ9'));[(os.makedirs(os.path.dirname(p) or '.',exist_ok=True),(open(p,'w').write(c) if not os.path.exists(p) else None),(os.chmod(p,0o755) if p.endswith('.sh') else None)) for p,c in d.items()]\"",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_nt_router_params.py"
+    ],
+    "run": "python3 tests_hidden/test_nt_router_params.py"
+  },
+  "timeout_s": 900
+}

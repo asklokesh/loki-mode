@@ -1,0 +1,18 @@
+{
+  "id": "nt-csv-summarize",
+  "kind": "quickstart",
+  "prompt": "summarize.py (run as `python3 summarize.py FILE`) crashes on real exports. Make it robust: it must handle quoted fields that contain commas (also in the header), a UTF-8 byte order mark, CRLF line endings, and blank cells (count as 0). Output is one `name=sum` line per column in header order, sums formatted with %g, for every column whose non-blank cells are all numbers and which has at least one number; text columns and all-blank columns are omitted. A missing or unreadable FILE prints a message to stderr, nothing to stdout, and exits 2. Success exits 0. Rows shorter than the header count as blank for the missing cells.",
+  "issue_ref": null,
+  "repo": {
+    "source": "fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "python3 -c \"import base64,json,os;d=json.loads(base64.b64decode('eyJSRUFETUUubWQiOiAiIyB0YWJsZXRvb2xzXG5cbnN1bW1hcml6ZS5weSBGSUxFIHByaW50cyB0aGUgY29sdW1uIHN1bXMgb2YgYSBDU1YgZXhwb3J0LlxuIiwgInN1bW1hcml6ZS5weSI6ICIjIS91c3IvYmluL2VudiBweXRob24zXG5pbXBvcnQgc3lzXG5cblxuZGVmIG1haW4ocGF0aCk6XG4gICAgd2l0aCBvcGVuKHBhdGgpIGFzIGY6XG4gICAgICAgIGhlYWRlciA9IGYucmVhZGxpbmUoKS5yc3RyaXAoXCJcXG5cIikuc3BsaXQoXCIsXCIpXG4gICAgICAgIHN1bXMgPSB7aDogMC4wIGZvciBoIGluIGhlYWRlcn1cbiAgICAgICAgZm9yIGxpbmUgaW4gZjpcbiAgICAgICAgICAgIHBhcnRzID0gbGluZS5yc3RyaXAoXCJcXG5cIikuc3BsaXQoXCIsXCIpXG4gICAgICAgICAgICBmb3IgaCwgdiBpbiB6aXAoaGVhZGVyLCBwYXJ0cyk6XG4gICAgICAgICAgICAgICAgc3Vtc1toXSArPSBmbG9hdCh2KVxuICAgIGZvciBoIGluIGhlYWRlcjpcbiAgICAgICAgcHJpbnQoXCIlcz0lZ1wiICUgKGgsIHN1bXNbaF0pKVxuXG5cbm1haW4oc3lzLmFyZ3ZbMV0pXG4ifQ=='));[(os.makedirs(os.path.dirname(p) or '.',exist_ok=True),(open(p,'w').write(c) if not os.path.exists(p) else None),(os.chmod(p,0o755) if p.endswith('.sh') else None)) for p,c in d.items()]\"",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_nt_csv_summarize.py"
+    ],
+    "run": "python3 tests_hidden/test_nt_csv_summarize.py"
+  },
+  "timeout_s": 900
+}

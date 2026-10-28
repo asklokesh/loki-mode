@@ -1,0 +1,18 @@
+{
+  "id": "nt-shell-rotate",
+  "kind": "quickstart",
+  "prompt": "rotate.sh (run as `bash rotate.sh DIR KEEP`) is meant to keep only the KEEP newest *.log files in DIR (newest by modification time) and delete the rest. It currently deletes one file too many and mangles file names containing spaces. Fix it. It must leave non-.log files and subdirectories (even ones named *.log) alone, and must not touch anything outside DIR. KEEP=0 deletes every .log file. A KEEP that is not a non-negative integer prints usage to stderr, exits 64 and deletes nothing; a DIR that is not a directory exits 66. When DIR has no .log files it exits 0 quietly. Exit 0 on success.",
+  "issue_ref": null,
+  "repo": {
+    "source": "fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "python3 -c \"import base64,json,os;d=json.loads(base64.b64decode('eyJSRUFETUUubWQiOiAiIyBsb2d0b29sc1xuXG5yb3RhdGUuc2ggRElSIEtFRVAgdHJpbXMgb2xkIGxvZ3MuXG4iLCAicm90YXRlLnNoIjogIiMhL2Jpbi9iYXNoXG5kaXI9JDFcbmtlZXA9JDJcbmNkICRkaXJcbmxzIC10ICoubG9nIHwgdGFpbCAtbiArJGtlZXAgfCB3aGlsZSByZWFkIGY7IGRvIHJtICRmOyBkb25lXG4ifQ=='));[(os.makedirs(os.path.dirname(p) or '.',exist_ok=True),(open(p,'w').write(c) if not os.path.exists(p) else None),(os.chmod(p,0o755) if p.endswith('.sh') else None)) for p,c in d.items()]\"",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_nt_shell_rotate.py"
+    ],
+    "run": "python3 tests_hidden/test_nt_shell_rotate.py"
+  },
+  "timeout_s": 900
+}

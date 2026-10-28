@@ -1,0 +1,5 @@
+# base (seed files only): hidden.run exit code 1
+FAIL internal_callers: AttributeError: module 'acct.users' has no attribute 'get_user'
+FAIL alias: AttributeError: module 'acct.users' has no attribute 'get_user'
+FAIL alias_late_binding: AttributeError: module 'acct.users' has no attribute 'get_user'
+FAIL no_leftovers: AssertionError: acct.billing

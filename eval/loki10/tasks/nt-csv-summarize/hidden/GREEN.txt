@@ -1,0 +1,2 @@
+# throwaway reference implementation (not committed): hidden.run exit code 0, last line is the nonce
+n0nce123

@@ -1,0 +1,6 @@
+# base (seed files only): hidden.run exit code 1
+FAIL cli: AssertionError: (0, '350\n')
+FAIL invalid: AssertionError: ('usd', 0)
+FAIL legacy_empty: AssertionError: 10
+
+FAIL lib: AttributeError: 'Order' object has no attribute 'currency'

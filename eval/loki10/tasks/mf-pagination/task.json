@@ -1,0 +1,18 @@
+{
+  "id": "mf-pagination",
+  "kind": "quickstart",
+  "prompt": "The catalog package lists all 23 items in one response. Add pagination across the layers. repo.list_items(offset=0, limit=None) slices (no arguments still returns everything) and repo.count() returns the total. routes.list_route(query) reads string keys `page` (default 1) and `per_page` (default 10, maximum 50) from the query dict and returns (200, body) with body = {\"items\": [...], \"page\": P, \"per_page\": N, \"total\": T, \"pages\": K} where pages is ceil(total/per_page) and at least 1. Non-integer, page < 1, per_page < 1 or per_page > 50 returns (400, {\"error\": \"invalid pagination\"}); a page past the last returns (404, {\"error\": \"page out of range\"}), except page 1 which is always valid. render.render(body) prints the items one per line followed by a final line `Page P of K (T items)`.",
+  "issue_ref": null,
+  "repo": {
+    "source": "fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "python3 -c \"import base64,json,os;d=json.loads(base64.b64decode('eyJjYXRhbG9nL19faW5pdF9fLnB5IjogIiIsICJjYXRhbG9nL3JlcG8ucHkiOiAiSVRFTVMgPSBbXCJpdGVtLSUwMmRcIiAlIGkgZm9yIGkgaW4gcmFuZ2UoMSwgMjQpXVxuXG5cbmRlZiBsaXN0X2l0ZW1zKCk6XG4gICAgcmV0dXJuIGxpc3QoSVRFTVMpXG4iLCAiY2F0YWxvZy9zZXJ2aWNlLnB5IjogImZyb20gY2F0YWxvZyBpbXBvcnQgcmVwb1xuXG5cbmRlZiBhbGxfaXRlbXMoKTpcbiAgICByZXR1cm4gcmVwby5saXN0X2l0ZW1zKClcbiIsICJjYXRhbG9nL3JvdXRlcy5weSI6ICJmcm9tIGNhdGFsb2cgaW1wb3J0IHNlcnZpY2VcblxuXG5kZWYgbGlzdF9yb3V0ZShxdWVyeSk6XG4gICAgcmV0dXJuIDIwMCwge1wiaXRlbXNcIjogc2VydmljZS5hbGxfaXRlbXMoKX1cbiIsICJjYXRhbG9nL3JlbmRlci5weSI6ICJkZWYgcmVuZGVyKGJvZHkpOlxuICAgIHJldHVybiBcIlxcblwiLmpvaW4oYm9keVtcIml0ZW1zXCJdKVxuIn0='));[(os.makedirs(os.path.dirname(p) or '.',exist_ok=True),(open(p,'w').write(c) if not os.path.exists(p) else None),(os.chmod(p,0o755) if p.endswith('.sh') else None)) for p,c in d.items()]\"",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_mf_pagination.py"
+    ],
+    "run": "python3 tests_hidden/test_mf_pagination.py"
+  },
+  "timeout_s": 900
+}

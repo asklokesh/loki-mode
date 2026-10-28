@@ -1,0 +1,18 @@
+{
+  "id": "mf-order-currency",
+  "kind": "quickstart",
+  "prompt": "The shop package (run as `python3 -m shop.cli`, store path from the SHOP_DB environment variable) has no notion of currency. Add it end to end. `add ID CENTS [--currency CODE]` takes the optional flag anywhere after `add`; CODE defaults to USD and must be exactly three uppercase letters, otherwise the command exits 64 and stores nothing. The currency is persisted in the jsonl store, and records written before this change (no currency key) load as USD. `total` prints `<cents> <CODE>` when every order shares one currency (an empty store prints `0 USD`); when currencies are mixed it prints nothing on stdout, a message on stderr and exits 3. Library changes: Order(order_id, amount_cents, currency='USD') exposes .currency and includes it in to_dict(), and totals.total_cents raises ValueError on mixed currencies.",
+  "issue_ref": null,
+  "repo": {
+    "source": "fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "python3 -c \"import base64,json,os;d=json.loads(base64.b64decode('eyJzaG9wL19faW5pdF9fLnB5IjogIiIsICJzaG9wL21vZGVsLnB5IjogImNsYXNzIE9yZGVyOlxuICAgIGRlZiBfX2luaXRfXyhzZWxmLCBvcmRlcl9pZCwgYW1vdW50X2NlbnRzKTpcbiAgICAgICAgc2VsZi5vcmRlcl9pZCA9IG9yZGVyX2lkXG4gICAgICAgIHNlbGYuYW1vdW50X2NlbnRzID0gaW50KGFtb3VudF9jZW50cylcblxuICAgIGRlZiB0b19kaWN0KHNlbGYpOlxuICAgICAgICByZXR1cm4ge1wiaWRcIjogc2VsZi5vcmRlcl9pZCwgXCJhbW91bnRfY2VudHNcIjogc2VsZi5hbW91bnRfY2VudHN9XG4iLCAic2hvcC9zdG9yZS5weSI6ICJpbXBvcnQganNvblxuXG5mcm9tIHNob3AubW9kZWwgaW1wb3J0IE9yZGVyXG5cblxuZGVmIHNhdmUocGF0aCwgb3JkZXJzKTpcbiAgICB3aXRoIG9wZW4ocGF0aCwgXCJ3XCIpIGFzIGY6XG4gICAgICAgIGZvciBvIGluIG9yZGVyczpcbiAgICAgICAgICAgIGYud3JpdGUoanNvbi5kdW1wcyhvLnRvX2RpY3QoKSkgKyBcIlxcblwiKVxuXG5cbmRlZiBsb2FkKHBhdGgpOlxuICAgIG91dCA9IFtdXG4gICAgdHJ5OlxuICAgICAgICBmID0gb3BlbihwYXRoKVxuICAgIGV4Y2VwdCBGaWxlTm90Rm91bmRFcnJvcjpcbiAgICAgICAgcmV0dXJuIG91dFxuICAgIHdpdGggZjpcbiAgICAgICAgZm9yIGxpbmUgaW4gZjpcbiAgICAgICAgICAgIGxpbmUgPSBsaW5lLnN0cmlwKClcbiAgICAgICAgICAgIGlmIGxpbmU6XG4gICAgICAgICAgICAgICAgZCA9IGpzb24ubG9hZHMobGluZSlcbiAgICAgICAgICAgICAgICBvdXQuYXBwZW5kKE9yZGVyKGRbXCJpZFwiXSwgZFtcImFtb3VudF9jZW50c1wiXSkpXG4gICAgcmV0dXJuIG91dFxuIiwgInNob3AvdG90YWxzLnB5IjogImRlZiB0b3RhbF9jZW50cyhvcmRlcnMpOlxuICAgIHJldHVybiBzdW0oby5hbW91bnRfY2VudHMgZm9yIG8gaW4gb3JkZXJzKVxuIiwgInNob3AvY2xpLnB5IjogImltcG9ydCBvc1xuaW1wb3J0IHN5c1xuXG5mcm9tIHNob3AgaW1wb3J0IHN0b3JlLCB0b3RhbHNcbmZyb20gc2hvcC5tb2RlbCBpbXBvcnQgT3JkZXJcblxuXG5kZWYgbWFpbihhcmd2KTpcbiAgICBkYiA9IG9zLmVudmlyb24uZ2V0KFwiU0hPUF9EQlwiLCBcInNob3AuanNvbmxcIilcbiAgICBpZiBsZW4oYXJndikgPj0gMyBhbmQgYXJndlswXSA9PSBcImFkZFwiOlxuICAgICAgICBvcmRlcnMgPSBzdG9yZS5sb2FkKGRiKVxuICAgICAgICBvcmRlcnMuYXBwZW5kKE9yZGVyKGFyZ3ZbMV0sIGFyZ3ZbMl0pKVxuICAgICAgICBzdG9yZS5zYXZlKGRiLCBvcmRlcnMpXG4gICAgICAgIHJldHVybiAwXG4gICAgaWYgYXJndls6MV0gPT0gW1widG90YWxcIl06XG4gICAgICAgIHByaW50KHRvdGFscy50b3RhbF9jZW50cyhzdG9yZS5sb2FkKGRiKSkpXG4gICAgICAgIHJldHVybiAwXG4gICAgcHJpbnQoXCJ1c2FnZTogc2hvcCBhZGQgSUQgQ0VOVFMgfCBzaG9wIHRvdGFsXCIsIGZpbGU9c3lzLnN0ZGVycilcbiAgICByZXR1cm4gNjRcblxuXG5pZiBfX25hbWVfXyA9PSBcIl9fbWFpbl9fXCI6XG4gICAgc3lzLmV4aXQobWFpbihzeXMuYXJndlsxOl0pKVxuIn0='));[(os.makedirs(os.path.dirname(p) or '.',exist_ok=True),(open(p,'w').write(c) if not os.path.exists(p) else None),(os.chmod(p,0o755) if p.endswith('.sh') else None)) for p,c in d.items()]\"",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_mf_order_currency.py"
+    ],
+    "run": "python3 tests_hidden/test_mf_order_currency.py"
+  },
+  "timeout_s": 900
+}

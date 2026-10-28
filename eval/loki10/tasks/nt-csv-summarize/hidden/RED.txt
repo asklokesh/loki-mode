@@ -1,0 +1,6 @@
+# base (seed files only): hidden.run exit code 1
+FAIL quoted_comma: AssertionError: (1, '', 'Traceback (most recent call last):\n  File "<tmp>", line 17, in <module>\n    main(sys.argv[1])\n    ~~~~^^^^^^^^^^^^^\n  File "<tmp>
+FAIL blank_and_short: AssertionError: (1, '', 'Traceback (most recent call last):\n  File "<tmp>", line 17, in <module>\n    main(sys.argv[1])\n    ~~~~^^^^^^^^^^^^^\n  File "<tmp>
+FAIL bom_crlf: AssertionError: (0, "'\\ufeffa=4\\nb=6\\n'", '')
+FAIL omitted: AssertionError: (1, '', 'Traceback (most recent call last):\n  File "<tmp>", line 17, in <module>\n    main(sys.argv[1])\n    ~~~~^^^^^^^^^^^^^\n  File "<tmp>
+FAIL missing: AssertionError: (1, '', 'Traceback (most recent call last):\n  File "<tmp>", line 17, in <module>\n    main(sys.argv[1])\n    ~~~~^^^^^^^^^^^^^\n  File "<tmp>

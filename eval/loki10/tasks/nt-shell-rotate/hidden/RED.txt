@@ -1,0 +1,9 @@
+# base (seed files only): hidden.run exit code 1
+FAIL keep_exact: AssertionError: ['e.log']
+FAIL spaces: AssertionError: (1, ['mid two.log', 'new three.log', 'old one.log'], 'rm: new: No such file or directory\nrm: three.log: No such file or directory\nrm: mid: No such file or directory\nrm: two.log: No such file or directory\nrm: old: No such file or directory\nrm: one.log: No such file or directory\n')
+FAIL untouched: AssertionError: usage: rm [-f | -i] [-dIPRrvWx] file ...
+       unlink [--] file
+rm: dir.log:: No such file or directory
+
+FAIL bad_args: AssertionError: ('-1', 0, ['a.log', 'b.log'])
+FAIL cwd: AssertionError: ([], ['z.log'])
