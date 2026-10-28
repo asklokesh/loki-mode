@@ -230,6 +230,64 @@ One set of definitions for the effort and honesty numbers, used by the bench rep
 - Waited versus active minutes: `waited_s` is the wall-clock seconds a run sat blocked on a person, an upper bound on human attention. `active_s` (in `interventions.json` and `interventions_detail`) is the measured time a person actually worked on steer, input, authorization and repair events, recorded only when both timestamps were measured. `loki trust` shows "Active minutes per accepted" only when every run measured it, otherwise "n/a (not measured)"; an unmeasured value is never reported as 0. Status: the runner does not yet write `active_s` (nothing calls `recordActiveSeconds`), so `loki trust` shows n/a until the writer slice lands. Only non-negative integers are accepted; a float or negative value is dropped as unmeasured.
 - Retries: iterations to completion, taken from the proof `iterations.count` (`loki trust` iterations axis). A retry is not an intervention.
 
+### PostHog insight definitions
+
+Reproducible definitions for the product-analytics dashboard. Every event and property below is an entry in `autonomy/lib/telemetry-schema.json`, the single allowlist for every sender: events `cli_command` (line 18), `installed` (15), `session_start` (21), `session_end` (26), `first_start_attempted` (33), `first_run_blocked` (36), `build_verified` (39); common properties `os_family`, `arch`, `version`, `channel`, `traffic`, `introspective` (lines 5-10); the `command` enum on `cli_command` (line 19). None of these carry an IP, a prompt, a path or any content; the payload cannot, because a key outside the schema is dropped at send. Dashboard settings are outside the repo: confirm the PostHog project has "Discard client IP data" on.
+
+Internal-noise filter, applied to every usage insight (HogQL fragment, called NOISE below):
+
+```
+properties.traffic = 'user' AND properties.introspective = false AND properties.command NOT IN ('version', '--version', '-v', 'help', '--help', '-h', 'other')
+```
+
+`traffic` and `introspective` are absent on events from older releases, so a clean insight over a long window silently drops them. Use the NOISE filter only for releases that send both properties, and read pre-property history through the version query below. Not yet expressible from the schema, therefore not defined here: resume accept rate, verification tax (stage seconds), run-level verdict mix beyond `build_verified`, and an ephemeral-home filter. Add the insight when the event or property enters the schema, not before.
+
+1. Clean daily and weekly active users. Trends, unique users, event `cli_command`, filter NOISE, interval day and week. Introspection and automation are excluded, so a Docker healthcheck calling `loki version` never counts as a user.
+2. Usage by command. Trends, event `cli_command`, filter NOISE, breakdown `command`. Reads which commands real users run.
+3. Provider mix. Trends, unique users, event `session_start`, breakdown `provider` (claude, codex, cline, aider, opencode). Filter `traffic = 'user'`.
+4. Verdict mix. Trends, event `build_verified`, breakdown `headline` (VERIFIED, VERIFIED WITH GAPS, NOT VERIFIED), filter `route = 'engine10'` and `traffic = 'user'`. `build_verified` fires only on a completed run, so this is the mix among reported runs, not among all starts.
+5. Gate pass rate. Trends, event `build_verified`, formula average of `gate_pass_rate`, filter `gates_total > 0`, breakdown `headline`.
+6. Time to first VERIFIED. HogQL, median seconds from the first `installed` to the first VERIFIED `build_verified` per user:
+
+```
+SELECT quantile(0.5)(dateDiff('second', i.t0, v.t1)) AS median_seconds, count() AS users
+FROM (SELECT distinct_id, min(timestamp) AS t0 FROM events WHERE event = 'installed' GROUP BY distinct_id) AS i
+JOIN (SELECT distinct_id, min(timestamp) AS t1 FROM events
+      WHERE event = 'build_verified' AND properties.headline = 'VERIFIED' GROUP BY distinct_id) AS v
+  ON i.distinct_id = v.distinct_id
+WHERE v.t1 >= i.t0
+```
+
+7. Failure Pareto. Bar chart, event `first_run_blocked`, breakdown `blocker` (no_provider, not_logged_in, not_a_repo, git_identity, node, python3, jq, git, curl, disk, skill_symlink, other), sorted descending. Pair with `build_verified` where `headline = 'NOT VERIFIED'` broken down by `evidence_gate_verdict`.
+8. Activation funnel. Funnel, ordered steps `installed`, `first_start_attempted`, `session_start`, `build_verified` with `headline = 'VERIFIED'`, conversion window 14 days, unique users. The `entry` property on `first_start_attempted` gives the entry command for a breakdown.
+
+Version-event hypothesis: the high volume of `version` events is automated healthcheck traffic that predates the v7.89.0 non-interactive auto-off (2026-06-20), not user behaviour. Status: unproven until this query is run on the live project. Run it as HogQL over a window that spans the cutover:
+
+```
+SELECT
+  properties.version AS version,
+  properties.channel AS channel,
+  count() AS version_events,
+  uniq(distinct_id) AS users,
+  round(count() / uniq(distinct_id), 1) AS events_per_user
+FROM events
+WHERE event = 'cli_command'
+  AND properties.command = 'version'
+  AND timestamp >= now() - INTERVAL 365 DAY
+GROUP BY version, channel
+ORDER BY version_events DESC
+LIMIT 100
+```
+
+Read it with these decision rules, fixed before the data so the result cannot be bent to fit:
+
+- Supported: `version_events` is concentrated in releases below 7.89.0 and in `channel = 'docker'`, with events_per_user far above any plausible human rate (a healthcheck every 30 seconds is 2,880 per container per day), and releases at or above 7.89.0 show a small events_per_user. Then `version` is noise, and the NOISE filter above is correct to drop it.
+- Refuted: events_per_user is comparable across the cutover, or the volume sits in `channel` values npm, homebrew or source at releases at or above 7.89.0. Then `version` is real human behaviour (or a different automation source), and the filter must be revisited before any user count is quoted.
+- Split by cutover: repeat the query with an added filter on the `version` property below 7.89.0, then at or above it, using PostHog semver comparison (`semver_lt` and `semver_gte`), and compare totals.
+- Check the residual: at releases at or above 7.89.0, compare `traffic IN ('ci', 'internal')` against `'user'`; a nonzero `user` share with a very high events_per_user in `docker` means a container with telemetry forced on still emits.
+
+Until this query is run, do not quote a usage number from the raw event stream as user behaviour.
+
 ---
 
 ## What we do not have
