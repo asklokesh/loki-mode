@@ -72,5 +72,31 @@ expect_rc "--pubkey good (space form) -> v10 VERIFIED" 0 --pubkey "$T/good.jwk" 
 expect_rc "--pubkey=bad run -> v10 UNCHECKED" 2 "--pubkey=$T/bad.jwk" e10-pk-1
 if grep -q "run: e10-pk-1" "$T/out"; then ok "mismatched key reaches the v10 verdict output"; else bad "mismatched key output: $(cat "$T/out") $(cat "$T/err")"; fi
 
+# LOKI_LEGACY_BASH=1 used to exec bin/loki <-> autonomy/loki forever for verify --pubkey and keys.
+# bounded_legacy <secs> <args...>: background PID, polled, killed and waited; prints rc or TIMEOUT.
+bounded_legacy() {
+    local secs="$1" pid i=0 rc
+    shift
+    (cd "$T" && env -u LOKI_ENGINE LOKI_LEGACY_BASH=1 LOKI_NO_BROWSER=1 LOKI_TELEMETRY_DISABLED=1 LOKI_DIR="$T/.loki" \
+        BUN_FROM_SOURCE=1 bash "$REPO/bin/loki" "$@") >"$T/lout" 2>"$T/lerr" &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt $((secs * 10)) ]; do sleep 0.1; i=$((i + 1)); done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null
+        echo TIMEOUT
+        return
+    fi
+    wait "$pid"
+    rc=$?
+    echo "$rc"
+}
+got="$(bounded_legacy 15 verify "--pubkey=$T/good.jwk" e10-pk-1)"
+if [ "$got" = "0" ]; then ok "legacy bash route: --pubkey good key ends VERIFIED (rc 0)"; else bad "legacy --pubkey good: rc $got: $(head -c 200 "$T/lout") $(head -c 200 "$T/lerr")"; fi
+got="$(bounded_legacy 15 verify --pubkey /nonexistent/k /nonexistent/r)"
+if [ "$got" = "2" ] && grep -q "cannot read an Ed25519 public key" "$T/lerr"; then ok "legacy bash route: unreadable key refused with a reason (rc 2)"; else bad "legacy --pubkey nonexistent: rc $got: $(head -c 200 "$T/lerr")"; fi
+got="$(bounded_legacy 15 keys)"
+if [ "$got" = "2" ] && grep -q "loki keys export" "$T/lout" "$T/lerr"; then ok "legacy bash route: loki keys ends (rc 2 usage)"; else bad "legacy keys: rc $got"; fi
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -20176,20 +20176,21 @@ with open(manifest_path, 'w') as f:
 # usable.
 # ---------------------------------------------------------------------------
 cmd_verify() {
-    # --pubkey FILE or --pubkey=FILE (any position) verifies a receipt against a given public key (v10 engine, no ~/.loki needed).
-    local _pk_arg
+    # One route decision for every engine10-only verify form. --pubkey FILE / --pubkey=FILE
+    # (any position) verifies a receipt against a given public key (no ~/.loki needed). Never
+    # exec bin/loki from here: under LOKI_LEGACY_BASH=1 bin/loki execs this script straight
+    # back, an unbounded exec loop. A workspace composite (composite.json, or --seal-composite
+    # RUN_DIR) is verified by the engine10 verifier directly; bin/loki sends a bare verify here.
+    local _pk_arg _pk_rc
     for _pk_arg in "$@"; do
         case "$_pk_arg" in
-            --pubkey|--pubkey=*|--require-exogenous) exec "$_LOKI_SCRIPT_DIR/../bin/loki" verify "$@" ;;
-        esac
-    done
-    # PATH slice: a workspace composite (composite.json, or --seal-composite RUN_DIR) is
-    # verified by the engine10 verifier directly; bin/loki sends a bare verify back here.
-    for _pk_arg in "$@"; do
-        case "$_pk_arg" in
-            --sign-deploy|--sign-provenance|--url|--receipt|composite.json|*/composite.json|--seal-composite|--seal-composite=*|--max-age|--max-age=*|.loki/groups/*/receipt.json|*/.loki/groups/*/receipt.json|.loki/runs/e10-*/receipt.json|*/.loki/runs/e10-*/receipt.json)
+            --pubkey|--pubkey=*|--require-exogenous|--sign-deploy|--sign-provenance|--url|--receipt|composite.json|*/composite.json|--seal-composite|--seal-composite=*|--max-age|--max-age=*|.loki/groups/*/receipt.json|*/.loki/groups/*/receipt.json|.loki/runs/e10-*/receipt.json|*/.loki/runs/e10-*/receipt.json)
+                # The delegate execs on success, so reaching the next line means it refused.
                 _loki_bun_delegate engine10 verify "$@"
-                return $? ;;
+                _pk_rc=$?
+                echo "loki verify: $_pk_arg needs the Bun engine, which is unavailable: ${_LOKI_DELEGATE_WHY:-bun route unavailable}" >&2
+                [ -z "${_LOKI_DELEGATE_FIX:-}" ] || echo "Fix: ${_LOKI_DELEGATE_FIX}" >&2
+                return "$_pk_rc" ;;
             # A signed deploy record (.loki/deploys/*.json, schema loki.deploy/1) or a run receipt anywhere (schema loki.v10.receipt) is re-checked by the same verifier.
             *.json)
                 if [ -f "$_pk_arg" ] && grep -Eq 'loki\.deploy/1|"schema" *: *"loki\.v10\.receipt' "$_pk_arg" 2>/dev/null; then
@@ -23909,8 +23910,12 @@ main() {
             cmd_verify "$@"
             ;;
         keys)
-            # public-key export lives in the Bun v10 engine; re-enter the shim on that route.
-            exec "$_LOKI_SCRIPT_DIR/../bin/loki" keys "$@"
+            # Public-key export lives in the Bun v10 engine. Delegate to it directly: exec'ing
+            # bin/loki here loops forever under LOKI_LEGACY_BASH=1 (bin/loki execs this script back).
+            _loki_bun_delegate engine10 keys "$@"
+            echo "loki keys: needs the Bun engine, which is unavailable: ${_LOKI_DELEGATE_WHY:-bun route unavailable}" >&2
+            [ -z "${_LOKI_DELEGATE_FIX:-}" ] || echo "Fix: ${_LOKI_DELEGATE_FIX}" >&2
+            exit 1
             ;;
         spec)
             cmd_spec "$@"
