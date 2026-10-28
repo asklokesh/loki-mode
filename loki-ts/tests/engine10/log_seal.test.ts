@@ -5,7 +5,8 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
-import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
+import { receiptSha256 } from "../../src/engine10/stages/seal.ts";
+import { loggedRun, type LoggedRun } from "./fixtures/verify/seal_corpus.ts";
 import { redactEnvelope, redactSecrets } from "../../src/util/redact.ts";
 import { main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
@@ -16,22 +17,7 @@ afterAll(() => { if (saved === undefined) delete process.env["LOKI_RECEIPT_SIGNI
 
 let n = 0;
 /** A signed run whose log line 1 is edited before the seal (the supervisor then appends tamper.detected), or an honest one. */
-function run(tamper: boolean, marker = true, started: Record<string, unknown> = { provider: "claude" }): { dir: string; path: string; lines: () => string[]; put: (l: string[]) => void } {
-  const id = `e10-ls-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl");
-  mkdirSync(dir, { recursive: true });
-  const log = new SupervisorLog(ev, id);
-  log.append("run.started", null, started);
-  if (tamper) writeFileSync(ev, readFileSync(ev, "utf8").replace('"claude"', '"claudX"'));
-  const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sha(readFileSync(ev)), time: { wall_s: 0, stages: {} }, ...(marker ? { log_seal: true } : {}) };
-  const hash = receiptSha256(body as never);
-  writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signReceipt(id, hash) }, null, 2));
-  log.append("receipt.sealed", "seal", { receipt_sha256: hash });
-  log.verify();
-  log.append("run.completed", null, {});
-  log.sealLog();
-  const lines = () => readFileSync(ev, "utf8").trim().split("\n");
-  return { dir, path: join(dir, "receipt.json"), lines, put: (l) => writeFileSync(ev, l.join("\n") + "\n") };
-}
+const run = (tamper: boolean, marker = true, started: Record<string, unknown> = { provider: "claude" }): LoggedRun => loggedRun(root, `e10-ls-${n++}`, { tamper, marker, started });
 const sha = (b: Buffer): string => new Bun.CryptoHasher("sha256").update(b).digest("hex");
 
 describe("Q17-05b redact at source", () => {
