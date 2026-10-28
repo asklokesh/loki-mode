@@ -961,13 +961,18 @@ verify_gate_static() {
                 if [ "$tschecker" = "tsc" ]; then
                     (cd "$tree" && tsc --noEmit --allowJs --jsx preserve --target esnext "$f") >/dev/null 2>&1 || ok=1
                 else
-                    (cd "$tree" && bun --check "$f") >/dev/null 2>&1 || ok=1
+                    # `bun build` parses without evaluating the module, so the
+                    # tree's bunfig preload, .env and top-level code never run.
+                    # --no-env-file and --config=/dev/null also keep the tree's
+                    # own config out; output is discarded.
+                    (cd "$tree" && bun --no-env-file --config=/dev/null build "$f" \
+                        --target=bun --external='*' --outfile /dev/null) >/dev/null 2>&1 || ok=1
                 fi
                 if [ "$ok" -ne 0 ]; then
                     findings=$((findings + 1))
                     details="${details}TS syntax error: $f. "
                     _verify_add_finding "Medium" "lint" "deterministic:$tschecker" "$f" "null" \
-                        "TypeScript syntax error in $f ($tschecker --check failed)."
+                        "TypeScript syntax error in $f ($tschecker syntax check failed)."
                 fi
             done <<<"$ts_files"
         fi

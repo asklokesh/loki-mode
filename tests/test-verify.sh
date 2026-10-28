@@ -555,6 +555,55 @@ else
     _no "evidence.json missing subject.worktree_clean_at_grade"
 fi
 
+# -------------------------------------------------------------------------
+# Scenario 12: the TS syntax check (bun fallback when tsc is absent) must
+# parse only. A tree with a bunfig preload, a .env canary and a top-level
+# side effect must execute none of them; a real syntax error is still found.
+# -------------------------------------------------------------------------
+if command -v bun >/dev/null 2>&1; then
+    # PATH without any directory that provides tsc, so the bun branch is taken.
+    NOTSC_PATH=""
+    _old_ifs="$IFS"; IFS=':'
+    for _d in $PATH; do
+        [ -x "$_d/tsc" ] && continue
+        NOTSC_PATH="${NOTSC_PATH:+$NOTSC_PATH:}$_d"
+    done
+    IFS="$_old_ifs"
+
+    S12="$TMP_ROOT/s12-ts-noexec"
+    init_repo "$S12"
+    ( cd "$S12"
+      git checkout -q -b feature
+      printf '[run]\npreload = ["./preload.ts"]\n\n[test]\npreload = ["./preload.ts"]\n' > bunfig.toml
+      printf 'import { writeFileSync } from "node:fs";\nwriteFileSync("%s/preload-ran", "x");\n' "$S12" > preload.ts
+      printf 'CANARY=env-was-loaded\n' > .env
+      printf 'import { writeFileSync } from "node:fs";\nwriteFileSync("%s/side-effect-ran", String(process.env.CANARY));\nexport const ok: number = 1;\n' "$S12" > good.ts
+      git add bunfig.toml preload.ts .env good.ts
+      git commit -qm "ts tree" --no-gpg-sign --no-verify
+    )
+    ( cd "$S12" && PATH="$NOTSC_PATH" bash "$VERIFY_SH" main ) >/dev/null 2>&1
+    if [ ! -e "$S12/preload-ran" ] && [ ! -e "$S12/side-effect-ran" ]; then
+        _ok "TS syntax check (bun): bunfig preload, .env and top-level code do not run"
+    else
+        _no "TS syntax check (bun) executed tree code: preload=$([ -e "$S12/preload-ran" ] && echo ran || echo no) side-effect=$([ -e "$S12/side-effect-ran" ] && echo ran || echo no)"
+    fi
+    rm -f "$S12/preload-ran" "$S12/side-effect-ran"
+    ( cd "$S12"
+      printf 'export const = ;\n' > bad.ts
+      git add bad.ts
+      git commit -qm "bad ts" --no-gpg-sign --no-verify
+    )
+    ( cd "$S12" && PATH="$NOTSC_PATH" bash "$VERIFY_SH" main ) >/dev/null 2>&1
+    if grep -q 'TS syntax error: bad.ts' "$S12/.loki/verify/evidence.json" 2>/dev/null \
+       && ! grep -q 'TS syntax error: good.ts' "$S12/.loki/verify/evidence.json" 2>/dev/null; then
+        _ok "TS syntax check (bun): syntax error still reported, valid file not flagged"
+    else
+        _no "TS syntax check (bun): bad.ts not reported (or good.ts flagged)"
+    fi
+else
+    echo "  SKIP: bun not on PATH, TS no-exec scenario skipped"
+fi
+
 echo ""
 echo "=== results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]
