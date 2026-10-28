@@ -320,5 +320,20 @@ out="$(cd "$sg" && LOKI_NEXT_ESTIMATE_TIMEOUT=2 LOKI_TS_ENTRY="$sg/hang.js" PATH
 el=$((SECONDS - t0))
 if [ "$rc" -eq 0 ] && [ "$el" -lt 25 ] && printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["suggestions"] and all(x["est_usd"] is None for x in d["suggestions"]); assert any("estimate unavailable" in n for n in d["notes"])' 2>/dev/null; then pass "a hung estimator is bounded: returns in ${el}s with est_usd null and an estimate-unavailable note"; else fail "hung estimator rc=$rc elapsed=${el}s: $out"; fi
 
+# A hung gh must not hang the command: each of the two gh calls has its own timeout (shortened here by env).
+mkdir -p "$sg/.loki/quality"
+printf '%s' '{"pass":false,"runner":"stubrunner","summary":"1 failed"}' > "$sg/.loki/quality/test-results.json"
+for mode in auth list; do
+    mkdir -p "$sg/hang/$mode"
+    if [ "$mode" = auth ]; then
+        printf '%s\n' '#!/bin/sh' 'exec sleep 600' > "$sg/hang/$mode/gh"
+    else
+        printf '%s\n' '#!/bin/sh' 'case "$1" in auth) exit 0 ;; *) exec sleep 600 ;; esac' > "$sg/hang/$mode/gh"
+    fi
+    chmod +x "$sg/hang/$mode/gh"
+    out="$(cd "$sg" && PATH="$sg/hang/$mode:$PATH" LOKI_NEXT_GH_AUTH_TIMEOUT=1 LOKI_NEXT_GH_LIST_TIMEOUT=1 LOKI_TELEMETRY_DISABLED=1 timeout -k 5 60 bash "$LOKI_BIN" next --suggest 2>&1)"; rc=$?
+    if [ "$rc" -eq 0 ] && [[ "$out" == *"issues skipped"* ]] && [[ "$out" == *"[todo]"* ]] && [[ "$out" == *"[failing_test]"* ]]; then pass "a hung gh ($mode call) times out, notes issues skipped, still returns todo and test suggestions"; else fail "hung gh ($mode) rc=$rc: $out"; fi
+done
+
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

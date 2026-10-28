@@ -5872,12 +5872,17 @@ _loki_next_suggest() {
     : > "$tmp/issues"; : > "$tmp/todos"; : > "$tmp/tests"
     # gh runs under a python timeout so a hung network call cannot hang the command.
     python3 - > "$tmp/issues" 2>/dev/null <<'PYEOF' || note="issues skipped: gh not installed, not authenticated, or timed out"
-import json, subprocess, sys
+import json, os, subprocess, sys
+def _t(name, default):
+    try:
+        return float(os.environ.get(name) or default)
+    except ValueError:
+        return default
 try:
-    if subprocess.run(["gh", "auth", "status"], capture_output=True, timeout=10).returncode != 0:
+    if subprocess.run(["gh", "auth", "status"], capture_output=True, timeout=_t("LOKI_NEXT_GH_AUTH_TIMEOUT", 10)).returncode != 0:
         sys.exit(1)
     r = subprocess.run(["gh", "issue", "list", "--state", "open", "--limit", "10", "--json", "number,title"],
-                       capture_output=True, text=True, timeout=15)
+                       capture_output=True, text=True, timeout=_t("LOKI_NEXT_GH_LIST_TIMEOUT", 15))
     if r.returncode != 0:
         sys.exit(1)
     for i in json.loads(r.stdout):
