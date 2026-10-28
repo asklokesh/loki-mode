@@ -102,7 +102,7 @@ else
 fi
 
 # --- Pinned facts (FV-docs-pin) -------------------------------------------------
-# loki answer starts a follow-up run; it does not resume the BLOCKED one.
+# loki answer resumes the BLOCKED run in place; the old "Resume a BLOCKED" wording must not return.
 hits="$(cd "$REPO_ROOT" && grep -rIl "Resume a BLOCKED" README.md autonomy/loki loki-ts/src completions docs/CLI-REFERENCE.md docs/slack.md 2>/dev/null || true)"
 if [ -z "$hits" ]; then pass "loki answer wording: no 'Resume a BLOCKED' left"; else fail "loki answer wording stale in: $(echo "$hits" | tr '\n' ' ')"; fi
 if grep -qi "loki answer" "$REPO_ROOT/docs/slack.md"; then pass "docs/slack.md mentions CLI loki answer"; else fail "docs/slack.md lacks CLI loki answer line"; fi

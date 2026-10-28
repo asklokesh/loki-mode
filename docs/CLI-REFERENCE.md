@@ -86,7 +86,7 @@ Hidden and legacy-only commands are omitted; see `docs/CLI-INVENTORY.md` for the
 | `loki undo` | Plan or apply an undo of a run |
 | `loki verify-pr` | Verify a PR against its linked issue in a sandbox |
 | `loki verify-pr respond` | Fix open review comments on the PR branch, one commit each, reply with the sha |
-| `loki answer` | Start a follow-up run from a BLOCKED run with your answer |
+| `loki answer` | Answer a BLOCKED run; it continues under the same run id |
 | `loki engine10` | v10 engine router |
 | `loki engine10 run` | Run the v10 engine |
 | `loki engine10 status` | v10 status |

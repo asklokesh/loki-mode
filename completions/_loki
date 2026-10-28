@@ -380,7 +380,7 @@ function _loki_commands {
         'crash:Crash report management'
         'otel:OpenTelemetry management'
         'wiki:Wiki commands'
-        'answer:Start a follow-up run from a BLOCKED run with your answer'
+        'answer:Answer a BLOCKED run; it continues under the same run id'
         'verify-pr:Verify a PR against its linked issue in a sandbox'
         'queue:Overnight issue queue with a morning digest'
         'issues:Run every open issue in a repo and open PRs'
