@@ -157,5 +157,82 @@ else
   bad "$_missing of the recommended first-run commands are outside the funnel gate"
 fi
 
+# --- 8. loki telemetry show: schema table equals docs/PRIVACY.md ------------
+SHOW_OUT="$(HOME="$TMPHOME" bash "$SRC" telemetry show 2>&1)"
+SHOW_TBL="$(printf '%s\n' "$SHOW_OUT" | grep '^|')"
+DOC_TBL="$(awk '/telemetry-show:begin/{f=1;next} /telemetry-show:end/{f=0} f&&/^\|/' "$REPO_ROOT/docs/PRIVACY.md")"
+if [ -n "$SHOW_TBL" ] && [ "$SHOW_TBL" = "$DOC_TBL" ]; then
+  ok "telemetry show table equals the docs/PRIVACY.md table"
+else
+  bad "telemetry show table differs from docs/PRIVACY.md (or is empty)"
+fi
+if printf '%s\n' "$SHOW_OUT" | grep -q 'build_verified'; then
+  ok "telemetry show lists the build_verified event"
+else
+  bad "telemetry show does not list build_verified"
+fi
+
+# --- 9. LOKI_TELEMETRY_DEBUG=1 sends nothing and prints keys only -----------
+# A curl stub on PATH records every call; debug mode must make zero.
+# Fresh HOME inside the trap-cleaned dir: earlier sections left
+# TELEMETRY_DISABLED=true in $TMPHOME/.loki/config.
+ORIG_TMPHOME="$TMPHOME"
+TMPHOME="$TMPHOME/dbg"; mkdir -p "$TMPHOME"
+STUBDIR="$TMPHOME/stub"; mkdir -p "$STUBDIR"
+CALLS="$TMPHOME/curl-calls"; : > "$CALLS"
+printf '#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' "$CALLS" > "$STUBDIR/curl"
+chmod +x "$STUBDIR/curl"
+printf 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n' > "$TMPHOME/.loki-telemetry-id"
+DBG_ERR="$TMPHOME/dbg.err"
+(
+  export HOME="$TMPHOME" PATH="$STUBDIR:$PATH" LOKI_TELEMETRY=on LOKI_TELEMETRY_DEBUG=1
+  unset DO_NOT_TRACK LOKI_TELEMETRY_DISABLED CI
+  set +u; SCRIPT_DIR="$REPO_ROOT"; export SCRIPT_DIR
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/autonomy/telemetry.sh"
+  loki_telemetry cli_command command=start
+) 2> "$DBG_ERR"
+sleep 1
+if [ ! -s "$CALLS" ]; then
+  ok "debug mode made 0 network calls (curl stub recorded none)"
+else
+  bad "debug mode called curl: $(cat "$CALLS")"
+fi
+if grep -q 'cli_command: ' "$DBG_ERR" && grep -q 'channel' "$DBG_ERR"; then
+  ok "debug mode printed the event and its property keys"
+else
+  bad "debug mode printed no event line: $(cat "$DBG_ERR")"
+fi
+if grep -E 'aaaaaaaa|phc_|start|/' "$DBG_ERR" >/dev/null; then
+  bad "debug output leaks the id, key, a value or a path"
+else
+  ok "debug output has keys only (no id, key, value or path)"
+fi
+SHOW_AFTER="$(HOME="$TMPHOME" bash "$SRC" telemetry show 2>&1)"
+if grep -q 'cli_command' "$TMPHOME/.loki/telemetry-last.log" 2>/dev/null \
+   && printf '%s\n' "$SHOW_AFTER" | grep -q '  cli_command: '; then
+  ok "telemetry show lists the last debug-recorded event"
+else
+  bad "telemetry show does not list the recorded event"
+fi
+
+# --- 10. Control: without debug the same call DOES reach curl ---------------
+: > "$CALLS"
+(
+  export HOME="$TMPHOME" PATH="$STUBDIR:$PATH" LOKI_TELEMETRY=on
+  unset DO_NOT_TRACK LOKI_TELEMETRY_DISABLED CI LOKI_TELEMETRY_DEBUG
+  set +u; SCRIPT_DIR="$REPO_ROOT"; export SCRIPT_DIR
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/autonomy/telemetry.sh"
+  loki_telemetry cli_command command=start
+) >/dev/null 2>&1
+sleep 1
+if [ -s "$CALLS" ]; then
+  ok "positive control: without debug the sender calls curl"
+else
+  bad "positive control failed: the stub saw no call, so the zero above proves nothing"
+fi
+TMPHOME="$ORIG_TMPHOME"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -111,7 +111,7 @@ _loki_completion() {
             ;;
 
         telemetry)
-            local telemetry_cmds="status enable disable stop start help"
+            local telemetry_cmds="status enable disable stop start show help"
             COMPREPLY=( $(compgen -W "${telemetry_cmds}" -- "$cur") )
             ;;
 

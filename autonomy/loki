@@ -30426,6 +30426,40 @@ TELEM_DISABLE_PY
             esac
             ;;
 
+        show)
+            # The allowlisted telemetry schema (keys and types only), then the
+            # last events recorded under LOKI_TELEMETRY_DEBUG=1 (event name and
+            # property keys only). Lines starting with "|" are the table that
+            # docs/PRIVACY.md reproduces. Reads files only; makes no network call.
+            local _ts_schema="${_LOKI_SCRIPT_DIR}/lib/telemetry-schema.json"
+            [ -f "$_ts_schema" ] || _ts_schema="${SKILL_DIR:-}/autonomy/lib/telemetry-schema.json"
+            if [ ! -f "$_ts_schema" ]; then
+                echo -e "${RED}telemetry schema not found${NC}"
+                return 1
+            fi
+            _TS_SCHEMA="$_ts_schema" python3 -c '
+import json, os
+s = json.load(open(os.environ["_TS_SCHEMA"]))
+def row(name, props):
+    keys = ", ".join("`%s` (%s)" % (k, v["type"]) for k, v in props.items()) or "none"
+    return "| `%s` | %s |" % (name, keys)
+print("| Event | Properties |")
+print("|---|---|")
+print(row("(every event)", s["common"]))
+for ev, props in s["events"].items():
+    print(row(ev, props))
+' || return 1
+            echo ""
+            echo "Last events recorded with LOKI_TELEMETRY_DEBUG=1 (names and keys only):"
+            local _ts_last="${HOME}/.loki/telemetry-last.log"
+            if [ -s "$_ts_last" ]; then
+                sed 's/^/  /' "$_ts_last"
+            else
+                echo "  none (run a command with LOKI_TELEMETRY_DEBUG=1 to record events instead of sending them)"
+            fi
+            echo ""
+            ;;
+
         --help|-h|help)
             echo -e "${BOLD}loki telemetry${NC} - OpenTelemetry management"
             echo ""
@@ -30441,6 +30475,8 @@ TELEM_DISABLE_PY
             echo "  stop                Alias for 'off' (persistent opt-out across all sessions)"
             echo "  analytics on|off|status"
             echo "                      Opt in/out of build-outcome analytics (off by default)"
+            echo "  show                Print the telemetry schema and the last debug-recorded events"
+            echo "                      (LOKI_TELEMETRY_DEBUG=1 prints event keys instead of sending)"
             echo ""
             echo "Anonymous diagnostics are ON by default for individual interactive installs,"
             echo "and OFF in CI, enterprise, air-gapped and non-interactive contexts. An opt-out"

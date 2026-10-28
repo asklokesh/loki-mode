@@ -650,6 +650,7 @@ function _loki_telemetry {
         'disable:Disable OTEL for current project'
         'stop:Permanently opt out across all sessions'
         'start:Remove persistent opt-out'
+        'show:Show telemetry schema and last debug events'
         'help:Telemetry help'
     )
     _describe -t cmds 'telemetry subcommand' cmds

@@ -290,6 +290,26 @@ loki_telemetry() {
         "traffic=$(_loki_traffic)" 2>/dev/null) || return 0
     [ -n "$payload" ] || return 0
 
+    # LOKI_TELEMETRY_DEBUG=1: record and print the event name and the property
+    # KEYS (never values, ids or paths) and send nothing. Runs after the opt-out
+    # gate and the schema filter, so it shows exactly what would have been sent.
+    # `loki telemetry show` reads the same record.
+    if [ "${LOKI_TELEMETRY_DEBUG:-}" = "1" ]; then
+        local _dbg_line
+        _dbg_line=$(printf '%s' "$payload" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(str(d.get("event", "")) + ": " + ", ".join(sorted((d.get("properties") or {}).keys())))
+' 2>/dev/null) || return 0
+        [ -n "$_dbg_line" ] || return 0
+        local _dbg_file="${HOME}/.loki/telemetry-last.log"
+        mkdir -p "${HOME}/.loki" 2>/dev/null || true
+        { tail -n 19 "$_dbg_file" 2>/dev/null; printf '%s\n' "$_dbg_line"; } > "${_dbg_file}.tmp" 2>/dev/null \
+            && mv "${_dbg_file}.tmp" "$_dbg_file" 2>/dev/null
+        printf 'telemetry debug (not sent) %s\n' "$_dbg_line" >&2
+        return 0
+    fi
+
     (curl -sS --max-time 3 -X POST "${LOKI_POSTHOG_HOST}/capture/" \
         -H "Content-Type: application/json" \
         -d "$payload" >/dev/null 2>&1 &) 2>/dev/null

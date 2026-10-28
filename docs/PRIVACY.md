@@ -117,6 +117,26 @@ paths, keys, or repo names -- only anonymous diagnostics.
   PostHog property `$geoip_disable: true`, which asks the analytics service not
   to derive a location from the request's source address.
 
+- Inspect it yourself. `loki telemetry show` prints this schema and the last
+  events recorded under `LOKI_TELEMETRY_DEBUG=1`. With that variable set, the
+  sender prints each event name and its property keys (never values, ids or
+  paths) to stderr and sends nothing. The table below is the output of
+  `loki telemetry show`, and a test keeps the two equal.
+
+<!-- telemetry-show:begin -->
+| Event | Properties |
+|---|---|
+| `(every event)` | `os_family` (enum), `arch` (enum), `version` (semver), `channel` (enum), `traffic` (enum), `introspective` (bool) |
+| `installed` | `first_command` (enum) |
+| `cli_command` | `command` (enum) |
+| `session_start` | `provider` (enum), `complexity` (enum), `parallel` (bool) |
+| `session_end` | `provider` (enum), `duration` (int), `iterations` (int), `result` (int) |
+| `dashboard_start` | none |
+| `first_start_attempted` | `entry` (enum) |
+| `first_run_blocked` | `blocker` (enum) |
+| `build_verified` | `headline` (enum), `route` (enum), `evidence_gate_verdict` (enum), `final_verdict` (enum), `iterations` (int), `files_changed_count` (int), `wall_clock_sec` (number), `gates_passed` (int), `gates_total` (int), `gate_pass_rate` (number) |
+<!-- telemetry-show:end -->
+
 ### 3. Welcome page form (anonymous, explicit submit, opt-in)
 
 The `loki welcome` page (`assets/welcome/welcome.html`) shows an optional form.
