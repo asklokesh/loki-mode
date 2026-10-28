@@ -44,3 +44,19 @@ describe("LOKI_SPEED gate", () => {
     try { expect(renderMainOutput(withPm, summary)).toMatch(/^pre-model 0\.9s \(.*intake 0\.3s/); } finally { delete process.env.LOKI_SPEED; }
   });
 });
+
+describe("intake phases in the pre-model line", () => {
+  const withPhases = (): EventEnvelope[] => journal().map((e) => e.type === "stage.completed" && e.stage === "intake"
+    ? { ...e, data: { intake_timing: { project_model: { ms: 8100, cached: false }, suite_baseline: { ms: 300, cached: true }, deps_install: { skipped: "no dependencies to install" } } } } as EventEnvelope : e);
+  test("the intake phases are carried and a skipped phase prints skipped, never 0.0s", () => {
+    const t = preModelTiming(withPhases(), T0)!;
+    expect(t.intake_phases?.["project_model"]).toEqual({ ms: 8100, cached: false });
+    const line = formatPreModelLine(t, {});
+    expect(line).toContain("[intake: project_model 8.1s, suite_baseline 0.3s cached, deps_install skipped]");
+    expect(line).not.toMatch(/deps_install 0/);
+  });
+  test("no intake_timing: the line is byte-identical to before", () => {
+    expect(preModelTiming(journal(), T0)!.intake_phases).toBeUndefined();
+    expect(formatPreModelLine(preModelTiming(journal(), T0), {})).not.toContain("[intake:");
+  });
+});

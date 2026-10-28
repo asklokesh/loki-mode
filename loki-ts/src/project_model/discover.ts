@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { fastTierModel } from "../runner/model_downgrades.ts";
 import { MAX_TURNS_EXIT } from "../runner/worker_proc.ts";
+import { defaultCacheRoot, readJson, writeJson } from "../engine10/cache.ts";
 import { STAGE_BUDGETS, type RunContext, type SessionResult } from "../engine10/types.ts";
 import { MANIFESTS } from "../runner/repo_profile.ts";
 import { safeGit } from "../util/safe_git.ts";
@@ -65,6 +66,21 @@ export function loadCommitted(repoDir: string): { model: ProjectModel; hash: str
   const v = validateAnswer(repoDir, raw);
   if (!v.ok) return ignore(v.errors.slice(0, 3).join("; "));
   return { model: { ...v.model, key: "" }, hash };
+}
+
+/** Shared store: an OK model keyed by the committed tree hash, so the same content in another checkout (a fresh clone, a benchmark copy) skips the discovery session. A hit is trusted no further than the repo-local cache: parseCached re-validates every citation against this checkout and computeKey must still match its manifests and directory shape. Never throws. */
+const sharedPath = (repoDir: string): { path: string; dir: string } | null => {
+  try { const tree = safeGit(repoDir, ["rev-parse", "HEAD^{tree}"]).trim(), dir = join(defaultCacheRoot(), "project-models"); return /^[0-9a-f]{40,64}$/.test(tree) ? { path: join(dir, `pm-${tree}.json`), dir } : null; } catch { return null; }
+};
+export function loadShared(repoDir: string, dirs: string[], now: number = Date.now()): ProjectModel | null {
+  try {
+    const p = sharedPath(repoDir), raw = p ? readJson<Record<string, unknown>>(p.path, (v): v is Record<string, unknown> => typeof v === "object" && v !== null) : null;
+    const m = raw && raw["status"] === "ok" ? parseCached(repoDir, raw, now) : null;
+    return m && computeKey(repoDir, m.fingerprintFiles, dirs) === m.key ? m : null;
+  } catch { return null; }
+}
+function saveShared(repoDir: string, model: ProjectModel): void {
+  try { const p = sharedPath(repoDir); if (p && model.status === "ok") writeJson(p.path, p.dir, model); } catch { /* an unwritable store only costs the next fresh checkout a session */ }
 }
 
 function save(repoDir: string, model: ProjectModel): void {
@@ -135,6 +151,9 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
     return { model: cached, cached: true, attempts: 0, ...(cached.status === "unknown" ? { owner: "model" as const } : {}) };
   }
 
+  const shared = opts.force ? null : loadShared(ctx.repoDir, dirs);
+  if (shared) { try { save(ctx.repoDir, shared); } catch { /* the shared copy still serves this run */ } return { model: shared, cached: true, attempts: 0 }; }
+
   // FC-55: every tracked file at the root means there is no package below it to learn; the repo-root
   // behavior consumers already have for an unknown model is exactly right, so no session is spent.
   if (isSingleDirectory(ctx.repoDir)) return { model: unknownModel("", "single-directory repo"), cached: false, attempts: 0, owner: "harness" };
@@ -195,7 +214,7 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
     const v = raw === undefined ? null : validateAnswer(ctx.repoDir, raw);
     if (v?.ok) {
       const model: ProjectModel = { ...v.model, key: computeKey(ctx.repoDir, v.model.fingerprintFiles, dirs) };
-      save(ctx.repoDir, model);
+      save(ctx.repoDir, model); saveShared(ctx.repoDir, model);
       return { model, cached: false, attempts: attempt, sessionModel: lastModel! };
     }
     errors = v ? v.errors.slice(0, 20) : ["no JSON answer was found: write the JSON object to the answer file"];

@@ -69,15 +69,17 @@ export function reasonOf(ev: EventEnvelope[], tampered: boolean, stop: string | 
 }
 /** One printable line from a value that may carry attacker-controlled text (a run id, a log event type): control characters (C0, C1, bidi, zero-width, separators), so terminal escapes, become spaces, secrets are redacted, the length is capped. */
 export const plainLine = (v: unknown, max = 200): string => clipWords(redactSecrets(String(v ?? "").replace(/[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\u061c\u180e\ufeff]+/g, " ").trim()), max);
-export interface PreModelTiming { span_s: number; stages: Record<string, number> } // D61-1: startMs to first session.started, self-time per stage ("setup" = none open); sums to span_s
+export type IntakePhases = Record<string, { ms: number; cached?: boolean } | { skipped: string }>; // intake stage data `intake_timing`: a phase that did not run is skipped, never 0 ms
+export interface PreModelTiming { span_s: number; stages: Record<string, number>; intake_phases?: IntakePhases } // D61-1: startMs to first session.started, self-time per stage ("setup" = none open); sums to span_s
 export function preModelTiming(events: EventEnvelope[], startMs: number): PreModelTiming | null {
   const cut = events.find((e) => e.type === "session.started"); if (!cut) return null;
   const cutMs = Math.max(startMs, Date.parse(cut.ts)), stages: Record<string, number> = {}, open: string[] = []; let prev = startMs;
   const charge = (at: number): void => { const n = open.at(-1) ?? "setup"; stages[n] = (stages[n] ?? 0) + (at - prev) / 1000; prev = at; };
   for (const e of events.slice(0, events.indexOf(cut))) { charge(Math.min(Math.max(Date.parse(e.ts), prev), cutMs)); if (e.type === "stage.started" && e.stage) open.push(e.stage); else if (/^stage\.(completed|failed|skipped)$/.test(e.type)) { const i = open.lastIndexOf(String(e.stage)); if (i >= 0) open.splice(i, 1); } }
-  charge(cutMs); return { span_s: (cutMs - startMs) / 1000, stages };
+  charge(cutMs); const ph = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data?.["intake_timing"]; return { span_s: (cutMs - startMs) / 1000, stages, ...(ph && typeof ph === "object" ? { intake_phases: ph as IntakePhases } : {}) };
 }
-export const formatPreModelLine = (t: PreModelTiming | null, env: NodeJS.ProcessEnv = process.env): string => env.LOKI_SPEED === "0" || !t ? "" : `pre-model ${t.span_s.toFixed(1)}s (${Object.entries(t.stages).filter(([, v]) => v >= 0.05).map(([k, v]) => `${k} ${v.toFixed(1)}s`).join(", ")})\n`; // flag off: byte-identical output
+const phasesNote = (t: PreModelTiming): string => t.intake_phases ? ` [intake: ${Object.entries(t.intake_phases).map(([k, v]) => `${k} ${"ms" in v ? `${(v.ms / 1000).toFixed(1)}s${v.cached ? " cached" : ""}` : "skipped"}`).join(", ")}]` : "";
+export const formatPreModelLine = (t: PreModelTiming | null, env: NodeJS.ProcessEnv = process.env): string => env.LOKI_SPEED === "0" || !t ? "" : `pre-model ${t.span_s.toFixed(1)}s (${Object.entries(t.stages).filter(([, v]) => v >= 0.05).map(([k, v]) => `${k} ${v.toFixed(1)}s`).join(", ")})${phasesNote(t)}\n`; // flag off: byte-identical output
 export interface SummaryInput {
   pr: { url: string; draft: boolean; draftReason?: string | null } | null;
   verdict: Verdict;

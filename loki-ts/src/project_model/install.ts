@@ -310,12 +310,19 @@ export function absentDepRoots(repoDir: string, model: ProjectApi | null | undef
 /** Intake's wired pre-step (FC-DEPS-NOT-INSTALLED, then FC-BASELINE-PER-PACKAGE): installs each package absentDepRoots names, once,
  *  through prepareDeps (event deps.install per package; a failure is NOT PROVEN and the run goes on), then records the per-command
  *  baseline for the full-suite commands verify will run. Returns intake's data; deps_not_proven reaches the receipt via verify's not_proven. */
-export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit">, signal: AbortSignal, runners: RunnerName[]): Promise<Record<string, unknown>> {
-  const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model), before = untrackedTops(ctx.repoDir);
+/** Per-subphase intake wall time. A phase that did not run is `{ skipped: reason }`, never `{ ms: 0 }`. */
+export type PhaseTiming = { ms: number; cached?: boolean } | { skipped: string };
+export type IntakeTiming = Partial<Record<"repo_walk" | "project_model" | "deps_install" | "suite_baseline" | "zero_probe", PhaseTiming>>;
+export interface DepsTiming { install?: PhaseTiming; baseline_ms?: number }
+export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit">, signal: AbortSignal, runners: RunnerName[], timing?: DepsTiming): Promise<Record<string, unknown>> {
+  const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model), before = untrackedTops(ctx.repoDir), t0 = Date.now();
   const r = await prepareDeps({ repoDir: ctx.repoDir, model, failed: roots.map((root) => ({ root, harnessOwned: true })), signal, timeoutMs: INSTALL_CAP_MS, opts: { runId: ctx.runId } });
   for (const c of r.checks) ctx.emit("deps.install", "intake", { ...c });
   const created = r.checks.some((c) => c.result === "pass") ? installCreatedSince(ctx.repoDir, before) : null; // a failed install records nothing, so nothing is hidden
+  const installMs = Date.now() - t0, tb = Date.now();
   baselineSuites(ctx.repoDir, fullSuiteSpecs(ctx.repoDir, runners), { rerun: r.checks.some((c) => c.result === "pass") });
+  const install: PhaseTiming = r.checks.length ? { ms: installMs } : { skipped: r.notProven.length ? "install not attempted" : "no dependencies to install" };
+  if (timing) { timing.install = install; timing.baseline_ms = Date.now() - tb; }
   return { ...(r.checks.length || r.notProven.length ? { deps_install: r.checks, deps_not_proven: r.notProven } : {}), ...(created ? { install_created: created } : {}) };
 }
 

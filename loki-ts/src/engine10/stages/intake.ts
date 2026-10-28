@@ -12,7 +12,7 @@ import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_don
 import { hooks } from "../hooks.ts";
 import { snapshotContract } from "../../features/contract.ts";
 import { probeZeroChecks } from "./verify.ts"; import { stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
-import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
+import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps, type DepsTiming, type IntakeTiming } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { ensureProfile, readinessNotice, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 export interface IntakeOptions { taskText?: string; issueJsonPath?: string; }
 interface IssueFields { state: string | null; closed_by_merged_pr?: boolean }
@@ -92,11 +92,13 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   mkdirSync(ctx.runDir, { recursive: true });
   const repomapRef = join(ctx.runDir, "repomap.json");
   const cacheDir = repoCacheDir(repoKey(null, ctx.repoDir)); // same dir sizing.ts and context.ts read; keyed by HEAD^{tree}, so an unchanged tree skips the repo walk and test detection
-  const repoMap = cachedRepoMap(cacheDir, tree, () => buildRepoMap(ctx.repoDir));
+  const tm: IntakeTiming = {}, lap = (): (() => number) => { const t = Date.now(); return () => Date.now() - t; }; let walkCached = true; const walkEnd = lap();
+  const repoMap = cachedRepoMap(cacheDir, tree, () => { walkCached = false; return buildRepoMap(ctx.repoDir); });
   writeFileSync(repomapRef, JSON.stringify(repoMap));
   let testmap = readTestMapCache(cacheDir, tree);
-  if (!testmap) { testmap = await ctx.tests.detect(ctx.repoDir); try { writeTestMapCache(cacheDir, tree, testmap); } catch { /* an unwritable cache only costs the next run a rebuild */ } }
-  const built = process.env.LOKI_REPO_BASELINE !== "0" ? ensureProfile(ctx.repoDir) : null; // REPOMEM: commands + a baseline test run on the untouched tree, reused while the manifests are unchanged; never throws
+  if (!testmap) { walkCached = false; testmap = await ctx.tests.detect(ctx.repoDir); try { writeTestMapCache(cacheDir, tree, testmap); } catch { /* an unwritable cache only costs the next run a rebuild */ } }
+  tm.repo_walk = { ms: walkEnd(), cached: walkCached }; const baselineEnd = lap(), baselineOn = process.env.LOKI_REPO_BASELINE !== "0";
+  const built = baselineOn ? ensureProfile(ctx.repoDir) : null, baselineMs = baselineEnd(); // REPOMEM: commands + a baseline test run on the untouched tree, reused while the manifests are unchanged; never throws
   const readiness = built ? readinessNotice(ctx.repoDir, repoReadiness(built.profile)) : null; // once per repo and score: a repo-config grade is not part of every run's outcome
   if (readiness && process.env.LOKI_E10_READINESS_FOLD === "1") held.fold = readiness;
   else if (readiness) process.stderr.write(`${readiness}\n`); // FV-readiness-env-3; D48 default mode: the supervisor folds it into the last line instead
@@ -116,7 +118,10 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   const stale = already ? unmergedEvidence(ctx.repoDir, already.paths, startBranch) : null;
   if (already && !stale) return { status: "completed", data: { ...base, ignore_snapshot: ignoreSnapshot(ctx.repoDir), ...alreadyData(already) } };
   if (stale) process.stderr.write(`engine10: ${stale.lokiOwn ? unmergedEvidenceNote(stale) : `evidence for the task is on ${stale.branch ?? "HEAD"} but not on ${stale.target}; implementing`}\n`); // L5/L6: the operator sees it when the run goes on to implement
-  const data = { ...base, ...(stale?.lokiOwn ? { unmerged_loki_work: { branch: stale.branch, target: stale.target, commits: stale.commits, message: unmergedEvidenceNote(stale) } } : {}), ...(await intakeProjectModel(ctx, signal, t0, testmap)), ...(await intakeDeps(ctx, signal, testmap.runners)), zero_baseline: await probeZeroChecks(ctx.repoDir, testmap.tests, signal), hidden_cfg: (() => { try { return hiddenRunnerConfigs(ctx.repoDir); } catch { return null; } })(), ignore_snapshot: ignoreSnapshot(ctx.repoDir), repomap_ref: repomapRef, testmap, already_satisfied: false };
+  const pmEnd = lap(), pm = await intakeProjectModel(ctx, signal, t0, testmap); tm.project_model = Object.keys(pm).length ? { ms: pmEnd(), cached: (pm["project_model"] as { cached?: boolean }).cached === true } : { skipped: "project model disabled or unavailable" }; const dt: DepsTiming = {}, depsData = await intakeDeps(ctx, signal, testmap.runners, dt);
+  tm.deps_install = dt.install ?? { skipped: "install step did not run" }; tm.suite_baseline = baselineOn ? { ms: baselineMs + (dt.baseline_ms ?? 0), cached: built?.reused ?? false } : { skipped: "LOKI_REPO_BASELINE=0" };
+  const zeroEnd = lap(), zero_baseline = await probeZeroChecks(ctx.repoDir, testmap.tests, signal); tm.zero_probe = testmap.tests.length ? { ms: zeroEnd() } : { skipped: "no detected test files" };
+  const data = { ...base, ...(stale?.lokiOwn ? { unmerged_loki_work: { branch: stale.branch, target: stale.target, commits: stale.commits, message: unmergedEvidenceNote(stale) } } : {}), ...pm, ...depsData, zero_baseline, hidden_cfg: (() => { try { return hiddenRunnerConfigs(ctx.repoDir); } catch { return null; } })(), ignore_snapshot: ignoreSnapshot(ctx.repoDir), intake_timing: tm, repomap_ref: repomapRef, testmap, already_satisfied: false };
   if (speedEnabled()) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { if (unmergedEvidence(ctx.repoDir, a.paths, startBranch)) throw new Error("evidence not on the PR target"); Object.assign(data, alreadyData(a)); });
   return { status: "completed", data };
 }

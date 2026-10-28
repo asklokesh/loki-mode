@@ -8,7 +8,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSyn
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
-import { cacheFileName, repoKey } from "../../src/engine10/cache.ts";
+import { cacheFileName, defaultCacheRoot, repoKey } from "../../src/engine10/cache.ts";
 import { dirname, join, resolve } from "node:path";
 import { commitStage } from "../../src/engine10/stages/seal.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
@@ -795,5 +795,62 @@ describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
       if (saved.m === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = saved.m;
       if (saved.i === undefined) delete process.env["LOKI_E10_INSTALL"]; else process.env["LOKI_E10_INSTALL"] = saved.i;
     }
+  });
+});
+
+describe("intake subphase timing and the shared project model", () => {
+  const answer = { workspaceKind: "single", workspaceCite: ["README.md"], fingerprintFiles: ["README.md"], packages: [{ name: "app", root: ".", runner: "pytest", cite: ["README.md"],
+    commands: { test: { cmd: "pytest", cwd: ".", cite: ["README.md"] }, lint: null, build: null, start: null }, ui: { present: false, boot: null, cite: [] }, dependsOn: [], install: null }] };
+  const answering = (calls: { n: number }): SessionRunner => ({ async run(o) { calls.n++; const m = /\(absolute path\): (\S+)/.exec(o.brief); if (m) writeFileSync(m[1]!, JSON.stringify(answer)); return { exit: 0, durationS: 0.01, killed: false, markers: [] } as never; } });
+  const timingOf = (r: { data: Record<string, unknown> }) => r.data["intake_timing"] as Record<string, { ms?: number; cached?: boolean; skipped?: string }>;
+  // The shared store is keyed by tree hash under the user's cache root, which a test home does not redirect: every test gets a unique tree and removes its own entry.
+  const uniq = `unique ${process.pid} ${Math.random()}\n`, trees: string[] = [];
+  const stamp = (dir: string, extra = ""): void => { writeFileSync(join(dir, "README.md"), uniq + extra); git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "stamp"]); trees.push(gitOut(dir, ["rev-parse", "HEAD^{tree}"]).trim()); };
+  beforeEach(() => { process.env["LOKI_E10_PROJECT_MODEL"] = "1"; stamp(repoDir); }); // the test preload turns discovery off
+  afterEach(() => { process.env["LOKI_E10_PROJECT_MODEL"] = "0"; for (const t of trees.splice(0)) rmSync(join(defaultCacheRoot(), "project-models", `pm-${t}.json`), { force: true }); });
+
+  test("intake data records repo walk, project model, deps install, suite baseline and zero probe; a phase that did not run is skipped, never 0 ms", async () => {
+    const calls = { n: 0 }, ctx = { ...makeCtx(repoDir, runDir, fakeTests()), sessions: answering(calls) };
+    const r = await runIntake(ctx, new AbortController().signal, { taskText: "do a thing" });
+    expect(r.status).toBe("completed");
+    const t = timingOf(r as never);
+    for (const k of ["repo_walk", "project_model", "suite_baseline"]) expect(typeof t[k]!.ms).toBe("number");
+    expect(t["deps_install"]).toEqual({ skipped: "no dependencies to install" });
+    expect(t["zero_probe"]).toEqual({ skipped: "no detected test files" });
+    expect(t["deps_install"]).not.toHaveProperty("ms");
+  });
+
+  test("LOKI_E10_PROJECT_MODEL=0 records the project model as skipped, and LOKI_REPO_BASELINE=0 records the suite baseline as skipped", async () => {
+    process.env["LOKI_E10_PROJECT_MODEL"] = "0"; process.env["LOKI_REPO_BASELINE"] = "0";
+    try {
+      const r = await runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { taskText: "do a thing" });
+      const t = timingOf(r as never);
+      expect(t["project_model"]).toHaveProperty("skipped"); expect(t["project_model"]).not.toHaveProperty("ms");
+      expect(t["suite_baseline"]).toEqual({ skipped: "LOKI_REPO_BASELINE=0" });
+    } finally { delete process.env["LOKI_E10_PROJECT_MODEL"]; delete process.env["LOKI_REPO_BASELINE"]; }
+  });
+
+  test("a fresh checkout of identical content reuses the shared project model: no discovery session, recorded cached", async () => {
+    const calls = { n: 0 };
+    const cold = await runIntake({ ...makeCtx(repoDir, runDir, fakeTests()), sessions: answering(calls) }, new AbortController().signal, { taskText: "do a thing" });
+    expect(timingOf(cold as never)["project_model"]!.cached).toBe(false); expect(calls.n).toBe(1);
+    const repo2 = freshRepo(), run2 = mkdtempSync(join(tmpdir(), "e10-intake-rundir-"));
+    try {
+      stamp(repo2);
+      expect(gitOut(repo2, ["rev-parse", "HEAD^{tree}"])).toBe(gitOut(repoDir, ["rev-parse", "HEAD^{tree}"]));
+      const warm = await runIntake({ ...makeCtx(repo2, run2, fakeTests()), sessions: answering(calls) }, new AbortController().signal, { taskText: "do a thing" });
+      expect(calls.n).toBe(1); expect(timingOf(warm as never)["project_model"]!.cached).toBe(true); expect(existsSync(join(repo2, ".loki", "project.json"))).toBe(true);
+    } finally { rmSync(repo2, { recursive: true, force: true }); rmSync(run2, { recursive: true, force: true }); }
+  });
+
+  test("the shared model is not trusted when this checkout's manifests differ: discovery runs again", async () => {
+    const calls = { n: 0 };
+    await runIntake({ ...makeCtx(repoDir, runDir, fakeTests()), sessions: answering(calls) }, new AbortController().signal, { taskText: "do a thing" });
+    const repo2 = freshRepo(), run2 = mkdtempSync(join(tmpdir(), "e10-intake-rundir-"));
+    try {
+      stamp(repo2, "different content\n");
+      await runIntake({ ...makeCtx(repo2, run2, fakeTests()), sessions: answering(calls) }, new AbortController().signal, { taskText: "do a thing" });
+      expect(calls.n).toBe(2);
+    } finally { rmSync(repo2, { recursive: true, force: true }); rmSync(run2, { recursive: true, force: true }); }
   });
 });
