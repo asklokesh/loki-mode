@@ -895,6 +895,29 @@ describe("one cost ledger: quota reruns, torn lines, children bucket", () => {
       expect(sumChildLedger(d, "E").usd).toBeNull();
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
+  test("a torn fragment with no id that is a prefix of this run's record start makes the total unknown, wherever it sits", () => {
+    for (const frag of ['{"ru', "{", '{"run_id"']) {
+      const d = tmpCheckout();
+      try {
+        withRunId("other", () => appendChildLedger(d, { ...rec, usd: 9 }));
+        appendFileSync(ledger(d), `${frag}\n`); // torn, before E's first record and not the last line
+        withRunId("E", () => appendChildLedger(d, { ...rec, usd: 5 }));
+        expect(sumChildLedger(d, "E").usd).toBeNull();
+        expect(sumChildLedger(d, "E").partialUsd).toBe(5);
+      } finally { rmSync(d, { recursive: true, force: true }); }
+    }
+  });
+  test("an unattributable fragment after this run's own record that is not the last line makes the total unknown", () => {
+    for (const frag of ['{"ru', '{"ph']) {
+      const d = tmpCheckout();
+      try {
+        withRunId("E", () => appendChildLedger(d, { ...rec, usd: 0.2 }));
+        appendFileSync(ledger(d), `${frag}\n`);
+        withRunId("E", () => appendChildLedger(d, { ...rec, usd: 5 }));
+        expect(sumChildLedger(d, "E").usd).toBeNull();
+      } finally { rmSync(d, { recursive: true, force: true }); }
+    }
+  });
   test("the writer puts run_id first, whether from the env or the record", () => {
     const d = tmpCheckout();
     try {

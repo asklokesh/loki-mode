@@ -92,12 +92,13 @@ export function withChildLedger<A extends unknown[], R extends { stdout: string 
 
 // Child sessions append to metrics/child-sessions.jsonl: the cross-review, reviewer, council, grill, docs and enrich calls and the SDK judge (see the appendChildLedger / withChildLedger / loki_child_ledger_append callers). Project-model and wall are NOT ledger writers.
 // Only this run's lines count (run_id). A line with no dollar figure, or a $0 line with zero usage (E-69), is UNKNOWN, never 0.
-// A ledger that exists but cannot be read is one UNKNOWN part. So is an unparseable line (a torn write) that could hold this run's record: one that names this run (or a prefix of its id, or carries a glued `{"run_id":` record start that does), one after this run's first own record, or a bare fragment at the end of the file (a write possibly still in flight). A torn fragment that names another run, or an unattributable one that ends before this run's first record, cannot contain this run's cost and is skipped. The writer always starts on a fresh line, so a later append never glues onto a fragment.
+// A ledger that exists but cannot be read is one UNKNOWN part. So is an unparseable line (a torn write) that could hold this run's record: one that names this run (or a prefix of its id, or carries a glued `{"run_id":` record start that does), a bare fragment that is a prefix of this run's record start (`{`, `{"ru`, `{"run_id"`) wherever it appears, one after this run's first own record, or a bare fragment at the end of the file (a write possibly still in flight). A torn fragment that names another run, or an unattributable one that is not such a prefix and ends before this run's first record, is skipped. The writer always starts on a fresh line, so a later append never glues onto a fragment.
 const RUN_START = /\{"run_id":"([^"]*)("?)/g;
 function mayHoldRun(line: string, runId: string, seenOwn: boolean, isLast: boolean): boolean {
   let any = false;
   for (const m of line.matchAll(RUN_START)) { any = true; if (m[2] === '"' ? m[1] === runId : runId.startsWith(m[1] ?? "")) return true; }
-  return any ? false : seenOwn || isLast;
+  if (any) return false;
+  return `{"run_id":"${runId}"`.startsWith(line.trim()) || seenOwn || isLast; // a bare fragment that is a prefix of this run's record start (`{`, `{"ru`, `{"run_id"`) may be its torn record, wherever it sits
 }
 export interface ChildSums { usd: number | null; partialUsd: number; measured: number; total: number; inputTokens: number; outputTokens: number }
 export function sumChildLedger(lokiRoot: string, runId: string): ChildSums {
