@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { childEnv, createSessionRunner } from "../../src/engine10/session.ts";
 import { readFileSync } from "node:fs";
-import { loadRepoMap, cascadeImplementModel, modelRank, planMode, wallLimitS, resolveModelAlias, sizeTask, smallMaxChars, smallTaskPath, wallConcurrent, wallFirstModel, wallMaxTokens, wallOutputCap, wallModel } from "../../src/engine10/sizing.ts";
+import { loadRepoMap, cascadeImplementModel, modelRank, planMode, wallLimitS, resolveModelAlias, namedFiles, sizeTask, smallMaxChars, smallTaskPath, wallConcurrent, wallFirstModel, wallMaxTokens, wallOutputCap, wallModel } from "../../src/engine10/sizing.ts";
 import { readPlanScope, planOutOfRepo } from "../../src/util/run_cap.ts";
 import { planStage } from "../../src/engine10/stages/plan.ts";
 import { wallStage, buildWallBrief, WALL_MAP_MAX_LINES } from "../../src/engine10/stages/wall.ts";
@@ -468,5 +468,23 @@ describe("Wall concurrency and output bound knobs", () => {
     const base = { stage: "wall", brief: "b", tier: "development", iterationId: "i", limitS: 10, signal: new AbortController().signal } as SessionRunOptions;
     expect(childEnv({ ...base, maxOutputTokens: 5000 }, { provider: "claude" }).CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("5000");
     expect(childEnv(base, { provider: "claude" }).CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe(process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS);
+describe("namedFiles exact tokens", () => {
+  const m = (files: string[]) => ({ files, entries: [], truncated: false });
+  it("does not match a longer name that merely contains the file name", () => {
+    expect(namedFiles("edit myindex.ts", m(["src/index.ts"]))).toEqual([]);
+    expect(namedFiles("edit index.tsx", m(["src/index.ts"]))).toEqual([]);
+    expect(namedFiles("edit my-index.ts and index.ts.bak", m(["src/index.ts"]))).toEqual([]);
+    expect(namedFiles("edit index.ts", m(["src/myindex.ts", "src/index.tsx", "src/index.ts"]))).toEqual(["src/index.ts"]);
+  });
+  it("matches a path named in the task", () => {
+    expect(namedFiles("fix the bug in src/app.py", m(["src/app.py", "src/other.py"]))).toEqual(["src/app.py"]);
+  });
+  it("matches through surrounding punctuation", () => {
+    for (const t of ["see `app.py`, then", "fix (app.py)", "update app.py.", "update app.py, then", "\"app.py\":"]) expect(namedFiles(t, m(["app.py"]))).toEqual(["app.py"]);
+  });
+  it("does not match a bare word to a file with an extension", () => {
+    expect(namedFiles("refactor main", m(["cmd/main.go"]))).toEqual([]);
+    expect(namedFiles("refactor the main.goal", m(["cmd/main.go"]))).toEqual([]);
+    expect(namedFiles("refactor main.go", m(["cmd/main.go"]))).toEqual(["cmd/main.go"]);
   });
 });

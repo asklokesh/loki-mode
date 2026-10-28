@@ -7,9 +7,11 @@ import { resolveClaudeModel } from "../util/claude_model.ts"; import { wallConcu
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap, TestRef } from "./types.ts";
 
-/** Repo-map files whose basename appears in the task text; no keyword scoring, tune from eval data. */
+const escRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Repo-map files whose basename appears in the task as an exact token (not inside a longer name like myindex.ts or index.tsx; a trailing sentence period is fine); no keyword scoring, tune from eval data. */
 export function namedFiles(task: string, map: RepoMap | null): string[] {
-  return (map?.files ?? []).filter((f) => task.toLowerCase().includes(basename(f).toLowerCase()));
+  const text = task.toLowerCase();
+  return (map?.files ?? []).filter((f) => new RegExp(`(?<![\\w.-])${escRe(basename(f).toLowerCase())}(?![\\w-]|\\.\\w)`).test(text));
 }
 
 /** P12-46: "large" = names more than LARGE_NAMED_FILES repo files; never lean, routed to decompose (a large unit never runs in parallel). */
