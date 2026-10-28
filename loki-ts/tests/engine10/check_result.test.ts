@@ -121,6 +121,13 @@ describe("runCheck routes through the shared classifier", () => {
 describe("wall base classify", () => {
   const f = { path: "w.test.ts", runner: "vitest" } as never;
   test("exit 0 with zero tests is not_run", () => { expect(classify(f, 0, VITEST_NO_FILES, "/tmp")).toBe("not_run"); });
+  test("unittest exit 1 is red only with a trusted FAILED trailer", () => {
+    const u = { path: "test_w.py", runner: "unittest" } as never;
+    const trailer = "F\n======\nFAIL: test_a (t.T)\n----------------------------------------------------------------------\nRan 1 test in 0.001s\n\nFAILED (failures=1)\n";
+    expect(classify(u, 1, trailer, "/tmp")).toBe("fail");
+    expect(classify(u, 1, "Traceback (most recent call last):\nboom\n", "/tmp")).toBe("not_run"); // no trailer: untrusted
+    expect(classify(u, 1, "Ran 1 test in 0.001s\n\nOK\n", "/tmp")).toBe("not_run"); // OK trailer contradicts exit 1
+  });
   test("exit 0 with tests is pass", () => { expect(classify(f, 0, VITEST_REAL, "/tmp")).toBe("pass"); });
 });
 
