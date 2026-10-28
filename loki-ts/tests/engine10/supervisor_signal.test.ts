@@ -1,6 +1,6 @@
 // D50-F1c: SIGINT/SIGTERM mid-run returns the checkout to the starting branch, kills worker and session groups, keeps the run branch.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -601,4 +601,78 @@ describe("loki start continues a cancelled run", () => {
     expect(statusNextStep(none.dir, join(none.dir, ".loki", "runs"), RID, readEvents(none.path))).toContain("offers to start fresh");
     expect(nextStepText(RID, "verify", true, true)).toContain("resume");
   });
+});
+
+// Steer-ack KPI: the real `loki steer` is injected at 5 points of a stub-provider run. Each steer must (a) print its ack line fast,
+// (b) be read at the expected stage, (c) lose no work, and (d) be applied (or refused loudly) before seal: never silently left behind.
+describe("loki steer at five stage points (stub provider)", () => {
+  const LOKI = resolve(import.meta.dir, "../../../autonomy/loki");
+  const ACK_BUDGET_S = 5;
+  type Stage = "plan" | "wall" | "implement" | "verify";
+  type Point = { at: string; stage: Stage; readAt: string; sealRefuses: boolean };
+  // stage = the stage about to run when the steer arrives; plan and implement sessions read steers, wall and verify do not.
+  const POINTS: Point[] = [
+    { at: "before-plan", stage: "plan", readAt: "plan", sealRefuses: false },
+    { at: "before-wall", stage: "wall", readAt: "implement", sealRefuses: true },
+    { at: "before-implement", stage: "implement", readAt: "implement", sealRefuses: true },
+    { at: "before-verify", stage: "verify", readAt: "seal", sealRefuses: true },
+    { at: "mid-wall-session", stage: "wall", readAt: "implement", sealRefuses: true },
+  ];
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const measured: string[] = [];
+  for (const p of POINTS) test(`steer ${p.at}: ack within ${ACK_BUDGET_S}s, read at ${p.readAt}, no lost work, applied before seal`, async () => {
+    const { withSteer, staleAtSeal, staleReason, readIntentRevisions } = await import("../../src/util/steer.ts");
+    const dir = mkdtempSync(join(tmpdir(), "e10-steer5-")); roots.push(dir);
+    execFileSync("git", ["init", "-q", "-b", "main", dir]);
+    git(dir, "config", "user.name", "t"); git(dir, "config", "user.email", "t@example.com");
+    writeFileSync(join(dir, "a.txt"), "base\n"); git(dir, "add", "a.txt"); git(dir, "commit", "-q", "-m", "base");
+    mkdirSync(join(dir, ".loki"));
+    const baseSha = git(dir, "rev-parse", "HEAD");
+    const note = `steer at ${p.at}: prefer small functions`;
+    const timeline: { stage: string; startMs: number }[] = [], ctx = { intentRevisions: [] as import("../../src/util/steer.ts").IntentRevision[], timeline };
+    const readStages: string[] = [], env = { ...process.env, LOKI_STEER_ACTOR: "tester", LOKI_STEER_SOURCE: "cli" } as NodeJS.ProcessEnv;
+    delete env.LOKI_PROMPT_INJECTION;
+    let ackS = -1, ack = "";
+    const inject = () => {
+      const t0 = performance.now();
+      const r = spawnSync("bash", [LOKI, "steer", note], { cwd: dir, env, encoding: "utf8" });
+      ackS = (performance.now() - t0) / 1000; ack = r.stdout;
+      expect(r.status).toBe(0);
+    };
+    // Stub provider: a session records whether its brief carried the steer; the implement session produces the work.
+    const session = (stage: Stage): void => {
+      timeline.push({ stage, startMs: Date.now() });
+      const out = withSteer({ stage, brief: "task\n\nbody" }, dir, ctx.intentRevisions);
+      if ((out.brief as string).includes("prefer small functions")) readStages.push(stage);
+      if (stage === "implement") { writeFileSync(join(dir, "feature.txt"), "feature work\n"); git(dir, "add", "feature.txt"); git(dir, "commit", "-q", "-m", "feature"); }
+    };
+    for (const st of ["plan", "wall", "implement", "verify"] as Stage[]) {
+      await sleep(8);
+      if (p.at === "mid-wall-session" && st === "wall") { timeline.push({ stage: "wall", startMs: Date.now() }); await sleep(8); inject(); await sleep(8); continue; }
+      if (st === p.stage) inject();
+      await sleep(8);
+      session(st);
+    }
+    const diffStat = git(dir, "diff", "--stat", baseSha, "HEAD");
+    const stale = staleAtSeal(dir, ctx);
+    const read = readStages[0] ?? (stale.length > 0 ? "seal" : "never");
+    expect(ack).toContain("Steer rev 1 received: applies at next plan/implement stage.");
+    expect(ackS).toBeLessThan(ACK_BUDGET_S);
+    expect(read).toBe(p.readAt);
+    // never left behind: inbox empty, archived with the exact text, revision recorded
+    expect(existsSync(join(dir, ".loki", "HUMAN_INPUT.md"))).toBe(false);
+    const arch = execFileSync("sh", ["-c", "cat .loki/logs/human-input-*.md"], { cwd: dir, encoding: "utf8" });
+    expect(arch).toContain(note);
+    expect(readIntentRevisions(dir).map((r) => r.rev)).toEqual([1]);
+    // seal: a pre-Wall steer passes; a post-Wall steer must refuse loudly and name the rev
+    if (p.sealRefuses) { expect(stale.map((r) => r.rev)).toEqual([1]); expect(staleReason(stale)).toContain("operator steer rev 1 arrived after the Wall was frozen"); }
+    else expect(stale).toEqual([]);
+    // no lost work: the implement commit is intact, the base file is untouched, the tree is clean apart from .loki
+    expect(diffStat).toContain("feature.txt");
+    expect(git(dir, "show", "HEAD:feature.txt")).toBe("feature work");
+    expect(git(dir, "status", "--porcelain", "--", ".", ":(exclude).loki")).toBe("");
+    expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("base\n");
+    measured.push(`${p.at}: ack ${ackS.toFixed(3)}s, read at ${read}, seal ${p.sealRefuses ? "refuses (post-Wall)" : "accepts"}, diff: ${diffStat.split("\n").pop()!.trim()}`);
+  }, 30000);
+  test("steer KPI summary", () => { console.log(`steer-ack KPI\n${measured.join("\n")}`); expect(measured.length).toBe(POINTS.length); });
 });
