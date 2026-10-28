@@ -1,6 +1,7 @@
 // D51-A4: pr_opened / blocked / finished post well-formed Slack payloads to a local mock webhook.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { notifyEvent } from "../../src/util/slack_events.ts";
+import { createHmac } from "node:crypto";
+import { notifyEvent, signWebhookBody, webhookPayload } from "../../src/util/slack_events.ts";
 
 const bodies: any[] = [];
 let server: ReturnType<typeof Bun.serve>;
@@ -69,5 +70,49 @@ describe("slack events", () => {
         expect(bodies).toHaveLength(1);
       }
     } finally { slow.stop(true); }
+  });
+});
+
+describe("signed webhook", () => {
+  const hits: { body: string; sig: string | null }[] = [];
+  let srv: ReturnType<typeof Bun.serve>;
+  let hook = "";
+  beforeAll(() => {
+    srv = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) { hits.push({ body: await req.text(), sig: req.headers.get("x-loki-signature") }); return new Response("ok"); } });
+    hook = `http://127.0.0.1:${srv.port}/hook`;
+  });
+  afterAll(() => srv.stop(true));
+  const verify = (secret: string, body: string, sig: string | null) => sig === `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
+  const events = ["pr_opened", "blocked", "finished", "budget", "stuck"] as const;
+
+  test("each event carries schema_version 1 and a signature the secret verifies", async () => {
+    for (const ev of events) {
+      hits.length = 0;
+      await notifyEvent({ LOKI_WEBHOOK_URL: hook, LOKI_WEBHOOK_SECRET: "s3cret" }, ev, { repo: "acme/widgets", outcome: "VERIFIED", stage: "verify" });
+      expect(hits).toHaveLength(1);
+      const b = JSON.parse(hits[0]!.body);
+      expect(b.schema_version).toBe(1);
+      expect(b.event).toBe(ev);
+      expect(verify("s3cret", hits[0]!.body, hits[0]!.sig)).toBe(true);
+    }
+  });
+  test("a wrong secret or a tampered body fails verification", async () => {
+    hits.length = 0;
+    await notifyEvent({ LOKI_WEBHOOK_URL: hook, LOKI_WEBHOOK_SECRET: "s3cret" }, "finished", { outcome: "VERIFIED" });
+    const h = hits[0]!;
+    expect(verify("other", h.body, h.sig)).toBe(false);
+    expect(verify("s3cret", h.body.replace("VERIFIED", "FAILED"), h.sig)).toBe(false);
+  });
+  test("no secret means no send, even with a URL", async () => {
+    hits.length = 0;
+    await notifyEvent({ LOKI_WEBHOOK_URL: hook }, "finished", { outcome: "VERIFIED" });
+    expect(hits).toHaveLength(0);
+  });
+  test("payload excludes prompt-bearing text and paths; the secret never reaches stderr", () => {
+    const p = JSON.stringify(webhookPayload("blocked", { question: "SECRET PROMPT TEXT", summary: "SUMMARY /Users/x/proj", action: "do /tmp/y", outcome: "BLOCKED" }));
+    expect(p).not.toContain("PROMPT");
+    expect(p).not.toContain("/Users");
+    expect(p).not.toContain("/tmp");
+    expect(signWebhookBody("k", "{}")).toMatch(/^sha256=[0-9a-f]{64}$/);
   });
 });

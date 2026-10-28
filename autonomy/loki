@@ -16637,7 +16637,8 @@ cmd_notify_help() {
     echo "Environment Variables:"
     echo "  LOKI_SLACK_WEBHOOK    Slack incoming webhook URL"
     echo "  LOKI_DISCORD_WEBHOOK  Discord webhook URL"
-    echo "  LOKI_WEBHOOK_URL      Custom webhook URL (POST JSON)"
+    echo "  LOKI_WEBHOOK_URL      Custom webhook URL (POST JSON, signed)"
+    echo "  LOKI_WEBHOOK_SECRET   HMAC-SHA256 key for X-Loki-Signature (required to send)"
     echo "  LOKI_NOTIFY_CHANNELS  Channels to use (comma-separated: slack,discord,webhook,desktop)"
     echo "                        Default: all configured channels"
     echo ""
@@ -16842,6 +16843,10 @@ cmd_notify_send() {
                 echo -e "${RED}Error: LOKI_WEBHOOK_URL not set${NC}"
                 exit 1
             fi
+            if [ -z "${LOKI_WEBHOOK_SECRET:-}" ]; then
+                echo -e "${RED}Error: LOKI_WEBHOOK_SECRET not set (webhooks are signed; nothing sent)${NC}"
+                exit 1
+            fi
             if send_webhook_notification "$message" "Manual"; then
                 echo -e "${GREEN}Sent to webhook${NC}"
             else
@@ -16961,7 +16966,16 @@ EOF
         "$webhook_url" > /dev/null 2>&1
 }
 
-# Send notification to custom webhook
+# HMAC-SHA256 of stdin keyed by LOKI_WEBHOOK_SECRET, lowercase hex. The secret is
+# read from the environment inside python3 so it never appears in argv or logs.
+_webhook_hmac_hex() {
+    python3 -c 'import hashlib,hmac,os,sys;print(hmac.new(os.environ["LOKI_WEBHOOK_SECRET"].encode(),sys.stdin.buffer.read(),hashlib.sha256).hexdigest())'
+}
+
+# Send a signed lifecycle event to the custom webhook (POST JSON, schema_version 1).
+# Header X-Loki-Signature: sha256=<hex HMAC of the exact body>. No LOKI_WEBHOOK_SECRET
+# means nothing is sent. The payload carries the event name and project name only:
+# no message text, no prompt text, no absolute paths.
 send_webhook_notification() {
     local message="$1"
     local event_type="${2:-Notification}"
@@ -16970,34 +16984,22 @@ send_webhook_notification() {
     if [ -z "$webhook_url" ]; then
         return 1
     fi
+    if [ -z "${LOKI_WEBHOOK_SECRET:-}" ] || ! command -v python3 >/dev/null 2>&1; then
+        echo "loki: webhook not sent: set LOKI_WEBHOOK_SECRET to sign outbound webhooks" >&2
+        return 1
+    fi
 
-    local project_name
-    project_name=$(basename "$(pwd)")
-    local timestamp
+    local timestamp event_escaped project_escaped payload sig
     timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    local message_escaped event_escaped project_escaped cwd_escaped
-    message_escaped=$(printf '%s' "$message" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g')
-    event_escaped=$(printf '%s' "$event_type" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g')
-    project_escaped=$(printf '%s' "$project_name" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g')
-    cwd_escaped=$(printf '%s' "$(pwd)" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g')
+    event_escaped=$(printf '%s' "$event_type" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    project_escaped=$(printf '%s' "$(basename "$(pwd)")" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    payload=$(printf '{"schema_version":1,"source":"loki-mode","event":"%s","project":"%s","timestamp":"%s"}' \
+        "$event_escaped" "$project_escaped" "$timestamp")
+    sig=$(printf '%s' "$payload" | _webhook_hmac_hex) || return 1
 
-    # Build generic JSON payload
-    local payload
-    payload=$(cat <<EOF
-{
-    "source": "loki-mode",
-    "event": "$event_escaped",
-    "message": "$message_escaped",
-    "project": "$project_escaped",
-    "timestamp": "$timestamp",
-    "cwd": "$cwd_escaped"
-}
-EOF
-)
-
-    # Send to webhook
-    curl -s -X POST -H 'Content-type: application/json' \
-        --data "$payload" \
+    printf '%s' "$payload" | curl -s -X POST -H 'Content-type: application/json' \
+        -H "X-Loki-Signature: sha256=${sig}" \
+        --data-binary @- \
         "$webhook_url" > /dev/null 2>&1
 }
 

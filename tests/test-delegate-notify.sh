@@ -346,6 +346,99 @@ else
     bad "loki notify desktop with no notifier" "rc=$n_rc calls=${n_calls:-0} out=$n_out"
 fi
 
+# --- signed outbound webhook: stub receiver on a run-owned port, stopped by PID ---
+HOOK_DIR="$WORK/hook"
+mkdir -p "$HOOK_DIR"
+cat > "$HOOK_DIR/recv.py" <<'PYEOF'
+import http.server, json, sys, base64
+out = sys.argv[1]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        with open(out, "a") as f:
+            f.write(json.dumps({"sig": self.headers.get("X-Loki-Signature", ""), "body": base64.b64encode(body).decode()}) + "\n")
+        self.send_response(200); self.end_headers()
+    def log_message(self, *a): pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+with open(out + ".port", "w") as f:
+    f.write(str(srv.server_port))
+srv.serve_forever()
+PYEOF
+HOOK_LOG="$HOOK_DIR/hits.jsonl"
+: > "$HOOK_LOG"
+python3 "$HOOK_DIR/recv.py" "$HOOK_LOG" >/dev/null 2>&1 &
+HOOK_PID=$!
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    [ -s "$HOOK_LOG.port" ] && break
+    sleep 0.25
+done
+HOOK_PORT="$(cat "$HOOK_LOG.port" 2>/dev/null)"
+
+if [ -z "$HOOK_PORT" ]; then
+    bad "stub webhook receiver started" "no port"
+else
+    SECRET="pg-test-secret-$$"
+    : > "$HOOK_LOG"
+    w_out="$(cd "$WORK" && env LOKI_WEBHOOK_URL="http://127.0.0.1:$HOOK_PORT/h" LOKI_WEBHOOK_SECRET="$SECRET" "$BASH" "$LOKI_BIN" notify webhook "do the secret prompt at $WORK" 2>&1)"; w_rc=$?
+    verify_hit() { # $1 secret
+        python3 - "$HOOK_LOG" "$1" <<'PYEOF'
+import sys, json, hmac, hashlib, base64
+line = open(sys.argv[1]).readline()
+d = json.loads(line)
+body = base64.b64decode(d["body"])
+want = "sha256=" + hmac.new(sys.argv[2].encode(), body, hashlib.sha256).hexdigest()
+sys.exit(0 if hmac.compare_digest(want, d["sig"]) else 1)
+PYEOF
+    }
+    if [ "$w_rc" -eq 0 ] && verify_hit "$SECRET"; then
+        ok "webhook: signature header verifies against the exact body"
+    else
+        bad "webhook: signature verifies" "rc=$w_rc out=$w_out hits=$(cat "$HOOK_LOG")"
+    fi
+    if verify_hit "wrong-secret"; then
+        bad "webhook: wrong secret must fail verification"
+    else
+        ok "webhook: wrong secret fails verification"
+    fi
+    body_json="$(python3 -c 'import sys,json,base64;print(base64.b64decode(json.loads(open(sys.argv[1]).readline())["body"]).decode())' "$HOOK_LOG")"
+    if python3 -c 'import sys,json;d=json.loads(sys.argv[1]);assert d["schema_version"]==1 and d["event"]=="Manual" and d["source"]=="loki-mode"' "$body_json" 2>/dev/null; then
+        ok "webhook: body is JSON with schema_version 1 and the event"
+    else
+        bad "webhook: body schema" "$body_json"
+    fi
+    case "$body_json" in
+        *"secret prompt"*|*"$WORK"*|*"/tmp"*|*"/var/"*) bad "webhook: payload leaks message text or an absolute path" "$body_json" ;;
+        *) ok "webhook: payload has no message text or absolute path" ;;
+    esac
+    case "$w_out" in
+        *"$SECRET"*) bad "webhook: secret printed to output" ;;
+        *) ok "webhook: secret never printed" ;;
+    esac
+    # tampered body: same signature over a changed body must not verify
+    python3 - "$HOOK_LOG" <<'PYEOF'
+import sys, json, base64
+p = sys.argv[1]
+d = json.loads(open(p).readline())
+d["body"] = base64.b64encode(base64.b64decode(d["body"]).replace(b"Manual", b"Hacked")).decode()
+open(p, "w").write(json.dumps(d) + "\n")
+PYEOF
+    if verify_hit "$SECRET"; then
+        bad "webhook: tampered body must fail verification"
+    else
+        ok "webhook: tampered body fails verification"
+    fi
+    # no secret: nothing is sent
+    : > "$HOOK_LOG"
+    ns_out="$(cd "$WORK" && env -u LOKI_WEBHOOK_SECRET LOKI_WEBHOOK_URL="http://127.0.0.1:$HOOK_PORT/h" "$BASH" "$LOKI_BIN" notify webhook "x" 2>&1)"; ns_rc=$?
+    if [ "$ns_rc" -ne 0 ] && [ ! -s "$HOOK_LOG" ]; then
+        ok "webhook: no secret means no send"
+    else
+        bad "webhook: no secret means no send" "rc=$ns_rc hits=$(cat "$HOOK_LOG") out=$ns_out"
+    fi
+fi
+kill "$HOOK_PID" 2>/dev/null || true
+wait "$HOOK_PID" 2>/dev/null || true
+
 # --- isolation: sourcing run.sh must never touch the shared checkout -------
 # Positive control: WORK must show its own provider file did get written.
 # Without this, disabling the mkdir entirely (or the probe silently no-op-ing)

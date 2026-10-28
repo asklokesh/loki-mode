@@ -31,6 +31,7 @@ loki notify slack "Build complete"
 | `LOKI_SLACK_WEBHOOK` | Slack incoming webhook URL | `https://hooks.slack.com/services/...` |
 | `LOKI_DISCORD_WEBHOOK` | Discord webhook URL | `https://discord.com/api/webhooks/...` |
 | `LOKI_WEBHOOK_URL` | Custom webhook URL (POST JSON) | `https://your-server.com/loki-webhook` |
+| `LOKI_WEBHOOK_SECRET` | HMAC-SHA256 key. Custom webhooks are signed (`X-Loki-Signature: sha256=<hex>`, JSON body with `schema_version`); without it nothing is sent | `export LOKI_WEBHOOK_SECRET=...` |
 | `LOKI_NOTIFY_CHANNELS` | Channels to use (comma-separated) | `slack,discord` or `all` |
 
 ## Integration Points in run.sh
