@@ -8,12 +8,14 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSyn
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
-import { cacheFileName, defaultCacheRoot, repoKey } from "../../src/engine10/cache.ts";
+import { cacheFileName, repoKey } from "../../src/engine10/cache.ts";
 import { dirname, join, resolve } from "node:path";
 import { commitStage } from "../../src/engine10/stages/seal.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import { ignoreRuleChanges } from "../../src/util/check_result.ts";
 import { resetInstallMemo } from "../../src/project_model/install.ts";
+import { loadShared } from "../../src/project_model/discover.ts";
+import { shallowDirs } from "../../src/project_model/gather.ts";
 import { baseLine } from "../../src/util/base_guard.ts";
 import { renderMainOutput } from "../../src/engine10/supervisor.ts";
 import { renderReviewerBody } from "../../src/e10ext/reviewer_body.ts";
@@ -803,11 +805,10 @@ describe("intake subphase timing and the shared project model", () => {
     commands: { test: { cmd: "pytest", cwd: ".", cite: ["README.md"] }, lint: null, build: null, start: null }, ui: { present: false, boot: null, cite: [] }, dependsOn: [], install: null }] };
   const answering = (calls: { n: number }): SessionRunner => ({ async run(o) { calls.n++; const m = /\(absolute path\): (\S+)/.exec(o.brief); if (m) writeFileSync(m[1]!, JSON.stringify(answer)); return { exit: 0, durationS: 0.01, killed: false, markers: [] } as never; } });
   const timingOf = (r: { data: Record<string, unknown> }) => r.data["intake_timing"] as Record<string, { ms?: number; cached?: boolean; skipped?: string }>;
-  // The shared store is keyed by tree hash under the user's cache root, which a test home does not redirect: every test gets a unique tree and removes its own entry.
-  const uniq = `unique ${process.pid} ${Math.random()}\n`, trees: string[] = [];
-  const stamp = (dir: string, extra = ""): void => { writeFileSync(join(dir, "README.md"), uniq + extra); git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "stamp"]); trees.push(gitOut(dir, ["rev-parse", "HEAD^{tree}"]).trim()); };
-  beforeEach(() => { process.env["LOKI_E10_PROJECT_MODEL"] = "1"; stamp(repoDir); }); // the test preload turns discovery off
-  afterEach(() => { process.env["LOKI_E10_PROJECT_MODEL"] = "0"; for (const t of trees.splice(0)) rmSync(join(defaultCacheRoot(), "project-models", `pm-${t}.json`), { force: true }); });
+  // The shared store is the run-owned directory tests/preload.ts sets in LOKI_E10_PM_STORE; each test starts with it empty.
+  const stamp = (dir: string, extra = ""): void => { writeFileSync(join(dir, "README.md"), `pm fixture\n${extra}`); git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "stamp"]); };
+  beforeEach(() => { process.env["LOKI_E10_PROJECT_MODEL"] = "1"; rmSync(process.env["LOKI_E10_PM_STORE"]!, { recursive: true, force: true }); stamp(repoDir); }); // the test preload turns discovery off
+  afterEach(() => { process.env["LOKI_E10_PROJECT_MODEL"] = "0"; });
 
   test("intake data records repo walk, project model, deps install, suite baseline and zero probe; a phase that did not run is skipped, never 0 ms", async () => {
     const calls = { n: 0 }, ctx = { ...makeCtx(repoDir, runDir, fakeTests()), sessions: answering(calls) };
@@ -841,6 +842,14 @@ describe("intake subphase timing and the shared project model", () => {
       const warm = await runIntake({ ...makeCtx(repo2, run2, fakeTests()), sessions: answering(calls) }, new AbortController().signal, { taskText: "do a thing" });
       expect(calls.n).toBe(1); expect(timingOf(warm as never)["project_model"]!.cached).toBe(true); expect(existsSync(join(repo2, ".loki", "project.json"))).toBe(true);
     } finally { rmSync(repo2, { recursive: true, force: true }); rmSync(run2, { recursive: true, force: true }); }
+  });
+
+  test("loadShared re-checks the key: same committed tree, but a fingerprint file edited in the working tree is not served", async () => {
+    const calls = { n: 0 };
+    await runIntake({ ...makeCtx(repoDir, runDir, fakeTests()), sessions: answering(calls) }, new AbortController().signal, { taskText: "do a thing" });
+    expect(loadShared(repoDir, shallowDirs(repoDir))).not.toBeNull();
+    writeFileSync(join(repoDir, "README.md"), "edited after the model was built\n");
+    expect(loadShared(repoDir, shallowDirs(repoDir))).toBeNull();
   });
 
   test("the shared model is not trusted when this checkout's manifests differ: discovery runs again", async () => {

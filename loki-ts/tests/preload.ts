@@ -104,6 +104,15 @@ if (process.env["LOKI_HERMETIC_HOME"] === undefined || process.env["HOME"] !== p
   }
 }
 
+// The shared project-model store defaults to the real ~/.loki/cache/v10 (bun os.homedir() ignores the HOME redirect above); no test may write there.
+if (!process.env["LOKI_E10_PM_STORE"]) {
+  const pmDir = mkdtempSync(join(tmpdir(), "loki-test-pmstore-"));
+  process.env["LOKI_E10_PM_STORE"] = pmDir;
+  afterAll(() => {
+    rmSync(pmDir, { recursive: true, force: true });
+  });
+}
+
 if (!process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]) {
   const dir = mkdtempSync(join(tmpdir(), "loki-test-key-"));
   markOwned(dir);

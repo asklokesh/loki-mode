@@ -68,9 +68,9 @@ export function loadCommitted(repoDir: string): { model: ProjectModel; hash: str
   return { model: { ...v.model, key: "" }, hash };
 }
 
-/** Shared store: an OK model keyed by the committed tree hash, so the same content in another checkout (a fresh clone, a benchmark copy) skips the discovery session. A hit is trusted no further than the repo-local cache: parseCached re-validates every citation against this checkout and computeKey must still match its manifests and directory shape. Never throws. */
+/** Shared store (LOKI_E10_PM_STORE overrides the directory; tests/preload.ts points it at a run-owned dir): an OK model keyed by the committed tree hash, so the same content in another checkout (a fresh clone, a benchmark copy) skips the discovery session. A hit is trusted no further than the repo-local cache: parseCached re-validates every citation against this checkout and computeKey must still match its manifests and directory shape. Never throws. */
 const sharedPath = (repoDir: string): { path: string; dir: string } | null => {
-  try { const tree = safeGit(repoDir, ["rev-parse", "HEAD^{tree}"]).trim(), dir = join(defaultCacheRoot(), "project-models"); return /^[0-9a-f]{40,64}$/.test(tree) ? { path: join(dir, `pm-${tree}.json`), dir } : null; } catch { return null; }
+  try { const tree = safeGit(repoDir, ["rev-parse", "HEAD^{tree}"]).trim(), dir = process.env["LOKI_E10_PM_STORE"] || join(defaultCacheRoot(), "project-models"); return /^[0-9a-f]{40,64}$/.test(tree) ? { path: join(dir, `pm-${tree}.json`), dir } : null; } catch { return null; }
 };
 export function loadShared(repoDir: string, dirs: string[], now: number = Date.now()): ProjectModel | null {
   try {
