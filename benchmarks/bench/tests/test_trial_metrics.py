@@ -189,7 +189,7 @@ class LokiResumeLegsTest(unittest.TestCase):
             calls.append(cmd[1:3])
             if cmd[1:2] == ["start"] and "--resume" not in cmd:
                 _eff(d, 1, 1.0)
-                return _cp(cmd, 0, "[wall] a\n[implement] b  (wall done 3s)\nOutcome: VERIFIED\n")
+                return _cp(cmd, 0, "[00:01] intake      done   1s   a\n[00:03] wall        done   3s   b\nOutcome: VERIFIED\n")
             if cmd[1:3] == ["start", "--resume"]:
                 _eff(d, 2, 0.5)
                 return _cp(cmd, 0, "Outcome: VERIFIED\n")

@@ -504,6 +504,9 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
             "advisor_calls": _advisor_calls(adapter_out),
             # Advisor errors this trial hit; a trial with calls but errors is not attached.
             "advisor_errors": _advisor_field(adapter_out, "errors"),
+            # Seconds per engine stage (loki only); None when not recorded.
+            "stage_durations_s": (adapter_out.get("provenance") or {}).get(
+                "stage_durations_s"),
         }
         row["metrics"] = schema.trial_metrics(
             adapter_out, verdict["success"], measured=not unmeasured_reasons)

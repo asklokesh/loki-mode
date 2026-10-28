@@ -113,7 +113,7 @@ def build_output(*, tool, tool_version, model_used, duration_s, iterations,
     return out
 
 
-def _run_reapable(cmd, cwd, timeout, full_env):
+def _run_reapable(cmd, cwd, timeout, full_env, stdin=None):
     """Run cmd so that a timeout kills the WHOLE process tree, not just the child.
 
     WHY: subprocess.run(timeout=...) kills only the process it spawned.
@@ -131,7 +131,7 @@ def _run_reapable(cmd, cwd, timeout, full_env):
     """
     proc = subprocess.Popen(
         cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, env=full_env, start_new_session=True,
+        text=True, env=full_env, start_new_session=True, stdin=stdin,
     )
     try:
         out, err = proc.communicate(timeout=timeout)
@@ -147,7 +147,8 @@ def _run_reapable(cmd, cwd, timeout, full_env):
         raise
 
 
-def _run_until(cmd, cwd, timeout, full_env, stop_marker, stop_after_s):
+def _run_until(cmd, cwd, timeout, full_env, stop_marker, stop_after_s,
+               stdin=None):
     """Like _run_reapable, but stop the process group early at a deterministic
     point: the first stdout line matching the regex `stop_marker`, or
     `stop_after_s` seconds, whichever comes first. Returns
@@ -155,7 +156,7 @@ def _run_until(cmd, cwd, timeout, full_env, stop_marker, stop_after_s):
     Raises TimeoutExpired past `timeout`, like _run_reapable."""
     proc = subprocess.Popen(
         cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, env=full_env, start_new_session=True,
+        text=True, env=full_env, start_new_session=True, stdin=stdin,
     )
     lines, hit = [], threading.Event()
     pat = re.compile(stop_marker) if stop_marker else None
@@ -218,8 +219,12 @@ def _kill_group(proc):
 
 
 def run_cli(cmd, *, cwd, timeout, runner=None, env=None,
-            stop_marker=None, stop_after_s=None):
+            stop_marker=None, stop_after_s=None, stdin_devnull=False):
     """Run a CLI command headless and return (rc, stdout, stderr, duration_s).
+
+    PWD is set to cwd: a child launched with cwd= still inherits the parent's
+    PWD, and tools that read $PWD (not getcwd) then work in the wrong tree.
+    stdin_devnull=True gives the child /dev/null instead of the parent's stdin.
 
     runner is an injectable subprocess.run-compatible callable so tests can
     mock the CLI without live keys. Done inside this function (never at module
@@ -228,6 +233,9 @@ def run_cli(cmd, *, cwd, timeout, runner=None, env=None,
     full_env = dict(os.environ)
     if env:
         full_env.update(env)
+    if cwd:
+        full_env["PWD"] = os.path.abspath(cwd)
+    stdin = subprocess.DEVNULL if stdin_devnull else None
     start = time.time()
     interrupted = False
     try:
@@ -251,9 +259,9 @@ def run_cli(cmd, *, cwd, timeout, runner=None, env=None,
                 rc, interrupted = -15, True
         elif stop_marker or stop_after_s is not None:
             rc, out, err, interrupted = _run_until(
-                cmd, cwd, timeout, full_env, stop_marker, stop_after_s)
+                cmd, cwd, timeout, full_env, stop_marker, stop_after_s, stdin)
         else:
-            rc, out, err = _run_reapable(cmd, cwd, timeout, full_env)
+            rc, out, err = _run_reapable(cmd, cwd, timeout, full_env, stdin)
         status = ("interrupted" if interrupted else
                   "completed" if rc == 0 else ("error_rc_%d" % rc))
     except subprocess.TimeoutExpired:

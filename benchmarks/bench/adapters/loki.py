@@ -117,6 +117,11 @@ def _count_iteration_completes(loki_dir):
 
 TAIL_CHARS = 2000
 
+# Full Anthropic model ids: claude-*, optional [1m] suffix, and the vendor
+# forms anthropic/claude-* and <region>.anthropic.claude-* (Bedrock/Vertex).
+_FULL_MODEL_ID = re.compile(
+    r"^(?:claude-|(?:[a-z0-9-]+/)?anthropic[/.]claude-|[a-z]{2,6}\.anthropic\.claude-)")
+
 
 def _tail(text, n=TAIL_CHARS):
     text = text or ""
@@ -425,10 +430,66 @@ def _collect_cost(loki_dir):
         return cost, None, None
     try:
         collected, model_from_eff = eff.collect_efficiency(loki_dir)
+        if collected.get("usd") is None:
+            fallback = _read_result_cost(loki_dir)
+            if fallback is not None:
+                collected, model_from_eff = fallback[0], fallback[1]
         return (collected, model_from_eff or None,
                 _cache_tokens_by_phase(loki_dir, collected, eff))
     except Exception:
         return cost, None, None
+
+
+def _read_result_cost(loki_dir):
+    """Spend from .loki/metrics/result-cost-*.json (the provider's own
+    total_cost_usd per session), for runs that wrote no efficiency records.
+    Returns (cost dict, model) or None when no file carries a numeric cost:
+    unknown is never zero."""
+    metrics = os.path.join(loki_dir, "metrics")
+    try:
+        names = sorted(os.listdir(metrics))
+    except Exception:
+        return None
+    usd, priced, model = 0.0, False, ""
+    toks = {"input_tokens": 0, "output_tokens": 0,
+            "cache_read_tokens": 0, "cache_creation_tokens": 0}
+    for name in names:
+        if not (name.startswith("result-cost-") and name.endswith(".json")):
+            continue
+        rec = _read_json_file(os.path.join(metrics, name))
+        if rec is None:
+            continue
+        v = rec.get("total_cost_usd")
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            usd += float(v)
+            priced = True
+        for k in toks:
+            t = rec.get(k)
+            if isinstance(t, int) and not isinstance(t, bool):
+                toks[k] += t
+        if rec.get("model"):
+            model = str(rec["model"])
+    if not priced:
+        return None
+    return dict(toks, usd=round(usd, 4), available=True), model
+
+
+def _read_stage_durations(loki_dir):
+    """{stage: seconds} from the latest engine10 run's stage.completed events
+    (data.duration_s). None when there is no readable event log or no stage
+    carried a duration. A repeated stage keeps its last completion."""
+    events = _read_v10_events(_latest_v10_run_dir(loki_dir))
+    if not events:
+        return None
+    out = {}
+    for ev in events:
+        if ev.get("type") != "stage.completed" or not isinstance(ev.get("stage"), str):
+            continue
+        data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
+        d = data.get("duration_s")
+        if isinstance(d, (int, float)) and not isinstance(d, bool):
+            out[ev["stage"]] = float(d)
+    return out or None
 
 
 def _num_sub(a, b):
@@ -492,11 +553,15 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
     if (
         "LOKI_SESSION_MODEL" not in os.environ
         and _pin
-        and (_pin in _REAL_MODEL_ALIASES or _pin.startswith("claude-"))
+        and (_pin in _REAL_MODEL_ALIASES or _FULL_MODEL_ID.match(_pin))
     ):
-        run_env["LOKI_SESSION_MODEL"] = _pin
-    stop = (r"\(%s done" % re.escape(interrupt_after_stage)
+        run_env["LOKI_SESSION_MODEL"] = (model or "").strip() if _FULL_MODEL_ID.match(_pin) else _pin
+    # Stage lines print as `[00:17] plan  done ...` (name padded), and only
+    # under --verbose, so the stop marker needs both.
+    stop = (r"\[\d+:\d{2}\] %s\s+done\b" % re.escape(interrupt_after_stage)
             if interrupt_after_stage else None)
+    if interrupt_after_stage:
+        cmd.append("--verbose")
     rc, out, err, status, duration = _base.run_cli(
         cmd, cwd=workdir, timeout=timeout, runner=runner,
         env=run_env, stop_marker=stop,
@@ -589,6 +654,9 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             "resume": resume,
             "journal_reuse_wall_s": resume["leg2_s"] if resume else None,
             "cache_tokens_by_phase": cache_by_phase,
+            # Seconds per engine10 stage from the run's events.jsonl; None when
+            # the run wrote no event log.
+            "stage_durations_s": _read_stage_durations(loki_dir),
             # True when the usd is a lower bound (token-only main session or
             # unpriced child sessions); a consumer must not treat it as complete.
             "cost_partial": bool(cost.get("cost_partial")),
