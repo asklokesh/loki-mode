@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { route } from "../../src/engine10/cli.ts";
 import { receiptSha256 } from "../../src/engine10/stages/seal.ts";
-import { verifyReceipt } from "../../src/engine10/verify_cmd.ts";
+import { verifyReceipt, main as verifyMain } from "../../src/engine10/verify_cmd.ts";
+import { sealRefusal } from "../../src/util/run_outputs.ts";
+import { generateKeyPairSync, createPublicKey } from "node:crypto";
+import { readdirSync } from "node:fs";
 import { maybeRunGroup, MAX_SEQ_TASK_BYTES, MAX_SPEC_BYTES, type GroupCtx, type GroupRunner } from "../../src/features/speed/route.ts";
 
 const SPEC = "- update src/a.ts to add alpha\n- update src/b.ts to add beta\n- update src/c.ts to add gamma\n";
@@ -332,6 +335,57 @@ describe("default group runner (run_group.ts)", () => {
       expect(err).toContain("sequential (reason: no origin remote");
       expect(err).not.toContain("NOT PROVEN");
     });
+  });
+  describe("a group that ends FAILED seals a refusal receipt", () => {
+    const signed = async (fn: (pub: ReturnType<typeof createPublicKey>) => Promise<void>): Promise<void> => {
+      const { privateKey } = generateKeyPairSync("ed25519"), prev = process.env["LOKI_RECEIPT_SIGNING_KEY"];
+      process.env["LOKI_RECEIPT_SIGNING_KEY"] = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+      try { await fn(createPublicKey(privateKey)); } finally { if (prev === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY"]; else process.env["LOKI_RECEIPT_SIGNING_KEY"] = prev; }
+    };
+    const goRefuse = async (d: string, l: ReturnType<typeof launcher>) => {
+      let err = "";
+      const res = await maybeRunGroup(SPEC, d, { LOKI_SPEED: "1", LOKI_GROUP_TEST_CMD: "true" } as NodeJS.ProcessEnv, { backlog: l, seal: { receiptSha256, verifyReceipt, refuse: sealRefusal }, listFiles: () => files, select: sel, stderr: (s) => { err += s; } });
+      return { code: res.code, err };
+    };
+    const runIds = (d: string): string[] => { try { return readdirSync(join(d, ".loki", "runs")); } catch { return []; } };
+    test("no unit passed: receipt.json exists and loki verify reads it as not verified with the reason", () => withDir(async (d) => {
+      mkRepo(d);
+      await signed(async (pub) => {
+        const { code, err } = await goRefuse(d, launcher(d, [], [1, 2, 3], 1));
+        expect(code).toBe(1);
+        const ids = runIds(d);
+        expect(ids.length).toBe(1);
+        expect(err).toContain(`loki verify ${ids[0]}`);
+        const rec = JSON.parse(readFileSync(join(d, ".loki", "runs", ids[0]!, "receipt.json"), "utf8"));
+        expect(rec.verdict).toBe("FAILED");
+        expect(rec.not_proven.join("\n")).toContain("no unit passed");
+        const types = readFileSync(join(d, ".loki", "runs", ids[0]!, "events.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l).type);
+        expect(types).toEqual(["run.started", "receipt.sealed", "run.completed", "log.sealed"]);
+        let out = "";
+        const w = process.stdout.write.bind(process.stdout);
+        process.stdout.write = ((c: string) => { out += c; return true; }) as typeof process.stdout.write;
+        let rc: number;
+        try { rc = await verifyMain([ids[0]!], { runsRoot: join(d, ".loki", "runs"), pubkey: pub }); } finally { process.stdout.write = w; }
+        expect(rc).not.toBe(0);
+        expect(out).toContain("NOT VERIFIED");
+        expect(out).toContain("FAILED");
+      });
+    }));
+    test("a refusal receipt edited after sealing reads TAMPERED", () => withDir(async (d) => {
+      mkRepo(d);
+      await signed(async (pub) => {
+        await goRefuse(d, launcher(d, [], [1, 2, 3], 1));
+        const id = runIds(d)[0]!, p = join(d, ".loki", "runs", id, "receipt.json");
+        writeFileSync(p, readFileSync(p, "utf8").replace("FAILED", "VERIFIED"));
+        expect((await verifyReceipt(p, { pubkey: pub })).verdict).toBe("TAMPERED");
+      });
+    }));
+    test("a failure with no refusal sealer supplied seals nothing (existing behavior)", () => withDir(async (d) => {
+      mkRepo(d);
+      const { code } = await go(d, {}, launcher(d, [], [1, 2, 3], 1));
+      expect(code).toBe(1);
+      expect(runIds(d)).toEqual([]);
+    }));
   });
   test("LOKI_GROUP_TEST_CMD wins over a package.json test script", async () => {
     await withDir(async (d) => {

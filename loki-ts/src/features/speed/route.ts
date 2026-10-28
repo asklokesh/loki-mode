@@ -86,6 +86,13 @@ export async function maybeRunGroup(task: string, repoDir: string, env: NodeJS.P
   const fb = (t: string, reason: string): RouteResult => { say(`loki: sequential (reason: ${reason})\n`); return { code: null, task: seq(t) }; };
   // The real group runner launches units through backlog.py, which needs an owner/repo origin. An injected runner (tests) has no such need.
   const NO_ORIGIN = "no origin remote of the form owner/repo on github.com, which group units need; running the task as one local run";
+  const groupFailed = async (e: unknown): Promise<number> => { // a throw out of the group runner is FAILED; it still leaves a verifiable refusal receipt when a sealer was supplied
+    const why = `loki: group run failed: ${(e as Error).message.split("\n")[0]}`;
+    say(`${why}\n`);
+    const sealed = await deps.seal?.refuse?.({ repoDir, task, reason: why, provider: deps.provider }).catch(() => null);
+    if (sealed) say(`loki: refusal receipt ${sealed.receiptPath}; run: loki verify ${sealed.runId}\n`);
+    return 1;
+  };
   const lacksOrigin = async (): Promise<boolean> => deps.group === undefined && (await import("./run_group.ts")).originSlug(repoDir) === undefined;
   let spec = task, specPath: string | null = null, dag: Dag | undefined;
   let missions: ReturnType<typeof parseMilestones> = [];
@@ -122,8 +129,7 @@ export async function maybeRunGroup(task: string, repoDir: string, env: NodeJS.P
       }
       return { code: 0, task: spec };
     } catch (e) {
-      say(`loki: group run failed: ${(e as Error).message.split("\n")[0]}\n`);
-      return { code: 1, task: spec };
+      return { code: await groupFailed(e), task: spec };
     }
   }
   if (!dag || dag.units.length < 2) return fb(spec, `decomposer returned ${dag?.units.length ?? 0} unit`);
@@ -134,7 +140,6 @@ export async function maybeRunGroup(task: string, repoDir: string, env: NodeJS.P
     const group = deps.group ?? (await import("./run_group.ts")).runGroup.bind(null, deps.backlog);
     return { code: await group(dag, { task, repoDir, env, provider: cap.provider, spec, specPath, seal: deps.seal, say }), task: spec };
   } catch (e) {
-    say(`loki: group run failed: ${(e as Error).message.split("\n")[0]}\n`);
-    return { code: 1, task: spec };
+    return { code: await groupFailed(e), task: spec };
   }
 }

@@ -723,4 +723,37 @@ export function summaryTokens(f: Folded, sawCost: boolean): number | null {
 export function summaryCache(events: ReturnType<typeof readEvents>, tampered: boolean): { cacheReadTokens: number | null; cacheSavedUsd: number | null } {
   const cs = tampered ? null : cacheSavings(events.filter((e) => e.type === "cost").map((e) => ({ model: typeof e.data.model === "string" ? e.data.model : undefined, cache_read_tokens: typeof e.data.cache_read_tokens === "number" ? e.data.cache_read_tokens : undefined })));
   return { cacheReadTokens: cs ? cs.readTokens : null, cacheSavedUsd: cs ? cs.savedUsd : null };
+/** A run that ends FAILED before (or without) a model call still leaves one verifiable record: the same receipt hash, signature, receipt.sealed and signed log.sealed lines the seal stage uses, over a run.started / run.completed log, with the refusal reason in not_proven. */
+export interface RefusalSeal { repoDir: string; task: string; reason: string; detail?: readonly string[]; provider?: string }
+export async function sealRefusal(o: RefusalSeal): Promise<{ runId: string; receiptPath: string } | null> {
+  try {
+    const clean = (s: string): string => s.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 500);
+    const [{ SupervisorLog }, seal, signer, { atomicWriteText }, { githubRepoFromUrl }] = await Promise.all([import("../engine10/supervisor.ts"), import("../engine10/stages/seal.ts"), import("./receipt_signer.ts"), import("./atomic.ts"), import("./engine_origin.ts")]);
+    const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
+    const runDir = join(o.repoDir, ".loki", "runs", runId), provider = o.provider ?? "claude", repo = githubRepoFromUrl(readOriginUrl(o.repoDir));
+    mkdirSync(runDir, { recursive: true });
+    const log = new SupervisorLog(join(o.repoDir, eventsRelPath(runId)), runId);
+    log.append("run.started", null, { task_source: "text", provider, refused: true, origin_repo: repo });
+    const git = (a: string[]): string => { try { return safeGit(o.repoDir, a).trim(); } catch { return ""; } };
+    const head = git(["rev-parse", "--verify", "--quiet", "HEAD"]), tree = head ? git(["rev-parse", `${head}^{tree}`]) : "";
+    const notProven = [clean(o.reason), ...(o.detail ?? []).map(clean).filter(Boolean), "cost not measured (refusal receipt)"];
+    const body: Omit<import("../engine10/types.ts").Receipt, "receipt_sha256" | "verification"> = {
+      schema: "loki.v10.receipt/1", run_id: runId, task: { source: "text", sha256: seal.sha256(o.task) }, repo: repo ?? "", base_sha: head, head_sha: head, tree, diff_sha256: seal.sha256(""),
+      wall: { files: [], passed: null }, checks: [], not_proven: notProven, verdict: "FAILED", evidence: [],
+      cost: { usd: null, input_tokens: 0, output_tokens: 0, measured_sessions: 0, total_sessions: 0, partial_usd: 0 },
+      time: { wall_s: 0, stages: {} }, provider, model: "", resumed: false,
+      events_sha256: seal.sha256(readFileSync(log.path)), log_seal: true, toolchain: signer.collectToolchain(),
+    };
+    let hash = seal.receiptSha256(body);
+    const sig = signer.signReceipt(runId, hash);
+    if (!sig.jwt) { body.not_proven = [...notProven, seal.SIGNING_UNAVAILABLE]; hash = seal.receiptSha256(body); }
+    const receipt = { ...body, receipt_sha256: hash, verification: { jwt: sig.jwt, kid: sig.kid } };
+    const receiptPath = join(runDir, "receipt.json");
+    atomicWriteText(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
+    atomicWriteText(join(runDir, "receipt.md"), seal.renderReceiptMd(receipt));
+    log.append("receipt.sealed", "seal", { path: receiptPath, receipt_sha256: hash, signed: sig.jwt !== null, kid: sig.kid, verdict: "FAILED", not_proven: receipt.not_proven });
+    log.append("run.completed", null, { verdict: "FAILED", pr_url: null, not_proven: receipt.not_proven, cost_usd: null, wall_s: 0 });
+    log.sealLog();
+    return { runId, receiptPath };
+  } catch { return null; }
 }

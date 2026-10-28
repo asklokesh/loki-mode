@@ -18,6 +18,7 @@ import { readSliceJournal, repoCacheDir, repoKey, sliceKey, writeSliceJournal } 
 import { integrateWithFixes, type FixUnit } from "./fix_units.ts";
 import type { receiptSha256 as ReceiptSha256Fn } from "../../engine10/stages/seal.ts";
 import type { verifyReceipt as VerifyReceiptFn } from "../../engine10/verify_cmd.ts";
+import type { sealRefusal as SealRefusalFn } from "../../util/run_outputs.ts";
 import { composeGroupReceipt } from "./seal_group.ts";
 import { safeGitSpawn } from "../../util/safe_git.ts";
 import { atomicWriteJson } from "../../util/atomic.ts";
@@ -29,7 +30,7 @@ import { createGroupFeed, createGroupRenderer } from "./group_output.ts";
 import { providerSlots, type GroupCtx } from "./route.ts";
 
 /** Seal and verify functions, injected by the caller outside features/ (D66 fence: features/ never value-imports seal or verify_cmd). */
-export interface SealDeps { receiptSha256: typeof ReceiptSha256Fn; verifyReceipt: typeof VerifyReceiptFn }
+export interface SealDeps { receiptSha256: typeof ReceiptSha256Fn; verifyReceipt: typeof VerifyReceiptFn; refuse?: typeof SealRefusalFn }
 
 /** Group integrated but not sealed: distinct non-zero so no caller reads it as VERIFIED. */
 export const NOT_PROVEN = 4;
@@ -177,7 +178,19 @@ function unitVerdictsOf(rec: Record<string, unknown>): string[] {
   return Array.isArray(us) && us.length > 0 ? us.map((u) => String(u.verdict)) : ["MISSING"];
 }
 
+/** A group that ends FAILED (exit 1) seals a minimal receipt through the supplied refusal sealer, so the run is offline-verifiable and `loki verify <id>` names the reason. NOT_PROVEN already has a group receipt (or no seal at all) and is left alone. */
 export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, ctx: GroupCtx): Promise<number> {
+  const out = ctx.say ?? ((s: string): void => { process.stderr.write(s); });
+  const lines: string[] = [];
+  const code = await runGroupCore(launcher, dag, { ...ctx, say: (s) => { for (const l of s.split("\n")) if (l.trim()) lines.push(l.trim()); out(s); } });
+  if (code === 0 || code === NOT_PROVEN || !ctx.seal?.refuse) return code;
+  const reason = lines.findLast((l) => /^loki: (FAILED|NOT PROVEN)\b/.test(l)) ?? `loki: group ended with exit ${code}`;
+  const sealed = await ctx.seal.refuse({ repoDir: ctx.repoDir, task: ctx.task, reason, detail: lines.filter((l) => l !== reason).slice(-3), provider: ctx.provider });
+  if (sealed) out(`loki: refusal receipt ${sealed.receiptPath}; run: loki verify ${sealed.runId}\n`);
+  return code;
+}
+
+async function runGroupCore(launcher: BacklogLauncher | undefined, dag: Dag, ctx: GroupCtx): Promise<number> {
   const say = ctx.say ?? ((s: string): void => { process.stderr.write(s); });
   const { repoDir, env } = ctx;
   if (!ctx.seal) { say("loki: NOT PROVEN: no seal or verify implementation was supplied; no unit was started\n"); return NOT_PROVEN; }

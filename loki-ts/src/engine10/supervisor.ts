@@ -288,7 +288,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     if (u?.ok && u.note) process.stderr.write(`engine10: ${u.note}\n`);
     if (u) { Object.assign(env, u.env); cap.usd = parseCapUsd(env.LOKI_E10_MAX_COST_USD) ?? cap.usd; }
   }
-  if (process.env.LOKI_SPEED !== "0" && !isIssue) { const [rt, sl, vc] = await Promise.all([import("../features/speed/route.ts"), import("./stages/seal.ts"), import("./verify_cmd.ts")]); const g = await rt.maybeRunGroup(task, repoDir, groupEnv(process.env, cap.usd, repoDir), { provider, seal: { receiptSha256: sl.receiptSha256, verifyReceipt: vc.verifyReceipt } }); if (g.code !== null) return g.code; task = g.task; } // D61-16: group entry; fallback runs on the text the group saw
+  if (process.env.LOKI_SPEED !== "0" && !isIssue) { const [rt, sl, vc] = await Promise.all([import("../features/speed/route.ts"), import("./stages/seal.ts"), import("./verify_cmd.ts")]); const g = await rt.maybeRunGroup(task, repoDir, groupEnv(process.env, cap.usd, repoDir), { provider, seal: { receiptSha256: sl.receiptSha256, verifyReceipt: vc.verifyReceipt, refuse: (await import("../util/run_outputs.ts")).sealRefusal } }); if (g.code !== null) return g.code; task = g.task; } // D61-16: group entry; fallback runs on the text the group saw
   if (spec) { // the worker reads the snapshot of exactly the bytes hashed here, never the live file
     mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, "spec.snapshot.md"), spec.raw);
     for (const e of [env, process.env]) { e.LOKI_E10_SPEC_PATH = relative(repoDir, spec.path); e.LOKI_E10_SPEC_SHA256 = spec.sha256; e.LOKI_E10_REPO_DIR = repoDir; }
