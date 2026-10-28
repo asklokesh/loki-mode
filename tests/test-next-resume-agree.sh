@@ -313,6 +313,12 @@ out="$(cd "$sg" && LOKI_TS_ENTRY="$sg/est.js" PATH="$sg/bin:$PATH" LOKI_TELEMETR
 if printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin)["suggestions"]; assert d and all(x["est_usd"]==[0.5,1.5] for x in d)' 2>/dev/null; then pass "est_usd is the estimator's range when it has history"; else fail "est_usd passthrough: $out"; fi
 out="$(cd "$WORK" && mkdir -p empty && cd empty && git init -q . 2>/dev/null; PATH="$sg/bin:$PATH" LOKI_TELEMETRY_DISABLED=1 bash "$LOKI_BIN" next --suggest 2>&1)"; rc=$?
 if [ "$rc" -eq 0 ] && [[ "$out" == *"No suggestions"* ]]; then pass "an empty repo yields no suggestions (up to 3, not exactly 3)"; else fail "empty repo rc=$rc: $out"; fi
+# A hung estimator must not hang `loki next --suggest`: bounded, est_usd null, with a note.
+printf '%s\n' 'await new Promise(r => setTimeout(r, 60000))' > "$sg/hang.js"
+t0=$SECONDS
+out="$(cd "$sg" && LOKI_NEXT_ESTIMATE_TIMEOUT=2 LOKI_TS_ENTRY="$sg/hang.js" PATH="$sg/bin:$PATH" LOKI_TELEMETRY_DISABLED=1 timeout -k 5 30 bash "$LOKI_BIN" next --suggest --json 2>&1)"; rc=$?
+el=$((SECONDS - t0))
+if [ "$rc" -eq 0 ] && [ "$el" -lt 25 ] && printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["suggestions"] and all(x["est_usd"] is None for x in d["suggestions"]); assert any("estimate unavailable" in n for n in d["notes"])' 2>/dev/null; then pass "a hung estimator is bounded: returns in ${el}s with est_usd null and an estimate-unavailable note"; else fail "hung estimator rc=$rc elapsed=${el}s: $out"; fi
 
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

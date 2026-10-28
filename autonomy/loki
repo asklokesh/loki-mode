@@ -5869,8 +5869,27 @@ try:
 except Exception:
     sys.exit(1)
 PYEOF
-    local est_json
-    est_json="$(cmd_estimate --json 2>/dev/null)" || est_json=""
+    local est_json="" est_pid="" est_ticks=0 est_max est_kid
+    est_max=$(( ${LOKI_NEXT_ESTIMATE_TIMEOUT:-20} * 4 ))
+    # The estimate runs in the background and is polled, so a slow or hung
+    # estimator cannot hang the command (no timeout binary is assumed: macOS
+    # bash 3.2 may lack one). Only the PID started here, and its direct
+    # children, are ever signalled.
+    ( cmd_estimate --json > "$tmp/est" 2>/dev/null ) &
+    est_pid=$!
+    while kill -0 "$est_pid" 2>/dev/null; do
+        if [ "$est_ticks" -ge "$est_max" ]; then
+            for est_kid in $(pgrep -P "$est_pid" 2>/dev/null); do kill "$est_kid" 2>/dev/null || true; done
+            kill "$est_pid" 2>/dev/null || true
+            note="${note:+$note; }estimate unavailable: timed out after ${LOKI_NEXT_ESTIMATE_TIMEOUT:-20}s"
+            : > "$tmp/est"
+            break
+        fi
+        sleep 0.25
+        est_ticks=$((est_ticks + 1))
+    done
+    wait "$est_pid" 2>/dev/null || true
+    est_json="$(cat "$tmp/est" 2>/dev/null)" || est_json=""
     { git grep -nIE 'TODO|FIXME' -- . ':!.loki' 2>/dev/null \
         || grep -rnIE 'TODO|FIXME' --exclude-dir=.git --exclude-dir=.loki --exclude-dir=node_modules . 2>/dev/null; } \
         | head -20 > "$tmp/todos" || true
