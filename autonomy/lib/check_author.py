@@ -247,17 +247,17 @@ def atomic_write(path: str, text: str) -> None:
 
 
 def record_unknown(out: str, reason: str, spec_sha, attempts) -> None:
-    """Failure record: drop every artifact of an earlier run, then write status
-    unknown plus the critical failing sentinel."""
-    for name in ("checklist.json", "author.json"):
+    """Failure record: drop every artifact of an earlier run, write the critical
+    failing sentinel first (the gate reads it), then status unknown."""
+    for name in ("checklist.json", "author.json", "verification-results.json"):
         try:
             os.unlink(os.path.join(out, name))
         except OSError:
             pass
+    atomic_write(os.path.join(out, "verification-results.json"), SENTINEL + "\n")
     atomic_write(os.path.join(out, "author.json"), json.dumps(
         {"status": "unknown", "reason": reason, "spec_sha256": spec_sha, "attempts": attempts},
         sort_keys=True) + "\n")
-    atomic_write(os.path.join(out, "verification-results.json"), SENTINEL + "\n")
 
 
 def run_accept(args) -> int:

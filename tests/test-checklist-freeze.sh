@@ -304,27 +304,50 @@ v=json.load(open(sys.argv[1]))["categories"][0]["items"][0]["verification"][0]
 sys.exit(1 if set(v)&{"passed","status","output","verified_at"} else 0)' "$ACC_OUT/checklist.json" \
     || fail "accept: pre-pass result fields survived into checklist.json"
 
-# accept never opens or lists anything under --repo (open/listdir/scandir spied)
+# a failing author.json write (ENOSPC) must still leave the sentinel and no stale pass
+mkdir -p "$ACC/out-enospc"
+printf '{"status":"authored"}' > "$ACC/out-enospc/author.json"
+printf '{}' > "$ACC/out-enospc/checklist.json"
+printf '{"categories":[{"items":[{"id":"OLD","title":"o","priority":"major","status":"passing","passed":true}]}]}' > "$ACC/out-enospc/verification-results.json"
+printf '{"categories":[{"items":[]}]}' | python3 -I -c '
+import errno, importlib.util, os, sys
+ca, spec, repo, out = sys.argv[1:5]
+m = importlib.util.spec_from_file_location("check_author_mod", ca)
+mod = importlib.util.module_from_spec(m)
+m.loader.exec_module(mod)
+real = mod.atomic_write
+def flaky(path, text):
+    if path.endswith("author.json"):
+        raise OSError(errno.ENOSPC, "No space left on device")
+    return real(path, text)
+mod.atomic_write = flaky
+sys.exit(mod.main(["accept", "--spec", spec, "--repo", repo, "--out", out]))
+' "$CA" "$ACC_SPEC" "$ACC_REPO" "$ACC/out-enospc" >"$ACC/acc.log" 2>&1
+ERC=$?
+[ "$ERC" -eq 1 ] || fail "accept ENOSPC: rc $ERC, want 1"
+grep -q Traceback "$ACC/acc.log" && fail "accept ENOSPC: traceback"
+grep -q check_authoring_unknown "$ACC/out-enospc/verification-results.json" || fail "accept ENOSPC: sentinel missing (stale results survived)"
+[ ! -e "$ACC/out-enospc/checklist.json" ] || fail "accept ENOSPC: stale checklist.json survived"
+grep -q authored "$ACC/out-enospc/author.json" 2>/dev/null && fail "accept ENOSPC: stale authored status survived"
+
+# accept never opens, lists or spawns anything under --repo (audit hook: open,
+# os.listdir, os.scandir, and any subprocess/system/exec/spawn event)
 printf '%s' "$GOODJSON" | python3 -I -c '
-import builtins, os, runpy, sys
+import os, runpy, sys
 ca, repo, spec, out = sys.argv[1:5]
 repo = os.path.realpath(repo)
 touched = []
-def watch(fn):
-    def w(p, *a, **k):
-        if isinstance(p, (str, bytes, os.PathLike)) and os.path.realpath(os.fsdecode(p)).startswith(repo):
-            touched.append(os.fsdecode(p))
-        return fn(p, *a, **k)
-    return w
-builtins.open = watch(builtins.open)
-import subprocess
-def nosub(*a, **k):
-    touched.append("subprocess")
-    raise OSError("subprocess forbidden in accept")
-subprocess.Popen.__init__ = nosub
-os.system = lambda *a, **k: touched.append("os.system")
-os.listdir = watch(os.listdir)
-os.scandir = watch(os.scandir)
+def under(p):
+    if isinstance(p, (str, bytes, os.PathLike)):
+        return os.path.realpath(os.fsdecode(p)).startswith(repo)
+    return False
+def hook(event, args):
+    if event in ("open", "os.listdir", "os.scandir", "os.chdir", "os.walk"):
+        if args and under(args[0]):
+            touched.append("%s:%s" % (event, os.fsdecode(args[0])))
+    elif event in ("subprocess.Popen", "os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.fork", "os.forkpty"):
+        touched.append(event)
+sys.addaudithook(hook)
 sys.argv = [ca, "accept", "--spec", spec, "--repo", repo, "--out", out]
 try:
     runpy.run_path(ca, run_name="__main__")
