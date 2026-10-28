@@ -127,18 +127,44 @@ _loki_telemetry_enabled() {
     return 0
 }
 
-_loki_telemetry_id() {
-    local id_file="${HOME}/.loki-telemetry-id"
+# _loki_telemetry_id_load: sets _LOKI_TID (the id), _LOKI_TID_MINTED (1 when this
+# process created it) and _LOKI_TID_AGE (whole days since the id file was
+# written). Called directly, never in a command substitution, so the globals
+# survive. The id file is always mode 0600. The last-resort fallback id is random
+# hex, never derived from the clock or pid.
+_loki_telemetry_id_load() {
+    local id_file="${HOME}/.loki-telemetry-id" mtime now
+    _LOKI_TID_MINTED=0
+    _LOKI_TID_AGE=0
     if [ -f "$id_file" ] 2>/dev/null; then
-        cat "$id_file" 2>/dev/null
-        return
+        _LOKI_TID=$(cat "$id_file" 2>/dev/null)
+        if [ -n "$_LOKI_TID" ]; then
+            mtime=$(stat -c %Y "$id_file" 2>/dev/null)
+            case "$mtime" in ''|*[!0-9]*) mtime=$(stat -f %m "$id_file" 2>/dev/null) ;; esac
+            case "$mtime" in
+                ''|*[!0-9]*) ;;
+                *)
+                    now=$(date +%s 2>/dev/null)
+                    case "$now" in ''|*[!0-9]*) ;; *)
+                        [ "$now" -ge "$mtime" ] && _LOKI_TID_AGE=$(( (now - mtime) / 86400 ))
+                    ;; esac
+                    ;;
+            esac
+            return 0
+        fi
     fi
-    local new_id
-    new_id=$(python3 -c "import uuid; print(uuid.uuid4())" 2>/dev/null) || \
-    new_id=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]') || \
-    new_id="anon-$(date +%s)-$$"
-    printf '%s\n' "$new_id" > "$id_file" 2>/dev/null
-    printf '%s' "$new_id"
+    _LOKI_TID=$(python3 -c "import uuid; print(uuid.uuid4())" 2>/dev/null) || \
+    _LOKI_TID=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]') || \
+    _LOKI_TID="anon-$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+    _LOKI_TID_MINTED=1
+    ( umask 077; printf '%s\n' "$_LOKI_TID" > "$id_file" ) 2>/dev/null
+    chmod 600 "$id_file" 2>/dev/null
+    return 0
+}
+
+_loki_telemetry_id() {
+    _loki_telemetry_id_load
+    printf '%s' "$_LOKI_TID"
 }
 
 _loki_detect_channel() {
@@ -271,7 +297,9 @@ loki_telemetry() {
     [ -f "$_lib/telemetry-schema.json" ] || _lib="${SCRIPT_DIR:-${SKILL_DIR:-}}/lib"
     [ -f "$_lib/telemetry-schema.json" ] && [ -f "$_lib/proof-analytics-props.py" ] || return 0
     local distinct_id
-    distinct_id=$(_loki_telemetry_id 2>/dev/null) || return 0
+    _loki_telemetry_id_load 2>/dev/null
+    distinct_id="${_LOKI_TID:-}"
+    [ -n "$distinct_id" ] || return 0
     local version
     version=$(cat "${SCRIPT_DIR:-${SKILL_DIR:-}}/VERSION" 2>/dev/null || cat "${SCRIPT_DIR:-${SKILL_DIR:-}}/../VERSION" 2>/dev/null || cat "${_LOKI_TELEMETRY_SELF_DIR:-}/../VERSION" 2>/dev/null || echo "unknown")
     version=$(echo "$version" | tr -d '[:space:]')
@@ -281,13 +309,19 @@ loki_telemetry() {
     os_family=$(_loki_os_family "$(uname -s 2>/dev/null)")
     arch=$(_loki_arch_family "$(uname -m 2>/dev/null)")
 
+    # ephemeral_home: the id was minted by this very process inside a container,
+    # so the home is not persisted and every run looks like a new user.
+    local ephemeral_home=false
+    [ "${_LOKI_TID_MINTED:-0}" = "1" ] && [ "$channel" = "docker" ] && ephemeral_home=true
+
     # The extra key=value pairs are forwarded as "$@" -- one argv slot per pair,
     # QUOTED, so a value with spaces or glob characters is neither split nor
     # expanded. The python side splits on the first "=" only.
     local payload
     payload=$(python3 "$_lib/proof-analytics-props.py" --payload "$event" "$distinct_id" "$LOKI_POSTHOG_KEY" \
         "$@" "os_family=$os_family" "arch=$arch" "version=$version" "channel=$channel" \
-        "traffic=$(_loki_traffic)" 2>/dev/null) || return 0
+        "traffic=$(_loki_traffic)" \
+        "id_age=${_LOKI_TID_AGE:-0}" "ephemeral_home=$ephemeral_home" 2>/dev/null) || return 0
     [ -n "$payload" ] || return 0
 
     # LOKI_TELEMETRY_DEBUG=1: record and print the event name and the property

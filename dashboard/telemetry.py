@@ -19,6 +19,7 @@ import os
 import platform
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -117,20 +118,34 @@ def _is_enabled():
     return True
 
 
-def _get_distinct_id():
+def _load_distinct_id():
+    """Return (id, minted_here, age_days). The id file is always mode 0600."""
     id_file = Path.home() / ".loki-telemetry-id"
     try:
-        return id_file.read_text().strip()
+        existing = id_file.read_text().strip()
+        if existing:
+            try:
+                age = max(0, int((time.time() - id_file.stat().st_mtime) // 86400))
+            except Exception:
+                age = 0
+            return existing, False, age
     except Exception:
-        new_id = str(uuid.uuid4())
+        pass
+    new_id = str(uuid.uuid4())
+    try:
+        fd = os.open(str(id_file), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
         try:
-            # Create with 0600 permissions (user read/write only)
-            fd = os.open(str(id_file), os.O_CREAT | os.O_WRONLY, 0o600)
             os.write(fd, (new_id + "\n").encode())
+        finally:
             os.close(fd)
-        except Exception:
-            pass
-        return new_id
+        os.chmod(str(id_file), 0o600)
+    except Exception:
+        pass
+    return new_id, True, 0
+
+
+def _get_distinct_id():
+    return _load_distinct_id()[0]
 
 
 def _detect_channel():
@@ -210,11 +225,15 @@ def build_payload(event, properties=None):
     listed. Caller properties are untrusted; trusted base properties win."""
     mod = _load_schema_module()
     raw = dict(properties or {})
+    distinct_id, minted, age = _load_distinct_id()
+    channel = _detect_channel()
     raw.update({
+        "id_age": age,
+        "ephemeral_home": bool(minted and channel == "docker"),
         "os_family": _os_family(),
         "arch": _arch_family(),
         "version": _get_version(),
-        "channel": _detect_channel(),
+        "channel": channel,
         "traffic": _traffic(),
     })
     props = mod.sanitize(mod.load_schema(), event, raw)
@@ -224,7 +243,7 @@ def build_payload(event, properties=None):
     return {
         "api_key": _POSTHOG_KEY,
         "event": event,
-        "distinct_id": _get_distinct_id(),
+        "distinct_id": distinct_id,
         "properties": props,
     }
 

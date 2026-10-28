@@ -223,7 +223,7 @@ lines = [l for l in open(sys.argv[1]) if l.strip()]
 if not lines:
     sys.exit(1)
 props = json.loads(lines[0])["properties"]
-expected = {"os_family", "arch", "version", "channel", "traffic", "introspective", "$geoip_disable"}
+expected = {"os_family", "arch", "version", "channel", "traffic", "introspective", "$geoip_disable", "id_age", "ephemeral_home"}
 if set(props) != expected:
     print("key set mismatch: %s" % sorted(props), file=sys.stderr)
     sys.exit(1)
@@ -607,6 +607,53 @@ if $GREP -q '"os_family": "windows"' "$LISTENER_OUT" && $GREP -q '"arch": "x64"'
     ok "os_family: MINGW64_NT-10.0-19045 maps to windows, raw uname never sent"
 else
     bad "os_family: windows mapping" "$(cat "$LISTENER_OUT")"
+fi
+
+# id_age and ephemeral_home: an empty HOME in a container mints the id (true),
+# the next run with that persisted HOME reuses it (false). Id file stays 0600.
+HE="$SANDBOX/home.ephemeral"; mkdir -p "$HE"
+eph_run() {
+    : > "$LISTENER_OUT"
+    ( export HOME="$HE" PATH="$REAL_PATH" LOKI_TELEMETRY=on LOKI_TELEMETRY_ENDPOINT="$ENDPOINT" \
+             LOKI_TTY_INTERACTIVE=1 SCRIPT_DIR="$REPO_ROOT/autonomy"
+      # shellcheck disable=SC1091
+      source "$REPO_ROOT/autonomy/telemetry.sh"
+      _loki_detect_channel() { printf 'docker'; }
+      loki_telemetry "cli_command" "command=status" ) >/dev/null 2>&1
+    wait_bodies 1
+}
+eph_run
+E1="$($GREP -c '"ephemeral_home": true' "$LISTENER_OUT")"; A1="$($GREP -c '"id_age": 0' "$LISTENER_OUT")"
+eph_run
+E2="$($GREP -c '"ephemeral_home": false' "$LISTENER_OUT")"
+MODE="$(python3 -c 'import os,sys;print(oct(os.stat(sys.argv[1]).st_mode&0o777))' "$HE/.loki-telemetry-id")"
+if [ "$E1" = 1 ] && [ "$A1" = 1 ] && [ "$E2" = 1 ] && [ "$MODE" = 0o600 ]; then
+    ok "ephemeral_home: true on an empty HOME, false once persisted; id_age sent; id file 0600 (bash)"
+else
+    bad "ephemeral_home bash" "e1=$E1 a1=$A1 e2=$E2 mode=$MODE"
+fi
+PYE="$(HOME="$SANDBOX/home.pyeph" python3 - "$REPO_ROOT" <<'PYT'
+import os, sys
+os.makedirs(os.environ["HOME"], exist_ok=True)
+sys.path.insert(0, sys.argv[1])
+from dashboard import telemetry as t
+t._detect_channel = lambda: "docker"
+a = t.build_payload("dashboard_start")["properties"]
+b = t.build_payload("dashboard_start")["properties"]
+mode = oct(os.stat(os.path.join(os.environ["HOME"], ".loki-telemetry-id")).st_mode & 0o777)
+print(a.get("ephemeral_home"), b.get("ephemeral_home"), "id_age" in a, mode)
+PYT
+)"
+if [ "$PYE" = "True False True 0o600" ]; then
+    ok "ephemeral_home: python sender true then false, id_age sent, id file 0600"
+else
+    bad "ephemeral_home python" "$PYE"
+fi
+# The fallback id is random hex, never clock plus pid.
+if ! $GREP -q 'anon-\$(date' "$REPO_ROOT/autonomy/telemetry.sh"; then
+    ok "fallback id no longer derives from the clock and pid"
+else
+    bad "fallback id still anon-epoch-pid"
 fi
 
 # traffic enum and the introspective flag.

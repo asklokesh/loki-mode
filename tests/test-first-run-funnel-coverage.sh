@@ -219,7 +219,7 @@ for line in open(sys.argv[1]):
     if d.get("event") == "build_verified":
         print(",".join(sorted(d["properties"])))
 ' "$_W/payload.log" 2>/dev/null)"
-    if [ "$_keys" = "arch,channel,headline,introspective,os_family,route,traffic,version" ]; then
+    if [ "$_keys" = "arch,channel,ephemeral_home,headline,id_age,introspective,os_family,route,traffic,version" ]; then
         ok "build_verified payload carries only headline and route beyond the baseline props"
     else
         bad "build_verified payload keys differ: $_keys"

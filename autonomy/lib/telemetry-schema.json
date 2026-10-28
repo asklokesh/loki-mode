@@ -7,7 +7,9 @@
   "version": {"type": "semver"},
   "channel": {"type": "enum", "values": ["npm", "docker", "homebrew", "skill", "source", "unknown"]},
   "traffic": {"type": "enum", "values": ["user", "ci", "internal"]},
-  "introspective": {"type": "bool"}
+  "introspective": {"type": "bool"},
+  "id_age": {"type": "int", "min": 0, "max": 36500},
+  "ephemeral_home": {"type": "bool"}
  },
  "introspective_commands": ["--help", "--version", "-h", "-v", "completion", "completions", "help", "internal", "memory", "version"],
  "introspective_source": {"cli_command": "command", "installed": "first_command"},

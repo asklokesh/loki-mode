@@ -88,6 +88,8 @@ paths, keys, or repo names -- only anonymous diagnostics.
   | `version` | the Loki Mode semver |
   | `channel` | npm, docker, homebrew, skill, source, unknown |
   | `traffic` | user, ci, internal (derived from CI environment variables, a non-interactive session, or an internal marker, so analytics can filter automation and our own use) |
+  | `id_age` | whole days since the id file was written (0 on the run that created it) |
+  | `ephemeral_home` | true when this process created the id inside a container, so analytics can exclude throwaway container homes from uniques, installs and retention. Mount `~/.loki-telemetry-id` (or the whole home) in a container to keep a stable id |
   | `introspective` | true or false, present on every event (false unless the event carries a command; true for version, help, completion, memory and internal commands, so they are flagged rather than counted as usage) |
 
   Per-event properties, and nothing else:
