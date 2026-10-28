@@ -1,7 +1,7 @@
 // Loki 10 event log (docs/v10/ENGINE.md "Event log"): append-only JSONL at <repo>/.loki/runs/<run-id>/events.jsonl, written only by the supervisor.
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, truncateSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
-import { addChildren, sumChildLedger } from "../util/child_ledger.ts";
+import { costUsdOf, runCost } from "../util/child_ledger.ts";
 import type { EventEnvelope, EventType, Obj, StageName, Verdict } from "./types.ts";
 
 const isObj = (x: unknown): x is Obj => typeof x === "object" && x !== null && !Array.isArray(x);
@@ -112,9 +112,6 @@ export function fold(events: EventEnvelope[]): Folded {
     cost: { usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
     lastSeq: -1,
   };
-  let usd = 0;
-  let sawCost = false;
-  let unmeasured = false;
   for (const e of events) {
     f.lastSeq = Math.max(f.lastSeq, e.seq);
     if (e.stage !== null) f.stages[e.stage] = e;
@@ -126,41 +123,26 @@ export function fold(events: EventEnvelope[]): Folded {
     } else if (e.type === "escalated") f.run.escalated = e;
     else if (e.type === "tamper.detected") f.run.tampered = true;
     else if (e.type === "cost") {
-      sawCost = true;
-      if (typeof e.data.usd === "number") usd += e.data.usd;
-      else unmeasured = true;
       if (typeof e.data.input_tokens === "number") f.cost.inputTokens += e.data.input_tokens;
       if (typeof e.data.output_tokens === "number") f.cost.outputTokens += e.data.output_tokens;
       if (typeof e.data.cache_read_tokens === "number") f.cost.cacheReadTokens += e.data.cache_read_tokens;
       if (typeof e.data.cache_creation_tokens === "number") f.cost.cacheCreationTokens += e.data.cache_creation_tokens;
     }
   }
-  f.cost.usd = sawCost && !unmeasured ? usd : null;
+  f.cost.usd = costUsdOf(events);
   return f;
 }
 
 // E-69: per-session measured/total counts and dollar sum from the raw cost events (not fold()'s cost.usd, which is null once any session is
 // unpriced). Lives next to fold() so a pure reader (the dashboard) need not import the supervisor. A TAMPERED log reports no measured cost.
-// With lokiRoot, this run's child-session ledger lines join the counts and dollars (the same addChildren rule the receipt uses).
+// With lokiRoot, never-ran quota attempts drop out and this run's child-session ledger lines join (util/child_ledger.ts runCost, the same rule the receipt uses).
 export function partialCost(events: EventEnvelope[], tampered = false, lokiRoot?: string): { measured: number; total: number; usd: number } {
-  if (tampered) return { measured: 0, total: 0, usd: 0 };
-  let measured = 0, total = 0, usd = 0;
-  for (const e of events) {
-    if (e.type !== "cost") continue;
-    total++;
-    if (typeof e.data.usd === "number") { measured++; usd += e.data.usd; }
-  }
-  const r = addChildren({ usd: null, partialUsd: usd, measuredCount: measured, totalCount: total }, childPart(events, lokiRoot));
-  return { measured: r.measuredCount, total: r.totalCount, usd: r.partialUsd };
+  const r = tampered ? null : runCost(events, lokiRoot);
+  return { measured: r?.measuredCount ?? 0, total: r?.totalCount ?? 0, usd: r?.partialUsd ?? 0 };
 }
 
-const childPart = (events: EventEnvelope[], lokiRoot?: string): ReturnType<typeof sumChildLedger> | null => (lokiRoot && events[0] ? sumChildLedger(lokiRoot, events[0].run) : null);
-
-/** THE run dollar total: the stage-session cost events (fold) plus this run's child ledger via addChildren, exactly what the receipt's sumRunCosts reports. run.completed, the console Cost line, Slack, handoff and status all read this. Null when tampered or any part is unknown (a ledger line that cannot be read or priced), never an undercount. */
-export function runCostUsd(events: EventEnvelope[], tampered = false, lokiRoot?: string): number | null {
-  if (tampered) return null;
-  return addChildren({ usd: fold(events).cost.usd, partialUsd: 0, measuredCount: 0, totalCount: 0 }, childPart(events, lokiRoot)).usd;
-}
+/** THE run dollar total (run.completed, console Cost line, Slack, handoff, status, dashboard): runCost, which is exactly what the receipt's sumRunCosts reports. Null when tampered or any part is unknown, never an undercount. */
+export const runCostUsd = (events: EventEnvelope[], tampered = false, lokiRoot?: string): number | null => (tampered ? null : runCost(events, lokiRoot).usd);
 
 /** The summary Cost inputs for a run's events. A run whose every cost event is the CLI invoker's unmetered marker (a recorded 0, no provider dollars) has no measured cost: usd null and zero measured sessions, so the Cost line reads "not measured", never "$0.00". A tampered log reports no trusted figure. */
 export function summaryCost(events: EventEnvelope[], tampered: boolean, lokiRoot?: string): { usd: number | null; pc: { measured: number; total: number; usd: number }; allUnmetered: boolean } {

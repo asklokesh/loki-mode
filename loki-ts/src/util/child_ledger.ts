@@ -9,6 +9,7 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { calculateCostFromRecords } from "../runner/budget.ts";
+import { neverRan, UNMETERED } from "../providers/provider_cost.ts";
 
 export interface LedgerRecord {
   phase: string;
@@ -69,7 +70,8 @@ export function appendChildLedger(lokiDir: string, rec: LedgerRecord): boolean {
     const dir = join(lokiDir, "metrics");
     mkdirSync(dir, { recursive: true });
     const runId = process.env["LOKI_E10_RUN_ID"];
-    appendFileSync(join(dir, "child-sessions.jsonl"), `${JSON.stringify(runId && !rec.run_id ? { ...rec, run_id: runId } : rec)}\n`);
+    // run_id is the FIRST key, so a line cut short mid-write still names its run (sumChildLedger fails closed on any line it cannot parse).
+    appendFileSync(join(dir, "child-sessions.jsonl"), `${JSON.stringify(runId && !rec.run_id ? { run_id: runId, ...rec } : rec.run_id ? { run_id: rec.run_id, ...rec } : rec)}\n`);
     return true;
   } catch { return false; }
 }
@@ -88,25 +90,71 @@ export function withChildLedger<A extends unknown[], R extends { stdout: string 
 
 // Child sessions append to metrics/child-sessions.jsonl: the cross-review, reviewer, council, grill, docs and enrich calls and the SDK judge (see the appendChildLedger / withChildLedger / loki_child_ledger_append callers). Project-model and wall are NOT ledger writers.
 // Only this run's lines count (run_id). A line with no dollar figure, or a $0 line with zero usage (E-69), is UNKNOWN, never 0.
-// A ledger that exists but cannot be read, or a torn line that names this run, is one UNKNOWN part: the total is null, never an undercount.
-export function sumChildLedger(lokiRoot: string, runId: string): { usd: number | null; partialUsd: number; measured: number; total: number } {
+// A ledger that exists but cannot be read, or ANY line that cannot be parsed (a torn write), is one UNKNOWN part: the total is null, never an undercount. The one unparsable line that is skipped is one whose first key is another run's complete run_id.
+const OTHER_RUN = /^\{"run_id":"([^"]*)"[,}]/;
+export interface ChildSums { usd: number | null; partialUsd: number; measured: number; total: number; inputTokens: number; outputTokens: number }
+export function sumChildLedger(lokiRoot: string, runId: string): ChildSums {
   let lines: string[] = [], unreadable = false;
   try { lines = readFileSync(join(lokiRoot, "metrics", "child-sessions.jsonl"), "utf8").split("\n"); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") unreadable = true; /* no ledger file: no children */ }
-  let partialUsd = 0, measured = 0, total = unreadable ? 1 : 0;
+  let partialUsd = 0, measured = 0, inputTokens = 0, outputTokens = 0, total = unreadable ? 1 : 0;
   for (const l of lines) {
     if (!l.trim()) continue;
     let r: Record<string, unknown>;
-    try { r = JSON.parse(l) as Record<string, unknown>; } catch { if (l.includes(runId)) total++; continue; } // torn line naming this run: cannot be attributed or priced
+    try { r = JSON.parse(l) as Record<string, unknown>; } catch { const o = OTHER_RUN.exec(l); if (!o || o[1] === runId) total++; continue; } // torn line: cannot be attributed or priced unless it provably names another run
     if (!r || typeof r !== "object" || r["run_id"] !== runId) continue;
     total++;
     const usage = ["input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens"].reduce((t, k) => t + (isNum(r[k]) ? r[k] : 0), 0);
+    inputTokens += isNum(r["input_tokens"]) ? r["input_tokens"] : 0; outputTokens += isNum(r["output_tokens"]) ? r["output_tokens"] : 0;
     if (isNum(r["usd"]) && r["usd"] >= 0 && !(r["usd"] === 0 && usage === 0)) { partialUsd += r["usd"]; measured++; }
   }
-  return { usd: total === measured ? partialUsd : null, partialUsd, measured, total };
+  return { usd: total === measured ? partialUsd : null, partialUsd, measured, total, inputTokens, outputTokens };
 }
 
 /** The ONE rule that adds a run's child sessions to its stage-session dollars. Receipt, run.completed, the console Cost line, Slack, status and handoff all go through it. Unknown on either side makes the total null; partial figures and counts keep the measured part. */
-export function addChildren<T extends { usd: number | null; partialUsd: number; measuredCount: number; totalCount: number }>(c: T, k: ReturnType<typeof sumChildLedger> | null): T {
+export function addChildren<T extends { usd: number | null; partialUsd: number; measuredCount: number; totalCount: number }>(c: T, k: ChildSums | null): T {
   if (!k || k.total === 0) return c;
   return { ...c, usd: c.usd !== null && k.usd !== null ? c.usd + k.usd : null, partialUsd: c.partialUsd + k.partialUsd, measuredCount: c.measuredCount + k.measured, totalCount: c.totalCount + k.total };
+}
+
+/** The children bucket of a run's cost: stage figures (tokens, per_model, per_stage, retry, savings) never include these. */
+export interface ChildBucket { usd: number | null; partial_usd: number; sessions: number; measured: number; input_tokens: number; output_tokens: number }
+
+/** A stage CostResult plus this run's children: usd/partialUsd/counts via addChildren, a truthful `children` bucket, and breakdown.usd = per_stage + children_usd. */
+export function withChildren<T extends { usd: number | null; partialUsd: number; measuredCount: number; totalCount: number; breakdown?: { usd: number | null } }>(c: T, lokiRoot: string, runId?: string): T & { children?: ChildBucket } {
+  const k = runId ? sumChildLedger(lokiRoot, runId) : null, r = addChildren(c, k);
+  if (!k || k.total === 0) return r;
+  return { ...r, children: { usd: k.usd, partial_usd: k.partialUsd, sessions: k.total, measured: k.measured, input_tokens: k.inputTokens, output_tokens: k.outputTokens }, ...(r.breakdown ? { breakdown: { ...r.breakdown, usd: r.usd, children_usd: k.usd } } : {}) };
+}
+
+type CostEv = { type: string; data: Record<string, unknown> };
+/** Dollars of a set of cost events: null when there are none or any is unpriced. The ONE sum fold() and the run total share. */
+export function costUsdOf(events: CostEv[]): number | null {
+  let usd = 0, saw = false;
+  for (const e of events) { if (e.type !== "cost") continue; saw = true; if (typeof e.data["usd"] !== "number") return null; usd += e.data["usd"]; }
+  return saw ? usd : null;
+}
+
+/** Cost events without the attempts that never ran. A quota rerun reuses its iteration id, so the Nth cost event of a session id is attempt N, whose result-cost file was archived as <id>-q<N> (archivePriorCost); an attempt whose archive has the never-ran shape (the receipt drops it too, via liveArchivedCosts) is not part of the run's cost. */
+export function liveCostEvents<T extends CostEv>(events: T[], lokiRoot?: string, unmetered = UNMETERED): T[] {
+  if (!lokiRoot) return events;
+  const seen = new Map<string, number>();
+  return events.filter((e) => {
+    const id = e.type === "cost" ? e.data["session_id"] : undefined;
+    if (typeof id !== "string") return true;
+    const n = (seen.get(id) ?? 0) + 1; seen.set(id, n);
+    return !neverRan(join(lokiRoot, "metrics", `result-cost-${id}-q${n}.json`), unmetered);
+  });
+}
+
+/** THE run cost from the event log: live stage cost events plus this run's children through addChildren. Receipt, run.completed, status, dashboard and the console Cost line all read it. */
+export function runCost(events: (CostEv & { run?: string })[], lokiRoot?: string): { usd: number | null; partialUsd: number; measuredCount: number; totalCount: number } {
+  const costs = liveCostEvents(events, lokiRoot).filter((e) => e.type === "cost"), priced = costs.filter((e) => typeof e.data["usd"] === "number");
+  const stage = { usd: costUsdOf(costs), partialUsd: priced.reduce((t, e) => t + (e.data["usd"] as number), 0), measuredCount: priced.length, totalCount: costs.length };
+  return addChildren(stage, lokiRoot && events[0]?.run ? sumChildLedger(lokiRoot, events[0].run) : null);
+}
+
+/** Child spend since this meter was created, for the dollar cap: pre-existing lines are already in the seeded prior spend. */
+export function childSpendMeter(lokiRoot: string, runId: string): () => number {
+  const base = sumChildLedger(lokiRoot, runId).partialUsd;
+  return () => Math.max(sumChildLedger(lokiRoot, runId).partialUsd - base, 0);
 }

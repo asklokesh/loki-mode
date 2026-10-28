@@ -218,6 +218,8 @@ export function withArchivedCosts(lokiRoot: string, ids: string[], keep: (archiv
   let files: string[] = []; try { files = readdirSync(join(lokiRoot, "metrics")); } catch { /* none yet */ }
   return [...new Set([...ids, ...ids.flatMap((id) => files.filter((f) => f.startsWith(`result-cost-${id}-q`) && f.endsWith(".json")).map((f) => f.slice("result-cost-".length, -".json".length)).filter(keep))])];
 }
+/** D48: marker on a result-cost file and the cost event/receipt for a CLI-invoker session that has no provider-reported dollars (recorded as 0, never null). */
+export const UNMETERED = "cli-invoker-unmetered";
 /** E-69 "never ran" shape of a result-cost file: a quota error result is always exactly $0, with all four usage counts 0 and source not the unmetered marker. Unreadable or any other shape is not it (an unknown cost must stay in the sum, flagged partial). */
 export function neverRan(path: string, unmeteredMarker: string): boolean {
   try {

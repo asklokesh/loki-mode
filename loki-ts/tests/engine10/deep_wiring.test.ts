@@ -5,10 +5,10 @@
 // webhook affect the verdict or wall time.
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readEvents } from "../../src/engine10/events.ts";
+import { readEvents, summaryCost } from "../../src/engine10/events.ts";
 import { runSupervisor, type PrStep } from "../../src/engine10/supervisor.ts";
 import { childEnv } from "../../src/engine10/session.ts";
 import { REVIEW_GUARD_DENYLIST } from "../../src/providers/claude_flags.ts";
@@ -257,5 +257,40 @@ describe("Q18-04 deep council default runner", () => {
     const { dir, base } = changedRepo();
     const r = await deepWith(async () => sess({ summary: "FINDING: a.ts:1 bad" }), dir, base);
     expect((r.data.checks as { name: string; result: string }[]).find((c) => c.name === "council")?.result).toBe("pass");
+  });
+});
+
+describe("child session spend reaches every run-total surface", () => {
+  const METERED_WORKER = worker(
+    'console.log(JSON.stringify({ type: "cost", stage: "implement", data: { session_id: "s1", usd: 0.3 } }));\n' +
+    'console.log(JSON.stringify({ type: "session.ended", stage: "implement", data: { session_id: "s1", exit: "done", duration_s: 1 } }));\n' +
+    'console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "VERIFIED", not_proven: [] } }));',
+  );
+  const seedChild = (dir: string, runId: string, usd: number): void => {
+    mkdirSync(join(dir, ".loki", "metrics"), { recursive: true });
+    writeFileSync(join(dir, ".loki", "metrics", "child-sessions.jsonl"), `${JSON.stringify({ run_id: runId, phase: "review", model: "m", usd })}\n`);
+  };
+
+  test("run.completed and the Slack Cost line carry stage plus child spend", async () => {
+    const dir = repo();
+    seedChild(dir, "e10-dwc1", 0.2);
+    const posts: { text: string }[] = [];
+    const server = Bun.serve({ port: 0, fetch: async (req) => { posts.push((await req.json()) as { text: string }); return new Response("ok"); } });
+    try {
+      await runSupervisor({ runId: "e10-dwc1", repoDir: dir, env: supEnv({ LOKI_SLACK_WEBHOOK_URL: `http://127.0.0.1:${server.port}/` }), workerArgv: METERED_WORKER });
+      const done = readEvents(join(dir, ".loki/runs/e10-dwc1/events.jsonl")).find((e) => e.type === "run.completed")!;
+      expect(done.data.cost_usd as number).toBeCloseTo(0.5, 10); // M4: a stage-only 0.3 here means run.completed dropped the ledger
+      expect(posts[0]!.text).toContain("$0.50");
+    } finally { server.stop(true); }
+  }, 10_000);
+
+  test("the console Cost line reads the same child-inclusive total", () => {
+    const dir = repo();
+    seedChild(dir, "e10-dwc2", 0.2);
+    const events = [{ v: 1, seq: 0, ts: "2026-10-28T00:00:00Z", run: "e10-dwc2", type: "cost", stage: "implement", data: { session_id: "s1", usd: 0.3 } }] as never[];
+    const { usd, pc } = summaryCost(events, false, join(dir, ".loki"));
+    expect(usd).toBeCloseTo(0.5, 10);
+    expect(pc.usd).toBeCloseTo(0.5, 10);
+    expect(readFileSync(new URL("../../src/engine10/supervisor.ts", import.meta.url), "utf8")).toMatch(/summaryCost\(events, res\.tampered, join\(repoDir, "\.loki"\)\)/); // M7: main() prints through summaryCost with the run's .loki root
   });
 });

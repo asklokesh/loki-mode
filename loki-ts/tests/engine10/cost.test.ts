@@ -21,6 +21,10 @@ import { partialUsagePath, recordPartialStreamCost } from "../../src/runner/budg
 import { consumeSdkStream } from "../../src/runner/sdk_stream_parser.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { makeEvent, partialCost, runCostUsd, summaryCost } from "../../src/engine10/events.ts";
+import { appendChildLedger, childSpendMeter, runCost } from "../../src/util/child_ledger.ts";
+import { resumeVerdicts } from "../../src/contrib/cost_records.ts";
+import { archivePriorCost, liveArchivedCosts } from "../../src/providers/provider_cost.ts";
+import { UNMETERED } from "../../src/engine10/cost.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "cost");
 const REPO_ROOT = join(import.meta.dir, "..", "..", "..");
@@ -715,7 +719,7 @@ describe("one cost ledger: per-session deltas, child sessions, fail closed", () 
     try {
       write(d, "plan", plan);
       writeFileSync(join(d, "metrics", "child-sessions.jsonl"), `${JSON.stringify({ phase: "wall", model: "m", cost_status: "unmeasured", run_id: "R1", source: "x" })}\n`);
-      expect(sumChildLedger(d, "R1")).toEqual({ usd: null, partialUsd: 0, measured: 0, total: 1 });
+      expect(sumChildLedger(d, "R1")).toEqual({ usd: null, partialUsd: 0, measured: 0, total: 1, inputTokens: 0, outputTokens: 0 });
       const c = sumRunCosts(d, ["plan"], [], "R1");
       expect(c.usd).toBeNull();
       expect(c.partialUsd).toBeCloseTo(0.0233, 10);
@@ -779,5 +783,128 @@ describe("one cost ledger: per-session deltas, child sessions, fail closed", () 
       expect(c.usd).toBeNull();
       expect(c.missing).toContain("mid");
     } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+});
+
+describe("one cost ledger: quota reruns, torn lines, children bucket", () => {
+  const write = (dir: string, iter: string, rec: Record<string, unknown>): void => {
+    mkdirSync(join(dir, "metrics"), { recursive: true });
+    writeFileSync(join(dir, "metrics", `result-cost-${iter}.json`), JSON.stringify(rec));
+  };
+  const quota = { total_cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, source: "sdk" };
+  const real = { total_cost_usd: 1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0, source: "sdk" };
+  const withRunId = <T>(id: string | undefined, fn: () => T): T => {
+    const prev = process.env["LOKI_E10_RUN_ID"];
+    if (id === undefined) delete process.env["LOKI_E10_RUN_ID"]; else process.env["LOKI_E10_RUN_ID"] = id;
+    try { return fn(); } finally { if (prev === undefined) delete process.env["LOKI_E10_RUN_ID"]; else process.env["LOKI_E10_RUN_ID"] = prev; }
+  };
+
+  test("a quota rerun: the event-log total and the receipt total are the same number", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "implement", quota); archivePriorCost(d, "implement"); write(d, "implement", real); // attempt 1 hit quota (archived -q1), attempt 2 ran
+      const events = [makeEvent("R1", 0, "cost", "implement", { session_id: "implement", usd: null }), makeEvent("R1", 1, "cost", "implement", { session_id: "implement", usd: 1 })];
+      const receipt = sumRunCosts(d, liveArchivedCosts(d, ["implement"], UNMETERED), [], "R1");
+      expect(receipt.usd).toBe(1);
+      expect(runCostUsd(events, false, d)).toBe(receipt.usd);
+      expect(summaryCost(events, false, d).usd).toBe(receipt.usd);
+      expect(runCost(events, d)).toMatchObject({ usd: receipt.usd, partialUsd: receipt.partialUsd, measuredCount: receipt.measuredCount, totalCount: receipt.totalCount });
+      expect(partialCost(events, false, d)).toEqual({ measured: 1, total: 1, usd: 1 });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a rerun whose first attempt was a real unpriced session stays unknown", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "implement", { ...quota, input_tokens: 9 }); archivePriorCost(d, "implement"); write(d, "implement", real); // $0 with real usage is not the never-ran shape
+      const events = [makeEvent("R1", 0, "cost", "implement", { session_id: "implement", usd: null }), makeEvent("R1", 1, "cost", "implement", { session_id: "implement", usd: 1 })];
+      expect(runCostUsd(events, false, d)).toBeNull();
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+
+  const rec = { phase: "reviewer", model: "m", input_tokens: 5, output_tokens: 7, cache_creation_tokens: 0, cache_read_tokens: 0, usd: 0.25, source: "x" };
+  test("a ledger line torn at ANY byte of the real writer's output never undercounts this run", () => {
+    const d = tmpCheckout();
+    try {
+      withRunId("R1", () => appendChildLedger(d, rec));
+      const full = readFileSync(join(d, "metrics", "child-sessions.jsonl"), "utf8").trimEnd();
+      expect(sumChildLedger(d, "R1")).toMatchObject({ usd: 0.25, total: 1 });
+      for (let i = 1; i < full.length; i++) {
+        writeFileSync(join(d, "metrics", "child-sessions.jsonl"), full.slice(0, i));
+        const k = sumChildLedger(d, "R1");
+        expect(k.usd).toBeNull(); // cut at byte i: unknown, never the 0 of a skipped line
+        expect(k.total).toBe(1);
+      }
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a torn line that provably names another run does not blank this run", () => {
+    const d = tmpCheckout();
+    try {
+      withRunId("R2", () => appendChildLedger(d, rec));
+      const other = readFileSync(join(d, "metrics", "child-sessions.jsonl"), "utf8").trimEnd();
+      writeFileSync(join(d, "metrics", "child-sessions.jsonl"), `${other.slice(0, other.length - 9)}\n`);
+      withRunId("R1", () => appendChildLedger(d, rec));
+      expect(sumChildLedger(d, "R1")).toMatchObject({ usd: 0.25, total: 1 });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("the writer puts run_id first, whether from the env or the record", () => {
+    const d = tmpCheckout();
+    try {
+      withRunId("R1", () => { appendChildLedger(d, rec); appendChildLedger(d, { ...rec, run_id: "R9" }); });
+      const lines = readFileSync(join(d, "metrics", "child-sessions.jsonl"), "utf8").trim().split("\n");
+      expect(lines[0]!.startsWith('{"run_id":"R1",')).toBe(true);
+      expect(lines[1]!.startsWith('{"run_id":"R9",')).toBe(true);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+
+  test("scope is truthful: tokens and per_stage are stage-only, the children bucket carries the rest, per_stage + children_usd = usd", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "plan", { ...real, total_cost_usd: 1, session_id: "S1" });
+      withRunId("R1", () => appendChildLedger(d, rec));
+      const c = sumRunCosts(d, ["plan"], [], "R1");
+      expect(c.usd).toBeCloseTo(1.25, 10);
+      expect(c.input_tokens).toBe(10); expect(c.output_tokens).toBe(5); // stage sessions only
+      expect(c.children).toEqual({ usd: 0.25, partial_usd: 0.25, sessions: 1, measured: 1, input_tokens: 5, output_tokens: 7 });
+      const stageUsd = Object.values(c.breakdown!.per_stage).reduce((t, s) => t + (s.usd ?? 0), 0);
+      expect(stageUsd + (c.breakdown!.children_usd as number)).toBeCloseTo(c.usd as number, 10);
+      expect(c.breakdown!.usd).toBe(c.usd);
+      expect(costTotalsOf(c).children).toEqual(c.children);
+      expect(sumRunCosts(d, ["plan"], [], "R-none").children).toBeUndefined(); // a run without children carries no bucket
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+
+  test("childSpendMeter reports only the spend added after it was created", () => {
+    const d = tmpCheckout();
+    try {
+      withRunId("R1", () => appendChildLedger(d, rec));
+      const spent = childSpendMeter(d, "R1");
+      expect(spent()).toBe(0);
+      withRunId("R1", () => appendChildLedger(d, rec));
+      withRunId("R2", () => appendChildLedger(d, rec));
+      expect(spent()).toBeCloseTo(0.25, 10);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+});
+
+describe("resume predecessor ties", () => {
+  test("two candidates tied at the best total are ambiguous: no usd, never the first one", () => {
+    // Only the FIRST tied candidate happens to prove a cumulative delta, so a first-wins pick would bill "3" a delta against an arbitrary parent.
+    const recs = [
+      { iter: "1", rec: { session_id: "S", total_cost_usd: 1, model_usage: { m: { output_tokens: 10, cost_usd: 1 } } } },
+      { iter: "2", rec: { session_id: "S", total_cost_usd: 1, model_usage: { m: { output_tokens: 99, cost_usd: 1 } } } },
+      { iter: "3", rec: { session_id: "T", resumed_from: "S", total_cost_usd: 2, output_tokens: 5, model_usage: { m: { output_tokens: 15, cost_usd: 2 } } } },
+    ];
+    const v = resumeVerdicts(recs);
+    expect(v.ambiguous).toContain("3"); // M3: picking top[0] on a tie lets "3" become a delta against an arbitrary parent
+    expect(v.delta["3"]).toBeUndefined();
+    expect(v.separate).not.toContain("3");
+  });
+  test("a single best candidate is still the parent", () => {
+    const recs = [
+      { iter: "1", rec: { session_id: "S", total_cost_usd: 1 } },
+      { iter: "2", rec: { session_id: "S", total_cost_usd: 1.5 } },
+      { iter: "3", rec: { session_id: "T", resumed_from: "S", total_cost_usd: 0.5 } },
+    ];
+    expect(resumeVerdicts(recs).separate).toContain("3"); // every candidate is above 0.5: the lowest (1) is the unique parent and 0.5 < 1 proves a separate session
   });
 });

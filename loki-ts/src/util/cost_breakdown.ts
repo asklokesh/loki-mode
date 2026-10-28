@@ -15,7 +15,8 @@ export interface StageCost {
   cache_hit_ratio: number | null; // read / (read + creation); null when both are 0, never 0
 }
 export interface CostBreakdown {
-  usd: number | null; // sum of per_stage usd; null when any session's dollars are unknown
+  usd: number | null; // per_stage usd plus children_usd; null when any session's dollars are unknown
+  children_usd?: number | null; // this run's child sessions, when it had any; per_stage, retry_usd and savings_usd cover STAGE sessions only
   per_stage: Record<string, StageCost>;
   retry_usd: number | null; // dollars spent in retry sessions (a subset of usd, not added on top)
   retry_sessions: number;

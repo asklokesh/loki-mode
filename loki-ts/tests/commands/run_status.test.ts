@@ -549,6 +549,21 @@ describe("status usd_so_far and usd_projected", () => {
   });
 });
 
+describe("status cost includes child sessions", () => {
+  test("cost_usd and usd_so_far add the run's child ledger to its stage spend; another run's line is ignored", () => {
+    mkdirSync(join(dir, ".loki", "metrics"), { recursive: true });
+    writeFileSync(join(dir, ".loki", "metrics", "child-sessions.jsonl"),
+      `${JSON.stringify({ run_id: "e10-x", phase: "review", usd: 0.2 })}\n${JSON.stringify({ run_id: "other", phase: "review", usd: 9 })}\n`);
+    const ev = [
+      { v: 1, seq: 0, ts: "2026-10-28T00:00:00Z", run: "e10-x", type: "run.started", stage: null, data: {} },
+      { v: 1, seq: 1, ts: "2026-10-28T00:00:01Z", run: "e10-x", type: "cost", stage: "plan", data: { session_id: "a", usd: 0.3 } },
+    ] as EventEnvelope[];
+    const s = summarize("e10-x", ev, join(dir, ".loki", "runs"), Date.now()) as unknown as Record<string, number>;
+    expect(s.cost_usd).toBeCloseTo(0.5, 10); // M5: 0.3 here means the status path dropped the ledger
+    expect(s.usd_so_far).toBeCloseTo(0.5, 10);
+  });
+});
+
 describe("loki status --follow", () => {
   const id = "e10-20261024T000000Z-ffff";
   const evPath = (): string => join(dir, ".loki", "runs", id, "events.jsonl");

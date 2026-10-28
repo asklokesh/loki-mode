@@ -118,6 +118,7 @@ export interface CostTotals {
   totalCount?: number;
   partialUsd?: number;
   unmetered?: boolean; // D48: usd is a recorded 0 for a CLI-invoker session with no provider figure
+  children?: import("../util/child_ledger.ts").ChildBucket; // child sessions; usd above includes them, the token fields do not
 }
 export interface CostReader { // implemented by cost.ts (E-06)
   read(repoDir: string, iterationIds: string[]): CostTotals;
@@ -205,6 +206,7 @@ export interface Receipt {
     total_sessions: number;
     partial_usd: number;
     source?: string; // D48: "cli-invoker-unmetered" when usd is a recorded 0, absent otherwise
+    children?: import("../util/child_ledger.ts").ChildBucket; // present only when the run had child sessions: usd, partial_usd and the session counts include them; input_tokens, output_tokens and per_model are stage sessions only
   };
   /** RECEIPT-TRUTH (receipt_time.ts): stages is a disjoint partition of total_s (first event to seal; a parallel group is one "a+b" bucket); wall_s = the stage buckets without setup, orchestration and seal. Additive; consumers read it through reconciledTotalS. */
   time: ReceiptTime;

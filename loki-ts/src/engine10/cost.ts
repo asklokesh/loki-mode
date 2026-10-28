@@ -2,10 +2,9 @@
 // cost-event data. Absent/unreadable/no-total_cost_usd, or a dollar figure with all-zero usage (E-69, the EV-8 failure mode), all mean UNKNOWN: usd null, never 0. E-06b: also writes `<lokiRoot>/metrics/efficiency/iteration-<N>.json`, the shape ENGINE.md section 10 and
 // autonomy/lib/cost-summary.py read (not ours to change). Unlike the legacy bash writer (autonomy/run.sh), which always writes cost_usd (defaulting to 0 when unknown), this omits cost_usd when there is no dollar figure.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"; import type { CostRecords, CostTotals } from "./types.ts"; import { hooks } from "./hooks.ts"; import { type CostBreakdown, costBreakdown } from "../util/cost_breakdown.ts";
-import { join } from "node:path"; import { addChildren, sumChildLedger } from "../util/child_ledger.ts"; export { sumChildLedger }; import { sessionPlanEnabled } from "../runner/router/flag.ts";
+import { join } from "node:path"; import { type ChildBucket, sumChildLedger, withChildren } from "../util/child_ledger.ts"; export { sumChildLedger }; import { sessionPlanEnabled } from "../runner/router/flag.ts";
 
-/** D48: marker on a result-cost file and the cost event/receipt for a CLI-invoker session (LOKI_E10_INVOKER=cli, e.g. the  stub provider) that has no provider-reported dollars. Recorded as 0, never null, and always disclosed in NOT PROVEN. */
-export const UNMETERED = "cli-invoker-unmetered";
+import { UNMETERED } from "../providers/provider_cost.ts"; export { UNMETERED }; // D48 marker, defined beside neverRan
 
 export interface RouterUsage {
   requests_total: number;
@@ -37,7 +36,8 @@ export interface CostResult {
   tokens_measured?: { k: number; n: number }; // set only when k < n: sessions whose tokens went into the sums
   records?: CostRecords; // COST-RECORDS / FIX-RESUME: per-model, scope, turns, resume verdict; absent when no file was read
   duration_ms?: number; // sum of the SDK result line duration_ms over the files that carried one; absent when none did
-  breakdown?: CostBreakdown; // P12-21: per-stage and retry attribution; usd null exactly when the run's is
+  breakdown?: CostBreakdown; // P12-21: per-stage and retry attribution; per_stage + children_usd = usd
+  children?: ChildBucket; // this run's child sessions (reviewers, judge, council); present only when the run had some. tokens, records, router, per_stage, retry and savings are STAGE sessions only
   // R1-08: summed router telemetry. over_100k_* are the input/output tokens of requests strictly over 100K prompt tokens, so a caller can apply the pricing over_100k tier (budget.ts); not applied
   // here. Optional so other CostResult producers (budget.ts) need no change; sumResultCosts always sets it.
   router?: RouterUsage;
@@ -167,14 +167,10 @@ export function recordSessionCost(lokiRoot: string, iterationId: string, info: E
   return cost;
 }
 
-// The run's one cost: stage deltas plus this run's child sessions (addChildren, the same rule events.ts uses for run.completed and the console); unknown if any part is unknown.
-// usd, partialUsd, measuredCount, totalCount and breakdown.usd include the children. Tokens, per_model, records, router and breakdown.per_stage are STAGE-SESSION ONLY (the same figures the cost events fold to).
-export function sumRunCosts(lokiRoot: string, iterations: string[], context: string[] = [], runId?: string): CostResult {
-  const c = sumResultCosts(lokiRoot, iterations, context), r = addChildren(c, runId ? sumChildLedger(lokiRoot, runId) : null);
-  return r.breakdown ? { ...r, breakdown: { ...r.breakdown, usd: r.usd } } : r;
-}
+// The run's one cost: stage deltas plus this run's child sessions (withChildren, the rule runCost uses for the event log); unknown if any part is unknown.
+export const sumRunCosts = (lokiRoot: string, iterations: string[], context: string[] = [], runId?: string): CostResult => withChildren(sumResultCosts(lokiRoot, iterations, context), lokiRoot, runId);
 
 /** Map the file-summed CostResult to the machine's CostTotals; a cache key no file carried stays unseen (NOT RECORDED), never 0. */
 export function costTotalsOf(c: CostResult): CostTotals {
-  return { usd: c.usd, ...(c.tokens_measured ? { tokensMeasured: c.tokens_measured } : {}), inputTokens: c.input_tokens, outputTokens: c.output_tokens, cacheReadTokens: c.cache_read_tokens, cacheCreationTokens: c.cache_creation_tokens, cacheReadSeen: c.cache_read_seen === true, cacheCreationSeen: c.cache_creation_seen === true, ...(c.duration_ms !== undefined ? { durationMs: c.duration_ms } : {}), ...(c.records ? { records: c.records } : {}), measuredCount: c.measuredCount, totalCount: c.totalCount, partialUsd: c.partialUsd, unmetered: c.unmetered };
+  return { usd: c.usd, ...(c.tokens_measured ? { tokensMeasured: c.tokens_measured } : {}), inputTokens: c.input_tokens, outputTokens: c.output_tokens, cacheReadTokens: c.cache_read_tokens, cacheCreationTokens: c.cache_creation_tokens, cacheReadSeen: c.cache_read_seen === true, cacheCreationSeen: c.cache_creation_seen === true, ...(c.duration_ms !== undefined ? { durationMs: c.duration_ms } : {}), ...(c.records ? { records: c.records } : {}), measuredCount: c.measuredCount, totalCount: c.totalCount, partialUsd: c.partialUsd, unmetered: c.unmetered, ...(c.children ? { children: c.children } : {}) };
 }

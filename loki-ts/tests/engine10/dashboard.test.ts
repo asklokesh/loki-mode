@@ -39,6 +39,19 @@ afterEach(() => {
   if (repoDir) rmSync(repoDir, { recursive: true, force: true });
 });
 
+describe("dashboard cost includes child sessions", () => {
+  test("costUsd and partialUsd add the run's child ledger to its stage spend", () => {
+    repoDir = mkRepo();
+    writeRun(repoDir, "r1", [ev(0, "run.started", null, {}), ev(1, "cost", "plan", { session_id: "s1", usd: 0.3 })]);
+    mkdirSync(join(repoDir, ".loki", "metrics"), { recursive: true });
+    writeFileSync(join(repoDir, ".loki", "metrics", "child-sessions.jsonl"), `${JSON.stringify({ run_id: "r1", phase: "review", usd: 0.2 })}\n`);
+    const s = summarizeRun(repoDir, "r1");
+    expect(s.costUsd).toBeCloseTo(0.5, 10); // M6: 0.3 here means the dashboard dropped the ledger
+    expect(s.partialUsd).toBeCloseTo(0.5, 10);
+    expect(s.totalSessions).toBe(2);
+  });
+});
+
 describe("summarizeRun / formatPanels", () => {
   test("an empty run: verdict, PR and NOT PROVEN panels are absent; cost and time read not measured", () => {
     repoDir = mkRepo();
