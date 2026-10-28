@@ -2050,5 +2050,41 @@ describe("main() Seal accuracy line (GAME10-03c)", () => {
       expect(r.code).toBe(1);
       expect(r.out).not.toContain("0.1%");
     } finally { rmSync(dir, { recursive: true, force: true }); }
+describe("verify binds a plain receipt to the requested run id", () => {
+  const withKey = async (fn: (dir: string) => Promise<void>): Promise<void> => {
+    const dir = tmpDir(), saved = [process.env["LOKI_RECEIPT_SIGNING_KEY"], process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]];
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = ""; process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(dir, "k.pem");
+    try { await fn(dir); } finally {
+      for (const [k, v] of [["LOKI_RECEIPT_SIGNING_KEY", saved[0]], ["LOKI_RECEIPT_SIGNING_KEY_FILE", saved[1]]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  /** A genuinely signed receipt with a signed log.sealed line, written under runs/<id>. */
+  const signedRun = (dir: string, id: string, mutate?: (f: Record<string, unknown>) => void): string => {
+    const f = baseReceiptFields(); f["run_id"] = id; f["log_seal"] = true; mutate?.(f);
+    const hash = computeReceiptHash(f), runDir = join(dir, "runs", id); mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "receipt.json"), JSON.stringify({ ...f, receipt_sha256: hash, verification: signReceipt(id, hash) }, null, 2));
+    sealedLog(runDir, hash, id);
+    return runDir;
+  };
+  test("the original id is VERIFIED; the same receipt and log copied under another id is not exit 0 and names both ids", async () => {
+    await withKey(async (dir) => {
+      const a = signedRun(dir, "run-a");
+      expect((await runMain(["run-a"], join(dir, "runs"))).code).toBe(0);
+      const b = join(dir, "runs", "other-run"); mkdirSync(b, { recursive: true });
+      for (const n of ["receipt.json", "events.jsonl"]) writeFileSync(join(b, n), readFileSync(join(a, n)));
+      const r = await runMain(["other-run"], join(dir, "runs"));
+      expect(r.code).not.toBe(0);
+      expect(r.out).not.toContain("verdict: VERIFIED");
+      expect(r.out).toContain("run-a"); expect(r.out).toContain("other-run");
+    });
+  });
+  test("a receipt with no run_id under a run id is refused, never VERIFIED", async () => {
+    await withKey(async (dir) => {
+      signedRun(dir, "norun", (f) => { delete f["run_id"]; });
+      const r = await runMain(["norun"], join(dir, "runs"));
+      expect(r.code).not.toBe(0);
+      expect(r.out).not.toContain("verdict: VERIFIED");
+    });
   });
 });
