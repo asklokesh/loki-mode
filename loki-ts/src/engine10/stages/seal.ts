@@ -23,7 +23,7 @@ import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
-import { checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, isExecutedProof, CODE_FILE_EXT, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
+import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, isExecutedProof, CODE_FILE_EXT, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
@@ -220,7 +220,7 @@ export const sealStage: Stage = {
     for (const d of Array.isArray(o.wall?.not_run_files) ? (o.wall!.not_run_files as Obj[]) : []) notProven.add(`Wall test not executed: ${String(d.file)}: ${String(d.reason)}`); // FC-69: never silent, on the receipt and the console NOT PROVEN line
     if (wallNotRun > 0 && ![...notProven].some((n) => n.startsWith("Wall test not executed:") || n.startsWith("wall test discarded:")) && !(Array.isArray(o.wall?.discarded) && (o.wall!.discarded as unknown[]).length > 0)) notProven.add(`Wall test not executed: ${wallNotRun} file(s), no reason recorded`);
     if (wallNotRun > 0) { // A-103b: wall.ts keeps each sealed copy under runDir/wall; a copy absent from wall.files was discarded (class not_run: no real base result)
-      try { const kept = new Set((Array.isArray(o.wall?.files) ? (o.wall!.files as Obj[]) : []).map((f) => basename(String(f.path)))); for (const n of readdirSync(join(ctx.runDir, "wall")).sort()) if (!kept.has(n)) notProven.add(`wall test discarded: ${n} (not_run)`); } catch { /* no sealed wall dir: count line only */ }
+      try { const kept = new Set((Array.isArray(o.wall?.files) ? (o.wall!.files as Obj[]) : []).map((f) => basename(String(f.path)))); for (const n of readdirSync(sealedWallDir(ctx.runDir)).sort()) if (!kept.has(n)) notProven.add(`wall test discarded: ${n} (not_run)`); } catch { /* no sealed wall dir: count line only */ }
     }
     if (!diffOk) notProven.add("diff not computed (git diff-tree failed)");
     // E-55: any status other than A means the path existed at base_sha (M, D, or T typechange, e.g. a symlink).

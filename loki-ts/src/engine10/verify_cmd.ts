@@ -8,7 +8,7 @@ import { lokiDir } from "../util/paths.ts"; import { receiptSealAccuracy } from 
 import { applyMaxAge, deployAttestCmd, pubFor, receiptShapeProblem, takeMaxAge } from "../util/receipt_signer.ts";
 import { latestRunId } from "../commands/run_status.ts"; import { sealDrift, tornTail, verifyLogSeals, wallNotComparedNote } from "../util/seal_drift.ts";
 import { readEvents } from "./events.ts";
-import { isExecutedProof, printable, withExplain, type ExplainRec } from "../util/check_result.ts";
+import { isExecutedProof, printable, sealedWallCopy, sealedWallDir, withExplain, type ExplainRec } from "../util/check_result.ts";
 import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
 import { exportDsseReceipt, isEnvelope, outcomeOf, runIdGuard, verifyDsseReceipt } from "../features/receipt_dsse.ts";
 import { verifyGroup } from "../features/speed/seal_group.ts"; import { composeComposite, compositeHash, compositeLines, isComposite, verifyComposite } from "../util/composite_seal.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
@@ -43,10 +43,10 @@ const isPlain = (v: unknown): boolean => v !== null && typeof v === "object" && 
 /** A sealed Wall copy under <run dir>/wall that no longer hashes to the sha256 the receipt recorded was edited after the seal. A moved receipt (no wall dir beside it) has nothing to compare; once the wall dir exists, a recorded file whose sealed copy is gone was deleted after the seal. */
 function wallTamperProblem(receiptPath: string, receipt: Record<string, unknown>): string | null {
   const wall = receipt["wall"] as { files?: unknown } | null | undefined, files = Array.isArray(wall?.files) ? (wall!.files as { path?: unknown; sha256?: unknown }[]) : [];
-  const wallDir = join(dirname(receiptPath), "wall"), haveWallDir = existsSync(wallDir);
+  const wallDir = sealedWallDir(dirname(receiptPath)), haveWallDir = existsSync(wallDir);
   for (const f of files) {
     if (typeof f?.path !== "string" || typeof f.sha256 !== "string") continue;
-    const copy = join(wallDir, basename(f.path));
+    const copy = sealedWallCopy(dirname(receiptPath), f.path);
     let cur: string; try { cur = createHash("sha256").update(readFileSync(copy)).digest("hex"); } catch { if (haveWallDir) return `sealed Wall file ${basename(f.path)} is missing from the run's wall directory: it was deleted after the seal`; continue; }
     if (cur !== f.sha256) return `sealed Wall file ${basename(f.path)} changed after the seal: receipt recorded sha256 ${f.sha256}, on disk ${cur}`;
   }

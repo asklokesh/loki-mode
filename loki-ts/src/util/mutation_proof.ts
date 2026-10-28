@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { safeGit } from "./safe_git.ts";
 import { readScopeText } from "./run_cap.ts";
+import { sealedWallCopy, sealedWallDir } from "./check_result.ts";
 
 export type MutationOutcome = "yes" | "no" | "inconclusive";
 export interface MutationProof { outcome: MutationOutcome; line: string; }
@@ -48,8 +49,8 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
       if (git(wt as string, ["reset", "-q", "--hard", i.baseSha]).status !== 0 || git(wt as string, ["clean", "-fdxq", ...DEP_DIRS.flatMap((d) => ["-e", d])]).status !== 0) return false;
       for (const [rel, src] of srcs) { mkdirSync(dirname(join(wt as string, rel)), { recursive: true }); writeFileSync(join(wt as string, rel), readFileSync(src)); } return true; };
     for (const rel of rels) { // sealed copy first (byte-exact what the run sealed), else the file in the working tree
-      const sealed = join(i.runDir, "wall", basename(rel));
-      if (!existsSync(sealed) && existsSync(join(i.runDir, "wall"))) return np(`sealed Wall copy missing: ${rel}`); // never substitute the working-tree file for a deleted sealed copy
+      const sealed = sealedWallCopy(i.runDir, rel);
+      if (!existsSync(sealed) && existsSync(sealedWallDir(i.runDir))) return np(`sealed Wall copy missing: ${rel}`); // never substitute the working-tree file for a deleted sealed copy
       const src = existsSync(sealed) ? sealed : join(i.repoDir, rel);
       if (!existsSync(src)) return np(`Wall file missing: ${rel}`);
       mkdirSync(dirname(join(wt, rel)), { recursive: true }); writeFileSync(join(wt, rel), readFileSync(src)); srcs.push([rel, src]);

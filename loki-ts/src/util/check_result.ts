@@ -28,6 +28,9 @@ export function plainTestEnv(base: NodeJS.ProcessEnv = process.env): Record<stri
   return e;
 }
 export const NO_TESTS_REASON = "no tests executed";
+/** The one owner of where a sealed Wall copy lives: <runDir>/wall/<basename>. Lives here (not wall.ts) because wall.ts imports this module; wall.ts re-exports it. */
+export const sealedWallDir = (runDir: string): string => join(runDir, "wall");
+export const sealedWallCopy = (runDir: string, path: string): string => join(sealedWallDir(runDir), basename(path));
 export const NO_RUNNER_REASON = "no runner of this repo runs this file"; // FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: the one wording wall.ts (not_run_files) and verify.ts (not_proven) share, so seal dedups them
 /** Machine-readable reason the Wall found no harness runner when bun was off (LOKI_WALL_HARNESS_RUNNER=0) or missing from PATH (the pre-spawn Bun.which check), else the repo simply has no toolchain; recorded as skip_code on the Wall skip. */
 /** The skip_code values a check or stage can carry: the harnessSkipCode set plus tool_not_on_path (a runner command missing from PATH). */
@@ -790,7 +793,7 @@ export function publishableWall(repoDir: string, runDir: string, o: Partial<Reco
   for (const w of arr(o.wall?.["files"])) {
     const rel = relative(repoDir, String(w["path"])), hit = arr(o.verify?.["checks"]).find((c) => tgt.has(String(c["name"])) && String(c["name"]).slice(String(c["name"]).indexOf(":") + 1) === rel && hasExecutedProof([c]));
     if (!hit || rel.startsWith("..") || isAbsolute(rel) || rel.startsWith(".loki/") || !basename(rel).startsWith("loki_wall_")) continue; // stale, failed, not-run or outside the repo: stays dropped
-    try { const bytes = readFileSync(join(runDir, "wall", basename(rel))); if (createHash("sha256").update(bytes).digest("hex") !== w["sha256"]) throw new Error("hash"); out.files.push({ rel, bytes, cmd: String(hit["cmd"]), runner: String(hit["name"]).slice(0, String(hit["name"]).indexOf(":")) }); } catch { out.notes.push(`Wall test not published: ${rel} (sealed copy missing or not the sealed bytes)`); }
+    try { const bytes = readFileSync(sealedWallCopy(runDir, rel)); if (createHash("sha256").update(bytes).digest("hex") !== w["sha256"]) throw new Error("hash"); out.files.push({ rel, bytes, cmd: String(hit["cmd"]), runner: String(hit["name"]).slice(0, String(hit["name"]).indexOf(":")) }); } catch { out.notes.push(`Wall test not published: ${rel} (sealed copy missing or not the sealed bytes)`); }
   }
   return out;
 }

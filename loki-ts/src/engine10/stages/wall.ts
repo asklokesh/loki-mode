@@ -24,6 +24,7 @@ export interface WallSealedFile { path: string; sha256: string; runner?: RunnerN
 // Runs the sealed Wall tests on the base tree; local since types.ts has no "execute tests" contract yet. not_run (D42 (3)): no real result; counts toward neither pass nor fail. Optional for pre-D42(3) fakes.
 export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run?: number }; /** FC-69: why each not_run file of the LAST run was not executed */ lastNotRunFiles?: { file: string; reason: string }[]; /** TEN-SPEED-19: one result per file, input order, at most `jobs` processes at once */ runEach?(repoDir: string, files: TestRef[], jobs: number, corroborate?: boolean): Promise<BaseEachResult[]>; }
 export const BASE_RUN_TIMEOUT_MS = 60_000; // same per-check budget as verify.ts's CHECK_TIMEOUT_MS
+export { sealedWallCopy, sealedWallDir } from "../../util/check_result.ts";
 export { classify, notRunReason, pytestCollectionIsRed } from "../../util/check_result.ts"; // moved to util/check_result.ts (core line budget)
 // One process per file, through verify's own interpreter resolution (E-98a) so a missing `python` is never misread as a failing test. env is explicit, matching verify.ts's runOnce (its default PATH lookup can otherwise resolve a
 // snapshot from process start, not the live env).

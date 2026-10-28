@@ -17,6 +17,8 @@ import { join, resolve } from "node:path";
 import { DSSE_PAYLOAD_TYPE, PREDICATE_TYPE, STATEMENT_TYPE, pae } from "../../src/features/receipt_dsse.ts";
 import { sealGroup } from "../../src/features/speed/seal_group.ts";
 import { compositeHash } from "../../src/util/composite_seal.ts";
+import { sealedWallCopy } from "../../src/engine10/stages/wall.ts";
+import * as checkResult from "../../src/util/check_result.ts";
 import { computeReceiptHash, main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
@@ -1810,6 +1812,12 @@ describe("verifyReceipt: a deleted sealed Wall copy is tampered", () => {
       expect(r.reasons.join(" ")).toContain("a.test.ts");
       expect(await main(["e10-wd-del", "--allow-unsigned"], { runsRoot: join(dir, "runs") })).toBe(1);
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("sealedWallCopy is the one resolver: <runDir>/wall/<basename>, shared by Wall, verify, mutation proof and publishing", () => {
+    expect(sealedWallCopy("/r/run1", "tests/wall/a.test.ts")).toBe(join("/r/run1", "wall", "a.test.ts"));
+    expect(sealedWallCopy("/r/run1", "/abs/elsewhere/b.test.ts")).toBe(join("/r/run1", "wall", "b.test.ts"));
+    expect(sealedWallCopy).toBe(checkResult.sealedWallCopy);
+    expect(checkResult.sealedWallDir("/r/run1")).toBe(join("/r/run1", "wall"));
   });
   test("wall directory absent (moved receipt): behaviour unchanged", async () => {
     const dir = tmpDir();
