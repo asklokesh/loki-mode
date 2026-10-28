@@ -44,7 +44,9 @@ export function mutationProof(i: MutationInput): MutationProof {
     added = existsSync(wt) || add.status === 0;
     if (add.status !== 0) return np("could not create the base worktree");
     for (const rel of rels) { // sealed copy first (byte-exact what the run sealed), else the file in the working tree
-      const sealed = join(i.runDir, "wall", basename(rel)), src = existsSync(sealed) ? sealed : join(i.repoDir, rel);
+      const sealed = join(i.runDir, "wall", basename(rel));
+      if (!existsSync(sealed) && existsSync(join(i.runDir, "wall"))) return np(`sealed Wall copy missing: ${rel}`); // never substitute the working-tree file for a deleted sealed copy
+      const src = existsSync(sealed) ? sealed : join(i.repoDir, rel);
       if (!existsSync(src)) return np(`Wall file missing: ${rel}`);
       mkdirSync(dirname(join(wt, rel)), { recursive: true }); writeFileSync(join(wt, rel), readFileSync(src));
     }

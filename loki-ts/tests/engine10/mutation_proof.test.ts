@@ -99,6 +99,13 @@ describe("mutation proof outcomes", () => {
     const r = mutationProof(input(f, { wallFiles: [{ path: join(f.repo, WALL) }, { path: join(f.repo, "loki_wall_other.test.ts") }] }));
     expect(r.outcome).toBe("inconclusive");
   });
+  test("a deleted sealed Wall copy is reported, not replaced by the working-tree file", () => {
+    const f = fixture("sealedgone", 1);
+    rmSync(join(f.runDir, "wall", WALL));
+    const r = mutationProof(input(f));
+    expect(r.outcome).toBe("inconclusive"); expect(r.line).toContain("sealed Wall copy missing"); expect(r.line).toContain(WALL);
+    expect(worktrees(f.repo)).toBe(1);
+  });
   test("opt-out flag", () => {
     expect(mutationEnabled({ LOKI_MUTATION_PROOF: "0" })).toBe(false);
     expect(mutationEnabled({})).toBe(true);

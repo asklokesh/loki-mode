@@ -1690,3 +1690,49 @@ describe("keys export rejects extra args (TEN-GATES-28)", () => {
     for (const h of ["--help", "-h"]) { const r = keysCli([h]); expect(r.code).toBe(0); expect(r.err).toContain("Usage: loki keys export"); }
   });
 });
+
+describe("verifyReceipt: a deleted sealed Wall copy is tampered", () => {
+  const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
+  function sealedWall(dir: string, runId: string): { path: string; wallDir: string } {
+    const fields = baseReceiptFields();
+    fields["run_id"] = runId;
+    fields["wall"] = { files: [{ path: "tests/wall/a.test.ts", sha256: sha("A\n") }, { path: "tests/wall/b.test.ts", sha256: sha("B\n") }], passed: true };
+    const runDir = join(dir, "runs", runId), wallDir = join(runDir, "wall");
+    mkdirSync(wallDir, { recursive: true });
+    writeFileSync(join(wallDir, "a.test.ts"), "A\n"); writeFileSync(join(wallDir, "b.test.ts"), "B\n");
+    const path = join(runDir, "receipt.json");
+    writeFileSync(path, JSON.stringify({ ...fields, receipt_sha256: computeReceiptHash(fields), verification: { jwt: null, kid: null } }));
+    return { path, wallDir };
+  }
+  test("clean sealed Wall: unchanged (not TAMPERED)", async () => {
+    const dir = tmpDir();
+    try { expect((await verifyReceipt(sealedWall(dir, "e10-wd-clean").path)).verdict).toBe("UNSIGNED"); } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("an edited sealed copy is TAMPERED", async () => {
+    const dir = tmpDir();
+    try {
+      const { path, wallDir } = sealedWall(dir, "e10-wd-edit");
+      writeFileSync(join(wallDir, "a.test.ts"), "EDITED\n");
+      expect((await verifyReceipt(path)).verdict).toBe("TAMPERED");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("one deleted sealed copy is TAMPERED, names the file, and exits 1", async () => {
+    const dir = tmpDir();
+    try {
+      const { path, wallDir } = sealedWall(dir, "e10-wd-del");
+      rmSync(join(wallDir, "a.test.ts"));
+      const r = await verifyReceipt(path);
+      expect(r.verdict).toBe("TAMPERED");
+      expect(r.reasons.join(" ")).toContain("a.test.ts");
+      expect(await main(["e10-wd-del", "--allow-unsigned"], { runsRoot: join(dir, "runs") })).toBe(1);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("wall directory absent (moved receipt): behaviour unchanged", async () => {
+    const dir = tmpDir();
+    try {
+      const { path, wallDir } = sealedWall(dir, "e10-wd-absent");
+      rmSync(wallDir, { recursive: true });
+      expect((await verifyReceipt(path)).verdict).toBe("UNSIGNED");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
