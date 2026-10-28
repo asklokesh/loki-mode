@@ -5,6 +5,9 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { buildTestMap, guessRunner, harnessRunners, impactedRefs, projectInterpreter, RealTestMapProvider } from "../../src/engine10/testmap.ts";
+import { commandFor } from "../../src/util/check_result.ts";
+import { projectApi } from "../../src/project_model/api.ts";
+import type { ProjectModel } from "../../src/project_model/schema.ts";
 
 const MIXED = resolve(import.meta.dir, "fixtures/testmap");
 
@@ -154,6 +157,11 @@ describe("package-local runner ownership (#233)", () => {
     expect(map.packageRunners["."]).toContain("bun");
     expect(map.packageRunners["."]).not.toContain("vitest");
     expect(map.packageRunners["fixtures/example"]).toContain("vitest");
+    const packageModel = projectApi({ status: "ok", packages: [{ name: "root", root: "." }, { name: "example", root: "fixtures/example" }] } as unknown as ProjectModel);
+    const rootTest = map.tests.find((t) => t.path === "src/root.test.ts")!;
+    const nestedTest = map.tests.find((t) => t.path === "fixtures/example/nested.test.ts")!;
+    expect(commandFor(rootTest, root, packageModel)).toMatchObject({ cwd: root, cmd: "bun", args: ["test", "src/root.test.ts"], pkgRoot: "." });
+    expect(commandFor(nestedTest, root, packageModel)).toMatchObject({ cwd: join(root, "fixtures/example"), cmd: "npx", args: ["--no-install", "vitest", "run", "nested.test.ts"], pkgRoot: "fixtures/example" });
   });
 });
 
