@@ -125,8 +125,8 @@ describe("registry vs dispatchers", () => {
     expect(BASH_SRC.join("\n")).not.toContain("LOKI_PROMPT_INJECTION=1");
   });
 
-  test("CLI-MODERN.md matches the registry", () => {
-    expect(readFileSync(join(REPO_ROOT, "docs", "v10", "CLI-MODERN.md"), "utf8")).toBe(renderDoc(REPO_ROOT));
+  test("CLI-INVENTORY.md matches the registry", () => {
+    expect(readFileSync(join(REPO_ROOT, "docs", "CLI-INVENTORY.md"), "utf8")).toBe(renderDoc(REPO_ROOT));
   });
 });
 

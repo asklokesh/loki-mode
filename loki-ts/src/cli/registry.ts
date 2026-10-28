@@ -1,5 +1,5 @@
 // The one typed command registry. Help, completions, did-you-mean and the
-// docs/v10/CLI-MODERN.md inventory are all generated from this tree (FC-18).
+// docs/CLI-INVENTORY.md inventory are all generated from this tree (FC-18).
 // Guard: loki-ts/tests/cli/registry_guard.test.ts.
 //
 // Classes: KEEP-MODERN and UPDATE are shown in help and completions.

@@ -10,7 +10,7 @@
 #   deploy/helm/*/Chart.yaml     appVersion
 #   wiki/*.md                    'still ships in X.Y.Z' version stamp
 #   docs/CLI-REFERENCE.md        whole file
-#   docs/v10/CLI-MODERN.md       whole file (existing registry generator)
+#   docs/CLI-INVENTORY.md       whole file (existing registry generator)
 # Block markers: <!-- generated:NAME --> ... <!-- /generated -->
 #
 # Usage: scripts/generate-stale-zero.sh [--check|--outputs]
@@ -24,7 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 CHECK=0
 # Single source for everything this script may write; --check and release.sh both read it.
-OUTPUT_PATHSPEC="SKILL.md README.md wiki helm deploy/helm docs/CLI-REFERENCE.md docs/v10/CLI-MODERN.md"
+OUTPUT_PATHSPEC="SKILL.md README.md wiki helm deploy/helm docs/CLI-REFERENCE.md docs/CLI-INVENTORY.md"
 if [ "${1:-}" = "--outputs" ]; then
     printf '%s\n' $OUTPUT_PATHSPEC
     exit 0
@@ -82,7 +82,7 @@ done
 {
     printf '# CLI reference\n\n'
     printf 'Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v%s. Do not edit by hand.\n' "$VERSION"
-    printf 'Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for the full inventory.\n\n'
+    printf 'Hidden and legacy-only commands are omitted; see `docs/CLI-INVENTORY.md` for the full inventory.\n\n'
     bun loki-ts/scripts/gen-command-lists.ts table
 } >"$WORK/cli-ref.md"
 cmp -s "$WORK/cli-ref.md" docs/CLI-REFERENCE.md 2>/dev/null || cat "$WORK/cli-ref.md" >docs/CLI-REFERENCE.md

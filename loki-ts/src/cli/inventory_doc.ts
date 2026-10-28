@@ -1,4 +1,4 @@
-// Renders docs/v10/CLI-MODERN.md from the registry (FC-18: nothing hand-maintained).
+// Renders docs/CLI-INVENTORY.md from the registry (FC-18: nothing hand-maintained).
 // Regenerate: bun loki-ts/scripts/gen-cli-modern-doc.ts
 // Guard: loki-ts/tests/cli/registry_guard.test.ts compares the file to this output.
 import { readFileSync } from "node:fs";
