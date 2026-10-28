@@ -98,5 +98,32 @@ if [ "$got" = "2" ] && grep -q "cannot read an Ed25519 public key" "$T/lerr"; th
 got="$(bounded_legacy 15 keys)"
 if [ "$got" = "2" ] && grep -q "loki keys export" "$T/lout" "$T/lerr"; then ok "legacy bash route: loki keys ends (rc 2 usage)"; else bad "legacy keys: rc $got"; fi
 
+# No bun on PATH: autonomy/loki runs under set -e, so a bare delegate call used to kill the script
+# before the refusal text printed (rc 1, empty output). Each form must exit non-zero WITH the reason.
+nobin="$T/nobin"
+mkdir -p "$nobin"
+for tool in bash env dirname cat grep sed awk tr date mkdir rm head tail sort uname id mktemp cut basename wc; do
+    p="$(command -v "$tool" 2>/dev/null || true)"
+    [ -n "$p" ] && ln -sf "$p" "$nobin/$tool"
+done
+nobun_case() {
+    local label="$1" entry="$2" rc
+    shift 2
+    (cd "$T" && env -i HOME="$T" PATH="$nobin" LOKI_LEGACY_BASH=1 LOKI_NO_BROWSER=1 LOKI_TELEMETRY_DISABLED=1 \
+        LOKI_DIR="$T/.loki" "$nobin/bash" "$entry" "$@") >"$T/nout" 2>"$T/nerr"
+    rc=$?
+    if [ "$rc" != "0" ] && grep -q "needs the Bun engine, which is unavailable" "$T/nout" "$T/nerr" 2>/dev/null; then
+        ok "no bun: $label (rc $rc, refusal printed)"
+    else
+        bad "no bun: $label: rc $rc out=$(head -c 200 "$T/nout") err=$(head -c 200 "$T/nerr")"
+    fi
+}
+for entry in "$REPO/autonomy/loki" "$REPO/bin/loki"; do
+    en="$(basename "$(dirname "$entry")")"
+    nobun_case "$en keys" "$entry" keys
+    nobun_case "$en verify --pubkey" "$entry" verify --pubkey k r
+    nobun_case "$en verify --require-exogenous" "$entry" verify --require-exogenous x
+done
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

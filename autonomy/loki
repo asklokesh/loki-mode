@@ -5394,8 +5394,11 @@ cmd_cancel() {
             ;;
     esac
     if _loki_e10_active_run; then
-        ( LOKI_DIR="$LOKI_DIR" _loki_bun_delegate cancel )
-        return $?
+        ( LOKI_DIR="$LOKI_DIR" _loki_bun_delegate cancel ) || {
+            echo "loki cancel needs the Bun engine, which is unavailable: ${_LOKI_DELEGATE_WHY:-bun route unavailable}" >&2
+            return 1
+        }
+        return 0
     fi
     echo -e "${YELLOW}No active Loki 10 run to cancel.${NC}"
     return 1
@@ -20186,16 +20189,16 @@ cmd_verify() {
         case "$_pk_arg" in
             --pubkey|--pubkey=*|--require-exogenous|--sign-deploy|--sign-provenance|--url|--receipt|composite.json|*/composite.json|--seal-composite|--seal-composite=*|--max-age|--max-age=*|.loki/groups/*/receipt.json|*/.loki/groups/*/receipt.json|.loki/runs/e10-*/receipt.json|*/.loki/runs/e10-*/receipt.json)
                 # The delegate execs on success, so reaching the next line means it refused.
-                _loki_bun_delegate engine10 verify "$@"
-                _pk_rc=$?
+                _pk_rc=0
+                _loki_bun_delegate engine10 verify "$@" || _pk_rc=$?
                 echo "loki verify: $_pk_arg needs the Bun engine, which is unavailable: ${_LOKI_DELEGATE_WHY:-bun route unavailable}" >&2
                 [ -z "${_LOKI_DELEGATE_FIX:-}" ] || echo "Fix: ${_LOKI_DELEGATE_FIX}" >&2
                 return "$_pk_rc" ;;
             # A signed deploy record (.loki/deploys/*.json, schema loki.deploy/1) or a run receipt anywhere (schema loki.v10.receipt) is re-checked by the same verifier.
             *.json)
                 if [ -f "$_pk_arg" ] && grep -Eq 'loki\.deploy/1|"schema" *: *"loki\.v10\.receipt' "$_pk_arg" 2>/dev/null; then
-                    _loki_bun_delegate engine10 verify "$@"
-                    return $?
+                    _loki_bun_delegate engine10 verify "$@" || return $?
+                    return 0
                 fi ;;
         esac
     done
@@ -23912,7 +23915,7 @@ main() {
         keys)
             # Public-key export lives in the Bun v10 engine. Delegate to it directly: exec'ing
             # bin/loki here loops forever under LOKI_LEGACY_BASH=1 (bin/loki execs this script back).
-            _loki_bun_delegate engine10 keys "$@"
+            _loki_bun_delegate engine10 keys "$@" || true
             echo "loki keys: needs the Bun engine, which is unavailable: ${_LOKI_DELEGATE_WHY:-bun route unavailable}" >&2
             [ -z "${_LOKI_DELEGATE_FIX:-}" ] || echo "Fix: ${_LOKI_DELEGATE_FIX}" >&2
             exit 1
