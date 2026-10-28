@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { classifyCheck, goRunner } from "./check_result.ts";
+import { classifyCheck, goRunner, sealedWallCopy } from "./check_result.ts";
 import { listRunIds } from "../commands/run_status.ts";
 import { safeGit } from "./safe_git.ts";
 import { isTestFile } from "./test_file_text.ts";
@@ -216,7 +216,7 @@ export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx)
   const added = new Set<string>(), changed = new Set<string>();
   for (let i = 0; i + 1 < c.rawDiff.length; i += 2) { const st = c.rawDiff[i]!.trim().split(" ").pop(); if (st === "A") added.add(c.rawDiff[i + 1]!); if (st === "A" || st === "M") changed.add(c.rawDiff[i + 1]!); }
   let wallText: string | null = null;
-  const wall = (): string => wallText ??= c.wallPaths.map((w) => { for (const f of [join(c.runDir, "wall", basename(w)), join(c.repoDir, w)]) try { return readFileSync(f, "utf8"); } catch { /* try next */ } return ""; }).join("\n");
+  const wall = (): string => wallText ??= c.wallPaths.map((w) => { for (const f of [sealedWallCopy(c.runDir, w), join(c.repoDir, w)]) try { return readFileSync(f, "utf8"); } catch { /* try next */ } return ""; }).join("\n");
   const esc = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const named = (f: string): boolean => new RegExp(`${f.includes("/") ? `(?<![\\w./-])${esc(f)}(?![\\w-])|` : ""}[/"'\`]${esc(basename(f))}(?=["'\`\\s);]|$)`).test(wall());
   const linkOk = (f: string): boolean => {

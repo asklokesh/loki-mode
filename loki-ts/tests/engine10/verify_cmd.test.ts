@@ -10,10 +10,10 @@ import { sealedLog } from "./log_fixture.ts";
 import { createHash, generateKeyPairSync, sign as nodeSign, type KeyObject } from "node:crypto";
 import { kidOf, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { DSSE_PAYLOAD_TYPE, PREDICATE_TYPE, STATEMENT_TYPE, pae } from "../../src/features/receipt_dsse.ts";
 import { sealGroup } from "../../src/features/speed/seal_group.ts";
 import { compositeHash } from "../../src/util/composite_seal.ts";
@@ -1818,6 +1818,25 @@ describe("verifyReceipt: a deleted sealed Wall copy is tampered", () => {
     expect(sealedWallCopy("/r/run1", "/abs/elsewhere/b.test.ts")).toBe(join("/r/run1", "wall", "b.test.ts"));
     expect(sealedWallCopy).toBe(checkResult.sealedWallCopy);
     expect(checkResult.sealedWallDir("/r/run1")).toBe(join("/r/run1", "wall"));
+  });
+  const SRC_ROOT = join(REPO_ROOT, "loki-ts", "src");
+  const INLINE_WALL = [/\b(?:join|resolve)\([^)\n]*["'`]wall["'`]/, /\$\{[^}]*\}\/wall\b/, /runs\/[^"'`\s]*\/wall\b/];
+  function inlineWallPaths(): string[] {
+    const hits: string[] = [];
+    for (const f of readdirSync(SRC_ROOT, { recursive: true }) as string[]) {
+      if (!f.endsWith(".ts") || f === join("util", "check_result.ts")) continue;
+      readFileSync(join(SRC_ROOT, f), "utf8").split("\n").forEach((line, i) => { if (INLINE_WALL.some((re) => re.test(line))) hits.push(`${f}:${i + 1}: ${line.trim().slice(0, 120)}`); });
+    }
+    return hits;
+  }
+  test("no file but check_result.ts builds a sealed Wall path inline", () => {
+    expect(inlineWallPaths()).toEqual([]);
+  });
+  test("the python harness and the stub arm spell the sealed Wall dir exactly as the resolver does", () => {
+    const seg = relative("/r/run1", checkResult.sealedWallDir("/r/run1"));
+    expect(seg).toBe("wall");
+    expect(readFileSync(join(REPO_ROOT, "eval", "loki10", "harness.py"), "utf8")).toContain(`os.path.join(work, ".loki", "runs", rid, "${seg}")`);
+    expect(readFileSync(join(REPO_ROOT, "eval", "loki10", "fixtures", "stub-arm.sh"), "utf8")).toContain(`.loki/runs/stub-run/${seg}/`);
   });
   test("wall directory absent (moved receipt): behaviour unchanged", async () => {
     const dir = tmpDir();
