@@ -68,10 +68,14 @@ def _cow_copy(src, dst):
 def _escapes_source(path):
     """True if a dep dir links or points outside itself.
 
-    Flags absolute symlinks, relative symlinks resolving outside the dep dir,
-    editable finders, and bin/* scripts whose shebang names the source path.
+    Flags absolute symlinks that resolve into the source tree, relative
+    symlinks resolving outside the dep dir, editable finders, and bin/*
+    scripts whose shebang names the source path. An absolute symlink that
+    resolves outside the source tree (a venv's bin/python pointing at a system
+    interpreter) is safe: the copy keeps pointing at the same external file.
     """
     base = os.path.realpath(path)
+    source_root = os.path.dirname(base)
     sources = {os.path.dirname(base).encode(), os.path.dirname(os.path.abspath(path)).encode()}
     for root, dirs, files in os.walk(path):
         for name in dirs + files:
@@ -79,7 +83,10 @@ def _escapes_source(path):
             if os.path.islink(p):
                 target = os.readlink(p)
                 if os.path.isabs(target):
-                    return True
+                    real = os.path.realpath(target)
+                    if real == source_root or real.startswith(source_root + os.sep):
+                        return True
+                    continue
                 real = os.path.realpath(os.path.join(root, target))
                 if real != base and not real.startswith(base + os.sep):
                     return True

@@ -137,6 +137,29 @@ class WorktreePrepTest(unittest.TestCase):
         (nm / "bin" / "tool").write_text("#!%s/node_modules/.bin/node\n" % self.repo)
         self.assertTrue(worktree_prep._escapes_source(str(nm)))
 
+    def test_absolute_symlink_to_external_python_allowed(self):
+        (self.repo / ".gitignore").write_text("node_modules/\n.venv/\n")
+        git(self.repo, "add", ".gitignore")
+        git(self.repo, "commit", "-q", "-m", "ignore venv")
+        ext = Path(self.tmp.name) / "ext-python"
+        ext.write_text("#!/bin/sh\n")
+        venv = self.repo / ".venv"
+        (venv / "bin").mkdir(parents=True)
+        os.symlink(str(ext), venv / "bin" / "python")
+        self.assertFalse(worktree_prep._escapes_source(str(venv)))
+        res = worktree_prep.prepare_worktree(str(self.repo), self.dest("wt6"), "b6")
+        self.assertIn(res["deps"], ("cow", "copy"))
+        self.assertTrue(os.path.islink(Path(res["path"]) / ".venv" / "bin" / "python"))
+
+    def test_absolute_symlink_into_source_tree_refused(self):
+        venv = self.repo / ".venv"
+        (venv / "bin").mkdir(parents=True)
+        os.symlink(str(self.repo / "a.txt"), venv / "bin" / "python")
+        self.assertTrue(worktree_prep._escapes_source(str(venv)))
+        os.remove(venv / "bin" / "python")
+        os.symlink(str(self.repo / "src-mod"), venv / "bin" / "python")
+        self.assertTrue(worktree_prep._escapes_source(str(venv)))
+
 
 if __name__ == "__main__":
     unittest.main()
