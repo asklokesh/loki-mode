@@ -85,7 +85,7 @@ export async function maybeRunGroup(task: string, repoDir: string, env: NodeJS.P
   };
   const fb = (t: string, reason: string): RouteResult => { say(`loki: sequential (reason: ${reason})\n`); return { code: null, task: seq(t) }; };
   // The real group runner launches units through backlog.py, which needs an owner/repo origin. An injected runner (tests) has no such need.
-  const NO_ORIGIN = "no origin remote of the form owner/repo, which group units need; running the task as one local run";
+  const NO_ORIGIN = "no origin remote of the form owner/repo on github.com, which group units need; running the task as one local run";
   const lacksOrigin = async (): Promise<boolean> => deps.group === undefined && (await import("./run_group.ts")).originSlug(repoDir) === undefined;
   let spec = task, specPath: string | null = null, dag: Dag | undefined;
   let missions: ReturnType<typeof parseMilestones> = [];

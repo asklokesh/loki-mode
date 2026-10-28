@@ -392,6 +392,26 @@ describe("a group run needs an origin remote; a local task without one runs sequ
       expect(err).not.toContain("sequential (reason: no origin remote");
     });
   });
+  for (const [label, origin] of [["a local path origin (bench/fixture)", "bench/fixture"], ["an absolute local path origin", "/srv/bench/fixture"], ["a gitlab.com origin", "https://gitlab.com/acme/widgets.git"], ["a non-github ssh origin", "git@gitlab.com:acme/widgets.git"]] as const) {
+    test(`${label}: sequential with the reason, not a failed group run`, async () => {
+      await withDir(async (d) => {
+        gitRepo(d, origin);
+        const { r, task, err } = await real(d);
+        expect(r).toBeNull();
+        expect(task).toBe(SPEC);
+        expect(err).toContain("sequential (reason: no origin remote of the form owner/repo on github.com");
+        expect(err).not.toContain("no unit passed");
+      });
+    });
+  }
+  test("a github.com ssh origin without .git still goes to the group runner", async () => {
+    await withDir(async (d) => {
+      gitRepo(d, "git@github.com:acme/widgets");
+      const { r, err } = await real(d);
+      expect(r).not.toBeNull();
+      expect(err).not.toContain("sequential (reason: no origin remote");
+    });
+  });
   test("a mission spec with no origin also falls back", async () => {
     await withDir(async (d) => {
       gitRepo(d);

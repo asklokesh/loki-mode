@@ -94,8 +94,9 @@ const git = (dir: string, args: string[]): string => {
   const r = safeGitSpawn(dir, args, { encoding: "utf8" });
   return r.status === 0 ? String(r.stdout).trim() : "";
 };
-const SLUG_RE = /[:/]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/;
-/** The owner/repo slug of the origin remote, or undefined. The unit launcher (backlog.py) needs it, so a group run cannot start without one. */
+// Mirrors origin_slug in autonomy/lib/backlog.py: only a github.com owner/repo origin is accepted.
+const SLUG_RE = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/;
+/** The owner/repo slug of a github.com origin remote, or undefined. The unit launcher (backlog.py) needs it and the route calls this same test, so a group run is never started that the launcher would refuse. */
 export const originSlug = (repoDir: string): string | undefined => SLUG_RE.exec(git(repoDir, ["remote", "get-url", "origin"]))?.[1];
 
 /** Repo test command argv: LOKI_GROUP_TEST_CMD (whitespace split) wins; else the repo profile's first test command (runner/repo_profile.ts); else empty (the suite then did not run). */
