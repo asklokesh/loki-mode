@@ -70,6 +70,12 @@ immediately instead of burning `backoffLimit`. Requires Kubernetes 1.31+.
 Both the bash runner and the Bun runner (`LOKI_SDK_LOOP`) implement this
 identically; a parity test asserts they agree status for status.
 
+The default engine honors the same opt-in: with `LOKI_DURABLE_STATE=1` a run that
+ends FAILED, PARTIAL, BUDGET_STOP, BLOCKED (spec conflict) or STALLED exits 20
+instead of 1, 3, 4, 5 or 6, and a success still exits 0. A signal cancel (130, or 143
+for SIGTERM) stays nonzero and retryable. Without the variable the ladder above is
+unchanged.
+
 ## `loki quick`
 
 | Code | Meaning |

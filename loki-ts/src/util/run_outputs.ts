@@ -375,10 +375,10 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
     return r.status !== "completed" ? { url: null, draft: false, existing: null, notProven: [`PR not opened: ${r.reason}`] } : { url: d.pr_url ?? null, draft: d.draft === true, existing: d.existing ?? null, notProven: d.not_proven };
   };
   const supervise = deps.supervise ?? (async (o) => (await import("../engine10/supervisor.ts")).runSupervisor(o));
-  const { EXIT } = await import("../engine10/output.ts");
+  const { exitCodeOf } = await import("../engine10/output.ts");
   const res = await supervise({ runId: it.runId, repoDir, env, resume: true, capS: capS === undefined ? undefined : Math.floor(capS), capCeilingS: ceilS === undefined ? undefined : Math.floor(ceilS), restoreBranch: origBranch, workerArgv: [process.execPath, ...SAFE_BUN_FLAGS, resolve(process.argv[1] ?? ""), "engine10", "worker", it.runId, provider, model, deep ? "deep" : "fast"], started: { ...st, resumed_from: rp.stage }, pr });
   out(`engine10: resumed run ${it.runId}: ${res.outcome}\n`);
-  return EXIT[res.outcome];
+  return exitCodeOf(res.outcome);
 }
 
 export type RunPrFn = (ctx: Record<string, unknown>, signal: AbortSignal) => Promise<{ status: string; reason?: string; data: Record<string, unknown> }>;

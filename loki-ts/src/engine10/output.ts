@@ -56,6 +56,7 @@ export function formatHeartbeatLine(h: HeartbeatLine): string {
 // A-110: one outcome name and a fixed exit ladder, mapped at the edge (the receipt keeps its verdict strings). 2 is usage/preflight, returned by main().
 export type Outcome = "VERIFIED" | "ALREADY_SATISFIED" | "BUDGET_STOP" | "BLOCKED" | "STALLED" | "PARTIAL" | "FAILED" | "CANCELLED";
 export const EXIT: Record<Outcome, number> = { VERIFIED: 0, ALREADY_SATISFIED: 0, FAILED: 1, PARTIAL: 6, BUDGET_STOP: 3, BLOCKED: 4, STALLED: 5, CANCELLED: 130 }; // CANCELLED: SIGINT/SIGTERM during a run, distinct from FAILED (docs/cost-controls.md)
+export const exitCodeOf = (o: Outcome, env: NodeJS.ProcessEnv = process.env): number => env.LOKI_DURABLE_STATE === "1" && o !== "CANCELLED" && EXIT[o] !== 0 ? 20 : EXIT[o]; // LOKI_DURABLE_STATE=1: deterministic failures exit 20 like the legacy runner (docs/exit-codes.md); a signal cancel stays retryable
 export function outcomeOf(verdict: Verdict, capHit: boolean, stop: string | null, tampered = false, sealed = false): Outcome {
   if (tampered) return "FAILED"; // a run whose event log was modified is never VERIFIED, whatever the receipt says
   if (verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED") return verdict;

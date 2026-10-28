@@ -100,6 +100,10 @@ describe("P12-09b quota that never recovers, real CLI invoker and worker", () =>
 
 describe("A-113b crashed verify is not a stall repeat", () => {
   test("control: X, X, X is STALLED", () => { expect(run({ VERIFY_SEQ: "X" }).json.outcome).toBe("STALLED"); }, 120_000);
+  test("the same STALLED run exits 5 by default and 20 with LOKI_DURABLE_STATE=1 through the real CLI", () => {
+    expect(run({ VERIFY_SEQ: "X" }).code).toBe(5);
+    expect(run({ VERIFY_SEQ: "X", LOKI_DURABLE_STATE: "1" }).code).toBe(20);
+  }, 240_000);
   test("X, crash, X is not STALLED", () => {
     expect(run({ VERIFY_SEQ: "X,crash,X,ok" }).json.outcome).not.toBe("STALLED");
   }, 120_000);
