@@ -125,6 +125,13 @@ _loki_completion() {
             COMPREPLY=( $(compgen -W "${syslog_cmds}" -- "$cur") )
             ;;
 
+        cost)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--json --last --month --csv --detail --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
         estimate)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--json --model --provider --help" -- "$cur") )

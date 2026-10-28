@@ -74,6 +74,15 @@ function _loki {
                 agent)
                     _loki_agent
                     ;;
+                cost)
+                    _arguments \
+                        '--json[Output machine-readable JSON]' \
+                        '--last[Show only the last N runs]:count:' \
+                        '--month[Only runs generated in that month]:month (YYYY-MM):' \
+                        '--csv[One CSV row per run]' \
+                        '--detail[Per-iteration cache and trend breakdown]' \
+                        '--help[Show help]'
+                    ;;
                 estimate)
                     _arguments \
                         '--json[Output machine-readable JSON]' \
