@@ -54,6 +54,7 @@ export function resolveModel(provider: string): string {
   if (routed) return routed;
   const pinned = provider === "claude" ? sessionPinModel(e) : undefined; // LOKI_SESSION_MODEL: the whole-run pin, ahead of the per-tier vars
   if (pinned) return pinned;
+  if (provider === "opencode") return (e.LOKI_OPENCODE_MODEL ?? "").trim() || "opencode default (unreported)"; // opencode takes -m from LOKI_OPENCODE_MODEL only
   if (provider !== "claude") return `${provider} (model not recorded)`;
   return e.LOKI_CLAUDE_MODEL_DEVELOPMENT || e.LOKI_MODEL_DEVELOPMENT || PROVIDER_DEFAULT_MODEL;
 }
@@ -167,6 +168,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
   return {
     run(opts: SessionRunOptions): Promise<SessionResult & { stderrTail: string }> {
+      if (cfg.provider === "opencode" && opts.model) opts = { ...opts, model: undefined }; // a stage pin (Wall's claude tier) cannot reach opencode; record the model it really runs
       const start = Date.now();
       // A signal aborted before run() never fires the listener below, so it never spawns.
       if (opts.signal.aborted || sessionsCancelled()) return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true, stderrTail: "" });

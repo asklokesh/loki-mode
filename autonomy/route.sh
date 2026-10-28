@@ -264,6 +264,8 @@ loki_route_resolve() {
         R_MODEL="$LOKI_MODEL_OVERRIDE"
     elif [ "$R_PROVIDER" = "opencode" ] && [ -n "${LOKI_OPENCODE_MODEL:-}" ]; then
         R_MODEL="$LOKI_OPENCODE_MODEL"
+    elif [ "$R_PROVIDER" = "opencode" ]; then
+        R_MODEL="opencode default (unreported)"
     elif [ "$R_PROVIDER" = "claude" ]; then
         R_MODEL="${LOKI_CLAUDE_MODEL_DEVELOPMENT:-${LOKI_MODEL_DEVELOPMENT:-claude (provider default)}}"
     else

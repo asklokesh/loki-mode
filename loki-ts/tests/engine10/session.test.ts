@@ -12,7 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { childEnv, classifyExitCause, createSessionRunner, diffShortstat, diffSignature, HEARTBEAT_MS_DEFAULT, untrackedList } from "../../src/engine10/session.ts";
+import { childEnv, classifyExitCause, createSessionRunner, resolveModel, diffShortstat, diffSignature, HEARTBEAT_MS_DEFAULT, untrackedList } from "../../src/engine10/session.ts";
 import { clampBashTimeoutEnv, killGroupWithGrace, pinBashShellEnv } from "../../src/runner/worker_proc.ts";
 import { resultCostPath, sumResultCosts, UNMETERED } from "../../src/engine10/cost.ts";
 import { liveArchivedCosts, withArchivedCosts } from "../../src/providers/provider_cost.ts";
@@ -796,5 +796,28 @@ describe("killGroupWithGrace re-checks the group before SIGKILL (CCR-01 r2 N1)",
   }, 10_000);
   test("group still alive after the grace: SIGKILL follows", async () => {
     expect(await run(true)).toEqual(["SIGTERM", "SIGKILL"]);
+  }, 10_000);
+});
+
+describe("opencode records the model it was asked for", () => {
+  test("resolveModel: LOKI_OPENCODE_MODEL, else an unreported default naming the provider", () => {
+    const prev = process.env["LOKI_OPENCODE_MODEL"], prevO = process.env["LOKI_MODEL_OVERRIDE"];
+    delete process.env["LOKI_MODEL_OVERRIDE"];
+    try {
+      process.env["LOKI_OPENCODE_MODEL"] = "anthropic/some-model";
+      expect(resolveModel("opencode")).toBe("anthropic/some-model");
+      delete process.env["LOKI_OPENCODE_MODEL"];
+      expect(resolveModel("opencode")).toBe("opencode default (unreported)");
+    } finally { if (prev === undefined) delete process.env["LOKI_OPENCODE_MODEL"]; else process.env["LOKI_OPENCODE_MODEL"] = prev; if (prevO !== undefined) process.env["LOKI_MODEL_OVERRIDE"] = prevO; }
+  });
+  test("a stage's claude pin (Wall) never reaches session.started under opencode", async () => {
+    const prev = process.env["LOKI_OPENCODE_MODEL"];
+    process.env["LOKI_OPENCODE_MODEL"] = "anthropic/some-model";
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    try {
+      const runner = createSessionRunner({ provider: "opencode", model: resolveModel("opencode"), childCommand: ["bash", ["-c", "true"]], emit: (type, _s, data) => events.push({ type, data }) });
+      await runner.run(baseOpts({ limitS: 10, model: "claude-haiku-4-5" }));
+    } finally { if (prev === undefined) delete process.env["LOKI_OPENCODE_MODEL"]; else process.env["LOKI_OPENCODE_MODEL"] = prev; }
+    expect(events.find((e) => e.type === "session.started")?.data["model"]).toBe("anthropic/some-model");
   }, 10_000);
 });
