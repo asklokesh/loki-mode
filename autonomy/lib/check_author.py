@@ -2,8 +2,9 @@
 """Check-author context (moat P3, interface A in tests/moat/p3-the-wall.sh).
 
   check_author.py context --spec <file> --repo <dir>
+  check_author.py accept  --spec <file> --repo <dir> --out <dir> [--context <file>] [--attempts N]
 
-Prints ONE JSON object on stdout: the exact and complete input handed to the
+context: prints ONE JSON object on stdout: the exact and complete input handed to the
 check-authoring model. No model call, no network, deterministic.
 
   {"spec_sha256": "<hex>", "inputs": [{"path", "sha256"}...], "prompt": "<text>"}
@@ -19,6 +20,16 @@ Same MAX_BLOB size cap and control-character path rule as the Wall. The Wall's
 other two classes are implementation-bearing and are excluded here: TESTISH test
 sources (style examples) and "named" source files (signatures of files the task
 names). Anything outside the spec and CONFIG files never reaches the author.
+
+accept: reads the author model's stdout from stdin, extracts exactly one JSON
+object (prose or a fenced block around it is tolerated; zero or several objects
+fail), validates it against the schema the verifier runs, and writes
+<out>/checklist.json plus <out>/author.json {status: "authored"} atomically. Any
+failure writes <out>/author.json {status: "unknown", reason} and the critical
+failing verification-results.json sentinel (same shape as council_reverify_checklist
+in autonomy/completion-council.sh), never a checklist.json, and exits non-zero.
+accept reads only the spec file (for its sha256) and the optional --context file;
+--repo is accepted for symmetry and is never opened.
 """
 import argparse
 import hashlib
@@ -39,10 +50,36 @@ MAX_FILES = 300
 TESTISH = re.compile(r"(^|/)(tests?|__tests__|spec)/|\.(test|spec)\.[jt]sx?$|(^|/)test_[^/]*\.py$|_test\.(py|go)$")
 CTRL = re.compile(r"[\x00-\x1f\x7f]")
 
+# Verification types the verifier dispatches in autonomy/checklist-verify.py
+# run_check(): file_exists :57, file_contains :69, tests_pass :89, command :218,
+# grep_codebase :249, http_check :350. Each maps to the fields that make the check
+# runnable (a check missing them can only ever stay pending).
+VERIFY_TYPES = {
+    "file_exists": ("path|target|file",),
+    "file_contains": ("path|target|file", "pattern"),
+    "tests_pass": ("pattern",),
+    "command": ("command",),
+    "grep_codebase": ("pattern",),
+    "http_check": (),
+}
+PRIORITIES = ("critical", "major", "minor")
+MAX_ITEMS = 60
+MAX_INPUT_BYTES = 2_000_000
+RESULT_FIELDS = ("passed", "output", "status", "verified_at")
+SENTINEL = ('{"categories":[{"items":[{"id":"check_authoring_unknown","title":'
+            '"acceptance checks could not be authored","priority":"critical","status":"failing"}]}]}')
+
 PROMPT_HEAD = (
     "You are the acceptance check author. You see only the specification and the "
     "project's runner configuration below. You cannot see the implementation. "
-    "Write acceptance checks that prove the specification is met."
+    "Write acceptance checks that prove the specification is met.\n\n"
+    "Reply with exactly ONE JSON object and nothing else of substance, in this format:\n"
+    '{"categories":[{"name":"<group>","items":[{"id":"<unique id>","title":"<requirement>",'
+    '"priority":"critical|major|minor","verification":[{"type":"<type>", ...}]}]}]}\n'
+    "Every item needs id, title, priority and at least one verification. Allowed "
+    "verification types and their fields: file_exists {path}; file_contains {path, pattern}; "
+    "tests_pass {pattern}; command {command}; grep_codebase {pattern}; http_check {path}. "
+    "Use at most %d items. Do not include pass or result fields." % MAX_ITEMS
 )
 
 
@@ -124,12 +161,142 @@ def build_context(spec: str, repo: str) -> dict:
     return {"spec_sha256": inputs[0]["sha256"], "inputs": inputs, "prompt": "\n\n".join(parts)}
 
 
+class Reject(Exception):
+    pass
+
+
+def extract_one_object(text: str) -> dict:
+    """The single top-level JSON object in text; zero or several is a Reject."""
+    dec = json.JSONDecoder()
+    found = []
+    i = 0
+    while True:
+        i = text.find("{", i)
+        if i < 0:
+            break
+        try:
+            obj, end = dec.raw_decode(text, i)
+        except ValueError:
+            i += 1
+            continue
+        found.append(obj)
+        i = end
+    if not found:
+        raise Reject("no JSON object in author output")
+    if len(found) > 1:
+        raise Reject("%d JSON objects in author output, expected exactly one" % len(found))
+    return found[0]
+
+
+def validate_checklist(doc: dict) -> dict:
+    cats = doc.get("categories")
+    if not isinstance(cats, list) or not cats:
+        raise Reject("categories must be a non-empty list")
+    out_cats, seen, count = [], set(), 0
+    for ci, cat in enumerate(cats):
+        items = cat.get("items") if isinstance(cat, dict) else None
+        if not isinstance(items, list):
+            raise Reject("category %d has no items list" % ci)
+        out_items = []
+        for it in items:
+            count += 1
+            if count > MAX_ITEMS:
+                raise Reject("more than %d items" % MAX_ITEMS)
+            if not isinstance(it, dict):
+                raise Reject("item is not an object")
+            iid, title = it.get("id"), it.get("title")
+            if not isinstance(iid, str) or not iid.strip() or not isinstance(title, str) or not title.strip():
+                raise Reject("item needs a non-empty string id and title")
+            if iid in seen:
+                raise Reject("duplicate item id: %s" % iid)
+            seen.add(iid)
+            if it.get("priority") not in PRIORITIES:
+                raise Reject("item %s: priority must be one of %s" % (iid, "/".join(PRIORITIES)))
+            ver = it.get("verification")
+            if not isinstance(ver, list) or not ver:
+                raise Reject("item %s: needs at least one verification" % iid)
+            out_ver = []
+            for v in ver:
+                if not isinstance(v, dict) or v.get("type") not in VERIFY_TYPES:
+                    raise Reject("item %s: verification type must be one of %s"
+                                 % (iid, ", ".join(sorted(VERIFY_TYPES))))
+                for need in VERIFY_TYPES[v["type"]]:
+                    if not any(isinstance(v.get(k), str) and v.get(k).strip() for k in need.split("|")):
+                        raise Reject("item %s: %s check needs %s" % (iid, v["type"], need))
+                out_ver.append({k: x for k, x in v.items() if k not in RESULT_FIELDS})
+            out_items.append({"id": iid, "title": title, "priority": it["priority"], "verification": out_ver})
+        name = cat.get("name")
+        out_cats.append({"name": name if isinstance(name, str) else "", "items": out_items})
+    return {"categories": out_cats}
+
+
+def atomic_write(path: str, text: str) -> None:
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    try:
+        with open(tmp, "w") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def run_accept(args) -> int:
+    out = args.out
+    os.makedirs(out, exist_ok=True)
+    spec_sha = sha256(read_bytes(args.spec))
+    inputs, prompt_sha = [{"path": os.path.realpath(args.spec), "sha256": spec_sha}], None
+    try:
+        if args.context:
+            try:
+                with open(args.context) as fh:
+                    ctx = json.load(fh)
+                inputs, prompt_sha = ctx["inputs"], sha256(ctx["prompt"].encode("utf-8"))
+                ctx_spec = ctx.get("spec_sha256")
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                raise Reject("context file unreadable or malformed")
+            if ctx_spec != spec_sha:
+                raise Reject("context spec_sha256 does not match the spec")
+        raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
+        if len(raw) > MAX_INPUT_BYTES:
+            raise Reject("author output exceeds %d bytes" % MAX_INPUT_BYTES)
+        text = raw.decode("utf-8", "replace")
+        if not text.strip():
+            raise Reject("empty author output")
+        checklist = validate_checklist(extract_one_object(text))
+    except Reject as e:
+        try:
+            os.unlink(os.path.join(out, "checklist.json"))
+        except OSError:
+            pass
+        atomic_write(os.path.join(out, "author.json"), json.dumps(
+            {"status": "unknown", "reason": str(e), "spec_sha256": spec_sha, "attempts": args.attempts},
+            sort_keys=True) + "\n")
+        atomic_write(os.path.join(out, "verification-results.json"), SENTINEL + "\n")
+        print("check_author: unknown: %s" % e, file=sys.stderr)
+        return 1
+    atomic_write(os.path.join(out, "checklist.json"), json.dumps(checklist, sort_keys=True, indent=2) + "\n")
+    atomic_write(os.path.join(out, "author.json"), json.dumps(
+        {"status": "authored", "spec_sha256": spec_sha, "inputs": inputs,
+         "prompt_sha256": prompt_sha, "attempts": args.attempts}, sort_keys=True) + "\n")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="check_author.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("context", help="print the exact check-author input as JSON")
     c.add_argument("--spec", required=True)
     c.add_argument("--repo", required=True)
+    a = sub.add_parser("accept", help="validate the author model's stdout and write the checklist")
+    a.add_argument("--spec", required=True)
+    a.add_argument("--repo", required=True)
+    a.add_argument("--out", required=True)
+    a.add_argument("--context", help="saved context output, for inputs and prompt_sha256")
+    a.add_argument("--attempts", type=int, default=1)
     args = ap.parse_args(argv)
     if not os.path.isfile(args.spec):
         print("check_author: spec not found: %s" % args.spec, file=sys.stderr)
@@ -137,6 +304,8 @@ def main(argv=None) -> int:
     if not os.path.isdir(args.repo):
         print("check_author: repo not a directory: %s" % args.repo, file=sys.stderr)
         return 2
+    if args.cmd == "accept":
+        return run_accept(args)
     json.dump(build_context(args.spec, args.repo), sys.stdout, sort_keys=True)
     sys.stdout.write("\n")
     return 0

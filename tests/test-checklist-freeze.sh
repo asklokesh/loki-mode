@@ -199,6 +199,102 @@ runsh_iterations 1
 grep -qi 'hash mismatch' "$T/harness.log" || fail "run.sh path: no hash mismatch logged for the edited check"
 
 # Mutations of the guarded code: each must turn this suite red.
+# check_author.py accept: the Wall's authored checklist. Failure writes status
+# unknown plus the critical failing sentinel and never a checklist.json.
+CA="$SCRIPT_DIR/../autonomy/lib/check_author.py"
+ACC="$T/accept"
+ACC_SPEC="$ACC/spec.md"
+ACC_REPO="$ACC/repo"
+mkdir -p "$ACC_REPO"
+printf '# PRD\nGreet people.\n' > "$ACC_SPEC"
+printf 'secret\n' > "$ACC_REPO/impl.txt"
+GOODJSON='{"categories":[{"name":"core","items":[{"id":"G1","title":"greets","priority":"critical","verification":[{"type":"file_exists","path":"present.txt"},{"type":"grep_codebase","pattern":"hello"}]}]}]}'
+
+# acc_run <name> <stdin text>: runs accept into a fresh out dir, sets ACC_RC and ACC_OUT
+acc_run() {
+    ACC_OUT="$ACC/out-$1"
+    rm -rf "$ACC_OUT"
+    printf '%s' "$2" | python3 -I "$CA" accept --spec "$ACC_SPEC" --repo "$ACC_REPO" --out "$ACC_OUT" >"$ACC/acc.log" 2>&1
+    ACC_RC=$?
+}
+acc_field() { python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2]))' "$ACC_OUT/author.json" "$1" 2>/dev/null; }
+
+expect_unknown() {
+    acc_run "$1" "$2"
+    [ "$ACC_RC" -ne 0 ] || fail "accept $1: exit 0 on bad input"
+    [ "$(acc_field status)" = unknown ] || fail "accept $1: status not unknown ($(acc_field status))"
+    [ ! -e "$ACC_OUT/checklist.json" ] || fail "accept $1: checklist.json written on failure"
+    python3 -I -c 'import json,sys
+d=json.load(open(sys.argv[1]));i=d["categories"][0]["items"][0]
+sys.exit(0 if i["priority"]=="critical" and i["status"]=="failing" else 1)' "$ACC_OUT/verification-results.json" 2>/dev/null \
+        || fail "accept $1: critical failing sentinel not written"
+}
+
+acc_run happy "Here you go:
+\`\`\`json
+$GOODJSON
+\`\`\`
+done"
+[ "$ACC_RC" -eq 0 ] || fail "accept happy path: rc $ACC_RC ($(cat "$ACC/acc.log"))"
+[ "$(acc_field status)" = authored ] || fail "accept happy path: status not authored"
+[ "$(acc_field spec_sha256)" = "$(python3 -I -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$ACC_SPEC")" ] || fail "accept happy path: spec_sha256 wrong"
+[ -f "$ACC_OUT/checklist.json" ] || fail "accept happy path: no checklist.json"
+ls "$ACC_OUT" | grep -q 'tmp' && fail "accept happy path: temp file left behind"
+# the written checklist runs through the real verifier without schema errors
+mkdir -p "$ACC/proj"
+printf x > "$ACC/proj/present.txt"
+VD="$(python3 -I "$SRC_DIR/checklist-verify.py" --checklist "$ACC_OUT/checklist.json" --freeze)"
+( cd "$ACC/proj" && python3 -I "$SRC_DIR/checklist-verify.py" --checklist "$ACC_OUT/checklist.json" --expect-digest "$VD" ) >"$ACC/v.log" 2>&1 \
+    || fail "accept happy path: verifier rejected the checklist ($(tail -1 "$ACC/v.log"))"
+grep -q '^Checklist: ' "$ACC/v.log" || fail "accept happy path: verifier printed no summary"
+[ -f "$ACC_OUT/verification-results.json" ] || fail "accept happy path: verifier wrote no results"
+
+expect_unknown missing-verification '{"categories":[{"items":[{"id":"A","title":"a","priority":"major"}]}]}'
+expect_unknown empty-verification '{"categories":[{"items":[{"id":"A","title":"a","priority":"major","verification":[]}]}]}'
+expect_unknown bad-priority '{"categories":[{"items":[{"id":"A","title":"a","priority":"urgent","verification":[{"type":"file_exists","path":"x"}]}]}]}'
+expect_unknown unknown-type '{"categories":[{"items":[{"id":"A","title":"a","priority":"major","verification":[{"type":"vibes","path":"x"}]}]}]}'
+expect_unknown missing-field '{"categories":[{"items":[{"id":"A","title":"a","priority":"major","verification":[{"type":"command"}]}]}]}'
+expect_unknown duplicate-id '{"categories":[{"items":[{"id":"A","title":"a","priority":"major","verification":[{"type":"file_exists","path":"x"}]},{"id":"A","title":"b","priority":"major","verification":[{"type":"file_exists","path":"x"}]}]}]}'
+expect_unknown non-json 'I could not do this task.'
+expect_unknown empty ''
+expect_unknown two-objects "$GOODJSON and also $GOODJSON"
+expect_unknown over-cap "$(python3 -I -c 'import json
+print(json.dumps({"categories":[{"items":[{"id":"I%d"%n,"title":"t","priority":"minor","verification":[{"type":"file_exists","path":"x"}]} for n in range(61)]}]}))')"
+# a stale checklist.json from an earlier attempt must not survive a failure
+mkdir -p "$ACC/out-stale"
+printf '{}' > "$ACC/out-stale/checklist.json"
+printf '' | python3 -I "$CA" accept --spec "$ACC_SPEC" --repo "$ACC_REPO" --out "$ACC/out-stale" >/dev/null 2>&1
+[ ! -e "$ACC/out-stale/checklist.json" ] || fail "accept: stale checklist.json survived a failed attempt"
+
+# accept never opens or lists anything under --repo (open/listdir/scandir spied)
+printf '%s' "$GOODJSON" | python3 -I -c '
+import builtins, os, runpy, sys
+ca, repo, spec, out = sys.argv[1:5]
+repo = os.path.realpath(repo)
+touched = []
+def watch(fn):
+    def w(p, *a, **k):
+        if isinstance(p, (str, bytes, os.PathLike)) and os.path.realpath(os.fsdecode(p)).startswith(repo):
+            touched.append(os.fsdecode(p))
+        return fn(p, *a, **k)
+    return w
+builtins.open = watch(builtins.open)
+os.listdir = watch(os.listdir)
+os.scandir = watch(os.scandir)
+sys.argv = [ca, "accept", "--spec", spec, "--repo", repo, "--out", out]
+try:
+    runpy.run_path(ca, run_name="__main__")
+except SystemExit:
+    pass
+sys.stderr.write("TOUCHED:" + ",".join(touched) + "\n")
+' "$CA" "$ACC_REPO" "$ACC_SPEC" "$ACC/out-spy" 2>"$ACC/spy.log"
+grep -q '^TOUCHED:$' "$ACC/spy.log" || fail "accept touched the repo tree: $(cat "$ACC/spy.log")"
+[ -f "$ACC/out-spy/checklist.json" ] || fail "accept spy run did not complete the happy path"
+
+# the context prompt tells the author the checklist format
+python3 -I "$CA" context --spec "$ACC_SPEC" --repo "$ACC_REPO" | grep -q 'categories' || fail "context prompt lacks the checklist format"
+
+
 if [ "$INNER" = 0 ] && [ -z "${LOKI_FREEZE_SRC_DIR:-}" ]; then
     mutate() {  # <name> <file> <old> <new> [<old2> <new2>]  (same file, applied in order)
         local name="$1" file="$2" old="$3" new="$4" old2="${5:-}" new2="${6:-}" dir="$T/mut-$1"
