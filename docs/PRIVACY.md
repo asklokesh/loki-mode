@@ -113,6 +113,9 @@ paths, keys, or repo names -- only anonymous diagnostics.
   PRD or issue text, code or diffs, file paths or names, repo names or URLs,
   branch names, raw error text or stack traces, environment variable values,
   secrets, emails, usernames, hostnames, or IP addresses.
+- Every analytics request (CLI, dashboard, and the welcome form) carries the
+  PostHog property `$geoip_disable: true`, which asks the analytics service not
+  to derive a location from the request's source address.
 
 ### 3. Welcome page form (anonymous, explicit submit, opt-in)
 

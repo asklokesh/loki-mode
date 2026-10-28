@@ -220,6 +220,7 @@ def build_payload(event, properties=None):
     props = mod.sanitize(mod.load_schema(), event, raw)
     if props is None:
         return None
+    props["$geoip_disable"] = True
     return {
         "api_key": _POSTHOG_KEY,
         "event": event,

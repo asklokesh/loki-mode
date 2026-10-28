@@ -332,7 +332,8 @@
             company_size: company,
             tools: tools,
             source: "welcome_opener",
-            loki_version: version
+            loki_version: version,
+            "$geoip_disable": true
             // Deliberately NO prompt, PRD, code, file path, cwd, hostname,
             // project name, email, or real name. Anonymous fields only.
           }

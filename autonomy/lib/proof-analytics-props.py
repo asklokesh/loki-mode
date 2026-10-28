@@ -115,6 +115,7 @@ def payload_main(argv):
     props = sanitize(load_schema(), event, raw)
     if props is None:
         return 1
+    props["$geoip_disable"] = True
     sys.stdout.write(json.dumps({
         "api_key": api_key,
         "event": event,

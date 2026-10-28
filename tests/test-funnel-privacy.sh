@@ -223,7 +223,7 @@ lines = [l for l in open(sys.argv[1]) if l.strip()]
 if not lines:
     sys.exit(1)
 props = json.loads(lines[0])["properties"]
-expected = {"os_family", "arch", "version", "channel", "traffic", "introspective"}
+expected = {"os_family", "arch", "version", "channel", "traffic", "introspective", "$geoip_disable"}
 if set(props) != expected:
     print("key set mismatch: %s" % sorted(props), file=sys.stderr)
     sys.exit(1)
@@ -524,7 +524,7 @@ import json, sys
 s = json.load(open(sys.argv[1])); bad = []
 for line in open(sys.argv[2]):
     d = json.loads(line)
-    allowed = set(s["common"]) | set(s["events"][d["event"]])
+    allowed = set(s["common"]) | {"$geoip_disable"} | set(s["events"][d["event"]])
     extra = set(d["properties"]) - allowed
     if extra:
         bad.append((d["event"], sorted(extra)))
@@ -679,7 +679,7 @@ import json, sys
 s = json.load(open(sys.argv[1])); bad = []
 for line in open(sys.argv[2]):
     d = json.loads(line)
-    extra = set(d["properties"]) - (set(s["common"]) | set(s["events"][d["event"]]))
+    extra = set(d["properties"]) - (set(s["common"]) | {"$geoip_disable"} | set(s["events"][d["event"]]))
     if extra:
         bad.append((d["event"], sorted(extra)))
 print(bad[0] if bad else "")
@@ -727,7 +727,7 @@ for f in files:
             continue
         if ev not in s["events"]:
             problems.append("event %s (%s) not in schema" % (ev, f)); continue
-        allowed = set(s["events"][ev]) | set(s["common"])
+        allowed = set(s["events"][ev]) | set(s["common"]) | {"$geoip_disable"}
         for k in re.findall(r'"([a-z_]+)=', m.group(4)):
             if k not in allowed:
                 problems.append("key %s of %s (%s) not in schema" % (k, ev, f))
@@ -851,6 +851,26 @@ if $GREP -q 'COPY autonomy/lib/proof-analytics-props.py autonomy/lib/telemetry-s
     ok "dashboard image carries the schema files so dashboard_start is not dropped"
 else
     bad "dashboard/Dockerfile lacks the telemetry schema files"
+fi
+
+# Every sender body carries the PostHog geoip-disable flag, so "never IPs" holds
+# at the sender. The bash and dashboard senders are checked on their real built
+# payload; the welcome form is a static page, so its source is checked.
+GEO_BASH="$(python3 "$REPO_ROOT/autonomy/lib/proof-analytics-props.py" --payload cli_command did key command=status 2>/dev/null)"
+if printf '%s' "$GEO_BASH" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin)["properties"].get("$geoip_disable") is True else 1)' 2>/dev/null; then
+    ok 'geoip: bash sender body carries $geoip_disable true'
+else
+    bad 'geoip: bash sender body lacks $geoip_disable' "$GEO_BASH"
+fi
+if python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import telemetry as t; b = t.build_payload("cli_command", {"command": "status"}); sys.exit(0 if b and b["properties"].get("$geoip_disable") is True else 1)' "$REPO_ROOT/dashboard" 2>/dev/null; then
+    ok 'geoip: dashboard sender body carries $geoip_disable true'
+else
+    bad 'geoip: dashboard sender body lacks $geoip_disable'
+fi
+if $GREP -qE '"[$]geoip_disable": *true' "$REPO_ROOT/assets/welcome/welcome.html"; then
+    ok 'geoip: welcome form body carries $geoip_disable true'
+else
+    bad 'geoip: welcome form body lacks $geoip_disable'
 fi
 
 kill "$LISTENER_PID" 2>/dev/null
