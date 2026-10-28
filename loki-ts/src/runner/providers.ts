@@ -394,7 +394,7 @@ const hasNoPriceCliff = (m: string): boolean => /sonnet|opus/i.test(m) && !/haik
 
 // Claude Code version bundled in the pinned Agent SDK. A test (providers.test.ts, "providers advisor" block) asserts this equals the
 // installed SDK's claudeCodeVersion, so an SDK bump that forgets it fails CI instead of silently mis-probing.
-export const SDK_BUNDLED_CLAUDE_CODE = "2.1.309";
+export const SDK_BUNDLED_CLAUDE_CODE = "2.1.312";
 function bundledClaudeCodeVersion(): string {
   return SDK_BUNDLED_CLAUDE_CODE;
 }

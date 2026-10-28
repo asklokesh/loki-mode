@@ -7,4 +7,4 @@
 # anthropic is pinned exactly: 2.x requires Python >=3.10 and API version 2026-10-21.
 mcp>=1.19.0,<2.0.0
 chromadb>=1.5.9,<2.0.0
-anthropic==2.2.0
+anthropic==2.3.0
