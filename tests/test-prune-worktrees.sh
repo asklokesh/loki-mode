@@ -82,7 +82,7 @@ scenario1() {
 
     out="$(bash "$script" "$d/repo" 2>&1)"
     case "$(line_for "$out" merged)" in REMOVE*) ;; *) echo "  dry-run: merged not REMOVE"; rc=1 ;; esac
-    case "$(line_for "$out" live)" in KEEP*live*) ;; *) echo "  dry-run: live not KEEP/live"; rc=1 ;; esac
+    case "$(line_for "$out" live)" in *"): live, locked with live pid "*) ;; *) echo "  dry-run: live not KEEP/live"; rc=1 ;; esac
     case "$(line_for "$out" dirty)" in KEEP*dirty*) ;; *) echo "  dry-run: dirty not KEEP/dirty"; rc=1 ;; esac
     case "$(line_for "$out" stale)" in KEEP*dirty*) ;; *) echo "  dry-run: stale-mtime dirty not KEEP/dirty"; rc=1 ;; esac
     [ "$(wtcount "$d/repo")" = 5 ] || { echo "  dry-run changed the worktree count"; rc=1; }
@@ -124,6 +124,55 @@ case "$(line_for "$out" zero)" in REMOVE*abandoned*) ok "T2 old clean 0-commit w
 n_before="$(wtcount "$r")"
 LOKI_PRUNE_ZERO_COMMIT_MAX_AGE_SECS=0 bash "$SRC_SH" "$r" --apply >/dev/null 2>&1
 if [ "$(wtcount "$r")" = "$((n_before - 2))" ] && [ -d "$w/cwdlive" ] && [ -d "$w/open" ]; then ok "T2 apply removed exactly squash + zero, kept open + cwdlive"; else bad "T2 apply removed exactly squash + zero"; fi
+
+# scenario_locks <script>: clean merged worktrees locked three ways must all be
+# KEPT in a dry run and survive --apply: (a) reason without any PID, (b) reason
+# naming a dead PID, (c) reason naming a live PID (must report "live").
+scenario_locks() {
+    local script="$1" d rc=0 out wts live_pid dead_pid b
+    d="$(mktemp -d "$T/s4.XXXXXX")"
+    mkrepo "$d"
+    wts="$d/wts"; mkdir -p "$wts"
+    sleep 300 & live_pid=$!
+    PIDS="$PIDS $live_pid"
+    sleep 0 & dead_pid=$!
+    wait "$dead_pid" 2>/dev/null
+    addwt "$d/repo" "$wts/nopid" nopid 1
+    addwt "$d/repo" "$wts/deadpid" deadpid 1
+    addwt "$d/repo" "$wts/livepid" livepid 1
+    for b in nopid deadpid livepid; do G -C "$d/repo" merge -q --no-edit "$b" 2>/dev/null; done
+    G -C "$d/repo" push -q origin main 2>/dev/null
+    G -C "$d/repo" worktree lock --reason "claude agent x" "$wts/nopid"
+    G -C "$d/repo" worktree lock --reason "claude agent pid $dead_pid" "$wts/deadpid"
+    G -C "$d/repo" worktree lock --reason "claude agent pid $live_pid" "$wts/livepid"
+    kill -0 "$dead_pid" 2>/dev/null && { echo "  dead pid $dead_pid is alive"; rc=1; }
+
+    out="$(bash "$script" "$d/repo" 2>&1)"
+    case "$(line_for "$out" nopid)" in *"): locked") ;; *) echo "  dry-run: no-PID lock not KEEP/locked"; rc=1 ;; esac
+    case "$(line_for "$out" deadpid)" in *"): locked") ;; *) echo "  dry-run: dead-PID lock not KEEP/locked"; rc=1 ;; esac
+    case "$(line_for "$out" livepid)" in *"): live, locked with live pid "*) ;; *) echo "  dry-run: live-PID lock not KEEP/live"; rc=1 ;; esac
+
+    bash "$script" "$d/repo" --apply >/dev/null 2>&1
+    for b in nopid deadpid livepid; do
+        [ -d "$wts/$b" ] || { echo "  apply: locked $b dir removed"; rc=1; }
+        G -C "$d/repo" rev-parse --verify -q "refs/heads/$b" >/dev/null || { echo "  apply: locked $b branch deleted"; rc=1; }
+    done
+    kill "$live_pid" 2>/dev/null || true
+    return $rc
+}
+if scenario_locks "$SRC_SH"; then ok "T4 locked clean merged worktrees (no PID, dead PID, live PID) are kept in dry run and apply"; else bad "T4 locked clean merged worktrees are kept"; fi
+
+# T4 mutations: each lock check removed alone, then both, must turn T4 red.
+mutate_expect_red() {
+    local label="$1" expr="$2" m="$T/mut-$1.sh"
+    sed "$expr" "$SRC_SH" >"$m"
+    bash -n "$m" 2>/dev/null || { bad "T4 mutation $label is not valid bash"; return; }
+    if cmp -s "$SRC_SH" "$m"; then bad "T4 mutation $label did not apply"; return; fi
+    if scenario_locks "$m" >/dev/null 2>&1; then bad "T4 mutation $label must turn the lock test red"; else ok "T4 mutation $label turns the lock test red"; fi
+}
+mutate_expect_red nopidcheck '/if pid_alive "\$tok"; then echo "locked with live pid/s/.*/:/'
+mutate_expect_red nolockflag '/if \[ "\$lockflag" = 1 \]; then echo "KEEP/d'
+mutate_expect_red neither '/if pid_alive "\$tok"; then echo "locked with live pid/s/.*/:/;/if \[ "\$lockflag" = 1 \]; then echo "KEEP/d'
 
 # T3: mutation, drop the dirty check; T1 must go red.
 MUT="$T/prune-mutant.sh"
