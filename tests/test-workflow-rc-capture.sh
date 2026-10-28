@@ -87,5 +87,52 @@ case "$YAML_STATE" in
     *)         fail "YAML check produced no usable verdict: $YAML_STATE" ;;
 esac
 
+# 5. Publish never waits on tests. pr-fast.yml also runs on every push to main as a
+#    signal only. It must trigger on main pushes, never cancel a main run, and no
+#    release.yml job may depend on it or on any other test workflow.
+PUBLISH_STATE="$(python3 - <<'PYEOF'
+import sys
+try:
+    import yaml
+except ImportError:
+    print("NO_PARSER"); sys.exit(0)
+def load(p):
+    d = yaml.safe_load(open(p))
+    if True in d and "on" not in d:
+        d["on"] = d.pop(True)
+    return d
+errs = []
+fast = load(".github/workflows/pr-fast.yml")
+on = fast.get("on") or {}
+if "main" not in ((on.get("push") or {}).get("branches") or []):
+    errs.append("pr-fast.yml does not trigger on push to main")
+cip = str((fast.get("concurrency") or {}).get("cancel-in-progress"))
+if cip.lower() == "true":
+    errs.append("pr-fast.yml cancels main runs (cancel-in-progress: true)")
+elif "pull_request" not in cip:
+    errs.append("cancel-in-progress is not keyed on the pull_request event: " + cip)
+grp = str((fast.get("concurrency") or {}).get("group"))
+if "release-npm" in grp or "github.sha" not in grp:
+    errs.append("pr-fast.yml concurrency group is shared with release or not keyed on sha: " + grp)
+rel = load(".github/workflows/release.yml")
+if "workflow_run" in (rel.get("on") or {}):
+    errs.append("release.yml triggers on workflow_run")
+for name, job in (rel.get("jobs") or {}).items():
+    needs = job.get("needs") or []
+    needs = [needs] if isinstance(needs, str) else needs
+    for n in needs:
+        if "fast" in n or "pr-fast" in n or n.startswith("test"):
+            errs.append("release.yml job %s needs %s" % (name, n))
+    if "pr-fast" in str(job.get("uses", "")):
+        errs.append("release.yml job %s calls pr-fast" % name)
+print("OK" if not errs else "BAD " + "; ".join(errs))
+PYEOF
+)"
+case "$PUBLISH_STATE" in
+    OK)        pass "publish never waits on tests: main-push signal, never cancelled, no release dependency" ;;
+    NO_PARSER) echo "  SKIP: pyyaml unavailable; publish-never-waits invariant not measured (not counted as a pass)" ;;
+    *)         fail "publish-never-waits invariant broken: $PUBLISH_STATE" ;;
+esac
+
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

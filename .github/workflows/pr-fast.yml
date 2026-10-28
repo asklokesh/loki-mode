@@ -2,13 +2,16 @@ name: PR fast tier
 
 on:
   pull_request:
+  # Signal only: publish never waits on this run (no release.yml job needs it).
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  group: pr-fast-${{ github.ref }}
-  cancel-in-progress: true
+  group: pr-fast-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   fast-tier:
