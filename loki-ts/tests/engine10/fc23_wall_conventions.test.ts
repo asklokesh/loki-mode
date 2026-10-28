@@ -532,6 +532,16 @@ describe("FC-WALL-LOCATION-BLIND (run e10-20261019T130749Z-f11c, FireLater#20)",
     await runWall(flCtx(repoDir, (o) => { briefs.push(o.brief); }), new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
     expect(briefs[0]).toContain("is copied to backend/src/lib/"); expect(briefs[0]).toContain("__dirname");
   });
+  test("Wall runner comes from the owning package, not a nested package's runner", async () => {
+    const briefs: string[] = [], repoDir = fl(), ctx = flCtx(repoDir, (o) => { briefs.push(o.brief); writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), "import { test } from 'bun:test'; test('a', () => {});\n"); });
+    ctx.outputs = () => ({ intake: { task: "add x", testmap: {
+      runners: ["vitest", "bun"], tests: [{ runner: "bun", path: "backend/src/lib/x.test.ts" }, { runner: "vitest", path: "fixtures/benchmark/test.test.ts" }],
+      testPackages: { "backend/src/lib/x.test.ts": "backend", "fixtures/benchmark/test.test.ts": "fixtures/benchmark" },
+      packageRunners: { backend: ["bun"], "fixtures/benchmark": ["vitest"] },
+    }, repomap_ref: join(ctx.runDir, "repomap.json") } }) as Partial<Record<StageName, Record<string, unknown>>>;
+    await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(briefs[0]).toContain("bun:test."); expect(briefs[0]).not.toContain("Vitest. Example:");
+  });
   test("(b) phantomReason names the cause when the phantom is the test dir joined with a real root path", () => {
     const files = ["backend/src/lib/x.test.ts", "backend/src/index.ts", "frontend/src/app.ts"];
     const why = phantomReason(["backend/src/lib/backend/src", "backend/src/lib/frontend/src"], files, "backend/src/lib", "backend")!;

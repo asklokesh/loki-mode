@@ -17,6 +17,9 @@ export interface EngineTestMap extends TestMap {
   commands: Partial<Record<RunnerName, CommandSpec>>;
   /** source basename -> repo-relative test paths that import/reference it. */
   readonly sourceRefs: Record<string, string[]>;
+  /** Package ownership and locally declared runners for each discovered test package. */
+  readonly testPackages: Record<string, string>;
+  readonly packageRunners: Record<string, RunnerName[]>;
 }
 const RUNNER_ORDER: readonly RunnerName[] = ["pytest", "vitest", "jest", "bun", "node", "npm", "go", "cargo"];
 const COMMANDS: Record<RunnerName, CommandSpec> = {
@@ -61,11 +64,22 @@ export function buildTestMap(root: string): EngineTestMap {
   const evidence: Partial<Record<RunnerName, string>> = {};
   const mark = (r: RunnerName, file: string): void => { if (!(r in evidence)) evidence[r] = file; };
   const jsText = new Map<string, string>();
+  const api = loadProjectApi(root);
+  const packageRoots = [...new Set([".", ...(api?.packages().map((p) => p.root) ?? []), ...files.filter((f) => basename(f) === "package.json").map((f) => dirname(f))])];
+  const ownerRoot = (file: string): string => {
+    const modeled = api?.packageRootOf(file);
+    if (modeled !== null && modeled !== undefined) return modeled;
+    return packageRoots.filter((p) => p === "." || file.startsWith(`${p}/`)).sort((a, b) => b.length - a.length)[0] ?? ".";
+  };
   for (const rel of files) {
     const name = basename(rel);
     const full = join(root, rel);
-    if (JS_TEST_RE.test(name) && !evidence["node"] && /(?:from|require\()\s*['"]node:test['"]/.test(jsText.set(rel, readText(full)).get(rel)!)) mark("node", rel);
-    else if (name === "package.json") detectFromPackageJson(readText(full), rel, mark);
+    if (JS_TEST_RE.test(name)) {
+      const text = readText(full); jsText.set(rel, text);
+      if (/(?:from|require\()\s*['"]bun:test['"]/.test(text)) mark("bun", rel);
+      if (/(?:from|require\()\s*['"]vitest['"]/.test(text)) mark("vitest", rel);
+      if (/(?:from|require\()\s*['"]node:test['"]/.test(text)) mark("node", rel);
+    } else if (name === "package.json") detectFromPackageJson(readText(full), rel, mark);
     else if (name === "bunfig.toml") mark("bun", rel);
     else if (name === "pytest.ini" || name === "conftest.py") mark("pytest", rel);
     else if (name === "pyproject.toml" && /\[tool\.pytest/.test(readText(full))) mark("pytest", rel);
@@ -77,14 +91,37 @@ export function buildTestMap(root: string): EngineTestMap {
     else if (name === "go.mod" || GO_TEST_RE.test(name)) mark("go", rel);
     else if (name === "Cargo.toml") mark("cargo", rel);
   }
-  // Per-file test entries exist only for narrowly-selectable runners: npm and cargo run the whole suite (coarse), so no individual file earns a TestRef for them.
-  const jsRunner: RunnerName | null = evidence["vitest"] ? "vitest" : evidence["jest"] ? "jest" : evidence["bun"] ? "bun" : evidence["node"] ? "node" : null;
+  // Runner evidence is scoped to the package that owns each test. A framework import in the
+  // test itself is stronger evidence than a manifest, and a nested package never owns siblings.
+  const packageRunners = new Map<string, RunnerName[]>();
+  for (const [pkgRoot, manifest] of packageRoots.map((p) => [p, p === "." ? "package.json" : `${p}/package.json`] as const)) {
+    const found = new Set<RunnerName>();
+    detectFromPackageJson(readText(join(root, manifest)), manifest, (r) => found.add(r));
+    const modelPkg = api?.packages().find((p) => p.root === pkgRoot);
+    const modelRunner = modelPkg?.runner?.toLowerCase();
+    if (modelRunner && RUNNER_ORDER.includes(modelRunner as RunnerName)) found.add(modelRunner as RunnerName);
+    const modelTest = modelPkg?.commands?.test?.cmd;
+    if (modelTest) detectFromPackageJson(JSON.stringify({ scripts: { test: modelTest } }), manifest, (r) => found.add(r));
+    for (const [path, text] of jsText) if (ownerRoot(path) === pkgRoot) {
+      if (/(?:from|require\()\s*['"]bun:test['"]/.test(text)) found.add("bun");
+      if (/(?:from|require\()\s*['"]vitest['"]/.test(text)) found.add("vitest");
+      if (/(?:from|require\()\s*['"]node:test['"]/.test(text)) found.add("node");
+    }
+    for (const [r, path] of Object.entries(evidence) as [RunnerName, string][]) {
+      if (ownerRoot(path) === pkgRoot) found.add(r);
+    }
+    packageRunners.set(pkgRoot, RUNNER_ORDER.filter((r) => found.has(r)));
+  }
   const tests: TestRef[] = [];
+  const testPackages: Record<string, string> = Object.create(null);
   for (const rel of files) {
-    const name = basename(rel);
-    if (JS_TEST_RE.test(name) && jsRunner) tests.push({ runner: jsRunner, path: rel });
-    else if (PY_TEST_RE.test(name) && evidence["pytest"]) tests.push({ runner: "pytest", path: rel });
-    else if (GO_TEST_RE.test(name) && evidence["go"]) tests.push({ runner: "go", path: rel });
+    const name = basename(rel), text = jsText.get(rel) ?? readText(join(root, rel)), pkgRoot = ownerRoot(rel);
+    const scope = packageRunners.get(pkgRoot) ?? packageRunners.get(".") ?? [];
+    const ownJs: RunnerName | undefined = /(?:from|require\()\s*['\"]bun:test['\"]/.test(text) ? "bun" : /(?:from|require\()\s*['\"]vitest['\"]/.test(text) ? "vitest" : /(?:from|require\()\s*['\"]node:test['\"]/.test(text) ? "node" : undefined;
+    const jsRunner = ownJs ?? (["vitest", "jest", "bun", "node"] as const).find((r) => scope.includes(r));
+    if (JS_TEST_RE.test(name) && jsRunner) { tests.push({ runner: jsRunner, path: rel }); testPackages[rel] = pkgRoot; }
+    else if (PY_TEST_RE.test(name) && (scope.includes("pytest") || /^\s*(?:import pytest|from pytest import)/m.test(text))) { tests.push({ runner: "pytest", path: rel }); testPackages[rel] = pkgRoot; }
+    else if (GO_TEST_RE.test(name) && scope.includes("go")) { tests.push({ runner: "go", path: rel }); testPackages[rel] = pkgRoot; }
   }
   // Object.create(null): keys come from grep'd file content, so a source named e.g. "constructor" must not collide with Object.prototype.
   const sourceRefs: Record<string, string[]> = Object.create(null);
@@ -99,8 +136,8 @@ export function buildTestMap(root: string): EngineTestMap {
   const runners = RUNNER_ORDER.filter((r) => r in evidence);
   const commands: Partial<Record<RunnerName, CommandSpec>> = {};
   for (const r of runners) commands[r] = r === "pytest" ? { ...COMMANDS.pytest, cmd: `${pytestPython(root)} -m pytest -q <files>` } : COMMANDS[r];
-  const map: EngineTestMap = { runners, tests, evidence, commands, sourceRefs };
-  attachScope(map, loadProjectApi(root), specs);
+  const map: EngineTestMap = { runners, tests, evidence, commands, sourceRefs, testPackages, packageRunners: Object.fromEntries(packageRunners) };
+  attachScope(map, api, specs);
   return map;
 }
 /** Test refs impacted by `changedFiles`: a changed test maps to itself; a changed source maps  to every test that imports/references its basename (built by `buildTestMap`'s grep, read back from `map.sourceRefs`). */
