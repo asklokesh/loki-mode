@@ -829,3 +829,106 @@ describe("loki proof bundle --audit <from>..<to>", () => {
     }, 60000);
   });
 });
+
+describe("loki proof verify/show/md accept an engine10 run id", () => {
+  let dir = "";
+  let keyFile = "";
+  const saved: Record<string, string | undefined> = {};
+  let out = "";
+  let err = "";
+  let realOut: typeof process.stdout.write;
+  let realErr: typeof process.stderr.write;
+
+  beforeEach(() => {
+    for (const k of ["LOKI_DIR", "LOKI_RECEIPT_SIGNING_KEY_FILE", "LOKI_RECEIPT_SIGNING_KEY"]) saved[k] = process.env[k];
+    dir = mkdtempSync(join(tmpdir(), "loki-proof-run-"));
+    keyFile = join(dir, "k.pem");
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+    process.env["LOKI_DIR"] = join(dir, ".loki");
+    out = "";
+    err = "";
+    realOut = process.stdout.write.bind(process.stdout);
+    realErr = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((c: string | Uint8Array) => ((out += String(c)), true)) as typeof process.stdout.write;
+    process.stderr.write = ((c: string | Uint8Array) => ((err += String(c)), true)) as typeof process.stderr.write;
+  });
+  afterEach(() => {
+    process.stdout.write = realOut;
+    process.stderr.write = realErr;
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function seedSignedRun(id: string): string {
+    const rd = join(dir, ".loki", "runs", id);
+    mkdirSync(rd, { recursive: true });
+    const ev = join(rd, "events.jsonl");
+    const log = new SupervisorLog(ev, id);
+    log.append("run.started", null, { provider: "claude" });
+    const evSha = new Bun.CryptoHasher("sha256").update(readFileSync(ev)).digest("hex");
+    const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", head_sha: "a".repeat(40), events_sha256: evSha, time: { wall_s: 0, stages: {} }, log_seal: true };
+    const hash = receiptSha256(body as never);
+    writeFileSync(join(rd, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signReceipt(id, hash) }, null, 2));
+    log.append("receipt.sealed", "seal", { receipt_sha256: hash });
+    log.verify();
+    log.append("run.completed", null, {});
+    log.sealLog();
+    return join(rd, "receipt.json");
+  }
+
+  it("verify of a signed run id is rc 0 with the engine10 verdict", async () => {
+    seedSignedRun("e10-x");
+    expect(await runProof(["verify", "e10-x"])).toBe(0);
+    expect(out).toContain("verdict: VERIFIED");
+    expect(err).not.toContain("Proof not found");
+  });
+
+  it("verify of a tampered run receipt is rc 1", async () => {
+    const rp = seedSignedRun("e10-x");
+    writeFileSync(rp, readFileSync(rp, "utf8").replace('"verdict": "VERIFIED"', '"verdict": "FAILED"'));
+    expect(await runProof(["verify", "e10-x"])).toBe(1);
+    expect(out).toContain("verdict: TAMPERED");
+  });
+
+  it("an id in neither place still says Proof not found (66)", async () => {
+    expect(await runProof(["verify", "e10-none"])).toBe(66);
+    expect(err).toContain("Proof not found: e10-none");
+    expect(await runProof(["show", "e10-none"])).toBe(1);
+    expect(await runProof(["md", "e10-none"])).toBe(1);
+  });
+
+  it("an unsafe id never resolves a run receipt", async () => {
+    seedSignedRun("e10-x");
+    expect(await runProof(["verify", "../runs/e10-x"])).toBe(66);
+  });
+
+  it("show prints the verdict, show --json prints the receipt, md prints the badge", async () => {
+    seedSignedRun("e10-x");
+    expect(await runProof(["show", "e10-x"])).toBe(0);
+    expect(out).toContain("verdict: VERIFIED");
+    out = "";
+    expect(await runProof(["show", "e10-x", "--json"])).toBe(0);
+    expect(JSON.parse(out).run_id).toBe("e10-x");
+    out = "";
+    expect(await runProof(["md", "e10-x"])).toBe(0);
+    expect(out).toContain("Verified by Loki");
+    expect(err).not.toContain("Proof not found");
+  });
+
+  it("the bash route agrees on verify, show, md, tampered and unknown ids", async () => {
+    const rp = seedSignedRun("e10-x");
+    const env = { LOKI_DIR: join(dir, ".loki"), LOKI_RECEIPT_SIGNING_KEY_FILE: keyFile, LOKI_RECEIPT_SIGNING_KEY: "", NO_COLOR: "1" };
+    const bash = (a: string[]) => run([BASH_CLI, "proof", ...a], { env, timeoutMs: 60000 });
+    const ok = await bash(["verify", "e10-x"]);
+    expect(ok.exitCode).toBe(0);
+    expect(ok.stdout).toContain("verdict: VERIFIED");
+    expect((await bash(["show", "e10-x"])).exitCode).toBe(0);
+    expect((await bash(["md", "e10-x"])).exitCode).toBe(0);
+    const none = await bash(["verify", "e10-none"]);
+    expect(none.exitCode).toBe(66);
+    expect(none.stdout + none.stderr).toContain("Proof not found");
+    writeFileSync(rp, readFileSync(rp, "utf8").replace('"verdict": "VERIFIED"', '"verdict": "FAILED"'));
+    expect((await bash(["verify", "e10-x"])).exitCode).toBe(1);
+  }, 120000);
+});

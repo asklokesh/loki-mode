@@ -34,7 +34,7 @@ import { safeGit } from "../util/safe_git.ts";
 import { findIsolatedPython3 } from "../util/python.ts";
 import { BOLD, CYAN, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 import { tierGate } from "../util/tier.ts";
-import { verifyReceipt } from "../engine10/verify_cmd.ts";
+import { main as verifyRunMain, verifyReceipt } from "../engine10/verify_cmd.ts";
 import { runIdGuard } from "../features/receipt_dsse.ts";
 import { buildAuditBundle, buildReceiptBundle, commitsInRange, receiptsInRange } from "../util/receipt_bundle.ts";
 import { runSecureScan } from "../util/secure_scan.ts";
@@ -200,6 +200,15 @@ async function showProof(args: readonly string[]): Promise<number> {
   }
   const d = readProof(id);
   if (d === null) {
+    // A 'loki start' run id has a sealed receipt, not a proof record: show it through the engine10 verifier.
+    const rp = runReceiptPath(id);
+    if (rp) {
+      if (asJson) {
+        process.stdout.write(readFileSync(rp, "utf8"));
+        return 0;
+      }
+      return verifyRunMain([id]);
+    }
     process.stderr.write(`${RED}Proof not found: ${id}${NC}\n`);
     process.stderr.write("Use 'loki proof list' to see available proofs.\n");
     return 1;
@@ -501,13 +510,23 @@ function printProofBadge(id: string, linkUrl?: string): void {
 // This route is the DEFAULT one users hit. `md` shipped on the bash route in
 // v8.6.0 and was unreachable here -- `loki proof md` answered "Unknown
 // subcommand" for anyone who had not set LOKI_LEGACY_BASH=1.
-function mdProof(id: string | undefined): number {
+async function mdProof(id: string | undefined): Promise<number> {
   if (!id) {
     process.stderr.write(`${RED}Missing proof id.${NC} Use 'loki proof list'.\n`);
     return 2;
   }
   const proofPath = join(lokiDir(), "proofs", id, "proof.json");
   if (!existsSync(proofPath)) {
+    const rp = runReceiptPath(id);
+    if (rp) {
+      const { md, why } = await runBadgeMd(rp);
+      if (!md) {
+        process.stderr.write(`${RED}No markdown:${NC} ${why}\n`);
+        return 1;
+      }
+      process.stdout.write(`${md}\n`);
+      return 0;
+    }
     process.stderr.write(`${RED}Proof not found: ${id}${NC}\n`);
     process.stderr.write("Use 'loki proof list' to see available proofs.\n");
     return 1;
@@ -918,6 +937,8 @@ async function verifyProof(id: string | undefined): Promise<number> {
   }
   const pj = join(proofsDir(), id, "proof.json");
   if (!existsSync(pj)) {
+    // Same verdict and exit codes as `loki verify <run-id>`.
+    if (runReceiptPath(id)) return verifyRunMain([id]);
     process.stderr.write(`${RED}Proof not found: ${id}${NC}\n`);
     process.stderr.write("Use 'loki proof list' to see available proofs.\n");
     return 66; // input missing; 1 is reserved for tamper/drift

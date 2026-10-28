@@ -39526,6 +39526,14 @@ PYU
 # Subcommands: list | show <id> | open <id> | share <id>.
 # The proof.json schema is frozen (R1 spec). Reads are tolerant of missing
 # keys (early/degraded proofs) and default to "-".
+# True when <id> is a safe 'loki start' run id with a sealed receipt under <loki_dir>/runs.
+_proof_is_run_id() {
+    case "$1" in
+        ''|*..*|[!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) return 1 ;;
+    esac
+    [ -f "$2/runs/$1/receipt.json" ]
+}
+
 cmd_proof() {
     local loki_dir="${LOKI_DIR:-.loki}"
     local proofs_dir="${loki_dir}/proofs"
@@ -39735,6 +39743,15 @@ PYEOF
                 exit 2
             fi
             local pj="${proofs_dir}/${id}/proof.json"
+            if [ ! -f "$pj" ] && _proof_is_run_id "$id" "${proofs_dir%/*}"; then
+                # A 'loki start' run id: the Bun route answers through the engine10 verifier.
+                if [ "$_ps_json" -eq 1 ]; then
+                    _loki_bun_delegate proof show "$id" --json
+                else
+                    _loki_bun_delegate proof show "$id"
+                fi
+                exit $?
+            fi
             if [ ! -f "$pj" ]; then
                 echo -e "${RED}Proof not found: ${id}${NC}"
                 echo "Use 'loki proof list' to see available proofs."
@@ -39879,6 +39896,10 @@ print(json.dumps(json.load(open(os.environ['LOKI_PROOF_JSON'])), indent=2))
                 exit 2
             fi
             local pj="${proofs_dir}/${id}/proof.json"
+            if [ ! -f "$pj" ] && _proof_is_run_id "$id" "${proofs_dir%/*}"; then
+                _loki_bun_delegate proof md "$id"
+                exit $?
+            fi
             if [ ! -f "$pj" ]; then
                 echo -e "${RED}Proof not found: ${id}${NC}" >&2
                 echo "Use 'loki proof list' to see available proofs." >&2
@@ -39990,6 +40011,11 @@ print(json.dumps(json.load(open(os.environ['LOKI_PROOF_JSON'])), indent=2))
                 exit 64  # usage (docs/exit-codes.md); 2 means "could not check"
             fi
             local pj="${proofs_dir}/${id}/proof.json"
+            if [ ! -f "$pj" ] && _proof_is_run_id "$id" "${proofs_dir%/*}"; then
+                # Same verdict and exit codes as `loki verify <run-id>`.
+                _loki_bun_delegate engine10 verify "$id"
+                exit $?
+            fi
             if [ ! -f "$pj" ]; then
                 echo -e "${RED}Proof not found: ${id}${NC}"
                 echo "Use 'loki proof list' to see available proofs."
