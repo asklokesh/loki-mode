@@ -471,6 +471,80 @@ else
 fi
 
 # -------------------------------------------
+# Tests 28-31: loki plan "<task>" --fast (stub claude provider)
+# -------------------------------------------
+FAST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/loki-planfast-XXXXXXXX")
+mkdir -p "$FAST_TMP/bin"
+cat > "$FAST_TMP/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+prompt=""; prev=""
+for a in "$@"; do [ "$prev" = "-p" ] && prompt="$a"; prev="$a"; done
+case "$prompt" in
+  PLAN-FAST*)
+    echo "$prompt" > "$LOKI_STUB_DIR/fast.prompt"
+    for i in $(seq 1 60); do echo "step $i"; done
+    echo "Acceptance:"; echo "tests pass" ;;
+  PLAN-REFINE*)
+    if [ -s "$LOKI_STUB_OUT" ]; then echo seen > "$LOKI_STUB_DIR/out-before-refine"; fi
+    if [ "${LOKI_STUB_SAME:-0}" = "1" ]; then
+      for i in $(seq 1 40); do echo "step $i"; done
+    else
+      for i in $(seq 1 40); do echo "revised step $i"; done
+    fi ;;
+esac
+exit 0
+STUB
+chmod +x "$FAST_TMP/bin/claude"
+fast_run() {
+    ( cd "$FAST_TMP" && PATH="$FAST_TMP/bin:$PATH" LOKI_PROVIDER=claude LOKI_STUB_DIR="$FAST_TMP" \
+        LOKI_STUB_OUT="$FAST_TMP/out.txt" LOKI_SKIP_PREREQS=true LOKI_TELEMETRY_DISABLED=1 \
+        "$LOKI" plan "add a retry to the fetcher" --fast "$@" > "$FAST_TMP/out.txt" 2>"$FAST_TMP/err.txt" )
+}
+rm -f "$FAST_TMP/out-before-refine"
+fast_run; fast_rc=$?
+split=$(grep -n '^Refined:$' "$FAST_TMP/out.txt" | head -1 | cut -d: -f1)
+plan_lines=$(( ${split:-0} - 2 ))
+diff_lines=$(( $(wc -l < "$FAST_TMP/out.txt") - ${split:-0} ))
+
+((TOTAL++))
+if [ "$fast_rc" -eq 0 ] && [ -n "$split" ] && [ "$plan_lines" -ge 1 ] && [ "$plan_lines" -le 40 ]; then
+    log_pass "loki plan --fast prints a plan of at most 40 lines ($plan_lines)"
+else
+    log_fail "plan --fast plan block" "rc=$fast_rc plan_lines=$plan_lines"
+fi
+
+((TOTAL++))
+if [ -f "$FAST_TMP/out-before-refine" ]; then
+    log_pass "loki plan --fast prints the plan before the refine call starts"
+else
+    log_fail "plan --fast ordering" "stdout was empty when the refine call started"
+fi
+
+((TOTAL++))
+if [ "$diff_lines" -ge 1 ] && [ "$diff_lines" -le 20 ] && sed -n "$((split+1))p" "$FAST_TMP/out.txt" | grep -q '^[<>]'; then
+    log_pass "loki plan --fast shows the refinement as a diff of at most 20 lines ($diff_lines)"
+else
+    log_fail "plan --fast diff block" "diff_lines=$diff_lines"
+fi
+
+((TOTAL++))
+LOKI_STUB_SAME=1 fast_run; same_rc=$?
+if [ "$same_rc" -eq 0 ] && [ "$(tail -n1 "$FAST_TMP/out.txt")" = "unchanged" ]; then
+    log_pass "loki plan --fast prints 'unchanged' when the refine matches"
+else
+    log_fail "plan --fast unchanged" "rc=$same_rc last=$(tail -n1 "$FAST_TMP/out.txt")"
+fi
+
+((TOTAL++))
+fast_help=$("$LOKI" plan --help 2>&1)
+if echo "$fast_help" | grep -q -- '--fast'; then
+    log_pass "loki plan --help lists --fast"
+else
+    log_fail "plan --help" "--fast missing"
+fi
+rm -rf -- "$FAST_TMP"
+
+# -------------------------------------------
 # Summary
 # -------------------------------------------
 echo ""

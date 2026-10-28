@@ -23316,11 +23316,62 @@ cmd_try() {
     return "$rc"
 }
 
+# loki plan <task> --fast: a one-screen plan from the small model tier (at most
+# 40 lines, acceptance clauses included), printed before the refine call starts,
+# then the medium-tier refinement shown as a diff of at most 20 lines or "unchanged".
+_plan_fast() {
+    local task="$1"
+    [ -f "$task" ] && task="$(cat "$task")"
+    if [ -z "$task" ]; then
+        echo -e "${RED}Usage: loki plan \"<task>\" --fast${NC}" >&2
+        return 2
+    fi
+    local pdir="$_LOKI_SCRIPT_DIR/../providers"
+    type load_provider >/dev/null 2>&1 || . "$pdir/loader.sh" 2>/dev/null
+    if ! load_provider "${LOKI_PROVIDER:-claude}" >/dev/null 2>&1 || ! type provider_invoke_argv >/dev/null 2>&1; then
+        echo "loki plan --fast: the provider '${LOKI_PROVIDER:-claude}' cannot be called from here" >&2
+        return 1
+    fi
+    local tmp to="${LOKI_PLAN_FAST_TIMEOUT:-120}" tcmd=()
+    command -v timeout >/dev/null 2>&1 && tcmd=(timeout "$to")
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/loki-plan-fast.XXXXXXXX")" || return 1
+    local common="Reply with plain text only. Do not use tools or edit files. No markdown fences."
+    local p1="PLAN-FAST. $common Write a plan for this task in at most 30 short lines: numbered steps, then a line 'Acceptance:' followed by one clause per line, each a checkable statement.
+Task: $task"
+    provider_invoke_argv fast "$p1"
+    "${tcmd[@]+"${tcmd[@]}"}" env CAVEMAN_DEFAULT_MODE=off "${_LOKI_INVOKE_ARGV[@]}" 2>/dev/null </dev/null \
+        | sed '/^[[:space:]]*$/d' | sed -n '1,40p' > "$tmp/plan1.txt"
+    if [ ! -s "$tmp/plan1.txt" ]; then
+        echo "loki plan --fast: the small-tier model returned no plan" >&2
+        rm -rf -- "$tmp"; return 1
+    fi
+    cat "$tmp/plan1.txt"
+    local p2="PLAN-REFINE. $common Improve this plan: fix wrong or missing steps and make every acceptance clause checkable. Output the full improved plan in the same format, at most 40 lines.
+Task: $task
+Plan:
+$(cat "$tmp/plan1.txt")"
+    provider_invoke_argv development "$p2"
+    "${tcmd[@]+"${tcmd[@]}"}" env CAVEMAN_DEFAULT_MODE=off "${_LOKI_INVOKE_ARGV[@]}" 2>/dev/null </dev/null \
+        | sed '/^[[:space:]]*$/d' | sed -n '1,40p' > "$tmp/plan2.txt"
+    echo ""
+    echo "Refined:"
+    if [ ! -s "$tmp/plan2.txt" ]; then
+        echo "refine unavailable (kept the plan above)"
+    elif diff "$tmp/plan1.txt" "$tmp/plan2.txt" >/dev/null 2>&1; then
+        echo "unchanged"
+    else
+        diff "$tmp/plan1.txt" "$tmp/plan2.txt" | grep '^[<>]' | sed -n '1,20p' || true
+    fi
+    rm -rf -- "$tmp"
+    return 0
+}
+
 cmd_plan() {
     local prd_file=""
     local show_requirements=false
     local show_json=false
     local show_verbose=false
+    local fast=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -23336,6 +23387,7 @@ cmd_plan() {
                 echo "  --json        Machine-readable JSON output"
                 echo "  --spec        With a task: write the acceptance criteria to .loki/specs/<slug>.md for you to edit"
                 echo "  --requirements  Print the last run's requirement-to-check map (.loki/state/requirements-map.json), read-only"
+                echo "  --fast        With a task: print a one-screen plan (max 40 lines, with acceptance clauses) from the small model tier, then the refined plan as a diff (max 20 lines) or 'unchanged'"
                 echo "  --verbose     Show detailed per-iteration breakdown"
                 echo "  --help, -h    Show this help"
                 echo ""
@@ -23353,6 +23405,7 @@ cmd_plan() {
                 ;;
             --json) show_json=true; shift ;;
             --verbose) show_verbose=true; shift ;;
+            --fast) fast=true; shift ;;
             --requirements) show_requirements=true; shift ;;
             *)
                 if [ -z "$prd_file" ]; then
@@ -23365,6 +23418,11 @@ cmd_plan() {
 
     if [ "$show_requirements" = true ]; then
         _plan_show_requirements "$show_json"
+        return $?
+    fi
+
+    if [ "$fast" = true ]; then
+        _plan_fast "$prd_file"
         return $?
     fi
 

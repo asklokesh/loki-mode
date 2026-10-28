@@ -292,7 +292,7 @@ _loki_completion() {
 
         plan)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--json --verbose --spec --requirements --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--json --verbose --spec --fast --requirements --help" -- "$cur") )
                 return 0
             fi
             ;;
