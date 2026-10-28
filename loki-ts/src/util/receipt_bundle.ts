@@ -2,11 +2,11 @@
 import { spawnSync } from "node:child_process";
 import { createPublicKey } from "node:crypto";
 import { cpSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, normalize } from "node:path";
+import { basename, dirname, join, normalize } from "node:path";
 import { computeReceiptHash, verifyReceipt } from "../engine10/verify_cmd.ts";
 import { kidOf, loadSigningKey } from "./receipt_signer.ts";
 import { safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
-import { isEnvelope } from "../features/receipt_dsse.ts";
+import { isEnvelope, runIdGuard } from "../features/receipt_dsse.ts";
 
 export type BundleResult = { ok: true; outDir: string; kid: string } | { ok: false; error: string };
 
@@ -17,6 +17,8 @@ export const VERIFY_COMMAND = "loki verify --pubkey pubkey.jwk receipt.json";
 export async function buildReceiptBundle(runDir: string, outDir: string): Promise<BundleResult> {
   const receiptPath = join(runDir, "receipt.json"), eventsPath = join(runDir, "events.jsonl");
   if (!existsSync(receiptPath)) return { ok: false, error: `no receipt.json in ${runDir}` };
+  const bound = runIdGuard(receiptPath, basename(runDir)); // same run-id binding as loki verify: a receipt copied under another run id is not bundled
+  if (bound) return { ok: false, error: `receipt is TAMPERED: ${bound}; only a locally VERIFIED signed receipt can be bundled` };
   const priv = loadSigningKey(false);
   if (!priv) return { ok: false, error: "no receipt signing key on this machine; cannot publish a verifying public key" };
   const pub = createPublicKey(priv), kid = kidOf(pub);

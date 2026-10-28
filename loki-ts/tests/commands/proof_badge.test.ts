@@ -304,6 +304,30 @@ describe("loki proof badge/bundle/share: sealed engine10 run, no .loki/proofs", 
     expect(cap.stdout).not.toContain("shields.io");
   });
 
+  it("receipt copied under another run id: no badge, no bundle, no share", async () => {
+    const src = sealRun("VERIFIED");
+    const other = "e10-pb-copied";
+    mkdirSync(join(scratch, "runs", other), { recursive: true });
+    for (const f of ["receipt.json", "events.jsonl"]) writeFileSync(join(scratch, "runs", other, f), readFileSync(join(scratch, "runs", src, f)));
+    capture();
+    const badge = await runProof(["badge", other]);
+    restore();
+    expect(badge).not.toBe(0);
+    expect(cap.stdout).not.toContain("shields.io");
+    expect(cap.stderr).toContain("TAMPERED");
+    const out = join(scratch, "out-copied");
+    capture();
+    const bundle = await runProof(["bundle", other, "--out", out]);
+    restore();
+    expect(bundle).not.toBe(0);
+    expect(existsSync(out)).toBe(false);
+    capture();
+    const share = await runProof(["share", other, "--yes", "--dry-run"]);
+    restore();
+    expect(share).not.toBe(0);
+    expect(cap.stdout).not.toContain("Would publish");
+  });
+
   it("path-traversal id is not resolved", async () => {
     capture();
     const code = await runProof(["badge", "../runs/x"]);

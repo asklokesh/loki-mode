@@ -90,6 +90,15 @@ describe("buildReceiptBundle", () => {
     const pk = takePubkey(["--pubkey", join(out, "pubkey.jwk")]);
     expect((await verifyReceipt(join(out, "receipt.json"), { pubkey: pk.pubkey })).verdict).toBe("VERIFIED");
   });
+  test("receipt copied into a run dir named for another run id is refused and writes nothing", async () => {
+    const src = run(true), dst = join(root, "runs", "e10-rb-copy");
+    mkdirSync(dst, { recursive: true });
+    for (const f of ["receipt.json", "events.jsonl"]) writeFileSync(join(dst, f), readFileSync(join(src, f)));
+    const out = join(root, "out-copy"), r = await buildReceiptBundle(dst, out);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("does not match run id");
+    expect(existsSync(out)).toBe(false);
+  });
   test("non-empty existing outDir is refused and left untouched", async () => {
     const out = join(root, "out-busy");
     mkdirSync(out, { recursive: true });

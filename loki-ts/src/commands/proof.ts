@@ -23,7 +23,7 @@
 // it (see loki-ts/tests/commands/proof.test.ts for the bash-vs-Bun gate).
 
 import { existsSync, readdirSync, realpathSync, statSync, readFileSync, mkdtempSync, copyFileSync, rmSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -35,6 +35,7 @@ import { findIsolatedPython3 } from "../util/python.ts";
 import { BOLD, CYAN, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 import { tierGate } from "../util/tier.ts";
 import { verifyReceipt } from "../engine10/verify_cmd.ts";
+import { runIdGuard } from "../features/receipt_dsse.ts";
 import { buildAuditBundle, buildReceiptBundle, commitsInRange, receiptsInRange } from "../util/receipt_bundle.ts";
 import { runSecureScan } from "../util/secure_scan.ts";
 
@@ -557,6 +558,8 @@ function runReceiptPath(id: string): string | null {
 // Badge text for a run receipt. Green needs BOTH the signature check (verifyReceipt) and the
 // receipt's own verdict to say VERIFIED; nothing else earns a badge.
 async function runBadgeMd(receiptPath: string, linkUrl?: string): Promise<{ md: string | null; why: string }> {
+  const bound = runIdGuard(receiptPath, basename(dirname(receiptPath))); // same run-id binding as loki verify: a copied receipt earns no badge
+  if (bound) return { md: null, why: `TAMPERED (${bound})` };
   const v = await verifyReceipt(receiptPath);
   let verdict = "";
   try {
