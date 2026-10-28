@@ -135,8 +135,8 @@ export function eachLine(abs: string, onLine: (line: string, no: number) => void
 }
 
 // Case-insensitive substring search over run files, decisions and semantic memory under <root>/.loki. Nothing is read through a symlink: a symlinked .loki is refused
-// (no hits), and every directory and file must resolve to its own lexical path under the real .loki. Hardlinks are not detected.
-// Printed fields pass through the shared secret redactor; a multi-line PEM body is redacted on its BEGIN line only. The Bun route covers decisions, runs and semantic memory only.
+// (no hits), and every directory and file must resolve to its own lexical path under the real .loki. A file with more than one hard link (st_nlink > 1) is refused too.
+// Printed fields pass through the shared secret redactor; a multi-line PEM private key is withheld from its BEGIN line (redacted) through its END line (never matched or printed). The Bun route covers decisions, runs and semantic memory only.
 export function searchMemory(root: string, text: string): MemoryHit[] {
   const needle = text.toLowerCase();
   const hits: MemoryHit[] = [];
@@ -153,9 +153,15 @@ export function searchMemory(root: string, text: string): MemoryHit[] {
   const scan = (abs: string, rel: string, runId: string): void => {
     try {
       const st = lstatSync(abs);
-      if (st.isSymbolicLink() || !st.isFile() || !inside(abs)) return;
+      if (st.isSymbolicLink() || !st.isFile() || st.nlink > 1 || !inside(abs)) return;
       const date = st.mtime.toISOString().slice(0, 10);
+      let inPem = false;
       eachLine(abs, (ln, no) => {
+        if (inPem) {
+          if (/-----END [A-Z ]*PRIVATE KEY-----/.test(ln)) inPem = false;
+          return;
+        }
+        if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(ln) && !/-----END [A-Z ]*PRIVATE KEY-----/.test(ln)) inPem = true;
         if (ln.toLowerCase().includes(needle)) hits.push({ run_id: red(runId), date, file: red(rel), line: no, text: red(ln.trim()).slice(0, 200) });
       });
     } catch { /* unreadable file: no hits */ }

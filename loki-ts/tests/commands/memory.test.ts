@@ -241,6 +241,38 @@ describe("memory search", () => {
     } finally { rmSync(d, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
   });
 
+  it("withholds every line of a multi-line PEM private key in text and json output", async () => {
+    const { writeFileSync, rmSync } = await import("node:fs");
+    const d = await fixture(1, []);
+    try {
+      const body = ["MIIEvQIBADANBgkqhkiG9w0BAQEFAASC", "KgwggSmAgEAAoIBAQC7VJTUt9Us8cKj", "bodysecretlinethree0987654321", "QwErTyUiOpAsDfGhJkLzXcVbNm123456"];
+      writeFileSync(resolve(d, ".loki", "runs", "run-0000", "key.txt"), ["before", "-----BEGIN PRIVATE KEY-----", ...body, "-----END PRIVATE KEY-----", "after"].join("\n") + "\n");
+      for (const needle of ["bodysecretline", "KgwggSmAgEAAoIB", "QwErTy"]) {
+        const j = await run(["bun", CLI, "memory", "search", needle, "--json"], { cwd: d, env });
+        const t = await run(["bun", CLI, "memory", "search", needle], { cwd: d, env });
+        for (const out of [j.stdout, t.stdout]) for (const b of body) expect(out).not.toContain(b);
+        expect(JSON.parse(j.stdout)).toEqual([]);
+      }
+      const a = await run(["bun", CLI, "memory", "search", "after", "--json"], { cwd: d, env });
+      expect(JSON.parse(a.stdout).length).toBe(1);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+
+  it("refuses a hardlink under .loki to a file outside it", async () => {
+    const { mkdirSync, writeFileSync, linkSync, rmSync } = await import("node:fs");
+    const { searchMemory } = await import("../../src/commands/memory.ts");
+    const d = await fixture(1, []);
+    const outside = resolve(d, "..", `${d.split("/").pop()}-hl`);
+    try {
+      mkdirSync(outside, { recursive: true });
+      writeFileSync(resolve(outside, "x.txt"), "needle hardlinked\n");
+      linkSync(resolve(outside, "x.txt"), resolve(d, ".loki", "runs", "run-0000", "hard.txt"));
+      expect(searchMemory(d, "needle")).toEqual([]);
+      const r = await run(["bun", CLI, "memory", "search", "needle", "--json"], { cwd: d, env });
+      expect(JSON.parse(r.stdout)).toEqual([]);
+    } finally { rmSync(d, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
+  });
+
   it("does not follow a symlinked parent dir (.loki/memory) or a symlinked .loki", async () => {
     const { mkdirSync, writeFileSync, symlinkSync, rmSync, mkdtempSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
