@@ -2791,6 +2791,21 @@ bun_flagless_ts_sites() {
     done < <(find "$root/loki-ts/src" -name '*.ts' -type f 2>/dev/null)
 }
 
+# The flags themselves: the TypeScript constant and the bin/loki array must be exactly the two required
+# flags, and every shell literal that spells one flag must spell both (a launch with a dropped or emptied
+# flag still has "a flag" and would pass the presence sweeps above).
+bun_flag_defects() {
+    local root="$1" f def
+    def="$(sed -n 's/^export const SAFE_BUN_FLAGS = \(\[[^]]*\]\) as const;.*/\1/p' "$root/loki-ts/src/runner/worker_proc.ts" 2>/dev/null)"
+    [ "$def" = '["--no-env-file", "--config=/dev/null"]' ] || echo "loki-ts/src/runner/worker_proc.ts: SAFE_BUN_FLAGS is [${def}]"
+    grep -qxF '_LOKI_BUN_SAFE=(--no-env-file --config=/dev/null)' "$root/bin/loki" 2>/dev/null || echo "bin/loki: _LOKI_BUN_SAFE is not exactly the two flags"
+    for f in "$root/bin/loki" "$root/autonomy/loki" "$root"/autonomy/*.sh "$root"/autonomy/lib/*.sh; do
+        [ -f "$f" ] || continue
+        grep -nE -e '--no-env-file|--config=/dev/null' "$f" | grep -vE '^[0-9]+:[[:space:]]*#|_LOKI_BUN_SAFE=' \
+            | grep -vE -e '--no-env-file --config=/dev/null' | sed "s|^|${f#"$root"/}:|"
+    done
+}
+
 # bin/loki must start Bun so that the hostile repo's bunfig.toml (preload) and .env are
 # never loaded: LOKI_TS_ENTRY points every Bun route at a probe that records what the
 # Bun process saw. A bare `bun probe` run in the same repo is the positive control.
@@ -2831,6 +2846,8 @@ case_bun_isolation() {
     [ -z "$bad" ] || nok "Bun launched without --no-env-file --config=/dev/null: $bad"
     bad="$(bun_flagless_ts_sites "$REPO_ROOT" | head -5 | tr '\n' ' ')"
     [ -z "$bad" ] || nok "TypeScript Bun spawn without SAFE_BUN_FLAGS: $bad"
+    bad="$(bun_flag_defects "$REPO_ROOT" | head -5 | tr '\n' ' ')"
+    [ -z "$bad" ] || nok "Bun safety flags are not exactly --no-env-file --config=/dev/null: $bad"
     # Positive controls: the scanners must flag flagless fixtures and pass flagged ones
     mkdir -p "$d/fx/bin" "$d/fx/autonomy" "$d/fx/loki-ts/src"
     printf 'exec bun "$BUN_CLI" "$@"\n' > "$d/fx/bin/loki"
@@ -2843,6 +2860,18 @@ case_bun_isolation() {
     printf 'spawn(process.execPath, [...SAFE_BUN_FLAGS, ...argv], { cwd });\n' > "$d/fx/loki-ts/src/a.ts"
     [ "$(bun_flagless_ts_sites "$d/fx" | wc -l | tr -d ' ')" = "0" ] || nok "negative control: TypeScript scan flagged a flagged spawn"
     bun_flagless_sites "$d/fx" | grep -q '^bin/loki' && nok "negative control: shell scan flagged a flagged launch"
+    mkdir -p "$d/fy/bin" "$d/fy/autonomy" "$d/fy/loki-ts/src/runner"
+    printf 'export const SAFE_BUN_FLAGS = ["--no-env-file", "--config=/dev/null"] as const;\n' > "$d/fy/loki-ts/src/runner/worker_proc.ts"
+    printf '_LOKI_BUN_SAFE=(--no-env-file --config=/dev/null)\n' > "$d/fy/bin/loki"
+    printf 'exec bun --no-env-file --config=/dev/null "$cli"\n' > "$d/fy/autonomy/loki"
+    [ -z "$(bun_flag_defects "$d/fy")" ] || nok "negative control: flag check flagged correct definitions"
+    printf 'export const SAFE_BUN_FLAGS = [] as const;\n' > "$d/fy/loki-ts/src/runner/worker_proc.ts"
+    [ -n "$(bun_flag_defects "$d/fy")" ] || nok "positive control: flag check passed an emptied constant"
+    printf 'export const SAFE_BUN_FLAGS = ["--no-env-file"] as const;\n' > "$d/fy/loki-ts/src/runner/worker_proc.ts"
+    [ -n "$(bun_flag_defects "$d/fy")" ] || nok "positive control: flag check passed a constant missing a flag"
+    printf 'export const SAFE_BUN_FLAGS = ["--no-env-file", "--config=/dev/null"] as const;\n' > "$d/fy/loki-ts/src/runner/worker_proc.ts"
+    printf 'exec bun --no-env-file "$cli"\n' > "$d/fy/autonomy/loki"
+    [ -n "$(bun_flag_defects "$d/fy")" ] || nok "positive control: flag check passed a shell launch with one flag"
     rm -rf -- "$d"
 }
 
