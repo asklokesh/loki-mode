@@ -99,10 +99,20 @@ notify_webhook() {
     local project_name=$(basename "$(pwd)")
     local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-    curl -s -X POST -H 'Content-type: application/json' \
-        --data "{\"source\":\"loki-mode\",\"event\":\"$event_type\",\"message\":\"$message\",\"project\":\"$project_name\",\"timestamp\":\"$timestamp\"}" \
+    [ -z "${LOKI_WEBHOOK_SECRET:-}" ] && return 0   # unsigned webhooks are not sent
+
+    local payload sig
+    payload="{\"schema_version\":1,\"source\":\"loki-mode\",\"event\":\"$event_type\",\"project\":\"$project_name\",\"timestamp\":\"$timestamp\"}"
+    sig=$(printf '%s' "$payload" | python3 -c 'import hashlib,hmac,os,sys;print(hmac.new(os.environ["LOKI_WEBHOOK_SECRET"].encode(),sys.stdin.buffer.read(),hashlib.sha256).hexdigest())')
+
+    curl -s --connect-timeout 5 --max-time 10 -X POST -H 'Content-type: application/json' \
+        -H "X-Loki-Signature: sha256=$sig" \
+        --data-binary "$payload" \
         "$webhook_url" > /dev/null 2>&1 || true
 }
+
+# Receiver check: recompute HMAC-SHA256 of the raw request body with the shared
+# secret and compare it (constant time) to the X-Loki-Signature value.
 
 # Broadcast to all configured channels
 notify_channels() {

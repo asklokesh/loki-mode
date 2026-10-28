@@ -435,6 +435,31 @@ PYEOF
     else
         bad "webhook: no secret means no send" "rc=$ns_rc hits=$(cat "$HOOK_LOG") out=$ns_out"
     fi
+    # status: URL without a secret must not read as configured
+    st_out="$(cd "$WORK" && env -u LOKI_WEBHOOK_SECRET LOKI_WEBHOOK_URL="http://127.0.0.1:$HOOK_PORT/h" "$BASH" "$LOKI_BIN" notify status 2>&1)"
+    case "$st_out" in
+        *"LOKI_WEBHOOK_SECRET is missing"*"nothing is sent"*) ok "notify status: URL without secret says nothing is sent" ;;
+        *) bad "notify status: URL without secret" "$st_out" ;;
+    esac
+    case "$st_out" in
+        *"Webhook   - Configured"*) bad "notify status: URL without secret still reads Configured" "$st_out" ;;
+        *) ok "notify status: URL without secret is not Configured" ;;
+    esac
+    st2_out="$(cd "$WORK" && env LOKI_WEBHOOK_SECRET="$SECRET" LOKI_WEBHOOK_URL="http://127.0.0.1:$HOOK_PORT/h" "$BASH" "$LOKI_BIN" notify status 2>&1)"
+    case "$st2_out" in
+        *"Webhook   - Configured"*) ok "notify status: URL with secret reads Configured" ;;
+        *) bad "notify status: URL with secret" "$st2_out" ;;
+    esac
+    # the curl call is bounded: a stub curl records its argv
+    CURL_BIN="$WORK/curlbin"
+    mkdir -p "$CURL_BIN"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/curl-args"\ncat >/dev/null\n' "$CURL_BIN" > "$CURL_BIN/curl"
+    chmod +x "$CURL_BIN/curl"
+    (cd "$WORK" && env PATH="$CURL_BIN:$PATH" LOKI_WEBHOOK_URL="http://127.0.0.1:$HOOK_PORT/h" LOKI_WEBHOOK_SECRET="$SECRET" "$BASH" "$LOKI_BIN" notify webhook "x" >/dev/null 2>&1)
+    case "$(cat "$CURL_BIN/curl-args" 2>/dev/null)" in
+        *"--connect-timeout 5"*"--max-time 10"*) ok "webhook: curl call has connect and total timeouts" ;;
+        *) bad "webhook: curl call has timeouts" "$(cat "$CURL_BIN/curl-args" 2>/dev/null)" ;;
+    esac
 fi
 kill "$HOOK_PID" 2>/dev/null || true
 wait "$HOOK_PID" 2>/dev/null || true

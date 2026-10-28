@@ -314,6 +314,7 @@ loki start ./prd.md
 | `LOKI_SLACK_WEBHOOK` | - | Slack incoming webhook URL |
 | `LOKI_DISCORD_WEBHOOK` | - | Discord webhook URL |
 | `LOKI_WEBHOOK_URL` | - | Generic webhook URL |
+| `LOKI_WEBHOOK_SECRET` | - | HMAC-SHA256 key for the `X-Loki-Signature: sha256=<hex>` header (receivers recompute it over the raw body); without it nothing is sent |
 | `LOKI_PROJECT` | - | Project name for notifications |
 
 **Example - Slack notifications:**

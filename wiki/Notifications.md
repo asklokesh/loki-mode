@@ -93,8 +93,11 @@ loki notify test
 
 ```bash
 export LOKI_WEBHOOK_URL="https://your-server.com/api/events"
+export LOKI_WEBHOOK_SECRET="a-long-random-string"
 loki notify test
 ```
+
+Each request carries `X-Loki-Signature: sha256=<hex>`, the HMAC-SHA256 of the raw request body keyed with `LOKI_WEBHOOK_SECRET`. A receiver recomputes it over the raw bytes and compares in constant time before trusting the body. With a URL but no secret, nothing is sent.
 
 ---
 

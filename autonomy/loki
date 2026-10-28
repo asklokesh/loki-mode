@@ -16679,8 +16679,10 @@ cmd_notify_status() {
     fi
 
     # Check custom webhook
-    if [ -n "${LOKI_WEBHOOK_URL:-}" ]; then
-        echo -e "  ${GREEN}[OK]${NC} Webhook   - Configured"
+    if [ -n "${LOKI_WEBHOOK_URL:-}" ] && [ -z "${LOKI_WEBHOOK_SECRET:-}" ]; then
+        echo -e "  ${YELLOW}[!!]${NC} Webhook   - URL set but LOKI_WEBHOOK_SECRET is missing, so nothing is sent"
+    elif [ -n "${LOKI_WEBHOOK_URL:-}" ]; then
+        echo -e "  ${GREEN}[OK]${NC} Webhook   - Configured (signed)"
         any_configured=true
     else
         echo -e "  ${DIM}[--]${NC} Webhook   - Not configured (set LOKI_WEBHOOK_URL)"
@@ -16997,7 +16999,7 @@ send_webhook_notification() {
         "$event_escaped" "$project_escaped" "$timestamp")
     sig=$(printf '%s' "$payload" | _webhook_hmac_hex) || return 1
 
-    printf '%s' "$payload" | curl -s -X POST -H 'Content-type: application/json' \
+    printf '%s' "$payload" | curl -s --connect-timeout 5 --max-time 10 -X POST -H 'Content-type: application/json' \
         -H "X-Loki-Signature: sha256=${sig}" \
         --data-binary @- \
         "$webhook_url" > /dev/null 2>&1

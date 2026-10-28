@@ -103,9 +103,17 @@ describe("signed webhook", () => {
     expect(verify("other", h.body, h.sig)).toBe(false);
     expect(verify("s3cret", h.body.replace("VERIFIED", "FAILED"), h.sig)).toBe(false);
   });
-  test("no secret means no send, even with a URL", async () => {
+  test("no secret means no request is attempted, even with a URL", async () => {
     hits.length = 0;
-    await notifyEvent({ LOKI_WEBHOOK_URL: hook }, "finished", { outcome: "VERIFIED" });
+    const realFetch = globalThis.fetch, orig = process.stderr.write.bind(process.stderr);
+    let attempts = 0;
+    const writes: string[] = [];
+    (globalThis as any).fetch = (...a: any[]) => { attempts++; return (realFetch as any)(...a); };
+    (process.stderr as any).write = (c: any) => { writes.push(String(c)); return true; };
+    try { await notifyEvent({ LOKI_WEBHOOK_URL: hook }, "finished", { outcome: "VERIFIED" }); }
+    finally { (globalThis as any).fetch = realFetch; (process.stderr as any).write = orig; }
+    expect(attempts).toBe(0);
+    expect(writes.join("")).toBe("");
     expect(hits).toHaveLength(0);
   });
   test("payload excludes prompt-bearing text and paths; the secret never reaches stderr", () => {

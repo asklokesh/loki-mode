@@ -1045,6 +1045,7 @@ loki notify webhook "Session finished"
 LOKI_SLACK_WEBHOOK=https://hooks.slack.com/services/...
 LOKI_DISCORD_WEBHOOK=https://discord.com/api/webhooks/...
 LOKI_WEBHOOK_URL=https://your-server.com/webhook
+LOKI_WEBHOOK_SECRET=a-long-random-string   # required: webhooks are signed, no secret means nothing is sent
 ```
 
 ---
@@ -1998,6 +1999,7 @@ loki start ./prd.md --provider cline
 | `LOKI_SLACK_WEBHOOK` | (none) | Slack webhook URL |
 | `LOKI_DISCORD_WEBHOOK` | (none) | Discord webhook URL |
 | `LOKI_WEBHOOK_URL` | (none) | Custom webhook URL |
+| `LOKI_WEBHOOK_SECRET` | (none) | HMAC-SHA256 key for the `X-Loki-Signature` header; without it nothing is sent |
 | `LOKI_COMPLETION_PROMISE` | (none) | Explicit stop condition text |
 | `LOKI_MAX_WS_CONNECTIONS` | 100 | Max WebSocket connections |
 | `LOKI_TELEMETRY` | (unset) | Anonymous diagnostics. `on` opts in; `off` opts out (opt-out wins). Unset: ON for an individual interactive install, auto-off in CI / non-interactive / `LOKI_ENTERPRISE=true` / `LOKI_AIRGAP=true`. |
