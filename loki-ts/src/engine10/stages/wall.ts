@@ -14,7 +14,7 @@ import { hasRelevantTests, loadRepoMap, namedFiles, planMode, repoMapText, sizeT
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { publishSealed, removeHoldout, sealStageDir, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { clauseEvidenceBlock, evidenceOf, ingestWallCases, wallCasesBrief, wallCasesRunner, withUnreproducedEvidence, type WallEvidence } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingJavaTool, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
-import { baseJobs, classify, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
+import { sealedWallDir, baseJobs, classify, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
 const WALL_PREFIX = "loki_wall_";
@@ -226,7 +226,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   const budgetLeft = WALL_STAGE_LIMIT_S * 1000 - (Date.now() - t0) >= WALL_RUNG_S * 1000; // the retry must fit its own session plus base run inside the stage limit, from the same constants
   if (!(unusable || green || killed) || !cheap || signal.aborted || cheap === wallModel()) return first;
   if (!budgetLeft) return green && first.data.reproduction_green_on_base !== true ? { ...first, data: distrustGreenBase(first.data) } : first; // fail closed: an unchecked cheap-rung green must not stand as already_satisfied
-  if (a.kind === "authored") { for (const f of (first.data.files as { path: string }[] | undefined) ?? []) rmSync(f.path, { force: true }); rmSync(join(ctx.runDir, "wall"), { recursive: true, force: true }); ctx.wallSealed = false; } // drop the abandoned attempt's installed copies, sealed copies and held-out tests so none leak into the retry
+  if (a.kind === "authored") { for (const f of (first.data.files as { path: string }[] | undefined) ?? []) rmSync(f.path, { force: true }); rmSync(sealedWallDir(ctx.runDir), { recursive: true, force: true }); ctx.wallSealed = false; } // drop the abandoned attempt's installed copies, sealed copies and held-out tests so none leak into the retry
   removeHoldout(ctx.runId, ctx.repoDir);
   ctx.emit("wall.reauthor", "wall", { from_model: cheap, to_model: wallModel(), reason: killed ? "first author session killed or timed out" : green ? "first author green on the base tree" : "no usable test from the first author" });
   const b = await wallAuthor(ctx, signal, { model: wallModel(), suffix: "-r2" }), second = b.kind === "done" ? b.result : await installWallAsync(ctx, b, ctx.repoDir, opts);

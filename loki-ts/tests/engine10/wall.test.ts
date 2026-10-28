@@ -22,7 +22,7 @@ import {
   classify,
   RealBaseTestRunner,
   runWall,
-  wallStage,
+  wallStage, sealedWallCopy,
   type BaseTestRunner,
   WALL_BASE_FILES, WALL_RUNG_S, WALL_STAGE_LIMIT_S, BASE_RUN_TIMEOUT_MS,
 } from "../../src/engine10/stages/wall.ts";
@@ -984,7 +984,7 @@ describe("COST-11 r2: escalation on doubt", () => {
   test("B1: the abandoned green attempt's files are gone from repo and sealed dir, and the sealed flag is reset", async () => {
     const seen: { repo: boolean; sealedCopy: boolean; flag: boolean | undefined }[] = [];
     const r = await go((n, _o, c) => {
-      if (n === 2) seen.push({ repo: existsSync(join(c.repoDir, "tests", "loki_wall_a1.test.ts")) || existsSync(join(c.repoDir, "loki_wall_a1.test.ts")), sealedCopy: existsSync(join(c.runDir, "wall", "loki_wall_a1.test.ts")), flag: c.sealed() });
+      if (n === 2) seen.push({ repo: existsSync(join(c.repoDir, "tests", "loki_wall_a1.test.ts")) || existsSync(join(c.repoDir, "loki_wall_a1.test.ts")), sealedCopy: existsSync(sealedWallCopy(c.runDir, "loki_wall_a1.test.ts")), flag: c.sealed() });
       return { files: [`loki_wall_a${n}.test.ts`] };
     }, (n) => n !== 2);
     expect((r.result.data.files as { path: string }[]).map((f) => f.path.split("/").pop())).toEqual(["loki_wall_a2.test.ts"]);
