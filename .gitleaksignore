@@ -206,3 +206,5 @@ c82f3beb4ee3a0a07b9e41ad040815a996a492cf:loki-ts/tests/util/redact.test.ts:gener
 d0795335816881b327f6dfaed2e634f81b03fa1d:loki-ts/tests/util/redact.test.ts:generic-api-key:130
 # Reviewed false positive (#306): line 40 is a list of env var names (MAX_THINKING_TOKENS, LOKI_E10_PREFIX), not a key.
 loki-ts/tests/engine10/session_router.test.ts:generic-api-key:40
+# Reviewed false positive: synthetic multi-line PEM fixture ("bodysecretline" markers) in the memory search redaction test, not a real key.
+151d5ea2a60c3773458139dee286ff20cf6b5300:loki-ts/tests/commands/memory.test.ts:generic-api-key:248
