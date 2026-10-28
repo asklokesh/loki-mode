@@ -1200,6 +1200,7 @@ run_test "Marketplace action Cleanup step scoped to this job's own loki run" "$S
 run_test "Dashboard API smoke cleanup kills only its own recorded PID" "$SCRIPT_DIR/test-dashboard-api-smoke-scoping.sh"
 run_test "cleanup-test-processes.sh scoped to LISTEN + this uid, --aggressive gated" "$SCRIPT_DIR/test-cleanup-script-scoping.sh"
 run_test "clean-test-branches.sh refuses own repo, spares protected branches, deletes only debris" "timeout -k 10 120 $SCRIPT_DIR/test-clean-test-branches.sh"
+run_test "prune-worktrees.sh removes only merged or abandoned clean worktrees, never live or dirty" "timeout -k 10 180 $SCRIPT_DIR/test-prune-worktrees.sh"
 run_test "No script or test removes run-owned temp dirs by glob (E-140)" "$SCRIPT_DIR/test-no-tmp-sweep.sh"
 run_test "Full test runs are capped at 2 per machine by a queue lock (test-slot)" "$SCRIPT_DIR/test-test-slot.sh"
 run_test "No test starts a build against the repo root (E-165)" "$SCRIPT_DIR/test-no-start-against-repo-root.sh"
