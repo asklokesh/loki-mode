@@ -160,6 +160,19 @@ class WorktreePrepTest(unittest.TestCase):
         os.symlink(str(self.repo / "src-mod"), venv / "bin" / "python")
         self.assertTrue(worktree_prep._escapes_source(str(venv)))
 
+    def test_absolute_symlink_into_prefix_sharing_sibling_allowed(self):
+        sibling = Path(self.tmp.name) / (self.repo.name + "-other")
+        sibling.mkdir()
+        (sibling / "python").write_text("#!/bin/sh\n")
+        venv = self.repo / ".venv"
+        (venv / "bin").mkdir(parents=True)
+        os.symlink(str(sibling / "python"), venv / "bin" / "python")
+        self.assertFalse(worktree_prep._escapes_source(str(venv)))
+        os.remove(venv / "bin" / "python")
+        (self.repo / "inner").mkdir()
+        os.symlink(str(self.repo / "inner"), venv / "bin" / "python")
+        self.assertTrue(worktree_prep._escapes_source(str(venv)))
+
 
 if __name__ == "__main__":
     unittest.main()
