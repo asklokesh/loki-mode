@@ -79,6 +79,8 @@ function checkEventLog(receiptPath: string, receipt: Record<string, unknown>): s
   if (!existsSync(path)) return "events.jsonl is missing";
   const raw = readFileSync(path, "utf8"), events = readEvents(path), all = raw.split("\n").filter((l) => l.trim() !== ""), lines = tornTail(raw) ? all.slice(0, -1) : all; // a torn final line is skipped here and reported UNCHECKED by sealDrift
   if (events.length !== lines.length || events.some((e, i) => e.seq !== i)) return "events.jsonl has a forged, edited or missing line";
+  const segs = raw.split("\n"), tail = segs.pop(); // the writer only emits whole newline-terminated lines: a blank line or bytes after the last newline were appended by hand
+  if (tail !== "" || segs.some((l) => l === "" || l !== l.trim())) return "events.jsonl has bytes the engine never writes (a blank line or stray whitespace); it was appended to after the seal";
   if (events.some((e) => e.type === "tamper.detected")) return "the supervisor detected events.jsonl being modified during the run";
   const h = createHash("sha256"); // the worker hashed the log as it stood at seal; the supervisor may lag, so any line-boundary prefix may match
   for (const l of lines) { if (h.copy().digest("hex") === bound) return null; h.update(l + "\n"); }

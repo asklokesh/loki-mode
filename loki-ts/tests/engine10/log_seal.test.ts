@@ -115,6 +115,20 @@ describe("A-117 log.sealed", () => {
     writeFileSync(r.path, readFileSync(r.path, "utf8").replace('"log_seal": true,', ""));
     expect((await verifyReceipt(r.path)).verdict).toBe("TAMPERED");
   });
+  test("whitespace or blank lines appended to a signed log are TAMPERED, the untouched log stays VERIFIED", async () => {
+    const r = run(false), orig = readFileSync(join(r.dir, "events.jsonl"), "utf8");
+    expect((await verifyReceipt(r.path)).verdict).toBe("VERIFIED");
+    for (const add of [" ", "\t", " \n", "\n\n"]) {
+      writeFileSync(join(r.dir, "events.jsonl"), orig + add);
+      expect([JSON.stringify(add), (await verifyReceipt(r.path)).verdict]).toEqual([JSON.stringify(add), "TAMPERED"]);
+    }
+    const body = orig.slice(0, -1), last = body.lastIndexOf("\n") + 1;
+    const shapes: Record<string, string> = { trailingSpace: body + " \n", trailingTab: body + "\t\n", trailingCr: body + "\r\n", leadingSpace: body.slice(0, last) + " " + body.slice(last) + "\n", midLogTab: orig.replace("\n", "\t\n"), fullCrlf: orig.replace(/\n/g, "\r\n") };
+    for (const [name, text] of Object.entries(shapes)) {
+      writeFileSync(join(r.dir, "events.jsonl"), text);
+      expect([name, (await verifyReceipt(r.path)).verdict]).toEqual([name, "TAMPERED"]);
+    }
+  });
   test("an interrupted run (sealed, no run.completed) is UNCHECKED rc 2", async () => {
     const r = run(false);
     r.put(r.lines().slice(0, -2));

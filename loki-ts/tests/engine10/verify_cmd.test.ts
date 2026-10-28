@@ -1375,6 +1375,30 @@ describe("seal drift review fixes (P12-01)", () => {
     } finally { rmSync(repo, { recursive: true, force: true }); }
   });
 
+  test("whitespace or blank lines appended to a sealed log are TAMPERED, the untouched log is not", async () => {
+    const repo = tmpDir();
+    try {
+      const dir = seal(repo, "r-ws", { checks: [unit] }, ev(0, "run.started", {}));
+      const p = join(dir, "events.jsonl"), orig = readFileSync(p, "utf8");
+      expect((await verify(join(repo, ".loki", "runs"), "r-ws")).code).toBe(0);
+      for (const add of [" ", "\t", " \n", "\n\n", "\n"]) {
+        writeFileSync(p, orig + add);
+        const r = await verify(join(repo, ".loki", "runs"), "r-ws");
+        expect([JSON.stringify(add), r.code]).toEqual([JSON.stringify(add), 1]);
+      }
+      // the receipt binds only the first line; a later line (the supervisor lag allowance) must still be byte-clean
+      const log2 = orig + ev(1, "run.completed", {}), body = log2.slice(0, -1), first = orig.length;
+      writeFileSync(p, log2);
+      expect((await verify(join(repo, ".loki", "runs"), "r-ws")).code).toBe(0);
+      const shapes: Record<string, string> = { trailingSpace: body + " \n", trailingTab: body + "\t\n", trailingCr: body + "\r\n", leadingSpace: log2.slice(0, first) + " " + log2.slice(first), tabBeforeNewline: orig.replace("\n", "\t\n") + log2.slice(first), fullCrlf: log2.replace(/\n/g, "\r\n") };
+      for (const [name, text] of Object.entries(shapes)) {
+        writeFileSync(p, text);
+        const r = await verify(join(repo, ".loki", "runs"), "r-ws");
+        expect([name, r.code]).toEqual([name, 1]);
+      }
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
   test("a log with no verify-stage trace is not compared (the narrowing stays)", async () => {
     const repo = tmpDir();
     try {
