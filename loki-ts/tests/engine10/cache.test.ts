@@ -1,3 +1,4 @@
+// select: not-src-walker (hashes src only to compare a copy against itself; asserts nothing about src content, and producer_fingerprint.ts is selected by import)
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
