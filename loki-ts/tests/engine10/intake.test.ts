@@ -863,3 +863,68 @@ describe("intake subphase timing and the shared project model", () => {
     } finally { rmSync(repo2, { recursive: true, force: true }); rmSync(run2, { recursive: true, force: true }); }
   });
 });
+
+import { scoreAmbiguity } from "../../src/features/spec_ambiguity.ts";
+describe("engine10 intake ambiguity gate", () => {
+  const AMBIGUOUS = "Add a fast, scalable export feature, maybe CSV or something.\nFormat is TBD.\nShould it include archived records?\nAuth: to be decided.\nMake it robust, etc.";
+  const CLEAR = "Add a --json flag to the status command that prints the same fields as a JSON object. Exit 0 on success and 2 on an unknown flag.";
+  const saved = { ask: process.env.LOKI_E10_INTAKE_ASK, assume: process.env.LOKI_E10_ASSUME };
+  afterEach(() => {
+    for (const [k, v] of [["LOKI_E10_INTAKE_ASK", saved.ask], ["LOKI_E10_ASSUME", saved.assume]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  });
+  const run = (task: string) => runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { taskText: task });
+
+  test("interactive: an ambiguous spec stops at one batched question set with a resume offer", async () => {
+    process.env.LOKI_E10_INTAKE_ASK = "1";
+    const r = await run(AMBIGUOUS);
+    expect(r.status).toBe("failed");
+    expect(r.reason).toContain("LOKI_E10_ASSUME=1");
+    expect((r.data.questions as string[]).length).toBeGreaterThan(1);
+    expect(readFileSync(String(r.data.checkpoint), "utf8")).toContain("Should it include archived records?");
+  });
+
+  test("headless: an ambiguous spec proceeds and records assumptions", async () => {
+    process.env.LOKI_E10_INTAKE_ASK = "0";
+    const r = await run(AMBIGUOUS);
+    expect(r.status).toBe("completed");
+    expect((r.data.assumptions as string[]).length).toBeGreaterThan(1);
+    expect(r.data.ambiguity_score as number).toBeGreaterThanOrEqual(5);
+  });
+
+  test("LOKI_E10_ASSUME=1 resumes an interactive run on recorded assumptions", async () => {
+    process.env.LOKI_E10_INTAKE_ASK = "1"; process.env.LOKI_E10_ASSUME = "1";
+    const r = await run(AMBIGUOUS);
+    expect(r.status).toBe("completed");
+    expect(r.data.assumptions).toBeDefined();
+  });
+
+  test("a clear spec is unchanged in both modes: no questions, no assumptions", async () => {
+    for (const ask of ["1", "0"]) {
+      process.env.LOKI_E10_INTAKE_ASK = ask;
+      const r = await run(CLEAR);
+      expect(r.status).toBe("completed");
+      expect(r.data.assumptions).toBeUndefined();
+      expect(r.data.ambiguity_score).toBeUndefined();
+    }
+  });
+
+  test("a lowercase status word is not a placeholder: the BMAD taskflow PRD is not ambiguous", async () => {
+    const prd = readFileSync(join(import.meta.dir, "../../../tests/fixtures/bmad/_bmad-output/planning-artifacts/prd-taskflow.md"), "utf8");
+    expect(/\btodo\b/.test(prd)).toBe(true);
+    expect(scoreAmbiguity(prd).hits.filter((h) => h.kind === "marker")).toEqual([]);
+    process.env.LOKI_E10_INTAKE_ASK = "0";
+    expect((await run(prd)).data.assumptions).toBeUndefined();
+    expect(scoreAmbiguity("Pick a colour. The font is TBD.").hits.map((h) => h.kind)).toContain("marker");
+  });
+
+  test("a sentence with a number is not vague, one without is", () => {
+    expect(scoreAmbiguity("The page must be fast, under 200 ms p95.").score).toBe(0);
+    expect(scoreAmbiguity("The page must be fast.").score).toBe(1);
+  });
+
+  test("an excerpt cut at 100 characters never splits a surrogate pair", () => {
+    const h = scoreAmbiguity(`${"a".repeat(96)}\u{1F600}\u{1F600} maybe.`).hits[0]!;
+    expect(h.excerpt.endsWith("...")).toBe(true);
+    expect(h.excerpt).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+  });
+});

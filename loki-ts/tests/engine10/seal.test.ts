@@ -137,6 +137,14 @@ describe("engine10 seal", () => {
       expect((r as unknown as { route: { requests_total: number } }).route.requests_total).toBe(8);
     } finally { if (prev === undefined) delete process.env["LOKI_ROUTER"]; else process.env["LOKI_ROUTER"] = prev; }
   });
+  test("a headless ambiguous run seals the intake assumptions in the receipt; a clear run omits the field", async () => {
+    noKey();
+    const { repo, base } = makeRepo("assumptions");
+    const withA = ctxFor(repo, base, "claude", { intake: { source: "text", task_sha256: "ab".repeat(32), assumptions: ["a1", "a2"] } });
+    expect(receiptOf(await sealStage.run(withA.ctx, new AbortController().signal)).assumptions).toEqual(["a1", "a2"]);
+    const clear = ctxFor(repo, base);
+    expect("assumptions" in receiptOf(await sealStage.run(clear.ctx, new AbortController().signal))).toBe(false);
+  }, 30000);
   test("atomic receipt: receipt.json and receipt.md are replaced by rename, never truncated in place", async () => {
     const { repo, base } = makeRepo("atomic-receipt");
     const { ctx } = ctxFor(repo, base);

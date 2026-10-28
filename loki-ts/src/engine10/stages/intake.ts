@@ -12,6 +12,7 @@ import { snapshotContract } from "../../features/contract.ts";
 import { probeZeroChecks } from "./verify.ts"; import { stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
 import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps, type DepsTiming, type IntakeTiming } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { ensureProfile, readinessNotice, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
+import { ambiguityGate } from "../../features/spec_ambiguity.ts";
 export interface IntakeOptions { taskText?: string; issueJsonPath?: string; }
 interface IssueFields { state: string | null; closed_by_merged_pr?: boolean }
 /** owner/repo#number, when the issue JSON carries both (GitHub); null for anything else, never guessed. */
@@ -87,6 +88,8 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
     // Deterministic exit: no repo/test map needed, and never a session/LLM call.
     return { status: "completed", data: { ...common, ignore_snapshot: ignoreSnapshot(ctx.repoDir), task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true } };
   }
+  const gate = ambiguityGate(task, ctx.runDir); const ambiguity = gate.data; // interactive: stop at a checkpoint with a resume offer; headless: assumptions go to the receipt
+  if (gate.stop) return { status: "failed", data: { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...gate.stop.failData }, reason: gate.stop.reason };
   mkdirSync(ctx.runDir, { recursive: true });
   const repomapRef = join(ctx.runDir, "repomap.json");
   const cacheDir = repoCacheDir(repoKey(null, ctx.repoDir)); // same dir sizing.ts and context.ts read; keyed by HEAD^{tree}, so an unchanged tree skips the repo walk and test detection
@@ -111,7 +114,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
     const commentArgv = source === "issue" && issueRef ? buildAlreadyDoneCommentArgv(ctx.runId, issueRef, bodyFile) : undefined;
     return { already_satisfied: true, evidence: already.evidence, iteration_ids: [`${ctx.runId}-already-done`], comment, ...(commentArgv ? { comment_argv: commentArgv } : {}) };
   };
-  const base = { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...(readiness ? { readiness } : {}) };
+  const base = { ...common, ...ambiguity, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...(readiness ? { readiness } : {}) };
   // FC-15: the claim rests on the PR target. Evidence only in target..HEAD means no claim; Loki's own work there is reported, never refused.
   const stale = already ? unmergedEvidence(ctx.repoDir, already.paths, startBranch) : null;
   if (already && !stale) return { status: "completed", data: { ...base, ignore_snapshot: ignoreSnapshot(ctx.repoDir), ...alreadyData(already) } };

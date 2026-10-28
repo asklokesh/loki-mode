@@ -8,6 +8,7 @@ import { cascadeEnabled, hasRelevantTests, loadRepoMap, namedFiles, planMode, si
 import { type RunContext, type Stage, type StageResult, type TestMap, taskBlock } from "../types.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { PLAN_SCOPE_FILE, outOfRepoInstruction, planOutOfRepo, seedPlanScope } from "../../util/run_cap.ts";
+import { assumptionsBlock } from "../../features/spec_ambiguity.ts";
 import { loadTaskText } from "./wall.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { planFallbackModel, planRoute, ROUTER_UNITS_INSTRUCTION } from "../../runner/router/plan_route.ts";
@@ -28,10 +29,11 @@ export function truncatePlan(raw: string, max: number = MAX_PLAN_LINES): string 
   return lines.slice(0, max).join("\n");
 }
 
-export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE), router: boolean = false, intentCard: boolean = false, behaviorChange: boolean = false, riskDecl: boolean = false): string {
+export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE), router: boolean = false, intentCard: boolean = false, behaviorChange: boolean = false, riskDecl: boolean = false, assumptions: unknown = undefined): string {
   return withStagePrefix([
     "You are the Loki 10 plan stage.",
     ...taskBlock(task),
+    ...assumptionsBlock(assumptions), // headless ambiguous spec: the same assumptions the receipt records
     relevantFiles.length
       ? `Relevant files (by keyword overlap with the task):\n${relevantFiles.join("\n")}`
       : "No relevant files were found by keyword overlap; use your own judgement.",
@@ -77,7 +79,7 @@ export const planStage: Stage = {
     const cardOn = intentCardEnabled(process.env);
     const runPlan = (onSonnet: boolean) => ctx.sessions.run({
       stage: "plan",
-      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), pr.routed, cardOn, mutationStrict(), reviewerBriefEnabled()),
+      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), pr.routed, cardOn, mutationStrict(), reviewerBriefEnabled(), prior.intake?.assumptions),
       tier: "fast",
       iterationId,
       limitS: planStage.limitS,

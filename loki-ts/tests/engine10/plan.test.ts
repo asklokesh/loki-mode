@@ -16,6 +16,7 @@ import {
   selectRelevantFiles,
   truncatePlan,
 } from "../../src/engine10/stages/plan.ts";
+import { buildImplementBrief } from "../../src/engine10/stages/implement.ts";
 import { buildRepoMap } from "../../src/engine10/repomap.ts";
 import type { RepoMap } from "../../src/engine10/repomap.ts";
 import type {
@@ -222,6 +223,21 @@ describe("engine10 plan brief", () => {
     expect(brief.toLowerCase()).toContain("at most 10");
   });
 
+  test("recorded assumptions reach the implement brief; none leaves it byte-identical", () => {
+    const a = ["\"fast\" taken literally: the smallest change"];
+    expect(buildImplementBrief("t", "p", [], "", null, a)).toContain(a[0]!);
+    expect(buildImplementBrief("t", "p", [], "", null, [])).toBe(buildImplementBrief("t", "p", []));
+  });
+
+  test("recorded assumptions reach the plan brief after the task; none adds nothing", () => {
+    const a = ["\"fast\" taken literally: the smallest change"];
+    const brief = buildPlanBrief("t", [], "/r/plan-output.txt", undefined, false, false, false, false, a);
+    expect(brief).toContain("recorded assumptions");
+    expect(brief).toContain(a[0]!);
+    expect(buildPlanBrief("t", [], "/r/plan-output.txt", undefined, false, false, false, false, [])).toBe(buildPlanBrief("t", [], "/r/plan-output.txt"));
+  });
+
+
   test("says so when no relevant files were found", () => {
     const brief = buildPlanBrief("fix the bug", [], "/run/plan-output.txt");
     expect(brief.toLowerCase()).toContain("no relevant files");
@@ -258,6 +274,17 @@ describe("engine10 plan stage", () => {
     expect(result.data.plan).toContain("step 1");
     expect(result.data.plan).not.toContain("step 11");
 
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("the plan session's brief carries the intake assumptions", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-e16-asm-"));
+    let seen = "";
+    const sessions = new FakeSessionRunner(doneResult, (opts) => { seen = opts.brief; });
+    const ctx = fakeCtx(dir, sessions, { intake: { task: "make it fast, maybe", assumptions: ["\"make it fast\" taken literally: smallest change"] } });
+    await planStage.run(ctx, new AbortController().signal);
+    expect(seen).toContain("recorded assumptions");
+    expect(seen).toContain("taken literally: smallest change");
     rmSync(dir, { recursive: true, force: true });
   });
 

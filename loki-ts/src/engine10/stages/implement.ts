@@ -16,6 +16,7 @@ import { routeEscalate, routeStart } from "../../runner/router/implement_route.t
 import { routerActive } from "../../runner/router/unit_model.ts";
 import { type ImplementExit, type RunContext, type SessionRunOptions, type Stage, type StageResult, type TestMap, taskBlock } from "../types.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { sha256 } from "./seal.ts";
+import { assumptionsBlock } from "../../features/spec_ambiguity.ts";
 import { loadSpecFile, specBriefBlock, type LoadedSpec } from "../../util/spec_file.ts";
 
 /** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
@@ -35,10 +36,11 @@ export function impactedTests(ctx: RunContext): string[] {
 
 export const briefCtx = (ctx: RunContext): string => briefContext(ctx, { select: selectRelevantFiles, cmd: (t, repoDir) => { const c = commandFor(t, repoDir, loadProjectApi(repoDir)); return [c.cmd, c.args, c.interpreter, c.pkgRoot]; } });
 const REPRO_LINE = "If the task reports a bug, first add a new test function that reproduces it, run it and see it fail, then fix the code and run that test again.";
-export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = "", spec: string | null = null): string {
+export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = "", spec: string | null = null, assumptions: unknown = undefined): string {
   return withStagePrefix([ // FIXED_RULES leads and FINISH_LINE closes, both byte-identical per task
     FIXED_RULES,
     ...taskBlock(task),
+    ...assumptionsBlock(assumptions),
     ...(spec ? [spec] : []), // SPEC-FIRST-INTENT: the user-edited spec is the authoritative intent; absent adds nothing
     plan ? `Follow this plan:\n${plan}` : "No separate plan was made: plan the change yourself in this session, then implement it." + (process.env.LOKI_E10_REPRO === "1" ? " " + REPRO_LINE : ""), // TEN-QUALITY-08: default off, lean path only
     ...(repoMap ? [repoMap] : []),
@@ -109,7 +111,7 @@ export const implementStage: Stage = {
     let sessionResume: string | undefined = own ? (ownId ? "resumed" : `fresh (${(own as { why: string }).why})`) : undefined;
     const first: SessionRunOptions = {
       stage: "implement",
-      brief: ownId ? INTERRUPTED_BRIEF : buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec)),
+      brief: ownId ? INTERRUPTED_BRIEF : buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec), prior.intake?.assumptions),
       tier: "development",
       iterationId: `${ctx.runId}-impl`,
       limitS: implementStage.limitS,
@@ -118,7 +120,7 @@ export const implementStage: Stage = {
       ...(downgrade ? { model: downgrade.to } : {}),
       ...(resumeId ? { resumeSessionId: resumeId } : {}), ...planStopChecks(ctx.repoDir, prior, new Set(impacted), implementStage.limitS, ctx.baseSha), // in-session fix rounds, default on (LOKI_E10_STOP_CHECKS=0 off)
     };
-    const unchained = (): SessionRunOptions => { const { resumeSessionId: _chained, ...rest } = first; return ownId ? { ...rest, brief: buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec)) } : rest; }; // read at call time: the router may rewrite first.model; retries and conflict reruns never inherit the chain link
+    const unchained = (): SessionRunOptions => { const { resumeSessionId: _chained, ...rest } = first; return ownId ? { ...rest, brief: buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec), prior.intake?.assumptions) } : rest; }; // read at call time: the router may rewrite first.model; retries and conflict reruns never inherit the chain link
     // ROUTER-1: per-unit ladder from the plan's route record (runner/router/unit_model.ts). Flag off: none of this runs.
     const rt = routed ? routeStart(ctx, first, prior.plan) : null;
     // S41-13: LOKI_E10_ATTEMPTS=2 on a normal-size task with a non-empty predicted S runs two attempts; the worker env is already token-scrubbed (asserted inside).

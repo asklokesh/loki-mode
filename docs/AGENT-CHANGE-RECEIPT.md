@@ -18,7 +18,7 @@ An Agent Change Receipt is the JSON file a Loki 10 run seals at `.loki/runs/<run
 - `events_sha256`: digest of the run event log.
 - `receipt_sha256`: sha256 of the canonical JSON with `verification` and `receipt_sha256` removed (`loki-ts/src/engine10/verify_cmd.ts:19`).
 - `verification`: `{ jwt, kid }`. `jwt` is a compact EdDSA (Ed25519) token binding the receipt hash; both are null when the receipt is unsigned (`stages/seal.ts:92-95`).
-- Optional, omitted when absent: `spec_conflict_reason`, `pre_existing_dirty`, `group`, `log_seal`.
+- Optional, omitted when absent: `spec_conflict_reason`, `pre_existing_dirty`, `assumptions` (a headless run on an ambiguous spec records the assumptions it made instead of asking), `group`, `log_seal`.
 
 ## Verify the signature
 
