@@ -208,6 +208,8 @@ ACC_REPO="$ACC/repo"
 mkdir -p "$ACC_REPO"
 printf '# PRD\nGreet people.\n' > "$ACC_SPEC"
 printf 'secret\n' > "$ACC_REPO/impl.txt"
+printf '{}\n' > "$ACC_REPO/package.json"
+( cd "$ACC_REPO" && git init -q && git add package.json impl.txt ) >/dev/null 2>&1
 GOODJSON='{"categories":[{"name":"core","items":[{"id":"G1","title":"greets","priority":"critical","verification":[{"type":"file_exists","path":"present.txt"},{"type":"grep_codebase","pattern":"hello"}]}]}]}'
 
 # acc_run <name> <stdin text>: runs accept into a fresh out dir, sets ACC_RC and ACC_OUT
@@ -255,6 +257,10 @@ expect_unknown bad-priority '{"categories":[{"items":[{"id":"A","title":"a","pri
 expect_unknown unknown-type '{"categories":[{"items":[{"id":"A","title":"a","priority":"major","verification":[{"type":"vibes","path":"x"}]}]}]}'
 expect_unknown missing-field '{"categories":[{"items":[{"id":"A","title":"a","priority":"major","verification":[{"type":"command"}]}]}]}'
 expect_unknown duplicate-id '{"categories":[{"items":[{"id":"A","title":"a","priority":"major","verification":[{"type":"file_exists","path":"x"}]},{"id":"A","title":"b","priority":"major","verification":[{"type":"file_exists","path":"x"}]}]}]}'
+expect_unknown zero-items '{"categories":[{"items":[]}]}'
+expect_unknown zero-items-many-cats '{"categories":[{"items":[]},{"name":"b","items":[]}]}'
+expect_unknown no-categories '{"categories":[]}'
+expect_unknown deep-nesting "{\"categories\":$(python3 -I -c 'print("["*200000)')"
 expect_unknown non-json 'I could not do this task.'
 expect_unknown empty ''
 expect_unknown two-objects "$GOODJSON and also $GOODJSON"
@@ -265,6 +271,38 @@ mkdir -p "$ACC/out-stale"
 printf '{}' > "$ACC/out-stale/checklist.json"
 printf '' | python3 -I "$CA" accept --spec "$ACC_SPEC" --repo "$ACC_REPO" --out "$ACC/out-stale" >/dev/null 2>&1
 [ ! -e "$ACC/out-stale/checklist.json" ] || fail "accept: stale checklist.json survived a failed attempt"
+
+# an unreadable spec ends unknown with the sentinel and clears an earlier run's artifacts
+if [ "$(id -u)" -ne 0 ]; then
+    mkdir -p "$ACC/out-unreadable"
+    printf '{}' > "$ACC/out-unreadable/checklist.json"
+    printf '{"status":"authored"}' > "$ACC/out-unreadable/author.json"
+    printf '# PRD\n' > "$ACC/unreadable.md"
+    chmod 000 "$ACC/unreadable.md"
+    printf '%s' "$GOODJSON" | python3 -I "$CA" accept --spec "$ACC/unreadable.md" --repo "$ACC_REPO" --out "$ACC/out-unreadable" >"$ACC/acc.log" 2>&1
+    URC=$?
+    chmod 600 "$ACC/unreadable.md"
+    [ "$URC" -eq 1 ] || fail "accept unreadable spec: rc $URC, want 1"
+    grep -q Traceback "$ACC/acc.log" && fail "accept unreadable spec: traceback"
+    ACC_OUT="$ACC/out-unreadable"
+    [ "$(acc_field status)" = unknown ] || fail "accept unreadable spec: status not unknown (stale authored survived)"
+    [ ! -e "$ACC_OUT/checklist.json" ] || fail "accept unreadable spec: stale checklist.json survived"
+    grep -q check_authoring_unknown "$ACC_OUT/verification-results.json" || fail "accept unreadable spec: no sentinel"
+fi
+# a failed accept replaces a prior authored status in the same out dir
+acc_run stale-author "$GOODJSON"
+[ "$(acc_field status)" = authored ] || fail "accept stale-author setup: not authored"
+printf '{"categories":[{"items":[]}]}' | python3 -I "$CA" accept --spec "$ACC_SPEC" --repo "$ACC_REPO" --out "$ACC_OUT" >/dev/null 2>&1
+[ "$(acc_field status)" = unknown ] || fail "accept: stale authored status survived a failed attempt"
+[ ! -e "$ACC_OUT/checklist.json" ] || fail "accept: stale checklist.json survived a failed attempt"
+
+# pre-pass result fields never reach the written checklist (contract.ts reads passed from it)
+acc_run strip '{"categories":[{"items":[{"id":"S","title":"s","priority":"major","verification":[{"type":"file_exists","path":"x","passed":true,"status":"passing","output":"ok","verified_at":"now"}]}]}]}'
+[ "$ACC_RC" -eq 0 ] || fail "accept strip: rc $ACC_RC"
+python3 -I -c 'import json,sys
+v=json.load(open(sys.argv[1]))["categories"][0]["items"][0]["verification"][0]
+sys.exit(1 if set(v)&{"passed","status","output","verified_at"} else 0)' "$ACC_OUT/checklist.json" \
+    || fail "accept: pre-pass result fields survived into checklist.json"
 
 # accept never opens or lists anything under --repo (open/listdir/scandir spied)
 printf '%s' "$GOODJSON" | python3 -I -c '
@@ -279,6 +317,12 @@ def watch(fn):
         return fn(p, *a, **k)
     return w
 builtins.open = watch(builtins.open)
+import subprocess
+def nosub(*a, **k):
+    touched.append("subprocess")
+    raise OSError("subprocess forbidden in accept")
+subprocess.Popen.__init__ = nosub
+os.system = lambda *a, **k: touched.append("os.system")
 os.listdir = watch(os.listdir)
 os.scandir = watch(os.scandir)
 sys.argv = [ca, "accept", "--spec", spec, "--repo", repo, "--out", out]

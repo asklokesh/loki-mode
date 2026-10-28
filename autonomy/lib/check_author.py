@@ -227,6 +227,8 @@ def validate_checklist(doc: dict) -> dict:
             out_items.append({"id": iid, "title": title, "priority": it["priority"], "verification": out_ver})
         name = cat.get("name")
         out_cats.append({"name": name if isinstance(name, str) else "", "items": out_items})
+    if count == 0:
+        raise Reject("checklist has no items")
     return {"categories": out_cats}
 
 
@@ -244,19 +246,38 @@ def atomic_write(path: str, text: str) -> None:
         raise
 
 
+def record_unknown(out: str, reason: str, spec_sha, attempts) -> None:
+    """Failure record: drop every artifact of an earlier run, then write status
+    unknown plus the critical failing sentinel."""
+    for name in ("checklist.json", "author.json"):
+        try:
+            os.unlink(os.path.join(out, name))
+        except OSError:
+            pass
+    atomic_write(os.path.join(out, "author.json"), json.dumps(
+        {"status": "unknown", "reason": reason, "spec_sha256": spec_sha, "attempts": attempts},
+        sort_keys=True) + "\n")
+    atomic_write(os.path.join(out, "verification-results.json"), SENTINEL + "\n")
+
+
 def run_accept(args) -> int:
     out = args.out
-    os.makedirs(out, exist_ok=True)
-    spec_sha = sha256(read_bytes(args.spec))
-    inputs, prompt_sha = [{"path": os.path.realpath(args.spec), "sha256": spec_sha}], None
     try:
+        os.makedirs(out, exist_ok=True)
+    except OSError as e:
+        print("check_author: cannot create %s: %s" % (out, e), file=sys.stderr)
+        return 1
+    spec_sha = None
+    try:
+        spec_sha = sha256(read_bytes(args.spec))
+        inputs, prompt_sha = [{"path": os.path.realpath(args.spec), "sha256": spec_sha}], None
         if args.context:
             try:
                 with open(args.context) as fh:
                     ctx = json.load(fh)
                 inputs, prompt_sha = ctx["inputs"], sha256(ctx["prompt"].encode("utf-8"))
                 ctx_spec = ctx.get("spec_sha256")
-            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
                 raise Reject("context file unreadable or malformed")
             if ctx_spec != spec_sha:
                 raise Reject("context spec_sha256 does not match the spec")
@@ -267,22 +288,21 @@ def run_accept(args) -> int:
         if not text.strip():
             raise Reject("empty author output")
         checklist = validate_checklist(extract_one_object(text))
-    except Reject as e:
-        try:
-            os.unlink(os.path.join(out, "checklist.json"))
-        except OSError:
-            pass
+        atomic_write(os.path.join(out, "checklist.json"), json.dumps(checklist, sort_keys=True, indent=2) + "\n")
         atomic_write(os.path.join(out, "author.json"), json.dumps(
-            {"status": "unknown", "reason": str(e), "spec_sha256": spec_sha, "attempts": args.attempts},
-            sort_keys=True) + "\n")
-        atomic_write(os.path.join(out, "verification-results.json"), SENTINEL + "\n")
-        print("check_author: unknown: %s" % e, file=sys.stderr)
-        return 1
-    atomic_write(os.path.join(out, "checklist.json"), json.dumps(checklist, sort_keys=True, indent=2) + "\n")
-    atomic_write(os.path.join(out, "author.json"), json.dumps(
-        {"status": "authored", "spec_sha256": spec_sha, "inputs": inputs,
-         "prompt_sha256": prompt_sha, "attempts": args.attempts}, sort_keys=True) + "\n")
-    return 0
+            {"status": "authored", "spec_sha256": spec_sha, "inputs": inputs,
+             "prompt_sha256": prompt_sha, "attempts": args.attempts}, sort_keys=True) + "\n")
+        return 0
+    except Reject as e:
+        reason = str(e)
+    except Exception as e:
+        reason = "accept failed: %s" % type(e).__name__
+    try:
+        record_unknown(out, reason, spec_sha, args.attempts)
+    except Exception as e:
+        print("check_author: could not record failure: %s" % e, file=sys.stderr)
+    print("check_author: unknown: %s" % reason, file=sys.stderr)
+    return 1
 
 
 def main(argv=None) -> int:
