@@ -8,7 +8,7 @@ import { lokiDir } from "../util/paths.ts";
 import { safeGitSpawn } from "../util/safe_git.ts";
 import { verifyReceipt, type Verdict } from "../engine10/verify_cmd.ts";
 import { readEvents } from "../engine10/events.ts";
-import { isEnvelope } from "../features/receipt_dsse.ts";
+import { isEnvelope, runIdGuard } from "../features/receipt_dsse.ts";
 import type { ApplyGit } from "./undo_apply.ts";
 import { formatAge } from "./queue.ts";
 
@@ -169,6 +169,8 @@ async function loadPlan(runId: string, allowUnsigned: boolean, deps: UndoDeps, g
   const runsRoot = deps.runsRoot ?? join(lokiDir(), "runs");
   const receiptPath = join(runsRoot, runId, "receipt.json");
   if (!existsSync(receiptPath)) { err(`loki undo: unknown run '${runId}' (no ${receiptPath})\n`); return { rc: 66 }; }
+  const bound = runIdGuard(receiptPath, runId); // same run-id binding as loki verify: a receipt copied from another run is refused
+  if (bound) { err(`loki undo: receipt verdict TAMPERED; refusing\n  ${bound}\n`); return { rc: EXIT_BY_VERDICT.TAMPERED }; }
   const result = await verifyReceipt(receiptPath);
   if (!(result.verdict === "UNSIGNED" && allowUnsigned) && result.verdict !== "VERIFIED") {
     err(`loki undo: receipt verdict ${result.verdict}; refusing\n${result.reasons.map((r) => `  ${r}\n`).join("")}`);
@@ -206,7 +208,7 @@ async function listRuns(deps: UndoDeps, git: GitRunner, out: (s: string) => void
       const l = git(repoDir, ["log", "--name-only", "--format=", "--end-of-options", `${refs.base}..${refs.head}`]);
       if (l.status === 0) files = String(new Set(l.stdout.split("\n").map((x) => x.trim()).filter(Boolean)).size);
     }
-    const verdict = (await verifyReceipt(r.path)).verdict;
+    const verdict = runIdGuard(r.path, r.id) ? "TAMPERED" : (await verifyReceipt(r.path)).verdict;
     rows.push([r.id, verdict, files, formatAge(new Date(r.mtime).toISOString(), now)]);
   }
   const w = [0, 1, 2].map((i) => Math.max(...rows.map((row) => row[i]!.length)));

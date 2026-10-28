@@ -118,3 +118,23 @@ describe("undo id before gate", () => {
     expect(r.err).toContain("behind LOKI_UNDO=1");
   });
 });
+
+describe("undo refuses a receipt copied from another run", () => {
+  const foreign = () => JSON.stringify({
+    payloadType: "application/vnd.in-toto+json",
+    payload: Buffer.from(JSON.stringify({ predicate: { run_id: "other-run" } })).toString("base64"),
+    signatures: [{ keyid: "k", sig: "AA" }],
+  });
+  test("--plan reports TAMPERED with the run id mismatch and exits 1", async () => {
+    mkRun("run1", 0, foreign());
+    const r = await list(["run1", "--plan"]);
+    expect(r.rc).toBe(1);
+    expect(r.err).toContain("does not match run id");
+    expect(r.calls.length).toBe(0);
+  });
+  test("--list shows the copied receipt as TAMPERED", async () => {
+    mkRun("run1", 0, foreign());
+    const r = await list(["--list"]);
+    expect(r.out).toContain("TAMPERED");
+  });
+});
