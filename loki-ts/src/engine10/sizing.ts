@@ -51,6 +51,10 @@ export function hasRelevantTests(task: string, map: RepoMap | null, tests: TestM
   return likely.length > 0 && impacted(tests, likely).length > 0;
 }
 
+/** Tiny greenfield: size small, short brief, no runner and no existing test. The Wall still runs and authors tests; only the test count is bounded. */
+export const WALL_TINY_MAX_CHARS = 300, WALL_TINY_BOUND = "Tiny task: write exactly one test file with at most 6 assertions unless more acceptance lines exist, then exactly one per acceptance line.";
+export const isTinyGreenfield = (size: TaskSize, task: string, tests: TestMap | null): boolean => size === "small" && task.length <= WALL_TINY_MAX_CHARS && !tests?.runners.length && !tests?.tests.length;
+
 /** "lean" skips Plan+Wall (one implement session); "wall" keeps Wall (medium/large, or small with no relevant tests). */
 export type SmallTaskPath = "lean" | "wall"; export const smallTaskPath = (size: TaskSize, relevantTests: boolean): SmallTaskPath => (size === "small" && relevantTests ? "lean" : "wall");
 const knob = (v: string | undefined, words: string[]): boolean => words.includes((v ?? "").toLowerCase());

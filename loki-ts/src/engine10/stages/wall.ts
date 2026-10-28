@@ -10,7 +10,7 @@ import { unitSpec } from "../../features/speed/unit_mode.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
-import { hasRelevantTests, loadRepoMap, namedFiles, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallOutputCap, wallModel, capToRunTier } from "../sizing.ts";
+import { hasRelevantTests, isTinyGreenfield, WALL_TINY_BOUND, loadRepoMap, namedFiles, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallOutputCap, wallModel, capToRunTier } from "../sizing.ts";
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { publishSealed, removeHoldout, sealStageDir, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { clauseEvidenceBlock, evidenceOf, ingestWallCases, wallCasesBrief, wallCasesRunner, withUnreproducedEvidence, type WallEvidence } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingJavaTool, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
@@ -57,11 +57,12 @@ export const WALL_OUTPUT_BUDGET = "Output budget: write one test file, one asser
 /** FC-WALL-OUT-OF-REPO-TARGET: static, cache-stable, sits beside the output budget before any run-specific text. */
 export const WALL_REPO_PATHS = "Reach repo code by repo-relative paths, never via home dir, $HOME or ~/. A file the task names keeps that path from the repo root (a bare name such as rotate.sh is at the root), never beside your test file.";
 
-export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false, conventions = "", acceptance: string[] = [], location: string | null = null, clauses: ClauseSet | null = null, evidence: WallEvidence | null = null): string { // location: repo-relative destination directory; "" is the repo root; null is unknown (no line)
+export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false, conventions = "", acceptance: string[] = [], location: string | null = null, clauses: ClauseSet | null = null, evidence: WallEvidence | null = null, tiny = false): string { // location: repo-relative destination directory; "" is the repo root; null is unknown (no line)
   return withStagePrefix([
     "You are the Loki 10 Wall author.",
     WALL_OUTPUT_BUDGET,
     WALL_REPO_PATHS,
+    ...(tiny ? [WALL_TINY_BOUND] : []),
     `You cannot see the repository. This directory holds only task.md and repomap.txt${hasManifest ? " and wall_manifest.txt (signatures, runner config, test layout and test-style examples)" : ""}.`,
     ...(repomapText ? [`Repository paths (repomap.txt):\n${repomapText}`] : []),
     ...taskBlock(task),
@@ -140,7 +141,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const model = retry?.model ?? wallFirstModel(sz.size), iterationId = `${ctx.runId}-wall${retry?.suffix ?? ""}`; // COST-11
   const session = await ctx.sessions.run({
     stage: "wall",
-    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? [], relative(ctx.repoDir, targetDir), clauseSet, evidence) + wallCasesBrief(runners), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
+    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? [], relative(ctx.repoDir, targetDir), clauseSet, evidence, isTinyGreenfield(sz.size, task, testMap)) + wallCasesBrief(runners), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
     tier: "development",
     model,

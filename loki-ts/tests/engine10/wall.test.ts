@@ -1235,3 +1235,37 @@ describe("Wall re-author follows the run tier", () => {
     expect(r.models).toEqual([SONNET]);
   });
 });
+
+describe("tiny greenfield Wall bound", () => {
+  const run = async (task: string, testmap: { runners: string[]; tests: { runner: string; path: string }[] }, files: string[]): Promise<string> => {
+    const s = setup(testmap); let brief = ""; const events: string[] = [];
+    writeFileSync(s.repomapRef, JSON.stringify({ files, entries: [], truncated: false }), "utf8");
+    const sessions: SessionRunner = { run: async (o) => { brief = o.brief; return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0.1, killed: false }; } };
+    const ctx = fakeCtx(s.repoDir, s.runDir, sessions, { intake: { task, testmap: s.testmap, repomap_ref: s.repomapRef } }, events);
+    try { await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 1, fail: 0 }) } }); return brief; }
+    finally { rmSync(s.repoDir, { recursive: true, force: true }); }
+  };
+  const BOUND = "write exactly one test file with at most 6 assertions";
+  test("a short one-file brief with no runner and no tests: the Wall still runs and is bounded", async () => {
+    const brief = await run("Write fizzbuzz.py with fizzbuzz(n) returning the usual strings.", { runners: [], tests: [] }, ["fizzbuzz.py"]);
+    expect(brief).toContain("Wall author");
+    expect(brief).toContain(BOUND);
+  });
+  test("control: a normal task (existing runner and tests) gets no bound", async () => {
+    expect(await run("Write fizzbuzz.py with fizzbuzz(n) returning the usual strings.", { runners: ["pytest"], tests: [{ runner: "pytest", path: "tests/test_a.py" }] }, ["fizzbuzz.py", "tests/test_a.py"])).not.toContain(BOUND);
+  });
+  test("with 8 acceptance lines the tiny bound yields to one assertion per line", () => {
+    const acc = Array.from({ length: 8 }, (_, i) => `rule ${i + 1} holds`);
+    const b = buildWallBrief("t", "", [], false, "", acc, null, null, null, true);
+    expect(b).toContain("unless more acceptance lines exist");
+    expect(b).toContain("then exactly one per acceptance line");
+    expect(b).toContain("Acceptance: rule 8 holds");
+  });
+  test("tiny=false is byte-identical to the default brief (prefix stability)", () => {
+    expect(buildWallBrief("t", "", [], false, "", ["a"], null, null, null, false)).toBe(buildWallBrief("t", "", [], false, "", ["a"]));
+    expect(buildWallBrief("t", "", [], false, "", ["a"], null, null, null, true)).not.toBe(buildWallBrief("t", "", [], false, "", ["a"]));
+  });
+  test("control: a long brief on a greenfield repo gets no bound", async () => {
+    expect(await run("Write fizzbuzz.py. " + "Handle every edge case in detail. ".repeat(12), { runners: [], tests: [] }, ["fizzbuzz.py"])).not.toContain(BOUND);
+  });
+});
