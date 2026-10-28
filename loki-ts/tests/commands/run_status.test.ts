@@ -599,6 +599,50 @@ describe("loki status --follow", () => {
     expect(lines.filter((l) => l.type === "stage")).toHaveLength(8);
   });
 
+  const plantPid = (pid: number, start: string): void => {
+    writeFileSync(join(dir, ".loki", "runs", id, "run.pid"), JSON.stringify({ pid, start, argv: ["x"], run_id: id }));
+  };
+  const deadPid = async (): Promise<number> => {
+    const { spawn } = await import("node:child_process");
+    const c = spawn(process.execPath, ["-e", "0"], { stdio: "ignore" });
+    const pid = c.pid as number;
+    await new Promise<void>((r) => c.once("exit", () => r()));
+    return pid;
+  };
+  async function timed(ms: number): Promise<{ rc: number | "timeout"; out: string[] }> {
+    const ac = new AbortController();
+    const out: string[] = [];
+    const t = setTimeout(() => ac.abort(), ms);
+    const rc = await followRun(evPath(), false, ac.signal, (s) => out.push(s), 20);
+    clearTimeout(t);
+    return { rc: ac.signal.aborted ? "timeout" : rc, out };
+  }
+
+  test("a dead owner with no run.completed stops following, names the pid, returns 1", async () => {
+    seven();
+    const pid = await deadPid();
+    plantPid(pid, "some-start");
+    const { rc, out } = await timed(1000);
+    expect(rc).toBe(1);
+    expect(out[out.length - 1]).toContain(`process ${pid} is no longer running`);
+  });
+
+  test("a live owner keeps being followed", async () => {
+    const { processStartTime } = await import("../../src/util/run_pid.ts");
+    seven();
+    plantPid(process.pid, processStartTime(process.pid) ?? "");
+    expect((await timed(250)).rc).toBe("timeout");
+  });
+
+  test("a completed run with a dead owner ends normally with its events", async () => {
+    const log = seven();
+    log.append("run.completed", null, { verdict: "VERIFIED" });
+    plantPid(await deadPid(), "some-start");
+    const { rc, out } = await timed(1000);
+    expect(rc).toBe(0);
+    expect(out[out.length - 1]).toBe("run completed: VERIFIED\n");
+  });
+
   test("runModernStatus --follow on a finished run prints its events and exits 0", async () => {
     writeRun("e10-20261003T000000Z-aaaa", { done: true });
     const { code, out } = await run(["--follow", "--json"]);
