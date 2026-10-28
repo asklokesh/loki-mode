@@ -1,6 +1,7 @@
 // E-13: live output (docs/v10/ENGINE.md section 11).
 // Golden lines are copied verbatim from the ENGINE.md examples.
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   estimateEtaS,
@@ -319,11 +320,20 @@ describe("outcomeOf and the exit ladder (A-110)", () => {
     const row = (v: Parameters<typeof outcomeOf>[0], cap: boolean, stop: string | null) => { const o = outcomeOf(v, cap, stop); return [o, EXIT[o]]; };
     expect(row("VERIFIED", false, null)).toEqual(["VERIFIED", 0]);
     expect(row("ALREADY_SATISFIED", false, null)).toEqual(["ALREADY_SATISFIED", 0]);
-    expect(row("PARTIAL", false, null)).toEqual(["PARTIAL", 1]); // FC-21 (d): the Outcome line is the receipt verdict
+    expect(row("PARTIAL", false, null)).toEqual(["PARTIAL", 6]); // the Outcome line is the receipt verdict; its exit differs from FAILED
     expect(row("FAILED", false, "fatal:auth")).toEqual(["FAILED", 1]);
     expect(row("PARTIAL", true, null)).toEqual(["BUDGET_STOP", 3]);
     expect(row("SPEC_CONFLICT", false, null)).toEqual(["BLOCKED", 4]);
     expect(row("PARTIAL", false, "stalled")).toEqual(["STALLED", 5]);
+  });
+  test("every outcome exit is documented in docs/exit-codes.md and only the two success outcomes share a code", () => {
+    expect(EXIT.PARTIAL).not.toBe(EXIT.FAILED);
+    const byCode = new Map<number, string[]>();
+    for (const [name, code] of Object.entries(EXIT)) byCode.set(code, [...(byCode.get(code) ?? []), name]);
+    for (const names of byCode.values()) if (names.length > 1) expect(names.sort()).toEqual(["ALREADY_SATISFIED", "VERIFIED"]); // no undocumented duplicate
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/exit-codes.md"), "utf8");
+    const table = doc.slice(doc.indexOf("### Run outcomes"), doc.indexOf("### With `LOKI_DURABLE_STATE=1`"));
+    for (const [name, code] of Object.entries(EXIT)) expect(table).toMatch(new RegExp(`\\| ${code} \\|[^\\n]*${name}`));
   });
   test("the Outcome line carries the outcome name, falling back to the verdict", () => {
     const base = { pr: null, verdict: "PARTIAL", notProven: [], flaky: [], cost: { usd: 1, provider: "claude", tokens: 1 }, wallS: 1, stages: [] } as never;

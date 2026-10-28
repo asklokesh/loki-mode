@@ -3067,8 +3067,9 @@ cmd_start() {
                 # read this help, saw nothing, and built the coarse gate -- the
                 # tiered contract might as well not have shipped.
                 echo "Exit codes:"
-                echo "  0                      The run completed, or a human stopped it"
-                echo "  nonzero                Something went wrong (no finer signal by default)"
+                echo "  0                      The run completed (verified), or a human stopped it"
+                echo "  Default engine run outcomes: 1 failed, 3 budget stop, 4 blocked,"
+                echo "                         5 stalled, 6 partial (done, not fully proven), 130 cancelled"
                 echo ""
                 echo "  With LOKI_DURABLE_STATE=1 the platform contract applies, which"
                 echo "  distinguishes 'retrying cannot help' from 'the process died':"

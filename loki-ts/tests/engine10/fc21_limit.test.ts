@@ -72,7 +72,7 @@ describe("FC-21 (d): one outcome", () => {
     expect(line("PARTIAL").text).toContain("Outcome:    PARTIAL\n");
     expect(line("FAILED").outcome).toBe("FAILED");
     expect(line("SPEC_CONFLICT").outcome).toBe("BLOCKED");
-    expect(EXIT.PARTIAL).toBe(1);
+    expect(EXIT.PARTIAL).toBe(6);
   });
   test("FC-21b (3): a cap stop with a sealed receipt keeps the receipt verdict and its exit code", () => {
     expect(outcomeOf("PARTIAL", true, null, false, true)).toBe("PARTIAL");

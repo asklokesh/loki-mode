@@ -6,9 +6,11 @@ nonzero on failure) and you should not build a gate on anything finer.
 
 ## The one rule
 
-**Severity rises with the code.** `[ $rc -ge 2 ]` always means "worse than the
-level-1 outcome" for any command on this page. If you remember nothing else,
-remember that a bigger number is never better news.
+**Severity rises with the code.** `[ $rc -ge 2 ]` means "worse than the
+level-1 outcome" for every command on this page except the `loki start` run
+outcome ladder, where 6 (PARTIAL) is a milder result than 3, 4 and 5 and the
+only safe test is `[ $rc -eq 0 ]` for "verified". Elsewhere, a bigger number is
+never better news.
 
 ## `loki start`
 
@@ -17,18 +19,31 @@ is the part most likely to surprise a script author.
 
 ### Default (local, CI)
 
-| Code | Meaning |
-|---|---|
-| 0 | The run completed |
-| nonzero | Something went wrong |
+The run outcome and its exit code are in the "Run outcomes" table below. Usage
+errors are distinct from run outcomes: `loki start` with an unknown option exits
+64, and `loki quick` with no task description exits 64 (they were 1 and 2). A
+missing provider CLI exits 2 before any spend, and so does a working directory
+that is not a repository (`engine10: not inside a git repository`). A PRD path
+that does not exist also exits 2 (`PRD file not found`). A gate that needs to
+tell "crashed" from "failed the quality gate" in a platform job can also opt
+into the durable contract further down.
 
-Usage errors are distinct from run outcomes: `loki start` with an unknown
-option exits 64, and `loki quick` with no task description exits 64 (they were
-1 and 2). A missing provider CLI still exits 2 before any spend, and so does a
-working directory that is not a git repository (`engine10: not inside a git
-repository`). A PRD path that does not exist also exits 2 (`PRD file not found`). There is no
-finer run-outcome signal. A gate that needs to tell "failed the quality gate"
-from "crashed" must opt into the durable contract below.
+### Run outcomes (engine10, the default engine)
+
+`loki start` on the default engine ends in exactly one outcome and exits with the code below. PARTIAL (the work is done but not fully proven) has its own code so a CI gate can tell it from FAILED. `[ $rc -eq 0 ]` is still the only safe test for "verified".
+
+| Code | Outcome | Meaning |
+|---|---|---|
+| 0 | VERIFIED, ALREADY_SATISFIED | Done and proven (or nothing to change) |
+| 1 | FAILED | The run failed, or its event log was modified |
+| 2 | (preflight) | Usage, missing provider CLI or not a repository, before any spend |
+| 3 | BUDGET_STOP | A cost or time cap ended the run |
+| 4 | BLOCKED | Contradictory spec (SPEC_CONFLICT) |
+| 5 | STALLED | The same failure three times |
+| 6 | PARTIAL | Done but not fully proven; before this release PARTIAL exited 1 like FAILED |
+| 130 | CANCELLED | SIGINT or SIGTERM during a run (143 for SIGTERM) |
+
+A gate that treated every nonzero code as failure keeps working. A gate that tested `-eq 1` for "failed or partial" must now also accept 6.
 
 ### With `LOKI_DURABLE_STATE=1` (the platform contract)
 
@@ -63,7 +78,7 @@ identically; a parity test asserts they agree status for status.
 | 3 | The diff weakened the tests (a skip marker added in a test file, a test runner config changed, or an existing test file deleted or renamed). The receipt headline is NOT VERIFIED and names what was weakened, for example `NOT VERIFIED (tests weakened: skip added in sum.test.js)` |
 | 2 | Not a git repository (engine10 preflight, before any spend), or a missing provider CLI |
 | 64 | Usage error: no task description, or an unknown leading `--option` (from 11.5.0; before that it was taken as task text and started a paid run) |
-| other nonzero | The run itself failed; this code is passed through unchanged |
+| other nonzero | The run itself failed; this code is passed through unchanged (a 6 means PARTIAL, see the `loki start` run outcomes table) |
 
 `loki quick` has no `--json` flag; its structured result is `loki why --json`, schema: `schemas/why-result.schema.json` (`state.lastExitCode` carries the ladder above).
 

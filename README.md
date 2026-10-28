@@ -73,7 +73,8 @@ Two vocabularies, not one. Receipt verdicts (sealed, 5): VERIFIED, PARTIAL, ALRE
 | Run outcome | Receipt verdict | `loki start` exit |
 |---|---|---|
 | VERIFIED, ALREADY_SATISFIED | same | 0 |
-| FAILED, PARTIAL | same | 1 |
+| FAILED | same | 1 |
+| PARTIAL | same | 6 |
 | BUDGET_STOP | none (stopped at a cap) | 3 |
 | BLOCKED | SPEC_CONFLICT | 4 |
 | STALLED | none | 5 |

@@ -405,22 +405,22 @@ async function ladder(code: () => string, extra: Partial<Parameters<typeof runSu
   return { r, exit: EXIT[r.outcome] };
 }
 describe("A-110 exit ladder", () => {
-  test("a red suite that ends PARTIAL exits 1 (was 0: only FAILED exited non-zero)", async () => {
+  test("a red suite that ends PARTIAL exits 6 (was 0: only FAILED exited non-zero)", async () => {
     const { r, exit } = await ladder(() => `${verifyRed("t::a")}${sealedAs("PARTIAL")}`);
     expect(r.verdict).toBe("PARTIAL");
     expect(r.outcome).toBe("PARTIAL"); // FC-21 (d): the outcome is the receipt verdict
-    expect(exit).toBe(1);
+    expect(exit).toBe(6);
     expect(r.receiptSha).toBe("ab".repeat(32));
   });
   test("VERIFIED and ALREADY_SATISFIED exit 0", async () => {
     expect((await ladder(() => sealedAs("VERIFIED"))).exit).toBe(0);
     expect((await ladder(() => sealedAs("ALREADY_SATISFIED"))).exit).toBe(0);
   });
-  test("a cap.hit run with a sealed receipt keeps the receipt verdict (L7), exit 1, and reports stop cap", async () => {
+  test("a cap.hit run with a sealed receipt keeps the receipt verdict (L7), exit 6, and reports stop cap", async () => {
     const { r, exit } = await ladder(() => `${ev("cap.hit", "implement", {})}${sealedAs("PARTIAL")}`);
     expect(r.outcome).toBe("PARTIAL");
     expect(r.stop).toBe("cap");
-    expect(exit).toBe(1);
+    expect(exit).toBe(6);
   });
   test("a cap.hit run with no sealed receipt is still BUDGET_STOP, exit 3", async () => {
     const { r, exit } = await ladder(() => `${ev("cap.hit", "implement", {})}`);

@@ -79,27 +79,27 @@ describe("engine10 cost cap e2e (stub claude, real CLI entry)", () => {
     expect(events.some((e) => e.type === "cost" && typeof e.data.usd === "number" && e.data.usd > 0.01)).toBe(true);
     expect(events.some((e) => e.type === "cap.hit")).toBe(true);
   }
-  test("priced cost events over a tiny --max-cost end with the sealed receipt verdict (L7), exit 1, and the cap on the Reason line", () => {
+  test("priced cost events over a tiny --max-cost end with the sealed receipt verdict (L7), exit 1 or 6 (PARTIAL), and the cap on the Reason line", () => {
     const r = runCapped(["--max-cost", "0.01"], null);
-    if (r.rc !== 1) console.error(r.out);
-    expect(r.rc).toBe(1);
+    if (r.rc !== 1 && r.rc !== 6) console.error(r.out);
+    expect(r.rc).toBe(/Outcome: +PARTIAL/.test(r.out) ? 6 : 1); // PARTIAL has its own exit
     expect(r.out).toMatch(/Outcome: +(PARTIAL|FAILED)/);
     expect(r.out).toContain("cost/time cap reached");
     expect(r.out).toContain("cap $0.01 (--max-cost)");
     expectCapHit(r.repo);
   }, 120_000);
-  test("loki.yaml budgets.per_run sets the cap with no flag, and the start line names loki.yaml", () => {
+  test("loki.yaml budgets.per_run sets the cap with no flag, and the start line names loki.yaml (exit 1 or 6 (PARTIAL))", () => {
     const r = runCapped([], "budgets:\n  per_run: 0.02\n");
-    if (r.rc !== 1) console.error(r.out);
-    expect(r.rc).toBe(1);
+    if (r.rc !== 1 && r.rc !== 6) console.error(r.out);
+    expect(r.rc).toBe(/Outcome: +PARTIAL/.test(r.out) ? 6 : 1); // PARTIAL has its own exit
     expect(r.out).toMatch(/Outcome: +(PARTIAL|FAILED)/);
     expect(r.out).toContain("cost/time cap reached");
     expect(r.out).toContain("cap $0.02 (loki.yaml)");
     expectCapHit(r.repo);
   }, 120_000);
-  test("--max-cost beats loki.yaml per_run on the start line", () => {
+  test("--max-cost beats loki.yaml per_run on the start line (exit 1 or 6 (PARTIAL))", () => {
     const r = runCapped(["--max-cost", "0.03"], "budgets:\n  per_run: 500\n");
-    expect(r.rc).toBe(1);
+    expect(r.rc).toBe(/Outcome: +PARTIAL/.test(r.out) ? 6 : 1); // PARTIAL has its own exit
     expect(r.out).toContain("cap $0.03 (--max-cost)");
     expect(r.out).not.toContain("(loki.yaml)");
   }, 120_000);

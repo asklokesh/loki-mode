@@ -279,6 +279,12 @@ The Wall catches failing tests earlier in the same session, fewer runs end PARTI
 
 - A few pre-existing failures remain in the wider test suite (review assurance tail, receipt signing discoverability and build analytics opt-in tests); they reproduce on the previous release and do not affect the shipped CLI.
 
+## Unreleased
+
+### Changed
+
+- `loki start` now exits 6 for a PARTIAL run (done, not fully proven) instead of 1, so a CI gate can tell it from FAILED (exit 1). Any nonzero test still fails the gate; a script that matched exactly 1 for PARTIAL must also accept 6. The code is listed in docs/exit-codes.md, `loki start --help` and the README outcome table.
+
 ## v11.77.0 (2026-10-24)
 
 ### Added
