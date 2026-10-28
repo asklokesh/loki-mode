@@ -161,3 +161,159 @@ extract_learnings_from_session (autonomy/run.sh) mirrors learnings and decisions
 | Vaults, deployments, dreams, webhooks | NOT ADOPTED | no Loki consumer; research preview |
 | Tool runner (`beta.messages.tool_runner`), compaction, structured outputs, adaptive thinking, advisor tool, citations, files API, web search / code execution, prompt cache TTL | NOT ADOPTED | Loki drives models through provider CLIs and the TS Agent SDK; the Python SDK is only the managed-agents bridge |
 | Bedrock / Vertex clients | NOT ADOPTED | no use |
+
+## Default `loki start` path: route trace and bash entry points (measured at 22823c935)
+
+Scope: trace only, nothing rewritten. All counts below were taken from the working tree at this commit.
+
+### Route results (no model calls)
+Command shape: `bin/loki route start <input> --json`. The representative inputs and the engine and adapter reported:
+
+| Input | input_type | engine | adapter |
+|---|---|---|---|
+| `"add a dark mode toggle"` (one-line brief) | task | engine10 | engine10:claude |
+| `./prd.md` (PRD file) | prd | engine10 | engine10:claude |
+| `acme/widgets#42` (issue ref) | issue | engine10 | engine10:claude |
+| `./api.yaml` and `./api.json` (OpenAPI/JSON spec) | prd | engine10 | engine10:claude |
+| `./prd.md --resume` (flagged) | prd | engine10 | engine10:claude |
+| `./prd.md --provider codex` (flagged, other provider) | prd | engine10 | engine10:codex |
+| `./prd.md --engine legacy` (legacy-mode flag) | prd | legacy | legacy-bash:claude (runs `autonomy/run.sh`) |
+
+Other flag outcomes from the same probe: `--parallel` and `--legacy` are refused on the default engine with a message pointing to `loki queue run --parallel K` or `--engine legacy`. `LOKI_LEGACY_BASH=1 loki route ...` answers `Unknown command: route` because that rollback flag forces every command through bash, which has no `route`. Every default-path input lands on engine10; the bash loop is reachable only through an explicit `--engine legacy` (or `LOKI_ENGINE=legacy`) and the `LOKI_LEGACY_BASH=1` rollback.
+
+### Bash-dispatched command inventory
+Source: `REGISTRY` in `loki-ts/src/cli/registry.ts` loaded with bun (a throwaway script printing name and `where` for each entry). Totals from that listing: 135 top-level entries; `where` is bash for 103, both for 16, bun for 16. The table covers the 119 entries whose `where` is bash or both. The registry has no field named `impl`; `where` is the field that records the dispatch side. For `both`, Bun handles a subset of subcommands and bash keeps the rest.
+
+Caller columns count matching lines of the text `loki <name>` (followed by a character other than a letter, digit, underscore or hyphen, or end of line) in: `bin/loki` (bin), `loki-ts/src` excluding `registry.ts` (ts), `autonomy/` recursive (aut). Case is the number of `<name>)` dispatch labels in `autonomy/loki`. Literal commands per name N: bin: `grep -Eh "loki N([^a-zA-Z0-9_-]|$)" bin/loki | wc -l`; ts: `grep -rEh --exclude-dir=node_modules --exclude=registry.ts "loki N([^a-zA-Z0-9_-]|$)" loki-ts/src | wc -l`; aut: `grep -rEh "loki N([^a-zA-Z0-9_-]|$)" autonomy | wc -l`; case: `grep -cE "^[[:space:]]*([a-z|-]*\|)?N(\|[a-z|-]*)?\)" autonomy/loki`. Caveat: the aut column includes usage and help text inside `autonomy/loki` itself, so it is an upper bound on real invocations.
+
+| command | where | bin | ts | aut | case |
+|---|---|---|---|---|---|
+| status | both | 0 | 22 | 36 | 17 |
+| doctor | both | 0 | 18 | 40 | 1 |
+| provider | both | 0 | 16 | 29 | 3 |
+| memory | both | 0 | 15 | 75 | 1 |
+| rollback | both | 0 | 12 | 14 | 2 |
+| backup | bash | 0 | 0 | 1 | 1 |
+| restore | bash | 0 | 0 | 2 | 1 |
+| proof | both | 0 | 36 | 74 | 1 |
+| wiki | both | 0 | 12 | 15 | 1 |
+| control | both | 0 | 27 | 8 | 1 |
+| report | both | 0 | 8 | 20 | 2 |
+| trust | both | 0 | 14 | 4 | 1 |
+| crash | both | 0 | 18 | 12 | 1 |
+| start | both | 12 | 71 | 262 | 10 |
+| help | bash | 0 | 2 | 32 | 52 |
+| chat | bash | 0 | 5 | 12 | 1 |
+| edit | bash | 0 | 0 | 20 | 2 |
+| diff | bash | 0 | 3 | 3 | 2 |
+| models | bash | 0 | 0 | 2 | 2 |
+| setup | bash | 0 | 3 | 7 | 2 |
+| quick | bash | 2 | 2 | 26 | 4 |
+| quickstart | bash | 0 | 2 | 30 | 1 |
+| init | bash | 0 | 0 | 23 | 2 |
+| template | bash | 0 | 0 | 9 | 1 |
+| verify | bash | 1 | 50 | 52 | 6 |
+| keys | bash | 0 | 3 | 0 | 1 |
+| review | bash | 0 | 1 | 26 | 2 |
+| dashboard | bash | 0 | 5 | 41 | 5 |
+| config | bash | 0 | 2 | 27 | 2 |
+| mcp | bash | 0 | 0 | 12 | 1 |
+| acp | bash | 0 | 0 | 0 | 1 |
+| stop | bash | 0 | 3 | 37 | 7 |
+| pause | both | 0 | 2 | 7 | 1 |
+| resume | both | 0 | 6 | 26 | 1 |
+| cancel | both | 0 | 1 | 2 | 3 |
+| why | bash | 0 | 0 | 36 | 1 |
+| next | bash | 0 | 0 | 12 | 2 |
+| logs | bash | 0 | 0 | 3 | 3 |
+| ship | bash | 0 | 0 | 15 | 1 |
+| deploy | bash | 0 | 2 | 37 | 1 |
+| import | bash | 0 | 0 | 2 | 2 |
+| github | bash | 0 | 0 | 11 | 4 |
+| issue | bash | 0 | 0 | 34 | 1 |
+| ci | bash | 0 | 0 | 10 | 1 |
+| modernize | both | 4 | 10 | 6 | 2 |
+| share | bash | 0 | 0 | 10 | 3 |
+| assets | bash | 0 | 0 | 18 | 1 |
+| export | bash | 0 | 9 | 14 | 5 |
+| notify | bash | 0 | 0 | 15 | 1 |
+| tour | bash | 0 | 2 | 11 | 2 |
+| wow | bash | 0 | 0 | 20 | 1 |
+| factory | bash | 0 | 0 | 3 | 1 |
+| welcome | bash | 0 | 0 | 5 | 1 |
+| onboard | bash | 0 | 0 | 10 | 2 |
+| setup-skill | bash | 0 | 6 | 3 | 1 |
+| self-update | bash | 0 | 0 | 18 | 0 |
+| remote | bash | 0 | 0 | 9 | 1 |
+| cockpit | bash | 0 | 8 | 12 | 1 |
+| code | bash | 0 | 0 | 17 | 2 |
+| context | bash | 0 | 0 | 10 | 2 |
+| secrets | bash | 0 | 0 | 1 | 1 |
+| api | bash | 0 | 0 | 5 | 1 |
+| sandbox | bash | 0 | 0 | 69 | 2 |
+| docker | bash | 0 | 0 | 20 | 3 |
+| web | bash | 0 | 0 | 18 | 1 |
+| preview | bash | 0 | 0 | 7 | 3 |
+| telemetry | bash | 1 | 0 | 27 | 1 |
+| syslog | bash | 0 | 0 | 4 | 1 |
+| explain | bash | 0 | 0 | 11 | 3 |
+| docs | bash | 0 | 0 | 41 | 1 |
+| test | bash | 0 | 0 | 11 | 5 |
+| bench | bash | 0 | 0 | 4 | 1 |
+| voice | bash | 0 | 0 | 0 | 1 |
+| own | bash | 0 | 1 | 8 | 1 |
+| secure | bash | 0 | 0 | 7 | 1 |
+| compliance | bash | 0 | 0 | 8 | 1 |
+| enterprise | bash | 0 | 0 | 7 | 1 |
+| projects | bash | 0 | 5 | 11 | 1 |
+| audit | bash | 0 | 0 | 10 | 2 |
+| cost | bash | 0 | 1 | 15 | 2 |
+| metrics | bash | 0 | 0 | 12 | 2 |
+| sentrux | bash | 0 | 1 | 12 | 1 |
+| magic | bash | 0 | 3 | 14 | 1 |
+| estimate | bash | 0 | 11 | 3 | 1 |
+| plan | bash | 0 | 4 | 18 | 2 |
+| grill | bash | 0 | 0 | 6 | 1 |
+| spec | bash | 0 | 0 | 20 | 1 |
+| intent | bash | 0 | 4 | 9 | 1 |
+| backlog | bash | 0 | 0 | 9 | 1 |
+| workspace | bash | 0 | 0 | 13 | 1 |
+| council | bash | 0 | 0 | 2 | 1 |
+| compound | bash | 0 | 0 | 6 | 2 |
+| cluster | bash | 0 | 0 | 13 | 1 |
+| optimize | bash | 0 | 0 | 6 | 1 |
+| ultracode | bash | 0 | 0 | 14 | 1 |
+| monitor | bash | 0 | 0 | 4 | 1 |
+| watch | bash | 0 | 0 | 16 | 5 |
+| watchdog | bash | 0 | 0 | 1 | 1 |
+| cleanup | bash | 0 | 0 | 4 | 1 |
+| state | bash | 0 | 5 | 19 | 1 |
+| agent | bash | 0 | 2 | 20 | 1 |
+| agents | bash | 0 | 0 | 3 | 1 |
+| trigger | bash | 0 | 0 | 15 | 1 |
+| failover | bash | 0 | 0 | 6 | 1 |
+| reset | bash | 0 | 0 | 5 | 1 |
+| merge | bash | 0 | 0 | 6 | 3 |
+| heal | bash | 1 | 1 | 23 | 2 |
+| migrate | bash | 0 | 0 | 27 | 6 |
+| dogfood | bash | 0 | 0 | 3 | 2 |
+| steer | bash | 0 | 4 | 14 | 2 |
+| outcomes | bash | 0 | 0 | 14 | 1 |
+| worktree | bash | 0 | 0 | 5 | 2 |
+| checkpoint | bash | 0 | 0 | 14 | 1 |
+| analyze | bash | 0 | 2 | 6 | 1 |
+| demo | bash | 0 | 2 | 12 | 2 |
+| run | bash | 0 | 1 | 41 | 8 |
+| trust-metrics | bash | 0 | 0 | 5 | 1 |
+| serve | bash | 0 | 0 | 13 | 1 |
+| open | bash | 0 | 0 | 1 | 3 |
+
+### Dead-code candidates (bash commands with weak or no callers)
+Every listed command has a registry entry, so "no registry route" yields none. By callers:
+- Zero callers in bin, ts and aut: `acp` and `voice`. `voice` is a stub that prints "planned for a future release" and exits 0 (case `voice)` in `autonomy/loki`): the strongest removal candidate. `acp` is not dead: its case label execs `autonomy/acp-agent.py` and it is documented in `docs/acp-editors.md` and `docs/CLI-REFERENCE.md`; it only has no internal caller.
+- One caller: `backup`, `secrets` (its case branch calls `cmd_secrets "$@"`), `watchdog`, `open`.
+- Two callers: `restore`, `models`, `import`, `council`.
+- Three callers: `keys` (all in ts), `cancel`, `logs`, `factory`, `agents`, `dogfood`.
+- `self-update` has no `self-update)` label under the pattern used (case 0) yet 18 aut lines; it is handled outside that pattern and needs a manual read before judging.
+
+Low caller counts mean the command is user-facing only; they are not proof of deadness. Confirm with `grep -rn` over `tests/`, `docs/` and `completions/` before any removal.
