@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A failing check can no longer produce a VERIFIED verdict on the default route.
 - Test-failure escalation no longer moves a run past an explicit `LOKI_SESSION_MODEL` pin.
 
+### Security
+
+- A .env or bunfig.toml (with a preload script) in the repo Loki runs in no longer loads into Loki's own Bun processes, top-level or respawned children. Variables you relied on from a repo .env must now be exported in your shell.
+
 ### Fixed
 
 - `loki verify` reads a torn, unterminated last line in `events.jsonl` as UNCHECKED instead of TAMPERED, and a resumed run's truncation of that tail reads VERIFIED. Blank lines, stray whitespace or CR inside event lines are still reported as TAMPERED.
@@ -59,18 +63,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Known issues
 
 - A few pre-existing failures remain in the wider test suite (review assurance tail, receipt signing discoverability and build analytics opt-in tests); they reproduce on the previous release and do not affect the shipped CLI.
-
-## Unreleased
-
-### Security
-
-- A .env or bunfig.toml (with a preload script) in the repo Loki runs in no longer loads into Loki's own Bun processes, top-level or respawned children. Every Bun launch from the repo directory now starts with `--no-env-file --config=/dev/null`; the working directory is unchanged. Variables you relied on from a repo .env must now be exported in your shell.
-
-## Unreleased
-
-### Changed
-
-- architecture-strategist, maintainer-mergeability and test-coverage-auditor are now advisory code reviewers: they still run on every review and their Critical and High findings are recorded (per-reviewer `advisory` flag and `advisory_critical` / `advisory_high` counts in the review aggregate, and an "Advisory review findings" row in the Evidence Receipt), but they no longer block the gate. The other reviewers, including security-sentinel, keep their veto. `LOKI_REVIEW_ADVISORY=0` restores the previous blocking behaviour. maintainer-mergeability and test-coverage-auditor now run on the haiku tier. On the labelled set of 23 good and 23 bad diffs, these three reviewers blocked 23 of 23 good and 23 of 23 bad diffs (a false block on every good diff) at $0.069 per diff on sonnet; the change removes that false block and cuts the cost of two of them. No accuracy improvement is claimed. Bad-diff catch by the remaining council: NOT PROVEN.
 
 ## v11.77.0 (2026-10-24)
 
