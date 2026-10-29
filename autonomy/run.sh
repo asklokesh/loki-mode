@@ -16485,12 +16485,13 @@ REVIEW_PRESTUB_TIMING
 _dispatch_reviewer_recorded() {
     local prompt_text="$1"
     local review_output="$2"
+    local reviewer_name_arg="${3:-}"
     local stderr_output="${LOKI_REVIEW_STDERR_FILE:-${review_output%.txt}-stderr.log}"
     local started_ms ended_ms rc=0 outcome="output"
     : > "$stderr_output" || return 125
     chmod 600 "$stderr_output" 2>/dev/null || return 125
     started_ms=$(python3 -c 'import time; print(time.monotonic_ns() // 1000000)' 2>/dev/null) || started_ms=0
-    _dispatch_reviewer "$prompt_text" "$review_output" 2>> "$stderr_output" || rc=$?
+    _dispatch_reviewer "$prompt_text" "$review_output" "$reviewer_name_arg" 2>> "$stderr_output" || rc=$?
     ended_ms=$(python3 -c 'import time; print(time.monotonic_ns() // 1000000)' 2>/dev/null) || ended_ms="$started_ms"
     if [ "$rc" -eq 124 ]; then
         outcome="deadline"
@@ -16533,6 +16534,7 @@ REVIEW_TIMING
 _dispatch_reviewer() {
     local prompt_text="$1"
     local review_output="$2"
+    local _review_reviewer_name="${3:-}"
     local _review_budget="${LOKI_REVIEW_CALL_TIMEOUT:-0}"
     local _review_requirements_manifest="${LOKI_REVIEW_REQUIREMENTS_MANIFEST:-}"
     if [ -n "$_review_requirements_manifest" ]; then
@@ -16593,7 +16595,7 @@ _dispatch_reviewer() {
             # Advisory reviewers with no measured signal default to haiku (see
             # _reviewer_model_pin); LOKI_REVIEW_ADVISORY=0 restores the default.
             local _rv_model
-            _rv_model="$(_reviewer_model_pin "${LOKI_REVIEWER_NAME:-}")"
+            _rv_model="$(_reviewer_model_pin "$_review_reviewer_name")"
             if [ -n "$_rv_model" ]; then
                 _rv_argv+=("--model" "$_rv_model")
             fi
@@ -18537,7 +18539,7 @@ print(json.loads(os.environ["_LOKI_REVIEW_SHARD_IDENTITIES"])[int(os.environ["_L
                 LOKI_REVIEW_REQUIREMENTS_SHARD_INDEX="$reviewer_shard_index" \
                 LOKI_DEADLINE_CONTROL_FILE="${dispatch_control_files[$i]}" \
                 LOKI_REVIEW_STDERR_FILE="$review_dir/$review_id/${reviewer_name}-stderr.log" \
-                    _dispatch_reviewer_recorded "$prompt_text" "$review_stage_file"
+                    _dispatch_reviewer_recorded "$prompt_text" "$review_stage_file" "$reviewer_name"
                 local shard_rc=$?
                 if [ "$shard_rc" -eq 0 ] \
                    && grep -qx 'VERDICT: FAIL' "$review_stage_file"; then
@@ -18546,9 +18548,8 @@ print(json.loads(os.environ["_LOKI_REVIEW_SHARD_IDENTITIES"])[int(os.environ["_L
                 fi
                 exit "$shard_rc"
             else
-                LOKI_REVIEWER_NAME="$reviewer_name" \
                 LOKI_REVIEW_STDERR_FILE="$review_dir/$review_id/${reviewer_name}-stderr.log" \
-                    _dispatch_reviewer_recorded "$prompt_text" "$review_stage_file"
+                    _dispatch_reviewer_recorded "$prompt_text" "$review_stage_file" "$reviewer_name"
             fi
         ) &
         pids+=($!)

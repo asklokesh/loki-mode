@@ -184,11 +184,11 @@ fi
 # Same reviewers, same env, same model. Empty output means the default model.
 _pin_sh() { (unset LOKI_ADVISOR_MODEL LOKI_REVIEWER_TIER_ROUTING LOKI_REVIEW_ADVISORY; export "$1"; _reviewer_model_pin "$2"); }
 _pin_ts() {
-    ( cd "$REPO_ROOT/loki-ts" && LOKI_PIN_ENV="$1" LOKI_PIN_REVIEWER="$2" bun -e '
+    ( cd "$REPO_ROOT/loki-ts" && LOKI_PIN_ENV="$1" LOKI_PIN_REVIEWER="$2" LOKI_PIN_TIER="${3:-}" bun -e '
         import { reviewerModelForTier } from "./src/providers/claude_flags.ts";
         const kv = (process.env.LOKI_PIN_ENV || "").split("=");
         const env = kv[0] ? { [kv[0]]: kv.slice(1).join("=") } : {};
-        const m = reviewerModelForTier({ tier: "complex", reviewer: process.env.LOKI_PIN_REVIEWER, env });
+        const m = reviewerModelForTier({ tier: process.env.LOKI_PIN_TIER || undefined, reviewer: process.env.LOKI_PIN_REVIEWER, env });
         console.log(m === null ? "" : m);' 2>/dev/null )
 }
 for _case in "LOKI_REVIEW_ADVISORY=1 maintainer-mergeability haiku" \
@@ -208,12 +208,16 @@ for _case in "LOKI_REVIEW_ADVISORY=1 maintainer-mergeability haiku" \
         bad "_reviewer_model_pin $1 $2 -> '${_got_sh:-default}' (want '${_want:-default}')"
     fi
     if command -v bun >/dev/null 2>&1 && [ -d "$REPO_ROOT/loki-ts/node_modules" ]; then
-        _got_ts="$(_pin_ts "$1" "$2")"
-        if [ "$_got_ts" = "$_got_sh" ]; then
-            ok "TS reviewerModelForTier matches bash for $1 $2"
-        else
-            bad "TS reviewerModelForTier ('${_got_ts:-default}') differs from bash ('${_got_sh:-default}') for $1 $2"
-        fi
+        # Real dispatches pass DETECTED_COMPLEXITY || "standard"; check every tier
+        # plus the unset default.
+        for _tier in simple standard complex ""; do
+            _got_ts="$(_pin_ts "$1" "$2" "$_tier")"
+            if [ "$_got_ts" = "$_got_sh" ]; then
+                ok "TS reviewerModelForTier matches bash for $1 $2 tier=${_tier:-default}"
+            else
+                bad "TS reviewerModelForTier ('${_got_ts:-default}') differs from bash ('${_got_sh:-default}') for $1 $2 tier=${_tier:-default}"
+            fi
+        done
     else
         bad "bun and loki-ts/node_modules required for the model-pin parity check"
     fi
