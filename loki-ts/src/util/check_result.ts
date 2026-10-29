@@ -13,7 +13,7 @@ import { CARGO_TEST_FILE_RE, isTestFile } from "../engine10/testmap.ts";
 import type { RunnerName, TestRef } from "../engine10/types.ts";
 import { UNITTEST_DISCOVER_ARGS } from "./python_build_check.ts";
 import { safeGit, tokenFreeEnv } from "./safe_git.ts";
-import { redactSecrets } from "./redact.ts";
+import { redactSecrets, UNSAFE_TERMINAL_CHARS_RE } from "./redact.ts";
 
 /** FC-69: the ONE child env for every harness-run test or verify command. A user's FORCE_COLOR=3 makes node:test, pytest, jest and
  *  friends emit ANSI that defeats line-anchored result parsers; FORCE_COLOR=0 + NO_COLOR=1 keeps the output plain. CI is left as is.
@@ -324,7 +324,7 @@ export function explainGates(receiptPath: string): ExplainGate[] {
     return { name: String(c.name ?? ""), class: p === "exogenous" || p === "independent" ? "exogenous" : p === "agent_authored" || p === "llm_judge" ? "agent-influenced" : "unrecorded", provenance: p, result: String(c.result ?? "not_run"), n: typeof c.n === "number" ? c.n : null, evidence: String(c.cmd ?? "") };
   });
 }
-const printable = (s: string): string => s.replace(/[\x00-\x1f\x7f]/g, "?"); // receipt text never drives the terminal
+export const printable = (s: string): string => s.replace(UNSAFE_TERMINAL_CHARS_RE, "?"); // receipt text never drives the terminal
 /** What the receipt verifier saw: set once it resolves a run receipt and prints its verdict. */
 export interface ExplainRec { runId?: string; receiptPath?: string; verdict?: string; reasons?: string[]; receiptSha256?: string | null; independent?: { k: number; of: number } | null; signingKid?: string | null; keyKid?: string | null; headSha?: string | null; receiptVerdict?: string | null; signedRunId?: string | null; signedSha?: string | null }
 /** --explain lists each gate after the verdict; --json prints {run_id, run, verdict, exit_code, receipt_sha256, reasons, agent_independent:{k,of}, gates, signing_kid, key_kid, head_sha, receipt_verdict} on stdout (TEN-GATES-26; the last four are always the final keys, read from the parse the signature covers: the JWT header kid of a VERIFIED receipt, the --pubkey thumbprint, the receipt head_sha and verdict) with the human lines on stderr. Read-only: the exit code is the verifier's, unchanged; a TAMPERED receipt's gates are never listed. */

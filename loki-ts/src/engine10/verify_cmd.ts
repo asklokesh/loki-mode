@@ -8,7 +8,7 @@ import { lokiDir } from "../util/paths.ts";
 import { applyMaxAge, deployAttestCmd, receiptShapeProblem, takeMaxAge } from "../util/receipt_signer.ts";
 import { latestRunId } from "../commands/run_status.ts"; import { sealDrift, tornTail, wallNotComparedNote } from "../util/seal_drift.ts";
 import { readEvents } from "./events.ts";
-import { isExecutedProof, withExplain, type ExplainRec } from "../util/check_result.ts";
+import { isExecutedProof, printable, withExplain, type ExplainRec } from "../util/check_result.ts";
 import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
 import { exportDsseReceipt, isEnvelope, outcomeOf, runIdGuard, verifyDsseReceipt } from "../features/receipt_dsse.ts";
 import { verifyGroup } from "../features/speed/seal_group.ts"; import { composeComposite, compositeHash, compositeLines, isComposite, verifyComposite } from "../util/composite_seal.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
@@ -175,7 +175,11 @@ function independentLine(receiptPath: string): { line: string; k: number; of: nu
 }
 const independentCounts = (receiptPath: string): { k: number; of: number } => { const { k, of } = independentLine(receiptPath); return { k, of }; }; // TEN-GATES-26: --json agent_independent
 // D47: a stripped receipt must never rank above UNCHECKED; --allow-unsigned opts in
-const EXIT_BY_VERDICT: Record<Verdict, number> = { VERIFIED: 0, UNSIGNED: 3, TAMPERED: 1, UNCHECKED: 2 }; export const main = (args: readonly string[], deps: VerifyDeps = {}): Promise<number> => withExplain(args, (a, rec) => verifyMain(a, deps, rec)); // TEN-GATES-14: --explain / --json, read-only (util/check_result.ts)
+/** A receipt found by run id must be signed for that run: a sealed directory copied under another id carries the original signed run_id and must not read VERIFIED. */
+function signedRunIdProblem(receiptPath: string, runId: string): string | null {
+  try { const r = JSON.parse(readFileSync(receiptPath, "utf8")) as Record<string, unknown>, s = r["run_id"]; return isEnvelope(r) || typeof s !== "string" || s === runId ? null : `receipt run_id ${JSON.stringify(printable(s).slice(0, 128))} does not match the run id ${JSON.stringify(runId)} it was found under (a sealed run copied under another id)`; } catch { return null; }
+}
+const EXIT_BY_VERDICT:Record<Verdict, number> = { VERIFIED: 0, UNSIGNED: 3, TAMPERED: 1, UNCHECKED: 2 }; export const main = (args: readonly string[], deps: VerifyDeps = {}): Promise<number> => withExplain(args, (a, rec) => verifyMain(a, deps, rec)); // TEN-GATES-14: --explain / --json, read-only (util/check_result.ts)
 async function verifyMain(args: readonly string[], deps: VerifyDeps, rec: ExplainRec): Promise<number> {
   const allowUnsigned = args.includes("--allow-unsigned") || process.env["LOKI_VERIFY_ALLOW_UNSIGNED"] === "1";
   const exportDsse = args.includes("--export-dsse"), requireExo = args.includes("--require-exogenous") || process.env["LOKI_VERIFY_REQUIRE_EXOGENOUS"] === "1"; // TEN-GATES-03
@@ -202,7 +206,7 @@ async function verifyMain(args: readonly string[], deps: VerifyDeps, rec: Explai
   const receiptPath = isPath ? runId : join(runsRoot, runId, "receipt.json"); // a receipt file path works directly
   const byRunId = !isPath; rec.runId = runId; rec.receiptPath = receiptPath; // TEN-GATES-14
   if (exportDsse) return exportDsseReceipt({ receiptPath, runId: byRunId ? runId : null, deps, verify: verifyReceipt, key: loadSigningKey(false), kidOf }); // INTEL-1 / INTEL-1b
-  const bad =byRunId ? runIdGuard(receiptPath, runId) : null; // INTEL-1b: an envelope found under a run id must be for that run
+  const bad = byRunId ? (runIdGuard(receiptPath, runId) ?? signedRunIdProblem(receiptPath, runId)) : null; // INTEL-1b: an envelope found under a run id must be for that run; a receipt must carry the run id it is found under
   if (bad) return (rec.verdict = "TAMPERED", rec.reasons = [bad], process.stdout.write(`run: ${runId}\nverdict: TAMPERED\n  ${bad}\n`), 1);
   let result = await verifyReceipt(receiptPath, deps); if (result.verdict === "VERIFIED" || result.verdict === "UNSIGNED") { const d = (() => { try { return sealDrift(receiptPath, JSON.parse(readFileSync(receiptPath, "utf8"))); } catch { return null; } })(); if (d) result = { verdict: d.verdict, reasons: [d.reason] }; } // P12-01
   if (ma.raw !== null) result = applyMaxAge(result, receiptPath, ma.raw, ma.seconds, (deps.now ?? Date.now)());

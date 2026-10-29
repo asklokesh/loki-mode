@@ -85,3 +85,5 @@ export function sanitizeReason(s: string): string {
   const capped = collapsed.length > 500 ? `${collapsed.slice(0, 500)}...` : collapsed;
   return capped.replace(/`/g, "'");
 }
+/** Attacker-controlled text printed on a terminal or in a report: every character in this class (C0 and C1 controls incl. ESC and CSI U+009B, DEL, soft hyphen, Arabic letter mark, zero-width and bidi format characters, word joiner and invisible operators, U+2028/2029, BOM) must become "?". The ONE copy; callers import it rather than keep a narrower one. */
+export const UNSAFE_TERMINAL_CHARS_RE = /[\x00-\x1f\x7f-\x9f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;

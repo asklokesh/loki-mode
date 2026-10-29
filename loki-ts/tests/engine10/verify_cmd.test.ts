@@ -654,6 +654,28 @@ async function runMain(args: string[], runsRoot: string): Promise<{ code: number
   }
 }
 
+describe("main() foreign signed run_id is printed safely", () => {
+  const hostile = async (rid: string) => {
+    const root = tmpDir(), dir = join(root, "found-id"); mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "receipt.json"), JSON.stringify({ run_id: rid }));
+    const res = await runMain(["found-id", "--json"], root);
+    return { ...res, field: (JSON.parse(res.out) as { reasons: string[] }).reasons[0]! };
+  };
+  test("DEL, C1 CSI and bidi override in the signed run_id never reach stdout raw", async () => {
+    const res = await hostile("a\u007fb\u009bc\u202ed\u001b[31me\u200bf\u2028g\ufeffh");
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("TAMPERED");
+    for (const ch of ["\u007f", "\u009b", "\u202e", "\u001b", "\u200b", "\u2028", "\ufeff"]) expect(res.out.includes(ch)).toBe(false);
+  });
+  test("a 100,000 character signed run_id is capped near 128 characters", async () => {
+    const res = await hostile("x".repeat(100_000));
+    expect(res.code).toBe(1);
+    expect(res.out.length).toBeLessThan(1000);
+    expect(res.field).toContain("x".repeat(128));
+    expect(res.field).not.toContain("x".repeat(129));
+  });
+});
+
 describe("main() UNSIGNED policy (D47)", () => {
   const withEnv = async (env: Record<string, string | undefined>, fn: () => Promise<void>) => {
     const saved: Record<string, string | undefined> = {};
@@ -1667,6 +1689,17 @@ describe("main() agent-independent evidence (TEN-GATES-03)", () => {
     } finally { done(s.dir, s.home); }
   });
 
+  test("--explain prints no raw C1, bidi or zero-width character from a receipt gate field", async () => {
+    if (!CRYPTO_PY) { console.log("SKIP: no python3 with cryptography"); return; }
+    const s = signed("gx11", [{ name: "n\u202eame\u009b", cmd: "c\u200bm\u2066d\u00ad\u061c\u2060", result: "pass", duration_s: 1, n: 1, provenance: "exogenous" }]);
+    try {
+      const r = await runMain(["gx11", "--explain"], s.runs);
+      expect(r.out).toContain("  gate n?ame?: exogenous");
+      expect(r.out).toContain("evidence: c?m?d???\n");
+      for (const ch of ["\u202e", "\u009b", "\u200b", "\u2066", "\u00ad", "\u061c", "\u2060"]) expect(r.out.includes(ch)).toBe(false);
+    } finally { done(s.dir, s.home); }
+  });
+
   test("verify json: unsigned receipt doc carries run, receipt_sha256, reasons and agent_independent; exit code and plain text unchanged", async () => {
     const dir = tmpDir();
     try {
@@ -1917,7 +1950,7 @@ describe("PX-10 adversarial receipt corpus", () => {
       { name: "run A receipt.json laid over run B", apply: (r) => { const a = build(); cpSync(a.path, r.path); } },
       { name: "run A jwt grafted into run B", apply: (r) => { const a = build(); const j = rc(a).verification; edit((o) => { o.verification = j; })(r); } },
       { name: "run A events.jsonl laid over run B", apply: (r) => { const a = build(); cpSync(evPath(a), evPath(r)); } },
-      { name: "this run's own sealed dir presented under another run id (same repo, same HEAD)", apply: (r) => { cpSync(r.dir, join(r.runsRoot, "px10-replay"), { recursive: true }); }, args: () => ["px10-replay"], todo: "FINDING: verify by run id never compares the directory name to the receipt's signed run_id, so a valid run's dir copied under another id reads VERIFIED; only --json signed_run_id exposes it to the caller" },
+      { name: "this run's own sealed dir presented under another run id (same repo, same HEAD)", apply: (r) => { cpSync(r.dir, join(r.runsRoot, "px10-replay"), { recursive: true }); }, args: () => ["px10-replay"] },
       { name: "another repo's sealed run dir copied under a new id (HEAD differs)", apply: (r) => { const a = build(); const dst = join(r.runsRoot, "px10-replay"); cpSync(a.dir, dst, { recursive: true }); r.path = join(dst, "receipt.json"); }, args: () => ["px10-replay"] },
       { name: "an event line duplicated", apply: (r) => { const l = evLines(r); l.splice(2, 0, l[1]!); putLines(r, l); } },
       { name: "seal tail (receipt.sealed .. log.sealed) replayed at the end", apply: (r) => { const l = evLines(r); putLines(r, [...l, ...l.slice(-3)]); } },
