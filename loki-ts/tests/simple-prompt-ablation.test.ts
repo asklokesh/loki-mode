@@ -129,12 +129,12 @@ describe("LOKI_SIMPLE prompt ablation", () => {
 describe("LOKI_SIMPLE gated-push comment", () => {
   it("states the same push count as the gated block", () => {
     const src = readFileSync(new URL("../src/runner/build_prompt.ts", import.meta.url), "utf8");
-    const block = src.split("if (!simple) {")[1].split("\n  }\n")[0];
+    const block = src.split("if (!simple) {")[1]!.split("\n  }\n")[0]!;
     const pushes = (block.match(/^\s*lines\.push\(/gm) ?? []).length;
     const words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
     const claimed = src.match(/only the (\w+) pushes and the flag-prefix loop below are gated/);
     expect(claimed).not.toBeNull();
-    expect(words.indexOf(claimed![1]) + 1).toBe(pushes);
+    expect(words.indexOf(claimed![1]!) + 1).toBe(pushes);
     expect(block).toContain("flagPrefixLines(env)");
   });
 });
