@@ -141,6 +141,21 @@ describe("engine10 intake", () => {
     const result = await runIntake(ctx, new AbortController().signal, { taskText: "do a thing" });
     expect(result.status).toBe("failed");
     expect(result.reason).toContain("dirty");
+    expect(result.data.blocker).toBe("dirty_tracked_tree"); // AN-08: the class comes from the refusing check, never parsed from the reason text
+  });
+
+  test("AN-08: a failed intake event names its class to the funnel; an off-enum value or another stage names none", async () => {
+    const { noteRefusalFromEvents, takeRefusal } = await import("../../src/util/funnel.ts");
+    takeRefusal();
+    noteRefusalFromEvents([{ type: "stage.failed", stage: "intake", data: { blocker: "dirty_tracked_tree", reason: "x" } }]); expect(takeRefusal()).toBe("dirty_tracked_tree");
+    noteRefusalFromEvents([{ type: "stage.failed", stage: "intake", data: { blocker: "/Users/x/secret" } }]); expect(takeRefusal()).toBeNull();
+    noteRefusalFromEvents([{ type: "stage.failed", stage: "verify", data: { blocker: "dirty_tracked_tree" } }]); expect(takeRefusal()).toBeNull();
+  });
+
+  test("AN-08: an untracked-only tree is not a refusal and names no blocker", async () => {
+    writeFileSync(join(repoDir, "scratch.txt"), "untracked\n");
+    const result = await runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { taskText: "do a thing" });
+    expect(result.status).toBe("completed"); expect(result.data.blocker).toBeUndefined();
   });
 
   test("FC-LOKI-DIR-DIRT: tracked .loki/ state the repo committed and then lost does not block intake or reach the commit", async () => {

@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { REPO_ROOT } from "./paths.ts";
-import { safeGitRun, tokenFreeEnv } from "./safe_git.ts";
+import { tokenFreeEnv } from "./safe_git.ts";
 
 export type FunnelKind = "first_run_blocked" | "build_verified";
 
@@ -26,23 +26,25 @@ export function emitFunnel(kind: FunnelKind, key: string): void {
   }
 }
 
-/** Bounded class of an engine10 preflight refusal, probed from the folder (never from the message text). */
-export async function classifyPreflightBlocker(cwd: string): Promise<string> {
-  const env = tokenFreeEnv(process.env) as Record<string, string>;
-  const git = (a: string[]) => safeGitRun(cwd, a, { env, timeoutMs: 5000 });
-  try {
-    const wt = await git(["rev-parse", "--is-inside-work-tree"]);
-    if (wt.exitCode !== 0 || wt.stdout.trim() !== "true") return "not_a_repo";
-    const [n, e] = await Promise.all([git(["config", "user.name"]), git(["config", "user.email"])]);
-    if (!n.stdout.trim() || !e.stdout.trim()) return "git_identity";
-  } catch {
-    // fall through to the coarse bucket
-  }
-  return "other";
+/** The fixed enum of refusal classes; the value is chosen by the check that refused, never probed from the folder or parsed from message text. */
+export const PREFLIGHT_BLOCKERS = ["not_a_repo", "git_identity", "dirty_tracked_tree", "no_provider", "not_logged_in", "prd_missing", "unsupported_flag", "disk", "other"] as const;
+export type PreflightBlocker = (typeof PREFLIGHT_BLOCKERS)[number];
+/** Narrows an untrusted value (an event field) to the enum, or null. */
+export function blockerOf(v: unknown): PreflightBlocker | null { return typeof v === "string" && (PREFLIGHT_BLOCKERS as readonly string[]).includes(v) ? (v as PreflightBlocker) : null; }
+
+let refusal: PreflightBlocker | null = null;
+/** Called by the refusing check right before it returns nonzero. */
+export function noteRefusal(b: PreflightBlocker | null): void { if (b) refusal = b; }
+/** Reads and clears the noted class. */
+export function takeRefusal(): PreflightBlocker | null { const b = refusal; refusal = null; return b; }
+/** A refusal that happened inside the run (the intake stage) is in the event log: note its class from the failed intake event. */
+export function noteRefusalFromEvents(events: readonly { type: string; stage?: string | null; data: Record<string, unknown> }[]): void {
+  noteRefusal(blockerOf(events.find((e) => e.type === "stage.failed" && e.stage === "intake")?.data["blocker"]));
 }
 
-/** Called once after a run-route command returns: exit 2 is a preflight refusal, exit 0 is VERIFIED or ALREADY_SATISFIED. */
-export async function funnelAfterRun(code: number, cwd: string): Promise<void> {
-  if (code === 2) emitFunnel("first_run_blocked", await classifyPreflightBlocker(cwd));
-  else if (code === 0) emitFunnel("build_verified", "engine10");
+/** Called once after a run-route command returns. A noted refusal class is sent for any nonzero exit; exit 2 with none noted is "other"; exit 0 is VERIFIED or ALREADY_SATISFIED. */
+export async function funnelAfterRun(code: number, _cwd: string): Promise<void> {
+  const b = takeRefusal();
+  if (code === 0) emitFunnel("build_verified", "engine10");
+  else if (b || code === 2) emitFunnel("first_run_blocked", b ?? "other");
 }

@@ -54,7 +54,7 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
 async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeOptions, held: { fold: string | null }): Promise<StageResult> {
   const t0 = Date.now(); if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before intake started" };
   const { blocking: dirty, preexisting } = splitDirty(ctx.repoDir, dirtyTrackedFiles(ctx.repoDir));
-  if (dirty.length > 0) return { status: "failed", data: {}, reason: `dirty tracked tree: ${dirty.join(", ")}` };
+  if (dirty.length > 0) return { status: "failed", data: { blocker: "dirty_tracked_tree" }, reason: `dirty tracked tree: ${dirty.join(", ")}` }; // AN-08: the class travels in the stage.failed event
   let baseSha = git(ctx.repoDir, ["rev-parse", "HEAD"]); const startBranch = git(ctx.repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]);
   // FC-STACKED-ON-LOKI-RUN (the success note is the start line plus the stacked_loki_skip event data, never raw stderr): HEAD is an earlier run's unaccepted output (every commit past the PR target is a Loki-Run commit): branch from the PR target tip, leave that branch untouched.
   let stacked = stackedOnLokiRun(ctx.repoDir); if (stacked) { try { ensureBranch(ctx.repoDir, ctx.branch, stacked.base_sha); baseSha = stacked.base_sha; ctx.baseSha = baseSha; } catch { stacked = null; process.stderr.write(`${process.stderr.isTTY ? "\r\x1b[2K" : ""}engine10: skip not applied (checkout failed); base stays HEAD\n`); } } if (!stacked) ensureBranch(ctx.repoDir, ctx.branch);

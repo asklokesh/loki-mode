@@ -719,3 +719,28 @@ describe("R100-022: publish capability at intake", () => {
     expect(classifyPublish("a/b", {})).toBeNull();
   });
 });
+
+describe("AN-08: the refusing check names its own blocker class", () => {
+  const base = { provider: "claude", pr: false } as const;
+  const loggedOut = (): string => { const p = join(tmpRoot("e10-pf-an08cli-"), "fake-cli"); writeFileSync(p, `#!/bin/sh\necho '{"loggedIn":false}'\n`); chmodSync(p, 0o755); return p; };
+  test("each fatal branch carries its enum class", async () => {
+    const nr = tmpRoot("e10-pf-an08-"); writeFileSync(join(nr, "f.txt"), "x");
+    expect((await checkPreflight({ repoDir: nr, ...base, env: { PATH: process.env.PATH ?? "" } })).blocker).toBe("not_a_repo");
+    const a = bareRepo();
+    expect((await checkPreflight({ repoDir: a.dir, ...base, env: { ...a.env, LOKI_CLAUDE_CLI: stubCli() } })).blocker).toBe("git_identity");
+    const b = identifiedRepo();
+    expect((await checkPreflight({ repoDir: b.dir, ...base, env: { ...b.env, LOKI_CLAUDE_CLI: MISSING_CLI } })).blocker).toBe("no_provider");
+    expect((await checkPreflight({ repoDir: b.dir, provider: "bogus", pr: false, env: b.env })).blocker).toBe("unsupported_flag");
+    expect((await checkPreflight({ repoDir: b.dir, ...base, env: { ...b.env, LOKI_CLAUDE_CLI: loggedOut() } })).blocker).toBe("not_logged_in");
+    const sf = () => ({ bavail: 1, bsize: 1024 });
+    expect((await checkPreflight({ repoDir: b.dir, ...base, statfs: sf, env: { ...b.env, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k" } })).blocker).toBe("disk");
+    const c = bareRepo(false); execFileSync("git", ["-C", c.dir, "config", "user.name", "t"]); execFileSync("git", ["-C", c.dir, "config", "user.email", "t@t.test"]);
+    expect((await checkPreflight({ repoDir: c.dir, ...base, env: { ...c.env, LOKI_CLAUDE_CLI: stubCli() } })).blocker).toBe("other");
+  });
+  test("a passing check has no blocker, and the thrown PreflightError carries the class", async () => {
+    const { dir, env } = identifiedRepo();
+    expect((await checkPreflight({ repoDir: dir, ...base, env: { ...env, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k" } })).blocker).toBeUndefined();
+    const e = await assertPreflight({ repoDir: dir, ...base, env: { ...env, LOKI_CLAUDE_CLI: MISSING_CLI } }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(PreflightError); expect((e as PreflightError).blocker).toBe("no_provider");
+  });
+});

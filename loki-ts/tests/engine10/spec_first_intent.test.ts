@@ -210,6 +210,17 @@ describe("unknown flag", () => {
       expect(r.err).toContain("usage:");
     }
   });
+  test("AN-08: each exit-2 refusal in main() notes its own class for the funnel", async () => {
+    const { takeRefusal } = await import("../../src/util/funnel.ts");
+    const cls = async (a: string[]): Promise<string | null> => { takeRefusal(); await run(a); return takeRefusal(); };
+    expect(await cls(["fix the bug", "--no-prr"])).toBe("unsupported_flag");
+    expect(await cls(["task", "--provider"])).toBe("unsupported_flag");
+    expect(await cls([])).toBe("prd_missing");
+    expect(await cls(["--spec", join(dir, "does-not-exist.md")])).toBe("prd_missing");
+    const cwd = process.cwd(), plain = mkdtempSync(join(tmpdir(), "e10-an08-")); writeFileSync(join(plain, "f"), "x");
+    process.chdir(plain);
+    try { expect(await cls(["do a thing"])).toBe("not_a_repo"); } finally { process.chdir(cwd); rmSync(plain, { recursive: true, force: true }); }
+  });
   test("provider needs a value: missing or flag-shaped value exits 2, codex unchanged", async () => {
     for (const a of [["task", "--provider"], ["task", "--provider", "--deep"], ["task", "--provider", ""]]) {
       const r = await run(a);

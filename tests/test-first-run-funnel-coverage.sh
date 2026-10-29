@@ -162,19 +162,19 @@ RECORDER
     _fun() {
         # $1 = exit code, $2.. = extra env; runs the real helper from a non-repo, non-empty folder
         env PATH="$_W:$PATH" HOME="$_W/home" LOKI_TEST_PAYLOAD="$_W/payload.log" LOKI_ANALYTICS=on LOKI_TELEMETRY=on "${@:2}" \
-            bun -e "await (await import('$REPO_ROOT/loki-ts/src/util/funnel.ts')).funnelAfterRun($1, process.cwd())" -- "$_BRIEF" >/dev/null 2>&1
+            bun -e "const f = await import('$REPO_ROOT/loki-ts/src/util/funnel.ts'); if (process.env.NOTE) f.noteRefusal(process.env.NOTE); await f.funnelAfterRun($1, process.cwd())" -- "$_BRIEF" >/dev/null 2>&1
         sleep 1.5
     }
     mkdir -p "$_W/home" "$_W/proj"; echo hi > "$_W/proj/notes.txt"
     cd "$_W/proj" || exit 1
     : > "$_W/payload.log"
-    _fun 2
+    _fun 2 NOTE=not_a_repo
     if [ "$(grep -c 'first_run_blocked' "$_W/payload.log")" = "1" ] && grep -q '"blocker": *"not_a_repo"' "$_W/payload.log"; then
         ok "one first_run_blocked blocker=not_a_repo recorded"
     else
         bad "expected one first_run_blocked not_a_repo line, got: $(cat "$_W/payload.log")"
     fi
-    _fun 2
+    _fun 2 NOTE=not_a_repo
     if [ "$(grep -c 'first_run_blocked' "$_W/payload.log")" = "1" ]; then
         ok "second identical run records nothing (once-per-install marker)"
     else
@@ -185,6 +185,20 @@ RECORDER
     else
         ok "payload carries no path, home dir or brief text"
     fi
+    # AN-08: the class is what the refusing check noted, for any nonzero exit; folder state never decides it
+    for _c in dirty_tracked_tree no_provider not_logged_in prd_missing unsupported_flag; do
+        rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+        _fun 1 "NOTE=$_c"
+        if grep -q "\"blocker\": *\"$_c\"" "$_W/payload.log"; then ok "exit 1 with a noted $_c records blocker=$_c"; else bad "$_c not recorded: $(cat "$_W/payload.log")"; fi
+    done
+    rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+    _fun 1
+    if [ ! -s "$_W/payload.log" ]; then ok "exit 1 with no noted refusal (untracked-only tree, ordinary failed run) records nothing"; else bad "unrefused exit 1 recorded: $(cat "$_W/payload.log")"; fi
+    _fun 2
+    if grep -q '"blocker": *"other"' "$_W/payload.log"; then ok "exit 2 with no noted refusal is the coarse other"; else bad "exit 2 without a note: $(cat "$_W/payload.log")"; fi
+    rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+    _fun 2 NOTE=/opt/x/secret-path
+    if grep -q '"blocker": *"other"' "$_W/payload.log" && ! grep -q 'secret-path' "$_W/payload.log"; then ok "a path-shaped note is reduced to other and never leaves"; else bad "path-shaped note: $(cat "$_W/payload.log")"; fi
     for _o in DO_NOT_TRACK=1 LOKI_TELEMETRY_DISABLED=true; do
         rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
         _fun 2 "$_o"; _fun 0 "$_o"
