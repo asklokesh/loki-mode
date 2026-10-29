@@ -6,7 +6,7 @@
 # - From a member dir (acme/ui): finds app_id=acme, root=acme, 3 members
 # - From a dir without a manifest: exits 0 with empty exported env vars
 # - Mismatched app_id in a sibling -> skipped + logged
-# - Cache hit: second run within the same mtime returns in <50ms
+# - Cache hit: second run within the same mtime spawns no python3
 # - Output style matches tests/test-claude-flags.sh (PASS:/FAIL:/total)
 
 set -u
@@ -124,18 +124,11 @@ else
     bad "mismatch: expected app_id_mismatch entry in $LOG"
 fi
 
-# ---------- 4. Cache hit: second run is fast ----------
-# First run primes the cache, second run hits it. Use python3 for a precise
-# millisecond timer.
-elapsed_ms() {
-    python3 - "$@" <<'PYEOF'
-import sys, time
-t0 = float(sys.argv[1])
-t1 = float(sys.argv[2])
-print(int((t1 - t0) * 1000))
-PYEOF
-}
-
+# ---------- 4. Cache hit: no python3 on the hot path ----------
+# First run primes the cache, second run hits it. Wall-clock timing is not
+# asserted: it is load dependent and flaked on a busy host. The contract the
+# timing proxied is that a hit never spawns python3, which is checked directly
+# with a recording python3 stub ahead of PATH.
 # Use a fresh fixture so the cache file from test #1 isn't present.
 CACHEFIX="$TMPROOT/cachefix"
 cp -R "$FIXTURE_SRC" "$CACHEFIX"
@@ -153,43 +146,25 @@ else
     bad "cache: expected $CACHE_FILE after first run"
 fi
 
-# Measure second run. Function-only timing (no subshell, no bash respawn).
-# The test wrapper uses bash's $EPOCHREALTIME (no python3 fork) so the
-# measurement reflects the helper's actual work rather than test scaffolding.
-# bash 5+ provides $EPOCHREALTIME as a float seconds.microseconds string;
-# we fall back to python3 timing if not available (bash 3.2 on macOS).
-have_epochrealtime=0
-# shellcheck disable=SC2050
-if [ -n "${EPOCHREALTIME:-}" ] || ( eval 'echo "${EPOCHREALTIME:-}"' 2>/dev/null | grep -q '\.'); then
-    have_epochrealtime=1
-fi
-best=999999
+# Hit runs with a recording python3 stub first on PATH. Any python3 spawn on
+# the hot path is logged and fails the check.
+STUBBIN="$TMPROOT/stubbin"
+STUBLOG="$TMPROOT/python3-calls.log"
+mkdir -p "$STUBBIN"
+: > "$STUBLOG"
+printf '#!/bin/sh\necho "python3 $*" >> "%s"\nexit 1\n' "$STUBLOG" > "$STUBBIN/python3"
+chmod +x "$STUBBIN/python3"
 for _i in 1 2 3; do
-    if [ "$have_epochrealtime" = "1" ]; then
-        t0_s="$EPOCHREALTIME"
-    else
-        t0_s=$(python3 -c 'import time; print(time.time())')
-    fi
-    unset LOKI_PROJECT_GRAPH_ROOT LOKI_PROJECT_GRAPH_APP_ID LOKI_PROJECT_GRAPH_MEMBERS
-    loki_project_graph_discover "$CACHEFIX/ui" >/dev/null
-    if [ "$have_epochrealtime" = "1" ]; then
-        t1_s="$EPOCHREALTIME"
-    else
-        t1_s=$(python3 -c 'import time; print(time.time())')
-    fi
-    ms=$(elapsed_ms "$t0_s" "$t1_s")
-    if [ "$ms" -lt "$best" ]; then best=$ms; fi
+    (
+        PATH="$STUBBIN:$PATH"
+        unset LOKI_PROJECT_GRAPH_ROOT LOKI_PROJECT_GRAPH_APP_ID LOKI_PROJECT_GRAPH_MEMBERS
+        loki_project_graph_discover "$CACHEFIX/ui" >/dev/null
+    )
 done
-# Architect target: <50ms. The helper achieves this in-process on Darwin
-# (cache hit eliminates python3 entirely; it's pure bash + awk + 1-2 stat
-# calls). When the test runs under bash 3.2 (no EPOCHREALTIME) we fall
-# back to a python3 timer that adds ~25-30ms of measurement overhead; the
-# 75ms threshold accommodates that scaffolding cost. Pure function work
-# is ~5-15ms.
-if [ "$best" -lt 75 ]; then
-    ok "cache: best of 3 cache-hit runs = ${best}ms (<75ms target; pure work <15ms)"
+if [ ! -s "$STUBLOG" ]; then
+    ok "cache: 3 cache-hit runs spawned no python3"
 else
-    bad "cache: best of 3 cache-hit runs = ${best}ms (>=75ms)"
+    bad "cache: cache-hit run spawned python3: $(head -1 "$STUBLOG")"
 fi
 
 # Verify cached values match first-run exports.
