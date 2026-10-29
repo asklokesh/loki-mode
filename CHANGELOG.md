@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.81.1 (2026-10-29)
+
+### Fixed
+
+- A run that dropped a faulty Wall test file in one fix round and re-authored a different one in a later round no longer reports VERIFIED; the verdict stays PARTIAL and names the dropped file.
+- The v11.80.0 note now says the run drops that Wall test file (not the assertion) when a spec conflict points at a Wall-authored file.
+
 ## v11.81.0 (2026-10-29)
 
 ### Added
