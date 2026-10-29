@@ -4,7 +4,7 @@
 // the slice's contract: machine.ts (E-02) and testmap.ts (E-05) do not exist
 // yet on main, and this stage codes against types.ts's interfaces only.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
@@ -251,6 +251,7 @@ describe("engine10 intake", () => {
   test("clean repo with literal task text: creates the branch, excludes .loki/, builds maps", async () => {
     const provider = fakeTests(["pytest", "vitest"]);
     const ctx = makeCtx(repoDir, runDir, provider);
+    appendFileSync(join(repoDir, ".git", "info", "exclude"), "hidden/\n"); mkdirSync(join(repoDir, "hidden")); writeFileSync(join(repoDir, "hidden", "conftest.py"), "x"); // SEAL-CONFTEST-01: an ignored runner config
     const start = Date.now();
     const result = await runIntake(ctx, new AbortController().signal, { taskText: "add a widget" });
     const elapsedS = (Date.now() - start) / 1000;
@@ -261,6 +262,7 @@ describe("engine10 intake", () => {
     expect(typeof result.data.base_sha).toBe("string");
     expect(result.data.task_sha256).toHaveLength(64);
     expect(elapsedS).toBeLessThan(15);
+    expect(Object.keys(result.data.hidden_cfg as object)).toEqual(["hidden/conftest.py"]); // snapshotted once at intake, compared at verify
 
     const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoDir, encoding: "utf8" }).trim();
     expect(branch).toBe("loki/e10-test-run");

@@ -1,16 +1,17 @@
 // D86 FC-09r: the one registry of files that steer how tests run or resolve code. A run that changes the runner-relevant part of one
 // cannot seal VERIFIED (the agent could be mocking the code under test). Shared files (package.json, go.mod, Cargo.toml, ...) are
 // compared base vs head by section, so a dependency bump is not config but a pretest edit, a go.mod replace or a tsconfig path is.
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto"; import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { safeGit } from "../util/safe_git";
 type Sections = RegExp | readonly string[] | "go" | "tsconfig" | "cargo"; interface Spec { re: RegExp; shared?: Sections }
 const PKG_KEYS = ["scripts", "jest", "overrides", "resolutions", "imports", "pnpm", "mocha", "vitest", "ava", "c8", "nyc", "babel", "bun", "patchedDependencies"] as const; // scripts is compared whole: pretest, posttest and test:* all count
 // FC-09w: macOS filesystems are case-insensitive, so PNPM-Workspace.yaml is read by pnpm. Every row is forced case-insensitive below, in one place.
 const RAW_CONFIGS: Spec[] = [
-  { re: /(^|\/)(conftest\.py|tox\.ini|bunfig\.toml|\.?pytest\.(ini|toml)|\.mocharc[\w.]*)$/ },
+  { re: /(^|\/)(conftest\.py|(site|user)customize\.py|tox\.ini|bunfig\.toml|\.?pytest\.(ini|toml)|\.mocharc[\w.]*)$/ },
   { re: /(^|\/)(vitest|vite|jest)\.(config|workspace)\.[\w.]+$/ },
   { re: /(^|\/)\.cargo\/config(\.toml)?$/ },
+  { re: /(^|\/)(site|dist)-packages\/[^/]+\.pth$/ }, // Python runs import lines in a site-packages .pth at startup; a .pth elsewhere (model weights) is not config
   { re: /(^|\/)(babel\.config\.[\w.]+|\.babelrc(\.[\w]+)?|\.pnpmfile\.(cjs|mjs))$/ },
   { re: /(^|\/)package\.json$/, shared: PKG_KEYS },
   { re: /(^|\/)(pnpm-workspace\.yaml|\.yarnrc\.yml|\.npmrc)$/ }, // D101: YAML parsers disagree (Bun.YAML vs js-yaml 4), so any byte change caps, no parsed comparison
@@ -136,4 +137,36 @@ export function runnerConfigNotes(repoDir: string, baseSha: string, head: string
     for (const r of [...refs].sort()) if (ch.has(r)) notes.add(`runner setup file changed: ${r} (loaded by ${cfg} as a preload, setup or mapper target)`);
   }
   return [...notes];
+}
+// Dependency trees are not project config: no runner reads a manifest nested in node_modules (pytest's default norecursedirs skips it; jest and vitest read the root config), so the listing excludes it.
+// bower_components and vendor are skipped except conftest.py, which pytest does load there (its default norecursedirs names neither). In a site-packages or dist-packages dir the import hooks count: top-level
+// .pth, sitecustomize.py, usercustomize.py and a dist-info entry_points.txt with a [pytest11] plugin section. A hook a sibling *.dist-info/RECORD lists with its current sha256 is exempt, as is the stock virtualenv and uv _virtualenv.pth.
+// Residuals, not checked: a RECORD the agent writes or edits to list a hook's new sha256; a tsconfig.json in node_modules that a project tsconfig extends; the modules a .pth imports (_virtualenv.py, __editable__ finders, _distutils_hack).
+const DEP_TREE = /(^|\/)node_modules\//, PY_LOADED_TREE = /(^|\/)(bower_components|vendor)\//, SITE = /^((?:.*\/)?(?:site|dist)-packages)\/(.+)$/, HOOK = /^([^/]+\.pth|(site|user)customize\.py|[^/]+\.dist-info\/entry_points\.txt)$/;
+function pipRecorded(repoDir: string, site: string, rel: string, sha: string, memo: Map<string, Set<string>>): boolean {
+  let s = memo.get(site);
+  if (!s) { s = new Set(); try { for (const d of readdirSync(join(repoDir, site))) if (d.endsWith(".dist-info")) try { for (const l of readFileSync(join(repoDir, site, d, "RECORD"), "utf8").split(/\r?\n/)) { const m = /^"?(.*?)"?,sha256=([\w-]+),/.exec(l); if (m) s.add(`${m[1]}\0${m[2]}`); } } catch { /* no RECORD */ } } catch { /* unreadable dir */ } memo.set(site, s); }
+  return s.has(`${rel}\0${Buffer.from(sha, "hex").toString("base64url")}`); // RECORD: urlsafe base64 sha256, padding stripped
+}
+/** SEAL-CONFTEST-01: path -> sha256 of every untracked runner config with ignore rules NOT applied, so a conftest.py listed in .git/info/exclude or a nested
+ *  .gitignore (invisible to changedFiles and to the committed tree the seal reads) is still seen. One listing per call: intake snapshots it, verify compares. Throws when git fails. */
+export function hiddenRunnerConfigs(repoDir: string): Record<string, string> {
+  const out: Record<string, string> = {}, memo = new Map<string, Set<string>>();
+  for (const f of gitOut(repoDir, ["-c", "core.quotePath=false", "ls-files", "-o", "-z", "--", ":(exclude,glob)**/node_modules/**"]).split("\0")) {
+    const site = SITE.exec(f);
+    if (!f || f.startsWith(".loki/") || (site ? !HOOK.test(site[2]!) : DEP_TREE.test(f) || (PY_LOADED_TREE.test(f) && !/(^|\/)conftest\.py$/i.test(f)) || !RUNNER_CONFIGS.some((s) => s.re.test(f)))) continue;
+    let b: Buffer; try { b = readFileSync(join(repoDir, f)); } catch { out[f] = "!unreadable"; continue; }
+    const h = createHash("sha256").update(b).digest("hex"), t = site ? b.toString("utf8") : "", stock = site?.[2] === "_virtualenv.pth" && /^import _virtualenv\r?\n?$/.test(t); // the one line virtualenv and uv write
+    if (stock || (site?.[2]!.endsWith("/entry_points.txt") && !/^\s*\[pytest11\]\s*$/m.test(t))) continue; // entry points without a pytest plugin section load nothing into the test run
+    if (!site || !pipRecorded(repoDir, site[1]!, site[2]!, h, memo)) out[f] = h;
+  }
+  return out;
+}
+/** Untracked runner configs added, changed or removed since the intake snapshot (`snap`), at most 5 named then "(+N more)". A failed listing, or configs present with no snapshot to compare, is one named entry: fail closed. */
+export function hiddenConfigChanged(repoDir: string, snap: unknown): string[] {
+  let now: Record<string, string>; try { now = hiddenRunnerConfigs(repoDir); } catch { return ["untracked runner configs (listing failed)"]; }
+  if (!snap || typeof snap !== "object") return Object.keys(now).length ? ["untracked runner configs (no intake snapshot to compare)"] : [];
+  const was = snap as Record<string, unknown>;
+  const d = [...new Set([...Object.keys(now), ...Object.keys(was)])].filter((f) => now[f] !== was[f]).sort();
+  return d.length > 5 ? [...d.slice(0, 5), `(+${d.length - 5} more)`] : d;
 }

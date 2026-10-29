@@ -3,10 +3,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
 import { hiddenEdits } from "../../src/util/check_result.ts";
 import { testConfigChanged, verifyStage } from "../../src/engine10/stages/verify.ts";
+import { hiddenConfigChanged, hiddenRunnerConfigs } from "../../src/features/runner_config.ts";
+import { createHash } from "node:crypto";
 
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
@@ -27,17 +29,19 @@ function repo(base: Record<string, string>): string {
   symlinkSync(Bun.which("python3")!, join(dir, ".venv", "bin", "python"));
   return dir;
 }
-/** `work` is written on top of the base commit; `sel(files)` answers impacted(): the named-files call gets the target only. */
-async function verify(base: Record<string, string>, work: Record<string, string>, task: string, target: TestRef, other: TestRef, narrow = false, prep?: (dir: string) => void): Promise<V> {
+/** `work` is written on top of the base commit; `sel(files)` answers impacted(): the named-files call gets the target only. `prep` runs and `pre` is written before the intake snapshot (hidden_cfg). */
+async function verify(base: Record<string, string>, work: Record<string, string>, task: string, target: TestRef, other: TestRef, narrow = false, prep?: (dir: string) => void, pre: Record<string, string> = {}): Promise<V> {
   const dir = repo(base), baseSha = sh(dir, ["rev-parse", "HEAD"]);
   prep?.(dir);
+  for (const [f, c] of Object.entries(pre)) writeFileSync(join(dir, f), c);
+  const hidden_cfg = hiddenRunnerConfigs(dir);
   for (const [f, c] of Object.entries(work)) writeFileSync(join(dir, f), c);
   mkdirSync(join(dir, ".loki"), { recursive: true });
   writeFileSync(join(dir, ".loki", "repomap.json"), JSON.stringify({ files: Object.keys(base) }));
   const ctx = {
     repoDir: dir, runDir: join(dir, ".loki"), baseSha, emit: () => {},
     tests: { detect: async () => ({ runners: [], tests: [target, other] }), impacted: (_m: unknown, f: string[]) => (f.includes(target.path) && (!narrow || f.length === 1) ? [target] : f.length ? [target, other] : []) },
-    outputs: () => ({ intake: { task, repomap_ref: join(dir, ".loki", "repomap.json") }, wall: { files: [] } }),
+    outputs: () => ({ intake: { task, repomap_ref: join(dir, ".loki", "repomap.json"), hidden_cfg }, wall: { files: [] } }),
   } as unknown as RunContext;
   return (await verifyStage.run(ctx, new AbortController().signal)).data as unknown as V;
 }
@@ -242,4 +246,66 @@ describe("engine10 verify: weakened checks (A-115)", () => {
     expect(d.not_proven.join("\n")).toContain("weakened test");
     expect(d.not_proven.join("\n")).not.toContain("required by the task");
   }, 60_000);
+  // SEAL-CONFTEST-01: a conftest.py listed in .git/info/exclude is invisible to the diff, yet it makes a NotImplementedError stub pass with no skip
+  const STUB = { "impl.py": "def double(x):\n    raise NotImplementedError\n" }, EXCL = { ".git/info/exclude": "conftest.py\n" };
+  const PATCH = "import impl\nimpl.double = lambda x: x * 2\n", STUB2 = { "impl.py": "def double(x):\n    raise NotImplementedError  # todo\n" };
+  test("SEAL-CONFTEST-01: an excluded conftest.py the run creates is named, so the verdict cannot be VERIFIED", async () => {
+    const d = await verify({ ...STUB, "test_target.py": TGT, "test_o.py": "def test_x():\n    assert True\n" }, { ...STUB2, "conftest.py": PATCH }, TASK, py("test_target.py"), py("test_o.py"), false, undefined, EXCL);
+    expect(d.not_proven).toEqual(["test configuration changed: conftest.py"]);
+  }, 60_000);
+  test("SEAL-CONFTEST-01: an excluded conftest.py already present at intake and untouched is not a change", async () => {
+    const d = await verify(TWO, { "impl.py": "def double(x):\n    return x * 2\n" }, TASK, py("test_target.py"), py("test_old.py"), false, undefined, { ...EXCL, "conftest.py": "import pytest\n" });
+    expect(d.pre_red).toEqual(["test_old.py::test_old"]);
+    expect(d.not_proven).toEqual([]);
+  }, 60_000);
+  // r2: what intake snapshots and verify compares; `pre` exists before the snapshot, `work` is the run. .venv/ is ignored by repo(); paths are written with their folders.
+  const SP = ".venv/lib/python3.12/site-packages", rec = (c: string): string => createHash("sha256").update(c).digest("base64url");
+  const hidden = (pre: Record<string, string>, work: Record<string, string>): string[] => {
+    const dir = repo({ "a.py": "" }), put = (m: Record<string, string>): void => { for (const [f, c] of Object.entries(m)) { mkdirSync(dirname(join(dir, f)), { recursive: true }); writeFileSync(join(dir, f), c); } };
+    put(pre); const snap = hiddenRunnerConfigs(dir); put(work); return hiddenConfigChanged(dir, snap);
+  };
+  test("SEAL-CONFTEST-01: a conftest.py under a nested .gitignore or in vendor/ is a change; .loki/ and a .pth outside site-packages are not", () => {
+    expect(hidden({ "sub/.gitignore": "*\n" }, { "sub/conftest.py": "x", "vendor/lib/conftest.py": "x", "model.pth": "w", ".loki/conftest.py": "" })).toEqual(["sub/conftest.py", "vendor/lib/conftest.py"]);
+  });
+  test("SEAL-CONFTEST-01: an npm-style install after intake (node_modules manifests, vendor/ and site-packages non-hook files) is not a change", () => {
+    expect(hidden({}, { "node_modules/pkg/package.json": '{"scripts":{"test":"x"}}', "node_modules/pkg/tsconfig.json": "{}", "vendor/pkg/package.json": "{}", [`${SP}/pkg/pyproject.toml`]: "[tool.pytest.ini_options]\n", [`${SP}/pkg/sitecustomize.py`]: "" })).toEqual([]);
+  });
+  test("SEAL-CONFTEST-01: a pip-installed .pth whose RECORD lists its sha256 is not a change", () => {
+    const pth = "/repo/src\n";
+    expect(hidden({}, { [`${SP}/__editable__.pkg-0.1.pth`]: pth, [`${SP}/pkg-0.1.dist-info/RECORD`]: `pkg-0.1.dist-info/METADATA,sha256=x,1\n__editable__.pkg-0.1.pth,sha256=${rec(pth)},${pth.length}\n` })).toEqual([]);
+  });
+  test("SEAL-CONFTEST-01: a hand-written sitecustomize.py, or a .pth whose bytes differ from its RECORD entry, is a change", () => {
+    expect(hidden({}, { [`${SP}/sitecustomize.py`]: "import impl\n" })).toEqual([`${SP}/sitecustomize.py`]);
+    expect(hidden({}, { [`${SP}/__editable__.pkg-0.1.pth`]: "import evil\n", [`${SP}/pkg-0.1.dist-info/RECORD`]: `__editable__.pkg-0.1.pth,sha256=${rec("/repo/src\n")},10\n` })).toEqual([`${SP}/__editable__.pkg-0.1.pth`]);
+  });
+  test("SEAL-CONFTEST-01: the stock _virtualenv.pth is not a change; any other bytes in it are", () => {
+    expect(hidden({}, { [`${SP}/_virtualenv.pth`]: "import _virtualenv", [`.venv/b/site-packages/_virtualenv.pth`]: "import _virtualenv\n" })).toEqual([]);
+    expect(hidden({}, { [`${SP}/_virtualenv.pth`]: "import _virtualenv\nimport evil\n" })).toEqual([`${SP}/_virtualenv.pth`]);
+  });
+  test("SEAL-CONFTEST-01: a dist-info entry_points.txt with a [pytest11] section and no matching RECORD is a change; other entry points are not", () => {
+    const ep = "[pytest11]\nplug = plug\n", f = `${SP}/plug-0.1.dist-info/entry_points.txt`;
+    expect(hidden({}, { [f]: ep })).toEqual([f]);
+    expect(hidden({}, { [f]: ep, [`${SP}/plug-0.1.dist-info/RECORD`]: `plug-0.1.dist-info/entry_points.txt,sha256=${rec("[console_scripts]\n")},18\n` })).toEqual([f]);
+    expect(hidden({}, { [f]: ep, [`${SP}/plug-0.1.dist-info/RECORD`]: `plug-0.1.dist-info/entry_points.txt,sha256=${rec(ep)},${ep.length}\n` })).toEqual([]);
+    expect(hidden({}, { [f]: "[console_scripts]\nplug = plug:main\n" })).toEqual([]);
+  });
+  // A real venv and pytest-plugin install during the run (offline, a wheel built here): uv when on PATH, else python3 -m venv with pip.
+  test.skipIf(!Bun.which("python3"))("SEAL-CONFTEST-01: creating a venv and installing a pytest plugin wheel during the run is not a change", () => {
+    const dir = repo({ "a.py": "" }), snap = hiddenRunnerConfigs(dir), env = { ...process.env, UV_CACHE_DIR: join(dir, ".venv", "uvcache"), UV_PYTHON_DOWNLOADS: "never", PIP_NO_INDEX: "1", PIP_DISABLE_PIP_VERSION_CHECK: "1" };
+    const whl = join(dir, ".venv", "plug_x-0.1-py3-none-any.whl"), run = (c: string, a: string[]): string => execFileSync(c, a, { cwd: dir, env, encoding: "utf8" });
+    run("python3", ["-I", "-c", `import base64,hashlib,sys,zipfile
+fs={"plug_x/__init__.py":"def pytest_configure(config):\\n    pass\\n","plug_x-0.1.dist-info/METADATA":"Metadata-Version: 2.1\\nName: plug-x\\nVersion: 0.1\\n","plug_x-0.1.dist-info/WHEEL":"Wheel-Version: 1.0\\nGenerator: t\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n","plug_x-0.1.dist-info/entry_points.txt":"[pytest11]\\nplug_x = plug_x\\n"}
+z=zipfile.ZipFile(sys.argv[1],"w");r=[n+",sha256="+base64.urlsafe_b64encode(hashlib.sha256(c.encode()).digest()).rstrip(b"=").decode()+","+str(len(c)) for n,c in fs.items()]
+[z.writestr(n,c) for n,c in fs.items()];z.writestr("plug_x-0.1.dist-info/RECORD","\\n".join(r+["plug_x-0.1.dist-info/RECORD,,"])+"\\n");z.close()`, whl]);
+    const uv = Bun.which("uv"), venv = join(dir, ".venv", "env");
+    if (uv) { run(uv, ["venv", "-q", venv]); run(uv, ["pip", "install", "-q", "--offline", "--no-index", "--python", join(venv, "bin", "python"), whl]); }
+    else { run("python3", ["-m", "venv", venv]); run(join(venv, "bin", "python"), ["-m", "pip", "install", "-q", "--no-index", whl]); }
+    const files = execFileSync("git", ["ls-files", "-o"], { cwd: dir, encoding: "utf8" });
+    expect(files).toContain("plug_x-0.1.dist-info/entry_points.txt");
+    if (uv) expect(files).toContain("site-packages/_virtualenv.pth");
+    expect(hiddenConfigChanged(dir, snap)).toEqual([]);
+  }, 60_000);
+  test("SEAL-CONFTEST-01: more than 5 changed hidden configs name 5, then the count", () => {
+    expect(hidden({}, Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((i) => [`.venv/t${i}/conftest.py`, ""])))).toEqual([1, 2, 3, 4, 5].map((i) => `.venv/t${i}/conftest.py`).concat("(+2 more)"));
+  });
 });

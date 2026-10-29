@@ -5,7 +5,7 @@ import { scopedOutOf } from "../../project_model/scope.ts";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative } from "node:path";
-import { testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
+import { hiddenConfigChanged, testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst } from "../../e10ext/select.ts"; import { dependentNotes, dependentTests } from "../../features/dependents.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { guessRunner, isTestFile } from "../testmap.ts";
@@ -254,7 +254,7 @@ export const verifyStage: Stage = {
     try { for (const [i, h] of (hold?.tests ?? []).entries()) { if (signal.aborted) break; const t = h as TestRef, tc = commandFor(t, ctx.repoDir, api); await runCheck(ctx, `holdout:${i + 1}`, tc.cmd, tc.args, signal, checks, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: true, opaque: true, ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); } } finally { hold?.cleanup(); }
     if (hold?.missing.length) { for (const m of hold.missing) recordHoldoutTriage(ctx.runDir, { check: "holdout:store", result: "not_run", reason: m }); const k: VerifyCheck = { name: "holdout:store", cmd: "holdout", result: "not_run", duration_s: 0, reason: "holdout store unavailable", owner: "harness" }; checks.push(k); ctx.emit("test.result", "verify", { ...pubHold(k) }); } // C-C4b-c: a store failure is a harness/infrastructure failure (not_run, no fix round), never a test failure the fixer sees; the missing-file text stays out of the log
     const targetNames = new Set([...[...wallTests, ...relevant].map(testCheckName), ...checks.filter(isHold).map((c) => c.name)]); // FC-21b: Wall and task-named tests, the proof a limit-stopped run needs
-    const cfgChanged = testConfigChanged(ctx.repoDir, ctx.baseSha, changed); // FC-21b: also feeds uncovered_changed
+    const cfgChanged = [...new Set([...testConfigChanged(ctx.repoDir, ctx.baseSha, changed), ...hiddenConfigChanged(ctx.repoDir, ctx.outputs().intake?.hidden_cfg)])]; // FC-21b: also feeds uncovered_changed; SEAL-CONFTEST-01: ignored configs added or changed since intake count too
     const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map(testCheckName)), new Set(relevant.map(testCheckName)), signal, cfgChanged.length === 0, new Set((ctx.outputs().intake as { zero_baseline?: { zero?: string[] } } | undefined)?.zero_baseline?.zero ?? []), depNames);
     // REPOMEM: a failing, untouched, non-target test whose every id was already red in the intake baseline (same base commit) is pre-existing: never blocks. Anything else that fails is introduced and always blocks.
     const attr = attribute(ctx.repoDir, ctx.baseSha, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, ids: c.ids, eligible: !targetNames.has(c.name) && !changed.includes(c.name.slice(c.name.indexOf(":") + 1)) })));
