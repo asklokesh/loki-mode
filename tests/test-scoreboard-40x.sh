@@ -125,6 +125,19 @@ wpbad '{"runs":[{"setup":"top","outcomes":{}}]}'
 [ "$RC" -eq 2 ] && grep -q 'empty outcomes' "$T/bad.out"; check wrong-pass-empty-outcomes-rc2 $? "rc=$RC $(cat "$T/bad.out")"
 wpbad '{"runs":[{"setup":"top","outcomes":{"SD-0001":"SEALED"}}]}'
 [ "$RC" -eq 2 ] && grep -q 'unmeasured' "$T/bad.out" && grep -q 'mock-abuse' "$T/bad.out"; check wrong-pass-partial-coverage-rc2 $? "rc=$RC $(cat "$T/bad.out")"
+# a malformed manifest fails loudly too (python entry point: the shell wrapper does not forward --wrong-pass-manifest)
+wpman() {
+    printf '%s' "$1" > "$T/man.json"
+    python3 -I "$SCRIPT_DIR/../scripts/scoreboard-40x.py" \
+        --current "$SCRIPT_DIR/../scripts/b9-fixtures/recorded-40x/current.tsv" \
+        --baseline "$SCRIPT_DIR/../scripts/b9-fixtures/recorded-40x/baseline-11.3.1.tsv" \
+        --version v --wrong-pass "$T/wp.json" --wrong-pass-manifest "$T/man.json" --json-out "$T/man-out.json" > "$T/man.out" 2>&1
+    RC=$?
+}
+wpman '{"defects":[{"id":"SD-0001"}]}'
+[ "$RC" -eq 2 ] && grep -q 'without id and category' "$T/man.out" && ! grep -q Traceback "$T/man.out"; check wrong-pass-manifest-defect-no-category-rc2 $? "rc=$RC $(cat "$T/man.out")"
+wpman '{"defects":[]}'
+[ "$RC" -eq 2 ] && grep -q 'declares no categories' "$T/man.out"; check wrong-pass-manifest-no-categories-rc2 $? "rc=$RC $(cat "$T/man.out")"
 # a missing results file exits 2, never a silent empty column
 bash "$SB" --dry --version v --wrong-pass "$T/nope.json" --json-out "$T/x.json" > /dev/null 2>&1; [ $? -eq 2 ]; check wrong-pass-missing-file-rc2 $? ""
 
