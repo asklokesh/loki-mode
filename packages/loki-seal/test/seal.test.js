@@ -1436,6 +1436,33 @@ test('seal analytics: a group-writable telemetry.sh is refused, a trusted one is
   assert.ok(!fs.existsSync(bad + '.ran'), 'group-writable sender must not run');
 });
 
+test('seal analytics: sender trust checks the owner uid (stubbed getuid) and every ancestor directory', { skip: !process.getuid && 'no uid on this platform' }, () => {
+  const { trustedTelemetry } = require('../bin/loki-seal.js');
+  const base = path.join(root, 'trust-' + n++);
+  const dirA = path.join(base, 'a');
+  const dirB = path.join(dirA, 'b');
+  fs.mkdirSync(dirB, { recursive: true });
+  for (const d of [base, dirA, dirB]) fs.chmodSync(d, 0o755);
+  const f = path.join(dirB, 'telemetry.sh');
+  fs.writeFileSync(f, 'true\n', { mode: 0o755 });
+  const real = fs.realpathSync(f);
+  const realGetuid = process.getuid;
+  try {
+    assert.strictEqual(trustedTelemetry(f), real, 'control: a clean chain is trusted');
+    // uid branch: a different current user than the file owner must be refused, on any machine
+    process.getuid = () => realGetuid.call(process) + 4242;
+    assert.strictEqual(trustedTelemetry(f), null, 'file owned by someone else is refused');
+    process.getuid = realGetuid;
+    // ancestor branch: a group- or other-writable directory anywhere above the file lets it be swapped
+    for (const mode of [0o775, 0o757]) {
+      fs.chmodSync(dirA, mode);
+      assert.strictEqual(trustedTelemetry(f), null, 'ancestor mode ' + mode.toString(8) + ' is refused');
+    }
+    fs.chmodSync(dirA, 0o755);
+    assert.strictEqual(trustedTelemetry(f), real, 'control: restored ancestor is trusted again');
+  } finally { process.getuid = realGetuid; }
+});
+
 test('seal analytics: not opted in spawns nothing, and the sender gets a minimal environment', () => {
   const t = teleEnv('optin');
   const marker = path.join(t.base, 'ran');

@@ -382,6 +382,23 @@ function underDir(p, dir) {
   return p === d || p.startsWith(d.endsWith(path.sep) ? d : d + path.sep);
 }
 
+// Every directory above the sender, up to the filesystem root, must be owned by the
+// current user or root and not group/other writable, otherwise the file could be swapped.
+// A root-owned sticky directory (such as /tmp) is allowed: other users cannot rename entries they do not own.
+function ancestorsSafe(real) {
+  const uid = process.getuid ? process.getuid() : null;
+  let dir = path.dirname(real);
+  for (;;) {
+    const st = fs.statSync(dir);
+    if (!st.isDirectory()) return false;
+    if (uid !== null && st.uid !== uid && st.uid !== 0) return false;
+    if ((st.mode & 0o022) && !(st.uid === 0 && (st.mode & 0o1000))) return false;
+    const up = path.dirname(dir);
+    if (up === dir) return true;
+    dir = up;
+  }
+}
+
 function trustedTelemetry(c) {
   try {
     const real = fs.realpathSync(c);
@@ -390,6 +407,7 @@ function trustedTelemetry(c) {
     let top = null;
     try { top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: ctx.root, encoding: 'utf8', timeout: 2000 }).stdout.trim() || null; } catch { /* not a repo */ }
     for (const dir of [process.cwd(), ctx.root, top]) if (dir && underDir(real, dir)) return null;
+    if (!ancestorsSafe(real)) return null;
     return real;
   } catch { return null; }
 }
@@ -574,7 +592,7 @@ function countHookError() {
   } finally { fs.closeSync(fd); }
 }
 
-module.exports = { passRecords, detect, childEnv };
+module.exports = { passRecords, detect, childEnv, trustedTelemetry };
 if (require.main === module) main().catch((e) => {
   const m = (e && e.message) || String(e);
   if (mode === 'start') {
