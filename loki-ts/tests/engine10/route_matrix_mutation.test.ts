@@ -54,7 +54,7 @@ const MUTATIONS: { name: string; edits: Edit[] }[] = [
   { name: "O6 machine stall climb runs over the override", edits: [[UM, "if (!routerActive() || out", "if (!routerEnabled() || out"]] },
   { name: "W1 Wall parity: router drops every per-call pin under an override", edits: [[SR, "if (!routerActive()) return opts.model;", "if (!routerActive()) return routerEnabled() ? undefined : opts.model;"]] },
   { name: "W2 Wall parity: no-advisor floor applied under an override", edits: [[SR, "if (!routerActive()) return opts.model;", "if (!routerActive()) return routerEnabled() ? floorNoAdvisor(opts.model, advisor) : opts.model;"]] },
-  { name: "M7 lint-only stall climbs (code-owned gate removed)", edits: [[UM, "const climbed = tests > 0 && (o.repeated", "const climbed = (o.repeated"]] },
+  { name: "M7 lint-only stall climbs (code-owned gate removed)", edits: [[UM, "const raised = tests > 0 && (o.repeated", "const raised = (o.repeated"]] },
   { name: "M8 unitRedo dropped (haiku unit not redone on sonnet)", edits: [[UM, '=== "redo-sonnet"; // B4', '=== "never"; // B4']] },
   { name: "M9 every plan is treated as a valid haiku record", edits: [[UM, "export function validHaikuRoute(plan: Record<string, unknown> | undefined): { reason: string } | null {", 'export function validHaikuRoute(plan: Record<string, unknown> | undefined): { reason: string } | null {\n  if (plan !== undefined || plan === undefined) return { reason: "x" };']] },
   { name: "M10 machine stall climb skips the shared decision", edits: [[UM, "return routedFix(runModel, out, { repeated: false, stall: true, groups, reason }).climbed;", 'return null;']] },

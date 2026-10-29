@@ -175,6 +175,14 @@ describe("torn last line of events.jsonl", () => {
     writeFileSync(evPath(r), readFileSync(evPath(r), "utf8").replace(/\n$/, ""));
     expect(await cli(r)).toBe(0);
   });
+  test("an unterminated tail the writer could not have cut (leading whitespace, a raw tab or CR, or a whole line with trailing whitespace) is TAMPERED rc 1", async () => {
+    const r = run(false), orig = readFileSync(evPath(r), "utf8"), whole = orig.replace(/\n$/, "");
+    const shapes: Record<string, string> = { tornLeadingSpace: orig + ' {"v":1,"seq":99', tornTab: orig + '{"v":1,\t"seq":99', tornCr: orig + '{"v":1,"seq":99\r', wholeTrailingSpace: whole + " ", wholeTrailingCr: whole + "\r" };
+    for (const [name, text] of Object.entries(shapes)) {
+      writeFileSync(evPath(r), text);
+      expect([name, await cli(r)]).toEqual([name, 1]);
+    }
+  });
 });
 
 describe("resume repairs a torn tail before the seal", () => {
