@@ -411,7 +411,7 @@ echo "author=\$arc digest=\${CHECKLIST_FROZEN_DIGEST:-none}"
 eval "\${AFTER:-:}"
 DRV
 au_run() {  # <mode> [after-hook]: echoes the driver's summary lines
-    ( cd "$AUP" && STUB_MODE="$1" AFTER="${2:-:}" PRISTINE_JSON="$PRISTINE" bash "$AU/driver.sh" 2>/dev/null )
+    ( cd "$AUP" && STUB_MODE="$1" AFTER="${2:-:}" PRISTINE_JSON="$PRISTINE" AU_SPEC="$AU/spec.md" bash "$AU/driver.sh" 2>/dev/null )
 }
 au_field() { python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2]))' "$AUP/.loki/checklist/author.json" "$1" 2>/dev/null; }
 au_calls() { cat "$AU/count" 2>/dev/null || echo 0; }
@@ -430,13 +430,20 @@ grep -q 'secret implementation' "$AU/prompt" && fail "author: prompt leaks imple
 grep -q 'no-tools' "$AUP/.loki/checklist/author-isolation.txt" || fail "author: claude isolation label missing"
 [ "$(au_calls)" = 1 ] || fail "author success: provider calls $(au_calls), want 1"
 ls "$AU"/tmp/loki-author.* >/dev/null 2>&1 && fail "author: run-owned work dir left behind"
-# once per spec sha256: a second start does not call the provider again
+# same process, authored twice: the in-memory digest lets the second call skip the provider
+au_reset
+au_run good 'checklist_author "$AU_SPEC"' >/dev/null
+[ "$(au_calls)" = 1 ] || fail "author: second call in the same process called the provider again ($(au_calls))"
+au_reset
 au_run good >/dev/null
-[ "$(au_calls)" = 1 ] || fail "author: second start called the provider again ($(au_calls))"
+# a restarted process holds no in-memory accepted digest and author.json is an
+# unsigned file the implementer can forge, so it re-authors instead of trusting it
+au_run good >/dev/null
+[ "$(au_calls)" = 2 ] || fail "author: restart trusted an unsigned author.json ($(au_calls), want 2)"
 # a changed spec is authored again
 printf '# PRD\nGreet people loudly.\n' > "$AU/spec.md"
 au_run good >/dev/null
-[ "$(au_calls)" = 2 ] || fail "author: changed spec was not re-authored ($(au_calls))"
+[ "$(au_calls)" = 3 ] || fail "author: changed spec was not re-authored ($(au_calls))"
 printf '# PRD\nGreet people.\n' > "$AU/spec.md"
 
 # first attempt bad, second good: authored on attempt 2
@@ -459,6 +466,19 @@ grep -q 'not authored by the check author' "$AU/warn.log" || fail "freeze refusa
 rm -f "$AU/count" "$AUP/.loki/checklist/checklist.json"
 au_run good >/dev/null
 [ "$(au_calls)" = 0 ] || fail "author: provider called again after two failed attempts"
+
+# forge: the author fails, then the implementer writes checklist.json AND a
+# matching author.json itself; freeze must still refuse (author.json is not bound
+# to the checklist content)
+au_reset
+out="$(au_run bad 'sp="$(python3 -I -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],\"rb\").read()).hexdigest())" "$AU_SPEC")"; printf "%s\n" "$PRISTINE_JSON" > .loki/checklist/checklist.json; printf "{\"status\":\"authored\",\"spec_sha256\":\"%s\"}" "$sp" > .loki/checklist/author.json; checklist_freeze_once; echo "forge_freeze=$? digest=${CHECKLIST_FROZEN_DIGEST:-none}"')"
+case "$out" in *"forge_freeze=1 digest=none"*) ;; *) fail "forged author.json froze an implementer checklist: $out" ;; esac
+grep -q 'does not match the checklist the check author produced' "$AU/warn.log" || fail "forge refusal not logged"
+# forge after a real authoring: the implementer swaps in its own checklist.json
+# (author.json left authored) before a fresh freeze; the digest comparison refuses
+au_reset
+out="$(au_run good 'CHECKLIST_FROZEN_DIGEST=""; printf "%s\n" "$PRISTINE_JSON" > .loki/checklist/checklist.json; checklist_freeze_once; echo "swap_freeze=$? digest=${CHECKLIST_FROZEN_DIGEST:-none}"')"
+case "$out" in *"swap_freeze=1 digest=none"*) ;; *) fail "swapped checklist.json froze after authoring: $out" ;; esac
 
 # codex and seam providers: cwd-only, never claimed tool-denied
 au_reset
@@ -502,7 +522,8 @@ PY
     mutate runsh-drops-freeze-call run.sh '            checklist_freeze_once || true' '            :'
     mutate author-gate-off prd-checklist.sh 'if [ "$CHECKLIST_AUTHOR_REQUIRED" = "true" ]; then' 'if false; then'
     mutate author-runs-in-repo prd-checklist.sh 'out="$(cd "$cwd" && LOKI_DIR' 'out="$(LOKI_DIR'
-    mutate author-not-once prd-checklist.sh 'if [ "$prior_status" = "authored" ]; then' 'if false; then'
+    mutate author-not-once prd-checklist.sh 'if [ "$prior_status" = "authored" ] && [ -n "$_CHECKLIST_AUTHORED_DIGEST" ]; then' 'if false; then'
+    mutate drop-authored-digest-compare prd-checklist.sh '[ -z "$_CHECKLIST_AUTHORED_DIGEST" ] || [ "$(_checklist_file_sha "$CHECKLIST_FILE")" != "$_CHECKLIST_AUTHORED_DIGEST" ]' 'false'
     mutate author-unbounded prd-checklist.sh 'CHECKLIST_AUTHOR_MAX_ATTEMPTS=2' 'CHECKLIST_AUTHOR_MAX_ATTEMPTS=3'
     mutate runsh-drops-author-call run.sh 'checklist_author "$prd_path" || true' ':'
     mutate runsh-keeps-init-prompt run.sh ' && [ ! -f ".loki/checklist/author.json" ]; then' '; then'

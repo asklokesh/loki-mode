@@ -161,6 +161,17 @@ checklist_init() {
 # reported as such, never as tool-denied.
 CHECKLIST_AUTHOR_REQUIRED=${CHECKLIST_AUTHOR_REQUIRED:-false}
 CHECKLIST_AUTHOR_MAX_ATTEMPTS=2
+# sha256 of the checklist.json the author's accepted reply produced, held in
+# this shell's memory only (never exported, never written to a file). author.json
+# is an unsigned file the implementer can forge, so freeze trusts only this.
+_CHECKLIST_AUTHORED_DIGEST=""
+
+# _checklist_file_sha <path>: sha256 hex of the file, empty if unreadable.
+_checklist_file_sha() {
+    local py
+    py="$(_loki_snapshot_py_tool)" || return 0
+    "$py" -I -S -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1" 2>/dev/null || true
+}
 
 # _checklist_author_field <field>: field of the author record, empty if absent.
 _checklist_author_field() {
@@ -206,9 +217,15 @@ checklist_author() {
     prior_sha="$(_checklist_author_field spec_sha256)"
     attempts=0
     if [ -n "$spec_sha" ] && [ "$prior_sha" = "$spec_sha" ]; then
-        if [ "$prior_status" = "authored" ]; then
+        # An authored record is only trusted by the process that wrote it: the
+        # accepted digest lives in memory, so a restarted process re-authors
+        # rather than believe an unsigned author.json.
+        if [ "$prior_status" = "authored" ] && [ -n "$_CHECKLIST_AUTHORED_DIGEST" ]; then
             checklist_freeze_once || true
             return 0
+        fi
+        if [ "$prior_status" = "authored" ]; then
+            prior_status=""
         fi
         attempts="$(_checklist_author_field attempts)"
         case "$attempts" in ''|*[!0-9]*) attempts=0 ;; esac
@@ -259,6 +276,7 @@ checklist_author() {
         log_warn "check author: no valid checks after ${attempts} attempt(s); completion stays blocked"
         return 1
     fi
+    _CHECKLIST_AUTHORED_DIGEST="$(_checklist_file_sha "$CHECKLIST_FILE")"
     checklist_freeze_once || true
     return 0
 }
@@ -1147,6 +1165,12 @@ checklist_freeze_once() {
         fi
         if [ "$_fa_status" != "authored" ] || [ -z "$_fa_sha" ] || [ "$_fa_sha" != "$_fa_want" ]; then
             log_warn "checklist freeze refused: the checks were not authored by the check author (status: ${_fa_status:-none})"
+            return 1
+        fi
+        # author.json is forgeable; bind the freeze to the digest the harness
+        # recorded in memory when it accepted the author's checklist.
+        if [ -z "$_CHECKLIST_AUTHORED_DIGEST" ] || [ "$(_checklist_file_sha "$CHECKLIST_FILE")" != "$_CHECKLIST_AUTHORED_DIGEST" ]; then
+            log_warn "checklist freeze refused: checklist.json does not match the checklist the check author produced"
             return 1
         fi
     fi
