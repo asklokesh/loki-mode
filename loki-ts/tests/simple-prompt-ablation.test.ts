@@ -23,7 +23,7 @@
 //
 // Gates, receipts and verification are never an ablation arm.
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { buildPrompt } from "../src/runner/build_prompt";
@@ -123,5 +123,18 @@ describe("LOKI_SIMPLE prompt ablation", () => {
       `LOKI_SIMPLE: ${full.length} -> ${simple.length} bytes (-${pct}%), ` +
         `~${Math.round((full.length - simple.length) / 4)} tokens/iteration`,
     );
+  });
+});
+
+describe("LOKI_SIMPLE gated-push comment", () => {
+  it("states the same push count as the gated block", () => {
+    const src = readFileSync(new URL("../src/runner/build_prompt.ts", import.meta.url), "utf8");
+    const block = src.split("if (!simple) {")[1].split("\n  }\n")[0];
+    const pushes = (block.match(/^\s*lines\.push\(/gm) ?? []).length;
+    const words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+    const claimed = src.match(/only the (\w+) pushes and the flag-prefix loop below are gated/);
+    expect(claimed).not.toBeNull();
+    expect(words.indexOf(claimed![1]) + 1).toBe(pushes);
+    expect(block).toContain("flagPrefixLines(env)");
   });
 });

@@ -1659,7 +1659,7 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   // about WHERE the number came from, which is exactly the kind of confident
   // mis-sourcing that turns a real measurement into an unreproducible claim.
   //
-  // Note the strip is bounded: only the nine pushes below are gated, so
+  // Note the strip is bounded: only the ten pushes and the flag-prefix loop below are gated, so
   // <loki_system>, the PRD anchor, the goal-score advisory and the closing tag
   // all survive. The prefix size is therefore a CEILING on the saving, never
   // the saving itself.
