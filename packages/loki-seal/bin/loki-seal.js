@@ -355,6 +355,39 @@ function runSuite(root, runner, timeout) {
   });
 }
 
+// Outcome analytics (enum only): one seal_hook_decision per Stop decision, sent through Loki's own sender
+// (loki_emit_seal_hook_decision in autonomy/telemetry.sh -> autonomy/lib/telemetry-schema.json), never a second
+// sender. Nothing is sent when Loki's telemetry.sh cannot be found, so a standalone install stays silent. The sender
+// is a detached child that is never awaited: a missing, throwing or hanging sender cannot change the decision, the
+// exit code or the hook's latency. The opt-outs are checked here so an opted-out user spawns nothing; the sender
+// re-checks them (and the analytics opt-in) in bash, which is the authority.
+function telemetryOff() {
+  const e = process.env;
+  if (String(e.LOKI_TELEMETRY || '').toLowerCase() === 'off' || e.LOKI_TELEMETRY_DISABLED === 'true' || e.DO_NOT_TRACK === '1') return true;
+  try { return /^TELEMETRY_DISABLED=true/m.test(fs.readFileSync(path.join(os.homedir(), '.loki', 'config'), 'utf8')); } catch { return false; }
+}
+
+function findTelemetry() {
+  const cands = [process.env.LOKI_TELEMETRY_SH, process.env.LOKI_DIR && path.join(process.env.LOKI_DIR, 'autonomy', 'telemetry.sh'),
+    path.join(__dirname, '..', '..', '..', 'autonomy', 'telemetry.sh'), path.join(os.homedir(), '.claude', 'skills', 'loki-mode', 'autonomy', 'telemetry.sh')];
+  return cands.find((c) => c && fs.existsSync(c)) || null;
+}
+
+const SEAL_REASONS = ['none', 'tests_failed', 'tests_weakened', 'no_tests', 'contract_unverified', 'released', 'error'];
+function emitDecision(decision, reason) {
+  try {
+    if (!['allow', 'block'].includes(decision) || !SEAL_REASONS.includes(reason) || telemetryOff()) return;
+    const sh = findTelemetry();
+    if (!sh) return;
+    // The script path and both enum values travel as positional arguments, never spliced into the command text.
+    // A watchdog kills the sender shell after 10 s, so a hung sender cannot linger.
+    const script = '( sleep 10; kill -9 $$ ) >/dev/null 2>&1 & . "$1" >/dev/null 2>&1 && loki_emit_seal_hook_decision "$2" "$3" >/dev/null 2>&1';
+    const child = spawn('bash', ['-c', script, 'loki-seal-emit', sh, decision, reason], { detached: true, stdio: 'ignore' });
+    child.on('error', () => {});
+    child.unref();
+  } catch { /* telemetry never affects the hook */ }
+}
+
 async function main() {
   let input = {};
   try { input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch { /* hook without JSON */ }
@@ -479,11 +512,13 @@ async function main() {
   ].join('\n');
 
   if ((problems.length && !released) || (cOnly && !cReleased)) {
+    emitDecision('block', findings.length ? 'tests_weakened' : problems.length ? 'tests_failed' : 'contract_unverified');
     // Exit 2: stderr is fed back to the model and the stop is blocked.
     process.stderr.write(`${receipt}\n\nDo not finish yet. Fix the code, not the tests:\n- ${[...problems, ...cproblems].join('\n- ')}` + (r && r.tail ? `\n\nLast test output:\n${r.tail}` : '') + '\n');
     process.exit(2);
   }
   // Plain Stop stdout goes only to the debug log; systemMessage is what the docs show to the user.
+  emitDecision('allow', released || cReleased ? 'released' : !runner ? 'no_tests' : 'none');
   process.stdout.write(JSON.stringify({ systemMessage: receipt }));
   try { fs.unlinkSync(errFile()); } catch { /* no counter yet */ }
 }
@@ -519,10 +554,12 @@ if (require.main === module) main().catch((e) => {
   try { n = countHookError(); } catch { counted = false; }
   // Counter unavailable (tmpdir read-only or full): a repeated stop (stop_hook_active) releases instead.
   if (counted ? n > max : ctx.input.stop_hook_active === true) {
+    emitDecision('allow', 'error');
     process.stdout.write(JSON.stringify({ systemMessage: `loki-seal: NOT VERIFIED (released after ${counted ? max + ' blocks' : 'a repeated stop'}: hook error)\nlast error: ${m}` }));
     process.exit(0);
   }
   // Fail closed: exit 2 blocks the stop; any other non-zero exit would let it through.
+  emitDecision('block', 'error');
   process.stderr.write(`loki-seal: NOT VERIFIED (hook error: ${m})\n`);
   process.exit(2);
 });

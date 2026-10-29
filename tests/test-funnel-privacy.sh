@@ -748,6 +748,27 @@ else
     bad "parity: schema lacks something a sender uses" "$PARITY"
 fi
 
+# seal_hook_decision: listed, enum-only; a path, a test name or an extra key never survives the schema filter.
+SEALEV="$(python3 - "$REPO_ROOT" <<'PPY'
+import sys, os, importlib.util
+root = sys.argv[1]
+spec = importlib.util.spec_from_file_location("pap", os.path.join(root, "autonomy/lib/proof-analytics-props.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+s = m.load_schema()
+good = m.sanitize(s, "seal_hook_decision", {"decision": "block", "reason": "tests_failed"})
+bad = m.sanitize(s, "seal_hook_decision", {"decision": "/Users/x/repo", "reason": "adds LEAKNAME_7f3a", "path": "/Users/x/repo", "test": "LEAKNAME_7f3a"})
+out = []
+if good.get("decision") != "block" or good.get("reason") != "tests_failed": out.append("valid enums dropped")
+if any(k in bad for k in ("decision", "reason", "path", "test")): out.append("unlisted value or key survived: %r" % bad)
+print("; ".join(out))
+PPY
+)"
+if [ -z "$SEALEV" ]; then
+    ok "seal_hook_decision: enums kept, path/test-name values and unlisted keys dropped by the schema"
+else
+    bad "seal_hook_decision schema filter" "$SEALEV"
+fi
+
 # ---------------------------------------------------------------------------
 # Hardening: seat tick marker, introspective on every event, verdict enums
 # pinned to what the producers write, zsh sourcing, dashboard image custody.

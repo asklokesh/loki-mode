@@ -36,6 +36,14 @@
   "first_run_blocked": {
    "blocker": {"type": "enum", "values": ["no_provider", "not_logged_in", "not_a_repo", "git_identity", "node", "python3", "jq", "git", "curl", "disk", "skill_symlink", "other"]}
   },
+  "seal_hook_decision": {
+   "decision": {"type": "enum", "values": ["allow", "block"]},
+   "reason": {"type": "enum", "values": ["none", "tests_failed", "tests_weakened", "no_tests", "contract_unverified", "released", "error"]}
+  },
+  "seal_hook_decision": {
+   "decision": {"type": "enum", "values": ["allow", "block"]},
+   "reason": {"type": "enum", "values": ["none", "tests_failed", "tests_weakened", "no_tests", "contract_unverified", "released", "error"]}
+  },
   "build_verified": {
    "headline": {"type": "enum", "values": ["VERIFIED", "VERIFIED WITH GAPS", "NOT VERIFIED"]},
    "route": {"type": "enum", "values": ["engine10"]},

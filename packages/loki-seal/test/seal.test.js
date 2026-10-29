@@ -36,11 +36,11 @@ function transcript(dir, text) {
   return f;
 }
 const DEFAULT_REQUEST = 'Fix the adder.\n- adds zero\n';
-function seal(cmd, dir, extra = {}) {
+function seal(cmd, dir, extra = {}, envx = {}) {
   const tp = 'transcript_path' in extra ? {} : { transcript_path: transcript(dir, DEFAULT_REQUEST) };
   const r = spawnSync('node', [SEAL, cmd], {
     input: JSON.stringify({ session_id: 's-' + path.basename(dir), cwd: dir, ...tp, ...extra }),
-    env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state') },
+    env: { ...process.env, LOKI_TELEMETRY: 'off', LOKI_SEAL_STATE_DIR: path.join(root, 'state'), ...envx },
     encoding: 'utf8',
   });
   // Contract: block = exit 2 + reason on stderr; pass = exit 0 + receipt on stdout.
@@ -1298,4 +1298,103 @@ test('forged lines r10: the bin runs as a hook (require.main guard) and exports 
   const q = spawnSync('node', ['-e', "const m = require(process.argv[1]); process.stdout.write(Object.keys(m).sort().join())", SEAL], { encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] });
   assert.strictEqual(q.status, 0, q.stderr);
   assert.match(q.stdout, /detect.*passRecords/);
+});
+
+// ---- seal_hook_decision analytics (AN-13): enum-only events through Loki's own sender, never blocking ----
+// No real network: curl is a stub on PATH that records the request body; HOME is a fixture so no real id or config is read.
+const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function teleEnv(tag) {
+  const base = path.join(root, 'tele-' + tag + '-' + n++);
+  fs.mkdirSync(path.join(base, 'bin'), { recursive: true });
+  fs.mkdirSync(path.join(base, 'home'), { recursive: true });
+  const cap = path.join(base, 'cap.log');
+  fs.writeFileSync(path.join(base, 'bin', 'curl'), `#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = "-d" ]; then printf '%s\\n' "$2" >> "${cap}"; fi; shift; done\n`, { mode: 0o755 });
+  const env = { PATH: path.join(base, 'bin') + path.delimiter + process.env.PATH, HOME: path.join(base, 'home'), LOKI_TELEMETRY: 'on', LOKI_ANALYTICS: 'on', LOKI_TELEMETRY_ENDPOINT: 'http://127.0.0.1:9' };
+  return { base, cap, env };
+}
+function captured(cap, wantLines, ms = 8000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const ls = fs.existsSync(cap) ? fs.readFileSync(cap, 'utf8').split('\n').filter(Boolean) : [];
+    if (ls.length >= wantLines) return ls;
+    sleepMs(100);
+  }
+  return fs.existsSync(cap) ? fs.readFileSync(cap, 'utf8').split('\n').filter(Boolean) : [];
+}
+const LEAK_TEST = 'adds LEAKNAME_7f3a';
+const leakRepo = () => repo(nodeRepo(ADD_BAD, `const test = require('node:test'); const assert = require('node:assert'); const add = require('../lib.js');
+test('${LEAK_TEST}', () => { assert.strictEqual(add(1, 2), 3); });
+`));
+
+test('seal analytics: a block sends one allowlisted seal_hook_decision with no path, file name or test name', () => {
+  const dir = leakRepo();
+  const t = teleEnv('block');
+  const r = seal('stop', dir, { transcript_path: transcript(dir, 'Fix the adder.\n- ' + LEAK_TEST + '\n') }, t.env);
+  assert.strictEqual(r.status, 2);
+  const lines = captured(t.cap, 1);
+  assert.strictEqual(lines.length, 1, 'exactly one event: ' + lines.join('|'));
+  const body = JSON.parse(lines[0]);
+  assert.strictEqual(body.event, 'seal_hook_decision');
+  assert.strictEqual(body.properties.decision, 'block');
+  assert.strictEqual(body.properties.reason, 'tests_failed');
+  const allowed = new Set(['decision', 'reason', 'os_family', 'arch', 'version', 'channel', 'traffic', 'introspective']);
+  assert.deepStrictEqual(Object.keys(body.properties).filter((k) => !allowed.has(k)), []);
+  for (const leak of [dir, root, 'LEAKNAME', 'a.test.js', 'lib.js', 'Fix the adder', path.basename(dir)]) {
+    assert.ok(!lines[0].includes(leak), `payload leaked ${leak}`);
+  }
+});
+
+test('seal analytics: weakening tests sends reason tests_weakened, a clean pass sends allow/none', () => {
+  const dir = repo(nodeRepo(ADD_OK, T2));
+  const t = teleEnv('weak');
+  assert.strictEqual(seal('start', dir, {}, t.env).status, 0);
+  put(dir, { 'test/a.test.js': null });
+  assert.strictEqual(seal('stop', dir, {}, t.env).status, 2);
+  const ok = repo(nodeRepo(ADD_OK, T2));
+  assert.strictEqual(seal('stop', ok, {}, t.env).status, 0);
+  const evs = captured(t.cap, 2).map((l) => JSON.parse(l).properties);
+  const key = (p) => p.decision + '/' + p.reason;
+  assert.deepStrictEqual(evs.map(key).sort(), ['allow/none', 'block/tests_weakened']);
+});
+
+test('seal analytics: every opt-out sends nothing (and the same setup sends when not opted out)', () => {
+  const optouts = [{ LOKI_TELEMETRY: 'off' }, { DO_NOT_TRACK: '1' }, { LOKI_TELEMETRY_DISABLED: 'true' }, { LOKI_ANALYTICS: 'off' }];
+  for (const o of optouts) {
+    const t = teleEnv('optout');
+    const dir = leakRepo();
+    assert.strictEqual(seal('stop', dir, {}, { ...t.env, ...o }).status, 2);
+    sleepMs(1500);
+    assert.ok(!fs.existsSync(t.cap), `${JSON.stringify(o)} must send nothing`);
+  }
+  const t = teleEnv('cfg');
+  fs.mkdirSync(path.join(t.env.HOME, '.loki'), { recursive: true });
+  fs.writeFileSync(path.join(t.env.HOME, '.loki', 'config'), 'TELEMETRY_DISABLED=true\n');
+  seal('stop', leakRepo(), {}, t.env);
+  sleepMs(1500);
+  assert.ok(!fs.existsSync(t.cap), 'config TELEMETRY_DISABLED=true must send nothing');
+});
+
+test('seal analytics: a throwing, missing or hanging sender leaves decision, exit code and output identical, in bounded time', () => {
+  const dir = leakRepo();
+  const run = (envx) => { const t0 = Date.now(); const r = seal('stop', dir, {}, envx); return { status: r.status, reason: r.out.reason, ms: Date.now() - t0 }; };
+  const control = run({});
+  const tag = teleEnv('fake');
+  const pidFile = path.join(tag.base, 'sender.pid');
+  const fakes = {
+    throws: 'loki_emit_seal_hook_decision() { return 9; }\nexit 7\n',
+    missing: null,
+    hangs: `loki_emit_seal_hook_decision() { echo $$ > "${pidFile}"; sleep 30; }\n`,
+  };
+  try {
+    for (const [name, body] of Object.entries(fakes)) {
+      let sh = path.join(tag.base, name + '.sh');
+      if (body === null) sh = path.join(tag.base, 'does-not-exist.sh'); else fs.writeFileSync(sh, body);
+      const got = run({ ...tag.env, LOKI_TELEMETRY_SH: sh });
+      assert.strictEqual(got.status, control.status, name + ' status');
+      assert.strictEqual(got.reason, control.reason, name + ' output');
+      assert.ok(got.ms < control.ms + 3000, `${name}: ${got.ms}ms vs control ${control.ms}ms`);
+    }
+  } finally {
+    if (fs.existsSync(pidFile)) { try { process.kill(+fs.readFileSync(pidFile, 'utf8'), 'SIGKILL'); } catch { /* already gone */ } }
+  }
 });
