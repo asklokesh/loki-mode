@@ -5,6 +5,22 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.83.0 (2026-10-29)
+
+### Added
+
+- Java projects now get an independent acceptance test (the Wall) and a verify run instead of being skipped as "no runnable test command": a Maven project (pom.xml) runs mvn test, a Gradle project (build.gradle, build.gradle.kts or gradlew) runs gradle test, and a Java project with no build tool runs plain javac and java. The test file goes in src/test/java, a run only counts when the build tool reports how many tests ran, and failing tests are named. A Java test that prints a FAIL line is red even if the process exits 0. Gradle at its default logging prints no per-test PASSED lines, so a Gradle run reads as not run (safe, never a pass) rather than as proof. A Java compile error counts as red in verify but as not run in the Wall. If mvn, gradle or javac is not installed, the Wall says so and the run is never VERIFIED.
+- `loki verify` now adds the reason "sealed Wall copies not present: not compared" (text and `--json`) when a receipt lists Wall files but the run has no wall folder. The verdict is unchanged, so exported bundles still verify.
+
+### Changed
+
+- When the first-run check refuses to start, it names the reason (dirty tracked tree, no provider, not logged in, missing task, unsupported flag, disk) instead of probing the folder.
+- The in-place brownfield safety check (same path, original history intact, tag and stash untouched) now runs on the default engine route.
+
+### Fixed
+
+- `loki verify` refuses a sealed run that was copied under another run id, and prints a mismatched receipt's signed run id with terminal-unsafe characters removed.
+
 ## v11.82.0 (2026-10-29)
 
 ### Fixed
