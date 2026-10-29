@@ -127,6 +127,63 @@ esac
 [ ! -e "$D7/.loki/checklist/checklist.json" ] && ok || fail "failed author must not leave a checklist.json"
 rm -rf "$D7"
 
+# 8. Operator reset: `loki spec checklist-reset <sha>` clears the sentinel for
+# exactly one spec sha256, refuses while a run is live, and is the only path
+# that does. Two projects each end with a failed author; the sha differs.
+LOKI_BIN="$SCRIPT_DIR/../autonomy/loki"
+make_failed_author() { # <dir> <spec text> ; prints the spec sha256
+    local d="$1"
+    mkdir -p "$d/.loki/checklist"
+    printf '%s\n' "$2" > "$d/spec.md"
+    printf '{}\n' > "$d/package.json"
+    (
+        cd "$d" || exit 3
+        export CHECKLIST_ENABLED=true LOKI_PROVIDER=no-such-provider TMPDIR="$d"
+        # shellcheck disable=SC1091
+        . "$SCRIPT_DIR/../autonomy/prd-checklist.sh"
+        checklist_init "$d/spec.md"
+        checklist_author "$d/spec.md" >/dev/null 2>&1
+    )
+    python3 -I -S -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$d/spec.md"
+}
+reset_in() { # <dir> <sha> ; echoes combined output, returns rc
+    ( cd "$1" && LOKI_DIR="$1/.loki" LOKI_NO_BROWSER=1 bash "$LOKI_BIN" spec checklist-reset "$2" 2>&1 )
+}
+D8="$(mkroot)"; D9="$(mkroot)"
+SHA8="$(make_failed_author "$D8" '# PRD A')"
+SHA9="$(make_failed_author "$D9" '# PRD B')"
+R="$D8/.loki/checklist"
+[ "$SHA8" != "$SHA9" ] && grep -q check_authoring_unknown "$R/verification-results.json" \
+    && [ "$(run_gate "$D8")" = "BLOCK" ] && ok || fail "setup: failed author must leave the sentinel and a BLOCKing gate"
+
+# unknown / malformed sha: clear error, nothing cleared
+out="$(reset_in "$D8" "$SHA9")"; rc=$?
+{ [ "$rc" -ne 0 ] && echo "$out" | grep -q "no sentinel for spec sha256" && [ -f "$R/author.json" ] \
+    && grep -q check_authoring_unknown "$R/verification-results.json"; } && ok || fail "an unknown sha must be a clear error and clear nothing (rc=$rc: $out)"
+out="$(reset_in "$D8" "nothex")"; rc=$?
+{ [ "$rc" -eq 2 ] && [ -f "$R/author.json" ]; } && ok || fail "a malformed sha must be a usage error (rc=$rc)"
+
+# live run: refuse while a recorded pid is alive
+sleep 120 &
+LIVE_PID=$!
+printf '%s\n' "$LIVE_PID" > "$D8/.loki/loki.pid"
+out="$(reset_in "$D8" "$SHA8")"; rc=$?
+{ [ "$rc" -ne 0 ] && echo "$out" | grep -q "a run is live" && [ -f "$R/author.json" ] \
+    && [ "$(run_gate "$D8")" = "BLOCK" ]; } && ok || fail "reset must refuse while a run is live and keep the gate closed (rc=$rc: $out)"
+kill "$LIVE_PID" 2>/dev/null; wait "$LIVE_PID" 2>/dev/null
+rm -f "$D8/.loki/loki.pid"
+
+# reset the named sha: gate stays closed up to here, then opens; the other sha is untouched
+out="$(reset_in "$D8" "$SHA8")"; rc=$?
+{ [ "$rc" -eq 0 ] && echo "$out" | grep -q "Cleared the check_authoring_unknown sentinel for spec sha256 $SHA8" \
+    && [ ! -e "$R/author.json" ] && [ ! -e "$R/verification-results.json" ]; } && ok || fail "reset of the named sha must clear and print what it cleared (rc=$rc: $out)"
+[ "$(run_gate "$D8")" = "PASS" ] && ok || fail "after reset the gate must no longer fail closed on the cleared sentinel"
+{ [ -f "$D9/.loki/checklist/author.json" ] && grep -q check_authoring_unknown "$D9/.loki/checklist/verification-results.json" \
+    && [ "$(run_gate "$D9")" = "BLOCK" ]; } && ok || fail "another sha's sentinel must stay untouched and BLOCKing"
+out="$(reset_in "$D8" "$SHA8")"; rc=$?
+[ "$rc" -ne 0 ] && ok || fail "a second reset of the same sha must be an error, not a silent success"
+rm -rf "$D8" "$D9"
+
 echo ""
 echo "test-checklist-gate-failclosed: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

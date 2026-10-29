@@ -662,6 +662,7 @@ loki spec - the living spec: the spec is the contract; we keep it true.
 
 USAGE:
     loki spec <lock|status|sync> [<spec-path>] [options]
+    loki spec checklist-reset <spec-sha256>
 
 DESCRIPTION:
     Binds a spec (PRD) to content hashes so drift between the spec and the code
@@ -679,6 +680,15 @@ SUBCOMMANDS:
               and a human table. Exit 0 in-sync, 1 on drift.
     sync      Refresh the lock after a human review (explicit action). This MVP
               NEVER auto-rewrites the spec itself.
+
+    checklist-reset <spec-sha256>
+              Operator reset for a spec whose acceptance-check authoring failed
+              twice. That failure leaves a check_authoring_unknown sentinel in
+              .loki/checklist that fails the completion gate closed. This
+              command, and nothing else, clears it for exactly the named spec
+              sha256 (the value in .loki/checklist/author.json), so the next run
+              authors the checks again. Refuses while a run is live. Exit 0
+              cleared, 1 refused or no such sentinel, 2 usage error.
 
 SPEC RESOLUTION (when <spec-path> is omitted, first match wins):
     .loki/generated-prd.md  ->  prd.md  ->  PRD.md  ->  docs/prd.md
@@ -704,6 +714,60 @@ VERIFY INTEGRATION:
 EOF
 }
 
+# Operator reset of the check_authoring_unknown sentinel for exactly one spec
+# sha256. The sentinel (verification-results.json) and its record (author.json,
+# status unknown, spec_sha256) are written together by lib/check_author.py
+# record_unknown; this is the only path that clears them. is_session_running is
+# the live-run detection `loki` already uses; without it the live state is
+# unknown, so the reset refuses.
+spec_checklist_reset() {
+    local sha="${1:-}"
+    case "$sha" in
+        *[!0-9a-f]*|"") _spec_err "usage: loki spec checklist-reset <spec-sha256> (64 lowercase hex characters)"; return $SPEC_EXIT_USAGE ;;
+    esac
+    if [ "${#sha}" -ne 64 ]; then
+        _spec_err "usage: loki spec checklist-reset <spec-sha256> (64 lowercase hex characters)"
+        return $SPEC_EXIT_USAGE
+    fi
+    if ! type is_session_running >/dev/null 2>&1; then
+        _spec_err "cannot tell whether a run is live; run this through 'loki spec checklist-reset'"
+        return $SPEC_EXIT_DRIFT
+    fi
+    if is_session_running; then
+        _spec_err "a run is live; stop it ('loki stop') before resetting the checklist sentinel"
+        return $SPEC_EXIT_DRIFT
+    fi
+    local dir="${LOKI_DIR:-.loki}/checklist"
+    local rec="$dir/author.json" res="$dir/verification-results.json"
+    local state
+    state="$(python3 -I -S -c 'import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+    print("%s %s" % (d.get("status",""), d.get("spec_sha256","")))
+except Exception:
+    print("unreadable")' "$rec" 2>/dev/null)" || state="unreadable"
+    if [ ! -f "$rec" ] || [ -L "$rec" ] || [ "$state" = "unreadable" ]; then
+        _spec_err "no check_authoring_unknown sentinel recorded in $dir (nothing cleared)"
+        return $SPEC_EXIT_DRIFT
+    fi
+    if [ "${state%% *}" != "unknown" ]; then
+        _spec_err "the author record in $dir is not a failed authoring (status ${state%% *}); nothing cleared"
+        return $SPEC_EXIT_DRIFT
+    fi
+    if [ "${state#* }" != "$sha" ]; then
+        _spec_err "no sentinel for spec sha256 $sha (the recorded failure is for ${state#* }); nothing cleared"
+        return $SPEC_EXIT_DRIFT
+    fi
+    if [ -f "$res" ] && [ ! -L "$res" ] && grep -q 'check_authoring_unknown' "$res" 2>/dev/null; then
+        rm -f -- "$res"
+    fi
+    rm -f -- "$rec"
+    printf 'Cleared the check_authoring_unknown sentinel for spec sha256 %s\n' "$sha"
+    printf 'Removed: %s, %s\n' "$rec" "$res"
+    printf 'The next run authors the acceptance checks again (attempt count reset).\n'
+    return $SPEC_EXIT_OK
+}
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -714,6 +778,16 @@ spec_main() {
     case "$sub" in
         -h|--help|help|"") spec_help; return $SPEC_EXIT_OK ;;
     esac
+
+    if [ "$sub" = "checklist-reset" ]; then
+        case "${1:-}" in -h|--help) spec_help; return $SPEC_EXIT_OK ;; esac
+        if [ $# -ne 1 ]; then
+            _spec_err "usage: loki spec checklist-reset <spec-sha256>"
+            return $SPEC_EXIT_USAGE
+        fi
+        spec_checklist_reset "$1"
+        return $?
+    fi
 
     local spec_arg=""
     local out_dir="$SPEC_DIR_DEFAULT"
