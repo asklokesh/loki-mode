@@ -711,16 +711,59 @@ run_ship_case "BUN_RACE_SCRIPT=$SHIPW/stage-sub.sh"
 assert_refused "CHANGELOG (substring of a release path) staged mid-run" $? SHIP_UNEXPECTED_STAGED "$SHIP_BASE"
 
 echo
-echo "T22 -- CHANGELOG line 8 mismatch: refuses before any write"
+echo "T22 -- CHANGELOG newest-header mismatch: refuses before any write"
 new_ship_fixture
 sed 's/^## v1.2.3 /## v1.2.30 /' "$SHIP_REPO/CHANGELOG.md" > "$SHIPW/cl" && cp "$SHIPW/cl" "$SHIP_REPO/CHANGELOG.md"
 run_ship_case ""
-assert_refused "c[7] '## v1.2.30' for 1.2.3 (prefix boundary)" $? SHIP_CHANGELOG_MISMATCH "$SHIP_BASE"
-grep -qx 1.2.3 "$SHIP_REPO/VERSION" && ok "c[7] mismatch: VERSION untouched" || bad "c[7] mismatch: VERSION written"
+assert_refused "newest header '## v1.2.30' for 1.2.3 (prefix boundary)" $? SHIP_CHANGELOG_MISMATCH "$SHIP_BASE"
+grep -qx 1.2.3 "$SHIP_REPO/VERSION" && ok "newest header mismatch: VERSION untouched" || bad "c[7] mismatch: VERSION written"
+
+# The newest section is found from its first '## v' header, not a fixed line.
+# set_ship_preamble N: commit and push a CHANGELOG with an N-line preamble
+# (sections kept from the template) so the ship starts from a clean tree.
+set_ship_preamble() {
+    local n="$1" i=1
+    {
+        while [ "$i" -le "$n" ]; do printf 'preamble line %s\n' "$i"; i=$((i + 1)); done
+        sed -n '/^## v/,$p' "$SHIP_TPL/CHANGELOG.md"
+    } > "$SHIPW/cl"
+    cp "$SHIPW/cl" "$SHIP_REPO/CHANGELOG.md"
+    commit_ship_changelog "changelog preamble $n"
+}
+commit_ship_changelog() {
+    gitq -C "$SHIP_REPO" add CHANGELOG.md
+    gitq -C "$SHIP_REPO" commit -q -m "$1"
+    gitq -C "$SHIP_REPO" push -q origin HEAD:main
+}
+for plen in 2 0 5; do
+    new_ship_fixture
+    set_ship_preamble "$plen"
+    pre_before="$(sed -n "1,${plen}p" "$SHIP_REPO/CHANGELOG.md")"
+    run_ship_case ""
+    rc=$?
+    [ "$rc" -eq 0 ] && ok "$plen-line preamble: ship exit 0" || bad "$plen-line preamble: expected exit 0, got $rc ($(tail -4 "$SHIPW/case.log"))"
+    committed="$(git -C "$SHIP_REPO" show HEAD:CHANGELOG.md)"
+    [ "$(printf '%s\n' "$committed" | grep -n '^## v' | head -1)" = "$((plen + 1)):## v1.2.4 (2026-10-17)" ] \
+        && ok "$plen-line preamble: new section is the first '## v' header" || bad "$plen-line preamble: first headers $(printf '%s\n' "$committed" | grep -n '^## v' | head -2 | tr '\n' '|')"
+    if [ "$plen" -gt 0 ]; then
+        [ "$(printf '%s\n' "$committed" | sed -n "1,${plen}p")" = "$pre_before" ] \
+            && ok "$plen-line preamble: preamble unchanged" || bad "$plen-line preamble changed"
+    fi
+    [ "$(printf '%s\n' "$committed" | grep -c '^## v1.2.3 ')" -eq 1 ] \
+        && ok "$plen-line preamble: old section kept once" || bad "$plen-line preamble: old section count"
+done
 new_ship_fixture
-{ printf 'extra header line\n'; cat "$SHIP_TPL/CHANGELOG.md"; } > "$SHIP_REPO/CHANGELOG.md"
+set_ship_preamble 3
+sed 's/^## v1.2.3 /## v1.2.9 /' "$SHIP_REPO/CHANGELOG.md" > "$SHIPW/cl" && cp "$SHIPW/cl" "$SHIP_REPO/CHANGELOG.md"
+commit_ship_changelog "wrong newest"
 run_ship_case ""
-assert_refused "c[7] shifted by one line" $? SHIP_CHANGELOG_MISMATCH "$SHIP_BASE"
+assert_refused "wrong newest version after a 3-line preamble" $? SHIP_CHANGELOG_MISMATCH "$(git -C "$SHIP_REPO" rev-parse HEAD)"
+grep -q "CHANGELOG.md line 4 is '## v1.2.9" "$SHIPW/case.log" && ok "mismatch message names the found line and header" || bad "mismatch message: $(tail -3 "$SHIPW/case.log")"
+new_ship_fixture
+printf '# Changelog\n\nno releases yet\n' > "$SHIP_REPO/CHANGELOG.md"
+commit_ship_changelog "no sections"
+run_ship_case ""
+assert_refused "no '## v' header" $? SHIP_CHANGELOG_NO_HEADER "$(git -C "$SHIP_REPO" rev-parse HEAD)"
 
 echo
 echo "T23 -- notes header must name the new version"

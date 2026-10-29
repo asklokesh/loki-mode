@@ -9,7 +9,7 @@
 #
 # --ship: the release recipe as one command. Runs
 # the same release gate, then preflights (notes header is '## v<new>',
-# CHANGELOG line 8 is '## v<current>', origin/main is an ancestor of HEAD),
+# the first '## v' CHANGELOG header is '## v<current>', origin/main is an ancestor of HEAD),
 # bumps, inserts the notes as the new CHANGELOG section, rebuilds dist,
 # stages by name (refusing CONTROL.md, usage-readings.tsv, bun.lock, out2.txt
 # and .claude/providers.ts), commits as asklokesh, re-checks ancestry, runs
@@ -709,6 +709,15 @@ ship_phase() {
     if [ -n "$1" ]; then log_step "ship: $1"; fi
 }
 
+# Print the line number of the first '## v' header in file $1 (the newest
+# section, wherever the preamble ends). Exit 1 and print nothing if none.
+ship_changelog_top_line() {
+    local n
+    n="$(awk '/^## v/ { print NR; exit }' "$1" 2>/dev/null)"
+    [ -n "$n" ] || return 1
+    printf '%s\n' "$n"
+}
+
 # Exit 0 iff line $2 of file $1 is the section header of exactly version $3:
 # "## v<ver>" followed by a space or end of line. A prefix match would accept
 # "## v1.2.30" for 1.2.3, so the version token is compared whole.
@@ -729,18 +738,19 @@ ship_check_notes_format() {
     (cd "$ROOT_DIR" && bash scripts/release-notes.sh "$2" --file "$1" >/dev/null 2>&1)
 }
 
-# Insert the notes file as the new top section at line index 7 (the 8th
-# line), dropping its trailing blank lines and keeping exactly one blank line
-# before the previous section.
+# Insert the notes file as the new top section immediately before the first
+# '## v' header (any preamble is kept as is), dropping its trailing blank lines
+# and keeping exactly one blank line before the previous section.
 ship_write_changelog() {
-    local notes="$1" cl="$ROOT_DIR/CHANGELOG.md" tmp
+    local notes="$1" cl="$ROOT_DIR/CHANGELOG.md" tmp top
+    top="$(ship_changelog_top_line "$cl")" || return 1
     tmp="$(mktemp "${cl}.XXXXXX")" || return 1
     cp -p "$cl" "$tmp"
     if {
-        sed -n '1,7p' "$cl"
+        awk -v t="$top" 'NR < t' "$cl"
         sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$notes"
         echo ""
-        sed -n '8,$p' "$cl"
+        sed -n "${top},\$p" "$cl"
     } >"$tmp"; then
         mv "$tmp" "$cl"
     else
@@ -777,7 +787,7 @@ sys.exit(1 if any(r.get("status") != "completed" for r in runs) else 0)
 }
 
 run_ship() {
-    local notes="$SHIP_NOTES" current new f staged hit waited dirty
+    local notes="$SHIP_NOTES" current new f staged hit waited dirty cl_top
     local max_wait="${LOKI_RELEASE_SHIP_WAIT:-300}" poll="${LOKI_RELEASE_SHIP_POLL:-10}"
     case "$max_wait" in '' | *[!0-9]*) max_wait=300 ;; esac
     case "$poll" in '' | *[!0-9]* | 0) poll=10 ;; esac
@@ -797,8 +807,10 @@ run_ship() {
     # release. Run the same validator on the notes before any write. Not bypassable.
     ship_check_notes_format "$notes" "$new" \
         || ship_refuse SHIP_NOTES_FORMAT "release-notes.sh rejects the notes in $notes (needs '### ' subsections and '- ' bullets)"
-    ship_header_is "$ROOT_DIR/CHANGELOG.md" 8 "$current" \
-        || ship_refuse SHIP_CHANGELOG_MISMATCH "CHANGELOG.md line 8 is '$(sed -n '8p' "$ROOT_DIR/CHANGELOG.md" 2>/dev/null)', expected '## v$current'"
+    cl_top="$(ship_changelog_top_line "$ROOT_DIR/CHANGELOG.md")" \
+        || ship_refuse SHIP_CHANGELOG_NO_HEADER "CHANGELOG.md has no '## v' section header"
+    ship_header_is "$ROOT_DIR/CHANGELOG.md" "$cl_top" "$current" \
+        || ship_refuse SHIP_CHANGELOG_MISMATCH "CHANGELOG.md line $cl_top is '$(sed -n "${cl_top}p" "$ROOT_DIR/CHANGELOG.md" 2>/dev/null)', expected '## v$current'"
     # The release commit may hold only HEAD plus this run's own edits. Refuse
     # an index that already has anything staged, and any release file or
     # build input that differs from HEAD (another agent's unreviewed edit in
@@ -826,8 +838,10 @@ run_ship() {
 
     ship_phase "write CHANGELOG section"
     ship_write_changelog "$notes" || ship_refuse SHIP_CHANGELOG_WRITE "could not write CHANGELOG.md"
-    ship_header_is "$ROOT_DIR/CHANGELOG.md" 8 "$new" \
-        || ship_refuse SHIP_CHANGELOG_MISMATCH "CHANGELOG.md line 8 is not '## v$new' after the insert"
+    cl_top="$(ship_changelog_top_line "$ROOT_DIR/CHANGELOG.md")" \
+        || ship_refuse SHIP_CHANGELOG_NO_HEADER "CHANGELOG.md has no '## v' section header after the insert"
+    ship_header_is "$ROOT_DIR/CHANGELOG.md" "$cl_top" "$new" \
+        || ship_refuse SHIP_CHANGELOG_MISMATCH "CHANGELOG.md line $cl_top is '$(sed -n "${cl_top}p" "$ROOT_DIR/CHANGELOG.md" 2>/dev/null)', expected '## v$new' after the insert"
     ship_check_notes_format "$ROOT_DIR/CHANGELOG.md" "$new" \
         || ship_refuse SHIP_NOTES_FORMAT "release-notes.sh rejects the written CHANGELOG.md section for v$new"
 
