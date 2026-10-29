@@ -12,8 +12,11 @@ Per task, current release vs the baseline release (11.3.1), improvement factor =
 Any input a factor needs that is missing in any run reads NOT RECORDED, never 0. A recorded human_min of 0 makes
 the human factor and EFFICIENCY NOT COMPUTABLE (division by zero); no estimate is substituted. A declared slot
 with no runs prints NOT RUN.
+--wrong-pass FILE adds one wrong-pass row per seeded-defect category and setup (SEALED outcomes / n) from
+benchmarks/seeded-defects/measure.py output. This writer only reads the file; producing it on a model-backed
+route (nightly) stays gated on LOKI_BENCH_SPEND_APPROVED by the caller.
 """
-import argparse, csv, datetime, json, sys
+import argparse, csv, datetime, json, os, sys
 
 NR, NC, NRUN = "NOT RECORDED", "NOT COMPUTABLE", "NOT RUN"
 TASKS = ["trivial-sum", "two-bug", "medium", "mass-10"]
@@ -94,6 +97,30 @@ def efficiency_factor(b, c):
     return round(c / b, 4)
 
 
+def wrong_pass_rows(path, manifest):
+    """Per-category wrong-pass counts from benchmarks/seeded-defects/measure.py output (no model call here).
+    wrong_pass = defects the verifier SEALED; category comes from the manifest the results were measured against."""
+    try:
+        with open(path) as fh:
+            res = json.load(fh)
+        with open(manifest) as fh:
+            defects = json.load(fh)["defects"]
+    except (OSError, ValueError, KeyError) as e:
+        print("wrong-pass input unreadable (%s): %s" % (path, e), file=sys.stderr)
+        sys.exit(2)
+    cat = {d["id"]: d["category"] for d in defects}
+    cats = sorted(set(cat.values()))
+    out = {}
+    for run in res.get("runs", []):
+        rows = {c: {"wrong_pass": 0, "n": 0} for c in cats}
+        for did, verdict in (run.get("outcomes") or {}).items():
+            if did in cat:
+                rows[cat[did]]["n"] += 1
+                rows[cat[did]]["wrong_pass"] += 1 if verdict == "SEALED" else 0
+        out[run.get("setup", "unknown")] = {"model": run.get("model"), "categories": rows}
+    return out
+
+
 def show(v):
     return v if isinstance(v, str) else ("%.2f" % v)
 
@@ -107,6 +134,8 @@ def main():
     ap.add_argument("--human-floor-min", type=float, default=None)
     ap.add_argument("--json-out", required=True)
     ap.add_argument("--metrics-out", default="")
+    ap.add_argument("--wrong-pass", default="", help="seeded-defect results JSON (measure.py output); adds the per-category wrong-pass column")
+    ap.add_argument("--wrong-pass-manifest", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "benchmarks", "seeded-defects", "manifest.json"))
     a = ap.parse_args()
     cur, base = load(a.current), load(a.baseline)
     rows = {}
@@ -131,6 +160,9 @@ def main():
     rep = {"version": a.version, "baseline": a.baseline_version,
            "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"), "tasks": rows,
            "human_floor_min": a.human_floor_min, "definitions": "factor = baseline / current, above 1 is better; EFFICIENCY = delivered (VERIFIED and hidden-check passing) rate / (mean usd x mean wall min x mean human min); NOT RECORDED when a field is missing"}
+    wp = wrong_pass_rows(a.wrong_pass, a.wrong_pass_manifest) if a.wrong_pass else None
+    if wp is not None:
+        rep["wrong_pass"] = wp
     with open(a.json_out, "w") as fh:
         json.dump(rep, fh, indent=2)
         fh.write("\n")
@@ -144,11 +176,16 @@ def main():
         eff = r["efficiency"] if isinstance(r["efficiency"], str) else "%.4g" % r["efficiency"]
         print("%-12s %3d %8s %8s %8s %12s %10s" % (t, r["n"], show(r["cost_factor"]), show(r["wall_factor"]),
                                                   show(r["human_factor"]), eff, show(r["efficiency_factor"])) + (" " + r["floor_note"] if "floor_note" in r else ""))
+    for setup, w in (wp or {}).items():
+        for c, r in w["categories"].items():
+            print("wrong_pass %-6s %-13s %d/%d" % (setup, c, r["wrong_pass"], r["n"]))
     if a.metrics_out:
         cells = " ".join("%s:%s" % (t, ("cost_x=%s wall_x=%s human_x=%s eff_x=%s" % tuple(
             show(rows[t][k]) for k in ("cost_factor", "wall_factor", "human_factor", "efficiency_factor")))
             if rows[t]["status"] == "ok" else rows[t]["status"]) + (" " + rows[t]["floor_note"] if "floor_note" in rows[t] else "") for t in TASKS)
         with open(a.metrics_out, "a") as fh:
+            for setup, w in (wp or {}).items():
+                cells += " wrong_pass:%s:%s" % (setup, ",".join("%s=%d/%d" % (c, r["wrong_pass"], r["n"]) for c, r in w["categories"].items()))
             fh.write("| %s | scoreboard-40x %s vs %s | %s |\n" % (rep["date"], a.version, a.baseline_version, cells))
     return 0
 

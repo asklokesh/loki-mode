@@ -67,4 +67,31 @@ bash "$SB" --current "$T/legacy.tsv" --baseline "$T/legacy.tsv" --version v --js
 RC=$?
 [ "$RC" -eq 2 ] && grep -q 'solved' "$T/legacy.out"; check legacy-6-column-exits-2 $? "rc=$RC $(cat "$T/legacy.out")"
 
+# wrong-pass column: one hermetic stub-verifier run of benchmarks/seeded-defects/measure.py (no model call, no key)
+# feeds the scoreboard as five per-category rows. Stub seals every logic-bug and security defect only.
+cat > "$T/stub-verifier.sh" <<'STUB'
+#!/usr/bin/env bash
+case "$SD_CATEGORY" in logic-bug|security) echo SEALED ;; *) echo NOT_SEALED ;; esac
+STUB
+python3 -I "$SCRIPT_DIR/../benchmarks/seeded-defects/measure.py" --setup top --model stub --verifier "bash $T/stub-verifier.sh" \
+    --out "$T/wp.json" > "$T/wp.run" 2>&1
+check wrong-pass-stub-run $? "$(cat "$T/wp.run")"
+bash "$SB" --dry --version v --wrong-pass "$T/wp.json" --json-out "$T/w.json" > "$T/w.out" 2>&1
+check wrong-pass-rc $? "$(cat "$T/w.out")"
+NCAT="$(python3 -I -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["wrong_pass"]["top"]["categories"]))' "$T/w.json" 2>&1)"
+[ "$NCAT" = "5" ]; check wrong-pass-five-categories $? "got $NCAT"
+for c in logic-bug mock-abuse security spec-miss test-fitting; do
+    grep -q "^wrong_pass top .*$c" "$T/w.out"; check "wrong-pass-row-$c" $? "$(cat "$T/w.out")"
+done
+[ "$(jget "$T/w.json" wrong_pass.top.categories.mock-abuse.wrong_pass)" = "0" ]; check wrong-pass-unsealed-zero $? "$(cat "$T/w.json")"
+LB="$(jget "$T/w.json" wrong_pass.top.categories.logic-bug.wrong_pass)"
+LN="$(jget "$T/w.json" wrong_pass.top.categories.logic-bug.n)"
+[ -n "$LN" ] && [ "$LB" = "$LN" ] && [ "$LN" -gt 0 ]; check wrong-pass-sealed-counted $? "wrong_pass=$LB n=$LN"
+bash "$SB" --dry --version v --wrong-pass "$T/wp.json" --json-out "$T/w2.json" --metrics-out "$T/wm.metrics" > /dev/null 2>&1
+grep -q 'wrong_pass:top:.*logic-bug=' "$T/wm.metrics"; check wrong-pass-metrics-cell $? "$(cat "$T/wm.metrics" 2>&1)"
+# without --wrong-pass the report has no wrong_pass key (existing consumers unchanged)
+[ "$(python3 -I -c 'import json,sys;print("wrong_pass" in json.load(open(sys.argv[1])))' "$T/d.json")" = "False" ]; check wrong-pass-absent-by-default $? ""
+# a missing results file exits 2, never a silent empty column
+bash "$SB" --dry --version v --wrong-pass "$T/nope.json" --json-out "$T/x.json" > /dev/null 2>&1; [ $? -eq 2 ]; check wrong-pass-missing-file-rc2 $? ""
+
 [ "$FAILS" -eq 0 ]
