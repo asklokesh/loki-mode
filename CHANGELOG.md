@@ -5,12 +5,6 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
-
-### Fixed
-
-- A run that dropped a faulty Wall test file in one fix round and re-authored a different one in a later round no longer reports VERIFIED; the verdict stays PARTIAL and names the dropped file.
-
 ## v11.81.0 (2026-10-29)
 
 ### Added
