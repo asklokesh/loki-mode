@@ -132,6 +132,13 @@ _loki_completion() {
             fi
             ;;
 
+        next)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--yes --dry-run --suggest --json --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
         estimate)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--json --model --provider --help" -- "$cur") )

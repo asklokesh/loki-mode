@@ -83,6 +83,14 @@ function _loki {
                         '--detail[Per-iteration cache and trend breakdown]' \
                         '--help[Show help]'
                     ;;
+                next)
+                    _arguments \
+                        '--yes[Skip the confirmation prompt]' \
+                        '--dry-run[Show what would run without running it]' \
+                        '--suggest[With no active run, propose up to 3 small tasks]' \
+                        '--json[Output machine-readable JSON]' \
+                        '--help[Show help]'
+                    ;;
                 estimate)
                     _arguments \
                         '--json[Output machine-readable JSON]' \
