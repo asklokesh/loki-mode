@@ -55,8 +55,8 @@ export function extractClauses(text: string): ClauseSet {
   const pages = text.replace(/\r\n/g, "\n").split("\f"), paged = pages.length > 1, out: { text: string; anchor: string }[] = [];
   pages.forEach((page, pi) => {
     const lines = page.split("\n"), keep = new Set<number>();
-    // stripTemplate takes and returns string[]; a filter-only view lets it report which line indexes survive, so anchors stay exact.
-    stripTemplate({ filter: (fn: (l: string) => boolean) => { lines.forEach((l, i) => { if (fn(l)) keep.add(i); }); return []; } } as unknown as string[]);
+    // stripTemplate only calls filter(); a filter-only view lets it report which line indexes survive, so anchors stay exact.
+    stripTemplate({ filter: (fn: (l: string) => boolean) => { lines.forEach((l, i) => { if (fn(l)) keep.add(i); }); return []; } });
     let under = false, fence = false, gwt = -1;
     const anchorOf = (i: number): string => `${paged ? `p${pi + 1}:` : ""}l${i + 1}`;
     for (const [i, raw] of lines.entries()) {
@@ -143,7 +143,8 @@ export function parseSpec(text: string, file?: string): ParsedSpec {
     criteria.push(v);
   }
   if (criteria.length === 0) fail(at[H_CRIT]! + 1, "no acceptance criteria");
-  if (criteria.length > MAX_CRITERIA + MAX_CLAUSES + 1) fail(at[H_CRIT]! + 1, `more than ${MAX_CRITERIA} criteria`);
+  const maxLines = MAX_CRITERIA + MAX_CLAUSES + 1;
+  if (criteria.length > maxLines) fail(at[H_CRIT]! + 1, `more than ${maxLines} criteria`);
   return { task: taskLines.join("\n"), intent: intentLines.join(" "), criteria };
 }
 

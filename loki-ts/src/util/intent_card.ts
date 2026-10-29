@@ -113,7 +113,7 @@ export const acceptancePromptBlock = (lines: string[]): string[] => lines.length
 
 // FC-PR-BODY-PUBLIC-HYGIENE: an issue template's checklist is form boilerplate, never what was asked. Dropped: checkbox items under a Preflight or before-submitting heading, anywhere, and checkbox items worded as a first-person attestation. Nothing under an acceptance or criteria heading is ever dropped.
 const TEMPLATE_HEAD = /^#+\s*(pre-?flight(\s+checklist)?|before (you )?(submit(ting)?|open(ing)?|fil(e|ing)))\s*:?\s*$/i, ACCEPT_HEAD = /^#+\s.*(accept|criteria)/i, CHECK_ITEM = /^[-*+]\s+\[[ xX]\]/, ATTEST = /\bI (have (searched|read|checked|confirmed)|am using the latest|agree to)\b/i;
-export function stripTemplate(lines: string[]): string[] {
+export function stripTemplate(lines: { filter(fn: (l: string) => boolean): string[] }): string[] {
   let tpl = false, acc = false;
   return lines.filter((l) => {
     if (/^#+\s/.test(l)) { tpl = TEMPLATE_HEAD.test(l); acc = ACCEPT_HEAD.test(l); return !tpl; }

@@ -77,6 +77,12 @@ describe("malformed spec is refused with a line number", () => {
     const i = good.findIndex((l) => l.startsWith("## Acceptance"));
     expect(err(good.slice(0, i + 1)).line).toBe(i + 1);
   });
+  test("too many criteria states the real limit", () => {
+    const i = good.findIndex((l) => l.startsWith("## Acceptance"));
+    const e = err([...good.slice(0, i + 1), "", ...Array.from({ length: 62 }, (_, k) => `- criterion ${k}`)]);
+    expect(e.message).toContain("more than 61 criteria");
+    expect(e.message).not.toContain("more than 20 ");
+  });
   test("missing intent section", () => {
     const i = good.findIndex((l) => l.startsWith("## Intent"));
     const e = err([...good.slice(0, i), ...good.slice(i + 2)]);
