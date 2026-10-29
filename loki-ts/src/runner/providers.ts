@@ -57,7 +57,7 @@ import type {
   ProviderResult,
   SessionTier,
 } from "./types.ts";
-import { PROVIDER_DEFAULT_MODEL, resolveClaudeModel } from "../util/claude_model.ts";
+import { PROVIDER_DEFAULT_MODEL, explicitSetupModel, resolveClaudeModel } from "../util/claude_model.ts";
 import { applyAliasPin, effortArgv, modelRouteEnv, modelRouteModel, otelPassthroughEnv } from "../providers/model_routes.ts";
 import { opencodeProvider } from "./provider_opencode.ts";
 import { cacheTtlFor } from "../util/cost_breakdown.ts";
@@ -250,26 +250,6 @@ export function useProviderDefaultModel(call: ProviderInvocation): boolean {
   return !(e[`LOKI_CLAUDE_MODEL_${name}`] || e[`LOKI_MODEL_${name}`] || e["LOKI_MODEL_OVERRIDE"] || e["LOKI_MAX_TIER"] || e["LOKI_TIER_ROUTING"]);
 }
 
-// Explicit top / floor setup: LOKI_SESSION_MODEL high|planning dispatches opus and
-// small|fast dispatches haiku, main loop only, never under legacy tier switching and
-// never over an explicit per-tier pin. Unset (the default) returns undefined, so
-// default routing is untouched. Mirrors claude.sh resolve_model_for_tier.
-function explicitSetupModel(call: ProviderInvocation): string | undefined {
-  const e = process.env;
-  if (call.mainLoop !== true || e["LOKI_LEGACY_TIER_SWITCHING"] === "true") return undefined;
-  const sess = (e["LOKI_SESSION_MODEL"] ?? "").trim().toLowerCase();
-  if (call.tier === "planning" && (sess === "high" || sess === "planning")) {
-    return e["LOKI_CLAUDE_MODEL_PLANNING"] || e["LOKI_MODEL_PLANNING"] ? undefined : "opus";
-  }
-  if (call.tier === "fast" && (sess === "small" || sess === "fast")) {
-    if (e["LOKI_CLAUDE_MODEL_FAST"] || e["LOKI_MODEL_FAST"]) return undefined;
-    // Skip the haiku arm when LOKI_ALLOW_HAIKU is explicitly set to anything but "true".
-    const allow = e["LOKI_ALLOW_HAIKU"];
-    return allow === undefined || allow === "true" ? "haiku" : undefined;
-  }
-  return undefined;
-}
-
 export function claudeModelFor(call: ProviderInvocation): string {
   const routedModel = modelRouteModel(process.env); // OC-MODELS: openrouter/ollama/... route wins
   if (routedModel) return routedModel;
@@ -289,7 +269,7 @@ export function claudeModelFor(call: ProviderInvocation): string {
   // Complexity-aware routing (opt-in LOKI_TIER_ROUTING=1) is applied after base
   // resolution and BEFORE the max-tier ceiling, byte-mirroring claude.sh
   // resolve_model_for_tier (route then clamp).
-  const base = opusPin ? "opus" : tierRouteModel(call.tier, explicitSetupModel(call) ?? claudeTierToModel(call.tier));
+  const base = opusPin ? "opus" : tierRouteModel(call.tier, (call.mainLoop === true ? explicitSetupModel(call.tier) : undefined) ?? claudeTierToModel(call.tier));
   return applyMaxTierCeiling(call.tier, base);
 }
 

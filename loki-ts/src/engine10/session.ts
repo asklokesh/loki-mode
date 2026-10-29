@@ -9,7 +9,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, write
 import { dirname, join } from "node:path";
 import { archivePriorCosts, writeProviderCost, stageMedianGapMs } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
-import { canonicalSessionPin, PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
+import { canonicalSessionPin, explicitSetupModel, PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
 import { hooks } from "./hooks.ts";
 import { readSessionId } from "../runner/session_resume.ts";
@@ -43,7 +43,7 @@ export function sessionPinModel(e: NodeJS.ProcessEnv = process.env): string | un
   const pin = canonicalSessionPin(e["LOKI_SESSION_MODEL"]);
   if (!pin) return undefined;
   if (pin === "fable") return "opus";
-  if (pin === "planning" || pin === "development" || pin === "fast") return claudeTierToModel(pin);
+  if (pin === "planning" || pin === "development" || pin === "fast") return explicitSetupModel(pin, e) ?? claudeTierToModel(pin);
   return pin;
 }
 /** The model a session really runs: the override, else the session pin, else a configured pin, else the provider's own default (no --model flag, L1 never below raw). */

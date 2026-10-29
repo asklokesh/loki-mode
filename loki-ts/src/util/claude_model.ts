@@ -133,3 +133,16 @@ export function canonicalSessionPin(raw: string | undefined): string | undefined
   }
   return pin;
 }
+
+/**
+ * Explicit top / floor setup, the one rule for every Bun surface: LOKI_SESSION_MODEL high|planning gives opus for the planning tier,
+ * small|fast gives haiku for the fast tier (only while LOKI_ALLOW_HAIKU is unset or "true"). Never under legacy tier switching and
+ * never over an explicit per-tier pin. Undefined means no setup applies. Mirrors claude.sh resolve_model_for_tier.
+ */
+export function explicitSetupModel(tier: string, e: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (e["LOKI_LEGACY_TIER_SWITCHING"] === "true") return undefined;
+  const sess = (e["LOKI_SESSION_MODEL"] ?? "").trim().toLowerCase();
+  if (tier === "planning" && (sess === "high" || sess === "planning")) return e["LOKI_CLAUDE_MODEL_PLANNING"] || e["LOKI_MODEL_PLANNING"] ? undefined : "opus";
+  if (tier !== "fast" || (sess !== "small" && sess !== "fast") || e["LOKI_CLAUDE_MODEL_FAST"] || e["LOKI_MODEL_FAST"]) return undefined;
+  return e["LOKI_ALLOW_HAIKU"] === undefined || e["LOKI_ALLOW_HAIKU"] === "true" ? "haiku" : undefined;
+}

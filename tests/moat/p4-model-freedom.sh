@@ -357,6 +357,35 @@ case_three_setups() {
     fi
 }
 
+# engine10 route: sessionPinModel must dispatch the same model as the bash resolver for the
+# explicit top and floor setups, including the LOKI_ALLOW_HAIKU gate.
+case_engine10_pin_parity() {
+    command -v bun >/dev/null 2>&1 || { echo "FAIL|prerequisite missing: bun (engine10 route cannot be measured)"; return 0; }
+    local row pin tier envs bash_m bun_m bad="" n=0
+    while IFS='|' read -r pin tier envs; do
+        # shellcheck disable=SC2086
+        bash_m="$(env -i HOME="$MOAT_TMP/home" PATH="$MOAT_TMP/bin:$PATH" LOKI_SESSION_MODEL="$pin" $envs bash -c ". '$REPO_ROOT/providers/claude.sh' >/dev/null 2>&1; resolve_model_for_tier $tier" 2>/dev/null)"
+        # shellcheck disable=SC2086
+        bun_m="$(env -i HOME="$MOAT_TMP/home" PATH="$MOAT_TMP/bin:$PATH" LOKI_SESSION_MODEL="$pin" $envs bun -e "const m = await import('$REPO_ROOT/loki-ts/src/engine10/session.ts'); console.log(m.sessionPinModel())" 2>/dev/null)"
+        n=$((n + 1))
+        diag "engine10 pin=$pin tier=$tier ${envs:-}: bash=$bash_m bun=$bun_m"
+        { [ -n "$bash_m" ] && [ "$bash_m" = "$bun_m" ]; } || bad="$bad $pin/$tier/${envs:-none}"
+    done <<'ROWS'
+high|planning|
+planning|planning|
+small|fast|
+fast|fast|
+small|fast|LOKI_ALLOW_HAIKU=true
+small|fast|LOKI_ALLOW_HAIKU=false
+high|planning|LOKI_CLAUDE_MODEL_PLANNING=sonnet
+ROWS
+    # The setups must also differ from the sonnet default, or equality proves nothing.
+    [ "$(env -i PATH="$PATH" LOKI_SESSION_MODEL=high bun -e "const m = await import('$REPO_ROOT/loki-ts/src/engine10/session.ts'); console.log(m.sessionPinModel())" 2>/dev/null)" = opus ] \
+        || { echo "FAIL|engine10 LOKI_SESSION_MODEL=high did not dispatch opus"; return 0; }
+    [ -z "$bad" ] || { echo "FAIL|engine10 sessionPinModel differs from the bash resolver for:$bad"; return 0; }
+    echo "PASS|engine10 sessionPinModel matches the bash resolver for $n top, floor, allow-haiku and per-tier-pin rows"
+}
+
 # ---------------------------------------------------------------------------
 # Corpus and results checkers (P4.seeded-defect-corpus-present, P4.floor-...)
 # ---------------------------------------------------------------------------
@@ -841,8 +870,9 @@ run_case P4.three-setups-resolve "top-only, floor-only and routed setups dispatc
 run_case P4.seeded-defect-corpus-present "seeded-defect corpus of >= 100 runnable defects in five categories" case_corpus
 run_case P4.floor-does-not-raise-wrong-pass "per-defect measured wrong-pass rate at floor <= top on the corpus" case_floor_wrong_pass
 run_case P4.seal-is-model-free "with --no-llm (model path off) and no API key, Seal verdict, exit code and a non-empty deterministic gate set are identical across model ids" case_seal_model_free
+run_case P4.engine10-pin-matches-bash "engine10 sessionPinModel dispatches the same model as the bash resolver for top and floor setups" case_engine10_pin_parity
 
-for id in P4.catalog-has-top-model P4.three-setups-resolve P4.seeded-defect-corpus-present P4.floor-does-not-raise-wrong-pass P4.seal-is-model-free; do
+for id in P4.catalog-has-top-model P4.three-setups-resolve P4.seeded-defect-corpus-present P4.floor-does-not-raise-wrong-pass P4.seal-is-model-free P4.engine10-pin-matches-bash; do
     case " $EMITTED " in *" $id "*) ;; *) printf 'CASE %s FAIL runner did not emit this case\n' "$id" ;; esac
 done
 diag "runtime $((SECONDS - START_S))s"

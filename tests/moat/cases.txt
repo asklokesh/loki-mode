@@ -46,6 +46,7 @@ P4.three-setups-resolve
 P4.seeded-defect-corpus-present
 P4.floor-does-not-raise-wrong-pass
 P4.seal-is-model-free
+P4.engine10-pin-matches-bash
 P5.egress-blocked-start-seal-verify
 P5.airgap-audit-honest
 P5.airgap-audit-default-route

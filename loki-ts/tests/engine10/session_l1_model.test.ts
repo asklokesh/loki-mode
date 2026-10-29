@@ -192,7 +192,7 @@ describe("EL-W0-06 auxiliary pins are listed", () => {
 
 // FC-ENGINE10-IGNORES-SESSION-MODEL-PIN: a LOKI_SESSION_MODEL pin is run or refused, never replaced by the provider default.
 describe("FC-ENGINE10-IGNORES-SESSION-MODEL-PIN", () => {
-  const PINS: Array<[string, string]> = [["sonnet", "sonnet"], ["opus", "opus"], ["haiku", "haiku"], ["fable", "opus"], ["small", "sonnet"], ["medium", "sonnet"], ["high", "sonnet"], ["planning", "sonnet"], ["development", "sonnet"], ["fast", "sonnet"], ["  OPUS ", "opus"]];
+  const PINS: Array<[string, string]> = [["sonnet", "sonnet"], ["opus", "opus"], ["haiku", "haiku"], ["fable", "opus"], ["small", "haiku"], ["medium", "sonnet"], ["high", "opus"], ["planning", "opus"], ["development", "sonnet"], ["fast", "haiku"], ["  OPUS ", "opus"]];
   for (const [pin, want] of PINS) {
     test(`LOKI_SESSION_MODEL=${JSON.stringify(pin)} -> ${want}: recorded, exported to every tier, --model not omitted`, async () => {
       process.env["LOKI_SESSION_MODEL"] = pin;
