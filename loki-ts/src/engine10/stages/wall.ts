@@ -12,7 +12,7 @@ import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallModel } from "../sizing.ts";
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { removeHoldout, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
-import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, projectInterpreter } from "../testmap.ts";
+import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, projectInterpreter, type EngineTestMap } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { baseJobs, classify, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
@@ -115,8 +115,13 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   // E-64: skip Wall too on the lean path (plan.ts, which always runs, logs this same decision on "variant"). LOKI_E10_PLAN=always forces a plan even for a small task, so the lean path never applies: a forced plan still gets the
   // Wall's independent acceptance tests. An external diff (CW-12) never takes the lean skip: the Wall is its only independent proof.
   const repoMap = loadRepoMap(repomapRef);
-  const runners: RunnerName[] = testMap ? harnessRunners(testMap.runners, repoMap?.files ?? []) : [];
   const sz = sizeTask(task, repoMap, testMap);
+  const targetDir = wallTargetDir(ctx.repoDir, existingTests), api = loadProjectApi(ctx.repoDir), pkg = api?.packageOf(`${relative(ctx.repoDir, targetDir)}/x`);
+  const engineMap = testMap as EngineTestMap | null;
+  const firstTest = existingTests[0]?.path;
+  const targetRoot = pkg?.root ?? (firstTest ? engineMap?.testPackages?.[firstTest] : undefined) ?? ".";
+  const packageTests = existingTests.filter((t) => (api?.packageRootOf(t.path) ?? engineMap?.testPackages?.[t.path] ?? ".") === targetRoot);
+  const runners: RunnerName[] = testMap ? harnessRunners(engineMap?.packageRunners?.[targetRoot] ?? [...new Set(packageTests.map((t) => t.runner))], repoMap?.files ?? []) : [];
   if (!ctx.externalPatch && planMode() !== "always" && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean") {
     return done({ status: "skipped", data: { size: sz.size }, reason: "small task with a relevant test: cascade skips Wall" });
   }
@@ -129,8 +134,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const tree = prior.intake?.tree as string | undefined;
   const repomapText = repoMapText(ctx.repoDir, tree, repomapRef, WALL_MAP_MAX_LINES);
 
-  const targetDir = wallTargetDir(ctx.repoDir, existingTests), pkg = loadProjectApi(ctx.repoDir)?.packageOf(`${relative(ctx.repoDir, targetDir)}/x`); // FC-23: the target package's own module system, read by a parser
-  const conv = readPackageConventions(join(ctx.repoDir, pkg?.root ?? "."), pkg?.runner ?? null);
+  const conv = readPackageConventions(join(ctx.repoDir, targetRoot), pkg?.runner ?? null);
   const cwd = mkdtempSync(join(tmpdir(), "loki-e15-wall-"));
   const wm = wallManifestFor(ctx.repoDir, tree, task); // D77: flag-gated, null (as if off) on any failure
   for (const [n, c] of [["task.md", task], ["repomap.txt", repomapText], ...(wm ? [["wall_manifest.txt", wm.text]] : [])] as [string, string][]) writeFileSync(join(cwd, n), c, "utf8");

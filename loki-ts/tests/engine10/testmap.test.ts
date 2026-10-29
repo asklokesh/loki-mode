@@ -5,6 +5,9 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { buildTestMap, guessRunner, harnessRunners, impactedRefs, projectInterpreter, RealTestMapProvider } from "../../src/engine10/testmap.ts";
+import { commandFor } from "../../src/util/check_result.ts";
+import { projectApi } from "../../src/project_model/api.ts";
+import type { ProjectModel } from "../../src/project_model/schema.ts";
 
 const MIXED = resolve(import.meta.dir, "fixtures/testmap");
 
@@ -49,7 +52,7 @@ describe("mixed pytest plus vitest repo", () => {
 
   test("changed src/search.ts maps to src/search.test.ts (import grep)", () => {
     const refs = impactedRefs(map, ["src/search.ts"]);
-    expect(refs).toEqual([{ runner: "vitest", path: "src/search.test.ts" }]);
+    expect(refs).toEqual([{ runner: "bun", path: "src/search.test.ts" }]);
   });
 
   test("changed python module maps to its test via the naming floor (fixture is import-free on purpose)", () => {
@@ -58,7 +61,7 @@ describe("mixed pytest plus vitest repo", () => {
   });
 
   test("a changed test file maps to itself; an unrelated file maps to nothing", () => {
-    expect(impactedRefs(map, ["src/search.test.ts"])).toEqual([{ runner: "vitest", path: "src/search.test.ts" }]);
+    expect(impactedRefs(map, ["src/search.test.ts"])).toEqual([{ runner: "bun", path: "src/search.test.ts" }]);
     expect(impactedRefs(map, ["README.md"])).toEqual([]);
   });
 
@@ -132,6 +135,33 @@ describe("TestMapProvider contract (types.ts, E-01)", () => {
     expect(map.runners).toContain("pytest");
     const refs = provider.impacted(map, ["app/ranker.py"]);
     expect(refs).toEqual([{ runner: "pytest", path: "tests/test_ranker.py" }]);
+  });
+});
+
+describe("package-local runner ownership (#233)", () => {
+  test("root and nested fixture packages keep their own declared and imported runners", () => {
+    const root = repo({
+      "package.json": JSON.stringify({ scripts: { test: "bun test" } }),
+      "bunfig.toml": "[test]\\n",
+      "src/root.test.ts": 'import { test } from "bun:test"; test("root", () => {});',
+      "fixtures/example/package.json": JSON.stringify({ devDependencies: { vitest: "1" }, scripts: { test: "vitest run" } }),
+      "fixtures/example/vite.config.ts": "export default {};",
+      "fixtures/example/nested.test.ts": 'import { it } from "vitest"; it("nested", () => {});',
+    });
+    const map = buildTestMap(root);
+    expect(map.runners).toContain("bun");
+    expect(map.runners).toContain("vitest");
+    expect(map.tests.find((t) => t.path === "src/root.test.ts")).toEqual({ runner: "bun", path: "src/root.test.ts" });
+    expect(map.tests.find((t) => t.path === "fixtures/example/nested.test.ts")).toEqual({ runner: "vitest", path: "fixtures/example/nested.test.ts" });
+    expect(map.testPackages).toEqual({ "src/root.test.ts": ".", "fixtures/example/nested.test.ts": "fixtures/example" });
+    expect(map.packageRunners["."]).toContain("bun");
+    expect(map.packageRunners["."]).not.toContain("vitest");
+    expect(map.packageRunners["fixtures/example"]).toContain("vitest");
+    const packageModel = projectApi({ status: "ok", packages: [{ name: "root", root: "." }, { name: "example", root: "fixtures/example" }] } as unknown as ProjectModel);
+    const rootTest = map.tests.find((t) => t.path === "src/root.test.ts")!;
+    const nestedTest = map.tests.find((t) => t.path === "fixtures/example/nested.test.ts")!;
+    expect(commandFor(rootTest, root, packageModel)).toMatchObject({ cwd: root, cmd: "bun", args: ["test", "src/root.test.ts"], pkgRoot: "." });
+    expect(commandFor(nestedTest, root, packageModel)).toMatchObject({ cwd: join(root, "fixtures/example"), cmd: "npx", args: ["--no-install", "vitest", "run", "nested.test.ts"], pkgRoot: "fixtures/example" });
   });
 });
 
