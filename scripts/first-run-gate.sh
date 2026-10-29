@@ -11,10 +11,25 @@
 #                       checks, and the legacy fallback line must be printed naming bun. Run it with bun off PATH.
 #   --installed <spec>  npm-install that exact package into a temp prefix and run IT
 #
+#   --shape node|python|go
+#                       fixture language (default node, the original bugrepo). Each is the same shape: one small
+#                       failing bug (an off-by-one loop start), a known one-line fix, and two tests (one fails before
+#                       the fix). python needs python3 (unittest); go needs go.
+#
 #   --entry start-empty TEN-UX-08: empty folder + `loki doctor` + `loki start "<brief>"`; asserts repo init, VERIFIED,
 #                       sealed receipt, Next line, and install+doctor+start wall time <= FRG_BUDGET_S (default 120)
 #                       recorded as install_to_first_success_s. --real also rewrites the metrics file "Time to first
 #                       sealed PR" row; the stub never writes METRICS.
+#
+# Per-rep fields, printed and appended to the report beside the assertions (null always carries a reason, never a guess):
+#   prompts_shown    number of interactive questions loki printed and waited on. Derived from the run's own output
+#                    (stdout+stderr log): lines carrying a confirmation prompt marker "[y/N]" or "[Y/n]". The gate runs
+#                    loki with stdin at /dev/null, so a prompt is printed and then answered by EOF; counting the printed
+#                    markers counts the questions a user would have been asked. null if the run log is missing.
+#   first_preview_s  seconds from the start of the run to the first healthy probe of an app the user can open, as
+#                    recorded by the app runner itself in <repo>/.loki/app-runner/first-preview.json
+#                    (seconds_to_first_preview, write-once, anchored at run start). null with a reason when the run
+#                    produced no previewable app (a one-line bug fix has none) or the record is unreadable.
 #
 # Test hooks: FRG_LOKI overrides the loki binary; FRG_REPORT the report path; FRG_BUDGET_S the start-empty budget;
 # FRG_FAKE_TOTAL_S injects the measured start-empty seconds.
@@ -23,7 +38,7 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 FIRST_RUN_METRICS="${FIRST_RUN_METRICS:-$REPO_ROOT/.loki/metrics/first-run.md}"
 TASK="fix the bug that makes the failing test in sum.test.js fail"
-MODE=stub SPEC="" ENGINE=v10 ENTRY=quick
+MODE=stub SPEC="" ENGINE=v10 ENTRY=quick SHAPE=node
 T0=$(date +%s)
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -31,11 +46,24 @@ while [ $# -gt 0 ]; do
         --real) MODE=real ;;
         --engine) ENGINE="${2:-}"; case "$ENGINE" in v10|legacy) ;; *) echo "--engine needs v10 or legacy" >&2; exit 2 ;; esac; shift ;;
         --installed) SPEC="${2:-}"; [ -n "$SPEC" ] || { echo "--installed needs a spec" >&2; exit 2; }; shift ;;
+        --shape) SHAPE="${2:-}"; case "$SHAPE" in node|python|go) ;; *) echo "--shape needs node, python or go" >&2; exit 2 ;; esac; shift ;;
         --entry) ENTRY="${2:-}"; case "$ENTRY" in quick|start-empty) ;; *) echo "--entry needs quick or start-empty" >&2; exit 2 ;; esac; shift ;;
-        *) echo "usage: $0 [--stub|--real] [--engine v10|legacy] [--entry quick|start-empty] [--installed <npm spec>]" >&2; exit 2 ;;
+        *) echo "usage: $0 [--stub|--real] [--shape node|python|go] [--engine v10|legacy] [--entry quick|start-empty] [--installed <npm spec>]" >&2; exit 2 ;;
     esac
     shift
 done
+
+# --real runs the real provider under a throwaway HOME that holds no login: fail before creating any state when neither credential is set.
+if [ "$MODE" = real ] && [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    echo "first-run-gate: --real needs ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the environment (the throwaway HOME has no claude login); set one and rerun" >&2
+    exit 2
+fi
+case "$SHAPE" in
+    node) SRC_FILE=sum.js TEST_FILE=sum.test.js ;;
+    python) SRC_FILE=sum.py TEST_FILE=test_sum.py ;;
+    go) SRC_FILE=sum.go TEST_FILE=sum_test.go ;;
+esac
+TASK="fix the bug that makes the failing test in $TEST_FILE fail"
 
 # shellcheck source=../eval/loki10/lib-tmp.sh
 . "$REPO_ROOT/eval/loki10/lib-tmp.sh"
@@ -54,8 +82,53 @@ mk_bugrepo() {
     ( cd "$d" && git init -q && git config user.email gate@example.invalid && git config user.name gate \
         && git add package.json sum.js sum.test.js && git commit -q -m init )
 }
-mk_bugrepo "$T/repo"
+# --- python and go fixtures: same shape as bugrepo (loop starts at 1, tests expect 6 and 0; the fix is the start index) ---
+mk_pyrepo() {
+    local d="$1"
+    printf '"""Sum an array of numbers."""\n\n\ndef sum_numbers(arr):\n    total = 0\n    for i in range(1, len(arr)):\n        total += arr[i]\n    return total\n' > "$d/sum.py"
+    printf 'import unittest\n\nfrom sum import sum_numbers\n\n\nclass SumTest(unittest.TestCase):\n    def test_sums_all_numbers(self):\n        self.assertEqual(sum_numbers([1, 2, 3]), 6)\n\n    def test_empty_array_is_0(self):\n        self.assertEqual(sum_numbers([]), 0)\n\n\nif __name__ == "__main__":\n    unittest.main()\n' > "$d/test_sum.py"
+    ( cd "$d" && git init -q && git config user.email gate@example.invalid && git config user.name gate \
+        && git add sum.py test_sum.py && git commit -q -m init )
+}
+mk_gorepo() {
+    local d="$1"
+    printf 'module bugrepo\n\ngo 1.21\n' > "$d/go.mod"
+    printf '// Package bugrepo sums an array of numbers.\npackage bugrepo\n\n// Sum adds up every element.\nfunc Sum(arr []int) int {\n\ttotal := 0\n\tfor i := 1; i < len(arr); i++ {\n\t\ttotal += arr[i]\n\t}\n\treturn total\n}\n' > "$d/sum.go"
+    printf 'package bugrepo\n\nimport "testing"\n\nfunc TestSumsAllNumbers(t *testing.T) {\n\tif got := Sum([]int{1, 2, 3}); got != 6 {\n\t\tt.Fatalf("Sum = %%d, want 6", got)\n\t}\n}\n\nfunc TestEmptyArrayIs0(t *testing.T) {\n\tif got := Sum(nil); got != 0 {\n\t\tt.Fatalf("Sum = %%d, want 0", got)\n\t}\n}\n' > "$d/sum_test.go"
+    ( cd "$d" && git init -q && git config user.email gate@example.invalid && git config user.name gate \
+        && git add go.mod sum.go sum_test.go && git commit -q -m init )
+}
+mk_fixture() { # mk_fixture <dir>: the --shape fixture
+    case "$SHAPE" in node) mk_bugrepo "$1" ;; python) mk_pyrepo "$1" ;; go) mk_gorepo "$1" ;; esac
+}
+mk_fixture "$T/repo"
 BASE=$(git -C "$T/repo" rev-parse HEAD)
+
+# emit_rep_fields <repo dir> <run log>: print and append the per-rep prompts_shown and first_preview_s lines (null carries a reason).
+emit_rep_fields() {
+    local n fp
+    if [ -r "$2" ]; then
+        n=$(sed 's/\x1b\[[0-9;]*m//g' "$2" | grep -Ec '\[[yY]/[nN]\]|\[[nN]/[yY]\]' || true)
+        echo "prompts_shown=${n:-0}" | tee -a "$REPORT"
+    else echo 'prompts_shown=null reason="run log missing"' | tee -a "$REPORT"; fi
+    fp=$(python3 - "$1/.loki/app-runner/first-preview.json" <<'PY'
+import json, sys
+try:
+    v = json.load(open(sys.argv[1])).get("seconds_to_first_preview")
+except FileNotFoundError:
+    print('first_preview_s=null reason="no previewable app: the run wrote no .loki/app-runner/first-preview.json"')
+    sys.exit(0)
+except (OSError, ValueError, AttributeError) as e:
+    print('first_preview_s=null reason="unreadable first-preview.json: %s"' % e.__class__.__name__)
+    sys.exit(0)
+if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
+    print("first_preview_s=%s" % v)
+else:
+    print('first_preview_s=null reason="first-preview.json has no valid seconds_to_first_preview"')
+PY
+)
+    echo "$fp" | tee -a "$REPORT"
+}
 
 # Throwaway HOME first: npm must not read ~/.npmrc or ~/.npm.
 ORIG_HOME="${LOKI_REAL_HOME:-$HOME}" # FC-07: under the hermetic test HOME the real dashboard venv is still read (read-only)
@@ -63,6 +136,7 @@ ORIG_HOME="${LOKI_REAL_HOME:-$HOME}" # FC-07: under the hermetic test HOME the r
 # user's REAL default 57374 and outlive the gate (P0-DASH-LEAK2). Disable it and, belt and braces,
 # point any dashboard at a free high port.
 LOKI_DASHBOARD_PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')"
+export PYTHONDONTWRITEBYTECODE=1 GOCACHE="$T/gocache" GOTOOLCHAIN=local
 export HOME="$T/home" LOKI_NO_BROWSER=1 LOKI_DASHBOARD=false LOKI_DASHBOARD_PORT npm_config_cache="$T/npm-cache" npm_config_userconfig="$T/home/.npmrc"
 
 # --- which loki ---------------------------------------------------------------
@@ -108,6 +182,10 @@ test('hello.js prints nothing else', () => { assert.strictEqual(execFileSync('no
 WALL
 elif [ -f sum.js ]; then
     sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
+elif [ -f sum.py ]; then
+    sed -i.bak 's/range(1,/range(0,/' sum.py && rm -f sum.py.bak
+elif [ -f sum.go ]; then
+    sed -i.bak 's/i := 1/i := 0/' sum.go && rm -f sum.go.bak
 elif case "$*" in *"Loki 10 implement stage"*) true ;; *) false ;; esac; then # start-empty leg: an empty folder, so only the implement session builds the tiny hello CLI the brief asks for (project-model and plan sessions run in the repo and must not write, or the Wall base run is no longer the empty base)
     printf 'console.log("hello");\n' > hello.js
     printf "const test = require('node:test');\nconst assert = require('node:assert');\nconst { execFileSync } = require('node:child_process');\ntest('prints hello', () => { assert.strictEqual(execFileSync('node', ['hello.js']).toString().trim(), 'hello'); });\n" > hello.test.js
@@ -148,6 +226,7 @@ if [ "$ENTRY" = start-empty ]; then
     if grep -Eq '(^|[[:space:]])Next:' <<<"$OUTC"; then res PASS next-line "Next present"
     else res FAIL next-line "no Next line in start output"; fi
     echo "install_to_first_success_s=$TOTAL" | tee -a "$REPORT"
+    emit_rep_fields "$EMPTY" "$T/start.log"
     case "$BUDGET$TOTAL" in
         *[!0-9]*|"") res FAIL first-success-budget "non-integer budget ($BUDGET) or time ($TOTAL)" ;;
         *) if [ "$TOTAL" -le "$BUDGET" ]; then res PASS first-success-budget "${TOTAL}s <= ${BUDGET}s"
@@ -187,12 +266,27 @@ res() { # res PASS|FAIL name detail
 }
 cd "$T/repo" || exit 2
 
-npm test --silent >"$T/npm-test.log" 2>&1; NPM_RC=$?
-# Run the fixture's tests ourselves: expect exactly 2 tests and 0 failures.
-node --test --test-reporter=tap >"$T/node-test.log" 2>&1
-NT=$(sed -n 's/^# tests \([0-9]*\)$/\1/p' "$T/node-test.log" | tail -1)
-NF=$(sed -n 's/^# fail \([0-9]*\)$/\1/p' "$T/node-test.log" | tail -1)
-NP=$(sed -n 's/^# pass \([0-9]*\)$/\1/p' "$T/node-test.log" | tail -1)
+# Run the fixture's tests ourselves: expect exactly 2 tests and 0 failures. NPM_RC is the shape's own test command rc.
+case "$SHAPE" in
+    node)
+        npm test --silent >"$T/npm-test.log" 2>&1; NPM_RC=$?
+        node --test --test-reporter=tap >"$T/node-test.log" 2>&1
+        NT=$(sed -n 's/^# tests \([0-9]*\)$/\1/p' "$T/node-test.log" | tail -1)
+        NF=$(sed -n 's/^# fail \([0-9]*\)$/\1/p' "$T/node-test.log" | tail -1)
+        NP=$(sed -n 's/^# pass \([0-9]*\)$/\1/p' "$T/node-test.log" | tail -1) ;;
+    python)
+        python3 -m unittest >"$T/npm-test.log" 2>&1; NPM_RC=$?
+        python3 -m unittest -v >"$T/node-test.log" 2>&1
+        NT=$(sed -n 's/^Ran \([0-9]*\) tests\{0,1\} .*$/\1/p' "$T/node-test.log" | tail -1)
+        NF=$(grep -Ec '\.\.\. (FAIL|ERROR)$' "$T/node-test.log" || true)
+        NP=$(grep -Ec '\.\.\. ok$' "$T/node-test.log" || true) ;;
+    go)
+        go test ./... >"$T/npm-test.log" 2>&1; NPM_RC=$?
+        go test -v ./... >"$T/node-test.log" 2>&1
+        NT=$(grep -Ec '^--- (PASS|FAIL|SKIP):' "$T/node-test.log" || true)
+        NF=$(grep -Ec '^--- FAIL:' "$T/node-test.log" || true)
+        NP=$(grep -Ec '^--- PASS:' "$T/node-test.log" || true) ;;
+esac
 # green is pass 2 and fail 0, so a skipped test (pass 1, skipped 1) is not green.
 GREEN=0; [ "${NT:-x}" = 2 ] && [ "${NP:-x}" = 2 ] && [ "${NF:-x}" = 0 ] && [ "$NPM_RC" -eq 0 ] && GREEN=1
 
@@ -203,13 +297,13 @@ else
     res FAIL exit-honest "run rc=$RC but green=$GREEN (tests=${NT:-none} pass=${NP:-none} fail=${NF:-none} npm rc=$NPM_RC)"
 fi
 # 2. the fix actually lands: 2 tests, 0 failures
-[ "$GREEN" -eq 1 ] && res PASS tests-green "node --test: 2 tests, 2 pass, 0 failures; npm test rc=0" \
-    || res FAIL tests-green "node --test tests=${NT:-none} pass=${NP:-none} fail=${NF:-none}; npm test rc=$NPM_RC"
+[ "$GREEN" -eq 1 ] && res PASS tests-green "$SHAPE tests: 2 tests, 2 pass, 0 failures; test command rc=0" \
+    || res FAIL tests-green "$SHAPE tests tests=${NT:-none} pass=${NP:-none} fail=${NF:-none}; npm test rc=$NPM_RC"
 
 # 3. diff against the base commit: only sum.js may change; nothing new outside .loki/
-BAD=$( { git diff --name-status "$BASE" -- . ':!.loki' | grep -v -E '^M[[:space:]]+sum\.js$'
+BAD=$( { git diff --name-status "$BASE" -- . ':!.loki' | grep -v -E "^M[[:space:]]+${SRC_FILE//./\\.}\$"
          git ls-files -o | grep -v '^\.loki/' | sed 's/^/?\t/'; } || true)
-if [ -z "$BAD" ]; then res PASS no-stray-files "only sum.js modified vs base; nothing new outside .loki/"
+if [ -z "$BAD" ]; then res PASS no-stray-files "only $SRC_FILE modified vs base; nothing new outside .loki/"
 else res FAIL no-stray-files "unexpected changes: $(echo "$BAD" | tr '\t\n' '  ')"; fi
 
 # 4. printed receipt digest: FULL 64-hex, equal to the receipt_sha256 loki verify reports
@@ -237,6 +331,9 @@ else res FAIL receipt-signed "loki verify reports no valid signature: $(grep -Ei
 LINES=$(wc -l < "$T/out.log" | tr -d ' ')
 MAXL=8; [ "$ENGINE" = legacy ] && MAXL=15 # legacy quiet budget
 [ "$LINES" -le "$MAXL" ] && res PASS output-lines "$LINES lines (max $MAXL)" || res FAIL output-lines "$LINES lines (max $MAXL)"
+
+# 7d. per-rep fields (prompts_shown, first_preview_s): see the header for how each is derived
+emit_rep_fields "$T/repo" "$T/out.log"
 
 # 8. wall time recorded
 echo "$WALL" | grep -Eq '^[0-9]+$' && res PASS wall-time "recorded ${WALL}s" || res FAIL wall-time "not recorded"
@@ -285,7 +382,9 @@ fi
 # 9. G8 (stub only): an agent that skips the target test (node { skip: true } on the target) must not end VERIFIED. Runs the v10 engine,
 #    whose verify stage judges skips and test configuration (A-115); since D48 this IS the only engine.
 if [ "$MODE" = stub ]; then
-  if [ "$ENGINE" = v10 ]; then
+  if [ "$ENGINE" = v10 ] && [ "$SHAPE" != node ]; then
+    echo "SKIP skip-not-verified: the skipped-test stub is node-only (--shape $SHAPE)"
+  elif [ "$ENGINE" = v10 ]; then
     mkdir -p "$T/skip" && mk_bugrepo "$T/skip"
     ( cd "$T/skip" && FRG_SKIP=1 "$LOKI" "$TASK" --no-pr ) < /dev/null > "$T/skip.log" 2>&1; SRC=$?
     if [ "$SRC" -ne 0 ] && ! grep -Eqi '^Outcome: *VERIFIED|verdict: *verified' "$T/skip.log"; then
@@ -335,7 +434,7 @@ fi
 
 # --- real mode: raw claude -p comparison, appended to METRICS.md --------------
 if [ "$MODE" = real ]; then
-    mk_bugrepo "$T/raw"
+    mk_fixture "$T/raw"
     RS=$(date +%s)
     ( cd "$T/raw" && claude -p "$TASK" --dangerously-skip-permissions --output-format json ) < /dev/null > "$T/raw.json" 2>&1
     RAW_WALL=$(( $(date +%s) - RS ))

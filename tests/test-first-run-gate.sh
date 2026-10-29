@@ -24,8 +24,15 @@ quick)
         esac
     fi
     [ "$FAKE_MODE" = skipmain ] && sed -i.bak "s/'sums all numbers', /'sums all numbers', { skip: true }, /" sum.test.js && rm -f sum.test.js.bak
-    [ "$FAKE_MODE" = red0 ] || sed -i.bak 's/i = 1/i = 0/' sum.js
-    rm -f sum.js.bak
+    if [ "$FAKE_MODE" != red0 ]; then
+        [ -f sum.js ] && sed -i.bak 's/i = 1/i = 0/' sum.js
+        [ -f sum.py ] && sed -i.bak 's/range(1,/range(0,/' sum.py
+        [ -f sum.go ] && sed -i.bak 's/i := 1/i := 0/' sum.go
+    fi
+    rm -f sum.js.bak sum.py.bak sum.go.bak
+    [ "$FAKE_MODE" = prompts ] && { echo "Overwrite? [y/N] "; echo "Proceed? [Y/n] "; }
+    [ "$FAKE_MODE" = fpreview ] && { mkdir -p .loki/app-runner; echo '{"seconds_to_first_preview":7}' > .loki/app-runner/first-preview.json; }
+    [ "$FAKE_MODE" = fpbad ] && { mkdir -p .loki/app-runner; echo '{"seconds_to_first_preview":' > .loki/app-runner/first-preview.json; }
     [ "$FAKE_MODE" = stray ] && echo x > NOTES.md
     [ "$FAKE_MODE" = delfile ] && rm sum.test.js
     [ "$FAKE_MODE" = truetest ] && sed -i.bak 's/node --test/true/' package.json && rm -f package.json.bak
@@ -126,6 +133,39 @@ run_gate skipbare;   expect skipbare skip-bare-verify FAIL;  [ "$RC" -ne 0 ] && 
 run_gate skipver;    expect skipver skip-not-verified FAIL;  [ "$RC" -ne 0 ] && ok "skipver: exits non-zero" || bad "skipver: exit 0"
 
 
+# --shape: python and go fixtures have the same shape as bugrepo (one failing test before the fix, green after)
+run_shape() { # run_shape <shape> <mode>: sets OUT and RC
+    OUT=$(env -u LOKI_RUN_TMP FAKE_MODE="$2" FRG_LOKI="$T/fake-loki" FRG_REPORT="$T/report-$1-$2.txt" bash "$GATE" --stub --shape "$1" 2>&1); RC=$?
+}
+for shape in python go; do
+    if ! command -v "$([ "$shape" = go ] && echo go || echo python3)" >/dev/null 2>&1; then echo "SKIP shape $shape: toolchain missing"; continue; fi
+    run_shape $shape clean
+    for a in exit-honest tests-green no-stray-files; do expect "$shape-clean" $a PASS; done
+    [ "$RC" -eq 0 ] && ok "$shape-clean: gate exits 0" || bad "$shape-clean: gate exit $RC"
+    run_shape $shape red0
+    expect "$shape-red0" tests-green FAIL
+    printf '%s\n' "$OUT" | grep -q 'tests=2 pass=1 fail=1' && ok "$shape-red0: fixture fails before the fix (2 tests, 1 fail)" || bad "$shape-red0: fixture is not 2 tests with 1 failing before the fix"
+    run_shape $shape stray; expect "$shape-stray" no-stray-files FAIL
+done
+OUT=$(bash "$GATE" --stub --shape ruby 2>&1); RC=$?
+[ "$RC" -eq 2 ] && ok "shape: an unknown shape is a usage error" || bad "shape: unknown shape rc=$RC"
+
+# per-rep fields: prompts_shown and first_preview_s are always present; null always carries a reason
+run_gate clean
+printf '%s\n' "$OUT" | grep -qx 'prompts_shown=0' && ok "fields: prompts_shown=0 on a run that asked nothing" || bad "fields: prompts_shown=0 missing"
+printf '%s\n' "$OUT" | grep -Eq '^first_preview_s=null reason="no previewable app' && ok "fields: first_preview_s null with a reason when no app ran" || bad "fields: first_preview_s null-with-reason missing"
+grep -q '^prompts_shown=' "$T/report-clean.txt" && grep -q '^first_preview_s=' "$T/report-clean.txt" && ok "fields: both recorded in the report" || bad "fields: not in the report"
+run_gate prompts;  printf '%s\n' "$OUT" | grep -qx 'prompts_shown=2' && ok "fields: two printed prompts are counted" || bad "fields: prompts not counted"
+run_gate fpreview; printf '%s\n' "$OUT" | grep -qx 'first_preview_s=7' && ok "fields: first_preview_s read from the app runner record" || bad "fields: first_preview_s not read"
+run_gate fpbad;    printf '%s\n' "$OUT" | grep -Eq '^first_preview_s=null reason="unreadable' && ok "fields: a corrupt record is null with a reason, not a guess" || bad "fields: corrupt record not null"
+
+# --real without a credential exits early, naming both variables, before creating any temp state
+EMPTYTMP="$T/empty-tmpdir"; mkdir -p "$EMPTYTMP"
+OUT=$(env -u LOKI_RUN_TMP -u ANTHROPIC_API_KEY -u CLAUDE_CODE_OAUTH_TOKEN TMPDIR="$EMPTYTMP" bash "$GATE" --real 2>&1); RC=$?
+[ "$RC" -eq 2 ] && ok "real: no credential exits 2" || bad "real: no credential rc=$RC"
+printf '%s\n' "$OUT" | grep -q 'ANTHROPIC_API_KEY' && printf '%s\n' "$OUT" | grep -q 'CLAUDE_CODE_OAUTH_TOKEN' && ok "real: message names both variables" || bad "real: message lacks a variable name"
+[ -z "$(/bin/ls -A "$EMPTYTMP")" ] && ok "real: no temp state created before the exit" || bad "real: temp state left in TMPDIR"
+
 # TEN-UX-08: --entry start-empty
 run_empty() { # run_empty <mode> [budget] [injected measured seconds]: sets OUT and RC
     OUT=$(env -u LOKI_RUN_TMP FAKE_MODE="$1" ${2:+FRG_BUDGET_S=$2} ${3:+FRG_FAKE_TOTAL_S=$3} FRG_LOKI="$T/fake-loki" FRG_REPORT="$T/report-E$1.txt" bash "$GATE" --stub --entry start-empty 2>&1); RC=$?
@@ -134,6 +174,8 @@ run_empty sgood
 for a in repo-init outcome-verified receipt-sealed next-line first-success-budget; do expect start-empty-good $a PASS; done
 [ "$RC" -eq 0 ] && ok "start-empty-good: gate exits 0" || bad "start-empty-good: gate exit $RC"
 printf '%s\n' "$OUT" | grep -Eq '^install_to_first_success_s=[0-9]+$' && ok "start-empty-good: report has install_to_first_success_s" || bad "start-empty-good: no install_to_first_success_s"
+run_empty sgood
+printf '%s\n' "$OUT" | grep -q '^prompts_shown=' && printf '%s\n' "$OUT" | grep -q '^first_preview_s=' && ok "fields: start-empty leg records both" || bad "fields: start-empty leg lacks the fields"
 run_empty srepo;  expect srepo repo-init FAIL;  [ "$RC" -ne 0 ] && ok "srepo: exits non-zero" || bad "srepo: exit 0"
 run_empty sslow 1; expect sslow first-success-budget FAIL; [ "$RC" -ne 0 ] && ok "sslow: exits non-zero" || bad "sslow: exit 0"
 run_empty snonext; expect snonext next-line FAIL; [ "$RC" -ne 0 ] && ok "snonext: exits non-zero" || bad "snonext: exit 0"
