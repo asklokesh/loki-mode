@@ -223,6 +223,107 @@ for _case in "LOKI_REVIEW_ADVISORY=1 maintainer-mergeability haiku" \
     fi
 done
 
+# --- council dispatch: the reviewer name reaches the --model pin ------------
+# Drives the REAL run_code_review council with a stub claude on PATH recording
+# argv. The pin helper is wrapped by a spy that records the name it receives, so
+# dropping "$reviewer_name" at either _dispatch_reviewer_recorded call site
+# (requirements-verifier shard branch, other-reviewer branch) turns this red.
+# The shard branch names its reviewer requirements-verifier-shard-NNN, which
+# the pin never maps to haiku, so there the contract is: name passed, no pin.
+_CD="$SCRATCH/council"
+_CD_BIN="$_CD/bin"; _CD_ARGV="$_CD/argv"; _CD_REPO="$_CD/repo"
+mkdir -p "$_CD_BIN" "$_CD_ARGV" "$_CD_REPO/src"
+cat > "$_CD_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+prompt=""; prev=""; seen=""
+for a in "$@"; do
+    [ "$prev" = "-p" ] && prompt="$a"
+    case "$a" in -p) ;; --*) seen="$seen $a" ;; esac
+    [ "$prev" = "--model" ] && seen="$seen $a"
+    prev="$a"
+done
+case "$prompt" in --*|"") prompt="$(cat)" ;; esac
+name="$(printf '%s' "$prompt" | grep -m1 -o '^You are [a-z-]*' | sed 's/^You are //')"
+[ -n "$name" ] || name=unknown
+printf '%s\n' "$seen" >> "$CD_ARGV_DIR/$name.argv"
+if [ "$name" = "requirements-verifier" ]; then
+    python3 - "$prompt" <<'PY'
+import json, re, sys
+m = re.search(r"<requirements_contract>\s*(\{.*?\})\s*</requirements_contract>", sys.argv[1], re.DOTALL)
+man = json.loads(m.group(1))
+print(json.dumps({"stop_reason": "tool_use", "structured_output": {
+    "schema": "loki-requirements-verdict/v1", "spec_sha256": man["spec_sha256"],
+    "verdict": "PASS", "findings": [],
+    "requirements": [{"id": i["id"], "status": "PASS", "evidence": "ok"} for i in man["requirements"]]}}))
+PY
+    exit 0
+fi
+printf 'VERDICT: PASS\nFINDINGS:\n- None\n'
+STUB
+chmod +x "$_CD_BIN/claude"
+git -C "$_CD_REPO" init -q
+git -C "$_CD_REPO" config user.name t; git -C "$_CD_REPO" config user.email t@t.t
+git -C "$_CD_REPO" config commit.gpgsign false
+printf 'export const a = 1;\n' > "$_CD_REPO/src/a.ts"
+git -C "$_CD_REPO" add src/a.ts; git -C "$_CD_REPO" commit -qm base
+printf 'expect(a).toBe(2); // test assert coverage\n' > "$_CD_REPO/src/a.ts"
+printf 'Build a counter.\nShow the count clearly.\n' > "$_CD/spec.md"
+_CD_SHA="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$_CD/spec.md")"
+_CD_SPY="$_CD/pin-spy"; : > "$_CD_SPY"
+(
+    cd "$_CD_REPO" || exit 1
+    log_header() { :; }; log_step() { :; }; log_info() { :; }; log_warn() { :; }; log_error() { :; }
+    emit_event_json() { :; }; register_pid() { :; }; unregister_pid() { :; }
+    loki_subcall_bare_enabled() { return 1; }
+    loki_review_guard_enabled() { return 1; }
+    loki_review_allowlist_enabled() { return 1; }
+    _loki_supervised_claude_isolation_ready() { return 0; }
+    loki_claude_flag_supported() { [ "${1:-}" = "--json-schema" ]; }
+    _orig_pin_def="$(declare -f _reviewer_model_pin)"
+    source /dev/stdin <<PIN_SPY
+${_orig_pin_def/_reviewer_model_pin/_orig_reviewer_model_pin}
+_reviewer_model_pin() { printf '%s\n' "\${1:-}" >> "$_CD_SPY"; _orig_reviewer_model_pin "\$@"; }
+PIN_SPY
+    PATH="$_CD_BIN:$PATH" CD_ARGV_DIR="$_CD_ARGV" \
+    TARGET_DIR="$_CD_REPO" PRD_PATH="$_CD/spec.md" ITERATION_COUNT=1 \
+    _LOKI_RUN_START_SHA="$(git -C "$_CD_REPO" rev-parse HEAD)" \
+    PROVIDER_NAME=claude LOKI_REVIEW_JSON_SCHEMA=off LOKI_REVIEW_RETRY=0 \
+    LOKI_GATE_DEVILS_ADVOCATE=false LOKI_REVIEW_ADVISORY=1 \
+    LOKI_HOST_GUARD_SETTINGS_JSON='{"hooks":{}}' LOKI_SPEC_SHA256="$_CD_SHA" \
+    LOKI_SUPERVISED_BUILD=1 LOKI_BUILD_PROFILE=simple-web \
+        run_code_review >/dev/null 2>&1
+) >/dev/null 2>&1
+_cd_argv() { cat "$_CD_ARGV/$1.argv" 2>/dev/null; }
+for _r in maintainer-mergeability test-coverage-auditor; do
+    if [ -s "$_CD_ARGV/$_r.argv" ] && _cd_argv "$_r" | grep -q -- '--model haiku'; then
+        ok "council non-shard branch: $_r dispatched with --model haiku"
+    else
+        bad "council non-shard branch: $_r dispatched with --model haiku (argv: '$(_cd_argv "$_r")')"
+    fi
+    if grep -qx "$_r" "$_CD_SPY"; then
+        ok "council non-shard branch: pin received reviewer name $_r"
+    else
+        bad "council non-shard branch: pin never received reviewer name $_r"
+    fi
+done
+if [ -s "$_CD_ARGV/architecture-strategist.argv" ] \
+   && ! _cd_argv architecture-strategist | grep -q -- '--model'; then
+    ok "council non-shard branch: architecture-strategist gets no --model pin"
+else
+    bad "council non-shard branch: architecture-strategist gets no --model pin (argv: '$(_cd_argv architecture-strategist)')"
+fi
+if [ -s "$_CD_ARGV/requirements-verifier.argv" ] \
+   && ! _cd_argv requirements-verifier | grep -q -- '--model haiku'; then
+    ok "council shard branch: requirements-verifier dispatched with no haiku pin"
+else
+    bad "council shard branch: requirements-verifier dispatched with no haiku pin (argv: '$(_cd_argv requirements-verifier)')"
+fi
+if grep -qx 'requirements-verifier-shard-[0-9]*' "$_CD_SPY"; then
+    ok "council shard branch: pin received the shard reviewer name"
+else
+    bad "council shard branch: pin never received the shard reviewer name (spy: $(tr '\n' ' ' < "$_CD_SPY"))"
+fi
+
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
