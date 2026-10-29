@@ -121,11 +121,35 @@ describe("CCR-06 structured Wall cases", () => {
     expect(out.result.reason).toContain("duplicate test name test_foo");
   });
 
+  // Each of these escapes, rendered against an add that raises NotImplementedError, passes or skips instead of failing.
+  const ADD = { name: "a", kind: "equals", imports: ["from calc import add"], call: "add(1, 2)", expected: "3" };
+  const escapes: [string, Record<string, unknown>, string][] = [
+    ["a bare return in arrange", { arrange: ["return"] }, "arrange[0] uses return"],
+    ["a return inside if 1: in arrange", { arrange: ["if 1: return"] }, "arrange[0] uses return"],
+    ["a return inside while True: in arrange", { arrange: ["while True: return"] }, "arrange[0] uses return"],
+    ["a yield in arrange", { arrange: ["x = yield 1"] }, "arrange[0] uses yield"],
+    ["an await in arrange", { arrange: ["x = await add(1, 2)"] }, "arrange[0] uses await"],
+    ["a raise of a skip in arrange", { imports: ["from calc import add", "import pytest"], arrange: ["raise pytest.skip.Exception('x')"] }, "arrange[0] uses raise"],
+    ["an exec smuggle in arrange", { imports: ["from calc import add", "import pytest"], arrange: ["exec('pytest.skip()')"] }, "arrange[0] uses exec"],
+    ["an eval in the call", { call: "eval('3')" }, "call uses eval"],
+    ["a pytest.skip in arrange", { imports: ["from calc import add", "import pytest"], arrange: ["pytest.skip('x')"] }, "arrange[0] uses .skip"],
+    ["a getattr with a computed name", { imports: ["from calc import add", "import os"], arrange: ["g = getattr(os, 'sys' + 'tem')"] }, "arrange[0] calls getattr"],
+    ["an expected that repeats the call", { expected: "add(1,  2)" }, "expected repeats the call"],
+    ["a call that compares with itself", { kind: "true", call: "add(1, 2) == add(1, 2)", expected: undefined }, "call compares an expression with itself"],
+    ["a patch of the module under test", { imports: ["import calc"], arrange: ["calc.add = lambda a, b: 3"], call: "calc.add(1, 2)" }, "arrange[0] rebinds or patches calc"],
+    ["a rebind of the function under test", { arrange: ["add = lambda a, b: 3"] }, "arrange[0] rebinds or patches add"],
+    ["a walrus rebind in the call", { call: "(add := lambda a, b: 3)(1, 2)" }, "call rebinds or patches add"],
+    ["an alias of the module under test", { imports: ["import calc"], arrange: ["m = calc", "m.add = lambda a, b: 3"], call: "calc.add(1, 2)" }, "arrange[0] aliases calc"],
+    ["a setattr on the module under test", { imports: ["import calc"], arrange: ["setattr(calc, 'add', lambda a, b: 3)"], call: "calc.add(1, 2)" }, "arrange[0] uses setattr"],
+    ["a dunder reach into the function", { arrange: ["c = add.__code__"] }, "arrange[0] uses .__code__"],
+    ["a re-import over the function under test", { arrange: ["from os import sep as add"] }, "arrange[0] re-imports"],
+  ];
   const refused:[string, Record<string, string>, string][] = [
     ["malformed JSON", { "loki_wall_cases.json": "{not json" }, "wall_cases_malformed_json"],
     ["a schema violation (unknown kind)", { "loki_wall_cases.json": JSON.stringify({ cases: [{ name: "a", kind: "magic", call: "f()" }] }) }, "wall_cases_schema"],
     ["a multi-line call", { "loki_wall_cases.json": JSON.stringify({ cases: [{ name: "a", kind: "true", call: "f()\nimport os" }] }) }, "wall_cases_schema"],
     ["a non-import in imports", { "loki_wall_cases.json": JSON.stringify({ cases: [{ name: "a", kind: "true", imports: ["os.system('x')"], call: "f()" }] }) }, "wall_cases_schema"],
+    ["a star import, whose bound names cannot be protected", { "loki_wall_cases.json": JSON.stringify({ cases: [{ name: "a", kind: "true", imports: ["from calc import *"], call: "add(1, 2)" }] }) }, "wall_cases_schema"],
     ["free-form code instead of JSON", { "loki_wall_t.py": "def test_a():\n    assert True\n" }, "wall_cases_free_form_output"],
     ["no output file", {}, "wall_cases_missing"],
     ["an expected that closes the template (999) or (True)", { "loki_wall_cases.json": JSON.stringify({ cases: [{ name: "a", kind: "equals", imports: ["from calc import add"], call: "add(1, 2)", expected: "999) or (True" }] }) }, "wall_cases_unsafe_code: case 0: expected"],
@@ -133,7 +157,14 @@ describe("CCR-06 structured Wall cases", () => {
     ["a call that injects statements", { "loki_wall_cases.json": JSON.stringify({ cases: [{ name: "a", kind: "true", call: "1); import os; os.system('x'); (1" }] }) }, "wall_cases_unsafe_code: case 0: call"],
     ["an arrange of two statements", { "loki_wall_cases.json": JSON.stringify({ cases: [{ name: "a", kind: "true", arrange: ["x = 1; import os"], call: "x" }] }) }, "wall_cases_unsafe_code: case 0: arrange[0]"],
     ["a call that comments out the closing paren", { "loki_wall_cases.json": JSON.stringify({ cases: [{ name: "a", kind: "true", call: "f() #" }] }) }, "wall_cases_unsafe_code"],
+    ...escapes.map(([label, c, reason]): [string, Record<string, string>, string] => [label, { "loki_wall_cases.json": JSON.stringify({ cases: [{ ...ADD, ...c }] }) }, `wall_cases_unsafe_code: case 0: ${reason}`]),
   ];
+  test("a nested def may return, and plain state setup is kept", async () => {
+    const ok = JSON.stringify({ cases: [{ ...ADD, imports: ["from calc import add", "import os", "import re"], arrange: ["def g(): return 1", "os.environ['LOKI_X'] = '1'", "r = re.compile('a')"], call: "add(g(), 2)" }] });
+    const { out } = await author("pytest", { "loki_wall_cases.json": ok }, ["calc.py"]);
+    if (out.kind !== "authored") throw new Error(JSON.stringify(out));
+    expect(out.contents.get("loki_wall_case_1_a.py")).toContain("    def g(): return 1");
+  });
   for (const [label, files, reason] of refused) {
     test(`refuses ${label} with a named reason`, async () => {
       const { out } = await author("pytest", files, ["calc.py"]);
