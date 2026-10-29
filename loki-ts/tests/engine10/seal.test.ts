@@ -29,7 +29,7 @@ import { repoKey } from "../../src/engine10/cache.ts";
 import { readOriginUrl } from "../../src/util/engine_origin.ts";
 import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
 import { EXIT, formatSummary, outcomeOf, reasonOf } from "../../src/engine10/output.ts";
-import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes } from "../../src/util/base_guard.ts"; import { commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage, EXTERNAL_NO_WALL } from "../../src/engine10/stages/seal.ts";
+import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes } from "../../src/util/base_guard.ts"; import { verifyStage } from "../../src/engine10/stages/verify.ts"; import { commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage, EXTERNAL_NO_WALL } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts"; import { getVersion } from "../../src/version.ts";
@@ -661,7 +661,6 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
 
   // never-worse-than-raw floor: repo checks pass, a Loki gate failed for a harness reason -> PARTIAL, owner harness, tree delivered.
   const floorRun = async (name: string, wallOwner: "harness" | undefined) => {
-    noKey();
     const { repo, base } = makeRepo(name);
     const { ctx } = ctxFor(repo, base, "claude", {
       verify: { checks: [
@@ -686,6 +685,29 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.verdict).toBe("FAILED");
     expect(r.checks.find((k) => k.name.startsWith("wall:"))!.owner).toBeUndefined();
   }, 30000);
+  test("floor: a genuinely failing check run through verify then seal is FAILED and carries no owner", async () => {
+    const { repo, base } = makeRepo("floor-real-verify");
+    writeFileSync(join(repo, "broken.sh"), "if [ -z \"$x\" ]\n  echo unterminated\n");
+    const { ctx } = ctxFor(repo, base, "claude", { verify: {} });
+    const v = await verifyStage.run(ctx, new AbortController().signal);
+    const bash = (v.data.checks as { name: string; result: string; owner?: string }[]).find((k) => k.name === "lint:bash-n")!;
+    expect(bash.result).toBe("fail");
+    expect(bash.owner).toBeUndefined();
+    const { ctx: sctx } = ctxFor(repo, base, "claude", { verify: v.data });
+    await commitStage.run(sctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(sctx, new AbortController().signal));
+    expect(r.verdict).toBe("FAILED");
+    const k = r.checks.find((c) => c.name === "lint:bash-n")!;
+    expect(k.result).toBe("fail");
+    expect(k.owner).toBeUndefined();
+  }, 30000);
+  test("floor: reasonOf never names a harness-owned failed check, and still names a code-owned one", () => {
+    const ev = (checks: unknown[]) => [{ v: 1, seq: 0, ts: "t", run: "r", type: "stage.completed", stage: "verify", data: { checks } }] as never;
+    const harness = { name: "wall:w.py", result: "fail", first_error: "collect error", owner: "harness" }, code = { name: "pytest", result: "fail", first_error: "assert 1 == 2" };
+    expect(reasonOf(ev([harness, code]), false, null, "FAILED")).toBe("pytest failed: assert 1 == 2");
+    expect(reasonOf(ev([harness]), false, null, "PARTIAL") ?? "").not.toContain("wall:w.py failed");
+    expect(reasonOf(ev([code]), false, null, "FAILED")).toBe("pytest failed: assert 1 == 2");
+  });
   test("floor: a harness-owned failure feeds no fix round and no stall", () => {
     const v = (owner?: string) => ({ checks: [{ name: "w", result: "fail", ...(owner ? { owner } : {}) }], failures_grouped: [{ signature: "w", count: 1, sample: "" }] });
     expect(hasFailures(v("harness"))).toBe(false);
