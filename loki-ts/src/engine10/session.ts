@@ -125,7 +125,7 @@ function exitKind(exit: number | null, killed: boolean, markers: SessionMarkers)
 // still names the number: classifyExitCause never falls back to an un-named string.
 const EXIT_CAUSES: Readonly<Record<number, string>> = Object.fromEntries(([
   [0, "success"], [1, "general error"], [2, "misuse of shell command"], [124, "timeout"], [125, "timeout or container failure"],
-  [126, "command not executable"], [127, "command not found"], [130, "SIGINT"], [137, "SIGKILL"], [143, "SIGTERM"],
+  [126, "command not executable"], [127, "command not found"], [130, "SIGINT"], [137, "SIGKILL"], [143, "SIGTERM"], [98, "turn cap"],
 ] as const).map(([code, what]) => [code, `exit ${code} (${what})`]));
 // E-68: a session child traps SIGTERM and exits 143, so classify from what the ENGINE knows (it sent the kill), never the child's code: killed always wins. killCause names which kill fired; it defaults to "limit".
 export function classifyExitCause(exit: number | null, killed: boolean, killCause?: "limit" | "aborted" | "stalled"): string {

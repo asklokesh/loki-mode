@@ -226,6 +226,24 @@ describe("engine10 implement stage", () => {
     expect(verdictOf({ implement: result.data }, pass, false, false, false, true)).toBe("PARTIAL");
   });
 
+  test("a resumed session that hits the turn cap does not start a second fresh session", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "loki-capres-"));
+    mkdirSync(join(repo, ".loki"), { recursive: true });
+    writeFileSync(join(repo, ".loki", "e10-session-e10-test-1-impl.json"), JSON.stringify({ session_id: "sess-own" }));
+    const seen: SessionRunOptions[] = [];
+    const sessions = new FakeSessionRunner(
+      { exit: MAX_TURNS_EXIT, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 30, killed: false },
+      (o) => { seen.push(o); },
+    );
+    const ctx = { ...fakeCtx(sessions, {}), repoDir: repo };
+    const result = await implementStage.run(ctx, new AbortController().signal);
+    rmSync(repo, { recursive: true, force: true });
+
+    expect(seen.length).toBe(1);
+    expect(seen[0]!.resumeSessionId).toBe("sess-own");
+    expect(result.data.stop_cause).toBe("max_turns");
+  });
+
   test("E-61: a non-killed error exit fails the stage and writes the stderr tail under runDir", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-e08-rd-"));
     const sessions = new FakeSessionRunner({
