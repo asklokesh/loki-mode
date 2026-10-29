@@ -1038,6 +1038,12 @@ describe("RX-1: a repo with no test runner still gets a failing-first Wall check
     const { harnessRunners } = await import("../../src/engine10/testmap.ts");
     expect(harnessRunners([], ["pyproject.toml", "scripts/gen.py"], nobun)).toEqual(["pytest"]);
   });
+  for (const manifest of ["requirements-dev.txt", "requirements-test.txt", "setup.cfg", "tox.ini"]) {
+    test(`${manifest} as the only manifest plus a .py file picks pytest without bun`, async () => {
+      const { harnessRunners } = await import("../../src/engine10/testmap.ts");
+      expect(harnessRunners([], [manifest, "app/main.py"], nobun)).toEqual(["pytest"]);
+    });
+  }
   test("a repo with a detected runner is unchanged", async () => {
     const { harnessRunners } = await import("../../src/engine10/testmap.ts");
     expect(harnessRunners(["vitest"], ["package.json"], nobun)).toEqual(["vitest"]);
