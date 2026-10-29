@@ -55,6 +55,7 @@ reviewer will check.
 | `metrics.false_pass` | bool or null | runner | claimed_done while the grader failed; null when no claim |
 | `metrics.council_cache_share` | number or null | runner | cache_read / (input + cache_creation + cache_read) over review/council ledger phases; null when none |
 | `metrics.journal_reuse_wall_s` | number or null | runner | wall seconds of a second run on the same card and base sha, from provenance; null when not measured |
+| `stages` | object, optional | runner | present only when the adapter reported usable records: `{wall_author?, review?}`, each `{model: str, outcome: str}`. A record with an empty or non-string `model` or `outcome` is dropped; a stage with no usable record is absent, never zero-filled |
 
 ## summary
 
@@ -66,6 +67,21 @@ reviewer will check.
 | `duration_s_median` / `_min` / `_max` | float or null | report median + spread, lead conservative |
 | `cost_usd_median` | float or null | null when no trial recorded cost |
 | `cost_usd_per_solved` | float or null | total cost / n_success; null if 0 solved or no cost recorded |
+
+## Stage outcomes (held-out wrong-pass run)
+
+Each run in the wrong-pass summary written by `runner.py` carries
+`stage_outcomes`, keyed by stage (`wall_author`, `review`). Informational only;
+it is not a P4 gate. Per stage:
+
+| Field | Type | Notes |
+|---|---|---|
+| `by_model` | object or null | `{<model>: {n: int, outcomes: {<outcome>: int}}}` over trials that carry a `trials[].stages.<stage>` record; null when no trial has one |
+| `reason` | string or null | null when measured; `"unmeasured: no trial reported a <stage> record"` when `by_model` is null |
+| `trials_without_record` | int | trials with no usable record for the stage, including on a partially measured stage (where `reason` stays null) |
+
+A stage model that `attribution.model_match` treats as the run model is keyed by
+the run model. An unmeasured stage is null with a reason, never a zero.
 
 ## verify
 

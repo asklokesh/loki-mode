@@ -443,7 +443,7 @@ def _models_of(row: Dict[str, Any]) -> List[str]:
     return [row["model_used"]] if row.get("model_used") else []
 
 
-def _model_match(a: str, b: str) -> bool:
+def model_match(a: str, b: str) -> bool:
     a, b = a.lower(), b.lower()
     return a == b or a in b or b in a
 
@@ -461,8 +461,8 @@ def attribution_cells(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                           for rw in grp if rw.get("arm") in RAW_ARMS):
             lm, rm = _models_of(loki), _models_of(raw)
             ok = bool(lm) and bool(rm) and all(
-                any(_model_match(x, y) for y in rm) for x in lm) and all(
-                any(_model_match(x, y) for y in lm) for x in rm)
+                any(model_match(x, y) for y in rm) for x in lm) and all(
+                any(model_match(x, y) for y in lm) for x in rm)
             reason = None
             if not ok:
                 reason = ("model mismatch: loki ran %s, %s ran %s"

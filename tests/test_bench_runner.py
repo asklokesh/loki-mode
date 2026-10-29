@@ -768,6 +768,35 @@ class StageOutcomesTest(unittest.TestCase):
             self.assertIsNone(so[stage]["by_model"])
             self.assertIn("unmeasured", so[stage]["reason"])
 
+    def test_empty_or_non_string_record_is_dropped_and_counted(self):
+        bad = [{"model": "", "outcome": "approved"},
+               {"model": "rev-model", "outcome": ""},
+               {"model": 7, "outcome": "approved"},
+               {"model": "rev-model", "outcome": None}]
+        for rec in bad:
+            self.assertEqual(runner.stage_records({"stages": {"review": rec}}), {})
+        seq = iter(bad[:2])
+        def adapter(workdir, spec, **kw):
+            out = mock_adapter_with_cost(workdir, spec, **kw)
+            out["stages"] = {"review": next(seq)}
+            return out
+        so = self._run(adapter)["stage_outcomes"]
+        self.assertIsNone(so["review"]["by_model"])
+        self.assertEqual(so["review"]["trials_without_record"], 2)
+        self.assertIn("unmeasured", so["review"]["reason"])
+
+    def test_partial_stage_reports_missing_count_with_no_reason(self):
+        seq = iter([True, False])
+        def adapter(workdir, spec, **kw):
+            if next(seq):
+                return _stage_adapter("approved")(workdir, spec, **kw)
+            return mock_adapter_with_cost(workdir, spec, **kw)
+        so = self._run(adapter)["stage_outcomes"]
+        self.assertEqual(so["review"]["by_model"],
+                         {"rev-model": {"n": 1, "outcomes": {"approved": 1}}})
+        self.assertEqual(so["review"]["trials_without_record"], 1)
+        self.assertIsNone(so["review"]["reason"])
+
 
 class CollectEfficiencyFallbackTest(unittest.TestCase):
     def test_collect_efficiency_returns_proof_shape(self):

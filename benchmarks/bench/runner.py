@@ -635,7 +635,7 @@ def stage_outcomes(rows: List[Dict[str, Any]], model: str) -> Dict[str, Any]:
                 missing += 1
                 continue
             m = rec["model"]
-            key = model if model and attribution._model_match(m, model) else m
+            key = model if model and attribution.model_match(m, model) else m
             cell = by_model.setdefault(key, {"n": 0, "outcomes": {}})
             cell["n"] += 1
             cell["outcomes"][rec["outcome"]] = cell["outcomes"].get(rec["outcome"], 0) + 1
