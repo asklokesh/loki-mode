@@ -13,14 +13,12 @@ import { loadSpecFile, type LoadedSpec } from "../util/spec_file.ts";
 import { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker } from "../util/engine_origin.ts";
 export { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker }; // re-exported: callers and tests import these from here
 import { withholdGithubTokens } from "../runner/github_token.ts"; import { readAliveBeat, writeAliveBeat, writeRunPid } from "../util/run_pid.ts";
-import { EventLog, conflictReasonOf, fold, partialCost, summaryCost, readEvents, tail, type Folded } from "./events.ts"; import { stageShareText } from "../util/cost_breakdown.ts";
-import { cacheSavings } from "../runner/budget.ts";
+import { EventLog, conflictReasonOf, fold, partialCost, summaryCost, readEvents, tail } from "./events.ts"; import { stageShareText } from "../util/cost_breakdown.ts";
 import { disclosureLine } from "../providers/provider_guard.ts";
 import { budgetNext, capNote, groupEnv, parseCapUsd, priorSpend, resolveCap, SUBSCRIPTION_NOTE, unenforceableNote, writeBudgetStop } from "../e10ext/budget_cap.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
-import { formatHeartbeatLine, formatStageLine, formatSummary, formatPreModelLine, preModelTiming, type PreModelTiming, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
-import { renderProofCard } from "../util/receipt_surface.ts";
+import { formatHeartbeatLine, formatStageLine, formatSummary, preModelTiming, EXIT, outcomeOf, reasonOf, type Outcome } from "./output.ts";
 import { LiveLine } from "../e10ext/liveline.ts";
 import { killGroup, spawnWorker, ulimitArgv } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
@@ -32,7 +30,7 @@ import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
 import { type EventEnvelope, type PushEnv, type StageName, type Verdict, backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, pushArgv, STAGE_BUDGETS } from "./types.ts";
 import { baseLine, dropEmptyRunBranch } from "../util/base_guard.ts";
-import { alreadyDoneTextComment, policyGate, prGate, runIntent, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
+import { alreadyDoneTextComment, policyGate, prGate, renderMainOutput, runIntent, summaryCache, summaryTokens, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
 
 export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
 import { createStuckWatch, stuckMinutes } from "../util/slack_events.ts";
@@ -229,36 +227,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   await slackEvent(env, "finished", { summary: formatSummary(summary), outcome: String(outcome), cost: summary.cost.usd != null ? `$${summary.cost.usd.toFixed(2)}` : "not measured", time: `${Math.round(wallS)}s`, receipt: log.tampered ? "TAMPERED" : receiptVerdict ? verdict : undefined }); rmRunPid(); process.off("exit", rmRunPid); // D51-A4, replaces E-48 adapters/slack.ts call
   return { verdict, outcome, stop: stop ?? (receiptVerdict && allEvents.some((e) => e.type === "cap.hit") ? "cap" : null), receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
 }
-export { alreadyDoneTextComment, policyGate, prGate, unmergedLokiWorkNote, type PolicyGate }; // moved to util/run_outputs.ts (line budget); re-exported for existing callers
-/** The block main() writes to stdout once a run finishes; pure because main() re-spawns process.argv[1] as the worker, so tests cannot drive it. */
-export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput, verbose = true): string {
-  const c = alreadyDoneTextComment(events), un = unmergedLokiWorkNote(events);
-  const pm = (events.findLast((e) => e.type === "run.completed")?.data.pre_model ?? null) as PreModelTiming | null;
-  const verify = events.findLast((e) => e.type === "stage.completed" && e.stage === "verify");
-  const checks = Array.isArray(verify?.data.checks) ? verify.data.checks.length : 0;
-  const seal = events.findLast((e) => e.type === "stage.completed" && e.stage === "seal");
-  const mutation = typeof seal?.data.mutation_line === "string" ? seal.data.mutation_line : null;
-  const card = renderProofCard({
-    verdict: summary.outcome ?? summary.verdict,
-    usd: summary.cost.usd,
-    wallS: summary.wallS,
-    checks,
-    mutationProof: mutation,
-    sha: summary.receipt?.sha ?? null,
-    tampered: summary.receipt?.tampered === true,
-  });
-  return `${c ? `\n${c}\n` : ""}${un ? `\n${un}\n` : ""}${verbose ? formatPreModelLine(pm) : ""}${formatSummary(summary)}\n${verbose ? `\n${card}\n` : ""}`; // D48: the default stays within 8 lines; the card is --verbose only
-}
+export { alreadyDoneTextComment, policyGate, prGate, renderMainOutput, summaryCache, summaryTokens, unmergedLokiWorkNote, type PolicyGate }; // moved to util/run_outputs.ts (line budget); re-exported for existing callers
 const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
-// E-59: every token field the provider reported, cache included (E-50 found "1k shown for 372k used" when this summed only input+output). The sole place tokens are computed for the Cost line.
-export function summaryTokens(f: Folded, sawCost: boolean): number | null {
-  return sawCost ? f.cost.inputTokens + f.cost.outputTokens + f.cost.cacheReadTokens + f.cost.cacheCreationTokens : null;
-}
-/** Summary cache fields from the cost events: tokens times the input minus cache-read price delta; null (printed "cache not measured") unless every cost event carried the key, and for a tampered log. */
-export function summaryCache(events: ReturnType<typeof readEvents>, tampered: boolean): { cacheReadTokens: number | null; cacheSavedUsd: number | null } {
-  const cs = tampered ? null : cacheSavings(events.filter((e) => e.type === "cost").map((e) => ({ model: typeof e.data.model === "string" ? e.data.model : undefined, cache_read_tokens: typeof e.data.cache_read_tokens === "number" ? e.data.cache_read_tokens : undefined })));
-  return { cacheReadTokens: cs ? cs.readTokens : null, cacheSavedUsd: cs ? cs.savedUsd : null };
-}
 export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];

@@ -1,9 +1,8 @@
 // Loki 10 state machine (ENGINE.md section 4): stage table, Plan || Wall, optional() loader, stage limits, global cap, stop reasons (stalled, fatal). Siblings arrive only through RunContext; stages come from ./stages/<name>.ts.
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { hooks } from "./hooks.ts";
-import { safeGit } from "../util/safe_git.ts";
+import { treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
@@ -62,29 +61,6 @@ const KILL_GRACE_MS = 2000;
 export function softCapS(capS: number): number { const plain = (capS * 14) / 15, budget = backstopS(capS) - ((STAGE_BUDGETS.commit.targetS ?? 0) + (STAGE_BUDGETS.seal.targetS ?? 0) + KILL_GRACE_MS / 1000 + 2); return Math.max(0, Math.min(plain, budget)); } // tightens 14/15 of capS so commit+seal's tail (plus a 2s margin: this clock starts after worker boot, the backstop's starts at spawn) fits before the backstop; when the tail can never fit at all (budget < 0), 0 still maximizes the gap to the backstop instead of the old plain-point fallback, which left as little as 0.17s to seal (E-67 round 5 REJECT finding 1)
 /** Stages that write to the working tree; only these journal a diff_stat. The concurrent wall (split) path runs beside implement and installs into a base copy, so a before/after delta would be implement's: it journals none (unmeasured). */
 const TREE_STAGES: ReadonlySet<string> = new Set(["wall", "implement", "fix"]);
-/** Tree hash of the working tree (tracked, modified and untracked, minus .loki) through a throwaway index, so the repo index is never touched. Null when unreadable. */
-function treeSnapshot(repoDir: string): string | null {
-  let dir: string | null = null;
-  try {
-    dir = mkdtempSync(join(tmpdir(), "loki-snap-"));
-    const env = { ...process.env, GIT_INDEX_FILE: join(dir, "index") };
-    safeGit(repoDir, ["read-tree", "HEAD"], { env });
-    safeGit(repoDir, ["add", "-A", "--", ".", ":(exclude).loki"], { env });
-    return safeGit(repoDir, ["write-tree"], { env }).trim() || null;
-  } catch { return null; } finally { if (dir) rmSync(dir, { recursive: true, force: true }); }
-}
-/** Files, added and removed lines between two tree hashes. Null when git cannot say; a binary file counts as 0 lines. */
-function treeDiffStat(repoDir: string, a: string | null, b: string | null): Obj | null {
-  if (!a || !b) return null;
-  try {
-    const paths: { path: string; added: number; removed: number }[] = [];
-    for (const line of safeGit(repoDir, ["diff", "--numstat", a, b]).split("\n")) {
-      const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(line);
-      if (m) paths.push({ path: m[3]!, added: m[1] === "-" ? 0 : Number(m[1]), removed: m[2] === "-" ? 0 : Number(m[2]) });
-    }
-    return paths.length === 0 ? null : { files: paths.length, added: paths.reduce((n, p) => n + p.added, 0), removed: paths.reduce((n, p) => n + p.removed, 0), paths };
-  } catch { return null; }
-}
 
 export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Promise<MachineResult> {
   const load = opts.load ?? defaultLoader(opts.stagesDir ?? join(import.meta.dir, "stages"));

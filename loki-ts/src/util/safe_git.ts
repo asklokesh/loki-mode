@@ -8,7 +8,7 @@
 // and credential helpers are neutralised too (FC-25c a); the user's global and system values are re-added so they keep working.
 // Always returns stdout as a utf8 string.
 import { hardenCredentialEnv } from "./credential_env.ts";
-import { lstatSync, readdirSync } from "node:fs";
+import { lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs"; import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { execFileSync, spawnSync, type ExecFileSyncOptions, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 
@@ -317,4 +317,27 @@ export async function ignoredPaths(repoDir: string, paths: string[], timeoutMs =
     try { const txt = await new Response(proc.stdout as ReadableStream).text(), code = await proc.exited; if (code !== 0 && code !== 1) return null; for (const f of txt.split("\0").filter(Boolean)) out.add(f.startsWith("./") ? f.slice(2) : f); } finally { clearTimeout(timer); }
   } catch { return null; }
   return out;
+}
+/** Tree hash of the working tree (tracked, modified and untracked, minus .loki) through a throwaway index, so the repo index is never touched. Null when unreadable. */
+export function treeSnapshot(repoDir: string): string | null {
+  let dir: string | null = null;
+  try {
+    dir = mkdtempSync(join(tmpdir(), "loki-snap-"));
+    const env = { ...process.env, GIT_INDEX_FILE: join(dir, "index") };
+    safeGit(repoDir, ["read-tree", "HEAD"], { env });
+    safeGit(repoDir, ["add", "-A", "--", ".", ":(exclude).loki"], { env });
+    return safeGit(repoDir, ["write-tree"], { env }).trim() || null;
+  } catch { return null; } finally { if (dir) rmSync(dir, { recursive: true, force: true }); }
+}
+/** Files, added and removed lines between two tree hashes. Null when git cannot say; a binary file counts as 0 lines. */
+export function treeDiffStat(repoDir: string, a: string | null, b: string | null): Record<string, unknown> | null {
+  if (!a || !b) return null;
+  try {
+    const paths: { path: string; added: number; removed: number }[] = [];
+    for (const line of safeGit(repoDir, ["diff", "--numstat", a, b]).split("\n")) {
+      const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(line);
+      if (m) paths.push({ path: m[3]!, added: m[1] === "-" ? 0 : Number(m[1]), removed: m[2] === "-" ? 0 : Number(m[2]) });
+    }
+    return paths.length === 0 ? null : { files: paths.length, added: paths.reduce((n, p) => n + p.added, 0), removed: paths.reduce((n, p) => n + p.removed, 0), paths };
+  } catch { return null; }
 }

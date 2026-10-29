@@ -10,12 +10,14 @@ import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { conflictReasonOf, fold, partialCost, readEvents } from "../engine10/events.ts";
+import { conflictReasonOf, fold, partialCost, readEvents, type Folded } from "../engine10/events.ts";
+import { cacheSavings } from "../runner/budget.ts";
+import { renderProofCard } from "./receipt_surface.ts";
 import { eventsRelPath, readOriginUrl } from "./engine_origin.ts";
 import { runOwnerAlive } from "./run_pid.ts";
 import { safeGit } from "./safe_git.ts";
 import { currentBranch } from "../e10ext/stop_restore.ts";
-import type { Outcome } from "../engine10/output.ts";
+import { formatPreModelLine, formatSummary, type Outcome, type PreModelTiming, type SummaryInput } from "../engine10/output.ts";
 import { noteOf } from "./base_guard.ts";
 import { sourceId } from "../../../packages/control-plane/src/shipper/ship.ts";
 import { redactSecrets } from "./redact.ts";
@@ -484,4 +486,33 @@ export function stackSection(env: NodeJS.ProcessEnv, base: string | undefined, h
   const r = env.LOKI_PR_REFS ?? "";
   const refs = !hasIssueLink && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+$/.test(r) ? `\nRefs ${r}\n` : "";
   return refs + (base ? `\nStacked on \`${base}\`: review and merge that pull request first.\n` : "");
+}
+
+/** The block main() writes to stdout once a run finishes; pure because main() re-spawns process.argv[1] as the worker, so tests cannot drive it. */
+export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput, verbose = true): string {
+  const c = alreadyDoneTextComment(events), un = unmergedLokiWorkNote(events);
+  const pm = (events.findLast((e) => e.type === "run.completed")?.data.pre_model ?? null) as PreModelTiming | null;
+  const verify = events.findLast((e) => e.type === "stage.completed" && e.stage === "verify");
+  const checks = Array.isArray(verify?.data.checks) ? verify.data.checks.length : 0;
+  const seal = events.findLast((e) => e.type === "stage.completed" && e.stage === "seal");
+  const mutation = typeof seal?.data.mutation_line === "string" ? seal.data.mutation_line : null;
+  const card = renderProofCard({
+    verdict: summary.outcome ?? summary.verdict,
+    usd: summary.cost.usd,
+    wallS: summary.wallS,
+    checks,
+    mutationProof: mutation,
+    sha: summary.receipt?.sha ?? null,
+    tampered: summary.receipt?.tampered === true,
+  });
+  return `${c ? `\n${c}\n` : ""}${un ? `\n${un}\n` : ""}${verbose ? formatPreModelLine(pm) : ""}${formatSummary(summary)}\n${verbose ? `\n${card}\n` : ""}`; // D48: the default stays within 8 lines; the card is --verbose only
+}
+// E-59: every token field the provider reported, cache included (E-50 found "1k shown for 372k used" when this summed only input+output). The sole place tokens are computed for the Cost line.
+export function summaryTokens(f: Folded, sawCost: boolean): number | null {
+  return sawCost ? f.cost.inputTokens + f.cost.outputTokens + f.cost.cacheReadTokens + f.cost.cacheCreationTokens : null;
+}
+/** Summary cache fields from the cost events: tokens times the input minus cache-read price delta; null (printed "cache not measured") unless every cost event carried the key, and for a tampered log. */
+export function summaryCache(events: ReturnType<typeof readEvents>, tampered: boolean): { cacheReadTokens: number | null; cacheSavedUsd: number | null } {
+  const cs = tampered ? null : cacheSavings(events.filter((e) => e.type === "cost").map((e) => ({ model: typeof e.data.model === "string" ? e.data.model : undefined, cache_read_tokens: typeof e.data.cache_read_tokens === "number" ? e.data.cache_read_tokens : undefined })));
+  return { cacheReadTokens: cs ? cs.readTokens : null, cacheSavedUsd: cs ? cs.savedUsd : null };
 }
