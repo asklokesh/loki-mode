@@ -253,9 +253,9 @@ async function runGroupCore(launcher: BacklogLauncher | undefined, dag: Dag, ctx
   } else {
     const frozen = freezeGroupContract(repoDir, groupId, dag.units, parseContract(ctx.spec, ctx.specPath ?? ""));
     if (!frozen.ok) { say(`loki: ${frozen.reason}\n`); return 1; }
-    if (!slugOf()) { say("loki: NOT PROVEN: group run needs an origin remote of the form owner/repo; no unit was started\n"); return 1; }
+    if (!slugOf()) { say("loki: FAILED: group run needs an origin remote of the form owner/repo; no unit was started\n"); return 1; }
     baseRef = git(repoDir, ["rev-parse", "HEAD"]);
-    if (!baseRef) { say("loki: NOT PROVEN: cannot resolve HEAD; no unit was started\n"); return 1; }
+    if (!baseRef) { say("loki: FAILED: cannot resolve HEAD; no unit was started\n"); return 1; }
     startBranch = git(repoDir, ["symbolic-ref", "--short", "-q", "HEAD"]);
     full = dag;
     units = dag.units.map((u) => ({ ...u }));
@@ -304,7 +304,7 @@ async function runGroupCore(launcher: BacklogLauncher | undefined, dag: Dag, ctx
   const costName = `${groupId}-${Date.now().toString(36)}`; // one record per invocation: a resumed group adds to earlier launches
   if (pending > 0) {
     const slug = slugOf();
-    if (!slug) { say("loki: NOT PROVEN: group run needs an origin remote of the form owner/repo; no unit was started\n"); return 1; }
+    if (!slug) { say("loki: FAILED: group run needs an origin remote of the form owner/repo; no unit was started\n"); return 1; }
     const n = Math.min(slots, pending);
     say(`loki: group ${groupId}: ${units.length} units, ${n} parallel slot(s) (provider ${provider})\n`);
     const backlog = join(REPO_ROOT, "autonomy", "lib", "backlog.py");

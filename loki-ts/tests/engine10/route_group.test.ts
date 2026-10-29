@@ -380,6 +380,40 @@ describe("default group runner (run_group.ts)", () => {
         expect((await verifyReceipt(p, { pubkey: pub })).verdict).toBe("TAMPERED");
       });
     }));
+    test("a throw out of the group runner (route groupFailed path) seals exactly one refusal receipt", () => withDir(async (d) => {
+      mkRepo(d);
+      await signed(async () => {
+        let err = "";
+        const res = await maybeRunGroup(SPEC, d, { LOKI_SPEED: "1" } as NodeJS.ProcessEnv, { group: async () => { throw new Error("boom"); }, seal: { receiptSha256, verifyReceipt, refuse: sealRefusal }, listFiles: () => files, select: sel, stderr: (s) => { err += s; } });
+        expect(res.code).toBe(1);
+        const ids = runIds(d);
+        expect(ids.length).toBe(1);
+        expect(err).toContain(`loki verify ${ids[0]}`);
+        const rec = JSON.parse(readFileSync(join(d, ".loki", "runs", ids[0]!, "receipt.json"), "utf8"));
+        expect(rec.verdict).toBe("FAILED");
+        expect(rec.not_proven.join("\n")).toContain("group run failed: boom");
+      });
+    }));
+    test("a mission whose milestone 1 fails seals exactly one receipt; route adds no second seal", () => withDir(async (d) => {
+      mkRepo(d);
+      await signed(async () => {
+        const MS = "## Milestone 1: scaffold\n- update src/a.ts to add alpha\n\n## Milestone 2: wire\nupdate src/b.ts to add beta\n";
+        const seen: string[][] = [];
+        let err = "";
+        const res = await maybeRunGroup(MS, d, { LOKI_SPEED: "1", LOKI_GROUP_TEST_CMD: "true" } as NodeJS.ProcessEnv, { backlog: launcher(d, seen, [1, 2, 3], 1), seal: { receiptSha256, verifyReceipt, refuse: sealRefusal }, listFiles: () => files, select: sel, stderr: (s) => { err += s; } });
+        expect(res.code).toBe(1);
+        expect(seen.length).toBe(1);
+        expect(err).toContain("milestone 1/2 failed (exit 1)");
+        expect(err.split("loki: refusal receipt").length - 1).toBe(1);
+        const ids = runIds(d);
+        expect(ids.length).toBe(1);
+        expect(JSON.parse(readFileSync(join(d, ".loki", "runs", ids[0]!, "receipt.json"), "utf8")).verdict).toBe("FAILED");
+      });
+    }));
+    test("pre-launch refusals print FAILED, the verdict they seal", () => {
+      const src = readFileSync(join(import.meta.dir, "../../src/features/speed/run_group.ts"), "utf8");
+      expect(src).not.toMatch(/NOT PROVEN: (group run needs an origin|cannot resolve HEAD)/);
+    });
     test("a failure with no refusal sealer supplied seals nothing (existing behavior)", () => withDir(async (d) => {
       mkRepo(d);
       const { code } = await go(d, {}, launcher(d, [], [1, 2, 3], 1));
