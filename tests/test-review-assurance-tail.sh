@@ -415,6 +415,19 @@ review_budget() {
     printf '%s' "$scaled"
 }
 
+# review_budget with a floor, for the cases whose pass condition is a REAL
+# answer or a REAL cancellation racing a wall clock on a loaded host: the fake
+# provider forks bash and python, which alone can exceed a 1s budget at load.
+# The floor only widens a race the product must win; the property under test
+# (timeout fails closed, early cancel beats the timeout) is unchanged because
+# the timed-out reviewer sleeps 30s and a waiting run still takes the full budget.
+review_budget_min() {
+    local floor="$1" scaled
+    scaled="$(review_budget "$2")"
+    [ "$scaled" -lt "$floor" ] && scaled="$floor"
+    printf '%s' "$scaled"
+}
+
 # Independent cases run as concurrent groups when budgets are scaled (S-191:
 # the serial suite took ~116s idle; see group_started). Each group is a forked subshell with its own scratch directory
 # as TMPROOT and CWD, so per-case files (requirements-prompt, da-started,
@@ -794,7 +807,7 @@ export REVIEW_TEST_REQUIREMENTS_CHILD_PID REVIEW_TEST_DA_MARKER REVIEW_TEST_TAMP
 medium_review_rc=0
 TARGET_DIR="$MEDIUM_REPO" PRD_PATH="$SPEC" ITERATION_COUNT=1 \
 _LOKI_RUN_START_SHA="$(git -C "$MEDIUM_REPO" rev-parse HEAD)" \
-PROVIDER_NAME=claude LOKI_REVIEW_JSON_SCHEMA=on LOKI_REVIEW_CALL_TIMEOUT="$(review_budget 1)" \
+PROVIDER_NAME=claude LOKI_REVIEW_JSON_SCHEMA=on LOKI_REVIEW_CALL_TIMEOUT="$(review_budget_min 4 1)" \
 LOKI_DEADLINE_KILL_GRACE="$(review_budget 1)" LOKI_REVIEW_RETRY=0 LOKI_REVIEW_INCONCLUSIVE_BLOCK=1 \
 LOKI_REVIEW_MERGEABILITY_MIN=99 \
 LOKI_GATE_DEVILS_ADVOCATE=false LOKI_HOST_GUARD_SETTINGS_JSON='{"hooks":{}}' \
@@ -1861,7 +1874,7 @@ REVIEW_TEST_SHARD_STATE="$SHARD_FAIL_STATE"
 export REVIEW_TEST_SHARD_STATE
 shard_fail_started=$(monotonic_ms)
 shard_fail_rc=$(run_review_case \
-    "$SHARD_FAIL_REPO" 1 requirements-shard-fail-fast "$SHARD_SPEC" auto 64000 "$(review_budget 12)" 1)
+    "$SHARD_FAIL_REPO" 1 requirements-shard-fail-fast "$SHARD_SPEC" auto 64000 "$(review_budget_min 24 12)" 1)
 shard_fail_ended=$(monotonic_ms)
 shard_fail_elapsed=$((shard_fail_ended - shard_fail_started))
 shard_fail_review=$(find "$SHARD_FAIL_REPO/.loki/quality/reviews" \
@@ -1882,11 +1895,11 @@ done < <(find "$SHARD_FAIL_STATE" -name 'child-*.pid' -type f | sort)
 #
 # The PROPERTY is "it cancelled instead of waiting for the deadline", so the
 # bound belongs at a fraction of the timeout that still falsifies waiting.
-# 12s timeout, 8s bound: a run that actually waited takes >=12s and still
+# 12s timeout (floored at 24s via review_budget_min), two-thirds bound: a run that actually waited takes >=12s and still
 # fails, while normal 3-4s scheduling jitter no longer does. Loosening past
 # the timeout itself would make the clause vacuous, which is why it is
 # two-thirds and not "generous".
-_shard_timeout_ms=$(( $(review_budget 12) * 1000 ))
+_shard_timeout_ms=$(( $(review_budget_min 24 12) * 1000 ))
 _shard_bound_ms=$(( _shard_timeout_ms * 2 / 3 ))
 # Each clause reports SEPARATELY. One `bad` line covering seven conditions
 # could not say which failed, which is why the CI log named all seven and
