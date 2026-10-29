@@ -96,3 +96,8 @@ P2.cp-verdict-honest-never-upgraded
 P7.cp-unmeasured-never-fabricated
 P7.cli-unmetered-cost-not-dollar-zero
 P2.e10-failing-check-never-verified
+P6.e10-user-files-intact
+P6.e10-untracked-not-swept
+P6.e10-ignored-files-not-swept
+P6.e10-mode-and-symlink-intact
+P6.e10-same-path-and-history

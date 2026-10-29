@@ -34,7 +34,7 @@ pass() { printf 'CASE %s PASS %s\n' "$1" "$2"; }
 fail() { printf 'CASE %s FAIL %s\n' "$1" "$2"; }
 note() { printf '%s\n' "$*" >&2; }
 
-ALL_CASES="P6.same-path-and-history P6.user-files-intact P6.change-landed-in-place P6.proof-produced-and-verifies P6.no-gate-artifacts-committed P6.untracked-not-swept P6.resume-does-not-sweep P6.ignored-files-not-swept P6.preexisting-edit-disclosed P6.resume-keeps-ignored-user-file P6.resume-after-interrupt-commits-agent-files P6.agent-self-commit-does-not-lose-user-file P6.user-file-mode-and-symlink-intact"
+ALL_CASES="P6.same-path-and-history P6.user-files-intact P6.change-landed-in-place P6.proof-produced-and-verifies P6.no-gate-artifacts-committed P6.untracked-not-swept P6.resume-does-not-sweep P6.ignored-files-not-swept P6.preexisting-edit-disclosed P6.resume-keeps-ignored-user-file P6.resume-after-interrupt-commits-agent-files P6.agent-self-commit-does-not-lose-user-file P6.user-file-mode-and-symlink-intact P6.e10-user-files-intact P6.e10-untracked-not-swept P6.e10-ignored-files-not-swept P6.e10-mode-and-symlink-intact P6.e10-same-path-and-history"
 
 # Caller-inherited knobs that would test something other than the default a
 # user gets. Unset so the run exercises the shipped defaults.
@@ -1235,6 +1235,142 @@ collect_fixture cfg P6.resume-keeps-ignored-user-file
 collect_fixture intr P6.resume-after-interrupt-commits-agent-files
 collect_fixture self P6.agent-self-commit-does-not-lose-user-file
 collect_fixture modes P6.user-file-mode-and-symlink-intact
+
+# ============================================================================
+# P6.e10-*: the same in-place guarantees on the default engine10 route
+# (bin/loki -> loki-ts/src/cli.ts) with the e2e stub claude CLI: no network, no
+# model, no spend. One serial run in an existing repo with history, a tag, a
+# tracked executable and symlink, an untracked file with a sentinel, an
+# untracked executable and symlink, and gitignored files. Runs last, in the
+# foreground, so it adds only its own few seconds.
+# ============================================================================
+E10_CASES="P6.e10-user-files-intact P6.e10-untracked-not-swept P6.e10-ignored-files-not-swept P6.e10-mode-and-symlink-intact P6.e10-same-path-and-history"
+E10_STUB_DIR="$REPO_ROOT/loki-ts/tests/engine10/fixtures/e2e/bin"
+E10_FIX_REPO="$REPO_ROOT/loki-ts/tests/engine10/fixtures/e2e/repo"
+E10_ENTRY="$REPO_ROOT/loki-ts/src/cli.ts"
+E10W="$T/e10/parent/repo"
+ge() { git -C "$E10W" "$@"; }
+e10_mode_of() { python3 -c 'import os,sys; print("%o" % (os.lstat(sys.argv[1]).st_mode & 0o7777))' "$1"; }
+# Hash+mode for regular files, link target for symlinks; outside .git/ and .loki/.
+manifest_links() {
+    python3 - "$1" <<'PY'
+import hashlib, os, sys
+root = sys.argv[1]
+for d, dirs, files in os.walk(root):
+    if d == root:
+        dirs[:] = [x for x in dirs if x not in (".git", ".loki")]
+    for f in files:
+        p = os.path.join(d, f)
+        if os.path.islink(p):
+            print("L %s %s" % (os.readlink(p), os.path.relpath(p, root)))
+        elif os.path.isfile(p):
+            print("%s %o %s" % (hashlib.sha256(open(p, "rb").read()).hexdigest(), os.stat(p).st_mode & 0o7777, os.path.relpath(p, root)))
+PY
+}
+
+e10_missing=""
+command -v bun >/dev/null 2>&1 || e10_missing="${e10_missing}${e10_missing:+, }bun"
+[ -f "$E10_ENTRY" ] || e10_missing="${e10_missing}${e10_missing:+, }loki-ts/src/cli.ts"
+[ -x "$E10_STUB_DIR/claude" ] || e10_missing="${e10_missing}${e10_missing:+, }e2e stub claude"
+[ -d "$REPO_ROOT/loki-ts/node_modules" ] || e10_missing="${e10_missing}${e10_missing:+, }loki-ts/node_modules"
+if [ -n "$e10_missing" ]; then
+    for c in $E10_CASES; do fail "$c" "prerequisite missing: $e10_missing"; done
+else
+    mkdir -p "$T/e10/home" "$T/e10/log" "$E10W"
+    E10_SENTINEL="moat-p6e10-sentinel-$$-${RANDOM}${RANDOM}"
+    {
+        cp -R "$E10_FIX_REPO/." "$E10W/" \
+        && ge init -q -b main \
+        && ge config user.name moat && ge config user.email moat@example.invalid \
+        && ge config commit.gpgsign false && ge config tag.gpgsign false \
+        && printf 'build/\n*.log\n' > "$E10W/.gitignore" \
+        && mkdir -p "$E10W/scripts" \
+        && printf '#!/bin/sh\necho tool\n' > "$E10W/scripts/tool.sh" && chmod 755 "$E10W/scripts/tool.sh" \
+        && printf 'data\n' > "$E10W/data.txt" && ln -s data.txt "$E10W/link-tracked" \
+        && ge add calc.ts calc.test.ts bunfig.toml .gitignore scripts/tool.sh data.txt link-tracked \
+        && ge commit -qm "c1: base" && ge tag v0.1 \
+        && printf '// note\n' >> "$E10W/data.txt" && ge add data.txt && ge commit -qm "c2: data" \
+        && printf 'my private notes\n%s\n' "$E10_SENTINEL" > "$E10W/NOTES.local.txt" \
+        && printf '#!/bin/sh\necho mine\n' > "$E10W/mine.local.sh" && chmod 750 "$E10W/mine.local.sh" \
+        && ln -s data.txt "$E10W/link-untracked" \
+        && mkdir -p "$E10W/build" && printf 'artifact\n' > "$E10W/build/out.bin" \
+        && printf 'debug line\n' > "$E10W/debug.log"
+    } >"$T/e10/log/fixture.log" 2>&1
+    if [ $? -ne 0 ]; then
+        for c in $E10_CASES; do fail "$c" "fixture setup failed: $(tr '\n' ' ' < "$T/e10/log/fixture.log" | cut -c1-200)"; done
+    else
+        E10_INODE="$(inode_of "$E10W")"
+        E10_ORIG_HEAD="$(ge rev-parse HEAD)"; E10_ORIG_TAG="$(ge rev-parse v0.1)"
+        E10_ORIG_REVLIST="$(ge rev-list HEAD | tr '\n' ' ')"; E10_ORIG_STASH="$(ge stash list)"
+        manifest_links "$E10W" | LC_ALL=C sort > "$T/e10/log/manifest.before"
+
+        E10_STUB_LOG="$T/e10/log/stub.log"
+        env -i PATH="$E10_STUB_DIR:$PATH" HOME="$T/e10/home" TMPDIR="$T/e10" \
+            LOKI_TS_ENTRY="$E10_ENTRY" LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$E10_STUB_DIR/claude" \
+            E2E_STUB_MODE=done E2E_STUB_LOG="$E10_STUB_LOG" LOKI_NO_BROWSER=1 LOKI_E10_PLAN=1 \
+            LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 CI=true \
+            LOKI_RECEIPT_SIGNING_KEY_FILE="$T/e10/key.pem" \
+            bash -c 'cd "$1" && exec bash "$2" "add a multiply(a, b) function to calc.ts" --no-pr' _ "$E10W" "$LOKI_BIN" \
+            </dev/null >"$T/e10/log/run.out" 2>"$T/e10/log/run.err"
+        E10_RC=$?
+        note "INFO P6 engine10 run rc=$E10_RC"
+
+        E10_HEAD="$(ge rev-parse HEAD 2>/dev/null)"
+        E10_VAC=""
+        { [ "$E10_HEAD" != "$E10_ORIG_HEAD" ] && ge show HEAD:calc.ts 2>/dev/null | grep -q 'multiply'; } \
+            || E10_VAC="vacuous: the engine10 run did not commit the stub's multiply() edit (rc=$E10_RC); "
+        grep -qx 'implement' "$E10_STUB_LOG" 2>/dev/null || E10_VAC="${E10_VAC}vacuous: the stub provider never got an implement session; "
+        [ -z "$E10_VAC" ] || tail -n 15 "$T/e10/log/run.out" "$T/e10/log/run.err" >&2
+        ge log --all --name-only --format= 2>/dev/null | sort -u > "$T/e10/log/ever-files"
+        manifest_links "$E10W" | LC_ALL=C sort > "$T/e10/log/manifest.after"
+
+        id=P6.e10-user-files-intact
+        why="$E10_VAC"
+        changed="$(comm -23 "$T/e10/log/manifest.before" "$T/e10/log/manifest.after" | awk '{print $NF}' | grep -v '^calc.ts$' | tr '\n' ' ')"
+        [ -z "$changed" ] || why="${why}pre-existing files changed or removed: $changed; "
+        grep -q "$E10_SENTINEL" "$E10W/NOTES.local.txt" 2>/dev/null || why="${why}NOTES.local.txt lost its sentinel; "
+        if [ -z "$why" ]; then pass "$id" "every pre-existing file except the task's calc.ts is byte-identical with the same mode; the untracked notes keep their sentinel on the engine10 route"; else fail "$id" "$why"; fi
+
+        id=P6.e10-untracked-not-swept
+        why="$E10_VAC"
+        for f in NOTES.local.txt mine.local.sh link-untracked; do
+            grep -qx "$f" "$T/e10/log/ever-files" && why="${why}untracked user file $f was committed; "
+        done
+        if [ -z "$why" ]; then pass "$id" "untracked notes, executable and symlink appear in no commit on the engine10 route; the task's own edit was committed"; else fail "$id" "$why"; fi
+
+        id=P6.e10-ignored-files-not-swept
+        why="$E10_VAC"
+        for f in build/out.bin debug.log; do
+            grep -qx "$f" "$T/e10/log/ever-files" && why="${why}ignored file $f was committed; "
+            [ -f "$E10W/$f" ] || why="${why}ignored file $f is gone from disk; "
+        done
+        if [ -z "$why" ]; then pass "$id" "gitignored build/out.bin and debug.log are in no commit and still on disk on the engine10 route"; else fail "$id" "$why"; fi
+
+        id=P6.e10-mode-and-symlink-intact
+        why="$E10_VAC"
+        ge ls-tree -r HEAD > "$T/e10/log/head-tree" 2>/dev/null
+        grep -q '^100755 .*[[:space:]]scripts/tool.sh$' "$T/e10/log/head-tree" || why="${why}committed scripts/tool.sh is not mode 100755; "
+        grep -q '^120000 .*[[:space:]]link-tracked$' "$T/e10/log/head-tree" || why="${why}committed link-tracked is not a symlink; "
+        [ "$(e10_mode_of "$E10W/scripts/tool.sh")" = 755 ] || why="${why}scripts/tool.sh mode on disk is $(e10_mode_of "$E10W/scripts/tool.sh"); "
+        { [ -L "$E10W/link-tracked" ] && [ "$(readlink "$E10W/link-tracked")" = data.txt ]; } || why="${why}link-tracked is not a symlink to data.txt; "
+        { [ -L "$E10W/link-untracked" ] && [ "$(readlink "$E10W/link-untracked")" = data.txt ]; } || why="${why}link-untracked is not a symlink to data.txt; "
+        { [ -f "$E10W/mine.local.sh" ] && [ "$(e10_mode_of "$E10W/mine.local.sh")" = 750 ]; } || why="${why}mine.local.sh missing or mode is not 750; "
+        if [ -z "$why" ]; then pass "$id" "tracked executable and symlink keep 100755 and 120000; untracked executable keeps 750 and untracked symlink keeps its target on the engine10 route"; else fail "$id" "$why"; fi
+
+        id=P6.e10-same-path-and-history
+        why="$E10_VAC"
+        now_inode="$(inode_of "$E10W")"
+        [ "$now_inode" = "$E10_INODE" ] || why="${why}directory inode changed ($E10_INODE -> $now_inode); "
+        [ "$(cd "$E10W" && pwd -P)" = "$E10W" ] || why="${why}path moved; "
+        [ "$(ge rev-parse v0.1 2>/dev/null)" = "$E10_ORIG_TAG" ] || why="${why}tag v0.1 changed; "
+        { [ "$(ge rev-parse main 2>/dev/null)" = "$E10_ORIG_HEAD" ] || [ "$(ge symbolic-ref --short -q HEAD)" != main ]; } || why="${why}main was moved in place; "
+        ge merge-base --is-ancestor "$E10_ORIG_HEAD" "$E10_HEAD" 2>/dev/null || why="${why}original HEAD is not an ancestor of the result; "
+        case "$(ge rev-list "$E10_HEAD" 2>/dev/null | tr '\n' ' ')" in *"$E10_ORIG_REVLIST") ;; *) why="${why}original history is not preserved; " ;; esac
+        [ "$(ge stash list)" = "$E10_ORIG_STASH" ] || why="${why}user stash stack changed; "
+        [ "$(ge worktree list --porcelain | grep -c '^worktree ')" = 1 ] || why="${why}extra git worktree present; "
+        if [ -z "$why" ]; then pass "$id" "same path and directory inode, original history is a prefix of the result, tag and stash untouched, one worktree on the engine10 route"; else fail "$id" "$why"; fi
+    fi
+fi
 
 echo "INFO P6 total_seconds=$(( $(date +%s) - T_START )) pipeline_seconds=$RUN_SECS"
 exit 0
