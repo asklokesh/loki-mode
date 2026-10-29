@@ -421,19 +421,6 @@ loki_emit_seal_hook_decision() {
     return 0
 }
 
-# loki_emit_seal_hook_decision <allow|block> <reason>: one event per loki-seal
-# Stop hook decision (the Claude Code wedge). Enum args only: any decision or
-# reason outside the fixed lists sends nothing, and the schema re-filters. Never
-# a path, file name, test name or error text. Same strict analytics gate as
-# build_verified, so every existing opt-out wins.
-loki_emit_seal_hook_decision() {
-    _loki_analytics_enabled || return 0
-    case "${1:-}" in allow|block) ;; *) return 0 ;; esac
-    case "${2:-}" in none|tests_failed|tests_weakened|no_tests|contract_unverified|released|error) ;; *) return 0 ;; esac
-    loki_telemetry "seal_hook_decision" "decision=$1" "reason=$2"
-    return 0
-}
-
 # loki_emit_build_verified_enum <headline> <route>: build_verified for the
 # default engine10 route, which has no proof.json reader. Enum args only:
 # anything but headline=VERIFIED and route=engine10 sends nothing. Same strict

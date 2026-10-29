@@ -357,32 +357,65 @@ function runSuite(root, runner, timeout) {
 
 // Outcome analytics (enum only): one seal_hook_decision per Stop decision, sent through Loki's own sender
 // (loki_emit_seal_hook_decision in autonomy/telemetry.sh -> autonomy/lib/telemetry-schema.json), never a second
-// sender. Nothing is sent when Loki's telemetry.sh cannot be found, so a standalone install stays silent. The sender
-// is a detached child that is never awaited: a missing, throwing or hanging sender cannot change the decision, the
-// exit code or the hook's latency. The opt-outs are checked here so an opted-out user spawns nothing; the sender
-// re-checks them (and the analytics opt-in) in bash, which is the authority.
-function telemetryOff() {
+// sender. The sender is a detached child that is never awaited: a missing, throwing or hanging sender cannot change
+// the decision, the exit code or the hook's latency.
+// Security: this hook runs inside whatever project the user opened, so it must never source a file from that
+// project. Nothing is resolved relative to this script or the cwd. Only an explicit LOKI_TELEMETRY_SH / LOKI_DIR or the
+// installed skill is a candidate, and the real path must be owned by the current user, not group or other writable,
+// and outside the cwd and the repo root. Nothing is spawned unless the user has opted in (analytics on, no opt-out).
+function homeConfig() {
+  try { return fs.readFileSync(path.join(os.homedir(), '.loki', 'config'), 'utf8'); } catch { return ''; }
+}
+
+function analyticsOn() {
   const e = process.env;
-  if (String(e.LOKI_TELEMETRY || '').toLowerCase() === 'off' || e.LOKI_TELEMETRY_DISABLED === 'true' || e.DO_NOT_TRACK === '1') return true;
-  try { return /^TELEMETRY_DISABLED=true/m.test(fs.readFileSync(path.join(os.homedir(), '.loki', 'config'), 'utf8')); } catch { return false; }
+  if (String(e.LOKI_TELEMETRY || '').toLowerCase() === 'off' || e.LOKI_TELEMETRY_DISABLED === 'true' || e.DO_NOT_TRACK === '1') return false;
+  const cfg = homeConfig();
+  if (/^TELEMETRY_DISABLED=true/m.test(cfg)) return false;
+  const a = String(e.LOKI_ANALYTICS || e.LOKI_POSTHOG || '').toLowerCase();
+  return a === 'on' || a === '1' || /^ANALYTICS_ENABLED=true/m.test(cfg);
+}
+
+function underDir(p, dir) {
+  let d;
+  try { d = fs.realpathSync(dir); } catch { return false; }
+  return p === d || p.startsWith(d.endsWith(path.sep) ? d : d + path.sep);
+}
+
+function trustedTelemetry(c) {
+  try {
+    const real = fs.realpathSync(c);
+    const st = fs.statSync(real);
+    if (!st.isFile() || (process.getuid && st.uid !== process.getuid()) || (st.mode & 0o022)) return null;
+    let top = null;
+    try { top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: ctx.root, encoding: 'utf8', timeout: 2000 }).stdout.trim() || null; } catch { /* not a repo */ }
+    for (const dir of [process.cwd(), ctx.root, top]) if (dir && underDir(real, dir)) return null;
+    return real;
+  } catch { return null; }
 }
 
 function findTelemetry() {
   const cands = [process.env.LOKI_TELEMETRY_SH, process.env.LOKI_DIR && path.join(process.env.LOKI_DIR, 'autonomy', 'telemetry.sh'),
-    path.join(__dirname, '..', '..', '..', 'autonomy', 'telemetry.sh'), path.join(os.homedir(), '.claude', 'skills', 'loki-mode', 'autonomy', 'telemetry.sh')];
-  return cands.find((c) => c && fs.existsSync(c)) || null;
+    path.join(os.homedir(), '.claude', 'skills', 'loki-mode', 'autonomy', 'telemetry.sh')];
+  for (const c of cands) { const t = c && trustedTelemetry(c); if (t) return t; }
+  return null;
 }
+
+// Minimal child environment: no project secrets or tokens reach the sender.
+const EMIT_ENV = /^(?:PATH|HOME|TMPDIR|DO_NOT_TRACK|LOKI_DIR|LOKI_ANALYTICS|LOKI_POSTHOG|LOKI_TELEMETRY\w*|LOKI_INTERNAL|LOKI_SEAT\w*|CI|GITHUB_ACTIONS|GITLAB_CI|BUILDKITE|JENKINS_URL|TEAMCITY_VERSION|CONTINUOUS_INTEGRATION)$/;
 
 const SEAL_REASONS = ['none', 'tests_failed', 'tests_weakened', 'no_tests', 'contract_unverified', 'released', 'error'];
 function emitDecision(decision, reason) {
   try {
-    if (!['allow', 'block'].includes(decision) || !SEAL_REASONS.includes(reason) || telemetryOff()) return;
+    if (!['allow', 'block'].includes(decision) || !SEAL_REASONS.includes(reason) || !analyticsOn()) return;
     const sh = findTelemetry();
     if (!sh) return;
+    const env = {};
+    for (const [k, v] of Object.entries(process.env)) if (EMIT_ENV.test(k)) env[k] = v;
     // The script path and both enum values travel as positional arguments, never spliced into the command text.
     // A watchdog kills the sender shell after 10 s, so a hung sender cannot linger.
     const script = '( sleep 10; kill -9 $$ ) >/dev/null 2>&1 & . "$1" >/dev/null 2>&1 && loki_emit_seal_hook_decision "$2" "$3" >/dev/null 2>&1';
-    const child = spawn('bash', ['-c', script, 'loki-seal-emit', sh, decision, reason], { detached: true, stdio: 'ignore' });
+    const child = spawn('bash', ['-c', script, 'loki-seal-emit', sh, decision, reason], { detached: true, stdio: 'ignore', env, cwd: os.homedir() });
     child.on('error', () => {});
     child.unref();
   } catch { /* telemetry never affects the hook */ }

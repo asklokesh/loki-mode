@@ -39,6 +39,7 @@ const DEFAULT_REQUEST = 'Fix the adder.\n- adds zero\n';
 function seal(cmd, dir, extra = {}, envx = {}) {
   const tp = 'transcript_path' in extra ? {} : { transcript_path: transcript(dir, DEFAULT_REQUEST) };
   const r = spawnSync('node', [SEAL, cmd], {
+    cwd: dir,
     input: JSON.stringify({ session_id: 's-' + path.basename(dir), cwd: dir, ...tp, ...extra }),
     env: { ...process.env, LOKI_TELEMETRY: 'off', LOKI_SEAL_STATE_DIR: path.join(root, 'state'), ...envx },
     encoding: 'utf8',
@@ -1302,6 +1303,7 @@ test('forged lines r10: the bin runs as a hook (require.main guard) and exports 
 
 // ---- seal_hook_decision analytics (AN-13): enum-only events through Loki's own sender, never blocking ----
 // No real network: curl is a stub on PATH that records the request body; HOME is a fixture so no real id or config is read.
+const TELE_SH = path.join(__dirname, '..', '..', '..', 'autonomy', 'telemetry.sh');
 const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function teleEnv(tag) {
   const base = path.join(root, 'tele-' + tag + '-' + n++);
@@ -1309,7 +1311,7 @@ function teleEnv(tag) {
   fs.mkdirSync(path.join(base, 'home'), { recursive: true });
   const cap = path.join(base, 'cap.log');
   fs.writeFileSync(path.join(base, 'bin', 'curl'), `#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = "-d" ]; then printf '%s\\n' "$2" >> "${cap}"; fi; shift; done\n`, { mode: 0o755 });
-  const env = { PATH: path.join(base, 'bin') + path.delimiter + process.env.PATH, HOME: path.join(base, 'home'), LOKI_TELEMETRY: 'on', LOKI_ANALYTICS: 'on', LOKI_TELEMETRY_ENDPOINT: 'http://127.0.0.1:9' };
+  const env = { PATH: path.join(base, 'bin') + path.delimiter + process.env.PATH, HOME: path.join(base, 'home'), LOKI_TELEMETRY: 'on', LOKI_ANALYTICS: 'on', LOKI_TELEMETRY_SH: TELE_SH, LOKI_TELEMETRY_ENDPOINT: 'http://127.0.0.1:9' };
   return { base, cap, env };
 }
 function captured(cap, wantLines, ms = 8000) {
@@ -1397,4 +1399,56 @@ test('seal analytics: a throwing, missing or hanging sender leaves decision, exi
   } finally {
     if (fs.existsSync(pidFile)) { try { process.kill(+fs.readFileSync(pidFile, 'utf8'), 'SIGKILL'); } catch { /* already gone */ } }
   }
+});
+
+test('seal analytics: a telemetry.sh planted in the project or in a node_modules layout is never sourced (canary stays absent)', () => {
+  const t = teleEnv('plant');
+  const proj = path.join(t.base, 'proj');
+  const canary = path.join(t.base, 'PWNED');
+  const planted = `touch "${canary}"\nloki_emit_seal_hook_decision() { touch "${canary}"; }\n`;
+  const inst = path.join(proj, 'node_modules', 'loki-seal', 'bin');
+  fs.mkdirSync(inst, { recursive: true });
+  for (const f of ['loki-seal.js', 'contract.js']) fs.copyFileSync(path.join(__dirname, '..', 'bin', f), path.join(inst, f));
+  for (const d of [path.join(proj, 'autonomy'), path.join(proj, 'node_modules', 'autonomy')]) {
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'telemetry.sh'), planted, { mode: 0o755 });
+  }
+  const { LOKI_TELEMETRY_SH, ...envNoSh } = t.env;
+  const stop = (envx) => spawnSync('node', [path.join(inst, 'loki-seal.js'), 'stop'], { input: JSON.stringify({ session_id: 'plant', cwd: proj }), cwd: proj,
+    env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state'), ...envNoSh, ...envx }, encoding: 'utf8' });
+  assert.strictEqual(stop({}).status, 0);
+  assert.strictEqual(stop({ LOKI_DIR: proj }).status, 0); // an env var pointing into the project is refused too
+  assert.strictEqual(stop({ LOKI_TELEMETRY_SH: path.join(proj, 'autonomy', 'telemetry.sh') }).status, 0);
+  sleepMs(2000);
+  assert.ok(!fs.existsSync(canary), 'planted telemetry.sh was executed');
+});
+
+test('seal analytics: a group-writable telemetry.sh is refused, a trusted one is used', () => {
+  const t = teleEnv('perm');
+  const mk = (mode) => { const f = path.join(t.base, 'm' + mode.toString(8) + '.sh'); fs.writeFileSync(f, `loki_emit_seal_hook_decision() { touch "${f}.ran"; }\n`); fs.chmodSync(f, mode); return f; };
+  const bad = mk(0o775);
+  seal('stop', leakRepo(), {}, { ...t.env, LOKI_TELEMETRY_SH: bad });
+  const good = mk(0o755);
+  seal('stop', leakRepo(), {}, { ...t.env, LOKI_TELEMETRY_SH: good });
+  const t0 = Date.now();
+  while (Date.now() - t0 < 6000 && !fs.existsSync(good + '.ran')) sleepMs(100);
+  assert.ok(fs.existsSync(good + '.ran'), 'trusted sender should run');
+  assert.ok(!fs.existsSync(bad + '.ran'), 'group-writable sender must not run');
+});
+
+test('seal analytics: not opted in spawns nothing, and the sender gets a minimal environment', () => {
+  const t = teleEnv('optin');
+  const marker = path.join(t.base, 'ran');
+  const sender = path.join(t.base, 'probe.sh');
+  fs.writeFileSync(sender, `loki_emit_seal_hook_decision() { env > "${marker}"; }\n`, { mode: 0o755 });
+  const { LOKI_ANALYTICS, ...noOptIn } = t.env;
+  seal('stop', leakRepo(), {}, { ...noOptIn, LOKI_TELEMETRY_SH: sender });
+  sleepMs(1500);
+  assert.ok(!fs.existsSync(marker), 'no analytics opt-in must spawn nothing');
+  seal('stop', leakRepo(), {}, { ...t.env, LOKI_TELEMETRY_SH: sender, SECRET_TOKEN_XYZ: 'hunter2', GITHUB_TOKEN: 'ghp_x' });
+  const t0 = Date.now();
+  while (Date.now() - t0 < 6000 && !fs.existsSync(marker)) sleepMs(100);
+  assert.ok(fs.existsSync(marker), 'opted in must run the sender');
+  const envOut = fs.readFileSync(marker, 'utf8');
+  assert.ok(!/SECRET_TOKEN_XYZ|GITHUB_TOKEN|hunter2/.test(envOut), 'project secrets leaked into the sender env');
 });
