@@ -578,9 +578,9 @@ for _sig in INT:130 TERM:143 HUP:129; do
     _sn="${_sig%%:*}"; _sc="${_sig##*:}"
     rm -f "$_TRY_ROOT/sync/started"
     set -m
-    # A suite launched with SIGINT ignored (CI runners, nohup) hands that to its background jobs and bash cannot trap an
-    # ignored-on-entry signal, so restore the default disposition before exec.
-    python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
+    # A suite launched with SIGINT or SIGHUP ignored (CI runners, nohup) hands that to its background jobs and bash cannot trap an
+    # ignored-on-entry signal, so restore the default dispositions before exec.
+    python3 -c 'import os, signal, sys; [signal.signal(s, signal.SIG_DFL) for s in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM)]; os.execvp(sys.argv[1], sys.argv[1:])' \
         env SKILL_DIR="$_TRY_ROOT/skill1" PATH="$_TRY_ROOT/path0:$PATH" ANTHROPIC_API_KEY=stub TMPDIR="$_TRY_TMP" \
         HOME="$_TRY_ROOT/home" LOKI_TRY_RECEIPT_DIR="$_TRY_ROOT/keep-sig" LOKI_NO_BROWSER=1 \
         "$LOKI" try "file://$_TRY_FX" --provider claude >"$_TRY_ROOT/sig.out" 2>&1 &
