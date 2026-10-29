@@ -1,7 +1,7 @@
 // A-117 round 2: the signed log.sealed line after run.completed makes deleting the post-seal tail (or the line) a TAMPERED verdict.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
@@ -122,6 +122,44 @@ describe("A-117 log.sealed", () => {
     const w = process.stdout.write.bind(process.stdout);
     process.stdout.write = (() => true) as never;
     try { expect(await main([r.dir.split("/").pop()!], { runsRoot: join(root, "runs") })).toBe(2); } finally { process.stdout.write = w; }
+  });
+});
+
+describe("torn last line of events.jsonl", () => {
+  const evPath = (r: { dir: string }): string => join(r.dir, "events.jsonl");
+  const cli = async (r: { dir: string }): Promise<number> => {
+    const w = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (() => true) as never;
+    try { return await main([r.dir.split("/").pop()!], { runsRoot: join(root, "runs") }); } finally { process.stdout.write = w; }
+  };
+  test("an unterminated, unparseable final line is UNCHECKED rc 2, never TAMPERED", async () => {
+    const r = run(false);
+    appendFileSync(evPath(r), '{"v":1,"seq":99,"type":"log.app');
+    expect(await cli(r)).toBe(2);
+  });
+  test("a truncated JSON line in the middle (newline kept) is TAMPERED", async () => {
+    const r = run(false), l = r.lines();
+    l[1] = l[1]!.slice(0, 20);
+    r.put(l);
+    expect((await verifyReceipt(r.path)).verdict).toBe("TAMPERED");
+    expect(await cli(r)).toBe(1);
+  });
+  test("a middle line cut mid-write is TAMPERED even when the final line is also torn", async () => {
+    const r = run(false), l = r.lines();
+    l[1] = l[1]!.slice(0, 20);
+    writeFileSync(evPath(r), l.join("\n") + "\n" + '{"v":1,"seq":99');
+    expect(await cli(r)).toBe(1);
+  });
+  test("an unparseable final line that ends in a newline is TAMPERED", async () => {
+    const r = run(false);
+    appendFileSync(evPath(r), '{"v":1,"seq":99,"type":"log.app\n');
+    expect(await cli(r)).toBe(1);
+  });
+  test("an honest log ending in a newline is VERIFIED rc 0, and a parseable last line missing its newline is not downgraded", async () => {
+    const r = run(false);
+    expect(await cli(r)).toBe(0);
+    writeFileSync(evPath(r), readFileSync(evPath(r), "utf8").replace(/\n$/, ""));
+    expect(await cli(r)).toBe(0);
   });
 });
 

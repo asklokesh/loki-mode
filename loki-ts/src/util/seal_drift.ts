@@ -12,6 +12,15 @@ const sha = (s: string | Buffer): string => createHash("sha256").update(s).diges
 export interface Drift { verdict: "TAMPERED" | "UNCHECKED"; reason: string }
 type Obj = Record<string, unknown>;
 
+/** True only for a log whose FINAL line is unterminated (no trailing newline) and does not parse: an append cut mid-write. An unparseable line followed by a newline, or any
+ *  unparseable middle line, is never torn (it is an edit). Callers treat a torn tail as UNCHECKED, not TAMPERED. */
+export function tornTail(raw: string): boolean {
+  if (raw === "" || raw.endsWith("\n")) return false;
+  const last = raw.slice(raw.lastIndexOf("\n") + 1);
+  if (last.trim() === "") return false;
+  try { JSON.parse(last); return false; } catch { return true; }
+}
+
 /** The events the receipt hash actually covers: the line-aligned prefix of events.jsonl hashing to events_sha256 (verify_cmd checkEventLog's rule), cut at log.sealed.
  *  Lines appended after seal are unbound and prove nothing. Null when no prefix matches (checkEventLog already reports that as TAMPERED). */
 function boundEvents(log: string, bound: string): EventEnvelope[] | null {
@@ -92,6 +101,7 @@ export function sealDrift(given: string, r: Obj, env: NodeJS.ProcessEnv = proces
   try { receiptPath = join(realpathSync(dirname(given)), basename(given)); } catch { /* keep the given path */ } // resolve the DIRECTORY only (as verifyReceipt/checkEventLog read the log from dirname(given)); a receipt.json symlink must not move the log and layout lookup
   const fab = fabricatedPass(receiptPath, r);
   if (fab) return { verdict: "TAMPERED", reason: fab };
+  try { const log = join(dirname(receiptPath), "events.jsonl"); if (existsSync(log) && tornTail(readFileSync(log, "utf8"))) return { verdict: "UNCHECKED", reason: "events.jsonl ends in a torn, unterminated line (an append cut mid-write); every complete line is intact but the log is not whole" }; } catch { /* unreadable log: checkEventLog owns that */ }
   const task = (r["task"] ?? {}) as { source?: unknown; sha256?: unknown };
   const cur = currentTaskSha(dirname(receiptPath), task.source, env);
   if (cur !== null && typeof task.sha256 === "string" && task.sha256 !== "" && cur !== task.sha256) return { verdict: "UNCHECKED", reason: `intent drift: sealed task sha256 ${task.sha256} differs from the current spec ${cur}` };
