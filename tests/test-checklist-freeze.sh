@@ -362,11 +362,122 @@ grep -q '^TOUCHED:$' "$ACC/spy.log" || fail "accept touched the repo tree: $(cat
 python3 -I "$CA" context --spec "$ACC_SPEC" --repo "$ACC_REPO" | grep -q 'categories' || fail "context prompt lacks the checklist format"
 
 
+
+# Walled check author (checklist_author): the real function against a stub
+# provider on PATH. The stub records its cwd, what that directory held, and the
+# prompt, then answers per STUB_MODE.
+AU="$T/author"
+mkdir -p "$AU/bin" "$AU/proj-repo-xyz/.loki/state"
+cat > "$AU/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+case " $* " in *" -p "*) ;; *) exit 0 ;; esac
+n=$(cat "$STUB_DIR/count" 2>/dev/null || echo 0)
+echo $((n + 1)) > "$STUB_DIR/count"
+pwd -P > "$STUB_DIR/cwd"
+ls -A | wc -l | tr -d ' ' > "$STUB_DIR/cwd-entries"
+cat > "$STUB_DIR/prompt"
+case "${STUB_MODE:-good}" in
+    good) reply="$STUB_GOOD" ;;
+    bad) reply='I could not do this.' ;;
+    second) if [ "$n" -ge 1 ]; then reply="$STUB_GOOD"; else reply='no'; fi ;;
+esac
+# the real CLI wraps the reply when asked for --output-format json
+case " $* " in
+    *" --output-format json "*) python3 -I -c 'import json,sys;print(json.dumps({"type":"result","result":sys.argv[1]}))' "$reply" ;;
+    *) printf '%s\n' "$reply" ;;
+esac
+exit 0
+STUB
+chmod +x "$AU/bin/claude"
+AUP="$AU/proj-repo-xyz"
+printf '# PRD\nGreet people.\n' > "$AU/spec.md"
+printf '{}\n' > "$AUP/package.json"
+printf 'secret implementation\n' > "$AUP/impl.txt"
+( cd "$AUP" && git init -q && git add package.json impl.txt ) >/dev/null 2>&1
+cat > "$AU/driver.sh" <<DRV
+set -u
+log_info() { printf '%s\n' "\$*" >> "$AU/info.log"; }
+log_step() { :; }
+log_warn() { printf '%s\n' "\$*" >> "$AU/warn.log"; }
+export CHECKLIST_ENABLED=true CHECKLIST_TIMEOUT=5 STUB_DIR="$AU" STUB_GOOD='$GOODJSON' STUB_MODE="\${STUB_MODE:-good}"
+export PATH="$AU/bin:\$PATH" LOKI_PROVIDER="\${LOKI_PROVIDER:-claude}" TMPDIR="$AU/tmp"
+mkdir -p "$AU/tmp"
+. "$SRC_DIR/prd-checklist.sh"
+checklist_init "$AU/spec.md"
+checklist_select_heldout() { :; }
+checklist_oracle_triangulate() { :; }
+checklist_author "$AU/spec.md"; arc=\$?
+echo "author=\$arc digest=\${CHECKLIST_FROZEN_DIGEST:-none}"
+eval "\${AFTER:-:}"
+DRV
+au_run() {  # <mode> [after-hook]: echoes the driver's summary lines
+    ( cd "$AUP" && STUB_MODE="$1" AFTER="${2:-:}" PRISTINE_JSON="$PRISTINE" bash "$AU/driver.sh" 2>/dev/null )
+}
+au_field() { python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2]))' "$AUP/.loki/checklist/author.json" "$1" 2>/dev/null; }
+au_calls() { cat "$AU/count" 2>/dev/null || echo 0; }
+au_reset() { rm -r "$AUP/.loki/checklist" 2>/dev/null; rm -f "$AU/count"; }
+
+# success: authored in an empty cwd, prompt never names the repo, frozen
+au_reset
+out="$(au_run good)"
+case "$out" in "author=0 digest="[0-9a-f]*) ;; *) fail "author success: $out" ;; esac
+[ "$(au_field status)" = authored ] || fail "author success: status not authored"
+[ -f "$AUP/.loki/checklist/checklist.json" ] || fail "author success: no checklist.json"
+[ "$(cat "$AU/cwd-entries" 2>/dev/null)" = 0 ] || fail "author: cwd was not empty ($(cat "$AU/cwd-entries" 2>/dev/null))"
+case "$(cat "$AU/cwd" 2>/dev/null)" in "$(cd "$AUP" && pwd -P)"*) fail "author: provider ran inside the repo" ;; "") fail "author: provider never ran" ;; esac
+grep -q 'proj-repo-xyz' "$AU/prompt" && fail "author: prompt names the repo path"
+grep -q 'secret implementation' "$AU/prompt" && fail "author: prompt leaks implementation"
+grep -q 'no-tools' "$AUP/.loki/checklist/author-isolation.txt" || fail "author: claude isolation label missing"
+[ "$(au_calls)" = 1 ] || fail "author success: provider calls $(au_calls), want 1"
+ls "$AU"/tmp/loki-author.* >/dev/null 2>&1 && fail "author: run-owned work dir left behind"
+# once per spec sha256: a second start does not call the provider again
+au_run good >/dev/null
+[ "$(au_calls)" = 1 ] || fail "author: second start called the provider again ($(au_calls))"
+# a changed spec is authored again
+printf '# PRD\nGreet people loudly.\n' > "$AU/spec.md"
+au_run good >/dev/null
+[ "$(au_calls)" = 2 ] || fail "author: changed spec was not re-authored ($(au_calls))"
+printf '# PRD\nGreet people.\n' > "$AU/spec.md"
+
+# first attempt bad, second good: authored on attempt 2
+au_reset
+au_run second >/dev/null
+{ [ "$(au_field status)" = authored ] && [ "$(au_field attempts)" = 2 ]; } || fail "author retry: status $(au_field status) attempts $(au_field attempts)"
+
+# always bad: exactly 2 attempts, sentinel, no checklist; an implementer-written
+# checklist.json is refused by freeze and never verified
+au_reset
+out="$(au_run bad 'printf "%s\n" "$PRISTINE_JSON" > .loki/checklist/checklist.json; checklist_freeze_once; echo "freeze_after_impl=$? digest=${CHECKLIST_FROZEN_DIGEST:-none}"; checklist_verify; echo "verify_after_impl=$?"')"
+case "$out" in "author=1 digest=none"*) ;; *) fail "author failure: $out" ;; esac
+[ "$(au_calls)" = 2 ] || fail "author failure: $(au_calls) attempts, want 2"
+[ "$(au_field status)" = unknown ] || fail "author failure: status not unknown"
+grep -q check_authoring_unknown "$AUP/.loki/checklist/verification-results.json" || fail "author failure: sentinel missing"
+case "$out" in *"freeze_after_impl=1 digest=none"*) ;; *) fail "implementer-written checklist.json was frozen: $out" ;; esac
+case "$out" in *"verify_after_impl=0"*) fail "verify succeeded on an implementer-written checklist: $out" ;; esac
+grep -q 'not authored by the check author' "$AU/warn.log" || fail "freeze refusal not logged"
+# restart after two failed attempts does not call the provider again
+rm -f "$AU/count" "$AUP/.loki/checklist/checklist.json"
+au_run good >/dev/null
+[ "$(au_calls)" = 0 ] || fail "author: provider called again after two failed attempts"
+
+# codex and seam providers: cwd-only, never claimed tool-denied
+au_reset
+( cd "$AUP" && LOKI_PROVIDER=codex STUB_MODE=bad bash "$AU/driver.sh" >/dev/null 2>&1 )
+grep -q 'check author isolation: cwd-only' "$AUP/.loki/checklist/author-isolation.txt" || fail "codex: isolation label not cwd-only"
+grep -qi 'tool' "$AUP/.loki/checklist/author-isolation.txt" && fail "codex: isolation label claims tool denial"
+
+# static wiring: run.sh calls the author after checklist_init and skips the INIT
+# prompt on author.json; the text-only role list names check_author
+grep -A3 'checklist_init "\$prd_path"' "$SRC_DIR/run.sh" | grep -q 'checklist_author "\$prd_path"' || fail "run.sh does not call checklist_author after checklist_init"
+grep -q '! -f ".loki/checklist/author.json" \]; then' "$SRC_DIR/run.sh" || fail "run.sh INIT prompt not skipped on author.json"
+grep -q 'grill|check_author|' "$SRC_DIR/lib/claude-flags.sh" || fail "check_author missing from text-only roles"
+
 if [ "$INNER" = 0 ] && [ -z "${LOKI_FREEZE_SRC_DIR:-}" ]; then
     mutate() {  # <name> <file> <old> <new> [<old2> <new2>]  (same file, applied in order)
         local name="$1" file="$2" old="$3" new="$4" old2="${5:-}" new2="${6:-}" dir="$T/mut-$1"
         mkdir -p "$dir"
         cp "$SRC_DIR"/prd-checklist.sh "$SRC_DIR"/checklist-verify.py "$SRC_DIR"/run.sh "$dir/"
+        cp -R "$SRC_DIR/lib" "$SRC_DIR/grill.sh" "$dir/"
         python3 -I - "$dir/$file" "$old" "$new" "$old2" "$new2" <<'PY'
 import sys
 p, old, new, old2, new2 = sys.argv[1:6]
@@ -389,6 +500,12 @@ PY
     mutate accept-empty-digest checklist-verify.py 'if expected is None or not _DIGEST_RE.match(expected):' 'if expected is None:'
     mutate refreeze-every-verify prd-checklist.sh '[ -z "$CHECKLIST_FROZEN_DIGEST" ] || return 0' ':'
     mutate runsh-drops-freeze-call run.sh '            checklist_freeze_once || true' '            :'
+    mutate author-gate-off prd-checklist.sh 'if [ "$CHECKLIST_AUTHOR_REQUIRED" = "true" ]; then' 'if false; then'
+    mutate author-runs-in-repo prd-checklist.sh 'out="$(cd "$cwd" && LOKI_DIR' 'out="$(LOKI_DIR'
+    mutate author-not-once prd-checklist.sh 'if [ "$prior_status" = "authored" ]; then' 'if false; then'
+    mutate author-unbounded prd-checklist.sh 'CHECKLIST_AUTHOR_MAX_ATTEMPTS=2' 'CHECKLIST_AUTHOR_MAX_ATTEMPTS=3'
+    mutate runsh-drops-author-call run.sh 'checklist_author "$prd_path" || true' ':'
+    mutate runsh-keeps-init-prompt run.sh ' && [ ! -f ".loki/checklist/author.json" ]; then' '; then'
     mutate harness-omits-digest prd-checklist.sh '--expect-digest "$CHECKLIST_FROZEN_DIGEST"' '--timeout 5'
 fi
 

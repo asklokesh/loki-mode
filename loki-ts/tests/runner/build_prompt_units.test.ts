@@ -413,6 +413,11 @@ describe("buildChecklistStatus", () => {
     expect(out).toContain("PRD_CHECKLIST_INIT:");
     expect(out).toContain("auto-verified every 11 iterations");
   });
+  it("skips PRD_CHECKLIST_INIT once the check author has recorded author.json", () => {
+    mkLoki("checklist");
+    writeFileSync(resolve(workDir, ".loki/checklist/author.json"), "{}");
+    expect(_internals.buildChecklistStatus(workDir, "./prd.md", {})).toBe("");
+  });
   it("returns empty when checklist.json exists (no checklist_summary fn)", () => {
     mkLoki("checklist");
     writeFileSync(resolve(workDir, ".loki/checklist/checklist.json"), "{}");

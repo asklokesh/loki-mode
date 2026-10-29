@@ -271,7 +271,7 @@ loki_lean_child_flags() {
         fi
     fi
     case "$role" in
-        grill|council|vote|review|reviewer|enrich|wiki|docs|docgen|summary)
+        grill|check_author|council|vote|review|reviewer|enrich|wiki|docs|docgen|summary)
             if loki_claude_flag_supported "--tools"; then
                 printf '%s\n' "--tools="
             fi

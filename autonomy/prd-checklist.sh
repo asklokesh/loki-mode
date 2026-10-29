@@ -148,6 +148,122 @@ checklist_init() {
 }
 
 #===============================================================================
+# Walled check author
+#===============================================================================
+# The agent that writes the code never writes the acceptance checks. After
+# checklist_init this authors them in a separate provider call that runs in an
+# EMPTY run-owned directory (the repo is never the cwd and never named in the
+# prompt), validates the reply with lib/check_author.py accept, and freezes the
+# result. Once per spec sha256, at most 2 attempts. A failed author leaves the
+# critical failing sentinel (council_checklist_gate then BLOCKs) and freeze
+# refuses any checklist.json the implementer writes afterwards.
+# Only claude gets hard no-tools; codex and seam providers are cwd-only and are
+# reported as such, never as tool-denied.
+CHECKLIST_AUTHOR_REQUIRED=${CHECKLIST_AUTHOR_REQUIRED:-false}
+CHECKLIST_AUTHOR_MAX_ATTEMPTS=2
+
+# _checklist_author_field <field>: field of the author record, empty if absent.
+_checklist_author_field() {
+    local py rec
+    py="$(_loki_snapshot_py_tool)" || return 0
+    rec="$(dirname "${CHECKLIST_FILE:-.loki/checklist/checklist.json}")/author.json"
+    [ -f "$rec" ] && [ ! -L "$rec" ] || return 0
+    "$py" -I -S -c 'import json,sys
+try:
+    v=json.load(open(sys.argv[1])).get(sys.argv[2])
+    print("" if v is None else v)
+except Exception:
+    pass' "$rec" "$1" 2>/dev/null || true
+}
+
+checklist_author_isolation() {
+    case "${LOKI_PROVIDER:-claude}" in
+        claude) echo "check author isolation: no-tools" ;;
+        *) echo "check author isolation: cwd-only" ;;
+    esac
+}
+
+checklist_author() {
+    local prd_path="${1:-${CHECKLIST_PRD_PATH:-}}"
+    [ "$CHECKLIST_ENABLED" = "true" ] || return 0
+    [ "${LOKI_CHECKLIST_AUTHOR:-1}" != "0" ] || return 0
+    [ -n "$prd_path" ] && [ -f "$prd_path" ] || return 0
+    CHECKLIST_AUTHOR_REQUIRED=true
+
+    local script_dir ca py spec_sha prior_status prior_sha attempts out_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    ca="${script_dir}/lib/check_author.py"
+    out_dir="${CHECKLIST_DIR:-.loki/checklist}"
+    CHECKLIST_FILE="${CHECKLIST_FILE:-${out_dir}/checklist.json}"
+    mkdir -p "$out_dir"
+    if [ ! -f "$ca" ] || ! py="$(_loki_snapshot_py_tool)"; then
+        log_warn "check author unavailable (fail closed): freeze refuses until the checks are authored"
+        return 1
+    fi
+    spec_sha="$("$py" -I -S -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$prd_path" 2>/dev/null)" || spec_sha=""
+
+    prior_status="$(_checklist_author_field status)"
+    prior_sha="$(_checklist_author_field spec_sha256)"
+    attempts=0
+    if [ -n "$spec_sha" ] && [ "$prior_sha" = "$spec_sha" ]; then
+        if [ "$prior_status" = "authored" ]; then
+            checklist_freeze_once || true
+            return 0
+        fi
+        attempts="$(_checklist_author_field attempts)"
+        case "$attempts" in ''|*[!0-9]*) attempts=0 ;; esac
+    fi
+
+    local work cwd ctx prompt rc out
+    work="$(mktemp -d "${TMPDIR:-/tmp}/loki-author.XXXXXXXX")" || return 1
+    cwd="${work}/cwd"
+    mkdir -p "$cwd"
+    ctx="${work}/context.json"
+    if ! "$py" -I -S "$ca" context --spec "$prd_path" --repo "$PWD" > "$ctx" 2>/dev/null; then
+        printf '' | "$py" -I -S "$ca" accept --spec "$prd_path" --repo "$PWD" --out "$out_dir" --attempts "$CHECKLIST_AUTHOR_MAX_ATTEMPTS" >/dev/null 2>&1 || true
+        rm -rf -- "$work"
+        log_warn "check author: could not build the author context (fail closed)"
+        return 1
+    fi
+    prompt="$("$py" -I -S -c 'import json,sys;sys.stdout.write(json.load(open(sys.argv[1]))["prompt"])' "$ctx" 2>/dev/null)" || prompt=""
+
+    if ! type grill_invoke_provider >/dev/null 2>&1; then
+        local _o
+        _o="$(set +o)"
+        # shellcheck disable=SC1091
+        . "${script_dir}/grill.sh" 2>/dev/null || true
+        eval "$_o"
+    fi
+
+    # The child ledger is written relative to LOKI_DIR; keep it pointing at the
+    # real state dir while the cwd is the empty directory.
+    local _ca_loki_dir="${LOKI_DIR:-$PWD/.loki}"
+    case "$_ca_loki_dir" in /*) ;; *) _ca_loki_dir="$PWD/$_ca_loki_dir" ;; esac
+    rc=1
+    while [ "$attempts" -lt "$CHECKLIST_AUTHOR_MAX_ATTEMPTS" ]; do
+        attempts=$((attempts + 1))
+        out=""
+        if [ -n "$prompt" ] && type grill_invoke_provider >/dev/null 2>&1; then
+            out="$(cd "$cwd" && LOKI_DIR="$_ca_loki_dir" grill_invoke_provider "$prompt" check_author 2>/dev/null)" || out=""
+        fi
+        if printf '%s' "$out" | "$py" -I -S "$ca" accept --spec "$prd_path" --repo "$PWD" \
+                --out "$out_dir" --context "$ctx" --attempts "$attempts" >/dev/null 2>&1; then
+            rc=0
+            break
+        fi
+    done
+    rm -rf -- "$work"
+    checklist_author_isolation > "${out_dir}/author-isolation.txt" 2>/dev/null || true
+    log_info "$(checklist_author_isolation)"
+    if [ "$rc" -ne 0 ]; then
+        log_warn "check author: no valid checks after ${attempts} attempt(s); completion stays blocked"
+        return 1
+    fi
+    checklist_freeze_once || true
+    return 0
+}
+
+#===============================================================================
 # Acceptance-Oracle Triangulation (P2-3)
 #===============================================================================
 # The PRD checklist derives acceptance criteria from the SPEC alone. That is a
@@ -1020,6 +1136,21 @@ checklist_freeze_once() {
     [ -z "$CHECKLIST_FROZEN_DIGEST" ] || return 0
     [ -n "$CHECKLIST_FILE" ] && [ -f "$CHECKLIST_FILE" ] || return 0
 
+    # Walled author: refuse unless the checks were authored by the check author
+    # for this spec. An implementer-written checklist.json has no authored record.
+    if [ "$CHECKLIST_AUTHOR_REQUIRED" = "true" ]; then
+        local _fa_status _fa_sha _fa_want="" _fa_py
+        _fa_status="$(_checklist_author_field status)"
+        _fa_sha="$(_checklist_author_field spec_sha256)"
+        if [ -n "${CHECKLIST_PRD_PATH:-}" ] && [ -f "$CHECKLIST_PRD_PATH" ] && _fa_py="$(_loki_snapshot_py_tool)"; then
+            _fa_want="$("$_fa_py" -I -S -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$CHECKLIST_PRD_PATH" 2>/dev/null)" || _fa_want=""
+        fi
+        if [ "$_fa_status" != "authored" ] || [ -z "$_fa_sha" ] || [ "$_fa_sha" != "$_fa_want" ]; then
+            log_warn "checklist freeze refused: the checks were not authored by the check author (status: ${_fa_status:-none})"
+            return 1
+        fi
+    fi
+
     local script_dir verify_script _cl_py digest
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     verify_script="${script_dir}/checklist-verify.py"
@@ -1222,6 +1353,10 @@ checklist_as_evidence() {
         echo ""
         echo "## PRD Checklist Verification"
         echo ""
+        if [ -f "$(dirname "$CHECKLIST_RESULTS_FILE")/author-isolation.txt" ]; then
+            cat "$(dirname "$CHECKLIST_RESULTS_FILE")/author-isolation.txt"
+            echo ""
+        fi
 
         _CHECKLIST_RESULTS="$CHECKLIST_RESULTS_FILE" "$_cl_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os

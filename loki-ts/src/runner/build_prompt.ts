@@ -1460,7 +1460,8 @@ function buildChecklistStatus(
   env: Readonly<Record<string, string | undefined>>,
 ): string {
   const checklistPath = resolve(cwd, ".loki/checklist/checklist.json");
-  if (prd !== null && prd.length > 0 && !existsSync(checklistPath)) {
+  const authorPath = resolve(cwd, ".loki/checklist/author.json");
+  if (prd !== null && prd.length > 0 && !existsSync(checklistPath) && !existsSync(authorPath)) {
     const interval = envInt(env, "CHECKLIST_INTERVAL", 5);
     return `PRD_CHECKLIST_INIT: Create .loki/checklist/checklist.json from the PRD. Extract requirements into categories with items. Each item needs: id, title, description, priority (critical|major|minor), and verification checks (file_exists, file_contains, tests_pass, grep_codebase, command). This checklist will be auto-verified every ${interval} iterations.`;
   }

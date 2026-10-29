@@ -191,6 +191,9 @@ _grill_with_timeout() {
 
 grill_invoke_provider() {
     local prompt="$1"
+    # Optional role: selects the lean-child flag set and ledger phase. The
+    # check author passes check_author (text-only, no tools).
+    local role="${2:-grill}"
     local provider="${LOKI_PROVIDER:-claude}"
 
     case "$provider" in
@@ -254,7 +257,7 @@ grill_invoke_provider() {
             if type loki_lean_child_flags >/dev/null 2>&1; then
                 while IFS= read -r _gr_lf; do
                     [ -n "$_gr_lf" ] && _gr_argv+=("$_gr_lf")
-                done < <(loki_lean_child_flags grill 2>/dev/null)
+                done < <(loki_lean_child_flags "$role" 2>/dev/null)
             fi
             if type loki_child_ledger_append >/dev/null 2>&1; then
                 _gr_ledger=true
@@ -274,7 +277,7 @@ grill_invoke_provider() {
             out="$(printf '%s' "$prompt" \
                 | _grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" env CAVEMAN_DEFAULT_MODE=off claude "${_gr_argv[@]}" -p - 2>/dev/null)"
             if [ "$_gr_ledger" = true ] && [ -n "$out" ]; then
-                loki_child_ledger_append grill "$out" >/dev/null 2>&1 || true
+                loki_child_ledger_append "$role" "$out" >/dev/null 2>&1 || true
                 out="$(printf '%s' "$out" | python3 -I -c 'import json,sys
 raw = sys.stdin.read()
 try:
@@ -299,7 +302,9 @@ sys.stdout.write(str(d.get("result", "")) if isinstance(d, dict) else raw)' 2>/d
                 return $GRILL_EXIT_ERROR
             fi
             local out
-            out="$(printf '%s' "$prompt" | _grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" codex exec --sandbox workspace-write - 2>/dev/null)"
+            local _cx_extra=()
+            [ "$role" = "check_author" ] && _cx_extra=(--skip-git-repo-check)
+            out="$(printf '%s' "$prompt" | _grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" codex exec --sandbox workspace-write ${_cx_extra[@]+"${_cx_extra[@]}"} - 2>/dev/null)"
             if [ -z "$out" ]; then
                 _grill_err "provider returned no output"
                 return $GRILL_EXIT_ERROR

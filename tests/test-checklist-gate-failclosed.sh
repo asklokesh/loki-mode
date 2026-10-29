@@ -102,6 +102,31 @@ JSON
     rm -rf "$D6"
 fi
 
+# 7. Walled check author: when the author step fails (provider unavailable, so
+# the reply is empty), the real checklist_author leaves the critical failing
+# sentinel and the gate BLOCKs. A completed build cannot pass on a checklist
+# nobody authored.
+D7="$(mkroot)"
+printf '# PRD\nGreet people.\n' > "$D7/spec.md"
+printf '{}\n' > "$D7/package.json"
+author_then_gate=$(
+    cd "$D7" || exit 3
+    COUNCIL_STATE_DIR="$D7/.loki/council"; mkdir -p "$COUNCIL_STATE_DIR"
+    export CHECKLIST_ENABLED=true LOKI_PROVIDER=no-such-provider TMPDIR="$D7"
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/../autonomy/prd-checklist.sh"
+    checklist_init "$D7/spec.md"
+    checklist_author "$D7/spec.md" >/dev/null 2>&1
+    echo "rc=$?"
+    if council_checklist_gate; then echo "PASS"; else echo "BLOCK"; fi
+)
+case "$author_then_gate" in
+    "rc=1"*BLOCK) ok ;;
+    *) fail "failed author should leave the sentinel and BLOCK the gate, got: $(echo "$author_then_gate" | tr '\n' ' ')" ;;
+esac
+[ ! -e "$D7/.loki/checklist/checklist.json" ] && ok || fail "failed author must not leave a checklist.json"
+rm -rf "$D7"
+
 echo ""
 echo "test-checklist-gate-failclosed: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1
