@@ -985,3 +985,44 @@ describe("COST-11 r2: escalation on doubt", () => {
     expect(wallStage.limitS).toBeGreaterThanOrEqual(2 * (300 + WALL_BASE_FILES * 60));
   });
 });
+
+describe("RX-1: a repo with no test runner still gets a failing-first Wall check", () => {
+  const nobun = { PATH: "/nonexistent" } as NodeJS.ProcessEnv; // Loki's bun harness unavailable: the repo's own toolchain must carry the Wall
+  const fixtures: [string, string[], string | null][] = [
+    ["node", ["package.json", "src/index.js"], "node"],
+    ["python", ["pyproject.toml", "app/main.py"], "pytest"],
+    ["go", ["go.mod", "main.go"], "go"],
+    ["rust", ["Cargo.toml", "src/lib.rs"], "cargo"],
+    ["no toolchain", ["README.md", "src/a.ts"], null],
+  ];
+  for (const [name, files, want] of fixtures) {
+    test(`${name} fixture without a runner: harnessRunners picks the toolchain runner`, async () => {
+      const { harnessRunners } = await import("../../src/engine10/testmap.ts");
+      expect(harnessRunners([], files, nobun)).toEqual(want ? [want as never] : []);
+    });
+  }
+  test("a repo with a detected runner is unchanged", async () => {
+    const { harnessRunners } = await import("../../src/engine10/testmap.ts");
+    expect(harnessRunners(["vitest"], ["package.json"], nobun)).toEqual(["vitest"]);
+  });
+  test("node repo with no tests and no bun: runWall authors a Wall and the failing base run is kept", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "loki-rx1-")), savedPath = process.env.PATH;
+    try {
+      const runDir = join(repoDir, ".loki", "runs", "r1"); mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "x", version: "1.0.0" }));
+      mkdirSync(join(repoDir, "src")); writeFileSync(join(repoDir, "src", "index.js"), "exports.add = (a, b) => a - b;\n");
+      const ref = join(runDir, "repomap.json"); writeFileSync(ref, JSON.stringify({ files: ["package.json", "src/index.js"], entries: [], truncated: false }));
+      const { buildTestMap } = await import("../../src/engine10/testmap.ts");
+      const tm = buildTestMap(repoDir); expect(tm.runners).toEqual([]);
+      let called = 0;
+      const sessions = new FakeSessionRunner((o) => { called++; writeFileSync(join(o.cwd!, "loki_wall_add.test.js"), "const t = require('node:test'), a = require('node:assert');\nt('add', () => a.strictEqual(require('../src/index.js').add(1, 2), 3));\n"); });
+      const ctx = { runId: "r1", runDir, repoDir, sessions, emit() {}, tests: { async detect() { return tm; }, impacted: () => [] }, outputs: () => ({ intake: { task: "fix add so it returns the sum across modules", testmap: tm, repomap_ref: ref } }) } as unknown as RunContext;
+      process.env.PATH = "/nonexistent"; process.env.LOKI_E10_PLAN = "always"; process.env.LOKI_E10_WALL_FIRST = "0"; process.env.LOKI_WALL_HOLDOUT = "0";
+      const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+      expect(called).toBe(1);
+      expect(r.status).toBe("completed");
+      expect((r.data.base_run as { fail: number }).fail).toBe(1);
+      expect(((r.data.files as unknown[]) ?? []).length).toBe(1);
+    } finally { process.env.PATH = savedPath; delete process.env.LOKI_E10_PLAN; delete process.env.LOKI_E10_WALL_FIRST; delete process.env.LOKI_WALL_HOLDOUT; rmSync(repoDir, { recursive: true, force: true }); }
+  });
+});

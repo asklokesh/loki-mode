@@ -38,7 +38,14 @@ function pytestPython(root: string): string {
   return "python";
 }
 /** No detected runner and no Python/Go test suite (docs, plugins, config): Loki's own bun runs the Wall's bun:test file, in the Wall and in verify. Off with LOKI_WALL_HARNESS_RUNNER=0 or no bun on PATH (FC-17 skip, as before). */
-export const harnessRunners = (runners: RunnerName[], files: readonly string[] = [], env: NodeJS.ProcessEnv = process.env): RunnerName[] => runners.length === 0 && !files.some((f) => PY_TEST_RE.test(basename(f)) || GO_TEST_RE.test(f)) && env.LOKI_WALL_HARNESS_RUNNER !== "0" && Bun.which("bun", { PATH: env.PATH ?? "" }) ? ["bun"] : runners;
+export const harnessRunners = (runners: RunnerName[], files: readonly string[] = [], env: NodeJS.ProcessEnv = process.env): RunnerName[] => {
+  if (runners.length > 0 || files.some((f) => PY_TEST_RE.test(basename(f)) || GO_TEST_RE.test(f))) return runners;
+  if (env.LOKI_WALL_HARNESS_RUNNER !== "0" && Bun.which("bun", { PATH: env.PATH ?? "" })) return ["bun"];
+  return toolchainRunner(files); // RX-1: no bun either: the repo's own toolchain runs the Wall instead of skipping it
+};
+/** RX-1: manifest or source extension -> the runner its own language toolchain ships (COMMANDS holds the command). First match wins. */
+const TOOLCHAINS: readonly (readonly [RegExp, RunnerName])[] = [[/(?:^|\/)package\.json$/, "node"], [/(?:^|\/)go\.mod$/, "go"], [/(?:^|\/)Cargo\.toml$/, "cargo"], [/(?:^|\/)(?:pyproject\.toml|setup\.py|requirements\.txt)$|\.py$/, "pytest"]];
+const toolchainRunner = (files: readonly string[]): RunnerName[] => { const hit = TOOLCHAINS.find(([re]) => files.some((f) => re.test(f))); return hit ? [hit[1]] : []; };
 /** Cargo selects one file only as `cargo test --test <stem>`, and only for an integration test directly under a tests/ directory. */
 export const CARGO_TEST_FILE_RE = /(?:^|\/)tests\/[^/]+\.rs$/;
 /** The runner that executes a Wall-authored file, by its extension; null when no runner of this repo can run it (wall.ts seals it unrun, verify skips it). relPath (repo-relative) decides a .rs file: cargo only under tests/, else null (FC-WALL-RUST-FILE-HAS-NO-RUNNER). */
