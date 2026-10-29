@@ -108,15 +108,25 @@ def wrong_pass_rows(path, manifest):
     except (OSError, ValueError, KeyError) as e:
         print("wrong-pass input unreadable (%s): %s" % (path, e), file=sys.stderr)
         sys.exit(2)
+    def die(msg):
+        print("wrong-pass input %s: %s" % (path, msg), file=sys.stderr)
+        sys.exit(2)
+
+    if not isinstance(res, dict) or not isinstance(res.get("runs"), list) or not res["runs"]:
+        die("expected a JSON object with a non-empty runs list")
     cat = {d["id"]: d["category"] for d in defects}
     cats = sorted(set(cat.values()))
     out = {}
-    for run in res.get("runs", []):
+    for run in res["runs"]:
+        if not isinstance(run, dict) or not isinstance(run.get("outcomes"), dict):
+            die("each run must be an object with an outcomes object")
+        unknown = sorted(set(run["outcomes"]) - set(cat))
+        if unknown:
+            die("outcome ids not in the manifest: %s" % ", ".join(unknown))
         rows = {c: {"wrong_pass": 0, "n": 0} for c in cats}
-        for did, verdict in (run.get("outcomes") or {}).items():
-            if did in cat:
-                rows[cat[did]]["n"] += 1
-                rows[cat[did]]["wrong_pass"] += 1 if verdict == "SEALED" else 0
+        for did, verdict in run["outcomes"].items():
+            rows[cat[did]]["n"] += 1
+            rows[cat[did]]["wrong_pass"] += 1 if verdict == "SEALED" else 0
         out[run.get("setup", "unknown")] = {"model": run.get("model"), "categories": rows}
     return out
 

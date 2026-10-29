@@ -91,6 +91,16 @@ bash "$SB" --dry --version v --wrong-pass "$T/wp.json" --json-out "$T/w2.json" -
 grep -q 'wrong_pass:top:.*logic-bug=' "$T/wm.metrics"; check wrong-pass-metrics-cell $? "$(cat "$T/wm.metrics" 2>&1)"
 # without --wrong-pass the report has no wrong_pass key (existing consumers unchanged)
 [ "$(python3 -I -c 'import json,sys;print("wrong_pass" in json.load(open(sys.argv[1])))' "$T/d.json")" = "False" ]; check wrong-pass-absent-by-default $? ""
+# malformed wrong-pass inputs fail loudly (rc 2, named on stderr), never a silent empty column
+wpbad() { printf '%s' "$1" > "$T/bad.json"; bash "$SB" --dry --version v --wrong-pass "$T/bad.json" --json-out "$T/bad-out.json" > "$T/bad.out" 2>&1; RC=$?; }
+wpbad '{"runs":[{"setup":"s","outcomes":{"zzz":"SEALED"}}]}'
+[ "$RC" -eq 2 ] && grep -q 'zzz' "$T/bad.out"; check wrong-pass-unknown-id-rc2 $? "rc=$RC $(cat "$T/bad.out")"
+wpbad '{}'
+[ "$RC" -eq 2 ]; check wrong-pass-empty-object-rc2 $? "rc=$RC $(cat "$T/bad.out")"
+wpbad '{"runs":[]}'
+[ "$RC" -eq 2 ]; check wrong-pass-empty-runs-rc2 $? "rc=$RC $(cat "$T/bad.out")"
+wpbad '[1,2]'
+[ "$RC" -eq 2 ] && ! grep -q Traceback "$T/bad.out"; check wrong-pass-toplevel-list-rc2 $? "rc=$RC $(cat "$T/bad.out")"
 # a missing results file exits 2, never a silent empty column
 bash "$SB" --dry --version v --wrong-pass "$T/nope.json" --json-out "$T/x.json" > /dev/null 2>&1; [ $? -eq 2 ]; check wrong-pass-missing-file-rc2 $? ""
 
