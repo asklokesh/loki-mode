@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `loki verify` now also runs the tests of modules that import a changed file by a relative path or a repo-root package path (JS, TS, Python), so a change that breaks a downstream module is no longer reported as verified. A downstream test that was already failing before your change is not counted against it when the test runner reports per-test results.
+- `loki verify` now also runs the tests of modules that import a changed file by a relative path (JS, TS, Python) or a repo-root package path (Python), so a change that breaks a downstream module is no longer reported as verified. A downstream test that was already failing before your change is not counted against it when the test runner reports per-test results.
 - A multi-file `bun test` run now gives every file the load-aware default timeout, so a busy machine no longer fails a correct test.
 
 ## v11.81.1 (2026-10-29)
