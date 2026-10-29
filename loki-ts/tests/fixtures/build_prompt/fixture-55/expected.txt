@@ -14,6 +14,5 @@ GOAL_MEASURABILITY: the stated goal is not currently hill-climbable. No measurab
 </loki_system>
 [CACHE_BREAKPOINT]
 <dynamic_context iteration="15" retry="0">
-PRD_CHECKLIST_INIT: Create .loki/checklist/checklist.json from the PRD. Extract requirements into categories with items. Each item needs: id, title, description, priority (critical|major|minor), and verification checks (file_exists, file_contains, tests_pass, grep_codebase, command). This checklist will be auto-verified every 5 iterations.
 COMPLETION_PROMISE: [The system shall achieve full conformance with the specification including edge cases X Y Z]. When all PRD requirements are implemented, tests pass, and the PRD checklist is at or near 100%, invoke the loki_complete_task MCP tool with your completion_statement and evidence (cite tests that passed, checklist items verified, files created/modified). Do NOT emit a completion string in prose -- use the tool call. FALLBACK: if the loki_complete_task tool is not available in your environment, instead run `touch .loki/signals/COMPLETION_REQUESTED` (optionally write a one-line statement to that file via `echo 'statement' > .loki/signals/COMPLETION_REQUESTED`); the runner detects this file and treats it as a completion claim.
 </dynamic_context>

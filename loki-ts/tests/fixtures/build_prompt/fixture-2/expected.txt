@@ -23,6 +23,5 @@ PENDING[2] prd-002: Add file logging
   Acceptance: Log file created; Timestamp on each line
   User Story: As a developer, I want logs so that I can debug
 PENDING[3] prd-003: Task. Execute these tasks BEFORE finding new improvements.
-PRD_CHECKLIST_INIT: Create .loki/checklist/checklist.json from the PRD. Extract requirements into categories with items. Each item needs: id, title, description, priority (critical|major|minor), and verification checks (file_exists, file_contains, tests_pass, grep_codebase, command). This checklist will be auto-verified every 5 iterations.
 NO COMPLETION PROMISE SET. Continue finding improvements. The Completion Council will evaluate your progress periodically. Iteration 5 of max 1000. If you do decide the task is complete, invoke the loki_complete_task MCP tool with a structured statement and evidence rather than emitting prose. FALLBACK if that tool is unavailable: `touch .loki/signals/COMPLETION_REQUESTED`.
 </dynamic_context>

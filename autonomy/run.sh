@@ -23461,10 +23461,7 @@ if lines:
 
     # PRD Checklist status injection (v5.44.0)
     local checklist_status=""
-    if [ -n "$prd" ] && [ ! -f ".loki/checklist/checklist.json" ] && [ ! -f ".loki/checklist/author.json" ]; then
-        # First iteration with PRD but no checklist yet: instruct AI to create it
-        checklist_status="PRD_CHECKLIST_INIT: Create .loki/checklist/checklist.json from the PRD. Extract requirements into categories with items. Each item needs: id, title, description, priority (critical|major|minor), and verification checks (file_exists, file_contains, tests_pass, grep_codebase, command). This checklist will be auto-verified every ${CHECKLIST_INTERVAL:-5} iterations."
-    elif type checklist_summary &>/dev/null && [ -f ".loki/checklist/verification-results.json" ]; then
+    if type checklist_summary &>/dev/null && [ -f ".loki/checklist/verification-results.json" ]; then
         checklist_status=$(checklist_summary 2>/dev/null || true)
         if [ -n "$checklist_status" ]; then
             checklist_status="PRD_CHECKLIST_STATUS: ${checklist_status}. Review failing items and prioritize fixing them in this iteration."

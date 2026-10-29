@@ -117,6 +117,12 @@ export type ProviderInvocation = {
   // this field today; providers.ts honors it so the Bun runner gets resume for
   // free once its main loop becomes the live route. See #165.
   resumeFirstCall?: boolean;
+  // Text-only call: the model gets no tools and cannot edit anything, and no
+  // project settings load. Mirrors the bash text-only roles in
+  // autonomy/lib/claude-flags.sh loki_lean_child_flags (--tools=). Honoured by
+  // the claude provider; other providers are cwd-bound only (the caller passes
+  // an empty directory), which the walled check author reports as such.
+  textOnly?: boolean;
 };
 
 export interface ProviderInvoker {

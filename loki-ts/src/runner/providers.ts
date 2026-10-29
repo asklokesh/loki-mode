@@ -42,6 +42,8 @@ import {
   tierRouteModel,
   permissionArgv,
   sdkPermissionOptions,
+  leanReviewerFlags,
+  REVIEW_GUARD_DENYLIST,
 } from "../providers/claude_flags.ts";
 import { mcpConfigPath } from "../providers/mcp_config.ts";
 import { LEAN_PREFIX } from "../features/lean_prefix.ts";
@@ -472,6 +474,19 @@ async function writeCaptured(
 // Claude provider (claude.sh:1-200)
 // ---------------------------------------------------------------------------
 
+// Flags for a text-only call (ProviderInvocation.textOnly): no tools, no
+// setting sources, no MCP, no slash commands, plus the review tool denylist as
+// defence in depth. LOKI_LEAN_CHILDREN=0 must not re-enable tools here, so the
+// lean flags are built with it forced on. Byte-for-byte the bash check_author
+// role: loki_lean_child_flags emits --tools= and grill adds --disallowedTools.
+export function textOnlyArgv(): string[] {
+  return [
+    ...leanReviewerFlags({ env: { ...process.env, LOKI_LEAN_CHILDREN: "1" }, settingSources: "" }),
+    "--disallowedTools",
+    REVIEW_GUARD_DENYLIST,
+  ];
+}
+
 // Build the Claude provider invoker. Maps to provider_invoke_with_tier()
 // at claude.sh:192-199 (v7.5.19 Phase B adds --effort / --max-budget-usd /
 // --fallback-model derived from existing Loki state):
@@ -538,6 +553,7 @@ export function claudeProvider(): ProviderInvoker {
         // claude.sh:31 PROVIDER_AUTONOMOUS_FLAG (the compiled policy swaps it unless LOKI_PERMISSION_POLICY=legacy, C-C2)
         ...permissionArgv(call.cwd),
         ...(process.env["LOKI_E10_DISALLOWED_TOOLS"] ? ["--disallowedTools", process.env["LOKI_E10_DISALLOWED_TOOLS"]] : []), // Q18-04: per-session deny (read-only reviewer)
+        ...(call.textOnly === true ? textOnlyArgv() : []),
         ...modelArgv,
         ...autoFlags,
         ...sessionArgv,

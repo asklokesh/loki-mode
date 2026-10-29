@@ -312,6 +312,17 @@ describe("codexProvider invocation", () => {
 });
 
 describe("claudeProvider invocation", () => {
+  it("textOnly adds the no-tools flag and the write denylist; a normal call does not", async () => {
+    const argvLog = writeStub({ stdout: "ok" });
+    await claudeProvider().invoke(makeCall({ textOnly: true }));
+    const on = readArgv(argvLog);
+    expect(on).toContain("--tools=");
+    expect(on).toContain("--disallowedTools");
+    expect(on.join(" ")).toContain("Bash");
+    await claudeProvider().invoke(makeCall());
+    expect(readArgv(argvLog)).not.toContain("--tools=");
+  });
+
   it("passes --dangerously-skip-permissions (legacy), --model, and -p", async () => {
     const argvLog = writeStub({ stdout: "ok" });
     const p = claudeProvider();

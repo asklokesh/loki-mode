@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { runAutonomous, tryImport } from "../../src/runner/autonomous.ts";
+import { checklistFreezeOnce, resetCheckAuthorMemory } from "../../src/runner/check_author.ts";
 import { saveStateForRunner as realSaveStateForRunner } from "../../src/runner/state.ts";
 import type {
   Clock,
@@ -959,5 +960,115 @@ describe("runAutonomous", () => {
         else process.env[k] = v;
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Walled check author (runs once before the loop, never in the repo).
+// ---------------------------------------------------------------------------
+
+const GOOD_REPLY = JSON.stringify({
+  categories: [
+    {
+      name: "core",
+      items: [
+        {
+          id: "c1",
+          title: "readme exists",
+          priority: "critical",
+          verification: [{ type: "file_exists", path: "README.md" }],
+        },
+      ],
+    },
+  ],
+});
+
+// Writes its reply to the captured path for textOnly (author) calls only, and
+// records every call so the test can inspect cwd, tier and textOnly.
+class AuthorProvider implements ProviderInvoker {
+  public calls: ProviderInvocation[] = [];
+  constructor(private readonly authorReplies: string[]) {}
+  async invoke(call: ProviderInvocation): Promise<ProviderResult> {
+    this.calls.push(call);
+    if (call.textOnly === true) {
+      const n = this.calls.filter((c) => c.textOnly === true).length - 1;
+      writeFileSync(call.iterationOutputPath, this.authorReplies[Math.min(n, this.authorReplies.length - 1)] ?? "");
+    }
+    return { exitCode: 0, capturedOutputPath: call.iterationOutputPath };
+  }
+}
+
+describe("walled check author (Bun route)", () => {
+  let prdFile: string;
+  const savedEnv: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    resetCheckAuthorMemory();
+    prdFile = resolve(tmpRoot, "spec.md");
+    writeFileSync(prdFile, "# spec\nBuild a thing.\n");
+    for (const k of ["LOKI_CHECKLIST_ENABLED", "LOKI_CHECKLIST_AUTHOR"]) {
+      savedEnv[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+  afterEach(() => {
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  const authorCalls = (p: AuthorProvider): ProviderInvocation[] => p.calls.filter((c) => c.textOnly === true);
+
+  it("runs before the loop, in an empty cwd that is not the repo, text-only on the fast tier", async () => {
+    const provider = new AuthorProvider([GOOD_REPLY]);
+    const council = new FakeCouncil([true]);
+    const code = await runAutonomous(baseOpts({ providerOverride: provider, council, prdPath: prdFile }));
+    expect(code).toBe(0);
+    const first = provider.calls[0]!;
+    expect(first.textOnly).toBe(true);
+    expect(first.tier).toBe("fast");
+    expect(first.cwd).toBeDefined();
+    expect(first.cwd).not.toBe(tmpRoot);
+    expect(first.cwd!.startsWith(tmpRoot)).toBe(false);
+    expect(first.prompt).not.toContain(tmpRoot);
+    // Every implementer call that follows is NOT text-only.
+    const rest = provider.calls.slice(1);
+    expect(rest.length).toBeGreaterThan(0);
+    expect(rest.every((c) => c.textOnly !== true)).toBe(true);
+    const author = JSON.parse(readFileSync(resolve(lokiDir, "checklist", "author.json"), "utf8")) as Record<string, unknown>;
+    expect(author["status"]).toBe("authored");
+  });
+
+  it("a failed author writes the sentinel and freeze refuses", async () => {
+    const provider = new AuthorProvider(["not json at all"]);
+    const council = new FakeCouncil([true]);
+    await runAutonomous(baseOpts({ providerOverride: provider, council, prdPath: prdFile }));
+    expect(authorCalls(provider)).toHaveLength(2);
+    const author = JSON.parse(readFileSync(resolve(lokiDir, "checklist", "author.json"), "utf8")) as Record<string, unknown>;
+    expect(author["status"]).toBe("unknown");
+    const res = readFileSync(resolve(lokiDir, "checklist", "verification-results.json"), "utf8");
+    expect(res).toContain("check_authoring_unknown");
+    // The implementer now writes its own checklist: freeze must still refuse.
+    writeFileSync(resolve(lokiDir, "checklist", "checklist.json"), GOOD_REPLY);
+    const ctx = { lokiDir, cwd: tmpRoot, prdPath: prdFile, log: () => {} } as unknown as RunnerContext;
+    expect(await checklistFreezeOnce(ctx)).toBe(false);
+  });
+
+  it("a restart with the same spec does not exceed 2 attempts in total", async () => {
+    const first = new AuthorProvider(["still not json"]);
+    await runAutonomous(baseOpts({ providerOverride: first, council: new FakeCouncil([true]), prdPath: prdFile }));
+    expect(authorCalls(first)).toHaveLength(2);
+    resetCheckAuthorMemory();
+    const second = new AuthorProvider([GOOD_REPLY]);
+    await runAutonomous(baseOpts({ providerOverride: second, council: new FakeCouncil([true]), prdPath: prdFile }));
+    expect(authorCalls(second)).toHaveLength(0);
+  });
+
+  it("an implementer-forged author record cannot freeze a checklist it wrote", async () => {
+    const provider = new AuthorProvider([GOOD_REPLY]);
+    await runAutonomous(baseOpts({ providerOverride: provider, council: new FakeCouncil([true]), prdPath: prdFile }));
+    const ctx = { lokiDir, cwd: tmpRoot, prdPath: prdFile, log: () => {} } as unknown as RunnerContext;
+    resetCheckAuthorMemory();
+    expect(await checklistFreezeOnce(ctx)).toBe(false);
   });
 });

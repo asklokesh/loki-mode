@@ -39,6 +39,7 @@ import {
 } from "./recovery_runtime.ts";
 import { runnerBudget } from "../e10ext/budget_cap.ts";
 import { routeTaskClass, type TaskClass } from "./capability_router.ts";
+import { runCheckAuthor } from "./check_author.ts";
 // Type-only: erased at build, so the runtime module stays behind the existing
 // graceful dynamic import below.
 import type { RarvPhase } from "./rarv.ts";
@@ -653,6 +654,16 @@ async function runAutonomousCore(
     } catch (err) {
       log(`[runner] repo profile build failed (non-fatal): ${(err as Error).message}`);
     }
+  }
+
+  // Walled check author (run.sh checklist_author): the acceptance checks are
+  // written by a separate text-only call in an empty directory BEFORE the
+  // implementer runs, never by the implementer. Fail closed and non-fatal: a
+  // failed author leaves the failing sentinel so completion stays blocked.
+  try {
+    await runCheckAuthor(ctx, provider);
+  } catch (err) {
+    log(`[runner] check author failed (completion stays blocked): ${(err as Error).message}`);
   }
 
   // -- Main loop (run.sh run_autonomous()) --------------------------------------

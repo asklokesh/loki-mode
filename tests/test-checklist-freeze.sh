@@ -486,10 +486,10 @@ au_reset
 grep -q 'check author isolation: cwd-only' "$AUP/.loki/checklist/author-isolation.txt" || fail "codex: isolation label not cwd-only"
 grep -qi 'tool' "$AUP/.loki/checklist/author-isolation.txt" && fail "codex: isolation label claims tool denial"
 
-# static wiring: run.sh calls the author after checklist_init and skips the INIT
-# prompt on author.json; the text-only role list names check_author
+# static wiring: run.sh calls the author after checklist_init and never tells the
+# implementer to write the checklist; the text-only role list names check_author
 grep -A3 'checklist_init "\$prd_path"' "$SRC_DIR/run.sh" | grep -q 'checklist_author "\$prd_path"' || fail "run.sh does not call checklist_author after checklist_init"
-grep -q '! -f ".loki/checklist/author.json" \]; then' "$SRC_DIR/run.sh" || fail "run.sh INIT prompt not skipped on author.json"
+grep -q 'PRD_CHECKLIST_INIT' "$SRC_DIR/run.sh" && fail "run.sh still tells the implementer to author the checklist"
 grep -q 'grill|check_author|' "$SRC_DIR/lib/claude-flags.sh" || fail "check_author missing from text-only roles"
 
 if [ "$INNER" = 0 ] && [ -z "${LOKI_FREEZE_SRC_DIR:-}" ]; then
@@ -526,7 +526,7 @@ PY
     mutate drop-authored-digest-compare prd-checklist.sh '[ -z "$_CHECKLIST_AUTHORED_DIGEST" ] || [ "$(_checklist_file_sha "$CHECKLIST_FILE")" != "$_CHECKLIST_AUTHORED_DIGEST" ]' 'false'
     mutate author-unbounded prd-checklist.sh 'CHECKLIST_AUTHOR_MAX_ATTEMPTS=2' 'CHECKLIST_AUTHOR_MAX_ATTEMPTS=3'
     mutate runsh-drops-author-call run.sh 'checklist_author "$prd_path" || true' ':'
-    mutate runsh-keeps-init-prompt run.sh ' && [ ! -f ".loki/checklist/author.json" ]; then' '; then'
+    mutate runsh-keeps-init-prompt run.sh '    local checklist_status=""' '    local checklist_status="PRD_CHECKLIST_INIT: write the checklist"'
     mutate harness-omits-digest prd-checklist.sh '--expect-digest "$CHECKLIST_FROZEN_DIGEST"' '--timeout 5'
 fi
 

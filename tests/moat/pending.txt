@@ -23,4 +23,3 @@
 #     the baseline.
 #
 # Entries:
-P3.implementer-prompt-has-no-check-authoring M2 remove PRD_CHECKLIST_INIT from both builders (run.sh build_prompt, build_prompt.ts buildChecklistStatus) and move check authoring to a walled step

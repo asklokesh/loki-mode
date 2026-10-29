@@ -1454,18 +1454,8 @@ function buildMagicContext(cwd: string, targetDir: string): string {
 // Checklist status (run.sh build_prompt()).
 // ---------------------------------------------------------------------------
 
-function buildChecklistStatus(
-  cwd: string,
-  prd: string | null,
-  env: Readonly<Record<string, string | undefined>>,
-): string {
-  const checklistPath = resolve(cwd, ".loki/checklist/checklist.json");
-  const authorPath = resolve(cwd, ".loki/checklist/author.json");
-  if (prd !== null && prd.length > 0 && !existsSync(checklistPath) && !existsSync(authorPath)) {
-    const interval = envInt(env, "CHECKLIST_INTERVAL", 5);
-    return `PRD_CHECKLIST_INIT: Create .loki/checklist/checklist.json from the PRD. Extract requirements into categories with items. Each item needs: id, title, description, priority (critical|major|minor), and verification checks (file_exists, file_contains, tests_pass, grep_codebase, command). This checklist will be auto-verified every ${interval} iterations.`;
-  }
-  // The elif branch in bash requires `checklist_summary` to be defined as a
+function buildChecklistStatus(): string {
+  // The bash branch requires `checklist_summary` to be defined as a
   // shell function. The TS port does not implement it -- matches the harness
   // behavior because bash's `type checklist_summary &>/dev/null` returns
   // false (the function lives outside run.sh).
@@ -1547,7 +1537,7 @@ async function resolveDynamicSections(
     openspecContext: buildOpenspecContext(ctx.cwd),
     mirofishContext: buildMirofishContext(ctx.cwd),
     magicContext: buildMagicContext(ctx.cwd, targetDir),
-    checklistStatus: buildChecklistStatus(ctx.cwd, prd, env),
+    checklistStatus: buildChecklistStatus(),
     efficiencyTrend: await buildEfficiencyTrend(ctx.cwd, env),
   };
 }

@@ -408,20 +408,19 @@ describe("buildOpenspecContext", () => {
 });
 
 describe("buildChecklistStatus", () => {
-  it("emits PRD_CHECKLIST_INIT when PRD set and checklist absent", () => {
-    const out = _internals.buildChecklistStatus(workDir, "./prd.md", { CHECKLIST_INTERVAL: "11" });
-    expect(out).toContain("PRD_CHECKLIST_INIT:");
-    expect(out).toContain("auto-verified every 11 iterations");
+  it("never tells the implementer to author the checklist", () => {
+    expect(_internals.buildChecklistStatus()).toBe("");
   });
-  it("skips PRD_CHECKLIST_INIT once the check author has recorded author.json", () => {
-    mkLoki("checklist");
-    writeFileSync(resolve(workDir, ".loki/checklist/author.json"), "{}");
-    expect(_internals.buildChecklistStatus(workDir, "./prd.md", {})).toBe("");
-  });
-  it("returns empty when checklist.json exists (no checklist_summary fn)", () => {
-    mkLoki("checklist");
-    writeFileSync(resolve(workDir, ".loki/checklist/checklist.json"), "{}");
-    expect(_internals.buildChecklistStatus(workDir, "./prd.md", {})).toBe("");
+  it("keeps PRD_CHECKLIST_INIT out of the assembled prompt even with a PRD and no checklist", async () => {
+    writeFileSync(resolve(workDir, "prd.md"), "# spec\n");
+    const out = await buildPrompt({
+      retry: 0,
+      prd: "./prd.md",
+      iteration: 1,
+      ctx: { cwd: workDir, env: emptyEnv({ PHASE_UNIT_TESTS: "true" }) },
+    });
+    expect(out).not.toContain("PRD_CHECKLIST_INIT");
+    expect(out).not.toContain("Create .loki/checklist/checklist.json");
   });
 });
 
