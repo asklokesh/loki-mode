@@ -1,9 +1,10 @@
 // WC-01a: wallStage = wallAuthor (session + compile check, writes only runDir/wall) then installWall (copy + base run).
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { removeHoldout, sealStageDir } from "../../src/util/holdout.ts";
 import { installWall, wallAuthor, wallStage, type BaseTestRunner } from "../../src/engine10/stages/wall.ts";
 import type { RunContext, SessionResult, SessionRunOptions, SessionRunner } from "../../src/engine10/types.ts";
 
@@ -82,14 +83,17 @@ describe("WC-01a wall split", () => {
     rmSync(repoDir, { recursive: true, force: true }); rmSync(runDir, { recursive: true, force: true });
   });
 
-  test("wallAuthor alone leaves repoDir byte-unchanged (git status empty) and seals under runDir/wall", async () => {
+  test("wallAuthor alone leaves repoDir byte-unchanged (git status empty); the sealed copies reach runDir/wall at install", async () => {
     const { repoDir, runDir, ctx, sessions } = fixture();
     const a = await wallAuthor(ctx, new AbortController().signal);
     expect(a.kind).toBe("authored");
     expect(execFileSync("git", ["status", "--porcelain"], { cwd: repoDir, encoding: "utf8" })).toBe("");
     expect(readdirSync(repoDir).sort()).toEqual([".git", "README.md"]);
-    expect(readdirSync(join(runDir, "wall")).sort()).toEqual(["loki_wall_a.test.ts", "loki_wall_b.test.ts", "loki_wall_c.test.ts"]);
+    expect(existsSync(join(runDir, "wall"))).toBe(false);
     expect(sessions.cwdListing).toEqual(["repomap.txt", "task.md"]);
+    if (a.kind !== "authored") throw new Error("expected authored");
+    installWall(ctx, a, repoDir, { baseRunner: new PerFileRunner() });
+    expect(readdirSync(join(runDir, "wall")).sort()).toEqual(["loki_wall_a.test.ts", "loki_wall_b.test.ts", "loki_wall_c.test.ts"]);
     expect(readFileSync(join(runDir, "wall", "loki_wall_a.test.ts"), "utf8")).toBe(BODY("a"));
     rmSync(repoDir, { recursive: true, force: true }); rmSync(runDir, { recursive: true, force: true });
   });
@@ -117,4 +121,41 @@ describe("WC-01a wall split", () => {
   });
 
   test("wallStage is exported unchanged in shape", () => { expect(wallStage.name).toBe("wall"); });
+});
+
+describe("RUN5-C1c the authored Wall is unreadable from the repo tree until install", () => {
+  const scan = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => e.name === ".git" ? [] : e.isDirectory() ? scan(join(dir, e.name)) : [join(dir, e.name)]);
+  test("real writer: while implement can read its tree no Wall content exists in it (runDir lives in <repo>/.loki/runs); install then publishes it", async () => {
+    const { repoDir, runDir: outer, ctx: base } = fixture();
+    const runDir = join(repoDir, ".loki", "runs", "wc01a"); mkdirSync(runDir, { recursive: true });
+    const ctx: RunContext = { ...base, runDir };
+    const a = await wallAuthor(ctx, new AbortController().signal);
+    if (a.kind !== "authored") throw new Error("expected authored");
+    const seen = scan(repoDir).filter((p) => readFileSync(p, "utf8").includes(BODY("a")) || p.includes("loki_wall_")); // what an implement session listing and reading the tree would find
+    expect(seen).toEqual([]);
+    installWall(ctx, a, repoDir, { baseRunner: new PerFileRunner() });
+    expect(readFileSync(join(runDir, "wall", "loki_wall_a.test.ts"), "utf8")).toBe(BODY("a"));
+    rmSync(repoDir, { recursive: true, force: true }); rmSync(outer, { recursive: true, force: true });
+  });
+});
+
+describe("RUN5-C1c staged Wall directory lifecycle", () => {
+  const authoredFor = async () => { const f = fixture(), a = await wallAuthor(f.ctx, new AbortController().signal); if (a.kind !== "authored") throw new Error("expected authored"); return { ...f, a, stage: sealStageDir(f.ctx.runId, f.repoDir) }; };
+  const drop = (f: { repoDir: string; runDir: string; ctx: RunContext }): void => { removeHoldout(f.ctx.runId, f.repoDir); rmSync(f.repoDir, { recursive: true, force: true }); rmSync(f.runDir, { recursive: true, force: true }); };
+  test("authoring stages the copies in the temp directory; install publishes and leaves no stage directory behind", async () => {
+    const f = await authoredFor();
+    try { expect(existsSync(f.stage)).toBe(true); installWall(f.ctx, f.a, f.repoDir, { baseRunner: new PerFileRunner() }); expect(existsSync(f.stage)).toBe(false); } finally { drop(f); }
+  });
+  test("a run that ends after authoring and before install leaves no stage directory (run-end cleanup)", async () => {
+    const f = await authoredFor();
+    try { expect(existsSync(f.stage)).toBe(true); removeHoldout(f.ctx.runId, f.repoDir); expect(existsSync(f.stage)).toBe(false); } finally { drop(f); }
+  });
+  test("a stage directory removed before install fails closed with a named reason, never a bare ENOENT", async () => {
+    const f = await authoredFor();
+    try {
+      rmSync(f.stage, { recursive: true, force: true });
+      const r = installWall(f.ctx, f.a, f.repoDir, { baseRunner: new PerFileRunner() });
+      expect(r.status).toBe("failed"); expect(r.reason).toContain("wall sealed copies missing"); expect(f.ctx.wallSealed).not.toBe(true);
+    } finally { drop(f); }
+  });
 });

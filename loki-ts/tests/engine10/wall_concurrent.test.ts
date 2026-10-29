@@ -1,9 +1,10 @@
 // WC-01b: LOKI_E10_WALL_CONCURRENT=1 authors the Wall alongside plan and implement, installs once before verify.
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { hooks } from "../../src/engine10/hooks.ts";
 import { FLOW, runMachine } from "../../src/engine10/machine.ts";
 import { STEER_MAX_BYTES, staleAtSeal, staleReason, staleWallRevisions } from "../../src/util/steer.ts";
 import type { RunContext, Stage, StageName, StageResult } from "../../src/engine10/types.ts";
@@ -12,7 +13,7 @@ type Ev = { type: string; stage: StageName | null; data: Record<string, unknown>
 const sleep = (ms: number, signal?: AbortSignal): Promise<void> => new Promise((res) => { const t = setTimeout(res, ms); signal?.addEventListener("abort", () => { clearTimeout(t); res(); }); });
 const git = (cwd: string, ...a: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd, encoding: "utf8" });
 const dirs: string[] = [];
-afterEach(() => { delete process.env.LOKI_E10_WALL_CONCURRENT; for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => { delete process.env.LOKI_E10_WALL_CONCURRENT; delete process.env.LOKI_E10_WALL_TIER; for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 // Template repo built once; each test copies it instead of running git init/add/commit.
 let templateDir = "", templateSha = "";
@@ -170,4 +171,52 @@ describe("WC-01b wall concurrent", () => {
       expect((await attempt(f)).status).toBe("failed");
     });
   });
+});
+
+describe("RUN5-C1 concurrent Wall is the default", () => {
+  // A fake snapshot hook: these tests pin ordering and blindness, so they must not depend on a real copy succeeding (the whole-directory run pollutes the environment the real copy needs, which already reds the WC-01b tests above there).
+  const saved = hooks.wall; const snaps: string[] = [];
+  beforeEach(() => { hooks.wall = { snapshotTree: async () => { const d = mkdtempSync(join(tmpdir(), "loki-run5c1-snap-")); snaps.push(d); return d; }, changedSinceBase: () => [], manifests: /package\.json$/ }; });
+  afterEach(() => { hooks.wall = saved; for (const d of snaps.splice(0)) rmSync(d, { recursive: true, force: true }); });
+  it("with the knob unset and sonnet already the Wall model, the Wall is authored concurrently and installed once before verify", async () => {
+    delete process.env.LOKI_E10_WALL_CONCURRENT; process.env.LOKI_E10_WALL_TIER = "sonnet";
+    const f = fixture(), r = await run(f, stages(f, { authorMs: 80 }));
+    expect(f.log.indexOf("implement:start")).toBeLessThan(f.log.indexOf("author:end"));
+    expect(f.log.filter((x) => x === "install")).toHaveLength(1);
+    expect(f.log.indexOf("install")).toBeLessThan(f.log.indexOf("verify"));
+    expect(r.outputs.wall?.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
+  }, 15000);
+  it("with the knob unset and no pin (haiku-first routing) the Wall stays sequential even when the stage has a split", async () => {
+    delete process.env.LOKI_E10_WALL_CONCURRENT; delete process.env.LOKI_E10_WALL_TIER;
+    const f0 = fixture(), s0 = stages(f0);
+    s0.wall = { ...(s0.wall as Stage), run: async () => { f0.log.push("wall:seq"); return { status: "completed", data: { readOnlyFiles: [] } }; } };
+    await run(f0, s0);
+    expect(f0.log).not.toContain("install"); expect(f0.log.indexOf("wall:seq")).toBeLessThan(f0.log.indexOf("implement:start"));
+  });
+  it("LOKI_E10_WALL_CONCURRENT=0 forces the sequential Wall even under a sonnet pin", async () => {
+    process.env.LOKI_E10_WALL_CONCURRENT = "0"; process.env.LOKI_E10_WALL_TIER = "sonnet";
+    const f = fixture(), s = stages(f);
+    s.wall = { ...(s.wall as Stage), run: async () => { f.log.push("wall:seq"); return { status: "completed", data: { readOnlyFiles: [] } }; } };
+    await run(f, s);
+    expect(f.log).not.toContain("author:start"); expect(f.log).not.toContain("install");
+    expect(f.log.indexOf("wall:seq")).toBeLessThan(f.log.indexOf("implement:start"));
+  });
+  it("blind: no Wall content reaches the implement stage, in its tree or in the outputs it can read", async () => {
+    delete process.env.LOKI_E10_WALL_CONCURRENT; process.env.LOKI_E10_WALL_TIER = "sonnet";
+    const MARK = "WALL_CONTENT_MARKER_7f3a";
+    const f = fixture(), s = stages(f, { authorMs: 30 });
+    const split = (s.wall as unknown as { split: { author: (c: RunContext, sig: AbortSignal) => Promise<Record<string, unknown>>; install: (c: RunContext, a: never, b: string) => StageResult } }).split;
+    const inner = split.author; split.author = async (c, sig) => ({ ...(await inner(c, sig)), contents: new Map([["loki_wall_a.test.ts", `${MARK}\n`]]) });
+    const innerInstall = split.install; split.install = (c, a, b) => { const r = innerInstall(c, a, b); writeFileSync(join(f.repoDir, "tests", "loki_wall_a.test.ts"), `${MARK}\n`); return r; };
+    const scan = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => e.name === ".git" ? [] : e.isDirectory() ? scan(join(dir, e.name)) : [join(dir, e.name)]);
+    let leaked: string[] | null = null;
+    s.implement = { name: "implement", targetS: 1, limitS: 5, run: async (c: RunContext) => {
+      await sleep(120); // the author has finished by now; the Wall is authored but must still be uninstalled
+      leaked = [...scan(f.repoDir).filter((p) => readFileSync(p, "utf8").includes(MARK)), ...(JSON.stringify(c.outputs()).includes(MARK) ? ["outputs"] : [])];
+      return { status: "completed", data: {} };
+    } };
+    await run(f, s);
+    expect(f.log).toContain("author:end"); expect(f.log).toContain("install");
+    expect(leaked as string[] | null).toEqual([]); // null would mean implement never ran
+  }, 15000);
 });

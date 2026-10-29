@@ -1,7 +1,7 @@
 // Shared deterministic holdout (P12-05): modernize holds out oracle cases, engine10's Wall holds out acceptance tests.
 // Selection is ranked by sha256(seed:id): no clock, file order or RNG. Held files live outside the repo (the implementer's cwd).
 import { createHash } from "node:crypto";
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 
@@ -29,8 +29,12 @@ export const isHoldoutCheck = (name: string): boolean => name.startsWith("holdou
 
 /** The one exact store path for a run (never a glob). */
 export const holdoutDirFor = (runId: string, repoDir: string): string => join(tmpdir(), `loki-e10-holdout-${sha(`${runId}:${repoDir}`).slice(0, 16)}`);
-/** Run-end cleanup: removes only this run's store. */
-export function removeHoldout(runId: string, repoDir: string): void { rmSync(holdoutDirFor(runId, repoDir), { recursive: true, force: true }); }
+/** Where the authored Wall's sealed copies wait, outside the repo tree, until the install step before verify (an implement session must not be able to read them from <repo>/.loki/runs). */
+export const sealStageDir = (runId: string, repoDir: string): string => join(tmpdir(), `loki-e10-wallseal-${sha(`${runId}:${repoDir}`).slice(0, 16)}`);
+/** Install step: moves the staged sealed copies to <runDir>/wall, where seal and mutation proof read them. Returns false when nothing was staged (the caller names the reason). */
+export function publishSealed(runId: string, repoDir: string, runDir: string): boolean { const from = sealStageDir(runId, repoDir); if (!existsSync(from)) return false; mkdirSync(runDir, { recursive: true }); rmSync(join(runDir, "wall"), { recursive: true, force: true }); cpSync(from, join(runDir, "wall"), { recursive: true }); rmSync(from, { recursive: true, force: true }); return true; }
+/** Run-end cleanup: removes only this run's stores. */
+export function removeHoldout(runId: string, repoDir: string): void { rmSync(holdoutDirFor(runId, repoDir), { recursive: true, force: true }); rmSync(sealStageDir(runId, repoDir), { recursive: true, force: true }); }
 
 interface HoldoutManifest { targetDir: string; files: { name: string; runner: string; sha256: string }[]; }
 const MANIFEST = "manifest.json";

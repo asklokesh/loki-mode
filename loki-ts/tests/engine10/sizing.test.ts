@@ -5,9 +5,9 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runMachine } from "../../src/engine10/machine.ts";
-import { createSessionRunner } from "../../src/engine10/session.ts";
+import { childEnv, createSessionRunner } from "../../src/engine10/session.ts";
 import { readFileSync } from "node:fs";
-import { loadRepoMap, cascadeImplementModel, modelRank, planMode, wallLimitS, resolveModelAlias, sizeTask, smallMaxChars, smallTaskPath, wallFirstModel, wallModel } from "../../src/engine10/sizing.ts";
+import { loadRepoMap, cascadeImplementModel, modelRank, planMode, wallLimitS, resolveModelAlias, sizeTask, smallMaxChars, smallTaskPath, wallConcurrent, wallFirstModel, wallMaxTokens, wallOutputCap, wallModel } from "../../src/engine10/sizing.ts";
 import { readPlanScope, planOutOfRepo } from "../../src/util/run_cap.ts";
 import { planStage } from "../../src/engine10/stages/plan.ts";
 import { wallStage, buildWallBrief, WALL_MAP_MAX_LINES } from "../../src/engine10/stages/wall.ts";
@@ -437,5 +437,36 @@ describe("clamp note", () => {
     expect(v).toBe(600);
     expect(err).toContain('LOKI_E10_SMALL_MAX_CHARS="zzz"');
     expect(capture(() => { smallMaxChars({} as NodeJS.ProcessEnv); smallMaxChars({ LOKI_E10_SMALL_MAX_CHARS: "50" } as NodeJS.ProcessEnv); wallLimitS("small", { LOKI_E10_WALL_LIMIT_S: "120" } as NodeJS.ProcessEnv); })).toBe("");
+  });
+});
+
+describe("Wall concurrency and output bound knobs", () => {
+  it("unset is concurrent only where sonnet is already the Wall model; 0/off/false opt out; 1/on/true force it", () => {
+    expect(wallConcurrent({})).toBe(false); // small and normal default runs keep haiku-first sequential
+    for (const pin of [{ LOKI_E10_WALL_TIER: "sonnet" }, { LOKI_MODEL_OVERRIDE: "opus" }, { LOKI_E10_WALL_FIRST: "0" }]) expect(wallConcurrent(pin)).toBe(true);
+    for (const v of ["0", "off", "false", "OFF"]) expect(wallConcurrent({ LOKI_E10_WALL_CONCURRENT: v, LOKI_E10_WALL_TIER: "sonnet" })).toBe(false);
+    for (const v of ["1", "on", "true"]) expect(wallConcurrent({ LOKI_E10_WALL_CONCURRENT: v })).toBe(true);
+  });
+  it("LOKI_E10_WALL_MAX_TOKENS defaults to 16000, honors a positive integer, rejects the rest", () => {
+    expect(wallMaxTokens({})).toBe(16000);
+    expect(wallMaxTokens({ LOKI_E10_WALL_MAX_TOKENS: "4096" })).toBe(4096);
+    for (const bad of ["x", "0", "-1", "2.5", "1e3", "0x10", "+5", " 5", "5 ", "1 000", "9007199254740992", "99999999999999999999"]) expect(wallMaxTokens({ LOKI_E10_WALL_MAX_TOKENS: bad })).toBe(16000);
+    expect(wallMaxTokens({ LOKI_E10_WALL_MAX_TOKENS: "9007199254740991" })).toBe(Number.MAX_SAFE_INTEGER);
+  });
+  it("a rejected value warns once", () => {
+    const w = process.stderr.write.bind(process.stderr), seen: string[] = [];
+    process.stderr.write = ((c: string | Uint8Array) => { seen.push(String(c)); return true; }) as typeof process.stderr.write;
+    try { for (let i = 0; i < 3; i++) wallMaxTokens({ LOKI_E10_WALL_MAX_TOKENS: "0x1F" }); } finally { process.stderr.write = w; }
+    expect(seen.filter((l) => l.includes("LOKI_E10_WALL_MAX_TOKENS"))).toHaveLength(1);
+  });
+  it("wallOutputCap: unset knob yields to an inherited user bound, a set knob wins, neither gives the default", () => {
+    expect(wallOutputCap({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: "5000" })).toBeUndefined();
+    expect(wallOutputCap({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: "5000", LOKI_E10_WALL_MAX_TOKENS: "6000" })).toBe(6000);
+    expect(wallOutputCap({})).toBe(16000);
+  });
+  it("the session child env carries the bound only when the call sets one", () => {
+    const base = { stage: "wall", brief: "b", tier: "development", iterationId: "i", limitS: 10, signal: new AbortController().signal } as SessionRunOptions;
+    expect(childEnv({ ...base, maxOutputTokens: 5000 }, { provider: "claude" }).CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("5000");
+    expect(childEnv(base, { provider: "claude" }).CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe(process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS);
   });
 });

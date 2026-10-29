@@ -83,7 +83,7 @@ export interface SessionRunOptions {
   /** Pins this session's model for its tier (E-45 Wall on sonnet); unset inherits the run model. */
   model?: string;
   resumeSessionId?: string; // MW-2: provider session to resume (LOKI_E10_FIX_RESUME); unset starts fresh
-  effort?: string; // EL-W0-06, L1: provider reasoning effort; omitted when unset so the provider default applies
+  maxOutputTokens?: number; /* claude: per-response output limit, CLAUDE_CODE_MAX_OUTPUT_TOKENS; unset keeps the provider default */ effort?: string; // EL-W0-06, L1: provider reasoning effort; omitted when unset so the provider default applies
 }
 export interface SessionResult {
   exit: number | null; // null when killed before exiting

@@ -90,7 +90,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
     else env["LOKI_SDK_LOOP"] = "1";
     env["LOKI_HOST_GUARD"] = "1";
     env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"; // an engine stage never needs background work; a Bash at its timeout stops instead of auto-backgrounding and pinning a finished session
-    if (process.env["LOKI_E10_STAGE"]) delete env["LOKI_E10_MAX_TURNS"]; clampBashTimeoutEnv(env, opts.limitS); // a nested run inside a stage session inherits the derived cap, never an explicit user value
+    if (process.env["LOKI_E10_STAGE"]) delete env["LOKI_E10_MAX_TURNS"]; clampBashTimeoutEnv(env, opts.limitS); if (opts.maxOutputTokens) env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = String(opts.maxOutputTokens); // a nested run inside a stage session inherits the derived cap, never an explicit user value; Wall author output bound, other stages keep the inherited value
     if (env["LOKI_E10_PREFIX"] === undefined) env["LOKI_E10_PREFIX"] = "lean"; // TEN-COST-13: lean cache-stable prefix by default; an explicit user value (including off) wins
     const forced = process.env["LOKI_MODEL_OVERRIDE"] || sessionPinModel(process.env); // the override, else the session pin (after the override, ahead of the per-tier vars; throws on an unrecognized pin)
     if (forced) for (const t of ["PLANNING", "DEVELOPMENT", "FAST"]) env[`LOKI_CLAUDE_MODEL_${t}`] = forced;

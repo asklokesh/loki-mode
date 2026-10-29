@@ -10,8 +10,8 @@ import { unitSpec } from "../../features/speed/unit_mode.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
-import { hasRelevantTests, loadRepoMap, namedFiles, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallModel } from "../sizing.ts";
-import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { removeHoldout, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
+import { hasRelevantTests, loadRepoMap, namedFiles, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallOutputCap, wallModel } from "../sizing.ts";
+import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { publishSealed, removeHoldout, sealStageDir, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingJavaTool, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { baseJobs, classify, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
@@ -98,7 +98,7 @@ function wallTargetDir(repoDir: string, existingTests: TestRef[], runners: Runne
 /** Runner for a generated file: extension decides for Python/Go, a JS/TS file takes the repo's detected JS runner; anything else never guesses (unselectable). */
 
 /** WC-01a: what wallAuthor hands installWall. Sealed copies live under <runDir>/wall; nothing here touches repoDir. */
-export interface WallAuthored { kind: "authored"; model?: string; iterationId?: string; task: string; sizeName: string; runners: RunnerName[]; targetDir: string; generated: string[]; contents: Map<string, string>; discarded: { file: string; reason: string }[]; manifestSha256?: string; holdoutDir?: string; clauses?: ClauseSet; }
+export interface WallAuthored { kind: "authored"; staged?: boolean; model?: string; iterationId?: string; task: string; sizeName: string; runners: RunnerName[]; targetDir: string; generated: string[]; contents: Map<string, string>; discarded: { file: string; reason: string }[]; manifestSha256?: string; holdoutDir?: string; clauses?: ClauseSet; }
 export type WallAuthorOutcome = { kind: "done"; result: StageResult } | WallAuthored;
 
 /** Session plus compile check. Writes only <runDir>/wall (sealed copies); repoDir is read, never written. */
@@ -145,7 +145,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
     tier: "development",
     model,
     iterationId,
-    limitS: wallLimitS(sz.size), // W1-S3
+    limitS: wallLimitS(sz.size), maxOutputTokens: wallOutputCap(), // W1-S3
     signal,
     cwd,
   });
@@ -153,9 +153,9 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
 
   const planText = typeof prior.plan?.plan === "string" ? prior.plan.plan : null, repoFiles = repoMap?.files ?? [];
   const oor = (): { name: string; why: string }[] => readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)).flatMap((name) => { const text = readFileSync(join(cwd, name), "utf8"), why = outOfRepoTarget(text) ?? vacuousCheck(name, text) ?? phantomReason(phantomRepoPaths(text, name, targetDir, ctx.repoDir, planText), repoFiles, relative(ctx.repoDir, targetDir), pkg?.root ?? ""); return why ? [{ name, why }] : []; });
-  const bad1 = oor(); if (bad1.length > 0 && !signal.aborted && !ctx.overCap?.()) await ctx.sessions.run({ stage: "wall", brief: withStagePrefix(outOfRepoReask("Rewrite these Wall files in place, keeping the same names and acceptance coverage.", bad1)), tier: "development", model, iterationId: `${iterationId}-oor`, limitS: wallLimitS(sz.size), signal, cwd }); // FC-WALL-OUT-OF-REPO-TARGET: re-ask once in the same directory with the precise reason
+  const bad1 = oor(); if (bad1.length > 0 && !signal.aborted && !ctx.overCap?.()) await ctx.sessions.run({ stage: "wall", brief: withStagePrefix(outOfRepoReask("Rewrite these Wall files in place, keeping the same names and acceptance coverage.", bad1)), tier: "development", model, iterationId: `${iterationId}-oor`, limitS: wallLimitS(sz.size), maxOutputTokens: wallOutputCap(), signal, cwd }); // FC-WALL-OUT-OF-REPO-TARGET: re-ask once in the same directory with the precise reason
   const oorBad = new Map(oor().map((b) => [b.name, b.why])), all = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)), held = stashHoldout({ runId: ctx.runId, repoDir: ctx.repoDir, srcDir: cwd, targetDir, names: all.filter((n) => !oorBad.has(n) && !conventionViolation(conv, n, readFileSync(join(cwd, n), "utf8"))), runnerOf: (n) => guessRunner(n, runners) }), generated = all.filter((n) => !held?.names.has(n)); // P12-05: the held-out subset never reaches the repo, runDir or the implementer
-  const sealedDir = join(ctx.runDir, "wall");
+  const sealedDir = sealStageDir(ctx.runId, ctx.repoDir); rmSync(sealedDir, { recursive: true, force: true }); // staged outside the repo tree; publishSealed moves it to <runDir>/wall at install
   if (generated.length > 0) mkdirSync(sealedDir, { recursive: true });
 
   const contents = new Map<string, string>();
@@ -166,16 +166,16 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
     if (oorWhy) discarded.push({ file: name, reason: `${oorWhy}; wall test discarded after one rewrite request` }); else if (bad) discarded.push({ file: name, reason: `${bad}; wall test did not compile under the package config` }); else contents.set(name, content);
   }
   rmSync(cwd, { recursive: true, force: true });
-  return { kind: "authored", model, iterationId, task, sizeName: sz.size, runners, targetDir, generated, contents, discarded, ...(clauseSet.clauses.length ? { clauses: clauseSet } : {}), ...(wm ? { manifestSha256: wm.sha256 } : {}), ...(held ? { holdoutDir: held.dir } : {}) };
+  return { kind: "authored", ...(generated.length > 0 ? { staged: true } : {}), model, iterationId, task, sizeName: sz.size, runners, targetDir, generated, contents, discarded, ...(clauseSet.clauses.length ? { clauses: clauseSet } : {}), ...(wm ? { manifestSha256: wm.sha256 } : {}), ...(held ? { holdoutDir: held.dir } : {}) };
 }
 
 /** Copy the sealed files into repoDir, emit wall.sealed, run the base run in baseDir, drop not_run files. */
-export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions = {}): StageResult { const g = installCore(ctx, a, baseDir, opts); g.next(); return g.next(null).value as StageResult; } // TEN-SPEED-19: sequential base run; installWallAsync runs it concurrently
-export async function installWallAsync(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions = {}): Promise<StageResult> { const g = installCore(ctx, a, baseDir, opts), y = g.next().value as { runner: BaseTestRunner; tests: TestRef[] }, jobs = baseJobs();
+export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions = {}): StageResult { const g = installCore(ctx, a, baseDir, opts), first = g.next(); if (first.done) return first.value as StageResult; return g.next(null).value as StageResult; } // TEN-SPEED-19: sequential base run; installWallAsync runs it concurrently
+export async function installWallAsync(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions = {}): Promise<StageResult> { const g = installCore(ctx, a, baseDir, opts), first = g.next(); if (first.done) return first.value as StageResult; const y = first.value as { runner: BaseTestRunner; tests: TestRef[] }, jobs = baseJobs();
   return g.next(jobs > 1 && y.runner.runEach && y.tests.length > 1 ? await y.runner.runEach(baseDir, y.tests, jobs) : null).value as StageResult; } // LOKI_E10_BASE_JOBS > 1 and a runner with runEach: concurrent base run
 function* installCore(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions): Generator<{ runner: BaseTestRunner; tests: TestRef[] }, StageResult, BaseEachResult[] | null> {
   const { generated, contents, discarded, targetDir, runners } = a;
-  if (generated.length > 0) mkdirSync(targetDir, { recursive: true }); const sealedFiles: WallSealedFile[] = [], readOnlyFiles: ReadOnlyFile[] = [], wallTests: TestRef[] = [];
+  if (generated.length > 0) { mkdirSync(targetDir, { recursive: true }); if (!publishSealed(ctx.runId, ctx.repoDir, ctx.runDir) && a.staged) return { status: "failed", data: {}, reason: "wall sealed copies missing: the staged Wall directory in the system temp directory was removed before install" }; } const sealedFiles: WallSealedFile[] = [], readOnlyFiles: ReadOnlyFile[] = [], wallTests: TestRef[] = [];
   for (const name of generated) {
     const content = contents.get(name); if (content === undefined) continue; // discarded: sealed copy only
     const dest = join(targetDir, name), runner = guessRunner(name, runners, relative(ctx.repoDir, dest));
@@ -240,5 +240,5 @@ export const wallStage: Stage = {
   limitS: WALL_STAGE_LIMIT_S, // B2: room for both rungs (each a session at the wallLimitS cap plus a base run), so the sonnet retry is never cut off by the stage ceiling
   run: (ctx, signal) => runWall(ctx, signal),
 };
-/** WC-01b: the split halves, read by the machine under LOKI_E10_WALL_CONCURRENT=1. */
+/** WC-01b: the split halves, read by the machine unless LOKI_E10_WALL_CONCURRENT=0. */
 export const stage = Object.assign(wallStage, { split: { author: wallAuthor, install: installWall } });

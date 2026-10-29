@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { readRepoMapCache, repoCacheDir, repoKey } from "./cache.ts";
 import { speedLikelyFiles } from "../features/speed/lean_select.ts";
-import { resolveClaudeModel } from "../util/claude_model.ts";
+import { resolveClaudeModel } from "../util/claude_model.ts"; import { wallConcurrent } from "../util/wall_knobs.ts";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap, TestRef } from "./types.ts";
 
@@ -71,10 +71,10 @@ export const wallModel = (env = process.env): string => resolveModelAlias(env.LO
 /** COST-11: first Wall author rung. Haiku for small/normal tasks, re-authored once on wallModel() when the result is unusable (wall.ts runWall).
  *  Fail-safe: any pin (LOKI_E10_WALL_TIER, LOKI_MODEL_OVERRIDE), concurrent Wall (its base run is not validated at author time), an unknown/large size or LOKI_E10_WALL_FIRST=0 uses wallModel() directly, so no escalation applies. */
 export const wallFirstModel = (size: TaskSize, env = process.env): string => {
-  if (knob(env.LOKI_E10_WALL_FIRST, ["0", "off", "false"]) || env.LOKI_E10_WALL_TIER || env.LOKI_MODEL_OVERRIDE || env.LOKI_E10_WALL_CONCURRENT === "1") return wallModel(env);
+  if (knob(env.LOKI_E10_WALL_FIRST, ["0", "off", "false"]) || env.LOKI_E10_WALL_TIER || env.LOKI_MODEL_OVERRIDE || wallConcurrent(env)) return wallModel(env);
   return size === "small" || size === "normal" ? resolveModelAlias("haiku") : wallModel(env);
 };
 /** E-64: the cascade's first implement call pins to the same sonnet alias Wall already uses (E-45). */
 export const cascadeImplementModel = wallModel;
 
-export { modelRank, escalationModel, cascadeDowngrade, haikuFirstDowngrade } from "../runner/model_rank.ts"; // L1 model ordering lives outside the engine10 line budget
+export { modelRank, escalationModel, cascadeDowngrade, haikuFirstDowngrade } from "../runner/model_rank.ts"; export { wallConcurrent, wallMaxTokens, wallOutputCap } from "../util/wall_knobs.ts"; // L1 model ordering and the Wall knobs live outside the engine10 line budget

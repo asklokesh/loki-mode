@@ -1,7 +1,7 @@
 // Loki 10 state machine (ENGINE.md section 4): stage table, Plan || Wall, optional() loader, stage limits, global cap, stop reasons (stalled, fatal). Siblings arrive only through RunContext; stages come from ./stages/<name>.ts.
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
-import { hooks } from "./hooks.ts";
+import { hooks } from "./hooks.ts"; import { wallConcurrent } from "../util/wall_knobs.ts";
 import { treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
@@ -11,7 +11,6 @@ import { repeatedNoopFix } from "../util/anti_loop.ts";
 
 /** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
 interface WallSplit { author(ctx: RunContext, signal: AbortSignal): Promise<{ kind: string } & Record<string, unknown>>; install(ctx: RunContext, a: never, baseDir: string): StageResult; }
-const wallConcurrent = (): boolean => process.env.LOKI_E10_WALL_CONCURRENT === "1";
 /** Run order. An array is a parallel group. fix is driven by the verify loop, deep is detached (supervisor). */
 export const FLOW: readonly (StageName | readonly StageName[])[] = [
   "intake", ["plan", "wall"], "implement", "verify", "commit", "seal", "pr",
@@ -173,7 +172,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     if (r.status === "failed") return r.reason !== "limit" && name !== "plan" && name !== "wall" && name !== "verify" && name !== "fix";
     return r.status === "completed" && (earlyExit(r.data) || outputs.intake?.already_satisfied === true); // D61-04: a deferred already-done hit lands on intake's data mid-implement
   };
-  // WC-01b: under LOKI_E10_WALL_CONCURRENT=1 the Wall is authored alongside plan and implement, then installed once before verify.
+  // WC-01b: by default (LOKI_E10_WALL_CONCURRENT=0 restores sequential) the Wall is authored alongside plan and implement, then installed once before verify.
   interface WallJob { snap: Promise<string | null>; split: WallSplit; promise: Promise<{ kind: string } & Record<string, unknown>>; ctl: AbortController; aborted: Promise<null>; t0: number; timer: ReturnType<typeof setTimeout>; why: () => "limit" | "cap" | null; onCap: () => void; }
   let wallJob: WallJob | null = null;
   const closeWallJob = (j: WallJob): void => { clearTimeout(j.timer); capCtl.signal.removeEventListener("abort", j.onCap); };
