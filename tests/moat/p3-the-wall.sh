@@ -65,6 +65,12 @@ set -uo pipefail
 #       A checklist edited after it was frozen is rejected by the deterministic
 #       verifier (autonomy/checklist-verify.py) with a hash mismatch reason.
 #
+#   P3.e10-wall-check-sealed-and-rerun
+#       A real default-route engine10 run with a stub provider: the Wall check
+#       fails on base, the receipt wall.files lists it with a sha256, a sealed
+#       copy sits under <run>/wall, the verify stage reran it green at head, and
+#       deleting the sealed copy makes `loki verify` report TAMPERED.
+#
 # ASSUMED INTERFACES (not built yet; the milestone builder implements to these):
 #
 #   A. Check-author context (P3.check-author-context-excludes-implementation):
@@ -108,7 +114,7 @@ export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 CI=tru
 MOAT_START=$(date +%s)
 MOAT_MAIN_PID=$$
 MOAT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/moat-p3.XXXXXX")" || { echo "p3: mktemp failed" >&2; exit 1; }
-MOAT_IDS="P3.implementer-prompt-has-no-check-authoring P3.check-author-context-excludes-implementation P3.checks-frozen-before-eval"
+MOAT_IDS="P3.implementer-prompt-has-no-check-authoring P3.check-author-context-excludes-implementation P3.checks-frozen-before-eval P3.e10-wall-check-sealed-and-rerun"
 MOAT_EMITTED=" "
 
 moat_emit() {
@@ -673,6 +679,115 @@ DRV
     [ "$(item_status "$cl" B)" != "verified" ] || nok "the edited check B was reported verified"
 }
 
+#-------------------------------------------------------------------------------
+# Default engine10 route, stub provider only (no paid call). A real
+# `loki start` run: the Wall check is red on base, the receipt lists it with a
+# sha256, the sealed copy sits under <run>/wall, the verify stage reran it at
+# head, and `loki verify` flags a deleted sealed copy as TAMPERED.
+#-------------------------------------------------------------------------------
+case_e10_wall_sealed_and_rerun() {
+    local fx="$MOAT_TMP/e10" w run rid rc out i
+    mkdir -p "$fx/bin" "$fx/w" "$fx/home"
+    w="$fx/w"
+    command -v node >/dev/null 2>&1 || { nok "node not on PATH"; return; }
+    printf '{"name":"fx","version":"1.0.0","scripts":{"test":"node --test"}}\n' > "$w/package.json"
+    printf 'function sum(arr) {\n  let total = 0;\n  for (let i = 1; i < arr.length; i++) total += arr[i];\n  return total;\n}\nmodule.exports = { sum };\n' > "$w/sum.js"
+    printf "const test = require('node:test');\nconst assert = require('node:assert');\nconst { sum } = require('./sum');\ntest('empty is 0', () => { assert.strictEqual(sum([]), 0); });\n" > "$w/sum.test.js"
+    {
+        printf '# PRD\n\nsum() in sum.js skips the first element of the array. Fix it so sum([1,2,3]) is 6.\n\n'
+        for i in 1 2 3 4 5 6 7 8; do
+            printf 'Detail %s: the fix must keep sum([]) at 0, must not change the module export shape, and must leave package.json untouched so the existing test command keeps working.\n' "$i"
+        done
+    } > "$w/prd.md"
+    cat > "$fx/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+case " $* " in
+    *" --help "* | *" --version "*) echo "claude stub 2.1.285 --settings --session-id --resume --model --dangerously-skip-permissions -p --print"; exit 0 ;;
+esac
+prompt=""
+while [ $# -gt 0 ]; do
+    if [ "$1" = "-p" ]; then prompt="${2:-}"; shift; fi
+    shift
+done
+case "$prompt" in
+  *"Loki 10 Wall author"*)
+    echo wall >> "$X_LOG"
+    printf "const test = require('node:test');\nconst assert = require('node:assert');\nconst { sum } = require('./sum');\ntest('sum adds every element', () => { assert.strictEqual(sum([1, 2, 3]), 6); });\n" > loki_wall_sum.test.js ;;
+  *"Loki 10 implement stage"*)
+    echo implement >> "$X_LOG"
+    sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak ;;
+esac
+echo "stub done"
+STUB
+    chmod +x "$fx/bin/claude"
+    ( cd "$w" && git init -q && git config user.email m@m.m && git config user.name moat \
+        && git add package.json sum.js sum.test.js prd.md && git commit -qm init ) >/dev/null 2>&1 \
+        || { nok "fixture repo setup failed"; return; }
+
+    : > "$fx/stub.log"
+    ( cd "$w" && env -i PATH="$fx/bin:$PATH" HOME="$fx/home" TERM=dumb LANG=C X_LOG="$fx/stub.log" \
+        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$fx/bin/claude" LOKI_NO_BROWSER=1 LOKI_DASHBOARD=false \
+        LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 CI=true \
+        perl -e 'alarm shift; exec @ARGV' 240 "$REPO_ROOT/bin/loki" start prd.md --no-pr \
+        < /dev/null > "$fx/out.txt" 2> "$fx/err.txt" )
+    rc=$?
+
+    grep -qx wall "$fx/stub.log" || { nok "the stub Wall author was never invoked (rc=$rc)"; return; }
+    grep -qx implement "$fx/stub.log" || { nok "the stub implement stage was never invoked (rc=$rc)"; return; }
+    run="$(ls -d "$w"/.loki/runs/e10-* 2>/dev/null | head -1)"
+    [ -n "$run" ] && [ -f "$run/receipt.json" ] || { nok "no e10-* run dir with a receipt (default route not taken, rc=$rc)"; return; }
+    rid="$(basename "$run")"
+
+    out="$(RUN="$run" python3 - <<'PY' 2>&1
+import json, os, hashlib
+run = os.environ["RUN"]
+r = json.load(open(os.path.join(run, "receipt.json")))
+wall = r.get("wall") or {}
+files = wall.get("files") or []
+bad = []
+if not files:
+    bad.append("receipt wall.files is empty")
+if wall.get("passed") is not True:
+    bad.append("receipt wall.passed is not true")
+for f in files:
+    base = os.path.basename(f.get("path", ""))
+    sealed = os.path.join(run, "wall", base)
+    if not os.path.isfile(sealed):
+        bad.append("no sealed copy for " + base)
+    elif hashlib.sha256(open(sealed, "rb").read()).hexdigest() != f.get("sha256"):
+        bad.append("sealed copy sha256 differs from receipt for " + base)
+names = [os.path.basename(f.get("path", "")) for f in files]
+if "loki_wall_sum.test.js" not in names:
+    bad.append("loki_wall_sum.test.js not in wall.files")
+hit = [c for c in r.get("checks", []) if "loki_wall_sum" in (c.get("name") or "") + (c.get("cmd") or "")]
+if not hit or any(c.get("result") != "pass" for c in hit):
+    bad.append("verify stage did not rerun the Wall check green at head")
+base_fail = None
+for line in open(os.path.join(run, "events.jsonl")):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    if e.get("type") == "stage.completed" and e.get("stage") == "wall":
+        base_fail = ((e.get("data") or {}).get("base_run") or {}).get("fail")
+if not isinstance(base_fail, int) or base_fail < 1:
+    bad.append("Wall check was not red on base (base_run.fail=%r)" % (base_fail,))
+print("; ".join(bad))
+PY
+)"
+    [ -z "$out" ] || { nok "$out"; return; }
+
+    ( cd "$w" && env -i PATH="$PATH" HOME="$fx/home" "$REPO_ROOT/bin/loki" verify "$rid" --allow-unsigned ) > "$fx/v1.txt" 2>&1
+    grep -q 'VERIFIED' "$fx/v1.txt" || nok "loki verify on the intact run was not VERIFIED: $(tail -1 "$fx/v1.txt")"
+    [ -z "$CASE_FAILS" ] || return
+
+    rm -f "$run/wall/loki_wall_sum.test.js"
+    ( cd "$w" && env -i PATH="$PATH" HOME="$fx/home" "$REPO_ROOT/bin/loki" verify "$rid" --allow-unsigned ) > "$fx/v2.txt" 2>&1
+    rc=$?
+    grep -q 'TAMPERED' "$fx/v2.txt" || nok "deleting the sealed Wall copy did not give TAMPERED: $(tail -1 "$fx/v2.txt")"
+    [ "$rc" -ne 0 ] || nok "loki verify exited 0 after the sealed Wall copy was deleted"
+}
+
 moat_run "P3.implementer-prompt-has-no-check-authoring" \
     "implementer build prompt (bash + Bun builders, PRD mode) carries no check-authoring instruction" \
     case_prompt_no_check_authoring
@@ -682,4 +797,7 @@ moat_run "P3.check-author-context-excludes-implementation" \
 moat_run "P3.checks-frozen-before-eval" \
     "deterministic verifier rejects checks edited after freezing with a hash mismatch" \
     case_checks_frozen
+moat_run "P3.e10-wall-check-sealed-and-rerun" \
+    "default engine10 route: Wall check red on base, sealed under the run dir, rerun green at head, deleted copy is TAMPERED" \
+    case_e10_wall_sealed_and_rerun
 exit 0

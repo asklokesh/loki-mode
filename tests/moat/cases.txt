@@ -101,3 +101,4 @@ P6.e10-untracked-not-swept
 P6.e10-ignored-files-not-swept
 P6.e10-mode-and-symlink-intact
 P6.e10-same-path-and-history
+P3.e10-wall-check-sealed-and-rerun
