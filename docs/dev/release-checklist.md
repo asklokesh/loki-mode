@@ -12,6 +12,19 @@ refs/heads/main` matches `git rev-parse HEAD`. `scripts/local-ci.sh` remains
 available for diagnosis on a quiet cycle -- it is no longer a push
 precondition, fast tier or full.
 
+Slice gate (run before reporting a slice built; a reviewer reruns the same command):
+`bash scripts/select-tests.sh --gate [--suite tests/test-foo.sh]... [--no-loki-ts]`.
+It checks that HEAD contains the current origin/main (and names how far behind
+it is, never rebasing for you), runs exactly the `--guards-only` row set (the
+`scripts/global-guards.tsv` rows plus the marker-only walkers, from one shared emitter) one
+at a time and names any red row, runs each `--suite`, then runs full engine10
+(`bun run test:engine10` in loki-ts, through the slot queue when the tree has that script) unless `--no-loki-ts` says the slice
+touched no loki-ts source. Every row, suite and the engine10 run is bounded by
+`timeout -k 15` (`LOKI_GATE_ROW_TIMEOUT`, `LOKI_GATE_SUITE_TIMEOUT`, `LOKI_GATE_ENGINE10_TIMEOUT`);
+a timeout, an empty guard list, a failed fetch (unless `--no-fetch`) or a missing
+`bun` fails the gate. It prints a pass/fail summary per step and exits
+non-zero on any failure.
+
 After a release ships, run post-release distribution validation:
 - npm: `npm pack loki-mode@<VERSION>`, untar, run `bash package/bin/loki version`
 - Docker: `docker pull asklokesh/loki-mode:<VERSION>`, `docker run --rm <img> version`,
