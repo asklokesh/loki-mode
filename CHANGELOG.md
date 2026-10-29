@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.80.0 (2026-10-29)
+
+### Changed
+
+- A run no longer routes work below the model you chose, and never above your `LOKI_MAX_TIER` cap. The plan fallback and modernize units now floor at the run model.
+- When a spec conflict points at a file the Wall itself wrote, the run treats it as a harness defect instead of blaming the task: it re-authors the Wall once, then drops the assertion and caps the verdict at PARTIAL, and the original Wall file is restored read-only. A correct solution is no longer blocked by a faulty check of Loki's own.
+
+### Fixed
+
+- The hermetic-home and project-graph test suites no longer fail on a loaded machine or on a developer's own home directory.
+
 ## v11.79.0 (2026-10-29)
 
 ### Added
