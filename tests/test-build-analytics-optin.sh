@@ -47,10 +47,22 @@ PROOF="$TMP/proofs/run1/proof.json"
 
 # --- reader allowlist (leak defense) ---
 OUT="$(python3 "$SCRIPT_DIR/lib/proof-analytics-props.py" "$PROOF")"
-if echo "$OUT" | grep -qiE "SECRET|should-not-leak|PRD|spec|paths"; then
-  bad "allowlist leaks forbidden content: $OUT"
+# Leak check, strict in two ways: (1) neither planted fixture string may
+# appear; (2) every emitted key must be in the telemetry-schema.json allowlist
+# for build_verified (common keys plus the event keys).
+BAD_KEYS="$(OUT="$OUT" python3 -c '
+import json, os, sys
+schema = json.load(open(sys.argv[1]))
+allowed = set(schema["common"]) | set(schema["events"]["build_verified"])
+keys = [l.split("=", 1)[0] for l in os.environ["OUT"].splitlines() if l.strip()]
+print(" ".join(k for k in keys if k not in allowed))
+' "$SCRIPT_DIR/lib/telemetry-schema.json")"
+if echo "$OUT" | grep -qE "SECRET-USER-PRD-TEXT-MUST-NOT-LEAK|secret/should-not-leak"; then
+  bad "allowlist leaks planted fixture content: $OUT"
+elif [ -n "$BAD_KEYS" ]; then
+  bad "emitted keys outside the schema allowlist: $BAD_KEYS"
 else
-  ok "allowlist emits no spec/path/PRD text"
+  ok "allowlist emits no spec/path/PRD text and only schema-allowlisted keys"
 fi
 echo "$OUT" | grep -q "headline=VERIFIED"        && ok "headline enum emitted"      || bad "headline missing"
 echo "$OUT" | grep -q "files_changed_count=7"    && ok "files count (not paths)"    || bad "count missing"
