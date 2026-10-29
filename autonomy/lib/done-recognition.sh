@@ -300,9 +300,12 @@ reuse_done_recognition_gate() {
     # --- Negative fast-path A: no completion footprint at all ----------------
     # The project was never completed by a prior run; there is nothing plausibly
     # done. Never pay for a model call. (Cheapest, most common miss-avoidance.)
+    # checklist.json is authored at iteration 0, so its presence alone shows no
+    # work was done; verification-results.json is written only after a verify
+    # pass over the implementer's output, so it is the checklist-side footprint.
     if [ ! -f "$loki_dir/signals/COMPLETION_REQUESTED" ] \
        && [ ! -f "$loki_dir/state/completion.json" ] \
-       && [ ! -f "$loki_dir/checklist/checklist.json" ]; then
+       && [ ! -f "$loki_dir/checklist/verification-results.json" ]; then
         log_info "Done-recognition: no prior completion footprint; proceeding to build."
         return 1
     fi

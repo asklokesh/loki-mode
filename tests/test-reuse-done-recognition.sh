@@ -484,6 +484,25 @@ fi
 cleanup_project
 
 #==============================================================================
+# checklist.json alone (authored at iteration 0) is NOT a footprint;
+# verification-results.json (implementer work was verified) IS.
+#==============================================================================
+new_project
+rm -f "$TARGET_DIR/.loki/signals/COMPLETION_REQUESTED" "$TARGET_DIR/.loki/state/completion.json"
+mkdir -p "$TARGET_DIR/.loki/checklist"
+printf '{"items":[]}\n' > "$TARGET_DIR/.loki/checklist/checklist.json"
+_loki_done_recog_invoke() { bump_invoke; printf '{"verdict":"done","requirements":[]}'; }
+reset_invokes
+GENERATED_PRD_ACTION="reuse"
+reuse_done_recognition_gate ".loki/generated-prd.md" >/dev/null 2>&1 || true
+[ "$(invoke_count)" -eq 0 ] && ok "(neg) checklist.json alone -> fast-path A fires, model NOT called" || fail "(neg) checklist.json alone reached the model"
+printf '{"summary":{"verified":1}}\n' > "$TARGET_DIR/.loki/checklist/verification-results.json"
+reset_invokes
+reuse_done_recognition_gate ".loki/generated-prd.md" >/dev/null 2>&1 || true
+[ "$(invoke_count)" -ge 1 ] && ok "(pos) verification-results.json present -> fast-path A does not fire" || fail "(pos) verification evidence did not reach the model"
+cleanup_project
+
+#==============================================================================
 # Provider not ok -> inconclusive fast-path, model NOT called, build
 #==============================================================================
 new_project
