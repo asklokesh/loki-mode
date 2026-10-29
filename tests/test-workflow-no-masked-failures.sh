@@ -26,7 +26,8 @@
 #      matching test/fast/ci, or a job whose steps run a test command) and the
 #      workflow has no `workflow_run` trigger. Publishing is not gated on tests.
 #   R8 no environment variable skips run_release_guard_rows: the function has no
-#      `return`, reads no LOKI_ variable but the per-row timeout, its call site is
+#      `return` and no `exit` but a literal non-zero one (whole-body scan, multi-line
+#      aware), reads no LOKI_ variable but the per-row timeout, its call site is
 #      gated only by --dry-run, and release.sh names no SKIP-style guard variable.
 set -uo pipefail
 
@@ -449,6 +450,13 @@ if sh_text is not None:
         body = fm.group(1)
         if re.search(r"\breturn\b", body):
             fail(f"{release_sh}: run_release_guard_rows contains a return; the rows must always run (R8)")
+        # Scan the whole body, not single lines: drop comment lines and join
+        # backslash continuations so an `if ...; then` / `exit 0` pair or a
+        # continued command is seen as written. Only `exit` with a literal
+        # non-zero status may leave the function; bare `exit` or `exit 0` skips the rows.
+        flat = re.sub(r"\\\n\s*", " ", "\n".join(ln for ln in body.split("\n") if not ln.lstrip().startswith("#")))
+        for em in re.finditer(r"(?<![\w.-])exit\b(?!\s+[1-9][0-9]*\b)", flat):
+            fail(f"{release_sh}: run_release_guard_rows has an exit that is not a literal non-zero status near {flat[max(0, em.start() - 30):em.end() + 12].strip()!r}; the rows must always run (R8)")
         for v in set(re.findall(r"\$\{?(LOKI_[A-Za-z0-9_]+)", body)):
             if v not in ("LOKI_RELEASE_GUARD_TIMEOUT",):
                 fail(f"{release_sh}: run_release_guard_rows reads ${v}; no env var may skip the rows (R8)")
@@ -673,6 +681,14 @@ if mode == "skip":
     s = s.replace(a, a + '    if [ "${LOKI_RELEASE_SKIP_GUARDS:-}" = "1" ]; then return 0; fi\n', 1)
 elif mode == "other":
     s = s.replace(a, a + '    [ -n "${LOKI_FAST_RELEASE:-}" ] && return 0\n', 1)
+elif mode == "multiexit":
+    s = s.replace(a, a + '    if [ -n "${FAST:-}" ]; then\n        exit 0\n    fi\n', 1)
+elif mode == "contexit":
+    s = s.replace(a, a + '    [ -n "${FAST:-}" ] && \\\n        exit 0\n', 1)
+elif mode == "bareexit":
+    s = s.replace(a, a + '    if [ -n "${FAST:-}" ]; then\n        exit\n    fi\n', 1)
+elif mode == "multireturn":
+    s = s.replace(a, a + '    if [ -n "${FAST:-}" ]; then\n        return\n    fi\n', 1)
 elif mode == "call":
     assert "        run_release_guard_rows\n" in s
     s = s.replace("        run_release_guard_rows\n", '        [ -n "${FAST:-}" ] || run_release_guard_rows\n', 1)
@@ -684,5 +700,9 @@ MP
 relmut8 R8a-skip-env-check-red 1 skip
 relmut8 R8b-other-env-return-red 1 other
 relmut8 R8c-ungated-call-red 1 call
+relmut8 R8e-multiline-exit-zero-red 1 multiexit
+relmut8 R8f-continued-exit-zero-red 1 contexit
+relmut8 R8g-bare-exit-red 1 bareexit
+relmut8 R8h-multiline-return-red 1 multireturn
 relmut8 R8d-unchanged-green 0 none
 exit "$SELF_FAIL"
