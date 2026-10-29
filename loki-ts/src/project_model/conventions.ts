@@ -121,7 +121,8 @@ export function vacuousCheck(fileName: string, content: string): string | null {
   if (/\.py$/.test(fileName)) {
     const code = strip(/(^|\s)#.*$/gm);
     const pylit = String.raw`(?:True|[1-9]\d*|"[^"\n]+"|'[^'\n]+')`;
-    const PYTAUT0 = new RegExp(String.raw`^(?:assert\s+(?:${pylit}|([1-9]\d*)\s*==\s*\1)(?:\s*,.*)?|(?:self\.)?assertTrue\(\s*${pylit}\s*\)|(?:self\.)?assertEqual\(\s*(${pylit})\s*,\s*\2\s*\))$`);
+    const wrap = (x: string): string => String.raw`(?:\(\s*)*${x}(?:\s*\))*`; // CCR-06: a rendered `assert (True)` or `assert (1) == (1)` is the same tautology; each starts with a literal paren so there is no ambiguity
+    const PYTAUT0 = new RegExp(String.raw`^(?:assert(?:\s+|(?=\())(?:${wrap(pylit)}|${wrap("([1-9]\\d*)")}\s*==\s*${wrap("\\1")})(?:\s*,.*)?|(?:self\.)?assertTrue\(\s*${wrap(pylit)}\s*\)|(?:self\.)?assertEqual\(\s*${wrap("(" + pylit + ")")}\s*,\s*${wrap("\\2")}\s*\))$`);
     const PYTAUT = { test: (l: string): boolean => PYTAUT0.test(l.trim()) }; // lines are trimmed first so no pattern carries adjacent whitespace quantifiers (quadratic on a near-miss)
     const real = code.split("\n").some((l) => /\bassert\b|\bself\.assert\w*\(|\bpytest\.(?:raises|fail)\b|\braise\b|\bfail\(/.test(l) && !PYTAUT.test(l));
     return !real && (code.split("\n").some((l) => PYTAUT.test(l)) || /def\s+test\w*\([^)]*\):\s*(?:pass|\.\.\.)\s*$/m.test(code)) ? reason : null;

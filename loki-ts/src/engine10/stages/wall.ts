@@ -12,7 +12,7 @@ import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, loadRepoMap, namedFiles, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallOutputCap, wallModel } from "../sizing.ts";
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { publishSealed, removeHoldout, sealStageDir, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
-import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingJavaTool, projectInterpreter } from "../testmap.ts";
+import { ingestWallCases, wallCasesBrief, wallCasesRunner } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingJavaTool, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { baseJobs, classify, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
@@ -140,7 +140,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const model = retry?.model ?? wallFirstModel(sz.size), iterationId = `${ctx.runId}-wall${retry?.suffix ?? ""}`; // COST-11
   const session = await ctx.sessions.run({
     stage: "wall",
-    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? [], relative(ctx.repoDir, targetDir), clauseSet),
+    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? [], relative(ctx.repoDir, targetDir), clauseSet) + wallCasesBrief(runners), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
     tier: "development",
     model,
@@ -150,10 +150,10 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
     cwd,
   });
   if (session.killed || session.exit === null) { rmSync(cwd, { recursive: true, force: true }); return done({ status: "failed", data: { iteration_ids: [iterationId], model }, reason: "wall session aborted, killed, or timed out", killed: true }); } // E-54: also covers killed-from-outside (exit:null, "killed before exiting" per types.ts)
-
+  const casesBad = ingestWallCases(cwd, runners, ctx.repoDir); if (casesBad) { rmSync(cwd, { recursive: true, force: true }); return done({ status: "failed", data: { iteration_ids: [iterationId], model }, reason: casesBad }); } // CCR-06: invalid structured output fails closed with a named reason, never free-form code
   const planText = typeof prior.plan?.plan === "string" ? prior.plan.plan : null, repoFiles = repoMap?.files ?? [];
   const oor = (): { name: string; why: string }[] => readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)).flatMap((name) => { const text = readFileSync(join(cwd, name), "utf8"), why = outOfRepoTarget(text) ?? vacuousCheck(name, text) ?? phantomReason(phantomRepoPaths(text, name, targetDir, ctx.repoDir, planText), repoFiles, relative(ctx.repoDir, targetDir), pkg?.root ?? ""); return why ? [{ name, why }] : []; });
-  const bad1 = oor(); if (bad1.length > 0 && !signal.aborted && !ctx.overCap?.()) await ctx.sessions.run({ stage: "wall", brief: withStagePrefix(outOfRepoReask("Rewrite these Wall files in place, keeping the same names and acceptance coverage.", bad1)), tier: "development", model, iterationId: `${iterationId}-oor`, limitS: wallLimitS(sz.size), maxOutputTokens: wallOutputCap(), signal, cwd }); // FC-WALL-OUT-OF-REPO-TARGET: re-ask once in the same directory with the precise reason
+  const bad1 = oor(); if (bad1.length > 0 && !wallCasesRunner(runners) && !signal.aborted && !ctx.overCap?.()) await ctx.sessions.run({ stage: "wall", brief: withStagePrefix(outOfRepoReask("Rewrite these Wall files in place, keeping the same names and acceptance coverage.", bad1)), tier: "development", model, iterationId: `${iterationId}-oor`, limitS: wallLimitS(sz.size), maxOutputTokens: wallOutputCap(), signal, cwd }); // FC-WALL-OUT-OF-REPO-TARGET: re-ask once in the same directory with the precise reason
   const oorBad = new Map(oor().map((b) => [b.name, b.why])), all = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)), held = stashHoldout({ runId: ctx.runId, repoDir: ctx.repoDir, srcDir: cwd, targetDir, names: all.filter((n) => !oorBad.has(n) && !conventionViolation(conv, n, readFileSync(join(cwd, n), "utf8"))), runnerOf: (n) => guessRunner(n, runners) }), generated = all.filter((n) => !held?.names.has(n)); // P12-05: the held-out subset never reaches the repo, runDir or the implementer
   const sealedDir = sealStageDir(ctx.runId, ctx.repoDir); rmSync(sealedDir, { recursive: true, force: true }); // staged outside the repo tree; publishSealed moves it to <runDir>/wall at install
   if (generated.length > 0) mkdirSync(sealedDir, { recursive: true });
