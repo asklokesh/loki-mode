@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { resolve } from "node:path";
+import { accessSync, constants as fsConstants } from "node:fs";
 
 const CANCEL_GRACE_MS = Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) > 0 ? Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) : 10000; // SIGINT/SIGTERM: time the worker gets to stop sessions and record usage before SIGKILL
 const DRAIN_MS = 2000; // after the worker exits, how long P0 waits for stdout to drain before closing it
@@ -42,6 +43,13 @@ export function clampBashTimeoutEnv(env: NodeJS.ProcessEnv, limitS: number): voi
     const cur = Number(env[k]);
     env[k] = String(Math.min(Number.isFinite(cur) && cur > 0 ? cur : dflt, budget));
   }
+}
+const POSIX_BASH = "/bin/bash";
+const isExecutable = (p: string): boolean => { try { accessSync(p, fsConstants.X_OK); return true; } catch { return false; } };
+/** Claude Code's Bash tool sources the rc of the shell named in SHELL and replays its aliases, so a user's `alias ls=eza` hangs a heredoc followed by a bare `ls` to the Bash timeout. Pin SHELL to /bin/bash for the session (only SHELL changes). Cost: zsh-only aliases and functions are not available to agent Bash commands; LOKI_E10_KEEP_USER_SHELL=1 leaves SHELL as is. `canExec` is injectable for tests. */
+export function pinBashShellEnv(env: NodeJS.ProcessEnv, canExec: (p: string) => boolean = isExecutable): void {
+  if (env["LOKI_E10_KEEP_USER_SHELL"] === "1" || !canExec(POSIX_BASH)) return;
+  env["SHELL"] = POSIX_BASH;
 }
 // A spawn with cwd D must give the child PWD=D: node/bun set the cwd but inherit the parent PWD, so a non-shell
 // child (opencode, node tools) resolves "." against the parent. Only PWD changes; cwd undefined leaves env untouched.

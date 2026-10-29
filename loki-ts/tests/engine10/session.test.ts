@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { childEnv, classifyExitCause, createSessionRunner, diffShortstat, diffSignature, HEARTBEAT_MS_DEFAULT, untrackedList } from "../../src/engine10/session.ts";
-import { clampBashTimeoutEnv, killGroupWithGrace } from "../../src/runner/worker_proc.ts";
+import { clampBashTimeoutEnv, killGroupWithGrace, pinBashShellEnv } from "../../src/runner/worker_proc.ts";
 import { resultCostPath, sumResultCosts, UNMETERED } from "../../src/engine10/cost.ts";
 import { liveArchivedCosts, withArchivedCosts } from "../../src/providers/provider_cost.ts";
 const archivedCostIds = (root: string, ids: string[]): string[] => liveArchivedCosts(root, ids, UNMETERED);
@@ -717,6 +717,30 @@ describe("TEN-SPEED-21 heartbeat single ls-files", () => {
       if (saved.d !== undefined) process.env["BASH_DEFAULT_TIMEOUT_MS"] = saved.d;
       if (saved.m !== undefined) process.env["BASH_MAX_TIMEOUT_MS"] = saved.m;
     }
+  });
+
+  test("claude session env pins SHELL to /bin/bash; opt-out and a missing bash leave it unchanged", () => {
+    const saved = { s: process.env["SHELL"], k: process.env["LOKI_E10_KEEP_USER_SHELL"] };
+    try {
+      process.env["SHELL"] = "/bin/zsh"; delete process.env["LOKI_E10_KEEP_USER_SHELL"];
+      const claude = childEnv(baseOpts({ limitS: 600 }), { provider: "claude" });
+      expect(claude["SHELL"]).toBe(existsSync("/bin/bash") ? "/bin/bash" : "/bin/zsh");
+      expect(claude["PATH"]).toBe(process.env["PATH"]);
+      expect(childEnv(baseOpts({ limitS: 600 }), { provider: "codex" })["SHELL"]).toBe("/bin/zsh"); // claude provider only
+      process.env["LOKI_E10_KEEP_USER_SHELL"] = "1";
+      expect(childEnv(baseOpts({ limitS: 600 }), { provider: "claude" })["SHELL"]).toBe("/bin/zsh");
+    } finally {
+      if (saved.s !== undefined) process.env["SHELL"] = saved.s; else delete process.env["SHELL"];
+      if (saved.k !== undefined) process.env["LOKI_E10_KEEP_USER_SHELL"] = saved.k; else delete process.env["LOKI_E10_KEEP_USER_SHELL"];
+    }
+    const a: NodeJS.ProcessEnv = { SHELL: "/bin/zsh" }; pinBashShellEnv(a, () => true);
+    expect(a["SHELL"]).toBe("/bin/bash");
+    const b: NodeJS.ProcessEnv = { SHELL: "/bin/zsh" }; pinBashShellEnv(b, () => false);
+    expect(b["SHELL"]).toBe("/bin/zsh");
+    const c: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", LOKI_E10_KEEP_USER_SHELL: "1" }; pinBashShellEnv(c, () => true);
+    expect(c["SHELL"]).toBe("/bin/zsh");
+    const d: NodeJS.ProcessEnv = {}; pinBashShellEnv(d, () => true);
+    expect(d["SHELL"]).toBe("/bin/bash");
   });
 
   test("fixture A: a Bash-like call past the clamped timeout ends inside the stage cap and never reports a background move", async () => {
