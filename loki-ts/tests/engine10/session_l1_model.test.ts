@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { claudeProvider } from "../../src/runner/providers.ts";
 import { _resetClaudeHelpCacheForTest } from "../../src/providers/claude_flags.ts";
 import { PROVIDER_DEFAULT_MODEL, createSessionRunner, resolveModel, sessionPinModel } from "../../src/engine10/session.ts";
+import { routedFix } from "../../src/runner/router/unit_model.ts";
 import { fixStage } from "../../src/engine10/stages/fix.ts";
 import { modelDowngrades } from "../../src/runner/model_downgrades.ts";
 import type { RunContext, SessionRunOptions } from "../../src/engine10/types.ts";
@@ -150,6 +151,14 @@ describe("EL-W0-06 fix rounds never leak the label and never go below the defaul
     expect(env).toMatch(/^LOKI_CLAUDE_MODEL_PLANNING=sonnet$/m);
     expect(env).not.toMatch(/opus/);
   }, 20_000);
+  test("routedFix under LOKI_SESSION_MODEL=haiku does not climb past the pin on a repeated code failure", () => {
+    const o = { repeated: true, stall: false, groups: groups, reason: "r" };
+    expect(routedFix("haiku", {}, o).climbed?.to).toMatch(/sonnet/); // unpinned, the climb happens
+    process.env["LOKI_SESSION_MODEL"] = "haiku";
+    const r = routedFix("haiku", {}, o);
+    expect(r.climbed).toBeNull();
+    expect(r.pin ?? "haiku").toMatch(/haiku/);
+  });
 });
 
 describe("EL-W0-06 auxiliary pins are listed", () => {
