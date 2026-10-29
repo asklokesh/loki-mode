@@ -184,6 +184,34 @@ out="$(reset_in "$D8" "$SHA8")"; rc=$?
 [ "$rc" -ne 0 ] && ok || fail "a second reset of the same sha must be an error, not a silent success"
 rm -rf "$D8" "$D9"
 
+# status check: a matching sha with a non-failed record (status authored) is refused
+D10="$(mkroot)"
+SHA10="$(make_failed_author "$D10" '# PRD C')"
+R10="$D10/.loki/checklist"
+python3 -I -S -c 'import json,sys
+p=sys.argv[1];d=json.load(open(p));d["status"]="authored";json.dump(d,open(p,"w"))' "$R10/author.json"
+out="$(reset_in "$D10" "$SHA10")"; rc=$?
+{ [ "$rc" -eq 1 ] && echo "$out" | grep -q "not a failed authoring" && [ -f "$R10/author.json" ] \
+    && [ -f "$R10/verification-results.json" ]; } && ok || fail "a matching sha with status authored must be refused with nothing deleted (rc=$rc: $out)"
+
+# partial clear: a real (non-sentinel) verification-results.json is never left behind a half reset
+python3 -I -S -c 'import json,sys
+p=sys.argv[1];d=json.load(open(p));d["status"]="unknown";json.dump(d,open(p,"w"))' "$R10/author.json"
+printf '{"items":[{"id":"c1","priority":"critical","status":"failing"}]}\n' > "$R10/verification-results.json"
+out="$(reset_in "$D10" "$SHA10")"; rc=$?
+{ [ "$rc" -eq 1 ] && echo "$out" | grep -q "refusing a partial clear" && ! echo "$out" | grep -q "^Removed:" \
+    && [ -f "$R10/author.json" ] && grep -q '"c1"' "$R10/verification-results.json"; } && ok || fail "a non-sentinel results file must refuse the reset and keep both files (rc=$rc: $out)"
+
+# symlinked checklist directory: refuse, delete nothing
+D11="$(mkroot)"
+SHA11="$(make_failed_author "$D11" '# PRD D')"
+mv "$D11/.loki/checklist" "$D11/real-checklist"
+ln -s "$D11/real-checklist" "$D11/.loki/checklist"
+out="$(reset_in "$D11" "$SHA11")"; rc=$?
+{ [ "$rc" -eq 1 ] && echo "$out" | grep -q "is a symlink" && [ -f "$D11/real-checklist/author.json" ] \
+    && [ -f "$D11/real-checklist/verification-results.json" ]; } && ok || fail "a symlinked checklist dir must be refused with nothing deleted (rc=$rc: $out)"
+rm -rf "${D10:?}" "${D11:?}"
+
 echo ""
 echo "test-checklist-gate-failclosed: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

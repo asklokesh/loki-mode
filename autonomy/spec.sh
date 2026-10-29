@@ -740,6 +740,10 @@ spec_checklist_reset() {
     local dir="${LOKI_DIR:-.loki}/checklist"
     local rec="$dir/author.json" res="$dir/verification-results.json"
     local state
+    if [ -L "$dir" ]; then
+        _spec_err "$dir is a symlink; refusing to clear anything through it"
+        return $SPEC_EXIT_DRIFT
+    fi
     state="$(python3 -I -S -c 'import json,sys
 try:
     d=json.load(open(sys.argv[1]))
@@ -758,12 +762,21 @@ except Exception:
         _spec_err "no sentinel for spec sha256 $sha (the recorded failure is for ${state#* }); nothing cleared"
         return $SPEC_EXIT_DRIFT
     fi
-    if [ -f "$res" ] && [ ! -L "$res" ] && grep -q 'check_authoring_unknown' "$res" 2>/dev/null; then
-        rm -f -- "$res"
+    local removed="$rec"
+    if [ -e "$res" ] || [ -L "$res" ]; then
+        if [ -f "$res" ] && [ ! -L "$res" ] && grep -q 'check_authoring_unknown' "$res" 2>/dev/null; then
+            removed="$rec, $res"
+        else
+            _spec_err "$res is not the check_authoring_unknown sentinel; refusing a partial clear (nothing cleared)"
+            return $SPEC_EXIT_DRIFT
+        fi
     fi
-    rm -f -- "$rec"
+    if [ "$removed" != "$rec" ]; then
+        rm -f -- "${res:?}"
+    fi
+    rm -f -- "${rec:?}"
     printf 'Cleared the check_authoring_unknown sentinel for spec sha256 %s\n' "$sha"
-    printf 'Removed: %s, %s\n' "$rec" "$res"
+    printf 'Removed: %s\n' "$removed"
     printf 'The next run authors the acceptance checks again (attempt count reset).\n'
     return $SPEC_EXIT_OK
 }
