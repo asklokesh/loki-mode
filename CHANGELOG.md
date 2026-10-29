@@ -5,6 +5,38 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.79.0 (2026-10-29)
+
+### Added
+
+- `loki try <public repo URL>` runs Loki on a public repository in a temporary clone and keeps only the receipt. The clone is removed on exit, Ctrl-C, TERM and HUP, and planted receipts or symlinks inside the clone are refused.
+- Acceptance clauses: a task's numbered, anchored acceptance criteria are extracted into the locked spec and the failing-first brief; the error names the real criteria limit when it is exceeded.
+- Three advisory reviewers (architecture, mergeability, test coverage) run on each change and record findings next to the verdict without being able to veto it. Their routing to the small model applies on the Bun route only.
+- The receipt now includes each cross-review reviewer's cost in the run total. A reviewer that reports no cost stays unknown and is listed as missing instead of counting as zero.
+- `loki next` flags (`--yes`, `--dry-run`, `--suggest`, `--json`) tab-complete in bash and zsh.
+- The benchmark runner runs `loki verify` after each arm and records the verdict against the held-out grader, with per-category wrong-pass columns in the scoreboard and model-by-stage outcomes in the result schema.
+
+### Changed
+
+- When a repository has no detected test runner, the failing-first check runs the repository's own toolchain runner instead of skipping. In a repository with several toolchains it picks the one matching the changed files, and a skipped runner records a machine-readable skip code. Only real Python manifests (including `requirements-dev.txt` and `requirements-test.txt`) make pytest eligible.
+- Every Bun process Loki starts, including respawned children and shell delegates, ignores the repository's `bunfig.toml` and `.env`.
+- The skill-declared checks gate now runs on the bash route too, and `LOKI_GATE_SECURITY_SCAN` is honored there.
+- Test timeouts scale with host load. The factor is 1 unless the machine is loaded, so an idle machine behaves as before.
+- A failing check can no longer produce a VERIFIED verdict on the default route.
+- Test-failure escalation no longer moves a run past an explicit `LOKI_SESSION_MODEL` pin.
+
+### Fixed
+
+- `loki verify` reads a torn, unterminated last line in `events.jsonl` as UNCHECKED instead of TAMPERED, and a resumed run's truncation of that tail reads VERIFIED. Blank lines, stray whitespace or CR inside event lines are still reported as TAMPERED.
+- The analytics sender used by the Stop hook is resolved only from trusted locations, requires owner-only write access, and is not started unless analytics is opted in. The hook sends enum-only events and never blocks its decision.
+- The release script finds the newest CHANGELOG section by its `## v` header and always runs the global guard rows; the environment variable that skipped them is gone.
+- The release script's guard-row check gained 15 tests that catch any way of skipping a guard row.
+- Test suites that failed only on a busy machine (the timeout scale, `loki try` signal handling, the analytics opt-in key check) now pass under load.
+
+### Known issues
+
+- The cross-review bad-diff catch rate is not proven yet; no claim is made for it in this release.
+
 ## v11.78.0 (2026-10-29)
 
 ### Added
