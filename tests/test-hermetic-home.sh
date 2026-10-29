@@ -32,17 +32,18 @@ ok() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 bad() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
 # Listing + mtime fingerprint of a directory tree. stat only; never reads contents.
+# One batched stat per few thousand paths (xargs), never a process per file: a developer's ~/.loki holds tens of
+# thousands of files, and a stat per file made the four snapshots outlast the suite timeout. GNU stat takes -c,
+# BSD takes -f; the flavor is probed once on a path that always exists.
+if stat -c '%Y' / >/dev/null 2>&1; then SNAP_STAT=(stat -c '%Y %n'); else SNAP_STAT=(stat -f '%m %N'); fi
 snap() {
-    local d="$1" p m
+    local d="$1"
     [ -d "$d" ] || { echo "absent"; return 0; }
     # Files a LIVE developer daemon owns and rewrites on its own clock (the running
     # Control Plane's sqlite store, the engine socket) are not test writes; a leak
     # into them is covered by phase A, which uses a stand-in home with no daemon.
-    find "$d" -print 2>/dev/null | grep -v -E '/control/control\.db(-wal|-shm)?$|/\.loki/run(/|$)' | LC_ALL=C sort | while IFS= read -r p; do
-        m="$(stat -c '%Y' -- "$p" 2>/dev/null)"
-        case "$m" in '' | *[!0-9]*) m="$(stat -f '%m' -- "$p" 2>/dev/null)" ;; esac
-        printf '%s %s\n' "$m" "$p"
-    done
+    find "$d" -print 2>/dev/null | grep -v -E '/control/control\.db(-wal|-shm)?$|/\.loki/run(/|$)' | LC_ALL=C sort | tr '\n' '\0' |
+        xargs -0 "${SNAP_STAT[@]}" 2>/dev/null
 }
 
 # Runner copy: the real preamble and run_test body with only our registrations.

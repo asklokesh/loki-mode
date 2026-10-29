@@ -15,6 +15,9 @@ _ROUTE_VALUE_FLAGS=" --provider --budget --budget-limit --max-cost --max-iterati
 # start with --, as _loki_start_optval_consumes). Declared here so a refused one still consumes its value. --parallel is NOT
 # here: cmd_start treats it as a plain boolean (_loki_start_flag_kind), so "--parallel 3" leaves 3 as a positional.
 _ROUTE_OPTVAL_FLAGS=" --mirofish "
+# Flags the loki front end (cmd_start in autonomy/loki) owns: a workspace run and the gated deploy chain. They wrap the
+# engine rather than configure it: the route still resolves (R_FRONT=1) but the dispatcher leaves the call to the front end.
+_ROUTE_FRONT_FLAGS=" --workspace --deploy --health-url --health-match --auto-rollback --destination --canary --domain "
 # Flags engine10 honors as-is.
 _ROUTE_E10_FLAGS=" --no-pr --deep --json --verbose --quiet --resume --provider --max-cost --spec --attempts --seal-existing "
 # The most a run cap can reach (capCeilingS(true) in loki-ts/src/util/run_cap.ts: the subscription ceiling).
@@ -134,10 +137,10 @@ loki_route_resolve() {
     local verb="$1"; shift
     R_DECIDED=0; R_E10=0; R_HARD=0; R_ENGINE=""; R_REASON=""; R_INPUT_TYPE=""; R_INPUT=""
     R_PROVIDER=""; R_MODEL=""; R_NOTICE=""; R_ERR=""; R_EXPLAIN=0; R_JSON=0; R_SESSION_MODEL=""; R_VERB=""
-    R_E10_ARGS=(); R_CLEAN=(); R_ADAPTER=""; R_CAPDIFF=(); R_E10_CAP_S=""; R_DRY=0; R_MAXCOST=""; R_PR_ARGS=()
+    R_FRONT=0; R_E10_ARGS=(); R_CLEAN=(); R_ADAPTER=""; R_CAPDIFF=(); R_E10_CAP_S=""; R_DRY=0; R_MAXCOST=""; R_PR_ARGS=()
     if [ "$verb" = "start" ] && _route_pr_mode "$@"; then return 0; fi
 
-    local a engine_req="" dry=0 help=0 legacy_flag="" session_model="" provider_flag="" max_duration="" cap_err="" input_flag=""
+    local a engine_req="" dry=0 help=0 front_flag="" legacy_flag="" session_model="" provider_flag="" max_duration="" cap_err="" input_flag=""
     local -a positionals=() passthru=()
     local i=0 n=$#
     local -a argv=("$@")
@@ -157,7 +160,9 @@ loki_route_resolve() {
                 local name="${a%%=*}" val=""
                 if _route_has "$_ROUTE_VALUE_FLAGS" "$name"; then
                     if [ "$name" = "$a" ]; then
-                        val="${argv[$i]:-}"; i=$((i + 1)); R_CLEAN+=("$val")
+                        val="${argv[$i]:-}"
+                        # The front end refuses a value that starts with a dash ("requires a name"); leave that token to the parser.
+                        if _route_has "$_ROUTE_FRONT_FLAGS" "$name" && [ "${val#-}" != "$val" ]; then val=""; else i=$((i + 1)); R_CLEAN+=("$val"); fi
                     else
                         val="${a#*=}"
                     fi
@@ -190,6 +195,10 @@ loki_route_resolve() {
                 esac
                 if _route_has "$_ROUTE_NOOP_FLAGS" "$name"; then continue; fi
                 if _route_has "$_ROUTE_E10_FLAGS" "$name"; then passthru+=("$name"); continue; fi
+                if _route_has "$_ROUTE_FRONT_FLAGS" "$name"; then
+                    if [ -z "$front_flag" ]; then front_flag="$name"; fi
+                    continue
+                fi
                 # Everything else is a flag engine10 does not honor.
                 if [ -z "$legacy_flag" ]; then legacy_flag="$name"; fi
                 ;;
@@ -291,8 +300,15 @@ loki_route_resolve() {
         R_ERR="loki: $input_flag cannot be combined with another input (${positionals[*]}); give one input"
         return 0
     fi
+    # --workspace, --deploy and its companions are run by the loki front end around the engine, never by engine10 itself.
+    if [ -n "$front_flag" ] && [ "$engine_req" = "engine10" ]; then
+        R_ERR="loki: flag $front_flag is run by the loki front end, not the Loki 10 engine; drop --engine engine10"
+        return 0
+    fi
+    if [ -n "$front_flag" ] && [ "$engine_req" != "legacy" ]; then R_FRONT=1; fi
     # A flag never changes the engine (#236): an unmapped one is refused, not routed to legacy.
-    if [ -n "$legacy_flag" ] && [ "$engine_req" != "legacy" ]; then
+    # A front-end call validates its own flags (cmd_start), so an unmapped one is not refused here.
+    if [ -n "$legacy_flag" ] && [ "$engine_req" != "legacy" ] && [ "$R_FRONT" != "1" ]; then
         R_ERR="loki: flag $legacy_flag is not supported by the Loki 10 engine; $(_route_refusal_hint "$legacy_flag")"
         return 0
     fi
@@ -432,5 +448,7 @@ loki_route_dispatch() {
     fi
     if [ -n "$R_NOTICE" ]; then echo "$R_NOTICE" >&2; fi
     R_VERB="$verb"
+    # A front-end call keeps its argv untouched: bin/loki hands it to autonomy/loki, which runs the workspace or deploy chain.
+    if [ "$R_FRONT" = "1" ]; then R_DECIDED=0; fi
     return 0
 }

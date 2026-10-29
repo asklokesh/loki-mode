@@ -706,8 +706,15 @@ case "v10" in
             # D58: `loki start <issue ref|issue URL|"multi-word task">` takes the same v10 path as
             # `loki <ref>`; any other start call (PRD file, flags first, one word) stays legacy.
             start)
-                case "${2:-}" in
-                    */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*|*" "*)
+                # --workspace and --deploy (with its companions) are run by the bash front end around the engine; never glue them into an engine10 task.
+                _e10_front=0
+                for _e10_a in "${@:2}"; do
+                    case "$_e10_a" in --workspace|--workspace=*|--deploy) _e10_front=1 ;; esac
+                done
+                unset _e10_a
+                case "${_e10_front}:${2:-}" in
+                    1:*) _e10=0 ;;
+                    0:*/*\#[0-9]*|0:http*://*/issues/*|0:http*://*/browse/*|0:jira:*|0:linear:*|0:https://linear.app/*/issue/*|0:*" "*)
                         _e10=1; _e10_args=("${@:2}")
                         if [ "$_LOKI_START_ATTEMPTS" = "1" ]; then
                             _e10_hard=1  # FC-38: --attempts never falls back to the legacy engine
@@ -726,6 +733,7 @@ case "v10" in
                         ;;
                     *) _e10=0 ;;
                 esac
+                unset _e10_front
                 ;;
             # http*://*/issues/* also covers GitLab's /-/issues/ URLs.
             */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*) _e10=1 ;;
