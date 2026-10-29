@@ -80,10 +80,16 @@ describe("the test script gives every file of a multi-file run the scaled defaul
   });
   it("the script clamps the scale to 1..10 by string pattern, so an overflowing value never reaches the arithmetic", () => {
     const script = (JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as { scripts: { test: string } }).scripts.test;
+    // The substitution must really happen: if the script text is renamed or reformatted, replace() is a silent no-op and the
+    // spawn below would run the real suite once per case. Fail before any spawn, and bound every spawn.
+    const echoed = script.replace("bun test --timeout", "echo");
+    expect(echoed).not.toBe(script);
+    expect(echoed).toContain("echo");
+    expect(echoed).not.toContain("bun test");
     const resolved = (shell: string, scale?: string) => {
       const env: Record<string, string | undefined> = { ...process.env, LOKI_TEST_TIMEOUT_SCALE: scale };
       if (scale === undefined) delete env["LOKI_TEST_TIMEOUT_SCALE"];
-      return spawnSync(shell, ["-c", script.replace("bun test --timeout", "echo")], { env: env as NodeJS.ProcessEnv, encoding: "utf8" }).stdout.trim();
+      return spawnSync(shell, ["-c", echoed], { env: env as NodeJS.ProcessEnv, encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" }).stdout.trim();
     };
     const cases: Array<[string | undefined, string]> = [
       [undefined, "15000"], ["", "15000"], ["abc", "15000"], ["0", "15000"], ["05", "15000"], ["-2", "15000"],
