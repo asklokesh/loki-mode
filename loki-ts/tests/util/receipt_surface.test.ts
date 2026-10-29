@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { postReceiptComment, prNumberFromUrl, renderProofCard, renderReceiptComment } from "../../src/util/receipt_surface.ts";
+import { buildDeepCommentBody, postDeepResults, postReceiptComment, prNumberFromUrl, renderProofCard, renderReceiptComment } from "../../src/util/receipt_surface.ts";
 
 describe("receipt comment", () => {
   test("names outcome, hash, verify, PROVEN and NOT PROVEN", () => {
@@ -80,5 +80,66 @@ describe("receipt comment", () => {
       expect(postReceiptComment({ ...base, scriptPath: bad, url: "https://github.com/o/r/pull/7" })).toBe("receipt comment not posted (exit 4: gh api comment update failed)");
       expect(postReceiptComment({ ...base, scriptPath: bad, url: "local:///tmp/x.git#b" })).toBeNull();
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("deep comment body: exact headings, per-check lines and NOT PROVEN lines", () => {
+    const body = buildDeepCommentBody(
+      [{ name: "lint", result: "pass" }, { name: "unit", result: "fail", reason: "2 failed" }],
+      ["no integration test", "docs unchecked"],
+      "failure",
+    );
+    expect(body).toBe(
+      "## Loki deep verify: failure\n\n### Checks\n- pass: lint\n- fail: unit (2 failed)\n\n### NOT PROVEN\n- no integration test\n- docs unchecked\n",
+    );
+    const proven = buildDeepCommentBody([{ name: "lint", result: "pass" }], [], "success");
+    expect(proven.startsWith("## Loki deep verify: success\n")).toBe(true);
+    expect(proven).toContain("### NOT PROVEN\n- none\n");
+    expect(buildDeepCommentBody([], [], "success")).toContain("### Checks\n- none\n");
+  });
+
+  describe("postDeepResults", () => {
+    const setup = () => {
+      const dir = mkdtempSync(join(tmpdir(), "deep-post-"));
+      const log = join(dir, "calls.log");
+      const script = join(dir, "push.sh");
+      writeFileSync(script, `printf '%s|%s|%s\\n' "$1" "$_LOKI_ORIGIN_PINNED" "$_LOKI_PINNED_ORIGIN" >> "${log}"\nif [ "$1" = comment ]; then cp "$3" "${dir}/posted.md"; printf '%s\\n' "$2" > "${dir}/pr.txt"; fi\n`);
+      const args = { scriptPath: script, repoDir: dir, runDir: join(dir, "run"), checks: [{ name: "lint", result: "pass" }], notProven: ["x"], statusState: "success" as const, headSha: "a".repeat(40) };
+      return { dir, log, args };
+    };
+
+    test("a numeric PR URL posts the comment and status against the pinned origin", async () => {
+      const { dir, log, args } = setup();
+      try {
+        const out = await postDeepResults({ ...args, pinnedOrigin: "https://github.com/pinned/repo.git", prUrl: "https://example.com/o/r/pull/42" });
+        expect(out).toEqual([]);
+        expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
+          "comment|1|https://github.com/pinned/repo.git",
+          "status|1|https://github.com/pinned/repo.git",
+        ]);
+        expect(readFileSync(join(dir, "pr.txt"), "utf8").trim()).toBe("42");
+        expect(readFileSync(join(dir, "posted.md"), "utf8")).toBe(buildDeepCommentBody(args.checks, args.notProven, "success"));
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+
+    test("a missing or non-numeric PR number posts no comment but still sets the status", async () => {
+      const { dir, log, args } = setup();
+      try {
+        for (const prUrl of [undefined, "", "https://github.com/o/r/pull/abc", "https://github.com/o/r/issues/5", "https://github.com/o/r/pull/5/files"]) {
+          const out = await postDeepResults({ ...args, pinnedOrigin: "https://github.com/pinned/repo.git", prUrl });
+          expect(out).toEqual(["deep comment not posted (no PR number)"]);
+        }
+        const lines = readFileSync(log, "utf8").trim().split("\n");
+        expect(lines.length).toBe(5);
+        expect(lines.every((l) => l.startsWith("status|"))).toBe(true);
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+
+    test("no pinned origin refuses everything and runs nothing", async () => {
+      const { dir, log, args } = setup();
+      try {
+        const out = await postDeepResults({ ...args, prUrl: "https://github.com/o/r/pull/9" });
+        expect(out).toEqual(["push refused: no pinned origin (Rule of Two)"]);
+        expect(() => readFileSync(log, "utf8")).toThrow();
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
   });
 });
