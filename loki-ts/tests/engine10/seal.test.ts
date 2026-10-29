@@ -1904,6 +1904,29 @@ describe("medium default review at seal", () => {
       expect(receiptOf(s).not_proven.join(" | ")).toContain("insufficient run time");
     });
   }, 60000);
+  test("reviewer cost: a reviewer's reported cost is in the seal and the run total; an unreported one keeps usd null and is listed as missing", async () => {
+    const run = async (name: string, body: string) => {
+      const c = setup(name, 0); writeFileSync(c.stub, `#!/bin/sh\nprintf '%s\\n' '${body}'\n`);
+      let ids: string[] = [], missing: string[] = [];
+      c.ctx.sessionIds = () => ["e10-r1-impl"];
+      mkdirSync(join(c.ctx.repoDir, ".loki", "metrics"), { recursive: true });
+      writeFileSync(join(c.ctx.repoDir, ".loki", "metrics", "result-cost-e10-r1-impl.json"), JSON.stringify({ total_cost_usd: 1, input_tokens: 10, output_tokens: 5, model: "m" }));
+      c.ctx.cost = { read: (d, i) => { ids = i; const r = sumResultCosts(join(d, ".loki"), i); missing = r.missing; return r as never; } };
+      let rc = {} as { cost?: Record<string, unknown> };
+      await withEnv(c.stub, {}, async () => { rc = receiptOf(await sealStage.run(c.ctx, new AbortController().signal)) as never; });
+      return { ids, missing, cost: rc.cost ?? {} };
+    };
+    const known = await run("rc-known", '{"type":"result","result":"VERDICT: PASS","total_cost_usd":0.5,"usage":{"input_tokens":100,"output_tokens":40},"modelUsage":{"claude-sonnet-x":{}}}');
+    expect(known.ids).toContain("r1-xreview-claude");
+    expect(known.missing).toEqual([]);
+    expect(known.cost["usd"]).toBeCloseTo(1.5, 6);
+    expect(known.cost["measured_sessions"]).toBe(2);
+    const unknown = await run("rc-unknown", '{"type":"result","result":"VERDICT: PASS"}');
+    expect(unknown.ids).toContain("r1-xreview-claude");
+    expect(unknown.missing).toEqual(["r1-xreview-claude"]);
+    expect(unknown.cost["usd"]).toBeNull();
+    expect(unknown.cost["partial_usd"]).toBe(1);
+  }, 60000);
   test("seal passes reviewRan through: a default review that ran credits one reviewer, an opt-out does not", async () => {
     const a = setup("rr-on", 0), b = setup("rr-off", 0);
     const notProven = async (c: typeof a, env: Record<string, string>) => { let np: string[] = []; await withEnv(c.stub, env, async () => { const s = await sealStage.run(c.ctx, new AbortController().signal); np = receiptOf(s).not_proven; }); return np.join(" | "); };
