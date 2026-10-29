@@ -1489,10 +1489,10 @@ describe("seal drift review fixes (P12-01)", () => {
     } finally { rmSync(repo, { recursive: true, force: true }); }
   });
 
-  test("a pass recorded after log.sealed does not count even inside the hashed prefix", async () => {
+  test("a pass recorded after receipt.sealed does not count even inside the hashed prefix", async () => {
     const repo = tmpDir();
     try {
-      seal(repo, "r-after", { checks: [unit] }, verifyLog(ev(2, "log.sealed", {}) + ev(3, "test.result", unit, "verify")));
+      seal(repo, "r-after", { checks: [unit] }, verifyLog(ev(2, "receipt.sealed", {}) + ev(3, "test.result", unit, "verify")));
       expect((await verify(runs(repo), "r-after")).code).toBe(1);
     } finally { rmSync(repo, { recursive: true, force: true }); }
   });

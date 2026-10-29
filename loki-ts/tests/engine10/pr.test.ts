@@ -4,14 +4,17 @@
 // rework and not on main, so RunContext deps are fakes and the push child is
 // a stub script at an injected path (never the real, credentialed
 // autonomy/lib/engine10-push.sh).
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_PUSH_GITLAB_SH, DEFAULT_PUSH_SH, runPr, stage } from "../../src/engine10/stages/pr.ts"; import { pushErrLine } from "../../src/util/term_width.ts";
 import { publishFallback } from "../../src/util/engine_origin.ts";
-import { EventLog, readEvents } from "../../src/engine10/events.ts";
+import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
+import { readEvents } from "../../src/engine10/events.ts";
+import { SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { RECOVERY_ABORT, discardRun, findInterrupted, nextStepText, parseRecoveryChoice, phaseOf, resumeMain, startRecovery, statusNextStep, type RunPrFn } from "../../src/util/run_outputs.ts";
 import type { CostReader, RunContext, SessionRunner, TestMapProvider, Verdict } from "../../src/engine10/types.ts";
 
@@ -449,22 +452,33 @@ const gitOut = (cwd: string, args: string[]): string => execFileSync("git", args
 const RUN = "e10-20261015T000000Z-abcd";
 
 describe("RECOVERY: interrupted run resume", () => {
-  let repo: string, log: EventLog, out: string[], prCalls: number;
+  let repo: string, log: SupervisorLog, out: string[], prCalls: number;
   const evPath = (): string => join(repo, ".loki", "runs", RUN, "events.jsonl");
   const say = (s: string): void => { out.push(s); };
   const runPr: RunPrFn = async () => { prCalls++; return { status: "completed", data: { pr_url: "https://github.com/o/r/pull/9", draft: false, existing: prCalls > 1 ? true : null } }; };
-  const seal = (): void => {
+  const tgit = (...a: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd: repo, encoding: "utf8" }).trim();
+  const sealedHead = (): string => { // loki/<run> carries one commit; its sha is the receipt's head_sha
+    if (!gitOut(repo, ["branch", "--list", `loki/${RUN}`])) { tgit("commit", "-q", "--allow-empty", "-m", "sealed"); tgit("branch", `loki/${RUN}`); }
+    return gitOut(repo, ["rev-parse", `loki/${RUN}`]);
+  };
+  const seal = (verdict = "VERIFIED", notProven: string[] = []): void => { // a real signed receipt: a publish resume takes verdict and not_proven from this file, not from the log line
     mkdirSync(join(repo, ".loki", "runs", RUN), { recursive: true });
-    writeFileSync(join(repo, ".loki", "runs", RUN, "receipt.json"), '{"receipt_sha256":"abc"}\n');
-    log.append("receipt.sealed", "seal", { verdict: "VERIFIED", receipt_sha256: "abc", path: ".loki/runs/x/receipt.json" });
+    const body = { schema: "loki.v10.receipt/1", run_id: RUN, verdict, head_sha: sealedHead(), not_proven: notProven, events_sha256: createHash("sha256").update(existsSync(evPath()) ? readFileSync(evPath()) : "").digest("hex"), time: { wall_s: 0, stages: {} }, checks: [] }; // bound to the log as it stands before receipt.sealed, as seal.ts does
+    const hash = receiptSha256(body as never);
+    writeFileSync(join(repo, ".loki", "runs", RUN, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signReceipt(RUN, hash) }, null, 2));
+    log.append("receipt.sealed", "seal", { verdict, receipt_sha256: hash, path: ".loki/runs/x/receipt.json" });
+    log.checkpoint(hash); // exactly what the supervisor does on seeing receipt.sealed: a signed checkpoint and an open run.state.json, which is all a crash in the publish phase leaves
   };
   const branch = (): void => { try { gitOut(repo, ["rev-parse", "--verify", "-q", `refs/heads/loki/${RUN}`]); } catch { gitOut(repo, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-q", "-m", "x"]); gitOut(repo, ["branch", `loki/${RUN}`]); } };
+  const keyEnv = { a: process.env["LOKI_RECEIPT_SIGNING_KEY"], b: process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] };
+  beforeAll(() => { process.env["LOKI_RECEIPT_SIGNING_KEY"] = ""; process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(tmpdir(), `loki-recovery-key-${process.pid}.pem`); });
+  afterAll(() => { rmSync(process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]!, { force: true }); for (const [k, v] of [["LOKI_RECEIPT_SIGNING_KEY", keyEnv.a], ["LOKI_RECEIPT_SIGNING_KEY_FILE", keyEnv.b]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
   beforeEach(() => {
     delete process.env["LOKI_NONINTERACTIVE"]; delete process.env["LOKI_NO_RESUME"];
     repo = mkdtempSync(join(tmpdir(), "loki-recovery-"));
     gitOut(repo, ["init", "-q"]);
     gitOut(repo, ["remote", "add", "origin", "https://github.com/o/r.git"]);
-    log = new EventLog(evPath(), RUN);
+    log = new SupervisorLog(evPath(), RUN);
     log.append("run.started", null, { provider: "claude", model: "m" });
     log.append("stage.completed", "intake", { task: "fix the bug", base_sha: "0".repeat(40) });
     out = []; prCalls = 0;
@@ -525,8 +539,7 @@ describe("RECOVERY: interrupted run resume", () => {
   });
 
   test("resume keeps the sealed receipt not_proven entries in the PR seal and run.completed", async () => {
-    mkdirSync(join(repo, ".loki", "runs", RUN), { recursive: true });
-    log.append("receipt.sealed", "seal", { verdict: "PARTIAL", receipt_sha256: "abc", path: "p", not_proven: ["cost unmetered", "wall result not recorded"] });
+    seal("PARTIAL", ["cost unmetered", "wall result not recorded"]);
     let seen: unknown = null;
     const spy: RunPrFn = async (ctx: Record<string, unknown>) => { seen = ((ctx["outputs"] as () => Record<string, unknown>)()["seal"] as Record<string, unknown>)["not_proven"]; return runPr(ctx, new AbortController().signal); };
     const cwd = process.cwd(); process.chdir(repo);
@@ -538,9 +551,8 @@ describe("RECOVERY: interrupted run resume", () => {
   });
 
   test("resume surfaces the policy-not-evaluated note in the PR seal and run.completed", async () => {
-    mkdirSync(join(repo, ".loki", "runs", RUN), { recursive: true });
     writeFileSync(join(repo, ".loki", "policies.json"), JSON.stringify({ autonomy: "execute", actions: { pr: "allow" } }));
-    log.append("receipt.sealed", "seal", { verdict: "PARTIAL", receipt_sha256: "abc", path: "p", not_proven: ["cost unmetered"] });
+    seal("PARTIAL", ["cost unmetered"]);
     const bin = join(repo, "..", `${RUN}-gitonly`); mkdirSync(bin, { recursive: true });
     symlinkSync(execFileSync("which", ["git"], { encoding: "utf8" }).trim(), join(bin, "git"));
     let seen: unknown = null;
@@ -662,7 +674,7 @@ describe("RECOVERY: interrupted run resume", () => {
     });
 
     test("Resume is not offered when it cannot finish: no run branch, no origin", async () => {
-      seal();
+      seal(); gitOut(repo, ["branch", "-D", `loki/${RUN}`]); // seal() makes the sealed-head branch the signed receipt names; drop it to model a run with no branch
       expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: true, ask: asks("1").ask })).toBeNull();
       expect(out.join("")).not.toContain("Resume (");
       branch(); out.length = 0;
@@ -700,7 +712,7 @@ describe("RECOVERY: interrupted run resume", () => {
     });
 
     test("a cancelled run is offered but never resumed, even at the publish phase", async () => {
-      seal(); branch(); log.append("run.completed", null, { verdict: "FAILED", cancelled: true, outcome: "CANCELLED" });
+      seal(); branch(); const sl = new SupervisorLog(evPath(), RUN); sl.append("run.completed", null, { verdict: "FAILED", cancelled: true, outcome: "CANCELLED" }); sl.sealLog();
       expect(findInterrupted(repo)).toBeNull();
       expect(findInterrupted(repo, undefined, true)?.cancelled).toBe(true);
       expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say })).toBeNull();
@@ -733,6 +745,18 @@ describe("RECOVERY: interrupted run resume", () => {
       await withEnv("LOKI_NO_RESUME", "1", async () => { expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: false })).toBeNull(); });
       expect(prCalls).toBe(0);
       expect(out.join("")).toBe("");
+    });
+
+    test("a crashed publish run whose signed checkpoint was cut is not offered Resume, starts fresh, and loki resume names LOKI_NO_RESUME", async () => {
+      seal(); branch();
+      const kept = readFileSync(evPath(), "utf8").split("\n").filter((l) => l !== "");
+      expect(JSON.parse(kept[kept.length - 1]!).type).toBe("log.sealed");
+      writeFileSync(evPath(), kept.slice(0, -1).join("\n") + "\n"); // the tail was cut right after receipt.sealed: nothing past the receipt is authenticated
+      expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: false })).toBeNull();
+      expect(out.join("")).toContain(`starting a new run, old work is kept on loki/${RUN}`);
+      const cwd = process.cwd(); process.chdir(repo);
+      try { expect(await resumeMain([], { runPr, out: say })).toBe(5); } finally { process.chdir(cwd); }
+      expect(prCalls).toBe(0);
     });
 
     test("a bare start (no task) resumes a publish run and otherwise says to give a task", async () => {

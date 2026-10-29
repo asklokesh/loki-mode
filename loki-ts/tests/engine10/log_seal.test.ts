@@ -223,6 +223,89 @@ describe("resume repairs a torn tail before the seal", () => {
   });
 });
 
+/** A cancelled run that was resumed: two run.completed + log.sealed pairs. "reseal" = cancelled before sealing, resume seals (receipt.sealed lands after the first pair);
+ *  "publish" = sealed first, cancelled in publish, resumePublish appends a second pair after the receipt.sealed. */
+function resumed(mode: "reseal" | "publish", cancelled = true): ReturnType<typeof run> {
+  const id = `e10-ls-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl");
+  mkdirSync(dir, { recursive: true });
+  const log = new SupervisorLog(ev, id);
+  log.append("run.started", null, { provider: "claude" });
+  const bound = sha(readFileSync(ev));
+  const seal = (): void => {
+    const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: bound, time: { wall_s: 0, stages: {} }, log_seal: true };
+    const hash = receiptSha256(body as never);
+    writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signReceipt(id, hash) }, null, 2));
+    log.append("receipt.sealed", "seal", { receipt_sha256: hash });
+  };
+  const cancel = (): void => { log.append("run.completed", null, { verdict: "FAILED", ...(cancelled ? { cancelled: true } : {}) }); log.sealLog(); };
+  if (mode === "reseal") { cancel(); seal(); } else { seal(); cancel(); }
+  log.append("run.completed", null, {});
+  log.sealLog();
+  const lines = () => readFileSync(ev, "utf8").trim().split("\n");
+  return { dir, path: join(dir, "receipt.json"), lines, put: (l) => writeFileSync(ev, l.join("\n") + "\n") };
+}
+describe("cancel then resume: the LAST run.completed pair is the one checked", () => {
+  const isType = (l: string, t: string): boolean => JSON.parse(l).type === t;
+  const edit = (r: ReturnType<typeof run>, t: string, f: (e: { data: Record<string, unknown> }) => void): void => {
+    const l = r.lines(), i = l.findLastIndex((x) => isType(x, t)), e = JSON.parse(l[i]!);
+    f(e);
+    r.put(l.map((x, j) => (j === i ? JSON.stringify(e) : x)));
+  };
+  for (const mode of ["single", "reseal", "publish"] as const) {
+    test(`${mode}: A4x forged run.completed with receipt.sealed moved to the tail is TAMPERED, not UNCHECKED`, async () => {
+      const r = mode === "single" ? run(false) : resumed(mode);
+      edit(r, "run.completed", (e) => { e.data = { verdict: "VERIFIED", pr_url: "https://evil.example/pr/1", not_proven: [] }; });
+      const l = r.lines(), i = l.findLastIndex((x) => isType(x, "receipt.sealed")), moved = [...l.slice(0, i), ...l.slice(i + 1), l[i]!];
+      r.put(moved.map((x, j) => JSON.stringify({ ...JSON.parse(x), seq: j })));
+      const v = await verifyReceipt(r.path);
+      expect(v.verdict).toBe("TAMPERED");
+      expect(v.reasons.join(" ")).not.toContain("no run.completed");
+    });
+    test(`${mode}: final run.completed retyped to worker.note is TAMPERED`, async () => {
+      const r = mode === "single" ? run(false) : resumed(mode);
+      edit(r, "run.completed", (e) => { (e as unknown as { type: string }).type = "worker.note"; });
+      expect((await verifyReceipt(r.path)).verdict).toBe("TAMPERED");
+    });
+    test(`${mode}: final run.completed deleted (final log.sealed kept, seq renumbered) is TAMPERED`, async () => {
+      const r = mode === "single" ? run(false) : resumed(mode), l = r.lines(), i = l.findLastIndex((x) => isType(x, "run.completed"));
+      r.put([...l.slice(0, i), ...l.slice(i + 1)].map((x, j) => JSON.stringify({ ...JSON.parse(x), seq: j })));
+      expect((await verifyReceipt(r.path)).verdict).toBe("TAMPERED");
+    });
+  }
+  test("a validly sealed but non-cancelled run.completed before this receipt.sealed is TAMPERED, not UNCHECKED", async () => {
+    const r = resumed("reseal", false), l = r.lines();
+    r.put(l.slice(0, l.findIndex((x) => isType(x, "receipt.sealed")) + 1)); // keeps the valid first pair, drops the resumed end
+    const v = await verifyReceipt(r.path);
+    expect(v.verdict).toBe("TAMPERED");
+    expect(v.reasons.join(" ")).toContain("not a cancelled run");
+  });
+  for (const mode of ["reseal", "publish"] as const) {
+    test(`${mode}: honest resumed run is VERIFIED`, async () => {
+      expect((await verifyReceipt(resumed(mode).path)).verdict).toBe("VERIFIED");
+    });
+    test(`${mode}: final run.completed edited is TAMPERED`, async () => {
+      const r = resumed(mode);
+      edit(r, "run.completed", (e) => { e.data = { verdict: "FAILED", not_proven: ["FORGED"] }; });
+      expect((await verifyReceipt(r.path)).verdict).toBe("TAMPERED");
+    });
+    test(`${mode}: tail after receipt.sealed deleted is UNCHECKED, not VERIFIED`, async () => {
+      const r = resumed(mode), l = r.lines();
+      r.put(l.slice(0, l.findLastIndex((x) => isType(x, "receipt.sealed")) + 1));
+      expect((await verifyReceipt(r.path)).verdict).toBe("UNCHECKED");
+    });
+    test(`${mode}: final log.sealed signature forged is TAMPERED`, async () => {
+      const r = resumed(mode);
+      edit(r, "log.sealed", (e) => { e.data["sig"] = "AAAA"; });
+      expect((await verifyReceipt(r.path)).verdict).toBe("TAMPERED");
+    });
+    test(`${mode}: final log.sealed deleted is TAMPERED`, async () => {
+      const r = resumed(mode);
+      r.put(r.lines().slice(0, -1));
+      expect((await verifyReceipt(r.path)).verdict).toBe("TAMPERED");
+    });
+  }
+});
+
 describe("P12-08c SUPERVISOR_ONLY", () => {
   test("a worker line of type deep.started is dropped by ingest; the supervisor append still lands", () => {
     const dir = join(root, "runs", `e10-so-${n++}`);

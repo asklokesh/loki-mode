@@ -362,3 +362,13 @@ export async function deployAttestCmd(args: readonly string[], env: { takePubkey
   if (r.verdict === "VERIFIED") process.stdout.write(`receipt_sha256: ${String(rec["receipt_sha256"])}\n`);
   return r.verdict === "VERIFIED" ? 0 : r.verdict === "TAMPERED" ? 1 : 2;
 }
+
+/** The public key for a kid: the local key's public half, or a retired one from LOKI_RECEIPT_RETIRED_PUBKEYS (colon-separated PEM paths). Never creates a key. */
+export function pubFor(kid: unknown, given?: KeyObject): KeyObject | undefined {
+  if (given) return kidOf(given) === kid ? given : undefined; // --pubkey: that key only, never the local JWKS
+  const active = loadSigningKey(false);
+  const pubs = (process.env["LOKI_RECEIPT_RETIRED_PUBKEYS"] ?? "").split(":").map((f) => f.trim()).filter(Boolean).flatMap((f) => {
+    try { return [createPublicKey(readFileSync(f))]; } catch { return []; }
+  });
+  return [...(active ? [createPublicKey(active)] : []), ...pubs].find((k) => kidOf(k) === kid);
+}

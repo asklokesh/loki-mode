@@ -5,8 +5,8 @@ import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "n
 import { basename, dirname, join } from "node:path";
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { lokiDir } from "../util/paths.ts";
-import { applyMaxAge, deployAttestCmd, receiptShapeProblem, takeMaxAge } from "../util/receipt_signer.ts";
-import { latestRunId } from "../commands/run_status.ts"; import { sealDrift, tornTail, wallNotComparedNote } from "../util/seal_drift.ts";
+import { applyMaxAge, deployAttestCmd, pubFor, receiptShapeProblem, takeMaxAge } from "../util/receipt_signer.ts";
+import { latestRunId } from "../commands/run_status.ts"; import { sealDrift, tornTail, verifyLogSeals, wallNotComparedNote } from "../util/seal_drift.ts";
 import { readEvents } from "./events.ts";
 import { isExecutedProof, printable, withExplain, type ExplainRec } from "../util/check_result.ts";
 import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
@@ -23,17 +23,8 @@ export interface VerifyDeps {
   read?: (path: string) => string; // reads the receipt file (tests count reads); default readFileSync utf8
 }
 interface AttestationOutcome { status: "verified" | "tampered" | "unchecked"; reason: string | null }
-/** The public key for a kid: the local key's public half, or a retired one from LOKI_RECEIPT_RETIRED_PUBKEYS (colon-separated PEM paths). Never creates a key. */
-function pubFor(kid: unknown, given?: KeyObject): KeyObject | undefined {
-  if (given) return kidOf(given) === kid ? given : undefined; // --pubkey: that key only, never the local JWKS
-  const active = loadSigningKey(false);
-  const pubs = (process.env["LOKI_RECEIPT_RETIRED_PUBKEYS"] ?? "").split(":").map((f) => f.trim()).filter(Boolean).flatMap((f) => {
-    try { return [createPublicKey(readFileSync(f))]; } catch { return []; }
-  });
-  return [...(active ? [createPublicKey(active)] : []), ...pubs].find((k) => kidOf(k) === kid);
-}
 /** Native EdDSA check against the local key's public half plus LOKI_RECEIPT_RETIRED_PUBKEYS (colon-separated PEM paths). Selection is by kid; an unknown kid is refused, never tried against every key. */
-function checkAttestation(jwt: string, expectedHash: string, given?: KeyObject): AttestationOutcome {
+export function checkAttestation(jwt: string, expectedHash: string, given?: KeyObject): AttestationOutcome {
   const bad = (reason: string): AttestationOutcome => ({ status: "tampered", reason });
   const [h, p, s, ...rest] = jwt.split(".");
   if (!h || !p || !s || rest.length > 0) return bad("malformed token");
@@ -61,7 +52,8 @@ function wallTamperProblem(receiptPath: string, receipt: Record<string, unknown>
   }
   return null;
 }
-function checkEventLog(receiptPath: string, receipt: Record<string, unknown>): string | null {
+/** Also used by resume: the receipt must bind a line-aligned prefix of the events.jsonl beside it. */
+export function checkEventLog(receiptPath: string, receipt: Record<string, unknown>): string | null {
   const bound = receipt["events_sha256"];
   if (receipt["schema"] === "loki.v10.receipt/1") { // P12-01c: seal.ts always writes these, so absence means an edit (other receipt kinds are not gated)
     const time = receipt["time"] as { stages?: unknown } | null | undefined;
@@ -92,14 +84,25 @@ function checkEventLog(receiptPath: string, receipt: Record<string, unknown>): s
 /** A-117: after run.completed the supervisor appends a log.sealed line, signed over the sha256 of every earlier byte plus a tampered flag. A signed receipt needs it
  *  right after run.completed (deep verify may append later events: lines after log.sealed are unauthenticated and no reader may trust them). A sealed receipt with no run.completed is an interrupted run: UNCHECKED, not TAMPERED. */
 function checkLogSeal(receiptPath: string, hash: string, kid: unknown, given?: KeyObject): { verdict: "TAMPERED" | "UNCHECKED"; reason: string } | null {
-  const path = join(dirname(receiptPath), "events.jsonl"), events = readEvents(path), done = events.findIndex((e) => e.type === "run.completed");
-  if (!events.some((e) => e.type === "receipt.sealed" && e.data["receipt_sha256"] === hash)) return { verdict: "TAMPERED", reason: "events.jsonl has no receipt.sealed event for this receipt" };
+  const path = join(dirname(receiptPath), "events.jsonl"), events = readEvents(path), done = events.findLastIndex((e) => e.type === "run.completed"); // a cancelled-then-resumed run holds several pairs: the LAST one, after this receipt's seal, is the run's end
+  const rs = events.findIndex((e) => e.type === "receipt.sealed" && e.data["receipt_sha256"] === hash);
+  if (rs < 0) return { verdict: "TAMPERED", reason: "events.jsonl has no receipt.sealed event for this receipt" };
+  if (events.filter((e) => e.type === "receipt.sealed").length !== 1) return { verdict: "TAMPERED", reason: "events.jsonl holds more than one receipt.sealed event; a run seals exactly one receipt" };
+  const raw = readFileSync(path, "utf8"), whole = tornTail(raw) ? raw.slice(0, raw.lastIndexOf("\n") + 1) : raw; // a torn final line is dropped as checkEventLog drops it, so sealDrift reports it UNCHECKED
+  const chain = verifyLogSeals(whole, events, { kid, given, expectSeal: true }); // every cancel seal, not only the last, must hash the lines before it
+  if (chain) return { verdict: "TAMPERED", reason: chain };
+  // sealLog only ever runs right after a run.completed, so the last log.sealed of an honest log sits at done+1; a later one means the final run.completed was retyped or deleted
+  if (events.findLastIndex((e) => e.type === "log.sealed") > done + 1) return { verdict: "TAMPERED", reason: "events.jsonl holds a log.sealed line that does not follow the last run.completed; the final run.completed was retyped or removed" };
   if (done < 0) return { verdict: "UNCHECKED", reason: "run did not complete, or the log was truncated (no run.completed in events.jsonl)" };
   const seal = events[done + 1], d = seal?.type === "log.sealed" ? seal.data : null;
   if (!d) return { verdict: "TAMPERED", reason: "events.jsonl has no signed log.sealed line after run.completed" };
   const lines = readFileSync(path, "utf8").split("\n").filter((l) => l.trim() !== ""), sha = createHash("sha256").update(lines.slice(0, done + 1).join("\n") + "\n").digest("hex");
   const pub = d["kid"] === kid ? pubFor(kid, given) : undefined; // the line must be signed by the key that signed the receipt
   if (!pub || d["events_sha256"] !== sha || d["tampered"] !== false || typeof d["sig"] !== "string" || !verify(null, Buffer.from(`${sha}:false`), pub, Buffer.from(d["sig"], "base64url"))) return { verdict: "TAMPERED", reason: "log.sealed line is invalid, forged, or records a tamper" };
+  if (done < rs) { // the last run.completed predates this receipt's seal: only a validly sealed CANCELLED pair followed by an unfinished resume is honest (the cancel marker is the isCancelDone test, inlined to keep run_outputs.ts's large import graph out of the verifier)
+    if (events[done]!.data["cancelled"] !== true) return { verdict: "TAMPERED", reason: "run.completed precedes this receipt's receipt.sealed but is not a cancelled run; events.jsonl was reordered or edited" };
+    return { verdict: "UNCHECKED", reason: "run was cancelled and resumed but the resumed run did not complete, or the log was truncated (no run.completed after receipt.sealed)" };
+  }
   return null;
 }
 export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}): Promise<VerifyResult> {

@@ -25,7 +25,7 @@ const np = (reason: string): MutationProof => ({ outcome: "inconclusive", line: 
 const MAX_TOTAL_S = 40; // B2: seal stage limit is 60s; the whole proof (worktree add, every test, removal) must fit well inside it
 /** Only a positive finite number of seconds is accepted from the env; anything else (negative, zero, NaN, Infinity, junk) falls back to 30. */
 const envTimeoutS = (raw: string | undefined): number => { const n = Number(raw ?? 30); return Number.isFinite(n) && n > 0 ? n : 30; };
-const DEP_DIRS = ["node_modules", ".venv", "venv"];
+export const DEP_DIRS = ["node_modules", ".venv", "venv"];
 const git = (cwd: string, args: string[], timeout = 30_000): { status: number } => { try { safeGit(cwd, args, { timeout }); return { status: 0 }; } catch { return { status: 1 }; } };
 
 /** Runs the proof. Never throws; the temp worktree is removed on every path with `git worktree remove --force <exact path>`. */

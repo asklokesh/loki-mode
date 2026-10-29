@@ -88,9 +88,14 @@ export function pubkeysFromEnv(env: Env = process.env): KeyResolver {
 const line = (e: EventEnvelope): string => JSON.stringify({ v: e.v, seq: e.seq, ts: e.ts, run: e.run, type: e.type, stage: e.stage, data: e.data });
 const verdictOf = (e: EventEnvelope | undefined): string | null => (typeof e?.data["verdict"] === "string" ? e.data["verdict"].trim().toUpperCase() : null);
 
-/** Events up to and including the sealing line (the authenticated prefix); everything when the run has none. Lines after it are unauthenticated. */
+/** The engine signs a checkpoint log.sealed right after receipt.sealed (so a publish resume trusts nothing past it); the run's end is sealed by a second log.sealed after run.completed.
+ *  A checkpoint is a log.sealed whose previous line is receipt.sealed; every other log.sealed is an end seal. */
+const isCheckpoint = (evs: readonly { type: string }[], i: number): boolean => evs[i]?.type === SEAL_LINE && evs[i - 1]?.type === "receipt.sealed";
+
+/** Events up to and including the end seal (the authenticated prefix); everything when the run has none. The checkpoint does not end the run, so a run that was
+ *  sealed but not finished is folded whole. Lines after the end seal are unauthenticated. */
 export function sealedPrefix<T extends { type: string }>(evs: readonly T[]): T[] {
-  const i = evs.findIndex((e) => e.type === SEAL_LINE);
+  const i = evs.findIndex((e, k) => e.type === SEAL_LINE && !isCheckpoint(evs, k));
   return i < 0 ? [...evs] : evs.slice(0, i + 1);
 }
 
@@ -108,7 +113,8 @@ export function verifyRunIntegrity(evs: readonly EventEnvelope[], opts: Integrit
     if (gap >= 0) bad.push(`event log has a seq gap, duplicate or missing start at position ${gap} (seq ${evs[gap]!.seq})`);
   }
   if (evs.some((e) => e.type === "tamper.detected")) bad.push("the supervisor detected events.jsonl being modified during the run");
-  const firstSeal = evs.findIndex((e) => e.type === SEAL_LINE);
+  const firstEnd = evs.findIndex((e, k) => e.type === SEAL_LINE && !isCheckpoint(evs, k)), firstCheckpoint = evs.findIndex((e, k) => isCheckpoint(evs, k));
+  const firstSeal = firstEnd >= 0 ? firstEnd : firstCheckpoint; // no end seal yet: whatever follows the checkpoint is unauthenticated, and a verdict there is a forgery
   if (firstSeal >= 0 && evs.slice(firstSeal + 1).some((e) => e.type === "run.completed" || e.type === "receipt.sealed" || typeof e.data["verdict"] === "string")) bad.push("a verdict-bearing event after log.sealed is unauthenticated");
   if (evs.filter((e) => e.type === "run.completed").length > 1) bad.push("more than one run.completed (a verdict appended after the seal is unauthenticated)");
 
@@ -128,7 +134,7 @@ export function verifyRunIntegrity(evs: readonly EventEnvelope[], opts: Integrit
     }
   }
 
-  const sealLines = evs.map((e, i) => (e.type === SEAL_LINE ? i : -1)).filter((i) => i >= 0);
+  const sealLines = evs.map((e, i) => (e.type === SEAL_LINE && !isCheckpoint(evs, i) ? i : -1)).filter((i) => i >= 0);
   if (sealLines.some((i) => i !== doneAt + 1)) bad.push(`${SEAL_LINE} is not the line right after run.completed`);
   const ls = doneAt >= 0 && evs[doneAt + 1]?.type === SEAL_LINE ? evs[doneAt + 1]!.data : null;
   const signedSeals = sealedAt.map((i) => evs[i]!.data).filter((d) => d["signed"] === true);
@@ -149,6 +155,18 @@ export function verifyRunIntegrity(evs: readonly EventEnvelope[], opts: Integrit
       }
     }
   } else if (signedReceipt && doneAt >= 0) bad.push(`signed receipt but no ${SEAL_LINE} line after run.completed`);
+
+  // The checkpoint is held to the same rule as the end seal: it hashes every line before it, carries tampered:false and verifies under the receipt's key.
+  evs.forEach((e, i) => {
+    if (!isCheckpoint(evs, i)) return;
+    const d = e.data, sha = createHash("sha256").update(lines.slice(0, i).join("\n") + "\n").digest("hex"), sig = typeof d["sig"] === "string" ? Buffer.from(d["sig"], "base64url") : null, kid = d["kid"];
+    if (d["tampered"] !== false) { bad.push(`checkpoint ${SEAL_LINE} (seq ${e.seq}) records a tamper or is malformed`); return; }
+    if (typeof kid !== "string" || !sig || sig.length !== 64) { hashBad.push(`checkpoint ${SEAL_LINE} (seq ${e.seq}) is malformed`); return; }
+    if (d["events_sha256"] !== sha) { hashBad.push(`checkpoint ${SEAL_LINE} (seq ${e.seq}) events_sha256 does not match the ingested log`); return; }
+    const pub = opts.pubkeyFor?.(kid);
+    if (pub) { sigChecked = true; if (!verify(null, Buffer.from(`${sha}:false`), pub, sig)) bad.push(`checkpoint ${SEAL_LINE} (seq ${e.seq}) signature does not verify`); }
+    else if (keysConfigured) bad.push(`checkpoint ${SEAL_LINE} kid ${kid} has no configured public key`);
+  });
 
   bad.push(...hashBad);
 

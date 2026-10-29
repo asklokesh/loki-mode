@@ -8,7 +8,7 @@ import { diffStat, formatRunSummary, handoffSection, readRiskSummary, writeHando
 import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path"; import { writeRunState } from "../util/seal_drift.ts";
 import { loadSpecFile, type LoadedSpec } from "../util/spec_file.ts";
 import { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker } from "../util/engine_origin.ts";
 export { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker }; // re-exported: callers and tests import these from here
@@ -91,7 +91,7 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
   private readonly log: EventLog;
   private readonly hash: Hash;
   tampered = false;
-  constructor(readonly path: string, runId: string) {
+  constructor(readonly path: string, private readonly runId: string) {
     this.log = new EventLog(path, runId);
     this.hash = createHash("sha256"); // seed AFTER construction: EventLog may truncate a torn last line
     try { this.hash.update(readFileSync(path)); } catch { /* new file */ }
@@ -125,6 +125,8 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
     const sha = this.hash.copy().digest("hex");
     this.append("log.sealed", null, { kid: kidOf(createPublicKey(key)), events_sha256: sha, tampered: this.tampered, sig: sign(null, Buffer.from(`${sha}:${this.tampered}`), key).toString("base64url") });
   }
+  receiptSha: string | null = null; state(s: "open" | "closed", outcome?: string): void { writeRunState(dirname(this.path), this.runId, { state: s, tampered: this.tampered, receipt_sha256: this.receiptSha, outcome }); } // run.state.json: the supervisor's integrity verdict, outside the truncatable log tail
+  checkpoint(sha: unknown): void { this.receiptSha = typeof sha === "string" ? sha : null; this.verify(); this.sealLog(); this.state("open"); } // right after receipt.sealed: a signed log.sealed carrying the tamper flag, so a publish resume trusts nothing past it and a cut tail cannot turn a tampered run into a clean one
   verify(): boolean { // re-hashes the file; on mismatch (once) emits tamper.detected; returns true when intact
     if (this.tampered) return false;
     const expected = this.hash.copy().digest("hex");
@@ -132,7 +134,7 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
     try { actual = createHash("sha256").update(readFileSync(this.path)).digest("hex"); } catch { /* deleted */ }
     if (actual === expected) return true;
     this.tampered = true;
-    this.append("tamper.detected", null, { expected_sha256: expected, actual_sha256: actual });
+    this.append("tamper.detected", null, { expected_sha256: expected, actual_sha256: actual }); this.state("closed", "TAMPERED");
     return false;
   }
 }
@@ -167,7 +169,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   let sealed: Record<string, unknown> | null = null; const origBranch = opts.restoreBranch !== undefined ? opts.restoreBranch : currentBranch(opts.repoDir), sessionGroups = new Set<number>(); // session children are detached (own group), so the worker's group kill misses them
   const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, (line) => {
     const e = log.ingest(line); if (e) stuck.event(String(e.stage ?? "unknown"), Date.now());
-    if (e?.type === "session.started" && typeof e.data.pgid === "number") sessionGroups.add(e.data.pgid); if (e?.type === "receipt.sealed") sealed = e.data;
+    if (e?.type === "session.started" && typeof e.data.pgid === "number") sessionGroups.add(e.data.pgid); if (e?.type === "receipt.sealed") { sealed = e.data; log.checkpoint(e.data["receipt_sha256"]); }
     if (e?.type === "variant" && e.data.intent_confirm === true && workerEnv.LOKI_INTENT_TTY === "1") {
       void askIntent(String(e.data.card ?? ""), join(opts.repoDir, ".loki", "runs", opts.runId));
     }
@@ -220,7 +222,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   }
   if (opts.status) { const st = await opts.status({ prUrl, outcome: String(outcome), reason: statusReason }); log.append("issue.commented", null, { argv: st?.argv ?? [], ok: st?.ok ?? false, ...(st?.skipped ? { skipped: true } : {}), reason: statusReason ?? String(outcome) }); }
   log.append("run.completed", null, { verdict, ...(cancelled ? { cancelled: true, signal: cancelled, outcome: "CANCELLED" } : {}), pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: wallS, pre_model: preModelTiming(allEvents, t0) }); // D61-1
-  log.sealLog(); recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "failed", failedCheckNames(folded.stages["verify"]?.data.checks, folded.stages["verify"]?.data.pre_red_checks as string[] | undefined), cleanTreeId(opts.repoDir)); // Q17-03/FC-LINT-PRE-RED: real failing checks minus base-red, read by decideRecovery so a flaky check does not mask them
+  log.sealLog(); log.state("closed", outcome); recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "failed", failedCheckNames(folded.stages["verify"]?.data.checks, folded.stages["verify"]?.data.pre_red_checks as string[] | undefined), cleanTreeId(opts.repoDir)); // Q17-03/FC-LINT-PRE-RED: real failing checks minus base-red, read by decideRecovery so a flaky check does not mask them
   const stages = allEvents.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number").map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })), // E-48 notify: Slack when configured, no-op otherwise
     pc = partialCost(allEvents, log.tampered, lokiRoot),
     summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, outcome, notProven, flaky: recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "flaky", folded.stages["verify"]?.data.flaky, cleanTreeId(opts.repoDir)), wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: summaryTokens(folded, allEvents.some((e) => e.type === "cost")), ...summaryCache(allEvents, log.tampered), partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total, stageShares: log.tampered ? null : stageShareText(allEvents), capUsd: Number(opts.started?.["max_cost_usd"]) > 0 ? Number(opts.started?.["max_cost_usd"]) : undefined } };

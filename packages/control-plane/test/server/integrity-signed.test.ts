@@ -9,7 +9,9 @@ import { kidOf as engineKidOf } from "../../../../loki-ts/src/engine10/stages/se
 import { computeReceiptHash, verifyReceipt } from "../../../../loki-ts/src/engine10/verify_cmd.ts";
 import { redactDeep } from "../../../../loki-ts/src/util/redact.ts";
 import { redactEvent, shipRun } from "../../src/shipper/ship.ts";
-import { SupervisorLog } from "../../../../loki-ts/src/engine10/supervisor.ts";
+import { runSupervisor, SupervisorLog } from "../../../../loki-ts/src/engine10/supervisor.ts";
+import { receiptSha256, signReceipt } from "../../../../loki-ts/src/engine10/stages/seal.ts";
+import { execFileSync } from "node:child_process";
 import { createApp } from "../../src/server/app.ts";
 import { effectiveVerdict, kidOf, UNCHECKED_SIG, verifyRunIntegrity } from "../../src/server/integrity.ts";
 
@@ -83,10 +85,10 @@ test("signed parity (B2): a log.sealed kid that differs from the receipt kid is 
   expect(verifyRunIntegrity(b.events, { pubkeyFor: keys }).tampered).toBe(true);
 });
 
-test("signed parity (B1): a verdict appended after log.sealed; the engine authenticates only the prefix, the CP is stricter and flags it", async () => {
+test("signed parity (B1): a verdict appended after log.sealed is TAMPERED in both the engine and the CP", async () => {
   const b = honest("e10-sp3", "FAILED");
   const appended = [...b.events, env("e10-sp3", 4, "run.completed", { verdict: "VERIFIED", not_proven: [] })];
-  expect((await engineVerdict(b, appended)).verdict).toBe("VERIFIED"); // engine ignores unauthenticated trailing lines
+  expect((await engineVerdict(b, appended)).verdict).toBe("TAMPERED"); // a log.sealed before the last run.completed means that run.completed was altered (SB-04)
   expect(verifyRunIntegrity(appended, { pubkeyFor: keys }).tampered).toBe(true);
 });
 
@@ -464,4 +466,57 @@ test("Q17-05b round 4: adjacent tokens that a single redaction pass leaves half-
     expect(JSON.stringify(got!.detail)).not.toContain(hex);
     expect([note, got!.detail.tampered, got!.detail.effective_verdict, got!.detail.integrity_reasons ?? []]).toEqual([note, false, "VERIFIED", []]);
   }
+}, 120000);
+
+// SB-04 r3: one checkpoint contract. The log a REAL runSupervisor writes (receipt.sealed, checkpoint log.sealed, run.completed, end log.sealed) must read honest in the CP.
+async function realSupervisedRun(id: string): Promise<{ dir: string; ev: string; app: ReturnType<typeof createApp>["app"] }> {
+  const saved = { k: process.env["LOKI_RECEIPT_SIGNING_KEY"], p: process.env["LOKI_CP_RECEIPT_PUBKEYS"] };
+  process.env["LOKI_RECEIPT_SIGNING_KEY"] = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+  process.env["LOKI_CP_RECEIPT_PUBKEYS"] = pemPath;
+  try {
+    const repo = mkdtempSync(join(tmp, "real-")), dir = join(repo, ".loki", "runs", id), ev = join(dir, "events.jsonl");
+    mkdirSync(dir, { recursive: true });
+    const g = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd: repo, encoding: "utf8" }).trim();
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo }); g("commit", "-q", "--allow-empty", "-m", "b"); g("branch", `loki/${id}`);
+    const head = g("rev-parse", "HEAD"), pre = new SupervisorLog(ev, id);
+    pre.append("run.started", null, { provider: "claude" }); pre.append("stage.completed", "intake", { base_sha: head, task: "t" });
+    const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", head_sha: head, not_proven: [], events_sha256: createHash("sha256").update(readFileSync(ev)).digest("hex"), time: { wall_s: 0, stages: {} }, log_seal: true, checks: [] };
+    const hash = receiptSha256(body as never);
+    writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signReceipt(id, hash) }, null, 2));
+    const sealed = JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { receipt_sha256: hash, signed: true, kid: KID, verdict: "VERIFIED", not_proven: [] } });
+    const code = `console.log(${JSON.stringify(sealed)}); setTimeout(() => {}, 300);`;
+    await runSupervisor({ runId: id, repoDir: repo, env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true", LOKI_CONTROL: "0" }, workerArgv: [process.execPath, "-e", code], capS: 30 } as never);
+    const { app } = createApp({ dbPath: ":memory:" });
+    return { dir, ev, app };
+  } finally {
+    if (saved.k === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY"]; else process.env["LOKI_RECEIPT_SIGNING_KEY"] = saved.k;
+    if (saved.p === undefined) delete process.env["LOKI_CP_RECEIPT_PUBKEYS"]; else process.env["LOKI_CP_RECEIPT_PUBKEYS"] = saved.p;
+  }
+}
+const shipReal = async (r: { dir: string; app: ReturnType<typeof createApp>["app"] }, id: string) => {
+  process.env["LOKI_CP_RECEIPT_PUBKEYS"] = pemPath;
+  await shipRun({ runDir: r.dir, url: "http://cp", source: SRC, fetchImpl: ((u: string, init: RequestInit) => r.app.request(new URL(u).pathname, init)) as unknown as typeof fetch });
+  return (await (await r.app.request(`/v1/runs/${SRC}/${id}`)).json()) as any;
+};
+
+test("SB-04 r3: a real runSupervisor honest run is not tampered, has no integrity reasons, and its full run is folded", async () => {
+  const r = await realSupervisedRun("e10-r3-honest");
+  const types = readFileSync(r.ev, "utf8").trim().split("\n").map((l) => JSON.parse(l).type);
+  expect(types.slice(types.indexOf("receipt.sealed"))).toEqual(["receipt.sealed", "log.sealed", "run.completed", "log.sealed"]);
+  const detail = await shipReal(r, "e10-r3-honest");
+  expect([detail.tampered, detail.integrity_reasons ?? []]).toEqual([false, []]);
+  expect(detail.effective_verdict).toBe("VERIFIED");
+  expect([detail.status, detail.verdict, typeof detail.ended_at]).toEqual(["completed", "VERIFIED", "string"]); // the fold covers run.completed, past the checkpoint
+});
+
+test("SB-04 r3: a forged event after the checkpoint is still flagged, both after the end seal and in the middle of the log", async () => {
+  const forgedLine = (n: number, run: string, type: string, data: object) => JSON.stringify({ v: 1, seq: n, ts: "2026-10-29T00:00:00.000Z", run, type, stage: "verify", data });
+  const a = await realSupervisedRun("e10-r3-forge-end");
+  const la = readFileSync(a.ev, "utf8").trim().split("\n");
+  writeFileSync(a.ev, la.join("\n") + "\n" + forgedLine(la.length, "e10-r3-forge-end", "run.completed", { verdict: "VERIFIED" }) + "\n");
+  expect((await shipReal(a, "e10-r3-forge-end")).tampered).toBe(true);
+  const b = await realSupervisedRun("e10-r3-forge-mid");
+  const lb = readFileSync(b.ev, "utf8").trim().split("\n"), ck = lb.findIndex((l) => JSON.parse(l).type === "log.sealed");
+  writeFileSync(b.ev, [...lb.slice(0, ck + 1), forgedLine(ck + 1, "e10-r3-forge-mid", "stage.completed", { forged: true }), ...lb.slice(ck + 1)].join("\n") + "\n");
+  expect((await shipReal(b, "e10-r3-forge-mid")).tampered).toBe(true);
 }, 120000);

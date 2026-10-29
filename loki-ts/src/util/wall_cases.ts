@@ -2,9 +2,10 @@
 // schema-checked JSON test cases instead of free-form test code; this module validates them and renders the repo's native
 // runner file (the repo default Python runner, or unittest when the repo uses it). Malformed JSON or a schema violation is refused with a named reason.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import type { RunnerName } from "../engine10/types.ts";
+import { DEP_DIRS } from "./mutation_proof.ts";
 import { guessRunner } from "../engine10/testmap.ts";
 import { plainTestEnv, resolveTool } from "./check_result.ts";
 
@@ -183,10 +184,28 @@ function unsafeCode(cases: Case[], runner: RunnerName, repoDir: string): string 
   return bit >= 0 ? `wall_cases_unsafe_code: case ${bit}: the rendered test file ${b[bit]}` : null;
 }
 
+/** True when the file is UTF-8 text without NUL bytes; compiled or binary output is never a Wall test. */
+function isTextFile(p: string): boolean {
+  try { const b = readFileSync(p); if (b.includes(0)) return false; new TextDecoder("utf-8", { fatal: true }).decode(b); return true; } catch { return false; }
+}
+
+/** The author may write tests/loki_wall_x.py; the collector reads only top-level names. Move each regular nested loki_wall_* file written inside `cwd` to the top by basename (only a file a runner of this repo can run, and only UTF-8 text, so compiled output such as __pycache__/*.pyc is never taken; a top-level name wins, a symlink or a symlinked directory is never followed, a top-level symlink or directory named loki_wall_* is removed so only regular files are collected, and dependency and dot directories are not entered), so the existing holdout, base run and runner handling apply to it unchanged. */
+export function hoistNestedWall(cwd: string, runners: RunnerName[], dir = cwd): void {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name), wall = e.name.startsWith("loki_wall_");
+    if (e.isDirectory()) {
+      if (e.name.startsWith(".") || e.name === "__pycache__" || DEP_DIRS.includes(e.name)) continue;
+      hoistNestedWall(cwd, runners, p);
+      if (dir === cwd && wall) rmSync(p, { recursive: true, force: true });
+    } else if (dir === cwd) { if (wall && !e.isFile()) rmSync(p, { force: true }); }
+    else if (e.isFile() && wall && !existsSync(join(cwd, e.name)) && guessRunner(e.name, runners, relative(cwd, p).split(sep).join("/")) && isTextFile(p)) renameSync(p, join(cwd, e.name));
+  }
+}
+
 /** After the author session in `cwd`: null when structured authoring does not apply or succeeded (one rendered file per case now sits in cwd, the JSON is removed); else the named refusal. Never falls back to free-form code. */
 export function ingestWallCases(cwd: string, runners: RunnerName[], repoDir: string, env: NodeJS.ProcessEnv = process.env): string | null {
   const runner = wallCasesRunner(runners, env);
-  if (!runner) return null;
+  if (!runner) { hoistNestedWall(cwd, runners); return null; }
   const stray = readdirSync(cwd).filter((f) => f.startsWith("loki_wall_") && f !== WALL_CASES_JSON);
   if (stray.length > 0) return `wall_cases_free_form_output: the author wrote ${stray.join(", ")} instead of ${WALL_CASES_JSON}`;
   const src = join(cwd, WALL_CASES_JSON);

@@ -2,7 +2,7 @@
 // Wall check: verify passes on the combined receipt; tampering one unit's events fails it.
 // The only spawn is git through the sh helper, which passes an explicit env.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { sealedLog } from "./log_fixture.ts";
@@ -334,6 +334,7 @@ describe("D61-13 single run is unchanged", () => {
     expect(Object.keys(r["toolchain"]).sort()).toEqual(["bun", "git", "node", "python3"]);
     expect(Object.values(r["toolchain"]).every((v) => v === null || typeof v === "string")).toBe(true);
     expect(collectToolchain(() => null).git).toBeNull(); // absent tool is null
+    const logPath = join(ctx.runDir, "events.jsonl"), sealTimeLog = existsSync(logPath) ? readFileSync(logPath) : Buffer.alloc(0); // the log as the seal stage bound the receipt to it
     sealedLog(ctx.runDir, String(r["receipt_sha256"]));
     expect((await verifyReceipt(p)).verdict).toBe("VERIFIED");
     // editing the toolchain without re-hashing is caught
@@ -346,6 +347,7 @@ describe("D61-13 single run is unchanged", () => {
     r["receipt_sha256"] = receiptSha256(r as never);
     r["verification"] = signReceipt(String(r["run_id"]), r["receipt_sha256"]);
     writeFileSync(p, JSON.stringify(r, null, 2) + "\n");
+    writeFileSync(logPath, sealTimeLog); // a second receipt.sealed on one log is TAMPERED, so the re-signed receipt is sealed onto the log it is bound to
     sealedLog(ctx.runDir, String(r["receipt_sha256"]));
     expect((await verifyReceipt(p)).verdict).toBe("VERIFIED");
     expect(raw.length).toBeGreaterThan(0);
