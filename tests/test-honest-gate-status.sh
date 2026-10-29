@@ -359,6 +359,17 @@ if command -v bun >/dev/null 2>&1; then
     else
         bad "skill checks failing case was ${_LOKI_SKILL_CHECKS_STATUS:-missing} rc=$SKRC"
     fi
+    # Absent subcommand: a cli.ts that exits 2 (as a stale build without
+    # skill-checks does) must be recorded not_run, never pass, and not block.
+    printf 'process.exit(2);\n' > "$WORK/stub-cli.ts"
+    printf -- '---\nname: probe\nchecks:\n  - exit 0\n---\n' > "$SK/.claude/skills/probe/SKILL.md"
+    LOKI_TS_ENTRY="$WORK/stub-cli.ts" enforce_skill_checks && SKRC=0 || SKRC=$?
+    if [ "$SKRC" -eq 0 ] && [ "${_LOKI_SKILL_CHECKS_STATUS:-}" = "not_run" ] \
+       && [ "${_LOKI_SKILL_CHECKS_REASON:-}" = "subcommand_absent" ]; then
+        ok "skill checks gate records not_run, never pass, when the subcommand is absent (rc 2)"
+    else
+        bad "skill checks absent-subcommand case was ${_LOKI_SKILL_CHECKS_STATUS:-missing}/${_LOKI_SKILL_CHECKS_REASON:-missing} rc=$SKRC"
+    fi
 else
     ok "skill checks cases skipped: bun not installed"
 fi
