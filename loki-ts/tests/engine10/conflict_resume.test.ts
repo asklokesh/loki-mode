@@ -1,5 +1,11 @@
 // FC-19: one LOKI_SPEC_CONFLICT correction round; no wording of the reason is inspected.
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fixStage } from "../../src/engine10/stages/fix.ts";
+import { verdictOf } from "../../src/engine10/stages/seal.ts";
+import { wallAnchor, wallDropped } from "../../src/util/wall_owned.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
 import { CONFLICT_CORRECTION } from "../../src/util/conflict_resume.ts";
 import type { RunContext, SessionResult, SessionRunOptions, SessionRunner } from "../../src/engine10/types.ts";
@@ -70,5 +76,76 @@ describe("FC-19 conflict resume", () => {
         expect(r.data.duration_s).toBe(3);
       });
     }
+  });
+});
+
+// FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT: a conflict anchored on a Wall file is Loki's defect.
+describe("Wall-anchored conflict is a harness defect", () => {
+  const WALL = "tests/loki_wall_units.test.ts", ANCHORED = `${WALL}:93 expects 4 but the task says the total is 5`, REAL = "the task says keep the REST API unchanged and also replace it with GraphQL (src/api.ts:93)";
+  const dirs: string[] = [];
+  afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+  class Wallish implements SessionRunner {
+    calls: SessionRunOptions[] = []; n = 0;
+    constructor(private impl: SessionResult[], private rewrite: string | null = "// fixed\n") {}
+    async run(o: SessionRunOptions): Promise<SessionResult> {
+      this.calls.push(o);
+      if (o.stage === "wall") { if (this.rewrite !== null) writeFileSync(join(o.cwd!, "loki_wall_units.test.ts"), this.rewrite, "utf8"); return done; }
+      return this.impl[Math.min(this.n++, this.impl.length - 1)]!;
+    }
+  }
+  function setup(s: SessionRunner) {
+    const repoDir = mkdtempSync(join(tmpdir(), "loki-e15-wallfc-")); dirs.push(repoDir);
+    mkdirSync(join(repoDir, "tests"), { recursive: true });
+    const path = join(repoDir, WALL); writeFileSync(path, "// original\n", "utf8");
+    const wall = { readOnlyFiles: [{ path, content: "// original\n" }], files: [{ path, sha256: "x" }] };
+    const ctx = { ...ctxOf(s), repoDir, runDir: join(repoDir, ".loki"), outputs: () => ({ wall }) } as unknown as RunContext;
+    return { ctx, wall, path };
+  }
+  test("wallAnchor reads path:line only, and only for Wall files", () => {
+    expect(wallAnchor(ANCHORED, [WALL])).toEqual({ file: WALL, line: 93 });
+    expect(wallAnchor(`see loki_wall_units.test.ts:12`, [WALL])).toEqual({ file: WALL, line: 12 });
+    expect(wallAnchor(REAL, [WALL])).toBeNull();
+    expect(wallAnchor(`the wall file ${WALL} is wrong`, [WALL])).toBeNull();
+  });
+  test("a conflict naming the Wall file is not a spec conflict; the Wall is re-authored once and the run continues", async () => {
+    const s = new Wallish([conflict(ANCHORED), conflict(ANCHORED), done]); const { ctx, path } = setup(s);
+    const r = await implementStage.run(ctx, new AbortController().signal);
+    expect(r.data.exit).toBe("done");
+    expect(r.data.spec_conflict_reason).toBeNull();
+    expect((r.data.wall_defect as { action: string }).action).toBe("reauthored");
+    expect(s.calls.filter((c) => c.stage === "wall").length).toBe(1);
+    expect(readFileSync(path, "utf8")).toBe("// fixed\n");
+  });
+  test("a persistent Wall-anchored conflict drops the assertion, never re-authors twice, and caps the verdict at PARTIAL", async () => {
+    const s = new Wallish([conflict(ANCHORED)]); const { ctx, wall, path } = setup(s);
+    const r = await implementStage.run(ctx, new AbortController().signal);
+    expect(r.data.exit).toBe("done");
+    expect(s.calls.filter((c) => c.stage === "wall").length).toBe(1);
+    expect((r.data.wall_defect as { action: string }).action).toBe("dropped");
+    expect(existsSync(path)).toBe(false); expect(wall.readOnlyFiles.length).toBe(0); expect(wall.files.length).toBe(0);
+    const o = { implement: { exit: "done", wall_defect: r.data.wall_defect }, intake: {} } as never;
+    expect(wallDropped(o)[0]).toContain(`${WALL}:93`);
+    const pass = { name: "vitest:a", cmd: "x", result: "pass" as const, duration_s: 1 };
+    expect(verdictOf(o, [pass], false, false, false, true)).toBe("PARTIAL");
+    expect(verdictOf({ implement: { exit: "done" }, intake: {} } as never, [pass], false, false, false, true)).toBe("VERIFIED");
+  });
+  test("control: a real user contradiction not anchored on the Wall stays a spec conflict, resumed once, no Wall session", async () => {
+    const s = new Wallish([conflict(REAL)]); const { ctx } = setup(s);
+    const r = await implementStage.run(ctx, new AbortController().signal);
+    expect(r.data.exit).toBe("spec_conflict");
+    expect(r.data.spec_conflict_reason).toBe(REAL);
+    expect(r.data.wall_defect).toBeUndefined();
+    expect(s.calls.length).toBe(2);
+    expect(s.calls.some((c) => c.stage === "wall")).toBe(false);
+  });
+  test("fix leaves Wall files read-only after the pass", async () => {
+    const { path, wall, ctx: base } = setup(new Wallish([done]));
+    const sess: SessionRunner = { async run() { writeFileSync(path, "// tampered\n", "utf8"); return done; } };
+    const ctx = { ...base, sessions: sess } as unknown as RunContext;
+    const r = await fixStage.run(ctx, new AbortController().signal);
+    expect(r.status).toBe("completed");
+    expect(readFileSync(path, "utf8")).toBe("// original\n");
+    expect(r.data.tests_reverted).toEqual([path]);
+    expect(wall.readOnlyFiles.length).toBe(1);
   });
 });

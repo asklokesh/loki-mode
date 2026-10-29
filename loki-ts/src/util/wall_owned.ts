@@ -26,3 +26,22 @@ export function wallOwnedFailure(raw: string, cwd: string, repoDir: string, wall
   const locs = failingLocations(raw, cwd, repoDir);
   return !!locs && locs.length > 0 && locs.every((l) => wall.has(l));
 }
+
+// FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT: a spec conflict whose reason cites a Wall file as path:line is a harness defect (Loki wrote that test), never the user's contradiction.
+// No wording is judged; only whether a cited location is a Wall file. A bare mention without a line is not an anchor.
+export interface WallDefect { file: string; line: number; reason: string; action: "reauthored" | "dropped"; }
+export const WALL_DROPPED = "Wall assertion dropped (harness-owned conflict persisted after one re-author)";
+
+/** The Wall file (repo-relative) and line a conflict reason cites as path:line, else null. */
+export function wallAnchor(reason: string, wall: readonly string[]): { file: string; line: number } | null {
+  for (const m of reason.matchAll(/([\w@./-]+\.[A-Za-z]{1,5}):(\d+)/g)) {
+    const p = m[1]!.replace(/^\.\//, ""), file = wall.find((w) => w === p || w.endsWith(`/${p}`) || p.endsWith(`/${w}`));
+    if (file) return { file, line: Number(m[2]) };
+  }
+  return null;
+}
+
+/** NOT PROVEN lines for every dropped Wall assertion recorded by implement or fix; a non-empty result caps the verdict at PARTIAL. */
+export function wallDropped(o: Record<string, Record<string, unknown> | undefined>): string[] {
+  return [...new Set([o.implement, o.fix].flatMap((s) => { const d = s?.wall_defect as WallDefect | undefined; return d?.action === "dropped" ? [`${WALL_DROPPED}: ${d.file}:${d.line}: ${d.reason}`] : []; }))];
+}
