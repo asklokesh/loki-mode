@@ -84,8 +84,9 @@ export async function runEngine10(args: string[], load: Loader = defaultLoader):
     process.stderr.write(`engine10: ${r.module} does not export ${r.fn}\n`);
     return 2;
   }
+  const startedMs = Date.now();
   const code = await (fn as (a: string[]) => unknown)(r.args);
   const rc = typeof code === "number" ? code : 0;
-  if (r.module === "supervisor.ts" && !r.args.some((a) => a === "--help" || a === "-h")) await (await import("../util/funnel.ts")).funnelAfterRun(rc, process.cwd()); // TEN-UX-03
+  if (r.module === "supervisor.ts" && !r.args.some((a) => a === "--help" || a === "-h")) await (await import("../util/funnel.ts")).funnelAfterRun(rc, process.cwd(), startedMs, r.args); // TEN-UX-03, AN-05
   return rc;
 }

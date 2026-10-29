@@ -102,6 +102,8 @@ paths, keys, or repo names -- only anonymous diagnostics.
   | `first_start_attempted` | first `loki start`, strict opt-in (section 4) | `entry` (a known loki subcommand, else `other`) |
   | `first_run_blocked` | first run stopped, strict opt-in (section 5) | `blocker` (fixed enum, section 5) |
   | `seal_hook_decision` | the loki-seal Stop hook decides, strict opt-in (section 4) | `decision` (allow, block), `reason` (none, tests_failed, tests_weakened, no_tests, contract_unverified, released, error) |
+  | `run_started` | a default-route run ends, strict opt-in (section 4) | `engine` (engine10) |
+  | `run_finished` | a default-route run ends, strict opt-in (section 4) | `engine`, `verdict` (VERIFIED, PARTIAL, ALREADY_SATISFIED, SPEC_CONFLICT, FAILED, INTERRUPTED, BLOCKED), `duration_s`, `stage_s_<stage>` (seconds per engine stage), `fix_rounds` (count), `exit_code` (0 to 255) |
   | `build_verified` | a build finishes, strict opt-in (section 4) | see section 4 |
 
   The `install` event of older versions is now `installed`. The npm postinstall

@@ -432,3 +432,36 @@ loki_emit_build_verified_enum() {
     loki_telemetry "build_verified" "headline=VERIFIED" "route=engine10"
     return 0
 }
+
+# loki_emit_run_started: one run_started event for a default-route (engine10)
+# run. Fixed engine value, no caller input. Same strict analytics gate as the
+# other run-outcome events, so every existing opt-out wins.
+loki_emit_run_started() {
+    _loki_analytics_enabled || return 0
+    loki_telemetry "run_started" "engine=engine10"
+    return 0
+}
+
+# loki_emit_run_finished <verdict> [key=value...]: one run_finished event.
+# Enum and integer args only: a verdict outside the fixed list sends nothing,
+# and a pair is forwarded only when its key is duration_s, fix_rounds, exit_code
+# or stage_s_<engine stage> AND its value is a plain non-negative integer. Never
+# a path, repo, branch, prompt or error text; the schema re-filters at send.
+loki_emit_run_finished() {
+    _loki_analytics_enabled || return 0
+    local _verdict="${1:-}"; shift
+    case "$_verdict" in VERIFIED|PARTIAL|ALREADY_SATISFIED|SPEC_CONFLICT|FAILED|INTERRUPTED|BLOCKED) ;; *) return 0 ;; esac
+    local _args=("engine=engine10" "verdict=${_verdict}") _kv _k _v
+    for _kv in "$@"; do
+        _k="${_kv%%=*}"; _v="${_kv#*=}"
+        case "$_k" in
+            duration_s|fix_rounds|exit_code|stage_s_intake|stage_s_plan|stage_s_wall|stage_s_implement|stage_s_verify|stage_s_fix|stage_s_commit|stage_s_seal|stage_s_pr|stage_s_deep) ;;
+            *) continue ;;
+        esac
+        case "$_v" in ''|*[!0-9]*) continue ;; esac
+        [ "${#_v}" -le 9 ] || continue
+        _args+=("${_k}=${_v}")
+    done
+    loki_telemetry "run_finished" "${_args[@]}"
+    return 0
+}

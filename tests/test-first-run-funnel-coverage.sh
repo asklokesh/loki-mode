@@ -193,7 +193,7 @@ RECORDER
     done
     rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
     _fun 1
-    if [ ! -s "$_W/payload.log" ]; then ok "exit 1 with no noted refusal (untracked-only tree, ordinary failed run) records nothing"; else bad "unrefused exit 1 recorded: $(cat "$_W/payload.log")"; fi
+    if ! grep -q 'first_run_blocked\|build_verified' "$_W/payload.log"; then ok "exit 1 with no noted refusal (untracked-only tree, ordinary failed run) records no blocked or verified event"; else bad "unrefused exit 1 recorded: $(cat "$_W/payload.log")"; fi
     _fun 2
     if grep -q '"blocker": *"other"' "$_W/payload.log"; then ok "exit 2 with no noted refusal is the coarse other"; else bad "exit 2 without a note: $(cat "$_W/payload.log")"; fi
     rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
@@ -224,6 +224,68 @@ for line in open(sys.argv[1]):
     else
         bad "build_verified payload keys differ: $_keys"
     fi
+    # --- AN-05: run_started and run_finished from the supervisor exit path ---
+    _rf_count() { python3 -c '
+import json, sys
+n = 0
+for line in open(sys.argv[1]):
+    if json.loads(line).get("event") == sys.argv[2]:
+        n += 1
+print(n)' "$_W/payload.log" "$1" 2>/dev/null; }
+    _rf_prop() { python3 -c '
+import json, sys
+for line in open(sys.argv[1]):
+    d = json.loads(line)
+    if d.get("event") == "run_finished":
+        print(d["properties"].get(sys.argv[2], ""))' "$_W/payload.log" "$1" 2>/dev/null; }
+    _receipt() { # $1 verdict; $2 optional extra json members
+        rm -rf "${_W:?}/proj/.loki"; mkdir -p "$_W/proj/.loki/runs/e10-20260101T000000-aaaa"
+        printf '{"verdict":"%s","time":{"wall_s":40,"total_s":61.4,"stages":{"wall":7,"implement":30.2,"fix":9}},"cost":{"fix_rounds":[{"round":1},{"round":2}]}%s}\n' "$1" "${2:-}" > "$_W/proj/.loki/runs/e10-20260101T000000-aaaa/receipt.json"
+    }
+    for _v in VERIFIED PARTIAL ALREADY_SATISFIED SPEC_CONFLICT FAILED; do
+        rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+        _receipt "$_v"
+        _fun 1
+        if [ "$(_rf_count run_finished)" = "1" ] && [ "$(_rf_prop verdict)" = "$_v" ]; then ok "receipt verdict $_v yields exactly one run_finished with that verdict"; else bad "verdict $_v: $(cat "$_W/payload.log")"; fi
+    done
+    if [ "$(_rf_count run_started)" = "1" ] && [ "$(_rf_prop duration_s)" = "61" ] && [ "$(_rf_prop stage_s_implement)" = "30" ] && [ "$(_rf_prop fix_rounds)" = "2" ] && [ "$(_rf_prop exit_code)" = "1" ]; then
+        ok "run_finished carries duration_s, stage_s_<stage>, fix_rounds and exit_code from the receipt allowlist"
+    else
+        bad "run_finished fields differ: $(cat "$_W/payload.log")"
+    fi
+    rm -rf "${_W:?}/home" "${_W:?}/proj/.loki"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+    _fun 1
+    if [ "$(_rf_count run_finished)" = "1" ] && [ "$(_rf_prop verdict)" = "INTERRUPTED" ]; then ok "no receipt yields INTERRUPTED"; else bad "no receipt: $(cat "$_W/payload.log")"; fi
+    rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+    _fun 4
+    if [ "$(_rf_prop verdict)" = "BLOCKED" ]; then ok "no receipt with the engine's blocked exit code 4 yields BLOCKED"; else bad "blocked: $(cat "$_W/payload.log")"; fi
+    rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+    _receipt VERIFIED ',"repo":"/Users/someone/secret-repo-xyzzy","spec_conflict_reason":"secret-reason-xyzzy","time2":{"path":"/opt/leak-path"}'
+    _fun 0
+    if [ "$(_rf_count run_finished)" = "1" ] && ! grep -q 'xyzzy\|leak-path\|/Users/someone' "$_W/payload.log"; then ok "an injected extra receipt key (a path or text) never appears in the payload"; else bad "injected receipt key leaked: $(cat "$_W/payload.log")"; fi
+    _rf_keys="$(python3 -c '
+import json, sys
+for line in open(sys.argv[1]):
+    d = json.loads(line)
+    if d.get("event") == "run_finished":
+        print(",".join(sorted(d["properties"])))' "$_W/payload.log" 2>/dev/null)"
+    if [ "$_rf_keys" = "arch,channel,duration_s,engine,exit_code,fix_rounds,introspective,os_family,stage_s_fix,stage_s_implement,stage_s_wall,traffic,verdict,version" ]; then ok "run_finished payload keys are exactly the allowlist"; else bad "run_finished keys: $_rf_keys"; fi
+    rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+    _receipt "/Users/someone/secret-verdict-xyzzy"
+    _fun 1
+    if [ "$(_rf_count run_finished)" = "1" ] && [ "$(_rf_prop verdict)" = "INTERRUPTED" ] && ! grep -q 'xyzzy' "$_W/payload.log"; then ok "a receipt verdict outside the enum is reported as INTERRUPTED, never as the receipt text"; else bad "out-of-enum verdict: $(cat "$_W/payload.log")"; fi
+    rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+    env PATH="$_W:$PATH" HOME="$_W/home" LOKI_TEST_PAYLOAD="$_W/payload.log" LOKI_ANALYTICS=on LOKI_TELEMETRY=on \
+        bun -e "const f = await import('$REPO_ROOT/loki-ts/src/util/funnel.ts'); await f.funnelAfterRun(0, process.cwd(), undefined, ['--dry-run', 'task'])" >/dev/null 2>&1
+    sleep 1.5
+    if [ "$(_rf_count run_started)" = "0" ] && [ "$(_rf_count run_finished)" = "0" ]; then ok "--dry-run emits no run_started or run_finished"; else bad "--dry-run emitted: $(cat "$_W/payload.log")"; fi
+    for _o in DO_NOT_TRACK=1 LOKI_TELEMETRY_DISABLED=true LOKI_ANALYTICS=off; do
+        rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+        _receipt VERIFIED
+        _fun 0 "$_o"
+        if [ ! -s "$_W/payload.log" ]; then ok "$_o emits no run events"; else bad "$_o still emitted: $(cat "$_W/payload.log")"; fi
+    done
+    rm -rf "${_W:?}/proj/.loki"
     cd "$REPO_ROOT" || exit 1
 else
     ok "bun absent; live funnel run skipped"
