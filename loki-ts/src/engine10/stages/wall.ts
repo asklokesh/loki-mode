@@ -10,11 +10,11 @@ import { unitSpec } from "../../features/speed/unit_mode.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
-import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallModel } from "../sizing.ts";
+import { hasRelevantTests, loadRepoMap, namedFiles, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallModel } from "../sizing.ts";
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { removeHoldout, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
-import { baseJobs, classify, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
+import { baseJobs, classify, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
 const WALL_PREFIX = "loki_wall_";
@@ -115,13 +115,13 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   // E-64: skip Wall too on the lean path (plan.ts, which always runs, logs this same decision on "variant"). LOKI_E10_PLAN=always forces a plan even for a small task, so the lean path never applies: a forced plan still gets the
   // Wall's independent acceptance tests. An external diff (CW-12) never takes the lean skip: the Wall is its only independent proof.
   const repoMap = loadRepoMap(repomapRef);
-  const runners: RunnerName[] = testMap ? harnessRunners(testMap.runners, repoMap?.files ?? []) : [];
+  const focus = namedFiles(task, repoMap), runners: RunnerName[] = testMap ? harnessRunners(testMap.runners, repoMap?.files ?? [], process.env, focus) : [];
   const sz = sizeTask(task, repoMap, testMap);
   if (!ctx.externalPatch && planMode() !== "always" && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean") {
     return done({ status: "skipped", data: { size: sz.size }, reason: "small task with a relevant test: cascade skips Wall" });
   }
 
-  if (testMap && runners.length === 0 && !(repoMap?.files ?? []).some((p) => /\.(py|go)$/.test(p))) return done({ status: "skipped", data: { size: sz.size, files: [], no_runner: true }, reason: "no runnable test command detected: the Wall cannot write a runnable check" }); // FC-17: decided before any model session
+  if (testMap && runners.length === 0 && !(repoMap?.files ?? []).some((p) => /\.(py|go)$/.test(p))) return done({ status: "skipped", data: { size: sz.size, files: [], no_runner: true, skip_code: harnessSkipCode() }, reason: "no runnable test command detected: the Wall cannot write a runnable check" }); // FC-17: decided before any model session
 
   // TEN-COST-09: a pytest-only Wall under the system interpreter is classified not_run (classify, notRunReason), so the author session would be paid for and discarded. Skip it before any session ONLY when the holdout is off: with it on, held files never go through the base-run classify and verify runs them on the system interpreter, which drives fix rounds and the seal, so the Wall must still run. The held count is unknown before authoring, so ratio 0 is the only provable zero. Seal reads not_proven and the verdict can never be VERIFIED by this Wall.
   if (testMap && (runners.length === 0 ? (repoMap?.files ?? []).some((p) => p.endsWith(".py")) && !(repoMap?.files ?? []).some((p) => p.endsWith(".go")) : runners.every((r) => r === "pytest")) && projectInterpreter(ctx.repoDir) === "system" && wallHoldoutRatio() === 0) return done({ status: "skipped", data: { size: sz.size, files: [], no_interpreter: true, not_proven: ["Wall skipped: no project test interpreter"] }, reason: "Wall skipped: no project test interpreter" });

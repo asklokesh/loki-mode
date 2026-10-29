@@ -37,15 +37,15 @@ function pytestPython(root: string): string {
   }
   return "python";
 }
-/** No detected runner and no Python/Go test suite (docs, plugins, config): Loki's own bun runs the Wall's bun:test file, in the Wall and in verify. Off with LOKI_WALL_HARNESS_RUNNER=0 or no bun on PATH (FC-17 skip, as before). */
-export const harnessRunners = (runners: RunnerName[], files: readonly string[] = [], env: NodeJS.ProcessEnv = process.env): RunnerName[] => {
+/** No detected runner and no Python/Go test suite (docs, plugins, config): Loki's own bun runs the Wall's bun:test file, in the Wall and in verify. Off with LOKI_WALL_HARNESS_RUNNER=0 or no bun on PATH, then the repo's own toolchain (RX-1); `focus` (changed or sealed files) picks the toolchain in a polyglot repo. */
+export const harnessRunners = (runners: RunnerName[], files: readonly string[] = [], env: NodeJS.ProcessEnv = process.env, focus: readonly string[] = []): RunnerName[] => {
   if (runners.length > 0 || files.some((f) => PY_TEST_RE.test(basename(f)) || GO_TEST_RE.test(f))) return runners;
   if (env.LOKI_WALL_HARNESS_RUNNER !== "0" && Bun.which("bun", { PATH: env.PATH ?? "" })) return ["bun"];
-  return toolchainRunner(files); // RX-1: no bun either: the repo's own toolchain runs the Wall instead of skipping it
+  return toolchainRunner(files, focus); // RX-1: no bun either: the repo's own toolchain runs the Wall instead of skipping it
 };
-/** RX-1: manifest or source extension -> the runner its own language toolchain ships (COMMANDS holds the command). First match wins. */
-const TOOLCHAINS: readonly (readonly [RegExp, RunnerName])[] = [[/(?:^|\/)package\.json$/, "node"], [/(?:^|\/)go\.mod$/, "go"], [/(?:^|\/)Cargo\.toml$/, "cargo"], [/(?:^|\/)(?:pyproject\.toml|setup\.py|requirements\.txt)$|\.py$/, "pytest"]];
-const toolchainRunner = (files: readonly string[]): RunnerName[] => { const hit = TOOLCHAINS.find(([re]) => files.some((f) => re.test(f))); return hit ? [hit[1]] : []; };
+/** RX-1: manifest -> the runner its own language toolchain ships (COMMANDS holds the command), plus that language's source extension. A manifest only makes a toolchain eligible; in a polyglot repo the focus files (changed or sealed) choose among the eligible ones by language, else the first eligible wins. */
+const TOOLCHAINS: readonly (readonly [RegExp, RunnerName, RegExp])[] = [[/(?:^|\/)package\.json$/, "node", /\.[cm]?[jt]sx?$/], [/(?:^|\/)go\.mod$/, "go", /\.go$/], [/(?:^|\/)Cargo\.toml$/, "cargo", /\.rs$/], [/(?:^|\/)(?:pyproject\.toml|setup\.py|requirements\.txt)$|\.py$/, "pytest", /\.py$/]];
+const toolchainRunner = (files: readonly string[], focus: readonly string[] = []): RunnerName[] => { const el = TOOLCHAINS.filter(([m]) => files.some((f) => m.test(f))), votes = (t: (typeof TOOLCHAINS)[number]): number => focus.filter((f) => t[2].test(f)).length; return el.length ? [el.reduce((b, t) => (votes(t) > votes(b) ? t : b))[1]] : []; };
 /** Cargo selects one file only as `cargo test --test <stem>`, and only for an integration test directly under a tests/ directory. */
 export const CARGO_TEST_FILE_RE = /(?:^|\/)tests\/[^/]+\.rs$/;
 /** The runner that executes a Wall-authored file, by its extension; null when no runner of this repo can run it (wall.ts seals it unrun, verify skips it). relPath (repo-relative) decides a .rs file: cargo only under tests/, else null (FC-WALL-RUST-FILE-HAS-NO-RUNNER). */

@@ -30,7 +30,7 @@ export interface VerifyCheck {
   duration_s: number;
   reason?: string; n?: number; count?: string; sk?: number; ids?: string[]; first_error?: string; anchor?: string; /* file:line of the first failure, council anchor grammar */ // A-112: failing test ids; A-113: first failing output line, normalized; feeds the stall signature
   interpreter?: Interpreter; // E-98a: which python/ruff this check actually ran on
-  owner?: "harness"; // FC-02: the runner could not load or collect; not_run, never a code failure
+  owner?: "harness"; skip_code?: "tool_not_on_path"; /* machine-readable twin of the "<cmd> not found on PATH" reason */ // FC-02: the runner could not load or collect; not_run, never a code failure
 }
 export { runnerCmd, commandFor, firstError } from "../../util/check_result.ts"; // one owner: check_result.ts (test invocation resolver and failure-line normalizer)
 import { firstFileLineAnchor, runnerCmd, commandFor, firstError, resolveTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
@@ -102,7 +102,7 @@ export async function runCheck(
   }
   const reason = c.reason;
   const anchor = result === "fail" ? firstFileLineAnchor(attempt.out.slice(-65536)) : null;
-  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out), ...(anchor ? { anchor } : {}) } : result === "pass" && kind === "test" ? { n: c.n ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(c.owner ? { owner: "harness" as const } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
+  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out), ...(anchor ? { anchor } : {}) } : result === "pass" && kind === "test" ? { n: c.n ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(attempt.missing ? { skip_code: "tool_not_on_path" as const } : {}), ...(c.owner ? { owner: "harness" as const } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
   if (result === "fail" && !opts.opaque && !isHold(check)) excerpts.set(check, failureExcerpt(attempt.out, ctx.repoDir));
   checks.push(check); if (opts.opaque && check.result !== "pass" && check.reason) recordHoldoutTriage(ctx.runDir, { check: name, result: check.result, reason: check.reason }); // C-C4b-c-b: real reason stays out of the event below
   ctx.emit("test.result", "verify", opts.opaque ? { ...pubHold(check) } : { ...check });
@@ -241,7 +241,7 @@ export const verifyStage: Stage = {
     const wallPaths = new Set((wall.files ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)));
     // A-114: the relevant tests of the task-named files are always selected, whatever the diff touches.
     const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string; deps_not_proven?: string[] } | undefined, repoMap = loadRepoMap(intake?.repomap_ref), relevant = ctx.tests.impacted(map, namedFiles(intake?.task ?? "", repoMap));
-    const harness = map.runners.length === 0 ? harnessRunners(map.runners, repoMap?.files ?? [])[0] : undefined, wallRunners = harness ? [harness] : map.runners;
+    const harness = map.runners.length === 0 ? harnessRunners(map.runners, repoMap?.files ?? [], process.env, [...changed, ...wallPaths])[0] : undefined, wallRunners = harness ? [harness] : map.runners;
     // FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER: run every sealed Wall path, never only those the runner's discovery lists (loki_wall_x.py is not a pytest-discovered name). No project runner: a Wall-sealed file runs with Loki's bun (harness), as before.
     const wallTests = [...wallPaths].flatMap((p): TestRef[] => { const found = map.tests.find((t) => t.path === p); if (found) return [found]; const runner = guessRunner(basename(p), wallRunners, p); return runner && (runner !== harness || /[._](?:test|spec)\.[cm]?[jt]sx?$/.test(p)) ? [{ runner, path: p }] : []; }); // harness: `bun test <name>` skips any name bun does not discover as a test (*.test, *_test, *.spec, *_spec)
     const tests = failedFirst(dedupeTests([...impacted, ...changedTestFiles, ...wallTests, ...relevant]), (ctx.outputs().verify as { checks?: Array<{ name?: unknown; result?: unknown }> } | undefined)?.checks); // TEN-SPEED-07

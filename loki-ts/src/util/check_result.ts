@@ -26,6 +26,8 @@ export function plainTestEnv(base: NodeJS.ProcessEnv = process.env): Record<stri
 }
 export const NO_TESTS_REASON = "no tests executed";
 export const NO_RUNNER_REASON = "no runner of this repo runs this file"; // FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: the one wording wall.ts (not_run_files) and verify.ts (not_proven) share, so seal dedups them
+/** Machine-readable reason the Wall found no harness runner when bun was off (LOKI_WALL_HARNESS_RUNNER=0) or missing from PATH (the pre-spawn Bun.which check), else the repo simply has no toolchain; recorded as skip_code on the Wall skip. */
+export const harnessSkipCode = (env: NodeJS.ProcessEnv = process.env): "harness_runner_disabled" | "bun_not_on_path" | "no_toolchain" => (env.LOKI_WALL_HARNESS_RUNNER === "0" ? "harness_runner_disabled" : Bun.which("bun", { PATH: env.PATH ?? "" }) ? "no_toolchain" : "bun_not_on_path");
 export const GO_EXIT0_REASON = "test count could not be confirmed: go test output is produced by the code under test and cannot confirm execution (a Go exit 0 is never a pass)";
 export const UNCONFIRMED_REASON = "test count could not be confirmed";
 /** Real failure evidence in a failed run: a failed test line, a go build or setup failure, a go compiler error line, or "N failed|errors". */

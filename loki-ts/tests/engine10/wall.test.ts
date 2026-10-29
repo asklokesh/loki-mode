@@ -1001,6 +1001,34 @@ describe("RX-1: a repo with no test runner still gets a failing-first Wall check
       expect(harnessRunners([], files, nobun)).toEqual(want ? [want as never] : []);
     });
   }
+  test("a polyglot node plus python repo with only .py changes picks pytest, not the first-listed node", async () => {
+    const { harnessRunners } = await import("../../src/engine10/testmap.ts");
+    const files = ["package.json", "pyproject.toml", "web/index.js", "app/main.py"];
+    expect(harnessRunners([], files, nobun, ["app/main.py"])).toEqual(["pytest"]);
+    expect(harnessRunners([], files, nobun, ["web/index.js"])).toEqual(["node"]);
+    expect(harnessRunners([], ["package.json", "go.mod", "main.go", "web/a.js"], nobun, ["main.go"])).toEqual(["go"]);
+    expect(harnessRunners([], files, nobun)).toEqual(["node"]); // no focus: manifest order, as before
+  });
+  test("the bun check skipping a runner records a machine-readable skip code", async () => {
+    const { harnessSkipCode } = await import("../../src/util/check_result.ts");
+    expect(harnessSkipCode(nobun)).toBe("bun_not_on_path");
+    expect(harnessSkipCode({ ...nobun, LOKI_WALL_HARNESS_RUNNER: "0" })).toBe("harness_runner_disabled");
+  });
+  test("a no-runner repo wall skip carries skip_code in its result data", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "loki-rx1b-")), savedPath = process.env.PATH;
+    try {
+      const runDir = join(repoDir, ".loki", "runs", "r1"); mkdirSync(runDir, { recursive: true });
+      const ref = join(runDir, "repomap.json"); writeFileSync(ref, JSON.stringify({ files: ["README.md", "docs/a.md"], entries: [], truncated: false }));
+      const { buildTestMap } = await import("../../src/engine10/testmap.ts");
+      const tm = buildTestMap(repoDir);
+      const sessions = new FakeSessionRunner(() => {});
+      const ctx = { runId: "r1", runDir, repoDir, sessions, emit() {}, tests: { async detect() { return tm; }, impacted: () => [] }, outputs: () => ({ intake: { task: "reword the docs intro paragraph across the guide pages", testmap: tm, repomap_ref: ref } }) } as unknown as RunContext;
+      process.env.PATH = "/nonexistent"; process.env.LOKI_E10_PLAN = "always";
+      const r = await runWall(ctx, new AbortController().signal);
+      expect(r.status).toBe("skipped");
+      expect(r.data).toMatchObject({ no_runner: true, skip_code: "bun_not_on_path" });
+    } finally { process.env.PATH = savedPath; delete process.env.LOKI_E10_PLAN; rmSync(repoDir, { recursive: true, force: true }); }
+  });
   test("a repo with a detected runner is unchanged", async () => {
     const { harnessRunners } = await import("../../src/engine10/testmap.ts");
     expect(harnessRunners(["vitest"], ["package.json"], nobun)).toEqual(["vitest"]);

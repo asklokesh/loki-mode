@@ -88,7 +88,9 @@ describe("engine10 verify: 0 executed tests is not a pass (A-111)", () => {
   }, 10_000);
   test("a missing lint/typecheck command is not_run", async () => {
     const d = mk();
-    notRun(await go(d, "no-such-linter-a111", ["x"]), /not found on PATH/);
+    const missing = await go(d, "no-such-linter-a111", ["x"]);
+    notRun(missing, /not found on PATH/);
+    expect(missing.skip_code).toBe("tool_not_on_path"); // machine-readable twin of the reason
   });
   test("go and cargo summaries", () => {
     expect(ran("ok  \tpkg\t0.002s [no tests to run]")).toBe(0);
