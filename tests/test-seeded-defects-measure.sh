@@ -148,5 +148,34 @@ stub_loki "[ -z \"\${ANTHROPIC_API_KEY:-}\" ] || { echo key-leaked >&2; exit 9; 
 if run_cmp "big,small"; then ok "compare-models: runs with the API key removed"; else bad "compare-models: API key removed"; fi
 if ! run_cmp "big" && ! run_cmp "big,big"; then ok "compare-models: needs two distinct ids"; else bad "compare-models: two distinct ids"; fi
 
+# LLM judge route: a stub claude proves SD_MODEL reaches the call as --model.
+# Model "strong" rejects, any other model accepts, so the two runs must differ.
+mkdir -p "$T/jbin"
+cat > "$T/jbin/claude" <<'STUB'
+#!/usr/bin/env bash
+m=""; while [ $# -gt 0 ]; do [ "$1" = "--model" ] && m="$2"; shift; done
+cat >/dev/null
+if [ "$m" = strong ]; then echo "defect found"; echo REJECT; else echo looks fine; echo ACCEPT; fi
+STUB
+chmod +x "$T/jbin/claude"
+JOUT="$T/judge.json"
+export LOKI_SD_CLAUDE="$T/jbin/claude"
+python3 "$M" --setup top --model strong --verifier llm-judge --only SD-0001,SD-0002 --out "$JOUT" >/dev/null 2>&1
+python3 "$M" --setup floor --model weak --verifier llm-judge --only SD-0001,SD-0002 --out "$JOUT" >/dev/null 2>&1
+if python3 -c "
+import json,sys
+r={x['setup']:x for x in json.load(open(sys.argv[1]))['runs']}
+assert set(r['top']['outcomes'].values())=={'NOT_SEALED'} and set(r['floor']['outcomes'].values())=={'SEALED'}
+assert r['top']['verifier']==r['floor']['verifier']=='llm-judge' and r['top']['route']=='custom'" "$JOUT" 2>/dev/null; then
+  ok "llm-judge: SD_MODEL reaches claude --model and maps REJECT/ACCEPT"
+else bad "llm-judge: SD_MODEL reaches claude --model"; fi
+cat > "$T/jbin/claude" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null; echo "maybe"
+STUB
+if ! python3 "$M" --setup top --model strong --verifier llm-judge --only SD-0001 --out "$T/judge2.json" >/dev/null 2>&1 && [ ! -f "$T/judge2.json" ]; then
+  ok "llm-judge: unparseable reply aborts and writes nothing"; else bad "llm-judge: unparseable reply aborts"; fi
+unset LOKI_SD_CLAUDE
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -34,8 +34,16 @@ report (default results/model-compare.json) and exits 0 only when every defect
 is identical across every model. This is an invariant check, not a measurement
 of any model.
 
+LLM judge route (--verifier llm-judge): for each defect, send the fixture files
+plus check.py to `claude -p --model $SD_MODEL` (tools disabled) and ask for a
+verdict. ACCEPT maps to SEALED (the model passed a seeded defect: a wrong pass),
+REJECT to NOT_SEALED. The reply's last non-empty line must be exactly ACCEPT or
+REJECT; anything else, a nonzero exit or a timeout aborts the run. The binary
+can be replaced with env LOKI_SD_CLAUDE (used by the hermetic stub test only).
+The recorded verifier is the string "llm-judge", identical for both setups.
+
 Usage:
-  measure.py --setup top|floor --model NAME [--verifier CMD] [--only ID,ID]
+  measure.py --setup top|floor --model NAME [--verifier CMD|llm-judge] [--only ID,ID]
              [--timeout SECS] [--out PATH]
   measure.py --compare-models A,B[,C] [--only ID,ID] [--timeout SECS] [--out PATH]
 """
@@ -142,7 +150,45 @@ def loki_version(timeout):
     return lines[0]
 
 
+JUDGE_PROMPT = (
+    "You are a strict code reviewer. Below are the files of one small task: its spec, the "
+    "implementation, the visible tests, and check.py, the acceptance check. Decide whether the "
+    "implementation is correct, meaning it satisfies the spec and would pass check.py. Reason "
+    "briefly, then end your reply with one final line that is exactly ACCEPT or REJECT.\n\n")
+
+
+def judge_prompt(case_dir):
+    parts = [JUDGE_PROMPT]
+    for name in sorted(os.listdir(case_dir)):
+        path = os.path.join(case_dir, name)
+        if os.path.isfile(path) and not os.path.islink(path):
+            with open(path, errors="replace") as f:
+                parts.append(f"=== {name} ===\n{f.read()}\n")
+    return "\n".join(parts)
+
+
+def verify_llm_judge(case_dir, defect, model, timeout):
+    exe = os.environ.get("LOKI_SD_CLAUDE") or "claude"
+    cmd = [exe, "-p", "--model", model, "--tools", "", "--no-session-persistence", "--disable-slash-commands"]
+    prompt = judge_prompt(case_dir)
+    try:
+        proc = subprocess.run(cmd, cwd=case_dir, input=prompt, capture_output=True, text=True,
+                              timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise MeasureError(f"{defect['id']}: llm judge timed out after {timeout}s")
+    except OSError as e:
+        raise MeasureError(f"{defect['id']}: llm judge could not start: {e}")
+    lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    last = lines[-1] if lines else None
+    if proc.returncode != 0 or last not in ("ACCEPT", "REJECT"):
+        raise MeasureError(f"{defect['id']}: llm judge exit {proc.returncode}, last line {last!r}, "
+                           f"want ACCEPT or REJECT; defect unmeasured")
+    return "SEALED" if last == "ACCEPT" else "NOT_SEALED"
+
+
 def verify_custom(cmd, case_dir, defect, model, timeout):
+    if cmd == "llm-judge":
+        return verify_llm_judge(case_dir, defect, model, timeout)
     env = dict(os.environ, SD_ID=defect["id"], SD_MODEL=model, SD_CATEGORY=defect["category"])
     try:
         p = run_capture(cmd, case_dir, env, timeout, shell=True)
