@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { changedSymbols, checkProvenance, classifyCheck, corroborateGoPass, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, javaSummary, javaTestClass, fullSuiteCmd, readableFailIds, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
+import { CARGO_UNLISTED_REASON, changedSymbols, checkProvenance, classifyCheck, corroboratePass, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, javaSummary, javaTestClass, fullSuiteCmd, readableFailIds, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
 import { firstError, runCheck, testCheckName, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -628,10 +628,10 @@ describe("go -json pass count and cargo trailer with stderr noise", () => {
       const raw = spawnSync("go", ["test", "-json", "./..."], { cwd: d, encoding: "utf8", env: process.env }).stdout;
       const cls = classifyCheck({ kind: "test", ok: true, out: raw, runner: "go" });
       const env = { ...process.env };
-      expect((await corroborateGoPass(cls, raw, "go test -json ./...", undefined, { cwd: d, env })).result).toBe("pass");
+      expect((await corroboratePass(cls, raw, "go test -json ./...", undefined, { cwd: d, env })).result).toBe("pass");
       const ghost = raw.replace(/TestReal/g, "TestGhost");
-      expect((await corroborateGoPass(classifyCheck({ kind: "test", ok: true, out: ghost, runner: "go" }), ghost, "go", ["test", "-json", "./..."], { cwd: d, env })).result).toBe("not_run");
-      expect((await corroborateGoPass(cls, raw, "go test -json ./... ; true", undefined, { cwd: d, env })).result).toBe("not_run");
+      expect((await corroboratePass(classifyCheck({ kind: "test", ok: true, out: ghost, runner: "go" }), ghost, "go", ["test", "-json", "./..."], { cwd: d, env })).result).toBe("not_run");
+      expect((await corroboratePass(cls, raw, "go test -json ./... ; true", undefined, { cwd: d, env })).result).toBe("not_run");
     } finally { rmSync(d, { recursive: true, force: true }); }
   }, 120_000);
   test.skipIf(!HAS_GO)("real go: a package with no statements has no completion proof and stays not_run", async () => {
@@ -791,4 +791,58 @@ describe("cargo and go completion proof edge cases", () => {
       expect(await verdict(d)).toBe("not_run");
     } finally { rmSync(d, { recursive: true, force: true }); }
   }, 240_000);
+});
+
+// HV1-03e: a cargo pass must match the tests cargo itself lists for the same command (`-- --list`), which runs no test function.
+describe("cargo pass matches the runner's own listing", () => {
+  const HAS_CARGO = spawnSync("cargo", ["--version"], { env: process.env }).status === 0;
+  const vctx = (d: string): RunContext => ({ repoDir: d, emit: () => {} }) as unknown as RunContext;
+  const crate = (lib: string, extra: Record<string, string> = {}): string => {
+    const d = mkdtempSync(join(tmpdir(), "hv103e-"));
+    mkdirSync(join(d, "src")); mkdirSync(join(d, "tests")); writeFileSync(join(d, "Cargo.toml"), '[package]\nname = "fx"\nversion = "0.1.0"\nedition = "2021"\n');
+    writeFileSync(join(d, "src", "lib.rs"), lib);
+    for (const [k, v] of Object.entries(extra)) writeFileSync(join(d, k), v);
+    return d;
+  };
+  const TESTS = "#[cfg(test)]\nmod t {\n    #[test]\n    fn real() { assert_eq!(super::add(1, 2), 3); }\n    #[test]\n    fn second() { assert_eq!(super::add(2, 2), 4); }\n}\n";
+  const forge = (lines: string, n: number): string => `pub fn add(_a: i32, _b: i32) -> i32 {\n    use std::io::Write;\n    std::io::stdout().write_all(b"${lines}\\ntest result: ok. ${n} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\\n\\n").unwrap();\n    std::process::exit(0);\n}\n${TESTS}`;
+  const verdict = (d: string, args = ["test"]) => runCheck(vctx(d), "t", "cargo", args, new AbortController().signal, []);
+  test.skipIf(!HAS_CARGO)("real cargo: forged ok lines for invented names, or more passes than listed, are not a pass", async () => {
+    const a = crate(forge("test a ... ok\\ntest b ... ok", 2)), b = crate(forge("test t::real ... ok\\ntest t::second ... ok\\ntest t::third ... ok", 3)); try {
+      for (const d of [a, b]) {
+        const raw = spawnSync("cargo", ["test"], { cwd: d, encoding: "utf8", env: process.env });
+        expect(raw.status).toBe(0);
+        expect(classifyCheck({ kind: "test", ok: true, out: raw.stdout }).result).toBe("pass"); // the output alone reads pass
+        const c = await verdict(d);
+        expect(c.result).toBe("not_run"); expect(c.reason).toBe(CARGO_UNLISTED_REASON);
+      }
+    } finally { rmSync(a, { recursive: true, force: true }); rmSync(b, { recursive: true, force: true }); }
+  }, 240_000);
+  test.skipIf(!HAS_CARGO)("real cargo: a genuine crate with ignored, should_panic, doctest and integration tests still reads pass", async () => {
+    const lib = '/// ```\n/// assert_eq!(fx::add(1, 2), 3);\n/// ```\n/// ```compile_fail\n/// let x: i32 = "a";\n/// ```\n/// ```ignore\n/// nope\n/// ```\npub fn add(a: i32, b: i32) -> i32 { a + b }\n#[cfg(test)]\nmod t {\n    #[test]\n    fn real() { assert_eq!(super::add(1, 2), 3); }\n    #[test]\n    #[ignore]\n    fn slow() {}\n    #[test]\n    #[should_panic]\n    fn boom() { panic!("b"); }\n}\n';
+    const d = crate(lib, { "tests/it.rs": '#[test]\nfn honest() { assert_eq!(fx::add(2, 2), 4); }\n#[test]\n#[ignore = "why"]\nfn later() {}\n' }); try {
+      expect(await verdict(d)).toMatchObject({ result: "pass", n: 5 });
+      expect(await verdict(d, ["test", "--", "--nocapture", "--test-threads=1"])).toMatchObject({ result: "pass", n: 5 });
+      expect(await verdict(d, ["test", "--test", "it"])).toMatchObject({ result: "pass", n: 1 });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
+  test.skipIf(!HAS_CARGO)("real cargo: test output ending in a word ending in ok (look) plus a forged summary under --nocapture is not a pass", async () => {
+    const d = crate(forge("look\\n", 1)), args = ["test", "--", "--nocapture", "--test-threads=1"]; try {
+      const raw = spawnSync("cargo", args, { cwd: d, encoding: "utf8", env: process.env });
+      expect(raw.status).toBe(0); expect(raw.stdout).toContain("look");
+      expect(classifyCheck({ kind: "test", ok: true, out: raw.stdout }).result).toBe("pass"); // the output alone reads pass: "look" ends in ok
+      const c = await verdict(d, args);
+      expect(c.result).toBe("not_run"); expect(c.reason).toBe(CARGO_UNLISTED_REASON);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
+  test.skipIf(!HAS_CARGO)("real cargo: the residual forge is real, the exact listed names with a matching summary still read pass", async () => {
+    const d = crate(forge("test t::real ... ok\\ntest t::second ... ok", 2)); try {
+      expect((await verdict(d)).result).toBe("pass");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
+  test("a cargo pass under libtest flags the listing cannot mirror is not_run without running anything", async () => {
+    const pass = { result: "pass" as const, n: 1 }, o = { cwd: tmpdir(), env: process.env };
+    for (const a of [["test", "--", "--include-ignored"], ["test", "--", "--ignored"], ["test", "--", "-Zunstable-options", "--format", "json"], ["test", "$(x)"]]) expect(await corroboratePass(pass, "", "cargo", a, o)).toEqual({ result: "not_run", reason: CARGO_UNLISTED_REASON });
+    expect(await corroboratePass({ result: "fail", n: 1 }, "", "cargo", ["test"], o)).toEqual({ result: "fail", n: 1 });
+  });
 });

@@ -65,47 +65,58 @@ const tailLines = (out: string): string[] => out.split("\n").filter((x) => x.tri
  *  trailer). A "test result:" printed by a test (--nocapture) is followed by "test x ... ok" lines, so it never counts. The final
  *  segment must qualify, else nothing does. */
 const CARGO_NOISE = /^\s*(?:Compiling|Finished|Running|Doc-tests|Fresh|Blocking|Downloaded|Downloading|Updating|Locking|Adding|Packaging|Building)\b|^(?:warning|error|note|help)\b|^\s*(?:-->|=\s|\||\d+\s*\||\^|~)|^(?:Some errors have detailed|For more information about)/;
-function cargoTrailer(out: string): string[] {
+function cargoLines(out: string): string[] {
   const ls = out.split("\n").filter((x) => x.trim());
   while (ls.length && CARGO_NOISE.test(ls[ls.length - 1]!)) ls.pop(); // cargo's own stderr (Finished, Running, warnings, "error: test failed") lands AFTER the stdout trailer when the streams are joined stdout-then-stderr
-  const segs: string[][] = [];
-  for (const l of ls) {
-    if (/^running \d+ tests?\b/.test(l)) segs.push([]);
-    else if (segs.length && !/^\s*(?:Running |Doc-tests |Doctest)/.test(l)) segs[segs.length - 1]!.push(l);
-  }
+  return ls;
+}
+function cargoTrailer(out: string): string[] {
+  const ls = cargoLines(out);
+  const segs = cargoSegs(ls).map((g) => g.body);
   // Threat model: libtest runs inside the process that executes the code under test, so code can print a "test result: ok. N passed" line and std::process::exit(0)
   // (nothing in-process is unforgeable). libtest prints each test's own "test <name> ... ok" line only AFTER that test returns, so an early exit leaves the
   // summary claiming more passes than the segment has ok lines. A summary whose passed count exceeds its segment's distinct ok lines (or the dots of -q output) makes the WHOLE run unmeasured,
   // never just that segment. Under --nocapture a test's own output (a print!, a should_panic message) splits "test x ... " from its "ok"; a pending name followed by a line ending in "ok" counts as one ok line.
-  // Residual risk, plainly: ok lines are NOT matched to real test names (the binary under test controls everything it prints), so code that prints one
-  // "test <any name> ... ok" line per claimed pass, then exits 0, still forges.
-  const okOf = (body: string[]): number => {
-    const names = new Set<string>(); let pending: string | undefined;
-    for (const raw of body) {
-      // Only leading whitespace is trimmed: libtest prints "test x ... " with a trailing space before the test's own output (a should_panic message, a print! without newline), which splits it from its "ok".
-      const l = raw.trimStart(), m = /^test (.+?) \.\.\.(?: (.*))?$/.exec(l);
-      if (m) {
-        const rest = m[2] ?? "";
-        if (rest === "FAILED" || /^ignored\b/.test(rest)) pending = undefined;
-        else if (/ok$/.test(rest)) { names.add(m[1]!); pending = undefined; }
-        else pending = m[1];
-      } else if (pending !== undefined && /ok$/.test(l.trimEnd())) { names.add(pending); pending = undefined; }
-    }
-    return names.size;
-  };
+  // This reading alone does not match ok lines to real test names; corroboratePass does that against the runner's own listing for a plain `cargo test` command.
   const dotsOf = (body: string[]): number => body.filter((l) => /^[.iF]+(?:\s+\d+\/\d+)?$/.test(l.trim())).reduce((t, l) => t + (l.match(/\./g)?.length ?? 0), 0);
   let forged = false;
   const lastOf = (g: string[]): string | undefined => {
     const l = g[g.length - 1];
     if (!l?.startsWith("test result: ")) return undefined;
     const passed = +(l.match(/(\d+) passed/)?.[1] ?? 0), body = g.slice(0, -1);
-    if (passed > Math.max(okOf(body), dotsOf(body))) { forged = true; return undefined; }
+    if (passed > Math.max(cargoNames(body).ok.size, dotsOf(body))) { forged = true; return undefined; }
     return l;
   };
   if (!segs.length) { const g: string[] = []; for (let k = ls.length - 1; k >= 0 && ls[k]!.startsWith("test result: "); k--) g.push(ls[k]!); return g.every((x) => !/[1-9]\d* passed/.test(x)) ? g : []; } // headerless trailer: no libtest header or ok lines to check, so only a zero-pass summary (never a pass) keeps its base reading; a claimed pass is unmeasured
   if (!lastOf(segs[segs.length - 1]!)) return [];
   const sums = segs.flatMap((g) => lastOf(g) ?? []);
   return forged ? [] : sums;
+}
+/** libtest segments: one per "running N tests" header (N kept), body = the lines after it except cargo's Running and Doc-tests notes. */
+function cargoSegs(ls: readonly string[]): { n: number; body: string[] }[] {
+  const segs: { n: number; body: string[] }[] = [];
+  for (const l of ls) {
+    const h = /^running (\d+) tests?\b/.exec(l);
+    if (h) segs.push({ n: +h[1]!, body: [] });
+    else if (segs.length && !/^\s*(?:Running |Doc-tests |Doctest)/.test(l)) segs[segs.length - 1]!.body.push(l);
+  }
+  return segs;
+}
+/** The names a libtest segment body reports ok and ignored, each without libtest's " - should panic" or rustdoc's " - compile[ fail]" suffix. */
+function cargoNames(body: readonly string[]): { ok: Set<string>; ignored: Set<string> } {
+  const ok = new Set<string>(), ignored = new Set<string>(), bare = (x: string): string => x.replace(/ - (?:should panic|compile(?: fail)?)$/, "");
+  let pending: string | undefined;
+  for (const raw of body) {
+    // Only leading whitespace is trimmed: libtest prints "test x ... " with a trailing space before the test's own output (a should_panic message, a print! without newline), which splits it from its "ok".
+    const l = raw.trimStart(), m = /^test (.+?) \.\.\.(?: (.*))?$/.exec(l);
+    if (m) {
+      const rest = m[2] ?? "";
+      pending = undefined;
+      if (/^ignored\b/.test(rest)) ignored.add(bare(m[1]!));
+      else if (rest !== "FAILED") { if (/ok$/.test(rest)) ok.add(bare(m[1]!)); else pending = bare(m[1]!); }
+    } else if (pending !== undefined && /ok$/.test(l.trimEnd())) { ok.add(pending); pending = undefined; }
+  }
+  return { ok, ignored };
 }
 /** bun test: only when the final line is "Ran N tests across", the nearest " N pass" / " N fail" lines above it. null = not bun output. */
 function bunCount(out: string): number | null {
@@ -165,7 +176,7 @@ export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" 
 }
 /** go test -json: every non-empty line is a test2json event (or a "go: " tool note), else null (parse doubt). The go command frames the test
  *  binary's stdout as events, but test or implementation code that prints \x16-marked lines can make the framing emit run/pass events for tests that never ran;
- *  the stream alone is therefore not proof (see corroborateGoPass). failed = a test or package
+ *  the stream alone is therefore not proof (see corroboratePass). failed = a test or package
  *  reported fail; failedTests = the Test names that failed; passed = top-level tests with a "run" event and a final pass (a skip never counts);
  *  complete = every started package has exactly one start and exactly one package-level terminal event, with no repeated run event. Exit 0 plus a complete event stream is counted from this alone, never from plain output (see GO_EXIT0_REASON). */
 function goJson(out: string): { failed: boolean; failedTests: string[]; passed: number; passedNames: string[]; complete: boolean } | null {
@@ -190,22 +201,55 @@ function goJson(out: string): { failed: boolean; failedTests: string[]; passed: 
   }
   if (!any) return null;
   const passedNames = [...status].filter(([, v]) => v === "pass").map(([k]) => k);
-  return { failed, failedTests: [...failedTests], passed: passedNames.length, passedNames, complete: !dirty && pkgs.size > 0 && [...pkgs].every((p) => starts.get(p) === 1 && done.get(p) === 1) }; // a torn stream or one with repeated starts, terminals or runs is doubt; a clean forged stream passes this and is caught by corroborateGoPass
+  return { failed, failedTests: [...failedTests], passed: passedNames.length, passedNames, complete: !dirty && pkgs.size > 0 && [...pkgs].every((p) => starts.get(p) === 1 && done.get(p) === 1) }; // a torn stream or one with repeated starts, terminals or runs is doubt; a clean forged stream passes this and is caught by corroboratePass
+}
+export const CARGO_UNLISTED_REASON = "test count could not be confirmed: the cargo summary does not match the tests cargo lists for the same command";
+/** A cargo pass is counted only when every libtest segment matches the runner's own listing, taken by running the same command with `-- --list` and `-- --list --ignored`.
+ *  Threat model: libtest prints its results inside the process that runs the code under test, so code can print "test <name> ... ok" lines and a summary and exit 0
+ *  (std::process::exit). A listing runs no test function, so its names and counts are the runner's, not the code's. Per segment, in order: the "running N tests" header,
+ *  passed + failed + ignored + measured, and the listed count agree; the ignored count matches the ignored listing; every ok name is listed and not ignored; every ignored
+ *  name is in the ignored listing. A segment count that differs from the listing, a listing that fails, or a line with shell syntax or the --ignored, --include-ignored,
+ *  --list, --format or --logfile libtest flags stays not_run. Residual risk, stated plainly: code that prints the exact listed names of its own binary with a matching
+ *  summary still forges, and so do code that runs before main (a link-section constructor) and a `harness = false` target, which control the listing too. */
+async function corroborateCargoPass(c: Classified, out: string, toks: readonly string[], o: { cwd: string; env: NodeJS.ProcessEnv }): Promise<Classified> {
+  const refuse: Classified = { result: "not_run", reason: CARGO_UNLISTED_REASON }, dd = toks.indexOf("--");
+  const lib = dd < 0 ? [] : toks.slice(dd + 1), argv = ["test", ...toks.slice(2, dd < 0 ? undefined : dd), "--", ...lib.filter((t) => t !== "-q" && t !== "--quiet"), "--list"];
+  if (toks.some((t) => /[&|;$`"'<>()\\]/.test(t)) || lib.some((t) => /^--(?:ignored|include-ignored|list|format|logfile)\b|^-Z/.test(t))) return refuse;
+  const listing = async (extra: string[]): Promise<Set<string>[] | null> => {
+    const r = await spawnCollect("cargo", [...argv, ...extra], { ...o, timeoutMs: 600_000 });
+    if (r.status !== 0) return null;
+    const blocks: Set<string>[] = []; let cur: string[] = [];
+    for (const l of stripAnsi(r.output).split("\n")) { // stdout precedes stderr in the joined stream, so cargo's own notes never land inside a block
+      const t = /^(\d+) tests?, (\d+) benchmarks?$/.exec(l), nm = /^(.+): (?:test|benchmark)$/.exec(l);
+      if (t) { const set = new Set(cur); if (set.size !== cur.length || set.size !== +t[1]! + +t[2]!) return null; blocks.push(set); cur = []; } else if (nm) cur.push(nm[1]!);
+    }
+    return blocks;
+  };
+  const all = await listing([]), ign = await listing(["--ignored"]), segs = cargoSegs(cargoLines(stripAnsi(out)));
+  if (!all || !ign || segs.length !== all.length || ign.length !== all.length) return refuse;
+  return segs.every((g, k) => {
+    const m = /^test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured;/.exec(g.body[g.body.length - 1] ?? ""), L = all[k]!, I = ign[k]!;
+    if (!m) return false;
+    const { ok, ignored } = cargoNames(g.body.slice(0, -1));
+    return g.n === L.size && +m[1]! + +m[2]! + +m[3]! + +m[4]! === L.size && +m[3]! === I.size && [...ok].every((x) => L.has(x) && !I.has(x)) && [...ignored].every((x) => I.has(x));
+  }) ? c : refuse;
 }
 /** A Go -json pass is counted only after the tests are re-run (-count=1) with `-coverprofile` into a private temp file and that profile lists exactly the statement
- *  blocks the harness computed STATICALLY from the package source. Threat model: the profile path reaches the test binary as -test.coverprofile=, so implementation or test code
+ *  blocks the harness computed STATICALLY from the package source. Threat model: the go command hands the test binary its own -test.coverprofile=<build dir>/_cover_.out on
+ *  argv (measured on go1.26) and copies that file into the harness path, and the binary itself emits the test2json framing (-test.v=test2json), so implementation or test code
  *  CAN write that file and print \x16-marked test2json lines, then leave through syscall.Exit(0); nothing the binary prints or writes is proof by itself. The expected block set
  *  comes from `go list` plus `go tool cover -mode=set` (it instruments source text and runs no user code), so the binary's profile must match
  *  file:line.col,line.col numStmt for every block of every non-test file of each passing package. A hand-written or truncated profile, a missing profile (early exit
  *  before the runtime writes it) and a package with no statements (checked per package), cgo files or a //line directive all stay not_run, the fail-safe default. The re-run must also exit 0 with a complete
  *  stream that passes the same tests. Argv or a plain `go test [-json] [-run X] <pkgs>` line only; any other shape (extra flags, shell syntax) cannot be re-run and stays
  *  not_run. A non-pass result is returned unchanged. Residual risk, stated plainly: code that reproduces the cover tool's block table for its own source can still forge. */
-export async function corroborateGoPass(c: Classified, out: string, cmdOrLine: string, args: readonly string[] | undefined, o: { cwd: string; env: NodeJS.ProcessEnv }): Promise<Classified> {
+export async function corroboratePass(c: Classified, out: string, cmdOrLine: string, args: readonly string[] | undefined, o: { cwd: string; env: NodeJS.ProcessEnv }): Promise<Classified> {
+  const toks = args ? [cmdOrLine, ...args] : cmdOrLine.trim().split(/\s+/);
+  if (c.result === "pass" && basename(toks[0] ?? "") === "cargo" && toks[1] === "test") return corroborateCargoPass(c, out, toks, o);
   if (c.result !== "pass" || goRunner(cmdOrLine, args).runner !== "go") return c;
   const refuse: Classified = { result: "not_run", reason: GO_EXIT0_REASON };
   const first = goJson(stripAnsi(out));
   const names = first?.passedNames ?? [];
-  const toks = args ? [cmdOrLine, ...args] : cmdOrLine.trim().split(/\s+/);
   if (!names.length || toks.some((t) => /[&|;$`"'<>()\\]/.test(t)) || basename(toks[0] ?? "") !== "go" || toks[1] !== "test") return refuse;
   const pkgs: string[] = [], run: string[] = [];
   for (let k = 2; k < toks.length; k++) {
@@ -880,7 +924,7 @@ export function notRunReason(status: number | null, interpreter?: "project" | "s
 export function classify(f: TestRef, status: number | null, output: string, repoDir: string, interpreter?: "project" | "system"): "pass" | "fail" | "not_run" {
   if (interpreter === "system") return "not_run";
   output = stripAnsi(output); // FC-69: every parser below reads plain text, whoever captured it
-  if (status === null || status === 126 || status === 127) return "not_run"; if (status === 0) return f.runner !== "go" && classifyCheck({ kind: "test", ok: true, out: output, path: f.path }).result === "pass" ? "pass" : "not_run"; // go: a base pass is never uncorroborated here (corroborateGoPass runs where verify counts it) // FC-16: exit 0 with zero or unknown executed tests is not a pass
+  if (status === null || status === 126 || status === 127) return "not_run"; if (status === 0) return f.runner !== "go" && classifyCheck({ kind: "test", ok: true, out: output, path: f.path }).result === "pass" ? "pass" : "not_run"; // go: a base pass is never uncorroborated here (corroboratePass runs where verify counts it) // FC-16: exit 0 with zero or unknown executed tests is not a pass
   if (f.runner === "unittest") return status === 1 && unittestCount(output, false) !== null ? (/unittest\.loader\._FailedTest|Failed to import test module/.test(output) ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "fail") : "not_run"; // red only on a trusted FAILED trailer; a module that failed to import is red only when the missing name is the repo's own (pytestCollectionIsRed), else not_run, as for pytest
   if (f.runner === "pytest") return status === 1 ? (pytestExit1IsRed(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
   if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
