@@ -393,7 +393,7 @@ cat > "$MOAT_TMP/corpus.py" <<'PY'
 import hashlib, json, os, sys
 CATS = ["logic-bug", "spec-miss", "test-fitting", "mock-abuse", "security"]
 MANIFEST_SCHEMA = "loki.seeded-defects/v2"
-RESULTS_SCHEMA = "loki.seeded-defects.results/v2"
+RESULTS_SCHEMAS = ("loki.seeded-defects.results/v2", "loki.seeded-defects.results/v3")
 OUTCOMES = ("SEALED", "NOT_SEALED")
 
 def inside(path, root):
@@ -486,8 +486,8 @@ def results(manifest, res):
         r = json.load(open(res))
     except Exception as e:
         return f"results unreadable: {e}"
-    if not isinstance(r, dict) or r.get("schema") != RESULTS_SCHEMA:
-        return f"results schema is {r.get('schema') if isinstance(r, dict) else None!r}, want {RESULTS_SCHEMA!r}"
+    if not isinstance(r, dict) or r.get("schema") not in RESULTS_SCHEMAS:
+        return f"results schema is {r.get('schema') if isinstance(r, dict) else None!r}, want one of {RESULTS_SCHEMAS!r}"
     sha = hashlib.sha256(open(manifest, "rb").read()).hexdigest()
     if r.get("manifest_sha256") != sha:
         return "results were measured on a different manifest (sha mismatch); stale measurement"
