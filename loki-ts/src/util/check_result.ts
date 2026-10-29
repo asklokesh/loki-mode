@@ -11,6 +11,7 @@ import { siteFor } from "../project_model/resolve.ts";
 import type { ProjectApi } from "../project_model/api.ts";
 import { CARGO_TEST_FILE_RE, isTestFile } from "../engine10/testmap.ts";
 import type { RunnerName, TestRef } from "../engine10/types.ts";
+import { UNITTEST_DISCOVER_ARGS } from "./python_build_check.ts";
 import { safeGit, tokenFreeEnv } from "./safe_git.ts";
 import { redactSecrets } from "./redact.ts";
 
@@ -711,6 +712,7 @@ export function classify(f: TestRef, status: number | null, output: string, repo
   if (interpreter === "system") return "not_run";
   output = stripAnsi(output); // FC-69: every parser below reads plain text, whoever captured it
   if (status === null || status === 126 || status === 127) return "not_run"; if (status === 0) return classifyCheck({ kind: "test", ok: true, out: output, path: f.path, ...(f.runner === "go" ? { runner: "go" as const } : {}) }).result === "pass" ? "pass" : "not_run"; // FC-16: exit 0 with zero or unknown executed tests is not a pass
+  if (f.runner === "unittest") return status === 1 && unittestCount(output, false) !== null ? (/unittest\.loader\._FailedTest|Failed to import test module/.test(output) ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "fail") : "not_run"; // red only on a trusted FAILED trailer; a module that failed to import is red only when the missing name is the repo's own (pytestCollectionIsRed), else not_run, as for pytest
   if (f.runner === "pytest") return status === 1 ? (pytestExit1IsRed(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
   if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
   return f.runner === "node" && nodeIsRed(f, output) ? "fail" : "not_run"; // npm/go/cargo: coarse (B2), never a per-file red
@@ -758,6 +760,10 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
       const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python");
       return [cmd, [...pre, "-m", "pytest", "-q", t.path], interpreter];
     }
+    case "unittest": { // stdlib: a file path is converted to a module name by unittest itself
+      const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python");
+      return interpreter === "project" ? [cmd, [...pre, "-m", "unittest", t.path], interpreter] : [cmd, [...pre, "-m", "unittest", t.path]]; // the stdlib runner needs no project interpreter, so a system python3 is not "not_run"
+    }
     case "vitest": return ["npx", ["--no-install", "vitest", "run", t.path]];
     case "jest": return ["npx", ["--no-install", "jest", t.path]];
     case "bun": return ["bun", ["test", t.path]];
@@ -768,7 +774,7 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
   }
 }
 /** The legacy per-runner full suite (no multi-root model), one check per detected runner: run by deep.ts, baselined via package_suite.ts fullSuiteSpecs. */
-const FULL_SUITE_STATIC: Record<Exclude<RunnerName, "pytest">, { cmd: string; args: string[] }> = {
+const FULL_SUITE_STATIC: Record<Exclude<RunnerName, "pytest" | "unittest">, { cmd: string; args: string[] }> = {
   vitest: { cmd: "npx", args: ["vitest", "run"] },
   jest: { cmd: "npx", args: ["jest"] },
   bun: { cmd: "bun", args: ["test"] },
@@ -779,9 +785,9 @@ const FULL_SUITE_STATIC: Record<Exclude<RunnerName, "pytest">, { cmd: string; ar
 };
 /** FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER: the one full-suite command per runner. pytest resolves its interpreter exactly as a per-test run does (resolveTool: project .venv, else python3), never a bare `python` that python3-only hosts lack. */
 export function fullSuiteCmd(runner: RunnerName, repoDir: string): { cmd: string; args: string[]; interpreter?: Interpreter } {
-  if (runner !== "pytest") return FULL_SUITE_STATIC[runner];
+  if (runner !== "pytest" && runner !== "unittest") return FULL_SUITE_STATIC[runner];
   const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python");
-  return { cmd, args: [...pre, "-m", "pytest", "-q"], interpreter };
+  return { cmd, args: [...pre, ...(runner === "unittest" ? UNITTEST_DISCOVER_ARGS : ["-m", "pytest", "-q"])], ...(runner === "unittest" && interpreter === "system" ? {} : { interpreter }) };
 }
 /** FC-01: the one resolver for a test invocation: a package-owned file runs in its package dir with a package-relative path, else exactly runnerCmd at the root. */
 export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null): { cwd: string; cmd: string; args: string[]; argv: string[]; interpreter?: Interpreter; pkgRoot: string } {

@@ -95,7 +95,7 @@ export interface SessionResult {
   stderrTail?: string;
 }
 export interface SessionRunner { run(opts: SessionRunOptions): Promise<SessionResult> } // implemented by session.ts (E-07)
-export type RunnerName = "pytest" | "vitest" | "jest" | "npm" | "bun" | "node" | "go" | "cargo";
+export type RunnerName = "pytest" | "unittest" | "vitest" | "jest" | "npm" | "bun" | "node" | "go" | "cargo";
 /** A test file and the runner that executes it (mixed repos run each runner separately). */
 export interface TestRef { runner: RunnerName; path: string /* relative to repoDir */ }
 export interface TestMap { runners: RunnerName[]; tests: TestRef[]; }

@@ -59,7 +59,9 @@ export function pytestArgv(pytestImportable: boolean, args: readonly string[]): 
   return pytestImportable ? ["python3", "-m", "pytest", ...args] : ["pytest", ...args];
 }
 
-const UNITTEST_ARGV: readonly string[] = ["python3", "-m", "unittest", "discover", "-p", "test_*.py"];
+/** Stdlib discovery args after the interpreter; check_result.ts reuses them for the unittest full suite. */
+export const UNITTEST_DISCOVER_ARGS: readonly string[] = ["-m", "unittest", "discover", "-p", "test_*.py"];
+const UNITTEST_ARGV: readonly string[] = ["python3", ...UNITTEST_DISCOVER_ARGS];
 
 const joinOut = (r: ShellResult): string => [r.stdout, r.stderr].filter((s) => s.length > 0).join("\n");
 

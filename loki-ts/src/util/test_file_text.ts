@@ -5,10 +5,11 @@ export const NPM_DEFAULT_TEST = /no test specified/;
 export const JS_TEST_RE = /\.(test|spec)\.[cm]?[jt]sx?$/;
 export const PY_TEST_RE = /^(test_.+|.+_test)\.py$/;
 export const GO_TEST_RE = /_test\.go$/;
+export const RS_TEST_RE = /(^|\/)tests\/[^/]+\.rs$/; // a cargo integration test
 export const SH_TEST_RE = /(^|\/)(tests?|__tests__)\/[^/]+\.(sh|bash)$/;
 export function isTestFile(rel: string): boolean {
   const name = basename(rel);
-  return JS_TEST_RE.test(name) || PY_TEST_RE.test(name) || GO_TEST_RE.test(name) || SH_TEST_RE.test(rel) || /^test[-_].+\.(sh|bash)$/.test(name);
+  return JS_TEST_RE.test(name) || PY_TEST_RE.test(name) || GO_TEST_RE.test(name) || RS_TEST_RE.test(rel) || SH_TEST_RE.test(rel) || /^test[-_].+\.(sh|bash)$/.test(name);
 }
 export function detectFromPackageJson(text: string, rel: string, mark: (r: RunnerName, file: string) => void): void {
   let pkg: {

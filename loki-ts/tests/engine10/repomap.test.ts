@@ -5,7 +5,7 @@
 // regression check so the existing behavior stays intact.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildRepoMap } from "../../src/engine10/repomap.ts";
@@ -164,5 +164,29 @@ describe("file cap", () => {
     commitAll();
     process.env.LOKI_E10_REPOMAP_MAX_FILES = "1";
     expect(buildRepoMap(dir).files).toEqual(["src/vendorish.js"]);
+  });
+
+  test("linguist vendored and documentation paths sort after source even when the build-dir rule misses them", () => {
+    for (const rel of ["bower_components/lib/a.js", "docs/a.js"]) { mkdirSync(join(dir, rel, ".."), { recursive: true }); writeFileSync(join(dir, rel), "export const a = 1;\n"); }
+    writeFileSync(join(dir, "z.js"), "export const z = 1;\n");
+    commitAll();
+    process.env.LOKI_E10_REPOMAP_MAX_FILES = "1";
+    expect(buildRepoMap(dir).files).toEqual(["z.js"]);
+  });
+
+  test("the vendored linguist rule data carries the full MIT permission notice", () => {
+    const data = JSON.parse(readFileSync(join(import.meta.dir, "../../src/project_model/linguist_rules.json"), "utf8"));
+    expect(data.license).toContain("Copyright (c) 2017 GitHub, Inc.");
+    expect(data.license).toContain("Permission is hereby granted, free of charge");
+    expect(data.license).toContain("The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.");
+    expect(data.license).toContain("THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND");
+  });
+
+  test("a generated lockfile sorts after source", () => {
+    writeFileSync(join(dir, "package-lock.json"), "{}\n");
+    writeFileSync(join(dir, "z.js"), "export const z = 1;\n");
+    commitAll();
+    process.env.LOKI_E10_REPOMAP_MAX_FILES = "1";
+    expect(buildRepoMap(dir).files).toEqual(["z.js"]);
   });
 });

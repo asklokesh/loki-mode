@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { classifyRunnerOutput } from "../../src/runner/runner_errors.ts";
 import { runCheck, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
+import { classify } from "../../src/util/check_result.ts";
 import { runWall } from "../../src/engine10/stages/wall.ts";
 import { removeHoldout } from "../../src/util/holdout.ts";
 import type { RunContext, SessionRunner } from "../../src/engine10/types.ts";
@@ -44,6 +45,14 @@ describe("FC-02 runner output classifier", () => {
   test("unittest import error mixed with a real assertion failure stays a code failure", () => {
     const out = "ImportError: Failed to import test module: a\nFAIL: test_b (t.T)\nAssertionError: 1 != 2\nFAILED (failures=1, errors=1)";
     expect(classifyRunnerOutput(out).owner).toBe("code");
+  });
+  test("unittest exit 5 with NO TESTS RAN is not_run, never fail", () => {
+    const out = "\n----------------------------------------------------------------------\nRan 0 tests in 0.000s\n\nNO TESTS RAN\n";
+    expect(classify({ runner: "unittest", path: "tests/test_a.py" }, 5, out, "/nonexistent", "project")).toBe("not_run");
+  });
+  test("unittest exit 1 with a FAILED trailer is a fail", () => {
+    const out = "FAIL: test_a (t.T)\nAssertionError: 1 != 2\n\nRan 1 test in 0.001s\n\nFAILED (failures=1)\n";
+    expect(classify({ runner: "unittest", path: "tests/test_a.py" }, 1, out, "/nonexistent", "project")).toBe("fail");
   });
   test("a genuine vitest assertion failure stays a code failure", () => {
     expect(classifyRunnerOutput(fx("vitest/assertion-failure.txt"))).toEqual({ kind: "test_failure", owner: "code" });
@@ -221,5 +230,56 @@ describe("TEN-COST-09 Wall skipped when no project interpreter", () => {
     const { r, called } = await run(true);
     expect(called).toBe(1);
     expect(r.reason ?? "").not.toContain("no project test interpreter");
+  });
+});
+
+describe("FC-WALL-HARNESS-TOOLCHAIN-ON-FOREIGN-STACK Wall runs in the repo's own stack", () => {
+  const wallFor = async (files: string[], authored: Record<string, string>, extra: Record<string, string> = {}): Promise<{ r: Awaited<ReturnType<typeof runWall>>; brief: string; called: number }> => {
+    const repoDir = mkdtempSync(join(tmpdir(), "loki-fcts-")), prev = process.env.LOKI_E10_WALL_FIRST;
+    process.env.LOKI_E10_WALL_FIRST = "0";
+    try {
+      const runDir = join(repoDir, ".loki", "runs", "r1"); mkdirSync(runDir, { recursive: true });
+      for (const [p, c] of Object.entries(extra)) { mkdirSync(dirname(join(repoDir, p)), { recursive: true }); writeFileSync(join(repoDir, p), c); }
+      const ref = join(runDir, "repomap.json");
+      writeFileSync(ref, JSON.stringify({ files, entries: [], truncated: false }));
+      let called = 0, brief = "";
+      const sessions: SessionRunner = { async run(o) { called++; if (!brief) brief = o.brief; for (const [n, c] of Object.entries(authored)) writeFileSync(join(o.cwd!, n), c); return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false }; } };
+      const tm = { runners: [], tests: [] };
+      const ctx = { ...ctxFor(repoDir, []), runId: "r1", runDir, sessions, tests: { async detect() { return tm; }, impacted: () => [] }, outputs: () => ({ intake: { task: "add a paginate helper that slices a list into pages with new behavior across modules", testmap: tm, repomap_ref: ref } }) } as unknown as RunContext;
+      const r = await runWall(ctx, sig());
+      return { r, brief, called };
+    } finally { if (prev === undefined) delete process.env.LOKI_E10_WALL_FIRST; else process.env.LOKI_E10_WALL_FIRST = prev; rmSync(repoDir, { recursive: true, force: true }); }
+  };
+  test("Python unittest-only repo: the brief names python3 -m unittest and no Wall file is .ts or .js", async () => {
+    const { r, brief, called } = await wallFor(["paginate.py", "README.md"], { "loki_wall_paginate.py": "import unittest\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        import paginate\n        self.assertEqual(paginate.paginate([1, 2, 3], 2), [[1, 2], [3]])\n" }, { "paginate.py": "def paginate(xs, n):\n    return [xs]\n" });
+    expect(called).toBe(1);
+    expect(brief).toContain("python3 -m unittest");
+    expect(brief).not.toContain("bun:test");
+    expect((r.data["base_run"] as { fail: number }).fail).toBe(1); // the stdlib runner's red is counted, not not_run
+    expect((r.data["files"] as { runner?: string }[]).map((f) => f.runner)).toEqual(["unittest"]); // D122: the sealed entry records the runner verify will reuse
+    const files = (r.data["files"] as { path: string }[]).map((f) => f.path);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.every((p) => p.endsWith(".py"))).toBe(true);
+  });
+  test("Go module with no _test.go, and a Rust crate: the brief names go test / cargo test, never bun", async () => {
+    const go = await wallFor(["go.mod", "main.go"], { "loki_wall_x_test.go": "package main\n" });
+    expect(go.brief).toContain("go test");
+    expect(go.brief).not.toContain("bun:test");
+    const rs = await wallFor(["src/lib.rs"], { "loki_wall_x.rs": "#[test] fn t() {}\n" });
+    expect(rs.brief).toContain("cargo test");
+    expect(rs.brief).not.toContain("bun:test");
+  });
+  test("source with no stdlib runner (Java): skipped in under 10s with NOT PROVEN, no session", async () => {
+    const t0 = Date.now();
+    const { r, called } = await wallFor(["src/Main.java"], {});
+    expect(Date.now() - t0).toBeLessThan(10_000);
+    expect(r.status).toBe("skipped");
+    expect(called).toBe(0);
+    expect(r.data["not_proven"]).toEqual(["Wall skipped: no runnable test command for this stack"]);
+  });
+  test("docs-only repo: bun fallback kept", async () => {
+    const { brief, called } = await wallFor(["README.md", "docs/a.md"], { "loki_wall_x.test.ts": "import { test, expect } from 'bun:test'; test('a', () => expect(1).toBe(1));\n" });
+    expect(called).toBeGreaterThan(0);
+    expect(brief).toContain("bun:test");
   });
 });

@@ -490,6 +490,29 @@ describe("engine10 wall base run, D42 (3)", () => {
     rmSync(repoDir, { recursive: true, force: true });
   });
 
+  test.skipIf(!Bun.which("python3"))("(3a-unittest) ImportError on a missing repo symbol under unittest: red, like pytest", () => {
+    const repoDir = repo();
+    mkdirSync(join(repoDir, "mypkg"), { recursive: true });
+    writeFileSync(join(repoDir, "mypkg", "__init__.py"), "", "utf8");
+    writeFileSync(join(repoDir, "mypkg", "mymod.py"), "# the feature is not built yet\n", "utf8");
+    writeFileSync(join(repoDir, "loki_wall_import_ut.py"), "import unittest\nfrom mypkg.mymod import missing_function\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        missing_function()\n", "utf8");
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "unittest", path: "loki_wall_import_ut.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 1, not_run: 0 });
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test.skipIf(!Bun.which("python3"))("(3b-unittest) ImportError on a missing third-party package under unittest: not_run", () => {
+    const repoDir = repo();
+    writeFileSync(join(repoDir, "loki_wall_tp_ut.py"), "import unittest\nimport loki_s41_16_never_installed_xyz\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        pass\n", "utf8");
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "unittest", path: "loki_wall_tp_ut.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
   test("(4) pytest exit 5, no tests collected: not_run", () => {
     const repoDir = repo();
     venvShim(repoDir);
@@ -1004,9 +1027,9 @@ describe("RX-1: a repo with no test runner still gets a failing-first Wall check
   test("a polyglot node plus python repo with only .py changes picks pytest, not the first-listed node", async () => {
     const { harnessRunners } = await import("../../src/engine10/testmap.ts");
     const files = ["package.json", "pyproject.toml", "web/index.js", "app/main.py"];
-    expect(harnessRunners([], files, nobun, ["app/main.py"])).toEqual(["pytest"]);
-    expect(harnessRunners([], files, nobun, ["web/index.js"])).toEqual(["node"]);
-    expect(harnessRunners([], ["package.json", "go.mod", "main.go", "web/a.js"], nobun, ["main.go"])).toEqual(["go"]);
+    expect(harnessRunners([], files, nobun, undefined, ["app/main.py"])).toEqual(["pytest"]);
+    expect(harnessRunners([], files, nobun, undefined, ["web/index.js"])).toEqual(["node"]);
+    expect(harnessRunners([], ["package.json", "go.mod", "main.go", "web/a.js"], nobun, undefined, ["main.go"])).toEqual(["go"]);
     expect(harnessRunners([], files, nobun)).toEqual(["node"]); // no focus: manifest order, as before
   });
   test("the bun check skipping a runner records a machine-readable skip code", async () => {

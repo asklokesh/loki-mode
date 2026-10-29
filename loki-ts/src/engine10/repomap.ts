@@ -2,7 +2,7 @@
 // Class.method). Caps files, bytes and symbols per file so a huge repo cannot blow up Intake's 15s/60s limit.
 import { closeSync, openSync, readSync } from "node:fs";
 import { safeGit } from "../util/safe_git.ts";
-import { join } from "node:path";
+import { join } from "node:path"; import { excludedPaths } from "../project_model/linguist.ts";
 export interface RepoMapEntry {
   path: string;
   symbols: string[]; // exported names, best effort
@@ -28,7 +28,7 @@ const PY_SYMBOL_RE = /^(?:(?:async\s+)?def\s+(\w+)|class\s+(\w+))|^([ \t]+)(?:as
 export function listRepoFiles(repoDir: string, maxFiles: number = maxFilesCap()): { files: string[]; truncated: boolean } {
   let out: string;
   try { out = safeGit(repoDir, ["ls-files"], { stdio: ["ignore", "pipe", "pipe"] }); } catch { return { files: [], truncated: false }; }
-  let all = out.split("\n").filter((l) => l.length > 0); if (all.length > maxFiles) { const junk = (f: string): boolean => /(^|\/)(vendor|node_modules|dist|build|third_party)\//.test(f); all = [...all.filter((f) => !junk(f)), ...all.filter(junk)]; }
+  let all = out.split("\n").filter((l) => l.length > 0); if (all.length > maxFiles) { const lg = excludedPaths(repoDir, all); const junk = (f: string): boolean => lg.has(f) || /(^|\/)(vendor|node_modules|dist|build|third_party)\//.test(f); all = [...all.filter((f) => !junk(f)), ...all.filter(junk)]; } // vendored, generated, documentation and build-dir files sort last
   return { files: all.slice(0, maxFiles), truncated: all.length > maxFiles };
 }
 function topLevelSymbols(absPath: string, re: RegExp): string[] {

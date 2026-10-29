@@ -605,3 +605,26 @@ describe("FC-WALL-LOCATION-BLIND review round 2", () => {
     expect(r.data.changed_files).toEqual(["src/ws.ts"]);
   }, 60_000);
 });
+
+describe("FC-VERIFY-REDETECTS-WALL-RUNNER verify runs the runner the Wall recorded", () => {
+  const hasPy = !!Bun.which("python3");
+  async function pyRun() {
+    const repoDir = mk();
+    for (const [n, c] of Object.entries({ "app/m.py": "def f():\n    return 1\n", ".gitignore": ".loki\n" })) { mkdirSync(join(repoDir, n.includes("/") ? n.slice(0, n.lastIndexOf("/")) : "."), { recursive: true }); writeFileSync(join(repoDir, n), c); }
+    git(repoDir, ["init", "-q"]); git(repoDir, ["add", "."]); git(repoDir, ["commit", "-qm", "base"]);
+    // The Wall sealed a unittest file against the intake map (no runner); implement then adds app/test_m.py, so a fresh detect now reports pytest.
+    mkdirSync(join(repoDir, "tests"), { recursive: true });
+    writeFileSync(join(repoDir, "tests", "loki_wall_m.py"), "import unittest\nfrom app.m import f\n\nclass T(unittest.TestCase):\n    def test_f(self):\n        self.assertEqual(f(), 1)\n");
+    writeFileSync(join(repoDir, "app", "test_m.py"), "def test_f():\n    assert True\n");
+    const ctx = wallCtx(repoDir, () => {}); ctx.baseSha = git(repoDir, ["rev-parse", "HEAD"]).trim(); ctx.tests = new RealTestMapProvider();
+    const f = { path: join(repoDir, "tests", "loki_wall_m.py"), runner: "unittest" };
+    ctx.outputs = () => ({ intake: { task: "add f", repomap_ref: join(repoDir, ".loki", "runs", "e10-fc23", "repomap.json") }, wall: { files: [f] } }) as Partial<Record<StageName, Record<string, unknown>>>;
+    const r = await verifyStage.run(ctx, new AbortController().signal);
+    return (r.data.checks as { name: string; cmd: string; result: string }[]).find((c) => c.name.includes("loki_wall_m"));
+  }
+  test.skipIf(!hasPy)("a python repo with no .venv: the sealed file runs under unittest and does not read not_run", async () => {
+    const c = await pyRun();
+    expect(c?.name).toBe("unittest:tests/loki_wall_m.py");
+    expect(c?.result).toBe("pass");
+  }, 60_000);
+});
