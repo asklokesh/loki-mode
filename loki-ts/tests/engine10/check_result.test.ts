@@ -596,18 +596,48 @@ describe("go -json pass count and cargo trailer with stderr noise", () => {
     const forged = [ev({ Action: "start", Package: "ex/a" }), ev({ Action: "run", Package: "ex/a", Test: "TestReal" }), ev({ Action: "pass", Package: "ex/a", Test: "TestReal", Elapsed: 0 })].join("\n") + "\n";
     expect(classifyCheck({ kind: "test", ok: true, out: forged, runner: "go" }).result).toBe("not_run");
   });
+  // Real go: the three places a package can print \x16-marked test2json lines and then exit 0 with syscall.Exit (which Go's os.Exit(0) check does not catch).
   const HAS_GO = spawnSync("go", ["version"], { env: process.env }).status === 0;
-  test.skipIf(!HAS_GO)("corroborateGoPass (real go): a listed pass stands, a name go cannot list is refused", async () => {
-    const d = mkdtempSync(join(tmpdir(), "hv103a-")); try {
-      writeFileSync(join(d, "go.mod"), "module ex/a\n\ngo 1.20\n");
-      writeFileSync(join(d, "a_test.go"), 'package a\n\nimport "testing"\n\nfunc TestA(t *testing.T) {}\n');
-      const c = classifyCheck({ kind: "test", ok: true, out: PASS, runner: "go" });
-      const env = { ...process.env, GOFLAGS: "-mod=mod" };
-      expect((await corroborateGoPass(c, PASS, "go", ["test", "-json", "./..."], { cwd: d, env })).result).toBe("pass");
-      const ghost = PASS.replace(/TestA/g, "TestGhost");
-      const cg = classifyCheck({ kind: "test", ok: true, out: ghost, runner: "go" });
-      expect((await corroborateGoPass(cg, ghost, "go", ["test", "-json", "./..."], { cwd: d, env })).result).toBe("not_run");
-      expect((await corroborateGoPass(c, PASS, "go test -json ./... ; true", undefined, { cwd: d, env })).result).toBe("not_run");
+  const FORGE = 'fmt.Print("\\x16=== RUN   TestReal\\n\\x16--- PASS: TestReal (0.00s)\\n\\x16PASS\\n\\x16ok  \\texample.com/fx\\t0.001s\\n"); syscall.Exit(0)';
+  const IMPL = (extra: string): string => `package fx\n\nimport "fmt"\nimport "syscall"\n\nvar _ = fmt.Sprint\nvar _ = syscall.Getpid\n\nfunc Add(a, b int) int { return a + b }\n${extra}\n`;
+  const TEST = (extra: string, body: string): string => `package fx\n\nimport "testing"\nimport "fmt"\nimport "syscall"\n\nvar _ = fmt.Sprint\nvar _ = syscall.Getpid\n\n${extra}\nfunc TestReal(t *testing.T) { ${body} }\n`;
+  const SITES: Array<[string, string, string]> = [
+    ["init in a test file", IMPL(""), TEST(`func init() { ${FORGE} }`, 't.Fatal("never runs")')],
+    ["the test body", IMPL(""), TEST("", FORGE)],
+    ["implementation code", IMPL(`func init() { ${FORGE} }`), TEST("", 't.Fatal("never runs")')],
+  ];
+  const goFixture = (impl: string, test: string): string => {
+    const d = mkdtempSync(join(tmpdir(), "hv103a-"));
+    writeFileSync(join(d, "go.mod"), "module example.com/fx\n\ngo 1.20\n"); writeFileSync(join(d, "a.go"), impl); writeFileSync(join(d, "a_test.go"), test);
+    return d;
+  };
+  const vctx = (d: string): RunContext => ({ repoDir: d, emit: () => {} }) as unknown as RunContext;
+  test.skipIf(!HAS_GO).each(SITES)("real go: a syscall.Exit(0) forge in %s reads as a pass in the stream but earns no pass through verify", async (_n, impl, test) => {
+    const d = goFixture(impl, test); try {
+      const raw = spawnSync("go", ["test", "-json", "./..."], { cwd: d, encoding: "utf8", env: process.env });
+      expect(raw.status).toBe(0);
+      if (_n !== "the test body") expect(classifyCheck({ kind: "test", ok: true, out: raw.stdout, runner: "go" }).result).toBe("pass"); // the stream alone is forgeable (a body forge repeats the run event, which the stream check already catches)
+      const c = await runCheck(vctx(d), "t", "go", ["test", "-json", "./..."], new AbortController().signal, []);
+      expect(c.result).toBe("not_run");
     } finally { rmSync(d, { recursive: true, force: true }); }
-  }, 60_000);
+  }, 120_000);
+  test.skipIf(!HAS_GO)("real go: a genuine pass is counted through verify and the deep/suite helper; a name the run never passed is refused", async () => {
+    const d = goFixture(IMPL(""), TEST("", "if Add(1, 2) != 3 { t.Fatal(1) }")); try {
+      const c = await runCheck(vctx(d), "t", "go", ["test", "-json", "./..."], new AbortController().signal, []);
+      expect(c.result).toBe("pass"); expect(c.n).toBe(1);
+      const raw = spawnSync("go", ["test", "-json", "./..."], { cwd: d, encoding: "utf8", env: process.env }).stdout;
+      const cls = classifyCheck({ kind: "test", ok: true, out: raw, runner: "go" });
+      const env = { ...process.env };
+      expect((await corroborateGoPass(cls, raw, "go test -json ./...", undefined, { cwd: d, env })).result).toBe("pass");
+      const ghost = raw.replace(/TestReal/g, "TestGhost");
+      expect((await corroborateGoPass(classifyCheck({ kind: "test", ok: true, out: ghost, runner: "go" }), ghost, "go", ["test", "-json", "./..."], { cwd: d, env })).result).toBe("not_run");
+      expect((await corroborateGoPass(cls, raw, "go test -json ./... ; true", undefined, { cwd: d, env })).result).toBe("not_run");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 120_000);
+  test.skipIf(!HAS_GO)("real go: a package with no statements has no completion proof and stays not_run", async () => {
+    const d = goFixture("package fx\n", 'package fx\n\nimport "testing"\n\nfunc TestReal(t *testing.T) {}\n'); try {
+      const c = await runCheck(vctx(d), "t", "go", ["test", "-json", "./..."], new AbortController().signal, []);
+      expect(c.result).toBe("not_run");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 120_000);
 });

@@ -5,7 +5,8 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { siteFor } from "../project_model/resolve.ts";
 import type { ProjectApi } from "../project_model/api.ts";
@@ -134,9 +135,10 @@ export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" 
   return {};
 }
 /** go test -json: every non-empty line is a test2json event (or a "go: " tool note), else null (parse doubt). The go command frames the test
- *  binary's stdout itself, so test code can only reach an event's Output string, never forge an event line. failed = a test or package
+ *  binary's stdout as events, but test or implementation code that prints \x16-marked lines can make the framing emit run/pass events for tests that never ran;
+ *  the stream alone is therefore not proof (see corroborateGoPass). failed = a test or package
  *  reported fail; failedTests = the Test names that failed; passed = top-level tests with a "run" event and a final pass (a skip never counts);
- *  complete = every started package has exactly one start and exactly one package-level terminal event. Exit 0 plus a complete event stream is counted from this alone, never from plain output (see GO_EXIT0_REASON). */
+ *  complete = every started package has exactly one start and exactly one package-level terminal event, with no repeated run event. Exit 0 plus a complete event stream is counted from this alone, never from plain output (see GO_EXIT0_REASON). */
 function goJson(out: string): { failed: boolean; failedTests: string[]; passed: number; passedNames: string[]; complete: boolean } | null {
   let any = false, failed = false, dirty = false;
   const status = new Map<string, string>(), ranSet = new Set<string>(), pkgs = new Set<string>(), failedTests = new Set<string>(), starts = new Map<string, number>(), done = new Map<string, number>();
@@ -159,38 +161,43 @@ function goJson(out: string): { failed: boolean; failedTests: string[]; passed: 
   }
   if (!any) return null;
   const passedNames = [...status].filter(([, v]) => v === "pass").map(([k]) => k);
-  return { failed, failedTests: [...failedTests], passed: passedNames.length, passedNames, complete: !dirty && pkgs.size > 0 && [...pkgs].every((p) => starts.get(p) === 1 && done.get(p) === 1) }; // a test that prints test2json framing before an early os.Exit(0) leaves no package-level terminal event of its own, or a second one
+  return { failed, failedTests: [...failedTests], passed: passedNames.length, passedNames, complete: !dirty && pkgs.size > 0 && [...pkgs].every((p) => starts.get(p) === 1 && done.get(p) === 1) }; // a torn stream or one with repeated starts, terminals or runs is doubt; a clean forged stream passes this and is caught by corroborateGoPass
 }
-/** Test names a package's own test binary lists (`go test -list .`), keyed "pkg::Name". Null = the listing failed or was unreadable. */
-function parseGoList(out: string): Set<string> {
-  const listed = new Set<string>(), group: string[] = [];
-  for (const l of stripAnsi(out).split("\n")) {
-    const ok = /^ok\s+(\S+)\s/.exec(l);
-    if (ok) { for (const n of group) listed.add(`${ok[1]}::${n}`); group.length = 0; } else if (/^(?:Test|Fuzz|Example|Benchmark)\S*$/.test(l.trim())) group.push(l.trim());
-  }
-  return listed;
-}
-/** A Go -json pass is counted only when the test binary itself still lists every passed test: a package whose init or TestMain prints test2json framing
- *  and exits 0 lists nothing (the early exit runs first), so its forged events earn no pass. Argv or a plain `go test [-json] [-run X] <pkgs>` line only; any other shape
- *  (extra flags, shell syntax) cannot be re-listed and stays not_run, the fail-safe default. A non-pass result is returned unchanged. */
+/** A Go -json pass is counted only after the tests are re-run (-count=1) with `-coverprofile` into a private temp file and every package that passed
+ *  tests has a statement line in that profile. Only the Go test runtime writes the profile, and only after the tests finish: a package that prints
+ *  test2json framing (\x16-marked lines) and then exits 0 from init, a test body, implementation code or TestMain, via os.Exit or syscall.Exit, never
+ *  reaches that write, so its forged events earn no pass. The re-run must also exit 0 with a complete stream that passes the same tests. A package with
+ *  no statements has nothing to prove and stays not_run, the fail-safe default. Argv or a plain `go test [-json] [-run X] <pkgs>` line only; any other
+ *  shape (extra flags, shell syntax) cannot be re-run and stays not_run. A non-pass result is returned unchanged. */
 export async function corroborateGoPass(c: Classified, out: string, cmdOrLine: string, args: readonly string[] | undefined, o: { cwd: string; env: NodeJS.ProcessEnv }): Promise<Classified> {
   if (c.result !== "pass" || goRunner(cmdOrLine, args).runner !== "go") return c;
   const refuse: Classified = { result: "not_run", reason: GO_EXIT0_REASON };
-  const names = goJson(stripAnsi(out))?.passedNames ?? [];
+  const first = goJson(stripAnsi(out));
+  const names = first?.passedNames ?? [];
   const toks = args ? [cmdOrLine, ...args] : cmdOrLine.trim().split(/\s+/);
   if (!names.length || toks.some((t) => /[&|;$`"'<>()\\]/.test(t)) || basename(toks[0] ?? "") !== "go" || toks[1] !== "test") return refuse;
-  const pkgs: string[] = [];
+  const pkgs: string[] = [], run: string[] = [];
   for (let k = 2; k < toks.length; k++) {
     const t = toks[k]!;
     if (t === "-json") continue;
-    if (t === "-run") { k++; continue; }
+    if (t === "-run") { const v = toks[++k]; if (v === undefined) return refuse; run.push("-run", v); continue; }
     if (t.startsWith("-")) return refuse;
     pkgs.push(t);
   }
-  const r = await spawnCollect("go", ["test", "-list", ".", ...(pkgs.length ? pkgs : ["."])], { cwd: o.cwd, env: o.env, timeoutMs: 120_000 });
-  if (r.status !== 0) return refuse;
-  const listed = parseGoList(r.output);
-  return names.every((n) => listed.has(n)) ? c : refuse;
+  const dir = mkdtempSync(join(tmpdir(), "loki-gocov-")), prof = join(dir, "cover.out");
+  try {
+    const r = await spawnCollect("go", ["test", "-json", "-count=1", `-coverprofile=${prof}`, ...run, ...(pkgs.length ? pkgs : ["."])], { cwd: o.cwd, env: o.env, timeoutMs: 600_000 });
+    const second = goJson(stripAnsi(r.output));
+    if (r.status !== 0 || !second || second.failed || !second.complete) return refuse;
+    const again = new Set(second.passedNames);
+    if (!names.every((n) => again.has(n))) return refuse;
+    const covered = new Set<string>();
+    for (const l of (existsSync(prof) ? readFileSync(prof, "utf8") : "").split("\n")) {
+      const m = /^(.+)\/[^/:]+:\d+\.\d+,\d+\.\d+ \d+ \d+$/.exec(l);
+      if (m) covered.add(m[1]!);
+    }
+    return [...new Set(names.map((n) => n.slice(0, n.indexOf("::"))))].every((pk) => covered.has(pk)) ? c : refuse;
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 /** Failing test ids a failed run names: go from the -json stream, cargo from "test x ... FAILED" lines that cover the trailer's failed count. [] = nothing readable (never red on its own). */
 export function readableFailIds(runner: "go" | "cargo", out: string): string[] {
