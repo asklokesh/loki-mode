@@ -284,11 +284,18 @@ class AnchorsTrackTheSource(unittest.TestCase):
             "whole model of the flag is stale")
         block = text.split(marker, 1)[1].split("\n  }", 1)[0]
         pushes = block.count("lines.push(")
+        # One push is the flagPrefixLines loop, covered by FLAG_STRIP_ANCHORS.
+        loops = block.count("flagPrefixLines(env)")
         self.assertEqual(
-            pushes, len(pd.STRIP_ANCHORS),
+            pushes - loops, len(pd.STRIP_ANCHORS),
             "build_prompt.ts strips %d lines but prompt-diff.py knows %d "
             "anchors; the tool is misreporting what LOKI_SIMPLE deletes"
-            % (pushes, len(pd.STRIP_ANCHORS)))
+            % (pushes - loops, len(pd.STRIP_ANCHORS)))
+        flag_texts = text.split("PREFIX_FLAG_LINES", 1)[1]
+        for a in pd.FLAG_STRIP_ANCHORS:
+            self.assertIn('"' + a, flag_texts, "flag anchor %r has no source line" % a)
+        self.assertEqual(flag_texts.count('flag: "LOKI_PROMPT_'),
+                         len(pd.FLAG_STRIP_ANCHORS))
 
 
 class HonestyRules(unittest.TestCase):

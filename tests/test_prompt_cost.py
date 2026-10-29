@@ -76,7 +76,7 @@ class TheSplitIsCorrect(unittest.TestCase):
     def test_prefix_plus_marker_plus_tail_reconstructs_every_file(self):
         """The identity that catches a slicing off-by-one.
 
-        94.2%% + 5.6%% rounds to 99.8%%, so an off-by-one hides comfortably
+        94.5%% + 5.3%% rounds to 99.8%%, so an off-by-one hides comfortably
         inside the gap between the two reported percentages. The marker's own
         18 bytes are the third slice, and only the exact identity sees them.
         """
@@ -100,16 +100,16 @@ class TheSplitIsCorrect(unittest.TestCase):
         self.assertGreater(checked, 0, "no fixture was actually checked")
 
     def test_fixture_1_matches_the_measured_reference(self):
-        """The stated reference: ~7909 bytes, prefix 94%, tail 5%."""
+        """The stated reference: ~8286 bytes, prefix 94%, tail 5%."""
         rows = {r["fixture"]: r for r in _report()["fixtures"]}
         self.assertIn("fixture-1", rows)
         r = rows["fixture-1"]
-        self.assertEqual(r["total_bytes"], 7909)
-        self.assertEqual(r["prefix_bytes"], 7452)
+        self.assertEqual(r["total_bytes"], 8286)
+        self.assertEqual(r["prefix_bytes"], 7829)
         self.assertEqual(r["tail_bytes"], 439)
-        self.assertAlmostEqual(r["prefix_share_pct"], 94.2, places=1)
+        self.assertAlmostEqual(r["prefix_share_pct"], 94.5, places=1)
         # bytes/4, floored.
-        self.assertEqual(r["prefix_tokens"], 7452 // 4)
+        self.assertEqual(r["prefix_tokens"], 7829 // 4)
         self.assertEqual(r["tail_tokens"], 439 // 4)
 
 
@@ -174,7 +174,7 @@ class TheSimpleSavingIsNeverFabricated(unittest.TestCase):
     LOKI_SIMPLE, so the real saving was never observed here. Two specific wrong
     numbers are within reach and both are pinned out: the source comment's
     "8090 -> 1776, -78%" describes a prompt that is not in this corpus
-    (fixture-1 is 7909 bytes), and "the prefix is 94% so it saves 94%" over-
+    (fixture-1 is 8286 bytes), and "the prefix is 94% so it saves 94%" over-
     claims by everything that survives the strip.
     """
 
@@ -240,7 +240,7 @@ class OutputShape(unittest.TestCase):
         report = _report("--bytes-per-token", "2")
         self.assertEqual(report["bytes_per_token"], 2)
         rows = {r["fixture"]: r for r in report["fixtures"]}
-        self.assertEqual(rows["fixture-1"]["prefix_tokens"], 7452 // 2)
+        self.assertEqual(rows["fixture-1"]["prefix_tokens"], 7829 // 2)
 
 
 if __name__ == "__main__":

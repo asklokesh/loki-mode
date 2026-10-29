@@ -26,8 +26,9 @@ compare the tail to itself, and the most important check in this file could
 never fail. Simulating the whole document means a predicate that drifts into
 matching tail content produces a real FAIL, which is the point.
 
-The anchors are derived from the nine values pushed inside `if (!simple)` at
-loki-ts/src/runner/build_prompt.ts:1607-1617. Two prefix lines pushed just
+The anchors are derived from the ten values pushed inside `if (!simple)` in
+loki-ts/src/runner/build_prompt.ts, plus the flag-gated prefix lines pushed by
+its flagPrefixLines loop (FLAG_STRIP_ANCHORS). Two prefix lines pushed just
 AFTER that block are deliberately absent: goal-sharpening and
 CODEBASE_ANALYSIS_MODE survive the flag, and listing them here would
 over-report the deletion. A stale anchor under-reports it, so an anchor that
@@ -52,7 +53,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CORPUS = os.path.join(
     os.path.dirname(_HERE), "loki-ts", "tests", "fixtures", "build_prompt")
 
-# The nine coaching values gated by `if (!simple)` in build_prompt.ts. Each is a
+# The ten coaching values gated by `if (!simple)` in build_prompt.ts. Each is a
 # whole-line, start-anchored prefix: a bare substring would match this file's
 # own prose and any tail line quoting an instruction back.
 STRIP_ANCHORS = (
@@ -65,6 +66,17 @@ STRIP_ANCHORS = (
     "RUN_CONTRACT: ",                            # COMPOSE_INSTRUCTION
     "LSP_GROUNDING: ",                           # LSP_GROUNDING_INSTRUCTION
     "Project conventions: read AGENTS.md",       # AGENTS_MD_INSTRUCTION
+    "UNTRUSTED_DATA: ",                          # UNTRUSTED_DATA_INSTRUCTION
+)
+
+# The default-off lines flagPrefixLines() emits inside the same block (one loop
+# push for all of them). They are absent from the corpus (no fixture sets the
+# flags), so they are kept apart from STRIP_ANCHORS: unused_anchors() would
+# otherwise report them stale. They still must be stripped when present.
+FLAG_STRIP_ANCHORS = (
+    "ADVISOR: ",                                 # LOKI_PROMPT_ADVISOR
+    "LENGTH: ",                                  # LOKI_PROMPT_LENGTH
+    "VERIFY_UI: ",                               # LOKI_PROMPT_SCREENSHOT
 )
 
 
@@ -90,7 +102,8 @@ def is_coaching(line):
     mentions an instruction be scored as coaching, which is exactly the
     misclassification the tail check is supposed to catch.
     """
-    return any(line.startswith(a) for a in STRIP_ANCHORS)
+    return any(line.startswith(a)
+               for a in STRIP_ANCHORS + FLAG_STRIP_ANCHORS)
 
 
 def simulate(text):
