@@ -43,6 +43,12 @@ function _loki {
                         '--provider[Provider]:provider:(claude opencode codex cline aider)' \
                         '--max-cost[Hard per-run cap in USD]:usd:'
                     ;;
+                try)
+                    _arguments \
+                        '--dry-run[Clone, print the task and estimate, no model call]' \
+                        '--provider[Provider]:provider:(claude opencode codex cline aider)' \
+                        '--max-cost[Hard per-run cap in USD]:usd:'
+                    ;;
                 control)
                     _arguments \
                         '--port[Port for the control plane server]:port:' \
@@ -284,6 +290,7 @@ function _loki_commands {
         'demo:Interactive 60-second demo'
         'tour:Offline sample receipt replay (no key, no spend)'
         'wow:Tiny real task in a temp repo, or the offline sample'
+        'try:Try Loki on a public repo in a temp clone, keep only the receipt'
         'factory:loki start with the autonomy policy printed'
         'welcome:Friendly first-run opener (what Loki is, next steps)'
         'init:Interactive PRD builder'

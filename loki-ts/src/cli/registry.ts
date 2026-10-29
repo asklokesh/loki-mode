@@ -232,6 +232,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("notify", "KEEP-MODERN", "bash", "Notifications", "Engine-neutral", { subcommands: [sub("desktop", "Send a desktop notification (macOS or Linux notify-send)", { positionals: [{ name: "message", type: "string" }] })] }),
   cmd("tour", "KEEP-MODERN", "bash", "See a sample result", "Onboarding"),
   cmd("wow", "KEEP-MODERN", "bash", "Tiny real task, or the offline sample", "Onboarding: loki tour --live"),
+  cmd("try", "KEEP-MODERN", "bash", "Try Loki on a public repo in a temp clone, keep only the receipt", "Onboarding: never touches your checkout", { flags: [bool("--dry-run", "Clone, print the clone path, task and estimate, no model call"), str("--provider", "<name>", "claude, opencode, codex, cline or aider"), str("--max-cost", "<usd>", "Hard per-run cap in USD (default 2)")], positionals: [{ name: "url", type: "string" }] }),
   cmd("factory", "KEEP-MODERN", "bash", "loki start with the autonomy policy printed", "propose, execute, operate unchanged"),
   cmd("welcome", "KEEP-MODERN", "bash", "First-run opener", "Onboarding"),
   cmd("onboard", "UPDATE", "bash", "Onboard to a codebase", "Overlaps wiki"),

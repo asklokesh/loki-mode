@@ -5,7 +5,7 @@ _loki_completion() {
     _init_completion || return
 
     # Main subcommands (must match autonomy/loki main case statement)
-    local main_commands="start backlog quick monitor demo tour wow factory welcome init stop pause resume cancel steer status next ship dashboard web serve api sandbox notify import github issue intent config provider reset memory compound checkpoint council dogfood projects enterprise secrets cockpit secure own handoff doctor watchdog audit metrics syslog onboard share proof receipt outcomes explain plan report cost estimate kpis stats test ci watch telemetry agent context ctx code run export review optimize heal modernize migrate cluster worktree wt trigger failover remote deploy docker mcp magic assets analyze compliance crash control workspace open otel preview quickstart rc rollback merge self-update sentrux setup-skill spec state template trust trust-metrics ultracode update verify voice why wiki bench cleanup logs grill docs cp version completions help keys answer queue issues undo runs acp verify-pr chat route edit setup models agents diff backup restore"
+    local main_commands="start backlog quick monitor demo tour wow try factory welcome init stop pause resume cancel steer status next ship dashboard web serve api sandbox notify import github issue intent config provider reset memory compound checkpoint council dogfood projects enterprise secrets cockpit secure own handoff doctor watchdog audit metrics syslog onboard share proof receipt outcomes explain plan report cost estimate kpis stats test ci watch telemetry agent context ctx code run export review optimize heal modernize migrate cluster worktree wt trigger failover remote deploy docker mcp magic assets analyze compliance crash control workspace open otel preview quickstart rc rollback merge self-update sentrux setup-skill spec state template trust trust-metrics ultracode update verify voice why wiki bench cleanup logs grill docs cp version completions help keys answer queue issues undo runs acp verify-pr chat route edit setup models agents diff backup restore"
 
     # 1. If we are on the first argument (subcommand)
     if [[ $cword -eq 1 ]]; then
@@ -264,6 +264,13 @@ _loki_completion() {
         wow)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--offline --dry-run --keep --provider --max-cost --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
+        try)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--dry-run --provider --max-cost --help" -- "$cur") )
                 return 0
             fi
             ;;

@@ -147,6 +147,7 @@ Hidden and legacy-only commands are omitted; see `docs/CLI-INVENTORY.md` for the
 | `loki notify desktop` | Send a desktop notification (macOS or Linux notify-send) |
 | `loki tour` | See a sample result |
 | `loki wow` | Tiny real task, or the offline sample |
+| `loki try` | Try Loki on a public repo in a temp clone, keep only the receipt |
 | `loki factory` | loki start with the autonomy policy printed |
 | `loki welcome` | First-run opener |
 | `loki onboard` | Onboard to a codebase |

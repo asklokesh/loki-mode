@@ -1864,6 +1864,7 @@ show_help_all() {
     echo "  workspace list | infer <name> | run <name> <ref>   Multi-repo runs from loki.yaml workspaces (LOKI_WORKSPACES=0 disables)"
     echo "  start --workspace <name> \"<brief>\"   Run a workspace; start --deploy [--health-url U] deploys after a VERIFIED run"
     echo "  quickstart [idea]  Guided first build: setup, idea, template, plan, go"
+    echo "  try <repo-url>     Try Loki on a public repo in a temp clone (--dry-run previews); only the receipt is kept"
     echo ""
     echo "Session:"
     echo "  status [--json|--badge|--probe]  Show current status (--json machine-readable, --badge deploy badge, --probe re-check deploy health)"
@@ -2023,7 +2024,7 @@ show_help_all() {
     echo "  projects proof (receipt) provider quick quickstart rc remote report reset"
     echo "  merge restore resume review rollback run runs sandbox secrets secure self-update sentrux"
     echo "  serve setup setup-skill share ship spec start state stats status steer stop"
-    echo "  syslog telemetry template test tour trigger trust trust-metrics"
+    echo "  syslog telemetry template test tour trigger trust trust-metrics try"
     echo "  ultracode undo update verify version voice watch watchdog web welcome why"
     echo "  wiki workspace worktree (wt) wow"
     echo "  control"
@@ -23024,6 +23025,217 @@ for r in reqs:
 "
 }
 
+# loki try: clone a public repo into a run-owned temp dir, pick a starter task, run it
+# there, keep only the receipt. The caller's checkout is never touched. The temp helpers
+# below follow the loki_run_tmp_create/cleanup contract (the repo's own copies live under
+# eval/, which the npm package does not ship).
+try_tmp_create() {
+    local temp_root d
+    temp_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || return 1
+    d="$(mktemp -d "${temp_root}/loki-run.XXXXXXXX")" || return 1
+    chmod 700 "$d" || { rmdir "$d" 2>/dev/null; return 1; }
+    if ! printf '%s\n' "$d" >"$d/.loki-run-owned"; then rm -rf -- "$d"; return 1; fi
+    printf '%s\n' "$d"
+}
+
+# Removes only a directory try_tmp_create made: a direct child of the temp root named
+# loki-run.*, not a symlink, carrying its own path in the owner marker.
+try_tmp_cleanup() {
+    local d="${1:-}" root marker_value=""
+    [ -n "$d" ] && [ -d "$d" ] && [ ! -L "$d" ] || return 0
+    root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || return 0
+    case "$d" in "$root"/loki-run.*) ;; *) return 0 ;; esac
+    [ "$(dirname -- "$d")" = "$root" ] || return 0
+    [ -f "$d/.loki-run-owned" ] && [ ! -L "$d/.loki-run-owned" ] || return 0
+    IFS= read -r marker_value <"$d/.loki-run-owned" || true
+    [ "$marker_value" = "$d" ] || return 0
+    rm -rf -- "$d"
+}
+
+# Prints the starter task for the clone at $1 (source URL $2): the first open GitHub
+# issue title when gh can read it, else the first TODO line. Prints nothing when neither exists.
+try_pick_task() {
+    local dest="$1" url="$2" slug title first p l t todo_file
+    case "$url" in
+        https://github.com/*)
+            slug="${url#https://github.com/}"
+            slug="${slug%.git}"
+            slug="${slug%/}"
+            if command -v gh >/dev/null 2>&1; then
+                title="$(gh issue list --repo "$slug" --state open --limit 1 --json title --jq '.[0].title // empty' 2>/dev/null)" || title=""
+                title="${title//$'\n'/ }"
+                if [ -n "$title" ]; then
+                    printf '%s\n' "Resolve the open issue: ${title:0:200}"
+                    return 0
+                fi
+            fi
+            ;;
+    esac
+    todo_file="$(dirname -- "$dest")/todo.txt"
+    git -C "$dest" grep -I -n -e TODO >"$todo_file" 2>/dev/null || true
+    first="$(sed -n 1p "$todo_file" 2>/dev/null)"
+    [ -n "$first" ] || return 0
+    p="${first%%:*}"
+    first="${first#*:}"
+    l="${first%%:*}"
+    t="${first#*:}"
+    t="$(printf '%s' "$t" | sed -e 's/^[[:space:]]*//' | cut -c1-160)"
+    printf '%s\n' "Resolve the TODO in ${p} (line ${l}): ${t}"
+}
+
+# Copies the newest receipt.json under $1/.loki/runs to a kept location and prints its path.
+try_keep_receipt() {
+    local dest="$1" src runid out_root out
+    src="$(python3 - "$dest/.loki/runs" <<'PY'
+import os, sys
+root, best = sys.argv[1], None
+for d, _, files in os.walk(root):
+    if "receipt.json" in files:
+        p = os.path.join(d, "receipt.json")
+        if best is None or os.path.getmtime(p) > os.path.getmtime(best):
+            best = p
+print(best or "")
+PY
+)" || src=""
+    [ -n "$src" ] || return 1
+    runid="$(basename -- "$(dirname -- "$src")")"
+    out_root="${LOKI_TRY_RECEIPT_DIR:-${HOME}/.loki/try-receipts}"
+    out="${out_root}/${runid}"
+    mkdir -p "$out" && cp "$src" "$out/receipt.json" || return 1
+    printf '%s\n' "$out/receipt.json"
+}
+
+_cmd_try_body() {
+    local tmp="$1" url="$2" dry_run="$3" provider="$4" max_cost="$5"
+    local dest="$tmp/repo" task
+    if ! (
+        unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX
+        GIT_TERMINAL_PROMPT=0 git -c protocol.ext.allow=never -c core.hooksPath=/dev/null \
+            clone --depth 1 --quiet -- "$url" "$dest"
+    ); then
+        echo "loki try: could not clone $url" >&2
+        return 1
+    fi
+    task="$(try_pick_task "$dest" "$url")"
+    if [ -z "$task" ]; then
+        echo "loki try: no starter task found (no open issue readable, no TODO line) in $url" >&2
+        return 1
+    fi
+    echo "Clone path: $dest"
+    echo "Task: $task"
+    echo "Estimate: one task on the Loki 10 engine, provider $provider, cost capped at \$$max_cost (--max-cost); the receipt records the actual spend."
+    if [ "$dry_run" = true ]; then
+        echo "[dry-run] No model call was made. A real run would execute:"
+        echo "  loki start \"<task>\" --no-pr --provider $provider --max-cost $max_cost"
+        return 0
+    fi
+    local rc=0 receipt
+    (
+        cd "$dest" && LOKI_ASSUME_YES=1 "$SKILL_DIR/bin/loki" start "$task" --no-pr --provider "$provider" --max-cost "$max_cost"
+    ) || rc=$?
+    if receipt="$(try_keep_receipt "$dest")"; then
+        echo ""
+        echo "Receipt: $receipt"
+        echo "Check it: loki verify $receipt"
+    else
+        echo ""
+        echo "No receipt was written (run exited $rc)."
+        [ "$rc" != "0" ] || rc=1
+    fi
+    return "$rc"
+}
+
+cmd_try() {
+    local url="" dry_run=false provider="" max_cost="2"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo -e "${BOLD}loki try${NC} - Try Loki on a public repo without touching your checkout"
+                echo ""
+                echo "Usage: loki try <public-repo-url> [--dry-run] [--provider P] [--max-cost N]"
+                echo ""
+                echo "Clones the repo (depth 1) into a run-owned temp directory, picks a starter"
+                echo "task (the first open GitHub issue title, else the first TODO line), runs it"
+                echo "on the Loki 10 engine with no PR, keeps only the receipt, and always removes"
+                echo "the temp clone. Your current checkout is never read or changed."
+                echo ""
+                echo "Options:"
+                echo "  --dry-run     Clone, then print the clone path, the task and an estimate. No model call, no spend"
+                echo "  --provider P  claude (default) or opencode, codex, cline, aider"
+                echo "  --max-cost N  Hard per-run cap in USD, a positive number (default 2)"
+                echo "  --help, -h    Show this help"
+                echo ""
+                echo "URL schemes: https://, http://, git://, file://"
+                echo "The receipt is kept under \${LOKI_TRY_RECEIPT_DIR:-~/.loki/try-receipts}/<run>/receipt.json;"
+                echo "re-check it with: loki verify <receipt path>"
+                echo ""
+                echo "Examples:"
+                echo "  loki try https://github.com/owner/repo --dry-run"
+                echo "  loki try https://github.com/owner/repo"
+                return 0
+                ;;
+            --dry-run) dry_run=true; shift ;;
+            --provider)
+                provider="${2:-}"
+                if [ -z "$provider" ]; then echo "loki try: --provider requires a value" >&2; return 2; fi
+                shift 2
+                ;;
+            --provider=*) provider="${1#*=}"; shift ;;
+            --max-cost)
+                max_cost="${2:-}"
+                if [ -z "$max_cost" ]; then echo "loki try: --max-cost requires a value" >&2; return 2; fi
+                shift 2
+                ;;
+            --max-cost=*) max_cost="${1#*=}"; shift ;;
+            -*)
+                echo "loki try: unknown option: $1" >&2
+                echo "Run 'loki try --help'." >&2
+                return 2
+                ;;
+            *)
+                if [ -n "$url" ]; then
+                    echo "loki try: only one repo URL is accepted" >&2
+                    return 2
+                fi
+                url="$1"
+                shift
+                ;;
+        esac
+    done
+    if [ -z "$url" ]; then
+        echo "Usage: loki try <public-repo-url> [--dry-run]" >&2
+        return 2
+    fi
+    case "$url" in
+        https://*|http://*|git://*|file://*) ;;
+        *) echo "loki try: unsupported URL '$url' (use https://, http://, git:// or file://)" >&2; return 2 ;;
+    esac
+    case "$url" in *[[:space:]]*) echo "loki try: the URL must not contain whitespace" >&2; return 2 ;; esac
+    if ! [[ "$max_cost" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! awk -v c="$max_cost" 'BEGIN { exit !(c > 0) }'; then
+        echo "loki try: --max-cost must be a positive number of USD, got: $max_cost" >&2
+        return 2
+    fi
+    local use_provider="${provider:-${LOKI_PROVIDER:-claude}}"
+    case "$use_provider" in
+        claude|opencode|codex|cline|aider) ;;
+        *) echo "loki try: unknown provider '$use_provider' (use claude, opencode, codex, cline or aider)" >&2; return 2 ;;
+    esac
+    if [ "$dry_run" != true ] && ! wow_provider_ready "$use_provider"; then
+        echo "loki try: no provider ready for '$use_provider'. Run 'loki doctor', or preview with --dry-run." >&2
+        return 1
+    fi
+
+    local tmp rc=0
+    tmp="$(try_tmp_create)" || { echo "loki try: cannot create a temp directory" >&2; return 1; }
+    # shellcheck disable=SC2064  # expand tmp now; it is local to this call
+    trap "try_tmp_cleanup '$tmp'; trap - INT TERM; exit 130" INT TERM
+    _cmd_try_body "$tmp" "$url" "$dry_run" "$use_provider" "$max_cost" || rc=$?
+    trap - INT TERM
+    try_tmp_cleanup "$tmp"
+    if [ ! -e "$tmp" ]; then echo "Removed the temp clone."; fi
+    return "$rc"
+}
+
 cmd_plan() {
     local prd_file=""
     local show_requirements=false
@@ -23149,7 +23361,7 @@ _suggest_command() {
 ultracode council demo dogfood heal modernize import issue github init template \
 status stop pause resume monitor watch watchdog dashboard web open preview share \
 memory context ctx checkpoint state report kpis cost metrics stats logs otel \
-syslog telemetry crash config provider doctor setup setup-skill onboard quickstart \
+syslog telemetry crash config provider doctor setup setup-skill onboard quickstart try \
 welcome update self-update rollback merge failover cluster enterprise remote deploy docker \
 sandbox api mcp magic compound assets export wiki control docs explain why audit compliance \
 welcome update self-update rollback failover cluster enterprise remote deploy docker \
@@ -23721,6 +23933,9 @@ main() {
             ;;
         plan)
             cmd_plan "$@"
+            ;;
+        try)
+            cmd_try "$@"
             ;;
         failover)
             cmd_failover "$@"

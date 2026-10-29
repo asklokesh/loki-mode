@@ -349,6 +349,126 @@ check_badge "badge: empty headline omitted" "" "" "$_bu"
 check_badge "badge: no url omitted" "" "VERIFIED" ""
 
 # -------------------------------------------
+# Test: loki try (clone a public repo into a run-owned temp dir, pick a task, keep the receipt)
+# -------------------------------------------
+# Everything runs under one test-owned TMPDIR so leftover loki-run.* dirs from loki try are countable.
+_TRY_REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
+_TRY_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/loki-try-test.XXXXXXXX")"
+_TRY_TMP="$_TRY_ROOT/tmp"
+mkdir -p "$_TRY_TMP" "$_TRY_ROOT/home"
+check_try() {
+    local desc="$1" ok="$2" detail="${3:-}"
+    ((TOTAL++))
+    if [ "$ok" = "1" ]; then log_pass "$desc"; else log_fail "$desc" "$detail"; fi
+}
+try_has() { case "$1" in *"$2"*) echo 1 ;; *) echo 0 ;; esac; }
+try_leftovers() { find "$_TRY_TMP" -mindepth 1 -maxdepth 1 -name 'loki-run.*' 2>/dev/null | wc -l | tr -d ' '; }
+
+# Public-style fixture repo (file://) with one TODO line, and a separate caller checkout.
+_TRY_FX="$_TRY_ROOT/fixture"
+_TRY_CALLER="$_TRY_ROOT/caller"
+mkdir -p "$_TRY_FX" "$_TRY_CALLER"
+(
+    cd "$_TRY_FX" && git init -q . \
+        && printf '%s\n' '// TODO: retry the request on timeout' 'export const x = 1;' > app.js \
+        && git add app.js && git -c user.email=t@example.com -c user.name=t -c commit.gpgsign=false commit -q -m init
+    cd "$_TRY_CALLER" && git init -q . \
+        && printf '%s\n' 'caller file' > mine.txt \
+        && git add mine.txt && git -c user.email=t@example.com -c user.name=t -c commit.gpgsign=false commit -q -m caller
+    printf '%s\n' 'uncommitted caller edit' >> mine.txt
+) >/dev/null 2>&1
+_try_caller_state() { (cd "$_TRY_CALLER" && git rev-parse HEAD && git status --porcelain && cksum mine.txt) 2>&1; }
+_TRY_BEFORE="$(_try_caller_state)"
+
+_try_out=""
+_try_rc=0
+_try_out="$(cd "$_TRY_CALLER" && env TMPDIR="$_TRY_TMP" HOME="$_TRY_ROOT/home" LOKI_NO_BROWSER=1 "$LOKI" try "file://$_TRY_FX" --dry-run 2>&1)" || _try_rc=$?
+check_try "loki try file:// --dry-run exits 0" "$([ "$_try_rc" = "0" ] && echo 1 || echo 0)" "rc=$_try_rc: $_try_out"
+check_try "loki try --dry-run prints the clone path" "$(try_has "$_try_out" 'Clone path: ')" "$_try_out"
+check_try "loki try --dry-run picks the TODO line as the task" "$(try_has "$_try_out" 'Task: Resolve the TODO in app.js (line 1): // TODO: retry the request on timeout')" "$_try_out"
+check_try "loki try --dry-run prints an estimate" "$(try_has "$_try_out" 'Estimate: ')" "$_try_out"
+check_try "loki try --dry-run removes the temp clone" "$(try_has "$_try_out" 'Removed the temp clone.')" "$_try_out"
+
+_try_rc=0
+_try_out="$(cd "$_TRY_CALLER" && env TMPDIR="$_TRY_TMP" HOME="$_TRY_ROOT/home" "$LOKI" try ftp://example.com/x 2>&1)" || _try_rc=$?
+check_try "loki try rejects a non-clone URL scheme with exit 2" "$([ "$_try_rc" = "2" ] && echo 1 || echo 0)" "rc=$_try_rc: $_try_out"
+_try_rc=0
+_try_out="$(cd "$_TRY_CALLER" && env TMPDIR="$_TRY_TMP" HOME="$_TRY_ROOT/home" "$LOKI" try "file://$_TRY_ROOT/does-not-exist" --dry-run 2>&1)" || _try_rc=$?
+check_try "loki try reports a failed clone with exit 1" "$([ "$_try_rc" = "1" ] && echo 1 || echo 0)" "rc=$_try_rc: $_try_out"
+
+# Live path with a stubbed engine (no model call). SKILL_DIR mirrors the repo except bin/loki; the stub
+# start writes a really signed receipt so the kept copy can be re-checked with loki verify.
+if command -v bun >/dev/null 2>&1; then
+    _TRY_STUB="$_TRY_ROOT/skill"
+    mkdir -p "$_TRY_STUB/bin" "$_TRY_ROOT/path" "$_TRY_ROOT/keep"
+    for _e in "$_TRY_REPO"/*; do
+        [ "$(basename "$_e")" = "bin" ] || ln -s "$_e" "$_TRY_STUB/$(basename "$_e")"
+    done
+    cat > "$_TRY_ROOT/fixture.ts" <<TS
+import { generateKeyPairSync, sign } from "node:crypto";
+import { writeFileSync } from "node:fs";
+import { computeReceiptHash } from "$_TRY_REPO/loki-ts/src/engine10/verify_cmd.ts";
+import { kidOf } from "$_TRY_REPO/loki-ts/src/engine10/stages/seal.ts";
+const dir = process.argv[2]!;
+const f: Record<string, unknown> = {
+  schema: "loki.v10.receipt/1", run_id: "e10-try-1", task: { source: "text", sha256: "a".repeat(64) }, repo: "o/r",
+  base_sha: "b".repeat(40), head_sha: "c".repeat(40), tree: "d".repeat(40), diff_sha256: "e".repeat(64),
+  wall: { files: [], passed: true }, checks: [{ name: "unit", cmd: "bun test", result: "pass", duration_s: 1 }],
+  not_proven: ["full suite"], verdict: "VERIFIED", cost: { usd: 0.1, input_tokens: 1, output_tokens: 1 },
+  time: { wall_s: 0, stages: {} }, provider: "claude", model: "m", resumed: false,
+  events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+};
+const k = generateKeyPairSync("ed25519");
+const kid = kidOf(k.publicKey), hash = computeReceiptHash(f);
+const h = Buffer.from(JSON.stringify({ alg: "EdDSA", kid })).toString("base64url");
+const p = Buffer.from(JSON.stringify({ receipt_sha256: hash })).toString("base64url");
+const jwt = h + "." + p + "." + sign(null, Buffer.from(h + "." + p), k.privateKey).toString("base64url");
+writeFileSync(dir + "/signed-receipt.json", JSON.stringify({ ...f, receipt_sha256: hash, verification: { jwt, kid } }));
+writeFileSync(dir + "/pub.pem", k.publicKey.export({ type: "spki", format: "pem" }));
+TS
+    if bun "$_TRY_ROOT/fixture.ts" "$_TRY_ROOT" >"$_TRY_ROOT/fixture.log" 2>&1; then
+        cat > "$_TRY_STUB/bin/loki" <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  start)
+    mkdir -p .loki/runs/e10-try-1
+    cp "$_TRY_ROOT/signed-receipt.json" .loki/runs/e10-try-1/receipt.json
+    exit 0 ;;
+esac
+exit 0
+STUB
+        chmod +x "$_TRY_STUB/bin/loki"
+        printf '#!/usr/bin/env bash\nexit 0\n' > "$_TRY_ROOT/path/claude"
+        chmod +x "$_TRY_ROOT/path/claude"
+        _try_rc=0
+        _try_out="$(cd "$_TRY_CALLER" && env SKILL_DIR="$_TRY_STUB" PATH="$_TRY_ROOT/path:$PATH" ANTHROPIC_API_KEY=stub \
+            TMPDIR="$_TRY_TMP" HOME="$_TRY_ROOT/home" LOKI_TRY_RECEIPT_DIR="$_TRY_ROOT/keep" LOKI_NO_BROWSER=1 \
+            "$LOKI" try "file://$_TRY_FX" --provider claude 2>&1)" || _try_rc=$?
+        _try_receipt="$(printf '%s\n' "$_try_out" | sed -n 's/^Receipt: //p' | head -1)"
+        check_try "loki try live run (stub engine) exits 0 and prints a receipt path" \
+            "$([ "$_try_rc" = "0" ] && [ -n "$_try_receipt" ] && [ -f "$_try_receipt" ] && echo 1 || echo 0)" "rc=$_try_rc: $_try_out"
+        _try_vrc=0
+        if [ -n "$_try_receipt" ]; then
+            (cd "$_TRY_ROOT" && env -u LOKI_ENGINE LOKI_NO_BROWSER=1 LOKI_TELEMETRY_DISABLED=1 \
+                LOKI_RECEIPT_RETIRED_PUBKEYS="$_TRY_ROOT/pub.pem" BUN_FROM_SOURCE=1 \
+                timeout -k 5 120 bash "$_TRY_REPO/bin/loki" verify "$_try_receipt") >"$_TRY_ROOT/verify.out" 2>&1 || _try_vrc=$?
+        else
+            _try_vrc=99
+        fi
+        check_try "loki verify <kept receipt> exits 0" "$([ "$_try_vrc" = "0" ] && echo 1 || echo 0)" "rc=$_try_vrc: $(head -c 300 "$_TRY_ROOT/verify.out" 2>/dev/null)"
+    else
+        check_try "loki try live-run fixture generated" 0 "$(head -c 300 "$_TRY_ROOT/fixture.log")"
+    fi
+else
+    echo "[SKIP] loki try live run: bun not installed"
+fi
+
+check_try "loki try leaves 0 loki-run.* dirs behind" "$([ "$(try_leftovers)" = "0" ] && echo 1 || echo 0)" "found $(try_leftovers): $(ls -A "$_TRY_TMP" 2>&1)"
+_TRY_AFTER="$(_try_caller_state)"
+check_try "loki try leaves the caller checkout unchanged (HEAD, status, file bytes)" "$([ "$_TRY_BEFORE" = "$_TRY_AFTER" ] && echo 1 || echo 0)" "before: $_TRY_BEFORE / after: $_TRY_AFTER"
+case "$_TRY_ROOT" in */loki-try-test.*) rm -rf -- "$_TRY_ROOT" ;; esac
+
+# -------------------------------------------
 # Summary
 # -------------------------------------------
 echo ""
