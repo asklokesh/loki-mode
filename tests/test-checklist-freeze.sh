@@ -111,7 +111,6 @@ case "$out" in "clean1=0 clean2=0 final=0") ;; *) fail "clean path: $out" ;; esa
 grep -qi 'hash mismatch' "$T/harness.log" && fail "clean path reported a mismatch"
 
 STATE="$PROJ/.loki/state/checklist-freeze.json"
-FIND="$PROJ/.loki/checklist"
 # The seven bypasses: each must stay blocked on the harness path.
 expect_blocked "edit only" 'tamper'
 expect_blocked "delete the record" 'tamper; rm -f "'"$STATE"'"'
@@ -241,7 +240,7 @@ done"
 [ "$(acc_field status)" = authored ] || fail "accept happy path: status not authored"
 [ "$(acc_field spec_sha256)" = "$(python3 -I -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$ACC_SPEC")" ] || fail "accept happy path: spec_sha256 wrong"
 [ -f "$ACC_OUT/checklist.json" ] || fail "accept happy path: no checklist.json"
-ls "$ACC_OUT" | grep -q 'tmp' && fail "accept happy path: temp file left behind"
+for stale in "$ACC_OUT"/*tmp*; do [ -e "$stale" ] && fail "accept happy path: temp file left behind"; done
 # the written checklist runs through the real verifier without schema errors
 mkdir -p "$ACC/proj"
 printf x > "$ACC/proj/present.txt"
