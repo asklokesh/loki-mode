@@ -127,5 +127,26 @@ python3 "$M" --setup top --model x --verifier "$STUB" --out "$T/unreadable.json"
 if [ "$rc" -ne 0 ] && [ "$(cat "$T/unreadable.json")" = '{broken' ]; then ok "unreadable prior aborts, left untouched"; else bad "unreadable prior aborts"; fi
 if ls "$OUT".tmp "$(dirname "$OUT")"/.wrong-pass-*.tmp >/dev/null 2>&1; then bad "no tmp leftovers"; else ok "no tmp leftovers"; fi
 
+# --compare-models: stub loki on PATH. Identical evidence across ids passes; a
+# verdict that follows LOKI_MODEL, a gate that follows it, or an affects_verdict
+# flag that is not false must each fail; the comparison runs with the key removed.
+EV='"deterministic_gates":[{"gate":"tests","status":"fail"}],"findings":[],"llm_review":{"affects_verdict":false}'
+run_cmp() { PATH="$T/bin:$PATH" ANTHROPIC_API_KEY=sk-test python3 "$M" --compare-models "$1" --only "$D1" --out "$T/cmp.json" >/dev/null 2>&1; }
+stub_loki "echo '{\"verdict\":\"BLOCKED\",\"exit_code\":2,$EV}'; exit 2"
+rm -f "$T/cmp.json"
+if run_cmp "big,small,unset" && python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1])); assert d['n']==1 and d['identical']==1 and d['models']==['big','small','unset']" "$T/cmp.json"; then
+  ok "compare-models: identical evidence across ids passes"; else bad "compare-models: identical evidence passes"; fi
+stub_loki "if [ \"\${LOKI_MODEL:-}\" = small ]; then echo '{\"verdict\":\"CONCERNS\",\"exit_code\":1,$EV}'; exit 1; fi; echo '{\"verdict\":\"BLOCKED\",\"exit_code\":2,$EV}'; exit 2"
+if ! run_cmp "big,small"; then ok "compare-models: verdict following the model id fails"; else bad "compare-models: verdict following model id fails"; fi
+stub_loki "g=fail; [ \"\${LOKI_MODEL:-}\" = small ] && g=pass; echo '{\"verdict\":\"BLOCKED\",\"exit_code\":2,\"deterministic_gates\":[{\"gate\":\"tests\",\"status\":\"'\$g'\"}],\"findings\":[],\"llm_review\":{\"affects_verdict\":false}}'; exit 2"
+if ! run_cmp "big,small"; then ok "compare-models: gate following the model id fails"; else bad "compare-models: gate following model id fails"; fi
+stub_loki "echo '{\"verdict\":\"BLOCKED\",\"exit_code\":2,\"deterministic_gates\":[],\"findings\":[],\"llm_review\":{\"affects_verdict\":true}}'; exit 2"
+if ! run_cmp "big,small"; then ok "compare-models: affects_verdict true fails"; else bad "compare-models: affects_verdict true fails"; fi
+stub_loki "[ -z \"\${ANTHROPIC_API_KEY:-}\" ] || { echo key-leaked >&2; exit 9; }; echo '{\"verdict\":\"BLOCKED\",\"exit_code\":2,$EV}'; exit 2"
+if run_cmp "big,small"; then ok "compare-models: runs with the API key removed"; else bad "compare-models: API key removed"; fi
+if ! run_cmp "big" && ! run_cmp "big,big"; then ok "compare-models: needs two distinct ids"; else bad "compare-models: two distinct ids"; fi
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

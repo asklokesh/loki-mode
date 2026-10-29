@@ -684,6 +684,101 @@ case_floor_wrong_pass() {
 }
 
 # ---------------------------------------------------------------------------
+# P4.seal-is-model-free
+# ---------------------------------------------------------------------------
+# Runs the real `loki verify --json --no-llm` (bin/loki of this checkout) over
+# seeded-defect fixtures once per model id (claude-opus-5-5, claude-haiku-4-5,
+# and LOKI_MODEL unset) with every API key variable removed, through
+# benchmarks/seeded-defects/measure.py --compare-models. PASS only if, for every
+# defect, the verdict, the exit code, the deterministic_gates array byte for
+# byte and the finding set (severity, category, source, blocking) are identical
+# across the ids, and llm_review.affects_verdict is false. Default scope: the
+# first defect of each category (a verify costs seconds); set
+# LOKI_P4_MODELFREE_FULL=1 for the whole corpus. Positive control: a loki shim
+# that makes one gate follow the model id must turn the comparison red.
+MODELFREE_MODELS="claude-opus-5-5,claude-haiku-4-5,unset"
+
+modelfree_ids() {  # echoes the defect ids to compare, comma separated
+    python3 - "$MANIFEST" "${LOKI_P4_MODELFREE_FULL:-0}" <<'PY'
+import json, sys
+ds = json.load(open(sys.argv[1]))["defects"]
+if sys.argv[2] == "1":
+    print(",".join(d["id"] for d in ds))
+else:
+    seen, ids = set(), []
+    for d in ds:
+        if d["category"] not in seen:
+            seen.add(d["category"])
+            ids.append(d["id"])
+    print(",".join(ids))
+PY
+}
+
+modelfree_shims() {  # $1 dir; real shim, and a mutant whose gate follows the model id
+    mkdir -p "$1/real" "$1/mutant"
+    printf '#!/bin/sh\nexec "%s/bin/loki" "$@"\n' "$REPO_ROOT" > "$1/real/loki"
+    cat > "$1/mutant/loki" <<SH
+#!/bin/sh
+out="\$("$REPO_ROOT/bin/loki" "\$@")"; rc=\$?
+case "\${LOKI_MODEL:-}" in
+  *haiku*) printf '%s' "\$out" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+d["deterministic_gates"][0]["status"] = "mutated-by-model-id"
+print(json.dumps(d, indent=2))' ;;
+  *) printf '%s\n' "\$out" ;;
+esac
+exit \$rc
+SH
+    chmod +x "$1/real/loki" "$1/mutant/loki"
+}
+
+modelfree_compare() {  # $1 shim dir  $2 ids  $3 report path; rc 0 only if identical
+    env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN \
+        -u LOKI_MODEL PATH="$1:$PATH" \
+        python3 "$CORPUS_DIR/measure.py" --compare-models "$MODELFREE_MODELS" --only "$2" \
+        --timeout 300 --out "$3" 2>"$3.err"
+}
+
+case_seal_model_free() {
+    command -v python3 >/dev/null 2>&1 || { echo "FAIL|prerequisite missing: python3"; return 0; }
+    [ -x "$REPO_ROOT/bin/loki" ] || { echo "FAIL|bin/loki missing or not executable"; return 0; }
+    local ids first shims="$MOAT_TMP/mf-shims" rep="$MOAT_TMP/mf-report.json" n
+    ids="$(modelfree_ids)" || { echo "FAIL|could not read the seeded-defect manifest"; return 0; }
+    first="${ids%%,*}"
+    modelfree_shims "$shims"
+    if modelfree_compare "$shims/mutant" "$first" "$MOAT_TMP/mf-mutant.json"; then
+        echo "FAIL|positive control failed: a gate that follows the model id was NOT detected"
+        return 0
+    fi
+    python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["differing"] == [sys.argv[2]] and "deterministic_gates" in d["defects"][0]["differing_fields"]' \
+        "$MOAT_TMP/mf-mutant.json" "$first" 2>/dev/null \
+        || { echo "FAIL|positive control: the mutant failed for the wrong reason: $(tail -c 300 "$MOAT_TMP/mf-mutant.json.err" | tr '\n' ' ')"; return 0; }
+    if ! modelfree_compare "$shims/real" "$ids" "$rep"; then
+        echo "FAIL|verdict or gates differ across model ids (or the compare could not run): $(tail -c 400 "$rep.err" | tr '\n' ' ')"
+        return 0
+    fi
+    n="$(python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+want = sys.argv[2].split(",")
+assert d["models"] == sys.argv[3].split(","), "models"
+assert [r["id"] for r in d["defects"]] == want, "ids"
+assert d["n"] == d["identical"] == len(want), "not all identical"
+for r in d["defects"]:
+    assert r["identical"], r["id"]
+    for m in d["models"]:
+        # the control must be a real verify result, not a blank or an error
+        assert r["verdict"][m] in ("BLOCKED", "CONCERNS", "VERIFIED"), (r["id"], m)
+        assert r["exit_code"][m] in (0, 1, 2), (r["id"], m)
+print(d["n"])' "$rep" "$ids" "$MODELFREE_MODELS" 2>&1)" || { echo "FAIL|report check: $n"; return 0; }
+    echo "PASS|identical verdicts, exit codes and deterministic gates for $n defects across $MODELFREE_MODELS with no API key; a gate that follows the model id is detected"
+}
+
+# ---------------------------------------------------------------------------
 # Runner: exactly one CASE line per case, even when a case function dies.
 # ---------------------------------------------------------------------------
 EMITTED=""
@@ -714,8 +809,9 @@ run_case P4.catalog-has-top-model "catalog lists $TOP_ID and the top tier resolv
 run_case P4.three-setups-resolve "top-only, floor-only and routed setups dispatch the intended ids per step" case_three_setups
 run_case P4.seeded-defect-corpus-present "seeded-defect corpus of >= 100 runnable defects in five categories" case_corpus
 run_case P4.floor-does-not-raise-wrong-pass "per-defect measured wrong-pass rate at floor <= top on the corpus" case_floor_wrong_pass
+run_case P4.seal-is-model-free "Seal verdict, exit code and deterministic gates are identical across model ids with no API key" case_seal_model_free
 
-for id in P4.catalog-has-top-model P4.three-setups-resolve P4.seeded-defect-corpus-present P4.floor-does-not-raise-wrong-pass; do
+for id in P4.catalog-has-top-model P4.three-setups-resolve P4.seeded-defect-corpus-present P4.floor-does-not-raise-wrong-pass P4.seal-is-model-free; do
     case " $EMITTED " in *" $id "*) ;; *) printf 'CASE %s FAIL runner did not emit this case\n' "$id" ;; esac
 done
 diag "runtime $((SECONDS - START_S))s"
