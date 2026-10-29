@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Acceptance checks are now written by a separate, walled provider call before the main loop, on both the shell and the Bun route: once per spec, at most two attempts, from an empty run-owned directory. Claude runs with tools denied; other providers are limited to that empty directory. The implementer can no longer write or replace the checks, and the checklist freeze only accepts the checks the author produced. If authoring fails, the council gate stays closed instead of passing. `loki spec checklist-reset <spec-sha256>` clears a failed authoring record for that one spec when no run is live.
+- Acceptance checks are now written by a separate, walled provider call before the main loop, on both the shell and the Bun route: once per spec, at most two attempts, from an empty run-owned directory. Claude runs with tools denied; other providers are limited to that empty directory. The implementer can no longer write or replace the checks, and the checklist freeze only accepts the checks the author produced. If authoring fails, the council gate stays closed instead of passing. `loki spec checklist-reset <spec-sha256>` clears a failed authoring record for that one spec when no run is live. The step that accepts the author's output runs with a minimal environment that carries no provider keys or GitHub tokens.
 
 ### Fixed
 
