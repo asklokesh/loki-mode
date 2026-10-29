@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2030,SC2031,SC2034
 # Moat property P6: in-place brownfield.
 #
 # The factory must work on an EXISTING repository without moving it: same path
@@ -21,6 +22,8 @@
 # the script ran to completion. A missing prerequisite is a FAIL, never a skip.
 set -uo pipefail
 
+# Per-fixture HOME/TMPDIR are meant to stay inside their subshell (SC2030/2031);
+# FX_PID_* are read by collect_fixture through eval (SC2034).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 RUN_SH="$REPO_ROOT/autonomy/run.sh"
@@ -273,20 +276,493 @@ run_pipeline() {
         LOKI_APP_RUNNER=false LOKI_NO_NEW_SESSION=1 LOKI_SKIP_AUTH_PREFLIGHT=1 \
         $TO bash "$RUN_SH" </dev/null >"$T/log/$1.out" 2>"$T/log/$1.err" )
 }
+# kill_leftovers <scope dir>: signal processes whose command line names the
+# scope directory. Concurrent fixtures each pass their own, so one fixture
+# never signals a sibling's run.
 kill_leftovers() {
-    local leftover p
-    leftover="$(pgrep -f "$T" 2>/dev/null | tr '\n' ' ')"
+    local leftover p scope="${1:?kill_leftovers needs a scope dir}"
+    leftover="$(pgrep -f "$scope" 2>/dev/null | tr '\n' ' ')"
     if [ -n "$leftover" ]; then
         note "P6: killing processes left behind by the run: $leftover"
         for p in $leftover; do kill "$p" 2>/dev/null || true; done
     fi
 }
+PROOF_ID=""
+# Run `loki proof verify $PROOF_ID` on one route (bin/loki execs autonomy/loki
+# when LOKI_LEGACY_BASH=1, so the two routes are distinct entry points). The
+# verifier JSON report lands in $T/log/verify-<tag>.out; returns the exit code.
+run_verify() {  # $1 = route (bun|bash), $2 = log tag, [$3 = repo, default $W]
+    local out="$T/log/verify-$2" repo="${3:-$W}"
+    if [ "$1" = bun ]; then
+        (cd "$repo" && "$LOKI_BIN" proof verify "$PROOF_ID") >"$out.out" 2>"$out.err"
+    else
+        (cd "$repo" && LOKI_LEGACY_BASH=1 "$LOKI_BIN" proof verify "$PROOF_ID") >"$out.out" 2>"$out.err"
+    fi
+}
+# "<ok> <hash_ok>" from a verifier report, e.g. "True True", or "unparsed".
+report_fields() {
+    python3 -c 'import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(d.get("ok"), d.get("hash_ok"))
+except Exception:
+    print("unparsed")' "$1" 2>/dev/null
+}
+# ============================================================================
+# Independent fixtures 2 to 5 (each its own repo, HOME, TMPDIR and stub logs)
+# run concurrently with the session-1/session-2 chain and with each other, then
+# their output is replayed below in the original case order. Every case still
+# runs and asserts the same thing; only the wall-clock overlap is new.
+# ============================================================================
+fixture_cfg() {
+# ============================================================================
+# P6.resume-keeps-ignored-user-file (second fixture, two more sessions)
+# ============================================================================
+# main ignores config.local.json. Session 1 un-ignores it and commits its own
+# copy on the session branch. Back on main, the user writes their real
+# config.local.json (ignored there). Resuming that branch would let git
+# overwrite the user's file, and the next checkout of main would delete it. The
+# resume must be refused and a new session branch minted; the user's file stays
+# intact during and after session 2 and after checkout of main, never committed.
+id=P6.resume-keeps-ignored-user-file
+why=""
+C="$T/cfg/repo"
+USER_CFG='{"user":"my real settings"}'
+gc() { git -C "$C" "$@"; }
+{
+    mkdir -p "$C" && git init -q "$C" \
+    && gc symbolic-ref HEAD refs/heads/main \
+    && gc config user.email moat@example.invalid \
+    && gc config user.name "moat p6" \
+    && gc config commit.gpgsign false \
+    && printf 'def hello():\n    return "hi"\n' > "$C/main.py" \
+    && printf 'config.local.json\n' > "$C/.gitignore" \
+    && gc add main.py .gitignore && gc commit -qm "c1: app, ignore local config"
+} >"$T/log/cfg-fixture.log" 2>&1 || why="second fixture setup failed: $(tr '\n' ' ' < "$T/log/cfg-fixture.log" | cut -c1-200); "
+CFG_LOG1="$T/log/cfg-stub1.log"
+CFG_LOG2="$T/log/cfg-stub2.log"
+: > "$CFG_LOG1"
+: > "$CFG_LOG2"
+if [ -z "$why" ]; then
+    run_pipeline cfg1 "$CFG_LOG1" cfg1 "$C"
+    rc=$?
+    echo "INFO P6 cfg session-1 run.sh rc=$rc"
+    kill_leftovers "$T/cfg"
+    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$CFG_LOG1")" -ge 1 ] \
+        || why="${why}vacuous: cfg session 1 never reached the provider build step (run.sh rc=$rc); "
+    C1_BRANCH="$(gc symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
+    case "$C1_BRANCH" in loki/session-*) ;; *) why="${why}cfg session 1 is not on a minted session branch ($C1_BRANCH); " ;; esac
+    C1_HEAD="$(gc rev-parse HEAD 2>/dev/null)"
+    # Vacuity guard: the session-1 branch really tracks config.local.json.
+    [ "$(gc show "$C1_BRANCH:config.local.json" 2>/dev/null)" = '{"agent":1}' ] \
+        || why="${why}vacuous: $C1_BRANCH does not track the agent's config.local.json; "
+    if gc checkout -q main 2>"$T/log/cfg-checkout1.err"; then
+        printf '%s\n' "$USER_CFG" > "$C/config.local.json"
+        gc check-ignore -q config.local.json \
+            || why="${why}vacuous: the user's config.local.json is not ignored on main; "
+    else
+        why="${why}could not switch to main before cfg session 2: $(head -c 160 "$T/log/cfg-checkout1.err" | tr '\n' ' '); "
+    fi
+fi
+if [ -z "$why" ]; then
+    run_pipeline cfg2 "$CFG_LOG2" cfg2 "$C"
+    rc=$?
+    echo "INFO P6 cfg session-2 run.sh rc=$rc"
+    kill_leftovers "$T/cfg"
+    # Vacuity guard: session 2 really ran and committed its own edit.
+    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$CFG_LOG2")" -ge 1 ] \
+        || why="${why}vacuous: cfg session 2 never reached the provider build step (run.sh rc=$rc); "
+    C2_BRANCH="$(gc symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
+    gc cat-file -e HEAD:app2.py 2>/dev/null \
+        || why="${why}vacuous: cfg session 2 committed no edit on $C2_BRANCH; "
+    case "$C2_BRANCH" in
+        loki/session-*) [ "$C2_BRANCH" != "$C1_BRANCH" ] \
+            || why="${why}session 2 resumed $C1_BRANCH instead of minting a new branch; " ;;
+        *) why="${why}cfg session 2 is not on a session branch ($C2_BRANCH); " ;;
+    esac
+    n_loki="$(gc branch --list 'loki/*' | grep -c .)"
+    [ "$n_loki" = "2" ] || why="${why}$n_loki loki branches after cfg session 2 (expected 2); "
+    [ "$(cat "$C/.loki/state/agent-branch.txt" 2>/dev/null)" = "$C2_BRANCH" ] \
+        || why="${why}agent-branch.txt does not name $C2_BRANCH; "
+    [ "$(gc rev-parse "$C1_BRANCH" 2>/dev/null)" = "$C1_HEAD" ] \
+        || why="${why}$C1_BRANCH moved during session 2; "
+    [ "$(cat "$T/log/cfg-seen.txt" 2>/dev/null)" = "$USER_CFG" ] \
+        || why="${why}during session 2 config.local.json was '$(head -c 80 "$T/log/cfg-seen.txt" 2>/dev/null)'; "
+    [ "$(cat "$C/config.local.json" 2>/dev/null)" = "$USER_CFG" ] \
+        || why="${why}after session 2 config.local.json is '$(head -c 80 "$C/config.local.json" 2>/dev/null)'; "
+    # Positive control: session 2's rewrite exposed the file to git add -A.
+    { [ "$(gc show HEAD:.gitignore 2>/dev/null)" = "build/" ] && ! gc check-ignore -q config.local.json; } \
+        || why="${why}positive control failed: config.local.json is still ignored on $C2_BRANCH; "
+    gc ls-tree -r --name-only HEAD 2>/dev/null | grep -qx 'config.local.json' \
+        && why="${why}config.local.json was committed onto $C2_BRANCH; "
+    if gc checkout -q main 2>"$T/log/cfg-checkout2.err"; then
+        [ "$(cat "$C/config.local.json" 2>/dev/null)" = "$USER_CFG" ] \
+            || why="${why}after checkout of main config.local.json is '$(head -c 80 "$C/config.local.json" 2>/dev/null || echo MISSING)'; "
+    else
+        why="${why}could not switch back to main after cfg session 2: $(head -c 160 "$T/log/cfg-checkout2.err" | tr '\n' ' '); "
+    fi
+fi
+if [ -z "$why" ]; then
+    pass "$id" "resuming $C1_BRANCH (which tracks config.local.json) was refused and $C2_BRANCH minted; the user's gitignored config.local.json was intact during and after session 2 and after checkout of main, and never committed"
+else
+    fail "$id" "$why"
+fi
+
+}
+fixture_intr() {
+# ============================================================================
+# P6.resume-after-interrupt-commits-agent-files (third fixture, two sessions)
+# ============================================================================
+# Session 1 makes helper.py (turn 1) and test_helper.py (turn 2) and is stopped
+# by a supervisor SIGTERM: state "interrupted", no session commit. Back on main
+# the user makes a file, then runs again; the recorded branch is resumed and
+# session 2 makes app.py import helper and finishes normally. The interrupted
+# session's files must be committed (the committed tree runs) and listed in the
+# receipt; the user's file must not be committed and must survive checkout of
+# main; the receipt must verify on both routes.
+id=P6.resume-after-interrupt-commits-agent-files
+why=""
+I="$T/intr/repo"
+gi() { git -C "$I" "$@"; }
+{
+    mkdir -p "$I" && git init -q "$I" \
+    && gi symbolic-ref HEAD refs/heads/main \
+    && gi config user.email moat@example.invalid \
+    && gi config user.name "moat p6" \
+    && gi config commit.gpgsign false \
+    && printf 'print("app")\n' > "$I/app.py" \
+    && printf 'build/\n__pycache__/\n' > "$I/.gitignore" \
+    && gi add app.py .gitignore && gi commit -qm "c1: app"
+} >"$T/log/intr-fixture.log" 2>&1 || why="third fixture setup failed: $(tr '\n' ' ' < "$T/log/intr-fixture.log" | cut -c1-200); "
+I_ORIG="$(gi rev-parse HEAD 2>/dev/null)"
+INTR_LOG1="$T/log/intr-stub1.log"
+INTR_LOG2="$T/log/intr-stub2.log"
+: > "$INTR_LOG1"
+: > "$INTR_LOG2"
+SENTINEL3="moat-p6-after-interrupt-$$-${RANDOM}${RANDOM}"
+if [ -z "$why" ]; then
+    LOKI_SUPERVISED_BUILD=1 run_pipeline intr1 "$INTR_LOG1" intr1 "$I"
+    rc=$?
+    echo "INFO P6 interrupted session-1 run.sh rc=$rc"
+    kill_leftovers "$T/intr"
+    # Vacuity guards: session 1 really made both files over two provider
+    # turns, was interrupted (not finished), and made no commit.
+    n="$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$INTR_LOG1")"
+    [ "$n" = 2 ] || why="${why}vacuous: interrupted session 1 made $n build calls (expected 2; run.sh rc=$rc); "
+    [ -s "$T/log/intr-stub1.kill-error" ] && why="${why}the stub could not signal run.sh: $(cat "$T/log/intr-stub1.kill-error"); "
+    [ "$rc" = 143 ] || why="${why}interrupted session 1 exited $rc (expected 143, SIGTERM); "
+    I1_STATUS="$(python3 -E -c 'import json, sys; print(json.load(open(sys.argv[1])).get("status"))' "$I/.loki/autonomy-state.json" 2>/dev/null)"
+    [ "$I1_STATUS" = interrupted ] || why="${why}state after session 1 is '$I1_STATUS', not interrupted; "
+    for f in helper.py test_helper.py; do
+        [ -f "$I/$f" ] || why="${why}vacuous: session 1 did not leave $f on disk; "
+    done
+    I1_BRANCH="$(gi symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
+    case "$I1_BRANCH" in loki/session-*) ;; *) why="${why}interrupted session 1 is not on a minted session branch ($I1_BRANCH); " ;; esac
+    [ "$(gi rev-parse HEAD 2>/dev/null)" = "$I_ORIG" ] \
+        || why="${why}vacuous: interrupted session 1 made a commit; "
+    # Only the post-provider record could have listed helper.py before turn 2.
+    # Not a vacuity guard, so session 2 still runs when it fails.
+    I_REC_WHY=""
+    tr '\000' '\n' < "$T/log/intr-stub1.record" 2>/dev/null | grep -qx 'helper.py' \
+        || I_REC_WHY="the post-provider record did not list helper.py before the interrupt ($(tr '\000' ',' < "$T/log/intr-stub1.record" 2>/dev/null)); "
+    if gi checkout -q main 2>"$T/log/intr-checkout1.err"; then
+        printf 'made after the interrupt\n%s\n' "$SENTINEL3" > "$I/AFTER.local.txt"
+    else
+        why="${why}could not switch to main before session 2: $(head -c 160 "$T/log/intr-checkout1.err" | tr '\n' ' '); "
+    fi
+fi
+if [ -z "$why" ]; then
+    # Session 1's iteration count is restored on an interrupted resume.
+    MOAT_MAX_ITER=5 run_pipeline intr2 "$INTR_LOG2" intr2 "$I"
+    rc=$?
+    echo "INFO P6 resumed session-2 run.sh rc=$rc"
+    kill_leftovers "$T/intr"
+    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$INTR_LOG2")" -ge 1 ] \
+        || why="${why}vacuous: resumed session 2 never reached the provider build step (run.sh rc=$rc); "
+    [ "$rc" = 0 ] || why="${why}resumed session 2 exited $rc; "
+    I2_BRANCH="$(gi symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
+    [ "$I2_BRANCH" = "$I1_BRANCH" ] || why="${why}session 2 is on $I2_BRANCH, not the resumed $I1_BRANCH; "
+    gi show HEAD:app.py 2>/dev/null | grep -q '^import helper' \
+        || why="${why}vacuous: session 2 committed no edit (HEAD:app.py does not import helper); "
+    grep -q 'Carried over.*helper\.py' "$T/log/intr2.out" "$T/log/intr2.err" 2>/dev/null \
+        || why="${why}the resume did not name helper.py as carried over; "
+    gi ls-tree -r --name-only HEAD > "$T/log/intr-head-tree.txt" 2>/dev/null
+    for f in helper.py test_helper.py; do
+        grep -qx "$f" "$T/log/intr-head-tree.txt" || why="${why}$f (made by the interrupted session) is not committed on $I2_BRANCH; "
+    done
+    grep -qx 'AFTER.local.txt' "$T/log/intr-head-tree.txt" \
+        && why="${why}AFTER.local.txt (made by the user after the interrupt) was committed; "
+    # The committed tree alone must run: app.py imports the committed helper.
+    mkdir -p "$T/intr/tree"
+    ran="$(gi archive HEAD | tar -x -C "$T/intr/tree" && (cd "$T/intr/tree" && python3 -E app.py 2>&1))"
+    [ "$ran" = hi ] || why="${why}the committed tree does not run: $(printf '%s' "$ran" | tail -n 1); "
+    PROOF_ID_SAVED="$PROOF_ID"
+    PROOF_ID="$(cat "$I/.loki/state/last-proof-id.txt" 2>/dev/null)"
+    IPJ="$I/.loki/proofs/$PROOF_ID/proof.json"
+    if [ -z "$PROOF_ID" ] || [ ! -f "$IPJ" ]; then
+        why="${why}no session-2 receipt (last-proof-id.txt='$PROOF_ID'); "
+    else
+        # A resume keeps the run id, so bind the receipt by its head commit.
+        python3 -E -c 'import json, sys
+d = json.load(open(sys.argv[1]))
+print("head_sha", ((d.get("facts") or {}).get("git") or {}).get("head_sha"))
+for f in (d.get("files_changed") or {}).get("files") or []:
+    print(f.get("path"))' "$IPJ" > "$T/log/intr-receipt.txt" 2>/dev/null
+        grep -qx "head_sha $(gi rev-parse HEAD 2>/dev/null)" "$T/log/intr-receipt.txt" \
+            || why="${why}the receipt is not bound to session 2's commit ($(head -n 1 "$T/log/intr-receipt.txt")); "
+        for f in helper.py test_helper.py app.py; do
+            grep -qx "$f" "$T/log/intr-receipt.txt" || why="${why}the receipt does not list $f ($(tr '\n' ',' < "$T/log/intr-receipt.txt")); "
+        done
+        grep -qx 'AFTER.local.txt' "$T/log/intr-receipt.txt" \
+            && why="${why}the receipt lists the user's AFTER.local.txt; "
+        i_routes="bash"
+        if command -v bun >/dev/null 2>&1; then
+            i_routes="bun bash"
+        else
+            why="${why}prerequisite missing: bun (Bun route not verified); "
+        fi
+        for r in $i_routes; do
+            run_verify "$r" "$r-intr" "$I"; rc=$?
+            f="$(report_fields "$T/log/verify-$r-intr.out")"
+            [ "$rc" -eq 0 ] && [ "$f" = "True True" ] \
+                || why="${why}$r route: proof verify $PROOF_ID rc=$rc report=[$f]; "
+        done
+    fi
+    PROOF_ID="$PROOF_ID_SAVED"
+    if gi checkout -q main 2>"$T/log/intr-checkout2.err"; then
+        grep -qF "$SENTINEL3" "$I/AFTER.local.txt" 2>/dev/null \
+            || why="${why}AFTER.local.txt is gone or changed after checkout of main; "
+    else
+        why="${why}could not switch back to main after session 2: $(head -c 160 "$T/log/intr-checkout2.err" | tr '\n' ' '); "
+    fi
+fi
+why="${why}${I_REC_WHY:-}"
+if [ -z "$why" ]; then
+    pass "$id" "an interrupted session's helper.py and test_helper.py were committed on $I2_BRANCH by the resumed session (the committed tree runs) and listed in its receipt, which verifies on bun and bash routes; the user's file made after the interrupt was not committed and survives checkout of main"
+else
+    fail "$id" "$why"
+fi
+
+}
+fixture_self() {
+# ============================================================================
+# P6.agent-self-commit-does-not-lose-user-file (fourth fixture, one session)
+# ============================================================================
+# The agent rewrites .gitignore and runs `git add -A && git commit` itself, so
+# the user's untracked NOTES.local.txt, ignored config.local.json and ignored
+# logs/run.log land on the session branch, and a checkout of main would delete
+# them. The session commit must take them off the branch tip (they stay on
+# disk), warn naming them, keep the agent's own file, and a checkout of main
+# must leave all three byte-identical.
+id=P6.agent-self-commit-does-not-lose-user-file
+why=""
+S="$T/self/repo"
+gs() { git -C "$S" "$@"; }
+SENTINEL4="moat-p6-self-commit-$$-${RANDOM}${RANDOM}"
+SELF_FILES="NOTES.local.txt config.local.json logs/run.log"
+{
+    mkdir -p "$S" && git init -q "$S" \
+    && gs symbolic-ref HEAD refs/heads/main \
+    && gs config user.email moat@example.invalid \
+    && gs config user.name "moat p6" \
+    && gs config commit.gpgsign false \
+    && printf 'def hello():\n    return "hi"\n' > "$S/main.py" \
+    && printf '*.local.json\nlogs/\n' > "$S/.gitignore" \
+    && gs add main.py .gitignore && gs commit -qm "c1: app, ignore local files" \
+    && printf 'self-commit notes\n%s\n' "$SENTINEL4" > "$S/NOTES.local.txt" \
+    && printf '{"user":"%s"}\n' "$SENTINEL4" > "$S/config.local.json" \
+    && mkdir -p "$S/logs" && printf 'log %s\n' "$SENTINEL4" > "$S/logs/run.log"
+} >"$T/log/self-fixture.log" 2>&1 || why="fourth fixture setup failed: $(tr '\n' ' ' < "$T/log/self-fixture.log" | cut -c1-200); "
+mkdir -p "$T/self/before"
+for f in $SELF_FILES; do
+    cat "$S/$f" > "$T/self/before/${f//\//_}" 2>/dev/null || why="${why}fixture did not create $f; "
+done
+SELF_LOG="$T/log/self-stub.log"
+: > "$SELF_LOG"
+if [ -z "$why" ]; then
+    run_pipeline self "$SELF_LOG" selfcommit "$S"
+    rc=$?
+    echo "INFO P6 self-commit session run.sh rc=$rc"
+    kill_leftovers "$T/self"
+    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$SELF_LOG")" -ge 1 ] \
+        || why="${why}vacuous: the self-commit session never reached the provider build step (run.sh rc=$rc); "
+    SELF_BRANCH="$(gs symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
+    case "$SELF_BRANCH" in loki/session-*) ;; *) why="${why}not on a minted session branch ($SELF_BRANCH); " ;; esac
+    # Vacuity guard: the agent's own commit really holds the user's files.
+    AGENT_SHA="$(cat "$T/log/self-stub.agent-commit" 2>/dev/null)"
+    if [ -z "$AGENT_SHA" ]; then
+        why="${why}vacuous: the stub's own git commit did not happen; "
+    else
+        for f in $SELF_FILES; do
+            gs show "$AGENT_SHA:$f" 2>/dev/null | grep -qF "$SENTINEL4" \
+                || why="${why}vacuous: the agent's commit does not hold $f; "
+        done
+    fi
+    gs ls-tree -r --name-only HEAD > "$T/log/self-head-tree.txt" 2>/dev/null
+    grep -qx 'feature.py' "$T/log/self-head-tree.txt" \
+        || why="${why}the agent's feature.py is not on the branch tip; "
+    for f in $SELF_FILES; do
+        grep -qxF "$f" "$T/log/self-head-tree.txt" && why="${why}$f is still on the branch tip ($SELF_BRANCH); "
+        cmp -s "$S/$f" "$T/self/before/${f//\//_}" || why="${why}$f is gone or changed on disk after the run; "
+    done
+    cat "$T/log/self.out" "$T/log/self.err" > "$T/log/self-all.txt" 2>/dev/null
+    warned="$(grep 'The agent committed your pre-existing' "$T/log/self-all.txt" | head -n 1)"
+    if [ -z "$warned" ]; then
+        why="${why}no warning naming the files the agent committed; "
+    else
+        for f in $SELF_FILES; do
+            case "$warned" in *"$f"*) ;; *) why="${why}the warning does not name $f; " ;; esac
+        done
+        case "$warned" in *"do not push"*) ;; *) why="${why}the warning does not say the branch history still holds them; " ;; esac
+    fi
+    if gs checkout -q main 2>"$T/log/self-checkout.err"; then
+        for f in $SELF_FILES; do
+            cmp -s "$S/$f" "$T/self/before/${f//\//_}" || why="${why}$f is gone or changed after checkout of main; "
+        done
+    else
+        why="${why}could not switch back to main: $(head -c 160 "$T/log/self-checkout.err" | tr '\n' ' '); "
+    fi
+fi
+# Stale-base leg (fifth fixture, one session): .loki/state still names the
+# base and session branch of an earlier session run from feature/x, both since
+# deleted. The session minted from main must record main as its base, so the
+# agent's own commit of the user's untracked PRECIOUS.txt comes off the tip and
+# a checkout of main keeps it.
+B="$T/stalebase/repo"
+gb() { git -C "$B" "$@"; }
+SENTINEL5="moat-p6-stale-base-$$-${RANDOM}${RANDOM}"
+{
+    mkdir -p "$B" && git init -q "$B" \
+    && gb symbolic-ref HEAD refs/heads/main \
+    && gb config user.email moat@example.invalid \
+    && gb config user.name "moat p6" \
+    && gb config commit.gpgsign false \
+    && printf 'def hello():\n    return "hi"\n' > "$B/main.py" \
+    && gb add main.py && gb commit -qm "c1: app" \
+    && gb branch feature/x \
+    && mkdir -p "$B/.loki/state" && printf '*\n' > "$B/.loki/.gitignore" \
+    && printf 'feature/x\n' > "$B/.loki/state/base-branch.txt" \
+    && printf 'loki/session-1-1\n' > "$B/.loki/state/agent-branch.txt" \
+    && gb branch -q -D feature/x \
+    && printf 'precious\n%s\n' "$SENTINEL5" > "$B/PRECIOUS.txt" \
+    && cp "$B/PRECIOUS.txt" "$T/stalebase/PRECIOUS.before"
+} >"$T/log/stale-fixture.log" 2>&1 || why="${why}stale-base fixture setup failed: $(tr '\n' ' ' < "$T/log/stale-fixture.log" | cut -c1-200); "
+# Vacuity guards: the base recorded before the run is stale and unresolvable.
+[ "$(cat "$B/.loki/state/base-branch.txt" 2>/dev/null)" = feature/x ] \
+    || why="${why}vacuous: the stale-base fixture does not record feature/x as the base; "
+gb rev-parse --verify -q feature/x >/dev/null 2>&1 \
+    && why="${why}vacuous: feature/x still resolves in the stale-base fixture; "
+STALE_LOG="$T/log/stale-stub.log"
+: > "$STALE_LOG"
+if [ -z "$why" ]; then
+    run_pipeline stalebase "$STALE_LOG" selfcommit "$B"
+    rc=$?
+    echo "INFO P6 stale-base session run.sh rc=$rc"
+    kill_leftovers "$T/self"
+    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$STALE_LOG")" -ge 1 ] \
+        || why="${why}vacuous: the stale-base session never reached the provider build step (run.sh rc=$rc); "
+    STALE_BRANCH="$(gb symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
+    case "$STALE_BRANCH" in loki/session-*) ;; *) why="${why}stale-base: not on a minted session branch ($STALE_BRANCH); " ;; esac
+    STALE_SHA="$(cat "$T/log/stale-stub.agent-commit" 2>/dev/null)"
+    if [ -z "$STALE_SHA" ]; then
+        why="${why}vacuous: the stale-base stub's own git commit did not happen; "
+    else
+        gb show "$STALE_SHA:PRECIOUS.txt" 2>/dev/null | grep -qF "$SENTINEL5" \
+            || why="${why}vacuous: the stale-base agent commit does not hold PRECIOUS.txt; "
+    fi
+    [ "$(cat "$B/.loki/state/base-branch.txt" 2>/dev/null)" = main ] \
+        || why="${why}stale-base: the mint from main recorded base '$(cat "$B/.loki/state/base-branch.txt" 2>/dev/null)'; "
+    gb ls-tree -r --name-only HEAD > "$T/log/stale-head-tree.txt" 2>/dev/null
+    grep -qx 'feature.py' "$T/log/stale-head-tree.txt" \
+        || why="${why}stale-base: the agent's feature.py is not on the branch tip; "
+    grep -qx 'PRECIOUS.txt' "$T/log/stale-head-tree.txt" \
+        && why="${why}stale-base: PRECIOUS.txt is still on the branch tip ($STALE_BRANCH); "
+    if gb checkout -q main 2>"$T/log/stale-checkout.err"; then
+        cmp -s "$B/PRECIOUS.txt" "$T/stalebase/PRECIOUS.before" \
+            || why="${why}stale-base: PRECIOUS.txt is gone or changed after checkout of main; "
+    else
+        why="${why}stale-base: could not switch back to main: $(head -c 160 "$T/log/stale-checkout.err" | tr '\n' ' '); "
+    fi
+fi
+if [ -z "$why" ]; then
+    pass "$id" "the agent's own git add -A commit put the user's untracked and ignored files on $SELF_BRANCH; the session took them off the branch tip (feature.py kept), warned naming them, and all three are byte-identical after checkout of main; with a base left by an earlier session from a deleted feature/x, the mint recorded main and the user's PRECIOUS.txt came off the tip of $STALE_BRANCH and is byte-identical after checkout of main"
+else
+    fail "$id" "$why"
+fi
+
+}
+fixture_modes() {
+# ============================================================================
+# P6.user-file-mode-and-symlink-intact (sixth fixture, one session)
+# ============================================================================
+# The user's tracked executable script and tracked symlink, plus an untracked
+# executable and an untracked symlink, must keep their mode and link target
+# across the session commit, both on disk and in the committed tree. The
+# agent's own new file is committed (positive control).
+id=P6.user-file-mode-and-symlink-intact
+why=""
+M="$T/modes/repo"
+gm() { git -C "$M" "$@"; }
+{
+    mkdir -p "$M/scripts" && git init -q "$M" \
+    && gm symbolic-ref HEAD refs/heads/main \
+    && gm config user.email moat@example.invalid \
+    && gm config user.name "moat p6" \
+    && gm config commit.gpgsign false \
+    && printf '#!/bin/sh\necho tool\n' > "$M/scripts/tool.sh" && chmod 755 "$M/scripts/tool.sh" \
+    && printf 'data\n' > "$M/data.txt" \
+    && ln -s data.txt "$M/link-tracked" \
+    && gm add scripts/tool.sh data.txt link-tracked && gm commit -qm "c1: tool and link" \
+    && printf '#!/bin/sh\necho mine\n' > "$M/mine.local.sh" && chmod 750 "$M/mine.local.sh" \
+    && ln -s data.txt "$M/link-untracked"
+} >"$T/log/modes-fixture.log" 2>&1 || why="sixth fixture setup failed: $(tr '\n' ' ' < "$T/log/modes-fixture.log" | cut -c1-200); "
+MODES_LOG="$T/log/modes-stub.log"
+: > "$MODES_LOG"
+mode_of() { python3 -c 'import os,sys; print("%o" % (os.lstat(sys.argv[1]).st_mode & 0o7777))' "$1"; }
+if [ -z "$why" ]; then
+    run_pipeline modes "$MODES_LOG" modes "$M"
+    rc=$?
+    echo "INFO P6 mode-and-symlink session run.sh rc=$rc"
+    kill_leftovers "$T/modes"
+    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$MODES_LOG")" -ge 1 ] \
+        || why="${why}vacuous: the session never reached the provider build step (run.sh rc=$rc); "
+    tail -n 25 "$T/log/modes.err" >&2; tail -n 10 "$T/log/modes.out" >&2; gm log --oneline --all >&2; gm status --short >&2; gm ls-tree -r HEAD >&2
+    gm ls-tree -r HEAD > "$T/log/modes-head-tree.txt" 2>/dev/null
+    grep -q '[[:space:]]agent_made.py$' "$T/log/modes-head-tree.txt" || why="${why}the agent's new file is not committed; "
+    grep -q '^100755 .*[[:space:]]scripts/tool.sh$' "$T/log/modes-head-tree.txt" || why="${why}committed scripts/tool.sh is not mode 100755; "
+    grep -q '^120000 .*[[:space:]]link-tracked$' "$T/log/modes-head-tree.txt" || why="${why}committed link-tracked is not a symlink; "
+    [ "$(mode_of "$M/scripts/tool.sh")" = 755 ] || why="${why}scripts/tool.sh mode on disk is $(mode_of "$M/scripts/tool.sh"); "
+    grep -q 'agent-edit' "$M/scripts/tool.sh" || why="${why}vacuous: the agent did not edit scripts/tool.sh; "
+    [ -L "$M/link-tracked" ] && [ "$(readlink "$M/link-tracked")" = data.txt ] || why="${why}link-tracked is not a symlink to data.txt; "
+    [ -L "$M/link-untracked" ] && [ "$(readlink "$M/link-untracked")" = data.txt ] || why="${why}link-untracked is not a symlink to data.txt; "
+    [ -f "$M/mine.local.sh" ] && [ "$(mode_of "$M/mine.local.sh")" = 750 ] || why="${why}mine.local.sh missing or mode is not 750; "
+fi
+if [ -z "$why" ]; then
+    pass "$id" "tracked executable and symlink keep mode 100755 and 120000 in the committed tree; untracked executable keeps 750 and untracked symlink keeps its target; the agent's new file is committed"
+else
+    fail "$id" "$why"
+fi
+}
+
+mkdir -p "$T/cfg/home" "$T/cfg/tmp"
+( export HOME="$T/cfg/home" TMPDIR="$T/cfg/tmp"; fixture_cfg ) >"$T/log/fx-cfg.out" 2>"$T/log/fx-cfg.err" &
+FX_PID_cfg=$!
+mkdir -p "$T/intr/home" "$T/intr/tmp"
+( export HOME="$T/intr/home" TMPDIR="$T/intr/tmp"; fixture_intr ) >"$T/log/fx-intr.out" 2>"$T/log/fx-intr.err" &
+FX_PID_intr=$!
+mkdir -p "$T/self/home" "$T/self/tmp"
+( export HOME="$T/self/home" TMPDIR="$T/self/tmp"; fixture_self ) >"$T/log/fx-self.out" 2>"$T/log/fx-self.err" &
+FX_PID_self=$!
+mkdir -p "$T/modes/home" "$T/modes/tmp"
+( export HOME="$T/modes/home" TMPDIR="$T/modes/tmp"; fixture_modes ) >"$T/log/fx-modes.out" 2>"$T/log/fx-modes.err" &
+FX_PID_modes=$!
+
 RUN_T0=$(date +%s)
 run_pipeline run "$STUB_LOG" session1
 RUN_RC=$?
 RUN_SECS=$(( $(date +%s) - RUN_T0 ))
 echo "INFO P6 pipeline run.sh rc=$RUN_RC seconds=$RUN_SECS"
-kill_leftovers
+kill_leftovers "$T/parent"
 if [ -d "$T/home" ]; then
     note "P6: files the run wrote under the isolated HOME:"
     (cd "$T/home" && find . -type f | LC_ALL=C sort | sed 's/^/  /' | head -20) >&2
@@ -413,26 +889,6 @@ ID_FILE="$W/.loki/state/last-proof-id.txt"
 PROOF_ID=""
 [ -s "$ID_FILE" ] && PROOF_ID="$(cat "$ID_FILE")"
 PJ="$W/.loki/proofs/$PROOF_ID/proof.json"
-# Run `loki proof verify $PROOF_ID` on one route (bin/loki execs autonomy/loki
-# when LOKI_LEGACY_BASH=1, so the two routes are distinct entry points). The
-# verifier JSON report lands in $T/log/verify-<tag>.out; returns the exit code.
-run_verify() {  # $1 = route (bun|bash), $2 = log tag, [$3 = repo, default $W]
-    local out="$T/log/verify-$2" repo="${3:-$W}"
-    if [ "$1" = bun ]; then
-        (cd "$repo" && "$LOKI_BIN" proof verify "$PROOF_ID") >"$out.out" 2>"$out.err"
-    else
-        (cd "$repo" && LOKI_LEGACY_BASH=1 "$LOKI_BIN" proof verify "$PROOF_ID") >"$out.out" 2>"$out.err"
-    fi
-}
-# "<ok> <hash_ok>" from a verifier report, e.g. "True True", or "unparsed".
-report_fields() {
-    python3 -c 'import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    print(d.get("ok"), d.get("hash_ok"))
-except Exception:
-    print("unparsed")' "$1" 2>/dev/null
-}
 if [ -z "$PROOF_ID" ]; then
     why="no .loki/state/last-proof-id.txt after the run (proof generation failed silently; run rc=$RUN_RC)"
 elif [ ! -f "$PJ" ]; then
@@ -603,7 +1059,7 @@ if [ -z "$S2_WHY" ]; then
     run_pipeline run2 "$STUB_LOG2" session2
     RUN2_RC=$?
     echo "INFO P6 session-2 run.sh rc=$RUN2_RC seconds=$(( $(date +%s) - RUN2_T0 ))"
-    kill_leftovers
+    kill_leftovers "$T/parent"
     if [ "$RUN2_RC" -ne 0 ]; then
         note "P6: session-2 run.sh exited $RUN2_RC; last lines of its output:"
         tail -n 15 "$T/log/run2.out" >&2
@@ -761,427 +1217,24 @@ else
     fail "$id" "$why"
 fi
 
-# ============================================================================
-# P6.resume-keeps-ignored-user-file (second fixture, two more sessions)
-# ============================================================================
-# main ignores config.local.json. Session 1 un-ignores it and commits its own
-# copy on the session branch. Back on main, the user writes their real
-# config.local.json (ignored there). Resuming that branch would let git
-# overwrite the user's file, and the next checkout of main would delete it. The
-# resume must be refused and a new session branch minted; the user's file stays
-# intact during and after session 2 and after checkout of main, never committed.
-id=P6.resume-keeps-ignored-user-file
-why=""
-C="$T/cfg/repo"
-USER_CFG='{"user":"my real settings"}'
-gc() { git -C "$C" "$@"; }
-{
-    mkdir -p "$C" && git init -q "$C" \
-    && gc symbolic-ref HEAD refs/heads/main \
-    && gc config user.email moat@example.invalid \
-    && gc config user.name "moat p6" \
-    && gc config commit.gpgsign false \
-    && printf 'def hello():\n    return "hi"\n' > "$C/main.py" \
-    && printf 'config.local.json\n' > "$C/.gitignore" \
-    && gc add main.py .gitignore && gc commit -qm "c1: app, ignore local config"
-} >"$T/log/cfg-fixture.log" 2>&1 || why="second fixture setup failed: $(tr '\n' ' ' < "$T/log/cfg-fixture.log" | cut -c1-200); "
-CFG_LOG1="$T/log/cfg-stub1.log"
-CFG_LOG2="$T/log/cfg-stub2.log"
-: > "$CFG_LOG1"
-: > "$CFG_LOG2"
-if [ -z "$why" ]; then
-    run_pipeline cfg1 "$CFG_LOG1" cfg1 "$C"
-    rc=$?
-    echo "INFO P6 cfg session-1 run.sh rc=$rc"
-    kill_leftovers
-    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$CFG_LOG1")" -ge 1 ] \
-        || why="${why}vacuous: cfg session 1 never reached the provider build step (run.sh rc=$rc); "
-    C1_BRANCH="$(gc symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
-    case "$C1_BRANCH" in loki/session-*) ;; *) why="${why}cfg session 1 is not on a minted session branch ($C1_BRANCH); " ;; esac
-    C1_HEAD="$(gc rev-parse HEAD 2>/dev/null)"
-    # Vacuity guard: the session-1 branch really tracks config.local.json.
-    [ "$(gc show "$C1_BRANCH:config.local.json" 2>/dev/null)" = '{"agent":1}' ] \
-        || why="${why}vacuous: $C1_BRANCH does not track the agent's config.local.json; "
-    if gc checkout -q main 2>"$T/log/cfg-checkout1.err"; then
-        printf '%s\n' "$USER_CFG" > "$C/config.local.json"
-        gc check-ignore -q config.local.json \
-            || why="${why}vacuous: the user's config.local.json is not ignored on main; "
-    else
-        why="${why}could not switch to main before cfg session 2: $(head -c 160 "$T/log/cfg-checkout1.err" | tr '\n' ' '); "
-    fi
-fi
-if [ -z "$why" ]; then
-    run_pipeline cfg2 "$CFG_LOG2" cfg2 "$C"
-    rc=$?
-    echo "INFO P6 cfg session-2 run.sh rc=$rc"
-    kill_leftovers
-    # Vacuity guard: session 2 really ran and committed its own edit.
-    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$CFG_LOG2")" -ge 1 ] \
-        || why="${why}vacuous: cfg session 2 never reached the provider build step (run.sh rc=$rc); "
-    C2_BRANCH="$(gc symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
-    gc cat-file -e HEAD:app2.py 2>/dev/null \
-        || why="${why}vacuous: cfg session 2 committed no edit on $C2_BRANCH; "
-    case "$C2_BRANCH" in
-        loki/session-*) [ "$C2_BRANCH" != "$C1_BRANCH" ] \
-            || why="${why}session 2 resumed $C1_BRANCH instead of minting a new branch; " ;;
-        *) why="${why}cfg session 2 is not on a session branch ($C2_BRANCH); " ;;
-    esac
-    n_loki="$(gc branch --list 'loki/*' | grep -c .)"
-    [ "$n_loki" = "2" ] || why="${why}$n_loki loki branches after cfg session 2 (expected 2); "
-    [ "$(cat "$C/.loki/state/agent-branch.txt" 2>/dev/null)" = "$C2_BRANCH" ] \
-        || why="${why}agent-branch.txt does not name $C2_BRANCH; "
-    [ "$(gc rev-parse "$C1_BRANCH" 2>/dev/null)" = "$C1_HEAD" ] \
-        || why="${why}$C1_BRANCH moved during session 2; "
-    [ "$(cat "$T/log/cfg-seen.txt" 2>/dev/null)" = "$USER_CFG" ] \
-        || why="${why}during session 2 config.local.json was '$(head -c 80 "$T/log/cfg-seen.txt" 2>/dev/null)'; "
-    [ "$(cat "$C/config.local.json" 2>/dev/null)" = "$USER_CFG" ] \
-        || why="${why}after session 2 config.local.json is '$(head -c 80 "$C/config.local.json" 2>/dev/null)'; "
-    # Positive control: session 2's rewrite exposed the file to git add -A.
-    { [ "$(gc show HEAD:.gitignore 2>/dev/null)" = "build/" ] && ! gc check-ignore -q config.local.json; } \
-        || why="${why}positive control failed: config.local.json is still ignored on $C2_BRANCH; "
-    gc ls-tree -r --name-only HEAD 2>/dev/null | grep -qx 'config.local.json' \
-        && why="${why}config.local.json was committed onto $C2_BRANCH; "
-    if gc checkout -q main 2>"$T/log/cfg-checkout2.err"; then
-        [ "$(cat "$C/config.local.json" 2>/dev/null)" = "$USER_CFG" ] \
-            || why="${why}after checkout of main config.local.json is '$(head -c 80 "$C/config.local.json" 2>/dev/null || echo MISSING)'; "
-    else
-        why="${why}could not switch back to main after cfg session 2: $(head -c 160 "$T/log/cfg-checkout2.err" | tr '\n' ' '); "
-    fi
-fi
-if [ -z "$why" ]; then
-    pass "$id" "resuming $C1_BRANCH (which tracks config.local.json) was refused and $C2_BRANCH minted; the user's gitignored config.local.json was intact during and after session 2 and after checkout of main, and never committed"
-else
-    fail "$id" "$why"
-fi
 
-# ============================================================================
-# P6.resume-after-interrupt-commits-agent-files (third fixture, two sessions)
-# ============================================================================
-# Session 1 makes helper.py (turn 1) and test_helper.py (turn 2) and is stopped
-# by a supervisor SIGTERM: state "interrupted", no session commit. Back on main
-# the user makes a file, then runs again; the recorded branch is resumed and
-# session 2 makes app.py import helper and finishes normally. The interrupted
-# session's files must be committed (the committed tree runs) and listed in the
-# receipt; the user's file must not be committed and must survive checkout of
-# main; the receipt must verify on both routes.
-id=P6.resume-after-interrupt-commits-agent-files
-why=""
-I="$T/intr/repo"
-gi() { git -C "$I" "$@"; }
-{
-    mkdir -p "$I" && git init -q "$I" \
-    && gi symbolic-ref HEAD refs/heads/main \
-    && gi config user.email moat@example.invalid \
-    && gi config user.name "moat p6" \
-    && gi config commit.gpgsign false \
-    && printf 'print("app")\n' > "$I/app.py" \
-    && printf 'build/\n__pycache__/\n' > "$I/.gitignore" \
-    && gi add app.py .gitignore && gi commit -qm "c1: app"
-} >"$T/log/intr-fixture.log" 2>&1 || why="third fixture setup failed: $(tr '\n' ' ' < "$T/log/intr-fixture.log" | cut -c1-200); "
-I_ORIG="$(gi rev-parse HEAD 2>/dev/null)"
-INTR_LOG1="$T/log/intr-stub1.log"
-INTR_LOG2="$T/log/intr-stub2.log"
-: > "$INTR_LOG1"
-: > "$INTR_LOG2"
-SENTINEL3="moat-p6-after-interrupt-$$-${RANDOM}${RANDOM}"
-if [ -z "$why" ]; then
-    LOKI_SUPERVISED_BUILD=1 run_pipeline intr1 "$INTR_LOG1" intr1 "$I"
-    rc=$?
-    echo "INFO P6 interrupted session-1 run.sh rc=$rc"
-    kill_leftovers
-    # Vacuity guards: session 1 really made both files over two provider
-    # turns, was interrupted (not finished), and made no commit.
-    n="$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$INTR_LOG1")"
-    [ "$n" = 2 ] || why="${why}vacuous: interrupted session 1 made $n build calls (expected 2; run.sh rc=$rc); "
-    [ -s "$T/log/intr-stub1.kill-error" ] && why="${why}the stub could not signal run.sh: $(cat "$T/log/intr-stub1.kill-error"); "
-    [ "$rc" = 143 ] || why="${why}interrupted session 1 exited $rc (expected 143, SIGTERM); "
-    I1_STATUS="$(python3 -E -c 'import json, sys; print(json.load(open(sys.argv[1])).get("status"))' "$I/.loki/autonomy-state.json" 2>/dev/null)"
-    [ "$I1_STATUS" = interrupted ] || why="${why}state after session 1 is '$I1_STATUS', not interrupted; "
-    for f in helper.py test_helper.py; do
-        [ -f "$I/$f" ] || why="${why}vacuous: session 1 did not leave $f on disk; "
-    done
-    I1_BRANCH="$(gi symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
-    case "$I1_BRANCH" in loki/session-*) ;; *) why="${why}interrupted session 1 is not on a minted session branch ($I1_BRANCH); " ;; esac
-    [ "$(gi rev-parse HEAD 2>/dev/null)" = "$I_ORIG" ] \
-        || why="${why}vacuous: interrupted session 1 made a commit; "
-    # Only the post-provider record could have listed helper.py before turn 2.
-    # Not a vacuity guard, so session 2 still runs when it fails.
-    I_REC_WHY=""
-    tr '\000' '\n' < "$T/log/intr-stub1.record" 2>/dev/null | grep -qx 'helper.py' \
-        || I_REC_WHY="the post-provider record did not list helper.py before the interrupt ($(tr '\000' ',' < "$T/log/intr-stub1.record" 2>/dev/null)); "
-    if gi checkout -q main 2>"$T/log/intr-checkout1.err"; then
-        printf 'made after the interrupt\n%s\n' "$SENTINEL3" > "$I/AFTER.local.txt"
-    else
-        why="${why}could not switch to main before session 2: $(head -c 160 "$T/log/intr-checkout1.err" | tr '\n' ' '); "
-    fi
-fi
-if [ -z "$why" ]; then
-    # Session 1's iteration count is restored on an interrupted resume.
-    MOAT_MAX_ITER=5 run_pipeline intr2 "$INTR_LOG2" intr2 "$I"
-    rc=$?
-    echo "INFO P6 resumed session-2 run.sh rc=$rc"
-    kill_leftovers
-    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$INTR_LOG2")" -ge 1 ] \
-        || why="${why}vacuous: resumed session 2 never reached the provider build step (run.sh rc=$rc); "
-    [ "$rc" = 0 ] || why="${why}resumed session 2 exited $rc; "
-    I2_BRANCH="$(gi symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
-    [ "$I2_BRANCH" = "$I1_BRANCH" ] || why="${why}session 2 is on $I2_BRANCH, not the resumed $I1_BRANCH; "
-    gi show HEAD:app.py 2>/dev/null | grep -q '^import helper' \
-        || why="${why}vacuous: session 2 committed no edit (HEAD:app.py does not import helper); "
-    grep -q 'Carried over.*helper\.py' "$T/log/intr2.out" "$T/log/intr2.err" 2>/dev/null \
-        || why="${why}the resume did not name helper.py as carried over; "
-    gi ls-tree -r --name-only HEAD > "$T/log/intr-head-tree.txt" 2>/dev/null
-    for f in helper.py test_helper.py; do
-        grep -qx "$f" "$T/log/intr-head-tree.txt" || why="${why}$f (made by the interrupted session) is not committed on $I2_BRANCH; "
-    done
-    grep -qx 'AFTER.local.txt' "$T/log/intr-head-tree.txt" \
-        && why="${why}AFTER.local.txt (made by the user after the interrupt) was committed; "
-    # The committed tree alone must run: app.py imports the committed helper.
-    mkdir -p "$T/intr/tree"
-    ran="$(gi archive HEAD | tar -x -C "$T/intr/tree" && (cd "$T/intr/tree" && python3 -E app.py 2>&1))"
-    [ "$ran" = hi ] || why="${why}the committed tree does not run: $(printf '%s' "$ran" | tail -n 1); "
-    PROOF_ID_SAVED="$PROOF_ID"
-    PROOF_ID="$(cat "$I/.loki/state/last-proof-id.txt" 2>/dev/null)"
-    IPJ="$I/.loki/proofs/$PROOF_ID/proof.json"
-    if [ -z "$PROOF_ID" ] || [ ! -f "$IPJ" ]; then
-        why="${why}no session-2 receipt (last-proof-id.txt='$PROOF_ID'); "
-    else
-        # A resume keeps the run id, so bind the receipt by its head commit.
-        python3 -E -c 'import json, sys
-d = json.load(open(sys.argv[1]))
-print("head_sha", ((d.get("facts") or {}).get("git") or {}).get("head_sha"))
-for f in (d.get("files_changed") or {}).get("files") or []:
-    print(f.get("path"))' "$IPJ" > "$T/log/intr-receipt.txt" 2>/dev/null
-        grep -qx "head_sha $(gi rev-parse HEAD 2>/dev/null)" "$T/log/intr-receipt.txt" \
-            || why="${why}the receipt is not bound to session 2's commit ($(head -n 1 "$T/log/intr-receipt.txt")); "
-        for f in helper.py test_helper.py app.py; do
-            grep -qx "$f" "$T/log/intr-receipt.txt" || why="${why}the receipt does not list $f ($(tr '\n' ',' < "$T/log/intr-receipt.txt")); "
-        done
-        grep -qx 'AFTER.local.txt' "$T/log/intr-receipt.txt" \
-            && why="${why}the receipt lists the user's AFTER.local.txt; "
-        i_routes="bash"
-        if command -v bun >/dev/null 2>&1; then
-            i_routes="bun bash"
-        else
-            why="${why}prerequisite missing: bun (Bun route not verified); "
-        fi
-        for r in $i_routes; do
-            run_verify "$r" "$r-intr" "$I"; rc=$?
-            f="$(report_fields "$T/log/verify-$r-intr.out")"
-            [ "$rc" -eq 0 ] && [ "$f" = "True True" ] \
-                || why="${why}$r route: proof verify $PROOF_ID rc=$rc report=[$f]; "
-        done
-    fi
-    PROOF_ID="$PROOF_ID_SAVED"
-    if gi checkout -q main 2>"$T/log/intr-checkout2.err"; then
-        grep -qF "$SENTINEL3" "$I/AFTER.local.txt" 2>/dev/null \
-            || why="${why}AFTER.local.txt is gone or changed after checkout of main; "
-    else
-        why="${why}could not switch back to main after session 2: $(head -c 160 "$T/log/intr-checkout2.err" | tr '\n' ' '); "
-    fi
-fi
-why="${why}${I_REC_WHY:-}"
-if [ -z "$why" ]; then
-    pass "$id" "an interrupted session's helper.py and test_helper.py were committed on $I2_BRANCH by the resumed session (the committed tree runs) and listed in its receipt, which verifies on bun and bash routes; the user's file made after the interrupt was not committed and survives checkout of main"
-else
-    fail "$id" "$why"
-fi
-
-# ============================================================================
-# P6.agent-self-commit-does-not-lose-user-file (fourth fixture, one session)
-# ============================================================================
-# The agent rewrites .gitignore and runs `git add -A && git commit` itself, so
-# the user's untracked NOTES.local.txt, ignored config.local.json and ignored
-# logs/run.log land on the session branch, and a checkout of main would delete
-# them. The session commit must take them off the branch tip (they stay on
-# disk), warn naming them, keep the agent's own file, and a checkout of main
-# must leave all three byte-identical.
-id=P6.agent-self-commit-does-not-lose-user-file
-why=""
-S="$T/self/repo"
-gs() { git -C "$S" "$@"; }
-SENTINEL4="moat-p6-self-commit-$$-${RANDOM}${RANDOM}"
-SELF_FILES="NOTES.local.txt config.local.json logs/run.log"
-{
-    mkdir -p "$S" && git init -q "$S" \
-    && gs symbolic-ref HEAD refs/heads/main \
-    && gs config user.email moat@example.invalid \
-    && gs config user.name "moat p6" \
-    && gs config commit.gpgsign false \
-    && printf 'def hello():\n    return "hi"\n' > "$S/main.py" \
-    && printf '*.local.json\nlogs/\n' > "$S/.gitignore" \
-    && gs add main.py .gitignore && gs commit -qm "c1: app, ignore local files" \
-    && printf 'self-commit notes\n%s\n' "$SENTINEL4" > "$S/NOTES.local.txt" \
-    && printf '{"user":"%s"}\n' "$SENTINEL4" > "$S/config.local.json" \
-    && mkdir -p "$S/logs" && printf 'log %s\n' "$SENTINEL4" > "$S/logs/run.log"
-} >"$T/log/self-fixture.log" 2>&1 || why="fourth fixture setup failed: $(tr '\n' ' ' < "$T/log/self-fixture.log" | cut -c1-200); "
-mkdir -p "$T/self/before"
-for f in $SELF_FILES; do
-    cat "$S/$f" > "$T/self/before/${f//\//_}" 2>/dev/null || why="${why}fixture did not create $f; "
-done
-SELF_LOG="$T/log/self-stub.log"
-: > "$SELF_LOG"
-if [ -z "$why" ]; then
-    run_pipeline self "$SELF_LOG" selfcommit "$S"
-    rc=$?
-    echo "INFO P6 self-commit session run.sh rc=$rc"
-    kill_leftovers
-    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$SELF_LOG")" -ge 1 ] \
-        || why="${why}vacuous: the self-commit session never reached the provider build step (run.sh rc=$rc); "
-    SELF_BRANCH="$(gs symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
-    case "$SELF_BRANCH" in loki/session-*) ;; *) why="${why}not on a minted session branch ($SELF_BRANCH); " ;; esac
-    # Vacuity guard: the agent's own commit really holds the user's files.
-    AGENT_SHA="$(cat "$T/log/self-stub.agent-commit" 2>/dev/null)"
-    if [ -z "$AGENT_SHA" ]; then
-        why="${why}vacuous: the stub's own git commit did not happen; "
-    else
-        for f in $SELF_FILES; do
-            gs show "$AGENT_SHA:$f" 2>/dev/null | grep -qF "$SENTINEL4" \
-                || why="${why}vacuous: the agent's commit does not hold $f; "
-        done
-    fi
-    gs ls-tree -r --name-only HEAD > "$T/log/self-head-tree.txt" 2>/dev/null
-    grep -qx 'feature.py' "$T/log/self-head-tree.txt" \
-        || why="${why}the agent's feature.py is not on the branch tip; "
-    for f in $SELF_FILES; do
-        grep -qxF "$f" "$T/log/self-head-tree.txt" && why="${why}$f is still on the branch tip ($SELF_BRANCH); "
-        cmp -s "$S/$f" "$T/self/before/${f//\//_}" || why="${why}$f is gone or changed on disk after the run; "
-    done
-    cat "$T/log/self.out" "$T/log/self.err" > "$T/log/self-all.txt" 2>/dev/null
-    warned="$(grep 'The agent committed your pre-existing' "$T/log/self-all.txt" | head -n 1)"
-    if [ -z "$warned" ]; then
-        why="${why}no warning naming the files the agent committed; "
-    else
-        for f in $SELF_FILES; do
-            case "$warned" in *"$f"*) ;; *) why="${why}the warning does not name $f; " ;; esac
-        done
-        case "$warned" in *"do not push"*) ;; *) why="${why}the warning does not say the branch history still holds them; " ;; esac
-    fi
-    if gs checkout -q main 2>"$T/log/self-checkout.err"; then
-        for f in $SELF_FILES; do
-            cmp -s "$S/$f" "$T/self/before/${f//\//_}" || why="${why}$f is gone or changed after checkout of main; "
-        done
-    else
-        why="${why}could not switch back to main: $(head -c 160 "$T/log/self-checkout.err" | tr '\n' ' '); "
-    fi
-fi
-# Stale-base leg (fifth fixture, one session): .loki/state still names the
-# base and session branch of an earlier session run from feature/x, both since
-# deleted. The session minted from main must record main as its base, so the
-# agent's own commit of the user's untracked PRECIOUS.txt comes off the tip and
-# a checkout of main keeps it.
-B="$T/stalebase/repo"
-gb() { git -C "$B" "$@"; }
-SENTINEL5="moat-p6-stale-base-$$-${RANDOM}${RANDOM}"
-{
-    mkdir -p "$B" && git init -q "$B" \
-    && gb symbolic-ref HEAD refs/heads/main \
-    && gb config user.email moat@example.invalid \
-    && gb config user.name "moat p6" \
-    && gb config commit.gpgsign false \
-    && printf 'def hello():\n    return "hi"\n' > "$B/main.py" \
-    && gb add main.py && gb commit -qm "c1: app" \
-    && gb branch feature/x \
-    && mkdir -p "$B/.loki/state" && printf '*\n' > "$B/.loki/.gitignore" \
-    && printf 'feature/x\n' > "$B/.loki/state/base-branch.txt" \
-    && printf 'loki/session-1-1\n' > "$B/.loki/state/agent-branch.txt" \
-    && gb branch -q -D feature/x \
-    && printf 'precious\n%s\n' "$SENTINEL5" > "$B/PRECIOUS.txt" \
-    && cp "$B/PRECIOUS.txt" "$T/stalebase/PRECIOUS.before"
-} >"$T/log/stale-fixture.log" 2>&1 || why="${why}stale-base fixture setup failed: $(tr '\n' ' ' < "$T/log/stale-fixture.log" | cut -c1-200); "
-# Vacuity guards: the base recorded before the run is stale and unresolvable.
-[ "$(cat "$B/.loki/state/base-branch.txt" 2>/dev/null)" = feature/x ] \
-    || why="${why}vacuous: the stale-base fixture does not record feature/x as the base; "
-gb rev-parse --verify -q feature/x >/dev/null 2>&1 \
-    && why="${why}vacuous: feature/x still resolves in the stale-base fixture; "
-STALE_LOG="$T/log/stale-stub.log"
-: > "$STALE_LOG"
-if [ -z "$why" ]; then
-    run_pipeline stalebase "$STALE_LOG" selfcommit "$B"
-    rc=$?
-    echo "INFO P6 stale-base session run.sh rc=$rc"
-    kill_leftovers
-    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$STALE_LOG")" -ge 1 ] \
-        || why="${why}vacuous: the stale-base session never reached the provider build step (run.sh rc=$rc); "
-    STALE_BRANCH="$(gb symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
-    case "$STALE_BRANCH" in loki/session-*) ;; *) why="${why}stale-base: not on a minted session branch ($STALE_BRANCH); " ;; esac
-    STALE_SHA="$(cat "$T/log/stale-stub.agent-commit" 2>/dev/null)"
-    if [ -z "$STALE_SHA" ]; then
-        why="${why}vacuous: the stale-base stub's own git commit did not happen; "
-    else
-        gb show "$STALE_SHA:PRECIOUS.txt" 2>/dev/null | grep -qF "$SENTINEL5" \
-            || why="${why}vacuous: the stale-base agent commit does not hold PRECIOUS.txt; "
-    fi
-    [ "$(cat "$B/.loki/state/base-branch.txt" 2>/dev/null)" = main ] \
-        || why="${why}stale-base: the mint from main recorded base '$(cat "$B/.loki/state/base-branch.txt" 2>/dev/null)'; "
-    gb ls-tree -r --name-only HEAD > "$T/log/stale-head-tree.txt" 2>/dev/null
-    grep -qx 'feature.py' "$T/log/stale-head-tree.txt" \
-        || why="${why}stale-base: the agent's feature.py is not on the branch tip; "
-    grep -qx 'PRECIOUS.txt' "$T/log/stale-head-tree.txt" \
-        && why="${why}stale-base: PRECIOUS.txt is still on the branch tip ($STALE_BRANCH); "
-    if gb checkout -q main 2>"$T/log/stale-checkout.err"; then
-        cmp -s "$B/PRECIOUS.txt" "$T/stalebase/PRECIOUS.before" \
-            || why="${why}stale-base: PRECIOUS.txt is gone or changed after checkout of main; "
-    else
-        why="${why}stale-base: could not switch back to main: $(head -c 160 "$T/log/stale-checkout.err" | tr '\n' ' '); "
-    fi
-fi
-if [ -z "$why" ]; then
-    pass "$id" "the agent's own git add -A commit put the user's untracked and ignored files on $SELF_BRANCH; the session took them off the branch tip (feature.py kept), warned naming them, and all three are byte-identical after checkout of main; with a base left by an earlier session from a deleted feature/x, the mint recorded main and the user's PRECIOUS.txt came off the tip of $STALE_BRANCH and is byte-identical after checkout of main"
-else
-    fail "$id" "$why"
-fi
-
-# ============================================================================
-# P6.user-file-mode-and-symlink-intact (sixth fixture, one session)
-# ============================================================================
-# The user's tracked executable script and tracked symlink, plus an untracked
-# executable and an untracked symlink, must keep their mode and link target
-# across the session commit, both on disk and in the committed tree. The
-# agent's own new file is committed (positive control).
-id=P6.user-file-mode-and-symlink-intact
-why=""
-M="$T/modes/repo"
-gm() { git -C "$M" "$@"; }
-{
-    mkdir -p "$M/scripts" && git init -q "$M" \
-    && gm symbolic-ref HEAD refs/heads/main \
-    && gm config user.email moat@example.invalid \
-    && gm config user.name "moat p6" \
-    && gm config commit.gpgsign false \
-    && printf '#!/bin/sh\necho tool\n' > "$M/scripts/tool.sh" && chmod 755 "$M/scripts/tool.sh" \
-    && printf 'data\n' > "$M/data.txt" \
-    && ln -s data.txt "$M/link-tracked" \
-    && gm add scripts/tool.sh data.txt link-tracked && gm commit -qm "c1: tool and link" \
-    && printf '#!/bin/sh\necho mine\n' > "$M/mine.local.sh" && chmod 750 "$M/mine.local.sh" \
-    && ln -s data.txt "$M/link-untracked"
-} >"$T/log/modes-fixture.log" 2>&1 || why="sixth fixture setup failed: $(tr '\n' ' ' < "$T/log/modes-fixture.log" | cut -c1-200); "
-MODES_LOG="$T/log/modes-stub.log"
-: > "$MODES_LOG"
-mode_of() { python3 -c 'import os,sys; print("%o" % (os.lstat(sys.argv[1]).st_mode & 0o7777))' "$1"; }
-if [ -z "$why" ]; then
-    run_pipeline modes "$MODES_LOG" modes "$M"
-    rc=$?
-    echo "INFO P6 mode-and-symlink session run.sh rc=$rc"
-    kill_leftovers
-    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$MODES_LOG")" -ge 1 ] \
-        || why="${why}vacuous: the session never reached the provider build step (run.sh rc=$rc); "
-    tail -n 25 "$T/log/modes.err" >&2; tail -n 10 "$T/log/modes.out" >&2; gm log --oneline --all >&2; gm status --short >&2; gm ls-tree -r HEAD >&2
-    gm ls-tree -r HEAD > "$T/log/modes-head-tree.txt" 2>/dev/null
-    grep -q '[[:space:]]agent_made.py$' "$T/log/modes-head-tree.txt" || why="${why}the agent's new file is not committed; "
-    grep -q '^100755 .*[[:space:]]scripts/tool.sh$' "$T/log/modes-head-tree.txt" || why="${why}committed scripts/tool.sh is not mode 100755; "
-    grep -q '^120000 .*[[:space:]]link-tracked$' "$T/log/modes-head-tree.txt" || why="${why}committed link-tracked is not a symlink; "
-    [ "$(mode_of "$M/scripts/tool.sh")" = 755 ] || why="${why}scripts/tool.sh mode on disk is $(mode_of "$M/scripts/tool.sh"); "
-    grep -q 'agent-edit' "$M/scripts/tool.sh" || why="${why}vacuous: the agent did not edit scripts/tool.sh; "
-    [ -L "$M/link-tracked" ] && [ "$(readlink "$M/link-tracked")" = data.txt ] || why="${why}link-tracked is not a symlink to data.txt; "
-    [ -L "$M/link-untracked" ] && [ "$(readlink "$M/link-untracked")" = data.txt ] || why="${why}link-untracked is not a symlink to data.txt; "
-    [ -f "$M/mine.local.sh" ] && [ "$(mode_of "$M/mine.local.sh")" = 750 ] || why="${why}mine.local.sh missing or mode is not 750; "
-fi
-if [ -z "$why" ]; then
-    pass "$id" "tracked executable and symlink keep mode 100755 and 120000 in the committed tree; untracked executable keeps 750 and untracked symlink keeps its target; the agent's new file is committed"
-else
-    fail "$id" "$why"
-fi
+# Collect the concurrent fixtures in the original case order.
+# collect_fixture <name> <case id>: replay the fixture's output. A fixture whose
+# subshell died before printing its CASE line is a FAIL, never a silent gap.
+collect_fixture() {
+    local name="$1" cid="$2" pid
+    eval "pid=\$FX_PID_$name"
+    wait "$pid"
+    cat "$T/log/fx-$name.out"
+    [ -s "$T/log/fx-$name.err" ] && cat "$T/log/fx-$name.err" >&2
+    grep -q "^CASE $cid " "$T/log/fx-$name.out" \
+        || fail "$cid" "fixture $name ended without a verdict: $(tail -n 1 "$T/log/fx-$name.err" 2>/dev/null | cut -c1-200)"
+    return 0
+}
+collect_fixture cfg P6.resume-keeps-ignored-user-file
+collect_fixture intr P6.resume-after-interrupt-commits-agent-files
+collect_fixture self P6.agent-self-commit-does-not-lose-user-file
+collect_fixture modes P6.user-file-mode-and-symlink-intact
 
 echo "INFO P6 total_seconds=$(( $(date +%s) - T_START )) pipeline_seconds=$RUN_SECS"
 exit 0
