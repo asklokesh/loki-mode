@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Acceptance checks are now written by a separate, walled provider call before the main loop, on both the shell and the Bun route: once per spec, at most two attempts, from an empty run-owned directory. Claude runs with tools denied; other providers are limited to that empty directory. The implementer can no longer write or replace the checks, and the checklist freeze only accepts the checks the author produced. If authoring fails, the council gate stays closed instead of passing. `loki spec checklist-reset <spec-sha256>` clears a failed authoring record for that one spec when no run is live.
+
 ### Fixed
 
+- A run's cost is now one total on every surface (receipt, `run.completed`, console, `loki status`, dashboard, Slack and handoff), and it includes child sessions such as reviewers, council, grill and docs. A resumed session is billed its own delta instead of being counted twice, and a cost that cannot be read fully shows as not measured instead of a lower number. The dollar cap also counts child spend, including after a resume.
 - `loki verify` again reads an `events.jsonl` whose last line was cut mid-write as UNCHECKED (exit 2) instead of TAMPERED, as the 11.79.0 notes stated, and a log whose final line is whole but missing only its newline keeps its verdict. Since 11.79.0 both were wrongly reported as TAMPERED. On a signed run, a cut `log.sealed` line still reads TAMPERED. A tail that a cut write could not produce (leading whitespace, a raw tab or CR, or a whole line with trailing whitespace), blank lines and stray whitespace inside lines are still TAMPERED.
 - `loki verify` now also runs the tests of JS and TS modules that import a changed file through a `tsconfig.json` or `jsconfig.json` setting: a repo-root path under `baseUrl` (such as `lib/a`) or a `paths` alias (such as `@/lib/a`). Before, only relative imports were followed, so a break behind one of these imports could still read as verified.
 - Correction to the v11.84.0 notes: a run whose session ran out of turns seals PARTIAL unless the target check and every check pass, in which case it seals VERIFIED.
