@@ -695,7 +695,11 @@ case_floor_wrong_pass() {
 # across the ids, and llm_review.affects_verdict is false. Default scope: the
 # first defect of each category (a verify costs seconds); set
 # LOKI_P4_MODELFREE_FULL=1 for the whole corpus. Positive control: a loki shim
-# that makes one gate follow the model id must turn the comparison red.
+# that makes one gate follow the model id must turn the comparison red, and a
+# second shim that empties deterministic_gates must be rejected, so three empty
+# runs cannot match trivially. Scope: the run uses --no-llm (model path off), so
+# this claims the deterministic Seal is model-free; it does not claim an
+# LLM-reviewed run is verdict-invariant.
 MODELFREE_MODELS="claude-opus-5-5,claude-haiku-4-5,unset"
 
 modelfree_ids() {  # echoes the defect ids to compare, comma separated
@@ -730,7 +734,28 @@ print(json.dumps(d, indent=2))' ;;
 esac
 exit \$rc
 SH
-    chmod +x "$1/real/loki" "$1/mutant/loki"
+    mkdir -p "$1/empty"
+    cat > "$1/empty/loki" <<SH
+#!/bin/sh
+out="\$("$REPO_ROOT/bin/loki" "\$@")"; rc=\$?
+printf '%s' "\$out" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+d["deterministic_gates"] = []
+print(json.dumps(d, indent=2))'
+exit \$rc
+SH
+    chmod +x "$1/real/loki" "$1/mutant/loki" "$1/empty/loki"
+}
+
+# Non-zero unless every defect ran at least one deterministic gate under every model id.
+modelfree_gates_nonempty() {  # $1 report path
+    python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+for r in d["defects"]:
+    for m in d["models"]:
+        assert r["gate_count"][m] > 0, ("empty deterministic_gates", r["id"], m)' "$1" 2>&1
 }
 
 modelfree_compare() {  # $1 shim dir  $2 ids  $3 report path; rc 0 only if identical
@@ -757,6 +782,11 @@ d = json.load(open(sys.argv[1]))
 assert d["differing"] == [sys.argv[2]] and "deterministic_gates" in d["defects"][0]["differing_fields"]' \
         "$MOAT_TMP/mf-mutant.json" "$first" 2>/dev/null \
         || { echo "FAIL|positive control: the mutant failed for the wrong reason: $(tail -c 300 "$MOAT_TMP/mf-mutant.json.err" | tr '\n' ' ')"; return 0; }
+    if modelfree_compare "$shims/empty" "$first" "$MOAT_TMP/mf-empty.json" \
+        && modelfree_gates_nonempty "$MOAT_TMP/mf-empty.json" >/dev/null; then
+        echo "FAIL|positive control failed: runs with empty deterministic_gates were NOT rejected"
+        return 0
+    fi
     if ! modelfree_compare "$shims/real" "$ids" "$rep"; then
         echo "FAIL|verdict or gates differ across model ids (or the compare could not run): $(tail -c 400 "$rep.err" | tr '\n' ' ')"
         return 0
@@ -774,8 +804,9 @@ for r in d["defects"]:
         # the control must be a real verify result, not a blank or an error
         assert r["verdict"][m] in ("BLOCKED", "CONCERNS", "VERIFIED"), (r["id"], m)
         assert r["exit_code"][m] in (0, 1, 2), (r["id"], m)
-print(d["n"])' "$rep" "$ids" "$MODELFREE_MODELS" 2>&1)" || { echo "FAIL|report check: $n"; return 0; }
-    echo "PASS|identical verdicts, exit codes and deterministic gates for $n defects across $MODELFREE_MODELS with no API key; a gate that follows the model id is detected"
+print(d["n"])' "$rep" "$ids" "$MODELFREE_MODELS" 2>&1)" \
+        && gates="$(modelfree_gates_nonempty "$rep")" || { echo "FAIL|report check: $n $gates"; return 0; }
+    echo "PASS|identical verdicts, exit codes and non-empty deterministic gates for $n defects across $MODELFREE_MODELS with no API key; a gate that follows the model id is detected"
 }
 
 # ---------------------------------------------------------------------------
@@ -809,7 +840,7 @@ run_case P4.catalog-has-top-model "catalog lists $TOP_ID and the top tier resolv
 run_case P4.three-setups-resolve "top-only, floor-only and routed setups dispatch the intended ids per step" case_three_setups
 run_case P4.seeded-defect-corpus-present "seeded-defect corpus of >= 100 runnable defects in five categories" case_corpus
 run_case P4.floor-does-not-raise-wrong-pass "per-defect measured wrong-pass rate at floor <= top on the corpus" case_floor_wrong_pass
-run_case P4.seal-is-model-free "Seal verdict, exit code and deterministic gates are identical across model ids with no API key" case_seal_model_free
+run_case P4.seal-is-model-free "with --no-llm (model path off) and no API key, Seal verdict, exit code and a non-empty deterministic gate set are identical across model ids" case_seal_model_free
 
 for id in P4.catalog-has-top-model P4.three-setups-resolve P4.seeded-defect-corpus-present P4.floor-does-not-raise-wrong-pass P4.seal-is-model-free; do
     case " $EMITTED " in *" $id "*) ;; *) printf 'CASE %s FAIL runner did not emit this case\n' "$id" ;; esac

@@ -24,4 +24,4 @@
 #
 # Entries:
 P3.implementer-prompt-has-no-check-authoring M2 remove PRD_CHECKLIST_INIT from both builders (run.sh build_prompt, build_prompt.ts buildChecklistStatus) and move check authoring to a walled step
-P4.floor-does-not-raise-wrong-pass M0 no corpus and no recorded top or floor wrong-pass run
+P4.floor-does-not-raise-wrong-pass M0 no recorded top or floor wrong-pass run on held-out bench tasks; needs a real top and floor run, which needs an API key

@@ -265,7 +265,8 @@ def compare_models(models, only=None, timeout=600, out=None, manifest=MANIFEST):
             differing.append(d["id"])
         rows.append({"id": d["id"], "identical": not fields, "differing_fields": fields,
                      "verdict": {m: per[m]["verdict"] for m in models},
-                     "exit_code": {m: per[m]["exit_code"] for m in models}})
+                     "exit_code": {m: per[m]["exit_code"] for m in models},
+                     "gate_count": {m: len(json.loads(per[m]["deterministic_gates"]) or []) for m in models}})
     doc = {"schema": "loki.seeded-defects.model-compare/v1",
            "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
            "models": models, "n": len(rows), "identical": len(rows) - len(differing),
