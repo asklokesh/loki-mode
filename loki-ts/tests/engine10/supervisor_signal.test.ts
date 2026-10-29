@@ -1,5 +1,5 @@
 // D50-F1c: SIGINT/SIGTERM mid-run returns the checkout to the starting branch, kills worker and session groups, keeps the run branch.
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,6 +11,12 @@ const git = (dir: string, ...a: string[]): string => execFileSync("git", ["-C", 
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const SUP = join(import.meta.dir, "../../src/engine10/supervisor.ts");
 import { baseLine, dropEmptyRunBranch } from "../../src/util/base_guard.ts";
+import { SupervisorLog } from "../../src/engine10/supervisor.ts";
+import { readEvents } from "../../src/engine10/events.ts";
+import { reasonOf } from "../../src/engine10/output.ts";
+import { signReceipt } from "../../src/engine10/stages/seal.ts";
+import { RECOVERY_ABORT, findInterrupted, nextStepText, resumeFlag, resumeMachineOpts, startRecovery, statusNextStep } from "../../src/util/run_outputs.ts";
+import { verifyLogSeals } from "../../src/util/seal_drift.ts";
 
 // Fake worker: creates the run branch (as intake does), starts a detached session-like sleeper, reports its pgid, then sleeps.
 const WORKER = (dirty: boolean): string => `
@@ -411,5 +417,153 @@ describe("stuck-run alert (LOKI_STUCK_MIN)", () => {
   test("stuck slack payload carries stage and action", async () => {
     const { slackPayload } = await import("../../src/util/slack_events.ts");
     expect(slackPayload("stuck", { stage: "verify", lastEventAt: "t", action: "act" }).text).toContain("verify");
+  });
+});
+
+// SB-04d: a run stopped by SIGTERM or Ctrl-C is offered Resume by `loki start` (and resumed with no prompt off a TTY) from its settled stages.
+describe("loki start continues a cancelled run", () => {
+  const RID = "e10-20260101T000000Z-cafe";
+  type Row = [string, string | null, Record<string, unknown>?];
+  const afterPlan: Row[] = [["run.started", null, { provider: "claude" }], ["stage.completed", "intake", { task: "add subtract" }], ["stage.completed", "plan"]];
+  const cancelDone: Row = ["run.completed", null, { verdict: "FAILED", cancelled: true, signal: "SIGTERM", outcome: "CANCELLED" }];
+  let keyDir = "";
+  const saved = { k: process.env["LOKI_RECEIPT_SIGNING_KEY"], f: process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] };
+  beforeAll(() => { keyDir = mkdtempSync(join(tmpdir(), "e10-sb04d-key-")); roots.push(keyDir); process.env["LOKI_RECEIPT_SIGNING_KEY"] = ""; process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(keyDir, "k.pem"); signReceipt("warm", "0".repeat(64)); });
+  afterAll(() => { for (const [k, v] of [["LOKI_RECEIPT_SIGNING_KEY", saved.k], ["LOKI_RECEIPT_SIGNING_KEY_FILE", saved.f]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  /** A repo holding the run branch and a log written by the real SupervisorLog (so the cancel seal is the engine's own). */
+  function mkRun(rows: Row[], seal = true): { dir: string; path: string } {
+    const dir = mkdtempSync(join(tmpdir(), "e10-sb04d-")); roots.push(dir);
+    execFileSync("git", ["init", "-q", "-b", "main", dir]);
+    git(dir, "config", "user.name", "t"); git(dir, "config", "user.email", "t@example.com");
+    writeFileSync(join(dir, "a.txt"), "base\n"); git(dir, "add", "a.txt"); git(dir, "commit", "-q", "-m", "base");
+    git(dir, "branch", `loki/${RID}`);
+    const path = join(dir, ".loki", "runs", RID, "events.jsonl"); mkdirSync(join(dir, ".loki", "runs", RID), { recursive: true });
+    const log = new SupervisorLog(path, RID), base = git(dir, "rev-parse", "HEAD");
+    for (const [t, st, d] of rows) log.append(t, st as never, t === "stage.completed" && st === "intake" ? { ...d, base_sha: base } : d ?? {});
+    if (seal && rows.some((r) => r[0] === "run.completed")) log.sealLog();
+    process.chdir(dir); // resumeFlag resolves the repo from the cwd, as it does for a real `loki start`
+    return { dir, path };
+  }
+  const cwd0 = process.cwd();
+  afterEach(() => { process.chdir(cwd0); });
+  const harness = (...answers: (string | null)[]) => {
+    const say: string[] = [], q = [...answers]; let seen = 0, asked = 0;
+    return { say, get seen() { return seen; }, get asked() { return asked; }, deps: { out: (x: string) => { say.push(x); }, ask: async () => { asked++; return q.length ? q.shift()! : null; }, supervise: (async () => { seen++; return { outcome: "VERIFIED" }; }) as never } };
+  };
+
+  test("non-TTY, same task: resumes from the settled intake and plan to VERIFIED; the machine re-enters past them", async () => {
+    const r = mkRun([...afterPlan, cancelDone]), h = harness();
+    expect(await startRecovery(r.dir, "add subtract", false, { ...h.deps, tty: false })).toBe(0);
+    expect(h.seen).toBe(1);
+    expect(h.say.join("")).toContain("settled: intake, plan");
+    const ctx = {}, flow = resumeMachineOpts(ctx, readEvents(r.path), readFileSync(r.path, "utf8"), ["intake", ["plan", "wall"], "implement", "verify"] as const);
+    expect(flow.ok && flow.flow).toEqual([["wall"], "implement", "verify"]); // no settled stage is called a second time
+    expect(flow.ok && Object.keys(flow.restored)).toEqual(["intake", "plan"]);
+  });
+  test("TTY: the default choice (Enter) resumes a cancelled run and the menu marks Resume as the default", async () => {
+    const r = mkRun([...afterPlan, cancelDone]), h = harness("");
+    expect(await startRecovery(r.dir, "add subtract", false, { ...h.deps, tty: true })).toBe(0);
+    expect(h.asked).toBe(1);
+    expect(h.seen).toBe(1);
+    expect(h.say.join("")).toContain("1) Resume (continue from the settled stages) [default]");
+  });
+  test("a bare start (no task) resumes the cancelled run too; a different task starts fresh", async () => {
+    const r = mkRun([...afterPlan, cancelDone]), h = harness();
+    expect(await startRecovery(r.dir, "something else", false, { ...h.deps, tty: false })).toBeNull();
+    expect(h.seen).toBe(0);
+    expect(await startRecovery(r.dir, "", false, { ...h.deps, tty: false })).toBe(0);
+    expect(h.seen).toBe(1);
+  });
+  test("cancelled with nothing settled: Start fresh only, never a Resume entry", async () => {
+    const r = mkRun([["run.started", null], cancelDone]), h = harness("1");
+    expect(await startRecovery(r.dir, "add subtract", false, { ...h.deps, tty: true })).toBeNull();
+    expect(h.say.join("")).not.toContain("Resume (");
+    expect(h.say.join("")).toContain("1) Start fresh");
+    expect(h.seen).toBe(0);
+    expect(await startRecovery(r.dir, "add subtract", false, { ...h.deps, tty: false })).toBeNull();
+    expect(h.seen).toBe(0);
+  });
+  test("Ctrl-C or EOF at the menu returns 130: nothing resumes, no run starts", async () => {
+    for (const a of [RECOVERY_ABORT, null]) {
+      const r = mkRun([...afterPlan, cancelDone]), h = harness(a);
+      expect(await startRecovery(r.dir, "add subtract", false, { ...h.deps, tty: true })).toBe(130);
+      expect(h.seen).toBe(0);
+    }
+  });
+  test("--fresh and LOKI_NO_RESUME=1 skip the offer; --no-pr still resumes the stages", async () => {
+    const r = mkRun([...afterPlan, cancelDone]), h = harness();
+    expect(await startRecovery(r.dir, "add subtract", false, { ...h.deps, tty: false, fresh: true })).toBeNull();
+    process.env["LOKI_NO_RESUME"] = "1";
+    try { expect(await startRecovery(r.dir, "add subtract", false, { ...h.deps, tty: false })).toBeNull(); } finally { delete process.env["LOKI_NO_RESUME"]; }
+    expect(h.seen).toBe(0);
+    expect(await startRecovery(r.dir, "add subtract", true, { ...h.deps, tty: false })).toBe(0);
+    expect(h.seen).toBe(1);
+  });
+  test("an explicit loki start --resume <id> works on a cancelled run", async () => {
+    const r = mkRun([...afterPlan, cancelDone]), h = harness();
+    expect(await resumeFlag(RID, true, h.deps)).toBe(0);
+    expect(h.seen).toBe(1);
+    expect(h.say.join("")).not.toContain("no interrupted engine10 run");
+  });
+  test("a refusal before the engine starts (dirty tree) never blocks a non-TTY fresh start", async () => {
+    const r = mkRun([...afterPlan, cancelDone]), h = harness();
+    writeFileSync(join(r.dir, "dirty.txt"), "x\n");
+    expect(await startRecovery(r.dir, "add subtract", false, { ...h.deps, tty: false })).toBeNull();
+    expect(h.seen).toBe(0);
+    expect(h.say.join("")).toContain("could not be resumed");
+  });
+  test("tampered tail after a cancel: an event appended after the cancel seal is refused, an edited earlier line too; the untouched log is the control", async () => {
+    const ok = mkRun([...afterPlan, cancelDone]); expect(findInterrupted(ok.dir, RID, true)).not.toBeNull();
+    const tail = mkRun([...afterPlan, cancelDone]);
+    writeFileSync(tail.path, readFileSync(tail.path, "utf8") + JSON.stringify({ v: 1, run: RID, seq: 99, ts: "2026-01-01T00:00:00.000Z", type: "stage.completed", stage: "implement", data: { forged: true } }) + "\n");
+    const h = harness();
+    expect(await resumeFlag(RID, true, h.deps)).toBe(2);
+    expect(h.say.join("")).toContain("after its last log.sealed");
+    expect(h.seen).toBe(0);
+    expect(await startRecovery(tail.dir, "add subtract", false, { ...h.deps, tty: false })).toBeNull();
+    expect(h.seen).toBe(0);
+    const edit = mkRun([...afterPlan, cancelDone]);
+    writeFileSync(edit.path, readFileSync(edit.path, "utf8").replace('"add subtract"', '"add multiply"'));
+    expect(findInterrupted(edit.dir, RID, true)).toBeNull();
+  });
+  test("truncated: a cancel seal cut off the log, or a line cut out before it, is never offered Resume and --resume refuses it", async () => {
+    const cut = mkRun([...afterPlan, cancelDone]), lines = readFileSync(cut.path, "utf8").split("\n").filter((l) => l !== "");
+    expect(lines.at(-1)).toContain("log.sealed");
+    writeFileSync(cut.path, lines.slice(0, -1).join("\n") + "\n"); // the seal after run.completed removed
+    const h = harness();
+    expect(await startRecovery(cut.dir, "add subtract", false, { ...h.deps, tty: false })).toBeNull();
+    expect(h.seen).toBe(0);
+    expect(await resumeFlag(RID, true, h.deps)).not.toBe(0);
+    expect(h.seen).toBe(0);
+    const gap = mkRun([...afterPlan, cancelDone]), gl = readFileSync(gap.path, "utf8").split("\n").filter((l) => l !== "");
+    writeFileSync(gap.path, [...gl.slice(0, 2), ...gl.slice(3)].join("\n") + "\n"); // an earlier line cut out
+    const g = harness();
+    expect(await startRecovery(gap.dir, "add subtract", false, { ...g.deps, tty: false })).toBeNull();
+    expect(g.seen).toBe(0);
+  });
+  test("seal honesty: the resumed run seals its own new events, and a tail edit after the resume breaks that seal", () => {
+    const r = mkRun([...afterPlan, cancelDone]);
+    const b = new SupervisorLog(r.path, RID);
+    b.append("run.resumed", null, { phase: "stage" }); b.append("stage.completed", "wall", {}); b.append("run.completed", null, { verdict: "VERIFIED" }); b.sealLog();
+    const raw = readFileSync(r.path, "utf8");
+    expect(verifyLogSeals(raw, readEvents(r.path), { sealLast: true })).toBeNull();
+    expect(readEvents(r.path).filter((e) => e.type === "log.sealed").length).toBe(2);
+    expect(verifyLogSeals(raw.replace('"verdict":"VERIFIED"', '"verdict":"PARTIAL"'), readEvents(r.path), { sealLast: true })).not.toBeNull();
+  });
+  test("a resumed run that stopped again is an interrupted run, not a tampered one", () => {
+    const r = mkRun([...afterPlan, cancelDone]);
+    const b = new SupervisorLog(r.path, RID); b.append("run.resumed", null, { phase: "stage" });
+    const it = findInterrupted(r.dir, RID, true);
+    expect(it).not.toBeNull();
+    expect(it?.cancelled).toBeUndefined();
+  });
+  test("the cancel line and loki status say Resume will be offered, only when a stage settled", () => {
+    const withStage = mkRun([...afterPlan, cancelDone]);
+    expect(reasonOf(readEvents(withStage.path), false, null, "CANCELLED")).toContain("offers to resume it (settled stages are kept) or start fresh");
+    const none = mkRun([["run.started", null], cancelDone]);
+    expect(reasonOf(readEvents(none.path), false, null, "CANCELLED")).toContain("offers to start fresh");
+    expect(statusNextStep(withStage.dir, join(withStage.dir, ".loki", "runs"), RID, readEvents(withStage.path))).toContain("offers to resume it from its settled stages");
+    expect(statusNextStep(none.dir, join(none.dir, ".loki", "runs"), RID, readEvents(none.path))).toContain("offers to start fresh");
+    expect(nextStepText(RID, "verify", true, true)).toContain("resume");
   });
 });

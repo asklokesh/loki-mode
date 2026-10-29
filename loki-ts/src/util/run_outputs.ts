@@ -192,9 +192,10 @@ export function findInterrupted(repoDir: string, runId?: string, includeCancelle
   const top = rows[0];
   if (!top) return null;
   const events = readEvents(join(repoDir, eventsRelPath(top.id)));
-  const cancelled = events.findLast((e) => e.type === "run.completed")?.data["cancelled"] === true; // SB-12: a cancelled run is offered (never resumed); its phase is read as if it had not completed
+  const doneAt = events.findLastIndex((e) => e.type === "run.completed"), tail = events.slice(doneAt + 1 + (events[doneAt + 1]?.type === "log.sealed" ? 1 : 0));
+  const cancelDone = doneAt >= 0 && isCancelDone(events[doneAt]!), cancelled = cancelDone && tail.length === 0; // SB-04d: a cancelled run is resumable; events after its cancel seal mean it was resumed and stopped again (an interrupted run) or were appended by hand (refused below)
   if (cancelled && !includeCancelled) return null;
-  const phase = phaseOf(cancelled ? events.filter((e) => e.type !== "run.completed") : events);
+  const phase = phaseOf(events.filter((e) => !isCancelDone(e)));
   if (phase === "done" || isDiscarded(root, top.id) || runOwnerAlive(join(root, top.id)) || events.length === 0) return null;
   const foreign = events.find((e) => e.run !== top.id); // a log holding another run's events (a copied or symlinked log) is not this run's
   if (foreign) return no(`run ${top.id} holds an event from run ${String(foreign.run)}; its log is not its own`);
@@ -249,7 +250,7 @@ export function resumePoint(events: readonly EventEnvelope[], rawLog?: string): 
   if (!events.some((e) => e.type === "run.started")) return { ok: false, reason: "no run.started event" };
   if (events.some((e) => e.type === "tamper.detected")) return { ok: false, reason: "event log was flagged as tampered" };
   if (rawLog !== undefined) { const bad = verifyLogSeals(rawLog, events, { sealLast: true }); if (bad) return { ok: false, reason: `event log failed its seal check (${bad})` }; } // FC-RESUME-TRUSTS-UNSEALED-LOG: a resumed supervisor re-hashes the file, so an edit made while stopped would otherwise be signed
-  if (events.some((e) => e.type === "run.completed")) return { ok: false, reason: "run already completed; nothing to resume" };
+  if (events.some((e) => e.type === "run.completed" && !isCancelDone(e))) return { ok: false, reason: "run already completed; nothing to resume" };
   const intake = events.findLast((e) => e.type === "stage.completed" && e.stage === "intake");
   if (intake && typeof intake.data["base_sha"] !== "string") return { ok: false, reason: "intake checkpoint has no base_sha" };
   const next = firstIncompleteStage(events);
@@ -298,10 +299,12 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   let repoDir: string;
   try { repoDir = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(); } catch { out("engine10: --resume: not inside a git repository\n"); return 2; }
   const id = runId && /^e10-[A-Za-z0-9-]+$/.test(runId) ? runId : undefined;
-  const why: { reason?: string } = {}, it = findInterrupted(repoDir, id, false, why);
+  const why: { reason?: string } = {}, it = findInterrupted(repoDir, id, true, why);
   if (!it) { out(`engine10: --resume: no interrupted engine10 run${why.reason ? ` (${plainLine(why.reason, 400)})` : ""}\n`); return 3; }
   let raw = "";
   try { raw = readFileSync(join(repoDir, eventsRelPath(it.runId)), "utf8"); } catch { return cannotResume(out, it.runId, "its event log is unreadable"); }
+  const tailBad = it.phase === "publish" ? null : cancelTailProblem(it.events);
+  if (tailBad) { out(`engine10: --resume refused: run ${it.runId} holds ${tailBad}\n`); return 2; }
   const rp = resumePoint(it.events, raw);
   if (!rp.ok && /^event log (is torn|ends in a torn)/.test(rp.reason)) return cannotResume(out, it.runId, `its ${rp.reason}`);
   if (!rp.ok) { out(`engine10: --resume refused: ${plainLine(rp.reason, 400)}\n`); return 2; }
@@ -439,20 +442,39 @@ export function parseRecoveryChoice(raw: string, resumable: boolean): RecoveryCh
 }
 
 /** SB-12: what the next `loki start` will do with this run; shared by `loki status` and the end-of-run cancel line. */
-export function nextStepText(runId: string, phase: Phase, cancelled: boolean, hasBranch: boolean): string {
+export function nextStepText(runId: string, phase: Phase, resumable: boolean, hasBranch: boolean): string {
   const kept = hasBranch ? `old work stays on loki/${runId}` : "no run branch was created";
-  return phase === "publish" && !cancelled ? `next loki start with the same task offers to finish its pull request step (run ${runId}) or start fresh` : `next loki start offers to start fresh; ${kept}`;
+  return resumable ? `next loki start with the same task offers to ${phase === "publish" ? "finish its pull request step" : "resume it from its settled stages"} (run ${runId}) or start fresh` : `next loki start offers to start fresh; ${kept}`;
 }
 
 const branchExists = (repoDir: string, runId: string): boolean => { try { return safeGit(repoDir, ["rev-parse", "--verify", "-q", `refs/heads/loki/${runId}`]).trim() !== ""; } catch { return false; } };
+
+/** SB-04d: the log.sealed line is the last authenticated point of a stopped run (the same checkpoint rule signedReceiptFacts applies to a publish resume): events after the last one were never sealed, so a resume refuses them instead of trusting them. */
+function cancelTailProblem(events: readonly EventEnvelope[]): string | null {
+  const at = events.findLastIndex((e) => e.type === "log.sealed");
+  return at >= 0 && at < events.length - 1 ? `${events.length - 1 - at} event(s) after its last log.sealed (${events[at + 1]!.type}); they are unauthenticated` : null;
+}
+
+/** SB-04d: can `loki start` continue this run from its settled stages (any phase before publish)? Same measured properties resumeFlag refuses on: branch, base commit, an intact sealed log, a settled stage. */
+function stagesResumable(repoDir: string, runId: string, events: readonly EventEnvelope[]): boolean {
+  if (!branchExists(repoDir, runId) || cancelTailProblem(events)) return false;
+  try {
+    const rp = resumePoint(events, readFileSync(join(repoDir, eventsRelPath(runId)), "utf8"));
+    if (!rp.ok || rp.skip.length === 0) return false;
+    const base = events.findLast((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
+    if (typeof base === "string" && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(base)) safeGit(repoDir, ["cat-file", "-e", `${base}^{commit}`]);
+    return true;
+  } catch { return false; }
+}
 
 /** The `loki status` next-step line for one run; null when the run is complete, live, discarded or has nothing left to offer. */
 export function statusNextStep(repoDir: string, runsDir: string, runId: string, events: readonly EventEnvelope[]): string | null {
   const cancelled = events.findLast((e) => e.type === "run.completed")?.data["cancelled"] === true;
   if (events.some((e) => e.type === "run.completed") && !cancelled) return null;
-  const phase = phaseOf(cancelled ? events.filter((e) => e.type !== "run.completed") : events);
+  const phase = phaseOf(events.filter((e) => !isCancelDone(e)));
   if (phase === "done" || events.length === 0 || isDiscarded(runsDir, runId) || runOwnerAlive(join(runsDir, runId))) return null;
-  return nextStepText(runId, phase, cancelled, branchExists(repoDir, runId));
+  const hasBranch = branchExists(repoDir, runId);
+  return nextStepText(runId, phase, phase === "publish" ? hasBranch && taskOf(events) !== null : stagesResumable(repoDir, runId, events), hasBranch);
 }
 
 /** `Discard old run`: writes the harness-owned marker inside the run's own directory, after checking that it is a real directory (not a link) under this repo's runs dir. */
@@ -469,32 +491,34 @@ const askLine = async (q: string): Promise<string | null> => {
   try { return await new Promise<string | null>((res) => { rl.once("close", () => res(null)); rl.once("SIGINT", () => res(RECOVERY_ABORT)); rl.question(q, (a) => res(a)); }); } finally { rl.close(); }
 };
 
-/** Called by `loki start` before it opens a new run (and by a bare `loki start`, task ""). Returns an exit code when it resumed, null to go on.
- *  Only a publish-phase run whose recorded task equals this task (any task when none was given) is resumable; the engine keeps stage state in memory, so
- *  Resume is never offered for another phase or for a cancelled run. TTY: the user picks. No TTY or LOKI_NONINTERACTIVE=1: a resumable run resumes, else a one-line note.
- *  --fresh (deps.fresh) and LOKI_NO_RESUME=1 skip all of it. */
 /** The run-state half of "resumePublish can finish this run": the record is intact and clean, and a record still open (a crash) is accepted only behind a valid signed checkpoint. */
 function publishStateOk(runDir: string, it: Interrupted): boolean {
   const sealedAt = it.events.findIndex((e) => e.type === "receipt.sealed"), hash = String(it.events[sealedAt]?.data["receipt_sha256"] ?? ""), cp = checkpointProblem(runDir, it.events);
   return runStateProblem(runDir, it.runId, hash, cp.signed && cp.problem === null) === null;
 }
+/** Called by `loki start` before it opens a new run (and by a bare `loki start`, task ""). Returns an exit code when it resumed, null to go on.
+ *  A run whose recorded task equals this task (any task when none was given) is resumable, cancelled or interrupted: a publish-phase run needs its origin, branch and
+ *  policy; an earlier phase needs its branch, base commit and an intact log with a settled stage, and re-enters at the first unsettled stage. TTY: the user picks. No TTY or LOKI_NONINTERACTIVE=1: a resumable run resumes, else a one-line note.
+ *  --fresh (deps.fresh) and LOKI_NO_RESUME=1 skip all of it. */
 export async function startRecovery(repoDir: string, task: string, noPr: boolean, deps: ResumeDeps = {}): Promise<number | null> {
   if (process.env["LOKI_NO_RESUME"] === "1" || deps.fresh === true) return null;
   const it = findInterrupted(repoDir, undefined, true);
   if (!it) return null;
   const note = deps.out ?? ((s: string) => { process.stderr.write(s); });
   const hasBranch = branchExists(repoDir, it.runId), t = task.trim();
-  const resumable = it.phase === "publish" && !it.cancelled && !noPr && it.task !== null && (t === "" || it.task === t) && hasBranch && readOriginUrl(repoDir) !== null && !("deny" in prGate(repoDir))
-    && publishStateOk(join(repoDir, ".loki", "runs", it.runId), it); // offered only when resumePublish can finish: branch, origin, policy and the supervisor's run-state record all allow it
+  const sameTask = it.task !== null && (t === "" || it.task === t), publish = it.phase === "publish";
+  const resumable = sameTask && (publish ? !noPr && hasBranch && readOriginUrl(repoDir) !== null && !("deny" in prGate(repoDir)) && publishStateOk(join(repoDir, ".loki", "runs", it.runId), it) : stagesResumable(repoDir, it.runId, it.events)); // offered only when the resume can proceed: publish needs branch, origin, policy and the supervisor's run-state record; earlier phases need branch, base commit, a verified log and a settled stage
   const kept = hasBranch ? `old work is kept on loki/${it.runId}` : "no run branch was created", was = it.cancelled ? "cancelled" : "interrupted";
   const interactive = (deps.tty ?? (process.stdin.isTTY === true && process.stderr.isTTY === true)) && process.env["LOKI_NONINTERACTIVE"] !== "1";
-  if (resumable && !interactive) return resumePublish(repoDir, it, deps);
+  let began = false;
+  const go = async (): Promise<number> => publish ? resumePublish(repoDir, it, deps) : resumeFlag(it.runId, noPr, { ...deps, supervise: async (o) => { began = true; return (deps.supervise ?? (async (x) => (await import("../engine10/supervisor.ts")).runSupervisor(x)))(o); } });
+  if (resumable && !interactive) { const rc = await go(); if (publish || began || rc === 0) return rc; note(`note: run ${it.runId} could not be resumed; starting a new run, ${kept}.\n`); return null; } // a refusal before the engine started (dirty tree, cap) never blocks a fresh start
   if (!interactive || (t === "" && !resumable)) {
     note(`note: run ${it.runId} was ${was} in phase ${it.phase}; ${t === "" ? `give a task to start a new run (loki start <task>); ${kept}` : `starting a new run, ${kept}`}.\n`);
     return null;
   }
   const ask = deps.ask ?? askLine, discardItem = "Discard old run (not offered again; nothing is deleted)";
-  const menu = resumable ? ["Resume (finish the pull request step)", `Start fresh (${kept})`, discardItem, "Show details"] : [`Start fresh (${kept})`, discardItem, "Show details"];
+  const menu = resumable ? [publish ? "Resume (finish the pull request step)" : "Resume (continue from the settled stages)", `Start fresh (${kept})`, discardItem, "Show details"] : [`Start fresh (${kept})`, discardItem, "Show details"];
   note(`loki: run ${it.runId} was ${was} in phase ${it.phase}${it.task ? ` (task: ${it.task.replace(/\s+/g, " ").slice(0, 80)})` : ""}.\n`);
   for (let tries = 0; tries < 5; tries++) {
     note(`${menu.map((m, i) => `  ${i + 1}) ${m}${i === 0 ? " [default]" : ""}`).join("\n")}\n`);
@@ -502,8 +526,8 @@ export async function startRecovery(repoDir: string, task: string, noPr: boolean
     if (ans === null || ans === RECOVERY_ABORT) { note("no choice made; nothing was started or resumed\n"); return 130; } // Ctrl-C or closed input is never a choice
     const c = parseRecoveryChoice(ans, resumable);
     if (c === null) { note(`not a choice: ${ans.trim().slice(0, 40)}\n`); continue; }
-    if (c === "details") { note(`  run ${it.runId}: ${it.events.length} events, last seq ${fold(it.events).lastSeq}, phase ${it.phase}, ${was}; ${kept}; ${resumable ? "resumable (same task, publish phase)" : it.phase === "publish" && !it.cancelled ? "not resumable here (different task or --no-pr)" : it.cancelled ? "not resumable (cancelled)" : "not resumable (stage state is in memory)"}\n`); continue; }
-    if (c === "resume") return resumePublish(repoDir, it, deps);
+    if (c === "details") { note(`  run ${it.runId}: ${it.events.length} events, last seq ${fold(it.events).lastSeq}, phase ${it.phase}, ${was}; ${kept}; ${resumable ? `resumable (same task, ${publish ? "publish phase" : "settled stages kept"})` : "not resumable here (different task, --no-pr, or the branch, base commit, log or a settled stage is missing)"}\n`); continue; }
+    if (c === "resume") return go();
     note(c === "discard" ? (discardRun(repoDir, it.runId) ? `Discarded run ${it.runId}: it will not be offered again; ${kept}.\n` : `Could not mark run ${it.runId} as discarded; starting fresh.\n`) : `Starting fresh; ${kept}.\n`);
     return null;
   }

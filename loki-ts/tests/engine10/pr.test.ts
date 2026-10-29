@@ -711,14 +711,12 @@ describe("RECOVERY: interrupted run resume", () => {
       expect(prCalls).toBe(0);
     });
 
-    test("a cancelled run is offered but never resumed, even at the publish phase", async () => {
+    test("a cancelled run at the publish phase is offered Resume and finishes its pull request step", async () => {
       seal(); branch(); const sl = new SupervisorLog(evPath(), RUN); sl.append("run.completed", null, { verdict: "FAILED", cancelled: true, outcome: "CANCELLED" }); sl.sealLog();
       expect(findInterrupted(repo)).toBeNull();
       expect(findInterrupted(repo, undefined, true)?.cancelled).toBe(true);
-      expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say })).toBeNull();
-      expect(out.join("")).toContain("was cancelled in phase publish");
-      expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: true, ask: asks("").ask })).toBeNull();
-      expect(prCalls).toBe(0);
+      expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say })).toBe(0);
+      expect(prCalls).toBe(1);
     });
 
     test("non-TTY resumes a same-task publish run; a different task starts fresh with a note naming the branch", async () => {
@@ -776,7 +774,7 @@ describe("RECOVERY: interrupted run resume", () => {
       expect(statusNextStep(repo, join(repo, ".loki", "runs"), RUN, readEvents(evPath()))).toContain("offers to start fresh; no run branch was created");
       seal(); branch();
       expect(statusNextStep(repo, join(repo, ".loki", "runs"), RUN, readEvents(evPath()))).toContain("offers to finish its pull request step");
-      expect(nextStepText(RUN, "publish", true, true)).toBe(`next loki start offers to start fresh; old work stays on loki/${RUN}`);
+      expect(nextStepText(RUN, "publish", false, true)).toBe(`next loki start offers to start fresh; old work stays on loki/${RUN}`);
       discardRun(repo, RUN);
       expect(statusNextStep(repo, join(repo, ".loki", "runs"), RUN, readEvents(evPath()))).toBeNull();
     });
