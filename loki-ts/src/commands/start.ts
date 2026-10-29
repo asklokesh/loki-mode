@@ -606,6 +606,24 @@ export async function dryRunStart(o: ParsedStartOpts, repoDir: string, env: Node
   return 0;
 }
 
+/** SB-12: test seam for the offer's tty and reader (production leaves it empty). */
+export const startRecoveryHooks: { deps?: import("../util/run_outputs.ts").ResumeDeps } = {};
+
+/** SB-12: the one resume offer for `loki start <spec>`, made here while the parent owns the terminal (the engine child gets stdin "ignore").
+ *  Returns an exit code when the user resumed, else null; on null it sets LOKI_NO_RESUME=1 so no engine child (or attempt) offers a second time.
+ *  --attempts never offers Resume (noPr), since N fresh runs are being asked for. */
+export async function offerInterruptedRun(o: ParsedStartOpts, cwd: string): Promise<number | null> {
+  if (process.env["LOKI_NO_RESUME"] === "1") return null;
+  try {
+    const { existsSync, readFileSync, statSync } = await import("node:fs"), { safeGit } = await import("../util/safe_git.ts"), { startRecovery } = await import("../util/run_outputs.ts");
+    const spec = o.prdPath, task = spec !== "" && existsSync(spec) && statSync(spec).isFile() ? readFileSync(spec, "utf8") : spec;
+    const rec = await startRecovery(safeGit(cwd, ["rev-parse", "--show-toplevel"]).trim(), task, o.noPr === true || o.attempts !== undefined, startRecoveryHooks.deps ?? {});
+    if (rec !== null) return rec;
+  } catch { /* not a repo: nothing to offer */ }
+  process.env["LOKI_NO_RESUME"] = "1";
+  return null;
+}
+
 export async function runStart(args: readonly string[]): Promise<number> {
   if (isBashOnlyStart(args)) {
     if (args.includes("--dry-run")) {
@@ -649,6 +667,7 @@ export async function runStart(args: readonly string[]): Promise<number> {
     if (t) parsed[k] = t.path;
   }
   if (parsed.dryRun) return dryRunStart(parsed, process.cwd(), process.env);
+  { const rec = await offerInterruptedRun(parsed, process.cwd()); if (rec !== null) return rec; }
   if (startEngine(parsed) === "runner") {
     const { runAutonomous } = await import("../runner/autonomous.ts");
     const capLine = await capSourceLine(parsed.budgetLimit, process.cwd(), process.env);

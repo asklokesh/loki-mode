@@ -11,6 +11,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { capSourceLine, dryRunStart, extractSpecText, runInternalSpecText, textifyBashArgs, textSpecPath, deployFlagError, isBashOnlyStart, missingPrdMessage, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
+import { EventLog } from "../../src/engine10/events.ts";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { offerInterruptedRun, runStart, startRecoveryHooks } from "../../src/commands/start.ts";
 import { VALID_PROVIDERS } from "../../src/runner/router/cost_preview.ts";
 
 // E2E-shaped: drives the real loop, which writes state files and spawns
@@ -917,5 +921,77 @@ describe("FC-BINARY-SPEC-READ-AS-UTF8 start entry wiring", () => {
       expect(r.status).toBe(2);
       expect(r.stderr).toContain("encrypted");
     } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+});
+
+describe("SB-12: the resume offer is made once, by the parent, for loki start <spec>", () => {
+  const RUN = "e10-20261015T000000Z-abcd";
+  let repo = "", cwd0 = "", out: string[] = [], asked = 0, prCalls = 0;
+  const sh = (a: string[]): void => { execFileSync("git", a, { cwd: repo, stdio: "ignore" }); };
+  const setup = (): void => {
+    cwd0 = process.cwd(); repo = mkdtempSync(join(tmpdir(), "loki-sb12-")); out = []; asked = 0; prCalls = 0;
+    sh(["init", "-q"]); sh(["remote", "add", "origin", "https://github.com/o/r.git"]);
+    mkdirSync(join(repo, ".loki", "runs", RUN), { recursive: true });
+    writeFileSync(join(repo, ".loki", "runs", RUN, "receipt.json"), '{"receipt_sha256":"abc"}\n');
+    const log = new EventLog(join(repo, ".loki", "runs", RUN, "events.jsonl"), RUN);
+    log.append("run.started", null, { provider: "claude", model: "m" });
+    log.append("stage.completed", "intake", { task: "fix the bug", base_sha: "0".repeat(40) });
+    log.append("receipt.sealed", "seal", { verdict: "VERIFIED", receipt_sha256: "abc", path: "r" });
+    writeFileSync(join(repo, "prd.md"), "fix the bug");
+    process.chdir(repo);
+    delete process.env["LOKI_NO_RESUME"];
+  };
+  const teardown = (): void => { process.chdir(cwd0); startRecoveryHooks.deps = undefined; delete process.env["LOKI_NO_RESUME"]; rmSync(repo, { recursive: true, force: true }); };
+  const hooks = (tty: boolean, ...answers: string[]): void => {
+    const q = [...answers];
+    startRecoveryHooks.deps = { tty, out: (s) => { out.push(s); }, ask: async () => { asked++; return q.shift() ?? null; }, runPr: async () => { prCalls++; return { status: "completed", data: { pr_url: "https://github.com/o/r/pull/9", draft: false, existing: null } }; } };
+  };
+
+  it("loki start ./prd.md on a TTY prompts once and Enter resumes the run", async () => {
+    setup();
+    try {
+      hooks(true, "");
+      expect(await runStart(["prd.md"])).toBe(0);
+      expect(asked).toBe(1);
+      expect(prCalls).toBe(1);
+    } finally { teardown(); }
+  });
+
+  it("choosing Start fresh sets LOKI_NO_RESUME=1 so the engine child does not offer again", async () => {
+    setup();
+    try {
+      hooks(true, "2");
+      expect(await offerInterruptedRun({ prdPath: "prd.md" } as never, repo)).toBeNull();
+      expect(asked).toBe(1);
+      expect(process.env["LOKI_NO_RESUME"]).toBe("1");
+      expect(await offerInterruptedRun({ prdPath: "prd.md" } as never, repo)).toBeNull();
+      expect(asked).toBe(1);
+    } finally { teardown(); }
+  });
+
+  it("--attempts 2 prompts once, never offers Resume, and silences the children", async () => {
+    setup();
+    try {
+      hooks(true, "");
+      expect(await offerInterruptedRun({ prdPath: "prd.md", attempts: 2 } as never, repo)).toBeNull();
+      expect(asked).toBe(1);
+      expect(out.join("")).not.toContain("Resume (");
+      expect(prCalls).toBe(0);
+      expect(process.env["LOKI_NO_RESUME"]).toBe("1");
+    } finally { teardown(); }
+  });
+
+  it("a non-TTY PRD start never prompts: same task resumes, another task starts fresh with a note", async () => {
+    setup();
+    try {
+      hooks(false);
+      expect(await offerInterruptedRun({ prdPath: "other brief" } as never, repo)).toBeNull();
+      expect(asked).toBe(0);
+      expect(out.join("")).toContain("starting a new run");
+      delete process.env["LOKI_NO_RESUME"];
+      expect(await runStart(["prd.md"])).toBe(0);
+      expect(asked).toBe(0);
+      expect(prCalls).toBe(1);
+    } finally { teardown(); }
   });
 });
