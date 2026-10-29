@@ -6,7 +6,7 @@ import { discoverControlUrl } from "../../../packages/control-plane/src/shipper/
 import { fold, readEvents } from "../engine10/events.ts";
 import { formatDuration } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
-import { STALE_S, STAGE_ORDER, controlRunLink, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../util/run_outputs.ts";
+import { STALE_S, STAGE_ORDER, controlRunLink, statusNextStep, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../util/run_outputs.ts";
 import { readRunControl, writeRunControl, type RunControlAction } from "../util/run_control.ts";
 import { readRunPid, runOwnerAlive } from "../util/run_pid.ts";
 import { isRunId } from "./undo.ts";
@@ -234,7 +234,8 @@ export async function runModernStatus(argv: readonly string[], env: NodeJS.Proce
     return 0;
   }
   const s: ModernStatus = { ...summarize(hit.id, hit.events, root, now), control_plane_url: cp, control_plane_run_url: controlRunLink(cp, repoDir, hit.id) };
-  process.stdout.write(json ? `${JSON.stringify(s)}\n` : `${render(s)}\n`);
+  const next = json ? null : statusNextStep(repoDir, root, hit.id, hit.events); // SB-12: says what the next `loki start` will do with an interrupted or cancelled run
+  process.stdout.write(json ? `${JSON.stringify(s)}\n` : `${render(s)}${next ? `\n  ${next}` : ""}\n`);
   return 0;
 }
 

@@ -232,7 +232,7 @@ const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$
 export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
-  let eoo = false, resume = false, quiet = false, specFile: string | null = null, maxCost: string | null = null, noPr = false, sealPatch: string | null = null, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
+  let eoo = false, resume = false, fresh = false, quiet = false, specFile: string | null = null, maxCost: string | null = null, noPr = false, sealPatch: string | null = null, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--no-pr") noPr = true;
@@ -246,9 +246,10 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (a === "--spec") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --spec needs a value\n"); return 2; } specFile = v; i++; } // TEN-STABILITY-63
     else if (a.startsWith("--spec=")) specFile = a.slice(7);
     else if (a === "--resume") resume = true;
+    else if (a === "--fresh") fresh = true; // SB-12: skip the interrupted-run offer
     else if (a === "--seal-existing") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --seal-existing needs a patch file\n"); return 2; } sealPatch = resolve(v); noPr = true; i++; } // CW-12: the changes already exist as this patch; implement applies it instead of running a session, and no PR is ever opened
     else if (a === "--" && !eoo) eoo = true; // TEN-STABILITY-37: `--` ends options, the rest is task text
-    else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--json] [--verbose] [--quiet] [--max-cost N] [--provider P] [--spec F] [--seal-existing PATCH] [--resume] [-- <task>]\n`); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
+    else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--json] [--verbose] [--quiet] [--max-cost N] [--provider P] [--spec F] [--seal-existing PATCH] [--resume] [--fresh] [-- <task>]\n`); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
     else words.push(a);
   }
   let task = words.join(" ").trim(); if (resume) return (await import("../util/run_outputs.ts")).resumeFlag(words[0], noPr);
@@ -257,6 +258,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     try { spec = loadSpecFile(resolve(specFile)); } catch (e) { process.stderr.write(`engine10: ${(e as Error).message}\n`); return 2; }
     if (!task) task = spec.task;
   }
+  if (!task && !fresh) { const rr = (await import("../util/run_outputs.ts")).startRecovery; try { const rd = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(), rec = await rr(rd, "", noPr); if (rec !== null) return rec; } catch { /* not a repo: the no-task error below */ } } // SB-12: a bare `loki start` offers or resumes an interrupted run
   if (!task) { process.stderr.write("engine10: no task given\n"); return 2; }
   let repoDir: string;
   try {
@@ -267,7 +269,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     process.stderr.write(`engine10: ${i.notice}\n`);
     try { repoDir = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(); } catch { process.stderr.write("engine10: not inside a git repository\n"); return 2; }
   }
-  { const rec = await (await import("../util/run_outputs.ts")).startRecovery(repoDir, task, noPr); if (rec !== null) return rec; } // RECOVERY: an interrupted publish for this same task resumes instead of starting over
+  { const rec = await (await import("../util/run_outputs.ts")).startRecovery(repoDir, task, noPr, { fresh }); if (rec !== null) return rec; } // RECOVERY: an interrupted publish for this same task resumes (a TTY is offered the choice) instead of starting over
   const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
   const runDir = join(repoDir, ".loki", "runs", runId);
   const cap = resolveCap(maxCost, repoDir); if ("error" in cap) { process.stderr.write(`engine10: ${cap.error}\n`); return 2; }

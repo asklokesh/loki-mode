@@ -459,6 +459,7 @@ function _loki_start {
         '--spec-first[Write an editable spec, then stop]' \
         '--dry-run[Validate flags and preflight, print provider, model and cap, spend nothing]' \
         '--resume[Resume an interrupted run at the stage it stopped in]::run id:' \
+        '--fresh[Skip the offer to resume an interrupted or cancelled run]' \
         '--yes[Skip confirmation prompts]' \
         '-y[Skip confirmation prompts]' \
         '--budget[Cost budget limit in USD]:amount:' \

@@ -73,6 +73,7 @@ const BOOL_ENV_FLAGS = new Map<string, [string, string]>([
   ["--regen", ["LOKI_PRD_REGEN", "1"]],
   ["--fresh-prd", ["LOKI_PRD_REGEN", "1"]],
   ["--skip-memory", ["LOKI_SKIP_MEMORY", "true"]],
+  ["--fresh", ["LOKI_NO_RESUME", "1"]], // SB-12: skip the interrupted-run offer; engine10 reads LOKI_NO_RESUME
 ]);
 
 // Accept-and-ignore no-op booleans (documented no-op on the non-interactive Bun
@@ -161,6 +162,7 @@ export const START_USAGE =
   "  --cost lean|off   opt-in cost profile (also LOKI_COST_PROFILE=lean): sets LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set; recorded in .loki/cost-profile.json\n" +
   "  --haiku          opt in to haiku for the first implement (same levers as --cost lean, plus LOKI_COST_FIRST=1). A failed check climbs back. The default model is the provider default, same as a raw session\n" +
   "  Proof            loki start sets LOKI_MUTATION_STRICT=1 and LOKI_E10_TRIM=1 unless you set them. A behavior change is VERIFIED only when a Wall test fails on the old code. Tool logs are trimmed before the next turn. Opt out with either var set to 0\n" +
+  "  --fresh       skip the offer to resume an interrupted or cancelled run (also LOKI_NO_RESUME=1); without it, loki start offers to resume or start fresh itself\n" +
   "  --dry-run     validate every flag, run the preflight and print the provider, model and cost cap this run would use, then exit 0 without spending a token\n" +
   "  --spec-first  write the acceptance criteria to .loki/specs/<slug>.md and stop, so you can edit them\n" +
   "  --spec FILE   run Loki 10 against an edited spec as the authoritative intent (a spec that does not parse exits 2 with the line)\n" +
@@ -623,6 +625,15 @@ export async function runStart(args: readonly string[]): Promise<number> {
       child.on("error", () => resolveExit(1));
       child.on("close", (code) => resolveExit(code ?? 1));
     });
+  }
+  { // SB-12: a bare `loki start` (no spec) offers or resumes an interrupted run before it asks for a spec
+    const errs: string[] = [], probe = parseStartArgs(args, (e) => { errs.push(e); }, () => {}, () => {});
+    if (probe === 2 && errs.some((e) => e.startsWith("start: a spec source")) && process.env["LOKI_NO_RESUME"] !== "1" && !args.includes("--fresh")) {
+      try {
+        const { startRecovery } = await import("../util/run_outputs.ts"), { safeGit } = await import("../util/safe_git.ts"), rec = await startRecovery(safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(), "", args.includes("--no-pr"));
+        if (rec !== null) return rec;
+      } catch { /* not a repo: the missing-spec message below */ }
+    }
   }
   const parsed = parseStartArgs(args);
   if (typeof parsed === "number") return parsed;

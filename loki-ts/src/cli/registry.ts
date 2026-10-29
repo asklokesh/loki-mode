@@ -78,6 +78,7 @@ const startFlags: FlagSpec[] = [
   { name: "--isolation", type: "enum", values: ["none", "worktree", "docker"], desc: "Per-run isolation level" },
   bool("--skip-memory", "Skip loading memory context at startup"),
   bool("--fresh-prd", "Regenerate the PRD from the codebase"),
+  bool("--fresh", "Skip the offer to resume an interrupted or cancelled run (also LOKI_NO_RESUME=1)"),
   { name: "--compliance", type: "enum", values: ["default", "healthcare", "fintech", "government"], desc: "Compliance preset" },
   str("--budget", "<usd>", "Cost budget limit in USD"),
   { name: "--cost", type: "enum", values: ["lean", "off"], desc: "Cost profile (also LOKI_COST_PROFILE)" },
@@ -89,7 +90,7 @@ const startFlags: FlagSpec[] = [
 export const REGISTRY: readonly CmdSpec[] = [
   // ---- Bun-native (loki-ts dispatcher) ----
   cmd("version", "KEEP-MODERN", "bun", "Show version", "Bun-native, no legacy dependency", { aliases: ["--version", "-v"] }),
-  cmd("status", "UPDATE", "both", "Show current run status", "Reads both engines; fold legacy fields into the v10 view", { flags: [json, bool("--badge", "Print the verified deploy badge"), bool("--probe", "Re-probe the last deploy health URL; exit 1 on regression")], example: "loki status --json" }),
+  cmd("status", "UPDATE", "both", "Show current run status, and what the next loki start will do with an interrupted run", "Reads both engines; fold legacy fields into the v10 view", { flags: [json, bool("--badge", "Print the verified deploy badge"), bool("--probe", "Re-probe the last deploy health URL; exit 1 on regression")], example: "loki status --json" }),
   cmd("stats", "DELETE", "bun", "Session statistics (alias of report session)", "Deprecated alias; use report session", { flags: [json, bool("--efficiency", "Token and cost efficiency")] }),
   cmd("doctor", "KEEP-MODERN", "both", "System prerequisites health check; --json, --fix, --requirements, --repo (repo profile with a 0-100 readiness score and fixes)", "Core onboarding gate", { flags: [json, bool("--fix", "Apply safe fixes; with --repo, build or refresh the repo profile"), bool("--yes", "With --fix: run the claude install and login without asking"), bool("--airgap", "Air-gapped check"), bool("--repo", "Print the repo profile and readiness score"), bool("--requirements", "Requirements per execution path")], example: "loki doctor --json" }),
   cmd("provider", "KEEP-MODERN", "both", "Show, list or set the AI provider", "Provider-agnostic core", {
@@ -174,7 +175,7 @@ export const REGISTRY: readonly CmdSpec[] = [
     subcommands: [sub("list", "List stored crash reports"), sub("show", "Show one scrubbed crash report"), sub("submit", "Submit a scrubbed crash report"),sub("help", "Show crash usage")],
   }),
   cmd("contract", "KEEP-MODERN", "bun", "Print the spec delivery contract", "v10 delivery contract", { positionals: [{ name: "spec", type: "path" }] }),
-  cmd("start", "UPDATE", "both", "Run the autonomous build (a `jira:KEY` or `linear:KEY` ref also writes the outcome back to that ticket, see docs/trackers.md)", "Forks between v10 and the SDK loop; flags still legacy-shaped", { flags: startFlags, positionals: [{ name: "spec", type: "path" }], example: "loki start ./prd.md --provider claude" }),
+  cmd("start", "UPDATE", "both", "Run the autonomous build (a `jira:KEY` or `linear:KEY` ref also writes the outcome back to that ticket, see docs/trackers.md); an interrupted or cancelled run is offered for resume or a fresh start, and --fresh skips the offer", "Forks between v10 and the SDK loop; flags still legacy-shaped", { flags: startFlags, positionals: [{ name: "spec", type: "path" }], example: "loki start ./prd.md --provider claude" }),
   cmd("slack", "KEEP-MODERN", "bun", "Slack inbound handler", "Bun-native integration", { subcommands: [sub("serve", "Serve the Slack handler", { flags: [port, str("--host", "<host>", "Bind host")] })] }),
   cmd("queue", "KEEP-MODERN", "bun", "Overnight issue queue with a morning digest", "Governor-aware batch of issue-mode runs", { subcommands: [sub("add", "Queue issue refs", { positionals: [{ name: "issue", type: "string" }] }), sub("list", "Show the queue", { flags: [bool("--json", "Print the queued refs as a JSON array")] }), sub("remove", "Take issue refs out of the queue", { positionals: [{ name: "issue", type: "string" }] }), sub("clear", "Empty the queue"), sub("run", "Process the queue", { flags: [bool("--no-pr", "Do not open pull requests"), str("--max-total-cost", "<usd>", "Stop before the next item once cumulative spend reaches this cap")] })] }),
   cmd("issues", "KEEP-MODERN", "bun", "Run every open issue in a repo and open PRs", "Mass issue pickup on the T7 queue", {
