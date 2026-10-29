@@ -1029,6 +1029,15 @@ describe("RX-1: a repo with no test runner still gets a failing-first Wall check
       expect(r.data).toMatchObject({ no_runner: true, skip_code: "bun_not_on_path" });
     } finally { process.env.PATH = savedPath; delete process.env.LOKI_E10_PLAN; rmSync(repoDir, { recursive: true, force: true }); }
   });
+  test("a stray .py file with package.json picks node, not pytest", async () => {
+    const { harnessRunners } = await import("../../src/engine10/testmap.ts");
+    expect(harnessRunners([], ["package.json", "src/index.js", "scripts/gen.py"], nobun)).toEqual(["node"]);
+    expect(harnessRunners([], ["scripts/gen.py"], nobun)).toEqual([]);
+  });
+  test("pyproject.toml plus a .py file still picks pytest", async () => {
+    const { harnessRunners } = await import("../../src/engine10/testmap.ts");
+    expect(harnessRunners([], ["pyproject.toml", "scripts/gen.py"], nobun)).toEqual(["pytest"]);
+  });
   test("a repo with a detected runner is unchanged", async () => {
     const { harnessRunners } = await import("../../src/engine10/testmap.ts");
     expect(harnessRunners(["vitest"], ["package.json"], nobun)).toEqual(["vitest"]);

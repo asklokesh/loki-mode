@@ -30,10 +30,10 @@ export interface VerifyCheck {
   duration_s: number;
   reason?: string; n?: number; count?: string; sk?: number; ids?: string[]; first_error?: string; anchor?: string; /* file:line of the first failure, council anchor grammar */ // A-112: failing test ids; A-113: first failing output line, normalized; feeds the stall signature
   interpreter?: Interpreter; // E-98a: which python/ruff this check actually ran on
-  owner?: "harness"; skip_code?: "tool_not_on_path"; /* machine-readable twin of the "<cmd> not found on PATH" reason */ // FC-02: the runner could not load or collect; not_run, never a code failure
+  owner?: "harness"; skip_code?: SkipCode; /* machine-readable twin of the "<cmd> not found on PATH" reason */ // FC-02: the runner could not load or collect; not_run, never a code failure
 }
 export { runnerCmd, commandFor, firstError } from "../../util/check_result.ts"; // one owner: check_result.ts (test invocation resolver and failure-line normalizer)
-import { firstFileLineAnchor, runnerCmd, commandFor, firstError, resolveTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
+import { type SkipCode, firstFileLineAnchor, runnerCmd, commandFor, firstError, resolveTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
 /** TEN-QUALITY-01: stage-local failure excerpts keyed by check object; never on VerifyCheck, never emitted, never set for a held-out check. */
 const excerpts = new WeakMap<object, string>();
 const isHold = (c: { name: string }): boolean => isHoldoutCheck(c.name); // C-C4b-c: pubHold is the one public shape of a held-out check: result and counts only
