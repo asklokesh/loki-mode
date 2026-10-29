@@ -7,6 +7,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MAX_TURNS_EXIT } from "../../src/runner/worker_proc.ts";
+import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import {
@@ -205,6 +207,23 @@ describe("engine10 implement stage", () => {
     const result = await implementStage.run(ctx, new AbortController().signal);
 
     expect(result.data.exit).toBe("killed");
+  });
+
+  test("a turn-cap exit completes as killed with harness owner and seals PARTIAL, never BLOCKED", async () => {
+    const sessions = new FakeSessionRunner({
+      exit: MAX_TURNS_EXIT,
+      markers: { done: false, alreadyDone: null, specConflict: null },
+      durationS: 30,
+      killed: false,
+    });
+    const result = await implementStage.run(fakeCtx(sessions, {}), new AbortController().signal);
+
+    expect(result.status).toBe("completed");
+    expect(result.data.exit).toBe("killed");
+    expect(result.data.owner).toBe("harness");
+    expect(result.data.stop_cause).toBe("max_turns");
+    const pass = [{ name: "t", cmd: "t", result: "pass", duration_s: 1 }] as never;
+    expect(verdictOf({ implement: result.data }, pass, false, false, false, true)).toBe("PARTIAL");
   });
 
   test("E-61: a non-killed error exit fails the stage and writes the stderr tail under runDir", async () => {

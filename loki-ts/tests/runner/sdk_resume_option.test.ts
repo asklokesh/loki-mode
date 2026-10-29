@@ -6,18 +6,20 @@ import { join } from "node:path";
 import type { ProviderInvocation } from "../../src/runner/types.ts";
 
 let scratch: string;
+let frames: Record<string, unknown>[] = [];
 let seen: { prompt: string; options: Record<string, unknown> } | undefined;
-const KEYS = ["FORCE_PROMPT_CACHING_5M", "LOKI_E10_CACHE_TTL", "LOKI_E10_RESUME_SESSION", "LOKI_E10_STAGE", "LOKI_ITERATION", "LOKI_HOST_GUARD"];
+const KEYS = ["LOKI_E10_MAX_TURNS", "FORCE_PROMPT_CACHING_5M", "LOKI_E10_CACHE_TTL", "LOKI_E10_RESUME_SESSION", "LOKI_E10_STAGE", "LOKI_ITERATION", "LOKI_HOST_GUARD"];
 let backup: Record<string, string | undefined>;
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), "loki-sdkresume-"));
   backup = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
   for (const k of KEYS) delete process.env[k];
   seen = undefined;
+  frames = [{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {}, session_id: "sess-new" }];
   mock.module("@anthropic-ai/claude-agent-sdk", () => ({
     query: (args: { prompt: string; options: Record<string, unknown> }) => {
       seen = args;
-      return (async function* () { yield { type: "result", is_error: false, total_cost_usd: 0.01, usage: {}, session_id: "sess-new" }; })();
+      return (async function* () { for (const f of frames) yield f; })();
     },
   }));
 });
@@ -59,5 +61,42 @@ describe("sdkQueryProvider 5-minute cache TTL (TEN-COST-12)", () => {
     const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
     await sdkQueryProvider().invoke(call());
     expect("FORCE_PROMPT_CACHING_5M" in (seen!.options["env"] as Record<string, string>)).toBe(false);
+  });
+});
+
+// Engine10 liveness: every stage session carries a maxTurns cap and a turn-cap result is a bounded harness-owned stop.
+describe("sdkQueryProvider maxTurns (engine10 liveness)", () => {
+  it("the configured cap reaches query options.maxTurns inside a stage", async () => {
+    process.env["LOKI_E10_STAGE"] = "implement";
+    process.env["LOKI_E10_MAX_TURNS"] = "160";
+    const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+    await sdkQueryProvider().invoke(call());
+    expect(seen!.options["maxTurns"]).toBe(160);
+  });
+  it("no maxTurns outside an engine stage", async () => {
+    process.env["LOKI_E10_MAX_TURNS"] = "160";
+    const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+    await sdkQueryProvider().invoke(call());
+    expect("maxTurns" in seen!.options).toBe(false);
+  });
+  it("session env derives the cap from the stage budget and honors an explicit value", async () => {
+    const { clampBashTimeoutEnv } = await import("../../src/runner/worker_proc.ts");
+    const a: NodeJS.ProcessEnv = {}; clampBashTimeoutEnv(a, 480);
+    expect(a["LOKI_E10_MAX_TURNS"]).toBe("160");
+    const b: NodeJS.ProcessEnv = { LOKI_E10_MAX_TURNS: "7" }; clampBashTimeoutEnv(b, 480);
+    expect(b["LOKI_E10_MAX_TURNS"]).toBe("7");
+    const c: NodeJS.ProcessEnv = { LOKI_E10_MAX_TURNS: "junk" }; clampBashTimeoutEnv(c, 5);
+    expect(c["LOKI_E10_MAX_TURNS"]).toBe("10");
+  });
+  it("a stream ending in error_max_turns returns the harness exit code within a bounded time", async () => {
+    process.env["LOKI_E10_STAGE"] = "implement";
+    process.env["LOKI_E10_MAX_TURNS"] = "3";
+    frames = [{ type: "result", subtype: "error_max_turns", is_error: true, total_cost_usd: 0.01, usage: {}, session_id: "s" }];
+    const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+    const { MAX_TURNS_EXIT } = await import("../../src/runner/worker_proc.ts");
+    const t0 = Date.now();
+    const r = await sdkQueryProvider().invoke(call());
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(r.exitCode).toBe(MAX_TURNS_EXIT);
   });
 });

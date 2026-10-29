@@ -27,8 +27,16 @@ export function reapLiveGroup(pgid: number | undefined, onReap: () => void): voi
   killGroupWithGrace(pgid);
 }
 const BASH_CLAMP_FLOOR_MS = 30_000, BASH_CLAMP_MARGIN_MS = 10_000;
-/** Clamp Claude Code's Bash timeouts to the stage budget (minus a margin, floored) so one command cannot outlive the stage; a smaller user value wins. */
+export const MAX_TURNS_EXIT = 98; // a session whose SDK result said error_max_turns: harness-owned, never a code failure
+const SECONDS_PER_TURN = 3, MIN_TURNS = 10;
+/** Per-stage turn cap derived from the stage's own time budget; an explicit positive-integer LOKI_E10_MAX_TURNS wins. */
+export function maxTurnsFor(limitS: number, env: NodeJS.ProcessEnv): number {
+  const user = Number(env["LOKI_E10_MAX_TURNS"]);
+  return Number.isInteger(user) && user > 0 ? user : Math.max(MIN_TURNS, Math.ceil(limitS / SECONDS_PER_TURN));
+}
+/** Clamp Claude Code's Bash timeouts to the stage budget (minus a margin, floored) so one command cannot outlive the stage; a smaller user value wins. Also hands the session its maxTurns cap. */
 export function clampBashTimeoutEnv(env: NodeJS.ProcessEnv, limitS: number): void {
+  env["LOKI_E10_MAX_TURNS"] = String(maxTurnsFor(limitS, env));
   const budget = Math.max(BASH_CLAMP_FLOOR_MS, Math.floor(limitS * 1000) - BASH_CLAMP_MARGIN_MS);
   for (const [k, dflt] of [["BASH_DEFAULT_TIMEOUT_MS", 120_000], ["BASH_MAX_TIMEOUT_MS", 600_000]] as const) {
     const cur = Number(env[k]);

@@ -23,7 +23,7 @@
 import { mkdirSync, existsSync, readFileSync, realpathSync, appendFileSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join, isAbsolute, relative, resolve, sep } from "node:path";
 import { run as shellRun, shellQuote } from "../util/shell.ts";
-import { envWithPwd } from "./worker_proc.ts";
+import { envWithPwd, MAX_TURNS_EXIT } from "./worker_proc.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { neutralizeEngineMarkers } from "./retry_class.ts"; // FC-AGENT-TEXT-FORGES-ENGINE-MARKER: a provider CLI stdout is agent text
 import {
@@ -220,6 +220,11 @@ export function claudeTierToModel(tier: SessionTier): string {
 // persisted median call gap (LOKI_E10_CACHE_GAP_MS, set by childEnv from the efficiency records) between the 5m and 60m TTLs
 // (cacheTtlFor) chooses 1h for that stage; at 60m or more neither cache hits, so 5m stays. No data keeps 5m.
 /** Ends the message stream after the SDK result frame and close()s the query so the SDK subprocess goes; a live background child must never hold a finished session. Closes on the result frame only: no marker text, timer or tool state is trusted, so a running tool or a slow Stop hook is never cut off. enabled false = passthrough. A missing result stays fail-closed, so verdict logic is untouched. */
+/** The turn cap this engine10 stage session runs under (set by session.ts from the stage budget); undefined outside an engine stage or when invalid. */
+export function stageMaxTurns(env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const n = Number(env["LOKI_E10_MAX_TURNS"]);
+  return env["LOKI_E10_STAGE"] && Number.isInteger(n) && n > 0 ? n : undefined;
+}
 export async function* closeQueryOnResult(q: AsyncIterable<StreamMsg> & { close?: () => void }, enabled: boolean): AsyncGenerator<StreamMsg> {
   if (!enabled) { yield* q; return; }
   try {
@@ -943,6 +948,7 @@ export function sdkQueryProvider(): ProviderInvoker {
             ...(extra.taskBudget ? { taskBudget: extra.taskBudget } : {}),
             ...(extra.fallbackModel ? { fallbackModel: extra.fallbackModel } : {}),
             ...(extra.settings ? { settings: extra.settings } : {}),
+            ...(stageMaxTurns() ? { maxTurns: stageMaxTurns() } : {}), // engine10 liveness: a stage cannot loop forever
           },
           // biome-ignore lint/suspicious/noExplicitAny: SDK Options type is broader than our subset
         } as any);
@@ -960,7 +966,8 @@ export function sdkQueryProvider(): ProviderInvoker {
         if (process.env["LOKI_E10_STAGE"]) writeSessionId(call.cwd, process.env["LOKI_ITERATION"] ?? "0", res);
         // Fail-closed: a stream that never produced a terminal result is a
         // failed iteration, never counted as success.
-        exitCode = res.sawResult ? res.exitCode : 1;
+        exitCode = res.sawResult ? (res.maxTurns ? MAX_TURNS_EXIT : res.exitCode) : 1; // error_max_turns: harness-owned stop, distinct from a code failure
+        if (res.maxTurns) captured += "\n[sdk-loop error: turn cap reached (error_max_turns)]\n";
         rateLimit = res.rateLimit;
       } catch (e) {
         captured += `\n[sdk-loop error: ${(e as Error).message}]\n`;

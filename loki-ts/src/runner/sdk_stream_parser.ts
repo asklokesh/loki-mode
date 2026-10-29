@@ -159,6 +159,8 @@ export interface StreamResult {
   // True iff a model_refusal_no_fallback frame arrived: nothing replaced the refused turn, so its session must
   // not be resumed (the refusal sits in that session's history).
   refusedNoFallback: boolean;
+  // True iff the terminal result frame carried subtype error_max_turns: the session hit its turn cap.
+  maxTurns: boolean;
 }
 
 export async function consumeSdkStream(
@@ -215,6 +217,7 @@ export async function consumeSdkStream(
   let refusedNoFallback = false;
   let rateLimit: { resetSeconds?: number } | undefined;
   let sawResult = false;
+  let maxTurns = false;
   // E-98e: per-message usage, keyed by message.id so a repeated streamed
   // snapshot of the same message is a max, not a double-count. Written to
   // partialUsagePath after every assistant message, so a session killed
@@ -490,12 +493,13 @@ export async function consumeSdkStream(
       if (advisorById.size === 0) recordRouterUsage(new Map(), advisorById, "#result", data.usage ?? {}); // advisor seen only on the result
       writeResultCost(lokiRoot, ctx.iteration, data, data.model ?? sessionModel, firstTurnPromptTokens, { ...routerTelemetry(reqById, advisorById, advisorFaults), ...toolTelemetry() }, ctx.requestedModel);
 
-      exitCode = data.is_error ? 1 : 0;
+      maxTurns = data.subtype === "error_max_turns";
+      exitCode = data.is_error || maxTurns ? 1 : 0;
       // do not break: a well-formed stream ends after result, but keep draining.
     }
   }
 
-  return { exitCode, sessionId: sessionId ?? seenSessionId, totalCostUsd, capturedText: captured, rateLimit, sawResult, truncated: guard.truncated || !sawResult, refused, refusedNoFallback };
+  return { exitCode, sessionId: sessionId ?? seenSessionId, totalCostUsd, capturedText: captured, rateLimit, sawResult, truncated: guard.truncated || !sawResult, refused, refusedNoFallback, maxTurns };
 }
 
 // --- helpers (translations of the Python functions) -----------------------
