@@ -5,17 +5,20 @@
 #          that writes ~/.loki/control, ~/.loki/dashboard/projects.json,
 #          ~/.loki/control/answers and ~/.loki/keys. HOME for that runner is a
 #          stand-in "real home"; none of it may be touched.
-# Phase B: real suites run through a runner copy under the REAL home (captured
-#          before any isolation: LOKI_REAL_HOME when this suite itself runs
-#          inside the runner, else HOME). The real ~/.loki listing and mtimes
-#          (read-only stat, contents never read) must not change.
+# Phase B: real suites run through a runner copy under a CANARY home: a private,
+#          seeded home owned by this run alone, standing in for the real HOME the
+#          runner would capture. The canary ~/.loki listing and mtimes must not
+#          change. Attribution is by construction: a write reaches the canary only
+#          if a process in this suite's tree made it, so unrelated real-HOME
+#          writers on a shared machine (other engine10 runs writing
+#          ~/.loki/cache/v10) can never be mistaken for a leak, and no path is
+#          allowlisted. Phase B never reads or writes the real ~/.loki.
 # Phase C: _loki_control_ui must honor LOKI_CONTROL=0 and never start a detached
 #          `control serve` or write ~/.loki/control.
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib/isolated-git-home.sh" || exit 1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REAL_HOME="${LOKI_REAL_HOME:-$HOME}"
 # shellcheck source=../eval/loki10/lib-tmp.sh
 . "$ROOT/eval/loki10/lib-tmp.sh"
 unset LOKI_RUN_TMP
@@ -99,6 +102,12 @@ if printf '%s' "$out_a" | grep -q "SEEN_RUN_TMP=\[unset\]"; then ok "A: LOKI_RUN
 if printf '%s' "$out_a" | grep -q "GIT_IDENTITY=yes"; then ok "A: git identity preserved in hermetic HOME"; else bad "A: git identity lost"; fi
 
 # Phase B
+# Canary home: seeded with a git identity and a ~/.loki tree so a suite that
+# resolves $HOME/.loki finds something real-looking, and any write is visible.
+CANARY="$T/canaryhome"
+mkdir -p "$CANARY/.loki/cache/v10" "$CANARY/.loki/control"
+: >"$CANARY/.loki/canary-seed"
+printf '[user]\n\tname = canary\n\temail = canary@example.invalid\n' >"$CANARY/.gitconfig"
 B_SUITES="test-cross-project-learning.sh test-first-run-gate.sh test-doctor-optional-skill-not-blocking.sh test-local-receipt-attestation.sh test-dashboard-multiproject.sh"
 reg=""
 for s in $B_SUITES; do
@@ -107,9 +116,9 @@ for s in $B_SUITES; do
 "
 done
 printf '%s' "$reg" | mk_runner
-before_b="$(snap "$REAL_HOME/.loki")"
-out_b="$(run_runner "$REAL_HOME")"; rc_b=$?
-after_b="$(snap "$REAL_HOME/.loki")"
+before_b="$(snap "$CANARY/.loki")"
+out_b="$(run_runner "$CANARY")"; rc_b=$?
+after_b="$(snap "$CANARY/.loki")"
 if [ "$rc_b" -eq 0 ]; then
     ok "B: real suites pass through the runner"
 else
@@ -117,25 +126,25 @@ else
     printf '%s\n' "$out_b" | grep -E "^.\[0;31m|^FAIL|^  FAIL|TIMEOUT|not ok|rror" | head -15
 fi
 if [ "$before_b" = "$after_b" ]; then
-    ok "B: real ~/.loki listing and mtimes unchanged"
+    ok "B: canary ~/.loki listing and mtimes unchanged"
 else
-    bad "B: real ~/.loki changed (paths below, contents never read)"
+    bad "B: suite tree wrote under its HOME ~/.loki (paths below, contents never read)"
     diff <(printf '%s\n' "$before_b") <(printf '%s\n' "$after_b") | head -10
 fi
 
 # Phase D: loki-ts/tests/engine10/ship_hook.test.ts (reads a host signing key) is
 # deterministic with and without a key, and the bun preload keeps the real ~/.loki clean.
 if command -v bun >/dev/null 2>&1; then
-    before_d="$(snap "$REAL_HOME/.loki")"
-    (cd "$ROOT/loki-ts" || exit 1; HOME="$REAL_HOME" env -u LOKI_HERMETIC_HOME -u LOKI_REAL_HOME timeout -k 10 300 bun test tests/engine10/ship_hook.test.ts >"$T/bun-d.log" 2>&1)
+    before_d="$(snap "$CANARY/.loki")"
+    (cd "$ROOT/loki-ts" || exit 1; HOME="$CANARY" env -u LOKI_HERMETIC_HOME -u LOKI_REAL_HOME timeout -k 10 300 bun test tests/engine10/ship_hook.test.ts >"$T/bun-d.log" 2>&1)
     rc_d=$?
-    after_d="$(snap "$REAL_HOME/.loki")"
+    after_d="$(snap "$CANARY/.loki")"
     if [ "$rc_d" -eq 0 ] && grep -q "with a signing key" "$ROOT/loki-ts/tests/engine10/ship_hook.test.ts" && grep -q "without a signing key" "$ROOT/loki-ts/tests/engine10/ship_hook.test.ts"; then
         ok "D: ship_hook.test.ts passes with and without a pinned signing key"
     else
         bad "D: ship_hook.test.ts rc=$rc_d"; tail -5 "$T/bun-d.log"
     fi
-    if [ "$before_d" = "$after_d" ]; then ok "D: bun preload left the real ~/.loki unchanged"; else bad "D: bun test changed the real ~/.loki"; fi
+    if [ "$before_d" = "$after_d" ]; then ok "D: bun preload left the canary ~/.loki unchanged"; else bad "D: bun test changed the canary ~/.loki"; fi
 else
     echo "  SKIP: D (bun not installed)"
 fi
