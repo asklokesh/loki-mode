@@ -13,8 +13,8 @@ export const WALL_CASE_PREFIX = "loki_wall_case_";
 // Run by the repo's own interpreter: every author field must be ONE well-formed piece of code before it is placed in a template.
 // Each field is then refused when, outside a nested def or lambda, it holds return, yield, yield from, await, raise or try (any of
 // which ends or swallows the test before its assertion); when it names exec, eval, compile, globals, locals, vars, setattr,
-// delattr, exit, quit, breakpoint, builtins or a dunder, reaches .exec, .eval, .setattr, .delattr, .exit, ._exit, .abort,
-// .kill, .fork, .skip, .skipTest, .xfail, .importorskip, .settrace, .setprofile or a dunder attribute, or calls getattr with a
+// delattr, exit, quit, breakpoint, builtins or a dunder (reading __file__ or __name__ is allowed), reaches .exec, .eval, .setattr, .delattr, .exit, ._exit, .abort,
+// .kill (except on a name the arrange binds once to a subprocess Popen call), .fork, .skip, .skipTest, .xfail, .importorskip, .settrace, .setprofile or a dunder attribute, or calls getattr with a
 // computed or blocked name; when it rebinds, patches, aliases or re-imports a name the case imports; and when a comparison
 // or the expected value repeats the call. This is a syntactic denylist: an indirect route (a module reached through a
 // container, or a library wrapper that runs code) is not detected, the same exposure free-form tests have.
@@ -40,12 +40,34 @@ def bound(lines):
 def root(n):
     while isinstance(n, (ast.Attribute, ast.Subscript)): n = n.value
     return n.id if isinstance(n, ast.Name) else ""
-def escape(t, ctx):
+def popens(t, kind, ctx):
+    mods, ctor, trees, count, out = set(), set(), [], {}, set()
+    for s in ctx.get("imports", []):
+        try: i = ast.parse(s.strip()).body[0]
+        except Exception: continue
+        if isinstance(i, ast.Import): mods |= {a.asname or a.name for a in i.names if a.name == "subprocess"}
+        if isinstance(i, ast.ImportFrom) and i.module == "subprocess": ctor |= {a.asname or a.name for a in i.names if a.name == "Popen"}
+    for s in ctx.get("arrange", []):
+        try: trees.append(ast.parse(s.strip()))
+        except Exception: pass
+    for x in trees + ([t] if kind == "expr" else []):
+        for n in ast.walk(x):
+            for b in (n.id if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load) else None, getattr(n, "name", None) if not isinstance(n, ast.alias) else n.asname or n.name.split(".")[0], n.arg if isinstance(n, ast.arg) else None, getattr(n, "rest", None)):
+                if isinstance(b, str): count[b] = count.get(b, 0) + 1
+    for x in trees:
+        a = x.body[0] if len(x.body) == 1 else None
+        if not (isinstance(a, ast.Assign) and len(a.targets) == 1 and isinstance(a.targets[0], ast.Name) and isinstance(a.value, ast.Call)): continue
+        f = a.value.func
+        if (isinstance(f, ast.Name) and f.id in ctor) or (isinstance(f, ast.Attribute) and f.attr == "Popen" and isinstance(f.value, ast.Name) and f.value.id in mods):
+            if count.get(a.targets[0].id) == 1: out.add(a.targets[0].id)
+    return out
+def escape(t, ctx, kind):
     head = bound(ctx.get("imports", []))
+    procs = popens(t, kind, ctx)
     prot = head | bound(ctx.get("arrange", []))
     for n in ast.walk(t):
-        if isinstance(n, ast.Name) and (n.id in NAMES or dunder(n.id)): return "uses " + n.id + ", which can run hidden code or skip, exit or rewrite the test"
-        if isinstance(n, ast.Attribute) and (n.attr in ATTRS or dunder(n.attr)): return "uses ." + n.attr + ", which can run hidden code or skip, exit or rewrite the test"
+        if isinstance(n, ast.Name) and (n.id in NAMES or dunder(n.id)) and not (n.id in ("__file__", "__name__") and isinstance(n.ctx, ast.Load)): return "uses " + n.id + ", which can run hidden code or skip, exit or rewrite the test"
+        if isinstance(n, ast.Attribute) and (n.attr in ATTRS or dunder(n.attr)) and not (n.attr == "kill" and isinstance(n.ctx, ast.Load) and isinstance(n.value, ast.Name) and n.value.id in procs): return "uses ." + n.attr + ", which can run hidden code or skip, exit or rewrite the test"
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "getattr":
             a = n.args[1] if len(n.args) > 1 else None
             if not (isinstance(a, ast.Constant) and isinstance(a.value, str) and a.value not in NAMES | ATTRS and not dunder(a.value)): return "calls getattr with a computed or blocked name"
@@ -64,7 +86,7 @@ def bad(kind, src, ctx):
     if kind == "stmt" and len(t.body) != 1: return "is not exactly one statement"
     e = exits(t)
     if e: return "uses " + e + " outside a nested function, which ends or swallows the test before its assertion"
-    e = escape(t, ctx)
+    e = escape(t, ctx, kind)
     if e: return e
     b = t.body if kind == "expr" else None
     if isinstance(b, ast.Compare) and len(b.ops) == 1 and ast.dump(b.left) == ast.dump(b.comparators[0]): return "compares an expression with itself"

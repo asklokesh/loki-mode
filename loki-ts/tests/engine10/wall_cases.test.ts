@@ -143,6 +143,12 @@ describe("CCR-06 structured Wall cases", () => {
     ["a setattr on the module under test", { imports: ["import calc"], arrange: ["setattr(calc, 'add', lambda a, b: 3)"], call: "calc.add(1, 2)" }, "arrange[0] uses setattr"],
     ["a dunder reach into the function", { arrange: ["c = add.__code__"] }, "arrange[0] uses .__code__"],
     ["a re-import over the function under test", { arrange: ["from os import sep as add"] }, "arrange[0] re-imports"],
+    ["a store to __file__", { arrange: ["__file__ = 'x'"] }, "arrange[0] uses __file__"],
+    ["a call to __import__", { imports: ["from calc import add"], arrange: ["m = __import__('os')"] }, "arrange[0] uses __import__"],
+    ["an os.kill", { imports: ["from calc import add", "import os"], arrange: ["os.kill(1, 9)"] }, "arrange[0] uses .kill"],
+    ["a kill on a name that is not a Popen", { arrange: ["p = object()", "p.kill()"] }, "arrange[1] uses .kill"],
+    ["a kill on a Popen name that is later rebound", { imports: ["from calc import add", "import subprocess"], arrange: ["p = subprocess.Popen(['true'])", "p = object()"], call: "p.kill()", kind: "true", expected: undefined }, "call uses .kill"],
+    ["a patch of kill on a Popen name", { imports: ["from calc import add", "import subprocess"], arrange: ["p = subprocess.Popen(['true'])", "p.kill = print"] }, "arrange[1] uses .kill"],
   ];
   const refused:[string, Record<string, string>, string][] = [
     ["malformed JSON", { "loki_wall_cases.json": "{not json" }, "wall_cases_malformed_json"],
@@ -165,6 +171,18 @@ describe("CCR-06 structured Wall cases", () => {
     if (out.kind !== "authored") throw new Error(JSON.stringify(out));
     expect(out.contents.get("loki_wall_case_1_a.py")).toContain("    def g(): return 1");
   });
+  const accepted: [string, Record<string, unknown>, string][] = [
+    ["reads __file__ for a path", { imports: ["from calc import add", "import os"], arrange: ["d = os.path.dirname(__file__)"] }, "os.path.dirname(__file__)"],
+    ["kills a Popen the arrange created", { imports: ["from calc import add", "import subprocess"], arrange: ["p = subprocess.Popen(['sleep', '5'])", "p.kill()"] }, "p.kill()"],
+    ["kills a Popen imported by name", { imports: ["from calc import add", "from subprocess import Popen"], arrange: ["p = Popen(['sleep', '5'])", "p.kill()"] }, "p.kill()"],
+  ];
+  for (const [label, c, snippet] of accepted) {
+    test(`accepts ${label}`, async () => {
+      const { out } = await author("pytest", { "loki_wall_cases.json": JSON.stringify({ cases: [{ ...ADD, ...c }] }) }, ["calc.py"]);
+      if (out.kind !== "authored") throw new Error(JSON.stringify(out));
+      expect(out.contents.get("loki_wall_case_1_a.py")).toContain(snippet);
+    });
+  }
   for (const [label, files, reason] of refused) {
     test(`refuses ${label} with a named reason`, async () => {
       const { out } = await author("pytest", files, ["calc.py"]);
