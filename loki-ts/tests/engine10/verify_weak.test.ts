@@ -1,10 +1,11 @@
 // A-115: a relevant check with more skipped tests than base is neither a pass nor progress; test-config edits are NOT PROVEN.
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
+import { hiddenEdits } from "../../src/util/check_result.ts";
 import { testConfigChanged, verifyStage } from "../../src/engine10/stages/verify.ts";
 
 const dirs: string[] = [];
@@ -13,7 +14,7 @@ const sh = (d: string, a: string[]): string => execFileSync("git", a, { cwd: d, 
 const T = "const t=require('node:test');const assert=require('node:assert');";
 const node = (path: string): TestRef => ({ runner: "node", path }) as TestRef;
 const py = (path: string): TestRef => ({ runner: "pytest", path }) as TestRef;
-type V = { pre_red: string[]; not_proven: string[] };
+type V = { pre_red: string[]; not_proven: string[]; target_checks?: string[] };
 
 function repo(base: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "e10-weak-"));
@@ -27,8 +28,9 @@ function repo(base: Record<string, string>): string {
   return dir;
 }
 /** `work` is written on top of the base commit; `sel(files)` answers impacted(): the named-files call gets the target only. */
-async function verify(base: Record<string, string>, work: Record<string, string>, task: string, target: TestRef, other: TestRef, narrow = false): Promise<V> {
+async function verify(base: Record<string, string>, work: Record<string, string>, task: string, target: TestRef, other: TestRef, narrow = false, prep?: (dir: string) => void): Promise<V> {
   const dir = repo(base), baseSha = sh(dir, ["rev-parse", "HEAD"]);
+  prep?.(dir);
   for (const [f, c] of Object.entries(work)) writeFileSync(join(dir, f), c);
   mkdirSync(join(dir, ".loki"), { recursive: true });
   writeFileSync(join(dir, ".loki", "repomap.json"), JSON.stringify({ files: Object.keys(base) }));
@@ -89,6 +91,103 @@ describe("engine10 verify: weakened checks (A-115)", () => {
     expect(d.not_proven).toContain("skipped or fewer tests than base: node:sum.test.js");
     expect(d.not_proven).toContain("weakened test: sum.test.js");
   }, 60_000);
+  // FC-GIT-HIDDEN-EDIT: a flagged tracked conftest is edited, git diff/status/commit stay silent, the forged file makes the red target pass
+  const HID = { ...TWO, "conftest.py": "# shared fixtures\n", "guide.md": "guide\n" }, FORGED = { "conftest.py": "import impl\nimpl.double = lambda x: x * 2\n", "notes.md": "done\n" };
+  const hidNote = "tracked file edited while assume-unchanged or skip-worktree hides it from diff and commit: conftest.py";
+  for (const flag of ["--assume-unchanged", "--skip-worktree"]) test(`${flag} on a tracked conftest, then a forged edit: NOT PROVEN names the file (main: not_proven [])`, async () => {
+    const d = await verify(HID, FORGED, TASK, py("test_target.py"), py("test_old.py"), false, (dir) => sh(dir, ["update-index", flag, "conftest.py"]));
+    expect(d.target_checks).toEqual(["pytest:test_target.py"]); // the forged conftest really turned the red target green
+    expect(d.not_proven).toContain(hidNote);
+    expect(d.not_proven).not.toContain("test configuration changed: conftest.py"); // git itself hides the edit from every diff-based note
+  }, 60_000);
+  test("assume-unchanged set on conftest before the run, file untouched, honest fix: no note", async () => {
+    let lsv = "";
+    const d = await verify(HID, { "impl.py": "def double(x):\n    return x * 2\n" }, TASK, py("test_target.py"), py("test_old.py"), false, (dir) => { sh(dir, ["update-index", "--assume-unchanged", "conftest.py"]); lsv = sh(dir, ["ls-files", "-v", "conftest.py"]); });
+    expect(lsv).toBe("h conftest.py");
+    expect(d.not_proven).toEqual([]);
+  }, 60_000);
+  test("sparse checkout: skip-worktree paths outside the cone are absent and never refuse an honest fix", async () => {
+    let lsv = "";
+    const d = await verify(HID, { "impl.py": "def double(x):\n    return x * 2\n" }, TASK, py("test_target.py"), py("test_old.py"), false, (dir) => { sh(dir, ["sparse-checkout", "set", "--no-cone", "/*", "!/guide.md"]); lsv = sh(dir, ["ls-files", "-v", "guide.md"]); });
+    expect(lsv).toBe("S guide.md");
+    expect(d.not_proven).toEqual([]);
+  }, 60_000);
+  // FC-GIT-HIDDEN-EDIT, round 2: git decides content equality on a copy of the index with the flag bits cleared
+  const hidRepo = (files: Record<string, string>, cfg: string[][] = []): string => {
+    const dir = mkdtempSync(join(tmpdir(), "e10-hid-")); dirs.push(dir);
+    sh(dir, ["init", "-q"]); sh(dir, ["config", "user.email", "t@t.test"]); sh(dir, ["config", "user.name", "t"]);
+    for (const [k, v] of cfg) sh(dir, ["config", k!, v!]);
+    for (const [f, c] of Object.entries(files)) { writeFileSync(join(dir, f), c); utimesSync(join(dir, f), 1577836800, 1577836800); }
+    sh(dir, ["-c", "core.autocrlf=false", "add", ...Object.keys(files)]); sh(dir, ["commit", "-q", "-m", "base"]); // the blobs are the bytes given, whatever core.autocrlf says
+    return dir;
+  };
+  const note = (f: string): string => `tracked file edited while assume-unchanged or skip-worktree hides it from diff and commit: ${f}`;
+  test("finding 1: a skip-worktree file deleted while sparse checkout is off is a hidden deletion (12a5094: no note)", () => {
+    const dir = hidRepo({ "conftest.py": "# fixtures\n", "impl.py": "x\n" });
+    sh(dir, ["update-index", "--skip-worktree", "conftest.py"]); rmSync(join(dir, "conftest.py"));
+    expect(hiddenEdits(dir)).toEqual([note("conftest.py")]);
+  });
+  test("finding 1 control: a skip-worktree path absent under a real sparse checkout is no note", () => {
+    const dir = hidRepo({ "conftest.py": "# fixtures\n", "guide.md": "g\n" });
+    sh(dir, ["sparse-checkout", "set", "--no-cone", "/*", "!/guide.md"]);
+    expect(sh(dir, ["ls-files", "-v", "guide.md"])).toBe("S guide.md");
+    expect(hiddenEdits(dir)).toEqual([]);
+  });
+  test("r3 control: cone-mode sparse checkout: a skip-worktree file in an excluded directory is no note, a deleted file in an included directory is", () => {
+    const dir = hidRepo({ "conftest.py": "c\n" });
+    for (const d of ["keep", "drop"]) { mkdirSync(join(dir, d)); writeFileSync(join(dir, d, "f.py"), "x\n"); }
+    sh(dir, ["add", "keep", "drop"]); sh(dir, ["commit", "-q", "-m", "dirs"]);
+    sh(dir, ["sparse-checkout", "set", "--cone", "keep"]);
+    expect(sh(dir, ["ls-files", "-v", "drop/f.py"])).toBe("S drop/f.py");
+    expect(hiddenEdits(dir)).toEqual([]);
+    sh(dir, ["update-index", "--skip-worktree", "keep/f.py"]); rmSync(join(dir, "keep", "f.py"));
+    expect(hiddenEdits(dir)).toEqual([note("keep/f.py")]);
+  });
+  test("r3: core.sparseCheckout=true set by the implementer, with no sparse pattern excluding the path, does not hide a deleted skip-worktree conftest.py", () => {
+    const dir = hidRepo({ "conftest.py": "# fixtures\n", "t.py": "x\n" });
+    sh(dir, ["update-index", "--skip-worktree", "conftest.py"]); rmSync(join(dir, "conftest.py")); sh(dir, ["config", "core.sparseCheckout", "true"]);
+    expect(hiddenEdits(dir)).toEqual([note("conftest.py")]);
+  });
+  test("r3: sparse config on and a pattern file that includes the path (/*): the deletion is reported", () => {
+    const dir = hidRepo({ "conftest.py": "# fixtures\n", "t.py": "x\n" });
+    sh(dir, ["update-index", "--skip-worktree", "conftest.py"]); rmSync(join(dir, "conftest.py")); sh(dir, ["config", "core.sparseCheckout", "true"]);
+    writeFileSync(join(dir, ".git", "info", "sparse-checkout"), "/*\n");
+    expect(hiddenEdits(dir)).toEqual([note("conftest.py")]);
+  });
+  test("finding 2: a submodule moved to another commit, then marked assume-unchanged, is named (12a5094: no note)", () => {
+    const sub = hidRepo({ "a.txt": "1\n" }), dir = hidRepo({ "top.txt": "t\n" });
+    sh(dir, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "vendor"]); sh(dir, ["commit", "-q", "-m", "sub"]);
+    writeFileSync(join(sub, "a.txt"), "2\n"); sh(sub, ["commit", "-q", "-am", "next"]);
+    sh(join(dir, "vendor"), ["pull", "-q", "origin", "HEAD"]); // the submodule checkout now sits on a commit the index does not record
+    sh(dir, ["update-index", "--assume-unchanged", "vendor"]);
+    expect(sh(dir, ["status", "--porcelain"])).toBe(""); // git itself reports nothing
+    expect(hiddenEdits(dir)).toEqual([note("vendor")]);
+  });
+  test("finding 3: a repo with 9000 long-named files and zero flagged files gets no note (12a5094: ENOBUFS note); one flagged and edited file is named", () => {
+    const dir = hidRepo({ "keep.txt": "k\n" }), d1 = "d".repeat(120), files: string[] = [];
+    mkdirSync(join(dir, d1)); for (let i = 0; i < 9000; i++) { const f = `${d1}/${"f".repeat(100)}${i}.txt`; writeFileSync(join(dir, f), `${i}\n`); files.push(f); }
+    sh(dir, ["add", d1]); sh(dir, ["commit", "-q", "-m", "many"]);
+    expect(hiddenEdits(dir)).toEqual([]);
+    sh(dir, ["update-index", "--assume-unchanged", files[4]!]); writeFileSync(join(dir, files[4]!), "edited\n");
+    expect(hiddenEdits(dir)).toEqual([note(files[4]!)]);
+  }, 60_000);
+  test("finding 4: an untouched assume-unchanged file whose committed blob has CRLF, under core.autocrlf=true, is no note (12a5094: false note)", () => {
+    const dir = hidRepo({ "crlf.txt": "a\r\nb\r\n", "x.txt": "x\n" }, [["core.autocrlf", "true"]]);
+    sh(dir, ["update-index", "--assume-unchanged", "crlf.txt"]);
+    expect(sh(dir, ["ls-files", "-v", "crlf.txt"])).toBe("h crlf.txt");
+    expect(sh(dir, ["status", "--porcelain"])).toBe(""); // git itself calls the tree clean
+    expect(hiddenEdits(dir)).toEqual([]);
+    utimesSync(join(dir, "crlf.txt"), 1600000000, 1600000000); // a touched file with the same bytes is no edit either
+    expect(hiddenEdits(dir)).toEqual([]);
+  });
+  for (const cfg of [["core.trustctime", "false"], ["core.checkStat", "minimal"]]) test(`repo ${cfg[0]}=${cfg[1]}: a same-size edit with mtime restored on a flagged file is still named (12a5094: no note)`, () => {
+    const dir = hidRepo({ "conftest.py": "AAAA\n" }, [cfg as string[]]), f = join(dir, "conftest.py"), ref = join(dir, "..", `${basename(dir)}.ref`);
+    sh(dir, ["update-index", "--assume-unchanged", "conftest.py"]);
+    Bun.sleepSync(1100); // ctime is compared to the second, so the edit must land in a later second than the index entry
+    execFileSync("touch", ["-r", f, ref]); writeFileSync(f, "BBBB\n"); execFileSync("touch", ["-r", ref, f]); rmSync(ref); // same inode, size and nanosecond mtime; only ctime moved
+    expect(sh(dir, ["status", "--porcelain"])).toBe("");
+    expect(hiddenEdits(dir)).toEqual([note("conftest.py")]);
+  });
   test("pytest.toml and .pytest.ini are test configuration", () => {
     expect(testConfigChanged(".", "HEAD", ["pytest.toml", "sub/.pytest.ini"])).toEqual(["pytest.toml", "sub/.pytest.ini"]);
   });

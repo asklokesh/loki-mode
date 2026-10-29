@@ -5,7 +5,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { siteFor } from "../project_model/resolve.ts";
@@ -14,7 +14,7 @@ import { CARGO_TEST_FILE_RE, isTestFile } from "../engine10/testmap.ts";
 import type { RunnerName, TestRef } from "../engine10/types.ts";
 import { declaresPythonDep } from "./lock_ecosystems.ts";
 import { UNITTEST_DISCOVER_ARGS } from "./python_build_check.ts";
-import { safeGit, tokenFreeEnv } from "./safe_git.ts";
+import { safeGit, safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
 import { redactSecrets, UNSAFE_TERMINAL_CHARS_RE } from "./redact.ts";
 
 /** FC-69: the ONE child env for every harness-run test or verify command. A user's FORCE_COLOR=3 makes node:test, pytest, jest and
@@ -782,6 +782,60 @@ export function changedFiles(repoDir: string, baseSha: string, skip?: (f: string
   const tracked = run(["-c", "core.quotePath=false", "diff", "--no-renames", "--name-only", "-z", baseSha]);
   const untracked = run(["-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard", "-z"]);
   return [...new Set([...tracked, ...untracked])].filter((f) => !f.startsWith(".loki/") && !skip?.(f)); // skip: install-owned paths (FC-DEPS-NOT-INSTALLED)
+}
+
+/** The skip-worktree paths that the effective sparse-checkout patterns genuinely exclude. core.sparseCheckout alone proves nothing (the
+ *  implementer sets repo config), so the pattern file is evaluated by git itself: its lines are gitignore-syntax with last-match-wins, so a
+ *  scratch repo takes them as info/exclude and `check-ignore --no-index` names the INCLUDED paths. Config off, file unreadable or any error
+ *  yields the empty set (fail closed: the deletion is reported). Known limit: an implementer who writes a pattern file excluding the path
+ *  is indistinguishable from a real sparse checkout. */
+function sparseExcluded(repoDir: string, tmp: string, paths: string[]): Set<string> {
+  try {
+    if (safeGit(repoDir, ["config", "--type=bool", "--get", "core.sparseCheckout"]).trim() !== "true") return new Set();
+    const rel = safeGit(repoDir, ["rev-parse", "--git-path", "info/sparse-checkout"]).trim(), pf = isAbsolute(rel) ? rel : join(repoDir, rel);
+    const scratch = join(tmp, "sparse"); mkdirSync(scratch);
+    safeGit(scratch, ["init", "-q"]); mkdirSync(join(scratch, ".git", "info"), { recursive: true });
+    copyFileSync(pf, join(scratch, ".git", "info", "exclude"));
+    const r = safeGitSpawn(scratch, ["-c", "core.ignorecase=false", "-c", "core.excludesFile=/dev/null", "check-ignore", "--no-index", "-z", "--stdin"], { input: Buffer.from(paths.map((p) => `${p}\0`).join("")) });
+    if (r.error || (r.status !== 0 && r.status !== 1)) return new Set();
+    const included = new Set(r.stdout.toString("utf8").split("\0").filter(Boolean));
+    return new Set(paths.filter((p) => !included.has(p)));
+  } catch { return new Set(); }
+}
+
+/** FC-GIT-HIDDEN-EDIT: assume-unchanged (lowercase ls-files -v tag) and skip-worktree (S) make diff, status and commit trust the index, so an
+ *  edited or deleted flagged file changes what checks run while the diff, receipt and commit never carry it. Git decides content equality:
+ *  a copy of the index in a run-owned dir (GIT_INDEX_FILE) has both bits cleared on the flagged paths, is refreshed (the stat cache forgives
+ *  a touched file whose bytes match, CRLF conversion included), and `diff-files` names every flagged path that still differs, a deleted one
+ *  and a moved submodule included. The hardened config pins core.trustctime and core.checkStat so a repo cannot hide a same-size edit. A
+ *  deleted skip-worktree path is spared only when the sparse-checkout patterns exclude it (sparseExcluded). Zero flagged paths cost one ls-files. Any error is a note. */
+export function hiddenEdits(repoDir: string): string[] {
+  let tmp = "";
+  try {
+    const idxRel = safeGit(repoDir, ["rev-parse", "--git-path", "index"]).trim(), idx = isAbsolute(idxRel) ? idxRel : join(repoDir, idxRel);
+    const flags = new Map<string, string>();
+    for (const l of safeGit(repoDir, ["-c", "core.quotePath=false", "ls-files", "-v", "-z"], { maxBuffer: Math.max(64 << 20, statSync(idx).size * 32) }).split("\0")) {
+      const m = /^([a-zS]) ([\s\S]+)$/.exec(l);
+      if (m) flags.set(m[2]!, m[1]!);
+    }
+    if (flags.size === 0) return [];
+    tmp = mkdtempSync(join(tmpdir(), "loki-hidden-")); const copy = join(tmp, "index"), env = { ...process.env, GIT_INDEX_FILE: copy };
+    copyFileSync(idx, copy);
+    const paths = Buffer.from([...flags.keys()].map((p) => `${p}\0`).join(""));
+    for (const bit of ["--no-assume-unchanged", "--no-skip-worktree"]) safeGit(repoDir, ["update-index", bit, "-z", "--stdin"], { env, input: paths, stdio: ["pipe", "pipe", "ignore"] }); // one bit per call: update-index acts on the first only
+    const rf = safeGitSpawn(repoDir, ["update-index", "-q", "--refresh"], { env, encoding: "utf8" }); // exit 1 is "needs update" (a changed or deleted path): the diff below names it
+    if (rf.error || (rf.status !== 0 && rf.status !== 1)) throw rf.error ?? new Error("refresh failed");
+    const out = safeGit(repoDir, ["-c", "core.quotePath=false", "diff-files", "--name-status", "-z"], { env, maxBuffer: 64 << 20 }).split("\0");
+    let sparse: Set<string> | undefined; const hidden: string[] = [];
+    for (let i = 0; i + 1 < out.length; i += 2) {
+      const st = out[i]!, f = out[i + 1]!, tag = flags.get(f);
+      if (tag === undefined) continue; // a change to an unflagged path is the ordinary diff's to report
+      if (st === "D" && tag === "S") { sparse ??= sparseExcluded(repoDir, tmp, [...flags].filter(([, t]) => t === "S").map(([q]) => q)); if (sparse.has(f)) continue; } // absent by sparse checkout: the pattern file really excludes it
+      hidden.push(f);
+    }
+    return hidden.map((p) => `tracked file edited while assume-unchanged or skip-worktree hides it from diff and commit: ${p}`);
+  } catch { return ["assume-unchanged or skip-worktree check could not read the index"]; }
+  finally { if (tmp) rmSync(tmp, { recursive: true, force: true }); }
 }
 
 /** changedFiles enriched with numstat counts and name-status; untracked files get a line count as additions. Throws on git failure. */

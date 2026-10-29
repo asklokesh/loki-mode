@@ -12,7 +12,7 @@ import { lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs"; import { 
 import { join, relative, sep } from "node:path";
 import { execFileSync, spawnSync, type ExecFileSyncOptions, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 
-export const SAFE_GIT_CONFIG: readonly string[] = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "core.sshCommand=", "-c", "protocol.ext.allow=never", "-c", "credential.helper="];
+export const SAFE_GIT_CONFIG: readonly string[] = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "core.sshCommand=", "-c", "protocol.ext.allow=never", "-c", "credential.helper=", "-c", "core.trustctime=true", "-c", "core.checkStat=default"];
 // allowToken keeps the user's credential helper and ssh command; fsmonitor, hooks and ext:: stay off.
 const CREDENTIAL_CONFIG: readonly string[] = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never"];
 // External diff, commit signing and a global attributes file: repo-chosen commands on diff/commit paths.
