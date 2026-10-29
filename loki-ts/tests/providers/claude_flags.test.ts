@@ -1286,6 +1286,17 @@ describe("claude_flags.reviewerModelForTier (S9)", () => {
     expect(reviewerModelForTier({ tier: "complex", reviewer: "architecture-strategist", env: {} })).toBeNull();
     expect(reviewerModelForTier({ tier: "simple", reviewer: "architecture-strategist", highTier: true, env: {} })).toBeNull();
   });
+  it("LOKI_REVIEW_ADVISORY gates the haiku pin: 1 pins advisory reviewers, 0 restores the default, non-advisory never pinned", () => {
+    for (const reviewer of ["maintainer-mergeability", "test-coverage-auditor"]) {
+      expect(reviewerModelForTier({ tier: "complex", reviewer, env: { LOKI_REVIEW_ADVISORY: "1" } })).toBe("haiku");
+      expect(reviewerModelForTier({ tier: "complex", reviewer, highTier: true, env: { LOKI_REVIEW_ADVISORY: "0" } })).toBeNull();
+      expect(reviewerModelForTier({ tier: "complex", reviewer, env: { LOKI_REVIEW_ADVISORY: "0" } })).toBeNull();
+      expect(reviewerModelForTier({ tier: "complex", reviewer, env: { LOKI_REVIEW_ADVISORY: "0", LOKI_ADVISOR_MODEL: "opus" } })).toBe("opus");
+    }
+    for (const v of ["1", "0"]) {
+      expect(reviewerModelForTier({ tier: "complex", reviewer: "security-sentinel", env: { LOKI_REVIEW_ADVISORY: v } })).toBeNull();
+    }
+  });
   it("complex, unknown and absent tiers stay unpinned", () => {
     expect(reviewerModelForTier({ tier: "complex", reviewer: "a", env: {} })).toBeNull();
     expect(reviewerModelForTier({ tier: "bogus", reviewer: "a", env: {} })).toBeNull();

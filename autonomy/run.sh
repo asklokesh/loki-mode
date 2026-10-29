@@ -16590,14 +16590,12 @@ _dispatch_reviewer() {
             # stronger/consistent judge - the documented "advisor will be opus if
             # needed or user opted". Only the tier aliases haiku|sonnet|opus are
             # honored; any other value is ignored with no --model.
-            if [ -n "${LOKI_ADVISOR_MODEL:-}" ]; then
-                local _adv _adv_norm
-                _adv="${LOKI_ADVISOR_MODEL}"
-                _adv_norm="$(printf '%s' "$_adv" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-                case "$_adv_norm" in
-                    haiku|sonnet|opus) _rv_argv+=("--model" "$_adv_norm") ;;
-                    *) : ;;  # any other value: no --model (account default)
-                esac
+            # Advisory reviewers with no measured signal default to haiku (see
+            # _reviewer_model_pin); LOKI_REVIEW_ADVISORY=0 restores the default.
+            local _rv_model
+            _rv_model="$(_reviewer_model_pin "${LOKI_REVIEWER_NAME:-}")"
+            if [ -n "$_rv_model" ]; then
+                _rv_argv+=("--model" "$_rv_model")
             fi
             if loki_is_supervised_simple_web; then
                 if ! _loki_supervised_claude_isolation_ready; then
@@ -17014,6 +17012,26 @@ _is_advisory_reviewer() {
         architecture-strategist|maintainer-mergeability|test-coverage-auditor) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# Reviewer model pin for the no-tier-routing bash route. Echoes the alias to pass
+# as --model, or nothing for the account default. Parity-locked with
+# reviewerModelForTier() in loki-ts/src/providers/claude_flags.ts for the
+# reviewers it pins at every tier: LOKI_ADVISOR_MODEL (haiku|sonnet|opus) wins,
+# LOKI_REVIEWER_TIER_ROUTING=0 and LOKI_REVIEW_ADVISORY=0 restore the default,
+# otherwise the two advisory reviewers with no measured signal run on haiku.
+_reviewer_model_pin() {
+    local _adv
+    _adv="$(printf '%s' "${LOKI_ADVISOR_MODEL:-}" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    case "$_adv" in
+        haiku|sonnet|opus) printf '%s\n' "$_adv"; return 0 ;;
+    esac
+    [ "${LOKI_REVIEWER_TIER_ROUTING:-}" != "0" ] || return 0
+    [ "${LOKI_REVIEW_ADVISORY:-1}" != "0" ] || return 0
+    case "${1:-}" in
+        maintainer-mergeability|test-coverage-auditor) printf '%s\n' "haiku" ;;
+    esac
+    return 0
 }
 
 # Count Critical and High findings in a reviewer file, same 4 severity forms as
@@ -18528,6 +18546,7 @@ print(json.loads(os.environ["_LOKI_REVIEW_SHARD_IDENTITIES"])[int(os.environ["_L
                 fi
                 exit "$shard_rc"
             else
+                LOKI_REVIEWER_NAME="$reviewer_name" \
                 LOKI_REVIEW_STDERR_FILE="$review_dir/$review_id/${reviewer_name}-stderr.log" \
                     _dispatch_reviewer_recorded "$prompt_text" "$review_stage_file"
             fi

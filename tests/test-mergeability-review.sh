@@ -180,6 +180,45 @@ else
     bad "advisory reviewer names match between quality_gates.ts and run.sh (ts='$_ts_adv' sh='$_sh_adv')"
 fi
 
+# --- reviewer model pin: bash mirror vs reviewerModelForTier ----------------
+# Same reviewers, same env, same model. Empty output means the default model.
+_pin_sh() { (unset LOKI_ADVISOR_MODEL LOKI_REVIEWER_TIER_ROUTING LOKI_REVIEW_ADVISORY; export "$1"; _reviewer_model_pin "$2"); }
+_pin_ts() {
+    ( cd "$REPO_ROOT/loki-ts" && LOKI_PIN_ENV="$1" LOKI_PIN_REVIEWER="$2" bun -e '
+        import { reviewerModelForTier } from "./src/providers/claude_flags.ts";
+        const kv = (process.env.LOKI_PIN_ENV || "").split("=");
+        const env = kv[0] ? { [kv[0]]: kv.slice(1).join("=") } : {};
+        const m = reviewerModelForTier({ tier: "complex", reviewer: process.env.LOKI_PIN_REVIEWER, env });
+        console.log(m === null ? "" : m);' 2>/dev/null )
+}
+for _case in "LOKI_REVIEW_ADVISORY=1 maintainer-mergeability haiku" \
+             "LOKI_REVIEW_ADVISORY=1 test-coverage-auditor haiku" \
+             "LOKI_REVIEW_ADVISORY=1 security-sentinel -" \
+             "LOKI_REVIEW_ADVISORY=0 maintainer-mergeability -" \
+             "LOKI_REVIEW_ADVISORY=0 test-coverage-auditor -" \
+             "LOKI_REVIEW_ADVISORY=0 security-sentinel -" \
+             "LOKI_ADVISOR_MODEL=opus maintainer-mergeability opus" \
+             "LOKI_REVIEWER_TIER_ROUTING=0 test-coverage-auditor -"; do
+    set -- $_case
+    _want="$3"; [ "$_want" = "-" ] && _want=""
+    _got_sh="$(_pin_sh "$1" "$2")"
+    if [ "$_got_sh" = "$_want" ]; then
+        ok "_reviewer_model_pin $1 $2 -> '${_want:-default}'"
+    else
+        bad "_reviewer_model_pin $1 $2 -> '${_got_sh:-default}' (want '${_want:-default}')"
+    fi
+    if command -v bun >/dev/null 2>&1 && [ -d "$REPO_ROOT/loki-ts/node_modules" ]; then
+        _got_ts="$(_pin_ts "$1" "$2")"
+        if [ "$_got_ts" = "$_got_sh" ]; then
+            ok "TS reviewerModelForTier matches bash for $1 $2"
+        else
+            bad "TS reviewerModelForTier ('${_got_ts:-default}') differs from bash ('${_got_sh:-default}') for $1 $2"
+        fi
+    else
+        bad "bun and loki-ts/node_modules required for the model-pin parity check"
+    fi
+done
+
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
