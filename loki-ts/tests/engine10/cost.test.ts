@@ -983,14 +983,14 @@ describe("resume predecessor ties", () => {
 
 describe("the sealed receipt carries this run's child sessions (worker cost reader through the seal stage)", () => {
   const sh = (cwd: string, ...argv: string[]): string => execFileSync(argv[0]!, argv.slice(1), { cwd, encoding: "utf8" });
-  const sealWith = async (cost: RunContext["cost"], repo: string): Promise<{ cost: { usd: number | null; children?: { usd: number | null; sessions: number } } }> => {
+  const sealWith = async (cost: RunContext["cost"], repo: string, ids: string[] = ["plan"]): Promise<{ cost: { usd: number | null; children?: { usd: number | null; sessions: number } } }> => {
     mkdirSync(join(repo, ".loki/runs/R1"), { recursive: true });
     sh(repo, "git", "init", "-q", "-b", "main"); sh(repo, "git", "config", "user.name", "t"); sh(repo, "git", "config", "user.email", "t@t.invalid");
     writeFileSync(join(repo, "a.txt"), "one\n"); sh(repo, "git", "add", "a.txt"); sh(repo, "git", "commit", "-q", "-m", "base");
     const base = sh(repo, "git", "rev-parse", "HEAD").trim();
     writeFileSync(join(repo, "a.txt"), "two\n"); sh(repo, "git", "commit", "-q", "-am", "work");
     const outputs = {
-      intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", resumed: false }, wall: { files: [] }, implement: { exit: "done", iteration_ids: ["plan"] },
+      intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", resumed: false }, wall: { files: [] }, implement: { exit: "done", iteration_ids: ids },
       verify: { checks: [{ name: "bun:w.test.ts", cmd: "bun test", result: "pass", n: 2, duration_s: 1 }], flaky: [], wall_passed: true, target_checks: [] },
     } as Partial<Record<StageName, Obj>>;
     const ctx: RunContext = {
@@ -1012,6 +1012,22 @@ describe("the sealed receipt carries this run's child sessions (worker cost read
       const receipt = await sealWith(workerCostReader("R1"), repo);
       expect(receipt.cost.usd).toBeCloseTo(1.25, 10); // X6: a reader that drops the run id sums no children and seals 1
       expect(receipt.cost.children).toMatchObject({ usd: 0.25, sessions: 1 });
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+  test("a killed session priced from streamed usage is in the receipt, and the receipt equals runCost", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "e10-seal-killed-"));
+    try {
+      const lokiDir = join(repo, ".loki"); mkdirSync(join(lokiDir, "metrics"), { recursive: true });
+      writeFileSync(join(lokiDir, "metrics", "result-cost-plan.json"), JSON.stringify({ total_cost_usd: 1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0, source: "sdk", session_id: "S1" }));
+      writeFileSync(partialUsagePath(lokiDir, "impl"), JSON.stringify({ input_tokens: 1000, output_tokens: 400, model: "claude-sonnet-5-5" })); // no result-cost-impl.json: the session was killed
+      const k = recordPartialStreamCost(lokiDir, "impl", { status: "killed", durationMs: 5, model: "claude-sonnet-5-5" });
+      expect(k.usd).not.toBeNull();
+      const events = [makeEvent("R1", 0, "cost", "plan", { session_id: "plan", usd: 1 }), makeEvent("R1", 1, "cost", "implement", { session_id: "impl", usd: k.usd })];
+      const shown = runCost(events, lokiDir).usd;
+      expect(shown).toBeCloseTo(1 + (k.usd as number), 10);
+      expect(sumRunCosts(lokiDir, ["plan", "impl"], [], "R1").usd).toBeNull(); // the files alone cannot price the killed session: today's receipt
+      expect((await sealWith(workerCostReader("R1", () => events), repo, ["plan", "impl"])).cost.usd).toBe(shown);
+      expect((await sealWith(workerCostReader("R1"), repo, ["plan", "impl"])).cost.usd).toBeNull(); // no cost events seen: the file totals stand
     } finally { rmSync(repo, { recursive: true, force: true }); }
   });
 });

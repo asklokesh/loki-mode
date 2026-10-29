@@ -162,6 +162,11 @@ export function runCost(events: (CostEv & { run?: string })[], lokiRoot?: string
   return addChildren(stage, lokiRoot && events[0]?.run ? sumChildLedger(lokiRoot, events[0].run) : null);
 }
 
+/** The sealed receipt's dollars: THE runCost over the run's cost events (a killed session priced from streamed usage included). With no cost event the file-summed totals stand. */
+export function sealedRunCost<T extends { usd: number | null; partialUsd: number; measuredCount: number; totalCount: number }>(files: T, events: (CostEv & { run?: string })[], lokiRoot: string): T {
+  return events.some((e) => e.type === "cost") ? { ...files, ...runCost(events, lokiRoot) } : files;
+}
+
 /** Child spend since this meter was created, for the dollar cap: pre-existing lines are already in the seeded prior spend. */
 export function childSpendMeter(lokiRoot: string, runId: string): () => number {
   const base = sumChildLedger(lokiRoot, runId).partialUsd;
