@@ -432,7 +432,8 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
               runner_fn: Any = None,
               task_dir: Optional[str] = None,
               effort: Optional[str] = None,
-              trial_label: Optional[str] = None) -> Dict[str, Any]:
+              trial_label: Optional[str] = None,
+              verify_fn: Any = None) -> Dict[str, Any]:
     """One trial: prepare workdir, invoke adapter, GRADE, assemble trial record.
 
     LOKI_BENCH_WORKDIRS=<root> keeps every workdir at <root>/<tool>/<task>/<label>/
@@ -506,6 +507,16 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
         }
         row["metrics"] = schema.trial_metrics(
             adapter_out, verdict["success"], measured=not unmeasured_reasons)
+        if verify_fn is not None:
+            # Seal verdict on the produced repo, beside the held-out grader
+            # result. A verifier that cannot answer yields None (unmeasured).
+            try:
+                seal_verdict = verify_fn(workdir, model)
+            except Exception:
+                seal_verdict = None
+            row["seal"] = seal_record(
+                spec["id"], tool, model, seal_verdict,
+                None if unmeasured_reasons else verdict["success"])
         if unmeasured_reasons:
             # Held-out grader evidence preserved separately, never discarded.
             #
@@ -539,6 +550,84 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
             shutil.rmtree(workdir, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# P4(b): Seal verdict vs held-out grader (wrong-pass capture)
+# ---------------------------------------------------------------------------
+
+WRONG_PASS_SCHEMA = "loki.seeded-defects.results/v2"  # same schema measure.py emits
+SEAL_VERDICTS = {"VERIFIED": 0, "CONCERNS": 1, "BLOCKED": 2}
+
+
+def seal_record(task: str, arm: str, model: str, verdict: Optional[str],
+                grader_pass: Optional[bool]) -> Dict[str, Any]:
+    """Per-trial record. wrong_pass is True only for VERIFIED with a failing
+    grader; a missing verdict or an unmeasured grader gives None, never a pass."""
+    if verdict not in SEAL_VERDICTS:
+        verdict = None
+    wrong = None
+    if verdict is not None and isinstance(grader_pass, bool):
+        wrong = (verdict == "VERIFIED" and not grader_pass)
+    return {"task": task, "arm": arm, "model": model, "verdict": verdict,
+            "grader_pass": grader_pass, "wrong_pass": wrong}
+
+
+def default_verify(workdir: str, model: str, timeout: int = 600) -> Optional[str]:
+    """Run `loki verify --json` on the arm's workdir with LOKI_MODEL=model.
+    Spend-gated (the verifier may call a model); returns None when not
+    approved, on any failure, or on an exit code that disagrees with the verdict."""
+    if os.environ.get("LOKI_BENCH_SPEND_APPROVED") != "1":
+        return None
+    env = dict(os.environ, LOKI_MODEL=model or "", LOKI_TELEMETRY_DISABLED="true", CI="true")
+    try:
+        base = subprocess.run(["git", "rev-list", "--max-parents=0", "HEAD"], cwd=workdir,
+                              capture_output=True, text=True, timeout=60).stdout.split()
+        if len(base) != 1:
+            return None
+        p = subprocess.run(["loki", "verify", base[0], "--json"], cwd=workdir, env=env,
+                           capture_output=True, text=True, timeout=timeout)
+        ev = json.loads(p.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    v = ev.get("verdict") if isinstance(ev, dict) else None
+    ec = ev.get("exit_code") if isinstance(ev, dict) else None
+    if SEAL_VERDICTS.get(v) is None or type(ec) is not int or ec != p.returncode \
+            or SEAL_VERDICTS[v] != ec:
+        return None
+    return v
+
+
+def wrong_pass_results(rows: List[Dict[str, Any]], setup: str, model: str) -> Dict[str, Any]:
+    """Summary in the schema measure.py emits. outcomes maps each MEASURED task
+    to SEALED (a wrong pass) or NOT_SEALED; trials with no verdict are listed
+    under unmeasured and excluded from n."""
+    recs = [t["seal"] for r in rows for t in r.get("trials", []) if "seal" in t]
+    outcomes: Dict[str, str] = {}
+    unmeasured: List[str] = []
+    for rec in recs:
+        if rec["wrong_pass"] is None:
+            if rec["task"] not in unmeasured:
+                unmeasured.append(rec["task"])
+            continue
+        # one wrong-passing trial marks the task SEALED
+        if rec["wrong_pass"] or rec["task"] not in outcomes:
+            outcomes[rec["task"]] = "SEALED" if rec["wrong_pass"] else "NOT_SEALED"
+    unmeasured = [t for t in unmeasured if t not in outcomes]
+    digest = hashlib.sha256(json.dumps(sorted(r.get("task_hash", "") for r in rows)).encode()).hexdigest()
+    run = {"setup": setup, "model": model, "n": len(outcomes),
+           "wrong_pass": sum(1 for v in outcomes.values() if v == "SEALED"),
+           "outcomes": outcomes, "unmeasured": unmeasured, "records": recs,
+           "route": "heldout-bench", "verifier": None, "loki_version": None}
+    return {"schema": WRONG_PASS_SCHEMA, "manifest_sha256": digest, "runs": [run]}
+
+
+def write_wrong_pass(rows: List[Dict[str, Any]], setup: str, model: str, out: str) -> Dict[str, Any]:
+    doc = wrong_pass_results(rows, setup, model)
+    with open(out, "w") as fh:
+        json.dump(doc, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    return doc
+
+
 def _spend_gated_adapter(adapter_name: str) -> Callable[..., Dict[str, Any]]:
     """Load a NAMED adapter behind the spend interlock."""
     # SPEND INTERLOCK. Loading a NAMED adapter is the point where this
@@ -569,7 +658,8 @@ def run_task(task_path: str, adapter_name: str, *,
              adapter: Optional[Callable[..., Dict[str, Any]]] = None,
              keep_workdir: bool = False,
              runner_fn: Any = None,
-             effort: Optional[str] = None) -> Dict[str, Any]:
+             effort: Optional[str] = None,
+             verify_fn: Any = None) -> Dict[str, Any]:
     """Run a full task: N trials of one adapter, assemble + validate a result-row.
 
     `adapter` may be passed directly (used by tests with a mock); otherwise the
@@ -606,7 +696,7 @@ def run_task(task_path: str, adapter_name: str, *,
         trial_rows.append(run_trial(
             adapter, spec, fixture_dir, used_model, adapter_name, i,
             keep_workdir=keep_workdir, runner_fn=runner_fn, task_dir=task_dir,
-            effort=effort,
+            effort=effort, verify_fn=verify_fn,
         ))
 
     row = {
@@ -830,6 +920,13 @@ def _main(argv: List[str]) -> int:
                          % ",".join(EFFORT_LEVELS))
     pr.add_argument("--out", default=None)
     pr.add_argument("--keep-workdir", action="store_true")
+    pr.add_argument("--seal-verify", action="store_true",
+                    help="run `loki verify` on each trial's repo and record the verdict beside the "
+                         "held-out grader result (needs LOKI_BENCH_SPEND_APPROVED=1, else unmeasured)")
+    pr.add_argument("--setup", choices=("top", "floor"), default=None,
+                    help="with --wrong-pass-out: which P4 setup this run records")
+    pr.add_argument("--wrong-pass-out", default=None,
+                    help="write the wrong-pass summary JSON (measure.py schema) here; needs --seal-verify and --setup")
 
     pc = sub.add_parser("resume-cost", help="control vs interrupted-then-resumed trial pair")
     pc.add_argument("task")
@@ -862,9 +959,22 @@ def _main(argv: List[str]) -> int:
         return 0
 
     if args.cmd == "run":
+        vfn = default_verify if args.seal_verify else None
+        if args.wrong_pass_out and not (args.seal_verify and args.setup and args.model):
+            print("ERROR: --wrong-pass-out needs --seal-verify, --setup and --model", file=sys.stderr)
+            return 2
+        if args.wrong_pass_out and args.effort is None:
+            row = run_task(args.task, args.adapter, trials=args.trials, model=args.model,
+                           keep_workdir=args.keep_workdir, verify_fn=vfn)
+            doc = write_wrong_pass([row], args.setup, args.model, args.wrong_pass_out)
+            r = doc["runs"][0]
+            print("%s %s: wrong_pass %d/%d (%d unmeasured) -> %s" % (
+                args.setup, args.model, r["wrong_pass"], r["n"], len(r["unmeasured"]), args.wrong_pass_out))
+            return 0
         if args.effort is None:
             row = run_task(args.task, args.adapter, trials=args.trials,
-                           model=args.model, keep_workdir=args.keep_workdir)
+                           model=args.model, keep_workdir=args.keep_workdir,
+                           verify_fn=vfn)
             payload = json.dumps(row, indent=2, sort_keys=True)
             if args.out:
                 with open(args.out, "w") as fh:
@@ -880,7 +990,7 @@ def _main(argv: List[str]) -> int:
             return 2
         rows = [run_task(args.task, args.adapter, trials=args.trials,
                          model=args.model, keep_workdir=args.keep_workdir,
-                         effort=lv) for lv in levels]
+                         effort=lv, verify_fn=vfn) for lv in levels]
         if not args.out:
             print(json.dumps(rows[0] if len(rows) == 1 else rows,
                              indent=2, sort_keys=True))

@@ -627,6 +627,73 @@ class EffortAxisTest(unittest.TestCase):
         self.assertNotIn("--effort", main_cmds[1])
 
 
+class WrongPassCaptureTest(unittest.TestCase):
+    """P4(b): a VERIFIED verdict with a failing held-out grader is a wrong pass."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="bench-wp-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _row(self, accept, verdict, task_id="wp-task"):
+        spec = _make_task(self.tmp, acceptance_cmd=accept, task_id=task_id)
+        return runner.run_task(spec, "mock", trials=1, adapter=mock_adapter_with_cost,
+                               model="floor-model", verify_fn=lambda wd, model: verdict)
+
+    def test_verified_with_failing_grader_is_wrong_pass(self):
+        seal = self._row("false", "VERIFIED")["trials"][0]["seal"]
+        self.assertEqual(seal["verdict"], "VERIFIED")
+        self.assertIs(seal["grader_pass"], False)
+        self.assertIs(seal["wrong_pass"], True)
+        self.assertEqual(seal["model"], "floor-model")
+
+    def test_verified_with_passing_grader_is_not_wrong_pass(self):
+        self.assertIs(self._row("true", "VERIFIED")["trials"][0]["seal"]["wrong_pass"], False)
+
+    def test_blocked_with_failing_grader_is_not_wrong_pass(self):
+        self.assertIs(self._row("false", "BLOCKED")["trials"][0]["seal"]["wrong_pass"], False)
+
+    def test_missing_verdict_is_unmeasured_never_a_pass(self):
+        seal = self._row("false", None)["trials"][0]["seal"]
+        self.assertIsNone(seal["verdict"])
+        self.assertIsNone(seal["wrong_pass"])
+
+    def test_no_verify_fn_adds_no_seal_key(self):
+        spec = _make_task(self.tmp, acceptance_cmd="true", task_id="plain")
+        row = runner.run_task(spec, "mock", trials=1, adapter=mock_adapter_with_cost)
+        self.assertNotIn("seal", row["trials"][0])
+
+    def test_summary_is_measure_schema_and_skips_unmeasured(self):
+        rows = [self._row("false", "VERIFIED", "t1"), self._row("true", "VERIFIED", "t2"),
+                self._row("false", None, "t3")]
+        doc = runner.wrong_pass_results(rows, "floor", "floor-model")
+        self.assertEqual(doc["schema"], "loki.seeded-defects.results/v2")
+        run = doc["runs"][0]
+        self.assertEqual((run["setup"], run["model"], run["n"], run["wrong_pass"]),
+                         ("floor", "floor-model", 2, 1))
+        self.assertEqual(run["outcomes"], {"t1": "SEALED", "t2": "NOT_SEALED"})
+        self.assertEqual(run["unmeasured"], ["t3"])
+        self.assertEqual(len(run["records"]), 3)
+
+    def test_default_verify_is_unmeasured_without_spend_approval(self):
+        old = os.environ.pop("LOKI_BENCH_SPEND_APPROVED", None)
+        try:
+            self.assertIsNone(runner.default_verify(self.tmp, "m"))
+        finally:
+            if old is not None:
+                os.environ["LOKI_BENCH_SPEND_APPROVED"] = old
+
+    def test_cli_writes_wrong_pass_file_with_stub_verify(self):
+        spec = _make_task(self.tmp, acceptance_cmd="false", task_id="cli-task")
+        out = os.path.join(self.tmp, "wp.json")
+        row = runner.run_task(spec, "mock", trials=1, adapter=mock_adapter_with_cost,
+                              verify_fn=lambda wd, m: "VERIFIED")
+        runner.write_wrong_pass([row], "top", "m", out)
+        with open(out) as fh:
+            self.assertEqual(json.load(fh)["runs"][0]["wrong_pass"], 1)
+
+
 class CollectEfficiencyFallbackTest(unittest.TestCase):
     def test_collect_efficiency_returns_proof_shape(self):
         # With no efficiency files, usd must be None (not 0) and the shape must
