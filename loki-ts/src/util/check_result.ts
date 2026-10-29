@@ -73,10 +73,34 @@ function cargoTrailer(out: string): string[] {
     if (/^running \d+ tests?\b/.test(l)) segs.push([]);
     else if (segs.length && !/^\s*(?:Running |Doc-tests |Doctest)/.test(l)) segs[segs.length - 1]!.push(l);
   }
-  const lastOf = (g: string[]): string | undefined => g[g.length - 1]?.startsWith("test result: ") ? g[g.length - 1] : undefined;
-  if (!segs.length) { const g: string[] = []; for (let k = ls.length - 1; k >= 0 && ls[k]!.startsWith("test result: "); k--) g.push(ls[k]!); return g; } // headerless trailer
+  // Threat model: libtest runs inside the process that executes the code under test, so code can print a "test result: ok. N passed" line and std::process::exit(0)
+  // (nothing in-process is unforgeable). libtest prints each test's own "test <name> ... ok" line only AFTER that test returns, so an early exit leaves the
+  // summary claiming more passes than the segment has ok lines. A summary whose passed count exceeds its segment's distinct ok lines (or the dots of -q output) makes the WHOLE run unmeasured,
+  // never just that segment. Under --nocapture a test's own output splits "test x ... hello" from a later "ok" line; that pair counts as one ok line.
+  // Residual risk, plainly: ok lines are NOT matched to real test names (the binary under test controls everything it prints), so code that prints one
+  // "test <any name> ... ok" line per claimed pass, then exits 0, still forges.
+  const okOf = (body: string[]): number => {
+    const names = new Set<string>(); let pending: string | undefined;
+    for (const raw of body) {
+      const l = raw.trim(), m = /^test (.+?) \.\.\. (.*)$/.exec(l);
+      if (m) { if (m[2] === "ok") names.add(m[1]!); pending = m[2] === "FAILED" || /^ignored\b/.test(m[2]!) ? undefined : m[1]; }
+      else if (l === "ok" && pending !== undefined) { names.add(pending); pending = undefined; }
+    }
+    return names.size;
+  };
+  const dotsOf = (body: string[]): number => body.filter((l) => /^[.iF]+(?:\s+\d+\/\d+)?$/.test(l.trim())).reduce((t, l) => t + (l.match(/\./g)?.length ?? 0), 0);
+  let forged = false;
+  const lastOf = (g: string[]): string | undefined => {
+    const l = g[g.length - 1];
+    if (!l?.startsWith("test result: ")) return undefined;
+    const passed = +(l.match(/(\d+) passed/)?.[1] ?? 0), body = g.slice(0, -1);
+    if (passed > Math.max(okOf(body), dotsOf(body))) { forged = true; return undefined; }
+    return l;
+  };
+  if (!segs.length) { const g: string[] = []; for (let k = ls.length - 1; k >= 0 && ls[k]!.startsWith("test result: "); k--) g.push(ls[k]!); return g.every((x) => !/[1-9]\d* passed/.test(x)) ? g : []; } // headerless trailer: no libtest header or ok lines to check, so only a zero-pass summary (never a pass) keeps its base reading; a claimed pass is unmeasured
   if (!lastOf(segs[segs.length - 1]!)) return [];
-  return segs.flatMap((g) => lastOf(g) ?? []);
+  const sums = segs.flatMap((g) => lastOf(g) ?? []);
+  return forged ? [] : sums;
 }
 /** bun test: only when the final line is "Ran N tests across", the nearest " N pass" / " N fail" lines above it. null = not bun output. */
 function bunCount(out: string): number | null {
@@ -163,12 +187,14 @@ function goJson(out: string): { failed: boolean; failedTests: string[]; passed: 
   const passedNames = [...status].filter(([, v]) => v === "pass").map(([k]) => k);
   return { failed, failedTests: [...failedTests], passed: passedNames.length, passedNames, complete: !dirty && pkgs.size > 0 && [...pkgs].every((p) => starts.get(p) === 1 && done.get(p) === 1) }; // a torn stream or one with repeated starts, terminals or runs is doubt; a clean forged stream passes this and is caught by corroborateGoPass
 }
-/** A Go -json pass is counted only after the tests are re-run (-count=1) with `-coverprofile` into a private temp file and every package that passed
- *  tests has a statement line in that profile. Only the Go test runtime writes the profile, and only after the tests finish: a package that prints
- *  test2json framing (\x16-marked lines) and then exits 0 from init, a test body, implementation code or TestMain, via os.Exit or syscall.Exit, never
- *  reaches that write, so its forged events earn no pass. The re-run must also exit 0 with a complete stream that passes the same tests. A package with
- *  no statements has nothing to prove and stays not_run, the fail-safe default. Argv or a plain `go test [-json] [-run X] <pkgs>` line only; any other
- *  shape (extra flags, shell syntax) cannot be re-run and stays not_run. A non-pass result is returned unchanged. */
+/** A Go -json pass is counted only after the tests are re-run (-count=1) with `-coverprofile` into a private temp file and that profile lists exactly the statement
+ *  blocks the harness computed STATICALLY from the package source. Threat model: the profile path reaches the test binary as -test.coverprofile=, so implementation or test code
+ *  CAN write that file and print \x16-marked test2json lines, then leave through syscall.Exit(0); nothing the binary prints or writes is proof by itself. The expected block set
+ *  comes from `go list` plus `go tool cover -mode=set` (it instruments source text and runs no user code), so the binary's profile must match
+ *  file:line.col,line.col numStmt for every block of every non-test file of each passing package. A hand-written or truncated profile, a missing profile (early exit
+ *  before the runtime writes it) and a package with no statements (checked per package), cgo files or a //line directive all stay not_run, the fail-safe default. The re-run must also exit 0 with a complete
+ *  stream that passes the same tests. Argv or a plain `go test [-json] [-run X] <pkgs>` line only; any other shape (extra flags, shell syntax) cannot be re-run and stays
+ *  not_run. A non-pass result is returned unchanged. Residual risk, stated plainly: code that reproduces the cover tool's block table for its own source can still forge. */
 export async function corroborateGoPass(c: Classified, out: string, cmdOrLine: string, args: readonly string[] | undefined, o: { cwd: string; env: NodeJS.ProcessEnv }): Promise<Classified> {
   if (c.result !== "pass" || goRunner(cmdOrLine, args).runner !== "go") return c;
   const refuse: Classified = { result: "not_run", reason: GO_EXIT0_REASON };
@@ -184,19 +210,43 @@ export async function corroborateGoPass(c: Classified, out: string, cmdOrLine: s
     if (t.startsWith("-")) return refuse;
     pkgs.push(t);
   }
-  const dir = mkdtempSync(join(tmpdir(), "loki-gocov-")), prof = join(dir, "cover.out");
+  const dir = mkdtempSync(join(tmpdir(), "loki-gocov-")), prof = join(dir, "cover.out"), where = pkgs.length ? pkgs : ["."];
+  const spawnOpts = { cwd: o.cwd, env: o.env, timeoutMs: 600_000 };
+  const profBlocks = (): Set<string> => { // the profile's blocks with counts dropped
+    const set = new Set<string>();
+    for (const l of (existsSync(prof) ? readFileSync(prof, "utf8") : "").split("\n")) { const m = /^(.+:\d+\.\d+,\d+\.\d+ \d+) \d+$/.exec(l); if (m) set.add(m[1]!); }
+    return set;
+  };
   try {
-    const r = await spawnCollect("go", ["test", "-json", "-count=1", `-coverprofile=${prof}`, ...run, ...(pkgs.length ? pkgs : ["."])], { cwd: o.cwd, env: o.env, timeoutMs: 600_000 });
+    const want = new Set(names.map((n) => n.slice(0, n.indexOf("::")))), expected = new Set<string>();
+    const ls = await spawnCollect("go", ["list", "-json=ImportPath,Dir,GoFiles,CgoFiles", ...where], spawnOpts);
+    if (ls.status !== 0) return refuse;
+    const perPkg = new Map<string, number>(); // statement blocks found per passing package; a package that stays at 0 (never listed, or no statements) has nothing to prove
+    for (const chunk of ls.output.split(/\n(?=\{\n)/)) {
+      let pk: { ImportPath?: string; Dir?: string; GoFiles?: string[]; CgoFiles?: string[] };
+      try { pk = JSON.parse(chunk) as typeof pk; } catch { return refuse; }
+      if (!pk.ImportPath || !want.has(pk.ImportPath)) continue;
+      if (!pk.Dir || !pk.GoFiles?.length || pk.CgoFiles?.length) return refuse; // cgo files are rewritten by the go command, so their block table is not computable here: not_run (a genuine cgo package is a false not_run)
+      perPkg.set(pk.ImportPath, 0);
+      for (const f of pk.GoFiles) {
+        if (/^\s*(?:\/\/line |\/\*line )/m.test(readFileSync(join(pk.Dir, f), "utf8"))) return refuse; // a //line directive (goyacc, ragel, templ) makes the profile name another file than the source: not provable, so not_run
+        const t = await spawnCollect("go", ["tool", "cover", "-mode=set", "-var=GoCoverStatic", join(pk.Dir, f)], spawnOpts);
+        if (t.status !== 0) return refuse;
+        const pos = /Pos: \[3 \* \d+\]uint32\{([^}]*)\}/.exec(t.output)?.[1] ?? "", stm = /NumStmt: \[\d+\]uint16\{([^}]*)\}/.exec(t.output)?.[1] ?? "";
+        const trip = [...pos.matchAll(/(\d+), (\d+), (0x[0-9a-f]+),/g)], nums = [...stm.matchAll(/(\d+),/g)];
+        if (trip.length !== nums.length) return refuse;
+        perPkg.set(pk.ImportPath, perPkg.get(pk.ImportPath)! + trip.length);
+        trip.forEach((m, k) => { const cols = +m[3]!; expected.add(`${pk.ImportPath}/${f}:${m[1]}.${cols & 0xffff},${m[2]}.${(cols >>> 16) & 0xffff} ${nums[k]![1]}`); });
+      }
+    }
+    if (![...want].every((pk) => (perPkg.get(pk) ?? 0) > 0)) return refuse;
+    const r = await spawnCollect("go", ["test", "-json", "-count=1", `-coverprofile=${prof}`, ...run, ...where], spawnOpts);
     const second = goJson(stripAnsi(r.output));
     if (r.status !== 0 || !second || second.failed || !second.complete) return refuse;
     const again = new Set(second.passedNames);
     if (!names.every((n) => again.has(n))) return refuse;
-    const covered = new Set<string>();
-    for (const l of (existsSync(prof) ? readFileSync(prof, "utf8") : "").split("\n")) {
-      const m = /^(.+)\/[^/:]+:\d+\.\d+,\d+\.\d+ \d+ \d+$/.exec(l);
-      if (m) covered.add(m[1]!);
-    }
-    return [...new Set(names.map((n) => n.slice(0, n.indexOf("::"))))].every((pk) => covered.has(pk)) ? c : refuse;
+    const got = [...profBlocks()].filter((k) => [...want].some((pk) => k.startsWith(`${pk}/`) && !k.slice(pk.length + 1).includes("/")));
+    return got.length === expected.size && got.every((k) => expected.has(k)) ? c : refuse;
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 /** Failing test ids a failed run names: go from the -json stream, cargo from "test x ... FAILED" lines that cover the trailer's failed count. [] = nothing readable (never red on its own). */

@@ -641,3 +641,133 @@ describe("go -json pass count and cargo trailer with stderr noise", () => {
     } finally { rmSync(d, { recursive: true, force: true }); }
   }, 120_000);
 });
+
+// HV1-03d: a pass needs completion proof the code under test cannot cheaply produce. Real cargo and go fixtures.
+describe("forged cargo and go passes earn no pass", () => {
+  const HAS_GO = spawnSync("go", ["version"], { env: process.env }).status === 0;
+  const HAS_CARGO = spawnSync("cargo", ["--version"], { env: process.env }).status === 0;
+  const vctx = (d: string): RunContext => ({ repoDir: d, emit: () => {} }) as unknown as RunContext;
+  const cargoFixture = (impl: string): string => {
+    const d = mkdtempSync(join(tmpdir(), "hv103d-"));
+    mkdirSync(join(d, "src")); writeFileSync(join(d, "Cargo.toml"), '[package]\nname = "fx"\nversion = "0.1.0"\nedition = "2021"\n');
+    writeFileSync(join(d, "src", "lib.rs"), `${impl}\n#[cfg(test)]\nmod t {\n    #[test]\n    fn real() { assert_eq!(super::add(1, 2), 3); }\n    #[test]\n    fn second() { assert_eq!(super::add(2, 2), 4); }\n}\n`);
+    return d;
+  };
+  const CARGO_FORGE = 'pub fn add(_a: i32, _b: i32) -> i32 {\n    use std::io::Write;\n    std::io::stdout().write_all(b"\\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\\n\\n").unwrap();\n    std::process::exit(0);\n}';
+  test.skipIf(!HAS_CARGO)("real cargo: a printed summary plus process::exit(0) is not a pass; a genuine run counts both tests", async () => {
+    const f = cargoFixture(CARGO_FORGE), g = cargoFixture("pub fn add(a: i32, b: i32) -> i32 { a + b }"); try {
+      const raw = spawnSync("cargo", ["test"], { cwd: f, encoding: "utf8", env: process.env });
+      expect(raw.status).toBe(0); expect(raw.stdout).toContain("2 passed"); // the forge really exits 0 and prints a passing summary
+      expect((await runCheck(vctx(f), "t", "cargo", ["test"], new AbortController().signal, [])).result).toBe("not_run");
+      const c = await runCheck(vctx(g), "t", "cargo", ["test"], new AbortController().signal, []);
+      expect(c.result).toBe("pass"); expect(c.n).toBe(2);
+    } finally { rmSync(f, { recursive: true, force: true }); rmSync(g, { recursive: true, force: true }); }
+  }, 240_000);
+  test("cargo: a summary needs its own ok lines, and a headerless trailer is not libtest output", () => {
+    const sum = "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    expect(classifyCheck({ kind: "test", ok: true, out: `\nrunning 2 tests\n${sum}` }).result).toBe("not_run");
+    expect(classifyCheck({ kind: "test", ok: true, out: `\nrunning 2 tests\ntest a ... ok\n${sum}` }).result).toBe("not_run");
+    expect(classifyCheck({ kind: "test", ok: true, out: `\nrunning 2 tests\ntest a ... ok\ntest b ... ok\n\n${sum}` })).toEqual({ result: "pass", n: 2 });
+    expect(classifyCheck({ kind: "test", ok: true, out: `\nrunning 2 tests\n..\n\n${sum}` })).toEqual({ result: "pass", n: 2 });
+    expect(classifyCheck({ kind: "test", ok: true, out: `\n${sum}` }).result).toBe("not_run");
+  });
+  // The forge reads -test.coverprofile= from os.Args, writes a plausible profile there, prints framed pass events and leaves with syscall.Exit(0).
+  const GO_FORGE = `package fx
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"syscall"
+)
+
+func init() {
+	for _, x := range os.Args {
+		if strings.HasPrefix(x, "-test.coverprofile=") {
+			os.WriteFile(strings.TrimPrefix(x, "-test.coverprofile="), []byte("mode: set\\nexample.com/fx/a.go:11.24,12.74 2 1\\n"), 0o644)
+		}
+	}
+	fmt.Print("\\x16=== RUN   TestReal\\n\\x16--- PASS: TestReal (0.00s)\\n\\x16PASS\\n\\x16ok  \\texample.com/fx\\t0.001s\\n")
+	syscall.Exit(0)
+}
+
+func Add(a, b int) int { return a + b }
+`;
+  const goFixture = (impl: string): string => {
+    const d = mkdtempSync(join(tmpdir(), "hv103d-"));
+    writeFileSync(join(d, "go.mod"), "module example.com/fx\n\ngo 1.20\n"); writeFileSync(join(d, "a.go"), impl);
+    writeFileSync(join(d, "a_test.go"), 'package fx\n\nimport "testing"\n\nfunc TestReal(t *testing.T) { if Add(1, 2) != 3 { t.Fatal(1) } }\n');
+    return d;
+  };
+  test.skipIf(!HAS_GO)("real go: a forged coverage profile and framed events with syscall.Exit(0) is not a pass; a genuine run counts", async () => {
+    const f = goFixture(GO_FORGE), g = goFixture("package fx\n\nfunc Add(a, b int) int { return a + b }\n"); try {
+      const raw = spawnSync("go", ["test", "-json", "./..."], { cwd: f, encoding: "utf8", env: process.env });
+      expect(raw.status).toBe(0);
+      expect(classifyCheck({ kind: "test", ok: true, out: raw.stdout, runner: "go" }).result).toBe("pass"); // the stream alone is forgeable
+      expect((await runCheck(vctx(f), "t", "go", ["test", "-json", "./..."], new AbortController().signal, [])).result).toBe("not_run");
+      const c = await runCheck(vctx(g), "t", "go", ["test", "-json", "./..."], new AbortController().signal, []);
+      expect(c.result).toBe("pass"); expect(c.n).toBe(1);
+    } finally { rmSync(f, { recursive: true, force: true }); rmSync(g, { recursive: true, force: true }); }
+  }, 240_000);
+});
+
+// HV1-03d round 2: whole-run refusal for a forged cargo summary, split --nocapture lines, and Go packages the cover table cannot prove.
+describe("cargo and go completion proof edge cases", () => {
+  const HAS_GO = spawnSync("go", ["version"], { env: process.env }).status === 0;
+  const HAS_CARGO = spawnSync("cargo", ["--version"], { env: process.env }).status === 0;
+  const vctx = (d: string): RunContext => ({ repoDir: d, emit: () => {} }) as unknown as RunContext;
+  const cargoDir = (lib: string, extra: Record<string, string> = {}): string => {
+    const d = mkdtempSync(join(tmpdir(), "hv103d2-"));
+    mkdirSync(join(d, "src")); mkdirSync(join(d, "tests")); writeFileSync(join(d, "Cargo.toml"), '[package]\nname = "fx"\nversion = "0.1.0"\nedition = "2021"\n');
+    writeFileSync(join(d, "src", "lib.rs"), lib);
+    for (const [k, v] of Object.entries(extra)) writeFileSync(join(d, k), v);
+    return d;
+  };
+  const SUM = "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s";
+  test.skipIf(!HAS_CARGO)("real cargo: a forged lib summary stays not_run even when an honest integration binary follows it", async () => {
+    const forge = `pub fn add(_a: i32, _b: i32) -> i32 {\n    use std::io::Write;\n    std::io::stdout().write_all(b"\\n${SUM}\\n\\n").unwrap();\n    std::process::exit(0);\n}\n#[cfg(test)]\nmod t {\n    #[test]\n    fn real() { assert_eq!(super::add(1, 2), 3); }\n    #[test]\n    fn second() { assert_eq!(super::add(2, 2), 4); }\n}\n`;
+    const d = cargoDir(forge, { "tests/it.rs": "#[test]\nfn honest() { assert_eq!(1 + 1, 2); }\n" }); try {
+      const raw = spawnSync("cargo", ["test"], { cwd: d, encoding: "utf8", env: process.env });
+      expect(raw.status).toBe(0);
+      expect(classifyCheck({ kind: "test", ok: true, out: raw.stdout }).result).toBe("not_run");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
+  test.skipIf(!HAS_CARGO)("real cargo: --nocapture --test-threads=1 splits ok lines and still counts every test", () => {
+    const body = [1, 2, 3, 4].map((k) => `    #[test]\n    fn t${k}() { println!("hello"); assert_eq!(1, 1); }\n`).join("");
+    const d = cargoDir(`pub fn add(a: i32, b: i32) -> i32 { a + b }\n#[cfg(test)]\nmod t {\n${body}}\n`); try {
+      const raw = spawnSync("cargo", ["test", "--", "--nocapture", "--test-threads=1"], { cwd: d, encoding: "utf8", env: process.env });
+      expect(raw.stdout).toMatch(/test t::t1 \.\.\. hello/);
+      expect(classifyCheck({ kind: "test", ok: true, out: raw.stdout })).toEqual({ result: "pass", n: 4 });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
+  test("cargo: the unfixable limit is real, an invented ok line per claimed pass still counts", () => {
+    expect(classifyCheck({ kind: "test", ok: true, out: `\nrunning 2 tests\ntest x ... ok\ntest y ... ok\n\n${SUM}\n` })).toEqual({ result: "pass", n: 2 });
+  });
+  const goDir = (impl: string, test: string, extra: Record<string, string> = {}): string => {
+    const d = mkdtempSync(join(tmpdir(), "hv103d2-"));
+    writeFileSync(join(d, "go.mod"), "module example.com/fx\n\ngo 1.20\n"); writeFileSync(join(d, "a.go"), impl); writeFileSync(join(d, "a_test.go"), test);
+    for (const [k, v] of Object.entries(extra)) writeFileSync(join(d, k), v);
+    return d;
+  };
+  const verdict = async (d: string) => (await runCheck(vctx(d), "t", "go", ["test", "-json", "./..."], new AbortController().signal, [])).result;
+  const T_OK = 'package fx\n\nimport "testing"\n\nfunc TestReal(t *testing.T) {}\n';
+  test.skipIf(!HAS_GO)("real go: a forged pass in a package with no statements is not a pass", async () => {
+    const forge = 'package fx\n\nimport (\n\t"fmt"\n\t"os"\n\t"strings"\n\t"syscall"\n\t"testing"\n)\n\nfunc init() {\n\tfor _, x := range os.Args {\n\t\tif strings.HasPrefix(x, "-test.coverprofile=") {\n\t\t\tos.WriteFile(strings.TrimPrefix(x, "-test.coverprofile="), []byte("mode: set\\n"), 0o644)\n\t\t}\n\t}\n\tfmt.Print("\\x16=== RUN   TestReal\\n\\x16--- PASS: TestReal (0.00s)\\n\\x16PASS\\n\\x16ok  \\texample.com/fx\\t0.001s\\n")\n\tsyscall.Exit(0)\n}\n\nfunc TestReal(t *testing.T) {}\n';
+    const d = goDir("package fx\n\ntype T struct{}\n\nconst K = 1\n", forge); try {
+      const raw = spawnSync("go", ["test", "-json", "./..."], { cwd: d, encoding: "utf8", env: process.env });
+      expect(classifyCheck({ kind: "test", ok: true, out: raw.stdout, runner: "go" }).result).toBe("pass"); // the stream alone is forgeable
+      expect(await verdict(d)).toBe("not_run");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
+  test.skipIf(!HAS_GO)("real go: a package with a //line directive is honestly not_run, never a silent pass", async () => {
+    const d = goDir('package fx\n\n//line gen.go:10\nfunc Add(a, b int) int { return a + b }\n', T_OK); try {
+      expect(await verdict(d)).toBe("not_run");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
+  test.skipIf(!HAS_GO || spawnSync("go", ["env", "CGO_ENABLED"], { encoding: "utf8" }).stdout.trim() !== "1")("real go: a package with a cgo file is honestly not_run", async () => {
+    const d = goDir("package fx\n\nfunc Add(a, b int) int { return a + b }\n", T_OK, { "c.go": "package fx\n\n// int one = 1;\nimport \"C\"\n" }); try {
+      expect(spawnSync("go", ["test", "./..."], { cwd: d, encoding: "utf8" }).status).toBe(0); // the repo is genuine
+      expect(await verdict(d)).toBe("not_run");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
+});

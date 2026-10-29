@@ -96,7 +96,8 @@ describe("engine10 verify: 0 executed tests is not a pass (A-111)", () => {
     expect(ran("ok  \tpkg\t0.002s [no tests to run]")).toBe(0);
     expect(ran("?   \tpkg\t[no test files]")).toBe(0);
     expect(ran("test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured")).toBe(0);
-    expect(ran("test result: ok. 3 passed; 0 failed; 0 ignored")).toBe(3);
+    expect(ran("test result: ok. 3 passed; 0 failed; 0 ignored")).toBeNull(); // HV1-03d: a bare summary with no libtest header or ok lines is the forgeable shape, so unmeasured
+    expect(ran("running 3 tests\ntest a ... ok\ntest b ... ok\ntest c ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored")).toBe(3);
     expect(ran("ok  \tpkg\t0.002s")).toBeNull();
   });
 });
