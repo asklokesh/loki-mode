@@ -150,6 +150,7 @@ def stats(rows):
     partial = [r for r in costed if r.get("cost_source") == "partial-stream"]
     return {
         "n": n, "completed": completed,
+        "asked": sum(1 for r in evaluated if r.get("asked") and not r.get("completed")),
         "completion": (completed / n) if n else None,
         "cost": cost, "cost_missing": cost_missing, "p50": nearest_rank(ttp, 50),
         "partial_share": (len(partial) / len(costed)) if costed else None,
@@ -393,7 +394,12 @@ def score(raw, loki, raw_rows, loki_rows, headline=False):
 
 
 def fmt_completion(s):
-    return "n/a" if s["n"] == 0 else "%d/%d (%.1f%%)" % (s["completed"], s["n"], 100 * s["completion"])
+    if s["n"] == 0:
+        return "n/a"
+    out = "%d/%d (%.1f%%)" % (s["completed"], s["n"], 100 * s["completion"])
+    # ASKED is reported beside the rate, never added to completed; it is
+    # shown only when present so a table without ASKED rows is unchanged.
+    return out + (" [ASKED %d]" % s["asked"] if s.get("asked") else "")
 
 
 def fmt_cost(s):

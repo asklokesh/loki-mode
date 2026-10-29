@@ -1,2 +1,2 @@
 # base (seed files only): hidden.run exit code 1
-FAIL no recorded assumption naming a choice (and no question asked)
+FAIL no recorded assumption naming a choice

@@ -30,6 +30,9 @@
 #               diff left in the working tree with no PR
 #   famref      (P12-30) copy every file under STUB_FAM_REF_DIR into the clone,
 #               commit on a new branch, push: the reference edit for a fam- task
+#   ask         push only a QUESTIONS.md that names both options of amb-dedupe
+#   askdefault  ask, plus an ASSUMPTIONS.md record and a dedupe that keeps the
+#               first occurrence (a working default matching its record)
 #   check       only run the hidden-file leak check
 # STUB_V10_MARKER=1|noevents|stale|oldpath|badfield writes the v10 engine
 # marker (and events): oldpath uses the superseded .loki/events/<id>.jsonl,
@@ -224,6 +227,18 @@ case "${STUB_MODE:-noop}" in
         # An untracked file, not fix_greet: v-nochange's seed already has the
         # fixed greet.sh, so re-writing the same bytes would leave no diff.
         echo "todo: nothing to change" > .stub-scratch.txt
+        ;;
+    ask | askdefault)
+        # amb-dedupe: a clarifying question on a pushed branch. askdefault also
+        # records an assumption and implements it (keep the first occurrence).
+        printf '# Questions\n\nShould dedupe keep the first occurrence or the last occurrence of a duplicate?\n' > QUESTIONS.md
+        if [ "$STUB_MODE" = askdefault ]; then
+            printf 'def dedupe(items):\n    seen = set()\n    out = []\n    for x in items:\n        if x not in seen:\n            seen.add(x)\n            out.append(x)\n    return out\n' > listkit.py
+            printf 'Assumed: keep the first occurrence of each item.\n' > ASSUMPTIONS.md
+            push_branch ask-default QUESTIONS.md listkit.py ASSUMPTIONS.md || exit 1
+        else
+            push_branch ask-only QUESTIONS.md || exit 1
+        fi
         ;;
     noop | check) ;;
     *) echo "unknown STUB_MODE" >&2; exit 2 ;;

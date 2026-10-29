@@ -77,6 +77,10 @@ TASK_KEYS = {"id", "kind", "prompt", "issue_ref", "repo", "setup", "hidden", "ti
 EXPECTED_OUTCOMES = ("no_change_needed",)
 DEFAULT_TIMEOUT_S = 900
 GIT_TIMEOUT_S = 600
+# An ambiguous-brief check that only asked a question exits ASKED_RC and prints
+# "ASKED <nonce>" last. It is its own outcome: not hidden_pass, not completed.
+ASKED_RC = 3
+ASKED_TOKEN = "ASKED"
 ZERO_SHA = "0" * 40
 BASE_BRANCH = "main"
 # Positive signal that the v10 engine (not a legacy fallback) ran. Per
@@ -948,7 +952,7 @@ def run_hidden(task, task_dir, grade_dir, env, log_prefix, cap):
         if why:
             with open(log_prefix + ".log", "a") as f:
                 f.write("[harness] refused: %s\n" % why)
-            return False, why
+            return False, why, False
     for rel in task["hidden"]["files"]:
         dst = os.path.join(grade_dir, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -967,15 +971,31 @@ def run_hidden(task, task_dir, grade_dir, env, log_prefix, cap):
     with open(out_path, encoding="utf-8", errors="replace") as f:
         text = ANSI_RE.sub("", f.read())
     kind = runner_kind(cmd)
-    if kind:
-        passed = rc == 0 and runner_summary_ok(kind, text)
-    else:
-        last = [ln.strip() for ln in text.splitlines() if ln.strip()]
-        passed = rc == 0 and bool(last) and last[-1] == nonce
+    verdict = hidden_verdict(rc, text, nonce, kind)
+    passed = verdict == "pass"
     with open(log_prefix + ".log", "a") as f:
         f.write("[harness] rc=%d runner=%s verdict=%s%s\n" % (
-            rc, kind or "custom", "pass" if passed else "fail", (" nonce=" + nonce) if passed else ""))
-    return passed, None
+            rc, kind or "custom", verdict, (" nonce=" + nonce) if verdict != "fail" else ""))
+    return passed, None, verdict == "asked"
+
+
+def hidden_verdict(rc, text, nonce, kind):
+    """'pass', 'asked' or 'fail' for one hidden.run result.
+
+    pass needs exit 0 and the nonce as the last stdout line (or a verified
+    runner summary). asked is a distinct, non-pass outcome for an ambiguous
+    brief: the check exits ASKED_RC with `ASKED <nonce>` as the last stdout
+    line. It is never a pass and never a plain fail; pytest-style runners
+    cannot report it.
+    """
+    if kind:
+        return "pass" if rc == 0 and runner_summary_ok(kind, text) else "fail"
+    last = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if rc == 0 and last and last[-1] == nonce:
+        return "pass"
+    if rc == ASKED_RC and last and last[-1] == "%s %s" % (ASKED_TOKEN, nonce):
+        return "asked"
+    return "fail"
 
 
 def v10_marker_problem(work, started):
@@ -1395,8 +1415,8 @@ def new_row(task, arm, cfg, slot, logs):
             "decomposable": task.get("decomposable"), "arm_note": ARM_STUB_NOTE.get(arm),
             "budget_stopped": False,
             "started": None, "ended": None, "wall_s": None, "time_to_pr_s": None,
-            "pr_opened": False, "pr_branch": None, "hidden_pass": False, "completed": False,
-            "hidden_subset": hidden_subset(task),
+            "pr_opened": False, "pr_branch": None, "hidden_pass": False, "asked": False,
+            "completed": False, "hidden_subset": hidden_subset(task),
             "cost_usd": None, "cost_source": "not reported", "cost_partial_usd": None, "exit_code": None,
             # Unknown is always None, never 0 (cost.ts convention): a zero
             # here would silently understate a scorecard sum over rows where
@@ -1453,7 +1473,7 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
             or (task.get("setup") and sh(task["setup"], base_dir, env, L["setup"], cap) != 0):
         row["status"] = "prepare_failed"
         return row
-    base_pass, base_refused = run_hidden(task, task_dir, base_dir, env, os.path.join(logdir, "baseline"), cap)
+    base_pass, base_refused, _ = run_hidden(task, task_dir, base_dir, env, os.path.join(logdir, "baseline"), cap)
     shutil.rmtree(base_dir)  # hidden files must be gone before the arm starts
     if base_refused:
         row["status"] = "task_invalid"
@@ -1553,7 +1573,7 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
         # just always empty for them, since they have no v10 run state.
         wall_excl = wall_paths(work)
         row["no_source_diff"] = no_source_diff(presnap, snapshot_tree(grade_dir, rundir, "post", exclude=wall_excl))
-    row["hidden_pass"], row["grade_refused"] = run_hidden(
+    row["hidden_pass"], row["grade_refused"], row["asked"] = run_hidden(
         task, task_dir, grade_dir, env, os.path.join(logdir, "grade_hidden"), cap)
     hs = row.get("hidden_subset")
     if hs and hs["files"] and set(hs["files"]) == set(task["hidden"]["files"]):
@@ -1784,6 +1804,12 @@ def is_done(r):
     return bool(r.get("completed")) and not r.get("capped") and not r.get("budget_stopped")
 
 
+def is_asked(r):
+    """The run asked instead of building (ASKED). Its own bucket: never
+    completed (is_done re-checks), and not a failed check either."""
+    return bool(r.get("asked")) and not is_done(r)
+
+
 def token_total(r):
     """Total tokens of one row (input+output+cache read+cache write), or None
     when the row has no measured token record: unknown is never zero."""
@@ -1813,6 +1839,7 @@ def arm_stats(rs):
         cost_per = round(sum(r["cost_usd"] for r in costed) / len(done), 4)
     return {
         "runs": len(rs), "evaluated": len(evaluated), "completed": len(done),
+        "asked": sum(1 for r in evaluated if is_asked(r)),
         "completion_rate": round(len(done) / len(evaluated), 4) if evaluated else None,
         "p50_time_to_pr_s": nearest_rank(ttp, 50), "p90_time_to_pr_s": nearest_rank(ttp, 90),
         "cost_per_completed_usd": cost_per, "cost_measured_runs": len(costed),
@@ -1880,6 +1907,9 @@ def miss_reason(r):
         if not r.get("hidden_pass"):
             return "regression: hidden tests failed after the run"
         return "not completed (no_change_needed)"
+    if is_asked(r):
+        return "ASKED: asked a question instead of building (not completed, not a failed check)" + \
+            ("" if r.get("pr_opened") else "; no branch pushed")
     if not r.get("pr_opened"):
         return "no branch pushed"
     if r.get("push_time_anomaly"):
@@ -1896,11 +1926,11 @@ def fmt(v, suffix=""):
 def _print_arms_text(arms):
     for arm, a in arms.items():
         print("  %s: completion %s (%d/%d evaluated), p50 ttPR %s, p90 ttPR %s, cost/completed %s "
-              "(cost measured %d/%d), capped %d, unavailable %d, infra/interrupted %d" % (
+              "(cost measured %d/%d), asked %d, capped %d, unavailable %d, infra/interrupted %d" % (
                   arm, fmt(a["completion_rate"]), a["completed"], a["evaluated"],
                   fmt(a["p50_time_to_pr_s"], "s"), fmt(a["p90_time_to_pr_s"], "s"),
                   fmt(a["cost_per_completed_usd"]), a["cost_measured_runs"], a["evaluated"],
-                  a["capped"], a["unavailable"], a["infra_or_interrupted"]))
+                  a["asked"], a["capped"], a["unavailable"], a["infra_or_interrupted"]))
         print("    wall p50 %s, completion %s, tokens/completed %s (tokens measured %d/%d), "
               "budget-stopped %d" % (
                   fmt(a["p50_wall_s"], "s"), fmt(a["completion_rate"]),
@@ -1912,16 +1942,16 @@ def _print_arms_text(arms):
 
 def _print_arms_markdown(arms):
     print("| Arm | Completed | Rate | p50 time to PR | p90 time to PR | p50 wall | Tokens per completed "
-          "| Cost per completed | Cost measured | Capped | Budget-stopped | Unavailable | Infra/interrupted |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+          "| Cost per completed | Cost measured | ASKED | Capped | Budget-stopped | Unavailable | Infra/interrupted |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for arm, a in arms.items():
         rate = "n/a" if a["completion_rate"] is None else "%.1f%%" % (100 * a["completion_rate"])
         cost = "n/a" if a["cost_per_completed_usd"] is None else "$%.4f" % a["cost_per_completed_usd"]
         label = arm + (" (%s)" % a["note"] if a["note"] else "")
-        print("| %s | %d/%d | %s | %s | %s | %s | %s | %s | %d/%d | %d | %d | %d | %d |" % (
+        print("| %s | %d/%d | %s | %s | %s | %s | %s | %s | %d/%d | %d | %d | %d | %d | %d |" % (
             label, a["completed"], a["evaluated"], rate, fmt(a["p50_time_to_pr_s"], "s"),
             fmt(a["p90_time_to_pr_s"], "s"), fmt(a["p50_wall_s"], "s"), fmt(a["tokens_per_completed"]),
-            cost, a["cost_measured_runs"], a["evaluated"],
+            cost, a["cost_measured_runs"], a["evaluated"], a["asked"],
             a["capped"], a["budget_stopped"], a["unavailable"], a["infra_or_interrupted"]))
 
 

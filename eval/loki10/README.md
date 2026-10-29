@@ -184,7 +184,7 @@ Otherwise the run's cost is null.
 
 Each results JSONL row has these fields: `run_id`, `task`, `arm`, `status`,
 `started`, `ended`, `wall_s`, `time_to_pr_s` (first push to the PR branch minus
-arm start, null if none), `pr_opened`, `hidden_pass`, `grade_refused`,
+arm start, null if none), `pr_opened`, `hidden_pass`, `asked`, `grade_refused`,
 `completed`, `cost_usd`, `cost_source`, `exit_code`, `capped`,
 `push_time_anomaly`, `invalid_reason`, `unavailable_reason`, `auth_source`,
 `expected_outcome`, `logs`, and, for `expected_outcome: no_change_needed`
@@ -194,6 +194,13 @@ implemented" above).
 - `completed` = `pr_opened` and `hidden_pass` and not `capped` and no
   `push_time_anomaly`. A push logged before the arm started is flagged, not
   clamped to zero.
+- `asked` is true when an ambiguous-brief check (`amb-*`) found a question
+  file and no passing recorded assumption: the check exits 3 and prints
+  `ASKED <nonce>` last. That is never `hidden_pass` and never `completed`;
+  summarize and the scorecard report it in its own ASKED column (rate
+  denominators are unchanged, so it is neither a completion nor a failed
+  check). Only a recorded assumption whose behavior and invariants hold
+  passes, with or without a question file beside it.
 - `cost_usd` is provider-reported only: claude's `total_cost_usd`, or the
   loki-arm contract above. It is never estimated.
 - summarize first dedupes: it keeps the newest row per `run_id`, then the

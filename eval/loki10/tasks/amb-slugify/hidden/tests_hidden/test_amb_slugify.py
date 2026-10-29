@@ -58,18 +58,22 @@ def asked_instead():
             return True
     return False
 def ambiguity_main():
-    if asked_instead():
-        print(os.environ["LOKI_EVAL_NONCE"])
-        return
+    # Only a recorded assumption whose behavior and invariants hold can pass.
+    # Asking is reported as its own outcome (ASKED, exit 3), never as a pass.
     opts = declared_options()
     if len(opts) == 0:
-        FAILS.append("no recorded assumption naming a choice (and no question asked)")
+        FAILS.append("no recorded assumption naming a choice")
     elif len(opts) > 1:
         FAILS.append("record names conflicting choices: %s" % sorted(opts))
     else:
         (o,) = opts
         check("invariants", invariants)
         check("behavior matches recorded choice %s" % o, BEHAVIOR[o])
+    if FAILS and asked_instead():
+        for f in FAILS:
+            print("FAIL " + f)
+        print("ASKED " + os.environ["LOKI_EVAL_NONCE"])
+        sys.exit(3)
     done()
 
 import textkit

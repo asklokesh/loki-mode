@@ -109,6 +109,9 @@
 #      prints wall, completion and tokens per completed for every arm under a
 #      "speed tier" heading in text, JSON and Markdown; a capped or
 #      budget-stopped run is never completed; missing tokens read n/a
+#  23. ASKED: an amb-* run that only asks is not hidden_pass or completed and
+#      summarize reports it in its own column; ask plus a working default
+#      matching its record still passes; reverting the fix turns it red
 #===============================================================================
 set -u
 
@@ -1835,6 +1838,68 @@ rc=$?
 [ "$rc" = 1 ] && grep -q "online fetch failed: cannot import harness" "$T/ms-noharness.out" && ! grep -q Traceback "$T/ms-noharness.out" \
     && pass "P12-30e: measure-size reports a harness import failure via note" \
     || fail "P12-30e: measure-size import failure rc=$rc: $(cat "$T/ms-noharness.out")"
+
+# ---- 23. ASKED: an ambiguous-brief run that only asks a question is its own
+# outcome. It is never hidden_pass and never completed, and summarize reports
+# it in its own column. A question beside a working default that matches its
+# recorded assumption still passes through the assumption path. Real amb-dedupe
+# task and check, stub arm modes ask / askdefault.
+hv() { python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import harness; print(harness.hidden_verdict(int(sys.argv[2]), sys.argv[3], "N0NCE", None))' "$HERE" "$@"; }
+[ "$(hv 3 $'FAIL x\nASKED N0NCE')" = asked ] && [ "$(hv 0 $'ASKED N0NCE')" = fail ] \
+    && [ "$(hv 3 $'ASKED WRONG')" = fail ] && [ "$(hv 3 $'N0NCE')" = fail ] \
+    && [ "$(hv 0 $'ok\nN0NCE')" = pass ] && [ "$(hv 1 $'ASKED N0NCE')" = fail ] \
+    && pass "23: hidden_verdict: ASKED needs exit 3 plus the nonce token; only exit 0 plus the bare nonce passes" \
+    || fail "23: hidden_verdict contract"
+ASKTASKS="$T/asktasks"
+mkdir -p "$ASKTASKS"
+cp -R "$HERE/tasks/amb-dedupe" "$ASKTASKS/amb-dedupe"
+ASKRUN() { env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$1" bash "$HERE/run.sh" "${@:2}"; }
+R="$T/out-asked"
+STUB_MODE=ask ASKRUN "$ASKTASKS" --arm raw-claude --task amb-dedupe --out "$R" >"$T/asked.log" 2>&1
+[ "$(row "$R/results.jsonl" pr_opened)" = true ] && [ "$(row "$R/results.jsonl" hidden_pass)" = false ] \
+    && [ "$(row "$R/results.jsonl" completed)" = false ] && [ "$(row "$R/results.jsonl" asked)" = true ] \
+    && pass "23: an ask-only branch is not hidden_pass and not completed, and the row says asked" \
+    || fail "23: ask-only row: $(tail -1 "$R/results.jsonl")"
+S="$(bash "$HERE/summarize" "$R/results.jsonl" --json)"
+printf '%s' "$S" | python3 -c 'import json,sys; g=json.load(sys.stdin)[0]; a=g["arms"]["raw-claude"]; sys.exit(0 if (a["asked"], a["completed"], a["evaluated"]) == (1, 0, 1) and "ASKED" in g["misses"][0]["reason"] else 1)' \
+    && bash "$HERE/summarize" "$R/results.jsonl" | grep -q "asked 1," \
+    && bash "$HERE/summarize" "$R/results.jsonl" --markdown | grep -q "| ASKED |" \
+    && pass "23: summarize reports ASKED as its own count (json, text, markdown), outside completed" \
+    || fail "23: summarize of an ask-only row: $S"
+R="$T/out-askdefault"
+STUB_MODE=askdefault ASKRUN "$ASKTASKS" --arm raw-claude --task amb-dedupe --out "$R" >"$T/askdefault.log" 2>&1
+[ "$(row "$R/results.jsonl" completed)" = true ] && [ "$(row "$R/results.jsonl" hidden_pass)" = true ] \
+    && [ "$(row "$R/results.jsonl" asked)" = false ] \
+    && pass "23: a question plus a working default matching its record still passes the assumption path" \
+    || fail "23: askdefault row: $(tail -1 "$R/results.jsonl")"
+# Mutation: put the old gameable behavior back (asking prints the pass nonce)
+# in a copy of the check. The ask-only run must then read as a pass, which
+# proves the ask-only assertions above fail when the fix is reverted.
+MUT="$T/asktasks-mut"
+mkdir -p "$MUT"
+cp -R "$HERE/tasks/amb-dedupe" "$MUT/amb-dedupe"
+python3 - "$MUT/amb-dedupe/hidden/tests_hidden/test_amb_dedupe.py" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = '        print("ASKED " + os.environ["LOKI_EVAL_NONCE"])\n        sys.exit(3)\n'
+assert s.count(old) == 1
+open(p, "w").write(s.replace(old, '        print(os.environ["LOKI_EVAL_NONCE"])\n        sys.exit(0)\n'))
+PY
+R="$T/out-asked-mut"
+STUB_MODE=ask ASKRUN "$MUT" --arm raw-claude --task amb-dedupe --out "$R" >"$T/asked-mut.log" 2>&1
+[ "$(row "$R/results.jsonl" hidden_pass)" = true ] && [ "$(row "$R/results.jsonl" completed)" = true ] \
+    && pass "23: with the fix reverted an ask-only branch completes (so the ask-only assertions go red)" \
+    || fail "23: reverted-fix control did not reproduce the gameable pass: $(tail -1 "$R/results.jsonl")"
+# All four amb-* checks carry the fix: none prints the pass nonce on the ask path.
+ok=1
+for t in amb-dedupe amb-quiet amb-retry amb-slugify; do
+    f="$(ls "$HERE/tasks/$t/hidden/tests_hidden/"test_*.py)"
+    grep -q 'print("ASKED " + os.environ\["LOKI_EVAL_NONCE"\])' "$f" && grep -q 'sys.exit(3)' "$f" || ok=0
+    sed -n '/^def ambiguity_main/,/^    done()/p' "$f" | grep -q 'asked_instead' || ok=0
+    ! sed -n '/^def ambiguity_main/,/^    done()/p' "$f" | grep -B1 -A2 'asked_instead' | grep -q 'return$' || ok=0
+done
+[ "$ok" = 1 ] && pass "23: all four amb-* checks route the ask path to ASKED" || fail "23: an amb-* check lacks the ASKED path"
 
 echo "Results: $PASS passed, $FAIL failed, $SKIPPED skipped"
 [ "$FAIL" = 0 ]
