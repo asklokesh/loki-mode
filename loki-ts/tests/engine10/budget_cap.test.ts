@@ -14,7 +14,7 @@ import { USAGE } from "../../src/engine10/cli.ts";
 import { engineArgv, START_USAGE, type ParsedStartOpts } from "../../src/commands/start.ts";
 import { buildProviderCost, writeProviderCost } from "../../src/providers/provider_cost.ts";
 import type { RunContext, Stage, StageName } from "../../src/engine10/types.ts";
-import { appendChildLedger, childSpendMeter } from "../../src/util/child_ledger.ts";
+import { appendChildLedger, childSpendDelta } from "../../src/util/child_ledger.ts";
 
 describe("cap resolution", () => {
   test("parse accepts positive numbers only", () => {
@@ -468,7 +468,7 @@ describe("child sessions count against the dollar cap", () => {
   test("child spend alone trips the cap, stage cost then adds to it", () => {
     const d = mkdtempSync(join(tmpdir(), "c5child-"));
     try {
-      const m = capMeter(noop, { LOKI_E10_MAX_COST_USD: "1" } as NodeJS.ProcessEnv, undefined, childSpendMeter(d, "R1"));
+      const m = capMeter(noop, { LOKI_E10_MAX_COST_USD: "1" } as NodeJS.ProcessEnv, undefined, childSpendDelta(d, "R1"));
       expect(m.over()).toBe(false);
       child(d, "R1"); expect(m.over()).toBe(false); expect(m.remaining()).toBeCloseTo(0.3, 10);
       m.emit("cost" as never, null as never, { usd: 0.4 }); // stage 0.4 + child 0.7
@@ -479,7 +479,7 @@ describe("child sessions count against the dollar cap", () => {
     const d = mkdtempSync(join(tmpdir(), "c5child-"));
     try {
       child(d, "R1"); // pre-resume child spend, already inside LOKI_E10_SPENT_USD
-      const m = capMeter(noop, { LOKI_E10_MAX_COST_USD: "1", LOKI_E10_SPENT_USD: "0.7" } as NodeJS.ProcessEnv, undefined, childSpendMeter(d, "R1"));
+      const m = capMeter(noop, { LOKI_E10_MAX_COST_USD: "1", LOKI_E10_SPENT_USD: "0.7" } as NodeJS.ProcessEnv, undefined, childSpendDelta(d, "R1"));
       child(d, "R2"); expect(m.over()).toBe(false); expect(m.remaining()).toBeCloseTo(0.3, 10);
       child(d, "R1", { ...rec, usd: 0.1 }); expect(m.remaining()).toBeCloseTo(0.2, 10); // post-resume child spend IS metered
       child(d, "R1", { ...rec, usd: 0.25 }); expect(m.over()).toBe(true);
@@ -489,7 +489,7 @@ describe("child sessions count against the dollar cap", () => {
     const d = mkdtempSync(join(tmpdir(), "c5child-"));
     try {
       const env = { LOKI_E10_MAX_COST_USD: "1", LOKI_BUDGET_LEDGER: join(d, "l.ledger") } as NodeJS.ProcessEnv;
-      const a = capMeter(noop, env, undefined, childSpendMeter(d, "R1")), b = capMeter(noop, env);
+      const a = capMeter(noop, env, undefined, childSpendDelta(d, "R1")), b = capMeter(noop, env);
       child(d, "R1"); expect(a.over()).toBe(false);
       expect(ledgerSum(join(d, "l.ledger"))).toBeCloseTo(0.7, 10);
       b.emit("cost" as never, null as never, { usd: 0.4 });

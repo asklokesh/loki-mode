@@ -2,7 +2,7 @@
 // D82-COSTCAP: the default is $100 when an API key is set in the env, and NO dollar cap on a subscription run (no key); only whether the key variable is SET is checked, never its value.
 // Enforced in the worker (worker.ts -> machine.ts overCap): once priced cost reaches the cap no further stage starts and the
 // run ends BUDGET_STOP (exit 3). Unpriced sessions (usd null) never count, so an unmetered run is not stopped by a guess.
-import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts"; import { loadDefaultMaxCostUsd } from "../runner/budget.ts";
+import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts"; import { ledgerSum, loadDefaultMaxCostUsd } from "../runner/budget.ts"; export { ledgerSum };
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"; import { join, resolve } from "node:path"; import { capability } from "../providers/provider_guard.ts";
 export const DEFAULT_MAX_COST_USD = loadDefaultMaxCostUsd(); // LM-002: default per-run cap lives in loki-ts/data/model-pricing.json, read by runner/budget.ts
 export const SUBSCRIPTION_NOTE = "subscription: no dollar cap; usage counts against your plan limits";
@@ -40,14 +40,10 @@ export function groupEnv(env: NodeJS.ProcessEnv, capUsd: number, repoDir?: strin
   if (repoDir && !out.LOKI_BUDGET_LEDGER) { try { const d = join(resolve(repoDir), ".loki", "runs"); mkdirSync(d, { recursive: true }); out.LOKI_BUDGET_LEDGER = join(d, `group-${process.pid}-${Date.now()}.ledger`); } catch (e) { out.LOKI_BUDGET_LEDGER = join(resolve(repoDir), ".loki", "runs", "unusable", "group.ledger"); /* deliberately unreachable path, used only when mkdir fails */ process.stderr.write(`budget: cannot create the shared ledger dir (${e instanceof Error ? e.message : String(e)}); units will stop, failing closed\n`); } } // P12-22s: a path under a non-directory, so capMeter fails closed on it
   return out;
 }
-/** P12-22r: shared ledger. One JSON line per priced cost, written with a single O_APPEND write (atomic for small lines). Sum = spend of every unit. */
-export function ledgerSum(path: string): number | null {
-  try { let t = 0, seeded = false; for (const l of readFileSync(path, "utf8").split("\n")) { if (!l) continue; const r = JSON.parse(l) as { usd?: unknown; seed?: unknown }, u = r.usd; if (r.seed === true) { if (seeded) continue; seeded = true; } /* first seed wins when units carry different seeds */ if (typeof u === "number" && Number.isFinite(u) && u > 0) t += u; } return t; } catch { return null; }
-}
 export const BUDGET_THRESHOLDS = [0.5, 0.8, 1] as const;
 export interface BudgetCrossing { threshold_pct: number; threshold_usd: number; usd_so_far: number; cap_usd: number }
 /** Worker side: wraps the emit fn so every cost event feeds the meter; `over` is RunContext.overCap. Emits one `budget` event per 50/80/100 percent threshold of the cap. */
-export function capMeter<E extends (type: never, stage: never, data: Record<string, unknown>) => void>(raw: E, env: NodeJS.ProcessEnv, onBudget?: (b: BudgetCrossing) => void, childUsd?: () => number): { emit: E; over: () => boolean; remaining: () => number | null } {
+export function capMeter<E extends (type: never, stage: never, data: Record<string, unknown>) => void>(raw: E, env: NodeJS.ProcessEnv, onBudget?: (b: BudgetCrossing) => void, childDelta?: () => number): { emit: E; over: () => boolean; remaining: () => number | null } {
   const capUsd = parseCapUsd(env.LOKI_E10_MAX_COST_USD) ?? 0, seed = Number(env.LOKI_E10_SPENT_USD);
   const m = costMeter(capUsd, seed); // LOKI_E10_SPENT_USD: prior spend on this task, so kill-and-rerun cannot reset the cap
   const ledger = env.LOKI_BUDGET_LEDGER ? resolve(env.LOKI_BUDGET_LEDGER) : "";
@@ -55,8 +51,7 @@ export function capMeter<E extends (type: never, stage: never, data: Record<stri
   if (ledger) { try { appendFileSync(ledger, ""); readFileSync(ledger); } catch { broken = true; } }
   const base = Number.isFinite(seed) && seed > 0 ? seed : 0;
   if (ledger && !broken && base > 0) { try { if (!((ledgerSum(ledger) ?? 0) > 0)) appendFileSync(ledger, JSON.stringify({ pid: process.pid, usd: base, seed: true }) + "\n"); } catch { broken = true; } } // P12-22s: the rerun seed is recorded once in the ledger (first seed line counts), never added on top of spend it already holds
-  let synced = 0; // child-session spend since the worker started, metered through the same private meter and shared ledger as stage cost
-  const sync = (): void => { const d = childUsd ? childUsd() - synced : 0; if (!(d > 0)) return; synced += d; m.add(d); if (ledger) { try { appendFileSync(ledger, JSON.stringify({ pid: process.pid, usd: d }) + "\n"); } catch { broken = true; } } };
+  const sync = (): void => { const d = childDelta ? childDelta() : 0; if (!(d > 0)) return; m.add(d); if (ledger) { try { appendFileSync(ledger, JSON.stringify({ pid: process.pid, usd: d }) + "\n"); } catch { broken = true; } } };
   const spent = (): number | null => { sync(); return ledgerSum(ledger); };
   const so_far = (): number => { sync(); const l = ledger && !broken ? spent() : null; return l !== null ? l : m.total(); };
   const fired = new Set<number>(); // each threshold once; a rerun seeded past one does not repeat it

@@ -172,3 +172,10 @@ export function childSpendMeter(lokiRoot: string, runId: string): () => number {
   const base = sumChildLedger(lokiRoot, runId).partialUsd;
   return () => Math.max(sumChildLedger(lokiRoot, runId).partialUsd - base, 0);
 }
+
+/** Child spend for the dollar cap, handed out once: each call returns what was added since the previous call (the first call, since creation). The cap meters it through the same private meter and shared ledger as stage cost. */
+export function childSpendDelta(lokiRoot: string, runId: string): () => number {
+  const total = childSpendMeter(lokiRoot, runId);
+  let seen = 0;
+  return () => { const d = total() - seen; if (!(d > 0)) return 0; seen += d; return d; };
+}

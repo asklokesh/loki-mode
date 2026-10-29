@@ -603,3 +603,8 @@ export function recordPartialStreamCost(lokiRoot: string, iterationId: string, i
   writeEfficiencyRecord(lokiRoot, info, out, "partial-stream");
   return out;
 }
+
+/** P12-22r: shared ledger. One JSON line per priced cost, written with a single O_APPEND write (atomic for small lines). Sum = spend of every unit. */
+export function ledgerSum(path: string): number | null {
+  try { let t = 0, seeded = false; for (const l of readFileSync(path, "utf8").split("\n")) { if (!l) continue; const r = JSON.parse(l) as { usd?: unknown; seed?: unknown }, u = r.usd; if (r.seed === true) { if (seeded) continue; seeded = true; } /* first seed wins when units carry different seeds */ if (typeof u === "number" && Number.isFinite(u) && u > 0) t += u; } return t; } catch { return null; }
+}

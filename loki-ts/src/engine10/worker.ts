@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { readEvents } from "./events.ts";
 import { eventsRelPath } from "../util/engine_origin.ts";
 import { GITHUB_TOKEN_VARS, SENTINEL_PREFIX } from "../util/credential_env.ts";
-import { costTotalsOf, liveArchivedCosts, sumRunCosts, UNMETERED } from "./cost.ts"; import { childSpendMeter, sealedRunCost } from "../util/child_ledger.ts";
+import { costTotalsOf, liveArchivedCosts, sumRunCosts, UNMETERED } from "./cost.ts"; import { childSpendDelta, sealedRunCost } from "../util/child_ledger.ts";
 import { capMeter, type BudgetCrossing } from "../e10ext/budget_cap.ts";
 import { resizeCap } from "../util/run_cap.ts"; import { loadProjectApi } from "../project_model/resolve.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
 import { FLOW, runMachine } from "./machine.ts";
@@ -47,7 +47,7 @@ export function costCapture(rawEmit: WorkerEmit, runId: string, repoDir: string,
 }
 
 /** The worker's one emit composition (main uses only this): the cap meter wraps the cost capture, so each cost event feeds the meter and the receipt's reader. */
-export function workerEmits(rawEmit: WorkerEmit, runId: string, repoDir: string, lokiRoot: string, env: NodeJS.ProcessEnv = process.env, onBudget?: (b: BudgetCrossing) => void): { emit: WorkerEmit; over: () => boolean; remaining: () => number | null; cost: RunContext["cost"] } { const c = costCapture(rawEmit, runId, repoDir, env); return { ...capMeter(c.emit, env, onBudget, childSpendMeter(lokiRoot, runId)), cost: c.cost }; }
+export function workerEmits(rawEmit: WorkerEmit, runId: string, repoDir: string, lokiRoot: string, env: NodeJS.ProcessEnv = process.env, onBudget?: (b: BudgetCrossing) => void): { emit: WorkerEmit; over: () => boolean; remaining: () => number | null; cost: RunContext["cost"] } { const c = costCapture(rawEmit, runId, repoDir, env); return { ...capMeter(c.emit, env, onBudget, childSpendDelta(lokiRoot, runId)), cost: c.cost }; }
 /** `engine10 worker <run-id> <provider> <model> <fast|deep>`, spawned by the supervisor through cli.ts. */
 export async function main(args: string[]): Promise<number> {
   const [runId, provider = "claude", model = resolveModel(provider), mode = "fast"] = args;
