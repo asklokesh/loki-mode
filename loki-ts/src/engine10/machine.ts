@@ -52,7 +52,8 @@ function defaultLoader(dir: string) {
     return mod ? (mod.stage ?? mod.default ?? null) : null;
   };
 }
-export const hasFailures = (d: Obj | undefined): boolean => (Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0) || (typeof d?.holdout_failed === "number" && d.holdout_failed > 0); // C-C4b: a held-out failure is only an opaque count
+const harnessOnlyFail = (d: Obj | undefined): boolean => { const f = (Array.isArray(d?.checks) ? (d.checks as Obj[]) : []).filter((c) => c?.result === "fail"); return f.length > 0 && f.every((c) => c.owner === "harness"); }; // a harness-owned failure never feeds a fix round or a STALLED stop
+export const hasFailures = (d: Obj | undefined): boolean => (Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0 && !harnessOnlyFail(d)) || (typeof d?.holdout_failed === "number" && d.holdout_failed > 0); // C-C4b: a held-out failure is only an opaque count
 // Only already_satisfied short-circuits to the tail. spec_conflict still runs verify (E-98b) but no fix round (FC-FIX-OVER-CONFLICT); seal reads implement.exit off outputs for the verdict.
 const earlyExit = (d: Obj): boolean => d.already_satisfied === true;
 /** After a cap or limit kill, how long the machine waits for the aborted stage to settle before moving on. */

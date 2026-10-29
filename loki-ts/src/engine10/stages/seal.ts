@@ -128,8 +128,8 @@ function checksOf(v: unknown, pc: ProvenanceCtx, preRed: readonly string[] = [],
   return v.filter((c): c is Obj => !!c && typeof c === "object").map((c) => ({
     name: String(c.name ?? ""),
     cmd: String(c.cmd ?? ""),
-    result: c.result === "pass" || c.result === "fail" ? c.result : "not_run",
-    duration_s: typeof c.duration_s === "number" ? c.duration_s : 0, provenance: checkProvenance(String(c.name ?? ""), pc), ...(typeof c.n === "number" ? { n: c.n } : {}), ...(typeof c.count === "string" ? { count: c.count } : {}), ...(c.result === "fail" && preRed.includes(String(c.name ?? "")) ? { pre_red: true as const } : {}), ...(c.result !== "pass" && c.result !== "fail" && repoSkipped.includes(String(c.name ?? "")) ? { repo_skipped: true as const } : {}), // pre_red (FC-PR-BODY-PUBLIC-HYGIENE); n: TEN-GATES-03-F1 verify --require-exogenous counts only executed proof (n > 0); additive like provenance
+    result: c.result === "pass" || (c.result === "fail" && c.owner !== "harness") ? c.result : "not_run", // never-worse-than-raw floor: a gate that failed for a harness reason is not a code failure; it seals not_run (PARTIAL), never FAILED
+    duration_s: typeof c.duration_s === "number" ? c.duration_s : 0, ...(c.owner === "harness" && c.result !== "pass" ? { owner: "harness" as const } : {}), provenance: checkProvenance(String(c.name ?? ""), pc), ...(typeof c.n === "number" ? { n: c.n } : {}), ...(typeof c.count === "string" ? { count: c.count } : {}), ...(c.result === "fail" && preRed.includes(String(c.name ?? "")) ? { pre_red: true as const } : {}), ...(c.result !== "pass" && c.result !== "fail" && repoSkipped.includes(String(c.name ?? "")) ? { repo_skipped: true as const } : {}), // pre_red (FC-PR-BODY-PUBLIC-HYGIENE); n: TEN-GATES-03-F1 verify --require-exogenous counts only executed proof (n > 0); additive like provenance
   }));
 }
 

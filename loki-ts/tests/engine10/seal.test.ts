@@ -20,7 +20,7 @@ import { dirname, join, resolve } from "node:path";
 import { backstopCommit } from "../../src/e10ext/commit_filter.ts"; import { sealDrift } from "../../src/util/seal_drift.ts";
 import { reviewExtraLimitS } from "../../src/engine10/stages/xreview.ts";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
-import { runMachine } from "../../src/engine10/machine.ts";
+import { hasFailures, runMachine } from "../../src/engine10/machine.ts";
 import { costTotalsOf, sumResultCosts } from "../../src/engine10/cost.ts";
 import { buildTime, reconciledTotalS } from "../../src/contrib/receipt_time.ts";
 import { hooks } from "../../src/engine10/hooks.ts";
@@ -658,6 +658,39 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(readFileSync(join(ctx.runDir, "receipt.md"), "utf8")).toContain("## Loki receipt: SPEC_CONFLICT");
     expect(events.find((e) => e.type === "receipt.sealed")?.data.verdict).toBe("SPEC_CONFLICT");
   }, 30000);
+
+  // never-worse-than-raw floor: repo checks pass, a Loki gate failed for a harness reason -> PARTIAL, owner harness, tree delivered.
+  const floorRun = async (name: string, wallOwner: "harness" | undefined) => {
+    noKey();
+    const { repo, base } = makeRepo(name);
+    const { ctx } = ctxFor(repo, base, "claude", {
+      verify: { checks: [
+        { name: "pytest", cmd: "pytest -q", result: "pass", n: 3, duration_s: 1 },
+        { name: "wall:loki_wall_a.py", cmd: "python3 -m pytest loki_wall_a.py", result: "fail", ...(wallOwner ? { owner: wallOwner } : {}), duration_s: 1 },
+      ], flaky: [], wall_passed: false, duration_s: 1 },
+    });
+    const c = await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    return { c, s, r: receiptOf(s) };
+  };
+  test("floor: a harness-owned gate failure with passing repo checks seals PARTIAL with owner harness and a delivered commit", async () => {
+    const { c, r } = await floorRun("floor-harness", "harness");
+    expect(c.status).toBe("completed");
+    expect(r.verdict).toBe("PARTIAL");
+    const w = r.checks.find((k) => k.name.startsWith("wall:"))!;
+    expect(w.result).toBe("not_run");
+    expect(w.owner).toBe("harness");
+  }, 30000);
+  test("floor: a code-owned gate failure is still FAILED and carries no owner", async () => {
+    const { r } = await floorRun("floor-code", undefined);
+    expect(r.verdict).toBe("FAILED");
+    expect(r.checks.find((k) => k.name.startsWith("wall:"))!.owner).toBeUndefined();
+  }, 30000);
+  test("floor: a harness-owned failure feeds no fix round and no stall", () => {
+    const v = (owner?: string) => ({ checks: [{ name: "w", result: "fail", ...(owner ? { owner } : {}) }], failures_grouped: [{ signature: "w", count: 1, sample: "" }] });
+    expect(hasFailures(v("harness"))).toBe(false);
+    expect(hasFailures(v())).toBe(true);
+  });
 
   // FC-16 r5: a Go-only run (count never confirmed) is reported as unconfirmed on NOT PROVEN, never as "no tests executed".
   test("go-only run: NOT PROVEN says the count could not be confirmed, not that no tests executed", async () => {
