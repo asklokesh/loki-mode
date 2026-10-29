@@ -5,11 +5,12 @@
 // deps.runsRoot -- never a checked-in fixture and never an assertion that
 // some sibling path is absent, so this test says nothing about any other
 // slice's files.
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { sealedLog } from "./log_fixture.ts";
 import { createHash, generateKeyPairSync, sign as nodeSign, type KeyObject } from "node:crypto";
-import { kidOf } from "../../src/engine10/stages/seal.ts";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { kidOf, signReceipt } from "../../src/engine10/stages/seal.ts";
+import { SupervisorLog } from "../../src/engine10/supervisor.ts";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -1759,4 +1760,207 @@ describe("verifyReceipt: a deleted sealed Wall copy is tampered", () => {
       expect((await verifyReceipt(path)).verdict).toBe("UNSIGNED");
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+});
+
+// PX-10 moat KPI: an adversarial receipt corpus. Every mutation is generated in code from a valid signed run
+// (real git repo, real SupervisorLog, real signReceipt), so nothing here is a checked-in fixture. "Detected"
+// means `loki verify` did not exit 0. Each class must be caught 100% and a clean set must never be flagged.
+describe("PX-10 adversarial receipt corpus", () => {
+  type VerifyDeps = NonNullable<Parameters<typeof main>[1]>;
+  interface PxRun { repo: string; dir: string; path: string; id: string; base: string; head: string; runsRoot: string }
+  interface PxCase { name: string; apply: (r: PxRun) => void; signed?: boolean; args?: (r: PxRun) => string[]; deps?: VerifyDeps; env?: Record<string, string>; todo?: string }
+  const keyA = generateKeyPairSync("ed25519"), keyB = generateKeyPairSync("ed25519");
+  const pem = (k: { privateKey: KeyObject }): string => k.privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+  const sha = (b: string | Buffer): string => createHash("sha256").update(b).digest("hex");
+  const git = (cwd: string, ...a: string[]): string => Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd }).stdout.toString().trim();
+  const roots: string[] = [];
+  const saved: Record<string, string | undefined> = {};
+  const ENVS = ["LOKI_RECEIPT_SIGNING_KEY", "LOKI_RECEIPT_SIGNING_KEY_FILE", "LOKI_VERIFY_ALLOW_HEAD_DRIFT", "LOKI_VERIFY_TASK_FILE", "LOKI_RECEIPT_RETIRED_PUBKEYS"];
+  beforeAll(() => { for (const k of ENVS) { saved[k] = process.env[k]; delete process.env[k]; } process.env["LOKI_RECEIPT_SIGNING_KEY"] = pem(keyA); });
+  afterAll(() => { for (const k of ENVS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } for (const d of roots) rmSync(d, { recursive: true, force: true }); });
+
+  let seq = 0;
+  /** A valid run: two-commit git repo, issue-sourced task, honest event log, receipt signed by keyA (or left unsigned). */
+  function build(extra = 0, signed = true): PxRun {
+    const repo = mkdtempSync(join(tmpdir(), "px10-")); roots.push(repo);
+    git(repo, "init", "-q"); writeFileSync(join(repo, "a.txt"), "1"); git(repo, "add", "a.txt"); git(repo, "commit", "-qm", `base ${seq}`);
+    writeFileSync(join(repo, "a.txt"), "2"); writeFileSync(join(repo, "b.txt"), "x"); git(repo, "add", "a.txt", "b.txt"); git(repo, "commit", "-qm", `head ${seq}`);
+    const base = git(repo, "rev-parse", "HEAD~1"), head = git(repo, "rev-parse", "HEAD"), id = `px10-run-${seq++}`;
+    const runsRoot = join(repo, ".loki", "runs"), dir = join(runsRoot, id), ev = join(dir, "events.jsonl");
+    mkdirSync(dir, { recursive: true });
+    const issue = JSON.stringify({ title: `task ${id}`, body: "do it" }); writeFileSync(join(dir, "issue.json"), issue);
+    const log = new SupervisorLog(ev, id);
+    log.append("run.started", null, { provider: "claude" }); log.append("stage.started", "verify", {}); log.append("test.result", "verify", { name: "unit", result: "pass" });
+    for (let i = 0; i < extra; i++) log.append("worker.note", null, { i });
+    const fields: Record<string, unknown> = { ...baseReceiptFields(), run_id: id, task: { source: "issue", sha256: sha(issue) }, base_sha: base, head_sha: head, events_sha256: sha(readFileSync(ev)), ...(signed ? { log_seal: true } : {}) };
+    const hash = computeReceiptHash(fields), path = join(dir, "receipt.json");
+    writeFileSync(path, JSON.stringify({ ...fields, receipt_sha256: hash, verification: signed ? signReceipt(id, hash) : { jwt: null, kid: null } }, null, 2));
+    log.append("receipt.sealed", "seal", { receipt_sha256: hash }); log.append("run.completed", null, {}); if (signed) log.sealLog();
+    return { repo, dir, path, id, base, head, runsRoot };
+  }
+  const evPath = (r: PxRun): string => join(r.dir, "events.jsonl");
+  const evText = (r: PxRun): string => readFileSync(evPath(r), "utf8");
+  const evLines = (r: PxRun): string[] => evText(r).split("\n").filter(Boolean);
+  const putLines = (r: PxRun, l: string[]): void => writeFileSync(evPath(r), l.join("\n") + "\n");
+  const rc = (r: PxRun): Record<string, any> => JSON.parse(readFileSync(r.path, "utf8"));
+  const putRc = (r: PxRun, o: unknown): void => writeFileSync(r.path, JSON.stringify(o, null, 2));
+  const edit = (f: (o: Record<string, any>) => void) => (r: PxRun): void => { const o = rc(r); f(o); putRc(r, o); };
+  /** Edit then recompute receipt_sha256 and re-sign with the current key, as an attacker holding the signing key would. */
+  const editResign = (f: (o: Record<string, any>) => void) => (r: PxRun): void => { const o = rc(r); f(o); delete o.receipt_sha256; const h = computeReceiptHash(o); o.receipt_sha256 = h; o.verification = signReceipt(o.run_id, h); putRc(r, o); };
+  const b64 = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const unb64 = (s: string): any => JSON.parse(Buffer.from(s, "base64url").toString());
+  /** Re-sign the receipt's JWT header/payload with `key`, optionally rewriting header fields. */
+  const forgeJwt = (key: KeyObject, hdr: Record<string, unknown> = {}, pay: Record<string, unknown> = {}) => edit((o) => { const [h, p] = o.verification.jwt.split("."); const H = b64({ ...unb64(h), ...hdr }), P = b64({ ...unb64(p), ...pay }); o.verification.jwt = `${H}.${P}.${nodeSign(null, Buffer.from(`${H}.${P}`), key).toString("base64url")}`; });
+  const jwtMap = (f: (parts: string[]) => string) => edit((o) => { o.verification.jwt = f(o.verification.jwt.split(".")); });
+  const reSealLog = (key: KeyObject, kid: string) => (r: PxRun): void => { const l = evLines(r), e = JSON.parse(l.at(-1)!); e.data.kid = kid; e.data.sig = nodeSign(null, Buffer.from(`${e.data.events_sha256}:false`), key).toString("base64url"); putLines(r, [...l.slice(0, -1), JSON.stringify(e)]); };
+  const kidA = kidOf(keyA.publicKey), kidB = kidOf(keyB.publicKey);
+
+  async function verdictOf(r: PxRun, args: string[], deps: VerifyDeps, env: Record<string, string> = {}): Promise<{ code: number; verdict: string }> {
+    const out: string[] = [], w = process.stdout.write.bind(process.stdout), e = process.stderr.write.bind(process.stderr), before: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(env)) { before[k] = process.env[k]; process.env[k] = v; }
+    process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    try { const code = await main(args, { runsRoot: r.runsRoot, ...deps }); return { code, verdict: /verdict: (\S+)/.exec(out.join(""))?.[1] ?? "NONE" }; }
+    finally { process.stdout.write = w; process.stderr.write = e; for (const [k, v] of Object.entries(before)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
+  }
+  async function run(c: PxCase): Promise<{ code: number; verdict: string }> {
+    const r = build(0, c.signed !== false); c.apply(r);
+    const args = c.args ? c.args(r) : [r.path, ...(c.signed === false ? ["--allow-unsigned"] : [])];
+    return verdictOf(r, args, c.deps ?? {}, c.env);
+  }
+
+  const wsBody = (r: PxRun): string => evText(r).slice(0, -1);
+  const append = (s: string) => (r: PxRun): void => writeFileSync(evPath(r), evText(r) + s);
+  const CLASSES: Record<string, PxCase[]> = {
+    tamper: [
+      { name: "verdict edited", apply: edit((o) => { o.verdict = "PARTIAL"; }) },
+      { name: "cost edited", apply: edit((o) => { o.cost.usd = 0; }) },
+      { name: "extra passing check injected", apply: edit((o) => { o.checks.push({ name: "e2e", cmd: "x", result: "pass", duration_s: 1 }); }) },
+      { name: "head_sha edited", apply: edit((o) => { o.head_sha = "1".repeat(40); }) },
+      { name: "diff_sha256 edited", apply: edit((o) => { o.diff_sha256 = "2".repeat(64); }) },
+      { name: "unknown field added", apply: edit((o) => { o.extra = 1; }) },
+      { name: "not_proven deleted", apply: edit((o) => { delete o.not_proven; }) },
+      { name: "events_sha256 swapped to the empty-log hash", apply: edit((o) => { o.events_sha256 = sha(""); }) },
+      { name: "receipt_sha256 deleted", apply: edit((o) => { delete o.receipt_sha256; }) },
+      { name: "receipt edited then only receipt_sha256 recomputed (jwt stale)", apply: edit((o) => { o.verdict = "PARTIAL"; delete o.receipt_sha256; o.receipt_sha256 = computeReceiptHash(o); }) },
+      { name: "log_seal marker removed (downgrade)", apply: edit((o) => { delete o.log_seal; }) },
+      { name: "signature stripped (jwt null)", apply: edit((o) => { o.verification = { jwt: null, kid: null }; }) },
+      { name: "event line content edited", apply: (r) => writeFileSync(evPath(r), evText(r).replace('"claude"', '"codex"')) },
+      { name: "test.result pass flipped to fail in the log", apply: (r) => writeFileSync(evPath(r), evText(r).replace('"result":"pass"', '"result":"fail"')) },
+      { name: "issue.json edited after seal (intent drift)", apply: (r) => writeFileSync(join(r.dir, "issue.json"), JSON.stringify({ title: "other", body: "other" })) },
+    ],
+    truncate: [
+      { name: "receipt.json cut to half", apply: (r) => writeFileSync(r.path, readFileSync(r.path, "utf8").slice(0, 400)) },
+      { name: "receipt.json emptied", apply: (r) => writeFileSync(r.path, "") },
+      { name: "events drop last line", apply: (r) => putLines(r, evLines(r).slice(0, -1)) },
+      { name: "events drop last 2 lines", apply: (r) => putLines(r, evLines(r).slice(0, -2)) },
+      { name: "events drop last 4 lines (back to before receipt.sealed)", apply: (r) => putLines(r, evLines(r).slice(0, -4)) },
+      { name: "events drop first line", apply: (r) => putLines(r, evLines(r).slice(1)) },
+      { name: "events emptied", apply: (r) => writeFileSync(evPath(r), "") },
+      { name: "events deleted", apply: (r) => rmSync(evPath(r)) },
+      { name: "events cut mid-line (torn tail)", apply: (r) => writeFileSync(evPath(r), evText(r).slice(0, -25)) },
+      { name: "jwt signature segment dropped", apply: jwtMap((p) => p.slice(0, 2).join(".")) },
+      { name: "jwt cut mid-signature", apply: jwtMap((p) => `${p[0]}.${p[1]}.${p[2]!.slice(0, 20)}`) },
+    ],
+    reorder: [
+      { name: "swap first two events", apply: (r) => { const l = evLines(r); [l[0], l[1]] = [l[1]!, l[0]!]; putLines(r, l); } },
+      { name: "reverse all events", apply: (r) => putLines(r, evLines(r).reverse()) },
+      { name: "log.sealed moved before run.completed", apply: (r) => { const l = evLines(r), n = l.length; [l[n - 1], l[n - 2]] = [l[n - 2]!, l[n - 1]!]; putLines(r, l); } },
+      { name: "receipt.sealed and run.completed swapped", apply: (r) => { const l = evLines(r), n = l.length; [l[n - 3], l[n - 2]] = [l[n - 2]!, l[n - 3]!]; putLines(r, l); } },
+      { name: "last event moved to the front", apply: (r) => { const l = evLines(r); putLines(r, [l.pop()!, ...l]); } },
+      { name: "jwt header and payload swapped", apply: jwtMap((p) => `${p[1]}.${p[0]}.${p[2]}`) },
+    ],
+    "stale commit": [
+      { name: "new commit rewrites a sealed path", apply: (r) => { writeFileSync(join(r.repo, "a.txt"), "3"); git(r.repo, "commit", "-qam", "later"); } },
+      { name: "new commit rewrites the other sealed path", apply: (r) => { writeFileSync(join(r.repo, "b.txt"), "y"); git(r.repo, "commit", "-qam", "later"); } },
+      { name: "two later commits on sealed paths", apply: (r) => { for (const v of ["3", "4"]) { writeFileSync(join(r.repo, "a.txt"), v); git(r.repo, "commit", "-qam", `later ${v}`); } } },
+      { name: "branch reset back to the base commit", apply: (r) => { git(r.repo, "reset", "-q", "--hard", r.base); } },
+      { name: "detached checkout of the base commit", apply: (r) => { git(r.repo, "checkout", "-q", r.base); } },
+      { name: "head commit amended with changed content", apply: (r) => { writeFileSync(join(r.repo, "a.txt"), "amended"); git(r.repo, "commit", "-qa", "--amend", "-m", "head"); } },
+      { name: "receipt older than --max-age", apply: () => {}, args: (r) => [r.path, "--max-age", "1h"], deps: { now: () => Date.now() + 86_400_000 } },
+    ],
+    "wrong commit": [
+      { name: "head_sha set to the base commit, re-signed", apply: editResign((o) => { o.head_sha = o.base_sha; }) },
+      { name: "head_sha set to zeros, re-signed", apply: editResign((o) => { o.head_sha = "0".repeat(40); }) },
+      { name: "head_sha abbreviated, re-signed", apply: editResign((o) => { o.head_sha = o.head_sha.slice(0, 7); }) },
+      { name: "base_sha and head_sha swapped, re-signed", apply: editResign((o) => { [o.base_sha, o.head_sha] = [o.head_sha, o.base_sha]; }) },
+      { name: "run dir copied into a different repo with other history", apply: (r) => { const other = build(); const dst = join(other.repo, ".loki", "runs", r.id); mkdirSync(join(dst, ".."), { recursive: true }); cpSync(r.dir, dst, { recursive: true }); r.path = join(dst, "receipt.json"); r.runsRoot = join(other.repo, ".loki", "runs"); } },
+      { name: "head_sha edited with no re-sign", apply: edit((o) => { o.head_sha = o.base_sha; }) },
+    ],
+    replay: [
+      { name: "run A receipt.json laid over run B", apply: (r) => { const a = build(); cpSync(a.path, r.path); } },
+      { name: "run A jwt grafted into run B", apply: (r) => { const a = build(); const j = rc(a).verification; edit((o) => { o.verification = j; })(r); } },
+      { name: "run A events.jsonl laid over run B", apply: (r) => { const a = build(); cpSync(evPath(a), evPath(r)); } },
+      { name: "this run's own sealed dir presented under another run id (same repo, same HEAD)", apply: (r) => { cpSync(r.dir, join(r.runsRoot, "px10-replay"), { recursive: true }); }, args: () => ["px10-replay"], todo: "FINDING: verify by run id never compares the directory name to the receipt's signed run_id, so a valid run's dir copied under another id reads VERIFIED; only --json signed_run_id exposes it to the caller" },
+      { name: "another repo's sealed run dir copied under a new id (HEAD differs)", apply: (r) => { const a = build(); const dst = join(r.runsRoot, "px10-replay"); cpSync(a.dir, dst, { recursive: true }); r.path = join(dst, "receipt.json"); }, args: () => ["px10-replay"] },
+      { name: "an event line duplicated", apply: (r) => { const l = evLines(r); l.splice(2, 0, l[1]!); putLines(r, l); } },
+      { name: "seal tail (receipt.sealed .. log.sealed) replayed at the end", apply: (r) => { const l = evLines(r); putLines(r, [...l, ...l.slice(-3)]); } },
+      { name: "valid old receipt replayed past --max-age", apply: () => {}, args: (r) => [r.path, "--max-age", "10m"], deps: { now: () => Date.now() + 3 * 3600_000 } },
+    ],
+    "key swap": [
+      { name: "jwt re-signed by another key, kid header kept", apply: forgeJwt(keyB.privateKey) },
+      { name: "jwt re-signed by another key and its kid", apply: forgeJwt(keyB.privateKey, { kid: kidB }) },
+      { name: "alg downgraded to none", apply: forgeJwt(keyA.privateKey, { alg: "none" }) },
+      { name: "alg set to HS256", apply: forgeJwt(keyA.privateKey, { alg: "HS256" }) },
+      { name: "log.sealed signed by another key with its kid", apply: reSealLog(keyB.privateKey, kidB) },
+      { name: "log.sealed signed by another key under the receipt kid", apply: reSealLog(keyB.privateKey, kidA) },
+      { name: "verification.kid swapped to another key's kid", apply: edit((o) => { o.verification.kid = kidB; }) },
+      { name: "checked against a different --pubkey", apply: () => {}, deps: { pubkey: keyB.publicKey } },
+      { name: "verifier holds a different local signing key", apply: () => {}, env: { LOKI_RECEIPT_SIGNING_KEY: pem(keyB) } },
+    ],
+    whitespace: [
+      { name: "space appended to the log", apply: append(" ") },
+      { name: "tab appended to the log", apply: append("\t") },
+      { name: "space + newline appended", apply: append(" \n") },
+      { name: "blank lines appended", apply: append("\n\n") },
+      { name: "single newline appended", apply: append("\n") },
+      { name: "trailing space on the last line", apply: (r) => writeFileSync(evPath(r), wsBody(r) + " \n") },
+      { name: "trailing CR on the last line", apply: (r) => writeFileSync(evPath(r), wsBody(r) + "\r\n") },
+      { name: "leading space on the last line", apply: (r) => { const l = evLines(r); l[l.length - 1] = " " + l.at(-1); putLines(r, l); } },
+      { name: "tab before a mid-log newline", apply: (r) => writeFileSync(evPath(r), evText(r).replace("\n", "\t\n")) },
+      { name: "log converted to CRLF", apply: (r) => writeFileSync(evPath(r), evText(r).replace(/\n/g, "\r\n")) },
+      { name: "unsigned: space appended to the log", signed: false, apply: append(" ") },
+      { name: "unsigned: blank line appended to the log", signed: false, apply: append("\n") },
+      { name: "unsigned: mid-log tab", signed: false, apply: (r) => writeFileSync(evPath(r), evText(r).replace("\n", "\t\n")) },
+    ],
+  };
+
+  const total = Object.values(CLASSES).reduce((a, c) => a + c.length, 0);
+  test("the corpus holds at least 40 generated mutations", () => { expect(total).toBeGreaterThanOrEqual(40); });
+
+  for (const [cls, cases] of Object.entries(CLASSES)) {
+    const live = cases.filter((c) => c.todo === undefined);
+    for (const c of cases.filter((x) => x.todo !== undefined)) test.todo(`${cls}: ${c.name} (${c.todo})`, () => {});
+    test(`class ${cls}: every mutation is detected`, async () => {
+      const missed: string[] = [];
+      for (const c of live) { const r = await run(c); if (r.code === 0) missed.push(`${c.name} -> ${r.verdict}`); }
+      console.log(`PX10 class=${cls} detected=${live.length - missed.length}/${live.length} rate=${Math.round(((live.length - missed.length) / live.length) * 100)}%${missed.length ? ` MISSED: ${missed.join("; ")}` : ""}`);
+      expect(missed).toEqual([]);
+    }, 120_000);
+  }
+
+  test("20 clean receipts verify clean: zero false TAMPERED", async () => {
+    const clean: { name: string; make: () => { r: PxRun; args: string[]; deps?: VerifyDeps } }[] = [];
+    const plain = (extra: number, post?: (r: PxRun) => void, args?: (r: PxRun) => string[], deps?: VerifyDeps) => () => { const r = build(extra); post?.(r); return { r, args: args ? args(r) : [r.path], deps }; };
+    for (let i = 0; i < 8; i++) clean.push({ name: `signed, ${i} extra events`, make: plain(i) });
+    for (let i = 0; i < 2; i++) clean.push({ name: "signed, receipt.json minified", make: plain(i, (r) => writeFileSync(r.path, JSON.stringify(rc(r)))) });
+    for (let i = 0; i < 2; i++) clean.push({ name: "signed, receipt.json keys reordered", make: plain(i, (r) => writeFileSync(r.path, JSON.stringify(Object.fromEntries(Object.entries(rc(r)).reverse()), null, 2))) });
+    clean.push({ name: "signed, receipt.json re-indented with a trailing newline", make: plain(1, (r) => writeFileSync(r.path, JSON.stringify(rc(r), null, 4) + "\n")) });
+    clean.push({ name: "signed, unrelated file committed after the seal", make: plain(0, (r) => { writeFileSync(join(r.repo, "c.txt"), "z"); git(r.repo, "add", "c.txt"); git(r.repo, "commit", "-qm", "unrelated"); }) });
+    clean.push({ name: "signed, checked against the right --pubkey", make: plain(0, undefined, undefined, { pubkey: keyA.publicKey }) });
+    clean.push({ name: "signed, fresh under --max-age 1d", make: plain(0, undefined, (r) => [r.path, "--max-age", "1d"]) });
+    clean.push({ name: "signed, verified by run id", make: plain(2, undefined, (r) => [r.id]) });
+    for (let i = 0; i < 3; i++) clean.push({ name: `unsigned, ${i} extra events, --allow-unsigned`, make: () => { const r = build(i, false); return { r, args: [r.path, "--allow-unsigned"] }; } });
+    expect(clean.length).toBe(20);
+    let flagged = 0, tampered = 0; const bad: string[] = [];
+    for (const c of clean) {
+      const { r, args, deps } = c.make();
+      const res = await verdictOf(r, args, deps ?? {});
+      if (res.code !== 0) { flagged++; bad.push(`${c.name} -> ${res.verdict}`); }
+      if (res.verdict === "TAMPERED") tampered++;
+    }
+    console.log(`PX10 clean=${clean.length} false_flagged=${flagged} false_TAMPERED=${tampered}${bad.length ? ` FLAGGED: ${bad.join("; ")}` : ""}`);
+    expect(bad).toEqual([]);
+    expect(tampered).toBe(0);
+  }, 120_000);
 });
