@@ -756,3 +756,4 @@ loki report release-notes lists sealed and unsealed commits (#391)	5
 Checklist Freeze	85
 loki edit --commit untracked file	2
 seeded-defect measure writes the results contract	5
+Full test runs are capped at 2 per machine by a queue lock (test-slot)	12

@@ -1201,6 +1201,7 @@ run_test "Dashboard API smoke cleanup kills only its own recorded PID" "$SCRIPT_
 run_test "cleanup-test-processes.sh scoped to LISTEN + this uid, --aggressive gated" "$SCRIPT_DIR/test-cleanup-script-scoping.sh"
 run_test "clean-test-branches.sh refuses own repo, spares protected branches, deletes only debris" "timeout -k 10 120 $SCRIPT_DIR/test-clean-test-branches.sh"
 run_test "No script or test removes run-owned temp dirs by glob (E-140)" "$SCRIPT_DIR/test-no-tmp-sweep.sh"
+run_test "Full test runs are capped at 2 per machine by a queue lock (test-slot)" "$SCRIPT_DIR/test-test-slot.sh"
 run_test "No test starts a build against the repo root (E-165)" "$SCRIPT_DIR/test-no-start-against-repo-root.sh"
 run_test "Runtime Gate port reclaims scoped to LISTEN + cwd ownership" "$SCRIPT_DIR/test-runtime-gate-port-scoping.sh"
 run_test "council_augment_from_managed_memory never falls back to cwd for PROJECT_DIR (BACKLOG 63)" "$SCRIPT_DIR/test-council-augment-managed-memory-project-dir.sh"

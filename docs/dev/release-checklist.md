@@ -113,6 +113,8 @@ For a manual push (`git push origin main`), run `bash scripts/local-ci.sh` first
 npm, then creates the tag and GitHub Release, builds/pushes Docker (including `:latest`), and updates the Homebrew tap. Do not manually
 create tags.
 
+Run the full Bun suite (including `tests/engine10`) only through `cd loki-ts && bun run test` or `bun run test:engine10`: both go through `scripts/test-slot.sh`, which allows at most 2 full runs per machine (`LOKI_ENGINE10_SLOTS` overrides; slots live in `~/.cache/loki-test-slots`, override `LOKI_TEST_SLOT_DIR`). A third run prints "waiting for a test slot" and starts when one frees; it is never killed, and a slot whose holder PID is dead is reclaimed. Filtered runs (`bun run test <file>`) take no slot. Never start the suite with a bare `bun test` for a full run. Test: `tests/test-test-slot.sh`.
+
 Before pushing the release commit, run `bash scripts/release.sh --check-clean`: it exits 1 naming any tracked file (for example a stamped `loki-ts/dist/loki.js.map`) the commit left modified; `--bump-only` prints the "stage these files:" list.
 
 ### 5. Verify ALL Distribution Channels

@@ -82,7 +82,7 @@ describe("the test script gives every file of a multi-file run the scaled defaul
     const script = (JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as { scripts: { test: string } }).scripts.test;
     // The substitution must really happen: if the script text is renamed or reformatted, replace() is a silent no-op and the
     // spawn below would run the real suite once per case. Fail before any spawn, and bound every spawn.
-    const echoed = script.replace("bun test --timeout", "echo");
+    const echoed = script.replace("bash ../scripts/test-slot.sh --full-only -- bun test --timeout", "echo");
     expect(echoed).not.toBe(script);
     expect(echoed).toContain("echo");
     expect(echoed).not.toContain("bun test");
