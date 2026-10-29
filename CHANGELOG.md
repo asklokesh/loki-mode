@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `loki verify` reads a torn, unterminated last line in `events.jsonl` as UNCHECKED instead of TAMPERED, and a resumed run's truncation of that tail reads VERIFIED. Blank lines, stray whitespace or CR inside event lines are still reported as TAMPERED.
 - The analytics sender used by the Stop hook is resolved only from trusted locations, requires owner-only write access, and is not started unless analytics is opted in. The hook sends enum-only events and never blocks its decision.
 - The release script finds the newest CHANGELOG section by its `## v` header and always runs the global guard rows; the environment variable that skipped them is gone.
-- The release script's guard-row check gained 15 tests that catch any way of skipping a guard row.
+- The release script's guard-row check is now covered by tests that catch any way of skipping a guard row.
 - Test suites that failed only on a busy machine (the timeout scale, `loki try` signal handling, the analytics opt-in key check) now pass under load.
 
 ### Known issues
