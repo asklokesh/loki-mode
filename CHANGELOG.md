@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- `loki verify` now also runs the tests of JS and TS modules that import a changed file through a `tsconfig.json` or `jsconfig.json` setting: a repo-root path under `baseUrl` (such as `lib/a`) or a `paths` alias (such as `@/lib/a`). Before, only relative imports were followed, so a break behind one of these imports could still read as verified.
+
 ## v11.84.0 (2026-10-29)
 
 ### Added
