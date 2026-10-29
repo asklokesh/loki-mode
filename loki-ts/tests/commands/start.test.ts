@@ -939,9 +939,11 @@ describe("SB-12: the resume offer is made once, by the parent, for loki start <s
     log.append("receipt.sealed", "seal", { verdict: "VERIFIED", receipt_sha256: "abc", path: "r" });
     writeFileSync(join(repo, "prd.md"), "fix the bug");
     process.chdir(repo);
-    delete process.env["LOKI_NO_RESUME"];
+    delete process.env["LOKI_NO_RESUME"]; delete process.env["LOKI_NONINTERACTIVE"];
+    sh(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-q", "-m", "x"]); sh(["branch", `loki/${RUN}`]);
+    startRecoveryHooks.afterOffer = () => 97; // hermetic: a regressed offer returns 97 here instead of launching the runner
   };
-  const teardown = (): void => { process.chdir(cwd0); startRecoveryHooks.deps = undefined; delete process.env["LOKI_NO_RESUME"]; rmSync(repo, { recursive: true, force: true }); };
+  const teardown = (): void => { process.chdir(cwd0); startRecoveryHooks.deps = undefined; startRecoveryHooks.afterOffer = undefined; delete process.env["LOKI_NO_RESUME"]; rmSync(repo, { recursive: true, force: true }); };
   const hooks = (tty: boolean, ...answers: string[]): void => {
     const q = [...answers];
     startRecoveryHooks.deps = { tty, out: (s) => { out.push(s); }, ask: async () => { asked++; return q.shift() ?? null; }, runPr: async () => { prCalls++; return { status: "completed", data: { pr_url: "https://github.com/o/r/pull/9", draft: false, existing: null } }; } };

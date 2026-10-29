@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { DEFAULT_PUSH_GITLAB_SH, DEFAULT_PUSH_SH, runPr, stage } from "../../src/engine10/stages/pr.ts"; import { pushErrLine } from "../../src/util/term_width.ts";
 import { publishFallback } from "../../src/util/engine_origin.ts";
 import { EventLog, readEvents } from "../../src/engine10/events.ts";
-import { discardRun, findInterrupted, nextStepText, parseRecoveryChoice, phaseOf, resumeMain, startRecovery, statusNextStep, type RunPrFn } from "../../src/util/run_outputs.ts";
+import { RECOVERY_ABORT, discardRun, findInterrupted, nextStepText, parseRecoveryChoice, phaseOf, resumeMain, startRecovery, statusNextStep, type RunPrFn } from "../../src/util/run_outputs.ts";
 import type { CostReader, RunContext, SessionRunner, TestMapProvider, Verdict } from "../../src/engine10/types.ts";
 
 const PR_URL = "https://github.com/octocat/hello/pull/42";
@@ -458,7 +458,9 @@ describe("RECOVERY: interrupted run resume", () => {
     writeFileSync(join(repo, ".loki", "runs", RUN, "receipt.json"), '{"receipt_sha256":"abc"}\n');
     log.append("receipt.sealed", "seal", { verdict: "VERIFIED", receipt_sha256: "abc", path: ".loki/runs/x/receipt.json" });
   };
+  const branch = (): void => { try { gitOut(repo, ["rev-parse", "--verify", "-q", `refs/heads/loki/${RUN}`]); } catch { gitOut(repo, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-q", "-m", "x"]); gitOut(repo, ["branch", `loki/${RUN}`]); } };
   beforeEach(() => {
+    delete process.env["LOKI_NONINTERACTIVE"]; delete process.env["LOKI_NO_RESUME"];
     repo = mkdtempSync(join(tmpdir(), "loki-recovery-"));
     gitOut(repo, ["init", "-q"]);
     gitOut(repo, ["remote", "add", "origin", "https://github.com/o/r.git"]);
@@ -579,7 +581,7 @@ describe("RECOVERY: interrupted run resume", () => {
   });
 
   test("startRecovery resumes only the same task; a different task starts fresh with a notice", async () => {
-    seal();
+    seal(); branch();
     expect(await startRecovery(repo, "something else", false, { runPr, out: say })).toBeNull();
     expect(out.join("")).toContain("interrupted in phase publish");
     expect(prCalls).toBe(0);
@@ -590,7 +592,6 @@ describe("RECOVERY: interrupted run resume", () => {
   describe("SB-12: the resume offer", () => {
     const asks = (...a: (string | null)[]): { ask: (q: string) => Promise<string | null>; left: () => number } => { const q = [...a]; return { ask: async () => (q.length ? q.shift()! : null), left: () => q.length }; };
     const withEnv = async (k: string, v: string, f: () => Promise<void>): Promise<void> => { const o = process.env[k]; process.env[k] = v; try { await f(); } finally { if (o === undefined) delete process.env[k]; else process.env[k] = o; } };
-    const branch = (): void => { gitOut(repo, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-q", "-m", "x"]); gitOut(repo, ["branch", `loki/${RUN}`]); };
 
     test("parseRecoveryChoice: default, numbers, words; Resume is refused when not resumable", () => {
       expect(parseRecoveryChoice("", true)).toBe("resume");
@@ -607,7 +608,7 @@ describe("RECOVERY: interrupted run resume", () => {
     });
 
     test("TTY on a resumable run: Enter resumes (default)", async () => {
-      seal();
+      seal(); branch();
       const a = asks("");
       expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: true, ask: a.ask })).toBe(0);
       expect(prCalls).toBe(1);
@@ -643,14 +644,41 @@ describe("RECOVERY: interrupted run resume", () => {
       expect(discardRun(repo, "../x")).toBe(false);
     });
 
-    test("TTY: Show details and a bad answer re-ask; EOF takes the default", async () => {
-      seal();
+    test("TTY: Show details and a bad answer re-ask; EOF is an abort, never a resume", async () => {
+      seal(); branch();
       const a = asks("what", "4", null);
-      expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: true, ask: a.ask })).toBe(0);
+      expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: true, ask: a.ask })).toBe(130);
       const t = out.join("");
       expect(t).toContain("not a choice: what");
       expect(t).toContain("resumable (same task, publish phase)");
-      expect(prCalls).toBe(1);
+      expect(prCalls).toBe(0);
+    });
+
+    test("Ctrl-C at the menu returns 130 with no resume and no new run", async () => {
+      seal(); branch();
+      expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: true, ask: asks(RECOVERY_ABORT).ask })).toBe(130);
+      expect(prCalls).toBe(0);
+      expect(findInterrupted(repo)?.runId).toBe(RUN);
+    });
+
+    test("Resume is not offered when it cannot finish: no run branch, no origin", async () => {
+      seal();
+      expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: true, ask: asks("1").ask })).toBeNull();
+      expect(out.join("")).not.toContain("Resume (");
+      branch(); out.length = 0;
+      gitOut(repo, ["remote", "remove", "origin"]);
+      expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: true, ask: asks("1").ask })).toBeNull();
+      expect(out.join("")).not.toContain("Resume (");
+      expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: false })).toBeNull();
+      expect(prCalls).toBe(0);
+    });
+
+    test("discardRun never writes through a dangling marker link", () => {
+      const outside = join(repo, "outside.txt");
+      mkdirSync(join(repo, ".loki", "runs", RUN), { recursive: true });
+      symlinkSync(outside, join(repo, ".loki", "runs", RUN, "discarded"));
+      expect(discardRun(repo, RUN)).toBe(false);
+      expect(existsSync(outside)).toBe(false);
     });
 
     test("TTY on a non-resumable phase: no Resume entry, default is Start fresh, a resume answer is refused", async () => {
@@ -664,7 +692,7 @@ describe("RECOVERY: interrupted run resume", () => {
     });
 
     test("TTY: a same-task publish run under --no-pr or a different task is not offered Resume", async () => {
-      seal();
+      seal(); branch();
       expect(await startRecovery(repo, "fix the bug", true, { runPr, out: say, tty: true, ask: asks("").ask })).toBeNull();
       expect(await startRecovery(repo, "other", false, { runPr, out: say, tty: true, ask: asks("").ask })).toBeNull();
       expect(out.join("")).not.toContain("Resume (");
@@ -672,7 +700,7 @@ describe("RECOVERY: interrupted run resume", () => {
     });
 
     test("a cancelled run is offered but never resumed, even at the publish phase", async () => {
-      seal(); log.append("run.completed", null, { verdict: "FAILED", cancelled: true, outcome: "CANCELLED" });
+      seal(); branch(); log.append("run.completed", null, { verdict: "FAILED", cancelled: true, outcome: "CANCELLED" });
       expect(findInterrupted(repo)).toBeNull();
       expect(findInterrupted(repo, undefined, true)?.cancelled).toBe(true);
       expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say })).toBeNull();
@@ -691,7 +719,7 @@ describe("RECOVERY: interrupted run resume", () => {
     });
 
     test("LOKI_NONINTERACTIVE=1 never prompts even on a TTY", async () => {
-      seal();
+      seal(); branch();
       await withEnv("LOKI_NONINTERACTIVE", "1", async () => {
         const a = asks("2");
         expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: true, ask: a.ask })).toBe(0);
@@ -700,7 +728,7 @@ describe("RECOVERY: interrupted run resume", () => {
     });
 
     test("--fresh and LOKI_NO_RESUME=1 skip the offer entirely", async () => {
-      seal();
+      seal(); branch();
       expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: false, fresh: true })).toBeNull();
       await withEnv("LOKI_NO_RESUME", "1", async () => { expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say, tty: false })).toBeNull(); });
       expect(prCalls).toBe(0);
@@ -708,7 +736,7 @@ describe("RECOVERY: interrupted run resume", () => {
     });
 
     test("a bare start (no task) resumes a publish run and otherwise says to give a task", async () => {
-      seal();
+      seal(); branch();
       expect(await startRecovery(repo, "", false, { runPr, out: say, tty: false })).toBe(0);
       expect(prCalls).toBe(1);
     });
@@ -722,7 +750,7 @@ describe("RECOVERY: interrupted run resume", () => {
 
     test("status and cancel next-step lines say what happens next, only for a run that can be offered", () => {
       expect(statusNextStep(repo, join(repo, ".loki", "runs"), RUN, readEvents(evPath()))).toContain("offers to start fresh; no run branch was created");
-      seal();
+      seal(); branch();
       expect(statusNextStep(repo, join(repo, ".loki", "runs"), RUN, readEvents(evPath()))).toContain("offers to finish its pull request step");
       expect(nextStepText(RUN, "publish", true, true)).toBe(`next loki start offers to start fresh; old work stays on loki/${RUN}`);
       discardRun(repo, RUN);

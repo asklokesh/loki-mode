@@ -401,12 +401,14 @@ export function statusNextStep(repoDir: string, runsDir: string, runId: string, 
 export function discardRun(repoDir: string, runId: string): boolean {
   if (!/^e10-[A-Za-z0-9-]+$/.test(runId)) return false;
   const dir = join(repoDir, ".loki", "runs", runId);
-  try { if (!lstatSync(dir).isDirectory()) return false; writeFileSync(join(dir, DISCARD_MARK), `${new Date().toISOString()}\n`); return true; } catch { return false; }
+  try { if (!lstatSync(dir).isDirectory()) return false; writeFileSync(join(dir, DISCARD_MARK), `${new Date().toISOString()}\n`, { flag: "wx" }); return true; } catch { return false; } // wx: a pre-planted file or dangling link at the marker path is refused, never followed
 }
 
+/** What a reader resolves on Ctrl-C. EOF (null) means the same: no choice was made, so nothing starts and nothing resumes. */
+export const RECOVERY_ABORT = "\u0000abort";
 const askLine = async (q: string): Promise<string | null> => {
   const rl = (await import("node:readline")).createInterface({ input: process.stdin, output: process.stderr });
-  try { return await new Promise<string | null>((res) => { rl.once("close", () => res(null)); rl.question(q, (a) => res(a)); }); } finally { rl.close(); }
+  try { return await new Promise<string | null>((res) => { rl.once("close", () => res(null)); rl.once("SIGINT", () => res(RECOVERY_ABORT)); rl.question(q, (a) => res(a)); }); } finally { rl.close(); }
 };
 
 /** Called by `loki start` before it opens a new run (and by a bare `loki start`, task ""). Returns an exit code when it resumed, null to go on.
@@ -418,8 +420,9 @@ export async function startRecovery(repoDir: string, task: string, noPr: boolean
   const it = findInterrupted(repoDir, undefined, true);
   if (!it) return null;
   const note = deps.out ?? ((s: string) => { process.stderr.write(s); });
-  const t = task.trim(), resumable = it.phase === "publish" && !it.cancelled && !noPr && it.task !== null && (t === "" || it.task === t);
-  const kept = branchExists(repoDir, it.runId) ? `old work is kept on loki/${it.runId}` : "no run branch was created", was = it.cancelled ? "cancelled" : "interrupted";
+  const hasBranch = branchExists(repoDir, it.runId), t = task.trim();
+  const resumable = it.phase === "publish" && !it.cancelled && !noPr && it.task !== null && (t === "" || it.task === t) && hasBranch && readOriginUrl(repoDir) !== null && !("deny" in prGate(repoDir)); // offered only when resumePublish can finish: branch, origin and policy all allow it
+  const kept = hasBranch ? `old work is kept on loki/${it.runId}` : "no run branch was created", was = it.cancelled ? "cancelled" : "interrupted";
   const interactive = (deps.tty ?? (process.stdin.isTTY === true && process.stderr.isTTY === true)) && process.env["LOKI_NONINTERACTIVE"] !== "1";
   if (resumable && !interactive) return resumePublish(repoDir, it, deps);
   if (!interactive || (t === "" && !resumable)) {
@@ -432,7 +435,7 @@ export async function startRecovery(repoDir: string, task: string, noPr: boolean
   for (let tries = 0; tries < 5; tries++) {
     note(`${menu.map((m, i) => `  ${i + 1}) ${m}${i === 0 ? " [default]" : ""}`).join("\n")}\n`);
     const ans = await ask("choice: ");
-    if (ans === null) return resumable ? resumePublish(repoDir, it, deps) : null; // input closed: take the default
+    if (ans === null || ans === RECOVERY_ABORT) { note("no choice made; nothing was started or resumed\n"); return 130; } // Ctrl-C or closed input is never a choice
     const c = parseRecoveryChoice(ans, resumable);
     if (c === null) { note(`not a choice: ${ans.trim().slice(0, 40)}\n`); continue; }
     if (c === "details") { note(`  run ${it.runId}: ${it.events.length} events, last seq ${fold(it.events).lastSeq}, phase ${it.phase}, ${was}; ${kept}; ${resumable ? "resumable (same task, publish phase)" : it.phase === "publish" && !it.cancelled ? "not resumable here (different task or --no-pr)" : it.cancelled ? "not resumable (cancelled)" : "not resumable (stage state is in memory)"}\n`); continue; }
@@ -440,8 +443,8 @@ export async function startRecovery(repoDir: string, task: string, noPr: boolean
     note(c === "discard" ? (discardRun(repoDir, it.runId) ? `Discarded run ${it.runId}: it will not be offered again; ${kept}.\n` : `Could not mark run ${it.runId} as discarded; starting fresh.\n`) : `Starting fresh; ${kept}.\n`);
     return null;
   }
-  note("no valid choice; starting fresh\n");
-  return null;
+  note("no valid choice; nothing was started or resumed\n");
+  return 130;
 }
 
 /** `loki resume [run-id]` for engine10 runs. Exit 0 resumed, 3 nothing to resume, 4 phase not auto-resumable, else failure. */

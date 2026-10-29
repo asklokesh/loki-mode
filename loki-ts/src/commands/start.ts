@@ -607,7 +607,7 @@ export async function dryRunStart(o: ParsedStartOpts, repoDir: string, env: Node
 }
 
 /** SB-12: test seam for the offer's tty and reader (production leaves it empty). */
-export const startRecoveryHooks: { deps?: import("../util/run_outputs.ts").ResumeDeps } = {};
+export const startRecoveryHooks: { deps?: import("../util/run_outputs.ts").ResumeDeps; afterOffer?: () => number } = {};
 
 /** SB-12: the one resume offer for `loki start <spec>`, made here while the parent owns the terminal (the engine child gets stdin "ignore").
  *  Returns an exit code when the user resumed, else null; on null it sets LOKI_NO_RESUME=1 so no engine child (or attempt) offers a second time.
@@ -668,6 +668,7 @@ export async function runStart(args: readonly string[]): Promise<number> {
   }
   if (parsed.dryRun) return dryRunStart(parsed, process.cwd(), process.env);
   { const rec = await offerInterruptedRun(parsed, process.cwd()); if (rec !== null) return rec; }
+  if (startRecoveryHooks.afterOffer) return startRecoveryHooks.afterOffer(); // test seam: stop before any runner or engine dispatch
   if (startEngine(parsed) === "runner") {
     const { runAutonomous } = await import("../runner/autonomous.ts");
     const capLine = await capSourceLine(parsed.budgetLimit, process.cwd(), process.env);
