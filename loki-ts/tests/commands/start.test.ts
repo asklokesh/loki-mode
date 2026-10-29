@@ -550,14 +550,27 @@ describe("cap source line (TEN-COST-41)", () => {
   it("cap source line: subscription run says no dollar cap", async () => {
     expect(await capSourceLine(undefined, tmpdir(), {})).toBe("no dollar cap (subscription)");
   });
-  it("cap source line: real entry (cli.ts start --budget-limit) prints the line before the run", () => {
+  it("cap source line: real entry (runStart prd.md --budget-limit) prints the line before the run, no provider reached", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-c41-"));
+    const cwd0 = process.cwd();
+    const saved = { b: process.env["LOKI_BUDGET_LIMIT"], n: process.env["LOKI_NO_RESUME"], w: process.stdout.write.bind(process.stdout) };
+    let out = "";
     try {
       writeFileSync(join(dir, "prd.md"), "# x\n");
-      const env = { ...process.env, PATH: "/usr/bin:/bin", LOKI_BUDGET_LIMIT: "" };
-      const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "prd.md", "--budget-limit", "7"], { cwd: dir, encoding: "utf8", timeout: 8_000, env });
-      expect(r.stdout).toContain("[runner] cap $7.00 (--budget-limit)");
+      process.chdir(dir);
+      delete process.env["LOKI_BUDGET_LIMIT"];
+      process.env["LOKI_NO_RESUME"] = "1";
+      startRecoveryHooks.afterOffer = () => 97; // hermetic: stop after the cap line, before any runner or provider dispatch
+      process.stdout.write = ((s: string | Uint8Array): boolean => { out += String(s); return true; }) as typeof process.stdout.write;
+      const rc = await runStart(["prd.md", "--budget-limit", "7"]);
+      expect(rc).toBe(97);
+      expect(out).toContain("[runner] cap $7.00 (--budget-limit)");
     } finally {
+      process.stdout.write = saved.w;
+      startRecoveryHooks.afterOffer = undefined;
+      process.chdir(cwd0);
+      if (saved.b === undefined) delete process.env["LOKI_BUDGET_LIMIT"]; else process.env["LOKI_BUDGET_LIMIT"] = saved.b;
+      if (saved.n === undefined) delete process.env["LOKI_NO_RESUME"]; else process.env["LOKI_NO_RESUME"] = saved.n;
       rmSync(dir, { recursive: true, force: true });
     }
   });

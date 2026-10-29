@@ -668,13 +668,14 @@ export async function runStart(args: readonly string[]): Promise<number> {
   }
   if (parsed.dryRun) return dryRunStart(parsed, process.cwd(), process.env);
   { const rec = await offerInterruptedRun(parsed, process.cwd()); if (rec !== null) return rec; }
-  if (startRecoveryHooks.afterOffer) return startRecoveryHooks.afterOffer(); // test seam: stop before any runner or engine dispatch
   if (startEngine(parsed) === "runner") {
-    const { runAutonomous } = await import("../runner/autonomous.ts");
     const capLine = await capSourceLine(parsed.budgetLimit, process.cwd(), process.env);
     if (capLine) process.stdout.write(`[runner] ${capLine}\n`);
+    if (startRecoveryHooks.afterOffer) return startRecoveryHooks.afterOffer(); // test seam: stop before any runner or engine dispatch
+    const { runAutonomous } = await import("../runner/autonomous.ts");
     return runAutonomous(parsed);
   }
+  if (startRecoveryHooks.afterOffer) return startRecoveryHooks.afterOffer();
   if (startEngine(parsed) === "spec") return runEngine10(process.cwd(), parsed, process.env, false);
   const { attempts, ...runnerOpts } = parsed;
   const { runAttempts, productionDeps } = await import("../runner/attempts.ts");
