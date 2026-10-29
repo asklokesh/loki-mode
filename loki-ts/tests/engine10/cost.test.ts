@@ -27,7 +27,7 @@ import { archivePriorCost, liveArchivedCosts } from "../../src/providers/provide
 import { UNMETERED } from "../../src/engine10/cost.ts";
 import { execFileSync } from "node:child_process";
 import { sealStage } from "../../src/engine10/stages/seal.ts";
-import { workerCostReader } from "../../src/engine10/worker.ts";
+import { costCapture, workerCostReader } from "../../src/engine10/worker.ts";
 import type { Obj, RunContext, StageName } from "../../src/engine10/types.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "cost");
@@ -1029,5 +1029,29 @@ describe("the sealed receipt carries this run's child sessions (worker cost read
       expect((await sealWith(workerCostReader("R1", () => events), repo, ["plan", "impl"])).cost.usd).toBe(shown);
       expect((await sealWith(workerCostReader("R1"), repo, ["plan", "impl"])).cost.usd).toBeNull(); // no cost events seen: the file totals stand
     } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+});
+
+describe("the worker keeps the cost events it emits for the receipt (costCapture)", () => {
+  const run = (resume: boolean, logged: number[], emitted: number[]): { usd: number | null; forwarded: number } => {
+    const repo = mkdtempSync(join(tmpdir(), "e10-capture-"));
+    try {
+      mkdirSync(join(repo, ".loki/runs/R1"), { recursive: true });
+      writeFileSync(join(repo, ".loki/runs/R1/events.jsonl"), logged.map((usd, i) => JSON.stringify(makeEvent("R1", i, "cost", "plan", { session_id: `old${i}`, usd }))).join("\n") + "\n");
+      let forwarded = 0;
+      const { emit, cost } = costCapture(() => { forwarded++; }, "R1", repo, resume ? { LOKI_E10_RESUME: "1" } : {});
+      emitted.forEach((usd, i) => emit("cost", "implement", { session_id: `new${i}`, usd }));
+      return { usd: cost.read(repo, []).usd, forwarded };
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  };
+  test("live capture: emitted cost events price the receipt and still reach the log", () => {
+    expect(run(false, [], [0.5, 0.25])).toEqual({ usd: 0.75, forwarded: 2 });
+  });
+  test("resume seeds the earlier cost events once, and new ones add to them", () => {
+    expect(run(true, [1, 2], [0.5])).toEqual({ usd: 3.5, forwarded: 1 });
+    expect(run(true, [1, 2], []).usd).toBe(3);
+  });
+  test("a fresh run ignores a stale log", () => {
+    expect(run(false, [1, 2], [0.5]).usd).toBe(0.5);
   });
 });

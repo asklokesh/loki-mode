@@ -496,6 +496,6 @@ describe("child sessions count against the dollar cap", () => {
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
   test("the worker hands the run's child meter to capMeter", () => {
-    expect(readFileSync(join(import.meta.dir, "..", "..", "src", "engine10", "worker.ts"), "utf8")).toMatch(/capMeter\(rawEmit, process\.env, .*childSpendMeter\(lokiRoot, runId\)\);/);
+    expect(readFileSync(join(import.meta.dir, "..", "..", "src", "engine10", "worker.ts"), "utf8")).toMatch(/costCapture\(rawEmit, runId, repoDir\);.*capMeter\(costEmit, process\.env, .*childSpendMeter\(lokiRoot, runId\)\);/);
   });
 });
