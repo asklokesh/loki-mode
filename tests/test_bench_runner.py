@@ -684,6 +684,41 @@ class WrongPassCaptureTest(unittest.TestCase):
             if old is not None:
                 os.environ["LOKI_BENCH_SPEND_APPROVED"] = old
 
+    def test_two_trials_one_unmeasured_is_unmeasured_not_not_sealed(self):
+        spec = _make_task(self.tmp, acceptance_cmd="true", task_id="mixed")
+        seq = iter(["CONCERNS", None])
+        row = runner.run_task(spec, "mock", trials=2, adapter=mock_adapter_with_cost,
+                              verify_fn=lambda wd, m: next(seq))
+        run = runner.wrong_pass_results([row], "floor", "m")["runs"][0]
+        self.assertEqual(run["outcomes"], {})
+        self.assertEqual(run["unmeasured"], ["mixed"])
+        self.assertEqual(run["n"], 0)
+
+    def test_two_trials_one_wrong_pass_one_unmeasured_stays_sealed(self):
+        spec = _make_task(self.tmp, acceptance_cmd="false", task_id="mixed2")
+        seq = iter([None, "VERIFIED"])
+        row = runner.run_task(spec, "mock", trials=2, adapter=mock_adapter_with_cost,
+                              verify_fn=lambda wd, m: next(seq))
+        run = runner.wrong_pass_results([row], "floor", "m")["runs"][0]
+        self.assertEqual(run["outcomes"], {"mixed2": "SEALED"})
+        self.assertEqual(run["unmeasured"], [])
+
+    def test_cli_refuses_effort_with_wrong_pass_out(self):
+        spec = _make_task(self.tmp, acceptance_cmd="true", task_id="eff")
+        rc = runner._main(["run", spec, "--adapter", "mock", "--model", "m", "--effort", "high",
+                           "--seal-verify", "--setup", "top",
+                           "--wrong-pass-out", os.path.join(self.tmp, "o.json")])
+        self.assertEqual(rc, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "o.json")))
+
+    def test_write_refuses_corpus_results_path_and_leaves_no_tmp(self):
+        corpus = os.path.join(_REPO, "benchmarks", "seeded-defects", "results", "wrong-pass.json")
+        with self.assertRaises(ValueError):
+            runner.write_wrong_pass([], "top", "m", corpus)
+        out = os.path.join(self.tmp, "ok.json")
+        runner.write_wrong_pass([], "top", "m", out)
+        self.assertEqual(os.listdir(self.tmp), ["ok.json"])
+
     def test_cli_writes_wrong_pass_file_with_stub_verify(self):
         spec = _make_task(self.tmp, acceptance_cmd="false", task_id="cli-task")
         out = os.path.join(self.tmp, "wp.json")

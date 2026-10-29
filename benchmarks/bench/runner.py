@@ -601,17 +601,18 @@ def wrong_pass_results(rows: List[Dict[str, Any]], setup: str, model: str) -> Di
     to SEALED (a wrong pass) or NOT_SEALED; trials with no verdict are listed
     under unmeasured and excluded from n."""
     recs = [t["seal"] for r in rows for t in r.get("trials", []) if "seal" in t]
+    by_task: Dict[str, List[Optional[bool]]] = {}
+    for rec in recs:
+        by_task.setdefault(rec["task"], []).append(rec["wrong_pass"])
     outcomes: Dict[str, str] = {}
     unmeasured: List[str] = []
-    for rec in recs:
-        if rec["wrong_pass"] is None:
-            if rec["task"] not in unmeasured:
-                unmeasured.append(rec["task"])
-            continue
-        # one wrong-passing trial marks the task SEALED
-        if rec["wrong_pass"] or rec["task"] not in outcomes:
-            outcomes[rec["task"]] = "SEALED" if rec["wrong_pass"] else "NOT_SEALED"
-    unmeasured = [t for t in unmeasured if t not in outcomes]
+    for task, flags in by_task.items():
+        if any(f is True for f in flags):
+            outcomes[task] = "SEALED"  # one wrong-passing trial marks the task
+        elif all(f is False for f in flags):
+            outcomes[task] = "NOT_SEALED"  # only when EVERY trial was measured
+        else:
+            unmeasured.append(task)
     digest = hashlib.sha256(json.dumps(sorted(r.get("task_hash", "") for r in rows)).encode()).hexdigest()
     run = {"setup": setup, "model": model, "n": len(outcomes),
            "wrong_pass": sum(1 for v in outcomes.values() if v == "SEALED"),
@@ -621,10 +622,22 @@ def wrong_pass_results(rows: List[Dict[str, Any]], setup: str, model: str) -> Di
 
 
 def write_wrong_pass(rows: List[Dict[str, Any]], setup: str, model: str, out: str) -> Dict[str, Any]:
+    corpus = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                           "seeded-defects", "results", "wrong-pass.json"))
+    if os.path.realpath(out) == corpus:
+        raise ValueError("refusing to write held-out results over the seeded-defects corpus file")
     doc = wrong_pass_results(rows, setup, model)
-    with open(out, "w") as fh:
-        json.dump(doc, fh, indent=2, sort_keys=True)
-        fh.write("\n")
+    d = os.path.dirname(os.path.abspath(out))
+    fd, tmp = tempfile.mkstemp(prefix=".wrong-pass-", suffix=".tmp", dir=d)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(doc, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        os.replace(tmp, out)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
     return doc
 
 
@@ -962,6 +975,14 @@ def _main(argv: List[str]) -> int:
         vfn = default_verify if args.seal_verify else None
         if args.wrong_pass_out and not (args.seal_verify and args.setup and args.model):
             print("ERROR: --wrong-pass-out needs --seal-verify, --setup and --model", file=sys.stderr)
+            return 2
+        if args.wrong_pass_out and os.path.realpath(args.wrong_pass_out) == os.path.realpath(
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "seeded-defects",
+                             "results", "wrong-pass.json")):
+            print("ERROR: --wrong-pass-out must not be the seeded-defects corpus results file", file=sys.stderr)
+            return 2
+        if args.wrong_pass_out and args.effort is not None:
+            print("ERROR: --wrong-pass-out cannot be combined with --effort", file=sys.stderr)
             return 2
         if args.wrong_pass_out and args.effort is None:
             row = run_task(args.task, args.adapter, trials=args.trials, model=args.model,
