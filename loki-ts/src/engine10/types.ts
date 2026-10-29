@@ -182,7 +182,7 @@ export interface Receipt {
   /** T2: the counted outcome for METRICS: "yes" | "no" | "inconclusive". */
   mutation_outcome?: "yes" | "no" | "inconclusive";
   /** FC-21b: set only when implement was stopped at its time limit; omitted otherwise so other receipts stay byte-stable. */
-  implement_limit?: { limit_s: number; elapsed_s: number };
+  implement_limit?: { limit_s: number; elapsed_s: number; stop_cause?: "max_turns"; owner?: "harness" };
   /** T9: provider failovers (stage, from, to, reason, evidence). Omitted when none happened so other receipts stay byte-stable. */
   failover?: import("../runner/provider_failover.ts").FailoverRecord[];
   /** E-120: implement's reason for a SPEC_CONFLICT exit, sanitized (newlines/control chars  collapsed to spaces, capped at 500 chars). Key is omitted entirely, never null, when  implement did not  record one, so receipt_sha256 for every other run stays byte-stable. */

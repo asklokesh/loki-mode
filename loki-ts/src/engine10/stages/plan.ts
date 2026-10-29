@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RepoMap } from "../repomap.ts";
 import { selectRelevantFiles } from "../relevant_files.ts";
-import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
+import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import { cascadeEnabled, hasRelevantTests, loadRepoMap, namedFiles, planMode, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
 import { type RunContext, type Stage, type StageResult, type TestMap, taskBlock } from "../types.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
@@ -89,7 +89,7 @@ export const planStage: Stage = {
     let planModel = pr.planModel(fastTierModel(process.env));
     let planModelNote: string | null = null;
     if (pr.pinOpus && !session.killed && session.exit !== 0) { // Opus unavailable: the fallback plans (never below the run model), and the receipt says so
-      planModel = planFallbackModel(ctx.model); planModelNote = `Opus plan session failed (exit ${session.exit}); the plan ran on ${planModel}`;
+      planModel = planFallbackModel(ctx.model); planModelNote = `Opus plan session failed (${session.exit === MAX_TURNS_EXIT ? "turn cap reached" : `exit ${session.exit}`}); the plan ran on ${planModel}`;
       session = await runPlan(true);
     }
 

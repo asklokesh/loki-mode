@@ -8,6 +8,7 @@ import { planStage } from "../../src/engine10/stages/plan.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines, routeStartLine } from "../../src/runner/router/route_block.ts";
 import { loadRouteRecord } from "../../src/runner/router/route_record.ts";
 import { shapeKeyForRun } from "../../src/runner/router/history.ts";
+import { MAX_TURNS_EXIT } from "../../src/runner/worker_proc.ts";
 import { modelDowngrades } from "../../src/runner/model_downgrades.ts";
 import type { RunContext, SessionResult, SessionRunOptions, SessionRunner } from "../../src/engine10/types.ts";
 
@@ -115,6 +116,13 @@ describe("FC-35 R-A/R-B: start line, receipt and route.json agree", () => {
     expect(c.block.plan_model).toBe("sonnet");
     expect(c.block.not_proven.join("\n")).toContain("Opus plan session failed");
     expect(c.record?.plan_model).toBe("sonnet");
+  });
+  test("Opus plan session that hit the turn cap: the note names the cap, not exit 98", async () => {
+    const s = setup(ON, (o, dir) => (o.model === "opus" ? { ...ok, exit: MAX_TURNS_EXIT } : scopeWith([{ id: "u1", kind: "impl", executor: "sonnet", reason: "r" }])(o, dir)));
+    const r = await planStage.run(s.ctx, sig());
+    const note = String(consumers(s, r.data).block.not_proven.join("\n"));
+    expect(note).toContain("Opus plan session failed (turn cap reached)");
+    expect(note).not.toContain("exit 98");
   });
   test("LOKI_E10_PLAN=0 with the router on: skipped, but the record says why nothing routed", async () => {
     const s = setup({ ...ON, LOKI_E10_PLAN: "0" }, (_o, _d) => ok);

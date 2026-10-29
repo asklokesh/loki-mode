@@ -222,6 +222,8 @@ describe("engine10 implement stage", () => {
     expect(result.data.exit).toBe("killed");
     expect(result.data.owner).toBe("harness");
     expect(result.data.stop_cause).toBe("max_turns");
+    expect(result.data.limit_s).toBe(implementStage.limitS);
+    expect(result.data.elapsed_s).toBe(30);
     const pass = [{ name: "t", cmd: "t", result: "pass", duration_s: 1 }] as never;
     expect(verdictOf({ implement: result.data }, pass, false, false, false, true)).toBe("PARTIAL");
   });

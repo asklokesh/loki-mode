@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { projectApi } from "../../src/project_model/api.ts";
 import { buildBrief, discoverProjectModel, intakeProjectModel, loadCached, PROJECT_FILE, UNKNOWN_TTL_MS } from "../../src/project_model/discover.ts";
+import { MAX_TURNS_EXIT } from "../../src/runner/worker_proc.ts";
 import { computeKey, gather } from "../../src/project_model/gather.ts";
 import { checkFingerprint, validateAnswer } from "../../src/project_model/schema.ts";
 import type { RunContext, SessionResult, SessionRunOptions } from "../../src/engine10/types.ts";
@@ -183,6 +184,13 @@ describe("A5 and B3: ownership and the stage budget", () => {
     expect(out.model.reason).toContain("owner=provider");
     expect(out.model.reason).not.toContain("rejected twice");
     expect(f.limits.length).toBe(1);
+  });
+  test("a discovery session that hit the turn cap is owner=harness, not provider", async () => {
+    const runner: Runner = { async run() { return { ...OK, exit: MAX_TURNS_EXIT, markers: { done: false, alreadyDone: null, specConflict: null } }; } };
+    const out = await discoverProjectModel(ctxFor(repo(), runner), sig);
+    expect(out.owner).toBe("harness");
+    expect(out.model.reason).toContain("owner=harness");
+    expect(out.model.reason).toContain("turn cap");
   });
   test("the session limit is the remaining budget; none starts without one", async () => {
     const r = replay([RECORDED]);

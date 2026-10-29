@@ -665,6 +665,22 @@ describe("TEN-COST-13 lean prefix default", () => {
   });
 });
 
+describe("turn cap env in a nested run", () => {
+  const cfg = { provider: "claude" } as Parameters<typeof childEnv>[1];
+  const o = { iterationId: "i", stage: "implement", brief: "b", tier: "development", limitS: 480 } as Parameters<typeof childEnv>[0];
+  test("a stage session's derived cap is not inherited as an explicit value; a user value outside a stage still wins", () => {
+    const saved = { stage: process.env["LOKI_E10_STAGE"], turns: process.env["LOKI_E10_MAX_TURNS"] };
+    try {
+      delete process.env["LOKI_E10_STAGE"]; process.env["LOKI_E10_MAX_TURNS"] = "7";
+      expect(childEnv(o, cfg)["LOKI_E10_MAX_TURNS"]).toBe("7");
+      process.env["LOKI_E10_STAGE"] = "implement"; // we are inside a stage session: the 7 was derived by the parent
+      expect(childEnv(o, cfg)["LOKI_E10_MAX_TURNS"]).toBe("160");
+    } finally {
+      for (const [k, v] of [["LOKI_E10_STAGE", saved.stage], ["LOKI_E10_MAX_TURNS", saved.turns]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  });
+});
+
 describe("TEN-SPEED-21 heartbeat single ls-files", () => {
   test("heartbeat single ls-files: one heartbeat tick runs ls-files once", async () => {
     const d = mkdtempSync(join(tmpdir(), "ten-speed-21-")), bin = join(d, "bin"), log = join(d, "calls.log"), repo = join(d, "repo");

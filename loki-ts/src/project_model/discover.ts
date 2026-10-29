@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fastTierModel } from "../runner/model_downgrades.ts";
+import { MAX_TURNS_EXIT } from "../runner/worker_proc.ts";
 import { STAGE_BUDGETS, type RunContext, type SessionResult } from "../engine10/types.ts";
 import { committedModelHash, computeKey, gather, isGitTracked, isSingleDirectory, shallowDirs, type Gathered } from "./gather.ts";
 import { PROJECT_MODEL_SCHEMA, parseCached, unknownModel, validateAnswer, type ProjectModel } from "./schema.ts";
@@ -163,7 +164,8 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
     const raw = readAnswer(answerPath, session.summary);
     if (raw === undefined && (session.killed || session.exit !== 0)) {
       // The provider or the session failed: not the model's answer, so no retry and nothing cached.
-      return { model: unknownModel("", `owner=provider: the discovery session failed (exit ${session.exit}${session.killed ? ", killed" : ""})`), cached: false, attempts: attempt, owner: "provider" };
+      const capped = session.exit === MAX_TURNS_EXIT && !session.killed; // the turn cap is the harness's own limit, not a provider failure
+      return { model: unknownModel("", `owner=${capped ? "harness" : "provider"}: the discovery session ${capped ? "hit the turn cap" : "failed"} (exit ${session.exit}${session.killed ? ", killed" : ""})`), cached: false, attempts: attempt, owner: capped ? "harness" : "provider" };
     }
     const v = raw === undefined ? null : validateAnswer(ctx.repoDir, raw);
     if (v?.ok) {
