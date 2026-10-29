@@ -17186,13 +17186,20 @@ PY
     return 0
 }
 
-# Removes only a directory this command created: a direct child of the temp root named loki-wow.*.
+# Removes only a directory the caller created: a direct child of the temp root named
+# <prefix>.* (default loki-wow), not a symlink. With a marker file name as $3, the directory
+# must also hold that file (not a symlink) whose first line equals the directory's own path.
 wow_cleanup_dir() {
-    local d="${1:-}" root
+    local d="${1:-}" prefix="${2:-loki-wow}" marker="${3:-}" root marker_value=""
     [ -n "$d" ] && [ -d "$d" ] && [ ! -L "$d" ] || return 0
     root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || return 0
-    case "$d" in "$root"/loki-wow.*) ;; *) return 0 ;; esac
+    case "$d" in "$root/$prefix".*) ;; *) return 0 ;; esac
     [ "$(dirname -- "$d")" = "$root" ] || return 0
+    if [ -n "$marker" ]; then
+        [ -f "$d/$marker" ] && [ ! -L "$d/$marker" ] || return 0
+        IFS= read -r marker_value <"$d/$marker" || true
+        [ "$marker_value" = "$d" ] || return 0
+    fi
     rm -rf -- "$d"
 }
 
@@ -23038,18 +23045,10 @@ try_tmp_create() {
     printf '%s\n' "$d"
 }
 
-# Removes only a directory try_tmp_create made: a direct child of the temp root named
-# loki-run.*, not a symlink, carrying its own path in the owner marker.
+# Removes only a directory try_tmp_create made (loki-run.* child of the temp root whose
+# .loki-run-owned marker holds its own path); the checks live in wow_cleanup_dir.
 try_tmp_cleanup() {
-    local d="${1:-}" root marker_value=""
-    [ -n "$d" ] && [ -d "$d" ] && [ ! -L "$d" ] || return 0
-    root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || return 0
-    case "$d" in "$root"/loki-run.*) ;; *) return 0 ;; esac
-    [ "$(dirname -- "$d")" = "$root" ] || return 0
-    [ -f "$d/.loki-run-owned" ] && [ ! -L "$d/.loki-run-owned" ] || return 0
-    IFS= read -r marker_value <"$d/.loki-run-owned" || true
-    [ "$marker_value" = "$d" ] || return 0
-    rm -rf -- "$d"
+    wow_cleanup_dir "${1:-}" loki-run .loki-run-owned
 }
 
 # Prints the starter task for the clone at $1 (source URL $2): the first open GitHub
@@ -23063,7 +23062,7 @@ try_pick_task() {
             slug="${slug%/}"
             if command -v gh >/dev/null 2>&1; then
                 title="$(gh issue list --repo "$slug" --state open --limit 1 --json title --jq '.[0].title // empty' 2>/dev/null)" || title=""
-                title="${title//$'\n'/ }"
+                title="$(printf '%s' "$title" | LC_ALL=C tr -d '\000-\011\013-\037\177' | LC_ALL=C tr '\n' ' ')"
                 if [ -n "$title" ]; then
                     printf '%s\n' "Resolve the open issue: ${title:0:200}"
                     return 0
@@ -23079,30 +23078,61 @@ try_pick_task() {
     first="${first#*:}"
     l="${first%%:*}"
     t="${first#*:}"
-    t="$(printf '%s' "$t" | sed -e 's/^[[:space:]]*//' | cut -c1-160)"
+    t="$(printf '%s' "$t" | LC_ALL=C tr -d '\000-\037\177' | sed -e 's/^[[:space:]]*//' | cut -c1-160)"
+    p="$(printf '%s' "$p" | LC_ALL=C tr -d '\000-\037\177')"
     printf '%s\n' "Resolve the TODO in ${p} (line ${l}): ${t}"
 }
 
-# Copies the newest receipt.json under $1/.loki/runs to a kept location and prints its path.
+# Copies the newest receipt.json under $1/.loki/runs/<run>/ to a kept location and prints its
+# path. The clone is untrusted: every level (.loki, runs, the run dir, the file) is opened
+# without following symlinks, and only a receipt modified after the stamp file $2 (touched
+# right before loki start) is accepted, so a receipt committed in the repo is never reported.
 try_keep_receipt() {
-    local dest="$1" src runid out_root out
-    src="$(python3 - "$dest/.loki/runs" <<'PY'
-import os, sys
-root, best = sys.argv[1], None
-for d, _, files in os.walk(root):
-    if "receipt.json" in files:
-        p = os.path.join(d, "receipt.json")
-        if best is None or os.path.getmtime(p) > os.path.getmtime(best):
-            best = p
-print(best or "")
-PY
-)" || src=""
-    [ -n "$src" ] || return 1
-    runid="$(basename -- "$(dirname -- "$src")")"
+    local dest="$1" stamp="$2" out_root
     out_root="${LOKI_TRY_RECEIPT_DIR:-${HOME}/.loki/try-receipts}"
-    out="${out_root}/${runid}"
-    mkdir -p "$out" && cp "$src" "$out/receipt.json" || return 1
-    printf '%s\n' "$out/receipt.json"
+    python3 -I - "$dest" "$stamp" "$out_root" <<'PY'
+import os, re, stat, sys
+dest, stamp, out_root = sys.argv[1:4]
+D = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+try:
+    start = os.stat(stamp).st_mtime_ns
+    root = os.open(dest, D)
+    loki = os.open(".loki", D, dir_fd=root)
+    runs = os.open("runs", D, dir_fd=loki)
+    names = os.listdir(runs)
+except OSError:
+    sys.exit(1)
+best = None
+for name in names:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
+        continue
+    try:
+        rd = os.open(name, D, dir_fd=runs)
+    except OSError:
+        continue
+    try:
+        fd = os.open("receipt.json", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=rd)
+    except OSError:
+        os.close(rd)
+        continue
+    try:
+        st = os.fstat(fd)
+        if stat.S_ISREG(st.st_mode) and st.st_size <= 16 * 1024 * 1024 and st.st_mtime_ns > start:
+            if best is None or st.st_mtime_ns > best[0]:
+                with os.fdopen(os.dup(fd), "rb") as f:
+                    best = (st.st_mtime_ns, name, f.read())
+    finally:
+        os.close(fd)
+        os.close(rd)
+if best is None:
+    sys.exit(1)
+out = os.path.join(out_root, best[1])
+os.makedirs(out, exist_ok=True)
+target = os.path.join(out, "receipt.json")
+with open(target, "wb") as f:
+    f.write(best[2])
+print(target)
+PY
 }
 
 _cmd_try_body() {
@@ -23129,11 +23159,12 @@ _cmd_try_body() {
         echo "  loki start \"<task>\" --no-pr --provider $provider --max-cost $max_cost"
         return 0
     fi
-    local rc=0 receipt
+    local rc=0 receipt stamp="$tmp/started.stamp"
+    : >"$stamp"
     (
         cd "$dest" && LOKI_ASSUME_YES=1 "$SKILL_DIR/bin/loki" start "$task" --no-pr --provider "$provider" --max-cost "$max_cost"
     ) || rc=$?
-    if receipt="$(try_keep_receipt "$dest")"; then
+    if receipt="$(try_keep_receipt "$dest" "$stamp")"; then
         echo ""
         echo "Receipt: $receipt"
         echo "Check it: loki verify $receipt"
@@ -23228,9 +23259,11 @@ cmd_try() {
     local tmp rc=0
     tmp="$(try_tmp_create)" || { echo "loki try: cannot create a temp directory" >&2; return 1; }
     # shellcheck disable=SC2064  # expand tmp now; it is local to this call
-    trap "try_tmp_cleanup '$tmp'; trap - INT TERM; exit 130" INT TERM
+    trap "try_tmp_cleanup '$tmp'; trap - INT TERM HUP; exit 130" INT
+    trap "try_tmp_cleanup '$tmp'; trap - INT TERM HUP; exit 143" TERM
+    trap "try_tmp_cleanup '$tmp'; trap - INT TERM HUP; exit 129" HUP
     _cmd_try_body "$tmp" "$url" "$dry_run" "$use_provider" "$max_cost" || rc=$?
-    trap - INT TERM
+    trap - INT TERM HUP
     try_tmp_cleanup "$tmp"
     if [ ! -e "$tmp" ]; then echo "Removed the temp clone."; fi
     return "$rc"

@@ -463,6 +463,137 @@ else
     echo "[SKIP] loki try live run: bun not installed"
 fi
 
+# --- loki try: untrusted-clone receipt handling (planted symlinks and a planted fake receipt) ---
+# The stub engine writes no receipt, so anything reported or copied came from the clone itself.
+_TRY_SECRET="$_TRY_ROOT/secret.txt"
+printf '%s\n' 'SECRET_TOKEN_DO_NOT_COPY' > "$_TRY_SECRET"
+mkdir -p "$_TRY_ROOT/ext/evil" "$_TRY_ROOT/ext2/evil" "$_TRY_ROOT/skill0/bin" "$_TRY_ROOT/path0"
+printf '%s\n' 'SECRET_TOKEN_DO_NOT_COPY' > "$_TRY_ROOT/ext/evil/receipt.json"
+printf '%s\n' 'SECRET_TOKEN_DO_NOT_COPY' > "$_TRY_ROOT/ext2/evil/receipt.json"
+# Future mtimes make the symlink skip the only thing standing between the secret and the output dir.
+touch -t 203012312359 "$_TRY_SECRET" "$_TRY_ROOT/ext/evil/receipt.json" "$_TRY_ROOT/ext2/evil/receipt.json"
+for _e in "$_TRY_REPO"/*; do
+    [ "$(basename "$_e")" = "bin" ] || ln -s "$_e" "$_TRY_ROOT/skill0/$(basename "$_e")"
+done
+printf '#!/usr/bin/env bash\nexit 0\n' > "$_TRY_ROOT/skill0/bin/loki"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$_TRY_ROOT/path0/claude"
+chmod +x "$_TRY_ROOT/skill0/bin/loki" "$_TRY_ROOT/path0/claude"
+
+_try_plant() {
+    # $1 = variant name; builds $_TRY_ROOT/plant-$1 as a git repo with a TODO and one planted entry
+    local v="$1" d="$_TRY_ROOT/plant-$1"
+    mkdir -p "$d"
+    (
+        cd "$d" && git init -q . && printf '%s\n' '// TODO: handle the edge case' > app.js
+        case "$v" in
+            filelink) mkdir -p .loki/runs/evil && ln -s "$_TRY_SECRET" .loki/runs/evil/receipt.json ;;
+            dirlink) mkdir -p .loki/runs && ln -s "$_TRY_ROOT/ext/evil" .loki/runs/evil ;;
+            runslink) mkdir -p .loki && ln -s "$_TRY_ROOT/ext2" .loki/runs ;;
+            fake) mkdir -p .loki/runs/fake && printf '%s\n' '{"planted":"SECRET_TOKEN_DO_NOT_COPY"}' > .loki/runs/fake/receipt.json ;;
+        esac
+        git add -A . && git -c user.email=t@example.com -c user.name=t -c commit.gpgsign=false commit -q -m plant
+    ) >/dev/null 2>&1
+}
+for _v in filelink dirlink runslink fake; do
+    _try_plant "$_v"
+    _keep="$_TRY_ROOT/keep-$_v"
+    _try_rc=0
+    _try_out="$(cd "$_TRY_CALLER" && env SKILL_DIR="$_TRY_ROOT/skill0" PATH="$_TRY_ROOT/path0:$PATH" ANTHROPIC_API_KEY=stub \
+        TMPDIR="$_TRY_TMP" HOME="$_TRY_ROOT/home" LOKI_TRY_RECEIPT_DIR="$_keep" LOKI_NO_BROWSER=1 \
+        "$LOKI" try "file://$_TRY_ROOT/plant-$_v" --provider claude 2>&1)" || _try_rc=$?
+    _try_files="$(find "$_keep" -type f 2>/dev/null | wc -l | tr -d ' ')"
+    _try_leak="$(grep -rl SECRET_TOKEN_DO_NOT_COPY "$_keep" 2>/dev/null | wc -l | tr -d ' ')"
+    check_try "loki try planted $_v: nothing is copied to the output dir" "$([ "$_try_files" = "0" ] && [ "$_try_leak" = "0" ] && echo 1 || echo 0)" "files=$_try_files leak=$_try_leak"
+    check_try "loki try planted $_v: no Receipt line is reported" "$(case "$_try_out" in *'Receipt:'*) echo 0 ;; *) echo 1 ;; esac)" "$_try_out"
+    check_try "loki try planted $_v: says no receipt was written and exits non-zero" "$([ "$_try_rc" != "0" ] && case "$_try_out" in *'No receipt was written'*) echo 1 ;; *) echo 0 ;; esac)" "rc=$_try_rc: $_try_out"
+done
+
+# --- loki try: control characters in the task never reach the task text or the terminal ---
+_try_ctl_task="$(cd "$_TRY_ROOT" && env TMPDIR="$_TRY_TMP" bash -c '
+    eval "$(awk "/^try_pick_task\\(\\) \\{/,/^}/" "$1")"
+    d="$2/ctl"; mkdir -p "$d/repo" && cd "$d/repo" && git init -q . && printf "// TODO: fix \033[31mred\033[0m \007bell\n" > a.js && git add a.js \
+      && git -c user.email=t@example.com -c user.name=t -c commit.gpgsign=false commit -q -m c
+    try_pick_task "$d/repo" file:///x' _ "$LOKI" "$_TRY_ROOT" 2>&1)"
+check_try "loki try task text has no control characters" "$([ -n "$_try_ctl_task" ] && ! printf '%s' "$_try_ctl_task" | LC_ALL=C grep -q "[[:cntrl:]]" && echo 1 || echo 0)" "$(printf '%s' "$_try_ctl_task" | od -c | head -3)"
+
+# --- temp-dir refusal guards: each unsafe directory must survive the cleanup call ---
+_try_cleanup_call() {
+    # $1 = dir; runs the real try_tmp_cleanup (and wow_cleanup_dir) extracted from the CLI under TMPDIR=$_TRY_TMP
+    (env TMPDIR="$_TRY_TMP" bash -c '
+        eval "$(awk "/^wow_cleanup_dir\\(\\) \\{/,/^}/" "$1")"
+        eval "$(awk "/^try_tmp_cleanup\\(\\) \\{/,/^}/" "$1")"
+        try_tmp_cleanup "$2"' _ "$LOKI" "$1") >/dev/null 2>&1 || true
+}
+_G="$_TRY_ROOT/guards"
+mkdir -p "$_G/outside"
+_TRY_RT="$(cd "$_TRY_TMP" && pwd -P)"
+# positive control: a directory that satisfies every rule IS removed
+mkdir -p "$_TRY_RT/loki-run.okay1234"
+printf '%s\n' "$_TRY_RT/loki-run.okay1234" > "$_TRY_RT/loki-run.okay1234/.loki-run-owned"
+_try_cleanup_call "$_TRY_RT/loki-run.okay1234"
+check_try "temp guard: a valid owned dir is removed (positive control)" "$([ ! -e "$_TRY_RT/loki-run.okay1234" ] && echo 1 || echo 0)"
+# outside the temp root, valid name and marker
+mkdir -p "$_G/outside/loki-run.abcd1234"
+printf '%s\n' "$_G/outside/loki-run.abcd1234" > "$_G/outside/loki-run.abcd1234/.loki-run-owned"
+_try_cleanup_call "$_G/outside/loki-run.abcd1234"
+check_try "temp guard: a dir outside the temp root is refused" "$([ -d "$_G/outside/loki-run.abcd1234" ] && echo 1 || echo 0)"
+# direct child of the root but outside the loki-run namespace, valid marker
+mkdir -p "$_TRY_RT/other.abcd1234"
+printf '%s\n' "$_TRY_RT/other.abcd1234" > "$_TRY_RT/other.abcd1234/.loki-run-owned"
+_try_cleanup_call "$_TRY_RT/other.abcd1234"
+check_try "temp guard: a temp-root child outside the loki-run namespace is refused" "$([ -d "$_TRY_RT/other.abcd1234" ] && echo 1 || echo 0)"
+# symlink named loki-run.* pointing at a real dir
+mkdir -p "$_G/real"
+printf '%s\n' "$_TRY_RT/loki-run.link1234" > "$_G/real/.loki-run-owned"
+ln -s "$_G/real" "$_TRY_RT/loki-run.link1234"
+_try_cleanup_call "$_TRY_RT/loki-run.link1234"
+check_try "temp guard: a symlinked dir is refused and its target kept" "$([ -L "$_TRY_RT/loki-run.link1234" ] && [ -f "$_G/real/.loki-run-owned" ] && echo 1 || echo 0)"
+# loki-run.* with no marker
+mkdir -p "$_TRY_RT/loki-run.nomark12"
+_try_cleanup_call "$_TRY_RT/loki-run.nomark12"
+check_try "temp guard: a loki-run dir with no marker is refused" "$([ -d "$_TRY_RT/loki-run.nomark12" ] && echo 1 || echo 0)"
+# marker that does not equal the path
+mkdir -p "$_TRY_RT/loki-run.badmark1"
+printf '%s\n' "$_TRY_RT/loki-run.someother" > "$_TRY_RT/loki-run.badmark1/.loki-run-owned"
+_try_cleanup_call "$_TRY_RT/loki-run.badmark1"
+check_try "temp guard: a marker that is not the dir path is refused" "$([ -d "$_TRY_RT/loki-run.badmark1" ] && echo 1 || echo 0)"
+rm -f "$_TRY_RT/loki-run.link1234"
+rmdir "$_TRY_RT/loki-run.nomark12"
+rm -f "$_TRY_RT/loki-run.badmark1/.loki-run-owned" "$_TRY_RT/other.abcd1234/.loki-run-owned"
+rmdir "$_TRY_RT/loki-run.badmark1" "$_TRY_RT/other.abcd1234"
+
+# --- INT / TERM / HUP mid-run: the temp clone is removed and the exit code names the signal ---
+mkdir -p "$_TRY_ROOT/skill1/bin" "$_TRY_ROOT/sync"
+for _e in "$_TRY_REPO"/*; do
+    [ "$(basename "$_e")" = "bin" ] || ln -s "$_e" "$_TRY_ROOT/skill1/$(basename "$_e")"
+done
+cat > "$_TRY_ROOT/skill1/bin/loki" <<STUB
+#!/usr/bin/env bash
+: > "$_TRY_ROOT/sync/started"
+sleep 2
+exit 0
+STUB
+chmod +x "$_TRY_ROOT/skill1/bin/loki"
+for _sig in INT:130 TERM:143 HUP:129; do
+    _sn="${_sig%%:*}"; _sc="${_sig##*:}"
+    rm -f "$_TRY_ROOT/sync/started"
+    set -m
+    env SKILL_DIR="$_TRY_ROOT/skill1" PATH="$_TRY_ROOT/path0:$PATH" ANTHROPIC_API_KEY=stub TMPDIR="$_TRY_TMP" \
+        HOME="$_TRY_ROOT/home" LOKI_TRY_RECEIPT_DIR="$_TRY_ROOT/keep-sig" LOKI_NO_BROWSER=1 \
+        "$LOKI" try "file://$_TRY_FX" --provider claude >"$_TRY_ROOT/sig.out" 2>&1 &
+    _sp=$!
+    set +m
+    _i=0
+    while [ ! -f "$_TRY_ROOT/sync/started" ] && [ "$_i" -lt 100 ]; do sleep 0.1; _i=$((_i + 1)); done
+    _during="$(try_leftovers)"
+    kill -s "$_sn" "$_sp" 2>/dev/null || true
+    _src=0
+    wait "$_sp" || _src=$?
+    check_try "loki try $_sn mid-run: clone existed during the run, then 0 loki-run.* dirs remain, exit $_sc" \
+        "$([ "$_during" = "1" ] && [ "$(try_leftovers)" = "0" ] && [ "$_src" = "$_sc" ] && echo 1 || echo 0)" \
+        "during=$_during after=$(try_leftovers) rc=$_src: $(head -c 300 "$_TRY_ROOT/sig.out")"
+done
+
 check_try "loki try leaves 0 loki-run.* dirs behind" "$([ "$(try_leftovers)" = "0" ] && echo 1 || echo 0)" "found $(try_leftovers): $(ls -A "$_TRY_TMP" 2>&1)"
 _TRY_AFTER="$(_try_caller_state)"
 check_try "loki try leaves the caller checkout unchanged (HEAD, status, file bytes)" "$([ "$_TRY_BEFORE" = "$_TRY_AFTER" ] && echo 1 || echo 0)" "before: $_TRY_BEFORE / after: $_TRY_AFTER"
