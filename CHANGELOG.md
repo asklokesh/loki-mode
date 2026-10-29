@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Go and Rust repos can now finish VERIFIED: a failing `go test` or `cargo test` run on the base code now names the tests that failed, so the Wall keeps its test files instead of discarding them as unreadable, and passing Go and Cargo runs report how many tests actually ran. Output that cannot be read, or that a test could have forged, still never counts as a pass.
+- Go and Rust repos can now finish VERIFIED: a failing `go test` or `cargo test` run on the base code now names the tests that failed, so the Wall keeps its test files instead of discarding them as unreadable, and passing Go and Cargo runs report how many tests actually ran. A Go run only counts as a pass when it also writes a completed coverage profile, so a forged early exit cannot count. A Cargo run whose summary line is printed by the code under test can still read as a pass; a fix follows.
 - A resumed implement session that hits the turn cap no longer starts a second paid session.
 
 ## v11.83.0 (2026-10-29)
