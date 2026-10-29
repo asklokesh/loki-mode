@@ -5,7 +5,9 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { loadAwareTimeoutMs } from "../preload.ts";
+import { loadAwareTimeoutMs, setLoadAwareTimeout } from "../preload.ts";
+
+setLoadAwareTimeout(60_000); // the scale test spawns two child bun runs of 6s+ each
 
 describe("loadAwareTimeoutMs", () => {
   const at = (load1: number, scale?: string, floorMs?: string) =>
