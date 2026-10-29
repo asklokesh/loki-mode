@@ -5,6 +5,29 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.78.0 (2026-10-29)
+
+### Added
+
+- `loki cost` flags (`--month`, `--csv`, `--last`, `--detail`, `--json`) now tab-complete in bash and zsh.
+
+### Changed
+
+- The Claude Agent SDK is updated to 0.3.312, the TypeScript SDK to 1.3.0 and the Python SDK to 2.3.0.
+- The CLI command inventory moved out of the internal docs folder and is regenerated, and the project structure map lists it.
+
+### Fixed
+
+- `loki verify` reports a deleted sealed acceptance-check copy as tampered instead of passing it.
+- Multi-part tasks go to the group runner only when the origin is a github.com owner/repo; otherwise they run as one local run and say why.
+- `loki memory search` withholds whole PEM private keys and refuses hardlinked files.
+- `loki next --suggest` no longer hangs when the cost estimate is slow or hung.
+- `loki status --follow` stops and names the dead owner's pid when the run's process died before completing.
+
+### Known issues
+
+- A few pre-existing failures remain in the wider test suite (review assurance tail, receipt signing discoverability and build analytics opt-in tests); they reproduce on the previous release and do not affect the shipped CLI.
+
 ## v11.77.0 (2026-10-24)
 
 ### Added
