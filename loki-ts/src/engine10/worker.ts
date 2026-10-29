@@ -5,7 +5,7 @@ import { readEvents } from "./events.ts";
 import { eventsRelPath } from "../util/engine_origin.ts";
 import { GITHUB_TOKEN_VARS, SENTINEL_PREFIX } from "../util/credential_env.ts";
 import { costTotalsOf, liveArchivedCosts, sumRunCosts, UNMETERED } from "./cost.ts"; import { childSpendMeter, sealedRunCost } from "../util/child_ledger.ts";
-import { capMeter } from "../e10ext/budget_cap.ts";
+import { capMeter, type BudgetCrossing } from "../e10ext/budget_cap.ts";
 import { resizeCap } from "../util/run_cap.ts"; import { loadProjectApi } from "../project_model/resolve.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
 import { FLOW, runMachine } from "./machine.ts";
 import { withFailover, type FailoverRecord } from "../runner/provider_failover.ts";
@@ -46,6 +46,8 @@ export function costCapture(rawEmit: WorkerEmit, runId: string, repoDir: string,
   return { emit: (t, s, d) => { if (t === "cost") kept.push({ type: t, data: d }); rawEmit(t, s, d); }, cost: workerCostReader(runId, () => kept) };
 }
 
+/** The worker's one emit composition (main uses only this): the cap meter wraps the cost capture, so each cost event feeds the meter and the receipt's reader. */
+export function workerEmits(rawEmit: WorkerEmit, runId: string, repoDir: string, lokiRoot: string, env: NodeJS.ProcessEnv = process.env, onBudget?: (b: BudgetCrossing) => void): { emit: WorkerEmit; over: () => boolean; remaining: () => number | null; cost: RunContext["cost"] } { const c = costCapture(rawEmit, runId, repoDir, env); return { ...capMeter(c.emit, env, onBudget, childSpendMeter(lokiRoot, runId)), cost: c.cost }; }
 /** `engine10 worker <run-id> <provider> <model> <fast|deep>`, spawned by the supervisor through cli.ts. */
 export async function main(args: string[]): Promise<number> {
   const [runId, provider = "claude", model = resolveModel(provider), mode = "fast"] = args;
@@ -57,7 +59,7 @@ export async function main(args: string[]): Promise<number> {
   (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = true; // cli.ts's blanket exit(130/143) stands down: the handler below owns the stop
   for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { void cancelSessions().finally(() => process.exit(sig === "SIGINT" ? 130 : 143)); });
   await runWorker(async (rawEmit) => {
-    const { emit: costEmit, cost } = costCapture(rawEmit, runId, repoDir); const { emit, over, remaining } = capMeter(costEmit, process.env, (b) => { void import("../util/slack_events.ts").then((m) => m.notifyEvent(process.env, "budget", { cost: `$${b.usd_so_far.toFixed(2)} of $${b.cap_usd.toFixed(2)} (${b.threshold_pct}% of cap)`, question: `$${b.cap_usd.toFixed(2)}`, summary: `Budget: ${b.threshold_pct}% of the $${b.cap_usd.toFixed(2)} cap reached ($${b.usd_so_far.toFixed(2)} spent)` })).catch(() => {}); }, childSpendMeter(lokiRoot, runId));
+    const { emit, over, remaining, cost } = workerEmits(rawEmit, runId, repoDir, lokiRoot, process.env, (b) => { void import("../util/slack_events.ts").then((m) => m.notifyEvent(process.env, "budget", { cost: `$${b.usd_so_far.toFixed(2)} of $${b.cap_usd.toFixed(2)} (${b.threshold_pct}% of cap)`, question: `$${b.cap_usd.toFixed(2)}`, summary: `Budget: ${b.threshold_pct}% of the $${b.cap_usd.toFixed(2)} cap reached ($${b.usd_so_far.toFixed(2)} spent)` })).catch(() => {}); });
     const base = createSessionRunner({ provider, model, emit: emit as EmitFn, lokiRoot, remaining });
     const failovers: FailoverRecord[] = [];
     const sessions = withFailover({

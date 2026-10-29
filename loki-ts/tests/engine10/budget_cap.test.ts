@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { budgetNext, lastBudgetStop, priorSpend, unenforceableNote, writeBudgetStop, capMeter, capNote, perAttemptCap, runnerBudget, childBudgetLimit, costMeter, groupEnv, ledgerSum, DEFAULT_MAX_COST_USD, hasApiKey, SUBSCRIPTION_NOTE, parseCapUsd, resolveCap, yamlPerRun } from "../../src/e10ext/budget_cap.ts";
+import { workerEmits } from "../../src/engine10/worker.ts";
 import { childEnv } from "../../src/engine10/session.ts";
 import { watchBudget } from "../../src/providers/provider_guard.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
@@ -495,7 +496,23 @@ describe("child sessions count against the dollar cap", () => {
       expect(b.over()).toBe(true); expect(a.over()).toBe(true);
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
-  test("the worker hands the run's child meter to capMeter", () => {
-    expect(readFileSync(join(import.meta.dir, "..", "..", "src", "engine10", "worker.ts"), "utf8")).toMatch(/costCapture\(rawEmit, runId, repoDir\);.*capMeter\(costEmit, process\.env, .*childSpendMeter\(lokiRoot, runId\)\);/);
+  test("workerEmits: one cost event feeds the receipt reader, the cap meter and the log, and the run's child spend seeds the meter", () => {
+    const d = mkdtempSync(join(tmpdir(), "c5child-"));
+    try {
+      const sent: unknown[] = [], lokiRoot = join(d, ".loki");
+      const w = workerEmits((t, _s, data) => { sent.push([t, data]); }, "R1", d, lokiRoot, { LOKI_E10_MAX_COST_USD: "2", LOKI_E10_SPENT_USD: "0.5" } as NodeJS.ProcessEnv);
+      expect(w.remaining()).toBeCloseTo(1.5, 10);
+      w.emit("cost", "implement", { session_id: "s1", usd: 0.25 });
+      expect(sent).toEqual([["cost", { session_id: "s1", usd: 0.25 }]]);
+      expect(w.cost.read(d, []).usd).toBe(0.25); // the reader main puts on ctx.cost saw the same event
+      expect(w.remaining()).toBeCloseTo(1.25, 10); // the meter saw it too, from the seed
+      child(lokiRoot, "R1"); expect(w.remaining()).toBeCloseTo(0.55, 10); // the child meter is wired in
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("main takes emit, over, remaining and cost only from workerEmits", () => {
+    const src = readFileSync(join(import.meta.dir, "..", "..", "src", "engine10", "worker.ts"), "utf8"), body = src.slice(src.indexOf("export async function main"));
+    expect(body).toMatch(/const \{ emit, over, remaining, cost \} = workerEmits\(rawEmit, runId, repoDir, lokiRoot, process\.env,/);
+    expect(body).not.toMatch(/capMeter\(|costCapture\(|workerCostReader\(/);
+    expect(body).toMatch(/\n\s+cost,\n/);
   });
 });
