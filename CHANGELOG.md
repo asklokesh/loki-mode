@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- A run stopped with Ctrl-C or SIGTERM can now be continued: the next `loki start` with the same task offers Resume as the default, keeps the stages that already finished and runs only the rest. Off a terminal it resumes on its own; `--fresh` and `LOKI_NO_RESUME=1` still start over. `loki start --resume <id>` works on a cancelled run, and the cancel message and `loki status` say what the next start will offer. The resumed part is sealed again, and events after a log's last signed `log.sealed` (added by hand, or left by a resumed run that was killed) are refused, as is a log with its cancel seal cut off. Ctrl-C or end of input at the menu never resumes. Proven by the "continues a cancelled run" tests in `loki-ts/tests/engine10/supervisor_signal.test.ts`.
+
 ## v11.86.0 (2026-10-29)
 
 ### Fixed
