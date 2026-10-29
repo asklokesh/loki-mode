@@ -4,7 +4,7 @@ import { failIds } from "../../src/engine10/failures.ts";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { CARGO_UNLISTED_REASON, changedSymbols, checkProvenance, classifyCheck, corroboratePass, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, javaSummary, javaTestClass, fullSuiteCmd, readableFailIds, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
 import { firstError, runCheck, testCheckName, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
@@ -881,8 +881,71 @@ describe("Wall file importing a module the task will create", () => {
       expect(classify(f, 1, out, d, "project")).toBe("not_run");
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
-  test("a ModuleNotFoundError mentioned only inside captured output does not make a pytest collection red", () => {
-    const out = "=== short test summary info ===\nERROR t.py - AttributeError: x\n  print: ModuleNotFoundError: No module named 'pricing' (quoted)\n";
-    expect(classify({ runner: "pytest", path: "t.py" }, 2, out, "/nonexistent", "project")).toBe("not_run");
+  // pytest's collection report: the E line, then any Captured section, then the short summary.
+  const PYT = (e: string, captured = ""): string => `==== ERRORS ====\n____ ERROR collecting tests/loki_wall_pricing.py ____\ntests/loki_wall_pricing.py:2: in <module>\n    import pricing\nE   ${e}\n${captured}==== short test summary info ====\nERROR tests/loki_wall_pricing.py - ${e}\n!!!! Interrupted: 1 error during collection !!!!\n==== 1 error in 0.03s ====\n`;
+  const pf = { runner: "pytest" as const, path: "tests/loki_wall_pricing.py" };
+  test("pytest: the E line naming the missing module is red; a name printed in captured output is not", () => {
+    const d = repo(); try {
+      expect(classify(pf, 2, PYT("ModuleNotFoundError: No module named 'pricing'"), d, "project")).toBe("fail");
+      expect(classify(pf, 2, PYT("AttributeError: boom", "----- Captured stderr -----\nModuleNotFoundError: No module named 'zzz'\n"), d, "project")).toBe("not_run"); // column 0, after the real E line
+      expect(classify(pf, 2, PYT("AttributeError: boom", "----- Captured stdout -----\n  ModuleNotFoundError: No module named 'zzz' (quoted)\n"), d, "project")).toBe("not_run"); // indented
+      expect(classify(pf, 2, PYT("AttributeError: boom", "----- Captured stdout -----\nE   ModuleNotFoundError: No module named 'zzz'\n"), d, "project")).toBe("not_run"); // forged E line after the separator
+      expect(classify({ runner: "unittest", path: pf.path }, 1, "Traceback (most recent call last):\nModuleNotFoundError: No module named 'zzz'\nTraceback (most recent call last):\nAttributeError: boom\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nFAILED (errors=1)\nImportError: Failed to import test module: x\n", d, "project")).toBe("not_run"); // unittest: only the last line before the Ran footer names the error
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  const MISSING = "yaml_not_installed_q", UT = `ERROR: x (unittest.loader._FailedTest.x)\nImportError: Failed to import test module: x\nTraceback (most recent call last):\nModuleNotFoundError: No module named '${MISSING}'\n\nRan 1 test in 0.000s\n\nFAILED (errors=1)\n`;
+  const uf = { runner: "unittest" as const, path: "tests/loki_wall_pricing.py" };
+  const MANIFESTS: [string, string, string][] = [
+    ["requirements-dev.txt", "requirements-dev.txt", "pytest>=7  # tests\nYaml-Not-Installed.Q==1.0\n"],
+    ["requirements.txt with options", "requirements/base.txt", "-r other.txt\n--index-url https://x\nyaml_not_installed_q[extra]>=1\n"],
+    ["pyproject project.dependencies", "pyproject.toml", "[project]\nname = \"x\"\ndependencies = [\n  \"requests\",\n  \"yaml-not-installed-q>=1\",\n]\n"],
+    ["pyproject optional-dependencies", "pyproject.toml", "[project.optional-dependencies]\ndev = [\"pytest\", \"yaml_not_installed_q\"]\n"],
+    ["pyproject dependency-groups", "pyproject.toml", "[dependency-groups]\ntest = [\"yaml-not-installed-q\"]\n"],
+    ["pyproject poetry dependencies", "pyproject.toml", "[tool.poetry.dependencies]\npython = \"^3.9\"\nYaml-Not-Installed-Q = { version = \"^1\" }\n"],
+    ["pyproject poetry group", "pyproject.toml", "[tool.poetry.group.dev.dependencies]\nyaml-not-installed-q = \"^1\"\n"],
+    ["setup.cfg install_requires", "setup.cfg", "[options]\ninstall_requires =\n    requests\n    yaml-not-installed-q>=1\n"],
+    ["setup.cfg extras_require", "setup.cfg", "[options.extras_require]\ntest =\n    pytest\n    yaml-not-installed-q\n"],
+    ["setup.py install_requires", "setup.py", "from setuptools import setup\nsetup(name='x', install_requires=['requests', 'yaml-not-installed-q>=1'])\n"],
+    ["Pipfile", "Pipfile", "[packages]\nrequests = \"*\"\n\n[dev-packages]\nyaml-not-installed-q = \"*\"\n"],
+  ];
+  for (const [label, file, body] of MANIFESTS) test(`a name declared in ${label} is an environment gap (not_run), undeclared is red`, () => {
+    const d = repo(); try {
+      expect(classify(uf, 1, UT, d, "project")).toBe("fail");
+      mkdirSync(join(d, dirname(file)), { recursive: true }); writeFileSync(join(d, file), body);
+      expect(classify(uf, 1, UT, d, "project")).toBe("not_run");
+      expect(classify(uf, 1, UT.replaceAll(MISSING, "other_pkg"), d, "project")).toBe("fail"); // only the declared name is a gap
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a name that an existing non-Wall test file imports is an environment gap", () => {
+    const d = repo(); try {
+      writeFileSync(join(d, "tests", "test_old.py"), `import ${MISSING}\n`);
+      expect(classify(uf, 1, UT, d, "project")).toBe("not_run");
+      rmSync(join(d, "tests", "test_old.py")); writeFileSync(join(d, "tests", "loki_wall_other.py"), `import ${MISSING}\n`);
+      expect(classify(uf, 1, UT, d, "project")).toBe("fail"); // another Wall file does not count
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a new submodule of a package the repo imports is red; importing that exact submodule is not", () => {
+    const d = repo(), ut = UT.replaceAll(MISSING, "pkg.sub"); try {
+      mkdirSync(join(d, "pkg")); writeFileSync(join(d, "pkg", "__init__.py"), ""); writeFileSync(join(d, "app.py"), "import pkg\nfrom pkg import other\nfrom pkg.other import sub2\n");
+      expect(classify(uf, 1, ut, d, "project")).toBe("fail");
+      for (const src of ["import pkg.sub\n", "import os, pkg.sub as s\n", "from pkg.sub import x\n", "from pkg import sub\n", "from pkg import (\n    a,\n    sub,\n)\n", "import pkg.sub.deep\n"]) {
+        writeFileSync(join(d, "app.py"), src); expect([src, classify(uf, 1, ut, d, "project")]).toEqual([src, "not_run"]);
+      }
+      writeFileSync(join(d, "app.py"), "from pkg import subx\nimport pkg.subx\n"); expect(classify(uf, 1, ut, d, "project")).toBe("fail");
+      writeFileSync(join(d, "app.py"), "import pkg.sub\n"); expect(classify(uf, 1, UT.replaceAll(MISSING, "pkg"), d, "project")).toBe("not_run"); // importing a deeper module names its parent
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("src/ layout and namespace packages keep their results; vendored and dot directories are not searched", () => {
+    const d = repo(); try {
+      mkdirSync(join(d, "src")); writeFileSync(join(d, "src", "pricing.py"), "");
+      expect(classify(uf, 1, UT.replaceAll(MISSING, "pricing"), d, "project")).toBe("not_run");
+      rmSync(join(d, "src", "pricing.py")); mkdirSync(join(d, "ns")); writeFileSync(join(d, "ns", "mod.py"), "");
+      expect(classify(uf, 1, UT.replaceAll(MISSING, "ns.mod"), d, "project")).toBe("not_run");
+      expect(classify(uf, 1, UT.replaceAll(MISSING, "ns"), d, "project")).toBe("fail");
+      for (const skipped of ["node_modules/x", ".git/x", ".venv/lib", "venv/lib", "__pycache__", "dist", "build", ".hidden"]) {
+        mkdirSync(join(d, skipped), { recursive: true }); writeFileSync(join(d, skipped, "pricing.py"), ""); writeFileSync(join(d, skipped, "app.py"), "import pricing\n");
+      }
+      expect(classify(uf, 1, UT.replaceAll(MISSING, "pricing"), d, "project")).toBe("fail");
+    } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });

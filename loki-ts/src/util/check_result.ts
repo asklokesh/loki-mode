@@ -889,14 +889,79 @@ export function pytestCollectionIsRed(output: string, repoDir: string): boolean 
   const frames = [...block.slice(0, eLine.index).matchAll(/^(.+?):\d+: in \S+\n\s*(.*)$/gm)]; const last = frames[frames.length - 1];
   return !!last && under(last[1]!) && !/^\s*(import\s|from\s\S+\s+import\b)/.test(last[2] ?? "");
 }
-/** The final traceback line (col 0, or pytest's "E " line) must name the missing module; a mention inside captured output proves nothing. A module the repo already holds anywhere (a src/ layout off sys.path) or imports from its own non-test Python is an environment gap; any other name is something the task will create. */
+const PY_SKIP_DIR = /^(\.|(node_modules|venv|__pycache__|dist|build|site-packages)$)/;
+const PY_MANIFEST = /^(requirements[^/]*\.txt|pyproject\.toml|setup\.cfg|setup\.py|Pipfile)$/;
+const depKey = (s: string): string => s.toLowerCase().replace(/[-_.]+/g, "_");
+/** Python sources (at most 5000) and dependency manifests under repoDir; dot, vendored and build directories are never entered. Throws when repoDir itself is unreadable. */
+function walkPython(repoDir: string): { py: string[]; manifests: string[] } {
+  const py: string[] = [], manifests: string[] = [], stack = [""];
+  while (stack.length && py.length < 5000) {
+    const dir = stack.pop()!; let ents;
+    try { ents = readdirSync(join(repoDir, dir), { withFileTypes: true }); } catch (e) { if (!dir) throw e; continue; }
+    for (const e of ents) {
+      const rel = dir ? `${dir}/${e.name}` : e.name;
+      if (e.isDirectory()) { if (!PY_SKIP_DIR.test(e.name)) stack.push(rel); continue; }
+      if (e.name.endsWith(".py")) py.push(rel);
+      if (PY_MANIFEST.test(e.name) || (e.name.endsWith(".txt") && /(^|\/)requirements$/.test(dir))) manifests.push(rel);
+    }
+  }
+  return { py, manifests };
+}
+/** Distribution names the manifests declare, normalized by depKey: requirements*.txt lines; pyproject and Pipfile dependency tables and arrays; setup.cfg install_requires, tests_require and extras_require; the quoted strings after those keys in setup.py. */
+function declaredDeps(repoDir: string, manifests: string[]): Set<string> {
+  const out = new Set<string>(), add = (s: string): void => { const m = /^\s*([A-Za-z0-9][\w.-]*)/.exec(s); if (m) out.add(depKey(m[1]!)); };
+  const strings = (v: string): string[] => [...v.matchAll(/["']([^"']+)["']/g)].map((m) => m[1]!);
+  const open = (x: string): number => (x.match(/[[{]/g) ?? []).length - (x.match(/[\]}]/g) ?? []).length;
+  for (const f of manifests) {
+    let t: string; try { t = readFileSync(join(repoDir, f), "utf8"); } catch { continue; }
+    const base = basename(f), lines = t.split("\n");
+    if (base.endsWith(".txt")) { for (const l of lines) if (!/^\s*-/.test(l)) add(l.replace(/(^|\s)#.*$/, "")); }
+    else if (base === "setup.py") { for (const m of t.matchAll(/\b(?:install_requires|tests_require|extras_require)\s*=\s*([[{][^]*?[\]}])\s*[,)]/g)) strings(m[1]!).forEach(add); }
+    else if (base === "setup.cfg") {
+      let sec = "", key = "";
+      const wanted = (): boolean => sec === "options.extras_require" || (sec === "options" && /^(install|tests)_requires?$/.test(key));
+      for (const l of lines) {
+        const h = /^\[([^\]]+)\]/.exec(l), kv = /^(\w[\w.-]*)\s*[=:]\s*(.*)$/.exec(l);
+        if (h) { sec = h[1]!; key = ""; } else if (kv) { key = kv[1]!; if (wanted()) add(kv[2]!); } else if (/^\s+\S/.test(l) && wanted()) add(l.replace(/\s*[#;].*$/, ""));
+      }
+    } else {
+      let table = "";
+      for (let i = 0; i < lines.length; i++) {
+        const h = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$/.exec(lines[i]!); if (h) { table = h[1]!.replace(/["']/g, ""); continue; }
+        const a = /^\s*("[^"]+"|'[^']+'|[\w.-]+)\s*=\s*(.*)$/.exec(lines[i]!); if (!a) continue;
+        let v = a[2]!; while (open(v) > 0 && i + 1 < lines.length) v += `\n${lines[++i]}`;
+        const key = a[1]!.replace(/["']/g, ""), depTable = /(^|\.)(dependencies|dev-dependencies|optional-dependencies|dependency-groups|extras|packages|dev-packages)$/.test(table);
+        if (depTable || /^(optional-)?dependencies$|^dev-dependencies$/.test(key)) { if (v.trimStart().startsWith("[")) strings(v).forEach(add); else if (depTable) add(key); }
+      }
+    }
+  }
+  return out;
+}
+/** Does the source import `name`: `import a.b`, `from a.b import x`, or for a dotted name `from a import b`. Importing a deeper module also names its parents (`import a.b.c` imports `a` and `a.b`), but importing only the parent does not name a submodule. */
+function importsName(t: string, name: string): boolean {
+  const q = (s: string): string => s.replace(/\./g, "\\."), dot = name.lastIndexOf(".");
+  if (new RegExp(`^[ \\t]*import[ \\t]+(?:[\\w.]+(?:[ \\t]+as[ \\t]+\\w+)?[ \\t]*,[ \\t]*)*${q(name)}(?!\\w)`, "m").test(t) || new RegExp(`^[ \\t]*from[ \\t]+${q(name)}(?!\\w)`, "m").test(t)) return true;
+  if (dot < 0) return false;
+  const last = new RegExp(`(?<![\\w.])${name.slice(dot + 1)}(?!\\w)`);
+  return [...t.matchAll(new RegExp(`^[ \\t]*from[ \\t]+${q(name.slice(0, dot))}[ \\t]+import[ \\t]+(\\([^)]*\\)|[^\\n]*)`, "gm"))].some((m) => last.test(m[1]!));
+}
+/** The missing module a collection error names. pytest: the last E line of the first "ERROR collecting" block, cut at its first Captured separator. Otherwise (unittest): the last line before the Ran footer. Text the test itself printed is never read. */
+function missingModule(output: string): string | undefined {
+  const re = /^(?:E {3})?ModuleNotFoundError: No module named '([\w.]+)'\s*$/, start = output.search(/^_+ ERROR collecting /m);
+  if (start >= 0) return re.exec(((output.slice(start).split(/^-+ Captured .*$/m)[0]!.split(/^=+ /m)[0]!.match(/^E {3}.*$/gm)) ?? []).pop() ?? "")?.[1];
+  return re.exec(output.split(/^(?:-+\n)?Ran \d+ tests? in /m)[0]!.trimEnd().split("\n").pop() ?? "")?.[1];
+}
+/** Red on base only for a module that is not in the repo, not declared in a dependency manifest, and not imported by any non-Wall Python file (tests included): that name is what the task creates. A dotted name is matched whole, so importing its package does not hide a new submodule. */
 function moduleToBeCreated(output: string, repoDir: string): boolean {
-  const name = [...output.matchAll(/^(?:E {3})?ModuleNotFoundError: No module named '([\w.]+)'\s*$/gm)].pop()?.[1]; if (!name || moduleUnderRepo(repoDir, name)) return false;
-  const rel = name.replace(/\./g, "/"), rx = new RegExp(`^\\s*(?:import|from)\\s+${name.split(".")[0]}\\b`, "m");
-  try {
-    const py = readdirSync(repoDir, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".py") && !/(^|\/)(\.|node_modules\/|venv\/|site-packages\/)/.test(f)).slice(0, 5000);
-    return !py.some((f) => (`/${f}`.endsWith(`/${rel}.py`) || `/${f}`.endsWith(`/${rel}/__init__.py`)) || (!isTestFile(f) && !/(^|\/)(tests?\/|loki_wall_)/.test(f) && (() => { try { return rx.test(readFileSync(join(repoDir, f), "utf8")); } catch { return false; } })()));
-  } catch { return false; }
+  const name = missingModule(output); if (!name || moduleUnderRepo(repoDir, name)) return false;
+  let w; try { w = walkPython(repoDir); } catch { return false; }
+  if (declaredDeps(repoDir, w.manifests).has(depKey(name.split(".")[0]!))) return false;
+  const rel = name.replace(/\./g, "/");
+  return !w.py.some((f) => {
+    if (`/${f}`.endsWith(`/${rel}.py`) || `/${f}`.endsWith(`/${rel}/__init__.py`)) return true;
+    if (/(^|\/)loki_wall_/.test(f)) return false;
+    try { return importsName(readFileSync(join(repoDir, f), "utf8"), name); } catch { return false; }
+  });
 }
 function moduleUnderRepo(repoDir: string, name: string): boolean { const rel = name.replace(/\./g, "/"); return existsSync(join(repoDir, `${rel}.py`)) || existsSync(join(repoDir, rel, "__init__.py")); }
 // E-125 r5: exit-1 output is red only from the real final summary, never captured text. The runner appends -rfE, so a repo's `-q` addopts (stacked to -qq, no footer) still lists FAILED lines.
