@@ -1259,6 +1259,8 @@ class LeanCostTableTest(unittest.TestCase):
         rows = (self._rows("raw-lean", "abc", 4.0) + self._rows(
             "loki-lean", "abc", 1.0, cost_profile="lean", lever_env={},
             engine="v10", loki_version="1.0.0"))
+        for r in rows:
+            r["cost_source"] = "claude_json.total_cost_usd"
         self._write(rows)
         text = A.render_cost_table(self.d)
         self.assertIn("vs raw-lean", text)
@@ -1284,6 +1286,25 @@ class LeanCostTableTest(unittest.TestCase):
         line = [ln for ln in text.splitlines() if ln.startswith("verdict loki-lean vs raw-lean")][0]
         self.assertIn("PROVEN_AT(0.5)", line)
         self.assertNotIn("NOT PROVEN", line)
+        self.assertIn("metered loki 1.00, floor 1.00", line)
+        self.assertIn("reconciliation not measured", line)
+
+    def test_unmetered_row_makes_verdict_line_invalid_lower_bound(self):
+        rows = []
+        for rep in range(3):
+            for arm, usd in (("raw-lean", 4.0), ("loki-lean", 1.0)):
+                for t in "abc":
+                    r = row(arm, True, True, cost=usd)
+                    r.update(task=t, repeat=rep + 1, engine="v10", loki_version="1.0.0", model_used="m1",
+                             lever_env={}, cost_source="claude_json.total_cost_usd")
+                    rows.append(r)
+        rows[1]["cost_usd"] = None
+        self._write(rows)
+        line = [ln for ln in A.render_cost_table(self.d).splitlines()
+                if ln.startswith("verdict loki-lean vs raw-lean")][0]
+        self.assertIn("INVALID", line)
+        self.assertIn("ratio not computable", line)
+        self.assertIn("lower bound", line)
 
     def test_different_lever_env_is_not_pooled_into_loki_arm(self):
         rows = self._rows("loki", "abc", 1.0, lever_env={}, cost_profile="off")

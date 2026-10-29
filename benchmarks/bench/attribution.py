@@ -1054,9 +1054,30 @@ def _verdict_lines(rows: List[Dict[str, Any]], labels: List[str]) -> List[str]:
             ci = ("ratio %.2fx, CI95 [%.2f, %.2f]" % (v["ratio"], v["ci_low"], v["ci_high"])
                   if v["ratio"] is not None else "ratio not computable")
             why = "; reasons: " + " | ".join(v["reasons"]) if v["reasons"] else ""
-            out.append("verdict %s vs %s (target %.1fx): %s (%s)%s"
-                       % (lab, f, COST_TARGET_FRACTION, v["verdict"], ci, why))
+            out.append("verdict %s vs %s (target %.1fx): %s (%s; %s)%s"
+                       % (lab, f, COST_TARGET_FRACTION, v["verdict"], ci,
+                          _cost_fields(v), why))
     return out
+
+
+def _cost_fields(v: Dict[str, Any]) -> str:
+    """Metered share, cost per accepted (failed attempts included) and the
+    console reconciliation of one verdict; an unmetered arm shows a lower bound."""
+    def share(c: Dict[str, Any]) -> str:
+        return "n/a" if c["metered_share"] is None else "%.2f" % c["metered_share"]
+
+    def cpa(c: Dict[str, Any]) -> str:
+        if c["cost_per_accepted_usd"] is not None:
+            return "$%.4f" % c["cost_per_accepted_usd"]
+        if c["cost_per_accepted_lower_bound_usd"] is not None:
+            return ">= $%.4f lower bound" % c["cost_per_accepted_lower_bound_usd"]
+        return "undefined"
+
+    lk, fl = v["arm_cost"]["loki"], v["arm_cost"]["floor"]
+    rec = v["reconciliation_error"]
+    rec = rec if isinstance(rec, str) else "%+.2f%%" % (100 * rec)
+    return ("metered loki %s, floor %s; per accepted loki %s, floor %s; "
+            "reconciliation %s" % (share(lk), share(fl), cpa(lk), cpa(fl), rec))
 
 
 def render_cost_table(out_dir: str, arms: Tuple[str, ...] = ARMS) -> str:

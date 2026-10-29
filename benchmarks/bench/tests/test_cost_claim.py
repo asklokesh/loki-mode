@@ -36,7 +36,7 @@ def test_partial_row_blocks():
     loki, floor = _tight(0.45)
     loki[0]["cost_partial"] = True
     v = cc.cost_claim_verdict(loki, floor, 0.5)
-    assert v["verdict"] == "NOT PROVEN"
+    assert v["verdict"] == "INVALID"
     assert any(r.startswith("partial") for r in v["reasons"])
 
 
@@ -205,7 +205,7 @@ def test_cli_maps_unmeasured_and_partial(tmp_path):
     rows[0]["cost_partial"] = True
     _write(f, rows)
     rc, out = _run(*_base_args(f))
-    assert rc == 1
+    assert rc == 3
     assert any(r.startswith("partial") for r in json.loads(out)["reasons"])
 
 
@@ -496,7 +496,7 @@ def test_cost_source_missing_blocks():
     loki, floor = _tight(0.4)
     del loki[0]["cost_source"]
     v = cc.cost_claim_verdict(loki, floor, 0.5)
-    assert v["verdict"] == "NOT PROVEN"
+    assert v["verdict"] == "INVALID"
     assert any(r.startswith("cost_source: missing") for r in v["reasons"])
 
 
@@ -519,7 +519,7 @@ def test_cli_cost_source_missing_not_proven(tmp_path):
     _write(f, rows)
     rc, out = _run(*_base_args(f))
     v = json.loads(out)
-    assert rc == 1 and any(r.startswith("cost_source:") for r in v["reasons"]), out
+    assert rc == 3 and any(r.startswith("cost_source:") for r in v["reasons"]), out
 
 
 def _bad_cost_cases():
@@ -534,7 +534,7 @@ def test_bad_cost_row_blocks():
         else:
             loki[0]["cost_usd"] = bad
         v = cc.cost_claim_verdict(loki, floor, 0.5)
-        assert v["verdict"] == "NOT PROVEN", (bad, v)
+        assert v["verdict"] == "INVALID", (bad, v)
         assert any(r.startswith("cost: 1 row(s)") for r in v["reasons"]), (bad, v)
 
 
@@ -564,7 +564,7 @@ def test_bad_cost_row_cli_not_proven(tmp_path):
     _write(f, rows)
     rc, out = _run(*_base_args(f))
     v = json.loads(out)
-    assert rc == 1 and any(r.startswith("cost:") for r in v["reasons"]), out
+    assert rc == 3 and any(r.startswith("cost:") for r in v["reasons"]), out
 
 
 # ---- INVALID: identity env record and positive control (retro 3.8.7) ----
@@ -644,3 +644,65 @@ def test_cli_failed_control_exit_3_and_control_not_in_claim(tmp_path):
     rc, out = _run(*_base_args(f))
     assert rc == 0, out
     assert "pc0" not in json.dumps(json.loads(out)["reasons"])
+
+
+# ---- Scoreboard cost fields: metered share, reconciliation, cost per accepted ----
+
+def test_null_cost_row_is_invalid_lower_bound_never_point():
+    for arm in ("loki", "floor"):
+        loki, floor = _tight(0.4)
+        (loki if arm == "loki" else floor)[0]["cost_usd"] = None
+        v = cc.cost_claim_verdict(loki, floor, 0.5)
+        assert v["verdict"] == "INVALID", (arm, v)
+        assert any(r.startswith("metered: %s" % arm) for r in v["reasons"]), v
+        c = v["arm_cost"][arm]
+        assert c["metered_share"] == 23 / 24
+        assert c["cost_per_accepted_usd"] is None
+        assert c["cost_per_accepted_lower_bound_usd"] is not None
+        assert v["ratio"] is None and v["ci_low"] is None and v["ci_high"] is None
+
+
+def test_metered_arm_cost_counts_failed_attempts():
+    # 8 tasks x 3 runs at 0.4; one failed attempt per task: 24 * 0.4 / 16
+    floor = _arm([[1.0] * 3] * 8)
+    loki = _arm([[0.4] * 3] * 8, accepted=lambda t, r: r != 0)
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    c = v["arm_cost"]["loki"]
+    assert c["metered_share"] == 1.0
+    assert abs(c["cost_per_accepted_usd"] - 0.6) < 1e-9
+    assert c["cost_per_accepted_lower_bound_usd"] is None
+    assert v["arm_cost"]["floor"]["cost_per_accepted_usd"] == 1.0
+
+
+def test_reconciliation_not_measured_without_csv_never_zero():
+    loki, floor = _tight(0.4)
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["verdict"] == "PROVEN_AT(0.5)"
+    assert v["reconciliation_error"] == "not measured"
+
+
+def test_reconciliation_against_console_total():
+    loki, floor = _tight(0.4)  # run total 24 * 0.4 + 24 * 1.0 = 33.6
+    err, d = cc.reconcile(loki + floor, 32.0)
+    assert abs(err - 0.05) < 1e-9 and abs(d["run_usd"] - 33.6) < 1e-9
+    loki[0]["cost_usd"] = None
+    assert cc.reconcile(loki + floor, 32.0)[0] == "not measured"
+    assert cc.reconcile(loki + floor, 0.0)[0] == "not measured"
+
+
+def test_cli_usage_csv_reconciles_and_rejects_bad_export(tmp_path):
+    f = tmp_path / "a.jsonl"
+    _write(f, _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0))
+    rc, out = _run(*_base_args(f))
+    assert rc == 0 and json.loads(out)["reconciliation_error"] == "not measured"
+    csv_p = tmp_path / "usage.csv"
+    # run total 24*0.4 + 24*1.0 + 6 control rows * 0.01 = 33.66
+    csv_p.write_text("usage_date_utc,model,Cost_USD\n2026-10-28,m1,$30.00\n"
+                     "2026-10-29,m1,3.66\n")
+    rc, out = _run(*_base_args(f), "--usage-csv", str(csv_p))
+    v = json.loads(out)
+    assert rc == 0 and abs(v["reconciliation_error"]) < 1e-9, out
+    csv_p.write_text("date,model\n2026-10-28,m1\n")
+    assert _run(*_base_args(f), "--usage-csv", str(csv_p))[0] == 2
+    csv_p.write_text("date,cost_usd\n2026-10-28,\n")
+    assert _run(*_base_args(f), "--usage-csv", str(csv_p))[0] == 2
