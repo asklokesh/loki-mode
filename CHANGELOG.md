@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `loki verify` again reads an `events.jsonl` whose last line was cut mid-write as UNCHECKED (exit 2) instead of TAMPERED, as the 11.79.0 notes stated, and a log whose final line is whole but missing only its newline keeps its verdict. Since 11.79.0 both were wrongly reported as TAMPERED. On a signed run, a cut `log.sealed` line still reads TAMPERED. A tail that a cut write could not produce (leading whitespace, a raw tab or CR, or a whole line with trailing whitespace), blank lines and stray whitespace inside lines are still TAMPERED.
 - `loki verify` now also runs the tests of JS and TS modules that import a changed file through a `tsconfig.json` or `jsconfig.json` setting: a repo-root path under `baseUrl` (such as `lib/a`) or a `paths` alias (such as `@/lib/a`). Before, only relative imports were followed, so a break behind one of these imports could still read as verified.
+- Correction to the v11.84.0 notes: a run whose session ran out of turns seals PARTIAL unless the target check and every check pass, in which case it seals VERIFIED.
 
 ## v11.84.0 (2026-10-29)
 
