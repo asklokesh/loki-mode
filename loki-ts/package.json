@@ -12,7 +12,7 @@
     "version": "bun src/cli.ts version",
     "postinstall": "cd ../packages/control-plane && bun install --frozen-lockfile",
     "typecheck": "bun run --bun tsc --noEmit",
-    "test": "LOKI_NO_BROWSER=1 bun test",
+    "test": "s=${LOKI_TEST_TIMEOUT_SCALE:-3}; case $s in \"\"|*[!0-9]*|0*) s=3;; ???*|1[1-9]|[2-9][0-9]) s=10;; esac; LOKI_NO_BROWSER=1 bun test --timeout $((5000 * s))",
     "bench": "bun run scripts/bench.ts",
     "build": "bun run scripts/build.ts",
     "build:binary": "bun build --compile src/cli.ts --outfile=dist/loki-ts"

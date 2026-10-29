@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { loadAwareTimeoutMs, setLoadAwareTimeout } from "../preload.ts";
 
-setLoadAwareTimeout(60_000); // the scale test spawns two child bun runs of 6s+ each
+setLoadAwareTimeout(60_000); // the scale test spawns two child bun runs of three 6s files each
 
 describe("loadAwareTimeoutMs", () => {
   const at = (load1: number, scale?: string, floorMs?: string) =>
@@ -52,18 +52,45 @@ describe("the real setLoadAwareTimeout path under bun test", () => {
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 });
 
-describe("the preload applies a load-aware global default", () => {
-  // A child test file with NO opt-in sleeps 6s. The 5000ms default scaled by 3 passes; unscaled it fails.
+describe("the test script gives every file of a multi-file run the scaled default", () => {
+  // Three child files with NO opt-in each sleep 6s, run in ONE `bun run test` process (the package script owns the default).
+  // A preload-time setDefaultTimeout reached only one of them; the script's --timeout reaches all three.
   const dir = mkdtempSync(join(tmpdir(), "loki-tmo-"));
-  const file = join(dir, "child.test.ts");
+  const files =[1, 2, 3].map((i) => join(dir, `child${i}.test.ts`));
   const cwd = join(import.meta.dir, "..", "..");
   const run = (scale: string) => {
-    writeFileSync(file, `import { it } from "bun:test";\nit("sleeps 6s", async () => { await new Promise((r) => setTimeout(r, 6000)); });\n`);
-    return spawnSync(process.execPath, ["test", file], { cwd, env: { ...process.env, LOKI_TEST_TIMEOUT_SCALE: scale, LOKI_TEST_TIMEOUT_MS: "" }, encoding: "utf8", timeout: 60_000 });
+    for (const f of files) writeFileSync(f, `import { it } from "bun:test";\nit("sleeps 6s", async () => { await new Promise((r) => setTimeout(r, 6000)); });\n`);
+    return spawnSync(process.execPath, ["run", "test", ...files], { cwd, env: { ...process.env, LOKI_TEST_TIMEOUT_SCALE: scale, LOKI_TEST_TIMEOUT_MS: "" }, encoding: "utf8", timeout: 90_000 });
   };
-  it("a 6s test passes at scale 3 and fails at scale 1", () => {
-    expect(run("3").status).toBe(0);
-    expect(run("1").status).not.toBe(0);
+  it("all three 6s tests pass at scale 3 and all three fail at scale 1", () => {
+    const ok = run("3");
+    expect(ok.status).toBe(0);
+    expect(`${ok.stdout}${ok.stderr}`).toMatch(/\b3 pass/);
+    const bad = run("1");
+    expect(bad.status).not.toBe(0);
+    expect(`${bad.stdout}${bad.stderr}`).toMatch(/\b3 fail/);
+  });
+  it("a zero or non-numeric scale falls back to 3 and a 20s hang still times out", () => {
+    for (const f of files) writeFileSync(f, `import { it } from "bun:test";\nit("hangs 20s", async () => { await new Promise((r) => setTimeout(r, 20000)); });\n`);
+    for (const scale of ["0", "abc"]) {
+      const r = spawnSync(process.execPath, ["run", "test", files[0]!], { cwd, env: { ...process.env, LOKI_TEST_TIMEOUT_SCALE: scale, LOKI_TEST_TIMEOUT_MS: "" }, encoding: "utf8", timeout: 60_000 });
+      expect(r.status).not.toBe(0);
+      expect(`${r.stdout}${r.stderr}`).toMatch(/timed out after 15000ms/);
+    }
+  });
+  it("the script clamps the scale to 1..10 by string pattern, so an overflowing value never reaches the arithmetic", () => {
+    const script = (JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as { scripts: { test: string } }).scripts.test;
+    const resolved = (shell: string, scale?: string) => {
+      const env: Record<string, string | undefined> = { ...process.env, LOKI_TEST_TIMEOUT_SCALE: scale };
+      if (scale === undefined) delete env["LOKI_TEST_TIMEOUT_SCALE"];
+      return spawnSync(shell, ["-c", script.replace("bun test --timeout", "echo")], { env: env as NodeJS.ProcessEnv, encoding: "utf8" }).stdout.trim();
+    };
+    const cases: Array<[string | undefined, string]> = [
+      [undefined, "15000"], ["", "15000"], ["abc", "15000"], ["0", "15000"], ["05", "15000"], ["-2", "15000"],
+      ["1", "5000"], ["3", "15000"], ["9", "45000"], ["10", "50000"], ["11", "50000"], ["99", "50000"],
+      ["100", "50000"], ["99999999", "50000"], ["3689348814741910", "50000"], ["18446744073709551616", "50000"],
+    ];
+    for (const shell of ["/bin/sh", "/bin/bash"]) for (const [scale, ms] of cases) expect(`${shell} ${scale}: ${resolved(shell, scale)}`).toBe(`${shell} ${scale}: ${ms}`);
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 });

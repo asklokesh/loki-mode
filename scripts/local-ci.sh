@@ -1174,7 +1174,7 @@ if why:
 "
   '
   run_check "bun run typecheck" "(cd loki-ts && bun run typecheck) 2>&1 | tail -5"
-  run_check "bun test" "(cd loki-ts && bun test) 2>&1 | tail -5"
+  run_check "bun test" "(cd loki-ts && bun run test) 2>&1 | tail -5"
   # dist freshness: the committed loki-ts/dist/loki.js is the artifact npm/Docker
   # ship from and the bin/loki shim runs when newer than src. A stale or mangled
   # dist passes every other gate (bun tests import from src), so a forgotten
