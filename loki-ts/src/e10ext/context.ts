@@ -37,6 +37,7 @@ const MAX_TESTS = 10;
 
 const shq = (w: string): string => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`);
 
+const detectedInterpreters = (tm: TestMap | undefined, repoDir: string, d: ContextDeps): string[] => [...new Set((tm?.runners ?? []).flatMap((runner) => { try { const c = d.cmd({ runner, path: "" } as TestRef, repoDir)[0]; return c ? [`${shq(c.startsWith(`${repoDir}/`) ? c.slice(repoDir.length + 1) : c)} (${runner})`] : []; } catch { return []; } }))]; // RUN5-C1i: executable per detected runner via the test-run resolver; none detected, none invented
 export function briefContext(ctx: RunContext, d: ContextDeps): string {
   const unit = unitBrief(); // D61-11: a unit brief is its pack files only
   if (unit !== null) return unit;
@@ -53,11 +54,13 @@ export function briefContext(ctx: RunContext, d: ContextDeps): string {
   const refs = tm && files.length ? ctx.tests.impacted(tm, files).slice(0, MAX_TESTS) : [];
   const rel = (p: string): string => (p.startsWith(`${ctx.repoDir}/`) ? p.slice(ctx.repoDir.length + 1) : p);
   const cmds = refs.map((t) => { const [c, a, , dir] = d.cmd(t, ctx.repoDir); return `${dir && dir !== "." ? `cd ${shq(dir)} && ` : ""}${[rel(c), ...a].map(shq).join(" ")}`; });
+  const interps = cmds.length ? [] : detectedInterpreters(tm, ctx.repoDir, d); // no impacted test: still name the interpreter intake detected
   const verified = readVerifiedCommand(repoCacheDir(repoKey(null, ctx.repoDir)));
   const sigs = process.env["LOKI_E10_SIGS"] === "0" || !files.length ? "" : signatureDigest(ctx.repoDir, files.slice(0, 5));
   return [
     files.length ? `Relevant files:\n${files.join("\n")}` : "",
     sigs ? `Key signatures (read the files for bodies):\n${sigs}` : "",
+    interps.length ? `Detected test interpreter (no test file to run yet; use exactly this executable, never a guessed one): ${interps.join(", ")}` : "",
     cmds.length ? `Impacted test commands:\n${cmds.join("\n")}` : "",
     verified ? `Last verified test command: ${verified}` : "",
     profileBrief(ctx.repoDir), // REPOMEM: validated repo commands + baseline-red tests; byte-stable for an unchanged profile
