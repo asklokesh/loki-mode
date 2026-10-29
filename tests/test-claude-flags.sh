@@ -248,6 +248,16 @@ export __LOKI_CLAUDE_HELP_CACHE="$LEAN_HELP"
 out=$(LOKI_LEAN_CHILDREN=0 loki_lean_child_flags grill)
 [ -z "$out" ] && ok "S2: LOKI_LEAN_CHILDREN=0 prints nothing" || bad "S2: opt-out printed [$out]"
 
+# opt-out keeps the walled check author text-only, and only that role
+out=$(LOKI_LEAN_CHILDREN=0 loki_lean_child_flags check_author)
+[ "$out" = "--tools=" ] && ok "S2: LOKI_LEAN_CHILDREN=0 keeps --tools= for check_author" || bad "S2: opt-out check_author printed [$out]"
+export __LOKI_CLAUDE_HELP_CACHE="  --bare  --setting-sources"
+out=$(LOKI_LEAN_CHILDREN=0 loki_lean_child_flags check_author)
+[ -z "$out" ] && ok "S2: opt-out check_author prints nothing when --tools is not advertised" || bad "S2: opt-out check_author printed [$out]"
+export __LOKI_CLAUDE_HELP_CACHE="$LEAN_HELP"
+out=$(LOKI_LEAN_CHILDREN=0 loki_lean_child_flags review)
+[ -z "$out" ] && ok "S2: opt-out leaves other roles empty" || bad "S2: opt-out review printed [$out]"
+
 # ledger
 loki_child_ledger_append grill '{"type":"result","total_cost_usd":0.0123,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":30,"cache_read_input_tokens":40},"modelUsage":{"claude-sonnet-x":{}}}'
 loki_child_ledger_append council '{"usage":{"input_tokens":1,"output_tokens":2}}'

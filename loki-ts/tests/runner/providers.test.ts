@@ -9,7 +9,7 @@
 // Read independently from the JSON so these assertions do not depend on resolveClaudeModel itself.
 const CATALOG_OPUS: string = JSON.parse(_rf(_join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers.claude.cli_aliases.opus;
 import { describe, expect, it, beforeEach, afterEach, test } from "bun:test";
-import { resolveProvider, claudeProvider, codexProvider, clineProvider, aiderProvider, PROVIDER_COMMIT_HYGIENE, buildSdkLoopOptions, providerCallTimeoutMs, mergeDisallowedTools, engine10CacheTtlEnv, SDK_BUNDLED_CLAUDE_CODE, truthy } from "../../src/runner/providers.ts";
+import { resolveProvider, claudeProvider, codexProvider, clineProvider, aiderProvider, PROVIDER_COMMIT_HYGIENE, buildSdkLoopOptions, providerCallTimeoutMs, mergeDisallowedTools, engine10CacheTtlEnv, SDK_BUNDLED_CLAUDE_CODE, truthy, textOnlyArgv } from "../../src/runner/providers.ts";
 import type { ProviderInvocation } from "../../src/runner/types.ts";
 import { readFileSync as _rf, chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join as _join, join } from "node:path";
@@ -321,6 +321,21 @@ describe("claudeProvider invocation", () => {
     expect(on.join(" ")).toContain("Bash");
     await claudeProvider().invoke(makeCall());
     expect(readArgv(argvLog)).not.toContain("--tools=");
+  });
+
+  it("textOnlyArgv drops --tools= for a CLI that does not advertise it, so the label reads cwd-only", () => {
+    _resetClaudeHelpCacheForTest("  --model <model>  select model");
+    try {
+      expect(textOnlyArgv()).not.toContain("--tools=");
+    } finally {
+      _resetClaudeHelpCacheForTest(null);
+    }
+    _resetClaudeHelpCacheForTest("  --tools <tools...>  built-in tools");
+    try {
+      expect(textOnlyArgv()).toContain("--tools=");
+    } finally {
+      _resetClaudeHelpCacheForTest(null);
+    }
   });
 
   it("passes --dangerously-skip-permissions (legacy), --model, and -p", async () => {

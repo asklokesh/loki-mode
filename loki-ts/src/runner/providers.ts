@@ -479,7 +479,8 @@ async function writeCaptured(
 // defence in depth. LOKI_LEAN_CHILDREN=0 must not re-enable tools here, so the
 // lean flags are built with it forced on. Mirrors the bash check_author role
 // (loki_lean_child_flags emits --tools= and grill adds --disallowedTools) but
-// is not byte-identical: the flag set is probed per CLI in bash and fixed here.
+// is not byte-identical: bash and bun both probe the CLI, but this path sets no
+// setting sources and forces the lean flags on.
 export function textOnlyArgv(): string[] {
   return [
     ...leanReviewerFlags({ env: { ...process.env, LOKI_LEAN_CHILDREN: "1" }, settingSources: "" }),

@@ -249,11 +249,17 @@ _loki_apikey_helper_configured() {
 #   - Text-only roles additionally get the single argument "--tools=" (no tools). --tools is
 #     variadic: "--tools" plus an empty argument swallows a trailing prompt.
 # Every flag is probed with loki_claude_flag_supported; an unsupported flag and
-# its value are dropped. LOKI_LEAN_CHILDREN=0 prints nothing. Main-session
-# flags are not touched by this helper.
+# its value are dropped. LOKI_LEAN_CHILDREN=0 drops the lean flags but the walled
+# check_author still gets "--tools=" (its isolation does not depend on the toggle).
+# Main-session flags are not touched by this helper.
 loki_lean_child_flags() {
     local role="${1:-}"
-    [ "${LOKI_LEAN_CHILDREN:-1}" = "0" ] && return 0
+    if [ "${LOKI_LEAN_CHILDREN:-1}" = "0" ]; then
+        if [ "$role" = "check_author" ] && loki_claude_flag_supported "--tools"; then
+            printf '%s\n' "--tools="
+        fi
+        return 0
+    fi
     if loki_subcall_bare_enabled; then
         printf '%s\n' "--bare"
     else
