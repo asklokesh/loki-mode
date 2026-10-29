@@ -79,7 +79,16 @@ function authorField(checklistDir: string, field: string): string {
   }
 }
 
-async function acceptCall(
+// The check author is isolated: its accept child needs an interpreter and a temp dir, nothing else. Provider keys, GitHub tokens and
+// every other parent variable stay behind.
+const CHILD_ENV_KEYS = ["PATH", "HOME", "LANG", "TMPDIR"] as const;
+export function checkAuthorChildEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const k of CHILD_ENV_KEYS) if (base[k] !== undefined) out[k] = base[k];
+  return out;
+}
+
+export async function acceptCall(
   py: string,
   script: string,
   stdinText: string,
@@ -89,7 +98,7 @@ async function acceptCall(
     const proc = Bun.spawn({
       cmd: [py, "-I", "-S", script, "accept", ...args],
       stdin: new Blob([stdinText]),
-      env: process.env,
+      env: checkAuthorChildEnv(process.env),
       stdout: "ignore",
       stderr: "ignore",
     });
