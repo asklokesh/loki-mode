@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `loki trust` now prints a per-path Seal record (and `path_seals` in `--json`): for each path in a receipt's `files_changed` list (the list the proof generator already records), how many receipts were sealed VERIFIED, how many were not, and how many revert commits in the repo history touched it (`null` when history is unreadable, never a made-up 0). Proven by the "per-path Seal record" tests in `loki-ts/tests/commands/trust.test.ts`: "reports 20 VERIFIED / 0 reverts for one path and flips a reverted path to 1", "reverts are null (unknown) outside a git repo, never a fabricated 0" and "human output lists the per-path record", plus "a proof written by the real generator for a repo change shows its path in loki trust", which runs `autonomy/lib/proof-generator.py` and then `loki trust`.
+
 ## v11.88.0 (2026-10-29)
 
 ### Added
