@@ -163,6 +163,44 @@ describe("torn last line of events.jsonl", () => {
   });
 });
 
+describe("resume repairs a torn tail before the seal", () => {
+  /** run.started, a crash that leaves a torn final line, then a resume (new SupervisorLog), then the seal. */
+  function resumed(): { dir: string; path: string; ev: string } {
+    const id = `e10-ls-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl");
+    mkdirSync(dir, { recursive: true });
+    new SupervisorLog(ev, id).append("run.started", null, { provider: "claude" });
+    appendFileSync(ev, '{"v":1,"seq":1,"type":"stage.sta'); // crash mid-append
+    const log = new SupervisorLog(ev, id); // resume: EventLog truncates the torn tail
+    log.append("run.resumed", null, {});
+    const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sha(readFileSync(ev)), time: { wall_s: 0, stages: {} }, log_seal: true };
+    const hash = receiptSha256(body as never);
+    writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signReceipt(id, hash) }, null, 2));
+    log.append("receipt.sealed", "seal", { receipt_sha256: hash });
+    log.verify();
+    log.append("run.completed", null, {});
+    log.sealLog();
+    return { dir, path: join(dir, "receipt.json"), ev };
+  }
+  test("the harness-owned truncation of a torn tail does not read TAMPERED: the resumed run verifies and the log holds no torn line", async () => {
+    const r = resumed();
+    const raw = readFileSync(r.ev, "utf8");
+    expect(raw).not.toContain("stage.sta");
+    expect(raw.endsWith("\n")).toBe(true);
+    expect((await verifyReceipt(r.path)).verdict).toBe("VERIFIED");
+  });
+  test("a real mid-log edit after the resume still reads TAMPERED", async () => {
+    const r = resumed();
+    writeFileSync(r.ev, readFileSync(r.ev, "utf8").replace('"claude"', '"claudX"'));
+    expect((await verifyReceipt(r.path)).verdict).toBe("TAMPERED");
+  });
+  test("deleting sealed history after the resume still reads TAMPERED", async () => {
+    const r = resumed();
+    const l = readFileSync(r.ev, "utf8").trim().split("\n");
+    writeFileSync(r.ev, [l[0], ...l.slice(2)].join("\n") + "\n");
+    expect((await verifyReceipt(r.path)).verdict).toBe("TAMPERED");
+  });
+});
+
 describe("P12-08c SUPERVISOR_ONLY", () => {
   test("a worker line of type deep.started is dropped by ingest; the supervisor append still lands", () => {
     const dir = join(root, "runs", `e10-so-${n++}`);

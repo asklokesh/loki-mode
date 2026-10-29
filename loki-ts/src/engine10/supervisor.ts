@@ -93,7 +93,7 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
   tampered = false;
   constructor(readonly path: string, runId: string) {
     this.log = new EventLog(path, runId);
-    this.hash = createHash("sha256"); // seed AFTER construction: EventLog may terminate a torn last line
+    this.hash = createHash("sha256"); // seed AFTER construction: EventLog may truncate a torn last line
     try { this.hash.update(readFileSync(path)); } catch { /* new file */ }
   }
   private implementOpen = false; // P12-07j: implement started and not yet settled; the only window a deferred already-done hit can be genuine
