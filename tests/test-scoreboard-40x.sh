@@ -101,6 +101,30 @@ wpbad '{"runs":[]}'
 [ "$RC" -eq 2 ]; check wrong-pass-empty-runs-rc2 $? "rc=$RC $(cat "$T/bad.out")"
 wpbad '[1,2]'
 [ "$RC" -eq 2 ] && ! grep -q Traceback "$T/bad.out"; check wrong-pass-toplevel-list-rc2 $? "rc=$RC $(cat "$T/bad.out")"
+# lost or unmeasured wrong pass must not read as a clean 0
+# variants of the full-coverage stub run, so each guard is the only thing that can fire
+wpmut() {
+    python3 -I -c 'import json,sys
+d=json.load(open(sys.argv[1])); r=d["runs"][0]; ids=sorted(r["outcomes"]); m=sys.argv[2]
+if m=="dup": d["runs"].append(json.loads(json.dumps(r)))
+elif m=="bogus": r["outcomes"][ids[0]]="BOGUS"
+elif m=="null": r["outcomes"][ids[0]]=None
+elif m=="nosetup": del r["setup"]
+json.dump(d,open(sys.argv[3],"w"))' "$T/wp.json" "$1" "$T/bad.json"
+    bash "$SB" --dry --version v --wrong-pass "$T/bad.json" --json-out "$T/bad-out.json" > "$T/bad.out" 2>&1; RC=$?
+}
+wpmut dup
+[ "$RC" -eq 2 ] && grep -q 'duplicate setup' "$T/bad.out"; check wrong-pass-duplicate-setup-rc2 $? "rc=$RC $(cat "$T/bad.out")"
+wpmut bogus
+[ "$RC" -eq 2 ] && grep -q 'BOGUS' "$T/bad.out"; check wrong-pass-bogus-verdict-rc2 $? "rc=$RC $(cat "$T/bad.out")"
+wpmut null
+[ "$RC" -eq 2 ] && grep -q 'None' "$T/bad.out"; check wrong-pass-null-verdict-rc2 $? "rc=$RC $(cat "$T/bad.out")"
+wpmut nosetup
+[ "$RC" -eq 2 ] && grep -q 'setup' "$T/bad.out"; check wrong-pass-missing-setup-rc2 $? "rc=$RC $(cat "$T/bad.out")"
+wpbad '{"runs":[{"setup":"top","outcomes":{}}]}'
+[ "$RC" -eq 2 ] && grep -q 'empty outcomes' "$T/bad.out"; check wrong-pass-empty-outcomes-rc2 $? "rc=$RC $(cat "$T/bad.out")"
+wpbad '{"runs":[{"setup":"top","outcomes":{"SD-0001":"SEALED"}}]}'
+[ "$RC" -eq 2 ] && grep -q 'unmeasured' "$T/bad.out" && grep -q 'mock-abuse' "$T/bad.out"; check wrong-pass-partial-coverage-rc2 $? "rc=$RC $(cat "$T/bad.out")"
 # a missing results file exits 2, never a silent empty column
 bash "$SB" --dry --version v --wrong-pass "$T/nope.json" --json-out "$T/x.json" > /dev/null 2>&1; [ $? -eq 2 ]; check wrong-pass-missing-file-rc2 $? ""
 

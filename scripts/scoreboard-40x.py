@@ -114,20 +114,37 @@ def wrong_pass_rows(path, manifest):
 
     if not isinstance(res, dict) or not isinstance(res.get("runs"), list) or not res["runs"]:
         die("expected a JSON object with a non-empty runs list")
-    cat = {d["id"]: d["category"] for d in defects}
+    try:
+        cat = {d["id"]: d["category"] for d in defects}
+    except (KeyError, TypeError):
+        die("manifest %s has a defect without id and category" % manifest)
     cats = sorted(set(cat.values()))
+    if not cats:
+        die("manifest %s declares no categories" % manifest)
     out = {}
     for run in res["runs"]:
         if not isinstance(run, dict) or not isinstance(run.get("outcomes"), dict):
             die("each run must be an object with an outcomes object")
+        setup = run.get("setup")
+        if not isinstance(setup, str) or not setup:
+            die("a run has no setup name")
+        if setup in out:
+            die("duplicate setup %r: a repeated setup would overwrite a recorded run" % setup)
+        if not run["outcomes"]:
+            die("run %r has empty outcomes (unmeasured)" % setup)
         unknown = sorted(set(run["outcomes"]) - set(cat))
         if unknown:
             die("outcome ids not in the manifest: %s" % ", ".join(unknown))
         rows = {c: {"wrong_pass": 0, "n": 0} for c in cats}
         for did, verdict in run["outcomes"].items():
+            if verdict not in ("SEALED", "NOT_SEALED"):
+                die("run %r outcome %s has verdict %r, want SEALED or NOT_SEALED" % (setup, did, verdict))
             rows[cat[did]]["n"] += 1
             rows[cat[did]]["wrong_pass"] += 1 if verdict == "SEALED" else 0
-        out[run.get("setup", "unknown")] = {"model": run.get("model"), "categories": rows}
+        missing = [c for c in cats if rows[c]["n"] == 0]
+        if missing:
+            die("run %r has unmeasured categories (n == 0): %s" % (setup, ", ".join(missing)))
+        out[setup] = {"model": run.get("model"), "categories": rows}
     return out
 
 
