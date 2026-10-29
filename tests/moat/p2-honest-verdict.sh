@@ -1659,6 +1659,79 @@ case_cp_verdict() {
     if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
 }
 
+# The default `loki <task>` route is engine10. Drive it for real (bin/loki, the Bun source entry, the stub claude CLI the
+# engine10 e2e tests use) on a fresh copy of a tiny bun repo. A wrapper stub stands in for the provider: the implement
+# session adds multiply(); in "vary" mode every later (fix) session adds one more failing test file, so the failure
+# signature changes and the verify loop runs out of rounds (exit 1) instead of stalling (exit 5). No network, no paid call.
+e10_fix_stub() { # <out file> <fixture claude stub>
+    cat > "$1" <<EOF
+#!/usr/bin/env bash
+prompt=""; prev=""
+for a in "\$@"; do [ "\$prev" = "-p" ] && prompt="\$a"; prev="\$a"; done
+if [ "\${E10_VARY:-}" = 1 ] && [ -n "\$prompt" ]; then
+    case "\$prompt" in
+        *"Loki 10 implement stage"*) # the first implement session is the task; every later one is a fix round
+            c="\$(cat "\$E10_VARY_N" 2>/dev/null || echo 0)"; c=\$((c + 1)); echo "\$c" > "\$E10_VARY_N"
+            if [ "\$c" -gt 1 ]; then
+                printf 'import { expect, test } from "bun:test";\ntest("extra %s", () => { expect(1).toBe(2); });\n' "\$c" > "extra_\$c.test.ts"
+                echo "LOKI_DONE"; exit 0
+            fi ;;
+    esac
+fi
+exec bash "$2" "\$@"
+EOF
+    chmod +x "$1"
+}
+# e10_run <name> <red|green> <vary 0|1> : sets e10_rc, e10_out, e10_verdict (receipt), e10_outcome (stdout Outcome line)
+e10_run() {
+    local name="$1" kind="$2" vary="$3" d="$RUN/e10/$1" fixture="$REPO_ROOT/loki-ts/tests/engine10/fixtures/e2e"
+    e10_rc=""; e10_verdict=""; e10_outcome=""; e10_out=""
+    mkdir -p "$d/bin" "$d/state" || return 1
+    cp -R "$fixture/repo" "$d/repo" || return 1
+    if [ "$kind" = red ]; then
+        printf 'import { expect, test } from "bun:test";\nimport * as calc from "./calc";\n\ntest("marker", () => { expect((calc as unknown as { marker?: number }).marker ?? 0).toBe(-1); });\n' > "$d/repo/calc.test.ts"
+    fi
+    g "$d/repo" init -q -b main && g "$d/repo" config user.name moat && g "$d/repo" config user.email moat@loki.local \
+        && g "$d/repo" add calc.ts calc.test.ts bunfig.toml && g "$d/repo" commit -qm base || return 1
+    e10_fix_stub "$d/bin/claude" "$fixture/bin/claude"
+    local rc=0
+    ( cd "$d/repo" && env -u LOKI_LEGACY_BASH -u LOKI_ENGINE -u ANTHROPIC_API_KEY -u GH_TOKEN -u GITHUB_TOKEN \
+        LOKI_TS_ENTRY="$REPO_ROOT/loki-ts/src/cli.ts" LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$d/bin/claude" \
+        "PATH=$d/bin:$PATH" E2E_STUB_MODE=done E2E_STUB_LOG="$d/stub.log" E10_VARY="$vary" E10_VARY_N="$d/state/n" \
+        LOKI_NO_BROWSER=1 LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$d/state/k.pem" \
+        bash "$LOKI_SHIM" "add a multiply(a, b) function to calc.ts" --no-pr ) > "$d/out" 2>&1 || rc=$?
+    e10_rc="$rc"; e10_out="$(cat "$d/out")"
+    e10_outcome="$(sed -n 's/^Outcome: *\([A-Z_]*\).*/\1/p' "$d/out" | head -1)"
+    local marker="$d/repo/.loki/engine.json" rid
+    rid="$(jfield "$marker" 'd["run_id"]')"
+    [ -n "$rid" ] && [ -f "$d/repo/.loki/runs/$rid/receipt.json" ] && e10_verdict="$(jfield "$d/repo/.loki/runs/$rid/receipt.json" 'd["verdict"]')"
+    return 0
+}
+case_e10_failing_check_never_verified() {
+    need bun git python3 || return
+    [ -d "$REPO_ROOT/loki-ts/node_modules" ] \
+        || { _why="prerequisite missing: loki-ts/node_modules (cd loki-ts && bun install --frozen-lockfile)"; return; }
+    local bad="" spec name kind vary
+    # Positive control first: the same route with a passing check must reach VERIFIED/0, so a blind or broken probe cannot pass.
+    for spec in "control:green:0" "stalled:red:0" "exhausted:red:1"; do
+        IFS=: read -r name kind vary <<<"$spec"
+        e10_run "$name" "$kind" "$vary" || { bad="$bad [$name: fixture setup failed]"; continue; }
+        printf '  e10[%s]: rc=%s outcome=%s receipt=%s\n' "$name" "$e10_rc" "$e10_outcome" "$e10_verdict" >&2
+        if [ "$kind" = green ]; then
+            [ "$e10_rc" = 0 ] && [ "$e10_outcome" = VERIFIED ] && [ "$e10_verdict" = VERIFIED ] \
+                || bad="$bad [$name: positive control did not reach VERIFIED/0 (rc=$e10_rc outcome=${e10_outcome:-none} receipt=${e10_verdict:-none}): $(printf '%s' "$e10_out" | tail -c 300 | tr '\n' '~')]"
+            continue
+        fi
+        [ -n "$e10_verdict" ] || { bad="$bad [$name: no receipt written: $(printf '%s' "$e10_out" | tail -c 300 | tr '\n' '~')]"; continue; }
+        [ "$e10_verdict" != VERIFIED ] || bad="$bad [$name: receipt verdict VERIFIED over a failing check]"
+        [ "$e10_outcome" != VERIFIED ] || bad="$bad [$name: stdout Outcome VERIFIED over a failing check]"
+        [ "$e10_rc" != 0 ] || bad="$bad [$name: exit 0 over a failing check (outcome=${e10_outcome:-none} receipt=$e10_verdict)]"
+        # The exhausted run must really have used up its fix rounds (exit 1, not the stall exit 5), or the second path is untested.
+        case "$name" in exhausted) [ "$e10_outcome" != STALLED ] || bad="$bad [$name: the fix loop stalled instead of running out of rounds; that path was not exercised]" ;; esac
+    done
+    if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
+}
+
 # --- run ----------------------------------------------------------------------
 run_case P2.advisory-only-never-verified "advisory/model-only gate passes never yield a VERIFIED headline (generator + verifier)" case_advisory_only
 run_case P2.unknown-gate-fails-closed "an unrecognized gate name or status cannot read green (generator + verifier)" case_unknown_gate
@@ -1679,6 +1752,7 @@ run_case P2.exit-zero-with-failures-not-pass "a runner that exits 0 while its ow
 run_case P2.console-verdict-needs-computed-result "a console verdict word needs a computed result: the receipt route carries the verifier's integrity_check (tampered, not_verified, verified on a real generator receipt), the audit verify route says nothing_checked for zero files, and the receipt panel never affirms without a server-verified result; the client probe flags the verbatim pre-fix lines" case_console_verdict
 
 run_case P2.cp-verdict-honest-never-upgraded "Control Plane (loki control serve): effective_verdict reads plain VERIFIED only for an attested, signature-checked seal; a tampered log (edited receipt.sealed, forged key, supervisor tamper flag, appended verdict, no receipt) reads TAMPERED, an unsigned run reads UNVERIFIED (also lowercase and ALREADY_SATISFIED), a FAILED run is never upgraded, no configured key reads signature-not-checked, and ?verdict=VERIFIED lists only the honest run" case_cp_verdict
+run_case P2.e10-failing-check-never-verified "default engine10 route (bin/loki, stub claude CLI): a failing check never prints Outcome VERIFIED, never seals a VERIFIED receipt and exits nonzero, both when the fix loop stalls (exit 5) and when its rounds run out (exit 1); a passing check on the same route reaches VERIFIED/0" case_e10_failing_check_never_verified
 
 printf 'moat-p2: finished in %ss\n' "$(( $(date +%s) - T_START ))" >&2
 exit 0

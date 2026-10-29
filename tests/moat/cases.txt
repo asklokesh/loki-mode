@@ -93,3 +93,4 @@ P5.airgap-no-update-check-egress
 P2.cp-verdict-honest-never-upgraded
 P7.cp-unmeasured-never-fabricated
 P7.cli-unmetered-cost-not-dollar-zero
+P2.e10-failing-check-never-verified
