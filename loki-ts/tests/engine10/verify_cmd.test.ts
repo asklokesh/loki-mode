@@ -804,6 +804,32 @@ describe("main() UNSIGNED policy (D47)", () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
+  test("wall.files listed but no wall dir: the verdict stays and a reason says the Wall copies were not compared; a present matching wall dir adds no such line", async () => {
+    const NOTE = "sealed Wall copies not present: not compared";
+    const dir = tmpDir();
+    try {
+      const body = Buffer.from("test('x', () => {});\n");
+      const withWall = (r: Record<string, unknown>) => {
+        const f = baseReceiptFields(); f["wall"] = { files: [{ path: "tests/w.test.ts", sha256: createHash("sha256").update(body).digest("hex") }], passed: true };
+        f["run_id"] = r["run_id"];
+        r["wall"] = f["wall"]; r["receipt_sha256"] = computeReceiptHash(f);
+      };
+      writeUnsignedReceipt(dir, "nw1", withWall);
+      const a = await runMain(["nw1", "--allow-unsigned"], join(dir, "runs"));
+      expect(a.code).toBe(0);
+      expect(a.out).toContain(`  ${NOTE}\n`);
+      const j = await runMain(["nw1", "--allow-unsigned", "--json"], join(dir, "runs"));
+      expect(j.code).toBe(0);
+      expect((JSON.parse(j.out) as { reasons: string[] }).reasons).toContain(NOTE);
+      writeUnsignedReceipt(dir, "nw2", withWall);
+      mkdirSync(join(dir, "runs", "nw2", "wall"), { recursive: true });
+      writeFileSync(join(dir, "runs", "nw2", "wall", "w.test.ts"), body);
+      const b = await runMain(["nw2", "--allow-unsigned"], join(dir, "runs"));
+      expect(b.code).toBe(0);
+      expect(b.out).not.toContain(NOTE);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   test("--allow-unsigned and LOKI_VERIFY_ALLOW_UNSIGNED=1 exit 0 with the explicit line", async () => {
     const dir = tmpDir();
     try {

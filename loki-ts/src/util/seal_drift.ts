@@ -118,3 +118,13 @@ export function sealDrift(given: string, r: Obj, env: NodeJS.ProcessEnv = proces
   }
   return null;
 }
+
+/** Honest note, never a verdict change: the receipt lists sealed Wall files but no <run dir>/wall exists to compare them with (an exported bundle omits it on purpose). */
+export function wallNotComparedNote(receiptPath: string): string | null {
+  try {
+    const r = JSON.parse(readFileSync(receiptPath, "utf8")) as Record<string, unknown>;
+    if (r["schema"] !== "loki.v10.receipt/1") return null;
+    const files = (r["wall"] as { files?: unknown } | null | undefined)?.files;
+    return Array.isArray(files) && files.length > 0 && !existsSync(join(dirname(receiptPath), "wall")) ? "sealed Wall copies not present: not compared" : null;
+  } catch { return null; }
+}

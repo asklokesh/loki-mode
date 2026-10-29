@@ -6,7 +6,7 @@ import { basename, dirname, join } from "node:path";
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { lokiDir } from "../util/paths.ts";
 import { applyMaxAge, deployAttestCmd, receiptShapeProblem, takeMaxAge } from "../util/receipt_signer.ts";
-import { latestRunId } from "../commands/run_status.ts"; import { sealDrift, tornTail } from "../util/seal_drift.ts";
+import { latestRunId } from "../commands/run_status.ts"; import { sealDrift, tornTail, wallNotComparedNote } from "../util/seal_drift.ts";
 import { readEvents } from "./events.ts";
 import { isExecutedProof, withExplain, type ExplainRec } from "../util/check_result.ts";
 import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
@@ -215,6 +215,7 @@ async function verifyMain(args: readonly string[], deps: VerifyDeps, rec: Explai
     const outcome = (() => { try { return outcomeOf(JSON.parse(readFileSync(receiptPath, "utf8"))); } catch { return "UNREADABLE"; } })();
     if (outcome !== "VERIFIED" && outcome !== "ALREADY_SATISFIED") { rec.verdict = `NOT VERIFIED (run outcome ${outcome})`; rec.independent = independentCounts(receiptPath); process.stdout.write(`run: ${runId}\nverdict: NOT VERIFIED (run outcome ${outcome}; receipt integrity ${result.verdict === "UNSIGNED" ? "unattested" : "intact"})\n`); return 4; }
   }
+  if (result.verdict === "VERIFIED" || result.verdict === "UNSIGNED") { const note = wallNotComparedNote(receiptPath); if (note) result = { ...result, reasons: [...result.reasons, note] }; }
   rec.verdict = result.verdict; rec.reasons = result.reasons; rec.receiptSha256 = result.receiptSha256 ?? null; rec.independent = independentCounts(receiptPath); process.stdout.write(`run: ${runId}\nverdict: ${result.verdict}\n`);
   if (result.receiptSha256) process.stdout.write(`receipt_sha256: ${result.receiptSha256}\n`);
   for (const reason of result.reasons) process.stdout.write(`  ${reason}\n`);
