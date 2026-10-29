@@ -670,6 +670,38 @@ printf 'c.execute(f"SELECT {x}")\n' > "$SAFE/tests/test_x.py"
 printf 'c.execute(f"SELECT {x}")\n' > "$SAFE/notes.md"
 scan "$SAFE"; assert_silent "sql-string-formatting" "r10-safe-and-excluded"
 
+# --- stage toggles (behavioural): extract each toggle-guarded stage block from run.sh and run it
+# against stubs. Covers LOKI_GATE_SECURITY_SCAN and LOKI_GATE_SKILL_CHECKS (default on; only
+# unset/empty/true/1 keep the stage on, the Bun flag() predicate).
+SEC_BLOCK="$(awk '/if \[ -[a-z] "\$\{LOKI_GATE_SECURITY_SCAN:-\}" \]/{f=1} /# BUG-ST-002/{f=0} f' "$RUN_SH")"
+SK_BLOCK="$(awk '/if \[ -[a-z] "\$\{LOKI_GATE_SKILL_CHECKS:-\}" \]/{f=1} /# Secure-by-default scan/{f=0} f' "$RUN_SH")"
+if [ -n "$SEC_BLOCK" ] && [ -n "$SK_BLOCK" ]; then ok "toggle: both stage blocks extracted from run.sh"; else bad "toggle: stage block extraction" "sec=${#SEC_BLOCK} skill=${#SK_BLOCK}"; fi
+toggle_run() { # $1=block $2=VAR name, $3=value or UNSET; prints stage events and calls
+    (
+        log_info() { :; }; log_warn() { :; }
+        run_secure_scan() { echo "CALL run_secure_scan"; return 0; }
+        enforce_skill_checks() { echo "CALL enforce_skill_checks"; _LOKI_SKILL_CHECKS_STATUS=pass; return 0; }
+        emit_stage_complete() { echo "STAGE $1"; }
+        track_gate_failure() { echo 1; }; clear_gate_failure() { :; }
+        unset LOKI_GATE_SECURITY_SCAN LOKI_GATE_SKILL_CHECKS
+        [ "$3" = "UNSET" ] || export "$2=$3"
+        eval "stage() { local gate_failures=''; $1
+        }"
+        stage
+    ) 2>/dev/null
+}
+for spec in "SEC_BLOCK|LOKI_GATE_SECURITY_SCAN|security_scan|run_secure_scan" "SK_BLOCK|LOKI_GATE_SKILL_CHECKS|skill_checks|enforce_skill_checks"; do
+    IFS='|' read -r bvar var stage fn <<< "$spec"
+    for val in UNSET "" true 1; do
+        out="$(toggle_run "${!bvar}" "$var" "$val")"
+        if grep -q "^STAGE $stage\$" <<< "$out" && grep -q "^CALL $fn\$" <<< "$out"; then ok "toggle: $var='${val}' emits $stage and calls $fn"; else bad "toggle: $var='${val}' should run $stage" "$out"; fi
+    done
+    for val in false 0 no; do
+        out="$(toggle_run "${!bvar}" "$var" "$val")"
+        if [ -z "$out" ]; then ok "toggle: $var=$val emits no $stage stage and skips $fn"; else bad "toggle: $var=$val should skip $stage" "$out"; fi
+    done
+done
+
 # ===========================================================================
 echo
 echo "secure-scan: $PASS passed, $FAIL failed"

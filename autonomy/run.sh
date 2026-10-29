@@ -15759,6 +15759,29 @@ enforce_mock_integrity() {
     return 0
 }
 
+# Skill-declared checks gate. Delegates to `loki internal skill-checks` (the Bun
+# runSkillChecks implementation) so both routes run the same commands with the
+# same hardened env. Sets _LOKI_SKILL_CHECKS_STATUS to pass|fail|not_run.
+# Fail closed: a missing launcher, missing bun, or an absent subcommand (rc 2,
+# e.g. a stale build) is recorded not_run, never pass; any other non-zero rc
+# (a failed check, or the runner erroring) is a fail.
+enforce_skill_checks() {
+    local _sk_loki="${PROJECT_DIR}/bin/loki" _sk_out _sk_rc=0
+    _LOKI_SKILL_CHECKS_STATUS="not_run"
+    _LOKI_SKILL_CHECKS_REASON="launcher_absent"
+    _LOKI_SKILL_CHECKS_DETAIL=""
+    if [ ! -x "$_sk_loki" ] || ! command -v bun >/dev/null 2>&1; then
+        return 0
+    fi
+    _sk_out="$(cd "${TARGET_DIR:-.}" 2>/dev/null && "$_sk_loki" internal skill-checks 2>&1)" || _sk_rc=$?
+    _LOKI_SKILL_CHECKS_DETAIL="$(printf '%s' "$_sk_out" | tail -n 3 | tr '\n' ' ' | cut -c1-500)"
+    case "$_sk_rc" in
+        0) _LOKI_SKILL_CHECKS_STATUS="pass"; _LOKI_SKILL_CHECKS_REASON="measured"; return 0 ;;
+        2) _LOKI_SKILL_CHECKS_REASON="subcommand_absent"; return 0 ;;
+        *) _LOKI_SKILL_CHECKS_STATUS="fail"; _LOKI_SKILL_CHECKS_REASON="check_failed_or_runner_error"; return 1 ;;
+    esac
+}
+
 enforce_lsp_diagnostics() {
     local lsp_file="${TARGET_DIR:-.}/.loki/quality/lsp-diagnostics.json"
     local verdict="absent"
@@ -27066,6 +27089,29 @@ EOF
                 build_count=$(track_gate_failure "production_build")
                 gate_failures="${gate_failures}production_build,"
                 log_warn "Production build gate FAILED ($build_count consecutive)"
+            fi
+            # Skill-declared checks gate (bash-route parity with the Bun
+            # skill_checks gate). Blocking, fail closed. Toggle
+            # LOKI_GATE_SKILL_CHECKS (default on), same predicate as the Bun
+            # route flag() in quality_gates.ts: unset/empty = on, else only
+            # "true" or "1" keeps the gate on. Runs through the Bun
+            # implementation, so the commands executed and their env match.
+            if [ -z "${LOKI_GATE_SKILL_CHECKS:-}" ] || [ "${LOKI_GATE_SKILL_CHECKS}" = "true" ] || [ "${LOKI_GATE_SKILL_CHECKS}" = "1" ]; then
+            log_info "Quality gate: skill-declared checks..."
+            local _stg_t0=$(date +%s 2>/dev/null); local _stg_ok=pass
+            enforce_skill_checks || true
+            _stg_ok="${_LOKI_SKILL_CHECKS_STATUS:-not_run}"
+            case "$_stg_ok" in
+                pass) clear_gate_failure "skill_checks" ;;
+                fail)
+                    local sk_count
+                    sk_count=$(track_gate_failure "skill_checks")
+                    gate_failures="${gate_failures}skill_checks,"
+                    log_warn "Skill checks gate FAILED ($sk_count consecutive) - ${_LOKI_SKILL_CHECKS_DETAIL:-}"
+                    ;;
+                *) log_info "Skill checks: gate did not run (${_LOKI_SKILL_CHECKS_REASON:-unknown})" ;;
+            esac
+            emit_stage_complete "skill_checks" "$_stg_ok" "$_stg_t0"
             fi
             # Secure-by-default scan (v7.87.0). Advisory by default (never
             # blocks); records .loki/quality/security-findings.json each

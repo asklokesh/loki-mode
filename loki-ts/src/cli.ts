@@ -282,6 +282,9 @@ async function dispatch(argv: readonly string[]): Promise<number> {
           "                  the parsed JSON. Fail-closed: non-zero + no stdout ->",
           "                  the bash caller falls back to claude/text. Driven by",
           "                  the SDK judge sites (LOKI_SDK_* flags).",
+          "  skill-checks    Run the checks declared in .claude/skills/*/SKILL.md",
+          "                  (the skill_checks quality gate). Exit 0 pass, 1 a check",
+          "                  failed, 3 runner error. Driven by run.sh.",
           "  sdk-text        (v8) The free-form (no-schema) sibling of sdk-judge for",
           "                  prose sites (grill, prd-enrich). Prints raw text; same",
           "                  fail-closed contract.",
@@ -341,6 +344,19 @@ async function dispatch(argv: readonly string[]): Promise<number> {
         } catch (err) {
           process.stderr.write(`reviewer-git-env: ${(err as Error).message}\n`);
           return 1;
+        }
+      }
+      if (subcmd === "skill-checks") {
+        // Bash-route bridge to the skill_checks quality gate (same runSkillChecks as the Bun route). Runs the checks declared in
+        // <cwd>/.claude/skills/*/SKILL.md. rc 0 = passed, 1 = a check failed (detail on stdout), 3 = the runner itself errored (fail closed).
+        try {
+          const { runSkillChecks } = await import("./util/skill_checks.ts");
+          const r = await runSkillChecks(process.cwd());
+          process.stdout.write(`${r.detail}\n`);
+          return r.passed ? 0 : 1;
+        } catch (err) {
+          process.stderr.write(`skill-checks: ${(err as Error).message}\n`);
+          return 3;
         }
       }
       if (subcmd === "spec-text") {

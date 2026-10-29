@@ -339,6 +339,48 @@ else
     bad "advisory semantic or invariant policy is not separated from blocking"
 fi
 
+# --- skill-declared checks gate (bash route calls the Bun implementation) ---
+SK="$WORK/skills"
+mkdir -p "$SK/.claude/skills/probe"
+TARGET_DIR="$SK"
+export LOKI_TS_ENTRY="$REAL_PROJECT_DIR/loki-ts/src/cli.ts"
+if command -v bun >/dev/null 2>&1; then
+    printf -- '---\nname: probe\nchecks:\n  - exit 0\n---\n' > "$SK/.claude/skills/probe/SKILL.md"
+    if enforce_skill_checks; then SKRC=0; else SKRC=$?; fi
+    if [ "$SKRC" -eq 0 ] && [ "${_LOKI_SKILL_CHECKS_STATUS:-}" = "pass" ]; then
+        ok "skill checks gate passes when every declared check passes"
+    else
+        bad "skill checks passing case was ${_LOKI_SKILL_CHECKS_STATUS:-missing} rc=$SKRC"
+    fi
+    printf -- '---\nname: probe\nchecks:\n  - exit 1\n---\n' > "$SK/.claude/skills/probe/SKILL.md"
+    if enforce_skill_checks; then SKRC=0; else SKRC=$?; fi
+    if [ "$SKRC" -eq 1 ] && [ "${_LOKI_SKILL_CHECKS_STATUS:-}" = "fail" ]; then
+        ok "skill checks gate fails when a declared check fails"
+    else
+        bad "skill checks failing case was ${_LOKI_SKILL_CHECKS_STATUS:-missing} rc=$SKRC"
+    fi
+else
+    ok "skill checks cases skipped: bun not installed"
+fi
+PROJECT_DIR="$WORK/no-launcher"
+mkdir -p "$PROJECT_DIR"
+if enforce_skill_checks && [ "${_LOKI_SKILL_CHECKS_STATUS:-}" = "not_run" ]; then
+    ok "skill checks gate records not_run, never pass, when the launcher is absent"
+else
+    bad "skill checks absent-launcher status was ${_LOKI_SKILL_CHECKS_STATUS:-missing}"
+fi
+PROJECT_DIR="$REAL_PROJECT_DIR"
+unset LOKI_TS_ENTRY
+SKILL_STAGE=$(sed -n '/# Skill-declared checks gate/,/# Secure-by-default scan/p' "$RUN_SH")
+if grep -q 'LOKI_GATE_SKILL_CHECKS' <<< "$SKILL_STAGE" \
+   && grep -q 'emit_stage_complete "skill_checks"' <<< "$SKILL_STAGE" \
+   && grep -q 'gate_failures="${gate_failures}skill_checks,"' <<< "$SKILL_STAGE" \
+   && grep -q 'fi$' <<< "$SKILL_STAGE"; then
+    ok "skill checks stage is toggle-guarded and failure joins the blocker set"
+else
+    bad "skill checks stage wiring missing toggle, stage event, or blocker"
+fi
+
 # --- isolation: sourcing run.sh must never touch the shared checkout -------
 # Positive control: WORK must show its own provider file did get written.
 # Without this, disabling the mkdir entirely (or the probe silently no-op-ing)
