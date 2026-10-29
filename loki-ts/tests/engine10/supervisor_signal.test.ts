@@ -1,6 +1,6 @@
 // D50-F1c: SIGINT/SIGTERM mid-run returns the checkout to the starting branch, kills worker and session groups, keeps the run branch.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -12,11 +12,13 @@ const alive = (pid: number): boolean => { try { process.kill(pid, 0); return tru
 const SUP = join(import.meta.dir, "../../src/engine10/supervisor.ts");
 import { baseLine, dropEmptyRunBranch } from "../../src/util/base_guard.ts";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
-import { readEvents } from "../../src/engine10/events.ts";
+import { makeEvent, readEvents } from "../../src/engine10/events.ts";
 import { reasonOf } from "../../src/engine10/output.ts";
 import { signReceipt } from "../../src/engine10/stages/seal.ts";
 import { RECOVERY_ABORT, findInterrupted, nextStepText, resumeFlag, resumeMachineOpts, startRecovery, statusNextStep } from "../../src/util/run_outputs.ts";
 import { verifyLogSeals } from "../../src/util/seal_drift.ts";
+import { runPr } from "../../src/engine10/stages/pr.ts";
+import { verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
 // Fake worker: creates the run branch (as intake does), starts a detached session-like sleeper, reports its pgid, then sleeps.
 const WORKER = (dirty: boolean): string => `
@@ -675,4 +677,185 @@ describe("loki steer at five stage points (stub provider)", () => {
     measured.push(`${p.at}: ack ${ackS.toFixed(3)}s, read at ${read}, seal ${p.sealRefuses ? "refuses (post-Wall)" : "accepts"}, diff: ${diffStat.split("\n").pop()!.trim()}`);
   }, 30000);
   test("steer KPI summary", () => { console.log(`steer-ack KPI\n${measured.join("\n")}`); expect(measured.length).toBe(POINTS.length); });
+});
+
+// PX-5: a SIGKILL at each stage boundary of a stub-provider run, then `loki start --resume`. The driver is a real child process (the test records its pid and kills only that pid)
+// that plays supervisor and machine over stub stages and the real runPr with a stub push script; the resume is the real resumeFlag / resumePublish.
+describe("stage-boundary SIGKILL matrix (PX-5)", () => {
+  const SRC = join(import.meta.dir, "../../src");
+  const PR_URL = "https://github.com/octocat/hello/pull/42";
+  const matrix = mkdtempSync(join(tmpdir(), "e10-px5-")); roots.push(matrix);
+  const spawned: ChildProcess[] = [], latency: Record<string, number> = {};
+  const ENV_KEYS = ["LOKI_RECEIPT_SIGNING_KEY", "LOKI_RECEIPT_SIGNING_KEY_FILE", "LOKI_PROVIDER", "LOKI_MODEL_OVERRIDE", "LOKI_NO_RESUME", "LOKI_PR_DRAFT", "LOKI_PR_BASE", "LOKI_CLAUDE_CLI"];
+  const saved: Record<string, string | undefined> = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
+  const driver = join(matrix, "driver.ts");
+  const BOUNDARIES = ["plan", "wall", "implement", "verify", "commit", "seal-pre", "seal", "pr-pre", "pr-opened"] as const;
+  type Boundary = (typeof BOUNDARIES)[number];
+  const publishPhase = new Set<Boundary>(["seal", "pr-pre", "pr-opened"]);
+  const imp = (rel: string): string => JSON.stringify(join(SRC, rel));
+  const DRIVER = `
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { SupervisorLog } from ${imp("engine10/supervisor.ts")};
+import { FLOW, runMachine } from ${imp("engine10/machine.ts")};
+import { receiptSha256, signReceipt } from ${imp("engine10/stages/seal.ts")};
+import { runPr } from ${imp("engine10/stages/pr.ts")};
+import { readEvents } from ${imp("engine10/events.ts")};
+import { resumeMachineOpts } from ${imp("util/run_outputs.ts")};
+const { MODE, REPO, RID, CRASH, MARKERS, STUB } = process.env;
+const git = (...a) => execFileSync("git", ["-C", REPO, ...a], { encoding: "utf8" }).trim();
+const runDir = join(REPO, ".loki", "runs", RID), evPath = join(runDir, "events.jsonl"), branch = "loki/" + RID, receipt = join(runDir, "receipt.json");
+mkdirSync(runDir, { recursive: true });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const mark = (at) => writeFileSync(join(MARKERS, at), String(process.pid));
+const hang = async (at) => { await sleep(400); mark(at); setInterval(() => {}, 1 << 30); await new Promise(() => {}); }; // the sibling parallel stage settles first; then park until the test SIGKILLs this pid
+const log = new SupervisorLog(evPath, RID);
+if (MODE === "fresh") log.append("run.started", null, { provider: "claude", model: "stub" });
+else log.append("run.resumed", null, { phase: "stage" });
+const baseSha = MODE === "fresh" ? git("rev-parse", "HEAD") : readEvents(evPath).find((e) => e.type === "stage.completed" && e.stage === "intake").data.base_sha;
+const ctx = {
+  runId: RID, repoDir: REPO, runDir, baseSha, branch, provider: "claude", model: "stub", deep: false, capS: 900,
+  emit: (type, stage, data) => {
+    if (type === "pr.opened" && CRASH === "pr-opened") { mark("pr-opened"); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0); } // the PR exists and the outbox says done, but the log never learns of it
+    log.append(type, stage, data ?? {});
+  },
+  sessions: { run: async () => { throw new Error("stub provider: no sessions"); } },
+  tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] },
+  cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
+  clock: { now: () => Date.now() }, outputs: () => ({}),
+};
+const done = { status: "completed", data: {} };
+const body = {
+  intake: async () => { git("checkout", "-q", "-b", branch); return { status: "completed", data: { base_sha: baseSha, task: "px5 stub task" } }; },
+  implement: async () => { writeFileSync(join(REPO, "feature.txt"), "px5\\n"); return done; },
+  verify: async (c) => { c.emit("test.result", "verify", { name: "unit", cmd: "stub", result: "pass" }); return { status: "completed", data: { passed: true, changed_files: ["feature.txt"] } }; },
+  commit: async () => { git("add", "feature.txt"); try { git("diff", "--cached", "--quiet"); } catch { git("commit", "-q", "-m", "px5 change"); } return done; }, // idempotent: a resumed run re-runs commit over an already committed tree
+  seal: async (c) => {
+    if (CRASH === "seal-pre") await hang("seal-pre");
+    const b = { schema: "loki.v10.receipt/1", run_id: RID, verdict: "VERIFIED", not_proven: [], events_sha256: createHash("sha256").update(readFileSync(evPath)).digest("hex"), time: { wall_s: 0, stages: {} }, log_seal: true, checks: [{ name: "unit", cmd: "stub", result: "pass" }] };
+    const hash = receiptSha256(b);
+    writeFileSync(receipt, JSON.stringify({ ...b, receipt_sha256: hash, verification: signReceipt(RID, hash) }, null, 2));
+    c.emit("receipt.sealed", "seal", { receipt_sha256: hash, verdict: "VERIFIED", not_proven: [], path: receipt });
+    if (CRASH === "seal") await hang("seal");
+    return { status: "completed", data: { verdict: "VERIFIED", receipt_sha256: hash, receipt_path: receipt, path: receipt, signed: true, not_proven: [] } };
+  },
+  pr: async (c) => {
+    if (CRASH === "pr-pre") await hang("pr-pre");
+    return runPr({ ...c, pinnedOrigin: "https://github.com/octocat/hello.git" }, new AbortController().signal, { pushScriptPath: STUB });
+  },
+};
+const stage = (name) => ({ name, targetS: 1, limitS: 60, run: async (c, signal) => {
+  if (CRASH === name && name !== "seal") await hang(name); // seal parks after receipt.sealed instead, inside its own body
+  return body[name] ? body[name](c, signal) : done;
+} });
+let flow = FLOW, restored;
+if (MODE === "resume") {
+  const r = resumeMachineOpts(ctx, readEvents(evPath), readFileSync(evPath, "utf8"), FLOW);
+  if (!r.ok) { console.error("resume refused: " + r.reason); process.exit(2); }
+  flow = r.flow; restored = r.restored;
+}
+const res = await runMachine(ctx, { load: async (n) => stage(n), flow, restored });
+if (res.stopped) { console.error("machine stopped: " + res.stopped); process.exit(3); }
+log.append("run.completed", null, { verdict: "VERIFIED", pr_url: res.outputs.pr?.pr_url ?? null });
+log.sealLog();
+process.exit(0);
+`;
+  async function startDriver(mode: "fresh" | "resume", c: { repo: string; rid: string; crash: string; markers: string; stub: string }): Promise<{ child: ChildProcess; exited: Promise<number | null>; err: () => string }> {
+    const child = spawn(process.execPath, [driver], { env: { ...process.env, MODE: mode, REPO: c.repo, RID: c.rid, CRASH: mode === "fresh" ? c.crash : "", MARKERS: c.markers, STUB: c.stub }, stdio: ["ignore", "ignore", "pipe"] });
+    spawned.push(child);
+    let err = ""; child.stderr?.on("data", (d: Buffer) => { err += d.toString(); });
+    const exited = new Promise<number | null>((r) => child.on("exit", (code) => r(code)));
+    return { child, exited, err: () => err };
+  }
+  const lines = (f: string): string[] => (existsSync(f) ? readFileSync(f, "utf8").split("\n").filter(Boolean) : []);
+  const pushes = (bin: string): number => lines(join(bin, "calls.log")).filter((m) => m === "push-pr").length;
+  function fixture(name: string) {
+    const root = join(matrix, name), repo = join(root, "repo"), markers = join(root, "markers"), bin = join(root, "bin"), stub = join(bin, "push.sh"), rid = `e10-px5-${name}`;
+    for (const d of [markers, bin]) mkdirSync(d, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    git(repo, "config", "user.name", "t"); git(repo, "config", "user.email", "t@example.com");
+    writeFileSync(join(repo, "a.txt"), "base\n"); git(repo, "add", "a.txt"); git(repo, "commit", "-q", "-m", "base");
+    git(repo, "remote", "add", "origin", "https://github.com/octocat/hello.git");
+    writeFileSync(stub, `#!/bin/sh
+mode="$1"; shift
+echo "$mode" >> "${bin}/calls.log"
+case "$mode" in
+  push-pr) if [ -f "${bin}/pr-remote" ]; then echo reused; else : > "${bin}/pr-remote"; echo created >> "${bin}/creations.log"; echo created; fi; echo "${PR_URL}" ;;
+esac
+exit 0
+`, { mode: 0o755 });
+    return { root, repo, markers, bin, stub, rid, crash: "", ev: join(repo, ".loki", "runs", rid, "events.jsonl"), receipt: join(repo, ".loki", "runs", rid, "receipt.json") };
+  }
+  async function crashAt(c: ReturnType<typeof fixture>, crash: string): Promise<void> {
+    c.crash = crash;
+    const d = await startDriver("fresh", c), marker = join(c.markers, crash);
+    for (let i = 0; i < 300 && !existsSync(marker); i++) { if (d.child.exitCode !== null) break; await sleep(100); }
+    expect(existsSync(marker), `driver never reached ${crash}: ${d.err()}`).toBe(true);
+    expect(d.child.pid).toBe(Number(readFileSync(marker, "utf8")));
+    d.child.kill("SIGKILL"); // the recorded pid of the child this test spawned, nothing else
+    expect(await d.exited).toBe(null);
+    expect(d.child.signalCode).toBe("SIGKILL");
+    expect(alive(d.child.pid as number)).toBe(false);
+  }
+  async function resumeRun(c: ReturnType<typeof fixture>): Promise<{ rc: number; ms: number; say: string }> {
+    const say: string[] = [], cwd = process.cwd(), t0 = performance.now();
+    try {
+      process.chdir(c.repo);
+      const rc = await resumeFlag(c.rid, false, {
+        out: (s) => { say.push(s); },
+        supervise: (async () => { const d = await startDriver("resume", c); const code = await d.exited; if (code !== 0) say.push(`resume driver exit ${code}: ${d.err()}`); return { outcome: code === 0 ? "VERIFIED" : "FAILED" }; }) as never,
+        runPr: (ctx, s) => runPr(ctx as never, s, { pushScriptPath: c.stub }),
+      });
+      return { rc, ms: performance.now() - t0, say: say.join("") };
+    } finally { process.chdir(cwd); }
+  }
+  async function assertRecovered(c: ReturnType<typeof fixture>, boundary: string, r: { rc: number; ms: number; say: string }): Promise<void> {
+    expect(r.rc, r.say).toBe(0);
+    latency[boundary] = Math.round(r.ms);
+    expect(Number.isFinite(r.ms) && r.ms > 0 && r.ms < 60000).toBe(true); // recovery latency is a measured number with a generous ceiling, not a timer the resume waits on
+    const raw = readFileSync(c.ev, "utf8"), evs = readEvents(c.ev);
+    expect(evs.every((e, i) => e.seq === i)).toBe(true);
+    expect(new Set(evs.map((e) => e.run)).size).toBe(1);
+    expect(evs.filter((e) => e.type === "receipt.sealed")).toHaveLength(1);
+    expect(evs.filter((e) => e.type === "pr.opened")).toHaveLength(1);
+    expect(evs.filter((e) => e.type === "run.completed")).toHaveLength(1);
+    expect(evs.at(-1)?.type).toBe("log.sealed");
+    expect(verifyLogSeals(raw, evs, { sealLast: true })).toBeNull();
+    expect((await verifyReceipt(c.receipt)).verdict).toBe("VERIFIED"); // hash, log binding and signature all hold after the resume
+    expect(git(c.repo, "branch", "--list", "loki/*", "--format=%(refname:short)").split("\n")).toEqual([`loki/${c.rid}`]); // no second run branch
+    expect(pushes(c.bin)).toBe(1); // push-pr ran once across the kill and the resume
+    expect(lines(join(c.bin, "creations.log"))).toHaveLength(1); // one PR was created
+    expect((evs.find((e) => e.type === "pr.opened")?.data as { url?: string }).url).toBe(PR_URL);
+  }
+
+  test("setup: a signing key exists and the driver is written", () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = ""; process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(matrix, "k.pem"); process.env["LOKI_CLAUDE_CLI"] = "/usr/bin/true";
+    signReceipt("warm", "0".repeat(64));
+    writeFileSync(driver, DRIVER);
+    expect(existsSync(join(matrix, "k.pem"))).toBe(true);
+  });
+  test("control: an uncrashed stub run opens exactly one PR and verifies", async () => {
+    const c = fixture("control"), d = await startDriver("fresh", c);
+    expect(await d.exited, d.err()).toBe(0);
+    expect(readEvents(c.ev).filter((e) => e.type === "pr.opened")).toHaveLength(1);
+    expect(pushes(c.bin)).toBe(1);
+    expect((await verifyReceipt(c.receipt)).verdict).toBe("VERIFIED");
+  }, 60000);
+  for (const boundary of BOUNDARIES) test(`SIGKILL at ${boundary}: resume completes with no duplicate branch or PR and an intact receipt chain`, async () => {
+    const c = fixture(boundary);
+    await crashAt(c, boundary);
+    const it = findInterrupted(c.repo, c.rid);
+    expect(it, "the killed run is found as interrupted").not.toBeNull();
+    expect(it?.phase === "publish").toBe(publishPhase.has(boundary));
+    expect(pushes(c.bin)).toBe(boundary === "pr-opened" ? 1 : 0); // pr-opened is the window where the PR already exists
+    await assertRecovered(c, boundary, await resumeRun(c));
+  }, 120000);
+  afterAll(() => {
+    for (const k of ENV_KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+    for (const ch of spawned) if (ch.exitCode === null && ch.signalCode === null && ch.pid !== undefined) { try { process.kill(ch.pid, "SIGKILL"); } catch { /* already gone */ } } // only pids this test spawned
+    console.log(`PX5 recovery latency ms by boundary: ${JSON.stringify(latency)}`);
+  });
 });

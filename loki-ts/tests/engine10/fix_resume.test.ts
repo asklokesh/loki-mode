@@ -1,7 +1,8 @@
 // MW-2 / CH-03: LOKI_E10_FIX_RESUME (default off; =1 opts in; CH-03 flips the default after RECEIPT-TRUTH). A fix round resumes the implement session; every failure path
 // starts fresh and records why. Mocked sessions only: no real model, no query().
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fixStage } from "../../src/engine10/stages/fix.ts";
@@ -791,5 +792,32 @@ describe("interrupted stage resume (FC-IMPLEMENT-RESUME-STARTS-OVER)", () => {
     const r2 = await run(ctxFor(s2, { intake: { task: "do it" }, verify: { failures_grouped: groups }, implement: impl }));
     expect("resumeSessionId" in s2.calls[0]!).toBe(false);
     expect(r2.data.fix_resume).toBe("fresh");
+  });
+});
+
+// PX-5: a provider session killed with a real SIGKILL (a pid this test spawned and recorded) leaves its id on disk, and the rerun resumes that session instead of starting over.
+describe("SIGKILL of a live session then resume (PX-5)", () => {
+  test("the killed implement session is resumed by its recorded id, one session, measured latency", async () => {
+    mkdirSync(join(repo, ".loki"), { recursive: true });
+    const file = join(repo, ".loki", "e10-session-r1-impl.json");
+    const child = spawn("bash", ["-c", `printf '{"session_id":"sess-sigkill"}' > "$SESSION_FILE"; exec sleep 300`], { env: { ...process.env, SESSION_FILE: file }, stdio: "ignore" });
+    try {
+      for (let i = 0; i < 100 && !existsSync(file); i++) await new Promise((r) => setTimeout(r, 50));
+      expect(existsSync(file)).toBe(true);
+      const exited = new Promise((r) => child.once("exit", r));
+      process.kill(child.pid as number, "SIGKILL");
+      await exited;
+      expect(child.signalCode).toBe("SIGKILL");
+    } finally { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }
+    const s = new Fake(() => ok), t0 = performance.now();
+    const r = await (await import("../../src/engine10/stages/implement.ts")).implementStage.run(ctxFor(s, { intake: { task: "do it" } }), new AbortController().signal);
+    const ms = Math.round(performance.now() - t0);
+    console.log(`PX5 session resume latency ms: ${ms}`);
+    expect(ms).toBeLessThan(10000);
+    expect(s.calls).toHaveLength(1);
+    expect(s.calls[0]!.resumeSessionId).toBe("sess-sigkill");
+    expect(s.calls[0]!.brief).toContain("interrupted");
+    expect(r.data.session_resume).toBe("resumed");
+    expect(r.data.iteration_ids).toEqual(["r1-impl"]);
   });
 });
