@@ -29,14 +29,11 @@
 # no commit, no push -- run this instead of hand-editing
 # VERSION, then commits the result itself.
 #
-# RELEASE GATE: a release is a lookup of an already-
-# verified commit, never a bump on an unverified tree. Before ANY bump (this
-# includes --bump-only) the script requires a completed/success run of the
-# "Tests" GitHub Actions workflow at HEAD's exact SHA.
-# No matching run -> refuse, exit 3 (RELEASE_ON_RED). --dry-run skips the
-# gate since it writes nothing. LOKI_RELEASE_ALLOW_RED=1 bypasses the gate
-# for tests only -- never set it for a real release. Even then the global guard
-# rows (scripts/global-guards.tsv) still run; LOKI_RELEASE_SKIP_GUARDS=1 skips them.
+# RELEASE GATE: before ANY bump (this includes --bump-only) the global guard
+# rows (scripts/global-guards.tsv) run against a clean worktree of HEAD; a red
+# row refuses the bump, exit 3 (RELEASE_GUARD_RED). No workflow run is required:
+# publishing never waits on a test job. --dry-run skips the gate since it
+# writes nothing. LOKI_RELEASE_SKIP_GUARDS=1 skips the rows with a loud warning.
 #
 # Files intentionally NOT bumped by this script (left to the maintainer):
 #   - vscode-extension/package.json: CLAUDE.md marks this DEPRECATED since
@@ -416,41 +413,14 @@ bump_all_version_files() {
 RELEASE_DIST_FILES="loki-ts/dist/loki.js loki-ts/dist/loki.js.map"
 RELEASE_COMMIT_FILES="VERSION package.json SKILL.md docker/Dockerfile docker/Dockerfile.sandbox plugins/loki-mode/.claude-plugin/plugin.json server.json CLAUDE.md dashboard/__init__.py mcp/__init__.py docs/INSTALLATION.md wiki/Home.md wiki/_Sidebar.md wiki/API-Reference.md web-app/src/components/Footer.tsx web-app/src/components/WhatsNew.tsx README.md helm/loki-mode/Chart.yaml deploy/helm/autonomi/Chart.yaml deploy/helm/control-plane/Chart.yaml docs/CLI-REFERENCE.md docs/CLI-INVENTORY.md CHANGELOG.md"
 
-# --- Release gate (RELEASE_ON_RED, S-108) --------------------------------
-# Founder P0: a release is a lookup of an already-verified commit. Refuses
-# (exit 3) unless HEAD's exact SHA has a completed/success run of every
-# workflow below. Runs before ANY bump, --bump-only included.
-RELEASE_REQUIRED_WORKFLOWS=("Tests")
+# --- Release gate ---------------------------------------------------------
+# Workflow names whose failed run at the cut SHA refuses a release. Empty until
+# the PR fast tier refusal signal lands. Every name here must match a `name:` in
+# .github/workflows/*.yml (tests/test-workflow-no-masked-failures.sh, R6).
+# shellcheck disable=SC2034
+RELEASE_REQUIRED_WORKFLOWS=()
 
-# True (exit 0) iff `gh run list` for $1 at commit $2 contains at least one
-# run whose status/conclusion/headSha all match. Parsed with python3 (already
-# a hard dependency elsewhere in this repo) instead of jq/grep, since gh's
-# --json output is a single compact JSON array and a text match on "success"
-# would also match a run on a different SHA or an unrelated field.
-_release_gate_run_is_green() {
-    local workflow="$1" sha="$2" json rc
-    json="$(gh run list --workflow "$workflow" --commit "$sha" \
-        --json status,conclusion,headSha 2>/dev/null)"
-    rc=$?
-    [ "$rc" -eq 0 ] && [ -n "$json" ] || return 1
-    python3 -c '
-import json, sys
-try:
-    runs = json.loads(sys.argv[1])
-except Exception:
-    sys.exit(1)
-sha = sys.argv[2]
-for r in runs:
-    if (r.get("status") == "completed"
-            and r.get("conclusion") == "success"
-            and r.get("headSha") == sha):
-        sys.exit(0)
-sys.exit(1)
-' "$json" "$sha"
-}
-
-# Cheap CI-only guards (global-guards.tsv R8 rows) that the green-CI gate
-# normally stands in for. Runs when that gate is skipped (LOKI_RELEASE_ALLOW_RED=1)
+# Cheap CI-only guards (global-guards.tsv R8 rows). Always run before a bump
 # so a release cannot cut on a tree a guard already rejects. Same runner as the
 # impacted gate (scripts/impacted-gate.sh --guards-only): per-row timeout, parallel.
 # LOKI_RELEASE_SKIP_GUARDS=1 skips with a loud warning. LOKI_RELEASE_GUARD_TIMEOUT
@@ -531,45 +501,6 @@ run_release_guard_rows() {
         exit 3
     fi
     log_success "Global guard rows green"
-}
-
-require_green_release_gate() {
-    local sha wf missing=""
-
-    sha="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null)" || {
-        log_error "RELEASE_ON_RED: could not resolve HEAD's SHA"
-        exit 3
-    }
-
-    if [ "${LOKI_RELEASE_ALLOW_RED:-}" = "1" ]; then
-        log_warn "=============================================================="
-        log_warn "LOKI_RELEASE_ALLOW_RED=1: SKIPPING the green-CI release gate."
-        log_warn "TEST-ONLY ESCAPE HATCH. NEVER set this for a real release."
-        log_warn "=============================================================="
-        run_release_guard_rows
-        return 0
-    fi
-
-    for wf in "${RELEASE_REQUIRED_WORKFLOWS[@]}"; do
-        if ! _release_gate_run_is_green "$wf" "$sha"; then
-            missing="$missing$wf, "
-        fi
-    done
-
-    if [ -n "$missing" ]; then
-        log_error "RELEASE_ON_RED: refusing to bump. HEAD ($sha) has no"
-        log_error "completed/success run for: ${missing%, }"
-        log_error "Runs gh found at $sha:"
-        for wf in "${RELEASE_REQUIRED_WORKFLOWS[@]}"; do
-            log_error "-- $wf --"
-            gh run list --workflow "$wf" --commit "$sha" \
-                --json status,conclusion,headSha,databaseId,createdAt 2>&1 \
-                | sed 's/^/  /' >&2 || true
-        done
-        exit 3
-    fi
-
-    log_success "Release gate: green Tests run found at $sha"
 }
 
 # loki-ts/dist rebuilds are content-hashed (writeDeterministicDebugId
@@ -1032,11 +963,11 @@ main() {
         return
     fi
 
-    # Release gate runs before ANY bump, --bump-only included. Skipped on
+    # The guard rows run before ANY bump, --bump-only included. Skipped on
     # --dry-run: it makes no changes, so it never needs to pass the "that
     # exact tree is verified" bar.
     if [ "$DRY_RUN" != "true" ]; then
-        require_green_release_gate
+        run_release_guard_rows
     fi
 
     if [ "$BUMP_ONLY" = "true" ]; then

@@ -19,6 +19,12 @@
 #      (in the script, or via `shell: bash`), else the pipe hides the rc.
 #   R5 a job gated by `if: always()` (`!cancelled()` run-gates are fine) is a result aggregator
 #      and must be on the reviewed allowlist.
+#   R6 every name in scripts/release.sh RELEASE_REQUIRED_WORKFLOWS must match a
+#      `name:` in the workflow dir (override: RELEASE_SH). A name nothing defines
+#      makes the release gate unsatisfiable (the retired "Tests" workflow did).
+#   R7 release.yml never waits on tests: no job `needs` a test job (id or name
+#      matching test/fast/ci, or a job whose steps run a test command) and the
+#      workflow has no `workflow_run` trigger. Publishing is not gated on tests.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,10 +38,11 @@ if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' 2>/dev/nul
     exit 1
 fi
 
-python3 -I - "$WFDIR" <<'PY'
+python3 -I - "$WFDIR" "${RELEASE_SH:-scripts/release.sh}" <<'PY'
 import glob, itertools, os, re, sys, yaml
 
 wfdir = sys.argv[1]
+release_sh = sys.argv[2]
 
 # (file, job, step name or None for the job itself) -> justification.
 # Empty since release.yml became the main workflow (converge-dist-tags.yml only schedules the dist-tag script); add a row only with a
@@ -341,6 +348,9 @@ ALWAYS_COND = re.compile(r"\b(always|failure)\(\)")
 
 allow_seen = {}
 parsed_files = set()
+wf_names = set()
+TEST_JOB = re.compile(r"(^|[-_ ])(tests?|fast|ci)([-_ ]|$)", re.I)
+release_doc = None
 for path in sorted(glob.glob(os.path.join(wfdir, "*.yml"))):
     fn = os.path.basename(path)
     parsed_files.add(fn)
@@ -349,6 +359,10 @@ for path in sorted(glob.glob(os.path.join(wfdir, "*.yml"))):
     except yaml.YAMLError as e:
         fail(f"{fn}: invalid YAML, cannot be checked (R0): {str(e).splitlines()[0]}")
         continue
+    if isinstance(doc, dict) and isinstance(doc.get("name"), str):
+        wf_names.add(doc["name"])
+    if fn == "release.yml":
+        release_doc = doc
     jobs = (doc or {}).get("jobs") or {}
     for jname, job in jobs.items():
         matrix = (job.get("strategy") or {}).get("matrix")
@@ -387,6 +401,41 @@ if "release.yml" in parsed_files:
             fail(f"{where}: allowlisted best-effort step lacks continue-on-error: true (D123)")
         if str(st.get("timeout-minutes")) != "3":
             fail(f"{where}: allowlisted best-effort step lacks timeout-minutes: 3 (D123)")
+
+# R6: every release-gate workflow name must exist.
+try:
+    sh_text = open(release_sh).read()
+except OSError as e:
+    sh_text = None
+    fail(f"{release_sh}: unreadable, RELEASE_REQUIRED_WORKFLOWS not measured (R6): {e}")
+if sh_text is not None:
+    decl = re.search(r"^RELEASE_REQUIRED_WORKFLOWS=\(([^)]*)\)", sh_text, re.M)
+    if not decl:
+        fail(f"{release_sh}: RELEASE_REQUIRED_WORKFLOWS declaration not found (R6)")
+    else:
+        for nm in re.findall(r'"([^"]*)"|\'([^\']*)\'|(\S+)', decl.group(1)):
+            nm = next(x for x in nm if x)
+            if nm not in wf_names:
+                fail(f"{release_sh}: RELEASE_REQUIRED_WORKFLOWS names {nm!r} but no workflow has that name: (R6)")
+
+# R7: release.yml never waits on tests.
+if isinstance(release_doc, dict):
+    triggers = release_doc.get("on", release_doc.get(True))
+    if isinstance(triggers, dict) and "workflow_run" in triggers or triggers == "workflow_run" \
+            or (isinstance(triggers, list) and "workflow_run" in triggers):
+        fail("release.yml: workflow_run trigger makes publishing wait on another workflow (R7)")
+    rjobs = release_doc.get("jobs") or {}
+    def is_test_job(jid, job):
+        if TEST_JOB.search(jid) or TEST_JOB.search(str(job.get("name") or "")):
+            return True
+        return any(isinstance(st.get("run"), str) and TEST_CMD.search(st["run"]) for st in job.get("steps") or [])
+    test_jobs = {jid for jid, job in rjobs.items() if is_test_job(jid, job)}
+    for jid, job in rjobs.items():
+        need = job.get("needs") or []
+        need = [need] if isinstance(need, str) else need
+        for n in need:
+            if n in test_jobs:
+                fail(f"release.yml:{jid}: needs test job {n!r}; publishing must not wait on tests (R7)")
 
 # Positive control: the files this guard exists for were actually parsed.
 want = ["release.yml"]
@@ -561,4 +610,30 @@ mut M12-always release.yml '    needs: docker-build
 ' '    needs: docker-build
     if: always()
 '
+# R6: a release-gate workflow name nothing defines turns the guard red; a real one stays green.
+relmut() { # name wanted-exit declaration
+    local d="$SELF/$1"
+    seed "$d"
+    python3 -I - "$d/release.sh" "$3" <<'MP'
+import re, sys
+p, decl = sys.argv[1:3]
+s = open("scripts/release.sh").read()
+s, n = re.subn(r"^RELEASE_REQUIRED_WORKFLOWS=\([^)]*\)", decl, s, count=1, flags=re.M)
+assert n == 1, "RELEASE_REQUIRED_WORKFLOWS anchor missing"
+open(p, "w").write(s)
+MP
+    RELEASE_SH="$d/release.sh" bash "$0" "$d" >/dev/null 2>&1
+    if [ $? -eq "$2" ]; then echo "  PASS: $1"; else echo "  FAIL: $1 (wanted exit $2)"; SELF_FAIL=1; fi
+}
+relmut R6a-nonexistent-name-red 1 'RELEASE_REQUIRED_WORKFLOWS=("Tests")'
+relmut R6b-existing-name-green 0 'RELEASE_REQUIRED_WORKFLOWS=("Release")'
+relmut R6c-declaration-missing-red 1 'RELEASE_WORKFLOWS_RENAMED=()'
+# R7: publishing never waits on tests.
+mut R7a-publish-needs-test-job release.yml '    needs: pack-npm
+' '    needs: [pack-npm, sanity]
+'
+mut R7b-workflow-run-trigger release.yml 'workflow_dispatch:' 'workflow_run:
+    workflows: ["PR fast tier"]
+    types: [completed]
+  workflow_dispatch:'
 exit "$SELF_FAIL"
