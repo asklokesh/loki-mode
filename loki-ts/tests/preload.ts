@@ -73,3 +73,7 @@ export function loadAwareTimeoutMs(
   return Math.max(Math.round(baseMs * factor), Number.isFinite(floor) && floor > 0 ? floor : 0);
 }
 export const setLoadAwareTimeout = (baseMs: number): void => setDefaultTimeout(loadAwareTimeoutMs(baseMs));
+
+// TEST-TIMEOUT-02: the global default is load-aware too, so a file with no opt-in is not stuck at a bare 5000ms under load.
+// A file-level setLoadAwareTimeout still wins because it runs after this preload.
+setLoadAwareTimeout(5000);

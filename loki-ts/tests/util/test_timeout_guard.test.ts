@@ -50,6 +50,22 @@ describe("the real setLoadAwareTimeout path under bun test", () => {
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 });
 
+describe("the preload applies a load-aware global default", () => {
+  // A child test file with NO opt-in sleeps 6s. The 5000ms default scaled by 3 passes; unscaled it fails.
+  const dir = mkdtempSync(join(tmpdir(), "loki-tmo-"));
+  const file = join(dir, "child.test.ts");
+  const cwd = join(import.meta.dir, "..", "..");
+  const run = (scale: string) => {
+    writeFileSync(file, `import { it } from "bun:test";\nit("sleeps 6s", async () => { await new Promise((r) => setTimeout(r, 6000)); });\n`);
+    return spawnSync(process.execPath, ["test", file], { cwd, env: { ...process.env, LOKI_TEST_TIMEOUT_SCALE: scale, LOKI_TEST_TIMEOUT_MS: "" }, encoding: "utf8", timeout: 60_000 });
+  };
+  it("a 6s test passes at scale 3 and fails at scale 1", () => {
+    expect(run("3").status).toBe(0);
+    expect(run("1").status).not.toBe(0);
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+});
+
 describe("no test sets its own fixed default timeout", () => {
   const root = join(import.meta.dir, "..");
   const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => {
