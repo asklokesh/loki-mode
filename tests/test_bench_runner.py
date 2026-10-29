@@ -729,6 +729,46 @@ class WrongPassCaptureTest(unittest.TestCase):
             self.assertEqual(json.load(fh)["runs"][0]["wrong_pass"], 1)
 
 
+def _stage_adapter(review_outcome):
+    def adapter(workdir, spec, *, model="mock-model", timeout=900, runner=None):
+        out = mock_adapter_with_cost(workdir, spec, model=model)
+        out["stages"] = {"review": {"model": "rev-model", "outcome": review_outcome}}
+        return out
+    return adapter
+
+
+class StageOutcomesTest(unittest.TestCase):
+    """Wall-author and review-stage outcomes by model: schema only, informational."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="bench-stage-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run(self, adapter, trials=2):
+        spec = _make_task(self.tmp, acceptance_cmd="true", task_id="st")
+        row = runner.run_task(spec, "mock", trials=trials, adapter=adapter, model="floor-model",
+                              verify_fn=lambda wd, m: "VERIFIED")
+        return runner.wrong_pass_results([row], "floor", "floor-model")["runs"][0]
+
+    def test_review_data_gives_per_model_counts(self):
+        seq = iter(["approved", "rejected"])
+        def adapter(workdir, spec, **kw):
+            return _stage_adapter(next(seq))(workdir, spec, **kw)
+        so = self._run(adapter)["stage_outcomes"]
+        self.assertEqual(so["review"]["by_model"],
+                         {"rev-model": {"n": 2, "outcomes": {"approved": 1, "rejected": 1}}})
+        self.assertIsNone(so["review"]["reason"])
+        self.assertIsNone(so["wall_author"]["by_model"])
+
+    def test_absent_data_is_unmeasured_not_zero(self):
+        so = self._run(mock_adapter_with_cost)["stage_outcomes"]
+        for stage in ("wall_author", "review"):
+            self.assertIsNone(so[stage]["by_model"])
+            self.assertIn("unmeasured", so[stage]["reason"])
+
+
 class CollectEfficiencyFallbackTest(unittest.TestCase):
     def test_collect_efficiency_returns_proof_shape(self):
         # With no efficiency files, usd must be None (not 0) and the shape must

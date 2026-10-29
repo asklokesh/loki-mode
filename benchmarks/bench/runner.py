@@ -507,6 +507,9 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
         }
         row["metrics"] = schema.trial_metrics(
             adapter_out, verdict["success"], measured=not unmeasured_reasons)
+        stages = stage_records(adapter_out)
+        if stages:
+            row["stages"] = stages
         if verify_fn is not None:
             # Seal verdict on the produced repo, beside the held-out grader
             # result. A verifier that cannot answer yields None (unmeasured).
@@ -596,6 +599,54 @@ def default_verify(workdir: str, model: str, timeout: int = 600) -> Optional[str
     return v
 
 
+STAGES = ("wall_author", "review")
+
+
+def stage_records(adapter_out: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    """Wall-author and review-stage records an adapter reported as
+    stages.<stage> = {"model": str, "outcome": str}. Anything malformed or
+    absent is dropped, so a stage with no usable record stays unmeasured."""
+    raw = adapter_out.get("stages")
+    out: Dict[str, Dict[str, str]] = {}
+    if not isinstance(raw, dict):
+        return out
+    for stage in STAGES:
+        rec = raw.get(stage)
+        if isinstance(rec, dict) and isinstance(rec.get("model"), str) and rec["model"] \
+                and isinstance(rec.get("outcome"), str) and rec["outcome"]:
+            out[stage] = {"model": rec["model"], "outcome": rec["outcome"]}
+    return out
+
+
+def stage_outcomes(rows: List[Dict[str, Any]], model: str) -> Dict[str, Any]:
+    """Per-model outcome counts for the Wall-author and review stages. When no
+    trial carries a record for a stage, by_model is null with a reason: never a
+    zero. A stage model that attribution treats as the run model is keyed by the
+    run model. Informational only; not a P4 gate."""
+    import attribution  # lazy: attribution imports this module
+    trials = [t for r in rows for t in r.get("trials", [])]
+    res: Dict[str, Any] = {}
+    for stage in STAGES:
+        by_model: Dict[str, Dict[str, Any]] = {}
+        missing = 0
+        for t in trials:
+            rec = (t.get("stages") or {}).get(stage)
+            if not rec:
+                missing += 1
+                continue
+            m = rec["model"]
+            key = model if model and attribution._model_match(m, model) else m
+            cell = by_model.setdefault(key, {"n": 0, "outcomes": {}})
+            cell["n"] += 1
+            cell["outcomes"][rec["outcome"]] = cell["outcomes"].get(rec["outcome"], 0) + 1
+        if by_model:
+            res[stage] = {"by_model": by_model, "reason": None, "trials_without_record": missing}
+        else:
+            res[stage] = {"by_model": None, "trials_without_record": missing,
+                          "reason": "unmeasured: no trial reported a %s record" % stage}
+    return res
+
+
 def wrong_pass_results(rows: List[Dict[str, Any]], setup: str, model: str) -> Dict[str, Any]:
     """Summary in the schema measure.py emits. outcomes maps each MEASURED task
     to SEALED (a wrong pass) or NOT_SEALED; trials with no verdict are listed
@@ -617,6 +668,7 @@ def wrong_pass_results(rows: List[Dict[str, Any]], setup: str, model: str) -> Di
     run = {"setup": setup, "model": model, "n": len(outcomes),
            "wrong_pass": sum(1 for v in outcomes.values() if v == "SEALED"),
            "outcomes": outcomes, "unmeasured": unmeasured, "records": recs,
+           "stage_outcomes": stage_outcomes(rows, model),
            "route": "heldout-bench", "verifier": None, "loki_version": None}
     return {"schema": WRONG_PASS_SCHEMA, "manifest_sha256": digest, "runs": [run]}
 
