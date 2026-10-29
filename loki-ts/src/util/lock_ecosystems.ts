@@ -1,8 +1,8 @@
 // loki-ts/src/util/lock_ecosystems.ts -- D106: the one ecosystem table behind lockedInstall (lockfile to frozen install form, workspace
 // declarations). It lives here, not in src/project_model, because it must name package managers and manifests; project_model sources
 // name no language or framework (tests/project_model L0 self-check). Entries in tests/engine10/l0_guard.allowlist move with it. No existing util owns package-manager and lockfile names, so a new file is justified.
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 
 export interface LockRule {
   tool: string; subs: string[]; locks: string[];
@@ -70,3 +70,53 @@ export function isYarnBerry(dir: string): boolean {
   if (existsSync(join(dir, ".yarnrc.yml"))) return true;
   try { return /^yarn@([2-9]|\d{2,})/.test(String((JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { packageManager?: unknown }).packageManager ?? "")); } catch { return false; }
 }
+
+const PY_SKIP_DIR = /^(\.|(node_modules|venv|__pycache__|dist|build|site-packages)$)/;
+const PY_MANIFEST = /^(requirements[^/]*\.txt|pyproject\.toml|setup\.cfg|setup\.py|Pipfile)$/;
+const depKey = (s: string): string => s.toLowerCase().replace(/[-_.]+/g, "_");
+/** Python dependency manifests under repoDir (at most 5000 directory entries); dot, vendored and build directories are never entered. */
+function pythonManifests(repoDir: string): string[] {
+  const out: string[] = [], stack = [""]; let seen = 0;
+  while (stack.length && seen < 5000) {
+    const dir = stack.pop()!; let ents;
+    try { ents = readdirSync(join(repoDir, dir), { withFileTypes: true }); } catch { continue; }
+    for (const e of ents) {
+      seen++; const rel = dir ? `${dir}/${e.name}` : e.name;
+      if (e.isDirectory()) { if (!PY_SKIP_DIR.test(e.name)) stack.push(rel); continue; }
+      if (PY_MANIFEST.test(e.name) || (e.name.endsWith(".txt") && /(^|\/)requirements$/.test(dir))) out.push(rel);
+    }
+  }
+  return out;
+}
+/** Distribution names the manifests declare, normalized by depKey: requirements lists; pyproject and Pipfile dependency tables and arrays; setup.cfg install_requires, tests_require and extras_require; the quoted strings after those keys in the setup script. */
+function declaredPythonDeps(repoDir: string, manifests: string[]): Set<string> {
+  const out = new Set<string>(), add = (s: string): void => { const m = /^\s*([A-Za-z0-9][\w.-]*)/.exec(s); if (m) out.add(depKey(m[1]!)); };
+  const strings = (v: string): string[] => [...v.matchAll(/["']([^"']+)["']/g)].map((m) => m[1]!);
+  const open = (x: string): number => (x.match(/[[{]/g) ?? []).length - (x.match(/[\]}]/g) ?? []).length;
+  for (const f of manifests) {
+    let t: string; try { t = readFileSync(join(repoDir, f), "utf8"); } catch { continue; }
+    const base = basename(f), lines = t.split("\n");
+    if (base.endsWith(".txt")) { for (const l of lines) if (!/^\s*-/.test(l)) add(l.replace(/(^|\s)#.*$/, "")); }
+    else if (/^setup\.py$/.test(base)) { for (const m of t.matchAll(/\b(?:install_requires|tests_require|extras_require)\s*=\s*([[{][^]*?[\]}])\s*[,)]/g)) strings(m[1]!).forEach(add); }
+    else if (base === "setup.cfg") {
+      let sec = "", key = "";
+      const wanted = (): boolean => sec === "options.extras_require" || (sec === "options" && /^(install|tests)_requires?$/.test(key));
+      for (const l of lines) {
+        const h = /^\[([^\]]+)\]/.exec(l), kv = /^(\w[\w.-]*)\s*[=:]\s*(.*)$/.exec(l);
+        if (h) { sec = h[1]!; key = ""; } else if (kv) { key = kv[1]!; if (wanted()) add(kv[2]!); } else if (/^\s+\S/.test(l) && wanted()) add(l.replace(/\s*[#;].*$/, ""));
+      }
+    } else {
+      let table = "";
+      for (let i = 0; i < lines.length; i++) {
+        const h = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$/.exec(lines[i]!); if (h) { table = h[1]!.replace(/["']/g, ""); continue; }
+        const a = /^\s*("[^"]+"|'[^']+'|[\w.-]+)\s*=\s*(.*)$/.exec(lines[i]!); if (!a) continue;
+        let v = a[2]!; while (open(v) > 0 && i + 1 < lines.length) v += `\n${lines[++i]}`;
+        const key = a[1]!.replace(/["']/g, ""), depTable = /(^|\.)(dependencies|dev-dependencies|optional-dependencies|dependency-groups|extras|packages|dev-packages)$/.test(table);
+        if (depTable || /^(optional-)?dependencies$|^dev-dependencies$/.test(key)) { if (v.trimStart().startsWith("[")) strings(v).forEach(add); else if (depTable) add(key); }
+      }
+    }
+  }
+  return out;
+}
+/** Does any Python dependency manifest under repoDir declare the distribution `name` (case, dash, dot and underscore insensitive)? Unreadable manifests declare nothing. */
+export function declaresPythonDep(repoDir: string, name: string): boolean { return declaredPythonDeps(repoDir, pythonManifests(repoDir)).has(depKey(name)); }

@@ -890,6 +890,7 @@ describe("Wall file importing a module the task will create", () => {
       expect(classify(pf, 2, PYT("AttributeError: boom", "----- Captured stderr -----\nModuleNotFoundError: No module named 'zzz'\n"), d, "project")).toBe("not_run"); // column 0, after the real E line
       expect(classify(pf, 2, PYT("AttributeError: boom", "----- Captured stdout -----\n  ModuleNotFoundError: No module named 'zzz' (quoted)\n"), d, "project")).toBe("not_run"); // indented
       expect(classify(pf, 2, PYT("AttributeError: boom", "----- Captured stdout -----\nE   ModuleNotFoundError: No module named 'zzz'\n"), d, "project")).toBe("not_run"); // forged E line after the separator
+      expect(classify(pf, 2, PYT("AttributeError: x\nE   ModuleNotFoundError: No module named 'zzz'"), d, "project")).toBe("not_run"); // a multi-line message: pytest prefixes every line with E, only the first is the exception type
       expect(classify({ runner: "unittest", path: pf.path }, 1, "Traceback (most recent call last):\nModuleNotFoundError: No module named 'zzz'\nTraceback (most recent call last):\nAttributeError: boom\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nFAILED (errors=1)\nImportError: Failed to import test module: x\n", d, "project")).toBe("not_run"); // unittest: only the last line before the Ran footer names the error
     } finally { rmSync(d, { recursive: true, force: true }); }
   });

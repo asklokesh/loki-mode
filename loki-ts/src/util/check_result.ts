@@ -12,6 +12,7 @@ import { siteFor } from "../project_model/resolve.ts";
 import type { ProjectApi } from "../project_model/api.ts";
 import { CARGO_TEST_FILE_RE, isTestFile } from "../engine10/testmap.ts";
 import type { RunnerName, TestRef } from "../engine10/types.ts";
+import { declaresPythonDep } from "./lock_ecosystems.ts";
 import { UNITTEST_DISCOVER_ARGS } from "./python_build_check.ts";
 import { safeGit, tokenFreeEnv } from "./safe_git.ts";
 import { redactSecrets, UNSAFE_TERMINAL_CHARS_RE } from "./redact.ts";
@@ -890,11 +891,9 @@ export function pytestCollectionIsRed(output: string, repoDir: string): boolean 
   return !!last && under(last[1]!) && !/^\s*(import\s|from\s\S+\s+import\b)/.test(last[2] ?? "");
 }
 const PY_SKIP_DIR = /^(\.|(node_modules|venv|__pycache__|dist|build|site-packages)$)/;
-const PY_MANIFEST = /^(requirements[^/]*\.txt|pyproject\.toml|setup\.cfg|setup\.py|Pipfile)$/;
-const depKey = (s: string): string => s.toLowerCase().replace(/[-_.]+/g, "_");
-/** Python sources (at most 5000) and dependency manifests under repoDir; dot, vendored and build directories are never entered. Throws when repoDir itself is unreadable. */
-function walkPython(repoDir: string): { py: string[]; manifests: string[] } {
-  const py: string[] = [], manifests: string[] = [], stack = [""];
+/** Python sources under repoDir (at most 5000); dot, vendored and build directories are never entered. Throws when repoDir itself is unreadable. */
+function walkPython(repoDir: string): string[] {
+  const py: string[] = [], stack = [""];
   while (stack.length && py.length < 5000) {
     const dir = stack.pop()!; let ents;
     try { ents = readdirSync(join(repoDir, dir), { withFileTypes: true }); } catch (e) { if (!dir) throw e; continue; }
@@ -902,40 +901,9 @@ function walkPython(repoDir: string): { py: string[]; manifests: string[] } {
       const rel = dir ? `${dir}/${e.name}` : e.name;
       if (e.isDirectory()) { if (!PY_SKIP_DIR.test(e.name)) stack.push(rel); continue; }
       if (e.name.endsWith(".py")) py.push(rel);
-      if (PY_MANIFEST.test(e.name) || (e.name.endsWith(".txt") && /(^|\/)requirements$/.test(dir))) manifests.push(rel);
     }
   }
-  return { py, manifests };
-}
-/** Distribution names the manifests declare, normalized by depKey: requirements*.txt lines; pyproject and Pipfile dependency tables and arrays; setup.cfg install_requires, tests_require and extras_require; the quoted strings after those keys in setup.py. */
-function declaredDeps(repoDir: string, manifests: string[]): Set<string> {
-  const out = new Set<string>(), add = (s: string): void => { const m = /^\s*([A-Za-z0-9][\w.-]*)/.exec(s); if (m) out.add(depKey(m[1]!)); };
-  const strings = (v: string): string[] => [...v.matchAll(/["']([^"']+)["']/g)].map((m) => m[1]!);
-  const open = (x: string): number => (x.match(/[[{]/g) ?? []).length - (x.match(/[\]}]/g) ?? []).length;
-  for (const f of manifests) {
-    let t: string; try { t = readFileSync(join(repoDir, f), "utf8"); } catch { continue; }
-    const base = basename(f), lines = t.split("\n");
-    if (base.endsWith(".txt")) { for (const l of lines) if (!/^\s*-/.test(l)) add(l.replace(/(^|\s)#.*$/, "")); }
-    else if (base === "setup.py") { for (const m of t.matchAll(/\b(?:install_requires|tests_require|extras_require)\s*=\s*([[{][^]*?[\]}])\s*[,)]/g)) strings(m[1]!).forEach(add); }
-    else if (base === "setup.cfg") {
-      let sec = "", key = "";
-      const wanted = (): boolean => sec === "options.extras_require" || (sec === "options" && /^(install|tests)_requires?$/.test(key));
-      for (const l of lines) {
-        const h = /^\[([^\]]+)\]/.exec(l), kv = /^(\w[\w.-]*)\s*[=:]\s*(.*)$/.exec(l);
-        if (h) { sec = h[1]!; key = ""; } else if (kv) { key = kv[1]!; if (wanted()) add(kv[2]!); } else if (/^\s+\S/.test(l) && wanted()) add(l.replace(/\s*[#;].*$/, ""));
-      }
-    } else {
-      let table = "";
-      for (let i = 0; i < lines.length; i++) {
-        const h = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$/.exec(lines[i]!); if (h) { table = h[1]!.replace(/["']/g, ""); continue; }
-        const a = /^\s*("[^"]+"|'[^']+'|[\w.-]+)\s*=\s*(.*)$/.exec(lines[i]!); if (!a) continue;
-        let v = a[2]!; while (open(v) > 0 && i + 1 < lines.length) v += `\n${lines[++i]}`;
-        const key = a[1]!.replace(/["']/g, ""), depTable = /(^|\.)(dependencies|dev-dependencies|optional-dependencies|dependency-groups|extras|packages|dev-packages)$/.test(table);
-        if (depTable || /^(optional-)?dependencies$|^dev-dependencies$/.test(key)) { if (v.trimStart().startsWith("[")) strings(v).forEach(add); else if (depTable) add(key); }
-      }
-    }
-  }
-  return out;
+  return py;
 }
 /** Does the source import `name`: `import a.b`, `from a.b import x`, or for a dotted name `from a import b`. Importing a deeper module also names its parents (`import a.b.c` imports `a` and `a.b`), but importing only the parent does not name a submodule. */
 function importsName(t: string, name: string): boolean {
@@ -945,19 +913,25 @@ function importsName(t: string, name: string): boolean {
   const last = new RegExp(`(?<![\\w.])${name.slice(dot + 1)}(?!\\w)`);
   return [...t.matchAll(new RegExp(`^[ \\t]*from[ \\t]+${q(name.slice(0, dot))}[ \\t]+import[ \\t]+(\\([^)]*\\)|[^\\n]*)`, "gm"))].some((m) => last.test(m[1]!));
 }
-/** The missing module a collection error names. pytest: the last E line of the first "ERROR collecting" block, cut at its first Captured separator. Otherwise (unittest): the last line before the Ran footer. Text the test itself printed is never read. */
+/** The missing module a collection error names. pytest: the first E line of the final run of E lines in the first "ERROR collecting" block, cut at its first Captured separator. Otherwise (unittest): the last line before the Ran footer. Text the test itself printed is never read. */
 function missingModule(output: string): string | undefined {
   const re = /^(?:E {3})?ModuleNotFoundError: No module named '([\w.]+)'\s*$/, start = output.search(/^_+ ERROR collecting /m);
-  if (start >= 0) return re.exec(((output.slice(start).split(/^-+ Captured .*$/m)[0]!.split(/^=+ /m)[0]!.match(/^E {3}.*$/gm)) ?? []).pop() ?? "")?.[1];
+  if (start >= 0) {
+    // The matched line must open the final run of E lines (the exception-type line): pytest prefixes every line of a multi-line message with E, so a raised message could otherwise carry a forged last line.
+    const ls = output.slice(start).split(/^-+ Captured .*$/m)[0]!.split(/^=+ /m)[0]!.split("\n"), isE = (l: string | undefined): boolean => l !== undefined && /^E(?: {3}.*)?$/.test(l);
+    let i = ls.length - 1; while (i >= 0 && !isE(ls[i])) i--;
+    while (i > 0 && isE(ls[i - 1])) i--;
+    return i < 0 ? undefined : re.exec(ls[i]!)?.[1];
+  }
   return re.exec(output.split(/^(?:-+\n)?Ran \d+ tests? in /m)[0]!.trimEnd().split("\n").pop() ?? "")?.[1];
 }
 /** Red on base only for a module that is not in the repo, not declared in a dependency manifest, and not imported by any non-Wall Python file (tests included): that name is what the task creates. A dotted name is matched whole, so importing its package does not hide a new submodule. */
 function moduleToBeCreated(output: string, repoDir: string): boolean {
   const name = missingModule(output); if (!name || moduleUnderRepo(repoDir, name)) return false;
-  let w; try { w = walkPython(repoDir); } catch { return false; }
-  if (declaredDeps(repoDir, w.manifests).has(depKey(name.split(".")[0]!))) return false;
+  let py; try { py = walkPython(repoDir); } catch { return false; }
+  if (declaresPythonDep(repoDir, name.split(".")[0]!)) return false;
   const rel = name.replace(/\./g, "/");
-  return !w.py.some((f) => {
+  return !py.some((f) => {
     if (`/${f}`.endsWith(`/${rel}.py`) || `/${f}`.endsWith(`/${rel}/__init__.py`)) return true;
     if (/(^|\/)loki_wall_/.test(f)) return false;
     try { return importsName(readFileSync(join(repoDir, f), "utf8"), name); } catch { return false; }
