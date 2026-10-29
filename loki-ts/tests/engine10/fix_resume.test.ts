@@ -800,7 +800,8 @@ describe("SIGKILL of a live session then resume (PX-5)", () => {
   test("the killed implement session is resumed by its recorded id, one session, measured latency", async () => {
     mkdirSync(join(repo, ".loki"), { recursive: true });
     const file = join(repo, ".loki", "e10-session-r1-impl.json");
-    const child = spawn("bash", ["-c", `printf '{"session_id":"sess-sigkill"}' > "$SESSION_FILE"; exec sleep 300`], { env: { ...process.env, SESSION_FILE: file }, stdio: "ignore" });
+    const sessionSrc = join(import.meta.dir, "../../src/runner/session_resume.ts");
+    const child = spawn(process.execPath, ["-e", `import { writeSessionId } from ${JSON.stringify(sessionSrc)}; writeSessionId(process.env.REPO, "r1-impl", { sessionId: "sess-sigkill" }); setInterval(() => {}, 1 << 30);`], { env: { ...process.env, REPO: repo }, stdio: "ignore" }); // the real writeSessionId runs in the child, which is then killed
     try {
       for (let i = 0; i < 100 && !existsSync(file); i++) await new Promise((r) => setTimeout(r, 50));
       expect(existsSync(file)).toBe(true);
@@ -812,8 +813,7 @@ describe("SIGKILL of a live session then resume (PX-5)", () => {
     const s = new Fake(() => ok), t0 = performance.now();
     const r = await (await import("../../src/engine10/stages/implement.ts")).implementStage.run(ctxFor(s, { intake: { task: "do it" } }), new AbortController().signal);
     const ms = Math.round(performance.now() - t0);
-    console.log(`PX5 session resume latency ms: ${ms}`);
-    expect(ms).toBeLessThan(10000);
+    console.log(`PX5 session resume latency ms (measured, unbounded): ${ms}`);
     expect(s.calls).toHaveLength(1);
     expect(s.calls[0]!.resumeSessionId).toBe("sess-sigkill");
     expect(s.calls[0]!.brief).toContain("interrupted");

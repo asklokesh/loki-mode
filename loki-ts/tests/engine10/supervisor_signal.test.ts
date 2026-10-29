@@ -681,6 +681,7 @@ describe("loki steer at five stage points (stub provider)", () => {
 
 // PX-5: a SIGKILL at each stage boundary of a stub-provider run, then `loki start --resume`. The driver is a real child process (the test records its pid and kills only that pid)
 // that plays supervisor and machine over stub stages and the real runPr with a stub push script; the resume is the real resumeFlag / resumePublish.
+// Not covered: the real runSupervisor resume and its PR callback before publish. A stub supervisor drives the PR step here, so those two are not exercised.
 describe("stage-boundary SIGKILL matrix (PX-5)", () => {
   const SRC = join(import.meta.dir, "../../src");
   const PR_URL = "https://github.com/octocat/hello/pull/42";
@@ -811,13 +812,21 @@ exit 0
       return { rc, ms: performance.now() - t0, say: say.join("") };
     } finally { process.chdir(cwd); }
   }
-  async function assertRecovered(c: ReturnType<typeof fixture>, boundary: string, r: { rc: number; ms: number; say: string }): Promise<void> {
+  const stageCounts = (f: string): Record<string, number> => { const n: Record<string, number> = {}; for (const e of readEvents(f)) if (e.type === "stage.completed" && typeof e.stage === "string") n[e.stage] = (n[e.stage] ?? 0) + 1; return n; };
+  const RESTORED = ["intake", "plan", "wall", "implement"]; // the stages a resume restores from the log instead of rerunning
+  async function assertRecovered(c: ReturnType<typeof fixture>, boundary: string, r: { rc: number; ms: number; say: string }, pre: Record<string, number>): Promise<void> {
     expect(r.rc, r.say).toBe(0);
     latency[boundary] = Math.round(r.ms);
-    expect(Number.isFinite(r.ms) && r.ms > 0 && r.ms < 60000).toBe(true); // recovery latency is a measured number with a generous ceiling, not a timer the resume waits on
+    expect(Number.isFinite(r.ms) && r.ms > 0 && r.ms < 5000).toBe(true); // about 5x the worst observed (895 ms): fails on a hang-class regression; the resume never waits on this value
     const raw = readFileSync(c.ev, "utf8"), evs = readEvents(c.ev);
     expect(evs.every((e, i) => e.seq === i)).toBe(true);
     expect(new Set(evs.map((e) => e.run)).size).toBe(1);
+    const post = stageCounts(c.ev);
+    const publish = publishPhase.has(boundary as Boundary); // a publish-phase resume goes through resumePublish: no stage reruns, and seal/pr are not re-recorded as stages
+    for (const s of ["intake", "plan", "wall", "implement", "verify", "commit", "seal", "pr"]) {
+      if ((pre[s] ?? 0) > 0 && (publish || RESTORED.includes(s))) expect(post[s], `stage ${s} finished before the kill and must not complete twice`).toBe(1); // exactly one stage.completed per finished stage across the kill and the resume
+      if (!publish || ["intake", "plan", "wall", "implement", "verify", "commit"].includes(s)) expect(post[s] ?? 0, `stage ${s} completes at least once`).toBeGreaterThanOrEqual(1);
+    }
     expect(evs.filter((e) => e.type === "receipt.sealed")).toHaveLength(1);
     expect(evs.filter((e) => e.type === "pr.opened")).toHaveLength(1);
     expect(evs.filter((e) => e.type === "run.completed")).toHaveLength(1);
@@ -851,7 +860,8 @@ exit 0
     expect(it, "the killed run is found as interrupted").not.toBeNull();
     expect(it?.phase === "publish").toBe(publishPhase.has(boundary));
     expect(pushes(c.bin)).toBe(boundary === "pr-opened" ? 1 : 0); // pr-opened is the window where the PR already exists
-    await assertRecovered(c, boundary, await resumeRun(c));
+    const pre = stageCounts(c.ev);
+    await assertRecovered(c, boundary, await resumeRun(c), pre);
   }, 120000);
   afterAll(() => {
     for (const k of ENV_KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
