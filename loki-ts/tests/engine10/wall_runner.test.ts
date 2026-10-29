@@ -132,6 +132,27 @@ describe("A-103 wall discards tests that are not red for the right reason", () =
     const fg = "=== RUN   TestA\n--- PASS: TestA (0.00s)\nPASS\nok  \texample.com/fg\t0.189s\n";
     expect(classify({ runner: "go" as const, path: "a_test.go" }, 0, fg, "/x")).toBe("not_run");
   });
+  test("classify go: a go test -json run that names a failing test is red; a compile failure or torn stream stays not_run", () => {
+    const ev = (o: Record<string, unknown>): string => JSON.stringify({ Time: "2026-10-29T00:00:00Z", ...o });
+    const f = { runner: "go" as const, path: "pkg/a_test.go" };
+    const red = [
+      ev({ Action: "start", Package: "ex/pkg" }), ev({ Action: "run", Package: "ex/pkg", Test: "TestAdd" }),
+      ev({ Action: "output", Package: "ex/pkg", Test: "TestAdd", Output: "--- FAIL: TestAdd (0.00s)\n" }),
+      ev({ Action: "fail", Package: "ex/pkg", Test: "TestAdd", Elapsed: 0 }), ev({ Action: "fail", Package: "ex/pkg", Elapsed: 0.01 }),
+    ].join("\n") + "\n";
+    expect(classify(f, 1, red, "/x")).toBe("fail");
+    const build = [ev({ Action: "start", Package: "ex/pkg" }), ev({ Action: "output", Package: "ex/pkg", Output: "FAIL\tex/pkg [build failed]\n" }), ev({ Action: "fail", Package: "ex/pkg", Elapsed: 0 })].join("\n") + "\n";
+    expect(classify(f, 1, build, "/x")).toBe("not_run");
+    expect(classify(f, 1, "exit status 1\nFAIL\tex/pkg\t0.01s\n", "/x")).toBe("not_run");
+  });
+  test("classify cargo: a failed test is red when cargo's stderr lines follow the stdout trailer (the order the Wall captures)", () => {
+    const f = { runner: "cargo" as const, path: "tests/itg.rs" };
+    const stdout = "\nrunning 2 tests\ntest ok_one ... ok\ntest bad_one ... FAILED\n\nfailures:\n\n---- bad_one stdout ----\nthread 'bad_one' panicked at tests/itg.rs:5:5:\nassertion failed\n\nfailures:\n    bad_one\n\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n";
+    const stderr = "   Compiling fx v0.1.0 (/r)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.30s\n     Running tests/itg.rs (target/debug/deps/itg-abc123)\nerror: test failed, to rerun pass `--test itg`\n";
+    expect(classify(f, 101, stdout + "\n" + stderr, "/x")).toBe("fail");
+    expect(classify(f, 101, stderr, "/x")).toBe("not_run"); // a compile error or empty run names no failing test
+    expect(classify(f, 101, stdout.replace("test bad_one ... FAILED\n", ""), "/x")).toBe("not_run"); // trailer says failed but no id is readable
+  });
   test("classify node:assertion failure is red; ReferenceError or missing module is not_run", () => {
     const f = { runner: "node" as const, path: "t.test.js" };
     expect(classify(f, 1, "# tests 1\n# pass 0\n# fail 1\n", "/x")).toBe("fail");

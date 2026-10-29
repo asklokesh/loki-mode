@@ -39,11 +39,16 @@ describe("item 2: go test -json is fail evidence only; a Go exit 0 is never a pa
   test("loki builds go test -json for the per-file command", () => {
     expect(runnerCmd({ runner: "go", path: "a/a_test.go" }, "/r")[1]).toEqual(["test", "-json", "./a"]);
   });
-  test("a well-formed -json pass on exit 0 is not_run with the honest reason (was: pass n=2)", () => {
-    const r = classifyCheck({ kind: "test", ok: true, out: GO_JSON_PASS, ...go });
+  test("a complete -json pass on exit 0 counts its executed tests; plain output still carries the honest reason", () => {
+    expect(classifyCheck({ kind: "test", ok: true, out: GO_JSON_PASS, ...go })).toEqual({ result: "pass", n: 2 });
+    const r = classifyCheck({ kind: "test", ok: true, out: "ok  \tex/a\t0.004s\n", ...go });
     expect(r.result).toBe("not_run");
     expect(r.reason).toBe(GO_EXIT0_REASON);
     expect(GO_EXIT0_REASON).toContain("produced by the code under test");
+  });
+  test("a -json stream that is torn (no package terminal event) is not a pass", () => {
+    const torn = GO_JSON_PASS.split("\n").slice(0, -2).join("\n") + "\n";
+    expect(classifyCheck({ kind: "test", ok: true, out: torn, ...go }).result).toBe("not_run");
   });
   test("a failing run with a fail event is a fail (fail evidence from -json)", () => {
     expect(classifyCheck({ kind: "test", ok: false, out: FAILED, ...go }).result).toBe("fail");
@@ -151,7 +156,7 @@ describe.skipIf(!HAS_GO)("item 5b: go Wall file through RealBaseTestRunner (real
     expect(new RealBaseTestRunner(null).run(pass, [{ runner: "go", path: "a_test.go" }])).toEqual({ pass: 0, fail: 0, not_run: 1 });
     const failing = fixture('func TestAdd(t *testing.T) { if Add(1, 2) != 4 { t.Fatal("x") } }');
     const r = new RealBaseTestRunner(null).run(failing, [{ runner: "go", path: "a_test.go" }]);
-    expect(r.pass).toBe(0); // Wall treats a go red as coarse (never a per-file fail), unchanged
+    expect(r).toEqual({ pass: 0, fail: 1, not_run: 0 }); // HV1-03a: a go -json red that names a failing test is a kept per-file fail
   }, 60_000); // real go compiles cold on CI runners (8.7s seen on release run 37168233387)
   test("a TestMain that prints a fake pass and exits 0 earns no pass", () => {
     const d = fixture('import "os"\nimport "fmt"\n\nfunc TestMain(m *testing.M) { fmt.Println("=== RUN   TestFake"); fmt.Println("--- PASS: TestFake (0.00s)"); fmt.Println("ok  \\texample.com/fx\\t0.001s"); os.Exit(0) }');

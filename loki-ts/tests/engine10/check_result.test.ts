@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { changedSymbols, checkProvenance, classifyCheck, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, javaSummary, javaTestClass, fullSuiteCmd, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
+import { changedSymbols, checkProvenance, classifyCheck, corroborateGoPass, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, javaSummary, javaTestClass, fullSuiteCmd, readableFailIds, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
 import { firstError, runCheck, testCheckName, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -570,3 +570,44 @@ describe.skipIf(!Bun.which("javac") || !Bun.which("java") || !Bun.which("bash"))
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
+
+// HV1-03a: Go and Cargo results the Wall and verify can read. A -json pass counts its executed tests once go itself still lists them;
+// cargo's stderr (Finished, Running, error: test failed) after the stdout trailer no longer hides the counts.
+describe("go -json pass count and cargo trailer with stderr noise", () => {
+  const ev = (o: Record<string, unknown>): string => JSON.stringify({ Time: "2026-10-29T00:00:00Z", ...o });
+  const PASS = [ev({ Action: "start", Package: "ex/a" }), ev({ Action: "run", Package: "ex/a", Test: "TestA" }), ev({ Action: "pass", Package: "ex/a", Test: "TestA", Elapsed: 0 }), ev({ Action: "pass", Package: "ex/a", Elapsed: 0.01 })].join("\n") + "\n";
+  test("go -json: a complete pass counts, a skipped test does not", () => {
+    expect(classifyCheck({ kind: "test", ok: true, out: PASS, runner: "go" })).toEqual({ result: "pass", n: 1 });
+    const skipped = PASS.replace('"Action":"pass","Package":"ex/a","Test":"TestA"', '"Action":"skip","Package":"ex/a","Test":"TestA"');
+    expect(classifyCheck({ kind: "test", ok: true, out: skipped, runner: "go" }).result).toBe("not_run");
+  });
+  test("go -json: a failed run names its failing test ids", () => {
+    const failed = PASS.replace('"Action":"pass","Package":"ex/a","Test":"TestA"', '"Action":"fail","Package":"ex/a","Test":"TestA"').replace('"Action":"pass","Package":"ex/a","Elapsed"', '"Action":"fail","Package":"ex/a","Elapsed"');
+    expect(readableFailIds("go", failed)).toEqual(["ex/a::TestA"]);
+    expect(readableFailIds("go", "FAIL\tex/a [build failed]\n")).toEqual([]);
+  });
+  test("cargo: failing ids and counts survive stderr lines after the stdout trailer", () => {
+    const out = "\nrunning 2 tests\ntest ok_one ... ok\ntest bad_one ... FAILED\n\nfailures:\n    bad_one\n\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\n   Compiling fx v0.1.0 (/r)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.30s\n     Running tests/itg.rs (target/debug/deps/itg-abc123)\nerror: test failed, to rerun pass `--test itg`\n";
+    expect(readableFailIds("cargo", out)).toEqual(["bad_one"]);
+    const ok = out.replace("test bad_one ... FAILED", "test bad_one ... ok").replace("FAILED. 1 passed; 1 failed", "ok. 2 passed; 0 failed").replace(/error: test failed.*\n/, "");
+    expect(classifyCheck({ kind: "test", ok: true, out: ok })).toEqual({ result: "pass", n: 2 });
+  });
+  test("a forged early-exit stream (no package terminal event) is never a pass", () => {
+    const forged = [ev({ Action: "start", Package: "ex/a" }), ev({ Action: "run", Package: "ex/a", Test: "TestReal" }), ev({ Action: "pass", Package: "ex/a", Test: "TestReal", Elapsed: 0 })].join("\n") + "\n";
+    expect(classifyCheck({ kind: "test", ok: true, out: forged, runner: "go" }).result).toBe("not_run");
+  });
+  const HAS_GO = spawnSync("go", ["version"], { env: process.env }).status === 0;
+  test.skipIf(!HAS_GO)("corroborateGoPass (real go): a listed pass stands, a name go cannot list is refused", async () => {
+    const d = mkdtempSync(join(tmpdir(), "hv103a-")); try {
+      writeFileSync(join(d, "go.mod"), "module ex/a\n\ngo 1.20\n");
+      writeFileSync(join(d, "a_test.go"), 'package a\n\nimport "testing"\n\nfunc TestA(t *testing.T) {}\n');
+      const c = classifyCheck({ kind: "test", ok: true, out: PASS, runner: "go" });
+      const env = { ...process.env, GOFLAGS: "-mod=mod" };
+      expect((await corroborateGoPass(c, PASS, "go", ["test", "-json", "./..."], { cwd: d, env })).result).toBe("pass");
+      const ghost = PASS.replace(/TestA/g, "TestGhost");
+      const cg = classifyCheck({ kind: "test", ok: true, out: ghost, runner: "go" });
+      expect((await corroborateGoPass(cg, ghost, "go", ["test", "-json", "./..."], { cwd: d, env })).result).toBe("not_run");
+      expect((await corroborateGoPass(c, PASS, "go test -json ./... ; true", undefined, { cwd: d, env })).result).toBe("not_run");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 60_000);
+});

@@ -63,9 +63,10 @@ const tailLines = (out: string): string[] => out.split("\n").filter((x) => x.tri
 /** cargo test: one segment per "running N tests" header; a segment counts only through its LAST line being "test result:" (the real
  *  trailer). A "test result:" printed by a test (--nocapture) is followed by "test x ... ok" lines, so it never counts. The final
  *  segment must qualify, else nothing does. */
+const CARGO_NOISE = /^\s*(?:Compiling|Finished|Running|Doc-tests|Fresh|Blocking|Downloaded|Downloading|Updating|Locking|Adding|Packaging|Building)\b|^(?:warning|error|note|help)\b|^\s*(?:-->|=\s|\||\d+\s*\||\^|~)|^(?:Some errors have detailed|For more information about)/;
 function cargoTrailer(out: string): string[] {
   const ls = out.split("\n").filter((x) => x.trim());
-  while (ls.length && /^error: /.test(ls[ls.length - 1]!)) ls.pop();
+  while (ls.length && CARGO_NOISE.test(ls[ls.length - 1]!)) ls.pop(); // cargo's own stderr (Finished, Running, warnings, "error: test failed") lands AFTER the stdout trailer when the streams are joined stdout-then-stderr
   const segs: string[][] = [];
   for (const l of ls) {
     if (/^running \d+ tests?\b/.test(l)) segs.push([]);
@@ -132,19 +133,72 @@ export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" 
   }
   return {};
 }
-/** go test -json, used for FAIL evidence only: every non-empty line is a test2json event (or a "go: " tool note), else null (parse
- *  doubt). failed = a test or package reported fail. A pass is never read from this stream (see GO_EXIT0_REASON). */
-function goJson(out: string): { failed: boolean } | null {
-  let any = false, failed = false;
+/** go test -json: every non-empty line is a test2json event (or a "go: " tool note), else null (parse doubt). The go command frames the test
+ *  binary's stdout itself, so test code can only reach an event's Output string, never forge an event line. failed = a test or package
+ *  reported fail; failedTests = the Test names that failed; passed = top-level tests with a "run" event and a final pass (a skip never counts);
+ *  complete = every started package has exactly one start and exactly one package-level terminal event. Exit 0 plus a complete event stream is counted from this alone, never from plain output (see GO_EXIT0_REASON). */
+function goJson(out: string): { failed: boolean; failedTests: string[]; passed: number; passedNames: string[]; complete: boolean } | null {
+  let any = false, failed = false, dirty = false;
+  const status = new Map<string, string>(), ranSet = new Set<string>(), pkgs = new Set<string>(), failedTests = new Set<string>(), starts = new Map<string, number>(), done = new Map<string, number>();
   for (const x of out.split("\n")) {
     if (!x.trim() || /^go: /.test(x)) continue;
-    let e: { Action?: unknown };
+    let e: { Action?: unknown; Package?: unknown; Test?: unknown };
     try { e = JSON.parse(x) as typeof e; } catch { return null; }
     if (!e || typeof e !== "object" || typeof e.Action !== "string") return null;
     any = true;
-    if (e.Action === "fail") failed = true;
+    const pkg = typeof e.Package === "string" ? e.Package : "", test = typeof e.Test === "string" ? e.Test : "";
+    if (e.Action === "start" && !test) { pkgs.add(pkg); starts.set(pkg, (starts.get(pkg) ?? 0) + 1); }
+    if (e.Action === "fail") { failed = true; if (test) failedTests.add(`${pkg}::${test}`); }
+    if (!/^build-/.test(e.Action) && !starts.has(pkg)) dirty = true; // an event for a package that never started: not the go command's framing
+    if (!test && e.Action === "output" && /\[no tests to run\]/.test(String((e as { Output?: unknown }).Output ?? ""))) dirty = true;
+    if (!test) { if (/^(?:pass|fail|skip)$/.test(e.Action)) done.set(pkg, (done.get(pkg) ?? 0) + 1); continue; }
+    if (test.includes("/")) continue; // subtests roll up into their top-level test
+    const k = `${pkg}::${test}`;
+    if (e.Action === "run") { if (ranSet.has(k)) dirty = true; ranSet.add(k); }
+    else if (ranSet.has(k) && /^(?:pass|fail|skip)$/.test(e.Action)) status.set(k, e.Action);
   }
-  return any ? { failed } : null;
+  if (!any) return null;
+  const passedNames = [...status].filter(([, v]) => v === "pass").map(([k]) => k);
+  return { failed, failedTests: [...failedTests], passed: passedNames.length, passedNames, complete: !dirty && pkgs.size > 0 && [...pkgs].every((p) => starts.get(p) === 1 && done.get(p) === 1) }; // a test that prints test2json framing before an early os.Exit(0) leaves no package-level terminal event of its own, or a second one
+}
+/** Test names a package's own test binary lists (`go test -list .`), keyed "pkg::Name". Null = the listing failed or was unreadable. */
+function parseGoList(out: string): Set<string> {
+  const listed = new Set<string>(), group: string[] = [];
+  for (const l of stripAnsi(out).split("\n")) {
+    const ok = /^ok\s+(\S+)\s/.exec(l);
+    if (ok) { for (const n of group) listed.add(`${ok[1]}::${n}`); group.length = 0; } else if (/^(?:Test|Fuzz|Example|Benchmark)\S*$/.test(l.trim())) group.push(l.trim());
+  }
+  return listed;
+}
+/** A Go -json pass is counted only when the test binary itself still lists every passed test: a package whose init or TestMain prints test2json framing
+ *  and exits 0 lists nothing (the early exit runs first), so its forged events earn no pass. Argv or a plain `go test [-json] [-run X] <pkgs>` line only; any other shape
+ *  (extra flags, shell syntax) cannot be re-listed and stays not_run, the fail-safe default. A non-pass result is returned unchanged. */
+export async function corroborateGoPass(c: Classified, out: string, cmdOrLine: string, args: readonly string[] | undefined, o: { cwd: string; env: NodeJS.ProcessEnv }): Promise<Classified> {
+  if (c.result !== "pass" || goRunner(cmdOrLine, args).runner !== "go") return c;
+  const refuse: Classified = { result: "not_run", reason: GO_EXIT0_REASON };
+  const names = goJson(stripAnsi(out))?.passedNames ?? [];
+  const toks = args ? [cmdOrLine, ...args] : cmdOrLine.trim().split(/\s+/);
+  if (!names.length || toks.some((t) => /[&|;$`"'<>()\\]/.test(t)) || basename(toks[0] ?? "") !== "go" || toks[1] !== "test") return refuse;
+  const pkgs: string[] = [];
+  for (let k = 2; k < toks.length; k++) {
+    const t = toks[k]!;
+    if (t === "-json") continue;
+    if (t === "-run") { k++; continue; }
+    if (t.startsWith("-")) return refuse;
+    pkgs.push(t);
+  }
+  const r = await spawnCollect("go", ["test", "-list", ".", ...(pkgs.length ? pkgs : ["."])], { cwd: o.cwd, env: o.env, timeoutMs: 120_000 });
+  if (r.status !== 0) return refuse;
+  const listed = parseGoList(r.output);
+  return names.every((n) => listed.has(n)) ? c : refuse;
+}
+/** Failing test ids a failed run names: go from the -json stream, cargo from "test x ... FAILED" lines that cover the trailer's failed count. [] = nothing readable (never red on its own). */
+export function readableFailIds(runner: "go" | "cargo", out: string): string[] {
+  const text = stripAnsi(out);
+  if (runner === "go") return goJson(text)?.failedTests ?? [];
+  const failed = cargoTrailer(text).reduce((t, l) => t + +(l.match(/(\d+) failed/)?.[1] ?? 0), 0);
+  const ids = [...new Set(text.split("\n").flatMap((l) => { const m = /^test (.+?) \.\.\. FAILED$/.exec(l.trim()); return m ? [m[1]!] : []; }))];
+  return failed > 0 && ids.length >= failed ? ids : [];
 }
 /** Executed-test count for a run whose `ran()` is null: node spec prints its failing-tests section after the summary block, so take the LAST
  *  pass and fail summary lines, not every one (A-112b: moved out of core engine10 verify.ts, no behaviour change). */
@@ -266,8 +320,11 @@ export function classifyCheck(i: ClassifyInput): Classified {
   // Go: the count comes from text a test can forge, so it is never trusted. Exit 0 is never a pass from parsing; a failed run is a
   // fail only when the output shows real failure evidence, else unconfirmed. A parse problem never fails the code and never passes.
   if (i.runner === "go") { // chosen from the command, never from output text a test can print
-    if (i.ok) return { result: "not_run", reason: GO_EXIT0_REASON };
-    const j = goJson(text); // go test -json: fail evidence (a fail event) on a red run
+    const j = goJson(text); // go test -json: a framed event stream
+    if (i.ok) {
+      if (!j || j.failed || !j.complete) return { result: "not_run", reason: GO_EXIT0_REASON }; // plain or -v output, a fail event under exit 0, or a torn stream: exit 0 alone is never a pass
+      return j.passed > 0 ? { result: "pass", n: j.passed } : { result: "not_run", n: 0, reason: `${NO_TESTS_REASON} (ran 0 tests, empty or all skipped)` };
+    }
     if (j) return j.failed ? { result: "fail" } : { result: "not_run", reason: UNCONFIRMED_REASON };
     // no usable -json stream (plain or -v output): exit 0 is never a pass from parsing; a failed run is a fail only with real failure evidence
     return FAIL_EVIDENCE.test(text) || GO_FAIL_EVIDENCE.test(text) ? { result: "fail" } : { result: "not_run", reason: UNCONFIRMED_REASON };
@@ -750,7 +807,7 @@ function nodeIsRed(f: TestRef, raw: string): boolean {
   return /^(?:#|\u2139) fail [1-9]/m.test(raw) && (/^ {2}AssertionError\b/m.test(blk) || /^ +name: 'AssertionError'/m.test(o) || (mod && !named ? /^[./]/.test(mod[1]!) : esm ? /^[./]/.test(esm[1]!) : top ? !top[1]!.endsWith(f.path) : !errs.length || errs.some((e) => !/^(?:Reference|Syntax)Error$/.test(e[1]!) || !(e[2]!.startsWith("node:") || e[2]!.endsWith(f.path))))); // ESM "cannot import name": red for a repo path, not_run for a bare package
 }
 // D42 (3) exit classification. B4 (r2): any "system"-interpreter result is not_run, same as verify (E-98a).
-// Red: pytest exit 1/resolved 2; jest/vitest/bun a parsed failed count>0. npm/go/cargo (B2, coarse): never fail.
+// Red: pytest exit 1/resolved 2; jest/vitest/bun a parsed failed count>0; go/cargo a readable failing test id. npm (B2, coarse): never fail.
 /** FC-69: why a base run was not_run, for the receipt and console ("Wall test not executed: <file>: <reason>"). */
 export function notRunReason(status: number | null, interpreter?: "project" | "system"): string {
   if (interpreter === "system") return "ran under the system interpreter, not the project's, so the result proves nothing";
@@ -761,12 +818,13 @@ export function notRunReason(status: number | null, interpreter?: "project" | "s
 export function classify(f: TestRef, status: number | null, output: string, repoDir: string, interpreter?: "project" | "system"): "pass" | "fail" | "not_run" {
   if (interpreter === "system") return "not_run";
   output = stripAnsi(output); // FC-69: every parser below reads plain text, whoever captured it
-  if (status === null || status === 126 || status === 127) return "not_run"; if (status === 0) return classifyCheck({ kind: "test", ok: true, out: output, path: f.path, ...(f.runner === "go" ? { runner: "go" as const } : {}) }).result === "pass" ? "pass" : "not_run"; // FC-16: exit 0 with zero or unknown executed tests is not a pass
+  if (status === null || status === 126 || status === 127) return "not_run"; if (status === 0) return f.runner !== "go" && classifyCheck({ kind: "test", ok: true, out: output, path: f.path }).result === "pass" ? "pass" : "not_run"; // go: a base pass is never uncorroborated here (corroborateGoPass runs where verify counts it) // FC-16: exit 0 with zero or unknown executed tests is not a pass
   if (f.runner === "unittest") return status === 1 && unittestCount(output, false) !== null ? (/unittest\.loader\._FailedTest|Failed to import test module/.test(output) ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "fail") : "not_run"; // red only on a trusted FAILED trailer; a module that failed to import is red only when the missing name is the repo's own (pytestCollectionIsRed), else not_run, as for pytest
   if (f.runner === "pytest") return status === 1 ? (pytestExit1IsRed(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
   if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
   if (f.runner === "maven" || f.runner === "gradle" || f.runner === "javac") { const j = javaSummary(output); return j && j.failed > 0 ? "fail" : "not_run"; } // HV1-03b: red only on a vouched summary that counts failures; a missing tool, no report or an unvouched report is not_run (verify's own exit-code path treats a compile error as fail, the safe direction)
-  return f.runner === "node" && nodeIsRed(f, output) ? "fail" : "not_run"; // npm/go/cargo: coarse (B2), never a per-file red
+  if (f.runner === "go" || f.runner === "cargo") return readableFailIds(f.runner, output).length > 0 ? "fail" : "not_run"; // red only on a readable failing test id; a compile error, panic outside a test or unparsed output stays not_run
+  return f.runner === "node" && nodeIsRed(f, output) ? "fail" : "not_run"; // npm: coarse (B2), never a per-file red
 }
 
 /** TEN-SPEED-19: LOKI_E10_BASE_JOBS, default 1 (sequential); an invalid value or one below 1 falls back to 1, capped at 16. */
