@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- A run that dropped a faulty Wall test file in one fix round and re-authored a different one in a later round no longer reports VERIFIED; the verdict stays PARTIAL and names the dropped file.
+
 ## v11.81.0 (2026-10-29)
 
 ### Added
@@ -29,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - A run no longer routes work below the model you chose, and never above your `LOKI_MAX_TIER` cap. The plan fallback and modernize units now floor at the run model.
-- When a spec conflict points at a file the Wall itself wrote, the run treats it as a harness defect instead of blaming the task: it re-authors the Wall once, then drops the assertion and caps the verdict at PARTIAL, and the original Wall file is restored read-only. A correct solution is no longer blocked by a faulty check of Loki's own.
+- When a spec conflict points at a file the Wall itself wrote, the run treats it as a harness defect instead of blaming the task: it re-authors the Wall once, then drops that Wall test file and caps the verdict at PARTIAL, and the original Wall file is restored read-only. A correct solution is no longer blocked by a faulty check of Loki's own.
 
 ### Fixed
 

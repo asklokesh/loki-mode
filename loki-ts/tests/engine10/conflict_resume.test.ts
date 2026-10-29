@@ -149,3 +149,65 @@ describe("Wall-anchored conflict is a harness defect", () => {
     expect(wall.readOnlyFiles.length).toBe(1);
   });
 });
+
+// FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT: a drop in one fix round must survive a later round that re-authors another Wall file.
+describe("Wall drops persist across fix rounds", () => {
+  const A = "tests/loki_wall_a.test.ts", B = "tests/loki_wall_b.test.ts", at = (f: string) => `${f}:93 expects 4 but the task says the total is 5`;
+  const dirs: string[] = [];
+  afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+  class Scripted implements SessionRunner {
+    constructor(private impl: SessionResult[], private rewrite: boolean) {}
+    n = 0;
+    async run(o: SessionRunOptions): Promise<SessionResult> {
+      if (o.stage === "wall") { if (this.rewrite) for (const f of [A, B]) { const base = f.split("/").pop()!; if (existsSync(join(o.cwd!, base))) writeFileSync(join(o.cwd!, base), "// fixed\n", "utf8"); } return done; }
+      return this.impl[Math.min(this.n++, this.impl.length - 1)]!;
+    }
+  }
+  function world() {
+    const repoDir = mkdtempSync(join(tmpdir(), "loki-e15-wallfc-")); dirs.push(repoDir); mkdirSync(join(repoDir, "tests"), { recursive: true });
+    for (const f of [A, B]) writeFileSync(join(repoDir, f), "// original\n", "utf8");
+    const wall = { readOnlyFiles: [A, B].map((f) => ({ path: join(repoDir, f), content: "// original\n" })), files: [A, B].map((f) => ({ path: join(repoDir, f), sha256: "x" })) };
+    return { repoDir, wall };
+  }
+  const round = async (w: ReturnType<typeof world>, s: SessionRunner, fix?: Record<string, unknown>) => {
+    const ctx = { ...ctxOf(s), repoDir: w.repoDir, runDir: join(w.repoDir, ".loki"), outputs: () => ({ wall: w.wall, ...(fix ? { fix } : {}) }) } as unknown as RunContext;
+    return (await fixStage.run(ctx, new AbortController().signal)).data;
+  };
+  const pass = { name: "vitest:a", cmd: "x", result: "pass" as const, duration_s: 1 };
+  const verdict = (fix: Record<string, unknown>, implement: Record<string, unknown> = { exit: "done" }) => verdictOf({ implement, fix, intake: {} } as never, [pass], false, false, false, true);
+
+  test("round 1 drops A, round 2 re-authors B: the drop stays on record and the verdict is PARTIAL", async () => {
+    const w = world();
+    const r1 = await round(w, new Scripted([conflict(at(A))], false));
+    expect((r1.wall_defect as { action: string }).action).toBe("dropped");
+    const r2 = await round(w, new Scripted([conflict(at(B)), conflict(at(B)), done], true), r1);
+    expect(r2.wall_defect as { action: string; file: string }).toMatchObject({ action: "reauthored", file: B });
+    const lines = wallDropped({ implement: { exit: "done" }, fix: r2, intake: {} } as never);
+    expect(lines.length).toBe(1); expect(lines[0]).toContain(`${A}:93`);
+    expect(verdict(r2)).toBe("PARTIAL");
+  });
+  test("control: no drop in any round stays VERIFIED", async () => {
+    const w = world();
+    const r1 = await round(w, new Scripted([done], false));
+    const r2 = await round(w, new Scripted([conflict(at(B)), conflict(at(B)), done], true), r1);
+    expect(wallDropped({ implement: { exit: "done" }, fix: r2, intake: {} } as never)).toEqual([]);
+    expect(verdict(r2)).toBe("VERIFIED");
+  });
+  test("two drops across rounds both appear, and a repeated record is deduped", async () => {
+    const w = world();
+    const r1 = await round(w, new Scripted([conflict(at(A))], false));
+    const r2 = await round(w, new Scripted([conflict(at(B))], false), r1);
+    const lines = wallDropped({ implement: { exit: "done" }, fix: r2, intake: {} } as never);
+    expect(lines.length).toBe(2); expect(lines.some((l) => l.includes(`${A}:93`))).toBe(true); expect(lines.some((l) => l.includes(`${B}:93`))).toBe(true);
+    const dup = wallDropped({ implement: { exit: "done", wall_defect: r1.wall_defect }, fix: { ...r2, wall_defects: [...(r2.wall_defects as unknown[]), r1.wall_defect] }, intake: {} } as never);
+    expect(dup.length).toBe(2);
+  });
+  test("a drop at implement followed by a fix re-author still caps", async () => {
+    const w = world();
+    const implement = { exit: "done", wall_defect: { file: A, line: 93, reason: "x", action: "dropped" } };
+    const r2 = await round(w, new Scripted([conflict(at(B)), conflict(at(B)), done], true));
+    expect((r2.wall_defect as { action: string }).action).toBe("reauthored");
+    expect(wallDropped({ implement, fix: r2, intake: {} } as never)[0]).toContain(`${A}:93`);
+    expect(verdict(r2, implement)).toBe("PARTIAL");
+  });
+});

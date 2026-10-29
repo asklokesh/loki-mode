@@ -41,7 +41,19 @@ export function wallAnchor(reason: string, wall: readonly string[]): { file: str
   return null;
 }
 
-/** NOT PROVEN lines for every dropped Wall assertion recorded by implement or fix; a non-empty result caps the verdict at PARTIAL. */
+/** Every Wall defect a stage record holds: the single wall_defect field plus the accumulated wall_defects array. */
+function defectsOf(s: Record<string, unknown> | undefined): WallDefect[] {
+  const many = Array.isArray(s?.wall_defects) ? (s!.wall_defects as WallDefect[]) : [], one = s?.wall_defect as WallDefect | undefined;
+  return [...many, ...(one ? [one] : [])];
+}
+
+/** A fix round's accumulated defects: everything earlier rounds recorded plus this round's, so a later re-author never replaces an earlier drop. */
+export function accumulateWallDefects(prior: Record<string, unknown> | undefined, current?: WallDefect | null): WallDefect[] {
+  const all = [...defectsOf(prior), ...(current ? [current] : [])], seen = new Set<string>();
+  return all.filter((d) => { const k = `${d.action}|${d.file}|${d.line}|${d.reason}`; return seen.has(k) ? false : (seen.add(k), true); });
+}
+
+/** NOT PROVEN lines for every dropped Wall test file recorded by implement or by any fix round; a non-empty result caps the verdict at PARTIAL. */
 export function wallDropped(o: Record<string, Record<string, unknown> | undefined>): string[] {
-  return [...new Set([o.implement, o.fix].flatMap((s) => { const d = s?.wall_defect as WallDefect | undefined; return d?.action === "dropped" ? [`${WALL_DROPPED}: ${d.file}:${d.line}: ${d.reason}`] : []; }))];
+  return [...new Set([o.implement, o.fix].flatMap((s) => defectsOf(s).filter((d) => d.action === "dropped").map((d) => `${WALL_DROPPED}: ${d.file}:${d.line}: ${d.reason}`)))];
 }
