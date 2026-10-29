@@ -27070,6 +27070,10 @@ EOF
             # Secure-by-default scan (v7.87.0). Advisory by default (never
             # blocks); records .loki/quality/security-findings.json each
             # iteration. Blocks only on un-waived HIGH when LOKI_SECURE_GATE=block.
+            # LOKI_GATE_SECURITY_SCAN toggle (default on), same predicate as the
+            # Bun route flag() in quality_gates.ts: unset/empty = on, else only
+            # "true" or "1" keeps the gate on.
+            if [ -z "${LOKI_GATE_SECURITY_SCAN:-}" ] || [ "${LOKI_GATE_SECURITY_SCAN}" = "true" ] || [ "${LOKI_GATE_SECURITY_SCAN}" = "1" ]; then
             log_info "Quality gate: security scan (advisory)..."
             local _stg_t0=$(date +%s 2>/dev/null); local _stg_ok=pass
             if run_secure_scan; then
@@ -27082,6 +27086,7 @@ EOF
                 log_warn "Security gate BLOCKED ($sec_count consecutive) - un-waived HIGH findings (LOKI_SECURE_GATE=block)"
             fi
             emit_stage_complete "security_scan" "$_stg_ok" "$_stg_t0"
+            fi
             # BUG-ST-002: Check pause signal between quality gates
             if [ -f "${TARGET_DIR:-.}/.loki/PAUSE" ] || [ -f "${TARGET_DIR:-.}/.loki/STOP" ]; then
                 log_warn "Pause/stop signal detected between quality gates - deferring remaining gates"

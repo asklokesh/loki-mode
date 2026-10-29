@@ -45,14 +45,11 @@
 #
 # ALLOWED ASYMMETRY (documented, explicitly excluded -- the test is honest about
 # what it does and does not cover):
-#   - LOKI_GATE_TIMEOUT: bash-only. It is a gate-execution VALUE knob (a timeout
-#     in seconds for the pytest/mock/mutation gate subprocesses), NOT a gate
-#     toggle. It is consumed only by bash gate-execution machinery
-#     (autonomy/run.sh + autonomy/verify.sh); the Bun route does not run those
-#     gate subprocesses itself (zero references in loki-ts/src). It is therefore
-#     a legitimate bash-only knob and is subtracted from the GATE_* set on the
-#     bash side before the set-equality assertion. Re-classify if the Bun route
-#     ever runs those gates.
+#   - LOKI_GATE_TIMEOUT: NOT an asymmetry any more. It is a gate-execution VALUE
+#     knob (seconds) read by bash gate machinery (autonomy/run.sh, verify.sh) and,
+#     since the Bun python build check landed, also by
+#     loki-ts/src/util/python_build_check.ts, so it appears in both sets and
+#     needs no allow-list entry.
 #   - The `report` NOUN dispatcher (autonomy/loki cmd_report) is bash-routed BY
 #     DESIGN, not a Bun gap. bin/loki only routes `report kpis` to Bun (kpis has
 #     no bash implementation); every other report subcommand
@@ -411,7 +408,7 @@ $d"
 # route has no equivalent (its read accessor was removed as dead code in
 # v7.78.0). Adding the vars to the bun route would be dead toggles that read as
 # supported features.
-GATE_ALLOWED_BASH_ONLY=("LOKI_GATE_TIMEOUT" "LOKI_GATE_MAGIC_DEBATE_BLOCKING"
+GATE_ALLOWED_BASH_ONLY=("LOKI_GATE_MAGIC_DEBATE_BLOCKING"
                         "LOKI_GATE_STUCK_ABORT" "LOKI_GATE_STUCK_THRESHOLD")
 # Allowed-asymmetry: gate names that are legitimately bun-only.
 #   (none) -- LOKI_GATE_LSP_DIAGNOSTICS and LOKI_GATE_LSP_WRITER are now wired

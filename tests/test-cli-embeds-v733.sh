@@ -267,7 +267,10 @@ drive_conflict() { # extra-env -> records argv to ARGV_LOG
 # ANTHROPIC_API_KEY set so the auth gate (council R1) enables --bare; on a
 # subscription/OAuth runner without it, --bare is correctly suppressed (tested
 # by A1 above), and asserting its presence here would be a false negative.
-( unset LOKI_BARE_SUBCALLS; export ANTHROPIC_API_KEY=sk-test; drive_conflict )
+# Permission policy is pinned: since 2da51023f an UNSET LOKI_PERMISSION_POLICY resolves
+# to compiled only when an operator policy exists, else legacy (bypass + deny rules), so
+# the default is host-dependent and each mode is asserted explicitly below.
+( unset LOKI_BARE_SUBCALLS; export ANTHROPIC_API_KEY=sk-test LOKI_PERMISSION_POLICY=compiled; drive_conflict )
 if [ -s "$ARGV_LOG" ]; then
   if argv_has "--bare"; then
     ok "EMBED2: resolve_conflicts_with_ai passes --bare (default ON + API key, real site)"
@@ -275,12 +278,20 @@ if [ -s "$ARGV_LOG" ]; then
     bad "EMBED2: conflict --bare default-on" "argv: $(tr '\n' ' ' < "$ARGV_LOG")"
   fi
   if argv_has "-p" && argv_has "--permission-mode" && ! argv_has "--dangerously-skip-permissions"; then
-    ok "EMBED2: conflict argv self-contained (-p + compiled permission-mode, C-C2 default)"
+    ok "EMBED2: conflict argv self-contained (-p + compiled permission-mode)"
   else
     bad "EMBED2: conflict argv shape" "argv: $(tr '\n' ' ' < "$ARGV_LOG")"
   fi
 else
   bad "EMBED2: conflict harness invoked stub claude" "ARGV_LOG empty -- function did not reach claude"
+fi
+
+: > "$ARGV_LOG"
+( unset LOKI_BARE_SUBCALLS; export ANTHROPIC_API_KEY=sk-test LOKI_PERMISSION_POLICY=legacy; drive_conflict )
+if argv_has "-p" && argv_has "--dangerously-skip-permissions" && argv_has "--disallowedTools" && ! argv_has "--permission-mode"; then
+  ok "EMBED2: conflict argv legacy policy keeps bypass + default deny rules"
+else
+  bad "EMBED2: conflict argv legacy shape" "argv: $(tr '\n' ' ' < "$ARGV_LOG")"
 fi
 
 : > "$ARGV_LOG"
@@ -385,7 +396,9 @@ else
 fi
 
 # grill.sh: devil's-advocate grill (_gr_argv) + sources the flags helper.
-if grep -q '_gr_argv+=("--bare")' "$GRILL_SH" \
+# --bare now arrives via loki_lean_child_flags (82d73d492), which emits it under the same
+# loki_subcall_bare_enabled gate; the old literal append was replaced.
+if grep -q 'loki_lean_child_flags grill' "$GRILL_SH" \
    && grep -q '_gr_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")' "$GRILL_SH"; then
   ok "EMBED2+3: grill.sh appends --bare + --disallowedTools"
 else
