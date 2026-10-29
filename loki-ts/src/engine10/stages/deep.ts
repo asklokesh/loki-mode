@@ -2,11 +2,12 @@
 // + PR: full suite, app-boot probe, council, secret scan; reports via engine10-push.sh (comment + addendum + status). A refused or unavailable check is NOT PROVEN, never red; only a failing full suite or a secret match is
 // failure. Rule of Two: assertWorkerEnv asserts no real GitHub token, since the deep worker runs repo code and reads untrusted diffs. Council goes through the injectable CouncilRunner; unwired, it is NOT PROVEN, never passing.
 import { installOwned } from "../../project_model/install.ts";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { appProbe, type AppProbeResult } from "../../util/app_probe.ts";
-import { runSecureScan, type SecureScanResult } from "../../util/secure_scan.ts";
+import { secureScanChanged } from "../../util/secure_scan.ts";
+import { postDeepResults } from "../../util/receipt_surface.ts";
 import { run } from "../../util/shell.ts";
 import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { assertWorkerEnv } from "../worker.ts";
@@ -14,7 +15,7 @@ import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv } from "../../project_model/package_suite.ts";
 import { classifyCheck, failureExcerpt, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
-import { DEEP_CAP_S, type PushArgs, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, pushArgv, STAGE_BUDGETS } from "../types.ts";
+import { DEEP_CAP_S, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, STAGE_BUDGETS } from "../types.ts";
 import { REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
 import { DEFAULT_PUSH_SH, SHA_RE } from "./pr.ts";
@@ -71,7 +72,6 @@ export const DEFAULT_SECRET_SCAN_SH = new URL("../../../../autonomy/lib/secret-s
 const MAX_COUNCIL_DIFF_BYTES = 400_000; // ENGINE.md section 2 cause 4: a 431361-byte context was refused
 const COUNCIL_LIMIT_S = 600;
 const FULL_SUITE_TIMEOUT_MS = 300_000; // 5 min per runner; deep's own stage limit (2700s) is the outer bound
-const PR_NUMBER_RE = /\/pull\/(\d+)$/;
 /** One check per detected runner, run to completion (no retry: flaky-rerun  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
 export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
   if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), changed: opts.changed, proofFiles: opts.proofFiles, wallBaseRed: opts.wallBaseRed }, checks, notProven)) return;
@@ -134,14 +134,6 @@ async function runCouncilCheck(
     notProven.add(`council (refused: ${(err as Error).message})`);
   }
 }
-/** secure-scan.py (util/secure_scan.ts) over a scratch copy of the changed regular files (relative paths kept, symlinks skipped). */
-async function secureScanChanged(repoDir: string, changed: string[], opts: DeepOptions): Promise<SecureScanResult> {
-  const dir = mkdtempSync(join(tmpdir(), "loki-deep-secure-"));
-  try {
-    for (const f of changed) if (existsSync(join(repoDir, f)) && lstatSync(join(repoDir, f)).isFile()) { mkdirSync(dirname(join(dir, f)), { recursive: true }); copyFileSync(join(repoDir, f), join(dir, f)); }
-    return await runSecureScan(dir, { ...(opts.secureScanPath ? { scriptPath: opts.secureScanPath } : {}), timeoutMs: 60_000 });
-  } finally { rmSync(dir, { recursive: true, force: true }); }
-}
 /** One "security scan" check over the changed files: secret-scan.sh's two matchers (sourced, never edited) plus secure-scan.py.  A secret hit or a HIGH secure-scan finding is fail; else a missing or broken scanner is not_run (NOT PROVEN), never pass. */
 async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
   const scriptPath = opts.secretScanShPath ?? DEFAULT_SECRET_SCAN_SH, name = "security scan", cmd = "secret-scan.sh + secure-scan.py";
@@ -150,7 +142,7 @@ async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptio
   const inline = 'script="$1"; shift; . "$script" || exit 3; hit=0; for f in "$@"; do if _commit_scan_secret_file "$f" || _commit_path_looks_secret "$f"; then printf "%s\\n" "$f"; hit=1; fi; done; exit "$hit"';
   const started = Date.now();
   const r = await run(["bash", "-c", inline, "_", scriptPath, ...changed.map((f) => join(ctx.repoDir, f))], { cwd: ctx.repoDir, timeoutMs: 30_000 });
-  const sec = await secureScanChanged(ctx.repoDir, changed, opts), gaps: string[] = [], reasons: string[] = [];
+  const sec = await secureScanChanged(ctx.repoDir, changed, opts.secureScanPath), gaps: string[] = [], reasons: string[] = [];
   const hits = r.exitCode === 3 ? [] : r.stdout.split("\n").map((l) => l.trim()).filter(Boolean), high = sec.findings.filter((f) => String(f.severity).toUpperCase() === "HIGH");
   if (r.exitCode === 3) gaps.push("secret-scan.sh failed to load");
   if (!sec.ok) gaps.push(sec.error ?? "secure-scan failed");
@@ -159,45 +151,6 @@ async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptio
   const result = reasons.length > 0 ? "fail" : gaps.length > 0 ? "not_run" : "pass";
   checks.push({ name, cmd, result, duration_s: (Date.now() - started) / 1000, ...(result === "pass" ? {} : { reason: (result === "fail" ? reasons : gaps).join("; ") }) });
   if (result === "not_run") notProven.add(`not run: ${name} (${gaps.join("; ")})`);
-}
-function buildCommentBody(checks: DeepCheck[], notProven: string[], statusState: "success" | "failure"): string {
-  const lines = [`## Loki deep verify: ${statusState}`, "", "### Checks"];
-  lines.push(...(checks.length ? checks.map((c) => `- ${c.result}: ${c.name}${c.reason ? ` (${c.reason})` : ""}`) : ["- none"]));
-  lines.push("", "### NOT PROVEN", ...(notProven.length ? notProven.map((n) => `- ${n}`) : ["- none"]));
-  return `${lines.join("\n")}\n`;
-}
-async function postResults(
-  ctx: DeepContext, opts: DeepOptions, checks: DeepCheck[], notProven: string[], statusState: "success" | "failure",
-): Promise<string[]> {
-  const out: string[] = [];
-  const pinnedOrigin = ctx.pinnedOrigin;
-  if (!pinnedOrigin) {
-    out.push("push refused: no pinned origin (Rule of Two)");
-    return out;
-  }
-  const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
-  const env = { ...process.env, ...opts.pushExtraEnv, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: pinnedOrigin };
-  const prUrl = (ctx.outputs().pr as { pr_url?: string } | undefined)?.pr_url;
-  const prNumber = prUrl ? PR_NUMBER_RE.exec(prUrl)?.[1] : undefined;
-  if (prNumber) {
-    mkdirSync(ctx.runDir, { recursive: true });
-    const bodyFile = join(ctx.runDir, "deep-comment.md");
-    writeFileSync(bodyFile, buildCommentBody(checks, notProven, statusState), "utf8");
-    // engine10-push.sh takes `comment <pr-number> <body-file>`; pushArgv "comment" does not match that contract
-    const commentResult = await run(["bash", scriptPath, "comment", prNumber, bodyFile], { cwd: ctx.repoDir, env, timeoutMs: 30_000 });
-    if (commentResult.exitCode !== 0) out.push(`deep comment not posted (engine10-push.sh exit ${commentResult.exitCode})`);
-  } else {
-    out.push("deep comment not posted (no PR number)");
-  }
-  const headSha = (await safeGitRun(ctx.repoDir, ["rev-parse", "HEAD"], { timeoutMs: 10_000 })).stdout.trim();
-  if (SHA_RE.test(headSha)) {
-    const statusArgs: PushArgs = { cmd: "status", sha: headSha, state: statusState, description: `Loki 10 deep verify: ${statusState}` };
-    const statusResult = await run(["bash", scriptPath, ...pushArgv(statusArgs)], { cwd: ctx.repoDir, env, timeoutMs: 30_000 });
-    if (statusResult.exitCode !== 0) out.push(`loki/deep-verify status not set (engine10-push.sh exit ${statusResult.exitCode})`);
-  } else {
-    out.push("loki/deep-verify status not set (HEAD sha not resolvable)");
-  }
-  return out;
 }
 export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepOptions = {}): Promise<StageResult> {
   if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before deep verify started" };
@@ -226,7 +179,11 @@ export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepO
   const addendum = { ...addendumBody, addendum_sha256: addendumSha256, verification: { jwt: sig.jwt, kid: sig.kid } };
   mkdirSync(ctx.runDir, { recursive: true });
   writeFileSync(join(ctx.runDir, "receipt-addendum-1.json"), JSON.stringify(addendum, null, 2) + "\n");
-  const pushNotProven = await postResults(ctx, opts, checks, notProvenList, statusState);
+  const headSha = (await safeGitRun(ctx.repoDir, ["rev-parse", "HEAD"], { timeoutMs: 10_000 })).stdout.trim();
+  const pushNotProven = await postDeepResults({
+    scriptPath: opts.pushScriptPath ?? DEFAULT_PUSH_SH, extraEnv: opts.pushExtraEnv, pinnedOrigin: ctx.pinnedOrigin, prUrl: (ctx.outputs().pr as { pr_url?: string } | undefined)?.pr_url,
+    headSha: SHA_RE.test(headSha) ? headSha : "", repoDir: ctx.repoDir, runDir: ctx.runDir, checks, notProven: notProvenList, statusState,
+  });
   const allNotProven = [...notProvenList, ...pushNotProven];
   ctx.emit("deep.completed", "deep", { checks, status_state: statusState, addendum_sha256: addendumSha256 });
   return { status: "completed", data: { checks, addendum_sha256: addendumSha256, status_state: statusState, not_proven: allNotProven, ...(notApplicable.length ? { not_applicable: notApplicable } : {}) } };

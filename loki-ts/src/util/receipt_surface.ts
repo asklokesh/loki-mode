@@ -1,8 +1,10 @@
 // GitHub receipt comment. The PR body already carries the same facts (e10ext/reviewer_body.ts).
 // This is the short comment a reviewer sees without opening the body. No new receipt format.
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pushArgv } from "../engine10/types.ts";
+import { run } from "./shell.ts";
 
 export interface ReceiptCommentInput {
   verdict: string;
@@ -91,4 +93,46 @@ export function postReceiptComment(a: {
   } catch {
     return "receipt comment not posted";
   }
+}
+
+/** PR number at the end of a push-pr URL (any host). Looser than prNumberFromUrl on purpose: the deep-verify comment accepts a non-github URL. */
+const PR_NUMBER_RE = /\/pull\/(\d+)$/;
+type CommentCheck = { name: string; result: string; reason?: string };
+
+export function buildDeepCommentBody(checks: CommentCheck[], notProven: string[], statusState: "success" | "failure"): string {
+  const lines = [`## Loki deep verify: ${statusState}`, "", "### Checks"];
+  lines.push(...(checks.length ? checks.map((c) => `- ${c.result}: ${c.name}${c.reason ? ` (${c.reason})` : ""}`) : ["- none"]));
+  lines.push("", "### NOT PROVEN", ...(notProven.length ? notProven.map((n) => `- ${n}`) : ["- none"]));
+  return `${lines.join("\n")}\n`;
+}
+
+/** Post the deep-verify comment and commit status through engine10-push.sh. headSha is "" when HEAD did not resolve to a full sha. Returns NOT PROVEN lines for each failed post. */
+export async function postDeepResults(a: {
+  scriptPath: string; extraEnv?: Record<string, string>; pinnedOrigin?: string; prUrl?: string; headSha: string;
+  repoDir: string; runDir: string; checks: CommentCheck[]; notProven: string[]; statusState: "success" | "failure";
+}): Promise<string[]> {
+  const out: string[] = [];
+  if (!a.pinnedOrigin) {
+    out.push("push refused: no pinned origin (Rule of Two)");
+    return out;
+  }
+  const env = { ...process.env, ...a.extraEnv, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: a.pinnedOrigin };
+  const prNumber = a.prUrl ? PR_NUMBER_RE.exec(a.prUrl)?.[1] : undefined;
+  if (prNumber) {
+    mkdirSync(a.runDir, { recursive: true });
+    const bodyFile = join(a.runDir, "deep-comment.md");
+    writeFileSync(bodyFile, buildDeepCommentBody(a.checks, a.notProven, a.statusState), "utf8");
+    // engine10-push.sh takes `comment <pr-number> <body-file>`; pushArgv "comment" does not match that contract
+    const commentResult = await run(["bash", a.scriptPath, "comment", prNumber, bodyFile], { cwd: a.repoDir, env, timeoutMs: 30_000 });
+    if (commentResult.exitCode !== 0) out.push(`deep comment not posted (engine10-push.sh exit ${commentResult.exitCode})`);
+  } else {
+    out.push("deep comment not posted (no PR number)");
+  }
+  if (a.headSha) {
+    const statusResult = await run(["bash", a.scriptPath, ...pushArgv({ cmd: "status", sha: a.headSha, state: a.statusState, description: `Loki 10 deep verify: ${a.statusState}` })], { cwd: a.repoDir, env, timeoutMs: 30_000 });
+    if (statusResult.exitCode !== 0) out.push(`loki/deep-verify status not set (engine10-push.sh exit ${statusResult.exitCode})`);
+  } else {
+    out.push("loki/deep-verify status not set (HEAD sha not resolvable)");
+  }
+  return out;
 }

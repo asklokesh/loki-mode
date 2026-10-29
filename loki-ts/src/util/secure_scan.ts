@@ -2,7 +2,7 @@
 // timeout, and a parsed {ok, findings, error?} result. Exit contract of the
 // script: 0 no findings, 1 findings, 2 bad input. Anything else, or output
 // that is not the expected JSON, is an error (never a silent pass).
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -104,6 +104,15 @@ export async function runSecureScan(targetDir: string, opts: SecureScanOpts = {}
   if (obj && typeof obj.error === "string") return fail(`secure-scan: ${obj.error}`);
   const tail = (res.stderr || res.stdout).trim().split("\n").slice(-3).join(" | ");
   return fail(`secure-scan failed (exit ${res.exitCode}): ${tail}`);
+}
+
+/** secure-scan.py over a scratch copy of the changed regular files (relative paths kept, symlinks skipped). */
+export async function secureScanChanged(repoDir: string, changed: string[], scriptPath?: string): Promise<SecureScanResult> {
+  const dir = mkdtempSync(join(tmpdir(), "loki-deep-secure-"));
+  try {
+    for (const f of changed) if (existsSync(join(repoDir, f)) && lstatSync(join(repoDir, f)).isFile()) { mkdirSync(dirname(join(dir, f)), { recursive: true }); copyFileSync(join(repoDir, f), join(dir, f)); }
+    return await runSecureScan(dir, { ...(scriptPath ? { scriptPath } : {}), timeoutMs: 60_000 });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
 function git(repoDir: string, args: string[]): string | null {
