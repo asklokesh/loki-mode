@@ -405,6 +405,9 @@ export function buildAutoFlags(args: AutoFlagsArgs): string[] {
 // reviewers keep today's behavior. LOKI_ADVISOR_MODEL (haiku|sonnet|opus) always
 // wins; only the tier aliases are honored, any other value is ignored.
 const REVIEWER_MOAT = ["security-sentinel", "devils-advocate"];
+// Advisory reviewers with no measured signal run on haiku at every tier and for
+// HIGH-tier changes. architecture-strategist is not listed: it keeps its tier.
+const REVIEWER_HAIKU_ALWAYS = ["maintainer-mergeability", "test-coverage-auditor"];
 
 export function reviewerModelForTier(opts: {
   tier?: string;
@@ -416,6 +419,7 @@ export function reviewerModelForTier(opts: {
   const advisor = (env["LOKI_ADVISOR_MODEL"] ?? "").trim().toLowerCase();
   if (advisor === "haiku" || advisor === "sonnet" || advisor === "opus") return advisor;
   if (env["LOKI_REVIEWER_TIER_ROUTING"] === "0") return null;
+  if (REVIEWER_HAIKU_ALWAYS.includes(opts.reviewer)) return "haiku";
   if (opts.highTier === true || REVIEWER_MOAT.includes(opts.reviewer)) return null;
   const tier = (opts.tier ?? "").trim().toLowerCase();
   return tier === "simple" || tier === "standard" ? "haiku" : null;

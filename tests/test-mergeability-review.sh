@@ -143,6 +143,43 @@ else
     ok "sourcing run.sh left no .loki/state/provider in the repo checkout"
 fi
 
+# --- advisory reviewers: behavior + TS/bash parity -------------------------
+# architecture-strategist, maintainer-mergeability and test-coverage-auditor run
+# but hold no veto (LOKI_REVIEW_ADVISORY=0 restores blocking).
+_adv_ok=true
+for r in architecture-strategist maintainer-mergeability test-coverage-auditor; do
+    (unset LOKI_REVIEW_ADVISORY; _is_advisory_reviewer "$r") || _adv_ok=false
+done
+for r in security-sentinel requirements-verifier code-quality-reviewer; do
+    (unset LOKI_REVIEW_ADVISORY; _is_advisory_reviewer "$r") && _adv_ok=false
+done
+if [ "$_adv_ok" = "true" ]; then
+    ok "_is_advisory_reviewer: exactly the three advisory reviewers by default"
+else
+    bad "_is_advisory_reviewer: exactly the three advisory reviewers by default"
+fi
+if (LOKI_REVIEW_ADVISORY=0; _is_advisory_reviewer architecture-strategist); then
+    bad "LOKI_REVIEW_ADVISORY=0 makes every reviewer blocking again"
+else
+    ok "LOKI_REVIEW_ADVISORY=0 makes every reviewer blocking again"
+fi
+_sevf="$SCRATCH/sev.txt"
+printf '%s\n' '- [Critical] a' '**High** b' 'Severity: Critical c' '- High: d' '- [Medium] e' > "$_sevf"
+_sevout="$(_count_blocking_severity_findings "$_sevf")"
+if [ "$_sevout" = "2 2" ]; then
+    ok "_count_blocking_severity_findings counts all four severity forms (2 critical, 2 high)"
+else
+    bad "_count_blocking_severity_findings counts all four severity forms (got: $_sevout)"
+fi
+# Parity: the TS ADVISORY_REVIEWERS set names the same reviewers as the bash case.
+_ts_adv="$(sed -n '/export const ADVISORY_REVIEWERS/,/\]);/p' "$REPO_ROOT/loki-ts/src/runner/quality_gates.ts" | grep -o '"[a-z-]*"' | tr -d '"' | sort | tr '\n' ' ')"
+_sh_adv="$(sed -n '/^_is_advisory_reviewer()/,/^}/p' "$RUN_SH" | grep -o '[a-z]*-[a-z-]*|[a-z|-]*' | tr '|' '\n' | sort | tr '\n' ' ')"
+if [ -n "$_ts_adv" ] && [ "$_ts_adv" = "$_sh_adv" ]; then
+    ok "advisory reviewer names match between quality_gates.ts and run.sh"
+else
+    bad "advisory reviewer names match between quality_gates.ts and run.sh (ts='$_ts_adv' sh='$_sh_adv')"
+fi
+
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

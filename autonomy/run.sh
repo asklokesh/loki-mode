@@ -17000,6 +17000,32 @@ _severity_is_blocking() {
     grep -qiE '(\[(critical|high)\])|(\*\*[[:space:]]*(critical|high)[[:space:]]*\*\*)|(severity:?[[:space:]]*(critical|high))|(^[[:space:]]*[-*][[:space:]]+(critical|high)([[:space:]:.,*]|$))' "$file"
 }
 
+# Advisory reviewers run and record findings but carry no veto. Default on;
+# LOKI_REVIEW_ADVISORY=0 restores blocking. Parity-locked with
+# ADVISORY_REVIEWERS / isAdvisoryReviewer() in loki-ts/src/runner/quality_gates.ts.
+_is_advisory_reviewer() {
+    [ "${LOKI_REVIEW_ADVISORY:-1}" != "0" ] || return 1
+    case "$1" in
+        architecture-strategist|maintainer-mergeability|test-coverage-auditor) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Count Critical and High findings in a reviewer file, same 4 severity forms as
+# _severity_is_blocking. Echoes "<critical_count> <high_count>". Parity-locked
+# with countBlockingSeverityFindings() in loki-ts/src/runner/quality_gates.ts.
+_count_blocking_severity_findings() {
+    local file="$1"
+    if [ ! -f "$file" ]; then
+        echo "0 0"
+        return 0
+    fi
+    local crit high
+    crit=$(grep -icE '(\[critical\])|(\*\*[[:space:]]*critical[[:space:]]*\*\*)|(severity:?[[:space:]]*critical)|(^[[:space:]]*[-*][[:space:]]+critical([[:space:]:.,*]|$))' "$file")
+    high=$(grep -icE '(\[high\])|(\*\*[[:space:]]*high[[:space:]]*\*\*)|(severity:?[[:space:]]*high)|(^[[:space:]]*[-*][[:space:]]+high([[:space:]:.,*]|$))' "$file")
+    echo "${crit:-0} ${high:-0}"
+}
+
 # 7.114.0 (rank 9): count non-blocking (Medium/Low) findings in a reviewer file.
 # Feeds the weighted mergeability quality score. Mirrors the severity-token
 # tolerance of _severity_is_blocking (bracketed, bold, 'Severity:', or bullet).
@@ -17984,7 +18010,10 @@ reviewers = mandatory + [
 # TRIMMING ORDER IS A SAFETY PROPERTY. Mandatory reviewers
 # (requirements-verifier, architecture-strategist, maintainer-mergeability) are
 # NEVER dropped: each carries a mandate no keyword-selected specialist has, and
-# shrinking a council must never be able to manufacture an approval. Only the
+# shrinking a council must never be able to manufacture an approval. They are
+# mandatory to run, not to block: architecture-strategist, maintainer-mergeability
+# and test-coverage-auditor are advisory (findings recorded, no veto) unless
+# LOKI_REVIEW_ADVISORY=0. Only the
 # appended tail (installed agents, then keyword specialists beyond the floor) is
 # trimmed, and the cap can never cut below the mandatory set.
 #
@@ -18860,6 +18889,10 @@ REVIEW_WAVE_TIMING
     # reviewers to compute the weighted mergeability quality score below.
     local nonblocking_medium=0
     local nonblocking_low=0
+    # Advisory reviewers: Critical/High counts recorded with no veto.
+    local advisory_critical=0
+    local advisory_high=0
+    local reviewer_rows=""
 
     for i in $(seq 0 $((reviewer_count - 1))); do
         local reviewer_name
@@ -18915,9 +18948,24 @@ REVIEW_WAVE_TIMING
         # contradictory PASS token. Structured output already normalizes this in
         # cr-rematerialize.py; keep the text fallback equally fail-closed.
         local _reviewer_has_blocking=false
+        local _reviewer_advisory=false _sev_counts _sev_crit _sev_high
+        if _is_advisory_reviewer "$reviewer_name"; then
+            _reviewer_advisory=true
+        fi
+        _sev_counts=$(_count_blocking_severity_findings "$review_output")
+        _sev_crit=${_sev_counts%% *}
+        _sev_high=${_sev_counts##* }
+        if [ "$_reviewer_advisory" = "true" ]; then
+            advisory_critical=$((advisory_critical + _sev_crit))
+            advisory_high=$((advisory_high + _sev_high))
+        fi
         if _severity_is_blocking "$review_output"; then
-            _reviewer_has_blocking=true
-            has_blocking=true
+            if [ "$_reviewer_advisory" = "true" ]; then
+                log_warn "ADVISORY: $reviewer_name recorded critical=$_sev_crit high=$_sev_high (no veto; LOKI_REVIEW_ADVISORY=0 restores blocking)"
+            else
+                _reviewer_has_blocking=true
+                has_blocking=true
+            fi
             if [ "$verdict" = "PASS" ]; then
                 log_error "BLOCKING: $reviewer_name returned PASS with Critical/High findings; normalizing verdict to FAIL"
                 verdict="FAIL"
@@ -18938,6 +18986,8 @@ REVIEW_WAVE_TIMING
                 log_error "BLOCKING: structured requirements contract did not pass"
             elif [ "$_reviewer_has_blocking" = "true" ]; then
                 log_error "BLOCKING: $reviewer_name found Critical/High severity issues"
+            elif [ "$_reviewer_advisory" = "true" ]; then
+                log_warn "FAIL: advisory reviewer $reviewer_name (non-blocking)"
             else
                 log_warn "FAIL: $reviewer_name found Medium/Low issues (non-blocking)"
             fi
@@ -18946,6 +18996,8 @@ REVIEW_WAVE_TIMING
             log_info "PASS: $reviewer_name"
         fi
         verdicts_summary="${verdicts_summary}${reviewer_name}:${verdict:-UNKNOWN} "
+        reviewer_rows="${reviewer_rows}${reviewer_name}|${verdict}|${_reviewer_advisory}|${_sev_crit}|${_sev_high}
+"
     done
 
     # Finding #596 FIX A2 + WAVE8 FIX run.sh-F3: a review is INCONCLUSIVE (=>
@@ -19006,6 +19058,9 @@ REVIEW_WAVE_TIMING
     export LOKI_REVIEW_AGG_QSCORE="$quality_score"
     export LOKI_REVIEW_AGG_QMED="$nonblocking_medium"
     export LOKI_REVIEW_AGG_QLOW="$nonblocking_low"
+    export LOKI_REVIEW_AGG_ADV_CRIT="$advisory_critical"
+    export LOKI_REVIEW_AGG_ADV_HIGH="$advisory_high"
+    export LOKI_REVIEW_AGG_ROWS="$reviewer_rows"
     python3 -E - << 'AGG_SCRIPT'
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os
@@ -19022,7 +19077,15 @@ result = {
     # else 100 - 5*medium - 2*low, floored at 0). Reported metric, not a hard gate.
     "quality_score": int(os.environ["LOKI_REVIEW_AGG_QSCORE"]),
     "nonblocking_medium": int(os.environ["LOKI_REVIEW_AGG_QMED"]),
-    "nonblocking_low": int(os.environ["LOKI_REVIEW_AGG_QLOW"])
+    "nonblocking_low": int(os.environ["LOKI_REVIEW_AGG_QLOW"]),
+    # Advisory reviewers run and record findings without a veto; never silent.
+    "advisory_critical": int(os.environ["LOKI_REVIEW_AGG_ADV_CRIT"]),
+    "advisory_high": int(os.environ["LOKI_REVIEW_AGG_ADV_HIGH"]),
+    "reviewers": [
+        {"name": f[0], "verdict": f[1], "advisory": f[2] == "true",
+         "critical": int(f[3]), "high": int(f[4])}
+        for f in (ln.split("|") for ln in os.environ["LOKI_REVIEW_AGG_ROWS"].splitlines() if ln.strip())
+    ]
 }
 with open(os.environ["LOKI_REVIEW_AGG_FILE"], "w") as f:
     json.dump(result, f, indent=2)
@@ -19031,6 +19094,7 @@ AGG_SCRIPT
     unset LOKI_REVIEW_AGG_PASS LOKI_REVIEW_AGG_FAIL LOKI_REVIEW_AGG_BLOCKING LOKI_REVIEW_AGG_VERDICTS
     unset LOKI_REVIEW_AGG_REAL LOKI_REVIEW_AGG_INCONCLUSIVE
     unset LOKI_REVIEW_AGG_QSCORE LOKI_REVIEW_AGG_QMED LOKI_REVIEW_AGG_QLOW
+    unset LOKI_REVIEW_AGG_ADV_CRIT LOKI_REVIEW_AGG_ADV_HIGH LOKI_REVIEW_AGG_ROWS
 
     emit_event_json "code_review_council_complete" \
         "review_id=$review_id" \
@@ -19259,6 +19323,9 @@ DA_AGG_PATCH
     fi
 
     log_info "Code review passed ($pass_count/$reviewer_count PASS, $fail_count FAIL - no blocking issues)"
+    if [ "$((advisory_critical + advisory_high))" -gt 0 ]; then
+        log_warn "Advisory findings (no veto): critical=$advisory_critical high=$advisory_high; see $review_dir/$review_id/aggregate.json"
+    fi
     return 0
 }
 

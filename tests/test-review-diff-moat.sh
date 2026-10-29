@@ -94,8 +94,10 @@ register_pid() { :; }; unregister_pid() { :; }
 STUB_BIN="$(mktemp -d "${TMPDIR:-/tmp}/loki-reviewdiff-stubbin.XXXXXX")"
 STUB_BODY_FILE="$STUB_BIN/body.txt"
 STUB_EMPTY_REVIEWER_FILE="$STUB_BIN/empty_reviewer.txt"
+STUB_CRIT_REVIEWERS_FILE="$STUB_BIN/crit_reviewers.txt"
 : > "$STUB_BODY_FILE"
 : > "$STUB_EMPTY_REVIEWER_FILE"
+: > "$STUB_CRIT_REVIEWERS_FILE"
 cat > "$STUB_BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 # Print the configured review body (empty => NO_OUTPUT). The prompt (the arg
@@ -117,6 +119,14 @@ for arg in "$@"; do
     prev="$arg"
 done
 [ -n "$prompt" ] || prompt="$(cat)"
+# Reviewers named in crit_reviewers.txt (space separated) answer FAIL with a
+# Critical finding; the rest print the shared body.
+for crit_name in $(cat "$self_dir/crit_reviewers.txt" 2>/dev/null); do
+    if printf '%s' "$prompt" | grep -q "^You are ${crit_name}\."; then
+        printf 'VERDICT: FAIL\nFINDINGS:\n- [Critical] seeded defect from %s\n' "$crit_name"
+        exit 0
+    fi
+done
 if [ -n "$empty_name" ]; then
     if printf '%s' "$prompt" | grep -q "^You are ${empty_name}\."; then
         exit 0
@@ -128,6 +138,7 @@ chmod +x "$STUB_BIN/claude"
 export PATH="$STUB_BIN:$PATH"
 set_review_body() { printf '%s' "$1" > "$STUB_BODY_FILE"; }
 set_empty_reviewer() { printf '%s' "$1" > "$STUB_EMPTY_REVIEWER_FILE"; }
+set_crit_reviewers() { printf '%s' "$1" > "$STUB_CRIT_REVIEWERS_FILE"; }
 
 setup_repo() {
     local dir="$1"
@@ -488,6 +499,50 @@ case2_verbose_pass() {
     rm -rf "$dir"
 }
 
+# ===========================================================================
+# Case 5 -- advisory reviewers: mandatory to run, not to block. A Critical from
+# architecture-strategist / maintainer-mergeability / test-coverage-auditor is
+# recorded (aggregate.json advisory counts, advisory:true rows) but does not
+# block; a security-sentinel Critical still blocks; LOKI_REVIEW_ADVISORY=0
+# restores blocking.
+# ===========================================================================
+case5_advisory() {
+    local label="$1" crit="$2" advisory_env="$3" want_rc="$4" want_adv_crit="$5"
+    local dir; dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-reviewdiff-c5.XXXXXX")"
+    setup_repo "$dir"
+    (
+        cd "$dir" || exit 1
+        echo "init" > README.md; git add README.md && git commit -qm init
+        echo "export const real = 5; // auth token test coverage" > src.ts
+        git add src.ts && git commit -qm work
+        set_review_body $'VERDICT: PASS\nFINDINGS:\n- None'
+        set_crit_reviewers "$crit"
+        TARGET_DIR="$dir" PROVIDER_NAME=claude ITERATION_COUNT=1 \
+        LOKI_REVIEW_RETRY=0 LOKI_REVIEW_ADVISORY="$advisory_env" \
+            run_code_review >/dev/null 2>&1
+        local rc=$?
+        local agg; agg="$(find "$dir/.loki/quality/reviews" -name aggregate.json 2>/dev/null | head -1)"
+        local blocking="?" advc="?" rows="?"
+        if [ -n "$agg" ] && [ -f "$agg" ]; then
+            blocking="$(python3 -c "import json;print(json.load(open('$agg')).get('has_blocking'))" 2>/dev/null)"
+            advc="$(python3 -c "import json;print(json.load(open('$agg')).get('advisory_critical'))" 2>/dev/null)"
+            rows="$(python3 -c "import json;d=json.load(open('$agg'));print(','.join(r['name'] for r in d.get('reviewers',[]) if r.get('advisory')))" 2>/dev/null)"
+        fi
+        echo "rc=$rc blocking=$blocking advc=$advc rows=$rows"
+    ) > "$dir/result.txt" 2>/dev/null
+    local r; r="$(cat "$dir/result.txt" 2>/dev/null)"
+    set_crit_reviewers ""
+    local rc_got; rc_got="$(printf '%s' "$r" | sed -E 's/^rc=([0-9]+).*/\1/')"
+    local want_ok=false
+    if [ "$want_rc" = "0" ]; then [ "$rc_got" = "0" ] && want_ok=true; else [ "$rc_got" != "0" ] && want_ok=true; fi
+    if [ "$want_ok" = "true" ] && printf '%s' "$r" | grep -q "advc=${want_adv_crit} "; then
+        ok "$label"
+    else
+        bad "$label" "$r"
+    fi
+    rm -rf "$dir"
+}
+
 case1
 case2_no_output
 case2_real_pass
@@ -496,6 +551,15 @@ case2_partial_no_output
 case3_test_capture
 case3_optout
 case4_grounded_context
+
+case5_advisory "C5: advisory-only Critical (architecture-strategist) records advisory_critical=1 and does not block" \
+    "architecture-strategist" "" 0 1
+case5_advisory "C5: advisory-only Critical (maintainer-mergeability + test-coverage-auditor) does not block" \
+    "maintainer-mergeability test-coverage-auditor" "" 0 2
+case5_advisory "C5: security-sentinel Critical still blocks" \
+    "security-sentinel" "" 1 0
+case5_advisory "C5: LOKI_REVIEW_ADVISORY=0 restores blocking for architecture-strategist" \
+    "architecture-strategist" 0 1 0
 
 rm -rf "$STUB_BIN" 2>/dev/null || true
 

@@ -235,6 +235,19 @@ def main():
     _off = [str(x) for x in _off] if isinstance(_off, list) else []
     if _off:
         _line("| Gates disabled | " + ", ".join(sorted(_off)) + " |")
+    # Advisory reviewers run without a veto; their Critical/High findings are
+    # shown here so a removed veto is never a hidden one. Display only: this row
+    # never feeds the headline. Emitted only when something was recorded.
+    _adv = _qg.get("advisory_review")
+    if isinstance(_adv, dict):
+        try:
+            _ac = int(_adv.get("critical") or 0)
+            _ah = int(_adv.get("high") or 0)
+        except Exception:
+            _ac = _ah = 0
+        if _ac + _ah > 0:
+            _line("| Advisory review findings | Critical " + str(_ac) + ", High "
+                  + str(_ah) + " (recorded, no veto; see the review aggregate) |")
     _line("| Base sha | `" + (base_sha or "(none)") + "` |")
     _line("| Head sha | `" + (head_sha or "(none)") + "` |")
 

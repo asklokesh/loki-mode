@@ -361,6 +361,51 @@ def _test_results_fresh(quality_dir):
         return False
 
 
+def _collect_advisory_review(loki_dir):
+    """Advisory reviewers' Critical/High counts from the latest code review.
+
+    architecture-strategist, maintainer-mergeability and test-coverage-auditor
+    run but hold no veto, so their findings must not vanish: they are recorded
+    here (receipt) and rendered in the PR report. DISPLAY ONLY: this never feeds
+    the headline. Returns None when no aggregate carries the advisory fields
+    (older run, or no review), so existing receipts are byte-identical.
+    """
+    reviews_dir = os.path.join(loki_dir, "quality", "reviews")
+    try:
+        ids = [d for d in os.listdir(reviews_dir)
+               if os.path.isfile(os.path.join(reviews_dir, d, "aggregate.json"))]
+    except OSError:
+        return None
+    if not ids:
+        return None
+    latest = max(ids, key=lambda d: (
+        os.path.getmtime(os.path.join(reviews_dir, d, "aggregate.json")), d))
+    agg = _read_json(os.path.join(reviews_dir, latest, "aggregate.json"), default=None)
+    if not isinstance(agg, dict) or "advisory_critical" not in agg:
+        return None
+    rows = agg.get("reviewers")
+    rows = rows if isinstance(rows, list) else []
+    reviewers = [
+        {"name": str(r.get("name") or ""),
+         "critical": _as_int(r.get("critical")), "high": _as_int(r.get("high"))}
+        for r in rows if isinstance(r, dict) and r.get("advisory") is True
+    ]
+    return {
+        "review_id": str(agg.get("review_id") or latest),
+        "critical": _as_int(agg.get("advisory_critical")),
+        "high": _as_int(agg.get("advisory_high")),
+        "reviewers": reviewers,
+        "veto": False,
+    }
+
+
+def _as_int(v):
+    try:
+        return int(v)
+    except Exception:
+        return 0
+
+
 def _collect_quality_gates(loki_dir):
     gates_raw = _read_json(
         os.path.join(loki_dir, "state", "quality-gates.json"), default=None
@@ -523,7 +568,10 @@ def _collect_quality_gates(loki_dir):
         if name.startswith("LOKI_PHASE_")
         and str(value).strip().lower() in ("false", "0", "no", "off")
     )
+    _adv_review = _collect_advisory_review(loki_dir)
+    _adv_extra = {"advisory_review": _adv_review} if _adv_review else {}
     return {
+        **_adv_extra,
         "passed": passed,
         "total": total,
         "gates": gates,

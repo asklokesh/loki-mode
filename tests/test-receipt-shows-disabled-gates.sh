@@ -107,6 +107,70 @@ bad="$(render "$SCRATCH/bad.json")"
     && ok "a malformed disabled_phases value does not break the receipt" \
     || ko "a malformed disabled_phases value does not break the receipt"
 
+# --- 5. advisory reviewer findings are shown, never silent -------------------
+# Advisory reviewers hold no veto, so their Critical/High counts ride in
+# quality_gates.advisory_review and render as one display-only row.
+mk_adv() {
+    python3 - "$1" "$2" "$3" <<'PY'
+import json, sys
+out, crit, high = sys.argv[1], sys.argv[2], sys.argv[3]
+adv = {"critical": int(crit), "high": int(high), "veto": False,
+       "reviewers": [{"name": "architecture-strategist", "critical": int(crit), "high": int(high)}]}
+json.dump({"run_id": "r5", "meta": {"run_id": "r5"}, "facts": {},
+           "honesty": {"headline": "VERIFIED", "degraded": []},
+           "quality_gates": {"passed": 3, "total": 3, "advisory_review": adv}},
+          open(out, "w"))
+PY
+}
+mk_adv "$SCRATCH/adv.json" 2 3
+adv_out="$(render "$SCRATCH/adv.json")"
+[[ "$adv_out" == *"Advisory review findings"* && "$adv_out" == *"Critical 2, High 3"* ]] \
+    && ok "advisory Critical and High counts appear in the receipt" \
+    || ko "advisory Critical and High counts appear in the receipt" "got: $(grep -i 'advisory' <<<"$adv_out")"
+mk_adv "$SCRATCH/adv0.json" 0 0
+adv0_out="$(render "$SCRATCH/adv0.json")"
+[[ "$adv0_out" == *"Evidence Receipt"* && "$adv0_out" != *"Advisory review findings"* ]] \
+    && ok "zero advisory findings render no row" \
+    || ko "zero advisory findings render no row"
+[[ "$clean" != *"Advisory review findings"* ]] \
+    && ok "an ordinary receipt (no advisory data) renders no advisory row" \
+    || ko "an ordinary receipt (no advisory data) renders no advisory row"
+python3 -c "
+import json
+json.dump({'run_id':'r6','meta':{'run_id':'r6'},'facts':{},
+           'honesty':{'headline':'VERIFIED','degraded':[]},
+           'quality_gates':{'advisory_review':{'critical':'x','high':None}}},
+          open('$SCRATCH/advbad.json','w'))"
+advbad="$(render "$SCRATCH/advbad.json")"
+[[ "$advbad" == *"Evidence Receipt"* ]] \
+    && ok "a malformed advisory_review value does not break the receipt" \
+    || ko "a malformed advisory_review value does not break the receipt"
+# Display only: the headline never derives from the advisory counts.
+[[ "$adv_out" == *"VERIFIED"* ]] \
+    && ok "advisory findings do not change the headline" \
+    || ko "advisory findings do not change the headline"
+
+# --- 6. the generator records advisory counts from the review aggregate -------
+mkdir -p "$SCRATCH/loki/quality/reviews/cycle-a"
+python3 -c "
+import json
+json.dump({'review_id':'cycle-a','advisory_critical':1,'advisory_high':2,
+           'reviewers':[{'name':'architecture-strategist','advisory':True,'critical':1,'high':2},
+                        {'name':'security-sentinel','advisory':False,'critical':0,'high':0}]},
+          open('$SCRATCH/loki/quality/reviews/cycle-a/aggregate.json','w'))"
+gen_out="$(python3 - "$REPO_ROOT/autonomy/lib/proof-generator.py" "$SCRATCH/loki" <<'PY'
+import importlib.util, sys, json
+spec = importlib.util.spec_from_file_location("pg", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+r = m._collect_advisory_review(sys.argv[2])
+print(json.dumps(r, sort_keys=True))
+PY
+)"
+[[ "$gen_out" == *'"critical": 1'* && "$gen_out" == *'"high": 2'* && "$gen_out" == *'"veto": false'* && "$gen_out" != *security-sentinel* ]] \
+    && ok "the generator extracts advisory counts and only advisory reviewers" \
+    || ko "the generator extracts advisory counts and only advisory reviewers" "got: $gen_out"
+
 echo ""
 echo "  Passed:     $passed"
 echo "  Failed:     $failed"

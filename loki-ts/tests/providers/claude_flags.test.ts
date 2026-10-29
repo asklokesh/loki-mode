@@ -1275,6 +1275,17 @@ describe("claude_flags.reviewerModelForTier (S9)", () => {
       expect(reviewerModelForTier({ tier, reviewer: "test-coverage-auditor", env: {} })).toBe("haiku");
     }
   });
+  it("maintainer-mergeability and test-coverage-auditor are haiku at every tier, architecture-strategist is not pinned", () => {
+    for (const reviewer of ["maintainer-mergeability", "test-coverage-auditor"]) {
+      for (const tier of ["simple", "standard", "complex", "bogus", undefined]) {
+        expect(reviewerModelForTier({ tier, reviewer, env: {} })).toBe("haiku");
+      }
+      expect(reviewerModelForTier({ tier: "complex", reviewer, highTier: true, env: {} })).toBe("haiku");
+      expect(reviewerModelForTier({ tier: "complex", reviewer, env: { LOKI_ADVISOR_MODEL: "opus" } })).toBe("opus");
+    }
+    expect(reviewerModelForTier({ tier: "complex", reviewer: "architecture-strategist", env: {} })).toBeNull();
+    expect(reviewerModelForTier({ tier: "simple", reviewer: "architecture-strategist", highTier: true, env: {} })).toBeNull();
+  });
   it("complex, unknown and absent tiers stay unpinned", () => {
     expect(reviewerModelForTier({ tier: "complex", reviewer: "a", env: {} })).toBeNull();
     expect(reviewerModelForTier({ tier: "bogus", reviewer: "a", env: {} })).toBeNull();

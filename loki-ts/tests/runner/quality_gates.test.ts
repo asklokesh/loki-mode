@@ -1647,6 +1647,69 @@ describe("runCodeReview (Phase 5 selection + dispatch + aggregation)", () => {
     expect(agg["nonblocking_low"]).toBe(0);
   });
 
+  // Advisory reviewers: mandatory to run, not to block. Findings stay recorded.
+  describe("advisory reviewers (no veto)", () => {
+    const crit = "VERDICT: FAIL\nFINDINGS:\n- [Critical] boom\n- [High] bang";
+    const advisoryOnly: ReviewerFn = async ({ reviewer }) =>
+      ["architecture-strategist", "maintainer-mergeability", "test-coverage-auditor"].includes(reviewer.name)
+        ? crit
+        : "VERDICT: PASS\nFINDINGS:\n- None";
+    const diff = { diff: "+ console.log('hi');\n", files: "src/x.ts\n" };
+
+    function readAgg(): Record<string, unknown> {
+      const root = join(scratch, "quality", "reviews");
+      const id = readdirSync(root)[0]!;
+      return JSON.parse(readFileSync(join(root, id, "aggregate.json"), "utf-8")) as Record<string, unknown>;
+    }
+
+    it("a diff with only advisory Critical findings gives has_blocking false and passes", async () => {
+      const r = await runCodeReview(makeCtx(), { diffOverride: diff, reviewer: advisoryOnly });
+      expect(r.passed).toBe(true);
+      const agg = readAgg();
+      expect(agg["has_blocking"]).toBe(false);
+      expect(agg["fail_count"]).toBeGreaterThan(0);
+      expect(agg["advisory_critical"]).toBe(3);
+      expect(agg["advisory_high"]).toBe(3);
+      const rows = agg["reviewers"] as Array<{ name: string; advisory: boolean; critical: number }>;
+      const arch = rows.find((x) => x.name === "architecture-strategist")!;
+      expect(arch.advisory).toBe(true);
+      expect(arch.critical).toBe(1);
+      expect(rows.find((x) => x.name === "security-sentinel")!.advisory).toBe(false);
+      expect(r.detail ?? "").toContain("advisory critical=3 high=3");
+    });
+
+    it("a security-sentinel Critical still blocks", async () => {
+      const secFail: ReviewerFn = async ({ reviewer }) =>
+        reviewer.name === "security-sentinel" ? crit : "VERDICT: PASS\nFINDINGS:\n- None";
+      const r = await runCodeReview(makeCtx(), { diffOverride: diff, reviewer: secFail });
+      expect(r.passed).toBe(false);
+      expect(readAgg()["has_blocking"]).toBe(true);
+    });
+
+    it("LOKI_REVIEW_ADVISORY=0 restores blocking and zeroes the advisory counts", async () => {
+      const prev = process.env["LOKI_REVIEW_ADVISORY"];
+      process.env["LOKI_REVIEW_ADVISORY"] = "0";
+      try {
+        const r = await runCodeReview(makeCtx(), { diffOverride: diff, reviewer: advisoryOnly });
+        expect(r.passed).toBe(false);
+        const agg = readAgg();
+        expect(agg["has_blocking"]).toBe(true);
+        expect(agg["advisory_critical"]).toBe(0);
+      } finally {
+        if (prev === undefined) delete process.env["LOKI_REVIEW_ADVISORY"];
+        else process.env["LOKI_REVIEW_ADVISORY"] = prev;
+      }
+    });
+
+    it("parseVerdict marks only the three advisory reviewers", () => {
+      expect(parseVerdict("architecture-strategist", crit)).toMatchObject({ blocking: false, advisory: true });
+      expect(parseVerdict("test-coverage-auditor", crit).blocking).toBe(false);
+      expect(parseVerdict("maintainer-mergeability", crit).blocking).toBe(false);
+      expect(parseVerdict("security-sentinel", crit).blocking).toBe(true);
+      expect(parseVerdict("security-sentinel", crit).advisory).toBeUndefined();
+    });
+  });
+
   // #270: shared Files + Diff first so parallel reviewers share a cacheable prefix.
   it("reviewer prompts share an identical prefix that covers the Files and Diff block", async () => {
     const { buildReviewerPrompt } = await import("../../src/runner/quality_gates.ts");
@@ -1763,10 +1826,8 @@ describe("runCodeReview (Phase 5 selection + dispatch + aggregation)", () => {
   });
 
   it("blocks the gate when any reviewer reports [Critical] or [High]", async () => {
-    let call = 0;
-    const mixedReviewer: ReviewerFn = async () => {
-      call += 1;
-      if (call === 2) {
+    const mixedReviewer: ReviewerFn = async ({ reviewer }) => {
+      if (reviewer.name === "security-sentinel") {
         return "VERDICT: FAIL\nFINDINGS:\n- [Critical] hardcoded secret in src/x.ts:3";
       }
       return "VERDICT: PASS\nFINDINGS:\n- None";
@@ -1836,11 +1897,11 @@ describe("runCodeReview (Phase 5 selection + dispatch + aggregation)", () => {
     expect(agg["quality_score"]).toBe(100);
   });
 
-  it("rank 9 fixture B: sprawling PR trips the mergeability scope blocker -> score 0, gate blocks", async () => {
-    // The maintainer-mergeability reviewer flags scope creep as a High blocker on
-    // a diff touching many unrelated files; the specialists still PASS. The score
-    // collapses to 0 (any blocker) and the gate blocks -- proving the new axis
-    // catches an unmergeable-but-non-buggy change the old pool would have missed.
+  it("rank 9 fixture B: sprawling PR is recorded by the advisory mergeability reviewer without a veto", async () => {
+    // The maintainer-mergeability reviewer flags scope creep as High on a diff
+    // touching many unrelated files; the specialists still PASS. It is advisory:
+    // the finding is recorded in aggregate.json (advisory_high) and the gate does
+    // not block. LOKI_REVIEW_ADVISORY=0 restores the old blocking (next test).
     const sprawlReviewer: ReviewerFn = async ({ reviewer }) => {
       if (reviewer.name === "maintainer-mergeability") {
         return "VERDICT: FAIL\nFINDINGS:\n- [High] scope creep: 40 unrelated files touched, multiple drive-by refactors (many files)";
@@ -1852,14 +1913,38 @@ describe("runCodeReview (Phase 5 selection + dispatch + aggregation)", () => {
       diffOverride: { diff: "+ // sweeping unrelated edits across the tree\n", files },
       reviewer: sprawlReviewer,
     });
-    expect(r.passed).toBe(false);
-    expect(r.detail ?? "").toContain("blocking severity");
+    expect(r.passed).toBe(true);
     const agg = JSON.parse(
       readFileSync(join(scratch, "quality", "reviews", reviewDirs()[0]!, "aggregate.json"), "utf-8"),
     ) as Record<string, unknown>;
-    expect(agg["has_blocking"]).toBe(true);
-    expect(agg["quality_score"]).toBe(0);
+    expect(agg["has_blocking"]).toBe(false);
+    expect(agg["advisory_high"]).toBe(1);
     expect(agg["verdicts"] as string).toContain("maintainer-mergeability:FAIL");
+  });
+
+  it("rank 9 fixture B with LOKI_REVIEW_ADVISORY=0: the mergeability scope blocker blocks and scores 0", async () => {
+    const prev = process.env["LOKI_REVIEW_ADVISORY"];
+    process.env["LOKI_REVIEW_ADVISORY"] = "0";
+    try {
+      const sprawlReviewer: ReviewerFn = async ({ reviewer }) =>
+        reviewer.name === "maintainer-mergeability"
+          ? "VERDICT: FAIL\nFINDINGS:\n- [High] scope creep: 40 unrelated files touched"
+          : "VERDICT: PASS\nFINDINGS:\n- None";
+      const r = await runCodeReview(makeCtx(), {
+        diffOverride: { diff: "+ // sweeping edits\n", files: "src/a.ts\n" },
+        reviewer: sprawlReviewer,
+      });
+      expect(r.passed).toBe(false);
+      expect(r.detail ?? "").toContain("blocking severity");
+      const agg = JSON.parse(
+        readFileSync(join(scratch, "quality", "reviews", reviewDirs()[0]!, "aggregate.json"), "utf-8"),
+      ) as Record<string, unknown>;
+      expect(agg["has_blocking"]).toBe(true);
+      expect(agg["quality_score"]).toBe(0);
+    } finally {
+      if (prev === undefined) delete process.env["LOKI_REVIEW_ADVISORY"];
+      else process.env["LOKI_REVIEW_ADVISORY"] = prev;
+    }
   });
 
   it("rank 9 fixture C: known-Critical still blocks and scores 0 (existing behavior preserved)", async () => {

@@ -1258,7 +1258,27 @@ export type ReviewerVerdict = {
   verdict: "PASS" | "FAIL" | "UNKNOWN" | "NO_OUTPUT";
   blocking: boolean;
   output: string;
+  // True when the reviewer runs but holds no veto (ADVISORY_REVIEWERS). Its
+  // findings are still recorded and counted, never dropped.
+  advisory?: boolean;
 };
+
+// Reviewers that are mandatory to RUN, not to BLOCK. They keep running and their
+// findings stay in the per-reviewer file, aggregate.json, the receipt and the
+// report; they carry no veto. LOKI_REVIEW_ADVISORY=0 restores the old blocking.
+// Parity-locked with _is_advisory_reviewer() in autonomy/run.sh.
+export const ADVISORY_REVIEWERS: ReadonlySet<string> = new Set([
+  "architecture-strategist",
+  "maintainer-mergeability",
+  "test-coverage-auditor",
+]);
+
+export function isAdvisoryReviewer(
+  name: string,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env["LOKI_REVIEW_ADVISORY"] !== "0" && ADVISORY_REVIEWERS.has(name);
+}
 
 export type ReviewerInput = {
   reviewer: Reviewer;
@@ -1874,11 +1894,13 @@ export function parseVerdict(reviewer: string, output: string): ReviewerVerdict 
   // and a bolded Critical did not flip a unanimous PASS. Reuse the same 4-form
   // matcher so a recognizable Critical/High in ANY form makes a FAIL blocking.
   const hasBlockingSeverity = matchesSeverityAnyForm(output, "critical") || matchesSeverityAnyForm(output, "high");
+  const advisory = isAdvisoryReviewer(reviewer);
   return {
     reviewer,
     verdict,
-    blocking: verdict === "FAIL" && hasBlockingSeverity,
+    blocking: !advisory && verdict === "FAIL" && hasBlockingSeverity,
     output,
+    ...(advisory ? { advisory: true } : {}),
   };
 }
 
@@ -1910,6 +1932,20 @@ export function countNonBlockingFindings(output: string): { medium: number; low:
     return n;
   };
   return { medium: countSev("medium"), low: countSev("low") };
+}
+
+// Count Critical and High findings in a reviewer's output (same 4-form matcher
+// as blocking detection). Used for the advisory counts in aggregate.json, the
+// receipt and the report. Parity-locked with _count_blocking_severity_findings()
+// in autonomy/run.sh.
+export function countBlockingSeverityFindings(output: string): { critical: number; high: number } {
+  const countSev = (sev: string): number => {
+    const re = severityFormRegex(sev);
+    let n = 0;
+    for (const line of output.split(/\r?\n/)) if (re.test(line)) n += 1;
+    return n;
+  };
+  return { critical: countSev("critical"), high: countSev("high") };
 }
 
 // 7.114.0 (rank 9): weighted mergeability quality score. 0 if any blocker,
@@ -1992,6 +2028,16 @@ export type AggregateArtifact = {
   quality_score: number;
   nonblocking_medium: number;
   nonblocking_low: number;
+  // Advisory reviewers: findings recorded without a veto. Never silent.
+  advisory_critical: number;
+  advisory_high: number;
+  reviewers: Array<{
+    name: string;
+    verdict: string;
+    advisory: boolean;
+    critical: number;
+    high: number;
+  }>;
 };
 
 export async function runCodeReview(
@@ -2099,6 +2145,9 @@ export async function runCodeReview(
   // can still list Low nits). UNKNOWN/unavailable verdicts contribute nothing.
   let nonblockingMedium = 0;
   let nonblockingLow = 0;
+  let advisoryCritical = 0;
+  let advisoryHigh = 0;
+  const reviewerRows: AggregateArtifact["reviewers"] = [];
   const verdictTokens: string[] = [];
   for (const v of results) {
     if (v.verdict === "PASS") passCount += 1;
@@ -2108,6 +2157,18 @@ export async function runCodeReview(
       const nb = countNonBlockingFindings(v.output);
       nonblockingMedium += nb.medium;
       nonblockingLow += nb.low;
+    }
+    if (v.verdict === "PASS" || v.verdict === "FAIL") {
+      const sev = countBlockingSeverityFindings(v.output);
+      const advisory = v.advisory === true;
+      if (advisory) {
+        advisoryCritical += sev.critical;
+        advisoryHigh += sev.high;
+        if (sev.critical + sev.high > 0) {
+          ctx.log(`code_review: ADVISORY ${v.reviewer} recorded critical=${sev.critical} high=${sev.high} (no veto; LOKI_REVIEW_ADVISORY=0 restores blocking)`);
+        }
+      }
+      reviewerRows.push({ name: v.reviewer, verdict: v.verdict, advisory, critical: sev.critical, high: sev.high });
     }
     verdictTokens.push(`${v.reviewer}:${v.verdict}`);
   }
@@ -2124,6 +2185,9 @@ export async function runCodeReview(
     quality_score: qualityScore,
     nonblocking_medium: nonblockingMedium,
     nonblocking_low: nonblockingLow,
+    advisory_critical: advisoryCritical,
+    advisory_high: advisoryHigh,
+    reviewers: reviewerRows,
   };
   atomicWriteText(join(reviewDir, "aggregate.json"), `${JSON.stringify(aggregate, null, 2)}\n`);
 
@@ -2331,7 +2395,7 @@ export async function runCodeReview(
 
   return {
     passed: true,
-    detail: `code_review: ${passCount}/${selection.reviewers.length} pass, ${failCount} fail (${reviewId})`,
+    detail: `code_review: ${passCount}/${selection.reviewers.length} pass, ${failCount} fail${advisoryCritical + advisoryHigh > 0 ? `, advisory critical=${advisoryCritical} high=${advisoryHigh} (no veto)` : ""} (${reviewId})`,
   };
 }
 

@@ -318,6 +318,12 @@ LOKI_REVIEW_INCONCLUSIVE_BLOCK=1  # default 1. Treat a code-review round that
                                   # or zero real verdicts) as a BLOCK instead
                                   # of a silent pass. Set 0 to disable.
 
+LOKI_REVIEW_ADVISORY=1            # default 1. architecture-strategist,
+                                  # maintainer-mergeability and
+                                  # test-coverage-auditor run and record
+                                  # findings but cannot veto. Set 0 to make
+                                  # them blocking again.
+
 LOKI_REVIEW_UNAVAILABLE_BLOCK=1   # default 1 (blocks under LOKI_HARD_GATES).
                                   # When NO reviewer can run at all (no claude
                                   # binary on PATH AND no reachable SDK judge),
