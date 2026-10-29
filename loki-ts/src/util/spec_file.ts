@@ -4,12 +4,14 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { taskBlock } from "../engine10/types.ts";
+import { stripTemplate } from "./intent_card.ts";
 import type { SessionRunner } from "../engine10/types.ts";
 
 export const SPEC_MARKER = "<!-- loki-spec v1: edit the intent and criteria; keep the three headings. -->";
 export const SPEC_DIR = join(".loki", "specs");
 const MAX_CRITERIA = 20;
 const MAX_FIELD = 400;
+export const MAX_CLAUSES = 40;
 const H_TASK = "## Task", H_INTENT = "## Intent", H_CRIT = "## Acceptance criteria";
 
 /** A spec that fails to parse; `line` is 1-based and reported to the user (exit 2). */
@@ -43,9 +45,68 @@ export function checkCriteriaJson(x: unknown): string | null {
   return null;
 }
 
-export function renderSpec(task: string, c: SpecCriteria): string {
+// Acceptance clauses: generic extraction from any spec text (markdown, numbered items, Acceptance headings, Given/When/Then, RFC 2119 prose). Ids are source order and a pure function of the text, so the same spec gives the same ids.
+export interface Clause { id: string; text: string; text_sha256: string; anchor: string }
+export interface ClauseSet { clauses: Clause[]; dropped: number }
+const CLAUSE_HEAD = /accept|criteria|requirement|must/i, RFC2119 = /\b(?:MUST|SHALL)(?: NOT)?\b/, GWT = /^(?:given|when|then|and|but)\b/i;
+const normClause = (t: string): string => t.replace(/\s+/g, " ").trim();
+
+export function extractClauses(text: string): ClauseSet {
+  const pages = text.replace(/\r\n/g, "\n").split("\f"), paged = pages.length > 1, out: { text: string; anchor: string }[] = [];
+  pages.forEach((page, pi) => {
+    const lines = page.split("\n"), keep = new Set<number>();
+    // stripTemplate takes and returns string[]; a filter-only view lets it report which line indexes survive, so anchors stay exact.
+    stripTemplate({ filter: (fn: (l: string) => boolean) => { lines.forEach((l, i) => { if (fn(l)) keep.add(i); }); return []; } } as unknown as string[]);
+    let under = false, fence = false, gwt = -1;
+    const anchorOf = (i: number): string => `${paged ? `p${pi + 1}:` : ""}l${i + 1}`;
+    for (const [i, raw] of lines.entries()) {
+      if (/^\s*(```|~~~)/.test(raw)) { fence = !fence; continue; }
+      if (fence || !keep.has(i)) continue;
+      const line = raw.trim();
+      if (line === "") { gwt = -1; continue; }
+      if (/^#+\s/.test(line) || (/:$/.test(line) && line.length <= 60 && !/^[-*+\d]/.test(line))) { under = CLAUSE_HEAD.test(line); gwt = -1; continue; }
+      const item = /^(?:[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+)(.*)$/.exec(line), numbered = /^\d+[.)]\s/.test(line), check = /^[-*+]\s+\[[ xX]\]/.test(line);
+      const body = (item ? item[1]! : line).replace(/\*\*|__/g, "");
+      if (GWT.test(body) && /^given\b/i.test(body) || (gwt >= 0 && GWT.test(body))) {
+        if (/^given\b/i.test(body)) { gwt = out.length; out.push({ text: body, anchor: anchorOf(i) }); } else out[gwt]!.text += ` ${body}`;
+        continue;
+      }
+      gwt = -1;
+      if (item ? (under || check || numbered || RFC2119.test(body)) : under || RFC2119.test(body)) {
+        if (item || under) out.push({ text: body, anchor: anchorOf(i) });
+        else for (const sent of body.split(/(?<=[.!?])\s+/)) if (RFC2119.test(sent)) out.push({ text: sent, anchor: anchorOf(i) });
+      }
+    }
+  });
+  const seen = new Set<string>(), uniq: { text: string; anchor: string }[] = [];
+  for (const c of out) { const t = normClause(c.text).slice(0, MAX_FIELD); if (t === "") continue; const k = t.toLowerCase(); if (!seen.has(k)) { seen.add(k); uniq.push({ text: t, anchor: c.anchor }); } }
+  const clauses = uniq.slice(0, MAX_CLAUSES).map((c, i) => ({ id: `C${i + 1}`, text: c.text, text_sha256: sha256Hex(c.text), anchor: c.anchor }));
+  return { clauses, dropped: Math.max(0, uniq.length - MAX_CLAUSES) };
+}
+export const clauseLine = (c: Clause): string => `${c.id}: ${c.text} [${c.anchor}]`;
+export const clauseDroppedNote = (n: number): string => `not_proven: ${n} further acceptance clause${n === 1 ? "" : "s"} beyond the first ${MAX_CLAUSES} were not extracted`;
+
+/** Wall brief lines for the extracted clauses; empty for a spec with none, so that brief is unchanged. */
+export function clauseBriefBlock(set: ClauseSet | null | undefined): string[] {
+  if (!set || set.clauses.length === 0) return [];
+  return [
+    `Acceptance clauses extracted from the spec, each with its source line (each must be covered by a test):\n${set.clauses.map((c) => `Acceptance: ${clauseLine(c)}`).join("\n")}`,
+    "At every assertion block put a marker comment `clause: C3` (the clause id it proves) in the test language's own comment syntax.",
+  ];
+}
+
+/** Which clause ids and which authored files carry no `clause: Cn` marker; never silently counted as covered. */
+export function untaggedClauses(set: ClauseSet | null | undefined, files: Map<string, string>): { untagged: string[]; untagged_files: string[] } {
+  if (!set || set.clauses.length === 0) return { untagged: [], untagged_files: [] };
+  const found = new Set<string>(), untagged_files: string[] = [];
+  for (const [name, body] of files) { let any = false; for (const m of body.matchAll(/\bclause:\s*(C\d+)\b/g)) { found.add(m[1]!); any = true; } if (!any) untagged_files.push(name); }
+  return { untagged: set.clauses.map((c) => c.id).filter((id) => !found.has(id)), untagged_files };
+}
+
+export function renderSpec(task: string, c: SpecCriteria, set?: ClauseSet | null): string {
   const quoted = task.split("\n").map((l) => `> ${l}`.trimEnd());
-  return [SPEC_MARKER, "", H_TASK, "", ...quoted, "", H_INTENT, "", c.intent.trim(), "", H_CRIT, "", ...c.criteria.map((x) => `- ${x.trim()}`), ""].join("\n");
+  const cl = set ? [...set.clauses.map((x) => `- ${clauseLine(x)}`), ...(set.dropped ? [`- ${clauseDroppedNote(set.dropped)}`] : [])] : [];
+  return [SPEC_MARKER, "", H_TASK, "", ...quoted, "", H_INTENT, "", c.intent.trim(), "", H_CRIT, "", ...c.criteria.map((x) => `- ${x.trim()}`), ...cl, ""].join("\n");
 }
 
 export function parseSpec(text: string, file?: string): ParsedSpec {
@@ -82,7 +143,7 @@ export function parseSpec(text: string, file?: string): ParsedSpec {
     criteria.push(v);
   }
   if (criteria.length === 0) fail(at[H_CRIT]! + 1, "no acceptance criteria");
-  if (criteria.length > MAX_CRITERIA) fail(at[H_CRIT]! + 1, `more than ${MAX_CRITERIA} criteria`);
+  if (criteria.length > MAX_CRITERIA + MAX_CLAUSES + 1) fail(at[H_CRIT]! + 1, `more than ${MAX_CRITERIA} criteria`);
   return { task: taskLines.join("\n"), intent: intentLines.join(" "), criteria };
 }
 
@@ -146,7 +207,7 @@ export async function generateSpec(o: GenerateOpts): Promise<GeneratedSpec> {
   try { parsed = JSON.parse(readFileSync(jsonPath, "utf8")); } catch { throw new Error("the model did not write valid JSON (schema check failed)"); }
   const bad = checkCriteriaJson(parsed);
   if (bad) throw new Error(`the model output failed the schema check: ${bad}`);
-  const text = renderSpec(o.task, parsed as SpecCriteria);
+  const text = renderSpec(o.task, parsed as SpecCriteria, extractClauses(o.task));
   mkdirSync(join(o.repoDir, SPEC_DIR), { recursive: true });
   writeFileSync(path, text, "utf8");
   return { path, sha256: sha256Hex(text) };

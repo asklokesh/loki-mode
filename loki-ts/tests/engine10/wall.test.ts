@@ -132,6 +132,16 @@ describe("engine10 wall brief", () => {
     expect(b).toContain("Acceptance: login works");
     expect(b).toContain("Acceptance: export works");
   });
+  test("extracted clauses reach the brief with ids and anchors; none means byte-identical", async () => {
+    const { extractClauses, untaggedClauses } = await import("../../src/util/spec_file.ts");
+    const set = extractClauses("## Acceptance criteria\n- a one\n- b two\n- c three\n- d four\n- e five\n");
+    const b = buildWallBrief("t", "", [], false, "", [], null, set);
+    for (const [i, l] of [[1, 2], [2, 3], [3, 4], [4, 5], [5, 6]] as const) expect(b).toMatch(new RegExp(`Acceptance: C${i}: .* \\[l${l}\\]`));
+    expect(b).toContain("clause: C3");
+    expect(buildWallBrief("t", "", [], false, "", [], null, extractClauses("no clauses here"))).toBe(buildWallBrief("t"));
+    const files = new Map([["loki_wall_a.test.ts", "// clause: C1\n// clause: C2\n"], ["loki_wall_b.test.ts", "test('x')"]]);
+    expect(untaggedClauses(set, files)).toEqual({ untagged: ["C3", "C4", "C5"], untagged_files: ["loki_wall_b.test.ts"] });
+  });
   test("brief requires one negative-case assertion per acceptance line, under 400 chars", () => {
     const m = buildWallBrief("t").match(/Negative case: [^\n]*?before the fix\./);
     expect(m).not.toBeNull();

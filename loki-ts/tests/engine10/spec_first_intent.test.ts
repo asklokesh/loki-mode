@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { buildPlanBrief } from "../../src/engine10/stages/plan.ts";
 import { buildImplementBrief } from "../../src/engine10/stages/implement.ts";
-import { generateSpec, loadSpecFile, parseSpec, renderSpec, slugify, specPrLine, specReceiptBlock, SpecError, specBriefBlock } from "../../src/util/spec_file.ts";
+import { clauseBriefBlock, clauseLine, extractClauses, generateSpec, loadSpecFile, parseSpec, renderSpec, slugify, specPrLine, specReceiptBlock, SpecError, specBriefBlock } from "../../src/util/spec_file.ts";
 import type { SessionResult, SessionRunner, SessionRunOptions } from "../../src/engine10/types.ts";
 
 const here = import.meta.dir;
@@ -251,5 +251,69 @@ describe("implement stage reads the run snapshot", () => {
       } as never, new AbortController().signal);
     } finally { if (saved === undefined) delete process.env.LOKI_E10_SPEC_SHA256; else process.env.LOKI_E10_SPEC_SHA256 = saved; }
     expect(s.briefs[0]).toContain("ranking is stable under ties");
+  });
+});
+
+const PRD5 = [
+  "# Search ranking", "", "Some background prose that is not a requirement.", "",
+  "## Acceptance criteria", "", "- Results are ordered by recency", "- Ties break on id", "",
+  "## Notes", "", "1. The API returns 400 for an empty query", "- [ ] Docs mention the new flag", "",
+  "The service MUST NOT cache empty results. It is fast.",
+].join("\n");
+
+describe("acceptance clause extraction (generic, anchored)", () => {
+  test("markdown PRD yields 5 numbered clauses with source line anchors", () => {
+    const { clauses, dropped } = extractClauses(PRD5);
+    expect(dropped).toBe(0);
+    expect(clauses.map(clauseLine)).toEqual([
+      "C1: Results are ordered by recency [l7]",
+      "C2: Ties break on id [l8]",
+      "C3: The API returns 400 for an empty query [l12]",
+      "C4: Docs mention the new flag [l13]",
+      "C5: The service MUST NOT cache empty results. [l15]",
+    ]);
+  });
+  test("DOCX-extracted text with form-feed pages anchors page and line", () => {
+    const { clauses } = extractClauses("Intro\n\fThe system SHALL log every login.\nOther text.\n");
+    expect(clauses.map(clauseLine)).toEqual(["C1: The system SHALL log every login. [p2:l1]"]);
+  });
+  test("issue template boilerplate is not a clause; Given/When/Then is one clause; acceptance checklists stay", () => {
+    const body = ["## Preflight checklist", "- [ ] I have searched existing issues", "", "## Acceptance", "- [ ] I have read the docs and it works", "", "Given a user", "When they log in", "Then a token is issued"].join("\n");
+    const t = extractClauses(body).clauses.map((c) => c.text);
+    expect(t).toEqual(["I have read the docs and it works", "Given a user When they log in Then a token is issued"]);
+  });
+  test("fenced code is ignored", () => {
+    expect(extractClauses("```\n1. not a clause\n```\n").clauses).toEqual([]);
+  });
+  test("same text gives same ids; editing one clause changes only its text_sha256", () => {
+    const a = extractClauses(PRD5).clauses, b = extractClauses(PRD5).clauses;
+    expect(b).toEqual(a);
+    const c = extractClauses(PRD5.replace("Ties break on id", "Ties break on name")).clauses;
+    expect(c.map((x) => x.id)).toEqual(a.map((x) => x.id));
+    expect(c.map((x, i) => x.text_sha256 !== a[i]!.text_sha256)).toEqual([false, true, false, false, false]);
+  });
+  test("duplicates collapse; over 40 keeps 40 and reports the dropped count", () => {
+    expect(extractClauses("1. Same thing\n2. same   thing\n").clauses).toHaveLength(1);
+    const many = Array.from({ length: 45 }, (_, i) => `${i + 1}. requirement number ${i}`).join("\n");
+    const r = extractClauses(many);
+    expect([r.clauses.length, r.dropped]).toEqual([40, 5]);
+  });
+  test("no recognizable clause: empty set, brief block empty, locked spec unchanged", () => {
+    const r = extractClauses("Just some prose.\nNothing here.");
+    expect(r.clauses).toEqual([]);
+    expect(clauseBriefBlock(r)).toEqual([]);
+    expect(renderSpec("t", CRIT, r)).toBe(renderSpec("t", CRIT));
+  });
+  test("RFC 2119 rule is load-bearing: a MUST sentence outside any list is a clause", () => {
+    expect(extractClauses("Plain text. The tool MUST exit 2 on error.").clauses.map((c) => c.text)).toEqual(["The tool MUST exit 2 on error."]);
+  });
+  test("locked spec carries the 5 clauses and round-trips through parseSpec", () => {
+    const text = renderSpec("t", CRIT, extractClauses(PRD5));
+    expect(parseSpec(text).criteria.filter((x) => /^C\d: .* \[l\d+\]$/.test(x))).toHaveLength(5);
+  });
+  test("generateSpec writes the clauses extracted from the task", async () => {
+    const f = new Fake((o) => writeFileSync(jsonPathOf(o.brief), JSON.stringify(CRIT)));
+    const g = await generateSpec({ task: PRD5, repoDir: dir, sessions: f });
+    expect(loadSpecFile(g.path).criteria.filter((x) => /^C\d: /.test(x))).toHaveLength(5);
   });
 });
