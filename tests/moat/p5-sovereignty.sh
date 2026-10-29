@@ -330,7 +330,26 @@ for a in "$@"; do
     [ "$prev" = "-p" ] && prompt="$a"
     prev="$a"
 done
-[ "$prompt" = "-" ] && cat >/dev/null
+stdin_text=""
+[ "$prompt" = "-" ] && stdin_text="$(cat)"
+# The walled check author sends its prompt on stdin (-p -) and needs one JSON
+# object back, wrapped as a result envelope because the caller passes
+# --output-format json (a bare object would be unwrapped to an empty reply),
+# with the measured usage a real CLI reports so the cost ledger is not a zero
+# measurement; any other non-build call gets inert text.
+case "$stdin_text" in
+    *"You are the acceptance check author"*)
+        case " $* " in
+            *" --output-format json "*) ;;
+            *)
+                printf '%s\n' '{"categories":[{"name":"greeter","items":[{"id":"greeter-file","title":"greeter.py exists","priority":"critical","verification":[{"type":"file_exists","path":"greeter.py"}]}]}]}'
+                exit 0
+                ;;
+        esac
+        printf '%s\n' '{"type":"result","result":"{\"categories\":[{\"name\":\"greeter\",\"items\":[{\"id\":\"greeter-file\",\"title\":\"greeter.py exists\",\"priority\":\"critical\",\"verification\":[{\"type\":\"file_exists\",\"path\":\"greeter.py\"}]}]}]}","usage":{"input_tokens":120,"output_tokens":60},"total_cost_usd":0.0004}'
+        exit 0
+        ;;
+esac
 case "$prompt" in
     *"<loki_system>"*)
         if [ ! -f greeter.py ]; then

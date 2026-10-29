@@ -477,8 +477,9 @@ async function writeCaptured(
 // Flags for a text-only call (ProviderInvocation.textOnly): no tools, no
 // setting sources, no MCP, no slash commands, plus the review tool denylist as
 // defence in depth. LOKI_LEAN_CHILDREN=0 must not re-enable tools here, so the
-// lean flags are built with it forced on. Byte-for-byte the bash check_author
-// role: loki_lean_child_flags emits --tools= and grill adds --disallowedTools.
+// lean flags are built with it forced on. Mirrors the bash check_author role
+// (loki_lean_child_flags emits --tools= and grill adds --disallowedTools) but
+// is not byte-identical: the flag set is probed per CLI in bash and fixed here.
 export function textOnlyArgv(): string[] {
   return [
     ...leanReviewerFlags({ env: { ...process.env, LOKI_LEAN_CHILDREN: "1" }, settingSources: "" }),

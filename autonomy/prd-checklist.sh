@@ -188,10 +188,13 @@ except Exception:
 }
 
 checklist_author_isolation() {
-    case "${LOKI_PROVIDER:-claude}" in
-        claude) echo "check author isolation: no-tools" ;;
-        *) echo "check author isolation: cwd-only" ;;
-    esac
+    # no-tools only when the argv the check_author role sends carries --tools=.
+    if [ "${LOKI_PROVIDER:-claude}" = "claude" ] && type loki_lean_child_flags >/dev/null 2>&1 \
+        && loki_lean_child_flags check_author 2>/dev/null | grep -qx -- '--tools='; then
+        echo "check author isolation: no-tools"
+    else
+        echo "check author isolation: cwd-only"
+    fi
 }
 
 checklist_author() {

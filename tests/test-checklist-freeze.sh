@@ -370,6 +370,8 @@ AU="$T/author"
 mkdir -p "$AU/bin" "$AU/proj-repo-xyz/.loki/state"
 cat > "$AU/bin/claude" <<'STUB'
 #!/usr/bin/env bash
+# the isolation label keys on the flags the CLI reports, so advertise --tools
+case " $* " in *" --help "*) echo "  --tools <tools...>  Specify the list of available tools"; exit 0 ;; esac
 case " $* " in *" -p "*) ;; *) exit 0 ;; esac
 n=$(cat "$STUB_DIR/count" 2>/dev/null || echo 0)
 echo $((n + 1)) > "$STUB_DIR/count"

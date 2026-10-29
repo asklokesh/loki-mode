@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
 import { run as shellRun } from "../util/shell.ts";
+import { textOnlyArgv } from "./providers.ts";
 import type { ProviderInvoker, RunnerContext } from "./types.ts";
 
 export const CHECK_AUTHOR_MAX_ATTEMPTS = 2;
@@ -220,9 +221,11 @@ export async function runCheckAuthor(ctx: RunnerContext, provider: ProviderInvok
         break;
       }
     }
-    ctx.log(`[check-author] isolation: ${ctx.provider === "claude" ? "no-tools" : "cwd-only"}`);
+    // Labelled from the argv actually sent: no-tools only when --tools= is in it.
+    const isolation = ctx.provider === "claude" && textOnlyArgv().includes("--tools=") ? "no-tools" : "cwd-only";
+    ctx.log(`[check-author] isolation: ${isolation}`);
     try {
-      writeFileSync(join(dir, "author-isolation.txt"), `check author isolation: ${ctx.provider === "claude" ? "no-tools" : "cwd-only"}\n`);
+      writeFileSync(join(dir, "author-isolation.txt"), `check author isolation: ${isolation}\n`);
     } catch { /* informational */ }
     if (!ok) {
       ctx.log(`[check-author] no valid checks after ${attempts} attempt(s); completion stays blocked`);
