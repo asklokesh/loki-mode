@@ -182,6 +182,18 @@ describe("FC-21b: the sealed receipt", () => {
     const plain = await seal("rt2", { exit: "killed", limit_s: 480, elapsed_s: 481 }, greenVerify([]));
     expect(plain.implement_limit).toEqual({ limit_s: 480, elapsed_s: 481 });
   });
+  const capped = { exit: "killed", limit_s: 480, elapsed_s: 30, stop_cause: "max_turns", owner: "harness" };
+  const redVerify = (): Obj => { const g = greenVerify(["bun:w.test.ts"]); (g.checks as Obj[]).push({ name: "bun:other.test.ts", cmd: "bun test", result: "fail", n: 1, duration_s: 1 }); return g; };
+  test("a turn cap with a target pass but one failing check seals PARTIAL", async () => {
+    const r = await seal("rcr", capped, redVerify());
+    expect(r.verdict).toBe("PARTIAL");
+    expect(r.implement_limit).toEqual({ limit_s: 480, elapsed_s: 30, stop_cause: "max_turns", owner: "harness" });
+  });
+  test("a turn cap with a target pass and every check green seals VERIFIED", async () => {
+    const r = await seal("rcg", capped, greenVerify(["bun:w.test.ts"]));
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.implement_limit).toEqual({ limit_s: 480, elapsed_s: 30, stop_cause: "max_turns", owner: "harness" });
+  });
   test("a limit with no target check seals PARTIAL; a run with no limit has no implement_limit key", async () => {
     expect((await seal("rp", { exit: "killed", limit_s: 480, elapsed_s: 481 }, greenVerify([]))).verdict).toBe("PARTIAL");
     const none = await seal("rn", { exit: "done" }, greenVerify([]));
