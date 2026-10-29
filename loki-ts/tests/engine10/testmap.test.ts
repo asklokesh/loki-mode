@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { buildTestMap, guessRunner, harnessRunners, impactedRefs, projectInterpreter, RealTestMapProvider } from "../../src/engine10/testmap.ts";
+import { buildTestMap, guessRunner, harnessRunners, impactedRefs, missingJavaTool, projectInterpreter, RealTestMapProvider } from "../../src/engine10/testmap.ts";
 
 const MIXED = resolve(import.meta.dir, "fixtures/testmap");
 
@@ -338,7 +338,7 @@ describe("harnessRunners (no project runner: the source language's own stdlib ru
   });
   test("source language whose tool is not on PATH or has no stdlib runner: no runner (Wall skips), never bun", () => {
     expect(harnessRunners([], ["paginate.py"], { PATH: "/nonexistent" })).toEqual([]);
-    expect(harnessRunners([], ["lib.java"], withTools)).toEqual([]);
+    expect(harnessRunners([], ["lib.kt"], withTools)).toEqual([]);
   });
   test("bun only when no source in another language", () => expect(harnessRunners([], ["a.ts", "b.js"], withTools)).toEqual(["bun"]));
   test("the majority language of the runnable sources picks the runner, never a stray file", () => {
@@ -382,7 +382,7 @@ describe("harnessRunners language attribution (D122: linguist rules, .gitattribu
     const root = repo(files), g = (...a: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: root, encoding: "utf8" });
     g("init", "-q"); g("add", "-A"); g("commit", "-q", "-m", "x");
     const bin = mkdtempSync(join(tmpdir(), "loki-hr2-")); temps.push(bin);
-    writeFileSync(join(bin, "python3"), "#!/bin/sh\n"); chmodSync(join(bin, "python3"), 0o755);
+    for (const t of ["python3", "javac"]) { writeFileSync(join(bin, t), "#!/bin/sh\n"); chmodSync(join(bin, t), 0o755); }
     return { root, list: Object.keys(files).filter((f) => f !== ".gitattributes"), env: { PATH: `${bin}:${process.env.PATH ?? ""}` } };
   }
   const ts = (): Record<string, string> => many("src", 5, ".ts", (i) => `export const f${i} = ${i};\n${filler(2000, "//")}`);
@@ -421,13 +421,46 @@ describe("harnessRunners language attribution (D122: linguist rules, .gitattribu
   test("rails_with_js: Ruby bytes outweigh the JS, so no runner (never bun on a non-JS repo)", () => {
     expect(pick(lrepo({ ...many("app", 6, ".rb", () => filler(3000)), ...many("app/js", 2, ".js", () => filler(500, "//")) }))).toEqual([]);
   });
-  test("java_with_js: Java bytes outweigh the JS and the top stdlib language, so no runner", () => {
-    expect(pick(lrepo({ ...many("src", 6, ".java", () => filler(3000, "//")), ...many("web", 2, ".js", () => filler(500, "//")), ...many("tools", 2, ".py", () => filler(300)) }))).toEqual([]);
+  test("java_with_js: Java bytes outweigh the JS and the top stdlib language, so plain javac runs the Wall (HV1-03b), never bun", () => {
+    expect(pick(lrepo({ ...many("src", 6, ".java", () => filler(3000, "//")), ...many("web", 2, ".js", () => filler(500, "//")), ...many("tools", 2, ".py", () => filler(300)) }))).toEqual(["javac"]);
   });
   test("control: the same JS outweighing the Ruby picks bun", () => {
     expect(pick(lrepo({ ...many("app", 2, ".rb", () => filler(500)), ...many("app/js", 6, ".js", () => filler(3000, "//")) }))).toEqual(["bun"]);
   });
   test("a minified file outside any vendor path is still dropped by the line-length heuristic", () => {
     expect(pick(lrepo({ "app.py": filler(2000), "web/bundle.js": `${"a=1;".repeat(15000)}\n` }))).toEqual(["unittest"]);
+  });
+});
+
+describe("Java repos get a Wall runner (HV1-03b)", () => {
+  const none = { PATH: "/nonexistent" };
+  const tools = (): { PATH: string } => { const bin = mkdtempSync(join(tmpdir(), "loki-jv-")); temps.push(bin); for (const t of ["mvn", "gradle", "javac"]) { writeFileSync(join(bin, t), "#!/bin/sh\n"); chmodSync(join(bin, t), 0o755); } return { PATH: `${bin}:/nonexistent` }; };
+  test("pom.xml is maven evidence; build.gradle(.kts), settings.gradle and gradlew are gradle evidence", () => {
+    expect(buildTestMap(repo({ "pom.xml": "<project/>", "src/main/java/A.java": "class A {}" })).runners).toEqual(["maven"]);
+    expect(buildTestMap(repo({ "build.gradle.kts": "", "src/main/java/A.java": "class A {}" })).runners).toEqual(["gradle"]);
+    expect(buildTestMap(repo({ gradlew: "#!/bin/sh\n" })).runners).toEqual(["gradle"]);
+  });
+  test("a Java file with no build tool at all (the heldout seeds) runs under plain javac", () => {
+    expect(harnessRunners([], ["README.md", "src/main/java/cal/CalendarMath.java", "src/main/java/cal/Report.java"], tools())).toEqual(["javac"]);
+  });
+  test("a Wall test in src/test/java is runnable: maven, gradle and javac each pick their own runner", () => {
+    expect(guessRunner("loki_wall_LeapTest.java", ["maven"])).toBe("maven");
+    expect(guessRunner("loki_wall_LeapTest.java", ["gradle"])).toBe("gradle");
+    expect(guessRunner("loki_wall_LeapTest.java", ["javac"])).toBe("javac");
+    expect(guessRunner("loki_wall_LeapTest.java", ["pytest"])).toBeNull();
+  });
+  test("a manifest-detected build tool that is not installed is no runner, and the skip names the tool", () => {
+    expect(harnessRunners(["maven"], ["pom.xml", "src/main/java/A.java"], none)).toEqual([]);
+    expect(harnessRunners(["maven"], ["pom.xml", "src/main/java/A.java"], tools())).toEqual(["maven"]);
+    expect(missingJavaTool(["pom.xml", "src/main/java/A.java"], none)).toBe("mvn");
+    expect(missingJavaTool(["build.gradle"], none)).toBe("gradle");
+    expect(missingJavaTool(["src/main/java/A.java"], none)).toBe("javac");
+    expect(missingJavaTool(["src/main/java/A.java"], tools())).toBeNull();
+    expect(missingJavaTool(["a.py"], none)).toBeNull();
+  });
+  test("the repo's own wrapper counts as the tool", () => {
+    const root = repo({ mvnw: "#!/bin/sh\n", "pom.xml": "<project/>" });
+    expect(harnessRunners(["maven"], ["pom.xml"], none, root)).toEqual(["maven"]);
+    expect(missingJavaTool(["pom.xml"], none, root)).toBeNull();
   });
 });

@@ -18,7 +18,7 @@ export interface EngineTestMap extends TestMap {
   /** source basename -> repo-relative test paths that import/reference it. */
   readonly sourceRefs: Record<string, string[]>;
 }
-const RUNNER_ORDER: readonly RunnerName[] = ["pytest", "vitest", "jest", "bun", "node", "npm", "go", "cargo"];
+const RUNNER_ORDER: readonly RunnerName[] = ["pytest", "vitest", "jest", "bun", "node", "npm", "go", "cargo", "maven", "gradle", "javac"];
 export const COMMANDS: Record<RunnerName, CommandSpec> = {
   pytest: { cmd: "python -m pytest -q <files>", coarse: false },
   unittest: { cmd: "python3 -m unittest <files>", coarse: false },
@@ -29,6 +29,9 @@ export const COMMANDS: Record<RunnerName, CommandSpec> = {
   npm: { cmd: "npm test --silent", coarse: true },
   go: { cmd: "go test ./<pkg dirs>", coarse: false },
   cargo: { cmd: "cargo test", coarse: true },
+  maven: { cmd: "mvn test -Dtest=<class>", coarse: false },
+  gradle: { cmd: "gradle cleanTest test --tests <class>", coarse: false },
+  javac: { cmd: "javac + java <test class>", coarse: false },
 };
 /** Repo's own interpreter first (E-53): `<root>/.venv/bin/python`, then  `<root>/venv/bin/python`, else bare `python` on PATH. */
 function pytestPython(root: string): string {
@@ -39,16 +42,25 @@ function pytestPython(root: string): string {
   return "python";
 }
 /** One runner resolver for a repo whose Project Model names no runner (FC-WALL-HARNESS-TOOLCHAIN-ON-FOREIGN-STACK). A source file in another language selects that language's own stdlib runner (python3 -m unittest, go test, cargo test) when its tool is on PATH; a source language with no stdlib runner here, or a missing tool, yields [] (Wall skips with NOT PROVEN, before any model session). Loki's own bun runs the Wall only when JS/TS holds at least as many source bytes as any other language (or the repo has no source at all: docs, plugins, config). The env switch LOKI_WALL_HARNESS_RUNNER=0 or no bun on PATH turns off the bun fallback only. */
-const STDLIB_RUNNERS: ReadonlyArray<{ ext: RegExp; runner: RunnerName; tool: string }> = [{ ext: /\.py$/, runner: "unittest", tool: "python3" }, { ext: /\.go$/, runner: "go", tool: "go" }, { ext: /\.rs$/, runner: "cargo", tool: "cargo" }];
+const STDLIB_RUNNERS: ReadonlyArray<{ ext: RegExp; runner: RunnerName; tool: string }> = [{ ext: /\.py$/, runner: "unittest", tool: "python3" }, { ext: /\.go$/, runner: "go", tool: "go" }, { ext: /\.rs$/, runner: "cargo", tool: "cargo" }, { ext: /\.java$/, runner: "javac", tool: "javac" }];
 const FOREIGN_SOURCE_RE = /\.(?:py|go|rs|java|kt|kts|scala|rb|php|cs|c|cc|cpp|cxx|h|hpp|swift|m|mm|ex|exs|erl|hs|clj|lua|pl|dart|r|jl|zig)$/i;
+/** HV1-03b: the tool each Java runner needs (the repo wrapper counts for maven and gradle). */
+const JAVA_TOOLS: Partial<Record<RunnerName, { tool: string; wrapper?: string }>> = { maven: { tool: "mvn", wrapper: "mvnw" }, gradle: { tool: "gradle", wrapper: "gradlew" }, javac: { tool: "javac" } };
+const javaToolOk = (r: RunnerName, env: NodeJS.ProcessEnv, root?: string): boolean => { const t = JAVA_TOOLS[r]; return !t || !!Bun.which(t.tool, { PATH: env.PATH ?? "" }) || (!!t.wrapper && !!root && existsSync(join(root, t.wrapper))); };
+/** HV1-03b: the Java tool that would run this repo's Wall but is not installed ("mvn", "gradle", "javac"), else null. Names the cause in the skip note so a Java repo is never skipped with a bare "no runnable test command". */
+export function missingJavaTool(files: readonly string[], env: NodeJS.ProcessEnv = process.env, root?: string): string | null {
+  const want: RunnerName | null = files.some((f) => /(?:^|\/)pom\.xml$/.test(f)) ? "maven" : files.some((f) => /(?:^|\/)(?:build|settings)\.gradle(?:\.kts)?$|(?:^|\/)gradlew$/.test(f)) ? "gradle" : files.some((f) => /\.java$/.test(f)) ? "javac" : null;
+  return want && !javaToolOk(want, env, root) ? JAVA_TOOLS[want]!.tool : null;
+}
 /** Detected runner first; the language holding most runnable sources picks its stdlib runner, else Loki's own bun runs the Wall's bun:test file (docs, plugins, config, JS/TS). Off with LOKI_WALL_HARNESS_RUNNER=0 or no bun on PATH, then the repo's own toolchain (RX-1); `focus` (changed or sealed files) picks the toolchain in a polyglot repo. */
-export const harnessRunners = (runners: RunnerName[], files: readonly string[] = [], env: NodeJS.ProcessEnv = process.env, root?: string, focus: readonly string[] = []): RunnerName[] => {
+export const harnessRunners = (runners: RunnerName[], files: readonly string[] = [], env: NodeJS.ProcessEnv = process.env, root?: string, focus: readonly string[] = []): RunnerName[] => pickHarnessRunners(runners, files, env, root, focus).filter((r) => javaToolOk(r, env, root)); // HV1-03b: a Java build tool that is not installed is never a runner (the Wall then skips with the tool named, see missingJavaTool) instead of a base run that cannot start
+const pickHarnessRunners = (runners: RunnerName[], files: readonly string[], env: NodeJS.ProcessEnv, root: string | undefined, focus: readonly string[]): RunnerName[] => {
   const onPath = (tool: string): boolean => !!Bun.which(tool, { PATH: env.PATH ?? "" }), w = languageBytes(root, files, (f) => STDLIB_RUNNERS.find((r) => r.ext.test(f))?.runner ?? (/\.[cm]?[jt]sx?$/i.test(f) ? "js" : FOREIGN_SOURCE_RE.test(f) ? "other" : null)), at = (k: string): number => w.get(k) ?? 0, js = at("js"), top = STDLIB_RUNNERS.reduce((a, r) => (at(r.runner) > at(a.runner) ? r : a)), bun: RunnerName[] = env.LOKI_WALL_HARNESS_RUNNER !== "0" && onPath("bun") ? ["bun"] : toolchainRunner(files, focus); // RX-1: no bun either: the repo's own toolchain runs the Wall instead of skipping it
   const t = at(top.runner), o = at("other");
   return runners.length > 0 ? runners : js >= t && js >= o ? (js === 0 && w.size > 0 ? [] : bun) : t > o ? (onPath(top.tool) ? [top.runner] : toolchainRunner(files, focus)) : []; // the language holding the most source BYTES wins after linguist's vendored/generated/documentation rules and .gitattributes; a tie with JS goes to bun, a stdlib language whose tool is not on PATH falls to the repo's own manifest toolchain (RX-1; [] without a manifest, so NOT PROVEN), a tie between a stdlib language and an unsupported one yields [] (NOT PROVEN), and bun never runs a repo whose largest language is not JS/TS; one runner, so the Wall brief and verify agree
 };
 /** RX-1: manifest -> the runner its own language toolchain ships (COMMANDS holds the command), plus that language's source extension. A manifest only makes a toolchain eligible; in a polyglot repo the focus files (changed or sealed) choose among the eligible ones by language, else the first eligible wins. */
-const TOOLCHAINS: readonly (readonly [RegExp, RunnerName, RegExp])[] = [[/(?:^|\/)package\.json$/, "node", /\.[cm]?[jt]sx?$/], [/(?:^|\/)go\.mod$/, "go", /\.go$/], [/(?:^|\/)Cargo\.toml$/, "cargo", /\.rs$/], [/(?:^|\/)(?:pyproject\.toml|setup\.py|setup\.cfg|requirements(?:[-_.][\w.-]+)?\.txt|tox\.ini|pytest\.ini)$/, "pytest", /\.py$/]];
+const TOOLCHAINS: readonly (readonly [RegExp, RunnerName, RegExp])[] = [[/(?:^|\/)package\.json$/, "node", /\.[cm]?[jt]sx?$/], [/(?:^|\/)go\.mod$/, "go", /\.go$/], [/(?:^|\/)Cargo\.toml$/, "cargo", /\.rs$/], [/(?:^|\/)pom\.xml$/, "maven", /\.java$/], [/(?:^|\/)(?:build|settings)\.gradle(?:\.kts)?$|(?:^|\/)gradlew$/, "gradle", /\.java$/], [/(?:^|\/)(?:pyproject\.toml|setup\.py|setup\.cfg|requirements(?:[-_.][\w.-]+)?\.txt|tox\.ini|pytest\.ini)$/, "pytest", /\.py$/]];
 const toolchainRunner = (files: readonly string[], focus: readonly string[] = []): RunnerName[] => { const el = TOOLCHAINS.filter(([m]) => files.some((f) => m.test(f))), votes = (t: (typeof TOOLCHAINS)[number]): number => focus.filter((f) => t[2].test(f)).length; return el.length ? [el.reduce((b, t) => (votes(t) > votes(b) ? t : b))[1]] : []; };
 /** Cargo selects one file only as `cargo test --test <stem>`, and only for an integration test directly under a tests/ directory. */
 export const CARGO_TEST_FILE_RE = /(?:^|\/)tests\/[^/]+\.rs$/;
@@ -57,6 +69,7 @@ export function guessRunner(fileName: string, runners: RunnerName[], relPath?: s
   if (fileName.endsWith(".py")) return runners.includes("unittest") && !runners.includes("pytest") ? "unittest" : "pytest";
   if (fileName.endsWith(".go")) return "go";
   if (fileName.endsWith(".rs")) return runners.includes("cargo") && relPath !== undefined && CARGO_TEST_FILE_RE.test(relPath) ? "cargo" : null;
+  if (fileName.endsWith(".java")) return (["maven", "gradle", "javac"] as const).find((r) => runners.includes(r)) ?? null; // HV1-03b: a Java test runs under the repo's own build tool, else plain javac
   return /\.[cm]?[jt]sx?$/.test(fileName) ? (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r)) ?? null : null; // a JS runner only ever runs a JS/TS file
 }
 /** TEN-COST-09: "project" when a repo-local interpreter exists (.venv, venv, or an in-repo VIRTUAL_ENV), else "system". Mirrors verify.ts resolveTool, which marks a system pytest result not_run. */
@@ -87,6 +100,8 @@ export function buildTestMap(root: string): EngineTestMap {
     else if (/^jest\.config\.[cm]?[jt]s(on)?$/.test(name)) mark("jest", rel);
     else if (name === "go.mod" || GO_TEST_RE.test(name)) mark("go", rel);
     else if (name === "Cargo.toml") mark("cargo", rel);
+    else if (name === "pom.xml") mark("maven", rel);
+    else if (/^(?:build|settings)\.gradle(?:\.kts)?$/.test(name) || name === "gradlew") mark("gradle", rel);
   }
   // Per-file test entries exist only for narrowly-selectable runners: npm and cargo run the whole suite (coarse), so no individual file earns a TestRef for them.
   const jsRunner: RunnerName | null = evidence["vitest"] ? "vitest" : evidence["jest"] ? "jest" : evidence["bun"] ? "bun" : evidence["node"] ? "node" : null;

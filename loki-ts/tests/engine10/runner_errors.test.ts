@@ -269,9 +269,9 @@ describe("FC-WALL-HARNESS-TOOLCHAIN-ON-FOREIGN-STACK Wall runs in the repo's own
     expect(rs.brief).toContain("cargo test");
     expect(rs.brief).not.toContain("bun:test");
   });
-  test("source with no stdlib runner (Java): skipped in under 10s with NOT PROVEN, no session", async () => {
+  test("source with no stdlib runner (Kotlin): skipped in under 10s with NOT PROVEN, no session", async () => {
     const t0 = Date.now();
-    const { r, called } = await wallFor(["src/Main.java"], {});
+    const { r, called } = await wallFor(["src/Main.kt"], {});
     expect(Date.now() - t0).toBeLessThan(10_000);
     expect(r.status).toBe("skipped");
     expect(called).toBe(0);

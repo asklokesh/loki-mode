@@ -1,5 +1,5 @@
 // engine10/failures.ts -- failing test ids (A-112) and the FailureGroup shape fix.ts consumes (E-17). The per-runner parsers and groupFailures had no production caller (only their own tests) and were deleted by A-115.
-import { stripAnsi } from "../util/check_result.ts";
+import { javaSummary, stripAnsi } from "../util/check_result.ts";
 export interface FailureGroup {
   signature: string; // normalized reason: numbers and quoted values collapsed
   count: number;
@@ -49,6 +49,8 @@ function goCargoIds(output: string): string[] | null {
 export function failIds(raw: string): string[] {
   const output = stripAnsi(raw), gc = goCargoIds(output);
   if (gc) return gc;
+  const jv = javaSummary(output); // HV1-03b: surefire / gradle / javac-wrapper ids, only when they cover the vouched failed count
+  if (jv) return jv.failed > 0 && jv.ids.length >= jv.failed ? jv.ids : [];
   const ids = [...new Set(output.split("\n").map((l) => ID_LINE.exec(l.trim())).flatMap((m) => (m ? [(m.slice(1).find(Boolean) ?? "").trim()] : [])).filter(Boolean))];
   const c = failCount(output);
   return c && ids.length >= c ? ids : [];

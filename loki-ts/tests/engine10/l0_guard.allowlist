@@ -36,8 +36,10 @@ src/engine10/testmap.ts	cargo test
 src/engine10/testmap.ts	go test
 src/engine10/testmap.ts	go.mod
 src/engine10/testmap.ts	jest
+src/engine10/testmap.ts	mvn test
 src/engine10/testmap.ts	npm test
 src/engine10/testmap.ts	package.json
+src/engine10/testmap.ts	pom.xml
 src/engine10/testmap.ts	pyproject.toml
 src/engine10/testmap.ts	pytest
 src/engine10/testmap.ts	vitest

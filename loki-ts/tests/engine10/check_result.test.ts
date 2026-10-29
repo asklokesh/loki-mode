@@ -1,10 +1,11 @@
 // FC-16: a check that executed zero tests is NOT a pass. One shared classifier, every runner fixture, plus the verdict gate.
 import { afterAll, describe, expect, test } from "bun:test";
+import { failIds } from "../../src/engine10/failures.ts";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { changedSymbols, checkProvenance, classifyCheck, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
+import { changedSymbols, checkProvenance, classifyCheck, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, javaSummary, javaTestClass, fullSuiteCmd, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
 import { firstError, runCheck, testCheckName, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -444,3 +445,96 @@ describe("FC-WALL-GO-FILE-RUNS-WHOLE-PACKAGE: goTestNames and the go argv", () =
     expect(runnerCmd({ runner: "go", path: "z_test.go" }, dir)[1]).toEqual(["test", "-json", "./."]);
   });
 });
+
+// HV1-03b. No mvn or gradle is installed on the build machine, so the maven and gradle outputs below are written from the tools' documented report formats (surefire "Results:" block, gradle -i "Class > method() PASSED"), not captured. The plain-javac path is run for real below.
+const MVN_PASS = "[INFO] Running cal.LeapTest\n[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.05 s -- in cal.LeapTest\n[INFO] \n[INFO] Results:\n[INFO] \n[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0\n[INFO] \n[INFO] ------------------------------------------------------------------------\n[INFO] BUILD SUCCESS\n[INFO] ------------------------------------------------------------------------\n[INFO] Total time:  2.1 s\n";
+const MVN_FAIL = "[ERROR] Tests run: 3, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.05 s <<< FAILURE! -- in cal.LeapTest\n[ERROR] cal.LeapTest.century -- Time elapsed: 0.01 s <<< FAILURE!\norg.opentest4j.AssertionFailedError: expected: <false> but was: <true>\n[INFO] \n[INFO] Results:\n[INFO] \n[ERROR] Failures: \n[ERROR]   LeapTest.century:12 expected: <false> but was: <true>\n[INFO] \n[ERROR] Tests run: 3, Failures: 1, Errors: 0, Skipped: 0\n[INFO] \n[INFO] ------------------------------------------------------------------------\n[INFO] BUILD FAILURE\n[INFO] ------------------------------------------------------------------------\n[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test (default-test) on project cal: There are test failures.\n";
+const MVN_NONE = "[INFO] No tests to run.\n[INFO] ------------------------------------------------------------------------\n[INFO] BUILD SUCCESS\n[INFO] ------------------------------------------------------------------------\n";
+const MVN_COMPILE = "[ERROR] /w/src/test/java/loki_wall_LeapTest.java:[3,8] cannot find symbol\n[INFO] BUILD FAILURE\n[ERROR] Failed to execute goal compiler:testCompile\n";
+const GRADLE_PASS = "> Task :test\ncal.LeapTest > leap() PASSED\ncal.LeapTest > century() PASSED\ncal.LeapTest > skipped() SKIPPED\n\nBUILD SUCCESSFUL in 2s\n3 actionable tasks: 3 executed\n";
+const GRADLE_FAIL = "> Task :test FAILED\ncal.LeapTest > leap() PASSED\ncal.LeapTest > century() FAILED\n    org.opentest4j.AssertionFailedError at LeapTest.java:12\n\n2 tests completed, 1 failed\n\nFAILURE: Build failed with an exception.\n\nBUILD FAILED in 2s\n";
+const GRADLE_UPTODATE = "> Task :test UP-TO-DATE\n\nBUILD SUCCESSFUL in 500ms\n";
+
+describe("Java run reports (HV1-03b)", () => {
+  test("maven pass: executed count from the Results block, exit status alone proves nothing", () => {
+    expect(javaSummary(MVN_PASS)).toEqual({ executed: 3, failed: 0, ids: [] });
+    expect(testCount(MVN_PASS, "src/test/java/cal/LeapTest.java", true)).toBe(3);
+    expect(classify({ runner: "maven", path: "src/test/java/cal/LeapTest.java" }, 0, MVN_PASS, "/nonexistent")).toBe("pass");
+    expect(classify({ runner: "maven", path: "src/test/java/cal/LeapTest.java" }, 0, MVN_NONE, "/nonexistent")).toBe("not_run");
+    expect(classify({ runner: "maven", path: "src/test/java/cal/LeapTest.java" }, 0, "", "/nonexistent")).toBe("not_run");
+  });
+  test("maven fail: red with the failing test id; a compile error is not_run", () => {
+    expect(javaSummary(MVN_FAIL)).toEqual({ executed: 3, failed: 1, ids: ["cal.LeapTest.century"] });
+    expect(failIds(MVN_FAIL)).toEqual(["cal.LeapTest.century"]);
+    expect(classify({ runner: "maven", path: "src/test/java/cal/LeapTest.java" }, 1, MVN_FAIL, "/nonexistent")).toBe("fail");
+    expect(classify({ runner: "maven", path: "src/test/java/cal/LeapTest.java" }, 1, MVN_COMPILE, "/nonexistent")).toBe("not_run");
+  });
+  test("a forged or contradictory report is unmeasured", () => {
+    expect(javaSummary(MVN_PASS.replace("BUILD SUCCESS", "BUILD FAILURE"))).toBeNull();
+    expect(javaSummary(MVN_FAIL.replace("BUILD FAILURE", "BUILD SUCCESS"))).toBeNull();
+    expect(javaSummary("[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0\n[INFO] BUILD SUCCESS\n")).toBeNull();
+    expect(javaSummary("Tests run: 3\n")).toBeNull();
+  });
+  test("gradle -i: PASSED and FAILED lines are the count, skipped did not execute, an up-to-date task ran nothing", () => {
+    expect(javaSummary(GRADLE_PASS)).toEqual({ executed: 2, failed: 0, ids: [] });
+    expect(javaSummary(GRADLE_FAIL)).toEqual({ executed: 2, failed: 1, ids: ["cal.LeapTest.century()"] });
+    expect(failIds(GRADLE_FAIL)).toEqual(["cal.LeapTest.century()"]);
+    expect(javaSummary(GRADLE_UPTODATE)).toBeNull();
+    expect(classify({ runner: "gradle", path: "src/test/java/cal/LeapTest.java" }, 0, GRADLE_UPTODATE, "/nonexistent")).toBe("not_run");
+    expect(classify({ runner: "gradle", path: "src/test/java/cal/LeapTest.java" }, 0, GRADLE_PASS, "/nonexistent")).toBe("pass");
+    expect(classify({ runner: "gradle", path: "src/test/java/cal/LeapTest.java" }, 1, GRADLE_FAIL, "/nonexistent")).toBe("fail");
+  });
+  test("build tool missing or not started is not_run, never pass or fail", () => {
+    for (const runner of ["maven", "gradle", "javac"] as const) for (const status of [null, 127, 126]) expect(classify({ runner, path: "src/test/java/XTest.java" }, status, "", "/nonexistent")).toBe("not_run");
+  });
+  test("commands: maven and gradle select the one class, a repo wrapper wins, javac gets root and class", () => {
+    const root = mkdtempSync(join(tmpdir(), "hv103b-")); dirs.push(root);
+    expect(runnerCmd({ runner: "maven", path: "src/test/java/cal/LeapTest.java" }, root)).toEqual(["mvn", ["-B", "test", "-Dtest=LeapTest", "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false"]]);
+    expect(runnerCmd({ runner: "gradle", path: "src/test/java/cal/LeapTest.java" }, root)[1]).toEqual(["cleanTest", "test", "--tests", "cal.LeapTest", "-i", "--console=plain"]);
+    writeFileSync(join(root, "gradlew"), "#!/bin/sh\n");
+    expect(runnerCmd({ runner: "gradle", path: "src/test/java/cal/LeapTest.java" }, root)[0]).toBe("./gradlew");
+    expect(runnerCmd({ runner: "javac", path: "src/test/java/cal/LeapTest.java" }, root).slice(0, 1)).toEqual(["bash"]);
+    expect(javaTestClass("src/test/java/cal/LeapTest.java")).toEqual({ root: ".", cls: "cal.LeapTest", rel: "src/test/java/cal/LeapTest.java" });
+    expect(javaTestClass("svc/src/test/java/LeapTest.java")).toEqual({ root: "svc", cls: "LeapTest", rel: "src/test/java/LeapTest.java" });
+    expect(fullSuiteCmd("maven", root).cmd).toBe("mvn");
+  });
+});
+
+describe.skipIf(!Bun.which("javac") || !Bun.which("java") || !Bun.which("bash"))("plain javac Wall run, for real (HV1-03b)", () => {
+  const seed = (test: string): string => {
+    const root = mkdtempSync(join(tmpdir(), "hv103b-javac-")); dirs.push(root);
+    mkdirSync(join(root, "src/main/java/cal"), { recursive: true }); mkdirSync(join(root, "src/test/java"), { recursive: true });
+    writeFileSync(join(root, "src/main/java/cal/Leap.java"), "package cal;\npublic class Leap { public static boolean is(int y) { return y % 4 == 0 && (y % 100 != 0 || y % 400 == 0); } }\n");
+    writeFileSync(join(root, "src/test/java/loki_wall_LeapTest.java"), test);
+    return root;
+  };
+  const T = (body: string): string => `import cal.Leap;\npublic class loki_wall_LeapTest {\n  static boolean failed;\n  static void check(String n, boolean ok) { System.out.println((ok ? "PASS " : "FAIL ") + n); if (!ok) failed = true; }\n  public static void main(String[] a) { ${body} if (failed) System.exit(1); }\n}\n`;
+  const run = (root: string): { status: number | null; out: string } => { const [cmd, args] = runnerCmd({ runner: "javac", path: "src/test/java/loki_wall_LeapTest.java" }, root), r = spawnSync(cmd, args, { cwd: root, encoding: "utf8" }); return { status: r.status, out: `${r.stdout}\n${r.stderr}` }; };
+  test("passing tests: exit 0 and a counted summary classify pass", () => {
+    const r = run(seed(T('check("2000", Leap.is(2000)); check("1900", !Leap.is(1900));')));
+    expect(r.status).toBe(0);
+    expect(javaSummary(r.out)).toEqual({ executed: 2, failed: 0, ids: [] });
+    expect(classify({ runner: "javac", path: "src/test/java/loki_wall_LeapTest.java" }, r.status, r.out, "/nonexistent")).toBe("pass");
+  });
+  test("a failing test is red with its id", () => {
+    const r = run(seed(T('check("2000", Leap.is(2000)); check("1900 is leap", Leap.is(1900));')));
+    expect(r.status).toBe(1);
+    expect(javaSummary(r.out)).toEqual({ executed: 2, failed: 1, ids: ["1900 is leap"] });
+    expect(failIds(r.out)).toEqual(["1900 is leap"]);
+    expect(classify({ runner: "javac", path: "src/test/java/loki_wall_LeapTest.java" }, r.status, r.out, "/nonexistent")).toBe("fail");
+  });
+  test("a test that prints nothing exits 0 but is not a pass; a compile error is not_run", () => {
+    const quiet = run(seed(T("")));
+    expect(quiet.status).toBe(0);
+    expect(classify({ runner: "javac", path: "src/test/java/loki_wall_LeapTest.java" }, quiet.status, quiet.out, "/nonexistent")).toBe("not_run");
+    const broken = run(seed("public class loki_wall_LeapTest { nope }"));
+    expect(classify({ runner: "javac", path: "src/test/java/loki_wall_LeapTest.java" }, broken.status, broken.out, "/nonexistent")).toBe("not_run");
+  });
+  test("the full-suite command runs every *Test.java", () => {
+    const root = seed(T('check("2000", Leap.is(2000));')), s = fullSuiteCmd("javac", root), r = spawnSync(s.cmd, s.args, { cwd: root, encoding: "utf8" });
+    expect(testCount(`${r.stdout}\n${r.stderr}`, undefined, r.status === 0)).toBe(1);
+  });
+});
+
+const dirs: string[] = [];
+afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
