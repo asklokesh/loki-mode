@@ -110,6 +110,28 @@ export function writeProviderCost(dest: string, provider: string, model: string,
   return rec;
 }
 
+/** Reviewer-stage cost: one result-cost-<iter>.json per reviewer (stage "review", plus reviewer and model). Claude's --output-format json carries total_cost_usd and usage; other reviewers report tokens at most. A figure the reviewer did not report is left OUT of the file (unknown, never 0), so the run total stays null rather than undercounted. */
+export function writeReviewerCost(lokiRoot: string, iterationId: string, o: { reviewer: string; provider: string; model?: string; stdout: string; stderr?: string }): void {
+  try {
+    const rec: Record<string, unknown> = { stage: "review", reviewer: o.reviewer };
+    let model = o.model || "";
+    if (o.provider === "claude") {
+      const j = JSON.parse(o.stdout) as { total_cost_usd?: unknown; usage?: Record<string, unknown>; modelUsage?: Record<string, unknown> };
+      if (typeof j.total_cost_usd === "number" && Number.isFinite(j.total_cost_usd)) rec["total_cost_usd"] = j.total_cost_usd;
+      const u = j.usage ?? {};
+      for (const [k, from] of [["input_tokens", "input_tokens"], ["output_tokens", "output_tokens"], ["cache_read_tokens", "cache_read_input_tokens"], ["cache_creation_tokens", "cache_creation_input_tokens"]] as const) if (typeof u[from] === "number") rec[k] = u[from];
+      model = Object.keys(j.modelUsage ?? {})[0] || model; // the provider-reported model wins over the requested pin
+    } else {
+      const u = parseUsage(o.provider, `${o.stdout}\n${o.stderr ?? ""}`);
+      if (u) { rec["input_tokens"] = u.input; rec["output_tokens"] = u.output; if (u.usd !== null) rec["total_cost_usd"] = u.usd; }
+    }
+    if (model) rec["model"] = model;
+    const dir = join(lokiRoot, "metrics");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `result-cost-${iterationId}.json`), JSON.stringify(rec));
+  } catch { /* best-effort: no file means the reviewer's cost is unknown, which the sum already reports */ }
+}
+
 // --- E-06b: .loki/metrics/efficiency/iteration-<N>.json -------------------
 
 export interface EfficiencySessionInfo {

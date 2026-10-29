@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { existsSync, readFileSync, rmSync as rmTree } from "node:fs";
 import { acceptanceLines, acceptancePromptBlock } from "../../src/util/intent_card.ts";
 import { REVIEW_ALLOWLIST_NO_GIT, REVIEW_ALLOWLIST_TOKEN, REVIEW_GUARD_DENYLIST } from "../../src/providers/claude_flags.ts";
+import { sumResultCosts } from "../../src/engine10/cost.ts";
 import { crossReview, hygieneFindings, ignoredPaths, minVerdict, modelReviewRan, parseReview, reviewArgv, reviewProvider, reviewReceipt } from "../../src/engine10/stages/xreview.ts";
 
 const root = mkdtempSync(join(tmpdir(), "xv1-"));
@@ -218,6 +219,24 @@ describe("medium default review", () => {
       expect(r?.level).toBe("pass"); expect(r?.provider).toBe("claude"); expect(r?.same_vendor_default).toBe(true);
       expect(reviewReceipt("claude", r).review).toEqual({ provider: "claude", vendor_differs: false, same_vendor: true, defaulted: true, level: "pass", ran: "reviewer (sonnet)" });
     });
+  });
+  it("reviewer cost: one result-cost line per reviewer, the run total includes it, an unreported cost is unknown not 0", async () => {
+    const { ctx } = mk("medium"), bd = mkdtempSync(join(root, "costbin-"));
+    const claude = join(bd, "claude"), codex = join(bd, "codex");
+    writeFileSync(claude, `#!/bin/sh\nprintf '%s\\n' '{"type":"result","result":"VERDICT: PASS","total_cost_usd":0.0123,"usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":5},"modelUsage":{"claude-sonnet-x":{}}}'\n`); chmodSync(claude, 0o755);
+    writeFileSync(codex, "#!/bin/sh\nprintf 'VERDICT: PASS\\n'\n"); chmodSync(codex, 0o755);
+    const repoDir = (ctx as { repoDir: string }).repoDir, ids: string[] = [];
+    for (const [provider, stub] of [["claude", claude], ["codex", codex]] as const) {
+      await withEnv(stub, { LOKI_REVIEW_PROVIDER: provider }, async () => { const r = await crossReview({ ...(ctx as object), runId: "r1", provider: "claude" } as never, "VERIFIED", "HEAD"); ids.push(r!.cost_iteration!); });
+    }
+    expect(ids).toEqual(["r1-xreview-claude", "r1-xreview-codex"]);
+    const lines = ids.map((i) => JSON.parse(readFileSync(join(repoDir, ".loki", "metrics", `result-cost-${i}.json`), "utf8")));
+    expect(lines[0]).toMatchObject({ stage: "review", reviewer: "xreview-claude", total_cost_usd: 0.0123, input_tokens: 100, output_tokens: 20, model: "claude-sonnet-x" });
+    expect(lines[1].reviewer).toBe("xreview-codex"); expect("total_cost_usd" in lines[1]).toBe(false);
+    expect(sumResultCosts(join(repoDir, ".loki"), [ids[0]!]).usd).toBe(0.0123);
+    const both = sumResultCosts(join(repoDir, ".loki"), ids);
+    expect(both.usd).toBeNull(); expect(both.partialUsd).toBe(0.0123); expect(both.missing).toEqual(["r1-xreview-codex"]);
+    expect(both.tokens_measured).toEqual({ k: 1, n: 2 }); expect(both.breakdown?.per_stage["review"]?.sessions).toBe(2);
   });
   it("medium default review: a BLOCK caps the verdict at PARTIAL", async () => {
     const { ctx, stub } = mk("medium", "claude", "VERDICT: BLOCK\\n- bad");
