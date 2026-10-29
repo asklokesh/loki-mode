@@ -500,6 +500,29 @@ describe("Java run reports (HV1-03b)", () => {
   });
 });
 
+describe("javac wrapper summary checks are each load-bearing (HV1-03b)", () => {
+  const S = (lines: string[], tail: string): string => `${lines.join("\n")}\n${tail}\n`;
+  test("zero tests run is unmeasured", () => {
+    expect(javaSummary("LOKI_JAVA_TESTS: 0 run, 0 failed\n")).toBeNull();
+    expect(testCount("LOKI_JAVA_TESTS: 0 run, 0 failed\n", undefined, true)).toBeNull();
+    expect(classifyCheck({ kind: "test", ok: true, out: "LOKI_JAVA_TESTS: 0 run, 0 failed\n", path: "src/test/java/XTest.java" }).result).toBe("not_run");
+  });
+  test("failing ids must match the failed count", () => {
+    expect(javaSummary(S(["PASS a", "FAIL b"], "LOKI_JAVA_TESTS: 2 run, 0 failed"))).toBeNull();
+    expect(javaSummary(S(["PASS a", "FAIL b"], "LOKI_JAVA_TESTS: 2 run, 2 failed"))).toBeNull();
+    expect(classifyCheck({ kind: "test", ok: true, out: S(["PASS a", "FAIL b"], "LOKI_JAVA_TESTS: 2 run, 0 failed"), path: "src/test/java/XTest.java" }).result).not.toBe("pass");
+  });
+  test("the PASS and FAIL line count must match the run count", () => {
+    expect(javaSummary(S(["PASS a"], "LOKI_JAVA_TESTS: 5 run, 0 failed"))).toBeNull();
+    expect(javaSummary(S(["PASS a", "PASS b"], "LOKI_JAVA_TESTS: 1 run, 0 failed"))).toBeNull();
+    expect(classifyCheck({ kind: "test", ok: true, out: S(["PASS a"], "LOKI_JAVA_TESTS: 5 run, 0 failed"), path: "src/test/java/XTest.java" }).result).not.toBe("pass");
+  });
+  test("a clean summary is still measured", () => {
+    expect(javaSummary(S(["PASS a", "FAIL b"], "LOKI_JAVA_TESTS: 2 run, 1 failed"))).toEqual({ executed: 2, failed: 1, ids: ["b"] });
+    expect(classifyCheck({ kind: "test", ok: true, out: S(["PASS a", "PASS b"], "LOKI_JAVA_TESTS: 2 run, 0 failed"), path: "src/test/java/XTest.java" }).result).toBe("pass");
+  });
+});
+
 describe.skipIf(!Bun.which("javac") || !Bun.which("java") || !Bun.which("bash"))("plain javac Wall run, for real (HV1-03b)", () => {
   const seed = (test: string): string => {
     const root = mkdtempSync(join(tmpdir(), "hv103b-javac-")); dirs.push(root);
@@ -529,6 +552,15 @@ describe.skipIf(!Bun.which("javac") || !Bun.which("java") || !Bun.which("bash"))
     expect(classify({ runner: "javac", path: "src/test/java/loki_wall_LeapTest.java" }, quiet.status, quiet.out, "/nonexistent")).toBe("not_run");
     const broken = run(seed("public class loki_wall_LeapTest { nope }"));
     expect(classify({ runner: "javac", path: "src/test/java/loki_wall_LeapTest.java" }, broken.status, broken.out, "/nonexistent")).toBe("not_run");
+  });
+  test("a test that prints FAIL but exits 0 is red, not a pass", () => {
+    const body = 'public class loki_wall_LeapTest { public static void main(String[] a) { System.out.println("PASS one"); System.out.println("FAIL two"); } }';
+    const r = run(seed(body));
+    expect(r.status).toBe(1);
+    expect(javaSummary(r.out)).toEqual({ executed: 2, failed: 1, ids: ["two"] });
+    expect(classify({ runner: "javac", path: "src/test/java/loki_wall_LeapTest.java" }, r.status, r.out, "/nonexistent")).toBe("fail");
+    expect(classify({ runner: "javac", path: "src/test/java/loki_wall_LeapTest.java" }, 0, r.out, "/nonexistent")).not.toBe("pass");
+    expect(classifyCheck({ kind: "test", ok: true, out: r.out, path: "src/test/java/loki_wall_LeapTest.java" }).result).toBe("fail");
   });
   test("the full-suite command runs every *Test.java", () => {
     const root = seed(T('check("2000", Leap.is(2000));')), s = fullSuiteCmd("javac", root), r = spawnSync(s.cmd, s.args, { cwd: root, encoding: "utf8" });

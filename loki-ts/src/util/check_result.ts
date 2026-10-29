@@ -180,7 +180,7 @@ export function javaSummary(raw: string): JavaSummary | null {
   }
   return null;
 }
-/** HV1-03b: the plain-javac runner for a Java repo with no build tool. It compiles src/main/java plus the one test file, runs the test class, and counts the "PASS <name>" / "FAIL <name>" lines the test printed, ending with the summary line javaSummary reads. The test's own exit status is kept. */
+/** HV1-03b: the plain-javac runner for a Java repo with no build tool. It compiles src/main/java plus the one test file, runs the test class, and counts the "PASS <name>" / "FAIL <name>" lines the test printed, ending with the summary line javaSummary reads. The test's own exit status is kept, and the wrapper exits 1 when it counted any FAIL line (a test that printed FAIL but exited 0 is still red). */
 const JAVAC_WRAPPER = `set -u
 root="$1"; cls="$2"; shift 2; cd "$root" || exit 70
 if [ "$cls" = "-" ]; then
@@ -196,6 +196,7 @@ for c in $cls; do java -cp "$out" "$c" >> "$out/run.log" 2>&1 || st=$?; done
 cat "$out/run.log"
 p=$(grep -c '^PASS ' "$out/run.log"); f=$(grep -c '^FAIL ' "$out/run.log")
 echo "LOKI_JAVA_TESTS: $((p + f)) run, $f failed"
+[ "$f" -gt 0 ] && st=1
 exit $st`;
 /** HV1-03b: "src/test/java/a/b/XTest.java" -> module root "." and class "a.b.XTest" (a test outside src/test/java is a default-package class named after its file). */
 export function javaTestClass(path: string): { root: string; cls: string; rel: string } {
@@ -277,6 +278,7 @@ export function classifyCheck(i: ClassifyInput): Classified {
   if (n === 0) return { result: "not_run", n: 0, reason: `${NO_TESTS_REASON} (ran 0 tests, empty or all skipped)` };
   if (!i.ok) return { result: "fail", ...(n !== null ? { n } : {}) };
   if (n === null) return { result: "not_run", reason: UNMEASURED_REASON };
+  const jv = javaSummary(text); if (jv && jv.failed > 0) return { result: "fail", n }; // HV1-03b: exit 0 with a Java report that counts failures contradicts itself; never a pass
   return { result: "pass", n };
 }
 /** TEN-QUALITY-17: a test check that fails and then passes on ONE immediate rerun is flaky, not fail, so fix rounds are not spent on it.
@@ -763,7 +765,7 @@ export function classify(f: TestRef, status: number | null, output: string, repo
   if (f.runner === "unittest") return status === 1 && unittestCount(output, false) !== null ? (/unittest\.loader\._FailedTest|Failed to import test module/.test(output) ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "fail") : "not_run"; // red only on a trusted FAILED trailer; a module that failed to import is red only when the missing name is the repo's own (pytestCollectionIsRed), else not_run, as for pytest
   if (f.runner === "pytest") return status === 1 ? (pytestExit1IsRed(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
   if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
-  if (f.runner === "maven" || f.runner === "gradle" || f.runner === "javac") { const j = javaSummary(output); return j && j.failed > 0 ? "fail" : "not_run"; } // HV1-03b: red only on a vouched summary that counts failures; a compile error, a missing tool or no report is not_run
+  if (f.runner === "maven" || f.runner === "gradle" || f.runner === "javac") { const j = javaSummary(output); return j && j.failed > 0 ? "fail" : "not_run"; } // HV1-03b: red only on a vouched summary that counts failures; a missing tool, no report or an unvouched report is not_run (verify's own exit-code path treats a compile error as fail, the safe direction)
   return f.runner === "node" && nodeIsRed(f, output) ? "fail" : "not_run"; // npm/go/cargo: coarse (B2), never a per-file red
 }
 
