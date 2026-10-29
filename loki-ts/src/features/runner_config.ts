@@ -138,10 +138,10 @@ export function runnerConfigNotes(repoDir: string, baseSha: string, head: string
   }
   return [...notes];
 }
-// Dependency trees are not project config: no runner reads a manifest nested in node_modules (pytest's default norecursedirs skips it; jest and vitest read the root config), so the listing excludes it.
+// Dependency trees are not project config: no runner reads a manifest nested in node_modules (this relies on pytest's default norecursedirs, which skips it; a project norecursedirs override that lets pytest into node_modules is a known gap; jest and vitest read the root config), so the listing excludes it.
 // bower_components and vendor are skipped except conftest.py, which pytest does load there (its default norecursedirs names neither). In a site-packages or dist-packages dir the import hooks count: top-level
 // .pth, sitecustomize.py, usercustomize.py and a dist-info entry_points.txt with a [pytest11] plugin section. A hook a sibling *.dist-info/RECORD lists with its current sha256 is exempt, as is the stock virtualenv and uv _virtualenv.pth.
-// Residuals, not checked: a RECORD the agent writes or edits to list a hook's new sha256; a tsconfig.json in node_modules that a project tsconfig extends; the modules a .pth imports (_virtualenv.py, __editable__ finders, _distutils_hack).
+// Residuals, not checked: a RECORD the agent writes or edits to list a hook's new sha256; a tsconfig.json in node_modules that a project tsconfig extends; the modules a .pth imports (_virtualenv.py, __editable__ finders, _distutils_hack); a pytest-plugin entry_points.txt in a .dist-info at the repo root; an .egg-info entry_points.txt; edits to the module an installed plugin entry loads; a node_modules conftest.py when norecursedirs leaves node_modules in.
 const DEP_TREE = /(^|\/)node_modules\//, PY_LOADED_TREE = /(^|\/)(bower_components|vendor)\//, SITE = /^((?:.*\/)?(?:site|dist)-packages)\/(.+)$/, HOOK = /^([^/]+\.pth|(site|user)customize\.py|[^/]+\.dist-info\/entry_points\.txt)$/;
 function pipRecorded(repoDir: string, site: string, rel: string, sha: string, memo: Map<string, Set<string>>): boolean {
   let s = memo.get(site);
