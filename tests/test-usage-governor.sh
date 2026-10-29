@@ -27,6 +27,12 @@ python3 -c "import json,zoneinfo" 2>/dev/null || {
 FIXTURE_ROOT="$(mktemp -d)"
 trap 'rm -rf "$FIXTURE_ROOT"' EXIT
 
+# Most cases below run the tool without --cache-path; a temp HOME keeps its
+# default cache (~/.claude/usage-governor/transcript-cache.json) out of the
+# operator's real directory, which they would otherwise overwrite and prune.
+mkdir -p "$FIXTURE_ROOT/home"
+export HOME="$FIXTURE_ROOT/home"
+
 # A live-log path that never exists, passed to every invocation that doesn't
 # test live data on purpose, so no test ever reads the operator's real
 # ~/.claude/usage-governor/statusline.jsonl.
@@ -880,6 +886,101 @@ if echo "$_timeout_test_neg" | grep -q "^TIMEOUT_SECS 20$"; then
   ok "LOKI_USAGE_LIVE_TIMEOUT=-5 falls back to default 20"
 else
   bad "expected TIMEOUT_SECS=20 for negative value, got: $_timeout_test_neg"
+fi
+
+# ---------------------------------------------------------------------------
+# T25-T27: transcript cache hygiene. Every case runs against a temp cache
+# directory (--cache-path under FIXTURE_ROOT); the real ~/.claude/usage-governor
+# is never read or written.
+# ---------------------------------------------------------------------------
+echo "T25 -- cache pruning drops entries for old and vanished files"
+_prune25="$(python3 - "$TOOL" "$FIXTURE_ROOT/t25" <<'PYEOF'
+import importlib.util, os, sys, time
+spec = importlib.util.spec_from_file_location("ug", sys.argv[1])
+ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
+base = sys.argv[2]
+os.makedirs(base)
+fresh, old, gone = (os.path.join(base, n) for n in ("fresh.jsonl", "old.jsonl", "gone.jsonl"))
+for p in (fresh, old):
+    open(p, "w").close()
+now = time.time()
+cut = now - 7 * 86400
+ent = lambda m: {"size": 0, "mtime": m, "entries": []}
+cache = {fresh: ent(now), old: ent(cut - 86400), gone: ent(now)}
+out = ug._prune_cache(cache, cut)
+print("kept=%s" % ",".join(sorted(os.path.basename(k) for k in out)))
+# End to end: a run over an empty tree must write a cache without the stale keys.
+root = os.path.join(base, "projects"); os.makedirs(os.path.join(root, "p"))
+cpath = os.path.join(base, "cache.json")
+import json
+json.dump(cache, open(cpath, "w"))
+ug.build_report(ug.Path(root), ug.Path(base, "none.tsv"), ug.parse_ts("2026-09-28T16:00:00Z"),
+                ug.Path(base, "nolive.jsonl"), cache_path=ug.Path(cpath))
+print("after_run_keys=%d" % len(json.load(open(cpath))))
+PYEOF
+)"
+if echo "$_prune25" | grep -q "^kept=fresh.jsonl$" && echo "$_prune25" | grep -q "^after_run_keys=0$"; then
+  ok "only the fresh existing file survives pruning, and a run rewrites the cache without stale keys"
+else
+  bad "expected kept=fresh.jsonl and after_run_keys=0, got: $_prune25"
+fi
+
+echo "T26 -- a save deletes only stale tmp siblings that match the cache's tmp pattern"
+ROOT26="$FIXTURE_ROOT/t26/projects"; PROJ26="$ROOT26/-Users-test-proj"
+mkdir -p "$PROJ26"
+CDIR26="$FIXTURE_ROOT/t26/cache"; mkdir -p "$CDIR26"
+CACHE26="$CDIR26/transcript-cache.json"
+READINGS26="$FIXTURE_ROOT/t26/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS26"
+_row "$PROJ26/s.jsonl" "2026-09-28T15:30:00.000Z" "claude-sonnet-4-6" 10 "msg_t26" ""
+for f in transcript-cache.json.stale001.tmp other-cache.json.stale001.tmp transcript-cache.json.keep.bak notes.tmp transcript-cache.json.fresh001.tmp; do
+  : > "$CDIR26/$f"
+done
+python3 - "$CDIR26" <<'PYEOF'
+import os, sys, time
+d = sys.argv[1]
+old = time.time() - 3600
+for f in ("transcript-cache.json.stale001.tmp", "other-cache.json.stale001.tmp",
+          "transcript-cache.json.keep.bak", "notes.tmp"):
+    os.utime(os.path.join(d, f), (old, old))
+PYEOF
+python3 "$TOOL" --root "$ROOT26" --readings "$READINGS26" --now "2026-09-28T16:00:00Z" \
+  --live-log "$NOLIVE" --cache-path "$CACHE26" --json >/dev/null
+_left26="$(find "$CDIR26" -mindepth 1 -maxdepth 1 -exec basename {} \; | sort | tr '\n' ' ')"
+_want26="notes.tmp other-cache.json.stale001.tmp transcript-cache.json transcript-cache.json.fresh001.tmp transcript-cache.json.keep.bak "
+if [ "$_left26" = "$_want26" ]; then
+  ok "stale matching tmp removed; fresh tmp, other-name tmp, .bak and notes.tmp left alone"
+else
+  bad "unexpected directory contents: '$_left26' (wanted '$_want26')"
+fi
+
+echo "T27 -- a warm run with nothing changed does not rewrite the cache"
+ROOT27="$FIXTURE_ROOT/t27/projects"; PROJ27="$ROOT27/-Users-test-proj"
+mkdir -p "$PROJ27"
+CACHE27="$FIXTURE_ROOT/t27/transcript-cache.json"
+READINGS27="$FIXTURE_ROOT/t27/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS27"
+_row "$PROJ27/s.jsonl" "2026-09-28T15:30:00.000Z" "claude-sonnet-4-6" 10 "msg_t27" ""
+python3 "$TOOL" --root "$ROOT27" --readings "$READINGS27" --now "2026-09-28T16:00:00Z" \
+  --live-log "$NOLIVE" --cache-path "$CACHE27" --json >/dev/null
+python3 -c "import os,sys; os.utime(sys.argv[1], (1000000000, 1000000000))" "$CACHE27"
+python3 "$TOOL" --root "$ROOT27" --readings "$READINGS27" --now "2026-09-28T16:00:00Z" \
+  --live-log "$NOLIVE" --cache-path "$CACHE27" --json >/dev/null
+_mt27="$(python3 -c "import os,sys; print(int(os.stat(sys.argv[1]).st_mtime))" "$CACHE27")"
+_tmps27="$(find "$FIXTURE_ROOT/t27" -maxdepth 1 -name '*.tmp' | wc -l | tr -d ' ')"
+if [ "$_mt27" = "1000000000" ] && [ "$_tmps27" = "0" ]; then
+  ok "cache file untouched (mtime preserved) and no tmp file created on an unchanged run"
+else
+  bad "expected untouched cache, got mtime=$_mt27 tmp_files=$_tmps27"
+fi
+_row "$PROJ27/s.jsonl" "2026-09-28T15:40:00.000Z" "claude-sonnet-4-6" 20 "msg_t27b" ""
+python3 "$TOOL" --root "$ROOT27" --readings "$READINGS27" --now "2026-09-28T16:00:00Z" \
+  --live-log "$NOLIVE" --cache-path "$CACHE27" --json >/dev/null
+_mt27b="$(python3 -c "import os,sys; print(int(os.stat(sys.argv[1]).st_mtime))" "$CACHE27")"
+if [ "$_mt27b" != "1000000000" ]; then
+  ok "a changed transcript still triggers a save"
+else
+  bad "cache was not rewritten after the transcript changed"
 fi
 
 echo ""

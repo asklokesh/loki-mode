@@ -58,15 +58,18 @@ readings the script prints "uncalibrated" and no percentage, per spec.
 from __future__ import annotations
 
 import argparse
+import bisect
 import glob
 import json
 import math
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -89,6 +92,9 @@ LIVE_FRESHNESS_SECONDS = 30 * 60
 # an unchanged file is read from cache on the next run instead of
 # re-parsed. See iter_records.
 CACHE_PATH = Path.home() / ".claude" / "usage-governor" / "transcript-cache.json"
+# A save killed mid-write (the pulse deadline) leaves its unique mkstemp file
+# behind; saves delete such leftovers once they are older than this.
+STALE_TMP_SECONDS = 10 * 60
 
 LIMIT_PATTERNS = [
     re.compile(r"limit reached", re.IGNORECASE),
@@ -145,23 +151,74 @@ def iter_jsonl_files(root: Path, min_mtime: float | None = None):
 def _load_cache(cache_path: Path):
     try:
         with open(cache_path, "r", encoding="utf-8") as fh:
-            return json.load(fh)
+            data = json.load(fh)
     except (OSError, ValueError):
         return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _prune_cache(cache, min_mtime):
+    """Drop entries whose file is older than min_mtime or no longer exists.
+
+    min_mtime is the earliest start of any window the caller reads, so an
+    entry below it can never be consulted (iter_jsonl_files skips the file).
+    """
+    pruned = {}
+    for key, ent in cache.items():
+        if not isinstance(ent, dict):
+            continue
+        mtime = ent.get("mtime")
+        if min_mtime is not None and isinstance(mtime, (int, float)) and mtime < min_mtime:
+            continue
+        if not os.path.exists(key):
+            continue
+        pruned[key] = ent
+    return pruned
+
+
+def _remove_stale_tmp(cache_path: Path, now: float | None = None):
+    """Delete leftover '<cache name>.<random>.tmp' siblings older than STALE_TMP_SECONDS.
+
+    Only regular files whose name matches that exact pattern in the cache's own
+    directory are touched. Returns how many were removed.
+    """
+    now = time.time() if now is None else now
+    pattern = re.compile(re.escape(cache_path.name) + r"\.[A-Za-z0-9_]+\.tmp")
+    removed = 0
+    try:
+        names = os.listdir(cache_path.parent)
+    except OSError:
+        return 0
+    for name in names:
+        if not pattern.fullmatch(name):
+            continue
+        full = cache_path.parent / name
+        try:
+            st = os.lstat(full)
+            if not stat.S_ISREG(st.st_mode) or now - st.st_mtime < STALE_TMP_SECONDS:
+                continue
+            os.unlink(full)
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 def _save_cache(cache_path: Path, cache):
-    # A unique per-writer tmp name (tempfile.mkstemp in the same dir) so two
-    # overlapping pulse refreshes never share one ".tmp" path and interleave
-    # or truncate each other's write; os.replace is still the atomic swap.
+    # Atomic: a unique per-writer tmp file (tempfile.mkstemp in the same dir) so
+    # two overlapping pulse refreshes never share one path, then os.replace. The
+    # C-accelerated json.dumps replaces json.dump, whose pure-Python iterencode
+    # cost ~15x more on the multi-hundred-MB cache.
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
+        _remove_stale_tmp(cache_path)
+        payload = json.dumps(cache, separators=(",", ":"))
         fd, tmp_name = tempfile.mkstemp(
             prefix=cache_path.name + ".", suffix=".tmp", dir=str(cache_path.parent)
         )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(cache, fh)
+                fh.write(payload)
             os.replace(tmp_name, cache_path)
         except OSError:
             os.unlink(tmp_name)
@@ -239,7 +296,8 @@ def iter_records(root: Path, min_mtime=None, cache_path: Path | None = None):
     came from cache or a fresh parse: `best` merges by dedup key across
     ALL files regardless of source, keeping the max output_tokens seen.
     """
-    cache = _load_cache(cache_path) if cache_path is not None else {}
+    loaded = _load_cache(cache_path) if cache_path is not None else {}
+    cache = _prune_cache(loaded, min_mtime) if cache_path is not None else {}
     new_cache = {}
     best = {}
     for path in iter_jsonl_files(root, min_mtime):
@@ -269,7 +327,7 @@ def iter_records(root: Path, min_mtime=None, cache_path: Path | None = None):
     # set) would otherwise re-serialize and rewrite the whole multi-MB cache
     # every time for zero benefit -- the dict compare is cheap next to the
     # json.dump + write it would otherwise pay unconditionally.
-    if cache_path is not None and new_cache != cache:
+    if cache_path is not None and (new_cache != cache or len(cache) != len(loaded)):
         _save_cache(cache_path, new_cache)
     for _out, path, role, ts, model, usage in best.values():
         yield path, role, ts, model, usage
@@ -888,16 +946,34 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
             h[f] += v
             r[f] += v
 
+    # Perf: every reading and hour bucket sums a time range of all_records.
+    # Scanning all_records per range is O(readings x records); instead index
+    # the records by timestamp once and bisect each range. The selected
+    # indices are re-sorted into all_records order and summed with the same
+    # left-to-right loop as sum_usage, so the float opus-weighted totals are
+    # bit-identical to the scan this replaces.
+    rec_order = sorted(range(len(all_records)), key=lambda i: all_records[i][2])
+    rec_ts_sorted = [all_records[i][2] for i in rec_order]
+    rec_out = [output_tokens_of(rec[4]) for rec in all_records]
+    rec_opus = [opus_weighted_tokens_of(rec[3], rec[4]) for rec in all_records]
+
+    def sum_range(lo, hi, hi_inclusive=True):
+        a = bisect.bisect_left(rec_ts_sorted, lo)
+        b = (bisect.bisect_right if hi_inclusive else bisect.bisect_left)(rec_ts_sorted, hi)
+        out_tokens = 0
+        opus_weighted = 0.0
+        for i in sorted(rec_order[a:b]):
+            out_tokens += rec_out[i]
+            opus_weighted += rec_opus[i]
+        return out_tokens, opus_weighted
+
     window_pairs = []
     weekly_pairs = []
     for ts, window_pct, weekly_pct in readings:
-        w_records = [rec for rec in all_records if ts - timedelta(hours=WINDOW_HOURS) <= rec[2] <= ts]
-        w_out, w_opus = sum_usage(w_records)
+        w_out, w_opus = sum_range(ts - timedelta(hours=WINDOW_HOURS), ts)
         window_pairs.append((w_out, w_opus, window_pct))
 
-        wk_start = last_wednesday_reset(ts)
-        wk_records = [rec for rec in all_records if wk_start <= rec[2] <= ts]
-        wk_out, wk_opus = sum_usage(wk_records)
+        wk_out, wk_opus = sum_range(last_wednesday_reset(ts), ts)
         weekly_pairs.append((wk_out, wk_opus, weekly_pct))
 
     window_rate_out, window_n = fit_tokens_per_percent([(o, p) for o, _w, p in window_pairs])
@@ -912,8 +988,7 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
     for i in range(WINDOW_HOURS, 0, -1):
         b_start = now - timedelta(hours=i)
         b_end = now - timedelta(hours=i - 1)
-        b_records = [rec for rec in all_records if b_start <= rec[2] < b_end]
-        o, w = sum_usage(b_records)
+        o, w = sum_range(b_start, b_end, hi_inclusive=False)
         hour_buckets_out.append(o)
         hour_buckets_opus.append(w)
 
@@ -924,8 +999,7 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
     oldest_hour_out = hour_buckets_out[0]
     oldest_hour_opus = hour_buckets_opus[0]
 
-    weekly_records = [rec for rec in all_records if weekly_start <= rec[2] <= now]
-    weekly_out, weekly_opus = sum_usage(weekly_records)
+    weekly_out, weekly_opus = sum_range(weekly_start, now)
 
     last_hour_start = now - timedelta(hours=1)
     active_engineers = len({
