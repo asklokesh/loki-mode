@@ -86,7 +86,8 @@ def test_wide_spread_not_proven_despite_point_estimate():
 
 def test_unmeasured_excluded_and_counted():
     loki, floor = _tight(0.4)
-    loki.append({"task_id": "t0", "unmeasured": True})
+    loki.append({"task_id": "t0", "unmeasured": True, "cost_usd": 0.0,
+                 "cost_source": "src"})
     ok = cc.cost_claim_verdict(loki, floor, 0.5)
     assert ok["verdict"] == "PROVEN_AT(0.5)"
     assert ok["unmeasured"] == 1
@@ -425,7 +426,8 @@ def test_cost_profile_ignores_floor_and_unmeasured_rows():
     loki, floor = _tight(0.4)
     for r in loki:
         r["cost_profile"] = "lean"
-    loki.append({"task_id": "t0", "unmeasured": True, "cost_profile": "off"})
+    loki.append({"task_id": "t0", "unmeasured": True, "cost_profile": "off",
+                 "cost_usd": 0.0, "cost_source": "src"})
     v = cc.cost_claim_verdict(loki, floor, 0.5)
     assert v["cost_profile"] == "lean"
     assert v["verdict"] == "PROVEN_AT(0.5)", v
@@ -706,3 +708,66 @@ def test_cli_usage_csv_reconciles_and_rejects_bad_export(tmp_path):
     assert _run(*_base_args(f), "--usage-csv", str(csv_p))[0] == 2
     csv_p.write_text("date,cost_usd\n2026-10-28,\n")
     assert _run(*_base_args(f), "--usage-csv", str(csv_p))[0] == 2
+
+
+def test_unmeasured_spend_is_in_the_numerator():
+    loki, floor = _tight(0.4)
+    loki += [{"task_id": "t%d" % i, "unmeasured": True, "accepted": True,
+              "cost_usd": 50.0, "cost_source": "src"} for i in range(5)]
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    c = v["arm_cost"]["loki"]
+    assert c["metered_share"] == 1.0
+    assert abs(c["cost_per_accepted_usd"] - (24 * 0.4 + 250.0) / 24) < 1e-9, c
+    assert v["ratio"] > 0.5 and v["verdict"] == "NOT PROVEN", v
+
+
+def test_unmeasured_null_cost_row_is_invalid():
+    loki, floor = _tight(0.4)
+    loki.append({"task_id": "t0", "unmeasured": True, "status": "harness_error",
+                 "cost_usd": None})
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["verdict"] == "INVALID", v
+    assert v["arm_cost"]["loki"]["cost_per_accepted_usd"] is None
+    assert v["arm_cost"]["loki"]["cost_per_accepted_lower_bound_usd"] is not None
+
+
+def test_unmetered_invalid_has_no_ci_reason():
+    loki, floor = _tight(0.9)  # CI upper bound would exceed the target
+    loki[0]["cost_usd"] = None
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["verdict"] == "INVALID"
+    assert not any("ci:" in r for r in v["reasons"]), v["reasons"]
+
+
+def test_reconcile_partial_row_is_not_measured():
+    loki, floor = _tight(0.4)
+    loki[0]["cost_partial"] = True
+    err, d = cc.reconcile(loki + floor, 33.6)
+    assert err == "not measured" and "1 run row" in d["reason"], d
+
+
+def test_usage_csv_rejects_ambiguous_exports(tmp_path):
+    p = tmp_path / "u.csv"
+
+    def total(text):
+        p.write_text(text)
+        return cc.console_usd_from_csv(str(p))
+
+    assert total("date,cost_usd\n1,\"1,500.00\"\n2,$2.5\n") == 1502.5
+    for bad in ("date,cost\n1,2.0\n",                     # bare cost header
+                "date,amount\n1,2.0\n",                   # bare amount header
+                "date,cost_usd\n1,2.0\nTotal,2.0\n",      # total row
+                "date,cost_usd\n1,2.0\n subtotal ,2.0\n",  # subtotal row
+                "date,cost_usd\n1,\"1,50\"\n",            # comma not thousands
+                "date,cost_usd\n1,\"15,00.0\"\n"):
+        try:
+            total(bad)
+        except ValueError:
+            continue
+        raise AssertionError("accepted: %r" % bad)
+    f = tmp_path / "a.jsonl"
+    _write(f, _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0))
+    p.write_text("date,cost_usd\n1,\"1,50\"\n")
+    assert _run(*_base_args(f), "--usage-csv", str(p))[0] == 2
+    p.write_text("date,cost_usd\n1,33.66\nTOTAL,33.66\n")
+    assert _run(*_base_args(f), "--usage-csv", str(p))[0] == 2

@@ -17,15 +17,18 @@ Rows may also carry elapsed_s; the verdict adds an informational paired time
 ratio (floor / loki, above 1 means loki is faster) with the same bootstrap CI.
 Rows without a usable elapsed_s are excluded from it and counted. The time
 ratio never changes the verdict.
-Unmeasured rows are excluded; their count is reported and, when the verdict is
-NOT PROVEN, listed among the reasons.
+Unmeasured rows are excluded from acceptance and every gate except cost (their
+spend still counts); their count is reported and, when the verdict is NOT
+PROVEN, listed among the reasons.
 
 Scoreboard cost fields, per arm (both arms of a cost claim run on Claude, so
-both are claude arms): metered_share is the share of measured rows carrying a
-provider-reported usd cost (finite cost_usd, a cost_source, not cost_partial);
-cost_per_accepted_usd is total spend over every attempt, failed ones included,
-divided by accepted tasks. Below a metered share of 1.0 the verdict is INVALID,
-the ratio and CI are withheld and the arm reports only
+both are claude arms): metered_share is the share of the arm's rows, unmeasured
+ones included, carrying a provider-reported usd cost (finite cost_usd, a
+cost_source, not cost_partial); cost_per_accepted_usd is total spend over every
+attempt, failed and unmeasured ones included, divided by accepted measured
+tasks. The cost ratio and its CI use the same numerator. Below a metered share
+of 1.0 the verdict is INVALID, the ratio, CI and ci reason are withheld and the
+arm reports only
 cost_per_accepted_lower_bound_usd, never a point estimate. reconciliation_error
 compares the run's summed cost_usd with an Anthropic console usage CSV export
 for the run window (--usage-csv); without one it is "not measured", never 0.
@@ -37,6 +40,7 @@ import argparse
 import json
 import math
 import random
+import re
 import os
 import sys
 
@@ -58,9 +62,11 @@ def _good_cost(r):
 def _cpa(rows):
     """Cost per accepted task over rows; None when nothing was accepted.
 
-    Rows with an unusable cost_usd add nothing here; the verdict blocks on them.
+    Every row's spend counts, unmeasured ones included; only measured rows can
+    be accepted. Rows with an unusable cost_usd add nothing here; the verdict is
+    INVALID on them.
     """
-    accepted = sum(1 for r in rows if r.get("accepted"))
+    accepted = sum(1 for r in rows if r.get("accepted") and not r.get("unmeasured"))
     if accepted == 0:
         return None
     return sum(r["cost_usd"] for r in rows if _good_cost(r)) / accepted
@@ -84,15 +90,18 @@ def _arm_cost(rows):
 
 
 CONSOLE_COST_COLUMNS = ("cost_usd", "cost (usd)", "total_cost_usd",
-                        "amount_usd", "cost", "amount")
+                        "amount_usd")
+_TOTAL_ROW = re.compile(r"\s*(sub)?total\b", re.IGNORECASE)
+_USD_CELL = re.compile(r"-?(\d{1,3}(,\d{3})+|\d+)(\.\d+)?")
 
 
 def console_usd_from_csv(path):
     """Sum the usd cost column of an Anthropic console usage CSV export.
 
     The column is the first header (case-insensitive) in CONSOLE_COST_COLUMNS.
-    No such column, or a blank or non-numeric cost cell, raises ValueError:
-    an unreadable export is never read as 0.
+    Only usd-named columns count. No such column, a total or subtotal row, or a
+    blank, non-numeric or badly comma-grouped cost cell raises ValueError: an
+    unreadable export is never read as 0 and never summed twice.
     """
     import csv
     with open(path, newline="", encoding="utf-8-sig") as f:
@@ -103,13 +112,16 @@ def console_usd_from_csv(path):
             raise ValueError("usage csv %s has no cost column (headers: %s)"
                              % (path, ",".join(heads)))
         total = 0.0
+        first = reader.fieldnames[0]
         for i, rec in enumerate(reader, start=2):
-            cell = (rec.get(col) or "").strip().replace("$", "").replace(",", "")
-            try:
-                v = float(cell)
-            except ValueError:
+            if _TOTAL_ROW.match(rec.get(first) or ""):
+                raise ValueError("usage csv %s line %d: total or subtotal row; "
+                                 "export the itemised rows only" % (path, i))
+            cell = (rec.get(col) or "").strip().replace("$", "", 1)
+            if not _USD_CELL.fullmatch(cell):
                 raise ValueError("usage csv %s line %d: cost %r is not a number"
                                  % (path, i, rec.get(col)))
+            v = float(cell.replace(",", ""))
             if not math.isfinite(v):
                 raise ValueError("usage csv %s line %d: cost is not finite"
                                  % (path, i))
@@ -127,7 +139,7 @@ def reconcile(run_rows, console_usd):
     rows = list(run_rows)
     if console_usd is None:
         return "not measured", {"reason": "no console usage csv given"}
-    missing = sum(1 for r in rows if not _good_cost(r))
+    missing = sum(1 for r in rows if not _good_cost(r) or r.get("cost_partial"))
     if missing:
         return "not measured", {"reason": "%d run row(s) without a usable "
                                 "cost_usd" % missing, "console_usd": console_usd}
@@ -266,7 +278,7 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
     loki = [r for r in loki_rows if not r.get("unmeasured")]
     floor = [r for r in floor_rows if not r.get("unmeasured")]
     rows = loki + floor
-    arm_cost = {"loki": _arm_cost(loki), "floor": _arm_cost(floor)}
+    arm_cost = {"loki": _arm_cost(loki_rows), "floor": _arm_cost(floor_rows)}
     unmetered = [n for n in ("loki", "floor")
                  if arm_cost[n]["metered_share"] is not None
                  and arm_cost[n]["metered_share"] < 1.0]
@@ -336,18 +348,19 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
         reasons.append("cost_profile: loki arm mixes profiles or lacks "
                        "cost_profile on some rows")
 
-    ci = bootstrap_ratio_ci(loki, floor, seed, iters) if loki and floor else None
+    # Unmeasured spend is real spend: the ratio reads every row's cost.
+    ci = (bootstrap_ratio_ci(loki_rows, floor_rows, seed, iters)
+          if loki and floor and not unmetered else None)
     ratio = lo = hi = None
-    if ci:
+    if unmetered:
+        pass  # INVALID; a ratio of lower bounds is no estimate, so no ci line
+    elif ci:
         ratio, lo, hi = ci
         if hi > target:
             reasons.append("ci: upper bound %.4f exceeds target %s"
                            % (hi, target))
     elif loki and floor:
         reasons.append("ci: not computable (no accepted work or no paired tasks)")
-
-    if unmetered:
-        ratio = lo = hi = None  # a ratio of lower bounds is no estimate
 
     time_excluded = sum(1 for r in rows if not _has_elapsed(r))
     tci = bootstrap_time_ratio_ci(loki, floor, seed, iters)
