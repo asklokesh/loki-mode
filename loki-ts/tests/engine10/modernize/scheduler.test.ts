@@ -1,4 +1,5 @@
 // M-17 wall: scheduler policy (cascade, best-of-2, workers, budget stop, id safety, single writer).
+import { modelRank } from "../../../src/runner/model_rank.ts";
 import { describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
@@ -459,5 +460,23 @@ describe("scheduler", () => {
         expect(existsSync(marker)).toBe(false);
       } finally { s.done(); }
     });
+  });
+});
+
+describe("NBR-G3 unit attempts never run below the run model", () => {
+  it("every attempt of every unit floors at the run model; a sonnet run model keeps the cascade", async () => {
+    for (const [runModel, first, next] of [["opus", "opus", "opus"], ["fable", "fable", "fable"], ["sonnet", "sonnet", "opus"], ["haiku", "sonnet", "opus"]] as const) {
+      const f = fixture();
+      const seen: Array<[string, string, number]> = [];
+      const run = (c: AttemptCtx): AttemptOutcome => {
+        seen.push([c.unit.id, c.model, c.variant]);
+        return { result: res(c.unit.id, c.unit.id === "a" && c.variant === 0 ? "NOT_EQUAL" : "PROVEN"), costUsd: 1 };
+      };
+      await schedule(planOf([[u("a"), u("hot", true)]]), { ...f.base, run, workers: 1, runModel });
+      expect(seen).toContainEqual(["a", first, 0]);
+      expect(seen).toContainEqual(["a", next, 1]);
+      expect(seen.every(([, m]) => modelRank(m) >= modelRank(runModel))).toBe(true);
+      f.done();
+    }
   });
 });

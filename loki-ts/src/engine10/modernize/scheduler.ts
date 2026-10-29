@@ -9,10 +9,11 @@ import type { ClusterResult, Unit } from "./cluster.ts";
 import { budgetExceeded } from "./estimate.ts";
 import type { ModernizeLog } from "./log.ts";
 import { safeGit } from "../../util/safe_git.ts";
+import { unitModel } from "../../runner/router/unit_model.ts";
 import { encodeUnitId, isModernizeId, isSafeUnitId, modernizeRoot } from "./types.ts";
 import type { UnitRunResult } from "./unit.ts";
 
-export type Model = "sonnet" | "opus";
+export type Model = string; // NBR-G3: sonnet or opus by the cascade, or the run model when it ranks higher
 export const MAX_LOCAL_WORKERS = 32;
 export const DEFAULT_WORKERS = 4;
 /** Section 3.4: per-unit cost cap is the estimate x 3. */
@@ -143,6 +144,7 @@ export interface SchedulerOpts {
   run: AttemptRunner;
   /** Stamped on unit.started events when set. */
   runId?: string;
+  runModel?: string; // NBR-G3: unit attempts floor here; defaults to the resolved run model
   worktrees?: WorktreeOps;
   /** When set, a PROVEN unit is merged through mergeOnce, which emits unit.completed (M-22). */
   merge?: MergeOps;
@@ -176,8 +178,8 @@ export function clampWorkers(n: number): number {
 }
 
 /** First attempt's model: top legacy-risk units go straight to opus, everything else sonnet. */
-export function firstModel(unit: Unit): Model {
-  return unit.highRisk ? "opus" : "sonnet";
+export function firstModel(unit: Unit, runModel?: string): Model {
+  return unitModel(unit.highRisk ? "opus" : "sonnet", runModel);
 }
 
 /** Runs the plan wave by wave (a wave's units are independent; the next wave needs this one). */
@@ -218,7 +220,7 @@ export async function schedule(plan: ClusterResult, opts: SchedulerOpts): Promis
     let last: UnitRunResult | null = null;
     let reason: string | undefined;
     // Cascade: attempt 0 on the routed model; after a failed check, both best-of-2 variants on opus.
-    const steps: Array<[0 | 1 | 2, Model]> = [[0, firstModel(unit)], [1, "opus"], [2, "opus"]];
+    const steps: Array<[0 | 1 | 2, Model]> = [[0, firstModel(unit, opts.runModel)], [1, unitModel("opus", opts.runModel)], [2, unitModel("opus", opts.runModel)]];
     for (const [variant, model] of steps) {
       if (attempts > 0 && (stopped(0) || (cap != null && unitCost >= cap))) {
         reason = hit ? "budget stop" : "per-unit cost cap reached";

@@ -10,7 +10,7 @@ import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { PLAN_SCOPE_FILE, outOfRepoInstruction, planOutOfRepo, seedPlanScope } from "../../util/run_cap.ts";
 import { loadTaskText } from "./wall.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
-import { planRoute, ROUTER_UNITS_INSTRUCTION } from "../../runner/router/plan_route.ts";
+import { planFallbackModel, planRoute, ROUTER_UNITS_INSTRUCTION } from "../../runner/router/plan_route.ts";
 import { applyIntent, intentCardEnabled, INTENT_CARD_INSTRUCTION } from "../../util/intent_card.ts";
 import { behaviorChangeInstruction, mutationStrict, readBehaviorChange } from "../../util/mutation_proof.ts";
 import { reviewerBriefEnabled } from "../../util/reviewer_brief.ts";
@@ -83,13 +83,13 @@ export const planStage: Stage = {
       limitS: planStage.limitS,
       signal,
       cwd: ctx.repoDir,
-      ...pr.pinFor(onSonnet),
+      ...pr.pinFor(onSonnet, ctx.model),
     });
     let session = await runPlan(false);
     let planModel = pr.planModel(fastTierModel(process.env));
     let planModelNote: string | null = null;
-    if (pr.pinOpus && !session.killed && session.exit !== 0) { // Opus unavailable: Sonnet plans, and the receipt says so
-      planModel = "sonnet"; planModelNote = `Opus plan session failed (exit ${session.exit}); the plan ran on sonnet`;
+    if (pr.pinOpus && !session.killed && session.exit !== 0) { // Opus unavailable: the fallback plans (never below the run model), and the receipt says so
+      planModel = planFallbackModel(ctx.model); planModelNote = `Opus plan session failed (exit ${session.exit}); the plan ran on ${planModel}`;
       session = await runPlan(true);
     }
 
