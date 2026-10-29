@@ -5,12 +5,6 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
-
-### Fixed
-
-- Go and Rust repos can now finish VERIFIED: a failing `go test` or `cargo test` run on the base code now names the tests that failed, so the Wall keeps its test files instead of discarding them as unreadable, and passing Go and Cargo runs report how many tests actually ran. Output that cannot be read, or that a test could have forged, still never counts as a pass.
-
 ## v11.83.0 (2026-10-29)
 
 ### Added
