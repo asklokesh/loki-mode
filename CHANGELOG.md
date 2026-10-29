@@ -5,6 +5,25 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.81.0 (2026-10-29)
+
+### Added
+
+- `loki start` now finds an interrupted or cancelled run and asks whether to resume it, start fresh or discard it. `--fresh` or `LOKI_NO_RESUME=1` skips the question.
+- Ctrl-C or closed input at that question exits 130 and never resumes or starts anything. Resume is offered only when the run branch, the origin remote and the PR policy allow the pull request step to finish.
+- `loki status` shows the next step for an interrupted run. A cancelled run's message says the next `loki start` offers to start fresh, with any work kept on `loki/<runid>`.
+
+### Changed
+
+- The Seeded-defect benchmark can verify with an LLM judge and records top-model and floor-model wrong-pass runs.
+- The first-run gate covers Python and Go fixture repositories, records the prompts shown and the first preview time per repetition, and exits early for `--real` when no credential is present.
+
+### Fixed
+
+- The Wall now runs tests with the project's own language runner (for example `python3 -m unittest`, `go test`, or the manifest's runner) instead of bun on non-JavaScript repos. When no runner is available, the check is skipped with a NOT PROVEN note rather than failing correct code. `loki verify` reruns each sealed test with the same runner the Wall used.
+- An explicit session model pin now applies the same top and floor setup on the TypeScript route as on the bash route.
+- Review test cases for non-blocking advice and shard fail-fast no longer fail on a loaded machine.
+
 ## v11.80.0 (2026-10-29)
 
 ### Changed
