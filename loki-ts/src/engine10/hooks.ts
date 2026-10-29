@@ -8,5 +8,6 @@ export interface Hooks {
   effort?: { resolve(stage: string, optsEffort: string | undefined): string | undefined; fix(round: number, codeOwned: boolean): string | undefined };
   wall?: { snapshotTree(repoDir: string, signal: AbortSignal): Promise<string | null>; changedSinceBase(repoDir: string, baseSha: string): string[] | null; manifests: RegExp };
   briefFacts?(o: Partial<Record<string, Obj>>, runId: string, runDir: string): BriefFacts; sealed?(runDir: string, receipt: { run_id: string; provider: string; model: string; receipt_sha256: string; cost?: { per_model?: Record<string, unknown> } }): void; // after the receipt files are final; failures never reach the seal
+  runtimeEvidence?(task: string): Rec | null;
 }
 export const hooks: Hooks = {};

@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Intake recognizes runtime evidence in the task text (Python, JS and Java stack frames, request and response pairs, Jira and Linear URLs) through one generic frame parser and records it with a content hash and size caps; pasted text is only pattern-matched, never run. The parser lives in contrib and core reaches it through the runtimeEvidence hook. Proven by the extractRuntimeEvidence tests and the runtimeEvidence hook wiring test in tracker_intake.test.ts, and the traceback test in intake.test.ts.
+
 ## v11.88.0 (2026-10-29)
 
 ### Added
