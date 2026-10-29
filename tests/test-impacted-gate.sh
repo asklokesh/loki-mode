@@ -51,6 +51,16 @@ printf '%s' "$out" | grep -q 'impacted-gate: PASS' && bad "gate printed PASS des
 printf '%s' "$out" | grep -q 'impacted-gate: FAIL' && ok "gate printed FAIL" || bad "gate did not print FAIL"
 printf '%s' "$out" | grep -q "^rc=1 $FIX/s-fail.sh" && ok "failing suite rc=1 reported" || bad "failing suite rc not reported"
 
+# Case 1b: a red row whose failing test line sits outside the last 15 lines
+# must still have its name printed.
+{ echo "(fail) util deeply buried failing test name"; echo "FAIL: shell buried case"; i=0; while [ "$i" -lt 30 ]; do echo "noise $i"; i=$((i + 1)); done; echo "1 fail"; } >"$FIX/make-log.txt"
+printf 'cat "%s"\nexit 1\n' "$FIX/make-log.txt" >"$FIX/s-buried.sh"
+printf '%s\n' "$FIX/s-buried.sh" >"$FIX/list-buried.txt"
+out="$(run_gate "$FIX/list-buried.txt")"
+printf '%s' "$out" | grep -q '(fail) util deeply buried failing test name' && ok "red row prints buried (fail) test name" || bad "buried (fail) name not printed"
+printf '%s' "$out" | grep -q 'FAIL: shell buried case' && ok "red row prints buried shell FAIL line" || bad "buried shell FAIL line not printed"
+printf '%s' "$out" | grep -q 'noise 29' && ok "red row still prints the tail" || bad "tail missing"
+
 # Case 2: all passing, slower suites included. Must exit 0 with all results kept.
 printf '%s\n%s\n%s\n%s\n' "$FIX/s-cleaner.sh" "$FIX/s-slow.sh" "$FIX/s-mid.sh" "$FIX/s-ok.sh" >"$FIX/list-ok.txt"
 out="$(run_gate "$FIX/list-ok.txt")"

@@ -138,6 +138,14 @@ if [ -n "$FAILED" ]; then
     echo "impacted-gate: FAIL"
     while IFS=$'\t' read -r rc s; do
         echo "--- rc=$rc $s (tail) ---"
+        # Failing test names first (they scroll out of the tail), bounded to 40
+        # lines. Markers: bun "(fail) name", shell suites "FAIL: name".
+        grep -E '^[[:space:]]*(\(fail\)|FAIL:)' "$(log_of "$s")" >"$LOKI_RUN_TMP/fails.txt" 2>/dev/null || true
+        if [ -s "$LOKI_RUN_TMP/fails.txt" ]; then
+            echo "--- failing tests (first 40 of $(wc -l <"$LOKI_RUN_TMP/fails.txt" | tr -d ' ')) ---"
+            head -40 "$LOKI_RUN_TMP/fails.txt"
+            echo "--- tail ---"
+        fi
         tail -15 "$(log_of "$s")"
     done <<<"$FAILED"
     exit 1
