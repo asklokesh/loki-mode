@@ -76,15 +76,20 @@ function cargoTrailer(out: string): string[] {
   // Threat model: libtest runs inside the process that executes the code under test, so code can print a "test result: ok. N passed" line and std::process::exit(0)
   // (nothing in-process is unforgeable). libtest prints each test's own "test <name> ... ok" line only AFTER that test returns, so an early exit leaves the
   // summary claiming more passes than the segment has ok lines. A summary whose passed count exceeds its segment's distinct ok lines (or the dots of -q output) makes the WHOLE run unmeasured,
-  // never just that segment. Under --nocapture a test's own output splits "test x ... hello" from a later "ok" line; that pair counts as one ok line.
+  // never just that segment. Under --nocapture a test's own output (a print!, a should_panic message) splits "test x ... " from its "ok"; a pending name followed by a line ending in "ok" counts as one ok line.
   // Residual risk, plainly: ok lines are NOT matched to real test names (the binary under test controls everything it prints), so code that prints one
   // "test <any name> ... ok" line per claimed pass, then exits 0, still forges.
   const okOf = (body: string[]): number => {
     const names = new Set<string>(); let pending: string | undefined;
     for (const raw of body) {
-      const l = raw.trim(), m = /^test (.+?) \.\.\. (.*)$/.exec(l);
-      if (m) { if (m[2] === "ok") names.add(m[1]!); pending = m[2] === "FAILED" || /^ignored\b/.test(m[2]!) ? undefined : m[1]; }
-      else if (l === "ok" && pending !== undefined) { names.add(pending); pending = undefined; }
+      // Only leading whitespace is trimmed: libtest prints "test x ... " with a trailing space before the test's own output (a should_panic message, a print! without newline), which splits it from its "ok".
+      const l = raw.trimStart(), m = /^test (.+?) \.\.\.(?: (.*))?$/.exec(l);
+      if (m) {
+        const rest = m[2] ?? "";
+        if (rest === "FAILED" || /^ignored\b/.test(rest)) pending = undefined;
+        else if (/ok$/.test(rest)) { names.add(m[1]!); pending = undefined; }
+        else pending = m[1];
+      } else if (pending !== undefined && /ok$/.test(l.trimEnd())) { names.add(pending); pending = undefined; }
     }
     return names.size;
   };

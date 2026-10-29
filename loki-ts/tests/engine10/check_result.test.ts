@@ -743,6 +743,27 @@ describe("cargo and go completion proof edge cases", () => {
   test("cargo: the unfixable limit is real, an invented ok line per claimed pass still counts", () => {
     expect(classifyCheck({ kind: "test", ok: true, out: `\nrunning 2 tests\ntest x ... ok\ntest y ... ok\n\n${SUM}\n` })).toEqual({ result: "pass", n: 2 });
   });
+  // Shapes captured from a real `cargo test -- --nocapture --test-threads=1` (stdout and stderr joined); the trailing space after "..." is real.
+  const PANIC_SPLIT = "\nrunning 2 tests\ntest boom - should panic ... \nthread 'boom' panicked at src/lib.rs:2:37:\nboom\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nok\ntest plain ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+  const PRINT_NO_NL = "\nrunning 3 tests\ntest a ... ok\ntest b ... ok\ntest printer ... hellook\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+  test("cargo: a should_panic message splitting the test line from its ok still counts", () => {
+    expect(classifyCheck({ kind: "test", ok: true, out: PANIC_SPLIT })).toEqual({ result: "pass", n: 2 });
+  });
+  test("cargo: a print! without a newline fused to the ok still counts", () => {
+    expect(classifyCheck({ kind: "test", ok: true, out: PRINT_NO_NL })).toEqual({ result: "pass", n: 3 });
+  });
+  test("cargo: a pending test name followed by a line that does not end in ok does not count", () => {
+    const out = "\nrunning 2 tests\ntest boom - should panic ... \nthread 'boom' panicked at src/lib.rs:2:37:\nboom\ntest plain ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    expect(classifyCheck({ kind: "test", ok: true, out }).result).toBe("not_run");
+  });
+  test.skipIf(!HAS_CARGO)("real cargo: a should_panic test and a print! without newline under --nocapture still count", () => {
+    const lib = '#[test]\nfn plain() { assert_eq!(1, 1); }\n#[test]\n#[should_panic]\nfn boom() { panic!("boom"); }\n#[test]\nfn printer() { print!("hello"); }\n';
+    const d = cargoDir(lib); try {
+      const raw = spawnSync("cargo", ["test", "--", "--nocapture", "--test-threads=1"], { cwd: d, encoding: "utf8", env: process.env });
+      expect(raw.status).toBe(0);
+      expect(classifyCheck({ kind: "test", ok: true, out: raw.stdout })).toEqual({ result: "pass", n: 3 });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
   const goDir = (impl: string, test: string, extra: Record<string, string> = {}): string => {
     const d = mkdtempSync(join(tmpdir(), "hv103d2-"));
     writeFileSync(join(d, "go.mod"), "module example.com/fx\n\ngo 1.20\n"); writeFileSync(join(d, "a.go"), impl); writeFileSync(join(d, "a_test.go"), test);
