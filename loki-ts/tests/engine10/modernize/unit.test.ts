@@ -268,8 +268,10 @@ function pytest(dir: string, env: Record<string, string> = {}) {
 }
 
 describe("collection errors are classified by the Wall's rule (findings 3 and 4), real pytest", () => {
-  it("a missing third-party package is not_run", () => {
+  it("a missing package is not_run when the repo already imports it, red when the task has yet to create it", () => {
     writeFileSync(join(repoDir, "test_conf.py"), "import definitely_not_installed_pkg_xyz\n");
+    expect(classifyBaseRun(pytest(repoDir), repoDir)).toBe("red");
+    writeFileSync(join(repoDir, "app.py"), "import definitely_not_installed_pkg_xyz\n");
     expect(classifyBaseRun(pytest(repoDir), repoDir)).toBe("not_run");
   });
 

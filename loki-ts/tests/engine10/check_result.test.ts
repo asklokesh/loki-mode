@@ -846,3 +846,43 @@ describe("cargo pass matches the runner's own listing", () => {
     expect(await corroboratePass({ result: "fail", n: 1 }, "", "cargo", ["test"], o)).toEqual({ result: "fail", n: 1 });
   });
 });
+
+// A Wall file whose top level imports a module the task creates: red on base (import error), green only after implement.
+describe("Wall file importing a module the task will create", () => {
+  const WALL = "import unittest\nimport pricing\n\nclass T(unittest.TestCase):\n    def test_total(self):\n        self.assertEqual(pricing.total(2, 3), 6)\n";
+  const run = (d: string, mod: string): { status: number | null; output: string } => {
+    const r = spawnSync("python3", ["-m", mod === "unittest" ? "unittest" : "pytest", ...(mod === "unittest" ? [] : ["-q", "-p", "no:cacheprovider"]), "tests/loki_wall_pricing.py"], { cwd: d, encoding: "utf8", env: { ...process.env, PYTHONPATH: d } });
+    return { status: r.status, output: `${r.stdout}\n${r.stderr}` };
+  };
+  const repo = (): string => { const d = mkdtempSync(join(tmpdir(), "c1f-")); mkdirSync(join(d, "tests")); writeFileSync(join(d, "tests", "loki_wall_pricing.py"), WALL); return d; };
+  const HAS_PYTEST = spawnSync("python3", ["-I", "-c", "import pytest"]).status === 0;
+  for (const runner of ["unittest", "pytest"] as const) test.skipIf(runner === "pytest" && !HAS_PYTEST)(`${runner}: red on base, still red while the module is missing, pass once implemented`, () => {
+    const d = repo(), f = { runner, path: "tests/loki_wall_pricing.py" }; try {
+      const base = run(d, runner);
+      expect(classify(f, base.status, base.output, d, "project")).toBe("fail");
+      expect(classifyCheck({ kind: "test", ok: false, out: base.output, path: f.path }).result).not.toBe("pass"); // the slice reading never loosens: a still-missing module is no pass
+      writeFileSync(join(d, "pricing.py"), "def total(a, b):\n    return a * b\n");
+      const head = run(d, runner);
+      expect(head.status).toBe(0);
+      expect(classify(f, head.status, head.output, d, "project")).toBe("pass");
+      writeFileSync(join(d, "pricing.py"), "def total(a, b):\n    return a + b + 100\n");
+      const wrong = run(d, runner);
+      expect(classify(f, wrong.status, wrong.output, d, "project")).toBe("fail");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a missing module the repo code already imports, or a module that exists, stays not_run", () => {
+    const d = repo(); try {
+      const out = "ERROR: x (unittest.loader._FailedTest.x)\nImportError: Failed to import test module: x\nTraceback (most recent call last):\nModuleNotFoundError: No module named 'pricing'\n\nRan 1 test in 0.000s\n\nFAILED (errors=1)\n";
+      const f = { runner: "unittest" as const, path: "tests/loki_wall_pricing.py" };
+      expect(classify(f, 1, out, d, "project")).toBe("fail");
+      writeFileSync(join(d, "app.py"), "import pricing\n");
+      expect(classify(f, 1, out, d, "project")).toBe("not_run");
+      rmSync(join(d, "app.py")); writeFileSync(join(d, "pricing.py"), "");
+      expect(classify(f, 1, out, d, "project")).toBe("not_run");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a ModuleNotFoundError mentioned only inside captured output does not make a pytest collection red", () => {
+    const out = "=== short test summary info ===\nERROR t.py - AttributeError: x\n  print: ModuleNotFoundError: No module named 'pricing' (quoted)\n";
+    expect(classify({ runner: "pytest", path: "t.py" }, 2, out, "/nonexistent", "project")).toBe("not_run");
+  });
+});

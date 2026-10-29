@@ -5,7 +5,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { siteFor } from "../project_model/resolve.ts";
@@ -873,7 +873,7 @@ export function failureExcerpt(out: string, repoDir = "", cap = EXCERPT_GROUP_CA
 // Wall base-run exit classification, moved from engine10/stages/wall.ts (core line budget); this module owns result classification.
 // B1/B2/B3/B4 (r3, opus review of E-125): only the short-summary line names the FINAL exception -- immune to a captured stdout/stderr block forging an earlier frame (B3), or an earlier link in a chain (B4).
 export function pytestCollectionIsRed(output: string, repoDir: string): boolean {
-  if (/ModuleNotFoundError/.test(output)) return false;
+  if (/ModuleNotFoundError/.test(output)) return moduleToBeCreated(output, repoDir); // a missing module is red only when it is neither in the repo nor a declared dependency: the Wall file imports what the task creates, and after implement it must still import and pass
   const real = (p: string): string | null => { try { return realpathSync(isAbsolute(p) ? p : join(repoDir, p)); } catch { return null; } };
   const repoReal = real(repoDir); const under = (p: string): boolean => { const r = real(p); return !!repoReal && !!r && (r === repoReal || r.startsWith(`${repoReal}/`)); };
   // pytest reports an ImportError from `from x import y` via its own (short-summary-less) path; the message always carries the module's own (absolute) file, so a direct scan is unambiguous.
@@ -888,6 +888,15 @@ export function pytestCollectionIsRed(output: string, repoDir: string): boolean 
   // NameError: the raise site must be repo code, not merely an import line naming an outside module. B2 (r3): a frame path may contain a space.
   const frames = [...block.slice(0, eLine.index).matchAll(/^(.+?):\d+: in \S+\n\s*(.*)$/gm)]; const last = frames[frames.length - 1];
   return !!last && under(last[1]!) && !/^\s*(import\s|from\s\S+\s+import\b)/.test(last[2] ?? "");
+}
+/** The final traceback line (col 0, or pytest's "E " line) must name the missing module; a mention inside captured output proves nothing. A module the repo already holds anywhere (a src/ layout off sys.path) or imports from its own non-test Python is an environment gap; any other name is something the task will create. */
+function moduleToBeCreated(output: string, repoDir: string): boolean {
+  const name = [...output.matchAll(/^(?:E {3})?ModuleNotFoundError: No module named '([\w.]+)'\s*$/gm)].pop()?.[1]; if (!name || moduleUnderRepo(repoDir, name)) return false;
+  const rel = name.replace(/\./g, "/"), rx = new RegExp(`^\\s*(?:import|from)\\s+${name.split(".")[0]}\\b`, "m");
+  try {
+    const py = readdirSync(repoDir, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".py") && !/(^|\/)(\.|node_modules\/|venv\/|site-packages\/)/.test(f)).slice(0, 5000);
+    return !py.some((f) => (`/${f}`.endsWith(`/${rel}.py`) || `/${f}`.endsWith(`/${rel}/__init__.py`)) || (!isTestFile(f) && !/(^|\/)(tests?\/|loki_wall_)/.test(f) && (() => { try { return rx.test(readFileSync(join(repoDir, f), "utf8")); } catch { return false; } })()));
+  } catch { return false; }
 }
 function moduleUnderRepo(repoDir: string, name: string): boolean { const rel = name.replace(/\./g, "/"); return existsSync(join(repoDir, `${rel}.py`)) || existsSync(join(repoDir, rel, "__init__.py")); }
 // E-125 r5: exit-1 output is red only from the real final summary, never captured text. The runner appends -rfE, so a repo's `-q` addopts (stacked to -qq, no footer) still lists FAILED lines.

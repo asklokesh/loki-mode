@@ -479,11 +479,13 @@ describe("engine10 wall base run, D42 (3)", () => {
     rmSync(repoDir, { recursive: true, force: true });
   });
 
-  test("(3b) ImportError on a missing third-party package: not_run", () => {
+  test("(3b) ImportError on a missing package the repo already imports: not_run; one it does not import yet is red (the task creates it)", () => {
     const repoDir = repo();
     venvShim(repoDir);
     writeFileSync(join(repoDir, "loki_wall_thirdparty.py"), "import loki_s41_16_never_installed_xyz\n\ndef test_x():\n    pass\n", "utf8");
 
+    expect(new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_thirdparty.py" }])).toEqual({ pass: 0, fail: 1, not_run: 0 });
+    writeFileSync(join(repoDir, "app.py"), "import loki_s41_16_never_installed_xyz\n", "utf8");
     const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_thirdparty.py" }]);
 
     expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
@@ -503,10 +505,12 @@ describe("engine10 wall base run, D42 (3)", () => {
     rmSync(repoDir, { recursive: true, force: true });
   });
 
-  test.skipIf(!Bun.which("python3"))("(3b-unittest) ImportError on a missing third-party package under unittest: not_run", () => {
+  test.skipIf(!Bun.which("python3"))("(3b-unittest) ImportError on a missing package under unittest: red unless the repo already imports it", () => {
     const repoDir = repo();
     writeFileSync(join(repoDir, "loki_wall_tp_ut.py"), "import unittest\nimport loki_s41_16_never_installed_xyz\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        pass\n", "utf8");
 
+    expect(new RealBaseTestRunner().run(repoDir, [{ runner: "unittest", path: "loki_wall_tp_ut.py" }])).toEqual({ pass: 0, fail: 1, not_run: 0 });
+    writeFileSync(join(repoDir, "app.py"), "import loki_s41_16_never_installed_xyz\n", "utf8");
     const result = new RealBaseTestRunner().run(repoDir, [{ runner: "unittest", path: "loki_wall_tp_ut.py" }]);
 
     expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
