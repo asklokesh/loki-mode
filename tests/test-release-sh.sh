@@ -372,16 +372,19 @@ rc11=$?
 grep -q "SKIPPING the green-CI" "$WORK2/case.log" && bad "stale green-CI banner still printed" || ok "no stale green-CI banner"
 
 echo
-echo "T12 -- SKIP_GUARDS=1 is the only way past a red row"
-if run_gate_case green "LOKI_RELEASE_SKIP_GUARDS=1 GUARD_STUB_RC=1"; then
-    ok "SKIP_GUARDS=1 proceeds despite a red row"
+echo "T12 -- no environment variable skips a red guard row"
+for skipvar in LOKI_RELEASE_SKIP_GUARDS LOKI_SKIP_GUARDS SKIP_GUARDS; do
+    run_gate_case green "${skipvar}=1 GUARD_STUB_RC=1"
+    rc12=$?
+    [ "$rc12" -eq 3 ] && ok "$skipvar=1 does not skip a red row (exit 3)" || bad "$skipvar=1: expected exit 3, got $rc12"
+done
+grep -q "SKIPPING" "$WORK2/case.log" && bad "a skip banner was printed" || ok "no skip banner exists"
+if run_gate_case green "GUARD_STUB_RC=0"; then
+    ok "green row proceeds"
 else
-    bad "expected exit 0 with SKIP_GUARDS=1, got $?"
+    bad "expected exit 0 with a green row, got $?"
 fi
-grep -q "SKIPPING the global guard rows" "$WORK2/case.log" \
-    && ok "SKIP_GUARDS prints a loud warning" || bad "no skip warning"
 
-echo
 echo "T13 -- guard rows run against a clean worktree of HEAD, not the dirty tree (REL-GUARD-b)"
 # (a) dirty tracked file would make the row red; HEAD is green, so the guard stays green.
 reset_repo2
@@ -749,11 +752,11 @@ rc=$?
 [ "$(origin_main)" = "$SHIP_BASE" ] && grep -qx 1.2.3 "$SHIP_REPO/VERSION" && ok "gate refusal: nothing written or pushed" || bad "gate refusal wrote or pushed"
 
 echo
-echo "T17d -- notes with no '### ' subsection are refused before any write, even with LOKI_RELEASE_SKIP_GUARDS=1 (FC-RELEASE-NOTES-FORMAT-UNCHECKED-LOCALLY)"
+echo "T17d -- notes with no '### ' subsection are refused before any write, with all guard rows green (FC-RELEASE-NOTES-FORMAT-UNCHECKED-LOCALLY)"
 new_ship_fixture
 printf '## v1.2.4 (2026-10-17)\n\n- bullets but no subsection\n' > "$SHIPW/notes-flat.md"
 ORIG="$(origin_main)"
-run_ship_case "LOKI_RELEASE_SKIP_GUARDS=1" "$SHIPW/notes-flat.md"
+run_ship_case "GUARD_STUB_RC=0" "$SHIPW/notes-flat.md"
 assert_refused "flat notes" $? SHIP_NOTES_FORMAT "$ORIG"
 grep -qx 1.2.3 "$SHIP_REPO/VERSION" && ok "flat notes: nothing written (VERSION unchanged)" || bad "flat notes: VERSION was bumped"
 

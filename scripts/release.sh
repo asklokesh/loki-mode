@@ -33,7 +33,7 @@
 # rows (scripts/global-guards.tsv) run against a clean worktree of HEAD; a red
 # row refuses the bump, exit 3 (RELEASE_GUARD_RED). No workflow run is required:
 # publishing never waits on a test job. --dry-run skips the gate since it
-# writes nothing. LOKI_RELEASE_SKIP_GUARDS=1 skips the rows with a loud warning.
+# writes nothing. No environment variable skips the rows.
 #
 # Files intentionally NOT bumped by this script (left to the maintainer):
 #   - vscode-extension/package.json: CLAUDE.md marks this DEPRECATED since
@@ -423,17 +423,10 @@ RELEASE_REQUIRED_WORKFLOWS=()
 # Cheap CI-only guards (global-guards.tsv R8 rows). Always run before a bump
 # so a release cannot cut on a tree a guard already rejects. Same runner as the
 # impacted gate (scripts/impacted-gate.sh --guards-only): per-row timeout, parallel.
-# LOKI_RELEASE_SKIP_GUARDS=1 skips with a loud warning. LOKI_RELEASE_GUARD_TIMEOUT
-# (default 300s) is the per-row limit. Guards run in a clean worktree of HEAD; a worktree failure exits 3.
+# No environment variable skips them. LOKI_RELEASE_GUARD_TIMEOUT (default 300s)
+# is the per-row limit. Guards run in a clean worktree of HEAD; a worktree failure exits 3.
 run_release_guard_rows() {
     local out rc=0 started
-    if [ "${LOKI_RELEASE_SKIP_GUARDS:-}" = "1" ]; then
-        log_warn "=============================================================="
-        log_warn "LOKI_RELEASE_SKIP_GUARDS=1: SKIPPING the global guard rows."
-        log_warn "A red CI-only guard will NOT stop this release."
-        log_warn "=============================================================="
-        return 0
-    fi
     # The guards read the working tree, so run them in a clean detached worktree of
     # HEAD: the main checkout is dirty by design (usage-governor appends to tracked files).
     local tmp_root dir wt
@@ -801,8 +794,7 @@ run_ship() {
         || ship_refuse SHIP_NOTES_HEADER "the first line of $notes must be '## v$new ...'"
     # FC-RELEASE-NOTES-FORMAT-UNCHECKED-LOCALLY: CI's release-notes.sh rejects a section
     # with no '### ' subsection AFTER npm has published, skipping the tag and GitHub
-    # release. Run the same validator on the notes before any write. Not bypassable:
-    # LOKI_RELEASE_SKIP_GUARDS covers only the global guard rows, never this.
+    # release. Run the same validator on the notes before any write. Not bypassable.
     ship_check_notes_format "$notes" "$new" \
         || ship_refuse SHIP_NOTES_FORMAT "release-notes.sh rejects the notes in $notes (needs '### ' subsections and '- ' bullets)"
     ship_header_is "$ROOT_DIR/CHANGELOG.md" 8 "$current" \

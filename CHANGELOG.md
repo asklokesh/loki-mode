@@ -2009,7 +2009,7 @@ v11.17.7 never published: its Tests run was red on e66c51a09 because the Tier A 
 - The cost benchmark (`benchmarks/bench/attribution.py --execute`) now runs the repo `bin/loki` (or `LOKI_BENCH_LOKI_BIN`) instead of whatever `loki` is first on PATH, and refuses to run with exit 2 when the binary's version does not match the repo `VERSION`. Set `LOKI_BENCH_ALLOW_VERSION_MISMATCH=1` to override. The run metadata records the binary used. A stale global v11.3.9 binary had silently measured an old engine.
 
 ### Changed
-- `scripts/release.sh` under `LOKI_RELEASE_ALLOW_RED=1` now runs the global guard rows (`scripts/impacted-gate.sh --guards-only`) before any write and exits 3 when one is red. `LOKI_RELEASE_SKIP_GUARDS=1` skips them; `LOKI_RELEASE_GUARD_TIMEOUT` sets the per-row limit (default 170s). New guard rows: help-changelog-drift, no-tmp-sweep, hard-deadline-confinement and cli-commands. Six ALLOW_RED cuts had shipped trees that failed these CI-only guards.
+- `scripts/release.sh` under `LOKI_RELEASE_ALLOW_RED=1` now runs the global guard rows (`scripts/impacted-gate.sh --guards-only`) before any write and exits 3 when one is red. `LOKI_RELEASE_GUARD_TIMEOUT` sets the per-row limit (default 170s). New guard rows: help-changelog-drift, no-tmp-sweep, hard-deadline-confinement and cli-commands. Six ALLOW_RED cuts had shipped trees that failed these CI-only guards.
 - Decision: runner config YAML files cap trust on any byte change instead of comparing parsed keys, after a reproduced parser differential with pnpm 11.1.3.
 
 ## v11.17.5 (2026-10-16)

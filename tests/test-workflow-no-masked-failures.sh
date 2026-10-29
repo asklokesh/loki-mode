@@ -25,6 +25,9 @@
 #   R7 release.yml never waits on tests: no job `needs` a test job (id or name
 #      matching test/fast/ci, or a job whose steps run a test command) and the
 #      workflow has no `workflow_run` trigger. Publishing is not gated on tests.
+#   R8 no environment variable skips run_release_guard_rows: the function has no
+#      `return`, reads no LOKI_ variable but the per-row timeout, its call site is
+#      gated only by --dry-run, and release.sh names no SKIP-style guard variable.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -437,6 +440,26 @@ if isinstance(release_doc, dict):
             if n in test_jobs:
                 fail(f"release.yml:{jid}: needs test job {n!r}; publishing must not wait on tests (R7)")
 
+# R8: no env var skips run_release_guard_rows.
+if sh_text is not None:
+    fm = re.search(r"^run_release_guard_rows\(\) \{\n(.*?)^\}", sh_text, re.M | re.S)
+    if not fm:
+        fail(f"{release_sh}: run_release_guard_rows definition not found (R8)")
+    else:
+        body = fm.group(1)
+        if re.search(r"\breturn\b", body):
+            fail(f"{release_sh}: run_release_guard_rows contains a return; the rows must always run (R8)")
+        for v in set(re.findall(r"\$\{?(LOKI_[A-Za-z0-9_]+)", body)):
+            if v not in ("LOKI_RELEASE_GUARD_TIMEOUT",):
+                fail(f"{release_sh}: run_release_guard_rows reads ${v}; no env var may skip the rows (R8)")
+        if re.search(r"\$\{?[A-Za-z_]*(SKIP|BYPASS|DISABLE)[A-Za-z_]*", body, re.I):
+            fail(f"{release_sh}: run_release_guard_rows reads a SKIP-style variable (R8)")
+    call = re.search(r"^(\s*)if (.*?); then\n\s*run_release_guard_rows\n", sh_text, re.M)
+    if not call or call.group(2).strip() != '[ "$DRY_RUN" != "true" ]':
+        fail(f"{release_sh}: run_release_guard_rows call must be gated only by --dry-run (R8)")
+    if re.search(r"SKIP_?GUARD", sh_text, re.I):
+        fail(f"{release_sh}: a SKIP-style guard variable is named (R8)")
+
 # Positive control: the files this guard exists for were actually parsed.
 want = ["release.yml"]
 if os.path.basename(wfdir.rstrip("/")) == "workflows" and wfdir == ".github/workflows":
@@ -636,4 +659,30 @@ mut R7b-workflow-run-trigger release.yml 'workflow_dispatch:' 'workflow_run:
     workflows: ["PR fast tier"]
     types: [completed]
   workflow_dispatch:'
+# R8: re-adding any skip path for the guard rows turns the guard red.
+relmut8() { # name wanted-exit mode
+    local d="$SELF/$1"
+    seed "$d"
+    python3 -I - "$d/release.sh" "$3" <<'MP'
+import sys
+p, mode = sys.argv[1:3]
+s = open("scripts/release.sh").read()
+a = "run_release_guard_rows() {\n"
+assert a in s
+if mode == "skip":
+    s = s.replace(a, a + '    if [ "${LOKI_RELEASE_SKIP_GUARDS:-}" = "1" ]; then return 0; fi\n', 1)
+elif mode == "other":
+    s = s.replace(a, a + '    [ -n "${LOKI_FAST_RELEASE:-}" ] && return 0\n', 1)
+elif mode == "call":
+    assert "        run_release_guard_rows\n" in s
+    s = s.replace("        run_release_guard_rows\n", '        [ -n "${FAST:-}" ] || run_release_guard_rows\n', 1)
+open(p, "w").write(s)
+MP
+    RELEASE_SH="$d/release.sh" bash "$0" "$d" >/dev/null 2>&1
+    if [ $? -eq "$2" ]; then echo "  PASS: $1"; else echo "  FAIL: $1 (wanted exit $2)"; SELF_FAIL=1; fi
+}
+relmut8 R8a-skip-env-check-red 1 skip
+relmut8 R8b-other-env-return-red 1 other
+relmut8 R8c-ungated-call-red 1 call
+relmut8 R8d-unchanged-green 0 none
 exit "$SELF_FAIL"
