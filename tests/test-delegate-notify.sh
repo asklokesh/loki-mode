@@ -480,6 +480,34 @@ else
     ok "sourcing run.sh left no .loki/state/provider in the repo checkout"
 fi
 
+# --- guard: no unsigned generic-webhook sender may exist -------------------
+# The only sender that POSTs to LOKI_WEBHOOK_URL is send_webhook_notification in
+# autonomy/loki, and it must sign. A second sender (the removed generic sender in
+# autonomy/notify.sh) sent the same event unsigned.
+_dead_fn="_notify_""webhook"
+if grep -rn --include='*.sh' --include='*.ts' --include='loki' "$_dead_fn" "$REPO_ROOT/autonomy" "$REPO_ROOT/bin" "$REPO_ROOT/loki-ts/src" 2>/dev/null | grep -q .; then
+    bad "guard: no unsigned webhook sender function remains"
+else
+    ok "guard: no unsigned webhook sender function remains"
+fi
+_unsigned=""
+for f in "$REPO_ROOT"/autonomy/*.sh; do
+    [ -f "$f" ] || continue
+    if grep -q 'curl' "$f" && grep -qE '"?\$\{?LOKI_WEBHOOK_URL' "$f"; then
+        _unsigned="$_unsigned $f"
+    fi
+done
+if [ -n "$_unsigned" ]; then
+    bad "guard: no autonomy/*.sh posts to LOKI_WEBHOOK_URL" "$_unsigned"
+else
+    ok "guard: no autonomy/*.sh posts to LOKI_WEBHOOK_URL"
+fi
+if awk '/^send_webhook_notification\(\)/{f=1} f&&/X-Loki-Signature/{found=1} f&&/^}/{exit} END{exit !found}' "$LOKI_BIN"; then
+    ok "guard: send_webhook_notification signs its POST"
+else
+    bad "guard: send_webhook_notification signs its POST"
+fi
+
 echo ""
 echo "delegate-notify: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

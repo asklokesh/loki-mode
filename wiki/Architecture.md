@@ -347,7 +347,7 @@ Environment variables:
          |                           |                           |
          v                           v                           v
 +--------+--------+        +---------+-------+        +----------+-------+
-|  _notify_slack  |        | _notify_discord |        | _notify_webhook  |
+|  _notify_slack  |        | _notify_discord |        | notify webhook  |
 +--------+--------+        +---------+-------+        +----------+-------+
          |                           |                           |
          | curl (background)         | curl (background)         | curl (background)

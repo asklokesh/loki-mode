@@ -3,11 +3,10 @@
 # Loki Mode - Multi-Channel Notification System
 # Version: 1.0.0
 #
-# Supports: Slack, Discord, Generic Webhooks
+# Supports: Slack, Discord (generic webhooks are sent signed by `loki notify webhook`)
 # Environment Variables:
 #   LOKI_SLACK_WEBHOOK    - Slack incoming webhook URL
 #   LOKI_DISCORD_WEBHOOK  - Discord webhook URL
-#   LOKI_WEBHOOK_URL          - Generic webhook URL (any endpoint)
 #   LOKI_PROJECT              - Project name for notifications (optional)
 #   LOKI_NOTIFICATIONS        - Enable/disable all notifications (default: true)
 #===============================================================================
@@ -187,58 +186,6 @@ PAYLOAD
 }
 
 #===============================================================================
-# Generic Webhook Notifications
-#===============================================================================
-
-_notify_webhook() {
-    local event="$1"
-    local title="$2"
-    local message="$3"
-    local metadata="${4:-{}}"
-
-    # Skip if no webhook URL configured
-    [ -z "$LOKI_WEBHOOK_URL" ] && return 0
-
-    local project
-    project="$(_get_project_name)"
-    local timestamp
-    timestamp="$(_get_timestamp)"
-
-    # Escape strings for JSON
-    local escaped_title escaped_message escaped_event escaped_project
-    escaped_title="$(_json_escape "$title")"
-    escaped_message="$(_json_escape "$message")"
-    escaped_event="$(_json_escape "$event")"
-    escaped_project="$(_json_escape "$project")"
-
-    # Ensure metadata is valid JSON, default to empty object
-    if [ -z "$metadata" ] || [ "$metadata" = "{}" ]; then
-        metadata="{}"
-    fi
-
-    # Build standard JSON payload
-    local payload
-    payload=$(cat <<PAYLOAD
-{
-    "event": "$escaped_event",
-    "project": "$escaped_project",
-    "title": "$escaped_title",
-    "message": "$escaped_message",
-    "timestamp": "$timestamp",
-    "metadata": $metadata
-}
-PAYLOAD
-)
-
-    # Send in background with timeout, fail silently
-    (curl -s --fail --connect-timeout 5 --max-time 10 -X POST \
-        -H "Content-Type: application/json" \
-        -d "$payload" \
-        "$LOKI_WEBHOOK_URL" \
-        >/dev/null 2>&1) &
-}
-
-#===============================================================================
 # Unified Notification Function (Main Entry Point)
 #===============================================================================
 
@@ -262,7 +209,6 @@ notify() {
     # Send to all configured channels (background, non-blocking)
     _notify_slack "$event" "$title" "$message" "$metadata"
     _notify_discord "$event" "$title" "$message" "$metadata"
-    _notify_webhook "$event" "$title" "$message" "$metadata"
 
     return 0
 }
@@ -317,16 +263,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "Environment:"
     echo "  LOKI_SLACK_WEBHOOK: ${LOKI_SLACK_WEBHOOK:-(not set)}"
     echo "  LOKI_DISCORD_WEBHOOK: ${LOKI_DISCORD_WEBHOOK:-(not set)}"
-    echo "  LOKI_WEBHOOK_URL: ${LOKI_WEBHOOK_URL:-(not set)}"
     echo "  LOKI_PROJECT: ${LOKI_PROJECT:-(auto-detect)}"
     echo "  LOKI_NOTIFICATIONS: ${LOKI_NOTIFICATIONS:-true}"
     echo ""
 
-    if [ -z "$LOKI_SLACK_WEBHOOK" ] && [ -z "$LOKI_DISCORD_WEBHOOK" ] && [ -z "$LOKI_WEBHOOK_URL" ]; then
+    if [ -z "$LOKI_SLACK_WEBHOOK" ] && [ -z "$LOKI_DISCORD_WEBHOOK" ]; then
         echo "No webhook URLs configured. Set at least one of:"
         echo "  export LOKI_SLACK_WEBHOOK='https://hooks.slack.com/...'"
         echo "  export LOKI_DISCORD_WEBHOOK='https://discord.com/api/webhooks/...'"
-        echo "  export LOKI_WEBHOOK_URL='https://your-endpoint.com/webhook'"
         exit 1
     fi
 
