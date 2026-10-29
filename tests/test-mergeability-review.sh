@@ -182,7 +182,7 @@ fi
 
 # --- reviewer model pin: bash mirror vs reviewerModelForTier ----------------
 # Same reviewers, same env, same model. Empty output means the default model.
-_pin_sh() { (unset LOKI_ADVISOR_MODEL LOKI_REVIEWER_TIER_ROUTING LOKI_REVIEW_ADVISORY; export "$1"; _reviewer_model_pin "$2"); }
+_pin_sh() { (unset LOKI_ADVISOR_MODEL LOKI_REVIEWER_TIER_ROUTING LOKI_REVIEW_ADVISORY; export "${1?}"; _reviewer_model_pin "$2"); }
 _pin_ts() {
     ( cd "$REPO_ROOT/loki-ts" && LOKI_PIN_ENV="$1" LOKI_PIN_REVIEWER="$2" LOKI_PIN_TIER="${3:-}" bun -e '
         import { reviewerModelForTier } from "./src/providers/claude_flags.ts";
