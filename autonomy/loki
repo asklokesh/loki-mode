@@ -31711,21 +31711,22 @@ METRICS_SCRIPT
 
     # Handle --share flag
     if [ "$share_flag" = true ]; then
-        local tmpfile
-        tmpfile=$(mktemp "/tmp/loki-metrics-XXXXXX.md")
+        local tmpdir tmpfile
+        tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/loki-metrics.XXXXXXXX") || exit 1
+        tmpfile="$tmpdir/metrics.md"
         echo "$metrics_output" > "$tmpfile"
 
         if ! command -v gh &>/dev/null; then
             echo -e "${RED}gh CLI not found -- cannot share${NC}"
             echo "Install: brew install gh"
-            rm -f "$tmpfile"
+            rm -f "$tmpfile"; rmdir "$tmpdir" 2>/dev/null || true
             exit 1
         fi
 
         if ! gh auth status &>/dev/null 2>&1; then
             echo -e "${RED}GitHub CLI not authenticated${NC}"
             echo "Run 'gh auth login' to authenticate."
-            rm -f "$tmpfile"
+            rm -f "$tmpfile"; rmdir "$tmpdir" 2>/dev/null || true
             exit 1
         fi
 
@@ -31739,7 +31740,7 @@ METRICS_SCRIPT
         fi
         gist_url=$(gh gist create "$tmpfile" --desc "$gist_desc" $share_visibility 2>&1)
         local gist_exit=$?
-        rm -f "$tmpfile"
+        rm -f "$tmpfile"; rmdir "$tmpdir" 2>/dev/null || true
 
         if [ $gist_exit -ne 0 ]; then
             echo -e "${RED}Failed to create gist${NC}"
@@ -39023,20 +39024,21 @@ cmd_share() {
     esac
 
     # Generate report to temp file
-    local tmpfile
-    tmpfile=$(mktemp "/tmp/loki-share-XXXXXX.$ext")
+    local tmpdir tmpfile
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/loki-share.XXXXXXXX") || exit 1
+    tmpfile="$tmpdir/session-report.$ext"
 
     echo "Generating session report..."
     if ! "$0" report --format "$format" > "$tmpfile" 2>/dev/null; then
         echo -e "${RED}Failed to generate session report${NC}"
-        rm -f "$tmpfile"
+        rm -f "$tmpfile"; rmdir "$tmpdir" 2>/dev/null || true
         exit 1
     fi
 
     # Verify report is not empty
     if [ ! -s "$tmpfile" ]; then
         echo -e "${RED}Generated report is empty${NC}"
-        rm -f "$tmpfile"
+        rm -f "$tmpfile"; rmdir "$tmpdir" 2>/dev/null || true
         exit 1
     fi
 
@@ -39076,8 +39078,12 @@ _loki_gist_upload() {
     gist_err=$(cat "$errfile" 2>/dev/null)
     [ "$errfile" != "/dev/null" ] && rm -f "$errfile"
 
-    # Cleanup temp file
+    # Cleanup temp file and its private loki-* directory (rmdir only removes
+    # an empty directory).
     rm -f "$file"
+    case "$(basename "$(dirname "$file")")" in
+        loki-*) rmdir "$(dirname "$file")" 2>/dev/null || true ;;
+    esac
 
     if [ $gist_exit -ne 0 ]; then
         echo -e "${RED}Failed to create gist${NC}"
@@ -39200,8 +39206,9 @@ PYEOF
 
     # POST the redacted HTML. Auth header is sent only if a license key exists;
     # OSS users with their own endpoint need no key.
-    local tmp_body tmp_code
-    tmp_body=$(mktemp "/tmp/loki-hosted-XXXXXX.out")
+    local tmp_body tmp_code tmp_body_dir
+    tmp_body_dir=$(mktemp -d "${TMPDIR:-/tmp}/loki-hosted.XXXXXXXX") || return 1
+    tmp_body="$tmp_body_dir/response.out"
     local -a curl_args=(-sS -o "$tmp_body" -w '%{http_code}' -X POST
         -H "Content-Type: text/html"
         -H "X-Loki-Proof-Id: ${id}"
@@ -39215,7 +39222,7 @@ PYEOF
     if [ "$curl_exit" -ne 0 ]; then
         echo -e "${RED}Failed to reach hosted endpoint (curl exit ${curl_exit}).${NC}" >&2
         echo "Check LOKI_HOSTED_ENDPOINT or publish to a gist: loki proof share ${id}" >&2
-        rm -f "$tmp_body"
+        rm -f "$tmp_body"; rmdir "$tmp_body_dir" 2>/dev/null || true
         return 1
     fi
 
@@ -39242,7 +39249,7 @@ except Exception:
 print(url)
 PYEOF
 )
-            rm -f "$tmp_body"
+            rm -f "$tmp_body"; rmdir "$tmp_body_dir" 2>/dev/null || true
             if [ -n "$published_url" ]; then
                 echo -e "${GREEN}Published: ${published_url}${NC}"
             else
@@ -39259,7 +39266,7 @@ PYEOF
                 echo "" >&2
             fi
             echo "Nothing was published. Or publish to a gist: loki proof share ${id}" >&2
-            rm -f "$tmp_body"
+            rm -f "$tmp_body"; rmdir "$tmp_body_dir" 2>/dev/null || true
             return 1
             ;;
     esac
@@ -40294,8 +40301,9 @@ PYEOF
             fi
 
             # Copy to a temp file so _loki_gist_upload can remove it after.
-            local tmpfile
-            tmpfile=$(mktemp "/tmp/loki-proof-XXXXXX.html")
+            local tmpfile tmpdir
+            tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/loki-proof.XXXXXXXX") || exit 1
+            tmpfile="$tmpdir/proof.html"
             cp "$html" "$tmpfile"
             echo "Uploading proof page..."
             local gist_desc="Loki Mode proof-of-run ${id}"
