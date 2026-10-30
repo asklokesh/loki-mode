@@ -1,5 +1,5 @@
 // Loki 10 worker (P2, ENGINE.md 6): the token-withheld process that runs intake..seal. It never writes events.jsonl; each event is one JSON line {type, stage, data} on stdout, and the supervisor validates, stamps seq and appends. Its own diagnostics go to stderr.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readEvents } from "./events.ts";
 import { eventsRelPath } from "../util/engine_origin.ts";
@@ -26,6 +26,40 @@ export function assertWorkerEnv(env: NodeJS.ProcessEnv = process.env): void {
     }
   }
 }
+/** GAME10-05a: one stage's capability record, derived from the env (and argv) the stage is actually spawned with, never a declaration. Env key NAMES and presence only; a value never enters the record. can_push is true when a push token is held, "unknown" when no token is held but a credential helper, gh auth config or keyring path is reachable from the env, false only when none can exist. network is false only when the spawn argv itself runs under an enforcing sandbox. */
+export interface StageCapability { stage: string; secrets: string[]; can_push: boolean | "unknown"; network: boolean }
+const SECRET_KEY_RE = /(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY)/i, FLAG_NAME_RE = /^LOKI_(ALLOW|ENABLE|DISABLE|NO|REQUIRE|SKIP|FORCE)_/, FLAG_VALUE_RE = /^(0|1|true|false|yes|no|on|off)$/i; // the last two: a switch such as LOKI_ALLOW_AGENT_GITHUB_TOKEN=1 is not a secret
+const readText = (p: string): string => { try { return readFileSync(p, "utf8"); } catch { return ""; } };
+/** The last credential.helper this env resolves to: env-injected entries (GIT_CONFIG_COUNT/KEY/VALUE) win and an empty value resets; otherwise the user's global git config files and ~/.git-credentials. */
+function credentialHelperReachable(env: NodeJS.ProcessEnv): boolean {
+  const n = Number(env.GIT_CONFIG_COUNT ?? 0); let last: string | null = null;
+  for (let i = 0; i < (Number.isInteger(n) ? n : 0); i++) if ((env[`GIT_CONFIG_KEY_${i}`] ?? "").toLowerCase() === "credential.helper") last = env[`GIT_CONFIG_VALUE_${i}`] ?? "";
+  if (last !== null) return last !== "";
+  const home = env.HOME ?? "", xdg = env.XDG_CONFIG_HOME || (home ? join(home, ".config") : "");
+  const files = env.GIT_CONFIG_GLOBAL !== undefined ? [env.GIT_CONFIG_GLOBAL] : [home && join(home, ".gitconfig"), xdg && join(xdg, "git", "config")];
+  return (home !== "" && existsSync(join(home, ".git-credentials"))) || files.some((f) => f && /^\s*helper\s*=\s*\S/m.test(readText(f)));
+}
+/** gh falls back to hosts.yml and then the OS keyring when no token var is held; a hosts.yml in the config dir this env resolves to means a login (token or keyring) can exist. */
+function ghAuthReachable(env: NodeJS.ProcessEnv): boolean {
+  const home = env.HOME ?? "", dir = env.GH_CONFIG_DIR || (env.XDG_CONFIG_HOME ? join(env.XDG_CONFIG_HOME, "gh") : home ? join(home, ".config", "gh") : ""); return dir !== "" && readText(join(dir, "hosts.yml")).trim() !== "";
+}
+/** True only when the argv head is a known wrapper invoked with the flags that actually cut the network. A bare wrapper name proves nothing, and neither does an env flag. */
+export function argvEnforcesNoNetwork(argv: readonly string[]): boolean {
+  const head = (argv[0] ?? "").split("/").pop() ?? "", rest = argv.slice(1);
+  if (head === "unshare") return rest.some((a) => a === "--net" || a.startsWith("--net=") || /^-[a-zA-Z]*n[a-zA-Z]*$/.test(a));
+  if (head === "bwrap") return rest.includes("--unshare-net") || rest.includes("--unshare-all");
+  if (head === "sandbox-exec") { const i = rest.indexOf("-p"); return i >= 0 && /\(deny\s+network\*\)/.test(rest[i + 1] ?? ""); }
+  return head === "firejail" && rest.includes("--net=none");
+}
+export function stageCapability(stage: string, env: NodeJS.ProcessEnv, argv: readonly string[] = []): StageCapability {
+  const held = (k: string): boolean => { const v = env[k] ?? ""; return v !== "" && !v.startsWith(SENTINEL_PREFIX); };
+  const secrets = Object.keys(env).filter((k) => SECRET_KEY_RE.test(k) && !FLAG_NAME_RE.test(k) && held(k) && !FLAG_VALUE_RE.test(env[k] ?? "")).sort();
+  const can_push: boolean | "unknown" = GITHUB_TOKEN_VARS.some(held) ? true : credentialHelperReachable(env) || ghAuthReachable(env) ? "unknown" : false;
+  return { stage, secrets, can_push, network: !argvEnforcesNoNetwork(argv) };
+}
+/** The worker's first line: what this process really holds, cross-checking the supervisor's spawn-site record. workerStages: every stage the worker runs (FLOW flattened, minus pr, which runs in the supervisor). */
+export function emitObservedCapability(emit: WorkerEmit, env: NodeJS.ProcessEnv = process.env, argv: readonly string[] = process.argv): void { emit("capability.observed" as never, null, { stages: workerStages().map((st) => stageCapability(st, env, argv)) }); }
+export const workerStages = (): StageName[] => FLOW.flat().filter((x): x is StageName => x !== "pr");
 export async function runWorker(
   drive: WorkerDrive,
   opts: { env?: NodeJS.ProcessEnv; write?: (line: string) => void } = {},
@@ -59,6 +93,7 @@ export async function main(args: string[]): Promise<number> {
   (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = true; // cli.ts's blanket exit(130/143) stands down: the handler below owns the stop
   for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { void cancelSessions().finally(() => process.exit(sig === "SIGINT" ? 130 : 143)); });
   await runWorker(async (rawEmit) => {
+    emitObservedCapability(rawEmit); // GAME10-05a
     const { emit, over, remaining, cost } = workerEmits(rawEmit, runId, repoDir, lokiRoot, process.env, (b) => { void import("../util/slack_events.ts").then((m) => m.notifyEvent(process.env, "budget", { cost: `$${b.usd_so_far.toFixed(2)} of $${b.cap_usd.toFixed(2)} (${b.threshold_pct}% of cap)`, question: `$${b.cap_usd.toFixed(2)}`, summary: `Budget: ${b.threshold_pct}% of the $${b.cap_usd.toFixed(2)} cap reached ($${b.usd_so_far.toFixed(2)} spent)` })).catch(() => {}); });
     const base = createSessionRunner({ provider, model, emit: emit as EmitFn, lokiRoot, remaining });
     const failovers: FailoverRecord[] = [];

@@ -34,6 +34,7 @@ export type PrContext = RunContext & {
 };
 export interface PrOptions {
   /** Injectable for tests; defaults to the real script next to this checkout. */
+  onSpawnEnv?: (env: NodeJS.ProcessEnv) => void; // GAME10-05a: receives the exact env object the push script is spawned with
   pushScriptPath?: string; gitlabPushScriptPath?: string; // the GitLab twin (TEN-ADOPTION-09), same injection rule
 }
 export const DEFAULT_PUSH_SH = join(REPO_ROOT, "autonomy/lib/engine10-push.sh");
@@ -116,7 +117,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   writeFileSync(bodyFile, withAiMarker(withSealRoute(shaped, process.env, seal), aiMarkerLine({ runId: ctx.runId, provider: ctx.provider, model: ctx.model })) + intentSection(ctx.outputs().plan) + specPrLine(process.env) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + link + stackSection(process.env, base, link !== "") + (ctx.handoffMd ?? ""), "utf8");
   const title = `Loki 10: ${verdict} (${ctx.runId})`;
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
-  const env = pushEnv(ctx.repoDir, pinnedOrigin);
+  const env = pushEnv(ctx.repoDir, pinnedOrigin); opts.onSpawnEnv?.(env);
   const pr = runOnce({ dir: ctx.runDir, key: idempotencyKey("pr", ctx.runId, ctx.branch), keep: (r) => r.ok, post: () => runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath, gitlabScriptPath: opts.gitlabPushScriptPath, env }) }); // P12-36: push-pr reuses an existing PR, so a pending replay is duplicate-safe
   if (!pr.ok) return { status: "failed", data: {}, reason: pr.reason + publishFallback(ctx.runDir, ctx.branch, base) };
   const { url, localOk, existing } = pr;

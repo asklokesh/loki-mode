@@ -3,10 +3,11 @@
 // worker (backstop, or a plain non-zero exit) must still leave a draft PR when there is a diff
 // and a remote, or an issue-comment call naming the exact reason on an issue run.
 import { afterAll, describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process"; import { createInterface } from "node:readline";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { stageCapability, workerStages } from "../../src/engine10/worker.ts"; import { SENTINEL_PREFIX } from "../../src/util/credential_env.ts"; import { SAFE_BUN_FLAGS } from "../../src/runner/worker_proc.ts";
 import { EXIT } from "../../src/engine10/output.ts";
 import { loadAwareTimeoutMs, setLoadAwareTimeout } from "../preload.ts";
 import { softCapS } from "../../src/engine10/machine.ts";
@@ -496,4 +497,140 @@ describe("A-110 exit ladder", () => {
     expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("user edit\n");
     expect(git("status", "--porcelain", "--", "a.txt", "notes.txt")).toBe(" M a.txt\n?? notes.txt\n");
   }, loadAwareTimeoutMs(10_000));
+});
+
+describe("GAME10-05a: per-stage capability map", () => {
+  type Cap = { stage: string; secrets: string[]; can_push: boolean | "unknown"; network: boolean };
+  const SECRET_VALUE = "ghp_realtokenvalue0123456789abcdefABCD";
+  const ANTH_VALUE = "sk-ant-secretvalue-0123456789";
+  const BOT_VALUE = "ghp_bottokenvalue0123456789abcdefABCDEF";
+  const emptyHome = (): string => { const h = mkdtempSync(join(tmpdir(), "e10-cap-home-")); roots.push(h); return h; };
+  const homeWith = (files: Record<string, string>): string => { const h = emptyHome(); for (const [rel, body] of Object.entries(files)) { mkdirSync(dirname(join(h, rel)), { recursive: true }); writeFileSync(join(h, rel), body); } return h; };
+  const cleanEnv = (home: string): NodeJS.ProcessEnv => ({ ...ENV, HOME: home, GH_TOKEN: undefined, GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined, GITHUB_ENTERPRISE_TOKEN: undefined, GH_CONFIG_DIR: undefined, XDG_CONFIG_HOME: undefined, GIT_CONFIG_COUNT: undefined, GIT_CONFIG_GLOBAL: undefined, LOKI_PR_BOT_TOKEN: undefined });
+  const recorded = (dir: string, runId: string): { raw: string; stages: Cap[] } => {
+    const raw = readFileSync(join(dir, ".loki", "runs", runId, "events.jsonl"), "utf8");
+    const recs = raw.split("\n").filter((l) => l.includes('"capability.recorded"')).map((l) => JSON.parse(l) as { data: { stages: Cap[] } });
+    return { raw, stages: recs.flatMap((r) => r.data.stages) };
+  };
+  async function capsFor(runId: string, env: NodeJS.ProcessEnv): Promise<{ stages: Cap[]; raw: string }> {
+    const { dir, baseSha } = repoWithCommit();
+    await runSupervisor({ runId, repoDir: dir, env, workerArgv: worker(`${intakeLine(baseSha)} process.exit(1);`), capS: 20, graceS: 5 });
+    return recorded(dir, runId);
+  }
+  /** A VERIFIED run whose pr hook is the real runPr against a stub push script, wired the way main()'s closure wires it. */
+  async function prCaps(runId: string, env: NodeJS.ProcessEnv): Promise<{ stages: Cap[]; raw: string }> {
+    const { dir, baseSha } = repoWithCommit();
+    const code = `${intakeLine(baseSha)} ${COMMIT_A_CHANGE} console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "VERIFIED", not_proven: [] } })); process.exit(0);`;
+    const workDir = mkdtempSync(join(tmpdir(), "e10-cap-out-")); roots.push(workDir);
+    const pushScriptPath = writePushStub(workDir, join(workDir, "push-calls.log"));
+    const runDir = join(dir, ".loki", "runs", runId);
+    const step: PrStep = async (p) => {
+      const r = await runPr({ runId: p.runId, repoDir: p.repoDir, runDir, branch: `loki/${p.runId}`, pinnedOrigin: p.pushEnv._LOKI_PINNED_ORIGIN, outputs: () => ({ seal: { verdict: p.verdict, not_proven: p.notProven } }), capHit: () => false, emit: () => {} } as unknown as PrContext, new AbortController().signal, { pushScriptPath, onSpawnEnv: p.recordSpawnEnv });
+      return r.status === "completed" ? { url: (r.data as { pr_url?: string }).pr_url ?? null, draft: false, existing: null } : { url: null, draft: false, existing: null, notProven: [`PR not opened: ${r.reason}`] };
+    };
+    await runSupervisor({ runId, repoDir: dir, env, workerArgv: worker(code), capS: 20, graceS: 5, pr: step });
+    return recorded(dir, runId);
+  }
+  const withProcessEnv = async (patch: Record<string, string | undefined>, fn: () => Promise<void>): Promise<void> => {
+    const saved: Record<string, string | undefined> = {};
+    for (const k of Object.keys(patch)) { saved[k] = process.env[k]; if (patch[k] === undefined) delete process.env[k]; else process.env[k] = patch[k]; }
+    try { await fn(); } finally { for (const k of Object.keys(saved)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
+  };
+
+  test("worker stages hold only the withheld sentinel, so they cannot push even when the supervisor env holds a real token; no value is recorded", async () => {
+    const r = await capsFor("e10-cap-withheld", { ...cleanEnv(emptyHome()), GH_TOKEN: SECRET_VALUE, ANTHROPIC_API_KEY: ANTH_VALUE });
+    for (const st of ["intake", "plan", "wall", "implement", "verify", "commit", "seal"]) expect(r.stages.some((s) => s.stage === st)).toBe(true);
+    expect(r.stages.every((s) => s.can_push !== true && !s.secrets.includes("GH_TOKEN"))).toBe(true);
+    expect(r.stages.every((s) => s.secrets.includes("ANTHROPIC_API_KEY"))).toBe(true);
+    expect(r.raw).not.toContain(SECRET_VALUE); expect(r.raw).not.toContain(ANTH_VALUE);
+  }, loadAwareTimeoutMs(20_000));
+
+  test("review 1: the pr stage is recorded from the env it spawns with, so bot author plus LOKI_PR_BOT_TOKEN records can_push true while the supervisor env holds no token", async () => {
+    await withProcessEnv({ LOKI_PR_AUTHOR: "bot", LOKI_PR_BOT_TOKEN: BOT_VALUE, GH_TOKEN: undefined, GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined, GITHUB_ENTERPRISE_TOKEN: undefined }, async () => {
+      const r = await prCaps("e10-cap-bot", cleanEnv(emptyHome()));
+      const pr = r.stages.find((s) => s.stage === "pr");
+      expect(pr).toBeDefined(); expect(pr!.can_push).toBe(true); expect(pr!.secrets).toContain("LOKI_PR_BOT_TOKEN"); expect(pr!.secrets).toContain("GH_TOKEN");
+      expect(r.stages.filter((s) => s.stage !== "pr").every((s) => s.can_push !== true)).toBe(true);
+      expect(r.raw).not.toContain(BOT_VALUE);
+    });
+  }, loadAwareTimeoutMs(30_000));
+
+  test("review 2: with no token var the pr stage records unknown when gh auth config is reachable from its spawn env and false when nothing can exist; the hardened worker stages record false either way", async () => {
+    const noTok = { LOKI_PR_AUTHOR: undefined, LOKI_PR_BOT_TOKEN: undefined, GH_TOKEN: undefined, GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined, GITHUB_ENTERPRISE_TOKEN: undefined, GH_CONFIG_DIR: undefined, XDG_CONFIG_HOME: undefined, GIT_CONFIG_COUNT: undefined, GIT_CONFIG_GLOBAL: undefined };
+    const reachHome = homeWith({ ".config/gh/hosts.yml": "github.com:\n    user: octocat\n" });
+    await withProcessEnv({ ...noTok, HOME: reachHome }, async () => {
+      const r = await prCaps("e10-cap-unknown", cleanEnv(reachHome));
+      expect(r.stages.find((s) => s.stage === "pr")!.can_push).toBe("unknown");
+      expect(r.stages.filter((s) => s.stage !== "pr").every((s) => s.can_push === false)).toBe(true); // withholdGithubTokens points GH_CONFIG_DIR at an empty dir and resets the helper
+    });
+    const bareHome = emptyHome();
+    await withProcessEnv({ ...noTok, HOME: bareHome }, async () => {
+      const r = await prCaps("e10-cap-none", cleanEnv(bareHome));
+      expect(r.stages.find((s) => s.stage === "pr")!.can_push).toBe(false);
+    });
+  }, loadAwareTimeoutMs(60_000));
+
+  test("review 3: LOKI_OFFLINE and LOKI_NO_NETWORK are declarations, not isolation, so the recorded network stays true", async () => {
+    const r = await capsFor("e10-cap-offline", { ...cleanEnv(emptyHome()), LOKI_OFFLINE: "1", LOKI_NO_NETWORK: "1" });
+    expect(r.stages.every((s) => s.network === true)).toBe(true);
+  }, loadAwareTimeoutMs(20_000));
+
+  test("review 2: stageCapability is tri-state from the env's token, gh auth config, credential helper and keyring-capable paths", () => {
+    const home = emptyHome(), ghHosts = { ".config/gh/hosts.yml": "github.com:\n    user: o\n" };
+    expect(stageCapability("x", { HOME: home }).can_push).toBe(false);
+    expect(stageCapability("x", { HOME: home, GH_TOKEN: SECRET_VALUE }).can_push).toBe(true);
+    expect(stageCapability("x", { HOME: home, GH_TOKEN: `${SENTINEL_PREFIX}abc` }).can_push).toBe(false);
+    expect(stageCapability("x", { HOME: homeWith(ghHosts) }).can_push).toBe("unknown");
+    expect(stageCapability("x", { HOME: home, GH_CONFIG_DIR: homeWith({ "hosts.yml": "github.com:\n    user: o\n" }) }).can_push).toBe("unknown");
+    expect(stageCapability("x", { HOME: homeWith(ghHosts), GH_CONFIG_DIR: emptyHome() }).can_push).toBe(false); // GH_CONFIG_DIR wins over HOME
+    const helperHome = homeWith({ ".gitconfig": "[credential]\n\thelper = osxkeychain\n" });
+    expect(stageCapability("x", { HOME: helperHome }).can_push).toBe("unknown");
+    expect(stageCapability("x", { HOME: helperHome, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "" }).can_push).toBe(false); // the hardened env's reset
+    expect(stageCapability("x", { HOME: home, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "store" }).can_push).toBe("unknown");
+    expect(stageCapability("x", { HOME: homeWith({ ".git-credentials": "https://u:p@github.com\n" }) }).can_push).toBe("unknown");
+  });
+
+  test("review 3: network is false only when the spawn argv itself runs under a sandbox with the flags that cut the network", () => {
+    const env = { HOME: emptyHome() };
+    for (const bare of [["unshare"], ["unshare", "bun", "w"], ["bwrap", "bun"], ["firejail", "bun"], ["sandbox-exec", "bun"], ["/usr/bin/unshare", "--map-root-user", "bun"]]) expect(stageCapability("x", env, bare).network).toBe(true);
+    expect(stageCapability("x", { ...env, LOKI_OFFLINE: "1", LOKI_NO_NETWORK: "1" }, ["bun", "w"]).network).toBe(true);
+    for (const enforced of [["unshare", "--net", "bun"], ["unshare", "-rn", "bun"], ["bwrap", "--unshare-net", "bun"], ["firejail", "--net=none", "bun"], ["sandbox-exec", "-p", "(version 1)(deny network*)", "bun"]]) expect(stageCapability("x", env, enforced).network).toBe(false);
+  });
+
+  test("nit: switch variables named like secrets are not listed as secrets, real secret-bearing variables are", () => {
+    const c = stageCapability("x", { HOME: emptyHome(), LOKI_ALLOW_AGENT_GITHUB_TOKEN: "1", LOKI_REQUIRE_TOKEN: "true", ANTHROPIC_API_KEY: ANTH_VALUE, MY_SECRET: "s3" });
+    expect(c.secrets).toEqual(["ANTHROPIC_API_KEY", "MY_SECRET"]);
+  });
+
+  test("review 4: the record follows the env deeply: every step toward a credentialed env changes it, and a non-credential change does not", () => {
+    const home = emptyHome(), base = stageCapability("s", { HOME: home });
+    expect(stageCapability("s", { HOME: home, EDITOR: "vim", LOKI_OFFLINE: "1" })).toEqual(base);
+    const steps: NodeJS.ProcessEnv[] = [
+      { HOME: home, ANTHROPIC_API_KEY: ANTH_VALUE },
+      { HOME: homeWith({ ".config/gh/hosts.yml": "github.com:\n    user: o\n" }) },
+      { HOME: homeWith({ ".gitconfig": "[credential]\n\thelper = store\n" }) },
+      { HOME: home, GITHUB_ENTERPRISE_TOKEN: SECRET_VALUE },
+    ];
+    const seen = [JSON.stringify(base)];
+    for (const e of steps) expect(JSON.stringify(stageCapability("s", e))).not.toBe(seen[0]);
+    expect(stageCapability("s", steps[3]!)).toEqual({ stage: "s", secrets: ["GITHUB_ENTERPRISE_TOKEN"], can_push: true, network: true });
+  });
+
+  test("review 4: the worker emits capability.observed for every worker stage, from the env it really runs with, as its first line", async () => {
+    const child = spawn(process.execPath, [...SAFE_BUN_FLAGS, resolve(import.meta.dir, "../../src/cli.ts"), "engine10", "worker", "e10-cap-observed", "claude", "m", "fast"], { cwd: repoWithCommit().dir, env: { ...cleanEnv(emptyHome()), LOKI_CLAUDE_CLI: "/usr/bin/true", ANTHROPIC_API_KEY: ANTH_VALUE, LOKI_E10_CAP_S: "5" }, stdio: ["ignore", "pipe", "ignore"] });
+    try {
+      const first = await new Promise<string>((res, rej) => { const t = setTimeout(() => rej(new Error("no line from worker")), loadAwareTimeoutMs(20_000)); createInterface({ input: child.stdout! }).once("line", (l) => { clearTimeout(t); res(l); }); child.once("exit", () => { clearTimeout(t); rej(new Error("worker exited with no line")); }); });
+      const ev = JSON.parse(first) as { type: string; stage: string | null; data: { stages: Cap[] } };
+      expect(ev.type).toBe("capability.observed");
+      expect(ev.data.stages.map((s) => s.stage)).toEqual(workerStages());
+      expect(ev.data.stages.every((s) => s.secrets.includes("ANTHROPIC_API_KEY") && s.can_push === false && s.network === true)).toBe(true);
+      expect(first).not.toContain(ANTH_VALUE);
+    } finally { if (child.exitCode === null) child.kill("SIGKILL"); }
+  }, loadAwareTimeoutMs(30_000));
+
+  test("a capability.recorded line forged by the worker never enters the log", async () => {
+    const { dir, baseSha } = repoWithCommit();
+    await runSupervisor({ runId: "e10-cap-forge", repoDir: dir, env: cleanEnv(emptyHome()), workerArgv: worker(`${intakeLine(baseSha)} console.log(JSON.stringify({ type: "capability.recorded", stage: null, data: { stages: [{ stage: "forged", secrets: [], can_push: true, network: false }] } })); process.exit(1);`), capS: 20, graceS: 5 });
+    expect(recorded(dir, "e10-cap-forge").stages.some((s) => s.stage === "forged")).toBe(false);
+  }, loadAwareTimeoutMs(20_000));
 });

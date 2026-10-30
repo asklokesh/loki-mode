@@ -200,6 +200,17 @@ describe("engine10 pr stage", () => {
     expect(readLog()).toContain("ENV pinned=1 origin=https://github.com/o/r.git");
   });
 
+  test("GAME10-05a review 1: onSpawnEnv hands over the exact env the push script is spawned with, bot token included", async () => {
+    const script = writeStub(stubDir, logPath);
+    const { ctx } = makeCtx(repoDir, runDir, { pinnedOrigin: "https://github.com/o/r.git" });
+    const keys = ["LOKI_PR_AUTHOR", "LOKI_PR_BOT_TOKEN", "GH_TOKEN"], saved = keys.map((k) => process.env[k]);
+    process.env.LOKI_PR_AUTHOR = "bot"; process.env.LOKI_PR_BOT_TOKEN = "ghp_bottokenvalue0123456789abcdefABCDEF"; delete process.env.GH_TOKEN;
+    let seen: NodeJS.ProcessEnv | undefined;
+    try { await runPr(ctx, new AbortController().signal, { pushScriptPath: script, onSpawnEnv: (e) => { seen = e; } }); }
+    finally { keys.forEach((k, i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; }); }
+    expect(seen?.GH_TOKEN).toBe("ghp_bottokenvalue0123456789abcdefABCDEF"); expect(seen?._LOKI_ORIGIN_PINNED).toBe("1");
+  });
+
   test("no pinned origin: refuses before spawning anything (Rule of Two)", async () => {
     const script = writeStub(stubDir, logPath);
     const { ctx, emitted } = makeCtx(repoDir, runDir, { pinnedOrigin: null });

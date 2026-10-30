@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Every engine10 run now records what each stage can do, read from the environment it is spawned with and never declared: which secret-bearing variable names it holds (names only, never values, switches such as `LOKI_ALLOW_AGENT_GITHUB_TOKEN` excluded), whether it can push (true with a token, unknown when only a credential helper, gh login or keyring path is reachable, false when none can exist) and whether it has network (false only when the spawn argv runs under a sandbox with the flags that cut it, never from `LOKI_OFFLINE`). The supervisor writes it as `capability.recorded`, the pr stage from the exact env its push script gets (bot author plus `LOKI_PR_BOT_TOKEN` included), and the worker emits `capability.observed`. Proven by `loki-ts/tests/engine10/supervisor_backstop.test.ts` ("GAME10-05a: per-stage capability map", 10 tests: the bot-token pr record, the tri-state push cases, the network flag cases, the switch exclusion, the deep env-mutation record, the real worker's first line, a forged `capability.recorded` dropped) and `loki-ts/tests/engine10/pr.test.ts` ("GAME10-05a review 1: onSpawnEnv ...").
+
 ## v11.88.0 (2026-10-29)
 
 ### Added
