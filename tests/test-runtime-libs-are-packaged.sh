@@ -164,14 +164,32 @@ if command -v npm >/dev/null 2>&1 && command -v npx >/dev/null 2>&1 && command -
     if [ ! -f "$_zi_tgz" ]; then
         bad "zero-install: npm pack did not produce a tarball: $(head -c 300 "$_ZI/pack.out")"
     else
-        _zi_node_dir="$(dirname "$(command -v node)")"
+        # PATH holds only node, npm and npx (symlinks in a private dir) plus /usr/bin:/bin, so no
+        # bun or loki on the machine can satisfy the run; Bun must come from the npx install.
+        mkdir -p "$_ZI/bin"
+        for _t in node npm npx; do ln -s "$(command -v "$_t")" "$_ZI/bin/$_t"; done
+        _ZI_PATH="$_ZI/bin:/usr/bin:/bin"
+        if env -i PATH="$_ZI_PATH" sh -c 'command -v bun' >/dev/null 2>&1; then
+            bad "zero-install: bun is on the test PATH; the run would not prove optionalDependencies"
+        else
+            ok "zero-install: no bun on the test PATH"
+        fi
+        if env -i PATH="$_ZI_PATH" sh -c 'command -v loki' >/dev/null 2>&1; then
+            bad "zero-install: a loki is on the test PATH; nothing is uninstalled"
+        else
+            ok "zero-install: no loki on the test PATH"
+        fi
         _zi_rc=0
-        ( cd "$_ZI/work" && env -i PATH="$_zi_node_dir:/usr/bin:/bin" HOME="$_ZI/home" TMPDIR="$_ZI" \
+        ( cd "$_ZI/work" && env -i PATH="$_ZI_PATH" HOME="$_ZI/home" TMPDIR="$_ZI" \
             npm_config_prefix="$_ZI/prefix" npm_config_cache="$_ZI/cache" LOKI_NO_BROWSER=1 CI=1 \
             LOKI_TELEMETRY_DISABLED=true LOKI_NO_TELEMETRY=1 DO_NOT_TRACK=1 \
             timeout -k 15 600 npx --yes --package "$_zi_tgz" -- loki try "file://$_ZI/fx" --dry-run </dev/null >"$_ZI/npx.out" 2>&1 ) || _zi_rc=$?
         if [ "$_zi_rc" -ne 0 ] && grep -qE 'ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT' "$_ZI/npx.out"; then
-            printf 'SKIP: zero-install: registry unreachable, optionalDependencies cannot be resolved\n'
+            if [ -n "${CI:-}" ]; then
+                bad "zero-install: registry unreachable in CI; the zero-install path is unproven: $(head -c 300 "$_ZI/npx.out")"
+            else
+                printf 'SKIP: zero-install: registry unreachable, optionalDependencies cannot be resolved\n'
+            fi
         else
             if [ "$_zi_rc" -eq 0 ]; then
                 ok "zero-install: npx <tarball> try --dry-run exits 0"
@@ -182,6 +200,20 @@ if command -v npm >/dev/null 2>&1 && command -v npx >/dev/null 2>&1 && command -
                 ok "zero-install: try reached the preview (task and dry-run lines)"
             else
                 bad "zero-install: try did not reach the preview: $(head -c 600 "$_ZI/npx.out")"
+            fi
+            # A Bun-routed command in the same bun-free environment: `start --dry-run` runs on the
+            # Bun entry, so it only succeeds (and avoids the legacy-engine notice) if the npx-cache Bun was used.
+            _zi_rc2=0
+            ( cd "$_ZI/work" && env -i PATH="$_ZI_PATH" HOME="$_ZI/home" TMPDIR="$_ZI" \
+                npm_config_prefix="$_ZI/prefix" npm_config_cache="$_ZI/cache" LOKI_NO_BROWSER=1 CI=1 \
+                LOKI_TELEMETRY_DISABLED=true LOKI_NO_TELEMETRY=1 DO_NOT_TRACK=1 \
+                timeout -k 15 300 npx --yes --package "$_zi_tgz" -- loki start "add a readme" --dry-run --provider claude \
+                </dev/null >"$_ZI/bunroute.out" 2>&1 ) || _zi_rc2=$?
+            if [ "$_zi_rc2" -eq 0 ] && grep -q '^engine:   engine10' "$_ZI/bunroute.out" \
+                && ! grep -qi 'legacy engine\|cannot run on this machine' "$_ZI/bunroute.out"; then
+                ok "zero-install: the Bun-routed start --dry-run ran on engine10 with no bun on PATH"
+            else
+                bad "zero-install: Bun-routed start --dry-run failed (rc=$_zi_rc2): $(head -c 600 "$_ZI/bunroute.out")"
             fi
             _zi_bun=""
             for _b in "$_ZI"/cache/_npx/*/node_modules/@oven/bun-*/bin/bun; do
