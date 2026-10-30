@@ -23135,6 +23135,28 @@ print(target)
 PY
 }
 
+# One line per supported provider (names from SUPPORTED_PROVIDERS in providers/loader.sh), printed once.
+try_print_provider_setup() {
+    local want="$1" known p hint
+    known="$(sed -n 's/^SUPPORTED_PROVIDERS=(\(.*\))$/\1/p' "$_LOKI_SCRIPT_DIR/../providers/loader.sh" 2>/dev/null | tr -d '"' | head -1)"
+    if [ -z "$known" ]; then
+        echo "loki try: cannot read SUPPORTED_PROVIDERS from providers/loader.sh" >&2
+        return 1
+    fi
+    echo "loki try: no provider is ready for '$want'. Set up one of these, then run loki try again (or preview with --dry-run):"
+    for p in $known; do
+        case "$p" in
+            claude) hint="claude login   (or set ANTHROPIC_API_KEY)" ;;
+            codex) hint="codex login   (or set OPENAI_API_KEY)" ;;
+            opencode) hint="opencode auth login" ;;
+            aider) hint="install aider and set OPENAI_API_KEY or ANTHROPIC_API_KEY" ;;
+            cline) hint="install the cline CLI and configure its API key" ;;
+            *) hint="install the $p CLI (no login command is mapped for it)" ;;
+        esac
+        echo "  $p: $hint"
+    done
+}
+
 _cmd_try_body() {
     local tmp="$1" url="$2" dry_run="$3" provider="$4" max_cost="$5"
     local dest="$tmp/repo" task
@@ -23167,7 +23189,7 @@ _cmd_try_body() {
     if receipt="$(try_keep_receipt "$dest" "$stamp")"; then
         echo ""
         echo "Receipt: $receipt"
-        echo "Check it: loki verify $receipt"
+        echo "Check it: npx loki-mode verify \"$receipt\""
     else
         echo ""
         echo "No receipt was written (run exited $rc)."
@@ -23252,8 +23274,8 @@ cmd_try() {
         *) echo "loki try: unknown provider '$use_provider' (use claude, opencode, codex, cline or aider)" >&2; return 2 ;;
     esac
     if [ "$dry_run" != true ] && ! wow_provider_ready "$use_provider"; then
-        echo "loki try: no provider ready for '$use_provider'. Run 'loki doctor', or preview with --dry-run." >&2
-        return 1
+        try_print_provider_setup "$use_provider" >&2
+        return 2
     fi
 
     local tmp rc=0
