@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- The moat check that an all-unmetered CLI run prints Cost: not measured, never $0.00 now drives the function the run summary really prints its cost through, found from the summary's call site, so a rename of that function can no longer fail or green-wash the check; it turns red when an unmetered run renders a dollar figure.
+
 ## v11.89.0 (2026-10-30)
 
 ### Added

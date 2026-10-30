@@ -5223,20 +5223,26 @@ case_cp_unmeasured() {
 # P7.cli-unmetered-cost-not-dollar-zero
 # A run whose every cost event is the CLI invoker's unmetered marker (a recorded
 # 0, no provider dollars) must print "Cost: not measured", never "$0.00 (claude,
-# 0 tokens; ...)". Drives the real summaryCost() and formatSummary() from
-# loki-ts/src, and checks the supervisor summary path calls summaryCost(). The
-# controls: a metered run keeps its dollar figure, a measured zero stays $0.00.
+# 0 tokens; ...)". Drives the function main() in supervisor.ts really prints its
+# Cost through (found by the call-site shape `const { usd, pc } = <fn>(events,
+# res.tampered, ...)`, so renaming or wrapping it cannot silently green-wash the
+# row) and formatSummary() from loki-ts/src. The controls: a metered run keeps
+# its dollar figure, a measured zero stays $0.00.
 # ---------------------------------------------------------------------------
 case_cli_unmetered_cost() {
     local d="$MOAT_TMP/unmetered" out rc=0
     command -v bun >/dev/null 2>&1 || { echo "FAIL|prerequisite missing: bun"; return 0; }
     mkdir -p "$d"
     cat > "$d/probe.ts" <<'TS'
-import { summaryCost } from "@ts/engine10/events.ts";
+import * as sup from "@ts/engine10/supervisor.ts";
 import { formatSummary } from "@ts/engine10/output.ts";
+const fnName = process.argv[2] ?? "";
+const summaryCost = (sup as Record<string, unknown>)[fnName] as ((e: unknown[], t: boolean, repoDir: string) => { usd: number | null; pc: { usd: number; measured: number; total: number } }) | undefined;
+if (typeof summaryCost !== "function") { console.log(`BAD supervisor.ts does not export the function main() prints its cost through (${fnName})`); process.exit(1); }
+const repoDir = process.argv[3] ?? ".";
 const ev = (seq: number, data: Record<string, unknown>) => ({ v: 1 as const, seq, ts: "2026-01-01T00:00:00Z", run: "r", type: "cost", stage: "implement", data });
 const line = (events: ReturnType<typeof ev>[]): string => {
-  const { usd, pc } = summaryCost(events, false);
+  const { usd, pc } = summaryCost(events, false, repoDir);
   const out = formatSummary({ pr: null, verdict: "VERIFIED", notProven: [], flaky: [], wallS: 10, stages: [],
     cost: { usd, provider: "claude", tokens: 0, note: usd === null ? "CLI invoker records no cost" : null, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total } } as never);
   return out.split("\n").find((l) => l.startsWith("Cost:")) ?? "";
@@ -5252,14 +5258,16 @@ for (const b of bad) console.log("BAD " + b);
 process.exit(bad.length ? 1 : 0);
 TS
     sed -i.bak "s#@ts/#$REPO_ROOT/loki-ts/src/#g" "$d/probe.ts" && rm -f "$d/probe.ts.bak"
-    out="$(cd "$d" && bun "$d/probe.ts" 2> "$d/probe.err")" || rc=$?
+    local fn
+    fn="$(grep -oE 'const \{ usd, pc \} = [A-Za-z_][A-Za-z0-9_]*\(events, res\.tampered' "$REPO_ROOT/loki-ts/src/engine10/supervisor.ts" | sed -E 's/.*= ([A-Za-z0-9_]+)\(.*/\1/' | head -n 1)"
+    [ -n "$fn" ] || { echo "FAIL|supervisor.ts main() no longer derives its summary cost as 'const { usd, pc } = <fn>(events, res.tampered, ...)'"; return 0; }
+    mkdir -p "$d/repo"
+    out="$(cd "$d" && bun "$d/probe.ts" "$fn" "$d/repo" 2> "$d/probe.err")" || rc=$?
     if [ "$rc" != 0 ] && ! grep -q '^BAD ' <<<"$out"; then
         echo "FAIL|probe did not run (rc=$rc): $(tail -c 200 "$d/probe.err" | tr '\n' ' ')"; return 0
     fi
     if [ "$rc" != 0 ]; then echo "FAIL|$(grep '^BAD ' <<<"$out" | sed 's/^BAD //' | tr '\n' ';')"; return 0; fi
-    grep -q 'summaryCost(events, res.tampered)' "$REPO_ROOT/loki-ts/src/engine10/supervisor.ts" \
-        || { echo "FAIL|supervisor.ts summary no longer derives its cost through summaryCost()"; return 0; }
-    echo "PASS|an all-unmetered CLI run prints Cost: not measured, a metered run keeps its dollar figure, a measured zero stays \$0.00, and the supervisor summary uses summaryCost()"
+    echo "PASS|an all-unmetered CLI run prints Cost: not measured, a metered run keeps its dollar figure, a measured zero stays \$0.00, all through $fn(), the function main() prints its Cost through"
 }
 
 # ---------------------------------------------------------------------------
