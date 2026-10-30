@@ -11,7 +11,8 @@
         "base/test_visible.py",
         "head/src.py",
         "head/test_visible.py",
-        "check.py"
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
       ],
       "has_check": true,
       "id": "PR-0001",
@@ -28,7 +29,8 @@
         "base/test_visible.py",
         "head/src.py",
         "head/test_visible.py",
-        "check.py"
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
       ],
       "has_check": true,
       "id": "PR-0002",
@@ -45,7 +47,8 @@
         "base/test_visible.py",
         "head/src.py",
         "head/test_visible.py",
-        "check.py"
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
       ],
       "has_check": true,
       "id": "PR-0003",
@@ -62,7 +65,8 @@
         "base/test_visible.py",
         "head/src.py",
         "head/test_visible.py",
-        "check.py"
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
       ],
       "has_check": true,
       "id": "PR-0004",
@@ -79,7 +83,8 @@
         "base/test_visible.py",
         "head/src.py",
         "head/test_visible.py",
-        "check.py"
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
       ],
       "has_check": true,
       "id": "PR-0005",
@@ -96,7 +101,8 @@
         "base/test_visible.py",
         "head/src.py",
         "head/test_visible.py",
-        "check.py"
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
       ],
       "has_check": true,
       "id": "PR-0006",
@@ -113,7 +119,8 @@
         "base/test_visible.py",
         "head/src.py",
         "head/test_visible.py",
-        "check.py"
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
       ],
       "has_check": true,
       "id": "PR-0007",
@@ -136,6 +143,6 @@
       "summary": "linked issue is prose with no runnable check"
     }
   ],
-  "note": "PR-shaped fixtures: issue, base tree, head tree (the PR), optional check. The 7 cases with a check carry a Check line in issue.md that loki verify-pr extractChecks accepts; PR-0008 is prose only. expected_exit is the intended loki verify-pr exit code (0 verified, 3 no proof to run, 4 proof failed), NOT a measured one: the full verify-pr was not run (it needs a GitHub PR and the container sandbox). Measured with the real judgePr and stubbed inputs: PR-0008 gives 3, but PR-0001 and PR-0002 give 4 because python3 check.py is not a recognised report runner (bun test, pytest, jest, vitest), so a control cannot reach 0 as written. SEALED cases are grader-passing controls for the false-block rate.",
+  "note": "PR-shaped fixtures: issue, base tree, head tree (the PR). The 7 cases with a check carry a Check line in issue.md (`python3 -m pytest tests/test_clause.py`) that loki verify-pr extractChecks accepts, and the pytest clause test ships in both the base and head trees; PR-0008 is prose only. expected_exit is the loki verify-pr exit code (0 verified, 3 no proof to run, 4 proof failed). Measured with the real judgePr (loki-ts/src/commands/verify_pr.ts) where only the PR fetch, issue trust and checkout were stubbed and the sandbox ran the command locally in a copy of the tree: the observed exit equalled expected_exit for all 8 cases (0 for PR-0002 and PR-0004, 4 for PR-0001, PR-0003, PR-0005, PR-0006 and PR-0007, 3 for PR-0008). Not measured: the full loki verify-pr against a real GitHub PR and the container sandbox. SEALED cases are grader-passing controls for the false-block rate.",
   "schema": "loki.seeded-defects.pr/v1"
 }

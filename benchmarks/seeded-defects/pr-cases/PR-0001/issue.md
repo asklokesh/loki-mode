@@ -4,4 +4,4 @@
 
 Clause 1: the upper bound hi is included.
 
-Check: `python3 check.py`
+Check: `python3 -m pytest tests/test_clause.py`

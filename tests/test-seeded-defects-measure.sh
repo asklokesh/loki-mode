@@ -240,7 +240,7 @@ for c in cs:
     for f in c["files"]:
         p = os.path.join(root, c["dir"], f)
         assert os.path.isfile(p) and os.path.getsize(p) > 0, (c["id"], f)
-    assert c["has_check"] == ("check.py" in c["files"]), c["id"]
+    assert c["has_check"] == ("head/tests/test_clause.py" in c["files"]) == ("base/tests/test_clause.py" in c["files"]), c["id"]
     # extractChecks (loki-ts/src/contrib/verify_pr_f2p.ts:24): verify-pr reads checks only from the issue body
     issue = open(os.path.join(root, c["dir"], "issue.md")).read()
     runnable = any(re.match(r"^\s*(?:[-*+]\s+)?check:\s*`([^`]+)`", ln, re.I) for ln in issue.splitlines())
@@ -249,10 +249,10 @@ for c in cs:
         w = os.path.join(tmp, "pr-" + c["id"] + side)
         shutil.copytree(os.path.join(root, c["dir"], side), w)
         assert run(w, "test_visible.py") == 0, (c["id"], side, "visible tests must pass")
-        if side == "head" and c["has_check"]:
-            shutil.copy(os.path.join(root, c["dir"], "check.py"), w)
-            rc = run(w, "check.py")
-            assert (rc == 0) == (c["expected_verdict"] == "SEALED"), (c["id"], "check outcome", rc)
+        if c["has_check"]:
+            # the issue Check runs pytest on the clause test shipped in the tree; it must fail on base, and on head only for a defect
+            rc = subprocess.run(["python3", "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_clause.py"], cwd=w, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+            assert (rc == 0) == (side == "head" and c["expected_verdict"] == "SEALED"), (c["id"], side, "check outcome", rc)
 PY2
 then ok "pr-manifest: PR fixtures pass visible tests, defects fail the issue check, controls pass it"
 else bad "pr-manifest: PR fixtures"; fi

@@ -4,4 +4,4 @@
 
 Clause 1: names such as ../secret raise ValueError.
 
-Check: `python3 check.py`
+Check: `python3 -m pytest tests/test_clause.py`

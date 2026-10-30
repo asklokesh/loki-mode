@@ -2,4 +2,4 @@
 
 `square(n)` must return n squared for every integer n.
 
-Check: `python3 check.py`
+Check: `python3 -m pytest tests/test_clause.py`

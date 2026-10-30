@@ -4,4 +4,4 @@
 
 Clause 1: values below lo are raised to lo.
 
-Check: `python3 check.py`
+Check: `python3 -m pytest tests/test_clause.py`
