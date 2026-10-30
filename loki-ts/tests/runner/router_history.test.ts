@@ -506,4 +506,25 @@ describe("sealed outcome per model tier per shape (GAME10-09a)", () => {
     expect(rec[OTHER]?.["haiku"]).toMatchObject({ verified: 0, failed: 1, total: 1 });
     expect(rec[SHAPE]?.["sonnet"]).toMatchObject({ partial: 1, total: 1 });
   });
+
+  it("shape names like __proto__ and constructor keep their record and never touch Object.prototype", () => {
+    const rec = sealedOutcomesByTier([
+      { shape: "__proto__", receipt: sealed(cheap, "VERIFIED") },
+      { shape: "constructor", receipt: sealed(cheap, "VERIFIED") },
+    ]);
+    expect(Object.keys(Object.prototype)).toEqual([]);
+    expect(({} as Record<string, unknown>)["haiku"]).toBeUndefined();
+    expect(rec["__proto__"]?.["haiku"]).toMatchObject({ verified: 1, total: 1 });
+    expect(rec["constructor"]?.["haiku"]).toMatchObject({ verified: 1, total: 1 });
+  });
+
+  it("an unknown or missing model gets its own unknown tier and is never a sonnet outcome", () => {
+    const rec = sealedOutcomesByTier([
+      { shape: SHAPE, receipt: sealed("some-other-model", "VERIFIED") },
+      { shape: SHAPE, receipt: sealed(undefined as unknown as string, "VERIFIED") },
+      { shape: SHAPE, receipt: sealed("claude-sonnet-5-5", "VERIFIED") },
+    ]);
+    expect(rec[SHAPE]?.["unknown"]).toMatchObject({ verified: 2, total: 2 });
+    expect(rec[SHAPE]?.["sonnet"]).toMatchObject({ verified: 1, total: 1 });
+  });
 });

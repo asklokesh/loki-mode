@@ -96,10 +96,10 @@ export interface TierOutcomeCount { verified: number; partial: number; failed: n
 export type SealedTierRecord = Record<string, Record<string, TierOutcomeCount>>;
 export interface ShapedReceipt { shape: string; receipt: Record<string, unknown> }
 
-/** Model tier of a receipt's model name (same haiku test as outcomeFor; opus is its own tier). */
+/** Model family of a receipt's model name; a missing or unrecognized model is "unknown", never a sonnet outcome. Not claudeTierRank: that returns a catalog role rank and null for legacy-tier ids, which history rows still carry. */
 export function tierOfModel(model: unknown): string {
   const m = typeof model === "string" ? model.toLowerCase() : "";
-  return m.includes("haiku") ? "haiku" : m.includes("opus") ? "opus" : "sonnet";
+  return m.includes("haiku") ? "haiku" : m.includes("opus") ? "opus" : m.includes("sonnet") ? "sonnet" : "unknown";
 }
 
 /** True only when receipt_sha256 is a hash that matches the receipt body (verification and the hash itself excluded, as seal.ts receiptSha256 does). A hash that cannot be computed is not a seal. */
@@ -116,10 +116,10 @@ export function receiptSealIntact(receipt: Record<string, unknown>): boolean {
 
 /** Sealed outcome per shape per model tier, read from receipts. VERIFIED counts only with an intact seal. */
 export function sealedOutcomesByTier(receipts: readonly ShapedReceipt[]): SealedTierRecord {
-  const out: SealedTierRecord = {};
+  const out: SealedTierRecord = Object.create(null); // shape names come from callers: "__proto__" must be a plain key
   for (const { shape, receipt } of receipts) {
     const tier = tierOfModel(receipt["model"]);
-    const byTier = (out[shape] ??= {});
+    const byTier = (out[shape] ??= Object.create(null) as Record<string, TierOutcomeCount>);
     const c = (byTier[tier] ??= { verified: 0, partial: 0, failed: 0, other: 0, unsealed: 0, total: 0 });
     c.total++;
     if (!receiptSealIntact(receipt)) { c.unsealed++; continue; }
