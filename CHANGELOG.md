@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- A parallel `loki start` group now reruns each unit's sealed Wall tests on the merged tree after the repo suite, so a unit that passed alone but is broken by another unit's change fails the group and is named, with a per-unit pass, fail or no_wall line in the output. A unit with no sealed Wall is reported no_wall (never a pass) and does not fail the group; a missing, tampered or unrunnable sealed copy fails closed. Proven by the `integrate` tests "A and B each pass alone, B changes the default A's Wall depends on: merged Wall fails A and never ok" and "a Wall whose directory is a symlink committed by another unit is refused and writes nothing outside the repo" (loki-ts/tests/engine10/integrate.test.ts) and the `runGroup` test "runGroup reruns u1's sealed Wall on the merged tree: u2 adds cfg.txt, the group fails naming u1" (loki-ts/tests/engine10/seal_group.test.ts). A group resumed from units harvested before this change has no stored Wall copies and fails closed at integration; rerun it fresh with `LOKI_GROUP_RESUME=0`.
+
 ## v11.89.0 (2026-10-30)
 
 ### Added

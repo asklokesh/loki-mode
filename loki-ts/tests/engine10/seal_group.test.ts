@@ -615,7 +615,7 @@ describe("group run: Group Seal and resume", () => {
     sh(["git", "remote", "add", "origin", "git@github.com:acme/widgets.git"], d);
     return d;
   };
-  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[]; satisfied?: number[]; shared?: number[]; fixNoop?: boolean; fixFail?: boolean; fixSkipMerge?: boolean; badTask?: number[]; noTask?: number[]; noSpec?: number[]; originHead?: string }
+  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[]; satisfied?: number[]; shared?: number[]; fixNoop?: boolean; fixFail?: boolean; fixSkipMerge?: boolean; wall?: Record<number, string>; extra?: Record<number, [string, string]>; badTask?: number[]; noTask?: number[]; noSpec?: number[]; originHead?: string }
   /** Fake backlog.py: for each unit not marked done in the dag, commit on loki/unit-<g>-<n> and harvest a signed receipt at that head. */
   const fake = (repo: string, calls: string[], o: Opt = {}) => async (argv: string[]): Promise<{ code: number; stdout: string }> => {
     const g = argv[argv.indexOf("--group") + 1]!;
@@ -639,7 +639,10 @@ describe("group run: Group Seal and resume", () => {
         sh(has ? ["git", "checkout", "-q", br] : ["git", "checkout", "-q", "-b", br, u.base ?? o.originHead ?? "main"], repo); // backlog.py: an empty base starts at origin/HEAD
         const f = o.shared?.includes(n) ? "shared.txt" : `${g}-u${n}.txt`;
         writeFileSync(join(repo, f), o.shared?.includes(n) ? `${n}\n` : `${calls.length}\n`);
-        sh(["git", "add", f], repo); sh(["git", "commit", "-q", "-m", `u${n}`], repo);
+        sh(["git", "add", f], repo);
+        const ex = o.extra?.[n];
+        if (ex) { writeFileSync(join(repo, ex[0]), ex[1]); sh(["git", "add", ex[0]], repo); }
+        sh(["git", "commit", "-q", "-m", `u${n}`], repo);
       }
       const head = sh(["git", "rev-parse", "HEAD"], repo).trim();
       sh(["git", "checkout", "-q", prev], repo);
@@ -647,7 +650,12 @@ describe("group run: Group Seal and resume", () => {
       mkdirSync(d, { recursive: true });
       const events = JSON.stringify({ v: 1, seq: 0, ts: "2026-01-01T00:00:00.000Z", run: u.id, type: "run.started", stage: null, data: {} }) + "\n";
       writeFileSync(join(d, "events.jsonl"), events);
-      const body = { schema: "loki.v10.receipt/1", run_id: u.id, verdict: o.satisfied?.includes(n) ? "ALREADY_SATISFIED" : "VERIFIED", head_sha: head, events_sha256: sha256(events), ...(o.noSpec?.includes(n) ? {} : unitSpecReceiptBlock({ LOKI_UNIT_SPEC: u.spec ?? "", LOKI_SPEED: "1" } as NodeJS.ProcessEnv)), ...(o.noTask?.includes(n) ? {} : { task: { source: "text", sha256: sha256(o.badTask?.includes(n) ? "forged task" : (u.items ?? []).join("\n")) } }), time: { wall_s: 0, stages: {} }, not_proven: [] };
+      const wallSrc = o.wall?.[n];
+      if (wallSrc !== undefined) { // harvest layout: the sealed copy sits beside the receipt; the receipt path points into the (gone) unit worktree
+        mkdirSync(join(d, "wall"), { recursive: true });
+        writeFileSync(join(d, "wall", "loki_wall_x.test.ts"), wallSrc);
+      }
+      const body = { ...(wallSrc !== undefined ? { wall: { files: [{ path: `${repo}-backlog/unit-${g}-${n}/loki_wall_x.test.ts`, sha256: sha256(wallSrc) }] } } : {}), schema: "loki.v10.receipt/1", run_id: u.id, verdict: o.satisfied?.includes(n) ? "ALREADY_SATISFIED" : "VERIFIED", head_sha: head, events_sha256: sha256(events), ...(o.noSpec?.includes(n) ? {} : unitSpecReceiptBlock({ LOKI_UNIT_SPEC: u.spec ?? "", LOKI_SPEED: "1" } as NodeJS.ProcessEnv)), ...(o.noTask?.includes(n) ? {} : { task: { source: "text", sha256: sha256(o.badTask?.includes(n) ? "forged task" : (u.items ?? []).join("\n")) } }), time: { wall_s: 0, stages: {} }, not_proven: [] };
       const h = receiptSha256(body as never), sig = o.unsigned?.includes(n) ? { jwt: null, kid: null } : signReceipt(u.id, h);
       const rec = { ...body, receipt_sha256: h, verification: sig };
       if (o.tamper?.includes(n)) rec.verdict = "FAILED";
@@ -686,6 +694,35 @@ describe("group run: Group Seal and resume", () => {
       expect(us).toMatchObject({ id: u.id, writeSet: u.writeSet, pack: u.writeSet, tokenBudget: 1e9, acceptance: [] });
     }
     expect(JSON.parse(readFileSync(join(gd, "group", "manifest.json"), "utf8")).units.map((u: { unit_id: string }) => u.unit_id)).toEqual(["u1", "u2", "u3"]);
+  });
+
+  // GAME10-06a: the loki start path hands each harvested unit's sealed Wall to integrate.
+  const absentCfg = `import { expect, test } from "bun:test";\nimport { existsSync } from "node:fs";\nimport { join } from "node:path";\ntest("cfg.txt is absent", () => { expect(existsSync(join(import.meta.dir, "cfg.txt"))).toBe(false); });\n`;
+  test("runGroup reruns u1's sealed Wall on the merged tree: u2 adds cfg.txt, the group fails naming u1", async () => {
+    const repo = mkRepo("gr-wall-red"), calls: string[] = [];
+    const { code, err } = await go(repo, fake(repo, calls, { wall: { 1: absentCfg }, extra: { 2: ["cfg.txt", "x\n"] } }));
+    expect(code).toBe(1);
+    expect(err).toContain("sealed Wall failed on the merged tree: u1");
+    expect(err).toContain("loki: unit u1 sealed Wall on the merged tree: fail");
+  });
+  test("runGroup: compatible units keep the group VERIFIED and report the Wall pass; units without a Wall are no_wall", async () => {
+    const repo = mkRepo("gr-wall-green"), calls: string[] = [];
+    const { code, err } = await go(repo, fake(repo, calls, { wall: { 1: absentCfg } }));
+    expect(err).toContain("loki: unit u1 sealed Wall on the merged tree: pass");
+    expect(err).toContain("loki: unit u2 sealed Wall on the merged tree: no_wall");
+    expect(code).toBe(0);
+  });
+  test("runGroup: a tampered harvested Wall copy fails closed", async () => {
+    const repo = mkRepo("gr-wall-tamper"), calls: string[] = [];
+    const base = fake(repo, calls, { wall: { 1: absentCfg } });
+    const { code, err } = await go(repo, async (argv) => {
+      const r = await base(argv);
+      const g = argv[argv.indexOf("--group") + 1]!;
+      writeFileSync(join(repo, ".loki", "groups", g, "group", "units", "u1", "wall", "loki_wall_x.test.ts"), "test('x', () => {});\n");
+      return r;
+    });
+    expect(code).toBe(1);
+    expect(err).toContain("not the sealed bytes");
   });
 
   test("a verified group receipt on the group branch short-circuits: exit 0, nothing launched", async () => {

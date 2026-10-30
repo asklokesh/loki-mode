@@ -378,6 +378,15 @@ def main(argv):
                 tmp = dst + ".tmp%d" % os.getpid()
                 shutil.copyfile(src, tmp)
                 os.replace(tmp, dst)
+            # The sealed Wall copies travel with the receipt: integrate reruns them on the merged tree after the worktree is gone.
+            wsrc, wdst = os.path.join(src_dir, "wall"), os.path.join(dst_dir, "wall")
+            if os.path.isdir(wsrc) and not os.path.islink(wsrc) and not os.path.islink(wdst):
+                shutil.rmtree(wdst, ignore_errors=True)
+                os.makedirs(wdst, mode=0o700, exist_ok=True)
+                for name in os.listdir(wsrc):
+                    f = os.path.join(wsrc, name)
+                    if os.path.isfile(f) and not os.path.islink(f):
+                        shutil.copyfile(f, os.path.join(wdst, name))
         except OSError:
             pass
 

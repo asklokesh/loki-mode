@@ -1,10 +1,12 @@
 // D61 slice 12 Wall: two clean units merge and the suite runs once; a planted conflict names its unit and leaves no partial merge;
 // a suite failure yields fail and never ok. git runs through a helper with an explicit env.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { integrate, integrationOrder } from "../../src/engine10/integrate.ts";
+import { loadSealedWall } from "../../src/util/check_result.ts";
 import type { Dag } from "../../src/features/decompose.ts";
 
 let root = "";
@@ -25,6 +27,7 @@ function fixture(name: string, files: Record<string, Record<string, string>>, rc
   mkdirSync(repo, { recursive: true });
   sh(repo, "init", "-q", "-b", "main");
   writeFileSync(join(repo, "shared.txt"), "base\n");
+  writeFileSync(join(repo, "config.txt"), "fast\n");
   const counter = join(root, `${name}.count`);
   writeFileSync(join(repo, "suite.sh"), `#!/bin/sh\necho x >> "${counter}"\nexit ${rc}\n`, { mode: 0o755 });
   sh(repo, "add", "."); sh(repo, "commit", "-qm", "base");
@@ -112,5 +115,84 @@ describe("integrate", () => {
   test("DAG order follows edges", () => {
     const d: Dag = { ...dag("u1", "u2", "u3"), edges: [{ from: "u3", to: "u1", via: "x" }] };
     expect(integrationOrder(d)).toEqual(["u2", "u3", "u1"]);
+  });
+
+  // GAME10-06a: each unit's sealed Wall is rerun on the merged tree.
+  const wallSrc = (want: string): string => `import { expect, test } from "bun:test";\nimport { readFileSync } from "node:fs";\nimport { join } from "node:path";\ntest("default is ${want}", () => { expect(readFileSync(join(import.meta.dir, "config.txt"), "utf8").trim()).toBe("${want}"); });\n`;
+  function sealWall(name: string, repo: string, srcs: Record<string, string>): { files: ReturnType<typeof loadSealedWall>["files"]; problems: string[] } {
+    const runDir = join(root, `${name}.run`);
+    mkdirSync(join(runDir, "wall"), { recursive: true });
+    const listed = Object.entries(srcs).map(([n, src]) => { writeFileSync(join(runDir, "wall", n), src); return { path: join(repo, n), sha256: createHash("sha256").update(src).digest("hex") }; });
+    writeFileSync(join(runDir, "receipt.json"), JSON.stringify({ wall: { files: listed } }));
+    return loadSealedWall(runDir, repo);
+  }
+  const twoUnits = (name: string, bValue: string) => fixture(name, { a: { "loki_wall_a.test.ts": wallSrc("fast") }, b: bValue === "fast" ? { "other.txt": "o\n" } : { "config.txt": `${bValue}\n` } });
+  const run = (f: ReturnType<typeof fixture>, gid: string, walls: Parameters<typeof integrate>[0]["walls"]) => integrate({ repoDir: f.repo, groupId: gid, baseRef: "main", dag: dag("a", "b"), branches: f.branches, testCmd: ["./suite.sh"], walls });
+  test("A and B each pass alone, B changes the default A's Wall depends on: merged Wall fails A and never ok", () => {
+    const f = twoUnits("wall-red", "slow");
+    const walls = { a: sealWall("wall-red", f.repo, { "loki_wall_a.test.ts": wallSrc("fast") }), b: sealWall("wall-red-b", f.repo, { "loki_wall_b.test.ts": wallSrc("slow") }) };
+    const without = run(f, "w1", undefined);
+    expect(without.ok).toBe(true); // the gap this slice closes: the suite alone is green
+    sh(f.repo, "checkout", "-q", "main"); sh(f.repo, "branch", "-D", "loki/group-w1");
+    const r = run(f, "w2", walls);
+    expect(r.suiteExit).toBe(0);
+    expect(r.wallResults?.["a"]?.status).toBe("fail");
+    expect(r.wallResults?.["b"]?.status).toBe("pass");
+    expect(r.perUnit["a"]).toBe("fail");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("a (");
+    expect(sh(f.repo, "status", "--porcelain")).toBe("");
+  });
+  test("compatible units: every sealed Wall passes on the merged tree and ok holds", () => {
+    const f = twoUnits("wall-green", "fast");
+    const r = run(f, "w3", { a: sealWall("wall-green", f.repo, { "loki_wall_a.test.ts": wallSrc("fast") }), b: sealWall("wall-green-b", f.repo, { "loki_wall_b.test.ts": wallSrc("fast") }) });
+    expect(r.wallResults).toEqual({ a: { status: "pass" }, b: { status: "pass" } });
+    expect(r.ok).toBe(true);
+  });
+  test("a Wall with one passing and one failing file fails the unit (a single failure counts)", () => {
+    const f = twoUnits("wall-one-fail", "fast");
+    const r = run(f, "w5", { a: sealWall("wall-one-fail", f.repo, { "loki_wall_a.test.ts": wallSrc("fast"), "loki_wall_c.test.ts": wallSrc("slow") }), b: { files: [], problems: [] } });
+    expect(r.wallResults?.["a"]?.status).toBe("fail");
+    expect(r.wallResults?.["a"]?.reason).toContain("1 passed, 1 failed");
+    expect(r.ok).toBe(false);
+  });
+  test("a unit with no sealed Wall is recorded no_wall: never a pass, and it does not fail the group", () => {
+    const f = twoUnits("wall-none", "fast");
+    const r = run(f, "w4", { a: sealWall("wall-none", f.repo, { "loki_wall_a.test.ts": wallSrc("fast") }) });
+    expect(r.wallResults?.["a"]?.status).toBe("pass");
+    expect(r.wallResults?.["b"]?.status).toBe("no_wall");
+    expect(r.perUnit["b"]).toBe("pass");
+    expect(r.ok).toBe(true);
+  });
+  test("a tampered sealed copy (loadSealedWall problem) fails the unit through integrate", () => {
+    const f = twoUnits("wall-tamper", "fast");
+    const good = sealWall("wall-tamper", f.repo, { "loki_wall_a.test.ts": wallSrc("fast") });
+    writeFileSync(join(root, "wall-tamper.run", "wall", "loki_wall_a.test.ts"), "tampered");
+    const bad = loadSealedWall(join(root, "wall-tamper.run"), f.repo);
+    expect(good.problems).toEqual([]);
+    expect(bad.files).toEqual([]);
+    const r = run(f, "w6", { a: bad, b: { files: [], problems: [] } });
+    expect(r.wallResults?.["a"]?.status).toBe("fail");
+    expect(r.wallResults?.["a"]?.reason).toContain("not the sealed bytes");
+    expect(r.ok).toBe(false);
+  });
+  test("a Wall whose directory is a symlink committed by another unit is refused and writes nothing outside the repo", () => {
+    const outside = join(root, "wall-link-outside");
+    mkdirSync(outside, { recursive: true });
+    const f = fixture("wall-link", { a: { "a.txt": "a\n" }, b: { "b.txt": "b\n" } });
+    sh(f.repo, "checkout", "-q", "-b", "linker", "main");
+    symlinkSync(outside, join(f.repo, "tests"));
+    sh(f.repo, "add", "tests"); sh(f.repo, "commit", "-qm", "link"); sh(f.repo, "checkout", "-q", "main");
+    const walls = { a: { files: [{ rel: "tests/loki_wall_a.test.ts", bytes: Buffer.from(wallSrc("fast")) }], problems: [] }, b: { files: [], problems: [] } };
+    const r = integrate({ repoDir: f.repo, groupId: "w7", baseRef: "main", dag: dag("a", "b"), branches: { a: "linker", b: f.branches["b"]! }, testCmd: ["./suite.sh"], walls });
+    expect(r.wallResults?.["a"]?.status).toBe("fail");
+    expect(r.wallResults?.["a"]?.reason).toContain("symlink");
+    expect(existsSync(join(outside, "loki_wall_a.test.ts"))).toBe(false);
+  });
+  test("a Wall path with .. is refused", () => {
+    const f = twoUnits("wall-dotdot", "fast");
+    const r = run(f, "w8", { a: { files: [{ rel: "../escape.test.ts", bytes: Buffer.from(wallSrc("fast")) }], problems: [] }, b: { files: [], problems: [] } });
+    expect(r.wallResults?.["a"]?.reason).toContain("outside the repo");
+    expect(existsSync(join(f.repo, "..", "escape.test.ts"))).toBe(false);
   });
 });
