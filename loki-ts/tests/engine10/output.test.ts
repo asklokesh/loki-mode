@@ -9,6 +9,7 @@ import {
   formatHeartbeatLine,
   formatStageLine,
   formatSummary,
+  formatTierSeal,
   formatTokens,
   EXIT,
   outcomeOf,
@@ -454,5 +455,24 @@ describe("summaryCache", () => {
     expect(summaryCache([ev({ model: "sonnet", cache_read_tokens: 1_000_000 })], false)).toEqual({ cacheReadTokens: 1_000_000, cacheSavedUsd: 1.9 });
     expect(summaryCache([ev({ model: "sonnet", cache_read_tokens: 5 }), ev({ model: "sonnet" })], false)).toEqual({ cacheReadTokens: null, cacheSavedUsd: null });
     expect(summaryCache([ev({ model: "sonnet", cache_read_tokens: 5 })], true).cacheSavedUsd).toBeNull();
+  });
+});
+
+describe("formatTierSeal and the Tier summary line (GAME10-09b)", () => {
+  const c = (verified: number, total: number) => ({ verified, partial: 0, failed: total - verified, other: 0, unsealed: 0, total });
+  const base = { pr: null, verdict: "VERIFIED", notProven: [], flaky: [], wallS: 60, stages: [], cost: { usd: 0.84, provider: "claude", tokens: 1000 } };
+  test("renders the sealed tier, the avoided cost and both parity counts from the record", () => {
+    const t = { tier: "haiku", topTierCostAvoidedUsd: 1.5, record: { haiku: c(23, 24), opus: c(24, 24) } };
+    expect(formatTierSeal(t)).toBe("haiku tier sealed; top-tier cost avoided $1.50; parity here: haiku sealed 23 of 24, opus sealed 24 of 24");
+    expect(formatSummary({ ...base, tier: t } as never)).toContain("Tier:       haiku tier sealed;");
+  });
+  test("a missing record, cost or tier reads not measured, never 0", () => {
+    expect(formatTierSeal({ tier: "haiku", record: null })).toBe("haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured");
+    expect(formatTierSeal({ tier: "haiku", topTierCostAvoidedUsd: -1, record: { haiku: c(0, 0) } })).toContain("avoided not measured");
+    expect(formatTierSeal({})).toBe("sealed tier not measured; top-tier cost avoided not measured; parity here: not measured, opus not measured");
+  });
+  test("a prototype-named tier is a plain missing key, and no tier input leaves the summary unchanged", () => {
+    expect(formatTierSeal({ tier: "constructor", record: {} })).toContain("constructor not measured");
+    expect(formatSummary(base as never)).not.toContain("Tier:");
   });
 });

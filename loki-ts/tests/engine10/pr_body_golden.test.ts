@@ -3,7 +3,7 @@
 // The recorded PR body printed "not recorded" for the issue, why, files in scope and tests although every one was in the run dir.
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { applyPrTemplate, readPrTemplate, receiptProof } from "../../src/engine10/pr_body.ts";
+import { tierBodyLine, applyPrTemplate, readPrTemplate, receiptProof } from "../../src/engine10/pr_body.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderReviewerBody } from "../../src/e10ext/reviewer_body.ts";
@@ -189,5 +189,13 @@ describe("pr template", () => {
       writeFileSync(join(d, ".github", "PULL_REQUEST_TEMPLATE.md"), "## A\nx\n".repeat(20000));
       expect((readPrTemplate(d) ?? "").length).toBeLessThanOrEqual(32768);
     } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+});
+
+describe("PR body tier line (GAME10-09b)", () => {
+  it("prints the sealed tier and parity record, and not measured when the record is missing", () => {
+    const c = (verified: number, total: number) => ({ verified, partial: 0, failed: total - verified, other: 0, unsealed: 0, total });
+    expect(tierBodyLine({ tier: "sonnet", topTierCostAvoidedUsd: 0.42, record: { sonnet: c(10, 10), opus: c(9, 10) } })).toBe("- Model tier: sonnet tier sealed; top-tier cost avoided $0.42; parity here: sonnet sealed 10 of 10, opus sealed 9 of 10");
+    expect(tierBodyLine({ tier: "sonnet" })).toContain("parity here: sonnet not measured, opus not measured");
   });
 });
