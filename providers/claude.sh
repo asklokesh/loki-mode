@@ -382,6 +382,19 @@ LOKI_FIRSTPASS_EOF
     fi
 }
 
+# SHELL value for a claude child. Claude Code's Bash tool replays the aliases of
+# the shell named in SHELL, so a user's `alias ls=eza` hangs agent Bash commands.
+# Pin /bin/bash when executable (same rule as the engine10 route,
+# loki-ts/src/runner/worker_proc.ts pinBashShellEnv); LOKI_E10_KEEP_USER_SHELL=1
+# keeps the user's shell. Only SHELL changes; claude spawn sites only.
+_loki_claude_shell_value() {
+    if [ "${LOKI_E10_KEEP_USER_SHELL:-}" != "1" ] && [ -x /bin/bash ]; then
+        printf '%s' "/bin/bash"
+    else
+        printf '%s' "${SHELL-}"
+    fi
+}
+
 # Invocation function (basic, no tier).
 # Auto-flags use development tier defaults.
 provider_invoke() {
@@ -394,7 +407,7 @@ provider_invoke() {
     # nothing when unset/empty and preserves spaced elements otherwise.
     loki_model_route_prefix
     _loki_claude_permission_argv
-    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude "${_LOKI_PERM_ARGV[@]}" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
+    SHELL="$(_loki_claude_shell_value)" "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude "${_LOKI_PERM_ARGV[@]}" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
 }
 
 # provider_invoke_argv <tier> <prompt> -- populate _LOKI_INVOKE_ARGV with the
@@ -440,6 +453,7 @@ provider_invoke_argv() {
     _loki_claude_permission_argv
     _LOKI_INVOKE_ARGV=(
         "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}"
+        env "SHELL=$(_loki_claude_shell_value)"
         claude "${_LOKI_PERM_ARGV[@]}"
         "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}"
     )
@@ -698,5 +712,5 @@ provider_invoke_with_tier() {
     # expands to nothing when empty and preserves spaced elements otherwise.
     loki_model_route_prefix
     _loki_claude_permission_argv
-    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude "${_LOKI_PERM_ARGV[@]}" --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
+    SHELL="$(_loki_claude_shell_value)" "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude "${_LOKI_PERM_ARGV[@]}" --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
 }

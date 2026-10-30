@@ -69,6 +69,10 @@ done
 # ---- EXECUTABLE ----------------------------------------------------------
 for p in claude codex opencode; do
     a0="$(runb ". $PROVIDERS/$p.sh >/dev/null 2>&1; provider_invoke_argv development 'hi'; printf '%s' \"\${_LOKI_INVOKE_ARGV[0]}\"")"
+    # claude leads with `env SHELL=<pin> claude` (SHELL pin for agent Bash); the command is the 3rd element.
+    if [ "$p" = claude ] && [ "$a0" = env ]; then
+        a0="$(runb ". $PROVIDERS/$p.sh >/dev/null 2>&1; provider_invoke_argv development 'hi'; case \"\${_LOKI_INVOKE_ARGV[1]}\" in SHELL=*) printf '%s' \"\${_LOKI_INVOKE_ARGV[2]}\" ;; esac")"
+    fi
     case "$a0" in
         claude|codex|opencode) ok "$p argv[0] is a real command ($a0)" ;;
         *) bad "$p argv[0]='$a0' is not an executable name" ;;

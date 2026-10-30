@@ -417,6 +417,105 @@ fi
 
 rm -rf "$STUB_DIR_13"
 
+# ===========================================
+# Test 14: legacy claude invocation pins SHELL=/bin/bash (user alias ls=eza
+# hangs agent Bash otherwise); LOKI_E10_KEEP_USER_SHELL=1 keeps the user's
+# shell; other providers keep SHELL untouched.
+# ===========================================
+log_test "claude provider_invoke pins SHELL=/bin/bash, opt-out keeps user shell, codex untouched"
+
+STUB_DIR_14="$(mktemp -d "${TMPDIR:-/tmp}/loki-prov-stub.XXXXXX")"
+for _c in claude codex; do
+    printf '#!/usr/bin/env bash\necho "%s-SHELL=$SHELL"\n' "$_c" > "$STUB_DIR_14/$_c"
+    chmod +x "$STUB_DIR_14/$_c"
+done
+
+shell_probe() {
+    # $1 provider file, $2 function, $3 KEEP value ("" = unset)
+    (
+        export SHELL=/bin/zsh LOKI_CODEX_OUTPUT_LAST=false
+        if [ -n "$3" ]; then export LOKI_E10_KEEP_USER_SHELL="$3"; else unset LOKI_E10_KEEP_USER_SHELL; fi
+        PATH="$STUB_DIR_14:$PATH"
+        source "$PROVIDERS_DIR/$1.sh"
+        if [ "$2" = "provider_invoke" ]; then provider_invoke "x"; else provider_invoke_with_tier development "x"; fi
+    ) 2>&1
+}
+for _fn in provider_invoke provider_invoke_with_tier; do
+    out="$(shell_probe claude "$_fn" "")"
+    if echo "$out" | grep -q '^claude-SHELL=/bin/bash$'; then
+        log_pass "claude $_fn pins SHELL=/bin/bash"
+    else
+        log_fail "claude $_fn did not pin SHELL: $out"
+    fi
+    out="$(shell_probe claude "$_fn" 1)"
+    if echo "$out" | grep -q '^claude-SHELL=/bin/zsh$'; then
+        log_pass "claude $_fn keeps SHELL=/bin/zsh with LOKI_E10_KEEP_USER_SHELL=1"
+    else
+        log_fail "claude $_fn opt-out lost the user shell: $out"
+    fi
+done
+out="$(shell_probe codex provider_invoke "")"
+if echo "$out" | grep -q '^codex-SHELL=/bin/zsh$'; then
+    log_pass "codex provider_invoke leaves SHELL untouched"
+else
+    log_fail "codex provider_invoke changed SHELL: $out"
+fi
+
+# provider_invoke_argv (the argv the run.sh seam executes) must carry the pin when exec'd.
+out="$(
+    export SHELL=/bin/zsh; unset LOKI_E10_KEEP_USER_SHELL
+    PATH="$STUB_DIR_14:$PATH"
+    source "$PROVIDERS_DIR/claude.sh"
+    provider_invoke_argv development "x" && "${_LOKI_INVOKE_ARGV[@]}"
+)"
+if echo "$out" | grep -q '^claude-SHELL=/bin/bash$'; then
+    log_pass "claude provider_invoke_argv argv execs with SHELL=/bin/bash"
+else
+    log_fail "claude provider_invoke_argv argv is unpinned: $out"
+fi
+
+# Structural: EVERY claude spawn statement in run.sh and claude.sh (and the
+# _LOKI_INVOKE_ARGV builder) carries the pin, so a new unpinned site fails.
+struct_out="$(python3 -I - "$SCRIPT_DIR/../autonomy/run.sh" "$SCRIPT_DIR/../providers/claude.sh" <<'PY'
+import re, sys
+spawn = re.compile(r'(?<![\w$/.-])claude\s+"\$\{')
+total = 0
+bad = []
+for path in sys.argv[1:]:
+    lines = open(path).read().split("\n")
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        if raw.lstrip().startswith("#"):
+            i += 1
+            continue
+        start, stmt = i + 1, raw
+        while stmt.rstrip().endswith("\\") and i + 1 < len(lines):
+            i += 1
+            stmt = stmt.rstrip()[:-1] + " " + lines[i]
+        if stmt.lstrip().startswith("_LOKI_INVOKE_ARGV=(") and ")" not in stmt:
+            while i + 1 < len(lines) and lines[i].strip() != ")":
+                i += 1
+                stmt += " " + lines[i]
+        if spawn.search(stmt):
+            total += 1
+            if "_loki_claude_shell_value" not in stmt:
+                bad.append("%s:%d" % (path.rsplit("/", 1)[-1], start))
+        i += 1
+print("SITES=%d" % total)
+print("UNPINNED=%s" % (",".join(bad) or "none"))
+PY
+)"
+sites="$(echo "$struct_out" | sed -n 's/^SITES=//p')"
+unpinned="$(echo "$struct_out" | sed -n 's/^UNPINNED=//p')"
+if [ "${sites:-0}" -ge 12 ] && [ "$unpinned" = "none" ]; then
+    log_pass "every claude spawn statement in run.sh and claude.sh carries the SHELL pin ($sites sites)"
+else
+    log_fail "claude spawn sites unpinned or detector vacuous (sites=${sites:-0}): $unpinned"
+fi
+
+rm -rf "$STUB_DIR_14"
+
 echo ""
 echo "========================================"
 echo "Test Summary"

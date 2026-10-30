@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- The legacy Claude route now gives Claude Code `SHELL=/bin/bash` when it is executable, so a zsh `alias ls=eza` can no longer hang an agent Bash command, matching the default engine route. This covers every Claude spawn in `providers/claude.sh` and `autonomy/run.sh`, including the per-iteration run, the `provider_invoke_argv` argv, the review and conflict-resolution calls and the usage-doc regeneration. Set `LOKI_E10_KEEP_USER_SHELL=1` to keep your own shell; only `SHELL` changes and other providers are untouched. Proven by the Test 14 cases in `tests/test-provider-invocation.sh`: the pin and opt-out on both invoke functions, the executed `provider_invoke_argv` argv, codex untouched, and a structural check that fails on any Claude spawn statement in either file that lacks the pin. Residual: aliases defined in `~/.bashrc` still load under bash, so an alias there can still affect agent Bash commands.
+
 ## v11.88.0 (2026-10-29)
 
 ### Added
