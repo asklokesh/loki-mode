@@ -501,7 +501,7 @@ async function supervisedCrash(): Promise<ReturnType<typeof publishRepo>> {
 
 test("SB-04 r3: a real runSupervisor killed in the publish phase is offered by startRecovery and resumed by resumeMain, publishing once on the signed checkpoint", async () => {
   const a = await supervisedCrash();
-  expect(types(a.ev)).toBe("run.started,stage.completed,run.started,receipt.sealed,log.sealed"); // the shape the writer leaves
+  expect(types(a.ev)).toBe("run.started,stage.completed,run.started,capability.recorded,receipt.sealed,log.sealed"); // the shape the writer leaves
   expect(state(a.dir)).toMatchObject({ state: "open" });
   const cwd = process.cwd(); process.chdir(a.repo);
   try {

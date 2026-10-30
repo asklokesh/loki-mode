@@ -3,10 +3,11 @@
 // worker (backstop, or a plain non-zero exit) must still leave a draft PR when there is a diff
 // and a remote, or an issue-comment call naming the exact reason on an issue run.
 import { afterAll, describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process"; import { createInterface } from "node:readline";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { stageCapability, workerStages } from "../../src/engine10/worker.ts"; import { buildStageEnv, stageCapability as contribCapability } from "../../src/contrib/stage_capability.ts"; import { SENTINEL_PREFIX } from "../../src/util/credential_env.ts"; import { SAFE_BUN_FLAGS } from "../../src/runner/worker_proc.ts";
 import { EXIT } from "../../src/engine10/output.ts";
 import { loadAwareTimeoutMs, setLoadAwareTimeout } from "../preload.ts";
 import { softCapS } from "../../src/engine10/machine.ts";
@@ -496,4 +497,181 @@ describe("A-110 exit ladder", () => {
     expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("user edit\n");
     expect(git("status", "--porcelain", "--", "a.txt", "notes.txt")).toBe(" M a.txt\n?? notes.txt\n");
   }, loadAwareTimeoutMs(10_000));
+});
+
+describe("GAME10-05a: per-stage capability map", () => {
+  type Cap = { stage: string; secrets: string[]; can_push: boolean | "unknown"; network: boolean | "unknown" };
+  const SECRET_VALUE = "ghp_realtokenvalue0123456789abcdefABCD";
+  const ANTH_VALUE = "sk-ant-secretvalue-0123456789";
+  const BOT_VALUE = "ghp_bottokenvalue0123456789abcdefABCDEF";
+  const emptyHome = (): string => { const h = mkdtempSync(join(tmpdir(), "e10-cap-home-")); roots.push(h); return h; };
+  const homeWith = (files: Record<string, string>): string => { const h = emptyHome(); for (const [rel, body] of Object.entries(files)) { mkdirSync(dirname(join(h, rel)), { recursive: true }); writeFileSync(join(h, rel), body); } return h; };
+  const cleanEnv = (home: string): NodeJS.ProcessEnv => ({ ...ENV, HOME: home, GH_TOKEN: undefined, GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined, GITHUB_ENTERPRISE_TOKEN: undefined, GH_CONFIG_DIR: undefined, XDG_CONFIG_HOME: undefined, GIT_CONFIG_COUNT: undefined, GIT_CONFIG_GLOBAL: undefined, LOKI_PR_BOT_TOKEN: undefined });
+  const recorded = (dir: string, runId: string): { raw: string; stages: Cap[] } => {
+    const raw = readFileSync(join(dir, ".loki", "runs", runId, "events.jsonl"), "utf8");
+    const recs = raw.split("\n").filter((l) => l.includes('"capability.recorded"')).map((l) => JSON.parse(l) as { data: { stages: Cap[] } });
+    return { raw, stages: recs.flatMap((r) => r.data.stages) };
+  };
+  async function capsFor(runId: string, env: NodeJS.ProcessEnv): Promise<{ stages: Cap[]; raw: string }> {
+    const { dir, baseSha } = repoWithCommit();
+    await runSupervisor({ runId, repoDir: dir, env, workerArgv: worker(`${intakeLine(baseSha)} process.exit(1);`), capS: 20, graceS: 5 });
+    return recorded(dir, runId);
+  }
+  /** A VERIFIED run whose pr hook is the real runPr against a stub push script, wired the way main()'s closure wires it. */
+  async function prCaps(runId: string, env: NodeJS.ProcessEnv, deep = false): Promise<{ stages: Cap[]; raw: string }> {
+    const { dir, baseSha } = repoWithCommit();
+    const code = `${intakeLine(baseSha)} ${COMMIT_A_CHANGE} console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "VERIFIED", not_proven: [] } })); process.exit(0);`;
+    const workDir = mkdtempSync(join(tmpdir(), "e10-cap-out-")); roots.push(workDir);
+    const pushScriptPath = writePushStub(workDir, join(workDir, "push-calls.log"));
+    const runDir = join(dir, ".loki", "runs", runId);
+    const step: PrStep = async (p) => {
+      const r = await runPr({ runId: p.runId, repoDir: p.repoDir, runDir, branch: `loki/${p.runId}`, pinnedOrigin: p.pushEnv._LOKI_PINNED_ORIGIN, outputs: () => ({ seal: { verdict: p.verdict, not_proven: p.notProven } }), capHit: () => false, emit: () => {} } as unknown as PrContext, new AbortController().signal, { pushScriptPath, onSpawnEnv: p.recordSpawnEnv });
+      return r.status === "completed" ? { url: (r.data as { pr_url?: string }).pr_url ?? null, draft: false, existing: null } : { url: null, draft: false, existing: null, notProven: [`PR not opened: ${r.reason}`] };
+    };
+    await runSupervisor({ runId, repoDir: dir, env, workerArgv: worker(code), capS: 20, graceS: 5, pr: step, ...(deep ? { deepArgv: worker("process.exit(0)") } : {}) });
+    return recorded(dir, runId);
+  }
+  const withProcessEnv = async (patch: Record<string, string | undefined>, fn: () => Promise<void>): Promise<void> => {
+    const saved: Record<string, string | undefined> = {};
+    for (const k of Object.keys(patch)) { saved[k] = process.env[k]; if (patch[k] === undefined) delete process.env[k]; else process.env[k] = patch[k]; }
+    try { await fn(); } finally { for (const k of Object.keys(saved)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
+  };
+
+  test("worker stages record unknown, never false: their env is a copy of the supervisor env, not an allowlist env; no value is recorded", async () => {
+    const r = await capsFor("e10-cap-withheld", { ...cleanEnv(emptyHome()), GH_TOKEN: SECRET_VALUE, ANTHROPIC_API_KEY: ANTH_VALUE });
+    for (const st of ["intake", "plan", "wall", "implement", "verify", "commit", "seal"]) expect(r.stages.some((s) => s.stage === st)).toBe(true);
+    expect(r.stages.every((s) => s.can_push === "unknown" && s.network === "unknown")).toBe(true);
+    expect(r.stages.every((s) => s.secrets.includes("ANTHROPIC_API_KEY"))).toBe(true);
+    expect(r.raw).not.toContain(SECRET_VALUE); expect(r.raw).not.toContain(ANTH_VALUE);
+  }, loadAwareTimeoutMs(20_000));
+
+  test("review 1: the pr stage is recorded from the env it spawns with, so bot author plus LOKI_PR_BOT_TOKEN records can_push true while the supervisor env holds no token", async () => {
+    await withProcessEnv({ LOKI_PR_AUTHOR: "bot", LOKI_PR_BOT_TOKEN: BOT_VALUE, GH_TOKEN: undefined, GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined, GITHUB_ENTERPRISE_TOKEN: undefined }, async () => {
+      const r = await prCaps("e10-cap-bot", cleanEnv(emptyHome()));
+      const pr = r.stages.find((s) => s.stage === "pr");
+      expect(pr).toBeDefined(); expect(pr!.can_push).toBe(true); expect(pr!.secrets).toContain("LOKI_PR_BOT_TOKEN"); expect(pr!.secrets).toContain("GH_TOKEN");
+      expect(r.stages.filter((s) => s.stage !== "pr").every((s) => s.can_push !== true)).toBe(true);
+      expect(r.raw).not.toContain(BOT_VALUE);
+    });
+  }, loadAwareTimeoutMs(30_000));
+
+  test("round 3: with no token and a bare HOME the real pr spawn env still records unknown, never false", async () => {
+    const noTok = { LOKI_PR_AUTHOR: undefined, LOKI_PR_BOT_TOKEN: undefined, GH_TOKEN: undefined, GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined, GITHUB_ENTERPRISE_TOKEN: undefined, GH_CONFIG_DIR: undefined, XDG_CONFIG_HOME: undefined, GIT_CONFIG_COUNT: undefined, GIT_CONFIG_GLOBAL: undefined };
+    const bareHome = emptyHome();
+    await withProcessEnv({ ...noTok, HOME: bareHome }, async () => {
+      const r = await prCaps("e10-cap-none", cleanEnv(bareHome));
+      expect(r.stages.find((s) => s.stage === "pr")!.can_push).toBe("unknown");
+    });
+  }, loadAwareTimeoutMs(60_000));
+
+  test("round 3: the real worker, deep and pr spawn envs are not helper-built, so every one records unknown, never false", async () => {
+    const bareHome = emptyHome();
+    await withProcessEnv({ LOKI_PR_AUTHOR: undefined, LOKI_PR_BOT_TOKEN: undefined, GH_TOKEN: undefined, GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined, GITHUB_ENTERPRISE_TOKEN: undefined, HOME: bareHome }, async () => {
+      const r = await prCaps("e10-cap-deep", cleanEnv(bareHome), true);
+      for (const st of ["intake", "wall", "seal", "deep", "pr"]) expect(r.stages.some((s) => s.stage === st)).toBe(true);
+      expect(r.stages.every((s) => s.can_push === "unknown" && s.network === "unknown")).toBe(true);
+    });
+  }, loadAwareTimeoutMs(60_000));
+
+  test("review 3: LOKI_OFFLINE and LOKI_NO_NETWORK are declarations, not isolation, so the recorded network is never false", async () => {
+    const r = await capsFor("e10-cap-offline", { ...cleanEnv(emptyHome()), LOKI_OFFLINE: "1", LOKI_NO_NETWORK: "1" });
+    expect(r.stages.every((s) => s.network === "unknown")).toBe(true);
+  }, loadAwareTimeoutMs(20_000));
+
+  // --- round 3: fail closed. Each row is one input the round-2 review showed understating a stage; every case must NOT record false. ---
+  const runTmp = (): string => { const d = mkdtempSync(join(tmpdir(), "loki-run.")); roots.push(d); writeFileSync(join(d, ".loki-run-owned"), `${d}\n`); return d; };
+  const withRunTmp = <T>(d: string, fn: () => T): T => { const saved = process.env.LOKI_RUN_TMP; process.env.LOKI_RUN_TMP = d; try { return fn(); } finally { if (saved === undefined) delete process.env.LOKI_RUN_TMP; else process.env.LOKI_RUN_TMP = saved; } };
+  const NO_NET = ["unshare", "-n", "bun", "worker.ts"], BARE = ["bun", "worker.ts"];
+  /** An env that satisfies every can_push-false condition: allowlist names only, run-owned HOME, no system git config, global git config /dev/null. */
+  const sealedEnv = (home: string): NodeJS.ProcessEnv => buildStageEnv(home, { PATH: "/usr/bin" });
+  /** The same names and values but not returned by the helper: a forged lookalike. */
+  const forgedEnv = (home: string): NodeJS.ProcessEnv => ({ ...sealedEnv(home) });
+  /** A helper-built env patched in place (undefined deletes), so the object stays a helper product while one input is bent. */
+  const bent = (home: string, patch: NodeJS.ProcessEnv): NodeJS.ProcessEnv => { const e = sealedEnv(home); for (const [k, v] of Object.entries(patch)) { if (v === undefined) delete e[k]; else e[k] = v; } return e; };
+  type Case = { env?: NodeJS.ProcessEnv; argv?: string[]; setup?: (home: string) => void };
+  const SBPL_ALLOW_AFTER = "(version 1)(deny network*)(allow network*)", SBPL_COMMENT_ONLY = "(version 1)\n; (deny network*)\n", SBPL_DENY = "(version 1)(deny network*)";
+  const SBPL_EVAL_ALLOW = "(version 1)(deny network*)(deny file-read-data (begin ((eval (string->symbol (string-append \"al\" \"low\"))) default) ((eval (string->symbol (string-append \"al\" \"low\"))) network*) (literal \"/nonexistent-x\")))"; // round 3 security: SBPL is a Scheme, so an allow can be built at runtime
+  const rows: { finding: string; field: "can_push" | "network" | "secrets"; cases: Case[]; check?: (c: Cap) => boolean }[] = [
+    { finding: "1 SSH_AUTH_SOCK set", field: "can_push", cases: [{ env: { SSH_AUTH_SOCK: "/tmp/agent.sock" } }, { env: { SSH_AUTH_SOCK: "/tmp/agent.sock" }, argv: NO_NET }] },
+    { finding: "2 key in ~/.ssh or GIT_SSH_COMMAND", field: "can_push", cases: [{ env: { GIT_SSH_COMMAND: "ssh -i /k" } }, { env: { GIT_SSH_COMMAND: "ssh -i /k" }, argv: NO_NET }, { setup: (h) => { mkdirSync(join(h, ".ssh")); writeFileSync(join(h, ".ssh", "id_ed25519"), "k"); } }] },
+    { finding: "3 credential.helper in the repo .git/config", field: "can_push", cases: [{ setup: (h) => { mkdirSync(join(h, "repo", ".git"), { recursive: true }); writeFileSync(join(h, "repo", ".git", "config"), "[credential]\n\thelper = store\n"); } }] },
+    { finding: "4 credential helper in the system gitconfig", field: "can_push", cases: [{ env: { GIT_CONFIG_NOSYSTEM: undefined } }] },
+    { finding: "5 GIT_CONFIG_PARAMETERS or GIT_CONFIG_KEY_n carrying a helper", field: "can_push", cases: [{ env: { GIT_CONFIG_PARAMETERS: "'credential.helper=store'" } }, { env: { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "store" } }, { env: { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "store" }, argv: NO_NET }] },
+    { finding: "6 GIT_ASKPASS set", field: "can_push", cases: [{ env: { GIT_ASKPASS: "/bin/askpass" } }, { env: { GIT_ASKPASS: "/bin/askpass" }, argv: NO_NET }] },
+    { finding: "7 GITLAB_TOKEN or LOKI_PR_BOT_TOKEN alone", field: "can_push", cases: [{ env: { GITLAB_TOKEN: SECRET_VALUE } }, { env: { LOKI_PR_BOT_TOKEN: BOT_VALUE } }, { env: { LOKI_PR_BOT_TOKEN: BOT_VALUE }, argv: NO_NET }], check: (c) => c.can_push === true },
+    { finding: "8 secrets misses GH_PAT, NPM_CONFIG__AUTH, OPENAI_KEY, DATABASE_URL, MY_API_KEY", field: "secrets", cases: [{ env: { GH_PAT: "x", NPM_CONFIG__AUTH: "x", OPENAI_KEY: "x", DATABASE_URL: "postgres://u:p@h/db", MY_API_KEY: "1" } }], check: (c) => ["GH_PAT", "NPM_CONFIG__AUTH", "OPENAI_KEY", "DATABASE_URL", "MY_API_KEY"].every((n) => (c.secrets as string[]).includes(n)) },
+    { finding: "9 unshare -r with the inner -n, firejail with the inner --net=none", field: "network", cases: [{ argv: ["unshare", "-r", "bun", "worker.ts", "-n", "3"] }, { argv: ["firejail", "bun", "w.ts", "--net=none"] }] },
+    { finding: "10 bwrap --unshare-all --share-net", field: "network", cases: [{ argv: ["bwrap", "--unshare-all", "--share-net", "bun", "w.ts"] }] },
+    { finding: "11 sandbox-exec -p with a later allow", field: "network", cases: [{ argv: ["sandbox-exec", "-p", SBPL_ALLOW_AFTER, "bun", "w.ts"] }] },
+    { finding: "12 sandbox-exec -p with the deny only in a comment", field: "network", cases: [{ argv: ["sandbox-exec", "-p", SBPL_COMMENT_ONLY, "bun", "w.ts"] }] },
+    { finding: "13 sandbox-exec -p with an allow built by string-append and eval", field: "network", cases: [{ argv: ["sandbox-exec", "-p", SBPL_EVAL_ALLOW, "bun", "w.ts"] }], check: (c) => c.network === "unknown" && c.can_push === "unknown" },
+  ];
+  test.each(rows.map((r) => [r.finding, r] as const))("round 3 negative control, finding %s: never recorded as false", (_n, row) => {
+    for (const c of row.cases) {
+      const root = runTmp(), home = join(root, "home"); mkdirSync(home);
+      c.setup?.(home);
+      const env = bent(home, c.env ?? {});
+      const cap = withRunTmp(root, () => stageCapability("x", env, c.argv ?? BARE)) as Cap;
+      if (row.check) expect(row.check(cap)).toBe(true); else expect((cap as unknown as Record<string, unknown>)[row.field]).not.toBe(false);
+    }
+  });
+
+  test("round 3 positive control: false is returned when it is proven, for the allowlist env and for each strict wrapper", () => {
+    const root = runTmp(), home = join(root, "home"); mkdirSync(home);
+    withRunTmp(root, () => {
+      expect(stageCapability("x", sealedEnv(home), NO_NET)).toEqual({ stage: "x", secrets: [], can_push: false, network: false });
+      for (const argv of [["unshare", "--net", "bun"], ["unshare", "-rn", "bun"], ["bwrap", "--unshare-net", "bun"], ["bwrap", "--unshare-all", "--bind", "/", "/", "bun"], ["bwrap", "--share-net", "--unshare-all", "bun"], ["firejail", "--quiet", "--net=none", "bun"], ["/usr/bin/firejail", "--net=none", "--", "bun"]]) expect(stageCapability("x", sealedEnv(home), argv).network).toBe(false);
+      for (const argv of [["sandbox-exec", "-p", SBPL_DENY, "bun"], ["sandbox-exec", "-D", "A=b", "-p", "(version 1)\n(deny network*) ; no net", "bun"], ["sandbox-exec", "-p", SBPL_EVAL_ALLOW, "bun"]]) expect(stageCapability("x", sealedEnv(home), argv)).toMatchObject({ network: "unknown", can_push: "unknown" }); // SBPL is never read, even from the buildStageEnv env
+    });
+  });
+
+  test("round 3: can_push stays unknown when any one of the four conditions fails", () => {
+    const root = runTmp(), home = join(root, "home"); mkdirSync(home); const other = emptyHome();
+    withRunTmp(root, () => {
+      const unknown = (env: NodeJS.ProcessEnv, argv: string[] = NO_NET): unknown => stageCapability("x", env, argv).can_push;
+      expect(unknown(bent(home, { HOME: other }))).toBe("unknown"); // HOME is not run-owned
+      expect(unknown(bent(home, { HOME: undefined }))).toBe("unknown");
+      expect(unknown(bent(home, { GIT_CONFIG_NOSYSTEM: undefined }))).toBe("unknown");
+      expect(unknown(bent(home, { GIT_CONFIG_GLOBAL: "/etc/gitconfig" }))).toBe("unknown");
+      expect(unknown(bent(home, { EXTRA: "1" }))).toBe("unknown"); // passthrough beyond the allowlist
+      expect(unknown(sealedEnv(home), BARE)).toBe("unknown"); // network not proven cut
+      expect(unknown(forgedEnv(home))).toBe("unknown"); // right HOME, GIT_CONFIG_* and safe names, but not built by the helper
+      expect(unknown(Object.assign(forgedEnv(home), { LOKI_STAGE_ENV_BUILT: "1", __built: "true" }))).toBe("unknown"); // no env var or property can forge the mark
+    });
+    expect(contribCapability("x", sealedEnv(home), NO_NET, undefined).can_push).toBe("unknown"); // no run-owned directory known
+  });
+
+  test("round 3: network parse reads only the wrapper's own leading flags and abandons on anything it cannot place", () => {
+    const net = (argv: string[]): unknown => stageCapability("x", {}, argv).network;
+    for (const argv of [[], ["bun", "w.ts"], ["unshare"], ["unshare", "--net=/proc/1/ns/net", "bun"], ["unshare", "-S", "0", "-n", "bun"], ["unshare", "--", "-n", "bun"], ["bwrap", "bun"], ["bwrap", "--unshare-net", "--frobnicate", "bun"], ["bwrap", "--args", "3", "bun"], ["firejail", "--net=none", "--net=eth0", "bun"], ["firejail", "--net=none", "--ignore=net", "bun"], ["sandbox-exec", "-f", "p.sb", "bun"], ["sandbox-exec", "-n", "no-network", "bun"], ["sandbox-exec", "-p", "\"(deny network*)\"", "bun"], ["sandbox-exec", "-p", "(version 1)(deny network*", "bun"], ["sandbox-exec", "-p", "(version 1)(deny network*)(import \"x.sb\")", "bun"], ["sandbox-exec", "-p", "(version 1)(deny network*)(if #t (allow network*))", "bun"], ["docker", "run", "--network", "none", "bun"], ["env", "unshare", "-n", "bun"]]) expect(net(argv)).toBe("unknown");
+  });
+
+  test("round 3: secrets is the child env names outside the one safe list, whatever they are called", () => {
+    const c = stageCapability("x", { PATH: "/usr/bin", HOME: "/h", LOKI_ALLOW_AGENT_GITHUB_TOKEN: "1", ANTHROPIC_API_KEY: ANTH_VALUE, FOO: "bar", GONE: undefined });
+    expect(c.secrets).toEqual(["ANTHROPIC_API_KEY", "FOO", "LOKI_ALLOW_AGENT_GITHUB_TOKEN"]);
+    expect(JSON.stringify(c)).not.toContain(ANTH_VALUE);
+  });
+
+  test("round 3: with no contrib registered a capability is unknown everywhere", async () => {
+    const { hooks } = await import("../../src/engine10/hooks.ts"); const saved = hooks.stageCapability; delete hooks.stageCapability;
+    try { expect(stageCapability("x", { GH_TOKEN: "t" }, NO_NET)).toEqual({ stage: "x", secrets: "unknown", can_push: "unknown", network: "unknown" }); } finally { hooks.stageCapability = saved; }
+  });
+
+  test("review 4: the worker emits capability.observed for every worker stage, from the env it really runs with, as its first line", async () => {
+    const child = spawn(process.execPath, [...SAFE_BUN_FLAGS, resolve(import.meta.dir, "../../src/cli.ts"), "engine10", "worker", "e10-cap-observed", "claude", "m", "fast"], { cwd: repoWithCommit().dir, env: { ...cleanEnv(emptyHome()), LOKI_CLAUDE_CLI: "/usr/bin/true", ANTHROPIC_API_KEY: ANTH_VALUE, LOKI_E10_CAP_S: "5" }, stdio: ["ignore", "pipe", "ignore"] });
+    try {
+      const first = await new Promise<string>((res, rej) => { const t = setTimeout(() => rej(new Error("no line from worker")), loadAwareTimeoutMs(20_000)); createInterface({ input: child.stdout! }).once("line", (l) => { clearTimeout(t); res(l); }); child.once("exit", () => { clearTimeout(t); rej(new Error("worker exited with no line")); }); });
+      const ev = JSON.parse(first) as { type: string; stage: string | null; data: { stages: Cap[] } };
+      expect(ev.type).toBe("capability.observed");
+      expect(ev.data.stages.map((s) => s.stage)).toEqual(workerStages());
+      expect(ev.data.stages.every((s) => s.secrets.includes("ANTHROPIC_API_KEY") && s.can_push === "unknown" && s.network === "unknown")).toBe(true);
+      expect(first).not.toContain(ANTH_VALUE);
+    } finally { if (child.exitCode === null) child.kill("SIGKILL"); }
+  }, loadAwareTimeoutMs(30_000));
+
+  test("a capability.recorded line forged by the worker never enters the log", async () => {
+    const { dir, baseSha } = repoWithCommit();
+    await runSupervisor({ runId: "e10-cap-forge", repoDir: dir, env: cleanEnv(emptyHome()), workerArgv: worker(`${intakeLine(baseSha)} console.log(JSON.stringify({ type: "capability.recorded", stage: null, data: { stages: [{ stage: "forged", secrets: [], can_push: true, network: false }] } })); process.exit(1);`), capS: 20, graceS: 5 });
+    expect(recorded(dir, "e10-cap-forge").stages.some((s) => s.stage === "forged")).toBe(false);
+  }, loadAwareTimeoutMs(20_000));
 });

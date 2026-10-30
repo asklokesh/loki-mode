@@ -12,7 +12,7 @@ import { dirname, join, relative, resolve } from "node:path"; import { writeRunS
 import { loadSpecFile, type LoadedSpec } from "../util/spec_file.ts";
 import { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker } from "../util/engine_origin.ts";
 export { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker }; // re-exported: callers and tests import these from here
-import { withholdGithubTokens } from "../runner/github_token.ts"; import { readAliveBeat, writeAliveBeat, writeRunPid } from "../util/run_pid.ts";
+import { stageCapability, workerStages } from "./worker.ts"; import { withholdGithubTokens } from "../runner/github_token.ts"; import { readAliveBeat, writeAliveBeat, writeRunPid } from "../util/run_pid.ts";
 import { EventLog, conflictReasonOf, fold, partialCost, runCostUsd, summaryCost, readEvents, tail } from "./events.ts"; import { stageShareText } from "../util/cost_breakdown.ts";
 import { disclosureLine } from "../providers/provider_guard.ts";
 import { budgetNext, capNote, groupEnv, parseCapUsd, priorSpend, resolveCap, SUBSCRIPTION_NOTE, unenforceableNote, writeBudgetStop } from "../e10ext/budget_cap.ts";
@@ -20,7 +20,7 @@ import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
 import { formatHeartbeatLine, formatStageLine, formatSummary, preModelTiming, EXIT, outcomeOf, reasonOf, type Outcome } from "./output.ts";
 import { LiveLine } from "../e10ext/liveline.ts";
-import { SAFE_BUN_FLAGS, killGroup, spawnWorker, ulimitArgv } from "../runner/worker_proc.ts";
+import { SAFE_BUN_FLAGS, envWithPwd, killGroup, spawnWorker, ulimitArgv } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts"; import { noteRefusal, noteRefusalFromEvents, type PreflightBlocker } from "../util/funnel.ts";
 import { resolveModel } from "./session.ts";
@@ -38,7 +38,7 @@ import { encodeEstimate, startText } from "../runner/router/cost_preview.ts";
 export const START_LINE = "Loki 10 engine";
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 async function slackEvent(...a: Parameters<typeof import("../util/slack_events.ts").notifyEvent>): Promise<void> { try { await (await import("../util/slack_events.ts")).notifyEvent(...a); } catch { /* best-effort */ } }
-const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "run.resumed", "pr.opened", "log.sealed", "deep.started", "already.attested"]); // types only the supervisor may write; same types from the worker are dropped
+const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "run.resumed", "pr.opened", "log.sealed", "deep.started", "already.attested", "capability.recorded"]); // types only the supervisor may write; same types from the worker are dropped
 const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "SPEC_CONFLICT", "FAILED"]);
 const ALIVE_BEAT_MS = 15_000;
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
@@ -59,6 +59,7 @@ export interface PrOutcome { url: string | null; draft: boolean; existing: boole
 export type PrStep = (p: {
   env: NodeJS.ProcessEnv; // the supervisor's own credentialed env (read-only by contract)
   pushEnv: PushEnv; // origin pin from memory, never from the log
+  recordSpawnEnv: (spawnEnv: NodeJS.ProcessEnv) => void; // GAME10-05a: the pr stage hands over the exact env object it spawns the push script with; the capability record is read from it
   runId: string; repoDir: string; verdict: Verdict;
   notProven: string[]; // accumulated so far (backstop/tamper included): the only place the PR body learns why when a killed worker never sealed a receipt
 }) => Promise<PrOutcome | null>;
@@ -166,6 +167,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const ceilingS = Math.max(capS, opts.capCeilingS ?? capS);
   const backstopMs = backstopS(ceilingS, opts.graceS ?? BACKSTOP_GRACE_S) * 1000; // hard SIGKILL safety net for a stage blocking past the worker's own soft cap
   const escalateMs = Math.max(0, Math.min(2000, ceilingS * 1000 - backstopMs)); // SIGTERM->SIGKILL clamped so a trapping worker cannot outlive the cap
+  let spawnArgv: string[] = opts.workerArgv; try { spawnArgv = ulimitArgv(opts.workerArgv, workerEnv); } catch { /* spawnWorker refuses the same input */ } log.append("capability.recorded", null, { stages: workerStages().map((st) => stageCapability(st, envWithPwd(workerEnv, opts.repoDir), spawnArgv)) }); // GAME10-05a: worker stages are read from the env and argv spawnWorker is given; pr is recorded by recordSpawnEnv at its own spawn
   let sealed: Record<string, unknown> | null = null; const origBranch = opts.restoreBranch !== undefined ? opts.restoreBranch : currentBranch(opts.repoDir), sessionGroups = new Set<number>(); // session children are detached (own group), so the worker's group kill misses them
   const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, (line) => {
     const e = log.ingest(line); if (e) stuck.event(String(e.stage ?? "unknown"), Date.now());
@@ -197,14 +199,14 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   if (opts.pr && !cancelled && intact && origin && verdict !== "ALREADY_SATISFIED" && verdict !== "VERIFIED" && hasDiff) process.stderr.write(localBranchNote(opts.runId, verdict, opts.repoDir)); // FC-NO-PUSH-UNVERIFIED
   if (opts.pr && !cancelled && intact && origin && verdict === "VERIFIED" && hasDiff) { // FC-NO-PUSH-UNVERIFIED: only a verified success leaves the machine; ALREADY_SATISFIED opens no PR (E-66)
     const pushEnv: PushEnv = { _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };
-    const out = await opts.pr({ env, pushEnv, runId: opts.runId, repoDir: opts.repoDir, verdict, notProven });
+    const out = await opts.pr({ env, pushEnv, runId: opts.runId, repoDir: opts.repoDir, verdict, notProven, recordSpawnEnv: (spawnEnv) => { log.append("capability.recorded", "pr", { stages: [stageCapability("pr", spawnEnv)] }); } });
     notProven.push(...(out?.notProven ?? []));
     if (out?.url) {
       prUrl = out.url;
       log.append("pr.opened", "pr", { url: out.url, draft: out.draft, existing: out.existing });
       await opts.status?.({ prUrl: out.url }); await slackEvent(env, "pr_opened", { repo: githubRepoFromUrl(origin) ?? undefined, issue: String(opts.started?.["issue_ref"] ?? ""), prUrl: out.url, outcome: verdict }); // D51-A4
       // E-48: deep verify (stages/deep.ts) runs detached, never keeping the supervisor alive; deep.started records the pid so it is never orphaned untracked.
-      if (opts.deepArgv) { let argv: string[] | null = null; try { argv = ulimitArgv([...opts.deepArgv, origin], workerEnv); } catch (e) { notProven.push(`deep verify not spawned: ${(e as Error).message}`); } const [cmd, ...dArgs] = argv ?? [], child = argv && cmd ? spawn(cmd, dArgs, { cwd: opts.repoDir, env: workerEnv, stdio: "ignore", detached: true }) : null; child?.on("error", () => {}); if (child?.pid) { child.unref(); log.append("deep.started", "deep", { pid: child.pid }); } else if (argv) notProven.push("deep verify not spawned"); }
+      if (opts.deepArgv) { let argv: string[] | null = null; try { argv = ulimitArgv([...opts.deepArgv, origin], workerEnv); } catch (e) { notProven.push(`deep verify not spawned: ${(e as Error).message}`); } const [cmd, ...dArgs] = argv ?? [], child = argv && cmd ? spawn(cmd, dArgs, { cwd: opts.repoDir, env: workerEnv, stdio: "ignore", detached: true }) : null; child?.on("error", () => {}); if (child?.pid) { child.unref(); log.append("capability.recorded", "deep", { stages: [stageCapability("deep", workerEnv, argv ?? [])] }); log.append("deep.started", "deep", { pid: child.pid }); } else if (argv) notProven.push("deep verify not spawned"); }
     }
   }
   const allEvents = readEvents(log.path), folded = fold(allEvents), lokiRoot = join(opts.repoDir, ".loki"), costUsd = runCostUsd(allEvents, log.tampered, lokiRoot), wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null
@@ -345,7 +347,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`, ...runIntent(repoDir),
       ...(downgrades.length ? { downgrades } : {}), ...runIdentity(repoDir, process.env, model),
     },
-    pr: noPr ? undefined : async ({ pushEnv, verdict, notProven }) => {
+    pr: noPr ? undefined : async ({ pushEnv, verdict, notProven, recordSpawnEnv }) => {
       const gate = prGate(repoDir); // autonomy ladder: deny = no PR plus a not-proven line; require_approval = draft PR
       if ("deny" in gate) return { url: null, draft: false, existing: null, notProven: [gate.deny] };
       const { loadRunOutputs } = await import("../util/run_outputs.ts"), { runPr } = await import("./stages/pr.ts"); // supervisor-only: the worker never loads pr.ts
@@ -358,7 +360,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
         outputs: () => ({ ...loadRunOutputs(runDir, events), seal: { ...sealed, verdict, receipt_path: sealed.path } }), // L7: the PR body reads recorded intake, plan and verify data, not only seal
         capHit: () => events.some((e) => e.type === "cap.hit"), draft: gate.draft,
         emit: () => {}, // pr.opened is appended by runSupervisor from the outcome
-      } as unknown as PrContext, new AbortController().signal);
+      } as unknown as PrContext, new AbortController().signal, { onSpawnEnv: recordSpawnEnv });
       const d = r.data as { pr_url?: string; draft?: boolean; existing?: boolean | null; not_proven?: string[] };
       if (r.status !== "completed") return { url: null, draft: false, existing: null, notProven: [`PR not opened: ${r.reason}`] };
       return { url: d.pr_url ?? null, draft: d.draft === true, existing: d.existing ?? null, notProven: d.not_proven };

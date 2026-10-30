@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readEvents } from "./events.ts";
+import { hooks, type StageCapability } from "./hooks.ts";
 import { eventsRelPath } from "../util/engine_origin.ts";
 import { GITHUB_TOKEN_VARS, SENTINEL_PREFIX } from "../util/credential_env.ts";
 import { costTotalsOf, liveArchivedCosts, sumRunCosts, UNMETERED } from "./cost.ts"; import { childSpendDelta, sealedRunCost } from "../util/child_ledger.ts";
@@ -26,6 +27,11 @@ export function assertWorkerEnv(env: NodeJS.ProcessEnv = process.env): void {
     }
   }
 }
+/** GAME10-05a: capability record for one stage; the evidence lives in contrib (hooks.stageCapability). An empty slot records "unknown" everywhere, never a guess. */
+export const stageCapability = (stage: string, env: NodeJS.ProcessEnv, argv: readonly string[] = []): StageCapability => hooks.stageCapability?.(stage, env, argv) ?? { stage, secrets: "unknown", can_push: "unknown", network: "unknown" };
+/** The worker's first line: what this process really holds, cross-checking the supervisor's spawn-site record. workerStages: every stage the worker runs (FLOW flattened, minus pr, which runs in the supervisor). */
+export function emitObservedCapability(emit: WorkerEmit, env: NodeJS.ProcessEnv = process.env, argv: readonly string[] = process.argv): void { emit("capability.observed" as never, null, { stages: workerStages().map((st) => stageCapability(st, env, argv)) }); }
+export const workerStages = (): StageName[] => FLOW.flat().filter((x): x is StageName => x !== "pr");
 export async function runWorker(
   drive: WorkerDrive,
   opts: { env?: NodeJS.ProcessEnv; write?: (line: string) => void } = {},
@@ -59,6 +65,7 @@ export async function main(args: string[]): Promise<number> {
   (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = true; // cli.ts's blanket exit(130/143) stands down: the handler below owns the stop
   for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { void cancelSessions().finally(() => process.exit(sig === "SIGINT" ? 130 : 143)); });
   await runWorker(async (rawEmit) => {
+    emitObservedCapability(rawEmit); // GAME10-05a
     const { emit, over, remaining, cost } = workerEmits(rawEmit, runId, repoDir, lokiRoot, process.env, (b) => { void import("../util/slack_events.ts").then((m) => m.notifyEvent(process.env, "budget", { cost: `$${b.usd_so_far.toFixed(2)} of $${b.cap_usd.toFixed(2)} (${b.threshold_pct}% of cap)`, question: `$${b.cap_usd.toFixed(2)}`, summary: `Budget: ${b.threshold_pct}% of the $${b.cap_usd.toFixed(2)} cap reached ($${b.usd_so_far.toFixed(2)} spent)` })).catch(() => {}); });
     const base = createSessionRunner({ provider, model, emit: emit as EmitFn, lokiRoot, remaining });
     const failovers: FailoverRecord[] = [];
