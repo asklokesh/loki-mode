@@ -26,6 +26,8 @@ const norm = (p: string): string[] => readFileSync(p, "utf8").split("\n").filter
   const e = JSON.parse(l); e.ts = "T"; if ("wall_s" in e.data) e.data.wall_s = 0;
   // FC-07: with a resolvable signing key the supervisor appends log.sealed, whose hash and signature cover the raw timestamps; mask them so the test is key-independent.
   if (e.type === "log.sealed") { for (const k of ["events_sha256", "sig", "kid"]) if (k in e.data) e.data[k] = "X"; }
+  // The capability record lists the child env names, and the shipping run sets LOKI_CONTROL_URL on purpose; mask the name list so the test compares only what shipping must not change.
+  if (e.type === "capability.recorded") { for (const s of e.data.stages ?? []) if ("secrets" in s) s.secrets = "X"; }
   return JSON.stringify(e);
 });
 
