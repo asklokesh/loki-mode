@@ -6,7 +6,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { projectApi } from "../../src/project_model/api.ts";
-import { discoverProjectModel, intakeProjectModel } from "../../src/project_model/discover.ts";
+import { discoverProjectModel, intakeProjectModel, signalsResolve } from "../../src/project_model/discover.ts";
 import { loadProjectApi } from "../../src/project_model/resolve.ts";
 import { unknownModel, validateAnswer } from "../../src/project_model/schema.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
@@ -196,6 +196,27 @@ describe("intake skips discovery when the deterministic signals resolve", () => 
       expect((r.data as any).project_model.owner).toBe("harness");
       expect(calls).toBe(0);
     } finally { keys.forEach((k, i) => { if (prev[i] === undefined) delete process.env[k]; else process.env[k] = prev[i]!; }); }
+  });
+  test("a repo with per-package manifests below the root still runs discovery, so each package gets its own install", async () => {
+    const d = mkdtempSync(join(tmpdir(), "pm-nested-"));
+    dirs.push(d);
+    writeFileSync(join(d, "pytest.ini"), "[pytest]\naddopts = -q\n");
+    for (const p of ["a", "b"]) {
+      mkdirSync(join(d, p, "tests"), { recursive: true });
+      writeFileSync(join(d, p, "pyproject.toml"), `[project]\nname = "${p}"\n`);
+      writeFileSync(join(d, p, "tests", `test_${p}.py`), "def test_x():\n    assert True\n");
+    }
+    mkdirSync(join(d, "c", "src"), { recursive: true });
+    writeFileSync(join(d, "c", "src", "c.py"), "x = 1\n");
+    git(d, "init", "-q");
+    git(d, "add", "-A", "-f");
+    const tm = buildTestMap(d);
+    expect(tm.runners.length).toBe(1);
+    expect(tm.tests.length).toBeGreaterThan(0); // the test-file signal alone resolves; only the nested manifests must stop the skip
+    expect(signalsResolve(tm)).toBe(true);
+    expect(signalsResolve(tm, d)).toBe(false);
+    const { calls } = await count(d);
+    expect(calls).toBeGreaterThan(0);
   });
   test("a two-package repo whose signals do not resolve still runs discovery", async () => {
     const { calls } = await count(twoPkg(false));

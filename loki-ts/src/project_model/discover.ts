@@ -8,6 +8,8 @@ import { join } from "node:path";
 import { fastTierModel } from "../runner/model_downgrades.ts";
 import { MAX_TURNS_EXIT } from "../runner/worker_proc.ts";
 import { STAGE_BUDGETS, type RunContext, type SessionResult } from "../engine10/types.ts";
+import { MANIFESTS } from "../runner/repo_profile.ts";
+import { safeGit } from "../util/safe_git.ts";
 import { recordRunShape } from "../util/run_shape.ts";
 import { committedModelHash, computeKey, gather, isGitTracked, isSingleDirectory, shallowDirs, type Gathered } from "./gather.ts";
 import { PROJECT_MODEL_SCHEMA, parseCached, unknownModel, validateAnswer, type ProjectModel } from "./schema.ts";
@@ -101,10 +103,21 @@ function readAnswer(answerPath: string, summary: string | undefined): unknown {
   return undefined;
 }
 
-/** Intake's deterministic signals already name the runner and the test units: one runner, every detected test file runs under it.
- *  The repo-root behavior consumers keep for an unknown model is then the right one, so no session is spent. */
-export function signalsResolve(tm: { runners: readonly string[]; tests: readonly { runner: string }[] } | undefined): boolean {
-  return !!tm && tm.runners.length === 1 && tm.tests.length > 0 && tm.tests.every((t) => t.runner === tm.runners[0]);
+/** A tracked manifest (the repo profile's one manifest list) below the repo root means a package the test map cannot see: a package with no
+ *  tests still needs its own install, and absentDepRoots needs a model to name it. Rule chosen: skip only when there is none. A git failure reads as nested. */
+export function hasNestedManifest(repoDir: string): boolean {
+  try {
+    const names = new Set<string>(MANIFESTS);
+    return safeGit(repoDir, ["ls-files", "-z"], { maxBuffer: 256 * 1024 * 1024 }).split("\0").some((p) => p.includes("/") && names.has(p.slice(p.lastIndexOf("/") + 1)));
+  } catch {
+    return true;
+  }
+}
+
+/** Intake's deterministic signals already name the runner and the test units: one runner, every detected test file runs under it, and no
+ *  package manifest lives below the root. The repo-root behavior consumers keep for an unknown model is then the right one, so no session is spent. */
+export function signalsResolve(tm: { runners: readonly string[]; tests: readonly { runner: string }[] } | undefined, repoDir?: string): boolean {
+  return !!tm && tm.runners.length === 1 && tm.tests.length > 0 && tm.tests.every((t) => t.runner === tm.runners[0]) && (repoDir === undefined || !hasNestedManifest(repoDir));
 }
 
 /** `budgetS` is the time this call may use in total (the caller derives it from the stage budget). */
@@ -125,7 +138,7 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
   // FC-55: every tracked file at the root means there is no package below it to learn; the repo-root
   // behavior consumers already have for an unknown model is exactly right, so no session is spent.
   if (isSingleDirectory(ctx.repoDir)) return { model: unknownModel("", "single-directory repo"), cached: false, attempts: 0, owner: "harness" };
-  if (signalsResolve(opts.testmap)) return { model: unknownModel("", "deterministic signals resolve the runner and units"), cached: false, attempts: 0, owner: "harness" };
+  if (signalsResolve(opts.testmap, ctx.repoDir)) return { model: unknownModel("", "deterministic signals resolve the runner and units"), cached: false, attempts: 0, owner: "harness" };
 
   const deadline = Date.now() + (opts.budgetS ?? Infinity) * 1000;
   const g = gather(ctx.repoDir);

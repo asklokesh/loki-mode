@@ -288,7 +288,7 @@ export type BaselineRunner = (cmd: string, cwd: string, timeoutMs: number) => Ba
 
 export const commandProfilePath = (repoDir: string): string => join(repoDir, ".loki", "state", "repo-profile.json");
 const DEFAULT_TIMEOUT_S = 60;
-const MANIFESTS = ["requirements.txt", "package.json", "Makefile", "makefile", "GNUmakefile", "pyproject.toml", "tox.ini", "pytest.ini", "setup.cfg", "go.mod", "Cargo.toml", "tsconfig.json"];
+export const MANIFESTS = ["requirements.txt", "package.json", "Makefile", "makefile", "GNUmakefile", "pyproject.toml", "tox.ini", "pytest.ini", "setup.cfg", "go.mod", "Cargo.toml", "tsconfig.json"];
 const NO_TEST = /no test specified/i;
 
 const read = (p: string): string => { try { return readFileSync(p, "utf8"); } catch { return ""; } };
