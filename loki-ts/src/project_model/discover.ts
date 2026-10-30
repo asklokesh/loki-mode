@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fastTierModel } from "../runner/model_downgrades.ts";
 import { MAX_TURNS_EXIT } from "../runner/worker_proc.ts";
 import { STAGE_BUDGETS, type RunContext, type SessionResult } from "../engine10/types.ts";
+import { recordRunShape } from "../util/run_shape.ts";
 import { committedModelHash, computeKey, gather, isGitTracked, isSingleDirectory, shallowDirs, type Gathered } from "./gather.ts";
 import { PROJECT_MODEL_SCHEMA, parseCached, unknownModel, validateAnswer, type ProjectModel } from "./schema.ts";
 
@@ -106,10 +107,14 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
   const committed = loadCommitted(ctx.repoDir);
   if (committed) {
     const model: ProjectModel = { ...committed.model, key: computeKey(ctx.repoDir, committed.model.fingerprintFiles, dirs, committed.hash) };
+    recordRunShape(ctx.runDir, model);
     return { model, cached: true, attempts: 0 };
   }
   const cached = opts.force ? null : loadCached(ctx.repoDir);
-  if (cached && computeKey(ctx.repoDir, cached.fingerprintFiles, dirs) === cached.key) return { model: cached, cached: true, attempts: 0, ...(cached.status === "unknown" ? { owner: "model" as const } : {}) };
+  if (cached && computeKey(ctx.repoDir, cached.fingerprintFiles, dirs) === cached.key) {
+    recordRunShape(ctx.runDir, cached);
+    return { model: cached, cached: true, attempts: 0, ...(cached.status === "unknown" ? { owner: "model" as const } : {}) };
+  }
 
   // FC-55: every tracked file at the root means there is no package below it to learn; the repo-root
   // behavior consumers already have for an unknown model is exactly right, so no session is spent.

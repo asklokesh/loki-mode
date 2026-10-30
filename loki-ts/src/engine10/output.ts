@@ -5,6 +5,7 @@ import { clipWords, collapseNotProven, formatClock, formatDuration, formatTokens
 export { formatClock, formatDuration, formatTokens }; // one owner: util/term_width.ts
 import { registryLoader } from "./registry.ts";
 import { redactSecrets } from "../util/redact.ts";
+import type { TierOutcomeCount } from "../runner/router/history.ts";
 import { conflictReasonOf } from "./events.ts"; import { isBlockingFail } from "../util/failure_memory.ts";
 const NAME_WIDTH = 12; // fits "implement" + padding to align the next column
 const STATUS_WIDTH = 8; // E-44: "skipped" plus one separating space (7 ran it into the duration)
@@ -99,8 +100,15 @@ export interface SummaryInput {
     measuredSessions?: number;
     totalSessions?: number; stageShares?: string | null; /* TEN-COST-28: stageShareText line, printed as Spend */ capUsd?: number; // Q17-02: run cap USD when set; the measured Cost line adds "N% of cap $X"
   };
-  wallS: number;
+  tier?: TierSeal; wallS: number;
   stages: { label: string; seconds: number }[]; firstSealed?: boolean; // TEN-UX-11: first sealed PR in repo (METRICS row 14); only literal true marks Time
+}
+/** Which tier sealed, the top-tier cost avoided and this shape's sealed parity record. Every figure comes from the receipt or the router history; a missing one reads "not measured". Display only: never feeds the verdict. */
+export interface TierSeal { tier?: string | null; topTierCostAvoidedUsd?: number | null; record?: Record<string, TierOutcomeCount> | null }
+const TOP_TIER = "opus";
+export function formatTierSeal(t: TierSeal): string {
+  const tier = t.tier ? plainLine(t.tier, 40) : "", usd = t.topTierCostAvoidedUsd, rec = (k: string): string => { const c = t.record && Object.hasOwn(t.record, k) ? t.record[k] : undefined; return c && c.total > 0 ? `${k} sealed ${c.verified} of ${c.total}` : `${k} not measured`; };
+  return `${tier ? `${tier} tier sealed` : "sealed tier not measured"}; top-tier cost avoided ${typeof usd === "number" && Number.isFinite(usd) && usd >= 0 ? `$${usd.toFixed(2)}` : "not measured"}; parity here: ${tier ? rec(tier) : "not measured"}, ${rec(TOP_TIER)}`;
 }
 function labelCol(text: string): string { return `${text}:`.padEnd(LABEL_WIDTH); }
 function cacheText(c: SummaryInput["cost"]): string {
@@ -125,7 +133,7 @@ export function formatSummary(input: SummaryInput): string {
         : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
   const stagesStr = input.stages.map((s) => `${s.label} ${formatDuration(s.seconds)}`).join(", ") + ((slow) => (slow ? `; slowest: ${slow.label} ${Math.min(100, Math.round((slow.seconds / input.wallS) * 100))}%` : ""))(input.wallS > 0 ? input.stages.filter((s) => s.seconds > 0).reduce<{ label: string; seconds: number } | null>((a, s) => (a && a.seconds >= s.seconds ? a : s), null) : null); // TEN-SPEED-03: slowest stage share of wall; needs real durations and wall
   const timeLine = `${labelCol("Time")}${formatDuration(input.wallS)} (${stagesStr})${input.firstSealed === true ? " - first sealed PR in this repo" : ""}`;
-  return [verdictLine, ...(input.reason ? [`${labelCol("Reason")}${input.reason}`] : []), prLine, ...receiptLine, notProvenLine, costLine, ...(input.cost.stageShares ? [`${labelCol("Spend")}${input.cost.stageShares}`] : []), timeLine].join("\n");
+  return [verdictLine, ...(input.reason ? [`${labelCol("Reason")}${input.reason}`] : []), prLine, ...receiptLine, notProvenLine, costLine, ...(input.tier && input.verdict === "VERIFIED" ? [`${labelCol("Tier")}${formatTierSeal(input.tier)}`] : []), ...(input.cost.stageShares ? [`${labelCol("Spend")}${input.cost.stageShares}`] : []), timeLine].join("\n");
 }
 /** Section 3: eta.ts is optional; when absent, ETAs are omitted. */
 export type EtaEstimator = (targetS: number | null, elapsedS: number) => number | null;

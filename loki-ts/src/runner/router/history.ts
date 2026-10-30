@@ -53,7 +53,7 @@ export function shapeKeyForRepo(repoDir: string): string | null {
  * FC-35: shape key for a run. The run's own Project Model answer (<runDir>/project-model.answer.json, schema-checked
  * by validateAnswer) wins; else the repo's cached/committed model. Null when neither is usable.
  */
-export function shapeKeyForRun(repoDir: string, runDir: string): string | null {
+export function shapeKeyForRun(repoDir: string, runDir: string, ownOnly = false): string | null {
   try {
     const p = join(runDir, "project-model.answer.json");
     if (existsSync(p)) {
@@ -61,7 +61,7 @@ export function shapeKeyForRun(repoDir: string, runDir: string): string | null {
       if (v.ok) return shapeKey({ ...v.model, key: "" });
     }
   } catch { /* fall through to the repo model */ }
-  return shapeKeyForRepo(repoDir);
+  return ownOnly ? null : shapeKeyForRepo(repoDir); // ownOnly: a run without its own answer has no recoverable shape
 }
 
 /**
