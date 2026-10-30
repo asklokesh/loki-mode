@@ -101,3 +101,47 @@ jobs:
           name: loki-ci-report
           path: loki-ci-report.json
           retention-days: 30
+
+  # Optional: verify the pull request against its linked issue (experimental).
+  # Runs in your own runner. The PR code executes only inside the Docker sandbox
+  # (scripts/verify-pr-sandbox.sh), which never pulls images, so the image must
+  # already hold your dependencies. Replace LOKI_VPR_IMAGE with your own image.
+  # Exit codes: 0 verified, 2 usage or sandbox blocked, 3 no proof to run (no
+  # linked issue or no runnable check), 4 the proof ran and failed.
+  verify-pr:
+    name: Verify PR against linked issue
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    env:
+      LOKI_VERIFY_PR: "1"
+      LOKI_VPR_IMAGE: ghcr.io/your-org/your-test-image:latest
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Loki Mode
+        run: npm install -g loki-mode@11.89.0
+
+      - name: Pull the sandbox image
+        run: docker pull "$LOKI_VPR_IMAGE"
+
+      - name: Verify the PR
+        run: >
+          loki verify-pr
+          "${{ github.repository }}#${{ github.event.pull_request.number }}"
+          --out verify-pr-out
+
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loki-verify-pr
+          path: verify-pr-out/
+          retention-days: 30

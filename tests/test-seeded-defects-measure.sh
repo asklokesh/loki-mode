@@ -219,5 +219,43 @@ if ! python3 "$M" --setup top --model strong --verifier llm-judge --only SD-0001
   ok "llm-judge: unparseable reply aborts and writes nothing"; else bad "llm-judge: unparseable reply aborts"; fi
 unset LOKI_SD_CLAUDE
 
+# PR-shaped corpus (pr-manifest.json): fixtures only. Each head passes its visible tests; a defect head fails the
+# issue check, a control head passes it, a case with no check names none.
+PRM="$REPO_ROOT/benchmarks/seeded-defects/pr-manifest.json"
+if python3 -I - "$PRM" "$T" <<'PY2'
+import json, os, re, shutil, subprocess, sys
+man, tmp = sys.argv[1], sys.argv[2]
+root = os.path.dirname(man)
+d = json.load(open(man))
+assert d["schema"] == "loki.seeded-defects.pr/v1"
+cs = d["cases"]
+ids = [c["id"] for c in cs]
+assert len(set(ids)) == len(ids) >= 8
+assert any(c["expected_verdict"] == "SEALED" for c in cs) and any(c["expected_verdict"] == "NOT_SEALED" for c in cs)
+def run(cwd, f):
+    return subprocess.run(["python3", "-B", f], cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+for c in cs:
+    assert c["expected_verdict"] in ("SEALED", "NOT_SEALED") and c["expected_exit"] in (0, 3, 4), c["id"]
+    assert (c["expected_verdict"] == "SEALED") == (c["expected_exit"] == 0), c["id"]
+    for f in c["files"]:
+        p = os.path.join(root, c["dir"], f)
+        assert os.path.isfile(p) and os.path.getsize(p) > 0, (c["id"], f)
+    assert c["has_check"] == ("head/tests/test_clause.py" in c["files"]) == ("base/tests/test_clause.py" in c["files"]), c["id"]
+    # extractChecks (loki-ts/src/contrib/verify_pr_f2p.ts:24): verify-pr reads checks only from the issue body
+    issue = open(os.path.join(root, c["dir"], "issue.md")).read()
+    runnable = any(re.match(r"^\s*(?:[-*+]\s+)?check:\s*`([^`]+)`", ln, re.I) for ln in issue.splitlines())
+    assert c["has_check"] == runnable, (c["id"], "has_check must equal a runnable Check line in issue.md", runnable)
+    for side in ("base", "head"):
+        w = os.path.join(tmp, "pr-" + c["id"] + side)
+        shutil.copytree(os.path.join(root, c["dir"], side), w)
+        assert run(w, "test_visible.py") == 0, (c["id"], side, "visible tests must pass")
+        if c["has_check"]:
+            # the issue Check runs pytest on the clause test shipped in the tree; it must fail on base, and on head only for a defect
+            rc = subprocess.run(["python3", "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_clause.py"], cwd=w, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+            assert (rc == 0) == (side == "head" and c["expected_verdict"] == "SEALED"), (c["id"], side, "check outcome", rc)
+PY2
+then ok "pr-manifest: PR fixtures pass visible tests, defects fail the issue check, controls pass it"
+else bad "pr-manifest: PR fixtures"; fi
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

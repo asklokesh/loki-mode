@@ -1,0 +1,148 @@
+{
+  "cases": [
+    {
+      "category": "logic-bug",
+      "dir": "pr-cases/PR-0001",
+      "expected_exit": 4,
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "issue.md",
+        "base/src.py",
+        "base/test_visible.py",
+        "head/src.py",
+        "head/test_visible.py",
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
+      ],
+      "has_check": true,
+      "id": "PR-0001",
+      "summary": "PR fixes the lower bound but leaves hi exclusive"
+    },
+    {
+      "category": "logic-bug",
+      "dir": "pr-cases/PR-0002",
+      "expected_exit": 0,
+      "expected_verdict": "SEALED",
+      "files": [
+        "issue.md",
+        "base/src.py",
+        "base/test_visible.py",
+        "head/src.py",
+        "head/test_visible.py",
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
+      ],
+      "has_check": true,
+      "id": "PR-0002",
+      "summary": "correct PR for the same issue"
+    },
+    {
+      "category": "spec-miss",
+      "dir": "pr-cases/PR-0003",
+      "expected_exit": 4,
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "issue.md",
+        "base/src.py",
+        "base/test_visible.py",
+        "head/src.py",
+        "head/test_visible.py",
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
+      ],
+      "has_check": true,
+      "id": "PR-0003",
+      "summary": "PR satisfies clause 1 and skips clause 2"
+    },
+    {
+      "category": "spec-miss",
+      "dir": "pr-cases/PR-0004",
+      "expected_exit": 0,
+      "expected_verdict": "SEALED",
+      "files": [
+        "issue.md",
+        "base/src.py",
+        "base/test_visible.py",
+        "head/src.py",
+        "head/test_visible.py",
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
+      ],
+      "has_check": true,
+      "id": "PR-0004",
+      "summary": "correct PR for the same issue"
+    },
+    {
+      "category": "test-fitting",
+      "dir": "pr-cases/PR-0005",
+      "expected_exit": 4,
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "issue.md",
+        "base/src.py",
+        "base/test_visible.py",
+        "head/src.py",
+        "head/test_visible.py",
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
+      ],
+      "has_check": true,
+      "id": "PR-0005",
+      "summary": "PR hardcodes the value the visible test asserts"
+    },
+    {
+      "category": "security",
+      "dir": "pr-cases/PR-0006",
+      "expected_exit": 4,
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "issue.md",
+        "base/src.py",
+        "base/test_visible.py",
+        "head/src.py",
+        "head/test_visible.py",
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
+      ],
+      "has_check": true,
+      "id": "PR-0006",
+      "summary": "PR joins the path without containment"
+    },
+    {
+      "category": "regression",
+      "dir": "pr-cases/PR-0007",
+      "expected_exit": 4,
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "issue.md",
+        "base/src.py",
+        "base/test_visible.py",
+        "head/src.py",
+        "head/test_visible.py",
+        "base/tests/test_clause.py",
+        "head/tests/test_clause.py"
+      ],
+      "has_check": true,
+      "id": "PR-0007",
+      "summary": "PR fixes clamp and breaks the neighbouring scale function"
+    },
+    {
+      "category": "no-runnable-check",
+      "dir": "pr-cases/PR-0008",
+      "expected_exit": 3,
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "issue.md",
+        "base/src.py",
+        "base/test_visible.py",
+        "head/src.py",
+        "head/test_visible.py"
+      ],
+      "has_check": false,
+      "id": "PR-0008",
+      "summary": "linked issue is prose with no runnable check"
+    }
+  ],
+  "note": "PR-shaped fixtures: issue, base tree, head tree (the PR). The 7 cases with a check carry a Check line in issue.md (`python3 -m pytest tests/test_clause.py`) that loki verify-pr extractChecks accepts, and the pytest clause test ships in both the base and head trees; PR-0008 is prose only. expected_exit is the loki verify-pr exit code (0 verified, 3 no proof to run, 4 proof failed). Measured with the real judgePr (loki-ts/src/commands/verify_pr.ts) where only the PR fetch, issue trust and checkout were stubbed and the sandbox ran the command locally in a copy of the tree: the observed exit equalled expected_exit for all 8 cases (0 for PR-0002 and PR-0004, 4 for PR-0001, PR-0003, PR-0005, PR-0006 and PR-0007, 3 for PR-0008). Not measured: the full loki verify-pr against a real GitHub PR and the container sandbox. SEALED cases are grader-passing controls for the false-block rate.",
+  "schema": "loki.seeded-defects.pr/v1"
+}
