@@ -11,5 +11,6 @@ export interface Hooks {
   wall?: { snapshotTree(repoDir: string, signal: AbortSignal): Promise<string | null>; changedSinceBase(repoDir: string, baseSha: string): string[] | null; manifests: RegExp };
   stageCapability?(stage: string, env: NodeJS.ProcessEnv, argv: readonly string[]): StageCapability;
   briefFacts?(o: Partial<Record<string, Obj>>, runId: string, runDir: string): BriefFacts; sealed?(runDir: string, receipt: { run_id: string; provider: string; model: string; receipt_sha256: string; cost?: { per_model?: Record<string, unknown> } }): void; // after the receipt files are final; failures never reach the seal
+  runtimeEvidence?(task: string): Rec | null;
 }
 export const hooks: Hooks = {};

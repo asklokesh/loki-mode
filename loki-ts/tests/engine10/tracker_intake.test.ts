@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { adfToText, fetchTrackerIssue, parseTrackerRef } from "../../src/features/tracker_intake.ts";
+import { EVIDENCE_FRAME_CAP, EVIDENCE_TEXT_CAP, extractRuntimeEvidence } from "../../src/contrib/runtime_evidence.ts";
+import { hooks } from "../../src/engine10/hooks.ts";
 
 const okJson = (body: unknown) => async () => new Response(JSON.stringify(body), { status: 200 });
 
@@ -120,5 +122,42 @@ describe("supervisor tracker writeback env", () => {
     expect(line!.slice(0, line!.indexOf("process.env.LOKI_WRITEBACK_ISSUE = env"))).not.toContain("//");
     expect(line).toContain("process.env.LOKI_WRITEBACK_KIND = env.LOKI_WRITEBACK_KIND = trackerRef.source");
     expect(parseTrackerRef("jira:PROJ-1")).toEqual({ source: "jira", key: "PROJ-1" });
+  });
+});
+
+describe("extractRuntimeEvidence (GAME10-08a)", () => {
+  const py = 'Traceback (most recent call last):\n  File "app/main.py", line 12, in handler\n    run()\n  File "app/db.py", line 40, in run\nValueError: boom';
+  const js = "TypeError: x is undefined\n    at render (/srv/ui/view.js:10:5)\n    at /srv/ui/index.js:3:1";
+  const java = "java.lang.NullPointerException\n\tat com.acme.Svc.call(Svc.java:57)\n\tat com.acme.Main.main(Main.java:9)";
+  test("python, js and java traces yield frames and a stable hash through one parser", () => {
+    const p = extractRuntimeEvidence(py)!, j = extractRuntimeEvidence(js)!, v = extractRuntimeEvidence(java)!;
+    expect(p.frames).toEqual([{ file: "app/main.py", line: 12, fn: "handler" }, { file: "app/db.py", line: 40, fn: "run" }]);
+    expect(j.frames).toEqual([{ file: "/srv/ui/view.js", line: 10, fn: "render" }, { file: "/srv/ui/index.js", line: 3, fn: null }]);
+    expect(v.frames).toEqual([{ file: "Svc.java", line: 57, fn: "com.acme.Svc.call" }, { file: "Main.java", line: 9, fn: "com.acme.Main.main" }]);
+    expect(p.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(extractRuntimeEvidence(py)!.sha256).toBe(p.sha256);
+    expect(extractRuntimeEvidence(py + '\n  File "x.py", line 1')!.sha256).not.toBe(p.sha256);
+  });
+  test("request and response pairs and tracker urls", () => {
+    const e = extractRuntimeEvidence("> POST /api/login HTTP/1.1\n< HTTP/1.1 500 Internal Server Error\nsee https://acme.atlassian.net/browse/PROJ-9 and linear:WEB-4.")!;
+    expect(e.exchanges).toEqual([{ request: "POST /api/login", response: "500" }]);
+    expect(e.tracker_refs).toEqual([{ source: "jira", key: "PROJ-9", site: "https://acme.atlassian.net" }, { source: "linear", key: "WEB-4" }]);
+  });
+  test("prose shaped like a bare frame is not evidence but a bare path frame is", () => {
+    for (const t of ["at 10:30", "meet at 12:45 tomorrow", "at noon:5", "at lunch 10:30", "at https://x.com:443", "at 5/6:30", "at the office/home:5"]) expect(extractRuntimeEvidence(t)).toBeNull();
+    expect(extractRuntimeEvidence("at /app/src/x.js:12:3")!.frames).toEqual([{ file: "/app/src/x.js", line: 12, fn: null }]);
+  });
+  test("prose yields null and input is capped", () => {
+    expect(extractRuntimeEvidence("fix the login bug, it fails sometimes")).toBeNull();
+    expect(extractRuntimeEvidence(`${"x".repeat(EVIDENCE_TEXT_CAP)}\n  File "late.py", line 1, in f`)).toBeNull();
+    const many = extractRuntimeEvidence(Array.from({ length: 1000 }, (_, i) => `  File "f${i}.py", line ${i}, in g`).join("\n"))!;
+    expect(many.frames.length).toBe(EVIDENCE_FRAME_CAP);
+  });
+});
+
+describe("runtimeEvidence hook wiring (GAME10-08a)", () => {
+  test("registerContrib (tests/preload.ts) fills the hook and it returns the extracted frames", () => {
+    const ev = hooks.runtimeEvidence?.('  File "app/main.py", line 12, in handler') as { frames: unknown[] } | null | undefined;
+    expect(ev?.frames).toEqual([{ file: "app/main.py", line: 12, fn: "handler" }]);
   });
 });

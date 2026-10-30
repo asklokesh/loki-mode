@@ -250,6 +250,14 @@ describe("engine10 intake", () => {
     expect(readFileSync(resolve(wt, common), "utf8")).toContain(".loki/");
   });
 
+  test("GAME10-08a: a pasted traceback is recorded as runtime evidence with frames and a hash, not treated as prose", async () => {
+    const ctx = makeCtx(repoDir, runDir, fakeTests());
+    const result = await runIntake(ctx, new AbortController().signal, { taskText: 'login crashes\nTraceback (most recent call last):\n  File "app/main.py", line 12, in handler\nValueError: boom' });
+    const ev = result.data.runtime_evidence as { frames: { file: string; line: number; fn: string | null }[]; sha256: string };
+    expect(ev.frames).toEqual([{ file: "app/main.py", line: 12, fn: "handler" }]);
+    expect(ev.sha256).toHaveLength(64);
+  });
+
   test("clean repo with literal task text: creates the branch, excludes .loki/, builds maps", async () => {
     const provider = fakeTests(["pytest", "vitest"]);
     const ctx = makeCtx(repoDir, runDir, provider);
