@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { explainLines, defaultCheckout, defaultIssue, defaultPrMeta, defaultPackageSuites, defaultSandbox, parsePrRef, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
-import { extractChecks } from "../../src/contrib/verify_pr_f2p.ts";
+import { extractChecks, judgeF2p, runnerConfigChanged } from "../../src/contrib/verify_pr_f2p.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "vpr2-test-")); });
@@ -21,7 +21,7 @@ function fixture(kind: "fix" | "delete-test" | "noop" | "already-passing"): { ur
   mkdirSync(repo);
   git(repo, "init", "-q", "-b", "main");
   writeFileSync(join(repo, "add.sh"), kind === "already-passing" ? "echo 3\n" : "echo 4\n");
-  writeFileSync(join(repo, "t.sh"), '[ "$(sh add.sh)" = 3 ]\n');
+  writeFileSync(join(repo, "t.sh"), '[ "$(sh add.sh)" = 3 ] && printf "(pass) add\\n 1 pass\\n 0 fail\\n"\n');
   git(repo, "add", "."); git(repo, "commit", "-qm", "base");
   const base = git(repo, "rev-parse", "HEAD");
   git(repo, "checkout", "-qb", "pr");
@@ -37,8 +37,8 @@ function fixture(kind: "fix" | "delete-test" | "noop" | "already-passing"): { ur
 
 /** Trusted-fixture stand-in for the sandbox: runs the check on the host in the given dir. The real adapter is tested separately. */
 const hostSandbox = (d: string, cmd: string) => {
-  const r = spawnSync("sh", ["-c", cmd], { cwd: d, stdio: "ignore" });
-  return { status: "COMPLETED" as const, exit_code: r.status };
+  const r = spawnSync("sh", ["-c", `{ ${cmd}\n} 2>&1`], { cwd: d, stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" });
+  return { status: "COMPLETED" as const, exit_code: r.status, output: r.stdout };
 };
 
 const TRUSTED = { author: "maint", authorAssociation: "MEMBER", updatedAt: "2026-10-01T00:00:00Z", repo: "o/r" };
@@ -367,3 +367,86 @@ async function runReseal(meta: PrMeta, over: Partial<VerifyPrDeps>) {
   const rc = await runVerifyPr(["reseal", "o/r#7", "--out", outDir], handlerDeps(meta, over, out));
   return { rc, out: out.join(""), outDir };
 }
+
+/** A local repo with `base` files on main and `pr` files layered on the branch; checks use the real bun and pytest on the host. */
+function repoWith(name: string, base: Record<string, string>, pr: Record<string, string>): PrMeta {
+  const repo = join(dir, `src-${name}`);
+  mkdirSync(repo);
+  git(repo, "init", "-q", "-b", "main");
+  for (const [f, c] of Object.entries(base)) writeFileSync(join(repo, f), c);
+  git(repo, "add", "."); git(repo, "commit", "-qm", "base");
+  const baseSha = git(repo, "rev-parse", "HEAD");
+  git(repo, "checkout", "-qb", "pr");
+  for (const [f, c] of Object.entries(pr)) writeFileSync(join(repo, f), c);
+  git(repo, "add", "-A"); git(repo, "commit", "-qm", "pr");
+  const head = git(repo, "rev-parse", "HEAD");
+  git(repo, "update-ref", "refs/pull/7/head", head);
+  return { baseSha, headSha: head, cloneUrl: repo, issueRefs: ["o/r#1"] };
+}
+
+const issueFor = (cmd: string): string => `Fix add()\n\n## Acceptance criteria\n- add(1,2) is 3\n\nCheck: \`${cmd}\`\n`;
+const BUN_FILES = {
+  "add.ts": "export const add = (a: number, b: number) => a + b + 1;\n",
+  "add.test.ts": 'import { test, expect } from "bun:test";\nimport { add } from "./add.ts";\ntest("add", () => { expect(add(1, 2)).toBe(3); });\n',
+};
+const BUN_FIXED = "export const add = (a: number, b: number) => a + b;\n";
+const PY_FILES = { "add.py": "def add(a, b):\n    return a + b + 1\n", "test_add.py": "from add import add\n\ndef test_add():\n    assert add(1, 2) == 3\n" };
+const PY_FIXED = "def add(a, b):\n    return a + b\n";
+const BUN_CHECK = "bun test add.test.ts";
+const PY_CHECK = "python3 -m pytest -q -p no:cacheprovider test_add.py";
+
+describe("verify-pr: an exit code alone is not proof", () => {
+  test("a correct bun fix and a correct pytest fix are still VERIFIED", async () => {
+    const b = await run(repoWith("bun-ok", BUN_FILES, { "add.ts": BUN_FIXED }), { checkout: defaultCheckout }, issueFor(BUN_CHECK));
+    expect([b.rc, b.json.verdict]).toEqual([0, "VERIFIED"]);
+    const p = await run(repoWith("py-ok", PY_FILES, { "add.py": PY_FIXED }), { checkout: defaultCheckout }, issueFor(PY_CHECK));
+    expect([p.rc, p.json.verdict]).toEqual([0, "VERIFIED"]);
+  }, 60_000);
+
+  test("a bunfig preload that exits 0 after the run is NOT PROVEN (exit 4) naming bunfig.toml", async () => {
+    const meta = repoWith("bunfig", BUN_FILES, {
+      "bunfig.toml": '[test]\npreload = ["./pre.ts"]\n',
+      "pre.ts": 'import { afterAll } from "bun:test";\nafterAll(() => process.exit(0));\n',
+    });
+    const r = await run(meta, { checkout: defaultCheckout }, issueFor(BUN_CHECK));
+    expect(r.rc).toBe(4);
+    expect(r.json.verdict).toBe("NOT PROVEN");
+    expect(r.json.reasons.join(" ")).toContain("bunfig.toml");
+  }, 60_000);
+
+  test("a conftest.py that calls os._exit(0) is NOT PROVEN (exit 4) naming conftest.py", async () => {
+    const meta = repoWith("conftest", PY_FILES, { "conftest.py": "import os\n\ndef pytest_sessionfinish(session, exitstatus):\n    os._exit(0)\n" });
+    const r = await run(meta, { checkout: defaultCheckout }, issueFor(PY_CHECK));
+    expect(r.rc).toBe(4);
+    expect(r.json.verdict).toBe("NOT PROVEN");
+    expect(r.json.reasons.join(" ")).toContain("conftest.py");
+  }, 60_000);
+
+  test("a preload already on base that the PR rewrites to exit 0 is caught by the missing pass record", async () => {
+    const base = { ...BUN_FILES, "bunfig.toml": '[test]\npreload = ["./pre.ts"]\n', "pre.ts": "export {};\n" };
+    const meta = repoWith("preload-rewrite", base, { "pre.ts": 'import { afterAll } from "bun:test";\nafterAll(() => process.exit(0));\n' });
+    const r = await run(meta, { checkout: defaultCheckout }, issueFor(BUN_CHECK));
+    expect(r.rc).toBe(4);
+    expect(r.json.reasons.join(" ")).toContain("without a recorded test pass");
+  }, 60_000);
+
+  test("judgeF2p: exit 0 with no pass record, or with a recorded failure, is not a pass", () => {
+    const base = { status: "COMPLETED" as const, exit_code: 1 };
+    const head = (output: string | undefined) => ({ status: "COMPLETED" as const, exit_code: 0, output });
+    expect(judgeF2p("c", base, head(undefined)).ok).toBe(false);
+    expect(judgeF2p("c", base, head("")).ok).toBe(false);
+    expect(judgeF2p("c", base, head("(pass) a\n(fail) b\n 1 pass\n 1 fail\n")).ok).toBe(false);
+    expect(judgeF2p("c", base, head("(fail) b\n")).ok).toBe(false);
+    expect(judgeF2p("c", base, head("(pass) a\n 1 pass\n 0 fail\n")).ok).toBe(true);
+    expect(judgeF2p("c", base, head("1 passed in 0.01s")).ok).toBe(true);
+    expect(judgeF2p("c", base, head("1 failed, 1 passed in 0.01s")).ok).toBe(false);
+  });
+
+  test("runnerConfigChanged flags runner files and test-runner sections, not unrelated config", () => {
+    writeFileSync(join(dir, "setup.cfg"), "[tool:x_test]\naddopts = -q\n");
+    writeFileSync(join(dir, "runner.ini"), "[runner_test]\nk = 1\n");
+    writeFileSync(join(dir, "plain.toml"), "[project]\nname = 'x'\n");
+    writeFileSync(join(dir, "bunfig.toml"), "x = 1\n");
+    expect(runnerConfigChanged(["setup.cfg", "runner.ini", "plain.toml", "bunfig.toml", "gone/conftest.py", "src/a.ts"], dir)).toEqual(["setup.cfg", "runner.ini", "bunfig.toml"]);
+  });
+});

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseContract } from "../features/contract.ts";
 import { fetchIssue } from "../engine10/fetch_issue.ts";
-import { extractChecks, judgeF2p, referencedFiles, type SandboxResult } from "../contrib/verify_pr_f2p.ts";
+import { extractChecks, judgeF2p, referencedFiles, runnerConfigChanged, type SandboxResult } from "../contrib/verify_pr_f2p.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
 
@@ -109,7 +109,8 @@ export function defaultSandbox(dir: string, cmd: string, env: NodeJS.ProcessEnv 
     if (!existsSync(res)) return { status: r.status === 3 ? "BLOCKED" : "ERROR", exit_code: null, detail: (r.stderr ?? "").trim().slice(0, 200) || `runner rc ${r.status}` };
     const j = JSON.parse(readFileSync(res, "utf8")) as { status?: string; exit_code?: number | null; detail?: string };
     const st = j.status === "COMPLETED" || j.status === "TIMEOUT" || j.status === "BLOCKED" ? j.status : "ERROR";
-    return { status: st, exit_code: typeof j.exit_code === "number" ? j.exit_code : null, detail: j.detail };
+    const outFile = join(out, "output.txt");
+    return { status: st, exit_code: typeof j.exit_code === "number" ? j.exit_code : null, detail: j.detail, output: existsSync(outFile) ? readFileSync(outFile, "utf8") : "" };
   } catch (e) {
     return { status: "ERROR", exit_code: null, detail: String(e).slice(0, 200) };
   } finally {
@@ -174,6 +175,8 @@ export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): Verify
     const gone = referencedFiles(c, co.baseDir).filter((p) => !existsSync(join(co.headDir, p)));
     if (gone.length > 0) return np(`test removed by the PR: ${gone.join(", ")}`);
   }
+  const cfg = runnerConfigChanged(co.changed, co.headDir);
+  if (cfg.length > 0) return np(`the PR adds or changes test runner config, so a passing check is not proof: ${cfg.join(", ")}`);
   for (const c of res.checks) {
     const o = judgeF2p(c, deps.sandbox(co.baseDir, c), deps.sandbox(co.headDir, c));
     if (!o.ok) return { ...np(o.reason), blocked: o.blocked };

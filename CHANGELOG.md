@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- `loki verify-pr` no longer reports VERIFIED on a bare exit code 0: the issue's check must show a recorded test pass in the runner's own output, and a PR that adds or changes runner config (`bunfig.toml`, `conftest.py`, or an ini, cfg or toml file with a test-runner section) is NOT PROVEN, naming the file.
+
 ## v11.88.0 (2026-10-29)
 
 ### Added
