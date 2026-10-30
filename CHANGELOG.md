@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Every PR body and `loki verify` output now prints the receipt's signed Seal accuracy line, or "Seal accuracy: not measured" when the receipt has none for that change.
 
+### Fixed
+
+- The earned auto-merge check now refuses a pure rename (100% similarity, no mode line in the diff) of a symlink or submodule between earned paths, reading the file modes from git on both sides of the PR, and names the renamed file in the refusal.
+
 ## v11.90.0 (2026-10-30)
 
 ### Added
