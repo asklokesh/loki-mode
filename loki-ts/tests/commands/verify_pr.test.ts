@@ -510,6 +510,9 @@ describe("verify-pr: an exit code alone is not proof", () => {
     mkdirSync(join(dir, "plain"), { recursive: true });
     writeFileSync(join(dir, "plain/package.json"), '{"name":"x"}');
     expect(runnerConfigChanged([...names, "package.json", "plain/package.json"], dir)).toEqual([...names, "package.json"]);
+    mkdirSync(join(dir, "cm"), { recursive: true });
+    writeFileSync(join(dir, "cm/package.json"), '{"name":"r","jest":{"testEnvironment":"node","rootDir":"setup","testMatch":["**/decoy.test.js"]} /* c */ }');
+    expect(runnerConfigChanged(["cm/package.json"], dir)).toEqual(["cm/package.json"]);
   });
 
   test.each([["jest.config.js", "npx jest add.test.js", '{"success":true,"numFailedTests":0,"numPassedTests":1}'], ["vitest.config.ts", "npx vitest run add.test.js", '<testsuites><testsuite><testcase name="a"/></testsuite></testsuites>']])("a %s change makes a passing check NOT PROVEN (exit 4) naming the file", async (cfgFile, check, report) => {

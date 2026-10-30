@@ -72,7 +72,7 @@ export function runnerConfigChanged(changed: readonly string[], headDir: string)
     const r = REPORT_RUNNERS.find((x) => x.config.test(b));
     if (r) {
       if (!r.key || !b.endsWith(".json")) return true;
-      try { return r.key in (JSON.parse(readFileSync(join(headDir, f), "utf8")) as object); } catch { return false; }
+      try { return r.key in (JSON.parse(readFileSync(join(headDir, f), "utf8")) as object); } catch { return true; }
     }
     if (!/\.(?:ini|cfg|toml)$/.test(f)) return false;
     try { return /^\s*\[[^\]\n]*test/im.test(readFileSync(join(headDir, f), "utf8")); } catch { return false; }
