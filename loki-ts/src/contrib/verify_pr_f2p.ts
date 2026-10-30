@@ -64,12 +64,16 @@ export function reportShowsPass(report: string | undefined): boolean {
   return cases - skipped > 0 && bad === 0 && counted === 0;
 }
 
-const RUNNER_CONFIG_NAMES = new Set(["bunfig.toml", "conftest.py"]);
-/** Files the PR added or changed that configure or preload the test runner: bunfig.toml, conftest.py, and any ini, cfg or toml file with a section header naming a test runner (`[...test...]`). The PR's own code could end the run early or redirect which tests run, so the check cannot be trusted. */
+/** Files the PR added or changed that configure or preload the test runner: each REPORT_RUNNERS entry's config file, and any ini, cfg or toml file with a section header naming a test runner (`[...test...]`). The PR's own code could end the run early or redirect which tests run, so the check cannot be trusted. */
 export function runnerConfigChanged(changed: readonly string[], headDir: string): string[] {
   return changed.filter((f) => {
     if (!existsSync(join(headDir, f))) return false;
-    if (RUNNER_CONFIG_NAMES.has(basename(f))) return true;
+    const b = basename(f);
+    const r = REPORT_RUNNERS.find((x) => x.config.test(b));
+    if (r) {
+      if (!r.key || !b.endsWith(".json")) return true;
+      try { return r.key in (JSON.parse(readFileSync(join(headDir, f), "utf8")) as object); } catch { return false; }
+    }
     if (!/\.(?:ini|cfg|toml)$/.test(f)) return false;
     try { return /^\s*\[[^\]\n]*test/im.test(readFileSync(join(headDir, f), "utf8")); } catch { return false; }
   });

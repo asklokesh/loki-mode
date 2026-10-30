@@ -502,4 +502,23 @@ describe("verify-pr: an exit code alone is not proof", () => {
     writeFileSync(join(dir, "bunfig.toml"), "x = 1\n");
     expect(runnerConfigChanged(["setup.cfg", "runner.ini", "plain.toml", "bunfig.toml", "gone/conftest.py", "src/a.ts"], dir)).toEqual(["setup.cfg", "runner.ini", "bunfig.toml"]);
   });
+
+  test("runnerConfigChanged flags jest, vitest and vite configs and a package.json with a jest key only", () => {
+    const names = ["jest.config.js", "sub/vitest.config.ts", "vite.config.mts", "vitest.workspace.ts"];
+    for (const n of names) { mkdirSync(join(dir, "sub"), { recursive: true }); writeFileSync(join(dir, n), "export default {};\n"); }
+    writeFileSync(join(dir, "package.json"), '{"jest":{"setupFiles":["./x.js"]}}');
+    mkdirSync(join(dir, "plain"), { recursive: true });
+    writeFileSync(join(dir, "plain/package.json"), '{"name":"x"}');
+    expect(runnerConfigChanged([...names, "package.json", "plain/package.json"], dir)).toEqual([...names, "package.json"]);
+  });
+
+  test.each([["jest.config.js", "npx jest add.test.js", '{"success":true,"numFailedTests":0,"numPassedTests":1}'], ["vitest.config.ts", "npx vitest run add.test.js", '<testsuites><testsuite><testcase name="a"/></testsuite></testsuites>']])("a %s change makes a passing check NOT PROVEN (exit 4) naming the file", async (cfgFile, check, report) => {
+    const base = { "add.test.js": "// test\n" };
+    const meta = repoWith(`cfg-${cfgFile}`, base, { [cfgFile]: "module.exports = {};\n" });
+    let n = 0;
+    const r = await run(meta, { checkout: defaultCheckout, sandbox: () => (n++ === 0 ? { status: "COMPLETED", exit_code: 1 } : { status: "COMPLETED", exit_code: 0, report }) }, issueFor(check));
+    expect(r.rc).toBe(4);
+    expect(r.json.verdict).toBe("NOT PROVEN");
+    expect(r.json.reasons.join(" ")).toContain(cfgFile);
+  }, 30_000);
 });
