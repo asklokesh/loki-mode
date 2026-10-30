@@ -233,6 +233,58 @@ describe("engine10 wall stage", () => {
     rmSync(repoDir, { recursive: true, force: true });
   });
 
+  describe("runtime evidence reproduction", () => {
+    const EV = { sha256: "ab".repeat(32), frames: [{ file: "app/main.py", line: 12, fn: "handler" }], exchanges: [{ request: "GET /x", response: "500" }], tracker_refs: [], truncated: false };
+    const runWith = async (evidence: unknown, base: { pass: number; fail: number }) => {
+      const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
+      const sessions = new FakeSessionRunner((opts) => { writeFileSync(join(opts.cwd!, "loki_wall_sample.test.ts"), SAMPLE, "utf8"); });
+      const intake = { task: "fix the crash", testmap: tm, repomap_ref: join(runDir, "repomap.json"), ...(evidence ? { runtime_evidence: evidence } : {}) };
+      const ctx = fakeCtx(repoDir, runDir, sessions, { intake }, []);
+      const result = await runWall(ctx, new AbortController().signal, { baseRunner: new FakeBaseTestRunner(base) });
+      rmSync(repoDir, { recursive: true, force: true });
+      return { result, brief: sessions.lastOpts?.brief ?? "" };
+    };
+
+    test("no evidence: brief is byte-identical and the result has no reproduction fields", async () => {
+      expect(buildWallBrief("t", "", [], false, "", [], null, null, null)).toBe(buildWallBrief("t"));
+      const { result } = await runWith(null, { pass: 1, fail: 0 });
+      expect(result.data.green_on_base).toBe(true);
+      expect(result.data.reproduction_green_on_base).toBeUndefined();
+      expect(result.data.not_proven).toBeUndefined();
+      expect(result.data.base_run).toEqual({ pass: 1, fail: 0, not_run: 0 });
+    });
+
+    test("evidence reaches the brief and requires a reproduction that fails on the current code", () => {
+      const b = buildWallBrief("t", "", [], false, "", [], null, null, EV);
+      expect(b).toContain("abababababab");
+      expect(b).toContain("Frame: handler app/main.py:12");
+      expect(b).toContain("Exchange: GET /x -> 500");
+      expect(b).toMatch(/reproduce this failure[^\n]*FAIL on the current code/);
+      expect(b.length - buildWallBrief("t").length).toBeLessThan(900);
+    });
+
+    test("evidence and a reproduction red on base: proceeds with base_run intact", async () => {
+      const { result } = await runWith(EV, { pass: 0, fail: 1 });
+      expect(result.data.reproduction_green_on_base).toBeUndefined();
+      expect(result.data.not_proven).toBeUndefined();
+      expect((result.data.base_run as { fail: number }).fail).toBe(1);
+    });
+
+    test("evidence and a reproduction green on base: recorded unproven, never already satisfied", async () => {
+      const { result } = await runWith(EV, { pass: 1, fail: 0 });
+      expect(result.data.reproduction_green_on_base).toBe(true);
+      expect(result.data.already_satisfied).toBe(false);
+      expect((result.data.base_run as { not_run: number }).not_run).toBeGreaterThan(0);
+      expect((result.data.not_proven as string[])[0]).toContain("was not reproduced");
+    });
+
+    test("malformed evidence is ignored", async () => {
+      const { result, brief } = await runWith({ sha256: 5 }, { pass: 1, fail: 0 });
+      expect(brief).not.toContain("Runtime evidence recorded");
+      expect(result.data.reproduction_green_on_base).toBeUndefined();
+    });
+  });
+
   test("a base-tree failure never short-circuits", async () => {
     const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
     const events: string[] = [];

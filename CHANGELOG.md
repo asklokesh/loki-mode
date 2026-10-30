@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Every PR body and `loki verify` output now prints the receipt's signed Seal accuracy line, or "Seal accuracy: not measured" when the receipt has none for that change.
+- When the task carries runtime evidence (a stack trace, request and response pair or tracker URL), the Wall brief now requires a test that reproduces it and fails on the current code; if every Wall test already passes there, the run records the evidence as not reproduced and never reports the task as already satisfied. Runs without evidence are unchanged, proven by tests/engine10/wall.test.ts.
 
 ### Fixed
 
