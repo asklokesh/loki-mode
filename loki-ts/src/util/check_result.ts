@@ -5,9 +5,9 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readlinkSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { siteFor } from "../project_model/resolve.ts";
 import type { ProjectApi } from "../project_model/api.ts";
 import { CARGO_TEST_FILE_RE, isTestFile } from "../engine10/testmap.ts";
@@ -836,6 +836,113 @@ export function hiddenEdits(repoDir: string): string[] {
     return hidden.map((p) => `tracked file edited while assume-unchanged or skip-worktree hides it from diff and commit: ${p}`);
   } catch { return ["assume-unchanged or skip-worktree check could not read the index"]; }
   finally { if (tmp) rmSync(tmp, { recursive: true, force: true }); }
+}
+
+/** FC-IGNORE-RULE-HIDES-INPUT: changedFiles lists untracked files with --exclude-standard, so a pattern the run adds to .git/info/exclude or to the
+ *  effective core.excludesFile hides a planted conftest.py from the seal, receipt and PR. Intake records, per source, the path git resolves
+ *  (core.excludesFile through `git config --type=path`, else the XDG default) and the sha256 of its content, "missing" for no file, "unreadable"
+ *  for a file that cannot be read. Verify compares: a changed hash or a new path is a note naming the file, and the ignored files the run created
+ *  are listed. Intake also hashes every ignored untracked .gitignore, pyvenv.cfg and virtual-environment interpreter or tool
+ *  (exec_files); one added or changed by the run is a note naming it, and the only exemption is a pure tool cache (pureToolCache). A
+ *  .gitignore in the changed files is a note naming it. A missing or malformed snapshot, or a failed listing, is a note too (fail closed). */
+export type IgnoreSource = { path: string; state: string };
+export type IgnoreSnapshot = { at: number; info_exclude: IgnoreSource; global_excludes: IgnoreSource; exec_files: Record<string, string> | null };
+/** Ignored, untracked files that decide what verify runs or imports: a .gitignore, a pyvenv.cfg, and the interpreter and tools verify launches
+ *  (python*, ruff, pytest) from the bin or Scripts directory of a virtual environment (a pyvenv.cfg directory, .venv or venv). A hidden conftest.py, site hooks and .pth files are
+ *  hiddenRunnerConfigs' concern (features/runner_config.ts), which skips what a package install wrote. Path -> content hash, "link:<target>" for a symlink;
+ *  null when the listing failed. */
+const EXEC_NAMES = new Set([".gitignore", "pyvenv.cfg"]);
+const VENV_TOOL = /^(python[0-9.]*(\.exe)?|ruff(\.exe)?|pytest(\.exe)?|py\.test)$/;
+function execFiles(repoDir: string): Record<string, string> | null {
+  let all: string[];
+  try { all = safeGit(repoDir, ["-c", "core.quotePath=false", "ls-files", "--others", "--ignored", "--exclude-standard", "-z"]).split("\0").filter((f) => f && !f.startsWith(".loki/")); } catch { return null; }
+  const roots = new Set([".venv", "venv", ...all.filter((f) => basename(f) === "pyvenv.cfg").map((f) => dirname(f))]);
+  const inVenvBin = (f: string): boolean => { for (let d = dirname(f); d !== "." && d !== "/"; d = dirname(d)) if ((basename(d) === "bin" || basename(d) === "Scripts") && roots.has(dirname(d))) return true; return false; };
+  const out: Record<string, string> = {};
+  for (const f of all) {
+    if (!(EXEC_NAMES.has(basename(f)) || (VENV_TOOL.test(basename(f)) && inVenvBin(f)))) continue;
+    const abs = join(repoDir, f);
+    try { const st = lstatSync(abs); out[f] = st.isSymbolicLink() ? `link:${readlinkSync(abs)}` : st.size > 4_000_000 ? `big:${st.size}` : createHash("sha256").update(readFileSync(abs)).digest("hex"); } catch { out[f] = "unreadable"; }
+  }
+  return out;
+}
+function ignoreSource(path: string): IgnoreSource {
+  try { return { path, state: existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex") : "missing" }; } catch { return { path, state: "unreadable" }; }
+}
+export function ignoreSnapshot(repoDir: string): IgnoreSnapshot {
+  const resolved = (args: string[], dflt: string): string => {
+    try { const v = safeGit(repoDir, args).trim(); return v ? resolve(repoDir, v) : dflt; } catch { return dflt; }
+  };
+  const info = resolved(["rev-parse", "--git-path", "info/exclude"], join(repoDir, ".git", "info", "exclude"));
+  const xdg = process.env["XDG_CONFIG_HOME"] || join(process.env["HOME"] ?? "", ".config");
+  const glob = resolved(["config", "--type=path", "--get", "core.excludesFile"], join(xdg, "git", "ignore"));
+  return { at: Date.now(), info_exclude: ignoreSource(info), global_excludes: ignoreSource(glob), exec_files: execFiles(repoDir) };
+}
+/** A path for a note: repo-relative inside the repo, `~/...` under the home directory, else the bare file name. Never absolute (notes reach receipt.json and the PR body). */
+function noteLabel(repoDir: string, p: string): string {
+  const home = process.env["HOME"], inside = (root: string): string | null => { const r = relative(root, p); return r && !r.startsWith("..") && !isAbsolute(r) ? r : null; };
+  const rel = inside(repoDir); if (rel) return rel;
+  const h = home ? inside(home) : null; if (h) return `~/${h}`;
+  return basename(p);
+}
+/** Exact .gitignore text each tool writes into its own cache directory, captured from a real run of that tool and compared by string equality (no pattern, no bare "*").
+ *  A tool is listed only when its text was captured: nox writes no cache directory, and tox's real text is a bare "*", which any planted file could imitate, so neither is exempt. */
+const TOOL_CACHE_GITIGNORE: Record<string, string> = {
+  ".pytest_cache": "# Created by pytest automatically.\n*\n", // pytest 9.2.0
+  ".mypy_cache": "# Automatically created by mypy\n*\n", // mypy 2.4.1
+  ".ruff_cache": "# Automatically created by ruff.\n*\n", // ruff 0.17.3
+  ".hypothesis": "# This .gitignore file was automatically created by Hypothesis. Hypothesis gitignores\n# .hypothesis by default, because we generally recommend that .hypothesis not be checked\n# into version control.\n#\n# If you *would* like to check .hypothesis into version control, you should delete this\n# file. Hypothesis will not re-create this .gitignore unless .hypothesis is deleted (and\n# if it does, that's a bug - please report it!)\n\n*\n", // hypothesis 6.170.13
+};
+const CACHE_CODE_EXT = /\.(py[a-z]?|pth|so|pyd|dylib|dll|js|mjs|cjs|ts|sh|rb|pl)$/i;
+/** True only when `dir` (repo-relative) is a known pure tool cache: its .gitignore is exactly that tool's own text and nothing under it is importable, executable, linked, or a virtual environment. Any doubt is false. */
+function pureToolCache(repoDir: string, dir: string): boolean {
+  const text = TOOL_CACHE_GITIGNORE[basename(dir)];
+  if (text === undefined) return false;
+  try {
+    if (readFileSync(join(repoDir, dir, ".gitignore"), "utf8") !== text) return false;
+    let seen = 0;
+    const walk = (rel: string): boolean => {
+      for (const e of readdirSync(join(repoDir, rel), { withFileTypes: true })) {
+        if (++seen > 5000 || e.isSymbolicLink()) return false;
+        const r = join(rel, e.name);
+        if (e.isDirectory()) { if (/^(bin|Scripts|site-packages|lib|lib64|include)$/.test(e.name) || !walk(r)) return false; continue; }
+        if (!e.isFile() || CACHE_CODE_EXT.test(e.name) || ((EXEC_NAMES.has(e.name) || /^(conftest|sitecustomize|usercustomize)\./.test(e.name)) && e.name !== ".gitignore") || /^python/i.test(e.name) || (statSync(join(repoDir, r)).mode & 0o111) !== 0) return false;
+      }
+      return true;
+    };
+    return walk(dir);
+  } catch { return false; }
+}
+export function ignoreRuleChanges(repoDir: string, snap: unknown, baseSha?: string): string[] {
+  const ok = (v: unknown): v is IgnoreSource => !!v && typeof (v as IgnoreSource).path === "string" && typeof (v as IgnoreSource).state === "string";
+  const s = snap as Partial<IgnoreSnapshot> | null | undefined;
+  if (!s || typeof s.at !== "number" || !ok(s.info_exclude) || !ok(s.global_excludes) || s.info_exclude.state === "unreadable" || s.global_excludes.state === "unreadable") return ["ignore rules could not be compared with the intake snapshot: the file .git/info/exclude or core.excludesFile was not recorded readable"];
+  try {
+    const now = ignoreSnapshot(repoDir), notes: string[] = [];
+    for (const [label, a, b] of [[".git/info/exclude", s.info_exclude, now.info_exclude], ["core.excludesFile", s.global_excludes, now.global_excludes]] as const) {
+      if (b.state === "unreadable") notes.push(`ignore rules could not be read at verify: ${label}`);
+      else if (a.path !== b.path) notes.push(`ignore rules changed while the run was in progress: ${label} now resolves to ${noteLabel(repoDir, b.path)} (was ${noteLabel(repoDir, a.path)})`);
+      else if (a.state !== b.state) notes.push(`ignore rules changed while the run was in progress: ${label} was edited, so git may hide files the run created`);
+    }
+    // Fail closed: nothing that can hold an interpreter or import-path content is ever exempt. Only a pure tool cache is: the tool's own .gitignore,
+    // byte for byte, in a directory with no importable, executable, linked or virtual-environment content.
+    const prior = s.exec_files, cur = execFiles(repoDir);
+    if (!prior || !cur) return ["ignore rules could not be compared with the intake snapshot: the ignored files that can change what verify runs were not recorded or could not be listed"];
+    const gi = new Set(changedFiles(repoDir, baseSha ?? "HEAD").filter((f) => basename(f) === ".gitignore"));
+    const hidden: string[] = [];
+    for (const [f, h] of Object.entries(cur)) {
+      if (prior[f] === h) continue;
+      if (basename(f) === ".gitignore" && pureToolCache(repoDir, dirname(f))) continue;
+      if (basename(f) === ".gitignore") gi.add(f); else hidden.push(f);
+    }
+    if (gi.size) notes.push(`ignore rules changed while the run was in progress: ${[...gi].slice(0, 20).join(", ")} was added or edited, so git may hide files the run created`);
+    if (hidden.length) notes.push(`an ignored file that can change what verify runs or imports was added or changed during the run: ${hidden.slice(0, 20).join(", ")}${hidden.length > 20 ? ` (+${hidden.length - 20} more)` : ""}`);
+    const listIgnored = (): string[] => safeGit(repoDir, ["-c", "core.quotePath=false", "ls-files", "--others", "--ignored", "--exclude-standard", "-z"]).split("\0").filter((f) => f && !f.startsWith(".loki/"));
+    if (notes.length === 0) return [];
+    const made = listIgnored().filter((f) => { try { const st = statSync(join(repoDir, f)); return Math.max(st.birthtimeMs, st.mtimeMs) >= s.at!; } catch { return false; } });
+    if (made.length) notes.push(`ignored file created during the run, hidden from the diff and the receipt: ${made.slice(0, 20).join(", ")}${made.length > 20 ? ` (+${made.length - 20} more)` : ""}`);
+    return notes;
+  } catch { return ["ignore rules could not be compared with the intake snapshot: git failed"]; }
 }
 
 /** changedFiles enriched with numstat counts and name-status; untracked files get a line count as additions. Throws on git failure. */
