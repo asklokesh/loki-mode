@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `loki verify-pr` no longer reports VERIFIED on a bare exit code 0 or on printed test totals: the issue's Check must run bun test, pytest, jest or vitest, and the pass is read from the report file that runner writes (the Check is run with a report flag added). A Check using another command, or a PR that adds or changes runner config (`bunfig.toml`, `conftest.py`, or an ini, cfg or toml file with a test-runner section), is NOT PROVEN with the reason and file named.
 - `loki trust` reports reverts as unknown (never 0) when the repository is a shallow clone or git cannot say whether it is, because truncated history can hide an earlier revert.
+- The moat check that an all-unmetered CLI run prints Cost: not measured, never $0.00 now runs the real run supervisor end to end with a stub worker and reads the Cost line it prints, so it no longer depends on a function name and turns red when the run prints more than one Cost line or when an unmetered run's Cost line carries any dollar figure.
 
 ## v11.89.0 (2026-10-30)
 

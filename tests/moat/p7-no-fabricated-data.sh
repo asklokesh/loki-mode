@@ -5223,43 +5223,62 @@ case_cp_unmeasured() {
 # P7.cli-unmetered-cost-not-dollar-zero
 # A run whose every cost event is the CLI invoker's unmetered marker (a recorded
 # 0, no provider dollars) must print "Cost: not measured", never "$0.00 (claude,
-# 0 tokens; ...)". Drives the real summaryCost() and formatSummary() from
-# loki-ts/src, and checks the supervisor summary path calls summaryCost(). The
-# controls: a metered run keeps its dollar figure, a measured zero stays $0.00.
+# 0 tokens; ...)". Drives the real main() of loki-ts/src/engine10/supervisor.ts
+# end to end in a scratch git repo: the engine10 worker it respawns is a stub
+# that prints cost events and a sealed receipt, and the Cost line main() itself
+# prints is read from its stdout. No source text is matched, so a rename, a
+# wrapper or a hardcoded value anywhere on the summary path is judged by what
+# is printed. Proves only that this stubbed CLI-invoker run prints the right
+# Cost line; it does not cover the other supervisor outputs (handoff, Slack,
+# run.completed). The controls: a metered run keeps its dollar figure, a
+# measured zero stays $0.00; a run that printed no Cost line at all is a FAIL.
 # ---------------------------------------------------------------------------
 case_cli_unmetered_cost() {
-    local d="$MOAT_TMP/unmetered" out rc=0
+    local d="$MOAT_TMP/unmetered" rc=0 label events want got r n
     command -v bun >/dev/null 2>&1 || { echo "FAIL|prerequisite missing: bun"; return 0; }
-    mkdir -p "$d"
-    cat > "$d/probe.ts" <<'TS'
-import { summaryCost } from "@ts/engine10/events.ts";
-import { formatSummary } from "@ts/engine10/output.ts";
-const ev = (seq: number, data: Record<string, unknown>) => ({ v: 1 as const, seq, ts: "2026-01-01T00:00:00Z", run: "r", type: "cost", stage: "implement", data });
-const line = (events: ReturnType<typeof ev>[]): string => {
-  const { usd, pc } = summaryCost(events, false);
-  const out = formatSummary({ pr: null, verdict: "VERIFIED", notProven: [], flaky: [], wallS: 10, stages: [],
-    cost: { usd, provider: "claude", tokens: 0, note: usd === null ? "CLI invoker records no cost" : null, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total } } as never);
-  return out.split("\n").find((l) => l.startsWith("Cost:")) ?? "";
-};
-const bad: string[] = [];
-const un = line([ev(1, { usd: 0, source: "cli-invoker-unmetered" }), ev(2, { usd: 0, source: "cli-invoker-unmetered" })]);
-if (!/^Cost: +not measured/.test(un)) bad.push(`unmetered run printed: ${un}`);
-const metered = line([ev(1, { usd: 0.3, input_tokens: 5 }), ev(2, { usd: 0.2, input_tokens: 5 })]);
-if (!/^Cost: +\$0\.50/.test(metered)) bad.push(`metered run printed: ${metered}`);
-const zero = line([ev(1, { usd: 0, input_tokens: 5 })]);
-if (!/^Cost: +\$0\.00/.test(zero)) bad.push(`measured zero printed: ${zero}`);
-for (const b of bad) console.log("BAD " + b);
-process.exit(bad.length ? 1 : 0);
+    command -v git >/dev/null 2>&1 || { echo "FAIL|prerequisite missing: git"; return 0; }
+    mkdir -p "$d/home"
+    printf '[user]\n\tname = t\n\temail = t@example.com\n' > "$d/home/.gitconfig"
+    cat > "$d/drive.ts" <<'TS'
+if (process.argv[2] === "engine10") {
+  for (const l of (process.env.P7_EVENTS ?? "").split("\n")) if (l) console.log(l);
+  console.log(JSON.stringify({ type: "session.ended", stage: "implement", data: { session_id: "s1", exit: "done", duration_s: 1 } }));
+  console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "VERIFIED", not_proven: [] } }));
+  process.exit(0);
+}
+const { main } = await import(process.env.P7_SUPERVISOR ?? "");
+await main(["--no-pr", "add a thing"]);
+process.exit(0);
 TS
-    sed -i.bak "s#@ts/#$REPO_ROOT/loki-ts/src/#g" "$d/probe.ts" && rm -f "$d/probe.ts.bak"
-    out="$(cd "$d" && bun "$d/probe.ts" 2> "$d/probe.err")" || rc=$?
-    if [ "$rc" != 0 ] && ! grep -q '^BAD ' <<<"$out"; then
-        echo "FAIL|probe did not run (rc=$rc): $(tail -c 200 "$d/probe.err" | tr '\n' ' ')"; return 0
-    fi
-    if [ "$rc" != 0 ]; then echo "FAIL|$(grep '^BAD ' <<<"$out" | sed 's/^BAD //' | tr '\n' ';')"; return 0; fi
-    grep -q 'summaryCost(events, res.tampered)' "$REPO_ROOT/loki-ts/src/engine10/supervisor.ts" \
-        || { echo "FAIL|supervisor.ts summary no longer derives its cost through summaryCost()"; return 0; }
-    echo "PASS|an all-unmetered CLI run prints Cost: not measured, a metered run keeps its dollar figure, a measured zero stays \$0.00, and the supervisor summary uses summaryCost()"
+    local unm='{"type":"cost","stage":"implement","data":{"session_id":"s1","usd":0,"source":"cli-invoker-unmetered"}}
+{"type":"cost","stage":"implement","data":{"session_id":"s2","usd":0,"source":"cli-invoker-unmetered"}}'
+    local met='{"type":"cost","stage":"implement","data":{"session_id":"s1","usd":0.3,"input_tokens":5}}
+{"type":"cost","stage":"implement","data":{"session_id":"s2","usd":0.2,"input_tokens":5}}'
+    local zer='{"type":"cost","stage":"implement","data":{"session_id":"s1","usd":0,"input_tokens":5}}'
+    for label in unmetered metered measured-zero; do
+        case "$label" in
+            unmetered) events="$unm"; want='^Cost: +not measured[^$]*$' ;;
+            metered) events="$met"; want='^Cost: +\$0\.50' ;;
+            *) events="$zer"; want='^Cost: +\$0\.00' ;;
+        esac
+        r="$d/repo-$label"
+        mkdir -p "$r"
+        git -C "$r" init -q -b main . >/dev/null 2>&1 \
+            && git -C "$r" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m init >/dev/null 2>&1 \
+            || { echo "FAIL|could not create the scratch repo"; return 0; }
+        rc=0
+        (cd "$r" && HOME="$d/home" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com P7_EVENTS="$events" P7_SUPERVISOR="$REPO_ROOT/loki-ts/src/engine10/supervisor.ts" \
+            LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI=/usr/bin/true LOKI_SPEED=0 LOKI_CONTROL=0 LOKI_NO_BROWSER=1 \
+            bun "$d/drive.ts" > "$d/out-$label" 2> "$d/err-$label") || rc=$?
+        got="$(grep -E '^Cost:' "$d/out-$label")" || got=""
+        if [ -z "$got" ]; then
+            echo "FAIL|$label run printed no Cost line (rc=$rc): $(tail -c 200 "$d/err-$label" | tr '\n' ' ')"; return 0
+        fi
+        n="$(grep -cE '^Cost:' "$d/out-$label")"
+        [ "$n" = "1" ] || { echo "FAIL|$label run printed $n Cost lines"; return 0; }
+        grep -qE "$want" <<<"$got" || { echo "FAIL|$label run printed: $got"; return 0; }
+    done
+    echo "PASS|main() of a stubbed all-unmetered CLI run prints Cost: not measured, a metered run keeps its dollar figure, a measured zero stays \$0.00 (the Cost line main() prints, read from its stdout)"
 }
 
 # ---------------------------------------------------------------------------
