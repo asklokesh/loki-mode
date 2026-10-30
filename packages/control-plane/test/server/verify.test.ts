@@ -150,8 +150,9 @@ test("a DSSE envelope copied from another run reads TAMPERED (runIdGuard)", asyn
 });
 
 test("a verifier that throws yields UNCHECKED, never VERIFIED or a 500", async () => {
-  await seedRun("null-1", {});
-  writeFileSync(join(repo, ".loki", "runs", "null-1", "receipt.json"), "null");
+  // A well-formed signed receipt that binds a non-empty log, with events.jsonl a directory: the shape gate passes and the log read throws EISDIR.
+  await seedRun("null-1", signed("null-1", { events_sha256: "a".repeat(64) }));
+  mkdirSync(join(repo, ".loki", "runs", "null-1", "events.jsonl"));
   const before = rows().length;
   const r = await verify("null-1");
   expect(r.status).toBe(200);
