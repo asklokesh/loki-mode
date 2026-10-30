@@ -253,6 +253,22 @@ describe("default group runner (run_group.ts)", () => {
       expect(readFileSync(join(d, ".loki/groups", seen[0]![seen[0]!.indexOf("--group") + 1]!, "dag.json"), "utf8")).toContain("units");
     });
   });
+  test("a unit whose sealed Wall copy is tampered is FAILED (exit 1)", async () => {
+    await withDir(async (d) => {
+      mkRepo(d);
+      const base = launcher(d, []);
+      const tamper = async (argv: string[]) => {
+        const res = await base(argv), g = argv[argv.indexOf("--group") + 1]!, run = join(d, ".loki/groups", g, "group/units", "u1");
+        mkdirSync(join(run, "wall"), { recursive: true });
+        writeFileSync(join(run, "wall", "loki_wall_a.test.ts"), "tampered");
+        writeFileSync(join(run, "receipt.json"), JSON.stringify({ wall: { files: [{ path: `${d}-backlog/unit-${g}-1/loki_wall_a.test.ts`, sha256: "0".repeat(64) }] } }));
+        return res;
+      };
+      const { code, err } = await go(d, { LOKI_PROVIDER: "claude" }, tamper);
+      expect(code).toBe(1);
+      expect(err).toContain("not the sealed bytes");
+    });
+  });
   test("--provider (deps.provider) caps slots and is forwarded to the units", async () => {
     await withDir(async (d) => {
       mkRepo(d);

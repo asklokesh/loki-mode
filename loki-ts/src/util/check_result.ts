@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readlinkSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { siteFor } from "../project_model/resolve.ts";
 import type { ProjectApi } from "../project_model/api.ts";
 import { CARGO_TEST_FILE_RE, isTestFile } from "../engine10/testmap.ts";
@@ -768,6 +768,47 @@ export function publishableWall(repoDir: string, runDir: string, o: Partial<Reco
     const rel = relative(repoDir, String(w["path"])), hit = arr(o.verify?.["checks"]).find((c) => tgt.has(String(c["name"])) && String(c["name"]).slice(String(c["name"]).indexOf(":") + 1) === rel && hasExecutedProof([c]));
     if (!hit || rel.startsWith("..") || isAbsolute(rel) || rel.startsWith(".loki/") || !basename(rel).startsWith("loki_wall_")) continue; // stale, failed, not-run or outside the repo: stays dropped
     try { const bytes = readFileSync(join(runDir, "wall", basename(rel))); if (createHash("sha256").update(bytes).digest("hex") !== w["sha256"]) throw new Error("hash"); out.files.push({ rel, bytes, cmd: String(hit["cmd"]), runner: String(hit["name"]).slice(0, String(hit["name"]).indexOf(":")) }); } catch { out.notes.push(`Wall test not published: ${rel} (sealed copy missing or not the sealed bytes)`); }
+  }
+  return out;
+}
+/** Why a sealed Wall path cannot be written into repoDir: it leaves the repo, or it is, or sits under, a symlink or non-directory (a link committed by another unit must not redirect a write). null = safe. */
+export function wallPathProblem(repoDir: string, relPath: string): string | null {
+  const rel = normalize(relPath);
+  if (isAbsolute(rel) || rel.split(sep).includes("..")) return `Wall path outside the repo: ${relPath}`;
+  let cur = repoDir;
+  for (const part of dirname(rel) === "." ? [] : dirname(rel).split(sep)) { cur = join(cur, part); try { const st = lstatSync(cur); if (st.isSymbolicLink() || !st.isDirectory()) return `Wall path crosses a symlink or non-directory: ${relPath}`; } catch { return null; } }
+  try { return lstatSync(join(repoDir, rel)).isSymbolicLink() ? `Wall path is a symlink: ${relPath}` : null; } catch { return null; }
+}
+export interface SealedWallFile { rel: string; bytes: Buffer; runner?: RunnerName }
+/** Reads a unit's sealed Wall as the receipt recorded it: each runDir/wall/<name> copy must hash to receipt.wall.files[].sha256, else a problem (the caller treats it as a failing Wall). Same sources as publishableWall and verify's wallTamperProblem. */
+export function loadSealedWall(runDir: string, unitRepoDir: string): { files: SealedWallFile[]; problems: string[]; receiptMissing?: true } {
+  const files: SealedWallFile[] = [], problems: string[] = [];
+  let listed: unknown;
+  try { listed = (JSON.parse(readFileSync(join(runDir, "receipt.json"), "utf8")) as { wall?: { files?: unknown } }).wall?.files; } catch { return { files, problems, receiptMissing: true }; } // missing or unreadable receipt: nothing was sealed to rerun, so the group is NOT_PROVEN, not FAILED
+  for (const w of Array.isArray(listed) ? (listed as { path?: unknown; sha256?: unknown; runner?: unknown }[]) : []) {
+    const rel = typeof w?.path === "string" ? relative(unitRepoDir, w.path) : "";
+    if (!rel || rel.startsWith("..") || isAbsolute(rel)) { problems.push(`sealed Wall path outside the repo: ${String(w?.path)}`); continue; }
+    try {
+      const bytes = readFileSync(join(runDir, "wall", basename(rel)));
+      if (createHash("sha256").update(bytes).digest("hex") !== w.sha256) throw new Error("hash");
+      files.push({ rel, bytes, ...(typeof w.runner === "string" ? { runner: w.runner as RunnerName } : {}) });
+    } catch { problems.push(`sealed Wall copy ${basename(rel)} missing or not the sealed bytes`); }
+  }
+  return { files, problems };
+}
+
+/** GAME10-06a: each integrated unit's sealed Wall, read from the harvested unit run dir. The unit worktree (where the receipt's Wall paths point) is named by the receipt itself, falling back to the backlog worktree for the branch. */
+export function unitWalls(repoDir: string, gid: string, branches: Record<string, string>): Record<string, ReturnType<typeof loadSealedWall>> {
+  const out: Record<string, ReturnType<typeof loadSealedWall>> = {};
+  for (const [id, br] of Object.entries(branches)) {
+    const runDir = join(repoDir, ".loki", "groups", gid, "group", "units", id);
+    let root = `${repoDir}-backlog/${br.replace(/^loki\//, "")}`;
+    try {
+      const f = ((JSON.parse(readFileSync(join(runDir, "receipt.json"), "utf8")) as { wall?: { files?: { path?: unknown }[] } }).wall?.files ?? [])[0]?.path;
+      const m = typeof f === "string" ? /^(.*-backlog\/unit-[^/]+-\d+)\//.exec(f) : null;
+      if (m) root = m[1]!;
+    } catch { /* unreadable receipt: loadSealedWall reports it */ }
+    out[id] = loadSealedWall(runDir, root);
   }
   return out;
 }

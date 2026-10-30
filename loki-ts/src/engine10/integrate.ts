@@ -1,7 +1,9 @@
 // D61 slice 12: integrate passing parallel unit branches onto loki/group-<id> in DAG order, run the repo test command once, and report per-unit outcomes. A conflict stops the merge and names the
 // unit; the merge is aborted so no partial merge is left (fix units are deferred). Moat: ok is true only when every unit passed its own run, merged cleanly and the suite ran and exited 0.
 import { spawnSync } from "node:child_process";
+import { RealBaseTestRunner } from "./stages/wall.ts";
 import type { Dag } from "../features/decompose.ts";
+import { integrationOrder, rerunWalls, type WallResult, type WallSet } from "../util/group_integrate.ts";
 import { safeGitSpawn } from "../util/safe_git.ts";
 
 export type UnitOutcome = "pass" | "fail" | "conflict" | "skipped";
@@ -17,6 +19,8 @@ export interface IntegrateOpts {
   /** repo test command argv, run once in repoDir after all merges. */
   testCmd: readonly string[];
   suiteTimeoutMs?: number;
+  /** unit id -> what loadSealedWall returned for that unit. When set, every merged unit's sealed Wall is rerun on the merged tree after the suite; problems fail the unit. A unit with no files is recorded no_wall: not a Wall pass and it does not fail the group, so its proof on the merged tree is the suite exiting 0. A missing or unreadable receipt ends the group NOT PROVEN in the group Seal. */
+  walls?: WallSet;
 }
 export interface IntegrateResult {
   perUnit: Record<string, UnitOutcome>;
@@ -26,6 +30,8 @@ export interface IntegrateResult {
   /** tail of the suite stdout+stderr when the suite ran and failed; lets a fix unit skip re-running the suite. */
   suiteOutput?: string;
   conflictUnit?: string;
+  /** Per-unit sealed Wall rerun on the merged tree; present only when opts.walls was given and the suite passed. */
+  wallResults?: Record<string, WallResult>;
   ok: boolean;
   reason?: string;
 }
@@ -33,23 +39,10 @@ export interface IntegrateResult {
 const IDENT = ["-c", "user.name=loki-integrate", "-c", "user.email=integrate@loki.invalid", "-c", "commit.gpgSign=false"];
 const SUITE_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "CI", "LOKI_NO_BROWSER"];
 
-/** Unit ids in DAG order: edges (from -> to) first, ties broken by dag.units order. A cycle is appended in unit order, never dropped. */
-export function integrationOrder(dag: Dag): string[] {
-  const ids = dag.units.map((u) => u.id), indeg = new Map(ids.map((i) => [i, 0]));
-  for (const e of dag.edges) if (indeg.has(e.to) && indeg.has(e.from)) indeg.set(e.to, indeg.get(e.to)! + 1);
-  const out: string[] = [], done = new Set<string>();
-  while (out.length < ids.length) {
-    const next = ids.find((i) => !done.has(i) && indeg.get(i) === 0);
-    if (next === undefined) { for (const i of ids) if (!done.has(i)) { out.push(i); done.add(i); } break; }
-    out.push(next); done.add(next);
-    for (const e of dag.edges) if (e.from === next && indeg.has(e.to)) indeg.set(e.to, indeg.get(e.to)! - 1);
-  }
-  return out;
-}
 
 const git = (dir: string, args: string[]) => safeGitSpawn(dir, [...IDENT, ...args], { encoding: "utf8" });
 
-export function integrate(o: IntegrateOpts): IntegrateResult {
+export async function integrate(o: IntegrateOpts): Promise<IntegrateResult> {
   const branch = `loki/group-${o.groupId}`, order = integrationOrder(o.dag);
   const perUnit: Record<string, UnitOutcome> = {};
   const failed = new Set(o.failedUnits ?? []);
@@ -101,6 +94,12 @@ export function integrate(o: IntegrateOpts): IntegrateResult {
     const suiteOutput = `${String(s.stdout ?? "")}\n${String(s.stderr ?? "")}`.slice(-16_000);
     return res({ suiteExit, suiteOutput, reason: suiteExit === null ? "suite did not complete" : `suite exit ${suiteExit}` });
   }
+  const wallResults = o.walls ? await rerunWalls(new RealBaseTestRunner(), o.repoDir, merged, o.walls) : undefined;
+  if (wallResults) {
+    const broken = merged.filter((id) => wallResults![id]?.status === "fail"), left = git(o.repoDir, ["status", "--porcelain", "--untracked-files=no"]);
+    for (const id of broken) perUnit[id] = "fail";
+    if (broken.length > 0 || left.status !== 0 || String(left.stdout).trim() !== "") return res({ suiteExit, wallResults, reason: broken.length > 0 ? `sealed Wall failed on the merged tree: ${broken.map((id) => `${id} (${wallResults![id]?.reason ?? "unknown"})`).join("; ")}` : "sealed Wall rerun left the merged tree dirty" });
+  }
   const allPass = Object.values(perUnit).every((v) => v === "pass");
-  return res({ suiteExit, ok: allPass, ...(allPass ? {} : { reason: "a unit failed its own run" }) });
+  return res({ suiteExit, ...(wallResults ? { wallResults } : {}), ok: allPass, ...(allPass ? {} : { reason: "a unit failed its own run" }) });
 }

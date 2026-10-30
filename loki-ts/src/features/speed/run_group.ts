@@ -12,6 +12,7 @@ import { join, resolve } from "node:path";
 import type { Dag, Unit } from "../decompose.ts";
 import { assignCriteria, freezeGroupContract, groupContractPath, parseContract } from "../contract.ts";
 import { integrate } from "../../engine10/integrate.ts";
+import { unitWalls } from "../../util/check_result.ts";
 import { unitSpecSha256 } from "./unit_mode.ts";
 import { readSliceJournal, repoCacheDir, repoKey, sliceKey, writeSliceJournal } from "../../engine10/cache.ts";
 import { integrateWithFixes, type FixUnit } from "./fix_units.ts";
@@ -330,10 +331,11 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     return `loki/${key}`;
   };
   const r = await integrateWithFixes({ repoDir, env, dag: { ...full, units: units.filter((u) => !(u as Partial<FixUnit>).fixKind) }, fixes, branches, failed: failedUnits, testCmd,
-    io: { integrate: (dag, br, failed) => integrate({ repoDir, groupId, baseRef, dag, branches: br, failedUnits: failed, testCmd }), launch: launchFix, leave: dropGroupBranch, say } });
+    io: { integrate: (dag, br, failed) => integrate({ repoDir, groupId, baseRef, dag, branches: br, failedUnits: failed, testCmd, walls: unitWalls(repoDir, groupId, br) }), launch: launchFix, leave: dropGroupBranch, say } });
   if (fixes.length > 0) putDag(units);
   if (costs.length > 1) { say(groupCostLine(costs, provider)); writeGroupCostRecord(repoDir, costName, costs, provider); } // fix units ran after the first line: restate the running total
   for (const [id, o] of Object.entries(r.perUnit)) say(`loki: unit ${id} ${o}\n`);
+  for (const [id, w] of Object.entries(r.wallResults ?? {})) say(`loki: unit ${id} sealed Wall on the merged tree: ${w.status}${w.reason ? ` (${w.reason})` : ""}\n`);
   if (!r.ok || launchCode !== 0) {
     say(`loki: FAILED: group not verified (${r.reason ?? "launcher reported a failed unit"})\n`);
     return 1;
