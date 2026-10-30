@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Measure one named model against the seeded-defect corpus.
 
-Writes (or updates) results/wrong-pass.json, schema loki.seeded-defects.results/v2,
-the contract checked by tests/moat/p4-model-freedom.sh. One run per setup
+Writes (or updates) results/wrong-pass.json, schema loki.seeded-defects.results/v3,
+the contract checked by tests/moat/p4-model-freedom.sh. v3 adds, per run, corpus_sha256
+and strata: one row per (language, runner) with the run's tier (its setup), n,
+wrong_pass and wilson_upper_95, the Wilson 95% upper bound on the wrong-pass rate. A
+prior v2 file is still read and its runs are upgraded in place when merged. One run per setup
 (top|floor); re-measuring a setup replaces only that run. Every defect gets an
 outcome, SEALED or NOT_SEALED. wrong_pass is the count of SEALED outcomes.
 
@@ -50,6 +53,7 @@ Usage:
 import argparse
 import hashlib
 import json
+import math
 import os
 import shutil
 import signal
@@ -60,7 +64,11 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 MANIFEST = os.path.join(HERE, "manifest.json")
 DEFAULT_OUT = os.path.join(HERE, "results", "wrong-pass.json")
-SCHEMA = "loki.seeded-defects.results/v2"
+SCHEMA = "loki.seeded-defects.results/v3"
+READABLE_SCHEMAS = ("loki.seeded-defects.results/v2", SCHEMA)
+Z95 = 1.959963984540054
+LANGUAGES = {".py": "python", ".js": "javascript", ".ts": "typescript", ".go": "go", ".rs": "rust",
+             ".java": "java", ".rb": "ruby", ".sh": "shell"}
 VALID = ("SEALED", "NOT_SEALED")
 SEALED_VERDICTS = {"VERIFIED": 0}
 NOT_SEALED_VERDICTS = {"CONCERNS": 1, "BLOCKED": 2}
@@ -68,6 +76,44 @@ NOT_SEALED_VERDICTS = {"CONCERNS": 1, "BLOCKED": 2}
 
 class MeasureError(Exception):
     pass
+
+
+def wilson_upper(k, n, z=Z95):
+    """Upper end of the Wilson score interval for k successes in n trials."""
+    if n <= 0:
+        return 1.0
+    p = k / n
+    denom = 1 + z * z / n
+    centre = p + z * z / (2 * n)
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return min(1.0, (centre + half) / denom)
+
+
+def defect_stratum(defect):
+    """(language, runner): runner is the first word of the check command, language comes from
+    the first fixture file that is not a spec, test or check file."""
+    check = (defect.get("check") or "").split()
+    runner = check[0] if check else "none"
+    language = "unknown"
+    for name in defect.get("files") or []:
+        base = os.path.basename(name)
+        if base.startswith(("spec", "test", "check")):
+            continue
+        language = LANGUAGES.get(os.path.splitext(base)[1], "unknown")
+        break
+    return language, runner
+
+
+def strata_rows(outcomes, defects, tier):
+    by_id = {d["id"]: d for d in defects}
+    cells = {}
+    for did, out in outcomes.items():
+        key = defect_stratum(by_id.get(did, {}))
+        n, wp = cells.get(key, (0, 0))
+        cells[key] = (n + 1, wp + (1 if out == "SEALED" else 0))
+    return [{"language": lang, "runner": runner, "tier": tier, "n": n, "wrong_pass": wp,
+             "wilson_upper_95": round(wilson_upper(wp, n), 4)}
+            for (lang, runner), (n, wp) in sorted(cells.items())]
 
 
 def run_capture(cmd, cwd, env, timeout, shell=False):
@@ -205,7 +251,8 @@ def measure(setup, model, verifier=None, only=None, timeout=600, out=DEFAULT_OUT
     with open(manifest, "rb") as f:
         manifest_bytes = f.read()
     sha = hashlib.sha256(manifest_bytes).hexdigest()
-    defects = json.loads(manifest_bytes).get("defects") or []
+    all_defects = json.loads(manifest_bytes).get("defects") or []
+    defects = all_defects
     if only:
         known = {d["id"] for d in defects}
         bad = sorted(set(only) - known)
@@ -235,18 +282,24 @@ def measure(setup, model, verifier=None, only=None, timeout=600, out=DEFAULT_OUT
                 old = json.load(f)
         except (OSError, ValueError) as e:
             raise MeasureError(f"existing results file {out} is unreadable ({e}); move it aside or fix it")
-        if isinstance(old, dict) and old.get("schema") == SCHEMA and old.get("manifest_sha256") == sha:
+        if isinstance(old, dict) and old.get("schema") in READABLE_SCHEMAS and old.get("manifest_sha256") == sha:
             keep = [r for r in old.get("runs", []) if isinstance(r, dict) and r.get("setup") != setup]
             for r in keep:
                 if r.get("route") != route or r.get("verifier") != verifier:
                     raise MeasureError(f"refusing to merge a {setup} run (route {route}, verifier {verifier!r}) "
                                        f"with the recorded {r.get('setup')} run (route {r.get('route')!r}, "
                                        f"verifier {r.get('verifier')!r}); re-measure both setups on one route")
+            for r in keep:
+                oc = r.get("outcomes")
+                if isinstance(oc, dict):
+                    r.setdefault("corpus_sha256", sha)
+                    r["strata"] = strata_rows(oc, all_defects, r.get("setup"))
             doc["runs"] = keep
         # a stale prior (other schema or manifest) is replaced, never merged
     wp = sum(1 for v in outcomes.values() if v == "SEALED")
     run = {"setup": setup, "model": model, "n": len(outcomes), "wrong_pass": wp, "outcomes": outcomes,
-           "route": route, "verifier": verifier, "loki_version": version}
+           "route": route, "verifier": verifier, "loki_version": version,
+           "corpus_sha256": sha, "strata": strata_rows(outcomes, all_defects, setup)}
     doc["runs"].append(run)
     order = {"top": 0, "floor": 1}
     doc["runs"].sort(key=lambda r: order.get(r.get("setup"), 9))

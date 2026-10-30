@@ -33,7 +33,7 @@ if python3 - "$OUT" "$MANIFEST" <<'PY'
 import hashlib, json, sys
 r = json.load(open(sys.argv[1])); mb = open(sys.argv[2], "rb").read()
 ids = {d["id"] for d in json.loads(mb)["defects"]}
-assert r["schema"] == "loki.seeded-defects.results/v2"
+assert r["schema"] == "loki.seeded-defects.results/v3"
 assert r["manifest_sha256"] == hashlib.sha256(mb).hexdigest()
 assert [x["setup"] for x in r["runs"]] == ["top", "floor"]
 for x in r["runs"]:
@@ -102,6 +102,45 @@ import json,sys
 r=json.load(open(sys.argv[1]))['runs'][0]; assert list(r['outcomes'].values())==[sys.argv[2]] and r['loki_version']=='loki-stub-1.2.3' and r['route']=='default' and r['verifier'] is None" "$T/d.json" "${pair##*|}" 2>/dev/null; then
     ok "default route: ${pair%%|*} exit $rcx gives ${pair##*|}"; else bad "default route: ${pair%%|*} gives ${pair##*|}"; fi
 done
+
+# Per-stratum rows: Wilson 95% upper bound, tier, corpus sha, loki version. Hand-computed
+# bounds for n=60: 0/60 -> z^2/(n+z^2) = 0.0602; 2/60 -> 0.1136 (rounded to 4 places).
+IDS60="$(python3 -I -c "import json;print(','.join(d['id'] for d in json.load(open('$MANIFEST'))['defects'][:60]))")"
+SOUT="$T/strata.json"
+: > "$T/seal"
+python3 "$M" --setup top --model s --verifier "$STUB" --only "$IDS60" --out "$SOUT" >/dev/null 2>&1
+printf 'SD-0001\nSD-0002\n' > "$T/seal"
+python3 "$M" --setup floor --model s --verifier "$STUB" --only "$IDS60" --out "$SOUT" >/dev/null 2>&1
+if python3 -I - "$SOUT" "$MANIFEST" <<'PY'
+import hashlib, json, sys
+r = json.load(open(sys.argv[1])); sha = hashlib.sha256(open(sys.argv[2], "rb").read()).hexdigest()
+top, floor = r["runs"]
+assert top["strata"] == [{"language": "python", "runner": "python3", "tier": "top", "n": 60,
+                          "wrong_pass": 0, "wilson_upper_95": 0.0602}], top["strata"]
+assert floor["strata"] == [{"language": "python", "runner": "python3", "tier": "floor", "n": 60,
+                            "wrong_pass": 2, "wilson_upper_95": 0.1136}], floor["strata"]
+assert top["corpus_sha256"] == floor["corpus_sha256"] == sha == r["manifest_sha256"]
+assert "loki_version" in top and "loki_version" in floor
+PY
+then ok "strata rows carry Wilson 95% upper bound (0/60, 2/60), tier and corpus sha"; else bad "strata rows with Wilson bound"; fi
+
+# A prior v2 file (no strata) is still read: its run is kept and gains strata.
+python3 -I - "$T/v2.json" "$MANIFEST" "$IDS60" "$STUB" <<'PY'
+import hashlib, json, sys
+sha = hashlib.sha256(open(sys.argv[2], "rb").read()).hexdigest()
+oc = {i: "NOT_SEALED" for i in sys.argv[3].split(",")}
+json.dump({"schema": "loki.seeded-defects.results/v2", "manifest_sha256": sha,
+           "runs": [{"setup": "top", "model": "old", "n": 60, "wrong_pass": 0, "outcomes": oc,
+                     "route": "custom", "verifier": sys.argv[4], "loki_version": None}]}, open(sys.argv[1], "w"))
+PY
+python3 "$M" --setup floor --model new --verifier "$STUB" --only "$IDS60" --out "$T/v2.json" >/dev/null 2>&1
+if python3 -I - "$T/v2.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["schema"] == "loki.seeded-defects.results/v3" and [x["setup"] for x in r["runs"]] == ["top", "floor"]
+assert r["runs"][0]["model"] == "old" and r["runs"][0]["strata"][0]["wilson_upper_95"] == 0.0602
+PY
+then ok "v2 prior is read and upgraded with strata"; else bad "v2 prior is read and upgraded with strata"; fi
 
 # Provenance: the custom route records its verifier and no loki_version; the p4
 # checker refuses a default-route file (model-independent) for a per-model claim.
