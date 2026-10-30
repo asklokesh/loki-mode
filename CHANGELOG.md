@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `loki verify-pr` now exits 4 (NOT PROVEN, naming the file) when a PR removes the pytest section from setup.cfg or pyproject.toml, or the jest key from package.json, while keeping the file, or adds an empty pytest.ini that masks other config, or adds or removes pytest config in pyproject.toml written as a top-level dotted key (`tool.pytest.ini_options...`), a dotted key under `[tool]`, a quoted key (`tool."pytest"...`) or an inline table (`pytest = { ini_options = ... }`); it previously exited 0 VERIFIED. A pytest version pin bump (`==` or Poetry caret) is still a plain dependency bump.
+- A `bun test` run that is stopped by SIGTERM, Ctrl-C or a timeout no longer leaves loki-test-home-* and loki-test-key-* directories in your temp folder. Runs that are killed outright or stopped by `--bail` still leave their directories, which the next run removes once they are over 10 minutes old, only when they carry that run's owner marker and its process is gone.
 
 ## v11.91.0 (2026-10-30)
 
