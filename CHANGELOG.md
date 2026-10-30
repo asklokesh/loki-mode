@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Opt-in earned merge: with `LOKI_EARNED_MERGE=1`, `loki merge pr` (and `--ship`) merges only when every changed path has at least `LOKI_EARNED_MERGE_MIN_VERIFIED` (default 20, minimum 1) VERIFIED receipts in `loki trust` and no recorded revert, judging both sides of a rename; a truncated file list refuses. Protected paths (`.github/`, `.loki/`, `.env*`, `.envrc`, `CODEOWNERS`, plus `LOKI_EARNED_MERGE_PROTECTED` globs, matched case-insensitively), reverted paths and paths whose revert status is unknown stay PR-only, and the refusal names `gate: trust`. Off by default; behavior without the opt-in is unchanged.
+
 ### Fixed
 
 - `loki verify-pr` no longer reports VERIFIED on a bare exit code 0 or on printed test totals: the issue's Check must run bun test, pytest, jest or vitest, and the pass is read from the report file that runner writes (the Check is run with a report flag added). A Check using another command, or a PR that adds or changes runner config (`bunfig.toml`, `conftest.py`, or an ini, cfg or toml file with a test-runner section), is NOT PROVEN with the reason and file named.
