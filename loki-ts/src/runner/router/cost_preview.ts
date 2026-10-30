@@ -21,17 +21,24 @@ export const previewOn = (env: Env): boolean => env["LOKI_COST_PREVIEW"] !== "0"
 
 export interface PriorOpts { model?: string; sizeClass?: SizeClass; env?: Env }
 
-// Rough prior, used only when a shape has no usable history. Keyed by model tier and the plan's size class;
-// the class is never read from task wording. Provenance: measured cost_usd per run of the Loki (v10) arm of the
-// D50 small-tier baseline (docs/v10/METRICS.md, 2026-09-30, 9 measured runs per tier, min-max). The B9
-// scoreboard rows are still pending (RELEASE-11.md), so only the small-task band is measured; at start no plan
-// exists, so "unplanned" uses that band. medium and large have no measured row and therefore no prior.
+// First-run prior, used only when a shape has no usable history. Keyed by model tier and the plan's size class;
+// the class is never read from task wording. Provenance, sonnet: measured Loki-arm cost per run (claude-sonnet-5-5
+// implement, haiku-5-5 first Wall pass) from benchmark runs run10, run11 and run12 (scoreboard dirs 2026-10-29-run10,
+// 2026-10-29-run11, 2026-10-30-run12; Loki 11.85.0, 11.87.0, 11.89.0; 72 rows, 8 tasks x 3 reps x 3 runs). Cost is the
+// sum of each row's result-cost files, resumed sessions counted as the increment only. Min-max, rounded outward to
+// cents, same as the history path: all 72 rows $0.0134-$0.1609 (median $0.0225) gives "unplanned", which is what
+// the start line uses because no plan exists yet; the 54 rows with no plan stage (single-unit tasks) $0.0134-$0.0582
+// (median $0.0210) gives "small". The 18 plan-stage rows ($0.0694-$0.1609) carry no recorded scope file count, so
+// medium and large have no measured row and therefore no prior. Fixture: tests/runner/fixtures/cost_preview_run10_12_rows.json.
+// haiku and opus were not run in run10 to run12 and keep their earlier bands.
+// haiku: measured cost_usd per run of the Loki (v10) arm of the D50 small-tier baseline (docs/v10/METRICS.md,
+// 2026-09-30, 9 measured runs, min-max).
 // opus: no per-run min-max exists (the D50 baseline ran no opus arm). Its band is the two measured cost-per-
 // completed-task means of the D30 small-tier report on claude-opus-5-5 (29 tasks): v10 lean $0.1616 to v10
 // default knobs $0.3946 (docs/v10/METRICS.md, 2026-09-28).
 const PRIOR_USD: Record<string, Partial<Record<SizeClass, [number, number]>>> = {
   haiku: { unplanned: [0.19, 0.63], small: [0.19, 0.63] },
-  sonnet: { unplanned: [0.11, 0.98], small: [0.11, 0.98] },
+  sonnet: { unplanned: [0.01, 0.17], small: [0.01, 0.06] },
   opus: { unplanned: [0.16, 0.39], small: [0.16, 0.39] },
 };
 
@@ -68,7 +75,7 @@ export function startText(r: EstimateResult, capUsd = 0): string {
 }
 
 function startBase(r: EstimateResult): string {
-  if (!r.ok && r.prior) return `estimate: ~$${r.prior.usd[0].toFixed(2)}-$${r.prior.usd[1].toFixed(2)} (rough prior, no history for this shape)`;
+  if (!r.ok && r.prior) return `estimate: ~$${r.prior.usd[0].toFixed(2)}-$${r.prior.usd[1].toFixed(2)} (first run in this repo)`;
   if (!r.ok) return `estimate: NOT AVAILABLE (${r.reason})`;
   const { est: e } = r;
   return `estimate: $${e.usd[0].toFixed(2)}-$${e.usd[1].toFixed(2)}, ${e.wall_s ? `${mins(e.wall_s[0])}-${mins(e.wall_s[1])}` : "time NOT RECORDED"} (${e.runs} prior runs, shape ${e.shape})`;
@@ -125,11 +132,11 @@ Usage: loki estimate [--model M] [--provider P] [--json]
 
 Prints the same estimate line "loki start" prints before a run: the dollar and time
 range of this repo's prior verified runs of the same project shape. With fewer than
-${MIN_RUNS} such runs it prints a rough per-model prior, or NOT AVAILABLE (reason).
+${MIN_RUNS} such runs it prints a per-model first-run prior, or NOT AVAILABLE (reason).
 It never estimates from task text and never prints a number it did not measure.
 
 Options:
-  --model M      Model whose rough prior to use when there is no history (default: the start model)
+  --model M      Model whose first-run prior to use when there is no history (default: the start model)
   --provider P   Provider whose default model is used (default: LOKI_PROVIDER or claude)
   --json         Machine-readable output (the estimate result object)
   --help, -h     Show this help

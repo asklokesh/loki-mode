@@ -1,7 +1,7 @@
 // 11.3.0 T1: cost preview. Estimate comes from the existing per-shape run history; no history prints
 // NOT AVAILABLE, a missing actual is NOT RECORDED (never 0), LOKI_COST_PREVIEW=0 adds nothing.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendRunOutcome, isCodeLoss, routeScore, WALL_KIND } from "../../src/runner/router/history.ts";
@@ -81,13 +81,47 @@ describe("opt-out LOKI_COST_PREVIEW=0", () => {
   });
 });
 
+describe("first-run band matches measured cost (run10 to run12)", () => {
+  type Row = { run: string; task: string; rep: number; usd: number; plan_stage: boolean };
+  const rows = (JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "cost_preview_run10_12_rows.json"), "utf8")) as { rows: Row[] }).rows;
+  const printed = (text: string): [number, number] => { const m = /~\$(\d+\.\d\d)-\$(\d+\.\d\d)/.exec(text)!; return [Number(m[1]), Number(m[2])]; };
+  const contained = (rs: Row[], band: [number, number]): number => rs.filter((r) => r.usd >= band[0] - 0.005 && r.usd <= band[1] + 0.005).length;
+  test("the fixture is the 72 recorded Loki rows", () => {
+    expect(rows.length).toBe(72);
+    expect(rows.filter((r) => r.run === "run12").length).toBe(24);
+  });
+  test("the printed start band contains the actual cost on at least 80% of run12 rows", () => {
+    const band = printed(startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-sonnet-5-5" })));
+    const r12 = rows.filter((r) => r.run === "run12");
+    expect(contained(r12, band) / r12.length).toBeGreaterThanOrEqual(0.8);
+  });
+  test("the band also covers every run10 and run11 row it was not tuned against alone", () => {
+    const band = printed(startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-sonnet-5-5" })));
+    const earlier = rows.filter((r) => r.run !== "run12");
+    expect(contained(earlier, band)).toBe(earlier.length);
+  });
+  test("the small class band contains every single-unit row and its lower bound is not above the median", () => {
+    const single = rows.filter((r) => !r.plan_stage);
+    const band = priorFor("claude-sonnet-5-5", "small")!.usd;
+    expect(contained(single, band)).toBe(single.length);
+    const med = [...single].sort((a, b) => a.usd - b.usd)[Math.floor(single.length / 2)]!.usd;
+    expect(band[0]).toBeLessThanOrEqual(med);
+  });
+  test("the first-run wording replaces the old rough prior label", () => {
+    const text = startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-sonnet-5-5" }));
+    expect(text).toEndWith("(first run in this repo)");
+    expect(text).not.toContain("rough prior");
+    expect(text).not.toContain("no history for this shape");
+  });
+});
+
 describe("rough prior (F2)", () => {
   test("no history: prior shown and labelled", () => {
     const r = estimateFromHistory(SHAPE, KEY, root, { model: "claude-sonnet-5-5" });
-    expect(startText(r)).toBe("estimate: ~$0.11-$0.98 (rough prior, no history for this shape)");
+    expect(startText(r)).toBe("estimate: ~$0.01-$0.17 (first run in this repo)");
   });
   test("haiku tier has its own row", () => {
-    expect(startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-haiku-5-5" }))).toBe("estimate: ~$0.19-$0.63 (rough prior, no history for this shape)");
+    expect(startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-haiku-5-5" }))).toBe("estimate: ~$0.19-$0.63 (first run in this repo)");
   });
   test("unknown tier or unmeasured size class has no prior", () => {
     expect(priorFor("claude-fable-5", "unplanned")).toBeNull();
@@ -97,7 +131,7 @@ describe("rough prior (F2)", () => {
   });
   test("opus prior", () => {
     expect(priorFor("claude-opus-5-5")?.tier).toBe("opus");
-    expect(startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-opus-5-5" }))).toBe("estimate: ~$0.16-$0.39 (rough prior, no history for this shape)");
+    expect(startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-opus-5-5" }))).toBe("estimate: ~$0.16-$0.39 (first run in this repo)");
     expect(startText(estimateFromHistory(SHAPE, KEY, root, { model: "opus", env: { LOKI_COST_PRIOR: "0" } }))).toContain("NOT AVAILABLE");
   });
   test("size class comes from structured plan scope file count", () => {
@@ -117,7 +151,7 @@ describe("rough prior (F2)", () => {
     const prior = { LOKI_E10_COST_ESTIMATE: JSON.stringify(estimateFromHistory(SHAPE, KEY, root, { model: "claude-sonnet-5-5" })) };
     const b = receiptBlock(prior, 0.3, false, 100).cost_preview!;
     expect(b["estimate_source"]).toBe("rough_prior");
-    expect(b["estimate"]).toEqual({ usd_low: 0.11, usd_high: 0.98, tier: "sonnet", size_class: "unplanned" });
+    expect(b["estimate"]).toEqual({ usd_low: 0.01, usd_high: 0.17, tier: "sonnet", size_class: "unplanned" });
     add(0.4, 120); add(1.1, 540); add(0.7, 300);
     const h = receiptBlock({ LOKI_E10_COST_ESTIMATE: JSON.stringify(estimateFromHistory(SHAPE, KEY, root, { model: "claude-sonnet-5-5" })) }, 0.3, false, 100).cost_preview!;
     expect(h["estimate_source"]).toBe("history");
@@ -158,7 +192,7 @@ describe("loki estimate is the same estimator as the loki start preview (ESTIMAT
     }
   });
   test("the numbers are the sonnet prior and no prior is NOT AVAILABLE, never a made-up number", () => {
-    expect(run([]).out).toBe("estimate: ~$0.11-$0.98 (rough prior, no history for this shape)\n");
+    expect(run([]).out).toBe("estimate: ~$0.01-$0.17 (first run in this repo)\n");
     expect(run(["--provider", "codex"]).out).toBe("estimate: NOT AVAILABLE (no project shape recorded for this repo)\n");
   });
   test("--json carries the same result object the start line is rendered from", () => {
