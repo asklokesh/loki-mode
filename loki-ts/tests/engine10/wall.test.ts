@@ -19,7 +19,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildWallBrief,
-  evidenceBrief,
   classify,
   RealBaseTestRunner,
   runWall,
@@ -27,6 +26,7 @@ import {
   type BaseTestRunner,
   WALL_BASE_FILES, WALL_RUNG_S, WALL_STAGE_LIMIT_S, BASE_RUN_TIMEOUT_MS,
 } from "../../src/engine10/stages/wall.ts";
+import { evidenceBrief } from "../../src/util/wall_cases.ts";
 import type {
   RunContext,
   SessionResult,
