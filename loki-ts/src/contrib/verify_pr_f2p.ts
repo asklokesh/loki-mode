@@ -70,6 +70,7 @@ export function runnerConfigChanged(changed: readonly string[], headDir: string,
     const b = basename(f), r = REPORT_RUNNERS.find((x) => x.config.test(b));
     const at = [headDir, baseDir].find((d) => existsSync(join(d, f)));
     if (!at) return !!r;
+    if (!r && !/\.(?:ini|cfg|toml)$/.test(f)) return false;
     try {
       const txt = readFileSync(join(at, f), "utf8");
       if (r) return !r.key || !b.endsWith(".json") || r.key in (JSON.parse(txt) as object);

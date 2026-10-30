@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { explainLines, defaultCheckout, defaultIssue, defaultPrMeta, defaultPackageSuites, defaultSandbox, parsePrRef, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
-import { extractChecks, judgeF2p, reportedCheck, reportShowsPass, REPORT_TOKEN, runnerConfigChanged } from "../../src/contrib/verify_pr_f2p.ts";
+import { extractChecks, judgeF2p, reportedCheck, reportShowsPass, REPORT_TOKEN, runnerConfigChanged, type SandboxResult } from "../../src/contrib/verify_pr_f2p.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "vpr2-test-")); });
@@ -515,6 +515,19 @@ describe("verify-pr: an exit code alone is not proof", () => {
     const r = await run({ ...meta, headSha: head }, { checkout: defaultCheckout, sandbox: () => (n++ === 0 ? { status: "COMPLETED", exit_code: 1 } : { status: "COMPLETED", exit_code: 0, report: '<testsuites><testsuite><testcase name="a"/></testsuite></testsuites>' }) }, issueFor("python3 -m pytest -q test_w.py"));
     expect(r.rc).toBe(4);
     expect(r.json.reasons.join(" ")).toMatch(/pytest\.ini|jest\.config\.js/);
+  }, 30_000);
+
+  test("a PR that only bumps a git submodule is not flagged as runner config", async () => {
+    const files = { "pytest.ini": "[pytest]\nfilterwarnings =\n    error\n", "test_w.py": "def test_w():\n    assert True\n" };
+    const meta = repoWith("submodule-bump", files, { "note.txt": "x\n" });
+    const repo = meta.cloneUrl;
+    const gitlink = (sha: string) => git(repo, "update-index", "--add", "--cacheinfo", `160000,${sha},vendor/lib`);
+    gitlink("1".repeat(40)); git(repo, "commit", "-qm", "add submodule");
+    gitlink("2".repeat(40)); git(repo, "commit", "-qm", "bump submodule");
+    const head = git(repo, "rev-parse", "HEAD");
+    git(repo, "update-ref", "refs/pull/7/head", head);
+    const r = await run({ ...meta, headSha: head }, { checkout: defaultCheckout, sandbox: (): SandboxResult => ({ status: "COMPLETED", exit_code: 0 }) }, issueFor("python3 -m pytest -q test_w.py"));
+    expect(r.json.reasons.join(" ")).not.toMatch(/vendor\/lib/);
   }, 30_000);
 
   test("runnerConfigChanged flags jest, vitest and vite configs and a package.json with a jest key only", () => {
