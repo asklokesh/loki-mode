@@ -36,7 +36,7 @@ export const COMMANDS: Record<RunnerName, CommandSpec> = {
 /** Runners that can write a machine pass/fail report file: the invocation to find in a check command and the flags that name the report (`<report>` is replaced by the caller's path), and `config`, the basenames that configure or preload that runner (a .json match counts only when it holds the entry's `key`). Go and cargo have no stable file reporter and are absent. verify-pr reads its verdict from that file, never from an exit code or printed totals. */
 export const REPORT_RUNNERS: readonly { runner: RunnerName; find: RegExp; flags: string; config: RegExp; key?: string }[] = [
   { runner: "bun", find: /bun test\b/, flags: "--reporter=junit --reporter-outfile=<report>", config: /^bunfig\.toml$/ },
-  { runner: "pytest", find: /(?:(?:python3?|py) -m )?py\.?test\b/, flags: "--junitxml=<report>", config: /^conftest\.py$/ },
+  { runner: "pytest", find: /(?:(?:python3?|py) -m )?py\.?test\b/, flags: "--junitxml=<report>", config: /^(?:conftest\.py|\.?pytest\.ini)$/ },
   { runner: "jest", find: /jest\b/, flags: "--json --outputFile=<report>", config: /^(?:jest\.config\..+|package\.json)$/, key: "jest" },
   { runner: "vitest", find: /vitest\b/, flags: "--reporter=junit --outputFile=<report>", config: /^(?:vitest|vite)\.config\..+$|^vitest\.workspace\..+$/ },
 ];
