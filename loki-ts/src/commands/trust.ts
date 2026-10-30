@@ -24,7 +24,8 @@ import {
 import type { AutonomyLevel } from "../metrics/trust.ts";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { renderProofBadge } from "./proof.ts";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { safeGit } from "../util/safe_git.ts";
 import { lokiDir as defaultLokiDir } from "../util/paths.ts";
 
 // Read-only: the current autonomy level from .loki/policies.json (JSON only).
@@ -69,6 +70,87 @@ function lastSealedBadge(lokiDir: string): string | null {
   return null;
 }
 
+export interface PathSeal {
+  path: string;
+  /** Receipts naming this path whose sealed headline is exactly VERIFIED. */
+  verified: number;
+  /** Receipts naming this path with any other headline (or none). */
+  other: number;
+  /** Revert commits in git history that touched this path; null when history is unreadable. */
+  reverts: number | null;
+}
+
+// Paths touched by revert commits (subject `Revert "..."` or a "This reverts
+// commit" body line, which also covers a reverted merge). Null when the
+// directory is not a readable git repo. Argument arrays only, via safeGit.
+function revertCounts(repoDir: string): Map<string, number> | null {
+  let log: string;
+  try {
+    log = safeGit(repoDir, ["log", "--format=%H%x1f%B%x1e"]);
+  } catch {
+    return null;
+  }
+  const counts = new Map<string, number>();
+  for (const rec of log.split("\x1e")) {
+    const [sha, body] = rec.trim().split("\x1f");
+    if (!sha || body === undefined) continue;
+    if (!/^Revert "/.test(body) && !/^This reverts commit [0-9a-f]{7,40}/m.test(body)) continue;
+    let names: string;
+    try {
+      names = safeGit(repoDir, ["show", "-z", "--name-only", "--no-renames", "--format=", "-m", "--first-parent", sha]);
+    } catch {
+      return null; // an unreadable revert commit makes every count unknown, never a silent undercount
+    }
+    // -z: NUL-separated, unquoted paths (a quoted octal-escaped name would never match a receipt path)
+    for (const p of new Set(names.split("\0").filter((l) => l.length > 0))) {
+      counts.set(p, (counts.get(p) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+// Per-path Seal record: each proof.json lists the paths it changed in
+// files_changed.files[].path (the list the generator already records); the verdict is honesty.headline (else verdict). Reverts come
+// from git history. Read-only; paths no receipt names are not listed.
+export function computePathSeals(lokiDir: string, repoDir: string = dirname(lokiDir)): PathSeal[] {
+  const byPath = new Map<string, PathSeal>();
+  const reverts = revertCounts(repoDir);
+  const dir = join(lokiDir, "proofs");
+  let ids: string[] = [];
+  try {
+    ids = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  } catch {
+    return [];
+  }
+  for (const id of ids) {
+    let d: { files_changed?: { files?: unknown }; honesty?: { headline?: unknown }; verdict?: unknown };
+    try {
+      d = JSON.parse(readFileSync(join(dir, id, "proof.json"), "utf8"));
+    } catch {
+      continue;
+    }
+    const files = d.files_changed?.files;
+    if (!Array.isArray(files)) continue;
+    const h = d.honesty?.headline ?? d.verdict;
+    const ok = typeof h === "string" && h.trim().toUpperCase() === "VERIFIED";
+    for (const f of files) {
+      const p = (f as { path?: unknown } | null)?.path;
+      if (typeof p !== "string" || p === "") continue;
+      const e = byPath.get(p) ?? { path: p, verified: 0, other: 0, reverts: reverts === null ? null : (reverts.get(p) ?? 0) };
+      if (ok) e.verified++;
+      else e.other++;
+      byPath.set(p, e);
+    }
+  }
+  return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+function formatPathSeals(seals: PathSeal[]): string {
+  if (seals.length === 0) return "";
+  const rows = seals.map((s) => `  ${s.path}: ${s.verified} VERIFIED, ${s.other} other, ${s.reverts === null ? "reverts unknown" : `${s.reverts} reverts`}`);
+  return `\nPer-path Seal record:\n${rows.join("\n")}\n`;
+}
+
 const HELP = `loki trust -- visible trust trajectory (R4)
 
 Usage:
@@ -82,7 +164,8 @@ Shows whether the agent is earning autonomy on THIS repo over time:
   - Iterations to completion (lower is better)
   - Human interventions      (lower is better, when recorded)
 
-It also prints an "Outcome effort" block: accepted outcomes, misleading
+It also prints a "Per-path Seal record" (VERIFIED receipts and git reverts
+per changed path; proof.json files_changed), and an "Outcome effort" block: accepted outcomes, misleading
 completion rate (false VERIFIED over VERIFIED claims), cost per accepted
 (n/a when any cost is unmeasured), interventions by type, and minutes per
 accepted (waited, upper bound; active minutes are not measured). Definitions:
@@ -117,9 +200,13 @@ export function runTrust(args: readonly string[]): number {
   // Best-effort cache so the CLI, dashboard, and bash fallback share one
   // source of truth (parity with the bash route + dashboard endpoint).
   writeTrajectoryCache(lokiDir, traj);
-  process.stdout.write(
-    asJson ? formatTrajectoryJson(traj) + "\n" : formatTrajectoryHuman(traj) + "\n",
-  );
+  const seals = computePathSeals(lokiDir);
+  if (asJson) {
+    const base = JSON.parse(formatTrajectoryJson(traj)) as Record<string, unknown>;
+    process.stdout.write(JSON.stringify({ ...base, path_seals: seals }, null, 2) + "\n");
+  } else {
+    process.stdout.write(formatTrajectoryHuman(traj) + "\n" + formatPathSeals(seals));
+  }
   if (!asJson) {
     const badge = lastSealedBadge(lokiDir);
     process.stdout.write(

@@ -10,8 +10,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { runTrust } from "../../src/commands/trust.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { REPO_ROOT } from "../../src/util/paths.ts";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 function run(args: string[]): { code: number; stdout: string; stderr: string } {
   const origOut = process.stdout.write.bind(process.stdout);
@@ -184,5 +186,103 @@ describe("runTrust graduation advice", () => {
       expect(r.stdout).toContain("No README badge yet");
       expect(run(["--json"]).stdout).not.toContain("badge");
     });
+  });
+});
+
+describe("runTrust per-path Seal record", () => {
+  function git(...a: string[]): void {
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgSign=false", ...a], { cwd: td, stdio: "ignore" });
+  }
+  function seedPathProof(runId: string, headline: string, paths: string[]): void {
+    const d = join(lokiDir, "proofs", runId);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(
+      join(d, "proof.json"),
+      JSON.stringify({ run_id: runId, generated_at: "2026-01-01T00:00:00Z", honesty: { headline }, files_changed: { files: paths.map((path) => ({ path })) } }),
+    );
+  }
+
+  it("reports 20 VERIFIED / 0 reverts for one path and flips a reverted path to 1", () => {
+    git("init", "-q");
+    writeFileSync(join(td, "a.txt"), "a\n");
+    writeFileSync(join(td, "b.txt"), "b\n");
+    git("add", "a.txt", "b.txt");
+    git("commit", "-q", "-m", "base");
+    writeFileSync(join(td, "b.txt"), "b2\n");
+    git("commit", "-q", "-am", "change b");
+    git("revert", "--no-edit", "HEAD");
+    for (let i = 0; i < 20; i++) seedPathProof(`run-a-${String(i).padStart(2, "0")}`, "VERIFIED", ["a.txt"]);
+    seedPathProof("run-b-00", "VERIFIED", ["b.txt"]);
+    seedPathProof("run-b-01", "PARTIAL", ["b.txt"]);
+    const j = JSON.parse(run(["--json"]).stdout);
+    const by = Object.fromEntries(j.path_seals.map((x: { path: string }) => [x.path, x]));
+    expect(by["a.txt"]).toEqual({ path: "a.txt", verified: 20, other: 0, reverts: 0 });
+    expect(by["b.txt"]).toEqual({ path: "b.txt", verified: 1, other: 1, reverts: 1 });
+  });
+
+  it("a proof written by the real generator for a repo change shows its path in loki trust", () => {
+    git("init", "-q");
+    writeFileSync(join(td, "a.txt"), "a\n");
+    git("add", "a.txt");
+    git("commit", "-q", "-m", "base");
+    mkdirSync(lokiDir, { recursive: true });
+    writeFileSync(join(td, "feature.txt"), "new work\n");
+    git("add", "feature.txt");
+    git("commit", "-q", "-m", "add feature");
+    const gen = resolve(REPO_ROOT, "autonomy", "lib", "proof-generator.py");
+    const g = spawnSync("python3", [gen, "--loki-dir", lokiDir, "--run-id", "real-writer-1", "--quiet"], { cwd: td, encoding: "utf8" });
+    expect(g.status).toBe(0);
+    expect(existsSync(join(lokiDir, "proofs", "real-writer-1", "proof.json"))).toBe(true);
+    const j = JSON.parse(run(["--json"]).stdout);
+    const hit = j.path_seals.find((x: { path: string }) => x.path === "feature.txt");
+    expect(hit).toBeDefined();
+    expect(hit.verified + hit.other).toBe(1);
+    expect(hit.reverts).toBe(0);
+  });
+
+  it("reverts are null (unknown) outside a git repo, never a fabricated 0", () => {
+    seedPathProof("run-x", "VERIFIED", ["x.txt"]);
+    const j = JSON.parse(run(["--json"]).stdout);
+    expect(j.path_seals).toEqual([{ path: "x.txt", verified: 1, other: 0, reverts: null }]);
+  });
+
+  it("a reverted merge counts reverts for a non-ASCII path and a path with a space (no quoted-path false zero)", () => {
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(td, "m.txt"), "m\n");
+    git("add", "m.txt");
+    git("commit", "-q", "-m", "base");
+    git("checkout", "-q", "-b", "loki/s1");
+    writeFileSync(join(td, "é.txt"), "e\n");
+    writeFileSync(join(td, "with space.txt"), "s\n");
+    git("add", "é.txt", "with space.txt");
+    git("commit", "-q", "-m", "add files");
+    git("checkout", "-q", "main");
+    git("merge", "--no-ff", "-q", "-m", "merge s1", "loki/s1");
+    git("revert", "-m", "1", "--no-edit", "HEAD");
+    seedPathProof("run-u-00", "VERIFIED", ["é.txt", "with space.txt"]);
+    const j = JSON.parse(run(["--json"]).stdout);
+    const by = Object.fromEntries(j.path_seals.map((x: { path: string }) => [x.path, x]));
+    expect(by["é.txt"].reverts).toBe(1);
+    expect(by["with space.txt"].reverts).toBe(1);
+  });
+
+  it("reverts are null (unknown), never 0, when a revert commit cannot be read", () => {
+    git("init", "-q");
+    writeFileSync(join(td, "b.txt"), "b\n");
+    git("add", "b.txt");
+    git("commit", "-q", "-m", "base");
+    writeFileSync(join(td, "b.txt"), "b2\n");
+    git("commit", "-q", "-am", "change b");
+    git("revert", "--no-edit", "HEAD");
+    const tree = execFileSync("git", ["rev-parse", "HEAD^{tree}"], { cwd: td, encoding: "utf8" }).trim();
+    rmSync(join(td, ".git", "objects", tree.slice(0, 2), tree.slice(2)), { force: true });
+    seedPathProof("run-r-00", "VERIFIED", ["b.txt"]);
+    const j = JSON.parse(run(["--json"]).stdout);
+    expect(j.path_seals).toEqual([{ path: "b.txt", verified: 1, other: 0, reverts: null }]);
+  });
+
+  it("human output lists the per-path record", () => {
+    seedPathProof("run-x", "VERIFIED", ["x.txt"]);
+    expect(run([]).stdout).toContain("x.txt: 1 VERIFIED, 0 other, reverts unknown");
   });
 });
