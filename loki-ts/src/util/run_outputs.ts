@@ -18,7 +18,8 @@ import { eventsRelPath, readOriginUrl } from "./engine_origin.ts";
 import { runOwnerAlive } from "./run_pid.ts";
 import { safeGit } from "./safe_git.ts";
 import { currentBranch } from "../e10ext/stop_restore.ts";
-import { formatPreModelLine, formatSummary, plainLine, type Outcome, type PreModelTiming, type SummaryInput } from "../engine10/output.ts";
+import { shapeKeyForRepo, sealedOutcomesByTier, tierOfModel, type ShapedReceipt } from "../runner/router/history.ts";
+import { formatPreModelLine, formatSummary, plainLine, type Outcome, type TierSeal, type PreModelTiming, type SummaryInput } from "../engine10/output.ts";
 import { noteOf } from "./base_guard.ts";
 import { sourceId } from "../../../packages/control-plane/src/shipper/ship.ts";
 import { redactSecrets } from "./redact.ts";
@@ -651,6 +652,14 @@ export function stackSection(env: NodeJS.ProcessEnv, base: string | undefined, h
   return refs + (base ? `\nStacked on \`${base}\`: review and merge that pull request first.\n` : "");
 }
 
+/** Tier that sealed this run plus this repo shape's sealed record, read from the receipts under .loki/runs. Top-tier cost avoided has no recorded source yet, so it stays null and prints "not measured". Display only. */
+export function tierSealFor(repoDir: string, runId: string): TierSeal {
+  const shape = shapeKeyForRepo(repoDir), root = join(repoDir, ".loki", "runs"), receipts: ShapedReceipt[] = [], read = (d: string): Record<string, unknown> | null => { try { const r: unknown = JSON.parse(readFileSync(join(root, d, "receipt.json"), "utf8")); return typeof r === "object" && r !== null ? r as Record<string, unknown> : null; } catch { return null; } };
+  let dirs: string[] = []; try { dirs = readdirSync(root).sort().slice(-200); } catch { /* no runs dir */ }
+  for (const d of dirs) { const receipt = shape === null ? null : read(d); if (receipt && shape !== null) receipts.push({ shape, receipt }); }
+  const tier = tierOfModel(read(basename(runId))?.["model"]);
+  return { tier: tier === "unknown" ? null : tier, topTierCostAvoidedUsd: null, record: shape === null ? null : sealedOutcomesByTier(receipts)[shape] ?? null };
+}
 /** The block main() writes to stdout once a run finishes; pure because main() re-spawns process.argv[1] as the worker, so tests cannot drive it. */
 export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput, verbose = true): string {
   const c = alreadyDoneTextComment(events), un = unmergedLokiWorkNote(events);

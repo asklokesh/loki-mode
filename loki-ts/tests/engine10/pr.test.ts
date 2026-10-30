@@ -14,6 +14,9 @@ import { DEFAULT_PUSH_GITLAB_SH, DEFAULT_PUSH_SH, runPr, stage } from "../../src
 import { publishFallback } from "../../src/util/engine_origin.ts";
 import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { readEvents } from "../../src/engine10/events.ts"; import { stageCapability } from "../../src/engine10/worker.ts";
+import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
+import { renderMainOutput } from "../../src/engine10/supervisor.ts";
+import { tierSealFor } from "../../src/util/run_outputs.ts";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { RECOVERY_ABORT, discardRun, findInterrupted, nextStepText, parseRecoveryChoice, phaseOf, resumeMain, startRecovery, statusNextStep, type RunPrFn } from "../../src/util/run_outputs.ts";
 import type { CostReader, RunContext, SessionRunner, TestMapProvider, Verdict } from "../../src/engine10/types.ts";
@@ -368,6 +371,25 @@ describe("engine10 pr stage", () => {
     } finally {
       if (prev === undefined) delete process.env.LOKI_ROUTER; else process.env.LOKI_ROUTER = prev;
     }
+  });
+
+  test("sealed tier record flows from the repo's receipts into the console Tier line and the real PR body; the cost avoided stays not measured", async () => {
+    writeFileSync(join(repoDir, "package.json"), "{}");
+    const pkg = { name: "p0", root: ".", runner: "vitest", commands: { test: null, lint: null, build: null, start: null }, ui: { present: false, boot: null, cite: ["package.json"] }, cite: ["package.json"] };
+    mkdirSync(join(repoDir, ".loki"), { recursive: true });
+    writeFileSync(join(repoDir, ".loki", "project.json"), JSON.stringify({ schema: "loki.v10.project/1", status: "ok", workspaceKind: "single", workspaceCite: ["package.json"], packages: [pkg], fingerprintFiles: ["package.json"], key: computeKey(repoDir, ["package.json"], shallowDirs(repoDir)) }));
+    const put = (id: string, model: string, verdict: string): void => {
+      const body = { schema: "loki.v10.receipt/1", model, verdict }, d = join(repoDir, ".loki", "runs", id);
+      mkdirSync(d, { recursive: true }); writeFileSync(join(d, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: receiptSha256(body as never), verification: { jwt: null, kid: null } }));
+    };
+    put("a1", "claude-haiku-4-5", "VERIFIED"); put("a2", "claude-haiku-4-5", "FAILED"); put("a3", "claude-opus-4-5", "VERIFIED"); put("e10-test-run", "claude-haiku-4-5", "VERIFIED");
+    const want = "haiku tier sealed; top-tier cost avoided not measured; parity here: haiku sealed 2 of 3, opus sealed 1 of 1";
+    expect(tierSealFor(repoDir, "e10-test-run")).toMatchObject({ tier: "haiku", topTierCostAvoidedUsd: null });
+    const summary = { pr: null, verdict: "VERIFIED", notProven: [], flaky: [], wallS: 60, stages: [], cost: { usd: 0.5, provider: "claude", tokens: 1000 }, tier: tierSealFor(repoDir, "e10-test-run") };
+    expect(renderMainOutput([], summary as never, false)).toContain(`Tier:       ${want}`);
+    const { ctx } = makeCtx(repoDir, runDir, { verdict: "VERIFIED" });
+    await runPr(ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath) });
+    expect(readFileSync(join(runDir, "pr-body.md"), "utf8")).toContain(`\n- Model tier: ${want}\n`);
   });
 
   test("T2: the sealed mutation_line (the key seal.ts writes) lands in the PR body, and is absent when seal wrote none", async () => {
