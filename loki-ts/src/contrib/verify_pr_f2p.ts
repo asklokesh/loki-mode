@@ -76,7 +76,7 @@ export function runnerConfigChanged(changed: readonly string[], headDir: string,
     const at = [headDir, baseDir].filter((d, i, a) => a.indexOf(d) === i && existsSync(join(d, f)));
     if (at.length === 0 || (r && !r.key)) return !!r || at.length > 0;
     if (!r && !/\.(?:ini|cfg|toml)$/.test(f)) return false;
-    return at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => r ? !r.key || !b.endsWith(".json") || r.key in (JSON.parse(txt) as object) : /^\s*\[[^\]\n]*test|^\s*[\w."'-]*\bpytest\b[\w."'-]*\s*=/im.test(txt)));
+    return at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => r ? !r.key || !b.endsWith(".json") || r.key in (JSON.parse(txt) as object) : /^\s*\[[^\]\n]*test|^\s*[\w."'-]*\bpytest\.[\w."'-]*\s*=/im.test(txt)));
   });
 }
 
