@@ -30,7 +30,7 @@ import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
 import { type EventEnvelope, type PushEnv, type StageName, type Verdict, backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, pushArgv, STAGE_BUDGETS } from "./types.ts";
 import { baseLine, dropEmptyRunBranch } from "../util/base_guard.ts";
-import { alreadyDoneTextComment, policyGate, prGate, renderMainOutput, runIntent, summaryCache, summaryTokens, tierSealFor, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
+import { alreadyDoneTextComment, policyGate, prGate, renderMainOutput, runIntent, summaryCache, summaryTier, summaryTokens, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
 
 export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
 import { createStuckWatch, stuckMinutes } from "../util/slack_events.ts";
@@ -390,7 +390,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       usd, provider, tokens: summaryTokens(f, sawCost), ...summaryCache(events, res.tampered), note: !res.tampered && cli && (usd === null || events.some((e) => e.type === "cost" && e.data.source === "cli-invoker-unmetered")) ? "CLI invoker records no cost" : null,
       partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total, stageShares: res.tampered ? null : stageShareText(events),
     },
-    tier: res.tampered ? undefined : tierSealFor(repoDir, runId), wallS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000),
+    tier: summaryTier(repoDir, runId, res.tampered), wallS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000),
     stages: events.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number")
       .map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })),
   }, verbose);

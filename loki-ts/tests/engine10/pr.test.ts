@@ -16,7 +16,7 @@ import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { readEvents } from "../../src/engine10/events.ts"; import { stageCapability } from "../../src/engine10/worker.ts";
 import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
 import { renderMainOutput } from "../../src/engine10/supervisor.ts";
-import { tierSealFor } from "../../src/util/run_outputs.ts";
+import { summaryTier, tierSealFor } from "../../src/util/run_outputs.ts";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { RECOVERY_ABORT, discardRun, findInterrupted, nextStepText, parseRecoveryChoice, phaseOf, resumeMain, startRecovery, statusNextStep, type RunPrFn } from "../../src/util/run_outputs.ts";
 import type { CostReader, RunContext, SessionRunner, TestMapProvider, Verdict } from "../../src/engine10/types.ts";
@@ -373,23 +373,51 @@ describe("engine10 pr stage", () => {
     }
   });
 
+  const cmd = { cmd: "x", cwd: ".", cite: ["package.json"] };
+  const answerFor = (runner: string): string => JSON.stringify({ workspaceKind: "single", workspaceCite: ["package.json"], packages: [{ name: "p0", root: ".", runner, commands: { test: cmd, lint: null, build: null, start: null }, ui: { present: false, boot: null, cite: ["package.json"] }, cite: ["package.json"] }], fingerprintFiles: ["package.json"] });
+  const putRun = (id: string, model: string, verdict: string, runner: string | null): void => {
+    const body = { schema: "loki.v10.receipt/1", model, verdict }, d = join(repoDir, ".loki", "runs", id);
+    mkdirSync(d, { recursive: true }); writeFileSync(join(d, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: receiptSha256(body as never), verification: { jwt: null, kid: null } }));
+    if (runner !== null) writeFileSync(join(d, "project-model.answer.json"), answerFor(runner));
+  };
+  const tierSetup = (): void => { writeFileSync(join(repoDir, "package.json"), "{}"); mkdirSync(join(repoDir, ".loki"), { recursive: true }); };
+  const want = "haiku tier sealed; top-tier cost avoided not measured; parity here: haiku sealed 2 of 3, opus sealed 1 of 1";
+  const seedTier = (): void => { tierSetup(); putRun("a1", "claude-haiku-4-5", "VERIFIED", "jest"); putRun("a2", "claude-haiku-4-5", "FAILED", "jest"); putRun("a3", "claude-opus-4-5", "VERIFIED", "jest"); putRun("e10-test-run", "claude-haiku-4-5", "VERIFIED", "jest"); };
+
   test("sealed tier record flows from the repo's receipts into the console Tier line and the real PR body; the cost avoided stays not measured", async () => {
-    writeFileSync(join(repoDir, "package.json"), "{}");
-    const pkg = { name: "p0", root: ".", runner: "vitest", commands: { test: null, lint: null, build: null, start: null }, ui: { present: false, boot: null, cite: ["package.json"] }, cite: ["package.json"] };
-    mkdirSync(join(repoDir, ".loki"), { recursive: true });
-    writeFileSync(join(repoDir, ".loki", "project.json"), JSON.stringify({ schema: "loki.v10.project/1", status: "ok", workspaceKind: "single", workspaceCite: ["package.json"], packages: [pkg], fingerprintFiles: ["package.json"], key: computeKey(repoDir, ["package.json"], shallowDirs(repoDir)) }));
-    const put = (id: string, model: string, verdict: string): void => {
-      const body = { schema: "loki.v10.receipt/1", model, verdict }, d = join(repoDir, ".loki", "runs", id);
-      mkdirSync(d, { recursive: true }); writeFileSync(join(d, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: receiptSha256(body as never), verification: { jwt: null, kid: null } }));
-    };
-    put("a1", "claude-haiku-4-5", "VERIFIED"); put("a2", "claude-haiku-4-5", "FAILED"); put("a3", "claude-opus-4-5", "VERIFIED"); put("e10-test-run", "claude-haiku-4-5", "VERIFIED");
-    const want = "haiku tier sealed; top-tier cost avoided not measured; parity here: haiku sealed 2 of 3, opus sealed 1 of 1";
+    seedTier();
     expect(tierSealFor(repoDir, "e10-test-run")).toMatchObject({ tier: "haiku", topTierCostAvoidedUsd: null });
     const summary = { pr: null, verdict: "VERIFIED", notProven: [], flaky: [], wallS: 60, stages: [], cost: { usd: 0.5, provider: "claude", tokens: 1000 }, tier: tierSealFor(repoDir, "e10-test-run") };
     expect(renderMainOutput([], summary as never, false)).toContain(`Tier:       ${want}`);
     const { ctx } = makeCtx(repoDir, runDir, { verdict: "VERIFIED" });
     await runPr(ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath) });
     expect(readFileSync(join(runDir, "pr-body.md"), "utf8")).toContain(`\n- Model tier: ${want}\n`);
+  });
+
+  test("each sealed receipt counts for its own run's shape: a later shape change does not re-credit earlier runs", () => {
+    tierSetup();
+    putRun("b1", "claude-haiku-4-5", "VERIFIED", "jest"); putRun("b2", "claude-haiku-4-5", "VERIFIED", "jest"); putRun("b3", "claude-haiku-4-5", "VERIFIED", "jest");
+    writeFileSync(join(repoDir, ".loki", "project.json"), JSON.stringify({ schema: "loki.v10.project/1", status: "ok", workspaceKind: "single", workspaceCite: ["package.json"], packages: [JSON.parse(answerFor("vitest")).packages[0]], fingerprintFiles: ["package.json"], key: computeKey(repoDir, ["package.json"], shallowDirs(repoDir)) }));
+    putRun("b4", "claude-haiku-4-5", "VERIFIED", "vitest");
+    expect(tierSealFor(repoDir, "b4").record?.haiku?.total).toBe(1);
+    putRun("b5", "claude-haiku-4-5", "VERIFIED", null); // shape cannot be recovered: skipped, never given the current shape
+    expect(tierSealFor(repoDir, "b4").record?.haiku?.total).toBe(1);
+  });
+
+  test("the supervisor summary input carries the tier, and none for a tampered run", () => {
+    seedTier();
+    expect(summaryTier(repoDir, "e10-test-run", false)).toMatchObject({ tier: "haiku" });
+    expect(summaryTier(repoDir, "e10-test-run", true)).toBeUndefined();
+    expect(readFileSync(join(import.meta.dir, "../../src/engine10/supervisor.ts"), "utf8")).toContain("tier: summaryTier(repoDir, runId, res.tampered)");
+  });
+
+  test("a PARTIAL or FAILED draft PR body carries no tier line", async () => {
+    seedTier();
+    for (const verdict of ["PARTIAL", "FAILED"] as const) {
+      const { ctx } = makeCtx(repoDir, runDir, { verdict });
+      await runPr(ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath) });
+      expect(readFileSync(join(runDir, "pr-body.md"), "utf8")).not.toContain("Model tier:");
+    }
   });
 
   test("T2: the sealed mutation_line (the key seal.ts writes) lands in the PR body, and is absent when seal wrote none", async () => {
