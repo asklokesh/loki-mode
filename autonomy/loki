@@ -143,6 +143,17 @@ _loki_caveman_narration_level() {
 # claude-flags.sh (like the caveman wrapper above) and fills _LOKI_PERM_ARGV; unset
 # LOKI_PERMISSION_POLICY=legacy keeps --dangerously-skip-permissions byte-identically.
 _loki_perm_argv_for() {
+    # Also sets _LOKI_CLAUDE_SHELL, the SHELL value every claude spawn in this CLI
+    # pins (/bin/bash; LOKI_E10_KEEP_USER_SHELL=1 keeps the user's). Computed in a
+    # subshell so the helper's top-level exports never leak. Falls back to the
+    # user's SHELL when the lib is unavailable. Spawn sites that need only the
+    # shell call this with output discarded.
+    _LOKI_CLAUDE_SHELL="$(
+        # shellcheck source=autonomy/lib/claude-flags.sh
+        . "${_LOKI_SCRIPT_DIR}/lib/claude-flags.sh" >/dev/null 2>&1 || exit 1
+        _loki_claude_shell_value
+    )" || _LOKI_CLAUDE_SHELL=""
+    [ -n "$_LOKI_CLAUDE_SHELL" ] || _LOKI_CLAUDE_SHELL="${SHELL-}"
     _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
     # Legacy policy: return before sourcing anything (claude-flags.sh exports caveman vars).
     [ "${LOKI_PERMISSION_POLICY:-}" = "legacy" ] && return 0
@@ -19851,7 +19862,7 @@ Tasks:
             _loki_perm_argv_for "$codebase_path"
             case "$provider_name" in
                 claude)
-                    { (cd "$codebase_path" && if [ -n "$_loki_mig_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_mig_cm" claude "${_LOKI_PERM_ARGV[@]}" -p "$phase_prompt" --output-format stream-json --verbose 2>&1; else claude "${_LOKI_PERM_ARGV[@]}" -p "$phase_prompt" --output-format stream-json --verbose 2>&1; fi) | \
+                    { (cd "$codebase_path" && if [ -n "$_loki_mig_cm" ]; then SHELL="$_LOKI_CLAUDE_SHELL" CAVEMAN_DEFAULT_MODE="$_loki_mig_cm" claude "${_LOKI_PERM_ARGV[@]}" -p "$phase_prompt" --output-format stream-json --verbose 2>&1; else SHELL="$_LOKI_CLAUDE_SHELL" claude "${_LOKI_PERM_ARGV[@]}" -p "$phase_prompt" --output-format stream-json --verbose 2>&1; fi) | \
                         while IFS= read -r line; do
                             # Extract text from stream-json
                             if echo "$line" | python3 -c "
@@ -20029,7 +20040,7 @@ IMPORTANT RULES:
         _loki_perm_argv_for "$codebase_path"
         case "$provider_name" in
             claude)
-                { (cd "$codebase_path" && if [ -n "$_loki_doc_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_doc_cm" claude "${_LOKI_PERM_ARGV[@]}" -p "$doc_prompt" --output-format stream-json --verbose 2>&1; else claude "${_LOKI_PERM_ARGV[@]}" -p "$doc_prompt" --output-format stream-json --verbose 2>&1; fi) | \
+                { (cd "$codebase_path" && if [ -n "$_loki_doc_cm" ]; then SHELL="$_LOKI_CLAUDE_SHELL" CAVEMAN_DEFAULT_MODE="$_loki_doc_cm" claude "${_LOKI_PERM_ARGV[@]}" -p "$doc_prompt" --output-format stream-json --verbose 2>&1; else SHELL="$_LOKI_CLAUDE_SHELL" claude "${_LOKI_PERM_ARGV[@]}" -p "$doc_prompt" --output-format stream-json --verbose 2>&1; fi) | \
                     while IFS= read -r line; do
                         if echo "$line" | python3 -c "
 import sys, json
@@ -21095,7 +21106,7 @@ Begin healing now. Follow the RARV cycle for each action."
         claude)
             _loki_perm_argv_for "$codebase_path"
             local run_args=("${_LOKI_PERM_ARGV[@]}" -p "$heal_prompt" --output-format stream-json --verbose)
-            (cd "$codebase_path" && if [ -n "$_loki_heal_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_heal_cm" claude "${run_args[@]}" 2>&1; else claude "${run_args[@]}" 2>&1; fi) | \
+            (cd "$codebase_path" && if [ -n "$_loki_heal_cm" ]; then SHELL="$_LOKI_CLAUDE_SHELL" CAVEMAN_DEFAULT_MODE="$_loki_heal_cm" claude "${run_args[@]}" 2>&1; else SHELL="$_LOKI_CLAUDE_SHELL" claude "${run_args[@]}" 2>&1; fi) | \
                 while IFS= read -r line; do
                     if echo "$line" | python3 -c "
 import sys, json
@@ -24292,7 +24303,8 @@ _review_ultra() {
     echo -e "${DIM}Running: claude ${ur_argv[*]}${NC}" >&2
     echo "" >&2
     local ur_rc=0
-    claude "${ur_argv[@]}" || ur_rc=$?
+    _loki_perm_argv_for "$PWD" >/dev/null 2>&1 || true
+    SHELL="$_LOKI_CLAUDE_SHELL" claude "${ur_argv[@]}" || ur_rc=$?
     if [ "$ur_rc" -ne 0 ] && [ "$trust_ws" != true ] && [ "$ur_trust_ok" = true ]; then
         echo "If claude reported an untrusted folder, re-run: loki review --ultra --yes --trust-workspace" >&2
     fi
@@ -24419,7 +24431,8 @@ _run_ultracode() {
 
     echo -e "${DIM}Running: claude -p \"ultracode: ...\" --model opus${NC}" >&2
     echo "" >&2
-    claude "${uc_argv[@]}"
+    _loki_perm_argv_for "$PWD" >/dev/null 2>&1 || true
+    SHELL="$_LOKI_CLAUDE_SHELL" claude "${uc_argv[@]}"
     return $?
 }
 
@@ -30576,7 +30589,8 @@ cmd_remote() {
     # If workspace isn't trusted, it exits immediately with an error.
     # Use || true to prevent set -e from killing the script before auto-recovery.
     local rc_exit=0
-    claude remote-control ${rc_flags[@]+"${rc_flags[@]}"} || rc_exit=$?
+    _loki_perm_argv_for "$PWD" >/dev/null 2>&1 || true
+    SHELL="$_LOKI_CLAUDE_SHELL" claude remote-control ${rc_flags[@]+"${rc_flags[@]}"} || rc_exit=$?
 
     # Exit 0 = normal session end
     if [ $rc_exit -eq 0 ]; then
@@ -30616,7 +30630,8 @@ print('ok')
     echo ""
     echo -e "${GREEN}Launching remote control...${NC}"
     echo ""
-    exec claude remote-control ${rc_flags[@]+"${rc_flags[@]}"}
+    _loki_perm_argv_for "$PWD" >/dev/null 2>&1 || true
+    SHELL="$_LOKI_CLAUDE_SHELL" exec claude remote-control ${rc_flags[@]+"${rc_flags[@]}"}
 }
 
 # Syslog/SIEM integration management
@@ -32857,7 +32872,8 @@ USER TASK: ${prompt}"
             local agent_exit=0
             case "$provider" in
                 claude)
-                    claude -p "$full_prompt" 2>&1 || agent_exit=$?
+                    _loki_perm_argv_for "$PWD" >/dev/null 2>&1 || true
+                    SHELL="$_LOKI_CLAUDE_SHELL" claude -p "$full_prompt" 2>&1 || agent_exit=$?
                     ;;
                 codex)
                     codex exec --sandbox workspace-write "$full_prompt" 2>&1 || agent_exit=$?
@@ -32998,7 +33014,7 @@ $diff"
             [ -f ".loki/state/provider" ] && provider=$(cat ".loki/state/provider" 2>/dev/null)
 
             case "$provider" in
-                claude)  claude -p "$review_prompt" 2>&1 ;;
+                claude)  _loki_perm_argv_for "$PWD" >/dev/null 2>&1 || true; SHELL="$_LOKI_CLAUDE_SHELL" claude -p "$review_prompt" 2>&1 ;;
                 codex)   codex exec --sandbox workspace-write "$review_prompt" 2>&1 ;;
                 cline)   cline -y "$review_prompt" 2>&1 ;;
                 aider)   aider --message "$review_prompt" --yes-always --no-auto-commits < /dev/null 2>&1 ;;
@@ -34766,7 +34782,8 @@ _docs_invoke_provider() {
             declare -F loki_child_ledger_append >/dev/null 2>&1 && _ledger=true
             local _fmt=()
             [ "$_ledger" = true ] && _fmt=(--output-format json)
-            result=$($t_prefix env CAVEMAN_DEFAULT_MODE=off claude -p ${_lean[@]+"${_lean[@]}"} ${_fmt[@]+"${_fmt[@]}"} --model "${LOKI_DOCS_MODEL:-sonnet}" "$prompt" 2>/dev/null) || exit_code=$?
+            _loki_perm_argv_for "$PWD" >/dev/null 2>&1 || true
+            result=$($t_prefix env "SHELL=$_LOKI_CLAUDE_SHELL" CAVEMAN_DEFAULT_MODE=off claude -p ${_lean[@]+"${_lean[@]}"} ${_fmt[@]+"${_fmt[@]}"} --model "${LOKI_DOCS_MODEL:-sonnet}" "$prompt" 2>/dev/null) || exit_code=$?
             if [ "$_ledger" = true ] && [ -n "$result" ]; then
                 loki_child_ledger_append docs "$result" >/dev/null 2>&1 || true
                 result=$(printf '%s' "$result" | python3 -c 'import json,sys

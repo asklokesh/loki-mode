@@ -448,7 +448,7 @@ grep -qE 'CAVEMAN_DEFAULT_MODE=off claude' "$REPO_ROOT/autonomy/council-v2.sh" \
 grep -qE 'CAVEMAN_DEFAULT_MODE=off claude' "$REPO_ROOT/autonomy/lib/voter-agents.sh" \
   && ok "voter-agents.sh dispatch voter suppresses caveman" \
   || bad "voter-agents suppress" "voter-agents.sh subcall not suppressed"
-grep -qE 'env CAVEMAN_DEFAULT_MODE=off claude' "$REPO_ROOT/autonomy/grill.sh" \
+grep -qE 'CAVEMAN_DEFAULT_MODE=off claude' "$REPO_ROOT/autonomy/grill.sh" \
   && ok "grill.sh devil's-advocate suppresses caveman (env prefix via timeout)" \
   || bad "grill suppress" "grill.sh subcall not suppressed"
 

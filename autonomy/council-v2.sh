@@ -426,6 +426,14 @@ Respond ONLY with a valid JSON object. No markdown fencing."
                 # opt-out LOKI_BARE_SUBCALLS=0 / LOKI_REVIEW_TOOL_GUARD=0;
                 # type-guarded for standalone sourcing.
                 local _c2_argv=("--model" "${_c2_agent_model:-haiku}")
+                # Pin SHELL=/bin/bash for the claude child (LOKI_E10_KEEP_USER_SHELL=1 keeps the user shell).
+                local _c2_shell
+                _c2_shell="$(
+                    type _loki_claude_shell_value >/dev/null 2>&1 \
+                        || . "${BASH_SOURCE[0]%/*}/lib/claude-flags.sh" >/dev/null 2>&1 || exit 1
+                    _loki_claude_shell_value
+                )" || _c2_shell=""
+                [ -n "$_c2_shell" ] || _c2_shell="${SHELL-}"
                 if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
                     _c2_argv+=("--bare")
                 fi
@@ -458,7 +466,7 @@ Respond ONLY with a valid JSON object. No markdown fencing."
                     local _c2_schema_content _c2_json
                     _c2_schema_content="$(cat "$_c2_schema" 2>/dev/null)" || _c2_schema_content=""
                     if [ -n "$_c2_schema_content" ]; then
-                        _c2_json="$(echo "$full_prompt" | CAVEMAN_DEFAULT_MODE=off claude "${_c2_argv[@]}" -p \
+                        _c2_json="$(echo "$full_prompt" | SHELL="$_c2_shell" CAVEMAN_DEFAULT_MODE=off claude "${_c2_argv[@]}" -p \
                             --json-schema "$_c2_schema_content" --output-format json 2>/dev/null)" || _c2_json=""
                         if [ -n "$_c2_json" ]; then
                             # Pull the schema-validated object out of the envelope.
@@ -480,7 +488,7 @@ except Exception:
                 fi
                 # Fall through to the plain text call (+ sed-carve) on any miss.
                 if [ -z "$result" ]; then
-                    result=$(echo "$full_prompt" | CAVEMAN_DEFAULT_MODE=off claude "${_c2_argv[@]}" -p 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","justification":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
+                    result=$(echo "$full_prompt" | SHELL="$_c2_shell" CAVEMAN_DEFAULT_MODE=off claude "${_c2_argv[@]}" -p 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","justification":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
                 fi
             else
                 result='{"verdict":"INCONCLUSIVE","justification":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'

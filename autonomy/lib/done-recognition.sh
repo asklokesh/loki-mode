@@ -141,6 +141,14 @@ _loki_done_recog_invoke() {
         || . "$(dirname "${BASH_SOURCE[0]}")/../../providers/loader.sh" 2>/dev/null
     loki_claude_sidecall_allowed 2>/dev/null || return 1
     command -v claude >/dev/null 2>&1 || return 1
+    # Pin SHELL=/bin/bash for the claude child (LOKI_E10_KEEP_USER_SHELL=1 keeps the user shell).
+    local _dr_shell
+    _dr_shell="$(
+        type _loki_claude_shell_value >/dev/null 2>&1 \
+            || . "$(dirname "${BASH_SOURCE[0]}")/claude-flags.sh" >/dev/null 2>&1 || exit 1
+        _loki_claude_shell_value
+    )" || _dr_shell=""
+    [ -n "$_dr_shell" ] || _dr_shell="${SHELL-}"
 
     # STRUCTURED VERDICT (v8.x): when the CLI supports --json-schema, force valid
     # JSON so parse_object never has to brace-slice prose. --json-schema takes
@@ -160,11 +168,11 @@ _loki_done_recog_invoke() {
             _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
             ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
             if command -v timeout >/dev/null 2>&1; then
-                _dr_json=$(CAVEMAN_DEFAULT_MODE=off timeout "${LOKI_DONE_RECOG_TIMEOUT}" \
+                _dr_json=$(SHELL="$_dr_shell" CAVEMAN_DEFAULT_MODE=off timeout "${LOKI_DONE_RECOG_TIMEOUT}" \
                     claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" \
                     --json-schema "$_dr_schema_content" --output-format json 2>/dev/null) || _dr_json=""
             else
-                _dr_json=$(CAVEMAN_DEFAULT_MODE=off \
+                _dr_json=$(SHELL="$_dr_shell" CAVEMAN_DEFAULT_MODE=off \
                     claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" \
                     --json-schema "$_dr_schema_content" --output-format json 2>/dev/null) || _dr_json=""
             fi
@@ -197,10 +205,10 @@ except Exception:
     _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
     ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
     if command -v timeout >/dev/null 2>&1; then
-        out=$(CAVEMAN_DEFAULT_MODE=off timeout "${LOKI_DONE_RECOG_TIMEOUT}" \
+        out=$(SHELL="$_dr_shell" CAVEMAN_DEFAULT_MODE=off timeout "${LOKI_DONE_RECOG_TIMEOUT}" \
                   claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" 2>/dev/null) || rc=$?
     else
-        out=$(CAVEMAN_DEFAULT_MODE=off \
+        out=$(SHELL="$_dr_shell" CAVEMAN_DEFAULT_MODE=off \
                   claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" 2>/dev/null) || rc=$?
     fi
     [ "$rc" -ne 0 ] && return 1

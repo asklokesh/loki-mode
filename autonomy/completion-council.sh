@@ -3268,6 +3268,13 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
                 # out of scope when this file is sourced standalone, so each is
                 # type-guarded (degrades to the prior bare invocation).
                 local _cm_argv=("--model" "$council_model")
+                local _cm_shell
+                _cm_shell="$(
+                    type _loki_claude_shell_value >/dev/null 2>&1 \
+                        || . "${BASH_SOURCE[0]%/*}/lib/claude-flags.sh" >/dev/null 2>&1 || exit 1
+                    _loki_claude_shell_value
+                )" || _cm_shell=""
+                [ -n "$_cm_shell" ] || _cm_shell="${SHELL-}"
                 if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
                     _cm_argv+=("--bare")
                 fi
@@ -3299,7 +3306,7 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
                 # required safe default. pipefail (run.sh:172) makes the assignment's
                 # $? equal timeout's 124 when the CLI is killed. _provider_rc is read
                 # after the case to force a conservative REJECT on timeout.
-                verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" env CAVEMAN_DEFAULT_MODE=off claude "${_cm_argv[@]}" -p 2>/dev/null)
+                verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" env "SHELL=$_cm_shell" CAVEMAN_DEFAULT_MODE=off claude "${_cm_argv[@]}" -p 2>/dev/null)
                 _provider_rc=$?
             fi
             ;;
@@ -3476,6 +3483,13 @@ REASON: one-line justification citing path:line evidence"
                 # reviewer must never mutate the tree). Gated + opt-out
                 # LOKI_BARE_SUBCALLS=0 / LOKI_REVIEW_TOOL_GUARD=0; type-guarded.
                 local _co_argv=("--model" "$council_model")
+                local _co_shell
+                _co_shell="$(
+                    type _loki_claude_shell_value >/dev/null 2>&1 \
+                        || . "${BASH_SOURCE[0]%/*}/lib/claude-flags.sh" >/dev/null 2>&1 || exit 1
+                    _loki_claude_shell_value
+                )" || _co_shell=""
+                [ -n "$_co_shell" ] || _co_shell="${SHELL-}"
                 if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
                     _co_argv+=("--bare")
                 fi
@@ -3491,7 +3505,7 @@ REASON: one-line justification citing path:line evidence"
                 # bash-F3: timeout-guard the devil's-advocate subcall (same 600s
                 # default as the member subcalls / Bun council.ts). An empty
                 # verdict on timeout hits the conservative REJECT fallback below.
-                verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" env CAVEMAN_DEFAULT_MODE=off claude "${_co_argv[@]}" -p 2>/dev/null)
+                verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" env "SHELL=$_co_shell" CAVEMAN_DEFAULT_MODE=off claude "${_co_argv[@]}" -p 2>/dev/null)
             fi
             ;;
         codex)

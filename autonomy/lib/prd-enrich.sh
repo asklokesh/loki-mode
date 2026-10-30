@@ -101,13 +101,16 @@ _loki_prd_enrich_invoke() {
         _pe_ledger=true
         _pe_argv+=("--output-format" "json")
     fi
+    # Pin SHELL=/bin/bash for the claude child (LOKI_E10_KEEP_USER_SHELL=1 keeps the user shell).
+    local _pe_shell
+    _pe_shell="$(_loki_claude_shell_value 2>/dev/null || printf '%s' "${SHELL-}")"
     if command -v timeout >/dev/null 2>&1; then
-        out=$(CAVEMAN_DEFAULT_MODE=off timeout "${LOKI_PRD_ENRICH_TIMEOUT}" \
+        out=$(SHELL="$_pe_shell" CAVEMAN_DEFAULT_MODE=off timeout "${LOKI_PRD_ENRICH_TIMEOUT}" \
                   claude "${_pe_argv[@]}" -p "$prompt" 2>/dev/null) || rc=$?
     else
         # No coreutils timeout (e.g. bare macOS). Run without it; the model
         # call is a one-shot and the caller still tolerates failure.
-        out=$(CAVEMAN_DEFAULT_MODE=off \
+        out=$(SHELL="$_pe_shell" CAVEMAN_DEFAULT_MODE=off \
                   claude "${_pe_argv[@]}" -p "$prompt" 2>/dev/null) || rc=$?
     fi
     if [ "$rc" -eq 0 ] && [ "$_pe_ledger" = true ] && [ -n "$out" ]; then
