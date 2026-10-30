@@ -121,6 +121,9 @@ assert floor["strata"] == [{"language": "python", "runner": "python3", "tier": "
                             "wrong_pass": 2, "wilson_upper_95": 0.1136}], floor["strata"]
 assert top["corpus_sha256"] == floor["corpus_sha256"] == sha == r["manifest_sha256"]
 assert "loki_version" in top and "loki_version" in floor
+import datetime
+for r in (top, floor):
+    t = datetime.datetime.strptime(r["measured_at"], "%Y-%m-%dT%H:%M:%SZ"); assert abs((datetime.datetime.utcnow() - t).total_seconds()) < 600, r["measured_at"]
 PY
 then ok "strata rows carry Wilson 95% upper bound (0/60, 2/60), tier and corpus sha"; else bad "strata rows with Wilson bound"; fi
 

@@ -25,6 +25,8 @@ import { redactSecrets } from "./redact.ts";
 import { checkpointProblem, onlyWallPublish, runStateProblem, verifyLogSeals } from "./seal_drift.ts";
 import { readIntentRevisions, type IntentRevision } from "./steer.ts";
 import { REPO_ROOT } from "./paths.ts";
+import { getVersion } from "../version.ts";
+import { resolveClaudeModel } from "./claude_model.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
 
 /** Receipt field (A04): the operator intent revisions this run consumed. Omitted when none so other receipts stay byte-stable. */
@@ -59,6 +61,35 @@ export function seededCorpusBlock(env: NodeJS.ProcessEnv = process.env): { seede
     } catch { /* no usable results: catch_rate stays null */ }
     return { seeded_corpus: { corpus_version: version, corpus_defects: ids.length, catch_rate: rate } };
   } catch { return {}; }
+}
+export const SEAL_ACCURACY_NOT_MEASURED = "Seal accuracy: not measured";
+const SEAL_ACCURACY_MAX_AGE_MS = 7 * 86_400_000, SPEC_PREFIXES = ["spec", "test", "check"];
+const LANG_BY_EXT: Record<string, string> = { ".py": "python", ".js": "javascript", ".ts": "typescript", ".go": "go", ".rs": "rust", ".java": "java", ".rb": "ruby", ".sh": "shell" };
+/** GAME10-03: the one Seal accuracy line, read from benchmarks/seeded-defects/results/wrong-pass.json (never typed). The stratum is the changed
+ *  code's language (first changed file that is not a spec, test or check file, as measure.py picks it), the first passing check's runner, and the
+ *  tier of the run measured with this receipt's model. The line says "not measured" for a loki version mismatch, a corpus other than the current
+ *  manifest, a missing stratum or a run measured over 7 days ago (its measured_at; missing or unparseable means not measured). The line sits in the signed body, so editing it breaks receipt_sha256. */
+export function sealAccuracyLine(changed: readonly string[], checks: readonly { cmd: string; result: string }[], model: string, env: NodeJS.ProcessEnv = process.env, nowMs: number = Date.now()): string {
+  try {
+    const dir = env["LOKI_SEEDED_DEFECTS_DIR"] || join(REPO_ROOT, "benchmarks", "seeded-defects"), file = join(dir, "results", "wrong-pass.json");
+    const corpus = createHash("sha256").update(readFileSync(join(dir, "manifest.json"))).digest("hex");
+    const res = JSON.parse(readFileSync(file, "utf8")) as { manifest_sha256?: unknown; runs?: Record<string, unknown>[] };
+    if (res.manifest_sha256 !== corpus || !Array.isArray(res.runs)) return SEAL_ACCURACY_NOT_MEASURED;
+    const first = changed.map((f) => basename(f)).find((b) => !SPEC_PREFIXES.some((p) => b.startsWith(p)));
+    const lang = first === undefined ? "unknown" : LANG_BY_EXT[first.slice(first.lastIndexOf(".")).toLowerCase()] ?? "unknown";
+    const runner = checks.find((c) => c.result === "pass")?.cmd.trim().split(/\s+/)[0];
+    const run = res.runs.find((r) => typeof r["model"] === "string" && resolveClaudeModel(r["model"]) === resolveClaudeModel(model));
+    if (!runner || !run || run["loki_version"] !== getVersion() || run["corpus_sha256"] !== corpus || !Array.isArray(run["strata"])) return SEAL_ACCURACY_NOT_MEASURED;
+    const at = typeof run["measured_at"] === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/.test(run["measured_at"]) ? Date.parse(run["measured_at"]) : NaN, age = nowMs - at; // the writer's own timestamp; file mtime resets on checkout
+    if (!(age >= 0 && age <= SEAL_ACCURACY_MAX_AGE_MS)) return SEAL_ACCURACY_NOT_MEASURED;
+    const row = (run["strata"] as Record<string, unknown>[]).find((r) => r["language"] === lang && r["runner"] === runner);
+    const n = row?.["n"], wp = row?.["wrong_pass"], up = row?.["wilson_upper_95"];
+    if (typeof n !== "number" || typeof wp !== "number" || typeof up !== "number" || !Number.isInteger(n) || !Number.isInteger(wp) || n < 1 || wp < 0 || wp > n || !(up >= 0 && up <= 1)) return SEAL_ACCURACY_NOT_MEASURED;
+    return `Seal accuracy for ${lang}/${runner} at this tier: ${wp} wrong pass${wp === 1 ? "" : "es"} in ${n} seeded defects, 95% upper bound ${(up * 100).toFixed(1)}%, measured on ${getVersion()}`;
+  } catch { return SEAL_ACCURACY_NOT_MEASURED; }
+}
+export function sealAccuracyBlock(changed: readonly string[], checks: readonly { cmd: string; result: string }[], model: string, env: NodeJS.ProcessEnv = process.env, nowMs: number = Date.now()): { seal_accuracy: string } {
+  return { seal_accuracy: sealAccuracyLine(changed, checks, model, env, nowMs) };
 }
 
 const REVERTED = "unrelated edit reverted:";

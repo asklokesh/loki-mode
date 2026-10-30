@@ -172,6 +172,7 @@ export interface Receipt {
   unit_spec?: { sha256: string }; // #317b: present only for a unit run; the sha256 of its canonical spec (id, items, acceptance, writeSet, base)
   spec?: { path: string; sha256: string }; intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[]; // P12-02 (omitted when none); SPEC-FIRST-INTENT: present only when a user spec file drove the run
   seeded_corpus?: import("../util/run_outputs.ts").SeededCorpus; /* TEN-GATES-15 */ supply?: import("../supply/supply_guard.ts").SupplyBlock; // T10: present only when the guard found newly added dependencies
+  seal_accuracy?: string; // GAME10-03: signed line read from the measured wrong-pass results, or "Seal accuracy: not measured"
   route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on.
   cost_preview?: Record<string, unknown>; // 11.3.0 T1: absent under LOKI_COST_PREVIEW=0
   verdict: Verdict;
