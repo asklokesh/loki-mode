@@ -408,8 +408,29 @@ describe("engine10 pr stage", () => {
     seedTier();
     expect(summaryTier(repoDir, "e10-test-run", false)).toMatchObject({ tier: "haiku" });
     expect(summaryTier(repoDir, "e10-test-run", true)).toBeUndefined();
-    expect(readFileSync(join(import.meta.dir, "../../src/engine10/supervisor.ts"), "utf8")).toContain("tier: summaryTier(repoDir, runId, res.tampered)");
   });
+
+  test("main() prints the Tier line on a VERIFIED run, driven through the real supervisor with a fake worker", () => {
+    const base = mkdtempSync(join(tmpdir(), "e10-pr-main-")), repo = join(base, "repo");
+    try {
+      execFileSync("git", ["init", "-q", "-b", "main", repo]);
+      git(repo, ["config", "user.email", "t@example.com"]); git(repo, ["config", "user.name", "t"]);
+      writeFileSync(join(repo, "a.txt"), "base\n"); git(repo, ["add", "a.txt"]); git(repo, ["commit", "-q", "-m", "base"]);
+      const sup = join(import.meta.dir, "../../src/engine10/supervisor.ts");
+      writeFileSync(join(base, "drive.ts"), `import { main } from ${JSON.stringify(sup)};
+import { mkdirSync, writeFileSync } from "node:fs";
+if (process.argv[2] === "engine10") {
+  const runId = process.argv[4]!, d = ".loki/runs/" + runId;
+  mkdirSync(d, { recursive: true }); writeFileSync(d + "/receipt.json", JSON.stringify({ model: "claude-haiku-4-5", verdict: "VERIFIED" }));
+  console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "VERIFIED", receipt_sha256: "ab".repeat(32), not_proven: [] } }));
+} else process.exit(await main(["--no-pr", "do a thing"]));
+`);
+      const r = Bun.spawnSync({ cmd: [process.execPath, join(base, "drive.ts")], cwd: repo, env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true", LOKI_PREFLIGHT_PROBE: "0", LOKI_NO_BROWSER: "1" } });
+      const out = r.stdout.toString();
+      expect(out).toContain("Tier:");
+      expect(out).toContain("haiku tier sealed; top-tier cost avoided not measured");
+    } finally { rmSync(base, { recursive: true, force: true }); }
+  }, 60000);
 
   test("a PARTIAL or FAILED draft PR body carries no tier line", async () => {
     seedTier();

@@ -3,7 +3,7 @@
 // a mocked SessionRunner replaying recorded answers; no real model is called.
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { projectApi } from "../../src/project_model/api.ts";
@@ -11,6 +11,8 @@ import { buildBrief, discoverProjectModel, loadCached, PROJECT_FILE } from "../.
 import { GATHER_CAPS, gather } from "../../src/project_model/gather.ts";
 import { validateAnswer } from "../../src/project_model/schema.ts";
 import { fastTierModel } from "../../src/runner/model_downgrades.ts";
+import { receiptSha256 } from "../../src/engine10/stages/seal.ts";
+import { tierSealFor } from "../../src/util/run_outputs.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import type { RunContext, SessionResult, SessionRunOptions } from "../../src/engine10/types.ts";
 
@@ -157,6 +159,21 @@ describe("discovery", () => {
     expect(api.known()).toBe(false);
     expect(api.packageRootOf("backend/x.test.ts")).toBeNull();
     expect(api.hasUI()).toBe(false);
+  });
+
+  test("a run that reuses the cached model still records its shape, so its sealed receipt joins the parity record", async () => {
+    const d = repo();
+    const m = mock([RECORDED]);
+    await discoverProjectModel(ctxFor(d, m.runner), sig); // first run: session writes the cache
+    const body = { schema: "loki.v10.receipt/1", model: "claude-haiku-4-5", verdict: "VERIFIED" };
+    const runDir = join(d, ".loki", "runs", "r2");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: receiptSha256(body as never), verification: { jwt: null, kid: null } }));
+    const second = await discoverProjectModel({ ...ctxFor(d, m.runner), runId: "r2", runDir } as RunContext, sig);
+    expect(second.cached).toBe(true);
+    expect(m.briefs.length).toBe(1);
+    expect(existsSync(join(runDir, "project-model.answer.json"))).toBe(true);
+    expect(tierSealFor(d, "r2").record?.["haiku"]).toMatchObject({ total: 1, verified: 1 });
   });
 
   test("cache hit when hashes are unchanged, miss after a lockfile edit", async () => {
