@@ -394,7 +394,7 @@ provider_invoke() {
     # nothing when unset/empty and preserves spaced elements otherwise.
     loki_model_route_prefix
     _loki_claude_permission_argv
-    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude "${_LOKI_PERM_ARGV[@]}" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
+    SHELL="$(_loki_claude_shell_value)" "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude "${_LOKI_PERM_ARGV[@]}" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
 }
 
 # provider_invoke_argv <tier> <prompt> -- populate _LOKI_INVOKE_ARGV with the
@@ -440,6 +440,7 @@ provider_invoke_argv() {
     _loki_claude_permission_argv
     _LOKI_INVOKE_ARGV=(
         "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}"
+        env "SHELL=$(_loki_claude_shell_value)"
         claude "${_LOKI_PERM_ARGV[@]}"
         "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}"
     )
@@ -698,5 +699,5 @@ provider_invoke_with_tier() {
     # expands to nothing when empty and preserves spaced elements otherwise.
     loki_model_route_prefix
     _loki_claude_permission_argv
-    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude "${_LOKI_PERM_ARGV[@]}" --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
+    SHELL="$(_loki_claude_shell_value)" "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude "${_LOKI_PERM_ARGV[@]}" --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
 }
