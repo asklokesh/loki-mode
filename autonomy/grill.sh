@@ -251,6 +251,9 @@ grill_invoke_provider() {
             _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
             ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
             local _gr_argv=("${_LOKI_PERM_ARGV[@]}" "--model" "${LOKI_GRILL_MODEL:-sonnet}")
+            # Pin SHELL=/bin/bash for the claude child (LOKI_E10_KEEP_USER_SHELL=1 keeps the user shell).
+            local _gr_shell
+            _gr_shell="$(_loki_claude_shell_value 2>/dev/null || printf '%s' "${SHELL-}")"
             # lean child flags (text-only role, no tools/MCP/slash commands) and
             # a ledger line per call via --output-format json (unwrapped below).
             local _gr_lf _gr_ledger=false
@@ -275,7 +278,7 @@ grill_invoke_provider() {
             # (not a bare VAR=val prefix) because the call goes through
             # _grill_with_timeout, where the first token is exec'd as the command.
             out="$(printf '%s' "$prompt" \
-                | _grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" env CAVEMAN_DEFAULT_MODE=off claude "${_gr_argv[@]}" -p - 2>/dev/null)"
+                | _grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" env "SHELL=$_gr_shell" CAVEMAN_DEFAULT_MODE=off claude "${_gr_argv[@]}" -p - 2>/dev/null)"
             if [ "$_gr_ledger" = true ] && [ -n "$out" ]; then
                 loki_child_ledger_append "$role" "$out" >/dev/null 2>&1 || true
                 out="$(printf '%s' "$out" | python3 -I -c 'import json,sys

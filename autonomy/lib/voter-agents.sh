@@ -401,7 +401,7 @@ loki_council_dispatch_agents() {
         _va_fmt=(--output-format json)
     fi
     response=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" \
-                      env CAVEMAN_DEFAULT_MODE=off claude "${_LOKI_PERM_ARGV[@]}" \
+                      env "SHELL=$(_loki_claude_shell_value 2>/dev/null || printf '%s' "${SHELL-}")" CAVEMAN_DEFAULT_MODE=off claude "${_LOKI_PERM_ARGV[@]}" \
                       ${_va_lean[@]+"${_va_lean[@]}"} \
                       ${_va_fmt[@]+"${_va_fmt[@]}"} \
                       -p "$prompt" \

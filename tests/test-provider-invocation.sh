@@ -559,6 +559,110 @@ rm -rf "${REGEN_DIR_14:?}"
 
 rm -rf "$STUB_DIR_14"
 
+# ===========================================
+# Test 15: claude side-call spawns in the libraries and autonomy/loki pin
+# SHELL=/bin/bash (same helper as run.sh); LOKI_E10_KEEP_USER_SHELL=1 keeps
+# the user's shell. Stub claude records the SHELL it was handed.
+# ===========================================
+log_test "claude side-call spawns (prd-enrich, done-recognition, quickstart, grill, loki) pin SHELL=/bin/bash"
+
+REPO_15="$(cd "$SCRIPT_DIR/.." && pwd)"
+STUB_DIR_15="$(mktemp -d "${TMPDIR:-/tmp}/loki-prov-sc.XXXXXX")"
+printf '#!/usr/bin/env bash\ncase " $* " in *" -p "*) echo "SHELL=[$SHELL]" >> "$LOKI_SC_REC" ;; esac\nprintf "{}"\n' > "$STUB_DIR_15/claude"
+chmod +x "$STUB_DIR_15/claude"
+
+# $1 case, $2 KEEP value ("" = unset). Prints the SHELL the stub claude saw.
+sidecall_probe() {
+    local rec="$STUB_DIR_15/rec.$1.${2:-unset}"
+    rm -f "$rec"
+    (
+        export SHELL=/bin/zsh LOKI_PROVIDER=claude LOKI_ALLOW_CLAUDE_SIDECALLS=1 LOKI_SC_REC="$rec"
+        export LOKI_NO_BROWSER=1 LOKI_SDK_PRD_ENRICH=0 LOKI_SDK_DONE_RECOG=0 LOKI_SDK_GRILL=0
+        if [ -n "$2" ]; then export LOKI_E10_KEEP_USER_SHELL="$2"; else unset LOKI_E10_KEEP_USER_SHELL; fi
+        PATH="$STUB_DIR_15:$PATH"
+        cd "$STUB_DIR_15" || exit 1
+        case "$1" in
+            prd-enrich)
+                # shellcheck source=/dev/null
+                source "$REPO_15/autonomy/lib/prd-enrich.sh"
+                _loki_prd_enrich_invoke "x" ;;
+            done-recognition)
+                # shellcheck source=/dev/null
+                source "$REPO_15/autonomy/lib/done-recognition.sh"
+                _loki_done_recog_invoke "x" ;;
+            quickstart)
+                # shellcheck source=/dev/null
+                source "$REPO_15/autonomy/quickstart.sh"
+                _qs_classify_invoke "x" ;;
+            grill)
+                # shellcheck source=/dev/null
+                source "$REPO_15/autonomy/grill.sh"
+                grill_invoke_provider "x" ;;
+            loki-helper)
+                eval "$(sed -n '/^_loki_perm_argv_for() {/,/^}/p' "$REPO_15/autonomy/loki")"
+                _LOKI_SCRIPT_DIR="$REPO_15/autonomy"
+                _loki_perm_argv_for "$STUB_DIR_15"
+                echo "SHELL=[$_LOKI_CLAUDE_SHELL]" > "$rec" ;;
+        esac
+    ) >/dev/null 2>&1
+    tr '\n' ' ' < "$rec" 2>/dev/null
+}
+for _case in prd-enrich done-recognition quickstart grill loki-helper; do
+    out="$(sidecall_probe "$_case" "")"
+    if [ -n "$out" ] && ! echo "$out" | grep -qv '^SHELL=\[/bin/bash\] *$'; then
+        log_pass "$_case claude spawn pins SHELL=/bin/bash under a user SHELL=/bin/zsh"
+    else
+        log_fail "$_case claude spawn did not pin SHELL (got: ${out:-nothing recorded})"
+    fi
+    out="$(sidecall_probe "$_case" 1)"
+    if [ -n "$out" ] && ! echo "$out" | grep -qv '^SHELL=\[/bin/zsh\] *$'; then
+        log_pass "$_case claude spawn keeps SHELL=/bin/zsh with LOKI_E10_KEEP_USER_SHELL=1"
+    else
+        log_fail "$_case opt-out lost the user shell (got: ${out:-nothing recorded})"
+    fi
+done
+
+# Structural: EVERY claude spawn statement in the side-call libraries and
+# autonomy/loki carries a SHELL pin, so a new unpinned site fails.
+struct_out="$(python3 -I - "$REPO_15" <<'PY'
+import re, sys
+root = sys.argv[1]
+files = ["autonomy/lib/prd-enrich.sh", "autonomy/lib/voter-agents.sh", "autonomy/grill.sh",
+         "autonomy/quickstart.sh", "autonomy/lib/done-recognition.sh", "autonomy/council-v2.sh",
+         "autonomy/completion-council.sh", "autonomy/loki"]
+spawn = re.compile(r'(?<![\w$/.\'"-])(?:exec\s+)?claude\s+(?:"\$\{|-p\s|remote-control|ultra)')
+total, bad = 0, []
+for rel in files:
+    lines = open(root + "/" + rel).read().split("\n")
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        if raw.lstrip().startswith(("#", "echo", "printf")):
+            i += 1
+            continue
+        start, stmt = i + 1, raw
+        while stmt.rstrip().endswith("\\") and i + 1 < len(lines):
+            i += 1
+            stmt = stmt.rstrip()[:-1] + " " + lines[i]
+        if spawn.search(stmt) and "--help" not in stmt:
+            total += 1
+            if "SHELL=" not in stmt:
+                bad.append("%s:%d" % (rel, start))
+        i += 1
+print("SITES=%d" % total)
+print("UNPINNED=%s" % (",".join(bad) or "none"))
+PY
+)"
+sites="$(echo "$struct_out" | sed -n 's/^SITES=//p')"
+unpinned="$(echo "$struct_out" | sed -n 's/^UNPINNED=//p')"
+if [ "${sites:-0}" -ge 20 ] && [ "$unpinned" = "none" ]; then
+    log_pass "every claude spawn statement in the side-call libraries and autonomy/loki carries the SHELL pin ($sites sites)"
+else
+    log_fail "side-call claude spawn sites unpinned or detector vacuous (sites=${sites:-0}): $unpinned"
+fi
+
+rm -rf "${STUB_DIR_15:?}"
+
 echo ""
 echo "========================================"
 echo "Test Summary"

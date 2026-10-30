@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- Claude helper calls that Loki makes outside the main build loop (PRD enrichment, the done-recognition and council reviews, the voter agents, grill, quickstart classification, and `loki` migrate, docs, heal, review and remote-control) now run with `SHELL=/bin/bash`, so a shell alias such as `ls=eza` no longer hangs the agent's Bash tool. Set `LOKI_E10_KEEP_USER_SHELL=1` to keep your own shell.
+
 ## v11.91.0 (2026-10-30)
 
 ### Added
