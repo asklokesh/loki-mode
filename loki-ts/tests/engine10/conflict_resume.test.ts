@@ -8,6 +8,7 @@ import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import { wallAnchor, wallDropped } from "../../src/util/wall_owned.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
 import { CONFLICT_CORRECTION } from "../../src/util/conflict_resume.ts";
+import { FINISH_LINE } from "../../src/e10ext/context.ts";
 import type { RunContext, SessionResult, SessionRunOptions, SessionRunner } from "../../src/engine10/types.ts";
 
 const INCIDENT = "the task asks for all 37 route files to be migrated, but the stage rules limit me to the named files and a few tests";
@@ -101,11 +102,41 @@ describe("Wall-anchored conflict is a harness defect", () => {
     const ctx = { ...ctxOf(s), repoDir, runDir: join(repoDir, ".loki"), outputs: () => ({ wall }) } as unknown as RunContext;
     return { ctx, wall, path };
   }
-  test("wallAnchor reads path:line only, and only for Wall files", () => {
+  test("wallAnchor reads a path with an optional :line, and only for Wall files", () => {
     expect(wallAnchor(ANCHORED, [WALL])).toEqual({ file: WALL, line: 93 });
     expect(wallAnchor(`see loki_wall_units.test.ts:12`, [WALL])).toEqual({ file: WALL, line: 12 });
     expect(wallAnchor(REAL, [WALL])).toBeNull();
-    expect(wallAnchor(`the wall file ${WALL} is wrong`, [WALL])).toBeNull();
+    expect(wallAnchor(`the wall file ${WALL} is wrong`, [WALL])).toEqual({ file: WALL, line: null }); // RUN5-S2b: the line is optional
+  });
+  // RUN5-S2b: run8 markers named a Wall file with no line; the reader demanded path:line the writer was never asked for.
+  const RUN8_A = "`test_without_top_prints_all_words_sorted` in `tests/loki_wall_top_test.py` asserts sorted output but the task says insertion order", RUN8_B = "`tests/loki_wall_pricing.py` expects a 10% discount but the task says 15%";
+  const RUN8_WALL = ["tests/loki_wall_top_test.py", "tests/loki_wall_pricing.py"] as const;
+  test("RUN5-S2b wallAnchor accepts a Wall file by path or basename with no line, never a non-Wall file", () => {
+    expect(wallAnchor(RUN8_A, RUN8_WALL)).toEqual({ file: RUN8_WALL[0], line: null });
+    expect(wallAnchor(RUN8_B, RUN8_WALL)).toEqual({ file: RUN8_WALL[1], line: null });
+    expect(wallAnchor("loki_wall_pricing.py expects 10%", RUN8_WALL)).toEqual({ file: RUN8_WALL[1], line: null });
+    expect(wallAnchor(`${WALL}:93 x`, [WALL])).toEqual({ file: WALL, line: 93 });
+    expect(wallAnchor("src/pricing.py expects 10% but the task says 15%", RUN8_WALL)).toBeNull();
+    expect(wallAnchor("tests/other_top_test.py and top_test.py conflict", RUN8_WALL)).toBeNull();
+    expect(wallAnchor("the task says keep the API and also replace it", RUN8_WALL)).toBeNull();
+  });
+  test("RUN5-S2b a run8 marker with no line drives the re-author path", async () => {
+    const wallRel = "tests/loki_wall_units.test.ts";
+    for (const marker of [`\`test_x\` in \`${wallRel}\` contradicts the task`, `\`loki_wall_units.test.ts\` expects 4 but the task says 5`]) {
+      const s = new Wallish([conflict(marker), conflict(marker), done]); const { ctx, path } = setup(s);
+      const r = await implementStage.run(ctx, new AbortController().signal);
+      expect(r.data.exit).toBe("done");
+      expect(r.data.spec_conflict_reason).toBeNull();
+      expect(r.data.wall_defect).toMatchObject({ action: "reauthored", file: wallRel, line: null });
+      expect(s.calls.filter((c) => c.stage === "wall").length).toBe(1);
+      expect(readFileSync(path, "utf8")).toBe("// fixed\n");
+    }
+    const s2 = new Wallish([conflict(`\`${wallRel}\` is wrong`)]); const c2 = setup(s2);
+    const r2 = await implementStage.run(c2.ctx, new AbortController().signal);
+    expect(wallDropped({ implement: { exit: "done", wall_defect: r2.data.wall_defect }, intake: {} } as never)[0]).toContain(`${wallRel}: `);
+  });
+  test("RUN5-S2b the conflict marker ask names path:line of the cited test", () => {
+    expect(FINISH_LINE).toContain("path:line");
   });
   test("a conflict naming the Wall file is not a spec conflict; the Wall is re-authored once and the run continues", async () => {
     const s = new Wallish([conflict(ANCHORED), conflict(ANCHORED), done]); const { ctx, path } = setup(s);

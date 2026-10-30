@@ -27,19 +27,22 @@ export function wallOwnedFailure(raw: string, cwd: string, repoDir: string, wall
   return !!locs && locs.length > 0 && locs.every((l) => wall.has(l));
 }
 
-// FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT: a spec conflict whose reason cites a Wall file as path:line is a harness defect (Loki wrote that test), never the user's contradiction.
-// No wording is judged; only whether a cited location is a Wall file. A bare mention without a line is not an anchor.
-export interface WallDefect { file: string; line: number; reason: string; action: "reauthored" | "dropped"; }
+// FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT: a spec conflict whose reason cites a Wall file (repo-relative path or basename, optional :line) is a harness defect (Loki wrote that test), never the user's contradiction.
+// No wording is judged; only whether a cited location is a Wall file. A mention of a non-Wall file is not an anchor. `line` is null when the citation carried none.
+export interface WallDefect { file: string; line: number | null; reason: string; action: "reauthored" | "dropped"; }
 export const WALL_DROPPED = "Wall assertion dropped (harness-owned conflict persisted after one re-author)";
 
-/** The Wall file (repo-relative) and line a conflict reason cites as path:line, else null. */
-export function wallAnchor(reason: string, wall: readonly string[]): { file: string; line: number } | null {
-  for (const m of reason.matchAll(/([\w@./-]+\.[A-Za-z]{1,5}):(\d+)/g)) {
+/** The first Wall file (repo-relative; text order, then Wall order) a conflict reason cites by path or basename, with its :line or null; else null. */
+export function wallAnchor(reason: string, wall: readonly string[]): { file: string; line: number | null } | null {
+  for (const m of reason.matchAll(/([\w@./-]+\.[A-Za-z]{1,5})(?::(\d+))?(?![\w/-])/g)) {
     const p = m[1]!.replace(/^\.\//, ""), file = wall.find((w) => w === p || w.endsWith(`/${p}`) || p.endsWith(`/${w}`));
-    if (file) return { file, line: Number(m[2]) };
+    if (file) return { file, line: m[2] ? Number(m[2]) : null };
   }
   return null;
 }
+
+/** "file:line" when the defect carries a line, else just "file". */
+export const defectLoc = (d: { file: string; line: number | null }): string => (d.line ? `${d.file}:${d.line}` : d.file);
 
 /** Every Wall defect a stage record holds: the single wall_defect field plus the accumulated wall_defects array. */
 function defectsOf(s: Record<string, unknown> | undefined): WallDefect[] {
@@ -55,5 +58,5 @@ export function accumulateWallDefects(prior: Record<string, unknown> | undefined
 
 /** NOT PROVEN lines for every dropped Wall test file recorded by implement or by any fix round; a non-empty result caps the verdict at PARTIAL. */
 export function wallDropped(o: Record<string, Record<string, unknown> | undefined>): string[] {
-  return [...new Set([o.implement, o.fix].flatMap((s) => defectsOf(s).filter((d) => d.action === "dropped").map((d) => `${WALL_DROPPED}: ${d.file}:${d.line}: ${d.reason}`)))];
+  return [...new Set([o.implement, o.fix].flatMap((s) => defectsOf(s).filter((d) => d.action === "dropped").map((d) => `${WALL_DROPPED}: ${defectLoc(d)}: ${d.reason}`)))];
 }

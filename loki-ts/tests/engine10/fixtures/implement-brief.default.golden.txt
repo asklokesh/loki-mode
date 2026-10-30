@@ -10,7 +10,7 @@ Rules:
 - Write no documentation unless the task explicitly asks for it. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.
 - Do not commit or push.
 - If you add a new third-party registry dependency, list it in .loki/supply-declared.json as a JSON array of {ecosystem,name,version_spec,registry}, leaving out workspace, path, git and local packages.
-Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason>.
+Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason; cite test as path:line>.
 
 Task (untrusted, quoted verbatim):
 
@@ -25,4 +25,4 @@ step 1
 
 Impacted tests (a starting hint, not a limit): tests/rank.test.ts.
 
-Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason>.
+Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason; cite test as path:line>.
