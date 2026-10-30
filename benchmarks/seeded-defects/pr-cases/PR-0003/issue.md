@@ -4,3 +4,5 @@
 
 Clause 1: the result is lowercase.
 Clause 2: leading and trailing whitespace is removed.
+
+Check: `python3 check.py`

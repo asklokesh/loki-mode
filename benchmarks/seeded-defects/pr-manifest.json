@@ -136,6 +136,6 @@
       "summary": "linked issue is prose with no runnable check"
     }
   ],
-  "note": "PR-shaped fixtures: issue, base tree, head tree (the PR), optional check. Fixtures only, no runs. expected_exit is the loki verify-pr exit code (0 verified, 3 no proof to run, 4 proof failed). SEALED cases are grader-passing controls for the false-block rate.",
+  "note": "PR-shaped fixtures: issue, base tree, head tree (the PR), optional check. The 7 cases with a check carry a Check line in issue.md that loki verify-pr extractChecks accepts; PR-0008 is prose only. expected_exit is the intended loki verify-pr exit code (0 verified, 3 no proof to run, 4 proof failed), NOT a measured one: the full verify-pr was not run (it needs a GitHub PR and the container sandbox). Measured with the real judgePr and stubbed inputs: PR-0008 gives 3, but PR-0001 and PR-0002 give 4 because python3 check.py is not a recognised report runner (bun test, pytest, jest, vitest), so a control cannot reach 0 as written. SEALED cases are grader-passing controls for the false-block rate.",
   "schema": "loki.seeded-defects.pr/v1"
 }

@@ -223,7 +223,7 @@ unset LOKI_SD_CLAUDE
 # issue check, a control head passes it, a case with no check names none.
 PRM="$REPO_ROOT/benchmarks/seeded-defects/pr-manifest.json"
 if python3 -I - "$PRM" "$T" <<'PY2'
-import json, os, shutil, subprocess, sys
+import json, os, re, shutil, subprocess, sys
 man, tmp = sys.argv[1], sys.argv[2]
 root = os.path.dirname(man)
 d = json.load(open(man))
@@ -241,6 +241,10 @@ for c in cs:
         p = os.path.join(root, c["dir"], f)
         assert os.path.isfile(p) and os.path.getsize(p) > 0, (c["id"], f)
     assert c["has_check"] == ("check.py" in c["files"]), c["id"]
+    # extractChecks (loki-ts/src/contrib/verify_pr_f2p.ts:24): verify-pr reads checks only from the issue body
+    issue = open(os.path.join(root, c["dir"], "issue.md")).read()
+    runnable = any(re.match(r"^\s*(?:[-*+]\s+)?check:\s*`([^`]+)`", ln, re.I) for ln in issue.splitlines())
+    assert c["has_check"] == runnable, (c["id"], "has_check must equal a runnable Check line in issue.md", runnable)
     for side in ("base", "head"):
         w = os.path.join(tmp, "pr-" + c["id"] + side)
         shutil.copytree(os.path.join(root, c["dir"], side), w)
