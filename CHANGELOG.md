@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `loki verify-pr` now exits 4 (NOT PROVEN, naming the file) when a PR removes the pytest section from setup.cfg or pyproject.toml, or the jest key from package.json, while keeping the file, or adds an empty pytest.ini that masks other config, or edits pytest config written as dotted TOML keys; it previously exited 0 VERIFIED. A pytest version pin bump (`==` or Poetry caret) is still a plain dependency bump.
+- `loki verify-pr` now exits 4 (NOT PROVEN, naming the file) when a PR removes the pytest section from setup.cfg or pyproject.toml, or the jest key from package.json, while keeping the file, or adds an empty pytest.ini that masks other config, or adds or removes pytest config in pyproject.toml written as a top-level dotted key (`tool.pytest.ini_options...`), a dotted key under `[tool]`, a quoted key (`tool."pytest"...`) or an inline table (`pytest = { ini_options = ... }`); it previously exited 0 VERIFIED. A pytest version pin bump (`==` or Poetry caret) is still a plain dependency bump.
 
 ## v11.91.0 (2026-10-30)
 
