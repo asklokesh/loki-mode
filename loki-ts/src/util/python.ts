@@ -447,8 +447,3 @@ function pytestConfigFor(root: string): string {
   if (has("setup.cfg", /^\s*\[tool:pytest\]/m)) return join(root, "setup.cfg");
   return "/dev/null";
 }
-
-/** Reads `path` and applies `test` to its text; an unreadable file counts as a hit (fail closed). */
-export function textMatchesOrUnreadable(path: string, test: (txt: string) => boolean): boolean {
-  try { return test(readFileSync(path, "utf8")); } catch { return true; }
-}

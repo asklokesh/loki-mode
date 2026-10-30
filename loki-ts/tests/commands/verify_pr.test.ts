@@ -526,7 +526,7 @@ describe("verify-pr: an exit code alone is not proof", () => {
     ["pyproject.toml pytest section removed", { "pyproject.toml": "[project]\nname = 'x'\n" }, 4, /pyproject\.toml/],
     ["only an unrelated setup.cfg section edited", { "setup.cfg": "[flake8]\nmax-line-length = 120\n" }, 0, /^$/],
     ["config kept untouched while the bug is fixed", { "add.py": PY_FIXED }, 0, /^$/],
-  ] as const)("a PR with %s exits %i", async (_n, edits, rc, reason) => {
+  ] as const)("a PR with %s", async (_n, edits, rc, reason) => {
     const base = _n.startsWith("only an unrelated") ? { ...SECTION_FILES, "setup.cfg": "[flake8]\nmax-line-length = 100\n" } : SECTION_FILES;
     const meta = repoWith(`sec-${_n.replace(/\W/g, "")}`, base, { "note.txt": "x\n" });
     const repo = meta.cloneUrl;
@@ -539,6 +539,27 @@ describe("verify-pr: an exit code alone is not proof", () => {
     expect(r.rc).toBe(rc);
     expect(r.json.reasons.join(" ")).toMatch(reason);
   }, 30_000);
+
+  const WARN_TEST = "import warnings\n\ndef test_w():\n    warnings.warn('x', DeprecationWarning)\n";
+  const SELECT_TEST = "def test_bad():\n    assert False\n\ndef check_ok():\n    assert True\n";
+  const WARN_CHECK = "python3 -m pytest -q -p no:cacheprovider test_w.py";
+  test.each([
+    ["G1 setup.cfg [tool:pytest] masked by an added empty pytest.ini", { "setup.cfg": "[tool:pytest]\nfilterwarnings = error\n", "test_w.py": WARN_TEST }, { "pytest.ini": "" }, WARN_CHECK, 4],
+    ["G2 dotted-key pytest config removed from pyproject.toml", { "pyproject.toml": "[tool]\npytest.ini_options.filterwarnings = ['error']\n", "test_w.py": WARN_TEST }, { "pyproject.toml": "[tool]\nblack.line-length = 88\n" }, WARN_CHECK, 4],
+    ["G3 top-level dotted pytest key added to pyproject.toml", { "pyproject.toml": "[project]\nname = 'x'\n", "test_b.py": SELECT_TEST }, { "pyproject.toml": "tool.pytest.ini_options.python_functions = 'check_*'\n[project]\nname = 'x'\n" }, "python3 -m pytest -q -p no:cacheprovider test_b.py", 4],
+    ["a pyproject dependency bump that names pytest", { "pyproject.toml": "[project]\nname = 'x'\ndependencies = [\"pytest>=7\"]\n", "test_w.py": "def test_w():\n    assert False\n" }, { "pyproject.toml": "[project]\nname = 'x'\ndependencies = [\"pytest>=8\"]\n", "test_w.py": "def test_w():\n    assert True\n" }, WARN_CHECK, 0],
+  ] as const)("config bypass form: %s", async (_n, base, pr, check, rc) => {
+    const meta = repoWith(`byp-${_n.replace(/\W/g, "").slice(0, 24)}`, base, pr);
+    const r = await run(meta, { checkout: defaultCheckout }, issueFor(check));
+    expect(r.rc).toBe(rc);
+    if (rc === 4) expect(r.json.reasons.join(" ")).toMatch(/pytest\.ini|pyproject\.toml/);
+  }, 60_000);
+
+  test("a config path that cannot be read is treated as config, not skipped", () => {
+    mkdirSync(join(dir, "unreadable.toml"));
+    writeFileSync(join(dir, "unreadable.toml", "x"), "x\n");
+    expect(runnerConfigChanged(["unreadable.toml"], dir)).toEqual(["unreadable.toml"]);
+  });
 
   test("a PR that only bumps a git submodule is not flagged as runner config", async () => {
     const files = { "pytest.ini": "[pytest]\nfilterwarnings =\n    error\n", "test_w.py": "def test_w():\n    assert True\n" };
