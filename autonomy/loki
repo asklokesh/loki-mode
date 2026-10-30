@@ -28238,12 +28238,12 @@ EOF_FILES
         base="${refs%% *}"; head="${refs#* }"
         case "$base$head" in ''|*[!0-9a-f]*) echo "the PR's rename modes are unreadable"; return 1 ;; esac
         if ! git cat-file -e "${base}^{commit}" 2>/dev/null || ! git cat-file -e "${head}^{commit}" 2>/dev/null; then
-            git fetch -q origin "pull/${num}/head" >/dev/null 2>&1 || true
+            GIT_TERMINAL_PROMPT=0 git fetch -q origin "pull/${num}/head" >/dev/null 2>&1 || true
         fi
         while IFS="$(printf '\t')" read -r from to; do
             [ -n "$to" ] || continue
-            m_old="$(git ls-tree "$base" -- "$from" 2>/dev/null | awk '{print $1; exit}')"
-            m_new="$(git ls-tree "$head" -- "$to" 2>/dev/null | awk '{print $1; exit}')"
+            m_old="$(git ls-tree --full-tree "$base" -- "$from" 2>/dev/null | awk '{print $1; exit}')"
+            m_new="$(git ls-tree --full-tree "$head" -- "$to" 2>/dev/null | awk '{print $1; exit}')"
             case "$m_old:$m_new" in
                 120000:*|160000:*|*:120000|*:160000) echo "rename from $from to $to involves a symlink or submodule"; return 1 ;;
                 '':*|*:'') echo "rename from $from to $to has unreadable file modes"; return 1 ;;

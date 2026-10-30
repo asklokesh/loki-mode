@@ -475,7 +475,8 @@ for _n in 4 5; do
   printf '{"honesty":{"headline":"VERIFIED"},"files_changed":{"files":[{"path":"lnk.txt"},{"path":"lnk2.txt"},{"path":"reg.txt"},{"path":"reg2.txt"}]}}' > "$EM/.loki/proofs/r$_n/proof.json"
 done
 echo t > "$EM/tgt.txt"; echo r > "$EM/reg.txt"; ln -s tgt.txt "$EM/lnk.txt"
-git -C "$EM" add tgt.txt reg.txt lnk.txt; git -C "$EM" commit -qm "add link and file"
+mkdir -p "$EM/sub"; echo d > "$EM/sub/lnk.txt"; echo d > "$EM/sub/lnk2.txt"
+git -C "$EM" add tgt.txt reg.txt lnk.txt sub/lnk.txt sub/lnk2.txt; git -C "$EM" commit -qm "add link and file"
 _base="$(git -C "$EM" rev-parse HEAD)"
 git -C "$EM" mv lnk.txt lnk2.txt; git -C "$EM" mv reg.txt reg2.txt
 git -C "$EM" commit -qm "rename both"
@@ -496,6 +497,28 @@ EOF_C
     *) grep -q "^pr merge feat-em" "$STUB_LOG" && ok "earned: a pure regular-file rename still merges" || bad "regular rename did not merge: $OUT" ;;
   esac
 done
+# Run from a subdirectory holding same-named regular-file decoys: the modes must
+# come from the repo root tree, not the cwd.
+ln -s ../.loki "$EM/sub/.loki"
+printf 'lnk2.txt\tlnk.txt\n' > "$WORK/files-feat-em"
+printf 'diff --git a/lnk.txt b/lnk2.txt\nsimilarity index 100%%\nrename from lnk.txt\nrename to lnk2.txt\n' > "$WORK/diff-feat-em"
+: > "$STUB_LOG"
+OUT="$(cd "$EM/sub" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
+grep -q "^pr merge feat-em" "$STUB_LOG" && bad "subdir decoy let a symlink rename merge" || ok "earned: a subdirectory decoy cannot hide a symlink rename"
+echo "$OUT" | grep -q "rename from lnk.txt to lnk2.txt involves a symlink or submodule" && ok "earned: subdirectory run still names the symlink" || bad "subdir msg: $OUT"
+# Fail-safe arms: garbage refs, and a rename path absent from the tree.
+printf 'garbage\n' > "$WORK/refs-feat-em"
+: > "$STUB_LOG"
+OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
+grep -q "^pr merge feat-em" "$STUB_LOG" && bad "garbage refs merged" || ok "earned: unreadable rename refs never merge"
+echo "$OUT" | grep -q "the PR's rename modes are unreadable" && ok "earned: garbage refs name the unreadable modes" || bad "garbage refs msg: $OUT"
+printf '%s %s\n' "$_base" "$_head" > "$WORK/refs-feat-em"
+printf 'reg2.txt\treg.txt\n' > "$WORK/files-feat-em"
+printf 'diff --git a/reg.txt b/reg2.txt\nsimilarity index 100%%\nrename from reg.txt\nrename to nowhere.txt\n' > "$WORK/diff-feat-em"
+: > "$STUB_LOG"
+OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
+grep -q "^pr merge feat-em" "$STUB_LOG" && bad "absent rename path merged" || ok "earned: a rename path absent from the tree never merges"
+echo "$OUT" | grep -q "rename from reg.txt to nowhere.txt has unreadable file modes" && ok "earned: absent path names the unreadable modes" || bad "absent msg: $OUT"
 printf 'good.txt\n' > "$WORK/files-feat-em"
 printf 'UNREADABLE\n' > "$WORK/diff-feat-em"
 : > "$STUB_LOG"
