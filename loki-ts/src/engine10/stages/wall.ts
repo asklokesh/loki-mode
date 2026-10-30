@@ -55,7 +55,7 @@ export const WALL_MAP_MAX_LINES = 200;
 export const WALL_OUTPUT_BUDGET = "Output budget: write one test file, one assertion block per acceptance line, no docstrings, and no closing summary.";
 
 /** FC-WALL-OUT-OF-REPO-TARGET: static, cache-stable, sits beside the output budget before any run-specific text. */
-export const WALL_REPO_PATHS = "Reach repo code by repo-relative paths, never via home dir, $HOME or ~/.";
+export const WALL_REPO_PATHS = "Reach repo code by repo-relative paths, never via home dir, $HOME or ~/. A file the task names keeps exactly that path relative to the repository root (a bare name such as rotate.sh is at the root). Locate it from the repository root, never beside your test file, because the implementer places the deliverable wherever the test looks.";
 
 export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false, conventions = "", acceptance: string[] = [], location: string | null = null, clauses: ClauseSet | null = null, evidence: WallEvidence | null = null): string { // location: repo-relative destination directory; "" is the repo root; null is unknown (no line)
   return withStagePrefix([

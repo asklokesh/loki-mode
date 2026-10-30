@@ -127,6 +127,13 @@ describe("engine10 wall brief", () => {
     expect(brief.toLowerCase()).toContain("cannot see the repository");
     expect(brief).toContain("loki_wall_");
   });
+  test("a task-named file stays at its named path from the repo root, stated in the static prefix", () => {
+    const b = buildWallBrief("Write `rotate.sh DIR KEEP` in bash", "", [], false, "", [], "tests");
+    const at = b.indexOf("a bare name such as rotate.sh is at the root");
+    expect(at).toBeGreaterThan(-1);
+    expect(b).toContain("never beside your test file");
+    expect(at).toBeLessThan(b.indexOf("Write `rotate.sh DIR KEEP`")); // before run-specific text
+  });
   test("frozen unit acceptance lines seed the brief; none means byte-identical", () => {
     expect(buildWallBrief("t", "", [], false, "", [])).toBe(buildWallBrief("t"));
     const b = buildWallBrief("t", "", [], false, "", ["login works", "export works"]);
