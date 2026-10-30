@@ -626,6 +626,16 @@ export function repoReadiness(p: CommandProfile, host?: ReadinessHost): Readines
   return { score, grade: score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 50 ? "D" : "F", findings };
 }
 
+/** The one-line Readiness notice for a run, or null when this repo already showed the same score (marker under .loki/state); a first run or a changed score returns it. */
+export function readinessNotice(repoDir: string, r: Readiness): string | null {
+  const marker = join(repoDir, ".loki", "state", "readiness-shown");
+  let shown: string | null = null;
+  try { shown = readFileSync(marker, "utf8").trim(); } catch { /* no marker: first run */ }
+  if (shown === String(r.score)) return null;
+  try { mkdirSync(join(marker, ".."), { recursive: true }); atomicWriteFileSync(marker, `${r.score}\n`); } catch { /* an unwritable marker only repeats the line */ }
+  return `Readiness: ${r.score}/100 (${r.grade})${r.findings.length ? ` - run \`loki doctor --repo\` for ${r.findings.length} fix(es)` : ""}`;
+}
+
 export const readinessLines = (r: Readiness): string[] => [`  Readiness: ${r.score}/100 (${r.grade})`, ...(r.findings.length ? ["  Fix:", ...r.findings.map((f) => `    - ${f.fix}`)] : [])];
 
 export function renderProfile(p: CommandProfile | null, host?: ReadinessHost): string {

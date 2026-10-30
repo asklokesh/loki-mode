@@ -16,7 +16,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { failIds } from "../../src/engine10/failures.ts";
 import { exitCodedId } from "../../src/util/check_result.ts";
-import { attribute, attributeFullSuite, attributeStatic, baselineSuites, discoverCommands, ensureProfile, loadProfile, manifestHash, profileBrief, commandProfilePath, renderProfile, repoReadiness, type BaselineRunner, type CommandProfile, type ProfileCommand } from "../../src/runner/repo_profile.ts";
+import { attribute, attributeFullSuite, attributeStatic, baselineSuites, discoverCommands, ensureProfile, loadProfile, manifestHash, profileBrief, commandProfilePath, renderProfile, repoReadiness, readinessNotice, type BaselineRunner, type CommandProfile, type ProfileCommand } from "../../src/runner/repo_profile.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
@@ -1063,6 +1063,26 @@ describe("repo baseline profile (REPOMEM)", () => {
         expect(readFileSync(commandProfilePath(d), "utf8")).toBe(before);
       } finally { process.chdir(cwd); }
     }, 60_000);
+  });
+
+  describe("readinessNotice: shown on the first run and when the score changes", () => {
+    const rd = (score: number) => ({ score, grade: "F", findings: [] }) as never;
+    const repo = () => mkdtempSync(join(tmpdir(), "loki-rdy-"));
+    test("first run shows the line, second run in the same repo does not", () => {
+      const d = repo();
+      try {
+        expect(readinessNotice(d, rd(45))).toBe("Readiness: 45/100 (F)");
+        expect(readinessNotice(d, rd(45))).toBeNull();
+      } finally { rmSync(d, { recursive: true, force: true }); }
+    });
+    test("a changed score shows the line again", () => {
+      const d = repo();
+      try {
+        readinessNotice(d, rd(45));
+        expect(readinessNotice(d, rd(60))).toBe("Readiness: 60/100 (F)");
+        expect(readinessNotice(d, rd(60))).toBeNull();
+      } finally { rmSync(d, { recursive: true, force: true }); }
+    });
   });
 
   describe("repoReadiness (FV-readiness-env-1)", () => {
