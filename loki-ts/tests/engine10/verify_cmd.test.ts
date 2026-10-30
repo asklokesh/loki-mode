@@ -2023,3 +2023,32 @@ describe("PX-10 adversarial receipt corpus", () => {
     expect(tampered).toBe(0);
   }, 120_000);
 });
+
+describe("main() Seal accuracy line (GAME10-03c)", () => {
+  const LINE = "Seal accuracy for python/pytest at this tier: 0 wrong passes in 60 seeded defects, 95% upper bound 6.0%, measured on 11.85.0";
+  const run = async (id: string, extra: Record<string, unknown>): Promise<string> => {
+    const dir = tmpDir();
+    try {
+      const fields = { ...baseReceiptFields(), run_id: id, ...extra }, runDir = join(dir, "runs", id);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(runDir, "receipt.json"), JSON.stringify({ ...fields, receipt_sha256: computeReceiptHash(fields), verification: { jwt: null, kid: null } }));
+      return (await runMain([id, "--allow-unsigned"], join(dir, "runs"))).out;
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+  test("prints the receipt's signed line, and the same not measured line when it says so or the receipt predates it", async () => {
+    expect(await run("sa1", { seal_accuracy: LINE })).toContain(`\n${LINE}\n`);
+    expect(await run("sa2", { seal_accuracy: "Seal accuracy: not measured" })).toContain("\nSeal accuracy: not measured\n");
+    expect(await run("sa3", {})).toContain("\nSeal accuracy: not measured\n");
+  });
+  test("an edited line is TAMPERED and prints no accuracy line", async () => {
+    const dir = tmpDir();
+    try {
+      const f = { ...baseReceiptFields(), run_id: "sa4", seal_accuracy: LINE }, runDir = join(dir, "runs", "sa4");
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(runDir, "receipt.json"), JSON.stringify({ ...f, seal_accuracy: LINE.replace("6.0%", "0.1%"), receipt_sha256: computeReceiptHash(f), verification: { jwt: null, kid: null } }));
+      const r = await runMain(["sa4", "--allow-unsigned"], join(dir, "runs"));
+      expect(r.code).toBe(1);
+      expect(r.out).not.toContain("0.1%");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});

@@ -12,7 +12,7 @@ import { intentSection } from "../../util/intent_card.ts";
 import { specPrLine } from "../../util/spec_file.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { collapseNotProven, pushErrLine } from "../../util/term_width.ts";
-import { stackBase, stackSection, tierSealFor } from "../../util/run_outputs.ts"; import { publishFallback } from "../../util/engine_origin.ts";
+import { sealAccuracyOfFile, stackBase, stackSection, tierSealFor } from "../../util/run_outputs.ts"; import { publishFallback } from "../../util/engine_origin.ts";
 import { postReceiptComment, renderReceiptComment } from "../../util/receipt_surface.ts";
 import { lokiYamlTexts, yamlKey } from "../../util/yaml_key.ts"; import { idempotencyKey, runOnce } from "../../util/outbox.ts";
 /** B7: who opens the PR. LOKI_PR_AUTHOR beats loki.yaml pr.author; anything but "bot" is "me". */
@@ -112,7 +112,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const link = issueLink(ctx.runDir, verdict);
   const bodyFile = join(ctx.runDir, "pr-body.md");
   const beforeAfter = await beforeAfterBlock(ctx.repoDir, ctx.runDir, ((ctx.outputs().verify?.["changed_files"] ?? []) as unknown[]).map(String), ctx.baseSha, { signal });
-  const reviewerBody = renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs() });
+  const reviewerBody = renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs(), sealAccuracy: sealAccuracyOfFile(seal.receipt_path ?? null) });
   const tpl = readPrTemplate(ctx.repoDir), shaped = tpl === null ? reviewerBody : applyPrTemplate(reviewerBody, tpl, receiptProof(verdict, ctx.outputs(), seal.receipt_sha256 ?? null)); // no template: today's body, byte-identical
   writeFileSync(bodyFile, withAiMarker(withSealRoute(shaped, process.env, seal), aiMarkerLine({ runId: ctx.runId, provider: ctx.provider, model: ctx.model })) + (verdict === "VERIFIED" ? `\n${tierBodyLine(tierSealFor(ctx.repoDir, ctx.runId))}\n` : "") + intentSection(ctx.outputs().plan) + specPrLine(process.env) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + link + stackSection(process.env, base, link !== "") + (ctx.handoffMd ?? ""), "utf8");
   const title = `Loki 10: ${verdict} (${ctx.runId})`;
