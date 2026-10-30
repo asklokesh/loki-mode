@@ -5,21 +5,6 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
-
-### Changed
-
-- `loki share`, `loki proof share` and `loki metrics --share` now create a secret GitHub gist by default (they were public). Pass `--public` to publish a public gist, which prints a one-line warning that anyone with the URL can see it. `--private` still works as a no-op alias.
-
-### Added
-
-- Every PR body and `loki verify` output now prints the receipt's signed Seal accuracy line, or "Seal accuracy: not measured" when the receipt has none for that change.
-- When the task carries runtime evidence (a stack trace, request and response pair or tracker URL), the Wall brief now requires a test that reproduces it and fails on the current code; if every Wall test already passes there, the run records the evidence as not reproduced and never reports the task as already satisfied (the sealed verdict stays PARTIAL). The evidence block in the brief is capped at 700 bytes and keeps only plain path characters. Runs without evidence are unchanged, proven by tests/engine10/wall.test.ts.
-
-### Fixed
-
-- The earned auto-merge check now refuses a pure rename (100% similarity, no mode line in the diff) of a symlink or submodule between earned paths, reading the file modes from git on both sides of the PR, and names the renamed file in the refusal.
-
 ## v11.90.0 (2026-10-30)
 
 ### Added
