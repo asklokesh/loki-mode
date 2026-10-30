@@ -188,6 +188,37 @@ else
   log_fail "share preview" "no redaction preview in share output: $out"
 fi
 
+# ---------------------------------------------------------------------------
+# T9: gist visibility. Default and --private record no --public in gh argv;
+# --public records it and prints the stderr warning.
+# ---------------------------------------------------------------------------
+check_vis() {
+  local desc="$1" expect="$2"; shift 2
+  : > "$GH_LOG"
+  local o
+  o=$( ( cd "$PROJECT" && LOKI_LEGACY_BASH=1 LOKI_DIR=".loki" \
+         bash "$LOKI" proof share "$RUN_ID" --yes "$@" ) 2>&1 )
+  local line has=no
+  line=$(grep "gist create" "$GH_LOG" | head -1)
+  if [ -z "$line" ]; then
+    log_fail "$desc" "gh gist create not called: $o"; return 0
+  fi
+  case " $line " in *" --public "*) has=yes ;; esac
+  if [ "$has" != "$expect" ]; then
+    log_fail "$desc" "expected --public=$expect, argv: $line"; return 0
+  fi
+  if [ "$expect" = "yes" ] && ! echo "$o" | grep -qi "PUBLIC and visible to anyone"; then
+    log_fail "$desc" "no public warning printed"; return 0
+  fi
+  if [ "$expect" = "no" ] && echo "$o" | grep -qi "PUBLIC and visible to anyone"; then
+    log_fail "$desc" "public warning printed for a secret gist"; return 0
+  fi
+  log_pass "$desc"
+}
+check_vis "share (default) creates a secret gist" no
+check_vis "share --private creates a secret gist" no --private
+check_vis "share --public creates a public gist and warns" yes --public
+
 echo ""
 echo -e "${YELLOW}=== Results: ${GREEN}${PASS} passed${NC}, ${RED}${FAIL} failed${NC} ===${NC}"
 

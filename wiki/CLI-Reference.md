@@ -1755,7 +1755,8 @@ loki proof <subcommand> [args]
 | Option | Description |
 |--------|-------------|
 | `--yes` | Skip the redaction-preview confirmation prompt |
-| `--private` | Create a secret gist (default: public) |
+| `--public` | Create a PUBLIC gist, visible to anyone with the URL |
+| `--private` | Create a secret gist (default: secret; accepted for compatibility) |
 | `--hosted` | Publish to `LOKI_HOSTED_ENDPOINT` (no official backend yet; operators supply their own) |
 
 **Examples:**
@@ -1770,11 +1771,11 @@ loki proof show <run_id>
 # Open the proof page locally in your browser
 loki proof open <run_id>
 
-# Publish to a GitHub Gist (shows a redaction preview first)
+# Publish to a secret GitHub Gist (shows a redaction preview first)
 loki proof share <run_id>
 
-# Publish as a secret gist without the confirmation prompt
-loki proof share --private --yes <run_id>
+# Publish as a public gist without the confirmation prompt
+loki proof share --public --yes <run_id>
 
 # Print a copy-paste "Verified by Loki" markdown badge
 loki proof badge <run_id>

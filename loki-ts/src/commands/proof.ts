@@ -69,7 +69,8 @@ the receipt verdict is VERIFIED or ALREADY_SATISFIED; otherwise exit 1.
 
 Options for 'share':
   --yes                Skip the redaction-preview confirmation prompt
-  --private            Create a secret gist (default: public)
+  --public             Create a PUBLIC gist, visible to anyone with the URL
+  --private            Create a secret gist (default: secret; accepted for compatibility)
   --hosted             Publish to LOKI_HOSTED_ENDPOINT (open-core seam; no official backend yet)
   --dry-run            Run the secret scan and list what would be published; publishes
                        nothing. Exit 0 clean, 1 when the scan blocks
@@ -702,6 +703,7 @@ async function shareRun(id: string, receiptPath: string, skipConfirm: boolean, v
     }
     const args = ["gh", "gist", "create", ...files, "--desc", `Loki Mode receipt bundle ${id}`];
     if (visibility !== "") args.push(visibility);
+    if (visibility === "--public") process.stderr.write(`${YELLOW}Warning: this gist is PUBLIC and visible to anyone with the URL.${NC}\n`);
     const res = await run(args, { timeoutMs: 60000 });
     if (res.exitCode !== 0) {
       process.stderr.write(`${RED}Failed to create gist${NC}\n${res.stdout}${res.stderr}\n`);
@@ -747,7 +749,7 @@ async function dryRunProofPage(id: string, html: string): Promise<number> {
 async function shareProof(argv: readonly string[]): Promise<number> {
   let id = "";
   let skipConfirm = false;
-  let visibility = "--public";
+  let visibility = "";
   let hosted = false;
   let dryRun = false;
   for (const a of argv) {
@@ -828,6 +830,7 @@ async function shareProof(argv: readonly string[]): Promise<number> {
   const args = ["gh", "gist", "create", tmpfile, "--desc", desc];
   // Match bash: empty visibility (--private) collapses to no flag.
   if (visibility !== "") args.push(visibility);
+  if (visibility === "--public") process.stderr.write(`${YELLOW}Warning: this gist is PUBLIC and visible to anyone with the URL.${NC}\n`);
   const res = await run(args, { timeoutMs: 60000 });
   try {
     rmSync(dir, { recursive: true, force: true });

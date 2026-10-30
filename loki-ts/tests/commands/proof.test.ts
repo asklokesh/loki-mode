@@ -373,6 +373,26 @@ describe("loki proof share --dry-run", () => {
     const r = await share(["nope", "--dry-run"], g.bin);
     expect(r.exitCode).toBe(1);
   });
+
+  it("gist visibility: secret by default and with --private, public only with --public", async () => {
+    seedPage("p-vis", "<html>hello</html>");
+    const g = fakeGh();
+    const gistLines = (): string[] =>
+      readFileSync(g.log, "utf8").split("\n").filter((l) => l.startsWith("gist create"));
+    for (const argv of [["p-vis", "--yes"], ["p-vis", "--yes", "--private"]]) {
+      rmSync(g.log, { force: true });
+      const r = await share(argv, g.bin);
+      expect(r.exitCode).toBe(0);
+      expect(gistLines().length).toBe(1);
+      expect(gistLines()[0]).not.toContain("--public");
+      expect(r.stderr).not.toContain("PUBLIC and visible");
+    }
+    rmSync(g.log, { force: true });
+    const pub = await share(["p-vis", "--yes", "--public"], g.bin);
+    expect(pub.exitCode).toBe(0);
+    expect(gistLines()[0]).toContain("--public");
+    expect(pub.stderr).toContain("PUBLIC and visible to anyone with the URL");
+  });
 });
 
 // TEN-ADOPTION-14: list --json prints the index as a machine-readable array.

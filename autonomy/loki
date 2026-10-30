@@ -31273,6 +31273,7 @@ cmd_metrics() {
     local last_n=0
     local save_file=false
     local share_flag=false
+    local share_visibility=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -31289,7 +31290,8 @@ cmd_metrics() {
                 echo "  --json               Machine-readable JSON output"
                 echo "  --last N             Analyze only the last N sessions (default: all)"
                 echo "  --save               Write report to METRICS.md in project root"
-                echo "  --share              Upload report as GitHub Gist (via loki share)"
+                echo "  --share              Upload report as a secret GitHub Gist (via loki share)"
+                echo "  --public             With --share, create a PUBLIC gist instead"
                 echo "  --help, -h           Show this help"
                 echo ""
                 echo "Subcommands:"
@@ -31300,7 +31302,7 @@ cmd_metrics() {
                 echo "  loki metrics --json            # Machine-readable output"
                 echo "  loki metrics --last 5          # Last 5 sessions only"
                 echo "  loki metrics --save            # Write METRICS.md"
-                echo "  loki metrics --share           # Share as GitHub Gist"
+                echo "  loki metrics --share           # Share as a secret GitHub Gist"
                 echo "  loki metrics prometheus        # Prometheus metrics from dashboard"
                 exit 0
                 ;;
@@ -31309,6 +31311,7 @@ cmd_metrics() {
             --last=*) last_n="${1#*=}"; shift ;;
             --save) save_file=true; shift ;;
             --share) share_flag=true; shift ;;
+            --public) share_visibility="--public"; shift ;;
             prometheus)
                 # Legacy Prometheus metrics subcommand
                 shift
@@ -31731,7 +31734,10 @@ METRICS_SCRIPT
         project_name=$(basename "$(pwd)")
         local gist_desc="Loki Mode productivity report - ${project_name:-project} ($(date +%Y-%m-%d))"
         local gist_url
-        gist_url=$(gh gist create "$tmpfile" --desc "$gist_desc" --public 2>&1)
+        if [ "$share_visibility" = "--public" ]; then
+            echo -e "${YELLOW}Warning: this gist is PUBLIC and visible to anyone with the URL.${NC}" >&2
+        fi
+        gist_url=$(gh gist create "$tmpfile" --desc "$gist_desc" $share_visibility 2>&1)
         local gist_exit=$?
         rm -f "$tmpfile"
 
@@ -38938,7 +38944,8 @@ REPORT_SCRIPT
 
 cmd_share() {
     local format="markdown"
-    local visibility="--public"
+    # Secret by default: --public is passed to gh only on an explicit --public.
+    local visibility=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -38951,20 +38958,22 @@ cmd_share() {
                 echo "returning a shareable URL."
                 echo ""
                 echo "Options:"
-                echo "  --private            Create a secret gist (default: public)"
+                echo "  --public             Create a PUBLIC gist, visible to anyone with the URL"
+                echo "  --private            Create a secret gist (default: secret; accepted for compatibility)"
                 echo "  --format <fmt>       Report format: text, markdown, html (default: markdown)"
                 echo "  --help, -h           Show this help"
                 echo ""
                 echo "Examples:"
-                echo "  loki share                         # Public markdown gist"
-                echo "  loki share --private               # Secret gist"
-                echo "  loki share --format html           # Public HTML gist"
-                echo "  loki share --private --format text  # Secret text gist"
+                echo "  loki share                         # Secret markdown gist (default)"
+                echo "  loki share --public                # Public gist"
+                echo "  loki share --format html           # Secret HTML gist"
+                echo "  loki share --public --format text  # Public text gist"
                 echo ""
                 echo "Requires: gh CLI (https://cli.github.com)"
                 exit 0
                 ;;
             --private) visibility=""; shift ;;
+            --public) visibility="--public"; shift ;;
             --format) format="${2:-markdown}"; shift 2 ;;
             --format=*) format="${1#*=}"; shift ;;
             *) echo -e "${RED}Unknown option: $1${NC}" >&2; echo "Run 'loki share --help' for usage." >&2; exit 1 ;;
@@ -39038,8 +39047,8 @@ cmd_share() {
 }
 
 # Internal helper: upload a single file as a GitHub Gist.
-# Args: $1=file path, $2=description, $3=visibility ("--public", "--private",
-# or "" for gh's default). NOTE: $3 is intentionally left unquoted at the
+# Args: $1=file path, $2=description, $3=visibility ("--public" for a public
+# gist, or "" for gh's default, which is a secret gist). NOTE: $3 is intentionally left unquoted at the
 # gh call site so an empty value collapses (the --private case sets it to "").
 # Removes the input file after the attempt. Prints "Shared: <url>" on success;
 # on failure prints the gh error and exits 1.
@@ -39054,6 +39063,9 @@ _loki_gist_upload() {
     # "Shared:" line and the ready-to-post hook with multi-line gh chatter.
     local gist_out gist_err gist_exit
     local errfile
+    if [ "$visibility" = "--public" ]; then
+        echo -e "${YELLOW}Warning: this gist is PUBLIC and visible to anyone with the URL.${NC}" >&2
+    fi
     # Fall back to /dev/null if mktemp fails (disk full / unwritable /tmp) so the
     # redirect target is always a real path -- never an empty string (2>"" is a
     # bash error). We lose the captured stderr text in that rare case, not the
@@ -39518,7 +39530,8 @@ cmd_proof() {
             echo ""
             echo "Options for 'share':"
             echo "  --yes                Skip the redaction-preview confirmation prompt"
-            echo "  --private            Create a secret gist (default: public)"
+            echo "  --public             Create a PUBLIC gist, visible to anyone with the URL"
+            echo "  --private            Create a secret gist (default: secret; accepted for compatibility)"
             echo "  --hosted             Publish to LOKI_HOSTED_ENDPOINT (open-core seam; no official backend yet)"
             echo ""
             echo "Proofs are generated automatically at run completion (LOKI_PROOF=0 to opt out)."
@@ -40176,7 +40189,7 @@ print(json.dumps(doc, indent=2))
         share)
             local id=""
             local skip_confirm=0
-            local visibility="--public"
+            local visibility=""
             local hosted=0
             # every python3 invocation below reads proof.json from inside
             # the checkout being shared. Resolve an absolute path once so an
