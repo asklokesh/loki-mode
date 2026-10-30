@@ -3,11 +3,65 @@
 // E-154b: bun test never fires process "exit", so cleanup hangs off a bun:test
 // afterAll; the dir is removed again (idempotent) after every file.
 import { afterAll, beforeAll, setDefaultTimeout } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { cpus, loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerContrib } from "../src/contrib/index.ts";
 import { RECEIPT_SIGNER_BASENAME } from "../src/util/receipt_signer.ts";
+
+// PG-64: afterAll is not reached when bun stops early (`--bail`, a `timeout` SIGTERM) and nothing runs after SIGKILL. Every dir this
+// preload creates gets an owner marker holding this process's pid. Exit and signal handlers remove the dirs; the next run reaps only
+// dirs that carry a marker whose pid is dead and whose marker is older than REAP_AGE_MS. Unmarked dirs are never touched.
+const OWNER_MARKER = ".loki-test-owner";
+const REAP_AGE_MS = 10 * 60 * 1000;
+const ownedDirs = new Set<string>();
+const pidAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+export function reapStaleTestDirs(root: string = tmpdir(), now: number = Date.now()): string[] {
+  const reaped: string[] = [];
+  let names: string[] = [];
+  try {
+    names = readdirSync(root);
+  } catch {
+    return reaped;
+  }
+  for (const name of names) {
+    if (!name.startsWith("loki-test-home-") && !name.startsWith("loki-test-key-")) continue;
+    const dir = join(root, name);
+    const marker = join(dir, OWNER_MARKER);
+    try {
+      const pid = Number(readFileSync(marker, "utf8").trim());
+      if (!Number.isInteger(pid) || pid <= 0 || pidAlive(pid)) continue;
+      if (now - statSync(marker).mtimeMs < REAP_AGE_MS) continue;
+      rmSync(dir, { recursive: true, force: true });
+      reaped.push(dir);
+    } catch {
+      // no marker or unreadable: not ours, leave it
+    }
+  }
+  return reaped;
+}
+const markOwned = (dir: string): void => {
+  ownedDirs.add(dir);
+  writeFileSync(join(dir, OWNER_MARKER), `${process.pid}\n`);
+};
+const removeOwned = (): void => {
+  for (const dir of ownedDirs) rmSync(dir, { recursive: true, force: true });
+};
+process.on("exit", removeOwned);
+for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+  process.on(sig, () => {
+    removeOwned();
+    process.exit(128 + (sig === "SIGTERM" ? 15 : sig === "SIGINT" ? 2 : 1));
+  });
+}
+reapStaleTestDirs();
 
 // D91: fill core's hook slots from contrib/, as src/cli.ts does at startup.
 registerContrib();
@@ -36,6 +90,7 @@ if (process.env["LOKI_HERMETIC_HOME"] === undefined || process.env["HOME"] !== p
     const seedHome = (): void => {
       mkdirSync(hermetic, { recursive: true, mode: 0o700 });
       writeFileSync(join(hermetic, ".gitconfig"), "[user]\n\tname = loki-test\n\temail = loki-test@example.invalid\n");
+      markOwned(hermetic);
     };
     seedHome();
     process.env["LOKI_HERMETIC_HOME"] = hermetic;
@@ -51,6 +106,7 @@ if (process.env["LOKI_HERMETIC_HOME"] === undefined || process.env["HOME"] !== p
 
 if (!process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]) {
   const dir = mkdtempSync(join(tmpdir(), "loki-test-key-"));
+  markOwned(dir);
   process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(dir, RECEIPT_SIGNER_BASENAME);
   afterAll(() => {
     rmSync(dir, { recursive: true, force: true });
