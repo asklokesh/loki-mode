@@ -6,9 +6,11 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { projectApi } from "../../src/project_model/api.ts";
-import { discoverProjectModel } from "../../src/project_model/discover.ts";
+import { discoverProjectModel, intakeProjectModel, signalsResolve } from "../../src/project_model/discover.ts";
 import { loadProjectApi } from "../../src/project_model/resolve.ts";
 import { unknownModel, validateAnswer } from "../../src/project_model/schema.ts";
+import { runIntake } from "../../src/engine10/stages/intake.ts";
+import { buildTestMap } from "../../src/engine10/testmap.ts";
 import { commandFor } from "../../src/engine10/stages/verify.ts";
 import type { RunContext, SessionResult, SessionRunOptions } from "../../src/engine10/types.ts";
 
@@ -145,5 +147,79 @@ describe("FC-55 hard timeout on the discovery session", () => {
     expect(out.owner).toBe("provider");
     expect(out.model.reason).toContain("hung");
     expect(events.map((e) => e[0])).toContain("project_model.fallback");
+  });
+});
+
+describe("intake skips discovery when the deterministic signals resolve", () => {
+  function twoPkg(withRunner: boolean): string {
+    const d = mkdtempSync(join(tmpdir(), "pm-resolved-"));
+    dirs.push(d);
+    if (withRunner) writeFileSync(join(d, "pytest.ini"), "[pytest]\naddopts = -q\n");
+    for (const p of ["alpha", "beta"]) {
+      mkdirSync(join(d, p), { recursive: true });
+      writeFileSync(join(d, p, `${p}.py`), "def f():\n    return 1\n");
+      if (withRunner) writeFileSync(join(d, p, `test_${p}.py`), `from ${p} import f\n\ndef test_f():\n    assert f() == 1\n`);
+    }
+    writeFileSync(join(d, "README.md"), "x\n");
+    git(d, "init", "-q");
+    git(d, "add", "-A", "-f");
+    return d;
+  }
+  const count = async (d: string): Promise<{ calls: number; frag: Record<string, any> }> => {
+    let calls = 0;
+    const prev = process.env["LOKI_E10_PROJECT_MODEL"];
+    delete process.env["LOKI_E10_PROJECT_MODEL"]; // default ON
+    try {
+      const frag = await intakeProjectModel(ctxFor(d, async () => { calls++; return ok; }), sig, Date.now(), buildTestMap(d));
+      return { calls, frag };
+    } finally { if (prev === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = prev; }
+  };
+  test("a two-package repo whose runner and units resolve from manifests runs zero sessions", async () => {
+    const { calls, frag } = await count(twoPkg(true));
+    expect(calls).toBe(0);
+    expect(frag["project_model"].owner).toBe("harness");
+    expect(frag["project_model"].attempts).toBe(0);
+  });
+  test("through runIntake: the stage wires its test map to discovery, so the same repo runs zero sessions", async () => {
+    const d = twoPkg(true);
+    for (const a of [["config", "user.email", "t@example.com"], ["config", "user.name", "t"], ["commit", "-q", "-m", "init"]]) git(d, ...a);
+    let calls = 0;
+    const ctx = { ...ctxFor(d, async () => { calls++; return ok; }), branch: "loki/pm-resolved", tests: { detect: async (r: string) => buildTestMap(r), impacted: () => [] } } as unknown as RunContext;
+    const keys = ["LOKI_E10_PROJECT_MODEL", "LOKI_E10_INSTALL", "LOKI_REPO_BASELINE"] as const;
+    const prev = keys.map((k) => process.env[k]);
+    delete process.env["LOKI_E10_PROJECT_MODEL"];
+    process.env["LOKI_E10_INSTALL"] = "0";
+    process.env["LOKI_REPO_BASELINE"] = "0";
+    try {
+      const r = await runIntake(ctx, sig, { taskText: "do a thing" });
+      expect(r.status).toBe("completed");
+      expect((r.data as any).project_model.owner).toBe("harness");
+      expect(calls).toBe(0);
+    } finally { keys.forEach((k, i) => { if (prev[i] === undefined) delete process.env[k]; else process.env[k] = prev[i]!; }); }
+  });
+  test("a repo with per-package manifests below the root still runs discovery, so each package gets its own install", async () => {
+    const d = mkdtempSync(join(tmpdir(), "pm-nested-"));
+    dirs.push(d);
+    writeFileSync(join(d, "pytest.ini"), "[pytest]\naddopts = -q\n");
+    for (const p of ["a", "b"]) {
+      mkdirSync(join(d, p, "tests"), { recursive: true });
+      writeFileSync(join(d, p, "pyproject.toml"), `[project]\nname = "${p}"\n`);
+      writeFileSync(join(d, p, "tests", `test_${p}.py`), "def test_x():\n    assert True\n");
+    }
+    mkdirSync(join(d, "c", "src"), { recursive: true });
+    writeFileSync(join(d, "c", "src", "c.py"), "x = 1\n");
+    git(d, "init", "-q");
+    git(d, "add", "-A", "-f");
+    const tm = buildTestMap(d);
+    expect(tm.runners.length).toBe(1);
+    expect(tm.tests.length).toBeGreaterThan(0); // the test-file signal alone resolves; only the nested manifests must stop the skip
+    expect(signalsResolve(tm)).toBe(true);
+    expect(signalsResolve(tm, d)).toBe(false);
+    const { calls } = await count(d);
+    expect(calls).toBeGreaterThan(0);
+  });
+  test("a two-package repo whose signals do not resolve still runs discovery", async () => {
+    const { calls } = await count(twoPkg(false));
+    expect(calls).toBeGreaterThan(0);
   });
 });
