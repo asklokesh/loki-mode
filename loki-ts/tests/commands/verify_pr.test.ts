@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { explainLines, defaultCheckout, defaultIssue, defaultPrMeta, defaultPackageSuites, defaultSandbox, parsePrRef, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
-import { extractChecks, judgeF2p, reportedCheck, reportShowsPass, REPORT_TOKEN, runnerConfigChanged } from "../../src/contrib/verify_pr_f2p.ts";
+import { extractChecks, judgeF2p, reportedCheck, reportShowsPass, REPORT_TOKEN, runnerConfigChanged, type SandboxResult } from "../../src/contrib/verify_pr_f2p.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "vpr2-test-")); });
@@ -500,6 +500,55 @@ describe("verify-pr: an exit code alone is not proof", () => {
     writeFileSync(join(dir, "runner.ini"), "[runner_test]\nk = 1\n");
     writeFileSync(join(dir, "plain.toml"), "[project]\nname = 'x'\n");
     writeFileSync(join(dir, "bunfig.toml"), "x = 1\n");
-    expect(runnerConfigChanged(["setup.cfg", "runner.ini", "plain.toml", "bunfig.toml", "gone/conftest.py", "src/a.ts"], dir)).toEqual(["setup.cfg", "runner.ini", "bunfig.toml"]);
+    expect(runnerConfigChanged(["setup.cfg", "runner.ini", "plain.toml", "bunfig.toml", "gone/conftest.py", "src/a.ts"], dir)).toEqual(["setup.cfg", "runner.ini", "bunfig.toml", "gone/conftest.py"]);
   });
+
+  test.each([["deleted pytest.ini", { "pytest.ini": null }], ["renamed pytest.ini", { "pytest.ini": null, "pytest.ini.bak": "[pytest]\nfilterwarnings =\n    error\n" }], ["deleted jest.config.js", { "jest.config.js": null }]] as const)("a PR with a %s is NOT PROVEN (exit 4)", async (_n, edits) => {
+    const files = { "pytest.ini": "[pytest]\nfilterwarnings =\n    error\n", "jest.config.js": "module.exports = {};\n", "test_w.py": "import warnings\n\ndef test_w():\n    warnings.warn('x', DeprecationWarning)\n" };
+    const meta = repoWith(`del-${_n.replace(/\W/g, "")}`, files, { "note.txt": "x\n" });
+    const repo = meta.cloneUrl;
+    for (const [f, c] of Object.entries(edits)) { if (c === null) git(repo, "rm", "-q", f); else writeFileSync(join(repo, f), c); }
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "edit");
+    const head = git(repo, "rev-parse", "HEAD");
+    git(repo, "update-ref", "refs/pull/7/head", head);
+    let n = 0;
+    const r = await run({ ...meta, headSha: head }, { checkout: defaultCheckout, sandbox: () => (n++ === 0 ? { status: "COMPLETED", exit_code: 1 } : { status: "COMPLETED", exit_code: 0, report: '<testsuites><testsuite><testcase name="a"/></testsuite></testsuites>' }) }, issueFor("python3 -m pytest -q test_w.py"));
+    expect(r.rc).toBe(4);
+    expect(r.json.reasons.join(" ")).toMatch(/pytest\.ini|jest\.config\.js/);
+  }, 30_000);
+
+  test("a PR that only bumps a git submodule is not flagged as runner config", async () => {
+    const files = { "pytest.ini": "[pytest]\nfilterwarnings =\n    error\n", "test_w.py": "def test_w():\n    assert True\n" };
+    const meta = repoWith("submodule-bump", files, { "note.txt": "x\n" });
+    const repo = meta.cloneUrl;
+    const gitlink = (sha: string) => git(repo, "update-index", "--add", "--cacheinfo", `160000,${sha},vendor/lib`);
+    gitlink("1".repeat(40)); git(repo, "commit", "-qm", "add submodule");
+    gitlink("2".repeat(40)); git(repo, "commit", "-qm", "bump submodule");
+    const head = git(repo, "rev-parse", "HEAD");
+    git(repo, "update-ref", "refs/pull/7/head", head);
+    const r = await run({ ...meta, headSha: head }, { checkout: defaultCheckout, sandbox: (): SandboxResult => ({ status: "COMPLETED", exit_code: 0 }) }, issueFor("python3 -m pytest -q test_w.py"));
+    expect(r.json.reasons.join(" ")).not.toMatch(/vendor\/lib/);
+  }, 30_000);
+
+  test("runnerConfigChanged flags jest, vitest and vite configs and a package.json with a jest key only", () => {
+    const names = ["jest.config.js", "sub/vitest.config.ts", "vite.config.mts", "vitest.workspace.ts"];
+    for (const n of names) { mkdirSync(join(dir, "sub"), { recursive: true }); writeFileSync(join(dir, n), "export default {};\n"); }
+    writeFileSync(join(dir, "package.json"), '{"jest":{"setupFiles":["./x.js"]}}');
+    mkdirSync(join(dir, "plain"), { recursive: true });
+    writeFileSync(join(dir, "plain/package.json"), '{"name":"x"}');
+    expect(runnerConfigChanged([...names, "package.json", "plain/package.json"], dir)).toEqual([...names, "package.json"]);
+    mkdirSync(join(dir, "cm"), { recursive: true });
+    writeFileSync(join(dir, "cm/package.json"), '{"name":"r","jest":{"testEnvironment":"node","rootDir":"setup","testMatch":["**/decoy.test.js"]} /* c */ }');
+    expect(runnerConfigChanged(["cm/package.json"], dir)).toEqual(["cm/package.json"]);
+  });
+
+  test.each([["jest.config.js", "npx jest add.test.js", '{"success":true,"numFailedTests":0,"numPassedTests":1}'], ["vitest.config.ts", "npx vitest run add.test.js", '<testsuites><testsuite><testcase name="a"/></testsuite></testsuites>']])("a %s change makes a passing check NOT PROVEN (exit 4) naming the file", async (cfgFile, check, report) => {
+    const base = { "add.test.js": "// test\n" };
+    const meta = repoWith(`cfg-${cfgFile}`, base, { [cfgFile]: "module.exports = {};\n" });
+    let n = 0;
+    const r = await run(meta, { checkout: defaultCheckout, sandbox: () => (n++ === 0 ? { status: "COMPLETED", exit_code: 1 } : { status: "COMPLETED", exit_code: 0, report }) }, issueFor(check));
+    expect(r.rc).toBe(4);
+    expect(r.json.verdict).toBe("NOT PROVEN");
+    expect(r.json.reasons.join(" ")).toContain(cfgFile);
+  }, 30_000);
 });

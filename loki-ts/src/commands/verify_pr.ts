@@ -96,7 +96,7 @@ export function defaultCheckout(ref: PrRef, meta: PrMeta, workDir: string): Chec
     execFileSync("tar", ["-xf", tar, "-C", dir], { stdio: "ignore", env: tokenFreeEnv(process.env) });
     rmSync(tar, { force: true });
   }
-  const changed = safeGit(repo, ["diff", "--name-only", "-z", meta.baseSha, meta.headSha]).split("\0").filter(Boolean);
+  const changed = safeGit(repo, ["diff", "--name-only", "--no-renames", "-z", meta.baseSha, meta.headSha]).split("\0").filter(Boolean);
   return { ...dirs, changed };
 }
 
@@ -186,7 +186,7 @@ export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): Verify
     if ("reason" in rc) return np(rc.reason);
     reported.set(c, rc.cmd);
   }
-  const cfg = runnerConfigChanged(co.changed, co.headDir);
+  const cfg = runnerConfigChanged(co.changed, co.headDir, co.baseDir);
   if (cfg.length > 0) return np(`the PR adds or changes test runner config, so a passing check is not proof: ${cfg.join(", ")}`);
   for (const c of res.checks) {
     const o = judgeF2p(c, deps.sandbox(co.baseDir, c), deps.sandbox(co.headDir, reported.get(c)!));

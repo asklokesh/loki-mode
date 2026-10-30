@@ -64,14 +64,18 @@ export function reportShowsPass(report: string | undefined): boolean {
   return cases - skipped > 0 && bad === 0 && counted === 0;
 }
 
-const RUNNER_CONFIG_NAMES = new Set(["bunfig.toml", "conftest.py"]);
-/** Files the PR added or changed that configure or preload the test runner: bunfig.toml, conftest.py, and any ini, cfg or toml file with a section header naming a test runner (`[...test...]`). The PR's own code could end the run early or redirect which tests run, so the check cannot be trusted. */
-export function runnerConfigChanged(changed: readonly string[], headDir: string): string[] {
+/** Files the PR added, changed, renamed or deleted that configure or preload the test runner: each REPORT_RUNNERS entry's config file, and any ini, cfg or toml file with a section header naming a test runner (`[...test...]`). A path missing at head is judged by its base version, and a read failure or a path missing at both sides counts as config (fail closed). The PR's own code could end the run early or redirect which tests run, so the check cannot be trusted. */
+export function runnerConfigChanged(changed: readonly string[], headDir: string, baseDir: string = headDir): string[] {
   return changed.filter((f) => {
-    if (!existsSync(join(headDir, f))) return false;
-    if (RUNNER_CONFIG_NAMES.has(basename(f))) return true;
-    if (!/\.(?:ini|cfg|toml)$/.test(f)) return false;
-    try { return /^\s*\[[^\]\n]*test/im.test(readFileSync(join(headDir, f), "utf8")); } catch { return false; }
+    const b = basename(f), r = REPORT_RUNNERS.find((x) => x.config.test(b));
+    const at = [headDir, baseDir].find((d) => existsSync(join(d, f)));
+    if (!at) return !!r;
+    if (!r && !/\.(?:ini|cfg|toml)$/.test(f)) return false;
+    try {
+      const txt = readFileSync(join(at, f), "utf8");
+      if (r) return !r.key || !b.endsWith(".json") || r.key in (JSON.parse(txt) as object);
+      return /\.(?:ini|cfg|toml)$/.test(f) && /^\s*\[[^\]\n]*test/im.test(txt);
+    } catch { return true; }
   });
 }
 
