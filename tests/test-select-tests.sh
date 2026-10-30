@@ -548,6 +548,187 @@ else
 fi
 rm -rf "$rt_dir"
 
+# --gate: pre-BUILT slice gate. Fixture repo = a copy of scripts/ with stub guard rows and an
+# origin/main ref, so no real suite runs. Engine10 is skipped via --no-loki-ts except in the
+# stub-bun cases.
+gate_fixture() { # $1 = dir
+    mkdir -p "$1/tests" "$1/loki-ts/tests/engine10"
+    cp -R "$REPO_ROOT/scripts" "$1/scripts"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$1/tests/row-ok.sh"
+    printf '#!/usr/bin/env bash\necho row failing\nexit 1\n' > "$1/tests/row-red.sh"
+    printf 'shell_test\ttests/row-ok.sh\n' > "$1/scripts/global-guards.tsv"
+    (cd "$1" && git init -q . && git config gc.auto 0 && git config user.email t@example.com && git config user.name t \
+        && git add -A && git commit -q -m base && git update-ref refs/remotes/origin/main HEAD)
+}
+gate_dir="$(mktemp -d "${LOKI_RUN_TMP:-${TMPDIR:-/tmp}}/select-gate.XXXXXX")"
+gate_fixture "$gate_dir"
+gate_run() { (cd "$gate_dir" && bash scripts/select-tests.sh --gate --no-fetch "$@" 2>&1); }
+
+out="$(gate_run --no-loki-ts)"; rc=$?
+expect_contains "gate: clean slice passes" "$out" "gate: PASS"
+expect_contains "gate: engine10 skip is stated" "$out" "SKIPPED engine10"
+if [ "$rc" -eq 0 ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL: gate clean slice rc=$rc"; fi
+
+printf 'shell_test\ttests/row-ok.sh\nshell_test\ttests/row-red.sh\n' > "$gate_dir/scripts/global-guards.tsv"
+out="$(gate_run --no-loki-ts)"; rc=$?
+expect_contains "gate: red guard row is named" "$out" "RED GUARD ROW: shell_test tests/row-red.sh"
+expect_contains "gate: summary counts rows" "$out" "1 passed, 1 failed"
+if [ "$rc" -ne 0 ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL: gate red row exited 0"; fi
+printf 'shell_test\ttests/row-ok.sh\n' > "$gate_dir/scripts/global-guards.tsv"
+
+out="$(gate_run --no-loki-ts --suite tests/row-red.sh)"; rc=$?
+expect_contains "gate: red named suite is named" "$out" "RED SUITE: tests/row-red.sh"
+if [ "$rc" -ne 0 ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL: gate red suite exited 0"; fi
+
+# stub bun: engine10 runs through the single function and its failure fails the gate
+mkdir -p "$gate_dir/stubbin"
+printf '#!/usr/bin/env bash\necho "stub bun $*"\nexit "${STUB_BUN_RC:-0}"\n' > "$gate_dir/stubbin/bun"
+chmod +x "$gate_dir/stubbin/bun"
+out="$(cd "$gate_dir" && PATH="$gate_dir/stubbin:$PATH" bash scripts/select-tests.sh --gate --no-fetch 2>&1)"; rc=$?
+expect_contains "gate: engine10 runs by default" "$out" "stub bun test tests/engine10"
+if [ "$rc" -eq 0 ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL: gate with green engine10 rc=$rc"; fi
+out="$(cd "$gate_dir" && STUB_BUN_RC=1 PATH="$gate_dir/stubbin:$PATH" bash scripts/select-tests.sh --gate --no-fetch 2>&1)"; rc=$?
+expect_contains "gate: red engine10 fails the gate" "$out" "4 engine10     : FAIL"
+if [ "$rc" -ne 0 ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL: gate red engine10 exited 0"; fi
+
+# behind origin/main: origin/main gains a commit HEAD lacks
+(cd "$gate_dir" && git commit -q --allow-empty -m upstream && git update-ref refs/remotes/origin/main HEAD && git reset -q --hard HEAD~1)
+out="$(gate_run --no-loki-ts)"; rc=$?
+expect_contains "gate: behind origin/main is refused with a count" "$out" "behind origin/main by 1"
+if [ "$rc" -ne 0 ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL: gate behind origin/main exited 0"; fi
+
+gate_expect_rc() { # $1 = desc, $2 = want (0|nonzero), $3 = actual rc
+    if { [ "$2" = 0 ] && [ "$3" -eq 0 ]; } || { [ "$2" != 0 ] && [ "$3" -ne 0 ]; }; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1)); echo "FAIL: $1 (rc=$3, wanted $2)"
+    fi
+}
+# reset to a clean fixture state (HEAD == origin/main) for the fail-closed cases
+(cd "$gate_dir" && git reset -q --hard origin/main)
+printf '#!/usr/bin/env bash\necho ran-row-A\nexit 0\n' > "$gate_dir/tests/row-a.sh"
+printf '#!/usr/bin/env bash\necho ran-row-B\nexit 0\n' > "$gate_dir/tests/row-b.sh"
+
+# final guard row without a trailing newline must still run
+printf 'shell_test\ttests/row-a.sh\nshell_test\ttests/row-b.sh' > "$gate_dir/scripts/global-guards.tsv"
+out="$(gate_run --no-loki-ts)"; rc=$?
+expect_contains "gate: last row without trailing newline runs" "$out" "ran-row-B"
+expect_contains "gate: both rows counted without trailing newline" "$out" "2 passed, 0 failed"
+gate_expect_rc "gate: no-trailing-newline tsv passes" 0 "$rc"
+
+# a guard list that yields zero rows must fail closed
+: > "$gate_dir/scripts/global-guards.tsv"
+out="$(gate_run --no-loki-ts)"; rc=$?
+expect_contains "gate: empty guard list is named" "$out" "zero guard rows"
+gate_expect_rc "gate: empty guard list fails" nonzero "$rc"
+printf '# only a comment\n' > "$gate_dir/scripts/global-guards.tsv"
+out="$(gate_run --no-loki-ts)"; rc=$?
+gate_expect_rc "gate: comment-only guard list fails" nonzero "$rc"
+printf 'shell_test\ttests/row-ok.sh\n' > "$gate_dir/scripts/global-guards.tsv"
+
+# behind check: a rev-list failure must fail (a 40-hex id that names no object resolves in rev-parse but not in rev-list)
+out="$(gate_run --no-loki-ts --origin-ref 1111111111111111111111111111111111111111)"; rc=$?
+expect_contains "gate: rev-list failure is named" "$out" "rev-list failed"
+gate_expect_rc "gate: rev-list failure fails the gate" nonzero "$rc"
+
+# fetch failure fails unless --no-fetch (the fixture has no origin remote)
+out="$(cd "$gate_dir" && bash scripts/select-tests.sh --gate --no-loki-ts 2>&1)"; rc=$?
+expect_contains "gate: failed fetch is named" "$out" "fetch of origin main failed"
+gate_expect_rc "gate: failed fetch fails the gate" nonzero "$rc"
+out="$(gate_run --no-loki-ts)"; rc=$?
+gate_expect_rc "gate: --no-fetch skips the fetch and passes" 0 "$rc"
+
+# bounded rows and suites: a unit that sleeps past a tiny timeout is FAILED and named
+printf '#!/usr/bin/env bash\nexec sleep 60\n' > "$gate_dir/tests/row-slow.sh"
+printf 'shell_test\ttests/row-slow.sh\nshell_test\ttests/row-ok.sh\n' > "$gate_dir/scripts/global-guards.tsv"
+out="$(cd "$gate_dir" && LOKI_GATE_ROW_TIMEOUT=1 bash scripts/select-tests.sh --gate --no-fetch --no-loki-ts 2>&1)"; rc=$?
+expect_contains "gate: timed-out row is named" "$out" "RED GUARD ROW: shell_test tests/row-slow.sh (TIMED OUT after 1s)"
+expect_contains "gate: timed-out row is in the summary" "$out" "tests/row-slow.sh(timed out)"
+expect_contains "gate: rows after a timeout still run" "$out" "1 passed, 1 failed"
+gate_expect_rc "gate: timed-out row fails the gate" nonzero "$rc"
+printf 'shell_test\ttests/row-ok.sh\n' > "$gate_dir/scripts/global-guards.tsv"
+out="$(cd "$gate_dir" && LOKI_GATE_SUITE_TIMEOUT=1 bash scripts/select-tests.sh --gate --no-fetch --no-loki-ts --suite tests/row-slow.sh 2>&1)"; rc=$?
+expect_contains "gate: timed-out suite is named" "$out" "RED SUITE: tests/row-slow.sh (TIMED OUT after 1s)"
+gate_expect_rc "gate: timed-out suite fails the gate" nonzero "$rc"
+
+# engine10 goes through the package script (the slot queue) when the tree has it
+printf '{"scripts":{"test:engine10":"bash ../scripts/test-slot.sh -- bun test tests/engine10"}}\n' > "$gate_dir/loki-ts/package.json"
+out="$(cd "$gate_dir" && PATH="$gate_dir/stubbin:$PATH" bash scripts/select-tests.sh --gate --no-fetch 2>&1)"; rc=$?
+expect_contains "gate: engine10 uses the slot package script" "$out" "stub bun run test:engine10"
+gate_expect_rc "gate: engine10 via package script passes" 0 "$rc"
+rm -f "$gate_dir/loki-ts/package.json"
+
+# a missing bun fails the gate (PATH holds only the tools the gate itself needs)
+mkdir -p "$gate_dir/nobunbin"
+for tool in bash env git dirname timeout; do
+    tool_path="$(PATH="$PATH" command -v "$tool" 2>/dev/null)" || tool_path=""
+    [ -n "$tool_path" ] && ln -sf "$tool_path" "$gate_dir/nobunbin/$tool"
+done
+out="$(cd "$gate_dir" && PATH="$gate_dir/nobunbin" bash scripts/select-tests.sh --gate --no-fetch 2>&1)"; rc=$?
+expect_contains "gate: missing bun is named" "$out" "bun is not on PATH"
+gate_expect_rc "gate: missing bun fails the gate" nonzero "$rc"
+
+# one row emitter: --gate step 2 runs exactly the --guards-only row set, including a marker-only walker the tsv never names
+wk_dir="$(mktemp -d "${LOKI_RUN_TMP:-${TMPDIR:-/tmp}}/select-gate-walk.XXXXXX")"
+gate_fixture "$wk_dir"
+mkdir -p "$wk_dir/stubbin"
+printf '#!/usr/bin/env bash\necho "stub bun $*"\nexit 0\n' > "$wk_dir/stubbin/bun"
+chmod +x "$wk_dir/stubbin/bun"
+printf '// select: walk-all-src\n' > "$wk_dir/loki-ts/tests/zz-marker-walker.test.ts"
+wk_go="$(cd "$wk_dir" && bash scripts/select-tests.sh --guards-only 2>&1 | awk -F'\t' 'NF==3 {print $2 " " $3}' | LC_ALL=C sort)"
+wk_gate="$(cd "$wk_dir" && PATH="$wk_dir/stubbin:$PATH" bash scripts/select-tests.sh --gate --no-fetch --no-loki-ts 2>&1)"; rc=$?
+wk_ran="$(printf '%s\n' "$wk_gate" | sed -n 's/^--- guard row: \(.*\) ---$/\1/p' | LC_ALL=C sort)"
+expect_contains "gate: --guards-only lists the marker-only walker" "$wk_go" "bun_test loki-ts/tests/zz-marker-walker.test.ts"
+expect_contains "gate: step 2 runs the marker-only walker" "$wk_gate" "--- guard row: bun_test loki-ts/tests/zz-marker-walker.test.ts ---"
+if [ "$wk_ran" = "$wk_go" ] && [ -n "$wk_ran" ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL: gate row set differs from --guards-only row set"; fi
+gate_expect_rc "gate: walker fixture passes" 0 "$rc"
+# a tsv-only step 2 must turn the set comparison red
+wk_mut="$(mktemp -d "${LOKI_RUN_TMP:-${TMPDIR:-/tmp}}/select-gate-walkmut.XXXXXX")"
+gate_fixture "$wk_mut"
+printf '// select: walk-all-src\n' > "$wk_mut/loki-ts/tests/zz-marker-walker.test.ts"
+python3 - "$REPO_ROOT/scripts/select-tests.sh" "$wk_mut/scripts/select-tests.sh" <<'PYEOF'
+import sys
+s = open(sys.argv[1]).read()
+s = s.replace('gate_rows="$(emit_guard_rows)"', 'gate_rows="$(emit_guard_rows | grep -v zz-marker-walker)"')
+open(sys.argv[2], 'w').write(s)
+PYEOF
+if cmp -s "$wk_mut/scripts/select-tests.sh" "$REPO_ROOT/scripts/select-tests.sh"; then
+    FAIL=$((FAIL + 1)); echo "FAIL: walker mutation did not change the script"
+else
+    wk_mgate="$(cd "$wk_mut" && PATH="$wk_dir/stubbin:$PATH" bash scripts/select-tests.sh --gate --no-fetch --no-loki-ts 2>&1)"
+    wk_mran="$(printf '%s\n' "$wk_mgate" | sed -n 's/^--- guard row: \(.*\) ---$/\1/p' | LC_ALL=C sort)"
+    if [ "$wk_mran" != "$wk_go" ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL: walker canary: tsv-only step 2 still matches the guards-only set"; fi
+fi
+# fail closed: missing tsv, a grep that errors and an empty row list all fail the gate
+cp "$wk_dir/scripts/global-guards.tsv" "$wk_dir/tsv.bak"
+rm -f "$wk_dir/scripts/global-guards.tsv"
+out="$(cd "$wk_dir" && PATH="$wk_dir/stubbin:$PATH" bash scripts/select-tests.sh --gate --no-fetch --no-loki-ts 2>&1)"; rc=$?
+gate_expect_rc "gate: missing tsv fails closed" nonzero "$rc"
+cp "$wk_dir/tsv.bak" "$wk_dir/scripts/global-guards.tsv"
+mkdir -p "$wk_dir/grepbin"
+printf '#!/usr/bin/env bash\nexit 2\n' > "$wk_dir/grepbin/grep"
+chmod +x "$wk_dir/grepbin/grep"
+out="$(cd "$wk_dir" && PATH="$wk_dir/grepbin:$wk_dir/stubbin:$PATH" bash scripts/select-tests.sh --gate --no-fetch --no-loki-ts 2>&1)"; rc=$?
+gate_expect_rc "gate: failed walker grep fails closed" nonzero "$rc"
+printf '# only a comment\n' > "$wk_dir/scripts/global-guards.tsv"
+rm -f "$wk_dir/loki-ts/tests/zz-marker-walker.test.ts"
+out="$(cd "$wk_dir" && PATH="$wk_dir/stubbin:$PATH" bash scripts/select-tests.sh --gate --no-fetch --no-loki-ts 2>&1)"; rc=$?
+gate_expect_rc "gate: empty row list fails closed" nonzero "$rc"
+rm -rf "${wk_dir:?}" "${wk_mut:?}"
+
+# mutation canary: with the guard-row step removed, a red row must no longer fail the gate
+mut_dir="$(mktemp -d "${LOKI_RUN_TMP:-${TMPDIR:-/tmp}}/select-gate-mut.XXXXXX")"
+gate_fixture "$mut_dir"
+printf 'shell_test\ttests/row-red.sh\n' > "$mut_dir/scripts/global-guards.tsv"
+sed 's/gate_run_row "\$gk" "\$gt" <\/dev\/null; urc=\$?/true; urc=0/' "$REPO_ROOT/scripts/select-tests.sh" > "$mut_dir/scripts/select-tests.sh"
+if cmp -s "$mut_dir/scripts/select-tests.sh" "$REPO_ROOT/scripts/select-tests.sh"; then
+    FAIL=$((FAIL + 1)); echo "FAIL: gate mutation did not change the script"
+else
+    (cd "$mut_dir" && bash scripts/select-tests.sh --gate --no-fetch --no-loki-ts >/dev/null 2>&1); rc=$?
+    if [ "$rc" -eq 0 ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL: gate mutation canary: red row still caught without the guard-row step"; fi
+fi
+rm -rf "${mut_dir:?}" "${gate_dir:?}"
+
 echo ""
 echo "select-tests fixtures: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

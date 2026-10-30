@@ -30,7 +30,21 @@
 #                tests/run-all-tests.sh suite untimed (that IS "everything");
 #                everything else is capped at 100s per suite.
 #
-# --guards-only print only the R8 global guard rows (scripts/global-guards.tsv) and exit.
+# --guards-only print only the R8 global guard rows (scripts/global-guards.tsv plus the marker-only walkers) and exit.
+#
+# --gate         pre-BUILT slice gate, one command for a builder and a reviewer:
+#                (1) HEAD must contain the current origin/main (never rebases for you),
+#                (2) every --guards-only row (tsv rows plus marker-only walkers, one shared emitter), one at a time, red rows named,
+#                (3) each --suite PATH (.sh, .test.ts, .py),
+#                (4) full engine10 (`bun run test:engine10` in loki-ts, via the slot queue) unless --no-loki-ts.
+#                Every row, suite and engine10 is bounded by `timeout -k 15 N`
+#                (LOKI_GATE_ROW_TIMEOUT / LOKI_GATE_SUITE_TIMEOUT / LOKI_GATE_ENGINE10_TIMEOUT);
+#                a timeout, an empty guard list, a failed fetch or a missing bun FAILS the gate.
+#                Prints a pass/fail summary per step; exits non-zero on any failure.
+#   --suite PATH   extra suite for step 3 (repeatable)
+#   --no-loki-ts   the slice touched no loki-ts source: skip step 4 and say so
+#   --no-fetch     do not fetch origin main before step 1 (a failed fetch otherwise fails the gate)
+#   --origin-ref R ref step 1 compares against (default origin/main)
 #
 # R0-R8 selection rules are implemented below, in order. R8 (always-on global
 # guards) is declared in scripts/global-guards.tsv and emitted for every
@@ -47,6 +61,11 @@ FILES_FROM=""
 MODE="git"
 DO_RUN=0
 GUARDS_ONLY=0
+GATE=0
+GATE_SUITES=()
+GATE_NO_LOKI_TS=0
+GATE_FETCH=1
+GATE_ORIGIN_REF="origin/main"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -56,8 +75,13 @@ while [ $# -gt 0 ]; do
         --files) MODE="files"; FILES_FROM="${2:--}"; shift 2 ;;
         --run) DO_RUN=1; shift ;;
         --guards-only) GUARDS_ONLY=1; shift ;;
+        --gate) GATE=1; shift ;;
+        --suite) GATE_SUITES+=("${2:-}"); shift 2 ;;
+        --no-loki-ts) GATE_NO_LOKI_TS=1; shift ;;
+        --no-fetch) GATE_FETCH=0; shift ;;
+        --origin-ref) GATE_ORIGIN_REF="${2:-origin/main}"; shift 2 ;;
         -h | --help)
-            sed -n '2,36p' "$0"
+            sed -n '2,48p' "$0"
             exit 0
             ;;
         *)
@@ -66,6 +90,216 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+emit() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
+
+GUARDS_TSV="${SELECT_TESTS_GUARDS_TSV:-$SCRIPT_DIR/global-guards.tsv}"
+
+# R8: the repo-wide guards, always selected. The one row emitter: tsv rows plus the marker-only walkers,
+# used by --guards-only and by --gate step 2 so the two row sets cannot drift. Returns non-zero (after
+# printing an R0 row) on a missing tsv or a failed walker grep so callers can fail closed.
+emit_guard_rows() {
+    local gk gt
+    [ -f "$GUARDS_TSV" ] || { emit R0 ALL "scripts/global-guards.tsv missing"; return 1; }
+    while IFS=$'\t' read -r gk gt || [ -n "$gk" ]; do
+        case "$gk" in '' | '#'*) continue ;; esac
+        [ -n "$gt" ] || continue
+        emit R8 "$gk" "$gt"
+    done <"$GUARDS_TSV"
+    emit_marked_walkers
+}
+
+# bun tests that walk the whole loki-ts/src tree name no src stem, so R4 never selects them. Each carries
+# the marker "select: walk-all-src" and is found here by content, so a new walker needs no list edit. Files that a
+# declared tsv row already covers (exact path, or a bun_test directory row above them) are not repeated.
+emit_marked_walkers() {
+    local mf covered gk gt found grc
+    [ -d loki-ts/tests ] || return 0
+    found="$(grep -rlF 'select: walk-all-src' loki-ts/tests --include='*.test.ts' 2>/dev/null)"; grc=$?
+    if [ "$grc" -gt 1 ]; then
+        emit R0 ALL "walker grep failed (rc=$grc)"
+        return 1
+    fi
+    [ -n "$found" ] || return 0
+    while IFS= read -r mf; do
+        [ -n "$mf" ] || continue
+        covered=0
+        while IFS=$'\t' read -r gk gt; do
+            case "$gk" in bun_test) ;; *) continue ;; esac
+            case "$mf" in "$gt" | "$gt"/*) covered=1; break ;; esac
+        done <"$GUARDS_TSV"
+        [ "$covered" -eq 1 ] || emit R8 bun_test "$mf"
+    done < <(printf '%s\n' "$found" | LC_ALL=C sort)
+}
+
+# ---- --gate: the pre-BUILT slice gate -------------------------------
+# Separate from the selector and --run paths. Engine10 goes through the one
+# function gate_run_engine10 so a queue lock can wrap it. Every row, suite and
+# engine10 run is bounded by `timeout -k 15 N` (the helper the repo already
+# uses); a timed-out unit counts as FAILED and is named in the summary.
+# Env: LOKI_GATE_ROW_TIMEOUT (default 600s), LOKI_GATE_SUITE_TIMEOUT (900s),
+# LOKI_GATE_ENGINE10_TIMEOUT (2400s); a non-positive-integer value is ignored.
+gate_secs() { # $1 = env value, $2 = default
+    case "$1" in '' | *[!0-9]* | 0*) echo "$2" ;; *) echo "$1" ;; esac
+}
+GATE_ROW_SECS="$(gate_secs "${LOKI_GATE_ROW_TIMEOUT:-}" 600)"
+GATE_SUITE_SECS="$(gate_secs "${LOKI_GATE_SUITE_TIMEOUT:-}" 900)"
+GATE_ENGINE10_SECS="$(gate_secs "${LOKI_GATE_ENGINE10_TIMEOUT:-}" 2400)"
+
+gate_timeout_bin() {
+    local t
+    for t in timeout gtimeout; do
+        if command -v "$t" >/dev/null 2>&1; then echo "$t"; return 0; fi
+    done
+    return 1
+}
+
+gate_bounded() { # $1 = seconds, rest = command
+    local secs="$1" tbin
+    shift
+    tbin="$(gate_timeout_bin)" || { echo "gate: no timeout helper (timeout/gtimeout) on PATH" >&2; return 125; }
+    "$tbin" -k 15 "$secs" "$@"
+}
+
+gate_timed_out() { [ "$1" -eq 124 ] || [ "$1" -eq 137 ]; }
+
+gate_run_engine10() {
+    # Prefer the package script (goes through scripts/test-slot.sh, so at most
+    # a fixed number of full runs per machine). A tree without that script
+    # falls back to the bare run and says so.
+    if grep -q '"test:engine10"' loki-ts/package.json 2>/dev/null; then
+        ( cd loki-ts && gate_bounded "$GATE_ENGINE10_SECS" bun run test:engine10 )
+    else
+        echo "gate: note: loki-ts/package.json has no test:engine10 script, running bun test directly (no slot queue)"
+        ( cd loki-ts && gate_bounded "$GATE_ENGINE10_SECS" bun test tests/engine10 )
+    fi
+}
+
+gate_run_row() {
+    local kind="$1" target="$2"
+    case "$kind" in
+        bun_test) ( cd loki-ts && gate_bounded "$GATE_ROW_SECS" bun test "${target#loki-ts/}" ) ;;
+        shell_test | moat) gate_bounded "$GATE_ROW_SECS" bash "$target" ;;
+        *) echo "gate: unknown guard row kind: $kind" >&2; return 2 ;;
+    esac
+}
+
+gate_run_suite() {
+    case "$1" in
+        *.sh) gate_bounded "$GATE_SUITE_SECS" bash "$1" ;;
+        *.test.ts) ( cd loki-ts && gate_bounded "$GATE_SUITE_SECS" bun test "${1#loki-ts/}" ) ;;
+        *.py) gate_bounded "$GATE_SUITE_SECS" python3 -m pytest -q "$1" ;;
+        *) echo "gate: unrecognized suite type: $1" >&2; return 2 ;;
+    esac
+}
+
+run_gate() {
+    local rc=0 behind behind_rc rows_pass=0 rows_fail=0 suites_pass=0 suites_fail=0
+    local failed_rows="" failed_suites="" s1 s2 s3 s4 gk gt gr gate_rows rows_rc suite urc fetch_failed=0
+
+    echo "=== gate step 1: HEAD contains $GATE_ORIGIN_REF ==="
+    if [ "$GATE_FETCH" -eq 1 ]; then
+        if ! git fetch -q origin main; then
+            echo "gate: fetch of origin main failed; refusing to compare against a stale local $GATE_ORIGIN_REF (pass --no-fetch to accept it)"
+            fetch_failed=1
+        fi
+    fi
+    if [ "$fetch_failed" -eq 1 ]; then
+        s1="FAIL (fetch of origin main failed; --no-fetch skips the fetch)"; rc=1
+    elif ! git rev-parse --verify -q "$GATE_ORIGIN_REF" >/dev/null; then
+        echo "gate: cannot resolve $GATE_ORIGIN_REF"
+        s1="FAIL (unresolvable $GATE_ORIGIN_REF)"; rc=1
+    else
+        behind="$(git rev-list --count "HEAD..$GATE_ORIGIN_REF")"; behind_rc=$?
+        case "$behind" in '' | *[!0-9]*) behind_rc=1 ;; esac
+        if [ "$behind_rc" -ne 0 ]; then
+            echo "gate: rev-list failed for HEAD..$GATE_ORIGIN_REF; cannot tell whether HEAD is behind"
+            s1="FAIL (rev-list failed for $GATE_ORIGIN_REF)"; rc=1
+        elif [ "$behind" -gt 0 ]; then
+            echo "gate: behind $GATE_ORIGIN_REF by $behind commit(s); rebase onto $GATE_ORIGIN_REF and rerun (the gate never rebases for you)"
+            s1="FAIL (behind $GATE_ORIGIN_REF by $behind)"; rc=1
+        else
+            s1="PASS"
+        fi
+    fi
+
+    echo "=== gate step 2: global guard rows, one at a time ==="
+    gate_rows="$(emit_guard_rows)"; rows_rc=$?
+    if [ "$rows_rc" -ne 0 ]; then
+        echo "gate: row emitter failed: $gate_rows"
+        rows_fail=1; failed_rows="row emitter (failed)"
+    else
+        while IFS=$'\t' read -r gr gk gt; do
+            [ "$gr" = "R8" ] || continue
+            echo "--- guard row: $gk $gt ---"
+            gate_run_row "$gk" "$gt" </dev/null; urc=$?
+            if [ "$urc" -eq 0 ]; then
+                rows_pass=$((rows_pass + 1))
+            elif gate_timed_out "$urc"; then
+                echo "RED GUARD ROW: $gk $gt (TIMED OUT after ${GATE_ROW_SECS}s)"
+                rows_fail=$((rows_fail + 1)); failed_rows="${failed_rows} ${gt}(timed out)"
+            else
+                echo "RED GUARD ROW: $gk $gt"
+                rows_fail=$((rows_fail + 1)); failed_rows="${failed_rows} ${gt}"
+            fi
+        done <<<"$gate_rows"
+        if [ $((rows_pass + rows_fail)) -eq 0 ]; then
+            echo "gate: the row emitter yielded zero guard rows; failing closed"
+            rows_fail=1; failed_rows="no rows (zero rows ran)"
+        fi
+    fi
+    s2="$rows_pass passed, $rows_fail failed"
+    [ "$rows_fail" -eq 0 ] || rc=1
+
+    echo "=== gate step 3: named suites ==="
+    for suite in ${GATE_SUITES[@]+"${GATE_SUITES[@]}"}; do
+        echo "--- suite: $suite ---"
+        gate_run_suite "$suite" </dev/null; urc=$?
+        if [ "$urc" -eq 0 ]; then
+            suites_pass=$((suites_pass + 1))
+        elif gate_timed_out "$urc"; then
+            echo "RED SUITE: $suite (TIMED OUT after ${GATE_SUITE_SECS}s)"
+            suites_fail=$((suites_fail + 1)); failed_suites="${failed_suites} ${suite}(timed out)"
+        else
+            echo "RED SUITE: $suite"
+            suites_fail=$((suites_fail + 1)); failed_suites="${failed_suites} ${suite}"
+        fi
+    done
+    s3="$suites_pass passed, $suites_fail failed"
+    [ "$suites_fail" -eq 0 ] || rc=1
+
+    echo "=== gate step 4: full engine10 ==="
+    if [ "$GATE_NO_LOKI_TS" -eq 1 ]; then
+        echo "gate: SKIPPED engine10 because --no-loki-ts says this slice touched no loki-ts source"
+        s4="SKIPPED (--no-loki-ts: slice touched no loki-ts source)"
+    elif ! command -v bun >/dev/null 2>&1; then
+        echo "gate: bun is not on PATH; engine10 cannot run"
+        s4="FAIL (bun not found)"; rc=1
+    else
+        gate_run_engine10; urc=$?
+        if [ "$urc" -eq 0 ]; then
+            s4="PASS"
+        elif gate_timed_out "$urc"; then
+            s4="FAIL (TIMED OUT after ${GATE_ENGINE10_SECS}s)"; rc=1
+        else
+            s4="FAIL"; rc=1
+        fi
+    fi
+
+    echo ""
+    echo "=== gate summary ==="
+    echo "1 rebase check : $s1"
+    echo "2 guard rows   : $s2${failed_rows:+ (red:$failed_rows)}"
+    echo "3 named suites : $s3${failed_suites:+ (red:$failed_suites)}"
+    echo "4 engine10     : $s4"
+    if [ "$rc" -eq 0 ]; then echo "gate: PASS"; else echo "gate: FAIL"; fi
+    return "$rc"
+}
+
+if [ "$GATE" -eq 1 ]; then
+    run_gate
+    exit $?
+fi
 
 CHANGED_FILE_LIST=""
 UNPARSEABLE=0
@@ -189,39 +423,8 @@ finish() {
     exit $?
 }
 
-emit() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
-
-# R8: the repo-wide guards, always selected. The list lives only in global-guards.tsv.
-emit_global_guards() {
-    local gk gt
-    [ -f "$SCRIPT_DIR/global-guards.tsv" ] || { emit R0 ALL "scripts/global-guards.tsv missing"; return 0; }
-    while IFS=$'\t' read -r gk gt; do
-        case "$gk" in '' | '#'*) continue ;; esac
-        [ -n "$gt" ] || continue
-        emit R8 "$gk" "$gt"
-    done <"$SCRIPT_DIR/global-guards.tsv"
-    emit_marked_walkers
-}
-
-# bun tests that walk the whole loki-ts/src tree name no src stem, so R4 never selects them. Each carries
-# the marker "select: walk-all-src" and is found here by content, so a new walker needs no list edit. Files that a
-# declared tsv row already covers (exact path, or a bun_test directory row above them) are not repeated.
-emit_marked_walkers() {
-    local mf covered gk gt
-    [ -d loki-ts/tests ] || return 0
-    while IFS= read -r mf; do
-        [ -n "$mf" ] || continue
-        covered=0
-        while IFS=$'\t' read -r gk gt; do
-            case "$gk" in bun_test) ;; *) continue ;; esac
-            case "$mf" in "$gt" | "$gt"/*) covered=1; break ;; esac
-        done <"$SCRIPT_DIR/global-guards.tsv"
-        [ "$covered" -eq 1 ] || emit R8 bun_test "$mf"
-    done < <(grep -rlF 'select: walk-all-src' loki-ts/tests --include='*.test.ts' 2>/dev/null | LC_ALL=C sort)
-}
-
 if [ "$GUARDS_ONLY" -eq 1 ]; then
-    emit_global_guards
+    emit_guard_rows
     finish
 fi
 
@@ -307,7 +510,7 @@ for f in "${CHANGED[@]}"; do
     esac
 done
 
-emit_global_guards
+emit_guard_rows
 
 if [ "$DOCS_ONLY" -eq 1 ]; then
     finish
