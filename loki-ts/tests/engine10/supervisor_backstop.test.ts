@@ -7,7 +7,7 @@ import { execFileSync, spawn } from "node:child_process"; import { createInterfa
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { stageCapability, workerStages } from "../../src/engine10/worker.ts"; import { SENTINEL_PREFIX } from "../../src/util/credential_env.ts"; import { SAFE_BUN_FLAGS } from "../../src/runner/worker_proc.ts";
+import { stageCapability, workerStages } from "../../src/engine10/worker.ts"; import { buildStageEnv, stageCapability as contribCapability } from "../../src/contrib/stage_capability.ts"; import { SENTINEL_PREFIX } from "../../src/util/credential_env.ts"; import { SAFE_BUN_FLAGS } from "../../src/runner/worker_proc.ts";
 import { EXIT } from "../../src/engine10/output.ts";
 import { loadAwareTimeoutMs, setLoadAwareTimeout } from "../preload.ts";
 import { softCapS } from "../../src/engine10/machine.ts";
@@ -500,7 +500,7 @@ describe("A-110 exit ladder", () => {
 });
 
 describe("GAME10-05a: per-stage capability map", () => {
-  type Cap = { stage: string; secrets: string[]; can_push: boolean | "unknown"; network: boolean };
+  type Cap = { stage: string; secrets: string[]; can_push: boolean | "unknown"; network: boolean | "unknown" };
   const SECRET_VALUE = "ghp_realtokenvalue0123456789abcdefABCD";
   const ANTH_VALUE = "sk-ant-secretvalue-0123456789";
   const BOT_VALUE = "ghp_bottokenvalue0123456789abcdefABCDEF";
@@ -518,7 +518,7 @@ describe("GAME10-05a: per-stage capability map", () => {
     return recorded(dir, runId);
   }
   /** A VERIFIED run whose pr hook is the real runPr against a stub push script, wired the way main()'s closure wires it. */
-  async function prCaps(runId: string, env: NodeJS.ProcessEnv): Promise<{ stages: Cap[]; raw: string }> {
+  async function prCaps(runId: string, env: NodeJS.ProcessEnv, deep = false): Promise<{ stages: Cap[]; raw: string }> {
     const { dir, baseSha } = repoWithCommit();
     const code = `${intakeLine(baseSha)} ${COMMIT_A_CHANGE} console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "VERIFIED", not_proven: [] } })); process.exit(0);`;
     const workDir = mkdtempSync(join(tmpdir(), "e10-cap-out-")); roots.push(workDir);
@@ -528,7 +528,7 @@ describe("GAME10-05a: per-stage capability map", () => {
       const r = await runPr({ runId: p.runId, repoDir: p.repoDir, runDir, branch: `loki/${p.runId}`, pinnedOrigin: p.pushEnv._LOKI_PINNED_ORIGIN, outputs: () => ({ seal: { verdict: p.verdict, not_proven: p.notProven } }), capHit: () => false, emit: () => {} } as unknown as PrContext, new AbortController().signal, { pushScriptPath, onSpawnEnv: p.recordSpawnEnv });
       return r.status === "completed" ? { url: (r.data as { pr_url?: string }).pr_url ?? null, draft: false, existing: null } : { url: null, draft: false, existing: null, notProven: [`PR not opened: ${r.reason}`] };
     };
-    await runSupervisor({ runId, repoDir: dir, env, workerArgv: worker(code), capS: 20, graceS: 5, pr: step });
+    await runSupervisor({ runId, repoDir: dir, env, workerArgv: worker(code), capS: 20, graceS: 5, pr: step, ...(deep ? { deepArgv: worker("process.exit(0)") } : {}) });
     return recorded(dir, runId);
   }
   const withProcessEnv = async (patch: Record<string, string | undefined>, fn: () => Promise<void>): Promise<void> => {
@@ -537,10 +537,10 @@ describe("GAME10-05a: per-stage capability map", () => {
     try { await fn(); } finally { for (const k of Object.keys(saved)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
   };
 
-  test("worker stages hold only the withheld sentinel, so they cannot push even when the supervisor env holds a real token; no value is recorded", async () => {
+  test("worker stages record unknown, never false: their env is a copy of the supervisor env, not an allowlist env; no value is recorded", async () => {
     const r = await capsFor("e10-cap-withheld", { ...cleanEnv(emptyHome()), GH_TOKEN: SECRET_VALUE, ANTHROPIC_API_KEY: ANTH_VALUE });
     for (const st of ["intake", "plan", "wall", "implement", "verify", "commit", "seal"]) expect(r.stages.some((s) => s.stage === st)).toBe(true);
-    expect(r.stages.every((s) => s.can_push !== true && !s.secrets.includes("GH_TOKEN"))).toBe(true);
+    expect(r.stages.every((s) => s.can_push === "unknown" && s.network === "unknown")).toBe(true);
     expect(r.stages.every((s) => s.secrets.includes("ANTHROPIC_API_KEY"))).toBe(true);
     expect(r.raw).not.toContain(SECRET_VALUE); expect(r.raw).not.toContain(ANTH_VALUE);
   }, loadAwareTimeoutMs(20_000));
@@ -555,65 +555,103 @@ describe("GAME10-05a: per-stage capability map", () => {
     });
   }, loadAwareTimeoutMs(30_000));
 
-  test("review 2: with no token var the pr stage records unknown when gh auth config is reachable from its spawn env and false when nothing can exist; the hardened worker stages record false either way", async () => {
+  test("round 3: with no token and a bare HOME the real pr spawn env still records unknown, never false", async () => {
     const noTok = { LOKI_PR_AUTHOR: undefined, LOKI_PR_BOT_TOKEN: undefined, GH_TOKEN: undefined, GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined, GITHUB_ENTERPRISE_TOKEN: undefined, GH_CONFIG_DIR: undefined, XDG_CONFIG_HOME: undefined, GIT_CONFIG_COUNT: undefined, GIT_CONFIG_GLOBAL: undefined };
-    const reachHome = homeWith({ ".config/gh/hosts.yml": "github.com:\n    user: octocat\n" });
-    await withProcessEnv({ ...noTok, HOME: reachHome }, async () => {
-      const r = await prCaps("e10-cap-unknown", cleanEnv(reachHome));
-      expect(r.stages.find((s) => s.stage === "pr")!.can_push).toBe("unknown");
-      expect(r.stages.filter((s) => s.stage !== "pr").every((s) => s.can_push === false)).toBe(true); // withholdGithubTokens points GH_CONFIG_DIR at an empty dir and resets the helper
-    });
     const bareHome = emptyHome();
     await withProcessEnv({ ...noTok, HOME: bareHome }, async () => {
       const r = await prCaps("e10-cap-none", cleanEnv(bareHome));
-      expect(r.stages.find((s) => s.stage === "pr")!.can_push).toBe(false);
+      expect(r.stages.find((s) => s.stage === "pr")!.can_push).toBe("unknown");
     });
   }, loadAwareTimeoutMs(60_000));
 
-  test("review 3: LOKI_OFFLINE and LOKI_NO_NETWORK are declarations, not isolation, so the recorded network stays true", async () => {
+  test("round 3: the real worker, deep and pr spawn envs are not helper-built, so every one records unknown, never false", async () => {
+    const bareHome = emptyHome();
+    await withProcessEnv({ LOKI_PR_AUTHOR: undefined, LOKI_PR_BOT_TOKEN: undefined, GH_TOKEN: undefined, GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined, GITHUB_ENTERPRISE_TOKEN: undefined, HOME: bareHome }, async () => {
+      const r = await prCaps("e10-cap-deep", cleanEnv(bareHome), true);
+      for (const st of ["intake", "wall", "seal", "deep", "pr"]) expect(r.stages.some((s) => s.stage === st)).toBe(true);
+      expect(r.stages.every((s) => s.can_push === "unknown" && s.network === "unknown")).toBe(true);
+    });
+  }, loadAwareTimeoutMs(60_000));
+
+  test("review 3: LOKI_OFFLINE and LOKI_NO_NETWORK are declarations, not isolation, so the recorded network is never false", async () => {
     const r = await capsFor("e10-cap-offline", { ...cleanEnv(emptyHome()), LOKI_OFFLINE: "1", LOKI_NO_NETWORK: "1" });
-    expect(r.stages.every((s) => s.network === true)).toBe(true);
+    expect(r.stages.every((s) => s.network === "unknown")).toBe(true);
   }, loadAwareTimeoutMs(20_000));
 
-  test("review 2: stageCapability is tri-state from the env's token, gh auth config, credential helper and keyring-capable paths", () => {
-    const home = emptyHome(), ghHosts = { ".config/gh/hosts.yml": "github.com:\n    user: o\n" };
-    expect(stageCapability("x", { HOME: home }).can_push).toBe(false);
-    expect(stageCapability("x", { HOME: home, GH_TOKEN: SECRET_VALUE }).can_push).toBe(true);
-    expect(stageCapability("x", { HOME: home, GH_TOKEN: `${SENTINEL_PREFIX}abc` }).can_push).toBe(false);
-    expect(stageCapability("x", { HOME: homeWith(ghHosts) }).can_push).toBe("unknown");
-    expect(stageCapability("x", { HOME: home, GH_CONFIG_DIR: homeWith({ "hosts.yml": "github.com:\n    user: o\n" }) }).can_push).toBe("unknown");
-    expect(stageCapability("x", { HOME: homeWith(ghHosts), GH_CONFIG_DIR: emptyHome() }).can_push).toBe(false); // GH_CONFIG_DIR wins over HOME
-    const helperHome = homeWith({ ".gitconfig": "[credential]\n\thelper = osxkeychain\n" });
-    expect(stageCapability("x", { HOME: helperHome }).can_push).toBe("unknown");
-    expect(stageCapability("x", { HOME: helperHome, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "" }).can_push).toBe(false); // the hardened env's reset
-    expect(stageCapability("x", { HOME: home, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "store" }).can_push).toBe("unknown");
-    expect(stageCapability("x", { HOME: homeWith({ ".git-credentials": "https://u:p@github.com\n" }) }).can_push).toBe("unknown");
+  // --- round 3: fail closed. Each row is one input the round-2 review showed understating a stage; every case must NOT record false. ---
+  const runTmp = (): string => { const d = mkdtempSync(join(tmpdir(), "loki-run.")); roots.push(d); writeFileSync(join(d, ".loki-run-owned"), `${d}\n`); return d; };
+  const withRunTmp = <T>(d: string, fn: () => T): T => { const saved = process.env.LOKI_RUN_TMP; process.env.LOKI_RUN_TMP = d; try { return fn(); } finally { if (saved === undefined) delete process.env.LOKI_RUN_TMP; else process.env.LOKI_RUN_TMP = saved; } };
+  const NO_NET = ["unshare", "-n", "bun", "worker.ts"], BARE = ["bun", "worker.ts"];
+  /** An env that satisfies every can_push-false condition: allowlist names only, run-owned HOME, no system git config, global git config /dev/null. */
+  const sealedEnv = (home: string): NodeJS.ProcessEnv => buildStageEnv(home, { PATH: "/usr/bin" });
+  /** The same names and values but not returned by the helper: a forged lookalike. */
+  const forgedEnv = (home: string): NodeJS.ProcessEnv => ({ ...sealedEnv(home) });
+  /** A helper-built env patched in place (undefined deletes), so the object stays a helper product while one input is bent. */
+  const bent = (home: string, patch: NodeJS.ProcessEnv): NodeJS.ProcessEnv => { const e = sealedEnv(home); for (const [k, v] of Object.entries(patch)) { if (v === undefined) delete e[k]; else e[k] = v; } return e; };
+  type Case = { env?: NodeJS.ProcessEnv; argv?: string[]; setup?: (home: string) => void };
+  const SBPL_ALLOW_AFTER = "(version 1)(deny network*)(allow network*)", SBPL_COMMENT_ONLY = "(version 1)\n; (deny network*)\n", SBPL_DENY = "(version 1)(deny network*)";
+  const rows: { finding: string; field: "can_push" | "network" | "secrets"; cases: Case[]; check?: (c: Cap) => boolean }[] = [
+    { finding: "1 SSH_AUTH_SOCK set", field: "can_push", cases: [{ env: { SSH_AUTH_SOCK: "/tmp/agent.sock" } }, { env: { SSH_AUTH_SOCK: "/tmp/agent.sock" }, argv: NO_NET }] },
+    { finding: "2 key in ~/.ssh or GIT_SSH_COMMAND", field: "can_push", cases: [{ env: { GIT_SSH_COMMAND: "ssh -i /k" } }, { env: { GIT_SSH_COMMAND: "ssh -i /k" }, argv: NO_NET }, { setup: (h) => { mkdirSync(join(h, ".ssh")); writeFileSync(join(h, ".ssh", "id_ed25519"), "k"); } }] },
+    { finding: "3 credential.helper in the repo .git/config", field: "can_push", cases: [{ setup: (h) => { mkdirSync(join(h, "repo", ".git"), { recursive: true }); writeFileSync(join(h, "repo", ".git", "config"), "[credential]\n\thelper = store\n"); } }] },
+    { finding: "4 credential helper in the system gitconfig", field: "can_push", cases: [{ env: { GIT_CONFIG_NOSYSTEM: undefined } }] },
+    { finding: "5 GIT_CONFIG_PARAMETERS or GIT_CONFIG_KEY_n carrying a helper", field: "can_push", cases: [{ env: { GIT_CONFIG_PARAMETERS: "'credential.helper=store'" } }, { env: { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "store" } }, { env: { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "store" }, argv: NO_NET }] },
+    { finding: "6 GIT_ASKPASS set", field: "can_push", cases: [{ env: { GIT_ASKPASS: "/bin/askpass" } }, { env: { GIT_ASKPASS: "/bin/askpass" }, argv: NO_NET }] },
+    { finding: "7 GITLAB_TOKEN or LOKI_PR_BOT_TOKEN alone", field: "can_push", cases: [{ env: { GITLAB_TOKEN: SECRET_VALUE } }, { env: { LOKI_PR_BOT_TOKEN: BOT_VALUE } }, { env: { LOKI_PR_BOT_TOKEN: BOT_VALUE }, argv: NO_NET }], check: (c) => c.can_push === true },
+    { finding: "8 secrets misses GH_PAT, NPM_CONFIG__AUTH, OPENAI_KEY, DATABASE_URL, MY_API_KEY", field: "secrets", cases: [{ env: { GH_PAT: "x", NPM_CONFIG__AUTH: "x", OPENAI_KEY: "x", DATABASE_URL: "postgres://u:p@h/db", MY_API_KEY: "1" } }], check: (c) => ["GH_PAT", "NPM_CONFIG__AUTH", "OPENAI_KEY", "DATABASE_URL", "MY_API_KEY"].every((n) => (c.secrets as string[]).includes(n)) },
+    { finding: "9 unshare -r with the inner -n, firejail with the inner --net=none", field: "network", cases: [{ argv: ["unshare", "-r", "bun", "worker.ts", "-n", "3"] }, { argv: ["firejail", "bun", "w.ts", "--net=none"] }] },
+    { finding: "10 bwrap --unshare-all --share-net", field: "network", cases: [{ argv: ["bwrap", "--unshare-all", "--share-net", "bun", "w.ts"] }] },
+    { finding: "11 sandbox-exec -p with a later allow", field: "network", cases: [{ argv: ["sandbox-exec", "-p", SBPL_ALLOW_AFTER, "bun", "w.ts"] }] },
+    { finding: "12 sandbox-exec -p with the deny only in a comment", field: "network", cases: [{ argv: ["sandbox-exec", "-p", SBPL_COMMENT_ONLY, "bun", "w.ts"] }] },
+  ];
+  test.each(rows.map((r) => [r.finding, r] as const))("round 3 negative control, finding %s: never recorded as false", (_n, row) => {
+    for (const c of row.cases) {
+      const root = runTmp(), home = join(root, "home"); mkdirSync(home);
+      c.setup?.(home);
+      const env = bent(home, c.env ?? {});
+      const cap = withRunTmp(root, () => stageCapability("x", env, c.argv ?? BARE)) as Cap;
+      if (row.check) expect(row.check(cap)).toBe(true); else expect((cap as unknown as Record<string, unknown>)[row.field]).not.toBe(false);
+    }
   });
 
-  test("review 3: network is false only when the spawn argv itself runs under a sandbox with the flags that cut the network", () => {
-    const env = { HOME: emptyHome() };
-    for (const bare of [["unshare"], ["unshare", "bun", "w"], ["bwrap", "bun"], ["firejail", "bun"], ["sandbox-exec", "bun"], ["/usr/bin/unshare", "--map-root-user", "bun"]]) expect(stageCapability("x", env, bare).network).toBe(true);
-    expect(stageCapability("x", { ...env, LOKI_OFFLINE: "1", LOKI_NO_NETWORK: "1" }, ["bun", "w"]).network).toBe(true);
-    for (const enforced of [["unshare", "--net", "bun"], ["unshare", "-rn", "bun"], ["bwrap", "--unshare-net", "bun"], ["firejail", "--net=none", "bun"], ["sandbox-exec", "-p", "(version 1)(deny network*)", "bun"]]) expect(stageCapability("x", env, enforced).network).toBe(false);
+  test("round 3 positive control: false is returned when it is proven, for the allowlist env and for each strict wrapper", () => {
+    const root = runTmp(), home = join(root, "home"); mkdirSync(home);
+    withRunTmp(root, () => {
+      expect(stageCapability("x", sealedEnv(home), NO_NET)).toEqual({ stage: "x", secrets: [], can_push: false, network: false });
+      for (const argv of [["unshare", "--net", "bun"], ["unshare", "-rn", "bun"], ["bwrap", "--unshare-net", "bun"], ["bwrap", "--unshare-all", "--bind", "/", "/", "bun"], ["bwrap", "--share-net", "--unshare-all", "bun"], ["firejail", "--quiet", "--net=none", "bun"], ["/usr/bin/firejail", "--net=none", "--", "bun"], ["sandbox-exec", "-p", SBPL_DENY, "bun"], ["sandbox-exec", "-D", "A=b", "-p", "(version 1)\n(deny network*) ; no net", "bun"]]) expect(stageCapability("x", sealedEnv(home), argv).network).toBe(false);
+    });
   });
 
-  test("nit: switch variables named like secrets are not listed as secrets, real secret-bearing variables are", () => {
-    const c = stageCapability("x", { HOME: emptyHome(), LOKI_ALLOW_AGENT_GITHUB_TOKEN: "1", LOKI_REQUIRE_TOKEN: "true", ANTHROPIC_API_KEY: ANTH_VALUE, MY_SECRET: "s3" });
-    expect(c.secrets).toEqual(["ANTHROPIC_API_KEY", "MY_SECRET"]);
+  test("round 3: can_push stays unknown when any one of the four conditions fails", () => {
+    const root = runTmp(), home = join(root, "home"); mkdirSync(home); const other = emptyHome();
+    withRunTmp(root, () => {
+      const unknown = (env: NodeJS.ProcessEnv, argv: string[] = NO_NET): unknown => stageCapability("x", env, argv).can_push;
+      expect(unknown(bent(home, { HOME: other }))).toBe("unknown"); // HOME is not run-owned
+      expect(unknown(bent(home, { HOME: undefined }))).toBe("unknown");
+      expect(unknown(bent(home, { GIT_CONFIG_NOSYSTEM: undefined }))).toBe("unknown");
+      expect(unknown(bent(home, { GIT_CONFIG_GLOBAL: "/etc/gitconfig" }))).toBe("unknown");
+      expect(unknown(bent(home, { EXTRA: "1" }))).toBe("unknown"); // passthrough beyond the allowlist
+      expect(unknown(sealedEnv(home), BARE)).toBe("unknown"); // network not proven cut
+      expect(unknown(forgedEnv(home))).toBe("unknown"); // right HOME, GIT_CONFIG_* and safe names, but not built by the helper
+      expect(unknown(Object.assign(forgedEnv(home), { LOKI_STAGE_ENV_BUILT: "1", __built: "true" }))).toBe("unknown"); // no env var or property can forge the mark
+    });
+    expect(contribCapability("x", sealedEnv(home), NO_NET, undefined).can_push).toBe("unknown"); // no run-owned directory known
   });
 
-  test("review 4: the record follows the env deeply: every step toward a credentialed env changes it, and a non-credential change does not", () => {
-    const home = emptyHome(), base = stageCapability("s", { HOME: home });
-    expect(stageCapability("s", { HOME: home, EDITOR: "vim", LOKI_OFFLINE: "1" })).toEqual(base);
-    const steps: NodeJS.ProcessEnv[] = [
-      { HOME: home, ANTHROPIC_API_KEY: ANTH_VALUE },
-      { HOME: homeWith({ ".config/gh/hosts.yml": "github.com:\n    user: o\n" }) },
-      { HOME: homeWith({ ".gitconfig": "[credential]\n\thelper = store\n" }) },
-      { HOME: home, GITHUB_ENTERPRISE_TOKEN: SECRET_VALUE },
-    ];
-    const seen = [JSON.stringify(base)];
-    for (const e of steps) expect(JSON.stringify(stageCapability("s", e))).not.toBe(seen[0]);
-    expect(stageCapability("s", steps[3]!)).toEqual({ stage: "s", secrets: ["GITHUB_ENTERPRISE_TOKEN"], can_push: true, network: true });
+  test("round 3: network parse reads only the wrapper's own leading flags and abandons on anything it cannot place", () => {
+    const net = (argv: string[]): unknown => stageCapability("x", {}, argv).network;
+    for (const argv of [[], ["bun", "w.ts"], ["unshare"], ["unshare", "--net=/proc/1/ns/net", "bun"], ["unshare", "-S", "0", "-n", "bun"], ["unshare", "--", "-n", "bun"], ["bwrap", "bun"], ["bwrap", "--unshare-net", "--frobnicate", "bun"], ["bwrap", "--args", "3", "bun"], ["firejail", "--net=none", "--net=eth0", "bun"], ["firejail", "--net=none", "--ignore=net", "bun"], ["sandbox-exec", "-f", "p.sb", "bun"], ["sandbox-exec", "-n", "no-network", "bun"], ["sandbox-exec", "-p", "\"(deny network*)\"", "bun"], ["sandbox-exec", "-p", "(version 1)(deny network*", "bun"], ["sandbox-exec", "-p", "(version 1)(deny network*)(import \"x.sb\")", "bun"], ["sandbox-exec", "-p", "(version 1)(deny network*)(if #t (allow network*))", "bun"], ["docker", "run", "--network", "none", "bun"], ["env", "unshare", "-n", "bun"]]) expect(net(argv)).toBe("unknown");
+  });
+
+  test("round 3: secrets is the child env names outside the one safe list, whatever they are called", () => {
+    const c = stageCapability("x", { PATH: "/usr/bin", HOME: "/h", LOKI_ALLOW_AGENT_GITHUB_TOKEN: "1", ANTHROPIC_API_KEY: ANTH_VALUE, FOO: "bar", GONE: undefined });
+    expect(c.secrets).toEqual(["ANTHROPIC_API_KEY", "FOO", "LOKI_ALLOW_AGENT_GITHUB_TOKEN"]);
+    expect(JSON.stringify(c)).not.toContain(ANTH_VALUE);
+  });
+
+  test("round 3: with no contrib registered a capability is unknown everywhere", async () => {
+    const { hooks } = await import("../../src/engine10/hooks.ts"); const saved = hooks.stageCapability; delete hooks.stageCapability;
+    try { expect(stageCapability("x", { GH_TOKEN: "t" }, NO_NET)).toEqual({ stage: "x", secrets: "unknown", can_push: "unknown", network: "unknown" }); } finally { hooks.stageCapability = saved; }
   });
 
   test("review 4: the worker emits capability.observed for every worker stage, from the env it really runs with, as its first line", async () => {
@@ -623,7 +661,7 @@ describe("GAME10-05a: per-stage capability map", () => {
       const ev = JSON.parse(first) as { type: string; stage: string | null; data: { stages: Cap[] } };
       expect(ev.type).toBe("capability.observed");
       expect(ev.data.stages.map((s) => s.stage)).toEqual(workerStages());
-      expect(ev.data.stages.every((s) => s.secrets.includes("ANTHROPIC_API_KEY") && s.can_push === false && s.network === true)).toBe(true);
+      expect(ev.data.stages.every((s) => s.secrets.includes("ANTHROPIC_API_KEY") && s.can_push === "unknown" && s.network === "unknown")).toBe(true);
       expect(first).not.toContain(ANTH_VALUE);
     } finally { if (child.exitCode === null) child.kill("SIGKILL"); }
   }, loadAwareTimeoutMs(30_000));

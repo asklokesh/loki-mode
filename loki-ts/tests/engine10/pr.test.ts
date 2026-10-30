@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { DEFAULT_PUSH_GITLAB_SH, DEFAULT_PUSH_SH, runPr, stage } from "../../src/engine10/stages/pr.ts"; import { pushErrLine } from "../../src/util/term_width.ts";
 import { publishFallback } from "../../src/util/engine_origin.ts";
 import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
-import { readEvents } from "../../src/engine10/events.ts";
+import { readEvents } from "../../src/engine10/events.ts"; import { stageCapability } from "../../src/engine10/worker.ts";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { RECOVERY_ABORT, discardRun, findInterrupted, nextStepText, parseRecoveryChoice, phaseOf, resumeMain, startRecovery, statusNextStep, type RunPrFn } from "../../src/util/run_outputs.ts";
 import type { CostReader, RunContext, SessionRunner, TestMapProvider, Verdict } from "../../src/engine10/types.ts";
@@ -209,6 +209,19 @@ describe("engine10 pr stage", () => {
     try { await runPr(ctx, new AbortController().signal, { pushScriptPath: script, onSpawnEnv: (e) => { seen = e; } }); }
     finally { keys.forEach((k, i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; }); }
     expect(seen?.GH_TOKEN).toBe("ghp_bottokenvalue0123456789abcdefABCDEF"); expect(seen?._LOKI_ORIGIN_PINNED).toBe("1");
+  });
+
+  test("GAME10-05a round 3: the capability of the env the push script is spawned with is true with a bot token and unknown (never false) without one", async () => {
+    const script = writeStub(stubDir, logPath);
+    const { ctx } = makeCtx(repoDir, runDir, { pinnedOrigin: "https://github.com/o/r.git" });
+    const keys = ["LOKI_PR_AUTHOR", "LOKI_PR_BOT_TOKEN", "GH_TOKEN"], saved = keys.map((k) => process.env[k]);
+    const spawnedEnv = async (): Promise<NodeJS.ProcessEnv> => { let seen: NodeJS.ProcessEnv = {}; await runPr(ctx, new AbortController().signal, { pushScriptPath: script, onSpawnEnv: (e) => { seen = e; } }); return seen; };
+    try {
+      delete process.env.GH_TOKEN; process.env.LOKI_PR_AUTHOR = "bot"; process.env.LOKI_PR_BOT_TOKEN = "ghp_bottokenvalue0123456789abcdefABCDEF";
+      expect(stageCapability("pr", await spawnedEnv()).can_push).toBe(true);
+      delete process.env.LOKI_PR_AUTHOR; delete process.env.LOKI_PR_BOT_TOKEN;
+      expect(stageCapability("pr", await spawnedEnv()).can_push).toBe("unknown");
+    } finally { keys.forEach((k, i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; }); }
   });
 
   test("no pinned origin: refuses before spawning anything (Rule of Two)", async () => {
