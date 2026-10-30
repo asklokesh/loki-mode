@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hooks } from "../../src/engine10/hooks.ts";
 import { FLOW, runMachine } from "../../src/engine10/machine.ts";
+import { verdictOf, wallGreenOnBaseOf } from "../../src/engine10/stages/seal.ts";
 import { STEER_MAX_BYTES, staleAtSeal, staleReason, staleWallRevisions } from "../../src/util/steer.ts";
 import type { RunContext, Stage, StageName, StageResult } from "../../src/engine10/types.ts";
 
@@ -185,6 +186,19 @@ describe("RUN5-C1 concurrent Wall is the default", () => {
     expect(f.log.filter((x) => x === "install")).toHaveLength(1);
     expect(f.log.indexOf("install")).toBeLessThan(f.log.indexOf("verify"));
     expect(r.outputs.wall?.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
+  }, 15000);
+  it("an unreproduced-evidence Wall green on base keeps its base run when implement touched files, so seal stays PARTIAL", async () => {
+    delete process.env.LOKI_E10_WALL_CONCURRENT; process.env.LOKI_E10_WALL_TIER = "sonnet";
+    const verdictFor = async (flagged: boolean) => {
+      hooks.wall = { ...hooks.wall!, changedSinceBase: () => ["src/a.ts"] }; // implement touched a file: the unsure branch
+      const f = fixture(), s = stages(f), split = (s.wall as unknown as { split: { install: (c: RunContext, a: never, b: string) => StageResult } }).split;
+      split.install = () => ({ status: "completed", data: { files: [], readOnlyFiles: [], already_satisfied: false, green_on_base: true, base_run: { pass: 1, fail: 0, not_run: 0 }, ...(flagged ? { reproduction_green_on_base: true } : {}) } });
+      const r = await run(f, s), o = { wall: r.outputs.wall, implement: { exit: "done" }, intake: {} } as never;
+      return { v: verdictOf(o, [{ name: "t", cmd: "t", result: "pass", duration_s: 0 }], false, false, wallGreenOnBaseOf(o), true), base: r.outputs.wall?.base_run };
+    };
+    const yes = await verdictFor(true);
+    expect(yes.base).toEqual({ pass: 1, fail: 0, not_run: 0 }); expect(yes.v).toBe("PARTIAL");
+    expect((await verdictFor(false)).base).toEqual({ pass: 1, fail: 0, not_run: 1, unproven: true }); // unchanged distrust for an ordinary green
   }, 15000);
   it("with the knob unset and no pin (haiku-first routing) the Wall stays sequential even when the stage has a split", async () => {
     delete process.env.LOKI_E10_WALL_CONCURRENT; delete process.env.LOKI_E10_WALL_TIER;

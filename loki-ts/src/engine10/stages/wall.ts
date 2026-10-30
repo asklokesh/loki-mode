@@ -5,14 +5,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpath
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { type RunContext, type RunnerName, type Stage, type StageResult, type TestMap, type TestRef, taskBlock } from "../types.ts";
-import { clauseBriefBlock, clauseDroppedNote, extractClauses, untaggedClauses, type ClauseSet } from "../../util/spec_file.ts";
+import { clauseDroppedNote, extractClauses, untaggedClauses, type ClauseSet } from "../../util/spec_file.ts";
 import { unitSpec } from "../../features/speed/unit_mode.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, loadRepoMap, namedFiles, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallOutputCap, wallModel } from "../sizing.ts";
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { publishSealed, removeHoldout, sealStageDir, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
-import { ingestWallCases, wallCasesBrief, wallCasesRunner } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingJavaTool, projectInterpreter } from "../testmap.ts";
+import { clauseEvidenceBlock, evidenceOf, ingestWallCases, wallCasesBrief, wallCasesRunner, withUnreproducedEvidence, type WallEvidence } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingJavaTool, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { baseJobs, classify, corroboratePass, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
@@ -57,7 +57,7 @@ export const WALL_OUTPUT_BUDGET = "Output budget: write one test file, one asser
 /** FC-WALL-OUT-OF-REPO-TARGET: static, cache-stable, sits beside the output budget before any run-specific text. */
 export const WALL_REPO_PATHS = "Reach repo code by repo-relative paths, never via home dir, $HOME or ~/.";
 
-export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false, conventions = "", acceptance: string[] = [], location: string | null = null, clauses: ClauseSet | null = null): string { // location: repo-relative destination directory; "" is the repo root; null is unknown (no line)
+export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false, conventions = "", acceptance: string[] = [], location: string | null = null, clauses: ClauseSet | null = null, evidence: WallEvidence | null = null): string { // location: repo-relative destination directory; "" is the repo root; null is unknown (no line)
   return withStagePrefix([
     "You are the Loki 10 Wall author.",
     WALL_OUTPUT_BUDGET,
@@ -66,7 +66,7 @@ export function buildWallBrief(task: string, repomapText = "", runners: RunnerNa
     ...(repomapText ? [`Repository paths (repomap.txt):\n${repomapText}`] : []),
     ...taskBlock(task),
     ...(acceptance.length ? [`Acceptance criteria frozen for this unit (each must be covered by a test):\n${acceptance.map((a) => `Acceptance: ${a}`).join("\n")}`] : []),
-    ...clauseBriefBlock(clauses),
+    ...clauseEvidenceBlock(clauses, evidence),
     "Write behavioral acceptance tests that prove the task is done. A test that errors on import, uses another framework's globals, or fails for a reason unrelated to the task is discarded. Negative case: for each acceptance line include one assertion that rejects bad input or would fail before the fix.",
     `Test runner: ${runners.map((r) => RUNNER_HINT[r]).find(Boolean) ?? "the framework named in repomap.txt"}`,
     ...(conventions ? [conventions] : []),
@@ -98,7 +98,7 @@ function wallTargetDir(repoDir: string, existingTests: TestRef[], runners: Runne
 /** Runner for a generated file: extension decides for Python/Go, a JS/TS file takes the repo's detected JS runner; anything else never guesses (unselectable). */
 
 /** WC-01a: what wallAuthor hands installWall. Sealed copies live under <runDir>/wall; nothing here touches repoDir. */
-export interface WallAuthored { kind: "authored"; staged?: boolean; model?: string; iterationId?: string; task: string; sizeName: string; runners: RunnerName[]; targetDir: string; generated: string[]; contents: Map<string, string>; discarded: { file: string; reason: string }[]; manifestSha256?: string; holdoutDir?: string; clauses?: ClauseSet; }
+export interface WallAuthored { kind: "authored"; staged?: boolean; model?: string; iterationId?: string; task: string; sizeName: string; runners: RunnerName[]; targetDir: string; generated: string[]; contents: Map<string, string>; discarded: { file: string; reason: string }[]; manifestSha256?: string; holdoutDir?: string; clauses?: ClauseSet; evidence?: WallEvidence; }
 export type WallAuthorOutcome = { kind: "done"; result: StageResult } | WallAuthored;
 
 /** Session plus compile check. Writes only <runDir>/wall (sealed copies); repoDir is read, never written. */
@@ -136,11 +136,11 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const wm = wallManifestFor(ctx.repoDir, tree, task); // D77: flag-gated, null (as if off) on any failure
   for (const [n, c] of [["task.md", task], ["repomap.txt", repomapText], ...(wm ? [["wall_manifest.txt", wm.text]] : [])] as [string, string][]) writeFileSync(join(cwd, n), c, "utf8");
 
-  const clauseSet = extractClauses(task);
+  const clauseSet = extractClauses(task), evidence = evidenceOf(prior.intake?.runtime_evidence);
   const model = retry?.model ?? wallFirstModel(sz.size), iterationId = `${ctx.runId}-wall${retry?.suffix ?? ""}`; // COST-11
   const session = await ctx.sessions.run({
     stage: "wall",
-    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? [], relative(ctx.repoDir, targetDir), clauseSet) + wallCasesBrief(runners), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
+    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? [], relative(ctx.repoDir, targetDir), clauseSet, evidence) + wallCasesBrief(runners), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
     tier: "development",
     model,
@@ -166,7 +166,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
     if (oorWhy) discarded.push({ file: name, reason: `${oorWhy}; wall test discarded after one rewrite request` }); else if (bad) discarded.push({ file: name, reason: `${bad}; wall test did not compile under the package config` }); else contents.set(name, content);
   }
   rmSync(cwd, { recursive: true, force: true });
-  return { kind: "authored", ...(generated.length > 0 ? { staged: true } : {}), model, iterationId, task, sizeName: sz.size, runners, targetDir, generated, contents, discarded, ...(clauseSet.clauses.length ? { clauses: clauseSet } : {}), ...(wm ? { manifestSha256: wm.sha256 } : {}), ...(held ? { holdoutDir: held.dir } : {}) };
+  return { kind: "authored", ...(generated.length > 0 ? { staged: true } : {}), model, iterationId, task, sizeName: sz.size, runners, targetDir, generated, contents, discarded, ...(clauseSet.clauses.length ? { clauses: clauseSet } : {}), ...(evidence ? { evidence } : {}), ...(wm ? { manifestSha256: wm.sha256 } : {}), ...(held ? { holdoutDir: held.dir } : {}) };
 }
 
 /** Copy the sealed files into repoDir, emit wall.sealed, run the base run in baseDir, drop not_run files. */
@@ -195,7 +195,7 @@ function* installCore(ctx: RunContext, a: WallAuthored, baseDir: string, opts: W
   // D42 (3): not_run refuses the seal too -- never short-circuit on a base run that never proved anything.
   const alreadySatisfied = generated.length > 0 && unselectable === 0 && baseRun.fail === 0 && (baseRun.not_run ?? 0) === 0 && baseRun.pass === generated.length;
 
-  return {
+  return withUnreproducedEvidence({
     status: "completed",
     data: {
       files: sealedFiles,
@@ -208,7 +208,7 @@ function* installCore(ctx: RunContext, a: WallAuthored, baseDir: string, opts: W
       ...(discarded.length ? { discarded } : {}),
       ...(a.clauses ? { clauses: a.clauses.clauses.length, ...untaggedData(a.clauses, contents), ...(a.clauses.dropped ? { not_proven: [clauseDroppedNote(a.clauses.dropped)] } : {}) } : {}),
     },
-  };
+  }, a.evidence, alreadySatisfied, generated.length === 0);
 }
 
 const untaggedData = (set: ClauseSet, files: Map<string, string>): Record<string, string[]> => { const u = untaggedClauses(set, files); return { ...(u.untagged.length ? { untagged: u.untagged } : {}), ...(u.untagged_files.length ? { untagged_files: u.untagged_files } : {}) }; }; // listed, never silently counted as covered
@@ -222,10 +222,10 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   const first = a.kind === "done" ? a.result : await installWallAsync(ctx, a, ctx.repoDir, opts);
   // COST-11: a cheaper first rung is re-authored exactly once on wallModel() when its result cannot be trusted: nothing usable (nothing written, all discarded or not_run), a killed or timed-out session (N3), or a Wall already green on the base tree (B1: a haiku test that passes before the change may be vacuous, so the sonnet result decides already_satisfied). Never loops. Any doubt escalates.
   const cheap = a.kind === "authored" ? a.model : (first.data.model as string | undefined) ?? "", killed = a.kind === "done" && first.killed === true, usable = a.kind === "authored" && first.status === "completed";
-  const unusable = usable && ((first.data.files as unknown[] | undefined) ?? []).length === 0, green = usable && !unusable && (first.data.already_satisfied === true || wallGreenOnBaseOf({ wall: first.data })); // same green test seal applies
+  const unusable = usable && ((first.data.files as unknown[] | undefined) ?? []).length === 0, green = usable && !unusable && (first.data.already_satisfied === true || first.data.reproduction_green_on_base === true || wallGreenOnBaseOf({ wall: first.data })); // same green test seal applies
   const budgetLeft = WALL_STAGE_LIMIT_S * 1000 - (Date.now() - t0) >= WALL_RUNG_S * 1000; // the retry must fit its own session plus base run inside the stage limit, from the same constants
   if (!(unusable || green || killed) || !cheap || signal.aborted || cheap === wallModel()) return first;
-  if (!budgetLeft) return green ? { ...first, data: distrustGreenBase(first.data) } : first; // fail closed: an unchecked cheap-rung green must not stand as already_satisfied
+  if (!budgetLeft) return green && first.data.reproduction_green_on_base !== true ? { ...first, data: distrustGreenBase(first.data) } : first; // fail closed: an unchecked cheap-rung green must not stand as already_satisfied
   if (a.kind === "authored") { for (const f of (first.data.files as { path: string }[] | undefined) ?? []) rmSync(f.path, { force: true }); rmSync(join(ctx.runDir, "wall"), { recursive: true, force: true }); ctx.wallSealed = false; } // drop the abandoned attempt's installed copies, sealed copies and held-out tests so none leak into the retry
   removeHoldout(ctx.runId, ctx.repoDir);
   ctx.emit("wall.reauthor", "wall", { from_model: cheap, to_model: wallModel(), reason: killed ? "first author session killed or timed out" : green ? "first author green on the base tree" : "no usable test from the first author" });

@@ -102,7 +102,7 @@ export const wallGreenOnBaseOf = (o: Partial<Record<StageName, Obj>>): boolean =
 export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean, proof: boolean, targetProof = false, uncovered: string[] = [], leanGap: string[] = []): Verdict {
   const exit = o.implement?.exit, wd = wallDropped(o as never).length > 0;
   // FC-16: no success verdict without a Loki-executed check with n>0 and a pass; otherwise PARTIAL (NOT PROVEN, "no tests executed").
-  if (o.commit?.failed !== true && strs(o.commit?.not_proven).length === 0 && (o.intake?.already_satisfied === true || exit === "already_done")) return proof || wallGreenOnBase ? "ALREADY_SATISFIED" : "PARTIAL"; // FC-VACUOUS-WALL-GREEN: a Wall green on base proves a claim, never makes the claim itself
+  if (o.commit?.failed !== true && strs(o.commit?.not_proven).length === 0 && (o.intake?.already_satisfied === true || exit === "already_done")) return (proof || wallGreenOnBase) && o.wall?.reproduction_green_on_base !== true ? "ALREADY_SATISFIED" : "PARTIAL"; // FC-VACUOUS-WALL-GREEN: a Wall green on base proves a claim, never makes the claim itself; GAME10-08b: recorded runtime evidence the Wall did not reproduce is never "already satisfied"
   if (exit === "spec_conflict") return "SPEC_CONFLICT"; if (o.commit?.failed === true || strs(o.commit?.not_proven).length > 0) return "FAILED"; // r3: an unrestored user file is never a clean verdict; A-104b r2: a failed commit never seals VERIFIED
   // Section 2: an empty diff without the LOKI_ALREADY_DONE marker is FAILED, never VERIFIED.
   if (emptyDiff) return "FAILED";
