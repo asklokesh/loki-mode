@@ -111,4 +111,19 @@ describe("S41-10b static-first brief", () => {
     expect(text).toContain("ok/file.py");
     for (const f of bad.slice(0, -1)) expect(text).not.toContain(f);
   });
+  // The interpreter intake detected reaches the implementer even before any test file exists.
+  test("no test file yet, the brief still names the detected interpreter", () => {
+    const ctx = fixture(5);
+    const c2 = { ...ctx, outputs: () => ({ intake: { ...ctx.outputs().intake, testmap: { runners: ["pytest"], tests: [] } } }), tests: { impacted: () => [] } } as unknown as RunContext;
+    const text = briefContext(c2, { select: selectRelevantFiles, cmd: () => ["python3", ["-m", "pytest", "-q", "x"], "system", "."] });
+    expect(text).toContain("Detected test interpreter");
+    expect(text).toContain("python3 (pytest)");
+    expect(text).not.toContain("Impacted test commands");
+  });
+  test("no detected runner, no interpreter line is invented", () => {
+    const ctx = fixture(5);
+    const c2 = { ...ctx, outputs: () => ({ intake: { ...ctx.outputs().intake, testmap: { runners: [], tests: [] } } }), tests: { impacted: () => [] } } as unknown as RunContext;
+    const text = briefContext(c2, { select: selectRelevantFiles, cmd: () => ["python3", [], undefined, "."] });
+    expect(text).not.toContain("Detected test interpreter");
+  });
 });
