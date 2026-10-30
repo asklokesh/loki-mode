@@ -2,6 +2,7 @@
 // base and PASS on the PR head. Pure decision logic plus check extraction; execution is injected (the VPR-1 sandbox).
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { REPORT_RUNNERS } from "../engine10/testmap.ts";
 
 export interface SandboxResult { status: "COMPLETED" | "TIMEOUT" | "ERROR" | "BLOCKED"; exit_code: number | null; detail?: string; output?: string; report?: string }
 export type F2pOutcome =
@@ -33,26 +34,19 @@ export function referencedFiles(cmd: string, dir: string): string[] {
 
 /** Placeholder the sandbox adapter swaps for the run's unpredictable report path inside the sandbox. */
 export const REPORT_TOKEN = "__LOKI_REPORT__";
-export const RECOGNISED_RUNNERS = "bun test, pytest, jest, vitest";
+export const RECOGNISED_RUNNERS = REPORT_RUNNERS.map((r) => r.runner).join(", ");
 
 /** Rewrites the first recognised runner in `check` so it writes a machine report to REPORT_TOKEN. The report is read back from the file, never from printed output the PR's tests could forge. Runners with no stable report file and unrecognised commands are returned as a reason, never trusted on exit code or printed totals. */
 export function reportedCheck(check: string): { cmd: string } | { reason: string } {
-  const lead = String.raw`(?<![\w./-])`;
-  const forms: [RegExp, (m: string) => string][] = [
-    [new RegExp(`${lead}bun test\\b`), (m) => `${m} --reporter=junit --reporter-outfile=${REPORT_TOKEN}`],
-    [new RegExp(`${lead}(?:(?:python3?|py) -m )?py(?:\\.)?test\\b`), (m) => `${m} --junitxml=${REPORT_TOKEN}`],
-    [new RegExp(`${lead}jest\\b`), (m) => `${m} --json --outputFile=${REPORT_TOKEN}`],
-    [new RegExp(`${lead}vitest\\b`), (m) => `${m} --reporter=junit --outputFile=${REPORT_TOKEN}`],
-  ];
-  for (const [re, add] of forms) {
-    const m = re.exec(check);
-    if (m) return { cmd: check.slice(0, m.index) + add(m[0]) + check.slice(m.index + m[0].length) };
+  for (const r of REPORT_RUNNERS) {
+    const m = new RegExp(String.raw`(?<![\w./-])${r.find.source}`).exec(check);
+    if (m) return { cmd: `${check.slice(0, m.index)}${m[0]} ${r.flags.replace("<report>", REPORT_TOKEN)}${check.slice(m.index + m[0].length)}` };
   }
   const why = "no recognised test runner in the check (runners with no stable report file, such as go and cargo, are not accepted)";
   return { reason: `check cannot be proven: ${why}. A Check must run one of ${RECOGNISED_RUNNERS}, which write a pass/fail report file that is read back; an exit code or printed totals alone is not proof: ${check}` };
 }
 
-/** True only when the runner-written report (junit xml or jest json) records at least one passing test and no failure or error. A missing or unparseable report is not a pass. */
+/** True only when the runner-written report (junit xml or json) records at least one passing test and no failure or error. A missing or unparseable report is not a pass. */
 export function reportShowsPass(report: string | undefined): boolean {
   const r = (report ?? "").trim();
   if (r === "") return false;

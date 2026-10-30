@@ -33,6 +33,13 @@ export const COMMANDS: Record<RunnerName, CommandSpec> = {
   gradle: { cmd: "gradle cleanTest test --tests <class>", coarse: false },
   javac: { cmd: "javac + java <test class>", coarse: false },
 };
+/** Runners that can write a machine pass/fail report file: the invocation to find in a check command and the flags that name the report (`<report>` is replaced by the caller's path). Go and cargo have no stable file reporter and are absent. verify-pr reads its verdict from that file, never from an exit code or printed totals. */
+export const REPORT_RUNNERS: readonly { runner: RunnerName; find: RegExp; flags: string }[] = [
+  { runner: "bun", find: /bun test\b/, flags: "--reporter=junit --reporter-outfile=<report>" },
+  { runner: "pytest", find: /(?:(?:python3?|py) -m )?py\.?test\b/, flags: "--junitxml=<report>" },
+  { runner: "jest", find: /jest\b/, flags: "--json --outputFile=<report>" },
+  { runner: "vitest", find: /vitest\b/, flags: "--reporter=junit --outputFile=<report>" },
+];
 /** Repo's own interpreter first (E-53): `<root>/.venv/bin/python`, then  `<root>/venv/bin/python`, else bare `python` on PATH. */
 function pytestPython(root: string): string {
   for (const venv of [".venv", "venv"]) {

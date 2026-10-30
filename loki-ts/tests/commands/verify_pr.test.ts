@@ -460,7 +460,7 @@ describe("verify-pr: an exit code alone is not proof", () => {
     const r = await run(fixture("fix").meta, { checkout: defaultCheckout }, issueFor("sh t.sh"));
     expect(r.rc).toBe(4);
     const why = r.json.reasons.join(" ");
-    for (const w of ["bun test", "pytest", "jest", "vitest", "report file"]) expect(why).toContain(w);
+    for (const w of ["bun", "pytest", "jest", "vitest", "report file"]) expect(why).toContain(w);
   });
 
   test("reportedCheck rewrites recognised runners and refuses go, cargo and unknown commands with a reason", () => {
