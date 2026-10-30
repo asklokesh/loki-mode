@@ -219,5 +219,39 @@ if ! python3 "$M" --setup top --model strong --verifier llm-judge --only SD-0001
   ok "llm-judge: unparseable reply aborts and writes nothing"; else bad "llm-judge: unparseable reply aborts"; fi
 unset LOKI_SD_CLAUDE
 
+# PR-shaped corpus (pr-manifest.json): fixtures only. Each head passes its visible tests; a defect head fails the
+# issue check, a control head passes it, a case with no check names none.
+PRM="$REPO_ROOT/benchmarks/seeded-defects/pr-manifest.json"
+if python3 -I - "$PRM" "$T" <<'PY2'
+import json, os, shutil, subprocess, sys
+man, tmp = sys.argv[1], sys.argv[2]
+root = os.path.dirname(man)
+d = json.load(open(man))
+assert d["schema"] == "loki.seeded-defects.pr/v1"
+cs = d["cases"]
+ids = [c["id"] for c in cs]
+assert len(set(ids)) == len(ids) >= 8
+assert any(c["expected_verdict"] == "SEALED" for c in cs) and any(c["expected_verdict"] == "NOT_SEALED" for c in cs)
+def run(cwd, f):
+    return subprocess.run(["python3", "-B", f], cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+for c in cs:
+    assert c["expected_verdict"] in ("SEALED", "NOT_SEALED") and c["expected_exit"] in (0, 3, 4), c["id"]
+    assert (c["expected_verdict"] == "SEALED") == (c["expected_exit"] == 0), c["id"]
+    for f in c["files"]:
+        p = os.path.join(root, c["dir"], f)
+        assert os.path.isfile(p) and os.path.getsize(p) > 0, (c["id"], f)
+    assert c["has_check"] == ("check.py" in c["files"]), c["id"]
+    for side in ("base", "head"):
+        w = os.path.join(tmp, "pr-" + c["id"] + side)
+        shutil.copytree(os.path.join(root, c["dir"], side), w)
+        assert run(w, "test_visible.py") == 0, (c["id"], side, "visible tests must pass")
+        if side == "head" and c["has_check"]:
+            shutil.copy(os.path.join(root, c["dir"], "check.py"), w)
+            rc = run(w, "check.py")
+            assert (rc == 0) == (c["expected_verdict"] == "SEALED"), (c["id"], "check outcome", rc)
+PY2
+then ok "pr-manifest: PR fixtures pass visible tests, defects fail the issue check, controls pass it"
+else bad "pr-manifest: PR fixtures"; fi
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
