@@ -101,8 +101,14 @@ function readAnswer(answerPath: string, summary: string | undefined): unknown {
   return undefined;
 }
 
+/** Intake's deterministic signals already name the runner and the test units: one runner, every detected test file runs under it.
+ *  The repo-root behavior consumers keep for an unknown model is then the right one, so no session is spent. */
+export function signalsResolve(tm: { runners: readonly string[]; tests: readonly { runner: string }[] } | undefined): boolean {
+  return !!tm && tm.runners.length === 1 && tm.tests.length > 0 && tm.tests.every((t) => t.runner === tm.runners[0]);
+}
+
 /** `budgetS` is the time this call may use in total (the caller derives it from the stage budget). */
-export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal, opts: { force?: boolean; budgetS?: number; hardTimeoutMs?: number } = {}): Promise<Discovery> {
+export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal, opts: { force?: boolean; budgetS?: number; hardTimeoutMs?: number; testmap?: Parameters<typeof signalsResolve>[0] } = {}): Promise<Discovery> {
   const dirs = shallowDirs(ctx.repoDir);
   const committed = loadCommitted(ctx.repoDir);
   if (committed) {
@@ -119,6 +125,7 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
   // FC-55: every tracked file at the root means there is no package below it to learn; the repo-root
   // behavior consumers already have for an unknown model is exactly right, so no session is spent.
   if (isSingleDirectory(ctx.repoDir)) return { model: unknownModel("", "single-directory repo"), cached: false, attempts: 0, owner: "harness" };
+  if (signalsResolve(opts.testmap)) return { model: unknownModel("", "deterministic signals resolve the runner and units"), cached: false, attempts: 0, owner: "harness" };
 
   const deadline = Date.now() + (opts.budgetS ?? Infinity) * 1000;
   const g = gather(ctx.repoDir);
@@ -188,11 +195,11 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
 /** Intake's stage-data fragment. Default ON (FC-01: verify, Wall, deep and visual evidence consume it);
  *  LOKI_E10_PROJECT_MODEL=0 opts out. Work surface (L2): any failure yields {}.
  *  The sessions get what is left of the intake budget (STAGE_BUDGETS.intake, the one table). */
-export async function intakeProjectModel(ctx: RunContext, signal: AbortSignal, startedMs: number): Promise<Record<string, unknown>> {
+export async function intakeProjectModel(ctx: RunContext, signal: AbortSignal, startedMs: number, testmap?: Parameters<typeof signalsResolve>[0]): Promise<Record<string, unknown>> {
   if (!projectModelEnabled()) return {};
   try {
     const budgetS = STAGE_BUDGETS.intake.limitS - (Date.now() - startedMs) / 1000 - KILL_GRACE_S - MARGIN_S;
-    const { model, cached, attempts, owner, sessionModel } = await discoverProjectModel(ctx, signal, { budgetS });
+    const { model, cached, attempts, owner, sessionModel } = await discoverProjectModel(ctx, signal, { budgetS, testmap });
     return { project_model: { status: model.status, key: model.key, cached, attempts, ...(sessionModel ? { session_model: sessionModel } : {}), ref: PROJECT_FILE, ...(owner ? { owner } : {}), ...(model.reason ? { reason: model.reason } : {}) } };
   } catch {
     return {};
