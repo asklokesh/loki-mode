@@ -13,7 +13,18 @@ mkdir -p "$WORK/bin" "$WORK/repo"
 cat > "$WORK/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >> "$STUB_LOG"
-[ "$1" = "api" ] && { while IFS="$(printf '\t')" read -r _n _p; do echo "F	$_n"; [ -z "$_p" ] || echo "P	$_p"; done < "$STUB_WORK/files-feat-em"; exit 0; }
+if [ "$1" = "api" ]; then
+  # Raw paginated JSON (2 files per page); the production -q filter runs per page like gh does.
+  _f=""; _prev=""; for _a in "$@"; do [ "$_prev" = "-q" ] && _f="$_a"; _prev="$_a"; done
+  jq -c -R -s 'split("\n") | map(select(length > 0)) | map(split("\t")) | map(if length > 1 then {filename: .[0], previous_filename: .[1], status: "renamed"} else {filename: .[0], status: "modified"} end) | . as $all | range(0; length; 2) | $all[.:.+2]' "$STUB_WORK/files-feat-em" |
+    while IFS= read -r _page; do printf '%s' "$_page" | jq -r "$_f"; done
+  exit 0
+fi
+if [ "$1 $2" = "pr diff" ]; then
+  [ -f "$STUB_WORK/diff-$3" ] && { cat "$STUB_WORK/diff-$3"; [ "$(head -1 "$STUB_WORK/diff-$3")" != "UNREADABLE" ]; exit $?; }
+  while IFS="$(printf '\t')" read -r _n _p; do printf 'diff --git a/%s b/%s\nindex 1111111..2222222 100644\n--- a/%s\n+++ b/%s\n@@ -1 +1 @@\n-a\n+b\n' "${_p:-$_n}" "$_n" "${_p:-$_n}" "$_n"; done < "$STUB_WORK/files-$3"
+  exit 0
+fi
 case "$1 $2" in
   "pr checks") [ "$3" = "12" ] && exit 1; [ "$3" = "feat-red" ] && exit 1
                [ "$3" = "21" ] && [ ! -f "$STUB_WORK/repaired" ] && exit 1
@@ -438,6 +449,31 @@ OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=0 LOKI_EARNED_MERGE=1 bash "$L
 grep -q "^pr merge feat-em" "$STUB_LOG" && bad "MIN_VERIFIED=0 merged a NOT_PROVEN-only path" || ok "earned: MIN_VERIFIED=0 is clamped to 1"
 rm -r "$EM/.loki/proofs/r3"
 printf 'good.txt\n' > "$WORK/files-feat-em"
+# Symlink and submodule modes: an earned path must not be able to point elsewhere.
+printf 'good.txt\n' > "$WORK/files-feat-em"
+for _case in \
+  "became-symlink:diff --git a/good.txt b/good.txt\nold mode 100644\nnew mode 120000" \
+  "was-symlink:diff --git a/good.txt b/good.txt\nindex 1111111..2222222 120000" \
+  "new-symlink:diff --git a/good.txt b/good.txt\nnew file mode 120000\nindex 0000000..2222222" \
+  "deleted-symlink:diff --git a/good.txt b/good.txt\ndeleted file mode 120000\nindex 1111111..0000000" \
+  "new-gitlink:diff --git a/good.txt b/good.txt\nnew file mode 160000\nindex 0000000..2222222" \
+  "gitlink-update:diff --git a/good.txt b/good.txt\nindex 1111111..2222222 160000"; do
+  _cn="${_case%%:*}"; printf '%b\n' "${_case#*:}" > "$WORK/diff-feat-em"
+  : > "$STUB_LOG"
+  OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
+  grep -q "^pr merge feat-em" "$STUB_LOG" && bad "earned $_cn merged" || ok "earned: $_cn never merges"
+  echo "$OUT" | grep -q "a/good.txt b/good.txt involves a symlink or submodule" && ok "earned: $_cn names the path" || bad "earned $_cn msg: $OUT"
+done
+# Positive control: a plain 100644 -> 100755 mode change still merges.
+printf 'diff --git a/good.txt b/good.txt\nold mode 100644\nnew mode 100755\n' > "$WORK/diff-feat-em"
+: > "$STUB_LOG"
+(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em >/dev/null 2>&1)
+grep -q "^pr merge feat-em" "$STUB_LOG" && ok "earned: an executable-bit change still merges" || bad "exec-bit change did not merge"
+printf 'UNREADABLE\n' > "$WORK/diff-feat-em"
+: > "$STUB_LOG"
+OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
+grep -q "^pr merge feat-em" "$STUB_LOG" && bad "unreadable diff merged" || ok "earned: unreadable diff never merges"
+rm -f "$WORK/diff-feat-em"
 # Below the VERIFIED floor (default 20) refuses.
 : > "$STUB_LOG"
 OUT="$(cd "$EM" && LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
