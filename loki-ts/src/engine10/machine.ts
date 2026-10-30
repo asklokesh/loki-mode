@@ -215,7 +215,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
             // Fail closed: a base run that passes while implement changed files is not trusted as "already satisfied" (the base copy could still resolve into live code); verify decides.
             const unsure = changed === null || touched.length > 0, d = r.data, b0 = d.base_run as { pass?: number; fail?: number; not_run?: number };
             const green = typeof b0.pass === "number" && b0.pass > 0 && b0.fail === 0 && (b0.not_run ?? 0) === 0;
-            const d1 = unsure && green ? distrustGreenBase(d) : d; // shared fail-closed mechanism (wall.ts distrustGreenBase)
+            const d1 = unsure && green && d.reproduction_green_on_base !== true ? distrustGreenBase(d) : d; // shared fail-closed mechanism (wall.ts distrustGreenBase)
             r = { ...r, data: { ...d1, base_run: { ...(d1.base_run as Obj), ...(changed === null || changed.some((f) => hooks.wall!.manifests.test(f)) ? { deps: "head" } : {}) } } };
           }
         } finally { rmSync(base, { recursive: true, force: true }); }
