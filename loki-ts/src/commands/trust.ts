@@ -97,11 +97,12 @@ function revertCounts(repoDir: string): Map<string, number> | null {
     if (!/^Revert "/.test(body) && !/^This reverts commit [0-9a-f]{7,40}/m.test(body)) continue;
     let names: string;
     try {
-      names = safeGit(repoDir, ["show", "--name-only", "--no-renames", "--format=", "-m", "--first-parent", sha]);
+      names = safeGit(repoDir, ["show", "-z", "--name-only", "--no-renames", "--format=", "-m", "--first-parent", sha]);
     } catch {
-      continue;
+      return null; // an unreadable revert commit makes every count unknown, never a silent undercount
     }
-    for (const p of new Set(names.split("\n").filter((l) => l.length > 0))) {
+    // -z: NUL-separated, unquoted paths (a quoted octal-escaped name would never match a receipt path)
+    for (const p of new Set(names.split("\0").filter((l) => l.length > 0))) {
       counts.set(p, (counts.get(p) ?? 0) + 1);
     }
   }
