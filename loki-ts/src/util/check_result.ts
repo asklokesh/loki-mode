@@ -251,7 +251,9 @@ export async function corroboratePass(c: Classified, out: string, cmdOrLine: str
   const refuse: Classified = { result: "not_run", reason: GO_EXIT0_REASON };
   const first = goJson(stripAnsi(out));
   const names = first?.passedNames ?? [];
-  if (!names.length || toks.some((t) => /[&|;$`"'<>()\\]/.test(t)) || basename(toks[0] ?? "") !== "go" || toks[1] !== "test") return refuse;
+  // argv has no shell, so metacharacters in it are inert; only the exact `-run ^(A|B)$` value runnerCmd builds from a file's Test names is let through, so a generated -run never refuses a real pass.
+  const shellish = (t: string, i: number): boolean => /[&|;$`"'<>()\\]/.test(t) && !(args !== undefined && toks[i - 1] === "-run" && /^\^\([A-Za-z0-9_|]+\)\$$/.test(t));
+  if (!names.length || toks.some(shellish) || basename(toks[0] ?? "") !== "go" || toks[1] !== "test") return refuse;
   const pkgs: string[] = [], run: string[] = [];
   for (let k = 2; k < toks.length; k++) {
     const t = toks[k]!;
