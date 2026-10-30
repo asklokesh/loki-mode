@@ -23,10 +23,12 @@ import {
   shapeKey,
   shapeKeyForRepo,
   repoHistoryFloor,
+  sealedOutcomesByTier,
 } from "../../src/runner/router/history.ts";
 import { repoCacheDir, repoKey } from "../../src/engine10/cache.ts";
 import { readOriginUrl } from "../../src/util/engine_origin.ts";
 import { ranModel, recordRun } from "../../src/runner/router/cost_preview.ts";
+import { receiptSha256 } from "../../src/engine10/stages/seal.ts";
 import { routeRecord } from "../../src/runner/router/unit_model.ts";
 import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
 import type { ProjectModel } from "../../src/project_model/schema.ts";
@@ -455,5 +457,74 @@ describe("P12-32b live cost routing", () => {
 
   it("a floor never lowers: a non-haiku route stays at the run floor", () => {
     expect(routeRecord("opus", undefined, () => "sonnet")).toEqual(routeRecord("opus", undefined));
+  });
+});
+
+describe("sealed outcome per model tier per shape (GAME10-09a)", () => {
+  const sealed = (model: string, verdict: string, extra: Record<string, unknown> = {}): Record<string, unknown> => {
+    const body = { schema: "loki.v10.receipt/1", model, verdict, ...extra };
+    return { ...body, receipt_sha256: receiptSha256(body as never), verification: { jwt: null, kid: null } };
+  };
+  const cheap = "claude-haiku-4-5";
+  const OTHER = "single:jest";
+
+  it("10 cheap-tier VERIFIED sealed receipts give a 10/10 record for the shape", () => {
+    const rec = sealedOutcomesByTier(Array.from({ length: 10 }, (_, i) => ({ shape: SHAPE, receipt: sealed(cheap, "VERIFIED", { run: i }) })));
+    expect(rec[SHAPE]?.["haiku"]).toEqual({ verified: 10, partial: 0, failed: 0, other: 0, unsealed: 0, total: 10 });
+  });
+
+  it("counts PARTIAL and FAILED separately from VERIFIED", () => {
+    const rec = sealedOutcomesByTier([
+      { shape: SHAPE, receipt: sealed(cheap, "VERIFIED") },
+      { shape: SHAPE, receipt: sealed(cheap, "PARTIAL") },
+      { shape: SHAPE, receipt: sealed(cheap, "PARTIAL", { n: 2 }) },
+      { shape: SHAPE, receipt: sealed(cheap, "FAILED") },
+    ]);
+    expect(rec[SHAPE]?.["haiku"]).toMatchObject({ verified: 1, partial: 2, failed: 1, unsealed: 0, total: 4 });
+  });
+
+  it("a receipt with a missing, malformed or mismatched seal is not counted as VERIFIED", () => {
+    const good = sealed(cheap, "VERIFIED");
+    const { receipt_sha256: _h, ...missing } = good;
+    const edited = { ...good, verdict: "VERIFIED", extra: "added after sealing" };
+    const rec = sealedOutcomesByTier([
+      { shape: SHAPE, receipt: missing },
+      { shape: SHAPE, receipt: { ...good, receipt_sha256: "not-a-hash" } },
+      { shape: SHAPE, receipt: edited },
+      { shape: SHAPE, receipt: { ...sealed(cheap, "PARTIAL"), verdict: "VERIFIED" } },
+    ]);
+    expect(rec[SHAPE]?.["haiku"]).toMatchObject({ verified: 0, unsealed: 4, total: 4 });
+  });
+
+  it("two shapes and two tiers do not mix", () => {
+    const rec = sealedOutcomesByTier([
+      { shape: SHAPE, receipt: sealed(cheap, "VERIFIED") },
+      { shape: OTHER, receipt: sealed(cheap, "FAILED") },
+      { shape: SHAPE, receipt: sealed("claude-sonnet-5", "PARTIAL") },
+    ]);
+    expect(rec[SHAPE]?.["haiku"]).toMatchObject({ verified: 1, failed: 0, total: 1 });
+    expect(rec[OTHER]?.["haiku"]).toMatchObject({ verified: 0, failed: 1, total: 1 });
+    expect(rec[SHAPE]?.["sonnet"]).toMatchObject({ partial: 1, total: 1 });
+  });
+
+  it("shape names like __proto__ and constructor keep their record and never touch Object.prototype", () => {
+    const rec = sealedOutcomesByTier([
+      { shape: "__proto__", receipt: sealed(cheap, "VERIFIED") },
+      { shape: "constructor", receipt: sealed(cheap, "VERIFIED") },
+    ]);
+    expect(Object.keys(Object.prototype)).toEqual([]);
+    expect(({} as Record<string, unknown>)["haiku"]).toBeUndefined();
+    expect(rec["__proto__"]?.["haiku"]).toMatchObject({ verified: 1, total: 1 });
+    expect(rec["constructor"]?.["haiku"]).toMatchObject({ verified: 1, total: 1 });
+  });
+
+  it("an unknown or missing model gets its own unknown tier and is never a sonnet outcome", () => {
+    const rec = sealedOutcomesByTier([
+      { shape: SHAPE, receipt: sealed("some-other-model", "VERIFIED") },
+      { shape: SHAPE, receipt: sealed(undefined as unknown as string, "VERIFIED") },
+      { shape: SHAPE, receipt: sealed("claude-sonnet-5-5", "VERIFIED") },
+    ]);
+    expect(rec[SHAPE]?.["unknown"]).toMatchObject({ verified: 2, total: 2 });
+    expect(rec[SHAPE]?.["sonnet"]).toMatchObject({ verified: 1, total: 1 });
   });
 });

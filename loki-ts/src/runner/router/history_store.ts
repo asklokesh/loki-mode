@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { resolve } from "node:path";
 import { repoCacheDir } from "../../engine10/cache.ts";
 import { withFileLockSync } from "../../util/atomic.ts";
+import { createHash } from "node:crypto";
+import { canonicalJson } from "../../util/receipt_signer.ts";
 
 // H4 (R1-16): per-repo, per-shape outcome history, appended at seal. Local runs only; the
 // router reads it as an evidence floor. A missing or corrupt file is a cold read; a write
@@ -87,4 +89,45 @@ export function appendRunOutcome(key: string, outcome: RunOutcome, cacheRoot?: s
   } catch {
     return false;
   }
+}
+
+/** GAME10-09a: sealed outcome counts for one model tier on one repo shape. unsealed = a receipt whose seal is missing or does not match its content; it never counts toward verified. */
+export interface TierOutcomeCount { verified: number; partial: number; failed: number; other: number; unsealed: number; total: number }
+export type SealedTierRecord = Record<string, Record<string, TierOutcomeCount>>;
+export interface ShapedReceipt { shape: string; receipt: Record<string, unknown> }
+
+/** Model family of a receipt's model name; a missing or unrecognized model is "unknown", never a sonnet outcome. Not claudeTierRank: that returns a catalog role rank and null for legacy-tier ids, which history rows still carry. */
+export function tierOfModel(model: unknown): string {
+  const m = typeof model === "string" ? model.toLowerCase() : "";
+  return m.includes("haiku") ? "haiku" : m.includes("opus") ? "opus" : m.includes("sonnet") ? "sonnet" : "unknown";
+}
+
+/** True only when receipt_sha256 is a hash that matches the receipt body (verification and the hash itself excluded, as seal.ts receiptSha256 does). A hash that cannot be computed is not a seal. */
+export function receiptSealIntact(receipt: Record<string, unknown>): boolean {
+  const recorded = receipt["receipt_sha256"];
+  if (typeof recorded !== "string" || !/^[0-9a-f]{64}$/.test(recorded)) return false;
+  try {
+    const { verification: _v, receipt_sha256: _h, ...body } = receipt;
+    return createHash("sha256").update(canonicalJson(body)).digest("hex") === recorded;
+  } catch {
+    return false;
+  }
+}
+
+/** Sealed outcome per shape per model tier, read from receipts. VERIFIED counts only with an intact seal. */
+export function sealedOutcomesByTier(receipts: readonly ShapedReceipt[]): SealedTierRecord {
+  const out: SealedTierRecord = Object.create(null); // shape names come from callers: "__proto__" must be a plain key
+  for (const { shape, receipt } of receipts) {
+    const tier = tierOfModel(receipt["model"]);
+    const byTier = (out[shape] ??= Object.create(null) as Record<string, TierOutcomeCount>);
+    const c = (byTier[tier] ??= { verified: 0, partial: 0, failed: 0, other: 0, unsealed: 0, total: 0 });
+    c.total++;
+    if (!receiptSealIntact(receipt)) { c.unsealed++; continue; }
+    const v = receipt["verdict"];
+    if (v === "VERIFIED") c.verified++;
+    else if (v === "PARTIAL") c.partial++;
+    else if (v === "FAILED") c.failed++;
+    else c.other++;
+  }
+  return out;
 }

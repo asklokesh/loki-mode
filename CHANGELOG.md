@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The implement brief now names the test interpreter intake detected (for example python3 on a host with no `python`) even before any test file exists, so the implementer no longer guesses a missing executable and exits 127; nothing is added when no runner was detected. Proven by the test titled "no test file yet, the brief still names the detected interpreter", which asserts the brief names the detected interpreter, and by "no detected runner, no interpreter line is invented", which asserts nothing is added when no runner was detected.
+- The router history store now reads the sealed outcome (VERIFIED, PARTIAL, FAILED) from receipts and keeps it per model tier per repo shape; a receipt with a missing, malformed or mismatched seal is counted as unsealed, never as VERIFIED. Proven by the test `sealed outcome per model tier per shape (GAME10-09a)` (loki-ts/tests/runner/router_history.test.ts).
 
 ## v11.88.0 (2026-10-29)
 
