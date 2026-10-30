@@ -500,8 +500,22 @@ describe("verify-pr: an exit code alone is not proof", () => {
     writeFileSync(join(dir, "runner.ini"), "[runner_test]\nk = 1\n");
     writeFileSync(join(dir, "plain.toml"), "[project]\nname = 'x'\n");
     writeFileSync(join(dir, "bunfig.toml"), "x = 1\n");
-    expect(runnerConfigChanged(["setup.cfg", "runner.ini", "plain.toml", "bunfig.toml", "gone/conftest.py", "src/a.ts"], dir)).toEqual(["setup.cfg", "runner.ini", "bunfig.toml"]);
+    expect(runnerConfigChanged(["setup.cfg", "runner.ini", "plain.toml", "bunfig.toml", "gone/conftest.py", "src/a.ts"], dir)).toEqual(["setup.cfg", "runner.ini", "bunfig.toml", "gone/conftest.py"]);
   });
+
+  test.each([["deleted pytest.ini", { "pytest.ini": null }], ["renamed pytest.ini", { "pytest.ini": null, "pytest.ini.bak": "[pytest]\nfilterwarnings =\n    error\n" }], ["deleted jest.config.js", { "jest.config.js": null }]] as const)("a PR with a %s is NOT PROVEN (exit 4)", async (_n, edits) => {
+    const files = { "pytest.ini": "[pytest]\nfilterwarnings =\n    error\n", "jest.config.js": "module.exports = {};\n", "test_w.py": "import warnings\n\ndef test_w():\n    warnings.warn('x', DeprecationWarning)\n" };
+    const meta = repoWith(`del-${_n.replace(/\W/g, "")}`, files, { "note.txt": "x\n" });
+    const repo = meta.cloneUrl;
+    for (const [f, c] of Object.entries(edits)) { if (c === null) git(repo, "rm", "-q", f); else writeFileSync(join(repo, f), c); }
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "edit");
+    const head = git(repo, "rev-parse", "HEAD");
+    git(repo, "update-ref", "refs/pull/7/head", head);
+    let n = 0;
+    const r = await run({ ...meta, headSha: head }, { checkout: defaultCheckout, sandbox: () => (n++ === 0 ? { status: "COMPLETED", exit_code: 1 } : { status: "COMPLETED", exit_code: 0, report: '<testsuites><testsuite><testcase name="a"/></testsuite></testsuites>' }) }, issueFor("python3 -m pytest -q test_w.py"));
+    expect(r.rc).toBe(4);
+    expect(r.json.reasons.join(" ")).toMatch(/pytest\.ini|jest\.config\.js/);
+  }, 30_000);
 
   test("runnerConfigChanged flags jest, vitest and vite configs and a package.json with a jest key only", () => {
     const names = ["jest.config.js", "sub/vitest.config.ts", "vite.config.mts", "vitest.workspace.ts"];
