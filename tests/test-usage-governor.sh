@@ -402,6 +402,42 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# T12b: --weekly-ceiling accepts 91..100, rejects 90 and 101, and leaves the
+# default 90 ceiling alone when absent (T12 above).
+# ---------------------------------------------------------------------------
+echo "T12b -- --weekly-ceiling override range"
+ROOT12B="$FIXTURE_ROOT/t12b/projects"
+PROJ12B="$ROOT12B/-Users-test-proj"
+mkdir -p "$PROJ12B/subagents"
+_row "$PROJ12B/session-main.jsonl" "2026-12-02T12:30:00.000Z" "claude-sonnet-4-6" 1000 "msg_cos" ""
+_row "$PROJ12B/subagents/agent1.jsonl" "2026-12-02T16:30:00.000Z" "claude-sonnet-4-6" 500 "msg_e1" ""
+READINGS12B="$FIXTURE_ROOT/t12b/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n2026-12-02T17:00:00Z\t20\t92\n' > "$READINGS12B"
+_gov12b() {
+  python3 "$TOOL" --root "$ROOT12B" --readings "$READINGS12B" --now "2026-12-02T17:00:00Z" --live-log "$NOLIVE" "$@" --json
+}
+_why12b_default="$(_q "$(_gov12b)" "print(d['governor']['max_engineers_reason'])")"
+_why12b_95="$(_q "$(_gov12b --weekly-ceiling 95)" "print(d['governor']['max_engineers_reason'])")"
+if [ "$_why12b_default" = "over_ceiling" ]; then
+  ok "default ceiling: weekly 92 -> over_ceiling"
+else
+  bad "expected over_ceiling at weekly 92, got '$_why12b_default'"
+fi
+if [ "$_why12b_95" = "ok" ]; then
+  ok "--weekly-ceiling 95 lifts the over_ceiling stop at weekly 92"
+else
+  bad "expected reason ok with --weekly-ceiling 95, got '$_why12b_95'"
+fi
+for _bad_ceiling in 90 101; do
+  _gov12b --weekly-ceiling "$_bad_ceiling" >/dev/null 2>&1
+  if [ "$?" -eq 2 ]; then
+    ok "--weekly-ceiling $_bad_ceiling rejected"
+  else
+    bad "--weekly-ceiling $_bad_ceiling should exit 2"
+  fi
+done
+
+# ---------------------------------------------------------------------------
 # T13 (B1): next_wednesday_reset must add 7 days in America/New_York LOCAL
 # time, not UTC -- a UTC-side +7 days is a fixed 168h and lands an hour off
 # in any week that crosses a DST transition.

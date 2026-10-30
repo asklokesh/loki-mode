@@ -1250,6 +1250,8 @@ def main(argv=None):
         "--measure-cache", default=str(MEASURE_CACHE_PATH),
         help="path to the cached /usage read (15 min between real invocations)",
     )
+    parser.add_argument("--weekly-ceiling", type=float, default=None,
+                        help="weekly D39 ceiling, 91..100; pass only a verified founder override (default 90)")
     parser.add_argument("--seats", type=int, default=None,
                         help="seats assumed active over the burn calibration span (default: active engineers last hour)")
     parser.add_argument("--json", action="store_true", help="print JSON instead of a human summary")
@@ -1262,6 +1264,10 @@ def main(argv=None):
         "--no-cache", action="store_true", help="never read or write the transcript parse cache"
     )
     args = parser.parse_args(argv)
+    if args.weekly_ceiling is not None:
+        if not 90.0 < args.weekly_ceiling <= 100.0:
+            parser.error("--weekly-ceiling must be above 90 and at most 100")
+        globals()["WEEKLY_PCT_CEILING"] = args.weekly_ceiling
 
     now = parse_ts(args.now) if args.now else datetime.now(timezone.utc)
     if now is None:
