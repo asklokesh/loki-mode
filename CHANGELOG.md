@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A conflict marker that names a Loki Wall test file without a line number (for example "`tests/loki_wall_pricing.py` expects ...") is now treated as Loki's own test defect and re-authored, instead of sealing a spec conflict. The Wall file is matched by repo-relative path or basename, the `:line` is optional, and a non-Wall file mention is never an anchor. The implement and resume prompts also ask the agent to cite the conflicting test as path:line. Proven by the tests in `loki-ts/tests/engine10/conflict_resume.test.ts`.
 - The legacy Claude route now gives Claude Code `SHELL=/bin/bash` when it is executable, so a zsh `alias ls=eza` can no longer hang an agent Bash command, matching the default engine route. This covers every Claude spawn in `providers/claude.sh` and `autonomy/run.sh`, including the per-iteration run, the `provider_invoke_argv` argv, the review and conflict-resolution calls and the usage-doc regeneration. Set `LOKI_E10_KEEP_USER_SHELL=1` to keep your own shell; only `SHELL` changes and other providers are untouched. Proven by the Test 14 cases in `tests/test-provider-invocation.sh`: the pin and opt-out on both invoke functions, the executed `provider_invoke_argv` argv, codex untouched, the usage-doc regeneration under a codex provider with `LOKI_ALLOW_CLAUDE_SIDECALLS=1` (pinned, and the user shell kept under the opt-out, never empty), and a structural check that fails on any Claude spawn statement in either file that lacks the pin. Residual: aliases defined in `~/.bashrc` still load under bash, so an alias there can still affect agent Bash commands.
 
+## Unreleased
+
+### Fixed
+
+- `loki verify-pr` no longer reports VERIFIED on a bare exit code 0 or on printed test totals: the issue's Check must run bun test, pytest, jest or vitest, and the pass is read from the report file that runner writes (the Check is run with a report flag added). A Check using another command, or a PR that adds or changes runner config (`bunfig.toml`, `conftest.py`, or an ini, cfg or toml file with a test-runner section), is NOT PROVEN with the reason and file named.
+
 ## v11.88.0 (2026-10-29)
 
 ### Added
