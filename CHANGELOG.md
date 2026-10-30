@@ -5,6 +5,20 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.90.0 (2026-10-30)
+
+### Added
+
+- Every signed receipt now carries one Seal accuracy line read from the measured seeded-defect results: wrong passes out of seeded defects for the change's language and test runner, the 95% upper bound, and the Loki version it was measured on. The line says "not measured" when the version differs, the language and runner were not measured, or the result is older than 7 days; editing it breaks `loki verify`.
+- A parallel `loki start` group now reruns each unit's sealed Wall tests on the merged tree after the repo suite, so a unit that passed alone but is broken by another unit's change fails the group and is named, with a per-unit pass, fail or no_wall line in the output. A unit sealed with no Wall file is reported no_wall, never counted as a Wall pass; its proof on the merged tree is the repo suite, which must exit 0. A unit whose sealed receipt is missing or unreadable ends the group NOT PROVEN (exit 4). A tampered or unrunnable sealed copy, a failing test, or a Wall file that ran zero tests fails the group. A Go Wall that passes alone also passes in the group. Proven by the `integrate` tests "A and B each pass alone, B changes the default A's Wall depends on: merged Wall fails A and never ok", "a Go Wall that passes alone also passes in the group", "a Wall with one passing file and one zero-test file fails the unit (not_run counts)", "a unit whose sealed receipt is missing is no_wall, not a failure" and "a Wall whose directory is a symlink committed by another unit is refused and writes nothing outside the repo", the `runGroup` test "runGroup reruns u1's sealed Wall on the merged tree: u2 adds cfg.txt, the group fails naming u1", the group-runner test "a unit whose sealed Wall copy is tampered is FAILED (exit 1)", and the `runGroup` tests "runGroup: every unit sealed with no Wall file ends VERIFIED with a no_wall line per unit" and "runGroup: a harvested unit receipt removed ends NOT PROVEN (exit 4) and that unit reads no_wall". A group resumed from units harvested before this change has no stored Wall copies and fails closed at integration; rerun it fresh with `LOKI_GROUP_RESUME=0`.
+- Opt-in earned merge: with `LOKI_EARNED_MERGE=1`, `loki merge pr` (and `--ship`) merges only when every changed path has at least `LOKI_EARNED_MERGE_MIN_VERIFIED` (default 20, minimum 1) VERIFIED receipts in `loki trust` and no recorded revert, judging both sides of a rename; a truncated file list refuses. Protected paths (`.github/`, `.loki/`, `.env*`, `.envrc`, `CODEOWNERS`, plus `LOKI_EARNED_MERGE_PROTECTED` globs, matched case-insensitively), reverted paths and paths whose revert status is unknown stay PR-only, and the refusal names `gate: trust`. Off by default; behavior without the opt-in is unchanged.
+
+### Fixed
+
+- `loki verify-pr` no longer reports VERIFIED on a bare exit code 0 or on printed test totals: the issue's Check must run bun test, pytest, jest or vitest, and the pass is read from the report file that runner writes (the Check is run with a report flag added). A Check using another command, or a PR that adds or changes runner config (`bunfig.toml`, `conftest.py`, or an ini, cfg or toml file with a test-runner section), is NOT PROVEN with the reason and file named.
+- `loki trust` reports reverts as unknown (never 0) when the repository is a shallow clone or git cannot say whether it is, because truncated history can hide an earlier revert.
+- The moat check that an all-unmetered CLI run prints Cost: not measured, never $0.00 now runs the real run supervisor end to end with a stub worker and reads the Cost line it prints, so it no longer depends on a function name and turns red when the run prints more than one Cost line or when an unmetered run's Cost line carries any dollar figure.
+
 ## v11.89.0 (2026-10-30)
 
 ### Added
