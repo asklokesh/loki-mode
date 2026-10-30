@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- The router history store now reads the sealed outcome (VERIFIED, PARTIAL, FAILED) from receipts and keeps it per model tier per repo shape; a receipt with a missing, malformed or mismatched seal is counted as unsealed, never as VERIFIED. Proven by the test `sealed outcome per model tier per shape (GAME10-09a)` (loki-ts/tests/runner/router_history.test.ts).
+
 ## v11.88.0 (2026-10-29)
 
 ### Added
