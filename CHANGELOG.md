@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- A conflict marker that names a Loki Wall test file without a line number (for example "`tests/loki_wall_pricing.py` expects ...") is now treated as Loki's own test defect and re-authored, instead of sealing a spec conflict. The Wall file is matched by repo-relative path or basename, the `:line` is optional, and a non-Wall file mention is never an anchor. The implement and resume prompts also ask the agent to cite the conflicting test as path:line. Proven by the RUN5-S2b tests in `loki-ts/tests/engine10/conflict_resume.test.ts`.
+
 ## v11.88.0 (2026-10-29)
 
 ### Added
