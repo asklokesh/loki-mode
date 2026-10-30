@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Every signed receipt now carries one Seal accuracy line read from the measured seeded-defect results: wrong passes out of seeded defects for the change's language and test runner, the 95% upper bound, and the Loki version it was measured on. The line says "not measured" when the version differs, the language and runner were not measured, or the result is older than 7 days; editing it breaks `loki verify`.
+- The earned auto-merge check now refuses a pure rename (100% similarity, no mode line in the diff) of a symlink or submodule between earned paths, reading the file modes from git on both sides of the PR, and names the renamed file in the refusal.
 
 ## v11.89.0 (2026-10-30)
 

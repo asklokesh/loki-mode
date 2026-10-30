@@ -28178,13 +28178,14 @@ _pr_record_merge() {
 # exactly 0 reverts in git history. A revert count of null (history
 # unreadable), a missing record, an unreadable trust output or an unreadable or
 # truncated file list or an unreadable diff all refuse, as does any PR whose
-# diff touches a symlink (120000) or submodule (160000) mode. Protected paths (.github/, .loki/, .env*,
+# diff touches a symlink (120000) or submodule (160000) mode, including a pure
+# rename of one (modes read from git on the base and head). Protected paths (.github/, .loki/, .env*,
 # .envrc, CODEOWNERS, plus the space-separated globs in
 # LOKI_EARNED_MERGE_PROTECTED), matched case-insensitively, always stay
 # PR-only. The reason for a refusal goes to stdout; the return code is 1.
 _pr_earned_merge_check() {
     local pr="$1" min="${LOKI_EARNED_MERGE_MIN_VERIFIED:-20}" meta="" num="" want="" lines="" seals=""
-    local kind p lp g row v r got=0 globs=() diff="" bad_mode=""
+    local kind p lp g row v r got=0 globs=() diff="" bad_mode="" renames="" refs="" base="" head="" from to m_old m_new
     case "$min" in ''|*[!0-9]*) min=20 ;; esac
     [ "$min" -ge 1 ] || min=1
     command -v jq >/dev/null 2>&1 || { echo "jq is required to read the Seal record"; return 1; }
@@ -28229,6 +28230,28 @@ EOF_FILES
     [ -n "$diff" ] || { echo "the PR's file modes are unreadable"; return 1; }
     bad_mode="$(printf '%s\n' "$diff" | awk '/^diff --git /{h=$0} /^(new file mode|deleted file mode|old mode|new mode) (120000|160000)$/{print h; exit} /^index [0-9a-f.]+ (120000|160000)$/{print h; exit}')"
     [ -z "$bad_mode" ] || { echo "${bad_mode#diff --git } involves a symlink or submodule"; return 1; }
+    # A pure rename (100% similarity) carries no mode or index line, so the scan
+    # above cannot see a symlink moving. Read both sides' modes from git.
+    renames="$(printf '%s\n' "$diff" | awk '/^rename from /{f=substr($0,13)} /^rename to /{print f "\t" substr($0,11); f=""}')"
+    if [ -n "$renames" ]; then
+        refs="$(gh pr view "$pr" --json baseRefOid,headRefOid -q '.baseRefOid + " " + .headRefOid' 2>/dev/null)" || refs=""
+        base="${refs%% *}"; head="${refs#* }"
+        case "$base$head" in ''|*[!0-9a-f]*) echo "the PR's rename modes are unreadable"; return 1 ;; esac
+        if ! git cat-file -e "${base}^{commit}" 2>/dev/null || ! git cat-file -e "${head}^{commit}" 2>/dev/null; then
+            git fetch -q origin "pull/${num}/head" >/dev/null 2>&1 || true
+        fi
+        while IFS="$(printf '\t')" read -r from to; do
+            [ -n "$to" ] || continue
+            m_old="$(git ls-tree "$base" -- "$from" 2>/dev/null | awk '{print $1; exit}')"
+            m_new="$(git ls-tree "$head" -- "$to" 2>/dev/null | awk '{print $1; exit}')"
+            case "$m_old:$m_new" in
+                120000:*|160000:*|*:120000|*:160000) echo "rename from $from to $to involves a symlink or submodule"; return 1 ;;
+                '':*|*:'') echo "rename from $from to $to has unreadable file modes"; return 1 ;;
+            esac
+        done <<EOF_RENAMES
+$renames
+EOF_RENAMES
+    fi
     return 0
 }
 

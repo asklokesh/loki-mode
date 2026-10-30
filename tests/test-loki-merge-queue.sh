@@ -31,7 +31,7 @@ case "$1 $2" in
                [ "$3" = "22" ] && exit 1
                [ "$3" = "feat-pend" ] && exit 8; [ "$3" = "feat-auth" ] && exit 4
                exit 0 ;;
-  "pr view") case "$*" in *"--json number,changedFiles"*) [ -f "$STUB_WORK/files-$3" ] || exit 1
+  "pr view") case "$*" in *baseRefOid*) cat "$STUB_WORK/refs-$3"; exit 0 ;; *"--json number,changedFiles"*) [ -f "$STUB_WORK/files-$3" ] || exit 1
                 if [ -f "$STUB_WORK/count-$3" ]; then echo "7 $(cat "$STUB_WORK/count-$3")"; else echo "7 $(wc -l < "$STUB_WORK/files-$3" | tr -d ' ')"; fi; exit 0 ;; *headRefOid*) [ "$3" = "feat-nohead" ] && exit 1
                 if [ "$3" = "feat-race" ]; then if [ -f "$STUB_WORK/race1" ]; then echo "$STUB_HEAD2"; else touch "$STUB_WORK/race1"; echo "$STUB_HEAD"; fi; exit 0; fi; if [ "$3" = "feat-moved" ]; then echo "$STUB_HEAD2"; else echo "$STUB_HEAD"; fi; exit 0 ;; *headRefName*) echo feat-w ;; *) [ "$3" = "feat-draft" ] && echo true || echo false ;; esac; exit 0 ;;
   "pr merge") [ "$3" = "feat-mfail" ] && exit 1; [ "$3" = "feat-race" ] && exit 1; exit 0 ;;
@@ -469,6 +469,34 @@ printf 'diff --git a/good.txt b/good.txt\nold mode 100644\nnew mode 100755\n' > 
 : > "$STUB_LOG"
 (cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em >/dev/null 2>&1)
 grep -q "^pr merge feat-em" "$STUB_LOG" && ok "earned: an executable-bit change still merges" || bad "exec-bit change did not merge"
+# Pure 100% renames carry no mode line: the modes are read from git on both sides.
+for _n in 4 5; do
+  mkdir -p "$EM/.loki/proofs/r$_n"
+  printf '{"honesty":{"headline":"VERIFIED"},"files_changed":{"files":[{"path":"lnk.txt"},{"path":"lnk2.txt"},{"path":"reg.txt"},{"path":"reg2.txt"}]}}' > "$EM/.loki/proofs/r$_n/proof.json"
+done
+echo t > "$EM/tgt.txt"; echo r > "$EM/reg.txt"; ln -s tgt.txt "$EM/lnk.txt"
+git -C "$EM" add tgt.txt reg.txt lnk.txt; git -C "$EM" commit -qm "add link and file"
+_base="$(git -C "$EM" rev-parse HEAD)"
+git -C "$EM" mv lnk.txt lnk2.txt; git -C "$EM" mv reg.txt reg2.txt
+git -C "$EM" commit -qm "rename both"
+_head="$(git -C "$EM" rev-parse HEAD)"
+printf '%s %s\n' "$_base" "$_head" > "$WORK/refs-feat-em"
+for _case in "symlink-rename:lnk.txt:lnk2.txt" "regular-rename:reg.txt:reg2.txt"; do
+  IFS=: read -r _cn _from _to <<EOF_C
+$_case
+EOF_C
+  printf '%s\t%s\n' "$_to" "$_from" > "$WORK/files-feat-em"
+  printf 'diff --git a/%s b/%s\nsimilarity index 100%%\nrename from %s\nrename to %s\n' "$_from" "$_to" "$_from" "$_to" > "$WORK/diff-feat-em"
+  : > "$STUB_LOG"
+  OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
+  case "$_cn" in
+    symlink-rename)
+      grep -q "^pr merge feat-em" "$STUB_LOG" && bad "earned $_cn merged" || ok "earned: a pure symlink rename never merges"
+      echo "$OUT" | grep -q "rename from lnk.txt to lnk2.txt involves a symlink or submodule" && ok "earned: pure symlink rename names the file" || bad "earned $_cn msg: $OUT" ;;
+    *) grep -q "^pr merge feat-em" "$STUB_LOG" && ok "earned: a pure regular-file rename still merges" || bad "regular rename did not merge: $OUT" ;;
+  esac
+done
+printf 'good.txt\n' > "$WORK/files-feat-em"
 printf 'UNREADABLE\n' > "$WORK/diff-feat-em"
 : > "$STUB_LOG"
 OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
