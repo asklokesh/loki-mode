@@ -123,8 +123,8 @@ export function formatSummary(input: SummaryInput): string {
   const verdictLine = `${labelCol("Outcome")}${input.outcome ?? input.verdict}`;
   const r = input.receipt;
   const receiptLine = r ? [`${labelCol("Receipt")}${r.tampered ? "TAMPERED (event log modified; receipt not trustworthy)" : r.sha ? `sha256:${r.sha}${r.signed === false ? " (UNSIGNED)" : r.signed === null ? " (UNCHECKED)" : ""}` : "none (UNCHECKED)"}`] : [];
-  let notProvenLine = `${labelCol("NOT PROVEN")}${collapseNotProven(input.notProven).map((n) => n.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/ {2,}/g, " ").trim()).join(", ") || (input.receipt && !input.receipt.sha ? "everything (no receipt sealed)" : "")}`;
-  if (input.flaky.length > 0) notProvenLine += input.flaky.length > 8 ? `; flaky ${input.flaky.length} tests (listed in receipt.json)` : `; flaky ${input.flaky.join(", ")}`; // FC-OUTCOME-FLOOD
+  const npText = collapseNotProven(input.notProven).map((n) => n.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/ {2,}/g, " ").trim()).join(", ") || (input.receipt && !input.receipt.sha ? "everything (no receipt sealed)" : "");
+  const npBody = [npText, input.flaky.length > 8 ? `flaky ${input.flaky.length} tests (listed in receipt.json)` : input.flaky.length ? `flaky ${input.flaky.join(", ")}` : ""].filter(Boolean).join("; "); // FC-OUTCOME-FLOOD; an empty list prints no line
   const costLine =
     input.cost.usd != null
       ? `${labelCol("Cost")}$${input.cost.usd.toFixed(2)} (${input.cost.provider}, ${input.cost.tokens != null ? `${formatTokens(input.cost.tokens)} tokens` : "tokens not measured"}${cacheText(input.cost)}${input.cost.note ? `; ${input.cost.note}` : ""}${input.cost.capUsd ? `; ${Math.round((input.cost.usd / input.cost.capUsd) * 100)}% of cap $${input.cost.capUsd.toFixed(2)}` : ""})`
@@ -133,7 +133,7 @@ export function formatSummary(input: SummaryInput): string {
         : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
   const stagesStr = input.stages.map((s) => `${s.label} ${formatDuration(s.seconds)}`).join(", ") + ((slow) => (slow ? `; slowest: ${slow.label} ${Math.min(100, Math.round((slow.seconds / input.wallS) * 100))}%` : ""))(input.wallS > 0 ? input.stages.filter((s) => s.seconds > 0).reduce<{ label: string; seconds: number } | null>((a, s) => (a && a.seconds >= s.seconds ? a : s), null) : null); // TEN-SPEED-03: slowest stage share of wall; needs real durations and wall
   const timeLine = `${labelCol("Time")}${formatDuration(input.wallS)} (${stagesStr})${input.firstSealed === true ? " - first sealed PR in this repo" : ""}`;
-  return [verdictLine, ...(input.reason ? [`${labelCol("Reason")}${input.reason}`] : []), prLine, ...receiptLine, notProvenLine, costLine, ...(input.tier && input.verdict === "VERIFIED" ? [`${labelCol("Tier")}${formatTierSeal(input.tier)}`] : []), ...(input.cost.stageShares ? [`${labelCol("Spend")}${input.cost.stageShares}`] : []), timeLine].join("\n");
+  return [verdictLine, ...(input.reason ? [`${labelCol("Reason")}${input.reason}`] : []), prLine, ...receiptLine, ...(npBody ? [`${labelCol("NOT PROVEN")}${npBody}`] : []), costLine, ...(input.tier && input.verdict === "VERIFIED" ? [`${labelCol("Tier")}${formatTierSeal(input.tier)}`] : []), ...(input.cost.stageShares ? [`${labelCol("Spend")}${input.cost.stageShares}`] : []), timeLine].join("\n");
 }
 /** Section 3: eta.ts is optional; when absent, ETAs are omitted. */
 export type EtaEstimator = (targetS: number | null, elapsedS: number) => number | null;

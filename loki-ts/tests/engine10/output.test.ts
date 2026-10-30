@@ -382,6 +382,12 @@ describe("reasonOf (A-130 round 4)", () => {
     const base = { pr: null, verdict: "FAILED", notProven: [], flaky: [], cost: { usd: null, provider: "claude", tokens: null }, wallS: 1, stages: [] };
     expect(formatSummary({ ...base, receipt: { sha: null, signed: null } } as never)).toContain("NOT PROVEN: everything (no receipt sealed)");
   });
+  test("a sealed run with nothing unproven and no flaky tests prints no NOT PROVEN line", () => {
+    const base = { pr: null, verdict: "VERIFIED", notProven: [], flaky: [], cost: { usd: null, provider: "claude", tokens: null }, wallS: 1, stages: [], receipt: { sha: "ab", signed: true } };
+    const out = formatSummary(base as never);
+    expect(out).not.toContain("NOT PROVEN");
+    expect(formatSummary({ ...base, flaky: ["t::a"] } as never)).toContain("NOT PROVEN: flaky t::a");
+  });
   test("a multi-line NOT PROVEN item (raw push stderr) stays on one line", () => {
     const base = { pr: null, verdict: "SPEC_CONFLICT", flaky: [], cost: { usd: null, provider: "claude", tokens: null }, wallS: 1, stages: [], receipt: { sha: "ab", signed: true } };
     const out = formatSummary({ ...base, notProven: ["full suite", "PR not opened: x failed:\nremote: Permission to a/b.git denied to u.\nfatal: 403"] } as never);

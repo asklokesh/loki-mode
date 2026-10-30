@@ -13,7 +13,7 @@ import { hooks } from "../hooks.ts";
 import { snapshotContract } from "../../features/contract.ts";
 import { probeZeroChecks } from "./verify.ts"; import { stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
 import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { ensureProfile, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { ensureProfile, readinessNotice, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 export interface IntakeOptions { taskText?: string; issueJsonPath?: string; }
 interface IssueFields { state: string | null; closed_by_merged_pr?: boolean }
 /** owner/repo#number, when the issue JSON carries both (GitHub); null for anything else, never guessed. */
@@ -97,7 +97,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   let testmap = readTestMapCache(cacheDir, tree);
   if (!testmap) { testmap = await ctx.tests.detect(ctx.repoDir); try { writeTestMapCache(cacheDir, tree, testmap); } catch { /* an unwritable cache only costs the next run a rebuild */ } }
   const built = process.env.LOKI_REPO_BASELINE !== "0" ? ensureProfile(ctx.repoDir) : null; // REPOMEM: commands + a baseline test run on the untouched tree, reused while the manifests are unchanged; never throws
-  const rd = built ? repoReadiness(built.profile) : null, readiness = rd ? `Readiness: ${rd.score}/100 (${rd.grade})${rd.findings.length ? ` - run \`loki doctor --repo\` for ${rd.findings.length} fix(es)` : ""}` : null;
+  const readiness = built ? readinessNotice(ctx.repoDir, repoReadiness(built.profile)) : null; // once per repo and score: a repo-config grade is not part of every run's outcome
   if (readiness && process.env.LOKI_E10_READINESS_FOLD === "1") held.fold = readiness;
   else if (readiness) process.stderr.write(`${readiness}\n`); // FV-readiness-env-3; D48 default mode: the supervisor folds it into the last line instead
   // E-66: "already implemented" as a first-class outcome. A deterministic evidence search over repoMap/testmap/CHANGELOG, confirmed by one short cheap-model session that must cite files; no candidate evidence means no session call (checkAlreadyDone's own gate).

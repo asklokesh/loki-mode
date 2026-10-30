@@ -154,6 +154,13 @@ describe("engine10 intake", () => {
     noteRefusalFromEvents([{ type: "stage.failed", stage: "verify", data: { blocker: "dirty_tracked_tree" } }]); expect(takeRefusal()).toBeNull();
   });
 
+  test("Readiness is reported on the first intake in a repo and not on the second", async () => {
+    const run = () => runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { taskText: "do a thing" });
+    const first = await run(), second = await run();
+    expect(first.data.readiness).toMatch(/^Readiness: \d+\/100 \([A-F]\)/);
+    expect(second.data.readiness).toBeUndefined();
+  });
+
   test("AN-08: an untracked-only tree is not a refusal and names no blocker", async () => {
     writeFileSync(join(repoDir, "scratch.txt"), "untracked\n");
     const result = await runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { taskText: "do a thing" });
