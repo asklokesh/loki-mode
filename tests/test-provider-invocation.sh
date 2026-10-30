@@ -500,7 +500,8 @@ for path in sys.argv[1:]:
                 stmt += " " + lines[i]
         if spawn.search(stmt):
             total += 1
-            if "_loki_claude_shell_value" not in stmt:
+            # _ic_shell is computed from _loki_claude_shell_value in a subshell (usage regen).
+            if "_loki_claude_shell_value" not in stmt and 'SHELL=$_ic_shell' not in stmt:
                 bad.append("%s:%d" % (path.rsplit("/", 1)[-1], start))
         i += 1
 print("SITES=%d" % total)
@@ -530,13 +531,15 @@ regen_shell_probe() {
         PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"; export PROJECT_DIR
         # shellcheck source=/dev/null
         source "$PROVIDERS_DIR/codex.sh"
-        # Take the helper source line from run.sh itself, so removing it there turns this red.
-        eval "$(grep -E '^[^#]*source "\$PROJECT_DIR/autonomy/lib/claude-flags\.sh"' "$SCRIPT_DIR/../autonomy/run.sh" | head -1)"
         eval "$(sed -n '/^_intelligent_usage_regen() {/,/^}/p' "$SCRIPT_DIR/../autonomy/run.sh")"
         log_info() { :; }
         _loki_is_quick_prd() { return 1; }
         TARGET_DIR="$REGEN_DIR_14/proj"; mkdir -p "$TARGET_DIR"
         _intelligent_usage_regen >/dev/null 2>&1
+        # Leak guard: the helper is sourced in a subshell, never into this process.
+        if type _loki_claude_permission_argv >/dev/null 2>&1 || [ -n "${CAVEMAN_DEFAULT_MODE+x}" ]; then
+            echo "# LEAK"
+        fi
         cat "$TARGET_DIR/USAGE.md" 2>/dev/null
     )
 }

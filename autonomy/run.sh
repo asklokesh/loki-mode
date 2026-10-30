@@ -1860,10 +1860,6 @@ PROVIDERS_DIR="$PROJECT_DIR/providers"
 if [ -f "$PROVIDERS_DIR/loader.sh" ]; then
     # shellcheck source=/dev/null
     source "$PROVIDERS_DIR/loader.sh"
-    # Owns _loki_claude_shell_value; claude.sh sources it too, but a non-claude
-    # provider with LOKI_ALLOW_CLAUDE_SIDECALLS=1 never loads claude.sh.
-    # shellcheck source=/dev/null
-    [ ! -f "$PROJECT_DIR/autonomy/lib/claude-flags.sh" ] || source "$PROJECT_DIR/autonomy/lib/claude-flags.sh"
 
     # Detect only when the operator expressed no preference. Sourcing the
     # loader first is required -- auto_detect_provider() is defined there.
@@ -21778,9 +21774,20 @@ ${_commits}"
     # would fail that check or produce caveman-style USAGE text, so disable
     # caveman unconditionally. Inlined on `claude` only (does not cross the pipe
     # to head). No-op when caveman is absent.
+    # A non-claude provider with LOKI_ALLOW_CLAUDE_SIDECALLS=1 never loads
+    # claude.sh, so compute the pinned shell in a subshell: the helper's
+    # top-level exports (caveman vars) must not leak into this process.
+    local _ic_shell
+    _ic_shell="$(
+        # shellcheck source=/dev/null
+        type _loki_claude_shell_value >/dev/null 2>&1 \
+            || . "$PROJECT_DIR/autonomy/lib/claude-flags.sh" >/dev/null 2>&1 || exit 1
+        _loki_claude_shell_value
+    )" || _ic_shell=""
+    [ -n "$_ic_shell" ] || _ic_shell="${SHELL-}"
     local _ic_out
     _ic_out=$(printf '%s' "$_ic_prompt" \
-        | timeout 60 env "SHELL=$(_loki_claude_shell_value)" CAVEMAN_DEFAULT_MODE=off claude "${_ic_argv[@]}" -p - 2>/dev/null \
+        | timeout 60 env "SHELL=$_ic_shell" CAVEMAN_DEFAULT_MODE=off claude "${_ic_argv[@]}" -p - 2>/dev/null \
         | head -200)
     # Sanity check: response must look like Markdown (starts with # or ##).
     if [ -z "$_ic_out" ] || ! printf '%s' "$_ic_out" | head -1 | grep -qE '^#'; then
