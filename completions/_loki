@@ -185,7 +185,8 @@ function _loki {
                         '--json[Machine-readable JSON output]' \
                         '--last[Analyze last N sessions]:number:' \
                         '--save[Write report to METRICS.md]' \
-                        '--share[Upload report as GitHub Gist]' \
+                        '--share[Upload report as a secret GitHub Gist]' \
+                        '--public[With --share, create a PUBLIC gist]' \
                         '--help[Show help]' \
                         '1:subcommand:(prometheus)'
                     ;;
@@ -199,14 +200,16 @@ function _loki {
                     ;;
                 share)
                     _arguments \
-                        '--private[Create a secret gist]' \
+                        '--public[Create a PUBLIC gist, visible to anyone with the URL]' \
+                        '--private[Create a secret gist (default)]' \
                         '--format[Report format]:format:(text markdown html)' \
                         '--help[Show help]'
                     ;;
                 proof)
                     _arguments \
                         '--yes[Skip redaction-preview confirmation]' \
-                        '--private[Create a secret gist when sharing]' \
+                        '--public[Create a PUBLIC gist when sharing]' \
+                        '--private[Create a secret gist when sharing (default)]' \
                         '--hosted[Hosted publishing (coming in R9)]' \
                         '--dry-run[Scan and list what share would publish; publishes nothing]' \
                         '--help[Show help]' \

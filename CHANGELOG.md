@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed
+
+- `loki share`, `loki proof share` and `loki metrics --share` now create a secret GitHub gist by default (they were public). Pass `--public` to publish a public gist, which prints a one-line warning that anyone with the URL can see it. `--private` still works as a no-op alias.
+
 ### Added
 
 - Every PR body and `loki verify` output now prints the receipt's signed Seal accuracy line, or "Seal accuracy: not measured" when the receipt has none for that change.
