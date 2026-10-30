@@ -474,5 +474,6 @@ describe("formatTierSeal and the Tier summary line (GAME10-09b)", () => {
   test("a prototype-named tier is a plain missing key, and no tier input leaves the summary unchanged", () => {
     expect(formatTierSeal({ tier: "constructor", record: {} })).toContain("constructor not measured");
     expect(formatSummary(base as never)).not.toContain("Tier:");
+    expect(formatSummary({ ...base, verdict: "FAILED", tier: { tier: "haiku" } } as never)).not.toContain("Tier:");
   });
 });

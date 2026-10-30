@@ -133,7 +133,7 @@ export function formatSummary(input: SummaryInput): string {
         : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
   const stagesStr = input.stages.map((s) => `${s.label} ${formatDuration(s.seconds)}`).join(", ") + ((slow) => (slow ? `; slowest: ${slow.label} ${Math.min(100, Math.round((slow.seconds / input.wallS) * 100))}%` : ""))(input.wallS > 0 ? input.stages.filter((s) => s.seconds > 0).reduce<{ label: string; seconds: number } | null>((a, s) => (a && a.seconds >= s.seconds ? a : s), null) : null); // TEN-SPEED-03: slowest stage share of wall; needs real durations and wall
   const timeLine = `${labelCol("Time")}${formatDuration(input.wallS)} (${stagesStr})${input.firstSealed === true ? " - first sealed PR in this repo" : ""}`;
-  return [verdictLine, ...(input.reason ? [`${labelCol("Reason")}${input.reason}`] : []), prLine, ...receiptLine, notProvenLine, costLine, ...(input.tier ? [`${labelCol("Tier")}${formatTierSeal(input.tier)}`] : []), ...(input.cost.stageShares ? [`${labelCol("Spend")}${input.cost.stageShares}`] : []), timeLine].join("\n");
+  return [verdictLine, ...(input.reason ? [`${labelCol("Reason")}${input.reason}`] : []), prLine, ...receiptLine, notProvenLine, costLine, ...(input.tier && input.verdict === "VERIFIED" ? [`${labelCol("Tier")}${formatTierSeal(input.tier)}`] : []), ...(input.cost.stageShares ? [`${labelCol("Spend")}${input.cost.stageShares}`] : []), timeLine].join("\n");
 }
 /** Section 3: eta.ts is optional; when absent, ETAs are omitted. */
 export type EtaEstimator = (targetS: number | null, elapsedS: number) => number | null;
