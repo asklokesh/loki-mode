@@ -147,6 +147,59 @@ else
     printf 'SKIP: npm not available; files[] assertions above still ran\n'
 fi
 
+# --- zero-install: the packed tarball runs `loki try` with nothing installed --
+# The user's first command is `npx loki-mode try <url>`. Run exactly that against
+# the real tarball with an empty HOME, an empty npm prefix and cache, and no bun
+# on PATH, so Bun must come from optionalDependencies. File:// stands in for the
+# public URL and --dry-run makes no model call.
+if command -v npm >/dev/null 2>&1 && command -v npx >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+    _ZI="$(mktemp -d "${TMPDIR:-/tmp}/loki-zero-install.XXXXXXXX")"
+    mkdir -p "$_ZI/home" "$_ZI/prefix" "$_ZI/cache" "$_ZI/pack" "$_ZI/fx" "$_ZI/work"
+    ( cd "$_ZI/fx" && git init -q . && printf '%s\n' '// TODO: retry the request on timeout' > app.js \
+        && git add app.js && git -c user.email=t@example.com -c user.name=t -c commit.gpgsign=false commit -q -m init ) >/dev/null 2>&1
+    _zi_tgz=""
+    if ( cd "$_ZI/pack" && npm pack --silent --pack-destination "$_ZI/pack" "$REPO_ROOT" >"$_ZI/pack.out" 2>&1 ); then
+        _zi_tgz="$_ZI/pack/$(tail -1 "$_ZI/pack.out")"
+    fi
+    if [ ! -f "$_zi_tgz" ]; then
+        bad "zero-install: npm pack did not produce a tarball: $(head -c 300 "$_ZI/pack.out")"
+    else
+        _zi_node_dir="$(dirname "$(command -v node)")"
+        _zi_rc=0
+        ( cd "$_ZI/work" && env -i PATH="$_zi_node_dir:/usr/bin:/bin" HOME="$_ZI/home" TMPDIR="$_ZI" \
+            npm_config_prefix="$_ZI/prefix" npm_config_cache="$_ZI/cache" LOKI_NO_BROWSER=1 CI=1 \
+            LOKI_TELEMETRY_DISABLED=true LOKI_NO_TELEMETRY=1 DO_NOT_TRACK=1 \
+            timeout -k 15 600 npx --yes --package "$_zi_tgz" -- loki try "file://$_ZI/fx" --dry-run </dev/null >"$_ZI/npx.out" 2>&1 ) || _zi_rc=$?
+        if [ "$_zi_rc" -ne 0 ] && grep -qE 'ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT' "$_ZI/npx.out"; then
+            printf 'SKIP: zero-install: registry unreachable, optionalDependencies cannot be resolved\n'
+        else
+            if [ "$_zi_rc" -eq 0 ]; then
+                ok "zero-install: npx <tarball> try --dry-run exits 0"
+            else
+                bad "zero-install: npx try exited $_zi_rc: $(head -c 600 "$_ZI/npx.out")"
+            fi
+            if grep -q '^Task: ' "$_ZI/npx.out" && grep -q '^\[dry-run\] No model call was made' "$_ZI/npx.out"; then
+                ok "zero-install: try reached the preview (task and dry-run lines)"
+            else
+                bad "zero-install: try did not reach the preview: $(head -c 600 "$_ZI/npx.out")"
+            fi
+            _zi_bun=""
+            for _b in "$_ZI"/cache/_npx/*/node_modules/@oven/bun-*/bin/bun; do
+                [ -x "$_b" ] && _zi_bun="$_b" && break
+            done
+            if [ -n "$_zi_bun" ] && "$_zi_bun" --version >/dev/null 2>&1; then
+                ok "zero-install: Bun resolved from optionalDependencies and runs"
+            else
+                bad "zero-install: no working @oven/bun-* in the npx install (found: ${_zi_bun:-none})"
+            fi
+        fi
+    fi
+    # Remove only the directory this test created.
+    case "$_ZI" in "${TMPDIR:-/tmp}"/loki-zero-install.*) rm -rf -- "$_ZI" ;; esac
+else
+    printf 'SKIP: zero-install: npm, npx or git not available\n'
+fi
+
 echo ""
 echo "  Passed:     $PASS"
 echo "  Failed:     $FAIL"

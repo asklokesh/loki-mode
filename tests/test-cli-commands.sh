@@ -389,6 +389,26 @@ check_try "loki try --dry-run picks the TODO line as the task" "$(try_has "$_try
 check_try "loki try --dry-run prints an estimate" "$(try_has "$_try_out" 'Estimate: ')" "$_try_out"
 check_try "loki try --dry-run removes the temp clone" "$(try_has "$_try_out" 'Removed the temp clone.')" "$_try_out"
 
+# No provider ready (bare PATH, empty HOME, no keys): one login/key line per supported provider, once, exit 2.
+_try_rc=0
+_try_out="$(cd "$_TRY_CALLER" && env -i PATH=/usr/bin:/bin TMPDIR="$_TRY_TMP" HOME="$_TRY_ROOT/home" LOKI_NO_BROWSER=1 "$LOKI" try "file://$_TRY_FX" 2>&1 </dev/null)" || _try_rc=$?
+check_try "loki try with no provider ready exits 2" "$([ "$_try_rc" = "2" ] && echo 1 || echo 0)" "rc=$_try_rc: $_try_out"
+for _tp in $(sed -n 's/^SUPPORTED_PROVIDERS=(\(.*\))$/\1/p' "$_TRY_REPO/providers/loader.sh" | tr -d '"'); do
+    _tn="$(printf '%s\n' "$_try_out" | grep -c "^  $_tp: " || true)"
+    check_try "loki try with no provider ready lists $_tp exactly once" "$([ "$_tn" = "1" ] && echo 1 || echo 0)" "count=$_tn: $_try_out"
+done
+check_try "loki try with no provider ready names the exact claude login" "$(try_has "$_try_out" '  claude: claude login')" "$_try_out"
+check_try "loki try with no provider ready names the exact codex login" "$(try_has "$_try_out" '  codex: codex login')" "$_try_out"
+# No provider ready (bare PATH, empty HOME, no keys): one login/key line per supported provider, once, exit 2.
+_try_rc=0
+_try_out="$(cd "$_TRY_CALLER" && env -i PATH=/usr/bin:/bin TMPDIR="$_TRY_TMP" HOME="$_TRY_ROOT/home" LOKI_NO_BROWSER=1 "$LOKI" try "file://$_TRY_FX" 2>&1 </dev/null)" || _try_rc=$?
+check_try "loki try with no provider ready exits 2" "$([ "$_try_rc" = "2" ] && echo 1 || echo 0)" "rc=$_try_rc: $_try_out"
+for _tp in $(sed -n 's/^SUPPORTED_PROVIDERS=(\(.*\))$/\1/p' "$_TRY_REPO/providers/loader.sh" | tr -d '"'); do
+    _tn="$(printf '%s\n' "$_try_out" | grep -c "^  $_tp: " || true)"
+    check_try "loki try with no provider ready lists $_tp exactly once" "$([ "$_tn" = "1" ] && echo 1 || echo 0)" "count=$_tn: $_try_out"
+done
+check_try "loki try with no provider ready names the exact claude login" "$(try_has "$_try_out" '  claude: claude login')" "$_try_out"
+check_try "loki try with no provider ready names the exact codex login" "$(try_has "$_try_out" '  codex: codex login')" "$_try_out"
 _try_rc=0
 _try_out="$(cd "$_TRY_CALLER" && env TMPDIR="$_TRY_TMP" HOME="$_TRY_ROOT/home" "$LOKI" try ftp://example.com/x 2>&1)" || _try_rc=$?
 check_try "loki try rejects a non-clone URL scheme with exit 2" "$([ "$_try_rc" = "2" ] && echo 1 || echo 0)" "rc=$_try_rc: $_try_out"
@@ -447,6 +467,10 @@ STUB
         _try_receipt="$(printf '%s\n' "$_try_out" | sed -n 's/^Receipt: //p' | head -1)"
         check_try "loki try live run (stub engine) exits 0 and prints a receipt path" \
             "$([ "$_try_rc" = "0" ] && [ -n "$_try_receipt" ] && [ -f "$_try_receipt" ] && echo 1 || echo 0)" "rc=$_try_rc: $_try_out"
+        check_try "loki try live run prints the npx verify command for the kept receipt" \
+            "$(try_has "$_try_out" "npx loki-mode verify $_try_receipt")" "$_try_out"
+        check_try "loki try live run prints the npx verify command for the kept receipt" \
+            "$(try_has "$_try_out" "npx loki-mode verify $_try_receipt")" "$_try_out"
         _try_vrc=0
         if [ -n "$_try_receipt" ]; then
             (cd "$_TRY_ROOT" && env -u LOKI_ENGINE LOKI_NO_BROWSER=1 LOKI_TELEMETRY_DISABLED=1 \
