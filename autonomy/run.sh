@@ -1860,6 +1860,10 @@ PROVIDERS_DIR="$PROJECT_DIR/providers"
 if [ -f "$PROVIDERS_DIR/loader.sh" ]; then
     # shellcheck source=/dev/null
     source "$PROVIDERS_DIR/loader.sh"
+    # Owns _loki_claude_shell_value; claude.sh sources it too, but a non-claude
+    # provider with LOKI_ALLOW_CLAUDE_SIDECALLS=1 never loads claude.sh.
+    # shellcheck source=/dev/null
+    [ ! -f "$PROJECT_DIR/autonomy/lib/claude-flags.sh" ] || source "$PROJECT_DIR/autonomy/lib/claude-flags.sh"
 
     # Detect only when the operator expressed no preference. Sourcing the
     # loader first is required -- auto_detect_provider() is defined there.

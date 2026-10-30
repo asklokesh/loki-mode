@@ -436,6 +436,7 @@ shell_probe() {
         export SHELL=/bin/zsh LOKI_CODEX_OUTPUT_LAST=false
         if [ -n "$3" ]; then export LOKI_E10_KEEP_USER_SHELL="$3"; else unset LOKI_E10_KEEP_USER_SHELL; fi
         PATH="$STUB_DIR_14:$PATH"
+        # shellcheck source=/dev/null
         source "$PROVIDERS_DIR/$1.sh"
         if [ "$2" = "provider_invoke" ]; then provider_invoke "x"; else provider_invoke_with_tier development "x"; fi
     ) 2>&1
@@ -513,6 +514,45 @@ if [ "${sites:-0}" -ge 12 ] && [ "$unpinned" = "none" ]; then
 else
     log_fail "claude spawn sites unpinned or detector vacuous (sites=${sites:-0}): $unpinned"
 fi
+
+# Non-claude provider + LOKI_ALLOW_CLAUDE_SIDECALLS=1: providers/claude.sh is NOT
+# sourced, yet the USAGE.md regen side-call still spawns claude. It must get the
+# pinned SHELL from whatever run.sh itself sources, never an empty SHELL.
+REGEN_DIR_14="$(mktemp -d "${TMPDIR:-/tmp}/loki-prov-regen.XXXXXX")"
+printf '#!/usr/bin/env bash\ncat >/dev/null\necho "# SHELL=[$SHELL]"\n' > "$REGEN_DIR_14/claude"
+chmod +x "$REGEN_DIR_14/claude"
+regen_shell_probe() {
+    # $1 KEEP value ("" = unset)
+    (
+        export SHELL=/bin/zsh LOKI_ALLOW_CLAUDE_SIDECALLS=1 LOKI_PROVIDER=codex
+        if [ -n "$1" ]; then export LOKI_E10_KEEP_USER_SHELL="$1"; else unset LOKI_E10_KEEP_USER_SHELL; fi
+        PATH="$REGEN_DIR_14:$PATH"
+        PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"; export PROJECT_DIR
+        # shellcheck source=/dev/null
+        source "$PROVIDERS_DIR/codex.sh"
+        # Take the helper source line from run.sh itself, so removing it there turns this red.
+        eval "$(grep -E '^[^#]*source "\$PROJECT_DIR/autonomy/lib/claude-flags\.sh"' "$SCRIPT_DIR/../autonomy/run.sh" | head -1)"
+        eval "$(sed -n '/^_intelligent_usage_regen() {/,/^}/p' "$SCRIPT_DIR/../autonomy/run.sh")"
+        log_info() { :; }
+        _loki_is_quick_prd() { return 1; }
+        TARGET_DIR="$REGEN_DIR_14/proj"; mkdir -p "$TARGET_DIR"
+        _intelligent_usage_regen >/dev/null 2>&1
+        cat "$TARGET_DIR/USAGE.md" 2>/dev/null
+    )
+}
+out="$(regen_shell_probe "")"
+if [ "$out" = "# SHELL=[/bin/bash]" ]; then
+    log_pass "usage regen on codex + sidecall opt-in pins SHELL=/bin/bash (helper available without claude.sh)"
+else
+    log_fail "usage regen on codex + sidecall opt-in got: $out"
+fi
+out="$(regen_shell_probe 1)"
+if [ "$out" = "# SHELL=[/bin/zsh]" ]; then
+    log_pass "usage regen on codex + sidecall opt-in keeps the user shell under LOKI_E10_KEEP_USER_SHELL=1"
+else
+    log_fail "usage regen opt-out got: $out"
+fi
+rm -rf "${REGEN_DIR_14:?}"
 
 rm -rf "$STUB_DIR_14"
 

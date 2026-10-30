@@ -382,19 +382,6 @@ LOKI_FIRSTPASS_EOF
     fi
 }
 
-# SHELL value for a claude child. Claude Code's Bash tool replays the aliases of
-# the shell named in SHELL, so a user's `alias ls=eza` hangs agent Bash commands.
-# Pin /bin/bash when executable (same rule as the engine10 route,
-# loki-ts/src/runner/worker_proc.ts pinBashShellEnv); LOKI_E10_KEEP_USER_SHELL=1
-# keeps the user's shell. Only SHELL changes; claude spawn sites only.
-_loki_claude_shell_value() {
-    if [ "${LOKI_E10_KEEP_USER_SHELL:-}" != "1" ] && [ -x /bin/bash ]; then
-        printf '%s' "/bin/bash"
-    else
-        printf '%s' "${SHELL-}"
-    fi
-}
-
 # Invocation function (basic, no tier).
 # Auto-flags use development tier defaults.
 provider_invoke() {

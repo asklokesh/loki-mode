@@ -1174,3 +1174,16 @@ _loki_claude_permission_argv() {
     _LOKI_PERM_ARGV=()
     while IFS= read -r _a; do _LOKI_PERM_ARGV+=("$_a"); done <<< "$_out"
 }
+
+# SHELL value for a claude child. Claude Code's Bash tool replays the aliases of
+# the shell named in SHELL, so a user's `alias ls=eza` hangs agent Bash commands.
+# Pin /bin/bash when executable (same rule as the engine10 route,
+# loki-ts/src/runner/worker_proc.ts pinBashShellEnv); LOKI_E10_KEEP_USER_SHELL=1
+# keeps the user's shell. Only SHELL changes; claude spawn sites only.
+_loki_claude_shell_value() {
+    if [ "${LOKI_E10_KEEP_USER_SHELL:-}" != "1" ] && [ -x /bin/bash ]; then
+        printf '%s' "/bin/bash"
+    else
+        printf '%s' "${SHELL-}"
+    fi
+}
