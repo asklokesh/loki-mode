@@ -14,6 +14,7 @@ import {
   EXIT,
   outcomeOf,
   reasonOf,
+  spendSoFar,
 } from "../../src/engine10/output.ts";
 import { summaryCost } from "../../src/engine10/events.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
@@ -475,5 +476,30 @@ describe("formatTierSeal and the Tier summary line (GAME10-09b)", () => {
     expect(formatTierSeal({ tier: "constructor", record: {} })).toContain("constructor not measured");
     expect(formatSummary(base as never)).not.toContain("Tier:");
     expect(formatSummary({ ...base, verdict: "FAILED", tier: { tier: "haiku" } } as never)).not.toContain("Tier:");
+  });
+});
+
+describe("stage lines carry the run spend so far", () => {
+  const cost = (stage: string, usd: number, source = "provider") => ({ v: 1, seq: 0, ts: "t", run: "r", type: "cost", stage, data: { usd, source, input_tokens: 10, output_tokens: 5, session_id: `s-${stage}` } }) as unknown as EventEnvelope;
+  const line = (name: string, evs: EventEnvelope[]) => formatStageLine({ clockS: 1, name, status: "done", durationS: 2, detail: "ok", spend: spendSoFar(evs) });
+  test("figures are cumulative across stages and the last one equals the summary Cost", () => {
+    const evs: EventEnvelope[] = [];
+    const lines: string[] = [];
+    for (const [stage, usd] of [["plan", 0.01], ["implement", 0.02], ["verify", 0.01]] as const) { evs.push(cost(stage, usd)); lines.push(line(stage, evs)); }
+    expect(lines[0]).toContain("($0.01 so far)");
+    expect(lines[1]).toContain("($0.03 so far)");
+    expect(lines[2]).toContain("($0.04 so far)");
+    const sc = summaryCost(evs, false);
+    expect(formatSummary({ pr: null, verdict: "VERIFIED", notProven: [], flaky: [], wallS: 1, stages: [], cost: { usd: sc.usd, provider: "claude", tokens: 15 } } as never)).toContain("Cost:       $0.04 ");
+  });
+  test("an unmetered run prints no dollar figure on any stage line", () => {
+    const evs = [cost("plan", 0, "cli-invoker-unmetered")];
+    expect(line("plan", evs)).toContain("(spend not measured)");
+    expect(line("plan", evs)).not.toContain("$");
+    expect(line("intake", [])).not.toContain("$");
+  });
+  test("a partially priced run labels the figure partial", () => {
+    const evs = [cost("plan", 0.02), cost("fix", null as unknown as number)];
+    expect(line("fix", evs)).toContain("(partial: $0.02 so far)");
   });
 });

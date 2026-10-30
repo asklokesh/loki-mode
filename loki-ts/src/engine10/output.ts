@@ -6,7 +6,7 @@ export { formatClock, formatDuration, formatTokens }; // one owner: util/term_wi
 import { registryLoader } from "./registry.ts";
 import { redactSecrets } from "../util/redact.ts";
 import type { TierOutcomeCount } from "../runner/router/history.ts";
-import { conflictReasonOf } from "./events.ts"; import { isBlockingFail } from "../util/failure_memory.ts";
+import { conflictReasonOf, summaryCost } from "./events.ts"; import { isBlockingFail } from "../util/failure_memory.ts";
 const NAME_WIDTH = 12; // fits "implement" + padding to align the next column
 const STATUS_WIDTH = 8; // E-44: "skipped" plus one separating space (7 ran it into the duration)
 const LABEL_WIDTH = 12; // fits "NOT PROVEN:" + one space
@@ -18,7 +18,7 @@ export interface StageLine {
   status: "done" | "failed" | "skipped";
   /** null when the stage carries no duration_s (stage.skipped, section 5); never fabricated as 0. */
   durationS: number | null;
-  detail: string;
+  detail: string; spend?: string | null; // run spend so far, from spendSoFar(); absent prints nothing extra
 }
 // Q18-07: eta.ts is optional (core never imports contrib); the first line kicks off the lazy load, so ETA and learning start from the second line.
 let etaMod: { estimate?: EtaEstimator; record?: (t: number | null, a: number) => void } | null = null;
@@ -31,8 +31,10 @@ export function formatStageLine(line: StageLine): string {
   const status = line.status.padEnd(STATUS_WIDTH);
   const duration = line.durationS == null ? "not measured" : formatDuration(line.durationS);
   if (line.status === "done" && line.durationS != null) etaOf().record?.(targetOf(line.name), line.durationS);
-  return `[${clock}] ${name}${status}${duration}   ${line.detail}`;
+  return `[${clock}] ${name}${status}${duration}   ${line.detail}${line.spend ? ` ${line.spend}` : ""}`;
 }
+/** Run spend so far for a stage line, from the same summaryCost the final Cost line reads: "($0.04 so far)"; partially priced reads "(partial: $X so far)"; nothing priced reads "(spend not measured)", never $0.00. */
+export const spendSoFar = (events: EventEnvelope[], lokiRoot?: string): string => { const c = summaryCost(events, false, lokiRoot); return c.usd != null ? `($${c.usd.toFixed(2)} so far)` : c.pc.measured > 0 ? `(partial: $${c.pc.usd.toFixed(2)} so far)` : "(spend not measured)"; };
 export interface HeartbeatLine {
   /** Elapsed run time (since run.started) when this line is printed. */
   clockS: number;
@@ -142,11 +144,8 @@ export async function estimateEtaS(targetS: number | null, elapsedS: number, mod
   let mod: { estimate?: EtaEstimator };
   try {
     mod = (await (modulePath === "./eta.ts" ? registryLoader(modulePath) : import(modulePath))) as { estimate?: EtaEstimator };
-  } catch (err) {
-    // Only a missing module means "no ETA yet"; any other import error is a bug.
-    const e = err as { code?: string; message?: string };
-    if (e?.code === "ERR_MODULE_NOT_FOUND" || /Cannot find module|Module not found/i.test(String(e?.message ?? err))) return null;
-    throw err;
+  } catch (err) { // Only a missing module means "no ETA yet"; any other import error is a bug.
+    const e = err as { code?: string; message?: string }; if (e?.code === "ERR_MODULE_NOT_FOUND" || /Cannot find module|Module not found/i.test(String(e?.message ?? err))) return null; throw err;
   }
   if (typeof mod.estimate !== "function") return null;
   try { return mod.estimate(targetS, elapsedS); } catch { return null; }
