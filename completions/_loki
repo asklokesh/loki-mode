@@ -100,7 +100,7 @@ function _loki {
                 estimate)
                     _arguments \
                         '--json[Output machine-readable JSON]' \
-                        '--model[Model whose rough prior to use]:model:' \
+                        '--model[Model whose first-run prior to use]:model:' \
                         '--provider[Provider whose default model is used]:provider:' \
                         '--help[Show help]'
                     ;;
