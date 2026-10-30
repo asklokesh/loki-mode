@@ -1,8 +1,9 @@
 // VPR-2: the fail-to-pass (F2P) check for `loki verify-pr`. A check derived from the LINKED ISSUE must FAIL on the PR
 // base and PASS on the PR head. Pure decision logic plus check extraction; execution is injected (the VPR-1 sandbox).
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { REPORT_RUNNERS } from "../engine10/testmap.ts";
+import { textMatchesOrUnreadable } from "../util/python.ts";
 
 export interface SandboxResult { status: "COMPLETED" | "TIMEOUT" | "ERROR" | "BLOCKED"; exit_code: number | null; detail?: string; output?: string; report?: string }
 export type F2pOutcome =
@@ -64,18 +65,14 @@ export function reportShowsPass(report: string | undefined): boolean {
   return cases - skipped > 0 && bad === 0 && counted === 0;
 }
 
-/** Files the PR added, changed, renamed or deleted that configure or preload the test runner: each REPORT_RUNNERS entry's config file, and any ini, cfg or toml file with a section header naming a test runner (`[...test...]`). A path missing at head is judged by its base version, and a read failure or a path missing at both sides counts as config (fail closed). The PR's own code could end the run early or redirect which tests run, so the check cannot be trusted. */
+/** Files the PR added, changed, renamed or deleted that configure or preload the test runner: each REPORT_RUNNERS entry's config file, and any ini, cfg or toml file with a section header naming a test runner (`[...test...]`). Both the base and the head version are judged, so a runner section or key removed from a file that stays (setup.cfg, package.json jest key) counts like a deleted file. A read failure or a path missing at both sides counts as config (fail closed). The PR's own code could end the run early or redirect which tests run, so the check cannot be trusted. */
 export function runnerConfigChanged(changed: readonly string[], headDir: string, baseDir: string = headDir): string[] {
   return changed.filter((f) => {
     const b = basename(f), r = REPORT_RUNNERS.find((x) => x.config.test(b));
-    const at = [headDir, baseDir].find((d) => existsSync(join(d, f)));
-    if (!at) return !!r;
+    const at = [headDir, baseDir].filter((d, i, a) => a.indexOf(d) === i && existsSync(join(d, f)));
+    if (at.length === 0) return !!r;
     if (!r && !/\.(?:ini|cfg|toml)$/.test(f)) return false;
-    try {
-      const txt = readFileSync(join(at, f), "utf8");
-      if (r) return !r.key || !b.endsWith(".json") || r.key in (JSON.parse(txt) as object);
-      return /\.(?:ini|cfg|toml)$/.test(f) && /^\s*\[[^\]\n]*test/im.test(txt);
-    } catch { return true; }
+    return at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => r ? !r.key || !b.endsWith(".json") || r.key in (JSON.parse(txt) as object) : /^\s*\[[^\]\n]*test/im.test(txt)));
   });
 }
 
