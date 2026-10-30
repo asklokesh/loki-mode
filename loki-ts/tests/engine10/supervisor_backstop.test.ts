@@ -590,6 +590,7 @@ describe("GAME10-05a: per-stage capability map", () => {
   const bent = (home: string, patch: NodeJS.ProcessEnv): NodeJS.ProcessEnv => { const e = sealedEnv(home); for (const [k, v] of Object.entries(patch)) { if (v === undefined) delete e[k]; else e[k] = v; } return e; };
   type Case = { env?: NodeJS.ProcessEnv; argv?: string[]; setup?: (home: string) => void };
   const SBPL_ALLOW_AFTER = "(version 1)(deny network*)(allow network*)", SBPL_COMMENT_ONLY = "(version 1)\n; (deny network*)\n", SBPL_DENY = "(version 1)(deny network*)";
+  const SBPL_EVAL_ALLOW = "(version 1)(deny network*)(deny file-read-data (begin ((eval (string->symbol (string-append \"al\" \"low\"))) default) ((eval (string->symbol (string-append \"al\" \"low\"))) network*) (literal \"/nonexistent-x\")))"; // round 3 security: SBPL is a Scheme, so an allow can be built at runtime
   const rows: { finding: string; field: "can_push" | "network" | "secrets"; cases: Case[]; check?: (c: Cap) => boolean }[] = [
     { finding: "1 SSH_AUTH_SOCK set", field: "can_push", cases: [{ env: { SSH_AUTH_SOCK: "/tmp/agent.sock" } }, { env: { SSH_AUTH_SOCK: "/tmp/agent.sock" }, argv: NO_NET }] },
     { finding: "2 key in ~/.ssh or GIT_SSH_COMMAND", field: "can_push", cases: [{ env: { GIT_SSH_COMMAND: "ssh -i /k" } }, { env: { GIT_SSH_COMMAND: "ssh -i /k" }, argv: NO_NET }, { setup: (h) => { mkdirSync(join(h, ".ssh")); writeFileSync(join(h, ".ssh", "id_ed25519"), "k"); } }] },
@@ -603,6 +604,7 @@ describe("GAME10-05a: per-stage capability map", () => {
     { finding: "10 bwrap --unshare-all --share-net", field: "network", cases: [{ argv: ["bwrap", "--unshare-all", "--share-net", "bun", "w.ts"] }] },
     { finding: "11 sandbox-exec -p with a later allow", field: "network", cases: [{ argv: ["sandbox-exec", "-p", SBPL_ALLOW_AFTER, "bun", "w.ts"] }] },
     { finding: "12 sandbox-exec -p with the deny only in a comment", field: "network", cases: [{ argv: ["sandbox-exec", "-p", SBPL_COMMENT_ONLY, "bun", "w.ts"] }] },
+    { finding: "13 sandbox-exec -p with an allow built by string-append and eval", field: "network", cases: [{ argv: ["sandbox-exec", "-p", SBPL_EVAL_ALLOW, "bun", "w.ts"] }], check: (c) => c.network === "unknown" && c.can_push === "unknown" },
   ];
   test.each(rows.map((r) => [r.finding, r] as const))("round 3 negative control, finding %s: never recorded as false", (_n, row) => {
     for (const c of row.cases) {
@@ -618,7 +620,8 @@ describe("GAME10-05a: per-stage capability map", () => {
     const root = runTmp(), home = join(root, "home"); mkdirSync(home);
     withRunTmp(root, () => {
       expect(stageCapability("x", sealedEnv(home), NO_NET)).toEqual({ stage: "x", secrets: [], can_push: false, network: false });
-      for (const argv of [["unshare", "--net", "bun"], ["unshare", "-rn", "bun"], ["bwrap", "--unshare-net", "bun"], ["bwrap", "--unshare-all", "--bind", "/", "/", "bun"], ["bwrap", "--share-net", "--unshare-all", "bun"], ["firejail", "--quiet", "--net=none", "bun"], ["/usr/bin/firejail", "--net=none", "--", "bun"], ["sandbox-exec", "-p", SBPL_DENY, "bun"], ["sandbox-exec", "-D", "A=b", "-p", "(version 1)\n(deny network*) ; no net", "bun"]]) expect(stageCapability("x", sealedEnv(home), argv).network).toBe(false);
+      for (const argv of [["unshare", "--net", "bun"], ["unshare", "-rn", "bun"], ["bwrap", "--unshare-net", "bun"], ["bwrap", "--unshare-all", "--bind", "/", "/", "bun"], ["bwrap", "--share-net", "--unshare-all", "bun"], ["firejail", "--quiet", "--net=none", "bun"], ["/usr/bin/firejail", "--net=none", "--", "bun"]]) expect(stageCapability("x", sealedEnv(home), argv).network).toBe(false);
+      for (const argv of [["sandbox-exec", "-p", SBPL_DENY, "bun"], ["sandbox-exec", "-D", "A=b", "-p", "(version 1)\n(deny network*) ; no net", "bun"], ["sandbox-exec", "-p", SBPL_EVAL_ALLOW, "bun"]]) expect(stageCapability("x", sealedEnv(home), argv)).toMatchObject({ network: "unknown", can_push: "unknown" }); // SBPL is never read, even from the buildStageEnv env
     });
   });
 

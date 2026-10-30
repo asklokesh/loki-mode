@@ -65,52 +65,6 @@ function firejailNoNet(args: readonly string[]): boolean {
   }
   return false;
 }
-type Sx = string | Sx[];
-/** Minimal SBPL reader: ';' comments are dropped outside strings, strings stay opaque, parentheses nest. Null when unbalanced. */
-function readSbpl(src: string): Sx[] | null {
-  const toks: string[] = []; let i = 0;
-  while (i < src.length) {
-    const c = src[i]!;
-    if (c === ";") { while (i < src.length && src[i] !== "\n") i++; }
-    else if (/\s/.test(c)) i++;
-    else if (c === "(" || c === ")") { toks.push(c); i++; }
-    else if (c === '"') { let j = i + 1; while (j < src.length && src[j] !== '"') j += src[j] === "\\" ? 2 : 1; if (j >= src.length) return null; toks.push(src.slice(i, j + 1)); i = j + 1; }
-    else { let j = i; while (j < src.length && !/[\s();"]/.test(src[j]!)) j++; toks.push(src.slice(i, j)); i = j; }
-  }
-  const stack: Sx[][] = [[]];
-  for (const t of toks) {
-    if (t === "(") stack.push([]);
-    else if (t === ")") { const done = stack.pop(); if (!done || stack.length === 0) return null; stack[stack.length - 1]!.push(done); }
-    else stack[stack.length - 1]!.push(t);
-  }
-  return stack.length === 1 ? stack[0]! : null;
-}
-const hasAtom = (x: Sx, atom: string): boolean => (typeof x === "string" ? x === atom : x.some((y) => hasAtom(y, atom)));
-/** A profile proves no network only when it holds a top-level (deny network*), only (version N) and (deny ...) forms, and no allow anywhere. */
-function profileDeniesNetwork(profile: string): boolean {
-  const forms = readSbpl(profile); if (!forms) return false;
-  let denied = false;
-  for (const f of forms) {
-    if (typeof f === "string" || f.length === 0) return false;
-    if (hasAtom(f, "allow")) return false;
-    if (f[0] === "version") continue;
-    if (f[0] !== "deny") return false;
-    if (f[1] === "network*") denied = true;
-  }
-  return denied;
-}
-function sandboxExecNoNet(args: readonly string[]): boolean {
-  let profile: string | null = null;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i]!;
-    if (a === "--") break;
-    if (a === "-p") { if (profile !== null || i + 1 >= args.length) return false; profile = args[++i]!; }
-    else if (a === "-D") i++;
-    else if (a.startsWith("-")) return false; // -f, -n and anything else: not parsed, so not proven
-    else break;
-  }
-  return profile !== null && profileDeniesNetwork(profile);
-}
 /** false only when argv starts with a known wrapper whose own leading flags positively cut the network; otherwise "unknown". Flags after the first non-flag token belong to the inner command and are never read. */
 export function argvEnforcesNoNetwork(argv: readonly string[]): Tri {
   const rest = argv.slice(1);
@@ -118,7 +72,7 @@ export function argvEnforcesNoNetwork(argv: readonly string[]): Tri {
     case "unshare": return unshareNoNet(rest) ? false : "unknown";
     case "bwrap": return bwrapNoNet(rest) ? false : "unknown";
     case "firejail": return firejailNoNet(rest) ? false : "unknown";
-    case "sandbox-exec": return sandboxExecNoNet(rest) ? false : "unknown";
+    case "sandbox-exec": return "unknown"; // SBPL is a Scheme, so a profile cannot be proven free of allow and is never read
     default: return "unknown";
   }
 }
