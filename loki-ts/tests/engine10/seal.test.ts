@@ -10,7 +10,7 @@ import { snapshotContract } from "../../src/features/contract.ts";
 import { snapshotUntracked, splitDirty, untrackedAtIntake } from "../../src/e10ext/preexisting_dirty.ts";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { STEER_MAX_BYTES, withSteer } from "../../src/util/steer.ts";
-import { intentRevisionsBlock } from "../../src/util/run_outputs.ts";
+import { intentRevisionsBlock, sealAccuracyLine, SEAL_ACCURACY_NOT_MEASURED } from "../../src/util/run_outputs.ts";
 import { appendReceiptFact } from "../../src/util/pr_lessons.ts";
 import { sealedLog } from "./log_fixture.ts";
 import { copyFileSync, linkSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
@@ -32,7 +32,7 @@ import { EXIT, formatSummary, outcomeOf, reasonOf } from "../../src/engine10/out
 import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes } from "../../src/util/base_guard.ts"; import { commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage, EXTERNAL_NO_WALL } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
-import { REPO_ROOT } from "../../src/util/paths.ts";
+import { REPO_ROOT } from "../../src/util/paths.ts"; import { getVersion } from "../../src/version.ts";
 import { RECEIPT_SIGNER_BASENAME } from "../../src/util/receipt_signer.ts";
 const PRE_KEY_FILE = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
 
@@ -2126,4 +2126,73 @@ describe("#238 wall proven at committed path", () => {
     const x = await run("loc-ok", true);
     expect(x.s.data.verdict).toBe("VERIFIED"); expect(x.s.data.wall_published).toBeDefined();
   }, 60000);
+});
+
+describe("Seal accuracy line (GAME10-03)", () => {
+  const MODEL = "claude-opus-5-5", DAY = 86_400_000;
+  const mk = (name: string, over: { row?: Record<string, unknown> | null; ver?: string | null; run?: Record<string, unknown>; ageDays?: number | null; corpusSha?: string } = {}) => {
+    const dir = join(root, name);
+    mkdirSync(join(dir, "results"), { recursive: true });
+    writeFileSync(join(dir, "manifest.json"), '{"defects":[]}');
+    const sha = createHash("sha256").update('{"defects":[]}').digest("hex");
+    const row = over.row === null ? [] : [{ language: "python", runner: "pytest", tier: "top", n: 60, wrong_pass: 0, wilson_upper_95: 0.0602, ...over.row }];
+    const file = join(dir, "results", "wrong-pass.json");
+    writeFileSync(file, JSON.stringify({ schema: "loki.seeded-defects.results/v3", manifest_sha256: sha, runs: [{ setup: "top", model: MODEL, loki_version: over.ver === undefined ? getVersion() : over.ver, corpus_sha256: over.corpusSha ?? sha, strata: row, ...(over.ageDays === null ? {} : { measured_at: new Date(Date.now() - (over.ageDays ?? 0) * DAY).toISOString() }), ...over.run }] }));
+    return { LOKI_SEEDED_DEFECTS_DIR: dir } as NodeJS.ProcessEnv;
+  };
+  const line = (env: NodeJS.ProcessEnv, files = ["src/app.py", "tests/test_app.py"], model = MODEL) => sealAccuracyLine(files, [{ cmd: "pytest -q", result: "pass" }], model, env);
+  test("a measured stratum states its counts, upper bound and version from the file", () => {
+    expect(line(mk("sa-ok"))).toBe(`Seal accuracy for python/pytest at this tier: 0 wrong passes in 60 seeded defects, 95% upper bound 6.0%, measured on ${getVersion()}`);
+    expect(line(mk("sa-one", { row: { wrong_pass: 1, n: 40, wilson_upper_95: 0.1286 } }))).toContain("1 wrong pass in 40 seeded defects, 95% upper bound 12.9%");
+  });
+  test("not measured on a version mismatch", () => {
+    expect(line(mk("sa-ver", { ver: "0.0.1" }))).toBe(SEAL_ACCURACY_NOT_MEASURED);
+    expect(line(mk("sa-nover", { ver: null }))).toBe(SEAL_ACCURACY_NOT_MEASURED);
+  });
+  test("not measured when the stratum is missing", () => {
+    expect(line(mk("sa-nostratum", { row: null }))).toBe(SEAL_ACCURACY_NOT_MEASURED);
+    expect(line(mk("sa-otherlang"), ["src/app.go"])).toBe(SEAL_ACCURACY_NOT_MEASURED);
+    expect(line(mk("sa-othermodel"), undefined, "claude-haiku-5-5")).toBe(SEAL_ACCURACY_NOT_MEASURED);
+    expect(sealAccuracyLine(["src/app.py"], [{ cmd: "pytest", result: "fail" }], MODEL, mk("sa-nopass"))).toBe(SEAL_ACCURACY_NOT_MEASURED);
+  });
+  test("measured_at rules: missing or unparseable is not measured, 8 days is not measured, 1 day is measured, a checkout-fresh mtime does not help", () => {
+    expect(line(mk("sa-noat", { ageDays: null }))).toBe(SEAL_ACCURACY_NOT_MEASURED);
+    expect(line(mk("sa-badat", { run: { measured_at: "yesterday" } }))).toBe(SEAL_ACCURACY_NOT_MEASURED);
+    expect(line(mk("sa-8d", { ageDays: 8 }))).toBe(SEAL_ACCURACY_NOT_MEASURED);
+    expect(line(mk("sa-1d", { ageDays: 1 }))).toStartWith("Seal accuracy for python/pytest");
+    expect(line(mk("sa-future", { ageDays: -2 }))).toBe(SEAL_ACCURACY_NOT_MEASURED);
+  });
+  test("not measured when the result is older than 7 days, measured at 6 days", () => {
+    expect(line(mk("sa-old", { ageDays: 8 }))).toBe(SEAL_ACCURACY_NOT_MEASURED);
+    expect(line(mk("sa-6d", { ageDays: 6 }))).toStartWith("Seal accuracy for python/pytest");
+  });
+  test("not measured for a corpus other than the current manifest and for a malformed row", () => {
+    expect(line(mk("sa-corpus", { corpusSha: "f".repeat(64) }))).toBe(SEAL_ACCURACY_NOT_MEASURED);
+    expect(line(mk("sa-badrow", { row: { wrong_pass: 61 } }))).toBe(SEAL_ACCURACY_NOT_MEASURED);
+    expect(line({ LOKI_SEEDED_DEFECTS_DIR: join(root, "sa-absent") })).toBe(SEAL_ACCURACY_NOT_MEASURED);
+  });
+  test("the sealed receipt carries the line and editing it fails verification", async () => {
+    const { repo, base } = makeRepo("sa-seal");
+    const { ctx } = ctxFor(repo, base);
+    ctx.model = MODEL;
+    const prev = process.env["LOKI_SEEDED_DEFECTS_DIR"];
+    process.env["LOKI_SEEDED_DEFECTS_DIR"] = mk("sa-seal-corpus", { row: { language: "unknown" } })["LOKI_SEEDED_DEFECTS_DIR"]!;
+    try {
+      const s = await sealStage.run(ctx, new AbortController().signal), path = s.data.receipt_path as string;
+      expect(receiptOf(s).seal_accuracy).toContain("Seal accuracy for unknown/pytest at this tier: 0 wrong passes in 60");
+      expect(s.data.signed).toBe(true);
+      expect((await verifyReceipt(path)).reasons.some((r) => r.startsWith("receipt_sha256 mismatch"))).toBe(false); // the fixture event log is not the sealed one; integrity is under test
+      const t = JSON.parse(readFileSync(path, "utf8"));
+      t.seal_accuracy = t.seal_accuracy.replace("95% upper bound 6.0%", "95% upper bound 0.1%");
+      writeFileSync(path, JSON.stringify(t, null, 2) + "\n");
+      const bad = await verifyReceipt(path);
+      expect(bad.verdict).toBe("TAMPERED");
+      expect(bad.reasons[0]).toStartWith("receipt_sha256 mismatch");
+    } finally { if (prev === undefined) delete process.env["LOKI_SEEDED_DEFECTS_DIR"]; else process.env["LOKI_SEEDED_DEFECTS_DIR"] = prev; }
+  });
+  test("a receipt with no usable stratum signs not measured", async () => {
+    const { repo, base } = makeRepo("sa-seal-none");
+    const { ctx } = ctxFor(repo, base);
+    expect(receiptOf(await sealStage.run(ctx, new AbortController().signal)).seal_accuracy).toBe(SEAL_ACCURACY_NOT_MEASURED);
+  });
 });

@@ -2,7 +2,7 @@
 // `cryptography`). The key is the A-120 local key, created on first use. An empty token means UNSIGNED, never presented as attested.
 import { wallDropped } from "../../util/wall_owned.ts";
 import { sanitizeReason } from "../../util/redact.ts";
-import { specReceiptBlock } from "../../util/spec_file.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock } from "../../util/run_outputs.ts";
+import { specReceiptBlock } from "../../util/spec_file.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock, sealAccuracyBlock } from "../../util/run_outputs.ts";
 import { createHash } from "node:crypto"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
@@ -309,7 +309,7 @@ export const sealStage: Stage = {
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
-      ...specReceiptBlock(process.env), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(),
+      ...specReceiptBlock(process.env), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(), ...sealAccuracyBlock(rawDiff.filter((_, i) => i % 2 === 1), checks, ctx.model), // GAME10-03
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only

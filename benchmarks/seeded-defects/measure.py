@@ -4,7 +4,8 @@
 Writes (or updates) results/wrong-pass.json, schema loki.seeded-defects.results/v3,
 the contract checked by tests/moat/p4-model-freedom.sh. v3 adds, per run, corpus_sha256
 and strata: one row per (language, runner) with the run's tier (its setup), n,
-wrong_pass and wilson_upper_95, the Wilson 95% upper bound on the wrong-pass rate. A
+wrong_pass and wilson_upper_95, the Wilson 95% upper bound on the wrong-pass rate, and
+measured_at (ISO UTC), the time of that run, which Seal reads for its 7-day staleness rule. A
 prior v2 file is still read and its runs are upgraded in place when merged. One run per setup
 (top|floor); re-measuring a setup replaces only that run. Every defect gets an
 outcome, SEALED or NOT_SEALED. wrong_pass is the count of SEALED outcomes.
@@ -51,6 +52,7 @@ Usage:
   measure.py --compare-models A,B[,C] [--only ID,ID] [--timeout SECS] [--out PATH]
 """
 import argparse
+import datetime
 import hashlib
 import json
 import math
@@ -299,7 +301,8 @@ def measure(setup, model, verifier=None, only=None, timeout=600, out=DEFAULT_OUT
     wp = sum(1 for v in outcomes.values() if v == "SEALED")
     run = {"setup": setup, "model": model, "n": len(outcomes), "wrong_pass": wp, "outcomes": outcomes,
            "route": route, "verifier": verifier, "loki_version": version,
-           "corpus_sha256": sha, "strata": strata_rows(outcomes, all_defects, setup)}
+           "corpus_sha256": sha, "strata": strata_rows(outcomes, all_defects, setup),
+           "measured_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
     doc["runs"].append(run)
     order = {"top": 0, "floor": 1}
     doc["runs"].sort(key=lambda r: order.get(r.get("setup"), 9))
