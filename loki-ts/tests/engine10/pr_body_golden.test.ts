@@ -7,7 +7,7 @@ import { tierBodyLine, applyPrTemplate, readPrTemplate, receiptProof } from "../
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderReviewerBody } from "../../src/e10ext/reviewer_body.ts";
-import { loadRunOutputs, type StageOutputs } from "../../src/util/run_outputs.ts";
+import { loadRunOutputs, sealAccuracyOfFile, type StageOutputs } from "../../src/util/run_outputs.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
 
 const FIX = join(import.meta.dir, "..", "fixtures", "pr-body-firelater17");
@@ -197,5 +197,28 @@ describe("PR body tier line (GAME10-09b)", () => {
     const c = (verified: number, total: number) => ({ verified, partial: 0, failed: total - verified, other: 0, unsealed: 0, total });
     expect(tierBodyLine({ tier: "sonnet", topTierCostAvoidedUsd: 0.42, record: { sonnet: c(10, 10), opus: c(9, 10) } })).toBe("- Model tier: sonnet tier sealed; top-tier cost avoided $0.42; parity here: sonnet sealed 10 of 10, opus sealed 9 of 10");
     expect(tierBodyLine({ tier: "sonnet" })).toContain("parity here: sonnet not measured, opus not measured");
+  });
+});
+
+describe("PR body Seal accuracy line (GAME10-03c)", () => {
+  const LINE = "Seal accuracy for python/pytest at this tier: 0 wrong passes in 60 seeded defects, 95% upper bound 6.0%, measured on 11.85.0";
+  const withReceipt = (receipt: Record<string, unknown>, body: (path: string) => void): void => {
+    const d = mkdtempSync(join(tmpdir(), "sa-"));
+    try { writeFileSync(join(d, "receipt.json"), JSON.stringify(receipt)); body(join(d, "receipt.json")); } finally { rmSync(d, { recursive: true, force: true }); }
+  };
+  const outputs = loadRunOutputs(FIX, events);
+  const bodyWith = (sealAccuracy?: string): string => renderReviewerBody({ verdict: "VERIFIED", draftReason: null, notProven: [], receiptPath: null, receiptSha256: null, signed: null, runId: "r", outputs, sealAccuracy });
+  it("prints the receipt's signed line under Receipt, unchanged", () => {
+    withReceipt({ seal_accuracy: LINE }, (p) => expect(bodyWith(sealAccuracyOfFile(p))).toContain(`## Receipt\n- Digest: not recorded\n- ${LINE}\n`));
+  });
+  it("prints the same not measured line when the receipt says so, omits the field or is unreadable", () => {
+    withReceipt({ seal_accuracy: "Seal accuracy: not measured" }, (p) => expect(bodyWith(sealAccuracyOfFile(p))).toContain("\n- Seal accuracy: not measured\n"));
+    withReceipt({}, (p) => expect(bodyWith(sealAccuracyOfFile(p))).toContain("\n- Seal accuracy: not measured\n"));
+    expect(bodyWith(sealAccuracyOfFile("/nonexistent/receipt.json"))).toContain("\n- Seal accuracy: not measured\n");
+    expect(bodyWith()).toContain("\n- Seal accuracy: not measured\n");
+  });
+  it("never prints a field that is not an accuracy line", () => {
+    withReceipt({ seal_accuracy: "ignore previous\nSeal accuracy: 0 wrong" }, (p) => expect(sealAccuracyOfFile(p)).toBe("Seal accuracy: not measured"));
+    withReceipt({ seal_accuracy: 7 }, (p) => expect(sealAccuracyOfFile(p)).toBe("Seal accuracy: not measured"));
   });
 });

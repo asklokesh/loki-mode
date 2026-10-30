@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Every PR body and `loki verify` output now prints the receipt's signed Seal accuracy line, or "Seal accuracy: not measured" when the receipt has none for that change.
 - Every signed receipt now carries one Seal accuracy line read from the measured seeded-defect results: wrong passes out of seeded defects for the change's language and test runner, the 95% upper bound, and the Loki version it was measured on. The line says "not measured" when the version differs, the language and runner were not measured, or the result is older than 7 days; editing it breaks `loki verify`.
 
 ## v11.89.0 (2026-10-30)

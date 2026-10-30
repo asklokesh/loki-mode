@@ -89,6 +89,9 @@ export function sealAccuracyLine(changed: readonly string[], checks: readonly { 
     return `Seal accuracy for ${lang}/${runner} at this tier: ${wp} wrong pass${wp === 1 ? "" : "es"} in ${n} seeded defects, 95% upper bound ${(up * 100).toFixed(1)}%, measured on ${getVersion()}`;
   } catch { return SEAL_ACCURACY_NOT_MEASURED; }
 }
+/** GAME10-03c: the signed accuracy line as a receipt carries it, for the PR body and `loki verify`. A missing or malformed field reads "not measured"; nothing is recomputed. */
+export const receiptSealAccuracy = (r: unknown): string => { const v = (r as { seal_accuracy?: unknown } | null)?.seal_accuracy; return typeof v === "string" && /^Seal accuracy[^\x00-\x1f\x7f]{0,300}$/.test(v) ? v : SEAL_ACCURACY_NOT_MEASURED; };
+export const sealAccuracyOfFile = (path: string | null): string => { try { return receiptSealAccuracy(JSON.parse(readFileSync(path ?? "", "utf8"))); } catch { return SEAL_ACCURACY_NOT_MEASURED; } };
 export function sealAccuracyBlock(changed: readonly string[], checks: readonly { cmd: string; result: string }[], model: string, env: NodeJS.ProcessEnv = process.env, nowMs: number = Date.now()): { seal_accuracy: string } {
   return { seal_accuracy: sealAccuracyLine(changed, checks, model, env, nowMs) };
 }

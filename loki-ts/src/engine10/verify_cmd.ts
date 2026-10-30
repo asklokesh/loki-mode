@@ -4,7 +4,7 @@
 import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
-import { lokiDir } from "../util/paths.ts";
+import { lokiDir } from "../util/paths.ts"; import { receiptSealAccuracy } from "../util/run_outputs.ts";
 import { applyMaxAge, deployAttestCmd, pubFor, receiptShapeProblem, takeMaxAge } from "../util/receipt_signer.ts";
 import { latestRunId } from "../commands/run_status.ts"; import { sealDrift, tornTail, verifyLogSeals, wallNotComparedNote } from "../util/seal_drift.ts";
 import { readEvents } from "./events.ts";
@@ -229,7 +229,7 @@ async function verifyMain(args: readonly string[], deps: VerifyDeps, rec: Explai
   rec.verdict = result.verdict; rec.reasons = result.reasons; rec.receiptSha256 = result.receiptSha256 ?? null; rec.independent = independentCounts(receiptPath); process.stdout.write(`run: ${runId}\nverdict: ${result.verdict}\n`);
   if (result.receiptSha256) process.stdout.write(`receipt_sha256: ${result.receiptSha256}\n`);
   for (const reason of result.reasons) process.stdout.write(`  ${reason}\n`);
-  if (result.verdict !== "TAMPERED") try { const r = JSON.parse(readFileSync(receiptPath, "utf8")) as Record<string, unknown>; if (isComposite(r)) for (const l of compositeLines(r)) process.stdout.write(`${l}\n`); } catch { /* unreadable: the verdict above already says so */ }
+  if (result.verdict !== "TAMPERED") try { const r = JSON.parse(readFileSync(receiptPath, "utf8")) as Record<string, unknown>; if (isComposite(r)) for (const l of compositeLines(r)) process.stdout.write(`${l}\n`); else if (r["schema"] === "loki.v10.receipt/1") process.stdout.write(`${receiptSealAccuracy(r)}\n`); } catch { /* unreadable: the verdict above already says so */ }
   if (result.verdict === "UNSIGNED") {
     if (deps.pubkey) { process.stdout.write("attestation: UNSIGNED, but --pubkey asked for a signature check; refusing\n"); return EXIT_BY_VERDICT.UNSIGNED; }
     if (requireExo) { const ind = independentLine(receiptPath); process.stdout.write(`${ind.line}\n`); if (allowUnsigned && ind.k === 0) return (process.stdout.write("require-exogenous: refused, no agent-independent passing check\n"), 4); } // TEN-GATES-03-F1

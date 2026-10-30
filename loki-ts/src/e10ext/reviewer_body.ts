@@ -1,12 +1,12 @@
 // INTEL-3: reviewer-first PR body, pure rendering from data the engine already holds. Order: what was asked, what changed, how it was tested, NOT PROVEN, receipt. Absent data
 // prints "not recorded", never a number. Task text is untrusted: truncated, never executed.
 import { noteOf } from "../util/base_guard.ts";
-import { getVersion } from "../version.ts";
+import { getVersion } from "../version.ts"; import { SEAL_ACCURACY_NOT_MEASURED } from "../util/run_outputs.ts";
 import { ALREADY_FAILING_ON_BASE, checkResultLabel } from "../util/check_result.ts"; import { intentLine, stripTemplate } from "../util/intent_card.ts"; import { WALL_FILE } from "./commit_filter.ts";
 export interface ReviewerBodyInput {
   verdict: string; draftReason: string | null; notProven: string[];
   receiptPath: string | null; receiptSha256: string | null; signed: boolean | null; runId: string;
-  outputs: Partial<Record<string, Record<string, unknown>>>;
+  outputs: Partial<Record<string, Record<string, unknown>>>; sealAccuracy?: string; // the receipt's signed accuracy line (GAME10-03c)
 }
 const MAX_CRITERIA = 8, MAX_FILES = 10, MAX_CMDS = 5, W = 160;
 const clip = (s: string): string => (s.length > W ? `${s.slice(0, W - 3)}...` : s);
@@ -48,7 +48,7 @@ export function renderReviewerBody(i: ReviewerBodyInput, env: NodeJS.ProcessEnv 
   const L = ["## What the issue asked", ...(asked.length > 0 ? asked : ["- not recorded"]), "", "## What changed and why", `- Why: ${why ? clip(why) : "not recorded"}`, ...(files.length > 0 ? more(files, MAX_FILES) : ["- Files in scope: not recorded"]), ""];
   L.push("## How it was tested", `- Verdict: ${i.verdict}${i.draftReason ? ` (DRAFT: ${i.draftReason})` : ""}`, ...(noteOf(i.outputs.intake) ? [`- Note: ${noteOf(i.outputs.intake)}`] : []), ...tested(i.outputs), ""); // FC-15: unclipped, the evidence paths are the point
   const wp = i.outputs.seal?.["wall_published"] as { files?: unknown; cmds?: unknown } | undefined; if (arr<string>(wp?.files).length > 0) L.push("## Acceptance tests", "Published in this branch: the Wall tests that ran and passed in verify.", ...arr<string>(wp?.files).map((f) => `- ${clip(f)}`), ...arr<string>(wp?.cmds).map((c) => `- Run: \`${clip(c)}\``), ""); /* FC-VERIFIED-PR-WITHOUT-ITS-TEST */ L.push("## NOT PROVEN", ...(i.notProven.length > 0 ? i.notProven.map((p) => `- ${p}`) : ["- none"]), "");
-  L.push("## Receipt", `- Digest: ${i.receiptSha256 ? `sha256:${i.receiptSha256}` : "not recorded"}${i.signed === null ? "" : i.signed ? " (signed)" : " (UNSIGNED)"}`);
+  L.push("## Receipt", `- Digest: ${i.receiptSha256 ? `sha256:${i.receiptSha256}` : "not recorded"}${i.signed === null ? "" : i.signed ? " (signed)" : " (UNSIGNED)"}`, `- ${i.sealAccuracy ?? SEAL_ACCURACY_NOT_MEASURED}`);
   const rel = /(?:^|\/)(\.loki\/runs\/[^/]+\/receipt\.json)$/.exec(i.receiptPath ?? "")?.[1]; if (rel) L.push(`- File: ${rel}`); // repo-relative only: an absolute local path never goes into a public PR
   L.push(`- Verify: \`loki verify ${i.runId}\``);
   L.push(`- On another machine: the author runs \`loki proof bundle ${i.runId}\`; the reviewer runs \`loki verify --pubkey pubkey.jwk receipt.json\`${/^\d+\.\d+\.\d+/.test(version) ? " or adds this step to a workflow:" : " or adds the receipt-check action"}`);
