@@ -144,7 +144,7 @@ describe("extractRuntimeEvidence (GAME10-08a)", () => {
     expect(e.tracker_refs).toEqual([{ source: "jira", key: "PROJ-9", site: "https://acme.atlassian.net" }, { source: "linear", key: "WEB-4" }]);
   });
   test("prose shaped like a bare frame is not evidence but a bare path frame is", () => {
-    for (const t of ["at 10:30", "meet at 12:45 tomorrow", "at noon:5", "at lunch 10:30"]) expect(extractRuntimeEvidence(t)).toBeNull();
+    for (const t of ["at 10:30", "meet at 12:45 tomorrow", "at noon:5", "at lunch 10:30", "at https://x.com:443", "at 5/6:30", "at the office/home:5"]) expect(extractRuntimeEvidence(t)).toBeNull();
     expect(extractRuntimeEvidence("at /app/src/x.js:12:3")!.frames).toEqual([{ file: "/app/src/x.js", line: 12, fn: null }]);
   });
   test("prose yields null and input is capped", () => {

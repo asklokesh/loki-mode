@@ -10,14 +10,14 @@ export interface RuntimeEvidence { frames: EvidenceFrame[]; exchanges: EvidenceE
 const PY_FRAME = /^\s*File "([^"\n]+)", line (\d+)(?:, in (\S+))?/;
 const JAVA_FRAME = /^\s*at ([\w$.<>/-]+)\(([^():\s]+):(\d+)\)/;
 const JS_FRAME = /^\s*at (?:async )?(?:([^\s(]+) )?\(?((?:[A-Za-z]:)?[^\s()]+?):(\d+)(?::\d+)?\)?\s*$/;
-// A JS frame file must look like a path (separator or source extension), so prose such as `at 10:30` is not evidence.
-const JS_PATHLIKE = /[\\/]|\.(?:[cm]?[jt]s|[jt]sx)$/;
+// A JS frame file must be a source file and not a non-file: URL, so prose such as `at 10:30` or `at 5/6:30` is not evidence.
+const JS_SOURCE_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/, URL_SCHEME = /^(?!file:)[A-Za-z][\w+.-]*:\/\//;
 const REQ_LINE = /^\s*(?:[>*]\s*)?(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) (\S+)(?: HTTP\/\d(?:\.\d)?)?\s*$/;
 const RES_LINE = /^\s*(?:[<*]\s*)?HTTP\/\d(?:\.\d)? (\d{3})\b/;
 function frameOf(line: string): EvidenceFrame | null {
   let m = PY_FRAME.exec(line); if (m) return { file: m[1]!, line: Number(m[2]), fn: m[3] ?? null };
   m = JAVA_FRAME.exec(line); if (m) return { file: m[2]!, line: Number(m[3]), fn: m[1]! };
-  m = JS_FRAME.exec(line); if (m && JS_PATHLIKE.test(m[2]!)) return { file: m[2]!, line: Number(m[3]), fn: m[1] ?? null };
+  m = JS_FRAME.exec(line); if (m && JS_SOURCE_FILE.test(m[2]!) && !URL_SCHEME.test(m[2]!)) return { file: m[2]!, line: Number(m[3]), fn: m[1] ?? null };
   return null;
 }
 /** Extracts frames, request/response pairs and tracker URLs from pasted text, with a content hash over what was recorded. Returns null when none is present. Input is capped, never executed. */

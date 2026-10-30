@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Intake recognizes runtime evidence in the task text (Python, JS and Java stack frames, request and response pairs, Jira and Linear URLs) through one generic frame parser and records it with a content hash and size caps; pasted text is only pattern-matched, never run. The parser lives in contrib and core reaches it through the runtimeEvidence hook. A JS frame must name a path or a source file, so prose like "at 10:30" is not evidence (proven by the "prose shaped like a bare frame" test in tracker_intake.test.ts). Proven by the extractRuntimeEvidence tests and the runtimeEvidence hook wiring test in tracker_intake.test.ts, and the traceback test in intake.test.ts.
+- Intake recognizes runtime evidence in the task text (Python, JS and Java stack frames, request and response pairs, Jira and Linear URLs) through one generic frame parser and records it with a content hash and size caps; pasted text is only pattern-matched, never run. The parser lives in contrib and core reaches it through the runtimeEvidence hook. A JS frame counts as evidence only when it names a JS or TS source file and is not a web URL, so prose such as a clock time or a date is ignored (proven by the "prose shaped like a bare frame" test in tracker_intake.test.ts). Proven by the extractRuntimeEvidence tests and the runtimeEvidence hook wiring test in tracker_intake.test.ts, and the traceback test in intake.test.ts.
 
 ## v11.88.0 (2026-10-29)
 
