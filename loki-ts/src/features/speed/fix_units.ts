@@ -52,7 +52,7 @@ function tailBrief(text: string): string {
 }
 
 export interface FixIo {
-  integrate: (dag: Dag, branches: Record<string, string>, failed: string[]) => IntegrateResult;
+  integrate: (dag: Dag, branches: Record<string, string>, failed: string[]) => IntegrateResult | Promise<IntegrateResult>;
   launch: (fix: FixUnit) => Promise<string | null>; // branch only when the fix passed; starts at fix.base (the group tip), forwarded by dag.json to backlog.py
   leave: () => string | null;
   say: (s: string) => void;
@@ -62,8 +62,8 @@ export interface FixIo {
  *  `fixes` holds the group's earlier fix units (resume) and receives new ones. A failed fix returns the result that stopped integration. */
 export async function integrateWithFixes(o: { repoDir: string; env: NodeJS.ProcessEnv; dag: Dag; fixes: FixUnit[]; branches: Record<string, string>; failed: string[]; testCmd: readonly string[]; io: FixIo }): Promise<IntegrateResult> {
   const { io } = o;
-  const again = (): IntegrateResult => io.integrate(effectiveDag(o.dag, o.fixes), o.branches, o.failed);
-  let r = again();
+  const again = async (): Promise<IntegrateResult> => io.integrate(effectiveDag(o.dag, o.fixes), o.branches, o.failed);
+  let r = await again();
   while (!r.ok && o.failed.length === 0 && fixEnabled(o.env) && o.fixes.length < MAX_FIX_UNITS) {
     const target = r.conflictUnit ?? (r.suiteExit !== null && r.suiteExit !== 0 ? "suite" : "");
     if (!target || o.fixes.some((f) => f.fixFor === target || f.id === target)) break;
@@ -82,7 +82,7 @@ export async function integrateWithFixes(o: { repoDir: string; env: NodeJS.Proce
     o.fixes.push(fix); o.branches[id] = branch;
     const err = io.leave();
     if (err) { io.say(`loki: ${err}\n`); return r; }
-    r = again();
+    r = await again();
   }
   return r;
 }

@@ -781,10 +781,10 @@ export function wallPathProblem(repoDir: string, relPath: string): string | null
 }
 export interface SealedWallFile { rel: string; bytes: Buffer; runner?: RunnerName }
 /** Reads a unit's sealed Wall as the receipt recorded it: each runDir/wall/<name> copy must hash to receipt.wall.files[].sha256, else a problem (the caller treats it as a failing Wall). Same sources as publishableWall and verify's wallTamperProblem. */
-export function loadSealedWall(runDir: string, unitRepoDir: string): { files: SealedWallFile[]; problems: string[] } {
+export function loadSealedWall(runDir: string, unitRepoDir: string): { files: SealedWallFile[]; problems: string[]; receiptMissing?: true } {
   const files: SealedWallFile[] = [], problems: string[] = [];
   let listed: unknown;
-  try { listed = (JSON.parse(readFileSync(join(runDir, "receipt.json"), "utf8")) as { wall?: { files?: unknown } }).wall?.files; } catch { return { files, problems: ["sealed receipt unreadable"] }; }
+  try { listed = (JSON.parse(readFileSync(join(runDir, "receipt.json"), "utf8")) as { wall?: { files?: unknown } }).wall?.files; } catch { return { files, problems, receiptMissing: true }; } // missing or unreadable receipt: nothing was sealed to rerun, so the group is NOT_PROVEN, not FAILED
   for (const w of Array.isArray(listed) ? (listed as { path?: unknown; sha256?: unknown; runner?: unknown }[]) : []) {
     const rel = typeof w?.path === "string" ? relative(unitRepoDir, w.path) : "";
     if (!rel || rel.startsWith("..") || isAbsolute(rel)) { problems.push(`sealed Wall path outside the repo: ${String(w?.path)}`); continue; }
@@ -795,6 +795,22 @@ export function loadSealedWall(runDir: string, unitRepoDir: string): { files: Se
     } catch { problems.push(`sealed Wall copy ${basename(rel)} missing or not the sealed bytes`); }
   }
   return { files, problems };
+}
+
+/** GAME10-06a: each integrated unit's sealed Wall, read from the harvested unit run dir. The unit worktree (where the receipt's Wall paths point) is named by the receipt itself, falling back to the backlog worktree for the branch. */
+export function unitWalls(repoDir: string, gid: string, branches: Record<string, string>): Record<string, ReturnType<typeof loadSealedWall>> {
+  const out: Record<string, ReturnType<typeof loadSealedWall>> = {};
+  for (const [id, br] of Object.entries(branches)) {
+    const runDir = join(repoDir, ".loki", "groups", gid, "group", "units", id);
+    let root = `${repoDir}-backlog/${br.replace(/^loki\//, "")}`;
+    try {
+      const f = ((JSON.parse(readFileSync(join(runDir, "receipt.json"), "utf8")) as { wall?: { files?: { path?: unknown }[] } }).wall?.files ?? [])[0]?.path;
+      const m = typeof f === "string" ? /^(.*-backlog\/unit-[^/]+-\d+)\//.exec(f) : null;
+      if (m) root = m[1]!;
+    } catch { /* unreadable receipt: loadSealedWall reports it */ }
+    out[id] = loadSealedWall(runDir, root);
+  }
+  return out;
 }
 
 /** Tracked changes against baseSha, plus untracked new files (commit runs after verify). `.loki/`

@@ -11,8 +11,8 @@ import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import type { Dag, Unit } from "../decompose.ts";
 import { assignCriteria, freezeGroupContract, groupContractPath, parseContract } from "../contract.ts";
-import { integrate, type IntegrateOpts } from "../../engine10/integrate.ts";
-import { loadSealedWall } from "../../util/check_result.ts";
+import { integrate } from "../../engine10/integrate.ts";
+import { unitWalls } from "../../util/check_result.ts";
 import { unitSpecSha256 } from "./unit_mode.ts";
 import { readSliceJournal, repoCacheDir, repoKey, sliceKey, writeSliceJournal } from "../../engine10/cache.ts";
 import { integrateWithFixes, type FixUnit } from "./fix_units.ts";
@@ -133,22 +133,6 @@ function findResumable(repoDir: string, specSha: string, unitIds?: string[]): { 
     if (!best || at > best.at || (at === best.at && gid > best.gid)) best = { gid, stored: d, at };
   }
   return best ? { gid: best.gid, stored: best.stored } : null;
-}
-
-/** GAME10-06a: each integrated unit's sealed Wall, read from the harvested unit run dir. The unit worktree (where the receipt's Wall paths point) is named by the receipt itself, falling back to the backlog worktree for the branch. */
-export function unitWalls(repoDir: string, gid: string, branches: Record<string, string>): NonNullable<IntegrateOpts["walls"]> {
-  const out: NonNullable<IntegrateOpts["walls"]> = {};
-  for (const [id, br] of Object.entries(branches)) {
-    const runDir = join(repoDir, ".loki", "groups", gid, "group", "units", id);
-    let root = `${repoDir}-backlog/${br.replace(/^loki\//, "")}`;
-    try {
-      const f = ((JSON.parse(readFileSync(join(runDir, "receipt.json"), "utf8")) as { wall?: { files?: { path?: unknown }[] } }).wall?.files ?? [])[0]?.path;
-      const m = typeof f === "string" ? /^(.*-backlog\/unit-[^/]+-\d+)\//.exec(f) : null;
-      if (m) root = m[1]!;
-    } catch { /* unreadable receipt: loadSealedWall reports it */ }
-    out[id] = loadSealedWall(runDir, root);
-  }
-  return out;
 }
 
 /** A harvested unit counts as done only if its receipt verifies (signed), reads VERIFIED, and its head is the unit branch tip. */

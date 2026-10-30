@@ -184,14 +184,14 @@ test("suite fix reuses output: captured suiteOutput feeds the brief and the suit
   } finally { rmSync(repoDir, { recursive: true, force: true }); }
 });
 
-test("suite fix reuses output: real integrate captures the failing suite output", () => {
+test("suite fix reuses output: real integrate captures the failing suite output", async () => {
   const repoDir = tmp();
   const g = (...a: string[]) => spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t.invalid", "-c", "commit.gpgSign=false", ...a], { cwd: repoDir, encoding: "utf8" });
   try {
     g("init", "-q", "-b", "main"); writeFileSync(join(repoDir, "x.txt"), "x\n"); g("add", "x.txt"); g("commit", "-qm", "base");
     g("checkout", "-qb", "ub"); writeFileSync(join(repoDir, "a.txt"), "a\n"); g("add", "a.txt"); g("commit", "-qm", "a"); g("checkout", "-q", "main");
     const one: Dag = { units: [unit("a")], sharedFiles: [], edges: [] };
-    const r = integrate({ repoDir, groupId: "t", baseRef: "main", dag: one, branches: { a: "ub" }, testCmd: ["sh", "-c", "echo FAIL widget-test; echo boom >&2; exit 1"] });
+    const r = await integrate({ repoDir, groupId: "t", baseRef: "main", dag: one, branches: { a: "ub" }, testCmd: ["sh", "-c", "echo FAIL widget-test; echo boom >&2; exit 1"] });
     expect(r.suiteExit).toBe(1);
     expect(r.suiteOutput).toContain("FAIL widget-test");
     expect(r.suiteOutput).toContain("boom");
