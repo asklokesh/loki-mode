@@ -5,7 +5,8 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { integrate, integrationOrder } from "../../src/engine10/integrate.ts";
+import { integrate } from "../../src/engine10/integrate.ts";
+import { integrationOrder } from "../../src/util/group_integrate.ts";
 import { loadSealedWall } from "../../src/util/check_result.ts";
 import type { Dag } from "../../src/features/decompose.ts";
 

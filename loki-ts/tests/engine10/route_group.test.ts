@@ -253,7 +253,7 @@ describe("default group runner (run_group.ts)", () => {
       expect(readFileSync(join(d, ".loki/groups", seen[0]![seen[0]!.indexOf("--group") + 1]!, "dag.json"), "utf8")).toContain("units");
     });
   });
-  test("a unit whose sealed Wall copy is tampered is FAILED (exit 1); a missing receipt is NOT_PROVEN (exit 4) in the tests above", async () => {
+  test("a unit whose sealed Wall copy is tampered is FAILED (exit 1)", async () => {
     await withDir(async (d) => {
       mkRepo(d);
       const base = launcher(d, []);

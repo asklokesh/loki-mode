@@ -712,6 +712,27 @@ describe("group run: Group Seal and resume", () => {
     expect(err).toContain("loki: unit u2 sealed Wall on the merged tree: no_wall");
     expect(code).toBe(0);
   });
+  test("runGroup: every unit sealed with no Wall file ends VERIFIED with a no_wall line per unit", async () => {
+    const repo = mkRepo("gr-wall-none"), calls: string[] = [];
+    const { code, err } = await go(repo, fake(repo, calls));
+    expect(code).toBe(0);
+    expect(err).toContain("VERIFIED");
+    expect(err).not.toContain("NOT PROVEN");
+    for (const u of ["u1", "u2", "u3"]) expect(err).toContain(`loki: unit ${u} sealed Wall on the merged tree: no_wall (no sealed Wall to rerun)`);
+  });
+  test("runGroup: a harvested unit receipt removed ends NOT PROVEN (exit 4) and that unit reads no_wall", async () => {
+    const repo = mkRepo("gr-wall-norcpt"), calls: string[] = [];
+    const base = fake(repo, calls);
+    const { code, err } = await go(repo, async (argv) => {
+      const r = await base(argv);
+      rmSync(join(repo, ".loki", "groups", argv[argv.indexOf("--group") + 1]!, "group", "units", "u2", "receipt.json"));
+      return r;
+    });
+    expect(code).toBe(4);
+    expect(err).toContain("NOT PROVEN");
+    expect(err).toContain("loki: unit u2 sealed Wall on the merged tree: no_wall (sealed receipt missing or unreadable)");
+    expect(err).toContain("unit u2 sub-receipt missing");
+  });
   test("runGroup: a tampered harvested Wall copy fails closed", async () => {
     const repo = mkRepo("gr-wall-tamper"), calls: string[] = [];
     const base = fake(repo, calls, { wall: { 1: absentCfg } });
