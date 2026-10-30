@@ -18,7 +18,7 @@ import { disclosureLine } from "../providers/provider_guard.ts";
 import { budgetNext, capNote, groupEnv, parseCapUsd, priorSpend, resolveCap, SUBSCRIPTION_NOTE, unenforceableNote, writeBudgetStop } from "../e10ext/budget_cap.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
-import { formatHeartbeatLine, formatStageLine, formatSummary, preModelTiming, EXIT, outcomeOf, reasonOf, type Outcome } from "./output.ts";
+import { formatHeartbeatLine, formatStageLine, spendSoFar, formatSummary, preModelTiming, EXIT, outcomeOf, reasonOf, type Outcome } from "./output.ts";
 import { LiveLine } from "../e10ext/liveline.ts";
 import { SAFE_BUN_FLAGS, envWithPwd, killGroup, spawnWorker, ulimitArgv } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
@@ -310,12 +310,12 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const capLine = !json ? [disclosureLine(provider), unenforceableNote(provider, cap.usd)].filter(Boolean).join("\n") : null; if (capLine) process.stdout.write(`${capLine}\n`); // LM-004: one line when the provider lacks a guarantee claude has; claude prints nothing extra
   const t0 = Date.now();
   const eventsPath = join(repoDir, eventsRelPath(runId));
-  const live = (e: EventEnvelope): void => {
+  const liveSeen: EventEnvelope[] = [], live = (e: EventEnvelope): void => { liveSeen.push(e); // stage lines carry the run spend so far (same summaryCost as the final Cost line)
     const clockS = (Date.parse(e.ts) - t0) / 1000;
     const d = e.data;
     if (e.type.startsWith("stage.") && e.type !== "stage.started") {
       const status = e.type === "stage.completed" ? "done" : e.type === "stage.failed" ? "failed" : "skipped";
-      process.stdout.write(formatStageLine({ clockS, name: String(e.stage), status, durationS: Number(d.duration_s ?? 0), detail: String(d.reason ?? d.summary ?? "") }) + "\n");
+      process.stdout.write(formatStageLine({ clockS, name: String(e.stage), status, durationS: Number(d.duration_s ?? 0), detail: String(d.reason ?? d.summary ?? ""), spend: spendSoFar(liveSeen, join(repoDir, ".loki")) }) + "\n");
     } else if (e.type === "heartbeat") {
       const diff = d.diff as { files: number; insertions: number; deletions: number } | null;
       process.stdout.write(formatHeartbeatLine({ clockS, stage: String(e.stage), waitingOn: `${provider} session`, elapsedS: Number(d.elapsed_s ?? 0), diff }) + "\n");
