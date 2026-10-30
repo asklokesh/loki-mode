@@ -5226,12 +5226,11 @@ case_cp_unmeasured() {
 # 0 tokens; ...)". Drives the real main() of loki-ts/src/engine10/supervisor.ts
 # end to end in a scratch git repo: the engine10 worker it respawns is a stub
 # that prints cost events and a sealed receipt, and the Cost line main() itself
-# prints is read from its stdout. No source text is matched, so a rename, a
-# wrapper or a hardcoded value anywhere on the summary path is judged by what
-# is printed. Proves only that this stubbed CLI-invoker run prints the right
+# prints is read from its stdout. No source text is matched; the row judges only
+# the single Cost line main() prints. Proves only that this stubbed CLI-invoker run prints the right
 # Cost line; it does not cover the other supervisor outputs (handoff, Slack,
 # run.completed). The controls: a metered run keeps its dollar figure, a
-# measured zero stays $0.00; a run that printed no Cost line at all is a FAIL.
+# measured zero stays $0.00; a run that printed no Cost line, or more than one, is a FAIL.
 # ---------------------------------------------------------------------------
 case_cli_unmetered_cost() {
     local d="$MOAT_TMP/unmetered" rc=0 label events want got r n
