@@ -1010,3 +1010,109 @@ describe("SB-12: the resume offer is made once, by the parent, for loki start <s
     } finally { teardown(); }
   });
 });
+
+describe("loki start with a pull request URL", () => {
+  const run = async (...args: string[]): Promise<{ rc: number; verify: string[][]; implement: number; err: string; out: string }> => {
+    const verify: string[][] = []; let implement = 0, err = "", out = "";
+    startRecoveryHooks.verifyPr = async (a) => { verify.push([...a]); return 41; };
+    startRecoveryHooks.afterOffer = () => { implement++; return 97; };
+    const cwd0 = process.cwd(), d = mkdtempSync(join(tmpdir(), "loki-start-pr-")), w = process.stderr.write.bind(process.stderr), wo = process.stdout.write.bind(process.stdout);
+    process.chdir(d);
+    process.env["LOKI_NO_RESUME"] = "1";
+    process.stderr.write = ((c: string | Uint8Array) => { err += String(c); return true; }) as typeof process.stderr.write;
+    process.stdout.write = ((c: string | Uint8Array) => { out += String(c); return true; }) as typeof process.stdout.write;
+    try { return { rc: await runStart(args), verify, implement, err, out }; }
+    finally { process.stderr.write = w; process.stdout.write = wo; process.chdir(cwd0); startRecoveryHooks.verifyPr = undefined; startRecoveryHooks.afterOffer = undefined; delete process.env["LOKI_NO_RESUME"]; rmSync(d, { recursive: true, force: true }); }
+  };
+  const PR = "https://github.com/o/r/pull/12";
+
+  it("loki start <PR URL> dispatches to verify-pr with the PR ref and never reaches the implement stage", async () => {
+    const r = await run(PR);
+    expect(r.rc).toBe(41);
+    expect(r.verify).toEqual([[PR]]);
+    expect(r.implement).toBe(0);
+  });
+
+  it("a flag before the URL does not bypass the dispatch", async () => {
+    const r = await run("--no-pr", PR);
+    expect(r.verify).toEqual([[PR]]);
+    expect(r.implement).toBe(0);
+  });
+
+  it("an uppercase host, www.github.com and http:// all reach verify-pr as the canonical https URL", async () => {
+    for (const u of ["HTTPS://GitHub.COM/o/r/pull/12", "https://www.github.com/o/r/pull/12", "http://github.com/o/r/pull/12"]) {
+      const r = await run(u);
+      expect(r.verify).toEqual([[PR]]);
+      expect(r.implement).toBe(0);
+    }
+  });
+
+  it("--json and --out after the URL pass through to verify-pr", async () => {
+    const r = await run(PR, "--json", "--out", "d");
+    expect(r.verify).toEqual([[PR, "--json", "--out", "d"]]);
+  });
+
+  it("an unsupported flag is refused in one line naming it and the supported flags, nothing runs", async () => {
+    const r = await run(PR, "--provider", "codex");
+    expect(r.rc).toBe(2);
+    expect(r.verify).toEqual([]);
+    expect(r.implement).toBe(0);
+    expect(r.err.trim().split("\n")).toHaveLength(1);
+    expect(r.err).toContain("--provider");
+    expect(r.err).toContain("--out");
+    expect(r.err).toContain("--json");
+  });
+
+  it("an issue URL and a plain brief still route to the implement stage, not verify-pr", async () => {
+    for (const arg of ["https://github.com/o/r/issues/12", "fix the login bug"]) {
+      const r = await run(arg);
+      expect(r.rc).toBe(97);
+      expect(r.verify).toEqual([]);
+      expect(r.implement).toBe(1);
+    }
+  });
+
+  it("only the github.com host is a PR host: a GitHub Enterprise host and github.com.evil.com run as a brief", async () => {
+    for (const u of ["https://github.example.com/o/r/pull/1", "https://github.com.evil.com/o/r/pull/1"]) {
+      const r = await run(u);
+      expect(r.rc).toBe(97);
+      expect(r.verify).toEqual([]);
+      expect(r.implement).toBe(1);
+    }
+  });
+
+  it("a PR-shaped url verify-pr would reject (.. in owner/repo) is refused in one line with exit 2, nothing runs", async () => {
+    const r = await run("https://github.com/a/b..c/pull/1");
+    expect(r.rc).toBe(2);
+    expect(r.verify).toEqual([]);
+    expect(r.implement).toBe(0);
+    expect(r.err.trim().split("\n")).toHaveLength(1);
+    expect(r.err).toContain("b..c");
+  });
+
+  it("--explain-route prints the verify-pr route and runs nothing, as the bash route does", async () => {
+    const r = await run(PR, "--explain-route");
+    expect(r.rc).toBe(0);
+    expect(r.verify).toEqual([]);
+    expect(r.implement).toBe(0);
+    expect(r.out).toContain("engine:   verify-pr\n");
+    expect(r.out).toContain(`input:    pr (${PR})\n`);
+    const j = await run("--json", "--explain-route", PR);
+    expect(j.rc).toBe(0);
+    const o = JSON.parse(j.out) as { engine: string; input_type: string; input: string };
+    expect(o.engine).toBe("verify-pr");
+    expect(o.input_type).toBe("pr");
+    expect(o.input).toBe(PR);
+  });
+
+  it("without LOKI_VERIFY_PR=1 the real verify-pr refuses: exit 2 with the experimental message", async () => {
+    const hold = process.env["LOKI_VERIFY_PR"]; delete process.env["LOKI_VERIFY_PR"];
+    const err: string[] = [];
+    const w = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((c: string | Uint8Array) => { err.push(String(c)); return true; }) as typeof process.stderr.write;
+    process.env["LOKI_NO_RESUME"] = "1";
+    try { expect(await runStart([PR])).toBe(2); }
+    finally { process.stderr.write = w; delete process.env["LOKI_NO_RESUME"]; if (hold !== undefined) process.env["LOKI_VERIFY_PR"] = hold; }
+    expect(err.join("")).toBe("loki verify-pr: experimental, set LOKI_VERIFY_PR=1\n");
+  });
+});

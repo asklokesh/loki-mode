@@ -473,6 +473,62 @@ else
     echo "SKIP: route contract needs python3"
 fi
 
+# GAME10-01a: the installed layout (a root with autonomy/route.sh) is the path users take; the fixture above omits route.sh on purpose.
+mkdir -p "$T/root2/bin" "$T/root2/autonomy"
+cp "$REPO/bin/loki" "$T/root2/bin/loki"
+cp "$REPO/autonomy/telemetry.sh" "$REPO/autonomy/route.sh" "$T/root2/autonomy/"
+cp "$T/root/autonomy/loki" "$T/root2/autonomy/loki"
+run_loki2() { T_BIN="$T/root2/bin/loki" run_loki_bin "$@"; }
+run_loki_bin() {
+    local path="$1"; shift
+    local envs=()
+    while [ "$1" != "--" ]; do envs+=("$1"); shift; done
+    shift
+    rm -f "$T/out"
+    (cd "$T/cwd" && env -i HOME="$T/home" PATH="$path" LOKI_TELEMETRY_DISABLED=1 \
+        LOKI_TS_ENTRY="$ENTRY" ${envs[@]+"${envs[@]}"} \
+        ${TO[@]+"${TO[@]}"} bash "$T_BIN" "$@") >"$T/stdout" 2>"$T/stderr"
+    echo "$?" >"$T/rc"
+    cat "$T/out" 2>/dev/null || true
+}
+# `loki start <github PR URL>` reaches verify-pr through bin/loki, on every spelling and flag order, never engine10/implement.
+PRU="https://github.com/o/r/pull/12"
+expect "start <PR url> -> verify-pr, not engine10" "BUN $ENTRY verify-pr $PRU" "$(run_loki2 "$WITH_BUN" -- start "$PRU")"
+expect "start --no-pr <PR url> (flag first) -> verify-pr" "BUN $ENTRY verify-pr $PRU" "$(run_loki2 "$WITH_BUN" -- start --no-pr "$PRU")"
+expect "start <PR url> --json -> verify-pr keeps --json" "BUN $ENTRY verify-pr $PRU --json" "$(run_loki2 "$WITH_BUN" -- start "$PRU" --json)"
+expect "start <PR url> --out d -> verify-pr keeps --out d" "BUN $ENTRY verify-pr $PRU --out d" "$(run_loki2 "$WITH_BUN" -- start "$PRU" --out d)"
+expect "start <PR url> --out=d -> verify-pr --out d" "BUN $ENTRY verify-pr $PRU --out d" "$(run_loki2 "$WITH_BUN" -- start "$PRU" --out=d)"
+expect "start uppercase host PR url -> normalized verify-pr" "BUN $ENTRY verify-pr $PRU" "$(run_loki2 "$WITH_BUN" -- start "HTTPS://GitHub.COM/o/r/pull/12")"
+expect "start www.github.com PR url -> normalized verify-pr" "BUN $ENTRY verify-pr $PRU" "$(run_loki2 "$WITH_BUN" -- start "https://www.github.com/o/r/pull/12")"
+expect "start http:// PR url -> normalized https verify-pr" "BUN $ENTRY verify-pr $PRU" "$(run_loki2 "$WITH_BUN" -- start "http://github.com/o/r/pull/12")"
+expect "start PR url with /files suffix -> verify-pr" "BUN $ENTRY verify-pr $PRU" "$(run_loki2 "$WITH_BUN" -- start "$PRU/files")"
+got="$(run_loki2 "$WITH_BUN" -- start "$PRU" --provider codex)"
+expect "start <PR url> --provider codex is refused, nothing runs" "" "$got"
+expect "start <PR url> --provider codex exits 2" "2" "$(cat "$T/rc")"
+if grep -q -- "--provider" "$T/stderr" && grep -q -- "--out" "$T/stderr" && grep -q -- "--json" "$T/stderr" && [ "$(wc -l <"$T/stderr" | tr -d ' ')" = "1" ]; then ok "unsupported flag refusal is one line naming the flag and the supported ones"; else bad "refusal text: $(cat "$T/stderr")"; fi
+expect "route start <PR url> prints the pr kind" "1" "$(cd "$T/cwd" && env -i HOME="$T/home" PATH="$WITH_BUN" LOKI_TS_ENTRY="$ENTRY" bash "$T/root2/bin/loki" route start "$PRU" 2>&1 | grep -c '^input:    pr (')"
+expect "start issue url still -> engine10" "BUN $ENTRY engine10 https://github.com/o/r/issues/7" "$(run_loki2 "$WITH_BUN" -- start "https://github.com/o/r/issues/7")"
+expect "start owner/repo#N still -> engine10 issue" "BUN $ENTRY engine10 o/r#12" "$(run_loki2 "$WITH_BUN" -- start "o/r#12")"
+expect "start multi-word brief still -> engine10" "BUN $ENTRY engine10 fix the login bug" "$(run_loki2 "$WITH_BUN" -- start "fix the login bug")"
+expect "start one-word brief still -> engine10 brief" "BUN $ENTRY engine10 fixit" "$(run_loki2 "$WITH_BUN" -- start fixit)"
+# GAME10-01a-F1: only the github.com host is a PR host. Other hosts run as a brief, never verify-pr.
+expect "start GitHub Enterprise host PR-shaped url is not a PR (brief)" "BUN $ENTRY engine10 https://github.example.com/o/r/pull/1" "$(run_loki2 "$WITH_BUN" -- start "https://github.example.com/o/r/pull/1")"
+expect "start github.com.evil.com PR-shaped url is not a PR (brief)" "BUN $ENTRY engine10 https://github.com.evil.com/o/r/pull/1" "$(run_loki2 "$WITH_BUN" -- start "https://github.com.evil.com/o/r/pull/1")"
+# A PR-shaped url verify-pr would reject (".." in owner/repo) is refused by the route itself: exit 2, one line, nothing runs.
+got="$(run_loki2 "$WITH_BUN" -- start "https://github.com/a/b..c/pull/1")"
+expect "start PR url with .. in repo is refused, nothing runs" "" "$got"
+expect "start PR url with .. in repo exits 2" "2" "$(cat "$T/rc")"
+if grep -q -- "b..c" "$T/stderr" && [ "$(wc -l <"$T/stderr" | tr -d ' ')" = "1" ]; then ok "invalid PR url refusal is one line naming the url"; else bad "invalid PR url refusal text: $(cat "$T/stderr")"; fi
+# --explain-route prints the verify-pr route and runs nothing (the TS entry does the same).
+got="$(run_loki2 "$WITH_BUN" -- start "$PRU" --explain-route)"
+expect "start <PR url> --explain-route runs nothing" "" "$got"
+expect "start <PR url> --explain-route exits 0" "0" "$(cat "$T/rc")"
+if grep -q '^engine:   verify-pr$' "$T/stdout" && grep -q '^input:    pr (' "$T/stdout"; then ok "start <PR url> --explain-route prints the verify-pr route"; else bad "explain-route output: $(cat "$T/stdout")"; fi
+# The label says what runs: `loki route quick <PR url>` runs engine10 on the url as a brief.
+rq="$(cd "$T/cwd" && env -i HOME="$T/home" PATH="$WITH_BUN" LOKI_TS_ENTRY="$ENTRY" bash "$T/root2/bin/loki" route quick "$PRU" 2>&1)"
+if printf '%s\n' "$rq" | grep -q '^input:    brief (' && printf '%s\n' "$rq" | grep -q 'brief input runs on engine10' && ! printf '%s\n' "$rq" | grep -q 'pr input'; then ok "route quick <PR url> is labelled brief, which is what runs"; else bad "route quick label: $rq"; fi
+expect "quick <PR url> really runs engine10 with the url as the brief" "BUN $ENTRY engine10 --no-pr $PRU" "$(run_loki2 "$WITH_BUN" -- quick "$PRU")"
+
 # #308: a value flag consumes its value on the route parser, so the value never joins the positional list.
 vf_resolve() { bash -c 'source "$1"; shift; loki_route_resolve start "$@"; printf "%s|%s" "$R_INPUT" "$R_INPUT_TYPE"' _ "$REPO/autonomy/route.sh" "$@" 2>/dev/null; }
 for vf in "--workspace ws" "--config c.yaml" "--vars v.yaml" "--mirofish http://m" "--max-iterations 7" "--completion-promise done"; do

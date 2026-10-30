@@ -60,9 +60,60 @@ _route_json_str() {
     printf '%s' "$1" | tr '\n\t\r' '   ' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 
+# Echoes the canonical https://github.com/owner/repo/pull/N for a github.com pull request URL
+# (host case-insensitive, optional www., http or https, optional /files style suffix); echoes nothing otherwise.
+# The owner/repo shape mirrors parsePrRef in loki-ts/src/commands/verify_pr.ts.
+_route_pr_url() {
+    local re='^[Hh][Tt][Tt][Pp][Ss]?://([Ww][Ww][Ww]\.)?[Gg][Ii][Tt][Hh][Uu][Bb]\.[Cc][Oo][Mm]/([A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*)/pull/([0-9]+)([/?#].*)?$'
+    if [[ "$1" =~ $re ]]; then printf 'https://github.com/%s/pull/%s' "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"; fi
+}
+
+# `loki start <PR URL> [--json] [--out DIR] [--no-pr]` is the verify-pr command, whatever the flag order.
+# Returns 1 when no argument is a PR URL (the caller carries on). Otherwise sets R_* (R_PR_ARGS = the verify-pr argv)
+# and returns 0; an unsupported flag or a second input sets R_ERR.
+# shellcheck disable=SC2034
+_route_pr_mode() {
+    local a pr="" bad="" badref="" extra="" i=0 n=$# u
+    local -a argv=("$@") eargs=()
+    for u in "$@"; do
+        case "$u" in --help|-h) return 1 ;; esac
+    done
+    while [ "$i" -lt "$n" ]; do
+        a="${argv[$i]}"; i=$((i + 1))
+        case "$a" in
+            --explain-route) R_EXPLAIN=1 ;;
+            --json) eargs+=(--json); R_JSON=1 ;;
+            --no-pr) ;;
+            --out) eargs+=(--out "${argv[$i]:-}"); i=$((i + 1)) ;;
+            --out=*) eargs+=(--out "${a#--out=}") ;;
+            -*) [ -n "$bad" ] || bad="${a%%=*}" ;;
+            *)
+                u="$(_route_pr_url "$a")"
+                # PR-shaped but invalid (a ".." in owner/repo): refused, like parsePrRef in verify_pr.ts.
+                if [ -n "$u" ]; then case "${u#https://github.com/}" in *..*) [ -n "$badref" ] || badref="$a" ;; esac; fi
+                if [ -n "$u" ] && [ -z "$pr" ]; then pr="$u"; else extra="${extra:+$extra }$a"; fi ;;
+        esac
+    done
+    [ -n "$pr" ] || return 1
+    R_DECIDED=1; R_INPUT_TYPE="pr"; R_INPUT="$pr"; R_ENGINE="verify-pr"; R_ADAPTER="verify-pr"
+    R_PROVIDER="n/a"; R_MODEL="n/a (no model call)"
+    R_REASON="pull request URL: verify-pr seals it; no plan or implement stage, nothing is pushed"
+    if [ -n "$badref" ]; then
+        R_ERR="loki: start <PR url>: not a valid pull request URL: $badref"
+    elif [ -n "$bad" ]; then
+        R_ERR="loki: start <PR url>: flag $bad is not supported (verify-pr takes --out DIR, --json and --no-pr)"
+    elif [ -n "$extra" ]; then
+        R_ERR="loki: start <PR url> takes one input; also got: $extra"
+    else
+        R_PR_ARGS=("$pr" ${eargs[@]+"${eargs[@]}"})
+    fi
+    return 0
+}
+
 _route_classify() {
-    # $1 = single positional. Echoes: issue | prd | task | brief | missing-prd
+    # $1 = single positional. Echoes: pr | issue | prd | task | brief | missing-prd
     local p="$1"
+    if [ -n "$(_route_pr_url "$p")" ]; then echo pr; return 0; fi
     case "$p" in
         */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*) echo issue; return 0 ;;
     esac
@@ -83,7 +134,8 @@ loki_route_resolve() {
     local verb="$1"; shift
     R_DECIDED=0; R_E10=0; R_HARD=0; R_ENGINE=""; R_REASON=""; R_INPUT_TYPE=""; R_INPUT=""
     R_PROVIDER=""; R_MODEL=""; R_NOTICE=""; R_ERR=""; R_EXPLAIN=0; R_JSON=0; R_SESSION_MODEL=""; R_VERB=""
-    R_E10_ARGS=(); R_CLEAN=(); R_ADAPTER=""; R_CAPDIFF=(); R_E10_CAP_S=""; R_DRY=0; R_MAXCOST=""
+    R_E10_ARGS=(); R_CLEAN=(); R_ADAPTER=""; R_CAPDIFF=(); R_E10_CAP_S=""; R_DRY=0; R_MAXCOST=""; R_PR_ARGS=()
+    if [ "$verb" = "start" ] && _route_pr_mode "$@"; then return 0; fi
 
     local a engine_req="" dry=0 help=0 legacy_flag="" session_model="" provider_flag="" max_duration="" cap_err="" input_flag=""
     local -a positionals=() passthru=()
@@ -171,6 +223,8 @@ loki_route_resolve() {
         R_INPUT="(from --spec)"
     elif [ "$npos" -eq 1 ]; then
         R_INPUT_TYPE=$(_route_classify "${positionals[0]}")
+        # Only `loki start` sends a PR URL to verify-pr (_route_pr_mode); on any other verb engine10 runs it as a brief.
+        if [ "$R_INPUT_TYPE" = "pr" ]; then R_INPUT_TYPE=brief; fi
         R_INPUT="${positionals[0]}"
     else
         R_INPUT_TYPE=task
