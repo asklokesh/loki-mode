@@ -5234,7 +5234,7 @@ case_cp_unmeasured() {
 # measured zero stays $0.00; a run that printed no Cost line at all is a FAIL.
 # ---------------------------------------------------------------------------
 case_cli_unmetered_cost() {
-    local d="$MOAT_TMP/unmetered" rc=0 label events want got r
+    local d="$MOAT_TMP/unmetered" rc=0 label events want got r n
     command -v bun >/dev/null 2>&1 || { echo "FAIL|prerequisite missing: bun"; return 0; }
     command -v git >/dev/null 2>&1 || { echo "FAIL|prerequisite missing: git"; return 0; }
     mkdir -p "$d/home"
@@ -5257,7 +5257,7 @@ TS
     local zer='{"type":"cost","stage":"implement","data":{"session_id":"s1","usd":0,"input_tokens":5}}'
     for label in unmetered metered measured-zero; do
         case "$label" in
-            unmetered) events="$unm"; want='^Cost: +not measured' ;;
+            unmetered) events="$unm"; want='^Cost: +not measured[^$]*$' ;;
             metered) events="$met"; want='^Cost: +\$0\.50' ;;
             *) events="$zer"; want='^Cost: +\$0\.00' ;;
         esac
@@ -5270,10 +5270,12 @@ TS
         (cd "$r" && HOME="$d/home" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com P7_EVENTS="$events" P7_SUPERVISOR="$REPO_ROOT/loki-ts/src/engine10/supervisor.ts" \
             LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI=/usr/bin/true LOKI_SPEED=0 LOKI_CONTROL=0 LOKI_NO_BROWSER=1 \
             bun "$d/drive.ts" > "$d/out-$label" 2> "$d/err-$label") || rc=$?
-        got="$(grep -E '^Cost:' "$d/out-$label" | head -n 1)"
+        got="$(grep -E '^Cost:' "$d/out-$label")" || got=""
         if [ -z "$got" ]; then
             echo "FAIL|$label run printed no Cost line (rc=$rc): $(tail -c 200 "$d/err-$label" | tr '\n' ' ')"; return 0
         fi
+        n="$(grep -cE '^Cost:' "$d/out-$label")"
+        [ "$n" = "1" ] || { echo "FAIL|$label run printed $n Cost lines"; return 0; }
         grep -qE "$want" <<<"$got" || { echo "FAIL|$label run printed: $got"; return 0; }
     done
     echo "PASS|main() of a stubbed all-unmetered CLI run prints Cost: not measured, a metered run keeps its dollar figure, a measured zero stays \$0.00 (the Cost line main() prints, read from its stdout)"

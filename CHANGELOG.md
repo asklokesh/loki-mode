@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The moat check that an all-unmetered CLI run prints Cost: not measured, never $0.00 now runs the real run supervisor end to end with a stub worker and reads the Cost line it prints, so it no longer depends on a function name and turns red when that printed line shows a dollar figure for an unmetered run.
+- The moat check that an all-unmetered CLI run prints Cost: not measured, never $0.00 now runs the real run supervisor end to end with a stub worker and reads the Cost line it prints, so it no longer depends on a function name and turns red when the run prints more than one Cost line or when an unmetered run's Cost line carries any dollar figure.
 
 ## v11.89.0 (2026-10-30)
 
