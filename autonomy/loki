@@ -28170,13 +28170,51 @@ _pr_record_merge() {
     return 0
 }
 
+# Owner opt-in earned merge (LOKI_EARNED_MERGE=1, off by default). Every path
+# the PR changes must have a Seal record from `loki trust --json` (path_seals)
+# with at least LOKI_EARNED_MERGE_MIN_VERIFIED (default 20) VERIFIED receipts and
+# exactly 0 reverts in git history. A revert count of null (history unreadable),
+# a missing record, an unreadable trust output or an unreadable file list all
+# refuse. Protected paths (.github/, .loki/, .env*, plus the space-separated
+# globs in LOKI_EARNED_MERGE_PROTECTED) always stay PR-only. The reason for a
+# refusal goes to stdout; the return code is 1.
+_pr_earned_merge_check() {
+    local pr="$1" min="${LOKI_EARNED_MERGE_MIN_VERIFIED:-20}" files="" seals="" p g row v r
+    case "$min" in ''|*[!0-9]*) min=20 ;; esac
+    command -v jq >/dev/null 2>&1 || { echo "jq is required to read the Seal record"; return 1; }
+    files="$(gh pr view "$pr" --json files -q '.files[].path' 2>/dev/null)" || files=""
+    [ -n "$files" ] || { echo "the PR's changed files are unreadable"; return 1; }
+    seals="$("$_LOKI_SCRIPT_DIR/../bin/loki" trust --json 2>/dev/null)" || seals=""
+    printf '%s' "$seals" | jq -e '.path_seals | type == "array"' >/dev/null 2>&1 || { echo "the Seal record is unreadable"; return 1; }
+    while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        case "$p" in .github/*|.loki/*|.env|.env.*|*/.env|*/.env.*) echo "$p is a protected path"; return 1 ;; esac
+        for g in ${LOKI_EARNED_MERGE_PROTECTED:-}; do
+            # shellcheck disable=SC2254
+            case "$p" in $g) echo "$p is a protected path"; return 1 ;; esac
+        done
+        row="$(printf '%s' "$seals" | jq -r --arg p "$p" '[.path_seals[] | select(.path == $p)] | if length == 0 then "none" else "\(.[0].verified) \(.[0].reverts)" end')" || row="none"
+        [ "$row" != "none" ] || { echo "$p has no Seal record"; return 1; }
+        v="${row%% *}"; r="${row#* }"
+        case "$r" in
+            0) ;;
+            null) echo "$p revert status is unknown"; return 1 ;;
+            *) echo "$p has $r recorded revert(s)"; return 1 ;;
+        esac
+        [ "$v" -ge "$min" ] 2>/dev/null || { echo "$p has $v VERIFIED receipts, need $min"; return 1; }
+    done <<EOF_FILES
+$files
+EOF_FILES
+    return 0
+}
+
 # Shared merge gate. One PR (number or branch) merges only when it is not a
 # draft, `gh pr checks` exits 0 after polling pending (rc=8), and, with
 # --require-verified, every clean proof recorded for the PR's head commit
 # (facts.git.head_sha == headRefOid, dirty-tree proofs ignored) says VERIFIED; a stale or missing proof
 # refuses ("gate: head"). The merge passes --match-head-commit so a push after
 # the gate cannot land unjudged. On refusal it prints the exact blocking gate
-# ("gate: draft|head|verdict|checks") and leaves the PR open.
+# ("gate: draft|head|verdict|trust|checks") and leaves the PR open.
 # Usage: _merge_pr_gated <pr> [--require-verified] [--delete-branch]
 _merge_pr_gated() {
     local pr="$1" need_verified=false margs=(--squash) rc d
@@ -28251,6 +28289,14 @@ _merge_pr_gated() {
             _pr_record_merge "$pr" "blocked:verdict" "verdict"
             return 1
         fi
+    fi
+    if [ "${LOKI_EARNED_MERGE:-0}" = "1" ]; then
+        local trust_why=""
+        trust_why="$(_pr_earned_merge_check "$pr")" || {
+            echo "$pr: not merged, gate: trust ($trust_why); PR left open" >&2
+            _pr_record_merge "$pr" "blocked:trust" "trust"
+            return 1
+        }
     fi
     rc=0; _pr_checks_wait "$pr" || rc=$?
     if [ "$rc" != "0" ]; then

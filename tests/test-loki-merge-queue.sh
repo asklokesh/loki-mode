@@ -19,7 +19,7 @@ case "$1 $2" in
                [ "$3" = "22" ] && exit 1
                [ "$3" = "feat-pend" ] && exit 8; [ "$3" = "feat-auth" ] && exit 4
                exit 0 ;;
-  "pr view") case "$*" in *headRefOid*) [ "$3" = "feat-nohead" ] && exit 1
+  "pr view") case "$*" in *"--json files"*) cat "$STUB_WORK/files-$3" 2>/dev/null || exit 1; exit 0 ;; *headRefOid*) [ "$3" = "feat-nohead" ] && exit 1
                 if [ "$3" = "feat-race" ]; then if [ -f "$STUB_WORK/race1" ]; then echo "$STUB_HEAD2"; else touch "$STUB_WORK/race1"; echo "$STUB_HEAD"; fi; exit 0; fi; if [ "$3" = "feat-moved" ]; then echo "$STUB_HEAD2"; else echo "$STUB_HEAD"; fi; exit 0 ;; *headRefName*) echo feat-w ;; *) [ "$3" = "feat-draft" ] && echo true || echo false ;; esac; exit 0 ;;
   "pr merge") [ "$3" = "feat-mfail" ] && exit 1; [ "$3" = "feat-race" ] && exit 1; exit 0 ;;
   "run list") echo 99; exit 0 ;;
@@ -357,6 +357,51 @@ printf '{"state":"created","url":"https://github.com/o/r/pull/22","branch":"feat
 LOKI_PR_REPAIR_MAX=1 bash "$LOKI" merge watch 22 >/dev/null 2>&1
 [ "$(prj .merge.outcome)" = "blocked:checks" ] && echo "$(prj .merge.checks)" | grep -q "repair attempt" && ok "pr.json: exhausted watch records blocked:checks" || bad "pr.json watch: $(cat .loki/state/pr.json)"
 grep -q '^  /merge ' "$SCRIPT_DIR/../autonomy/lib/chat.sh" && ok "chat: /merge verb documented" || bad "chat /merge missing"
+
+# Owner opt-in earned merge: LOKI_EARNED_MERGE=1 consults the per-path Seal
+# record (loki trust --json). Off by default; protected, reverted and
+# revert-unknown paths stay PR-only. Real bin/loki trust over a fixture repo.
+EM="$WORK/earn"; mkdir -p "$EM"
+git -C "$EM" init -q
+git -C "$EM" config user.email t@t
+git -C "$EM" config user.name t
+for _n in 1 2; do
+  mkdir -p "$EM/.loki/proofs/r$_n"
+  printf '{"honesty":{"headline":"VERIFIED"},"files_changed":{"files":[{"path":"good.txt"},{"path":"gone.txt"},{"path":".github/w.yml"}]}}' > "$EM/.loki/proofs/r$_n/proof.json"
+done
+echo a > "$EM/gone.txt"; git -C "$EM" add gone.txt; git -C "$EM" commit -qm "add gone"
+echo b >> "$EM/gone.txt"; git -C "$EM" commit -qam "change gone"
+git -C "$EM" revert --no-edit HEAD >/dev/null 2>&1
+printf 'good.txt\n' > "$WORK/files-feat-em"
+OUT="$(cd "$EM" && bash "$LOKI" merge pr feat-em 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && grep -q "^pr merge feat-em --squash --match-head-commit $STUB_HEAD\$" "$STUB_LOG" && ! grep -q "pr view feat-em --json files" "$STUB_LOG" && ok "earned: default off, merge path unchanged and no record consulted" || bad "earned default rc=$RC: $OUT"
+: > "$STUB_LOG"
+OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && grep -q "^pr merge feat-em " "$STUB_LOG" && ok "earned: opted-in eligible path merges" || bad "earned eligible rc=$RC: $OUT"
+for _case in "protected:.github/w.yml" "protected-env:.env.local" "reverted:gone.txt" "unknown-record:nothing.txt"; do
+  _cn="${_case%%:*}"; _cp="${_case#*:}"
+  printf 'good.txt\n%s\n' "$_cp" > "$WORK/files-feat-em"
+  : > "$STUB_LOG"
+  OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"; RC=$?
+  grep -q "^pr merge feat-em" "$STUB_LOG" && bad "earned $_cn merged" || ok "earned: $_cn path never merges"
+  [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "gate: trust" && ok "earned: $_cn names the trust gate" || bad "earned $_cn msg rc=$RC: $OUT"
+done
+printf 'good.txt\ndocs/x.md\n' > "$WORK/files-feat-em"
+: > "$STUB_LOG"
+OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 LOKI_EARNED_MERGE_PROTECTED="docs/*" bash "$LOKI" merge pr feat-em 2>&1)"
+grep -q "^pr merge feat-em" "$STUB_LOG" && bad "owner-protected glob merged" || ok "earned: owner-listed protected glob stays PR-only"
+# Unknown revert status: a non-git directory cannot read history, so reverts is null.
+NG="$WORK/earn-nogit"; mkdir -p "$NG/.loki/proofs/r1" "$NG/.loki/proofs/r2"
+cp "$EM/.loki/proofs/r1/proof.json" "$NG/.loki/proofs/r1/"; cp "$EM/.loki/proofs/r2/proof.json" "$NG/.loki/proofs/r2/"
+printf 'good.txt\n' > "$WORK/files-feat-em"
+: > "$STUB_LOG"
+OUT="$(cd "$NG" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"; RC=$?
+grep -q "^pr merge feat-em" "$STUB_LOG" && bad "unknown revert status merged" || ok "earned: unknown revert status never merges"
+[ "$RC" -ne 0 ] && echo "$OUT" | grep -q "revert status is unknown" && ok "earned: names the unknown revert status" || bad "earned unknown msg rc=$RC: $OUT"
+# Below the VERIFIED floor (default 20) refuses.
+: > "$STUB_LOG"
+OUT="$(cd "$EM" && LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
+grep -q "^pr merge feat-em" "$STUB_LOG" && bad "below floor merged" || ok "earned: below the VERIFIED floor never merges"
 
 echo "Passed: $PASS Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
