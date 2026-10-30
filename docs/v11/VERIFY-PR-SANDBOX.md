@@ -25,6 +25,7 @@ verify-pr-sandbox.sh --repo DIR --out DIR --cmd 'SHELL CMD' --image IMG [--timeo
 | Env scrub | `docker run` inherits no host env; only PATH, HOME=/work, CI=1 are passed. GH_TOKEN, GITHUB_TOKEN, SSH_AUTH_SOCK never reach argv |
 | Mounts | exactly one: the repo, read-only. No HOME, no docker socket, no output mount |
 | Output | stdout is captured by the host, capped in-container (`--max-output`); the host writes result.json and output.txt |
+| Report | `--report /work/NAME` returns the file the check's runner wrote there (up to 1 MiB, outside the output cap) between nonce-bearing markers; the host writes it as report.txt. verify-pr runs bun test, pytest, jest and vitest with a report flag and a random path, and reads pass/fail only from that file |
 
 Deviation from the card: there is no mounted output dir. A writable host mount would let the checked code fill the host disk, so the result travels on stdout and only the host writes `OUT`. Numeric flags are forced to base 10 (a leading zero is not octal) and every value flag requires a value. `--image` is restricted to `[A-Za-z0-9._/:@-]`.
 
@@ -35,6 +36,7 @@ Deviation from the card: there is no mounted output dir. A writable host mount w
 - Oversized output: capped by `--max-output`; `output_truncated` is set.
 - Fork bomb: `--pids-limit 256`. Memory bomb: `--memory`. Disk fill: tmpfs size caps.
 - Forged result: the checked code can print a fake `LOKI_VPR_END` line. A per-run 128-bit nonce is sent to the wrapper on stdin and the checked command runs with stdin from /dev/null; the host accepts only the last line carrying that nonce. Docker's default seccomp profile does NOT block ptrace or process_vm_readv on kernels >= 4.8, and the checked command runs as the same uid as the wrapper inside the container, so a hostile process can read the wrapper's memory and recover the nonce. The nonce therefore only stops accidental or naive forgery; it is not a security boundary. One cross-check is added: the wrapper exits with the check's code and the host rejects (status ERROR) a sentinel that disagrees with docker's own exit code. The PR code can still make its own check report success, which is why `result.json` is a signal about the check and not the final verdict (VPR-2 owns that, and it must not treat a bare COMPLETED exit 0 as proof). A custom seccomp profile denying ptrace is a possible hardening and is not shipped here.
+- Forged report: the report path is a per-run random name given only on the runner's command line, so printed totals cannot forge it. A hostile test that reads its parent's command line (or the nonce, see above) and rewrites the file after the runner exits can still forge a pass; the same ptrace-class residual applies.
 - Docker pool exhaustion: reported as BLOCKED, never as a failing check.
 
 ## Not covered (residual, tracked for VPR-2 review)

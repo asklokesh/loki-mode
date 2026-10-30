@@ -3,14 +3,15 @@
 #
 # Contract (VPR-1; consumed by VPR-2). See docs/v11/VERIFY-PR-SANDBOX.md.
 #   verify-pr-sandbox.sh --repo DIR --out DIR --cmd 'SHELL CMD' [--image IMG]
-#                        [--timeout SECS] [--max-output BYTES] [--print-argv]
+#                        [--timeout SECS] [--max-output BYTES] [--report /work/NAME] [--print-argv]
 # Exit codes: 0 the check ran (read exit_code in result.json), 2 refused (bad
 # input), 3 BLOCKED (docker absent, daemon down, image missing, pool exhausted).
-# BLOCKED is never a verdict about the PR. Writes OUT/result.json and OUT/output.txt (the capped check output) only.
+# BLOCKED is never a verdict about the PR. Writes OUT/result.json, OUT/output.txt (the capped check output) and, when --report
+# names a file the check wrote, OUT/report.txt (that file, capped at 1 MiB, carried outside the output cap) only.
 # Env: LOKI_VPR_IMAGE (default image), LOKI_VPR_DOCKER (docker binary, tests).
 set -uo pipefail
 
-REPO="" OUT="" CMD="" IMAGE="${LOKI_VPR_IMAGE:-}" TIMEOUT=120 MAX_OUT=65536 PRINT_ARGV=0
+REPO="" OUT="" CMD="" IMAGE="${LOKI_VPR_IMAGE:-}" TIMEOUT=120 MAX_OUT=65536 PRINT_ARGV=0 REPORT=""
 DOCKER="${LOKI_VPR_DOCKER:-docker}"
 
 die() { printf 'verify-pr-sandbox: %s\n' "$*" >&2; exit 2; }
@@ -23,6 +24,7 @@ while [ $# -gt 0 ]; do
         --image) [ $# -ge 2 ] || die "$1 needs a value"; IMAGE="$2"; shift 2 ;;
         --timeout) [ $# -ge 2 ] || die "$1 needs a value"; TIMEOUT="$2"; shift 2 ;;
         --max-output) [ $# -ge 2 ] || die "$1 needs a value"; MAX_OUT="$2"; shift 2 ;;
+        --report) [ $# -ge 2 ] || die "$1 needs a value"; REPORT="$2"; shift 2 ;;
         --print-argv) PRINT_ARGV=1; shift ;;
         *) die "unknown argument: $1" ;;
     esac
@@ -33,6 +35,7 @@ done
 [ -n "$CMD" ] || die "--cmd is required"
 [ -n "$IMAGE" ] || die "--image or LOKI_VPR_IMAGE is required (no implicit pull)"
 case "$IMAGE" in -*|*[!A-Za-z0-9._/:@-]*) die "invalid image name" ;; esac
+[ -z "$REPORT" ] || printf '%s\n' "$REPORT" | grep -Eq '^/work/\.?[A-Za-z0-9_][A-Za-z0-9._-]*$' || die "--report must be /work/NAME"
 case "$TIMEOUT" in ''|*[!0-9]*) die "--timeout must be an integer" ;; esac
 case "$MAX_OUT" in ''|*[!0-9]*) die "--max-output must be an integer" ;; esac
 [ "${#TIMEOUT}" -le 7 ] && [ "${#MAX_OUT}" -le 9 ] || die "numeric argument too long"
@@ -79,10 +82,11 @@ NAME="loki-vpr-$$-${NONCE:0:8}"
 WRAPPER='read -r N
 cp -a /repo/. /work/ 2>/dev/null || { echo "LOKI_VPR_END $N 125"; exit 125; }
 cd /work || exit 125
-LOKI_VPR_CMD="$1" T="$2" M="$3"
+LOKI_VPR_CMD="$1" T="$2" M="$3" R="$4"
 timeout -s KILL "$T" sh -c "$LOKI_VPR_CMD" </dev/null >/cap/out 2>&1
 rc=$?
 head -c "$M" /cap/out
+if [ -n "$R" ] && [ -f "$R" ]; then printf "\nLOKI_VPR_REPORT %s\n" "$N"; head -c 1048576 "$R"; printf "\nLOKI_VPR_REPORT_END %s\n" "$N"; fi
 printf "\nLOKI_VPR_END %s %s\n" "$N" "$rc"
 exit "$rc"'
 
@@ -96,7 +100,7 @@ ARGV=(run --rm -i --name "$NAME" --pull never
     --workdir /work
     -v "$REPO_REAL:/repo:ro"
     -e "PATH=/usr/local/bin:/usr/bin:/bin" -e HOME=/work -e CI=1
-    "$IMAGE" sh -c "$WRAPPER" vpr "$CMD" "$TIMEOUT" "$MAX_OUT")
+    "$IMAGE" sh -c "$WRAPPER" vpr "$CMD" "$TIMEOUT" "$MAX_OUT" "$REPORT")
 
 if [ "$PRINT_ARGV" = 1 ]; then
     printf '%s\n' "$DOCKER" "${ARGV[@]}"
@@ -137,13 +141,16 @@ if [ "$killed" = 1 ]; then
 elif [ -n "$end_line" ]; then
     rc="${end_line##* }"
     case "$rc" in ''|*[!0-9]*) rc=null ;; esac
+    # Split the runner-written report (between nonce-bearing markers) from the capped check output.
+    awk -v n="$NONCE" -v rep="$RAW.report" 'BEGIN { b = "LOKI_VPR_REPORT " n; e = "LOKI_VPR_REPORT_END " n } $0 == b { r = 1; next } $0 == e { r = 0; next } r { print > rep; next } { print }' "$RAW" >"$RAW.main"
     trunc=false
-    [ "$(wc -c <"$RAW")" -ge "$MAX_OUT" ] && trunc=true
+    [ "$(wc -c <"$RAW.main")" -ge "$MAX_OUT" ] && trunc=true
     # The wrapper exits with the check's code, so a sentinel that disagrees with docker's own exit code is not trusted.
     if [ "$rc" != null ] && [ "$rc" != "$drc" ]; then
         write_result ERROR null false "sentinel exit $rc disagrees with container exit $drc"
     else
-        grep -av "^LOKI_VPR_END $NONCE " "$RAW" | head -c "$MAX_OUT" >"$OUT_REAL/.output.$$" && mv -f "$OUT_REAL/.output.$$" "$OUT_REAL/output.txt"
+        [ ! -f "$RAW.report" ] || mv -f "$RAW.report" "$OUT_REAL/report.txt"
+        grep -av "^LOKI_VPR_END $NONCE " "$RAW.main" | head -c "$MAX_OUT" >"$OUT_REAL/.output.$$" && mv -f "$OUT_REAL/.output.$$" "$OUT_REAL/output.txt"
         if [ "$rc" = 137 ]; then write_result TIMEOUT 137 "$trunc" "check exceeded ${TIMEOUT}s"
         else write_result COMPLETED "$rc" "$trunc" "ok"; fi
     fi
@@ -152,5 +159,5 @@ elif grep -aqiE "cannot allocate|no space left|too many|pool overlaps|daemon" "$
 else
     write_result ERROR null false "no result sentinel (docker rc $drc)"
 fi
-rm -f "$RAW" "$RAW.err"
+rm -f "$RAW" "$RAW.err" "$RAW.main" "$RAW.report"
 exit 0

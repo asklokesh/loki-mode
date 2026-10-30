@@ -121,3 +121,7 @@ src/util/lock_ecosystems.ts	Cargo.toml
 src/util/lock_ecosystems.ts	Gemfile
 src/util/lock_ecosystems.ts	package.json
 src/util/lock_ecosystems.ts	pyproject.toml
+# VPR-EXIT0-01 report flags: verify_pr_f2p.ts must name the runners it can ask for a machine-written pass/fail report (the verdict is read from that file, never from exit code or printed totals). Goes away with Project Model sourcing of runner knowledge (11.3.3 L4).
+src/contrib/verify_pr_f2p.ts	jest
+src/contrib/verify_pr_f2p.ts	pytest
+src/contrib/verify_pr_f2p.ts	vitest

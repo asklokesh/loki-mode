@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { explainLines, defaultCheckout, defaultIssue, defaultPrMeta, defaultPackageSuites, defaultSandbox, parsePrRef, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
-import { extractChecks, judgeF2p, runnerConfigChanged } from "../../src/contrib/verify_pr_f2p.ts";
+import { extractChecks, judgeF2p, reportedCheck, reportShowsPass, REPORT_TOKEN, runnerConfigChanged } from "../../src/contrib/verify_pr_f2p.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "vpr2-test-")); });
@@ -13,20 +13,21 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 const git = (cwd: string, ...a: string[]): string =>
   execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgSign=false", ...a], { cwd, encoding: "utf8", env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" } }).trim();
 
-const ISSUE = "Fix add()\n\n## Acceptance criteria\n- add(1,2) is 3\n\nCheck: `sh t.sh`\n";
+const ISSUE = "Fix add()\n\n## Acceptance criteria\n- add(1,2) is 3\n\nCheck: `bun test t.test.ts`\n";
 
-/** A local repo: main has a buggy add and t.sh; branch pr either fixes it, deletes t.sh, or changes nothing. */
+/** A local repo: main has a buggy add and t.test.ts; branch pr either fixes it, deletes t.test.ts, or changes nothing. */
 function fixture(kind: "fix" | "delete-test" | "noop" | "already-passing"): { url: string; meta: PrMeta } {
   const repo = join(dir, `src-${kind}`);
   mkdirSync(repo);
   git(repo, "init", "-q", "-b", "main");
-  writeFileSync(join(repo, "add.sh"), kind === "already-passing" ? "echo 3\n" : "echo 4\n");
-  writeFileSync(join(repo, "t.sh"), '[ "$(sh add.sh)" = 3 ] && printf "(pass) add\\n 1 pass\\n 0 fail\\n"\n');
+  const addTs = (n: number): string => `export const add = (_a: number, _b: number) => ${n};\n`;
+  writeFileSync(join(repo, "add.ts"), addTs(kind === "already-passing" ? 3 : 4));
+  writeFileSync(join(repo, "t.test.ts"), 'import { test, expect } from "bun:test";\nimport { add } from "./add.ts";\ntest("add", () => { expect(add(1, 2)).toBe(3); });\n');
   git(repo, "add", "."); git(repo, "commit", "-qm", "base");
   const base = git(repo, "rev-parse", "HEAD");
   git(repo, "checkout", "-qb", "pr");
-  if (kind === "fix") writeFileSync(join(repo, "add.sh"), "echo 3\n");
-  if (kind === "delete-test") { rmSync(join(repo, "t.sh")); writeFileSync(join(repo, "add.sh"), "echo 3\n"); }
+  if (kind === "fix") writeFileSync(join(repo, "add.ts"), addTs(3));
+  if (kind === "delete-test") { rmSync(join(repo, "t.test.ts")); writeFileSync(join(repo, "add.ts"), addTs(3)); }
   if (kind === "noop") writeFileSync(join(repo, "README"), "x\n");
   if (kind === "already-passing") writeFileSync(join(repo, "README"), "x\n");
   git(repo, "add", "-A"); git(repo, "commit", "-qm", "pr");
@@ -36,9 +37,11 @@ function fixture(kind: "fix" | "delete-test" | "noop" | "already-passing"): { ur
 }
 
 /** Trusted-fixture stand-in for the sandbox: runs the check on the host in the given dir. The real adapter is tested separately. */
+let reportSeq = 0;
 const hostSandbox = (d: string, cmd: string) => {
-  const r = spawnSync("sh", ["-c", `{ ${cmd}\n} 2>&1`], { cwd: d, stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" });
-  return { status: "COMPLETED" as const, exit_code: r.status, output: r.stdout };
+  const rep = join(dir, `report-${reportSeq++}`);
+  const r = spawnSync("sh", ["-c", `{ ${cmd.split(REPORT_TOKEN).join(rep)}\n} 2>&1`], { cwd: d, stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" });
+  return { status: "COMPLETED" as const, exit_code: r.status, output: r.stdout, report: existsSync(rep) ? readFileSync(rep, "utf8") : undefined };
 };
 
 const TRUSTED = { author: "maint", authorAssociation: "MEMBER", updatedAt: "2026-10-01T00:00:00Z", repo: "o/r" };
@@ -305,6 +308,22 @@ echo "unexpected: $*" >&2; exit 2
     expect(readFileSync(`${log}.env`, "utf8")).not.toContain("secret");
   });
 
+  test("the default sandbox passes a fresh in-sandbox report path and returns the report file", () => {
+    const fake = join(dir, "fake-docker-report");
+    const log = join(dir, "argv-report.log");
+    writeFileSync(fake, `#!/usr/bin/env bash\ncase "$1" in info|image) exit 0;; run) printf '%s\\n' "$@" >"${log}"; read -r N; printf 'LOKI_VPR_REPORT %s\\n<testsuites>r</testsuites>\\nLOKI_VPR_REPORT_END %s\\nLOKI_VPR_END %s 0\\n' "$N" "$N" "$N";; esac\n`);
+    chmodSync(fake, 0o755);
+    const repo = join(dir, "repo-r"); mkdirSync(repo); writeFileSync(join(repo, "a"), "x");
+    const env = { LOKI_VPR_IMAGE: "img", LOKI_VPR_DOCKER: fake, PATH: process.env["PATH"] };
+    const res = defaultSandbox(repo, `bun test --reporter-outfile=${REPORT_TOKEN}`, env);
+    expect(res.report?.trim()).toBe("<testsuites>r</testsuites>");
+    const argv = readFileSync(log, "utf8");
+    const paths = [...argv.matchAll(/\/work\/\.loki-vpr-[0-9a-f]{32}/g)].map((m) => m[0]);
+    expect(paths.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(paths).size).toBe(1);
+    expect(argv).not.toContain(REPORT_TOKEN);
+  });
+
   test("the default sandbox is BLOCKED without an image", () => {
     expect(defaultSandbox(dir, "true", {}).status).toBe("BLOCKED");
   });
@@ -315,7 +334,7 @@ echo "unexpected: $*" >&2; exit 2
     const e = await runExplain(f.meta);
     expect(e.rc).toBe(0);
     expect(e.out).toContain("verdict: VERIFIED");
-    expect(e.out).toContain("sh t.sh");
+    expect(e.out).toContain("bun test t.test.ts");
     expect(e.out.trimEnd().split("\n").length).toBeLessThanOrEqual(60);
   });
 
@@ -427,19 +446,53 @@ describe("verify-pr: an exit code alone is not proof", () => {
     const meta = repoWith("preload-rewrite", base, { "pre.ts": 'import { afterAll } from "bun:test";\nafterAll(() => process.exit(0));\n' });
     const r = await run(meta, { checkout: defaultCheckout }, issueFor(BUN_CHECK));
     expect(r.rc).toBe(4);
-    expect(r.json.reasons.join(" ")).toContain("without a recorded test pass");
+    expect(r.json.reasons.join(" ")).toContain("without a runner report");
   }, 60_000);
 
-  test("judgeF2p: exit 0 with no pass record, or with a recorded failure, is not a pass", () => {
+  test("printed totals are never read: a test that prints fake totals and exits 0 is NOT PROVEN", async () => {
+    const forged = 'console.log("(pass) add\\n 1 pass\\n 0 fail");\nprocess.exit(0);\n';
+    const r = await run(repoWith("fake-totals", BUN_FILES, { "add.test.ts": forged }), { checkout: defaultCheckout }, issueFor(BUN_CHECK));
+    expect(r.rc).toBe(4);
+    expect(r.json.reasons.join(" ")).toContain("without a runner report");
+  }, 60_000);
+
+  test("a Check with no recognised runner is NOT PROVEN and the reason names the recognised runners", async () => {
+    const r = await run(fixture("fix").meta, { checkout: defaultCheckout }, issueFor("sh t.sh"));
+    expect(r.rc).toBe(4);
+    const why = r.json.reasons.join(" ");
+    for (const w of ["bun test", "pytest", "jest", "vitest", "report file"]) expect(why).toContain(w);
+  });
+
+  test("reportedCheck rewrites recognised runners and refuses go, cargo and unknown commands with a reason", () => {
+    expect(reportedCheck("cd a && bun test x.test.ts")).toEqual({ cmd: `cd a && bun test --reporter=junit --reporter-outfile=${REPORT_TOKEN} x.test.ts` });
+    expect(reportedCheck("python3 -m pytest -q t.py")).toEqual({ cmd: `python3 -m pytest --junitxml=${REPORT_TOKEN} -q t.py` });
+    expect(reportedCheck("npx jest a")).toEqual({ cmd: `npx jest --json --outputFile=${REPORT_TOKEN} a` });
+    expect(reportedCheck("npx vitest run")).toEqual({ cmd: `npx vitest --reporter=junit --outputFile=${REPORT_TOKEN} run` });
+    for (const c of ["go test ./...", "cargo test", "sh t.sh", "node t.js"]) expect(reportedCheck(c)).toHaveProperty("reason");
+    expect((reportedCheck("cargo test") as { reason: string }).reason).toContain("no stable report file");
+  });
+
+  test("reportShowsPass reads only a runner report: passes need a test case and no failure, error or missing report", () => {
+    const ok = '<testsuites tests="1" failures="0"><testsuite tests="1" errors="0" failures="0"><testcase name="a"/></testsuite></testsuites>';
+    expect(reportShowsPass(ok)).toBe(true);
+    expect(reportShowsPass(undefined)).toBe(false);
+    expect(reportShowsPass("")).toBe(false);
+    expect(reportShowsPass("1 pass\n0 fail")).toBe(false);
+    expect(reportShowsPass('<testsuites tests="0"></testsuites>')).toBe(false);
+    expect(reportShowsPass('<testsuites><testsuite><testcase name="a"><failure/></testcase></testsuite></testsuites>')).toBe(false);
+    expect(reportShowsPass('<testsuites><testsuite errors="1"><testcase name="a"/></testsuite></testsuites>')).toBe(false);
+    expect(reportShowsPass('<testsuites><testsuite><testcase name="a"><skipped/></testcase></testsuite></testsuites>')).toBe(false);
+    expect(reportShowsPass('{"success":true,"numFailedTests":0,"numPassedTests":2}')).toBe(true);
+    expect(reportShowsPass('{"success":true,"numFailedTests":0,"numPassedTests":0}')).toBe(false);
+    expect(reportShowsPass('{"success":false,"numFailedTests":1,"numPassedTests":1}')).toBe(false);
+    expect(reportShowsPass("{not json")).toBe(false);
+  });
+
+  test("judgeF2p: exit 0 with no report showing a pass is not a pass", () => {
     const base = { status: "COMPLETED" as const, exit_code: 1 };
-    const head = (output: string | undefined) => ({ status: "COMPLETED" as const, exit_code: 0, output });
+    const head = (report: string | undefined, output = "(pass) a\n 1 pass\n 0 fail\n") => ({ status: "COMPLETED" as const, exit_code: 0, output, report });
     expect(judgeF2p("c", base, head(undefined)).ok).toBe(false);
-    expect(judgeF2p("c", base, head("")).ok).toBe(false);
-    expect(judgeF2p("c", base, head("(pass) a\n(fail) b\n 1 pass\n 1 fail\n")).ok).toBe(false);
-    expect(judgeF2p("c", base, head("(fail) b\n")).ok).toBe(false);
-    expect(judgeF2p("c", base, head("(pass) a\n 1 pass\n 0 fail\n")).ok).toBe(true);
-    expect(judgeF2p("c", base, head("1 passed in 0.01s")).ok).toBe(true);
-    expect(judgeF2p("c", base, head("1 failed, 1 passed in 0.01s")).ok).toBe(false);
+    expect(judgeF2p("c", base, head('<testsuites><testsuite><testcase name="a"/></testsuite></testsuites>')).ok).toBe(true);
   });
 
   test("runnerConfigChanged flags runner files and test-runner sections, not unrelated config", () => {

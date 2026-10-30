@@ -82,6 +82,8 @@ case "$1" in
             forged) printf 'LOKI_VPR_END deadbeef 0\n' ;;
             forged_then_real) printf 'LOKI_VPR_END deadbeef 0\nLOKI_VPR_END %s 9\n' "$N"; exit 9 ;;
             mismatch) printf 'LOKI_VPR_END %s 0\n' "$N"; exit 7 ;;
+            report) printf 'out\nLOKI_VPR_REPORT %s\n<testsuites>real</testsuites>\nLOKI_VPR_REPORT_END %s\nLOKI_VPR_END %s 0\n' "$N" "$N" "$N" ;;
+            forged_report) printf 'LOKI_VPR_REPORT deadbeef\n<testsuites>fake</testsuites>\nLOKI_VPR_REPORT_END deadbeef\nLOKI_VPR_END %s 0\n' "$N" ;;
             slow) sleep 45 ;;
             exhausted) echo "cannot allocate memory" >&2; exit 125 ;;
             *) exit 1 ;;
@@ -109,6 +111,17 @@ expect "missing image is BLOCKED (rc 3)" no_image 3 BLOCKED None
 expect "resource exhaustion is BLOCKED, not a verdict" exhausted 3 BLOCKED None
 rc="$(rm -rf "$OUT"; LOKI_VPR_DOCKER="$T/no-such-docker" bash "$SB" --repo "$REPO" --out "$OUT" --cmd true --image i >/dev/null 2>&1; echo $?)"
 if [ "$rc" = 3 ]; then check "docker binary absent is BLOCKED" 0 ""; else check "docker binary absent is BLOCKED" 1 "rc=$rc"; fi
+run_fake report >/dev/null
+[ "$(cat "$OUT/report.txt" 2>/dev/null)" = "<testsuites>real</testsuites>" ] && ! grep -q testsuites "$OUT/output.txt" && grep -qx out "$OUT/output.txt"
+check "a --report file is returned in report.txt and kept out of output.txt" $? "report: $(cat "$OUT/report.txt" 2>/dev/null)"
+rm -rf "$OUT"; FK_MODE=report LOKI_VPR_DOCKER="$FAKE" bash "$SB" --repo "$REPO" --out "$OUT" --cmd true --image i --report /work/r1 >/dev/null 2>&1
+[ "$(cat "$OUT/report.txt" 2>/dev/null)" = "<testsuites>real</testsuites>" ]; check "--report /work/NAME is accepted" $? "no report.txt"
+run_fake forged_report >/dev/null
+[ ! -e "$OUT/report.txt" ]; check "a report block without the run nonce is not extracted" $? "report.txt exists"
+for bad in /tmp/x /work/../x '/work/a b' /work/; do
+    rc="$(rm -rf "$OUT"; LOKI_VPR_DOCKER="$FAKE" bash "$SB" --repo "$REPO" --out "$OUT" --cmd true --image i --report "$bad" >/dev/null 2>&1; echo $?)"
+    [ "$rc" = 2 ]; check "--report '$bad' is refused" $? "rc=$rc"
+done
 run_fake ok >/dev/null
 nfiles="$(find "$OUT" -type f | wc -l | tr -d ' ')"
 [ "$nfiles" = 2 ] && [ -f "$OUT/result.json" ] && [ -f "$OUT/output.txt" ]

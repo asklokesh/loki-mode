@@ -4,12 +4,13 @@
 // Exit codes align with `loki verify`: 0 VERIFIED, 2 NOT PROVEN because the sandbox was blocked/usage, 3 NOT PROVEN because
 // no proof exists to run (no linked issue or no trusted runnable check), 4 NOT PROVEN because the proof ran and failed.
 import { execFileSync, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseContract } from "../features/contract.ts";
 import { fetchIssue } from "../engine10/fetch_issue.ts";
-import { extractChecks, judgeF2p, referencedFiles, runnerConfigChanged, type SandboxResult } from "../contrib/verify_pr_f2p.ts";
+import { extractChecks, judgeF2p, referencedFiles, reportedCheck, REPORT_TOKEN, runnerConfigChanged, type SandboxResult } from "../contrib/verify_pr_f2p.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
 
@@ -22,6 +23,7 @@ export interface VerifyPrDeps {
   prMeta: (ref: PrRef) => PrMeta;
   issue: (ref: string) => IssueInfo;
   checkout: (ref: PrRef, meta: PrMeta, workDir: string) => Checkout;
+  /** A cmd containing REPORT_TOKEN is run with the token replaced by a fresh in-sandbox path whose file contents come back as `report`. */
   sandbox: (dir: string, cmd: string) => SandboxResult;
   packageSuites: (baseDir: string, headDir: string, changed: readonly string[]) => PackageSuites;
   outDir: string;
@@ -98,19 +100,22 @@ export function defaultCheckout(ref: PrRef, meta: PrMeta, workDir: string): Chec
   return { ...dirs, changed };
 }
 
-/** Real sandbox: scripts/verify-pr-sandbox.sh with a token-free env; its result.json is the only thing read back. Image comes from LOKI_VPR_IMAGE. */
+/** Real sandbox: scripts/verify-pr-sandbox.sh with a token-free env; its result.json, output.txt and (when the command names REPORT_TOKEN) the runner-written report.txt are the only things read back. Image comes from LOKI_VPR_IMAGE. */
 export function defaultSandbox(dir: string, cmd: string, env: NodeJS.ProcessEnv = process.env): SandboxResult {
   const image = env["LOKI_VPR_IMAGE"];
   if (!image) return { status: "BLOCKED", exit_code: null, detail: "LOKI_VPR_IMAGE is not set" };
   const out = mkdtempSync(join(tmpdir(), "loki-vpr-out-"));
+  const reporting = cmd.includes(REPORT_TOKEN);
+  const reportPath = `/work/.loki-vpr-${randomBytes(16).toString("hex")}`;
   try {
-    const r = spawnSync("bash", [join(REPO_ROOT, "scripts/verify-pr-sandbox.sh"), "--repo", dir, "--out", out, "--cmd", cmd, "--image", image], { env: tokenFreeEnv(env), encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });
+    const r = spawnSync("bash", [join(REPO_ROOT, "scripts/verify-pr-sandbox.sh"), "--repo", dir, "--out", out, "--cmd", reporting ? cmd.split(REPORT_TOKEN).join(reportPath) : cmd, "--image", image, ...(reporting ? ["--report", reportPath] : [])], { env: tokenFreeEnv(env), encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });
     const res = join(out, "result.json");
     if (!existsSync(res)) return { status: r.status === 3 ? "BLOCKED" : "ERROR", exit_code: null, detail: (r.stderr ?? "").trim().slice(0, 200) || `runner rc ${r.status}` };
     const j = JSON.parse(readFileSync(res, "utf8")) as { status?: string; exit_code?: number | null; detail?: string };
     const st = j.status === "COMPLETED" || j.status === "TIMEOUT" || j.status === "BLOCKED" ? j.status : "ERROR";
     const outFile = join(out, "output.txt");
-    return { status: st, exit_code: typeof j.exit_code === "number" ? j.exit_code : null, detail: j.detail, output: existsSync(outFile) ? readFileSync(outFile, "utf8") : "" };
+    const repFile = join(out, "report.txt");
+    return { status: st, exit_code: typeof j.exit_code === "number" ? j.exit_code : null, detail: j.detail, output: existsSync(outFile) ? readFileSync(outFile, "utf8") : "", report: existsSync(repFile) ? readFileSync(repFile, "utf8") : undefined };
   } catch (e) {
     return { status: "ERROR", exit_code: null, detail: String(e).slice(0, 200) };
   } finally {
@@ -175,10 +180,16 @@ export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): Verify
     const gone = referencedFiles(c, co.baseDir).filter((p) => !existsSync(join(co.headDir, p)));
     if (gone.length > 0) return np(`test removed by the PR: ${gone.join(", ")}`);
   }
+  const reported = new Map<string, string>();
+  for (const c of res.checks) {
+    const rc = reportedCheck(c);
+    if ("reason" in rc) return np(rc.reason);
+    reported.set(c, rc.cmd);
+  }
   const cfg = runnerConfigChanged(co.changed, co.headDir);
   if (cfg.length > 0) return np(`the PR adds or changes test runner config, so a passing check is not proof: ${cfg.join(", ")}`);
   for (const c of res.checks) {
-    const o = judgeF2p(c, deps.sandbox(co.baseDir, c), deps.sandbox(co.headDir, c));
+    const o = judgeF2p(c, deps.sandbox(co.baseDir, c), deps.sandbox(co.headDir, reported.get(c)!));
     if (!o.ok) return { ...np(o.reason), blocked: o.blocked };
   }
   const ps = deps.packageSuites(co.baseDir, co.headDir, co.changed);
