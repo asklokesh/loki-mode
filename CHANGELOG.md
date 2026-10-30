@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Every signed receipt now carries one Seal accuracy line read from the measured seeded-defect results: wrong passes out of seeded defects for the change's language and test runner, the 95% upper bound, and the Loki version it was measured on. The line says "not measured" when the version differs, the language and runner were not measured, or the result is older than 7 days; editing it breaks `loki verify`.
 
+### Fixed
+
+- `loki trust` reports reverts as unknown (never 0) when the repository is a shallow clone or git cannot say whether it is, because truncated history can hide an earlier revert.
+
 ## v11.89.0 (2026-10-30)
 
 ### Added

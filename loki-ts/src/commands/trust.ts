@@ -82,10 +82,12 @@ export interface PathSeal {
 
 // Paths touched by revert commits (subject `Revert "..."` or a "This reverts
 // commit" body line, which also covers a reverted merge). Null when the
-// directory is not a readable git repo. Argument arrays only, via safeGit.
+// directory is not a readable, full-history git repo. Argument arrays only, via safeGit.
 function revertCounts(repoDir: string): Map<string, number> | null {
   let log: string;
   try {
+    // A shallow clone truncates history, so a count would silently undercount; anything but an explicit "false" is unknown.
+    if (safeGit(repoDir, ["rev-parse", "--is-shallow-repository"]).trim() !== "false") return null;
     log = safeGit(repoDir, ["log", "--format=%H%x1f%B%x1e"]);
   } catch {
     return null;

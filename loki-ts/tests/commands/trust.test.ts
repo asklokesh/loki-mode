@@ -281,6 +281,34 @@ describe("runTrust per-path Seal record", () => {
     expect(j.path_seals).toEqual([{ path: "b.txt", verified: 1, other: 0, reverts: null }]);
   });
 
+  it("reverts are null (unknown), never 0, in a shallow clone that cut off an old revert", () => {
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(td, "b.txt"), "b\n");
+    git("add", "b.txt");
+    git("commit", "-q", "-m", "base");
+    writeFileSync(join(td, "b.txt"), "b2\n");
+    git("commit", "-q", "-am", "change b");
+    git("revert", "--no-edit", "HEAD");
+    for (let i = 0; i < 3; i++) {
+      writeFileSync(join(td, "c.txt"), `c${i}\n`);
+      git("add", "c.txt");
+      git("commit", "-q", "-m", `later ${i}`);
+    }
+    const clone = mkdtempSync(join(tmpdir(), "trust-shallow-"));
+    try {
+      execFileSync("git", ["clone", "-q", "--depth", "1", `file://${td}`, clone], { stdio: "ignore" });
+      const d = join(clone, ".loki", "proofs", "run-s-00");
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, "proof.json"), JSON.stringify({ run_id: "run-s-00", honesty: { headline: "VERIFIED" }, files_changed: { files: [{ path: "b.txt" }] } }));
+      process.env.LOKI_DIR = join(clone, ".loki");
+      const j = JSON.parse(run(["--json"]).stdout);
+      expect(j.path_seals).toEqual([{ path: "b.txt", verified: 1, other: 0, reverts: null }]);
+    } finally {
+      process.env.LOKI_DIR = lokiDir;
+      rmSync(clone, { recursive: true, force: true });
+    }
+  });
+
   it("human output lists the per-path record", () => {
     seedPathProof("run-x", "VERIFIED", ["x.txt"]);
     expect(run([]).stdout).toContain("x.txt: 1 VERIFIED, 0 other, reverts unknown");
