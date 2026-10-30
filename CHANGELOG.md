@@ -5,6 +5,28 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.91.0 (2026-10-30)
+
+### Added
+
+- Every PR body and `loki verify` output now prints the receipt's signed Seal accuracy line, or "Seal accuracy: not measured" when the receipt has none for that change.
+- When the task carries runtime evidence (a stack trace, request and response pair or tracker URL), the Wall brief now requires a test that reproduces it and fails on the current code; if every Wall test already passes there, the run records the evidence as not reproduced and never reports the task as already satisfied (the sealed verdict stays PARTIAL). The evidence block in the brief is capped at 700 bytes and keeps only plain path characters. Runs without evidence are unchanged.
+- Docs and fixtures only: a GitHub Action example for `loki verify-pr` (`docs/examples/loki-ci-example.yml.example`) and a PR-shaped seeded-defect corpus under `benchmarks/seeded-defects/pr-cases`, where each case carries a runnable pytest check in its issue and in both trees so a control reaches `loki verify-pr` exit 0. No runtime behavior changes.
+
+### Changed
+
+- `loki share`, `loki proof share` and `loki metrics --share` now create a secret GitHub gist by default (they were public). Pass `--public` to publish a public gist, which prints a one-line warning that anyone with the URL can see it. `--private` still works as a no-op alias.
+- The cost estimate on a first run in a repo now shows a band measured from 72 recent runs ($0.01-$0.17 for a task with no plan yet), labelled (first run in this repo); it previously printed $0.11-$0.98 while actual runs cost about $0.02. The band is an estimate, not a guarantee.
+
+### Fixed
+
+- `loki verify-pr` now refuses a PR that adds or changes runner config for jest, vitest and vite (config files, and a `package.json` with a `jest` key), as well as `bunfig.toml`, `conftest.py` and ini, cfg or toml files whose head version has a test section. A deleted or renamed config file is judged by its base version, both sides of a rename are listed, and a `package.json` that cannot be parsed counts as config. A submodule bump is not treated as runner config. Before, a PR could change jest or vitest config, or delete or rename such a file, and still read as verified.
+- The earned auto-merge check now refuses a pure rename (100% similarity, no mode line in the diff) of a symlink or submodule between earned paths, reading the file modes from git on both sides of the PR, and names the renamed file in the refusal.
+
+### Known issue
+
+- `loki verify-pr` can still report VERIFIED when a PR weakens pytest or jest config without touching a recognised config section, for example by removing the test section from setup.cfg or the jest key from package.json while keeping the file, adding an empty pytest.ini, or writing pytest options as TOML dotted keys in pyproject.toml. A fix is in progress.
+
 ## v11.90.0 (2026-10-30)
 
 ### Added
