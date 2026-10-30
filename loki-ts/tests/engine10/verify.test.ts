@@ -2,6 +2,7 @@
 //
 // testmap.ts (E-05) and machine.ts (E-02) are not on main: RunContext.tests
 // is always a fake TestMapProvider here, never a real import of testmap.ts.
+import { ignoreSnapshot } from "../../src/util/check_result.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -52,6 +53,7 @@ function fakeCtx(opts: {
   impacted?: (map: TestMap, changed: string[]) => TestRef[];
 }): { ctx: RunContext; emitted: Emitted[] } {
   const emitted: Emitted[] = [];
+  const outputs = { ...(opts.outputs ?? {}), intake: { ignore_snapshot: ignoreSnapshot(opts.repoDir), ...(opts.outputs?.intake ?? {}) } }; // intake records the ignore sources before the run; a missing record refuses VERIFIED
   const ctx: RunContext = {
     runId: "e10-test",
     repoDir: opts.repoDir,
@@ -70,7 +72,7 @@ function fakeCtx(opts: {
     },
     cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
     clock: { now: () => Date.now() },
-    outputs: () => opts.outputs ?? {},
+    outputs: () => outputs,
   };
   return { ctx, emitted };
 }

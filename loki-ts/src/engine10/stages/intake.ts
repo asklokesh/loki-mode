@@ -11,7 +11,7 @@ import { type AlreadyDoneResult, buildAlreadyDoneCommentArgv, checkAlreadyDone, 
 import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_done_async.ts";
 import { snapshotContract } from "../../features/contract.ts";
 import { probeZeroChecks } from "./verify.ts"; import { stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
-import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
+import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { ensureProfile, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 export interface IntakeOptions { taskText?: string; issueJsonPath?: string; }
 interface IssueFields { state: string | null; closed_by_merged_pr?: boolean }
@@ -58,6 +58,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   let baseSha = git(ctx.repoDir, ["rev-parse", "HEAD"]); const startBranch = git(ctx.repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]);
   // FC-STACKED-ON-LOKI-RUN (the success note is the start line plus the stacked_loki_skip event data, never raw stderr): HEAD is an earlier run's unaccepted output (every commit past the PR target is a Loki-Run commit): branch from the PR target tip, leave that branch untouched.
   let stacked = stackedOnLokiRun(ctx.repoDir); if (stacked) { try { ensureBranch(ctx.repoDir, ctx.branch, stacked.base_sha); baseSha = stacked.base_sha; ctx.baseSha = baseSha; } catch { stacked = null; process.stderr.write(`${process.stderr.isTTY ? "\r\x1b[2K" : ""}engine10: skip not applied (checkout failed); base stays HEAD\n`); } } if (!stacked) ensureBranch(ctx.repoDir, ctx.branch);
+  // SEAL-ASSUME-02: ignore_snapshot is taken at each return below, after the baseline run (ensureProfile) and the dependency install (intakeDeps): the ignored files Loki itself produced are the start state, only the agent's changes are noted.
   const tree = git(ctx.repoDir, ["rev-parse", "HEAD^{tree}"]); excludeLokiDir(ctx.repoDir);
   const issueJsonPath = opts.issueJsonPath ?? process.env.LOKI_E10_ISSUE_JSON ?? join(ctx.runDir, "issue.json");
   const taskText = opts.taskText ?? process.env.LOKI_E10_TASK_TEXT;
@@ -84,7 +85,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   const common = { ...(stacked ? { stacked_loki_skip: stacked } : {}), task, title: task.split("\n")[0]!.slice(0, 72), repo: githubRepoFromUrl(origin) ?? origin, resumed: false, contract_snapshot: snapshotContract(ctx.repoDir), preexisting_untracked: untrackedAtIntake(ctx.repoDir), preexisting_untracked_blobs: snapshotUntracked(ctx.repoDir), ...(Object.keys(preexisting).length > 0 ? { preexisting_dirty: preexisting } : {}) };
   if (alreadySatisfied) {
     // Deterministic exit: no repo/test map needed, and never a session/LLM call.
-    return { status: "completed", data: { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true } };
+    return { status: "completed", data: { ...common, ignore_snapshot: ignoreSnapshot(ctx.repoDir), task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true } };
   }
   mkdirSync(ctx.runDir, { recursive: true });
   const repomapRef = join(ctx.runDir, "repomap.json");
@@ -111,9 +112,9 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   const base = { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...(readiness ? { readiness } : {}) };
   // FC-15: the claim rests on the PR target. Evidence only in target..HEAD means no claim; Loki's own work there is reported, never refused.
   const stale = already ? unmergedEvidence(ctx.repoDir, already.paths, startBranch) : null;
-  if (already && !stale) return { status: "completed", data: { ...base, ...alreadyData(already) } };
+  if (already && !stale) return { status: "completed", data: { ...base, ignore_snapshot: ignoreSnapshot(ctx.repoDir), ...alreadyData(already) } };
   if (stale) process.stderr.write(`engine10: ${stale.lokiOwn ? unmergedEvidenceNote(stale) : `evidence for the task is on ${stale.branch ?? "HEAD"} but not on ${stale.target}; implementing`}\n`); // L5/L6: the operator sees it when the run goes on to implement
-  const data = { ...base, ...(stale?.lokiOwn ? { unmerged_loki_work: { branch: stale.branch, target: stale.target, commits: stale.commits, message: unmergedEvidenceNote(stale) } } : {}), ...(await intakeProjectModel(ctx, signal, t0)), ...(await intakeDeps(ctx, signal, testmap.runners)), zero_baseline: await probeZeroChecks(ctx.repoDir, testmap.tests, signal), hidden_cfg: (() => { try { return hiddenRunnerConfigs(ctx.repoDir); } catch { return null; } })(), repomap_ref: repomapRef, testmap, already_satisfied: false };
+  const data = { ...base, ...(stale?.lokiOwn ? { unmerged_loki_work: { branch: stale.branch, target: stale.target, commits: stale.commits, message: unmergedEvidenceNote(stale) } } : {}), ...(await intakeProjectModel(ctx, signal, t0)), ...(await intakeDeps(ctx, signal, testmap.runners)), zero_baseline: await probeZeroChecks(ctx.repoDir, testmap.tests, signal), hidden_cfg: (() => { try { return hiddenRunnerConfigs(ctx.repoDir); } catch { return null; } })(), ignore_snapshot: ignoreSnapshot(ctx.repoDir), repomap_ref: repomapRef, testmap, already_satisfied: false };
   if (speedEnabled()) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { if (unmergedEvidence(ctx.repoDir, a.paths, startBranch)) throw new Error("evidence not on the PR target"); Object.assign(data, alreadyData(a)); });
   return { status: "completed", data };
 }

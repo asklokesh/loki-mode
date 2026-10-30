@@ -1,16 +1,17 @@
 // A-115: a relevant check with more skipped tests than base is neither a pass nor progress; test-config edits are NOT PROVEN.
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
-import { hiddenEdits } from "../../src/util/check_result.ts";
+import { hiddenEdits, ignoreRuleChanges, ignoreSnapshot } from "../../src/util/check_result.ts";
 import { testConfigChanged, verifyStage } from "../../src/engine10/stages/verify.ts";
 import { hiddenConfigChanged, hiddenRunnerConfigs } from "../../src/features/runner_config.ts";
 import { createHash } from "node:crypto";
 
 const dirs: string[] = [];
+let lastRepo = "";
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 const sh = (d: string, a: string[]): string => execFileSync("git", a, { cwd: d, encoding: "utf8" }).trim();
 const T = "const t=require('node:test');const assert=require('node:assert');";
@@ -29,19 +30,21 @@ function repo(base: Record<string, string>): string {
   symlinkSync(Bun.which("python3")!, join(dir, ".venv", "bin", "python"));
   return dir;
 }
-/** `work` is written on top of the base commit; `sel(files)` answers impacted(): the named-files call gets the target only. `prep` runs and `pre` is written before the intake snapshot (hidden_cfg). */
-async function verify(base: Record<string, string>, work: Record<string, string>, task: string, target: TestRef, other: TestRef, narrow = false, prep?: (dir: string) => void, pre: Record<string, string> = {}): Promise<V> {
-  const dir = repo(base), baseSha = sh(dir, ["rev-parse", "HEAD"]);
+/** `work` is written on top of the base commit; `sel(files)` answers impacted(): the named-files call gets the target only. `prep` runs and `pre` is written before the intake snapshot (hidden_cfg, ignore_snapshot); `during` runs after it, before the work. */
+async function verify(base: Record<string, string>, work: Record<string, string>, task: string, target: TestRef, other: TestRef, narrow = false, prep?: (dir: string) => void, pre: Record<string, string> = {}, during?: (dir: string) => void): Promise<V> {
+  const dir = repo(base), baseSha = sh(dir, ["rev-parse", "HEAD"]); lastRepo = dir;
   prep?.(dir);
   for (const [f, c] of Object.entries(pre)) writeFileSync(join(dir, f), c);
   const hidden_cfg = hiddenRunnerConfigs(dir);
+  const ignore_snapshot = ignoreSnapshot(dir); // intake records the ignore sources after prep, before the run touches anything
+  during?.(dir);
   for (const [f, c] of Object.entries(work)) writeFileSync(join(dir, f), c);
   mkdirSync(join(dir, ".loki"), { recursive: true });
   writeFileSync(join(dir, ".loki", "repomap.json"), JSON.stringify({ files: Object.keys(base) }));
   const ctx = {
     repoDir: dir, runDir: join(dir, ".loki"), baseSha, emit: () => {},
     tests: { detect: async () => ({ runners: [], tests: [target, other] }), impacted: (_m: unknown, f: string[]) => (f.includes(target.path) && (!narrow || f.length === 1) ? [target] : f.length ? [target, other] : []) },
-    outputs: () => ({ intake: { task, repomap_ref: join(dir, ".loki", "repomap.json"), hidden_cfg }, wall: { files: [] } }),
+    outputs: () => ({ intake: { task, repomap_ref: join(dir, ".loki", "repomap.json"), hidden_cfg, ignore_snapshot }, wall: { files: [] } }),
   } as unknown as RunContext;
   return (await verifyStage.run(ctx, new AbortController().signal)).data as unknown as V;
 }
@@ -126,6 +129,120 @@ describe("engine10 verify: weakened checks (A-115)", () => {
     return dir;
   };
   const note = (f: string): string => `tracked file edited while assume-unchanged or skip-worktree hides it from diff and commit: ${f}`;
+  // FC-IGNORE-RULE-HIDES-INPUT: a pattern the run adds to .git/info/exclude or core.excludesFile hides a planted conftest from the diff, seal, receipt and PR
+  const exclNote = "ignore rules changed while the run was in progress: .git/info/exclude";
+  const noAbsolute = (notes: string[]): void => { for (const n of notes) { expect(n).not.toContain(lastRepo); expect(n).not.toContain(realpathSync(lastRepo)); if (process.env["HOME"]) expect(n).not.toContain(process.env["HOME"]); } }; // notes reach receipt.json and the PR body
+  test("info/exclude pattern added by the run, then a hidden forged conftest turns the target green: NOT PROVEN names the file and the hidden conftest (main: not_proven [])", async () => {
+    const d = await verify(TWO, FORGED, TASK, py("test_target.py"), py("test_old.py"), false, undefined, {}, (dir) => appendFileSync(join(dir, ".git", "info", "exclude"), "conftest.py\n"));
+    expect(d.target_checks).toEqual(["pytest:test_target.py"]); // the forged conftest really turned the red target green
+    expect(d.not_proven.some((n) => n.startsWith(exclNote) && n.includes("info/exclude"))).toBe(true);
+    expect(d.not_proven.some((n) => n.startsWith("ignored file created during the run") && n.includes("conftest.py"))).toBe(true);
+    noAbsolute(d.not_proven);
+  }, 60_000);
+  test("core.excludesFile pointed at a new file by the run: NOT PROVEN names core.excludesFile and the new path (main: not_proven [])", async () => {
+    const out = mkdtempSync(join(tmpdir(), "e10-excl-")); dirs.push(out); const g = join(out, "global-ignore"); writeFileSync(g, "conftest.py\n");
+    const d = await verify(TWO, FORGED, TASK, py("test_target.py"), py("test_old.py"), false, undefined, {}, (dir) => sh(dir, ["config", "core.excludesFile", g]));
+    expect(d.target_checks).toEqual(["pytest:test_target.py"]);
+    expect(d.not_proven.some((n) => n.includes("core.excludesFile now resolves to") && n.includes("global-ignore"))).toBe(true);
+    expect(d.not_proven.some((n) => n.startsWith("ignored file created during the run") && n.includes("conftest.py"))).toBe(true);
+    noAbsolute(d.not_proven);
+  }, 60_000);
+  test("the run edits the tracked root .gitignore to add conftest.py, then plants a forged conftest: NOT PROVEN names .gitignore and conftest.py", async () => {
+    const d = await verify({ ...TWO, ".gitignore": "*.pyc\n" }, FORGED, TASK, py("test_target.py"), py("test_old.py"), false, undefined, {}, (dir) => appendFileSync(join(dir, ".gitignore"), "conftest.py\n"));
+    expect(d.target_checks).toEqual(["pytest:test_target.py"]);
+    expect(d.not_proven.some((n) => n.includes(".gitignore"))).toBe(true);
+    expect(d.not_proven.some((n) => n.startsWith("ignored file created during the run") && n.includes("conftest.py"))).toBe(true);
+    noAbsolute(d.not_proven);
+  }, 60_000);
+  test("the run adds an untracked self-ignoring pkg/.gitignore and plants pkg/conftest.py: NOT PROVEN names .gitignore and conftest.py", async () => {
+    const d = await verify(TWO, FORGED, TASK, py("test_target.py"), py("test_old.py"), false, undefined, {}, (dir) => { mkdirSync(join(dir, "pkg")); writeFileSync(join(dir, "pkg", ".gitignore"), "conftest.py\n.gitignore\n"); writeFileSync(join(dir, "pkg", "conftest.py"), "import impl\nimpl.double = lambda x: x * 2\n"); });
+    expect(d.not_proven.some((n) => n.includes("pkg/.gitignore"))).toBe(true);
+    expect(d.not_proven.some((n) => n.startsWith("ignored file created during the run") && n.includes("pkg/conftest.py"))).toBe(true);
+    noAbsolute(d.not_proven);
+  }, 60_000);
+  // A directory verify executes from or imports from is never exempt, whatever its name or its .gitignore says.
+  const hiddenNote = (d: V, f: string): boolean => d.not_proven.some((n) => n.startsWith("an ignored file that can change what verify runs or imports was added or changed during the run") && n.includes(f));
+  const SHIM = "#!/bin/sh\ncase \"$*\" in *pytest*) echo '2 passed in 0.01s'; exit 0;; esac\nexec python3 \"$@\"\n";
+  test("the run replaces the existing .venv/bin/python with a shim that prints 2 passed: NOT PROVEN names .venv/bin/python", async () => {
+    const d = await verify(TWO, { "impl.py": "# tidy\ndef double(x):\n    return x + 1\n" }, TASK, py("test_target.py"), py("test_old.py"), false, undefined, {}, (dir) => { rmSync(join(dir, ".venv", "bin", "python")); writeFileSync(join(dir, ".venv", "bin", "python"), SHIM); chmodSync(join(dir, ".venv", "bin", "python"), 0o755); writeFileSync(join(dir, ".venv", ".gitignore"), "*\n"); });
+    expect(hiddenNote(d, ".venv/bin/python")).toBe(true);
+    expect(d.not_proven.some((n) => n.includes(".venv/.gitignore"))).toBe(true);
+    noAbsolute(d.not_proven);
+  }, 60_000);
+  test("a .venv that did not exist at intake is created by the run with a shim python: NOT PROVEN names .venv/bin/python", async () => {
+    const d = await verify(TWO, { "impl.py": "# tidy\ndef double(x):\n    return x + 1\n" }, TASK, py("test_target.py"), py("test_old.py"), false, (dir) => rmSync(join(dir, ".venv"), { recursive: true }), {}, (dir) => { mkdirSync(join(dir, ".venv", "bin"), { recursive: true }); writeFileSync(join(dir, ".venv", ".gitignore"), "*\n"); writeFileSync(join(dir, ".venv", "bin", "python"), SHIM); chmodSync(join(dir, ".venv", "bin", "python"), 0o755); });
+    expect(hiddenNote(d, ".venv/bin/python")).toBe(true);
+  }, 60_000);
+  test("the run plants .pytest_cache/conftest.py beside a self-ignoring .gitignore: NOT PROVEN names the conftest and the .gitignore", async () => {
+    const d = await verify(TWO, FORGED, TASK, py("test_target.py"), py("test_old.py"), false, undefined, {}, (dir) => { mkdirSync(join(dir, ".pytest_cache")); writeFileSync(join(dir, ".pytest_cache", ".gitignore"), "# Created by pytest automatically.\n*\n"); writeFileSync(join(dir, ".pytest_cache", "conftest.py"), "x = 1\n"); });
+    expect(d.not_proven.some((n) => n.includes(".pytest_cache/conftest.py"))).toBe(true); // named by the runner-config check or by the ignored-file check
+    expect(d.not_proven.some((n) => n.startsWith("ignore rules changed") && n.includes(".pytest_cache/.gitignore"))).toBe(true);
+  }, 60_000);
+  test("a nested pkg/venv with a self-ignoring .gitignore and a conftest.py: NOT PROVEN names both", async () => {
+    const d = await verify(TWO, FORGED, TASK, py("test_target.py"), py("test_old.py"), false, undefined, {}, (dir) => { mkdirSync(join(dir, "pkg", "venv"), { recursive: true }); writeFileSync(join(dir, "pkg", "venv", ".gitignore"), "*\n"); writeFileSync(join(dir, "pkg", "venv", "conftest.py"), "x = 1\n"); });
+    expect(d.not_proven.some((n) => n.includes("pkg/venv/conftest.py"))).toBe(true); // named by the runner-config check or by the ignored-file check
+    expect(d.not_proven.some((n) => n.includes("pkg/venv/.gitignore"))).toBe(true);
+  }, 60_000);
+  test("tests/.tox with a bare * .gitignore and a conftest.py: NOT PROVEN names both", async () => {
+    const d = await verify(TWO, FORGED, TASK, py("test_target.py"), py("test_old.py"), false, undefined, {}, (dir) => { mkdirSync(join(dir, "tests", ".tox"), { recursive: true }); writeFileSync(join(dir, "tests", ".tox", ".gitignore"), "*\n"); writeFileSync(join(dir, "tests", ".tox", "conftest.py"), "x = 1\n"); });
+    expect(d.not_proven.some((n) => n.includes("tests/.tox/conftest.py"))).toBe(true); // named by the runner-config check or by the ignored-file check
+    expect(d.not_proven.some((n) => n.includes("tests/.tox/.gitignore"))).toBe(true);
+  }, 60_000);
+  const cacheRepo = (): string => hidRepo({ "a.py": "x\n" });
+  const withCache = (name: string, gi: string, extra: (cache: string) => void): string[] => {
+    const dir = cacheRepo(), snap = ignoreSnapshot(dir), base = sh(dir, ["rev-parse", "HEAD"]), c = join(dir, name);
+    mkdirSync(c, { recursive: true }); writeFileSync(join(c, ".gitignore"), gi); extra(c);
+    return ignoreRuleChanges(dir, snap, base);
+  };
+  const PYTEST_GI = "# Created by pytest automatically.\n*\n";
+  test("a pure .pytest_cache (pytest's own .gitignore, README, CACHEDIR.TAG, v/cache/nodeids) is silent; the same directory is noted when its .gitignore text differs, or it holds a python file, an executable, a symlink or a bin directory", () => {
+    const pure = (c: string): void => { writeFileSync(join(c, "README.md"), "r\n"); writeFileSync(join(c, "CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n"); mkdirSync(join(c, "v", "cache"), { recursive: true }); writeFileSync(join(c, "v", "cache", "nodeids"), "[]"); };
+    expect(withCache(".pytest_cache", PYTEST_GI, pure)).toEqual([]);
+    expect(withCache(".pytest_cache", "*\n", pure).length).toBeGreaterThan(0);
+    expect(withCache(".pytest_cache", PYTEST_GI + "!x\n", pure).length).toBeGreaterThan(0);
+    expect(withCache(".pytest_cache", PYTEST_GI, (c) => writeFileSync(join(c, "helper.py"), "x = 1\n")).length).toBeGreaterThan(0);
+    expect(withCache(".pytest_cache", PYTEST_GI, (c) => writeFileSync(join(c, "x.pth"), "/tmp\n")).length).toBeGreaterThan(0);
+    expect(withCache(".pytest_cache", PYTEST_GI, (c) => { writeFileSync(join(c, "tool"), "#!/bin/sh\n"); chmodSync(join(c, "tool"), 0o755); }).length).toBeGreaterThan(0);
+    expect(withCache(".pytest_cache", PYTEST_GI, (c) => symlinkSync("/usr/bin", join(c, "lnk"))).length).toBeGreaterThan(0);
+    expect(withCache(".pytest_cache", PYTEST_GI, (c) => { mkdirSync(join(c, "bin")); writeFileSync(join(c, "bin", "x"), "x"); }).length).toBeGreaterThan(0);
+    expect(withCache(".cache_other", PYTEST_GI, pure).length).toBeGreaterThan(0);
+}, 60_000);
+  // SEAL-ASSUME-02 r4: each exemption is the exact text a real run of that tool wrote (versions in check_result.ts), compared byte for byte.
+  const REAL_GI: Record<string, string> = {
+    ".pytest_cache": "# Created by pytest automatically.\n*\n",
+    ".mypy_cache": "# Automatically created by mypy\n*\n",
+    ".ruff_cache": "# Automatically created by ruff.\n*\n",
+    ".hypothesis": "# This .gitignore file was automatically created by Hypothesis. Hypothesis gitignores\n# .hypothesis by default, because we generally recommend that .hypothesis not be checked\n# into version control.\n#\n# If you *would* like to check .hypothesis into version control, you should delete this\n# file. Hypothesis will not re-create this .gitignore unless .hypothesis is deleted (and\n# if it does, that's a bug - please report it!)\n\n*\n",
+  };
+  for (const [name, text] of Object.entries(REAL_GI)) {
+    test(`SEAL-ASSUME-02 r4: ${name} with the tool's real .gitignore text is silent, and one changed byte is noted`, () => {
+      expect(withCache(name, text, () => {})).toEqual([]);
+      expect(withCache(name, text.replace("*\n", "!\n"), () => {}).length).toBeGreaterThan(0);
+      expect(withCache(name, text + "\n", () => {}).length).toBeGreaterThan(0);
+    }, 60_000);
+  }
+  test("SEAL-ASSUME-02 r4: a bare * .gitignore is never an exemption, whatever the directory is named (.hypothesis, .tox, .nox)", () => {
+    for (const name of [".hypothesis", ".tox", ".nox"]) expect(withCache(name, "*\n", () => {}).length).toBeGreaterThan(0);
+  }, 60_000);
+  test("a failed listing refuses (git missing from PATH, then a corrupt .git/HEAD) and the intake snapshot records a failed listing as unrecorded", () => {
+    const dir = hidRepo({ "a.py": "x\n" }), snap = ignoreSnapshot(dir), base = sh(dir, ["rev-parse", "HEAD"]);
+    expect(ignoreRuleChanges(dir, snap, base)).toEqual([]); // control: the same call with git on PATH is silent
+    const oldPath = process.env["PATH"];
+    try { process.env["PATH"] = join(dir, "no-such-bin"); expect(ignoreRuleChanges(dir, snap, base).length).toBe(1); expect(ignoreSnapshot(dir).exec_files).toBeNull(); } finally { process.env["PATH"] = oldPath; }
+    writeFileSync(join(dir, ".git", "HEAD"), "garbage\n");
+    expect(ignoreRuleChanges(dir, snap, base).length).toBe(1);
+    expect(ignoreRuleChanges(dir, { ...snap, exec_files: null }, base).length).toBe(1);
+}, 60_000);
+  test("info/exclude the user had before the run, untouched, honest fix: no ignore-rule note", async () => {
+    const d = await verify(TWO, { "impl.py": "def double(x):\n    return x * 2\n" }, TASK, py("test_target.py"), py("test_old.py"), false, (dir) => appendFileSync(join(dir, ".git", "info", "exclude"), "scratch.txt\nconftest.py\n"));
+    expect(d.not_proven.filter((n) => /ignore/.test(n))).toEqual([]);
+  }, 60_000);
+  test("a missing or unreadable ignore snapshot at verify refuses (fail closed); an unchanged snapshot is silent", () => {
+    const dir = hidRepo({ "a.py": "x\n" });
+    expect(ignoreRuleChanges(dir, ignoreSnapshot(dir))).toEqual([]);
+    expect(ignoreRuleChanges(dir, undefined).length).toBe(1);
+    expect(ignoreRuleChanges(dir, { at: 1, info_exclude: { path: "x", state: "unreadable" }, global_excludes: { path: "y", state: "missing" } }).length).toBe(1);
+  });
   test("finding 1: a skip-worktree file deleted while sparse checkout is off is a hidden deletion (12a5094: no note)", () => {
     const dir = hidRepo({ "conftest.py": "# fixtures\n", "impl.py": "x\n" });
     sh(dir, ["update-index", "--skip-worktree", "conftest.py"]); rmSync(join(dir, "conftest.py"));

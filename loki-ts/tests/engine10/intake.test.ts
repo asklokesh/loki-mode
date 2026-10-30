@@ -12,6 +12,8 @@ import { cacheFileName, repoKey } from "../../src/engine10/cache.ts";
 import { dirname, join, resolve } from "node:path";
 import { commitStage } from "../../src/engine10/stages/seal.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
+import { ignoreRuleChanges } from "../../src/util/check_result.ts";
+import { resetInstallMemo } from "../../src/project_model/install.ts";
 import { baseLine } from "../../src/util/base_guard.ts";
 import { renderMainOutput } from "../../src/engine10/supervisor.ts";
 import { renderReviewerBody } from "../../src/e10ext/reviewer_body.ts";
@@ -757,5 +759,26 @@ describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
     delete process.env.LOKI_E10_BASE;
     expect(r.status).toBe("completed");
     rmSync(root, { recursive: true, force: true });
+  });
+
+  // SEAL-ASSUME-02: the ignore snapshot is taken after everything Loki itself runs in intake (baseline and dependency install), so an
+  // interpreter environment the install creates is part of the start state and is not mistaken for the agent's work.
+  test("SEAL-ASSUME-02: an install step that creates .venv (pyvenv.cfg, bin/python) before the agent acts leaves zero ignore notes", async () => {
+    const saved = { m: process.env["LOKI_E10_PROJECT_MODEL"], i: process.env["LOKI_E10_INSTALL"] };
+    process.env["LOKI_E10_PROJECT_MODEL"] = "1"; delete process.env["LOKI_E10_INSTALL"]; resetInstallMemo();
+    try {
+      writeFileSync(join(repoDir, ".gitignore"), ".venv/\n"); writeFileSync(join(repoDir, "package-lock.json"), "{}\n");
+      git(repoDir, ["add", ".gitignore", "package-lock.json"]); git(repoDir, ["commit", "-q", "-m", "lock"]);
+      const cmd = `sh -c "mkdir -p .venv/bin && printf 'home = /usr/bin\\n' > .venv/pyvenv.cfg && printf '#!/bin/sh\\nexit 0\\n' > .venv/bin/python && chmod 755 .venv/bin/python"`;
+      mkdirSync(join(repoDir, ".loki"), { recursive: true });
+      writeFileSync(join(repoDir, ".loki", "project.json"), JSON.stringify({ schema: "loki.v10.project/1", status: "ok", key: "k", workspaceKind: "multi-root", workspaceCite: ["package-lock.json"], fingerprintFiles: ["package-lock.json"], packages: [{ name: ".", root: ".", runner: null, commands: { test: null, lint: null, build: null, start: null }, ui: { present: false, boot: null }, cite: ["package-lock.json"], dependsOn: [], install: { cmd, cwd: ".", cite: ["package-lock.json"] } }] }));
+      const result = await runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { taskText: "do a thing" });
+      expect(result.status).toBe("completed");
+      expect(existsSync(join(repoDir, ".venv", "pyvenv.cfg"))).toBe(true); // control: the install really ran and made the environment
+      expect(ignoreRuleChanges(repoDir, result.data.ignore_snapshot, String(result.data.base_sha))).toEqual([]);
+    } finally {
+      if (saved.m === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = saved.m;
+      if (saved.i === undefined) delete process.env["LOKI_E10_INSTALL"]; else process.env["LOKI_E10_INSTALL"] = saved.i;
+    }
   });
 });
