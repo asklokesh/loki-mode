@@ -643,7 +643,9 @@ if [ -f "$REPO_ROOT/autonomy/route.sh" ] && { [ "$_LOKI_START_ATTEMPTS" != "1" ]
             export LOKI_SESSION_MODEL="$R_SESSION_MODEL"
         fi
         if [ "$R_E10" = "1" ] && [ -n "${R_E10_CAP_S:-}" ]; then export LOKI_E10_CAP_S="$R_E10_CAP_S"; fi
-        if [ "$R_E10" != "1" ]; then
+        if [ "$R_ENGINE" = "verify-pr" ]; then
+            set -- verify-pr "${R_PR_ARGS[@]}"
+        elif [ "$R_E10" != "1" ]; then
             set -- "$([ "$R_VERB" = "bare" ] && echo start || echo "$R_VERB")" ${R_CLEAN[@]+"${R_CLEAN[@]}"}
         fi
     fi

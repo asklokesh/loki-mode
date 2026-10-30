@@ -607,7 +607,7 @@ export async function dryRunStart(o: ParsedStartOpts, repoDir: string, env: Node
 }
 
 /** SB-12: test seam for the offer's tty and reader (production leaves it empty). */
-export const startRecoveryHooks: { deps?: import("../util/run_outputs.ts").ResumeDeps; afterOffer?: () => number } = {};
+export const startRecoveryHooks: { deps?: import("../util/run_outputs.ts").ResumeDeps; afterOffer?: () => number; verifyPr?: (args: readonly string[]) => Promise<number> } = {};
 
 /** SB-12: the one resume offer for `loki start <spec>`, made here while the parent owns the terminal (the engine child gets stdin "ignore").
  *  Returns an exit code when the user resumed, else null; on null it sets LOKI_NO_RESUME=1 so no engine child (or attempt) offers a second time.
@@ -624,7 +624,56 @@ export async function offerInterruptedRun(o: ParsedStartOpts, cwd: string): Prom
   return null;
 }
 
+/** A github.com pull request URL (host case-insensitive, optional www., http or https) as the canonical https URL, else null. */
+export function canonicalPrUrl(a: string): string | null {
+  const m = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*)\/pull\/(\d+)(?:[/?#].*)?$/i.exec(a);
+  return m ? `https://github.com/${m[1]!}/pull/${m[2]!}` : null;
+}
+
+/** The route `loki start <PR url> --explain-route` prints; the text mirrors loki_route_print in autonomy/route.sh. */
+export function prRouteText(url: string, json: boolean): string {
+  const reason = "pull request URL: verify-pr seals it; no plan or implement stage, nothing is pushed";
+  if (json) return `${JSON.stringify({ engine: "verify-pr", adapter: "verify-pr", provider: "n/a", model: "n/a (no model call)", input_type: "pr", input: url.length > 72 ? `${url.slice(0, 69)}...` : url, reason, capability_differences: [], run_cap_s: null })}\n`;
+  const shown = url.length > 72 ? `${url.slice(0, 69)}...` : url;
+  return `engine:   verify-pr\nadapter:  verify-pr\nprovider: n/a\nmodel:    n/a (no model call)\ninput:    pr (${shown})\nreason:   ${reason}\n`;
+}
+
+/** The verify-pr argv for `loki start` args holding a PR URL (null when none does). Only --json, --out and --no-pr are honored; any other flag, a second input or a PR-shaped URL parsePrRef rejects is refused, never dropped. --explain-route prints the route instead of running. */
+export function prStartArgs(args: readonly string[], parsePrRef: (s: string) => unknown): { argv: string[]; explain: string | null } | { error: string } | null {
+  let url: string | null = null, bad = "", badRef = "", extra = "", explain = false, json = false;
+  const rest: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--help" || a === "-h") return null;
+    if (a === "--explain-route") explain = true;
+    else if (a === "--json") { rest.push(a); json = true; }
+    else if (a === "--no-pr") continue;
+    else if (a === "--out") { rest.push(a, args[i + 1] ?? ""); i++; }
+    else if (a.startsWith("--out=")) rest.push("--out", a.slice(6));
+    else if (a.startsWith("-")) bad ||= a.split("=")[0]!;
+    else {
+      const u = canonicalPrUrl(a);
+      if (u !== null && parsePrRef(u) === null) badRef ||= a;
+      if (u !== null && url === null) url = u; else extra += `${extra ? " " : ""}${a}`;
+    }
+  }
+  if (url === null) return null;
+  if (badRef) return { error: `loki start <PR url>: not a valid pull request URL: ${badRef}` };
+  if (bad) return { error: `loki start <PR url>: flag ${bad} is not supported (verify-pr takes --out DIR, --json and --no-pr)` };
+  if (extra) return { error: `loki start <PR url> takes one input; also got: ${extra}` };
+  return { argv: [url, ...rest], explain: explain ? prRouteText(url, json) : null };
+}
+
 export async function runStart(args: readonly string[]): Promise<number> {
+  { // A github.com PR URL anywhere in the args is sealed by the existing verify-pr path (mirrors _route_pr_mode in autonomy/route.sh): no plan, no implement, nothing pushed.
+    const { parsePrRef, runVerifyPr } = await import("./verify_pr.ts");
+    const pr = prStartArgs(args, parsePrRef);
+    if (pr !== null) {
+      if ("error" in pr) { process.stderr.write(`${pr.error}\n`); return 2; }
+      if (pr.explain !== null) { process.stdout.write(pr.explain); return 0; }
+      return (startRecoveryHooks.verifyPr ?? runVerifyPr)(pr.argv);
+    }
+  }
   if (isBashOnlyStart(args)) {
     if (args.includes("--dry-run")) {
       process.stderr.write("start: --dry-run is not supported with --workspace or --deploy\n");
