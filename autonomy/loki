@@ -28171,27 +28171,43 @@ _pr_record_merge() {
 }
 
 # Owner opt-in earned merge (LOKI_EARNED_MERGE=1, off by default). Every path
-# the PR changes must have a Seal record from `loki trust --json` (path_seals)
-# with at least LOKI_EARNED_MERGE_MIN_VERIFIED (default 20) VERIFIED receipts and
-# exactly 0 reverts in git history. A revert count of null (history unreadable),
-# a missing record, an unreadable trust output or an unreadable file list all
-# refuse. Protected paths (.github/, .loki/, .env*, plus the space-separated
-# globs in LOKI_EARNED_MERGE_PROTECTED) always stay PR-only. The reason for a
-# refusal goes to stdout; the return code is 1.
+# the PR changes (the new name and, for a rename, the previous name, listed by
+# paginated REST and required to match the PR's changedFiles count) must have a
+# Seal record from `loki trust --json` (path_seals) with at least
+# LOKI_EARNED_MERGE_MIN_VERIFIED (default 20, floor 1) VERIFIED receipts and
+# exactly 0 reverts in git history. A revert count of null (history
+# unreadable), a missing record, an unreadable trust output or an unreadable or
+# truncated file list all refuse. Protected paths (.github/, .loki/, .env*,
+# .envrc, CODEOWNERS, plus the space-separated globs in
+# LOKI_EARNED_MERGE_PROTECTED), matched case-insensitively, always stay
+# PR-only. The reason for a refusal goes to stdout; the return code is 1.
 _pr_earned_merge_check() {
-    local pr="$1" min="${LOKI_EARNED_MERGE_MIN_VERIFIED:-20}" files="" seals="" p g row v r
+    local pr="$1" min="${LOKI_EARNED_MERGE_MIN_VERIFIED:-20}" meta="" num="" want="" lines="" seals=""
+    local kind p lp g row v r got=0 globs=()
     case "$min" in ''|*[!0-9]*) min=20 ;; esac
+    [ "$min" -ge 1 ] || min=1
     command -v jq >/dev/null 2>&1 || { echo "jq is required to read the Seal record"; return 1; }
-    files="$(gh pr view "$pr" --json files -q '.files[].path' 2>/dev/null)" || files=""
-    [ -n "$files" ] || { echo "the PR's changed files are unreadable"; return 1; }
+    meta="$(gh pr view "$pr" --json number,changedFiles -q '"\(.number) \(.changedFiles)"' 2>/dev/null)" || meta=""
+    num="${meta%% *}"; want="${meta#* }"
+    case "$num$want" in ''|*[!0-9]*) echo "the PR's changed files are unreadable"; return 1 ;; esac
+    lines="$(gh api --paginate "repos/{owner}/{repo}/pulls/${num}/files" -q '.[] | ("F\t" + .filename), (select(.previous_filename != null) | "P\t" + .previous_filename)' 2>/dev/null)" || lines=""
+    [ -n "$lines" ] || { echo "the PR's changed files are unreadable"; return 1; }
     seals="$("$_LOKI_SCRIPT_DIR/../bin/loki" trust --json 2>/dev/null)" || seals=""
     printf '%s' "$seals" | jq -e '.path_seals | type == "array"' >/dev/null 2>&1 || { echo "the Seal record is unreadable"; return 1; }
-    while IFS= read -r p; do
+    # read -a splits on whitespace without expanding globs against the cwd.
+    read -r -a globs <<EOF_GLOBS
+$(printf '%s' "${LOKI_EARNED_MERGE_PROTECTED:-}" | tr '[:upper:]' '[:lower:]')
+EOF_GLOBS
+    while IFS="$(printf '\t')" read -r kind p; do
         [ -n "$p" ] || continue
-        case "$p" in .github/*|.loki/*|.env|.env.*|*/.env|*/.env.*) echo "$p is a protected path"; return 1 ;; esac
-        for g in ${LOKI_EARNED_MERGE_PROTECTED:-}; do
+        [ "$kind" = "F" ] && got=$((got + 1))
+        lp="$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')"
+        case "$lp" in .github/*|.loki/*|.env|.env.*|*/.env|*/.env.*|.envrc|*/.envrc|codeowners|docs/codeowners)
+            echo "$p is a protected path"; return 1 ;;
+        esac
+        for g in ${globs[@]+"${globs[@]}"}; do
             # shellcheck disable=SC2254
-            case "$p" in $g) echo "$p is a protected path"; return 1 ;; esac
+            case "$lp" in $g) echo "$p is a protected path"; return 1 ;; esac
         done
         row="$(printf '%s' "$seals" | jq -r --arg p "$p" '[.path_seals[] | select(.path == $p)] | if length == 0 then "none" else "\(.[0].verified) \(.[0].reverts)" end')" || row="none"
         [ "$row" != "none" ] || { echo "$p has no Seal record"; return 1; }
@@ -28203,8 +28219,9 @@ _pr_earned_merge_check() {
         esac
         [ "$v" -ge "$min" ] 2>/dev/null || { echo "$p has $v VERIFIED receipts, need $min"; return 1; }
     done <<EOF_FILES
-$files
+$lines
 EOF_FILES
+    [ "$got" = "$want" ] || { echo "the PR lists $want changed files but $got were readable"; return 1; }
     return 0
 }
 

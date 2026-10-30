@@ -13,13 +13,15 @@ mkdir -p "$WORK/bin" "$WORK/repo"
 cat > "$WORK/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >> "$STUB_LOG"
+[ "$1" = "api" ] && { while IFS="$(printf '\t')" read -r _n _p; do echo "F	$_n"; [ -z "$_p" ] || echo "P	$_p"; done < "$STUB_WORK/files-feat-em"; exit 0; }
 case "$1 $2" in
   "pr checks") [ "$3" = "12" ] && exit 1; [ "$3" = "feat-red" ] && exit 1
                [ "$3" = "21" ] && [ ! -f "$STUB_WORK/repaired" ] && exit 1
                [ "$3" = "22" ] && exit 1
                [ "$3" = "feat-pend" ] && exit 8; [ "$3" = "feat-auth" ] && exit 4
                exit 0 ;;
-  "pr view") case "$*" in *"--json files"*) cat "$STUB_WORK/files-$3" 2>/dev/null || exit 1; exit 0 ;; *headRefOid*) [ "$3" = "feat-nohead" ] && exit 1
+  "pr view") case "$*" in *"--json number,changedFiles"*) [ -f "$STUB_WORK/files-$3" ] || exit 1
+                if [ -f "$STUB_WORK/count-$3" ]; then echo "7 $(cat "$STUB_WORK/count-$3")"; else echo "7 $(wc -l < "$STUB_WORK/files-$3" | tr -d ' ')"; fi; exit 0 ;; *headRefOid*) [ "$3" = "feat-nohead" ] && exit 1
                 if [ "$3" = "feat-race" ]; then if [ -f "$STUB_WORK/race1" ]; then echo "$STUB_HEAD2"; else touch "$STUB_WORK/race1"; echo "$STUB_HEAD"; fi; exit 0; fi; if [ "$3" = "feat-moved" ]; then echo "$STUB_HEAD2"; else echo "$STUB_HEAD"; fi; exit 0 ;; *headRefName*) echo feat-w ;; *) [ "$3" = "feat-draft" ] && echo true || echo false ;; esac; exit 0 ;;
   "pr merge") [ "$3" = "feat-mfail" ] && exit 1; [ "$3" = "feat-race" ] && exit 1; exit 0 ;;
   "run list") echo 99; exit 0 ;;
@@ -367,24 +369,25 @@ git -C "$EM" config user.email t@t
 git -C "$EM" config user.name t
 for _n in 1 2; do
   mkdir -p "$EM/.loki/proofs/r$_n"
-  printf '{"honesty":{"headline":"VERIFIED"},"files_changed":{"files":[{"path":"good.txt"},{"path":"gone.txt"},{"path":".github/w.yml"}]}}' > "$EM/.loki/proofs/r$_n/proof.json"
+  printf '{"honesty":{"headline":"VERIFIED"},"files_changed":{"files":[{"path":"good.txt"},{"path":"gone.txt"},{"path":".github/w.yml"},{"path":".env.local"},{"path":".GitHub/x.yml"},{"path":"CODEOWNERS"},{"path":".envrc"},{"path":"moved.txt"},{"path":"src/auth/sub/deep.ts"}]}}' > "$EM/.loki/proofs/r$_n/proof.json"
 done
 echo a > "$EM/gone.txt"; git -C "$EM" add gone.txt; git -C "$EM" commit -qm "add gone"
 echo b >> "$EM/gone.txt"; git -C "$EM" commit -qam "change gone"
 git -C "$EM" revert --no-edit HEAD >/dev/null 2>&1
 printf 'good.txt\n' > "$WORK/files-feat-em"
 OUT="$(cd "$EM" && bash "$LOKI" merge pr feat-em 2>&1)"; RC=$?
-[ "$RC" -eq 0 ] && grep -q "^pr merge feat-em --squash --match-head-commit $STUB_HEAD\$" "$STUB_LOG" && ! grep -q "pr view feat-em --json files" "$STUB_LOG" && ok "earned: default off, merge path unchanged and no record consulted" || bad "earned default rc=$RC: $OUT"
+[ "$RC" -eq 0 ] && grep -q "^pr merge feat-em --squash --match-head-commit $STUB_HEAD\$" "$STUB_LOG" && ! grep -q "pr view feat-em --json number" "$STUB_LOG" && ok "earned: default off, merge path unchanged and no record consulted" || bad "earned default rc=$RC: $OUT"
 : > "$STUB_LOG"
 OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"; RC=$?
 [ "$RC" -eq 0 ] && grep -q "^pr merge feat-em " "$STUB_LOG" && ok "earned: opted-in eligible path merges" || bad "earned eligible rc=$RC: $OUT"
-for _case in "protected:.github/w.yml" "protected-env:.env.local" "reverted:gone.txt" "unknown-record:nothing.txt"; do
+for _case in "protected:.github/w.yml" "protected-env:.env.local" "protected-case:.GitHub/x.yml" "protected-codeowners:CODEOWNERS" "protected-envrc:.envrc" "reverted:gone.txt" "unknown-record:nothing.txt"; do
   _cn="${_case%%:*}"; _cp="${_case#*:}"
   printf 'good.txt\n%s\n' "$_cp" > "$WORK/files-feat-em"
   : > "$STUB_LOG"
   OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"; RC=$?
   grep -q "^pr merge feat-em" "$STUB_LOG" && bad "earned $_cn merged" || ok "earned: $_cn path never merges"
   [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "gate: trust" && ok "earned: $_cn names the trust gate" || bad "earned $_cn msg rc=$RC: $OUT"
+  case "$_cn" in protected*) echo "$OUT" | grep -q "$_cp is a protected path" && ok "earned: $_cn refused as protected, not for a missing record" || bad "earned $_cn reason: $OUT" ;; esac
 done
 printf 'good.txt\ndocs/x.md\n' > "$WORK/files-feat-em"
 : > "$STUB_LOG"
@@ -398,6 +401,43 @@ printf 'good.txt\n' > "$WORK/files-feat-em"
 OUT="$(cd "$NG" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"; RC=$?
 grep -q "^pr merge feat-em" "$STUB_LOG" && bad "unknown revert status merged" || ok "earned: unknown revert status never merges"
 [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "revert status is unknown" && ok "earned: names the unknown revert status" || bad "earned unknown msg rc=$RC: $OUT"
+# Owner glob must not expand against the cwd: src/auth/* would otherwise turn
+# into the one directory it matches here and let a deeper file through.
+mkdir -p "$EM/src/auth/sub"; : > "$EM/src/auth/sub/deep.ts"
+printf 'good.txt\nsrc/auth/sub/deep.ts\n' > "$WORK/files-feat-em"
+: > "$STUB_LOG"
+OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 LOKI_EARNED_MERGE_PROTECTED="src/auth/*" bash "$LOKI" merge pr feat-em 2>&1)"
+grep -q "^pr merge feat-em" "$STUB_LOG" && bad "cwd-expanded glob let a deep file merge" || ok "earned: owner glob is not expanded against the cwd"
+echo "$OUT" | grep -q "src/auth/sub/deep.ts is a protected path" && ok "earned: deep file matched by the owner glob" || bad "glob msg: $OUT"
+# A truncated file list (listed count differs from changedFiles) refuses.
+printf 'good.txt\n' > "$WORK/files-feat-em"; echo 111 > "$WORK/count-feat-em"
+: > "$STUB_LOG"
+OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
+grep -q "^pr merge feat-em" "$STUB_LOG" && bad "truncated file list merged" || ok "earned: truncated file list never merges"
+echo "$OUT" | grep -q "lists 111 changed files but 1 were readable" && ok "earned: names the truncation" || bad "trunc msg: $OUT"
+rm -f "$WORK/count-feat-em"
+# Renames: the previous name is judged too.
+for _case in "reverted-source:gone.txt" "protected-source:.github/w.yml"; do
+  _cn="${_case%%:*}"; _cp="${_case#*:}"
+  printf 'moved.txt\t%s\n' "$_cp" > "$WORK/files-feat-em"
+  : > "$STUB_LOG"
+  OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
+  grep -q "^pr merge feat-em" "$STUB_LOG" && bad "rename $_cn merged" || ok "earned: rename from a $_cn path never merges"
+  echo "$OUT" | grep -q "^feat-em: not merged, gate: trust ($_cp " && ok "earned: rename $_cn names the previous path" || bad "rename $_cn msg: $OUT"
+done
+printf 'moved.txt\tgood.txt\n' > "$WORK/files-feat-em"
+: > "$STUB_LOG"
+(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=2 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em >/dev/null 2>&1)
+grep -q "^pr merge feat-em" "$STUB_LOG" && ok "earned: rename between eligible paths merges" || bad "eligible rename did not merge"
+# MIN_VERIFIED=0 must not let a path with no VERIFIED receipt through.
+mkdir -p "$EM/.loki/proofs/r3"
+printf '{"honesty":{"headline":"NOT_PROVEN"},"files_changed":{"files":[{"path":"np.txt"}]}}' > "$EM/.loki/proofs/r3/proof.json"
+printf 'np.txt\n' > "$WORK/files-feat-em"
+: > "$STUB_LOG"
+OUT="$(cd "$EM" && LOKI_EARNED_MERGE_MIN_VERIFIED=0 LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
+grep -q "^pr merge feat-em" "$STUB_LOG" && bad "MIN_VERIFIED=0 merged a NOT_PROVEN-only path" || ok "earned: MIN_VERIFIED=0 is clamped to 1"
+rm -r "$EM/.loki/proofs/r3"
+printf 'good.txt\n' > "$WORK/files-feat-em"
 # Below the VERIFIED floor (default 20) refuses.
 : > "$STUB_LOG"
 OUT="$(cd "$EM" && LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
