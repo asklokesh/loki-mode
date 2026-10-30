@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.88.0 (2026-10-29)
+
+### Added
+
+- Every default-route run now reports its outcome to the opt-in analytics funnel: a `run_started` and a `run_finished` event sent from the run's exit path (not for `--dry-run`, and nothing under any opt-out or when analytics is off). `run_finished` carries only the receipt verdict (VERIFIED, PARTIAL, ALREADY_SATISFIED, SPEC_CONFLICT, FAILED; INTERRUPTED when the run left no receipt, BLOCKED on the blocked exit code with none), `duration_s`, `stage_s_<stage>`, `fix_rounds` and `exit_code`, read through an allowlist and re-filtered by `autonomy/lib/telemetry-schema.json`; no prompt, path, repo or branch name, or error text. Proven by the tests `AN-05 runFinishedArgs` (loki-ts/tests/engine10/funnel_run_events.test.ts) and `first-run funnel covers the walls users hit` (tests/test-first-run-funnel-coverage.sh).
+- Full test-suite runs started with `cd loki-ts && bun run test` or `bun run test:engine10` now queue so that at most two run on one machine at once (`LOKI_ENGINE10_SLOTS` changes the limit). A third run prints "waiting for a test slot" and starts when one frees, and a slot held by a dead process is reclaimed. Proven by `three concurrent starts: two run, third waits with a visible line, then runs, all slots released` and `slots held by a dead PID are reclaimed` (tests/test-test-slot.sh).
+
+### Fixed
+
+- Pressing Ctrl-C or sending SIGTERM to a queued or running full test run now stops it and frees its slot; the wrapper exits 130 on SIGINT and 143 on SIGTERM. Filtered runs (`bun run test <file>`) skip the queue and keep their exit code. Proven by `SIGINT stops the wrapper within the grace period and exits 130`, `no slot left after SIGTERM and normal exit` and `filtered run bypasses the queue and keeps its exit code` (tests/test-test-slot.sh).
+
 ## v11.87.0 (2026-10-29)
 
 ### Fixed
