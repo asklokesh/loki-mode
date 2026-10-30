@@ -82,7 +82,7 @@ time-to-first-preview write-once (bash route only).
 
 ## Anthropic SDK upgrade capability matrix (RQ-104, 2026-10-23)
 
-Pins (exact, all sites): `@anthropic-ai/sdk` 0.124.0 -> 1.3.0 (loki-ts/package.json, loki-ts/bun.lock, docker/Dockerfile peer pin); `@anthropic-ai/claude-agent-sdk` 0.3.293 -> 0.3.312 (loki-ts/package.json, package.json, package-lock.json, bun.lock, docker/Dockerfile). `tests/test-sdk-version-sync.sh` asserts both. Sources: sdk CHANGELOG 0.125.0..1.3.0, agent-sdk CHANGELOG 0.3.294..0.3.312.
+Pins (exact, all sites): `@anthropic-ai/sdk` 0.124.0 -> 1.3.0 (loki-ts/package.json, loki-ts/bun.lock, docker/Dockerfile peer pin); `@anthropic-ai/claude-agent-sdk` 0.3.293 -> 0.3.314 (loki-ts/package.json, package.json, package-lock.json, bun.lock, docker/Dockerfile). `tests/test-sdk-version-sync.sh` asserts both. Sources: sdk CHANGELOG 0.125.0..1.3.0, agent-sdk CHANGELOG 0.3.294..0.3.314.
 
 | Change | Status |
 |---|---|

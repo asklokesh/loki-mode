@@ -183,7 +183,7 @@ COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/ui/dist ./pac
 # @anthropic-ai/sdk is pinned to the loki-ts/package.json version because npm
 # auto-installs the agent SDK's open-ended peer (>=0.93.0) at the newest release;
 # an upstream publish whose tarball had not propagated yet 404'd this step.
-RUN cd loki-ts && npm install --no-save --no-package-lock @anthropic-ai/claude-agent-sdk@0.3.312 \
+RUN cd loki-ts && npm install --no-save --no-package-lock @anthropic-ai/claude-agent-sdk@0.3.314 \
     @anthropic-ai/sdk@1.3.0 \
     && chown -R loki:loki node_modules
 
