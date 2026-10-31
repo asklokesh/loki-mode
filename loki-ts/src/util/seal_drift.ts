@@ -25,6 +25,14 @@ export function tornTail(raw: string): boolean {
 
 /** The events the receipt hash actually covers: the line-aligned prefix of events.jsonl hashing to events_sha256 (verify_cmd checkEventLog's rule), cut at log.sealed.
  *  Lines appended after seal are unbound and prove nothing. Null when no prefix matches (checkEventLog already reports that as TAMPERED). */
+/** An answered run.resumed: answered:true with a string answer whose recorded answer_sha256 is the sha256 of that answer (what `loki answer` writes). */
+export const isAnsweredResume = (e: EventEnvelope): boolean => e.type === "run.resumed" && e.data["answered"] === true && typeof e.data["answer"] === "string" && e.data["answer_sha256"] === createHash("sha256").update(e.data["answer"]).digest("hex");
+/** True when the receipt.sealed at `seal` is an earlier attempt of an answered BLOCKED run: its next run.completed is a SPEC_CONFLICT that comes before `next`, and an answered resume follows it before `next`. */
+export function answeredBlockedBetween(events: readonly EventEnvelope[], seal: number, next: number): boolean {
+  const c = events.findIndex((e, i) => i > seal && e.type === "run.completed");
+  return c > seal && events[c]!.data["verdict"] === "SPEC_CONFLICT" && events.some((e, i) => i > c && i < next && isAnsweredResume(e));
+}
+
 function boundEvents(log: string, bound: string): EventEnvelope[] | null {
   if (!existsSync(log)) return null;
   const lines = readFileSync(log, "utf8").split("\n").filter((l) => l.trim() !== ""), h = createHash("sha256");
@@ -32,8 +40,9 @@ function boundEvents(log: string, bound: string): EventEnvelope[] | null {
   for (let i = 0; i <= lines.length; i++) { if (h.copy().digest("hex") === bound) { n = i; break; } if (i < lines.length) h.update(lines[i] + "\n"); }
   if (n < 0) return null;
   const evs = lines.slice(0, n).flatMap((l) => { try { return [JSON.parse(l) as EventEnvelope]; } catch { return []; } });
-  const sealed = evs.findIndex((e, i) => e.type === "receipt.sealed" && !evs.slice(i + 1).some((x) => x.type === "run.resumed" && x.data["answered"] === true)); // a log.sealed inside the prefix is a cancel seal of an earlier attempt; only a receipt.sealed no answered run.resumed follows ends the bound run (an answered BLOCKED run seals once per attempt)
-  return sealed >= 0 ? evs.slice(0, sealed) : evs;
+  const seals = evs.flatMap((e, i) => (e.type === "receipt.sealed" ? [i] : []));
+  const sealed = seals.find((s, k) => !answeredBlockedBetween(evs, s, seals[k + 1] ?? evs.length)); // a log.sealed inside the prefix is a cancel seal of an earlier attempt; only a receipt.sealed that no answered BLOCKED run separates from the next seal (or from the end of the bound prefix) ends the bound run (an answered BLOCKED run seals once per attempt)
+  return sealed !== undefined ? evs.slice(0, sealed) : evs;
 }
 
 /** The shared log.sealed reader (every reader that once cut at the first log.sealed uses this instead). Each log.sealed must hash every line before it, carry

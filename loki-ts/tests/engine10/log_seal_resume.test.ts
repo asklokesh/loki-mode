@@ -9,7 +9,7 @@ import { runSupervisor, SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { readEvents } from "../../src/engine10/events.ts";
 import { findInterrupted, isCancelDone, resumeMain, resumePoint, resumePublish, phaseOf, startRecovery, type RunPrFn } from "../../src/util/run_outputs.ts";
-import { verifyLogSeals } from "../../src/util/seal_drift.ts";
+import { sealDrift, verifyLogSeals } from "../../src/util/seal_drift.ts";
 import { main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
 const root = mkdtempSync(join(tmpdir(), "sb04r4-"));
@@ -18,10 +18,10 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 const types = (ev: string): string => readFileSync(ev, "utf8").trim().split("\n").map((l) => JSON.parse(l).type).join(",");
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
 let n = 0;
-function seal(dir: string, id: string, ev: string, log: SupervisorLog, checks: unknown[]): void {
+function seal(dir: string, id: string, ev: string, log: SupervisorLog, checks: unknown[], signed = true): void {
   const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sha(readFileSync(ev)), time: { wall_s: 0, stages: {} }, log_seal: true, checks };
   const hash = receiptSha256(body as never);
-  writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signReceipt(id, hash) }, null, 2));
+  writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signed ? signReceipt(id, hash) : { jwt: null } }, null, 2));
   log.append("receipt.sealed", "seal", { receipt_sha256: hash });
 }
 
@@ -105,21 +105,21 @@ test("a second receipt.sealed is TAMPERED", async () => {
 });
 
 /** An answered run as the supervisor writes it: attempt one seals (first verdict, optionally BLOCKED), then an in-place answer resumes it and attempt two seals again. */
-function answeredRun(firstVerdict: string, resumed: boolean, answered = true): { dir: string; ev: string; id: string; first: string } {
+function answeredRun(firstVerdict: string, resumed: boolean, answered = true, extra: Record<string, unknown> = {}, signed = true): { dir: string; ev: string; id: string; first: string } {
   const id = `e10-r4-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
   let log = new SupervisorLog(ev, id);
   log.append("run.started", null, { provider: "claude" });
   log.append("stage.started", "verify", {});
-  seal(dir, id, ev, log, []);
+  seal(dir, id, ev, log, [], signed);
   const first = readFileSync(join(dir, "receipt.json"), "utf8");
   log.append("run.completed", null, { verdict: firstVerdict });
-  log.sealLog();
+  if (signed) log.sealLog();
   log = new SupervisorLog(ev, id);
-  if (resumed) log.append("run.resumed", null, answered ? { answered: true, answer: "yes", answer_sha256: sha("yes"), question: "q" } : {});
+  if (resumed) log.append("run.resumed", null, answered ? { answered: true, answer: "yes", answer_sha256: sha("yes"), question: "q", ...extra } : {});
   log.append("test.result", "verify", { name: "unit", cmd: "bun test", result: "pass" });
-  seal(dir, id, ev, log, [{ name: "unit", cmd: "bun test", result: "pass" }]);
+  seal(dir, id, ev, log, [{ name: "unit", cmd: "bun test", result: "pass" }], signed);
   log.append("run.completed", null, { verdict: "VERIFIED" });
-  log.sealLog();
+  if (signed) log.sealLog();
   return { dir, ev, id, first };
 }
 const tamperedBySecondSeal = async (dir: string): Promise<void> => {
@@ -149,6 +149,39 @@ test("an edited first-attempt event of an answered run is TAMPERED", async () =>
   const r = answeredRun("SPEC_CONFLICT", true);
   writeFileSync(r.ev, readFileSync(r.ev, "utf8").replace('"stage.started"', '"stage.started" '));
   expect((await verifyReceipt(join(r.dir, "receipt.json"))).verdict).toBe("TAMPERED");
+});
+
+/** loki verify's composition: the library verdict, then sealDrift on an intact receipt. */
+const cli = async (rc: string): Promise<string> => { const r = await verifyReceipt(rc); if (r.verdict !== "VERIFIED" && r.verdict !== "UNSIGNED") return r.verdict; const d = sealDrift(rc, JSON.parse(readFileSync(rc, "utf8"))); return d ? `${d.verdict}:${d.reason}` : r.verdict; };
+test("C0 an honest answered BLOCKED run is VERIFIED by the library and by the loki verify composition", async () => {
+  const r = answeredRun("SPEC_CONFLICT", true), rc = join(r.dir, "receipt.json");
+  expect((await verifyReceipt(rc)).verdict).toBe("VERIFIED"); expect(await cli(rc)).toBe("VERIFIED");
+});
+test("N2 an answered resume whose answer_sha256 is not the sha256 of its answer is TAMPERED", async () => {
+  await tamperedBySecondSeal(answeredRun("SPEC_CONFLICT", true, true, { answer_sha256: "deadbeef" }).dir);
+});
+test("N2 an answered resume whose answer was swapped after its hash was recorded is TAMPERED", async () => {
+  await tamperedBySecondSeal(answeredRun("SPEC_CONFLICT", true, true, { answer: "no" }).dir);
+});
+test("N2 an answered resume with no string answer is TAMPERED", async () => {
+  await tamperedBySecondSeal(answeredRun("SPEC_CONFLICT", true, true, { answer: 7 }).dir);
+});
+test("N1 an unsigned receipt with an answered resume forged after a VERIFIED first seal reads TAMPERED, not UNSIGNED", async () => {
+  const v = await cli(join(answeredRun("VERIFIED", true, true, {}, false).dir, "receipt.json"));
+  expect(v).toContain("TAMPERED:receipt claims pass");
+});
+test("A9 an unsigned run whose pass exists only in attempt two with a plain resume is still fabricated", async () => {
+  expect(await cli(join(answeredRun("VERIFIED", true, false, {}, false).dir, "receipt.json"))).toContain("TAMPERED:receipt claims pass");
+});
+test("A11b an unsigned worker-writable event spoofing answered does not widen the bound", async () => {
+  const id = `e10-r4-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  let log = new SupervisorLog(ev, id);
+  log.append("run.started", null, { provider: "claude" }); log.append("stage.started", "verify", {});
+  seal(dir, id, ev, log, [], false); log.append("run.completed", null, { verdict: "SPEC_CONFLICT" });
+  log = new SupervisorLog(ev, id); log.append("run.resumed", null, {}); log.append("stage.completed", "verify", { answered: true, answer: "yes", answer_sha256: sha("yes"), question: "q" });
+  log.append("test.result", "verify", { name: "unit", cmd: "bun test", result: "pass" });
+  seal(dir, id, ev, log, [{ name: "unit", cmd: "bun test", result: "pass" }], false); log.append("run.completed", null, { verdict: "VERIFIED" });
+  expect(await cli(join(dir, "receipt.json"))).toContain("TAMPERED:receipt claims pass");
 });
 
 // Round 5: a cancelled publish-phase run goes findInterrupted -> resumePublish without resumePoint, so the seal check and the receipt file must carry the trust.

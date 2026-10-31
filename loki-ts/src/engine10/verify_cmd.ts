@@ -6,7 +6,7 @@ import { basename, dirname, join } from "node:path";
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { lokiDir } from "../util/paths.ts"; import { receiptSealAccuracy } from "../util/run_outputs.ts";
 import { applyMaxAge, deployAttestCmd, pubFor, receiptShapeProblem, takeMaxAge } from "../util/receipt_signer.ts";
-import { latestRunId } from "../commands/run_status.ts"; import { sealDrift, tornTail, verifyLogSeals, wallNotComparedNote } from "../util/seal_drift.ts";
+import { latestRunId } from "../commands/run_status.ts"; import { answeredBlockedBetween, sealDrift, tornTail, verifyLogSeals, wallNotComparedNote } from "../util/seal_drift.ts";
 import { readEvents } from "./events.ts";
 import { isExecutedProof, printable, sealedWallCopy, sealedWallDir, withExplain, type ExplainRec } from "../util/check_result.ts";
 import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
@@ -88,7 +88,7 @@ function checkLogSeal(receiptPath: string, hash: string, kid: unknown, given?: K
   const rs = events.findIndex((e) => e.type === "receipt.sealed" && e.data["receipt_sha256"] === hash);
   if (rs < 0) return { verdict: "TAMPERED", reason: "events.jsonl has no receipt.sealed event for this receipt" };
   const seals = events.flatMap((e, i) => (e.type === "receipt.sealed" ? [i] : [])); // a run seals one receipt; only an answered BLOCKED run seals once per attempt: each earlier seal is followed by a SPEC_CONFLICT run.completed, then an answered run.resumed, all before the next seal, and this receipt's seal is the last (the signed log.sealed chain covers every attempt)
-  if (!seals.every((s, k) => { const n = seals[k + 1], c = events.findIndex((e, i) => i > s && e.type === "run.completed"); return n === undefined ? s === rs : c > s && c < n && events[c]!.data["verdict"] === "SPEC_CONFLICT" && events.some((e, i) => i > c && i < n && e.type === "run.resumed" && e.data["answered"] === true && typeof e.data["answer_sha256"] === "string"); })) return { verdict: "TAMPERED", reason: "events.jsonl holds more than one receipt.sealed event without an answered BLOCKED run between them; a run seals exactly one receipt" };
+  if (!seals.every((s, k) => { const n = seals[k + 1]; return n === undefined ? s === rs : answeredBlockedBetween(events, s, n); })) return { verdict: "TAMPERED", reason: "events.jsonl holds more than one receipt.sealed event without an answered BLOCKED run between them; a run seals exactly one receipt" };
   const raw = readFileSync(path, "utf8"), whole = tornTail(raw) ? raw.slice(0, raw.lastIndexOf("\n") + 1) : raw; // a torn final line is dropped as checkEventLog drops it, so sealDrift reports it UNCHECKED
   const chain = verifyLogSeals(whole, events, { kid, given, expectSeal: true }); // every cancel seal, not only the last, must hash the lines before it
   if (chain) return { verdict: "TAMPERED", reason: chain };
