@@ -151,7 +151,7 @@ function nearestPackageRoot(testDir: string, repoDir: string, fileName: string):
   let pkg = testDir; while (pkg !== repoDir && pkg !== dirname(pkg) && !shaped(pkg)) pkg = dirname(pkg);
   return pkg;
 }
-const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSync|renameSync|symlinkSync|mkdir|writeFile|appendFile|cp|copyFile|rename|outputFile|ensureDir|mkdirp)\(/g;
+const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSync|renameSync|symlinkSync|mkdir|writeFile|appendFile|cp|copyFile|rename|outputFile|ensureDir|mkdirp|write|Bun\.write)\(/g;
 
 /** Paths the task text names as files (a name with a letter-bearing extension, optionally dir-prefixed), normalized repo-relative; the greenfield counterpart of namedFiles, which only sees files already in the repo map. */
 export function taskNamedPaths(task: string): string[] {

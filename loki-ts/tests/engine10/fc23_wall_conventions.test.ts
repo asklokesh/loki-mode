@@ -329,6 +329,7 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(phantomRepoPaths("const f = join(__dirname, 'fixtures', 'a.json');", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths("const f = join(__dirname, '..', 'node_modules', 'x');", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths(PHANTOM, "a.py", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths('const cfg = join(import.meta.dir, "config.yaml");\nBun.write(cfg, "x");', "a.test.ts", td, repo, null, "Create config.yaml")).toEqual([]);
   });
   test("task-named file beside the test file (greenfield sh-rotate Wall) is reported, at its true root path or as an unnamed fixture it is not", () => {
     const repo = cjsRepo(), td = join(repo, "tests"), task = "Write rotate.sh that rotates log files and also see docs/guide.md";
@@ -495,6 +496,15 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     const why = phantomReason(["plugins/ralph-loop"], ["some/other/ralph-loop/run.sh", "x/y.ts"]);
     expect(why).toContain("plugins/ralph-loop (a path named ralph-loop exists at some/other/ralph-loop)");
     expect(phantomReason([], [])).toBeNull();
+  });
+  test("wallAuthor wiring: a Wall resolving the task-named rotate.sh beside the test is re-asked with the named-path reason; the root-path rewrite is kept", async () => {
+    const repoDir = cjsRepo(); const briefs: string[] = [];
+    const ctx = wallCtx(repoDir, (o) => { briefs.push(o.brief); writeFileSync(join(o.cwd!, "loki_wall_rotate.test.ts"), `const S = join(__dirname, ${briefs.length === 1 ? "" : "'..', "}'rotate.sh');\ntest('x', () => { expect(S).toBeTruthy(); });\n`); });
+    const base = ctx.outputs; ctx.outputs = () => ({ ...base(), intake: { ...(base().intake as Record<string, unknown>), task: "Write `rotate.sh DIR KEEP` in bash that keeps the KEEP newest files" } }) as never;
+    const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(briefs.length).toBe(2);
+    expect(briefs[1]).toContain("task names rotate.sh");
+    expect(r.data.discarded).toBeUndefined();
   });
   test("a phantom path is re-asked once with the reason and the nearest real file; the rewrite is kept", async () => {
     const repoDir = repoWith(); const briefs: string[] = [];
