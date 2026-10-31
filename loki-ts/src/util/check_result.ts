@@ -165,14 +165,61 @@ function goCount(out: string, ok?: boolean): number | null | undefined {
  *  Any `&&`, `;`, `||` or `|` segment that runs go counts. Chosen from the command, never from output. Detecting go too often
  *  only fails closed (exit 0 is not_run), so a doubtful wrapper is classified as go. */
 /** The ONE command-shape test for every runner we corroborate (go, cargo). Every word of the command, split on whitespace and all shell punctuation, so a wrapper (nice, timeout, sh -c "...", bash -lc, a subshell, rustup run stable ...) cannot hide the tool: true when any word's basename is `tool`. */
-function mentionsTool(tool: string, toks: readonly string[]): boolean {
-  return toks.some((t) => t.split(/[\s"'`();&|<>${}\[\],=]+/).some((w) => w !== "" && basename(w) === tool));
+const SHELL_WORDS = new Set(["sh", "bash", "zsh", "dash", "ksh"]), RESERVED_WORDS = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "{", "}"]);
+// wrapper -> its flags that take a separate value (a value-less flag is skipped alone)
+const WRAPPERS: Record<string, readonly string[]> = { env: ["-u", "-C", "--unset", "--chdir"], nice: ["-n"], timeout: ["-s", "-k", "--signal", "--kill-after"], xargs: ["-n", "-L", "-P", "-I", "-s", "-d", "-E", "-a"], sudo: ["-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U"], doas: ["-u", "-C"], stdbuf: ["-i", "-o", "-e"], ionice: ["-c", "-n", "-p"], npx: ["-p", "--package"], bunx: [], pnpx: [], arch: [], taskset: ["-c"], chrt: [], time: ["-f", "-o"], command: [], exec: [], builtin: [], nohup: [], setsid: [], unbuffer: [], caffeinate: [], echo: [], printf: [] }; // echo and printf are doubtful wrappers on purpose: `echo go` stays a hit
+/** Split a shell line into simple commands (arrays of unquoted words): quotes and backslashes are honoured, and `;`, `&`, `|`, a newline, a parenthesis and a backtick end one command. */
+function simpleCommands(line: string): string[][] {
+  const out: string[][] = []; let cur: string[] = [], w = "", has = false, q = "";
+  const endWord = (): void => { if (has) cur.push(w); w = ""; has = false; };
+  const endCmd = (): void => { endWord(); if (cur.length) out.push(cur); cur = []; };
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    if (q) { if (ch === q) q = ""; else if (q === '"' && ch === "\\" && i + 1 < line.length) w += line[++i]; else w += ch; continue; }
+    if (ch === "'" || ch === '"') { q = ch; has = true; } else if (ch === "\\" && i + 1 < line.length) { w += line[++i]; has = true; }
+    else if (/\s/.test(ch)) { if (ch === "\n") endCmd(); else endWord(); }
+    else if (";&|()`".includes(ch)) { if (ch === "(" && w === "$") { w = ""; has = false; } endCmd(); }
+    else { w += ch; has = true; }
+  }
+  endCmd(); return out;
+}
+/** Whether one simple command runs `tool`: the command word (after reserved words, VAR=val assignments, redirections and known wrappers with their flags) has basename `tool`. A path or argument named like the tool (pytest tests/go, make DIR=go, npm test -- --grep cargo) is not a run of it. */
+function runsTool(tool: string, words: readonly string[], depth: number): boolean {
+  let i = 0;
+  for (;;) {
+    while (i < words.length && (RESERVED_WORDS.has(words[i]!) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!) || /^\d*[<>]/.test(words[i]!))) i += /^\d*[<>]+$/.test(words[i]!) ? 2 : 1;
+    const w = words[i]; if (w === undefined) return false;
+    const name = basename(w); if (name === tool) return true;
+    if (SHELL_WORDS.has(name)) {
+      for (let j = i + 1; j < words.length && /^-/.test(words[j]!); j++) if (/^-[A-Za-z]*c[A-Za-z]*$/.test(words[j]!)) return depth < 4 && words[j + 1] !== undefined && anyCommandRuns(tool, words[j + 1]!, depth + 1);
+      return false;
+    }
+    if (name === "eval") return depth < 4 && anyCommandRuns(tool, words.slice(i + 1).join(" "), depth + 1);
+    if (name === "rustup" && words[i + 1] === "run") { i += 3; continue; }
+    if (["pnpm", "yarn", "bun", "npm"].includes(name) && ["exec", "x", "dlx"].includes(words[i + 1] ?? "")) { i += 2; continue; }
+    const vf = WRAPPERS[name]; if (!vf) return false;
+    i++;
+    for (; i < words.length; i++) {
+      const a = words[i]!;
+      if (name === "env" && a === "-S") return depth < 4 && words[i + 1] !== undefined && anyCommandRuns(tool, words[i + 1]!, depth + 1);
+      if (a === "--") continue;
+      if (a.startsWith("-")) { if (vf.includes(a)) i++; continue; }
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(a) || (name === "timeout" && /^\d+(?:\.\d+)?[smhd]?$/.test(a))) continue;
+      break;
+    }
+  }
+}
+const anyCommandRuns = (tool: string, line: string, depth = 0): boolean => simpleCommands(line).some((c) => runsTool(tool, c, depth));
+/** Whether the command (a shell line, or an argv) runs `tool` in command position. Detecting a tool too often only fails closed, but a mere path or argument named like it must not turn an honest pass into not_run. */
+function mentionsTool(tool: string, cmd: string, args?: readonly string[]): boolean {
+  if (!args) return anyCommandRuns(tool, cmd);
+  return runsTool(tool, [cmd, ...args], 0) || ([cmd, ...args].some((a) => /[;&|()`]/.test(a)) && anyCommandRuns(tool, [cmd, ...args].join(" "))); // an argv element carrying shell syntax is also read as a line
 }
 /** The command as a word list: an argv as is, a line split on whitespace. */
 const commandWords = (cmd: string, args?: readonly string[]): string[] => (args ? [cmd, ...args] : cmd.trim().split(/\s+/));
 /** One shared Go-runner detection for every caller (verify, deep, per-package suites): a shell command line or an argv in which ANY word is go (a path to go, an env or nice or timeout or sh -c wrapper, a subshell, a `&&` segment). Chosen from the command, never from output. Detecting go too often only fails closed (exit 0 is not_run, and corroboratePass accepts only a plain `go test` line), so a doubtful wrapper is classified as go. */
 export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" } | Record<string, never> {
-  return mentionsTool("go", commandWords(cmd, args)) ? { runner: "go" } : {};
+  return mentionsTool("go", cmd, args) ? { runner: "go" } : {};
 }
 const CARGO_GLOBAL_FLAGS = new Set(["-v", "-vv", "--verbose", "-q", "--quiet", "--frozen", "--locked", "--offline"]), CARGO_OTHER_SUBS = new Set(["build", "check", "clippy", "fmt", "doc", "clean", "fetch", "tree", "run", "bench", "metadata", "update", "install", "publish", "package", "login", "search", "vendor"]);
 /** A cargo invocation parsed strictly: `cargo [known global flags, their values consumed] <sub> [args]`, nothing before cargo (no wrapper, no shell, no +toolchain shim). null = not a plain invocation. */
@@ -379,7 +426,7 @@ async function corroborateCargoPass(c: Classified, out: string, p: { global: str
  *  not_run. A non-pass result is returned unchanged. Residual risk, stated plainly: code that reproduces the cover tool's block table for its own source can still forge. */
 export async function corroboratePass(c: Classified, out: string, cmdOrLine: string, args: readonly string[] | undefined, o: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }): Promise<Classified> {
   const toks = commandWords(cmdOrLine, args);
-  if (c.result === "pass" && mentionsTool("cargo", toks)) { // only a plain `cargo [globals] test|t` is corroborated; any other shape holding cargo (wrapper, shell, subshell, +toolchain, an alias) is refused, except a plain non-test subcommand
+  if (c.result === "pass" && mentionsTool("cargo", cmdOrLine, args)) { // only a plain `cargo [globals] test|t` is corroborated; any other shape holding cargo (wrapper, shell, subshell, +toolchain, an alias) is refused, except a plain non-test subcommand
     const p = parseCargo(toks);
     if (p && p.sub === "test") return corroborateCargoPass(c, out, p, o); // the literal subcommand only: an alias (cargo t, or [alias] t = "run") can point it at main(), which prints a forged libtest summary
     if (!(p && CARGO_OTHER_SUBS.has(p.sub)) || /^test result:|^test \S.* \.\.\. ok\b/m.test(out)) return { result: "not_run", reason: CARGO_UNLISTED_REASON }; // run and bench execute the user's main(), whose libtest-shaped output is not a pass

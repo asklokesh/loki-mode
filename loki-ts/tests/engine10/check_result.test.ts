@@ -1190,6 +1190,35 @@ done
     const r = await spawnCollect("sleep", ["30"], { timeoutMs: 60_000, signal: ac.signal });
     expect(r.status).toBeNull(); expect(Date.now() - t0).toBeLessThan(5000);
   }, 15_000);
+  test("a path or argument named go or cargo is not a runner: an honest pass of another runner keeps its pass", async () => {
+    const pass = { result: "pass" as const, n: 3 }, o = { cwd: tmpdir(), env: process.env };
+    for (const line of ["npx jest tests/go", "pytest -q tests/go", "make test DIR=go", "pytest -q tests/cargo", "npm test -- --grep cargo", "cd go && npm test", "bun test src/cargo/x.test.ts"]) {
+      expect(goRunner(line)).toEqual({}); expect(await corroboratePass(pass, "", line, undefined, o)).toEqual(pass);
+    }
+    expect(goRunner("npx", ["jest", "tests/go"])).toEqual({}); expect(await corroboratePass(pass, "", "pytest", ["-q", "tests/cargo"], o)).toEqual(pass);
+  });
+  test("a tool in command position stays a runner through every wrapper and separator", async () => {
+    for (const line of ["go test ./...", "env X=1 go test", "timeout -s KILL 5 go test", "nice -n 5 go test", "cd x && go test", "a; go test", "a || go test", "a | go test", "(go test)", "$(go test)", "`go test`", "sh -c 'cd x && go test'", "bash -lc \"go test ./...\"", "xargs -n1 go test", "sudo -u me go test", "rustup run stable go test", "npx go", "echo go"]) expect(goRunner(line)).toEqual({ runner: "go" });
+    expect(goRunner("sh", ["-c", "cd x && go test"])).toEqual({ runner: "go" });
+    const pass = { result: "pass" as const, n: 1 }, o = { cwd: tmpdir(), env: process.env };
+    for (const line of ["nice cargo test", "timeout 5 cargo test", "sh -c 'cargo test'", "x; cargo test", "(cargo test)", "rustup run stable cargo test", "pnpm exec cargo test"]) expect(await corroboratePass(pass, "", line, undefined, o)).toEqual({ result: "not_run", reason: CARGO_UNLISTED_REASON });
+  });
+  test("spawnCollect leaves no watchdog child after a normal finish or an abort", async () => {
+    const dogs = (): number[] => (spawnSync("ps", ["-ax", "-o", "pid=,command="], { encoding: "utf8" }).stdout ?? "").split("\n").filter((l) => l.includes(`const O = ${process.pid},`)).map((l) => Number(l.trim().split(/\s+/)[0]));
+    const before = new Set(dogs()), fresh = (): number[] => dogs().filter((p) => !before.has(p));
+    await spawnCollect("sh", ["-c", "sleep 0.3"], { timeoutMs: 10_000 });
+    const ac = new AbortController(); setTimeout(() => ac.abort(), 100); await spawnCollect("sleep", ["30"], { timeoutMs: 60_000, signal: ac.signal });
+    let left = fresh(); for (let i = 0; i < 20 && left.length; i++) { await new Promise((res) => setTimeout(res, 100)); left = fresh(); }
+    for (const p of left) { try { process.kill(p, "SIGKILL"); } catch { /* gone */ } }
+    expect(left).toEqual([]);
+  }, 30_000);
+  test("an abort after a normal finish does not signal the finished group", async () => {
+    const ac = new AbortController(), r = await spawnCollect("sh", ["-c", "echo ok"], { timeoutMs: 10_000, signal: ac.signal });
+    expect(r.status).toBe(0);
+    let hit = 0; const orig = process.kill; (process as { kill: typeof process.kill }).kill = ((pid: number, sig?: string | number) => { if (pid < 0 && sig === "SIGTERM") hit++; return orig(pid, sig as never); }) as typeof process.kill;
+    try { ac.abort(); await new Promise((res) => setTimeout(res, 50)); } finally { (process as { kill: typeof process.kill }).kill = orig; }
+    expect(hit).toBe(0);
+  });
   test("an aborted stage kills the whole group: a SIGTERM-ignoring grandchild holding the pipes sees SIGTERM then SIGKILL and is gone and the promise resolves null", async () => {
     const d = mkdtempSync(join(tmpdir(), "loki-abort-")), pidFile = join(d, "gc.pid"), termFile = join(d, "term"); let gc = 0;
     try {
