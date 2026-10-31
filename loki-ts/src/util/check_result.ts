@@ -346,7 +346,7 @@ function stripTomlComments(t: string): string {
   }).join("\n");
 }
 /** The [env] names that let the repo steer what runs: PATH finds the repo's own cc or ld, LD_PRELOAD, DYLD_INSERT_LIBRARIES, LD_AUDIT and the library and framework search paths load repo code into every process cargo starts. */
-const CARGO_ENV_HIJACK = ["PATH", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "LD_AUDIT", "DYLD_VERSIONED_LIBRARY_PATH"] as const;
+const CARGO_ENV_HIJACK = ["PATH", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "LD_AUDIT", "DYLD_VERSIONED_LIBRARY_PATH", "DYLD_FALLBACK_FRAMEWORK_PATH", "DYLD_VERSIONED_FRAMEWORK_PATH"] as const;
 /** An [env] table (or inline env table, or env.<name> key) that sets the given variable. */
 function cargoEnvSets(t: string, name: string): boolean {
   const E = String.raw`["']?env["']?`, N = String.raw`["']?${name}["']?`; // cargo honors a quoted env table name and key

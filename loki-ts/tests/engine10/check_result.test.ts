@@ -1083,6 +1083,7 @@ describe("cargo listing check residuals", () => {
     ['quoted ["env"."LD_PRELOAD"] header', '["env"."LD_PRELOAD"]\nvalue = "x"\n', "[env] LD_PRELOAD"], ["single-quoted ['env'.LD_PRELOAD] header", "['env'.LD_PRELOAD]\nvalue = 'x'\n", "[env] LD_PRELOAD"],
     ['quoted "env" inline table', '"env" = { LD_LIBRARY_PATH = "x" }\n', "[env] LD_LIBRARY_PATH"], ['quoted "env".DYLD_INSERT_LIBRARIES dotted key', '"env".DYLD_INSERT_LIBRARIES = "x"\n', "[env] DYLD_INSERT_LIBRARIES"],
     ['quoted ["env"."PATH"] header', '["env"."PATH"]\nvalue = "x"\n', "[env] PATH"], ['quoted ["env"] table with a key', '["env"]\nLD_PRELOAD = "x"\n', "[env] LD_PRELOAD"],
+    ["[env] DYLD_FALLBACK_FRAMEWORK_PATH", '[env]\nDYLD_FALLBACK_FRAMEWORK_PATH = "/repo/fw"\n', "[env] DYLD_FALLBACK_FRAMEWORK_PATH"], ["[env] DYLD_VERSIONED_FRAMEWORK_PATH", '[env]\nDYLD_VERSIONED_FRAMEWORK_PATH = "/repo/fw"\n', "[env] DYLD_VERSIONED_FRAMEWORK_PATH"],
     ["[env] LD_AUDIT", '[env]\nLD_AUDIT = "/repo/audit.so"\n', "[env] LD_AUDIT"], ["[env] DYLD_VERSIONED_LIBRARY_PATH", '[env]\nDYLD_VERSIONED_LIBRARY_PATH = "/repo/lib"\n', "[env] DYLD_VERSIONED_LIBRARY_PATH"],
   ];
   for (const [name, body, what] of COMPILER_FORMS) test(`a repo cargo config with ${name} is refused with its own reason`, async () => {
@@ -1175,6 +1176,8 @@ describe("cargo listing check residuals", () => {
     ["a long-escape key", '"cargo-featur\\U00000065s" = ["x"]\n', ESC],
     // the top-level region ends by bracket depth, not at the first line starting with [; a backslash or multi-line quote anywhere in it is doubt
     ["a line-continuation multi-line string value", '"cargo-features" = ["""profile-\\\nrustflags"""]\n', ESC], ["an array hiding the first table-looking line, escaped value", 'a = [\n[1]]\ncargo-features = ["profile-\\u0072ustflags"]\n', ESC],
+    ["a basic multi-line string hides a header", 'a = """\n[x]\n"""\n"cargo-featu\\u0072es" = ["profile-rustflags"]\n', ESC],
+    ["a literal multi-line string hides a header", "a = '''\n[x]\n'''\n\"cargo-featu\\u0072es\" = [\"profile-rustflags\"]\n", ESC],
     ["an array hiding the first table-looking line, escaped quoted key", 'a = [\n[1]]\n"cargo-featu\\u0072es" = ["profile-rustflags"]\n', ESC], ["an array hiding the first table-looking line, literal value", 'a = [\n[1]]\ncargo-features = ["profile-rustflags"]\n', PR_WHAT],
   ];
   for (const [name, head, what] of PROFILE_FORMS) test(`a Cargo.toml with ${name} is refused naming the manifest`, async () => {
