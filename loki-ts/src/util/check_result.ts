@@ -162,19 +162,50 @@ function goCount(out: string, ok?: boolean): number | null | undefined {
   return lines.filter((x) => GO_PKG_RE.test(x)).every((x) => /\[no tests? (?:files|to run)\]/.test(x)) ? 0 : null;
 }
 /** Go is package-directory scoped: a test in tests/ cannot see root package code and only compiles through an implementer shim that is never committed. The Wall goes beside the first planned or named
- *  .go file in the texts ([plan, task]; the plan text only exists on resume, since plan and Wall run in one parallel group), or at the repo root without one. pkg, in order: a sibling non-test package clause;
- *  an explicit "package X" in the task; stem "main" gives main; a non-root dir gives its basename; a root file gives the go.mod module's last element without a /vN suffix; a non-identifier gives null (no brief line). */
-const GO_SRC = /(?<![\w./-])((?:[\w.-]+\/)*[\w-]+)\.go(?!\w)/g, GO_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/, GO_KEYWORDS = new Set("break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var".split(" "));
+ *  .go file in the texts (plan, then task), or at the repo root without one; pkg is a sibling's package clause, else "main" when its sentence says package main, else the directory name (the file stem only at the repo root). */
+const GO_SRC = /(?<![\w./-])((?:[\w.-]+\/)*[\w-]+)\.go(?!\w)/g;
+const GO_DIR = /(?<![\w./:$-])((?:[\w.-]+\/)*[\w-]*[A-Za-z0-9][\w-])\/(?![\w{]|\.\w)|\b(?:director(?:y|ies)|folder|dir)\s+`((?:[\w.-]+\/)*[\w-]+)`/g;
+// A package name is taken only when tied to the directory: "package X" right after it ("as package X", "directory as package X") or "package main in <dir>";
+// "package" as an English noun elsewhere ("the npm package manager in api/") only shows the sentence talks about a package, the name stays the directory's.
+const GO_PKG_AFTER = /^[\s,(:;-]*(?:(?:directory|dir|folder)\s+)?(?:(?:as|named|called)\s+)?(?:the\s+)?package\s+`?(?!(?:for|is|that|which|with|and|to|the|in|of|a|an|name|path)\b)([A-Za-z_]\w*)`?/;
+const GO_MAIN_BEFORE = /\bpackage\s+main\s+(?:in|under|at|inside|within|into|to)\s+(?:the\s+)?(?:directory\s+)?$/;
+const GO_IDENT = /^[A-Za-z_]\w*$/, GO_MAJOR = /^v\d+$/;
+const GO_KEYWORDS = new Set("break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var".split(" "));
+const goRel = (r: string): string => r.replace(/^(?:\.\/)+/, "");
+const GO_NON_PKG_WORD = /^(?:tests?|docs?|scripts?|vendor|node_modules)$/;
+/** Go's own ignore rule: testdata and any segment starting with _ or . never hold a package the toolchain builds. */
+const goIgnoredPath = (rel: string): boolean => rel.split("/").some((g) => g === "testdata" || g.startsWith("_") || g.startsWith("."));
+const goSiblingPkg = (dir: string): string | undefined => existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".go") && !f.endsWith("_test.go")).map((f) => /^package\s+(\w+)/m.exec(readFileSync(join(dir, f), "utf8"))?.[1]).find(Boolean) : undefined;
 export function plannedGoDir(repoDir: string, texts: string[]): { dir: string; pkg: string | null } {
-  let stem = "";
-  for (const t of texts) for (const m of t.matchAll(GO_SRC)) { const s = m[1]!; if (!stem && !s.endsWith("_test") && !s.split("/").includes("..")) stem = s; }
-  const rel = stem.includes("/") ? dirname(stem) : "", dir = join(repoDir, rel);
-  const sibling = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".go") && !f.endsWith("_test.go")).map((f) => /^package\s+(\w+)/m.exec(readFileSync(join(dir, f), "utf8"))?.[1]).find(Boolean) : undefined;
-  // Only "package `X`" or "(package X)" names the package; every bare name is prose ("the package should", "so this package builds, then") and falls back to the directory, since a wrong name always breaks the run.
-  const em = /\bpackage\s+`([A-Za-z_]\w*)`|\(package\s+([A-Za-z_]\w*)\)/.exec(texts[texts.length - 1] ?? ""), named = em ? (em[1] ?? em[2]) : undefined, explicit = named !== undefined && !GO_KEYWORDS.has(named) ? named : undefined;
-  const mod = rel === "" && existsSync(join(repoDir, "go.mod")) ? /^module\s+(\S+)/m.exec(readFileSync(join(repoDir, "go.mod"), "utf8"))?.[1]?.replace(/\/v\d+$/, "").split("/").pop() : undefined;
-  const pkg = sibling ?? explicit ?? (stem.split("/").pop() === "main" ? "main" : rel !== "" ? basename(rel) : mod) ?? null;
-  return { dir, pkg: pkg !== null && GO_IDENT.test(pkg) ? pkg : null };
+  for (const t of texts) for (const sentence of t.split(/(?<=[.!?])\s+|\n+/)) for (const m of sentence.matchAll(GO_SRC)) {
+    const stem = goRel(m[1]!), rel = dirname(`${stem}.go`), base = stem.split("/").pop()!;
+    if (stem.endsWith("_test") || base.startsWith("_") || base.startsWith(".") || (rel !== "." && goIgnoredPath(rel))) continue;
+    const dir = join(repoDir, rel === "." ? "" : rel);
+    // package main counts only when tied to this file (a main.go stem, "<file> as package main", "package main in <file>"), never from another path in the sentence
+    const all = [...sentence.matchAll(GO_SRC)], k = all.findIndex((x) => x.index === m.index), after = sentence.slice(m.index! + m[0].length, all[k + 1]?.index ?? sentence.length), before = sentence.slice(k > 0 ? all[k - 1]!.index! + all[k - 1]![0].length : 0, m.index!);
+    const tiedMain = base === "main" || GO_PKG_AFTER.exec(after)?.[1] === "main" || GO_MAIN_BEFORE.test(before);
+    // Package order: a sibling's clause; only a backticked "package `X`" or "(package X)" in the task (every bare "package" is prose); package main tied to this file; the directory's name; a root file's go.mod module
+    // (last element, no /vN); and only when all of those give nothing, the file's stem. A name that is no identifier or is a major-version path (v2) is skipped, and none valid gives no brief line.
+    const em = /\bpackage\s+`([A-Za-z_]\w*)`|\(package\s+([A-Za-z_]\w*)\)/.exec(texts[texts.length - 1] ?? ""), explicit = em ? (em[1] ?? em[2]) : undefined;
+    const mod = rel === "." && existsSync(join(repoDir, "go.mod")) ? /^module\s+(\S+)/m.exec(readFileSync(join(repoDir, "go.mod"), "utf8"))?.[1]?.replace(/\/v\d+$/, "").split("/").pop() : undefined;
+    const okName = (n: string | undefined): n is string => n !== undefined && GO_IDENT.test(n) && !GO_MAJOR.test(n);
+    const named = (explicit !== undefined && !GO_KEYWORDS.has(explicit) ? explicit : undefined) ?? [tiedMain ? "main" : undefined, rel === "." ? undefined : rel.split("/").pop()!, mod, base].find(okName) ?? null; // an explicit name is already an identifier and legal even as vN
+    return { dir, pkg: goSiblingPkg(dir) ?? named };
+  }
+  // No .go file named: a named package directory (a leading ./ is fine, backslash paths stay at the root). Per sentence, a directory counts when the word "package" sits
+  // between its neighbouring directory mentions or it already holds a Go package; the package is a sibling's clause, else the one tied to the directory, else its name.
+  for (const t of texts) for (const sentence of t.split(/(?<=[.!?])\s+|\n+/)) {
+    const ms = [...sentence.matchAll(GO_DIR)].filter((m) => { const r = goRel((m[1] ?? m[2])!); return !goIgnoredPath(r) && !r.split("/").some((g) => GO_NON_PKG_WORD.test(g)); });
+    for (let i = 0; i < ms.length; i++) {
+      const m = ms[i]!, rel = goRel((m[1] ?? m[2])!), dir = join(repoDir, rel), sibling = goSiblingPkg(dir);
+      const start = i === 0 ? 0 : ms[i - 1]!.index! + ms[i - 1]![0].length, end = i + 1 < ms.length ? ms[i + 1]!.index! : sentence.length;
+      const tied = GO_PKG_AFTER.exec(sentence.slice(m.index! + m[0].length, end))?.[1] ?? (GO_MAIN_BEFORE.test(sentence.slice(start, m.index!)) ? "main" : undefined);
+      if (!tied && !sibling && !/\bpackage\b/.test(sentence.slice(start, end))) continue;
+      const name = rel.split("/").pop()!; // no stem here: a directory name that is no Go identifier or is vN gives no brief
+      return { dir, pkg: sibling ?? tied ?? (GO_IDENT.test(name) && !GO_MAJOR.test(name) ? name : null) };
+    }
+  }
+  return { dir: repoDir, pkg: null };
 }
 export const goPackageBrief = (repoDir: string, targetDir: string, runners: readonly string[], texts: string[]): string => { const p = runners.includes("go") ? plannedGoDir(repoDir, texts) : null; return p?.pkg && p.dir === targetDir ? `\n\nGo: your test files sit in the package directory, so each one starts with "package ${p.pkg}" and uses the package's identifiers directly.` : ""; };
 /** One shared Go-runner detection for every caller (verify, deep, per-package suites): a shell command line or an argv. Chosen from the command, never from output. The answer is tri-state (see runsTool): a command word in command position is the tool, or the command is fully resolved and does not run it, or some word could not be resolved and the old any-word rule decides. Detecting go too often only fails closed (exit 0 is not_run, and corroboratePass accepts only a plain `go test` line). */
