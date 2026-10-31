@@ -28285,7 +28285,8 @@ _pr_record_merge() {
 # Owner opt-in earned merge (LOKI_EARNED_MERGE=1, off by default). Every path
 # the PR changes (the new name and, for a rename, the previous name, listed by
 # paginated REST and required to match the PR's changedFiles count) must have a
-# Seal record from `loki trust --json` (path_seals) with at least
+# Seal record, judged by `loki trust --check` (the rules live in
+# loki-ts/src/commands/trust.ts, which `loki trust` also displays), with at least
 # LOKI_EARNED_MERGE_MIN_VERIFIED (default 20, floor 1) VERIFIED receipts and
 # exactly 0 reverts in git history. A revert count of null (history
 # unreadable), a missing record, an unreadable trust output or an unreadable or
@@ -28297,44 +28298,38 @@ _pr_record_merge() {
 # PR-only. The reason for a refusal goes to stdout; the return code is 1.
 _pr_earned_merge_check() {
     local pr="$1" min="${LOKI_EARNED_MERGE_MIN_VERIFIED:-20}" meta="" num="" want="" lines="" seals=""
-    local kind p lp g row v r got=0 globs=() diff="" bad_mode="" renames="" refs="" base="" head="" from to m_old m_new
+    local kind p g plist="" verdicts got=0 diff="" bad_mode="" renames="" refs="" base="" head="" from to m_old m_new
     case "$min" in ''|*[!0-9]*) min=20 ;; esac
     [ "$min" -ge 1 ] || min=1
-    command -v jq >/dev/null 2>&1 || { echo "jq is required to read the Seal record"; return 1; }
     meta="$(gh pr view "$pr" --json number,changedFiles -q '"\(.number) \(.changedFiles)"' 2>/dev/null)" || meta=""
     num="${meta%% *}"; want="${meta#* }"
     case "$num$want" in ''|*[!0-9]*) echo "the PR's changed files are unreadable"; return 1 ;; esac
     lines="$(gh api --paginate "repos/{owner}/{repo}/pulls/${num}/files" -q '.[] | ("F\t" + .filename), (select(.previous_filename != null) | "P\t" + .previous_filename)' 2>/dev/null)" || lines=""
     [ -n "$lines" ] || { echo "the PR's changed files are unreadable"; return 1; }
-    seals="$("$_LOKI_SCRIPT_DIR/../bin/loki" trust --json 2>/dev/null)" || seals=""
-    printf '%s' "$seals" | jq -e '.path_seals | type == "array"' >/dev/null 2>&1 || { echo "the Seal record is unreadable"; return 1; }
-    # read -a splits on whitespace without expanding globs against the cwd.
-    read -r -a globs <<EOF_GLOBS
-$(printf '%s' "${LOKI_EARNED_MERGE_PROTECTED:-}" | tr '[:upper:]' '[:lower:]')
-EOF_GLOBS
     while IFS="$(printf '\t')" read -r kind p; do
         [ -n "$p" ] || continue
         [ "$kind" = "F" ] && got=$((got + 1))
-        lp="$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')"
-        case "$lp" in .github/*|.loki/*|.env|.env.*|*/.env|*/.env.*|.envrc|*/.envrc|codeowners|docs/codeowners)
-            echo "$p is a protected path"; return 1 ;;
-        esac
-        for g in ${globs[@]+"${globs[@]}"}; do
-            # shellcheck disable=SC2254
-            case "$lp" in $g) echo "$p is a protected path"; return 1 ;; esac
-        done
-        row="$(printf '%s' "$seals" | jq -r --arg p "$p" '[.path_seals[] | select(.path == $p)] | if length == 0 then "none" else "\(.[0].verified) \(.[0].reverts)" end')" || row="none"
-        [ "$row" != "none" ] || { echo "$p has no Seal record"; return 1; }
-        v="${row%% *}"; r="${row#* }"
-        case "$r" in
-            0) ;;
-            null) echo "$p revert status is unknown"; return 1 ;;
-            *) echo "$p has $r recorded revert(s)"; return 1 ;;
-        esac
-        [ "$v" -ge "$min" ] 2>/dev/null || { echo "$p has $v VERIFIED receipts, need $min"; return 1; }
+        plist="${plist}${p}"$'\n'
     done <<EOF_FILES
 $lines
 EOF_FILES
+    # One reader: `loki trust --check` applies the protected-path, revert and
+    # VERIFIED-floor rules (the same function `loki trust` displays). One line
+    # per path, in order: "ok<TAB>path" or "refuse<TAB>path<TAB>reason".
+    seals="$(printf '%s' "$plist" | LOKI_EARNED_MERGE_MIN_VERIFIED="$min" LOKI_EARNED_MERGE_PROTECTED="${LOKI_EARNED_MERGE_PROTECTED:-}" "$_LOKI_SCRIPT_DIR/../bin/loki" trust --check 2>/dev/null)" || seals=""
+    verdicts=0
+    while IFS="$(printf '\t')" read -r kind p g; do
+        [ -n "$kind" ] || continue
+        verdicts=$((verdicts + 1))
+        case "$kind" in
+            ok) ;;
+            refuse) echo "${g:-$p is refused}"; return 1 ;;
+            *) echo "the Seal record is unreadable"; return 1 ;;
+        esac
+    done <<EOF_VERDICTS
+$seals
+EOF_VERDICTS
+    [ "$verdicts" = "$(printf '%s' "$plist" | grep -c '')" ] || { echo "the Seal record is unreadable"; return 1; }
     [ "$got" = "$want" ] || { echo "the PR lists $want changed files but $got were readable"; return 1; }
     # A symlink (120000) or submodule (160000) can point an earned path anywhere:
     # refuse any PR whose diff adds, removes, changes or re-modes one.

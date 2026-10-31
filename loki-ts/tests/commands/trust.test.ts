@@ -15,7 +15,7 @@ import { REPO_ROOT } from "../../src/util/paths.ts";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-function run(args: string[]): { code: number; stdout: string; stderr: string } {
+function run(args: string[], stdin?: string): { code: number; stdout: string; stderr: string } {
   const origOut = process.stdout.write.bind(process.stdout);
   const origErr = process.stderr.write.bind(process.stderr);
   let out = "";
@@ -32,7 +32,7 @@ function run(args: string[]): { code: number; stdout: string; stderr: string } {
   }) as typeof process.stderr.write;
   let code: number;
   try {
-    code = runTrust(args);
+    code = runTrust(args, stdin);
   } finally {
     process.stdout.write = origOut;
     process.stderr.write = origErr;
@@ -311,6 +311,85 @@ describe("runTrust per-path Seal record", () => {
 
   it("human output lists the per-path record", () => {
     seedPathProof("run-x", "VERIFIED", ["x.txt"]);
-    expect(run([]).stdout).toContain("x.txt: 1 VERIFIED, 0 other, reverts unknown");
+    expect(run([]).stdout).toContain("x.txt: 1 of 20 VERIFIED, 0 other, reverts unknown");
+  });
+
+  describe("earned-merge progress", () => {
+    function seedRepo(): void {
+      git("init", "-q");
+      writeFileSync(join(td, "keep.txt"), "k\n");
+      writeFileSync(join(td, "gone.txt"), "g\n");
+      git("add", "keep.txt", "gone.txt");
+      git("commit", "-q", "-m", "base");
+      writeFileSync(join(td, "gone.txt"), "g2\n");
+      git("commit", "-q", "-am", "change gone");
+      git("revert", "--no-edit", "HEAD");
+    }
+    function seedMany(path: string, n: number, headline = "VERIFIED"): void {
+      for (let i = 0; i < n; i++) seedPathProof(`run-${path.replace(/\W/g, "_")}-${String(i).padStart(2, "0")}`, headline, [path]);
+    }
+    function row(out: string, path: string): string {
+      const l = out.split("\n").find((x) => x.startsWith(`  ${path}: `));
+      expect(l).toBeDefined();
+      return l as string;
+    }
+
+    it("shows progress toward the threshold with the number of receipts still needed", () => {
+      seedRepo();
+      seedMany("src/api/x.ts", 12);
+      expect(row(run([]).stdout, "src/api/x.ts")).toBe("  src/api/x.ts: 12 of 20 VERIFIED, 0 other, 0 reverts, 8 more needed");
+    });
+
+    it("honours the owner's minimum and marks a met path eligible", () => {
+      seedRepo();
+      seedMany("keep.txt", 3);
+      process.env.LOKI_EARNED_MERGE_MIN_VERIFIED = "3";
+      try {
+        expect(row(run([]).stdout, "keep.txt")).toBe("  keep.txt: 3 of 3 VERIFIED, 0 other, 0 reverts, eligible for earned merge");
+      } finally {
+        delete process.env.LOKI_EARNED_MERGE_MIN_VERIFIED;
+      }
+    });
+
+    it("says why a path is refused: protected, reverted, reverts unknown", () => {
+      seedRepo();
+      seedMany(".github/w.yml", 25);
+      seedMany("gone.txt", 25);
+      expect(row(run([]).stdout, ".github/w.yml")).toContain("refused: protected path");
+      expect(row(run([]).stdout, "gone.txt")).toContain("1 reverts, refused: reverted in git history");
+      rmSync(join(td, ".git"), { recursive: true, force: true });
+      seedMany("other.txt", 25);
+      expect(row(run([]).stdout, "other.txt")).toContain("reverts unknown, refused: reverts unknown (shallow clone or unreadable history)");
+    });
+
+    it("the display and the merge gate decision agree for every path", () => {
+      seedRepo();
+      const paths = ["keep.txt", "gone.txt", ".github/w.yml", ".ENV.local", "src/auth/deep.ts", "docs/CODEOWNERS", "low.txt", "at-floor.txt"];
+      seedMany("keep.txt", 25);
+      seedMany("gone.txt", 25);
+      seedMany(".github/w.yml", 25);
+      seedMany(".ENV.local", 25);
+      seedMany("src/auth/deep.ts", 25);
+      seedMany("docs/CODEOWNERS", 25);
+      seedMany("low.txt", 19);
+      seedMany("at-floor.txt", 20);
+      process.env.LOKI_EARNED_MERGE_PROTECTED = "src/auth/*";
+      try {
+        const shown = run([]).stdout;
+        const gate = run(["--check"], [...paths, "never-sealed.txt"].join("\n") + "\n").stdout.trim().split("\n");
+        expect(gate.length).toBe(paths.length + 1);
+        const verdict = new Map(gate.map((l) => [l.split("\t")[1], l.split("\t")[0]]));
+        for (const p of paths) {
+          const displayedEligible = row(shown, p).endsWith("eligible for earned merge");
+          expect(verdict.get(p) === "ok").toBe(displayedEligible);
+        }
+        expect(paths.filter((p) => verdict.get(p) === "ok")).toEqual(["keep.txt", "at-floor.txt"]);
+        expect(verdict.get("never-sealed.txt")).toBe("refuse");
+        expect(gate.find((l) => l.includes("never-sealed.txt"))).toContain("never-sealed.txt has no Seal record");
+        expect(gate.find((l) => l.includes("low.txt"))).toContain("low.txt has 19 VERIFIED receipts, need 20");
+      } finally {
+        delete process.env.LOKI_EARNED_MERGE_PROTECTED;
+      }
+    });
   });
 });
