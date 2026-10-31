@@ -274,7 +274,7 @@ describe("implement stage reads the run snapshot", () => {
 const PRD5 = [
   "# Search ranking", "", "Some background prose that is not a requirement.", "",
   "## Acceptance criteria", "", "- Results are ordered by recency", "- Ties break on id", "",
-  "## Edge cases", "", "1. The API returns 400 for an empty query", "- [ ] Docs mention the new flag", "",
+  "## Notes", "", "1. The API returns 400 for an empty query", "- [ ] Docs mention the new flag", "",
   "The service MUST NOT cache empty results. It is fast.",
 ].join("\n");
 
@@ -325,8 +325,22 @@ describe("acceptance clause extraction (generic, anchored)", () => {
     expect(extractClauses("Plain text. The tool MUST exit 2 on error.").clauses.map((c) => c.text)).toEqual(["The tool MUST exit 2 on error."]);
   });
   test("FALSEVER-CLAUSE recall: a bullet under any heading is a clause; scope-exclusion headings are not", () => {
-    const t = extractClauses(["## Errors", "- Syntax reports the offset", "- Arity names the function", "", "## Non-goals", "- GUI support", "", "## Notes:", "1. Be nice", "", "## Acceptance examples", "- 2+2 is 4", "", "## Out of scope", "- plugins"].join("\n")).clauses.map((c) => c.text);
-    expect(t).toEqual(["Syntax reports the offset", "Arity names the function", "2+2 is 4"]);
+    const t = extractClauses(["## Errors", "- Syntax reports the offset", "- Arity names the function", "", "## Non-goals", "- GUI support", "", "## Notes:", "1. Be nice", "", "## Examples", "- 1+2*3 gives 7", "", "## Out of scope", "- plugins", "", "## Will not do", "- macros"].join("\n")).clauses.map((c) => c.text);
+    expect(t).toEqual(["Syntax reports the offset", "Arity names the function", "Be nice", "1+2*3 gives 7"]);
+  });
+  test("a skip heading is the whole heading title: Will not crash, Future-dated payments and Future-proofing keep their bullets", () => {
+    const t = extractClauses(["## Will not crash", "- Bad input exits 2", "", "## Future-dated payments", "- Dates in the past are rejected", "", "## Future-proofing", "- Unknown keys are ignored", "", "## Out of scope for the tool", "- plugins"].join("\n")).clauses.map((c) => c.text);
+    expect(t).toEqual(["Bad input exits 2", "Dates in the past are rejected", "Unknown keys are ignored", "plugins"]);
+  });
+  test("background style headings (References, Alternatives, Glossary, Context, Rationale, Motivation, Appendix, Background) yield no clauses, with numbering, bold or a colon", () => {
+    const heads = ["## References", "## Alternatives", "## Glossary", "## Context", "## Rationale:", "## 3. Motivation", "### Appendix (informative)", "# **Background**", "## Future work", "## Non-goals", "## Won't do", "Out of scope:"];
+    for (const h of heads) expect(extractClauses([h, "- Something that reads like a bullet", ""].join("\n")).clauses.map((c) => c.text)).toEqual([]);
+  });
+  test("a 14-section PRD with bullets only under real sections gives 14 clauses, skip sections add none", () => {
+    const secs: string[] = [];
+    for (let i = 1; i <= 14; i++) secs.push(`## Behavior ${i}`, `- Rule ${i} holds`, "");
+    secs.push("## References", "- RFC 1", "", "## Glossary", "- term", "", "## Alternatives", "- other");
+    expect(extractClauses(secs.join("\n")).clauses.length).toBe(14);
   });
   test("FALSEVER-CLAUSE recall: OpenAPI YAML yields one clause per operation and per status code its text names", () => {
     const yaml = ["openapi: 3.0.3", "info:", "  title: T", "paths:", "  /links:", "    post:", "      description: |", "        Bad body: 400. Success: 201 `{}`.", "  /links/{code}:", "    get:", "      description: Unknown code: 404.", "    delete:", "      description: 204 empty."].join("\n");

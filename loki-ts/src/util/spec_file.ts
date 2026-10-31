@@ -49,7 +49,7 @@ export function checkCriteriaJson(x: unknown): string | null {
 export interface Clause { id: string; text: string; text_sha256: string; anchor: string }
 export interface ClauseSet { clauses: Clause[]; dropped: number }
 // A heading of this class holds scope exclusions or background, never acceptance clauses; a heading that also names acceptance still counts.
-const SKIP_HEAD = /non[- ]?goals?|out[- ]of[- ]scope|not (?:required|in scope)|future|notes?\b|examples?|background|context|references?|rationale|motivation|glossary|appendix|alternatives/i;
+const SKIP_HEAD = /^(?:#+\s*)?(?:\d+(?:\.\d+)*[.)]?\s*)?(?:\*\*|__)?\s*(?:non[- ]?goals?|out[- ]of[- ]scope|not (?:required|in scope)|won'?t do|will not do|future work|future|background|context|references?|rationale|motivation|glossary|appendix|alternatives?)(?:\s*\([^)]*\))?\s*:?\s*(?:\*\*|__)?\s*:?\s*$/i; // the whole heading is the title, so "Will not crash" or "Future-dated payments" stay clause headings
 const CLAUSE_HEAD = /accept|criteria|requirement|must/i, RFC2119 = /\b(?:MUST|SHALL)(?: NOT)?\b/, GWT = /^(?:given|when|then|and|but)\b/i;
 const normClause = (t: string): string => t.replace(/\s+/g, " ").trim();
 
