@@ -1102,6 +1102,20 @@ describe("providers advisor", () => {
       expect(o.fallbackModel).toBeUndefined();
     });
 
+    test("SAFE-3a: an implement session blocks writes outside its working directory (the unit worktree); other stages do not", () => {
+      process.env["LOKI_E10_STAGE"] = "implement";
+      expect(buildSdkLoopOptions(base()).settings).toEqual({ permissions: { blockWritesOutsideWorkingDirectories: true } });
+      process.env["LOKI_ROUTER"] = "1";
+      expect(buildSdkLoopOptions(base()).settings).toEqual({ advisorModel: "opus", autoCompactWindow: 100000, permissions: { blockWritesOutsideWorkingDirectories: true } });
+      delete process.env["LOKI_ROUTER"];
+      for (const stage of ["plan", "fix", "wall", "deep", "review"]) {
+        process.env["LOKI_E10_STAGE"] = stage;
+        expect(buildSdkLoopOptions(base()).settings).toBeUndefined();
+      }
+      delete process.env["LOKI_E10_STAGE"];
+      expect(buildSdkLoopOptions(base()).settings).toBeUndefined();
+    });
+
     test("the engine10 six-tool whitelist is untouched by the router", () => {
       process.env["LOKI_E10_STAGE"] = "implement";
       const off = buildSdkLoopOptions(base()).tools;
@@ -1139,6 +1153,22 @@ describe("providers advisor", () => {
       const i = argv.indexOf("--settings");
       expect(i).toBeGreaterThan(-1);
       expect(JSON.parse(argv[i + 1] as string)).toEqual({ advisorModel: "opus" });
+    });
+
+    test("SAFE-3a: an implement session on the CLI route carries the write fence in --settings; a plan session carries none", async () => {
+      const { cli, log } = stubCli();
+      process.env["LOKI_CLAUDE_CLI"] = cli;
+      process.env["LOKI_DIR"] = dir;
+      process.env["LOKI_E10_STAGE"] = "implement";
+      await claudeProvider().invoke(call() as never);
+      const argv = readFileSync(log, "utf8").split("\n");
+      const i = argv.indexOf("--settings");
+      expect(i).toBeGreaterThan(-1);
+      expect(JSON.parse(argv[i + 1] as string)).toEqual({ permissions: { blockWritesOutsideWorkingDirectories: true } });
+      rmSync(log);
+      process.env["LOKI_E10_STAGE"] = "plan";
+      await claudeProvider().invoke(call() as never);
+      expect(readFileSync(log, "utf8")).not.toContain("--settings");
     });
 
     test("advisor unavailable or flag off: no advisor in argv", async () => {

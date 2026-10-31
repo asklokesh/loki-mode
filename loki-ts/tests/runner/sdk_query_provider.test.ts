@@ -278,6 +278,9 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
       expect(opts["systemPrompt"]).toEqual({ type: "preset", preset: "claude_code", excludeDynamicSections: true });
       expect(opts["settingSources"]).toEqual(["project"]);
       expect(opts["mcpServers"]).toBeUndefined();
+      // SAFE-3a: the write fence reaches query() with cwd set to the session's working directory (the unit worktree).
+      expect(opts["settings"]).toEqual({ permissions: { blockWritesOutsideWorkingDirectories: true } });
+      expect(opts["cwd"]).toBe(call().cwd);
       const env = opts["env"] as Record<string, string>;
       expect(Object.keys(env).filter((k) => k.startsWith("LOKI_E10_"))).toEqual([]);
       expect(env["PATH"]).toBe(process.env["PATH"]);

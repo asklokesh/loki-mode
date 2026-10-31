@@ -449,10 +449,18 @@ export function planRouterSession(args: {
 
 // One --settings JSON for the CLI route: the host guard hooks (when required) merged with the router's
 // advisor settings (when the router is on and the advisor is available).
-function cliSettingsJson(hostGuard: boolean, router: RouterSessionPlan["settings"]): string {
-  if (!router) return hostGuardSettingsJson();
+function cliSettingsJson(hostGuard: boolean, router: RouterSessionPlan["settings"], fence?: WriteFence): string {
+  if (!router && !fence) return hostGuardSettingsJson();
   const guard = hostGuard ? (JSON.parse(hostGuardSettingsJson()) as Record<string, unknown>) : {};
-  return JSON.stringify({ ...guard, ...router });
+  return JSON.stringify({ ...guard, ...router, ...fence });
+}
+
+// SAFE-3a: an engine10 implement session may Write/Edit only inside its working directory (call.cwd, the unit worktree).
+// Settings.permissions.blockWritesOutsideWorkingDirectories (SDK 0.3.314 sdk.d.ts:7183) is enforced by the CLI on Write,
+// Edit and NotebookEdit in every permission mode; it does not cover Bash, MCP tools or hooks. Other stages are unchanged.
+type WriteFence = { permissions: { blockWritesOutsideWorkingDirectories: true } };
+function implementWriteFence(): WriteFence | undefined {
+  return process.env["LOKI_E10_STAGE"] === "implement" ? { permissions: { blockWritesOutsideWorkingDirectories: true } } : undefined;
 }
 
 // Write captured output to disk. Used by every provider to honor the
@@ -521,6 +529,7 @@ export function claudeProvider(): ProviderInvoker {
         await writeCaptured(call.iterationOutputPath, "", message);
         return { exitCode: 1, capturedOutputPath: call.iterationOutputPath };
       }
+      const fence = claudeFlagSupported("--settings") ? implementWriteFence() : undefined; // an older CLI without --settings runs unfenced
       const autoFlags = buildAutoFlags({
         tier: call.tier,
         complexity: process.env["LOKI_COMPLEXITY"] ?? "standard",
@@ -560,8 +569,8 @@ export function claudeProvider(): ProviderInvoker {
         ...modelArgv,
         ...autoFlags,
         ...sessionArgv,
-        ...(hostGuard || routed?.settings
-          ? ["--settings", cliSettingsJson(hostGuard, routed?.settings)]
+        ...(hostGuard || routed?.settings || fence
+          ? ["--settings", cliSettingsJson(hostGuard, routed?.settings, fence)]
           : []),
         // claude.sh:32 PROVIDER_PROMPT_FLAG
         "-p",
@@ -686,7 +695,7 @@ export interface SdkLoopExtraOptions {
   fallbackModel?: string;
   tools?: string[];
   model?: string;
-  settings?: { advisorModel: string; autoCompactWindow?: number };
+  settings?: { advisorModel?: string; autoCompactWindow?: number; permissions?: WriteFence["permissions"] };
   noAppend?: boolean;
   systemPrompt?: string;
   excludeDynamic?: boolean;
@@ -726,6 +735,8 @@ export function buildSdkLoopOptions(args: {
     out.model = router.model;
     if (router.settings) out.settings = router.settings;
   }
+  const fence = implementWriteFence();
+  if (fence) out.settings = { ...out.settings, ...fence };
   const engine10 = Boolean(process.env["LOKI_E10_STAGE"]);
   if (engine10) {
     const sp = engine10StaticPrefix(process.env);
