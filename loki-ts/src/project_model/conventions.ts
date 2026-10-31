@@ -131,25 +131,27 @@ function goGroupNames(list: string): string[] {
   return toks.flatMap((t) => (named || t.length >= 2) && /^[A-Za-z_]\w*$/.test(t[0] ?? "") ? [t[0]!] : []);
 }
 /** Go: a Test or Fuzz file with a package clause that never references the package under test. An external `package x_test` must import the package it tests and use it (a dot import of that package is not judged); a same-package test must use an identifier it does not itself declare (its imports, parameters and results, type parameters, locals, var/const names, fields and keywords excluded; with a dot import present only lowercase names count, since a dot import brings in exported names only). Comments and string/rune literals are removed in one pass first. Files without a package clause or a Test/Fuzz func are not judged. */
-function goUnreferenced(src: string): boolean {
+function goUnreferenced(src: string, goPkgPath?: string): boolean {
   const { masked, strs } = goLex(src), code = masked.replace(/"\u0001\d+"/g, '""');
   const pkg = /^\s*package\s+(\w+)/m.exec(code);
   if (!pkg || !/\bfunc\s+(?:Test|Fuzz)\w*\s*\(/.test(code)) return false;
   const specs: { alias: string; path: string }[] = [];
   for (const d of masked.matchAll(/^[ \t]*import\s*\(([\s\S]*?)\)|^[ \t]*import[ \t]+([^\n(]*)$/gm)) for (const l of (d[1] ?? d[2] ?? "").split("\n")) { const m = /^[ \t]*(?:([\w.]+)[ \t]+)?"\u0001(\d+)"[ \t;]*$/.exec(l); if (m) specs.push({ alias: m[1] ?? "", path: strs[Number(m[2]) - 1]! }); }
-  const lastOf = (p: string): string => { const parts = p.split("/"); let l = parts.pop()!; if (/^v\d+$/.test(l) && parts.length) l = parts.pop()!; return l; };
+  const lastOf = (p: string): string => { const parts = p.split("/"); let l = parts.pop()!; if (/^v\d+$/.test(l) && parts.length) l = parts.pop()!; return l.replace(/\.v\d+$/i, ""); }; // x/v2 and x.v3 both name x
+  const rawLast = (p: string): string => p.split("/").pop()!; // v1 in k8s.io/api/core/v1 is the identifier a file writes
   const norm = (l: string): string => l.toLowerCase().replace(/[^a-z0-9_]/g, "");
   const body = code.replace(/^\s*import\s*\([\s\S]*?\)/gm, " ").replace(/^\s*import\b.*$/gm, " ");
   const dots = specs.filter((s) => s.alias === ".");
   if (pkg[1]!.endsWith("_test")) {
-    const x = pkg[1]!.slice(0, -5), named = (p: string): boolean => [x, "go" + x, x + "go"].includes(norm(lastOf(p))); // go-x, x-go, x.go, x/v2 all name package x
-    const mine = specs.filter((s) => s.alias === x || (s.alias !== "_" && named(s.path)));
+    const x = pkg[1]!.slice(0, -5), nameOf = (p: string): string => { const parts = p.split("/"); let l = parts.pop()!; if (/^v\d+$/.test(l) && parts.length) l = parts.pop()!; return norm(l); }; // no .vN strip: gopkg.in/yaml.v3 is not package yaml
+    const named = (p: string): boolean => goPkgPath !== undefined ? p === goPkgPath || (p.startsWith(goPkgPath + "/") && /^v\d+$/.test(p.slice(goPkgPath.length + 1))) : nameOf(p) === x; // the package under test is identified by its import path (module path plus the Wall's directory, plus an optional /vN) when known; the name match is only for an unknown path, since a go-x or x-go name also names an unrelated dependency
+    const mine = specs.filter((s) => s.alias !== "_" && (named(s.path) || (goPkgPath === undefined && s.alias === x)));
     if (mine.some((s) => s.alias === ".")) return false;
     return !mine.some((s) => { const nm = s.alias || x; return new RegExp(String.raw`(?<![\w.])${nm}\s*\.\s*[A-Za-z_]`).test(body); });
   }
   const own = new Set<string>(["_", pkg[1]!, "true", "false", "nil", "iota"]);
   for (const w of "break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var any bool byte comparable complex64 complex128 error float32 float64 int int8 int16 int32 int64 rune string uint uint8 uint16 uint32 uint64 uintptr append cap clear close complex copy delete imag len make max min new panic print println real recover".split(" ")) own.add(w);
-  for (const s of specs) if (s.alias !== ".") own.add(s.alias && s.alias !== "_" ? s.alias : norm(lastOf(s.path)) || lastOf(s.path)), own.add(lastOf(s.path).replace(/[^\w]/g, "")), own.add(norm(lastOf(s.path).replace(/^go-|-go$|\.go$/g, "")));
+  for (const s of specs) if (s.alias !== ".") { own.add(s.alias && s.alias !== "_" ? s.alias : norm(lastOf(s.path)) || lastOf(s.path)); const l = lastOf(s.path), r = rawLast(s.path); own.add(l.replace(/[^\w]/g, "")); own.add(norm(l.replace(/^go-|-go$|\.go$/gi, ""))); own.add(r.replace(/[^\w]/g, "")); own.add(l.replace(/^go-|-go$|\.go$/gi, "").replace(/[^\w]/g, "")); }
   const names = (t: string): string[] => t.match(/[A-Za-z_]\w*/g) ?? [];
   for (const m of body.matchAll(/\b(?:func|type)\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)/g)) own.add(m[1]!);
   for (const m of body.matchAll(/\b(?:var|const)\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)/g)) names(m[1]!).forEach((n) => own.add(n));
@@ -177,7 +179,7 @@ function goUnreferenced(src: string): boolean {
 }
 
 /** TEN-MOAT-26: a generated Wall file that asserts nothing: its only assertions are tautologies (expect(true).toBe(true), assert True), its tests have empty bodies, or a shell file holds only true / exit 0 / ":". Such a file can never fail, so it proves nothing about the change. A JS/Python file with no tautology and no assertion but real calls is NOT flagged (it can still be red by throwing); a file that holds a tautology and no real assertion is flagged even if it also calls code. Go is judged per file: flagged only when every Test func body is empty or only t.Log/t.Skip and nothing can fail a test. Comments are ignored. Returns the reason, or null when the file is acceptable or its language is not recognised. */
-export function vacuousCheck(fileName: string, content: string): string | null {
+export function vacuousCheck(fileName: string, content: string, goPkgPath?: string): string | null {
   const reason = "asserts nothing (no assertion, or only an always-true one such as true or exit 0); write a check that fails when the behavior is absent";
   const strip = (re: RegExp): string => content.replace(/\/\*[\s\S]*?\*\//g, "").replace(re, "$1");
   if (/\.[cm]?[jt]sx?$/.test(fileName)) {
@@ -203,7 +205,7 @@ export function vacuousCheck(fileName: string, content: string): string | null {
     const trivial = new RegExp(String.raw`^(?:true|:|exit\s+0|return\s+0|(?:/usr)?/bin/true|(?:echo|printf)(?:\s+${tok})*|test\s+(?:[1-9]\d*|${tok})|\[\[?\s+(?:[1-9]\d*|${tok})\s+\]\]?)$`);
     return lines.length === 0 || lines.every((l) => l.split(/&&|\|\||;/).map((x) => x.trim()).every((x) => x === "" || trivial.test(x))) ? reason : null;
   }
-  if (/_test\.go$/.test(fileName)) return goVacuous(strip(/(^|[^:])\/\/.*$/gm)) ? reason : goUnreferenced(content) ? "never references the package under test (an external _test package must import and use it; a same-package test must use an identifier the package declares outside this file); write a check that calls the changed code" : null;
+  if (/_test\.go$/.test(fileName)) return goVacuous(strip(/(^|[^:])\/\/.*$/gm)) ? reason : goUnreferenced(content, goPkgPath) ? "never references the package under test (an external _test package must import and use it; a same-package test must use an identifier the package declares outside this file); write a check that calls the changed code" : null;
   return null;
 }
 
