@@ -204,17 +204,28 @@ type Tri = 0 | 1 | 2;
 const triOr = (a: Tri, b: Tri): Tri => (a === YES || b === YES ? YES : a === UNKNOWN || b === UNKNOWN ? UNKNOWN : NO);
 const TOOL_ALIASES: Record<string, readonly string[]> = { cargo: ["cargo-nextest", "cross"] }; // cargo front ends: cross and cargo-nextest run cargo, so they count as cargo
 const INLINE_CODE_FLAGS = new Set(["-c", "-e", "-r", "-p", "--eval"]), INTERPRETERS = new Set(["python", "python3", "node", "ruby", "php"]);
-const wordIsTool = (tool: string, w: string): boolean => { const name = basename(w); return name === tool || (TOOL_ALIASES[tool]?.includes(name) ?? false); };
+const GO_VERSIONED = /^go\d+(?:\.\d+){0,2}(?:rc\d+|beta\d+)?$/; // the golang.org/dl wrappers (go1.22, go1.22.3) run go
+const wordIsTool = (tool: string, w: string): boolean => { const name = basename(w); return name === tool || (TOOL_ALIASES[tool]?.includes(name) ?? false) || (tool === "go" && GO_VERSIONED.test(name)); };
+/** A variable that stands for the tool: GO, CARGO, GOCMD, GO_BIN, CARGO_CMD (the tool name leads it or is one of its underscore parts). make DIR=go is not one. */
+const varNamesTool = (tool: string, v: string): boolean => { const l = v.toLowerCase(); return l.startsWith(tool) || l.split("_").includes(tool); };
+const assignsTool = (tool: string, a: string): boolean => { const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(a); return m !== null && varNamesTool(tool, m[1]!) && (wordIsTool(tool, m[2]!) || varIsTool(tool, m[2]!)); };
+const SPAWN_API = /\b(?:system|popen|Popen|subprocess|check_output|check_call|exec|execFile|execFileSync|execSync|spawn|spawnSync|child_process|run|call)\b|`/;
+const DYNAMIC_CMD = /["']\s*\+\s*["']|\.join\(|\bchr\(|\bformat\(|\bf["']|%[sd]|\\x[0-9a-f]{2}|base64|fromCharCode|\$\{|\beval\b|\bgetattr\b|\bimport_module\b/;
+/** Inline interpreter code that runs the tool: `tool <arg>` text, the tool as a whole quoted argv element (subprocess.run(["go", "test"]), execFileSync("go", ["test"])), or code that spawns a process from a command built at run time (string concat, join, format), which cannot be read and so fails closed. */
+function inlineRunsTool(tool: string, code: string): boolean {
+  if (new RegExp(`\\b${tool}\\s+\\S`).test(code) || new RegExp(`["'](?:[^"']*/)?${tool}["']`).test(code)) return true;
+  return SPAWN_API.test(code) && DYNAMIC_CMD.test(code);
+}
 /** A `$`-word that stands for the tool: a variable named like it ($GO, "$CARGO", ${GO}) or one whose default is the tool (${GO:-go}). */
 const varIsTool = (tool: string, w: string): boolean => [...w.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)(?::?-([^}]*))?/g)].some((m) => m[1]!.toLowerCase() === tool || (m[2] !== undefined && wordIsTool(tool, m[2])));
 /** Arguments of a known runner that still run the tool: TOOL=tool assignment args (make test GO=go) and inline interpreter code that invokes it (python3 -c 'os.system("go test")'). A path or other-named variable (make DIR=go) stays a resolved NO. */
 function argsRunTool(tool: string, args: readonly string[]): boolean {
-  return args.some((a, j) => { const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(a); return m ? m[1]!.toLowerCase() === tool && (wordIsTool(tool, m[2]!) || varIsTool(tool, m[2]!)) : INLINE_CODE_FLAGS.has(args[j - 1] ?? "") && new RegExp(`\\b${tool}\\s+\\S`).test(a); });
+  return args.some((a, j) => { const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(a); return m ? assignsTool(tool, a) : INLINE_CODE_FLAGS.has(args[j - 1] ?? "") && inlineRunsTool(tool, a); });
 }
 function runsTool(tool: string, words: readonly string[], depth: number): Tri {
-  let i = 0;
+  let i = 0, assigned = false; // assigned: a prefix TOOL=tool assignment (GO=go make test) hands the tool to whatever runner follows
   for (;;) {
-    while (i < words.length && (RESERVED_WORDS.has(words[i]!) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!) || /^\d*[<>]/.test(words[i]!))) i += /^\d*[<>]+$/.test(words[i]!) ? 2 : 1;
+    while (i < words.length && (RESERVED_WORDS.has(words[i]!) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!) || /^\d*[<>]/.test(words[i]!))) { if (assignsTool(tool, words[i]!)) assigned = true; i += /^\d*[<>]+$/.test(words[i]!) ? 2 : 1; }
     const w = words[i]; if (w === undefined) return NO;
     if (w.includes("$")) return varIsTool(tool, w) ? YES : UNKNOWN;
     const name = basename(w); if (wordIsTool(tool, w)) return YES;
@@ -226,13 +237,14 @@ function runsTool(tool: string, words: readonly string[], depth: number): Tri {
     if (name === "rustup" && words[i + 1] === "run") { i += 3; continue; }
     if (["pnpm", "yarn", "bun", "npm"].includes(name) && ["exec", "x", "dlx"].includes(words[i + 1] ?? "")) { i += 2; continue; }
     const vf = WRAPPERS[name];
-    if (!vf) return KNOWN_RUNNERS.has(name) ? (name === "make" || INTERPRETERS.has(name)) && argsRunTool(tool, words.slice(i + 1)) ? YES : NO : UNKNOWN;
+    if (!vf) return KNOWN_RUNNERS.has(name) ? assigned || ((name === "make" || INTERPRETERS.has(name)) && argsRunTool(tool, words.slice(i + 1))) ? YES : NO : UNKNOWN;
     i++;
     for (; i < words.length; i++) {
       const a = words[i]!;
       if (name === "env" && a === "-S") return depth < 4 && words[i + 1] !== undefined ? anyCommandRuns(tool, words[i + 1]!, depth + 1) : UNKNOWN;
       if (a === "--") continue;
       if (a.startsWith("-")) { if (vf.includes(a)) i++; continue; }
+      if (assignsTool(tool, a)) assigned = true;
       if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(a) || (name === "timeout" && /^\d+(?:\.\d+)?[smhd]?$/.test(a))) continue;
       break;
     }
@@ -246,7 +258,7 @@ function mentionsTool(tool: string, cmd: string, args?: readonly string[]): bool
   let r: Tri = args ? runsTool(tool, [cmd, ...args], 0) : anyCommandRuns(tool, cmd);
   if (args && r !== YES && [cmd, ...args].some((a) => /[;&|()`]/.test(a))) r = triOr(r, anyCommandRuns(tool, [cmd, ...args].join(" "))); // an argv element carrying shell syntax is also read as a line
   if (r !== UNKNOWN) return r === YES;
-  return commandWords(cmd, args).some((t) => t.split(/[\s"'`();&|<>${}\[\],=]+/).some((x) => x !== "" && basename(x) === tool));
+  return commandWords(cmd, args).some((t) => t.split(/[\s"'`();&|<>${}\[\],=]+/).some((x) => x !== "" && wordIsTool(tool, x)));
 }
 /** One shared Go-runner detection for every caller (verify, deep, per-package suites): a shell command line or an argv, decided by the tri-state mentionsTool (command position when every command word resolved, otherwise the old any-word rule). Chosen from the command, never from output. Detecting go too often only fails closed (exit 0 is not_run, and corroboratePass accepts only a plain `go test` line). */
 export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" } | Record<string, never> {

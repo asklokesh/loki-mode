@@ -1278,6 +1278,17 @@ done
     const pass = { result: "pass" as const, n: 3 };
     for (const line of ["pytest -q tests/go", "make test DIR=go", "make test GO=gcc", "make test", "npm test -- --grep cargo", "pytest -q tests/cross", "make test DIR=cargo", "make test CARGO=gcc", "python3 -c 'print(1)'", "${CC:-gcc} test"]) { expect([line, goRunner(line)]).toEqual([line, {}]); expect(await corroboratePass(pass, "", line, undefined, o)).toEqual(pass); }
   });
+  test("HV1-03j: a go or cargo run hidden by string concat, a list-form spawn, a prefix assignment, a tool-named make variable or a versioned go wrapper is not a pass", async () => {
+    const o = { cwd: tmpdir(), env: process.env }, CARGO_OK = "running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    const goLines = [`python3 -c 'import os; os.system("g"+"o test ./...")'`, `python3 -c 'import subprocess; subprocess.run(["go", "test", "./..."])'`, `node -e 'require("child_process").execFileSync("go", ["test"])'`, "GO=go make test", "env GO=go make test", "make GOCMD=go test", "make test GO=go1.22", "go1.22 test ./...", "GO=go1.22.3 make test"];
+    for (const line of goLines) {
+      expect([line, goRunner(line)]).toEqual([line, { runner: "go" }]);
+      expect([line, (await corroboratePass({ result: "pass", n: 2 }, GO_V, line, undefined, o)).result]).toEqual([line, "not_run"]);
+    }
+    for (const line of [`python3 -c 'import os; os.system("car"+"go test")'`, `python3 -c 'import subprocess; subprocess.run(["cargo", "test"])'`, "CARGO=cargo make test", "make CARGO_BIN=cargo test"]) expect([line, (await corroboratePass({ result: "pass", n: 2 }, CARGO_OK, line, undefined, o)).result]).toEqual([line, "not_run"]);
+    const pass = { result: "pass" as const, n: 3 };
+    for (const line of ["make test DIR=go", "DIR=go make test", "env CC=gcc make test", "make GOCMD=gcc test", "python3 -c 'print(\"a\"+\"b\")'", "pytest -q tests/go1"]) { expect([line, goRunner(line)]).toEqual([line, {}]); expect(await corroboratePass(pass, "", line, undefined, o)).toEqual(pass); }
+  });
   test("HV1-03i: a go run behind a default-value expansion of an unrelated variable name is not a pass", async () => {
     const o = { cwd: tmpdir(), env: process.env }, line = "${GOCMD:-go} test ./...";
     expect([line, goRunner(line)]).toEqual([line, { runner: "go" }]);
