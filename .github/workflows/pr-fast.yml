@@ -38,6 +38,17 @@ jobs:
       - name: Install loki-ts dependencies
         run: bun install --cwd loki-ts --frozen-lockfile
 
+      # local-ci runs `python3.12 -m pytest`; the runner's system python3.12 has no pytest
+      # (run 41188540211: "/usr/bin/python3.12: No module named pytest"). Same install as
+      # the retired test.yml python jobs: requirements-test.txt is the repo's test dependency list.
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python test dependencies
+        run: python3 -m pip install -r requirements-test.txt
+
       - name: Fast tier of local-ci
         env:
           LOCAL_CI_TIER: fast
