@@ -839,6 +839,11 @@ describe("added workspace manifest: disclosed only when every condition holds", 
     expect(importSpecifiers('const q = Array.of / 2 /* import "@acme/x" */')).toEqual([]);
     expect(importSpecifiers('const q = a.return / 2 /* import "@acme/x" */')).toEqual([]);
     expect(importSpecifiers('for (const k of ks) {}\nconst of = 4; x = of / 2 /* import "@acme/x" */')).toEqual([]);
+    expect(importSpecifiers('for (let i = 0; i < of / 2 /* import "@acme/x" */; i++)')).toEqual([]);
+    expect(importSpecifiers('for (const k in of / 2 /* import "@acme/x" */)')).toEqual([]);
+    expect(importSpecifiers('for (const m of of / 2 /* import "@acme/x" */)')).toEqual([]);
+    expect(importSpecifiers('x.for(of / 2 /* import "@acme/x" */)')).toEqual([]);
+    expect(importSpecifiers('$for(of / 2 /* import "@acme/x" */)')).toEqual([]);
   });
   test("N2d unit: real imports and a real for-of loop are still read", () => {
     expect(importSpecifiers('import "@acme/x"')).toEqual(["@acme/x"]);
@@ -850,6 +855,7 @@ describe("added workspace manifest: disclosed only when every condition holds", 
     expect(importSpecifiers('for (const x of /from "validate"/.exec(s) ?? []) {}')).toEqual([]);
     expect(importSpecifiers('async function f() { for await (const x of /from "validate"/.exec(s) ?? []) {} }')).toEqual([]);
     expect(importSpecifiers('const of = 4; const q = of / 2;\nimport z from "@acme/x"')).toEqual(["@acme/x"]);
+    expect(importSpecifiers('for (const {a = f()} of /"/.exec(s)) {}\nimport z from "@acme/x"')).toEqual(["@acme/x"]);
   });
   test("N2b unit: importSpecifiers skips comments, strings, template text and regex literals, keeps real specifiers", () => {
     expect(importSpecifiers('const r = /from "a\\/b"/;\n')).toEqual([]);

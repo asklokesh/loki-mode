@@ -165,17 +165,14 @@ export function exportConds(x: unknown, out: string[] = []): string[] {
 }
 const WORKSPACE_SPEC = /^workspace:(\*|\^|~|[\^~]?\d[\w.+-]*)$/;
 const REGEX_AFTER_WORD = /(?:^|[^\w$.])(?:return|typeof|case|void|delete|throw|in|of|instanceof|else|yield|await|do)$/;
-/** True when `tail` ends inside the parenthesised head of a `for` or `for await` statement, so a trailing `of` there is the keyword and not an identifier. */
+/** True when `tail` (which ends in the word `of`) ends directly after the binding of a `for (` or `for await (` head, so that `of` is the keyword. Anything else between `for (` and `of` (a second `of`, `;`, `in`) makes it an identifier. */
 function inForHead(tail: string): boolean {
   let at = -1;
-  for (const m of tail.matchAll(/\bfor\s*(?:await\s*)?\(/g)) at = m.index! + m[0].length;
-  if (at < 0) return false;
-  let depth = 0;
-  for (const ch of tail.slice(at)) { if (ch === "(") depth++; else if (ch === ")" && --depth < 0) return false; }
-  return depth === 0;
+  for (const m of tail.matchAll(/(?<![\w$.])for\s*(?:await\s*)?\(/g)) at = m.index! + m[0].length;
+  return at >= 0 && /^\s*(?:(?:const|let|var)\s+)?(?:[\w$]+|[[{][^;]*[\]}])\s*$/.test(tail.slice(at, -2));
 }
 /** One lexical pass over `src`: comments and regex literals are dropped and every string literal is parked behind a placeholder. A `/` starts a regex at the start, after an operator or `(`, `,`, `=`, `:`, `[`, `!`, `&`, `|`,
- *  `?`, `{`, `;`, after one of the words in REGEX_AFTER_WORD (but `of` only inside a `for (...)` head, and no word after a `.`), and, when `amb` is true, after `)` or `}`. It is division after `++`, `--`, `]`, a word, a number or a string. Returns the specifiers read in this mode. */
+ *  `?`, `{`, `;`, after one of the words in REGEX_AFTER_WORD (but `of` only directly after a `for (` binding, and no word after a `.`), and, when `amb` is true, after `)` or `}`. It is division after `++`, `--`, `]`, a word, a number or a string. Returns the specifiers read in this mode. */
 function lexSpecifiers(src: string, amb: boolean): string[] {
   const lit: string[] = [], n = src.length;
   let t = "", i = 0;
