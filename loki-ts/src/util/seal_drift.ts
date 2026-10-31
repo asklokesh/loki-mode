@@ -4,6 +4,7 @@
 import { safeGit } from "./safe_git.ts";
 import { createHash, createPublicKey, sign, verify, type KeyObject } from "node:crypto";
 import { atomicWriteText } from "./atomic.ts";
+import { sealedWallDir } from "./check_result.ts";
 import { kidOf, loadSigningKey, pubFor } from "./receipt_signer.ts";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
@@ -154,7 +155,7 @@ export function wallNotComparedNote(receiptPath: string): string | null {
     const r = JSON.parse(readFileSync(receiptPath, "utf8")) as Record<string, unknown>;
     if (r["schema"] !== "loki.v10.receipt/1") return null;
     const files = (r["wall"] as { files?: unknown } | null | undefined)?.files;
-    return Array.isArray(files) && files.length > 0 && !existsSync(join(dirname(receiptPath), "wall")) ? "sealed Wall copies not present: not compared" : null;
+    return Array.isArray(files) && files.length > 0 && !existsSync(sealedWallDir(dirname(receiptPath))) ? "sealed Wall copies not present: not compared" : null;
   } catch { return null; }
 }
 

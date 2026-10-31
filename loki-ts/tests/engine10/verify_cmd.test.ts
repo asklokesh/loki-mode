@@ -1821,7 +1821,7 @@ describe("verifyReceipt: a deleted sealed Wall copy is tampered", () => {
     expect(checkResult.sealedWallDir("/r/run1")).toBe(join("/r/run1", "wall"));
   });
   const SRC_ROOT = join(REPO_ROOT, "loki-ts", "src");
-  const INLINE_WALL = [/\b(?:join|resolve)\([^)\n]*["'`]wall["'`]/, /\$\{[^}]*\}\/wall\b/, /runs\/[^"'`\s]*\/wall\b/];
+  const INLINE_WALL = [/\b(?:join|resolve)\((?:[^()\n]|\((?:[^()\n]|\([^()\n]*\))*\))*["'`]wall["'`]/, /\$\{[^}]*\}\/wall\b/, /runs\/[^"'`\s]*\/wall\b/];
   function inlineWallPaths(): string[] {
     const hits: string[] = [];
     for (const f of readdirSync(SRC_ROOT, { recursive: true }) as string[]) {
