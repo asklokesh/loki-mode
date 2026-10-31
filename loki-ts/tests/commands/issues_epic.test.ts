@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { decomposeBrief, parseDecomposition, progressLine, renderEpicTree, runEpicSlices, type EpicProgress, type SliceResult } from "../../src/commands/issues_epic.ts";
 import { parseIssuesArgs, runIssues, type GhIssue, type IssuesRunDeps, type Triage } from "../../src/commands/issues_run.ts";
-import { parseIssuesArgs, runIssues, type GhIssue, type IssuesRunDeps, type Triage } from "../../src/commands/issues_run.ts";
 import type { RunOpts, RunResult } from "../../src/commands/queue.ts";
 
 let dir: string;
@@ -30,7 +29,7 @@ function harness(opts: {
   triage?: Record<number, Triage>;
   decompose?: Record<number, string>;
   decomposeSeq?: Record<number, string[]>;
-  verdicts?: Record<string, { verdict: string; rc?: number; pr?: boolean }>;
+  verdicts?: Record<string, { verdict: string; rc?: number; pr?: boolean; work?: boolean }>;
   confirm?: boolean[];
 }) {
   const out: string[] = [];
@@ -71,7 +70,7 @@ function harness(opts: {
         mkdirSync(join(o.cwd, ".loki", "runs", runId), { recursive: true });
         writeFileSync(join(o.cwd, ".loki", "runs", runId, "receipt.json"), JSON.stringify({ verdict: v.verdict }));
       }
-      const res: RunResult = { rc: v.rc ?? 0, output: v.pr === false ? `${v.verdict}: nothing pushed\n` : `PR: https://github.com/o/r/pull/${100 + run}\n`, verdict: v.verdict, costUsd: 1.5, runId };
+      const res: RunResult = { rc: v.rc ?? 0, output: v.pr === false ? `${v.verdict}: nothing pushed\n` : `PR: https://github.com/o/r/pull/${100 + run}\n`, verdict: v.verdict, costUsd: 1.5, runId, ...(v.work !== undefined ? { didWork: v.work } : {}) };
       return res;
     },
     estimate: () => ({ ok: false, reason: "no history", prior: { usd: [0.11, 0.98], tier: "sonnet", size_class: "unplanned" } }),
@@ -329,22 +328,31 @@ describe("loki issues run: epic split", () => {
     });
 
     test("a whole-issue run that hits its cap triggers exactly one decompose and the slices run", async () => {
-      const h = harness({ issues: [issue(12)], verdicts: { "o/r#12": { verdict: "BUDGET_STOP", rc: 1, pr: false } } });
+      const h = harness({ issues: [issue(12)], verdicts: { "o/r#12": { verdict: "FAILED", rc: 3, pr: false } } });
       expect(await runIssues(["run", SLUG, "--yes"], noTriage(h, []))).toBe(0);
       expect(h.decomposed).toEqual([12]);
       expect(h.ran.map(h.sliceOf).filter((x) => x?.startsWith("s")).sort()).toEqual(["s1", "s2", "s3", "s4"]);
     });
 
-    test("a failed whole-issue run splits once; a verified one and --no-split do not split", async () => {
-      const failed = harness({ issues: [issue(12)], verdicts: { "o/r#12": { verdict: "FAILED", rc: 1, pr: false } } });
+    test("a failed whole-issue run that committed work splits once; a verified one and --no-split do not split", async () => {
+      const failed = harness({ issues: [issue(12)], verdicts: { "o/r#12": { verdict: "FAILED", rc: 1, pr: false, work: true } } });
       await runIssues(["run", SLUG, "--yes"], failed.inject);
       expect(failed.decomposed).toEqual([12]);
       const ok = harness({ issues: [issue(12)] });
       await runIssues(["run", SLUG, "--yes"], ok.inject);
       expect(ok.decomposed).toEqual([]);
-      const ns = harness({ issues: [issue(12)], verdicts: { "o/r#12": { verdict: "FAILED", rc: 1, pr: false } } });
+      const ns = harness({ issues: [issue(12)], verdicts: { "o/r#12": { verdict: "FAILED", rc: 1, pr: false, work: true } } });
       await runIssues(["run", SLUG, "--yes", "--no-split"], ns.inject);
       expect(ns.decomposed).toEqual([]);
+    });
+
+    test("a FAILED run that did no work (worker crash, setup failure) or is BLOCKED never splits", async () => {
+      for (const v of [{ verdict: "FAILED", rc: 1, pr: false, work: false }, { verdict: "FAILED", rc: 1, pr: false }, { verdict: "FAILED (exit 1)", rc: 1, pr: false, work: true }, { verdict: "SPEC_CONFLICT", rc: 4, pr: false, work: true }]) {
+        const h = harness({ issues: [issue(12)], verdicts: { "o/r#12": v } });
+        expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+        expect(h.decomposed).toEqual([]);
+        expect(h.ran.map((r) => r.ref)).toEqual(["o/r#12"]);
+      }
     });
 
     test("--parallel defaults to min(4, issue count); --parallel 1 stays sequential", () => {

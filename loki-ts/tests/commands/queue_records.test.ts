@@ -41,7 +41,14 @@ async function runOne(res: { rc: number; verdict?: string | null; costUsd?: numb
 describe("run record reader", () => {
   test("reads verdict and cost from an engine10 runs/<id>/receipt.json", () => {
     put("runs", "receipt.json", receipt("VERIFIED", { usd: 2.5, measured_sessions: 1 }));
-    expect(newestRecord(dir, 0)).toEqual({ verdict: "VERIFIED", costUsd: 2.5, runId: "r1" });
+    expect(newestRecord(dir, 0)).toEqual({ verdict: "VERIFIED", costUsd: 2.5, runId: "r1", didWork: null });
+  });
+
+  test("didWork is true only when the receipt head_sha differs from its base_sha", () => {
+    put("runs", "receipt.json", JSON.stringify({ verdict: "FAILED", base_sha: "a1", head_sha: "b2", cost: { usd: 1 } }));
+    expect(newestRecord(dir, 0).didWork).toBe(true);
+    put("runs", "receipt.json", JSON.stringify({ verdict: "FAILED", base_sha: "a1", head_sha: "a1", cost: { usd: 1 } }));
+    expect(newestRecord(dir, 0).didWork).toBe(false);
   });
 
   test("cli-invoker-unmetered cost is NOT RECORDED, never $0.00", async () => {

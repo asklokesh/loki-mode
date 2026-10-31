@@ -369,7 +369,7 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
     const wholeFailed: GhIssue[] = [];
     const onResult = (r: ItemResult): void => {
       const i = byRef.get(r.ref)!;
-      if (a.split && wholeRunTooLarge(r.row.pr, r.row.verdict, r.res.output)) wholeFailed.push(i);
+      if (a.split && wholeRunTooLarge(r.row.pr, r.res)) wholeFailed.push(i);
       const outcome = r.row.pr ? r.row.verdict : `${r.row.verdict}, no PR: ${clip(lastLine(r.res.output) || "no output", 140)}`;
       rows.set(i.number, { issue: i.number, title: i.title, triage: a.triage ? "actionable" : "not triaged", outcome, pr: r.row.pr ?? "none", cost: r.row.cost, time: secs(r.seconds) });
       d.out(`#${i.number} ${r.row.verdict}  pr ${r.row.pr ?? "none"}  cost ${r.row.cost}  ${secs(r.seconds)}\n`);
@@ -453,9 +453,16 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
   return 0;
 }
 
-/** A whole-issue run that opened no PR and failed or hit the cost/time cap: the signal that the issue was too large for one run. */
-export function wholeRunTooLarge(pr: string | null | undefined, verdict: string, output: string): boolean {
-  return !pr && (/^FAILED\b/.test(verdict) || /BUDGET_STOP|cost\/time cap reached/.test(output));
+/**
+ * A whole-issue run that opened no PR after doing real work and not finishing: it hit the cost/time cap (exit 3, the BUDGET_STOP rung),
+ * or its sealed receipt says FAILED with a committed change. A worker crash, a setup failure (no sealed receipt or no change), a
+ * spec conflict and a stall never qualify: splitting those only buys a planning call plus slices that fail the same way.
+ */
+export function wholeRunTooLarge(pr: string | null | undefined, res: Pick<RunResult, "rc" | "verdict" | "didWork">): boolean {
+  if (pr) return false;
+  if (res.verdict === "BLOCKED" || res.verdict === "SPEC_CONFLICT") return false;
+  if (res.rc === 3 || res.verdict === "BUDGET_STOP") return true;
+  return res.verdict === "FAILED" && res.didWork === true;
 }
 
 const PR_URL_RE = /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/;

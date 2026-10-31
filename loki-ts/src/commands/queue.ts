@@ -25,6 +25,7 @@ export interface RunResult {
   output: string;
   verdict?: string | null;
   costUsd?: number | null;
+  didWork?: boolean | null; // the sealed receipt's head_sha differs from its base_sha: the run committed a change; null when no receipt says
   runId?: string | null; // the engine10 run id (.loki/runs/<id>), so `loki issues run` can stack on loki/<id> (MASS-2)
 }
 
@@ -431,7 +432,7 @@ export async function defaultGovernor(): Promise<GovernorReading> {
 
 // Engine10 writes .loki/runs/<id>/receipt.json; the legacy loops write .loki/proofs/<id>/proof.json.
 // Both carry a top-level verdict and cost.usd. Newest file modified since `since` wins; runs/ first.
-export function newestRecord(lokiDir: string, since: number): { verdict: string | null; costUsd: number | null; runId?: string | null } {
+export function newestRecord(lokiDir: string, since: number): { verdict: string | null; costUsd: number | null; runId?: string | null; didWork?: boolean | null } {
   for (const [sub, file] of [["runs", "receipt.json"], ["proofs", "proof.json"]] as const) {
     const dir = join(lokiDir, sub);
     let best: { t: number; p: string; name: string } | null = null;
@@ -443,13 +444,13 @@ export function newestRecord(lokiDir: string, since: number): { verdict: string 
         if (t >= since && (!best || t > best.t)) best = { t, p, name };
       }
       if (!best) continue;
-      const d = JSON.parse(readFileSync(best.p, "utf8")) as { verdict?: unknown; cost?: { usd?: unknown; source?: unknown } };
+      const d = JSON.parse(readFileSync(best.p, "utf8")) as { verdict?: unknown; base_sha?: unknown; head_sha?: unknown; cost?: { usd?: unknown; source?: unknown } };
       const usd = d.cost?.usd;
       const unmetered = d.cost?.source === "cli-invoker-unmetered";
       return {
         verdict: typeof d.verdict === "string" ? d.verdict : null,
         costUsd: !unmetered && typeof usd === "number" && Number.isFinite(usd) ? usd : null,
-        ...(sub === "runs" ? { runId: best.name } : {}),
+        ...(sub === "runs" ? { runId: best.name, didWork: typeof d.base_sha === "string" && typeof d.head_sha === "string" ? d.base_sha !== d.head_sha : null } : {}),
       };
     } catch {
       continue;
@@ -499,7 +500,7 @@ export function makeDefaultRunner(lokiDir: string): QueueDeps["runner"] {
       /* log is best effort */
     }
     const proof = newestRecord(runLoki, since);
-    return { rc, output, verdict: proof.verdict, costUsd: proof.costUsd, runId: proof.runId ?? null };
+    return { rc, output, verdict: proof.verdict, costUsd: proof.costUsd, runId: proof.runId ?? null, didWork: proof.didWork ?? null };
   };
 }
 
