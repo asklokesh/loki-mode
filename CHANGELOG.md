@@ -5,6 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.97.0 (2026-10-31)
+
+A passing Go or cargo run can no longer hide behind a shell variable, make assignment or wrapper, the Go acceptance test lands in the right package and directory, and a run stopped by a signal or STOP file still reports that it finished.
+
+### Fixed
+
+- A go or cargo test run hidden behind a shell variable, a make assignment, a string concatenation, a list-form spawn, a prefix assignment, a tool-named make variable, inline interpreter code, a cargo front end or a versioned go wrapper is now detected as go or cargo, so a green exit is not read as a pass. A go or cargo run behind an unrelated variable name reads as not run.
+- A cargo pass is refused with the compiler reason when a quoted cargo-features key, an escaped manifest key, an [env] entry that loads repo code into the test binary (LD_PRELOAD, DYLD_INSERT_LIBRARIES, LD_LIBRARY_PATH, DYLD_LIBRARY_PATH, DYLD_FALLBACK_LIBRARY_PATH, DYLD_FRAMEWORK_PATH, DYLD_FALLBACK_FRAMEWORK_PATH, DYLD_VERSIONED_FRAMEWORK_PATH), a quoted env table name, a table header hidden in a multi-line string, or a -Zllvm-plugins rustflag lets the repo steer the test run.
+- The tool's own path and config variables no longer read as the tool, and adjacent quoted literals and gotip are caught.
+- A Go task that names a package directory but no .go file now gets its acceptance test in that directory with the named package, instead of at the repo root with no package line.
+- The Go acceptance-test directory pick skips testdata, underscore and dot paths at any segment, accepts a leading ./, ignores the word package used as a plain noun, takes a package phrase only from the same sentence as the directory, prefers a directory with a package phrase or an existing Go package, and falls back to the repo root on vague prose.
+- A planned Go file in a subdirectory now gets its acceptance test in the directory's name as package, a root file keeps its file name, and a planned main.go (or a file whose own sentence says so) keeps package main. A directory that is not a Go identifier (url-shortener) or is a major-version path (v2) no longer becomes the package name. An explicit Go package named in the task, including package v2, is taken as written.
+- The acceptance test no longer buys a second one when the project has no interpreter of its own, and an empty re-authored acceptance test is always disclosed.
+- A run ended by a signal or STOP file now reports that it finished, and the session lock is released only by the process that took it.
+
 ## v11.96.0 (2026-10-31)
 
 `loki trust` shows progress toward your earned-merge policy, a green Wall that leaves a spec clause unproven now seals PARTIAL, the Go and Wall acceptance-test paths are corrected, and a VERIFIED receipt discloses error assertions that do not name the expected error.
