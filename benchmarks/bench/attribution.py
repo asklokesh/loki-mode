@@ -1125,6 +1125,9 @@ def render_cost_table(out_dir: str, arms: Tuple[str, ...] = ARMS) -> str:
     L.append("Ratios are arm / floor cost per accepted; target ratio is arm / (%.1f * floor), "
              "so <= 1.00x meets the target. Every floor is always shown." % COST_TARGET_FRACTION)
     L.extend(_verdict_lines(rows, labels))
+    if any(r.get("arm") == "droid" and r.get("cost_usd") is None for r in rows):
+        L.append("droid arm: cost_usd is None (no provider-reported cost), so any cost "
+                 "claim that includes it stays INVALID.")
     return "\n".join(L) + "\n"
 
 

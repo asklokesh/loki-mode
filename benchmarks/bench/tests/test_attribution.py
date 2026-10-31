@@ -1306,6 +1306,16 @@ class LeanCostTableTest(unittest.TestCase):
         self.assertIn("ratio not computable", line)
         self.assertIn("lower bound", line)
 
+    def test_droid_arm_without_cost_states_cost_claim_stays_invalid(self):
+        rows = [row("raw-lean", True, True, cost=4.0),
+                row("droid", True, True, cost=None)]
+        self._write(rows)
+        text = A.render_cost_table(self.d)
+        notes = [ln for ln in text.splitlines() if ln.startswith("droid arm:")]
+        self.assertEqual(len(notes), 1, text)
+        self.assertIn("cost_usd is None", notes[0])
+        self.assertIn("INVALID", notes[0])
+
     def test_different_lever_env_is_not_pooled_into_loki_arm(self):
         rows = self._rows("loki", "abc", 1.0, lever_env={}, cost_profile="off")
         rows += self._rows("loki", "de", 9.0, lever_env={"LOKI_E10_TRIM": "1"},
