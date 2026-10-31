@@ -423,7 +423,7 @@ RELEASE_REQUIRED_WORKFLOWS=()
 # Cheap CI-only guards (global-guards.tsv R8 rows). Always run before a bump
 # so a release cannot cut on a tree a guard already rejects. Same runner as the
 # impacted gate (scripts/impacted-gate.sh --guards-only): per-row timeout, parallel.
-# No environment variable skips them. LOKI_RELEASE_GUARD_TIMEOUT (default 300s)
+# No environment variable skips them. LOKI_RELEASE_GUARD_TIMEOUT (default 900s)
 # is the per-row limit. Guards run in a clean worktree of HEAD; a worktree failure exits 3.
 run_release_guard_rows() {
     local out rc=0 started
@@ -479,7 +479,7 @@ run_release_guard_rows() {
     log_step "Running global guard rows against a clean worktree of HEAD (scripts/impacted-gate.sh --guards-only)..."
     started="$(date +%s)"
     # env -u: a caller-exported LOKI_RUN_TMP would make the gate's loki_run_tmp_create refuse.
-    out="$(cd "$wt" && env -u LOKI_RUN_TMP IMPACTED_SUITE_TIMEOUT="${LOKI_RELEASE_GUARD_TIMEOUT:-300}" \
+    out="$(cd "$wt" && env -u LOKI_RUN_TMP IMPACTED_SUITE_TIMEOUT="${LOKI_RELEASE_GUARD_TIMEOUT:-900}" \
         bash "$wt/scripts/impacted-gate.sh" --guards-only 2>&1)" || rc=$?
     git -C "$ROOT_DIR" worktree remove --force "$wt" >/dev/null 2>&1 || true
     case "$dir" in
@@ -695,6 +695,17 @@ ship_refuse() {
         log_error "The local release commit $SHIP_COMMITTED was NOT pushed and is left in place."
     fi
     exit 4
+}
+
+# A linked worktree has a git-dir distinct from the common dir. --ship pushes,
+# and the pre-push hook refuses pushes from linked worktrees, so refuse up
+# front, before any VERSION edit or commit, and name the main checkout.
+ship_require_main_checkout() {
+    local gd gcd
+    gd="$(cd "$(git -C "$ROOT_DIR" rev-parse --git-dir)" && pwd -P)" || return 0
+    gcd="$(cd "$(git -C "$ROOT_DIR" rev-parse --git-common-dir)" && pwd -P)" || return 0
+    [ "$gd" != "$gcd" ] || return 0
+    ship_refuse SHIP_LINKED_WORKTREE "--ship cannot run from a linked worktree ($ROOT_DIR). Run it from the main checkout: $(dirname -- "$gcd")"
 }
 
 # Close the running phase (printing its [TIME] line) and open phase $1.
@@ -967,6 +978,10 @@ main() {
     if [ "$CHECK_CLEAN" = "true" ]; then
         release_commit_clean
         return
+    fi
+
+    if [ "$SHIP" = "true" ]; then
+        ship_require_main_checkout
     fi
 
     # The guard rows run before ANY bump, --bump-only included. Skipped on

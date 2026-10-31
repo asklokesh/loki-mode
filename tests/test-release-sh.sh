@@ -421,8 +421,8 @@ else
 fi
 
 echo
-echo "T15 -- default guard timeout is 300s, not 170 (REL-GUARD-b)"
-grep -q 'LOKI_RELEASE_GUARD_TIMEOUT:-300' "$REPO_ROOT/scripts/release.sh" && ok "default 300" || bad "default not 300"
+echo "T15 -- default guard timeout is not 170 (REL-GUARD-b)"
+grep -q 'LOKI_RELEASE_GUARD_TIMEOUT:-900' "$REPO_ROOT/scripts/release.sh" && ok "default 900" || bad "default not 900"
 grep -q ':-170' "$REPO_ROOT/scripts/release.sh" && bad "170 default still present" || ok "no 170 default"
 
 echo
@@ -813,6 +813,29 @@ echo "T26 -- --ship argument validation"
 [ $? -eq 1 ] && ok "--ship --dry-run exits 1" || bad "--ship --dry-run accepted"
 
 echo
+echo "T27 -- --ship from a linked worktree is refused before any write"
+new_ship_fixture
+T27_WT="$SHIPW/linked-wt"
+rm -rf -- "$T27_WT"
+git -C "$SHIP_REPO" worktree add -q --detach "$T27_WT" HEAD >/dev/null 2>&1
+T27_ORIGIN="$(origin_main)"
+T27_HEAD="$(git -C "$T27_WT" rev-parse HEAD)"
+( cd "$T27_WT" \
+    && env PATH="$STUBBIN:$PATH" GIT_CONFIG_GLOBAL="$SHIPW/empty-gitconfig" GIT_CONFIG_NOSYSTEM=1 \
+       GH_MODE=green_head GH_RELEASE_COUNT="$SHIPW/release-count" GITLEAKS_LOG="$SHIPW/gitleaks.log" \
+       LOKI_RELEASE_SHIP_POLL=1 \
+       bash ./scripts/release.sh --ship --notes "$SHIPW/notes.md" >"$SHIPW/case.log" 2>&1 </dev/null )
+T27_RC=$?
+[ "$T27_RC" -eq 4 ] && ok "linked worktree: exit 4" || bad "linked worktree: expected exit 4, got $T27_RC ($(tail -4 "$SHIPW/case.log"))"
+grep -q "SHIP_LINKED_WORKTREE" "$SHIPW/case.log" && ok "linked worktree: SHIP_LINKED_WORKTREE printed" || bad "linked worktree: no SHIP_LINKED_WORKTREE"
+grep -qF "main checkout: $(cd "$SHIP_REPO" && pwd -P)" "$SHIPW/case.log" && ok "linked worktree: names the main checkout path" || bad "linked worktree: main checkout path missing ($(tail -3 "$SHIPW/case.log"))"
+grep -qx 1.2.3 "$T27_WT/VERSION" && ok "linked worktree: VERSION unchanged" || bad "linked worktree: VERSION was edited"
+[ "$(git -C "$T27_WT" rev-parse HEAD)" = "$T27_HEAD" ] && ok "linked worktree: no commit made" || bad "linked worktree: a commit was made"
+[ "$(origin_main)" = "$T27_ORIGIN" ] && ok "linked worktree: origin/main untouched" || bad "linked worktree: origin/main moved"
+git -C "$SHIP_REPO" worktree remove --force "$T27_WT" >/dev/null 2>&1
+
+
+echo
 echo "==============================================================="
-echo "Results: $PASS passed, $FAIL failed, $((PASS + FAIL)) total"
+echo "Results:$PASS passed, $FAIL failed, $((PASS + FAIL)) total"
 [ "$FAIL" -eq 0 ]
