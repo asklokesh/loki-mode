@@ -5,7 +5,8 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { decomposeBrief, parseDecomposition, progressLine, renderEpicTree, runEpicSlices, type EpicProgress, type SliceResult } from "../../src/commands/issues_epic.ts";
-import { runIssues, type GhIssue, type IssuesRunDeps, type Triage } from "../../src/commands/issues_run.ts";
+import { parseIssuesArgs, runIssues, type GhIssue, type IssuesRunDeps, type Triage } from "../../src/commands/issues_run.ts";
+import { parseIssuesArgs, runIssues, type GhIssue, type IssuesRunDeps, type Triage } from "../../src/commands/issues_run.ts";
 import type { RunOpts, RunResult } from "../../src/commands/queue.ts";
 
 let dir: string;
@@ -140,7 +141,7 @@ describe("parseDecomposition (schema, L0: the model decides the split, the harne
 describe("loki issues run: epic split", () => {
   test("stacking: slices run in dependency order, each in a worktree on its parent's branch, PR base = parent branch", async () => {
     const h = harness({ issues: [issue(12, "Big epic")] });
-    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(0);
     expect(h.decomposed).toEqual([12]);
     expect(h.ran.map(h.sliceOf)).toEqual(["s1", "s2", "s3", "s4"]);
     // Roots start from HEAD and PR to the default branch; s2 stacks on s1's run branch, s3 on s2's.
@@ -163,12 +164,12 @@ describe("loki issues run: epic split", () => {
 
   test("stop rule: a FAILED slice skips its dependents (transitively) while an independent sibling still runs", async () => {
     const h = harness({ issues: [issue(12)], verdicts: { s2: { verdict: "FAILED", rc: 1, pr: false } } });
-    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(0);
     expect(h.ran.map(h.sliceOf)).toEqual(["s1", "s2", "s4"]);
     const text = h.out.join("");
     expect(text).toContain("s3 title s3: SKIPPED (depends on s2, which was FAILED)");
     const blocked = harness({ issues: [issue(12)], verdicts: { s1: { verdict: "BLOCKED", rc: 3, pr: false } } });
-    await runIssues(["run", SLUG, "--yes"], blocked.inject);
+    await runIssues(["run", SLUG, "--triage", "--yes"], blocked.inject);
     expect(blocked.ran.map(blocked.sliceOf)).toEqual(["s1", "s4"]);
     expect(blocked.out.join("")).toContain("s3 title s3: SKIPPED (depends on s2, which was SKIPPED)");
   });
@@ -187,7 +188,7 @@ describe("loki issues run: epic split", () => {
 
   test("a rejected decomposition falls back to skipped: too-large and runs nothing", async () => {
     const h = harness({ issues: [issue(12)], decompose: { 12: plan(slice("s1", ["s2"]), slice("s2", ["s1"])) } });
-    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(0);
     expect(h.ran).toEqual([]);
     expect(h.out.join("")).toMatch(/\| #12 issue 12 \| too-large \| skipped: split refused: dependency cycle/);
   });
@@ -216,7 +217,7 @@ describe("loki issues run: epic split", () => {
 
   test("--no-split keeps the MASS-1 behavior: no decomposition call, too-large is skipped", async () => {
     const h = harness({ issues: [issue(12)] });
-    expect(await runIssues(["run", SLUG, "--yes", "--no-split"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes", "--no-split"], h.inject)).toBe(0);
     expect(h.decomposed).toEqual([]);
     expect(h.ran).toEqual([]);
     expect(h.out.join("")).toMatch(/\| #12 issue 12 \| too-large \| skipped: several services \| none \|/);
@@ -224,10 +225,10 @@ describe("loki issues run: epic split", () => {
 
   test("--comment off: no gh issue comment and no sub-issue; on: the slice plan is posted on the epic", async () => {
     const off = harness({ issues: [issue(12)] });
-    await runIssues(["run", SLUG, "--yes"], off.inject);
+    await runIssues(["run", SLUG, "--triage", "--yes"], off.inject);
     expect(off.ghCalls.filter((c) => !(c[1] === "list"))).toEqual([]);
     const on = harness({ issues: [issue(12)] });
-    await runIssues(["run", SLUG, "--yes", "--comment"], on.inject);
+    await runIssues(["run", SLUG, "--triage", "--yes", "--comment"], on.inject);
     const writes = on.ghCalls.filter((c) => c[1] !== "list");
     expect(writes.length).toBe(1);
     expect(writes[0]!.slice(0, 5)).toEqual(["issue", "comment", "12", "--repo", SLUG]);
@@ -238,7 +239,7 @@ describe("loki issues run: epic split", () => {
 
   test("cost: each epic shows slices x per-run estimate (labelled rough prior) before the run prompt", async () => {
     const h = harness({ issues: [issue(12), issue(13)], triage: { 13: { decision: "actionable", reason: "small" } } });
-    expect(await runIssues(["run", SLUG], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage"], h.inject)).toBe(0);
     const text = h.out.join("");
     expect(text).toContain("epic #12: 4 slices x ~$0.11-$0.98 (rough prior) = ~$0.44-$3.92");
     expect(h.prompts.length).toBe(2);
@@ -246,16 +247,16 @@ describe("loki issues run: epic split", () => {
     expect(text.indexOf("epic #12: 4 slices")).toBeLessThan(text.indexOf("#13 running"));
     const na = harness({ issues: [issue(12)] });
     na.inject.estimate = () => ({ ok: false, reason: "no project shape recorded for this repo" });
-    await runIssues(["run", SLUG, "--yes"], na.inject);
+    await runIssues(["run", SLUG, "--triage", "--yes"], na.inject);
     expect(na.out.join("")).toContain("epic #12: 4 slices x NOT AVAILABLE (no project shape recorded for this repo)");
     const no = harness({ issues: [issue(12)], confirm: [true, false] });
-    expect(await runIssues(["run", SLUG], no.inject)).toBe(1);
+    expect(await runIssues(["run", SLUG, "--triage"], no.inject)).toBe(1);
     expect(no.ran).toEqual([]);
   });
 
   test("the digest shows each epic as a tree (golden)", async () => {
     const h = harness({ issues: [issue(12, "Big epic")], verdicts: { s2: { verdict: "PARTIAL" }, s3: { verdict: "FAILED", rc: 1, pr: false } } });
-    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(0);
     const runs = readdirSync(join(dir, ".loki", "issues-run"));
     // The Time cell is wall-clock; everything else is golden.
     const digest = readFileSync(join(dir, ".loki", "issues-run", runs[0]!, "digest.md"), "utf8").replace(/ \| \d+s \|$/m, " | - |");
@@ -302,6 +303,62 @@ describe("loki issues run: epic split", () => {
       expect(src).not.toMatch(/["'`]pr["'`]\s*,\s*["'`]create["'`]/);
       expect(src).not.toContain("engine10-push");
     }
+  });
+
+  describe("speed defaults: triage opt-in, split only after a whole-issue run did not finish", () => {
+    const noTriage = (h: ReturnType<typeof harness>, calls: number[]): Partial<IssuesRunDeps> => ({
+      ...h.inject,
+      triage: async (_s: string, x: GhIssue) => {
+        calls.push(x.number);
+        throw new Error("triage must not be called");
+      },
+    });
+
+    test("the default run never calls triage and runs each issue whole; --triage calls it", async () => {
+      const calls: number[] = [];
+      const h = harness({ issues: [issue(1), issue(2)] });
+      expect(await runIssues(["run", SLUG, "--yes"], noTriage(h, calls))).toBe(0);
+      expect(calls).toEqual([]);
+      expect(h.ran.map((r) => r.ref).sort()).toEqual(["o/r#1", "o/r#2"]);
+      expect(h.decomposed).toEqual([]);
+      const t = harness({ issues: [issue(1)], triage: { 1: { decision: "actionable", reason: "small" } } });
+      const seen: number[] = [];
+      const inj = { ...t.inject, triage: async (_s: string, x: GhIssue) => (seen.push(x.number), { decision: "actionable" as const, reason: "small" }) };
+      expect(await runIssues(["run", SLUG, "--yes", "--triage"], inj)).toBe(0);
+      expect(seen).toEqual([1]);
+    });
+
+    test("a whole-issue run that hits its cap triggers exactly one decompose and the slices run", async () => {
+      const h = harness({ issues: [issue(12)], verdicts: { "o/r#12": { verdict: "BUDGET_STOP", rc: 1, pr: false } } });
+      expect(await runIssues(["run", SLUG, "--yes"], noTriage(h, []))).toBe(0);
+      expect(h.decomposed).toEqual([12]);
+      expect(h.ran.map(h.sliceOf).filter((x) => x?.startsWith("s")).sort()).toEqual(["s1", "s2", "s3", "s4"]);
+    });
+
+    test("a failed whole-issue run splits once; a verified one and --no-split do not split", async () => {
+      const failed = harness({ issues: [issue(12)], verdicts: { "o/r#12": { verdict: "FAILED", rc: 1, pr: false } } });
+      await runIssues(["run", SLUG, "--yes"], failed.inject);
+      expect(failed.decomposed).toEqual([12]);
+      const ok = harness({ issues: [issue(12)] });
+      await runIssues(["run", SLUG, "--yes"], ok.inject);
+      expect(ok.decomposed).toEqual([]);
+      const ns = harness({ issues: [issue(12)], verdicts: { "o/r#12": { verdict: "FAILED", rc: 1, pr: false } } });
+      await runIssues(["run", SLUG, "--yes", "--no-split"], ns.inject);
+      expect(ns.decomposed).toEqual([]);
+    });
+
+    test("--parallel defaults to min(4, issue count); --parallel 1 stays sequential", () => {
+      expect((parseIssuesArgs([SLUG]) as { parallel: number }).parallel).toBe(4);
+      expect((parseIssuesArgs([SLUG, "--parallel", "1"]) as { parallel: number }).parallel).toBe(1);
+      expect((parseIssuesArgs([SLUG, "--triage"]) as { triage: boolean }).triage).toBe(true);
+      expect((parseIssuesArgs([SLUG]) as { triage: boolean }).triage).toBe(false);
+    });
+
+    test("with 2 issues the default runs them in 2 worktrees, not 4", async () => {
+      const h = harness({ issues: [issue(1), issue(2)] });
+      await runIssues(["run", SLUG, "--yes"], h.inject);
+      expect(h.wtCreated.map((w) => w.name).sort()).toEqual(["issue-1", "issue-2"]);
+    });
   });
 });
 

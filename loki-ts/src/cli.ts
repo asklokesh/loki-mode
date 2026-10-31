@@ -45,7 +45,7 @@ Bun-native commands:
   queue <subcmd>         Overnight issue queue with a morning digest
                          (subcmds: add <issue...> | list | run [--no-pr])
   issues run [owner/repo] Triage every open issue and run the actionable ones; too-large ones become stacked PRs
-                         (flags: --label L --limit N --parallel K --draft --dry-run --json --yes --comment --no-split)
+                         (flags: --label L --limit N --parallel K --draft --dry-run --json --yes --comment --triage --no-split)
   verify-pr <url|o/r#N>  Verify a PR against its linked issue in a sandbox (LOKI_VERIFY_PR=1)
   answer [run] [text]    Answer a BLOCKED run; it continues under the same run id (text, --text, or the Control Plane answer file)
   control <subcmd>       Control plane (on by default; LOKI_CONTROL=0 turns it off)

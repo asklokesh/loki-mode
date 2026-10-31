@@ -85,7 +85,7 @@ describe("loki issues run", () => {
     const savedPath = process.env.PATH;
     process.env.PATH = `${bin}:${savedPath}`;
     try {
-      expect(await runIssues(["run", SLUG, "--label", "bug", "--limit", "5", "--dry-run"], h.inject)).toBe(0);
+      expect(await runIssues(["run", SLUG, "--triage", "--label", "bug", "--limit", "5", "--dry-run"], h.inject)).toBe(0);
     } finally {
       process.env.PATH = savedPath;
     }
@@ -97,7 +97,7 @@ describe("loki issues run", () => {
 
   test("passes --milestone as separate gh argv elements", async () => {
     const h = harness({ issues: [issue(7)] });
-    expect(await runIssues(["run", SLUG, "--label", "bug", "--milestone", "M1", "--dry-run"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--label", "bug", "--milestone", "M1", "--dry-run"], h.inject)).toBe(0);
     expect(h.ghCalls[0]!.slice(-4)).toEqual(["--label", "bug", "--milestone", "M1"]);
     expect(h.out.join("")).toContain("in milestone M1");
   });
@@ -105,7 +105,7 @@ describe("loki issues run", () => {
   test("keeps hostile label text as one literal argv element", async () => {
     const evil = 'x"; touch /tmp/pwned #$(id)`';
     const h = harness({});
-    expect(await runIssues(["run", SLUG, "--label", evil, "--dry-run"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--label", evil, "--dry-run"], h.inject)).toBe(0);
     expect(h.ghCalls[0]).toContain(evil);
   });
 
@@ -113,19 +113,19 @@ describe("loki issues run", () => {
     for (const flag of ["--limit", "--parallel"]) {
       for (const bad of ["1e1", "0x10", "0b11", " 5", "5 ", "+5", "1.0", "-1", "0", "", "99999999999999999999"]) {
         const h = harness({});
-        expect(await runIssues(["run", SLUG, flag, bad, "--dry-run"], h.inject)).toBe(2);
+        expect(await runIssues(["run", SLUG, "--triage", flag, bad, "--dry-run"], h.inject)).toBe(2);
         expect(h.err.join("")).toContain("needs a positive integer");
         expect(h.ghCalls).toEqual([]);
       }
       const ok = harness({});
-      expect(await runIssues(["run", SLUG, flag, "3", "--dry-run"], ok.inject)).toBe(0);
+      expect(await runIssues(["run", SLUG, "--triage", flag, "3", "--dry-run"], ok.inject)).toBe(0);
     }
   });
 
   test("refuses a dash-leading label or milestone before calling gh", async () => {
     for (const bad of [["--label", "--repo=evil"], ["--milestone", "-x"]]) {
       const h = harness({});
-      expect(await runIssues(["run", SLUG, ...bad, "--dry-run"], h.inject)).toBe(2);
+      expect(await runIssues(["run", SLUG, "--triage", ...bad, "--dry-run"], h.inject)).toBe(2);
       expect(h.err.join("")).toContain("invalid");
       expect(h.ghCalls).toEqual([]);
     }
@@ -144,7 +144,7 @@ describe("loki issues run", () => {
     const bad: unknown[] = [[1], [null], [{ ...row, number: "7" }], [{ ...row, labels: ["bug"] }], [row, { ...row, title: 3 }], [{ ...row, body: 5 }]];
     for (const rows of bad) {
       const h = harness({ issues: rows as ReturnType<typeof issue>[] });
-      expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(1);
+      expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(1);
       expect(h.err.join("")).toContain("malformed issue");
       expect(h.triaged).toEqual([]);
     }
@@ -152,9 +152,9 @@ describe("loki issues run", () => {
 
   test("a null body is empty and an empty list runs nothing", async () => {
     const h = harness({ issues: [{ ...issue(7), body: null } as unknown as ReturnType<typeof issue>] });
-    expect(await runIssues(["run", SLUG, "--dry-run"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--dry-run"], h.inject)).toBe(0);
     const e = harness({ issues: [] });
-    expect(await runIssues(["run", SLUG, "--yes"], e.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes"], e.inject)).toBe(0);
     expect(e.out.join("")).toContain("nothing to run");
   });
 
@@ -172,7 +172,7 @@ describe("loki issues run", () => {
     process.env.GH_TOKEN = "ghp_USERREALTOKEN";
     let after: string | undefined;
     try {
-      await runIssues(["run", SLUG, "--dry-run"], h.inject);
+      await runIssues(["run", SLUG, "--triage", "--dry-run"], h.inject);
       after = process.env.GH_TOKEN;
     } finally {
       for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
@@ -195,7 +195,7 @@ describe("loki issues run", () => {
     const t0 = Date.now();
     let rc: number;
     try {
-      rc = await runIssues(["run", SLUG, "--dry-run"], h.inject);
+      rc = await runIssues(["run", SLUG, "--triage", "--dry-run"], h.inject);
     } finally {
       for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
       Object.assign(process.env, saved);
@@ -213,9 +213,9 @@ describe("loki issues run", () => {
         { headRefName: "feature/human", body: "mentions #4" },
       ],
     });
-    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(0);
     expect(h.triaged).toEqual([1, 4]);
-    expect(h.ran.map((r) => r.ref)).toEqual(["o/r#1", "o/r#4"]);
+    expect(h.ran.map((r) => r.ref).sort()).toEqual(["o/r#1", "o/r#4"]);
     const text = h.out.join("");
     expect(text).toContain("skip #2 (open Loki PR exists)");
     expect(text).toContain("skip #3 (open Loki PR exists)");
@@ -227,7 +227,7 @@ describe("loki issues run", () => {
       issues: [issue(1), issue(2), issue(3)],
       triage: { 2: { decision: "needs-info", reason: "no repro steps" }, 3: { decision: "too-large", reason: "needs a schema redesign" } },
     });
-    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(0);
     expect(h.ran.map((r) => r.ref)).toEqual(["o/r#1"]);
     expect(h.ghCalls.some((c) => c[0] === "issue" && c[1] === "comment")).toBe(false);
     const text = h.out.join("");
@@ -236,7 +236,7 @@ describe("loki issues run", () => {
     expect(text).toMatch(/\| #3 issue 3 \| too-large \|/);
 
     const c = harness({ issues: [issue(2)], triage: { 2: { decision: "needs-info", reason: "no repro steps" } } });
-    expect(await runIssues(["run", SLUG, "--yes", "--comment"], c.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes", "--comment"], c.inject)).toBe(0);
     expect(c.ghCalls.find((x) => x[1] === "comment")).toEqual(["issue", "comment", "2", "--repo", SLUG, "--body", "Loki triage: needs-info. no repro steps"]);
   });
 
@@ -251,7 +251,7 @@ describe("loki issues run", () => {
       issues: [issue(1), issue(2)],
       results: { "o/r#2": { rc: 3, output: "engine10: stage plan done\nBLOCKED: spec conflict: which API version?\n", verdict: "BLOCKED", costUsd: null } },
     });
-    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(0);
     const text = h.out.join("");
     expect(text).toMatch(/\| #1 issue 1 \| actionable \| VERIFIED \| https:\/\/github\.com\/o\/r\/pull\/1 \| \$1\.25 \| 0s \|/);
     expect(text).toMatch(/\| #2 issue 2 \| actionable \| BLOCKED, no PR: BLOCKED: spec conflict: which API version\? \| none \| NOT RECORDED \|/);
@@ -264,16 +264,16 @@ describe("loki issues run", () => {
 
   test("--draft reaches the runner's PR options", async () => {
     const h = harness({ issues: [issue(1)] });
-    expect(await runIssues(["run", SLUG, "--yes", "--draft"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes", "--draft"], h.inject)).toBe(0);
     expect(h.ran[0]!.opts).toEqual({ pr: true, draft: true });
     const plain = harness({ issues: [issue(1)] });
-    await runIssues(["run", SLUG, "--yes"], plain.inject);
+    await runIssues(["run", SLUG, "--triage", "--yes"], plain.inject);
     expect(plain.ran[0]!.opts.draft).toBeUndefined();
   });
 
   test("--dry-run makes no triage call, spawns nothing and exits 0", async () => {
     const h = harness({ issues: [issue(1), issue(2)], isTTY: false });
-    expect(await runIssues(["run", SLUG, "--dry-run"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--dry-run"], h.inject)).toBe(0);
     expect(h.triaged).toEqual([]);
     expect(h.ran).toEqual([]);
     expect(h.worktrees).toEqual([]);
@@ -283,7 +283,7 @@ describe("loki issues run", () => {
 
   test("dry run json prints one decision row per issue and nothing else on stdout", async () => {
     const h = harness({ issues: [issue(1), issue(2)], prs: [{ headRefName: "loki/issue-2", body: "" }], isTTY: false });
-    expect(await runIssues(["run", SLUG, "--dry-run", "--json"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--dry-run", "--json"], h.inject)).toBe(0);
     expect(JSON.parse(h.out.join(""))).toEqual([
       { number: 1, decision: "pending", reason: "not triaged (dry run makes no model calls)", covered_by_pr: false },
       { number: 2, decision: "skip", reason: "open Loki PR exists", covered_by_pr: true },
@@ -294,40 +294,40 @@ describe("loki issues run", () => {
 
   test("dry run json with every issue covered still prints the plan", async () => {
     const h = harness({ issues: [issue(2)], prs: [{ headRefName: "loki/issue-2", body: "" }] });
-    expect(await runIssues(["run", SLUG, "--dry-run", "--json"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--dry-run", "--json"], h.inject)).toBe(0);
     expect(JSON.parse(h.out.join(""))).toHaveLength(1);
   });
 
   test("--json without --dry-run is refused with exit 2", async () => {
     const h = harness({ issues: [issue(1)] });
-    expect(await runIssues(["run", SLUG, "--json", "--yes"], h.inject)).toBe(2);
+    expect(await runIssues(["run", SLUG, "--triage", "--json", "--yes"], h.inject)).toBe(2);
     expect(h.triaged).toEqual([]);
   });
 
   test("no TTY and no --yes refuses with exit 2 before any billed call", async () => {
     const h = harness({ issues: [issue(1)], isTTY: false });
-    expect(await runIssues(["run", SLUG], h.inject)).toBe(2);
+    expect(await runIssues(["run", SLUG, "--triage"], h.inject)).toBe(2);
     expect(h.err.join("")).toContain("pass --yes");
     expect(h.triaged).toEqual([]);
     expect(h.ran).toEqual([]);
     const no = harness({ issues: [issue(1)], confirm: false });
-    expect(await runIssues(["run", SLUG], no.inject)).toBe(1);
+    expect(await runIssues(["run", SLUG, "--triage"], no.inject)).toBe(1);
     expect(no.triaged).toEqual([]);
   });
 
   test("--parallel caps at 4 in flight, each in its own worktree; 5 is refused", async () => {
     const h = harness({ issues: [1, 2, 3, 4, 5, 6, 7, 8].map((n) => issue(n)), runDelayMs: 20 });
-    expect(await runIssues(["run", SLUG, "--yes", "--parallel", "4"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes", "--parallel", "4"], h.inject)).toBe(0);
     expect(h.ran.length).toBe(8);
     expect(h.peak()).toBe(4);
     expect(h.worktrees.sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(new Set(h.ran.map((r) => r.opts.cwd)).size).toBe(8);
     const seq = harness({ issues: [1, 2, 3].map((n) => issue(n)), runDelayMs: 5 });
-    await runIssues(["run", SLUG, "--yes"], seq.inject);
+    await runIssues(["run", SLUG, "--triage", "--yes", "--parallel", "1"], seq.inject);
     expect(seq.peak()).toBe(1);
     expect(seq.worktrees).toEqual([]);
     const over = harness({ issues: [issue(1)] });
-    expect(await runIssues(["run", SLUG, "--yes", "--parallel", "5"], over.inject)).toBe(2);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes", "--parallel", "5"], over.inject)).toBe(2);
     expect(over.err.join("")).toContain("--parallel is at most 4");
   });
 
@@ -337,7 +337,7 @@ describe("loki issues run", () => {
     h.inject.runner = async () => (++calls === 1 ? { rc: 1, output: "Error: 429 rate limit exceeded, retry-after: 7" } : { rc: 0, output: "https://github.com/o/r/pull/9", verdict: "VERIFIED", costUsd: 0.5 });
     const slept: number[] = [];
     h.inject.sleep = async (ms) => void slept.push(ms);
-    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(0);
     expect(calls).toBe(2);
     expect(slept).toEqual([7000]);
     expect(h.out.join("")).toContain("https://github.com/o/r/pull/9");
@@ -358,7 +358,7 @@ describe("loki issues run", () => {
     const h = harness({ issues: [issue(1)] });
     const gh = h.inject.gh!;
     h.inject.gh = (args) => (args[0] === "pr" ? { rc: 1, stdout: "", stderr: "HTTP 502" } : gh(args));
-    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(1);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(1);
     expect(h.triaged).toEqual([]);
   });
 });
