@@ -5,6 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.95.0 (2026-10-31)
+
+`loki answer` now resumes a blocked run in place, a Wall test that contradicts the task is settled by two referees and caps the Seal at PARTIAL, implement sessions refuse file writes outside their worktree, and a test-command timeout now kills the whole runner process group.
+
+### Added
+
+- `loki answer <run-id> "<text>"` resumes a BLOCKED run in place under the same run id instead of starting a follow-up run: the answer joins the run's locked task, stages that already settled are restored and not re-run, and the log records `run.resumed` rather than a second `run.started`. The text can also be given with `--text` or through the Control Plane answer file.
+- `loki verify` accepts the extra seal an answered BLOCKED run produces: each earlier seal must be followed by a SPEC_CONFLICT completion and an answered resume whose recorded answer hash matches the answer, and the verified receipt must hold the last seal. The hash is computed over the answer as the log stores it, so a secret-shaped answer still verifies.
+- A Wall test that contradicts the task is now arbitrated by two referees and checked mechanically. A correction can only change the body of the one test it names, and an implementer conflict can no longer drop or weaken a check.
+
+### Changed
+
+- A run whose Wall test was corrected by arbitration, or rewritten with the referees switched off, seals PARTIAL instead of VERIFIED. The correction stays disclosed in NOT PROVEN, the seal note names the arbitration, and a resumed run keeps the arbitrated Wall hash and its disclosure. A run that would have sealed ALREADY_SATISFIED after arbitration is capped the same way.
+- Implement sessions refuse the Write, Edit and NotebookEdit tools outside the unit worktree, on both the SDK and CLI routes. This does not cover Bash, MCP tools or hooks, and is not a sandbox. Plan, fix, review and other stages are unchanged.
+- The Wall stage keeps a spent-budget green that was already flagged as a reproduction green on base, instead of distrusting it again.
+- Runs on the legacy engine report the same first-run milestones as the default engine: first start, first run finished, first verified build, and a second run inside seven days, each sent once per machine. Nothing is sent when analytics is off.
+
+### Fixed
+
+- A test-command timeout now kills the whole process group, so a runner started through `npx` or `npm` can no longer outlive the timeout or keep holding the output pipes. A child that ignores SIGTERM is killed with SIGKILL at the timeout. Sync and async runs also die with their owner and load no repo config, so a repo `bunfig` or `.env` cannot be picked up.
+- Test commands receive exactly the token-free test environment, never the parent environment, and a missing environment falls back to the plain test env.
+- The arbitration's Python checks no longer reuse stale bytecode.
+- The Seal drift reader and the Wall rewrite both use the single sealed Wall directory resolver, so the drift check reads the directory the rewrite wrote.
+
 ## v11.94.0 (2026-10-31)
 
 Loki waits out Claude's 5-hour usage limit instead of failing, `loki start` exits 6 for a PARTIAL run, custom webhooks are now signed (breaking), `loki plan --fast` gives a one-screen plan, and receipts copied under another run id are refused. Seal and git hardening are tightened.
