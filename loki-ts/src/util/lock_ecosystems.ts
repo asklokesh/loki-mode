@@ -164,21 +164,50 @@ export function exportConds(x: unknown, out: string[] = []): string[] {
   return out;
 }
 const WORKSPACE_SPEC = /^workspace:(\*|\^|~|[\^~]?\d[\w.+-]*)$/;
-/** The module specifiers a source text really imports: comments are removed and every string literal is parked behind a placeholder first, so a specifier named in a comment or inside another string is not seen.
- *  Static `import ... from`, `export ... from`, side-effect `import "x"`, `require("x")` and `import("x")` count. */
+const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|case|void|delete|throw|in|of)$/;
+/** The module specifiers a source text imports, read by one lexical pass: comments and regex literals are dropped and every string literal is parked behind a placeholder, so a specifier named in a comment,
+ *  a regex or another string is not seen. Static `import ... from`, `export ... from`, side-effect `import "x"`, `require("x")` and `import("x")` count. A `/` starts a regex after an operator, `(`, `,`, `=`, `:`,
+ *  `[`, `!`, `&`, `|`, `?`, `{`, `}`, `;`, `return` and the like, or at the start. That heuristic can misread a division as a regex (the text up to the next `/` on the line is then skipped: a real import is missed, so the
+ *  run caps, the safe direction); the reverse misread needs a regex literal right after `)` or `]`, which only a Wall written to defeat this reader would contain, and the Wall is sealed before the agent runs. */
 export function importSpecifiers(src: string): string[] {
-  const lit: string[] = [];
-  const t = src.replace(/("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (_m, q: string | undefined) => (q === undefined ? " " : `\u0000${lit.push(q.slice(1, -1)) - 1}\u0000`));
+  const lit: string[] = [], n = src.length;
+  let t = "", i = 0;
+  while (i < n) {
+    const c = src[i]!, d = src[i + 1];
+    if (c === "/" && d === "/") { const e = src.indexOf("\n", i); t += " "; i = e < 0 ? n : e; continue; }
+    if (c === "/" && d === "*") { const e = src.indexOf("*/", i + 2); t += " "; i = e < 0 ? n : e + 2; continue; }
+    if (c === '"' || c === "'" || c === "`") {
+      let k = i + 1;
+      while (k < n && src[k] !== c && (c === "`" || src[k] !== "\n")) k += src[k] === "\\" ? 2 : 1;
+      if (k < n && src[k] === c) { t += `\u0000${lit.push(src.slice(i + 1, k)) - 1}\u0000`; i = k + 1; continue; }
+    } else if (c === "/") {
+      const tail = t.trimEnd();
+      if (tail === "" || /[=(,:[!&|?{};+\-*%<>~^]$/.test(tail) || REGEX_AFTER_WORD.test(tail)) {
+        let k = i + 1, cls = false;
+        for (; k < n && src[k] !== "\n"; k++) { const ch = src[k]!; if (ch === "\\") k++; else if (ch === "[") cls = true; else if (ch === "]") cls = false; else if (ch === "/" && !cls) break; }
+        if (k < n && src[k] === "/") { t += "\u0001"; i = k + 1; continue; }
+      }
+    }
+    t += c; i++;
+  }
   const out: string[] = [];
   for (const m of t.matchAll(/\bfrom\s*\u0000(\d+)\u0000|\bimport\s*\u0000(\d+)\u0000|\b(?:require|import)\s*\(\s*\u0000(\d+)\u0000\s*\)/g)) out.push(lit[Number(m[1] ?? m[2] ?? m[3])]!);
   return out;
+}
+/** True when some exports node gives `import` and `require` different targets: a dual-package hazard (two copies of the module can load), not a test-only split, so it is disclosed and never caps. */
+export function exportsDiverge(x: unknown): boolean {
+  if (Array.isArray(x)) return x.some(exportsDiverge);
+  if (!x || typeof x !== "object") return false;
+  const o = x as Record<string, unknown>;
+  return ("import" in o && "require" in o && JSON.stringify(o["import"]) !== JSON.stringify(o["require"])) || Object.values(o).some(exportsDiverge);
 }
 /** Class D: a brand-new workspace package.json is disclosed (not capped) only when ALL hold: it is ADDED, in a directory that held no file at base; the plan or task names its path; a passing Wall
  *  imports the package (a static import, require() or import() specifier, comments ignored, naming the package or a path into its directory); its keys are on a plain-metadata allowlist (no runner,
  *  transpiler, imports, workspaces, overrides or bin keys, or any other loader hook); its "exports" use only subpath, import, require, default and types keys; it has no scripts, or only a bare `test` of
  *  "node --test" / "bun test"; and every dependency is a `workspace:` spec (`*`, `^`, `~` or a version, never an alias) naming the package.json name of a base package. file:, link:, relative, registry
- *  and any other spec caps. An unreadable or unparsable manifest, or a package name that shadows a name or dependency any base manifest uses, caps. */
-export function addedManifestOk(f: string, c: AddedManifestCtx, wall: string, esc: (x: string) => string): boolean {
+ *  and any other spec caps. An unreadable or unparsable manifest, or a package name that shadows a name or dependency any base manifest uses, caps. When it passes and exports gives `import` and `require`
+ *  different targets, a dual-package note is pushed to `notes` (disclosed, the verdict is unchanged). */
+export function addedManifestOk(f: string, c: AddedManifestCtx, wall: string, esc: (x: string) => string, notes?: string[]): boolean {
   if (basename(f) !== "package.json" || dirname(f) === "." || !c.wallPassedN) return false;
   const dir = dirname(f), g = (a: string[]): string | null => { try { return safeGit(c.repoDir, a, { timeout: 20000 }).trim(); } catch { return null; } };
   const mention = (t: string): boolean => new RegExp(`(?<![\\w./-])${esc(f)}(?![\\w-])`).test(t);
@@ -208,5 +237,6 @@ export function addedManifestOk(f: string, c: AddedManifestCtx, wall: string, es
     if (!d || typeof d !== "object" || Array.isArray(d)) return false;
     for (const [dn, spec] of Object.entries(d as Record<string, unknown>)) if (typeof spec !== "string" || !WORKSPACE_SPEC.test(spec) || !baseNames.has(dn)) return false;
   }
+  if (exportsDiverge(j["exports"])) notes?.push(`exports of ${f} gives import and require different targets (dual-package hazard: two copies of the module can load); disclosed, does not cap`);
   return true;
 }

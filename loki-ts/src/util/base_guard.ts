@@ -215,7 +215,7 @@ const ADVISORY_PATH = /^(?:test configuration changed|runner config changed): (.
 /** An advisory about a change the plan declared, or that a passing Wall requires, is disclosed and does not cap the verdict. Only ADDED paths qualify, so an edit to an existing file still caps,
  *  and so does anything the plan never declared. A config advisory caps, except an ADDED workspace manifest that passes every addedManifestOk condition. Symlink: it resolves, through every hop, to a regular file inside the repo that THIS diff added or modified and that is neither a test nor a Wall file, AND the
  *  plan declared the link or a passing Wall names its path (or quotes its name). Everything else stays capping. */
-export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx): { capping: string[]; disclosed: string[] } {
+export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx): { capping: string[]; disclosed: string[]; extra?: string[] } {
   const added = new Set<string>(), changed = new Set<string>();
   for (let i = 0; i + 1 < c.rawDiff.length; i += 2) { const st = c.rawDiff[i]!.trim().split(" ").pop(); if (st === "A") added.add(c.rawDiff[i + 1]!); if (st === "A" || st === "M") changed.add(c.rawDiff[i + 1]!); }
   let wallText: string | null = null;
@@ -228,13 +228,13 @@ export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx)
       return !rel.startsWith("..") && !rel.split(sep).includes(".git") && statSync(t).isFile() && changed.has(rel.split(sep).join("/")) && !isTestFile(rel) && !c.wallPaths.includes(rel);
     } catch { return false; }
   };
-  const capping: string[] = [], disclosed: string[] = [];
+  const capping: string[] = [], disclosed: string[] = [], extra: string[] = [];
   for (const n of notes) {
     const m = ADVISORY_PATH.exec(n), f = m?.[1] ?? m?.[2];
-    const ok = !!m && !!f && added.has(f) && c.wallPassedN && ((m[2] !== undefined && linkOk(f) && (c.planFiles.includes(f) || named(f))) || (m[1] !== undefined && addedManifestOk(f, c, wall(), esc)));
+    const ok = !!m && !!f && added.has(f) && c.wallPassedN && ((m[2] !== undefined && linkOk(f) && (c.planFiles.includes(f) || named(f))) || (m[1] !== undefined && addedManifestOk(f, c, wall(), esc, extra)));
     (ok ? disclosed : capping).push(n);
   }
-  return { capping, disclosed };
+  return extra.length ? { capping, disclosed, extra } : { capping, disclosed };
 }
 
 const RUN_BRANCH_RE = /^loki\/[A-Za-z0-9._\/-]+$/;

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { commitStage, sealStage } from "../../src/engine10/stages/seal.ts";
 import { splitDeclaredAdvisories } from "../../src/util/base_guard.ts";
+import { importSpecifiers } from "../../src/util/lock_ecosystems.ts";
 import { RUNNER_CONFIGS, runnerConfigNotes, testConfigChanged } from "../../src/features/runner_config.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 
@@ -827,6 +828,27 @@ describe("added workspace manifest: disclosed only when every condition holds", 
     await caps(run(pk({ dependencies: { "@acme/core": "workspace:../core" } })));
     await caps(run(pk({ dependencies: { "@acme/core": "workspace:" } })));
   }, 90000);
+  test("N2b: a regex literal that looks like an import is not an import (caps); a real import after a quote-bearing regex and a division is still seen", async () => {
+    for (const text of ['const r = /from "@acme/x"/;\n', 'foo(/require("@acme/x")/);\nconst q = [/from "@acme/x"/];\nfunction f() {\n  return /import "@acme/x"/;\n}\n']) await caps(run(pk(), { wall: { path: WALL.path, text } }));
+    const ok = 'const r = /a"b/; const q = 4 / 2 / 1;\nimport { x } from "../packages/x/src/index.mjs";\n';
+    expect((await run(pk(), { wall: { path: WALL.path, text: ok } })).verdict).toBe("VERIFIED");
+  }, 90000);
+  test("N2b unit: importSpecifiers skips comments, strings, template text and regex literals, keeps real specifiers", () => {
+    expect(importSpecifiers('const r = /from "a\\/b"/;\n')).toEqual([]);
+    expect(importSpecifiers('x = /re"/; import a from "p/q"; // import b from "c"\n/* require("d") */ const s = "import e from \'f\'";\n')).toEqual(["p/q"]);
+    expect(importSpecifiers('const n = a / b; const m = c / d; require("k"); await import("m"); export * from "z"; import "side";\n')).toEqual(["k", "m", "z", "side"]);
+  });
+  test("N7: an exports map whose import and require targets differ is VERIFIED with an exact dual-package note; matching targets add no note", async () => {
+    const NOTE7 = `exports of ${F} gives import and require different targets (dual-package hazard: two copies of the module can load); disclosed, does not cap`;
+    for (const e of [{ ".": { import: "./src/index.mjs", require: "./src/index.cjs" } }, { import: "./a.mjs", require: "./b.cjs" }, { "./sub": [{ import: "./a.mjs", require: "./b.cjs" }] }]) {
+      const r = await run(pk({ exports: e }));
+      expect(r.verdict).toBe("VERIFIED");
+      expect(r.not_proven).toContain(NOTE7);
+    }
+    const same = await run(pk({ exports: { ".": { import: "./src/index.mjs", require: "./src/index.mjs", default: "./src/index.mjs" } } }));
+    expect(same.verdict).toBe("VERIFIED");
+    expect(same.not_proven.some((n) => n.includes("dual-package"))).toBe(false);
+  }, 120000);
   test("E1: a conditional exports map (bun, node, test, development; top level or nested) caps", async () => {
     for (const e of [{ ".": { bun: "./src/stub.mjs", default: "./src/index.mjs" } }, { ".": { import: { node: "./real.js", default: "./src/index.mjs" } } }, { test: "./src/stub.mjs", import: "./src/index.mjs" }, { ".": [{ development: "./d.mjs" }, "./src/index.mjs"] }]) await caps(run(pk({ exports: e })));
   }, 120000);
