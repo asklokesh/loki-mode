@@ -32,7 +32,7 @@ describe("briefContext", () => {
   test("2000-file repo: under 3 KB, names relevant file and exact project-python command", () => {
     const text = briefContext(fixture(2000), deps);
     const brief = buildImplementBrief("fix invoice total rounding", null, ["tests/test_invoice_total.py"], text);
-    expect(brief.length - FOLD_PLAN_INSTRUCTION.length - 2).toBeLessThan(3000); // the fixed skipped-plan line is not repo context
+    expect(brief.replace(`${FOLD_PLAN_INSTRUCTION}\n\n`, "").length).toBeLessThan(3000); // the fixed skipped-plan line is not repo context
     expect(text).toContain("pkg/billing/invoice_total.py");
     expect(text).toContain(".venv/bin/python -m pytest -q tests/test_invoice_total.py");
     expect(text).not.toContain("module_1999");

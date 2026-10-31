@@ -74,13 +74,12 @@ function ctxFor(dir: string, s: SessionRunner, emitted: unknown[] = []): RunCont
 
 let dir: string;
 const saved: Record<string, string | undefined> = {};
-const KEYS = ["LOKI_INTENT_CARD", "LOKI_CONFIRM", "LOKI_INTENT_TTY", "LOKI_E10_PLAN"];
+const KEYS = ["LOKI_INTENT_CARD", "LOKI_CONFIRM", "LOKI_INTENT_TTY"];
 let errs: string[];
 const realWrite = process.stderr.write.bind(process.stderr);
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "loki-t3-"));
   for (const k of KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
-  process.env["LOKI_E10_PLAN"] = "always"; // these cases exercise the plan session; auto mode folds the plan into implement
   errs = [];
   process.stderr.write = ((s: string | Uint8Array) => { errs.push(String(s)); return true; }) as typeof process.stderr.write;
 });
@@ -92,6 +91,10 @@ afterEach(() => {
 const planWith = (text: string) => new Fake(() => writeFileSync(join(dir, "plan-output.txt"), text, "utf8"));
 
 describe("plan stage intent card", () => {
+  // These cases test the plan session itself (card print and parse), so they force it; the LOKI_CONFIRM cases below do not, which proves the consent gate keeps the plan on its own.
+  const planWas = process.env["LOKI_E10_PLAN"];
+  beforeEach(() => { process.env["LOKI_E10_PLAN"] = "always"; });
+  afterEach(() => { if (planWas === undefined) delete process.env["LOKI_E10_PLAN"]; else process.env["LOKI_E10_PLAN"] = planWas; });
   test("prints the card and records it in stage data", async () => {
     const s = planWith(["step 1", ...CARD3].join("\n"));
     const r = await planStage.run(ctxFor(dir, s), new AbortController().signal);
