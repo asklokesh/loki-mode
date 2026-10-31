@@ -10,7 +10,7 @@ import { FINISH_LINE } from "../e10ext/context.ts";
 import { wallModel } from "../engine10/sizing.ts";
 import { assertionCount, changedAssertion, changedRegion, editScopeViolation, quoteInSpec, testSpans, wallAnchor, type WallDefect } from "./wall_owned.ts";
 import { safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
-import { sealedWallDir } from "./check_result.ts";
+import { sealedWallCopy, sealedWallDir } from "./check_result.ts";
 import { vacuousCheck } from "../project_model/conventions.ts";
 import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
 import { taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
@@ -211,6 +211,7 @@ async function legacyReauthor(ctx: RunContext, first: SessionRunOptions, firstSe
     const next = !au.killed && au.exit === 0 && existsSync(join(cwd, name)) ? readFileSync(join(cwd, name), "utf8") : "";
     if (next.trim() === "" || next === f.content) return null;
     f.content = next; writeFileSync(f.path, next, "utf8"); const sf = (o.wall?.files as { path: string; sha256: string }[] | undefined)?.find((x) => x.path === f.path), sha = createHash("sha256").update(next).digest("hex"); if (sf) sf.sha256 = sha;
+    mkdirSync(sealedWallDir(ctx.runDir), { recursive: true }); writeFileSync(sealedWallCopy(ctx.runDir, f.path), next, "utf8"); // the sealed copy follows the re-authored bytes, so seal reads the Wall as published
     const arb: Arbitration = { check: a.file, test: "(whole file)", old_assertion: "(not validated)", new_assertion: "(not validated)", spec_quote: oneLine(reason), spec_quote_2: "", sha256: sha, kind: "legacy" }; // a legacy rewrite is recorded like an arbitration, so seal caps it and a resume replays it
     if (o.wall) (o.wall as Record<string, unknown>).arbitrated = [...(((o.wall as Record<string, unknown>).arbitrated as Arbitration[] | undefined) ?? []), arb];
     ctx.emit("wall.arbitrated", "wall", { path: f.path, content: next, arbitration: arb });

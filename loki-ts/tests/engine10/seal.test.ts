@@ -2039,7 +2039,7 @@ describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST a VERIFIED run publishes the sealed Wa
   const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
   const git = (repo: string, ...a: string[]): string => sh(["git", ...a], repo);
   /** Repo with a product change (a.txt), the Wall file in the tree (agent bytes), its sealed copy under runDir/wall, and verify outputs for it. */
-  async function run(name: string, o: { sealedSha?: string; result?: string; target?: string[]; verifyNotProven?: string[]; env?: Record<string, string>; productEdit?: boolean } = {}) {
+  async function run(name: string, o: { sealedSha?: string; result?: string; target?: string[]; verifyNotProven?: string[]; env?: Record<string, string>; productEdit?: boolean; copy?: "missing" | "tampered" } = {}) {
     noKey();
     const { repo, base } = makeRepo(name);
     if (o.productEdit === false) git(repo, "checkout", "--", "a.txt");
@@ -2049,6 +2049,7 @@ describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST a VERIFIED run publishes the sealed Wa
       verify: { checks: [{ name: NAME, cmd: `bun test ${REL}`, result: o.result ?? "pass", n: 2, duration_s: 1 }], target_checks: o.target ?? [NAME], flaky: [], wall_passed: (o.result ?? "pass") === "pass", duration_s: 1, ...(o.verifyNotProven ? { not_proven: o.verifyNotProven } : {}) },
     });
     mkdirSync(join(ctx.runDir, "wall"), { recursive: true }); writeFileSync(join(ctx.runDir, "wall/loki_wall_x.test.ts"), SEALED);
+    if (o.copy === "missing") rmSync(join(ctx.runDir, "wall/loki_wall_x.test.ts")); if (o.copy === "tampered") writeFileSync(join(ctx.runDir, "wall/loki_wall_x.test.ts"), SEALED + "// tampered\n");
     const prev = Object.fromEntries(Object.keys(o.env ?? {}).map((k) => [k, process.env[k]])); Object.assign(process.env, o.env ?? {});
     try {
       await commitStage.run(ctx, new AbortController().signal);
@@ -2083,6 +2084,13 @@ describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST a VERIFIED run publishes the sealed Wa
     expect(x.head).toBe(x.productHead); expect(x.s.data.wall_published).toBeUndefined();
     expect(x.r.not_proven.some((n) => n.includes("Wall test not published") && n.includes(REL))).toBe(true);
   }, 30000);
+  test("a passing Wall whose sealed copy is missing, or is not the sealed bytes, is PARTIAL and names the unpublished test", async () => {
+    for (const copy of ["missing", "tampered"] as const) {
+      const x = await run(`fcv-copy-${copy}`, { copy });
+      expect(x.s.data.verdict).toBe("PARTIAL"); expect(x.head).toBe(x.productHead); expect(x.s.data.wall_published).toBeUndefined();
+      expect(x.r.not_proven.some((n) => n.includes("Wall test not published") && n.includes(REL))).toBe(true);
+    }
+  }, 60000);
   test("a Wall file that failed, or is not in verify's passing target checks, stays dropped", async () => {
     const f = await run("fcv-failed", { result: "fail" }), n = await run("fcv-notarget", { target: [] });
     for (const x of [f, n]) { expect(x.head).toBe(x.productHead); expect(x.s.data.wall_published).toBeUndefined(); expect(git(x.repo, "ls-files", REL).trim()).toBe(""); }

@@ -5,6 +5,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sealedWallCopy } from "../../src/util/check_result.ts";
 import { fixStage } from "../../src/engine10/stages/fix.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import { editScopeViolation, wallAnchor } from "../../src/util/wall_owned.ts";
@@ -240,6 +241,7 @@ describe("Wall referee", () => {
       expect(arb.length).toBe(1); expect(arb[0]!.kind).toBe("legacy");
       expect(evs.filter((e) => e.type === "wall.arbitrated").length).toBe(1);
       expect(arb[0]!.sha256).toBe(sha(readFileSync(w.path, "utf8")));
+      expect(readFileSync(sealedWallCopy(w.ctx.runDir, w.path), "utf8")).toBe("// legacy rewrite\n"); // the sealed copy follows the re-authored bytes
     } finally { if (prev === undefined) delete process.env.LOKI_E10_WALL_REFEREE; else process.env.LOKI_E10_WALL_REFEREE = prev; }
   });
   test("the arbitration's default check runs the Wall file with PYTHONDONTWRITEBYTECODE=1 (no stale bytecode)", () => {
