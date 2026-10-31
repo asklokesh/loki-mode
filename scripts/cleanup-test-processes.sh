@@ -24,6 +24,8 @@
 #   scripts/cleanup-test-processes.sh              # report everything found
 #   scripts/cleanup-test-processes.sh --aggressive # kill everything found (this user's own processes only)
 #   scripts/cleanup-test-processes.sh --dry-run    # same as default: report only, kill nothing
+#   scripts/cleanup-test-processes.sh --reap-tmp   # list aged (6h+) loki-run.* / loki-test-home-* dirs left by killed runs; deletes nothing
+#   scripts/cleanup-test-processes.sh --reap-tmp-apply  # delete them (marker, owner, mode, no open file or cwd inside) and report the df delta
 
 set -uo pipefail
 
@@ -31,8 +33,14 @@ MODE="normal"
 case "${1:-}" in
     --aggressive) MODE="aggressive" ;;
     --dry-run)    MODE="dry" ;;
+    --reap-tmp|--reap-tmp-apply)
+        # shellcheck disable=SC1091
+        . "$(dirname "$0")/../eval/loki10/lib-tmp.sh"
+        if [ "$1" = "--reap-tmp-apply" ]; then loki_run_tmp_reap apply; else loki_run_tmp_reap dry; fi
+        exit $?
+        ;;
     "")           ;;
-    *) echo "usage: $0 [--aggressive|--dry-run]" >&2; exit 64 ;;
+    *) echo "usage: $0 [--aggressive|--dry-run|--reap-tmp|--reap-tmp-apply]" >&2; exit 64 ;;
 esac
 
 killed=0

@@ -45,12 +45,12 @@ loki_run_tmp_stat_field() {
     printf '%s\n' "$value"
 }
 
-loki_run_tmp_cleanup() {
+loki_run_tmp_validate_dir() {
     local target temp_root marker marker_value target_real
     local target_uid marker_uid target_mode marker_mode current_uid
 
-    target="${LOKI_RUN_TMP:-}"
-    [ -n "$target" ] || return 0
+    target="${1:-}"
+    [ -n "$target" ] || return 64
     temp_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || return 64
 
     case "$target" in
@@ -89,7 +89,121 @@ loki_run_tmp_cleanup() {
         return 64
     fi
 
+    return 0
+}
+
+loki_run_tmp_cleanup() {
+    local target="${LOKI_RUN_TMP:-}"
+    [ -n "$target" ] || return 0
+    loki_run_tmp_validate_dir "$target" || return 64
     rm -rf -- "$target"
     [ ! -e "$target" ] || return 1
     unset LOKI_RUN_TMP
+}
+
+# Same contract as loki_run_tmp_validate_dir for a hermetic test home
+# (loki-test-home-*): the marker is the seeded .gitconfig, matched by content.
+loki_test_home_validate_dir() {
+    local target="${1:-}" temp_root marker target_real current_uid target_uid marker_uid mode seed
+    [ -n "$target" ] || return 64
+    temp_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || return 64
+    case "$target" in
+        "${temp_root}"/loki-test-home-*) ;;
+        *) return 64 ;;
+    esac
+    [ "$(dirname -- "$target")" = "$temp_root" ] || return 64
+    [ -d "$target" ] && [ ! -L "$target" ] || return 64
+    marker="${target}/.gitconfig"
+    [ -f "$marker" ] && [ ! -L "$marker" ] || return 64
+    seed="$(printf '[user]\n\tname = loki-test\n\temail = loki-test@example.invalid\n')"
+    [ "$(cat -- "$marker" 2>/dev/null)" = "$seed" ] || return 64
+    current_uid="$(id -u)" || return 64
+    target_uid="$(loki_run_tmp_stat_field '%u' '%u' "$target")" || return 64
+    marker_uid="$(loki_run_tmp_stat_field '%u' '%u' "$marker")" || return 64
+    [ "$target_uid" = "$current_uid" ] && [ "$marker_uid" = "$current_uid" ] || return 64
+    mode="$(loki_run_tmp_stat_field '%a' '%Lp' "$target")" || return 64
+    mode="00${mode}"
+    [ "${mode#"${mode%???}"}" = "700" ] || return 64
+    target_real="$(cd "$target" 2>/dev/null && pwd -P)" || return 64
+    [ "$target_real" = "$target" ] || return 64
+    if [ -e "${target}/.git" ] || [ -L "${target}/.git" ]; then
+        return 64
+    fi
+    return 0
+}
+
+loki_run_tmp_df_avail() {
+    df -Pk "$1" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+# Guarded reaper for dirs a killed run left in the temp root. Dry-run unless
+# the first argument is "apply". Prints WOULD-REAP/REAPED/SKIP/REFUSE lines;
+# never kills a process. A candidate is a direct child of the resolved temp
+# root named loki-run.* or loki-test-home-*, whose newest mtime anywhere in
+# its tree (itself included, symlinks not followed) is at least 6h old,
+# validated by the same contract as loki_run_tmp_cleanup, with no open file
+# or cwd inside (lsof). Without lsof it skips everything.
+loki_run_tmp_reap() {
+    local mode="${1:-dry}" min_age="${LOKI_TMP_REAP_MIN_AGE:-21600}"
+    local temp_root cand base out rc young min_mins before="" after kind own reaped=0
+
+    if ! command -v lsof >/dev/null 2>&1; then
+        printf '%s\n' "lsof not found: skipping every candidate, nothing reaped" >&2
+        return 0
+    fi
+    temp_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || return 64
+    own="${LOKI_RUN_TMP:-}"
+    min_mins=$(((min_age + 59) / 60))
+    [ "$mode" = "apply" ] && before="$(loki_run_tmp_df_avail "$temp_root")"
+
+    while IFS= read -r cand; do
+        [ -n "$cand" ] || continue
+        base="$(basename -- "$cand")"
+        case "$base" in
+            loki-run.*) kind=run ;;
+            loki-test-home-*) kind=home ;;
+            *) continue ;;
+        esac
+        if [ -L "$cand" ]; then printf 'REFUSE symlink %s\n' "$cand"; continue; fi
+        if [ ! -d "$cand" ]; then printf 'REFUSE not-a-directory %s\n' "$cand"; continue; fi
+        if [ "$kind" = run ]; then
+            loki_run_tmp_validate_dir "$cand" >/dev/null 2>&1 || { printf 'REFUSE no-valid-marker %s\n' "$cand"; continue; }
+        else
+            loki_test_home_validate_dir "$cand" >/dev/null 2>&1 || { printf 'REFUSE no-valid-marker %s\n' "$cand"; continue; }
+        fi
+        if [ -n "$own" ] && [ "$cand" = "$own" ]; then printf 'SKIP own-run %s\n' "$cand"; continue; fi
+        # Young if any entry in the tree changed inside the window. A find error
+        # (unreadable subtree) fails closed as young.
+        young="$(find "$cand" -mmin "-${min_mins}" -print -quit 2>/dev/null)" || young="find-error"
+        if [ -n "$young" ]; then printf 'SKIP young %s\n' "$cand"; continue; fi
+        # lsof exits 1 for both "nothing open" and some errors: any output on
+        # either stream, or a status other than 1, means in use or unknown.
+        out="$(lsof -F p +D "$cand" 2>&1)"; rc=$?
+        if [ "$rc" -eq 0 ]; then printf 'SKIP in-use %s\n' "$cand"; continue; fi
+        if [ "$rc" -ne 1 ]; then printf 'SKIP lsof-failed %s\n' "$cand"; continue; fi
+        if [ -n "$out" ]; then
+            case "$out" in
+                p[0-9]*) printf 'SKIP in-use %s\n' "$cand" ;;
+                *) printf 'SKIP lsof-failed %s\n' "$cand" ;;
+            esac
+            continue
+        fi
+        if [ "$mode" = "apply" ]; then
+            rm -rf -- "$cand"
+            if [ -e "$cand" ]; then printf 'SKIP remove-failed %s\n' "$cand"; continue; fi
+            printf 'REAPED %s\n' "$cand"
+        else
+            printf 'WOULD-REAP %s\n' "$cand"
+        fi
+        reaped=$((reaped + 1))
+    done <<EOF
+$(find "$temp_root" -mindepth 1 -maxdepth 1 \( -name 'loki-run.*' -o -name 'loki-test-home-*' \) 2>/dev/null)
+EOF
+
+    if [ "$mode" = "apply" ]; then
+        after="$(loki_run_tmp_df_avail "$temp_root")"
+        printf 'reaped=%s df_avail_kb before=%s after=%s delta=%s\n' "$reaped" "$before" "$after" "$((after - before))"
+    else
+        printf 'dry-run: %s candidate(s); nothing deleted (use apply to delete)\n' "$reaped"
+    fi
 }
