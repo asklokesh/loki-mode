@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { buildPlanBrief } from "../../src/engine10/stages/plan.ts";
 import { buildImplementBrief } from "../../src/engine10/stages/implement.ts";
-import { clauseBriefBlock, clauseLine, extractClauses, generateSpec, loadSpecFile, parseSpec, renderSpec, slugify, specPrLine, specReceiptBlock, SpecError, specBriefBlock } from "../../src/util/spec_file.ts";
+import { clauseBriefBlock, clauseGapOf, clauseLine, coveredClauses, extractClauses, generateSpec, loadSpecFile, parseSpec, renderSpec, slugify, specPrLine, specReceiptBlock, SpecError, specBriefBlock } from "../../src/util/spec_file.ts";
 import type { SessionResult, SessionRunner, SessionRunOptions } from "../../src/engine10/types.ts";
 
 const here = import.meta.dir;
@@ -274,7 +274,7 @@ describe("implement stage reads the run snapshot", () => {
 const PRD5 = [
   "# Search ranking", "", "Some background prose that is not a requirement.", "",
   "## Acceptance criteria", "", "- Results are ordered by recency", "- Ties break on id", "",
-  "## Notes", "", "1. The API returns 400 for an empty query", "- [ ] Docs mention the new flag", "",
+  "## Edge cases", "", "1. The API returns 400 for an empty query", "- [ ] Docs mention the new flag", "",
   "The service MUST NOT cache empty results. It is fast.",
 ].join("\n");
 
@@ -323,6 +323,23 @@ describe("acceptance clause extraction (generic, anchored)", () => {
   });
   test("RFC 2119 rule is load-bearing: a MUST sentence outside any list is a clause", () => {
     expect(extractClauses("Plain text. The tool MUST exit 2 on error.").clauses.map((c) => c.text)).toEqual(["The tool MUST exit 2 on error."]);
+  });
+  test("FALSEVER-CLAUSE recall: a bullet under any heading is a clause; scope-exclusion headings are not", () => {
+    const t = extractClauses(["## Errors", "- Syntax reports the offset", "- Arity names the function", "", "## Non-goals", "- GUI support", "", "## Notes:", "1. Be nice", "", "## Acceptance examples", "- 2+2 is 4", "", "## Out of scope", "- plugins"].join("\n")).clauses.map((c) => c.text);
+    expect(t).toEqual(["Syntax reports the offset", "Arity names the function", "2+2 is 4"]);
+  });
+  test("FALSEVER-CLAUSE recall: OpenAPI YAML yields one clause per operation and per status code its text names", () => {
+    const yaml = ["openapi: 3.0.3", "info:", "  title: T", "paths:", "  /links:", "    post:", "      description: |", "        Bad body: 400. Success: 201 `{}`.", "  /links/{code}:", "    get:", "      description: Unknown code: 404.", "    delete:", "      description: 204 empty."].join("\n");
+    expect(extractClauses(yaml).clauses.map((c) => c.text)).toEqual(["operation POST /links", "POST /links returns 400", "POST /links returns 201", "operation GET /links/{code}", "GET /links/{code} returns 404", "operation DELETE /links/{code}", "DELETE /links/{code} returns 204"]);
+  });
+  test("FALSEVER-CLAUSE coverage: a marker counts only with an assertion token near it, in any language", () => {
+    const go = "// clause: C1\nif got != want {\n  t.Errorf(\"bad\")\n}\n", rs = "// clause: C2\nassert_eq!(eval(\"1/0\"), Err(DivisionByZero));\n", py = "# clause: C3\nwith pytest.raises(ValueError):\n    f()\n", sh = "# clause: C4\n[ \"$status\" -eq 2 ]\n", java = "// clause: C5\nassertThrows(X.class, () -> f());\n";
+    expect([...coveredClauses([go, rs, py, sh, java])].sort()).toEqual(["C1", "C2", "C3", "C4", "C5"]);
+    expect([...coveredClauses(["// clause: C1\n// assert this later\nconst x = 1;\n"])]).toEqual([]);
+    expect([...coveredClauses(["// clause: C1\n" + "\n".repeat(20) + "expect(1).toBe(1);\n"])]).toEqual([]);
+    const set = extractClauses("- one\n- two\n- three\n");
+    expect(clauseGapOf(set, [go])).toEqual(["spec clause not covered: C2: two", "spec clause not covered: C3: three"]);
+    expect(clauseGapOf(extractClauses("Plain prose only."), [])).toEqual([]);
   });
   test("locked spec carries the 5 clauses and round-trips through parseSpec", () => {
     const text = renderSpec("t", CRIT, extractClauses(PRD5));

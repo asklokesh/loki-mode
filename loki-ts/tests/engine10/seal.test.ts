@@ -2039,16 +2039,18 @@ describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST a VERIFIED run publishes the sealed Wa
   const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
   const git = (repo: string, ...a: string[]): string => sh(["git", ...a], repo);
   /** Repo with a product change (a.txt), the Wall file in the tree (agent bytes), its sealed copy under runDir/wall, and verify outputs for it. */
-  async function run(name: string, o: { sealedSha?: string; result?: string; target?: string[]; verifyNotProven?: string[]; env?: Record<string, string>; productEdit?: boolean; copy?: "missing" | "tampered" } = {}) {
+  async function run(name: string, o: { sealedSha?: string; result?: string; target?: string[]; verifyNotProven?: string[]; env?: Record<string, string>; productEdit?: boolean; task?: string; sealed?: string; copy?: "missing" | "tampered" } = {}) {
     noKey();
+    const sealedBody = o.sealed ?? SEALED;
     const { repo, base } = makeRepo(name);
     if (o.productEdit === false) git(repo, "checkout", "--", "a.txt");
     mkdirSync(join(repo, "tests"), { recursive: true }); writeFileSync(join(repo, REL), AGENT);
     const { ctx } = ctxFor(repo, base, "claude", {
-      wall: { files: [{ path: join(repo, REL), sha256: o.sealedSha ?? sha(SEALED) }], base_run: { pass: 0, fail: 1, not_run: 0 } },
+      wall: { files: [{ path: join(repo, REL), sha256: o.sealedSha ?? sha(sealedBody) }], base_run: { pass: 0, fail: 1, not_run: 0 } },
+      ...(o.task ? { intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, task: o.task } } : {}),
       verify: { checks: [{ name: NAME, cmd: `bun test ${REL}`, result: o.result ?? "pass", n: 2, duration_s: 1 }], target_checks: o.target ?? [NAME], flaky: [], wall_passed: (o.result ?? "pass") === "pass", duration_s: 1, ...(o.verifyNotProven ? { not_proven: o.verifyNotProven } : {}) },
     });
-    mkdirSync(join(ctx.runDir, "wall"), { recursive: true }); writeFileSync(join(ctx.runDir, "wall/loki_wall_x.test.ts"), SEALED);
+    mkdirSync(join(ctx.runDir, "wall"), { recursive: true }); writeFileSync(join(ctx.runDir, "wall/loki_wall_x.test.ts"), sealedBody);
     if (o.copy === "missing") rmSync(join(ctx.runDir, "wall/loki_wall_x.test.ts")); if (o.copy === "tampered") writeFileSync(join(ctx.runDir, "wall/loki_wall_x.test.ts"), SEALED + "// tampered\n");
     const prev = Object.fromEntries(Object.keys(o.env ?? {}).map((k) => [k, process.env[k]])); Object.assign(process.env, o.env ?? {});
     try {
@@ -2099,6 +2101,26 @@ describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST a VERIFIED run publishes the sealed Wa
     const x = await run("fcv-partial", { verifyNotProven: ["some gap"] });
     expect(x.s.data.verdict).toBe("PARTIAL"); expect(x.head).toBe(x.productHead); expect(x.s.data.wall_published).toBeUndefined();
   }, 30000);
+  // FALSEVER-CLAUSE: a green Wall that leaves a spec acceptance clause unproven is PARTIAL, never VERIFIED
+  const ERRORS_SPEC = "# PRD\n\n## Errors\n\n- Syntax: report the byte offset\n- DivisionByZero: for a zero right operand\n- Domain: sqrt of a negative\n";
+  const tagged = (ids: string[]): string => `import { test, expect } from "bun:test";\n${ids.map((id) => `// clause: ${id}\ntest("${id}", () => expect(1).toBe(1));\n`).join("")}`;
+  test("a green Wall that tags and asserts only some of the spec's Errors clauses is PARTIAL and names each uncovered clause", async () => {
+    const x = await run("fcv-clause-gap", { task: ERRORS_SPEC, sealed: tagged(["C1"]) });
+    expect(x.s.data.verdict).toBe("PARTIAL"); expect(x.head).toBe(x.productHead); expect(x.s.data.wall_published).toBeUndefined();
+    expect(x.r.not_proven).toContain("spec clause not covered: C2: DivisionByZero: for a zero right operand");
+    expect(x.r.not_proven).toContain("spec clause not covered: C3: Domain: sqrt of a negative");
+    expect(x.r.not_proven.some((n) => n.includes("spec clause not covered: C1:"))).toBe(false);
+  }, 30000);
+  test("a marker with no assertion near it does not cover its clause", async () => {
+    const x = await run("fcv-clause-marker-only", { task: ERRORS_SPEC, sealed: `${tagged(["C1", "C2"])}${"\n".repeat(12)}// clause: C3\n` });
+    expect(x.s.data.verdict).toBe("PARTIAL"); expect(x.r.not_proven.some((n) => n.startsWith("spec clause not covered: C3:"))).toBe(true);
+  }, 30000);
+  test("a Wall that tags and asserts every clause stays VERIFIED, with and without the publish switch", async () => {
+    const full = tagged(["C1", "C2", "C3"]), a = await run("fcv-clause-full", { task: ERRORS_SPEC, sealed: full }), b = await run("fcv-clause-full-off", { task: ERRORS_SPEC, sealed: full, env: { LOKI_COMMIT_WALL: "0" } });
+    expect(a.s.data.verdict).toBe("VERIFIED"); expect(b.s.data.verdict).toBe("VERIFIED");
+    const gap = await run("fcv-clause-gap-off", { task: ERRORS_SPEC, sealed: tagged(["C1"]), env: { LOKI_COMMIT_WALL: "0" } });
+    expect(gap.s.data.verdict).toBe("PARTIAL"); // the publish opt-out never switches the clause rule off
+  }, 90000);
   test("a Wall-only change (no product diff) is FAILED and publishes nothing", async () => {
     const x = await run("fcv-wallonly", { productEdit: false });
     expect(x.s.data.verdict).toBe("FAILED"); expect(x.head).toBe(x.base); expect(x.s.data.wall_published).toBeUndefined();
