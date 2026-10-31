@@ -20,6 +20,7 @@ import { join } from "node:path";
 import {
   buildWallBrief,
   classify,
+  notRunReason,
   RealBaseTestRunner,
   runWall,
   wallStage, sealedWallCopy,
@@ -1011,6 +1012,7 @@ describe("COST-11 r2: escalation on doubt", () => {
   // A Wall whose every test has no real base result is dropped; the run must not continue Wall-less without one re-author that carries the base-run results.
   describe("dropped sole Wall test: exactly one re-author", () => {
     const PIN = { LOKI_E10_WALL_TIER: "sonnet" }; // same-model rung: the old cheap-rung gate never fired here
+    const RVSYS = notRunReason(0, "system"), RVNULL = notRunReason(null);
     const notRun = (): BaseTestRunner => ({ run: () => ({ pass: 0, fail: 0, not_run: 1 }) });
     const droppedFirst = (): BaseTestRunner => { let calls = 0; return { run: () => (++calls === 1 ? { pass: 0, fail: 0, not_run: 1 } : { pass: 0, fail: 1, not_run: 0 }) }; };
     const briefs = (): { list: string[]; f: (n: number, o: SessionRunOptions) => { files: string[] } } => { const list: string[] = []; return { list, f: (n, o) => { list.push(o.brief); return { files: [`loki_wall_a${n}.test.ts`] }; } }; };
@@ -1043,6 +1045,10 @@ describe("COST-11 r2: escalation on doubt", () => {
       expect((r.result.data.files as unknown[]).length).toBe(0);
       expect(r.result.data.not_proven).toBeUndefined();
     });
+    const why = (...reasons: string[]): BaseTestRunner => { let i = 0; const r: BaseTestRunner & { lastNotRunFiles: { file: string; reason: string }[] } = { lastNotRunFiles: [], run: (_d, files) => { const reason = reasons[Math.min(i++, reasons.length - 1)]!; r.lastNotRunFiles = files.map((f) => ({ file: f.path, reason })); return { pass: 0, fail: 0, not_run: files.length }; } }; return r; };
+    test("system interpreter only -> no same-model re-author", async () => { const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => false, PIN, why(RVSYS)); expect(r.models).toHaveLength(1); });
+    test("not_run with an interpreter present (runner timed out) -> one re-author", async () => { const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => false, PIN, why(RVNULL)); expect(r.models).toHaveLength(2); });
+    test("mixed: one file system interpreter, one timed out -> one re-author", async () => { const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`, `loki_wall_b${n}.test.ts`] }), () => false, PIN, why(RVSYS, RVNULL)); expect(r.models).toHaveLength(2); });
     test("several tests, one dropped -> no re-author (unchanged)", async () => {
       let calls = 0;
       const r = await go(() => ({ files: ["loki_wall_a.test.ts", "loki_wall_b.test.ts"] }), () => false, PIN, { run: () => (++calls === 1 ? { pass: 0, fail: 0, not_run: 1 } : { pass: 0, fail: 1, not_run: 0 }) });
