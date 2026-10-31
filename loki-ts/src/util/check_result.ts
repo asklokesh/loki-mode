@@ -7,7 +7,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { killGroup, SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readlinkSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { siteFor } from "../project_model/resolve.ts";
 import type { ProjectApi } from "../project_model/api.ts";
@@ -164,25 +164,28 @@ function goCount(out: string, ok?: boolean): number | null | undefined {
  *  leading env / command / exec / time wrappers, VAR=val assignments and a path to go (/usr/local/go/bin/go) all resolving to go.
  *  Any `&&`, `;`, `||` or `|` segment that runs go counts. Chosen from the command, never from output. Detecting go too often
  *  only fails closed (exit 0 is not_run), so a doubtful wrapper is classified as go. */
-/** The command word of each shell segment once leading env / command / exec / time wrappers, VAR=val assignments and env flags are skipped; the tokens after it follow. Shared by the go and cargo detection. */
-function segmentTools(cmd: string, args?: readonly string[]): { tool: string; rest: string[] }[] {
-  const segs = args ? [[cmd, ...args]] : cmd.split(/&&|\|\||[;|\n]/).map((x) => x.trim().split(/\s+/).filter(Boolean));
-  const out: { tool: string; rest: string[] }[] = [];
-  for (const t0 of segs) {
-    const t = t0.map((x) => x.replace(/^["']|["']$/g, ""));
-    let k = 0;
-    for (; k < t.length; k++) {
-      const x = t[k]!;
-      if (/^[A-Za-z_]\w*=/.test(x) || /^(?:env|command|exec|time|nohup)$/.test(basename(x))) continue;
-      if (/^-/.test(x) && k > 0 && basename(t[k - 1]!) === "env") { if (x === "-u" || x === "-C" || x === "-S") k++; continue; }
-      break;
-    }
-    if (t[k] !== undefined) out.push({ tool: basename(t[k]!), rest: t.slice(k + 1) });
-  }
-  return out;
+/** The ONE command-shape test for every runner we corroborate (go, cargo). Every word of the command, split on whitespace and all shell punctuation, so a wrapper (nice, timeout, sh -c "...", bash -lc, a subshell, rustup run stable ...) cannot hide the tool: true when any word's basename is `tool`. */
+function mentionsTool(tool: string, toks: readonly string[]): boolean {
+  return toks.some((t) => t.split(/[\s"'`();&|<>${}\[\],=]+/).some((w) => w !== "" && basename(w) === tool));
 }
+/** The command as a word list: an argv as is, a line split on whitespace. */
+const commandWords = (cmd: string, args?: readonly string[]): string[] => (args ? [cmd, ...args] : cmd.trim().split(/\s+/));
+/** One shared Go-runner detection for every caller (verify, deep, per-package suites): a shell command line or an argv in which ANY word is go (a path to go, an env or nice or timeout or sh -c wrapper, a subshell, a `&&` segment). Chosen from the command, never from output. Detecting go too often only fails closed (exit 0 is not_run, and corroboratePass accepts only a plain `go test` line), so a doubtful wrapper is classified as go. */
 export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" } | Record<string, never> {
-  return segmentTools(cmd, args).some((s) => s.tool === "go") ? { runner: "go" } : {};
+  return mentionsTool("go", commandWords(cmd, args)) ? { runner: "go" } : {};
+}
+const CARGO_GLOBAL_FLAGS = new Set(["-v", "-vv", "--verbose", "-q", "--quiet", "--frozen", "--locked", "--offline"]), CARGO_OTHER_SUBS = new Set(["build", "b", "check", "c", "clippy", "fmt", "doc", "d", "clean", "fetch", "tree", "run", "r", "bench", "metadata", "update", "install", "publish", "package", "login", "search", "vendor"]);
+/** A cargo invocation parsed strictly: `cargo [known global flags, their values consumed] <sub> [args]`, nothing before cargo (no wrapper, no shell, no +toolchain shim). null = not a plain invocation. */
+function parseCargo(toks: readonly string[]): { global: string[]; sub: string; rest: string[] } | null {
+  if (basename(toks[0] ?? "") !== "cargo" || toks.some((t) => /[&|;$`"'<>()\\]/.test(t))) return null;
+  let k = 1;
+  for (; k < toks.length; k++) {
+    const t = toks[k]!;
+    if (CARGO_GLOBAL_FLAGS.has(t) || /^--(?:color|config)=./.test(t)) continue;
+    if ((t === "--color" || t === "--config") && toks[k + 1] !== undefined) { k++; continue; }
+    break;
+  }
+  return toks[k] === undefined || toks[k]!.startsWith("-") || toks[k]!.startsWith("+") ? null : { global: toks.slice(1, k), sub: toks[k]!, rest: toks.slice(k + 1) };
 }
 /** go test -json: every non-empty line is a test2json event (or a "go: " tool note), else null (parse doubt). The go command frames the test
  *  binary's stdout as events, but test or implementation code that prints \x16-marked lines can make the framing emit run/pass events for tests that never ran;
@@ -222,23 +225,21 @@ export const CARGO_UNLISTED_REASON = "test count could not be confirmed: the car
  *  name is in the ignored listing. A segment count that differs from the listing, a listing that fails, or a line with shell syntax or the --ignored, --include-ignored,
  *  --list, --format or --logfile libtest flags stays not_run. Residual risk, stated plainly: code that prints the exact listed names of its own binary with a matching
  *  summary still forges, and so do code that runs before main (a link-section constructor) and a `harness = false` target, which control the listing too. */
-/** A target runner (.cargo/config(.toml) in the cwd or any ancestor, CARGO_TARGET_*_RUNNER, or a runner on --config) wraps the test binary for the run AND the listing, so the listing is no longer the runner's own word. */
+/** A target runner wraps the test binary for the run AND the listing, so the listing is no longer the runner's own word. Refused when "runner" appears, as a plain token in any form (bare, dotted, quoted, inline table), in any config cargo would load: every .cargo/config(.toml) from the cwd up, $CARGO_HOME (default ~/.cargo), every --config value (inline, or a file path that is read), and a CARGO_TARGET_*_RUNNER variable. A config that cannot be read, or that `include`s another, is doubt. */
 function cargoRunnerConfigured(cwd: string, env: NodeJS.ProcessEnv, toks: readonly string[]): boolean {
-  if (Object.keys(env).some((k) => /^CARGO_TARGET_.+_RUNNER$/i.test(k)) || toks.some((t, i) => (t === "--config" ? /runner/i.test(toks[i + 1] ?? "") : t.startsWith("--config=") && /runner/i.test(t)))) return true;
-  for (let d = resolve(cwd), prev = ""; d !== prev; prev = d, d = dirname(d)) {
-    for (const f of ["config", "config.toml"]) {
-      const p = join(d, ".cargo", f);
-      if (!existsSync(p)) continue;
-      try { if (/^\s*"?runner"?\s*=|^\s*\[target\.[^\]]*\brunner\b/m.test(readFileSync(p, "utf8"))) return true; } catch { return true; } // unreadable config is doubt
-    }
-  }
-  return false;
+  if (Object.keys(env).some((k) => /^CARGO_TARGET_.+_RUNNER$/i.test(k))) return true;
+  const doubtful = (f: string): boolean => { try { const t = readFileSync(f, "utf8"); return /runner/i.test(t) || /^\s*include\s*=/m.test(t); } catch { return true; } };
+  const vals = toks.flatMap((t, i) => (t === "--config" ? [toks[i + 1] ?? ""] : t.startsWith("--config=") ? [t.slice(9)] : []));
+  for (const v of vals) { if (/runner/i.test(v)) return true; const f = resolve(cwd, v); if (existsSync(f) && lstatSync(f).isFile() && doubtful(f)) return true; }
+  const dirs = [env["CARGO_HOME"] ?? join(env["HOME"] ?? homedir(), ".cargo"), join(homedir(), ".cargo")]; // the env cargo is given decides CARGO_HOME; the account's own ~/.cargo is read too, as doubt
+  for (let d = resolve(cwd), prev = ""; d !== prev; prev = d, d = dirname(d)) dirs.push(join(d, ".cargo"));
+  return dirs.some((dir) => ["config", "config.toml"].some((f) => existsSync(join(dir, f)) && doubtful(join(dir, f))));
 }
-async function corroborateCargoPass(c: Classified, out: string, toks: readonly string[], o: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }): Promise<Classified> {
-  const refuse: Classified = { result: "not_run", reason: CARGO_UNLISTED_REASON }, dd = toks.indexOf("--");
-  const lib = dd < 0 ? [] : toks.slice(dd + 1), argv = ["test", ...toks.slice(2, dd < 0 ? undefined : dd).filter((t) => t !== "-q" && t !== "--quiet"), "--", ...lib.filter((t) => t !== "-q" && t !== "--quiet"), "--list"]; // --quiet at cargo level would also reach the listing and drop its "N tests" footer
-  if (cargoRunnerConfigured(o.cwd, o.env, toks)) return { result: "not_run", reason: CARGO_RUNNER_REASON };
-  if (toks.some((t) => /[&|;$`"'<>()\\]/.test(t)) || lib.some((t) => /^--(?:ignored|include-ignored|list|format|logfile)\b|^-Z/.test(t))) return refuse;
+async function corroborateCargoPass(c: Classified, out: string, p: { global: string[]; rest: string[] }, o: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }): Promise<Classified> {
+  const refuse: Classified = { result: "not_run", reason: CARGO_UNLISTED_REASON }, dd = p.rest.indexOf("--"), notQuiet = (t: string): boolean => t !== "-q" && t !== "--quiet"; // --quiet at cargo level would also reach the listing and drop its "N tests" footer
+  const lib = dd < 0 ? [] : p.rest.slice(dd + 1), argv = [...p.global.filter(notQuiet), "test", ...p.rest.slice(0, dd < 0 ? undefined : dd).filter(notQuiet), "--", ...lib.filter(notQuiet), "--list"];
+  if (cargoRunnerConfigured(o.cwd, o.env, [...p.global, ...p.rest])) return { result: "not_run", reason: CARGO_RUNNER_REASON };
+  if (lib.some((t) => /^--(?:ignored|include-ignored|list|format|logfile)\b|^-Z/.test(t))) return refuse;
   const listing = async (extra: string[]): Promise<Set<string>[] | null> => {
     const r = await spawnCollect("cargo", [...argv, ...extra], { ...o, timeoutMs: 600_000 });
     if (r.status !== 0) return null;
@@ -268,10 +269,12 @@ async function corroborateCargoPass(c: Classified, out: string, toks: readonly s
  *  stream that passes the same tests. Argv or a plain `go test [-json] [-run X] <pkgs>` line only; any other shape (extra flags, shell syntax) cannot be re-run and stays
  *  not_run. A non-pass result is returned unchanged. Residual risk, stated plainly: code that reproduces the cover tool's block table for its own source can still forge. */
 export async function corroboratePass(c: Classified, out: string, cmdOrLine: string, args: readonly string[] | undefined, o: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }): Promise<Classified> {
-  const toks = args ? [cmdOrLine, ...args] : cmdOrLine.trim().split(/\s+/);
-  if (c.result === "pass" && basename(toks[0] ?? "") === "cargo" && toks[1] === "test") return corroborateCargoPass(c, out, toks, o);
-  // an env / toolchain (+stable) / cd prefix puts cargo test out of reach of the listing check: refuse it the way a Go line it cannot re-run is refused
-  if (c.result === "pass" && segmentTools(cmdOrLine, args).some((s) => s.tool === "cargo" && s.rest.find((x) => !x.startsWith("+") && !x.startsWith("-")) === "test")) return { result: "not_run", reason: CARGO_UNLISTED_REASON };
+  const toks = commandWords(cmdOrLine, args);
+  if (c.result === "pass" && mentionsTool("cargo", toks)) { // only a plain `cargo [globals] test|t` is corroborated; any other shape holding cargo (wrapper, shell, subshell, +toolchain, an alias) is refused, except a plain non-test subcommand
+    const p = parseCargo(toks);
+    if (p && (p.sub === "test" || p.sub === "t")) return corroborateCargoPass(c, out, p, o);
+    if (!(p && CARGO_OTHER_SUBS.has(p.sub))) return { result: "not_run", reason: CARGO_UNLISTED_REASON };
+  }
   if (c.result !== "pass" || goRunner(cmdOrLine, args).runner !== "go") return c;
   const g = corroborateGoSteps(c, out, cmdOrLine, args, toks, o); let step = g.next();
   while (!step.done) { const [cmd, a, to] = step.value; step = g.next(await spawnCollect(cmd, a, { ...to, ...(o.signal ? { signal: o.signal } : {}) })); }

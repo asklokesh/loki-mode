@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { CARGO_RUNNER_REASON, CARGO_UNLISTED_REASON, spawnCollect, changedSymbols, checkProvenance, classifyCheck, corroboratePass, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, javaSummary, javaTestClass, fullSuiteCmd, readableFailIds, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
+import { CARGO_RUNNER_REASON, CARGO_UNLISTED_REASON, goRunner, spawnCollect, changedSymbols, checkProvenance, classifyCheck, corroboratePass, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, javaSummary, javaTestClass, fullSuiteCmd, readableFailIds, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
 import { firstError, runCheck, testCheckName, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -908,7 +908,7 @@ describe("cargo listing check residuals", () => {
     const pass = { result: "pass" as const, n: 2 }, o = { cwd: tmpdir(), env: process.env };
     for (const line of ["RUST_BACKTRACE=1 cargo test", "env cargo test", "cargo +stable test", "cd . && cargo test", "cd sub && RUST_LOG=x cargo test -q"]) expect(await corroboratePass(pass, "", line, undefined, o)).toEqual({ result: "not_run", reason: CARGO_UNLISTED_REASON });
     expect(await corroboratePass(pass, "", "env", ["A=1", "cargo", "test"], o)).toEqual({ result: "not_run", reason: CARGO_UNLISTED_REASON });
-    for (const line of ["cargo clippy", "cargo build", "env FOO=1 cargo fmt --check"]) expect(await corroboratePass(pass, "", line, undefined, o)).toEqual(pass); // not a cargo test: untouched
+    for (const line of ["cargo clippy", "cargo build", "cargo fmt --check", "cargo --locked build"]) expect(await corroboratePass(pass, "", line, undefined, o)).toEqual(pass); // not a cargo test: untouched
   });
   test.skipIf(!HAS_CARGO)("real cargo: cargo test -q on a genuine crate still reads pass", async () => {
     const d = crate(GOOD); try {
@@ -927,7 +927,7 @@ describe("cargo listing check residuals", () => {
       const pass = { result: "pass" as const, n: 2 };
       expect((await corroboratePass(pass, "", "cargo", ["test"], { cwd: join(outer, "pkg"), env: process.env })).reason).toBe(CARGO_RUNNER_REASON);
       expect((await corroboratePass(pass, "", "cargo", ["test"], { cwd: d, env: { ...process.env, CARGO_TARGET_X86_64_APPLE_DARWIN_RUNNER: "env" } })).reason).toBe(CARGO_RUNNER_REASON);
-      expect((await corroboratePass(pass, "", "cargo", ["test", "--config", "target.x.runner='env'"], { cwd: d, env: process.env })).reason).toBe(CARGO_RUNNER_REASON);
+      expect((await corroboratePass(pass, "", "cargo", ["test", "--config", "target.x.runner=env"], { cwd: d, env: process.env })).reason).toBe(CARGO_RUNNER_REASON);
       expect((await run(e, "cargo", ["test"])).result).toBe("pass");
     } finally { for (const x of [outer, d, e]) rmSync(x, { recursive: true, force: true }); }
   }, 240_000);
@@ -936,6 +936,53 @@ describe("cargo listing check residuals", () => {
       const raw = spawnSync("cargo", ["test"], { cwd: d, encoding: "utf8", env: process.env }), ac = new AbortController(); ac.abort();
       expect((await corroboratePass({ result: "pass", n: 2 }, raw.stdout, "cargo", ["test"], { cwd: d, env: process.env, signal: ac.signal })).result).toBe("not_run");
     } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
+  // Round 2: the command shape and the runner config are classified generically, not by a list of known spellings.
+  test.skipIf(!HAS_CARGO)("real cargo: a forged pass behind any wrapper, shell or alias is not a pass; a plain line is checked against the listing", async () => {
+    const d = crate(FORGE); try {
+      const shapes: [string, string[]][] = [["nice", ["cargo", "test"]], ["timeout", ["600", "cargo", "test"]], ["sh", ["-c", "cargo test"]], ["cargo", ["t"]], ["cargo", ["--color", "never", "test"]]];
+      for (const [cmd, args] of shapes) {
+        const raw = spawnSync(cmd, args, { cwd: d, encoding: "utf8", env: process.env });
+        expect(raw.status).toBe(0); expect(classifyCheck({ kind: "test", ok: true, out: raw.stdout }).result).toBe("pass");
+        expect([cmd, (await run(d, cmd, args)).result]).toEqual([cmd, "not_run"]);
+      }
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
+  test("a cargo or go pass behind bash -lc, a subshell, rustup run, nice, timeout or sh -c is refused without running anything", async () => {
+    const pass = { result: "pass" as const, n: 2 }, o = { cwd: tmpdir(), env: process.env };
+    for (const [cmd, args] of [["bash", ["-lc", "cargo test"]], ["(cargo", ["test)"]], ["rustup", ["run", "stable", "cargo", "test"]]] as [string, string[]][]) expect([cmd, await corroboratePass(pass, "", cmd, args, o)]).toEqual([cmd, { result: "not_run", reason: CARGO_UNLISTED_REASON }]);
+    for (const line of ["(cargo test)", "$(cargo test)", "cargo +nightly test", "cargo test && echo ok"]) expect([line, await corroboratePass(pass, "", line, undefined, o)]).toEqual([line, { result: "not_run", reason: CARGO_UNLISTED_REASON }]);
+    for (const line of ["nice go test ./...", "timeout 600 go test ./...", "sh -c 'go test ./...'", "(go test ./...)", "bash -lc \"go test ./...\""]) expect([line, await corroboratePass(pass, "", line, undefined, o)]).toEqual([line, { result: "not_run", reason: GO_EXIT0_REASON }]);
+    expect(await corroboratePass(pass, "", "sh", ["-c", "go test ./..."], o)).toEqual({ result: "not_run", reason: GO_EXIT0_REASON });
+    expect(goRunner("nice", ["go", "test"])).toEqual({ runner: "go" });
+    expect(goRunner("npm", ["test"])).toEqual({});
+  });
+  test.skipIf(!HAS_CARGO)("real cargo: plain lines with no runner still corroborate", async () => {
+    const d = crate(GOOD), cfg = crate(GOOD, { ".cargo/config.toml": "[build]\njobs = 2\n[alias]\nxt = \"test\"\n" }); try {
+      for (const args of [["test"], ["t"], ["--color", "never", "test"], ["--locked", "test", "--", "--test-threads=1"], ["test", "--quiet"]]) expect([args, (await run(d, "cargo", args)).result]).toEqual([args, "pass"]);
+      expect((await run(cfg, "cargo", ["test"])).result).toBe("pass");
+      const raw = spawnSync("cargo", ["test"], { cwd: d, encoding: "utf8", env: process.env }), home = crate(""); mkdirSync(join(home, "ch")); writeFileSync(join(home, "ch", "config.toml"), "[build]\njobs = 2\n");
+      try { expect((await corroboratePass({ result: "pass", n: 2 }, raw.stdout, "cargo test", undefined, { cwd: d, env: { ...process.env, CARGO_HOME: join(home, "ch") } })).result).toBe("pass"); } finally { rmSync(home, { recursive: true, force: true }); }
+    } finally { rmSync(d, { recursive: true, force: true }); rmSync(cfg, { recursive: true, force: true }); }
+  }, 240_000);
+  const RUNNER_FORMS: [string, string][] = [["dotted key", 'target.aarch64-apple-darwin.runner = "env"\n'], ["single-quoted key", "[target.aarch64-apple-darwin]\n'runner' = \"env\"\n"], ["inline table", '[target]\naarch64-apple-darwin = { runner = "env" }\n'], ["double-quoted key", '[target.aarch64-apple-darwin]\n"runner" = ["env"]\n']];
+  for (const [name, body] of RUNNER_FORMS) test.skipIf(!HAS_CARGO)(`real cargo: a repo runner written as a ${name} is refused`, async () => {
+    const d = crate(GOOD, { ".cargo/config.toml": body }); try {
+      const c = await run(d, "cargo", ["test"]);
+      expect(c.result).toBe("not_run"); expect(c.reason).toBe(CARGO_RUNNER_REASON);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
+  test.skipIf(!HAS_CARGO)("real cargo: a runner in a --config file, or in CARGO_HOME outside the repo's parents, is refused", async () => {
+    const d = crate(GOOD, { "rc.toml": 'target.aarch64-apple-darwin.runner = "env"\n' }), home = crate("", { "ch/config.toml": '[target.x86_64-unknown-linux-gnu]\nrunner = "env"\n' }); try {
+      const c = await run(d, "cargo", ["test", "--config", "rc.toml"]);
+      expect(c.result).toBe("not_run"); expect(c.reason).toBe(CARGO_RUNNER_REASON);
+      const raw = spawnSync("cargo", ["test"], { cwd: d, encoding: "utf8", env: process.env });
+      expect((await corroboratePass({ result: "pass", n: 2 }, raw.stdout, "cargo test", undefined, { cwd: d, env: { ...process.env, CARGO_HOME: join(home, "ch") } })).reason).toBe(CARGO_RUNNER_REASON);
+      expect((await corroboratePass({ result: "pass", n: 2 }, raw.stdout, "cargo test", undefined, { cwd: d, env: { ...process.env, CARGO_HOME: undefined, HOME: join(home, "h") } })).result).toBe("pass"); // HOME with no .cargo: nothing to read
+      mkdirSync(join(home, "h", ".cargo"), { recursive: true }); writeFileSync(join(home, "h", ".cargo", "config"), '[target.x86_64-unknown-linux-gnu]\nrunner = "env"\n');
+      const { CARGO_HOME: _unused, ...noHome } = process.env;
+      expect((await corroboratePass({ result: "pass", n: 2 }, raw.stdout, "cargo test", undefined, { cwd: d, env: { ...noHome, HOME: join(home, "h") } })).reason).toBe(CARGO_RUNNER_REASON); // default ~/.cargo
+    } finally { rmSync(d, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
   }, 240_000);
   test("spawnCollect kills its child when the signal aborts", async () => {
     const ac = new AbortController(), t0 = Date.now(); setTimeout(() => ac.abort(), 100);

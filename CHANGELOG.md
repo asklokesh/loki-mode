@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The cargo pass check no longer lets a forged pass through when the command carries an env, toolchain or cd prefix (`RUST_BACKTRACE=1 cargo test`, `cargo +stable test`, `env cargo test`, `cd . && cargo test`); those are not a counted pass, as for Go. `cargo test -q` no longer reads as not run because of its own `--quiet`. A cargo target runner (a `.cargo/config(.toml)` in the repo or any parent folder, a `CARGO_TARGET_*_RUNNER` variable or `--config` runner) wraps both the run and its listing, so such a pass is not counted. The listing runs now stop when the stage is aborted.
+- The cargo and Go pass checks now corroborate a pass only for a plain command: `cargo [global flags] test|t` or `go test`. Any other shape that contains the tool (nice, timeout, sh -c, bash -lc, a subshell, rustup run, a +toolchain shim, an env or cd prefix) is not a counted pass. `cargo test -q` no longer reads as not run because of its own `--quiet`. A cargo target runner, written in any form (bare, dotted, quoted or inline-table key) in any .cargo/config(.toml) from the repo up through its parents, in CARGO_HOME or ~/.cargo, in a `--config` value or the file it names, or in a CARGO_TARGET_*_RUNNER variable, also stops the pass from counting, because the runner wraps both the run and its listing. The listing subprocesses now stop when the stage is aborted.
 
 ## v11.95.0 (2026-10-31)
 

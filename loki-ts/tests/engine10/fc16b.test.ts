@@ -24,9 +24,9 @@ const GO_JSON_PASS = [
 describe("item 1: go detection through the one shared helper", () => {
   test.each([
     ["env X=1 go test ./...", true], ["GOFLAGS=-mod=mod go test ./...", true], ["/usr/local/go/bin/go test ./...", true],
-    ["cd x && env -u A go test ./...", true], ["go test ./...", true], ["make test", false], ["npm test", false], ["echo go", false],
+    ["cd x && env -u A go test ./...", true], ["go test ./...", true], ["make test", false], ["npm test", false], ["nice go test ./...", true], ["sh -c \"go test ./...\"", true], ["echo go", true],
   ])("%s", (cmd, isGo) => { expect(goRunner(cmd)).toEqual(isGo ? { runner: "go" } : {}); });
-  test("argv form", () => { expect(goRunner("go", ["test"])).toEqual({ runner: "go" }); expect(goRunner("npx", ["go"])).toEqual({}); });
+  test("argv form", () => { expect(goRunner("go", ["test"])).toEqual({ runner: "go" }); expect(goRunner("npx", ["go"])).toEqual({ runner: "go" }); expect(goRunner("npx", ["jest"])).toEqual({}); });
   test("a wrapped go command with exit 0 and a forged -v pass is not a pass (runner go)", () => {
     const out = "=== RUN   TestA\n--- PASS: TestA (0.00s)\nPASS\nok  \tex/a\t0.004s\n";
     expect(classifyCheck({ kind: "test", ok: true, out, ...goRunner("env X=1 go test -v ./...") }).result).toBe("not_run");
