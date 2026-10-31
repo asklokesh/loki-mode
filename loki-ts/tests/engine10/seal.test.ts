@@ -870,6 +870,107 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.not_proven.some((n) => n.includes("a.txt"))).toBe(false);
   }, 30000);
 
+  describe("FALSEVER-WALLPATH-3: a task-named bare file that exists only under a subdirectory", () => {
+    const run = async (name: string, task: string, files: string[]) => {
+      noKey();
+      const { repo, base } = makeRepo(name);
+      for (const f of files) { mkdirSync(dirname(join(repo, f)), { recursive: true }); writeFileSync(join(repo, f), "#!/bin/sh\necho ok\n"); }
+      const { ctx } = ctxFor(repo, base, "claude", { intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, task } });
+      await commitStage.run(ctx, new AbortController().signal);
+      return receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    };
+    const TASK = "Write rotate.sh DIR KEEP in bash that keeps the KEEP newest files (e.g. by mtime, i.e. newest first), no Node.js needed.";
+    test("px2b sh-rotate run 4 shape: rotate.sh only at tests/rotate.sh is PARTIAL with the named NOT PROVEN line", async () => {
+      const r = await run("wp3-run4", TASK, ["tests/rotate.sh"]);
+      expect(r.not_proven).toContain("task names rotate.sh but it exists only at tests/rotate.sh");
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
+    test("rotate.sh at the repo root stays VERIFIED", async () => {
+      const r = await run("wp3-root", TASK, ["rotate.sh"]);
+      expect(r.not_proven.some((n) => n.startsWith("task names rotate.sh"))).toBe(false);
+      expect(r.verdict).toBe("VERIFIED");
+    }, 30000);
+    test("rotate.sh at the root and under tests/ stays VERIFIED", async () => {
+      const r = await run("wp3-both", TASK, ["rotate.sh", "tests/rotate.sh"]);
+      expect(r.not_proven.some((n) => n.startsWith("task names rotate.sh"))).toBe(false);
+      expect(r.verdict).toBe("VERIFIED");
+    }, 30000);
+    const LAYOUTS: [string, string, string][] = [["main.go", "cmd/server/main.go", "Write main.go for the server"], ["__init__.py", "pkg/__init__.py", "Add an __init__.py for pkg"], ["conftest.py", "tests/conftest.py", "Add a conftest.py inside tests/"], ["index.ts", "src/components/index.ts", "Add an index.ts barrel in src/components"], ["test_utils.py", "tests/test_utils.py", "Write test_utils.py with the helper tests"]];
+    for (const [name, at, task] of LAYOUTS) test(`idiomatic layout ${at} for ${name} stays VERIFIED`, async () => {
+      const r = await run(`wp3-lay-${name.replace(/\W/g, "")}`, task, [at]);
+      expect(r.not_proven.some((n) => n.startsWith(`task names ${name}`))).toBe(false);
+      if (name === "conftest.py") return; // the separate runner-config gate legitimately caps a new conftest; only the misplaced-file note is asserted
+      expect(r.verdict).toBe("VERIFIED");
+    }, 30000);
+    test("an empty root file beside the real tests/rotate.sh keeps the cap", async () => {
+      noKey();
+      const { repo, base } = makeRepo("wp3-stub");
+      writeFileSync(join(repo, "rotate.sh"), "");
+      mkdirSync(join(repo, "tests"), { recursive: true }); writeFileSync(join(repo, "tests/rotate.sh"), "#!/bin/sh\necho ok\n");
+      const { ctx } = ctxFor(repo, base, "claude", { intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, task: TASK } });
+      await commitStage.run(ctx, new AbortController().signal);
+      const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+      expect(r.not_proven).toContain("task names rotate.sh but it exists only at tests/rotate.sh");
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
+    const runFiles = async (name: string, task: string, files: Record<string, string>, preBase: Record<string, string> = {}) => {
+      noKey();
+      const { repo, base: base0 } = makeRepo(name);
+      let base = base0;
+      if (Object.keys(preBase).length) { for (const [f, c] of Object.entries(preBase)) { mkdirSync(dirname(join(repo, f)), { recursive: true }); writeFileSync(join(repo, f), c); sh(["git", "add", f], repo); } sh(["git", "commit", "-q", "-m", "pre"], repo); base = sh(["git", "rev-parse", "HEAD"], repo).trim(); }
+      for (const [f, c] of Object.entries(files)) { mkdirSync(dirname(join(repo, f)), { recursive: true }); writeFileSync(join(repo, f), c); }
+      const { ctx } = ctxFor(repo, base, "claude", { intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, task } });
+      await commitStage.run(ctx, new AbortController().signal);
+      return receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    };
+    const CALC = "def add(a, b):\n    return a + b\n", MIS = "task names calc.py but it exists only at tests/calc.py";
+    for (const [i, task] of ["Create calc.py with an add(a, b) function and add tests.", "Create calc.py with add(a, b), with unit tests.", "Create calc.py with add(a, b); put the tests in tests/.", "Create calc.py with add(a, b) and test it."].entries()) test(`bare test words do not locate calc.py: calc.py only at tests/calc.py is PARTIAL (${i})`, async () => {
+      const r = await runFiles(`wp3c-bare${i}`, task, { "tests/calc.py": CALC });
+      expect(r.not_proven).toContain(MIS);
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
+    test("a task that says per the spec does not locate spec/calc.rb", async () => {
+      const r = await runFiles("wp3c-spec", "Write calc.rb per the spec below.", { "spec/calc.rb": "def add(a, b)\n  a + b\nend\n" });
+      expect(r.not_proven).toContain("task names calc.rb but it exists only at spec/calc.rb");
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
+    test("a path or a directory phrase in the task still locates the file", async () => {
+      for (const [i, task] of ["Create calc.py in tests/ with add(a, b)", "Create calc.py in the tests directory with add(a, b)"].entries()) {
+        const r = await runFiles(`wp3c-path${i}`, task, { "tests/calc.py": CALC });
+        expect(r.not_proven.some((n) => n.startsWith("task names calc.py"))).toBe(false);
+      }
+    }, 60000);
+    for (const [label, body] of [["pass", "pass\n"], ["a one-line docstring", '"""calc"""\n'], ["a multi-line docstring", '"""calc\n\ndef add(a, b): documented only\n"""\n'], ["package main", "package main\n"], ["export {}", "export {};\n"], ["use strict", "'use strict';\n"]] as const) test(`a root calc.py holding only ${label} keeps the cap`, async () => {
+      const r = await runFiles(`wp3c-stub-${label.replace(/\W/g, "")}`, "Create calc.py with add(a, b)", { "calc.py": body, "tests/calc.py": CALC });
+      expect(r.not_proven).toContain(MIS);
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
+    test("a real root calc.py that defines add beside tests/calc.py stays VERIFIED", async () => {
+      const r = await runFiles("wp3c-realroot", "Create calc.py with add(a, b)", { "calc.py": CALC + "\ndef sub(a, b):\n    return a - b\n", "tests/calc.py": CALC });
+      expect(r.not_proven.some((n) => n.startsWith("task names calc.py"))).toBe(false);
+      expect(r.verdict).toBe("VERIFIED");
+    }, 30000);
+    test("a stale root calc.py already at base and untouched by the run keeps the cap", async () => {
+      const r = await runFiles("wp3c-stale", "Create calc.py with add(a, b)", { "tests/calc.py": CALC }, { "calc.py": CALC });
+      expect(r.not_proven).toContain(MIS);
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
+    test("a root calc.py that exists at base and is edited by the run to define add stays VERIFIED", async () => {
+      const r = await runFiles("wp3c-editroot", "Create calc.py with add(a, b)", { "calc.py": CALC, "tests/calc.py": CALC }, { "calc.py": "# todo\nx = 1\n" });
+      expect(r.not_proven.some((n) => n.startsWith("task names calc.py"))).toBe(false);
+      expect(r.verdict).toBe("VERIFIED");
+    }, 30000);
+    test("socket.js and chart.js named by the task are files; Node.js is prose", async () => {
+      const r = await runFiles("wp3c-socket", "Create socket.js that handles connections, no Node.js tricks.", { "tests/socket.js": "function connect() {}\n" });
+      expect(r.not_proven).toContain("task names socket.js but it exists only at tests/socket.js");
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
+    test("a task that names tests/rotate.sh explicitly stays VERIFIED", async () => {
+      const r = await run("wp3-named", "Write tests/rotate.sh and call it rotate.sh in the docs", ["tests/rotate.sh"]);
+      expect(r.not_proven.some((n) => n.startsWith("task names rotate.sh"))).toBe(false);
+      expect(r.verdict).toBe("VERIFIED");
+    }, 30000);
+  });
   test("FC-WALL-PHANTOM-PATH: a symlink added by the change lands on NOT PROVEN by name; a regular new file and a plan-requested link do not", async () => {
     noKey();
     const { repo, base } = makeRepo("symadd");

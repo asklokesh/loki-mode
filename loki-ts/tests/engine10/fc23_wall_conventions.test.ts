@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWall, buildWallBrief, WALL_OUTPUT_BUDGET, WALL_REPO_PATHS } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
-import { conventionViolation, conventionsBrief, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, vacuousCheck } from "../../src/project_model/conventions.ts";
+import { conventionViolation, conventionsBrief, outOfRepoTarget, phantomReason, misplacedNamedNotes, phantomRepoPaths, readPackageConventions, taskNamedPaths, topLevelSymbols, vacuousCheck } from "../../src/project_model/conventions.ts";
 import { wallOwnedFailure } from "../../src/util/wall_owned.ts";
 import { withoutStaleWall } from "../../src/util/check_result.ts";
 import { RealTestMapProvider } from "../../src/engine10/testmap.ts";
@@ -329,6 +329,54 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(phantomRepoPaths("const f = join(__dirname, 'fixtures', 'a.json');", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths("const f = join(__dirname, '..', 'node_modules', 'x');", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths(PHANTOM, "a.py", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths('const cfg = join(import.meta.dir, "config.yaml");\nBun.write(cfg, "x");', "a.test.ts", td, repo, null, "Create config.yaml")).toEqual([]);
+  });
+  test("task-named file beside the test file (greenfield sh-rotate Wall) is reported, at its true root path or as an unnamed fixture it is not", () => {
+    const repo = cjsRepo(), td = join(repo, "tests"), task = "Write rotate.sh that rotates log files and also see docs/guide.md";
+    const wall = (expr: string): string => `import { join } from "node:path";\nconst SCRIPT = ${expr};\ntest("a", () => { expect(spawnSync("bash", [SCRIPT]).status).toBe(0); });\n`;
+    const name = "loki_wall_rotate.test.ts";
+    expect(phantomRepoPaths(wall('join(import.meta.dir, "rotate.sh")'), name, td, repo, null, task)).toEqual(["tests/rotate.sh"]);
+    expect(phantomRepoPaths(wall('join(__dirname, "docs", "guide.md")'), name, td, repo, null, task)).toEqual(["tests/docs/guide.md"]);
+    expect(phantomRepoPaths(wall('join(import.meta.dir, "..", "rotate.sh")'), name, td, repo, null, task)).toEqual([]);
+    expect(phantomRepoPaths(wall('join(process.cwd(), "rotate.sh")'), name, td, repo, null, task)).toEqual([]);
+    expect(phantomRepoPaths(wall('join(import.meta.dir, "fixture.log")'), name, td, repo, null, task)).toEqual([]);
+    expect(phantomRepoPaths(wall('join(import.meta.dir, "rotate.sh")'), name, td, repo, null, "Add a rotate script")).toEqual([]);
+    expect(phantomReason(["tests/rotate.sh"], [], "tests", "", task)).toContain("task names rotate.sh");
+  });
+  test("taskNamedPaths ignores prose tokens (e.g, i.e, Node.js) and keeps real file names", () => {
+    expect(taskNamedPaths("Use a loop (e.g. find, i.e. not ls) on Node.js to write rotate.sh and ./lib/x.py")).toEqual(["rotate.sh", "lib/x.py"]);
+    expect(misplacedNamedNotes("e.g. foo, i.e. bar, Node.js", [":000000 100644 0 0 A", "tests/e.g", ":000000 100644 0 0 A", "tests/Node.js"], "/nonexistent", "HEAD")).toEqual([]);
+  });
+  test("misplacedNamedNotes fires only for a test-directory copy of a non-test name the task does not locate", () => {
+    const add = (f: string): string[] => [":000000 100644 0 0 A", f], note = (task: string, f: string): string[] => misplacedNamedNotes(task, add(f), "/nonexistent", "HEAD");
+    expect(note("Write rotate.sh", "tests/rotate.sh")).toEqual(["task names rotate.sh but it exists only at tests/rotate.sh"]);
+    expect(note("Write rotate.sh", "cmd/server/rotate.sh")).toEqual([]);
+    expect(note("Add test_utils.py", "tests/test_utils.py")).toEqual([]);
+    expect(note("Add conftest.py", "tests/conftest.py")).toEqual([]);
+    expect(note("Add util_test.go and x.test.ts", "tests/util_test.go")).toEqual([]);
+    expect(note("Write rotate.sh and keep fixtures in tests/", "tests/rotate.sh")).toEqual([]);
+    expect(note("Write rotate.sh inside the tests directory", "tests/rotate.sh")).toEqual([]);
+    expect(note("Write rotate.sh and keep fixtures in tests", "tests/rotate.sh")).toEqual(["task names rotate.sh but it exists only at tests/rotate.sh"]);
+    for (const t of ["Create calc.py with an add(a, b) function and add tests.", "Create calc.py with add(a, b), with unit tests.", "Create calc.py with add(a, b); put the tests in tests/.", "Create calc.py with add(a, b) and test it.", "Create calc.py with add(a, b), put the tests under the tests directory"]) expect(note(t, "tests/calc.py")).toEqual(["task names calc.py but it exists only at tests/calc.py"]);
+    expect(note("Write calc.rb per the spec below.", "spec/calc.rb")).toEqual(["task names calc.rb but it exists only at spec/calc.rb"]);
+    expect(note("Write calc.py in tests/ and put the tests in tests/", "tests/calc.py")).toEqual([]);
+  });
+  test("topLevelSymbols reads definitions by shape and ignores stubs, docstrings and comments", () => {
+    const syms = (s: string): string[] => [...topLevelSymbols(s)].sort();
+    expect(syms("def add(a, b):\n    return a + b\n")).toEqual(["add"]);
+    expect(syms("pass\n")).toEqual([]);
+    expect(syms('"""calc"""\n')).toEqual([]);
+    expect(syms('"""calc\n\ndef add(a, b)\n"""\n')).toEqual([]);
+    expect(syms("export {};\n'use strict';\n")).toEqual([]);
+    expect(syms("package main\nfunc main() {}\n")).toEqual([]);
+    expect(syms("package main\nfunc Add(a, b int) int { return a + b }\nfunc (c Calc) Sub() {}\n")).toEqual(["Add", "Sub"]);
+    expect(syms("export function add() {}\nexport const sub = 1;\nmodule.exports = { mul, div as quot };\n")).toEqual(["add", "mul", "quot", "sub"]);
+    expect(syms("  def nested():\n    pass\n# def commented():\n")).toEqual([]);
+  });
+  test("taskNamedPaths keeps capitalised app files and drops only framework names", () => {
+    expect(taskNamedPaths("Write App.js, Server.js and Button.js at the repo root")).toEqual(["App.js", "Server.js", "Button.js"]);
+    expect(taskNamedPaths("Use Node.js, Vue.js, Next.js, Nuxt.js, Express.js, Three.js, D3.js and Chart.js")).toEqual([]);
+    expect(taskNamedPaths("Create socket.js that handles connections, chart.js, electron.js and express.js, no Node.js")).toEqual(["socket.js", "chart.js", "electron.js", "express.js"]);
   });
   test("monorepo: process.cwd() paths resolve against the nearest package root of the test file and the repo root", () => {
     const repo = repoWith(); mkdirSync(join(repo, "packages/a/test"), { recursive: true }); mkdirSync(join(repo, "packages/a/src"), { recursive: true });
@@ -483,6 +531,15 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     const why = phantomReason(["plugins/ralph-loop"], ["some/other/ralph-loop/run.sh", "x/y.ts"]);
     expect(why).toContain("plugins/ralph-loop (a path named ralph-loop exists at some/other/ralph-loop)");
     expect(phantomReason([], [])).toBeNull();
+  });
+  test("wallAuthor wiring: a Wall resolving the task-named rotate.sh beside the test is re-asked with the named-path reason; the root-path rewrite is kept", async () => {
+    const repoDir = cjsRepo(); const briefs: string[] = [];
+    const ctx = wallCtx(repoDir, (o) => { briefs.push(o.brief); writeFileSync(join(o.cwd!, "loki_wall_rotate.test.ts"), `const S = join(__dirname, ${briefs.length === 1 ? "" : "'..', "}'rotate.sh');\ntest('x', () => { expect(S).toBeTruthy(); });\n`); });
+    const base = ctx.outputs; ctx.outputs = () => ({ ...base(), intake: { ...(base().intake as Record<string, unknown>), task: "Write `rotate.sh DIR KEEP` in bash that keeps the KEEP newest files" } }) as never;
+    const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(briefs.length).toBe(2);
+    expect(briefs[1]).toContain("task names rotate.sh");
+    expect(r.data.discarded).toBeUndefined();
   });
   test("a phantom path is re-asked once with the reason and the nearest real file; the rewrite is kept", async () => {
     const repoDir = repoWith(); const briefs: string[] = [];

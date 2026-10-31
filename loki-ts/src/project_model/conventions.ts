@@ -151,10 +151,49 @@ function nearestPackageRoot(testDir: string, repoDir: string, fileName: string):
   let pkg = testDir; while (pkg !== repoDir && pkg !== dirname(pkg) && !shaped(pkg)) pkg = dirname(pkg);
   return pkg;
 }
-const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSync|renameSync|symlinkSync|mkdir|writeFile|appendFile|cp|copyFile|rename|outputFile|ensureDir|mkdirp)\(/g;
+const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSync|renameSync|symlinkSync|mkdir|writeFile|appendFile|cp|copyFile|rename|outputFile|ensureDir|mkdirp|write|Bun\.write)\(/g;
+
+const FRAMEWORK_JS = /^(?:Node|Vue|Next|Nuxt|Express|Three|D3|Chart|React|Angular|Ember|Backbone|Alpine|Svelte|Solid|Preact|Deno|Bun|Socket|Anime|Moment|Day|Underscore|Lodash|Handlebars|Mustache|Knockout|Meteor|Gatsby|Remix|Astro|Electron|Nest|Koa|Hapi|Fastify|P5|Phaser|Pixi|Babylon|Leaflet|Highcharts|Plotly|jQuery|Mocha|Jest|Cypress|Puppeteer)\.js$/;
+const TEST_DIR = /^(?:tests?|__tests__|specs?)$/, TEST_NAME = /^(?:conftest\.py|test_.*|.*_test\..*|.*\.test\..*|.*\.spec\..*|.*_spec\..*)$/;
+const hollow = (body: string): boolean => body.split("\n").every((l) => { const t = l.trim(); return !t || /^(?:#|\/\/|\/\*|\*)/.test(t); }); // empty, whitespace or comment/shebang lines only
+
+/** Paths the task text names as files (a name with a letter-bearing extension, optionally dir-prefixed), normalized repo-relative; the greenfield counterpart of namedFiles, which only sees files already in the repo map. */
+export function taskNamedPaths(task: string): string[] {
+  const names = [...task.matchAll(/(?<![\w./-])((?:\.\/)?(?:[\w.-]+\/)*[\w-]+\.[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*)(?![\w-]|\.\w)/g)].map((m) => m[1]!.replace(/^\.\//, ""));
+  return [...new Set(names.filter((n) => !/^[A-Za-z]\.[A-Za-z]$/.test(n) && !FRAMEWORK_JS.test(n)))]; // "e.g", "i.e" and framework names like "Node.js" are prose, never files; an app file such as App.js stays a file
+}
+
+/** Top-level symbol names a source text defines, by shape and never by language: a line-start def, class, function, func, fn, const, let, var, type, struct, enum, trait, interface, sub, proc, fun or val (optionally exported, public or async, with an optional Go receiver or `self.`), a line-start `name =` or `name() {`, `exports.name =`, and the names in `module.exports = { ... }` or `export { ... }`. Docstrings, block comments and line comments are ignored; main, init, dunder and test-prefixed names are not counted, so a stub cannot match on them. */
+export function topLevelSymbols(src: string): Set<string> {
+  const code = src.replace(/"""[\s\S]*?"""|'''[\s\S]*?'''|\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*(?:#|\/\/).*$/gm, "");
+  const out = new Set<string>(), add = (n: string | undefined): void => { if (n && n !== "_" && !/^(?:main|init)$|^__\w+__$|^[Tt]est/.test(n)) out.add(n); };
+  for (const m of code.matchAll(/^(?:(?:export|default|async|pub(?:\([^)]*\))?|static|public|abstract|final)\s+)*(?:def|class|function\*?|func|fn|const|let|var|type|interface|struct|enum|trait|sub|proc|fun|val)\s+(?:\([^)]*\)\s*)?(?:self\.)?([A-Za-z_$][\w$]*)|^(?:(?:module\.)?exports\.)?([A-Za-z_$][\w$]*)\s*(?:=(?!=)|\(\)\s*\{)/gm)) add(m[1] ?? m[2]);
+  for (const m of code.matchAll(/^(?:module\.exports\s*=|export)\s*\{([^}]*)\}/gm)) for (const part of m[1]!.split(",")) add(part.trim().split(/\s+/).pop());
+  return out;
+}
+
+/** FALSEVER-WALLPATH-3: language-agnostic last check. The task names a bare file X (a repo-root file), the run added X only under a test directory (tests/X) and not at the repo root, and the task does not name that directory (see taskNamesDir): the real grader runs X at the root, so the result is NOT PROVEN. A root X clears the note only when the run added or changed it (a root file untouched by the run is stale) and it defines at least one top-level symbol the test-directory copy defines; when that copy defines no symbol, any non-hollow root file clears it. Returns the note lines (empty when nothing is misplaced). */
+export function misplacedNamedNotes(task: string, rawDiff: string[], repoDir: string, head: string): string[] {
+  const named = taskNamedPaths(task), added = rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() === "A" && rawDiff[i + 1] ? [rawDiff[i + 1]!] : [])), changed = new Set(rawDiff.filter((_, i) => i % 2 === 1));
+  return named.filter((x) => !x.includes("/") && !TEST_NAME.test(x)).flatMap((x) => {
+    const hit = added.find((f) => f.includes("/") && basename(f) === x && TEST_DIR.test(f.split("/")[0]!)); // only a test directory copy stands in for the root file; cmd/server/main.go, pkg/__init__.py, src/components/index.ts are idiomatic
+    if (!hit || named.some((p) => p.endsWith(`/${x}`)) || taskNamesDir(task, dirname(hit))) return [];
+    const root = safeGitSpawn(repoDir, ["show", `${head}:${x}`], { timeout: 5000, encoding: "utf8" });
+    if (root.status === 0 && changed.has(x) && !hollow(root.stdout ?? "")) { // a stale root file (untouched by the run), or an empty or stub one beside the real file under tests/, keeps the cap
+      const copy = safeGitSpawn(repoDir, ["show", `${head}:${hit}`], { timeout: 5000, encoding: "utf8" }), want = topLevelSymbols(copy.status === 0 ? copy.stdout ?? "" : "");
+      if (want.size === 0 || [...topLevelSymbols(root.stdout ?? "")].some((n) => want.has(n))) return [];
+    }
+    return [`task names ${x} but it exists only at ${hit}`];
+  });
+}
+/** Whether the task names the directory as a home for the file: a path with a slash (`tests/`, `cmd/server`) or a phrase such as "in/under/inside the X directory". The bare words tests, test and spec never count, and neither does a mention that says the tests live there ("put the tests in tests/"): that is the home of the tests, not of the named file. */
+const taskNamesDir = (task: string, dir: string): boolean => {
+  const d = dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...task.matchAll(new RegExp(`(?<![\\w.-])${d}/|\\b(?:in|into|under|inside|within)\\s+(?:the\\s+)?[\`"']?${d}/?[\`"']?\\s+(?:directory|dir|folder)\\b`, "g"))].some((m) => !/\b(?:tests?|specs?)\b[^.;\n]{0,30}\b(?:in|into|under|inside|to|at|within)\s+(?:the\s+)?$/i.test(task.slice(0, m.index!) + (/^(?:in|into|under|inside|within)\b/.test(m[0]) ? `${/^\w+/.exec(m[0])![0]} ` : "")));
+};
 
 /** FC-WALL-PHANTOM-PATH: repo paths a JS/TS test builds with join/resolve from the test dir, the cwd or a const derived from them (const assignments followed, calls split across lines joined) that do not exist in the base tree. process.cwd() is tried as the nearest package root of the test dir (verify runs a package's tests there) and as the repo root; a path existing under either passes. A path the plan names, creates (mkdir/write/cp/rename target), or that git ignores passes; write/expect/tmp lines are ignored. A path that stays inside the test dir is reported only when its first segment is absent from the test dir but present at the package or repo root (tests/plugins/x for plugins/x); fixtures the test dir lacks stay unreported. Returns repo-relative missing paths (max 3). */
-export function phantomRepoPaths(content: string, fileName: string, testDir: string, repoDir: string, planText: string | null): string[] {
+export function phantomRepoPaths(content: string, fileName: string, testDir: string, repoDir: string, planText: string | null, task: string | null = null): string[] {
   if (!/\.[cm]?[jt]sx?$/.test(fileName)) return [];
   const code = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").replace(/,\s*\n\s*/g, ", ").replace(/=\s*\n\s*/g, "= ");
   const walkCode = /\bfor\s*\(\s*(?:const|let|var)\s+\w+\s+of\s*\[/.test(code) ? code.replace(/([;{])[ \t]*(?=(?:const|let|var)\s)/g, "$1\n") : code; // a walk-up loop: statements sharing a line are split so each binding is followed
@@ -162,6 +201,7 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
   const split = (s: string): string[] => { const out: string[] = []; let d = 0, q = "", cur = ""; for (let i = 0; i < s.length; i++) { const c = s[i]!; if (q) { cur += c; if (c === "\\") cur += s[++i] ?? ""; else if (c === q) q = ""; } else if (c === '"' || c === "'" || c === "`") { q = c; cur += c; } else if ("([{".includes(c)) { d++; cur += c; } else if (")]}".includes(c)) { d--; cur += c; } else if (c === "," && d === 0) { out.push(cur); cur = ""; } else cur += c; } if (cur.trim()) out.push(cur); return out; };
   const close = (line: string, at: number): number => { let d = 0; for (let j = at; j < line.length; j++) { if (line[j] === "(") d++; else if (line[j] === ")" && --d === 0) return j; } return -1; };
   const strayInTestDir = (out: string): boolean => { const first = relative(testDir, out).split("/")[0]!; return !!first && first !== "__self__" && !existsSync(join(testDir, first)) && [pkg, repoDir].some((d) => d !== testDir && existsSync(join(d, first))); }; // inside the test dir but the first segment only exists at a repo root: the author meant a repo path
+  const named = new Set(taskNamedPaths(task ?? "")), namedStray = (out: string): boolean => named.has(relative(testDir, out)); // the task names this file (bare name = repo root) and the test resolves it beside the test file, even when it exists nowhere yet (greenfield)
   const scan = (cwd: string): { reports: Map<string, { out: string; rel: string; tail?: string }>; created: string[] } => {
     const vars = new Map<string, string>(), walk = new Set<string>(), taint = new Set<string>(), reports = new Map<string, { out: string; rel: string; tail?: string }>(), created: string[] = []; let ln = 0; // reports are keyed by source line and call text so two cwd runs pair the same call
     const ev = (raw: string, report: boolean): string | null => {
@@ -178,7 +218,7 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
       if (call[1] === "dirname") return dirname(args[0]!);
       const out = resolve(...(args as string[]));
       const first = parts.slice(1).map((a) => /^\s*["'`]([^"'`]*)["'`]\s*$/.exec(a)?.[1]).find((x) => x), viaWalk = !!first && walk.has(parts[0]!.trim()) && [pkg, repoDir].some((d) => existsSync(join(d, first.split("/").filter(Boolean)[0] ?? "\0"))); // a walk-up base reaches the repo root: the first literal segment is checked there (absent everywhere keeps the old silence)
-      if (report && (viaWalk || (!parts.some((a) => walk.has(a.trim()) || taint.has(a.trim())) && (relative(testDir, out).startsWith("..") || strayInTestDir(out)))) && parts.some((a) => /^\s*["'`]/.test(a))) reports.set(`${ln}|${e}`, { out, rel: relative(repoDir, out), tail: viaWalk ? join(...(args.slice(1) as string[])) : undefined });
+      if (report && (viaWalk || (!parts.some((a) => walk.has(a.trim()) || taint.has(a.trim())) && (relative(testDir, out).startsWith("..") || strayInTestDir(out) || namedStray(out)))) && parts.some((a) => /^\s*["'`]/.test(a))) reports.set(`${ln}|${e}`, { out, rel: relative(repoDir, out), tail: viaWalk ? join(...(args.slice(1) as string[])) : undefined });
       return out;
     };
     for (const line of walkCode.split("\n")) {
@@ -198,7 +238,7 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
   const runs = [...new Set([pkg, repoDir])].map(scan);
   const planned = (rel: string): boolean => !!planText && rel.split("/").some((_, i, a) => { const pre = a.slice(0, i + 1).join("/"); return (i > 0 || a.length === 1) && !existsSync(join(repoDir, pre)) && new RegExp(`(?<![\\w-])${pre.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(planText); }); // only a path named with its parent (plugins/ralph-loop) is planned, never a bare segment or basename
   const phantom = (r: { out: string; rel: string; tail?: string }, created: string[]): boolean => {
-    const rel = r.rel; if (!rel || rel.startsWith("..") || isAbsolute(rel) || /(^|\/)(\.git|\.loki|dist|build|coverage|tmp)(\/|$)/.test(rel) || existsSync(r.out) || planned(rel)) return false;
+    const rel = r.rel; if (!rel || rel.startsWith("..") || isAbsolute(rel) || /(^|\/)(\.git|\.loki|dist|build|coverage|tmp)(\/|$)/.test(rel) || existsSync(r.out) || planned(rel) || named.has(rel)) return false; // a task-named file at its named repo path is the implementer's to create
     if (r.tail) { const seen = (from: string): boolean => { let d = from; for (let i = 0; i < 64; i++) { if (existsSync(join(d, r.tail!))) return true; if (d === repoDir || d === dirname(d)) return false; d = dirname(d); } return false; }; if ([testDir, pkg, repoDir].some(seen)) return false; } // a walk-up path found at any directory the walk passes (test dir or package root, up to the repo root) is real
     if (created.some((c) => c === r.out || c.startsWith(r.out + "/") || r.out.startsWith(c + "/"))) return false;
     return safeGitSpawn(repoDir, ["check-ignore", "-q", "--", rel], { timeout: 5000 }).status !== 0;
@@ -209,11 +249,12 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
 }
 
 /** FC-WALL-PHANTOM-PATH: the re-ask text (null when nothing is missing) for a phantom Wall file; the hint names real paths holding a segment with the same name, so a missing directory finds its real home too. */
-export function phantomReason(miss: string[], repoFiles: string[], testDir = "", pkgRoot = ""): string | null {
+export function phantomReason(miss: string[], repoFiles: string[], testDir = "", pkgRoot = "", task: string | null = null): string | null {
   if (miss.length === 0) return null;
   const real = (r: string): boolean => !!r && repoFiles.some((f) => f === r || f.startsWith(`${r}/`)), pkg = pkgRoot === "." ? "" : pkgRoot; // FC-WALL-LOCATION-BLIND: a phantom that is the test dir plus a path real at the repo root or the package root
   const at = (m: string): string | null => { const r = testDir && m.startsWith(`${testDir}/`) ? m.slice(testDir.length + 1) : ""; return !r ? null : real(r) ? `${r} exists relative to the repo root` : pkg && real(`${pkg}/${r}`) ? `${r} exists relative to the package root ${pkg}/` : null; };
-  const own = miss.map((m) => [m, at(m)] as const), loc = own.filter(([, w]) => w).map(([, w]) => w!), rest = own.filter(([, w]) => !w).map(([m]) => m);
+  const nm = new Set(taskNamedPaths(task ?? "")), beside = (m: string): string | null => { const r = testDir && m.startsWith(`${testDir}/`) ? m.slice(testDir.length + 1) : ""; return r && nm.has(r) ? r : null; }; // FALSEVER-WALLPATH: a task-named file resolved beside the test file
+  const own = miss.map((m) => [m, at(m) ?? (beside(m) ? `the task names ${beside(m)} at the repo path ${beside(m)}, not beside the test file` : null)] as const), loc = own.filter(([, w]) => w).map(([, w]) => w!), rest = own.filter(([, w]) => !w).map(([m]) => m);
   const hint = (m: string): string => { const n = basename(m), near = [...new Set(repoFiles.flatMap((f) => { const s = f.split("/"), k = s.indexOf(n); return k >= 0 && s.slice(0, k + 1).join("/") !== m ? [s.slice(0, k + 1).join("/")] : []; }))].slice(0, 3); return near.length ? `${m} (a path named ${n} exists at ${near.join(", ")})` : m; };
   const wrong = loc.length ? `references repo path(s) built from the wrong directory: your test file is copied to ${testDir}/, so __dirname and import.meta.dir are that directory, not the repo root; ${loc.join("; ")}. Compute the root from ${testDir}/ (go up ${testDir.split("/").length} level(s)) or use process.cwd() only if the runner starts at the root, and build every repo path from it` : "", typo = rest.length ? `references repo path(s) that do not exist in the repository and that the plan does not create: ${rest.map(hint).join("; ")}. Locate the real code by searching the repository; do not copy a name from the task text as a path` : "";
   return [wrong, typo].filter(Boolean).join(". Also, it ");
