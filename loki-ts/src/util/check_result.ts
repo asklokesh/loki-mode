@@ -1429,8 +1429,8 @@ function buildFailedBeforeAnyTest(runner: RunnerName, raw: string): boolean {
   }
 }
 /** A jest/vitest/bun suite that never loaded because the Wall test's OWN relative import names a repo file that does not exist (the feature is absent on base) is red on base, the JS twin of nodeIsRed
- *  and pytestCollectionIsRed. Every load error in the output must be of that shape (message names the test file as importer, specifier starts with ./ or ../, no file resolves for it, no probed extension or index
- *  either); a bare package, an importer that is not the test file, or any other error stays not_run (fail-safe). */
+ *  and pytestCollectionIsRed. Red only when the output holds at least one load-error line and EVERY such line is of that shape (importer is the test file on a path boundary, specifier starts with ./ or ../, no file,
+ *  directory, extension probe, .js-to-.ts stem or index resolves for it); a bare package, another importer, or any other error stays not_run (fail-safe). */
 function missingRelativeImportIsRed(f: TestRef, raw: string, repoDir: string): boolean {
   const out = stripAnsi(raw), hits: { spec: string; importer: string }[] = [];
   for (const m of out.matchAll(/Failed to load url (\S+) \(resolved id: [^)]*\) in (\S+?)\.(?: Does the file exist\?|\s|$)/g)) hits.push({ spec: m[1]!, importer: m[2]! }); // vitest
@@ -1438,9 +1438,11 @@ function missingRelativeImportIsRed(f: TestRef, raw: string, repoDir: string): b
   if (hits.length === 0) return false;
   const abs = resolve(repoDir, f.path);
   return hits.every(({ spec, importer }) => {
-    if (!/^\.\.?(?:\/|$)/.test(spec) || !(abs.endsWith(importer.replace(/^\.\//, "")) || importer.endsWith(f.path))) return false;
+    if (!/^\.\.?(?:\/|$)/.test(spec) || !(abs === importer || abs.endsWith("/" + importer.replace(/^\.\//, "")) || importer.endsWith("/" + f.path) || importer === f.path)) return false;
     const target = resolve(dirname(abs), spec.replace(/[?#].*$/, ""));
-    return !["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json"].some((x) => existsSync(target + x) && statSync(target + x).isFile()) && !["ts", "tsx", "js", "jsx", "mjs", "cjs"].some((x) => existsSync(join(target, `index.${x}`)));
+    const stem = target.replace(/\.(?:jsx?|mjs|cjs)$/, ""); // a NodeNext "../src/x.js" names x.ts: a config failure, never an absent feature
+    if (existsSync(target) && statSync(target).isDirectory()) return false;
+    return ![target, stem].some((t) => ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json"].some((x) => existsSync(t + x) && statSync(t + x).isFile())) && !["ts", "tsx", "js", "jsx", "mjs", "cjs"].some((x) => existsSync(join(target, `index.${x}`)));
   });
 }
 export function classify(f: TestRef, status: number | null, output: string, repoDir: string, interpreter?: "project" | "system"): "pass" | "fail" | "not_run" {

@@ -1419,4 +1419,20 @@ describe("classify: a Wall test whose own relative import is missing on base", (
     expect(classify(ref, 1, vt("../i18n/locales", join(dir, "backend/src/other.ts")), dir)).toBe("not_run");
     expect(classify(ref, 1, vt("/abs/x"), dir)).toBe("not_run");
   });
+  test("a missing feature file next to a real directory is still fail", () => { expect(classify(ref, 1, vt("../feature"), dir)).toBe("fail"); });
+  test("a NodeNext .js specifier whose .ts stem exists is a config failure, not_run", () => {
+    writeFileSync(join(dir, "backend/src/x.ts"), "export const x = 1;\n");
+    for (const ext of [".js", ".jsx", ".mjs", ".cjs"]) expect(classify(ref, 1, vt(`../x${ext}`), dir)).toBe("not_run");
+    expect(classify(ref, 1, vt("../absent.js"), dir)).toBe("fail");
+  });
+  test("a specifier naming an existing directory (no index file) is not_run", () => {
+    mkdirSync(join(dir, "backend/src/plain"), { recursive: true });
+    expect(classify(ref, 1, vt("../plain"), dir)).toBe("not_run");
+    expect(classify(ref, 1, vt(".."), dir)).toBe("not_run");
+  });
+  test("the importer must match the test file on a path boundary (xa.test.ts is not a.test.ts)", () => {
+    const a = { runner: "vitest", path: "backend/src/lib/a.test.ts" } as never;
+    expect(classify(a, 1, vt("../i18n/locales", join(dir, "backend/src/lib/xa.test.ts")), dir)).toBe("not_run");
+    expect(classify(a, 1, vt("../i18n/locales", join(dir, "backend/src/lib/a.test.ts")), dir)).toBe("fail");
+  });
 });
