@@ -958,8 +958,8 @@ describe("cargo listing check residuals", () => {
     expect(goRunner("npm", ["test"])).toEqual({});
   });
   test.skipIf(!HAS_CARGO)("real cargo: plain lines with no runner still corroborate", async () => {
-    const d = crate(GOOD), cfg = crate(GOOD, { ".cargo/config.toml": "[build]\njobs = 2\n[alias]\nxt = \"test\"\n" }); try {
-      for (const args of [["test"], ["t"], ["--color", "never", "test"], ["--locked", "test", "--", "--test-threads=1"], ["test", "--quiet"]]) expect([args, (await run(d, "cargo", args)).result]).toEqual([args, "pass"]);
+    const d = crate(GOOD), cfg = crate(GOOD, { ".cargo/config.toml": "[build]\njobs = 2\n" }); try {
+      for (const args of [["test"], ["--color", "never", "test"], ["--locked", "test", "--", "--test-threads=1"], ["test", "--quiet"]]) expect([args, (await run(d, "cargo", args)).result]).toEqual([args, "pass"]);
       expect((await run(cfg, "cargo", ["test"])).result).toBe("pass");
       const raw = spawnSync("cargo", ["test"], { cwd: d, encoding: "utf8", env: process.env }), home = crate(""); mkdirSync(join(home, "ch")); writeFileSync(join(home, "ch", "config.toml"), "[build]\njobs = 2\n");
       try { expect((await corroboratePass({ result: "pass", n: 2 }, raw.stdout, "cargo test", undefined, { cwd: d, env: { ...process.env, CARGO_HOME: join(home, "ch") } })).result).toBe("pass"); } finally { rmSync(home, { recursive: true, force: true }); }
@@ -984,6 +984,37 @@ describe("cargo listing check residuals", () => {
       expect((await corroboratePass({ result: "pass", n: 2 }, raw.stdout, "cargo test", undefined, { cwd: d, env: { ...noHome, HOME: join(home, "h") } })).reason).toBe(CARGO_RUNNER_REASON); // default ~/.cargo
     } finally { rmSync(d, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
   }, 240_000);
+  // Round 3: escaped keys, aliases and run/bench cannot turn a failing test into a pass.
+  const ESCAPED: [string, string][] = [["unicode escape in a quoted table key", '[target.aarch64-apple-darwin]\n"\\u0072unner" = "env"\n'], ["unicode escape in a dotted key", 'target.aarch64-apple-darwin."\\U00000072unner" = "env"\n'], ["escaped table name", '["t\\u0061rget".aarch64-apple-darwin]\nrunner = "env"\n']];
+  const pass2 = { result: "pass" as const, n: 2 }, TEST_OUT = "running 1 test\ntest forged ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+  for (const [name, body] of ESCAPED) test.skipIf(!HAS_CARGO)(`real cargo: a ${name} in a repo config is not a pass`, async () => {
+    const d = crate(GOOD, { ".cargo/config.toml": body }); try { const c = await run(d, "cargo", ["test"]); expect(c.result).toBe("not_run"); expect(c.reason).toBe(CARGO_RUNNER_REASON); } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
+  test.skipIf(!HAS_CARGO)("real cargo: an escaped runner key in a --config file or under CARGO_HOME is not a pass", async () => {
+    const d = crate(GOOD, { "rc.toml": '[target.aarch64-apple-darwin]\n"\\u0072unner" = "env"\n' }), home = crate("", { "ch/config.toml": '[target.aarch64-apple-darwin]\n"\\u0072unner" = "env"\n' }); try {
+      expect(await run(d, "cargo", ["test", "--config", "rc.toml"])).toMatchObject({ result: "not_run", reason: CARGO_RUNNER_REASON });
+      expect((await corroboratePass(pass2, TEST_OUT, "cargo test", undefined, { cwd: d, env: { ...process.env, CARGO_HOME: join(home, "ch") } })).reason).toBe(CARGO_RUNNER_REASON);
+      expect((await corroboratePass(pass2, TEST_OUT, "cargo", ["test", "--config", 'target.x."\\u0072unner"="env"'], { cwd: d, env: process.env })).result).toBe("not_run"); // quotes in the argv are refused as a shell shape before the config is read
+    } finally { rmSync(d, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
+  }, 240_000);
+  test.skipIf(!HAS_CARGO)("real cargo: a CARGO_TARGET_* variable, an [alias] config, a CARGO_ALIAS_* variable or an alias override of t is not a pass", async () => {
+    const d = crate(GOOD, { ".cargo/config.toml": '[alias]\nt = "run"\n' }), plain = crate(GOOD); try {
+      expect(await corroboratePass(pass2, TEST_OUT, "cargo", ["t"], { cwd: d, env: process.env })).toEqual({ result: "not_run", reason: CARGO_UNLISTED_REASON });
+      expect(await run(d, "cargo", ["test"])).toMatchObject({ result: "not_run", reason: CARGO_RUNNER_REASON });
+      expect(await corroboratePass(pass2, TEST_OUT, "cargo", ["t"], { cwd: plain, env: process.env })).toEqual({ result: "not_run", reason: CARGO_UNLISTED_REASON });
+      const o = (extra: Record<string, string>) => ({ cwd: plain, env: { ...process.env, ...extra } });
+      expect((await corroboratePass(pass2, TEST_OUT, "cargo", ["t"], o({ CARGO_ALIAS_T: "run" }))).reason).toBe(CARGO_UNLISTED_REASON);
+      expect((await corroboratePass(pass2, TEST_OUT, "cargo", ["test"], o({ CARGO_ALIAS_T: "run" }))).reason).toBe(CARGO_RUNNER_REASON);
+      expect((await corroboratePass(pass2, TEST_OUT, "cargo", ["test"], o({ CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: "x" }))).reason).toBe(CARGO_RUNNER_REASON);
+      expect((await corroboratePass(pass2, TEST_OUT, "cargo", ["test", "--config", "alias.t='run'"], o({}))).reason).toBe(CARGO_UNLISTED_REASON);
+      expect((await corroboratePass(pass2, TEST_OUT, "cargo", ["test", "--config", "alias.xt=run"], o({}))).reason).toBe(CARGO_RUNNER_REASON);
+    } finally { rmSync(d, { recursive: true, force: true }); rmSync(plain, { recursive: true, force: true }); }
+  }, 240_000);
+  test("cargo run, r, run -q and bench whose output reads as a libtest pass are not a pass; the same subcommands with other output are untouched", async () => {
+    const o = { cwd: tmpdir(), env: process.env };
+    for (const args of [["run"], ["r"], ["run", "-q"], ["run", "--quiet"], ["bench"], ["--quiet", "run"]]) expect([args, (await corroboratePass(pass2, TEST_OUT, "cargo", args, o)).result]).toEqual([args, "not_run"]);
+    for (const args of [["run"], ["bench"], ["build"], ["clippy"]]) expect([args, await corroboratePass(pass2, "Finished dev\nhello\n", "cargo", args, o)]).toEqual([args, pass2]);
+  });
   test("spawnCollect kills its child when the signal aborts", async () => {
     const ac = new AbortController(), t0 = Date.now(); setTimeout(() => ac.abort(), 100);
     const r = await spawnCollect("sleep", ["30"], { timeoutMs: 60_000, signal: ac.signal });

@@ -174,7 +174,7 @@ const commandWords = (cmd: string, args?: readonly string[]): string[] => (args 
 export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" } | Record<string, never> {
   return mentionsTool("go", commandWords(cmd, args)) ? { runner: "go" } : {};
 }
-const CARGO_GLOBAL_FLAGS = new Set(["-v", "-vv", "--verbose", "-q", "--quiet", "--frozen", "--locked", "--offline"]), CARGO_OTHER_SUBS = new Set(["build", "b", "check", "c", "clippy", "fmt", "doc", "d", "clean", "fetch", "tree", "run", "r", "bench", "metadata", "update", "install", "publish", "package", "login", "search", "vendor"]);
+const CARGO_GLOBAL_FLAGS = new Set(["-v", "-vv", "--verbose", "-q", "--quiet", "--frozen", "--locked", "--offline"]), CARGO_OTHER_SUBS = new Set(["build", "check", "clippy", "fmt", "doc", "clean", "fetch", "tree", "run", "bench", "metadata", "update", "install", "publish", "package", "login", "search", "vendor"]);
 /** A cargo invocation parsed strictly: `cargo [known global flags, their values consumed] <sub> [args]`, nothing before cargo (no wrapper, no shell, no +toolchain shim). null = not a plain invocation. */
 function parseCargo(toks: readonly string[]): { global: string[]; sub: string; rest: string[] } | null {
   if (basename(toks[0] ?? "") !== "cargo" || toks.some((t) => /[&|;$`"'<>()\\]/.test(t))) return null;
@@ -216,7 +216,7 @@ function goJson(out: string): { failed: boolean; failedTests: string[]; passed: 
   const passedNames = [...status].filter(([, v]) => v === "pass").map(([k]) => k);
   return { failed, failedTests: [...failedTests], passed: passedNames.length, passedNames, complete: !dirty && pkgs.size > 0 && [...pkgs].every((p) => starts.get(p) === 1 && done.get(p) === 1) }; // a torn stream or one with repeated starts, terminals or runs is doubt; a clean forged stream passes this and is caught by corroboratePass
 }
-export const CARGO_RUNNER_REASON = "test count could not be confirmed: a cargo target runner wraps both the test run and its listing";
+export const CARGO_RUNNER_REASON = "test count could not be confirmed: a cargo target or alias setting can redirect both the test run and its listing";
 export const CARGO_UNLISTED_REASON = "test count could not be confirmed: the cargo summary does not match the tests cargo lists for the same command";
 /** A cargo pass is counted only when every libtest segment matches the runner's own listing, taken by running the same command with `-- --list` and `-- --list --ignored`.
  *  Threat model: libtest prints its results inside the process that runs the code under test, so code can print "test <name> ... ok" lines and a summary and exit 0
@@ -225,12 +225,14 @@ export const CARGO_UNLISTED_REASON = "test count could not be confirmed: the car
  *  name is in the ignored listing. A segment count that differs from the listing, a listing that fails, or a line with shell syntax or the --ignored, --include-ignored,
  *  --list, --format or --logfile libtest flags stays not_run. Residual risk, stated plainly: code that prints the exact listed names of its own binary with a matching
  *  summary still forges, and so do code that runs before main (a link-section constructor) and a `harness = false` target, which control the listing too. */
-/** A target runner wraps the test binary for the run AND the listing, so the listing is no longer the runner's own word. Refused when "runner" appears, as a plain token in any form (bare, dotted, quoted, inline table), in any config cargo would load: every .cargo/config(.toml) from the cwd up, $CARGO_HOME (default ~/.cargo), every --config value (inline, or a file path that is read), and a CARGO_TARGET_*_RUNNER variable. A config that cannot be read, or that `include`s another, is doubt. */
+/** A cargo [target] table (a runner, a linker, rustflags per target) or an [alias] can redirect both the test run and its listing, and TOML lets the key be written as a unicode escape inside a quoted key, so no text scan for one word is sound. Refused whenever any config cargo would load (every .cargo/config(.toml) from the cwd up, $CARGO_HOME or ~/.cargo, every --config value, inline or a file path that is read) has a target table or key, an alias table or key, or any \u or \U escape, or an `include`; also refused for any CARGO_TARGET_* or CARGO_ALIAS_* variable. A config that cannot be read is doubt. */
+const CARGO_KEY = (name: string): RegExp => new RegExp(`(?:^|[\\s\\[,{.])["']?${name}["']?\\s*[.\\]=]`, "m");
+const CARGO_TARGET_KEY = CARGO_KEY("target"), CARGO_ALIAS_KEY = CARGO_KEY("alias"), CARGO_REDIRECT_TEXT = (t: string): boolean => CARGO_TARGET_KEY.test(t) || CARGO_ALIAS_KEY.test(t) || /\\[uU]/.test(t) || /^\s*include\s*=/m.test(t);
 function cargoRunnerConfigured(cwd: string, env: NodeJS.ProcessEnv, toks: readonly string[]): boolean {
-  if (Object.keys(env).some((k) => /^CARGO_TARGET_.+_RUNNER$/i.test(k))) return true;
-  const doubtful = (f: string): boolean => { try { const t = readFileSync(f, "utf8"); return /runner/i.test(t) || /^\s*include\s*=/m.test(t); } catch { return true; } };
+  if (Object.keys(env).some((k) => /^CARGO_(?:TARGET|ALIAS)_/i.test(k))) return true;
+  const doubtful = (f: string): boolean => { try { return CARGO_REDIRECT_TEXT(readFileSync(f, "utf8")); } catch { return true; } };
   const vals = toks.flatMap((t, i) => (t === "--config" ? [toks[i + 1] ?? ""] : t.startsWith("--config=") ? [t.slice(9)] : []));
-  for (const v of vals) { if (/runner/i.test(v)) return true; const f = resolve(cwd, v); if (existsSync(f) && lstatSync(f).isFile() && doubtful(f)) return true; }
+  for (const v of vals) { if (CARGO_REDIRECT_TEXT(v)) return true; const f = resolve(cwd, v); if (existsSync(f) && lstatSync(f).isFile() && doubtful(f)) return true; }
   const dirs = [env["CARGO_HOME"] ?? join(env["HOME"] ?? homedir(), ".cargo"), join(homedir(), ".cargo")]; // the env cargo is given decides CARGO_HOME; the account's own ~/.cargo is read too, as doubt
   for (let d = resolve(cwd), prev = ""; d !== prev; prev = d, d = dirname(d)) dirs.push(join(d, ".cargo"));
   return dirs.some((dir) => ["config", "config.toml"].some((f) => existsSync(join(dir, f)) && doubtful(join(dir, f))));
@@ -272,8 +274,8 @@ export async function corroboratePass(c: Classified, out: string, cmdOrLine: str
   const toks = commandWords(cmdOrLine, args);
   if (c.result === "pass" && mentionsTool("cargo", toks)) { // only a plain `cargo [globals] test|t` is corroborated; any other shape holding cargo (wrapper, shell, subshell, +toolchain, an alias) is refused, except a plain non-test subcommand
     const p = parseCargo(toks);
-    if (p && (p.sub === "test" || p.sub === "t")) return corroborateCargoPass(c, out, p, o);
-    if (!(p && CARGO_OTHER_SUBS.has(p.sub))) return { result: "not_run", reason: CARGO_UNLISTED_REASON };
+    if (p && p.sub === "test") return corroborateCargoPass(c, out, p, o); // the literal subcommand only: an alias (cargo t, or [alias] t = "run") can point it at main(), which prints a forged libtest summary
+    if (!(p && CARGO_OTHER_SUBS.has(p.sub)) || /^test result:|^test \S.* \.\.\. ok\b/m.test(out)) return { result: "not_run", reason: CARGO_UNLISTED_REASON }; // run and bench execute the user's main(), whose libtest-shaped output is not a pass
   }
   if (c.result !== "pass" || goRunner(cmdOrLine, args).runner !== "go") return c;
   const g = corroborateGoSteps(c, out, cmdOrLine, args, toks, o); let step = g.next();
