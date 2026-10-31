@@ -26,7 +26,7 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join, resolve, isAbsolute } from "node:path";
+import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { failIds } from "../engine10/failures.ts";
 import { classifyCheck, emptyDiscovery, exitCodedId, goRunner, isExitCodedScript, plainTestEnv, stripAnsi, type Classified } from "../util/check_result.ts";
 import { safeGit } from "../util/safe_git.ts";
@@ -491,6 +491,16 @@ function split(failing: { name: string; ids?: string[]; eligible: boolean; base:
   if (pre.length === 0) return { preExistingChecks: [], preExistingIds: [], introducedChecks: introduced, line: `baseline: ${known} known failure(s) before this run; ${unparsed ? `head failure ids unparseable for ${unparsed} failing check(s), cannot compare` : "none of the failing checks match them"}, ${introduced.length} introduced (blocking)` };
   return { preExistingChecks: pre.map((f) => f.name), preExistingIds: pre.flatMap((f) => f.ids ?? []), introducedChecks: introduced,
     line: `baseline: ${pre.length} pre-existing failing check(s) (not blocking), ${introduced.length} introduced${introduced.length ? " (blocking)" : ""}` };
+}
+
+/** The Go import path of `targetDir`: the nearest module file at or above it (never above `repoDir`) gives the module path, then the relative directory is appended. `read` returns a file's text or undefined; pure otherwise. */
+export function goPackagePath(read: (file: string) => string | undefined, repoDir: string, targetDir: string): string | undefined {
+  for (let d = targetDir; d.startsWith(repoDir); d = dirname(d)) {
+    const m = /^module\s+(\S+)/m.exec(read(join(d, "go.mod")) ?? "");
+    if (m) { const rel = relative(d, targetDir); return rel ? `${m[1]}/${rel}` : m[1]; }
+    if (d === repoDir || d === dirname(d)) break;
+  }
+  return undefined;
 }
 
 /** FC-GO-PACKAGE-ID-CHANGED-FILE: a go id is "pkg" (package-only fail, build failure) or "pkg::Test", pkg an import path, so the
