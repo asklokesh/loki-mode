@@ -30005,6 +30005,13 @@ main() {
         "${TARGET_DIR:-.}/.loki/state/failure-history.jsonl" 2>/dev/null || true
     rm -f "${TARGET_DIR:-.}/.loki/state/LAST_ERROR.json" 2>/dev/null || true
 
+    # Activation funnel (legacy route): first_start, or second_run_within_7d
+    # inside the window. Detached and best-effort; the analytics gate and every
+    # opt-out live in telemetry.sh. Mirrors loki-ts/src/util/funnel.ts.
+    if declare -f _loki_activation_run_started >/dev/null 2>&1; then
+        ( _loki_activation_run_started >/dev/null 2>&1 </dev/null & ) 2>/dev/null || true
+    fi
+
     if [ "$PARALLEL_MODE" = "true" ]; then
         # Parallel mode: orchestrate multiple worktrees
         log_header "Running in Parallel Mode"
@@ -30061,6 +30068,12 @@ main() {
         if [ "${LOKI_PROOF:-1}" != "0" ] && type generate_proof_of_run &>/dev/null; then
             generate_proof_of_run "$result" || true
         fi
+    fi
+
+    # Activation funnel (legacy route): the run ended, whatever the outcome.
+    # first_verified is sent by loki_emit_build_verified on a VERIFIED proof.
+    if declare -f loki_emit_activation >/dev/null 2>&1; then
+        ( loki_emit_activation first_run_finished >/dev/null 2>&1 </dev/null & ) 2>/dev/null || true
     fi
 
     # Final GitHub sync: sync all completed tasks and create PR (v5.41.0)

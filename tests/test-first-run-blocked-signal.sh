@@ -288,5 +288,62 @@ else
     ok "loki_emit_activation install with analytics off: no marker, no send"
 fi
 
+# ---------------------------------------------------------------------------
+# Legacy route (autonomy/run.sh): the same funnel, driven the way run.sh calls it
+# ---------------------------------------------------------------------------
+mkdir -p "$WORK/lp/proofs/r1" "$WORK/lp/proofs/r2"
+printf '%s' '{"iterations":3,"honesty":{"headline":"VERIFIED"}}' > "$WORK/lp/proofs/r1/proof.json"
+printf '%s' '{"iterations":3,"honesty":{"headline":"NOT VERIFIED"}}' > "$WORK/lp/proofs/r2/proof.json"
+legacy_run() {
+    # $1 = home, $2 = proof path; the run.sh sequence: start, build_verified, end
+    env PATH="$WORK/bin2:$PATH" HOME="$1" LOKI_TEST_LOG="$1/events.log" SCRIPT_DIR="$REPO_ROOT/autonomy" \
+        LOKI_ANALYTICS=on LOKI_TELEMETRY=on bash -c "
+            cd '$REPO_ROOT'; source autonomy/telemetry.sh 2>/dev/null
+            ( _loki_activation_run_started & ) ; loki_emit_build_verified '$2'
+            ( loki_emit_activation first_run_finished & ) ; sleep 0.8" >/dev/null 2>&1
+}
+lh="$WORK/act-legacy"; mkdir -p "$lh"
+legacy_run "$lh" "$WORK/lp/proofs/r1/proof.json"
+got="$(act_events "$lh/events.log" | grep '^activation_' | sort | tr '\n' ' ')"
+if [ "$got" = "$want" ]; then
+    ok "legacy route: all four first-run activation steps sent once"
+else
+    bad "legacy route activation events wrong: [$got]"
+fi
+legacy_run "$lh" "$WORK/lp/proofs/r1/proof.json"
+nl="$(grep -c '"event": *"activation_' "$lh/events.log")"
+# a replay may add only second_run_within_7d, never a first-run step again
+case "$nl" in 4|5) ok "legacy route: replay re-sends no first-run step ($nl total)" ;; *) bad "legacy replay sent $nl activation events" ;; esac
+
+lu="$WORK/act-legacy-unverified"; mkdir -p "$lu"
+legacy_run "$lu" "$WORK/lp/proofs/r2/proof.json"
+if act_events "$lu/events.log" | grep -q '^activation_first_verified'; then
+    bad "legacy route: a NOT VERIFIED proof sent first_verified"
+else
+    ok "legacy route: first_verified only on a VERIFIED proof"
+fi
+
+lo="$WORK/act-legacy-off"; mkdir -p "$lo"
+env PATH="$WORK/bin2:$PATH" HOME="$lo" LOKI_TEST_LOG="$lo/events.log" SCRIPT_DIR="$REPO_ROOT/autonomy" LOKI_TELEMETRY=on bash -c "
+    cd '$REPO_ROOT'; source autonomy/telemetry.sh 2>/dev/null
+    _loki_activation_run_started; loki_emit_build_verified '$WORK/lp/proofs/r1/proof.json'; loki_emit_activation first_run_finished; sleep 0.5" >/dev/null 2>&1
+if { [ -d "$lo/.loki" ] && [ -n "$(ls -A "$lo/.loki" 2>/dev/null)" ]; } || [ -s "$lo/events.log" ]; then
+    bad "legacy route with analytics off wrote a marker or sent"
+else
+    ok "legacy route with analytics off: nothing written, nothing sent"
+fi
+
+# run.sh must call both milestones, detached (the legacy path is otherwise silent)
+if grep -q '_loki_activation_run_started >/dev/null 2>&1 </dev/null &' "$REPO_ROOT/autonomy/run.sh"; then
+    ok "run.sh starts the activation funnel at run start, detached"
+else
+    bad "run.sh does not call _loki_activation_run_started detached"
+fi
+if grep -q 'loki_emit_activation first_run_finished >/dev/null 2>&1 </dev/null &' "$REPO_ROOT/autonomy/run.sh"; then
+    ok "run.sh sends first_run_finished at run end, detached"
+else
+    bad "run.sh does not call loki_emit_activation first_run_finished detached"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
