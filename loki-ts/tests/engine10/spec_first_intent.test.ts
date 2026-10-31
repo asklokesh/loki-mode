@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { buildPlanBrief } from "../../src/engine10/stages/plan.ts";
 import { buildImplementBrief } from "../../src/engine10/stages/implement.ts";
-import { clauseBriefBlock, clauseGapOf, clauseLine, coveredClauses, extractClauses, generateSpec, loadSpecFile, parseSpec, renderSpec, slugify, specPrLine, specReceiptBlock, SpecError, specBriefBlock, weakAssertionNote } from "../../src/util/spec_file.ts";
+import { clauseBriefBlock, clauseDroppedNote, clauseGapOf, clauseLine, coveredClauses, extractClauses, generateSpec, loadSpecFile, parseSpec, renderSpec, slugify, specPrLine, specReceiptBlock, SpecError, specBriefBlock, weakAssertionNote } from "../../src/util/spec_file.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import type { SessionResult, SessionRunner, SessionRunOptions } from "../../src/engine10/types.ts";
 
@@ -566,5 +566,23 @@ describe("heading lines that state a requirement", () => {
     const part = extractClauses([...heads, "", "## Details", ...bullets.slice(0, 37)].join("\n")); // 37 bullets leave 3 slots: the first three headings fill them
     expect(part.clauses.map((c) => c.text)).toEqual([...heads.slice(0, 3).map((h) => h.slice(3)), ...bullets.slice(0, 37).map((b) => b.slice(2))]);
     expect(part.dropped).toBe(2);
+  });
+  test("a heading that repeats a bullet counts as the bullet, so the cap never drops a requirement that is also written as a bullet", () => {
+    const req = "The API must reject case 1";
+    const others = Array.from({ length: 40 }, (_, i) => `- bullet ${i + 1}`);
+    const set = extractClauses([`## ${req}`, "", `- ${req}`, ...others].join("\n")); // 41 distinct bullets, the first one equal to the heading
+    expect(set.clauses.map((c) => c.text)).toEqual([req, ...others.slice(0, 39).map((b) => b.slice(2))]);
+    expect(set.dropped).toBe(1); // only bullet 40 falls off; the repeated heading is not a second clause
+  });
+  test("a heading that repeats a bullet in the middle of the list is still folded into it", () => {
+    const req = "The API must reject case 1";
+    const others = Array.from({ length: 40 }, (_, i) => `- bullet ${i + 1}`);
+    const set = extractClauses([`## ${req}`, "", ...others.slice(0, 20), `- ${req}`, ...others.slice(20)].join("\n")); // 41 distinct bullets, the repeat after 20 others
+    expect(set.clauses.map((c) => c.text)).toEqual([...others.slice(0, 20).map((b) => b.slice(2)), req, ...others.slice(20, 39).map((b) => b.slice(2))]);
+    expect(set.dropped).toBe(1);
+  });
+  test("the dropped-clause note names the cap, not a position, because a dropped heading can precede kept bullets", () => {
+    expect(clauseDroppedNote(1)).toBe("not_proven: 1 further acceptance clause over the 40 clause cap was not extracted");
+    expect(clauseDroppedNote(6)).toBe("not_proven: 6 further acceptance clauses over the 40 clause cap were not extracted");
   });
 });

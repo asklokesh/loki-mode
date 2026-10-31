@@ -121,7 +121,7 @@ export function extractClauses(text: string): ClauseSet {
   return { clauses, dropped: Math.max(0, uniq.length - MAX_CLAUSES) };
 }
 export const clauseLine = (c: Clause): string => `${c.id}: ${c.text} [${c.anchor}]`;
-export const clauseDroppedNote = (n: number): string => `not_proven: ${n} further acceptance clause${n === 1 ? "" : "s"} beyond the first ${MAX_CLAUSES} were not extracted`;
+export const clauseDroppedNote = (n: number): string => `not_proven: ${n} further acceptance clause${n === 1 ? "" : "s"} over the ${MAX_CLAUSES} clause cap ${n === 1 ? "was" : "were"} not extracted`;
 
 /** Wall brief lines for the extracted clauses; empty for a spec with none, so that brief is unchanged. */
 export function clauseBriefBlock(set: ClauseSet | null | undefined): string[] {
