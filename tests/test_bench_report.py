@@ -242,12 +242,17 @@ class TestMethodologyAlwaysPresent(unittest.TestCase):
                 self.assertIn("Methodology and disclaimers", fh.read())
 
 
-def _arm_row(tool, task, accepted_flags, cost=1.0, dur=100.0, files=1, partial=False):
+def _arm_row(tool, task, accepted_flags, cost=1.0, dur=100.0, files=1, partial=False,
+             outcome="VERIFIED", exit_status="completed"):
     trials = []
     for ok in accepted_flags:
-        ad = {"exit_status": "completed", "files_changed": files, "tool_version": "v-" + tool}
+        ad = {"tool": tool, "exit_status": exit_status, "files_changed": files, "tool_version": "v-" + tool}
+        prov = {}
+        if tool.startswith("loki"):
+            prov["run_outcome"] = outcome
         if partial:
-            ad["provenance"] = {"cost_partial": True}
+            prov["cost_partial"] = True
+        ad["provenance"] = prov
         trials.append({"success": ok, "cost_usd": cost, "duration_s": dur, "measured": True, "adapter": ad})
     return {"tool": tool, "task_id": task, "trials": trials}
 
@@ -284,7 +289,7 @@ class TestArmComparison(unittest.TestCase):
         cmp = report.arm_comparison(self._rows())
         lean, raw = cmp["arms"]
         self.assertEqual((lean["accepted"], raw["accepted"]), (7, 6))
-        # every trial exits clean with a diff, so every trial is a claim and PR-ready.
+        # every trial exits clean with a diff and a VERIFIED outcome, so every trial is a claim and PR-ready.
         self.assertEqual((lean["claimed"], lean["false_green"], lean["pr_ready"]), (12, 5, 12))
         self.assertEqual((raw["claimed"], raw["false_green"]), (12, 6))
         self.assertEqual(lean["tool_version"], "v-loki-lean")
@@ -306,6 +311,67 @@ class TestArmComparison(unittest.TestCase):
         rows = [_arm_row("claude_code", "a", [False] * 3), _arm_row("loki-lean", "a", [False] * 3)]
         md = report.render_markdown(report.build_report({"rows": rows}))
         self.assertIn("needs a positive control", md)
+
+    def test_partial_with_a_diff_is_pr_ready_for_loki_but_not_raw_errors(self):
+        rows = [_arm_row("claude_code", "a", [False] * 3, exit_status="error_rc_1"),
+                _arm_row("loki-lean", "a", [False] * 3, outcome="PARTIAL", exit_status="error_rc_6")]
+        lean, raw = report.arm_comparison(rows)["arms"]
+        self.assertEqual((lean["pr_ready"], raw["pr_ready"]), (3, 0))
+
+    def test_loki_failed_or_empty_diff_is_not_pr_ready(self):
+        rows = [_arm_row("claude_code", "a", [True] * 3),
+                _arm_row("loki-lean", "a", [False] * 2, outcome="FAILED", exit_status="error_rc_1"),
+                _arm_row("loki-lean", "b", [True], outcome="VERIFIED", files=0),
+                _arm_row("claude_code", "b", [True])]
+        self.assertEqual(report.arm_comparison(rows)["arms"][0]["pr_ready"], 0)
+
+    def test_false_green_compares_counts_not_rates(self):
+        # lean: 2 false-green of 6 claims (33%); raw: 1 of 2 claims (50%). Rate is lower, count is higher.
+        rows = [_arm_row("claude_code", "a", [True, False]), _arm_row("claude_code", "b", [True, True]),
+                _arm_row("loki-lean", "a", [True, False, False]), _arm_row("loki-lean", "b", [True, True, True])]
+        rows[1]["trials"] = [dict(t, adapter=dict(t["adapter"], exit_status="error_rc_1")) for t in rows[1]["trials"]]
+        cmp = report.arm_comparison(rows)
+        self.assertLess(cmp["false_green_rate"]["loki-lean"], cmp["false_green_rate"]["claude_code"])
+        self.assertGreater(cmp["arms"][0]["false_green"], cmp["arms"][1]["false_green"])
+        self.assertIs(cmp["checks"]["accuracy"], False)
+
+    def _good(self):
+        # Every criterion passes: lean accepts as much, costs and takes 0.4x, PR-ready 100%.
+        return [_arm_row("claude_code", "a", [True] * 3), _arm_row("loki-lean", "a", [True] * 3, cost=0.4, dur=40.0)]
+
+    def test_good_fixture_passes(self):
+        cmp = report.arm_comparison(self._good())
+        self.assertIs(cmp["pass"], True)
+
+    def _assert_unknown(self, rows, check):
+        cmp = report.arm_comparison(rows)
+        self.assertIsNone(cmp["checks"][check])
+        self.assertIsNone(cmp["pass"])
+        self.assertIn("unknown", report.render_arm_comparison(cmp))
+
+    def test_missing_cost_is_unknown(self):
+        rows = self._good()
+        for r in rows:
+            for t in r["trials"]:
+                t["cost_usd"] = None
+        self._assert_unknown(rows, "cost_le_half")
+
+    def test_missing_time_is_unknown(self):
+        rows = self._good()
+        for r in rows:
+            for t in r["trials"]:
+                t["duration_s"] = None
+        self._assert_unknown(rows, "time_le_half")
+
+    def test_no_paired_tasks_is_unknown(self):
+        rows = [_arm_row("claude_code", "a", [True] * 3), _arm_row("loki-lean", "b", [True] * 3, cost=0.4, dur=40.0)]
+        self._assert_unknown(rows, "accuracy")
+
+    def test_no_raw_claims_is_unknown(self):
+        rows = self._good()
+        for t in rows[0]["trials"]:
+            t["adapter"]["exit_status"] = "error_rc_1"
+        self._assert_unknown(rows, "accuracy")
 
     def test_no_comparison_without_both_arms(self):
         self.assertIsNone(report.build_report({"rows": [_arm_row("claude_code", "a", [True])]}).get("arm_comparison"))

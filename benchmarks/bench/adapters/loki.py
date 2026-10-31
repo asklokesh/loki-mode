@@ -290,6 +290,24 @@ def _read_honesty(loki_dir):
     return {"headline": headline, "degraded": degraded}
 
 
+def _run_outcome(loki_dir, rc):
+    """(outcome, source). The receipt verdict (upper-cased) when readable; else the
+    exit code: 0 is VERIFIED or ALREADY_SATISFIED (reported as VERIFIED, the
+    receipt-less case cannot tell them apart and neither carries a diff to open a
+    PR for beyond VERIFIED), 6 or 20 (the latter with LOKI_DURABLE_STATE=1) is
+    PARTIAL, any other code is FAILED. (None, None) when rc is unknown."""
+    receipt = _read_v10_receipt(loki_dir)
+    if receipt is not None and isinstance(receipt.get("verdict"), str) and receipt["verdict"].strip():
+        return receipt["verdict"].strip().upper(), "receipt"
+    if rc == 0:
+        return "VERIFIED", "exit_code"
+    if rc in (6, 20):
+        return "PARTIAL", "exit_code"
+    if isinstance(rc, int):
+        return "FAILED", "exit_code"
+    return None, None
+
+
 def _read_verify_verdict(loki_dir):
     """The build's HONESTY verdict (honesty.headline, e.g. "VERIFIED" /
     "NOT VERIFIED") from the latest proof. This is the honesty AXIS the
@@ -589,6 +607,7 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
     honesty = _read_honesty(loki_dir)
     verify_verdict = honesty["headline"] if honesty else None
     engine = _read_engine(loki_dir)
+    run_outcome, run_outcome_source = _run_outcome(loki_dir, rc)
 
     # Cost: shared with the proof generator. None usd == not recorded.
     cost, model_used, cache_by_phase = _collect_cost(loki_dir)
@@ -636,6 +655,11 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             # "VERIFIED" / "NOT VERIFIED"). None when no proof ran. This feeds the
             # equivalence report's HONESTY axis (was not_captured before this).
             "verify_verdict": verify_verdict,
+            # The run's own outcome, from the receipt when one exists, else from
+            # the exit code. Consumers decide PR-readiness from this, not from the
+            # exit status, which records a PARTIAL (rc 6 or 20) as an error.
+            "run_outcome": run_outcome,
+            "run_outcome_source": run_outcome_source,
             # Persisted because the workdir is deleted after grading: the
             # gap behind a "WITH GAPS" headline must survive in the row.
             "honesty": honesty,

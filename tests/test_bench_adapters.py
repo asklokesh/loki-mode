@@ -124,6 +124,23 @@ class TestLokiLeanArm(unittest.TestCase):
         self.assertEqual(env.get("LOKI_LEAN"), "1")
         self.assertIn("--no-pr", cmd)
 
+    def test_run_outcome_from_exit_code_without_a_receipt(self):
+        for rc, want in ((0, "VERIFIED"), (6, "PARTIAL"), (20, "PARTIAL"), (1, "FAILED")):
+            out = loki_adapter.run_lean(_REPO, "prd.md", runner=make_runner(version_out="7.10.0", run_rc=rc))
+            self.assertEqual((out["provenance"]["run_outcome"], out["provenance"]["run_outcome_source"]),
+                             (want, "exit_code"))
+
+    def test_run_outcome_prefers_the_receipt(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as wd:
+            run_dir = os.path.join(wd, ".loki", "runs", "r1")
+            os.makedirs(run_dir)
+            with open(os.path.join(run_dir, "receipt.json"), "w") as fh:
+                json.dump({"verdict": "partial"}, fh)
+            loki_dir = os.path.join(wd, ".loki")
+            self.assertEqual(loki_adapter._run_outcome(loki_dir, 0), ("PARTIAL", "receipt"))
+            self.assertEqual(loki_adapter._run_outcome(loki_dir, 6), ("PARTIAL", "receipt"))
+
     def test_plain_loki_arm_never_sets_lean(self):
         runner, seen = self._capture()
         out = loki_adapter.run(_REPO, "prd.md", runner=runner)

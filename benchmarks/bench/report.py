@@ -330,6 +330,24 @@ def _claimed(trial):
     return _eq._declared_complete_normalized(trial)
 
 
+LOKI_ARMS = ("loki", "loki-lean")
+PR_OUTCOMES = ("VERIFIED", "PARTIAL")
+
+
+def _pr_ready(trial):
+    """Would a PR open for this trial? Loki arms: the run's own outcome is
+    VERIFIED or PARTIAL (a PARTIAL with a diff opens a draft PR) and the diff is
+    non-empty. Raw: clean exit and a non-empty diff. The exit status is not used
+    for Loki, which records a PARTIAL as an error. Acceptance is the grader's."""
+    ad = trial.get("adapter") if isinstance(trial.get("adapter"), dict) else {}
+    if ad.get("tool") in LOKI_ARMS:
+        prov = ad.get("provenance") if isinstance(ad.get("provenance"), dict) else {}
+        fc = ad.get("files_changed")
+        return (prov.get("run_outcome") in PR_OUTCOMES
+                and isinstance(fc, (int, float)) and not isinstance(fc, bool) and fc > 0)
+    return _claimed(trial) is True
+
+
 def _complete_cost(trial):
     """The trial's cost when it is a whole number, else None. A partial cost is a
     lower bound and never enters a cost claim."""
@@ -351,8 +369,8 @@ def _arm_version(rows, arm):
 
 def summarize_arm(rows, arm):
     """Totals for one arm over every measured trial: accepted (grader), false-green
-    (claimed done but not accepted), PR-ready (claimed done: clean exit and a
-    non-empty diff, so a PR would open; the arms run with PRs off), cost over
+    (claimed done but not accepted), PR-ready (see _pr_ready; the arms run with
+    PRs off), cost over
     complete-cost trials only, and elapsed."""
     by_task = _arm_trials(rows, arm)
     trials = [t for ts in by_task.values() for t in ts]
@@ -368,7 +386,7 @@ def summarize_arm(rows, arm):
         "accepted": accepted,
         "claimed": sum(1 for _t, c in claims if c is True),
         "false_green": sum(1 for t, c in claims if c is True and t.get("success") is not True),
-        "pr_ready": sum(1 for _t, c in claims if c is True),
+        "pr_ready": sum(1 for t in trials if _pr_ready(t)),
         "cost_complete_n": len(costs),
         "cost_partial_n": len(trials) - len(costs),
         "cost_usd_total": round(sum(costs), 4) if costs else None,
@@ -437,10 +455,20 @@ def arm_comparison(rows, candidate=CANDIDATE_ARM, baseline=BASELINE_ARM):
     time_ratio, time_n = _ratio(tasks, "candidate_elapsed", "baseline_elapsed")
     cand_fg = cand_s["false_green"] / cand_s["claimed"] if cand_s["claimed"] else None
     base_fg = base_s["false_green"] / base_s["claimed"] if base_s["claimed"] else None
+    cand_k = sum(t["candidate_k"] for t in tasks)
+    base_k = sum(t["baseline_k"] for t in tasks)
+    if not tasks:
+        accuracy = None
+    elif cand_k < base_k or pairing["solid_losses"] or cand_s["false_green"] > base_s["false_green"]:
+        accuracy = False
+    elif not base_s["claimed"]:
+        # Raw claimed nothing, so there is no false-green count to compare against.
+        accuracy = None
+    else:
+        accuracy = True
     checks = {
-        "accuracy": (sum(t["candidate_k"] for t in tasks) >= sum(t["baseline_k"] for t in tasks)
-                     and not pairing["solid_losses"]
-                     and (cand_fg is None or base_fg is None or cand_fg <= base_fg)) if tasks else None,
+        # False-green is compared as COUNTS; the rates below are information only.
+        "accuracy": accuracy,
         "cost_le_half": None if cost_ratio is None else cost_ratio <= 0.5,
         "time_le_half": None if time_ratio is None else time_ratio <= 0.5,
         "pr_rate": cand_s["pr_ready"] / cand_s["n"] >= base_s["accepted"] / base_s["n"],
@@ -472,8 +500,9 @@ def render_arm_comparison(cmp):
             fmt_usd(a["cost_usd_total"]), a["cost_partial_n"],
             "n/a" if a["elapsed_s_total"] is None else "%.0f" % a["elapsed_s_total"]))
     out.append("")
-    out.append("PR-ready means the arm exited cleanly with a non-empty diff, so a PR would open; "
-               "these arms run with PRs off. Cost-partial rows are excluded from every cost figure.")
+    out.append("PR-ready: Loki arms report a VERIFIED or PARTIAL outcome with a non-empty diff; raw exits "
+               "cleanly with a non-empty diff. These arms run with PRs off. "
+               "Cost-partial rows are excluded from every cost figure.")
     for a in cmp["arms"]:
         if a["needs_positive_control"]:
             out.append("")
@@ -492,11 +521,11 @@ def render_arm_comparison(cmp):
     ck = cmp["checks"]
     word = lambda v: "unknown" if v is None else ("pass" if v else "FAIL")  # noqa: E731
     out += ["### Pass rule", "",
-            "- Accuracy (accepted on paired tasks >= baseline, no solid loss, false-green not above): %s" % word(ck["accuracy"]),
-            "- Cost (median per-task ratio <= 0.5, %d tasks with complete cost): %s (ratio %s)" % (
+            "- Accuracy (accepted on paired tasks >= baseline, no solid loss, false-green count not above): %s" % word(ck["accuracy"]),
+            "- Cost (ratio of medians <= 0.5, %d tasks with complete cost): %s (ratio %s)" % (
                 cmp["cost_ratio_tasks"], word(ck["cost_le_half"]),
                 "n/a" if cmp["cost_ratio"] is None else "%.3f" % cmp["cost_ratio"]),
-            "- Time (median per-task ratio <= 0.5, %d tasks): %s (ratio %s)" % (
+            "- Time (ratio of medians <= 0.5, %d tasks): %s (ratio %s)" % (
                 cmp["time_ratio_tasks"], word(ck["time_le_half"]),
                 "n/a" if cmp["time_ratio"] is None else "%.3f" % cmp["time_ratio"]),
             "- PR rate (PR-ready rate >= baseline accepted rate): %s" % word(ck["pr_rate"]),

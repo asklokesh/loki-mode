@@ -843,11 +843,15 @@ class ArmsInterleaveTest(unittest.TestCase):
         arms = ["loki-lean", "claude_code", "loki"]
         out = runner.run_arms(self._tasks(), arms, reps=2,
                               adapters={a: _arm_adapter(a, log) for a in arms})
-        # task order kept; within a task each rep runs every arm in turn.
-        self.assertEqual(log, arms * 2 + arms * 2)
-        self.assertEqual([(x["task_id"], x["rep"], x["arm"]) for x in out["schedule"]][:6],
-                         [("task-a", 1, "loki-lean"), ("task-a", 1, "claude_code"), ("task-a", 1, "loki"),
-                          ("task-a", 2, "loki-lean"), ("task-a", 2, "claude_code"), ("task-a", 2, "loki")])
+        # task order kept; within a task each rep runs every arm once, rotated.
+        rot = lambda n: arms[n:] + arms[:n]  # noqa: E731
+        # Latin-square rotation per (task, rep): offsets 0,1 for task-a, 2,0 for task-b.
+        self.assertEqual(log, rot(0) + rot(1) + rot(2) + rot(0))
+        self.assertEqual([(x["task_id"], x["rep"], x["arm"], x["position"]) for x in out["schedule"]][:6],
+                         [("task-a", 1, "loki-lean", 0), ("task-a", 1, "claude_code", 1), ("task-a", 1, "loki", 2),
+                          ("task-a", 2, "claude_code", 0), ("task-a", 2, "loki", 1), ("task-a", 2, "loki-lean", 2)])
+        first = [x["arm"] for x in out["schedule"] if x["position"] == 0]
+        self.assertGreater(len(set(first)), 1)
         self.assertEqual(len(out["rows"]), 6)
         for row in out["rows"]:
             self.assertEqual(schema.validate_result_row(row), [])
@@ -865,6 +869,23 @@ class ArmsInterleaveTest(unittest.TestCase):
             "loki-lean": _arm_adapter("loki-lean", log, writes=False)})
         by = {r["tool"]: r["trials"][0]["adapter"]["files_changed"] for r in out["rows"]}
         self.assertEqual(by, {"claude_code": 1, "loki-lean": 0})
+
+    def test_base_mismatch_is_caught_after_rep_one(self):
+        log = []
+        calls = {"n": 0}
+        real = runner._base_tree
+
+        def drifting(workdir):
+            calls["n"] += 1
+            return "tree-%d" % (calls["n"] % 2)
+        runner._base_tree = drifting
+        try:
+            with self.assertRaises(ValueError):
+                runner.run_arms(self._tasks()[:1], ["claude_code", "loki-lean"], reps=3, adapters={
+                    "claude_code": _arm_adapter("claude_code", log), "loki-lean": _arm_adapter("loki-lean", log)})
+        finally:
+            runner._base_tree = real
+        self.assertEqual(len(log), 2)
 
     def test_named_arms_are_spend_gated(self):
         os.environ.pop("LOKI_BENCH_SPEND_APPROVED", None)

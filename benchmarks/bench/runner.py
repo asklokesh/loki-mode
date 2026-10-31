@@ -849,9 +849,10 @@ def run_arms(task_paths: List[str], arms: List[str], *, reps: int = 3,
     """Run several arms over the same tasks, interleaved, and return one row per
     (task, arm) plus the exact schedule that ran.
 
-    Tasks run in the order given. Within a task each rep runs every arm in turn
-    (rep 1: arm A, arm B, ...; rep 2: ...), so provider drift, rate limits and
-    time of day land on every arm alike. Every trial is a fresh clone of the one
+    Tasks run in the order given. Within a task each rep runs every arm once, in
+    an order rotated per (task, rep) as a Latin square and recorded in
+    `schedule`, so provider drift, rate limits and time of day land on every
+    arm alike and no arm always goes first. Every trial is a fresh clone of the one
     frozen fixture; the baseline tree hash of each trial is checked equal across
     all arms of a task, so an arm that ran on a different base is an error, not
     a quiet comparison. `adapters` maps an arm to a callable (tests pass mocks);
@@ -866,25 +867,30 @@ def run_arms(task_paths: List[str], arms: List[str], *, reps: int = 3,
         raise ValueError("LOKI_LEAN is set in the parent env; unset it so the plain loki arm stays plain")
     rows: List[Dict[str, Any]] = []
     schedule: List[Dict[str, Any]] = []
-    for task_path in task_paths:
+    k = len(arms)
+    reps = max(1, reps)
+    for ti, task_path in enumerate(task_paths):
         per_arm: Dict[str, Dict[str, Any]] = {}
-        for rep in range(1, max(1, reps) + 1):
-            for arm in arms:
+        for rep in range(1, reps + 1):
+            # Latin-square rotation over (task, rep): every arm takes every
+            # position as evenly as the counts allow, so order never favours one.
+            off = (ti * reps + rep - 1) % k
+            for pos, arm in enumerate(arms[off:] + arms[:off]):
                 one = run_task(task_path, arm, trials=1, model=model,
                                adapter=adapters.get(arm), keep_workdir=keep_workdir,
                                runner_fn=runner_fn, verify_fn=verify_fn)
                 one["trials"][0]["trial"] = rep
-                schedule.append({"task_id": one["task_id"], "rep": rep, "arm": arm})
+                schedule.append({"task_id": one["task_id"], "rep": rep, "arm": arm, "position": pos})
                 if arm not in per_arm:
                     per_arm[arm] = one
                 else:
                     per_arm[arm]["trials"].extend(one["trials"])
-        bases = {(arm, t.get("base_tree")) for arm, r in per_arm.items() for t in r["trials"]}
-        trees = {b for _arm, b in bases}
-        hashes = {r["task_hash"] for r in per_arm.values()}
-        if len(trees) != 1 or len(hashes) != 1:
-            raise ValueError("arms ran on different bases for %s: trees=%s task_hash=%s" % (
-                next(iter(per_arm.values()))["task_id"], sorted(map(str, trees)), sorted(hashes)))
+            # Checked after every rep, so rep 1 already proves the shared base.
+            trees = {t.get("base_tree") for r in per_arm.values() for t in r["trials"]}
+            hashes = {r["task_hash"] for r in per_arm.values()}
+            if len(trees) != 1 or len(hashes) != 1:
+                raise ValueError("arms ran on different bases for %s: trees=%s task_hash=%s" % (
+                    next(iter(per_arm.values()))["task_id"], sorted(map(str, trees)), sorted(hashes)))
         for arm in arms:
             row = per_arm[arm]
             row["summary"] = schema.summarize_trials(row["trials"])
