@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- Benchmark and test runs that were killed no longer leave loki-run.* and loki-test-home-* directories filling your temp folder for good: `scripts/cleanup-test-processes.sh --reap-tmp` lists the ones that are 6 hours or older, and `--reap-tmp-apply` removes them and prints how much disk space came back. A directory is only removed when it carries its owner marker, belongs to you, and has no open file or running process inside; with no `lsof` installed it removes nothing.
+
 ## v11.94.0 (2026-10-31)
 
 Loki waits out Claude's 5-hour usage limit instead of failing, `loki start` exits 6 for a PARTIAL run, custom webhooks are now signed (breaking), `loki plan --fast` gives a one-screen plan, and receipts copied under another run id are refused. Seal and git hardening are tightened.
