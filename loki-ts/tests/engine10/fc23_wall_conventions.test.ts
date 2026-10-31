@@ -425,6 +425,17 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(taskNamedPaths("Use Node.js, Vue.js, Next.js, Nuxt.js, Express.js, Three.js, D3.js and Chart.js")).toEqual([]);
     expect(taskNamedPaths("Create socket.js that handles connections, chart.js, electron.js and express.js, no Node.js")).toEqual(["socket.js", "chart.js", "electron.js", "express.js"]);
   });
+  test("taskNamedPaths decides a capitalised product-shaped name by its sentence context, not by a name list", () => {
+    expect(taskNamedPaths("Use Knex.js and Svelte.js with Fly.io")).toEqual([]);
+    expect(taskNamedPaths("PostgreSQL with Knex.js for migrations, real-time board via Socket.io")).toEqual([]);
+    expect(taskNamedPaths("Build a single Node.js file named `retry.js` that exports one function")).toEqual(["retry.js"]);
+    expect(taskNamedPaths("Create Knex.js and add Widget.js next to lib/Other.js")).toEqual(["Knex.js", "Widget.js", "lib/Other.js"]);
+    expect(taskNamedPaths("Implement the loader in Main.py and edit README.md")).toEqual(["Main.py", "README.md"]);
+  });
+  test("a Bun.write target is still a created path through the generic write call", () => {
+    const td = mkdtempSync(join(tmpdir(), "wp-bw-"));
+    try { expect(phantomRepoPaths('const cfg = join(import.meta.dir, "out.yaml");\nBun.write(cfg, "x");', "a.test.ts", td, td, null)).toEqual([]); } finally { rmSync(td, { recursive: true, force: true }); }
+  });
   test("monorepo: process.cwd() paths resolve against the nearest package root of the test file and the repo root", () => {
     const repo = repoWith(); mkdirSync(join(repo, "packages/a/test"), { recursive: true }); mkdirSync(join(repo, "packages/a/src"), { recursive: true });
     writeFileSync(join(repo, "packages/a/package.json"), '{"name":"a","version":"1.0.0"}'); writeFileSync(join(repo, "packages/a/src/x.ts"), "x\n");

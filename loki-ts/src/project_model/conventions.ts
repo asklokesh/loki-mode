@@ -221,16 +221,24 @@ function nearestPackageRoot(testDir: string, repoDir: string, fileName: string):
   let pkg = testDir; while (pkg !== repoDir && pkg !== dirname(pkg) && !shaped(pkg)) pkg = dirname(pkg);
   return pkg;
 }
-const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSync|renameSync|symlinkSync|mkdir|writeFile|appendFile|cp|copyFile|rename|outputFile|ensureDir|mkdirp|write|Bun\.write)\(/g;
+const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSync|renameSync|symlinkSync|mkdir|writeFile|appendFile|cp|copyFile|rename|outputFile|ensureDir|mkdirp|write)\(/g;
 
-const FRAMEWORK_JS = /^(?:Node|Vue|Next|Nuxt|Express|Three|D3|Chart|React|Angular|Ember|Backbone|Alpine|Svelte|Solid|Preact|Deno|Bun|Socket|Anime|Moment|Day|Underscore|Lodash|Handlebars|Mustache|Knockout|Meteor|Gatsby|Remix|Astro|Electron|Nest|Koa|Hapi|Fastify|P5|Phaser|Pixi|Babylon|Leaflet|Highcharts|Plotly|jQuery|Mocha|Jest|Cypress|Puppeteer)\.js$/;
+const PRODUCT_SUFFIX = /^[A-Z][A-Za-z0-9]*[a-z0-9]\.(?:js|io)$/, MAKES_FILE = /\b(?:create|write|add|edit|update|make|implement|build|generate|save|put|name[ds]?|call(?:ed)?|rename|modify|touch|new)\b/gi, PROSE_CUE = /\b(?:use|using|with|in|on|via|no|without|from|by|like|requires?|under|for)\b/gi;
+/** A capitalized bare product-shaped name (Name.js, no directory) is a file only when a verb that asks for one (create, write, add, edit) is nearer before it in its sentence than any prose cue (use, with, in, on, via, no); otherwise it is prose. */
+function proseProductName(task: string, at: number, name: string): boolean {
+  if (!PRODUCT_SUFFIX.test(name)) return false;
+  const seg = task.slice(Math.max(0, at - 120), at).split(/[;\n]|[.!?]\s/).pop() ?? "";
+  const last = (re: RegExp): number => { let k = -1; for (const m of seg.matchAll(re)) k = m.index!; return k; };
+  if (/^\s+(?:[a-z]+\s+){1,2}(?:named|called)\b/.test(task.slice(at + name.length))) return true; // "a single Name.js file named x.js": the name describes the file that follows
+  return last(MAKES_FILE) <= last(PROSE_CUE);
+}
 const TEST_DIR = /^(?:tests?|__tests__|specs?)$/, TEST_NAME = /^(?:conftest\.py|test_.*|.*_test\..*|.*\.test\..*|.*\.spec\..*|.*_spec\..*)$/;
 const hollow = (body: string): boolean => body.split("\n").every((l) => { const t = l.trim(); return !t || /^(?:#|\/\/|\/\*|\*)/.test(t); }); // empty, whitespace or comment/shebang lines only
 
 /** Paths the task text names as files (a name with a letter-bearing extension, optionally dir-prefixed), normalized repo-relative; the greenfield counterpart of namedFiles, which only sees files already in the repo map. */
 export function taskNamedPaths(task: string): string[] {
-  const names = [...task.matchAll(/(?<![\w./-])((?:\.\/)?(?:[\w.-]+\/)*[\w-]+\.[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*)(?![\w-]|\.\w)/g)].map((m) => m[1]!.replace(/^\.\//, ""));
-  return [...new Set(names.filter((n) => !/^[A-Za-z]\.[A-Za-z]$/.test(n) && !FRAMEWORK_JS.test(n)))]; // "e.g", "i.e" and framework names like "Node.js" are prose, never files; an app file such as App.js stays a file
+  const names = [...task.matchAll(/(?<![\w./-])((?:\.\/)?(?:[\w.-]+\/)*[\w-]+\.[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*)(?![\w-]|\.\w)/g)].filter((m) => !proseProductName(task, m.index!, m[1]!)).map((m) => m[1]!.replace(/^\.\//, ""));
+  return [...new Set(names.filter((n) => !/^[A-Za-z]\.[A-Za-z]$/.test(n)))]; // "e.g" and "i.e" are prose, never files; a capitalized product-shaped name is a file only after a file-asking verb (see proseProductName)
 }
 
 /** Top-level symbol names a source text defines, by shape and never by language: a line-start def, class, function, func, fn, const, let, var, type, struct, enum, trait, interface, sub, proc, fun or val (optionally exported, public or async, with an optional Go receiver or `self.`), a line-start `name =` or `name() {`, `exports.name =`, and the names in `module.exports = { ... }` or `export { ... }`. Docstrings, block comments and line comments are ignored; main, init, dunder and test-prefixed names are not counted, so a stub cannot match on them. */
