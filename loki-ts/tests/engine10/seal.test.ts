@@ -28,7 +28,7 @@ import { readRunHistory, type RunOutcome } from "../../src/runner/router/history
 import { repoKey } from "../../src/engine10/cache.ts";
 import { readOriginUrl } from "../../src/util/engine_origin.ts";
 import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
-import { EXIT, formatSummary, outcomeOf, reasonOf } from "../../src/engine10/output.ts";
+import { renderReviewerBody } from "../../src/e10ext/reviewer_body.ts"; import { EXIT, formatSummary, outcomeOf, reasonOf } from "../../src/engine10/output.ts";
 import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes } from "../../src/util/base_guard.ts"; import { verifyStage } from "../../src/engine10/stages/verify.ts"; import { commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage, EXTERNAL_NO_WALL } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
@@ -687,6 +687,23 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     const w = r.checks.find((k) => k.name.startsWith("wall:"))!;
     expect(w.result).toBe("not_run");
     expect(w.owner).toBe("harness");
+  }, 30000);
+  test("a red Wall with a kept failure tail names the file on NOT PROVEN and leaves the verdict unchanged", async () => {
+    const mk = async (name: string, tail: boolean) => {
+      const { repo, base } = makeRepo(name);
+      const { ctx } = ctxFor(repo, base, "claude", { verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", n: 3, duration_s: 1 }, { name: "wall:loki_wall_a.py", cmd: "x", result: "fail", duration_s: 1 }], flaky: [], wall_passed: false, ...(tail ? { wall_failure_tail: "wall-failure-tail.txt" } : {}), duration_s: 1 } });
+      await commitStage.run(ctx, new AbortController().signal);
+      return { ctx, r: receiptOf(await sealStage.run(ctx, new AbortController().signal)) };
+    };
+    const withTail = await mk("wft-yes", true), without = await mk("wft-no", false);
+    const line = `Wall failure output kept: .loki/runs/r1/wall-failure-tail.txt`;
+    expect(withTail.r.not_proven).toContain(line);
+    expect(withTail.r.not_proven.join("\n")).not.toContain(withTail.ctx.repoDir); // repo-relative: no home directory in the receipt or the PR body
+    const body = renderReviewerBody({ verdict: withTail.r.verdict, draftReason: null, notProven: withTail.r.not_proven, receiptPath: null, receiptSha256: null, signed: null, runId: "r1", outputs: {} });
+    expect(body).toContain(line);
+    expect(body).not.toContain(withTail.ctx.repoDir); expect(body).not.toMatch(/(?:^|[\s`(])\/(?:Users|home|private|tmp|var)\//);
+    expect(without.r.not_proven.some((n) => n.startsWith("Wall failure output kept"))).toBe(false);
+    expect(withTail.r.verdict).toBe(without.r.verdict);
   }, 30000);
   test("floor: a code-owned gate failure is still FAILED and carries no owner", async () => {
     const { r } = await floorRun("floor-code", undefined);

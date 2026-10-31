@@ -9,7 +9,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rm
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { EventType, RunContext, StageName, TestMap, TestRef } from "../../src/engine10/types.ts";
-import { changedFiles, runCheck, runLintChecks, runnerCmd, verifyStage, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
+import { WALL_FAILURE_TAIL_CAP, WALL_FAILURE_TAIL_FILE, writeWallFailureTail, wallTailOf, changedFiles, runCheck, runLintChecks, runnerCmd, verifyStage, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classifyRisk, diffFiles, markExecuted, recordRisk, type DiffFile } from "../../src/util/check_result.ts";
 import { readRiskSummary, withRiskLine } from "../../src/util/run_summary.ts";
 
@@ -793,4 +793,52 @@ describe("FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER: verify runs every sealed Wall p
     expect((data.checks as VerifyCheck[]).filter((k) => k.name.includes("loki_wall_x.rs"))).toEqual([]);
     expect(data.not_proven as string[]).toContain("Wall test not executed: src/loki_wall_x.rs: no runner of this repo runs this file");
   }, 60_000);
+});
+
+describe("engine10 verify: red Wall failure tail", () => {
+  const wallRun = async (body: string) => {
+    const repoDir = mkRepo(), sha = baseSha(repoDir);
+    writeFileSync(join(repoDir, "loki_wall_feature_test.ts"), body);
+    const f = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: [], tests: [] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "loki_wall_feature_test.ts"), runner: "bun" as const }] } } });
+    const res = await verifyStage.run(f.ctx, sig());
+    return { f, res, file: join(f.ctx.runDir, WALL_FAILURE_TAIL_FILE) };
+  };
+  const RED = 'import { test, expect } from "bun:test";\ntest("w", () => expect("sentinel-actual-9f3").toBe("sentinel-expected-9f3"));\n';
+  test("a red Wall leaves its failing output in the run dir and verify names the file", async () => {
+    const { res, file } = await wallRun(RED);
+    expect(res.data.wall_passed).toBe(false);
+    expect(res.data.wall_failure_tail).toBe(WALL_FAILURE_TAIL_FILE);
+    const t = readFileSync(file, "utf8");
+    expect(t).toContain("== bun:loki_wall_feature_test.ts ==");
+    expect(t).toContain("sentinel-expected-9f3");
+  }, 60_000);
+  test("a green Wall writes no file and sets no key", async () => {
+    const { res, file } = await wallRun('import { test, expect } from "bun:test";\ntest("w", () => expect(1).toBe(1));\n');
+    expect(res.data.wall_passed).toBe(true);
+    expect("wall_failure_tail" in res.data).toBe(false);
+    expect(existsSync(file)).toBe(false);
+  }, 60_000);
+  test("the tail text never reaches an emitted event", async () => {
+    const { f } = await wallRun(RED);
+    expect(JSON.stringify(f.emitted)).not.toContain("sentinel-expected-9f3");
+  }, 60_000);
+  test("a secret straddling the cap cut is redacted, not left with its prefix cut off", () => {
+    const tok = "ghp_" + "A1b2C3d4E5".repeat(4).slice(0, 36), keyed = "token=" + "Zq9".repeat(12);
+    for (const secret of [tok, keyed]) {
+      const out = "x".repeat(20000) + "\n" + secret + " " + "y".repeat(WALL_FAILURE_TAIL_CAP - 30);
+      const t = wallTailOf(out, "/repo");
+      expect(t.length).toBeLessThanOrEqual(WALL_FAILURE_TAIL_CAP);
+      expect(t).not.toContain(secret.slice(12)); // the part of the secret left after the cut must not survive unredacted
+    }
+  });
+  test("output over the cap keeps only the tail, and a later green run removes the file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "e10-wft-")); cleanupDirs.push(dir);
+    const out = "HEAD-MARK" + "x".repeat(WALL_FAILURE_TAIL_CAP * 2) + "TAIL-MARK";
+    expect(writeWallFailureTail(dir, [{ name: "a", out }])).toBe(WALL_FAILURE_TAIL_FILE);
+    const t = readFileSync(join(dir, WALL_FAILURE_TAIL_FILE), "utf8");
+    expect(Buffer.byteLength(t)).toBeLessThanOrEqual(WALL_FAILURE_TAIL_CAP + 64);
+    expect(t).toContain("TAIL-MARK"); expect(t).not.toContain("HEAD-MARK");
+    expect(writeWallFailureTail(dir, [])).toBeUndefined();
+    expect(existsSync(join(dir, WALL_FAILURE_TAIL_FILE))).toBe(false);
+  });
 });
