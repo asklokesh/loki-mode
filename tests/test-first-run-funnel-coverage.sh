@@ -219,7 +219,7 @@ for line in open(sys.argv[1]):
     if d.get("event") == "build_verified":
         print(",".join(sorted(d["properties"])))
 ' "$_W/payload.log" 2>/dev/null)"
-    if [ "$_keys" = "arch,channel,ephemeral_home,headline,id_age,introspective,os_family,route,traffic,version" ]; then
+    if [ "$_keys" = "\$geoip_disable,arch,channel,ephemeral_home,headline,id_age,introspective,os_family,route,traffic,version" ]; then
         ok "build_verified payload carries only headline and route beyond the baseline props"
     else
         bad "build_verified payload keys differ: $_keys"
@@ -269,7 +269,7 @@ for line in open(sys.argv[1]):
     d = json.loads(line)
     if d.get("event") == "run_finished":
         print(",".join(sorted(d["properties"])))' "$_W/payload.log" 2>/dev/null)"
-    if [ "$_rf_keys" = "arch,channel,duration_s,engine,exit_code,fix_rounds,introspective,os_family,stage_s_fix,stage_s_implement,stage_s_wall,traffic,verdict,version" ]; then ok "run_finished payload keys are exactly the allowlist"; else bad "run_finished keys: $_rf_keys"; fi
+    if [ "$_rf_keys" = "\$geoip_disable,arch,channel,duration_s,engine,ephemeral_home,exit_code,fix_rounds,id_age,introspective,os_family,stage_s_fix,stage_s_implement,stage_s_wall,traffic,verdict,version" ]; then ok "run_finished payload keys are exactly the allowlist"; else bad "run_finished keys: $_rf_keys"; fi
     rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
     _receipt "/Users/someone/secret-verdict-xyzzy"
     _fun 1
