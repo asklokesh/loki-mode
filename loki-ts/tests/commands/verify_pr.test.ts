@@ -17,17 +17,19 @@ const git = (cwd: string, ...a: string[]): string =>
 const ISSUE = "Fix add()\n\n## Acceptance criteria\n- add(1,2) is 3\n\nCheck: `bun test t.test.ts`\n";
 
 /** A local repo: main has a buggy add and t.test.ts; branch pr either fixes it, deletes t.test.ts, or changes nothing. */
-function fixture(kind: "fix" | "delete-test" | "noop" | "already-passing"): { url: string; meta: PrMeta } {
+function fixture(kind: "fix" | "delete-test" | "noop" | "already-passing" | "alias"): { url: string; meta: PrMeta } {
   const repo = join(dir, `src-${kind}`);
   mkdirSync(repo);
   git(repo, "init", "-q", "-b", "main");
   const addTs = (n: number): string => `export const add = (_a: number, _b: number) => ${n};\n`;
   writeFileSync(join(repo, "add.ts"), addTs(kind === "already-passing" ? 3 : 4));
   writeFileSync(join(repo, "t.test.ts"), 'import { test, expect } from "bun:test";\nimport { add } from "./add.ts";\ntest("add", () => { expect(add(1, 2)).toBe(3); });\n');
+  if (kind === "alias") { mkdirSync(join(repo, "src/lib"), { recursive: true }); writeFileSync(join(repo, "jest.config.json"), '{"moduleNameMapper":{"^@/(.*)$":"<rootDir>/src/$1"}}'); writeFileSync(join(repo, "src/lib/sum.ts"), "export const sum = (a: number, b: number) => a + b;\n"); }
   git(repo, "add", "."); git(repo, "commit", "-qm", "base");
   const base = git(repo, "rev-parse", "HEAD");
   git(repo, "checkout", "-qb", "pr");
-  if (kind === "fix") writeFileSync(join(repo, "add.ts"), addTs(3));
+  if (kind === "alias") writeFileSync(join(repo, "src/lib/sum.ts"), "export const sum = (a: number, b: number) => b + a;\n");
+  if (kind === "fix" || kind === "alias") writeFileSync(join(repo, "add.ts"), addTs(3));
   if (kind === "delete-test") { rmSync(join(repo, "t.test.ts")); writeFileSync(join(repo, "add.ts"), addTs(3)); }
   if (kind === "noop") writeFileSync(join(repo, "README"), "x\n");
   if (kind === "already-passing") writeFileSync(join(repo, "README"), "x\n");
@@ -84,6 +86,12 @@ describe("loki verify-pr", () => {
     const f = fixture("fix");
     const r = await run(f.meta, { checkout: defaultCheckout });
     expect(r.rc).toBe(0);
+    expect(r.json.verdict).toBe("VERIFIED");
+  });
+
+  test("a PR changing ordinary source under a Next.js style @/ alias mapper stays VERIFIED, not flagged as runner config", async () => {
+    const f = fixture("alias");
+    const r = await run(f.meta, { checkout: defaultCheckout });
     expect(r.json.verdict).toBe("VERIFIED");
   });
 
@@ -816,12 +824,22 @@ describe("verify-pr: an exit code alone is not proof", () => {
     expect(runnerConfigChanged(["jest.config.json", "sub/jest.config.json", "package.json"], join(dir, "head"), join(dir, "base"))).toEqual(["jest.config.json", "sub/jest.config.json"]);
   });
 
-  test("runnerConfigChanged flags files under a moduleNameMapper target with a capture group or a plain target, and not other paths", () => {
+  test("runnerConfigChanged flags a capture target only when its directory looks like a substitute module, and a plain target as before", () => {
     mkdirSync(join(dir, "src/lib"), { recursive: true });
-    writeFileSync(join(dir, "jest.config.json"), '{"moduleNameMapper":{"^@/(.*)$":"<rootDir>/src/$1","^stub$":"<rootDir>/mocks/stub.js"}}');
-    expect(runnerConfigChanged(["src/lib/util.js"], dir)).toEqual(["src/lib/util.js"]);
+    writeFileSync(join(dir, "jest.config.json"), '{"moduleNameMapper":{"^@/(.*)$":"<rootDir>/src/$1","^s/(.*)$":"<rootDir>/stubs/$1.js","^m/(.*)$":"<rootDir>/test/mocks/lib$1","^stub$":"<rootDir>/mocks/stub.js"}}');
+    expect(runnerConfigChanged(["src/lib/util.js"], dir)).toEqual([]); // alias to real source
+    expect(runnerConfigChanged(["stubs/a.js", "stubs/deep/b.js"], dir)).toEqual(["stubs/a.js", "stubs/deep/b.js"]);
+    expect(runnerConfigChanged(["test/mocks/x.js"], dir)).toEqual(["test/mocks/x.js"]); // mid-segment capture keeps the directory up to the last slash
     expect(runnerConfigChanged(["mocks/stub.js"], dir)).toEqual(["mocks/stub.js"]);
-    expect(runnerConfigChanged(["other/util.js", "srcx/a.js"], dir)).toEqual([]);
+    expect(runnerConfigChanged(["other/util.js", "srcx/a.js", "stubsx/a.js"], dir)).toEqual([]);
+  });
+
+  test("runnerConfigChanged ignores capture targets with an empty, ./ or separator-less prefix and Windows separators", () => {
+    mkdirSync(join(dir, "src"), { recursive: true });
+    for (const t of ["$1", "./$1", "$1.js", "src$1", "<rootDir>/$1", "stubs\\\\$1"]) {
+      writeFileSync(join(dir, "jest.config.json"), JSON.stringify({ moduleNameMapper: { "^(\\.{1,2}/.*)\\.js$": t } }));
+      expect(runnerConfigChanged(["src/a.ts", "a.ts", "stubs/a.ts"], dir)).toEqual([]);
+    }
   });
 
   test("runnerConfigChanged flags jest, vitest and vite configs and a package.json with a jest key only", () => {

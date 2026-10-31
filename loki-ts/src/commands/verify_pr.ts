@@ -23,13 +23,19 @@ function textMatchesOrUnreadable(path: string, test: (txt: string) => boolean): 
 
 /** Changed in a PR, these always count as runner config whatever they hold: transpiler config (babel), interpreter startup hooks (sitecustomize.py, usercustomize.py, *.pth), mocha config, and anything under a __mocks__ directory (the runner applies those without the test asking, and a `roots` setting can move them out of the repo root). */
 const ALWAYS_CONFIG = /(?:^|\/)(?:babel\.config\.[\w.]+|\.babelrc(?:\.[\w.]+)?|(?:site|user)customize\.py|[^/]+\.pth|\.mocharc(?:\.[\w.]+)?)$|(?:^|\/)__mocks__\//;
-/** Repo paths named by a JS or TS runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; a target with a capture such as `<rootDir>/src/$1` yields its directory prefix `src/`, kept with a trailing slash so every file under it counts; only the runner's `key` of a shared manifest). Editing such a file changes what the runner loads even when the config itself is unchanged. Python plugin loading is not read from text: the sandbox records what the runner, its plugins and its conftests load (the runner's `boot` recorder). */
+/** Repo paths named by a JS or TS runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; a target with a capture such as `<rootDir>/src/$1` yields its directory prefix, kept with a trailing slash so every file under it counts, only when that prefix names a substitute module such as `mocks/` or `stubs/` (an alias to real source like `src/$1`, a bare or `./` prefix and a Windows-separator target are ignored); only the runner's `key` of a shared manifest). Editing such a file changes what the runner loads even when the config itself is unchanged. Python plugin loading is not read from text: the sandbox records what the runner, its plugins and its conftests load (the runner's `boot` recorder). */
+const SUBSTITUTE_DIR = /(^|\/)(__mocks__|mocks?|stubs?|fakes?|fixtures?)(\/|$)/i;
 function configRefs(changed: readonly string[], roots: readonly string[]): Set<string> {
   const out = new Set<string>(), dirs = new Set(changed.flatMap((f) => f.split("/").slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join("/")).concat("")));
   for (const root of new Set(roots)) for (const d of dirs) for (const n of (() => { try { return readdirSync(join(root, d)); } catch { return []; } })()) {
     const r = REPORT_RUNNERS.find((x) => x.config.test(n)); let txt: string;
     if (!r || r.boot) continue; try { txt = readFileSync(join(root, d, n), "utf8"); if (r.key && !n.startsWith(r.runner)) txt = JSON.stringify((JSON.parse(txt) as Record<string, unknown>)[r.key] ?? ""); } catch { continue; }
-    for (const t of [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) { const cap = /\$\d+/.exec(t), base = cap ? t.slice(0, cap.index).replace(/[^/]*$/, "") : t, p = posix.normalize(posix.join(d, base)); if ((cap ? !/[*?^$|()[\]\\{}<>\s]/.test(base) : /[a-z]/i.test(t) && !/[*?^$|()[\]\\{}<>\s]/.test(t)) && !t.startsWith("/") && !p.startsWith("..")) out.add(cap ? p.replace(/\/?$/, "/") : p); }
+    for (const t of [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) {
+      const cap = /\$\d+/.exec(t), base = cap ? t.slice(0, cap.index).replace(/[^/]*$/, "") : t, p = posix.normalize(posix.join(d, base));
+      if (t.startsWith("/") || p.startsWith("..") || /[*?^$|()[\]\\{}<>\s]/.test(base)) continue;
+      if (!cap) { if (/[a-z]/i.test(t)) out.add(p); continue; }
+      if (base.includes("/") && posix.normalize(base) !== "./" && SUBSTITUTE_DIR.test(base)) out.add(p.replace(/\/?$/, "/")); // a capture target is runner config only when its directory prefix looks like a substitute module; an alias to real source (src/$1), a bare or "./" prefix and a Windows-separator target are ordinary code
+    }
   }
   return out;
 }
@@ -38,7 +44,7 @@ export function runnerConfigChanged(changed: readonly string[], headDir: string,
   const refs = configRefs(changed, [headDir, baseDir]);
   return changed.filter((f) => {
     const b = basename(f), r = REPORT_RUNNERS.find((x) => x.config.test(b));
-    if (ALWAYS_CONFIG.test(f) || refs.has(f) || [...refs].some((x) => x.endsWith("/") && (x === "./" || f.startsWith(x))) || refs.has(f.replace(/\.[^./]+$/, "")) || refs.has(f.replace(/\/__init__\.py$/, ""))) return true;
+    if (ALWAYS_CONFIG.test(f) || refs.has(f) || [...refs].some((x) => x.endsWith("/") && f.startsWith(x)) || refs.has(f.replace(/\.[^./]+$/, "")) || refs.has(f.replace(/\/__init__\.py$/, ""))) return true;
     const at = [headDir, baseDir].filter((d, i, a) => a.indexOf(d) === i && existsSync(join(d, f)));
     if (/^tsconfig[\w.-]*\.json$/.test(b)) return at.length === 0 || at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => /"(?:paths|baseUrl|rootDirs|extends)"\s*:/.test(txt)));
     if (at.length === 0 || (r && !r.key)) return !!r || at.length > 0;
