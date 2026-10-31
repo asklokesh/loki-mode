@@ -4,10 +4,10 @@
  *  keyword as its own segment so max_tokens, token_count and tokens: stay readable. A match starts only where no name char precedes it (linear on long a_a_a runs, never mid-word
  *  as in mytoken=1) and consumes leading and repeated separators, so --password=, --db-password=, _token= and __SECRET= still redact. Values already redacted ([REDACTED...]) are skipped, which keeps the rule idempotent. */
 const ASSIGNMENT = /((?<![A-Za-z0-9_.-])[_.-]*(?:[A-Za-z0-9]+[_.-]+)*(?:password|passwd|secret|token|api[_-]?key|apikey)["']?\s*[:=]\s*)((?:"(?!\[REDACTED)(?:\\.|[^"\\\n])+")|(?:'(?!\[REDACTED)(?:\\.|[^'\\\n])+')|(?!["']|\[REDACTED)[^\s"',;&]+)/gi;
-/** Values that are identifiers, not secrets, shared by GLUED_ASSIGNMENT and CAMEL_ASSIGNMENT (bare values only): ALL_CAPS (RIGHT_PAREN_TOKEN), PascalCase (KeyObject), and a kebab or snake
+/** Values that are identifiers, not secrets, shared by GLUED_ASSIGNMENT and CAMEL_ASSIGNMENT (bare values only): ALL_CAPS with a leading letter and at least one underscore (RIGHT_PAREN_TOKEN; digits-only and underscore-free uppercase values such as ABCDEFGHJKLMNPQRSTUV are candidate secrets), PascalCase (KeyObject), and a kebab or snake
  *  name of 2+ lowercase segments ending in a resource word (autonomi-secrets). Each must span the whole value, so a dot or any other character makes it a candidate secret. A single
- *  lowercase word (correcthorse) is NOT an identifier. Segments are separator-delimited, so every alternative is linear. */
-const IDENT = String.raw`[A-Z0-9_]+(?![^\s"',;&])|(?:[A-Z][a-z]+)+(?![^\s"',;&])|[a-z]+(?:[-_][a-z]+)*[-_](?:secrets?|passwords?|tokens?|keys?|creds|config)(?![^\s"',;&])`;
+ *  lowercase word (correcthorse) is NOT an identifier. Accepted residual: a PascalCase passphrase (CorrectHorseBattery) reads as an identifier and stays readable. Segments are separator-delimited, so every alternative is linear. */
+const IDENT = String.raw`[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+(?![^\s"',;&])|(?:[A-Z][a-z]+)+(?![^\s"',;&])|[a-z]+(?:[-_][a-z]+)*[-_](?:secrets?|passwords?|tokens?|keys?|creds|config)(?![^\s"',;&])`;
 const ci = (w: string): string => [...w].map((c) => (/[a-z]/.test(c) ? `[${c}${c.toUpperCase()}]` : c)).join("");
 const KEYWORDS = ["password", "passwd", "secret", "token"].map(ci).join("|") + `|${ci("api")}[_-]?${ci("key")}|${ci("apikey")}`;
 /** A name that ends in the keyword with no separator (MYTOKEN=, xtoken=, 9token=) redacts only when the value looks like a credential (16+ of [A-Za-z0-9_-]), so mytoken=1 stays readable.

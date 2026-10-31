@@ -80,6 +80,10 @@ test("camelCase rule controls stay readable and the rule is idempotent", () => {
 
 test("letters-only and dotted values are secrets unless identifier-shaped; the length floor is pinned", () => {
   for (const v of ["correcthorse", "correct.horse.battery.staple", "a.b-c.d-e.f-g", "Ab1!Cd2@", "hunter2", "abc123"]) expect(redactSecrets(`adminPassword=${v}`)).toBe("adminPassword=[REDACTED]");
+  for (const v of ["xtoken=1234567890123456", "mytoken=ABCDEFGHJKLMNPQRSTUV", "adminPassword=correcthorsesecret", "adminPassword=ABCDEFGHJKLMNPQRSTUV"]) expect(redactSecrets(v)).toContain("[REDACTED]");
+  for (const v of ["nextToken: RIGHT_PAREN_TOKEN", "adminPassword=ADMIN_PASSWORD_VALUE", "xtoken=TEST_SIGNING_SECRET"]) expect(redactSecrets(v)).toBe(v);
+  // Accepted residual: a PascalCase passphrase reads as an identifier.
+  expect(redactSecrets("adminPassword=CorrectHorseBattery")).toBe("adminPassword=CorrectHorseBattery");
   expect(redactSecrets("clientSecret=abcd_efgh_ijkl")).toBe("clientSecret=[REDACTED]");
   expect(redactSecrets("adminPassword=Ab1!")).toBe("adminPassword=Ab1!");
   expect(redactSecrets("adminPassword=abcdefg")).toBe("adminPassword=abcdefg");

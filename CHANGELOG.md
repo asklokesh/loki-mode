@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Secret masking in logs and reports is more accurate. Passwords and secrets that are a single lowercase word or contain dots (for example `adminPassword=correcthorse`) and short values with a digit (`adminPassword=hunter2`) are now masked, while plain identifiers such as `nextToken: RIGHT_PAREN_TOKEN`, `adminPassword=ADMIN_PASSWORD_VALUE`, `existingSecret=autonomi-secrets` and `KeyObject` stay readable. SendGrid key masking now matches the real key shape only, so translation message ids such as `I18N_MSG.checkout_confirmation_title.button_label_text_primary` are no longer garbled.
+- Secret masking in logs and reports is more accurate. Passwords and secrets that are a single lowercase word or contain dots (for example `adminPassword=correcthorse`) and short values with a digit (`adminPassword=hunter2`) are now masked, while plain identifiers such as `nextToken: RIGHT_PAREN_TOKEN`, `adminPassword=ADMIN_PASSWORD_VALUE`, `existingSecret=autonomi-secrets` and `KeyObject` stay readable. SendGrid key masking now matches the real key shape only, so translation message ids such as `I18N_MSG.checkout_confirmation_title.button_label_text_primary` are no longer garbled. Known limit: a password written as a PascalCase phrase (`adminPassword=CorrectHorseBattery`) still reads as an identifier and is not masked.
 
 ## v11.95.0 (2026-10-31)
 
