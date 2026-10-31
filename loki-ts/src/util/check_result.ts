@@ -345,8 +345,8 @@ function stripTomlComments(t: string): string {
     return line;
   }).join("\n");
 }
-/** The [env] names that let the repo steer what runs: PATH finds the repo's own cc or ld, LD_PRELOAD and DYLD_INSERT_LIBRARIES load repo code into every process cargo starts. */
-const CARGO_ENV_HIJACK = ["PATH", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES"] as const;
+/** The [env] names that let the repo steer what runs: PATH finds the repo's own cc or ld, LD_PRELOAD, DYLD_INSERT_LIBRARIES and the library and framework search paths load repo code into every process cargo starts. */
+const CARGO_ENV_HIJACK = ["PATH", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"] as const;
 /** An [env] table (or inline env table, or env.<name> key) that sets the given variable. */
 function cargoEnvSets(t: string, name: string): boolean {
   if (new RegExp(String.raw`^\s*\[\s*env\s*\.\s*["']?${name}["']?\s*\]`, "m").test(t) || new RegExp(String.raw`(?:^|[\s,{])env\s*\.\s*["']?${name}["']?\s*[.=]`, "m").test(t)) return true;

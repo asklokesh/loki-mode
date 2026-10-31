@@ -1073,6 +1073,10 @@ describe("cargo listing check residuals", () => {
     ["dotted env.LD_PRELOAD", 'env.LD_PRELOAD = "/repo/evil.so"\n', "[env] LD_PRELOAD"], ["inline env table with LD_PRELOAD", 'env = { A = "1", LD_PRELOAD = "/repo/evil.so" }\n', "[env] LD_PRELOAD"],
     ["[env] DYLD_INSERT_LIBRARIES", '[env]\nDYLD_INSERT_LIBRARIES = "/repo/evil.dylib"\n', "[env] DYLD_INSERT_LIBRARIES"], ["[env.DYLD_INSERT_LIBRARIES] table", '[env.DYLD_INSERT_LIBRARIES]\nvalue = "evil.dylib"\n', "[env] DYLD_INSERT_LIBRARIES"],
     ["[env] LD_PRELOAD after other keys", '[env]\nRUST_LOG = "debug"\nLD_PRELOAD = "/repo/evil.so"\n', "[env] LD_PRELOAD"],
+    ["[env] LD_LIBRARY_PATH string", '[env]\nLD_LIBRARY_PATH = "/repo/lib"\n', "[env] LD_LIBRARY_PATH"], ["[env.LD_LIBRARY_PATH] table", '[env.LD_LIBRARY_PATH]\nvalue = "lib"\nrelative = true\n', "[env] LD_LIBRARY_PATH"],
+    ["[env] DYLD_LIBRARY_PATH string", '[env]\nDYLD_LIBRARY_PATH = "/repo/lib"\n', "[env] DYLD_LIBRARY_PATH"], ["[env.DYLD_LIBRARY_PATH] table", '[env.DYLD_LIBRARY_PATH]\nvalue = "lib"\nrelative = true\n', "[env] DYLD_LIBRARY_PATH"],
+    ["[env] DYLD_FALLBACK_LIBRARY_PATH string", '[env]\nDYLD_FALLBACK_LIBRARY_PATH = "/repo/lib"\n', "[env] DYLD_FALLBACK_LIBRARY_PATH"], ["[env.DYLD_FALLBACK_LIBRARY_PATH] table", '[env.DYLD_FALLBACK_LIBRARY_PATH]\nvalue = "lib"\nrelative = true\n', "[env] DYLD_FALLBACK_LIBRARY_PATH"],
+    ["[env] DYLD_FRAMEWORK_PATH string", '[env]\nDYLD_FRAMEWORK_PATH = "/repo/lib"\n', "[env] DYLD_FRAMEWORK_PATH"], ["[env.DYLD_FRAMEWORK_PATH] table", '[env.DYLD_FRAMEWORK_PATH]\nvalue = "lib"\nrelative = true\n', "[env] DYLD_FRAMEWORK_PATH"],
     ["-Zllvm-plugins", '[build]\nrustflags = ["-Zllvm-plugins=/repo/p.so"]\n', RF], ["-Z llvm-plugins", '[build]\nrustflags = ["-Z", "llvm-plugins=/repo/p.so"]\n', RF],
     ["a string -Zllvm-plugins", '[build]\nrustflags = "-Zllvm-plugins=/repo/p.so"\n', RF],
   ];
