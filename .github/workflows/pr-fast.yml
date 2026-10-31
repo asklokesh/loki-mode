@@ -74,5 +74,10 @@ jobs:
       - name: Install loki-ts dependencies
         run: bun install --cwd loki-ts --frozen-lockfile
 
+      # control.test.ts, control_default.test.ts and council/finding_schema.test.ts import
+      # packages/control-plane, which resolves drizzle-orm from its own node_modules.
+      - name: Install control-plane dependencies
+        run: bun install --cwd packages/control-plane --frozen-lockfile
+
       - name: bun test shard ${{ matrix.shard }}
         run: cd loki-ts && bun run test --shard=${{ matrix.shard }}
