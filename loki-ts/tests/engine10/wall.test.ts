@@ -956,7 +956,7 @@ describe("COST-11 r2: escalation on doubt", () => {
   const KILLED = { exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 1, killed: true } as SessionResult;
   // per-file base runner: every file reports greenBase ? pass : fail
   const baseOf = (green: boolean): BaseTestRunner => ({ run: () => (green ? { pass: 1, fail: 0 } : { pass: 0, fail: 1 }) });
-  const go = async (session: (n: number, o: SessionRunOptions, ctx: { abort: () => void; runId: string; repoDir: string; runDir: string; sealed: () => boolean | undefined }) => { files: string[]; result?: SessionResult }, green: (n: number) => boolean, env: Record<string, string> = {}, base?: BaseTestRunner) => {
+  const go = async (session: (n: number, o: SessionRunOptions, ctx: { abort: () => void; runId: string; repoDir: string; runDir: string; sealed: () => boolean | undefined }) => { files: string[]; result?: SessionResult }, green: (n: number) => boolean, env: Record<string, string> = {}, base?: BaseTestRunner, intakeExtra: Record<string, unknown> = {}) => {
     for (const k of ENV) delete process.env[k];
     Object.assign(process.env, env);
     const s = setup({ runners: ["vitest"], tests: [] }), models: string[] = [], events: string[] = [], ac = new AbortController();
@@ -967,7 +967,7 @@ describe("COST-11 r2: escalation on doubt", () => {
       for (const f of r.files) writeFileSync(join(o.cwd!, f), SAMPLE, "utf8");
       return r.result ?? OK;
     } };
-    const ctx = fakeCtx(s.repoDir, s.runDir, sessions, { intake: { task: "add x", testmap: s.testmap, repomap_ref: join(s.runDir, "repomap.json") } }, events);
+    const ctx = fakeCtx(s.repoDir, s.runDir, sessions, { intake: { task: "add x", testmap: s.testmap, repomap_ref: join(s.runDir, "repomap.json"), ...intakeExtra } }, events);
     const baseRunner: BaseTestRunner = base ?? { run: (...a) => baseOf(green(Math.min(n, 2))).run(...a) };
     void calls;
     try { return { result: await runWall(ctx, ac.signal, { baseRunner }), models, events, s }; }
@@ -1043,6 +1043,20 @@ describe("COST-11 r2: escalation on doubt", () => {
       off = 0;
       const k = await go(() => { off += WALL_STAGE_LIMIT_S * 1000; return { files: [], result: KILLED }; }, () => false);
       expect(k.models).toEqual([HAIKU]);
+    } finally { Date.now = real; }
+  });
+  test("M6: with the stage budget spent, a green already flagged reproduction_green_on_base is kept as is, not re-distrusted", async () => {
+    const real = Date.now; let off = 0; Date.now = () => real() + off;
+    try {
+      const ev = { sha256: "ab".repeat(32), frames: [{ file: "app/main.py", line: 12, fn: "handler" }], exchanges: [{ request: "GET /x", response: "500" }], tracker_refs: [], truncated: false };
+      const g = await go((n) => { off += WALL_STAGE_LIMIT_S * 1000; return { files: [`loki_wall_a${n}.test.ts`] }; }, () => true, {}, undefined, { runtime_evidence: ev });
+      expect(g.models).toEqual([HAIKU]);
+      expect(g.events).not.toContain("wall.reauthor:wall");
+      expect(g.result.data.reproduction_green_on_base).toBe(true);
+      expect(g.result.data.already_satisfied).toBe(false);
+      expect(g.result.data.already_satisfied_distrusted).toBeUndefined();
+      expect(g.result.data.base_run).toMatchObject({ pass: 1, fail: 0, not_run: 0 });
+      expect((g.result.data.base_run as { unproven?: boolean }).unproven).toBeUndefined();
     } finally { Date.now = real; }
   });
   test("M1 control: budget left for one more rung allows the retry", async () => {
