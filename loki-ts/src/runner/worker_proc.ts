@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { resolve } from "node:path";
-import { accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 
 const CANCEL_GRACE_MS = Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) > 0 ? Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) : 10000; // SIGINT/SIGTERM: time the worker gets to stop sessions and record usage before SIGKILL
 const DRAIN_MS = 2000; // after the worker exits, how long P0 waits for stdout to drain before closing it
@@ -59,6 +59,8 @@ export function envWithPwd<T extends Record<string, string | undefined>>(env: T,
 /** Bun reads bunfig.toml (preload) and .env from its cwd, which for a respawn is the user repo. Every Bun respawn from that cwd starts with these flags. */
 export const SAFE_BUN_FLAGS = ["--no-env-file", "--config=/dev/null"] as const;
 export const ULIMIT_REFUSED_EXIT = 97;
+// Debian/Ubuntu /bin/sh is dash, which has no `ulimit -u` ("Illegal option -u"); bash is on macOS and every Linux runner.
+const LIMIT_SHELL = existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh";
 const ULIMIT_KNOBS = [["LOKI_ULIMIT_VMEM_KB", "-v"], ["LOKI_ULIMIT_NPROC", "-u"]] as const;
 // Opt-in process limits (#265 slice B). Node cannot set rlimits, so a set knob wraps argv in a shell that applies them
 // and execs the worker. Values are positional arguments, never script text. Unset knobs return argv unchanged.
@@ -73,7 +75,7 @@ export function ulimitArgv(argv: string[], env: NodeJS.ProcessEnv): string[] {
   }
   const why = `loki: the OS refused the requested process limit (${set.map(([name]) => name).join(", ")}); the worker was not started. macOS rejects ulimit -v, so use LOKI_ULIMIT_NPROC alone there.`;
   const script = `${set.map(([, flag], i) => `ulimit ${flag} "$${i + 1}"`).join(" && ")} || { printf '%s\\n' '${why}' >&2; exit ${ULIMIT_REFUSED_EXIT}; }; shift ${set.length}; exec "$@"`;
-  return ["/bin/sh", "-c", script, "sh", ...values, ...argv];
+  return [LIMIT_SHELL, "-c", script, "sh", ...values, ...argv];
 }
 // Spawns the worker in its own process group, waits for exit plus stdout drain (DRAIN_MS), and backstops at
 // backstopMs with SIGTERM then SIGKILL after escalateMs, clamped so a SIGTERM-trapping worker cannot outlive the cap.

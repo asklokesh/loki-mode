@@ -714,7 +714,8 @@ sha = lambda b: hashlib.sha256(b.encode()).hexdigest()
 child = '{"receipt_sha256":"z","verdict":"VERIFIED","a":%s}' % ("[" * 100000 + "]" * 100000)
 os.makedirs(os.path.join(d, "group/units/u1"))
 open(os.path.join(d, "group/units/u1/receipt.json"), "w").write(child)
-body = {"schema": "loki.v10.group/1", "verdict": "VERIFIED",
+# run_id: seal always writes one, and verify by run id refuses a receipt without it (so the depth gate below is what is tested)
+body = {"schema": "loki.v10.group/1", "verdict": "VERIFIED", "run_id": os.path.basename(d),
         "group": {"group_id": "g1", "units": [{"index": 0, "unit_id": "u1", "sub_receipt_sha256": sha(child),
                                                "events_file_sha256": None, "receipt_sha256": "z", "verdict": "VERIFIED"}]}}
 body["receipt_sha256"] = sha(json.dumps(body, sort_keys=True, separators=(",", ":")))

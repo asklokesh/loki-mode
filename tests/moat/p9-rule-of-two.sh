@@ -286,9 +286,19 @@ PUSH_ACTIONS = {
 }
 
 
+# A step pinned to a commit ("uses: owner/name@<40 hex> # v4") carries its release in the trailing
+# comment, which the YAML parse drops. Without it a SHA pin has no readable major and the cache check
+# below treats it as the newest (cache-on-by-default) release. A SHA with no such comment stays unknown.
+PIN_COMMENT = re.compile(r"uses:\s*([\w.-]+/[\w./-]+)@([0-9a-f]{40})[ \t]+#[ \t]*(v\d+[\w.]*)")
+PIN_VERSION = {}
+
+
 def load(path):
     with open(path) as f:
-        return yaml.safe_load(f) or {}
+        raw = f.read()
+    for m in PIN_COMMENT.finditer(raw):
+        PIN_VERSION.setdefault((m.group(1), m.group(2)), m.group(3))
+    return yaml.safe_load(raw) or {}
 
 
 def on_of(doc):
@@ -394,7 +404,7 @@ def cache_restores(steps):
     for st in steps:
         uses, w = str(st.get("uses") or ""), (st.get("with") if isinstance(st.get("with"), dict) else {})
         name, ver = (uses.split("@") + [""])[:2]
-        major = re.match(r"v(\d+)", ver)
+        major = re.match(r"v(\d+)", PIN_VERSION.get((name, ver), ver))
         if name == "oven-sh/setup-bun" and str(w.get("no-cache", False)).strip().lower() != "true":
             out.append("oven-sh/setup-bun (caches bun unless no-cache: true)")
         elif name in ("actions/cache", "actions/cache/restore"):

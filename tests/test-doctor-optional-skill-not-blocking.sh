@@ -355,11 +355,15 @@ ln -s "$A123_T/gone" "$A123_H/.cline/skills/loki-mode"
 for _b in with-claude/claude no-claude/codex; do
     printf '#!/bin/sh\nexit 0\n' > "$A123_T/$_b"; chmod +x "$A123_T/$_b"
 done
+# The cleaned PATH below drops setup-bun's dir on a CI runner (bun is not in /opt/homebrew/bin there), and
+# the legacy bash doctor needs bun too. Resolve its dir once and carry it on both routes.
+A123_BUN_DIR=""
+command -v bun >/dev/null 2>&1 && A123_BUN_DIR="$(dirname "$(command -v bun)"):"
 # $1 route (bash|bun), $2 stub dir, $3 provider, $4 out file; prints the exit code.
 a123_run() {
     local route="$1" stub="$2" prov="$3" out="$4" rc=0
     if [ "$route" = bash ]; then
-        env -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_RECEIPT_SIGNING_KEY_FILE HOME="$A123_H" PATH="$stub:$(dirname "$(command -v node)"):/opt/homebrew/bin:/usr/bin:/bin" LOKI_LEGACY_BASH=1 \
+        env -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_RECEIPT_SIGNING_KEY_FILE HOME="$A123_H" PATH="$stub:${A123_BUN_DIR}$(dirname "$(command -v node)"):/opt/homebrew/bin:/usr/bin:/bin" LOKI_LEGACY_BASH=1 \
             ANTHROPIC_API_KEY=doctor-fixture-not-a-key LOKI_PROVIDER="$prov" LOKI_NO_BROWSER=1 \
             bash "$REPO_ROOT/autonomy/loki" doctor >"$out" 2>/dev/null || rc=$?
     else

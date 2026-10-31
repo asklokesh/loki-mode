@@ -219,7 +219,8 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# Scenario 4b: empty committed diff -> CONCERNS (exit 1), NOT BLOCKED.
+# Scenario 4b: empty committed diff -> CONCERNS verdict, exit 3 (the v11.4.0 exit
+# contract: an empty diff gives the verifier nothing to check), NOT BLOCKED.
 # Locks the fix for the whole-repo-scan regression: with no change set vs base,
 # all gates are skipped and the verdict is inconclusive -> CONCERNS. A planted
 # secret in an UNTOUCHED file (not in the diff) must NOT block.
@@ -236,10 +237,10 @@ init_repo "$S4B"
   git checkout -q -b feature
 )
 run_verify "$S4B" main
-if [ "$RC" -eq 1 ] && [ "$VERDICT" = "CONCERNS" ]; then
-    _ok "empty diff with pre-existing secret -> CONCERNS (exit 1), not BLOCKED"
+if [ "$RC" -eq 3 ] && [ "$VERDICT" = "CONCERNS" ]; then
+    _ok "empty diff with pre-existing secret -> CONCERNS (exit 3), not BLOCKED"
 else
-    _no "empty diff -> expected CONCERNS/1, got $VERDICT/$RC"
+    _no "empty diff -> expected CONCERNS/3, got $VERDICT/$RC"
 fi
 
 # -------------------------------------------------------------------------

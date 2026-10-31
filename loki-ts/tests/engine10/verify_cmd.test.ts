@@ -2098,6 +2098,18 @@ describe("verify binds a plain receipt to the requested run id", () => {
     sealedLog(runDir, hash, id);
     return runDir;
   };
+  test("a receipt that is over-nested or not an object is damaged (exit 2) under a run id, never a run-id TAMPERED finding", async () => {
+    await withKey(async (dir) => {
+      const nest = "[".repeat(100000) + "]".repeat(100000);
+      for (const [id, body] of [["deep", `{"schema":"loki.v10.receipt/1","a":${nest}}`], ["nul", "null"], ["arr", "[]"]] as const) {
+        const runDir = join(dir, "runs", id); mkdirSync(runDir, { recursive: true });
+        writeFileSync(join(runDir, "receipt.json"), body);
+        const r = await runMain([id], join(dir, "runs"));
+        expect(r.code).toBe(2);
+        expect(r.out).not.toContain("TAMPERED");
+      }
+    });
+  });
   test("the original id is VERIFIED; the same receipt and log copied under another id is not exit 0 and names both ids", async () => {
     await withKey(async (dir) => {
       const a = signedRun(dir, "run-a");

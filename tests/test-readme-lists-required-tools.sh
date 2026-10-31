@@ -30,9 +30,10 @@ bad() { echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
 
 # The Bun route's required set. Anchored on the object-literal shape: a bare
 # `required` also matches the `required: Severity;` type field, which would pull
-# in a phantom entry and make the count assertion meaningless.
+# in a phantom entry and make the count assertion meaningless. displayName may
+# be a template literal (the node entry interpolates NODE_MIN).
 bun_required=$(
-    grep -oE '\{ displayName: "[^"]+", jsonName: "[^"]+", cmd: "[^"]+", required: "required"' \
+    grep -oE '\{ displayName: ("[^"]+"|`[^`]+`), jsonName: "[^"]+", cmd: "[^"]+", required: "required"' \
         "$DOCTOR_TS" 2>/dev/null |
         sed -E 's/.*cmd: "([^"]+)".*/\1/' | sort -u
 )
