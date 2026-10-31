@@ -22,32 +22,34 @@ const WALL_PREFIX = "loki_wall_";
 export interface WallSealedFile { path: string; sha256: string; runner?: RunnerName; } // path: absolute, in the repo working tree
 
 // Runs the sealed Wall tests on the base tree; local since types.ts has no "execute tests" contract yet. not_run (D42 (3)): no real result; counts toward neither pass nor fail. Optional for pre-D42(3) fakes.
-export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run?: number }; /** FC-69: why each not_run file of the LAST run was not executed */ lastNotRunFiles?: { file: string; reason: string }[]; /** TEN-SPEED-19: one result per file, input order, at most `jobs` processes at once */ runEach?(repoDir: string, files: TestRef[], jobs: number, corroborate?: boolean): Promise<BaseEachResult[]>; }
+/** interpreter: "system" is set by the base runner itself when the file ran under the system interpreter, so no caller keys a decision on the reason wording */
+export interface NotRunRow { file: string; reason: string; interpreter?: "system"; }
+export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run?: number }; /** FC-69: why each not_run file of the LAST run was not executed */ lastNotRunFiles?: NotRunRow[]; /** TEN-SPEED-19: one result per file, input order, at most `jobs` processes at once */ runEach?(repoDir: string, files: TestRef[], jobs: number, corroborate?: boolean): Promise<BaseEachResult[]>; }
 export const BASE_RUN_TIMEOUT_MS = 60_000; // same per-check budget as verify.ts's CHECK_TIMEOUT_MS
 export { sealedWallCopy, sealedWallDir } from "../../util/check_result.ts";
 export { classify, notRunReason, pytestCollectionIsRed } from "../../util/check_result.ts"; // moved to util/check_result.ts (core line budget)
 // One process per file, through verify's own interpreter resolution (E-98a) so a missing `python` is never misread as a failing test. env is explicit, matching verify.ts's runOnce (its default PATH lookup can otherwise resolve a
 // snapshot from process start, not the live env).
 export class RealBaseTestRunner implements BaseTestRunner {
-  lastNotRunFiles: { file: string; reason: string }[] = [];
+  lastNotRunFiles: NotRunRow[] = [];
   constructor(private readonly api?: ProjectApi | null, private readonly timeoutMs: number = BASE_RUN_TIMEOUT_MS, private readonly extraEnv: Record<string, string> = {}) {} // FC-01: undefined = load the repo's cached Project Model per run
   run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run: number } {
     this.lastNotRunFiles = [];
-    let pass = 0, fail = 0, not_run = 0; const not_run_files: { file: string; reason: string }[] = []; const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; for (const f of files) {
+    let pass = 0, fail = 0, not_run = 0; const not_run_files: NotRunRow[] = []; const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; for (const f of files) {
       const { cmd, args, interpreter, cwd } = commandFor(f, repoDir, api);
       const r = spawnGroupSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, timeoutMs: Math.max(1000, this.timeoutMs), env: { ...plainTestEnv(), ...this.extraEnv } }); // FC-69: plain env in, ANSI stripped out; group-kill launcher reaps a grandchild runner
       const status = r.status, out = stripAnsi(r.output), base = classify(f, status, out, repoDir, interpreter);
       const result = base === "not_run" && status === 0 && f.runner === "go" && interpreter !== "system" && corroborateGoPassSync(classifyCheck({ kind: "test", ok: true, out, ...goRunner(cmd, args) }), out, cmd, args.filter((a, k) => a !== "-run" && args[k - 1] !== "-run"), { cwd, env: plainTestEnv() }).result === "pass" ? "pass" : base; // same Go exit 0 corroboration as runEach, synchronous
-      if (result === "pass") pass++; else if (result === "fail") fail++; else { not_run++; not_run_files.push({ file: f.path, reason: notRunReason(status, interpreter) }); }
+      if (result === "pass") pass++; else if (result === "fail") fail++; else { not_run++; not_run_files.push({ file: f.path, reason: notRunReason(status, interpreter), ...(interpreter === "system" ? { interpreter } : {}) }); }
     }
     this.lastNotRunFiles = not_run_files; return { pass, fail, not_run };
   }
   async runEach(repoDir: string, files: TestRef[], jobs: number, corroborate = false, remaining?: () => number): Promise<BaseEachResult[]> { // TEN-SPEED-19: same classification as run(), at most `jobs` processes at once
-    const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; return mapPool(files, jobs, async (f) => { const { cmd, args, interpreter, cwd } = commandFor(f, repoDir, api), r = await spawnCollect(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, env: plainTestEnv(), timeoutMs: Math.max(1000, Math.min(this.timeoutMs, remaining?.() ?? this.timeoutMs)) }), out = stripAnsi(r.output), base = classify(f, r.status, out, repoDir, interpreter), result = corroborate && base === "not_run" && r.status === 0 && f.runner === "go" && interpreter !== "system" && (await corroboratePass(classifyCheck({ kind: "test", ok: true, out, ...goRunner(cmd, args) }), out, cmd, args.filter((a, k) => a !== "-run" && args[k - 1] !== "-run") /* corroboration refuses the -run regex, so it reruns the package */, { cwd, env: plainTestEnv() })).result === "pass" ? "pass" : base; return { pass: +(result === "pass"), fail: +(result === "fail"), not_run: +(result === "not_run"), notRunFiles: result === "not_run" ? [{ file: f.path, reason: notRunReason(r.status, interpreter) }] : [] }; }, () => remaining !== undefined && remaining() <= 0); // remaining: the caller's budget; no new file starts once it is spent
+    const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; return mapPool(files, jobs, async (f) => { const { cmd, args, interpreter, cwd } = commandFor(f, repoDir, api), r = await spawnCollect(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, env: plainTestEnv(), timeoutMs: Math.max(1000, Math.min(this.timeoutMs, remaining?.() ?? this.timeoutMs)) }), out = stripAnsi(r.output), base = classify(f, r.status, out, repoDir, interpreter), result = corroborate && base === "not_run" && r.status === 0 && f.runner === "go" && interpreter !== "system" && (await corroboratePass(classifyCheck({ kind: "test", ok: true, out, ...goRunner(cmd, args) }), out, cmd, args.filter((a, k) => a !== "-run" && args[k - 1] !== "-run") /* corroboration refuses the -run regex, so it reruns the package */, { cwd, env: plainTestEnv() })).result === "pass" ? "pass" : base; return { pass: +(result === "pass"), fail: +(result === "fail"), not_run: +(result === "not_run"), notRunFiles: result === "not_run" ? [{ file: f.path, reason: notRunReason(r.status, interpreter), ...(interpreter === "system" ? { interpreter } : {}) }] : [] }; }, () => remaining !== undefined && remaining() <= 0); // remaining: the caller's budget; no new file starts once it is spent
   }
 }
 
-export interface BaseEachResult { pass: number; fail: number; not_run: number; notRunFiles: { file: string; reason: string }[]; } export interface WallOptions { baseRunner?: BaseTestRunner; }
+export interface BaseEachResult { pass: number; fail: number; not_run: number; notRunFiles: NotRunRow[]; } export interface WallOptions { baseRunner?: BaseTestRunner; }
 /** E-45: the Wall repo map is paths only, capped, so the (sonnet) brief stays short. */
 export const WALL_MAP_MAX_LINES = 200;
 
@@ -234,10 +236,10 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   // COST-11: a cheaper first rung is re-authored exactly once on wallModel() when its result cannot be trusted: nothing usable (nothing written, all discarded or not_run), a killed or timed-out session (N3), or a Wall already green on the base tree (B1: a haiku test that passes before the change may be vacuous, so the sonnet result decides already_satisfied). Never loops. Any doubt escalates.
   const cheap = a.kind === "authored" ? a.model : (first.data.model as string | undefined) ?? "", killed = a.kind === "done" && first.killed === true, usable = a.kind === "authored" && first.status === "completed";
   const unusable = usable && ((first.data.files as unknown[] | undefined) ?? []).length === 0, green = usable && !unusable && (first.data.already_satisfied === true || first.data.reproduction_green_on_base === true || wallGreenOnBaseOf({ wall: first.data })); // same green test seal applies
-  const nrf = (first.data.not_run_files as { reason: string }[] | undefined) ?? [], noInterp = nrf.length > 0 && nrf.every((x) => x.reason === notRunReason(0, "system")); // every not_run is "ran under the system interpreter": no rewrite can run without a project interpreter, so re-authoring only adds cost
+  const nrf = (first.data.not_run_files as NotRunRow[] | undefined) ?? [], noInterp = nrf.length > 0 && nrf.every((x) => x.interpreter === "system"); // every not_run is "ran under the system interpreter": no rewrite can run without a project interpreter, so re-authoring only adds cost
   const dropped = unusable && ((Number(((first.data.base_run ?? {}) as Record<string, unknown>).not_run ?? 0) > 0 && !noInterp) || ((first.data.discarded as unknown[] | undefined) ?? []).length > 0); // a Wall test was written and then dropped (no real base result or did not compile), as opposed to nothing written
   const budgetLeft = WALL_STAGE_LIMIT_S * 1000 - (Date.now() - t0) >= WALL_RUNG_S * 1000; // the retry must fit its own session plus base run inside the stage limit, from the same constants
-  if (!(unusable || green || killed) || !cheap || signal.aborted || (cheap === wallModel() && !dropped)) return first; // a same-model rung re-authors only when a written Wall test was dropped and none ran (the rewrite gets the base-run results); a green or killed same-model result stands
+  if (!(unusable || green || killed) || !cheap || signal.aborted || (cheap === wallModel() && !dropped) || (noInterp && !dropped && !killed && !green)) return first; /* no project interpreter and nothing dropped: no second Wall can run either, so none is bought */ // a same-model rung re-authors only when a written Wall test was dropped and none ran (the rewrite gets the base-run results); a green or killed same-model result stands
   if (!budgetLeft) return green && first.data.reproduction_green_on_base !== true ? { ...first, data: distrustGreenBase(first.data) } : first; // fail closed: an unchecked cheap-rung green must not stand as already_satisfied
   if (a.kind === "authored") { for (const f of (first.data.files as { path: string }[] | undefined) ?? []) rmSync(f.path, { force: true }); rmSync(sealedWallDir(ctx.runDir), { recursive: true, force: true }); ctx.wallSealed = false; } // drop the abandoned attempt's installed copies, sealed copies and held-out tests so none leak into the retry
   removeHoldout(ctx.runId, ctx.repoDir);
@@ -245,7 +247,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   ctx.emit("wall.reauthor", "wall", { from_model: cheap, to_model: r2Model, reason: killed ? "first author session killed or timed out" : green ? "first author green on the base tree" : "no usable test from the first author" });
   const b = await wallAuthor(ctx, signal, { model: r2Model, suffix: "-r2", note: dropped ? reauthorNote(first.data) : undefined }), second = b.kind === "done" ? b.result : await installWallAsync(ctx, b, ctx.repoDir, opts);
   const ids = [...((first.data.iteration_ids as string[] | undefined) ?? []), ...((second.data.iteration_ids as string[] | undefined) ?? [])];
-  const still = second.status === "completed" && ((second.data.files as unknown[] | undefined) ?? []).length === 0 && dropped; // the one re-author is spent: a second empty Wall is disclosed, never retried
+  const still = second.status === "completed" && ((second.data.files as unknown[] | undefined) ?? []).length === 0; // the one re-author is spent: a second empty Wall is disclosed, never retried
   return { ...second, data: { ...second.data, iteration_ids: ids, reauthored: true, ...(still ? { not_proven: [...((second.data.not_proven as string[] | undefined) ?? []), WALL_REAUTHOR_EXHAUSTED] } : {}) } }; // both tiers' spend reaches the ledger via iteration_ids
 }
 
