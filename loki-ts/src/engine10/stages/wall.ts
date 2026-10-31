@@ -1,7 +1,8 @@
 // E-15: Wall author (ENGINE.md 4). One provider session, cwd a fresh temp dir holding only task.md and repomap.txt (never sees the code), writes loki_wall_* tests, copied into the repo (never on abort/kill/timeout, E-54) and
 // sealed under <runDir>/wall/ (sha256 each); wall.sealed before Implement; clean base-tree pass short-circuits to already_satisfied. E-64: skipped outright on the small-task lean path (plan.ts logs the same decision).
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os"; import { goPackagePath } from "../../features/wall_manifest.ts";
+import { tmpdir } from "node:os";
+import { goPackagePath } from "../../runner/repo_profile.ts";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { type RunContext, type RunnerName, type Stage, type StageResult, type TestMap, type TestRef, taskBlock } from "../types.ts";
 import { clauseDroppedNote, extractClauses, untaggedClauses, type ClauseSet } from "../../util/spec_file.ts";

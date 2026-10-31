@@ -4,18 +4,9 @@
 // examples that import no module the task names, and public signatures of the named modules. Function
 // and method bodies never enter the output. TS/JS: only text before a body's opening brace, and a file whose
 // lexing is undecidable emits nothing. Python: heads come from the stdlib ast in an isolated interpreter. Parameter and field defaults are always masked as `= ...`.
-import { dirname, join, relative } from "node:path";
+import { join } from "node:path";
 import { pySignatures } from "../util/python.ts";
 import { tsAmbiguous, tsSignatures } from "../util/ts_signatures.ts";
-/** The Go import path of `targetDir`: the nearest module file at or above it (never above `repoDir`) gives the module path, then the relative directory is appended. `read` returns a file's text or undefined; pure otherwise. */
-export function goPackagePath(read: (file: string) => string | undefined, repoDir: string, targetDir: string): string | undefined {
-  for (let d = targetDir; d.startsWith(repoDir); d = dirname(d)) {
-    const m = /^module\s+(\S+)/m.exec(read(join(d, "go.mod")) ?? "");
-    if (m) { const rel = relative(d, targetDir); return rel ? `${m[1]}/${rel}` : m[1]; }
-    if (d === repoDir || d === dirname(d)) break;
-  }
-  return undefined;
-}
 export interface ManifestFile { path: string; content: string }
 
 export const MANIFEST_MAX_LINES = 400;
