@@ -1966,7 +1966,10 @@ run_check "npm pack tarball contents" '
             web-app/dist/index.html autonomy/provider-offer.sh \
             autonomy/quickstart.sh autonomy/lib/proof-verify.py \
             autonomy/lib/efficiency_cost.py autonomy/lib/cost-summary.py \
-            scripts/vpr-pytest-boot/loki_vpr_boot.py scripts/verify-pr-sandbox.sh; do
+            scripts/vpr-pytest-boot/loki_vpr_boot.py \
+            scripts/vpr-pytest-boot/loki_vpr_plugin.py \
+            scripts/vpr-pytest-boot/loki_vpr_site.py \
+            scripts/verify-pr-sandbox.sh; do
     _total=$((_total + 1))
     case "$_pack" in *"$_f"*) ;; *) _missing="$_missing $_f" ;; esac
   done
