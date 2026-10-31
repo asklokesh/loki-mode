@@ -666,3 +666,21 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             "stderr_tail": _tail(err),
         },
     )
+
+
+LEAN_ARM = "loki-lean"
+
+
+def run_lean(workdir, spec, **kwargs):
+    """The `loki-lean` benchmark arm: the same run as `run` with LOKI_LEAN=1.
+
+    `run` already passes --no-pr, so this arm never writes upstream. The row is
+    labelled `loki-lean` (tool and provenance.arm) so it never pools with the
+    plain `loki` arm; LOKI_LEAN=1 is recorded in provenance.lever_env.
+    """
+    extra = dict(kwargs.pop("extra_env", None) or {})
+    extra["LOKI_LEAN"] = "1"
+    out = run(workdir, spec, extra_env=extra, **kwargs)
+    out["tool"] = LEAN_ARM
+    out["provenance"]["arm"] = LEAN_ARM
+    return out

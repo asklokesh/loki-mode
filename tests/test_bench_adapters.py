@@ -101,6 +101,43 @@ def assert_schema(tc, out):
     tc.assertIn("verified", out["provenance"])
 
 
+class TestLokiLeanArm(unittest.TestCase):
+    def _capture(self):
+        seen = []
+
+        def _runner(cmd, **kwargs):
+            seen.append((cmd, kwargs.get("env") or {}))
+            return make_runner(version_out="7.10.0", run_out="ok")(cmd, **kwargs)
+        return _runner, seen
+
+    def test_row_is_labelled_validates_and_sets_lean_env(self):
+        runner, seen = self._capture()
+        out = loki_adapter.run_lean(_REPO, "prd.md", runner=runner)
+        assert_schema(self, out)
+        self.assertEqual(out["tool"], "loki-lean")
+        self.assertEqual(out["provenance"]["arm"], "loki-lean")
+        self.assertEqual(out["provenance"]["lever_env"], {"LOKI_LEAN": "1"})
+        self.assertEqual(_load("bench_schema_lean", "../bench_schema.py").validate_adapter_output(out), [])
+        start = [(c, e) for c, e in seen if "start" in c]
+        self.assertEqual(len(start), 1)
+        cmd, env = start[0]
+        self.assertEqual(env.get("LOKI_LEAN"), "1")
+        self.assertIn("--no-pr", cmd)
+
+    def test_plain_loki_arm_never_sets_lean(self):
+        runner, seen = self._capture()
+        out = loki_adapter.run(_REPO, "prd.md", runner=runner)
+        self.assertEqual(out["tool"], "loki")
+        self.assertEqual(out["provenance"]["lever_env"], {})
+        env = [e for c, e in seen if "start" in c][0]
+        self.assertEqual(env.get("LOKI_LEAN"), os.environ.get("LOKI_LEAN"))
+
+    def test_caller_levers_are_kept_beside_lean(self):
+        runner, _seen = self._capture()
+        out = loki_adapter.run_lean(_REPO, "prd.md", runner=runner, extra_env={"LOKI_COST_PROFILE": "lean"})
+        self.assertEqual(out["provenance"]["lever_env"], {"LOKI_COST_PROFILE": "lean", "LOKI_LEAN": "1"})
+
+
 class TestLokiAdapter(unittest.TestCase):
     def test_schema_and_no_success_quality(self):
         runner = make_runner(version_out="7.10.0", run_out="ok", run_rc=0)

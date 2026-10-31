@@ -190,6 +190,35 @@ def _git_baseline(workdir: str) -> None:
         subprocess.run(argv, cwd=workdir, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def _git_out(workdir: str, *argv: str) -> Optional[str]:
+    try:
+        proc = subprocess.run(["git", *argv], cwd=workdir, capture_output=True, text=True, timeout=60)
+    except Exception:
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _base_tree(workdir: str) -> Optional[str]:
+    """Tree hash of the baseline commit. Content-addressed, so every fresh clone of
+    one fixture reports the same value; a commit hash would differ per clone."""
+    out = _git_out(workdir, "rev-parse", "HEAD^{tree}")
+    return out.strip() if out and out.strip() else None
+
+
+def _files_changed(workdir: str, base_tree: Optional[str]) -> Optional[int]:
+    """Files the agent changed versus the baseline, committed or not, measured by
+    the harness on the workdir (never reported by the tool). The prompt file and
+    .loki state are the harness's, not the agent's. None when git cannot answer."""
+    if not base_tree:
+        return None
+    tracked = _git_out(workdir, "-c", "core.quotepath=off", "diff", "--name-only", base_tree)
+    untracked = _git_out(workdir, "-c", "core.quotepath=off", "ls-files", "--others", "--exclude-standard")
+    if tracked is None or untracked is None:
+        return None
+    names = {n for n in (tracked + untracked).splitlines() if n}
+    return len([n for n in names if n != PROMPT_FILENAME and not n.startswith(".loki/")])
+
+
 # ---------------------------------------------------------------------------
 # the GRADER -- the ONLY thing that decides success
 # ---------------------------------------------------------------------------
@@ -297,6 +326,11 @@ def grade(workdir: str, spec: Dict[str, Any],
 PROMPT_FILENAME = "BENCH_PROMPT.md"
 
 
+# Benchmark arms that are a configuration of an existing adapter, not a file of
+# their own: arm name -> (adapter module, entry point).
+ARM_ENTRYPOINTS = {"loki-lean": ("loki", "run_lean")}
+
+
 def load_adapter(name: str) -> Callable[..., Dict[str, Any]]:
     """Load benchmarks/bench/adapters/<name>.py and return its run() callable.
 
@@ -304,6 +338,10 @@ def load_adapter(name: str) -> Callable[..., Dict[str, Any]]:
     expose a module-level run() function with the documented signature.
     """
     adapters_dir = os.path.join(_HERE, "adapters")
+    if name in ARM_ENTRYPOINTS:
+        name, entry = ARM_ENTRYPOINTS[name]
+    else:
+        entry = "run"
     path = os.path.join(adapters_dir, "%s.py" % name)
     if not os.path.isfile(path):
         raise FileNotFoundError("adapter not found: %s (expected %s)" % (name, path))
@@ -314,9 +352,9 @@ def load_adapter(name: str) -> Callable[..., Dict[str, Any]]:
     spec = importlib.util.spec_from_file_location("_bench_adapter_%s" % name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    fn = getattr(mod, "run", None)
+    fn = getattr(mod, entry, None)
     if not callable(fn):
-        raise AttributeError("adapter %s has no callable run()" % name)
+        raise AttributeError("adapter %s has no callable %s()" % (name, entry))
     return fn
 
 
@@ -447,9 +485,14 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
         dest = os.path.join(root, tool, spec["id"], trial_label or str(trial_index))
     workdir = prepare_workdir(fixture_dir, tool, dest=dest)
     try:
+        base_tree = _base_tree(workdir)
         adapter_out = invoke_adapter(adapter, workdir, spec, model,
                                      agent_timeout, runner_fn=runner_fn,
                                      effort=effort)
+        # Diff evidence is measured here, before the grader overlays held-out
+        # files, so every arm is judged on the same yardstick.
+        if "files_changed" not in adapter_out:
+            adapter_out["files_changed"] = _files_changed(workdir, base_tree)
         # GRADE on the produced repo state. Grader sees workdir + spec (+ the
         # task dir to resolve a held-out overlay); never adapter-output.
         verdict = grade(workdir, spec, task_dir=task_dir)
@@ -489,6 +532,7 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
 
         row = {
             "trial": trial_index,
+            "base_tree": base_tree,
             "success": verdict["success"],
             "quality": verdict["quality"],
             "acceptance_exit_code": verdict["acceptance_exit_code"],
@@ -797,6 +841,60 @@ def run_task(task_path: str, adapter_name: str, *,
     return row
 
 
+def run_arms(task_paths: List[str], arms: List[str], *, reps: int = 3,
+             model: Optional[str] = None,
+             adapters: Optional[Dict[str, Callable[..., Dict[str, Any]]]] = None,
+             keep_workdir: bool = False, runner_fn: Any = None,
+             verify_fn: Any = None) -> Dict[str, Any]:
+    """Run several arms over the same tasks, interleaved, and return one row per
+    (task, arm) plus the exact schedule that ran.
+
+    Tasks run in the order given. Within a task each rep runs every arm in turn
+    (rep 1: arm A, arm B, ...; rep 2: ...), so provider drift, rate limits and
+    time of day land on every arm alike. Every trial is a fresh clone of the one
+    frozen fixture; the baseline tree hash of each trial is checked equal across
+    all arms of a task, so an arm that ran on a different base is an error, not
+    a quiet comparison. `adapters` maps an arm to a callable (tests pass mocks);
+    an arm without one is loaded behind the spend interlock.
+    """
+    adapters = adapters or {}
+    if len(set(arms)) != len(arms) or len(arms) < 2:
+        raise ValueError("arms must be two or more distinct names: %r" % (arms,))
+    if os.environ.get("LOKI_LEAN") and "loki" in arms:
+        # run_cli merges os.environ under the adapter env, so a parent LOKI_LEAN
+        # would turn the plain `loki` arm into the lean one without a trace.
+        raise ValueError("LOKI_LEAN is set in the parent env; unset it so the plain loki arm stays plain")
+    rows: List[Dict[str, Any]] = []
+    schedule: List[Dict[str, Any]] = []
+    for task_path in task_paths:
+        per_arm: Dict[str, Dict[str, Any]] = {}
+        for rep in range(1, max(1, reps) + 1):
+            for arm in arms:
+                one = run_task(task_path, arm, trials=1, model=model,
+                               adapter=adapters.get(arm), keep_workdir=keep_workdir,
+                               runner_fn=runner_fn, verify_fn=verify_fn)
+                one["trials"][0]["trial"] = rep
+                schedule.append({"task_id": one["task_id"], "rep": rep, "arm": arm})
+                if arm not in per_arm:
+                    per_arm[arm] = one
+                else:
+                    per_arm[arm]["trials"].extend(one["trials"])
+        bases = {(arm, t.get("base_tree")) for arm, r in per_arm.items() for t in r["trials"]}
+        trees = {b for _arm, b in bases}
+        hashes = {r["task_hash"] for r in per_arm.values()}
+        if len(trees) != 1 or len(hashes) != 1:
+            raise ValueError("arms ran on different bases for %s: trees=%s task_hash=%s" % (
+                next(iter(per_arm.values()))["task_id"], sorted(map(str, trees)), sorted(hashes)))
+        for arm in arms:
+            row = per_arm[arm]
+            row["summary"] = schema.summarize_trials(row["trials"])
+            errs = schema.validate_result_row(row)
+            if errs:
+                raise ValueError("assembled result-row invalid: %s" % "; ".join(errs))
+            rows.append(row)
+    return {"rows": rows, "schedule": schedule}
+
+
 def run_resume_pair(task_path: str, adapter_name: str, *, interrupt: Any,
                     trials: int = 1, model: Optional[str] = None,
                     adapter: Optional[Callable[..., Dict[str, Any]]] = None,
@@ -948,6 +1046,7 @@ def _current_tool_version(tool: str) -> Optional[str]:
     """Best-effort current version string for a tool, or None if unavailable."""
     cmds = {
         "loki": ["loki", "version"],
+        "loki-lean": ["loki", "version"],
         "aider": ["aider", "--version"],
         "claude_code": ["claude", "--version"],
         "codex": ["codex", "--version"],
@@ -1005,6 +1104,14 @@ def _main(argv: List[str]) -> int:
     pc.add_argument("--model", default=None)
     pc.add_argument("--out", default=None)
 
+    pa = sub.add_parser("arms", help="interleave several arms over the same tasks")
+    pa.add_argument("tasks", nargs="+")
+    pa.add_argument("--arms", default="loki-lean,claude_code,loki",
+                    help="comma list of arms; claude_code is the raw `claude -p` arm")
+    pa.add_argument("--reps", type=int, default=3)
+    pa.add_argument("--model", default=None)
+    pa.add_argument("--out", required=True)
+
     pv = sub.add_parser("verify", help="recompute task_hash + check tool versions")
     pv.add_argument("result")
 
@@ -1012,6 +1119,14 @@ def _main(argv: List[str]) -> int:
     pl.add_argument("task")
 
     args = p.parse_args(argv)
+
+    if args.cmd == "arms":
+        res = run_arms(args.tasks, [a for a in args.arms.split(",") if a],
+                       reps=args.reps, model=args.model)
+        with open(args.out, "w") as fh:
+            fh.write(json.dumps(res, indent=2, sort_keys=True) + "\n")
+        print("wrote %s (%d rows)" % (args.out, len(res["rows"])))
+        return 0
 
     if args.cmd == "resume-cost":
         itr = args.interrupt if args.adapter == "loki" else float(args.interrupt)
