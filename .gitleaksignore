@@ -208,3 +208,6 @@ d0795335816881b327f6dfaed2e634f81b03fa1d:loki-ts/tests/util/redact.test.ts:gener
 loki-ts/tests/engine10/session_router.test.ts:generic-api-key:40
 # Reviewed false positive: synthetic multi-line PEM fixture ("bodysecretline" markers) in the memory search redaction test, not a real key.
 151d5ea2a60c3773458139dee286ff20cf6b5300:loki-ts/tests/commands/memory.test.ts:generic-api-key:248
+# Reviewed false positive: synthetic token fixture in the redact test ("abc123"), not a real key.
+ea0ae22afa02927b879634ce0927308bbb3033e4:loki-ts/tests/util/redact.test.ts:generic-api-key:222
+e086611894ff60dfc93b5b74ab6b2f0081ec6169:loki-ts/tests/util/redact.test.ts:generic-api-key:222
