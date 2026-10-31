@@ -1327,9 +1327,10 @@ done
     });
   }
   // The tool's own path and config variables never name the binary, so an honest pass stays a pass.
+  // Accepted limit (TOOL=go): these also read as an honest pass although they hand the tool to a Makefile through a non-tool name: `GO_VERSION=go make test`, `make test GOPATH=go`, `CARGO_HOME=cargo make test`.
   const stillPass = ["make test DIR=go", "DIR=go make test", "env CC=gcc make test", "make GOCMD=gcc test", "python3 -c 'print(\"a\"+\"b\")'", "pytest -q tests/go1",
     "GOPATH=$HOME/go npm test", "GOROOT=/usr/local/go pytest -q", "env GOPATH=/root/go make test", "CARGO_HOME=/opt/cargo npm test", "CARGO_TARGET_DIR=/tmp/cargo pytest", "make GO_VERSION=go1.22 test",
-    "GOBIN=/usr/local/go/bin npm test", "GOMODCACHE=/tmp/go pytest", "GOFLAGS=-mod=vendor npm test", "GOOS=linux make test", "GOPROXY=off npm test", "GOTOOLCHAIN=go1.22 make test"];
+    "GOBIN=/usr/local/go/bin npm test", "GOBIN=$HOME/go pytest", "GOMODCACHE=/tmp/go pytest", "GOFLAGS=-mod=vendor npm test", "GOOS=linux make test", "GOPROXY=off npm test", "GOTOOLCHAIN=go1.22 make test"];
   for (const line of stillPass) {
     test(`HV1-03j: ${line} stays an honest pass`, async () => {
       const pass = { result: "pass" as const, n: 3 };
