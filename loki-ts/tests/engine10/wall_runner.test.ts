@@ -1,7 +1,8 @@
 // A-103: real `node --test` runs on a bugrepo (off-by-one sum) through RealBaseTestRunner.
 // A Wall test that is not red for the right reason is discarded, never left in the tree.
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RealBaseTestRunner, classify, runWall } from "../../src/engine10/stages/wall.ts";
@@ -221,7 +222,7 @@ describe("TEN-SPEED-19 base jobs", () => {
   test("spawnCollect stops a SIGTERM-ignoring child shortly after its timeout and reports no status", async () => {
     const { spawnCollect } = await import("../../src/util/check_result.ts");
     const t0 = Date.now(), r = await spawnCollect("node", STUBBORN, { timeoutMs: 1000 });
-    expect(Date.now() - t0).toBeLessThan(8000);
+    expect(Date.now() - t0).toBeLessThan(4000);
     expect(r.status).toBeNull();
   }, 20_000);
 
@@ -231,7 +232,7 @@ describe("TEN-SPEED-19 base jobs", () => {
     writeFileSync(join(repo, ".venv", "bin", "python"), `#!/bin/sh\nexec node -e "process.on('SIGTERM', () => {}); setTimeout(() => {}, 30000)"\n`, { mode: 0o755 });
     writeFileSync(join(repo, "test_a.py"), "def test_a():\n    pass\n");
     const t0 = Date.now(), r = new RealBaseTestRunner(null, 1000).run(repo, [{ runner: "pytest", path: "test_a.py" }]);
-    expect(Date.now() - t0).toBeLessThan(8000);
+    expect(Date.now() - t0).toBeLessThan(4000);
     expect(r).toEqual({ pass: 0, fail: 0, not_run: 1 });
   }, 20_000);
   // npx-style wrapper: the direct child is a shell, the SIGTERM-ignoring runner is its grandchild and holds the stdio pipes.
@@ -272,5 +273,46 @@ describe("TEN-SPEED-19 base jobs", () => {
     writeFileSync(join(repo, "test_a.py"), "def test_a():\n    pass\n");
     const t0 = Date.now(); new RealBaseTestRunner(null, 20_000).run(repo, [{ runner: "pytest", path: "test_a.py" }]);
     expect(Date.now() - t0).toBeLessThan(4000);
+  }, 30_000);
+  // Review attack rows: a trapped SIGTERM, argv parity, the launcher's own runtime flags, and a killed owner.
+  const TRAP0 = ["-c", "trap 'exit 0' TERM; echo '1 passed'; sleep 30 & wait"];
+  const CC = join(import.meta.dir, "../../src/util/check_result.ts");
+  const tmp = (n: string) => { const d = mkdtempSync(join(tmpdir(), `loki-run.${n}-`)); repos.push(d); return d; };
+  test("a runner that turns the timeout SIGTERM into exit 0 still reads as no status, sync and async", async () => {
+    const { spawnCollect, spawnGroupSync, plainTestEnv } = await import("../../src/util/check_result.ts");
+    const t0 = Date.now(), s = spawnGroupSync("sh", TRAP0, { env: plainTestEnv(), timeoutMs: 1000 });
+    expect(s.status).toBeNull(); expect(Date.now() - t0).toBeLessThan(4000);
+    const t1 = Date.now(), a = await spawnCollect("sh", TRAP0, { env: plainTestEnv(), timeoutMs: 1000 });
+    expect(a.status).toBeNull(); expect(Date.now() - t1).toBeLessThan(4000);
+  }, 20_000);
+  test("RealBaseTestRunner.run counts a runner that exits 0 on the timeout SIGTERM as not_run, never pass", () => {
+    const repo = tmp("x7"); mkdirSync(join(repo, ".venv", "bin"), { recursive: true });
+    writeFileSync(join(repo, ".venv", "bin", "python"), "#!/bin/sh\ntrap 'echo \"1 passed\"; exit 0' TERM\nsleep 30 & wait\n", { mode: 0o755 }); writeFileSync(join(repo, "test_a.py"), "def test_a():\n    pass\n");
+    const t0 = Date.now(); expect(new RealBaseTestRunner(null, 1000).run(repo, [{ runner: "pytest", path: "test_a.py" }])).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    expect(Date.now() - t0).toBeLessThan(4000);
+  }, 20_000);
+  test("850 KB of output with exit 0 keeps status 0 through the launcher, as spawnSync does", async () => {
+    const { spawnGroupSync, plainTestEnv } = await import("../../src/util/check_result.ts");
+    const a = ["-c", "head -c 850000 /dev/zero | tr '\\0' a; echo; echo '1 passed'"]; const o = spawnSync("sh", a, { encoding: "utf8", env: plainTestEnv() });
+    const r = spawnGroupSync("sh", a, { env: plainTestEnv(), timeoutMs: 20000 });
+    expect(o.status).toBe(0); expect(r.status).toBe(0); expect(r.output.length).toBeGreaterThan(850000);
+  }, 30_000);
+  test("the launcher does not load a .env or bunfig preload from the process cwd into the test env", () => {
+    const d = tmp("x3"); writeFileSync(join(d, ".env"), "LEAK_X3=yes\n"); writeFileSync(join(d, "bunfig.toml"), 'preload = ["./pre.js"]\n'); writeFileSync(join(d, "pre.js"), 'process.env.PRELOAD_X3 = "ran";\n');
+    const probe = join(tmp("x3p"), "probe.ts");
+    writeFileSync(probe, `import { spawnGroupSync, plainTestEnv } from "${CC}"; process.stdout.write(spawnGroupSync("sh", ["-c", 'echo "$\{LEAK_X3:-unset} $\{PRELOAD_X3:-unset}"'], { cwd: "/", env: plainTestEnv(), timeoutMs: 5000 }).output);`);
+    const r = spawnSync(process.execPath, ["--no-env-file", "--config=/dev/null", probe], { cwd: d, encoding: "utf8" });
+    expect(r.stdout.split("\n")[0]).toBe("unset unset");
+  }, 20_000);
+  for (const mode of ["sync", "async"] as const) test(`killing the owner's process group (cancel, cap) does not orphan the test runner (${mode})`, async () => {
+    const dir = tmp(`x1${mode}`), pf = join(dir, "pid");
+    const cmd = `node -e "process.on('SIGTERM', () => {}); setTimeout(() => {}, 60000)" & echo $! > '${pf}'; wait`;
+    writeFileSync(join(dir, "o.ts"), mode === "sync" ? `import { spawnGroupSync } from "${CC}"; spawnGroupSync("sh", ["-c", ${JSON.stringify(cmd)}], { timeoutMs: 60000 });` : `import { spawnCollect } from "${CC}"; await spawnCollect("sh", ["-c", ${JSON.stringify(cmd)}], { timeoutMs: 60000 });`);
+    const w = spawn(process.execPath, [join(dir, "o.ts")], { detached: true, stdio: "ignore" });
+    for (let i = 0; i < 50 && !existsSync(pf); i++) await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 300)); const pid = Number(readFileSync(pf, "utf8"));
+    process.kill(-w.pid!, "SIGKILL");
+    const gone = await dead(pid); if (!gone) process.kill(pid, "SIGKILL");
+    expect(gone).toBe(true);
   }, 30_000);
 });

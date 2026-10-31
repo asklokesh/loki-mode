@@ -3,7 +3,8 @@
 // reported as unknown. A success verdict (VERIFIED or ALREADY_SATISFIED) needs at least one Loki-executed check with n>0 and a
 // pass (hasExecutedProof). Every site that sets result "pass" for a test run routes through classifyCheck.
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { killGroup, SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readlinkSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1244,20 +1245,28 @@ export async function mapPool<T, R>(items: T[], jobs: number, fn: (item: T) => P
   await Promise.all(Array.from({ length: Math.min(Math.max(1, jobs), items.length) }, async () => { while (next < items.length && !stop()) { const i = next++; out[i] = await fn(items[i]!); } }));
   return out;
 }
-/** SIGKILL a detached child's whole process group (never by name); a wrapper's grandchild runner otherwise survives and holds the stdio pipes. Errors (group gone, no group support) are ignored. */
-export function killGroup(pid: number | undefined): void { if (pid) try { process.kill(-pid, "SIGKILL"); } catch { /* group already gone */ } }
+// A SIGKILL of the owner (a worker group kill on cancel or cap) cannot run its cleanup, so a detached runner group would outlive it. This watcher
+// runs in its own group, polls the owner and SIGKILLs the runner group once the owner is gone; the owner kills the watcher at a normal finish.
+const WATCHDOG = `const O = __O__, G = __G__; setInterval(() => { try { process.kill(O, 0); } catch { try { process.kill(-G, "SIGKILL"); } catch {} process.exit(0); } }, 200);`;
+const watchdogArgv = (): string[] => [process.execPath, ...SAFE_BUN_FLAGS, "-e", WATCHDOG];
+function startWatchdog(pgid: number | undefined): ChildProcess | undefined {
+  if (!pgid) return undefined;
+  const [bin, ...a] = watchdogArgv(); a[a.length - 1] = WATCHDOG.replace("__O__", String(process.pid)).replace("__G__", String(pgid));
+  try { const w = spawn(bin!, a, { detached: true, stdio: "ignore", env: { PATH: process.env["PATH"] ?? "" } }); w.on("error", () => {}); w.unref(); return w; } catch { return undefined; }
+}
 // Bun's spawnSync ignores `detached`, so the sync path cannot lead its own process group. It runs the command through this launcher (a child of the same runtime) which does lead one, kills the whole group at the timeout and prints {status, output}.
-const GROUP_LAUNCHER = `const { spawn } = require("node:child_process"); const [cmd, args, cwd, ms] = JSON.parse(require("node:fs").readFileSync(0, "utf8")); const MAX = 1048576; let out = "", err = "", to = false, fin = false;
-const c = spawn(cmd, args, { cwd: cwd || undefined, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+const GROUP_LAUNCHER = `const { spawn } = require("node:child_process"); const fs = require("node:fs"); const [cmd, args, cwd, ms, wd] = JSON.parse(fs.readFileSync(0, "utf8")); const MAX = 1048576; let out = "", err = "", to = false, fin = false;
+const c = spawn(cmd, args, { cwd: cwd || undefined, env: process.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+let w; try { const a = wd.slice(1); a[a.length - 1] = a[a.length - 1].replace("__O__", String(process.pid)).replace("__G__", String(c.pid)); w = spawn(wd[0], a, { detached: true, stdio: "ignore", env: { PATH: process.env.PATH || "" } }); w.on("error", () => {}); } catch {}
 const kill = (s) => { try { process.kill(-c.pid, s); } catch { try { c.kill(s); } catch {} } };
-const done = (code, sig) => { if (fin) return; fin = true; kill("SIGKILL"); process.stdout.write(JSON.stringify({ status: to || sig ? null : code, output: out + "\\n" + err })); process.exit(0); };
+const done = (code, sig) => { if (fin) return; fin = true; kill("SIGKILL"); try { w.kill("SIGKILL"); } catch {} const b = Buffer.from(JSON.stringify({ status: to || sig ? null : code, output: out + "\\n" + err })); for (let i = 0; i < b.length;) { try { i += fs.writeSync(1, b, i); } catch (e) { if (e.code !== "EAGAIN") break; } } process.exit(0); };
 setTimeout(() => { to = true; kill("SIGTERM"); setTimeout(() => done(null, 1), 1000); }, ms);
 const over = () => { if (out.length > MAX || err.length > MAX) { to = true; kill("SIGKILL"); } };
 c.stdout.on("data", (d) => { out += d; over(); }); c.stderr.on("data", (d) => { err += d; over(); });
 c.on("error", () => done(null, 1)); c.on("close", done); c.on("exit", (a, b) => setTimeout(() => done(a, b), 500)); `;
 /** Sync twin of spawnCollect with the same group-kill and timeout contract (status null on spawn error, signal or timeout). */
 export function spawnGroupSync(cmd: string, args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number }): { status: number | null; output: string } {
-  const r = spawnSync(process.execPath, ["-e", GROUP_LAUNCHER], { input: JSON.stringify([cmd, args, o.cwd ?? "", o.timeoutMs]), env: o.env, encoding: "utf8", timeout: o.timeoutMs + 5000, killSignal: "SIGKILL", maxBuffer: 16 * 1024 * 1024 });
+  const r = spawnSync(process.execPath, [...SAFE_BUN_FLAGS, "-e", GROUP_LAUNCHER], { input: JSON.stringify([cmd, args, o.cwd ?? "", o.timeoutMs, watchdogArgv()]), env: o.env, encoding: "utf8", timeout: o.timeoutMs + 5000, killSignal: "SIGKILL", maxBuffer: 16 * 1024 * 1024 });
   try { return JSON.parse(r.stdout) as { status: number | null; output: string }; } catch { return { status: null, output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` }; }
 }
 /** TEN-SPEED-19: async twin of the sync spawn used by RealBaseTestRunner: status is null on spawn error, signal or timeout; output is stdout and stderr merged by arrival. The child leads its own process group: SIGTERM at the timeout, then SIGKILL to the group 1s later, and the result resolves on exit plus a short drain grace, never waiting on a grandchild that holds the pipes. */
@@ -1265,11 +1274,12 @@ export function spawnCollect(cmd: string, args: string[], o: { cwd?: string; env
   return new Promise((resolve) => {
     let out = "", err = "", error = false, done = false; const MAX = 1024 * 1024; // spawnSync parity: stdin EOF, default maxBuffer, "stdout\nstderr" join
     const timers: NodeJS.Timeout[] = [];
-    const fin = (status: number | null) => { if (!done) { done = true; timers.forEach(clearTimeout); killGroup(c.pid); resolve({ status: error ? null : status, output: `${out}\n${err}` }); } };
+    const fin = (status: number | null) => { if (!done) { done = true; timers.forEach(clearTimeout); killGroup(c.pid, "SIGKILL"); wd?.kill("SIGKILL"); resolve({ status: error ? null : status, output: `${out}\n${err}` }); } };
     const c = spawn(cmd, args, { cwd: o.cwd, env: o.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const wd = startWatchdog(c.pid);
     const term = () => { try { process.kill(-c.pid!, "SIGTERM"); } catch { c.kill("SIGTERM"); } };
-    timers.push(setTimeout(() => { error = true; term(); timers.push(setTimeout(() => { killGroup(c.pid); fin(null); }, 1000)); }, o.timeoutMs)); // spawn's own timeout would signal the direct child only
-    const over = () => { if (out.length > MAX || err.length > MAX) { error = true; killGroup(c.pid); } };
+    timers.push(setTimeout(() => { error = true; term(); timers.push(setTimeout(() => { killGroup(c.pid, "SIGKILL"); fin(null); }, 1000)); }, o.timeoutMs)); // spawn's own timeout would signal the direct child only
+    const over = () => { if (out.length > MAX || err.length > MAX) { error = true; killGroup(c.pid, "SIGKILL"); } };
     c.stdout?.on("data", (d) => { out += d; over(); }); c.stderr?.on("data", (d) => { err += d; over(); });
     c.on("error", () => { error = true; fin(null); }); c.on("close", (code, sig) => fin(sig ? null : code));
     c.on("exit", (code, sig) => { timers.push(setTimeout(() => fin(sig ? null : code), 500)); }); // drain grace; close normally wins
