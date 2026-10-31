@@ -290,16 +290,7 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
     }
     let skipReason = t.reason;
     if (t.decision === "too-large" && a.split) {
-      let p: Decomposition;
-      try {
-        p = parseDecomposition(await d.decompose(slug, i, t.reason));
-        if (!p.ok && p.over !== undefined) {
-          d.out(`#${i.number} split had ${p.over} slices, over the cap; asking once more\n`);
-          p = parseDecomposition(await d.decompose(slug, i, t.reason, overCapNote(p.over)));
-        }
-      } catch (e) {
-        p = { ok: false, reason: `split call failed: ${e instanceof Error ? e.message : String(e)}` };
-      }
+      const p = await splitWithReask(d, slug, i, t.reason);
       if (p.ok) {
         epics.push({ issue: i, reason: t.reason, plan: p });
         d.out(`#${i.number} split into ${p.slices.length} slices: ${p.slices.map((s) => s.id + (p.parent[s.id] ? `<-${p.parent[s.id]}` : "")).join(", ")}\n`);
@@ -380,12 +371,7 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
     const late: typeof epics = [];
     for (const i of wholeFailed) {
       const why = rows.get(i.number)?.outcome ?? "the whole-issue run failed";
-      let p: Decomposition;
-      try {
-        p = parseDecomposition(await d.decompose(slug, i, `the whole-issue run did not finish: ${why}`));
-      } catch (e) {
-        p = { ok: false, reason: `split call failed: ${e instanceof Error ? e.message : String(e)}` };
-      }
+      const p = await splitWithReask(d, slug, i, `the whole-issue run did not finish: ${why}`);
       if (!p.ok) {
         d.out(`#${i.number} split refused: ${clip(p.reason, 160)}\n`);
         continue;
@@ -458,6 +444,20 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
  * or its sealed receipt says FAILED with a committed change. A worker crash, a setup failure (no sealed receipt or no change), a
  * spec conflict and a stall never qualify: splitting those only buys a planning call plus slices that fail the same way.
  */
+// One decompose call, re-asked once with the cap and count when the split came back over the cap; a thrown call is a refused split.
+async function splitWithReask(d: IssuesRunDeps, slug: string, i: GhIssue, reason: string): Promise<Decomposition> {
+  try {
+    let p = parseDecomposition(await d.decompose(slug, i, reason));
+    if (!p.ok && p.over !== undefined) {
+      d.out(`#${i.number} split had ${p.over} slices, over the cap; asking once more\n`);
+      p = parseDecomposition(await d.decompose(slug, i, reason, overCapNote(p.over)));
+    }
+    return p;
+  } catch (e) {
+    return { ok: false, reason: `split call failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 export function wholeRunTooLarge(pr: string | null | undefined, res: Pick<RunResult, "rc" | "verdict" | "didWork">): boolean {
   if (pr) return false;
   if (res.verdict === "BLOCKED" || res.verdict === "SPEC_CONFLICT") return false;

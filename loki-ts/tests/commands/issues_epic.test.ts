@@ -140,7 +140,7 @@ describe("parseDecomposition (schema, L0: the model decides the split, the harne
 describe("loki issues run: epic split", () => {
   test("stacking: slices run in dependency order, each in a worktree on its parent's branch, PR base = parent branch", async () => {
     const h = harness({ issues: [issue(12, "Big epic")] });
-    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes", "--parallel", "1"], h.inject)).toBe(0);
     expect(h.decomposed).toEqual([12]);
     expect(h.ran.map(h.sliceOf)).toEqual(["s1", "s2", "s3", "s4"]);
     // Roots start from HEAD and PR to the default branch; s2 stacks on s1's run branch, s3 on s2's.
@@ -163,7 +163,7 @@ describe("loki issues run: epic split", () => {
 
   test("stop rule: a FAILED slice skips its dependents (transitively) while an independent sibling still runs", async () => {
     const h = harness({ issues: [issue(12)], verdicts: { s2: { verdict: "FAILED", rc: 1, pr: false } } });
-    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes", "--parallel", "1"], h.inject)).toBe(0);
     expect(h.ran.map(h.sliceOf)).toEqual(["s1", "s2", "s4"]);
     const text = h.out.join("");
     expect(text).toContain("s3 title s3: SKIPPED (depends on s2, which was FAILED)");
@@ -196,7 +196,7 @@ describe("loki issues run: epic split", () => {
     const six = plan(...["a", "b", "c", "d", "e", "f"].map((id) => slice(id)));
     const three = plan(slice("s1"), slice("s2", ["s1"]), slice("s3"));
     const h = harness({ issues: [issue(12)], decomposeSeq: { 12: [six, three] } });
-    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(0);
     expect(h.decomposed).toEqual([12, 12]);
     expect(h.notes).toHaveLength(1);
     expect(h.notes[0]).toContain("6 slices");
@@ -208,7 +208,7 @@ describe("loki issues run: epic split", () => {
     const six = plan(...["a", "b", "c", "d", "e", "f"].map((id) => slice(id)));
     const five = plan(...["a", "b", "c", "d", "e"].map((id) => slice(id)));
     const h = harness({ issues: [issue(12)], decomposeSeq: { 12: [six, five] } });
-    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(0);
     expect(h.decomposed).toEqual([12, 12]);
     expect(h.ran).toEqual([]);
     expect(h.out.join("")).toMatch(/\| #12 issue 12 \| too-large \| skipped: split refused: a split may have at most 4 slices, got 5/);
@@ -255,7 +255,7 @@ describe("loki issues run: epic split", () => {
 
   test("the digest shows each epic as a tree (golden)", async () => {
     const h = harness({ issues: [issue(12, "Big epic")], verdicts: { s2: { verdict: "PARTIAL" }, s3: { verdict: "FAILED", rc: 1, pr: false } } });
-    expect(await runIssues(["run", SLUG, "--triage", "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes", "--parallel", "1"], h.inject)).toBe(0);
     const runs = readdirSync(join(dir, ".loki", "issues-run"));
     // The Time cell is wall-clock; everything else is golden.
     const digest = readFileSync(join(dir, ".loki", "issues-run", runs[0]!, "digest.md"), "utf8").replace(/ \| \d+s \|$/m, " | - |");
@@ -332,6 +332,17 @@ describe("loki issues run: epic split", () => {
       expect(await runIssues(["run", SLUG, "--yes"], noTriage(h, []))).toBe(0);
       expect(h.decomposed).toEqual([12]);
       expect(h.ran.map(h.sliceOf).filter((x) => x?.startsWith("s")).sort()).toEqual(["s1", "s2", "s3", "s4"]);
+    });
+
+    test("a post-failure split over the cap is re-asked exactly once, and the valid second split runs", async () => {
+      const six = plan(...["a", "b", "c", "d", "e", "f"].map((id) => slice(id)));
+      const two = plan(slice("s1"), slice("s2", ["s1"]));
+      const h = harness({ issues: [issue(12)], decomposeSeq: { 12: [six, two] }, verdicts: { "o/r#12": { verdict: "FAILED", rc: 3, pr: false } } });
+      expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+      expect(h.decomposed).toEqual([12, 12]);
+      expect(h.notes).toHaveLength(1);
+      expect(h.notes[0]).toContain("6 slices");
+      expect(h.ran.map(h.sliceOf).filter((x) => x?.startsWith("s")).sort()).toEqual(["s1", "s2"]);
     });
 
     test("a failed whole-issue run that committed work splits once; a verified one and --no-split do not split", async () => {
@@ -451,7 +462,7 @@ describe("PR-first epics: a small cap, independent slices first, concurrent sche
   });
   test("runIssues prints the epic progress line while slices run", async () => {
     const h = harness({ issues: [issue(12)] });
-    expect(await runIssues(["run", SLUG, "--yes", "--parallel", "2"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes", "--parallel", "2"], h.inject)).toBe(0);
     expect(h.out.join("")).toMatch(/#12 epic: \d+\/\d+ slices done, \d+ running, \d+ waiting/);
   });
 });
