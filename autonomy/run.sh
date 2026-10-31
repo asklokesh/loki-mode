@@ -29071,7 +29071,11 @@ _loki_remove_pgid_file() {
 _loki_session_exit_cleanup() {
     local exit_code=$?
     _loki_terminal_record 2>/dev/null || true
+    # Only the process that armed the trap releases the session lock: an EXIT
+    # trap also fires in SUBSHELLS ($$ is stable there, BASHPID is not), and a
+    # subshell exiting must not release the live parent's lock.
     if [ -n "${_LOKI_SESSION_LOCK_FILE:-}" ] \
+       && [ "${BASHPID:-$$}" = "${_LOKI_SESSION_LOCK_OWNER:-$$}" ] \
        && type safe_release_lock >/dev/null 2>&1; then
         safe_release_lock "$_LOKI_SESSION_LOCK_FILE" 2>/dev/null || true
     fi
@@ -29096,6 +29100,7 @@ _loki_session_exit_cleanup() {
 
 _loki_arm_session_exit_cleanup() {
     _LOKI_SESSION_LOCK_FILE="${1:-}"
+    _LOKI_SESSION_LOCK_OWNER="${BASHPID:-$$}"
     trap '_loki_session_exit_cleanup' EXIT
 }
 
@@ -29128,6 +29133,14 @@ with os.fdopen(fd, 'w') as handle:
     json.dump(record, handle, sort_keys=True)
 os.replace(tmp, path)
 " 2>/dev/null || true
+}
+
+# Activation funnel (legacy route): a run ended by a signal or STOP file still
+# finished. Detached and best-effort, like the normal run end in main().
+_loki_activation_run_finished() {
+    if declare -f loki_emit_activation >/dev/null 2>&1; then
+        ( loki_emit_activation first_run_finished >/dev/null 2>&1 </dev/null & ) 2>/dev/null || true
+    fi
 }
 
 cleanup() {
@@ -29245,6 +29258,7 @@ except (json.JSONDecodeError, OSError): pass
         else
             log_info "Session stopped."
         fi
+        _loki_activation_run_finished
         exit "$final_exit_code"
     fi
 
@@ -29298,6 +29312,7 @@ except (json.JSONDecodeError, OSError): pass
         save_state ${RETRY_COUNT:-0} "interrupted" 130
         emit_event_json "session_end" "result=130" "reason=interrupted"
         log_info "State saved. Run again to resume."
+        _loki_activation_run_finished
         exit 130
     fi
 
@@ -30072,9 +30087,7 @@ main() {
 
     # Activation funnel (legacy route): the run ended, whatever the outcome.
     # first_verified is sent by loki_emit_build_verified on a VERIFIED proof.
-    if declare -f loki_emit_activation >/dev/null 2>&1; then
-        ( loki_emit_activation first_run_finished >/dev/null 2>&1 </dev/null & ) 2>/dev/null || true
-    fi
+    _loki_activation_run_finished
 
     # Final GitHub sync: sync all completed tasks and create PR (v5.41.0)
     sync_github_completed_tasks
