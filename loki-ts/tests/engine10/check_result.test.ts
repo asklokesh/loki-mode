@@ -144,6 +144,12 @@ describe("verdict gate", () => {
     expect(verdictOf(o(), [pass0], false, false, false, false)).toBe("PARTIAL");
     expect(verdictOf(o(), [pass0], false, false, false, true)).toBe("VERIFIED");
   });
+  test("a sealed Wall copy that is missing or not the sealed bytes is PARTIAL, a clean copy stays VERIFIED", () => {
+    const copyGap = ["Wall test not published: tests/loki_wall_a.test.ts (sealed copy missing or not the sealed bytes)"];
+    expect(verdictOf(o(), [pass0], false, false, false, true, false, [], [], copyGap)).toBe("PARTIAL");
+    expect(verdictOf(o(), [pass0], false, false, false, true, false, [], [], [])).toBe("VERIFIED");
+    expect(verdictOf(o({ implement: { exit: "killed", limit_s: 60 } }), [pass0], false, false, false, true, true, [], [], copyGap)).toBe("PARTIAL");
+  });
   test("ALREADY_SATISFIED with zero executed checks (FC-16) is PARTIAL", () => {
     const a = o({ implement: { exit: "already_done" } });
     expect(verdictOf(a, [], true, false, false, false)).toBe("PARTIAL");
