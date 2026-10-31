@@ -24,9 +24,10 @@ import {
   runWall,
   wallStage, sealedWallCopy,
   type BaseTestRunner,
-  WALL_BASE_FILES, WALL_RUNG_S, WALL_STAGE_LIMIT_S, BASE_RUN_TIMEOUT_MS,
+  WALL_BASE_FILES, WALL_RUNG_S, WALL_STAGE_LIMIT_S, BASE_RUN_TIMEOUT_MS, WALL_REAUTHOR_EXHAUSTED, wallAuthor, installWall, type WallAuthored,
 } from "../../src/engine10/stages/wall.ts";
 import { evidenceBrief } from "../../src/util/wall_cases.ts";
+import { wallConcurrent } from "../../src/util/wall_knobs.ts";
 import type {
   RunContext,
   SessionResult,
@@ -942,7 +943,7 @@ describe("COST-11 haiku-first Wall author", () => {
   });
   test("overrides pin the model: no haiku, no escalation", async () => {
     for (const env of [{ LOKI_E10_WALL_TIER: "sonnet" }, { LOKI_MODEL_OVERRIDE: "opus" }, { LOKI_E10_WALL_FIRST: "0" }, { LOKI_E10_WALL_CONCURRENT: "1" }]) {
-      const r = await run(() => true, { pass: 0, fail: 0 }, env);
+      const r = await run(() => true, { pass: 1, fail: 0 }, env);
       expect(r.models).toHaveLength(1);
       expect(r.models[0]).not.toBe(HAIKU);
     }
@@ -1007,6 +1008,74 @@ describe("COST-11 r2: escalation on doubt", () => {
     } finally { delete process.env.LOKI_E10_WALL_TIER; }
   });
 
+  // A Wall whose every test has no real base result is dropped; the run must not continue Wall-less without one re-author that carries the base-run results.
+  describe("dropped sole Wall test: exactly one re-author", () => {
+    const PIN = { LOKI_E10_WALL_TIER: "sonnet" }; // same-model rung: the old cheap-rung gate never fired here
+    const notRun = (): BaseTestRunner => ({ run: () => ({ pass: 0, fail: 0, not_run: 1 }) });
+    const droppedFirst = (): BaseTestRunner => { let calls = 0; return { run: () => (++calls === 1 ? { pass: 0, fail: 0, not_run: 1 } : { pass: 0, fail: 1, not_run: 0 }) }; };
+    const briefs = (): { list: string[]; f: (n: number, o: SessionRunOptions) => { files: string[] } } => { const list: string[] = []; return { list, f: (n, o) => { list.push(o.brief); return { files: [`loki_wall_a${n}.test.ts`] }; } }; };
+    test("sole test dropped -> one re-author -> the new test runs, and the rewrite brief carries the base-run results", async () => {
+      const b = briefs(), r = await go(b.f, () => false, PIN, droppedFirst());
+      expect(r.models).toHaveLength(2);
+      expect(r.events.filter((e) => e === "wall.reauthor:wall")).toHaveLength(1);
+      expect(r.result.data.reauthored).toBe(true);
+      expect((r.result.data.files as { path: string }[]).map((f) => f.path.split("/").pop())).toEqual(["loki_wall_a2.test.ts"]);
+      expect(b.list[0]).not.toContain("left no test that ran");
+      expect(b.list[1]).toContain("left no test that ran on the base tree");
+      expect(b.list[1]).toContain("not run 1");
+      expect(b.list[1]).toContain("must pass on the base tree");
+      expect(r.result.data.not_proven).toBeUndefined();
+    });
+    test("the re-authored test dropped again -> still no Wall test, disclosed as NOT PROVEN, exactly one re-author (never a loop)", async () => {
+      const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => false, PIN, notRun());
+      expect(r.models).toHaveLength(2);
+      expect(r.events.filter((e) => e === "wall.reauthor:wall")).toHaveLength(1);
+      expect((r.result.data.files as unknown[]).length).toBe(0);
+      expect(r.result.data.not_proven).toContain(WALL_REAUTHOR_EXHAUSTED);
+      expect(r.result.data.already_satisfied).toBe(false);
+      expect(wallGreenOnBaseOf({ wall: r.result.data })).toBe(false);
+    });
+    test("several tests, one dropped -> no re-author (unchanged)", async () => {
+      let calls = 0;
+      const r = await go(() => ({ files: ["loki_wall_a.test.ts", "loki_wall_b.test.ts"] }), () => false, PIN, { run: () => (++calls === 1 ? { pass: 0, fail: 0, not_run: 1 } : { pass: 0, fail: 1, not_run: 0 }) });
+      expect(r.models).toHaveLength(1);
+      expect(r.events).not.toContain("wall.reauthor:wall");
+      expect((r.result.data.files as unknown[]).length).toBe(1);
+    });
+    test("disclosure only: after the second drop the Wall result is empty, not green, and carries the exhausted note; the external-diff verdict is PARTIAL", async () => {
+      const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => false, PIN, notRun());
+      const pass0 = { name: "t", cmd: "x", result: "pass", n: 1 } as never, o = { implement: { exit: "external" }, wall: r.result.data } as never;
+      expect(verdictOf(o, [pass0], false, false, false, true)).toBe("PARTIAL");
+      expect(r.result.data.green_on_base).toBeUndefined();
+      expect(r.result.data.already_satisfied).toBe(false);
+    });
+    test("pins the real seal outcome: a second drop on a normal run is disclosed as NOT PROVEN (wall.not_proven), not capped; the cap is a separate seal gate", async () => {
+      const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => false, PIN, notRun());
+      const pass0 = { name: "t", cmd: "x", result: "pass", n: 1 } as never, o = { implement: { exit: "done" }, wall: r.result.data } as never;
+      expect(r.result.data.not_proven).toContain(WALL_REAUTHOR_EXHAUSTED);
+      expect(verdictOf(o, [pass0], false, false, false, true)).toBe("VERIFIED"); // today seal only lists wall.not_proven (seal.ts); a cap would change this row
+    });
+    test("concurrent path (split author + install, taken under a tier or model pin) is not re-authored: one session, the drop is disclosed", async () => {
+      const keys = ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE", "LOKI_E10_WALL_FIRST", "LOKI_E10_WALL_CONCURRENT"];
+      for (const k of keys) delete process.env[k];
+      process.env.LOKI_E10_WALL_TIER = "sonnet";
+      const s = setup({ runners: ["vitest"], tests: [] }), events: string[] = [];
+      let n = 0;
+      const sessions = new FakeSessionRunner((o) => { n++; writeFileSync(join(o.cwd!, "loki_wall_sample.test.ts"), SAMPLE, "utf8"); });
+      const ctx = fakeCtx(s.repoDir, s.runDir, sessions, { intake: { task: "add x", testmap: s.testmap, repomap_ref: join(s.runDir, "repomap.json") } }, events);
+      try {
+        expect(wallConcurrent()).toBe(true);
+        const a = await wallAuthor(ctx, new AbortController().signal);
+        expect(a.kind).toBe("authored");
+        const res = installWall(ctx, a as WallAuthored, ctx.repoDir, { baseRunner: notRun() });
+        expect(n).toBe(1);
+        expect(events).not.toContain("wall.reauthor:wall");
+        expect((res.data.files as unknown[]).length).toBe(0);
+        expect(res.data.reauthored).toBeUndefined();
+        expect(res.data.base_run).toMatchObject({ not_run: 1 });
+      } finally { for (const k of keys) delete process.env[k]; rmSync(s.repoDir, { recursive: true, force: true }); }
+    });
+  });
   test("N3: a killed haiku session escalates once and both attempt ids are in the stage result (the ledger path is tested in machine.test.ts)", async () => {
     const r = await go((n) => (n === 1 ? { files: [], result: KILLED } : { files: ["loki_wall_b.test.ts"] }), () => false);
     expect(r.models).toEqual([HAIKU, SONNET]);
@@ -1246,7 +1315,7 @@ describe("Wall re-author follows the run tier", () => {
   });
   test("an explicit LOKI_E10_WALL_TIER pin is honored on a haiku run", async () => {
     const r = await run(HAIKU, { LOKI_E10_WALL_TIER: "sonnet" });
-    expect(r.models).toEqual([SONNET]);
+    expect(r.models).toEqual([SONNET, SONNET]); // a pin keeps the model; the dropped sole Wall test is re-authored once on it
   });
 });
 
