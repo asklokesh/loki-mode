@@ -2,12 +2,14 @@
 // A run starts from the base the user asked for; only the ALREADY_SATISFIED claim must rest on the PR target, never on
 // commits that exist only in target..HEAD (Loki's own unmerged work or the user's own).
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync } from "node:fs";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { existsSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyCheck, goRunner } from "./check_result.ts";
 import { listRunIds } from "../commands/run_status.ts";
 import { safeGit } from "./safe_git.ts";
+import { isManifestPath } from "../supply/supply_guard.ts";
+import { isTestFile } from "./test_file_text.ts";
 import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 
 function git(repoDir: string, args: string[], timeout = 20000, extraEnv: Record<string, string> = {}): string | null {
@@ -200,6 +202,40 @@ export function addedSymlinkNotes(rawDiff: string[], planText: string | null): s
   return out;
 }
 
+export interface DeclaredAdvisoryCtx {
+  repoDir: string; runDir: string; baseSha: string;
+  rawDiff: string[]; // diff-tree -z --raw list (meta, path pairs)
+  planFiles: string[]; // plan-scope.json "files"
+  wallPaths: string[]; // repo-relative Wall test paths
+  wallPassedN: boolean; // the Wall ran and passed with n > 0 in verify's raw checks
+}
+const ADVISORY_PATH = /^(?:test configuration changed|runner config changed): (.+?)(?: \(.*\))?$|^symlink added by the change .*?\): (.+)$/;
+/** An advisory about a change the plan declared, or that a passing Wall requires, is disclosed and does not cap the verdict. Only ADDED paths qualify, so an edit to an existing file still caps,
+ *  and so does anything the plan never declared. Config: the EXACT added path is in plan-scope.json, it is a package manifest (never a test-runner config, hook or setup file), and its folder held
+ *  no file at base (a new package). Symlink: it resolves, through every hop, to a regular file inside the repo that THIS diff added or modified and that is neither a test nor a Wall file, AND the
+ *  plan declared the link or a passing Wall names its path (or quotes its name). Everything else stays capping. */
+export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx): { capping: string[]; disclosed: string[] } {
+  const added = new Set<string>(), changed = new Set<string>();
+  for (let i = 0; i + 1 < c.rawDiff.length; i += 2) { const st = c.rawDiff[i]!.trim().split(" ").pop(); if (st === "A") added.add(c.rawDiff[i + 1]!); if (st === "A" || st === "M") changed.add(c.rawDiff[i + 1]!); }
+  let wallText: string | null = null;
+  const wall = (): string => wallText ??= c.wallPaths.map((w) => { for (const f of [join(c.runDir, "wall", basename(w)), join(c.repoDir, w)]) try { return readFileSync(f, "utf8"); } catch { /* try next */ } return ""; }).join("\n");
+  const esc = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const named = (f: string): boolean => new RegExp(`${f.includes("/") ? `(?<![\\w./-])${esc(f)}(?![\\w-])|` : ""}[/"'\`]${esc(basename(f))}(?=["'\`\\s);]|$)`).test(wall());
+  const newPackage = (f: string): boolean => { try { return safeGit(c.repoDir, ["ls-tree", "--name-only", c.baseSha, "--", `${dirname(f)}/`], { stdio: ["ignore", "pipe", "ignore"] }).trim() === "" && dirname(f) !== "."; } catch { return false; } };
+  const linkOk = (f: string): boolean => {
+    try {
+      const root = realpathSync(c.repoDir), t = realpathSync(join(c.repoDir, f)), rel = relative(root, t);
+      return !rel.startsWith("..") && !rel.split(sep).includes(".git") && statSync(t).isFile() && changed.has(rel.split(sep).join("/")) && !isTestFile(rel) && !c.wallPaths.includes(rel);
+    } catch { return false; }
+  };
+  const capping: string[] = [], disclosed: string[] = [];
+  for (const n of notes) {
+    const m = ADVISORY_PATH.exec(n), f = m?.[1] ?? m?.[2];
+    const ok = !!m && !!f && added.has(f) && c.wallPassedN && (m[2] ? linkOk(f) && (c.planFiles.includes(f) || named(f)) : c.planFiles.includes(f) && isManifestPath(f) && newPackage(f));
+    (ok ? disclosed : capping).push(n);
+  }
+  return { capping, disclosed };
+}
 
 const RUN_BRANCH_RE = /^loki\/[A-Za-z0-9._\/-]+$/;
 const tipOf = (repoDir: string, ref: string): string | null => {
