@@ -147,6 +147,40 @@ export function clauseGapOf(set: ClauseSet | null | undefined, files: Iterable<s
   return set.clauses.filter((c) => !covered.has(c.id)).map((c) => `spec clause not covered: ${c.id}: ${c.text}`);
 }
 
+// WALL-ASSERT-STRENGTH: assertion lines that check an error occurred without naming which one on that line or the 3 lines after it. Disclosure only, never a verdict cap: a bare error check is sometimes all a spec states.
+const WEAK_TOKENS: RegExp[] = [
+  /\b(?:debug_)?assert!\s*\(\s*(?!!)[^;]*?\.is_err\(\)\s*(?:,[^;]*)?\)/, // Rust: assert!(x.is_err()) with or without a message; a negated !x.is_err() is not an error check
+  /\b(?:raises|assertRaises)\(\s*(?:Exception|BaseException)\s*[,)]/, // Python: raises or assertRaises with the bare base Exception (a match= on the line pins it)
+  /\.toThrow(?:Error)?\(\s*\)|\.to\.throw\(\s*\)/, // JS/TS: toThrow() / rejects.toThrow() / chai .to.throw() with no message or class
+  /\bif\s+err\s*==\s*nil\s*\{|\b(?:assert|require)\.Error\(\s*t\s*,\s*err\s*(?:,[^()]*)?\)/, // Go: only checks that err is non-nil
+  /\[\[?\s*"?\$\{?status\}?"?\s+-ne\s+0\s*\]|^\s*assert_failure\s*(?:#.*)?$|^\s*run\s+!\s/, // bats: any failure code accepted
+];
+const WEAK_PIN = /\berrors\.Is\b|\bErrorIs\b|\bErrorContains\b|\bEqualError\b|\bunwrap_err\b|\bcm\.exception\b|\bexcinfo\b|\$\{?output\b|\bmatch=|\bassert_output\b/;
+const TEST_START = /^\s*(?:#\[test\]|@test\b|def test|func Test|(?:it|test|describe)\()/;
+const COMMENT_LINE = /^\s*(?:#(?!\[)|\/\/|--|\/\*|\*)/;
+/** node:test assert.throws(fn) / assert.rejects(p) closed on one line with no validator argument. */
+function nodeBareThrow(l: string): boolean {
+  const m = /\bassert\.(?:throws|rejects)\(/.exec(l); if (!m) return false;
+  let depth = 1;
+  for (let k = m.index + m[0].length; k < l.length; k++) { const c = l[k]!; if (c === "(" || c === "{" || c === "[") depth++; else if (c === ")" || c === "}" || c === "]") { depth--; if (depth === 0) return true; } else if (c === "," && depth === 1) return false; }
+  return false; // not closed on this line: a validator may follow, so it is not counted
+}
+
+/** NOT PROVEN line for Wall error assertions that do not pin the error on the line or the 3 lines after, or null when there are none. Files are {rel, body}. */
+export function weakAssertionNote(files: Iterable<{ rel: string; body: string }>): string | null {
+  const at: string[] = []; let n = 0;
+  for (const f of files) {
+    const lines = f.body.split("\n"), hit: number[] = [];
+    lines.forEach((l, i) => {
+      if (COMMENT_LINE.test(l) || !(WEAK_TOKENS.some((re) => re.test(l)) || nodeBareThrow(l))) return;
+      for (let k = i; k <= i + 3 && k < lines.length; k++) { if (k > i && TEST_START.test(lines[k]!)) break; if (!COMMENT_LINE.test(lines[k]!) && WEAK_PIN.test(lines[k]!)) return; }
+      hit.push(i + 1);
+    });
+    if (hit.length > 0) { n += hit.length; at.push(`${f.rel}:${hit.join(",")}`); }
+  }
+  return n === 0 ? null : `Wall assertion strength not measured: ${n} error assertion(s) do not name the expected error on the same line or the 3 lines after (${at.join("; ")}); the Wall is model-authored`;
+}
+
 export function renderSpec(task: string, c: SpecCriteria, set?: ClauseSet | null): string {
   const quoted = task.split("\n").map((l) => `> ${l}`.trimEnd());
   const cl = set ? [...set.clauses.map((x) => `- ${clauseLine(x)}`), ...(set.dropped ? [`- ${clauseDroppedNote(set.dropped)}`] : [])] : [];

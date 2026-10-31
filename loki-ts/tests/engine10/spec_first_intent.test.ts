@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { buildPlanBrief } from "../../src/engine10/stages/plan.ts";
 import { buildImplementBrief } from "../../src/engine10/stages/implement.ts";
-import { clauseBriefBlock, clauseGapOf, clauseLine, coveredClauses, extractClauses, generateSpec, loadSpecFile, parseSpec, renderSpec, slugify, specPrLine, specReceiptBlock, SpecError, specBriefBlock } from "../../src/util/spec_file.ts";
+import { clauseBriefBlock, clauseGapOf, clauseLine, coveredClauses, extractClauses, generateSpec, loadSpecFile, parseSpec, renderSpec, slugify, specPrLine, specReceiptBlock, SpecError, specBriefBlock, weakAssertionNote } from "../../src/util/spec_file.ts";
 import type { SessionResult, SessionRunner, SessionRunOptions } from "../../src/engine10/types.ts";
 
 const here = import.meta.dir;
@@ -363,5 +363,69 @@ describe("acceptance clause extraction (generic, anchored)", () => {
     const f = new Fake((o) => writeFileSync(jsonPathOf(o.brief), JSON.stringify(CRIT)));
     const g = await generateSpec({ task: PRD5, repoDir: dir, sessions: f });
     expect(loadSpecFile(g.path).criteria.filter((x) => /^C\d: /.test(x))).toHaveLength(5);
+  });
+});
+
+// WALL-ASSERT-STRENGTH: a disclosure of assertions that only prove an error happened; never a verdict input
+describe("weakAssertionNote", () => {
+  const note = (rel: string, body: string): string | null => weakAssertionNote([{ rel, body }]);
+  const wall = (n: string): string => readFileSync(join(here, "fixtures", "wall", n), "utf8");
+  test("replay of the rejected rust-expr-prd Wall surfaces the bare max() is_err line", () => {
+    const n = note("tests/loki_wall_calc.rs", wall("rust_expr_rejected.rs"));
+    expect(n).toBe(NOTE(3, "tests/loki_wall_calc.rs:22,23,107"));
+    expect(wall("rust_expr_rejected.rs").split("\n")[106]).toContain('eval("max()"');
+  });
+  test("an accepted Wall with exact Err(Arity(..)) asserts shows no line", () => {
+    expect(note("tests/loki_wall_calc.rs", wall("rust_expr_exact.rs"))).toBeNull();
+  });
+  const NOTE = (n: number, at: string): string => `Wall assertion strength not measured: ${n} error assertion(s) do not name the expected error on the same line or the 3 lines after (${at}); the Wall is model-authored`;
+  const rows: [string, string, string][] = [
+    ["rust", "assert!(f(1).is_err());", "assert_eq!(f(1), Err(E::Arity));"],
+    ["rust with a message", 'assert!(f(1).is_err(), "arity");', "assert_eq!(f(1), Err(E::Arity));"],
+    ["rust debug_assert", "debug_assert!(f(1).is_err());", "assert_eq!(f(1), Err(E::Arity));"],
+    ["python", "with pytest.raises(Exception):\n    f()", "with pytest.raises(ValueError):\n    f()"],
+    ["python unittest", "self.assertRaises(Exception, f)", "self.assertRaises(KeyError, f)"],
+    ["js", "expect(() => f()).toThrow();", 'expect(() => f()).toThrow("bad input");'],
+    ["js rejects", "await expect(p).rejects.toThrow();", "await expect(p).rejects.toThrow(RangeError);"],
+    ["chai", "expect(f).to.throw();", "expect(f).to.throw(RangeError);"],
+    ["node:test throws", "assert.throws(() => f(1));", "assert.throws(() => f(1), /bad input/);"],
+    ["node:test rejects", "await assert.rejects(p);", "await assert.rejects(p, { name: 'RangeError' });"],
+    ["go", "if err == nil {\n  t.Fatal(\"x\")\n}", "if !errors.Is(err, ErrArity) {\n  t.Fatal(\"x\")\n}"],
+    ["go testify", "assert.Error(t, err)", "assert.ErrorIs(t, err, ErrArity)"],
+    ["go require with a message", 'require.Error(t, err, "arity")', "require.EqualError(t, err, \"arity\")"],
+    ["bats status", '[ "$status" -ne 0 ]', '[ "$status" -eq 2 ]'],
+    ["bats assert_failure", "assert_failure", "assert_failure 2"],
+    ["bats run !", "run ! tool --bad", 'run tool --bad\n  [ "$status" -eq 2 ]'],
+  ];
+  for (const [name, weak, strong] of rows) {
+    test(`${name}: a bare error check is listed with the exact note, a pinned one is not`, () => {
+      expect(note("w", `// clause: C1\n${weak}\n`)).toBe(NOTE(1, "w:2"));
+      expect(note("w", `// clause: C1\n${strong}\n`)).toBeNull();
+    });
+  }
+  test("a pinning token on the next 3 lines of the same block suppresses the note; the 4th line or the next test does not", () => {
+    expect(note("w", 'if err == nil {\n  t.Fatal("x")\n}\nif !errors.Is(err, ErrArity) {\n}\n')).toBeNull();
+    expect(note("w", "assert!(f().is_err());\nlet e = f().unwrap_err();\n")).toBeNull();
+    expect(note("w", "assert.Error(t, err)\nassert.ErrorIs(t, err, ErrX)\n")).toBeNull();
+    expect(note("w", "require.Error(t, err)\nrequire.EqualError(t, err, \"x\")\n")).toBeNull();
+    expect(note("w", "require.Error(t, err)\nrequire.ErrorContains(t, err, \"x\")\n")).toBeNull();
+    expect(note("w", "assert!(f().is_err());\n\n\n\nlet e = f().unwrap_err();\n")).toBe(NOTE(1, "w:1"));
+    expect(note("w", "assert!(f().is_err());\n#[test]\nfn b() { let e = f().unwrap_err(); }\n")).toBe(NOTE(1, "w:1"));
+    expect(note("w", "run tool\nassert_failure\nassert_output --partial 'bad'\n")).toBeNull();
+    expect(note("w", 'run tool\n[ "$status" -ne 0 ]\n[[ "$output" == *bad* ]]\n')).toBeNull();
+    expect(note("w", "with pytest.raises(Exception) as excinfo:\n    f()\n")).toBeNull();
+    expect(note("w", "with self.assertRaises(Exception) as cm:\n    f()\nself.assertIn('x', str(cm.exception))\n")).toBeNull();
+  });
+  test("raises(Exception, match=...), a negated !x.is_err(), and is_none() are not error checks to disclose", () => {
+    expect(note("w", 'with pytest.raises(Exception, match="bad"):\n    f()\n')).toBeNull();
+    expect(note("w", "assert!(!f(1).is_err());\n")).toBeNull();
+    expect(note("w", "assert!(g().is_none());\n")).toBeNull();
+  });
+  test("node:test assert.throws that closes on its line with a second argument is not counted; one that spans lines is not guessed at", () => {
+    expect(note("w", "assert.throws(fn, { message: 'x' });\n")).toBeNull();
+    expect(note("w", "assert.throws(() => {\n  f();\n}, /x/);\n")).toBeNull();
+  });
+  test("a commented-out weak check is not counted", () => {
+    expect(note("w", "// assert!(f().is_err());\n# [ \"$status\" -ne 0 ]\n")).toBeNull();
   });
 });

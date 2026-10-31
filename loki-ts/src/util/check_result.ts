@@ -17,7 +17,7 @@ import { declaresPythonDep } from "./lock_ecosystems.ts";
 import { UNITTEST_DISCOVER_ARGS } from "./python_build_check.ts";
 import { safeGit, safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
 import { redactSecrets, UNSAFE_TERMINAL_CHARS_RE } from "./redact.ts";
-import { clauseGapOf, extractClauses } from "./spec_file.ts";
+import { clauseGapOf, extractClauses, weakAssertionNote } from "./spec_file.ts";
 
 /** FC-69: the ONE child env for every harness-run test or verify command. A user's FORCE_COLOR=3 makes node:test, pytest, jest and
  *  friends emit ANSI that defeats line-anchored result parsers; FORCE_COLOR=0 + NO_COLOR=1 keeps the output plain. CI is left as is.
@@ -789,8 +789,8 @@ export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process
 /** FC-WALL-LOCATION-BLIND: a loki_wall_* file in the tree that this run's Wall did not install (an earlier run left it untracked, or this run discarded it) is not a change of this run: verifying it would credit an exogenous pass for a test the receipt lists as discarded. `own` holds the paths this run installed (absolute or repo-relative). */
 export const withoutStaleWall = <T extends string | { path: string }>(items: T[], own: string[], repoDir: string): T[] => { const mine = new Set(own.map((p) => (isAbsolute(p) ? relative(repoDir, p) : p))); return items.filter((it) => { const f = typeof it === "string" ? it : it.path; return !/(^|\/)loki_wall_[^/]*$/.test(f) || mine.has(f); }); };
 /** FC-VERIFIED-PR-WITHOUT-ITS-TEST: the Wall files verify ran and passed (target_checks + executed proof), as their SEALED bytes: the runDir/wall copy must hash to wall.files[].sha256, else a NOT PROVEN note and no file. LOKI_COMMIT_WALL=0: none published. clauseGap (FALSEVER-CLAUSE) is read from the same passing sealed copies whatever that switch says: the spec clauses none of them proves, empty when no task text is given or no Wall file ran. */
-export function publishableWall(repoDir: string, runDir: string, o: Partial<Record<string, Record<string, unknown>>>, env: NodeJS.ProcessEnv = process.env, task?: string): { files: { rel: string; bytes: Buffer; cmd: string; runner: string }[]; notes: string[]; clauseGap: string[] } {
-  const out = { files: [] as { rel: string; bytes: Buffer; cmd: string; runner: string }[], notes: [] as string[], clauseGap: [] as string[] }, arr = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []), tgt = new Set(Array.isArray(o.verify?.["target_checks"]) ? (o.verify["target_checks"] as unknown[]).map(String) : []);
+export function publishableWall(repoDir: string, runDir: string, o: Partial<Record<string, Record<string, unknown>>>, env: NodeJS.ProcessEnv = process.env, task?: string): { files: { rel: string; bytes: Buffer; cmd: string; runner: string }[]; notes: string[]; clauseGap: string[]; weak: string[] } {
+  const out = { files: [] as { rel: string; bytes: Buffer; cmd: string; runner: string }[], notes: [] as string[], clauseGap: [] as string[], weak: [] as string[] }, arr = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []), tgt = new Set(Array.isArray(o.verify?.["target_checks"]) ? (o.verify["target_checks"] as unknown[]).map(String) : []);
   const listed = arr(o.wall?.["files"]);
   for (const w of listed) {
     const rel = relative(repoDir, String(w["path"])), hit = arr(o.verify?.["checks"]).find((c) => tgt.has(String(c["name"])) && String(c["name"]).slice(String(c["name"]).indexOf(":") + 1) === rel && hasExecutedProof([c]));
@@ -798,6 +798,7 @@ export function publishableWall(repoDir: string, runDir: string, o: Partial<Reco
     try { const bytes = readFileSync(sealedWallCopy(runDir, rel)); if (createHash("sha256").update(bytes).digest("hex") !== w["sha256"]) throw new Error("hash"); out.files.push({ rel, bytes, cmd: String(hit["cmd"]), runner: String(hit["name"]).slice(0, String(hit["name"]).indexOf(":")) }); } catch { out.notes.push(`Wall test not published: ${rel} (sealed copy missing or not the sealed bytes)`); }
   }
   if (task !== undefined && listed.length > 0) out.clauseGap = clauseGapOf(extractClauses(task), out.files.map((f) => f.bytes.toString("utf8")));
+  const weak = weakAssertionNote(out.files.map((f) => ({ rel: f.rel, body: f.bytes.toString("utf8") }))); if (weak) out.weak = [weak];
   if (env["LOKI_COMMIT_WALL"] === "0") { out.files = []; out.notes = []; }
   return out;
 }

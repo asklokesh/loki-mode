@@ -2121,6 +2121,17 @@ describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST a VERIFIED run publishes the sealed Wa
     const gap = await run("fcv-clause-gap-off", { task: ERRORS_SPEC, sealed: tagged(["C1"]), env: { LOKI_COMMIT_WALL: "0" } });
     expect(gap.s.data.verdict).toBe("PARTIAL"); // the publish opt-out never switches the clause rule off
   }, 90000);
+  // WALL-ASSERT-STRENGTH: a bare error check is disclosed on a VERIFIED receipt, never a verdict change
+  test("a VERIFIED run whose sealed Wall only checks that an error occurred names the lines in NOT PROVEN", async () => {
+    const weak = `${tagged(["C1", "C2", "C3"])}test("bare", () => {\n  expect(() => { throw new Error("x"); }).toThrow();\n});\n`;
+    const x = await run("fcv-weak-assert", { task: ERRORS_SPEC, sealed: weak });
+    expect(x.s.data.verdict).toBe("VERIFIED");
+    expect(x.r.not_proven.some((n) => n.startsWith("Wall assertion strength not measured: 1 error assertion(s) do not name the expected error on the same line or the 3 lines after (") && n.endsWith("the Wall is model-authored"))).toBe(true);
+    const pinned = await run("fcv-weak-assert-pinned", { task: ERRORS_SPEC, sealed: weak.replace(".toThrow()", '.toThrow("x")') });
+    expect(pinned.s.data.verdict).toBe("VERIFIED"); expect(pinned.r.not_proven.some((n) => n.startsWith("Wall assertion strength"))).toBe(false);
+    const partial = await run("fcv-weak-assert-partial", { task: ERRORS_SPEC, sealed: `${tagged(["C1"])}test("bare", () => {\n  expect(() => { throw new Error("x"); }).toThrow();\n});\n` });
+    expect(partial.s.data.verdict).toBe("PARTIAL"); expect(partial.r.not_proven.some((n) => n.startsWith("Wall assertion strength"))).toBe(false); // disclosed on VERIFIED only
+  }, 90000);
   test("a Wall-only change (no product diff) is FAILED and publishes nothing", async () => {
     const x = await run("fcv-wallonly", { productEdit: false });
     expect(x.s.data.verdict).toBe("FAILED"); expect(x.head).toBe(x.base); expect(x.s.data.wall_published).toBeUndefined();
@@ -2194,18 +2205,19 @@ describe("#238 wall proven at committed path", () => {
   const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
   // resolves its fixture from its own dir: passes only where loc_fixture.txt sits beside it
   const SEALED = 'import { test, expect } from "bun:test"; import { readFileSync } from "node:fs"; test("loc", () => expect(readFileSync(`${import.meta.dir}/loc_fixture.txt`, "utf8")).toBe("ok\\n"));\n';
-  async function run(name: string, fixtureAtCommitted: boolean, arbitrated: boolean | Record<string, unknown> = false, already = false) {
+  async function run(name: string, fixtureAtCommitted: boolean, arbitrated: boolean | Record<string, unknown> = false, already = false, weakLine = false) {
     noKey();
+    const body = weakLine ? SEALED + 'test("w", () => { expect(() => { throw new Error("x"); }).toThrow(); });\n' : SEALED;
     const { repo, base } = makeRepo(name);
     mkdirSync(join(repo, "tests"), { recursive: true }); writeFileSync(join(repo, REL), "// agent\n");
     writeFileSync(join(repo, "loc_fixture.txt"), "ok\n"); // proven where the fixture is: the repo root
     if (fixtureAtCommitted) writeFileSync(join(repo, "tests/loc_fixture.txt"), "ok\n");
     const { ctx } = ctxFor(repo, base, "claude", {
-      wall: { files: [{ path: join(repo, REL), sha256: sha(SEALED) }], base_run: already ? { pass: 1, fail: 0, not_run: 0 } : { pass: 0, fail: 1, not_run: 0 }, ...(arbitrated ? { arbitrated: [{ check: NAME, test: "loc", old_assertion: "old", new_assertion: "new", spec_quote: "the quote", ...(arbitrated === true ? {} : arbitrated) }] } : {}) },
+      wall: { files: [{ path: join(repo, REL), sha256: sha(body) }], base_run: already ? { pass: 1, fail: 0, not_run: 0 } : { pass: 0, fail: 1, not_run: 0 }, ...(arbitrated ? { arbitrated: [{ check: NAME, test: "loc", old_assertion: "old", new_assertion: "new", spec_quote: "the quote", ...(arbitrated === true ? {} : arbitrated) }] } : {}) },
       verify: { checks: [{ name: NAME, cmd: `bun test ${REL}`, result: "pass", n: 1, duration_s: 1 }], target_checks: [NAME], flaky: [], wall_passed: true, duration_s: 1 },
       ...(already ? { intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, already_satisfied: true, evidence: ["already true on base"] } } : {}),
     });
-    mkdirSync(join(ctx.runDir, "wall"), { recursive: true }); writeFileSync(join(ctx.runDir, "wall/loki_wall_loc.test.ts"), SEALED);
+    mkdirSync(join(ctx.runDir, "wall"), { recursive: true }); writeFileSync(join(ctx.runDir, "wall/loki_wall_loc.test.ts"), body);
     await commitStage.run(ctx, new AbortController().signal);
     const productHead = sh(["git", "rev-parse", "HEAD"], repo).trim(), s = await sealStage.run(ctx, new AbortController().signal);
     return { repo, s, r: receiptOf(s), productHead, head: sh(["git", "rev-parse", "HEAD"], repo).trim() };
@@ -2216,6 +2228,11 @@ describe("#238 wall proven at committed path", () => {
     expect(x.r.not_proven).toContain(`Wall test fails at its committed path: ${REL}`);
     expect(x.head).toBe(x.productHead); expect(x.s.data.wall_published).toBeUndefined();
   }, 60000);
+  test("the assertion strength note is added only for the final VERIFIED verdict, not for a run a committed-path failure turned PARTIAL", async () => {
+    const ok = await run("loc-weak-ok", true, false, false, true), bad = await run("loc-weak-bad", false, false, false, true);
+    expect(ok.s.data.verdict).toBe("VERIFIED"); expect(ok.r.not_proven.some((n) => n.startsWith("Wall assertion strength not measured: 1 error assertion(s)"))).toBe(true);
+    expect(bad.s.data.verdict).toBe("PARTIAL"); expect(bad.r.not_proven.some((n) => n.startsWith("Wall assertion strength"))).toBe(false);
+  }, 120000);
   test("the same test with its fixture at the committed path still seals VERIFIED and publishes", async () => {
     const x = await run("loc-ok", true);
     expect(x.s.data.verdict).toBe("VERIFIED"); expect(x.s.data.wall_published).toBeDefined();
