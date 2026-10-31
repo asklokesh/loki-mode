@@ -311,6 +311,31 @@ describe("TEN-MOAT-26 vacuous check", () => {
 
 // Header and helpers of the Wall file loki 11.17.77 wrote for anthropics/claude-code#81826 (run e10-20261019T064138Z-a7ca; base tree ef7bfdc has no plugins/ralph-loop).
 const REAL_81826 = 'import { test, expect } from \'bun:test\';\\nimport { spawnSync } from \'node:child_process\';\\nimport { mkdtempSync, existsSync, readFileSync, writeFileSync } from \'node:fs\';\\nimport { tmpdir } from \'node:os\';\\nimport { join } from \'node:path\';\\n\\nconst ROOT = process.env.REPO_ROOT ?? process.cwd();\\nconst PLUGIN = join(ROOT, \'plugins\', \'ralph-loop\');\\nconst SETUP = join(PLUGIN, \'scripts\', \'setup-ralph-loop.sh\');\\nconst HOOK = join(PLUGIN, \'hooks\', \'stop-hook.sh\');\\nconst STATE = join(\'.claude\', \'ralph-loop.local.md\');\\n\\nconst env: Record<string, string> = { ...(process.env as Record<string, string>) };\\ndelete env.CLAUDE_CODE_SESSION_ID;\\n\\nfunction freshDir(): string {\\n  const dir = mkdtempSync(join(tmpdir(), \'loki-wall-ralph-\'));\\n  writeFileSync(join(dir, \'t.jsonl\'),\\n    \'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"still working"}]}}\\\n\');\\n  return dir;\\n}\\n\\nfunction setup(dir: string, value: string) {\\n  return spawnSync(\'bash\', [SETUP, \'do\', \'the\', \'task\', \'--max-iterations\', value],\\n    { cwd: dir, env, encoding: \'utf8\' });\\n}\\n\\nfunction hook(dir: string) {\\n  return spawnSync(\'bash\', [HOOK], {\\n    cwd: dir,\\n    env,\\n    encoding: \'utf8\',\\n    input: JSON.stringify({ session_id: \'s1\', transcript_path: join(dir, \'t.jsonl\') }),\\n  });\\n}\\n\\nfunction stateExists(dir: string): boolean {\\n  return existsSync(join(dir, STATE));\\n}\\n\\nfunction rounds(dir: string, n: number): void {\\n  for (let i = 0; i < n; i++) {\\n    if (!stateExists(dir)) break;\\n    hook(dir);\\n  }';
+describe("Go Wall that never references the package under test", () => {
+  const hdr = (pkg: string, extra = ""): string => `package ${pkg}\n\nimport (\n\t"testing"\n${extra}\t"example.com/m/x"\n)\n\n`;
+  const go = (name: string, src: string): string | null => vacuousCheck(name, src);
+  const MSG = "never references the package under test";
+  test("an external _test package with no x. reference is vacuous; a real x.Foo() call is not", () => {
+    expect(go("a_test.go", `${hdr("x_test")}func TestA(t *testing.T) {\n\tif 1+1 != 2 { t.Fatal("bad") }\n}\n`)).toContain(MSG);
+    expect(go("a_test.go", `${hdr("x_test")}func TestA(t *testing.T) {\n\tif x.Foo() != 2 { t.Fatal("bad") }\n}\n`)).toBeNull();
+    expect(go("a_test.go", `${hdr("x_test").replace('\t"example.com/m/x"', '\talias "example.com/m/x"')}func TestA(t *testing.T) {\n\tif alias.Foo() != 2 { t.Fatal("bad") }\n}\n`)).toBeNull();
+  });
+  test("a same-package test that uses only its own literals and declarations is vacuous; one calling foo() is not", () => {
+    expect(go("a_test.go", `package x\n\nimport "testing"\n\nconst want = 3\n\nfunc TestA(t *testing.T) {\n\tgot := 3\n\tif got != want { t.Fatalf("bad %d", got) }\n}\n`)).toContain(MSG);
+    expect(go("a_test.go", `package x\n\nimport "testing"\n\nfunc TestA(t *testing.T) {\n\ttests := []struct {\n\t\tname string\n\t\tin int\n\t}{\n\t\t{name: "a", in: 1},\n\t}\n\tfor _, tt := range tests {\n\t\tt.Run(tt.name, func(t *testing.T) {\n\t\t\tif tt.in != 1 { t.Fatal("bad") }\n\t\t})\n\t}\n}\n`)).toContain(MSG);
+    expect(go("a_test.go", `package x\n\nimport "testing"\n\nfunc TestA(t *testing.T) {\n\tif foo() != 3 { t.Fatal("bad") }\n}\n`)).toBeNull();
+    expect(go("a_test.go", `package x\n\nimport "testing"\n\nfunc TestA(t *testing.T) {\n\ttests := []struct {\n\t\tname string\n\t\tin int\n\t}{\n\t\t{name: "a", in: 1},\n\t}\n\tfor _, tt := range tests {\n\t\tt.Run(tt.name, func(t *testing.T) {\n\t\t\tif Double(tt.in) != 2 { t.Fatal("bad") }\n\t\t})\n\t}\n}\n`)).toBeNull();
+  });
+  test("a reference that appears only inside a comment or string literal does not count", () => {
+    expect(go("a_test.go", `${hdr("x_test")}func TestA(t *testing.T) {\n\t// x.Foo()\n\ts := "x.Foo()"\n\tif s == "" { t.Fatal("bad") }\n}\n`)).toContain(MSG);
+    expect(go("a_test.go", `package x\n\nimport "testing"\n\nfunc TestA(t *testing.T) {\n\t// foo() is great\n\tn := 3\n\tif n != 3 { t.Fatal("foo()") }\n}\n`)).toContain(MSG);
+  });
+  test("a file with no package clause or no Test func is not judged", () => {
+    expect(go("a_test.go", `func TestA(t *testing.T) { if 1 != 2 { t.Fatal("x") } }\n`)).toBeNull();
+    expect(go("a_test.go", `package x\n\nfunc helper() int { return 1 }\n`)).toBeNull();
+  });
+});
+
 describe("FC-WALL-PHANTOM-PATH", () => {
   const PHANTOM = "const ROOT = join(__dirname, '..');\nconst PLUGIN = join(ROOT, 'plugins', 'ralph-loop');\nconst SH = join(PLUGIN, 'scripts', 'setup-ralph-loop.sh');\ntest('a', () => { expect(spawnSync('bash', [SH]).status).toBe(0); });\n";
   const FIXED = "const SH = join(__dirname, '..', 'plugins', 'ralph-wiggum', 'scripts', 'setup-ralph-loop.sh');\ntest('a', () => { expect(spawnSync('bash', [SH]).status).toBe(0); });\n";

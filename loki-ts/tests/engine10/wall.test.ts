@@ -1275,7 +1275,7 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
     const s = setup({ runners: [runner], tests: [] }); let brief = "";
     for (const [p, c] of Object.entries(seed)) { mkdirSync(join(s.repoDir, p, ".."), { recursive: true }); writeFileSync(join(s.repoDir, p), c, "utf8"); }
     const ext = runner === "go" ? "_test.go" : runner === "pytest" ? ".py" : ".test.ts";
-    const sessions = new FakeSessionRunner((o) => { brief = o.brief; writeFileSync(join(o.cwd!, `loki_wall_a${ext}`), runner === "go" ? "package ini\nimport \"testing\"\nfunc TestA(t *testing.T) { t.Fatal(\"x\") }\n" : runner === "pytest" ? "def test_a():\n    assert False\n" : SAMPLE, "utf8"); });
+    const sessions = new FakeSessionRunner((o) => { brief = o.brief; writeFileSync(join(o.cwd!, `loki_wall_a${ext}`), runner === "go" ? "package ini\nimport \"testing\"\nfunc TestA(t *testing.T) { if Foo() != 1 { t.Fatal(\"x\") } }\n" : runner === "pytest" ? "def test_a():\n    assert False\n" : SAMPLE, "utf8"); });
     const outputs: Record<string, Record<string, unknown>> = { intake: { task, testmap: s.testmap, repomap_ref: s.repomapRef } }; if (plan) outputs.plan = { plan };
     const ctx = fakeCtx(s.repoDir, s.runDir, sessions, outputs, []);
     try { const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } }); return { brief, files: (r.data.files as { path: string }[]).map((f) => ({ path: f.path.slice(s.repoDir.length + 1) })) }; }

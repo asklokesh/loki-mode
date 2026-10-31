@@ -106,6 +106,35 @@ function goVacuous(code: string): boolean {
   return n > 0;
 }
 
+/** Go: a Test file with a package clause that never references the package under test. An external `package x_test` must import a package named x (by last path element or alias) and use it; a same-package test must use at least one identifier it does not itself declare (its imports, parameters, locals, fields and keywords excluded). Comments and string/rune literals are removed first, so a name only in a comment or string is not a reference. Files without a package clause or Test func are not judged. */
+function goUnreferenced(src: string): boolean {
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/`[^`]*`|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, '""').replace(/\/\/.*$/gm, "");
+  const pkg = /^\s*package\s+(\w+)/m.exec(code);
+  if (!pkg || !/\bfunc\s+Test\w*\s*\(/.test(code)) return false;
+  const aliases = new Set<string>();
+  const paths = [...src.matchAll(/^[ \t]*(?:import[ \t]+)?(?:([\w.]+)[ \t]+)?"([^"\n]+)"[ \t]*$/gm)].map((m) => ({ alias: m[1] ?? "", path: m[2]! })); // one import spec per line, with or without the import keyword
+  const idents = (t: string): string[] => t.match(/[A-Za-z_]\w*/g) ?? [];
+  const body = code.replace(/^\s*import\s*\([\s\S]*?\)/gm, " ").replace(/^\s*import\s+.*$/gm, " ");
+  for (const i of paths) { const last = i.path.split("/").pop()!; aliases.add(i.alias && i.alias !== "_" && i.alias !== "." ? i.alias : last.replace(/^go-|-go$/g, "").replace(/[^\w]/g, "")); }
+  if (paths.some((i) => i.alias === ".")) return false; // a dot import puts the package's names in scope unqualified
+  if (pkg[1]!.endsWith("_test")) {
+    const x = pkg[1]!.slice(0, -5);
+    const mine = paths.filter((i) => i.alias === x || i.path.split("/").pop()!.replace(/[^\w]/g, "") === x || /^v\d+$/.test(i.path.split("/").pop()!) && i.path.split("/").slice(-2, -1)[0] === x);
+    return !mine.some((i) => new RegExp(String.raw`(?<![\w.])${i.alias && i.alias !== "_" ? i.alias : x}\s*\.\s*[A-Za-z_]`).test(body));
+  }
+  const own = new Set<string>(["_", "true", "false", "nil", "iota", pkg[1]!]);
+  for (const w of "break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var any bool byte comparable complex64 complex128 error float32 float64 int int8 int16 int32 int64 rune string uint uint8 uint16 uint32 uint64 uintptr append cap clear close complex copy delete imag len make max min new panic print println real recover".split(" ")) own.add(w);
+  for (const a of aliases) own.add(a);
+  for (const m of body.matchAll(/\b(?:func|type|var|const)\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)/g)) own.add(m[1]!);
+  for (const m of body.matchAll(/^\s*(?:var|const)\s*\(([\s\S]*?)\n\s*\)/gm)) for (const l of m[1]!.split("\n")) { const d = /^\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)/.exec(l); if (d) idents(d[1]!).forEach((n) => own.add(n)); }
+  for (const m of body.matchAll(/([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*:=/g)) idents(m[1]!).forEach((n) => own.add(n));
+  for (const m of body.matchAll(/\bfunc\b[^(\n]*\(([^)]*)\)/g)) for (const seg of m[1]!.split(",")) { const t = seg.trim().split(/\s+/); if (t.length >= 2) own.add(t[0]!); }
+  for (const m of body.matchAll(/^\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s+[\w*\[\]{}.]+\s*$/gm)) idents(m[1]!).forEach((n) => own.add(n)); // struct field declarations
+  for (const m of body.matchAll(/([A-Za-z_]\w*)\s*:(?!=)/g)) own.add(m[1]!); // keyed literal fields and labels
+  for (const m of body.matchAll(/(?<![\w.])([A-Za-z_]\w*)/g)) if (!own.has(m[1]!)) return false;
+  return true;
+}
+
 /** TEN-MOAT-26: a generated Wall file that asserts nothing: its only assertions are tautologies (expect(true).toBe(true), assert True), its tests have empty bodies, or a shell file holds only true / exit 0 / ":". Such a file can never fail, so it proves nothing about the change. A JS/Python file with no tautology and no assertion but real calls is NOT flagged (it can still be red by throwing); a file that holds a tautology and no real assertion is flagged even if it also calls code. Go is judged per file: flagged only when every Test func body is empty or only t.Log/t.Skip and nothing can fail a test. Comments are ignored. Returns the reason, or null when the file is acceptable or its language is not recognised. */
 export function vacuousCheck(fileName: string, content: string): string | null {
   const reason = "asserts nothing (no assertion, or only an always-true one such as true or exit 0); write a check that fails when the behavior is absent";
@@ -133,7 +162,7 @@ export function vacuousCheck(fileName: string, content: string): string | null {
     const trivial = new RegExp(String.raw`^(?:true|:|exit\s+0|return\s+0|(?:/usr)?/bin/true|(?:echo|printf)(?:\s+${tok})*|test\s+(?:[1-9]\d*|${tok})|\[\[?\s+(?:[1-9]\d*|${tok})\s+\]\]?)$`);
     return lines.length === 0 || lines.every((l) => l.split(/&&|\|\||;/).map((x) => x.trim()).every((x) => x === "" || trivial.test(x))) ? reason : null;
   }
-  if (/_test\.go$/.test(fileName)) return goVacuous(strip(/(^|[^:])\/\/.*$/gm)) ? reason : null;
+  if (/_test\.go$/.test(fileName)) return goVacuous(strip(/(^|[^:])\/\/.*$/gm)) ? reason : goUnreferenced(content) ? "never references the package under test (an external _test package must import and use it; a same-package test must use an identifier the package declares outside this file); write a check that calls the changed code" : null;
   return null;
 }
 

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A Go Wall test that never references the package under test (an external `_test` package with no use of the imported package, or a same-package test that uses only identifiers it declares itself) is now rejected as vacuous and re-asked before sealing, so it can no longer reach VERIFIED; a name that appears only in a comment or string does not count as a reference.
 - A Go task in a repo with no tests now gets its acceptance test beside the planned Go source file, with the package clause taken from a sibling file, the task, the directory or go.mod, instead of in tests/ where Go cannot see the package. The seal re-run of a published Go Wall now accepts a real passing Go test (exit 0 with executed tests) instead of reading it as not run, while a Wall whose tests are all skipped or that has no tests still does not reprove.
 
 ## v11.94.0 (2026-10-31)
