@@ -189,5 +189,78 @@ else
     bad "nothing calls loki_emit_first_run_blocked -- the signal would never fire"
 fi
 
+# 6. Activation funnel: install, first_start, first_run_finished, first_verified,
+#    second_run_within_7d. Appending recorder so emitted events are observable.
+mkdir -p "$WORK/bin2"
+cat > "$WORK/bin2/curl" <<'RECORDER'
+#!/bin/sh
+for a in "$@"; do
+    case "$a" in '{"api_key"'*) printf '%s\n' "$a" >> "$LOKI_TEST_LOG" ;; esac
+done
+exit 0
+RECORDER
+chmod +x "$WORK/bin2/curl"
+
+act_run() {
+    # $1 = home, $2 = shell snippet; analytics on
+    env PATH="$WORK/bin2:$PATH" HOME="$1" LOKI_TEST_LOG="$1/events.log" \
+        LOKI_ANALYTICS=on LOKI_TELEMETRY=on bash -c "
+            cd '$REPO_ROOT'; source autonomy/telemetry.sh 2>/dev/null
+            $2; sleep 0.6" >/dev/null 2>&1
+}
+act_events() {
+    python3 -c '
+import json,sys
+for l in open(sys.argv[1]):
+    d=json.loads(l); print(d["event"]+":"+str(d["properties"].get("since_install")))
+' "$1" 2>/dev/null
+}
+
+ah="$WORK/act"; mkdir -p "$ah"
+act_run "$ah" 'loki_emit_run_started; loki_emit_run_finished VERIFIED duration_s=5 exit_code=0'
+# Backgrounded curls do not guarantee arrival order, so check the set.
+got="$(act_events "$ah/events.log" | grep '^activation_' | sort | tr '\n' ' ')"
+want="activation_first_run_finished:lt_1h activation_first_start:lt_1h activation_first_verified:lt_1h activation_install:lt_1h "
+if [ "$got" = "$want" ]; then
+    ok "activation: install, first_start, first_run_finished, first_verified fire with a since_install bucket"
+else
+    bad "activation events wrong: [$got]"
+fi
+
+# Order: each marker holds its emit epoch; install is written first.
+if [ -f "$ah/.loki/funnel-install-ts" ] && [ -f "$ah/.loki/funnel-activation-install" ] \
+   && [ "$(cat "$ah/.loki/funnel-activation-install")" -le "$(cat "$ah/.loki/funnel-activation-first_start")" ]; then
+    ok "install precedes first_start; markers written after the gate passed"
+else
+    bad "activation markers missing or out of order"
+fi
+
+# second run: a later run start inside 7 days of the first fires exactly once
+act_run "$ah" 'sleep 1; loki_emit_run_started; loki_emit_run_started'
+n2="$(act_events "$ah/events.log" | grep -c '^activation_second_run_within_7d:')"
+if [ "$n2" = "1" ]; then ok "second_run_within_7d fires once inside the 7 day window"; else bad "second_run_within_7d fired $n2 times"; fi
+
+# replay: nothing activation-shaped fires again (5 events total)
+act_run "$ah" 'loki_emit_run_started; loki_emit_run_finished VERIFIED exit_code=0; loki_emit_build_verified_enum VERIFIED engine10'
+total="$(grep -c '"event": *"activation_' "$ah/events.log")"
+if [ "$total" = "5" ]; then ok "replay fires no activation event twice (5 total)"; else bad "activation events after replay: $total"; fi
+
+# outside the window: second run does not fire
+wh="$WORK/act-late"; mkdir -p "$wh/.loki"
+echo 1000 > "$wh/.loki/funnel-activation-first_start"
+act_run "$wh" 'loki_emit_run_started'
+if [ -f "$wh/.loki/funnel-activation-second_run_within_7d" ]; then bad "second run fired beyond 7 days"; else ok "no second_run_within_7d beyond 7 days"; fi
+
+# analytics off (telemetry on): no event, no marker, no install clock
+oh="$WORK/act-off"; mkdir -p "$oh"
+env PATH="$WORK/bin2:$PATH" HOME="$oh" LOKI_TEST_LOG="$oh/events.log" LOKI_TELEMETRY=on bash -c "
+    cd '$REPO_ROOT'; source autonomy/telemetry.sh 2>/dev/null
+    loki_emit_run_started; loki_emit_run_finished VERIFIED exit_code=0; loki_emit_build_verified_enum VERIFIED engine10; sleep 0.5" >/dev/null 2>&1
+if { [ -d "$oh/.loki" ] && [ -n "$(ls -A "$oh/.loki" 2>/dev/null)" ]; } || [ -s "$oh/events.log" ]; then
+    bad "analytics disabled but a marker or event was written"
+else
+    ok "analytics disabled: no activation marker, no install clock, no event"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

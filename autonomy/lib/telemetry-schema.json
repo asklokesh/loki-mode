@@ -54,6 +54,11 @@
    "gates_total": {"type": "int", "min": 0, "max": 1000},
    "gate_pass_rate": {"type": "number", "min": 0, "max": 1}
   },
+  "activation_install": {"since_install": {"type": "enum", "values": ["lt_1h", "lt_1d", "lt_7d", "lt_30d", "ge_30d"]}},
+  "activation_first_start": {"since_install": {"type": "enum", "values": ["lt_1h", "lt_1d", "lt_7d", "lt_30d", "ge_30d"]}},
+  "activation_first_run_finished": {"since_install": {"type": "enum", "values": ["lt_1h", "lt_1d", "lt_7d", "lt_30d", "ge_30d"]}},
+  "activation_first_verified": {"since_install": {"type": "enum", "values": ["lt_1h", "lt_1d", "lt_7d", "lt_30d", "ge_30d"]}},
+  "activation_second_run_within_7d": {"since_install": {"type": "enum", "values": ["lt_1h", "lt_1d", "lt_7d", "lt_30d", "ge_30d"]}},
   "run_started": {
    "engine": {"type": "enum", "values": ["engine10"]}
   },

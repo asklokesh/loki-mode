@@ -484,6 +484,77 @@ loki_emit_build_verified_enum() {
     [ "${1:-}" = "VERIFIED" ] || return 0
     [ "${2:-}" = "engine10" ] || return 0
     loki_telemetry "build_verified" "headline=VERIFIED" "route=engine10"
+    loki_emit_activation first_verified
+    return 0
+}
+
+# AN-10 activation funnel: five once-per-machine milestones, each carrying a
+# coarse since_install bucket. Same strict analytics gate as every other funnel
+# event. The install clock is a private epoch file written the first time any
+# milestone passes the gate; only the bucket (never the epoch) is sent.
+_loki_since_install_bucket() {
+    local _f="${HOME}/.loki/funnel-install-ts" _now _t _d
+    _now=$(date +%s 2>/dev/null) || return 1
+    _t=$(cat "$_f" 2>/dev/null)
+    case "$_t" in ''|*[!0-9]*)
+        mkdir -p "${HOME}/.loki" 2>/dev/null || return 1
+        printf '%s\n' "$_now" > "$_f" 2>/dev/null || true
+        _t="$_now" ;;
+    esac
+    _d=$((_now - _t))
+    if [ "$_d" -lt 3600 ]; then printf 'lt_1h'
+    elif [ "$_d" -lt 86400 ]; then printf 'lt_1d'
+    elif [ "$_d" -lt 604800 ]; then printf 'lt_7d'
+    elif [ "$_d" -lt 2592000 ]; then printf 'lt_30d'
+    else printf 'ge_30d'; fi
+}
+
+# loki_emit_activation <install|first_start|first_run_finished|first_verified|
+# second_run_within_7d>: emits activation_<step> at most once per machine. The
+# marker (holding the emit epoch) is written only after the gate passes and the
+# event is sent, so an opted-out machine never burns it. Any step first ensures
+# the install step has fired, so the order install -> ... holds.
+loki_emit_activation() {
+    local _step="${1:-}"
+    case "$_step" in install|first_start|first_run_finished|first_verified|second_run_within_7d) ;; *) return 0 ;; esac
+    _loki_analytics_enabled || return 0
+    local _dir="${HOME}/.loki"
+    [ -f "${_dir}/funnel-activation-${_step}" ] 2>/dev/null && return 0
+    if [ "$_step" != "install" ]; then
+        loki_emit_activation install
+    fi
+    local _bucket
+    _bucket=$(_loki_since_install_bucket) || return 0
+    if declare -f _loki_disclose_telemetry_once >/dev/null 2>&1; then
+        _loki_disclose_telemetry_once
+    fi
+    case "$_step" in
+        install) loki_telemetry "activation_install" "since_install=${_bucket}" 2>/dev/null || true ;;
+        first_start) loki_telemetry "activation_first_start" "since_install=${_bucket}" 2>/dev/null || true ;;
+        first_run_finished) loki_telemetry "activation_first_run_finished" "since_install=${_bucket}" 2>/dev/null || true ;;
+        first_verified) loki_telemetry "activation_first_verified" "since_install=${_bucket}" 2>/dev/null || true ;;
+        second_run_within_7d) loki_telemetry "activation_second_run_within_7d" "since_install=${_bucket}" 2>/dev/null || true ;;
+    esac
+    mkdir -p "$_dir" 2>/dev/null || return 0
+    date +%s > "${_dir}/funnel-activation-${_step}" 2>/dev/null || true
+    return 0
+}
+
+# _loki_activation_run_started: the first run start is first_start; a later
+# run start inside 7 days of it is second_run_within_7d.
+_loki_activation_run_started() {
+    _loki_analytics_enabled || return 0
+    local _m="${HOME}/.loki/funnel-activation-first_start" _t _now
+    if [ ! -f "$_m" ]; then
+        loki_emit_activation first_start
+        return 0
+    fi
+    _t=$(cat "$_m" 2>/dev/null)
+    case "$_t" in ''|*[!0-9]*) return 0 ;; esac
+    _now=$(date +%s 2>/dev/null) || return 0
+    if [ "$_now" -gt "$_t" ] && [ $((_now - _t)) -le 604800 ]; then
+        loki_emit_activation second_run_within_7d
+    fi
     return 0
 }
 
@@ -493,6 +564,7 @@ loki_emit_build_verified_enum() {
 loki_emit_run_started() {
     _loki_analytics_enabled || return 0
     loki_telemetry "run_started" "engine=engine10"
+    _loki_activation_run_started
     return 0
 }
 
@@ -517,5 +589,7 @@ loki_emit_run_finished() {
         _args+=("${_k}=${_v}")
     done
     loki_telemetry "run_finished" "${_args[@]}"
+    loki_emit_activation first_run_finished
+    [ "$_verdict" = "VERIFIED" ] && loki_emit_activation first_verified
     return 0
 }
