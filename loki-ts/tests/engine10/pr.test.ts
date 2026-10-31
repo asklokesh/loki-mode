@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_PUSH_GITLAB_SH, DEFAULT_PUSH_SH, runPr, stage } from "../../src/engine10/stages/pr.ts"; import { pushErrLine } from "../../src/util/term_width.ts";
+import { DEFAULT_PUSH_GITLAB_SH, DEFAULT_PUSH_SH, issueLink, runPr, stage } from "../../src/engine10/stages/pr.ts"; import { pushErrLine } from "../../src/util/term_width.ts";
 import { publishFallback } from "../../src/util/engine_origin.ts";
 import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { readEvents } from "../../src/engine10/events.ts"; import { stageCapability } from "../../src/engine10/worker.ts";
@@ -151,6 +151,22 @@ describe("engine10 pr stage", () => {
     await runPr(v.ctx, new AbortController().signal, { pushScriptPath: script });
     expect(readLog()).toContain(" Loki 10: VERIFIED (");
     expect(readLog()).not.toContain("[PARTIAL]");
+  });
+
+  test("a PARTIAL PR body links the issue with Refs, never Closes", async () => {
+    const script = writeStub(stubDir, logPath);
+    writeFileSync(join(runDir, "issue.json"), JSON.stringify({ repo: "o/r", number: 42 }));
+    const { ctx } = makeCtx(repoDir, runDir, { verdict: "PARTIAL" });
+    await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+    const body = readFileSync(join(runDir, "pr-body.md"), "utf8");
+    expect(body).toContain("\nRefs o/r#42\n");
+    expect(body).not.toContain("Closes");
+  });
+
+  test("issueLink: only VERIFIED closes; PARTIAL, FAILED, SPEC_CONFLICT and ALREADY_SATISFIED all say Refs", () => {
+    writeFileSync(join(runDir, "issue.json"), JSON.stringify({ repo: "o/r", number: 7 }));
+    expect(issueLink(runDir, "VERIFIED")).toBe("\nCloses o/r#7\n");
+    for (const v of ["PARTIAL", "FAILED", "SPEC_CONFLICT", "ALREADY_SATISFIED"] as const) expect(issueLink(runDir, v)).toBe("\nRefs o/r#7\n");
   });
 
   test("VERIFIED but the cap fired: --draft is still passed", async () => {

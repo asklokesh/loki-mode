@@ -133,6 +133,22 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.prUrl).not.toBeNull();
   }, loadAwareTimeoutMs(15_000));
 
+  test("a PARTIAL run with a real diff that was cancelled never calls pr and has no prUrl", async () => {
+    const { dir, baseSha } = repoWithCommit();
+    const code = `
+      ${intakeLine(baseSha)}
+      ${COMMIT_A_CHANGE}
+      console.log(JSON.stringify({ type: "cancel_effective", stage: null, data: {} }));
+      console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "PARTIAL", not_proven: ["cancelled"] } }));
+      process.exit(0);
+    `;
+    const pr = prSpy();
+    const r = await runSupervisor({ runId: "e10-cancel-partial", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step });
+    expect(r.outcome).toBe("CANCELLED");
+    expect(pr.calls.length).toBe(0);
+    expect(r.prUrl).toBeNull();
+  }, loadAwareTimeoutMs(15_000));
+
   test("P1: a sealed SPEC_CONFLICT or PARTIAL with no net diff never calls pr (no empty branch), and the blocked run still comments", async () => {
     for (const verdict of ["SPEC_CONFLICT", "PARTIAL"]) {
       const { dir, baseSha } = repoWithCommit();
