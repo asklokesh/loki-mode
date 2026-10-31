@@ -166,6 +166,13 @@ describe("FC-SEAL-NA-AS-UNPROVEN deepGaps", () => {
     expect(deepGaps(r("high", [...base, "full test command", "full suite", "council", "security scan"], ["council"]), [], [], true).notProven).toContain("council"); // a cross-review does not credit high's council
     expect(deepGaps(r("low", base, ["full test command", "reviewer", "council", "security scan"]), [], [], true).notProven).toEqual([]);
   });
+  test("PR-FIRST-4: a security scan verify executed is credited; a not_run or a look-alike name never is", () => {
+    const rec = r("high", [...base, "full test command", "full suite", "council", "security scan"], ["council", "security scan"]);
+    for (const result of ["pass", "fail"]) expect(deepGaps(rec, [{ name: "security scan", result }]).notProven).not.toContain("security scan");
+    for (const result of ["not_run", "flaky", undefined]) expect(deepGaps(rec, [{ name: "security scan", result }]).notProven).toContain("security scan");
+    expect(deepGaps(rec, [{ name: "security scan x", result: "pass" }]).notProven).toContain("security scan");
+    expect(deepGaps(rec, [{ name: "council", result: "pass" }]).notProven).toContain("council"); // verify never runs the council; only the deep session credits it
+  });
   test("an executed deep check is dropped", () => {
     const g = deepGaps(r("high", [...base, "full test command", "full suite", "council", "security scan"], ["council", "security scan"]), [], [{ name: "security scan", result: "pass" }]);
     expect(g.notProven).toEqual(["council"]);

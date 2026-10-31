@@ -1,8 +1,8 @@
 // loki-ts/src/engine10/stages/deep.ts -- E-23 Deep verify (ENGINE.md section 4). Runs after Seal + PR: full suite, app-boot probe, council, secret scan; reports via engine10-push.sh (comment + addendum + status). A refused or unavailable check is NOT PROVEN, never red; only a failing full suite or a secret match is failure. Rule of Two: assertWorkerEnv asserts no real GitHub token, since the deep worker runs repo code and reads untrusted diffs. Council goes through the injectable CouncilRunner; unwired, it is NOT PROVEN, never passing.
 import { installOwned } from "../../project_model/install.ts";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { appProbe, type AppProbeResult } from "../../util/app_probe.ts";
 import { secureScanChanged } from "../../util/secure_scan.ts";
 import { postDeepResults } from "../../util/receipt_surface.ts";
@@ -61,6 +61,7 @@ export interface DeepOptions {
   secureScanPath?: string; // secure-scan.py override, tests only
   council?: CouncilRunner; changed?: string[]; proofFiles?: string[]; wallBaseRed?: boolean; targetPassed?: boolean; /* a Wall or task-named check already passed with n>0 */ // FC-SEAL-NA-AS-UNPROVEN: the diff and the Wall verdict decide whether a package without tests is N/A
   maxCouncilDiffBytes?: number;
+  scanAddedSince?: string; // PR-FIRST-4 (verify only): scan just the lines added since this commit, and the path of a file new since it, so a match already on base never fails the run
   fullSuiteTimeoutMs?: number;
   path?: string; // PATH override, tests only, so "missing tool" never depends on the host
   env?: NodeJS.ProcessEnv; // for assertWorkerEnv; defaults to process.env
@@ -134,15 +135,35 @@ async function runCouncilCheck(
   }
 }
 /** One "security scan" check over the changed files: secret-scan.sh's two matchers (sourced, never edited) plus secure-scan.py.  A secret hit or a HIGH secure-scan finding is fail; else a missing or broken scanner is not_run (NOT PROVEN), never pass. */
-async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
+export async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
   const scriptPath = opts.secretScanShPath ?? DEFAULT_SECRET_SCAN_SH, name = "security scan", cmd = "secret-scan.sh + secure-scan.py";
   if (!existsSync(scriptPath)) { checks.push({ name, cmd, result: "not_run", duration_s: 0 }); notProven.add(`not run: ${name} (secret-scan.sh not found)`); return; }
   if (changed.length === 0) { checks.push({ name, cmd, result: "pass", duration_s: 0 }); return; }
-  const inline = 'script="$1"; shift; . "$script" || exit 3; hit=0; for f in "$@"; do if _commit_scan_secret_file "$f" || _commit_path_looks_secret "$f"; then printf "%s\\n" "$f"; hit=1; fi; done; exit "$hit"';
-  const started = Date.now();
-  const r = await run(["bash", "-c", inline, "_", scriptPath, ...changed.map((f) => join(ctx.repoDir, f))], { cwd: ctx.repoDir, timeoutMs: 30_000 });
-  const sec = await secureScanChanged(ctx.repoDir, changed, opts.secureScanPath), gaps: string[] = [], reasons: string[] = [];
-  const hits = r.exitCode === 3 ? [] : r.stdout.split("\n").map((l) => l.trim()).filter(Boolean), high = sec.findings.filter((f) => String(f.severity).toUpperCase() === "HIGH");
+  const inline = 'script="$1"; mode="$2"; shift 2; . "$script" || exit 3; hit=0; for f in "$@"; do if { [ "$mode" != path ] && _commit_scan_secret_file "$f"; } || { [ "$mode" != content ] && _commit_path_looks_secret "$f"; }; then printf "%s\\n" "$f"; hit=1; fi; done; exit "$hit"';
+  const started = Date.now(), scan = (mode: string, files: string[]) => (files.length ? run(["bash", "-c", inline, "_", scriptPath, mode, ...files], { cwd: ctx.repoDir, timeoutMs: 30_000 }) : Promise.resolve({ exitCode: 0, stdout: "", stderr: "" }));
+  let r: { exitCode: number | null; stdout: string }, sec: Awaited<ReturnType<typeof secureScanChanged>>;
+  if (opts.scanAddedSince) {
+    const base = opts.scanAddedSince, root = mkdtempSync(join(tmpdir(), "loki-verify-secscan-")), fresh: string[] = [];
+    try {
+      for (const f of changed) {
+        if (!existsSync(join(ctx.repoDir, f))) continue; // deleted: nothing added
+        const atBase = (await safeGitRun(ctx.repoDir, ["cat-file", "-e", `${base}:${f}`], { timeoutMs: 10_000 })).exitCode === 0;
+        if (!atBase) fresh.push(f);
+        const added = atBase ? (await safeGitRun(ctx.repoDir, ["diff", "--no-color", "--no-renames", "-U0", base, "--", f], { timeoutMs: 20_000 })).stdout.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n") : null;
+        mkdirSync(dirname(join(root, f)), { recursive: true });
+        if (added === null) copyFileSync(join(ctx.repoDir, f), join(root, f)); else writeFileSync(join(root, f), added ? added + "\n" : "");
+      }
+      const content = await scan("content", changed.filter((f) => existsSync(join(root, f))).map((f) => join(root, f))), path = await scan("path", fresh.map((f) => join(ctx.repoDir, f)));
+      const rel = (out: string, from: string): string => out.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => relative(from, l)).join("\n");
+      r = { exitCode: content.exitCode === 3 || path.exitCode === 3 ? 3 : Math.max(content.exitCode ?? 1, path.exitCode ?? 1), stdout: [rel(content.stdout, root), rel(path.stdout, ctx.repoDir)].filter(Boolean).join("\n") };
+      sec = await secureScanChanged(root, changed.filter((f) => existsSync(join(root, f))), opts.secureScanPath);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  } else {
+    r = await scan("both", changed.map((f) => join(ctx.repoDir, f)));
+    sec = await secureScanChanged(ctx.repoDir, changed, opts.secureScanPath);
+  }
+  const gaps: string[] = [], reasons: string[] = [];
+  const hits = r.exitCode === 3 ? [] : [...new Set(r.stdout.split("\n").map((l) => l.trim()).filter(Boolean))], high = sec.findings.filter((f) => String(f.severity).toUpperCase() === "HIGH");
   if (r.exitCode === 3) gaps.push("secret-scan.sh failed to load");
   if (!sec.ok) gaps.push(sec.error ?? "secure-scan failed");
   if (hits.length > 0) reasons.push(`secret match: ${hits.join(", ")}`);

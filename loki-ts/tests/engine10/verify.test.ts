@@ -842,3 +842,57 @@ describe("engine10 verify: red Wall failure tail", () => {
     expect(existsSync(join(dir, WALL_FAILURE_TAIL_FILE))).toBe(false);
   });
 });
+
+// PR-FIRST-4: the high tier's security scan runs in verify (before seal), so a high-tier receipt is not left waiting on the post-PR deep stage.
+describe("PR-FIRST-4 high-tier security scan in verify", () => {
+  const high = async (files: Record<string, string>) => {
+    const repoDir = mkRepo();
+    for (const [f, body] of Object.entries(files)) { mkdirSync(dirname(join(repoDir, f)), { recursive: true }); writeFileSync(join(repoDir, f), body); }
+    const { ctx } = fakeCtx({ repoDir, baseSha: baseSha(repoDir) });
+    const r = await verifyStage.run(ctx, sig());
+    const sec = (r.data.checks as VerifyCheck[]).filter((c) => c.name === "security scan");
+    return { r, sec, risk: JSON.parse(readFileSync(join(repoDir, ".loki", "state", "risk-tier.json"), "utf8")) as { tier: string; checks_deferred: string[] } };
+  };
+  test("a clean high-tier change runs the scan, passes, and drops it from the deferred list", async () => {
+    const { sec, risk } = await high({ "src/auth/login.ts": "export const ok = 1;\n" });
+    expect(risk.tier).toBe("high");
+    expect(sec.map((c) => c.result)).toEqual(["pass"]);
+    expect(risk.checks_deferred).not.toContain("security scan");
+  }, 60_000);
+  test("a secret-looking file fails the scan, which is a failing check (never VERIFIED)", async () => {
+    const { r, sec } = await high({ "src/auth/credentials.json": "{}\n" });
+    expect(sec.map((c) => c.result)).toEqual(["fail"]);
+    expect(String(sec[0]!.reason)).toContain("credentials.json");
+    expect((r.data.failures_grouped as { signature: string }[]).some((g) => g.signature.startsWith("security scan"))).toBe(true);
+  }, 60_000);
+  test("only lines the run added are scanned: a key already on base never fails, the same key added by the run does", async () => {
+    const key = `const k = "${"AKIA" + "QWERTYUIOPASDFGH"}";\n`; // built at runtime so the repo's own leak scanner never sees a literal
+    const edited = async (added: string) => {
+      const repoDir = mkRepo();
+      mkdirSync(join(repoDir, "src", "auth"), { recursive: true });
+      writeFileSync(join(repoDir, "src", "auth", "keys.ts"), key);
+      git(repoDir, ["add", "-A"]); git(repoDir, ["commit", "-qm", "base with a key"]);
+      const base = baseSha(repoDir);
+      writeFileSync(join(repoDir, "src", "auth", "keys.ts"), key + added);
+      const { ctx } = fakeCtx({ repoDir, baseSha: base });
+      const r = await verifyStage.run(ctx, sig());
+      return (r.data.checks as VerifyCheck[]).filter((c) => c.name === "security scan");
+    };
+    expect((await edited("export const ok = 1;\n")).map((c) => c.result)).toEqual(["pass"]);
+    const bad = await edited(key.replace("k =", "k2 ="));
+    expect(bad.map((c) => c.result)).toEqual(["fail"]);
+    expect(String(bad[0]!.reason)).toContain("src/auth/keys.ts");
+  }, 120_000);
+  test("a scanner that cannot run (secret-scan.sh fails to load) is not_run, NOT PROVEN in verify's own list (caps the verdict), and stays deferred", async () => {
+    const bin = mkdtempSync(join(tmpdir(), "e10-verify-bin-")); cleanupDirs.push(bin);
+    writeFileSync(join(bin, "bash"), "#!/bin/sh\nexit 3\n"); chmodSync(join(bin, "bash"), 0o755); // the scan's bash cannot source the matcher script
+    const oldPath = process.env["PATH"];
+    try {
+      process.env["PATH"] = `${bin}:${oldPath ?? ""}`;
+      const { r, sec, risk } = await high({ "src/auth/login.ts": "export const ok = 1;\n" });
+      expect(sec.map((c) => c.result)).toEqual(["not_run"]);
+      expect((r.data.not_proven as string[]).some((n) => n.startsWith("not run: security scan (") && n.includes("secret-scan.sh failed to load"))).toBe(true);
+      expect(risk.checks_deferred).toContain("security scan");
+    } finally { process.env["PATH"] = oldPath; }
+  }, 60_000);
+});
