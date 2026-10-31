@@ -5,14 +5,62 @@
 // no proof exists to run (no linked issue or no trusted runnable check), 4 NOT PROVEN because the proof ran and failed.
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, posix } from "node:path";
 import { parseContract } from "../features/contract.ts";
 import { fetchIssue } from "../engine10/fetch_issue.ts";
-import { extractChecks, judgeF2p, referencedFiles, reportedCheck, REPORT_TOKEN, runnerConfigChanged, type SandboxResult } from "../contrib/verify_pr_f2p.ts";
+import { REPORT_RUNNERS } from "../engine10/testmap.ts";
+import { extractChecks, judgeF2p, referencedFiles, reportedCheck, REPORT_TOKEN, type SandboxResult } from "../contrib/verify_pr_f2p.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
+
+/** Reads `path` and applies `test` to its text; an unreadable file counts as a hit (fail closed). */
+function textMatchesOrUnreadable(path: string, test: (txt: string) => boolean): boolean {
+  try { return test(readFileSync(path, "utf8")); } catch { return true; }
+}
+
+/** Changed in a PR, these always count as runner config whatever they hold: transpiler config (babel), interpreter startup hooks (sitecustomize.py, usercustomize.py, *.pth), mocha config, and anything under a __mocks__ directory (the runner applies those without the test asking, and a `roots` setting can move them out of the repo root). */
+const ALWAYS_CONFIG = /(?:^|\/)(?:babel\.config\.[\w.]+|\.babelrc(?:\.[\w.]+)?|(?:site|user)customize\.py|[^/]+\.pth|\.mocharc(?:\.[\w.]+)?)$|(?:^|\/)__mocks__\//;
+const OPEN = "\0open";
+/** Plugin modules named in a config text, or [OPEN] when its `pytest_plugins` cannot be fully read: an assignment that is not a closed literal (non-literal value, over-long annotation, no closer, a comment inside the literal), or any other use of the name (+=, .append, .extend, globals(), an import). Each closer is found with indexOf from its opener and the scan resumes after each literal, so long lists parse and the scan stays linear. */
+function pluginMods(txt: string): string[] {
+  const dotted = (m: RegExpMatchArray) => m[1]!.replace(/\./g, "/"), named: string[] = [], a = /\bpytest_plugins\s*(?::[^=\n]{0,200})?=(?!=)\s*/g;
+  let n = 0, g: RegExpExecArray | null;
+  if (/\bpytest_plugins\s*:[^=\n]{201}/.test(txt)) return [OPEN];
+  while ((g = a.exec(txt))) {
+    const i = a.lastIndex, o = txt[i]!, c = o === "[" ? "]" : o === "(" ? ")" : o === '"' || o === "'" ? o : "", e = c ? txt.indexOf(c, i + 1) : -1, end = /[ \t]*(?:#[^\n]*)?(?:\r?\n|$)/y;
+    end.lastIndex = e + 1;
+    if (e < 0 || txt.slice(i, e).includes("#") || (c === o && txt.slice(i, e).includes("\n")) || !end.test(txt)) return [OPEN];
+    named.push(...[...txt.slice(i, e + 1).matchAll(/["']([\w.]+)["']/g)].map(dotted)); n++; a.lastIndex = e + 1;
+  }
+  if ((txt.match(/\bpytest_plugins\b(?!\s*==)/g) ?? []).length !== n) return [OPEN];
+  return [...[...txt.matchAll(/(?:^|[\s"'\[,])-p["']?(?:\s*,)?\s*["']?([\w.]+)(?![\w.:])/g)].map(dotted), ...named];
+}
+/** Repo paths named by a runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest) and Python test-runner plugin modules (`-p`, bare, quoted or list form, in an ini, cfg or toml config; `pytest_plugins` in conftest.py; a dotted name maps to a path). Editing such a file changes what the runner loads even when the config itself is unchanged. */
+function configRefs(changed: readonly string[], roots: readonly string[]): Set<string> {
+  const out = new Set<string>(), dirs = new Set(changed.flatMap((f) => f.split("/").slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join("/")).concat("")));
+  for (const root of new Set(roots)) for (const d of dirs) for (const n of (() => { try { return readdirSync(join(root, d)); } catch { return []; } })()) {
+    const r = REPORT_RUNNERS.find((x) => x.config.test(n)), ini = /\.(?:ini|cfg)$|^pyproject\.toml$|^conftest\.py$/.test(n); let txt: string;
+    if ((!r && !ini) || (n.endsWith(".py") && n !== "conftest.py")) continue; try { txt = readFileSync(join(root, d, n), "utf8"); if (r?.key && !n.startsWith(r.runner)) txt = JSON.stringify((JSON.parse(txt) as Record<string, unknown>)[r.key] ?? ""); } catch { continue; }
+    for (const t of ini ? pluginMods(txt) : [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) { if (t === OPEN) { out.add("\0" + posix.join(d, n)); continue; } const p = posix.normalize(posix.join(d, t)); if (/[a-z]/i.test(t) && !/[*?^$|()[\]\\{}<>\s]/.test(t) && !t.startsWith("/") && !p.startsWith("..")) out.add(p); }
+  }
+  return out;
+}
+/** Files the PR added, changed, renamed or deleted that configure or preload the test runner: each REPORT_RUNNERS entry's config file, and any ini, cfg or toml file with a section header naming a test runner (`[...test...]`). Both the base and the head version are judged, so a runner section or key removed from a file that stays (a shared ini, cfg or json config) counts like a deleted file. A config file named for its runner is always config; the `key` check applies only to a shared manifest such as the project manifest. A read failure or a path missing at both sides counts as config (fail closed). The PR's own code could end the run early or redirect which tests run, so the check cannot be trusted. */
+export function runnerConfigChanged(changed: readonly string[], headDir: string, baseDir: string = headDir): string[] {
+  const refs = configRefs(changed, [headDir, baseDir]), open = [...refs].filter((r) => r[0] === "\0").map((r) => r.slice(1));
+  const hit = changed.filter((f) => f.endsWith(".py") && open.some((c) => f.startsWith(posix.dirname(c) === "." ? "" : posix.dirname(c) + "/")));
+  return [...hit, ...(hit.length ? open.map((c) => `${c} (pytest_plugins is not a closed literal)`) : [])].concat(changed.filter((f) => {
+    const b = basename(f), r = REPORT_RUNNERS.find((x) => x.config.test(b));
+    if (ALWAYS_CONFIG.test(f) || refs.has(f) || refs.has(f.replace(/\.[^./]+$/, "")) || refs.has(f.replace(/\/__init__\.py$/, ""))) return true;
+    const at = [headDir, baseDir].filter((d, i, a) => a.indexOf(d) === i && existsSync(join(d, f)));
+    if (/^tsconfig[\w.-]*\.json$/.test(b)) return at.length === 0 || at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => /"(?:paths|baseUrl|rootDirs|extends)"\s*:/.test(txt)));
+    if (at.length === 0 || (r && !r.key)) return !!r || at.length > 0;
+    if (!r && !/\.(?:ini|cfg|toml)$/.test(f)) return false;
+    return at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => r ? !r.key || b.startsWith(r.runner) || r.key in (JSON.parse(txt) as object) : /^\s*\[[^\]\n]*test|^[ \t]*[\w."' \t-]*\bpytest\b["']?[ \t]*(?:\.|=[ \t]*\{)/im.test(txt)));
+  }).filter((f) => !hit.includes(f)));
+}
 
 export interface PrRef { repo: string; number: number }
 export interface PrMeta { baseSha: string; headSha: string; cloneUrl: string; issueRefs: string[] }

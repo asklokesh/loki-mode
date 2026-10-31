@@ -3,8 +3,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { explainLines, defaultCheckout, defaultIssue, defaultPrMeta, defaultPackageSuites, defaultSandbox, parsePrRef, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
-import { extractChecks, judgeF2p, reportedCheck, reportShowsPass, REPORT_TOKEN, runnerConfigChanged, type SandboxResult } from "../../src/contrib/verify_pr_f2p.ts";
+import { explainLines, defaultCheckout, defaultIssue, defaultPrMeta, defaultPackageSuites, defaultSandbox, parsePrRef, runnerConfigChanged, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
+import { extractChecks, judgeF2p, reportedCheck, reportShowsPass, REPORT_TOKEN, type SandboxResult } from "../../src/contrib/verify_pr_f2p.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "vpr2-test-")); });
@@ -566,6 +566,13 @@ describe("verify-pr: an exit code alone is not proof", () => {
     ["F5 pytest_plugins annotation over 200 chars", { ...PLUG_REF, "conftest.py": `pytest_plugins: List${" ".repeat(260)} = ["plug"]\n` }, { "plug.py": HOOK }, 4, /conftest\.py/],
     ["F6 pytest_plugins assigned a non-literal", { ...PLUG_REF, "conftest.py": "PLUGINS = ['plug']\npytest_plugins = PLUGINS\n" }, { "plug.py": HOOK }, 4, /conftest\.py \(pytest_plugins is not a closed literal\)/],
     ["F7 pytest_plugins list plus an extra", { ...PLUG_REF, "conftest.py": "pytest_plugins = [] + extra\n" }, { "plug.py": HOOK }, 4, /not a closed literal/],
+    ["B1 closer bracket inside a comment in the list", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"a\",  # ]\n  \"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["B2 closer paren inside a comment in the tuple", { ...PLUG_REF, "conftest.py": "pytest_plugins = (\"a\",  # )\n  \"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["B3 pytest_plugins += a list", { ...PLUG_REF, "conftest.py": "pytest_plugins = []\npytest_plugins += [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["B4 pytest_plugins.append", { ...PLUG_REF, "conftest.py": "pytest_plugins = []\npytest_plugins.append(\"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["B5 pytest_plugins.extend", { ...PLUG_REF, "conftest.py": "pytest_plugins = []\npytest_plugins.extend([\"plug\"])\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["B6 globals() assignment of pytest_plugins", { ...PLUG_REF, "conftest.py": "globals()[\"pytest_plugins\"] = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["B7 pytest_plugins imported from another module", { ...PLUG_REF, "conftest.py": "from x import pytest_plugins\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
     ["A13 package plugin __init__.py rewritten", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = \"-p plug\"\n", "plug.py": null, "plug/__init__.py": "# plugin\n" }, { "plug/__init__.py": HOOK }, 4, /plug\/__init__\.py/],
     ["a referenced plugin left unchanged while the bug is fixed", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = [\"-p\", \"plug\"]\n", "conftest.py": "pytest_plugins = [\"plug\"]\n" }, {}, 0, /^$/],
   ] as const)("a PR where %s", async (_n, baseEdits, edits, rc, reason) => {
@@ -614,6 +621,17 @@ describe("verify-pr: an exit code alone is not proof", () => {
     runnerConfigChanged(["a.py"], d);
     expect(performance.now() - t0).toBeLessThan(1000);
   }, 60_000);
+
+  test("60000 pytest_plugins openers before one closer are NOT PROVEN and scanned in linear time", () => {
+    const d = join(dir, "redos-many-openers");
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, "conftest.py"), "pytest_plugins=[".repeat(60000) + "]\n");
+    writeFileSync(join(d, "a.py"), "x = 1\n");
+    const t0 = performance.now();
+    const r = runnerConfigChanged(["a.py"], d);
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(r.join(" ")).toContain("a.py");
+  });
 
   test("a 1MB unclosed pytest_plugins list is NOT PROVEN, not clean, and is read in under a second", () => {
     const d = join(dir, "redos-unclosed");
