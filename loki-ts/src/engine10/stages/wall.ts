@@ -13,7 +13,7 @@ import { hasRelevantTests, isTinyGreenfield, WALL_TINY_BOUND, loadRepoMap, named
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { publishSealed, removeHoldout, sealStageDir, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { clauseEvidenceBlock, evidenceOf, ingestWallCases, wallCasesBrief, wallCasesRunner, withUnreproducedEvidence, type WallEvidence } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingJavaTool, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
-import { sealedWallDir, baseJobs, classify, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, spawnGroupSync, stripAnsi } from "../../util/check_result.ts";
+import { sealedWallDir, baseJobs, classify, plannedGoDir, goPackageBrief, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, spawnGroupSync, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
 const WALL_PREFIX = "loki_wall_";
@@ -89,10 +89,12 @@ export function loadTaskText(ctx: RunContext, fromPrior: string | undefined): st
   return process.env.LOKI_E10_TASK_TEXT ?? "";
 }
 
-// Alongside an existing detected test file, or a top-level tests/ directory when the repo has none.
-function wallTargetDir(repoDir: string, existingTests: TestRef[], runners: RunnerName[] = []): string {
+// Alongside an existing detected test file, else by the runner's test-visibility rule. Java: the build tool only sees src/test/java (HV1-03b). Go is package-directory scoped: a test in tests/ cannot see root package code and
+// only compiles through an implementer shim that is never committed, so the Wall goes beside the first planned or named .go file (the repo root without one). Every other runner sees code from a top-level tests/.
+function wallTargetDir(repoDir: string, existingTests: TestRef[], runners: RunnerName[] = [], texts: string[] = []): string {
   const first = existingTests[0];
   if (!first && runners.some((r) => r === "maven" || r === "gradle" || r === "javac")) return join(repoDir, "src", "test", "java"); // HV1-03b: the build tool only sees Java tests here
+  if (!first && runners.includes("go")) return plannedGoDir(repoDir, texts).dir;
   return first ? join(repoDir, dirname(first.path)) : join(repoDir, "tests");
 }
 /** Runner for a generated file: extension decides for Python/Go, a JS/TS file takes the repo's detected JS runner; anything else never guesses (unselectable). */
@@ -130,7 +132,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const tree = prior.intake?.tree as string | undefined;
   const repomapText = repoMapText(ctx.repoDir, tree, repomapRef, WALL_MAP_MAX_LINES);
 
-  const targetDir = wallTargetDir(ctx.repoDir, existingTests, runners), pkg = loadProjectApi(ctx.repoDir)?.packageOf(`${relative(ctx.repoDir, targetDir)}/x`); // FC-23: the target package's own module system, read by a parser
+  const srcTexts = [typeof prior.plan?.plan === "string" ? prior.plan.plan : "", task], targetDir = wallTargetDir(ctx.repoDir, existingTests, runners, srcTexts), pkg = loadProjectApi(ctx.repoDir)?.packageOf(`${relative(ctx.repoDir, targetDir)}/x`); // FC-23: the target package's own module system, read by a parser
   const conv = readPackageConventions(join(ctx.repoDir, pkg?.root ?? "."), pkg?.runner ?? null);
   const cwd = mkdtempSync(join(tmpdir(), "loki-e15-wall-"));
   const wm = wallManifestFor(ctx.repoDir, tree, task); // D77: flag-gated, null (as if off) on any failure
@@ -140,7 +142,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const model = retry?.model ?? wallFirstModel(sz.size), iterationId = `${ctx.runId}-wall${retry?.suffix ?? ""}`; // COST-11
   const session = await ctx.sessions.run({
     stage: "wall",
-    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? [], relative(ctx.repoDir, targetDir), clauseSet, evidence, isTinyGreenfield(sz.size, task, testMap)) + wallCasesBrief(runners), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
+    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? [], relative(ctx.repoDir, targetDir), clauseSet, evidence, isTinyGreenfield(sz.size, task, testMap)) + wallCasesBrief(runners) + goPackageBrief(ctx.repoDir, targetDir, runners, srcTexts), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
     tier: "development",
     model,

@@ -1283,3 +1283,83 @@ describe("tiny greenfield Wall bound", () => {
     expect(await run("Write fizzbuzz.py. " + "Handle every edge case in detail. ".repeat(12), { runners: [], tests: [] }, ["fizzbuzz.py"])).not.toContain(BOUND);
   });
 });
+
+describe("Wall directory follows the runner's test-visibility rule", () => {
+  const run = async (task: string, runner: string, seed: Record<string, string> = {}, plan?: string): Promise<{ brief: string; files: { path: string }[] }> => {
+    const s = setup({ runners: [runner], tests: [] }); let brief = "";
+    for (const [p, c] of Object.entries(seed)) { mkdirSync(join(s.repoDir, p, ".."), { recursive: true }); writeFileSync(join(s.repoDir, p), c, "utf8"); }
+    const ext = runner === "go" ? "_test.go" : runner === "pytest" ? ".py" : ".test.ts";
+    const sessions = new FakeSessionRunner((o) => { brief = o.brief; writeFileSync(join(o.cwd!, `loki_wall_a${ext}`), runner === "go" ? "package ini\nimport \"testing\"\nfunc TestA(t *testing.T) { t.Fatal(\"x\") }\n" : runner === "pytest" ? "def test_a():\n    assert False\n" : SAMPLE, "utf8"); });
+    const outputs: Record<string, Record<string, unknown>> = { intake: { task, testmap: s.testmap, repomap_ref: s.repomapRef } }; if (plan) outputs.plan = { plan };
+    const ctx = fakeCtx(s.repoDir, s.runDir, sessions, outputs, []);
+    try { const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } }); return { brief, files: (r.data.files as { path: string }[]).map((f) => ({ path: f.path.slice(s.repoDir.length + 1) })) }; }
+    finally { rmSync(s.repoDir, { recursive: true, force: true }); }
+  };
+  test("Go greenfield: the Wall sits beside the planned ini.go with its package clause", async () => {
+    const r = await run("Implement ini.go (package ini) parsing INI text into sections.", "go");
+    expect(r.files.map((f) => f.path)).toEqual(["loki_wall_a_test.go"]);
+    expect(r.brief).toContain('starts with "package ini"');
+  });
+  // Plan and Wall run in one parallel group, so in production the Wall sees only the task text; the plan text applies only on resume (the last test below feeds it).
+  test("Go greenfield: a nested file named in the task puts the Wall in that package directory", async () => {
+    const r = await run("Build a rate limiter in internal/limiter/limiter.go.", "go");
+    expect(r.files.map((f) => f.path)).toEqual(["internal/limiter/loki_wall_a_test.go"]);
+    expect(r.brief).toContain('"package limiter"');
+  });
+  test("Go package order: a stem that differs from its dir gives the dir (internal/store/memory.go is package store)", async () => {
+    const r = await run("Add internal/store/memory.go with an in-memory store.", "go");
+    expect(r.files.map((f) => f.path)).toEqual(["internal/store/loki_wall_a_test.go"]);
+    expect(r.brief).toContain('"package store"');
+  });
+  test("Go package order: cmd/x/main.go is package main", async () => {
+    const r = await run("Write cmd/x/main.go that prints hello.", "go");
+    expect(r.files.map((f) => f.path)).toEqual(["cmd/x/loki_wall_a_test.go"]);
+    expect(r.brief).toContain('"package main"');
+  });
+  test("Go package order: a hyphenated stem at the root has no valid identifier, so no package line is emitted", async () => {
+    const r = await run("Write word-wrap.go that wraps text.", "go");
+    expect(r.files.map((f) => f.path)).toEqual(["loki_wall_a_test.go"]);
+    expect(r.brief).not.toContain("Go: your test files");
+  });
+  test("Go package order: an explicit package in the task beats the stem; a root file otherwise takes the go.mod module name without /vN", async () => {
+    expect((await run("Write ini.go, package `config`.", "go")).brief).toContain('"package config"');
+    const r = await run("Write ini.go that parses INI.", "go", { "go.mod": "module example.com/acme/shortener/v2\n\ngo 1.22\n" });
+    expect(r.brief).toContain('"package shortener"');
+    expect((await run("Write ini.go that parses INI.", "go")).brief).not.toContain("Go: your test files");
+  });
+  // Only a backticked name or "(package X)" names the package; every other phrasing falls back to the directory (Go convention), because a wrong name always breaks the run.
+  const pkgOf = async (task: string, seed: Record<string, string> = {}): Promise<string | null> => /each one starts with "package (\w+)"/.exec((await run(task, "go", seed)).brief)?.[1] ?? null;
+  test.each<[string, string, string | null, Record<string, string>?]>([
+    ["new package for", "Create a new package for rate limiting at limiter/limiter.go", "limiter"],
+    ["the package should", "Add internal/store/memory.go; the package should expose New()", "store"],
+    ["This package is used", "Add internal/store/memory.go. This package is used by the API.", "store"],
+    ["so the package compiles", "Fix limiter/limiter.go so the package compiles", "limiter"],
+    ["package name: text", "Write wrap.go; package name: text", "wrap", { "go.mod": "module example.com/wrap\n\ngo 1.22\n" }],
+    ["(package type) is a keyword", "Write limiter/limiter.go (package type)", "limiter"],
+    ["so that a package compiles", "Fix internal/store/memory.go so that a package compiles", "store"],
+    ["make sure this package works", "Fix internal/store/memory.go and make sure this package works", "store"],
+    ["so this package builds, then", "Fix internal/store/memory.go so this package builds, then add docs", "store"],
+    ["so each package works;", "Fix internal/store/memory.go so each package works; keep it small", "store"],
+    ["in package store (bare name)", "Implement internal/x/y.go in package store", "x"],
+    ["the package `config`", "Implement ini/ini.go in the package `config`", "config"],
+    ["the package `store`", "Implement internal/x/y.go in the package `store`", "store"],
+    ["(package ini)", "Implement ini.go (package ini)", "ini"],
+    ["(package store)", "Implement internal/x/y.go (package store)", "store"],
+    ["backticked after a comma", "Implement internal/x/y.go, package `store`.", "store"],
+  ])("Go package order: %s", async (_n, task, want, seed) => { expect(await pkgOf(task, seed ?? {})).toBe(want); });
+  test("Go greenfield: on resume the plan text names the file when the task does not", async () => {
+    const r = await run("Build a rate limiter.", "go", {}, "Files: internal/limiter/limiter.go");
+    expect(r.files.map((f) => f.path)).toEqual(["internal/limiter/loki_wall_a_test.go"]);
+  });
+  test("Go greenfield: a sibling's package clause wins over the file name", async () => {
+    const r = await run("Extend util/extra.go with helpers.", "go", { "util/main.go": "package toolkit\n" });
+    expect(r.files.map((f) => f.path)).toEqual(["util/loki_wall_a_test.go"]);
+    expect(r.brief).toContain('"package toolkit"');
+  });
+  test("Python and JS greenfield keep top-level tests/", async () => {
+    expect((await run("Write fizzbuzz.py", "pytest")).files.map((f) => f.path)).toEqual(["tests/loki_wall_a.py"]);
+    const js = await run("Write fizz.ts", "bun");
+    expect(js.files.map((f) => f.path)).toEqual(["tests/loki_wall_a.test.ts"]);
+    expect(js.brief).not.toContain("Go:");
+  });
+});
