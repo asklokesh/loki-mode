@@ -159,6 +159,19 @@ function goCount(out: string, ok?: boolean): number | null | undefined {
   if (lines.some((x) => /^(?:=== RUN|PASS$|FAIL$|testing: warning: no tests to run)/.test(x))) return 0;
   return lines.filter((x) => GO_PKG_RE.test(x)).every((x) => /\[no tests? (?:files|to run)\]/.test(x)) ? 0 : null;
 }
+/** Go is package-directory scoped: a test in tests/ cannot see root package code and only compiles through an implementer shim that is never committed. The Wall goes beside the first planned or named
+ *  .go file in the texts (plan, then task), or at the repo root without one; pkg is a sibling's package clause, else the planned file's stem. */
+const GO_SRC = /(?<![\w./-])((?:[\w.-]+\/)*[\w-]+)\.go(?!\w)/g;
+export function plannedGoDir(repoDir: string, texts: string[]): { dir: string; pkg: string | null } {
+  for (const t of texts) for (const m of t.matchAll(GO_SRC)) {
+    const stem = m[1]!; if (stem.endsWith("_test") || stem.split("/").includes("..")) continue;
+    const rel = dirname(`${stem}.go`), dir = join(repoDir, rel === "." ? "" : rel);
+    const sibling = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".go") && !f.endsWith("_test.go")).map((f) => /^package\s+(\w+)/m.exec(readFileSync(join(dir, f), "utf8"))?.[1]).find(Boolean) : undefined;
+    return { dir, pkg: sibling ?? (stem.split("/").pop() ?? null) };
+  }
+  return { dir: repoDir, pkg: null };
+}
+export const goPackageBrief = (repoDir: string, targetDir: string, runners: readonly string[], texts: string[]): string => { const p = runners.includes("go") ? plannedGoDir(repoDir, texts) : null; return p?.pkg && p.dir === targetDir ? `\n\nGo: your test files sit in the package directory, so each one starts with "package ${p.pkg}" and uses the package's identifiers directly.` : ""; };
 /** One shared Go-runner detection for every caller (verify, deep, per-package suites): a shell command line or an argv, with
  *  leading env / command / exec / time wrappers, VAR=val assignments and a path to go (/usr/local/go/bin/go) all resolving to go.
  *  Any `&&`, `;`, `||` or `|` segment that runs go counts. Chosen from the command, never from output. Detecting go too often

@@ -1269,3 +1269,37 @@ describe("tiny greenfield Wall bound", () => {
     expect(await run("Write fizzbuzz.py. " + "Handle every edge case in detail. ".repeat(12), { runners: [], tests: [] }, ["fizzbuzz.py"])).not.toContain(BOUND);
   });
 });
+
+describe("Wall directory follows the runner's test-visibility rule", () => {
+  const run = async (task: string, runner: string, seed: Record<string, string> = {}, plan?: string): Promise<{ brief: string; files: { path: string }[] }> => {
+    const s = setup({ runners: [runner], tests: [] }); let brief = "";
+    for (const [p, c] of Object.entries(seed)) { mkdirSync(join(s.repoDir, p, ".."), { recursive: true }); writeFileSync(join(s.repoDir, p), c, "utf8"); }
+    const ext = runner === "go" ? "_test.go" : runner === "pytest" ? ".py" : ".test.ts";
+    const sessions = new FakeSessionRunner((o) => { brief = o.brief; writeFileSync(join(o.cwd!, `loki_wall_a${ext}`), runner === "go" ? "package ini\nimport \"testing\"\nfunc TestA(t *testing.T) { t.Fatal(\"x\") }\n" : runner === "pytest" ? "def test_a():\n    assert False\n" : SAMPLE, "utf8"); });
+    const outputs: Record<string, Record<string, unknown>> = { intake: { task, testmap: s.testmap, repomap_ref: s.repomapRef } }; if (plan) outputs.plan = { plan };
+    const ctx = fakeCtx(s.repoDir, s.runDir, sessions, outputs, []);
+    try { const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } }); return { brief, files: (r.data.files as { path: string }[]).map((f) => ({ path: f.path.slice(s.repoDir.length + 1) })) }; }
+    finally { rmSync(s.repoDir, { recursive: true, force: true }); }
+  };
+  test("Go greenfield: the Wall sits beside the planned ini.go with its package clause", async () => {
+    const r = await run("Implement ini.go (package ini) parsing INI text into sections.", "go");
+    expect(r.files.map((f) => f.path)).toEqual(["loki_wall_a_test.go"]);
+    expect(r.brief).toContain('starts with "package ini"');
+  });
+  test("Go greenfield: a planned nested file puts the Wall in that package directory", async () => {
+    const r = await run("Build a rate limiter.", "go", {}, "Files: internal/limiter/limiter.go");
+    expect(r.files.map((f) => f.path)).toEqual(["internal/limiter/loki_wall_a_test.go"]);
+    expect(r.brief).toContain('"package limiter"');
+  });
+  test("Go greenfield: a sibling's package clause wins over the file name", async () => {
+    const r = await run("Extend util/extra.go with helpers.", "go", { "util/main.go": "package toolkit\n" });
+    expect(r.files.map((f) => f.path)).toEqual(["util/loki_wall_a_test.go"]);
+    expect(r.brief).toContain('"package toolkit"');
+  });
+  test("Python and JS greenfield keep top-level tests/", async () => {
+    expect((await run("Write fizzbuzz.py", "pytest")).files.map((f) => f.path)).toEqual(["tests/loki_wall_a.py"]);
+    const js = await run("Write fizz.ts", "bun");
+    expect(js.files.map((f) => f.path)).toEqual(["tests/loki_wall_a.test.ts"]);
+    expect(js.brief).not.toContain("Go:");
+  });
+});
