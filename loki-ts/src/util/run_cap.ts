@@ -85,5 +85,5 @@ export function planOutOfRepo(runDir: string): { reason: string } | null {
 }
 /** FC-OUT-OF-REPO: the plan brief line that lets the planner declare it. */
 export const outOfRepoInstruction = (scopePath: string): string => `If the requested change has no target in this repository (for example the code lives in a hosted service or another repo), write {"files":[],"out_of_repo":"<one sentence why>"} to ${scopePath} and do not guess files.`;
-/** FC-NO-PUSH-UNVERIFIED: the one line printed when an unverified run keeps its branch local. */
+/** FC-NO-PUSH-UNVERIFIED: the one line printed when a run that is neither VERIFIED nor PARTIAL (a PARTIAL run opens a labelled draft PR) keeps its branch local. */
 export const localBranchNote = (runId: string, verdict: string, repoDir: string): string => `engine10: run ${runId} sealed ${verdict}, not verified: branch loki/${runId} stays local (not pushed); inspect it in ${repoDir}\n`;

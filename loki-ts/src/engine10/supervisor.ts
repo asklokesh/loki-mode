@@ -197,8 +197,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     } catch { hasDiff = base !== null; }
   }
   if (!cancelled && verdict !== "VERIFIED") { const ib = fold(readEvents(log.path)).stages["intake"], ibd = ib?.type === "stage.completed" ? ib.data : null, note = dropEmptyRunBranch(opts.repoDir, origBranch, ibd?.branch, validBase(ibd?.base_sha ?? null)); if (note) process.stderr.write(note); } // FC-EMPTY-RUN-BRANCH-LEFT-CHECKED-OUT: a terminal run that committed nothing restores the user's branch and drops its empty run branch
-  if (opts.pr && !cancelled && intact && origin && verdict !== "ALREADY_SATISFIED" && verdict !== "VERIFIED" && hasDiff) process.stderr.write(localBranchNote(opts.runId, verdict, opts.repoDir)); // FC-NO-PUSH-UNVERIFIED
-  if (opts.pr && !cancelled && intact && origin && verdict === "VERIFIED" && hasDiff) { // FC-NO-PUSH-UNVERIFIED: only a verified success leaves the machine; ALREADY_SATISFIED opens no PR (E-66)
+  if (opts.pr && !cancelled && intact && origin && verdict !== "ALREADY_SATISFIED" && verdict !== "VERIFIED" && verdict !== "PARTIAL" && hasDiff) process.stderr.write(localBranchNote(opts.runId, verdict, opts.repoDir)); // FC-NO-PUSH-UNVERIFIED
+  if (opts.pr && !cancelled && intact && origin && (verdict === "VERIFIED" || verdict === "PARTIAL") && hasDiff) { // FC-NO-PUSH-UNVERIFIED: VERIFIED opens a ready PR, PARTIAL a labelled DRAFT PR ("[PARTIAL]" title, Not proven first; a PR beats no PR, 2026-10-31); FAILED, SPEC_CONFLICT and cancelled stay local; ALREADY_SATISFIED opens no PR (E-66)
     const pushEnv: PushEnv = { _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };
     const out = await opts.pr({ env, pushEnv, runId: opts.runId, repoDir: opts.repoDir, verdict, notProven, recordSpawnEnv: (spawnEnv) => { log.append("capability.recorded", "pr", { stages: [stageCapability("pr", spawnEnv)] }); } });
     notProven.push(...(out?.notProven ?? []));

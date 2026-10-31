@@ -116,7 +116,7 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.prUrl).toBeNull();
   }, loadAwareTimeoutMs(10_000));
 
-  test("FC-19: a sealed PARTIAL after a failed implement stage, with a diff, does not push (FC-NO-PUSH-UNVERIFIED)", async () => {
+  test("FC-19: a sealed PARTIAL after a failed implement stage, with a diff, opens a PR (PR-FIRST-1)", async () => {
     const { dir, baseSha } = repoWithCommit();
     const code = `
       ${intakeLine(baseSha)}
@@ -128,6 +128,23 @@ describe("E-67 rework: supervisor backstop", () => {
     const pr = prSpy();
     const r = await runSupervisor({ runId: "e10-fc19", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step, started: { task_source: "issue", issue_ref: "acme/widget#42" }, comment: commentSpy().step });
     expect(r.verdict).toBe("PARTIAL");
+    expect(pr.calls.length).toBe(1);
+    expect(pr.calls[0]!.verdict).toBe("PARTIAL");
+    expect(r.prUrl).not.toBeNull();
+  }, loadAwareTimeoutMs(15_000));
+
+  test("a PARTIAL run with a real diff that was cancelled never calls pr and has no prUrl", async () => {
+    const { dir, baseSha } = repoWithCommit();
+    const code = `
+      ${intakeLine(baseSha)}
+      ${COMMIT_A_CHANGE}
+      console.log(JSON.stringify({ type: "cancel_effective", stage: null, data: {} }));
+      console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "PARTIAL", not_proven: ["cancelled"] } }));
+      process.exit(0);
+    `;
+    const pr = prSpy();
+    const r = await runSupervisor({ runId: "e10-cancel-partial", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step });
+    expect(r.outcome).toBe("CANCELLED");
     expect(pr.calls.length).toBe(0);
     expect(r.prUrl).toBeNull();
   }, loadAwareTimeoutMs(15_000));
@@ -150,7 +167,7 @@ describe("E-67 rework: supervisor backstop", () => {
     }
   }, loadAwareTimeoutMs(20_000));
 
-  test("FC-NO-PUSH-UNVERIFIED: a sealed SPEC_CONFLICT, PARTIAL or FAILED with a real diff never calls pr (branch stays local); VERIFIED still does", async () => {
+  test("PR-FIRST-1: with a real diff VERIFIED and PARTIAL call pr (PARTIAL as a draft), SPEC_CONFLICT and FAILED never do (branch stays local)", async () => {
     for (const verdict of ["SPEC_CONFLICT", "PARTIAL", "FAILED", "VERIFIED"]) {
       const { dir, baseSha } = repoWithCommit();
       const code = `
@@ -161,7 +178,8 @@ describe("E-67 rework: supervisor backstop", () => {
       `;
       const pr = prSpy();
       await runSupervisor({ runId: `e10-nopush-${verdict.toLowerCase()}`, repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step });
-      expect(pr.calls.length).toBe(verdict === "VERIFIED" ? 1 : 0);
+      expect(pr.calls.length).toBe(verdict === "VERIFIED" || verdict === "PARTIAL" ? 1 : 0);
+      if (pr.calls.length === 1) expect(pr.calls[0]!.verdict).toBe(verdict);
     }
   }, loadAwareTimeoutMs(40_000));
 
