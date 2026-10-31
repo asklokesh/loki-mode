@@ -168,8 +168,8 @@ export function plannedGoDir(repoDir: string, texts: string[]): { dir: string; p
   for (const t of texts) for (const m of t.matchAll(GO_SRC)) { const s = m[1]!; if (!stem && !s.endsWith("_test") && !s.split("/").includes("..")) stem = s; }
   const rel = stem.includes("/") ? dirname(stem) : "", dir = join(repoDir, rel);
   const sibling = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".go") && !f.endsWith("_test.go")).map((f) => /^package\s+(\w+)/m.exec(readFileSync(join(dir, f), "utf8"))?.[1]).find(Boolean) : undefined;
-  // Only a backticked name, or a bare name closed by ) , ; or the end of the task and not introduced by "the", counts as explicit: ordinary prose ("the package should", "package for", "so the package compiles") never names a package.
-  const em = /(?<!\bthe\s)\bpackage\s+(?:`([A-Za-z_]\w*)`|([A-Za-z_]\w*)(?=[),;]|$))/.exec(texts[texts.length - 1] ?? ""), named = em ? (em[1] ?? em[2]) : undefined, explicit = named !== undefined && !GO_KEYWORDS.has(named) ? named : undefined;
+  // Only "package `X`" or "(package X)" names the package; every bare name is prose ("the package should", "so this package builds, then") and falls back to the directory, since a wrong name always breaks the run.
+  const em = /\bpackage\s+`([A-Za-z_]\w*)`|\(package\s+([A-Za-z_]\w*)\)/.exec(texts[texts.length - 1] ?? ""), named = em ? (em[1] ?? em[2]) : undefined, explicit = named !== undefined && !GO_KEYWORDS.has(named) ? named : undefined;
   const mod = rel === "" && existsSync(join(repoDir, "go.mod")) ? /^module\s+(\S+)/m.exec(readFileSync(join(repoDir, "go.mod"), "utf8"))?.[1]?.replace(/\/v\d+$/, "").split("/").pop() : undefined;
   const pkg = sibling ?? explicit ?? (stem.split("/").pop() === "main" ? "main" : rel !== "" ? basename(rel) : mod) ?? null;
   return { dir, pkg: pkg !== null && GO_IDENT.test(pkg) ? pkg : null };
