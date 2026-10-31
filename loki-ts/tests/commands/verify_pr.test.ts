@@ -595,6 +595,7 @@ describe("verify-pr: an exit code alone is not proof", () => {
     ["R06e import of a submodule of the edited package", { ...PLUG_REF, "conftest.py": "import plug.sub\n" }, { "plug/sub.py": HOOK }, 4, /plug\/sub\.py/],
     ["R07 fullwidth plugin name, fullwidth module edited", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"\uff50lug\"]\n" }, { "ｐlug.py": HOOK }, 4, /ｐlug\.py/],
     ["R14 type(sys).__setattr__ on the module", { ...PLUG_REF, "conftest.py": "import sys\ntype(sys).__setattr__(sys.modules[__name__], \"pytest_\" \"plugins\", [\"plug\"])\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R14m object.__setattr__ on the module", { ...PLUG_REF, "conftest.py": "import sys\nobject.__setattr__(sys.modules[__name__], \"pytest_\" \"plugins\", [\"plug\"])\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
     ["R15 the plugin list read through a frame", { ...PLUG_REF, "conftest.py": "import sys\nsys._getframe().f_globals[\"pytest_\" + \"plugins\"] = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
     ["R16 a syntax error in the conftest", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"plug\"\n" }, { "plug.py": HOOK }, 4, /conftest\.py/],
     ["R17 fullwidth -p module in an ini file", { ...PLUG_REF, "pytest.ini": "[pytest]\naddopts = -p \uff50lug\n" }, { "\uff50lug.py": HOOK }, 4, /pytest\.ini|\uff50lug\.py/],
