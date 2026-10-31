@@ -126,8 +126,8 @@ const OUTPUT_DIRS: { dir: string; sigs: string[] }[] = [ // a toolchain's build 
   { dir: "target", sigs: ["CACHEDIR.TAG", ".rustc_info.json"] },
   { dir: ".gradle", sigs: [] }, { dir: "node_modules", sigs: [] }, { dir: "__pycache__", sigs: [] },
 ];
-/** Of the paths a run ADDED, those inside a toolchain's own build output (a signed cargo target/, .gradle, node_modules, __pycache__). An output dir that already holds any file tracked at HEAD is the user's: nothing in it is returned. */
-export function toolchainOutputs(repoDir: string, added: string[]): Set<string> {
+/** Of the paths a run ADDED, those inside a toolchain's own build output (a signed cargo target/, .gradle, node_modules, __pycache__). An output dir that already holds any file tracked at the run's base commit is the user's: nothing in it is returned, and when the base cannot be read nothing is dropped. */
+export function toolchainOutputs(repoDir: string, added: string[], baseSha?: string): Set<string> {
   const dirOf = new Map<string, string>(), tracked = new Map<string, boolean>(), out = new Set<string>();
   for (const f of added) {
     const parts = f.split("/");
@@ -138,14 +138,14 @@ export function toolchainOutputs(repoDir: string, added: string[]): Set<string> 
     }
   }
   for (const [f, dir] of dirOf) {
-    if (!tracked.has(dir)) { try { tracked.set(dir, safeGit(repoDir, ["ls-tree", "-r", "--name-only", "HEAD", "--", `${dir}/`], { stdio: ["ignore", "pipe", "ignore"] }).trim() !== ""); } catch { tracked.set(dir, false); } }
+    if (!tracked.has(dir)) { try { tracked.set(dir, !baseSha || safeGit(repoDir, ["ls-tree", "-r", "--name-only", baseSha, "--", `${dir}/`], { stdio: ["ignore", "pipe", "ignore"] }).trim() !== ""); } catch { tracked.set(dir, true); } }
     if (!tracked.get(dir)) out.add(f);
   }
   return out;
 }
 /** One scope note per output dir the commit left out, so the drop is disclosed in the receipt. */
-export function toolchainDropNotes(repoDir: string, dropped: string[]): string[] {
+export function toolchainDropNotes(repoDir: string, dropped: string[], baseSha?: string): string[] {
   const n = new Map<string, number>();
-  for (const f of toolchainOutputs(repoDir, dropped)) { const p = f.split("/"), i = p.findIndex((x) => OUTPUT_DIRS.some((d) => d.dir === x)), k = p.slice(0, i + 1).join("/"); n.set(k, (n.get(k) ?? 0) + 1); }
+  for (const f of toolchainOutputs(repoDir, dropped, baseSha)) { const p = f.split("/"), i = p.findIndex((x) => OUTPUT_DIRS.some((d) => d.dir === x)), k = p.slice(0, i + 1).join("/"); n.set(k, (n.get(k) ?? 0) + 1); }
   return [...n].map(([d, c]) => `toolchain build output left out of the commit: ${d}/ (${c} file${c === 1 ? "" : "s"})`);
 }

@@ -142,26 +142,42 @@ test("FC-COMMIT-STAGES-USER-UNTRACKED the supervisor backstop also leaves an unt
   expect(sh(["git", "show", "--name-only", "--format=", "HEAD"], repo).split("\n").filter(Boolean)).toEqual(["a.txt"]);
 });
 
+const gitIn = (...a: string[]): string => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { stdio: "pipe", env: process.env }).toString().trim();
+const baseRepo = (): string => { gitIn("init", "-q"); writeFileSync(join(dir, "README.md"), "r\n"); gitIn("add", "README.md"); gitIn("commit", "-qm", "base"); return gitIn("rev-parse", "HEAD"); };
+
 test("build output a rust, gradle, node or python run created is dropped from the commit set; tracked files and a bare target/ are kept", () => {
-  mkdirSync(join(dir, "target"), { recursive: true }); writeFileSync(join(dir, "target", "CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n");
+  const base = baseRepo(); mkdirSync(join(dir, "target"), { recursive: true }); writeFileSync(join(dir, "target", "CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n");
   const a = (f: string) => ({ st: "A", f });
   const staged = [a("src/lib.rs"), a("target/CACHEDIR.TAG"), a("target/debug/app"), a("target/release/.fingerprint/x"), a("pkg/__pycache__/m.cpython-312.pyc"), a("node_modules/x/index.js"), a("web/target/keep.txt"), { st: "M", f: "target/tracked.txt" }];
-  const dropped = dropSet(dir, staged, undefined, env).map(({ f }) => f).sort();
+  const dropped = dropSet(dir, staged, undefined, env, undefined, undefined, base).map(({ f }) => f).sort();
   expect(dropped).toEqual(["node_modules/x/index.js", "pkg/__pycache__/m.cpython-312.pyc", "target/CACHEDIR.TAG", "target/debug/app", "target/release/.fingerprint/x"]);
 });
 
-test("an output dir that already holds a file tracked at HEAD is the user's: nothing in it is dropped", () => {
-  const g = (...a: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { stdio: "pipe", env: process.env });
+test("an output dir that already holds a file tracked at the base is the user's: nothing in it is dropped", () => {
+  const g = gitIn;
   g("init", "-q"); mkdirSync(join(dir, "target"), { recursive: true }); writeFileSync(join(dir, "target", "keep.txt"), "mine\n");
-  g("add", "target/keep.txt"); g("commit", "-qm", "base");
+  g("add", "target/keep.txt"); g("commit", "-qm", "base"); const base = g("rev-parse", "HEAD");
   writeFileSync(join(dir, "target", "CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n");
   const staged = [{ st: "A", f: "target/CACHEDIR.TAG" }, { st: "A", f: "target/debug/app" }];
-  expect(dropSet(dir, staged, undefined, process.env).map(({ f }) => f)).toEqual([]);
+  expect(dropSet(dir, staged, undefined, process.env, undefined, undefined, base).map(({ f }) => f)).toEqual([]);
+});
+
+test("a file the run itself committed into target/ after the base does not make the dir the user's", () => {
+  const base = baseRepo(); mkdirSync(join(dir, "target"), { recursive: true }); writeFileSync(join(dir, "target", "CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n");
+  writeFileSync(join(dir, "target", "early.o"), "o\n"); gitIn("add", "-f", "target/early.o"); gitIn("commit", "-qm", "implement");
+  expect(dropSet(dir, [{ st: "A", f: "target/CACHEDIR.TAG" }, { st: "A", f: "target/debug/app" }], undefined, process.env, undefined, undefined, base).map(({ f }) => f).sort()).toEqual(["target/CACHEDIR.TAG", "target/debug/app"]);
+});
+
+test("when the base cannot be read (not a git dir, or no base), nothing is dropped", () => {
+  mkdirSync(join(dir, "node_modules", "p"), { recursive: true });
+  const staged = [{ st: "A", f: "node_modules/p/i.js" }];
+  expect(dropSet(dir, staged, undefined, process.env, undefined, undefined, "0".repeat(40))).toEqual([]);
+  expect(dropSet(dir, staged, undefined, process.env)).toEqual([]);
 });
 
 test("each dropped toolchain output dir is disclosed as one note with its file count", () => {
   mkdirSync(join(dir, "target"), { recursive: true }); writeFileSync(join(dir, "target", "CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n");
-  expect(toolchainDropNotes(dir, ["target/CACHEDIR.TAG", "target/debug/app", "node_modules/x/i.js", "src/a.rs"])).toEqual([
+  expect(toolchainDropNotes(dir, ["target/CACHEDIR.TAG", "target/debug/app", "node_modules/x/i.js", "src/a.rs"], baseRepo())).toEqual([
     "toolchain build output left out of the commit: target/ (2 files)", "toolchain build output left out of the commit: node_modules/ (1 file)",
   ]);
 });
