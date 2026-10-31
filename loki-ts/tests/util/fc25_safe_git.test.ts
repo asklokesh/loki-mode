@@ -292,3 +292,13 @@ test("hung git config: driverKeys and netCommandOverrides time out and fail clos
     rmSync(d, { recursive: true, force: true });
   }
 });
+
+test("driver blanking is skipped only for builtins that cannot run a filter or textconv", () => {
+  g("config", "filter.canary.clean", "false"); g("config", "diff.canary.textconv", "false");
+  try {
+    for (const cmd of ["rev-parse", "symbolic-ref", "rev-list", "for-each-ref", "merge-base", "show-ref", "config"]) expect(safeGitArgs([cmd, "HEAD"], false, repo)).not.toContain("filter.canary.clean=");
+    for (const cmd of ["status", "diff", "log", "ls-files", "add", "checkout", "show", "cat-file"]) expect(safeGitArgs([cmd], false, repo)).toContain("filter.canary.clean=");
+    expect(safeGitArgs(["-C", repo, "rev-parse", "HEAD"], false, repo)).not.toContain("filter.canary.clean=");
+    expect(safeGit(repo, ["rev-parse", "--is-inside-work-tree"]).trim()).toBe("true");
+  } finally { g("config", "--unset", "filter.canary.clean"); g("config", "--unset", "diff.canary.textconv"); }
+});

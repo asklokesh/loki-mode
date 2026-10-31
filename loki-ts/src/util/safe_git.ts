@@ -24,6 +24,9 @@ const DRIVER_KEY_RE = "^(filter\\..*\\.(clean|smudge|process)|diff\\..*\\.(textc
 // Patch-producing subcommands. diff.external= (blank) makes these die with "external diff died", so --no-ext-diff
 // --no-textconv are injected right after the subcommand; a caller's --ext-diff/--textconv is dropped, never honoured.
 const PATCH_CMDS: ReadonlySet<string> = new Set(["diff", "show", "log", "whatchanged"]);
+/** Builtins that never run a clean/smudge/process filter or a textconv, so blanking repo drivers (one `git config` spawn per call) buys nothing.
+ *  Only ref and config plumbing: anything that diffs, stats the worktree, checks out or writes (ls-files -m, status, add, log -p) stays blanked. */
+const DRIVER_FREE_CMDS: ReadonlySet<string> = new Set(["rev-parse", "symbolic-ref", "rev-list", "for-each-ref", "merge-base", "show-ref", "config"]);
 const OPT_WITH_VALUE: ReadonlySet<string> = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env", "--attr-source"]);
 const SECRET_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK"] as const;
 
@@ -195,7 +198,7 @@ export function safeGitArgs(args: readonly string[], allowToken = false, repoDir
   const cfg = [...(allowToken ? CREDENTIAL_CONFIG : SAFE_GIT_CONFIG), ...DRIVER_CONFIG];
   const flags = cfg.flatMap((v, i) => (i % 2 === 1 && !off.has(v) ? [cfg[i - 1]!, v] : []));
   const net = allowToken && repoDir ? netCommandOverrides(repoDir, env) : { cfg: [], opts: [] };
-  return [...flags, ...net.cfg, ...(repoDir && !keep.repoDrivers ? driverKeys(repoDir).flatMap((k) => ["-c", `${k}=`]) : []), ...(allowToken ? noSubmoduleRecursion(injectPackOpts(noExtDiff(args), net.opts)) : injectPackOpts(noExtDiff(args), net.opts))];
+  return [...flags, ...net.cfg, ...(repoDir && !keep.repoDrivers && !DRIVER_FREE_CMDS.has(args[cmdIndex(args)] ?? "") ? driverKeys(repoDir).flatMap((k) => ["-c", `${k}=`]) : []), ...(allowToken ? noSubmoduleRecursion(injectPackOpts(noExtDiff(args), net.opts)) : injectPackOpts(noExtDiff(args), net.opts))];
 }
 
 /** allowToken fetch and pull: a submodule has its own repo-local config (core.sshCommand, proxy, TLS keys) that the superproject-only
