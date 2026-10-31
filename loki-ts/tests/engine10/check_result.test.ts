@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { CARGO_RUNNER_REASON, CARGO_UNLISTED_REASON, goRunner, spawnCollect, changedSymbols, checkProvenance, classifyCheck, corroboratePass, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, javaSummary, javaTestClass, fullSuiteCmd, readableFailIds, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
+import { CARGO_RUNNER_REASON, CARGO_TOOLCHAIN_REASON, CARGO_UNLISTED_REASON, goRunner, spawnCollect, changedSymbols, checkProvenance, classifyCheck, corroboratePass, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, javaSummary, javaTestClass, fullSuiteCmd, readableFailIds, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
 import { firstError, runCheck, testCheckName, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -1015,6 +1015,22 @@ describe("cargo listing check residuals", () => {
     for (const args of [["run"], ["r"], ["run", "-q"], ["run", "--quiet"], ["bench"], ["--quiet", "run"]]) expect([args, (await corroboratePass(pass2, TEST_OUT, "cargo", args, o)).result]).toEqual([args, "not_run"]);
     for (const args of [["run"], ["bench"], ["build"], ["clippy"]]) expect([args, await corroboratePass(pass2, "Finished dev\nhello\n", "cargo", args, o)]).toEqual([args, pass2]);
   });
+  // Round 4: a toolchain given as a path hands every cargo call, run and listing, to a script the repo controls.
+  const tcO = (cwd: string, env: NodeJS.ProcessEnv = process.env) => ({ cwd, env }), tcWant = { result: "not_run" as const, reason: CARGO_TOOLCHAIN_REASON };
+  const tcCase = (name: string, files: Record<string, string>, sub: string, env?: NodeJS.ProcessEnv) => test(name, async () => {
+    const d = crate("", files); try { expect(await corroboratePass(pass2, TEST_OUT, "cargo", ["test"], tcO(sub ? join(d, sub) : d, env))).toEqual(tcWant); } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  tcCase("a rust-toolchain.toml with [toolchain] path is not a pass", { "rust-toolchain.toml": '[toolchain]\npath = "/tmp/x/tc"\n' }, "");
+  tcCase("a legacy rust-toolchain file naming a path is not a pass", { "rust-toolchain": "./tc\n" }, "");
+  tcCase("a rust-toolchain.toml path in a parent directory is not a pass", { "rust-toolchain.toml": '[toolchain]\npath = "tc"\n', "pkg/.keep": "" }, "pkg");
+  for (const v of ["/opt/tc", "./tc", "../tc", "~/tc", "C:\\tc"]) tcCase(`a path-shaped RUSTUP_TOOLCHAIN ${v} is not a pass`, {}, "", { ...process.env, RUSTUP_TOOLCHAIN: v });
+  test("named toolchains (file or RUSTUP_TOOLCHAIN) are not refused for the toolchain", async () => {
+    const named = crate("", { "rust-toolchain.toml": '[toolchain]\nchannel = "1.89.0"\ncomponents = ["rustfmt"]\ntargets = ["wasm32-unknown-unknown"]\n', "pkg/.keep": "" }), legacyNamed = crate("", { "rust-toolchain": "stable\n" });
+    try { for (const [d, env] of [[join(named, "pkg"), process.env], [legacyNamed, process.env], [tmpdir(), { ...process.env, RUSTUP_TOOLCHAIN: "stable-aarch64-apple-darwin" }], [tmpdir(), { ...process.env, RUSTUP_TOOLCHAIN: "1.89.0" }]] as [string, NodeJS.ProcessEnv][]) expect((await corroboratePass(pass2, TEST_OUT, "cargo", ["test"], tcO(d, env))).reason).not.toBe(CARGO_TOOLCHAIN_REASON); } finally { rmSync(named, { recursive: true, force: true }); rmSync(legacyNamed, { recursive: true, force: true }); }
+  });
+  test.skipIf(!HAS_CARGO)("real cargo: a rust-toolchain.toml naming the stable channel still corroborates", async () => {
+    const d = crate(GOOD, { "rust-toolchain.toml": '[toolchain]\nchannel = "stable"\n' }); try { expect((await run(d, "cargo", ["test"])).result).toBe("pass"); } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
   test("spawnCollect kills its child when the signal aborts", async () => {
     const ac = new AbortController(), t0 = Date.now(); setTimeout(() => ac.abort(), 100);
     const r = await spawnCollect("sleep", ["30"], { timeoutMs: 60_000, signal: ac.signal });

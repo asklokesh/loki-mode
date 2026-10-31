@@ -224,7 +224,7 @@ export const CARGO_UNLISTED_REASON = "test count could not be confirmed: the car
  *  passed + failed + ignored + measured, and the listed count agree; the ignored count matches the ignored listing; every ok name is listed and not ignored; every ignored
  *  name is in the ignored listing. A segment count that differs from the listing, a listing that fails, or a line with shell syntax or the --ignored, --include-ignored,
  *  --list, --format or --logfile libtest flags stays not_run. Residual risk, stated plainly: code that prints the exact listed names of its own binary with a matching
- *  summary still forges, and so do code that runs before main (a link-section constructor) and a `harness = false` target, which control the listing too. */
+ *  summary still forges, and so do code that runs before main (a link-section constructor) and a `harness = false` target, which control the listing too. build.rustc-wrapper and RUSTC_WRAPPER are known gaps left accepted on purpose: sccache users set them, and refusing would make honest runs PARTIAL. */
 /** A cargo [target] table (a runner, a linker, rustflags per target) or an [alias] can redirect both the test run and its listing, and TOML lets the key be written as a unicode escape inside a quoted key, so no text scan for one word is sound. Refused whenever any config cargo would load (every .cargo/config(.toml) from the cwd up, $CARGO_HOME or ~/.cargo, every --config value, inline or a file path that is read) has a target table or key, an alias table or key, or any \u or \U escape, or an `include`; also refused for any CARGO_TARGET_* or CARGO_ALIAS_* variable. A config that cannot be read is doubt. */
 const CARGO_KEY = (name: string): RegExp => new RegExp(`(?:^|[\\s\\[,{.])["']?${name}["']?\\s*[.\\]=]`, "m");
 const CARGO_TARGET_KEY = CARGO_KEY("target"), CARGO_ALIAS_KEY = CARGO_KEY("alias"), CARGO_REDIRECT_TEXT = (t: string): boolean => CARGO_TARGET_KEY.test(t) || CARGO_ALIAS_KEY.test(t) || /\\[uU]/.test(t) || /^\s*include\s*=/m.test(t);
@@ -237,9 +237,26 @@ function cargoRunnerConfigured(cwd: string, env: NodeJS.ProcessEnv, toks: readon
   for (let d = resolve(cwd), prev = ""; d !== prev; prev = d, d = dirname(d)) dirs.push(join(d, ".cargo"));
   return dirs.some((dir) => ["config", "config.toml"].some((f) => existsSync(join(dir, f)) && doubtful(join(dir, f))));
 }
+export const CARGO_TOOLCHAIN_REASON = "test count could not be confirmed: a rust-toolchain path or RUSTUP_TOOLCHAIN path hands every cargo call to a toolchain the repo controls";
+/** A rustup toolchain given as a path (rust-toolchain.toml `[toolchain] path`, a legacy rust-toolchain file naming a path, or a path-shaped RUSTUP_TOOLCHAIN) hands every cargo call, the run and the listing alike, to a script the repo controls. Refused for a path in a rust-toolchain(.toml) in the cwd or any parent (the same walk as the .cargo parent walk). Named toolchains (stable, 1.89.0, with components or targets) stay accepted. Unreadable files and escapes are doubt. */
+const PATH_SHAPED = (v: string): boolean => /[\\/]/.test(v) || /^[.~]/.test(v.trim());
+function cargoToolchainRedirected(cwd: string, env: NodeJS.ProcessEnv): boolean {
+  if (PATH_SHAPED(env["RUSTUP_TOOLCHAIN"] ?? "")) return true;
+  const doubtful = (f: string): boolean => {
+    try {
+      const t = readFileSync(f, "utf8");
+      if (/\\[uU]/.test(t) || CARGO_KEY("path").test(t) || /^\s*channel\s*=\s*["']([^"']*)["']/m.test(t) && PATH_SHAPED(/^\s*channel\s*=\s*["']([^"']*)["']/m.exec(t)![1]!)) return true;
+      const first = t.split("\n").map((l) => l.trim()).find((l) => l !== "" && !l.startsWith("#")) ?? "";
+      return !/^\[/.test(first) && !/=/.test(first) && PATH_SHAPED(first); // legacy file: a plain line is a toolchain name
+    } catch { return true; }
+  };
+  for (let d = resolve(cwd), prev = ""; d !== prev; prev = d, d = dirname(d)) if (["rust-toolchain", "rust-toolchain.toml"].some((f) => existsSync(join(d, f)) && doubtful(join(d, f)))) return true;
+  return false;
+}
 async function corroborateCargoPass(c: Classified, out: string, p: { global: string[]; rest: string[] }, o: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }): Promise<Classified> {
   const refuse: Classified = { result: "not_run", reason: CARGO_UNLISTED_REASON }, dd = p.rest.indexOf("--"), notQuiet = (t: string): boolean => t !== "-q" && t !== "--quiet"; // --quiet at cargo level would also reach the listing and drop its "N tests" footer
   const lib = dd < 0 ? [] : p.rest.slice(dd + 1), argv = [...p.global.filter(notQuiet), "test", ...p.rest.slice(0, dd < 0 ? undefined : dd).filter(notQuiet), "--", ...lib.filter(notQuiet), "--list"];
+  if (cargoToolchainRedirected(o.cwd, o.env)) return { result: "not_run", reason: CARGO_TOOLCHAIN_REASON };
   if (cargoRunnerConfigured(o.cwd, o.env, [...p.global, ...p.rest])) return { result: "not_run", reason: CARGO_RUNNER_REASON };
   if (lib.some((t) => /^--(?:ignored|include-ignored|list|format|logfile)\b|^-Z/.test(t))) return refuse;
   const listing = async (extra: string[]): Promise<Set<string>[] | null> => {
