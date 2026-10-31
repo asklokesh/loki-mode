@@ -66,6 +66,17 @@ describe("engine10 E-45 sizing", () => {
     expect(v.data).toMatchObject({ size: "small", plan_skipped: true, wall_model: wallModel(), small_task_path: "wall", cascade: true });
   });
 
+  it("the variant event reports the model that authored the Wall (haiku first) and the re-author ceiling separately", async () => {
+    process.env.LOKI_E10_WALL_FIRST = "1";
+    try {
+      const { events } = await run("fix the off-by-one in mod1.ts", files(10));
+      const v = events.find((e) => e.type === "variant")!;
+      expect(v.data).toMatchObject({ size: "small", wall_model: wallFirstModel("small"), wall_model_reauthor: wallModel() });
+      expect(String(v.data.wall_model)).toContain("haiku");
+      expect(String(v.data.wall_model_reauthor)).toContain("sonnet");
+    } finally { process.env.LOKI_E10_WALL_FIRST = "0"; }
+  });
+
   it("E-64: a small task with a relevant test takes the lean path: one session, no Plan or Wall call", async () => {
     process.env.LOKI_E10_CASCADE = "1"; // L1: the downgrade is opt-in
     const { calls, events } = await run("fix the off-by-one in mod1.ts", files(10), { impacted: impactedOne });
