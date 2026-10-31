@@ -1525,7 +1525,7 @@ describe("in-session fix rounds: Stop hook", () => {
     expect(await run({ checks: [{ cwd: dir, cmd: "loki-no-such-tool-xyz", args: [] }], rounds: 2, budgetS: 30 })).toEqual([{}]);
   });
   test("the deadline starts at the Stop call, not at hook construction: a long session still blocks a failing check", async () => {
-    const [r] = await run({ checks: [sh("echo STILL_RED; exit 1")], rounds: 2, budgetS: 1 }, 1, undefined, 1500);
+    const [r] = await run({ checks: [sh("echo STILL_RED; exit 1")], rounds: 2, budgetS: 2 }, 1, undefined, 2500);
     expect(r!.decision).toBe("block");
     expect(String(r!.reason)).toContain("STILL_RED");
   });
