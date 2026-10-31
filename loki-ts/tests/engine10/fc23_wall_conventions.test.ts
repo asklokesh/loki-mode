@@ -314,7 +314,7 @@ const REAL_81826 = 'import { test, expect } from \'bun:test\';\\nimport { spawnS
 describe("Go Wall that never references the package under test", () => {
   // Every row compiles and passes under a real `go test` (GOPROXY=off, GOTOOLCHAIN=local) against a package x with Foo, Double, foo and Parse; vacuous rows are the ones a green run proves nothing for.
   const MSG = "never references the package under test";
-  const rows: [string, string, boolean][] = [
+  const rows: [string, string, boolean, string?][] = [
     ["ext-vac", "package x_test\n\nimport (\n\t\"testing\"\n\t_ \"example.com/m/x\"\n)\n\nfunc TestA(t *testing.T) {\n\tif 1+1 != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
     ["ext-ok", "package x_test\n\nimport (\n\t\"testing\"\n\t\"example.com/m/x\"\n)\n\nfunc TestA(t *testing.T) {\n\tif x.Foo() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
     ["ext-alias-ok", "package x_test\n\nimport (\n\t\"testing\"\n\talias \"example.com/m/x\"\n)\n\nfunc TestA(t *testing.T) {\n\tif alias.Foo() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
@@ -338,7 +338,7 @@ describe("Go Wall that never references the package under test", () => {
     ["E13b-const-block", "package x\n\nimport \"testing\"\n\nconst (\n\ta, b = 1, 2\n\tc    = 3\n)\n\nfunc TestA(t *testing.T) {\n\tif a+b != c {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
     ["fuzz-vac", "package x\n\nimport \"testing\"\n\nfunc FuzzA(f *testing.F) {\n\tf.Add(\"x\")\n\tf.Fuzz(func(t *testing.T, s string) {\n\t\tif len(s) < 0 {\n\t\t\tt.Fatal(\"bad\")\n\t\t}\n\t})\n}\n", true],
     ["fuzz-ok", "package x\n\nimport \"testing\"\n\nfunc FuzzA(f *testing.F) {\n\tf.Add(\"x\")\n\tf.Fuzz(func(t *testing.T, s string) {\n\t\tif Parse(s) < 0 {\n\t\t\tt.Fatal(\"bad\")\n\t\t}\n\t})\n}\n", false],
-    ["R6-go-prefix-module", "package thing_test\n\nimport (\n\t\"testing\"\n\t\"example.com/go-thing\"\n)\n\nfunc TestA(t *testing.T) {\n\tif thing.Foo() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
+    ["R6-go-prefix-module", "package thing_test\n\nimport (\n\t\"testing\"\n\t\"example.com/go-thing\"\n)\n\nfunc TestA(t *testing.T) {\n\tif thing.Foo() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false, "example.com/go-thing"],
     ["R7-import-comment", "package x_test\n\nimport (\n\t\"testing\"\n\t\"example.com/m/x\" // package under test\n)\n\nfunc TestA(t *testing.T) {\n\tif x.Foo() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
     ["R10-comment-in-string", "package x\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\tu := \"http://a/*b\"\n\tif Parse(u) != 3 {\n\t\tt.Fatal(\"*/\")\n\t}\n}\n", false],
     ["ext-dot-unrelated", "package x_test\n\nimport (\n\t\"testing\"\n\t. \"strings\"\n\t_ \"example.com/m/x\"\n)\n\nfunc TestA(t *testing.T) {\n\tif ToUpper(\"a\") != \"A\" {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
@@ -346,11 +346,24 @@ describe("Go Wall that never references the package under test", () => {
     ["go-prefix-pkg-calls-own", "package config\n\nimport (\n\t\"testing\"\n\t\"github.com/goccy/go-yaml\"\n)\n\nfunc TestA(t *testing.T) {\n\tvar v int\n\tif err := Decode(nil, &v); err != nil || yaml.X != 0 {\n\t\tt.Fatal(err)\n\t}\n}\n", false],
     ["suffix-go-pkg-only", "package config\n\nimport (\n\t\"testing\"\n\t\"example.com/foo-go\"\n)\n\nfunc TestA(t *testing.T) {\n\tif foo.Bar() != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
     ["major-version-pkg-only", "package config\n\nimport (\n\t\"testing\"\n\t\"example.com/x/foo/v2\"\n)\n\nfunc TestA(t *testing.T) {\n\tif foo.Bar() != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["ext-forge-go-yaml", "package yaml_test\n\nimport (\n\t\"testing\"\n\t\"github.com/goccy/go-yaml\"\n)\n\nfunc TestA(t *testing.T) {\n\tvar v int\n\tif err := yaml.Unmarshal(nil, &v); err != nil {\n\t\tt.Fatal(err)\n\t}\n}\n", true],
+    ["ext-forge-x-go", "package foo_test\n\nimport (\n\t\"testing\"\n\t\"example.com/other/foo-go\"\n)\n\nfunc TestA(t *testing.T) {\n\tif foo.Bar() != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["ext-major-version-ok", "package foo_test\n\nimport (\n\t\"testing\"\n\t\"example.com/x/foo/v2\"\n)\n\nfunc TestA(t *testing.T) {\n\tif foo.Bar() != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
+    ["raw-vN-segment", "package config\n\nimport (\n\t\"testing\"\n\t\"k8s.io/api/core/v1\"\n)\n\nfunc TestA(t *testing.T) {\n\tp := v1.Pod{}\n\tif p.Name != \"\" {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["gopkg-dot-v3", "package config\n\nimport (\n\t\"testing\"\n\t\"gopkg.in/yaml.v3\"\n)\n\nfunc TestA(t *testing.T) {\n\tvar v int\n\tif err := yaml.Unmarshal(nil, &v); err != nil {\n\t\tt.Fatal(err)\n\t}\n}\n", true],
+    ["gopkg-check-v1", "package config\n\nimport (\n\t\"testing\"\n\t\"gopkg.in/check.v1\"\n)\n\nfunc TestA(t *testing.T) {\n\tif check.Equals == nil {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["mixed-case-go-yaml", "package config\n\nimport (\n\t\"testing\"\n\t\"github.com/goccy/Go-Yaml\"\n)\n\nfunc TestA(t *testing.T) {\n\tvar v int\n\tif err := yaml.Unmarshal(nil, &v); err != nil {\n\t\tt.Fatal(err)\n\t}\n}\n", true],
     ["type-param-struct", "package x\n\nimport \"testing\"\n\ntype box[T any] struct {\n\tv T\n}\n\nfunc TestA(t *testing.T) {\n\tb := box[int]{v: 1}\n\tif b.v != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true]
   ];
-  for (const [name, src, vacuous] of rows) test(`${vacuous ? "vacuous" : "real"}: ${name}`, () => {
-    const r = vacuousCheck("a_test.go", src);
+  for (const [name, src, vacuous, mod] of rows) test(`${vacuous ? "vacuous" : "real"}: ${name}`, () => {
+    const r = vacuousCheck("a_test.go", src, mod);
     if (vacuous) expect(r).toContain(MSG); else expect(r).toBeNull();
+  });
+  test("an external test is judged by import path: the module path plus the Wall's directory", () => {
+    const own = "package yaml_test\n\nimport (\n\t\"testing\"\n\t\"github.com/goccy/go-yaml\"\n)\n\nfunc TestA(t *testing.T) {\n\tvar v int\n\tif err := yaml.Unmarshal(nil, &v); err != nil {\n\t\tt.Fatal(err)\n\t}\n}\n";
+    expect(vacuousCheck("a_test.go", own, "github.com/goccy/go-yaml")).toBeNull();
+    expect(vacuousCheck("a_test.go", own, "example.com/m/yaml")).toContain(MSG);
+    expect(vacuousCheck("a_test.go", own)).toContain(MSG);
   });
   test("a file with no package clause or no Test or Fuzz func is not judged", () => {
     expect(vacuousCheck("a_test.go", `func TestA(t *testing.T) { if 1 != 2 { t.Fatal("x") } }\n`)).toBeNull();
