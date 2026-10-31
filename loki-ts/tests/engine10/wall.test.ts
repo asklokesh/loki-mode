@@ -1035,6 +1035,14 @@ describe("COST-11 r2: escalation on doubt", () => {
       expect(r.result.data.already_satisfied).toBe(false);
       expect(wallGreenOnBaseOf({ wall: r.result.data })).toBe(false);
     });
+    test("same model, nothing written -> no re-author: the rewrite fires only after a drop of written tests", async () => {
+      const r = await go(() => ({ files: [] }), () => false, PIN, notRun());
+      expect(r.models).toHaveLength(1);
+      expect(r.events).not.toContain("wall.reauthor:wall");
+      expect(r.result.data.reauthored).toBeUndefined();
+      expect((r.result.data.files as unknown[]).length).toBe(0);
+      expect(r.result.data.not_proven).toBeUndefined();
+    });
     test("several tests, one dropped -> no re-author (unchanged)", async () => {
       let calls = 0;
       const r = await go(() => ({ files: ["loki_wall_a.test.ts", "loki_wall_b.test.ts"] }), () => false, PIN, { run: () => (++calls === 1 ? { pass: 0, fail: 0, not_run: 1 } : { pass: 0, fail: 1, not_run: 0 }) });
