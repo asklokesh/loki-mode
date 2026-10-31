@@ -468,6 +468,9 @@ describe("Wall concurrency and output bound knobs", () => {
     const base = { stage: "wall", brief: "b", tier: "development", iterationId: "i", limitS: 10, signal: new AbortController().signal } as SessionRunOptions;
     expect(childEnv({ ...base, maxOutputTokens: 5000 }, { provider: "claude" }).CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("5000");
     expect(childEnv(base, { provider: "claude" }).CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe(process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS);
+  });
+});
+
 describe("namedFiles exact tokens", () => {
   const m = (files: string[]) => ({ files, entries: [], truncated: false });
   it("does not match a longer name that merely contains the file name", () => {

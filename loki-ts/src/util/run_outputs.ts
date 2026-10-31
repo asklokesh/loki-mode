@@ -723,6 +723,8 @@ export function summaryTokens(f: Folded, sawCost: boolean): number | null {
 export function summaryCache(events: ReturnType<typeof readEvents>, tampered: boolean): { cacheReadTokens: number | null; cacheSavedUsd: number | null } {
   const cs = tampered ? null : cacheSavings(events.filter((e) => e.type === "cost").map((e) => ({ model: typeof e.data.model === "string" ? e.data.model : undefined, cache_read_tokens: typeof e.data.cache_read_tokens === "number" ? e.data.cache_read_tokens : undefined })));
   return { cacheReadTokens: cs ? cs.readTokens : null, cacheSavedUsd: cs ? cs.savedUsd : null };
+}
+
 /** A run that ends FAILED before (or without) a model call still leaves one verifiable record: the same receipt hash, signature, receipt.sealed and signed log.sealed lines the seal stage uses, over a run.started / run.completed log, with the refusal reason in not_proven. */
 export interface RefusalSeal { repoDir: string; task: string; reason: string; detail?: readonly string[]; provider?: string }
 export async function sealRefusal(o: RefusalSeal): Promise<{ runId: string; receiptPath: string } | null> {

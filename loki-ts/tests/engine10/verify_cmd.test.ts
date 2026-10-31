@@ -2050,6 +2050,9 @@ describe("main() Seal accuracy line (GAME10-03c)", () => {
       expect(r.code).toBe(1);
       expect(r.out).not.toContain("0.1%");
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
 describe("verify binds a plain receipt to the requested run id", () => {
   const withKey = async (fn: (dir: string) => Promise<void>): Promise<void> => {
     const dir = tmpDir(), saved = [process.env["LOKI_RECEIPT_SIGNING_KEY"], process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]];
