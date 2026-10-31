@@ -553,4 +553,18 @@ describe("heading lines that state a requirement", () => {
     expect(set.clauses.map((c) => c.id)).toEqual(["C1", "C2", "C3"]);
     expect(clauseGapOf(set, ["// clause: C2\nassert!(true);\n// clause: C3\nassert!(true);\n"]).join(" ")).toContain("C1");
   });
+  test("under the cap heading clauses rank after bullets: the kept bullets are exactly the ones a heading-free extractor keeps", () => {
+    const heads = [1, 2, 3, 4, 5].map((n) => `## The API must reject case ${n}`);
+    const bullets = Array.from({ length: 41 }, (_, i) => `- bullet ${i + 1}`);
+    const set = extractClauses([...heads, "", "## Details", ...bullets].join("\n"));
+    expect(set.clauses.map((c) => c.text)).toEqual(bullets.slice(0, 40).map((b) => b.slice(2))); // all 40 slots go to bullets; only bullet 41 falls off, as before headings counted
+    expect(set.clauses.map((c) => c.id)).toEqual(Array.from({ length: 40 }, (_, i) => `C${i + 1}`));
+    expect(set.dropped).toBe(6); // the one bullet plus the five heading clauses that found no room, all disclosed
+    const room = extractClauses([...heads.slice(0, 2), "", "## Details", ...bullets.slice(0, 36)].join("\n")); // 36 bullets leave 4 slots: both headings fit, in source order
+    expect(room.clauses.map((c) => c.text)).toEqual([...heads.slice(0, 2).map((h) => h.slice(3)), ...bullets.slice(0, 36).map((b) => b.slice(2))]);
+    expect(room.dropped).toBe(0);
+    const part = extractClauses([...heads, "", "## Details", ...bullets.slice(0, 37)].join("\n")); // 37 bullets leave 3 slots: the first three headings fill them
+    expect(part.clauses.map((c) => c.text)).toEqual([...heads.slice(0, 3).map((h) => h.slice(3)), ...bullets.slice(0, 37).map((b) => b.slice(2))]);
+    expect(part.dropped).toBe(2);
+  });
 });

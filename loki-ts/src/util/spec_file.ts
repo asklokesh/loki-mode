@@ -83,7 +83,7 @@ function openApiClauses(lines: string[]): { text: string; anchor: string }[] {
 }
 
 export function extractClauses(text: string): ClauseSet {
-  const pages = text.replace(/\r\n/g, "\n").split("\f"), paged = pages.length > 1, out: { text: string; anchor: string }[] = [];
+  const pages = text.replace(/\r\n/g, "\n").split("\f"), paged = pages.length > 1, out: { text: string; anchor: string; head?: true }[] = [];
   pages.forEach((page, pi) => {
     const lines = page.split("\n"), keep = new Set<number>();
     // stripTemplate only calls filter(); a filter-only view lets it report which line indexes survive, so anchors stay exact.
@@ -97,7 +97,7 @@ export function extractClauses(text: string): ClauseSet {
       if (fence || !keep.has(i)) continue;
       const line = raw.trim();
       if (line === "") { gwt = -1; continue; }
-      if (isHeadLine(line)) { under = CLAUSE_HEAD.test(line); skip = !under && SKIP_HEAD.test(line); gwt = -1; if (!skip && /^#+\s/.test(line) && headStatesRequirement(line, listFollows(i))) out.push({ text: line.replace(/^#+\s+/, "").replace(/\*\*|__/g, ""), anchor: anchorOf(i) }); continue; }
+      if (isHeadLine(line)) { under = CLAUSE_HEAD.test(line); skip = !under && SKIP_HEAD.test(line); gwt = -1; if (!skip && /^#+\s/.test(line) && headStatesRequirement(line, listFollows(i))) out.push({ text: line.replace(/^#+\s+/, "").replace(/\*\*|__/g, ""), anchor: anchorOf(i), head: true }); continue; }
       if (skip) continue;
       const item = /^(?:[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+)(.*)$/.exec(line);
       const body = (item ? item[1]! : line).replace(/\*\*|__/g, "");
@@ -111,9 +111,13 @@ export function extractClauses(text: string): ClauseSet {
     }
   });
   out.push(...openApiClauses(text.replace(/\r\n/g, "\n").split("\n")));
-  const seen = new Set<string>(), uniq: { text: string; anchor: string }[] = [];
-  for (const c of out) { const t = normClause(c.text).slice(0, MAX_FIELD); if (t === "") continue; const k = t.toLowerCase(); if (!seen.has(k)) { seen.add(k); uniq.push({ text: t, anchor: c.anchor }); } }
-  const clauses = uniq.slice(0, MAX_CLAUSES).map((c, i) => ({ id: `C${i + 1}`, text: c.text, text_sha256: sha256Hex(c.text), anchor: c.anchor }));
+  const seen = new Set<string>(), uniq: { text: string; anchor: string; head?: true }[] = [];
+  const bodyKeys = new Set(out.filter((c) => !c.head).map((c) => normClause(c.text).slice(0, MAX_FIELD).toLowerCase()));
+  for (const c of out) { const t = normClause(c.text).slice(0, MAX_FIELD); if (t === "") continue; const k = t.toLowerCase(); if (c.head && bodyKeys.has(k)) continue; if (!seen.has(k)) { seen.add(k); uniq.push({ text: t, anchor: c.anchor, ...(c.head ? { head: true as const } : {}) }); } }
+  // Heading clauses rank after list and body items under the cap: the non-heading set kept is what it was before headings counted, and headings fill only the room left. Order stays source order.
+  const headRoom = Math.max(0, MAX_CLAUSES - uniq.filter((c) => !c.head).length);
+  let nb = 0, nh = 0;
+  const clauses = uniq.filter((c) => (c.head ? nh++ < headRoom : nb++ < MAX_CLAUSES)).map((c, i) => ({ id: `C${i + 1}`, text: c.text, text_sha256: sha256Hex(c.text), anchor: c.anchor }));
   return { clauses, dropped: Math.max(0, uniq.length - MAX_CLAUSES) };
 }
 export const clauseLine = (c: Clause): string => `${c.id}: ${c.text} [${c.anchor}]`;
