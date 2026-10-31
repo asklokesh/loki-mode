@@ -29,6 +29,8 @@ const REGISTRY: Record<string, Entry> = {
   "util/modernize_unit.ts|checkout": { count: 1, cls: "trust", why: "detaches FETCH_HEAD inside a fresh run-owned temp dir that holds only the fetched repo@ref; no user work exists there" },
   "util/run_outputs.ts|checkout": { count: 1, cls: "trust", why: "resume switches to the run branch only after a dirty-tree check refused uncommitted files; plain checkout never forces, so it refuses rather than overwrite edits" },
   "e10ext/stop_restore.ts|checkout": { count: 1, cls: "trust", why: "returns the user's checkout to the branch they started on; plain checkout refuses to overwrite edits" },
+  "util/mutation_proof.ts|reset": { count: 1, cls: "trust", why: "mutation proof resets its own detached worktree (git worktree add under a fresh mkdtemp dir) to the base sha before a confirming re-run; never the user checkout" },
+  "util/mutation_proof.ts|clean": { count: 1, cls: "trust", why: "mutation proof cleans its own detached temp worktree before a confirming re-run, excluding the linked dependency dirs so the user's node_modules/venv symlink targets are untouched" },
 };
 
 function walk(dir: string, out: string[] = []): string[] {

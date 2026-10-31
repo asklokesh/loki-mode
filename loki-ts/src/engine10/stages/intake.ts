@@ -1,6 +1,4 @@
-// loki-ts/src/engine10/stages/intake.ts -- E-04 Intake (ENGINE.md section 4). Deterministic:
-// dirty-tree refusal, branch creation, .git/info/exclude, the issue already-done check, repo map / test map build, plus one cached Project Model discovery session (EL-W1-01). No PRD. Task arrives as
-// literal text (LOKI_E10_TASK_TEXT) or issue.json (LOKI_E10_ISSUE_JSON, default <runDir>/issue.json); outputs task text, title, repo, resumed for later stages.
+// loki-ts/src/engine10/stages/intake.ts -- E-04 Intake (ENGINE.md section 4). Deterministic: dirty-tree refusal, branch creation, .git/info/exclude, the issue already-done check, repo map / test map build, plus one cached Project Model discovery session (EL-W1-01). No PRD. Task arrives as literal text (LOKI_E10_TASK_TEXT) or issue.json (LOKI_E10_ISSUE_JSON, default <runDir>/issue.json); outputs task text, title, repo, resumed for later stages.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { STAGE_BUDGETS, type RunContext, type Stage, type StageResult } from "../types.ts";

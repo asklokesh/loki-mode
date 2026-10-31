@@ -1,5 +1,4 @@
-// loki-ts/src/engine10/cache.ts -- E-18 per-repo cache (ENGINE.md section 13): repomap/testmap keyed by HEAD^{tree} and the producer fingerprint.
-// Reads never throw (missing or corrupt = miss) and write nothing; callers time writes after the PR.
+// loki-ts/src/engine10/cache.ts -- E-18 per-repo cache (ENGINE.md section 13): repomap/testmap keyed by HEAD^{tree} and the producer fingerprint. Reads never throw (missing or corrupt = miss) and write nothing; callers time writes after the PR.
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
@@ -14,8 +13,7 @@ export function repoKey(originUrl: string | null, repoDir: string): string {
 /** ~/.loki/cache/v10 (ENGINE.md section 13). Callers may pass their own root  (tests do, to stay off the real home directory). */
 export function defaultCacheRoot(): string { return resolve(homeLokiDir(), "cache", "v10"); }
 export function repoCacheDir(key: string, cacheRoot: string = defaultCacheRoot()): string { return resolve(cacheRoot, key); }
-// Parses fine but is the wrong shape (e.g. `null`, `{}`, a bare number) is just as much a corrupt cache entry as unparseable text: both are a miss, never a throw. `isValid` lets each caller state its own shape; callers that skip
-// it accept anything JSON.parse produces, same as before.
+// Parses fine but is the wrong shape (e.g. `null`, `{}`, a bare number) is just as much a corrupt cache entry as unparseable text: both are a miss, never a throw. `isValid` lets each caller state its own shape; callers that skip it accept anything JSON.parse produces, same as before.
 export function readJson<T>(path: string, isValid: (v: unknown) => v is T = (_v): _v is T => true): T | null {
   if (!existsSync(path)) return null;
   try {

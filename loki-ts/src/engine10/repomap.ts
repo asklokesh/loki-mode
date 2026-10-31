@@ -1,5 +1,4 @@
-// E-04: repo map for Intake (ENGINE.md section 3 "repomap.ts: file list + top level symbols, size-capped"). Deterministic, no LLM: `git ls-files` plus a best-effort regex scan (Python methods are
-// Class.method). Caps files, bytes and symbols per file so a huge repo cannot blow up Intake's 15s/60s limit.
+// E-04: repo map for Intake (ENGINE.md section 3 "repomap.ts: file list + top level symbols, size-capped"). Deterministic, no LLM: `git ls-files` plus a best-effort regex scan (Python methods are Class.method). Caps files, bytes and symbols per file so a huge repo cannot blow up Intake's 15s/60s limit.
 import { closeSync, openSync, readSync } from "node:fs";
 import { safeGit } from "../util/safe_git.ts";
 import { join } from "node:path"; import { excludedPaths } from "../project_model/linguist.ts";

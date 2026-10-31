@@ -39,7 +39,6 @@ export interface IntegrateResult {
 const IDENT = ["-c", "user.name=loki-integrate", "-c", "user.email=integrate@loki.invalid", "-c", "commit.gpgSign=false"];
 const SUITE_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "CI", "LOKI_NO_BROWSER"];
 
-
 const git = (dir: string, args: string[]) => safeGitSpawn(dir, [...IDENT, ...args], { encoding: "utf8" });
 
 export async function integrate(o: IntegrateOpts): Promise<IntegrateResult> {

@@ -1,5 +1,4 @@
-// loki-ts/src/engine10/pr_body.ts -- AI marking and DRAFT helpers (ENGINE.md section 4 "Hard cap").
-// Pure, no I/O. The PR body itself is rendered by e10ext/reviewer_body.ts renderReviewerBody.
+// loki-ts/src/engine10/pr_body.ts -- AI marking and DRAFT helpers (ENGINE.md section 4 "Hard cap"). Pure, no I/O. The PR body itself is rendered by e10ext/reviewer_body.ts renderReviewerBody.
 import type { Verdict } from "./types.ts";
 import { formatTierSeal, type TierSeal } from "./output.ts";
 // MARK-1 AI marking helpers (clean, cleanMarked, aiTrailers, aiMarkerLine, withAiMarker) live in util/reviewer_brief.ts, outside the engine10 line budget (D29, D33).

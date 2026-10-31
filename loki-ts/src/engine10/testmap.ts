@@ -1,5 +1,4 @@
-// engine10/testmap.ts -- runner detection and the impacted-test map (E-05). Runners come from real files only (ENGINE.md section 8). Each changed file maps to tests that import/reference it, unioned
-// with a same-stem floor so Go or import-free tests never drop to zero (under-selecting is unsafe). Pure read. EngineTestMap extends types.ts TestMap without editing it.
+// engine10/testmap.ts -- runner detection and the impacted-test map (E-05). Runners come from real files only (ENGINE.md section 8). Each changed file maps to tests that import/reference it, unioned with a same-stem floor so Go or import-free tests never drop to zero (under-selecting is unsafe). Pure read. EngineTestMap extends types.ts TestMap without editing it.
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import { listProjectFiles } from "../util/safe_git.ts";

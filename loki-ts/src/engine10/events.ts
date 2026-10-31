@@ -133,9 +133,7 @@ export function fold(events: EventEnvelope[]): Folded {
   return f;
 }
 
-// E-69: per-session measured/total counts and dollar sum from the raw cost events (not fold()'s cost.usd, which is null once any session is
-// unpriced). Lives next to fold() so a pure reader (the dashboard) need not import the supervisor. A TAMPERED log reports no measured cost.
-// With lokiRoot, never-ran quota attempts drop out and this run's child-session ledger lines join (util/child_ledger.ts runCost, the same rule the receipt uses).
+// E-69: per-session measured/total counts and dollar sum from the raw cost events (not fold()'s cost.usd, which is null once any session is unpriced). Lives next to fold() so a pure reader (the dashboard) need not import the supervisor. A TAMPERED log reports no measured cost. With lokiRoot, never-ran quota attempts drop out and this run's child-session ledger lines join (util/child_ledger.ts runCost, the same rule the receipt uses).
 export function partialCost(events: EventEnvelope[], tampered = false, lokiRoot?: string): { measured: number; total: number; usd: number } {
   const r = tampered ? null : runCost(events, lokiRoot);
   return { measured: r?.measuredCount ?? 0, total: r?.totalCount ?? 0, usd: r?.partialUsd ?? 0 };

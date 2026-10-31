@@ -1,6 +1,4 @@
-// loki-ts/src/engine10/stages/deep.ts -- E-23 Deep verify (ENGINE.md section 4). Runs after Seal
-// + PR: full suite, app-boot probe, council, secret scan; reports via engine10-push.sh (comment + addendum + status). A refused or unavailable check is NOT PROVEN, never red; only a failing full suite or a secret match is
-// failure. Rule of Two: assertWorkerEnv asserts no real GitHub token, since the deep worker runs repo code and reads untrusted diffs. Council goes through the injectable CouncilRunner; unwired, it is NOT PROVEN, never passing.
+// loki-ts/src/engine10/stages/deep.ts -- E-23 Deep verify (ENGINE.md section 4). Runs after Seal + PR: full suite, app-boot probe, council, secret scan; reports via engine10-push.sh (comment + addendum + status). A refused or unavailable check is NOT PROVEN, never red; only a failing full suite or a secret match is failure. Rule of Two: assertWorkerEnv asserts no real GitHub token, since the deep worker runs repo code and reads untrusted diffs. Council goes through the injectable CouncilRunner; unwired, it is NOT PROVEN, never passing.
 import { installOwned } from "../../project_model/install.ts";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

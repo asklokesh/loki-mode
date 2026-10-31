@@ -1,5 +1,4 @@
-// E-04: the P1 fetch child (ENGINE.md section 6). Credentialed, deterministic, no LLM: wraps autonomy/issue-providers.sh's `fetch_issue()` for the normalized title/body/labels, then (GitHub only) reads `state` and `closedByPullRequestsReferences` so
-// Intake's already-done check (section 4 step 6) has real data to decide ALREADY_SATISFIED on. NormalizedIssue and Execer are local (types.ts declares neither); exec is injected so tests run with no gh/bash/network dependency.
+// E-04: the P1 fetch child (ENGINE.md section 6). Credentialed, deterministic, no LLM: wraps autonomy/issue-providers.sh's `fetch_issue()` for the normalized title/body/labels, then (GitHub only) reads `state` and `closedByPullRequestsReferences` so Intake's already-done check (section 4 step 6) has real data to decide ALREADY_SATISFIED on. NormalizedIssue and Execer are local (types.ts declares neither); exec is injected so tests run with no gh/bash/network dependency.
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
