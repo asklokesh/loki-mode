@@ -139,12 +139,13 @@ loki_run_tmp_df_avail() {
 # Guarded reaper for dirs a killed run left in the temp root. Dry-run unless
 # the first argument is "apply". Prints WOULD-REAP/REAPED/SKIP/REFUSE lines;
 # never kills a process. A candidate is a direct child of the resolved temp
-# root named loki-run.* or loki-test-home-*, at least 6h old (mtime),
+# root named loki-run.* or loki-test-home-*, whose newest mtime anywhere in
+# its tree (itself included, symlinks not followed) is at least 6h old,
 # validated by the same contract as loki_run_tmp_cleanup, with no open file
 # or cwd inside (lsof). Without lsof it skips everything.
 loki_run_tmp_reap() {
     local mode="${1:-dry}" min_age="${LOKI_TMP_REAP_MIN_AGE:-21600}"
-    local temp_root cand base now mtime age out rc before="" after kind own reaped=0
+    local temp_root cand base out rc young min_mins before="" after kind own reaped=0
 
     if ! command -v lsof >/dev/null 2>&1; then
         printf '%s\n' "lsof not found: skipping every candidate, nothing reaped" >&2
@@ -152,7 +153,7 @@ loki_run_tmp_reap() {
     fi
     temp_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || return 64
     own="${LOKI_RUN_TMP:-}"
-    now="$(date +%s)"
+    min_mins=$(((min_age + 59) / 60))
     [ "$mode" = "apply" ] && before="$(loki_run_tmp_df_avail "$temp_root")"
 
     while IFS= read -r cand; do
@@ -171,12 +172,22 @@ loki_run_tmp_reap() {
             loki_test_home_validate_dir "$cand" >/dev/null 2>&1 || { printf 'REFUSE no-valid-marker %s\n' "$cand"; continue; }
         fi
         if [ -n "$own" ] && [ "$cand" = "$own" ]; then printf 'SKIP own-run %s\n' "$cand"; continue; fi
-        mtime="$(loki_run_tmp_stat_field '%Y' '%m' "$cand")" || { printf 'SKIP no-mtime %s\n' "$cand"; continue; }
-        age=$((now - mtime))
-        if [ "$age" -lt "$min_age" ]; then printf 'SKIP young %s\n' "$cand"; continue; fi
-        out="$(lsof -F p +D "$cand" 2>/dev/null)"; rc=$?
-        if [ -n "$out" ] || [ "$rc" -eq 0 ]; then printf 'SKIP in-use %s\n' "$cand"; continue; fi
+        # Young if any entry in the tree changed inside the window. A find error
+        # (unreadable subtree) fails closed as young.
+        young="$(find "$cand" -mmin "-${min_mins}" -print -quit 2>/dev/null)" || young="find-error"
+        if [ -n "$young" ]; then printf 'SKIP young %s\n' "$cand"; continue; fi
+        # lsof exits 1 for both "nothing open" and some errors: any output on
+        # either stream, or a status other than 1, means in use or unknown.
+        out="$(lsof -F p +D "$cand" 2>&1)"; rc=$?
+        if [ "$rc" -eq 0 ]; then printf 'SKIP in-use %s\n' "$cand"; continue; fi
         if [ "$rc" -ne 1 ]; then printf 'SKIP lsof-failed %s\n' "$cand"; continue; fi
+        if [ -n "$out" ]; then
+            case "$out" in
+                p[0-9]*) printf 'SKIP in-use %s\n' "$cand" ;;
+                *) printf 'SKIP lsof-failed %s\n' "$cand" ;;
+            esac
+            continue
+        fi
         if [ "$mode" = "apply" ]; then
             rm -rf -- "$cand"
             if [ -e "$cand" ]; then printf 'SKIP remove-failed %s\n' "$cand"; continue; fi

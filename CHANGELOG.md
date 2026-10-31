@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Benchmark and test runs that were killed no longer leave loki-run.* and loki-test-home-* directories filling your temp folder for good: `scripts/cleanup-test-processes.sh --reap-tmp` lists the ones that are 6 hours or older, and `--reap-tmp-apply` removes them and prints how much disk space came back. A directory is only removed when it carries its owner marker, belongs to you, and has no open file or running process inside; with no `lsof` installed it removes nothing.
+- Benchmark and test runs that were killed no longer leave loki-run.* and loki-test-home-* directories filling your temp folder for good: `scripts/cleanup-test-processes.sh --reap-tmp` lists the ones that are 6 hours or older, and `--reap-tmp-apply` removes them and prints how much disk space came back. A directory is only removed when it carries its owner marker, belongs to you, has nothing inside it (at any depth) modified in the last 6 hours, and has no open file or running process inside; if the tree cannot be fully read or `lsof` reports anything unexpected, or is not installed, that directory is kept.
 
 ## v11.94.0 (2026-10-31)
 

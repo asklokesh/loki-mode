@@ -29,7 +29,7 @@ reap_tests() {
         local d="$root/$1"; mkdir "$d"; chmod 700 "$d"
         printf '[user]\n\tname = loki-test\n\temail = loki-test@example.invalid\n' >"$d/.gitconfig"
     }
-    age() { touch -t 200001010000 "$1"; }
+    age() { find "$1" -exec touch -h -t 200001010000 {} +; }
     reap() { ( unset LOKI_RUN_TMP; TMPDIR="$root" loki_run_tmp_reap "$@" 2>&1 ); }
 
     mk_run loki-run.aged; age "$root/loki-run.aged"
@@ -87,6 +87,43 @@ reap_tests() {
     if [ -d "$root/loki-run.badmarker" ] && printf '%s\n' "$out" | grep -q "REFUSE no-valid-marker $root/loki-run.badmarker"; then
         ok "reaper refuses a marker whose content differs"
     else bad "reaper bad-marker: $out"; fi
+
+    # newest mtime anywhere in the tree decides age
+    mk_run loki-run.deepfile; mkdir "$root/loki-run.deepfile/sub"; echo x >"$root/loki-run.deepfile/sub/f"
+    age "$root/loki-run.deepfile"; touch "$root/loki-run.deepfile/sub/f"; touch -t 200001010000 "$root/loki-run.deepfile/sub" "$root/loki-run.deepfile"
+    out="$(reap dry)"
+    if printf '%s\n' "$out" | grep -q "SKIP young $root/loki-run.deepfile"; then
+        ok "reaper skips an aged dir with a recently modified file in a subdir"
+    else bad "reaper deep-file: $out"; fi
+
+    mk_run loki-run.deepdir; mkdir -p "$root/loki-run.deepdir/a/b"
+    age "$root/loki-run.deepdir"; touch "$root/loki-run.deepdir/a/b"; touch -t 200001010000 "$root/loki-run.deepdir"
+    out="$(reap dry)"
+    if printf '%s\n' "$out" | grep -q "SKIP young $root/loki-run.deepdir"; then
+        ok "reaper skips an aged dir with a recently modified nested subdir"
+    else bad "reaper deep-dir: $out"; fi
+
+    mk_run loki-run.fullyaged; mkdir -p "$root/loki-run.fullyaged/a/b"; echo x >"$root/loki-run.fullyaged/a/b/f"
+    age "$root/loki-run.fullyaged"
+    out="$(reap dry)"
+    if printf '%s\n' "$out" | grep -q "WOULD-REAP $root/loki-run.fullyaged"; then
+        ok "reaper lists a fully aged tree (positive control)"
+    else bad "reaper fully-aged: $out"; fi
+
+    mk_run loki-run.unreadable; mkdir -p "$root/loki-run.unreadable/locked/x"
+    age "$root/loki-run.unreadable"; chmod 000 "$root/loki-run.unreadable/locked"
+    out="$(reap dry)"
+    chmod 700 "$root/loki-run.unreadable/locked"
+    if printf '%s\n' "$out" | grep -q "SKIP young $root/loki-run.unreadable"; then
+        ok "reaper treats a tree it cannot fully read as young"
+    else bad "reaper unreadable: $out"; fi
+
+    mkdir "$R/fakebin"; printf '#!/bin/sh\necho "lsof: boom" >&2\nexit 1\n' >"$R/fakebin/lsof"; chmod 755 "$R/fakebin/lsof"
+    out="$( ( unset LOKI_RUN_TMP; PATH="$R/fakebin:$PATH" TMPDIR="$root" loki_run_tmp_reap dry 2>&1 ) )"
+    if printf '%s\n' "$out" | grep -q "SKIP lsof-failed $root/loki-run.fullyaged" \
+        && ! printf '%s\n' "$out" | grep -q "WOULD-REAP"; then
+        ok "reaper skips when lsof exits 1 with stderr output"
+    else bad "reaper lsof-error: $out"; fi
 
     loki_run_tmp_cleanup || bad "reaper: fixture cleanup refused"
 }
