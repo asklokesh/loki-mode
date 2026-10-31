@@ -1,9 +1,9 @@
 // AN-05: the run_finished pairs come from receipt.json only through an allowlist.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { costBucket, modelTier, runFinishedArgs, sizeBucket, tokenBucket } from "../../src/util/funnel.ts";
+import { COST_BUCKETS, LANG_BUCKETS, MODEL_TIERS, RUNNER_KINDS, RUN_PROVIDERS, SIZE_BUCKETS, TOKEN_BUCKETS, costBucket, modelTier, runFinishedArgs, sizeBucket, tokenBucket } from "../../src/util/funnel.ts";
 
 let cwd = "";
 const savedLokiDir = process.env["LOKI_DIR"];
@@ -15,7 +15,7 @@ afterEach(() => {
   if (savedLokiDir !== undefined) process.env["LOKI_DIR"] = savedLokiDir;
   rmSync(cwd, { recursive: true, force: true });
 });
-const CTX = /^(provider|model_tier|lang_bucket|repo_size_bucket|test_runner|cost_bucket|token_bucket|retries)=/;
+const CTX = /^(provider|model_tier|lang_bucket|repo_size_bucket|test_runner|cost_bucket|token_bucket|provider_failovers)=/;
 const core = (a: string[]): string[] => a.filter((p) => !CTX.test(p));
 const pair = (a: string[], k: string): string | undefined => a.find((p) => p.startsWith(`${k}=`))?.slice(k.length + 1);
 function receipt(body: Record<string, unknown>): void {
@@ -69,7 +69,7 @@ describe("AN-06 run context buckets", () => {
     expect(pair(out, "model_tier")).toBe("balanced");
     expect(pair(out, "cost_bucket")).toBe("lt_1");
     expect(pair(out, "token_bucket")).toBe("lt_100k");
-    expect(pair(out, "retries")).toBe("0");
+    expect(pair(out, "provider_failovers")).toBe("0");
   });
   test("no path, file name or repo name appears anywhere in the serialized event", () => {
     write("secret_project_name/module_xyz.py");
@@ -90,13 +90,14 @@ describe("AN-06 run context buckets", () => {
     expect(pair(out, "token_bucket")).toBe("unknown");
     receipt({ verdict: "VERIFIED" });
     expect(pair(runFinishedArgs(0, cwd), "cost_bucket")).toBe("unknown");
-    expect(costBucket(null)).toBe("unknown");
-    expect(costBucket(0, "cli-invoker-unmetered")).toBe("unknown");
+    expect(costBucket({ usd: null })).toBe("unknown");
+    expect(costBucket({ usd: 0, source: "cli-invoker-unmetered" })).toBe("unknown");
     expect(pair(runFinishedArgs(1, cwd, Date.now() + 60_000), "cost_bucket")).toBe("unknown");
   });
   test("bucket edges: one value on each side of every edge", () => {
     expect([49, 50, 499, 500, 4999, 5000, 49999, 50000].map(sizeBucket)).toEqual(["xs", "s", "s", "m", "m", "l", "l", "xl"]);
-    expect([0.01, 0.99, 1, 4.99, 5, 19.99, 20].map((v) => costBucket(v))).toEqual(["lt_1", "lt_1", "lt_5", "lt_5", "lt_20", "lt_20", "ge_20"]);
+    const cb = (usd: number): string => costBucket({ usd, input_tokens: 1000, output_tokens: 10, measured_sessions: 1, total_sessions: 1, partial_usd: usd });
+    expect([0.01, 0.99, 1, 4.99, 5, 19.99, 20].map(cb)).toEqual(["lt_1", "lt_1", "lt_5", "lt_5", "lt_20", "lt_20", "ge_20"]);
     expect([1, 99999, 100000, 999999, 1e6, 9999999, 1e7].map((a) => tokenBucket(a, 0))).toEqual(["lt_100k", "lt_100k", "lt_1m", "lt_1m", "lt_10m", "lt_10m", "ge_10m"]);
     expect(tokenBucket(5, 5, true)).toBe("unknown");
     expect(modelTier("claude-haiku-4-5")).toBe("fast");
@@ -110,7 +111,43 @@ describe("AN-06 run context buckets", () => {
     expect(pair(out, "provider")).toBe("other");
     expect(pair(out, "cost_bucket")).toBe("unknown");
     expect(pair(out, "token_bucket")).toBe("unknown");
-    expect(pair(out, "retries")).toBe("0");
+    expect(pair(out, "provider_failovers")).toBe("0");
     expect(out.join(" ")).not.toContain("evil");
+  });
+});
+
+describe("AN-06 cost bucket honesty and failover key", () => {
+  const withCost = (cost: Record<string, unknown>): string | undefined => { receipt({ verdict: "VERIFIED", provider: "claude", cost }); return pair(runFinishedArgs(0, cwd), "cost_bucket"); };
+  const full = { input_tokens: 1000, output_tokens: 10, measured_sessions: 2, total_sessions: 2 };
+  test("a recorded 0 dollars with zero tokens is a session that never ran: unknown, not lt_1", () => {
+    expect(withCost({ usd: 0, input_tokens: 0, output_tokens: 0, measured_sessions: 0, total_sessions: 0, partial_usd: 0 })).toBe("unknown");
+    expect(withCost({ usd: 0, ...full, tokens_measured: { k: 1, n: 2 } })).toBe("unknown");
+    expect(withCost({ usd: 0.3, ...full, partial_usd: 0.3 })).toBe("lt_1");
+  });
+  test("unpriced sessions or a partial dollar sum make the bucket unknown", () => {
+    expect(withCost({ usd: 2, ...full, measured_sessions: 1, partial_usd: 2 })).toBe("unknown");
+    expect(withCost({ usd: 0, ...full, partial_usd: 3 })).toBe("unknown");
+    expect(withCost({ usd: 2, ...full, partial_usd: 2 })).toBe("lt_5");
+  });
+  test("provider_failovers is omitted without a receipt, 0 with a receipt that has none, and counts entries", () => {
+    expect(pair(runFinishedArgs(1, cwd), "provider_failovers")).toBeUndefined();
+    expect(runFinishedArgs(1, cwd).join(" ")).not.toContain("retries");
+    receipt({ verdict: "FAILED" });
+    expect(pair(runFinishedArgs(1, cwd), "provider_failovers")).toBe("0");
+    receipt({ verdict: "FAILED", failover: [{}, {}] });
+    expect(pair(runFinishedArgs(1, cwd), "provider_failovers")).toBe("2");
+  });
+});
+
+describe("AN-06 schema and funnel.ts enum lists agree", () => {
+  const schema = JSON.parse(readFileSync(join(import.meta.dir, "../../../autonomy/lib/telemetry-schema.json"), "utf8")) as { events: Record<string, Record<string, { values?: string[] }>> };
+  const rf = schema.events["run_finished"]!;
+  const lists: Record<string, readonly string[]> = { provider: RUN_PROVIDERS, model_tier: MODEL_TIERS, lang_bucket: LANG_BUCKETS, repo_size_bucket: SIZE_BUCKETS, test_runner: RUNNER_KINDS, cost_bucket: COST_BUCKETS, token_bucket: TOKEN_BUCKETS };
+  for (const [key, list] of Object.entries(lists)) {
+    test(`run_finished.${key} schema enum equals the funnel.ts list`, () => { expect(rf[key]?.values).toEqual([...list]); });
+  }
+  test("every key runFinishedArgs can emit is in the run_finished schema", () => {
+    receipt({ verdict: "VERIFIED", time: { total_s: 5, stages: { wall: 1 } }, cost: { fix_rounds: [{}], usd: 1, input_tokens: 1, output_tokens: 1 }, failover: [{}] });
+    for (const p of runFinishedArgs(0, cwd).slice(1)) expect(Object.keys(rf)).toContain(p.slice(0, p.indexOf("=")));
   });
 });

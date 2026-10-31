@@ -269,7 +269,13 @@ for line in open(sys.argv[1]):
     d = json.loads(line)
     if d.get("event") == "run_finished":
         print(",".join(sorted(d["properties"])))' "$_W/payload.log" 2>/dev/null)"
-    if [ "$_rf_keys" = "\$geoip_disable,arch,channel,cost_bucket,duration_s,engine,ephemeral_home,exit_code,fix_rounds,id_age,introspective,lang_bucket,model_tier,os_family,provider,repo_size_bucket,retries,stage_s_fix,stage_s_implement,stage_s_wall,test_runner,token_bucket,traffic,verdict,version" ]; then ok "run_finished payload keys are exactly the allowlist"; else bad "run_finished keys: $_rf_keys"; fi
+    if [ "$_rf_keys" = "\$geoip_disable,arch,channel,cost_bucket,duration_s,engine,ephemeral_home,exit_code,fix_rounds,id_age,introspective,lang_bucket,model_tier,os_family,provider,provider_failovers,repo_size_bucket,stage_s_fix,stage_s_implement,stage_s_wall,test_runner,token_bucket,traffic,verdict,version" ]; then ok "run_finished payload keys are exactly the allowlist"; else bad "run_finished keys: $_rf_keys"; fi
+    if ! grep -q 'retries' "$_W/payload.log" && [ "$(_rf_prop provider_failovers)" = "0" ]; then ok "a receipt with no failover sends provider_failovers=0 and no retries key"; else bad "failover key: $(cat "$_W/payload.log")"; fi
+    rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+    rm -rf "${_W:?}/proj/.loki"
+    _fun 1
+    if [ "$(_rf_count run_finished)" = "1" ] && ! grep -q 'provider_failovers\|retries' "$_W/payload.log"; then ok "no receipt omits the failover key; it never reports 0 for an unknown run"; else bad "no-receipt failover key: $(cat "$_W/payload.log")"; fi
+    _receipt VERIFIED
     if [ "$(_rf_prop cost_bucket)" = "unknown" ] && [ "$(_rf_prop token_bucket)" = "unknown" ] && [ "$(_rf_prop provider)" = "unknown" ] && [ "$(_rf_prop repo_size_bucket)" = "xs" ]; then ok "run_finished carries stratification buckets, and an absent cost reads unknown on the wire"; else bad "run_finished buckets: $(cat "$_W/payload.log")"; fi
     rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
     _receipt "/Users/someone/secret-verdict-xyzzy"
@@ -286,6 +292,42 @@ for line in open(sys.argv[1]):
         _fun 0 "$_o"
         if [ ! -s "$_W/payload.log" ]; then ok "$_o emits no run events"; else bad "$_o still emitted: $(cat "$_W/payload.log")"; fi
     done
+    # --- Standing negative test: a hostile run_finished payload sent straight into the schema filter and through the bash sender (curl stubbed, nothing is sent) ---
+    _HOST_PAIRS=("verdict=VERIFIED" "engine=engine10" "cost_bucket=lt_5" "token_bucket=lt_1m" "fix_rounds=2" "provider=/Users/x" "lang_bucket=/Users/bob/repo" "model_tier=claude-opus-4-custom" "test_runner=bob@example.com" "repo_size_bucket=my-private-repo" "provider_failovers=99999999999" "duration_s=-5" "exit_code=3" "secret_key=abc")
+    _hostile_check() { # $1 label; reads $_W/hostile.json (the capture body or empty)
+        python3 -c '
+import json, sys
+raw = open(sys.argv[1]).read().strip()
+if not raw:
+    print("EMPTY"); sys.exit(0)
+rows = [json.loads(x) for x in raw.splitlines()]
+d = next((r for r in rows if r.get("event") == "run_finished"), None)
+if d is None:
+    print("EMPTY"); sys.exit(0)
+p = d.get("properties", {})
+bad = [k for k in ("provider", "lang_bucket", "model_tier", "test_runner", "repo_size_bucket", "provider_failovers", "duration_s", "secret_key") if k in p]
+good = p.get("cost_bucket") == "lt_5" and p.get("token_bucket") == "lt_1m" and p.get("fix_rounds") == 2 and p.get("exit_code") == 3 and p.get("verdict") == "VERIFIED"
+text = json.dumps(p)
+leak = [t for t in ("/Users", "bob", "example.com", "custom", "private", "99999999999", "abc") if t in text]
+print("OK" if (not bad and good and not leak) else "BAD " + ",".join(bad) + " good=" + str(good) + " leak=" + ",".join(leak))' "$_W/hostile.json" 2>/dev/null
+    }
+    _hk="phc_test"
+    python3 "$REPO_ROOT/autonomy/lib/proof-analytics-props.py" --payload run_finished did "$_hk" "${_HOST_PAIRS[@]}" > "$_W/hostile.json" 2>/dev/null
+    _hr="$(_hostile_check)"
+    if [ "$_hr" = "OK" ]; then ok "schema filter drops a path, email, repo name, custom model id, negative duration, oversized int and unknown key; valid enums and ints pass"; else bad "schema filter hostile payload: $_hr"; fi
+    # an unknown provider and a case-variant that pass the bash shape check must still die at the enum
+    python3 "$REPO_ROOT/autonomy/lib/proof-analytics-props.py" --payload run_finished did "$_hk" "verdict=VERIFIED" "provider=gpt9" "model_tier=Claude" "cost_bucket=lt_1" > "$_W/hostile.json" 2>/dev/null
+    if python3 -c '
+import json, sys
+p = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])["properties"]
+sys.exit(0 if ("provider" not in p and "model_tier" not in p and p.get("cost_bucket") == "lt_1") else 1)' "$_W/hostile.json" 2>/dev/null; then ok "schema filter drops an unknown provider and an uppercase value, and keeps a valid bucket"; else bad "unknown provider or uppercase survived: $(cat "$_W/hostile.json")"; fi
+    rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+    env PATH="$_W:$PATH" HOME="$_W/home" LOKI_TEST_PAYLOAD="$_W/payload.log" LOKI_ANALYTICS=on LOKI_TELEMETRY=on \
+        bash -c 'source "$1/autonomy/telemetry.sh" >/dev/null 2>&1 && loki_emit_run_finished "$2" "${@:3}" >/dev/null 2>&1' _ "$REPO_ROOT" VERIFIED "${_HOST_PAIRS[@]:2}" "provider=gpt9" "model_tier=Claude"
+    sleep 1.5
+    cp "$_W/payload.log" "$_W/hostile.json"
+    _hr="$(_hostile_check)"
+    if [ "$(_rf_count run_finished)" = "1" ] && [ "$_hr" = "OK" ] && ! grep -q 'gpt9\|Claude' "$_W/payload.log"; then ok "loki_emit_run_finished with curl stubbed sends none of the hostile values (unknown provider and uppercase included)"; else bad "bash sender hostile payload: $_hr $(cat "$_W/payload.log")"; fi
     rm -rf "${_W:?}/proj/.loki"
     cd "$REPO_ROOT" || exit 1
 else

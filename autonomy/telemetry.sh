@@ -579,11 +579,13 @@ loki_emit_run_started() {
 
 # loki_emit_run_finished <verdict> [key=value...]: one run_finished event.
 # Enum and integer args only: a verdict outside the fixed list sends nothing,
-# and a pair is forwarded only when its key is duration_s, fix_rounds, retries, exit_code
+# and a pair is forwarded only when its key is duration_s, fix_rounds, provider_failovers, exit_code
 # or stage_s_<engine stage> AND its value is a plain non-negative integer, or
 # its key is a context bucket (provider, model_tier, lang_bucket,
 # repo_size_bucket, test_runner, cost_bucket, token_bucket) AND its value is
-# lowercase letters, digits or underscore (the schema holds the exact enum). Never
+# lowercase ASCII letters, digits or underscore, checked against an explicit
+# character list so no locale collation can widen it (the schema holds the exact
+# enum, and the Python send-time filter is the authority). Never
 # a path, repo, branch, prompt or error text; the schema re-filters at send.
 loki_emit_run_finished() {
     _loki_analytics_enabled || return 0
@@ -593,11 +595,11 @@ loki_emit_run_finished() {
     for _kv in "$@"; do
         _k="${_kv%%=*}"; _v="${_kv#*=}"
         case "$_k" in
-            duration_s|fix_rounds|retries|exit_code|stage_s_intake|stage_s_plan|stage_s_wall|stage_s_implement|stage_s_verify|stage_s_fix|stage_s_commit|stage_s_seal|stage_s_pr|stage_s_deep)
+            duration_s|fix_rounds|provider_failovers|exit_code|stage_s_intake|stage_s_plan|stage_s_wall|stage_s_implement|stage_s_verify|stage_s_fix|stage_s_commit|stage_s_seal|stage_s_pr|stage_s_deep)
                 case "$_v" in ''|*[!0-9]*) continue ;; esac
                 [ "${#_v}" -le 9 ] || continue ;;
             provider|model_tier|lang_bucket|repo_size_bucket|test_runner|cost_bucket|token_bucket)
-                case "$_v" in ''|*[!a-z0-9_]*) continue ;; esac
+                case "$_v" in ''|*[!abcdefghijklmnopqrstuvwxyz0123456789_]*) continue ;; esac
                 [ "${#_v}" -le 16 ] || continue ;;
             *) continue ;;
         esac

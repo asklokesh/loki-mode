@@ -75,7 +75,7 @@
    "test_runner": {"type": "enum", "values": ["pytest", "unittest", "vitest", "jest", "npm", "bun", "node", "go", "cargo", "maven", "gradle", "javac", "none", "unknown"]},
    "cost_bucket": {"type": "enum", "values": ["lt_1", "lt_5", "lt_20", "ge_20", "unknown"]},
    "token_bucket": {"type": "enum", "values": ["lt_100k", "lt_1m", "lt_10m", "ge_10m", "unknown"]},
-   "retries": {"type": "int", "min": 0, "max": 1000},
+   "provider_failovers": {"type": "int", "min": 0, "max": 1000},
    "stage_s_intake": {"type": "int", "min": 0, "max": 31536000},
    "stage_s_plan": {"type": "int", "min": 0, "max": 31536000},
    "stage_s_wall": {"type": "int", "min": 0, "max": 31536000},

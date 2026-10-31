@@ -58,7 +58,18 @@ export const COST_BUCKETS = ["lt_1", "lt_5", "lt_20", "ge_20", "unknown"] as con
 export const TOKEN_BUCKETS = ["lt_100k", "lt_1m", "lt_10m", "ge_10m", "unknown"] as const;
 const LANG_EXTS: Readonly<Record<string, (typeof LANG_BUCKETS)[number]>> = { py: "python", js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript", ts: "typescript", tsx: "typescript", go: "go", rs: "rust", java: "java", rb: "ruby", php: "php", cs: "csharp", c: "c_cpp", h: "c_cpp", cc: "c_cpp", cpp: "c_cpp", hpp: "c_cpp", sh: "shell", bash: "shell" };
 export const sizeBucket = (n: number): (typeof SIZE_BUCKETS)[number] => (n < 50 ? "xs" : n < 500 ? "s" : n < 5000 ? "m" : n < 50000 ? "l" : "xl");
-export const costBucket = (usd: unknown, source?: unknown): (typeof COST_BUCKETS)[number] => (typeof usd !== "number" || !Number.isFinite(usd) || usd < 0 || source === "cli-invoker-unmetered" ? "unknown" : usd < 1 ? "lt_1" : usd < 5 ? "lt_5" : usd < 20 ? "lt_20" : "ge_20");
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+/** Mirrors cost_breakdown.ts noUsage and the seal cost fields: a figure is a real dollar amount only when every session was priced, the dollar sum is complete, and a recorded 0 dollars comes with fully measured usage. Anything else is "unknown", never lt_1. */
+export const costBucket = (cost: Record<string, unknown>): (typeof COST_BUCKETS)[number] => {
+  const usd = cost["usd"];
+  if (typeof usd !== "number" || !Number.isFinite(usd) || usd < 0 || cost["source"] === "cli-invoker-unmetered") return "unknown";
+  const ms = cost["measured_sessions"], ts = cost["total_sessions"];
+  if (typeof ms === "number" && typeof ts === "number" && ms < ts) return "unknown";
+  const part = cost["partial_usd"];
+  if (typeof part === "number" && Number.isFinite(part) && Math.abs(part - usd) > 1e-9) return "unknown";
+  if (usd === 0 && (cost["tokens_measured"] !== undefined || ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"].every((k) => num(cost[k]) === 0))) return "unknown";
+  return usd < 1 ? "lt_1" : usd < 5 ? "lt_5" : usd < 20 ? "lt_20" : "ge_20";
+};
 export const tokenBucket = (inTok: unknown, outTok: unknown, partial = false): (typeof TOKEN_BUCKETS)[number] => {
   if (partial || typeof inTok !== "number" || typeof outTok !== "number" || !Number.isFinite(inTok + outTok) || inTok < 0 || outTok < 0 || inTok + outTok === 0) return "unknown";
   const t = inTok + outTok;
@@ -114,7 +125,8 @@ export function runFinishedArgs(code: number, cwd: string, startedMs?: number): 
   }
   const cost = (rec["cost"] ?? {}) as Record<string, unknown>;
   const fo = rec["failover"];
-  pairs.push(`provider=${providerBucket(rec["provider"])}`, `model_tier=${modelTier(rec["model"], cost["per_model"])}`, ...repoBuckets(cwd), `cost_bucket=${costBucket(cost["usd"], cost["source"])}`, `token_bucket=${tokenBucket(cost["input_tokens"], cost["output_tokens"], cost["tokens_measured"] !== undefined)}`, `retries=${Array.isArray(fo) ? Math.min(fo.length, 1000) : 0}`);
+  pairs.push(`provider=${providerBucket(rec["provider"])}`, `model_tier=${modelTier(rec["model"], cost["per_model"])}`, ...repoBuckets(cwd), `cost_bucket=${costBucket(cost)}`, `token_bucket=${tokenBucket(cost["input_tokens"], cost["output_tokens"], cost["tokens_measured"] !== undefined)}`);
+  if (Object.keys(rec).length > 0) pairs.push(`provider_failovers=${Array.isArray(fo) ? Math.min(fo.length, 1000) : 0}`); // omitted with no receipt: 0 would claim a run with no failover
   return [verdict, ...pairs, `exit_code=${Math.max(0, Math.min(255, Math.trunc(code)))}`];
 }
 

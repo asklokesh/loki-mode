@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- The anonymous run-finished event now carries coarse buckets (provider, model tier, main language, repo size, test runner, cost, tokens, retries) so outcomes can be compared per segment; no paths or names are sent, and an unknown cost reads "unknown", never zero.
+- The anonymous run-finished event now carries coarse buckets (provider, model tier, main language, repo size, test runner, cost, tokens, provider failovers) so outcomes can be compared per segment; no paths or names are sent, and an unknown cost reads "unknown", never zero.
 
 ## v11.94.0 (2026-10-31)
 
