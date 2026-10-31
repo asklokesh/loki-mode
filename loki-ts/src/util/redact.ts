@@ -4,6 +4,9 @@
  *  keyword as its own segment so max_tokens, token_count and tokens: stay readable. A match starts only where no name char precedes it (linear on long a_a_a runs, never mid-word
  *  as in mytoken=1) and consumes leading and repeated separators, so --password=, --db-password=, _token= and __SECRET= still redact. Values already redacted ([REDACTED...]) are skipped, which keeps the rule idempotent. */
 const ASSIGNMENT = /((?<![A-Za-z0-9_.-])[_.-]*(?:[A-Za-z0-9]+[_.-]+)*(?:password|passwd|secret|token|api[_-]?key|apikey)["']?\s*[:=]\s*)((?:"(?!\[REDACTED)(?:\\.|[^"\\\n])+")|(?:'(?!\[REDACTED)(?:\\.|[^'\\\n])+')|(?!["']|\[REDACTED)[^\s"',;&]+)/gi;
+/** A name that ends in the keyword with no separator (MYTOKEN=, xtoken=, 9token=) redacts only when the value looks like a credential (16+ of [A-Za-z0-9_-]), so mytoken=1 stays readable.
+ *  Same name-start guard as ASSIGNMENT keeps it linear; the value is never an already-redacted marker, which keeps the rule idempotent. */
+const GLUED_ASSIGNMENT = /((?<![A-Za-z0-9_.-])[_.-]*(?:[A-Za-z0-9]+[_.-]+)*[A-Za-z0-9]*(?:password|passwd|secret|token|api[_-]?key|apikey)["']?\s*[:=]\s*["']?)[A-Za-z0-9_-]{16,}[^\s"',;&]*/gi;
 const RULES: [RegExp, string | ((...a: string[]) => string)][] = [
   [/sk-ant-[A-Za-z0-9_-]{20,}/g, "[REDACTED:ANTHROPIC_KEY]"],
   [/github_pat_[A-Za-z0-9_]{20,}/g, "[REDACTED:GITHUB_TOKEN]"],
@@ -12,16 +15,16 @@ const RULES: [RegExp, string | ((...a: string[]) => string)][] = [
   [/(?:AKIA|ASIA)[0-9A-Z]{16}/g, "[REDACTED:AWS_KEY]"],
   [/(AccountKey=)[A-Za-z0-9+/]{40,}={0,2}/g, "$1[REDACTED:AZURE_KEY]"],
   [/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[REDACTED:JWT]"],
-  [/\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g, "[REDACTED:SENDGRID_KEY]"],
-  [/\bSK[0-9a-f]{32}\b/g, "[REDACTED:TWILIO_KEY]"],
-  [/\bpypi-AgEI[A-Za-z0-9_-]{50,}/g, "[REDACTED:PYPI_TOKEN]"],
+  [/SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g, "[REDACTED:SENDGRID_KEY]"],
+  [/(?<![A-Za-z0-9])SK[0-9a-f]{32}\b/g, "[REDACTED:TWILIO_KEY]"],
+  [/pypi-AgEI[A-Za-z0-9_-]{50,}/g, "[REDACTED:PYPI_TOKEN]"],
   [/\bshp(?:at|ca|pa|ss)_[a-f0-9]{32}\b/g, "[REDACTED:SHOPIFY_TOKEN]"],
   [/\bPMAK-[a-f0-9]{24}-[a-f0-9]{34}\b/g, "[REDACTED:POSTMAN_KEY]"],
-  [/\bdapi[a-f0-9]{32}(?:-\d)?\b/g, "[REDACTED:DATABRICKS_TOKEN]"],
-  [/\bkey-[a-f0-9]{32}\b/g, "[REDACTED:MAILGUN_KEY]"],
-  [/\bdckr_pat_[A-Za-z0-9_-]{20,}/g, "[REDACTED:DOCKER_TOKEN]"],
-  [/\bdop_v1_[a-f0-9]{64}\b/g, "[REDACTED:DIGITALOCEAN_TOKEN]"],
-  [/\bya29\.[A-Za-z0-9_-]{20,}/g, "[REDACTED:GOOGLE_OAUTH_TOKEN]"],
+  [/dapi[a-f0-9]{32}(?:-\d)?\b/g, "[REDACTED:DATABRICKS_TOKEN]"],
+  [/(?<![A-Za-z0-9])key-[a-f0-9]{32}\b/g, "[REDACTED:MAILGUN_KEY]"],
+  [/dckr_pat_[A-Za-z0-9_-]{20,}/g, "[REDACTED:DOCKER_TOKEN]"],
+  [/dop_v1_[a-f0-9]{64}\b/g, "[REDACTED:DIGITALOCEAN_TOKEN]"],
+  [/ya29\.[A-Za-z0-9_-]{20,}/g, "[REDACTED:GOOGLE_OAUTH_TOKEN]"],
   [/AIza[A-Za-z0-9_-]{35}/g, "[REDACTED:GOOGLE_KEY]"],
   [/glpat-[A-Za-z0-9_-]{20,}/g, "[REDACTED:GITLAB_TOKEN]"],
   [/npm_[A-Za-z0-9]{36}/g, "[REDACTED:NPM_TOKEN]"],
@@ -34,6 +37,7 @@ const RULES: [RegExp, string | ((...a: string[]) => string)][] = [
   [/(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/g, "$1[REDACTED]"],
   [/(\b[a-z][a-z0-9+.-]{0,63}:\/\/)[^\s/?#@]+@/gi, "$1[REDACTED]@"], // TEN-SECURITY-26: a bounded scheme keeps this linear; unbounded, every word start in a long a--a run rescanned it (quadratic)
   [ASSIGNMENT, (_m: string, pre: string, val: string) => (val[0] === '"' || val[0] === "'" ? `${pre}${val[0]}[REDACTED]${val[0]}` : `${pre}[REDACTED]`)],
+  [GLUED_ASSIGNMENT, "$1[REDACTED]"],
   [/(\bAuthorization\s*[:=]\s*)(?:Basic|Bearer|Token|Digest)?\s*[^\s,;"']+/gi, "$1[REDACTED]"],
 ];
 const QUERY_SEGMENT = /\?[^\s#"'<>]+/g;

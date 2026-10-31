@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- Token redaction no longer misses a secret that is glued to the text before it. The Docker, Google OAuth, SendGrid, DigitalOcean, Databricks and PyPI token shapes redact after any letter, digit or underscore, the Twilio and Mailgun shapes redact after an underscore, hyphen or dot, and a key name that ends in token, secret, password, passwd or api key with no separator (MYTOKEN=, xtoken=, 9token=) redacts when its value is 16 or more credential characters. token_count=3, max_tokens=1 and mytoken=1 stay readable.
+
 ## v11.95.0 (2026-10-31)
 
 `loki answer` now resumes a blocked run in place, a Wall test that contradicts the task is settled by two referees and caps the Seal at PARTIAL, implement sessions refuse file writes outside their worktree, and a test-command timeout now kills the whole runner process group.

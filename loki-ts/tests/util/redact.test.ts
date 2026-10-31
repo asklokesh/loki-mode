@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { redactEnvelope, redactEventData, redactSecrets } from "../../src/util/redact";
 
 test("URL userinfo is replaced", () => {
@@ -208,4 +208,62 @@ test("assignment redact covers flag and separator-prefixed names", () => {
     redactSecrets(big);
     expect(performance.now() - t0).toBeLessThan(100);
   }
+});
+
+describe("redaction survives glue (a secret directly after a word char)", () => {
+  const h32 = "0123456789abcdef".repeat(2);
+  // strict: the shape keeps a letter/digit guard because a pinned control (xSK..., monkey-<hex>) says an alphanumeric neighbour is benign.
+  const shapes: [string, string, string, boolean][] = [
+    ["DOCKER_TOKEN", "dckr_pat_" + "A1_-".repeat(6), "dckr", false],
+    ["GOOGLE_OAUTH_TOKEN", "ya29." + "a0Af_-".repeat(5), "ya29", false],
+    ["SENDGRID_KEY", "SG." + "a".repeat(22) + "." + "b".repeat(43), "SG", false],
+    ["DIGITALOCEAN_TOKEN", "dop_v1_" + "ab12".repeat(16), "dop", false],
+    ["DATABRICKS_TOKEN", "dapi" + h32, "dapi", false],
+    ["PYPI_TOKEN", "pypi-AgEIcHlwaS5vcmc" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v2W3x4Y5z6", "pypi", false],
+    ["TWILIO_KEY", "SK" + h32, "SK", true],
+    ["MAILGUN_KEY", "key-" + h32, "key", true],
+  ];
+  for (const [label, tok, name, strict] of shapes) {
+    for (const [lead, tag] of [["", "line start"], ["x", "after x"], ["9", "after 9"], ["_", "after _"], ["-", "after -"], [".", "after ."]] as const) {
+      const alnum = lead === "x" || lead === "9";
+      test(`${name} ${tag}`, () => {
+        const input = lead + tok;
+        if (strict && alnum) expect(redactSecrets(input)).toBe(input);
+        else {
+          const out = redactSecrets(input);
+          expect(out).toBe(`${lead}[REDACTED:${label}]`);
+          expect(redactSecrets(out)).toBe(out);
+        }
+      });
+    }
+  }
+
+  const cred = "A1b2C3d4E5f6G7h8";
+  const glued = ["MYTOKEN", "mytoken", "xtoken", "9token", "MYSECRET", "mysecret", "MYPASSWORD", "mypassword", "MYPASSWD", "xpasswd", "MYAPIKEY", "myapikey", "MYAPI_KEY", "myapi_key"];
+  for (const k of glued) {
+    test(`glued key ${k} redacts a credential-shaped value`, () => {
+      expect(redactSecrets(`${k}=${cred}`)).toBe(`${k}=[REDACTED]`);
+      expect(redactSecrets(`export ${k}: ${cred} && run`)).toBe(`export ${k}: [REDACTED] && run`);
+      expect(redactSecrets(`{"${k}": "${cred}"}`)).toBe(`{"${k}": "[REDACTED]"}`);
+      const once = redactSecrets(`${k}=${cred}`);
+      expect(redactSecrets(once)).toBe(once);
+    });
+  }
+  test("readable cases stay readable", () => {
+    for (const s of ["token_count=3", "max_tokens=1", "mytoken=1", "xtoken=" + cred.slice(0, 15), "9token=abc", "mytoken=hello world foo", "tokens=" + cred, "mytokens=" + cred, "mytoken_count=" + cred, "mytoken " + cred, "mytoken=[REDACTED]"]) {
+      expect(redactSecrets(s)).toBe(s);
+    }
+  });
+  test("a non-secret neighbour of a distinctive prefix stays unredacted", () => {
+    for (const s of ["monkey-" + h32, "xSK" + h32, "9key-" + h32, "dckr_pat_abc", "ya29.short", "SG.short.tok", "dapi-docs", "pypi-package", "dop_v1_" + "a".repeat(63)]) expect(redactSecrets(s)).toBe(s);
+  });
+  test("linear on 100k-char adversarial input (under 50ms each)", () => {
+    const inputs = ["a".repeat(100000), "a".repeat(100000) + "token", "x".repeat(100000) + "token=" + "y".repeat(100000), "a_".repeat(50000) + "token", "-".repeat(100000),
+      "token".repeat(20000), "token=".repeat(16667), "SG.".repeat(33333), "ya29.".repeat(20000), "key-".repeat(25000), "dapi".repeat(25000), "dckr_pat_".repeat(11111), "SK".repeat(50000), "pypi-AgEI".repeat(11111)];
+    for (const big of inputs) {
+      const t0 = performance.now();
+      redactSecrets(big);
+      expect(performance.now() - t0).toBeLessThan(50);
+    }
+  });
 });
