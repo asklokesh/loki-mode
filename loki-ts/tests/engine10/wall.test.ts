@@ -1519,7 +1519,7 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
   test("Go greenfield: a .go stem starting with _ or . falls back like other ignored names", async () => {
     expect((await run("Write _x.go.", "go")).files.map((f) => f.path)).toEqual(["loki_wall_a_test.go"]);
     const r = await run("Write _x.go and ./util/real.go.", "go");
-    expect(r.files.map((f) => f.path)).toEqual(["util/loki_wall_a_test.go"]); expect(r.brief).toContain('"package real"');
+    expect(r.files.map((f) => f.path)).toEqual(["util/loki_wall_a_test.go"]); expect(r.brief).toContain('"package util"');
   });
   test.skipIf(spawnSync("go", ["version"]).status !== 0)("Go greenfield: a planned testdata/gen.go never hosts the Wall, so go test actually runs it", async () => {
     const { plannedGoDir } = await import("../../src/util/check_result.ts");
@@ -1534,6 +1534,25 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
       writeFileSync(join(p.dir, "loki_wall_a_test.go"), `package ${p.pkg}\nimport "testing"\nfunc TestLokiWallShorten(t *testing.T) { if Shorten("x") == "" { t.Fatal("empty") } }\n`);
       const r = spawnSync("go", ["test", "-v", "./..."], { cwd: repo, encoding: "utf8" });
       expect(r.status).toBe(0); expect(r.stdout).toContain("TestLokiWallShorten");
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+  test("Go greenfield: a planned file in a subdirectory with no sibling takes the directory name as package, a root file its stem", async () => {
+    const a = await run("Implement ./util/real.go.", "go");
+    expect(a.files.map((f) => f.path)).toEqual(["util/loki_wall_a_test.go"]); expect(a.brief).toContain('"package util"');
+    expect((await run("Implement ini.go.", "go")).brief).toContain('"package ini"');
+  });
+  test.skipIf(spawnSync("go", ["version"]).status !== 0)("Go greenfield: a util/real.go implementer in package util compiles with the Wall in the same package and the test runs", async () => {
+    const { plannedGoDir } = await import("../../src/util/check_result.ts");
+    const repo = mkdtempSync(join(tmpdir(), "loki-walldir3b-"));
+    try {
+      writeFileSync(join(repo, "go.mod"), "module example.com/svc\n\ngo 1.21\n");
+      const p = plannedGoDir(repo, ["Implement ./util/real.go with Real."]);
+      expect(p).toEqual({ dir: join(repo, "util"), pkg: "util" });
+      mkdirSync(p.dir);
+      writeFileSync(join(p.dir, "loki_wall_a_test.go"), `package ${p.pkg}\nimport "testing"\nfunc TestLokiWallReal(t *testing.T) { if Real() != 1 { t.Fatal("bad") } }\n`);
+      writeFileSync(join(p.dir, "real.go"), "package util\nfunc Real() int { return 1 }\n");
+      const r = spawnSync("go", ["test", "-v", "./..."], { cwd: repo, encoding: "utf8" });
+      expect(r.status).toBe(0); expect(r.stdout).toContain("TestLokiWallReal");
     } finally { rmSync(repo, { recursive: true, force: true }); }
   });
   test("control: a Go task naming no file or directory keeps the repo root, and tests/ or URL paths never count", async () => {

@@ -179,7 +179,7 @@ export function plannedGoDir(repoDir: string, texts: string[]): { dir: string; p
     const stem = goRel(m[1]!), rel = dirname(`${stem}.go`), base = stem.split("/").pop()!;
     if (stem.endsWith("_test") || base.startsWith("_") || base.startsWith(".") || (rel !== "." && goIgnoredPath(rel))) continue;
     const dir = join(repoDir, rel === "." ? "" : rel);
-    return { dir, pkg: goSiblingPkg(dir) ?? base };
+    return { dir, pkg: goSiblingPkg(dir) ?? (rel === "." ? base : rel.split("/").pop()!) }; // Go names a package after its directory; only a root file has no directory name to use
   }
   // No .go file named: a named package directory (a leading ./ is fine, backslash paths stay at the root). Per sentence, a directory counts when the word "package" sits
   // between its neighbouring directory mentions or it already holds a Go package; the package is a sibling's clause, else the one tied to the directory, else its name.
