@@ -138,7 +138,8 @@ export function guardViolations(files: Record<string, string>): string[] {
     "stages/wall.ts": /^wallModel\(\),/,
     // seal.ts: the receipt `model` field records the run model (or the external label); it configures no session (CW-12 B3, 9efb8eca0).
     "stages/seal.ts": /^externalRun\(o\) \? EXTERNAL_MODEL_LABEL : ctx\.model,/,
-    "already_done.ts": /^wallModel\(\),/,
+    // HV1-02: the check-only pin is capped to the run's own tier (a haiku run stays on haiku), never lowered below it.
+    "already_done.ts": /^(wallModel\(\)|capToRunTier\(wallModel\(\), ctx\.model, \["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE"\]\)),/,
     // xreview: the model flag is the user-configured reviewer agent model (council/role_agents.ts), claude judge only; never a cascade or cost downgrade.
     "stages/xreview.ts": /^: \[cli, "-p", prompt, \.\.\.\(model \? \["--model", model\] : \[\]\), "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Write,Edit,NotebookEdit,Bash", \.\.\.leanReviewerFlags\(\{ env, flagSupported \}\), "--output-format", "json"\];$/,
   };
