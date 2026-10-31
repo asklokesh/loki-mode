@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- A Wall test that resolves a file the task names beside the test file (for example `join(import.meta.dir, "rotate.sh")` when the task says `rotate.sh`) is now rejected and re-asked before sealing, even when that file does not exist yet, so the implementer is no longer led to create it in `tests/` while the real grader runs it at the repo root.
+
 ## v11.94.0 (2026-10-31)
 
 Loki waits out Claude's 5-hour usage limit instead of failing, `loki start` exits 6 for a PARTIAL run, custom webhooks are now signed (breaking), `loki plan --fast` gives a one-screen plan, and receipts copied under another run id are refused. Seal and git hardening are tightened.

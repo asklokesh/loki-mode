@@ -330,6 +330,18 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(phantomRepoPaths("const f = join(__dirname, '..', 'node_modules', 'x');", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths(PHANTOM, "a.py", td, repo, null)).toEqual([]);
   });
+  test("task-named file beside the test file (greenfield sh-rotate Wall) is reported, at its true root path or as an unnamed fixture it is not", () => {
+    const repo = cjsRepo(), td = join(repo, "tests"), task = "Write rotate.sh that rotates log files and also see docs/guide.md";
+    const wall = (expr: string): string => `import { join } from "node:path";\nconst SCRIPT = ${expr};\ntest("a", () => { expect(spawnSync("bash", [SCRIPT]).status).toBe(0); });\n`;
+    const name = "loki_wall_rotate.test.ts";
+    expect(phantomRepoPaths(wall('join(import.meta.dir, "rotate.sh")'), name, td, repo, null, task)).toEqual(["tests/rotate.sh"]);
+    expect(phantomRepoPaths(wall('join(__dirname, "docs", "guide.md")'), name, td, repo, null, task)).toEqual(["tests/docs/guide.md"]);
+    expect(phantomRepoPaths(wall('join(import.meta.dir, "..", "rotate.sh")'), name, td, repo, null, task)).toEqual([]);
+    expect(phantomRepoPaths(wall('join(process.cwd(), "rotate.sh")'), name, td, repo, null, task)).toEqual([]);
+    expect(phantomRepoPaths(wall('join(import.meta.dir, "fixture.log")'), name, td, repo, null, task)).toEqual([]);
+    expect(phantomRepoPaths(wall('join(import.meta.dir, "rotate.sh")'), name, td, repo, null, "Add a rotate script")).toEqual([]);
+    expect(phantomReason(["tests/rotate.sh"], [], "tests", "", task)).toContain("task names rotate.sh");
+  });
   test("monorepo: process.cwd() paths resolve against the nearest package root of the test file and the repo root", () => {
     const repo = repoWith(); mkdirSync(join(repo, "packages/a/test"), { recursive: true }); mkdirSync(join(repo, "packages/a/src"), { recursive: true });
     writeFileSync(join(repo, "packages/a/package.json"), '{"name":"a","version":"1.0.0"}'); writeFileSync(join(repo, "packages/a/src/x.ts"), "x\n");
