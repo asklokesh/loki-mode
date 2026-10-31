@@ -63,7 +63,7 @@ export function mount(ctx: RouteCtx): void {
     return launch(a, plan.argv, done, plan.env);
   });
 
-  // resume = `loki answer <run>`: engine10 has no in-place resume, the answer rides into a fresh run (loki-ts/src/features/blocked_answer.ts).
+  // resume = `loki answer <run>`: the BLOCKED run resumes in place under the same run id (loki-ts/src/features/blocked_answer.ts).
   guarded("resume", (a, done) => {
     if (verifyRunPid(a.runDir, a.run).ok) return done(409, "refused", { error: "this run is still running" });
     const row = db.select().from(runs).where(and(eq(runs.sourceId, a.source), eq(runs.runId, a.run))).get();

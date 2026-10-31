@@ -7,7 +7,7 @@ import { fixStage } from "../../src/engine10/stages/fix.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import { wallAnchor, wallDropped } from "../../src/util/wall_owned.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
-import { CONFLICT_CORRECTION } from "../../src/util/conflict_resume.ts";
+import { CONFLICT_CORRECTION, answerMark, answeredTask, blockedCompletion, effectiveEvents } from "../../src/util/conflict_resume.ts";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
 import type { RunContext, SessionResult, SessionRunOptions, SessionRunner } from "../../src/engine10/types.ts";
 
@@ -240,5 +240,30 @@ describe("Wall drops persist across fix rounds", () => {
     expect((r2.wall_defect as { action: string }).action).toBe("reauthored");
     expect(wallDropped({ implement, fix: r2, intake: {} } as never)[0]).toContain(`${A}:93`);
     expect(verdict(r2, implement)).toBe("PARTIAL");
+  });
+});
+
+describe("in-place answer helpers", () => {
+  const ev = (seq: number, type: string, stage: string | null, data: Record<string, unknown> = {}) => ({ v: 1, seq, ts: "t", run: "r", type, stage, data }) as never;
+  const blockedLog = [ev(0, "run.started", null), ev(1, "stage.completed", "intake", { task: "t" }), ev(2, "stage.completed", "implement", { exit: "spec_conflict" }), ev(3, "stage.completed", "verify"), ev(4, "run.completed", null, { verdict: "SPEC_CONFLICT" }), ev(5, "log.sealed", null)];
+  test("a pending answer hides the blocked attempt from implement on, keeping intake", () => {
+    const withAnswer = [...blockedLog, ev(6, "run.resumed", null, { answered: true, answer: "a", question: "q" })];
+    expect(answerMark(withAnswer)).toBe(6);
+    expect(effectiveEvents(withAnswer).map((e) => e.seq)).toEqual([0, 1, 6]);
+    expect(effectiveEvents(blockedLog)).toBe(blockedLog); // no answer pending: untouched
+  });
+  test("once the answered attempt completes, nothing is hidden", () => {
+    const done = [...blockedLog, ev(6, "run.resumed", null, { answered: true, answer: "a" }), ev(7, "run.completed", null, { verdict: "VERIFIED" })];
+    expect(answerMark(done)).toBe(-1);
+    expect(effectiveEvents(done)).toBe(done);
+    expect(blockedCompletion(done, done.length)).toBeNull(); // the last completion is VERIFIED, so there is nothing to answer
+  });
+  test("a plan that declared the change out of repo is re-run too", () => {
+    const log = [ev(0, "run.started", null), ev(1, "stage.completed", "intake", { task: "t" }), ev(2, "stage.completed", "plan", { out_of_repo: true }), ev(3, "run.completed", null, { verdict: "SPEC_CONFLICT" }), ev(4, "run.resumed", null, { answered: true })];
+    expect(effectiveEvents(log).map((e) => e.seq)).toEqual([0, 1, 4]);
+  });
+  test("answeredTask appends every recorded answer in order", () => {
+    const t = answeredTask("do it", [ev(1, "run.resumed", null, { answered: true, answer: "one", question: "q1" }), ev(2, "run.resumed", null, { answered: true, answer: "two", question: "q2" }), ev(3, "run.resumed", null, {})]);
+    expect(t).toBe('do it\n\nClarification answering "q1": one\n\nClarification answering "q2": two');
   });
 });

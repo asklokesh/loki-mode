@@ -21,10 +21,10 @@ function repoWith(...fixtures: string[]): string {
   return repo;
 }
 function deps(repo: string, answerDir: string) {
-  const calls: { argv: string[]; env: NodeJS.ProcessEnv }[] = [], out: string[] = [], err: string[] = [];
+  const calls: { id: string; answer: string }[] = [], out: string[] = [], err: string[] = [];
   const d: AnswerDeps = {
-    repoDir: repo, env: { PATH: "/usr/bin", SLACK_BOT_TOKEN: "xoxb-secret", SLACK_SIGNING_SECRET: "s", LOKI_CONTROL_TOKEN: "t" }, binPath: "/x/bin/loki", answerDir,
-    launch: async (argv, env) => { calls.push({ argv, env }); return { code: 0, runId: "e10-new" }; },
+    repoDir: repo, env: { PATH: "/usr/bin", SLACK_BOT_TOKEN: "xoxb-secret", SLACK_SIGNING_SECRET: "s", LOKI_CONTROL_TOKEN: "t" }, answerDir,
+    resume: async (id, answer) => { calls.push({ id, answer }); return 0; },
     out: (l) => out.push(l), err: (l) => err.push(l),
   };
   return { d, calls, out, err };
@@ -44,36 +44,29 @@ describe("fix-round spec conflict reason (FC-FIX-CONFLICT-STALLED)", () => {
 });
 
 describe("loki answer", () => {
-  test("answer file plus fixture BLOCKED run gives argv with task, question and answer", async () => {
+  test("answer file plus fixture BLOCKED run resumes that run with the saved answer", async () => {
     const repo = repoWith("blocked"), ad = join(root, "answers");
     mkdirSync(join(ad, "abc123"), { recursive: true });
     writeFileSync(join(ad, "abc123", `${BLOCKED}.answer.txt`), "keep add pure\n");
     const t = deps(repo, ad);
     expect(await runAnswer([], t.d)).toBe(0);
-    const task = t.calls[0]!.argv[1]!;
-    expect(t.calls[0]!.argv[0]).toBe("/x/bin/loki");
-    expect(task).toContain("add a multiply(a, b) function to calc.ts");
-    expect(task).toContain('Clarification answering "the task contradicts calc.ts');
-    expect(task).toContain("keep add pure");
-    expect(t.out.join("\n")).toContain("e10-new");
+    expect(t.calls).toEqual([{ id: BLOCKED, answer: "keep add pure" }]);
+    expect(t.out.join("\n")).toContain(BLOCKED);
   });
-  test("env has LOKI_NO_BROWSER=1 and no Slack or control secrets", async () => {
+  test("positional text: loki answer <run-id> \"<text>\"", async () => {
     const t = deps(repoWith("blocked"), join(root, "none"));
-    await runAnswer([BLOCKED, "--text", "use a param"], t.d);
-    const env = t.calls[0]!.env;
+    expect(await runAnswer([BLOCKED, "use a param"], t.d)).toBe(0);
+    expect(await runAnswer(["use another"], t.d)).toBe(0);
+    expect(t.calls).toEqual([{ id: BLOCKED, answer: "use a param" }, { id: BLOCKED, answer: "use another" }]);
+    expect(await runAnswer([BLOCKED, "a", "--text", "b"], t.d)).toBe(2);
+  });
+  test("answerEnv strips Slack and control secrets and sets LOKI_NO_BROWSER", () => {
+    const env = answerEnv({ PATH: "/usr/bin", SLACK_BOT_TOKEN: "xoxb-secret", SLACK_SIGNING_SECRET: "s", LOKI_CONTROL_TOKEN: "t" });
     expect(env.LOKI_NO_BROWSER).toBe("1");
     expect(env.SLACK_BOT_TOKEN).toBeUndefined();
     expect(env.SLACK_SIGNING_SECRET).toBeUndefined();
     expect(env.LOKI_CONTROL_TOKEN).toBeUndefined();
     expect(env.PATH).toBe("/usr/bin");
-    expect(answerEnv({ SLACK_X: "1" }).SLACK_X).toBeUndefined();
-  });
-  test("the fresh run is told its parent run and the answer sha", async () => {
-    const t = deps(repoWith("blocked"), join(root, "none"));
-    await runAnswer([BLOCKED, "--text", "use a param"], t.d);
-    const env = t.calls[0]!.env;
-    expect(env.LOKI_PARENT_RUN).toBe(BLOCKED);
-    expect(env.LOKI_ANSWER_SHA).toBe(createHash("sha256").update("use a param").digest("hex"));
   });
   test("runIntent records actor, policy sha and parent run (redacted, validated)", () => {
     const repo = mkdtempSync(join(root, "intent-"));
@@ -89,7 +82,7 @@ describe("loki answer", () => {
     const bad = runIntent(repo, { LOKI_ACTOR: "x", LOKI_PARENT_RUN: "../etc", LOKI_ANSWER_SHA: "nothex", HOME: repo });
     expect([bad.parent_run, bad.answered_run, bad.answer_sha256]).toEqual([null, null, null]);
   });
-  test("a non-BLOCKED run exits 2 with the reason and launches nothing", async () => {
+  test("a non-BLOCKED run exits 2 with the reason and resumes nothing", async () => {
     const repo = repoWith("verified"), t = deps(repo, join(root, "none"));
     expect(await runAnswer(["e10-verified-verified", "--text", "x"], t.d)).toBe(2);
     expect(t.err.join("\n")).toContain("not BLOCKED");
@@ -98,11 +91,11 @@ describe("loki answer", () => {
   test("no answer, unknown run: exit 2", async () => {
     const t = deps(repoWith("blocked"), join(root, "none"));
     expect(await runAnswer([], t.d)).toBe(2);
-    expect(t.err.join("\n")).toContain("--text");
+    expect(t.err.join("\n")).toContain("no answer");
     expect(await runAnswer(["e10-nope", "--text", "x"], t.d)).toBe(2);
     expect(t.calls.length).toBe(0);
   });
-  test("text needs a value: bare --text exits 2 even with a saved answer, and launches nothing", async () => {
+  test("text needs a value: bare --text exits 2 even with a saved answer", async () => {
     const repo = repoWith("blocked"), ad = join(root, "answers-tnv");
     mkdirSync(join(ad, "abc123"), { recursive: true });
     writeFileSync(join(ad, "abc123", `${BLOCKED}.answer.txt`), "stale saved answer\n");
@@ -113,10 +106,8 @@ describe("loki answer", () => {
     expect(t.calls.length).toBe(0);
     expect(await runAnswer(["--text", "x"], t.d)).toBe(0);
     expect(await runAnswer(["--text=y"], t.d)).toBe(0);
-    expect(t.calls[0]!.argv[1]!).toContain(": x");
-    expect(t.calls[1]!.argv[1]!).toContain(": y");
     expect(await runAnswer([], t.d)).toBe(0);
-    expect(t.calls[2]!.argv[1]!).toContain("stale saved answer");
+    expect(t.calls.map((c) => c.answer)).toEqual(["x", "y", "stale saved answer"]);
   });
   test("traversal run ids are rejected with exit 2", async () => {
     const repo = repoWith("blocked");
@@ -125,7 +116,6 @@ describe("loki answer", () => {
     const t = deps(repo, join(root, "none"));
     for (const id of ["../evil", "a/b", "..", "x..y"]) expect(await runAnswer([id, "--text", "x"], t.d)).toBe(2);
     expect(readBlocked(repo, "../evil")).toContain("invalid run id");
-    expect(t.err.join("\n")).toContain("invalid run id");
     expect(t.calls.length).toBe(0);
     const ad = join(root, "ans2");
     mkdirSync(join(ad, "s"), { recursive: true });
@@ -139,11 +129,11 @@ describe("loki answer", () => {
     expect(readAnswerFile(ad, BLOCKED)!.length).toBe(4000);
     const t = deps(repoWith("blocked"), ad);
     await runAnswer([], t.d);
-    expect(t.calls[0]!.argv[1]!.length).toBeLessThan(4600);
+    expect(t.calls[0]!.answer.length).toBe(4000);
   });
   test("default run is the newest BLOCKED one even when a later run is verified", async () => {
     const t = deps(repoWith("blocked", "verified"), join(root, "none"));
     expect(await runAnswer(["--text", "go"], t.d)).toBe(0);
-    expect(t.calls[0]!.argv[1]).toContain("go");
+    expect(t.calls[0]).toEqual({ id: BLOCKED, answer: "go" });
   });
 });

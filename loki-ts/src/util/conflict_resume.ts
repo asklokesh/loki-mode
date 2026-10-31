@@ -8,8 +8,41 @@ import { readSessionId } from "../runner/session_resume.ts";
 import { FINISH_LINE } from "../e10ext/context.ts";
 import { wallModel } from "../engine10/sizing.ts";
 import { wallAnchor, type WallDefect } from "./wall_owned.ts";
-import { taskBlock, type RunContext, type SessionResult, type SessionRunOptions } from "../engine10/types.ts";
+import { taskBlock, type EventEnvelope, type RunContext, type SessionResult, type SessionRunOptions } from "../engine10/types.ts";
 import type { ReadOnlyFile } from "../engine10/stages/implement.ts";
+
+// In-place answer to a BLOCKED run (`loki answer <run-id> "<text>"`): the supervisor appends run.resumed with answered:true and the answer, and the
+// worker re-enters at the stage that raised the conflict. The log is append-only, so the blocked attempt's stage events stay in it; these helpers
+// hide them from the resume computation and fold every recorded answer into the restored task.
+const AFTER_PLAN = ["implement", "fix", "verify", "commit", "seal", "pr"], FROM_PLAN = ["plan", ...AFTER_PLAN];
+
+/** Index of the answered run.resumed that opens the current attempt: the last one, or `events.length` when the answer is about to be appended (assumeNext). -1 when no answer is pending, i.e. a run.completed follows the last answer. */
+export function answerMark(events: readonly EventEnvelope[], assumeNext = false): number {
+  if (assumeNext) return events.length;
+  const i = events.findLastIndex((e) => e.type === "run.resumed" && e.data["answered"] === true);
+  return i >= 0 && !events.slice(i + 1).some((e) => e.type === "run.completed") ? i : -1;
+}
+
+/** The last run.completed before `mark` when it is a SPEC_CONFLICT, else null (nothing blocked, nothing to answer). */
+export function blockedCompletion(events: readonly EventEnvelope[], mark: number): EventEnvelope | null {
+  const c = events.slice(0, mark).findLast((e) => e.type === "run.completed");
+  return c && c.data["verdict"] === "SPEC_CONFLICT" ? c : null;
+}
+
+/** The events a resume reasons over: with an answer pending, the blocked attempt's stage events from the conflicting stage on (plan when it declared the change out of repo, else implement), its run.completed and its log.sealed are dropped. Events after the answer are kept. */
+export function effectiveEvents(events: readonly EventEnvelope[], assumeNext = false): readonly EventEnvelope[] {
+  const mark = answerMark(events, assumeNext);
+  if (mark < 0 || !blockedCompletion(events, mark)) return events;
+  const plan = events.slice(0, mark).findLast((e) => e.type === "stage.completed" && e.stage === "plan"), drop = new Set(plan?.data["out_of_repo"] === true ? FROM_PLAN : AFTER_PLAN);
+  return events.filter((e, i) => i >= mark || !((e.stage !== null && drop.has(e.stage)) || e.type === "run.completed" || e.type === "log.sealed"));
+}
+
+/** The intake task with every recorded answer appended, in order. Answers live in supervisor-only run.resumed events, never in worker output. */
+export function answeredTask(task: string, events: readonly EventEnvelope[]): string {
+  let t = task;
+  for (const e of events) if (e.type === "run.resumed" && e.data["answered"] === true && typeof e.data["answer"] === "string" && e.data["answer"] !== "") t += `\n\nClarification answering "${String(e.data["question"] ?? "the blocked question")}": ${e.data["answer"]}`;
+  return t;
+}
 
 export const CONFLICT_CORRECTION =
   "Loki imposes no file or test limits on you. If your conflict is only about Loki's own rules, finish the task. If the task itself conflicts, restate the conflict. " +

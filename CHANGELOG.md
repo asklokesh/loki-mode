@@ -291,6 +291,12 @@ The Wall catches failing tests earlier in the same session, fewer runs end PARTI
 
 - BREAKING: custom webhooks are now signed. `loki notify webhook` and the run lifecycle events post JSON with `schema_version` 1 and an `X-Loki-Signature: sha256=<hex>` header (HMAC-SHA256 of the raw body keyed by LOKI_WEBHOOK_SECRET). A LOKI_WEBHOOK_URL with no LOKI_WEBHOOK_SECRET now sends nothing, and `loki notify status` says so. The payload carries event names, outcomes and ids only, and the call has a 5 second connect and 10 second total timeout.
 
+## Unreleased
+
+### Changed
+
+- `loki answer <run-id> "<text>"` now resumes a BLOCKED run in place under the same run id instead of starting a follow-up run: the answer joins the run's locked task, stages that already settled are restored and not re-run, and the log records `run.resumed` rather than a second `run.started`. The text can also be given with `--text` or through the Control Plane answer file.
+
 ## v11.77.0 (2026-10-24)
 
 ### Added
