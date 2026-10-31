@@ -254,26 +254,100 @@ function cargoToolchainRedirected(cwd: string, env: NodeJS.ProcessEnv): boolean 
   for (let d = resolve(cwd), prev = ""; d !== prev; prev = d, d = dirname(d)) if (["rust-toolchain", "rust-toolchain.toml"].some((f) => lstatOk(join(d, f)) && doubtful(join(d, f)))) return true;
   return false;
 }
-export const CARGO_COMPILER_REASON = "test count could not be confirmed: the repo's cargo config replaces rustc, wraps it, or sets a linker";
-/** A repo-committed cargo config that replaces the compiler (build.rustc), wraps it (build.rustc-wrapper, build.rustc-workspace-wrapper) or sets a linker (a linker key, or a linker in build.rustflags or target rustflags) lets the repo rewrite the test binary after it is built, so both the run and its listing are the repo's own word. Refused for such a key in a .cargo/config(.toml) in the cwd or any parent (the same walk as the runner check), or in a --config value or file. The CARGO_HOME / ~/.cargo config and the RUSTC_WRAPPER variable are NOT scanned here, because sccache users set them and refusing would make honest runs PARTIAL. A key written with a unicode escape, an `include`, or an unreadable file is doubt. */
-function cargoRepoCompilerRedirected(cwd: string, env: NodeJS.ProcessEnv, toks: readonly string[]): boolean {
-  const bad = (t: string): boolean => ["rustc", "rustc-wrapper", "rustc-workspace-wrapper", "linker"].some((k) => CARGO_KEY(k).test(t)) || CARGO_KEY("rustflags").test(t) && /linker/i.test(t) || /\\[uU]/.test(t) || /^\s*include\s*=/m.test(t);
-  const doubtful = (f: string): boolean => { try { return bad(readFileSync(f, "utf8")); } catch { return true; } };
-  const vals = toks.flatMap((t, i) => (t === "--config" ? [toks[i + 1] ?? ""] : t.startsWith("--config=") ? [t.slice(9)] : []));
-  for (const v of vals) { if (bad(v)) return true; const f = resolve(cwd, v); if (existsSync(f) && lstatSync(f).isFile() && doubtful(f)) return true; }
-  const home = new Set([resolve(env["CARGO_HOME"] || join(env["HOME"] || homedir(), ".cargo")), resolve(homedir(), ".cargo")]);
-  for (let d = resolve(cwd), prev = ""; d !== prev; prev = d, d = dirname(d)) {
-    const dir = join(d, ".cargo");
-    if (!home.has(dir) && ["config", "config.toml"].some((f) => existsSync(join(dir, f)) && doubtful(join(dir, f)))) return true;
+/** The reason names the setting and the file, so an honest repo can see what to move out of the repo. */
+export const cargoCompilerReason = (what: string, where: string): string => `test count could not be confirmed: ${what} in ${where} (move it to CARGO_HOME, or for a wrapper use the RUSTC_WRAPPER env)`;
+/** Cut TOML `#` comments (outside quotes) so a commented-out key is not read as a setting. */
+function stripTomlComments(t: string): string {
+  return t.split("\n").map((line) => {
+    let q = "";
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i]!;
+      if (q) { if (c === "\\" && q === '"') i++; else if (c === q) q = ""; } else if (c === '"' || c === "'") q = c; else if (c === "#") return line.slice(0, i);
+    }
+    return line;
+  }).join("\n");
+}
+/** An [env] table (or inline env table, or env.PATH key) that sets PATH lets rustc find the repo's own cc or ld. */
+function cargoEnvSetsPath(t: string): boolean {
+  if (/^\s*\[\s*env\s*\.\s*["']?PATH["']?\s*\]/m.test(t) || /(?:^|[\s,{])env\s*\.\s*["']?PATH["']?\s*[.=]/m.test(t)) return true;
+  if (/(?:^|[\s,{])env\s*=\s*\{/m.test(t) && CARGO_KEY("PATH").test(t)) return true;
+  let hdr = "";
+  for (const line of t.split("\n")) {
+    const h = /^\s*\[+\s*([^\[\]]*?)\s*\]+\s*$/.exec(line);
+    if (h) hdr = h[1]!.replace(/["']/g, "");
+    else if (hdr === "env" && /^\s*["']?PATH["']?\s*[.=]/.test(line)) return true;
   }
   return false;
+}
+const RUSTFLAGS_STRING = String.raw`(?:"(?:[^"\\]|\\.)*"|'[^']*')`;
+/** A rustflags entry with `link` (link-arg, link-args, linker, linker-flavor, link-self-contained), `-B`, `-Wl` or a codegen backend lets the repo pick the linker or load code into rustc. A bare `-C link-arg=-fuse-ld=<name>` (no path separator: mold, lld) is the one accepted form. */
+function rustflagsReachLinker(t: string): boolean {
+  const key = CARGO_KEY("rustflags"), n = (t.match(new RegExp(key.source, "gm")) ?? []).length;
+  if (n === 0) return false;
+  const vals = [...t.matchAll(new RegExp(String.raw`rustflags["']?\s*=\s*(\[(?:${RUSTFLAGS_STRING}|[^\]"'])*\]|${RUSTFLAGS_STRING})`, "g"))].map((m) => m[1]!);
+  if (vals.length !== n) return true;
+  return vals.some((v) => /link|-B|-Wl|codegen-backend/.test(v.replace(/link-arg=-fuse-ld=[A-Za-z0-9_.+-]+(?=["'\s,\]]|$)/g, "")));
+}
+/** The first setting in a cargo config text that lets the repo rewrite the test binary, as a label, or null. */
+function compilerSettingIn(raw: string): string | null {
+  const t = stripTomlComments(raw);
+  for (const [k, label] of [["rustc", "build.rustc"], ["rustc-wrapper", "build.rustc-wrapper"], ["rustc-workspace-wrapper", "build.rustc-workspace-wrapper"], ["linker", "linker"]] as const) if (CARGO_KEY(k).test(t)) return label;
+  if (cargoEnvSetsPath(t)) return "[env] PATH";
+  if (rustflagsReachLinker(t)) return "rustflags with a link, -B, -Wl or codegen-backend flag";
+  if (/\\[uU]/.test(t) || /^\s*include\s*=/m.test(t) || /"""|'''/.test(t)) return "an escaped key, include or multi-line string";
+  return null;
+}
+/** The repo root: the nearest ancestor holding .git, else the highest ancestor holding a Cargo.toml, else the cwd. */
+function cargoRepoRoot(cwd: string): string {
+  let top: string | null = null;
+  for (let d = resolve(cwd), prev = ""; d !== prev; prev = d, d = dirname(d)) {
+    if (existsSync(join(d, ".git"))) return d;
+    if (existsSync(join(d, "Cargo.toml"))) top = d;
+  }
+  return top ?? resolve(cwd);
+}
+/** A manifest in the repo (cwd up to the root, any --manifest-path, and a bounded scan below the root) that turns on nightly profile-rustflags. */
+function cargoProfileRustflagsManifest(root: string, cwd: string, toks: readonly string[]): string | null {
+  const hit = (f: string): boolean => { try { return /cargo-features\s*=\s*\[[^\]]*profile-rustflags/.test(stripTomlComments(readFileSync(f, "utf8"))); } catch { return false; } };
+  const seen = new Set<string>(), files: string[] = [];
+  for (let d = resolve(cwd), prev = ""; d !== prev; prev = d, d = dirname(d)) { files.push(join(d, "Cargo.toml")); if (d === root) break; }
+  toks.forEach((t, i) => { if (t === "--manifest-path") files.push(resolve(cwd, toks[i + 1] ?? "")); else if (t.startsWith("--manifest-path=")) files.push(resolve(cwd, t.slice(16))); });
+  for (let stack: [string, number][] = [[root, 0]], seenDirs = 0; stack.length && seenDirs < 500; ) {
+    const [d, depth] = stack.pop()!; seenDirs++;
+    files.push(join(d, "Cargo.toml"));
+    if (depth >= 5) continue;
+    try { for (const e of readdirSync(d, { withFileTypes: true })) if (e.isDirectory() && !["target", ".git", "node_modules"].includes(e.name)) stack.push([join(d, e.name), depth + 1]); } catch { /* unreadable dir: skip */ }
+  }
+  for (const f of files) if (!seen.has(f)) { seen.add(f); if (existsSync(f) && hit(f)) return f; }
+  return null;
+}
+/** A repo-committed cargo config that replaces the compiler (build.rustc), wraps it (build.rustc-wrapper, build.rustc-workspace-wrapper), sets a linker, reaches the linker through rustflags, or sets [env] PATH lets the repo rewrite the test binary after it is built, so both the run and its listing are the repo's own word. Read from a .cargo/config(.toml) in the cwd or any parent (the same walk as the runner check), a --config value or file, and a Cargo.toml that enables profile-rustflags. The CARGO_HOME / ~/.cargo config and the RUSTC_WRAPPER variable are NOT scanned, because sccache users set them and refusing would make honest runs PARTIAL; but only a .cargo directory strictly above the repo root is exempt, so a HOME inside the repo exempts nothing. A key written with a unicode escape, an `include`, a multi-line string, or an unreadable file is doubt. Returns the reason, which names the setting and the file. */
+function cargoRepoCompilerRedirected(cwd: string, env: NodeJS.ProcessEnv, toks: readonly string[]): string | null {
+  const root = cargoRepoRoot(cwd), rel = (f: string): string => { const r = relative(root, f); return r && !r.startsWith("..") && !isAbsolute(r) ? r : f; };
+  const inFile = (f: string): string | null => { try { return compilerSettingIn(readFileSync(f, "utf8")); } catch { return "an unreadable config"; } };
+  const vals = toks.flatMap((t, i) => (t === "--config" ? [toks[i + 1] ?? ""] : t.startsWith("--config=") ? [t.slice(9)] : []));
+  for (const v of vals) {
+    const inline = compilerSettingIn(v); if (inline) return cargoCompilerReason(inline, "--config");
+    const f = resolve(cwd, v);
+    if (existsSync(f) && lstatSync(f).isFile()) { const w = inFile(f); if (w) return cargoCompilerReason(w, v); }
+  }
+  const home = new Set([resolve(env["CARGO_HOME"] || join(env["HOME"] || homedir(), ".cargo")), resolve(homedir(), ".cargo")]);
+  const aboveRoot = (dir: string): boolean => { const r = relative(dirname(dir), root); return r !== "" && !r.startsWith("..") && !isAbsolute(r); };
+  for (let d = resolve(cwd), prev = ""; d !== prev; prev = d, d = dirname(d)) {
+    const dir = join(d, ".cargo");
+    if (home.has(dir) && aboveRoot(dir)) continue;
+    for (const f of ["config", "config.toml"]) if (existsSync(join(dir, f))) { const w = inFile(join(dir, f)); if (w) return cargoCompilerReason(w, rel(join(dir, f))); }
+  }
+  const m = cargoProfileRustflagsManifest(root, cwd, toks);
+  return m ? cargoCompilerReason("cargo-features profile-rustflags", rel(m)) : null;
 }
 async function corroborateCargoPass(c: Classified, out: string, p: { global: string[]; rest: string[] }, o: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }): Promise<Classified> {
   const refuse: Classified = { result: "not_run", reason: CARGO_UNLISTED_REASON }, dd = p.rest.indexOf("--"), notQuiet = (t: string): boolean => t !== "-q" && t !== "--quiet"; // --quiet at cargo level would also reach the listing and drop its "N tests" footer
   const lib = dd < 0 ? [] : p.rest.slice(dd + 1), argv = [...p.global.filter(notQuiet), "test", ...p.rest.slice(0, dd < 0 ? undefined : dd).filter(notQuiet), "--", ...lib.filter(notQuiet), "--list"];
   if (cargoToolchainRedirected(o.cwd, o.env)) return { result: "not_run", reason: CARGO_TOOLCHAIN_REASON };
   if (cargoRunnerConfigured(o.cwd, o.env, [...p.global, ...p.rest])) return { result: "not_run", reason: CARGO_RUNNER_REASON };
-  if (cargoRepoCompilerRedirected(o.cwd, o.env, [...p.global, ...p.rest])) return { result: "not_run", reason: CARGO_COMPILER_REASON };
+  const compilerWhy = cargoRepoCompilerRedirected(o.cwd, o.env, [...p.global, ...p.rest]);
+  if (compilerWhy) return { result: "not_run", reason: compilerWhy };
   if (lib.some((t) => /^--(?:ignored|include-ignored|list|format|logfile)\b|^-Z/.test(t))) return refuse;
   const listing = async (extra: string[]): Promise<Set<string>[] | null> => {
     const r = await spawnCollect("cargo", [...argv, ...extra], { ...o, timeoutMs: 600_000 });

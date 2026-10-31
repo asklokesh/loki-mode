@@ -121,3 +121,5 @@ src/util/lock_ecosystems.ts	Cargo.toml
 src/util/lock_ecosystems.ts	Gemfile
 src/util/lock_ecosystems.ts	package.json
 src/util/lock_ecosystems.ts	pyproject.toml
+# check_result reads the repo Cargo.toml only to refuse a cargo-features profile-rustflags pass (nightly, lets the repo rewrite link flags); it is read as data to fail safe to not_run, never to pick a runner.
+src/util/check_result.ts	Cargo.toml

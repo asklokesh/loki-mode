@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { CARGO_COMPILER_REASON, CARGO_RUNNER_REASON, CARGO_TOOLCHAIN_REASON, CARGO_UNLISTED_REASON, goRunner, spawnCollect, changedSymbols, checkProvenance, classifyCheck, corroboratePass, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, javaSummary, javaTestClass, fullSuiteCmd, readableFailIds, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
+import { cargoCompilerReason, CARGO_RUNNER_REASON, CARGO_TOOLCHAIN_REASON, CARGO_UNLISTED_REASON, goRunner, spawnCollect, changedSymbols, checkProvenance, classifyCheck, corroboratePass, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, javaSummary, javaTestClass, fullSuiteCmd, readableFailIds, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
 import { firstError, runCheck, testCheckName, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -1031,31 +1031,113 @@ describe("cargo listing check residuals", () => {
   test.skipIf(!HAS_CARGO)("real cargo: a rust-toolchain.toml naming the stable channel still corroborates", async () => {
     const d = crate(GOOD, { "rust-toolchain.toml": '[toolchain]\nchannel = "stable"\n' }); try { expect((await run(d, "cargo", ["test"])).result).toBe("pass"); } finally { rmSync(d, { recursive: true, force: true }); }
   }, 240_000);
-  // Round 5: a repo-committed compiler, wrapper or linker setting lets the repo rewrite the test binary.
-  const COMPILER_FORMS: [string, string][] = [["build.rustc table key", '[build]\nrustc = "./fakerustc"\n'], ["rustc-wrapper table key", '[build]\nrustc-wrapper = "./w.sh"\n'], ["rustc-workspace-wrapper", '[build]\nrustc-workspace-wrapper = "./w.sh"\n'], ["dotted build.rustc-wrapper", 'build.rustc-wrapper = "./w.sh"\n'], ["quoted key", "[build]\n'rustc-wrapper' = \"./w.sh\"\n"], ["inline table", 'build = { rustc-wrapper = "./w.sh" }\n'], ["linker in build.rustflags", '[build]\nrustflags = ["-C", "linker=./l.sh"]\n'], ["-Clinker= in build.rustflags", '[build]\nrustflags = ["-Clinker=./l.sh"]\n'], ["a linker key", '[x]\nlinker = "./l.sh"\n'], ["escaped key", '[build]\n"rustc-w\\u0072apper" = "./w.sh"\n']];
-  for (const [name, body] of COMPILER_FORMS) test(`a repo cargo config with ${name} is not a pass`, async () => {
-    const d = crate("", { ".cargo/config.toml": body }), sub = join(d, "pkg"); mkdirSync(sub);
-    try { for (const cwd of [d, sub]) expect([name, await corroboratePass(pass2, TEST_OUT, "cargo", ["test"], { cwd, env: process.env })]).toMatchObject([name, { result: "not_run", reason: name === "escaped key" ? CARGO_RUNNER_REASON : CARGO_COMPILER_REASON }]); } finally { rmSync(d, { recursive: true, force: true }); }
+  // A repo-committed compiler, wrapper, linker, linker-reaching rustflags or [env] PATH lets the repo rewrite the test binary.
+  const RF = "rustflags with a link, -B, -Wl or codegen-backend flag", CFG = ".cargo/config.toml";
+  const isCompilerReason = (r?: string): boolean => /\(move it to CARGO_HOME, or for a wrapper use the RUSTC_WRAPPER env\)/.test(r ?? "");
+  const cp = (cwd: string, env: NodeJS.ProcessEnv = process.env, args: string[] = ["test"]) => corroboratePass(pass2, TEST_OUT, "cargo", args, { cwd, env });
+  const COMPILER_FORMS: [string, string, string][] = [
+    ["build.rustc table key", '[build]\nrustc = "./fakerustc"\n', "build.rustc"], ["rustc-wrapper table key", '[build]\nrustc-wrapper = "./w.sh"\n', "build.rustc-wrapper"],
+    ["rustc-workspace-wrapper", '[build]\nrustc-workspace-wrapper = "./w.sh"\n', "build.rustc-workspace-wrapper"], ["dotted build.rustc-wrapper", 'build.rustc-wrapper = "./w.sh"\n', "build.rustc-wrapper"],
+    ["quoted key", "[build]\n'rustc-wrapper' = \"./w.sh\"\n", "build.rustc-wrapper"], ["inline table", 'build = { rustc-wrapper = "./w.sh" }\n', "build.rustc-wrapper"],
+    ["linker in build.rustflags", '[build]\nrustflags = ["-C", "linker=./l.sh"]\n', "linker"], ["-Clinker= in build.rustflags", '[build]\nrustflags = ["-Clinker=./l.sh"]\n', RF], ["a linker key", '[x]\nlinker = "./l.sh"\n', "linker"],
+    ["a real key after a commented one", '# linker = "x"\n[build]\nrustc-wrapper = "./w.sh" # real\n', "build.rustc-wrapper"],
+    // rustflags that reach the linker without a linker key
+    ["link-arg -fuse-ld=<repo path>", '[build]\nrustflags = ["-C", "link-arg=-fuse-ld=/repo/fakeld"]\n', RF], ["link-arg -fuse-ld=./relative", '[build]\nrustflags = ["-C", "link-arg=-fuse-ld=./fakeld"]\n', RF],
+    ["link-arg -B", '[build]\nrustflags = ["-C", "link-arg=-B/repo/bin"]\n', RF], ["link-args", '[build]\nrustflags = ["-C", "link-args=-B/repo/bin"]\n', RF],
+    ["-Wl,--dynamic-linker", '[build]\nrustflags = ["-C", "link-arg=-Wl,--dynamic-linker=/repo/ld.so"]\n', RF], ["-Wl,-I", '[build]\nrustflags = ["-Clink-arg=-Wl,-I/repo/ld.so"]\n', RF],
+    ["linker-flavor", '[build]\nrustflags = ["-C", "linker-flavor=gcc"]\n', RF], ["link-self-contained", '[build]\nrustflags = ["-C", "link-self-contained=yes"]\n', RF],
+    ["a bare -B entry", '[build]\nrustflags = ["-B/repo/bin"]\n', RF],
+    ["a string rustflags", '[build]\nrustflags = "-C link-arg=-B/repo/bin"\n', RF], ["a bracket inside an earlier flag", '[build]\nrustflags = ["--cfg", "a]b", "-C", "link-arg=-B/repo/bin"]\n', RF],
+    ["a multi-line array", '[build]\nrustflags = [\n  "--cfg", "x",\n  "-C", "link-arg=-B/repo/bin",\n]\n', RF], ["a nightly codegen backend", '[build]\nrustflags = ["-Zcodegen-backend=/repo/b.so"]\n', RF],
+    ["a multi-line string", '[build]\nrustflags = """\n-Clink-arg=-B/x\n"""\n', "an escaped key, include or multi-line string"],
+    ["a bare -Wl entry", '[build]\nrustflags = ["-Wl,-I/repo/ld.so"]\n', RF],
+    ["fuse-ld bare name next to -B", '[build]\nrustflags = ["-C", "link-arg=-fuse-ld=mold", "-B/repo/bin"]\n', RF],
+    // [env] PATH, with or without force
+    ["[env] PATH inline table with force", '[env]\nPATH = { value = "/repo/bin:/usr/bin", force = true }\n', "[env] PATH"], ["[env] PATH string", '[env]\nPATH = "/repo/bin"\n', "[env] PATH"],
+    ["[env] PATH without force", '[env]\nPATH = { value = "/repo/bin" }\n', "[env] PATH"], ["[env] quoted PATH", "[env]\n\"PATH\" = \"/repo/bin\"\n", "[env] PATH"],
+    ["[env.PATH] table", '[env.PATH]\nvalue = "/repo/bin"\nforce = true\n', "[env] PATH"], ["dotted env.PATH", 'env.PATH = "/repo/bin"\n', "[env] PATH"],
+    ["inline env table", 'env = { PATH = "/repo/bin", A = "1" }\n', "[env] PATH"], ["[env] PATH after other keys", '[env]\nRUST_LOG = "debug"\nPATH = "/repo/bin"\n', "[env] PATH"],
+  ];
+  for (const [name, body, what] of COMPILER_FORMS) test(`a repo cargo config with ${name} is refused with its own reason`, async () => {
+    const d = crate("", { [CFG]: body }), sub = join(d, "pkg"); mkdirSync(sub);
+    try { for (const cwd of [d, sub]) expect([name, await cp(cwd)]).toEqual([name, { result: "not_run", reason: cargoCompilerReason(what, CFG) }]); } finally { rmSync(d, { recursive: true, force: true }); }
   });
-  test("a compiler setting is refused for its own reason; inline --config and a --config file count; plain configs do not", async () => {
-    const d = crate("", { ".cargo/config.toml": '[build]\nrustc-wrapper = "./w.sh"\n', "rc.toml": '[build]\nrustc = "./x"\n', "ok/.cargo/config.toml": "[build]\njobs = 2\n" }), o = (cwd: string) => ({ cwd, env: process.env });
+  test("an escaped key or a [target] table with rustflags is refused by the runner check first", async () => {
+    const d = crate("", { [CFG]: '[build]\n"rustc-w\\u0072apper" = "./w.sh"\n' }), t = crate("", { [CFG]: '[target.x86_64-unknown-linux-gnu]\nrustflags = ["-C", "link-arg=-B/repo/bin"]\n' }); try { expect(await cp(t)).toMatchObject({ result: "not_run", reason: CARGO_RUNNER_REASON }); rmSync(t, { recursive: true, force: true }); expect(await cp(d)).toMatchObject({ result: "not_run", reason: CARGO_RUNNER_REASON }); } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  // Controls: these configs must not be refused as compiler redirection.
+  const OK_FORMS: [string, string][] = [
+    ["bare fuse-ld=mold", '[build]\nrustflags = ["-C", "link-arg=-fuse-ld=mold"]\n'], ["bare fuse-ld=lld", '[build]\nrustflags = ["-Clink-arg=-fuse-ld=lld"]\n'],
+    ["an honest config", '[build]\njobs = 2\nrustflags = ["--cfg", "tokio_unstable"]\n[env]\nRUST_LOG = "debug"\n'], ["a commented linker", '# linker = "x"\n[build]\njobs = 2 # rustc-wrapper = "x"\n'],
+    ["a commented env PATH", '[env]\n# PATH = "/repo/bin"\nRUST_LOG = "debug"\n'], ["an env PATH-like name", '[env]\nMY_PATH = "x"\nPATHEXT = "y"\n'], ["a path under another table", '[net]\nPATH = "x"\n'],
+  ];
+  for (const [name, body] of OK_FORMS) test(`a repo cargo config with ${name} is not refused as compiler redirection`, async () => {
+    const d = crate("", { [CFG]: body }); try { expect(isCompilerReason((await cp(d)).reason)).toBe(false); } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test.skipIf(!HAS_CARGO)("real cargo: an honest config with jobs, cfg rustflags and [env] RUST_LOG still corroborates", async () => {
+    const d = crate(GOOD, { [CFG]: '[build]\njobs = 2\nrustflags = ["--cfg", "tokio_unstable"]\n[env]\nRUST_LOG = "debug"\n' }); try { expect((await run(d, "cargo", ["test"])).result).toBe("pass"); } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 240_000);
+  test("a compiler setting is refused naming the key and the file; inline --config and a --config file count; plain configs do not", async () => {
+    const d = crate("", { [CFG]: '[build]\nrustc-wrapper = "./w.sh"\n', "rc.toml": '[build]\nrustc = "./x"\n', "ok/.cargo/config.toml": "[build]\njobs = 2\n" });
     try {
-      expect(await corroboratePass(pass2, TEST_OUT, "cargo", ["test"], o(d))).toEqual({ result: "not_run", reason: CARGO_COMPILER_REASON });
+      expect(await cp(d)).toEqual({ result: "not_run", reason: cargoCompilerReason("build.rustc-wrapper", CFG) });
+      expect(cargoCompilerReason("build.rustc-wrapper", CFG)).toBe("test count could not be confirmed: build.rustc-wrapper in .cargo/config.toml (move it to CARGO_HOME, or for a wrapper use the RUSTC_WRAPPER env)");
       const plain = crate(""); try {
-        expect(await corroboratePass(pass2, TEST_OUT, "cargo", ["test", "--config", "build.rustc-wrapper=w.sh"], o(plain))).toEqual({ result: "not_run", reason: CARGO_COMPILER_REASON });
-        expect(await corroboratePass(pass2, TEST_OUT, "cargo", ["test", "--config", join(d, "rc.toml")], o(plain))).toEqual({ result: "not_run", reason: CARGO_COMPILER_REASON });
-        expect((await corroboratePass(pass2, TEST_OUT, "cargo", ["test", "--config", "build.jobs=2"], o(plain))).reason).not.toBe(CARGO_COMPILER_REASON);
+        expect(await cp(plain, process.env, ["test", "--config", "build.rustc-wrapper=w.sh"])).toEqual({ result: "not_run", reason: cargoCompilerReason("build.rustc-wrapper", "--config") });
+        expect(await cp(plain, process.env, ["test", "--config", join(d, "rc.toml")])).toEqual({ result: "not_run", reason: cargoCompilerReason("build.rustc", join(d, "rc.toml")) });
+        expect(await cp(plain, process.env, ["test", "--config", 'build.rustflags=["-C","link-arg=-B/x"]'])).toMatchObject({ result: "not_run" }); // quoted shell shape is refused earlier
+        expect(await cp(plain, process.env, ["test", "--config=build.rustflags=-Clink-arg=-B/x"])).toEqual({ result: "not_run", reason: cargoCompilerReason(RF, "--config") });
+        expect(isCompilerReason((await cp(plain, process.env, ["test", "--config", "build.jobs=2"])).reason)).toBe(false);
       } finally { rmSync(plain, { recursive: true, force: true }); }
-      expect((await corroboratePass(pass2, TEST_OUT, "cargo", ["test"], o(join(d, "ok")))).reason).toBe(CARGO_COMPILER_REASON); // the parent's config still applies
+      expect(await cp(join(d, "ok"))).toEqual({ result: "not_run", reason: cargoCompilerReason("build.rustc-wrapper", CFG) }); // the parent's config still applies
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
-  test("a rustc-wrapper in the home cargo dir (HOME or CARGO_HOME) is not scanned, the same file in a repo is", async () => {
-    const h = crate("", { ".cargo/config.toml": '[build]\nrustc-wrapper = "sccache"\n', "ch/config.toml": '[build]\nrustc-wrapper = "sccache"\n' }), sub = join(h, "proj"); mkdirSync(sub);
+  // The home exemption: only a .cargo strictly above the repo root; a HOME inside the repo exempts nothing.
+  test("a rustc-wrapper in the home cargo dir above the repo is not scanned, the same file inside the repo is", async () => {
+    const top = mkdtempSync(join(tmpdir(), "hv103h-")), repo = join(top, "repo"), sub = join(repo, "proj"), wr = '[build]\nrustc-wrapper = "sccache"\n';
+    mkdirSync(join(top, ".cargo")); writeFileSync(join(top, ".cargo", "config.toml"), wr); mkdirSync(join(top, "ch")); writeFileSync(join(top, "ch", "config.toml"), wr);
+    mkdirSync(sub, { recursive: true }); mkdirSync(join(repo, ".git")); writeFileSync(join(repo, "Cargo.toml"), '[package]\nname = "fx"\nversion = "0.1.0"\n');
     try {
-      expect((await corroboratePass(pass2, TEST_OUT, "cargo", ["test"], { cwd: sub, env: { ...process.env, CARGO_HOME: undefined, HOME: h } })).reason).not.toBe(CARGO_COMPILER_REASON);
-      expect((await corroboratePass(pass2, TEST_OUT, "cargo", ["test"], { cwd: sub, env: { ...process.env, CARGO_HOME: join(h, ".cargo") } })).reason).not.toBe(CARGO_COMPILER_REASON);
-      expect((await corroboratePass(pass2, TEST_OUT, "cargo", ["test"], { cwd: sub, env: { ...process.env, CARGO_HOME: "", HOME: join(h, "elsewhere") } })).reason).toBe(CARGO_COMPILER_REASON);
-    } finally { rmSync(h, { recursive: true, force: true }); }
+      for (const env of [{ ...process.env, CARGO_HOME: undefined, HOME: top }, { ...process.env, CARGO_HOME: join(top, ".cargo") }]) for (const cwd of [repo, sub]) expect(isCompilerReason((await cp(cwd, env)).reason)).toBe(false);
+      expect(await cp(sub, { ...process.env, CARGO_HOME: "", HOME: join(top, "elsewhere") })).toEqual({ result: "not_run", reason: cargoCompilerReason("build.rustc-wrapper", join(top, ".cargo", "config.toml")) });
+    } finally { rmSync(top, { recursive: true, force: true }); }
+  });
+  test("an unreadable repo config is refused (by the runner check first)", async () => {
+    const d = crate("", { [CFG]: '[build]\njobs = 2\n' }); chmodSync(join(d, CFG), 0);
+    try { expect(await cp(d)).toMatchObject({ result: "not_run", reason: CARGO_RUNNER_REASON }); } finally { chmodSync(join(d, CFG), 0o600); rmSync(d, { recursive: true, force: true }); }
+  });
+  test("HOME set to a repo that has only a VCS dir and no Cargo.toml still exempts nothing inside it", async () => {
+    const d = mkdtempSync(join(tmpdir(), "hv103h-")), sub = join(d, "pkg"); mkdirSync(sub); mkdirSync(join(d, ".git")); mkdirSync(join(d, ".cargo")); writeFileSync(join(d, CFG), '[build]\nrustc-wrapper = "./w.sh"\n');
+    try { expect(await cp(sub, { ...process.env, CARGO_HOME: undefined, HOME: d })).toEqual({ result: "not_run", reason: cargoCompilerReason("build.rustc-wrapper", CFG) }); } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  for (const git of [false, true]) test(`HOME set to the repo (${git ? "with" : "without"} .git) does not exempt the repo's own .cargo`, async () => {
+    const d = crate("", { [CFG]: '[build]\nrustc = "./fakerustc"\n' }), sub = join(d, "pkg"); mkdirSync(sub); if (git) mkdirSync(join(d, ".git"));
+    try {
+      for (const env of [{ ...process.env, CARGO_HOME: undefined, HOME: d }, { ...process.env, CARGO_HOME: join(d, ".cargo") }]) for (const cwd of [d, sub]) expect(await cp(cwd, env)).toEqual({ result: "not_run", reason: cargoCompilerReason("build.rustc", CFG) });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  // Nightly profile-rustflags: a manifest that enables it can put a linker flag in a profile.
+  const PROFILE_TOML = '[package]\nname = "fx"\nversion = "0.1.0"\nedition = "2021"\n';
+  test("a Cargo.toml enabling profile-rustflags is refused naming the manifest; other cargo-features and a comment are not", async () => {
+    const d = crate("", { "Cargo.toml": `cargo-features = ["profile-rustflags"]\n${PROFILE_TOML}[profile.dev]\nrustflags = ["-C", "link-arg=-B/repo/bin"]\n`, "member/Cargo.toml": `cargo-features = ["edition2024", "profile-rustflags"]\n${PROFILE_TOML}`, "ok/.keep": "" });
+    try {
+      expect(await cp(d)).toEqual({ result: "not_run", reason: cargoCompilerReason("cargo-features profile-rustflags", "Cargo.toml") });
+      expect(await cp(join(d, "ok"))).toEqual({ result: "not_run", reason: cargoCompilerReason("cargo-features profile-rustflags", "Cargo.toml") });
+      writeFileSync(join(d, "Cargo.toml"), PROFILE_TOML);
+      const deepA = join(d, "a/b/c/d/e/f"), deepB = join(d, "x/y/z/u/v/w"), PR = `cargo-features = ["profile-rustflags"]\n${PROFILE_TOML}`;
+      mkdirSync(join(deepA, "g"), { recursive: true }); mkdirSync(deepB, { recursive: true }); writeFileSync(join(deepA, "Cargo.toml"), PR); writeFileSync(join(deepB, "Cargo.toml"), PR);
+      rmSync(join(d, "member"), { recursive: true, force: true });
+      expect(await cp(join(deepA, "g"))).toEqual({ result: "not_run", reason: cargoCompilerReason("cargo-features profile-rustflags", "a/b/c/d/e/f/Cargo.toml") }); // beyond the scan depth, found walking up from the cwd
+      rmSync(join(deepA, "Cargo.toml"));
+      expect(await cp(d, process.env, ["test", "--manifest-path", "x/y/z/u/v/w/Cargo.toml"])).toEqual({ result: "not_run", reason: cargoCompilerReason("cargo-features profile-rustflags", "x/y/z/u/v/w/Cargo.toml") }); // beyond the scan depth, named by --manifest-path
+      expect(await cp(d, process.env, ["test", "--manifest-path=x/y/z/u/v/w/Cargo.toml"])).toMatchObject({ result: "not_run", reason: cargoCompilerReason("cargo-features profile-rustflags", "x/y/z/u/v/w/Cargo.toml") });
+      rmSync(join(deepB, "Cargo.toml"));
+      mkdirSync(join(d, "member")); writeFileSync(join(d, "member", "Cargo.toml"), `cargo-features = ["edition2024", "profile-rustflags"]\n${PROFILE_TOML}`);
+      expect(await cp(d)).toEqual({ result: "not_run", reason: cargoCompilerReason("cargo-features profile-rustflags", "member/Cargo.toml") });
+      expect(await cp(d, process.env, ["test", "--manifest-path", "member/Cargo.toml"])).toEqual({ result: "not_run", reason: cargoCompilerReason("cargo-features profile-rustflags", "member/Cargo.toml") });
+      writeFileSync(join(d, "member", "Cargo.toml"), `cargo-features = ["edition2024"]\n# cargo-features = ["profile-rustflags"]\n${PROFILE_TOML}`);
+      expect(isCompilerReason((await cp(d)).reason)).toBe(false);
+    } finally { rmSync(d, { recursive: true, force: true }); }
   });
   test.skipIf(!HAS_CARGO)("real cargo: a CARGO_HOME rustc-wrapper config and the RUSTC_WRAPPER variable stay accepted (sccache users)", async () => {
     const d = crate(GOOD), home = crate("", { "ch/.keep": "" }); try {
@@ -1091,7 +1173,7 @@ done
     try {
       const raw = spawnSync("cargo", ["test"], { cwd: d, encoding: "utf8", env: process.env });
       expect(raw.status).toBe(0); expect(classifyCheck({ kind: "test", ok: true, out: raw.stdout }).result).toBe("pass"); // the forge is real: cargo itself reports a pass
-      expect(await run(d, "cargo", ["test"])).toMatchObject({ result: "not_run", reason: CARGO_COMPILER_REASON });
+      expect(await run(d, "cargo", ["test"])).toMatchObject({ result: "not_run", reason: cargoCompilerReason("build.rustc-wrapper", ".cargo/config.toml") });
     } finally { rmSync(d, { recursive: true, force: true }); }
   }, 240_000);
   // Toolchain forms that read as a path or hide one.
