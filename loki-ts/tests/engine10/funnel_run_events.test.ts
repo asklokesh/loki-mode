@@ -44,6 +44,12 @@ describe("AN-05 runFinishedArgs", () => {
     expect(out).toEqual(["FAILED", "duration_s=5", "exit_code=1"]);
     expect(JSON.stringify(out)).not.toContain("secret");
   });
+  test("the Wall failure-tail NOT PROVEN line never reaches the pairs", () => {
+    receipt({ verdict: "FAILED", not_proven: ["Wall failure output kept: /Users/x/.loki/runs/r1/wall-failure-tail.txt"], wall: { tail: "AssertionError secret" } });
+    const out = runFinishedArgs(1, cwd);
+    expect(out).toEqual(["FAILED", "exit_code=1"]);
+    expect(out.join(" ")).not.toContain("wall-failure-tail");
+  });
   test("a corrupt receipt is INTERRUPTED, never a throw", () => {
     const d = join(cwd, ".loki", "runs", "e10-20260101T000000-aaaa");
     mkdirSync(d, { recursive: true });

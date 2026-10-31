@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- When the acceptance tests Loki wrote (the Wall) are still failing at the end of a run, the failing assertion output (last 16 KiB, secrets redacted) is now saved as wall-failure-tail.txt in the run directory, and the receipt's NOT PROVEN list names that file. The verdict is unchanged, and the output is never sent in analytics.
+
 ## v11.94.0 (2026-10-31)
 
 Loki waits out Claude's 5-hour usage limit instead of failing, `loki start` exits 6 for a PARTIAL run, custom webhooks are now signed (breaking), `loki plan --fast` gives a one-screen plan, and receipts copied under another run id are refused. Seal and git hardening are tightened.

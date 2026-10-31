@@ -688,6 +688,18 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(w.result).toBe("not_run");
     expect(w.owner).toBe("harness");
   }, 30000);
+  test("a red Wall with a kept failure tail names the file on NOT PROVEN and leaves the verdict unchanged", async () => {
+    const mk = async (name: string, tail: boolean) => {
+      const { repo, base } = makeRepo(name);
+      const { ctx } = ctxFor(repo, base, "claude", { verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", n: 3, duration_s: 1 }, { name: "wall:loki_wall_a.py", cmd: "x", result: "fail", duration_s: 1 }], flaky: [], wall_passed: false, ...(tail ? { wall_failure_tail: "wall-failure-tail.txt" } : {}), duration_s: 1 } });
+      await commitStage.run(ctx, new AbortController().signal);
+      return { ctx, r: receiptOf(await sealStage.run(ctx, new AbortController().signal)) };
+    };
+    const withTail = await mk("wft-yes", true), without = await mk("wft-no", false);
+    expect(withTail.r.not_proven).toContain(`Wall failure output kept: ${join(withTail.ctx.runDir, "wall-failure-tail.txt")}`);
+    expect(without.r.not_proven.some((n) => n.startsWith("Wall failure output kept"))).toBe(false);
+    expect(withTail.r.verdict).toBe(without.r.verdict);
+  }, 30000);
   test("floor: a code-owned gate failure is still FAILED and carries no owner", async () => {
     const { r } = await floorRun("floor-code", undefined);
     expect(r.verdict).toBe("FAILED");
