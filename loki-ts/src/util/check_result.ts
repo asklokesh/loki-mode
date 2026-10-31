@@ -198,7 +198,7 @@ function simpleCommands(line: string): string[][] {
   }
   endCmd(); return out;
 }
-/** Whether one simple command runs `tool`, tri-state: NO (resolved, not the tool), YES (the command word after reserved words, VAR=val assignments, redirections and known wrappers with their flags has basename `tool`), UNKNOWN (an unknown or variable command word, or a shell whose flags did not parse to -c). A path or argument named like the tool (pytest tests/go, make DIR=go, npm test -- --grep cargo) is a resolved NO. */
+/** Whether one simple command runs `tool`, tri-state: NO (resolved, not the tool), YES (the command word after reserved words, VAR=val assignments, redirections and known wrappers with their flags has basename `tool`), UNKNOWN (an unknown or variable command word, or a shell whose flags did not parse to -c). A path or argument named like the tool (pytest tests/go, make DIR=go, a package-manager test script passed --grep cargo) is a resolved NO. */
 const NO = 0, YES = 1, UNKNOWN = 2;
 type Tri = 0 | 1 | 2;
 const triOr = (a: Tri, b: Tri): Tri => (a === YES || b === YES ? YES : a === UNKNOWN || b === UNKNOWN ? UNKNOWN : NO);
