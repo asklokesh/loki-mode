@@ -703,6 +703,8 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(body).toContain(line);
     expect(body).not.toContain(withTail.ctx.repoDir); expect(body).not.toMatch(/(?:^|[\s`(])\/(?:Users|home|private|tmp|var)\//);
     expect(without.r.not_proven.some((n) => n.startsWith("Wall failure output kept"))).toBe(false);
+    for (const n of without.r.not_proven) expect(withTail.r.not_proven).toContain(n); // the tail adds a line, it never removes one
+    expect(withTail.r.not_proven.length).toBe(without.r.not_proven.length + 1);
     expect(withTail.r.verdict).toBe(without.r.verdict);
   }, 30000);
   test("floor: a code-owned gate failure is still FAILED and carries no owner", async () => {
