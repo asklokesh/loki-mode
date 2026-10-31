@@ -1435,6 +1435,7 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
     ["so the package compiles", "Fix limiter/limiter.go so the package compiles", "limiter"],
     ["package name: text", "Write wrap.go; package name: text", "wrap", { "go.mod": "module example.com/wrap\n\ngo 1.22\n" }],
     ["(package type) is a keyword", "Write limiter/limiter.go (package type)", "limiter"],
+    ["package `v2` is a legal explicit name", "Write ini.go, package `v2`.", "v2"],
     ["so that a package compiles", "Fix internal/store/memory.go so that a package compiles", "store"],
     ["make sure this package works", "Fix internal/store/memory.go and make sure this package works", "store"],
     ["so this package builds, then", "Fix internal/store/memory.go so this package builds, then add docs", "store"],

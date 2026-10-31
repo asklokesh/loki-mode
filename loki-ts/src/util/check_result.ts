@@ -189,7 +189,7 @@ export function plannedGoDir(repoDir: string, texts: string[]): { dir: string; p
     const em = /\bpackage\s+`([A-Za-z_]\w*)`|\(package\s+([A-Za-z_]\w*)\)/.exec(texts[texts.length - 1] ?? ""), explicit = em ? (em[1] ?? em[2]) : undefined;
     const mod = rel === "." && existsSync(join(repoDir, "go.mod")) ? /^module\s+(\S+)/m.exec(readFileSync(join(repoDir, "go.mod"), "utf8"))?.[1]?.replace(/\/v\d+$/, "").split("/").pop() : undefined;
     const okName = (n: string | undefined): n is string => n !== undefined && GO_IDENT.test(n) && !GO_MAJOR.test(n);
-    const named = [explicit !== undefined && !GO_KEYWORDS.has(explicit) ? explicit : undefined, tiedMain ? "main" : undefined, rel === "." ? undefined : rel.split("/").pop()!, mod, base].find(okName) ?? null;
+    const named = (explicit !== undefined && !GO_KEYWORDS.has(explicit) ? explicit : undefined) ?? [tiedMain ? "main" : undefined, rel === "." ? undefined : rel.split("/").pop()!, mod, base].find(okName) ?? null; // an explicit name is already an identifier and legal even as vN
     return { dir, pkg: goSiblingPkg(dir) ?? named };
   }
   // No .go file named: a named package directory (a leading ./ is fine, backslash paths stay at the root). Per sentence, a directory counts when the word "package" sits
