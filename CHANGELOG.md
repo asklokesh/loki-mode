@@ -5,6 +5,56 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.94.0 (2026-10-31)
+
+Loki waits out Claude's 5-hour usage limit instead of failing, `loki start` exits 6 for a PARTIAL run, custom webhooks are now signed (breaking), `loki plan --fast` gives a one-screen plan, and receipts copied under another run id are refused. Seal and git hardening are tightened.
+
+### Added
+
+- Loki now recognizes Claude Code's "5-hour limit" message as a rate limit and waits instead of failing. A provider that exits with no output is reported as "provider returned no output" instead of unclassified.
+- The intake step shows where its time goes and reuses the project model across identical checkouts of the same committed tree. A reused model is re-validated against the checkout before it is trusted.
+- Intake scores how ambiguous a spec is. Interactive runs ask one batched set of questions; headless runs record their assumptions in the receipt and pass them to plan and implement.
+- PDF and DOCX specs are extracted with page and line anchors, with OCR for scanned pages when an OCR tool is installed.
+- `loki plan --fast` prints a one-screen plan from the small model tier, then a refine diff.
+- A group run that ends FAILED now seals a verifiable refusal receipt.
+- `loki verify`, `show` and `md` accept the run id that `loki start` prints.
+- `loki doctor` warns when the installed Agent SDK differs from the pinned version and prints a fix command for your install layout.
+- `loki telemetry show` and `LOKI_TELEMETRY_DEBUG` print the event keys instead of sending them.
+- `LOKI_MUTATION_PROOF_JOBS` opts in to running the Seal mutation proof's Wall tests several at a time.
+- `scripts/prune-worktrees.sh` removes merged or abandoned agent worktrees safely (dry run by default).
+- The docs show the VS Code `mcp.json` that `loki mcp install` writes.
+
+### Changed
+
+- BREAKING: custom webhooks are now signed. `loki notify webhook` and the run lifecycle events post JSON with `schema_version` 1 and an `X-Loki-Signature: sha256=<hex>` header (HMAC-SHA256 of the raw body keyed by LOKI_WEBHOOK_SECRET). A LOKI_WEBHOOK_URL with no LOKI_WEBHOOK_SECRET now sends nothing, and `loki notify status` says so. The payload carries event names, outcomes and ids only, and the call has a 5 second connect and 10 second total timeout.
+- `loki start` now exits 6 for a PARTIAL run (done, not fully proven) instead of 1, so a CI gate can tell it from FAILED (exit 1). Any nonzero test still fails the gate; a script that matched exactly 1 for PARTIAL must also accept 6. The code is listed in docs/exit-codes.md, `loki start --help` and the README outcome table.
+- Seal's mutation proof runs the Wall tests one at a time by default, so a test with side effects outside the repo can no longer fake a yes. The opt-in concurrent mode reports a failing Wall test only if it also fails when re-run alone, re-runs it from a clean base tree, and stops starting tests once its time budget is spent.
+- Ref and config git calls skip the repo filter and textconv driver scan, which cut the time to the first printed line of `loki start` from about 0.34s to 0.25s (median of 12 runs, measured from source with a stubbed model). The skip fails closed: it applies only when every leading option is a known global option.
+- A gate that failed for a harness reason now seals PARTIAL with the harness as owner instead of FAILED, and starts no fix round.
+- The Wall for a tiny greenfield task (one file) is bounded to six assertions unless more acceptance lines exist, so it authors less while still running.
+- A haiku run keeps project-model discovery, the Wall re-author and the already-done check on haiku.
+- Advisory reviewers for mergeability and coverage never run on haiku when `LOKI_REVIEW_ADVISORY=0`, on both the TypeScript and bash routes.
+- Sizing matches named files as exact tokens, so `myindex.ts` or `index.tsx` no longer count as naming `index.ts`.
+- The variant event reports the model that authored the Wall (`wall_model`) and the re-author ceiling (`wall_model_reauthor`). Opencode runs record the model they were asked for, or an unreported default naming the provider.
+- Shipping a release from a linked worktree is refused up front with the main checkout path, and the release guard timeout default is 900 seconds.
+- The usage governor finishes inside the pulse deadline and no longer leaks cache temp files. `next --suggest` gh timeouts are overridable. Provider effort lookups start python3 once instead of twice.
+- Telemetry sends the PostHog geoip-disable flag on every analytics request and flags throwaway container homes. Activation milestones (install, first start, first run finished, first verified, second run within 7 days) are sent once per machine with a coarse install-age bucket, behind the strict analytics gate, and a first run reports each step once even when events fire together.
+
+### Fixed
+
+- Verify-PR now treats an added or removed `jest.config.json` as runner config, so a `moduleNameMapper` stub can no longer reach VERIFIED.
+- `loki verify`, the proof badge, bundle and share, and `loki undo` refuse a receipt that was copied under another run id.
+- A unit whose dependency folder cannot be copied safely now starts without it and installs its own, instead of failing before the model is called. A copy that fails partway is removed and reported as "copy failed", distinct from "not safe to copy". A backlog unit whose dependency dirs were skipped has them named in its task text with an instruction to install them.
+- Worktree prep accepts a venv whose interpreter symlink points outside the repo, keeps a link into a prefix-sharing sibling directory, and refuses a link into the repo.
+- Hardened git calls now neutralise every gpg program and `log.showSignature`, and pin off `tag.gpgSign`, `push.gpgSign` and `gpg.ssh.defaultKeyCommand`, so a repo-set command no longer runs when git signs a tag or shows signatures.
+- Verify, the mutation proof and Wall publishing find the sealed acceptance-check copy through one shared resolver, so a moved or renamed copy is judged the same way everywhere.
+- The Bun TypeScript syntax check in verify parses only and no longer runs the tree's code.
+- `loki keys` and `loki verify` print why they are refused when Bun is missing instead of exiting silently, and `loki verify --pubkey` and `loki keys` no longer hang under `LOKI_LEGACY_BASH=1`.
+- The engine honors `LOKI_DURABLE_STATE=1`, so deterministic failures exit 20 like the legacy runner.
+- Done-recognition no longer treats the iteration-0 checklist as proof of completed work.
+- The unsigned generic webhook sender is removed from `notify.sh`; only the signed path posts to `LOKI_WEBHOOK_URL`.
+- Runs on the legacy engine report the same first-run milestones as the default engine.
+
 ## v11.93.0 (2026-10-30)
 
 The Wall catches failing tests earlier in the same session, fewer runs end PARTIAL for test-harness reasons, and the Claude Agent SDK moves to 0.3.314.
