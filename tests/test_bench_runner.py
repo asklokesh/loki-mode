@@ -815,5 +815,96 @@ class CollectEfficiencyFallbackTest(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _arm_adapter(tool, log, writes=True):
+    """A mock arm that logs its call order and (optionally) edits a file."""
+    def _run(workdir, spec, *, model="mock-model", timeout=900, runner=None):
+        log.append(tool)
+        if writes:
+            with open(os.path.join(workdir, "seed.txt"), "a") as fh:
+                fh.write(tool + "\n")
+        return {"tool": tool, "tool_version": "1.0", "model_used": model,
+                "duration_s": 2.0, "iterations": 1, "tokens_in": 1, "tokens_out": 1,
+                "cost_usd": 0.1, "exit_status": "completed", "provenance": {}}
+    return _run
+
+
+class ArmsInterleaveTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="bench-arms-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _tasks(self):
+        return [_make_task(self.tmp, acceptance_cmd="true", task_id=t) for t in ("task-a", "task-b")]
+
+    def test_interleaved_order_same_base_and_valid_rows(self):
+        log = []
+        arms = ["loki-lean", "claude_code", "loki"]
+        out = runner.run_arms(self._tasks(), arms, reps=2,
+                              adapters={a: _arm_adapter(a, log) for a in arms})
+        # task order kept; within a task each rep runs every arm once, rotated.
+        rot = lambda n: arms[n:] + arms[:n]  # noqa: E731
+        # Latin-square rotation per (task, rep): offsets 0,1 for task-a, 2,0 for task-b.
+        self.assertEqual(log, rot(0) + rot(1) + rot(2) + rot(0))
+        self.assertEqual([(x["task_id"], x["rep"], x["arm"], x["position"]) for x in out["schedule"]][:6],
+                         [("task-a", 1, "loki-lean", 0), ("task-a", 1, "claude_code", 1), ("task-a", 1, "loki", 2),
+                          ("task-a", 2, "claude_code", 0), ("task-a", 2, "loki", 1), ("task-a", 2, "loki-lean", 2)])
+        first = [x["arm"] for x in out["schedule"] if x["position"] == 0]
+        self.assertGreater(len(set(first)), 1)
+        self.assertEqual(len(out["rows"]), 6)
+        for row in out["rows"]:
+            self.assertEqual(schema.validate_result_row(row), [])
+            self.assertEqual([t["trial"] for t in row["trials"]], [1, 2])
+        # one frozen base tree per task, shared by every arm and every trial.
+        for tid in ("task-a", "task-b"):
+            trees = {t["base_tree"] for r in out["rows"] if r["task_id"] == tid for t in r["trials"]}
+            self.assertEqual(len(trees), 1)
+            self.assertNotIn(None, trees)
+
+    def test_files_changed_is_measured_by_the_harness(self):
+        log = []
+        out = runner.run_arms(self._tasks()[:1], ["claude_code", "loki-lean"], reps=1, adapters={
+            "claude_code": _arm_adapter("claude_code", log, writes=True),
+            "loki-lean": _arm_adapter("loki-lean", log, writes=False)})
+        by = {r["tool"]: r["trials"][0]["adapter"]["files_changed"] for r in out["rows"]}
+        self.assertEqual(by, {"claude_code": 1, "loki-lean": 0})
+
+    def test_base_mismatch_is_caught_after_rep_one(self):
+        log = []
+        calls = {"n": 0}
+        real = runner._base_tree
+
+        def drifting(workdir):
+            calls["n"] += 1
+            return "tree-%d" % (calls["n"] % 2)
+        runner._base_tree = drifting
+        try:
+            with self.assertRaises(ValueError):
+                runner.run_arms(self._tasks()[:1], ["claude_code", "loki-lean"], reps=3, adapters={
+                    "claude_code": _arm_adapter("claude_code", log), "loki-lean": _arm_adapter("loki-lean", log)})
+        finally:
+            runner._base_tree = real
+        self.assertEqual(len(log), 2)
+
+    def test_named_arms_are_spend_gated(self):
+        os.environ.pop("LOKI_BENCH_SPEND_APPROVED", None)
+        with self.assertRaises(RuntimeError):
+            runner.run_arms(self._tasks()[:1], ["loki-lean", "claude_code"], reps=1)
+
+    def test_parent_lean_env_is_refused_for_the_plain_arm(self):
+        os.environ["LOKI_LEAN"] = "1"
+        try:
+            with self.assertRaises(ValueError):
+                runner.run_arms(self._tasks()[:1], ["loki", "claude_code"], reps=1,
+                                adapters={"loki": _arm_adapter("loki", []), "claude_code": _arm_adapter("claude_code", [])})
+        finally:
+            del os.environ["LOKI_LEAN"]
+
+    def test_lean_arm_loads_the_loki_adapter_entrypoint(self):
+        self.assertEqual(runner.load_adapter("loki-lean").__name__, "run_lean")
+        self.assertEqual(runner.load_adapter("loki").__name__, "run")
+
+
 if __name__ == "__main__":
     unittest.main()

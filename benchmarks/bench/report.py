@@ -304,6 +304,237 @@ def summarize_row(row):
     }
 
 
+# ---------------------------------------------------------------------------
+# Arm comparison: per-arm totals and a paired per-task table
+# ---------------------------------------------------------------------------
+
+CANDIDATE_ARM = "loki-lean"
+BASELINE_ARM = "claude_code"
+
+
+def _arm_trials(rows, arm):
+    """task_id -> measured trials of `arm`, pooled across its rows. Unmeasured
+    trials are excluded here so no total, median or paired count reads them."""
+    out = {}
+    for r in rows:
+        if isinstance(r, dict) and r.get("tool") == arm:
+            trials = [t for t in (r.get("trials") or []) if isinstance(t, dict)]
+            out.setdefault(r.get("task_id"), []).extend(_schema.split_measured(trials)[0])
+    return out
+
+
+def _claimed(trial):
+    """Declared complete under the one rule applied to every arm (clean exit and
+    a non-empty diff): equivalence_report's definition, not a second copy."""
+    import equivalence_report as _eq
+    return _eq._declared_complete_normalized(trial)
+
+
+LOKI_ARMS = ("loki", "loki-lean")
+PR_OUTCOMES = ("VERIFIED", "PARTIAL")
+
+
+def _pr_ready(trial):
+    """Would a PR open for this trial? Loki arms: the run's own outcome is
+    VERIFIED or PARTIAL (a PARTIAL with a diff opens a draft PR) and the diff is
+    non-empty. Raw: clean exit and a non-empty diff. The exit status is not used
+    for Loki, which records a PARTIAL as an error. Acceptance is the grader's."""
+    ad = trial.get("adapter") if isinstance(trial.get("adapter"), dict) else {}
+    if ad.get("tool") in LOKI_ARMS:
+        prov = ad.get("provenance") if isinstance(ad.get("provenance"), dict) else {}
+        fc = ad.get("files_changed")
+        return (prov.get("run_outcome") in PR_OUTCOMES
+                and isinstance(fc, (int, float)) and not isinstance(fc, bool) and fc > 0)
+    return _claimed(trial) is True
+
+
+def _complete_cost(trial):
+    """The trial's cost when it is a whole number, else None. A partial cost is a
+    lower bound and never enters a cost claim."""
+    c = trial.get("cost_usd")
+    if isinstance(c, bool) or not isinstance(c, (int, float)) or _schema.cost_is_partial(trial):
+        return None
+    return float(c)
+
+
+def _arm_version(rows, arm):
+    for r in rows:
+        if isinstance(r, dict) and r.get("tool") == arm:
+            for t in r.get("trials") or []:
+                v = (t.get("adapter") or {}).get("tool_version") if isinstance(t, dict) else None
+                if v:
+                    return v
+    return None
+
+
+def summarize_arm(rows, arm):
+    """Totals for one arm over every measured trial: accepted (grader), false-green
+    (claimed done but not accepted), PR-ready (see _pr_ready; the arms run with
+    PRs off), cost over
+    complete-cost trials only, and elapsed."""
+    by_task = _arm_trials(rows, arm)
+    trials = [t for ts in by_task.values() for t in ts]
+    claims = [(t, _claimed(t)) for t in trials]
+    costs = [c for c in (_complete_cost(t) for t in trials) if c is not None]
+    durs = [t.get("duration_s") for t in trials]
+    accepted = sum(1 for t in trials if t.get("success") is True)
+    return {
+        "arm": arm,
+        "tool_version": _arm_version(rows, arm),
+        "tasks": len(by_task),
+        "n": len(trials),
+        "accepted": accepted,
+        "claimed": sum(1 for _t, c in claims if c is True),
+        "false_green": sum(1 for t, c in claims if c is True and t.get("success") is not True),
+        "pr_ready": sum(1 for t in trials if _pr_ready(t)),
+        "cost_complete_n": len(costs),
+        "cost_partial_n": len(trials) - len(costs),
+        "cost_usd_total": round(sum(costs), 4) if costs else None,
+        "elapsed_s_total": round(sum(d for d in durs if isinstance(d, (int, float))), 1) if durs else None,
+        "elapsed_s_median": _median(durs),
+        "needs_positive_control": bool(trials) and accepted == 0,
+    }
+
+
+def _task_median(trials, getter):
+    return _median([v for v in (getter(t) for t in trials) if v is not None])
+
+
+def pair_arms(rows, candidate=CANDIDATE_ARM, baseline=BASELINE_ARM):
+    """Paired per-task comparison of `candidate` against `baseline`.
+
+    A task is paired when both arms have at least one measured trial. Candidate
+    is worse on a task when its accepted count is below the baseline's, better
+    when above. A solid loss is a task the baseline solved in every one of >=3
+    trials where the candidate solved fewer than 2/3 of its own.
+    """
+    cand = _arm_trials(rows, candidate)
+    base = _arm_trials(rows, baseline)
+    tasks = []
+    for tid in sorted(t for t in cand if t in base and cand[t] and base[t]):
+        ck = sum(1 for t in cand[tid] if t.get("success") is True)
+        bk = sum(1 for t in base[tid] if t.get("success") is True)
+        cn, bn = len(cand[tid]), len(base[tid])
+        tasks.append({
+            "task_id": tid,
+            "candidate_k": ck, "candidate_n": cn,
+            "baseline_k": bk, "baseline_n": bn,
+            "outcome": "worse" if ck < bk else ("better" if ck > bk else "same"),
+            "solid_loss": bn >= 3 and bk == bn and ck * 3 < 2 * cn,
+            "candidate_cost": _task_median(cand[tid], _complete_cost),
+            "baseline_cost": _task_median(base[tid], _complete_cost),
+            "candidate_elapsed": _task_median(cand[tid], lambda t: t.get("duration_s")),
+            "baseline_elapsed": _task_median(base[tid], lambda t: t.get("duration_s")),
+        })
+    return {
+        "candidate": candidate, "baseline": baseline, "tasks": tasks,
+        "worse": sum(1 for t in tasks if t["outcome"] == "worse"),
+        "better": sum(1 for t in tasks if t["outcome"] == "better"),
+        "same": sum(1 for t in tasks if t["outcome"] == "same"),
+        "solid_losses": [t["task_id"] for t in tasks if t["solid_loss"]],
+    }
+
+
+def _ratio(tasks, cand_key, base_key):
+    both = [t for t in tasks if t[cand_key] is not None and t[base_key] is not None]
+    c, b = _median([t[cand_key] for t in both]), _median([t[base_key] for t in both])
+    return (round(c / b, 3) if c is not None and b else None), len(both)
+
+
+def arm_comparison(rows, candidate=CANDIDATE_ARM, baseline=BASELINE_ARM):
+    """Per-arm totals, the paired table and the pre-registered pass rule
+    (accuracy, cost, time, PR). A check is None when its data is missing: an
+    unmeasured criterion is unknown, never a pass. None when either arm is absent."""
+    arms = [summarize_arm(rows, a) for a in (candidate, baseline)]
+    if not all(a["n"] for a in arms):
+        return None
+    cand_s, base_s = arms
+    pairing = pair_arms(rows, candidate, baseline)
+    tasks = pairing["tasks"]
+    cost_ratio, cost_n = _ratio(tasks, "candidate_cost", "baseline_cost")
+    time_ratio, time_n = _ratio(tasks, "candidate_elapsed", "baseline_elapsed")
+    cand_fg = cand_s["false_green"] / cand_s["claimed"] if cand_s["claimed"] else None
+    base_fg = base_s["false_green"] / base_s["claimed"] if base_s["claimed"] else None
+    cand_k = sum(t["candidate_k"] for t in tasks)
+    base_k = sum(t["baseline_k"] for t in tasks)
+    if not tasks:
+        accuracy = None
+    elif cand_k < base_k or pairing["solid_losses"] or cand_s["false_green"] > base_s["false_green"]:
+        accuracy = False
+    elif not base_s["claimed"]:
+        # Raw claimed nothing, so there is no false-green count to compare against.
+        accuracy = None
+    else:
+        accuracy = True
+    checks = {
+        # False-green is compared as COUNTS; the rates below are information only.
+        "accuracy": accuracy,
+        "cost_le_half": None if cost_ratio is None else cost_ratio <= 0.5,
+        "time_le_half": None if time_ratio is None else time_ratio <= 0.5,
+        "pr_rate": cand_s["pr_ready"] / cand_s["n"] >= base_s["accepted"] / base_s["n"],
+    }
+    return {
+        "arms": arms, "paired": pairing,
+        "cost_ratio": cost_ratio, "cost_ratio_tasks": cost_n,
+        "time_ratio": time_ratio, "time_ratio_tasks": time_n,
+        "false_green_rate": {candidate: cand_fg, baseline: base_fg},
+        "checks": checks,
+        "pass": None if any(v is None for v in checks.values()) else all(checks.values()),
+    }
+
+
+def _fmt_pct(v):
+    return "n/a" if v is None else "%.0f%%" % (v * 100)
+
+
+def render_arm_comparison(cmp):
+    """Markdown for arm_comparison(); every cell is a measured count or n/a."""
+    out = ["## Arm comparison", ""]
+    out.append("| Arm | CLI version | Trials | Accepted | False-green | PR-ready | "
+               "Cost USD (complete rows) | Cost-partial rows | Elapsed total (s) |")
+    out.append("|---|---|---|---|---|---|---|---|---|")
+    for a in cmp["arms"]:
+        out.append("| %s | %s | %d | %d | %d/%d | %d | %s | %d | %s |" % (
+            a["arm"], a["tool_version"] or "not recorded", a["n"], a["accepted"],
+            a["false_green"], a["claimed"], a["pr_ready"],
+            fmt_usd(a["cost_usd_total"]), a["cost_partial_n"],
+            "n/a" if a["elapsed_s_total"] is None else "%.0f" % a["elapsed_s_total"]))
+    out.append("")
+    out.append("PR-ready: Loki arms report a VERIFIED or PARTIAL outcome with a non-empty diff; raw exits "
+               "cleanly with a non-empty diff. These arms run with PRs off. "
+               "Cost-partial rows are excluded from every cost figure.")
+    for a in cmp["arms"]:
+        if a["needs_positive_control"]:
+            out.append("")
+            out.append("Arm %s accepted 0 of %d trials: this needs a positive control "
+                       "before it is read as a result." % (a["arm"], a["n"]))
+    pair = cmp["paired"]
+    c, b = pair["candidate"], pair["baseline"]
+    out += ["", "### Paired per task: %s vs %s" % (c, b), "",
+            "| Task | %s accepted | %s accepted | Outcome |" % (c, b), "|---|---|---|---|"]
+    for t in pair["tasks"]:
+        out.append("| %s | %d/%d | %d/%d | %s%s |" % (
+            t["task_id"], t["candidate_k"], t["candidate_n"], t["baseline_k"], t["baseline_n"],
+            t["outcome"], " (solid loss)" if t["solid_loss"] else ""))
+    out += ["", "%s did worse than %s on %d tasks, better on %d, the same on %d." % (
+        c, b, pair["worse"], pair["better"], pair["same"]), ""]
+    ck = cmp["checks"]
+    word = lambda v: "unknown" if v is None else ("pass" if v else "FAIL")  # noqa: E731
+    out += ["### Pass rule", "",
+            "- Accuracy (accepted on paired tasks >= baseline, no solid loss, false-green count not above): %s" % word(ck["accuracy"]),
+            "- Cost (ratio of medians <= 0.5, %d tasks with complete cost): %s (ratio %s)" % (
+                cmp["cost_ratio_tasks"], word(ck["cost_le_half"]),
+                "n/a" if cmp["cost_ratio"] is None else "%.3f" % cmp["cost_ratio"]),
+            "- Time (ratio of medians <= 0.5, %d tasks): %s (ratio %s)" % (
+                cmp["time_ratio_tasks"], word(ck["time_le_half"]),
+                "n/a" if cmp["time_ratio"] is None else "%.3f" % cmp["time_ratio"]),
+            "- PR rate (PR-ready rate >= baseline accepted rate): %s" % word(ck["pr_rate"]),
+            "- False-green rate: %s %s, %s %s" % (
+                c, _fmt_pct(cmp["false_green_rate"][c]), b, _fmt_pct(cmp["false_green_rate"][b])),
+            "- Overall: %s" % word(cmp["pass"]), ""]
+    return "\n".join(out)
+
+
 def pick_winner(summaries):
     """Winner = highest success-rate among VERIFIED (non-manual) tools.
 
@@ -409,6 +640,10 @@ def build_report(result_row):
         "winner": winner,
         "winner_reason": reason,
     }
+    # Only when both comparison arms are present; other reports are unchanged.
+    cmp = arm_comparison(rows)
+    if cmp is not None:
+        results["arm_comparison"] = cmp
     return results
 
 
@@ -479,6 +714,9 @@ def render_markdown(results):
             s["provenance_tag"],
         ))
     lines.append("")
+
+    if results.get("arm_comparison"):
+        lines.append(render_arm_comparison(results["arm_comparison"]))
 
     # Note any manual/unverified rows explicitly.
     manual_tools = [s["tool"] for s in results.get("summaries", []) if s["manual"]]

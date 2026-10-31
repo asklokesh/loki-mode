@@ -290,6 +290,31 @@ def _read_honesty(loki_dir):
     return {"headline": headline, "degraded": degraded}
 
 
+def _run_outcome(loki_dir, rc):
+    """(outcome, source). The exit code decides the class and the receipt only
+    refines within it: 0 is the receipt verdict when it is VERIFIED or
+    ALREADY_SATISFIED, VERIFIED with no receipt, and UNVERIFIED when the receipt
+    names any other verdict (a stale or mismatched receipt; fail closed); 6 or 20 (the latter with
+    LOKI_DURABLE_STATE=1) is PARTIAL; any other code is FAILED whatever the
+    receipt says (BUDGET_STOP or STALLED can carry a PARTIAL verdict). With no
+    exit code the receipt verdict stands; with neither it is (None, None)."""
+    receipt = _read_v10_receipt(loki_dir)
+    verdict = None
+    if receipt is not None and isinstance(receipt.get("verdict"), str) and receipt["verdict"].strip():
+        verdict = receipt["verdict"].strip().upper()
+    if isinstance(rc, int) and not isinstance(rc, bool):
+        if rc == 0:
+            if verdict is None:
+                return "VERIFIED", "exit_code"
+            if verdict in ("VERIFIED", "ALREADY_SATISFIED"):
+                return verdict, "receipt"
+            return "UNVERIFIED", "contradiction"
+        if rc in (6, 20):
+            return "PARTIAL", "exit_code"
+        return "FAILED", "exit_code"
+    return (verdict, "receipt") if verdict else (None, None)
+
+
 def _read_verify_verdict(loki_dir):
     """The build's HONESTY verdict (honesty.headline, e.g. "VERIFIED" /
     "NOT VERIFIED") from the latest proof. This is the honesty AXIS the
@@ -589,6 +614,7 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
     honesty = _read_honesty(loki_dir)
     verify_verdict = honesty["headline"] if honesty else None
     engine = _read_engine(loki_dir)
+    run_outcome, run_outcome_source = _run_outcome(loki_dir, rc)
 
     # Cost: shared with the proof generator. None usd == not recorded.
     cost, model_used, cache_by_phase = _collect_cost(loki_dir)
@@ -636,6 +662,11 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             # "VERIFIED" / "NOT VERIFIED"). None when no proof ran. This feeds the
             # equivalence report's HONESTY axis (was not_captured before this).
             "verify_verdict": verify_verdict,
+            # The run's own outcome, from the receipt when one exists, else from
+            # the exit code. Consumers decide PR-readiness from this, not from the
+            # exit status, which records a PARTIAL (rc 6 or 20) as an error.
+            "run_outcome": run_outcome,
+            "run_outcome_source": run_outcome_source,
             # Persisted because the workdir is deleted after grading: the
             # gap behind a "WITH GAPS" headline must survive in the row.
             "honesty": honesty,
@@ -666,3 +697,21 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             "stderr_tail": _tail(err),
         },
     )
+
+
+LEAN_ARM = "loki-lean"
+
+
+def run_lean(workdir, spec, **kwargs):
+    """The `loki-lean` benchmark arm: the same run as `run` with LOKI_LEAN=1.
+
+    `run` already passes --no-pr, so this arm never writes upstream. The row is
+    labelled `loki-lean` (tool and provenance.arm) so it never pools with the
+    plain `loki` arm; LOKI_LEAN=1 is recorded in provenance.lever_env.
+    """
+    extra = dict(kwargs.pop("extra_env", None) or {})
+    extra["LOKI_LEAN"] = "1"
+    out = run(workdir, spec, extra_env=extra, **kwargs)
+    out["tool"] = LEAN_ARM
+    out["provenance"]["arm"] = LEAN_ARM
+    return out

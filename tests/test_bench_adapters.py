@@ -101,6 +101,98 @@ def assert_schema(tc, out):
     tc.assertIn("verified", out["provenance"])
 
 
+class TestLokiLeanArm(unittest.TestCase):
+    def _capture(self):
+        seen = []
+
+        def _runner(cmd, **kwargs):
+            seen.append((cmd, kwargs.get("env") or {}))
+            return make_runner(version_out="7.10.0", run_out="ok")(cmd, **kwargs)
+        return _runner, seen
+
+    def test_row_is_labelled_validates_and_sets_lean_env(self):
+        runner, seen = self._capture()
+        out = loki_adapter.run_lean(_REPO, "prd.md", runner=runner)
+        assert_schema(self, out)
+        self.assertEqual(out["tool"], "loki-lean")
+        self.assertEqual(out["provenance"]["arm"], "loki-lean")
+        self.assertEqual(out["provenance"]["lever_env"], {"LOKI_LEAN": "1"})
+        self.assertEqual(_load("bench_schema_lean", "../bench_schema.py").validate_adapter_output(out), [])
+        start = [(c, e) for c, e in seen if "start" in c]
+        self.assertEqual(len(start), 1)
+        cmd, env = start[0]
+        self.assertEqual(env.get("LOKI_LEAN"), "1")
+        self.assertIn("--no-pr", cmd)
+
+    def test_run_outcome_from_exit_code_without_a_receipt(self):
+        for rc, want in ((0, "VERIFIED"), (6, "PARTIAL"), (20, "PARTIAL"), (1, "FAILED")):
+            out = loki_adapter.run_lean(_REPO, "prd.md", runner=make_runner(version_out="7.10.0", run_rc=rc))
+            self.assertEqual((out["provenance"]["run_outcome"], out["provenance"]["run_outcome_source"]),
+                             (want, "exit_code"))
+
+    def _receipt_dir(self, wd, verdict):
+        run_dir = os.path.join(wd, ".loki", "runs", "r1")
+        os.makedirs(run_dir)
+        with open(os.path.join(run_dir, "receipt.json"), "w") as fh:
+            json.dump({"verdict": verdict}, fh)
+        return os.path.join(wd, ".loki")
+
+    def test_run_outcome_receipt_refines_within_the_exit_class(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as wd:
+            loki_dir = self._receipt_dir(wd, "partial")
+            self.assertEqual(loki_adapter._run_outcome(loki_dir, 6), ("PARTIAL", "exit_code"))
+            self.assertEqual(loki_adapter._run_outcome(loki_dir, 20), ("PARTIAL", "exit_code"))
+            self.assertEqual(loki_adapter._run_outcome(loki_dir, None), ("PARTIAL", "receipt"))
+        with tempfile.TemporaryDirectory() as wd:
+            self.assertEqual(loki_adapter._run_outcome(os.path.join(wd, ".loki"), 0), ("VERIFIED", "exit_code"))
+        with tempfile.TemporaryDirectory() as wd:
+            loki_dir = self._receipt_dir(wd, "already_satisfied")
+            self.assertEqual(loki_adapter._run_outcome(loki_dir, 0), ("ALREADY_SATISFIED", "receipt"))
+
+    def test_clean_exit_with_a_contradicting_receipt_is_unverified_and_not_pr_ready(self):
+        import tempfile
+        spec = importlib.util.spec_from_file_location(
+            "bench_report_lean_outcome", os.path.join(_REPO, "benchmarks", "bench", "report.py"))
+        report = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(report)
+        for verdict in ("PARTIAL", "FAILED", "BLOCKED"):
+            with tempfile.TemporaryDirectory() as wd:
+                outcome, source = loki_adapter._run_outcome(self._receipt_dir(wd, verdict), 0)
+            self.assertEqual((outcome, source), ("UNVERIFIED", "contradiction"))
+            self.assertNotIn(outcome, report.PR_OUTCOMES)
+            trial = {"success": False, "adapter": {"tool": "loki-lean", "files_changed": 3,
+                                                   "provenance": {"run_outcome": outcome}}}
+            self.assertFalse(report._pr_ready(trial))
+
+    def test_nonzero_non_partial_exit_is_failed_without_a_receipt(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as wd:
+            for rc in (3, 4, 5, 130):
+                self.assertEqual(loki_adapter._run_outcome(os.path.join(wd, ".loki"), rc), ("FAILED", "exit_code"))
+        self.assertEqual(loki_adapter._run_outcome("/nonexistent/.loki", None), (None, None))
+
+    def test_partial_receipt_never_rescues_a_failed_exit(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as wd:
+            loki_dir = self._receipt_dir(wd, "PARTIAL")
+            for rc in (1, 3, 4, 5, 130):
+                self.assertEqual(loki_adapter._run_outcome(loki_dir, rc), ("FAILED", "exit_code"))
+
+    def test_plain_loki_arm_never_sets_lean(self):
+        runner, seen = self._capture()
+        out = loki_adapter.run(_REPO, "prd.md", runner=runner)
+        self.assertEqual(out["tool"], "loki")
+        self.assertEqual(out["provenance"]["lever_env"], {})
+        env = [e for c, e in seen if "start" in c][0]
+        self.assertEqual(env.get("LOKI_LEAN"), os.environ.get("LOKI_LEAN"))
+
+    def test_caller_levers_are_kept_beside_lean(self):
+        runner, _seen = self._capture()
+        out = loki_adapter.run_lean(_REPO, "prd.md", runner=runner, extra_env={"LOKI_COST_PROFILE": "lean"})
+        self.assertEqual(out["provenance"]["lever_env"], {"LOKI_COST_PROFILE": "lean", "LOKI_LEAN": "1"})
+
+
 class TestLokiAdapter(unittest.TestCase):
     def test_schema_and_no_success_quality(self):
         runner = make_runner(version_out="7.10.0", run_out="ok", run_rc=0)
