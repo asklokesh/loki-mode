@@ -4,6 +4,11 @@
  *  keyword as its own segment so max_tokens, token_count and tokens: stay readable. A match starts only where no name char precedes it (linear on long a_a_a runs, never mid-word
  *  as in mytoken=1) and consumes leading and repeated separators, so --password=, --db-password=, _token= and __SECRET= still redact. Values already redacted ([REDACTED...]) are skipped, which keeps the rule idempotent. */
 const ASSIGNMENT = /((?<![A-Za-z0-9_.-])[_.-]*(?:[A-Za-z0-9]+[_.-]+)*(?:password|passwd|secret|token|api[_-]?key|apikey)["']?\s*[:=]\s*)((?:"(?!\[REDACTED)(?:\\.|[^"\\\n])+")|(?:'(?!\[REDACTED)(?:\\.|[^'\\\n])+')|(?!["']|\[REDACTED)[^\s"',;&]+)/gi;
+/** camelCase and privateKey names ASSIGNMENT cannot see (adminPassword, clientSecret, privateKey, private_key): the name ends in Password, Secret or private key, and a symbol-rich value
+ *  redacts. Floor: 8 characters bare (the NIST 800-63B minimum password length; keeps "password: none", "secret=true" readable), 4 inside quotes (a quote marks a literal). Bare ALL_CAPS values
+ *  (RIGHT_PAREN_TOKEN), placeholders (${VAR}, <value>, {{x}}, [REDACTED]), calls (createPrivateKey({) and plain-word values with no digit or symbol (a Secret name such as existingSecret=my-secrets, a type
+ *  name in a type annotation) are identifiers, not secrets, and stay. */
+const CAMEL_ASSIGNMENT = /((?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]*(?:[a-z0-9](?:Password|Secret)|[Pp]rivate[_-]?[Kk]ey)["']?\s*[:=]\s*)((?:"(?!\[REDACTED|<|\$\{|\{\{)(?:\\.|[^"\\\n]){4,}")|(?:'(?!\[REDACTED|<|\$\{|\{\{)(?:\\.|[^'\\\n]){4,}')|(?![A-Z0-9_]+(?![^\s"',;&])|["'\[$<{]|[\w.$]+[({])(?=[^\s"',;&]*[^A-Za-z_.\s"',;&-])[^\s"',;&]{8,})/g;
 const RULES: [RegExp, string | ((...a: string[]) => string)][] = [
   [/sk-ant-[A-Za-z0-9_-]{20,}/g, "[REDACTED:ANTHROPIC_KEY]"],
   [/github_pat_[A-Za-z0-9_]{20,}/g, "[REDACTED:GITHUB_TOKEN]"],
@@ -34,6 +39,7 @@ const RULES: [RegExp, string | ((...a: string[]) => string)][] = [
   [/(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/g, "$1[REDACTED]"],
   [/(\b[a-z][a-z0-9+.-]{0,63}:\/\/)[^\s/?#@]+@/gi, "$1[REDACTED]@"], // TEN-SECURITY-26: a bounded scheme keeps this linear; unbounded, every word start in a long a--a run rescanned it (quadratic)
   [ASSIGNMENT, (_m: string, pre: string, val: string) => (val[0] === '"' || val[0] === "'" ? `${pre}${val[0]}[REDACTED]${val[0]}` : `${pre}[REDACTED]`)],
+  [CAMEL_ASSIGNMENT, (_m: string, pre: string, val: string) => (val[0] === '"' || val[0] === "'" ? `${pre}${val[0]}[REDACTED]${val[0]}` : `${pre}[REDACTED]`)],
   [/(\bAuthorization\s*[:=]\s*)(?:Basic|Bearer|Token|Digest)?\s*[^\s,;"']+/gi, "$1[REDACTED]"],
 ];
 const QUERY_SEGMENT = /\?[^\s#"'<>]+/g;

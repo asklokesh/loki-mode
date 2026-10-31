@@ -52,6 +52,31 @@ test("PEM private key blocks are redacted, including multi-line and truncated", 
   expect(redactSecrets("-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----")).toBe("-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----");
 });
 
+test("camelCase and privateKey assignments redact symbol-rich values", () => {
+  expect(redactSecrets("adminPassword=P@ssw0rd!2026xyz")).toBe("adminPassword=[REDACTED]");
+  expect(redactSecrets('clientSecret: "abc!def#ghi$jk"')).toBe('clientSecret: "[REDACTED]"');
+  expect(redactSecrets("privateKey=xY9!kL2@mN4#")).toBe("privateKey=[REDACTED]");
+  expect(redactSecrets("private_key=xY9!kL2@mN4#")).toBe("private_key=[REDACTED]");
+  expect(redactSecrets("dbPassword='hunter2!'")).toBe("dbPassword='[REDACTED]'");
+  expect(redactSecrets('{"adminPassword": "P@ssw0rd!2026xyz", "x": 1}')).toBe('{"adminPassword": "[REDACTED]", "x": 1}');
+  expect(redactSecrets("clientSecret: abc!def#ghi$jk\nnext: 1")).toBe("clientSecret: [REDACTED]\nnext: 1");
+  expect(redactSecrets("export appSecret=abc!def#ghi$jk;")).toBe("export appSecret=[REDACTED];");
+});
+
+test("camelCase rule controls stay readable and the rule is idempotent", () => {
+  const keep = [
+    "nextToken: RIGHT_PAREN_TOKEN", "adminPassword=ADMIN_PASSWORD_VALUE", "password_hint=see docs", "passwordHint=see the docs page",
+    "adminPassword=short", "clientSecret: none", "privateKey=true", "adminPassword=${DB_PASSWORD}", "clientSecret: <value here>",
+    "the secret is in the vault and the password is rotated", "Password and Secret handling", "see https://example.com/docs/privateKey/guide",
+    "--set existingSecret=autonomi-secrets \\", "let key: { privateKey: KeyObject };", "const privateKey = createPrivateKey({ key: x })", "build_jwks(private_key=Ed25519PrivateKey.generate())",
+    "--set secrets.githubWebhookSecret='<hmac>' \\", 'clientSecret: "${CLIENT_SECRET_VALUE}"',
+    "https://example.com/adminPassword=1", "privateKeyPath: ./keys/id", "adminPassword=[REDACTED]", 'clientSecret: "[REDACTED]"',
+  ];
+  for (const k of keep) expect(redactSecrets(k)).toBe(k);
+  const once = redactSecrets("adminPassword=P@ssw0rd!2026xyz clientSecret: 'abc!def#ghi$jk'");
+  expect(redactSecrets(once)).toBe(once);
+});
+
 test("vendor tokens", () => {
   const sg = "SG." + "a".repeat(22) + "." + "b".repeat(43);
   const tw = "SK" + "0123456789abcdef".repeat(2);
