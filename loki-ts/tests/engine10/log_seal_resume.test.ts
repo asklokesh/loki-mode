@@ -871,6 +871,14 @@ test("SB-04e (FG14): an honest re-resume of an answered BLOCKED run (answered pa
   });
   expect(v.verdict).not.toBe("TAMPERED");
 });
+test("SB-04e (FG15): a plain resume pair sealed before the answered resume is TAMPERED", async () => {
+  const v = await afterCompletion({ verdict: "SPEC_CONFLICT" }, (ev, id) => {
+    const l = new SupervisorLog(ev, id); l.append("run.resumed", null, { phase: "stage" }); l.sealLog();
+    resumeCkpt(ANS)(ev, id);
+  });
+  expect(v.verdict).toBe("TAMPERED");
+  expect(v.text).toContain(POSITION);
+});
 test("SB-04e (g): an unsigned stage tail after a cancel seal is refused: no Resume offer", async () => {
   const id = `e10-k${n++}`, repo = mkdtempSync(join(root, "kill-")), dir = join(repo, ".loki", "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo }); tgit(repo, "commit", "-q", "--allow-empty", "-m", "b"); tgit(repo, "branch", `loki/${id}`);
