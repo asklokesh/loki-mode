@@ -3,7 +3,7 @@ name: loki-mode
 description: Runs an autonomous software factory that knows what it is supposed to deliver and proves it did, with a signed receipt. Use when the user says Loki Mode or asks to build, fix or verify software autonomously.
 ---
 
-# Loki Mode v11.97.0
+# Loki Mode v11.98.0
 
 **Current entry points (Loki 10 engine):** `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"` run the Loki 10 engine and end with a signed receipt (`loki verify`). `loki backlog owner/repo --all` runs many issues in parallel. Guide: `docs/v10/GUIDE.md`. The skill instructions below, and `loki start`, describe the previous bash loop. PRD-file starts (`loki start ./prd.md`) and the opencode provider still run on it until FC38-SWEEP ports them; the legacy-engine command and the LOKI_ENGINE switch remain removed. Prefer `loki owner/repo#N` for issues.
 
@@ -475,4 +475,4 @@ Implemented, planned and deprecated items, with the version each landed in: `ski
 
 ---
 
-**v11.97.0 | [Autonomi](https://www.autonomi.dev/) flagship product | core skill**
+**v11.98.0 | [Autonomi](https://www.autonomi.dev/) flagship product | core skill**

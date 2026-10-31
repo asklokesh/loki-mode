@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.98.0 (2026-10-31)
+
+`loki issues run` now opens a labelled draft PR for PARTIAL work instead of leaving it on a local branch, and CI runs green again on main.
+
+### Changed
+
+- A PARTIAL `loki issues run` result with a diff now pushes its branch and opens a draft PR titled with a `[PARTIAL]` prefix. The PR body leads with a Not proven section listing the first 10 reasons and the total, and links the issue with Refs, never Closes. Failed, spec-conflict and cancelled runs stay local, and VERIFIED still opens its ready PR as before. Dependent issues of a PARTIAL slice that has a PR are stacked on its branch.
+
+### Fixed
+
+- CI runs green again on main: test environment fixes for setup-python in the bun test jobs, the verify exit code for an empty diff, and damaged-receipt handling.
+
 ## v11.97.0 (2026-10-31)
 
 A passing Go or cargo run can no longer hide behind a shell variable, make assignment or wrapper, the Go acceptance test lands in the right package and directory, and a run stopped by a signal or STOP file still reports that it finished.
