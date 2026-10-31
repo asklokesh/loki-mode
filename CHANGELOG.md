@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.99.0 (2026-10-31)
+
+`loki issues run` splits a too-large issue into at most 4 slices, runs ready slices in parallel, and asks the planner once more when a split comes back over the cap.
+
+### Changed
+
+- `loki issues run` splits a large issue into at most 4 independent slices and runs ready slices concurrently with `--parallel`, so far fewer slices are skipped. Each concurrent slice gets its own worktree and branch, and a PARTIAL slice with a draft PR still stacks its dependent slices.
+- When the planner returns a split over the 4-slice cap, it is asked once more with the cap named before the issue is skipped as too large.
+
 ## v11.98.0 (2026-10-31)
 
 `loki issues run` now opens a labelled draft PR for PARTIAL work instead of leaving it on a local branch, and CI runs green again on main.

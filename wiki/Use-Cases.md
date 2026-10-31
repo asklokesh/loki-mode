@@ -1,6 +1,6 @@
 # Use Cases
 
-> Legacy engine note: this page documents the legacy engine (`loki start`, `LOKI_ENGINE=legacy`), which still ships in 11.98.0 and is being removed. For the current Loki 10 commands (`loki "<task>"`, `loki owner/repo#N`, `loki backlog`, `loki verify`) see [[Home]] and [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
+> Legacy engine note: this page documents the legacy engine (`loki start`, `LOKI_ENGINE=legacy`), which still ships in 11.99.0 and is being removed. For the current Loki 10 commands (`loki "<task>"`, `loki owner/repo#N`, `loki backlog`, `loki verify`) see [[Home]] and [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
 
 Real-world examples and patterns for using Loki Mode effectively.
 
