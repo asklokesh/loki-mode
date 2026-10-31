@@ -559,6 +559,13 @@ describe("verify-pr: an exit code alone is not proof", () => {
     ["E4 pyproject addopts list plugin module rewritten", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = [\"-p\", \"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
     ["E3 conftest pytest_plugins list module rewritten", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
     ["E3 conftest pytest_plugins string module rewritten", { ...PLUG_REF, "conftest.py": "pytest_plugins = \"plug\"\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["F1 pytest_plugins list over 4096 chars, plug last", { ...PLUG_REF, "conftest.py": `pytest_plugins = [${Array.from({ length: 450 }, (_, i) => `"mod${i}"`).join(", ")}, "plug"]\n` }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["F2 pytest_plugins list over 4096 chars, plug first", { ...PLUG_REF, "conftest.py": `pytest_plugins = ["plug", ${Array.from({ length: 450 }, (_, i) => `"mod${i}"`).join(", ")}]\n` }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["F3 pytest_plugins tuple over 4096 chars", { ...PLUG_REF, "conftest.py": `pytest_plugins = (${Array.from({ length: 450 }, (_, i) => `"mod${i}"`).join(", ")}, "plug")\n` }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["F4 pytest_plugins opener followed by a 5000 char comment", { ...PLUG_REF, "conftest.py": `pytest_plugins = [  # ${"c".repeat(5000)}\n  "plug",\n]\n` }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["F5 pytest_plugins annotation over 200 chars", { ...PLUG_REF, "conftest.py": `pytest_plugins: List${" ".repeat(260)} = ["plug"]\n` }, { "plug.py": HOOK }, 4, /conftest\.py/],
+    ["F6 pytest_plugins assigned a non-literal", { ...PLUG_REF, "conftest.py": "PLUGINS = ['plug']\npytest_plugins = PLUGINS\n" }, { "plug.py": HOOK }, 4, /conftest\.py \(pytest_plugins is not a closed literal\)/],
+    ["F7 pytest_plugins list plus an extra", { ...PLUG_REF, "conftest.py": "pytest_plugins = [] + extra\n" }, { "plug.py": HOOK }, 4, /not a closed literal/],
     ["A13 package plugin __init__.py rewritten", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = \"-p plug\"\n", "plug.py": null, "plug/__init__.py": "# plugin\n" }, { "plug/__init__.py": HOOK }, 4, /plug\/__init__\.py/],
     ["a referenced plugin left unchanged while the bug is fixed", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = [\"-p\", \"plug\"]\n", "conftest.py": "pytest_plugins = [\"plug\"]\n" }, {}, 0, /^$/],
   ] as const)("a PR where %s", async (_n, baseEdits, edits, rc, reason) => {
@@ -607,6 +614,18 @@ describe("verify-pr: an exit code alone is not proof", () => {
     runnerConfigChanged(["a.py"], d);
     expect(performance.now() - t0).toBeLessThan(1000);
   }, 60_000);
+
+  test("a 1MB unclosed pytest_plugins list is NOT PROVEN, not clean, and is read in under a second", () => {
+    const d = join(dir, "redos-unclosed");
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, "conftest.py"), "pytest_plugins = [" + "x".repeat(1 << 20));
+    writeFileSync(join(d, "a.py"), "x = 1\n");
+    const t0 = performance.now();
+    const r = runnerConfigChanged(["a.py"], d);
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(r.join(" ")).toContain("a.py");
+    expect(r.join(" ")).toContain("conftest.py");
+  });
 
   test("a config path that cannot be read is treated as config, not skipped", () => {
     mkdirSync(join(dir, "unreadable.toml"));
