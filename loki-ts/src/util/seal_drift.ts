@@ -46,6 +46,26 @@ function boundEvents(log: string, bound: string): EventEnvelope[] | null {
   return sealed !== undefined ? evs.slice(0, sealed) : evs;
 }
 
+/** A resume checkpoint is a log.sealed the supervisor writes right after the run.resumed it appends on a resume, so a hard kill of the resumed part leaves a signed point to resume from. Returns the unsigned tail after the LAST log.sealed when that seal is a resume checkpoint (the killed resumed part: supervisor-written, never authenticated), else null. */
+export function resumeCheckpointTail(events: readonly EventEnvelope[]): { sealAt: number } | null {
+  const at = events.findLastIndex((e) => e.type === "log.sealed");
+  return at > 0 && at < events.length - 1 && events[at - 1]!.type === "run.resumed" ? { sealAt: at } : null;
+}
+
+/** Indexes of killed resumes' unsigned tails, derived from log structure alone (no data field is read, so a forged line cannot name a range): a run.resumed at i followed by its checkpoint at i+1 drops j+1..i-1 when j, the previous log.sealed, is itself a resume checkpoint. A run.resumed inside a dropped span is skipped, so a forged one never extends the drop. */
+export function killedTailIndexes(events: readonly EventEnvelope[]): Set<number> {
+  const gone = new Set<number>();
+  let prevSeal = -1;
+  for (let i = 0; i < events.length; i++) {
+    if (gone.has(i)) continue;
+    if (events[i]!.type === "run.resumed" && events[i + 1]?.type === "log.sealed" && prevSeal > 0 && events[prevSeal - 1]!.type === "run.resumed") {
+      for (let k = prevSeal + 1; k < i; k++) gone.add(k);
+    }
+    if (events[i]!.type === "log.sealed") prevSeal = i;
+  }
+  return gone;
+}
+
 /** The shared log.sealed reader (every reader that once cut at the first log.sealed uses this instead). Each log.sealed must hash every line before it, carry
  *  tampered:false, and be signed by a known key (the receipt's kid when given). Every run.completed except the last must be followed by its seal (when sealing
  *  is expected: a signing key exists or a seal is present), so a deleted cancel seal cannot hide an edit. Null when intact or when the log was never sealed. */

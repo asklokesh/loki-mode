@@ -11,6 +11,7 @@ import { wallModel } from "../engine10/sizing.ts";
 import { assertionCount, changedAssertion, changedRegion, editScopeViolation, quoteInSpec, testSpans, wallAnchor, type WallDefect } from "./wall_owned.ts";
 import { safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
 import { sealedWallCopy, sealedWallDir } from "./check_result.ts";
+import { killedTailIndexes } from "./seal_drift.ts";
 import { vacuousCheck } from "../project_model/conventions.ts";
 import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
 import { taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
@@ -34,8 +35,10 @@ export function blockedCompletion(events: readonly EventEnvelope[], mark: number
   return c && c.data["verdict"] === "SPEC_CONFLICT" ? c : null;
 }
 
-/** The events a resume reasons over: with an answer pending, the blocked attempt's stage events from the conflicting stage on (plan when it declared the change out of repo, else implement), its run.completed and its log.sealed are dropped. Events after the answer are kept. */
+/** The events a resume reasons over: a hard-killed resume's unsigned tail (see killedTailIndexes) is dropped first; with an answer pending, the blocked attempt's stage events from the conflicting stage on (plan when it declared the change out of repo, else implement), its run.completed and its log.sealed are dropped. Events after the answer are kept. */
 export function effectiveEvents(events: readonly EventEnvelope[], assumeNext = false): readonly EventEnvelope[] {
+  const gone = killedTailIndexes(events); // a hard-killed resume's unsigned tail is never counted as settled work
+  if (gone.size) events = events.filter((_, i) => !gone.has(i));
   const mark = answerMark(events, assumeNext);
   if (mark < 0 || !blockedCompletion(events, mark)) return events;
   const plan = events.slice(0, mark).findLast((e) => e.type === "stage.completed" && e.stage === "plan"), drop = new Set(plan?.data["out_of_repo"] === true ? FROM_PLAN : AFTER_PLAN);

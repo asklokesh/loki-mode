@@ -25,7 +25,7 @@ import { applyArbitrations } from "./conflict_resume.ts";
 import { noteOf } from "./base_guard.ts";
 import { sourceId } from "../../../packages/control-plane/src/shipper/ship.ts";
 import { redactSecrets } from "./redact.ts";
-import { checkpointProblem, onlyWallPublish, runStateProblem, verifyLogSeals } from "./seal_drift.ts";
+import { checkpointProblem, onlyWallPublish, resumeCheckpointTail, runStateProblem, verifyLogSeals } from "./seal_drift.ts";
 import { readIntentRevisions, type IntentRevision } from "./steer.ts";
 import { REPO_ROOT } from "./paths.ts";
 import { getVersion } from "../version.ts";
@@ -196,6 +196,8 @@ function stageState(events: readonly EventEnvelope[], nowMs?: number): WorkItemS
 // duplicating a side effect (design: docs/v10/ENGINE.md "Recovery of an interrupted run").
 /** A run.completed written by a SIGINT/SIGTERM/loki-cancel stop: it seals the log but is not a finish. */
 export const isCancelDone = (e: EventEnvelope): boolean => e.type === "run.completed" && e.data["cancelled"] === true;
+/** A run.completed a resume checkpoint seal may follow: a cancel stop, or a BLOCKED (SPEC_CONFLICT) completion. Used by verify only (resumeCheckpointOk, which also demands an answered resume for SPEC_CONFLICT); resumePoint does not use it. */
+export const isResumableDone = (e: EventEnvelope): boolean => isCancelDone(e) || (e.type === "run.completed" && e.data["verdict"] === "SPEC_CONFLICT");
 export type Phase = "implement" | "verify" | "publish" | "done";
 
 /** RECOVERY: which phase an event log stopped in. "done" means nothing is left to resume. */
@@ -357,7 +359,7 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   try { raw = readFileSync(join(repoDir, eventsRelPath(it.runId)), "utf8"); } catch { return cannotResume(out, it.runId, "its event log is unreadable"); }
   const tailBad = it.phase === "publish" ? null : cancelTailProblem(it.events);
   if (tailBad) { out(`engine10: --resume refused: run ${it.runId} holds ${tailBad}\n`); return 2; }
-  const rp = resumePoint(it.events, raw, answer !== undefined);
+  const tl = trustedLog(it.events, raw), rp = resumePoint(tl.events, tl.raw, answer !== undefined);
   if (!rp.ok && /^event log (is torn|ends in a torn)/.test(rp.reason)) return cannotResume(out, it.runId, `its ${rp.reason}`);
   if (!rp.ok) { out(`engine10: --resume refused: ${plainLine(rp.reason, 400)}\n`); return 2; }
   if (it.phase === "publish" && noPr) { out("engine10: --resume refused: --no-pr was given and this run is in its publish phase\n"); return 2; }
@@ -366,7 +368,7 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   if (wantProv && typeof st1["provider"] === "string" && wantProv !== st1["provider"]) return cannotResume(out, it.runId, `the provider changed since the kill: the run used ${st1["provider"]}, LOKI_PROVIDER is ${wantProv}`);
   if (wantModel && st1["model_override_applied"] !== true && typeof st1["model"] === "string" && wantModel !== st1["model"]) return cannotResume(out, it.runId, `the model changed since the kill: the run used ${st1["model"]}, LOKI_MODEL_OVERRIDE is ${wantModel}`);
   if (rp.skip.length === 0) return cannotResume(out, it.runId, "no stage had settled, so there is nothing to resume from");
-  const baseSha = it.events.findLast((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
+  const baseSha = tl.events.findLast((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
   if (typeof baseSha === "string" && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(baseSha)) { try { safeGit(repoDir, ["cat-file", "-e", `${baseSha}^{commit}`]); } catch { return cannotResume(out, it.runId, `its base commit ${baseSha.slice(0, 12)} is gone from this repo`); } }
   out(`engine10: resume from stage ${rp.stage} (settled: ${rp.skip.join(", ") || "none"})\n`);
   const br = `loki/${it.runId}`, origBranch = currentBranch(repoDir), pc = partialCost(it.events, false, join(repoDir, ".loki")), st0 = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>;
@@ -507,16 +509,22 @@ const branchExists = (repoDir: string, runId: string): boolean => { try { return
 /** SB-04d: the log.sealed line is the last authenticated point of a stopped run (the same checkpoint rule signedReceiptFacts applies to a publish resume): events after the last one were never sealed, so a resume refuses them instead of trusting them. */
 function cancelTailProblem(events: readonly EventEnvelope[]): string | null {
   const at = events.findLastIndex((e) => e.type === "log.sealed");
-  return at >= 0 && at < events.length - 1 ? `${events.length - 1 - at} event(s) after its last log.sealed (${events[at + 1]!.type}); they are unauthenticated` : null;
+  return at >= 0 && at < events.length - 1 && !resumeCheckpointTail(events) ? `${events.length - 1 - at} event(s) after its last log.sealed (${events[at + 1]!.type}); they are unauthenticated` : null;
+}
+
+/** The log a resume decision reasons over: when the last log.sealed is a resume checkpoint, only the log up to it (the killed resumed part after it is unsigned and never read). A torn log is returned whole so the torn-line refusal still fires. */
+function trustedLog(events: readonly EventEnvelope[], raw: string): { events: readonly EventEnvelope[]; raw: string } {
+  const t = resumeCheckpointTail(events), lines = raw.split("\n").filter((l) => l.trim() !== "");
+  return t && lines.length === events.length ? { events: events.slice(0, t.sealAt + 1), raw: lines.slice(0, t.sealAt + 1).join("\n") + "\n" } : { events, raw };
 }
 
 /** SB-04d: can `loki start` continue this run from its settled stages (any phase before publish)? Same measured properties resumeFlag refuses on: branch, base commit, an intact sealed log, a settled stage. */
 function stagesResumable(repoDir: string, runId: string, events: readonly EventEnvelope[]): boolean {
   if (!branchExists(repoDir, runId) || cancelTailProblem(events)) return false;
   try {
-    const rp = resumePoint(events, readFileSync(join(repoDir, eventsRelPath(runId)), "utf8"));
+    const tl = trustedLog(events, readFileSync(join(repoDir, eventsRelPath(runId)), "utf8")), rp = resumePoint(tl.events, tl.raw);
     if (!rp.ok || rp.skip.length === 0) return false;
-    const base = events.findLast((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
+    const base = tl.events.findLast((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
     if (typeof base === "string" && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(base)) safeGit(repoDir, ["cat-file", "-e", `${base}^{commit}`]);
     return true;
   } catch { return false; }

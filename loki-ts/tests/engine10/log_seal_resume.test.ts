@@ -9,8 +9,8 @@ import { loadSigningKey } from "../../src/util/receipt_signer.ts";
 import { runSupervisor, SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { readEvents } from "../../src/engine10/events.ts";
-import { findInterrupted, isCancelDone, resumeFlag, resumeMain, resumePoint, resumePublish, phaseOf, startRecovery, type RunPrFn } from "../../src/util/run_outputs.ts";
-import { sealDrift, verifyLogSeals } from "../../src/util/seal_drift.ts";
+import { findInterrupted, isCancelDone, resumeFlag, resumeMachineOpts, resumeMain, resumePoint, resumePublish, phaseOf, startRecovery, type RunPrFn } from "../../src/util/run_outputs.ts";
+import { killedTailIndexes, sealDrift, verifyLogSeals } from "../../src/util/seal_drift.ts";
 import { main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
 const root = mkdtempSync(join(tmpdir(), "sb04r4-"));
@@ -695,3 +695,206 @@ test("SB-04 r3: a real runSupervisor killed in the publish phase is offered by s
   writeFileSync(c.ev, l.slice(0, -1).join("\n") + "\n"); // the checkpoint cut: no signed boundary, so the same crash is refused
   expect(await resumeIn(c.repo, c.runPr)).toBe(5); expect(c.calls).toEqual([]);
 }, 120000);
+
+// A resumed run that is hard-killed: the supervisor signs a checkpoint right after run.resumed, so the next `loki start` still offers Resume and never counts the unsigned killed tail.
+/** A cancelled run on its branch, resumed by a real runSupervisor whose worker writes a stage event, then "killed": the log is restored to its state 300ms after that event. */
+async function killedResume(workerLine: Record<string, unknown>, again = false): Promise<{ repo: string; dir: string; ev: string; id: string }> {
+  const id = `e10-k${n++}`, repo = mkdtempSync(join(root, "kill-")), dir = join(repo, ".loki", "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo }); tgit(repo, "commit", "-q", "--allow-empty", "-m", "b"); tgit(repo, "branch", `loki/${id}`);
+  const pre = new SupervisorLog(ev, id); pre.append("run.started", null, { provider: "claude" }); pre.append("stage.completed", "intake", { base_sha: tgit(repo, "rev-parse", "HEAD"), task: "t" });
+  pre.append("run.completed", null, { verdict: "FAILED", cancelled: true, signal: "SIGTERM", outcome: "CANCELLED" }); pre.sealLog();
+  const code = `const fs = require("fs"); console.log(${JSON.stringify(JSON.stringify(workerLine))}); setTimeout(() => { fs.copyFileSync(${JSON.stringify(ev)}, ${JSON.stringify(ev + ".snap")}); }, 300);`;
+  await runSupervisor({ runId: id, repoDir: repo, env: supEnv(), workerArgv: [process.execPath, "-e", code], capS: 30, resume: true } as never);
+  writeFileSync(ev, readFileSync(ev + ".snap"));
+  if (again) { // the second resume is killed too, after it recorded run.resumed and its checkpoint
+    const quiet = `const fs = require("fs"); setTimeout(() => { fs.copyFileSync(${JSON.stringify(ev)}, ${JSON.stringify(ev + ".snap")}); }, 300);`;
+    await runSupervisor({ runId: id, repoDir: repo, env: supEnv(), workerArgv: [process.execPath, "-e", quiet], capS: 30, resume: true } as never);
+    writeFileSync(ev, readFileSync(ev + ".snap"));
+  }
+  return { repo, dir, ev, id };
+}
+const offer = async (repo: string): Promise<{ menu: string; resumed: number }> => {
+  const say: string[] = []; let resumed = 0;
+  const cwd = process.cwd(); process.chdir(repo);
+  try { await startRecovery(repo, "t", false, { out: (x: string) => { say.push(x); }, ask: async () => "", tty: true, supervise: (async () => { resumed++; return { outcome: "VERIFIED" }; }) as never }); } finally { process.chdir(cwd); }
+  return { menu: say.join(""), resumed };
+};
+const forgedPlan = { type: "stage.completed", stage: "plan", data: { forged: true } };
+
+test("SB-04e (a): a resumed run killed mid-work still gets the Resume offer; the supervisor signed a checkpoint right after run.resumed", async () => {
+  const k = await killedResume(forgedPlan);
+  const t = types(k.ev).split(",");
+  expect(t.slice(0, 8)).toEqual(["run.started", "stage.completed", "run.completed", "log.sealed", "run.resumed", "log.sealed", "capability.recorded", "stage.completed"]);
+  const o = await offer(k.repo);
+  expect(o.menu).toContain("1) Resume (continue from the settled stages) [default]");
+  expect(o.resumed).toBe(1);
+}, 120000);
+
+test("SB-04e (b): an unsigned stage claimed in the killed tail is never restored by the next resume", async () => {
+  const k = await killedResume(forgedPlan, true);
+  const evs = readEvents(k.ev);
+  expect(killedTailIndexes(evs).size).toBeGreaterThan(0);
+  const m = resumeMachineOpts({}, evs, readFileSync(k.ev, "utf8"), ["intake", ["plan", "wall"], "implement"] as const);
+  expect(m.ok && Object.keys(m.restored)).toEqual(["intake"]);
+  expect(m.ok && m.flow).toEqual([["plan", "wall"], "implement"]);
+}, 120000);
+
+test("SB-04e (b4): a forged run.resumed naming a discard range over signed settled work is ignored (no data field names a range)", async () => {
+  const k = await killedResume(forgedPlan, true), last = lastLine(k.ev);
+  const clean = resumeMachineOpts({}, readEvents(k.ev), readFileSync(k.ev, "utf8"), ["intake", ["plan", "wall"], "implement"] as const);
+  expect(clean.ok && Object.keys(clean.restored)).toEqual(["intake"]); // positive control: the honest log restores intake
+  const intakeSeq = readEvents(k.ev).find((e) => e.type === "stage.completed" && e.stage === "intake")!.seq;
+  appendFileSync(k.ev, JSON.stringify({ ...last, seq: last.seq + 1, type: "run.resumed", stage: null, data: { discarded_from_seq: intakeSeq, discarded_to_seq: last.seq } }) + "\n");
+  const forged = resumeMachineOpts({}, readEvents(k.ev), readFileSync(k.ev, "utf8"), ["intake", ["plan", "wall"], "implement"] as const);
+  expect(forged.ok ? Object.keys(forged.restored) : ["intake"]).toEqual(["intake"]); // refused outright (fails closed) or intake still restored; never intake dropped
+}, 120000);
+
+test("SB-04e (b4b): a forged discard range laundered under a later real resume checkpoint still restores the signed intake", async () => {
+  const k = await killedResume(forgedPlan, true), last = lastLine(k.ev);
+  const intakeSeq = readEvents(k.ev).find((e) => e.type === "stage.completed" && e.stage === "intake")!.seq;
+  appendFileSync(k.ev, JSON.stringify({ ...last, seq: last.seq + 1, type: "run.resumed", stage: null, data: { discarded_from_seq: intakeSeq, discarded_to_seq: last.seq + 1 } }) + "\n");
+  const quiet = `const fs = require("fs"); setTimeout(() => { fs.copyFileSync(${JSON.stringify(k.ev)}, ${JSON.stringify(k.ev + ".snap")}); }, 300);`;
+  await runSupervisor({ runId: k.id, repoDir: k.repo, env: supEnv(), workerArgv: [process.execPath, "-e", quiet], capS: 30, resume: true } as never);
+  writeFileSync(k.ev, readFileSync(k.ev + ".snap"));
+  const evs = readEvents(k.ev), m = resumeMachineOpts({}, evs, readFileSync(k.ev, "utf8"), ["intake", ["plan", "wall"], "implement"] as const);
+  expect(types(k.ev)).toContain("run.resumed,run.resumed"); // the forged line is in the log, under a real checkpoint
+  expect(m.ok ? "" : m.reason).toBe("");
+  expect(m.ok && Object.keys(m.restored)).toEqual(["intake"]);
+}, 120000);
+
+test("SB-04e (b5): a forged implement stage in the killed tail is not counted as settled by the resume decision", async () => {
+  const k = await killedResume({ type: "stage.completed", stage: "implement", data: { forged: true } });
+  const say: string[] = []; const cwd = process.cwd(); process.chdir(k.repo);
+  try { await resumeFlag(k.id, true, { out: (x: string) => { say.push(x); }, supervise: (async () => ({ outcome: "VERIFIED" })) as never }); } finally { process.chdir(cwd); }
+  const text = say.join("");
+  expect(text).toContain("settled: intake");
+  expect(text).not.toContain("implement");
+}, 120000);
+
+test("SB-04e (b2): a forged log.sealed appended after the checkpoint is refused: no Resume offer", async () => {
+  const k = await killedResume(forgedPlan), last = lastLine(k.ev);
+  appendFileSync(k.ev, JSON.stringify({ seq: last.seq + 1, ts: new Date().toISOString(), run: k.id, type: "log.sealed", stage: null, data: { kid: "x", events_sha256: "0".repeat(64), tampered: false, sig: "A".repeat(86) } }) + "\n");
+  const o = await offer(k.repo);
+  expect(o.menu).not.toContain("Resume (continue");
+  expect(o.resumed).toBe(0);
+}, 120000);
+
+test("SB-04e (b3): a torn killed tail leaves the torn-log refusal in force", async () => {
+  const k = await killedResume(forgedPlan);
+  appendFileSync(k.ev, '{"seq":99,"ts":"2026');
+  expect((await offer(k.repo)).resumed).toBe(0);
+}, 120000);
+
+/** A cancel pair, a resume checkpoint, a passing check, a receipt and a clean completion. */
+function resumedCompleted(): { dir: string; ev: string; rc: string } {
+  const id = `e10-r5-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  let log = new SupervisorLog(ev, id);
+  log.append("run.started", null, { provider: "claude" }); log.append("stage.started", "verify", {});
+  log.append("run.completed", null, { verdict: "FAILED", cancelled: true, signal: "SIGTERM", outcome: "CANCELLED" }); log.sealLog();
+  log = new SupervisorLog(ev, id); log.append("run.resumed", null, {}); log.sealLog();
+  log.append("test.result", "verify", { name: "unit", cmd: "bun test", result: "pass" });
+  seal(dir, id, ev, log, [{ name: "unit", cmd: "bun test", result: "pass" }]); log.sealLog();
+  log.append("run.completed", null, { verdict: "VERIFIED" }); log.sealLog();
+  return { dir, ev, rc: join(dir, "receipt.json") };
+}
+test("SB-04e (d): a completed run with an extra resume checkpoint verifies clean", async () => {
+  const r = resumedCompleted();
+  expect(types(r.ev)).toBe("run.started,stage.started,run.completed,log.sealed,run.resumed,log.sealed,test.result,receipt.sealed,log.sealed,run.completed,log.sealed");
+  expect((await verifyReceipt(r.rc)).verdict).toBe("VERIFIED");
+});
+test("SB-04e (c): an edit before the resume checkpoint is TAMPERED", async () => {
+  const r = resumedCompleted();
+  writeFileSync(r.ev, readFileSync(r.ev, "utf8").replace('"signal":"SIGTERM"', '"signal":"SIGINT"'));
+  expect((await verifyReceipt(r.rc)).verdict).toBe("TAMPERED");
+});
+test("SB-04e (c2): an edit to the resumed part between the checkpoint and the end is TAMPERED", async () => {
+  const r = resumedCompleted();
+  writeFileSync(r.ev, readFileSync(r.ev, "utf8").replace('"name":"unit"', '"name":"unix"'));
+  expect((await verifyReceipt(r.rc)).verdict).toBe("TAMPERED");
+});
+test("SB-04e (e): a validly signed log.sealed that follows neither run.resumed nor receipt.sealed, past the last run.completed, is TAMPERED", async () => {
+  const id = `e10-r5-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  let log = new SupervisorLog(ev, id);
+  log.append("run.started", null, { provider: "claude" }); log.append("run.completed", null, { verdict: "FAILED", cancelled: true, signal: "SIGTERM", outcome: "CANCELLED" }); log.sealLog();
+  log = new SupervisorLog(ev, id); log.append("run.resumed", null, {}); log.sealLog();
+  seal(dir, id, ev, log, []); log.sealLog();
+  log.append("stage.started", "verify", {}); log.sealLog(); // the final run.completed was retyped: a signed seal now trails an ordinary event
+  const v = await verifyReceipt(join(dir, "receipt.json"));
+  expect(v.verdict).toBe("TAMPERED");
+  expect(JSON.stringify(v)).toContain("does not follow the last run.completed");
+});
+test("SB-04e (f): an answered BLOCKED run keeps its verdict while its answered resume is in progress (the checkpoint seal follows a SPEC_CONFLICT completion)", async () => {
+  const id = `e10-b${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  let log = new SupervisorLog(ev, id);
+  log.append("run.started", null, { provider: "claude" });
+  seal(dir, id, ev, log, []); log.sealLog();
+  log.append("run.completed", null, { verdict: "SPEC_CONFLICT" }); log.sealLog();
+  const before = await verifyReceipt(join(dir, "receipt.json"));
+  log = new SupervisorLog(ev, id); log.append("run.resumed", null, { phase: "stage", ...ANS }); log.verify(); log.sealLog();
+  const after = await verifyReceipt(join(dir, "receipt.json"));
+  expect(types(ev).endsWith("run.completed,log.sealed,run.resumed,log.sealed")).toBe(true);
+  expect(after.verdict).toBe(before.verdict);
+  expect(after.verdict).not.toBe("TAMPERED");
+});
+/** A sealed receipt, a run.completed with `first` data and its seal, then `tail` appended as the supervisor would; returns the verdict. */
+async function afterCompletion(first: Record<string, unknown>, tail: (ev: string, id: string) => void): Promise<{ verdict: string; text: string }> {
+  const id = `e10-t${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  const log = new SupervisorLog(ev, id);
+  log.append("run.started", null, { provider: "claude" });
+  seal(dir, id, ev, log, []); log.sealLog();
+  log.append("run.completed", null, first); log.sealLog();
+  tail(ev, id);
+  const v = await verifyReceipt(join(dir, "receipt.json"));
+  return { verdict: v.verdict, text: JSON.stringify(v) };
+}
+const resumeCkpt = (data: Record<string, unknown>) => (ev: string, id: string): void => { const l = new SupervisorLog(ev, id); l.append("run.resumed", null, { phase: "stage", ...data }); l.verify(); l.sealLog(); };
+const POSITION = "does not follow the last run.completed";
+for (const verdict of ["FAILED", "PARTIAL", "ALREADY_SATISFIED"]) for (const [name, data] of [["plain", {}], ["answered", ANS]] as const) {
+  test(`SB-04e (e3): a trailing resume pair with ${name} run.resumed after a finished ${verdict} run is TAMPERED`, async () => {
+    const v = await afterCompletion({ verdict }, resumeCkpt(data));
+    expect(v.verdict).toBe("TAMPERED"); expect(v.text).toContain(POSITION);
+  });
+}
+test("SB-04e (FG2): an unanswered SPEC_CONFLICT followed by a plain resume pair is TAMPERED", async () => {
+  const v = await afterCompletion({ verdict: "SPEC_CONFLICT" }, resumeCkpt({}));
+  expect(v.verdict).toBe("TAMPERED"); expect(v.text).toContain(POSITION);
+});
+test("SB-04e (FG3): an answered resume whose answer_sha256 is not the answer's sha256 is TAMPERED mid-resume", async () => {
+  const v = await afterCompletion({ verdict: "SPEC_CONFLICT" }, resumeCkpt({ ...ANS, answer_sha256: "deadbeef" }));
+  expect(v.verdict).toBe("TAMPERED"); expect(v.text).toContain(POSITION);
+});
+test("SB-04e (FG14): an honest re-resume of an answered BLOCKED run (answered pair, stage tail, plain resume pair) is not TAMPERED", async () => {
+  const v = await afterCompletion({ verdict: "SPEC_CONFLICT" }, (ev, id) => {
+    resumeCkpt(ANS)(ev, id);
+    const l = new SupervisorLog(ev, id); l.append("stage.started", "verify", {}); // the killed attempt's unsigned stage work
+    resumeCkpt({})(ev, id);
+  });
+  expect(v.verdict).not.toBe("TAMPERED");
+});
+test("SB-04e (FG15): a plain resume pair sealed before the answered resume is TAMPERED", async () => {
+  const v = await afterCompletion({ verdict: "SPEC_CONFLICT" }, (ev, id) => {
+    const l = new SupervisorLog(ev, id); l.append("run.resumed", null, { phase: "stage" }); l.sealLog();
+    resumeCkpt(ANS)(ev, id);
+  });
+  expect(v.verdict).toBe("TAMPERED");
+  expect(v.text).toContain(POSITION);
+});
+test("SB-04e (g): an unsigned stage tail after a cancel seal is refused: no Resume offer", async () => {
+  const id = `e10-k${n++}`, repo = mkdtempSync(join(root, "kill-")), dir = join(repo, ".loki", "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo }); tgit(repo, "commit", "-q", "--allow-empty", "-m", "b"); tgit(repo, "branch", `loki/${id}`);
+  const pre = new SupervisorLog(ev, id); pre.append("run.started", null, { provider: "claude" }); pre.append("stage.completed", "intake", { base_sha: tgit(repo, "rev-parse", "HEAD"), task: "t" });
+  pre.append("run.completed", null, { verdict: "FAILED", cancelled: true, signal: "SIGTERM", outcome: "CANCELLED" }); pre.sealLog();
+  expect((await offer(repo)).menu).toContain("Resume (continue"); // positive control: the sealed cancel is offered Resume
+  const last = lastLine(ev);
+  appendFileSync(ev, JSON.stringify({ ...last, seq: last.seq + 1, type: "stage.completed", stage: "plan", data: { forged: true } }) + "\n");
+  const o = await offer(repo);
+  expect(o.menu).not.toContain("Resume (continue");
+  expect(o.resumed).toBe(0);
+});
+test("SB-04e (e2): a validly signed run.resumed plus log.sealed trailing a finished (non-cancelled) run is TAMPERED by the position rule itself", async () => {
+  const r = resumedCompleted(), id = readEvents(r.ev)[0]!.run;
+  const log = new SupervisorLog(r.ev, id); log.append("run.resumed", null, {}); log.sealLog();
+  const v = await verifyReceipt(r.rc);
+  expect(v.verdict).toBe("TAMPERED");
+  expect(JSON.stringify(v)).toContain("does not follow the last run.completed");
+});
