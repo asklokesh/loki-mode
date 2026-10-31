@@ -10,7 +10,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, posix } from "node:path";
 import { parseContract } from "../features/contract.ts";
 import { fetchIssue } from "../engine10/fetch_issue.ts";
-import { HITS_TOKEN, REPORT_RUNNERS } from "../engine10/testmap.ts";
+import { REPORT_RUNNERS } from "../engine10/testmap.ts";
+import { HITS_TOKEN } from "../util/runner_boot.ts";
 import { extractChecks, judgeF2p, referencedFiles, reportedCheck, REPORT_TOKEN, type SandboxResult } from "../contrib/verify_pr_f2p.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
@@ -22,7 +23,7 @@ function textMatchesOrUnreadable(path: string, test: (txt: string) => boolean): 
 
 /** Changed in a PR, these always count as runner config whatever they hold: transpiler config (babel), interpreter startup hooks (sitecustomize.py, usercustomize.py, *.pth), mocha config, and anything under a __mocks__ directory (the runner applies those without the test asking, and a `roots` setting can move them out of the repo root). */
 const ALWAYS_CONFIG = /(?:^|\/)(?:babel\.config\.[\w.]+|\.babelrc(?:\.[\w.]+)?|(?:site|user)customize\.py|[^/]+\.pth|\.mocharc(?:\.[\w.]+)?)$|(?:^|\/)__mocks__\//;
-/** Repo paths named by a JS or TS runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest). Editing such a file changes what the runner loads even when the config itself is unchanged. Python plugin loading is not read from text: the sandbox records what pytest, its plugins and its conftests load (the runner's `boot` recorder). */
+/** Repo paths named by a JS or TS runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest). Editing such a file changes what the runner loads even when the config itself is unchanged. Python plugin loading is not read from text: the sandbox records what the runner, its plugins and its conftests load (the runner's `boot` recorder). */
 function configRefs(changed: readonly string[], roots: readonly string[]): Set<string> {
   const out = new Set<string>(), dirs = new Set(changed.flatMap((f) => f.split("/").slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join("/")).concat("")));
   for (const root of new Set(roots)) for (const d of dirs) for (const n of (() => { try { return readdirSync(join(root, d)); } catch { return []; } })()) {
@@ -42,7 +43,7 @@ export function runnerConfigChanged(changed: readonly string[], headDir: string,
     if (/^tsconfig[\w.-]*\.json$/.test(b)) return at.length === 0 || at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => /"(?:paths|baseUrl|rootDirs|extends)"\s*:/.test(txt)));
     if (at.length === 0 || (r && !r.key)) return !!r || at.length > 0;
     if (!r && !/\.(?:ini|cfg|toml)$/.test(f)) return false;
-    return at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => r ? !r.key || b.startsWith(r.runner) || r.key in (JSON.parse(txt) as object) : /^\s*\[[^\]\n]*test|^[ \t]*[\w."' \t-]*\bpytest\b["']?[ \t]*(?:\.|=[ \t]*\{)/im.test(txt)));
+    return at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => r ? !r.key || b.startsWith(r.runner) || r.key in (JSON.parse(txt) as object) : /^\s*\[[^\]\n]*test/im.test(txt) || REPORT_RUNNERS.some((x) => x.inline?.test(txt))));
   });
 }
 
@@ -56,8 +57,9 @@ export function bootRecord(hits: string | undefined): { files: Set<string>; reas
   for (const l of lines) {
     if (l === "E") continue;
     if (l === "O") { torn ||= "the load record passed its line cap"; continue; }
-    let j: { p?: unknown; start?: unknown; end?: unknown; err?: unknown; x?: unknown } | null = null;
-    try { j = l.startsWith("H ") ? JSON.parse(l.slice(2)) as typeof j : null; } catch { j = null; }
+    type Hit = { p?: unknown; start?: unknown; end?: unknown; err?: unknown; x?: unknown };
+    let j: Hit | null = null;
+    try { j = l.startsWith("H ") ? JSON.parse(l.slice(2)) as Hit : null; } catch { j = null; }
     if (j === null || typeof j !== "object") { torn ||= "the load record has an unreadable line"; continue; }
     if (typeof j.p === "string" && Object.keys(j).length === 1) files.add(j.p);
     else if (j.start === 1 && Object.keys(j).length === 1) starts++;
@@ -251,7 +253,7 @@ export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): Verify
     const base = deps.sandbox(co.baseDir, c), head = deps.sandbox(co.headDir, reported.get(c)!);
     const rec = booted.has(c) && head.status === "COMPLETED" ? bootRecord(head.hits) : null, changedSet = new Set(co.changed);
     const hit = rec ? [...rec.files].filter((f) => changedSet.has(f)) : [];
-    if (hit.length > 0) return np(`the PR adds or changes files that pytest, a plugin or a conftest loads before it collects tests (recorded in the sandbox), so a passing check is not proof: ${hit.join(", ")}`);
+    if (hit.length > 0) return np(`the PR adds or changes files that the test runner, a plugin or a conftest loads before it collects tests (recorded in the sandbox), so a passing check is not proof: ${hit.join(", ")}`);
     const o = judgeF2p(c, base, head);
     if (!o.ok) return { ...np(o.reason), blocked: o.blocked };
     if (rec?.reason) return np(`${rec.reason}, so a passing check is not proof: ${c}`);

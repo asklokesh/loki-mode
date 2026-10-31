@@ -5,6 +5,7 @@ import sys, pytest, loki_vpr_boot as b
 # the window, and the file of every plugin registered at any time is noted. Installed third-party plugins stay outside
 # (not PR-controlled). Test-module collection and fixtures are outside: the issue's test and the code under test are
 # meant to change. A conftest implementing pytest_runtest_call puts the test body in the window, which can only over-flag.
+b.snap()
 def _wrap(f):
     def w(*a, **k):
         b.enter()
@@ -13,6 +14,7 @@ def _wrap(f):
     return w
 @pytest.hookimpl(tryfirst=True)
 def pytest_load_initial_conftests(early_config, parser, args):
+    b.snap()
     pm = early_config.pluginmanager
     for n in ("_importconftest", "import_plugin"):
         setattr(pm, n, _wrap(getattr(pm, n)))

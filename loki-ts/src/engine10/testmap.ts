@@ -3,8 +3,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import { listProjectFiles } from "../util/safe_git.ts";
-import { REPO_ROOT } from "../util/paths.ts";
-import { loadProjectApi } from "../project_model/resolve.ts"; import { languageBytes } from "../project_model/linguist.ts";
+import { loadProjectApi } from "../project_model/resolve.ts"; import { languageBytes } from "../project_model/linguist.ts"; import { pytestBoot } from "../util/runner_boot.ts";
 import { attachScope, scopeRefs } from "../project_model/scope.ts";
 import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
 import { GO_TEST_RE, JS_SPEC_RE, JS_TEST_RE, PY_TEST_RE, coveredStem, detectFromPackageJson, isTestFile, referencedBasenames } from "../util/test_file_text.ts";
@@ -34,17 +33,10 @@ export const COMMANDS: Record<RunnerName, CommandSpec> = {
   gradle: { cmd: "gradle cleanTest test --tests <class>", coarse: false },
   javac: { cmd: "javac + java <test class>", coarse: false },
 };
-/** Sandbox wrapper for a pytest check (verify-pr): writes the load recorder from scripts/vpr-pytest-boot into a fresh mktemp dir (removed on exit), puts it first on PYTHONPATH and loads its plugin ahead of any ini plugin. The recorder writes to fd 9, the append-only hits pipe the sandbox reads from outside the check (the HITS_TOKEN no-op in the first line asks for it). */
-export const HITS_TOKEN = "__LOKI_HITS__";
-const pytestBoot = (cmd: string): string => {
-  const f = (n: string, to: string) => `cat >"$B/${to}" <<'LOKI_VPR_PY'\n${readFileSync(join(REPO_ROOT, "scripts/vpr-pytest-boot", n), "utf8")}LOKI_VPR_PY`;
-  return [`: ${HITS_TOKEN}`, 'B=$(mktemp -d) || exit 125', 'trap \'rm -rf "$B"\' EXIT', f("loki_vpr_boot.py", "loki_vpr_boot.py"), f("loki_vpr_plugin.py", "loki_vpr_plugin.py"), f("loki_vpr_site.py", "sitecustomize.py"),
-    'export LOKI_VPR_ROOT="$(pwd -P)" PYTHONPATH="$B${PYTHONPATH:+:$PYTHONPATH}" PYTEST_ADDOPTS="-p loki_vpr_plugin ${PYTEST_ADDOPTS-}"', cmd].join("\n") + "\n";
-};
-/** Runners that can write a machine pass/fail report file: the invocation to find in a check command and the flags that name the report (`<report>` is replaced by the caller's path), `boot` (wraps the check in a sandbox script that records what the runner loads before it collects tests), and `config`, the basenames that configure or preload that runner (a .json match counts only when it holds the entry's `key`). Go and cargo have no stable file reporter and are absent. verify-pr reads its verdict from that file, never from an exit code or printed totals. */
-export const REPORT_RUNNERS: readonly { runner: RunnerName; find: RegExp; flags: string; config: RegExp; key?: string; boot?: (cmd: string) => string }[] = [
+/** Runners that can write a machine pass/fail report file: the invocation to find in a check command and the flags that name the report (`<report>` is replaced by the caller's path), `boot` (wraps the check in a sandbox script that records what the runner loads before it collects tests), `inline` (a text pattern for a pytest section or key in a shared ini, cfg or toml file), and `config`, the basenames that configure or preload that runner (a .json match counts only when it holds the entry's `key`). Go and cargo have no stable file reporter and are absent. verify-pr reads its verdict from that file, never from an exit code or printed totals. */
+export const REPORT_RUNNERS: readonly { runner: RunnerName; find: RegExp; flags: string; config: RegExp; key?: string; boot?: (cmd: string) => string; inline?: RegExp }[] = [
   { runner: "bun", find: /bun test\b/, flags: "--reporter=junit --reporter-outfile=<report>", config: /^bunfig\.toml$/ },
-  { runner: "pytest", find: /(?:(?:python3?|py) -m )?py\.?test\b/, flags: "--junitxml=<report>", config: /^(?:conftest\.py|\.?pytest\.ini)$/, boot: pytestBoot },
+  { runner: "pytest", find: /(?:(?:python3?|py) -m )?py\.?test\b/, flags: "--junitxml=<report>", config: /^(?:conftest\.py|\.?pytest\.ini)$/, boot: pytestBoot, inline: /^[ \t]*[\w.\"' \t-]*\bpytest\b[\"']?[ \t]*(?:\.|=[ \t]*\{)/im },
   { runner: "jest", find: /jest\b/, flags: "--json --outputFile=<report>", config: /^(?:jest\.config\..+|package\.json)$/, key: "jest" },
   { runner: "vitest", find: /vitest\b/, flags: "--reporter=junit --outputFile=<report>", config: /^(?:vitest|vite)\.config\..+$|^vitest\.workspace\..+$/ },
 ];

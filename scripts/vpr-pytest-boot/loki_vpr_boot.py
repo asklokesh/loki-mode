@@ -4,7 +4,12 @@ import json, os, shlex, sys
 # it names proceeds, while pytest starts up (until pytest_sessionstart) and while a conftest or plugin import runs. The
 # reader treats every line anywhere in the stream as a hit, so PR code that writes to, closes or redirects fd 9 can only
 # add lines: its own file was recorded before it ran. A process spawn, a ctypes call or a rename/link in that window cannot
-# be followed (an unrecorded child or a libc open reads files unseen), so it is recorded as taint.
+# be followed (an unrecorded child or a libc open reads files unseen), so it is recorded as taint. ctypes counts only when
+# a repo-file frame is on the calling stack (a plugin's own ctypes import is not PR code); the interpreter's own
+# __pycache__ .pyc write is the one rename that is not a taint, and only when the stack is exactly the genuine importlib
+# chain get_code, _cache_bytecode, set_data, _write_atomic or pytest's assertion-rewrite chain exec_module, _write_pyc
+# (code objects compared by identity); a pyc written into the recorder's own directory (nothing there is imported after start-up) is exempt, and only while every namespace that chain calls through (importlib, marshal, builtins, _imp, os and io, and for pytest its rewrite module) still holds the objects it held at start-up (pytest's rewrite module: when first seen fully loaded, before any later import can run PR code), so a patched code_to_pyc, source_to_code, marshal or compile turns the write into a taint, so PR code that renames a
+# planted .pyc itself, or calls set_data or _cache_bytecode with its own bytes, is a taint.
 def _install():
     root = os.environ.get("LOKI_VPR_ROOT", "")
     roots = {os.path.abspath(root), os.path.realpath(root)} if root else set()
@@ -53,10 +58,62 @@ def _install():
                     try: out += shlex.split(y)
                     except ValueError: emit("x:split", {"x": "unsplittable command string"})
         return out
+    here = os.path.dirname(os.path.abspath(__file__))
+    snaps = {}
+    def spaces(*mods):
+        out = []
+        for m in mods:
+            if m is None: continue
+            for o in [m] + ([c for c in vars(m).values() if isinstance(c, type) and getattr(c, "__module__", "") == m.__name__] if hasattr(m, "__dict__") else []):
+                out.append((o, dict(vars(o)), {k: v.__code__ for k, v in vars(o).items() if hasattr(v, "__code__")}))
+        return out
+    def intact(key):
+        for o, d, codes in snaps.get(key, [(None, None, None)]):
+            if o is None: return False
+            cur = vars(o)
+            if len(cur) != len(d) or any(d.get(k, snaps) is not v for k, v in cur.items()): return False
+            if any(getattr(v, "__code__", None) is not codes.get(k, None) for k, v in cur.items() if hasattr(v, "__code__")): return False
+        return True
+    def snap():
+        try:
+            import importlib._bootstrap_external as be, importlib._bootstrap as bs, marshal, builtins, _imp
+            if "be" not in snaps: snaps["be"] = spaces(be, bs, marshal, builtins, _imp, be._os, be._io)
+            rw = sys.modules.get("_pytest.assertion.rewrite")
+            if rw and "rw" not in snaps and not getattr(getattr(rw, "__spec__", None), "_initializing", False): snaps["rw"] = spaces(rw)
+        except Exception: st["err"] = True
+    def pyc_write(a):
+        try: src, dst = os.path.basename(os.fsdecode(a[0])), os.fsdecode(a[1])
+        except Exception: return False
+        head, _, tail = src.rpartition(".")
+        if not (tail.isdigit() and head.endswith(".pyc") and dst.endswith(".pyc") and os.path.basename(os.path.dirname(dst)) == "__pycache__"): return False
+        if os.path.dirname(os.path.dirname(os.path.abspath(dst))) == here: return True
+        f = sys._getframe(2)
+        try:
+            be = sys.modules["importlib._bootstrap_external"]
+            chains = [(["be"], [be._write_atomic, be.SourceFileLoader.set_data, be.SourceFileLoader._cache_bytecode, be.SourceFileLoader.get_code])]
+            rw = sys.modules.get("_pytest.assertion.rewrite")
+            if rw: chains.append((["be", "rw"], [rw._write_pyc, rw.AssertionRewritingHook.exec_module]))
+            codes = [(k, [g.__code__ for g in c]) for k, c in chains]
+        except Exception: return False
+        for keys, want in codes:
+            g = f
+            for c in want:
+                if g is None or g.f_code is not c: break
+                g = g.f_back
+            else: return all(intact(k) for k in keys)
+        return False
     def hook(ev, a):
+        if "rw" not in snaps and not st["busy"] and "_pytest.assertion.rewrite" in sys.modules:
+            st["busy"] = True
+            try: snap()
+            finally: st["busy"] = False
         if ev.startswith("ctypes.") and not st["done"] and (st["boot"] or st["depth"] > 0) and not st["busy"]:
             st["busy"] = True
-            try: emit("x:ctypes", {"x": "ctypes use"})
+            try:
+                f = sys._getframe(1)
+                while f is not None:
+                    if rels(f.f_code.co_filename): emit("x:ctypes", {"x": "ctypes use from repo code"}); break
+                    f = f.f_back
             finally: st["busy"] = False
             return
         if ev not in watch or st["done"] or st["busy"] or not (st["boot"] or st["depth"] > 0): return
@@ -69,6 +126,7 @@ def _install():
                 ps = [a[0]]
                 if isinstance(a[0], (str, bytes, os.PathLike)) and not os.path.isabs(os.fsdecode(a[0])): ps_b = fd_dirs()
             else:
+                if ev == "os.rename" and pyc_write(a): return
                 emit("x:" + ev, {"x": ev + " in the load window"})
                 ps = tokens(ev, a[:3])
             for p in ps:
@@ -82,7 +140,9 @@ def _install():
     def enter(): st["depth"] += 1
     def leave(): st["depth"] = max(0, st["depth"] - 1)
     def boot_end(): st["boot"] = False
-    def early(): put({"start": 1})
+    def early():
+        snap()
+        put({"start": 1})
     def note(p):
         if st["done"] or st["busy"]: return
         st["busy"] = True
@@ -100,5 +160,5 @@ def _install():
         try: put({"end": 1, "err": 1 if st["err"] else 0})
         except OSError: pass
     sys.addaudithook(hook)
-    return enter, leave, boot_end, finish, early, note, inrepo
-enter, leave, boot_end, finish, early, note, inrepo = _install()
+    return enter, leave, boot_end, finish, early, note, inrepo, snap
+enter, leave, boot_end, finish, early, note, inrepo, snap = _install()

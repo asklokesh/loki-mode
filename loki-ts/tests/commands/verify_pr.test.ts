@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { explainLines, defaultCheckout, defaultIssue, defaultPrMeta, defaultPackageSuites, defaultSandbox, bootRecord, parsePrRef, runnerConfigChanged, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
 import { extractChecks, judgeF2p, reportedCheck, reportShowsPass, REPORT_TOKEN, type SandboxResult } from "../../src/contrib/verify_pr_f2p.ts";
-import { HITS_TOKEN } from "../../src/engine10/testmap.ts";
+import { HITS_TOKEN, pytestBoot } from "../../src/util/runner_boot.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "vpr2-test-")); });
@@ -40,10 +40,12 @@ function fixture(kind: "fix" | "delete-test" | "noop" | "already-passing"): { ur
 /** Trusted-fixture stand-in for the sandbox: runs the check on the host in the given dir. The real adapter is tested separately. */
 let reportSeq = 0;
 const hostSandbox = (d: string, cmd: string) => {
-  const rep = join(dir, `report-${reportSeq++}`);
-  const r = spawnSync("sh", ["-c", `{ ${cmd.split(REPORT_TOKEN).join(rep).split(HITS_TOKEN).join("")}\n} 2>&1`], { cwd: d, stdio: ["ignore", "pipe", "ignore", "ignore", "ignore", "ignore", "ignore", "ignore", "ignore", cmd.includes(HITS_TOKEN) ? "pipe" : "ignore"], encoding: "utf8" });
-  // Same shape as the real sandbox: the host reads fd 9 from a pipe after the check exits; "E" means the pipe closed.
-  const hits = cmd.includes(HITS_TOKEN) ? `${String(r.output?.[9] ?? "").split("\n").filter((l) => l !== "").map((l) => `H ${l}`).join("\n")}\nE\n` : undefined;
+  const rep = join(dir, `report-${reportSeq++}`), hitsFile = join(dir, `hits-${reportSeq}`);
+  const hitting = cmd.includes(HITS_TOKEN);
+  // fd 9 is an append-only file here (bun's spawnSync does not return a pipe on fd 9); the real sandbox reads a pipe.
+  const r = spawnSync("sh", ["-c", `${hitting ? `exec 9>>'${hitsFile}'\n` : ""}{ ${cmd.split(REPORT_TOKEN).join(rep).split(HITS_TOKEN).join("")}\n} 2>&1`], { cwd: d, stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" });
+  // "E" means the reader saw the stream close.
+  const hits = hitting ? `${(existsSync(hitsFile) ? readFileSync(hitsFile, "utf8") : "").split("\n").filter((l) => l !== "").map((l) => `H ${l}`).join("\n")}\nE\n` : undefined;
   return { status: "COMPLETED" as const, exit_code: r.status, output: r.stdout, report: existsSync(rep) ? readFileSync(rep, "utf8") : undefined, hits };
 };
 
@@ -468,7 +470,7 @@ describe("verify-pr: an exit code alone is not proof", () => {
 
   test("reportedCheck rewrites recognised runners and refuses go, cargo and unknown commands with a reason", () => {
     expect(reportedCheck("cd a && bun test x.test.ts")).toEqual({ cmd: `cd a && bun test --reporter=junit --reporter-outfile=${REPORT_TOKEN} x.test.ts`, runner: "bun" });
-    expect(reportedCheck("python3 -m pytest -q t.py")).toEqual({ cmd: `python3 -m pytest --junitxml=${REPORT_TOKEN} -q t.py`, runner: "pytest" });
+    expect(reportedCheck("python3 -m pytest -q t.py")).toEqual({ cmd: `python3 -m pytest --junitxml=${REPORT_TOKEN} -q t.py`, runner: "pytest", boot: expect.any(Function) });
     expect(reportedCheck("npx jest a")).toEqual({ cmd: `npx jest --json --outputFile=${REPORT_TOKEN} a`, runner: "jest" });
     expect(reportedCheck("npx vitest run")).toEqual({ cmd: `npx vitest --reporter=junit --outputFile=${REPORT_TOKEN} run`, runner: "vitest" });
     for (const c of ["go test ./...", "cargo test", "sh t.sh", "node t.js"]) expect(reportedCheck(c)).toHaveProperty("reason");
@@ -653,11 +655,17 @@ describe("verify-pr: an exit code alone is not proof", () => {
     ["FORGE2 ftruncate fd 9 plus forged terminator", { ...PLUG_REF, "conftest.py": "import plug\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import os, add\nos.ftruncate(9, 0)\nos.write(9, b'{\"end\":0,\"h\":\"0\",\"err\":0,\"early\":1}\\n')\nos.dup2(os.open(os.devnull, os.O_WRONLY), 9)\nadd.add = lambda a, b: a + b\n" }, 4, /./],
     ["FORGE3 fd 9 redirected only", { ...PLUG_REF, "conftest.py": "import plug\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import os, add\nos.dup2(os.open(os.devnull, os.O_WRONLY), 9)\nadd.add = lambda a, b: a + b\n" }, 4, /./],
     ["READ1 conftest execs a file read by a shell cat", { ...PLUG_REF, "conftest.py": "import subprocess\nexec(subprocess.check_output(\"cat plug.py\", shell=True))\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /./],
-    ["READ2 conftest execs a file read through libc open", { ...PLUG_REF, "conftest.py": "import ctypes, os\nexec(os.read(ctypes.CDLL(None).open(b\"plug.py\", 0), 65536))\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["READ2 conftest execs a file read through libc open", { ...PLUG_REF, "conftest.py": "import ctypes, os\nexec(os.read(ctypes.CDLL(None).open(b\"plug.py\", 0), 65536))\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /ctypes use from repo code/],
     ["READ3 conftest execs a file opened relative to a dir fd", { ...PLUG_REF, "lib/plug.py": "# p\n", "conftest.py": "import os\nd = os.open(\"lib\", os.O_RDONLY)\nexec(os.read(os.open(\"plug.py\", os.O_RDONLY, dir_fd=d), 65536))\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "lib/plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /./],
     ["CTRL conftest execs a file read by open", { ...PLUG_REF, "conftest.py": "exec(open(\"plug.py\").read())\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /recorded in the sandbox.*plug\.py/],
     ["READ4 conftest execs a file read by a child python with a scrubbed env", { ...PLUG_REF, "conftest.py": "import subprocess, sys\nexec(subprocess.check_output([sys.executable, \"-c\", \"print(open(chr(112)+'lug.py').read())\"], env={}))\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /load window|recorded in the sandbox/],
-    ["LINK1 conftest hard-links the changed file to a new name, then execs it", { ...PLUG_REF, "conftest.py": "import os\nos.link(\"plug.py\", \"alias.py\")\nexec(open(\"alias.py\").read())\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["LINK1 conftest hard-links the changed file to a new name, then execs it", { ...PLUG_REF, "conftest.py": "import os\nos.link(\"plug.py\", \"alias.py\")\nexec(open(\"alias.py\").read())\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /recorded in the sandbox.*plug\.py|os\.link in the load window/],
+    ["PYC1 conftest renames a planted *.pyc.<digits> into __pycache__", { ...PLUG_REF, "conftest.py": "import os\nos.makedirs(\"__pycache__\", exist_ok=True)\nopen(\"x.pyc.123\", \"wb\").write(b\"z\")\nos.rename(\"x.pyc.123\", \"__pycache__/mod.cpython-314.pyc\")\n" }, { "add.py": "def add(a, b):\n    return a + b\n" }, 4, /os\.rename in the load window/],
+    ["PYC2 conftest calls the importlib loader set_data with its own bytes", { ...PLUG_REF, "conftest.py": "import importlib.machinery as m\nm.SourceFileLoader(\"mod\", \"plug.py\").set_data(\"__pycache__/mod.cpython-314.pyc\", b\"z\")\n" }, { "add.py": "def add(a, b):\n    return a + b\n" }, 4, /os\.rename in the load window/],
+    ["PYC3 conftest imports an unchanged sibling helper, the interpreter writes its pyc", { ...PLUG_REF, "conftest.py": "import helper\n", "helper.py": "X = 1\n" }, { "other.py": "# changed\n" }, 0, /^$/],
+    ["PYC4 conftest wraps importlib code_to_timestamp_pyc, then imports a sibling so the genuine chain writes the pyc", { ...PLUG_REF, "conftest.py": "import importlib._bootstrap_external as be\norig = be._code_to_timestamp_pyc\nbe._code_to_timestamp_pyc = lambda *a, **k: orig(*a, **k)\nimport helper\n", "helper.py": "X = 1\n" }, { "other.py": "# changed\n" }, 4, /os\.rename in the load window/],
+    ["PYC5 conftest wraps builtins.compile, then imports a sibling so the genuine chain writes the pyc", { ...PLUG_REF, "conftest.py": "import builtins\norig = builtins.compile\nbuiltins.compile = lambda *a, **k: orig(*a, **k)\nimport helper\n", "helper.py": "X = 1\n" }, { "other.py": "# changed\n" }, 4, /os\.rename in the load window/],
+    ["PYC6 conftest wraps the pytest assertion rewriter, then imports a test module so the rewrite chain writes the pyc", { ...PLUG_REF, "conftest.py": "import _pytest.assertion.rewrite as r\norig = r.rewrite_asserts\nr.rewrite_asserts = lambda *a, **k: orig(*a, **k)\nimport test_other\n", "test_other.py": "X = 1\n" }, { "other.py": "# changed\n" }, 4, /os\.rename in the load window/],
     ["EXIT1 conftest unchanged, a hit pipe killed by closing fd 9 before the changed file loads", { ...PLUG_REF, "conftest.py": "import os\nos.close(9)\nexec(open(\"plug.py\").read())\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /./],
     ["a referenced plugin left unchanged while the bug is fixed", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = [\"-p\", \"plug\"]\n", "conftest.py": "pytest_plugins = [\"plug\"]\n" }, {}, 0, /^$/],
   ] as const)("a PR where %s", async (_n, baseEdits, edits, rc, reason) => {
@@ -735,6 +743,21 @@ describe("verify-pr: an exit code alone is not proof", () => {
     const r = bootRecord(hitsOf(["plug.py"], ['H {"end":0,"h":"0","err":0,"early":1}', "H junk"]));
     expect([...r.files]).toEqual(["plug.py"]);
     expect(r.reason).toBeDefined();
+  });
+
+  test.each([["passes", "true", 0], ["fails", "exit 3", 3]] as const)("the recorder scratch dir is gone after a check that %s", (_n, cmd, rc) => {
+    const tmp = mkdtempSync(join(tmpdir(), "loki-vprboot-"));
+    try {
+      const r = spawnSync("bash", ["-c", pytestBoot(cmd)], { env: { PATH: process.env["PATH"] ?? "", TMPDIR: tmp }, encoding: "utf8" });
+      expect(r.status).toBe(rc);
+      expect(readdirSync(tmp)).toEqual([]);
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  test("a hit line written after the terminator still counts toward the union", () => {
+    const r = bootRecord(`H {"start":1}\nH {"end":1,"err":0}\nH {"p":"late.py"}\nE\n`);
+    expect([...r.files]).toEqual(["late.py"]);
+    expect(r.reason).toBeUndefined();
   });
 
   test("a complete record naming only unchanged files lets the pass stand, and one naming a changed file does not", async () => {
