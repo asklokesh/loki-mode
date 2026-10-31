@@ -439,11 +439,6 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
   return 0;
 }
 
-/**
- * A whole-issue run that opened no PR after doing real work and not finishing: it hit the cost/time cap (exit 3, the BUDGET_STOP rung),
- * or its sealed receipt says FAILED with a committed change. A worker crash, a setup failure (no sealed receipt or no change), a
- * spec conflict and a stall never qualify: splitting those only buys a planning call plus slices that fail the same way.
- */
 // One decompose call, re-asked once with the cap and count when the split came back over the cap; a thrown call is a refused split.
 async function splitWithReask(d: IssuesRunDeps, slug: string, i: GhIssue, reason: string): Promise<Decomposition> {
   try {
@@ -458,6 +453,11 @@ async function splitWithReask(d: IssuesRunDeps, slug: string, i: GhIssue, reason
   }
 }
 
+/**
+ * A whole-issue run that opened no PR after doing real work and not finishing: it hit the cost/time cap (exit 3, the BUDGET_STOP rung),
+ * or its sealed receipt says FAILED with a committed change. A worker crash, a setup failure (no sealed receipt or no change), a
+ * spec conflict and a stall never qualify: splitting those only buys a planning call plus slices that fail the same way.
+ */
 export function wholeRunTooLarge(pr: string | null | undefined, res: Pick<RunResult, "rc" | "verdict" | "didWork">): boolean {
   if (pr) return false;
   if (res.verdict === "BLOCKED" || res.verdict === "SPEC_CONFLICT") return false;
