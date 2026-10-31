@@ -49,10 +49,15 @@ export function checkCriteriaJson(x: unknown): string | null {
 export interface Clause { id: string; text: string; text_sha256: string; anchor: string }
 export interface ClauseSet { clauses: Clause[]; dropped: number }
 // A heading of this class holds scope exclusions or background, never acceptance clauses; a heading that also names acceptance still counts.
-const SKIP_HEAD = /^(?:#+\s*)?(?:\d+(?:\.\d+)*[.)]?\s*)?(?:\*\*|__)?\s*(?:non[- ]?goals?|out[- ]of[- ]scope|not (?:required|in scope)|won'?t do|will not do|future work|future|background|context|references?|rationale|motivation|glossary|appendix|alternatives?)(?:\s*\([^)]*\))?(?:\s*:\s+\S.*)?\s*:?\s*(?:\*\*|__)?\s*:?\s*$/i; // the whole heading is the title (or "Title: text"), so "Will not crash" or "Future-dated payments" stay clause headings
+const SKIP_HEAD = /^(?:#+\s*)?(?:\d+(?:\.\d+)*[.)]?\s*)?(?:\*\*|__)?\s*(?:(?:non[- ]?goals?|out[- ]of[- ]scope|not (?:required|in scope)|won'?t do|will not do|future work|future)(?:\s*\([^)]*\))?(?:\s*:\s+\S.*)?|(?:background|context|references?|rationale|motivation|glossary|appendix|alternatives?(?:\s+(?:considered|explored|rejected))?|considered alternatives)(?:\s*\([^)]*\))?)\s*:?\s*(?:\*\*|__)?\s*:?\s*$/i; // the whole heading is the title; only the exclusion titles may carry "Title: text", so "Will not crash", "Future-dated payments" and "Context: Billing" keep their clauses
 const CLAUSE_HEAD = /accept|criteria|requirement|must/i, RFC2119 = /\b(?:MUST|SHALL)(?: NOT)?\b/, GWT = /^(?:given|when|then|and|but)\b/i;
 // A markdown heading that states a requirement is a clause too: a must/should/shall verb (not the bare "Must have" title), implements/implementing, or a colon then a full sentence. A bare title ("Errors", "API") is not.
-const HEAD_REQ = /\b(?:must|should|shall)\s+(?!haves?\b)[a-z]|\bimplement(?:s|ing)\s+\S|:\s+\S+(?:\s+\S+){3,}[.!?]$/i;
+const HEAD_REQ = /\b(?:must|should|shall)\s+(?!haves?\b)[a-z]|\bimplements\s+\S|\w[^\n]*?\bimplementing\s+\S/i;
+// Question-led headings ("What should happen") and label headings ("Step 2: ...", "Example: ...", "Goal: ...") describe or introduce; they do not state a requirement.
+const HEAD_QUESTION = /^#+\s+(?:\d+(?:\.\d+)*[.)]?\s*)?(?:what|how|why|when|where|who|which)\b/i;
+const HEAD_LABEL = /^#+\s+(?:\d+(?:\.\d+)*[.)]?\s*)?(?:step|example|examples|goal|goals|note|notes|usage|overview|summary|task|tip)\b/i;
+const HEAD_SENTENCE = /:\s+\S+(?:\s+\S+){3,}[.!?]$/;
+const headStatesRequirement = (line: string): boolean => !HEAD_QUESTION.test(line) && (HEAD_REQ.test(line) || (!HEAD_LABEL.test(line) && HEAD_SENTENCE.test(line)));
 const normClause = (t: string): string => t.replace(/\s+/g, " ").trim();
 
 const OAS_METHOD = /^ {4}(get|put|post|delete|patch|head|options):\s*$/;
@@ -84,7 +89,7 @@ export function extractClauses(text: string): ClauseSet {
       if (fence || !keep.has(i)) continue;
       const line = raw.trim();
       if (line === "") { gwt = -1; continue; }
-      if (/^#+\s/.test(line) || (/:$/.test(line) && line.length <= 60 && !/^[-*+\d]/.test(line))) { under = CLAUSE_HEAD.test(line); skip = !under && SKIP_HEAD.test(line); gwt = -1; if (!skip && /^#+\s/.test(line) && HEAD_REQ.test(line)) out.push({ text: line.replace(/^#+\s+/, "").replace(/\*\*|__/g, ""), anchor: anchorOf(i) }); continue; }
+      if (/^#+\s/.test(line) || (/:$/.test(line) && line.length <= 60 && !/^[-*+\d]/.test(line))) { under = CLAUSE_HEAD.test(line); skip = !under && SKIP_HEAD.test(line); gwt = -1; if (!skip && /^#+\s/.test(line) && headStatesRequirement(line)) out.push({ text: line.replace(/^#+\s+/, "").replace(/\*\*|__/g, ""), anchor: anchorOf(i) }); continue; }
       if (skip) continue;
       const item = /^(?:[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+)(.*)$/.exec(line);
       const body = (item ? item[1]! : line).replace(/\*\*|__/g, "");
@@ -154,12 +159,19 @@ const WEAK_TOKENS: RegExp[] = [
   /\b(?:debug_)?assert!\s*\(\s*(?!!)[^;]*?\.is_err\(\)\s*(?:,[^;]*)?\)/, // Rust: assert!(x.is_err()) with or without a message; a negated !x.is_err() is not an error check
   /\b(?:raises|assertRaises)\(\s*(?:Exception|BaseException)\s*[,)]/, // Python: raises or assertRaises with the bare base Exception (a match= on the line pins it)
   /\.toThrow(?:Error)?\(\s*\)|\.to\.throw\(\s*\)/, // JS/TS: toThrow() / rejects.toThrow() / chai .to.throw() with no message or class
-  /\bif\s+err\s*==\s*nil\s*\{|\b(?:assert|require)\.Error\(\s*t\s*,\s*err\s*(?:,[^()]*)?\)/, // Go: only checks that err is non-nil
+  /\b(?:assert|require)\.Error\(\s*t\s*,\s*err\s*(?:,[^()]*)?\)/, // Go testify: only checks that err is non-nil (the bare `if err == nil {` failure branch is goNilFailure)
   /\[\[?\s*"?\$\{?status\}?"?\s+-ne\s+0\s*\]|^\s*assert_failure\s*(?:#.*)?$|^\s*run\s+!\s/, // bats: any failure code accepted
 ];
-const WEAK_PIN = /\berrors\.Is\b|\bErrorIs\b|\bErrorContains\b|\bEqualError\b|\bunwrap_err\b|\bcm\.exception\b|\bexcinfo\b|\$\{?output\b|\bmatch=|\bassert_output\b/;
+const WEAK_PIN = /\berrors\.Is\b|\bErrorIs\b|\bErrorContains\b|\bEqualError\b|\bunwrap_err\b|\bcm\.exception\b|\bexcinfo\b|\$\{?output\b|\bmatch=|\bassert_output\b|\bErr\(|\bmatches!|\berr\s*!=\s*[A-Z]\w*Err\b|\berr\s*!=\s*Err\w*|\.Error\(\)\s*[!=]=|\.value\b|\.message\b/;
 const TEST_START = /^\s*(?:#\[test\]|@test\b|def test|func Test|(?:it|test|describe)\()/;
 const COMMENT_LINE = /^\s*(?:#(?!\[)|\/\/|--|\/\*|\*)/;
+/** Go `if err == nil {` whose body is a bare failure (t.Fatal/t.Error/t.Fail/panic, same line or next line); a body that goes on to compare values is the success branch. */
+function goNilFailure(lines: string[], i: number): boolean {
+  const m = /\bif\s+err\s*==\s*nil\s*\{(.*)$/.exec(lines[i]!); if (!m) return false;
+  let rest = m[1]!.trim();
+  for (let k = i + 1; rest === "" && k < lines.length; k++) rest = lines[k]!.trim();
+  return /^(?:t\.(?:Fatal|Error|Fail)\w*\b|panic\()/.test(rest);
+}
 /** node:test assert.throws(fn) / assert.rejects(p) closed on one line with no validator argument. */
 function nodeBareThrow(l: string): boolean {
   const m = /\bassert\.(?:throws|rejects)\(/.exec(l); if (!m) return false;
@@ -174,7 +186,7 @@ export function weakAssertionNote(files: Iterable<{ rel: string; body: string }>
   for (const f of files) {
     const lines = f.body.split("\n"), hit: number[] = [];
     lines.forEach((l, i) => {
-      if (COMMENT_LINE.test(l) || !(WEAK_TOKENS.some((re) => re.test(l)) || nodeBareThrow(l))) return;
+      if (COMMENT_LINE.test(l) || !(WEAK_TOKENS.some((re) => re.test(l)) || nodeBareThrow(l) || goNilFailure(lines, i))) return;
       for (let k = i; k <= i + 3 && k < lines.length; k++) { if (k > i && TEST_START.test(lines[k]!)) break; if (!COMMENT_LINE.test(lines[k]!) && WEAK_PIN.test(lines[k]!)) return; }
       hit.push(i + 1);
     });

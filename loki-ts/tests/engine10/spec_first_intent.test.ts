@@ -336,6 +336,17 @@ describe("acceptance clause extraction (generic, anchored)", () => {
     const heads = ["## References", "## Alternatives", "## Glossary", "## Context", "## Rationale:", "## 3. Motivation", "### Appendix (informative)", "# **Background**", "## Future work", "## Non-goals", "## Won't do", "Out of scope:"];
     for (const h of heads) expect(extractClauses([h, "- Something that reads like a bullet", ""].join("\n")).clauses.map((c) => c.text)).toEqual([]);
   });
+  test("alternatives headings with a qualifier yield no clauses", () => {
+    for (const h of ["## Alternatives considered", "## Alternatives explored", "## Alternatives rejected", "## Considered alternatives", "### 2. Alternatives Considered:"]) {
+      expect(extractClauses([h, "- Use bit.ly (rejected: cost)"].join("\n")).clauses.map((c) => c.text)).toEqual([]);
+    }
+    expect(extractClauses("## Alternatives to cache\n- Entries expire after 5 minutes").clauses).toHaveLength(1);
+  });
+  test("Context and Background headings keep their requirement text and bullets; only exclusion titles take Title: text", () => {
+    expect(extractClauses("## Context: Billing\n- An invoice total equals the sum of its lines").clauses).toHaveLength(1);
+    expect(extractClauses("## Background: refunds should settle within 2 days\n- A refund older than 2 days is marked late").clauses.map((c) => c.text)).toEqual(["Background: refunds should settle within 2 days", "A refund older than 2 days is marked late"]);
+    expect(extractClauses("## Out of scope: anything about OAuth").clauses).toEqual([]);
+  });
   test("a 14-section PRD with bullets only under real sections gives 14 clauses, skip sections add none", () => {
     const secs: string[] = [];
     for (let i = 1; i <= 14; i++) secs.push(`## Behavior ${i}`, `- Rule ${i} holds`, "");
@@ -393,6 +404,13 @@ describe("weakAssertionNote", () => {
     ["go", "if err == nil {\n  t.Fatal(\"x\")\n}", "if !errors.Is(err, ErrArity) {\n  t.Fatal(\"x\")\n}"],
     ["go testify", "assert.Error(t, err)", "assert.ErrorIs(t, err, ErrArity)"],
     ["go require with a message", 'require.Error(t, err, "arity")', "require.EqualError(t, err, \"arity\")"],
+    ["rust Err( on the next line", "assert!(r.is_err());", "assert!(r.is_err());\nassert_eq!(r, Err(E::Arity));"],
+    ["rust matches!", "assert!(r.is_err());", "assert!(r.is_err());\nassert!(matches!(kind, E::Arity));"],
+    ["go err != sentinel", "if err == nil {\n  t.Fatal(\"x\")\n}", "if err == nil {\n  t.Fatal(\"x\")\n}\nif err != ErrArity {\n  t.Fatal(\"y\")\n}"],
+    ["go err != Err-prefixed", "if err == nil {\n  t.Fatal(\"x\")\n}", "if err == nil {\n  t.Fatal(\"x\")\n}\nif err != ArityErr {\n  t.Fatal(\"y\")\n}"],
+    ["go Error() comparison", "if err == nil {\n  t.Fatal(\"x\")\n}", "if err == nil {\n  t.Fatal(\"x\")\n}\nif err.Error() != \"arity\" {\n  t.Fatal(\"y\")\n}"],
+    ["python exception value", "with pytest.raises(Exception) as e:\n    f()", "with pytest.raises(Exception) as e:\n    f()\nassert \"arity\" in str(e.value)"],
+    ["js error message", "expect(() => f()).toThrow();", "expect(() => f()).toThrow();\nexpect(e.message).toBe(\"arity\");"],
     ["bats status", '[ "$status" -ne 0 ]', '[ "$status" -eq 2 ]'],
     ["bats assert_failure", "assert_failure", "assert_failure 2"],
     ["bats run !", "run ! tool --bad", 'run tool --bad\n  [ "$status" -eq 2 ]'],
@@ -403,6 +421,11 @@ describe("weakAssertionNote", () => {
       expect(note("w", `// clause: C1\n${strong}\n`)).toBeNull();
     });
   }
+  test("a Go if err == nil whose body compares values is the success branch, not an error check", () => {
+    expect(note("w", "if err == nil {\n  if got != want {\n    t.Fatal(\"x\")\n  }\n}\n")).toBeNull();
+    expect(note("w", "if err == nil { if got != want { t.Fatal(\"x\") } }\n")).toBeNull();
+    expect(note("w", "if err == nil { t.Fatal(\"x\") }\n")).toBe(NOTE(1, "w:1"));
+  });
   test("a pinning token on the next 3 lines of the same block suppresses the note; the 4th line or the next test does not", () => {
     expect(note("w", 'if err == nil {\n  t.Fatal("x")\n}\nif !errors.Is(err, ErrArity) {\n}\n')).toBeNull();
     expect(note("w", "assert!(f().is_err());\nlet e = f().unwrap_err();\n")).toBeNull();
@@ -452,6 +475,15 @@ describe("heading lines that state a requirement", () => {
     expect(texts("# Errors\n\n## API\n\n## Functions\n\n### Must have\n\n## Implementation notes\n\n## Section 2: Parsing")).toEqual([]);
     expect(texts("Errors\n======\n\nAPI\n---\n")).toEqual([]);
     expect(texts("1 Errors\n\n2.1 Functions\n\n3 Public API\n")).toEqual([]);
+  });
+  test("question-led, gerund-led and label headings are not requirements", () => {
+    for (const h of ["## What should happen", "## How it should work", "## Why you should care", "## Implementing the parser", "## Step 2: Install the dependencies with npm.", "## Example: a user signs up and gets an email.", "## Goal: make link shortening fast and reliable."]) expect(texts(h)).toEqual([]);
+  });
+  test("neighbouring headings stay correct", () => {
+    expect(texts("## Usage: overview")).toEqual([]);
+    expect(texts("## Step 2: Install")).toEqual([]);
+    expect(texts("### Must have\n\n### Must-haves\n\n### Should haves")).toEqual([]);
+    expect(texts("## The API must return JSON")).toHaveLength(1);
   });
   test("scope-exclusion headings still skip, even when they carry a requirement signal", () => {
     expect(texts("## Non-goals: the tool should not parse YAML.\n- GUI support")).toEqual([]);
