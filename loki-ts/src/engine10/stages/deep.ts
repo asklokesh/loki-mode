@@ -157,7 +157,8 @@ export async function runSecretScan(ctx: RunContext, changed: string[], opts: De
         const atBase = (await safeGitRun(ctx.repoDir, ["cat-file", "-e", `${base}:${f}`], { timeoutMs: 10_000 })).exitCode === 0;
         let added: string | null = null;
         if (atBase) {
-          const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", "--no-renames", "-U0", base, "--", f], { timeoutMs: 20_000 });
+          // --text: a modified binary shows its added bytes, never a bare "Binary files differ" that reads as nothing added.
+          const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", "--text", "--no-renames", "-U0", base, "--", f], { timeoutMs: 20_000 });
           if (d.exitCode !== 0) { unread.push(f); continue; } // a failed or killed diff is unread, never an empty (clean) file
           added = d.stdout.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n");
           if (!added) continue; // nothing added to this file

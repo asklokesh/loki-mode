@@ -922,6 +922,20 @@ describe("PR-FIRST-4 high-tier security scan in verify", () => {
     expect(sec.map((c) => c.result)).toEqual(["not_run"]);
     expect(String(sec[0]!.reason)).toContain("added lines could not be read: src/auth/keys.ts");
   }, 60_000);
+  test("a key appended to a binary file on base is scanned (the diff is read as text), next to a clean text edit", async () => {
+    const repoDir = mkRepo();
+    mkdirSync(join(repoDir, "src", "auth"), { recursive: true });
+    writeFileSync(join(repoDir, "src", "auth", "blob.bin"), Buffer.from([0, 1, 2, 0, 255, 0, 10]));
+    writeFileSync(join(repoDir, "src", "auth", "a.ts"), "export const a = 1;\n");
+    git(repoDir, ["add", "-A"]); git(repoDir, ["commit", "-qm", "base"]);
+    const base = baseSha(repoDir);
+    writeFileSync(join(repoDir, "src", "auth", "blob.bin"), Buffer.concat([Buffer.from([0, 1, 2, 0, 255, 0, 10]), Buffer.from(`k = "${"AKIA" + "QWERTYUIOPASDFGH"}"\n`)]));
+    writeFileSync(join(repoDir, "src", "auth", "a.ts"), "export const a = 2;\n");
+    const { ctx } = fakeCtx({ repoDir, baseSha: base });
+    const sec = ((await verifyStage.run(ctx, sig())).data.checks as VerifyCheck[]).filter((c) => c.name === "security scan");
+    expect(sec.map((c) => c.result)).toEqual(["fail"]);
+    expect(String(sec[0]!.reason)).toContain("secret match: src/auth/blob.bin");
+  }, 60_000);
   test("a checkout under a directory named like a secret (credential-service) still passes a clean new file", async () => {
     const parent = mkdtempSync(join(tmpdir(), "credential-service-")); cleanupDirs.push(parent);
     const { sec } = await high({ "src/auth/login.ts": "export const ok = 1;\n" }, parent);
