@@ -359,15 +359,31 @@ describe("Go Wall that never references the package under test", () => {
     const r = vacuousCheck("a_test.go", src, mod);
     if (vacuous) expect(r).toContain(MSG); else expect(r).toBeNull();
   });
-  test("an external test is judged by import path: the module path plus the Wall's directory", () => {
-    const own = "package yaml_test\n\nimport (\n\t\"testing\"\n\t\"github.com/goccy/go-yaml\"\n)\n\nfunc TestA(t *testing.T) {\n\tvar v int\n\tif err := yaml.Unmarshal(nil, &v); err != nil {\n\t\tt.Fatal(err)\n\t}\n}\n";
-    expect(vacuousCheck("a_test.go", own, "github.com/goccy/go-yaml")).toBeNull();
-    expect(vacuousCheck("a_test.go", own, "example.com/m/yaml")).toContain(MSG);
-    expect(vacuousCheck("a_test.go", own)).toContain(MSG);
-    const evil = own.replace("github.com/goccy/go-yaml", "example.com/evil/yaml");
-    expect(vacuousCheck("a_test.go", evil, "example.com/mod/yaml")).toContain(MSG);
+  test("an external test is judged by import path: the module path plus the Wall's directory, plus an optional /vN", () => {
+    const f = (imp: string, alias = ""): string => `package yaml_test\n\nimport (\n\t"testing"\n\t${alias ? alias + " " : ""}"${imp}"\n)\n\nfunc TestA(t *testing.T) {\n\tvar v int\n\tif err := yaml.Unmarshal(nil, &v); err != nil {\n\t\tt.Fatal(err)\n\t}\n}\n`, P = "example.com/mod/yaml";
+    expect(vacuousCheck("a_test.go", f("github.com/goccy/go-yaml"), "github.com/goccy/go-yaml")).toBeNull();
+    expect(vacuousCheck("a_test.go", f("github.com/goccy/go-yaml"), "example.com/m/yaml")).toContain(MSG);
+    expect(vacuousCheck("a_test.go", f("github.com/goccy/go-yaml"))).toContain(MSG);
+    expect(vacuousCheck("a_test.go", f("example.com/evil/yaml"), P)).toContain(MSG);
+    expect(vacuousCheck("a_test.go", f("github.com/goccy/go-yaml", "yaml"), P)).toContain(MSG);
+    expect(vacuousCheck("a_test.go", f("gopkg.in/yaml.v3", "yaml"), P)).toContain(MSG);
+    expect(vacuousCheck("a_test.go", f("gopkg.in/yaml.v3"), P)).toContain(MSG);
+    expect(vacuousCheck("a_test.go", f("example.com/evil/yaml/v2"), P)).toContain(MSG);
+    expect(vacuousCheck("a_test.go", f("gopkg.in/yaml.v3"))).toContain(MSG); // no path: the .vN name is not package yaml
+    expect(vacuousCheck("a_test.go", f(P), P)).toBeNull();
+    expect(vacuousCheck("a_test.go", f(P + "/v2"), P)).toBeNull(); // the real package at a /v2 path stays real
     const v2 = "package foo_test\n\nimport (\n\t\"testing\"\n\t\"example.com/m/v2/pkg/foo\"\n)\n\nfunc TestA(t *testing.T) {\n\tif foo.Bar() != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n";
     expect(vacuousCheck("a_test.go", v2, "example.com/m/v2/pkg/foo")).toBeNull();
+  });
+  test("wall.ts passes the go.mod package path: a same-name forge in a Go Wall is discarded as vacuous", async () => {
+    const repoDir = mk();
+    writeFileSync(join(repoDir, "go.mod"), "module example.com/mod\n\ngo 1.22\n");
+    mkdirSync(join(repoDir, "yaml")); writeFileSync(join(repoDir, "yaml", "yaml.go"), "package yaml\n\nfunc Unmarshal(b []byte, v any) error { return nil }\n");
+    execFileSync("git", ["init", "-q"], { cwd: repoDir });
+    const forge = "package yaml_test\n\nimport (\n\t\"testing\"\n\t\"example.com/evil/yaml\"\n)\n\nfunc TestA(t *testing.T) {\n\tvar v int\n\tif err := yaml.Unmarshal(nil, &v); err != nil {\n\t\tt.Fatal(err)\n\t}\n}\n";
+    const ctx = wallCtx(repoDir, (o) => { writeFileSync(join(o.cwd!, "loki_wall_a_test.go"), forge); });
+    const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 1, fail: 0 }) } });
+    expect(JSON.stringify(r.data.discarded)).toContain("never references the package under test");
   });
   test("a file with no package clause or no Test or Fuzz func is not judged", () => {
     expect(vacuousCheck("a_test.go", `func TestA(t *testing.T) { if 1 != 2 { t.Fatal("x") } }\n`)).toBeNull();

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A Go Wall test no longer reads as non-vacuous because it imports a dependency whose name merely contains the package under test (a yaml_test importing only goccy/go-yaml): the package under test is identified by its import path (the go.mod module path plus the Wall's directory), and the name-only match is gone. A raw major-version last segment (v1 in k8s.io/api/core/v1), a .vN suffix (gopkg.in/yaml.v3, gopkg.in/check.v1) and a mixed-case Go- prefix are now recognised as imports, so a test that only calls them is flagged and the Seal stays PARTIAL.
+- A Go Wall test that never exercises the package under test is now discarded and listed as not proven, instead of passing as real. The package under test is identified by its import path (the go.mod module path plus the Wall's directory, with an optional /vN), so a test that imports only a similarly named dependency (a yaml_test importing only goccy/go-yaml or gopkg.in/yaml.v3, with or without an alias) no longer counts. Tests that only call k8s.io/api/core/v1, gopkg.in/yaml.v3, gopkg.in/check.v1 or a mixed-case Go-Yaml import are also caught.
 
 ## v11.95.0 (2026-10-31)
 

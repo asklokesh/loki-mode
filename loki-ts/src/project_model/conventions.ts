@@ -143,8 +143,9 @@ function goUnreferenced(src: string, goPkgPath?: string): boolean {
   const body = code.replace(/^\s*import\s*\([\s\S]*?\)/gm, " ").replace(/^\s*import\b.*$/gm, " ");
   const dots = specs.filter((s) => s.alias === ".");
   if (pkg[1]!.endsWith("_test")) {
-    const x = pkg[1]!.slice(0, -5), named = (p: string): boolean => goPkgPath !== undefined ? p === goPkgPath : norm(lastOf(p)) === x; // the package under test is identified by its import path (module path plus the Wall's directory, matched exactly) when known; a go-x or x-go name alone never counts, since it also names an unrelated dependency
-    const mine = specs.filter((s) => s.alias === x || (s.alias !== "_" && named(s.path)));
+    const x = pkg[1]!.slice(0, -5), nameOf = (p: string): string => { const parts = p.split("/"); let l = parts.pop()!; if (/^v\d+$/.test(l) && parts.length) l = parts.pop()!; return norm(l); }; // no .vN strip: gopkg.in/yaml.v3 is not package yaml
+    const named = (p: string): boolean => goPkgPath !== undefined ? p === goPkgPath || (p.startsWith(goPkgPath + "/") && /^v\d+$/.test(p.slice(goPkgPath.length + 1))) : nameOf(p) === x; // the package under test is identified by its import path (module path plus the Wall's directory, plus an optional /vN) when known; the name match is only for an unknown path, since a go-x or x-go name also names an unrelated dependency
+    const mine = specs.filter((s) => s.alias !== "_" && (named(s.path) || (goPkgPath === undefined && s.alias === x)));
     if (mine.some((s) => s.alias === ".")) return false;
     return !mine.some((s) => { const nm = s.alias || x; return new RegExp(String.raw`(?<![\w.])${nm}\s*\.\s*[A-Za-z_]`).test(body); });
   }
