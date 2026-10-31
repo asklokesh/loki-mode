@@ -27,6 +27,47 @@ let stubDir = "";
 let logPath = "";
 
 const git = (dir: string, args: string[]): string => execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
+// A Go module below the repo root: go resolves the module from the cwd, so the run must start at the nearest go.mod above the test file.
+function goRepo(mods: string[], pkgRel: string, ok: boolean): string {
+  const dir = tmp("e10-gosub-");
+  for (const m of mods) { mkdirSync(join(dir, m), { recursive: true }); writeFileSync(join(dir, m, "go.mod"), `module x/${m.replace(/\W/g, "_") || "root"}\n\ngo 1.21\n`); }
+  const pkg = join(dir, pkgRel); mkdirSync(pkg, { recursive: true });
+  writeFileSync(join(pkg, "a.go"), `package pkg\nfunc A() int { return ${ok ? 1 : 2} }\n`);
+  writeFileSync(join(pkg, "a_test.go"), 'package pkg\nimport "testing"\nfunc TestA(t *testing.T) { if A() != 1 { t.Fatal("bad") } }\n');
+  return dir;
+}
+const goHere = Bun.which("go") !== null;
+describe("go module below the repo root", () => {
+  test("the run starts at the nearest go.mod with a module-relative package path", () => {
+    const dir = goRepo(["svc"], "svc/pkg", true);
+    const c = commandFor({ runner: "go", path: "svc/pkg/a_test.go" }, dir, null);
+    expect(c.cwd).toBe(join(dir, "svc"));
+    expect(c.args.at(-1)).toBe("./pkg");
+    expect(c.pkgRoot).toBe("svc");
+  });
+  test("a root go.mod keeps the run at the repo root", () => {
+    const dir = goRepo([""], "pkg", true);
+    const c = commandFor({ runner: "go", path: "pkg/a_test.go" }, dir, null);
+    expect(c.cwd).toBe(dir);
+    expect(c.args.at(-1)).toBe("./pkg");
+    expect(c.pkgRoot).toBe(".");
+  });
+  test("nested go.mod files pick the nearest one", () => {
+    const dir = goRepo(["svc", "svc/inner"], "svc/inner/pkg", true);
+    const c = commandFor({ runner: "go", path: "svc/inner/pkg/a_test.go" }, dir, null);
+    expect(c.cwd).toBe(join(dir, "svc", "inner"));
+    expect(c.args.at(-1)).toBe("./pkg");
+  });
+  test.skipIf(!goHere)("a passing Wall under svc/go.mod reads pass (real go)", () => {
+    const dir = goRepo(["svc"], "svc/pkg", true);
+    expect(new RealBaseTestRunner(null).run(dir, [{ runner: "go", path: "svc/pkg/a_test.go" }])).toEqual({ pass: 1, fail: 0, not_run: 0 });
+  });
+  test.skipIf(!goHere)("a failing Wall under svc/go.mod reads fail (real go)", () => {
+    const dir = goRepo(["svc"], "svc/pkg", false);
+    expect(new RealBaseTestRunner(null).run(dir, [{ runner: "go", path: "svc/pkg/a_test.go" }])).toEqual({ pass: 0, fail: 1, not_run: 0 });
+  });
+});
+
 const tmp = (p: string): string => { const d = realpathSync(mkdtempSync(join(tmpdir(), p))); dirs.push(d); return d; };
 const cmd = (c: string, cwd: string, cite: string): ModelCommand => ({ cmd: c, cwd, cite: [cite] });
 
