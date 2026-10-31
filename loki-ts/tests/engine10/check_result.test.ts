@@ -149,6 +149,10 @@ describe("verdict gate", () => {
     expect(verdictOf(o(), [pass0], false, false, false, true, false, [], [], copyGap)).toBe("PARTIAL");
     expect(verdictOf(o(), [pass0], false, false, false, true, false, [], [], [])).toBe("VERIFIED");
     expect(verdictOf(o({ implement: { exit: "killed", limit_s: 60 } }), [pass0], false, false, false, true, true, [], [], copyGap)).toBe("PARTIAL");
+    const clauseGap = ["spec clause not covered: C10: EvalError::Syntax"]; // FALSEVER-CLAUSE
+    expect(verdictOf(o(), [pass0], false, false, false, true, false, [], [], [], clauseGap)).toBe("PARTIAL");
+    expect(verdictOf(o({ implement: { exit: "killed", limit_s: 60 } }), [pass0], false, false, false, true, true, [], [], [], clauseGap)).toBe("PARTIAL");
+    expect(verdictOf(o(), [pass0], false, false, false, true, false, [], [], [], [])).toBe("VERIFIED");
   });
   test("ALREADY_SATISFIED with zero executed checks (FC-16) is PARTIAL", () => {
     const a = o({ implement: { exit: "already_done" } });

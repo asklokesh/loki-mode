@@ -48,8 +48,26 @@ export function checkCriteriaJson(x: unknown): string | null {
 // Acceptance clauses: generic extraction from any spec text (markdown, numbered items, Acceptance headings, Given/When/Then, RFC 2119 prose). Ids are source order and a pure function of the text, so the same spec gives the same ids.
 export interface Clause { id: string; text: string; text_sha256: string; anchor: string }
 export interface ClauseSet { clauses: Clause[]; dropped: number }
+// A heading of this class holds scope exclusions or background, never acceptance clauses; a heading that also names acceptance still counts.
+const SKIP_HEAD = /non[- ]?goals?|out[- ]of[- ]scope|not (?:required|in scope)|future|notes?\b|examples?|background|context|references?|rationale|motivation|glossary|appendix|alternatives/i;
 const CLAUSE_HEAD = /accept|criteria|requirement|must/i, RFC2119 = /\b(?:MUST|SHALL)(?: NOT)?\b/, GWT = /^(?:given|when|then|and|but)\b/i;
 const normClause = (t: string): string => t.replace(/\s+/g, " ").trim();
+
+const OAS_METHOD = /^ {4}(get|put|post|delete|patch|head|options):\s*$/;
+/** OpenAPI YAML: one clause per operation and one per HTTP status code its text names, e.g. "operation POST /links" and "POST /links returns 404". */
+function openApiClauses(lines: string[]): { text: string; anchor: string }[] {
+  const out: { text: string; anchor: string }[] = [];
+  if (!lines.some((l) => /^openapi:\s*["']?3/.test(l))) return out;
+  let inPaths = false, path = "", op = "";
+  lines.forEach((l, i) => {
+    if (/^\S/.test(l)) { inPaths = /^paths:/.test(l); path = op = ""; return; }
+    if (!inPaths) return;
+    const p = /^ {2}["']?(\/[^"':\s]*)["']?:\s*$/.exec(l), m = OAS_METHOD.exec(l);
+    if (p) { path = p[1]!; op = ""; } else if (m && path) { op = `${m[1]!.toUpperCase()} ${path}`; out.push({ text: `operation ${op}`, anchor: `l${i + 1}` }); }
+    else if (op) for (const c of l.matchAll(/(?<![\w.\/-])([1-5]\d\d)(?![\w\/-]|\.\d)/g)) out.push({ text: `${op} returns ${c[1]!}`, anchor: `l${i + 1}` });
+  });
+  return out;
+}
 
 export function extractClauses(text: string): ClauseSet {
   const pages = text.replace(/\r\n/g, "\n").split("\f"), paged = pages.length > 1, out: { text: string; anchor: string }[] = [];
@@ -57,27 +75,27 @@ export function extractClauses(text: string): ClauseSet {
     const lines = page.split("\n"), keep = new Set<number>();
     // stripTemplate only calls filter(); a filter-only view lets it report which line indexes survive, so anchors stay exact.
     stripTemplate({ filter: (fn: (l: string) => boolean) => { lines.forEach((l, i) => { if (fn(l)) keep.add(i); }); return []; } });
-    let under = false, fence = false, gwt = -1;
+    let under = false, skip = false, fence = false, gwt = -1;
     const anchorOf = (i: number): string => `${paged ? `p${pi + 1}:` : ""}l${i + 1}`;
     for (const [i, raw] of lines.entries()) {
       if (/^\s*(```|~~~)/.test(raw)) { fence = !fence; continue; }
       if (fence || !keep.has(i)) continue;
       const line = raw.trim();
       if (line === "") { gwt = -1; continue; }
-      if (/^#+\s/.test(line) || (/:$/.test(line) && line.length <= 60 && !/^[-*+\d]/.test(line))) { under = CLAUSE_HEAD.test(line); gwt = -1; continue; }
-      const item = /^(?:[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+)(.*)$/.exec(line), numbered = /^\d+[.)]\s/.test(line), check = /^[-*+]\s+\[[ xX]\]/.test(line);
+      if (/^#+\s/.test(line) || (/:$/.test(line) && line.length <= 60 && !/^[-*+\d]/.test(line))) { under = CLAUSE_HEAD.test(line); skip = !under && SKIP_HEAD.test(line); gwt = -1; continue; }
+      if (skip) continue;
+      const item = /^(?:[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+)(.*)$/.exec(line);
       const body = (item ? item[1]! : line).replace(/\*\*|__/g, "");
       if (GWT.test(body) && /^given\b/i.test(body) || (gwt >= 0 && GWT.test(body))) {
         if (/^given\b/i.test(body)) { gwt = out.length; out.push({ text: body, anchor: anchorOf(i) }); } else out[gwt]!.text += ` ${body}`;
         continue;
       }
       gwt = -1;
-      if (item ? (under || check || numbered || RFC2119.test(body)) : under || RFC2119.test(body)) {
-        if (item || under) out.push({ text: body, anchor: anchorOf(i) });
-        else for (const sent of body.split(/(?<=[.!?])\s+/)) if (RFC2119.test(sent)) out.push({ text: sent, anchor: anchorOf(i) });
-      }
+      if (item || under) out.push({ text: body, anchor: anchorOf(i) }); // every bullet or numbered item is a clause under ANY heading; a prose line counts only under a criteria heading or as an RFC 2119 sentence
+      else for (const sent of body.split(/(?<=[.!?])\s+/)) if (RFC2119.test(sent)) out.push({ text: sent, anchor: anchorOf(i) });
     }
   });
+  out.push(...openApiClauses(text.replace(/\r\n/g, "\n").split("\n")));
   const seen = new Set<string>(), uniq: { text: string; anchor: string }[] = [];
   for (const c of out) { const t = normClause(c.text).slice(0, MAX_FIELD); if (t === "") continue; const k = t.toLowerCase(); if (!seen.has(k)) { seen.add(k); uniq.push({ text: t, anchor: c.anchor }); } }
   const clauses = uniq.slice(0, MAX_CLAUSES).map((c, i) => ({ id: `C${i + 1}`, text: c.text, text_sha256: sha256Hex(c.text), anchor: c.anchor }));
@@ -91,7 +109,7 @@ export function clauseBriefBlock(set: ClauseSet | null | undefined): string[] {
   if (!set || set.clauses.length === 0) return [];
   return [
     `Acceptance clauses extracted from the spec, each with its source line (each must be covered by a test):\n${set.clauses.map((c) => `Acceptance: ${clauseLine(c)}`).join("\n")}`,
-    "At every assertion block put a marker comment `clause: C3` (the clause id it proves) in the test language's own comment syntax.",
+    "At every assertion block put a marker comment `clause: C3` (the clause id it proves) in the test language's own comment syntax, within a few lines of a real assertion. Every listed clause needs its own marker and assertion; a clause with none is reported NOT PROVEN and caps the run at PARTIAL.",
   ];
 }
 
@@ -101,6 +119,32 @@ export function untaggedClauses(set: ClauseSet | null | undefined, files: Map<st
   const found = new Set<string>(), untagged_files: string[] = [];
   for (const [name, body] of files) { let any = false; for (const m of body.matchAll(/\bclause:\s*(C\d+)\b/g)) { found.add(m[1]!); any = true; } if (!any) untagged_files.push(name); }
   return { untagged: set.clauses.map((c) => c.id).filter((id) => !found.has(id)), untagged_files };
+}
+
+// One generic assertion-token table, matched on every Wall file whatever its language: Go t.Error/t.Fatal, Rust assert!/panic/expect, Python assert and raises(, JS/TS expect( and assert, bats [ and status checks, Java assert*.
+const ASSERT_TOKENS: RegExp[] = [/\bt\.(?:Error|Errorf|Fatal|Fatalf)\(/, /\b(?:debug_)?assert(?:_eq|_ne)?!\s*[(\[{]/, /#\[should_panic|\bpanic!|\.(?:expect|expect_err|unwrap_err)\(/, /^\s*assert\b/m, /\braises\(/, /\bexpect\(/, /\bassert(?:\.\w+|\w*)\s*\(/, /^\s*\[\[?\s/m, /\$status\b|\$\{status\}/, /\bassert_\w+/];
+const MARKER_BEFORE = 4, MARKER_AFTER = 6; // lines around a `clause: Cn` marker searched for an assertion token
+
+/** Clause ids a set of PASSING sealed Wall files covers: a `clause: Cn` marker with an assertion token within a few lines of it. A marker in a comment alone never counts. */
+export function coveredClauses(files: Iterable<string>): Set<string> {
+  const covered = new Set<string>();
+  for (const body of files) {
+    const lines = body.split("\n");
+    lines.forEach((l, i) => {
+      const ids = [...l.matchAll(/\bclause:\s*(C\d+)\b/g)].map((m) => m[1]!);
+      if (ids.length === 0) return;
+      const near = lines.slice(Math.max(0, i - MARKER_BEFORE), i + MARKER_AFTER + 1).filter((x) => !/\bclause:\s*C\d+\b/.test(x) || !/^\s*(?:#|\/\/|--|\/\*|\*)/.test(x)).join("\n");
+      if (ASSERT_TOKENS.some((re) => re.test(near))) for (const id of ids) covered.add(id);
+    });
+  }
+  return covered;
+}
+
+/** NOT PROVEN reasons for every extracted clause no passing sealed Wall file covers; empty for a spec with no clauses. */
+export function clauseGapOf(set: ClauseSet | null | undefined, files: Iterable<string>): string[] {
+  if (!set || set.clauses.length === 0) return [];
+  const covered = coveredClauses(files);
+  return set.clauses.filter((c) => !covered.has(c.id)).map((c) => `spec clause not covered: ${c.id}: ${c.text}`);
 }
 
 export function renderSpec(task: string, c: SpecCriteria, set?: ClauseSet | null): string {
