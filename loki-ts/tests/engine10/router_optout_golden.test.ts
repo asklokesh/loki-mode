@@ -121,7 +121,8 @@ async function captureStages(extra: Record<string, string>): Promise<Record<stri
     };
     const sig = new AbortController().signal;
     const intake = { intake: { task: TASK } };
-    await run("plan", intake, async (c) => { const r = await planStage.run(c, sig); return { status: r.status }; });
+    // A task with no repo map now folds the plan into implement in auto mode; this golden pins the plan session's own model choice, so it forces the session unless the case already pins the mode.
+    await run("plan", intake, async (c) => { const prev = process.env["LOKI_E10_PLAN"]; if (prev === undefined) process.env["LOKI_E10_PLAN"] = "always"; try { const r = await planStage.run(c, sig); return { status: r.status }; } finally { if (prev === undefined) delete process.env["LOKI_E10_PLAN"]; } });
     await run("wall", intake, async (c) => { const r = await runWall(c, sig); return { status: r.status }; });
     await run("already_done", {}, async (c) => { const r = await checkAlreadyDone(c, sig, TASK, buildRepoMap(alreadyDoneRepo), buildTestMap(alreadyDoneRepo)); return { satisfied: r?.satisfied ?? false }; });
     await run("implement", { ...intake, plan: { plan: null } }, async (c) => { const r = await implementStage.run(c, sig); return { status: r.status, result_model: r.data?.["model"] ?? null, cascade: r.data?.["cascade"] ?? null, model_downgrade: r.data?.["model_downgrade"] ?? null }; });

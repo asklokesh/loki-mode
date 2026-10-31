@@ -9,9 +9,10 @@ import { childEnv, createSessionRunner } from "../../src/engine10/session.ts";
 import { readFileSync } from "node:fs";
 import { loadRepoMap, cascadeImplementModel, modelRank, planMode, wallLimitS, resolveModelAlias, namedFiles, sizeTask, smallMaxChars, smallTaskPath, wallConcurrent, wallFirstModel, wallMaxTokens, wallOutputCap, wallModel } from "../../src/engine10/sizing.ts";
 import { readPlanScope, planOutOfRepo } from "../../src/util/run_cap.ts";
+import { FIXED_RULES } from "../../src/e10ext/context.ts";
 import { planStage } from "../../src/engine10/stages/plan.ts";
 import { wallStage, buildWallBrief, WALL_MAP_MAX_LINES } from "../../src/engine10/stages/wall.ts";
-import { implementStage } from "../../src/engine10/stages/implement.ts";
+import { FOLD_PLAN_INSTRUCTION, buildImplementBrief, implementStage } from "../../src/engine10/stages/implement.ts";
 import { fixStage } from "../../src/engine10/stages/fix.ts";
 import type { RunContext, SessionRunOptions, Stage, StageName, TestMap, TestRef } from "../../src/engine10/types.ts";
 
@@ -107,10 +108,31 @@ describe("engine10 E-45 sizing", () => {
     expect(events.find((e) => e.type === "variant")!.data).toMatchObject({ small_task_path: "wall" });
   });
 
-  it("a normal task makes 3 sessions and records the variant", async () => {
+  it("a normal (medium) task folds the plan into the implement brief: no plan session, plan_skipped true", async () => {
     const { calls, events } = await run("x".repeat(700), files(10));
+    expect(calls.map((c) => c.stage).sort()).toEqual(["implement", "wall"]);
+    expect(events.find((e) => e.type === "variant")!.data).toMatchObject({ size: "normal", plan_skipped: true });
+    expect(events.find((e) => e.type === "stage.skipped" && e.stage === "plan")?.data.reason).toBe("normal task: implementer plans");
+    expect(calls.find((c) => c.stage === "implement")!.brief).toContain(FOLD_PLAN_INSTRUCTION);
+  });
+
+  it("a large task keeps the plan session and its implement brief has no fold instruction", async () => {
+    const task = "change " + files(9).map((f) => f.replace("src/", "")).join(" ");
+    const { calls, events } = await run(task, files(10));
     expect(calls.map((c) => c.stage).sort()).toEqual(["implement", "plan", "wall"]);
-    expect(events.find((e) => e.type === "variant")!.data).toMatchObject({ size: "normal", plan_skipped: false });
+    expect(events.find((e) => e.type === "variant")!.data).toMatchObject({ size: "large", plan_skipped: false });
+  });
+
+  it("the fold instruction sits right after FIXED_RULES; the bytes before the task text match the planned brief, and a planned brief has none", () => {
+    const planned = buildImplementBrief("add search ranking", "step 1", [], "");
+    const skipped = buildImplementBrief("add search ranking", null, [], "");
+    expect(planned).not.toContain(FOLD_PLAN_INSTRUCTION);
+    const at = skipped.indexOf(FOLD_PLAN_INSTRUCTION);
+    const prefix = skipped.slice(0, at);
+    expect(prefix.length).toBeGreaterThan(FIXED_RULES.length);
+    expect(prefix.endsWith(`${FIXED_RULES}\n\n`)).toBe(true);
+    expect(planned.startsWith(prefix)).toBe(true);
+    expect(skipped.slice(at + FOLD_PLAN_INSTRUCTION.length + 2).startsWith(planned.slice(prefix.length, prefix.length + 20))).toBe(true);
   });
 
   it("LOKI_E10_PLAN=1 forces the plan on a small task; =0 skips it on a normal one", async () => {
@@ -406,16 +428,17 @@ describe("engine10 TEN-COST-26 sizing knobs", () => {
     process.env.LOKI_E10_SMALL_NO_RUNNER = "0";
     expect(sizeTask("fix a.ts", map, noRunner).size).toBe("normal");
   });
-  it("through the machine: a no-runner one-file task skips plan and writes the plan-scope.json the guard reads; a multi-file task still plans; the opt-out plans", async () => {
+  it("through the machine: a no-runner one-file task skips plan and writes the plan-scope.json the guard reads; a multi-file task now skips too and seeds all its files; a large task still plans", async () => {
     const noRun: TestMap = { runners: [], tests: [] };
     const one = await run("fix the off-by-one in mod1.ts", files(10), { testmap: noRun });
     expect(one.calls.map((c) => c.stage)).not.toContain("plan");
     expect(readPlanScope(one.runDir)).toEqual(["src/mod1.ts"]);
     expect(planOutOfRepo(one.runDir)).toBeNull();
     const multi = await run("fix mod1.ts mod2.ts mod3.ts together", files(10), { testmap: noRun });
-    expect(multi.calls.map((c) => c.stage)).toContain("plan");
-    process.env.LOKI_E10_SMALL_NO_RUNNER = "0";
-    expect((await run("fix the off-by-one in mod1.ts", files(10), { testmap: noRun })).calls.map((c) => c.stage)).toContain("plan");
+    expect(multi.calls.map((c) => c.stage)).not.toContain("plan");
+    expect(readPlanScope(multi.runDir).sort()).toEqual(["src/mod1.ts", "src/mod2.ts", "src/mod3.ts"]);
+    const large = await run("fix " + files(9).map((f) => f.replace("src/", "")).join(" "), files(10), { testmap: noRun });
+    expect(large.calls.map((c) => c.stage)).toContain("plan");
   });
   it("a no-runner small task still routes to wall, never lean", () => {
     process.env.LOKI_E10_SMALL_NO_RUNNER = "1";

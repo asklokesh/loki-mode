@@ -74,12 +74,13 @@ function ctxFor(dir: string, s: SessionRunner, emitted: unknown[] = []): RunCont
 
 let dir: string;
 const saved: Record<string, string | undefined> = {};
-const KEYS = ["LOKI_INTENT_CARD", "LOKI_CONFIRM", "LOKI_INTENT_TTY"];
+const KEYS = ["LOKI_INTENT_CARD", "LOKI_CONFIRM", "LOKI_INTENT_TTY", "LOKI_E10_PLAN"];
 let errs: string[];
 const realWrite = process.stderr.write.bind(process.stderr);
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "loki-t3-"));
   for (const k of KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
+  process.env["LOKI_E10_PLAN"] = "always"; // these cases exercise the plan session; auto mode folds the plan into implement
   errs = [];
   process.stderr.write = ((s: string | Uint8Array) => { errs.push(String(s)); return true; }) as typeof process.stderr.write;
 });

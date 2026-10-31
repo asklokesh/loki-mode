@@ -63,14 +63,14 @@ export const planStage: Stage = {
     const sz = sizeTask(task, loaded, testMap); // E-45: a small task skips this session and the implementer plans
     const mode = planMode();
     const pr = await planRoute(ctx.runDir, ctx.provider, process.env, ctx.repoDir); // R1-10 (runner/router/plan_route.ts): flag off adds nothing
-    // FC-35: with the router on a small task still plans (Opus must route it); only an explicit LOKI_E10_PLAN=0 skips, and records why.
-    const skip = mode === "never" || (mode === "auto" && sz.size === "small" && !pr.routed);
+    // FC-35: with the router on a task still plans (Opus must route it); only an explicit LOKI_E10_PLAN=0 skips, and records why. A large task keeps the plan session; small and normal fold the plan into the implement brief.
+    const skip = mode === "never" || (mode === "auto" && sz.size !== "large" && !pr.routed);
     // E-64: wall.ts makes this same check to skip itself; a forced plan (LOKI_E10_PLAN=always) also forces "wall", since it still gets its own Wall.
     const path = mode === "always" ? "wall" : smallTaskPath(sz.size, hasRelevantTests(task, loaded, testMap, ctx.tests.impacted));
     ctx.emit("variant", null, { size: sz.size, reasons: sz.reasons, plan_mode: mode, plan_skipped: skip, wall_model: wallEnabled() ? wallFirstModel(sz.size) : null, wall_model_reauthor: wallEnabled() ? wallModel() : null, small_task_path: path, cascade: cascadeEnabled() });
     if (skip) pr.record({ planModel: "none", skipReason: "plan stage skipped (LOKI_E10_PLAN=0)" });
     if (skip && mode === "auto") seedPlanScope(ctx.runDir, namedFiles(task, loaded)); // the scope guard reads plan-scope.json
-    if (skip) return { status: "skipped", data: { size: sz.size }, reason: mode === "never" ? "LOKI_E10_PLAN=0" : "small task: implementer plans" };
+    if (skip) return { status: "skipped", data: { size: sz.size }, reason: mode === "never" ? "LOKI_E10_PLAN=0" : `${sz.size === "small" ? "small" : "normal"} task: implementer plans` };
 
     const relevantFiles = selectRelevantFiles(task, repoMap, undefined, ctx.repoDir);
     const outputPath = planOutputPath(ctx.runDir);
