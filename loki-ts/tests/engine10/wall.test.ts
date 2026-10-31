@@ -1455,6 +1455,35 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
     expect(r.files.map((f) => f.path)).toEqual(["util/loki_wall_a_test.go"]);
     expect(r.brief).toContain('"package toolkit"');
   });
+  test("Go greenfield: a task naming a directory and package but no .go file puts the Wall in that directory", async () => {
+    const task = "Build a URL shortener API. Put the code in the shortener/ directory as package shortener. Provide start.sh at the repository root; GET /stats/{code} returns hits.";
+    const r = await run(task, "go");
+    expect(r.files.map((f) => f.path)).toEqual(["shortener/loki_wall_a_test.go"]);
+    expect(r.brief).toContain('starts with "package shortener"');
+  });
+  test("Go greenfield: a backticked directory in the plan wins and a sibling package clause is kept", async () => {
+    const r = await run("Build a limiter.", "go", { "internal/rl/a.go": "package ratelimit\n" }, "Create the `internal/rl` directory.");
+    expect(r.files.map((f) => f.path)).toEqual(["internal/rl/loki_wall_a_test.go"]);
+    expect(r.brief).toContain('"package ratelimit"');
+  });
+  test.skipIf(spawnSync("go", ["version"]).status !== 0)("Go greenfield: the Wall in the named directory goes red before and green after a correct implementation", async () => {
+    const { plannedGoDir } = await import("../../src/util/check_result.ts");
+    const repo = mkdtempSync(join(tmpdir(), "loki-walldir2-"));
+    try {
+      writeFileSync(join(repo, "go.mod"), "module example.com/svc\n\ngo 1.21\n");
+      const p = plannedGoDir(repo, ["Put the code in the shortener/ directory as package shortener."]);
+      expect(p).toEqual({ dir: join(repo, "shortener"), pkg: "shortener" });
+      mkdirSync(p.dir, { recursive: true });
+      writeFileSync(join(p.dir, "loki_wall_a_test.go"), `package ${p.pkg}\nimport "testing"\nfunc TestCode(t *testing.T) { if Code("x") == "" { t.Fatal("empty") } }\n`);
+      const go = (): number | null => spawnSync("go", ["test", "./..."], { cwd: repo, encoding: "utf8" }).status;
+      expect(go()).not.toBe(0);
+      writeFileSync(join(p.dir, "shortener.go"), "package shortener\nfunc Code(u string) string { return \"abc1\" + u }\n");
+      expect(go()).toBe(0);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+  test("control: a Go task naming no file or directory keeps the repo root, and tests/ or URL paths never count", async () => {
+    expect((await run("Build a URL shortener, see https://example.com/docs/ and tests/ for style; GET /stats/ returns hits.", "go")).files.map((f) => f.path)).toEqual(["loki_wall_a_test.go"]);
+  });
   test("Python and JS greenfield keep top-level tests/", async () => {
     expect((await run("Write fizzbuzz.py", "pytest")).files.map((f) => f.path)).toEqual(["tests/loki_wall_a.py"]);
     const js = await run("Write fizz.ts", "bun");
