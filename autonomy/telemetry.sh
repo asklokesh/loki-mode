@@ -511,15 +511,19 @@ _loki_since_install_bucket() {
 
 # loki_emit_activation <install|first_start|first_run_finished|first_verified|
 # second_run_within_7d>: emits activation_<step> at most once per machine. The
-# marker (holding the emit epoch) is written only after the gate passes and the
-# event is sent, so an opted-out machine never burns it. Any step first ensures
-# the install step has fired, so the order install -> ... holds.
+# step is claimed atomically (mkdir) after the analytics gate and before the
+# send, so concurrent emitters send it once. The marker (holding the emit epoch)
+# is written after the gate and the send attempt, not after confirmed delivery,
+# so an opted-out machine never burns it. Any step first ensures the install
+# step has fired, so the order install -> ... holds.
 loki_emit_activation() {
     local _step="${1:-}"
     case "$_step" in install|first_start|first_run_finished|first_verified|second_run_within_7d) ;; *) return 0 ;; esac
     _loki_analytics_enabled || return 0
     local _dir="${HOME}/.loki"
     [ -f "${_dir}/funnel-activation-${_step}" ] 2>/dev/null && return 0
+    mkdir -p "$_dir" 2>/dev/null || return 0
+    mkdir "${_dir}/funnel-activation-${_step}.d" 2>/dev/null || return 0
     if [ "$_step" != "install" ]; then
         loki_emit_activation install
     fi

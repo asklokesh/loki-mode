@@ -262,5 +262,31 @@ else
     ok "analytics disabled: no activation marker, no install clock, no event"
 fi
 
+# concurrent emitters (run_started, run_finished, build_verified start as
+# detached processes at once): each activation step is sent exactly once
+ch="$WORK/act-conc"
+cn=0; cbad=0
+while [ "$cn" -lt 10 ]; do
+    cn=$((cn + 1))
+    rm -rf "$ch"; mkdir -p "$ch"
+    act_run "$ch" 'loki_emit_run_started & loki_emit_run_finished VERIFIED exit_code=0 & loki_emit_build_verified_enum VERIFIED engine10 & wait'
+    for ev in install first_start first_run_finished first_verified; do
+        c="$(grep -c "\"event\": *\"activation_${ev}\"" "$ch/events.log" 2>/dev/null)"
+        [ "$c" = "1" ] || { cbad=$((cbad + 1)); printf '  trial %d: activation_%s sent %s times\n' "$cn" "$ev" "$c"; }
+    done
+done
+if [ "$cbad" = "0" ]; then ok "concurrent emits send each activation step exactly once (10 trials)"; else bad "concurrent activation emits duplicated or dropped $cbad times"; fi
+
+# direct call with analytics off: no marker, no claim, no send
+dh="$WORK/act-direct-off"; mkdir -p "$dh"
+env PATH="$WORK/bin2:$PATH" HOME="$dh" LOKI_TEST_LOG="$dh/events.log" LOKI_TELEMETRY=on bash -c "
+    cd '$REPO_ROOT'; source autonomy/telemetry.sh 2>/dev/null
+    loki_emit_activation install; sleep 0.5" >/dev/null 2>&1
+if { [ -d "$dh/.loki" ] && [ -n "$(ls -A "$dh/.loki" 2>/dev/null)" ]; } || [ -s "$dh/events.log" ]; then
+    bad "loki_emit_activation install with analytics off wrote a marker or sent"
+else
+    ok "loki_emit_activation install with analytics off: no marker, no send"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
