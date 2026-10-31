@@ -2,7 +2,7 @@
 import { installOwned } from "../../project_model/install.ts";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { appProbe, type AppProbeResult } from "../../util/app_probe.ts";
 import { secureScanChanged } from "../../util/secure_scan.ts";
 import { postDeepResults } from "../../util/receipt_surface.ts";
@@ -140,31 +140,45 @@ export async function runSecretScan(ctx: RunContext, changed: string[], opts: De
   if (!existsSync(scriptPath)) { checks.push({ name, cmd, result: "not_run", duration_s: 0 }); notProven.add(`not run: ${name} (secret-scan.sh not found)`); return; }
   if (changed.length === 0) { checks.push({ name, cmd, result: "pass", duration_s: 0 }); return; }
   const inline = 'script="$1"; mode="$2"; shift 2; . "$script" || exit 3; hit=0; for f in "$@"; do if { [ "$mode" != path ] && _commit_scan_secret_file "$f"; } || { [ "$mode" != content ] && _commit_path_looks_secret "$f"; }; then printf "%s\\n" "$f"; hit=1; fi; done; exit "$hit"';
-  const started = Date.now(), scan = (mode: string, files: string[]) => (files.length ? run(["bash", "-c", inline, "_", scriptPath, mode, ...files], { cwd: ctx.repoDir, timeoutMs: 30_000 }) : Promise.resolve({ exitCode: 0, stdout: "", stderr: "" }));
-  let r: { exitCode: number | null; stdout: string }, sec: Awaited<ReturnType<typeof secureScanChanged>>;
+  // Every scan runs on repo-relative names (from repoDir, or from the added-lines copy), so a parent directory such as
+  // /home/u/credential-service/ never reaches the path heuristic.  A killed scan (null exit) is -1, never a clean 0 or 1.
+  const started = Date.now(), gaps: string[] = [], reasons: string[] = [], outs: { code: number; hits: string[] }[] = [];
+  const scan = async (mode: string, cwd: string, files: string[]): Promise<void> => {
+    if (!files.length) return;
+    const s = await run(["bash", "-c", inline, "_", scriptPath, mode, ...files], { cwd, timeoutMs: 30_000 });
+    outs.push({ code: s.exitCode ?? -1, hits: s.stdout.split("\n").map((l) => l.trim()).filter(Boolean) });
+  };
+  let sec: Awaited<ReturnType<typeof secureScanChanged>>;
   if (opts.scanAddedSince) {
-    const base = opts.scanAddedSince, root = mkdtempSync(join(tmpdir(), "loki-verify-secscan-")), fresh: string[] = [];
+    const base = opts.scanAddedSince, root = mkdtempSync(join(tmpdir(), "loki-verify-secscan-")), fresh: string[] = [], copied: string[] = [], unread: string[] = [];
     try {
       for (const f of changed) {
         if (!existsSync(join(ctx.repoDir, f))) continue; // deleted: nothing added
         const atBase = (await safeGitRun(ctx.repoDir, ["cat-file", "-e", `${base}:${f}`], { timeoutMs: 10_000 })).exitCode === 0;
-        if (!atBase) fresh.push(f);
-        const added = atBase ? (await safeGitRun(ctx.repoDir, ["diff", "--no-color", "--no-renames", "-U0", base, "--", f], { timeoutMs: 20_000 })).stdout.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n") : null;
+        let added: string | null = null;
+        if (atBase) {
+          const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", "--no-renames", "-U0", base, "--", f], { timeoutMs: 20_000 });
+          if (d.exitCode !== 0) { unread.push(f); continue; } // a failed or killed diff is unread, never an empty (clean) file
+          added = d.stdout.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n");
+          if (!added) continue; // nothing added to this file
+        } else fresh.push(f);
         mkdirSync(dirname(join(root, f)), { recursive: true });
-        if (added === null) copyFileSync(join(ctx.repoDir, f), join(root, f)); else writeFileSync(join(root, f), added ? added + "\n" : "");
+        if (added === null) copyFileSync(join(ctx.repoDir, f), join(root, f)); else writeFileSync(join(root, f), added + "\n");
+        copied.push(f);
       }
-      const content = await scan("content", changed.filter((f) => existsSync(join(root, f))).map((f) => join(root, f))), path = await scan("path", fresh.map((f) => join(ctx.repoDir, f)));
-      const rel = (out: string, from: string): string => out.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => relative(from, l)).join("\n");
-      r = { exitCode: content.exitCode === 3 || path.exitCode === 3 ? 3 : Math.max(content.exitCode ?? 1, path.exitCode ?? 1), stdout: [rel(content.stdout, root), rel(path.stdout, ctx.repoDir)].filter(Boolean).join("\n") };
-      sec = await secureScanChanged(root, changed.filter((f) => existsSync(join(root, f))), opts.secureScanPath);
+      if (unread.length > 0) gaps.push(`added lines could not be read: ${unread.join(", ")}`);
+      await scan("content", root, copied);
+      await scan("path", ctx.repoDir, fresh);
+      sec = await secureScanChanged(root, copied, opts.secureScanPath);
     } finally { rmSync(root, { recursive: true, force: true }); }
   } else {
-    r = await scan("both", changed.map((f) => join(ctx.repoDir, f)));
+    await scan("both", ctx.repoDir, changed);
     sec = await secureScanChanged(ctx.repoDir, changed, opts.secureScanPath);
   }
-  const gaps: string[] = [], reasons: string[] = [];
-  const hits = r.exitCode === 3 ? [] : [...new Set(r.stdout.split("\n").map((l) => l.trim()).filter(Boolean))], high = sec.findings.filter((f) => String(f.severity).toUpperCase() === "HIGH");
-  if (r.exitCode === 3) gaps.push("secret-scan.sh failed to load");
+  // A hit printed before a scan died is still a hit; any exit outside 0 / 1-with-hits / 3 means the scan did not finish.
+  const hits = [...new Set(outs.filter((o) => o.code !== 3).flatMap((o) => o.hits))], high = sec.findings.filter((f) => String(f.severity).toUpperCase() === "HIGH");
+  if (outs.some((o) => o.code === 3)) gaps.push("secret-scan.sh failed to load");
+  for (const o of outs) if (o.code !== 0 && o.code !== 3 && !(o.code === 1 && o.hits.length > 0)) gaps.push(`secret scan did not finish (exit ${o.code})`);
   if (!sec.ok) gaps.push(sec.error ?? "secure-scan failed");
   if (hits.length > 0) reasons.push(`secret match: ${hits.join(", ")}`);
   if (high.length > 0) reasons.push(`secure-scan: ${high.map((f) => `${f.rule}: ${f.file}:${f.line}`).join(", ")}`);
