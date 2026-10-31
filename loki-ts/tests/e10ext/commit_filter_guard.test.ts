@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { backstopCommit, guardedBackstop, validBase } from "../../src/e10ext/commit_filter.ts";
+import { backstopCommit, dropSet, guardedBackstop, validBase } from "../../src/e10ext/commit_filter.ts";
 
 let dir = "";
 let env: NodeJS.ProcessEnv = {};
@@ -41,6 +42,7 @@ test("an intact log with a valid base still runs the backstop", () => {
 
 // TEN-QUALITY-16: the commit stage formats only the run's own kept files with a formatter the repo already configures.
 import { mkdirSync } from "node:fs";
+import { toolchainDropNotes } from "../../src/util/lock_ecosystems.ts";
 import { commitStage } from "../../src/engine10/stages/seal.ts";
 import type { RunContext } from "../../src/engine10/types.ts";
 
@@ -138,4 +140,28 @@ test("FC-COMMIT-STAGES-USER-UNTRACKED the supervisor backstop also leaves an unt
   writeFileSync(join(repo, "a.txt"), "x\n");
   backstopCommit(repo, { ...process.env }, "r1", base, undefined, undefined, blobs);
   expect(sh(["git", "show", "--name-only", "--format=", "HEAD"], repo).split("\n").filter(Boolean)).toEqual(["a.txt"]);
+});
+
+test("build output a rust, gradle, node or python run created is dropped from the commit set; tracked files and a bare target/ are kept", () => {
+  mkdirSync(join(dir, "target"), { recursive: true }); writeFileSync(join(dir, "target", "CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n");
+  const a = (f: string) => ({ st: "A", f });
+  const staged = [a("src/lib.rs"), a("target/CACHEDIR.TAG"), a("target/debug/app"), a("target/release/.fingerprint/x"), a("pkg/__pycache__/m.cpython-312.pyc"), a("node_modules/x/index.js"), a("web/target/keep.txt"), { st: "M", f: "target/tracked.txt" }];
+  const dropped = dropSet(dir, staged, undefined, env).map(({ f }) => f).sort();
+  expect(dropped).toEqual(["node_modules/x/index.js", "pkg/__pycache__/m.cpython-312.pyc", "target/CACHEDIR.TAG", "target/debug/app", "target/release/.fingerprint/x"]);
+});
+
+test("an output dir that already holds a file tracked at HEAD is the user's: nothing in it is dropped", () => {
+  const g = (...a: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { stdio: "pipe", env: process.env });
+  g("init", "-q"); mkdirSync(join(dir, "target"), { recursive: true }); writeFileSync(join(dir, "target", "keep.txt"), "mine\n");
+  g("add", "target/keep.txt"); g("commit", "-qm", "base");
+  writeFileSync(join(dir, "target", "CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n");
+  const staged = [{ st: "A", f: "target/CACHEDIR.TAG" }, { st: "A", f: "target/debug/app" }];
+  expect(dropSet(dir, staged, undefined, process.env).map(({ f }) => f)).toEqual([]);
+});
+
+test("each dropped toolchain output dir is disclosed as one note with its file count", () => {
+  mkdirSync(join(dir, "target"), { recursive: true }); writeFileSync(join(dir, "target", "CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n");
+  expect(toolchainDropNotes(dir, ["target/CACHEDIR.TAG", "target/debug/app", "node_modules/x/i.js", "src/a.rs"])).toEqual([
+    "toolchain build output left out of the commit: target/ (2 files)", "toolchain build output left out of the commit: node_modules/ (1 file)",
+  ]);
 });

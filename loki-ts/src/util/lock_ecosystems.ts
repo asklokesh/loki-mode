@@ -3,6 +3,7 @@
 // name no language or framework (tests/project_model L0 self-check). Entries in tests/engine10/l0_guard.allowlist move with it. No existing util owns package-manager and lockfile names, so a new file is justified.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { safeGit } from "./safe_git.ts";
 
 export interface LockRule {
   tool: string; subs: string[]; locks: string[];
@@ -120,3 +121,31 @@ function declaredPythonDeps(repoDir: string, manifests: string[]): Set<string> {
 }
 /** Does any Python dependency manifest under repoDir declare the distribution `name` (case, dash, dot and underscore insensitive)? Unreadable manifests declare nothing. */
 export function declaresPythonDep(repoDir: string, name: string): boolean { return declaredPythonDeps(repoDir, pythonManifests(repoDir)).has(depKey(name)); }
+
+const OUTPUT_DIRS: { dir: string; sigs: string[] }[] = [ // a toolchain's build output dir; `sigs` are files the toolchain itself writes in it (cachedir.org tag, cargo's rustc info), so a user's own `target/` is never matched by name alone
+  { dir: "target", sigs: ["CACHEDIR.TAG", ".rustc_info.json"] },
+  { dir: ".gradle", sigs: [] }, { dir: "node_modules", sigs: [] }, { dir: "__pycache__", sigs: [] },
+];
+/** Of the paths a run ADDED, those inside a toolchain's own build output (a signed cargo target/, .gradle, node_modules, __pycache__). An output dir that already holds any file tracked at HEAD is the user's: nothing in it is returned. */
+export function toolchainOutputs(repoDir: string, added: string[]): Set<string> {
+  const dirOf = new Map<string, string>(), tracked = new Map<string, boolean>(), out = new Set<string>();
+  for (const f of added) {
+    const parts = f.split("/");
+    for (let i = 0; i < parts.length - 1; i++) {
+      const o = OUTPUT_DIRS.find((d) => d.dir === parts[i]); if (!o) continue;
+      const dir = parts.slice(0, i + 1).join("/");
+      if (o.sigs.length === 0 || o.sigs.some((s) => existsSync(join(repoDir, dir, s)))) { dirOf.set(f, dir); break; }
+    }
+  }
+  for (const [f, dir] of dirOf) {
+    if (!tracked.has(dir)) { try { tracked.set(dir, safeGit(repoDir, ["ls-tree", "-r", "--name-only", "HEAD", "--", `${dir}/`], { stdio: ["ignore", "pipe", "ignore"] }).trim() !== ""); } catch { tracked.set(dir, false); } }
+    if (!tracked.get(dir)) out.add(f);
+  }
+  return out;
+}
+/** One scope note per output dir the commit left out, so the drop is disclosed in the receipt. */
+export function toolchainDropNotes(repoDir: string, dropped: string[]): string[] {
+  const n = new Map<string, number>();
+  for (const f of toolchainOutputs(repoDir, dropped)) { const p = f.split("/"), i = p.findIndex((x) => OUTPUT_DIRS.some((d) => d.dir === x)), k = p.slice(0, i + 1).join("/"); n.set(k, (n.get(k) ?? 0) + 1); }
+  return [...n].map(([d, c]) => `toolchain build output left out of the commit: ${d}/ (${c} file${c === 1 ? "" : "s"})`);
+}
