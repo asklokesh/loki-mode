@@ -22,7 +22,7 @@ export function modelDowngrades(provider: string, env: NodeJS.ProcessEnv = proce
     else if (cascadeDowngrade(runModel, env)) out.push({ stage: "implement", model: cascadeImplementModel(env), reason: "LOKI_IMPLEMENT_HAIKU_FIRST overridden by LOKI_E10_CASCADE" }); // only when the cascade really pins (implement.ts: cascadeDowngrade ?? haikuFirstDowngrade)
     else out.push({ stage: "implement", model: resolveModelAlias("haiku"), reason: "LOKI_IMPLEMENT_HAIKU_FIRST opt-in" });
   }
-  if (leanEnabled(env) && routerActive(env)) out.push({ stage: "implement", model: resolveModelAlias("sonnet"), reason: "LOKI_LEAN opt-in (small and medium units; one rung up after a failed verify)" }); // LEAN-5: named, never silent
+  if (leanEnabled(env) && routerActive(env)) out.push({ stage: "implement", model: resolveModelAlias("sonnet"), reason: "LOKI_LEAN opt-in (small and normal units; one rung up after a failed verify)" }); // LEAN-5: named, never silent
   const fast = env.LOKI_MODEL_OVERRIDE ? undefined : env.LOKI_CLAUDE_MODEL_FAST || env.LOKI_MODEL_FAST || (env.LOKI_ALLOW_HAIKU === "true" ? "haiku" : "sonnet");
   if (planMode(env) !== "never" && weak(fast) && !(routerEnabled(env) && envOverride(env) === null)) out.push({ stage: "plan", model: fast, reason: "fast tier" });
   const wall = wallModel(env);

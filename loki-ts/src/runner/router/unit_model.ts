@@ -44,11 +44,11 @@ export const routerPinsAllowed = (env: Record<string, string | undefined> = proc
 /** The router acts on model choice only when the flag is on and no user model override is set; otherwise a stage behaves exactly as with the router off. */
 export const routerActive = (env: Record<string, string | undefined> = process.env): boolean => routerEnabled(env) && routerPinsAllowed(env);
 
-/** LEAN-5: LOKI_LEAN=1 (default off) starts a small or medium implement unit on sonnet and climbs one rung to the run model after the first code-owned failed verify (routedFix). It rides the router ladder, so it acts only where routerActive() does. */
+/** LEAN-5: LOKI_LEAN=1 (default off) starts a small or normal (not large) implement unit on sonnet and climbs one rung to the run model after the first code-owned failed verify (routedFix). It rides the router ladder, so it acts only where routerActive() does. */
 export const leanEnabled = (env: Record<string, string | undefined> = process.env): boolean => ["1", "on", "true"].includes((env["LOKI_LEAN"] ?? "").trim().toLowerCase());
-const leanStart = (runModel: string, size: string | undefined, env: Record<string, string | undefined>): string | null => (leanEnabled(env) && routerPinsAllowed(env) && (size === "small" || size === "medium") && modelRank(runFloor(runModel)) > modelRank("sonnet") ? resolveModelAlias("sonnet") : null); // never lifts a run that already sits at or below sonnet, never starts on opus
+const leanStart = (runModel: string, size: string | undefined, env: Record<string, string | undefined>): string | null => (leanEnabled(env) && routerPinsAllowed(env) && (size === "small" || size === "normal") && modelRank(runFloor(runModel)) > modelRank("sonnet") ? resolveModelAlias("sonnet") : null); // never lifts a run that already sits at or below sonnet, never starts on opus
 
-/** The route record for the single "run" unit: haiku only with a valid record, otherwise the run floor (LEAN-5: sonnet for a small or medium unit when size is given and lean is on). Callers gate on routerActive(). */
+/** The route record for the single "run" unit: haiku only with a valid record, otherwise the run floor (LEAN-5: sonnet for a small or normal unit when size is given and lean is on). Callers gate on routerActive(). */
 export function routeRecord(runModel: string, plan: Record<string, unknown> | undefined, historyFloor?: () => RunExecutor, size?: string, env: Record<string, string | undefined> = process.env): RouteRecord {
   const v = validHaikuRoute(plan);
   const h = v && historyFloor ? historyRaisedRoute(v.reason, historyFloor()) : null; // P12-32b: history is read only when the cheapest tier is on the table, and can only raise

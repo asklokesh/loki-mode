@@ -239,16 +239,16 @@ describe("FC-ENGINE10-IGNORES-SESSION-MODEL-PIN", () => {
   }
 });
 
-// LEAN-5: LOKI_LEAN=1 starts a small or medium implement unit on sonnet and climbs exactly one rung after the first code-owned failed verify.
+// LEAN-5: LOKI_LEAN=1 starts a small or normal implement unit on sonnet and climbs exactly one rung after the first code-owned failed verify.
 describe("LEAN-5 implement tier ladder", () => {
   const LK = ["LOKI_LEAN", "LOKI_ROUTER"], ls: Record<string, string | undefined> = {};
   beforeEach(() => { for (const k of LK) { ls[k] = process.env[k]; delete process.env[k]; } });
   afterEach(() => { for (const k of LK) { if (ls[k] === undefined) delete process.env[k]; else process.env[k] = ls[k]; } });
   const OPUS = "claude-opus-4-1", code = { repeated: false, stall: false, groups: [{ signature: "test:a.test.ts" }], reason: "verify failed" };
   const rec = (size: string | undefined, run = OPUS) => routeRecord(run, undefined, undefined, size);
-  test("lean on: a small or medium task starts on sonnet, a large one and an unknown size keep the run floor, never opus", () => {
+  test("lean on: a small or normal task starts on sonnet, a large one and an unknown size keep the run floor, never opus", () => {
     process.env["LOKI_LEAN"] = "1";
-    for (const sz of ["small", "medium"]) { const r = rec(sz); expect(r.model).toMatch(/sonnet/); expect(r.source).toBe("lean"); expect(r.valid).toBe(true); }
+    for (const sz of ["small", "normal"]) { const r = rec(sz); expect(r.model).toMatch(/sonnet/); expect(r.source).toBe("lean"); expect(r.valid).toBe(true); }
     expect(rec("large")).toEqual(routeRecord(OPUS, undefined)); expect(rec(undefined)).toEqual(routeRecord(OPUS, undefined));
     expect(rec("small", "claude-sonnet-4-5").source).toBe("default"); // a run already at sonnet is not lifted or relabelled
   });
@@ -264,7 +264,7 @@ describe("LEAN-5 implement tier ladder", () => {
     for (const lean of [undefined, "0", "off"]) {
       if (lean !== undefined) process.env["LOKI_LEAN"] = lean; else delete process.env["LOKI_LEAN"];
       expect(JSON.stringify(rec("small"))).toBe(JSON.stringify(routeRecord(OPUS, undefined)));
-      expect(JSON.stringify(routedFix(OPUS, { implement: { route_model: "claude-sonnet-4-5" } }, code))).toBe(JSON.stringify(routedFix(OPUS, { implement: { route_model: "claude-sonnet-4-5" } }, code)));
+      expect(routedFix(OPUS, { implement: { route_model: "claude-sonnet-4-5" } }, code)).toEqual({ pin: undefined, climbed: null });
     }
     delete process.env["LOKI_LEAN"];
     expect(routedFix(OPUS, { implement: { route_model: "claude-sonnet-4-5" } }, code).climbed).toBeNull(); // today: a below-floor carry without a route record is floored, no lean climb
