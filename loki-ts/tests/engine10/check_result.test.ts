@@ -1400,3 +1400,23 @@ describe("Wall file that cannot build on base is red on base only for the build 
     expect(classifyCheck({ kind: "test", ok: false, out: GO_BUILD_FAIL, runner: "go" }).result).not.toBe("pass");
   });
 });
+
+// PR-FIRST-3 cause 1: a vitest/jest/bun suite that never loaded because the Wall test's own relative import names a file absent on base is red on base.
+describe("classify: a Wall test whose own relative import is missing on base", () => {
+  const dir = mkdtempSync(join(tmpdir(), "loki-pf3-")); mkdirSync(join(dir, "backend/src/lib"), { recursive: true }); mkdirSync(join(dir, "backend/src/real"), { recursive: true });
+  writeFileSync(join(dir, "backend/src/real/index.ts"), "export const x = 1;\n");
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const ref = { runner: "vitest", path: "backend/src/lib/loki_wall_a.test.ts" } as never;
+  const vt = (spec: string, importer = join(dir, "backend/src/lib/loki_wall_a.test.ts")): string => ` FAIL  x [ x ]\nError: Failed to load url ${spec} (resolved id: ${spec}) in ${importer}. Does the file exist?\n Test Files  1 failed (1)\n      Tests  no tests\n`;
+  test("a missing relative module is fail", () => { expect(classify(ref, 1, vt("../i18n/locales"), dir)).toBe("fail"); });
+  test("jest and bun wordings are fail too", () => {
+    expect(classify({ runner: "jest", path: "backend/src/lib/loki_wall_a.test.ts" } as never, 1, "Cannot find module '../schemas/common' from 'src/lib/loki_wall_a.test.ts'", dir)).toBe("fail");
+    expect(classify({ runner: "bun", path: "backend/src/lib/loki_wall_a.test.ts" } as never, 1, `error: Cannot find module "../utils/transaction" from "${join(dir, "backend/src/lib/loki_wall_a.test.ts")}"`, dir)).toBe("fail");
+  });
+  test("a relative module that exists (directory index) stays not_run", () => { expect(classify(ref, 1, vt("../real"), dir)).toBe("not_run"); });
+  test("a bare package, another importer, or an absolute id stays not_run", () => {
+    expect(classify(ref, 1, vt("left-pad"), dir)).toBe("not_run");
+    expect(classify(ref, 1, vt("../i18n/locales", join(dir, "backend/src/other.ts")), dir)).toBe("not_run");
+    expect(classify(ref, 1, vt("/abs/x"), dir)).toBe("not_run");
+  });
+});

@@ -89,6 +89,18 @@ export function outOfRepoTarget(content: string): string | null {
   return null;
 }
 
+/** A Wall test that reads a dotenv file (.env, .env.example, .env.local, ...) by literal path. The implementer's sandbox denies every tool access to those files, so the check could never be satisfied from
+ *  the implementer's side and its assertion would end as a harness-owned conflict; the author is asked to assert on the config source (schema, loader) instead. Writes, temp dirs and expect/assert lines are ignored. */
+export function dotenvFileRead(content: string): string | null {
+  const code = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1").replace(/(^|\s)#.*$/gm, "$1");
+  for (const line of code.split("\n")) {
+    if (/^\s*(?:await\s+)?(?:expect|assert\w*)\b|\b(?:write\w*|mkdtemp\w*|tmpdir|rm\w*|unlink\w*|touch)\b/.test(line)) continue;
+    const m = /["'`](?:[^"'`\n]*\/)?(\.env(?:\.[\w.-]+)?)["'`]/.exec(line);
+    if (m) return `reads ${m[1]}, which the implementer's sandbox blocks (dotenv files are denied to every tool), so the check cannot be satisfied; assert on the code that defines or loads the variables (the env schema or config module) instead of the dotenv file`;
+  }
+  return null;
+}
+
 /** Go: true when the file has Test funcs, every body is empty or only t.Log/t.Skip calls, and nothing in the file can fail a test. Linear brace scan, no backtracking regex over the body. */
 function goVacuous(code: string): boolean {
   if (/\b\w+\.(?:Fatal|Fatalf|Error|Errorf|Fail|FailNow|Run)\b/.test(code)) return false;
@@ -333,7 +345,9 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
 export function phantomReason(miss: string[], repoFiles: string[], testDir = "", pkgRoot = "", task: string | null = null): string | null {
   if (miss.length === 0) return null;
   const real = (r: string): boolean => !!r && repoFiles.some((f) => f === r || f.startsWith(`${r}/`)), pkg = pkgRoot === "." ? "" : pkgRoot; // FC-WALL-LOCATION-BLIND: a phantom that is the test dir plus a path real at the repo root or the package root
-  const at = (m: string): string | null => { const r = testDir && m.startsWith(`${testDir}/`) ? m.slice(testDir.length + 1) : ""; return !r ? null : real(r) ? `${r} exists relative to the repo root` : pkg && real(`${pkg}/${r}`) ? `${r} exists relative to the package root ${pkg}/` : null; };
+  const at = (m: string): string | null => { const r = testDir && m.startsWith(`${testDir}/`) ? m.slice(testDir.length + 1) : ""; return !r ? doubled(m) : real(r) ? `${r} exists relative to the repo root` : pkg && real(`${pkg}/${r}`) ? `${r} exists relative to the package root ${pkg}/` : null; };
+  // A multi-root repo: the test dir backend/src/lib, a root taken one level too shallow (backend/src) and a repo path appended to it (backend/src/utils/x) doubles the prefix (backend/src/backend/src/utils/x): the tail after a repeated ancestor is the real repo path.
+  const doubled = (m: string): string | null => { const segs = testDir.split("/").filter(Boolean); for (let k = segs.length - 1; k >= 1; k--) { const anc = segs.slice(0, k).join("/"), rest = m.startsWith(`${anc}/`) ? m.slice(anc.length + 1) : ""; if (rest.startsWith(`${segs[0]}/`) && (real(rest) || repoFiles.some((f) => f.replace(/\.[^./]+$/, "") === rest))) return `${rest} exists relative to the repo root, but the path was built from ${anc}/ (the root was taken ${segs.length - k} level(s) too shallow, so the prefix is doubled): build it from the repo root, ${segs.length} level(s) above ${testDir}/`; } return null; };
   const nm = new Set(taskNamedPaths(task ?? "")), beside = (m: string): string | null => { const r = testDir && m.startsWith(`${testDir}/`) ? m.slice(testDir.length + 1) : ""; return r && nm.has(r) ? r : null; }; // FALSEVER-WALLPATH: a task-named file resolved beside the test file
   const own = miss.map((m) => [m, at(m) ?? (beside(m) ? `the task names ${beside(m)} at the repo path ${beside(m)}, not beside the test file` : null)] as const), loc = own.filter(([, w]) => w).map(([, w]) => w!), rest = own.filter(([, w]) => !w).map(([m]) => m);
   const hint = (m: string): string => { const n = basename(m), near = [...new Set(repoFiles.flatMap((f) => { const s = f.split("/"), k = s.indexOf(n); return k >= 0 && s.slice(0, k + 1).join("/") !== m ? [s.slice(0, k + 1).join("/")] : []; }))].slice(0, 3); return near.length ? `${m} (a path named ${n} exists at ${near.join(", ")})` : m; };
