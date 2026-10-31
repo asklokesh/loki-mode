@@ -293,7 +293,7 @@ for line in open(sys.argv[1]):
         if [ ! -s "$_W/payload.log" ]; then ok "$_o emits no run events"; else bad "$_o still emitted: $(cat "$_W/payload.log")"; fi
     done
     # --- Standing negative test: a hostile run_finished payload sent straight into the schema filter and through the bash sender (curl stubbed, nothing is sent) ---
-    _HOST_PAIRS=("verdict=VERIFIED" "engine=engine10" "cost_bucket=lt_5" "token_bucket=lt_1m" "fix_rounds=2" "provider=/Users/x" "lang_bucket=/Users/bob/repo" "model_tier=claude-opus-4-custom" "test_runner=bob@example.com" "repo_size_bucket=my-private-repo" "provider_failovers=99999999999" "duration_s=-5" "exit_code=3" "secret_key=abc")
+    _HOST_PAIRS=("verdict=VERIFIED" "engine=engine10" "cost_bucket=lt_5" "token_bucket=lt_1m" "fix_rounds=2" "provider=$HOME/x" "lang_bucket=$HOME/bob/repo" "model_tier=claude-opus-4-custom" "test_runner=bob@example.com" "repo_size_bucket=my-private-repo" "provider_failovers=99999999999" "duration_s=-5" "exit_code=3" "secret_key=abc")
     _hostile_check() { # $1 label; reads $_W/hostile.json (the capture body or empty)
         python3 -c '
 import json, sys
