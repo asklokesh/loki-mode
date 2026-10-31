@@ -2134,6 +2134,11 @@ _loki_classify_iteration_error() {
         echo "provider_empty_output"
         return 0
     fi
+    # A failed provider start (for example claude -p exiting 1) leaves a 0-byte log.
+    if [ -n "$iter_output" ] && [ -f "$iter_output" ] && [ ! -s "$iter_output" ]; then
+        echo "provider_empty_output"
+        return 0
+    fi
     # Rate limit: reuse the same detector the retry path uses.
     if [ -n "$iter_output" ] && [ -f "$iter_output" ] && detect_rate_limit "$iter_output" 2>/dev/null | grep -qE '^[1-9]'; then
         echo "rate_limited"
@@ -20463,7 +20468,7 @@ is_rate_limited() {
     # agent's own generated source, and treating them as a limit caused the
     # multi-minute false waits the co-occurrence rule was added to stop.
     if printf '%s\n' "$tail_txt" \
-        | grep -qiE '(quota exceeded|rate limit exceeded|too many requests)' 2>/dev/null; then
+        | grep -qiE '(quota exceeded|rate limit exceeded|too many requests|5-hour limit)' 2>/dev/null; then
         return 0
     fi
 

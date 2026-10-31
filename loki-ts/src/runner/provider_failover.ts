@@ -15,7 +15,7 @@ const DEFAULT_ORDER = ["claude", "cline", "codex", "aider", "opencode"]; // prov
 const ALLOWED = new Set(DEFAULT_ORDER); // gemini (deprecated) and unknown names can never be chosen
 
 // Provider wire text only: scanned on the child's stderr tail and the SDK error line, never the agent transcript.
-const RATE_LIMIT = /(?:\brate[_ -]?limit(?:ed|_error| exceeded| reached)?\b|\btoo many requests\b|\bhttp[ /:]*429\b|\bstatus[ :=]*429\b|\b429 |\binsufficient_quota\b|\bquota[ _]exceeded\b|\bRESOURCE_EXHAUSTED\b)/i;
+const RATE_LIMIT = /(?:\brate[_ -]?limit(?:ed|_error| exceeded| reached)?\b|\btoo many requests\b|\bhttp[ /:]*429\b|\bstatus[ :=]*429\b|\b429 |\binsufficient_quota\b|\bquota[ _]exceeded\b|\bRESOURCE_EXHAUSTED\b|\b5-hour limit\b)/i;
 const OUTAGE = /(?:\boverloaded(?:_error)?\b|\bservice unavailable\b|\bhttp[ /:]*(?:50[234]|529)\b|\bstatus[ :=]*(?:50[234]|529)\b|\bETIMEDOUT\b|\bbad gateway\b|\bgateway timeout\b|\bECONNREFUSED\b|\bENOTFOUND\b|\bEAI_AGAIN\b|\bECONNRESET\b|\bsocket hang up\b|\busage limit reached\b)/i;
 
 /** The first provider-written line that names a rate limit or outage, or null (a code failure, a clean exit, or a kill). */

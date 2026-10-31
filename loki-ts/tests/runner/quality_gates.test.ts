@@ -2645,6 +2645,13 @@ describe("#320 claudeReviewer streams so the stagger hook fires before completio
     }, 60000);
   }
 
+  it("streamFinalResult: control characters escaped as \\uXXXX parse to the same events as the unescaped form", () => {
+    const esc = `{"type":"result","result":"a\\u000ab\\u0009c\\u001b[0m"}\n`;
+    const raw = `{"type":"result","result":${JSON.stringify("a\nb\tc\u001b[0m")}}\n`;
+    expect(streamFinalResult(esc, "text")).toBe(streamFinalResult(raw, "text"));
+    expect(streamFinalResult(esc, "text")).toBe("a\nb\tc\u001b[0m\n");
+  });
+
   it("streamFinalResult: json keeps the last result object, text unwraps it, a missing result is empty (fail-closed upstream)", () => {
     const stream = `{"type":"system"}\nnot json\n{"type":"result","result":"VERDICT: PASS","n":1}\n`;
     expect(JSON.parse(streamFinalResult(stream, "json"))).toEqual({ type: "result", result: "VERDICT: PASS", n: 1 });

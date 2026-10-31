@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { classifyOutage, nextProvider, withFailover, type FailoverRecord } from "../../src/runner/provider_failover.ts";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import type { SessionResult, SessionRunOptions, SessionRunner } from "../../src/engine10/types.ts";
 
 describe("classifyOutage", () => {
@@ -33,6 +37,42 @@ describe("classifyOutage", () => {
   test("evidence is capped at 300 chars", () => {
     const c = classifyOutage("rate limit " + "x".repeat(500), 1, false);
     expect(c?.evidence.length).toBe(300);
+  });
+});
+
+describe("claude 5-hour usage limit wording", () => {
+  test("a 5-hour limit line with a failing exit is a rate_limit wait", () => {
+    expect(classifyOutage("You've hit your 5-hour limit. Resets 3pm.\n", 1, false)?.reason).toBe("rate_limit");
+  });
+  test("the 5-hour wording is not matched with a clean exit or a wider phrase", () => {
+    expect(classifyOutage("5-hour limit", 0, false)).toBeNull();
+    expect(classifyOutage("the 5-hour build finished", 1, false)).toBeNull();
+  });
+});
+
+// The bash loop mirrors the same wording and the empty-output cause: extract the functions from run.sh and run them for real.
+const RUN_SH = resolve(import.meta.dir, "../../../autonomy/run.sh");
+function bash(fn: string, body: string, content: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "loki-compat-"));
+  try {
+    const f = join(dir, "out.log");
+    writeFileSync(f, content);
+    const script = `eval "$(sed -n '/^${fn}() {/,/^}/p' '${RUN_SH}')"\n${body}`;
+    return spawnSync("bash", ["-c", script, "x", f], { encoding: "utf8" }).stdout.trim();
+  } finally {
+    rmSync(dir, { recursive: true });
+  }
+}
+describe("run.sh mirrors", () => {
+  test("is_rate_limited treats the 5-hour limit line as a usage-limit wait", () => {
+    const body = 'is_rate_limited "$1" && echo yes || echo no';
+    expect(bash("is_rate_limited", body, "building\nYou've hit your 5-hour limit\n")).toBe("yes");
+    expect(bash("is_rate_limited", body, "Added a 5-hour cache TTL.\n")).toBe("no");
+  });
+  test("an empty output from a failed provider start is named provider_empty_output, not unknown", () => {
+    const body = 'detect_rate_limit() { echo 0; }\n_loki_classify_iteration_error "$1" 0';
+    expect(bash("_loki_classify_iteration_error", body, "")).toBe("provider_empty_output");
+    expect(bash("_loki_classify_iteration_error", body, "some output\n")).toBe("unknown");
   });
 });
 
