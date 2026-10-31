@@ -177,14 +177,62 @@ export function earnedPolicyFromEnv(env: Record<string, string | undefined> = pr
   return { minVerified: Math.max(1, n), protectedGlobs: globs };
 }
 
+const escRe = (c: string): string => c.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&");
+const POSIX_CLASS: Record<string, string> = {
+  alnum: "a-zA-Z0-9", alpha: "a-zA-Z", digit: "0-9", lower: "a-z", upper: "A-Z", space: " \\t\\n\\r\\f\\v",
+  blank: " \\t", punct: "!-\\/:-@\\[-`{-~", xdigit: "0-9a-fA-F", word: "a-zA-Z0-9_", cntrl: "\\x00-\\x1f\\x7f", print: "\\x20-\\x7e", graph: "\\x21-\\x7e",
+};
+
+// Bracket expression starting at glob[i] === "[": returns the regex and the
+// index of the closing "]", or null when unterminated (then "[" is literal, as in bash).
+function bracket(glob: string, i: number): { re: string; end: number } | null {
+  let j = i + 1;
+  let neg = false;
+  if (glob[j] === "!" || glob[j] === "^") {
+    neg = true;
+    j++;
+  }
+  let body = "";
+  let first = true;
+  for (; j < glob.length; j++) {
+    const c = glob[j] as string;
+    if (c === "]" && !first) return { re: `[${neg ? "^" : ""}${body}]`, end: j };
+    first = false;
+    if (c === "[" && glob[j + 1] === ":") {
+      const close = glob.indexOf(":]", j + 2);
+      const cls = close === -1 ? undefined : POSIX_CLASS[glob.slice(j + 2, close)];
+      if (cls !== undefined) {
+        body += cls;
+        j = close + 1;
+        continue;
+      }
+    }
+    if (c === "\\" && j + 1 < glob.length) {
+      body += escRe(glob[++j] as string);
+      continue;
+    }
+    body += c === "-" ? "-" : escRe(c);
+  }
+  return null;
+}
+
 // Shell-style glob, the dialect of a bash `case` pattern: * spans any
-// characters including "/", ? is one character, everything else is literal.
+// characters including "/", ? is one character, [..] / [!..] / [^..] are
+// bracket classes, a backslash makes the next character literal.
 function globMatch(glob: string, text: string): boolean {
   let re = "";
-  for (const c of glob) {
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i] as string;
     if (c === "*") re += ".*";
     else if (c === "?") re += ".";
-    else re += c.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&");
+    else if (c === "\\" && i + 1 < glob.length) re += escRe(glob[++i] as string);
+    else if (c === "[") {
+      const b = bracket(glob, i);
+      if (b) {
+        re += b.re;
+        i = b.end;
+      } else re += escRe(c);
+    } else re += escRe(c);
   }
   return new RegExp(`^${re}$`, "s").test(text);
 }

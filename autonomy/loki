@@ -28298,7 +28298,7 @@ _pr_record_merge() {
 # PR-only. The reason for a refusal goes to stdout; the return code is 1.
 _pr_earned_merge_check() {
     local pr="$1" min="${LOKI_EARNED_MERGE_MIN_VERIFIED:-20}" meta="" num="" want="" lines="" seals=""
-    local kind p g plist="" verdicts got=0 diff="" bad_mode="" renames="" refs="" base="" head="" from to m_old m_new
+    local kind p g plist="" sent=() verdicts got=0 diff="" bad_mode="" renames="" refs="" base="" head="" from to m_old m_new
     case "$min" in ''|*[!0-9]*) min=20 ;; esac
     [ "$min" -ge 1 ] || min=1
     meta="$(gh pr view "$pr" --json number,changedFiles -q '"\(.number) \(.changedFiles)"' 2>/dev/null)" || meta=""
@@ -28310,6 +28310,7 @@ _pr_earned_merge_check() {
         [ -n "$p" ] || continue
         [ "$kind" = "F" ] && got=$((got + 1))
         plist="${plist}${p}"$'\n'
+        sent+=("$p")
     done <<EOF_FILES
 $lines
 EOF_FILES
@@ -28320,6 +28321,8 @@ EOF_FILES
     verdicts=0
     while IFS="$(printf '\t')" read -r kind p g; do
         [ -n "$kind" ] || continue
+        # Each verdict must echo the path sent at the same position.
+        [ "$p" = "${sent[$verdicts]-}" ] || { echo "the Seal record is unreadable"; return 1; }
         verdicts=$((verdicts + 1))
         case "$kind" in
             ok) ;;

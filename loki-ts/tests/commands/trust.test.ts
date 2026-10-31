@@ -362,6 +362,52 @@ describe("runTrust per-path Seal record", () => {
       expect(row(run([]).stdout, "other.txt")).toContain("reverts unknown, refused: reverts unknown (shallow clone or unreadable history)");
     });
 
+    it("owner globs match like a bash case pattern: brackets, negation and backslash escapes", () => {
+      const cases: [string, string][] = [
+        ["src/a[0-9].key", "src/a1.key"],
+        ["src/[!y].ts", "src/x.ts"],
+        ["src/[^y].ts", "src/x.ts"],
+        ["src/\\x.ts", "src/x.ts"],
+        ["a\\\\b.ts", "a\\b.ts"],
+        ["SRC/[A-C]*", "src/Bz"],
+      ];
+      for (const [glob, path] of cases) {
+        seedMany(path, 25);
+        process.env.LOKI_EARNED_MERGE_PROTECTED = glob;
+        try {
+          expect(run(["--check"], `${path}\n`).stdout).toBe(`refuse\t${path}\t${path} is a protected path\n`);
+        } finally {
+          delete process.env.LOKI_EARNED_MERGE_PROTECTED;
+        }
+      }
+      process.env.LOKI_EARNED_MERGE_PROTECTED = "src/[!x].ts src/[0-9].ts";
+      try {
+        expect(run(["--check"], "src/x.ts\n").stdout).not.toContain("protected");
+      } finally {
+        delete process.env.LOKI_EARNED_MERGE_PROTECTED;
+      }
+    });
+
+    it("a minimum of 0 floors to 1 receipt, and a non-numeric minimum means 20", () => {
+      git("init", "-q");
+      writeFileSync(join(td, "k.txt"), "k\n");
+      git("add", "k.txt");
+      git("commit", "-q", "-m", "base");
+      const check = (min: string): string => {
+        process.env.LOKI_EARNED_MERGE_MIN_VERIFIED = min;
+        try {
+          return run(["--check"], "k.txt\nnone.txt\n").stdout;
+        } finally {
+          delete process.env.LOKI_EARNED_MERGE_MIN_VERIFIED;
+        }
+      };
+      seedPathProof("run-k-partial", "PARTIAL", ["k.txt"]);
+      expect(check("0")).toContain("k.txt has 0 VERIFIED receipts, need 1");
+      seedPathProof("run-k-ok", "VERIFIED", ["k.txt"]);
+      expect(check("0")).toStartWith("ok\tk.txt\n");
+      expect(check("abc")).toContain("k.txt has 1 VERIFIED receipts, need 20");
+    });
+
     it("the display and the merge gate decision agree for every path", () => {
       seedRepo();
       const paths = ["keep.txt", "gone.txt", ".github/w.yml", ".ENV.local", "src/auth/deep.ts", "docs/CODEOWNERS", "low.txt", "at-floor.txt"];
