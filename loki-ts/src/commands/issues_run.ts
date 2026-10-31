@@ -15,7 +15,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { MAX_PARALLEL, makeDefaultRunner, queueAdd, queueRun, type ItemResult, type QueueDeps, type RunOpts, type RunResult } from "./queue.ts";
 import { estimateFor, startText, type EstimateResult } from "../runner/router/cost_preview.ts";
-import { makeSessionDecompose, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
+import { makeSessionDecompose, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { resolveModel } from "../engine10/session.ts";
@@ -44,7 +44,7 @@ export interface IssuesRunDeps {
   lokiDir: string;
   gh: (args: readonly string[]) => GhResult;
   triage: (slug: string, issue: GhIssue) => Promise<Triage>;
-  decompose: (slug: string, issue: GhIssue, triageReason: string) => Promise<string>; // the model's JSON split, validated here
+  decompose: (slug: string, issue: GhIssue, triageReason: string, note?: string) => Promise<string>; // the model's JSON split, validated here
   runner: QueueDeps["runner"];
   estimate: () => EstimateResult;
   confirm: (question: string) => Promise<boolean>;
@@ -286,6 +286,10 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
       let p: Decomposition;
       try {
         p = parseDecomposition(await d.decompose(slug, i, t.reason));
+        if (!p.ok && p.over !== undefined) {
+          d.out(`#${i.number} split had ${p.over} slices, over the cap; asking once more\n`);
+          p = parseDecomposition(await d.decompose(slug, i, t.reason, overCapNote(p.over)));
+        }
       } catch (e) {
         p = { ok: false, reason: `split call failed: ${e instanceof Error ? e.message : String(e)}` };
       }

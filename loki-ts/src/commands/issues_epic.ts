@@ -15,7 +15,7 @@ export interface Slice {
   files: string[];
 }
 
-export type Decomposition = { ok: true; slices: Slice[]; parent: Record<string, string | null> } | { ok: false; reason: string };
+export type Decomposition = { ok: true; slices: Slice[]; parent: Record<string, string | null> } | { ok: false; reason: string; over?: number };
 
 export interface SliceResult {
   id: string;
@@ -60,7 +60,7 @@ export function parseDecomposition(text: string): Decomposition {
   const raw = (j as { slices?: unknown }).slices;
   if (!Array.isArray(raw)) return { ok: false, reason: 'the JSON has no "slices" array' };
   if (raw.length < MIN_SLICES) return { ok: false, reason: `a split needs at least ${MIN_SLICES} slices, got ${raw.length}` };
-  if (raw.length > MAX_SLICES) return { ok: false, reason: `a split may have at most ${MAX_SLICES} slices, got ${raw.length}` };
+  if (raw.length > MAX_SLICES) return { ok: false, reason: `a split may have at most ${MAX_SLICES} slices, got ${raw.length}`, over: raw.length };
   const slices: Slice[] = [];
   const seen = new Set<string>();
   for (const [k, r] of raw.entries()) {
@@ -117,7 +117,11 @@ export function parseDecomposition(text: string): Decomposition {
   return { ok: true, slices: order, parent };
 }
 
-export function decomposeBrief(slug: string, i: GhIssue, triageReason: string, outPath: string): string {
+/** The re-ask sent once when a split came back over the cap: names the cap and the count it got. */
+export const overCapNote = (got: number): string =>
+  `Your previous split had ${got} slices but the limit is ${MAX_SLICES}. Merge related slices so the plan has at most ${MAX_SLICES}, and write the corrected JSON object to the file.`;
+
+export function decomposeBrief(slug: string, i: GhIssue, triageReason: string, outPath: string, note = ""): string {
   return [
     "You are planning how an autonomous coding agent should deliver one GitHub issue that is too large for a single pull request.",
     `A triage pass judged it too large: ${oneLine(triageReason)}`,
@@ -134,6 +138,7 @@ export function decomposeBrief(slug: string, i: GhIssue, triageReason: string, o
     i.labels.length ? `Labels: ${i.labels.join(", ")}` : "",
     "",
     i.body.slice(0, 12000),
+    ...(note ? ["", note] : []),
   ].join("\n");
 }
 
@@ -217,8 +222,8 @@ export function renderEpicTree(n: number, title: string, rows: readonly SliceRes
 }
 
 /** One Opus planning session through the engine's own session runner; returns the JSON text it wrote (or its reply). */
-export function makeSessionDecompose(repoDir: string, lokiDir: string, provider: string): (slug: string, issue: GhIssue, triageReason: string) => Promise<string> {
-  return async (slug, issue, triageReason) => {
+export function makeSessionDecompose(repoDir: string, lokiDir: string, provider: string): (slug: string, issue: GhIssue, triageReason: string, note?: string) => Promise<string> {
+  return async (slug, issue, triageReason, note) => {
     const { mkdirSync, readFileSync, existsSync } = await import("node:fs");
     const { join } = await import("node:path");
     const { createSessionRunner } = await import("../engine10/session.ts");
@@ -229,7 +234,7 @@ export function makeSessionDecompose(repoDir: string, lokiDir: string, provider:
     const runner = createSessionRunner({ provider, lokiRoot: lokiDir });
     const r = (await runner.run({
       stage: "plan",
-      brief: decomposeBrief(slug, issue, triageReason, outPath),
+      brief: decomposeBrief(slug, issue, triageReason, outPath, note),
       tier: "planning",
       iterationId: `issues-decompose-${issue.number}-${Date.now()}`,
       limitS: 600,

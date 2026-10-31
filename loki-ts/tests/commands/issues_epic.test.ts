@@ -28,6 +28,7 @@ function harness(opts: {
   issues?: ReturnType<typeof issue>[];
   triage?: Record<number, Triage>;
   decompose?: Record<number, string>;
+  decomposeSeq?: Record<number, string[]>;
   verdicts?: Record<string, { verdict: string; rc?: number; pr?: boolean }>;
   confirm?: boolean[];
 }) {
@@ -35,6 +36,7 @@ function harness(opts: {
   const err: string[] = [];
   const ghCalls: string[][] = [];
   const decomposed: number[] = [];
+  const notes: string[] = [];
   const ran: { ref: string; opts: RunOpts }[] = [];
   const wtCreated: { name: string; base: string }[] = [];
   const prompts: string[] = [];
@@ -50,8 +52,11 @@ function harness(opts: {
       return { rc: 0, stdout: "", stderr: "" };
     },
     triage: async (_s: string, i: GhIssue) => opts.triage?.[i.number] ?? { decision: "too-large", reason: "several services" },
-    decompose: async (_s: string, i: GhIssue) => {
+    decompose: async (_s: string, i: GhIssue, _r: string, note?: string) => {
       decomposed.push(i.number);
+      if (note !== undefined) notes.push(note);
+      const seq = opts.decomposeSeq?.[i.number];
+      if (seq) return seq[Math.min(decomposed.filter((n) => n === i.number).length - 1, seq.length - 1)]!;
       return opts.decompose?.[i.number] ?? STACK;
     },
     runner: async (ref, o) => {
@@ -89,7 +94,7 @@ function harness(opts: {
     err: (s) => void err.push(s),
   };
   const sliceOf = (r: { ref: string }) => /^Slice (\S+) /.exec(r.ref)?.[1];
-  return { inject, out, err, ghCalls, decomposed, ran, wtCreated, prompts, sliceOf };
+  return { inject, out, err, ghCalls, decomposed, notes, ran, wtCreated, prompts, sliceOf };
 }
 
 describe("parseDecomposition (schema, L0: the model decides the split, the harness only validates)", () => {
@@ -173,6 +178,28 @@ describe("loki issues run: epic split", () => {
     expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
     expect(h.ran).toEqual([]);
     expect(h.out.join("")).toMatch(/\| #12 issue 12 \| too-large \| skipped: split refused: dependency cycle/);
+  });
+
+  test("a split over the cap is re-asked once with the cap and the count; a valid second reply runs the issue", async () => {
+    const six = plan(...["a", "b", "c", "d", "e", "f"].map((id) => slice(id)));
+    const three = plan(slice("s1"), slice("s2", ["s1"]), slice("s3"));
+    const h = harness({ issues: [issue(12)], decomposeSeq: { 12: [six, three] } });
+    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+    expect(h.decomposed).toEqual([12, 12]);
+    expect(h.notes).toHaveLength(1);
+    expect(h.notes[0]).toContain("6 slices");
+    expect(h.notes[0]).toContain("limit is 4");
+    expect(h.ran.map(h.sliceOf).sort()).toEqual(["s1", "s2", "s3"]);
+  });
+
+  test("a split over the cap twice is skipped as too-large after exactly one re-ask", async () => {
+    const six = plan(...["a", "b", "c", "d", "e", "f"].map((id) => slice(id)));
+    const five = plan(...["a", "b", "c", "d", "e"].map((id) => slice(id)));
+    const h = harness({ issues: [issue(12)], decomposeSeq: { 12: [six, five] } });
+    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+    expect(h.decomposed).toEqual([12, 12]);
+    expect(h.ran).toEqual([]);
+    expect(h.out.join("")).toMatch(/\| #12 issue 12 \| too-large \| skipped: split refused: a split may have at most 4 slices, got 5/);
   });
 
   test("--no-split keeps the MASS-1 behavior: no decomposition call, too-large is skipped", async () => {
