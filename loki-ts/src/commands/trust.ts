@@ -147,10 +147,96 @@ export function computePathSeals(lokiDir: string, repoDir: string = dirname(loki
   return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
-function formatPathSeals(seals: PathSeal[]): string {
+// ---- Earned-merge policy: the ONE place the threshold, protected-path and
+// revert rules live. The merge gate (autonomy/loki _pr_earned_merge_check) asks
+// `loki trust --check` and the per-path display below calls the same function.
+export interface EarnedPolicy {
+  minVerified: number;
+  protectedGlobs: string[];
+}
+
+export type EarnedCode = "eligible" | "protected" | "no-record" | "reverts-unknown" | "reverted" | "below-threshold";
+
+export interface EarnedDecision {
+  path: string;
+  eligible: boolean;
+  code: EarnedCode;
+  /** The refusal reason (gate wording, starts with the path); null when eligible. */
+  reason: string | null;
+  /** More VERIFIED receipts needed to reach the minimum (0 when met). */
+  needed: number;
+}
+
+const BUILTIN_PROTECTED = [".github/*", ".loki/*", ".env", ".env.*", "*/.env", "*/.env.*", ".envrc", "*/.envrc", "codeowners", "docs/codeowners"];
+
+// Default 20, floor 1; a value that is not all digits falls back to the default.
+export function earnedPolicyFromEnv(env: Record<string, string | undefined> = process.env): EarnedPolicy {
+  const raw = env.LOKI_EARNED_MERGE_MIN_VERIFIED;
+  const n = raw !== undefined && /^[0-9]+$/.test(raw) ? Number(raw) : 20;
+  const globs = (env.LOKI_EARNED_MERGE_PROTECTED ?? "").toLowerCase().split(/\s+/).filter((g) => g !== "");
+  return { minVerified: Math.max(1, n), protectedGlobs: globs };
+}
+
+// Shell-style glob, the dialect of a bash `case` pattern: * spans any
+// characters including "/", ? is one character, everything else is literal.
+function globMatch(glob: string, text: string): boolean {
+  let re = "";
+  for (const c of glob) {
+    if (c === "*") re += ".*";
+    else if (c === "?") re += ".";
+    else re += c.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`, "s").test(text);
+}
+
+export function isProtectedPath(path: string, policy: EarnedPolicy): boolean {
+  const lp = path.toLowerCase();
+  return [...BUILTIN_PROTECTED, ...policy.protectedGlobs].some((g) => globMatch(g, lp));
+}
+
+// Order is the gate's order: protected, no record, reverts, then the floor.
+export function earnedMergeDecision(path: string, seal: PathSeal | undefined, policy: EarnedPolicy): EarnedDecision {
+  const refuse = (code: EarnedCode, reason: string, needed: number): EarnedDecision => ({ path, eligible: false, code, reason, needed });
+  const needed = Math.max(0, policy.minVerified - (seal?.verified ?? 0));
+  if (isProtectedPath(path, policy)) return refuse("protected", `${path} is a protected path`, needed);
+  if (!seal) return refuse("no-record", `${path} has no Seal record`, needed);
+  if (seal.reverts === null) return refuse("reverts-unknown", `${path} revert status is unknown`, needed);
+  if (seal.reverts !== 0) return refuse("reverted", `${path} has ${seal.reverts} recorded revert(s)`, needed);
+  if (seal.verified < policy.minVerified) return refuse("below-threshold", `${path} has ${seal.verified} VERIFIED receipts, need ${policy.minVerified}`, needed);
+  return { path, eligible: true, code: "eligible", reason: null, needed: 0 };
+}
+
+function progressText(d: EarnedDecision): string {
+  switch (d.code) {
+    case "eligible": return "eligible for earned merge";
+    case "below-threshold": return `${d.needed} more needed`;
+    case "protected": return "refused: protected path, always PR-only";
+    case "reverted": return "refused: reverted in git history";
+    case "reverts-unknown": return "refused: reverts unknown (shallow clone or unreadable history)";
+    default: return "refused: no Seal record";
+  }
+}
+
+function formatPathSeals(seals: PathSeal[], policy: EarnedPolicy): string {
   if (seals.length === 0) return "";
-  const rows = seals.map((s) => `  ${s.path}: ${s.verified} VERIFIED, ${s.other} other, ${s.reverts === null ? "reverts unknown" : `${s.reverts} reverts`}`);
-  return `\nPer-path Seal record:\n${rows.join("\n")}\n`;
+  const rows = seals.map((s) => {
+    const rv = s.reverts === null ? "reverts unknown" : `${s.reverts} reverts`;
+    return `  ${s.path}: ${s.verified} of ${policy.minVerified} VERIFIED, ${s.other} other, ${rv}, ${progressText(earnedMergeDecision(s.path, s, policy))}`;
+  });
+  const head = `Earned-merge policy: ${policy.minVerified} VERIFIED receipts and 0 reverts per path (display only; auto-merge stays off unless LOKI_EARNED_MERGE=1)`;
+  return `\nPer-path Seal record:\n${head}\n${rows.join("\n")}\n`;
+}
+
+// `loki trust --check`: the merge gate's own decision, one line per input path:
+// "ok<TAB>path" or "refuse<TAB>path<TAB>reason".
+function formatChecks(paths: string[], seals: PathSeal[], policy: EarnedPolicy): string {
+  const by = new Map(seals.map((s) => [s.path, s]));
+  return paths
+    .map((p) => {
+      const d = earnedMergeDecision(p, by.get(p), policy);
+      return d.eligible ? `ok\t${p}\n` : `refuse\t${p}\t${d.reason}\n`;
+    })
+    .join("");
 }
 
 const HELP = `loki trust -- visible trust trajectory (R4)
@@ -158,6 +244,8 @@ const HELP = `loki trust -- visible trust trajectory (R4)
 Usage:
   loki trust             Pretty-print the per-project trust trajectory
   loki trust --json      Emit the trajectory as JSON
+  loki trust --check     Read paths (one per line) from stdin and print the
+                         earned-merge decision for each (used by the merge gate)
   loki trust --help      Show this help
 
 Shows whether the agent is earning autonomy on THIS repo over time:
@@ -167,7 +255,9 @@ Shows whether the agent is earning autonomy on THIS repo over time:
   - Human interventions      (lower is better, when recorded)
 
 It also prints a "Per-path Seal record" (VERIFIED receipts and git reverts
-per changed path; proof.json files_changed), and an "Outcome effort" block: accepted outcomes, misleading
+per changed path; proof.json files_changed) with each path's progress toward
+the earned-merge policy (LOKI_EARNED_MERGE_MIN_VERIFIED, default 20, and zero
+reverts) and why a path is refused (protected, reverted, reverts unknown), and an "Outcome effort" block: accepted outcomes, misleading
 completion rate (false VERIFIED over VERIFIED claims), cost per accepted
 (n/a when any cost is unmeasured), interventions by type, and minutes per
 accepted (waited, upper bound; active minutes are not measured). Definitions:
@@ -181,8 +271,9 @@ regressing axis); it never writes the policy file. Complements 'loki kpis' (sing
 snippet for the last sealed run (or the next step when there is none).
 `;
 
-export function runTrust(args: readonly string[]): number {
+export function runTrust(args: readonly string[], stdin?: string): number {
   let asJson = false;
+  let check = false;
   for (const a of args) {
     if (a === "--help" || a === "-h" || a === "help") {
       process.stdout.write(HELP);
@@ -192,12 +283,30 @@ export function runTrust(args: readonly string[]): number {
       asJson = true;
       continue;
     }
+    if (a === "--check") {
+      check = true;
+      continue;
+    }
     process.stderr.write(
       `loki trust: unknown arg: ${a}\nRun 'loki trust --help' for usage.\n`,
     );
     return 1;
   }
   const lokiDir = defaultLokiDir();
+  const policy = earnedPolicyFromEnv();
+  if (check) {
+    let input = stdin;
+    if (input === undefined) {
+      try {
+        input = readFileSync(0, "utf8");
+      } catch {
+        input = "";
+      }
+    }
+    const paths = input.split("\n").filter((l) => l !== "");
+    process.stdout.write(formatChecks(paths, computePathSeals(lokiDir), policy));
+    return 0;
+  }
   const traj = computeTrajectory(lokiDir, currentAutonomy(lokiDir));
   // Best-effort cache so the CLI, dashboard, and bash fallback share one
   // source of truth (parity with the bash route + dashboard endpoint).
@@ -207,7 +316,7 @@ export function runTrust(args: readonly string[]): number {
     const base = JSON.parse(formatTrajectoryJson(traj)) as Record<string, unknown>;
     process.stdout.write(JSON.stringify({ ...base, path_seals: seals }, null, 2) + "\n");
   } else {
-    process.stdout.write(formatTrajectoryHuman(traj) + "\n" + formatPathSeals(seals));
+    process.stdout.write(formatTrajectoryHuman(traj) + "\n" + formatPathSeals(seals, policy));
   }
   if (!asJson) {
     const badge = lastSealedBadge(lokiDir);
