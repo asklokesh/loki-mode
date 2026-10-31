@@ -422,7 +422,10 @@ def main(argv):
             # Shared worktree prep (D51-B05): per-base lock, clean start point, deps copied.
             git("branch", "-D", s["branch"], cwd=top)
             try:
-                worktree_prep.prepare_worktree(top, wt, s["branch"], base=s.get("base") or None)
+                prep = worktree_prep.prepare_worktree(top, wt, s["branch"], base=s.get("base") or None)
+                if prep.get("deps_skipped"):
+                    say("backlog: %s deps not copied (%s), the session installs them"
+                        % (s["label"], ", ".join(prep["deps_skipped"])))
                 r = None
             except (RuntimeError, subprocess.CalledProcessError) as e:
                 msg = getattr(e, "stderr", None) or str(e)

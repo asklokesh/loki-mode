@@ -71,6 +71,18 @@ class WorktreePrepTest(unittest.TestCase):
         self.assertEqual(res["deps"], "setup")
         self.assertTrue((Path(res["path"]) / "setup-ran").exists())
 
+    def test_unsafe_deps_skipped_not_refused(self):
+        (self.repo / ".gitignore").write_text("node_modules/\n.venv/\n")
+        git(self.repo, "add", ".gitignore")
+        git(self.repo, "commit", "-q", "-m", "ign")
+        bindir = self.repo / ".venv" / "bin"
+        bindir.mkdir(parents=True)
+        os.symlink("/usr/bin/env", str(bindir / "python"))
+        res = worktree_prep.prepare_worktree(str(self.repo), self.dest("wt5"), "b5")
+        self.assertEqual(res["deps"], "skipped")
+        self.assertEqual(res["deps_skipped"], [".venv"])
+        self.assertFalse((Path(res["path"]) / ".venv").exists())
+
     def test_lock_contention_times_out(self):
         import fcntl
         held = open(worktree_prep._lock_path(str(self.repo)), "w")
@@ -90,14 +102,15 @@ class WorktreePrepTest(unittest.TestCase):
             else:
                 os.environ["LOKI_PREP_LOCK_TIMEOUT"] = old
 
-    def test_relative_symlink_escape_refused(self):
+    def test_relative_symlink_escape_skipped(self):
         nm = self.repo / "node_modules"
         nm.mkdir()
         (nm / "ok.js").write_text("1\n")
         os.symlink("../../outside", nm / "escape")
         self.assertTrue(worktree_prep._escapes_source(str(nm)))
-        with self.assertRaises(RuntimeError):
-            worktree_prep.prepare_worktree(str(self.repo), self.dest("wt5"), "b5")
+        res = worktree_prep.prepare_worktree(str(self.repo), self.dest("wt6"), "b6")
+        self.assertEqual(res["deps_skipped"], ["node_modules"])
+        self.assertFalse((Path(res["path"]) / "node_modules").exists())
 
     def test_relative_symlink_inside_allowed_and_shebang_refused(self):
         nm = self.repo / "node_modules"

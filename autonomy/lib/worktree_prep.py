@@ -119,7 +119,8 @@ def _acquire_lock(lock):
             time.sleep(0.1)
 
 
-def _copy_deps(source, dest, start):
+def _copy_deps(source, dest, start, skipped=None):
+    """Copy ignored dep dirs; a dir that cannot be copied safely is left out and named in skipped."""
     copied = 0
     for name in DEP_DIRS:
         s = os.path.join(source, name)
@@ -130,9 +131,16 @@ def _copy_deps(source, dest, start):
         if _git(source, "ls-tree", "-d", start, name, check=False).stdout.strip():
             continue
         if _escapes_source(s):
-            raise RuntimeError("deps: copy unsafe, declare setup")
+            if skipped is None:
+                raise RuntimeError("deps: copy unsafe, declare setup")
+            skipped.append(name)
+            continue
         if not _cow_copy(s, os.path.join(dest, name)):
-            raise RuntimeError("deps: copy failed, declare setup")
+            if skipped is None:
+                raise RuntimeError("deps: copy failed, declare setup")
+            subprocess.run(["rm", "-rf", os.path.join(dest, name)], check=False)
+            skipped.append(name)
+            continue
         copied += 1
     return copied
 
@@ -152,14 +160,22 @@ def prepare_worktree(source_repo, dest, branch, setup=None, base=None):
         lock.close()
 
     deps = "none"
+    skipped = []
     if setup:
         r = subprocess.run(setup, shell=True, cwd=dest)
         if r.returncode != 0:
             raise RuntimeError("deps: setup command failed (exit %d)" % r.returncode)
         deps = "setup"
-    elif _copy_deps(source_repo, dest, base_sha):
-        deps = "cow" if sys.platform in ("darwin", "linux") else "copy"
-    return {"path": dest, "base_sha": base_sha, "deps": deps, "left_out_changes": left_out}
+    else:
+        if _copy_deps(source_repo, dest, base_sha, skipped):
+            deps = "cow" if sys.platform in ("darwin", "linux") else "copy"
+        elif skipped:
+            deps = "skipped"
+        if skipped:
+            print("worktree: deps not copied (%s): not safe to copy, the session installs them"
+                  % ", ".join(skipped), file=sys.stderr)
+    return {"path": dest, "base_sha": base_sha, "deps": deps, "left_out_changes": left_out,
+            "deps_skipped": skipped}
 
 
 def main(argv=None):
