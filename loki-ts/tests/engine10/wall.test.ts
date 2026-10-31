@@ -817,6 +817,28 @@ describe("engine10 wall base run, D42 (3)", () => {
     expect(classify({ runner: "pytest", path: "x" }, 0, "1 passed in 0.01s", repoDir, "project")).toBe("pass");
     rmSync(repoDir, { recursive: true, force: true });
   });
+
+  // The real runner, not a fake: a repo with a pytest file and no .venv runs under the system interpreter, and the row says so in the structured field the cheap-rung decision reads.
+  function noVenvRepo(): string {
+    const repoDir = repo();
+    mkdirSync(join(repoDir, "tests"));
+    writeFileSync(join(repoDir, "tests", "test_x.py"), "def test_x():\n    assert True\n", "utf8");
+    return repoDir;
+  }
+  test("the real runner's run() marks a not_run file with no project interpreter as interpreter: system", () => {
+    const repoDir = noVenvRepo();
+    const runner = new RealBaseTestRunner(null, 30000);
+    expect(runner.run(repoDir, [{ runner: "pytest", path: "tests/test_x.py" }])).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    expect(runner.lastNotRunFiles[0]?.interpreter).toBe("system");
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+  test("the real runner's runEach() marks a not_run file with no project interpreter as interpreter: system", async () => {
+    const repoDir = noVenvRepo();
+    const [r] = await new RealBaseTestRunner(null, 30000).runEach(repoDir, [{ runner: "pytest", path: "tests/test_x.py" }], 1);
+    expect(r?.not_run).toBe(1);
+    expect(r?.notRunFiles[0]?.interpreter).toBe("system");
+    rmSync(repoDir, { recursive: true, force: true });
+  });
 });
 
 // D77 / W1-S2: LOKI_E10_WALL_MANIFEST puts a signatures-only wall_manifest.txt in the Wall cwd.
