@@ -27,7 +27,20 @@ const PATCH_CMDS: ReadonlySet<string> = new Set(["diff", "show", "log", "whatcha
 /** Builtins that never run a clean/smudge/process filter or a textconv, so blanking repo drivers (one `git config` spawn per call) buys nothing.
  *  Only ref and config plumbing: anything that diffs, stats the worktree, checks out or writes (ls-files -m, status, add, log -p) stays blanked. */
 const DRIVER_FREE_CMDS: ReadonlySet<string> = new Set(["rev-parse", "symbolic-ref", "rev-list", "for-each-ref", "merge-base", "show-ref", "config"]);
-const OPT_WITH_VALUE: ReadonlySet<string> = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env", "--attr-source"]);
+const OPT_WITH_VALUE: ReadonlySet<string> = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env", "--attr-source", "--shallow-file", "--super-prefix"]);
+const OPT_NO_VALUE: ReadonlySet<string> = new Set(["-P", "--no-pager", "-p", "--paginate", "--bare", "--no-replace-objects", "--literal-pathspecs", "--no-literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--no-lazy-fetch"]);
+/** Fail closed: true only when every token before the subcommand is a recognised global option (with its value if it takes one) and the
+ *  subcommand is driver-free. An unknown leading option could swallow the next token as its value, so it means "blank". */
+function skipsDriverScan(args: readonly string[]): boolean {
+  let i = 0;
+  while (i < args.length && args[i]!.startsWith("-")) {
+    const a = args[i]!;
+    if (OPT_WITH_VALUE.has(a)) { if (i + 1 >= args.length) return false; i += 2; continue; }
+    if (OPT_NO_VALUE.has(a) || /^--(git-dir|work-tree|namespace|exec-path|config-env|attr-source|shallow-file|super-prefix)=/.test(a)) { i++; continue; }
+    return false;
+  }
+  return DRIVER_FREE_CMDS.has(args[i] ?? "");
+}
 const SECRET_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK"] as const;
 
 /** A copy of env without SSH_AUTH_SOCK and with every ambient GitHub credential withheld (FC-90, credential_env.ts): the token
@@ -198,7 +211,7 @@ export function safeGitArgs(args: readonly string[], allowToken = false, repoDir
   const cfg = [...(allowToken ? CREDENTIAL_CONFIG : SAFE_GIT_CONFIG), ...DRIVER_CONFIG];
   const flags = cfg.flatMap((v, i) => (i % 2 === 1 && !off.has(v) ? [cfg[i - 1]!, v] : []));
   const net = allowToken && repoDir ? netCommandOverrides(repoDir, env) : { cfg: [], opts: [] };
-  return [...flags, ...net.cfg, ...(repoDir && !keep.repoDrivers && !DRIVER_FREE_CMDS.has(args[cmdIndex(args)] ?? "") ? driverKeys(repoDir).flatMap((k) => ["-c", `${k}=`]) : []), ...(allowToken ? noSubmoduleRecursion(injectPackOpts(noExtDiff(args), net.opts)) : injectPackOpts(noExtDiff(args), net.opts))];
+  return [...flags, ...net.cfg, ...(repoDir && !keep.repoDrivers && !skipsDriverScan(args) ? driverKeys(repoDir).flatMap((k) => ["-c", `${k}=`]) : []), ...(allowToken ? noSubmoduleRecursion(injectPackOpts(noExtDiff(args), net.opts)) : injectPackOpts(noExtDiff(args), net.opts))];
 }
 
 /** allowToken fetch and pull: a submodule has its own repo-local config (core.sshCommand, proxy, TLS keys) that the superproject-only

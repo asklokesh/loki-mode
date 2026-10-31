@@ -293,6 +293,25 @@ test("hung git config: driverKeys and netCommandOverrides time out and fail clos
   }
 });
 
+test("--shallow-file swallowing 'config' cannot smuggle a diff past the driver blanking", () => {
+  const mark = join(root, "driver-hit.txt"), drv = join(root, "drv.sh");
+  writeFileSync(drv, `#!/bin/sh\necho "driver $0" >> "${mark}"\ncat "$2" 2>/dev/null\nexit 0\n`); chmodSync(drv, 0o755);
+  g("checkout", "-q", "-b", "drvside"); writeFileSync(join(repo, "a.txt"), "changed\n"); g("commit", "-qam", "side");
+  writeFileSync(join(repo, ".gitattributes"), "* diff=evil filter=evil\n");
+  g("config", "diff.evil.command", drv); g("config", "diff.evil.textconv", drv); g("config", "filter.evil.process", drv); g("config", "filter.evil.clean", drv);
+  rmSync(mark, { force: true });
+  try {
+    safeGitSpawn(repo, ["--shallow-file", "config", "diff", "other", "drvside"], { encoding: "utf8" });
+    expect(existsSync(mark)).toBe(false);
+    safeGitSpawn(repo, ["rev-parse", "HEAD"], { encoding: "utf8" });
+    expect(existsSync(mark)).toBe(false);
+  } finally {
+    rmSync(join(repo, ".gitattributes"), { force: true });
+    for (const k of ["diff.evil.command", "diff.evil.textconv", "filter.evil.process", "filter.evil.clean"]) g("config", "--unset", k);
+    g("checkout", "-q", "-"); g("branch", "-qD", "drvside");
+  }
+});
+
 test("driver blanking is skipped only for builtins that cannot run a filter or textconv", () => {
   g("config", "filter.canary.clean", "false"); g("config", "diff.canary.textconv", "false");
   try {
@@ -300,5 +319,10 @@ test("driver blanking is skipped only for builtins that cannot run a filter or t
     for (const cmd of ["status", "diff", "log", "ls-files", "add", "checkout", "show", "cat-file"]) expect(safeGitArgs([cmd], false, repo)).toContain("filter.canary.clean=");
     expect(safeGitArgs(["-C", repo, "rev-parse", "HEAD"], false, repo)).not.toContain("filter.canary.clean=");
     expect(safeGit(repo, ["rev-parse", "--is-inside-work-tree"]).trim()).toBe("true");
+    // fail closed: an unknown or value-taking leading option means the subcommand is not trusted, so the scan stays on
+    expect(safeGitArgs(["--no-pager", "-C", repo, "rev-parse", "HEAD"], false, repo)).not.toContain("filter.canary.clean=");
+    expect(safeGitArgs(["--shallow-file", "x", "rev-parse", "HEAD"], false, repo)).not.toContain("filter.canary.clean=");
+    expect(safeGitArgs(["--some-unknown-opt", "rev-parse", "HEAD"], false, repo)).toContain("filter.canary.clean=");
+    expect(safeGitArgs(["--shallow-file"], false, repo)).toContain("filter.canary.clean=");
   } finally { g("config", "--unset", "filter.canary.clean"); g("config", "--unset", "diff.canary.textconv"); }
 });
