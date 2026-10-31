@@ -10,6 +10,7 @@ import { FINISH_LINE } from "../e10ext/context.ts";
 import { wallModel } from "../engine10/sizing.ts";
 import { assertionCount, changedAssertion, changedRegion, editScopeViolation, quoteInSpec, testSpans, wallAnchor, type WallDefect } from "./wall_owned.ts";
 import { safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
+import { sealedWallDir } from "./check_result.ts";
 import { vacuousCheck } from "../project_model/conventions.ts";
 import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
 import { taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
@@ -179,7 +180,7 @@ export async function adjudicateWallConflict(ctx: RunContext, first: SessionRunO
     const onBase = runCheck(base, ref);
     if (onBase !== "fail") { restore(); declined(onBase === "not_run" ? "the replacement could not be run on the base tree (not_run), so red-on-base is unproven" : "the replacement passes on the base tree, so it does not discriminate"); return null; }
     // apply: tree file, in-memory read-only copy, sealed sha and sealed copy together, then re-check against what the seal holds
-    f.content = next; const sealedCopy = join(ctx.runDir, "wall", name);
+    f.content = next; const sealedCopy = join(sealedWallDir(ctx.runDir), name);
     if (existsSync(dirname(sealedCopy))) writeFileSync(sealedCopy, next, "utf8");
     sf.sha256 = createHash("sha256").update(next).digest("hex");
     const sealedNow = existsSync(sealedCopy) ? readFileSync(sealedCopy, "utf8") : null;
