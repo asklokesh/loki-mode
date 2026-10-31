@@ -1278,6 +1278,15 @@ done
     const pass = { result: "pass" as const, n: 3 };
     for (const line of ["pytest -q tests/go", "make test DIR=go", "make test GO=gcc", "make test", "npm test -- --grep cargo", "pytest -q tests/cross", "make test DIR=cargo", "make test CARGO=gcc", "python3 -c 'print(1)'", "${CC:-gcc} test"]) { expect([line, goRunner(line)]).toEqual([line, {}]); expect(await corroboratePass(pass, "", line, undefined, o)).toEqual(pass); }
   });
+  test("HV1-03i: a go run behind a default-value expansion of an unrelated variable name is not a pass", async () => {
+    const o = { cwd: tmpdir(), env: process.env }, line = "${GOCMD:-go} test ./...";
+    expect([line, goRunner(line)]).toEqual([line, { runner: "go" }]);
+    expect([line, (await corroboratePass({ result: "pass", n: 2 }, GO_V, line, undefined, o)).result]).toEqual([line, "not_run"]);
+  });
+  test("HV1-03i: a cargo run behind a default-value expansion of an unrelated variable name is not a pass", async () => {
+    const o = { cwd: tmpdir(), env: process.env }, line = "${X:-cargo} test", out = "running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    expect([line, (await corroboratePass({ result: "pass", n: 2 }, out, line, undefined, o)).result]).toEqual([line, "not_run"]);
+  });
   test("spawnCollect leaves no watchdog child after a normal finish or an abort", async () => {
     const dogs = (): number[] => (spawnSync("ps", ["-ax", "-o", "pid=,command="], { encoding: "utf8" }).stdout ?? "").split("\n").filter((l) => l.includes(`const O = ${process.pid},`)).map((l) => Number(l.trim().split(/\s+/)[0]));
     const before = new Set(dogs()), fresh = (): number[] => dogs().filter((p) => !before.has(p));
