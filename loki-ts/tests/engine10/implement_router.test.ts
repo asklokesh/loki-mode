@@ -1,5 +1,5 @@
 // ROUTER-1 R1-11: routed executor in implement, triggers b (LOKI_ESCALATE) and c (SPEC_CONFLICT), per-unit ladder, start on haiku or sonnet.
-import { rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -7,8 +7,14 @@ import { implementStage } from "../../src/engine10/stages/implement.ts";
 import { climb } from "../../src/runner/model_rank.ts";
 import type { RunContext, SessionResult, SessionRunOptions, StageName } from "../../src/engine10/types.ts";
 
-const saved = process.env["LOKI_ROUTER"];
-afterEach(() => { rmSync(join(tmpdir(), "loki-r11-run"), { recursive: true, force: true }); if (saved === undefined) delete process.env["LOKI_ROUTER"]; else process.env["LOKI_ROUTER"] = saved; });
+const saved = process.env["LOKI_ROUTER"], savedLean = process.env["LOKI_LEAN"];
+const scratch: string[] = [];
+afterEach(() => {
+  rmSync(join(tmpdir(), "loki-r11-run"), { recursive: true, force: true });
+  for (const d of scratch.splice(0)) rmSync(d, { recursive: true, force: true });
+  if (saved === undefined) delete process.env["LOKI_ROUTER"]; else process.env["LOKI_ROUTER"] = saved;
+  if (savedLean === undefined) delete process.env["LOKI_LEAN"]; else process.env["LOKI_LEAN"] = savedLean;
+});
 
 const ok: SessionResult = { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 1, killed: false };
 const esc: SessionResult = { ...ok, markers: { done: true, alreadyDone: null, specConflict: null, escalate: "advisor: too subtle" } };
@@ -17,10 +23,10 @@ const conflict: SessionResult = { ...ok, markers: { done: false, alreadyDone: nu
 // A valid Opus route record (R1-10 parseUnits output): every unit haiku with a reason, nothing NOT PROVEN.
 const HAIKU_PLAN = { units: [{ id: "u1", kind: "impl", executor: "haiku", reason: "mechanical rename" }], route_not_proven: [] };
 
-function run(results: SessionResult[], plan: Record<string, unknown> | undefined, model = "claude (provider default)") {
+function run(results: SessionResult[], plan: Record<string, unknown> | undefined, model = "claude (provider default)", intake: Record<string, unknown> = {}) {
   const calls: SessionRunOptions[] = [];
   const events: { type: string; data: Record<string, unknown> }[] = [];
-  const outputs: Partial<Record<StageName, Record<string, unknown>>> = { intake: { task: "t" }, ...(plan ? { plan } : {}) };
+  const outputs: Partial<Record<StageName, Record<string, unknown>>> = { intake: { task: "t", ...intake }, ...(plan ? { plan } : {}) };
   const ctx = {
     runId: "e10-r11", repoDir: "/nonexistent-r11", runDir: join(tmpdir(), "loki-r11-run"), baseSha: "x", branch: "b", provider: "claude", model, deep: false, capS: 900,
     emit: (type: string, _s: unknown, data: Record<string, unknown>) => events.push({ type, data }),
@@ -97,5 +103,31 @@ describe("R1-12 ladder", () => {
     expect(climb("u1", "claude-opus-5-5", "stall", "e")).toBeNull();
     expect(climb("u1", "sonnet", "spec_conflict", "e")).toBeNull();
     expect(climb("u2", "haiku", "spec_conflict", "e")?.unit).toBe("u2");
+  });
+});
+
+describe("LEAN-5 size reaches the implement start", () => {
+  const OPUS = "claude-opus-4-1";
+  const repoMap = (files: string[]): string => { const d = mkdtempSync(join(tmpdir(), "loki-lean5-")); scratch.push(d); const f = join(d, "repomap.json"); writeFileSync(f, JSON.stringify({ files, entries: [], truncated: false })); return f; };
+  test("LOKI_ROUTER=1 + LOKI_LEAN=1: a normal and a small task start on sonnet through routeStart, source lean", async () => {
+    process.env["LOKI_ROUTER"] = "1"; process.env["LOKI_LEAN"] = "1";
+    const normal = await run([ok], undefined, OPUS);
+    expect(normal.calls[0]!.model).toMatch(/sonnet/);
+    expect(normal.events.find((e) => e.type === "route")?.data).toMatchObject({ unit: "run", source: "lean" });
+    const small = await run([ok], undefined, OPUS, { task: "fix a.ts", repomap_ref: repoMap(["src/a.ts"]), testmap: { runners: [{ name: "bun" }], tests: [] } });
+    expect(small.calls[0]!.model).toMatch(/sonnet/);
+    expect(small.events.find((e) => e.type === "route")?.data).toMatchObject({ source: "lean" });
+  });
+  test("a large task (names more than 8 repo files) does not start on sonnet under LOKI_LEAN", async () => {
+    process.env["LOKI_ROUTER"] = "1"; process.env["LOKI_LEAN"] = "1";
+    const files = Array.from({ length: 9 }, (_, i) => `src/m${i}.ts`);
+    const { calls, events } = await run([ok], undefined, OPUS, { task: "change " + files.map((f) => f.slice(4)).join(" "), repomap_ref: repoMap(files) });
+    expect(calls[0]!.model).not.toMatch(/sonnet/);
+    expect(events.find((e) => e.type === "route")?.data["source"]).not.toBe("lean");
+  });
+  test("LOKI_LEAN off: the same normal task does not start on sonnet", async () => {
+    process.env["LOKI_ROUTER"] = "1"; delete process.env["LOKI_LEAN"];
+    const { calls } = await run([ok], undefined, OPUS);
+    expect(calls[0]!.model).not.toMatch(/sonnet/);
   });
 });

@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { claudeProvider } from "../../src/runner/providers.ts";
 import { _resetClaudeHelpCacheForTest } from "../../src/providers/claude_flags.ts";
 import { PROVIDER_DEFAULT_MODEL, createSessionRunner, resolveModel, sessionPinModel } from "../../src/engine10/session.ts";
-import { routedFix } from "../../src/runner/router/unit_model.ts";
+import { routeRecord, routedFix } from "../../src/runner/router/unit_model.ts";
 import { fixStage } from "../../src/engine10/stages/fix.ts";
 import { modelDowngrades } from "../../src/runner/model_downgrades.ts";
 import type { RunContext, SessionRunOptions } from "../../src/engine10/types.ts";
@@ -237,4 +237,44 @@ describe("FC-ENGINE10-IGNORES-SESSION-MODEL-PIN", () => {
       expect(bash.stdout.trim()).toBe(sessionPinModel() as string);
     });
   }
+});
+
+// LEAN-5: LOKI_LEAN=1 starts a small or normal implement unit on sonnet and climbs exactly one rung after the first code-owned failed verify.
+describe("LEAN-5 implement tier ladder", () => {
+  const LK = ["LOKI_LEAN", "LOKI_ROUTER"], ls: Record<string, string | undefined> = {};
+  beforeEach(() => { for (const k of LK) { ls[k] = process.env[k]; delete process.env[k]; } });
+  afterEach(() => { for (const k of LK) { if (ls[k] === undefined) delete process.env[k]; else process.env[k] = ls[k]; } });
+  const OPUS = "claude-opus-4-1", code = { repeated: false, stall: false, groups: [{ signature: "test:a.test.ts" }], reason: "verify failed" };
+  const rec = (size: string | undefined, run = OPUS) => routeRecord(run, undefined, undefined, size);
+  test("lean on: a small or normal task starts on sonnet, a large one and an unknown size keep the run floor, never opus", () => {
+    process.env["LOKI_LEAN"] = "1";
+    for (const sz of ["small", "normal"]) { const r = rec(sz); expect(r.model).toMatch(/sonnet/); expect(r.source).toBe("lean"); expect(r.valid).toBe(true); }
+    expect(rec("large")).toEqual(routeRecord(OPUS, undefined)); expect(rec(undefined)).toEqual(routeRecord(OPUS, undefined));
+    expect(rec("small", "claude-sonnet-4-5").source).toBe("default"); // a run already at sonnet is not lifted or relabelled
+  });
+  test("a failed verify escalates exactly one rung to the run model; a lint-only failure does not", () => {
+    process.env["LOKI_LEAN"] = "1";
+    const out = { implement: { route_model: rec("small").model } };
+    const r = routedFix(OPUS, out, code);
+    expect(r.pin).toBe(OPUS); expect(r.climbed).toMatchObject({ unit: "run", trigger: "code_fail" }); expect(r.climbed?.from).toMatch(/sonnet/); expect(r.climbed?.to).toBe(OPUS);
+    expect(routedFix(OPUS, { fix: { model: OPUS } }, code).climbed).toBeNull(); // already on the run model: nothing further from lean
+    expect(routedFix(OPUS, out, { ...code, groups: [{ signature: "lint:eslint" }] }).pin).toMatch(/sonnet/);
+  });
+  test("lean off is byte-identical to today, whatever the size", () => {
+    for (const lean of [undefined, "0", "off"]) {
+      if (lean !== undefined) process.env["LOKI_LEAN"] = lean; else delete process.env["LOKI_LEAN"];
+      expect(JSON.stringify(rec("small"))).toBe(JSON.stringify(routeRecord(OPUS, undefined)));
+      expect(routedFix(OPUS, { implement: { route_model: "claude-sonnet-4-5" } }, code)).toEqual({ pin: undefined, climbed: null });
+    }
+    delete process.env["LOKI_LEAN"];
+    expect(routedFix(OPUS, { implement: { route_model: "claude-sonnet-4-5" } }, code).climbed).toBeNull(); // today: a below-floor carry without a route record is floored, no lean climb
+    expect(modelDowngrades("claude", { LOKI_ROUTER: "1" } as NodeJS.ProcessEnv, OPUS).some((d) => /LOKI_LEAN/.test(d.reason))).toBe(false);
+  });
+  test("LOKI_MODEL_OVERRIDE still wins: no lean downgrade is recorded and the router pin is off", () => {
+    const env = { LOKI_LEAN: "1", LOKI_ROUTER: "1", LOKI_MODEL_OVERRIDE: "opus" } as NodeJS.ProcessEnv;
+    expect(modelDowngrades("claude", env, OPUS).some((d) => /LOKI_LEAN/.test(d.reason))).toBe(false);
+    expect(modelDowngrades("claude", { LOKI_LEAN: "1", LOKI_ROUTER: "1" } as NodeJS.ProcessEnv, OPUS).some((d) => /LOKI_LEAN/.test(d.reason))).toBe(true);
+    process.env["LOKI_LEAN"] = "1"; process.env["LOKI_ROUTER"] = "1"; process.env["LOKI_MODEL_OVERRIDE"] = "opus";
+    try { expect(routeRecord(OPUS, undefined, undefined, "small", process.env).source).not.toBe("lean"); } finally { delete process.env["LOKI_MODEL_OVERRIDE"]; }
+  });
 });
