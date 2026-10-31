@@ -35,10 +35,13 @@ export function impactedTests(ctx: RunContext): string[] {
 }
 
 export const briefCtx = (ctx: RunContext): string => briefContext(ctx, { select: selectRelevantFiles, cmd: (t, repoDir) => { const c = commandFor(t, repoDir, loadProjectApi(repoDir)); return [c.cmd, c.args, c.interpreter, c.pkgRoot]; } });
+// Plan skipped: one fixed line, no per-task text, placed right after FIXED_RULES so every skipped-plan brief shares the same cache-stable prefix.
+export const FOLD_PLAN_INSTRUCTION = "Before editing, write the files you will change and the test you will run, in at most 10 lines, then proceed.";
 const REPRO_LINE = "If the task reports a bug, first add a new test function that reproduces it, run it and see it fail, then fix the code and run that test again.";
 export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = "", spec: string | null = null, assumptions: unknown = undefined): string {
   return withStagePrefix([ // FIXED_RULES leads and FINISH_LINE closes, both byte-identical per task
     FIXED_RULES,
+    ...(plan ? [] : [FOLD_PLAN_INSTRUCTION]),
     ...taskBlock(task),
     ...assumptionsBlock(assumptions),
     ...(spec ? [spec] : []), // SPEC-FIRST-INTENT: the user-edited spec is the authoritative intent; absent adds nothing

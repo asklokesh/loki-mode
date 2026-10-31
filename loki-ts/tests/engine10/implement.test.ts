@@ -14,6 +14,7 @@ import { createSessionRunner, childEnv } from "../../src/engine10/session.ts";
 const createChildEnv = (o: SessionRunOptions, provider: string) => childEnv(o, { provider } as never);
 import {
   buildImplementBrief,
+  FOLD_PLAN_INSTRUCTION,
   implementStage,
   learningsBlock,
   type ReadOnlyFile,
@@ -110,7 +111,9 @@ describe("engine10 implement brief: LOKI_E10_REPRO (TEN-QUALITY-08)", () => {
     expect(b.split(SENT).length - 1).toBe(1);
   });
   test("flag unset: lean brief is byte-identical to the pre-change golden", () => {
-    const b = withRepro(undefined, lean);
+    const withFold = withRepro(undefined, lean);
+    expect(withFold).toContain(`${FOLD_PLAN_INSTRUCTION}\n\n`); // the only addition for a skipped plan: one fixed line after FIXED_RULES
+    const b = withFold.replace(`${FOLD_PLAN_INSTRUCTION}\n\n`, "");
     expect(b.length).toBe(GOLDEN.len);
     expect(new Bun.CryptoHasher("sha256").update(b).digest("hex")).toBe(GOLDEN.sha);
     expect(b).not.toContain(SENT);

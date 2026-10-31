@@ -3,7 +3,7 @@
 // E-16 wall check (docs/v10/ENGINE.md section 16 / BOARD). Depends on
 // machine.ts/session.ts (E-02/E-07) and the repo map (E-04) only through the
 // RunContext/SessionRunner/RepoMap shapes, so every sibling here is a fake.
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { MAX_RELEVANT_FILES } from "../../src/engine10/relevant_files.ts";
 import { rankRelevant } from "../../src/util/relevance.ts";
 import { execFileSync } from "node:child_process";
@@ -245,6 +245,10 @@ describe("engine10 plan brief", () => {
 });
 
 describe("engine10 plan stage", () => {
+  // These cases exercise the plan session; auto mode folds the plan into implement for a non-large task.
+  let prevPlan: string | undefined;
+  beforeAll(() => { prevPlan = process.env.LOKI_E10_PLAN; process.env.LOKI_E10_PLAN = "always"; });
+  afterAll(() => { if (prevPlan === undefined) delete process.env.LOKI_E10_PLAN; else process.env.LOKI_E10_PLAN = prevPlan; });
   test("reads the session's plan-output.txt, truncates it, and reports relevant_files", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-e16-"));
     const repomapPath = join(dir, "repomap.json");

@@ -1,7 +1,8 @@
 // E-45 wall check: small tasks make 2 sessions (wall on sonnet, implement), normal 3;
 // the wall brief stays under a fixed size; the variant is recorded.
 import { afterAll, afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { cpSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runMachine } from "../../src/engine10/machine.ts";
@@ -9,9 +10,11 @@ import { childEnv, createSessionRunner } from "../../src/engine10/session.ts";
 import { readFileSync } from "node:fs";
 import { loadRepoMap, cascadeImplementModel, modelRank, planMode, wallLimitS, resolveModelAlias, namedFiles, sizeTask, smallMaxChars, smallTaskPath, wallConcurrent, wallFirstModel, wallMaxTokens, wallOutputCap, wallModel } from "../../src/engine10/sizing.ts";
 import { readPlanScope, planOutOfRepo } from "../../src/util/run_cap.ts";
-import { planStage } from "../../src/engine10/stages/plan.ts";
+import { FIXED_RULES } from "../../src/e10ext/context.ts";
+import { keepsPlanForConsentOrCap, planStage } from "../../src/engine10/stages/plan.ts";
+import { discoverProjectModel } from "../../src/project_model/discover.ts";
 import { wallStage, buildWallBrief, WALL_MAP_MAX_LINES } from "../../src/engine10/stages/wall.ts";
-import { implementStage } from "../../src/engine10/stages/implement.ts";
+import { FOLD_PLAN_INSTRUCTION, buildImplementBrief, implementStage } from "../../src/engine10/stages/implement.ts";
 import { fixStage } from "../../src/engine10/stages/fix.ts";
 import type { RunContext, SessionRunOptions, Stage, StageName, TestMap, TestRef } from "../../src/engine10/types.ts";
 
@@ -26,7 +29,7 @@ const files = (n: number) => Array.from({ length: n }, (_, i) => `src/mod${i}.ts
 // A relevant-tests fake: every changed file maps to one impacted test, so the E-64 lean path applies.
 const impactedOne: (m: TestMap, f: string[]) => TestRef[] = (_m, f) => (f.length ? [{ runner: "bun", path: "tests/a.test.ts" }] : []);
 
-async function run(task: string, repoFiles: string[], opts: { impacted?: (m: TestMap, f: string[]) => TestRef[]; model?: string; testmap?: TestMap } = {}) {
+async function run(task: string, repoFiles: string[], opts: { impacted?: (m: TestMap, f: string[]) => TestRef[]; model?: string; testmap?: TestMap; repoDir?: string } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "loki-e45-"));
   dirs.push(dir);
   const repomapRef = join(dir, "repomap.json");
@@ -36,7 +39,7 @@ async function run(task: string, repoFiles: string[], opts: { impacted?: (m: Tes
   const intake: Stage = { name: "intake", targetS: 1, limitS: 5, run: async () => ({ status: "completed", data: { task, repomap_ref: repomapRef, testmap: opts.testmap ?? TM } }) };
   const stages: Partial<Record<StageName, Stage>> = { intake, plan: planStage, wall: wallStage, implement: implementStage };
   const ctx: RunContext = {
-    runId: "e10-e45", repoDir: dir, runDir: dir, baseSha: "abc", branch: "loki/e10-e45", provider: "claude", model: opts.model ?? "run-model",
+    runId: "e10-e45", repoDir: opts.repoDir ?? dir, runDir: dir, baseSha: "abc", branch: "loki/e10-e45", provider: "claude", model: opts.model ?? "run-model",
     deep: false, capS: 900,
     emit: (type, stage, data) => { events.push({ type, stage, data }); },
     sessions: { run: async (o) => { calls.push(o); return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false }; } },
@@ -48,6 +51,26 @@ async function run(task: string, repoFiles: string[], opts: { impacted?: (m: Tes
   await runMachine(ctx, { load: async (n) => stages[n] ?? null });
   return { calls, events, runDir: dir };
 }
+
+// A real git repo whose cached Project Model has 2 packages (the recorded firelater-17 answer) or 1 (frontend dropped).
+async function pmRepo(multi: boolean): Promise<string> {
+  const fix = join(import.meta.dir, "..", "fixtures", "project-model", "firelater-17");
+  const d = mkdtempSync(join(tmpdir(), "loki-e45pm-")); dirs.push(d);
+  cpSync(fix, d, { recursive: true }); rmSync(join(d, "response.json"));
+  const ans = JSON.parse(readFileSync(join(fix, "response.json"), "utf8")) as Record<string, any>;
+  if (!multi) { ans.packages = ans.packages.filter((p: any) => p.root === "backend"); ans.fingerprintFiles = ans.fingerprintFiles.filter((f: string) => f.startsWith("backend/")); rmSync(join(d, "frontend"), { recursive: true, force: true }); }
+  execFileSync("git", ["init", "-q"], { cwd: d, stdio: "pipe" }); execFileSync("git", ["add", "-A", "-f"], { cwd: d, stdio: "pipe" });
+  const runner = { run: async (o: SessionRunOptions) => { writeFileSync(/\(absolute path\): (\S+)/.exec(o.brief)![1]!, JSON.stringify(ans)); return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false }; } };
+  await discoverProjectModel({ runId: "pm", repoDir: d, runDir: join(d, ".loki", "runs", "pm"), sessions: runner } as unknown as RunContext, new AbortController().signal);
+  return d;
+}
+const withStderrTty = async (tty: boolean, fn: () => Promise<void>): Promise<void> => {
+  const was = Object.getOwnPropertyDescriptor(process.stderr, "isTTY"), pm = process.env.LOKI_E10_PROJECT_MODEL;
+  Object.defineProperty(process.stderr, "isTTY", { value: tty, configurable: true });
+  process.env.LOKI_E10_PROJECT_MODEL = "1"; // tests/preload.ts turns the Project Model off; the cap rule reads it
+  try { await fn(); } finally {
+    if (pm === undefined) delete process.env.LOKI_E10_PROJECT_MODEL; else process.env.LOKI_E10_PROJECT_MODEL = pm; if (was) Object.defineProperty(process.stderr, "isTTY", was); else delete (process.stderr as { isTTY?: boolean }).isTTY; }
+};
 
 describe("engine10 E-45 sizing", () => {
   it("a small task makes exactly 2 sessions: wall pinned to sonnet, then implement", async () => {
@@ -107,10 +130,90 @@ describe("engine10 E-45 sizing", () => {
     expect(events.find((e) => e.type === "variant")!.data).toMatchObject({ small_task_path: "wall" });
   });
 
-  it("a normal task makes 3 sessions and records the variant", async () => {
+  it("a normal (medium) task folds the plan into the implement brief: no plan session, plan_skipped true", async () => {
     const { calls, events } = await run("x".repeat(700), files(10));
+    expect(calls.map((c) => c.stage).sort()).toEqual(["implement", "wall"]);
+    expect(events.find((e) => e.type === "variant")!.data).toMatchObject({ size: "normal", plan_skipped: true });
+    expect(events.find((e) => e.type === "stage.skipped" && e.stage === "plan")?.data.reason).toBe("normal task: implementer plans");
+    expect(calls.find((c) => c.stage === "implement")!.brief).toContain(FOLD_PLAN_INSTRUCTION);
+  });
+
+  it("headless (no LOKI_CONFIRM, no terminal) a normal task still skips the plan", async () => {
+    await withStderrTty(false, async () => {
+      delete process.env.LOKI_CONFIRM;
+      const { calls } = await run("x".repeat(700), files(10));
+      expect(calls.map((c) => c.stage)).not.toContain("plan");
+    });
+  });
+
+  it("LOKI_CONFIRM=1 on a normal task with LOKI_E10_PLAN unset keeps the plan session (the consent question lives there)", async () => {
+    process.env.LOKI_CONFIRM = "1";
+    try {
+      delete process.env.LOKI_E10_PLAN;
+      const { calls, events } = await run("x".repeat(700), files(10));
+      expect(calls.map((c) => c.stage)).toContain("plan");
+      expect(events.find((e) => e.type === "variant")!.data).toMatchObject({ size: "normal", plan_skipped: false });
+    } finally { delete process.env.LOKI_CONFIRM; }
+  });
+
+  it("the intent card shown on an attached terminal keeps the plan of a normal task only; LOKI_INTENT_CARD=0 does not; LOKI_CONFIRM keeps it at every size", () => {
+    const k = (env: NodeJS.ProcessEnv, tty: boolean, size: string) => keepsPlanForConsentOrCap(env, tty, size, () => 1, () => 0);
+    expect(k({}, true, "normal")).toBe(true);
+    expect(k({}, false, "normal")).toBe(false);
+    expect(k({}, true, "small")).toBe(false);
+    expect(k({ LOKI_INTENT_CARD: "0" }, true, "normal")).toBe(false);
+    expect(k({ LOKI_CONFIRM: "1", LOKI_INTENT_CARD: "0" }, false, "small")).toBe(true);
+    let reads = 0;
+    expect(keepsPlanForConsentOrCap({ LOKI_CONFIRM: "1" }, false, "small", () => { reads++; return 0; }, () => { reads++; return 2; })).toBe(true);
+    expect(reads).toBe(0);
+  });
+
+  it("small task on a terminal without LOKI_CONFIRM does not plan; with LOKI_CONFIRM=1 it plans; a normal task on a terminal plans", async () => {
+    await withStderrTty(true, async () => {
+      delete process.env.LOKI_CONFIRM; delete process.env.LOKI_E10_PLAN;
+      expect((await run("fix the off-by-one in mod1.ts", files(10))).calls.map((c) => c.stage)).not.toContain("plan");
+      expect((await run("x".repeat(700), files(10))).calls.map((c) => c.stage)).toContain("plan");
+      process.env.LOKI_CONFIRM = "1";
+      try { expect((await run("fix the off-by-one in mod1.ts", files(10))).calls.map((c) => c.stage)).toContain("plan"); } finally { delete process.env.LOKI_CONFIRM; }
+    });
+  });
+
+  it("a normal task naming no files plans in a multi-package repo (the plan sizes the cap) and skips in a single-package repo", async () => {
+    await withStderrTty(false, async () => {
+      const multi = await run("x".repeat(700), files(10), { repoDir: await pmRepo(true) });
+      expect(multi.calls.map((c) => c.stage)).toContain("plan");
+      const single = await run("x".repeat(700), files(10), { repoDir: await pmRepo(false) });
+      expect(single.calls.map((c) => c.stage)).not.toContain("plan");
+      const none = await run("x".repeat(700), files(10));
+      expect(none.calls.map((c) => c.stage)).not.toContain("plan");
+    });
+  });
+
+  it("a normal task that names files skips even in a multi-package repo (plan-scope is seeded from them)", async () => {
+    await withStderrTty(false, async () => {
+      const r = await run("change mod1.ts and mod2.ts " + "x".repeat(700), files(10), { repoDir: await pmRepo(true) });
+      expect(r.calls.map((c) => c.stage)).not.toContain("plan");
+      expect(readPlanScope(r.runDir).sort()).toEqual(["src/mod1.ts", "src/mod2.ts"]);
+    });
+  });
+
+  it("a large task keeps the plan session and its implement brief has no fold instruction", async () => {
+    const task = "change " + files(9).map((f) => f.replace("src/", "")).join(" ");
+    const { calls, events } = await run(task, files(10));
     expect(calls.map((c) => c.stage).sort()).toEqual(["implement", "plan", "wall"]);
-    expect(events.find((e) => e.type === "variant")!.data).toMatchObject({ size: "normal", plan_skipped: false });
+    expect(events.find((e) => e.type === "variant")!.data).toMatchObject({ size: "large", plan_skipped: false });
+  });
+
+  it("the fold instruction sits right after FIXED_RULES; the bytes before the task text match the planned brief, and a planned brief has none", () => {
+    const planned = buildImplementBrief("add search ranking", "step 1", [], "");
+    const skipped = buildImplementBrief("add search ranking", null, [], "");
+    expect(planned).not.toContain(FOLD_PLAN_INSTRUCTION);
+    const at = skipped.indexOf(FOLD_PLAN_INSTRUCTION);
+    const prefix = skipped.slice(0, at);
+    expect(prefix.length).toBeGreaterThan(FIXED_RULES.length);
+    expect(prefix.endsWith(`${FIXED_RULES}\n\n`)).toBe(true);
+    expect(planned.startsWith(prefix)).toBe(true);
+    expect(skipped.slice(at + FOLD_PLAN_INSTRUCTION.length + 2).startsWith(planned.slice(prefix.length, prefix.length + 20))).toBe(true);
   });
 
   it("LOKI_E10_PLAN=1 forces the plan on a small task; =0 skips it on a normal one", async () => {
@@ -406,16 +509,17 @@ describe("engine10 TEN-COST-26 sizing knobs", () => {
     process.env.LOKI_E10_SMALL_NO_RUNNER = "0";
     expect(sizeTask("fix a.ts", map, noRunner).size).toBe("normal");
   });
-  it("through the machine: a no-runner one-file task skips plan and writes the plan-scope.json the guard reads; a multi-file task still plans; the opt-out plans", async () => {
+  it("through the machine: a no-runner one-file task skips plan and writes the plan-scope.json the guard reads; a multi-file task now skips too and seeds all its files; a large task still plans", async () => {
     const noRun: TestMap = { runners: [], tests: [] };
     const one = await run("fix the off-by-one in mod1.ts", files(10), { testmap: noRun });
     expect(one.calls.map((c) => c.stage)).not.toContain("plan");
     expect(readPlanScope(one.runDir)).toEqual(["src/mod1.ts"]);
     expect(planOutOfRepo(one.runDir)).toBeNull();
     const multi = await run("fix mod1.ts mod2.ts mod3.ts together", files(10), { testmap: noRun });
-    expect(multi.calls.map((c) => c.stage)).toContain("plan");
-    process.env.LOKI_E10_SMALL_NO_RUNNER = "0";
-    expect((await run("fix the off-by-one in mod1.ts", files(10), { testmap: noRun })).calls.map((c) => c.stage)).toContain("plan");
+    expect(multi.calls.map((c) => c.stage)).not.toContain("plan");
+    expect(readPlanScope(multi.runDir).sort()).toEqual(["src/mod1.ts", "src/mod2.ts", "src/mod3.ts"]);
+    const large = await run("fix " + files(9).map((f) => f.replace("src/", "")).join(" "), files(10), { testmap: noRun });
+    expect(large.calls.map((c) => c.stage)).toContain("plan");
   });
   it("a no-runner small task still routes to wall, never lean", () => {
     process.env.LOKI_E10_SMALL_NO_RUNNER = "1";
