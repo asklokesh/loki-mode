@@ -223,13 +223,13 @@ function nearestPackageRoot(testDir: string, repoDir: string, fileName: string):
 }
 const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSync|renameSync|symlinkSync|mkdir|writeFile|appendFile|cp|copyFile|rename|outputFile|ensureDir|mkdirp|write)\(/g;
 
-const PRODUCT_SUFFIX = /^[A-Z][A-Za-z0-9]*[a-z0-9]\.(?:js|io)$/, MODIFIED_NOUN = /^\s+(?:v?\d|cli|code|script|app|application|project|module|server|program|service|library|package|backend|frontend|api|runtime|tool|binary|snippet|command|environment|version|implementation)\b/i;
+const PRODUCT_SUFFIX = /^[A-Z][A-Za-z0-9]*[a-z0-9]\.(?:js|io)$/, MODIFIED_NOUN = /^\s+(?:cli|code|script|app|application|project|module|server|program|service|library|package|backend|frontend|api|runtime|tool|binary|snippet|command|environment|version|implementation)\b/i;
 const PROSE_CUE_END = /\b(use|using|with|via|without|no|on|e\.g\.?|i\.e\.?|such as|like|including|built on|powered by)\s+(?:[\w.-]+(?:\s*,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+))*$/i;
-/** A capitalized bare product-shaped name (Name.js, no directory) is prose only on direct evidence, and a file otherwise: a use-type cue right before it or before the comma/and list it belongs to (use, using, with, via, without, no, on, e.g., such as; "use X as ..." is a file), or the name used as a modifier (a noun or version number right after it: "Name.js CLI", "Name.js code", "Name.js 20", "Name.js file named x"). */
+/** A capitalized bare product-shaped name (Name.js, no directory) is prose only on direct evidence, and a file otherwise: a use-type cue right before it or before the comma/and list it belongs to (use, using, with, via, without, no, on, e.g., such as; "use X as ..." is a file), or the name used as a modifier (a noun right after it unless a determiner precedes the name: "Name.js CLI", "Name.js code", "Name.js 20", "Name.js file named x"). */
 function proseProductName(task: string, at: number, name: string): boolean {
   if (!PRODUCT_SUFFIX.test(name)) return false;
   const after = task.slice(at + name.length);
-  if (MODIFIED_NOUN.test(after) || /^\s+(?:[A-Za-z]+\s+){1,2}(?:named|called)\b/.test(after)) return true;
+  if ((MODIFIED_NOUN.test(after) && !/\b(?:the|this|that|its|your|our)\s+$/i.test(task.slice(Math.max(0, at - 8), at))) || /^\s+(?:[A-Za-z]+\s+){1,2}(?:named|called)\b/.test(after)) return true;
   const cue = PROSE_CUE_END.exec(task.slice(Math.max(0, at - 200), at));
   return !!cue && !(/^(?:use|using)$/i.test(cue[1]!) && /^\s+as\b/i.test(after));
 }
