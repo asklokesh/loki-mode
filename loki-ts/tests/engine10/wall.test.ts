@@ -1045,8 +1045,42 @@ describe("COST-11 r2: escalation on doubt", () => {
       expect((r.result.data.files as unknown[]).length).toBe(0);
       expect(r.result.data.not_proven).toBeUndefined();
     });
-    const why = (...reasons: string[]): BaseTestRunner => { let i = 0; const r: BaseTestRunner & { lastNotRunFiles: { file: string; reason: string }[] } = { lastNotRunFiles: [], run: (_d, files) => { const reason = reasons[Math.min(i++, reasons.length - 1)]!; r.lastNotRunFiles = files.map((f) => ({ file: f.path, reason })); return { pass: 0, fail: 0, not_run: files.length }; } }; return r; };
+    const why = (...reasons: string[]): BaseTestRunner => { let i = 0; const r: BaseTestRunner & { lastNotRunFiles: { file: string; reason: string }[] } = { lastNotRunFiles: [], run: (_d, files) => { const reason = reasons[Math.min(i++, reasons.length - 1)]!; r.lastNotRunFiles = files.map((f) => ({ file: f.path, reason, ...(reason === RVSYS ? { interpreter: "system" as const } : {}) })); return { pass: 0, fail: 0, not_run: files.length }; } }; return r; }; // the real runner sets the field exactly when the file ran under the system interpreter
     test("system interpreter only -> no same-model re-author", async () => { const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => false, PIN, why(RVSYS)); expect(r.models).toHaveLength(1); });
+    const rows = (...specs: { reason: string; interpreter?: "system" }[]): BaseTestRunner => { let i = 0; const r: BaseTestRunner & { lastNotRunFiles: { file: string; reason: string; interpreter?: "system" }[] } = { lastNotRunFiles: [], run: (_d, files) => { const sp = specs[Math.min(i++, specs.length - 1)]!; r.lastNotRunFiles = files.map((f) => ({ file: f.path, ...sp })); return { pass: 0, fail: 0, not_run: files.length }; } }; return r; };
+    const SYS = { reason: RVSYS, interpreter: "system" as const };
+    test("the no-interpreter decision keys on the structured field: rewording the reason does not change it", async () => {
+      const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => false, PIN, rows({ reason: "reworded: ran elsewhere", interpreter: "system" }));
+      expect(r.models).toHaveLength(1);
+      const t = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => false, PIN, rows({ reason: RVSYS }));
+      expect(t.models).toHaveLength(2); // the old reason text without the field no longer counts
+    });
+    test("cheap rung with no project interpreter: no second Wall is bought and the not_run stays not_run", async () => {
+      const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => false, {}, rows(SYS));
+      expect(r.models).toHaveLength(1);
+      expect(r.events).not.toContain("wall.reauthor:wall");
+      expect(r.result.data.reauthored).toBeUndefined();
+      expect((r.result.data.files as unknown[]).length).toBe(0);
+      expect(r.result.data.already_satisfied).toBe(false);
+    });
+    test("cheap rung, mixed system and timeout rows -> still escalates once, and the rewrite brief carries the note", async () => {
+      const b = briefs(), two = (n: number, o: SessionRunOptions) => ({ files: [`loki_wall_a${n}.test.ts`, `loki_wall_b${n}.test.ts`, ...b.f(n, o).files.slice(1)] }), r = await go(two, () => false, {}, rows(SYS, { reason: RVNULL }));
+      expect(r.models).toHaveLength(2);
+      expect(r.events.filter((e) => e === "wall.reauthor:wall")).toHaveLength(1);
+      expect(b.list[1]).toContain("left no test that ran on the base tree");
+    });
+    test("cheap rung, runner timeout with an interpreter -> escalates once; the second Wall also empty is disclosed", async () => {
+      const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => false, {}, rows({ reason: RVNULL }));
+      expect(r.models).toHaveLength(2);
+      expect((r.result.data.files as unknown[]).length).toBe(0);
+      expect(r.result.data.not_proven).toContain(WALL_REAUTHOR_EXHAUSTED);
+    });
+    test("cheap rung wrote nothing, the escalation also writes nothing -> still disclosed as NOT PROVEN", async () => {
+      const r = await go(() => ({ files: [] }), () => false, {}, rows({ reason: RVNULL }));
+      expect(r.models).toHaveLength(2);
+      expect((r.result.data.files as unknown[]).length).toBe(0);
+      expect(r.result.data.not_proven).toContain(WALL_REAUTHOR_EXHAUSTED);
+    });
     test("not_run with an interpreter present (runner timed out) -> one re-author", async () => { const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => false, PIN, why(RVNULL)); expect(r.models).toHaveLength(2); });
     test("mixed: one file system interpreter, one timed out -> one re-author", async () => { const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`, `loki_wall_b${n}.test.ts`] }), () => false, PIN, why(RVSYS, RVNULL)); expect(r.models).toHaveLength(2); });
     test("several tests, one dropped -> no re-author (unchanged)", async () => {
