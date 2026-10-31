@@ -345,34 +345,36 @@ function stripTomlComments(t: string): string {
     return line;
   }).join("\n");
 }
-/** An [env] table (or inline env table, or env.PATH key) that sets PATH lets rustc find the repo's own cc or ld. */
-function cargoEnvSetsPath(t: string): boolean {
-  if (/^\s*\[\s*env\s*\.\s*["']?PATH["']?\s*\]/m.test(t) || /(?:^|[\s,{])env\s*\.\s*["']?PATH["']?\s*[.=]/m.test(t)) return true;
-  if (/(?:^|[\s,{])env\s*=\s*\{/m.test(t) && CARGO_KEY("PATH").test(t)) return true;
+/** The [env] names that let the repo steer what runs: PATH finds the repo's own cc or ld, LD_PRELOAD and DYLD_INSERT_LIBRARIES load repo code into every process cargo starts. */
+const CARGO_ENV_HIJACK = ["PATH", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES"] as const;
+/** An [env] table (or inline env table, or env.<name> key) that sets the given variable. */
+function cargoEnvSets(t: string, name: string): boolean {
+  if (new RegExp(String.raw`^\s*\[\s*env\s*\.\s*["']?${name}["']?\s*\]`, "m").test(t) || new RegExp(String.raw`(?:^|[\s,{])env\s*\.\s*["']?${name}["']?\s*[.=]`, "m").test(t)) return true;
+  if (/(?:^|[\s,{])env\s*=\s*\{/m.test(t) && CARGO_KEY(name).test(t)) return true;
   let hdr = "";
   for (const line of t.split("\n")) {
     const h = /^\s*\[+\s*([^\[\]]*?)\s*\]+\s*$/.exec(line);
     if (h) hdr = h[1]!.replace(/["']/g, "");
-    else if (hdr === "env" && /^\s*["']?PATH["']?\s*[.=]/.test(line)) return true;
+    else if (hdr === "env" && new RegExp(String.raw`^\s*["']?${name}["']?\s*[.=]`).test(line)) return true;
   }
   return false;
 }
 const RUSTFLAGS_STRING = String.raw`(?:"(?:[^"\\]|\\.)*"|'[^']*')`;
-/** A rustflags entry with `link` (link-arg, link-args, linker, linker-flavor, link-self-contained), `-B`, `-Wl` or a codegen backend lets the repo pick the linker or load code into rustc. A bare `-C link-arg=-fuse-ld=<name>` (no path separator: mold, lld) is the one accepted form. */
+/** A rustflags entry with `link` (link-arg, link-args, linker, linker-flavor, link-self-contained), `-B`, `-Wl`, a codegen backend or `llvm-plugins` lets the repo pick the linker or load code into rustc. A bare `-C link-arg=-fuse-ld=<name>` (no path separator: mold, lld) is the one accepted form. */
 function rustflagsReachLinker(t: string): boolean {
   const key = CARGO_KEY("rustflags"), n = (t.match(new RegExp(key.source, "gm")) ?? []).length;
   if (n === 0) return false;
   const vals = [...t.matchAll(new RegExp(String.raw`rustflags["']?\s*=\s*(\[(?:${RUSTFLAGS_STRING}|[^\]"'])*\]|${RUSTFLAGS_STRING})`, "g"))].map((m) => m[1]!);
   if (vals.length !== n) return true;
-  return vals.some((v) => /link|-B|-Wl|codegen-backend/.test(v.replace(/link-arg=-fuse-ld=[A-Za-z0-9_.+-]+(?=["'\s,\]]|$)/g, "")));
+  return vals.some((v) => /link|-B|-Wl|codegen-backend|llvm-plugins/.test(v.replace(/link-arg=-fuse-ld=[A-Za-z0-9_.+-]+(?=["'\s,\]]|$)/g, "")));
 }
 /** The first setting in a cargo config text that lets the repo rewrite the test binary, as a label, or null. */
 function compilerSettingIn(raw: string): string | null {
   const t = stripTomlComments(raw);
   for (const [k, label] of [["rustc", "build.rustc"], ["rustc-wrapper", "build.rustc-wrapper"], ["rustc-workspace-wrapper", "build.rustc-workspace-wrapper"], ["linker", "linker"]] as const) if (CARGO_KEY(k).test(t)) return label;
-  if (cargoEnvSetsPath(t)) return "[env] PATH";
-  if (rustflagsReachLinker(t)) return "rustflags with a link, -B, -Wl or codegen-backend flag";
-  if (/\\[uU]/.test(t) || /^\s*include\s*=/m.test(t) || /"""|'''/.test(t)) return "an escaped key, include or multi-line string";
+  for (const name of CARGO_ENV_HIJACK) if (cargoEnvSets(t, name)) return `[env] ${name}`;
+  if (rustflagsReachLinker(t)) return "rustflags with a link, -B, -Wl, codegen-backend or llvm-plugins flag";
+  if (/\\[uU]/.test(t) || /^\s*include\s*=/m.test(t) || /"""|'''/.test(t)) return CARGO_ESCAPED_LABEL;
   return null;
 }
 /** The repo root: the nearest ancestor holding .git, else the highest ancestor holding a Cargo.toml, else the cwd. */
@@ -384,9 +386,16 @@ function cargoRepoRoot(cwd: string): string {
   }
   return top ?? resolve(cwd);
 }
-/** A manifest in the repo (cwd up to the root, any --manifest-path, and a bounded scan below the root) that turns on nightly profile-rustflags. */
-function cargoProfileRustflagsManifest(root: string, cwd: string, toks: readonly string[]): string | null {
-  const hit = (f: string): boolean => { try { return /cargo-features\s*=\s*\[[^\]]*profile-rustflags/.test(stripTomlComments(readFileSync(f, "utf8"))); } catch { return false; } };
+const CARGO_ESCAPED_LABEL = "an escaped key, include or multi-line string";
+/** A manifest in the repo (cwd up to the root, any --manifest-path, and a bounded scan below the root) that turns on nightly profile-rustflags: the key bare or quoted, or (doubt) any unicode escape above the first table, where only top-level keys such as cargo-features can sit. Returns the manifest and the setting label. */
+function cargoProfileRustflagsManifest(root: string, cwd: string, toks: readonly string[]): [string, string] | null {
+  const hit = (f: string): string | null => {
+    try {
+      const t = stripTomlComments(readFileSync(f, "utf8"));
+      if (/["']?cargo-features["']?\s*=\s*\[[^\]]*profile-rustflags/.test(t)) return "cargo-features profile-rustflags";
+      return /\\[uU]/.test(t.split(/^\s*\[/m)[0]!) ? CARGO_ESCAPED_LABEL : null;
+    } catch { return null; }
+  };
   const seen = new Set<string>(), files: string[] = [];
   for (let d = resolve(cwd), prev = ""; d !== prev; prev = d, d = dirname(d)) { files.push(join(d, "Cargo.toml")); if (d === root) break; }
   toks.forEach((t, i) => { if (t === "--manifest-path") files.push(resolve(cwd, toks[i + 1] ?? "")); else if (t.startsWith("--manifest-path=")) files.push(resolve(cwd, t.slice(16))); });
@@ -396,7 +405,7 @@ function cargoProfileRustflagsManifest(root: string, cwd: string, toks: readonly
     if (depth >= 5) continue;
     try { for (const e of readdirSync(d, { withFileTypes: true })) if (e.isDirectory() && !["target", ".git", "node_modules"].includes(e.name)) stack.push([join(d, e.name), depth + 1]); } catch { /* unreadable dir: skip */ }
   }
-  for (const f of files) if (!seen.has(f)) { seen.add(f); if (existsSync(f) && hit(f)) return f; }
+  for (const f of files) if (!seen.has(f)) { seen.add(f); const w = existsSync(f) ? hit(f) : null; if (w) return [f, w]; }
   return null;
 }
 /** A repo-committed cargo config that replaces the compiler (build.rustc), wraps it (build.rustc-wrapper, build.rustc-workspace-wrapper), sets a linker, reaches the linker through rustflags, or sets [env] PATH lets the repo rewrite the test binary after it is built, so both the run and its listing are the repo's own word. Read from a .cargo/config(.toml) in the cwd or any parent (the same walk as the runner check), a --config value or file, and a Cargo.toml that enables profile-rustflags. The CARGO_HOME / ~/.cargo config and the RUSTC_WRAPPER variable are NOT scanned, because sccache users set them and refusing would make honest runs PARTIAL; but only a .cargo directory strictly above the repo root is exempt, so a HOME inside the repo exempts nothing. A key written with a unicode escape, an `include`, a multi-line string, or an unreadable file is doubt. Returns the reason, which names the setting and the file. */
@@ -417,7 +426,7 @@ function cargoRepoCompilerRedirected(cwd: string, env: NodeJS.ProcessEnv, toks: 
     for (const f of ["config", "config.toml"]) if (existsSync(join(dir, f))) { const w = inFile(join(dir, f)); if (w) return cargoCompilerReason(w, rel(join(dir, f))); }
   }
   const m = cargoProfileRustflagsManifest(root, cwd, toks);
-  return m ? cargoCompilerReason("cargo-features profile-rustflags", rel(m)) : null;
+  return m ? cargoCompilerReason(m[1], rel(m[0])) : null;
 }
 async function corroborateCargoPass(c: Classified, out: string, p: { global: string[]; rest: string[] }, o: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }): Promise<Classified> {
   const refuse: Classified = { result: "not_run", reason: CARGO_UNLISTED_REASON }, dd = p.rest.indexOf("--"), notQuiet = (t: string): boolean => t !== "-q" && t !== "--quiet"; // --quiet at cargo level would also reach the listing and drop its "N tests" footer

@@ -1042,7 +1042,7 @@ describe("cargo listing check residuals", () => {
     const d = crate(GOOD, { "rust-toolchain.toml": '[toolchain]\nchannel = "stable"\n' }); try { expect((await run(d, "cargo", ["test"])).result).toBe("pass"); } finally { rmSync(d, { recursive: true, force: true }); }
   }, 240_000);
   // A repo-committed compiler, wrapper, linker, linker-reaching rustflags or [env] PATH lets the repo rewrite the test binary.
-  const RF = "rustflags with a link, -B, -Wl or codegen-backend flag", CFG = ".cargo/config.toml";
+  const RF = "rustflags with a link, -B, -Wl, codegen-backend or llvm-plugins flag", CFG = ".cargo/config.toml";
   const isCompilerReason = (r?: string): boolean => /\(move it to CARGO_HOME, or for a wrapper use the RUSTC_WRAPPER env\)/.test(r ?? "");
   const cp = (cwd: string, env: NodeJS.ProcessEnv = process.env, args: string[] = ["test"]) => corroboratePass(pass2, TEST_OUT, "cargo", args, { cwd, env });
   const COMPILER_FORMS: [string, string, string][] = [
@@ -1067,6 +1067,14 @@ describe("cargo listing check residuals", () => {
     ["[env] PATH without force", '[env]\nPATH = { value = "/repo/bin" }\n', "[env] PATH"], ["[env] quoted PATH", "[env]\n\"PATH\" = \"/repo/bin\"\n", "[env] PATH"],
     ["[env.PATH] table", '[env.PATH]\nvalue = "/repo/bin"\nforce = true\n', "[env] PATH"], ["dotted env.PATH", 'env.PATH = "/repo/bin"\n', "[env] PATH"],
     ["inline env table", 'env = { PATH = "/repo/bin", A = "1" }\n', "[env] PATH"], ["[env] PATH after other keys", '[env]\nRUST_LOG = "debug"\nPATH = "/repo/bin"\n', "[env] PATH"],
+    // [env] LD_PRELOAD and DYLD_INSERT_LIBRARIES load repo code into every process cargo starts; -Zllvm-plugins loads a repo plugin into rustc
+    ["[env] LD_PRELOAD string", '[env]\nLD_PRELOAD = "/repo/evil.so"\n', "[env] LD_PRELOAD"], ["[env] LD_PRELOAD inline table", '[env]\nLD_PRELOAD = { value = "evil.so", relative = true }\n', "[env] LD_PRELOAD"],
+    ["[env] quoted LD_PRELOAD", "[env]\n\"LD_PRELOAD\" = \"/repo/evil.so\"\n", "[env] LD_PRELOAD"], ["[env.LD_PRELOAD] table", '[env.LD_PRELOAD]\nvalue = "evil.so"\n', "[env] LD_PRELOAD"],
+    ["dotted env.LD_PRELOAD", 'env.LD_PRELOAD = "/repo/evil.so"\n', "[env] LD_PRELOAD"], ["inline env table with LD_PRELOAD", 'env = { A = "1", LD_PRELOAD = "/repo/evil.so" }\n', "[env] LD_PRELOAD"],
+    ["[env] DYLD_INSERT_LIBRARIES", '[env]\nDYLD_INSERT_LIBRARIES = "/repo/evil.dylib"\n', "[env] DYLD_INSERT_LIBRARIES"], ["[env.DYLD_INSERT_LIBRARIES] table", '[env.DYLD_INSERT_LIBRARIES]\nvalue = "evil.dylib"\n', "[env] DYLD_INSERT_LIBRARIES"],
+    ["[env] LD_PRELOAD after other keys", '[env]\nRUST_LOG = "debug"\nLD_PRELOAD = "/repo/evil.so"\n', "[env] LD_PRELOAD"],
+    ["-Zllvm-plugins", '[build]\nrustflags = ["-Zllvm-plugins=/repo/p.so"]\n', RF], ["-Z llvm-plugins", '[build]\nrustflags = ["-Z", "llvm-plugins=/repo/p.so"]\n', RF],
+    ["a string -Zllvm-plugins", '[build]\nrustflags = "-Zllvm-plugins=/repo/p.so"\n', RF],
   ];
   for (const [name, body, what] of COMPILER_FORMS) test(`a repo cargo config with ${name} is refused with its own reason`, async () => {
     const d = crate("", { [CFG]: body }), sub = join(d, "pkg"); mkdirSync(sub);
@@ -1079,7 +1087,7 @@ describe("cargo listing check residuals", () => {
   const OK_FORMS: [string, string][] = [
     ["bare fuse-ld=mold", '[build]\nrustflags = ["-C", "link-arg=-fuse-ld=mold"]\n'], ["bare fuse-ld=lld", '[build]\nrustflags = ["-Clink-arg=-fuse-ld=lld"]\n'],
     ["an honest config", '[build]\njobs = 2\nrustflags = ["--cfg", "tokio_unstable"]\n[env]\nRUST_LOG = "debug"\n'], ["a commented linker", '# linker = "x"\n[build]\njobs = 2 # rustc-wrapper = "x"\n'],
-    ["a commented env PATH", '[env]\n# PATH = "/repo/bin"\nRUST_LOG = "debug"\n'], ["an env PATH-like name", '[env]\nMY_PATH = "x"\nPATHEXT = "y"\n'], ["a path under another table", '[net]\nPATH = "x"\n'],
+    ["a commented env PATH", '[env]\n# PATH = "/repo/bin"\nRUST_LOG = "debug"\n'], ["an env PATH-like name", '[env]\nMY_PATH = "x"\nPATHEXT = "y"\n'], ["env LD_PRELOAD-like names", '[env]\nMY_LD_PRELOAD = "x"\nLD_PRELOADX = "y"\n'], ["a commented LD_PRELOAD", '[env]\n# LD_PRELOAD = "x"\n# DYLD_INSERT_LIBRARIES = "y"\nRUST_LOG = "debug"\n'], ["an llvm-args rustflag", '[build]\nrustflags = ["-C", "llvm-args=-x86-asm-syntax=intel"]\n'], ["a path under another table", '[net]\nPATH = "x"\n'],
   ];
   for (const [name, body] of OK_FORMS) test(`a repo cargo config with ${name} is not refused as compiler redirection`, async () => {
     const d = crate("", { [CFG]: body }); try { expect(isCompilerReason((await cp(d)).reason)).toBe(false); } finally { rmSync(d, { recursive: true, force: true }); }
@@ -1148,6 +1156,22 @@ describe("cargo listing check residuals", () => {
       writeFileSync(join(d, "member", "Cargo.toml"), `cargo-features = ["edition2024"]\n# cargo-features = ["profile-rustflags"]\n${PROFILE_TOML}`);
       expect(isCompilerReason((await cp(d)).reason)).toBe(false);
     } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  const PR_WHAT = "cargo-features profile-rustflags", ESC = "an escaped key, include or multi-line string";
+  const PROFILE_FORMS: [string, string, string][] = [
+    ["a quoted cargo-features key", '"cargo-features" = ["profile-rustflags"]\n', PR_WHAT], ["a single-quoted cargo-features key", "'cargo-features' = [\"profile-rustflags\"]\n", PR_WHAT],
+    ["a single-quoted profile-rustflags value", "cargo-features = ['profile-rustflags']\n", PR_WHAT], ["a spaced quoted key", '"cargo-features"   =   [ "edition2024" , "profile-rustflags" ]\n', PR_WHAT],
+    ["a multi-line array with a comment", 'cargo-features = [\n  "edition2024", # nightly\n  "profile-rustflags",\n]\n', PR_WHAT],
+    ["a unicode-escaped cargo-features key", '"cargo-featu\\u0072es" = ["profile-rustflags"]\n', ESC], ["a unicode-escaped profile-rustflags value", 'cargo-features = ["profile-rust\\u0066lags"]\n', ESC],
+    ["a long-escape key", '"cargo-featur\\U00000065s" = ["x"]\n', ESC],
+  ];
+  for (const [name, head, what] of PROFILE_FORMS) test(`a Cargo.toml with ${name} is refused naming the manifest`, async () => {
+    const d = crate("", { "Cargo.toml": `${head}${PROFILE_TOML}` });
+    try { expect([name, await cp(d)]).toEqual([name, { result: "not_run", reason: cargoCompilerReason(what, "Cargo.toml") }]); } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a Cargo.toml with other cargo-features, or an escape only below the first table, is not refused for profile-rustflags", async () => {
+    const d = crate("", { "Cargo.toml": `cargo-features = ["edition2024"]\n${PROFILE_TOML}description = "Jos\\u00e9"\n`, "m/Cargo.toml": `"cargo-features" = ["edition2024"]\n${PROFILE_TOML}` });
+    try { expect(isCompilerReason((await cp(d)).reason)).toBe(false); } finally { rmSync(d, { recursive: true, force: true }); }
   });
   test.skipIf(!HAS_CARGO)("real cargo: a CARGO_HOME rustc-wrapper config and the RUSTC_WRAPPER variable stay accepted (sccache users)", async () => {
     const d = crate(GOOD), home = crate("", { "ch/.keep": "" }); try {
