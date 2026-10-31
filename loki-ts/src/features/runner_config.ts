@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto"; import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { safeGit } from "../util/safe_git";
+import { exportConds } from "../util/lock_ecosystems";
 type Sections = RegExp | readonly string[] | "go" | "tsconfig" | "cargo"; interface Spec { re: RegExp; shared?: Sections }
 const PKG_KEYS = ["scripts", "jest", "overrides", "resolutions", "imports", "pnpm", "mocha", "vitest", "ava", "c8", "nyc", "babel", "bun", "patchedDependencies"] as const; // scripts is compared whole: pretest, posttest and test:* all count
 // FC-09w: macOS filesystems are case-insensitive, so PNPM-Workspace.yaml is read by pnpm. Every row is forced case-insensitive below, in one place.
@@ -56,7 +57,7 @@ function relevant(shared: Sections, text: string): string {
     }
     return out.join("\n"); }
   if (shared === "tsconfig") { const j = jsonc(text) as { compilerOptions?: Record<string, unknown>; extends?: unknown }; const o = j.compilerOptions ?? {}; return JSON.stringify(["extends", "baseUrl", "paths", "rootDirs", "moduleSuffixes", "customConditions"].map((k) => (k === "extends" ? j["extends"] : o[k]))); }
-  if (Array.isArray(shared)) { const j = JSON.parse(text) as Record<string, unknown>; return JSON.stringify([shared.map((k) => j[k]), depGuard(j)]); }
+  if (Array.isArray(shared)) { const j = JSON.parse(text) as Record<string, unknown>; return JSON.stringify([shared.map((k) => j[k]), depGuard(j), exportConds(j["exports"])]); }
   let on = false;
   return lines(text).filter((l) => { if (/^\[[^\]]+\]$/.test(l)) on = (shared as RegExp).test(l); return on || KW.test(l); }).join("\n");
 }

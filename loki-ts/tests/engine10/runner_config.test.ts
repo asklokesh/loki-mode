@@ -23,6 +23,18 @@ function repo(files: Record<string, string>): { dir: string; base: string; edit:
 const pkg = (scripts: Record<string, string>, extra: Record<string, unknown> = {}): string => JSON.stringify({ name: "x", scripts, ...extra }, null, 2);
 
 describe("FC-09r testConfigChanged", () => {
+  test("exports conditions: an exports-only added manifest with a runner condition advises, a standard one does not, and editing a condition caps", () => {
+    const f = "packages/x/package.json", ex = (e: unknown): string => JSON.stringify({ name: "x", exports: e });
+    const r = repo({ "a.txt": "a" });
+    r.edit(f, ex({ ".": { import: "./i.mjs", require: "./i.cjs", default: "./i.mjs", types: "./i.d.ts" }, "./s": "./s.mjs" }));
+    expect(testConfigChanged(r.dir, r.base, [f])).toEqual([]);
+    r.edit(f, ex({ ".": { bun: "./stub.mjs", default: "./i.mjs" } }));
+    expect(testConfigChanged(r.dir, r.base, [f])).toEqual([f]);
+    const r2 = repo({ [f]: ex({ ".": { node: "./a.mjs", default: "./i.mjs" } }) });
+    expect(testConfigChanged(r2.dir, r2.base, [f])).toEqual([]);
+    r2.edit(f, ex({ ".": { node: "./b.mjs", default: "./i.mjs" } }));
+    expect(testConfigChanged(r2.dir, r2.base, [f])).toEqual([f]);
+  });
   test.each([["pretest"], ["posttest"], ["test:unit"], ["build"]])("package.json scripts.%s edit caps", (k) => {
     const r = repo({ "package.json": pkg({ test: "node --test", [k]: "echo a" }) });
     r.edit("package.json", pkg({ test: "node --test", [k]: "echo b" }));
@@ -789,10 +801,35 @@ describe("added workspace manifest: disclosed only when every condition holds", 
   test("D1b: named only by the task text (not in the plan) is disclosed", async () => {
     expect((await run(pk(), { plan: [], task: `Create ${F} for the new package` })).verdict).toBe("VERIFIED");
   }, 30000);
-  test("D1c: a bare node --test script, a workspace: dep on a base package and a file: dep to an untouched base dir are disclosed", async () => {
-    const m = pk({ scripts: { test: "node --test" }, dependencies: { "@acme/core": "workspace:*" }, devDependencies: { shared: "file:../core/lib" } });
-    expect((await run(m)).verdict).toBe("VERIFIED");
+  test("D1c: an exact-match scripts.test and workspace: deps (`*` and a version range) on a base package are disclosed", async () => {
+    const m = pk({ scripts: { test: "node --test" }, dependencies: { "@acme/core": "workspace:*" }, devDependencies: { "@acme/core2": "workspace:^1.0.0" } });
+    const base = { ...BASE, "packages/core2/package.json": JSON.stringify({ name: "@acme/core2" }) + "\n" };
+    expect((await run(m, { base })).verdict).toBe("VERIFIED");
   }, 30000);
+  test("D1d: a real require() and a dynamic import() of the package name or its directory are disclosed", async () => {
+    expect((await run(pk(), { wall: { path: WALL.path, text: 'const x = require("@acme/x");\n' } })).verdict).toBe("VERIFIED");
+    expect((await run(pk(), { wall: { path: WALL.path, text: 'const x = await import("@acme/x/sub");\n' } })).verdict).toBe("VERIFIED");
+  }, 60000);
+  test("D1e: exports using only subpath, import, require, default and types keys (nested too) are disclosed", async () => {
+    const e = { ".": { import: { types: "./i.d.ts", default: "./src/index.mjs" }, require: "./src/index.cjs", default: "./src/index.mjs" }, "./sub": ["./src/s.mjs"] };
+    expect((await run(pk({ exports: e }))).verdict).toBe("VERIFIED");
+  }, 30000);
+  test("A1: a dependency named chai pointing by file: at an untouched base stub caps", async () => caps(run(pk({ devDependencies: { chai: "file:../../tests/fixtures/fake-chai" } }), { base: { ...BASE, "tests/fixtures/fake-chai/index.js": "module.exports = {};\n", "tests/fixtures/fake-chai/package.json": JSON.stringify({ name: "chai" }) + "\n" } })), 30000);
+  test("A2: a dependency named jest pointing by link: at a base directory caps, so does a bare relative spec", async () => {
+    await caps(run(pk({ devDependencies: { jest: "link:../core/lib" } })));
+    await caps(run(pk({ devDependencies: { shared: "../core/lib" } })));
+  }, 60000);
+  test("A3: a Wall that names the package only in a comment or inside another string caps", async () => {
+    for (const text of ['// import { x } from "../packages/x/src/index.mjs";\n/* require("@acme/x") */\nconsole.log(1);\n', 'const s = "import { x } from \'../packages/x/src/index.mjs\'";\n', 'const p = "packages/x/src/index.mjs";\nimport { y } from "packages/x/src/index.mjs";\n']) await caps(run(pk(), { wall: { path: WALL.path, text } }));
+  }, 90000);
+  test("A4: a workspace: alias spec (workspace:fake-chai@*) and workspace: with a path cap", async () => {
+    await caps(run(pk({ dependencies: { "@acme/core": "workspace:fake-chai@*" } })));
+    await caps(run(pk({ dependencies: { "@acme/core": "workspace:../core" } })));
+    await caps(run(pk({ dependencies: { "@acme/core": "workspace:" } })));
+  }, 90000);
+  test("E1: a conditional exports map (bun, node, test, development; top level or nested) caps", async () => {
+    for (const e of [{ ".": { bun: "./src/stub.mjs", default: "./src/index.mjs" } }, { ".": { import: { node: "./real.js", default: "./src/index.mjs" } } }, { test: "./src/stub.mjs", import: "./src/index.mjs" }, { ".": [{ development: "./d.mjs" }, "./src/index.mjs"] }]) await caps(run(pk({ exports: e })));
+  }, 120000);
   test("D2: a postinstall script caps", async () => caps(run(pk({ scripts: { postinstall: "node ./p.js" } }))), 30000);
   test("D2b: a prepare script caps", async () => caps(run(pk({ scripts: { prepare: "node ./p.js" } }))), 30000);
   test("D2c: a test script running jest or a local file caps", async () => { await caps(run(pk({ scripts: { test: "jest" } }))); await caps(run(pk({ scripts: { test: "node t" } }))); }, 60000);

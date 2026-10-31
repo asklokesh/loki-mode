@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A run that creates a brand-new workspace package (for example packages/validate/package.json) is no longer capped PARTIAL by "test configuration changed" when the Wall passes. The new manifest is disclosed only if the plan or task names its path, a passing Wall imports the package, its directory was empty at base, it has plain metadata keys only, no scripts (or only a bare `node --test` / `bun test`), and every dependency is a `workspace:` package or an untouched in-repo path. Any other new or edited manifest still caps.
+- A run that creates a brand-new workspace package (for example packages/validate/package.json) is no longer capped PARTIAL by "test configuration changed" when the Wall passes. The new manifest is disclosed only if the plan or task names its path; a passing Wall imports the package through a real static import, require() or import() specifier (a comment or string does not count); its directory was empty at base; it has plain metadata keys only; its "exports" use only subpath, import, require, default and types keys; it has no scripts (or only a bare `node --test` / `bun test`); and every dependency is a `workspace:` spec (`*`, `^`, `~` or a version, never an alias or a path) naming a base package. file:, link:, relative and registry dependencies still cap. Any other new or edited manifest still caps.
+- A package.json whose "exports" carries a condition other than subpath, import, require, default or types (bun, node, test, development) is now runner-relevant when added or changed, so it caps; an exports-only manifest used to raise no advisory.
 
 ## v11.94.0 (2026-10-31)
 
