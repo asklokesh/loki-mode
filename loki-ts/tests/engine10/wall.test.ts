@@ -1556,6 +1556,12 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
     expect(await pk("Implement pkg/v2/client.go.")).toBe("client");
     expect(await pk("Implement internal/url-shortener/my-store.go.")).toBeNull();
     expect((await run("Implement cmd/server/main.go.", "go")).brief).toContain('"package main"');
+    const pd = async (t: string) => (await import("../../src/util/check_result.ts")).plannedGoDir("/nonexistent-repo", [t]);
+    expect(await pd("- store/store.go\n- package main in cmd/app/main.go")).toEqual({ dir: "/nonexistent-repo/store", pkg: "store" });
+    expect((await pd("Add store/store.go\n- package main for the CLI")).pkg).toBe("store");
+    expect(await pd("Create the package in url-shortener/.")).toEqual({ dir: "/nonexistent-repo/url-shortener", pkg: null });
+    expect((await pd("Create package code in pkg/v2/.")).pkg).toBeNull();
+    expect((await pd("Create the package in internal/store/.")).pkg).toBe("store");
   });
   test.skipIf(spawnSync("go", ["version"]).status !== 0)("Go greenfield: a cmd/server/main.go implementer compiles with the Wall in package main and the test runs", async () => {
     const { plannedGoDir } = await import("../../src/util/check_result.ts");

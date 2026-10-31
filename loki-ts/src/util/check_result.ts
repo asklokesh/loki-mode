@@ -196,7 +196,8 @@ export function plannedGoDir(repoDir: string, texts: string[]): { dir: string; p
       const start = i === 0 ? 0 : ms[i - 1]!.index! + ms[i - 1]![0].length, end = i + 1 < ms.length ? ms[i + 1]!.index! : sentence.length;
       const tied = GO_PKG_AFTER.exec(sentence.slice(m.index! + m[0].length, end))?.[1] ?? (GO_MAIN_BEFORE.test(sentence.slice(start, m.index!)) ? "main" : undefined);
       if (!tied && !sibling && !/\bpackage\b/.test(sentence.slice(start, end))) continue;
-      return { dir, pkg: sibling ?? tied ?? (rel.split("/").pop() ?? null) };
+      const name = rel.split("/").pop()!; // no stem here: a directory name that is no Go identifier or is vN gives no brief
+      return { dir, pkg: sibling ?? tied ?? (GO_IDENT.test(name) && !GO_MAJOR.test(name) ? name : null) };
     }
   }
   return { dir: repoDir, pkg: null };
