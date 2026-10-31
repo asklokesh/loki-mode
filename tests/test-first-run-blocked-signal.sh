@@ -341,7 +341,7 @@ main_run() {
     mkdir -p "$root/h" "$root/proj"; printf '# prd\n' > "$root/proj/prd.md"
     ( cd "$root/proj" && env -i PATH="$WORK/bin2:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin" HOME="$root/h" \
         LOKI_TEST_LOG="$root/events.log" LOKI_ANALYTICS="$mode" LOKI_TELEMETRY=on LOKI_SKIP_PREREQS=true LOKI_DASHBOARD=false \
-        TARGET_DIR="$root/proj" "$@" timeout 120 bash -c "
+        TARGET_DIR="$root/proj" "$@" timeout 120 ${MAIN_BASH:-bash} -c "
             source '$REPO_ROOT/autonomy/run.sh' >/dev/null 2>&1
             run_autonomous() { $stub; }
             main prd.md" >"$root/out.log" 2>&1; echo $? >"$root/rc"; sleep 0.8 )
@@ -386,6 +386,19 @@ if [ "$(wc -l < "$mk/released" 2>/dev/null | tr -d ' ')" = "1" ] && [ "$(cat "$m
     ok "main(): the session lock is released once, by the arming process, on a STOP-file exit"
 else
     bad "main(): STOP-file run lock releases=[$(tr '\n' ' ' < "$mk/released" 2>/dev/null)] main pid=$(cat "$mk/mainpid" 2>/dev/null)"
+fi
+
+# Same STOP-file run under a bash that has BASHPID (4+), where a subshell that inherits the EXIT trap can be told from the arming process.
+# The stub calls the exit cleanup from a subshell; only the arming-process guard keeps that from releasing the live parent's lock, so removing the guard turns this row red.
+# On bash 3.2 (the macOS /bin/bash that main() runs under above) BASHPID is unset and the guard falls back to $$, so the row above cannot tell the processes apart; this one is skipped there.
+MB4=""; for cand in /opt/homebrew/bin/bash /usr/local/bin/bash "$(command -v bash)"; do [ -x "$cand" ] && [ -n "$("$cand" -c 'echo "${BASHPID:-}"' 2>/dev/null)" ] && { MB4="$cand"; break; }; done
+if [ -z "$MB4" ]; then ok "main(): STOP-file subshell lock row needs bash 4+ (BASHPID); none on this host, skipped"; else
+mk2="$WORK/main-stop4"; MAIN_BASH="$MB4" main_run "$mk2" 'mkdir -p .loki; : > .loki/STOP; check_human_intervention; echo "$$" > "'"$mk2"'/mainpid"; safe_release_lock() { echo "${BASHPID:-$$}" >> "'"$mk2"'/released"; }; ( _loki_session_exit_cleanup ); return 0' on
+if [ "$(cat "$mk2/mainpid" 2>/dev/null)" != "" ] && [ "$(wc -l < "$mk2/released" 2>/dev/null | tr -d ' ')" = "1" ] && [ "$(cat "$mk2/released" 2>/dev/null)" = "$(cat "$mk2/mainpid" 2>/dev/null)" ] && [ "$(grep -c '"event": *"activation_first_run_finished"' "$mk2/events.log" 2>/dev/null)" = "1" ]; then
+    ok "main() on bash 4+: a subshell exit cleanup does not release the lock; only the arming process does, once, on a STOP-file exit"
+else
+    bad "main() on bash 4+: STOP-file run lock releases=[$(tr '\n' ' ' < "$mk2/released" 2>/dev/null)] main pid=$(cat "$mk2/mainpid" 2>/dev/null)"
+fi
 fi
 
 mo="$WORK/main-off"; main_run "$mo" 'kill -TERM $$; sleep 5' off LOKI_SUPERVISED_BUILD=1
