@@ -870,6 +870,37 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.not_proven.some((n) => n.includes("a.txt"))).toBe(false);
   }, 30000);
 
+  describe("FALSEVER-WALLPATH-3: a task-named bare file that exists only under a subdirectory", () => {
+    const run = async (name: string, task: string, files: string[]) => {
+      noKey();
+      const { repo, base } = makeRepo(name);
+      for (const f of files) { mkdirSync(dirname(join(repo, f)), { recursive: true }); writeFileSync(join(repo, f), "#!/bin/sh\necho ok\n"); }
+      const { ctx } = ctxFor(repo, base, "claude", { intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, task } });
+      await commitStage.run(ctx, new AbortController().signal);
+      return receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    };
+    const TASK = "Write rotate.sh DIR KEEP in bash that keeps the KEEP newest files (e.g. by mtime, i.e. newest first), no Node.js needed.";
+    test("px2b sh-rotate run 4 shape: rotate.sh only at tests/rotate.sh is PARTIAL with the named NOT PROVEN line", async () => {
+      const r = await run("wp3-run4", TASK, ["tests/rotate.sh"]);
+      expect(r.not_proven).toContain("task names rotate.sh but it exists only at tests/rotate.sh");
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
+    test("rotate.sh at the repo root stays VERIFIED", async () => {
+      const r = await run("wp3-root", TASK, ["rotate.sh"]);
+      expect(r.not_proven.some((n) => n.startsWith("task names rotate.sh"))).toBe(false);
+      expect(r.verdict).toBe("VERIFIED");
+    }, 30000);
+    test("rotate.sh at the root and under tests/ stays VERIFIED", async () => {
+      const r = await run("wp3-both", TASK, ["rotate.sh", "tests/rotate.sh"]);
+      expect(r.not_proven.some((n) => n.startsWith("task names rotate.sh"))).toBe(false);
+      expect(r.verdict).toBe("VERIFIED");
+    }, 30000);
+    test("a task that names tests/rotate.sh explicitly stays VERIFIED", async () => {
+      const r = await run("wp3-named", "Write tests/rotate.sh and call it rotate.sh in the docs", ["tests/rotate.sh"]);
+      expect(r.not_proven.some((n) => n.startsWith("task names rotate.sh"))).toBe(false);
+      expect(r.verdict).toBe("VERIFIED");
+    }, 30000);
+  });
   test("FC-WALL-PHANTOM-PATH: a symlink added by the change lands on NOT PROVEN by name; a regular new file and a plan-requested link do not", async () => {
     noKey();
     const { repo, base } = makeRepo("symadd");

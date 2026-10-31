@@ -155,7 +155,18 @@ const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSyn
 
 /** Paths the task text names as files (a name with a letter-bearing extension, optionally dir-prefixed), normalized repo-relative; the greenfield counterpart of namedFiles, which only sees files already in the repo map. */
 export function taskNamedPaths(task: string): string[] {
-  return [...new Set([...task.matchAll(/(?<![\w./-])((?:\.\/)?(?:[\w.-]+\/)*[\w-]+\.[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*)(?![\w-]|\.\w)/g)].map((m) => m[1]!.replace(/^\.\//, "")))];
+  const names = [...task.matchAll(/(?<![\w./-])((?:\.\/)?(?:[\w.-]+\/)*[\w-]+\.[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*)(?![\w-]|\.\w)/g)].map((m) => m[1]!.replace(/^\.\//, ""));
+  return [...new Set(names.filter((n) => !/^[A-Za-z]\.[A-Za-z]$/.test(n) && !/^[A-Z][a-z]+\.js$/.test(n)))]; // "e.g", "i.e" and product names like "Node.js" are prose, never files
+}
+
+/** FALSEVER-WALLPATH-3: language-agnostic last check. The task names a bare file X (a repo-root file), the run added X only under a subdirectory (tests/X) and not at the repo root, and the task does not name that subdirectory path: the real grader runs X at the root, so the result is NOT PROVEN. Returns the note lines (empty when nothing is misplaced). */
+export function misplacedNamedNotes(task: string, rawDiff: string[], repoDir: string, head: string): string[] {
+  const named = taskNamedPaths(task), added = rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() === "A" && rawDiff[i + 1] ? [rawDiff[i + 1]!] : []));
+  return named.filter((x) => !x.includes("/")).flatMap((x) => {
+    const hit = added.find((f) => f.includes("/") && basename(f) === x);
+    if (!hit || named.some((p) => p.endsWith(`/${x}`)) || safeGitSpawn(repoDir, ["cat-file", "-e", `${head}:${x}`], { timeout: 5000 }).status === 0) return [];
+    return [`task names ${x} but it exists only at ${hit}`];
+  });
 }
 
 /** FC-WALL-PHANTOM-PATH: repo paths a JS/TS test builds with join/resolve from the test dir, the cwd or a const derived from them (const assignments followed, calls split across lines joined) that do not exist in the base tree. process.cwd() is tried as the nearest package root of the test dir (verify runs a package's tests there) and as the repo root; a path existing under either passes. A path the plan names, creates (mkdir/write/cp/rename target), or that git ignores passes; write/expect/tmp lines are ignored. A path that stays inside the test dir is reported only when its first segment is absent from the test dir but present at the package or repo root (tests/plugins/x for plugins/x); fixtures the test dir lacks stay unreported. Returns repo-relative missing paths (max 3). */

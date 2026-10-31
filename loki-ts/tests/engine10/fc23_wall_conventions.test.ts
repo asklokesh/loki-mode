@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWall, buildWallBrief, WALL_OUTPUT_BUDGET, WALL_REPO_PATHS } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
-import { conventionViolation, conventionsBrief, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, vacuousCheck } from "../../src/project_model/conventions.ts";
+import { conventionViolation, conventionsBrief, outOfRepoTarget, phantomReason, misplacedNamedNotes, phantomRepoPaths, readPackageConventions, taskNamedPaths, vacuousCheck } from "../../src/project_model/conventions.ts";
 import { wallOwnedFailure } from "../../src/util/wall_owned.ts";
 import { withoutStaleWall } from "../../src/util/check_result.ts";
 import { RealTestMapProvider } from "../../src/engine10/testmap.ts";
@@ -342,6 +342,10 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(phantomRepoPaths(wall('join(import.meta.dir, "fixture.log")'), name, td, repo, null, task)).toEqual([]);
     expect(phantomRepoPaths(wall('join(import.meta.dir, "rotate.sh")'), name, td, repo, null, "Add a rotate script")).toEqual([]);
     expect(phantomReason(["tests/rotate.sh"], [], "tests", "", task)).toContain("task names rotate.sh");
+  });
+  test("taskNamedPaths ignores prose tokens (e.g, i.e, Node.js) and keeps real file names", () => {
+    expect(taskNamedPaths("Use a loop (e.g. find, i.e. not ls) on Node.js to write rotate.sh and ./lib/x.py")).toEqual(["rotate.sh", "lib/x.py"]);
+    expect(misplacedNamedNotes("e.g. foo, i.e. bar, Node.js", [":000000 100644 0 0 A", "tests/e.g", ":000000 100644 0 0 A", "tests/Node.js"], "/nonexistent", "HEAD")).toEqual([]);
   });
   test("monorepo: process.cwd() paths resolve against the nearest package root of the test file and the repo root", () => {
     const repo = repoWith(); mkdirSync(join(repo, "packages/a/test"), { recursive: true }); mkdirSync(join(repo, "packages/a/src"), { recursive: true });

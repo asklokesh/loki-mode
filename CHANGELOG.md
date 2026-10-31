@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A Wall test that resolves a file the task names beside the test file (for example `join(import.meta.dir, "rotate.sh")` when the task says `rotate.sh`) is now rejected and re-asked before sealing, even when that file does not exist yet, so the implementer is no longer led to create it in `tests/` while the real grader runs it at the repo root.
+- A run whose task names a bare file (for example `rotate.sh`) but added it only under a subdirectory such as `tests/rotate.sh`, and not at the repo root, now ends PARTIAL with a NOT PROVEN line, for any language or Wall shape the static path scan cannot see.
 
 ## v11.94.0 (2026-10-31)
 
