@@ -823,6 +823,31 @@ test("SB-04e (e): a validly signed log.sealed that follows neither run.resumed n
   expect(v.verdict).toBe("TAMPERED");
   expect(JSON.stringify(v)).toContain("does not follow the last run.completed");
 });
+test("SB-04e (f): an answered BLOCKED run keeps its verdict while its answered resume is in progress (the checkpoint seal follows a SPEC_CONFLICT completion)", async () => {
+  const id = `e10-b${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  let log = new SupervisorLog(ev, id);
+  log.append("run.started", null, { provider: "claude" });
+  seal(dir, id, ev, log, []); log.sealLog();
+  log.append("run.completed", null, { verdict: "SPEC_CONFLICT" }); log.sealLog();
+  const before = await verifyReceipt(join(dir, "receipt.json"));
+  log = new SupervisorLog(ev, id); log.append("run.resumed", null, { phase: "stage", answered: true, answer: "x" }); log.verify(); log.sealLog();
+  const after = await verifyReceipt(join(dir, "receipt.json"));
+  expect(types(ev).endsWith("run.completed,log.sealed,run.resumed,log.sealed")).toBe(true);
+  expect(after.verdict).toBe(before.verdict);
+  expect(after.verdict).not.toBe("TAMPERED");
+});
+test("SB-04e (g): an unsigned stage tail after a cancel seal is refused: no Resume offer", async () => {
+  const id = `e10-k${n++}`, repo = mkdtempSync(join(root, "kill-")), dir = join(repo, ".loki", "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo }); tgit(repo, "commit", "-q", "--allow-empty", "-m", "b"); tgit(repo, "branch", `loki/${id}`);
+  const pre = new SupervisorLog(ev, id); pre.append("run.started", null, { provider: "claude" }); pre.append("stage.completed", "intake", { base_sha: tgit(repo, "rev-parse", "HEAD"), task: "t" });
+  pre.append("run.completed", null, { verdict: "FAILED", cancelled: true, signal: "SIGTERM", outcome: "CANCELLED" }); pre.sealLog();
+  expect((await offer(repo)).menu).toContain("Resume (continue"); // positive control: the sealed cancel is offered Resume
+  const last = lastLine(ev);
+  appendFileSync(ev, JSON.stringify({ ...last, seq: last.seq + 1, type: "stage.completed", stage: "plan", data: { forged: true } }) + "\n");
+  const o = await offer(repo);
+  expect(o.menu).not.toContain("Resume (continue");
+  expect(o.resumed).toBe(0);
+});
 test("SB-04e (e2): a validly signed run.resumed plus log.sealed trailing a finished (non-cancelled) run is TAMPERED by the position rule itself", async () => {
   const r = resumedCompleted(), id = readEvents(r.ev)[0]!.run;
   const log = new SupervisorLog(r.ev, id); log.append("run.resumed", null, {}); log.sealLog();
