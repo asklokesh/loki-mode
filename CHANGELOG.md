@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- Secret masking in logs and reports is more accurate. Passwords and secrets that are a single lowercase word or contain dots (for example `adminPassword=correcthorse`) and short values with a digit (`adminPassword=hunter2`) are now masked, while plain identifiers such as `nextToken: RIGHT_PAREN_TOKEN`, `adminPassword=ADMIN_PASSWORD_VALUE`, `existingSecret=autonomi-secrets` and `KeyObject` stay readable. SendGrid key masking now matches the real key shape only, so translation message ids such as `I18N_MSG.checkout_confirmation_title.button_label_text_primary` are no longer garbled.
+
 ## v11.95.0 (2026-10-31)
 
 `loki answer` now resumes a blocked run in place, a Wall test that contradicts the task is settled by two referees and caps the Seal at PARTIAL, implement sessions refuse file writes outside their worktree, and a test-command timeout now kills the whole runner process group.

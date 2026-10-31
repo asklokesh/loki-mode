@@ -4,9 +4,21 @@
  *  keyword as its own segment so max_tokens, token_count and tokens: stay readable. A match starts only where no name char precedes it (linear on long a_a_a runs, never mid-word
  *  as in mytoken=1) and consumes leading and repeated separators, so --password=, --db-password=, _token= and __SECRET= still redact. Values already redacted ([REDACTED...]) are skipped, which keeps the rule idempotent. */
 const ASSIGNMENT = /((?<![A-Za-z0-9_.-])[_.-]*(?:[A-Za-z0-9]+[_.-]+)*(?:password|passwd|secret|token|api[_-]?key|apikey)["']?\s*[:=]\s*)((?:"(?!\[REDACTED)(?:\\.|[^"\\\n])+")|(?:'(?!\[REDACTED)(?:\\.|[^'\\\n])+')|(?!["']|\[REDACTED)[^\s"',;&]+)/gi;
+/** Values that are identifiers, not secrets, shared by GLUED_ASSIGNMENT and CAMEL_ASSIGNMENT (bare values only): ALL_CAPS (RIGHT_PAREN_TOKEN), PascalCase (KeyObject), and a kebab or snake
+ *  name of 2+ lowercase segments ending in a resource word (autonomi-secrets). Each must span the whole value, so a dot or any other character makes it a candidate secret. A single
+ *  lowercase word (correcthorse) is NOT an identifier. Segments are separator-delimited, so every alternative is linear. */
+const IDENT = String.raw`[A-Z0-9_]+(?![^\s"',;&])|(?:[A-Z][a-z]+)+(?![^\s"',;&])|[a-z]+(?:[-_][a-z]+)*[-_](?:secrets?|passwords?|tokens?|keys?|creds|config)(?![^\s"',;&])`;
+const ci = (w: string): string => [...w].map((c) => (/[a-z]/.test(c) ? `[${c}${c.toUpperCase()}]` : c)).join("");
+const KEYWORDS = ["password", "passwd", "secret", "token"].map(ci).join("|") + `|${ci("api")}[_-]?${ci("key")}|${ci("apikey")}`;
 /** A name that ends in the keyword with no separator (MYTOKEN=, xtoken=, 9token=) redacts only when the value looks like a credential (16+ of [A-Za-z0-9_-]), so mytoken=1 stays readable.
- *  Same name-start guard as ASSIGNMENT keeps it linear; the value is never an already-redacted marker, which keeps the rule idempotent. */
-const GLUED_ASSIGNMENT = /((?<![A-Za-z0-9_.-])[_.-]*(?:[A-Za-z0-9]+[_.-]+)*[A-Za-z0-9]*(?:password|passwd|secret|token|api[_-]?key|apikey)["']?\s*[:=]\s*["']?)[A-Za-z0-9_-]{16,}[^\s"',;&]*/gi;
+ *  Same name-start guard as ASSIGNMENT keeps it linear; the value is never an already-redacted marker, which keeps the rule idempotent. The keyword is case-insensitive via explicit
+ *  classes (not the i flag) so the IDENT exemption stays case-sensitive; a bare IDENT value (nextToken: RIGHT_PAREN_TOKEN, existingSecret=autonomi-secrets) stays readable. */
+const GLUED_ASSIGNMENT = new RegExp(String.raw`((?<![A-Za-z0-9_.-])[_.-]*(?:[A-Za-z0-9]+[_.-]+)*[A-Za-z0-9]*(?:${KEYWORDS})["']?\s*[:=]\s*(?:["'](?=[A-Za-z0-9_-]{16})|(?!["'])(?!${IDENT})(?=[A-Za-z0-9_-]{16})))[A-Za-z0-9_-]{16,}[^\s"',;&]*`, "g");
+/** camelCase and privateKey names ASSIGNMENT cannot see (adminPassword, clientSecret, privateKey, private_key): the name ends in Password, Secret or private key. Floor: 8 characters bare
+ *  (the NIST 800-63B minimum password length; keeps "password: none", "secret=true" readable), 6 when the value has a digit (hunter2, abc123: a digit makes a short value a likely password,
+ *  and a bare 6-char digit-bearing identifier is rare), 4 inside quotes (a quote marks a literal). Placeholders (${VAR}, <value>, {{x}}, [REDACTED]), calls (createPrivateKey({) and IDENT
+ *  values stay readable. */
+const CAMEL_ASSIGNMENT = new RegExp(String.raw`((?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]*(?:[a-z0-9](?:Password|Secret)|[Pp]rivate[_-]?[Kk]ey)["']?\s*[:=]\s*)((?:"(?!\[REDACTED|<|\$\{|\{\{)(?:\\.|[^"\\\n]){4,}")|(?:'(?!\[REDACTED|<|\$\{|\{\{)(?:\\.|[^'\\\n]){4,}')|(?!${IDENT}|["'\[$<{]|[\w.$]+[({])(?:(?=[^\s"',;&]*[0-9])[^\s"',;&]{6,}|[^\s"',;&]{8,}))`, "g");
 const RULES: [RegExp, string | ((...a: string[]) => string)][] = [
   [/sk-ant-[A-Za-z0-9_-]{20,}/g, "[REDACTED:ANTHROPIC_KEY]"],
   [/github_pat_[A-Za-z0-9_]{20,}/g, "[REDACTED:GITHUB_TOKEN]"],
@@ -15,7 +27,7 @@ const RULES: [RegExp, string | ((...a: string[]) => string)][] = [
   [/(?:AKIA|ASIA)[0-9A-Z]{16}/g, "[REDACTED:AWS_KEY]"],
   [/(AccountKey=)[A-Za-z0-9+/]{40,}={0,2}/g, "$1[REDACTED:AZURE_KEY]"],
   [/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[REDACTED:JWT]"],
-  [/SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g, "[REDACTED:SENDGRID_KEY]"],
+  [/SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g, "[REDACTED:SENDGRID_KEY]"],
   [/(?<![A-Za-z0-9])SK[0-9a-f]{32}\b/g, "[REDACTED:TWILIO_KEY]"],
   [/pypi-AgEI[A-Za-z0-9_-]{50,}/g, "[REDACTED:PYPI_TOKEN]"],
   [/\bshp(?:at|ca|pa|ss)_[a-f0-9]{32}\b/g, "[REDACTED:SHOPIFY_TOKEN]"],
@@ -38,6 +50,7 @@ const RULES: [RegExp, string | ((...a: string[]) => string)][] = [
   [/(\b[a-z][a-z0-9+.-]{0,63}:\/\/)[^\s/?#@]+@/gi, "$1[REDACTED]@"], // TEN-SECURITY-26: a bounded scheme keeps this linear; unbounded, every word start in a long a--a run rescanned it (quadratic)
   [ASSIGNMENT, (_m: string, pre: string, val: string) => (val[0] === '"' || val[0] === "'" ? `${pre}${val[0]}[REDACTED]${val[0]}` : `${pre}[REDACTED]`)],
   [GLUED_ASSIGNMENT, "$1[REDACTED]"],
+  [CAMEL_ASSIGNMENT, (_m: string, pre: string, val: string) => (val[0] === '"' || val[0] === "'" ? `${pre}${val[0]}[REDACTED]${val[0]}` : `${pre}[REDACTED]`)],
   [/(\bAuthorization\s*[:=]\s*)(?:Basic|Bearer|Token|Digest)?\s*[^\s,;"']+/gi, "$1[REDACTED]"],
 ];
 const QUERY_SEGMENT = /\?[^\s#"'<>]+/g;
