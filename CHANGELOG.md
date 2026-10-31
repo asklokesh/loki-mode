@@ -5,6 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.92.0 (2026-10-30)
+
+### Added
+
+- `loki try` lists each supported provider's login or key command once and exits 2 when none is ready, and prints the `npx` verify command for the kept receipt with the receipt path quoted. A packaged test runs `loki try` from the tarball with nothing else installed and proves Bun comes from the npx install with none on PATH.
+- Verbose stage lines now show the run's spend so far, for example `($0.04 so far)`, read from the same cost total as the final Cost line. A partly priced run reads `(partial: $X so far)` and a run with nothing priced reads `(spend not measured)`.
+
+### Changed
+
+- A successful run ends on a cleaner summary: the repo Readiness line prints only on a repo's first run or when its score changes (a marker under `.loki/state` records the last score shown), and a sealed run with nothing unproven and no flaky tests no longer prints an empty NOT PROVEN line.
+- Intake skips the Project Model discovery session when the test map already resolves one runner for every detected test and no package manifest sits below the repo root, which saves the 11 to 17 seconds that session took on multi-directory repos. Repos with nested manifests still run discovery as before.
+- `loki share`, `loki metrics --share` and `loki proof share` now write their temp files into a private directory with a fixed name, so a file pre-created in the temp directory can no longer make the command fail.
+
+### Fixed
+
+- A genuine passing Go check whose generated `-run ^(TestA|TestB)$` argument carries regex characters is now counted as a pass instead of leaving the run PARTIAL. Forged exits, injected shell text and the shell-line form are still refused.
+- `loki verify-pr` now exits 4 (NOT PROVEN, naming the file) when a PR removes the pytest section from setup.cfg or pyproject.toml, or the jest key from package.json, while keeping the file, or adds an empty pytest.ini that masks other config, or adds or removes pytest config in pyproject.toml written as a top-level dotted key (`tool.pytest.ini_options...`), a dotted key under `[tool]`, a quoted key (`tool."pytest"...`) or an inline table (`pytest = { ini_options = ... }`); it previously exited 0 VERIFIED. A pytest version pin bump (`==` or Poetry caret) is still a plain dependency bump.
+- A `bun test` run that is stopped by SIGTERM, Ctrl-C or a timeout no longer leaves loki-test-home-* and loki-test-key-* directories in your temp folder. Runs that are killed outright or stopped by `--bail` still leave their directories, which the next run removes once they are over 10 minutes old, only when they carry that run's owner marker and its process is gone.
+- Claude helper calls that Loki makes outside the main build loop (PRD enrichment, the done-recognition and council reviews, the voter agents, grill, quickstart classification, and `loki` migrate, docs, heal, review and remote-control) now run with `SHELL=/bin/bash`, so a shell alias such as `ls=eza` no longer hangs the agent's Bash tool. Set `LOKI_E10_KEEP_USER_SHELL=1` to keep your own shell.
+
+### Known issue
+
+- `loki verify-pr` judges a pyproject.toml, setup.cfg or tox.ini that contains a test section as a whole file, so an unrelated edit to such a file is refused as a runner config change. This refuses too often; it never reports a false VERIFIED.
+
 ## v11.91.0 (2026-10-30)
 
 ### Added
