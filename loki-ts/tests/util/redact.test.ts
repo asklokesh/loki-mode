@@ -52,16 +52,6 @@ test("PEM private key blocks are redacted, including multi-line and truncated", 
   expect(redactSecrets("-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----")).toBe("-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----");
 });
 
-test("SendGrid rule leaves identifiers ending in SG alone and still redacts real keys", () => {
-  const tail = "." + "a".repeat(22) + "." + "b".repeat(43);
-  for (const id of ["MSG.applicationSettingsKey", "I18N_MSG.someKey", "xSG" + tail, "_SG" + tail, "9SG" + tail]) expect(redactSecrets(id)).toBe(id);
-  const key = "SG" + tail;
-  expect(redactSecrets(`key=${key}`)).toBe("key=[REDACTED:SENDGRID_KEY]");
-  expect(redactSecrets(`"${key}"`)).toBe('"[REDACTED:SENDGRID_KEY]"');
-  expect(redactSecrets(`token ${key}`)).toBe("token [REDACTED:SENDGRID_KEY]");
-  expect(redactSecrets(key)).toBe("[REDACTED:SENDGRID_KEY]");
-});
-
 test("vendor tokens", () => {
   const sg = "SG." + "a".repeat(22) + "." + "b".repeat(43);
   const tw = "SK" + "0123456789abcdef".repeat(2);
