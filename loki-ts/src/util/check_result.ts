@@ -1250,9 +1250,10 @@ export function spawnCollect(cmd: string, args: string[], o: { cwd?: string; env
     let out = "", err = "", error = false, done = false; const MAX = 1024 * 1024; // spawnSync parity: stdin EOF, default maxBuffer, "stdout\nstderr" join
     const fin = (status: number | null) => { if (!done) { done = true; resolve({ status: error ? null : status, output: `${out}\n${err}` }); } };
     const c = spawn(cmd, args, { cwd: o.cwd, env: o.env, timeout: o.timeoutMs, stdio: ["ignore", "pipe", "pipe"] });
+    const hard = setTimeout(() => { if (c.exitCode === null && c.signalCode === null) c.kill("SIGKILL"); }, o.timeoutMs + 1000); // spawn's timeout sends SIGTERM only; a child that ignores it is SIGKILLed 1s later (this handle only)
     const over = () => { if (out.length > MAX || err.length > MAX) { error = true; c.kill("SIGTERM"); } };
     c.stdout?.on("data", (d) => { out += d; over(); }); c.stderr?.on("data", (d) => { err += d; over(); });
-    c.on("error", () => { error = true; fin(null); }); c.on("close", (code, sig) => fin(sig ? null : code));
+    c.on("error", () => { error = true; fin(null); }); c.on("close", (code, sig) => { clearTimeout(hard); fin(sig ? null : code); });
   });
 }
 // E-98a B2: .venv, then venv, then an in-repo (realpath under repoDir) VIRTUAL_ENV are "project";

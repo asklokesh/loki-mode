@@ -1,17 +1,15 @@
-// D63-C4: `loki answer [<run-id>] [--text "..."]` closes the BLOCKED loop. engine10 has no in-place resume
-// (BLOCKED is terminal), so the answer rides into a fresh run as task context. The answer comes from --text or
-// the Control Plane answer file (<answerDir>/<source>/<run>.answer.txt). Launch is injected for tests.
-import { spawn } from "node:child_process";
+// `loki answer [<run-id>] ["<text>" | --text "..."]` closes the BLOCKED loop: the run resumes under the same run id
+// (util/run_outputs.ts resumeFlag), the answer joins its task text, and settled stages are not re-run. The answer comes
+// from the argument, --text, or the Control Plane answer file (<answerDir>/<source>/<run>.answer.txt). The resume is injected for tests.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { conflictReasonOf, readEvents } from "../engine10/events.ts";
 import { eventsPath, latestRunId, listRunIds, runsRoot } from "../commands/run_status.ts";
-import { REPO_ROOT } from "../util/paths.ts";
 
 export interface AnswerDeps {
-  repoDir: string; env: NodeJS.ProcessEnv; binPath: string; answerDir: string;
-  launch(argv: string[], env: NodeJS.ProcessEnv, cwd: string): Promise<{ code: number; runId: string }>;
+  repoDir: string; env: NodeJS.ProcessEnv; answerDir: string;
+  resume(runId: string, answer: string): Promise<number>;
   out(line: string): void; err(line: string): void;
 }
 const clean = (s: string): string => s.replace(/[\x00-\x1f\x7f]+/g, " ").trim();
@@ -55,6 +53,7 @@ export function readAnswerFile(answerDir: string, runId: string): string | null 
 }
 export async function runAnswer(args: string[], d: AnswerDeps): Promise<number> {
   let runId = "", text: string | undefined;
+  const pos: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--text") {
@@ -62,36 +61,30 @@ export async function runAnswer(args: string[], d: AnswerDeps): Promise<number> 
       text = args[++i];
     }
     else if (a.startsWith("--text=")) text = a.slice(7);
-    else if (!runId && !a.startsWith("-")) runId = a;
-    else { d.err("usage: loki answer [<run-id>] [--text \"...\"]"); return 2; }
+    else if (!a.startsWith("-")) pos.push(a);
+    else { d.err(USAGE); return 2; }
   }
+  if (pos.length > 0 && /^e10-[A-Za-z0-9-]+$/.test(pos[0]!)) runId = pos.shift()!; // a run id, else the first word is already the answer
+  if (pos.length > 1 || (pos.length === 1 && text !== undefined)) { d.err(USAGE); return 2; }
+  if (pos.length === 1) text = pos[0];
   const id = runId || newestBlocked(d.repoDir) || latestRunId(runsRoot(process.env, d.repoDir));
   if (!id) { d.err("loki answer: no runs found; nothing is BLOCKED"); return 2; }
   const b = readBlocked(d.repoDir, id);
   if (typeof b === "string") { d.err(`loki answer: ${b}`); return 2; }
-  const answer = (text ?? readAnswerFile(d.answerDir, id) ?? "").trim();
-  if (!answer) { d.err(`loki answer: no answer for ${id}; pass --text "..." or answer it in the Control Plane`); return 2; }
-  const task = `${b.task}\n\nClarification answering "${b.question}": ${answer}`;
-  const r = await d.launch([d.binPath, task], { ...answerEnv(d.env), LOKI_PARENT_RUN: id, LOKI_ANSWER_SHA: new Bun.CryptoHasher("sha256").update(answer).digest("hex") }, d.repoDir); // run.started records answered_run + answer sha
-  d.out(`new run ${r.runId} (exit ${r.code})`);
-  return r.code;
+  const answer = (text ?? readAnswerFile(d.answerDir, id) ?? "").trim().slice(0, MAX_ANSWER);
+  if (!answer) { d.err(`loki answer: no answer for ${id}; pass the text (loki answer ${id} "...") or answer it in the Control Plane`); return 2; }
+  d.out(`resuming ${id} with your answer`);
+  return d.resume(id, answer);
 }
-/** Real launcher: spawns bin/loki and discovers the run dir it creates. */
-function realLaunch(argv: string[], env: NodeJS.ProcessEnv, cwd: string): Promise<{ code: number; runId: string }> {
-  const before = new Set(listRunIds(runsRoot(process.env, cwd)));
-  const child = spawn(argv[0]!, argv.slice(1), { cwd, env, stdio: "ignore" });
-  return new Promise((res) => {
-    let runId = "";
-    const poll = setInterval(() => { runId = listRunIds(runsRoot(process.env, cwd)).find((x) => !before.has(x) && x.startsWith("e10-")) ?? runId; }, 100);
-    const fin = (code: number) => { clearInterval(poll); runId = runId || listRunIds(runsRoot(process.env, cwd)).find((x) => !before.has(x)) || `pid-${child.pid}`; res({ code, runId }); };
-    child.on("exit", (c) => fin(c ?? 1));
-    child.on("error", () => fin(1));
-  });
-}
+const USAGE = 'usage: loki answer [<run-id>] ["<text>" | --text "..."]';
 export function runAnswerCli(args: string[]): Promise<number> {
+  const safe = answerEnv(process.env); // the resumed run is headless and never sees chat or control secrets
+  for (const k of Object.keys(process.env)) if (!(k in safe)) delete process.env[k];
+  process.env.LOKI_NO_BROWSER = "1";
   return runAnswer(args, {
-    repoDir: process.cwd(), env: process.env, binPath: join(REPO_ROOT, "bin", "loki"),
+    repoDir: process.cwd(), env: process.env,
     answerDir: process.env.LOKI_CONTROL_ANSWER_DIR || join(process.env.HOME || homedir(), ".loki", "control", "answers"),
-    launch: realLaunch, out: (l) => process.stdout.write(l + "\n"), err: (l) => process.stderr.write(l + "\n"),
+    resume: async (runId, answer) => (await import("../util/run_outputs.ts")).resumeFlag(runId, false, { out: (l) => process.stdout.write(l) }, answer),
+    out: (l) => process.stdout.write(l + "\n"), err: (l) => process.stderr.write(l + "\n"),
   });
 }

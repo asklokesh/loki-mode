@@ -32,7 +32,7 @@ function boundEvents(log: string, bound: string): EventEnvelope[] | null {
   for (let i = 0; i <= lines.length; i++) { if (h.copy().digest("hex") === bound) { n = i; break; } if (i < lines.length) h.update(lines[i] + "\n"); }
   if (n < 0) return null;
   const evs = lines.slice(0, n).flatMap((l) => { try { return [JSON.parse(l) as EventEnvelope]; } catch { return []; } });
-  const sealed = evs.findIndex((e) => e.type === "receipt.sealed"); // a log.sealed inside the prefix is a cancel seal of an earlier attempt; only receipt.sealed ends the bound run
+  const sealed = evs.findIndex((e, i) => e.type === "receipt.sealed" && !evs.slice(i + 1).some((x) => x.type === "run.resumed" && x.data["answered"] === true)); // a log.sealed inside the prefix is a cancel seal of an earlier attempt; only a receipt.sealed no answered run.resumed follows ends the bound run (an answered BLOCKED run seals once per attempt)
   return sealed >= 0 ? evs.slice(0, sealed) : evs;
 }
 

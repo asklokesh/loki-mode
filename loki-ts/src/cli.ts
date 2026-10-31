@@ -47,7 +47,7 @@ Bun-native commands:
   issues run [owner/repo] Triage every open issue and run the actionable ones; too-large ones become stacked PRs
                          (flags: --label L --limit N --parallel K --draft --dry-run --json --yes --comment --no-split)
   verify-pr <url|o/r#N>  Verify a PR against its linked issue in a sandbox (LOKI_VERIFY_PR=1)
-  answer [run] [--text]  Start a follow-up run from a BLOCKED run with your answer (--text, or the Control Plane answer file)
+  answer [run] [text]    Answer a BLOCKED run; it continues under the same run id (text, --text, or the Control Plane answer file)
   control <subcmd>       Control plane (on by default; LOKI_CONTROL=0 turns it off)
                          (subcmds: serve [--port N] [--db PATH] | backfill [DIR] | status)
   estimate [--json]      Cost estimate for a run (the same estimate 'loki start' prints)

@@ -74,7 +74,7 @@ cat > "$GATE" <<GATEEOF
 export SCRIPT_DIR="$SCRIPT_DIR"
 export HOME="$TMP/home"; mkdir -p "\$HOME/.loki"
 export LOKI_TTY_INTERACTIVE=1
-curl() { while [ \$# -gt 0 ]; do [ "\$1" = "-d" ] && shift && printf '%s' "\$1" > "$TMP/payload.json"; shift; done; }
+curl() { while [ \$# -gt 0 ]; do [ "\$1" = "-d" ] && shift && printf '%s\n' "\$1" >> "$TMP/payload.json"; shift; done; }
 export -f curl
 source "$SCRIPT_DIR/telemetry.sh"
 r() { rm -f "$TMP/payload.json"; loki_emit_build_verified "$PROOF"; sleep 0.4; }

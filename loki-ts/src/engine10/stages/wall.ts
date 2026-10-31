@@ -35,7 +35,7 @@ export class RealBaseTestRunner implements BaseTestRunner {
     this.lastNotRunFiles = [];
     let pass = 0, fail = 0, not_run = 0; const not_run_files: { file: string; reason: string }[] = []; const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; for (const f of files) {
       const { cmd, args, interpreter, cwd } = commandFor(f, repoDir, api);
-      const r = spawnSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, encoding: "utf8", timeout: Math.max(1000, this.timeoutMs), env: plainTestEnv() }); // FC-69: plain env in, ANSI stripped out
+      const r = spawnSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, encoding: "utf8", timeout: Math.max(1000, this.timeoutMs), killSignal: "SIGKILL", env: plainTestEnv() }); // FC-69: plain env in, ANSI stripped out
       const status = r.error ? null : r.status, out = stripAnsi(`${r.stdout ?? ""}\n${r.stderr ?? ""}`), base = classify(f, status, out, repoDir, interpreter);
       const result = base === "not_run" && status === 0 && f.runner === "go" && interpreter !== "system" && corroborateGoPassSync(classifyCheck({ kind: "test", ok: true, out, ...goRunner(cmd, args) }), out, cmd, args.filter((a, k) => a !== "-run" && args[k - 1] !== "-run"), { cwd, env: plainTestEnv() }).result === "pass" ? "pass" : base; // same Go exit 0 corroboration as runEach, synchronous
       if (result === "pass") pass++; else if (result === "fail") fail++; else { not_run++; not_run_files.push({ file: f.path, reason: notRunReason(status, interpreter) }); }

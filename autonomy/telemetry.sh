@@ -459,6 +459,11 @@ loki_emit_build_verified() {
         [ -n "$_line" ] && _args+=("$_line")
     done <<< "$_props"
     loki_telemetry "build_verified" "${_args[@]}"
+    # Only a VERIFIED headline is the first_verified milestone.
+    case "$_props" in
+        "headline=VERIFIED"|"headline=VERIFIED"$'\n'*|*$'\n'"headline=VERIFIED"|*$'\n'"headline=VERIFIED"$'\n'*)
+            loki_emit_activation first_verified ;;
+    esac
     return 0
 }
 

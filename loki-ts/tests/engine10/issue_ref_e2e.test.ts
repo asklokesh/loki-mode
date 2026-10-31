@@ -331,3 +331,69 @@ describe("engine10 issue-ref user journeys U7-U9 (recorded fixtures, no paid mod
     expect(slurp(calls).trim().split("\n").map((l) => l.split("\t"))).toEqual([["pr", "create", "--repo", "acme/widgets", "--head", "loki/issue-101", "--title", "T", "--body-file", "b.md", "--draft"]]);
   }, 60_000);
 });
+
+describe("engine10 loki answer: a BLOCKED run resumes in place under the same run id (stub provider)", () => {
+  test("answer joins the task, run.resumed (not a second run.started) is appended, settled stages are not re-run, the receipt is VERIFIED", async () => {
+    const p = prep(true, { ISSUE_REF_STUB_CONFLICT: "1" });
+    const first = await exec(p, ["bash", BIN_LOKI, "acme/widgets#101"]);
+    expect(first.code).toBe(4);
+    const blocked = readRun(p);
+    const runId = (JSON.parse(readFileSync(join(p.repo, ".loki", "engine.json"), "utf8")) as { run_id: string }).run_id;
+    expect(blocked.events.findLast((e) => e.type === "run.completed")!.data.verdict).toBe("SPEC_CONFLICT");
+    const implementCalls = slurp(p.stubLog).trim().split("\n").filter((l) => l === "implement").length;
+    expect(implementCalls).toBe(2); // the conflict and its one correction round
+
+    const wrong = await exec(p, [process.execPath, ENTRY, "answer", "e10-nope", "x"]);
+    expect(wrong.code).toBe(2);
+
+    const ans = await exec(p, [process.execPath, ENTRY, "answer", runId, "yes, clamp at zero"]);
+    if (ans.code !== 0) console.error(ans.out);
+    expect(ans.code).toBe(0);
+    const { events, runDir } = readRun(p);
+    expect(events.filter((e) => e.type === "run.started")).toHaveLength(1);
+    const resumed = events.filter((e) => e.type === "run.resumed");
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0]!.data.answered).toBe(true);
+    expect(resumed[0]!.data.answer).toBe("yes, clamp at zero");
+    expect(events.filter((e) => e.type === "stage.completed" && e.stage === "intake")).toHaveLength(1); // settled stage restored, not re-run
+    expect(slurp(p.stubLog).trim().split("\n").filter((l) => l === "implement")).toHaveLength(3); // the answered attempt is one more implement session
+    expect(slurp(p.briefLog)).toContain("Clarification answering");
+    expect(slurp(p.briefLog)).toContain("yes, clamp at zero");
+    expect(events.findLast((e) => e.type === "run.completed")!.data.verdict).toBe("VERIFIED");
+    expect(JSON.parse(readFileSync(join(runDir, "receipt.json"), "utf8")).verdict).toBe("VERIFIED");
+
+    const again = await exec(p, [process.execPath, ENTRY, "answer", runId, "again"]);
+    expect(again.code).toBe(2); // no longer BLOCKED
+  }, 180_000);
+
+  // seal_drift boundEvents cuts at a log.sealed NOT followed by run.resumed, so the first (BLOCKED) seal of a resumed run does not truncate the bound log.
+  test("verify of the answered run is VERIFIED", async () => {
+    const p = prep(true, { ISSUE_REF_STUB_CONFLICT: "1" });
+    expect((await exec(p, ["bash", BIN_LOKI, "acme/widgets#101"])).code).toBe(4);
+    const runId = (JSON.parse(readFileSync(join(p.repo, ".loki", "engine.json"), "utf8")) as { run_id: string }).run_id;
+    expect((await exec(p, [process.execPath, ENTRY, "answer", runId, "yes, clamp at zero"])).code).toBe(0);
+    const ver = await exec(p, [process.execPath, ENTRY, "engine10", "verify", runId]);
+    expect(ver.out).not.toContain("TAMPERED");
+    expect(ver.out).not.toContain("no test.result pass");
+    expect(ver.out).toMatch(/\bVERIFIED\b/);
+    expect(ver.code).toBe(0);
+  }, 180_000);
+
+  test("a tampered second segment of the answered run still reads TAMPERED", async () => {
+    const p = prep(true, { ISSUE_REF_STUB_CONFLICT: "1" });
+    expect((await exec(p, ["bash", BIN_LOKI, "acme/widgets#101"])).code).toBe(4);
+    const runId = (JSON.parse(readFileSync(join(p.repo, ".loki", "engine.json"), "utf8")) as { run_id: string }).run_id;
+    expect((await exec(p, [process.execPath, ENTRY, "answer", runId, "yes, clamp at zero"])).code).toBe(0);
+    const log = join(readRun(p).runDir, "events.jsonl");
+    const lines = readFileSync(log, "utf8").split("\n");
+    const at = lines.findIndex((l) => l.includes('"run.resumed"'));
+    expect(at).toBeGreaterThan(0);
+    const later = lines.findIndex((l, i) => i > at && l.includes('"test.result"'));
+    expect(later).toBeGreaterThan(at);
+    lines[later] = lines[later]!.replace('"pass"', '"fail"');
+    writeFileSync(log, lines.join("\n"));
+    const ver = await exec(p, [process.execPath, ENTRY, "engine10", "verify", runId]);
+    expect(ver.code).not.toBe(0);
+    expect(ver.out).toContain("TAMPERED");
+  }, 180_000);
+});

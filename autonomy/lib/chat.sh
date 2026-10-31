@@ -48,7 +48,7 @@ Loki chat commands:
   /stop              loki stop
   /pause             loki pause (the run halts at the next iteration boundary)
   /resume            loki resume
-  /answer <text>     loki answer --text: answer a BLOCKED run with a follow-up run
+  /answer <text>     loki answer --text: answer a BLOCKED run, which resumes under the same run id
   /workspace <name> <brief>  loki start --workspace (multi-repo run, composite receipt)
   /deploy [--destination D] [--canary] [--env-file F] [--domain H] [--health-url U] [--auto-rollback]
                      loki deploy --execute after you confirm (gated on a VERIFIED receipt)

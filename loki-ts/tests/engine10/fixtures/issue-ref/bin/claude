@@ -41,6 +41,10 @@ if [ "$stage" = "wall" ]; then
 fi
 if [ "$stage" = "implement" ]; then
   if [ -n "${ISSUE_REF_STUB_BRIEF_LOG:-}" ]; then printf '%s' "$prompt" > "$ISSUE_REF_STUB_BRIEF_LOG"; fi
+  # PG-31 seam: raise a spec conflict until the brief carries the operator's answer.
+  if [ -n "${ISSUE_REF_STUB_CONFLICT:-}" ]; then
+    case "$prompt" in *"Clarification answering"*) ;; *) echo "LOKI_SPEC_CONFLICT: should subtract clamp at zero?"; exit 0 ;; esac
+  fi
   printf '\nexport function subtract(a: number, b: number): number {\n  return a - b;\n}\n' >> calc.ts
   echo "LOKI_DONE"
 fi

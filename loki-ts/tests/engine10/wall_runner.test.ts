@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classify, runWall } from "../../src/engine10/stages/wall.ts";
+import { RealBaseTestRunner, classify, runWall } from "../../src/engine10/stages/wall.ts";
 import type { RunContext, SessionRunOptions, SessionRunner } from "../../src/engine10/types.ts";
 
 const SUM = "function sum(arr) { let t = 0; for (let i = 1; i < arr.length; i++) t += arr[i]; return t; }\nmodule.exports = { sum };\n";
@@ -205,4 +205,22 @@ describe("TEN-SPEED-19 base jobs", () => {
     expect(a.status).toBe(sync.status);
     expect(a.output).toBe(`${sync.stdout}\n${sync.stderr}`);
   }, 30_000);
+  // A child that ignores SIGTERM (as bun test does) must still stop at the timeout.
+  const STUBBORN = ["-e", "process.on('SIGTERM', () => {}); setTimeout(() => {}, 30000)"];
+  test("spawnCollect stops a SIGTERM-ignoring child shortly after its timeout and reports no status", async () => {
+    const { spawnCollect } = await import("../../src/util/check_result.ts");
+    const t0 = Date.now(), r = await spawnCollect("node", STUBBORN, { timeoutMs: 1000 });
+    expect(Date.now() - t0).toBeLessThan(4000);
+    expect(r.status).toBeNull();
+  }, 20_000);
+
+  test("RealBaseTestRunner.run stops a SIGTERM-ignoring child at the timeout and counts it not_run", () => {
+    const repo = mkdtempSync(join(tmpdir(), "loki-run.f0-")); repos.push(repo);
+    mkdirSync(join(repo, ".venv", "bin"), { recursive: true });
+    writeFileSync(join(repo, ".venv", "bin", "python"), `#!/bin/sh\nexec node -e "process.on('SIGTERM', () => {}); setTimeout(() => {}, 30000)"\n`, { mode: 0o755 });
+    writeFileSync(join(repo, "test_a.py"), "def test_a():\n    pass\n");
+    const t0 = Date.now(), r = new RealBaseTestRunner(null, 1000).run(repo, [{ runner: "pytest", path: "test_a.py" }]);
+    expect(Date.now() - t0).toBeLessThan(4000);
+    expect(r).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  }, 20_000);
 });
