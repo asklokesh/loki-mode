@@ -159,6 +159,8 @@ COPY --chown=loki:loki completions/ ./completions/
 # reads at runtime -- shipping the dir keeps the JSON-as-source-of-truth
 # contract intact across Docker installs.
 COPY --chown=loki:loki bin/ ./bin/
+COPY --chown=loki:loki scripts/vpr-pytest-boot/ ./scripts/vpr-pytest-boot/
+COPY --chown=loki:loki scripts/verify-pr-sandbox.sh ./scripts/verify-pr-sandbox.sh
 COPY --chown=loki:loki loki-ts/dist/ ./loki-ts/dist/
 COPY --chown=loki:loki loki-ts/data/ ./loki-ts/data/
 

@@ -754,6 +754,14 @@ describe("verify-pr: an exit code alone is not proof", () => {
     } finally { rmSync(tmp, { recursive: true, force: true }); }
   });
 
+  test("the wrapped check runs with the user site off, so a user-site .pth cannot run before the recorder", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "loki-vprboot-"));
+    try {
+      const r = spawnSync("bash", ["-c", pytestBoot('python3 -c "import sys; print(sys.flags.no_user_site)"')], { env: { PATH: process.env["PATH"] ?? "", TMPDIR: tmp }, encoding: "utf8" });
+      expect(r.stdout.trim()).toBe("1");
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  });
+
   test("a hit line written after the terminator still counts toward the union", () => {
     const r = bootRecord(`H {"start":1}\nH {"end":1,"err":0}\nH {"p":"late.py"}\nE\n`);
     expect([...r.files]).toEqual(["late.py"]);
