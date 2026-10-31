@@ -52,14 +52,18 @@ export interface ClauseSet { clauses: Clause[]; dropped: number }
 const SKIP_HEAD = /^(?:#+\s*)?(?:\d+(?:\.\d+)*[.)]?\s*)?(?:\*\*|__)?\s*(?:(?:non[- ]?goals?|out[- ]of[- ]scope|not (?:required|in scope)|won'?t do|will not do|future work|future)(?:\s*\([^)]*\))?(?:\s*:\s+\S.*)?|(?:background|context|references?|rationale|motivation|glossary|appendix|alternatives?(?:\s+(?:considered|explored|rejected))?|considered alternatives)(?:\s*\([^)]*\))?)\s*:?\s*(?:\*\*|__)?\s*:?\s*$/i; // the whole heading is the title; only the exclusion titles may carry "Title: text", so "Will not crash", "Future-dated payments" and "Context: Billing" keep their clauses
 const CLAUSE_HEAD = /accept|criteria|requirement|must/i, RFC2119 = /\b(?:MUST|SHALL)(?: NOT)?\b/, GWT = /^(?:given|when|then|and|but)\b/i;
 // A markdown heading that states a requirement is a clause too: a must/should/shall verb (not the bare "Must have" title), implements/implementing, or a colon then a full sentence. A bare title ("Errors", "API") is not.
-const HEAD_REQ = /\b(?:must|should|shall)\s+(?!haves?\b)[a-z]|\bimplements\s+\S|\w[^\n]*?\bimplementing\s+\S/i;
+const HEAD_MODAL = /\b(?:must|should|shall|will(?!\s+not\b))\s+(?!haves?\b)[a-z]/i;
+const HEAD_REQ = new RegExp(`${HEAD_MODAL.source}|\\bimplements\\s+\\S|\\w[^\\n]*?\\bimplementing\\s+\\S`, "i");
 // Question-led headings ("What should happen"; "When ...?" or "Where ...?" only with the trailing "?") and label or standard-title headings ("Step 2: ...", "Example: ...", "RFC 4180: ...") describe or introduce; they do not state a requirement.
-const HEAD_QUESTION = /^#+\s+(?:\d+(?:\.\d+)*[.)]?\s*)?(?:(?:what|how|why|who|which)\b|(?:when|where|if)\b[^\n]*\?\s*$)/i;
-const HEAD_LABEL = /^#+\s+(?:\d+(?:\.\d+)*[.)]?\s*)?(?:step|example|examples|goal|goals|note|notes|usage|overview|summary|task|tip|rfc|iso|ieee|ecma|w3c|ansi)\b/i;
+const HEAD_QUESTION = /^#+\s+(?:\d+(?:\.\d+)*[.)]?\s*)?(?:(?:what|how|why|who|which)\b|(?:when|where|if)\b[^\n]*\?\s*$)|\?\s*$/i;
+const HEAD_LABEL = /^#+\s+(?:\d+(?:\.\d+)*[.)]?\s*)?(?:step|example|examples|goal|goals|note|notes|usage|overview|summary|task|tip)\b/i;
+// A standard reference prefix ("RFC 4180: ...") is a title unless the text after the colon states something (a modal or a be-verb).
+const HEAD_STD = /^#+\s+(?:\d+(?:\.\d+)*[.)]?\s*)?(?:rfc|iso|ieee|ecma|w3c|ansi)\b/i, HEAD_STATES = /\b(?:must|shall|should|will|may|can|is|are|be|returns?)\b/i;
 const LIST_ITEM = /^(?:[-*+]\s+|\d+[.)]\s+)/;
 const isHeadLine = (l: string): boolean => /^#+\s/.test(l) || (/:$/.test(l) && l.length <= 60 && !/^[-*+\d]/.test(l));
 const HEAD_SENTENCE = /:\s+\S+(?:\s+\S+){3,}[.!?]$/;
-const headStatesRequirement = (line: string): boolean => !HEAD_QUESTION.test(line) && (HEAD_REQ.test(line) || (!HEAD_LABEL.test(line) && HEAD_SENTENCE.test(line)));
+// Over a list the heading is a container (the items are the clauses) unless it carries a modal requirement itself.
+const headStatesRequirement = (line: string, overList: boolean): boolean => !HEAD_QUESTION.test(line) && (overList ? HEAD_MODAL.test(line) : HEAD_REQ.test(line) || (!HEAD_LABEL.test(line) && HEAD_SENTENCE.test(line) && (!HEAD_STD.test(line) || HEAD_STATES.test(line.slice(line.indexOf(":") + 1)))));
 const normClause = (t: string): string => t.replace(/\s+/g, " ").trim();
 
 const OAS_METHOD = /^ {4}(get|put|post|delete|patch|head|options):\s*$/;
@@ -93,7 +97,7 @@ export function extractClauses(text: string): ClauseSet {
       if (fence || !keep.has(i)) continue;
       const line = raw.trim();
       if (line === "") { gwt = -1; continue; }
-      if (isHeadLine(line)) { under = CLAUSE_HEAD.test(line); skip = !under && SKIP_HEAD.test(line); gwt = -1; if (!skip && /^#+\s/.test(line) && headStatesRequirement(line) && !listFollows(i)) out.push({ text: line.replace(/^#+\s+/, "").replace(/\*\*|__/g, ""), anchor: anchorOf(i) }); continue; }
+      if (isHeadLine(line)) { under = CLAUSE_HEAD.test(line); skip = !under && SKIP_HEAD.test(line); gwt = -1; if (!skip && /^#+\s/.test(line) && headStatesRequirement(line, listFollows(i))) out.push({ text: line.replace(/^#+\s+/, "").replace(/\*\*|__/g, ""), anchor: anchorOf(i) }); continue; }
       if (skip) continue;
       const item = /^(?:[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+)(.*)$/.exec(line);
       const body = (item ? item[1]! : line).replace(/\*\*|__/g, "");

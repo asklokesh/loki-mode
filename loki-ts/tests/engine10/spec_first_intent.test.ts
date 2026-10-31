@@ -345,7 +345,7 @@ describe("acceptance clause extraction (generic, anchored)", () => {
   });
   test("Context and Background headings keep their requirement text and bullets; only exclusion titles take Title: text", () => {
     expect(extractClauses("## Context: Billing\n- An invoice total equals the sum of its lines").clauses).toHaveLength(1);
-    expect(extractClauses("## Background: refunds should settle within 2 days\n- A refund older than 2 days is marked late").clauses.map((c) => c.text)).toEqual(["A refund older than 2 days is marked late"]); // over a list the heading is a container
+    expect(extractClauses("## Background: refunds should settle within 2 days\n- A refund older than 2 days is marked late").clauses.map((c) => c.text)).toEqual(["Background: refunds should settle within 2 days", "A refund older than 2 days is marked late"]); // a modal heading stays a clause over a list
     expect(extractClauses("## Background: refunds should settle within 2 days\n\n## Notes\n").clauses.map((c) => c.text)).toEqual(["Background: refunds should settle within 2 days"]); // a leaf keeps it
     expect(extractClauses("## Out of scope: anything about OAuth").clauses).toEqual([]);
   });
@@ -463,8 +463,20 @@ describe("heading lines that state a requirement", () => {
     expect(texts([ERR_HEAD, "- `EvalError::Arity(String)`: wrong argument count"].join("\n"))).toEqual(["`EvalError::Arity(String)`: wrong argument count"]);
     expect(texts([ERR_HEAD, "", "## Other"].join("\n"))).toEqual([ERR_HEAD.slice(3)]);
   });
-  test("a numbered or blank-separated list under a heading also makes it a container; prose does not", () => {
-    expect(texts("## The parser must reject empty input\n\n1. Empty string\n2. Only spaces")).toEqual(["Empty string", "Only spaces"]);
+  test("a modal requirement heading stays a clause with bullets or a numbered list under it", () => {
+    expect(texts("## The parser must reject empty input\n\n1. Empty string\n2. Only spaces")).toEqual(["The parser must reject empty input", "Empty string", "Only spaces"]);
+    expect(texts("## The API must return 401 when the token is missing\n- The body names the header")).toEqual(["The API must return 401 when the token is missing", "The body names the header"]);
+    expect(texts("## The API will return 401 when the token is missing\n- The body names the header")).toHaveLength(2);
+    expect(texts("## Will not crash\n- Bad input exits 2")).toEqual(["Bad input exits 2"]);
+  });
+  test("a standard-reference heading keeps a colon requirement sentence; a bare or title-only one is no clause", () => {
+    expect(texts("## RFC 4180: fields containing a comma are wrapped in double quotes.")).toEqual(["RFC 4180: fields containing a comma are wrapped in double quotes."]);
+    expect(texts("## ISO 8601: dates must be written as YYYY-MM-DD.")).toHaveLength(1);
+    expect(texts("## RFC 4180")).toEqual([]);
+    expect(texts("## Overview")).toEqual([]);
+    expect(texts("## Will it scale?")).toEqual([]);
+  });
+  test("a numbered or blank-separated list under a non-modal heading makes it a container; prose does not", () => {
     expect(texts("## Output should be sorted\nIt returns an error.\n\n## Next")).toEqual(["Output should be sorted"]);
   });
   test("an RFC-style title heading is not a clause, a bare Approach: over bullets leaves the bullets, a leaf Approach: sentence is a clause", () => {
@@ -493,6 +505,13 @@ describe("heading lines that state a requirement", () => {
     expect(extractClauses(spec).clauses.map((c) => c.id)).toEqual(["C1", "C2"]);
     expect(verdictFor(spec, "// clause: C2\nexpect(log).toBe(1);\n")).toBe("PARTIAL");
     expect(verdictFor(spec, "// clause: C1\nexpect(status).toBe(401);\n// clause: C2\nexpect(log).toBe(1);\n")).toBe("VERIFIED");
+  });
+  test("verdictOf: a dropped-before requirement heading now caps at PARTIAL when unproven, and a fully covered spec stays VERIFIED", () => {
+    const spec = "## The API must return 401 when the token is missing\n- The body names the header\n\n## RFC 4180: fields containing a comma are wrapped in double quotes.\n";
+    expect(extractClauses(spec).clauses.map((c) => c.id)).toEqual(["C1", "C2", "C3"]);
+    expect(verdictFor(spec, "// clause: C2\nassert!(a);\n// clause: C3\nassert!(b);\n")).toBe("PARTIAL"); // C1 unproven
+    expect(verdictFor(spec, "// clause: C1\nassert!(a);\n// clause: C2\nassert!(b);\n")).toBe("PARTIAL"); // C3 unproven
+    expect(verdictFor(spec, "// clause: C1\nassert!(a);\n// clause: C2\nassert!(b);\n// clause: C3\nassert!(c);\n")).toBe("VERIFIED"); // control: no inflation
   });
   test("verdictOf: a heading over bullets adds no heading clause, so proving the bullets is enough", () => {
     const spec = "## Errors (`EvalError`, a public enum implementing `std::error::Error`)\n- Arity is reported\n- Syntax is reported";
