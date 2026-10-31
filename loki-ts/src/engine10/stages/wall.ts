@@ -102,7 +102,7 @@ export interface WallAuthored { kind: "authored"; staged?: boolean; model?: stri
 export type WallAuthorOutcome = { kind: "done"; result: StageResult } | WallAuthored;
 
 /** Session plus compile check. Writes only <runDir>/wall (sealed copies); repoDir is read, never written. */
-export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: { model: string; suffix: string }): Promise<WallAuthorOutcome> {
+export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: { model: string; suffix: string; note?: string }): Promise<WallAuthorOutcome> {
   const done = (result: StageResult): WallAuthorOutcome => ({ kind: "done", result });
   if (signal.aborted) return done({ status: "failed", data: {}, reason: "aborted before wall started" });
   if (!wallEnabled()) return done({ status: "skipped", data: {}, reason: "LOKI_E10_WALL=0" });
@@ -140,7 +140,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const model = retry?.model ?? wallFirstModel(sz.size), iterationId = `${ctx.runId}-wall${retry?.suffix ?? ""}`; // COST-11
   const session = await ctx.sessions.run({
     stage: "wall",
-    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? [], relative(ctx.repoDir, targetDir), clauseSet, evidence, isTinyGreenfield(sz.size, task, testMap)) + wallCasesBrief(runners), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
+    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? [], relative(ctx.repoDir, targetDir), clauseSet, evidence, isTinyGreenfield(sz.size, task, testMap)) + wallCasesBrief(runners) + (retry?.note ? `\n\n${retry.note}` : ""), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
     tier: "development",
     model,
@@ -217,22 +217,31 @@ export const WALL_BASE_FILES = 4; // files one rung's base run is sized for; Rea
 export const WALL_RUNG_S = WALL_SESSION_MAX_S + WALL_BASE_FILES * (BASE_RUN_TIMEOUT_MS / 1000), WALL_STAGE_LIMIT_S = 2 * WALL_RUNG_S; // one rung at its worst: a max session plus a per-file base run; the stage holds two rungs
 export const distrustGreenBase = (d: Record<string, unknown>): Record<string, unknown> => ({ ...d, already_satisfied: false, already_satisfied_distrusted: true, base_run: { ...((d.base_run ?? {}) as Record<string, unknown>), not_run: 1, unproven: true } }); // Fail closed for EVERY consumer (wall, discard.alreadySatisfied, seal wallGreenOnBase): an untrusted green base run is recorded as unproven (not_run), which all of them already refuse. Shared by machine.ts (concurrent Wall) and runWall (budget-blocked cheap rung).
 
+/** Brief note for the one re-author after an attempt left no Wall test that ran: the base-run counts and the per-file reasons, so the rewrite can run. Built only from harness-recorded fields. */
+export function reauthorNote(d: Record<string, unknown>): string {
+  const b = (d.base_run ?? {}) as Record<string, unknown>, rows = [...((d.discarded as { file: string; reason: string }[] | undefined) ?? []), ...((d.not_run_files as { file: string; reason: string }[] | undefined) ?? [])];
+  return ["Your previous Wall attempt left no test that ran on the base tree, so it proved nothing and was dropped.", `Base run: pass ${Number(b.pass ?? 0)}, fail ${Number(b.fail ?? 0)}, not run ${Number(b.not_run ?? 0)}.`, ...rows.slice(0, 5).map((r) => `- ${String(r.file)}: ${String(r.reason).slice(0, 300)}`), "Write the Wall again so every test runs. An assertion about behaviour the repository already has must pass on the base tree; only assertions about the new behaviour may fail there."].join("\n");
+}
+export const WALL_REAUTHOR_EXHAUSTED = "Wall re-authored once and still no Wall test ran on the base tree";
+
 export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOptions = {}): Promise<StageResult> {
   const t0 = Date.now(), a = await wallAuthor(ctx, signal);
   const first = a.kind === "done" ? a.result : await installWallAsync(ctx, a, ctx.repoDir, opts);
   // COST-11: a cheaper first rung is re-authored exactly once on wallModel() when its result cannot be trusted: nothing usable (nothing written, all discarded or not_run), a killed or timed-out session (N3), or a Wall already green on the base tree (B1: a haiku test that passes before the change may be vacuous, so the sonnet result decides already_satisfied). Never loops. Any doubt escalates.
   const cheap = a.kind === "authored" ? a.model : (first.data.model as string | undefined) ?? "", killed = a.kind === "done" && first.killed === true, usable = a.kind === "authored" && first.status === "completed";
   const unusable = usable && ((first.data.files as unknown[] | undefined) ?? []).length === 0, green = usable && !unusable && (first.data.already_satisfied === true || first.data.reproduction_green_on_base === true || wallGreenOnBaseOf({ wall: first.data })); // same green test seal applies
+  const dropped = unusable && (Number(((first.data.base_run ?? {}) as Record<string, unknown>).not_run ?? 0) > 0 || ((first.data.discarded as unknown[] | undefined) ?? []).length > 0); // a Wall test was written and then dropped (no real base result or did not compile), as opposed to nothing written
   const budgetLeft = WALL_STAGE_LIMIT_S * 1000 - (Date.now() - t0) >= WALL_RUNG_S * 1000; // the retry must fit its own session plus base run inside the stage limit, from the same constants
-  if (!(unusable || green || killed) || !cheap || signal.aborted || cheap === wallModel()) return first;
+  if (!(unusable || green || killed) || !cheap || signal.aborted || (cheap === wallModel() && !dropped)) return first; // a same-model rung re-authors only when a written Wall test was dropped and none ran (the rewrite gets the base-run results); a green or killed same-model result stands
   if (!budgetLeft) return green && first.data.reproduction_green_on_base !== true ? { ...first, data: distrustGreenBase(first.data) } : first; // fail closed: an unchecked cheap-rung green must not stand as already_satisfied
   if (a.kind === "authored") { for (const f of (first.data.files as { path: string }[] | undefined) ?? []) rmSync(f.path, { force: true }); rmSync(sealedWallDir(ctx.runDir), { recursive: true, force: true }); ctx.wallSealed = false; } // drop the abandoned attempt's installed copies, sealed copies and held-out tests so none leak into the retry
   removeHoldout(ctx.runId, ctx.repoDir);
   const r2Model = capToRunTier(wallModel(), ctx.model, ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE"]);
   ctx.emit("wall.reauthor", "wall", { from_model: cheap, to_model: r2Model, reason: killed ? "first author session killed or timed out" : green ? "first author green on the base tree" : "no usable test from the first author" });
-  const b = await wallAuthor(ctx, signal, { model: r2Model, suffix: "-r2" }), second = b.kind === "done" ? b.result : await installWallAsync(ctx, b, ctx.repoDir, opts);
+  const b = await wallAuthor(ctx, signal, { model: r2Model, suffix: "-r2", ...(dropped ? { note: reauthorNote(first.data) } : {}) }), second = b.kind === "done" ? b.result : await installWallAsync(ctx, b, ctx.repoDir, opts);
   const ids = [...((first.data.iteration_ids as string[] | undefined) ?? []), ...((second.data.iteration_ids as string[] | undefined) ?? [])];
-  return { ...second, data: { ...second.data, iteration_ids: ids, reauthored: true } }; // both tiers' spend reaches the ledger via iteration_ids
+  const still = second.status === "completed" && ((second.data.files as unknown[] | undefined) ?? []).length === 0 && dropped; // the one re-author is spent: a second empty Wall is disclosed, never retried
+  return { ...second, data: { ...second.data, iteration_ids: ids, reauthored: true, ...(still ? { not_proven: [...((second.data.not_proven as string[] | undefined) ?? []), WALL_REAUTHOR_EXHAUSTED] } : {}) } }; // both tiers' spend reaches the ledger via iteration_ids
 }
 
 export const wallStage: Stage = {
