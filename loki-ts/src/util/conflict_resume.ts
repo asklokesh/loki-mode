@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { readSessionId } from "../runner/session_resume.ts";
 import { FINISH_LINE } from "../e10ext/context.ts";
-import { wallModel, wallRefereeEnabled } from "../engine10/sizing.ts";
+import { wallModel } from "../engine10/sizing.ts";
 import { assertionCount, changedAssertion, changedRegion, editScopeViolation, quoteInSpec, testSpans, wallAnchor, type WallDefect } from "./wall_owned.ts";
 import { safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
 import { vacuousCheck } from "../project_model/conventions.ts";
@@ -107,7 +107,9 @@ export function applyArbitrations(wall: Record<string, unknown>, events: readonl
   if (got.length) wall.arbitrated = got;
 }
 
-const defaultRunCheck = (dir: string, ref: TestRef): "pass" | "fail" | "not_run" => { const r = new RealBaseTestRunner(undefined, undefined, { PYTHONDONTWRITEBYTECODE: "1" }).run(dir, [ref]); return r.fail > 0 ? "fail" : r.pass > 0 && (r.not_run ?? 0) === 0 ? "pass" : "not_run"; };
+/** LOKI_E10_WALL_REFEREE: default on. =0/off/false restores the single unvalidated re-author of a conflicting Wall file (the legacy path), which never drops a check. */
+const wallRefereeEnabled = (env = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_WALL_REFEREE ?? "").toLowerCase());
+export const defaultRunCheck = (dir: string, ref: TestRef): "pass" | "fail" | "not_run" => { const r = new RealBaseTestRunner(undefined, undefined, { PYTHONDONTWRITEBYTECODE: "1" }).run(dir, [ref]); return r.fail > 0 ? "fail" : r.pass > 0 && (r.not_run ?? 0) === 0 ? "pass" : "not_run"; };
 export function defaultBaseTree(ctx: RunContext): string | null {
   const dir = mkdtempSync(join(tmpdir(), "loki-e15-base-"));
   try { const g = safeGitSpawn(ctx.repoDir, ["archive", ctx.baseSha], { maxBuffer: 512 * 1024 * 1024 }); if (g.status !== 0) throw new Error("git archive failed"); execFileSync("tar", ["-x", "-C", dir], { input: g.stdout, stdio: ["pipe", "ignore", "ignore"], env: tokenFreeEnv() });

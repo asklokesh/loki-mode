@@ -162,6 +162,17 @@ describe("A-103 wall discards tests that are not red for the right reason", () =
   });
 });
 
+describe("RealBaseTestRunner extraEnv reaches the child", () => {
+  // the fixture passes only when the child sees PYTHONDONTWRITEBYTECODE=1, which the plain test env does not carry
+  const PROBE = "const test = require('node:test');\nconst assert = require('node:assert');\ntest('env', () => { assert.strictEqual(process.env.PYTHONDONTWRITEBYTECODE, '1'); });\n";
+  const mk = (): string => { const d = mkdtempSync(join(tmpdir(), "loki-extraenv-")); repos.push(d); writeFileSync(join(d, "t.test.js"), PROBE, "utf8"); return d; };
+  test("extraEnv is merged into the child env; without it the same file is red", () => {
+    const f = { runner: "node" as const, path: "t.test.js" };
+    expect(new RealBaseTestRunner(null, undefined, { PYTHONDONTWRITEBYTECODE: "1" }).run(mk(), [f])).toEqual({ pass: 1, fail: 0, not_run: 0 });
+    expect(new RealBaseTestRunner(null).run(mk(), [f])).toEqual({ pass: 0, fail: 1, not_run: 0 });
+  });
+});
+
 describe("TEN-SPEED-19 base jobs", () => {
   const H2 = "const test = require('node:test');\nconst assert = require('node:assert');\nconst fs = require('node:fs');\nconst { sum } = require('../sum');\n";
   const slow = (n: string) => H2 + `test('${n}', () => { const t0 = Date.now(); fs.appendFileSync(process.env.SPAN_LOG, 'S ' + t0 + '\\n'); while (Date.now() - t0 < 700) {} fs.appendFileSync(process.env.SPAN_LOG, 'E ' + Date.now() + '\\n'); assert.strictEqual(sum([1, 2, 3]), 6); });\n`;

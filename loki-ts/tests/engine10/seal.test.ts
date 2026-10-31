@@ -2164,15 +2164,16 @@ describe("#238 wall proven at committed path", () => {
   const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
   // resolves its fixture from its own dir: passes only where loc_fixture.txt sits beside it
   const SEALED = 'import { test, expect } from "bun:test"; import { readFileSync } from "node:fs"; test("loc", () => expect(readFileSync(`${import.meta.dir}/loc_fixture.txt`, "utf8")).toBe("ok\\n"));\n';
-  async function run(name: string, fixtureAtCommitted: boolean, arbitrated = false) {
+  async function run(name: string, fixtureAtCommitted: boolean, arbitrated: boolean | Record<string, unknown> = false, already = false) {
     noKey();
     const { repo, base } = makeRepo(name);
     mkdirSync(join(repo, "tests"), { recursive: true }); writeFileSync(join(repo, REL), "// agent\n");
     writeFileSync(join(repo, "loc_fixture.txt"), "ok\n"); // proven where the fixture is: the repo root
     if (fixtureAtCommitted) writeFileSync(join(repo, "tests/loc_fixture.txt"), "ok\n");
     const { ctx } = ctxFor(repo, base, "claude", {
-      wall: { files: [{ path: join(repo, REL), sha256: sha(SEALED) }], base_run: { pass: 0, fail: 1, not_run: 0 }, ...(arbitrated ? { arbitrated: [{ check: NAME, test: "loc", old_assertion: "old", new_assertion: "new", spec_quote: "the quote" }] } : {}) },
+      wall: { files: [{ path: join(repo, REL), sha256: sha(SEALED) }], base_run: already ? { pass: 1, fail: 0, not_run: 0 } : { pass: 0, fail: 1, not_run: 0 }, ...(arbitrated ? { arbitrated: [{ check: NAME, test: "loc", old_assertion: "old", new_assertion: "new", spec_quote: "the quote", ...(arbitrated === true ? {} : arbitrated) }] } : {}) },
       verify: { checks: [{ name: NAME, cmd: `bun test ${REL}`, result: "pass", n: 1, duration_s: 1 }], target_checks: [NAME], flaky: [], wall_passed: true, duration_s: 1 },
+      ...(already ? { intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, already_satisfied: true, evidence: ["already true on base"] } } : {}),
     });
     mkdirSync(join(ctx.runDir, "wall"), { recursive: true }); writeFileSync(join(ctx.runDir, "wall/loki_wall_loc.test.ts"), SEALED);
     await commitStage.run(ctx, new AbortController().signal);
@@ -2196,6 +2197,17 @@ describe("#238 wall proven at committed path", () => {
     expect(x.s.data.wall_published).toBeUndefined();
     const y = await run("loc-noarb", true, false);
     expect(y.s.data.verdict).toBe("VERIFIED"); expect(y.r.not_proven.some((n) => n.startsWith("Wall assertion arbitrated"))).toBe(false);
+  }, 120000);
+  test("a legacy (unvalidated) Wall rewrite is capped at PARTIAL and disclosed as such", async () => {
+    const x = await run("loc-legacy", true, { kind: "legacy", test: "(whole file)", old_assertion: "(not validated)", new_assertion: "(not validated)" });
+    expect(x.s.data.verdict).toBe("PARTIAL");
+    expect(x.r.not_proven.some((n) => n.startsWith(`Wall assertion arbitrated (legacy re-author, no referees, no validation): ${NAME}`) && n.endsWith("verdict capped at PARTIAL"))).toBe(true);
+  }, 120000);
+  test("an arbitrated run that would seal ALREADY_SATISFIED is capped at PARTIAL too; without the record it stays ALREADY_SATISFIED", async () => {
+    const ctl = await run("loc-as-ctl", true, false, true);
+    expect(ctl.s.data.verdict).toBe("ALREADY_SATISFIED");
+    const x = await run("loc-as-arb", true, true, true);
+    expect(x.s.data.verdict).toBe("PARTIAL");
   }, 120000);
 });
 

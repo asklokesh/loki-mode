@@ -9,7 +9,7 @@ import { fixStage } from "../../src/engine10/stages/fix.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import { editScopeViolation, wallAnchor } from "../../src/util/wall_owned.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
-import { CONFLICT_CORRECTION, adjudicateWallConflict, answerMark, answeredTask, applyArbitrations, blockedCompletion, defaultBaseTree, effectiveEvents, type RefereeDeps } from "../../src/util/conflict_resume.ts";
+import { CONFLICT_CORRECTION, adjudicateWallConflict, answerMark, answeredTask, applyArbitrations, blockedCompletion, defaultBaseTree, defaultRunCheck, effectiveEvents, type RefereeDeps } from "../../src/util/conflict_resume.ts";
 import { resumeMachineOpts } from "../../src/util/run_outputs.ts";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
 import type { RunContext, SessionResult, SessionRunOptions, SessionRunner, TestRef } from "../../src/engine10/types.ts";
@@ -229,11 +229,24 @@ describe("Wall referee", () => {
     const prev = process.env.LOKI_E10_WALL_REFEREE; process.env.LOKI_E10_WALL_REFEREE = "0";
     try {
       const s = new Referees({ file: "// legacy rewrite\n" }, undefined, [conflict(CLAIM)]), w = world(s);
-      const r = await adjudicateWallConflict(w.ctx, first(), sess(CLAIM), w.ro, w.deps);
+      const evs: { type: string; data: Record<string, unknown> }[] = [];
+      const ctx = { ...w.ctx, emit: (type: string, _s: unknown, data: Record<string, unknown>) => { evs.push({ type, data }); } } as unknown as RunContext;
+      const r = await adjudicateWallConflict(ctx, first(), sess(CLAIM), w.ro, w.deps);
       expect(r!.session.markers.specConflict).toBe(CLAIM); // persistent: stands as a conflict
       expect(existsSync(w.path)).toBe(true); expect(w.ro.length).toBe(1); expect((w.wall.files as unknown[]).length).toBe(1);
-      expect(s.walls().length).toBe(1); expect(w.wall.arbitrated).toBeUndefined();
+      expect(s.walls().length).toBe(1);
+      // the unvalidated rewrite is recorded (legacy marker) so seal caps it, and a durable event lets resume rebuild it
+      const arb = w.wall.arbitrated as { kind?: string; sha256: string }[];
+      expect(arb.length).toBe(1); expect(arb[0]!.kind).toBe("legacy");
+      expect(evs.filter((e) => e.type === "wall.arbitrated").length).toBe(1);
+      expect(arb[0]!.sha256).toBe(sha(readFileSync(w.path, "utf8")));
     } finally { if (prev === undefined) delete process.env.LOKI_E10_WALL_REFEREE; else process.env.LOKI_E10_WALL_REFEREE = prev; }
+  });
+  test("the arbitration's default check runs the Wall file with PYTHONDONTWRITEBYTECODE=1 (no stale bytecode)", () => {
+    const d = mkdtempSync(join(tmpdir(), "loki-e15-bytecode-")); try {
+      writeFileSync(join(d, "t.test.js"), "const test = require('node:test');\nconst assert = require('node:assert');\ntest('env', () => { assert.strictEqual(process.env.PYTHONDONTWRITEBYTECODE, '1'); });\n", "utf8");
+      expect(defaultRunCheck(d, { runner: "node", path: "t.test.js" })).toBe("pass");
+    } finally { rmSync(d, { recursive: true, force: true }); }
   });
   test("stage level: a referee that declines leaves the run a spec conflict with the Wall file intact", async () => {
     const s = new Referees({ verdict: { verdict: "keep" } }, B_YES, [conflict(CLAIM)]), w = world(s);
