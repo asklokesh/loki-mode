@@ -104,6 +104,53 @@ test("a second receipt.sealed is TAMPERED", async () => {
   expect((await verifyReceipt(join(dir, "receipt.json"))).verdict).toBe("TAMPERED");
 });
 
+/** An answered run as the supervisor writes it: attempt one seals (first verdict, optionally BLOCKED), then an in-place answer resumes it and attempt two seals again. */
+function answeredRun(firstVerdict: string, resumed: boolean, answered = true): { dir: string; ev: string; id: string; first: string } {
+  const id = `e10-r4-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  let log = new SupervisorLog(ev, id);
+  log.append("run.started", null, { provider: "claude" });
+  log.append("stage.started", "verify", {});
+  seal(dir, id, ev, log, []);
+  const first = readFileSync(join(dir, "receipt.json"), "utf8");
+  log.append("run.completed", null, { verdict: firstVerdict });
+  log.sealLog();
+  log = new SupervisorLog(ev, id);
+  if (resumed) log.append("run.resumed", null, answered ? { answered: true, answer: "yes", answer_sha256: sha("yes"), question: "q" } : {});
+  log.append("test.result", "verify", { name: "unit", cmd: "bun test", result: "pass" });
+  seal(dir, id, ev, log, [{ name: "unit", cmd: "bun test", result: "pass" }]);
+  log.append("run.completed", null, { verdict: "VERIFIED" });
+  log.sealLog();
+  return { dir, ev, id, first };
+}
+const tamperedBySecondSeal = async (dir: string): Promise<void> => {
+  const r = await verifyReceipt(join(dir, "receipt.json"));
+  expect(r.verdict).toBe("TAMPERED");
+  expect(r.reasons.join(" ")).toContain("more than one receipt.sealed");
+};
+
+test("an answered BLOCKED run with two seals verifies VERIFIED", async () => {
+  expect((await verifyReceipt(join(answeredRun("SPEC_CONFLICT", true).dir, "receipt.json"))).verdict).toBe("VERIFIED");
+});
+test("a second receipt.sealed with no run.resumed between is TAMPERED even after a BLOCKED first attempt", async () => {
+  await tamperedBySecondSeal(answeredRun("SPEC_CONFLICT", false).dir);
+});
+test("a plain (not answered) run.resumed between two seals is TAMPERED", async () => {
+  await tamperedBySecondSeal(answeredRun("SPEC_CONFLICT", true, false).dir);
+});
+test("a run.resumed forged after a VERIFIED (not BLOCKED) first seal is TAMPERED", async () => {
+  await tamperedBySecondSeal(answeredRun("VERIFIED", true).dir);
+});
+test("a receipt that matches the first seal, not the last, is TAMPERED", async () => {
+  const r = answeredRun("SPEC_CONFLICT", true);
+  writeFileSync(join(r.dir, "receipt.json"), r.first);
+  await tamperedBySecondSeal(r.dir);
+});
+test("an edited first-attempt event of an answered run is TAMPERED", async () => {
+  const r = answeredRun("SPEC_CONFLICT", true);
+  writeFileSync(r.ev, readFileSync(r.ev, "utf8").replace('"stage.started"', '"stage.started" '));
+  expect((await verifyReceipt(join(r.dir, "receipt.json"))).verdict).toBe("TAMPERED");
+});
+
 // Round 5: a cancelled publish-phase run goes findInterrupted -> resumePublish without resumePoint, so the seal check and the receipt file must carry the trust.
 /** git in a test repo with a fixed identity and no signing. */
 const tgit = (repo: string, ...a: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd: repo, encoding: "utf8" }).trim();

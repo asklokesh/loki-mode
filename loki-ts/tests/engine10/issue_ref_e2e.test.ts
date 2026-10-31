@@ -366,15 +366,34 @@ describe("engine10 loki answer: a BLOCKED run resumes in place under the same ru
     expect(again.code).toBe(2); // no longer BLOCKED
   }, 180_000);
 
-  // KNOWN GAP: util/seal_drift.ts boundEvents cuts the bound log at the FIRST log.sealed, so a run sealed once as BLOCKED and again after the answer is
-  // checked against the blocked attempt's events and `verify` reports TAMPERED. test.failing turns red when seal_drift.ts is fixed; convert it to a plain test then.
-  test.failing("verify of the answered run is VERIFIED", async () => {
+  // seal_drift boundEvents cuts at a log.sealed NOT followed by run.resumed, so the first (BLOCKED) seal of a resumed run does not truncate the bound log.
+  test("verify of the answered run is VERIFIED", async () => {
     const p = prep(true, { ISSUE_REF_STUB_CONFLICT: "1" });
     expect((await exec(p, ["bash", BIN_LOKI, "acme/widgets#101"])).code).toBe(4);
     const runId = (JSON.parse(readFileSync(join(p.repo, ".loki", "engine.json"), "utf8")) as { run_id: string }).run_id;
     expect((await exec(p, [process.execPath, ENTRY, "answer", runId, "yes, clamp at zero"])).code).toBe(0);
     const ver = await exec(p, [process.execPath, ENTRY, "engine10", "verify", runId]);
+    expect(ver.out).not.toContain("TAMPERED");
+    expect(ver.out).not.toContain("no test.result pass");
+    expect(ver.out).toMatch(/\bVERIFIED\b/);
     expect(ver.code).toBe(0);
-    expect(ver.out).toContain("VERIFIED");
+  }, 180_000);
+
+  test("a tampered second segment of the answered run still reads TAMPERED", async () => {
+    const p = prep(true, { ISSUE_REF_STUB_CONFLICT: "1" });
+    expect((await exec(p, ["bash", BIN_LOKI, "acme/widgets#101"])).code).toBe(4);
+    const runId = (JSON.parse(readFileSync(join(p.repo, ".loki", "engine.json"), "utf8")) as { run_id: string }).run_id;
+    expect((await exec(p, [process.execPath, ENTRY, "answer", runId, "yes, clamp at zero"])).code).toBe(0);
+    const log = join(readRun(p).runDir, "events.jsonl");
+    const lines = readFileSync(log, "utf8").split("\n");
+    const at = lines.findIndex((l) => l.includes('"run.resumed"'));
+    expect(at).toBeGreaterThan(0);
+    const later = lines.findIndex((l, i) => i > at && l.includes('"test.result"'));
+    expect(later).toBeGreaterThan(at);
+    lines[later] = lines[later]!.replace('"pass"', '"fail"');
+    writeFileSync(log, lines.join("\n"));
+    const ver = await exec(p, [process.execPath, ENTRY, "engine10", "verify", runId]);
+    expect(ver.code).not.toBe(0);
+    expect(ver.out).toContain("TAMPERED");
   }, 180_000);
 });
