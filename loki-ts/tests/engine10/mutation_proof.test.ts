@@ -116,6 +116,59 @@ describe("mutation proof outcomes", () => {
       expect(JSON.stringify(b)).toBe(JSON.stringify(a)); expect(b.outcome).toBe(outcome); expect(b.line).toBe(`test fails without the fix: ${outcome}${outcome === "no" ? " (warning: the Wall tests also pass on the old code)" : ""}`);
     }
   });
+  test("shared scratch path: two Wall files on one fixed path give the same proof serial and concurrent, never a false yes", async () => {
+    const f = fixture("shared", 1); const names = ["loki_wall_s1.test.ts", "loki_wall_s2.test.ts"];
+    const body = `import { expect, test } from "bun:test";\nimport { existsSync, rmSync, writeFileSync } from "node:fs";\nconst m = import.meta.dir + "/.scratch";\ntest("s", async () => { expect(existsSync(m)).toBe(false); writeFileSync(m, "1"); await Bun.sleep(500); rmSync(m); });\n`;
+    for (const w of names) { writeFileSync(join(f.repo, w), body); writeFileSync(join(f.runDir, "wall", w), body); }
+    const over = { wallFiles: names.map((w) => ({ path: join(f.repo, w) })), checks: names.map((w) => ({ name: `bun:${w}` })), runner: new RealBaseTestRunner(null) };
+    const serial = await mutationProof(input(f, { ...over, env: { LOKI_MUTATION_PROOF_JOBS: "1" } })), conc = await mutationProof(input(f, { ...over, env: { LOKI_MUTATION_PROOF_JOBS: "4" } }));
+    expect(serial.outcome).toBe("no"); expect(JSON.stringify(conc)).toBe(JSON.stringify(serial));
+  });
+  test("a concurrent-only fail never yields yes; a fail that reproduces serially does", async () => {
+    const f = fixture("conc-only", 1); const names = ["loki_wall_c1.test.ts", "loki_wall_c2.test.ts"];
+    const over = { wallFiles: names.map((w) => ({ path: join(f.repo, w) })), checks: names.map((w) => ({ name: `bun:${w}` })) };
+    for (const w of names) { writeFileSync(join(f.repo, w), wallBody(1)); writeFileSync(join(f.runDir, "wall", w), wallBody(1)); }
+    const mkr = (serialFail: number) => ({ run: () => ({ pass: 1 - serialFail, fail: serialFail }), runEach: async (_d: string, t: unknown[]) => t.map((_, k) => ({ pass: k ? 1 : 0, fail: k ? 0 : 1 })) });
+    expect((await mutationProof(input(f, { ...over, runner: mkr(0) }))).outcome).toBe("no");
+    expect((await mutationProof(input(f, { ...over, runner: mkr(1) }))).outcome).toBe("yes");
+  });
+  test("budget: the serial path builds the runner from the remaining budget per file", async () => {
+    const f = fixture("budget-serial", 2); const names = ["loki_wall_b1.test.ts", "loki_wall_b2.test.ts", "loki_wall_b3.test.ts"], calls: number[] = [];
+    for (const w of names) { writeFileSync(join(f.repo, w), wallBody(1)); writeFileSync(join(f.runDir, "wall", w), wallBody(1)); }
+    const run = () => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300); return { pass: 1, fail: 0, not_run: 0 }; };
+    await mutationProof(input(f, { wallFiles: names.map((w) => ({ path: join(f.repo, w) })), checks: names.map((w) => ({ name: `bun:${w}` })), timeoutS: 5, env: { LOKI_MUTATION_PROOF_JOBS: "1" }, runner: (ms: number) => { calls.push(ms); return { run }; } }));
+    expect(calls.length).toBeGreaterThanOrEqual(3); expect(Math.max(...calls)).toBeLessThanOrEqual(5000); expect(calls[calls.length - 1]!).toBeLessThan(calls[0]! - 400);
+  });
+  test("budget: an already spent deadline is a timeout and no runner is built", async () => {
+    const f = fixture("budget-pre", 2); const names = ["loki_wall_p1.test.ts", "loki_wall_p2.test.ts"]; let built = 0;
+    for (const w of names) { writeFileSync(join(f.repo, w), wallBody(1)); writeFileSync(join(f.runDir, "wall", w), wallBody(1)); }
+    const r = await mutationProof(input(f, { wallFiles: names.map((w) => ({ path: join(f.repo, w) })), checks: names.map((w) => ({ name: `bun:${w}` })), timeoutS: 0.001, runner: () => { built++; return { run: () => ({ pass: 0, fail: 1 }) }; } }));
+    expect(r.line).toBe("test fails without the fix: inconclusive (timeout)"); expect(built).toBe(0);
+  });
+  test("budget: a concurrent run that outlives the budget is a timeout, never yes", async () => {
+    const f = fixture("budget-conc", 2); const names = ["loki_wall_q1.test.ts", "loki_wall_q2.test.ts"];
+    for (const w of names) { writeFileSync(join(f.repo, w), wallBody(1)); writeFileSync(join(f.runDir, "wall", w), wallBody(1)); }
+    const slow = { run: () => ({ pass: 0, fail: 1 }), runEach: async (_d: string, t: unknown[]) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1300); return t.map(() => ({ pass: 0, fail: 1 })); } };
+    const r = await mutationProof(input(f, { wallFiles: names.map((w) => ({ path: join(f.repo, w) })), checks: names.map((w) => ({ name: `bun:${w}` })), timeoutS: 1, runner: slow }));
+    expect(r.line).toBe("test fails without the fix: inconclusive (timeout)");
+  });
+  test("budget: runEach starts no new file once the budget is spent and a spent slot is a timeout", async () => {
+    const f = fixture("budget-stop", 2); const names = Array.from({ length: 6 }, (_, k) => `loki_wall_r${k}.test.ts`);
+    for (const w of names) { writeFileSync(join(f.repo, w), `import { test } from "bun:test";\ntest("t", async () => { await Bun.sleep(700); });\n`); writeFileSync(join(f.runDir, "wall", w), readFileSync(join(f.repo, w))); }
+    const t0 = Date.now();
+    const r = await mutationProof(input(f, { wallFiles: names.map((w) => ({ path: join(f.repo, w) })), checks: names.map((w) => ({ name: `bun:${w}` })), timeoutS: 1, env: { LOKI_MUTATION_PROOF_JOBS: "2" }, runner: (ms: number) => new RealBaseTestRunner(null, ms) }));
+    expect(r.line).toBe("test fails without the fix: inconclusive (timeout)"); expect(Date.now() - t0).toBeLessThan(4500);
+  });
+  test("runEach: a spent budget starts no new file (empty slot) and clamps a running file's timeout", async () => {
+    const f = fixture("runeach", 1); const ok = ["loki_wall_e1.test.ts", "loki_wall_e2.test.ts", "loki_wall_e3.test.ts"];
+    for (const w of ok) writeFileSync(join(f.repo, w), wallBody(2));
+    let asked = 0; const rn = new RealBaseTestRunner(null);
+    const res = await rn.runEach(f.repo, ok.map((path) => ({ runner: "bun", path })) as never, 1, false, () => asked++ >= 1 ? 0 : 1000);
+    expect(res[0]).toBeDefined(); expect(res[1]).toBeUndefined(); expect(res[2]).toBeUndefined();
+    writeFileSync(join(f.repo, "loki_wall_slow.test.ts"), `import { test } from "bun:test";\ntest("t", async () => { await Bun.sleep(4000); });\n`);
+    const t0 = Date.now(); const slow = await rn.runEach(f.repo, [{ runner: "bun", path: "loki_wall_slow.test.ts" }] as never, 1, false, () => 1000);
+    expect(Date.now() - t0).toBeLessThan(3000); expect(slow[0]!.pass).toBe(0);
+  });
   test("opt-out flag", async () => {
     expect(mutationEnabled({ LOKI_MUTATION_PROOF: "0" })).toBe(false);
     expect(mutationEnabled({})).toBe(true);
