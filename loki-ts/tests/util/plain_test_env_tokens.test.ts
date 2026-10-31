@@ -2,7 +2,7 @@
 // parent env, then check the child of plainTestEnv and a Wall base run (RealBaseTestRunner, real `node --test`) see none of them.
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RealBaseTestRunner } from "../../src/engine10/stages/wall.ts";
@@ -50,5 +50,25 @@ describe("FC-87 plainTestEnv is token-free", () => {
       expect(r.status).toBe(0);
       expect(r.output.trim()).toBe(JSON.stringify(["yes", null, null]));
     } finally { delete process.env["LOKI_FC87_PARENT_ONLY"]; }
+  });
+  test("the launcher process itself runs with only PATH, so the given env reaches the command alone", () => {
+    // BUN_OPTIONS preloads a script into every bun process it reaches. It is in the given env, so the command (bun) preloads it once; a launcher handed the given env would preload it too.
+    const dir = mkdtempSync(join(tmpdir(), "loki-fc87-")); dirs.push(dir);
+    const mark = join(dir, "mark"), pre = join(dir, "pre.js");
+    writeFileSync(mark, ""); writeFileSync(pre, `require("node:fs").appendFileSync(process.env.LOKI_FC87_MARK, "x");\n`);
+    const r = spawnGroupSync(process.execPath, ["-e", "1"], { env: { PATH: process.env["PATH"] ?? "", BUN_OPTIONS: `--preload ${pre}`, LOKI_FC87_MARK: mark }, timeoutMs: 30_000 });
+    expect(r.status).toBe(0);
+    expect(readFileSync(mark, "utf8")).toBe("x");
+  });
+  test("the group launcher with no env falls back to the token-free plain test env, never the raw parent env", () => {
+    plant();
+    const probe = `console.log(JSON.stringify([${JSON.stringify(SECRETS)}.map((k) => process.env[k] ?? null), process.env.NO_COLOR ?? null]))`;
+    const r = spawnGroupSync(process.execPath, ["-e", probe], { timeoutMs: 30_000 });
+    {
+      expect(r.status).toBe(0);
+      const [secrets, noColor] = JSON.parse(r.output.trim()) as [(string | null)[], string | null];
+      for (const v of secrets) expect(v === null || !real(v)).toBe(true);
+      expect(noColor).toBe("1");
+    }
   });
 });
