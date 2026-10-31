@@ -388,6 +388,53 @@ describe("runTrust per-path Seal record", () => {
       }
     });
 
+    function checkWith(glob: string, paths: string[]): string[] {
+      for (const p of paths) seedMany(p, 25);
+      process.env.LOKI_EARNED_MERGE_PROTECTED = glob;
+      try {
+        return run(["--check"], paths.join("\n") + "\n").stdout.trim().split("\n");
+      } finally {
+        delete process.env.LOKI_EARNED_MERGE_PROTECTED;
+      }
+    }
+
+    it("a collating symbol or equivalence class in a glob refuses every path", () => {
+      for (const glob of ["src/[[.a.]].ts", "src/[[=a=]].ts"]) {
+        const out = checkWith(glob, ["src/a.ts", "src/b.ts"]);
+        expect(out.length).toBe(2);
+        for (const l of out) {
+          expect(l.startsWith("refuse\t")).toBe(true);
+          expect(l).toContain(`the protected glob "${glob}" cannot be evaluated`);
+        }
+      }
+    });
+
+    it("a reversed range is refused with a message naming the glob, not a crash", () => {
+      const out = checkWith("src/[z-a].ts", ["src/a.ts"]);
+      expect(out).toEqual([`refuse\tsrc/a.ts\tsrc/a.ts is refused: the protected glob "src/[z-a].ts" cannot be evaluated, so every path is refused`]);
+    });
+
+    it("a backslash inside a bracket class makes the next character literal", () => {
+      const out = checkWith("src/[a\\]b].ts", ["src/].ts", "src/b.ts", "src/c.ts"]);
+      expect(out[0]).toBe("refuse\tsrc/].ts\tsrc/].ts is a protected path");
+      expect(out[1]).toBe("refuse\tsrc/b.ts\tsrc/b.ts is a protected path");
+      expect(out[2]).not.toContain("protected");
+    });
+
+    it("a leading ] in a bracket class is a literal member", () => {
+      const out = checkWith("src/[]a].ts", ["src/].ts", "src/a.ts", "src/b.ts"]);
+      expect(out[0]).toBe("refuse\tsrc/].ts\tsrc/].ts is a protected path");
+      expect(out[1]).toBe("refuse\tsrc/a.ts\tsrc/a.ts is a protected path");
+      expect(out[2]).not.toContain("protected");
+    });
+
+    it("POSIX character classes match like the shell", () => {
+      const out = checkWith("src/[[:digit:]].ts src/[[:upper:]x].md", ["src/5.ts", "src/a.ts", "src/x.md"]);
+      expect(out[0]).toBe("refuse\tsrc/5.ts\tsrc/5.ts is a protected path");
+      expect(out[1]).not.toContain("protected");
+      expect(out[2]).toBe("refuse\tsrc/x.md\tsrc/x.md is a protected path");
+    });
+
     it("a minimum of 0 floors to 1 receipt, and a non-numeric minimum means 20", () => {
       git("init", "-q");
       writeFileSync(join(td, "k.txt"), "k\n");

@@ -207,6 +207,9 @@ function bracket(glob: string, i: number): { re: string; end: number } | null {
         continue;
       }
     }
+    // Collating symbols [.x.] and equivalence classes [=x=] depend on the locale.
+    // Not emulated: the glob is treated as matching every path (fail closed).
+    if (c === "[" && (glob[j + 1] === "." || glob[j + 1] === "=")) throw new Error("unsupported bracket element");
     if (c === "\\" && j + 1 < glob.length) {
       body += escRe(glob[++j] as string);
       continue;
@@ -237,16 +240,31 @@ function globMatch(glob: string, text: string): boolean {
   return new RegExp(`^${re}$`, "s").test(text);
 }
 
-export function isProtectedPath(path: string, policy: EarnedPolicy): boolean {
+// The refusal reason when a protected glob matches the path, else null. A glob
+// that cannot be evaluated (collating symbol, equivalence class, reversed
+// range) refuses every path and names the glob, never crashes.
+function protectedReason(path: string, policy: EarnedPolicy): string | null {
   const lp = path.toLowerCase();
-  return [...BUILTIN_PROTECTED, ...policy.protectedGlobs].some((g) => globMatch(g, lp));
+  for (const g of [...BUILTIN_PROTECTED, ...policy.protectedGlobs]) {
+    try {
+      if (globMatch(g, lp)) return `${path} is a protected path`;
+    } catch {
+      return `${path} is refused: the protected glob "${g}" cannot be evaluated, so every path is refused`;
+    }
+  }
+  return null;
+}
+
+export function isProtectedPath(path: string, policy: EarnedPolicy): boolean {
+  return protectedReason(path, policy) !== null;
 }
 
 // Order is the gate's order: protected, no record, reverts, then the floor.
 export function earnedMergeDecision(path: string, seal: PathSeal | undefined, policy: EarnedPolicy): EarnedDecision {
   const refuse = (code: EarnedCode, reason: string, needed: number): EarnedDecision => ({ path, eligible: false, code, reason, needed });
   const needed = Math.max(0, policy.minVerified - (seal?.verified ?? 0));
-  if (isProtectedPath(path, policy)) return refuse("protected", `${path} is a protected path`, needed);
+  const prot = protectedReason(path, policy);
+  if (prot !== null) return refuse("protected", prot, needed);
   if (!seal) return refuse("no-record", `${path} has no Seal record`, needed);
   if (seal.reverts === null) return refuse("reverts-unknown", `${path} revert status is unknown`, needed);
   if (seal.reverts !== 0) return refuse("reverted", `${path} has ${seal.reverts} recorded revert(s)`, needed);
