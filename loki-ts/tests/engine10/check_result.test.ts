@@ -1223,6 +1223,16 @@ done
     const pass = { result: "pass" as const, n: 3 };
     for (const line of ["pytest -q tests/go", "make test DIR=go", "npm test -- --grep cargo"]) { expect(goRunner(line)).toEqual({}); expect(await corroboratePass(pass, "", line, undefined, o)).toEqual(pass); }
   });
+  test("HV1-03i: a go or cargo run hidden behind a variable, a make assignment, inline interpreter code or a cargo front end is not a pass", async () => {
+    const o = { cwd: tmpdir(), env: process.env }, CARGO_OK = "running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    for (const line of ["${GO:-go} test ./...", '"$GO" test ./...', "${GO} test ./...", 'bash -c "$GO test ./..."', `python3 -c 'import os; os.system("go test ./...")'`, "make test GO=go", "make test GO=/usr/local/go/bin/go", "make test GO=${GO:-go}"]) {
+      expect([line, goRunner(line)]).toEqual([line, { runner: "go" }]);
+      expect([line, (await corroboratePass({ result: "pass", n: 2 }, GO_V, line, undefined, o)).result]).toEqual([line, "not_run"]);
+    }
+    for (const line of ["cargo-nextest run", "${CARGO:-cargo} test", '"$CARGO" test', "make test CARGO=cargo", "cross test", `python3 -c 'import os; os.system("cargo test")'`]) expect([line, (await corroboratePass({ result: "pass", n: 2 }, CARGO_OK, line, undefined, o)).result]).toEqual([line, "not_run"]);
+    const pass = { result: "pass" as const, n: 3 };
+    for (const line of ["pytest -q tests/go", "make test DIR=go", "make test GO=gcc", "make test", "npm test -- --grep cargo", "pytest -q tests/cross", "make test DIR=cargo", "make test CARGO=gcc", "python3 -c 'print(1)'", "${CC:-gcc} test"]) { expect([line, goRunner(line)]).toEqual([line, {}]); expect(await corroboratePass(pass, "", line, undefined, o)).toEqual(pass); }
+  });
   test("spawnCollect leaves no watchdog child after a normal finish or an abort", async () => {
     const dogs = (): number[] => (spawnSync("ps", ["-ax", "-o", "pid=,command="], { encoding: "utf8" }).stdout ?? "").split("\n").filter((l) => l.includes(`const O = ${process.pid},`)).map((l) => Number(l.trim().split(/\s+/)[0]));
     const before = new Set(dogs()), fresh = (): number[] => dogs().filter((p) => !before.has(p));
