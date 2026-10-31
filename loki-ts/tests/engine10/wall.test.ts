@@ -1546,6 +1546,31 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
     expect(a.files.map((f) => f.path)).toEqual(["cmd/server/loki_wall_a_test.go"]); expect(a.brief).toContain('"package main"');
     expect((await run("Write util/real.go. Also add package main elsewhere.", "go")).brief).toContain('"package util"');
   });
+  test("Go greenfield: package main is tied to the planned file, a main.go stem is always main, and a non-identifier or major-version directory falls back to the stem", async () => {
+    const pk = async (t: string) => (await import("../../src/util/check_result.ts")).plannedGoDir("/nonexistent-repo", [t]).pkg;
+    expect(await pk("Implement cmd/server/main.go.")).toBe("main");
+    expect(await pk("Implement cmd/server/main.go with the HTTP entry point.")).toBe("main");
+    expect(await pk("Write util/real.go and package main in cmd/app/.")).toBe("util");
+    expect(await pk("Write package main in cmd/app/main.go.")).toBe("main");
+    expect(await pk("Implement internal/url-shortener/store.go.")).toBe("store");
+    expect(await pk("Implement pkg/v2/client.go.")).toBe("client");
+    expect(await pk("Implement internal/url-shortener/my-store.go.")).toBeNull();
+    expect((await run("Implement cmd/server/main.go.", "go")).brief).toContain('"package main"');
+  });
+  test.skipIf(spawnSync("go", ["version"]).status !== 0)("Go greenfield: a cmd/server/main.go implementer compiles with the Wall in package main and the test runs", async () => {
+    const { plannedGoDir } = await import("../../src/util/check_result.ts");
+    const repo = mkdtempSync(join(tmpdir(), "loki-walldir3c-"));
+    try {
+      writeFileSync(join(repo, "go.mod"), "module example.com/svc\n\ngo 1.21\n");
+      const p = plannedGoDir(repo, ["Implement cmd/server/main.go."]);
+      expect(p).toEqual({ dir: join(repo, "cmd", "server"), pkg: "main" });
+      mkdirSync(p.dir, { recursive: true });
+      writeFileSync(join(p.dir, "loki_wall_a_test.go"), `package ${p.pkg}\nimport "testing"\nfunc TestLokiWallMain(t *testing.T) { if answer() != 1 { t.Fatal("bad") } }\n`);
+      writeFileSync(join(p.dir, "main.go"), "package main\nfunc answer() int { return 1 }\nfunc main() {}\n");
+      const r = spawnSync("go", ["test", "-v", "./..."], { cwd: repo, encoding: "utf8" });
+      expect(r.status).toBe(0); expect(r.stdout).toContain("TestLokiWallMain");
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
   test.skipIf(spawnSync("go", ["version"]).status !== 0)("Go greenfield: a util/real.go implementer in package util compiles with the Wall in the same package and the test runs", async () => {
     const { plannedGoDir } = await import("../../src/util/check_result.ts");
     const repo = mkdtempSync(join(tmpdir(), "loki-walldir3b-"));
