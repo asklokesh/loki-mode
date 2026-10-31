@@ -30,7 +30,7 @@ nf = lambda s: unicodedata.normalize("NFKC", s)
 T = sys.argv[1]
 WORDS = (T, "pluginmanager", "import_plugin", "addopts")
 BAD = {"setattr", "getattr", "delattr", "exec", "eval", "compile", "__import__", "globals", "locals", "vars", "import_module", "importlib", "builtins", "__builtins__"}
-ATTR = BAD | {"modules", "f_globals", "f_locals", "_getframe", "currentframe", "stack"}
+ATTR = BAD | {"modules", "f_globals", "f_locals", "_getframe", "currentframe", "stack", "reduce"}
 OKDUNDER = {"__file__", "__name__", "__doc__", "__package__"}
 def stop(): raise SystemExit(1)
 tree = ast.parse(sys.stdin.buffer.read().decode("utf-8"))
@@ -45,7 +45,20 @@ for st in tree.body:
     else: stop()
     if not all(x.isascii() and re.fullmatch(r"[\\w.]+", x, re.A) for x in vals): stop()
     canon.add(id(t)); plugins += vals
+strn = {t.id for n in ast.walk(tree) if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant) and isinstance(n.value.value, (str, bytes)) for t in n.targets if isinstance(t, ast.Name)}
+isstr = lambda e: (isinstance(e, ast.Constant) and isinstance(e.value, (str, bytes))) or (isinstance(e, ast.Name) and e.id in strn)
+ENC = {"base64", "codecs", "binascii", "zlib", "marshal", "pickle", "operator", "str", "bytes", "bytearray"}
+refs = set()
+def ref(x):
+    for s in {x, nf(x)}:
+        for w in re.split(r"[^\\w./]+", s):
+            w = re.sub(r"/+", "/", re.sub(r"\\.+", "/", re.sub(r"\\.py$", "", w.strip("/.")))).strip("/")
+            if w: refs.add(w)
 for n in ast.walk(tree):
+    if isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes)): ref(n.value.decode("latin-1") if isinstance(n.value, bytes) else n.value)
+    if isinstance(n, ast.JoinedStr) or (isinstance(n, ast.BinOp) and (isstr(n.left) or isstr(n.right))) or (isinstance(n, ast.AugAssign) and (isstr(n.value) or (isinstance(n.target, ast.Name) and n.target.id in strn))): stop()
+    if isinstance(n, (ast.Attribute, ast.Subscript)) and (isstr(n.value) or (isinstance(n.value, ast.Name) and n.value.id in ENC)): stop()
+    if isinstance(n, ast.Name) and n.id in {"chr", "bytes", "bytearray"}: stop()
     if id(n) in canon: continue
     for _, val in ast.iter_fields(n):
         for x in (val if isinstance(val, list) else [val]):
@@ -59,25 +72,36 @@ for n in ast.walk(tree):
         if n.attr in ATTR and not (n.attr == "compile" and isinstance(n.value, ast.Name) and n.value.id == "re"): stop()
     if isinstance(n, ast.Import):
         for a in n.names:
-            if a.name.split(".")[0] in BAD: stop()
+            if a.name.split(".")[0] in BAD | ENC - {"str", "bytes", "bytearray"}: stop()
             imports.append(a.name)
     if isinstance(n, ast.ImportFrom):
         base = "." * n.level + (n.module or "")
-        if (n.module or "").split(".")[0] in BAD: stop()
+        if (n.module or "").split(".")[0] in BAD | ENC - {"str", "bytes", "bytearray"}: stop()
         imports.append(base)
         for a in n.names:
             if a.name in ATTR: stop()
             if a.name != "*": imports.append(base + ("" if base.endswith(".") else ".") + a.name)
-print(json.dumps({"plugins": plugins, "imports": imports}))
+print(json.dumps({"plugins": plugins, "imports": imports, "refs": sorted(refs)}))
 `;
 /** The conftest text read by Python's parser (see SCAN), or null (OPEN) when python3 is missing, times out, exits non-zero or prints anything but the expected JSON. */
-function conftestScan(txt: string): { plugins: string[]; imports: string[] } | null {
+function conftestScan(txt: string): { plugins: string[]; imports: string[]; refs: string[] } | null {
   try {
     const r = spawnSync("python3", ["-I", "-c", SCAN, "pytest_plugins"], { input: txt, encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL", cwd: tmpdir(), env: tokenFreeEnv(process.env), maxBuffer: 1 << 24 });
     if (r.error || r.status !== 0) return null;
-    const j = JSON.parse(r.stdout) as { plugins?: unknown; imports?: unknown };
-    return Array.isArray(j.plugins) && Array.isArray(j.imports) ? { plugins: j.plugins.map(String), imports: j.imports.map(String) } : null;
+    const j = JSON.parse(r.stdout) as { plugins?: unknown; imports?: unknown; refs?: unknown };
+    return Array.isArray(j.plugins) && Array.isArray(j.imports) && Array.isArray(j.refs) ? { plugins: j.plugins.map(String), imports: j.imports.map(String), refs: j.refs.map(String) } : null;
   } catch { return null; }
+}
+/** Modules a pytest11 entry point names in setup.cfg `[options.entry_points]` or pyproject `[project.entry-points.pytest11]` / `[tool.poetry.plugins.pytest11]`: every word of the entry is taken as a module path (an over-approximation, so a name that collides is NOT PROVEN, never trusted). */
+function entryPlugins(txt: string): string[] {
+  const out: string[] = [], lines = txt.split(/\r?\n/);
+  lines.forEach((l, i) => {
+    const table = /^\s*\[(?:project\.entry-points|tool\.poetry\.plugins)\.\s*["']?pytest11["']?\s*\]/.test(l), key = !table && /^\s*["']?pytest11["']?\s*[=:]/.test(l);
+    if (!table && !key) return;
+    const end = lines.findIndex((x, j) => j > i && (table ? /^\s*\[/ : /^\S/).test(x)), body = [key ? l.replace(/^\s*["']?pytest11["']?\s*[=:]/, "") : "", ...lines.slice(i + 1, end < 0 ? undefined : end)].join("\n");
+    for (const w of body.match(/[\w.]+/g) ?? []) out.push(w.replace(/\.py$/, "").replace(/\./g, "/"));
+  });
+  return out;
 }
 /** Plugin modules named by `-p` in an ini, cfg or toml runner config (bare, quoted, list or attached form; `-p no:name` switches a plugin off), or [OPEN] when a named module is not a plain `[\w.]+` word (an escape, an adjacent quote, a non-ASCII letter), because the runner would load a different file than the text shows. */
 function iniPlugins(txt: string): string[] {
@@ -99,6 +123,8 @@ function configRefs(changed: readonly string[], roots: readonly string[]): Set<s
     if (n === "conftest.py" && !scan) { out.add("\0" + me); continue; }
     for (const m of scan?.imports ?? []) { const up = /^\.+/.exec(m)?.[0].length ?? 0, rest = m.slice(up).replace(/\./g, "/"); out.add(up ? `${IMPORT}${me}\t${posix.normalize(posix.join(d, ...Array(up - 1).fill(".."), rest))}` : `${PLUGIN}${me}\t${rest}`); }
     for (const m of scan?.plugins ?? []) out.add(`${PLUGIN}${me}\t${m.replace(/\./g, "/")}`);
+    for (const m of scan?.refs ?? []) out.add(`${PLUGIN}${me}\t${m}`);
+    for (const m of ini && n !== "conftest.py" ? entryPlugins(txt) : []) out.add(`${PLUGIN}${me}\t${m}`);
     for (const t of scan ? scan.plugins.map((m) => m.replace(/\./g, "/")) : ini ? iniPlugins(txt) : [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) { if (t === OPEN) { out.add("\0" + me); continue; } const p = posix.normalize(posix.join(d, t)); if (/[a-z]/i.test(t) && !/[*?^$|()[\]\\{}<>\s]/.test(t) && !t.startsWith("/") && !p.startsWith("..")) out.add(p); }
   }
   return out;
