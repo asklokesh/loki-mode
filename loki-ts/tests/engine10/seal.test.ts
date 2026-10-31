@@ -913,6 +913,58 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
       expect(r.not_proven).toContain("task names rotate.sh but it exists only at tests/rotate.sh");
       expect(r.verdict).toBe("PARTIAL");
     }, 30000);
+    const runFiles = async (name: string, task: string, files: Record<string, string>, preBase: Record<string, string> = {}) => {
+      noKey();
+      const { repo, base: base0 } = makeRepo(name);
+      let base = base0;
+      if (Object.keys(preBase).length) { for (const [f, c] of Object.entries(preBase)) { mkdirSync(dirname(join(repo, f)), { recursive: true }); writeFileSync(join(repo, f), c); sh(["git", "add", f], repo); } sh(["git", "commit", "-q", "-m", "pre"], repo); base = sh(["git", "rev-parse", "HEAD"], repo).trim(); }
+      for (const [f, c] of Object.entries(files)) { mkdirSync(dirname(join(repo, f)), { recursive: true }); writeFileSync(join(repo, f), c); }
+      const { ctx } = ctxFor(repo, base, "claude", { intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, task } });
+      await commitStage.run(ctx, new AbortController().signal);
+      return receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    };
+    const CALC = "def add(a, b):\n    return a + b\n", MIS = "task names calc.py but it exists only at tests/calc.py";
+    for (const [i, task] of ["Create calc.py with an add(a, b) function and add tests.", "Create calc.py with add(a, b), with unit tests.", "Create calc.py with add(a, b); put the tests in tests/.", "Create calc.py with add(a, b) and test it."].entries()) test(`bare test words do not locate calc.py: calc.py only at tests/calc.py is PARTIAL (${i})`, async () => {
+      const r = await runFiles(`wp3c-bare${i}`, task, { "tests/calc.py": CALC });
+      expect(r.not_proven).toContain(MIS);
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
+    test("a task that says per the spec does not locate spec/calc.rb", async () => {
+      const r = await runFiles("wp3c-spec", "Write calc.rb per the spec below.", { "spec/calc.rb": "def add(a, b)\n  a + b\nend\n" });
+      expect(r.not_proven).toContain("task names calc.rb but it exists only at spec/calc.rb");
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
+    test("a path or a directory phrase in the task still locates the file", async () => {
+      for (const [i, task] of ["Create calc.py in tests/ with add(a, b)", "Create calc.py in the tests directory with add(a, b)"].entries()) {
+        const r = await runFiles(`wp3c-path${i}`, task, { "tests/calc.py": CALC });
+        expect(r.not_proven.some((n) => n.startsWith("task names calc.py"))).toBe(false);
+      }
+    }, 60000);
+    for (const [label, body] of [["pass", "pass\n"], ["a one-line docstring", '"""calc"""\n'], ["a multi-line docstring", '"""calc\n\ndef add(a, b): documented only\n"""\n'], ["package main", "package main\n"], ["export {}", "export {};\n"], ["use strict", "'use strict';\n"]] as const) test(`a root calc.py holding only ${label} keeps the cap`, async () => {
+      const r = await runFiles(`wp3c-stub-${label.replace(/\W/g, "")}`, "Create calc.py with add(a, b)", { "calc.py": body, "tests/calc.py": CALC });
+      expect(r.not_proven).toContain(MIS);
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
+    test("a real root calc.py that defines add beside tests/calc.py stays VERIFIED", async () => {
+      const r = await runFiles("wp3c-realroot", "Create calc.py with add(a, b)", { "calc.py": CALC + "\ndef sub(a, b):\n    return a - b\n", "tests/calc.py": CALC });
+      expect(r.not_proven.some((n) => n.startsWith("task names calc.py"))).toBe(false);
+      expect(r.verdict).toBe("VERIFIED");
+    }, 30000);
+    test("a stale root calc.py already at base and untouched by the run keeps the cap", async () => {
+      const r = await runFiles("wp3c-stale", "Create calc.py with add(a, b)", { "tests/calc.py": CALC }, { "calc.py": CALC });
+      expect(r.not_proven).toContain(MIS);
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
+    test("a root calc.py that exists at base and is edited by the run to define add stays VERIFIED", async () => {
+      const r = await runFiles("wp3c-editroot", "Create calc.py with add(a, b)", { "calc.py": CALC, "tests/calc.py": CALC }, { "calc.py": "# todo\nx = 1\n" });
+      expect(r.not_proven.some((n) => n.startsWith("task names calc.py"))).toBe(false);
+      expect(r.verdict).toBe("VERIFIED");
+    }, 30000);
+    test("socket.js and chart.js named by the task are files; Node.js is prose", async () => {
+      const r = await runFiles("wp3c-socket", "Create socket.js that handles connections, no Node.js tricks.", { "tests/socket.js": "function connect() {}\n" });
+      expect(r.not_proven).toContain("task names socket.js but it exists only at tests/socket.js");
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
     test("a task that names tests/rotate.sh explicitly stays VERIFIED", async () => {
       const r = await run("wp3-named", "Write tests/rotate.sh and call it rotate.sh in the docs", ["tests/rotate.sh"]);
       expect(r.not_proven.some((n) => n.startsWith("task names rotate.sh"))).toBe(false);

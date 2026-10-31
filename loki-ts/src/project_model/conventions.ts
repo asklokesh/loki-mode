@@ -153,7 +153,7 @@ function nearestPackageRoot(testDir: string, repoDir: string, fileName: string):
 }
 const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSync|renameSync|symlinkSync|mkdir|writeFile|appendFile|cp|copyFile|rename|outputFile|ensureDir|mkdirp|write|Bun\.write)\(/g;
 
-const FRAMEWORK_JS = /^(?:Node|Vue|Next|Nuxt|Express|Three|D3|Chart|React|Angular|Ember|Backbone|Alpine|Svelte|Solid|Preact|Deno|Bun|Socket|Anime|Moment|Day|Underscore|Lodash|Handlebars|Mustache|Knockout|Meteor|Gatsby|Remix|Astro|Electron|Nest|Koa|Hapi|Fastify|P5|Phaser|Pixi|Babylon|Leaflet|Highcharts|Plotly|jQuery|Mocha|Jest|Cypress|Puppeteer)\.js$/i;
+const FRAMEWORK_JS = /^(?:Node|Vue|Next|Nuxt|Express|Three|D3|Chart|React|Angular|Ember|Backbone|Alpine|Svelte|Solid|Preact|Deno|Bun|Socket|Anime|Moment|Day|Underscore|Lodash|Handlebars|Mustache|Knockout|Meteor|Gatsby|Remix|Astro|Electron|Nest|Koa|Hapi|Fastify|P5|Phaser|Pixi|Babylon|Leaflet|Highcharts|Plotly|jQuery|Mocha|Jest|Cypress|Puppeteer)\.js$/;
 const TEST_DIR = /^(?:tests?|__tests__|specs?)$/, TEST_NAME = /^(?:conftest\.py|test_.*|.*_test\..*|.*\.test\..*|.*\.spec\..*|.*_spec\..*)$/;
 const hollow = (body: string): boolean => body.split("\n").every((l) => { const t = l.trim(); return !t || /^(?:#|\/\/|\/\*|\*)/.test(t); }); // empty, whitespace or comment/shebang lines only
 
@@ -163,18 +163,34 @@ export function taskNamedPaths(task: string): string[] {
   return [...new Set(names.filter((n) => !/^[A-Za-z]\.[A-Za-z]$/.test(n) && !FRAMEWORK_JS.test(n)))]; // "e.g", "i.e" and framework names like "Node.js" are prose, never files; an app file such as App.js stays a file
 }
 
-/** FALSEVER-WALLPATH-3: language-agnostic last check. The task names a bare file X (a repo-root file), the run added X only under a subdirectory (tests/X) and not at the repo root, and the task does not name that subdirectory path: the real grader runs X at the root, so the result is NOT PROVEN. Returns the note lines (empty when nothing is misplaced). */
+/** Top-level symbol names a source text defines, by shape and never by language: a line-start def, class, function, func, fn, const, let, var, type, struct, enum, trait, interface, sub, proc, fun or val (optionally exported, public or async, with an optional Go receiver or `self.`), a line-start `name =` or `name() {`, `exports.name =`, and the names in `module.exports = { ... }` or `export { ... }`. Docstrings, block comments and line comments are ignored; main, init, dunder and test-prefixed names are not counted, so a stub cannot match on them. */
+export function topLevelSymbols(src: string): Set<string> {
+  const code = src.replace(/"""[\s\S]*?"""|'''[\s\S]*?'''|\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*(?:#|\/\/).*$/gm, "");
+  const out = new Set<string>(), add = (n: string | undefined): void => { if (n && n !== "_" && !/^(?:main|init)$|^__\w+__$|^[Tt]est/.test(n)) out.add(n); };
+  for (const m of code.matchAll(/^(?:(?:export|default|async|pub(?:\([^)]*\))?|static|public|abstract|final)\s+)*(?:def|class|function\*?|func|fn|const|let|var|type|interface|struct|enum|trait|sub|proc|fun|val)\s+(?:\([^)]*\)\s*)?(?:self\.)?([A-Za-z_$][\w$]*)|^(?:(?:module\.)?exports\.)?([A-Za-z_$][\w$]*)\s*(?:=(?!=)|\(\)\s*\{)/gm)) add(m[1] ?? m[2]);
+  for (const m of code.matchAll(/^(?:module\.exports\s*=|export)\s*\{([^}]*)\}/gm)) for (const part of m[1]!.split(",")) add(part.trim().split(/\s+/).pop());
+  return out;
+}
+
+/** FALSEVER-WALLPATH-3: language-agnostic last check. The task names a bare file X (a repo-root file), the run added X only under a test directory (tests/X) and not at the repo root, and the task does not name that directory (see taskNamesDir): the real grader runs X at the root, so the result is NOT PROVEN. A root X clears the note only when the run added or changed it (a root file untouched by the run is stale) and it defines at least one top-level symbol the test-directory copy defines; when that copy defines no symbol, any non-hollow root file clears it. Returns the note lines (empty when nothing is misplaced). */
 export function misplacedNamedNotes(task: string, rawDiff: string[], repoDir: string, head: string): string[] {
-  const named = taskNamedPaths(task), added = rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() === "A" && rawDiff[i + 1] ? [rawDiff[i + 1]!] : []));
+  const named = taskNamedPaths(task), added = rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() === "A" && rawDiff[i + 1] ? [rawDiff[i + 1]!] : [])), changed = new Set(rawDiff.filter((_, i) => i % 2 === 1));
   return named.filter((x) => !x.includes("/") && !TEST_NAME.test(x)).flatMap((x) => {
     const hit = added.find((f) => f.includes("/") && basename(f) === x && TEST_DIR.test(f.split("/")[0]!)); // only a test directory copy stands in for the root file; cmd/server/main.go, pkg/__init__.py, src/components/index.ts are idiomatic
     if (!hit || named.some((p) => p.endsWith(`/${x}`)) || taskNamesDir(task, dirname(hit))) return [];
     const root = safeGitSpawn(repoDir, ["show", `${head}:${x}`], { timeout: 5000, encoding: "utf8" });
-    if (root.status === 0 && !hollow(root.stdout ?? "")) return []; // a real root file; an empty or stub one beside the real file under tests/ keeps the cap
+    if (root.status === 0 && changed.has(x) && !hollow(root.stdout ?? "")) { // a stale root file (untouched by the run), or an empty or stub one beside the real file under tests/, keeps the cap
+      const copy = safeGitSpawn(repoDir, ["show", `${head}:${hit}`], { timeout: 5000, encoding: "utf8" }), want = topLevelSymbols(copy.status === 0 ? copy.stdout ?? "" : "");
+      if (want.size === 0 || [...topLevelSymbols(root.stdout ?? "")].some((n) => want.has(n))) return [];
+    }
     return [`task names ${x} but it exists only at ${hit}`];
   });
 }
-const taskNamesDir = (task: string, dir: string): boolean => new RegExp(`(?<![\\w.-])${dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/?(?![\\w-])`).test(task);
+/** Whether the task names the directory as a home for the file: a path with a slash (`tests/`, `cmd/server`) or a phrase such as "in/under/inside the X directory". The bare words tests, test and spec never count, and neither does a mention that says the tests live there ("put the tests in tests/"): that is the home of the tests, not of the named file. */
+const taskNamesDir = (task: string, dir: string): boolean => {
+  const d = dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...task.matchAll(new RegExp(`(?<![\\w.-])${d}/|\\b(?:in|into|under|inside|within)\\s+(?:the\\s+)?[\`"']?${d}/?[\`"']?\\s+(?:directory|dir|folder)\\b`, "g"))].some((m) => !/\b(?:tests?|specs?)\b[^.;\n]{0,30}\b(?:in|into|under|inside|to|at|within)\s+(?:the\s+)?$/i.test(task.slice(0, m.index!) + (/^(?:in|into|under|inside|within)\b/.test(m[0]) ? `${/^\w+/.exec(m[0])![0]} ` : "")));
+};
 
 /** FC-WALL-PHANTOM-PATH: repo paths a JS/TS test builds with join/resolve from the test dir, the cwd or a const derived from them (const assignments followed, calls split across lines joined) that do not exist in the base tree. process.cwd() is tried as the nearest package root of the test dir (verify runs a package's tests there) and as the repo root; a path existing under either passes. A path the plan names, creates (mkdir/write/cp/rename target), or that git ignores passes; write/expect/tmp lines are ignored. A path that stays inside the test dir is reported only when its first segment is absent from the test dir but present at the package or repo root (tests/plugins/x for plugins/x); fixtures the test dir lacks stay unreported. Returns repo-relative missing paths (max 3). */
 export function phantomRepoPaths(content: string, fileName: string, testDir: string, repoDir: string, planText: string | null, task: string | null = null): string[] {
