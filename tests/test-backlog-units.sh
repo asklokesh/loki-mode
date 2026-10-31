@@ -210,6 +210,22 @@ reset_mock
 out="$(MOCK_COST=0.80 $TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagc.json" --concurrency 1 2>&1)"
 [ "$(grep -c '^start ' "$TMP/events")" = "3" ] && pass "no cap set: all units run" || fail "no cap" "$out"
 
+echo "== skipped dependency dirs are named in the unit task"
+git -C "$REPO" worktree prune
+printf '.venv/\n' > "$REPO/.gitignore"; git -C "$REPO" add .gitignore; git -C "$REPO" -c user.name=t -c user.email=t@t commit -q -m ign
+mkdir -p "$REPO/.venv/bin"; ln -s /usr/bin/true "$REPO/.venv/bin/python"
+cat > "$TMP/dagv.json" <<'DEOF'
+{"group":"gv","units":[{"id":"v1","items":["do v"]}]}
+DEOF
+reset_mock
+LOKI_WORKSPACES=1 $TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagv.json" >/dev/null 2>&1
+flat="$(tr '\n' ' ' < "$TMP/events")"
+case "$flat" in *"args=do v  These dependency directories were not copied into this worktree: .venv. Install them"*) pass "skipped .venv named with an install instruction";; *) fail "skipped .venv named" "$flat";; esac
+rm -rf "$REPO/.venv"
+reset_mock
+LOKI_WORKSPACES=1 $TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagv.json" >/dev/null 2>&1
+[ "$(grep '^start v1 ' "$TMP/events")" = "start v1 loki/unit-gv-1 args=do v --no-pr" ] && pass "nothing skipped: task text byte-identical" || fail "no-skip control" "$(cat "$TMP/events" 2>&1)"
+
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

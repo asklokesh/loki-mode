@@ -201,6 +201,12 @@ def load_dag(path, group):
     return group, units
 
 
+def deps_note(task, skipped):
+    """Task text plus a line naming dependency dirs the worktree prep did not copy."""
+    return "%s\n\nThese dependency directories were not copied into this worktree: %s. Install them before building or testing." % (
+        task, ", ".join(skipped))
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="loki backlog", add_help=True)
     ap.add_argument("repo")
@@ -426,6 +432,8 @@ def main(argv):
                 if prep.get("deps_skipped"):
                     say("backlog: %s deps not copied (%s), the session installs them"
                         % (s["label"], ", ".join(prep["deps_skipped"])))
+                    if s["unit"]:  # per-unit task text, outside the cached prompt prefix
+                        s["cmd"] = [s["cmd"][0], deps_note(s["cmd"][1], prep["deps_skipped"])] + s["cmd"][2:]
                 r = None
             except (RuntimeError, subprocess.CalledProcessError) as e:
                 msg = getattr(e, "stderr", None) or str(e)
