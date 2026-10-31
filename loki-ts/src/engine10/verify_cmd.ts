@@ -4,10 +4,10 @@
 import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
-import { lokiDir } from "../util/paths.ts"; import { isResumableDone, receiptSealAccuracy } from "../util/run_outputs.ts";
+import { lokiDir } from "../util/paths.ts"; import { isCancelDone, isResumableDone, receiptSealAccuracy } from "../util/run_outputs.ts"; import { answerMark } from "../util/conflict_resume.ts";
 import { applyMaxAge, deployAttestCmd, pubFor, receiptShapeProblem, takeMaxAge } from "../util/receipt_signer.ts";
-import { latestRunId } from "../commands/run_status.ts"; import { answeredBlockedBetween, sealDrift, tornTail, verifyLogSeals, wallNotComparedNote } from "../util/seal_drift.ts";
-import { readEvents } from "./events.ts";
+import { latestRunId } from "../commands/run_status.ts"; import { answeredBlockedBetween, isAnsweredResume, sealDrift, tornTail, verifyLogSeals, wallNotComparedNote } from "../util/seal_drift.ts";
+import { readEvents } from "./events.ts"; import type { EventEnvelope } from "./types.ts";
 import { isExecutedProof, printable, sealedWallCopy, sealedWallDir, withExplain, type ExplainRec } from "../util/check_result.ts";
 import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
 import { exportDsseReceipt, isEnvelope, outcomeOf, runIdGuard, verifyDsseReceipt } from "../features/receipt_dsse.ts";
@@ -81,6 +81,14 @@ export function checkEventLog(receiptPath: string, receipt: Record<string, unkno
   for (const l of lines) { if (h.copy().digest("hex") === bound) return null; h.update(l + "\n"); }
   return h.digest("hex") === bound ? null : "events.jsonl does not match the hash recorded at seal";
 }
+/** True when the log.sealed at `i`, beyond the last run.completed at `done`, may be a resume checkpoint: the completion is one a resume continues from (isResumableDone), and a SPEC_CONFLICT one only counts once an answered run.resumed with a valid answer_sha256 (answerMark, isAnsweredResume) sits between it and `i`. A cancel stop needs no answer. */
+function resumeCheckpointOk(events: readonly EventEnvelope[], done: number, i: number): boolean {
+  const d = events[done]!;
+  if (!isResumableDone(d)) return false;
+  if (isCancelDone(d)) return true;
+  const m = answerMark(events.slice(0, i));
+  return m > done && isAnsweredResume(events[m]!);
+}
 /** A-117: after run.completed the supervisor appends a log.sealed line, signed over the sha256 of every earlier byte plus a tampered flag. A signed receipt needs it
  *  right after run.completed (deep verify may append later events: lines after log.sealed are unauthenticated and no reader may trust them). A sealed receipt with no run.completed is an interrupted run: UNCHECKED, not TAMPERED. */
 function checkLogSeal(receiptPath: string, hash: string, kid: unknown, given?: KeyObject): { verdict: "TAMPERED" | "UNCHECKED"; reason: string } | null {
@@ -94,7 +102,7 @@ function checkLogSeal(receiptPath: string, hash: string, kid: unknown, given?: K
   if (chain) return { verdict: "TAMPERED", reason: chain };
   // sealLog only ever runs right after a run.completed, so the last log.sealed of an honest log sits at done+1; a later one means the final run.completed was retyped or deleted
   // The extra log.sealed lines an honest log holds beyond done+1 are checkpoints the supervisor writes right after a run.resumed (resume) or a receipt.sealed (seal); each was already hashed and signature-checked by verifyLogSeals above, and anything else there still reads as a retyped run.completed.
-  if (events.some((e, i) => e.type === "log.sealed" && i > done + 1 && (!isResumableDone(events[done]!) || (events[i - 1]!.type !== "run.resumed" && events[i - 1]!.type !== "receipt.sealed")))) return { verdict: "TAMPERED", reason: "events.jsonl holds a log.sealed line that does not follow the last run.completed; the final run.completed was retyped or removed" };
+  if (events.some((e, i) => e.type === "log.sealed" && i > done + 1 && (!resumeCheckpointOk(events, done, i) || (events[i - 1]!.type !== "run.resumed" && events[i - 1]!.type !== "receipt.sealed")))) return { verdict: "TAMPERED", reason: "events.jsonl holds a log.sealed line that does not follow the last run.completed; the final run.completed was retyped or removed" };
   if (done < 0) return { verdict: "UNCHECKED", reason: "run did not complete, or the log was truncated (no run.completed in events.jsonl)" };
   const seal = events[done + 1], d = seal?.type === "log.sealed" ? seal.data : null;
   if (!d) return { verdict: "TAMPERED", reason: "events.jsonl has no signed log.sealed line after run.completed" };

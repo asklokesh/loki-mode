@@ -196,7 +196,7 @@ function stageState(events: readonly EventEnvelope[], nowMs?: number): WorkItemS
 // duplicating a side effect (design: docs/v10/ENGINE.md "Recovery of an interrupted run").
 /** A run.completed written by a SIGINT/SIGTERM/loki-cancel stop: it seals the log but is not a finish. */
 export const isCancelDone = (e: EventEnvelope): boolean => e.type === "run.completed" && e.data["cancelled"] === true;
-/** A run.completed the resume path continues from: a cancel stop, or a BLOCKED (SPEC_CONFLICT) completion that `loki answer` resumes (blockedCompletion). Verify uses the same predicate to accept the resume checkpoint seal that follows it. */
+/** A run.completed a resume checkpoint seal may follow: a cancel stop, or a BLOCKED (SPEC_CONFLICT) completion. Used by verify only (resumeCheckpointOk, which also demands an answered resume for SPEC_CONFLICT); resumePoint does not use it. */
 export const isResumableDone = (e: EventEnvelope): boolean => isCancelDone(e) || (e.type === "run.completed" && e.data["verdict"] === "SPEC_CONFLICT");
 export type Phase = "implement" | "verify" | "publish" | "done";
 

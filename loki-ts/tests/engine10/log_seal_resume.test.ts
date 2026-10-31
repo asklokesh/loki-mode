@@ -830,11 +830,46 @@ test("SB-04e (f): an answered BLOCKED run keeps its verdict while its answered r
   seal(dir, id, ev, log, []); log.sealLog();
   log.append("run.completed", null, { verdict: "SPEC_CONFLICT" }); log.sealLog();
   const before = await verifyReceipt(join(dir, "receipt.json"));
-  log = new SupervisorLog(ev, id); log.append("run.resumed", null, { phase: "stage", answered: true, answer: "x" }); log.verify(); log.sealLog();
+  log = new SupervisorLog(ev, id); log.append("run.resumed", null, { phase: "stage", ...ANS }); log.verify(); log.sealLog();
   const after = await verifyReceipt(join(dir, "receipt.json"));
   expect(types(ev).endsWith("run.completed,log.sealed,run.resumed,log.sealed")).toBe(true);
   expect(after.verdict).toBe(before.verdict);
   expect(after.verdict).not.toBe("TAMPERED");
+});
+/** A sealed receipt, a run.completed with `first` data and its seal, then `tail` appended as the supervisor would; returns the verdict. */
+async function afterCompletion(first: Record<string, unknown>, tail: (ev: string, id: string) => void): Promise<{ verdict: string; text: string }> {
+  const id = `e10-t${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  const log = new SupervisorLog(ev, id);
+  log.append("run.started", null, { provider: "claude" });
+  seal(dir, id, ev, log, []); log.sealLog();
+  log.append("run.completed", null, first); log.sealLog();
+  tail(ev, id);
+  const v = await verifyReceipt(join(dir, "receipt.json"));
+  return { verdict: v.verdict, text: JSON.stringify(v) };
+}
+const resumeCkpt = (data: Record<string, unknown>) => (ev: string, id: string): void => { const l = new SupervisorLog(ev, id); l.append("run.resumed", null, { phase: "stage", ...data }); l.verify(); l.sealLog(); };
+const POSITION = "does not follow the last run.completed";
+for (const verdict of ["FAILED", "PARTIAL", "ALREADY_SATISFIED"]) for (const [name, data] of [["plain", {}], ["answered", ANS]] as const) {
+  test(`SB-04e (e3): a trailing resume pair with ${name} run.resumed after a finished ${verdict} run is TAMPERED`, async () => {
+    const v = await afterCompletion({ verdict }, resumeCkpt(data));
+    expect(v.verdict).toBe("TAMPERED"); expect(v.text).toContain(POSITION);
+  });
+}
+test("SB-04e (FG2): an unanswered SPEC_CONFLICT followed by a plain resume pair is TAMPERED", async () => {
+  const v = await afterCompletion({ verdict: "SPEC_CONFLICT" }, resumeCkpt({}));
+  expect(v.verdict).toBe("TAMPERED"); expect(v.text).toContain(POSITION);
+});
+test("SB-04e (FG3): an answered resume whose answer_sha256 is not the answer's sha256 is TAMPERED mid-resume", async () => {
+  const v = await afterCompletion({ verdict: "SPEC_CONFLICT" }, resumeCkpt({ ...ANS, answer_sha256: "deadbeef" }));
+  expect(v.verdict).toBe("TAMPERED"); expect(v.text).toContain(POSITION);
+});
+test("SB-04e (FG14): an honest re-resume of an answered BLOCKED run (answered pair, stage tail, plain resume pair) is not TAMPERED", async () => {
+  const v = await afterCompletion({ verdict: "SPEC_CONFLICT" }, (ev, id) => {
+    resumeCkpt(ANS)(ev, id);
+    const l = new SupervisorLog(ev, id); l.append("stage.started", "verify", {}); // the killed attempt's unsigned stage work
+    resumeCkpt({})(ev, id);
+  });
+  expect(v.verdict).not.toBe("TAMPERED");
 });
 test("SB-04e (g): an unsigned stage tail after a cancel seal is refused: no Resume offer", async () => {
   const id = `e10-k${n++}`, repo = mkdtempSync(join(root, "kill-")), dir = join(repo, ".loki", "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
