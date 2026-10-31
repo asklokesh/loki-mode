@@ -81,7 +81,7 @@ function pluginMods(txt: string): string[] {
   }
   return [...[...txt.matchAll(/(?:^|[\s"'\[,])-p["']?(?:\s*,)?\s*["']?([\w.]+)(?![\w.:])/g)].map(dotted), ...named];
 }
-/** Repo paths named by a runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest) and pytest plugin modules (`-p`, bare, quoted or list form, in an ini, cfg or toml config; `pytest_plugins` in conftest.py; a dotted name maps to a path). Editing such a file changes what the runner loads even when the config itself is unchanged. */
+/** Repo paths named by a runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest) and Python test-runner plugin modules (`-p`, bare, quoted or list form, in an ini, cfg or toml config; `pytest_plugins` in conftest.py; a dotted name maps to a path). Editing such a file changes what the runner loads even when the config itself is unchanged. */
 function configRefs(changed: readonly string[], roots: readonly string[]): Set<string> {
   const out = new Set<string>(), dirs = new Set(changed.flatMap((f) => f.split("/").slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join("/")).concat("")));
   for (const root of new Set(roots)) for (const d of dirs) for (const n of (() => { try { return readdirSync(join(root, d)); } catch { return []; } })()) {
