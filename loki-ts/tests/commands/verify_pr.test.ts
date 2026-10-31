@@ -816,6 +816,14 @@ describe("verify-pr: an exit code alone is not proof", () => {
     expect(runnerConfigChanged(["jest.config.json", "sub/jest.config.json", "package.json"], join(dir, "head"), join(dir, "base"))).toEqual(["jest.config.json", "sub/jest.config.json"]);
   });
 
+  test("runnerConfigChanged flags files under a moduleNameMapper target with a capture group or a plain target, and not other paths", () => {
+    mkdirSync(join(dir, "src/lib"), { recursive: true });
+    writeFileSync(join(dir, "jest.config.json"), '{"moduleNameMapper":{"^@/(.*)$":"<rootDir>/src/$1","^stub$":"<rootDir>/mocks/stub.js"}}');
+    expect(runnerConfigChanged(["src/lib/util.js"], dir)).toEqual(["src/lib/util.js"]);
+    expect(runnerConfigChanged(["mocks/stub.js"], dir)).toEqual(["mocks/stub.js"]);
+    expect(runnerConfigChanged(["other/util.js", "srcx/a.js"], dir)).toEqual([]);
+  });
+
   test("runnerConfigChanged flags jest, vitest and vite configs and a package.json with a jest key only", () => {
     const names = ["jest.config.js", "sub/vitest.config.ts", "vite.config.mts", "vitest.workspace.ts"];
     for (const n of names) { mkdirSync(join(dir, "sub"), { recursive: true }); writeFileSync(join(dir, n), "export default {};\n"); }

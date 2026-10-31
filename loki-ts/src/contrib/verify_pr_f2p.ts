@@ -1,7 +1,7 @@
 // VPR-2: the fail-to-pass (F2P) check for `loki verify-pr`. A check derived from the LINKED ISSUE must FAIL on the PR
 // base and PASS on the PR head. Pure decision logic plus check extraction; execution is injected (the VPR-1 sandbox).
-import { existsSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { REPORT_RUNNERS } from "../engine10/testmap.ts";
 
 export interface SandboxResult { status: "COMPLETED" | "TIMEOUT" | "ERROR" | "BLOCKED"; exit_code: number | null; detail?: string; output?: string; report?: string; hits?: string }
