@@ -140,6 +140,19 @@ describe("engine10 pr stage", () => {
     expect(readLog()).toContain("--draft");
   });
 
+  test("PR-FIRST-1: a PARTIAL title is prefixed [PARTIAL] and a VERIFIED title is not", async () => {
+    const script = writeStub(stubDir, logPath);
+    const { ctx } = makeCtx(repoDir, runDir, { verdict: "PARTIAL" });
+    await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+    expect(readLog()).toContain("[PARTIAL] Loki 10: PARTIAL (");
+    writeFileSync(logPath, "");
+    const vDir = mkdtempSync(join(stubDir, "run-")); // a fresh outbox, so the recorded PARTIAL push is not replayed
+    const v = makeCtx(repoDir, vDir, { verdict: "VERIFIED" });
+    await runPr(v.ctx, new AbortController().signal, { pushScriptPath: script });
+    expect(readLog()).toContain(" Loki 10: VERIFIED (");
+    expect(readLog()).not.toContain("[PARTIAL]");
+  });
+
   test("VERIFIED but the cap fired: --draft is still passed", async () => {
     const script = writeStub(stubDir, logPath);
     const { ctx } = makeCtx(repoDir, runDir, { verdict: "VERIFIED", capHit: true });
@@ -897,7 +910,7 @@ describe("TEN-ADOPTION-09 gitlab.com origin routes to engine10-push-gitlab.sh pu
     expect(result.data.existing).toBeNull();
     expect(result.data.not_proven).toEqual(["commit status loki/deep-verify not set (gitlab origin)"]);
     expect(emitted[0]).toEqual({ type: "pr.opened", stage: "pr", data: { url: MR_URL, draft: true, existing: null } });
-    expect(glLog(gl.log)).toContain(`GL mode=push-mr args=${ctx.repoDir} ${ctx.branch} Loki 10: PARTIAL (e10-test-run) ${runDir}/pr-body.md --draft pinned=1 origin=${GL_ORIGIN}`);
+    expect(glLog(gl.log)).toContain(`GL mode=push-mr args=${ctx.repoDir} ${ctx.branch} [PARTIAL] Loki 10: PARTIAL (e10-test-run) ${runDir}/pr-body.md --draft pinned=1 origin=${GL_ORIGIN}`);
     expect(readLog()).toBe(""); // neither push-pr nor the GitHub status call ran
   });
 
