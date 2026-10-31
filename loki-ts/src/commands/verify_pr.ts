@@ -4,7 +4,7 @@
 // Exit codes align with `loki verify`: 0 VERIFIED, 2 NOT PROVEN because the sandbox was blocked/usage, 3 NOT PROVEN because
 // no proof exists to run (no linked issue or no trusted runnable check), 4 NOT PROVEN because the proof ran and failed.
 import { execFileSync, spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, posix } from "node:path";
@@ -22,120 +22,20 @@ function textMatchesOrUnreadable(path: string, test: (txt: string) => boolean): 
 
 /** Changed in a PR, these always count as runner config whatever they hold: transpiler config (babel), interpreter startup hooks (sitecustomize.py, usercustomize.py, *.pth), mocha config, and anything under a __mocks__ directory (the runner applies those without the test asking, and a `roots` setting can move them out of the repo root). */
 const ALWAYS_CONFIG = /(?:^|\/)(?:babel\.config\.[\w.]+|\.babelrc(?:\.[\w.]+)?|(?:site|user)customize\.py|[^/]+\.pth|\.mocharc(?:\.[\w.]+)?)$|(?:^|\/)__mocks__\//;
-const OPEN = "\0open", IMPORT = "\x01", PLUGIN = "\x02";
-/** Run by `python3 -I` on a conftest's text (stdin); the text is parsed with Python's own `ast` and never executed. Prints JSON `{plugins, imports}`, or exits non-zero (OPEN) when the file cannot be read as a plain conftest: a parse error; the `pytest_plugins` name used anywhere but a module-level assignment of a string or a list or tuple of ASCII `[\w.]+` strings; a string, name or attribute holding the plugin names, the plugin manager, `import_plugin`, `addopts` or a `-p` option; a name or attribute that sets, reads or builds attributes or code dynamically (setattr, getattr, delattr, exec, eval, compile except re.compile, __import__, globals, locals, vars, import_module, importlib, builtins, sys.modules, frames) or any dunder attribute. `imports` lists every module the file imports (relative ones keep their leading dots; `from m import n` lists m and m.n). */
-const SCAN = `
-import ast, json, re, sys, unicodedata
-nf = lambda s: unicodedata.normalize("NFKC", s)
-T = sys.argv[1]
-WORDS = (T, "pluginmanager", "import_plugin", "addopts")
-BAD = {"setattr", "getattr", "delattr", "exec", "eval", "compile", "__import__", "globals", "locals", "vars", "import_module", "importlib", "builtins", "__builtins__"}
-ATTR = BAD | {"modules", "f_globals", "f_locals", "_getframe", "currentframe", "stack", "reduce"}
-OKDUNDER = {"__file__", "__name__", "__doc__", "__package__"}
-def stop(): raise SystemExit(1)
-tree = ast.parse(sys.stdin.buffer.read().decode("utf-8"))
-plugins, imports, canon = [], [], set()
-for st in tree.body:
-    t = v = None
-    if isinstance(st, ast.Assign) and len(st.targets) == 1: t, v = st.targets[0], st.value
-    elif isinstance(st, ast.AnnAssign) and st.value is not None: t, v = st.target, st.value
-    if not (isinstance(t, ast.Name) and t.id == T): continue
-    if isinstance(v, ast.Constant) and isinstance(v.value, str): vals = [v.value]
-    elif isinstance(v, (ast.List, ast.Tuple)) and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in v.elts): vals = [e.value for e in v.elts]
-    else: stop()
-    if not all(x.isascii() and re.fullmatch(r"[\\w.]+", x, re.A) for x in vals): stop()
-    canon.add(id(t)); plugins += vals
-strn = {t.id for n in ast.walk(tree) if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant) and isinstance(n.value.value, (str, bytes)) for t in n.targets if isinstance(t, ast.Name)}
-isstr = lambda e: (isinstance(e, ast.Constant) and isinstance(e.value, (str, bytes))) or (isinstance(e, ast.Name) and e.id in strn)
-ENC = {"base64", "codecs", "binascii", "zlib", "marshal", "pickle", "operator", "str", "bytes", "bytearray"}
-refs = set()
-def ref(x):
-    for s in {x, nf(x)}:
-        for w in re.split(r"[^\\w./]+", s):
-            w = re.sub(r"/+", "/", re.sub(r"\\.+", "/", re.sub(r"\\.py$", "", w.strip("/.")))).strip("/")
-            if w: refs.add(w)
-for n in ast.walk(tree):
-    if isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes)): ref(n.value.decode("latin-1") if isinstance(n.value, bytes) else n.value)
-    if isinstance(n, ast.JoinedStr) or (isinstance(n, ast.BinOp) and (isstr(n.left) or isstr(n.right))) or (isinstance(n, ast.AugAssign) and (isstr(n.value) or (isinstance(n.target, ast.Name) and n.target.id in strn))): stop()
-    if isinstance(n, (ast.Attribute, ast.Subscript)) and (isstr(n.value) or (isinstance(n.value, ast.Name) and n.value.id in ENC)): stop()
-    if isinstance(n, ast.Name) and n.id in {"chr", "bytes", "bytearray"}: stop()
-    if id(n) in canon: continue
-    for _, val in ast.iter_fields(n):
-        for x in (val if isinstance(val, list) else [val]):
-            if isinstance(x, bytes): x = x.decode("latin-1")
-            if not isinstance(x, str): continue
-            z = nf(x).lower()
-            if any(w in z or w in x.lower() for w in WORDS) or re.match(r"\\s*-p", z): stop()
-    if isinstance(n, ast.Name) and (n.id in BAD or (n.id.startswith("__") and n.id.endswith("__") and n.id not in OKDUNDER)): stop()
-    if isinstance(n, ast.Attribute):
-        if n.attr.startswith("__") and n.attr.endswith("__"): stop()
-        if n.attr in ATTR and not (n.attr == "compile" and isinstance(n.value, ast.Name) and n.value.id == "re"): stop()
-    if isinstance(n, ast.Import):
-        for a in n.names:
-            if a.name.split(".")[0] in BAD | ENC - {"str", "bytes", "bytearray"}: stop()
-            imports.append(a.name)
-    if isinstance(n, ast.ImportFrom):
-        base = "." * n.level + (n.module or "")
-        if (n.module or "").split(".")[0] in BAD | ENC - {"str", "bytes", "bytearray"}: stop()
-        imports.append(base)
-        for a in n.names:
-            if a.name in ATTR: stop()
-            if a.name != "*": imports.append(base + ("" if base.endswith(".") else ".") + a.name)
-print(json.dumps({"plugins": plugins, "imports": imports, "refs": sorted(refs)}))
-`;
-/** The conftest text read by Python's parser (see SCAN), or null (OPEN) when python3 is missing, times out, exits non-zero or prints anything but the expected JSON. */
-function conftestScan(txt: string): { plugins: string[]; imports: string[]; refs: string[] } | null {
-  try {
-    const r = spawnSync("python3", ["-I", "-c", SCAN, "pytest_plugins"], { input: txt, encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL", cwd: tmpdir(), env: tokenFreeEnv(process.env), maxBuffer: 1 << 24 });
-    if (r.error || r.status !== 0) return null;
-    const j = JSON.parse(r.stdout) as { plugins?: unknown; imports?: unknown; refs?: unknown };
-    return Array.isArray(j.plugins) && Array.isArray(j.imports) && Array.isArray(j.refs) ? { plugins: j.plugins.map(String), imports: j.imports.map(String), refs: j.refs.map(String) } : null;
-  } catch { return null; }
-}
-/** Modules a pytest11 entry point names in setup.cfg `[options.entry_points]` or pyproject `[project.entry-points.pytest11]` / `[tool.poetry.plugins.pytest11]`: every word of the entry is taken as a module path (an over-approximation, so a name that collides is NOT PROVEN, never trusted). */
-function entryPlugins(txt: string): string[] {
-  const out: string[] = [], lines = txt.split(/\r?\n/);
-  lines.forEach((l, i) => {
-    const table = /^\s*\[(?:project\.entry-points|tool\.poetry\.plugins)\.\s*["']?pytest11["']?\s*\]/.test(l), key = !table && /^\s*["']?pytest11["']?\s*[=:]/.test(l);
-    if (!table && !key) return;
-    const end = lines.findIndex((x, j) => j > i && (table ? /^\s*\[/ : /^\S/).test(x)), body = [key ? l.replace(/^\s*["']?pytest11["']?\s*[=:]/, "") : "", ...lines.slice(i + 1, end < 0 ? undefined : end)].join("\n");
-    for (const w of body.match(/[\w.]+/g) ?? []) out.push(w.replace(/\.py$/, "").replace(/\./g, "/"));
-  });
-  return out;
-}
-/** Plugin modules named by `-p` in an ini, cfg or toml runner config (bare, quoted, list or attached form; `-p no:name` switches a plugin off), or [OPEN] when a named module is not a plain `[\w.]+` word (an escape, an adjacent quote, a non-ASCII letter), because the runner would load a different file than the text shows. */
-function iniPlugins(txt: string): string[] {
-  const out: string[] = [];
-  for (const m of txt.matchAll(/(?:^|[\s"'[,])-p["']?(?:\s*,)?\s*["']?([^\s,\]]*)/g)) {
-    const w = m[1]!.replace(/["']$/, "");
-    if (/^[\w.]+$/.test(w) && /^[\x00-\x7f]+$/.test(w)) out.push(w.replace(/\./g, "/"));
-    else if (w && !/^no:[\w.-]+$/.test(w)) return [OPEN];
-  }
-  return out;
-}
-/** Repo paths named by a runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest) and Python test-runner plugin modules (`-p`, bare, quoted or list form, in an ini, cfg or toml config; `pytest_plugins` in conftest.py; a dotted name maps to a path). Editing such a file changes what the runner loads even when the config itself is unchanged. */
+/** Repo paths named by a JS or TS runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest). Editing such a file changes what the runner loads even when the config itself is unchanged. Python plugin loading is not read from text: the sandbox records what pytest, its plugins and its conftests load (see PYTEST_BOOT). */
 function configRefs(changed: readonly string[], roots: readonly string[]): Set<string> {
   const out = new Set<string>(), dirs = new Set(changed.flatMap((f) => f.split("/").slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join("/")).concat("")));
   for (const root of new Set(roots)) for (const d of dirs) for (const n of (() => { try { return readdirSync(join(root, d)); } catch { return []; } })()) {
-    const r = REPORT_RUNNERS.find((x) => x.config.test(n)), ini = /\.(?:ini|cfg)$|^pyproject\.toml$|^conftest\.py$/.test(n); let txt: string;
-    if ((!r && !ini) || (n.endsWith(".py") && n !== "conftest.py")) continue; try { txt = readFileSync(join(root, d, n), "utf8"); if (r?.key && !n.startsWith(r.runner)) txt = JSON.stringify((JSON.parse(txt) as Record<string, unknown>)[r.key] ?? ""); } catch { continue; }
-    const scan = n === "conftest.py" ? conftestScan(txt) : null, me = posix.join(d, n);
-    if (n === "conftest.py" && !scan) { out.add("\0" + me); continue; }
-    for (const m of scan?.imports ?? []) { const up = /^\.+/.exec(m)?.[0].length ?? 0, rest = m.slice(up).replace(/\./g, "/"); out.add(up ? `${IMPORT}${me}\t${posix.normalize(posix.join(d, ...Array(up - 1).fill(".."), rest))}` : `${PLUGIN}${me}\t${rest}`); }
-    for (const m of scan?.plugins ?? []) out.add(`${PLUGIN}${me}\t${m.replace(/\./g, "/")}`);
-    for (const m of scan?.refs ?? []) out.add(`${PLUGIN}${me}\t${m}`);
-    for (const m of ini && n !== "conftest.py" ? entryPlugins(txt) : []) out.add(`${PLUGIN}${me}\t${m}`);
-    for (const t of scan ? scan.plugins.map((m) => m.replace(/\./g, "/")) : ini ? iniPlugins(txt) : [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) { if (t === OPEN) { out.add("\0" + me); continue; } const p = posix.normalize(posix.join(d, t)); if (/[a-z]/i.test(t) && !/[*?^$|()[\]\\{}<>\s]/.test(t) && !t.startsWith("/") && !p.startsWith("..")) out.add(p); }
+    const r = REPORT_RUNNERS.find((x) => x.config.test(n)); let txt: string;
+    if (!r || r.runner === "pytest") continue; try { txt = readFileSync(join(root, d, n), "utf8"); if (r.key && !n.startsWith(r.runner)) txt = JSON.stringify((JSON.parse(txt) as Record<string, unknown>)[r.key] ?? ""); } catch { continue; }
+    for (const t of [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) { const p = posix.normalize(posix.join(d, t)); if (/[a-z]/i.test(t) && !/[*?^$|()[\]\\{}<>\s]/.test(t) && !t.startsWith("/") && !p.startsWith("..")) out.add(p); }
   }
   return out;
 }
 /** Files the PR added, changed, renamed or deleted that configure or preload the test runner: each REPORT_RUNNERS entry's config file, and any ini, cfg or toml file with a section header naming a test runner (`[...test...]`). Both the base and the head version are judged, so a runner section or key removed from a file that stays (a shared ini, cfg or json config) counts like a deleted file. A config file named for its runner is always config; the `key` check applies only to a shared manifest such as the project manifest. A read failure or a path missing at both sides counts as config (fail closed). The PR's own code could end the run early or redirect which tests run, so the check cannot be trusted. */
 export function runnerConfigChanged(changed: readonly string[], headDir: string, baseDir: string = headDir): string[] {
-  const refs = configRefs(changed, [headDir, baseDir]), open = [...refs].filter((r) => r[0] === "\0").map((r) => r.slice(1));
-  const hit = changed.filter((f) => f.endsWith(".py") && open.some((c) => f.startsWith(posix.dirname(c) === "." ? "" : posix.dirname(c) + "/")));
-  const via = [...refs].filter((r) => r[0] === IMPORT || r[0] === PLUGIN).map((r) => ({ anchored: r[0] === IMPORT, conftest: r.slice(1).split("\t")[0]!, mod: r.slice(1).split("\t")[1]! }));
-  const imported = changed.filter((f) => { const s = "/" + f.replace(/\.py$/, "").replace(/\/__init__$/, "") + "/"; return f.endsWith(".py") && !hit.includes(f) && via.some((v) => v.anchored ? v.mod === "" || s.startsWith("/" + v.mod + "/") : s.includes("/" + v.mod + "/")); });
-  return [...hit, ...imported, ...(hit.length ? open.map((c) => `${c} (pytest_plugins is not a closed literal)`) : []), ...(imported.length ? [...new Set(via.map((v) => v.conftest))].map((c) => `${c} (imports or loads a module the PR changed)`) : [])].concat(changed.filter((f) => {
+  const refs = configRefs(changed, [headDir, baseDir]);
+  return changed.filter((f) => {
     const b = basename(f), r = REPORT_RUNNERS.find((x) => x.config.test(b));
     if (ALWAYS_CONFIG.test(f) || refs.has(f) || refs.has(f.replace(/\.[^./]+$/, "")) || refs.has(f.replace(/\/__init__\.py$/, ""))) return true;
     const at = [headDir, baseDir].filter((d, i, a) => a.indexOf(d) === i && existsSync(join(d, f)));
@@ -143,7 +43,137 @@ export function runnerConfigChanged(changed: readonly string[], headDir: string,
     if (at.length === 0 || (r && !r.key)) return !!r || at.length > 0;
     if (!r && !/\.(?:ini|cfg|toml)$/.test(f)) return false;
     return at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => r ? !r.key || b.startsWith(r.runner) || r.key in (JSON.parse(txt) as object) : /^\s*\[[^\]\n]*test|^[ \t]*[\w."' \t-]*\bpytest\b["']?[ \t]*(?:\.|=[ \t]*\{)/im.test(txt)));
-  }).filter((f) => !hit.includes(f) && !imported.includes(f)));
+  });
+}
+
+/** Recorder (sitecustomize imports it, so it starts before pytest) written into the sandbox outside the repo copy. A sys.addaudithook writes one JSON line per repo file that an import, exec, compile, open, dlopen or process-start event names, immediately and unbuffered, to the inherited fd 9, while pytest is starting up (before pytest_sessionstart) and while any conftest or plugin import is running (depth set by loki_vpr_plugin). Each line extends a sha256 chain; the terminator `{"end": lines, "h": chain, "err": 0|1}` is written at pytest_collection_finish. Path events fire before the named code runs, so PR code cannot unrecord itself, only add lines or break the chain. */
+const PYTEST_BOOT = `import hashlib, json, os, sys
+def _install():
+    root = os.environ.get("LOKI_VPR_ROOT", "")
+    roots = {os.path.abspath(root), os.path.realpath(root)} if root else set()
+    st = {"boot": True, "depth": 0, "n": 0, "h": "0", "busy": False, "err": not roots, "done": False, "early": False}
+    seen = set()
+    watch = {"import", "exec", "compile", "open", "ctypes.dlopen", "os.system", "subprocess.Popen", "os.exec", "os.posix_spawn", "os.spawn"}
+    def put(line):
+        data = (line + "\\n").encode()
+        try:
+            if os.write(9, data) != len(data): st["err"] = True
+        except OSError: st["err"] = True
+    def emit(rel):
+        line = json.dumps({"p": rel}, separators=(",", ":"))
+        st["h"] = hashlib.sha256((st["h"] + "|" + line).encode()).hexdigest()
+        st["n"] += 1
+        put(line)
+    def rels(p):
+        if isinstance(p, (bytes, os.PathLike)): p = os.fsdecode(p)
+        if not isinstance(p, str) or not p or p[0] == "<" or "\\0" in p: return []
+        a = os.path.abspath(p)
+        out = []
+        for q in (a, os.path.realpath(a)):
+            for rt in roots:
+                if q == rt or q.startswith(rt + os.sep):
+                    r = os.path.relpath(q, rt).replace(os.sep, "/")
+                    if r not in out: out.append(r)
+        return out
+    def paths(ev, a):
+        if ev in ("import", "compile"): return [a[1]]
+        if ev == "exec": return [getattr(a[0], "co_filename", None)]
+        if ev in ("open", "ctypes.dlopen"): return [a[0]]
+        out = []
+        for x in a[:3]:
+            for y in (x if isinstance(x, (list, tuple)) else [x]):
+                if isinstance(y, str) and ev == "os.system": out += y.split()
+                elif isinstance(y, (str, bytes, os.PathLike)): out.append(y)
+        return out
+    def hook(ev, a):
+        if ev not in watch or st["done"] or st["busy"] or not (st["boot"] or st["depth"] > 0): return
+        st["busy"] = True
+        try:
+            for p in paths(ev, a):
+                for r in rels(p):
+                    if ev == "open" and not st["depth"] and r.endswith((".ini", ".cfg", ".toml")): continue
+                    if r not in seen: seen.add(r); emit(r)
+        except Exception: st["err"] = True
+        finally: st["busy"] = False
+    def enter(): st["depth"] += 1
+    def leave(): st["depth"] = max(0, st["depth"] - 1)
+    def boot_end(): st["boot"] = False
+    def fail(): st["err"] = True
+    def early(): st["early"] = True
+    def finish():
+        if st["done"]: return
+        st["done"] = True
+        put(json.dumps({"end": st["n"], "h": st["h"], "err": 1 if st["err"] else 0, "early": 1 if st["early"] else 0}, separators=(",", ":")))
+    sys.addaudithook(hook)
+    return enter, leave, boot_end, fail, finish, early
+enter, leave, boot_end, fail, finish, early = _install()
+`;
+/** Shadows the interpreter's own sitecustomize on PYTHONPATH so the recorder starts first, then runs the next sitecustomize on sys.path (a distribution may use it to set up its site-packages). */
+const PYTEST_SITE = `import importlib.util, os, sys
+import loki_vpr_boot
+loki_vpr_boot.early()
+_me = os.path.dirname(os.path.abspath(__file__))
+for _d in sys.path:
+    _f = os.path.join(_d or ".", "sitecustomize.py")
+    if os.path.dirname(os.path.abspath(_f)) != _me and os.path.isfile(_f):
+        _s = importlib.util.spec_from_file_location("sitecustomize_next", _f)
+        _m = importlib.util.module_from_spec(_s)
+        _s.loader.exec_module(_m)
+        break
+`;
+/** The pytest half: wraps the plugin manager's conftest and plugin imports so the recorder knows when one is running, ends the start-up window at pytest_sessionstart and writes the terminator at pytest_collection_finish. Test-module collection is outside the window: the issue's test and the code under test are meant to change. */
+const PYTEST_PLUGIN = `import pytest, loki_vpr_boot as b
+def _wrap(f):
+    def w(*a, **k):
+        b.enter()
+        try: return f(*a, **k)
+        finally: b.leave()
+    return w
+@pytest.hookimpl(tryfirst=True)
+def pytest_load_initial_conftests(early_config, parser, args):
+    pm = early_config.pluginmanager
+    for n in ("_importconftest", "import_plugin"):
+        try: setattr(pm, n, _wrap(getattr(pm, n)))
+        except Exception: b.fail()
+@pytest.hookimpl(tryfirst=True)
+def pytest_sessionstart(session): b.boot_end()
+@pytest.hookimpl(trylast=True)
+def pytest_collection_finish(session): b.finish()
+`;
+const REC_OPEN = "<!--LOKI_VPR_RECORD\n";
+/** Wraps a pytest check so the sandbox run also writes the load record: the recorder and plugin go to a fresh mktemp dir (PYTHONPATH, a sitecustomize that imports the recorder, PYTEST_ADDOPTS -p so it loads before any ini addopts plugin), fd 9 is opened append-only before the check starts, and once the check has exited the record is appended to the runner report inside an XML comment, after every PR process has finished. The check's own exit code is kept. */
+export function bootedPytest(cmd: string): string {
+  return [
+    'B=$(mktemp -d) || exit 125',
+    `cat >"$B/loki_vpr_boot.py" <<'LOKI_VPR_PY'\n${PYTEST_BOOT}LOKI_VPR_PY`,
+    `cat >"$B/loki_vpr_plugin.py" <<'LOKI_VPR_PY'\n${PYTEST_PLUGIN}LOKI_VPR_PY`,
+    `cat >"$B/sitecustomize.py" <<'LOKI_VPR_PY'\n${PYTEST_SITE}LOKI_VPR_PY`,
+    'exec 9>>"$B/rec"',
+    'export LOKI_VPR_ROOT="$(pwd -P)" PYTHONPATH="$B${PYTHONPATH:+:$PYTHONPATH}" PYTEST_ADDOPTS="-p loki_vpr_plugin ${PYTEST_ADDOPTS-}"',
+    cmd,
+    'rc=$?',
+    `{ printf '\\n${REC_OPEN.trim()}\\n'; cat "$B/rec"; printf '\\n-->\\n'; } >>${REPORT_TOKEN}`,
+    'exit $rc',
+  ].join("\n") + "\n";
+}
+/** Reads the record bootedPytest appended to the head report. `files` are the repo files named by lines before the first break in the chain (a forged or surviving line can only add a file); `reason` is set unless the record is complete: terminator present, line count and sha256 chain matching, no write error. */
+export function bootRecord(report: string | undefined): { files: Set<string>; reason?: string } {
+  const files = new Set<string>(), txt = report ?? "", at = txt.lastIndexOf(REC_OPEN);
+  if (at < 0) return { files, reason: "no load record came back from the sandbox (python3 or pytest could not start the recorder)" };
+  const lines = txt.slice(at + REC_OPEN.length).split("\n"), close = lines.lastIndexOf("-->");
+  let h = "0", torn = close < 0 ? "the load record is not closed" : "";
+  const body = (close < 0 ? lines : lines.slice(0, close)).filter((l) => l !== "");
+  let term: { end?: unknown; h?: unknown; err?: unknown; early?: unknown } | null = null;
+  for (const [i, l] of body.entries()) {
+    let j: { p?: unknown; end?: unknown; h?: unknown; err?: unknown; early?: unknown };
+    try { j = JSON.parse(l) as typeof j; } catch { torn ||= "the load record has an unreadable line"; break; }
+    if (typeof j.p === "string") { files.add(j.p); h = createHash("sha256").update(`${h}|${l}`).digest("hex"); continue; }
+    if (i === body.length - 1 && typeof j.end === "number") term = j; else torn ||= "the load record has an unexpected line";
+    break;
+  }
+  if (!torn && !term) torn = "the load record has no terminator (pytest did not reach collection_finish)";
+  if (!torn && term && (term.end !== files.size || term.h !== h || term.err !== 0 || term.early !== 1)) torn = "the load record does not match its terminator (truncated, rewritten or a write failed)";
+  return torn ? { files, reason: torn } : { files };
 }
 
 export interface PrRef { repo: string; number: number }
@@ -312,17 +342,23 @@ export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): Verify
     const gone = referencedFiles(c, co.baseDir).filter((p) => !existsSync(join(co.headDir, p)));
     if (gone.length > 0) return np(`test removed by the PR: ${gone.join(", ")}`);
   }
-  const reported = new Map<string, string>();
+  const reported = new Map<string, string>(), booted = new Set<string>();
   for (const c of res.checks) {
     const rc = reportedCheck(c);
     if ("reason" in rc) return np(rc.reason);
-    reported.set(c, rc.cmd);
+    if (rc.runner === "pytest") booted.add(c);
+    reported.set(c, rc.runner === "pytest" ? bootedPytest(rc.cmd) : rc.cmd);
   }
   const cfg = runnerConfigChanged(co.changed, co.headDir, co.baseDir);
   if (cfg.length > 0) return np(`the PR adds or changes test runner config, so a passing check is not proof: ${cfg.join(", ")}`);
   for (const c of res.checks) {
-    const o = judgeF2p(c, deps.sandbox(co.baseDir, c), deps.sandbox(co.headDir, reported.get(c)!));
+    const base = deps.sandbox(co.baseDir, c), head = deps.sandbox(co.headDir, reported.get(c)!);
+    const rec = booted.has(c) && head.status === "COMPLETED" ? bootRecord(head.report) : null, changedSet = new Set(co.changed);
+    const hit = rec ? [...rec.files].filter((f) => changedSet.has(f)) : [];
+    if (hit.length > 0) return np(`the PR adds or changes files that pytest, a plugin or a conftest loads before it collects tests (recorded in the sandbox), so a passing check is not proof: ${hit.join(", ")}`);
+    const o = judgeF2p(c, base, head);
     if (!o.ok) return { ...np(o.reason), blocked: o.blocked };
+    if (rec?.reason) return np(`${rec.reason}, so a passing check is not proof: ${c}`);
   }
   const ps = deps.packageSuites(co.baseDir, co.headDir, co.changed);
   if (ps.removed.length > 0) return np(`package test script removed by the PR: ${ps.removed.join(", ")}`);
