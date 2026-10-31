@@ -348,3 +348,27 @@ test("driver blanking is skipped only for builtins that cannot run a filter or t
     expect(safeGitArgs(["--shallow-file"], false, repo)).toContain("filter.canary.clean=");
   } finally { g("config", "--unset", "filter.canary.clean"); g("config", "--unset", "diff.canary.textconv"); }
 });
+
+test("a repo-set gpg.ssh.defaultKeyCommand never runs when tag.gpgSign makes git sign", () => {
+  const mark = join(root, "keycmd-hit.txt"), prog = join(root, "keycmd.sh");
+  writeFileSync(prog, `#!/bin/sh\necho "keycmd $*" >> "${mark}"\nexit 1\n`); chmodSync(prog, 0o755);
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" };
+  g("config", "gpg.format", "ssh"); g("config", "gpg.ssh.defaultKeyCommand", prog); g("config", "tag.gpgSign", "true");
+  try {
+    rmSync(mark, { force: true });
+    try { execFileSync("git", ["tag", "-m", "x", "vplain"], { cwd: repo, stdio: "ignore", env }); } catch { /* signing fails after the key lookup */ }
+    expect(existsSync(mark)).toBe(true); // positive control: unhardened git runs the key command
+    rmSync(mark, { force: true });
+    try { safeGit(repo, ["tag", "-m", "x", "vsafe"]); } catch { /* only the marker matters */ }
+    expect(existsSync(mark)).toBe(false);
+    // push.gpgSign needs a push-cert capable remote to reach the key lookup, so pin it by argv
+    const argv = safeGitArgs(["push"], false, repo).join(" ");
+    for (const pair of ["gpg.ssh.defaultKeyCommand=", "tag.gpgSign=false", "push.gpgSign=false"]) expect(argv).toContain(`-c ${pair}`);
+    // userHooks callers keep the user's own signing setup
+    const kept = safeGitArgs(["tag"], false, repo, { userHooks: true }).join(" ");
+    for (const pair of ["gpg.ssh.defaultKeyCommand=", "tag.gpgSign=false", "push.gpgSign=false", "commit.gpgSign=false"]) expect(kept).not.toContain(`-c ${pair}`);
+  } finally {
+    for (const k of ["gpg.format", "gpg.ssh.defaultKeyCommand", "tag.gpgSign"]) g("config", "--unset", k);
+    for (const t of ["vplain", "vsafe"]) try { g("tag", "-d", t); } catch { /* not created */ }
+  }
+});
