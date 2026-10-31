@@ -46,7 +46,7 @@ export function runnerConfigChanged(changed: readonly string[], headDir: string,
   });
 }
 
-/** Recorder (sitecustomize imports it, so it starts before pytest) written into the sandbox outside the repo copy. A sys.addaudithook writes one JSON line per repo file that an import, exec, compile, open, dlopen or process-start event names, immediately and unbuffered, to the inherited fd 9, while pytest is starting up (before pytest_sessionstart) and while any conftest or plugin import is running (depth set by loki_vpr_plugin). Each line extends a sha256 chain; the terminator `{"end": lines, "h": chain, "err": 0|1}` is written at pytest_collection_finish. Path events fire before the named code runs, so PR code cannot unrecord itself, only add lines or break the chain. */
+/** Recorder (sitecustomize imports it, so it starts before pytest) written into the sandbox outside the repo copy. A sys.addaudithook writes one JSON line per repo file that an import, exec, compile, open, dlopen or process-start event names, immediately and unbuffered, to the inherited fd 9, while pytest is starting up (before pytest_sessionstart), while any conftest or plugin import is running, and while any hook that a repo conftest or repo plugin implements is being called, at any point in the session (depth set by loki_vpr_plugin); the module file of every plugin registered at any time is noted too. Each line extends a sha256 chain; the terminator `{"end": lines, "h": chain, "err": 0|1, "early": 0|1}` is written at pytest_unconfigure, the last hook, so deferred loading is inside the record. Path events fire before the named code runs, so PR code cannot unrecord itself, only add lines or break the chain. RESIDUAL, plainly: arbitrary PR code running in this same interpreter can forge any in-process record, including the junit report itself; this record raises the bar on config-loaded files and does not claim a hostile-process guarantee. Fixtures and test modules that import the code under test stay outside the window, so the normal case is not flagged. */
 const PYTEST_BOOT = `import hashlib, json, os, sys
 def _install():
     root = os.environ.get("LOKI_VPR_ROOT", "")
@@ -100,13 +100,26 @@ def _install():
     def boot_end(): st["boot"] = False
     def fail(): st["err"] = True
     def early(): st["early"] = True
+    def note(p):
+        if st["done"] or st["busy"]: return
+        st["busy"] = True
+        try:
+            for r in rels(p):
+                if r not in seen: seen.add(r); emit(r)
+        except Exception: st["err"] = True
+        finally: st["busy"] = False
+    def inrepo(p):
+        f = getattr(p, "__file__", None)
+        if not f:
+            f = getattr(sys.modules.get(getattr(type(p), "__module__", ""), None), "__file__", None)
+        return bool(f) and bool(rels(f))
     def finish():
         if st["done"]: return
         st["done"] = True
         put(json.dumps({"end": st["n"], "h": st["h"], "err": 1 if st["err"] else 0, "early": 1 if st["early"] else 0}, separators=(",", ":")))
     sys.addaudithook(hook)
-    return enter, leave, boot_end, fail, finish, early
-enter, leave, boot_end, fail, finish, early = _install()
+    return enter, leave, boot_end, fail, finish, early, note, inrepo
+enter, leave, boot_end, fail, finish, early, note, inrepo = _install()
 `;
 /** Shadows the interpreter's own sitecustomize on PYTHONPATH so the recorder starts first, then runs the next sitecustomize on sys.path (a distribution may use it to set up its site-packages). */
 const PYTEST_SITE = `import importlib.util, os, sys
@@ -121,8 +134,8 @@ for _d in sys.path:
         _s.loader.exec_module(_m)
         break
 `;
-/** The pytest half: wraps the plugin manager's conftest and plugin imports so the recorder knows when one is running, ends the start-up window at pytest_sessionstart and writes the terminator at pytest_collection_finish. Test-module collection is outside the window: the issue's test and the code under test are meant to change. */
-const PYTEST_PLUGIN = `import pytest, loki_vpr_boot as b
+/** The pytest half: wraps the plugin manager's conftest and plugin imports, monitors every hook call that has a repo-file implementation (a conftest or a repo-local plugin; installed third-party plugins are not PR-controlled and stay outside, a deviation from "any non-builtin plugin" that avoids flagging every PR on a framework plugin's own imports), notes the file of every plugin registered at any time, ends the start-up window at pytest_sessionstart and writes the terminator at pytest_unconfigure. Test-module collection and fixtures are outside the window: the issue's test and the code under test are meant to change. A conftest that implements pytest_runtest_call or pytest_pyfunc_call puts the test body in the window, which can only over-flag. */
+const PYTEST_PLUGIN = `import sys, pytest, loki_vpr_boot as b
 def _wrap(f):
     def w(*a, **k):
         b.enter()
@@ -135,10 +148,22 @@ def pytest_load_initial_conftests(early_config, parser, args):
     for n in ("_importconftest", "import_plugin"):
         try: setattr(pm, n, _wrap(getattr(pm, n)))
         except Exception: b.fail()
+    try:
+        reg = pm.register
+        def register(plugin, name=None):
+            b.note(getattr(plugin, "__file__", None) or getattr(sys.modules.get(getattr(type(plugin), "__module__", ""), None), "__file__", None))
+            return reg(plugin, name)
+        pm.register = register
+        def before(hook_name, hook_impls, kwargs):
+            if any(b.inrepo(i.plugin) for i in hook_impls): b.enter()
+        def after(outcome, hook_name, hook_impls, kwargs):
+            if any(b.inrepo(i.plugin) for i in hook_impls): b.leave()
+        pm.add_hookcall_monitoring(before, after)
+    except Exception: b.fail()
 @pytest.hookimpl(tryfirst=True)
 def pytest_sessionstart(session): b.boot_end()
 @pytest.hookimpl(trylast=True)
-def pytest_collection_finish(session): b.finish()
+def pytest_unconfigure(config): b.finish()
 `;
 const REC_OPEN = "<!--LOKI_VPR_RECORD\n";
 /** Wraps a pytest check so the sandbox run also writes the load record: the recorder and plugin go to a fresh mktemp dir (PYTHONPATH, a sitecustomize that imports the recorder, PYTEST_ADDOPTS -p so it loads before any ini addopts plugin), fd 9 is opened append-only before the check starts, and once the check has exited the record is appended to the runner report inside an XML comment, after every PR process has finished. The check's own exit code is kept. */
@@ -171,7 +196,7 @@ export function bootRecord(report: string | undefined): { files: Set<string>; re
     if (i === body.length - 1 && typeof j.end === "number") term = j; else torn ||= "the load record has an unexpected line";
     break;
   }
-  if (!torn && !term) torn = "the load record has no terminator (pytest did not reach collection_finish)";
+  if (!torn && !term) torn = "the load record has no terminator (pytest did not reach pytest_unconfigure)";
   if (!torn && term && (term.end !== files.size || term.h !== h || term.err !== 0 || term.early !== 1)) torn = "the load record does not match its terminator (truncated, rewritten or a write failed)";
   return torn ? { files, reason: torn } : { files };
 }

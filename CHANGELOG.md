@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- `loki verify-pr` no longer scans conftest.py files for plugin names. For a pytest check, the sandbox now records every repo file that pytest start-up, a conftest, a plugin, any hook a repo conftest or plugin implements, or any plugin registration loads, and a passing check is NOT PROVEN (exit 4) when a file the PR changed is in that record, or when the record is missing, cut short or does not match its hash chain. Test modules and fixtures that import the code under test stay outside the record, so ordinary conftests no longer cost a NOT PROVEN. Residual: arbitrary PR code running in the same interpreter can forge any in-process record, including the junit report itself, so this raises the bar on config-loaded files and is not a guarantee against a hostile process.
+
 ## v11.93.0 (2026-10-30)
 
 The Wall catches failing tests earlier in the same session, fewer runs end PARTIAL for test-harness reasons, and the Claude Agent SDK moves to 0.3.314.
