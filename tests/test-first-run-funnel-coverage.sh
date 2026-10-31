@@ -269,7 +269,8 @@ for line in open(sys.argv[1]):
     d = json.loads(line)
     if d.get("event") == "run_finished":
         print(",".join(sorted(d["properties"])))' "$_W/payload.log" 2>/dev/null)"
-    if [ "$_rf_keys" = "\$geoip_disable,arch,channel,duration_s,engine,ephemeral_home,exit_code,fix_rounds,id_age,introspective,os_family,stage_s_fix,stage_s_implement,stage_s_wall,traffic,verdict,version" ]; then ok "run_finished payload keys are exactly the allowlist"; else bad "run_finished keys: $_rf_keys"; fi
+    if [ "$_rf_keys" = "\$geoip_disable,arch,channel,cost_bucket,duration_s,engine,ephemeral_home,exit_code,fix_rounds,id_age,introspective,lang_bucket,model_tier,os_family,provider,repo_size_bucket,retries,stage_s_fix,stage_s_implement,stage_s_wall,test_runner,token_bucket,traffic,verdict,version" ]; then ok "run_finished payload keys are exactly the allowlist"; else bad "run_finished keys: $_rf_keys"; fi
+    if [ "$(_rf_prop cost_bucket)" = "unknown" ] && [ "$(_rf_prop token_bucket)" = "unknown" ] && [ "$(_rf_prop provider)" = "unknown" ] && [ "$(_rf_prop repo_size_bucket)" = "xs" ]; then ok "run_finished carries stratification buckets, and an absent cost reads unknown on the wire"; else bad "run_finished buckets: $(cat "$_W/payload.log")"; fi
     rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
     _receipt "/Users/someone/secret-verdict-xyzzy"
     _fun 1
