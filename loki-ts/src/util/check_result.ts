@@ -345,17 +345,18 @@ function stripTomlComments(t: string): string {
     return line;
   }).join("\n");
 }
-/** The [env] names that let the repo steer what runs: PATH finds the repo's own cc or ld, LD_PRELOAD, DYLD_INSERT_LIBRARIES and the library and framework search paths load repo code into every process cargo starts. */
-const CARGO_ENV_HIJACK = ["PATH", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"] as const;
+/** The [env] names that let the repo steer what runs: PATH finds the repo's own cc or ld, LD_PRELOAD, DYLD_INSERT_LIBRARIES, LD_AUDIT and the library and framework search paths load repo code into every process cargo starts. */
+const CARGO_ENV_HIJACK = ["PATH", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "LD_AUDIT", "DYLD_VERSIONED_LIBRARY_PATH"] as const;
 /** An [env] table (or inline env table, or env.<name> key) that sets the given variable. */
 function cargoEnvSets(t: string, name: string): boolean {
-  if (new RegExp(String.raw`^\s*\[\s*env\s*\.\s*["']?${name}["']?\s*\]`, "m").test(t) || new RegExp(String.raw`(?:^|[\s,{])env\s*\.\s*["']?${name}["']?\s*[.=]`, "m").test(t)) return true;
-  if (/(?:^|[\s,{])env\s*=\s*\{/m.test(t) && CARGO_KEY(name).test(t)) return true;
+  const E = String.raw`["']?env["']?`, N = String.raw`["']?${name}["']?`; // cargo honors a quoted env table name and key
+  if (new RegExp(String.raw`^\s*\[\s*${E}\s*\.\s*${N}\s*\]`, "m").test(t) || new RegExp(String.raw`(?:^|[\s,{])${E}\s*\.\s*${N}\s*[.=]`, "m").test(t)) return true;
+  if (new RegExp(String.raw`(?:^|[\s,{])${E}\s*=\s*\{`, "m").test(t) && CARGO_KEY(name).test(t)) return true;
   let hdr = "";
   for (const line of t.split("\n")) {
     const h = /^\s*\[+\s*([^\[\]]*?)\s*\]+\s*$/.exec(line);
-    if (h) hdr = h[1]!.replace(/["']/g, "");
-    else if (hdr === "env" && new RegExp(String.raw`^\s*["']?${name}["']?\s*[.=]`).test(line)) return true;
+    if (h) { hdr = h[1]!.replace(/["'\s]/g, ""); if (hdr === `env.${name}`) return true; }
+    else if (hdr === "env" && new RegExp(String.raw`^\s*${N}\s*[.=]`).test(line)) return true;
   }
   return false;
 }
@@ -387,13 +388,27 @@ function cargoRepoRoot(cwd: string): string {
   return top ?? resolve(cwd);
 }
 const CARGO_ESCAPED_LABEL = "an escaped key, include or multi-line string";
+/** Doubt about the top-level region of a manifest (everything before the first table header, found by bracket depth outside strings, so a line starting with [ inside an array does not end it): any backslash or multi-line string quote there could hide cargo-features. */
+function topLevelDoubt(t: string): boolean {
+  let q = "", depth = 0, lineStart = true;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i]!;
+    if (c === "\\") return true;
+    if (c === '"' || c === "'") { if (t.startsWith(c.repeat(3), i)) return true; if (!q) q = c; else if (q === c) q = ""; lineStart = false; continue; }
+    if (c === "\n") { q = ""; lineStart = true; continue; }
+    if (q) continue;
+    if (c === "[" || c === "{") { if (depth === 0 && lineStart) return false; depth++; } else if (c === "]" || c === "}") depth = Math.max(0, depth - 1);
+    if (!/\s/.test(c)) lineStart = false;
+  }
+  return false;
+}
 /** A manifest in the repo (cwd up to the root, any --manifest-path, and a bounded scan below the root) that turns on nightly profile-rustflags: the key bare or quoted, or (doubt) any unicode escape above the first table, where only top-level keys such as cargo-features can sit. Returns the manifest and the setting label. */
 function cargoProfileRustflagsManifest(root: string, cwd: string, toks: readonly string[]): [string, string] | null {
   const hit = (f: string): string | null => {
     try {
       const t = stripTomlComments(readFileSync(f, "utf8"));
       if (/["']?cargo-features["']?\s*=\s*\[[^\]]*profile-rustflags/.test(t)) return "cargo-features profile-rustflags";
-      return /\\[uU]/.test(t.split(/^\s*\[/m)[0]!) ? CARGO_ESCAPED_LABEL : null;
+      return topLevelDoubt(t) ? CARGO_ESCAPED_LABEL : null;
     } catch { return null; }
   };
   const seen = new Set<string>(), files: string[] = [];

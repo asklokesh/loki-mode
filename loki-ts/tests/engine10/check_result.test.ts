@@ -1079,6 +1079,11 @@ describe("cargo listing check residuals", () => {
     ["[env] DYLD_FRAMEWORK_PATH string", '[env]\nDYLD_FRAMEWORK_PATH = "/repo/lib"\n', "[env] DYLD_FRAMEWORK_PATH"], ["[env.DYLD_FRAMEWORK_PATH] table", '[env.DYLD_FRAMEWORK_PATH]\nvalue = "lib"\nrelative = true\n', "[env] DYLD_FRAMEWORK_PATH"],
     ["-Zllvm-plugins", '[build]\nrustflags = ["-Zllvm-plugins=/repo/p.so"]\n', RF], ["-Z llvm-plugins", '[build]\nrustflags = ["-Z", "llvm-plugins=/repo/p.so"]\n', RF],
     ["a string -Zllvm-plugins", '[build]\nrustflags = "-Zllvm-plugins=/repo/p.so"\n', RF],
+    // cargo honors a quoted env table name, so quoting it must not hide a hijack name
+    ['quoted ["env"."LD_PRELOAD"] header', '["env"."LD_PRELOAD"]\nvalue = "x"\n', "[env] LD_PRELOAD"], ["single-quoted ['env'.LD_PRELOAD] header", "['env'.LD_PRELOAD]\nvalue = 'x'\n", "[env] LD_PRELOAD"],
+    ['quoted "env" inline table', '"env" = { LD_LIBRARY_PATH = "x" }\n', "[env] LD_LIBRARY_PATH"], ['quoted "env".DYLD_INSERT_LIBRARIES dotted key', '"env".DYLD_INSERT_LIBRARIES = "x"\n', "[env] DYLD_INSERT_LIBRARIES"],
+    ['quoted ["env"."PATH"] header', '["env"."PATH"]\nvalue = "x"\n', "[env] PATH"], ['quoted ["env"] table with a key', '["env"]\nLD_PRELOAD = "x"\n', "[env] LD_PRELOAD"],
+    ["[env] LD_AUDIT", '[env]\nLD_AUDIT = "/repo/audit.so"\n', "[env] LD_AUDIT"], ["[env] DYLD_VERSIONED_LIBRARY_PATH", '[env]\nDYLD_VERSIONED_LIBRARY_PATH = "/repo/lib"\n', "[env] DYLD_VERSIONED_LIBRARY_PATH"],
   ];
   for (const [name, body, what] of COMPILER_FORMS) test(`a repo cargo config with ${name} is refused with its own reason`, async () => {
     const d = crate("", { [CFG]: body }), sub = join(d, "pkg"); mkdirSync(sub);
@@ -1168,10 +1173,19 @@ describe("cargo listing check residuals", () => {
     ["a multi-line array with a comment", 'cargo-features = [\n  "edition2024", # nightly\n  "profile-rustflags",\n]\n', PR_WHAT],
     ["a unicode-escaped cargo-features key", '"cargo-featu\\u0072es" = ["profile-rustflags"]\n', ESC], ["a unicode-escaped profile-rustflags value", 'cargo-features = ["profile-rust\\u0066lags"]\n', ESC],
     ["a long-escape key", '"cargo-featur\\U00000065s" = ["x"]\n', ESC],
+    // the top-level region ends by bracket depth, not at the first line starting with [; a backslash or multi-line quote anywhere in it is doubt
+    ["a line-continuation multi-line string value", '"cargo-features" = ["""profile-\\\nrustflags"""]\n', ESC], ["an array hiding the first table-looking line, escaped value", 'a = [\n[1]]\ncargo-features = ["profile-\\u0072ustflags"]\n', ESC],
+    ["an array hiding the first table-looking line, escaped quoted key", 'a = [\n[1]]\n"cargo-featu\\u0072es" = ["profile-rustflags"]\n', ESC], ["an array hiding the first table-looking line, literal value", 'a = [\n[1]]\ncargo-features = ["profile-rustflags"]\n', PR_WHAT],
   ];
   for (const [name, head, what] of PROFILE_FORMS) test(`a Cargo.toml with ${name} is refused naming the manifest`, async () => {
     const d = crate("", { "Cargo.toml": `${head}${PROFILE_TOML}` });
     try { expect([name, await cp(d)]).toEqual([name, { result: "not_run", reason: cargoCompilerReason(what, "Cargo.toml") }]); } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a normal manifest is not refused: escapes and unicode below the first table, an array of arrays above it", async () => {
+    for (const head of ['authors = ["Jos\u00e9"]\n', 'a = [\n[1]]\ncargo-features = ["edition2024"]\n', '']) {
+      const d = crate("", { "Cargo.toml": `${head}${PROFILE_TOML}description = "caf\\u00e9 \\U0001F600"\nauthors = ["Jos\u00e9 \u00dcber"]\n` });
+      try { expect([head, isCompilerReason((await cp(d)).reason)]).toEqual([head, false]); } finally { rmSync(d, { recursive: true, force: true }); }
+    }
   });
   test("a Cargo.toml with other cargo-features, or an escape only below the first table, is not refused for profile-rustflags", async () => {
     const d = crate("", { "Cargo.toml": `cargo-features = ["edition2024"]\n${PROFILE_TOML}description = "Jos\\u00e9"\n`, "m/Cargo.toml": `"cargo-features" = ["edition2024"]\n${PROFILE_TOML}` });
