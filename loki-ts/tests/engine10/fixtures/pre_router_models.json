@@ -90,7 +90,11 @@
               "sdk": {
                 "model": "<unset>",
                 "fallbackModel": "sonnet",
-                "settings": null
+                "settings": {
+                  "permissions": {
+                    "blockWritesOutsideWorkingDirectories": true
+                  }
+                }
               }
             }
           ],
@@ -298,7 +302,11 @@
               "sdk": {
                 "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
-                "settings": null
+                "settings": {
+                  "permissions": {
+                    "blockWritesOutsideWorkingDirectories": true
+                  }
+                }
               }
             }
           ],
@@ -505,7 +513,11 @@
               "sdk": {
                 "model": "<unset>",
                 "fallbackModel": "sonnet",
-                "settings": null
+                "settings": {
+                  "permissions": {
+                    "blockWritesOutsideWorkingDirectories": true
+                  }
+                }
               }
             }
           ],
@@ -707,7 +719,11 @@
               "sdk": {
                 "model": "<unset>",
                 "fallbackModel": "sonnet",
-                "settings": null
+                "settings": {
+                  "permissions": {
+                    "blockWritesOutsideWorkingDirectories": true
+                  }
+                }
               }
             }
           ],
@@ -911,7 +927,11 @@
               "sdk": {
                 "model": "sonnet",
                 "fallbackModel": null,
-                "settings": null
+                "settings": {
+                  "permissions": {
+                    "blockWritesOutsideWorkingDirectories": true
+                  }
+                }
               }
             }
           ],
@@ -1110,7 +1130,11 @@
               "sdk": {
                 "model": "opus",
                 "fallbackModel": "sonnet",
-                "settings": null
+                "settings": {
+                  "permissions": {
+                    "blockWritesOutsideWorkingDirectories": true
+                  }
+                }
               }
             }
           ],
@@ -1312,7 +1336,11 @@
               "sdk": {
                 "model": "<unset>",
                 "fallbackModel": "sonnet",
-                "settings": null
+                "settings": {
+                  "permissions": {
+                    "blockWritesOutsideWorkingDirectories": true
+                  }
+                }
               }
             }
           ],
