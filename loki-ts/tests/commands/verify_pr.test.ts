@@ -601,6 +601,12 @@ describe("verify-pr: an exit code alone is not proof", () => {
     ["R18 -p module spliced from adjacent quotes in an ini file", { ...PLUG_REF, "pytest.ini": "[pytest]\naddopts = -p \"pl\"ug\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
     ["L1 conftest with stdlib imports, a regex and a fixture", { ...PLUG_REF, "conftest.py": "import os\nimport re\nimport pytest\n\nPAT = re.compile(\"x\")\n\n@pytest.fixture\ndef f():\n    return os.getcwd()\n" }, {  }, 0, /^$/],
     ["A13 package plugin __init__.py rewritten", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = \"-p plug\"\n", "plug.py": null, "plug/__init__.py": "# plugin\n" }, { "plug/__init__.py": HOOK }, 4, /plug\/__init__\.py/],
+    ["R08 line continuation in list", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"a\", \\\n  \"plug\"]\n" }, { "plug.py": HOOK }, 4, /./],
+    ["R09 comment in list no closer", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"a\",  # note\n  \"plug\"]\n" }, { "plug.py": HOOK }, 4, /./],
+    ["R10 nested tuple", { ...PLUG_REF, "conftest.py": "pytest_plugins = ((\"plug\",),)\n" }, { "plug.py": HOOK }, 4, /./],
+    ["R11 adjacent strings in tuple", { ...PLUG_REF, "conftest.py": "pytest_plugins = (\"pl\"\n  \"ug\",)\n" }, { "plug.py": HOOK }, 4, /./],
+    ["R12 continuation after equals", { ...PLUG_REF, "conftest.py": "pytest_plugins = \\\n  [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /./],
+    ["R13 fullwidth identifier", { ...PLUG_REF, "conftest.py": "ｐytest_plugins = (\"x\" \"y\", \"plug\")\n" }, { "plug.py": HOOK }, 4, /./],
     ["a referenced plugin left unchanged while the bug is fixed", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = [\"-p\", \"plug\"]\n", "conftest.py": "pytest_plugins = [\"plug\"]\n" }, {}, 0, /^$/],
   ] as const)("a PR where %s", async (_n, baseEdits, edits, rc, reason) => {
     const files: Record<string, string> = { ...SECTION_FILES };
