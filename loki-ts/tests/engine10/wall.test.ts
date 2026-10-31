@@ -1313,6 +1313,22 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
     expect(r.brief).toContain('"package shortener"');
     expect((await run("Write ini.go that parses INI.", "go")).brief).not.toContain("Go: your test files");
   });
+  test("Go package order: ordinary prose after the word package never names the package", async () => {
+    const pkgOf = async (task: string, seed: Record<string, string> = {}): Promise<string | null> => /each one starts with "package (\w+)"/.exec((await run(task, "go", seed)).brief)?.[1] ?? null;
+    expect(await pkgOf("Create a new package for rate limiting at limiter/limiter.go")).toBe("limiter");
+    expect(await pkgOf("Add internal/store/memory.go; the package should expose New()")).toBe("store");
+    expect(await pkgOf("Add internal/store/memory.go. This package is used by the API.")).toBe("store");
+    expect(await pkgOf("Fix limiter/limiter.go so the package compiles")).toBe("limiter");
+    expect(await pkgOf("Write wrap.go; package name: text", { "go.mod": "module example.com/wrap\n\ngo 1.22\n" })).toBe("wrap");
+    expect(await pkgOf("Write limiter/limiter.go (package type)")).toBe("limiter");
+  });
+  test("Go package order: the forms that do name a package keep working", async () => {
+    const pkgOf = async (task: string): Promise<string | null> => /each one starts with "package (\w+)"/.exec((await run(task, "go")).brief)?.[1] ?? null;
+    expect(await pkgOf("Implement ini.go (package ini)")).toBe("ini");
+    expect(await pkgOf("Implement internal/x/y.go (package store)")).toBe("store");
+    expect(await pkgOf("Implement internal/x/y.go in package store")).toBe("store");
+    expect(await pkgOf("Implement internal/x/y.go, package `store`.")).toBe("store");
+  });
   test("Go greenfield: on resume the plan text names the file when the task does not", async () => {
     const r = await run("Build a rate limiter.", "go", {}, "Files: internal/limiter/limiter.go");
     expect(r.files.map((f) => f.path)).toEqual(["internal/limiter/loki_wall_a_test.go"]);
