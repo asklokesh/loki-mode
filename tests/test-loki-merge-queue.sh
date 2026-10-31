@@ -529,6 +529,19 @@ rm -f "$WORK/diff-feat-em"
 : > "$STUB_LOG"
 OUT="$(cd "$EM" && LOKI_EARNED_MERGE=1 bash "$LOKI" merge pr feat-em 2>&1)"
 grep -q "^pr merge feat-em" "$STUB_LOG" && bad "below floor merged" || ok "earned: below the VERIFIED floor never merges"
+# The gate trusts a verdict line only when it echoes the path it sent, in order.
+# A copy of autonomy/ with a stub bin/loki stands in for `loki trust --check`.
+SR="$WORK/stubrepo"; mkdir -p "$SR/bin"; cp -R "$SCRIPT_DIR/../autonomy" "$SR/autonomy"
+printf 'good.txt\ndocs/x.md\n' > "$WORK/files-feat-em"
+printf '#!/bin/sh\ncat >/dev/null\nprintf "ok\\tzzz\\nok\\tzzz\\n"\n' > "$SR/bin/loki"; chmod +x "$SR/bin/loki"
+: > "$STUB_LOG"
+OUT="$(cd "$EM" && LOKI_EARNED_MERGE=1 bash "$SR/autonomy/loki" merge pr feat-em 2>&1)"; RC=$?
+grep -q "^pr merge feat-em" "$STUB_LOG" && bad "echoed-path mismatch merged" || ok "earned: a verdict echoing the wrong path never merges"
+[ "$RC" -ne 0 ] && echo "$OUT" | grep -q "gate: trust (the Seal record is unreadable)" && ok "earned: path mismatch names the unreadable record" || bad "mismatch msg rc=$RC: $OUT"
+printf '#!/bin/sh\nawk '"'"'{ printf "ok\\t%%s\\n", $0 }'"'"'\n' > "$SR/bin/loki"
+: > "$STUB_LOG"
+OUT="$(cd "$EM" && LOKI_EARNED_MERGE=1 bash "$SR/autonomy/loki" merge pr feat-em 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && grep -q "^pr merge feat-em " "$STUB_LOG" && ok "earned: a stub echoing every path in order merges (positive control)" || bad "echo stub rc=$RC: $OUT"
 
 echo "Passed: $PASS Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
