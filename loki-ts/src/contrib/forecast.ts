@@ -1,6 +1,4 @@
-// QF-2: advisory quota forecast printed before a run. Never blocks, never throws, and is never written
-// into a receipt as a measured value. A percent is printed only when there are past runs whose window
-// deltas were measured on this machine; otherwise the line says "unmeasured" and carries no forecast number.
+// QF-2: advisory quota forecast printed before a run. Never blocks, never throws, and is never written into a receipt as a measured value. A percent is printed only when there are past runs whose window deltas were measured on this machine; otherwise the line says "unmeasured" and carries no forecast number.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { terminalWidth } from "../util/term_width.ts";

@@ -441,12 +441,12 @@ describe("verify-pr: an exit code alone is not proof", () => {
     expect(r.json.reasons.join(" ")).toContain("conftest.py");
   }, 60_000);
 
-  test("a preload already on base that the PR rewrites to exit 0 is caught by the missing pass record", async () => {
+  test("a preload already on base that the PR rewrites to exit 0 is runner config, though bunfig.toml stays", async () => {
     const base = { ...BUN_FILES, "bunfig.toml": '[test]\npreload = ["./pre.ts"]\n', "pre.ts": "export {};\n" };
     const meta = repoWith("preload-rewrite", base, { "pre.ts": 'import { afterAll } from "bun:test";\nafterAll(() => process.exit(0));\n' });
     const r = await run(meta, { checkout: defaultCheckout }, issueFor(BUN_CHECK));
     expect(r.rc).toBe(4);
-    expect(r.json.reasons.join(" ")).toContain("without a runner report");
+    expect(r.json.reasons.join(" ")).toMatch(/runner config.*pre\.ts/);
   }, 60_000);
 
   test("printed totals are never read: a test that prints fake totals and exits 0 is NOT PROVEN", async () => {
@@ -517,21 +517,32 @@ describe("verify-pr: an exit code alone is not proof", () => {
     expect(r.json.reasons.join(" ")).toMatch(/pytest\.ini|jest\.config\.js/);
   }, 30_000);
 
-  const PYC = "[tool:pytest]\naddopts = -q\n\n[flake8]\nmax-line-length = 100\n";
+  const PYC = "[tool:pytest]\naddopts = -q -p plug\n\n[flake8]\nmax-line-length = 100\n";
   const PASS = '<testsuites><testsuite><testcase name="a"/></testsuite></testsuites>';
-  const SECTION_FILES = { "setup.cfg": PYC, "package.json": '{"name":"x","jest":{"testEnvironment":"node"}}\n', "pyproject.toml": "[tool.pytest.ini_options]\naddopts = '-q'\n", "add.py": PY_FILES["add.py"], "test_add.py": PY_FILES["test_add.py"] };
+  const SECTION_FILES = { "setup.cfg": PYC, "package.json": '{"name":"x","main":"add.py","jest":{"testEnvironment":"node","setupFiles":["<rootDir>/jest.setup.js"]}}\n', "pyproject.toml": "[tool.pytest.ini_options]\naddopts = '-q'\n", "add.py": PY_FILES["add.py"], "test_add.py": PY_FILES["test_add.py"], "jest.setup.js": "// setup\n", "vitest.config.ts": 'export default { test: { setupFiles: ["./vsetup.ts"] } };\n', "vsetup.ts": "// setup\n", "plug.py": "# plugin\n", "tsconfig.json": '{"compilerOptions":{"strict":true}}\n' };
   test.each([
     ["setup.cfg [tool:pytest] section removed", { "setup.cfg": "[flake8]\nmax-line-length = 100\n" }, 4, /setup\.cfg/],
     ["package.json jest key removed", { "package.json": '{"name":"x"}\n' }, 4, /package\.json/],
     ["jest.config.json added with a moduleNameMapper stub", { "jest.config.json": '{"moduleNameMapper":{"^./add$":"<rootDir>/fake.js"}}\n' }, 4, /jest\.config\.json/],
     ["pyproject.toml pytest section removed", { "pyproject.toml": "[project]\nname = 'x'\n" }, 4, /pyproject\.toml/],
+    ["F1 a jest setupFiles target edited while package.json stays", { "jest.setup.js": "Math.random = () => 0;\n" }, 4, /jest\.setup\.js/],
+    ["F1 a vitest setupFiles target edited while the config stays", { "vsetup.ts": "globalThis.x = 1;\n" }, 4, /vsetup\.ts/],
+    ["F1 a pytest -p plugin module edited while setup.cfg stays", { "plug.py": "import sys\nsys.exit(0)\n" }, 4, /plug\.py/],
+    ["F2 a root __mocks__ module added", { "__mocks__/fs.js": "module.exports = {};\n" }, 4, /__mocks__\/fs\.js/],
+    ["F3 babel.config.js added", { "babel.config.js": "module.exports = { plugins: ['./stub'] };\n" }, 4, /babel\.config\.js/],
+    ["F3 .babelrc added", { ".babelrc": '{"plugins":["./stub"]}\n' }, 4, /\.babelrc/],
+    ["F4 tsconfig.json path mapping added", { "tsconfig.json": '{"compilerOptions":{"paths":{"./add":["./fake"]}}}\n' }, 4, /tsconfig\.json/],
+    ["F5 sitecustomize.py added", { "sitecustomize.py": "import builtins\n" }, 4, /sitecustomize\.py/],
+    ["F5 a .pth file added", { "stub.pth": "import os\n" }, 4, /stub\.pth/],
+    ["F6 .mocharc.yml added", { ".mocharc.yml": "require: ./stub.js\n" }, 4, /\.mocharc\.yml/],
+    ["a tsconfig.json edit with no path mapping", { "tsconfig.json": '{"compilerOptions":{"strict":false}}\n' }, 0, /^$/],
     ["only an unrelated setup.cfg section edited", { "setup.cfg": "[flake8]\nmax-line-length = 120\n" }, 0, /^$/],
     ["config kept untouched while the bug is fixed", { "add.py": PY_FIXED }, 0, /^$/],
   ] as const)("a PR with %s", async (_n, edits, rc, reason) => {
     const base = _n.startsWith("only an unrelated") ? { ...SECTION_FILES, "setup.cfg": "[flake8]\nmax-line-length = 100\n" } : SECTION_FILES;
     const meta = repoWith(`sec-${_n.replace(/\W/g, "")}`, base, { "note.txt": "x\n" });
     const repo = meta.cloneUrl;
-    for (const [f, c] of Object.entries({ "add.py": PY_FIXED, ...edits })) writeFileSync(join(repo, f), c);
+    for (const [f, c] of Object.entries({ "add.py": PY_FIXED, ...edits })) { mkdirSync(join(repo, f, ".."), { recursive: true }); writeFileSync(join(repo, f), c); }
     git(repo, "add", "-A"); git(repo, "commit", "-qm", "edit");
     const head = git(repo, "rev-parse", "HEAD");
     git(repo, "update-ref", "refs/pull/7/head", head);

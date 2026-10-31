@@ -1,8 +1,4 @@
-// D65-SLACK / D63-C6: two-way Slack for the v10 engine, on by default (LOKI_SLACK_INBOUND=0 disables).
-// An app_mention starts a run and replies with the run id in the thread; a BLOCKED run posts its question
-// in the same thread, and a thread reply starts a follow-up run carrying the answer (engine10 has no in-place
-// resume: BLOCKED is terminal, --resume only resumes a publish-phase run, so the answer rides along as task context).
-// Tokens come only from env (SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET); they are never logged or stored.
+// D65-SLACK / D63-C6: two-way Slack for the v10 engine, on by default (LOKI_SLACK_INBOUND=0 disables). An app_mention starts a run and replies with the run id in the thread; a BLOCKED run posts its question in the same thread, and a thread reply starts a follow-up run carrying the answer (engine10 has no in-place resume: BLOCKED is terminal, --resume only resumes a publish-phase run, so the answer rides along as task context). Tokens come only from env (SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET); they are never logged or stored.
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
