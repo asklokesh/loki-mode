@@ -429,3 +429,38 @@ describe("weakAssertionNote", () => {
     expect(note("w", "// assert!(f().is_err());\n# [ \"$status\" -ne 0 ]\n")).toBeNull();
   });
 });
+
+// CLAUSE-HEADING: requirement text written on a heading line is a clause; a bare section title is not
+describe("heading lines that state a requirement", () => {
+  const texts = (s: string): string[] => extractClauses(s).clauses.map((c) => c.text);
+  const ERR_HEAD = "## Errors (`EvalError`, a public enum implementing `std::error::Error` and `PartialEq`)";
+  test("the rust-expr-prd Errors heading yields a clause, with its bullets after it", () => {
+    expect(texts([ERR_HEAD, "- `EvalError::Arity(String)`: wrong argument count"].join("\n"))).toEqual([ERR_HEAD.slice(3), "`EvalError::Arity(String)`: wrong argument count"]);
+  });
+  test("must/should/shall verb alone makes a heading clause", () => {
+    expect(texts("## The parser must reject empty input")).toHaveLength(1);
+    expect(texts("## Output should be sorted")).toHaveLength(1);
+    expect(texts("## Callers shall retry")).toHaveLength(1);
+  });
+  test("implements alone makes a heading clause", () => {
+    expect(texts("## The error type implements Display")).toHaveLength(1);
+  });
+  test("a colon then a full sentence makes a heading clause", () => {
+    expect(texts("## Errors: every variant carries a message.")).toHaveLength(1);
+  });
+  test("bare titles yield none in markdown, setext and numbered headings", () => {
+    expect(texts("# Errors\n\n## API\n\n## Functions\n\n### Must have\n\n## Implementation notes\n\n## Section 2: Parsing")).toEqual([]);
+    expect(texts("Errors\n======\n\nAPI\n---\n")).toEqual([]);
+    expect(texts("1 Errors\n\n2.1 Functions\n\n3 Public API\n")).toEqual([]);
+  });
+  test("scope-exclusion headings still skip, even when they carry a requirement signal", () => {
+    expect(texts("## Non-goals: the tool should not parse YAML.\n- GUI support")).toEqual([]);
+    expect(texts("## Out of scope\n\n## Future work: we should add a GUI later.")).toEqual([]);
+    expect(texts("## Will not crash: the tool must exit 2 on bad input.")).toEqual(["Will not crash: the tool must exit 2 on bad input."]); // only a leading exclusion title skips
+  });
+  test("a heading clause shifts later ids, and an untagged one is a gap", () => {
+    const set = extractClauses([ERR_HEAD, "- one", "- two"].join("\n"));
+    expect(set.clauses.map((c) => c.id)).toEqual(["C1", "C2", "C3"]);
+    expect(clauseGapOf(set, ["// clause: C2\nassert!(true);\n// clause: C3\nassert!(true);\n"]).join(" ")).toContain("C1");
+  });
+});

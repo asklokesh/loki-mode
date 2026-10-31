@@ -49,8 +49,10 @@ export function checkCriteriaJson(x: unknown): string | null {
 export interface Clause { id: string; text: string; text_sha256: string; anchor: string }
 export interface ClauseSet { clauses: Clause[]; dropped: number }
 // A heading of this class holds scope exclusions or background, never acceptance clauses; a heading that also names acceptance still counts.
-const SKIP_HEAD = /^(?:#+\s*)?(?:\d+(?:\.\d+)*[.)]?\s*)?(?:\*\*|__)?\s*(?:non[- ]?goals?|out[- ]of[- ]scope|not (?:required|in scope)|won'?t do|will not do|future work|future|background|context|references?|rationale|motivation|glossary|appendix|alternatives?)(?:\s*\([^)]*\))?\s*:?\s*(?:\*\*|__)?\s*:?\s*$/i; // the whole heading is the title, so "Will not crash" or "Future-dated payments" stay clause headings
+const SKIP_HEAD = /^(?:#+\s*)?(?:\d+(?:\.\d+)*[.)]?\s*)?(?:\*\*|__)?\s*(?:non[- ]?goals?|out[- ]of[- ]scope|not (?:required|in scope)|won'?t do|will not do|future work|future|background|context|references?|rationale|motivation|glossary|appendix|alternatives?)(?:\s*\([^)]*\))?(?:\s*:\s+\S.*)?\s*:?\s*(?:\*\*|__)?\s*:?\s*$/i; // the whole heading is the title (or "Title: text"), so "Will not crash" or "Future-dated payments" stay clause headings
 const CLAUSE_HEAD = /accept|criteria|requirement|must/i, RFC2119 = /\b(?:MUST|SHALL)(?: NOT)?\b/, GWT = /^(?:given|when|then|and|but)\b/i;
+// A markdown heading that states a requirement is a clause too: a must/should/shall verb (not the bare "Must have" title), implements/implementing, or a colon then a full sentence. A bare title ("Errors", "API") is not.
+const HEAD_REQ = /\b(?:must|should|shall)\s+(?!haves?\b)[a-z]|\bimplement(?:s|ing)\s+\S|:\s+\S+(?:\s+\S+){3,}[.!?]$/i;
 const normClause = (t: string): string => t.replace(/\s+/g, " ").trim();
 
 const OAS_METHOD = /^ {4}(get|put|post|delete|patch|head|options):\s*$/;
@@ -82,7 +84,7 @@ export function extractClauses(text: string): ClauseSet {
       if (fence || !keep.has(i)) continue;
       const line = raw.trim();
       if (line === "") { gwt = -1; continue; }
-      if (/^#+\s/.test(line) || (/:$/.test(line) && line.length <= 60 && !/^[-*+\d]/.test(line))) { under = CLAUSE_HEAD.test(line); skip = !under && SKIP_HEAD.test(line); gwt = -1; continue; }
+      if (/^#+\s/.test(line) || (/:$/.test(line) && line.length <= 60 && !/^[-*+\d]/.test(line))) { under = CLAUSE_HEAD.test(line); skip = !under && SKIP_HEAD.test(line); gwt = -1; if (!skip && /^#+\s/.test(line) && HEAD_REQ.test(line)) out.push({ text: line.replace(/^#+\s+/, "").replace(/\*\*|__/g, ""), anchor: anchorOf(i) }); continue; }
       if (skip) continue;
       const item = /^(?:[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+)(.*)$/.exec(line);
       const body = (item ? item[1]! : line).replace(/\*\*|__/g, "");
