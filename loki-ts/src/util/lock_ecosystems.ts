@@ -164,9 +164,18 @@ export function exportConds(x: unknown, out: string[] = []): string[] {
   return out;
 }
 const WORKSPACE_SPEC = /^workspace:(\*|\^|~|[\^~]?\d[\w.+-]*)$/;
-const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|case|void|delete|throw|in|of|instanceof|else|yield|await|do)$/;
+const REGEX_AFTER_WORD = /(?:^|[^\w$.])(?:return|typeof|case|void|delete|throw|in|of|instanceof|else|yield|await|do)$/;
+/** True when `tail` ends inside the parenthesised head of a `for` or `for await` statement, so a trailing `of` there is the keyword and not an identifier. */
+function inForHead(tail: string): boolean {
+  let at = -1;
+  for (const m of tail.matchAll(/\bfor\s*(?:await\s*)?\(/g)) at = m.index! + m[0].length;
+  if (at < 0) return false;
+  let depth = 0;
+  for (const ch of tail.slice(at)) { if (ch === "(") depth++; else if (ch === ")" && --depth < 0) return false; }
+  return depth === 0;
+}
 /** One lexical pass over `src`: comments and regex literals are dropped and every string literal is parked behind a placeholder. A `/` starts a regex at the start, after an operator or `(`, `,`, `=`, `:`, `[`, `!`, `&`, `|`,
- *  `?`, `{`, `;`, after one of the words in REGEX_AFTER_WORD, and, when `amb` is true, after `)` or `}`. It is division after `++`, `--`, `]`, a word, a number or a string. Returns the specifiers read in this mode. */
+ *  `?`, `{`, `;`, after one of the words in REGEX_AFTER_WORD (but `of` only inside a `for (...)` head, and no word after a `.`), and, when `amb` is true, after `)` or `}`. It is division after `++`, `--`, `]`, a word, a number or a string. Returns the specifiers read in this mode. */
 function lexSpecifiers(src: string, amb: boolean): string[] {
   const lit: string[] = [], n = src.length;
   let t = "", i = 0;
@@ -180,7 +189,7 @@ function lexSpecifiers(src: string, amb: boolean): string[] {
       if (k < n && src[k] === c) { t += `\u0000${lit.push(src.slice(i + 1, k)) - 1}\u0000`; i = k + 1; continue; }
     } else if (c === "/") {
       const tail = t.trimEnd();
-      if (!/(\+\+|--)$/.test(tail) && (tail === "" || /[=(,:[!&|?{;+\-*%<>~^]$/.test(tail) || (amb && /[)}]$/.test(tail)) || REGEX_AFTER_WORD.test(tail))) {
+      if (!/(\+\+|--)$/.test(tail) && (tail === "" || /[=(,:[!&|?{;+\-*%<>~^]$/.test(tail) || (amb && /[)}]$/.test(tail)) || (REGEX_AFTER_WORD.test(tail) && (!/(?:^|[^\w$.])of$/.test(tail) || inForHead(tail))))) {
         let k = i + 1, cls = false;
         for (; k < n && src[k] !== "\n"; k++) { const ch = src[k]!; if (ch === "\\") k++; else if (ch === "[") cls = true; else if (ch === "]") cls = false; else if (ch === "/" && !cls) break; }
         if (k < n && src[k] === "/") { t += "\u0001"; i = k + 1; continue; }
@@ -195,8 +204,9 @@ function lexSpecifiers(src: string, amb: boolean): string[] {
 /** The module specifiers a source text imports: static `import ... from`, `export ... from`, side-effect `import "x"`, `require("x")` and `import("x")`, with comments, regex literals and the text of other strings
  *  ignored. A `/` after `)` or `}` is ambiguous without a parser (`if (a) /re/.test(s)` and `{} /re/` start a regex, `f(a) / 2` and `({}) / 2` divide), and a misread in either direction can make a comment or
  *  regex text look like an import. So the text is read twice, once with every `/` after `)` or `}` taken as a regex start and once as a division, and a specifier counts only as often as BOTH readings find it.
- *  Where the two readings disagree an import is dropped, never invented, so the run caps. Residuals: a division misread as a regex elsewhere (for example after a word REGEX_AFTER_WORD names, or after `+`, `-`,
- *  `*` where the left side is not a value) hides the text up to the next `/` on its line, which can only drop an import; template-literal `${}` bodies are read as plain string text, so an import inside one is not seen. */
+ *  Where the two readings disagree an import is dropped, never invented, so the run caps. When both readings make the same misread they agree, so this is not a guarantee: a division misread as a regex start leaves the
+ *  rest of its line to be read as code, and a comment or string there can then show up as an import. `of` as an identifier (`of / 2`) and a word after a `.` are read as division; residuals that still misread: another
+ *  REGEX_AFTER_WORD word used as an identifier (`yield`, `await`), or `+`, `-`, `*` where the left side is not a value. Template-literal `${}` bodies are read as plain string text, so an import inside one is not seen. */
 export function importSpecifiers(src: string): string[] {
   const b = lexSpecifiers(src, false).slice(), out: string[] = [];
   for (const x of lexSpecifiers(src, true)) { const k = b.indexOf(x); if (k >= 0) { b.splice(k, 1); out.push(x); } }

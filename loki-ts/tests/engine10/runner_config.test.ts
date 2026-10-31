@@ -833,6 +833,24 @@ describe("added workspace manifest: disclosed only when every condition holds", 
     const ok = 'const r = /a"b/; const q = 4 / 2 / 1;\nimport { x } from "../packages/x/src/index.mjs";\n';
     expect((await run(pk(), { wall: { path: WALL.path, text: ok } })).verdict).toBe("VERIFIED");
   }, 90000);
+  test("N2d unit: `of` as an identifier or a property is division, so a comment after it is never an import", () => {
+    expect(importSpecifiers('const of = 4; x = of / 2 /* import "@acme/x" */')).toEqual([]);
+    expect(importSpecifiers('const of = 4; const q = of / 2 // import "@acme/x"\n')).toEqual([]);
+    expect(importSpecifiers('const q = Array.of / 2 /* import "@acme/x" */')).toEqual([]);
+    expect(importSpecifiers('const q = a.return / 2 /* import "@acme/x" */')).toEqual([]);
+    expect(importSpecifiers('for (const k of ks) {}\nconst of = 4; x = of / 2 /* import "@acme/x" */')).toEqual([]);
+  });
+  test("N2d unit: real imports and a real for-of loop are still read", () => {
+    expect(importSpecifiers('import "@acme/x"')).toEqual(["@acme/x"]);
+    expect(importSpecifiers('import x from "@acme/x"')).toEqual(["@acme/x"]);
+    expect(importSpecifiers('export * from "@acme/x"')).toEqual(["@acme/x"]);
+    expect(importSpecifiers('const m = require("@acme/x")')).toEqual(["@acme/x"]);
+    expect(importSpecifiers('const m = await import("@acme/x")')).toEqual(["@acme/x"]);
+    expect(importSpecifiers('for (const x of y) { f(x); }\nimport z from "@acme/x"')).toEqual(["@acme/x"]);
+    expect(importSpecifiers('for (const x of /from "validate"/.exec(s) ?? []) {}')).toEqual([]);
+    expect(importSpecifiers('async function f() { for await (const x of /from "validate"/.exec(s) ?? []) {} }')).toEqual([]);
+    expect(importSpecifiers('const of = 4; const q = of / 2;\nimport z from "@acme/x"')).toEqual(["@acme/x"]);
+  });
   test("N2b unit: importSpecifiers skips comments, strings, template text and regex literals, keeps real specifiers", () => {
     expect(importSpecifiers('const r = /from "a\\/b"/;\n')).toEqual([]);
     expect(importSpecifiers('x = /re"/; import a from "p/q"; // import b from "c"\n/* require("d") */ const s = "import e from \'f\'";\n')).toEqual(["p/q"]);
