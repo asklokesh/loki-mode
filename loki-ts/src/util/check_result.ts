@@ -3,7 +3,7 @@
 // reported as unknown. A success verdict (VERIFIED or ALREADY_SATISFIED) needs at least one Loki-executed check with n>0 and a
 // pass (hasExecutedProof). Every site that sets result "pass" for a test run routes through classifyCheck.
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readlinkSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -248,6 +248,22 @@ export async function corroboratePass(c: Classified, out: string, cmdOrLine: str
   const toks = args ? [cmdOrLine, ...args] : cmdOrLine.trim().split(/\s+/);
   if (c.result === "pass" && basename(toks[0] ?? "") === "cargo" && toks[1] === "test") return corroborateCargoPass(c, out, toks, o);
   if (c.result !== "pass" || goRunner(cmdOrLine, args).runner !== "go") return c;
+  const g = corroborateGoSteps(c, out, cmdOrLine, args, toks, o); let step = g.next();
+  while (!step.done) { const [cmd, a, to] = step.value; step = g.next(await spawnCollect(cmd, a, to)); }
+  return step.value;
+}
+type SpawnRes = { status: number | null; output: string };
+/** The same Go corroboration as corroboratePass, for the one synchronous caller (RealBaseTestRunner.run): identical steps, spawnSync driver. Go only; any other runner is returned unchanged. */
+export function corroborateGoPassSync(c: Classified, out: string, cmdOrLine: string, args: readonly string[] | undefined, o: { cwd: string; env: NodeJS.ProcessEnv }): Classified {
+  if (c.result !== "pass" || goRunner(cmdOrLine, args).runner !== "go") return c;
+  const g = corroborateGoSteps(c, out, cmdOrLine, args, args ? [cmdOrLine, ...args] : cmdOrLine.trim().split(/\s+/), o); let step = g.next();
+  while (!step.done) {
+    const [cmd, a, to] = step.value, r = spawnSync(cmd, a, { cwd: to.cwd, env: to.env, timeout: to.timeoutMs, encoding: "utf8", maxBuffer: 1024 * 1024 }), res: SpawnRes = { status: r.error || r.signal ? null : r.status, output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` };
+    step = g.next(res);
+  }
+  return step.value;
+}
+function* corroborateGoSteps(c: Classified, out: string, cmdOrLine: string, args: readonly string[] | undefined, toks: string[], o: { cwd: string; env: NodeJS.ProcessEnv }): Generator<[string, string[], { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number }], Classified, SpawnRes> {
   const refuse: Classified = { result: "not_run", reason: GO_EXIT0_REASON };
   const first = goJson(stripAnsi(out));
   const names = first?.passedNames ?? [];
@@ -271,7 +287,7 @@ export async function corroboratePass(c: Classified, out: string, cmdOrLine: str
   };
   try {
     const want = new Set(names.map((n) => n.slice(0, n.indexOf("::")))), expected = new Set<string>();
-    const ls = await spawnCollect("go", ["list", "-json=ImportPath,Dir,GoFiles,CgoFiles", ...where], spawnOpts);
+    const ls: SpawnRes = yield ["go", ["list", "-json=ImportPath,Dir,GoFiles,CgoFiles", ...where], spawnOpts];
     if (ls.status !== 0) return refuse;
     const perPkg = new Map<string, number>(); // statement blocks found per passing package; a package that stays at 0 (never listed, or no statements) has nothing to prove
     for (const chunk of ls.output.split(/\n(?=\{\n)/)) {
@@ -282,7 +298,7 @@ export async function corroboratePass(c: Classified, out: string, cmdOrLine: str
       perPkg.set(pk.ImportPath, 0);
       for (const f of pk.GoFiles) {
         if (/^\s*(?:\/\/line |\/\*line )/m.test(readFileSync(join(pk.Dir, f), "utf8"))) return refuse; // a //line directive (goyacc, ragel, templ) makes the profile name another file than the source: not provable, so not_run
-        const t = await spawnCollect("go", ["tool", "cover", "-mode=set", "-var=GoCoverStatic", join(pk.Dir, f)], spawnOpts);
+        const t: SpawnRes = yield ["go", ["tool", "cover", "-mode=set", "-var=GoCoverStatic", join(pk.Dir, f)], spawnOpts];
         if (t.status !== 0) return refuse;
         const pos = /Pos: \[3 \* \d+\]uint32\{([^}]*)\}/.exec(t.output)?.[1] ?? "", stm = /NumStmt: \[\d+\]uint16\{([^}]*)\}/.exec(t.output)?.[1] ?? "";
         const trip = [...pos.matchAll(/(\d+), (\d+), (0x[0-9a-f]+),/g)], nums = [...stm.matchAll(/(\d+),/g)];
@@ -292,7 +308,7 @@ export async function corroboratePass(c: Classified, out: string, cmdOrLine: str
       }
     }
     if (![...want].every((pk) => (perPkg.get(pk) ?? 0) > 0)) return refuse;
-    const r = await spawnCollect("go", ["test", "-json", "-count=1", `-coverprofile=${prof}`, ...run, ...where], spawnOpts);
+    const r: SpawnRes = yield ["go", ["test", "-json", "-count=1", `-coverprofile=${prof}`, ...run, ...where], spawnOpts];
     const second = goJson(stripAnsi(r.output));
     if (r.status !== 0 || !second || second.failed || !second.complete) return refuse;
     const again = new Set(second.passedNames);
@@ -418,6 +434,11 @@ export function exitCodedId(cmd: string, out: string, repoDir = ""): string | nu
 }
 export interface ClassifyInput { kind: "test" | "static"; ok: boolean; cut?: boolean; missing?: boolean; out: string; path?: string; runner?: "go"; exitCoded?: boolean /* FC-FULL-SUITE-EXIT-CODED-SCRIPT: the command is a plain script (isExitCodedScript), decided by exit code like a static check */ }
 export interface Classified { result: "pass" | "fail" | "not_run"; n?: number; reason?: string; count?: string }
+/** A suite that discovered nothing: a parsed 0-test count with no skip, pending or todo wording left once explicit zero counts are removed. Skipped tests are not empty discovery (a change that skips the whole suite must never read as "nothing to run"). */
+export function emptyDiscovery(cls: Classified, out: string): boolean {
+  if (cls.result !== "not_run" || cls.n !== 0 || !/\bran 0 tests\b/.test(cls.reason ?? "")) return false;
+  return !/skip|pending|todo/i.test(stripAnsi(out).replace(/\b0 (?:skipped|pending|todo)\b|\b(?:skipped|pending|todo)\W{1,3}0\b/gi, ""));
+}
 /** classifyCheck result plus the rerun-only "flaky" verdict (TEN-QUALITY-17); kept separate so existing classifyCheck callers keep the narrow type. */
 export interface ClassifiedRerun extends Omit<Classified, "result"> { result: Classified["result"] | "flaky"; rerun?: { first: "fail"; second: "pass"; n?: number } }
 /** One attempt of one check. static = lint/typecheck/scan (exit code decides, no count). test = a test runner: pass needs n>0. */
@@ -1173,6 +1194,31 @@ export function notRunReason(status: number | null, interpreter?: "project" | "s
   if (status === 126 || status === 127) return `the test runner command was not found or not executable (exit ${status})`;
   return status === 0 ? "exit 0 but no executed test count could be confirmed" : `exit ${status} but the runner output showed no readable failing test`;
 }
+/** A Wall file for a feature that does not exist on base cannot build there. That is red on base only for output the BUILD TOOL itself printed with no test started: go -json build-fail/[build failed] events with no test event, cargo "could not compile" with no libtest header, javac/maven/gradle compile errors with no test summary. This is base-side evidence only: the head run must still build and pass (verify, Seal wall.passed) or the file never counts; a Wall that also fails to build on head is FAILED there. */
+function buildFailedBeforeAnyTest(runner: RunnerName, raw: string): boolean {
+  const out = stripAnsi(raw);
+  switch (runner) {
+    case "go": {
+      let build = false;
+      for (const x of out.split("\n")) {
+        if (!x.trim() || /^go: /.test(x)) continue;
+        let e: { Action?: unknown; Package?: unknown; Test?: unknown; ImportPath?: unknown; Output?: unknown };
+        try { e = JSON.parse(x) as typeof e; } catch { return false; }
+        if (!e || typeof e !== "object" || typeof e.Action !== "string") return false;
+        if (typeof e.Test === "string" && e.Test) return false; // a test started: this is a test result, not a build failure
+        if (e.Action === "build-fail" && typeof e.ImportPath === "string" && e.Package === undefined) build = true;
+        if (e.Action === "output" && typeof e.Package === "string" && /^FAIL\t\S+ \[(?:build|setup) failed\]\n?$/.test(String(e.Output ?? ""))) build = true;
+        if (e.Action === "pass" || e.Action === "run") return false;
+      }
+      return build;
+    }
+    case "cargo": return /^error: could not compile `[^`]+`/m.test(out) && !/^running \d+ tests?\b/m.test(out) && !/^test result: /m.test(out);
+    case "javac": return /^\S+\.java:\d+: error: /m.test(out) && !/^LOKI_JAVA_TESTS: /m.test(out);
+    case "maven": return /COMPILATION ERROR|Compilation failure/.test(out) && !/Tests run:/.test(out);
+    case "gradle": return /Execution failed for task ':[\w:-]*compile\w*Java'/.test(out) && !/\d+ tests? completed/.test(out);
+    default: return false;
+  }
+}
 export function classify(f: TestRef, status: number | null, output: string, repoDir: string, interpreter?: "project" | "system"): "pass" | "fail" | "not_run" {
   if (interpreter === "system") return "not_run";
   output = stripAnsi(output); // FC-69: every parser below reads plain text, whoever captured it
@@ -1180,8 +1226,8 @@ export function classify(f: TestRef, status: number | null, output: string, repo
   if (f.runner === "unittest") return status === 1 && unittestCount(output, false) !== null ? (/unittest\.loader\._FailedTest|Failed to import test module/.test(output) ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "fail") : "not_run"; // red only on a trusted FAILED trailer; a module that failed to import is red only when the missing name is the repo's own (pytestCollectionIsRed), else not_run, as for pytest
   if (f.runner === "pytest") return status === 1 ? (pytestExit1IsRed(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
   if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
-  if (f.runner === "maven" || f.runner === "gradle" || f.runner === "javac") { const j = javaSummary(output); return j && j.failed > 0 ? "fail" : "not_run"; } // HV1-03b: red only on a vouched summary that counts failures; a missing tool, no report or an unvouched report is not_run (verify's own exit-code path treats a compile error as fail, the safe direction)
-  if (f.runner === "go" || f.runner === "cargo") return readableFailIds(f.runner, output).length > 0 ? "fail" : "not_run"; // red only on a readable failing test id; a compile error, panic outside a test or unparsed output stays not_run
+  if (f.runner === "maven" || f.runner === "gradle" || f.runner === "javac") { const j = javaSummary(output); return (j && j.failed > 0) || buildFailedBeforeAnyTest(f.runner, output) ? "fail" : "not_run"; } // HV1-03b: red only on a vouched summary that counts failures; a missing tool, no report or an unvouched report is not_run (verify's own exit-code path treats a compile error as fail, the safe direction)
+  if (f.runner === "go" || f.runner === "cargo") return readableFailIds(f.runner, output).length > 0 || buildFailedBeforeAnyTest(f.runner, output) ? "fail" : "not_run"; // red on a readable failing test id, or on a toolchain build failure before any test started (the feature the Wall names is absent on base); a panic outside a test or unparsed output stays not_run
   return f.runner === "node" && nodeIsRed(f, output) ? "fail" : "not_run"; // npm: coarse (B2), never a per-file red
 }
 

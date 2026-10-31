@@ -132,7 +132,7 @@ describe("A-103 wall discards tests that are not red for the right reason", () =
     const fg = "=== RUN   TestA\n--- PASS: TestA (0.00s)\nPASS\nok  \texample.com/fg\t0.189s\n";
     expect(classify({ runner: "go" as const, path: "a_test.go" }, 0, fg, "/x")).toBe("not_run");
   });
-  test("classify go: a go test -json run that names a failing test is red; a compile failure or torn stream stays not_run", () => {
+  test("classify go: a go test -json run that names a failing test is red; a go build failure is red on base; a torn stream stays not_run", () => {
     const ev = (o: Record<string, unknown>): string => JSON.stringify({ Time: "2026-10-29T00:00:00Z", ...o });
     const f = { runner: "go" as const, path: "pkg/a_test.go" };
     const red = [
@@ -142,7 +142,7 @@ describe("A-103 wall discards tests that are not red for the right reason", () =
     ].join("\n") + "\n";
     expect(classify(f, 1, red, "/x")).toBe("fail");
     const build = [ev({ Action: "start", Package: "ex/pkg" }), ev({ Action: "output", Package: "ex/pkg", Output: "FAIL\tex/pkg [build failed]\n" }), ev({ Action: "fail", Package: "ex/pkg", Elapsed: 0 })].join("\n") + "\n";
-    expect(classify(f, 1, build, "/x")).toBe("not_run");
+    expect(classify(f, 1, build, "/x")).toBe("fail");
     expect(classify(f, 1, "exit status 1\nFAIL\tex/pkg\t0.01s\n", "/x")).toBe("not_run");
   });
   test("classify cargo: a failed test is red when cargo's stderr lines follow the stdout trailer (the order the Wall captures)", () => {

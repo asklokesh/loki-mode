@@ -546,12 +546,12 @@ describe.skipIf(!Bun.which("javac") || !Bun.which("java") || !Bun.which("bash"))
     expect(failIds(r.out)).toEqual(["1900 is leap"]);
     expect(classify({ runner: "javac", path: "src/test/java/loki_wall_LeapTest.java" }, r.status, r.out, "/nonexistent")).toBe("fail");
   });
-  test("a test that prints nothing exits 0 but is not a pass; a compile error is not_run", () => {
+  test("a test that prints nothing exits 0 but is not a pass; a compile error is red on base (the feature is absent)", () => {
     const quiet = run(seed(T("")));
     expect(quiet.status).toBe(0);
     expect(classify({ runner: "javac", path: "src/test/java/loki_wall_LeapTest.java" }, quiet.status, quiet.out, "/nonexistent")).toBe("not_run");
     const broken = run(seed("public class loki_wall_LeapTest { nope }"));
-    expect(classify({ runner: "javac", path: "src/test/java/loki_wall_LeapTest.java" }, broken.status, broken.out, "/nonexistent")).toBe("not_run");
+    expect(classify({ runner: "javac", path: "src/test/java/loki_wall_LeapTest.java" }, broken.status, broken.out, "/nonexistent")).toBe("fail");
   });
   test("a test that prints FAIL but exits 0 is red, not a pass", () => {
     const body = 'public class loki_wall_LeapTest { public static void main(String[] a) { System.out.println("PASS one"); System.out.println("FAIL two"); } }';
@@ -974,5 +974,48 @@ describe("Wall file importing a module the task will create", () => {
       }
       expect(classify(uf, 1, UT.replaceAll(MISSING, "pricing"), d, "project")).toBe("fail");
     } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+});
+
+describe("Wall file that cannot build on base is red on base only for the build tool's own output", () => {
+  const ev = (o: Record<string, unknown>): string => JSON.stringify(o);
+  const GO_BUILD_FAIL = [
+    ev({ ImportPath: "ex/a [ex/a.test]", Action: "build-output", Output: "./a_test.go:3:30: undefined: Missing\n" }),
+    ev({ ImportPath: "ex/a [ex/a.test]", Action: "build-fail" }),
+    ev({ Action: "start", Package: "ex/a" }),
+    ev({ Action: "output", Package: "ex/a", Output: "FAIL\tex/a [build failed]\n" }),
+    ev({ Action: "fail", Package: "ex/a", Elapsed: 0, FailedBuild: "ex/a [ex/a.test]" }),
+  ].join("\n") + "\n";
+  const CARGO_BUILD_FAIL = "   Compiling fx v0.1.0 (/x)\nerror[E0432]: unresolved import `fx::nope`\n\nerror: could not compile `fx` (test \"w\") due to 1 previous error\n";
+  const JAVAC_BUILD_FAIL = "src/test/java/CronTest.java:5: error: cannot find symbol\n  Cron c = new Cron();\n";
+  const go = { runner: "go" as const, path: "a_test.go" }, cargo = { runner: "cargo" as const, path: "tests/w.rs" }, javac = { runner: "javac" as const, path: "src/test/java/CronTest.java" };
+  test.each([["go", go, GO_BUILD_FAIL], ["cargo", cargo, CARGO_BUILD_FAIL], ["javac", javac, JAVAC_BUILD_FAIL]] as const)("%s: build failure with no test started is fail on base", (_n, f, out) => {
+    expect(classify(f, f.runner === "cargo" ? 101 : 1, out, "/nonexistent", "project")).toBe("fail");
+  });
+  test("canary: a go -json run that exits non-zero with no build-fail event and no test started (init panic) stays not_run", () => {
+    const ev = (o: Record<string, unknown>): string => JSON.stringify(o);
+    const f = { runner: "go" as const, path: "tests/wall_a_test.go" };
+    const panic = [ev({ Action: "start", Package: "ex/pkg" }), ev({ Action: "output", Package: "ex/pkg", Output: "panic: init failed\n" }), ev({ Action: "fail", Package: "ex/pkg", Elapsed: 0 })].join("\n") + "\n";
+    expect(classify(f, 1, panic, "/x")).toBe("not_run");
+    expect(classify(f, 2, "panic: init failed\n\ngoroutine 1 [running]:\n", "/x")).toBe("not_run");
+  });
+  test("a zero exit, a missing tool or the system interpreter is never red", () => {
+    expect(classify(go, 0, GO_BUILD_FAIL, "/nonexistent", "project")).toBe("not_run");
+    expect(classify(go, 127, GO_BUILD_FAIL, "/nonexistent", "project")).toBe("not_run");
+    expect(classify(cargo, 101, CARGO_BUILD_FAIL, "/nonexistent", "system")).toBe("not_run");
+  });
+  test("forgery: text a test printed is not a build failure", () => {
+    expect(classify(go, 1, "FAIL\tex/a [build failed]\n", "/nonexistent", "project")).toBe("not_run");
+    const ranThenPrinted = [ev({ Action: "start", Package: "ex/a" }), ev({ Action: "run", Package: "ex/a", Test: "TestA" }), ev({ Action: "output", Package: "ex/a", Test: "TestA", Output: "FAIL\tex/a [build failed]\n" }), ev({ Action: "pass", Package: "ex/a", Test: "TestA" }), ev({ Action: "pass", Package: "ex/a" })].join("\n") + "\n";
+    expect(classify(go, 1, ranThenPrinted, "/nonexistent", "project")).toBe("not_run");
+    expect(classify(cargo, 101, `running 1 test\ntest t ... ok\n${CARGO_BUILD_FAIL}`, "/nonexistent", "project")).toBe("not_run");
+    expect(classify(javac, 1, `${JAVAC_BUILD_FAIL}LOKI_JAVA_TESTS: 0 run, 0 failed\n`, "/nonexistent", "project")).toBe("not_run");
+  });
+  test("MUTATION: red on base never yields VERIFIED by itself", () => {
+    const o = { wall: { files: [{ path: "a_test.go" }], base_run: { pass: 0, fail: 1, not_run: 0 } }, implement: { exit: "ok" } } as never;
+    expect(verdictOf(o, [{ name: "test:a_test.go", result: "fail" }] as never, false, false, false, true, true)).toBe("FAILED"); // still does not build on head: verify records fail
+    expect(verdictOf(o, [{ name: "test:a_test.go", result: "not_run" }] as never, false, false, false, false, false)).toBe("PARTIAL"); // never ran on head
+    expect(verdictOf(o, [], false, false, false, false, false)).toBe("PARTIAL");
+    expect(classifyCheck({ kind: "test", ok: false, out: GO_BUILD_FAIL, runner: "go" }).result).not.toBe("pass");
   });
 });

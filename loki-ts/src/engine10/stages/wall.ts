@@ -14,7 +14,7 @@ import { hasRelevantTests, loadRepoMap, namedFiles, planMode, repoMapText, sizeT
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { publishSealed, removeHoldout, sealStageDir, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { clauseEvidenceBlock, evidenceOf, ingestWallCases, wallCasesBrief, wallCasesRunner, withUnreproducedEvidence, type WallEvidence } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingJavaTool, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
-import { baseJobs, classify, corroboratePass, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
+import { baseJobs, classify, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
 const WALL_PREFIX = "loki_wall_";
@@ -35,12 +35,11 @@ export class RealBaseTestRunner implements BaseTestRunner {
     let pass = 0, fail = 0, not_run = 0; const not_run_files: { file: string; reason: string }[] = []; const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; for (const f of files) {
       const { cmd, args, interpreter, cwd } = commandFor(f, repoDir, api);
       const r = spawnSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, encoding: "utf8", timeout: Math.max(1000, this.timeoutMs), env: plainTestEnv() }); // FC-69: plain env in, ANSI stripped out
-      const status = r.error ? null : r.status;
-      const result = classify(f, status, stripAnsi(`${r.stdout ?? ""}\n${r.stderr ?? ""}`), repoDir, interpreter);
+      const status = r.error ? null : r.status, out = stripAnsi(`${r.stdout ?? ""}\n${r.stderr ?? ""}`), base = classify(f, status, out, repoDir, interpreter);
+      const result = base === "not_run" && status === 0 && f.runner === "go" && interpreter !== "system" && corroborateGoPassSync(classifyCheck({ kind: "test", ok: true, out, ...goRunner(cmd, args) }), out, cmd, args.filter((a, k) => a !== "-run" && args[k - 1] !== "-run"), { cwd, env: plainTestEnv() }).result === "pass" ? "pass" : base; // same Go exit 0 corroboration as runEach, synchronous
       if (result === "pass") pass++; else if (result === "fail") fail++; else { not_run++; not_run_files.push({ file: f.path, reason: notRunReason(status, interpreter) }); }
     }
-    this.lastNotRunFiles = not_run_files;
-    return { pass, fail, not_run };
+    this.lastNotRunFiles = not_run_files; return { pass, fail, not_run };
   }
   async runEach(repoDir: string, files: TestRef[], jobs: number, corroborate = false): Promise<BaseEachResult[]> { // TEN-SPEED-19: same classification as run(), at most `jobs` processes at once
     const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; return mapPool(files, jobs, async (f) => { const { cmd, args, interpreter, cwd } = commandFor(f, repoDir, api), r = await spawnCollect(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, env: plainTestEnv(), timeoutMs: Math.max(1000, this.timeoutMs) }), out = stripAnsi(r.output), base = classify(f, r.status, out, repoDir, interpreter), result = corroborate && base === "not_run" && r.status === 0 && f.runner === "go" && interpreter !== "system" && (await corroboratePass(classifyCheck({ kind: "test", ok: true, out, ...goRunner(cmd, args) }), out, cmd, args.filter((a, k) => a !== "-run" && args[k - 1] !== "-run") /* corroboration refuses the -run regex, so it reruns the package */, { cwd, env: plainTestEnv() })).result === "pass" ? "pass" : base; return { pass: +(result === "pass"), fail: +(result === "fail"), not_run: +(result === "not_run"), notRunFiles: result === "not_run" ? [{ file: f.path, reason: notRunReason(r.status, interpreter) }] : [] }; });
@@ -71,7 +70,7 @@ export function buildWallBrief(task: string, repomapText = "", runners: RunnerNa
     `Test runner: ${runners.map((r) => RUNNER_HINT[r]).find(Boolean) ?? "the framework named in repomap.txt"}`,
     ...(conventions ? [conventions] : []),
     ...(location === "" ? ["Each file you write is copied to the repository root before it runs, so __dirname and import.meta.dir resolve to the repository root, not this directory."] : location ? [`Each file you write is copied to ${location}/ (relative to the repository root) before it runs, so __dirname and import.meta.dir resolve to that directory, not this one and not the repo root. Build repo paths from it (join(__dirname, ${[...location.split("/").filter(Boolean)].map(() => '".."').join(", ") || '"."'}, "<repo path>")) or from process.cwd() only when you know the runner starts at the root.`] : []),
-    `Name every file you write starting with "${WALL_PREFIX}". Write nothing else.`,
+    `Start file names with "${WALL_PREFIX}" (JS/TS: end in .test.<ext>). Write nothing else.`,
   ].join("\n\n"));
 }
 

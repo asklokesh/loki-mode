@@ -13,7 +13,8 @@ import { runFullSuite, type DeepCheck } from "../../src/engine10/stages/deep.ts"
 import { RealBaseTestRunner } from "../../src/engine10/stages/wall.ts";
 import { projectApi } from "../../src/project_model/api.ts";
 import { PROJECT_FILE } from "../../src/project_model/discover.ts";
-import { wallRedOnBaseOf } from "../../src/project_model/package_suite.ts";
+import { packageSuiteSpecs, wallRedOnBaseOf } from "../../src/project_model/package_suite.ts";
+import { baselineSuites, ensureProfile } from "../../src/runner/repo_profile.ts";
 import { loadProjectApi, siteFor } from "../../src/project_model/resolve.ts";
 import { PROJECT_MODEL_SCHEMA, type ModelCommand, type ProjectModel } from "../../src/project_model/schema.ts";
 
@@ -162,6 +163,44 @@ describe("FC-01 verify in a multi-root monorepo", () => {
     expect([ok.result, ok.count, ok.n]).toEqual(["pass", "n/a (exit-coded check, not a test runner)", undefined]);
     expect((await runWith("python3 check_bad.py")).result).toBe("fail");
     expect((await runWith("python3 -m pytest --version")).result).toBe("not_run");
+  });
+  describe("a full suite that ran 0 tests is a disclosed note only when the base suite was empty too", () => {
+    const zeroTests = async (headEcho: string, baseOut: string | null, targetPassed: boolean): Promise<{ checks: DeepCheck[]; np: string[] }> => {
+      const { dir, base } = monorepo(true);
+      const m = loadProjectApi(dir)!.model as ProjectModel;
+      m.packages[0]!.commands.test = cmd(`echo "${headEcho}"`, "backend", "backend/package.json");
+      writeFileSync(join(dir, PROJECT_FILE), JSON.stringify(m));
+      if (baseOut !== null) {
+        const run = (): { code: number; timedOut: boolean; out: string } => ({ code: 0, timedOut: false, out: baseOut });
+        ensureProfile(dir, { run }); baselineSuites(dir, packageSuiteSpecs(loadProjectApi(dir))!, { run });
+      }
+      const checks: DeepCheck[] = [], np = new Set<string>();
+      await runFullSuite(ctxFor(dir, base, []), sig(), { targetPassed }, checks, np);
+      return { checks, np: [...np] };
+    };
+    const EMPTY = "No test files found", SKIPPED = " Test Files  1 skipped (1)\n      Tests  0 passed | 37 skipped (37)";
+    test("empty on base and on head, with a passed target check: a non-gating note", async () => {
+      const r = await zeroTests(EMPTY, EMPTY, true);
+      expect(r.checks).toEqual([]);
+      expect(r.np.some((n) => n.startsWith("n/a: full suite: backend (ran 0 tests"))).toBe(true);
+      expect(r.np.some((n) => n.startsWith("not run: full suite"))).toBe(false);
+    });
+    test("no target check passed, or no base profile: the 0-test suite stays not_run", async () => {
+      expect((await zeroTests(EMPTY, EMPTY, false)).checks.map((c) => c.result)).toEqual(["not_run"]);
+      expect((await zeroTests(EMPTY, null, true)).checks.map((c) => c.result)).toEqual(["not_run"]);
+    });
+    test("MUTATION: a head that skips the whole suite (37 skipped) stays not_run even though base was empty", async () => {
+      const r = await zeroTests(SKIPPED, EMPTY, true);
+      expect(r.checks.map((c) => c.result)).toEqual(["not_run"]);
+      expect(r.np.some((n) => n.startsWith("n/a:"))).toBe(false);
+    });
+    test("MUTATION: a base that executed tests makes a 0-test head not_run (the change broke discovery)", async () => {
+      const r = await zeroTests(EMPTY, " Test Files  1 passed (1)\n      Tests  1 passed (1)", true);
+      expect(r.checks.map((c) => c.result)).toEqual(["not_run"]);
+    });
+    test("MUTATION: a base that also skipped everything is not empty discovery", async () => {
+      expect((await zeroTests(SKIPPED, SKIPPED, true)).checks.map((c) => c.result)).toEqual(["not_run"]);
+    });
   });
   test("the deep full suite runs each package's own test command in its own directory", async () => {
     const { dir, base } = monorepo(true);

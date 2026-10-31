@@ -151,13 +151,25 @@ describe.skipIf(!HAS_GO)("item 5b: go Wall file through RealBaseTestRunner (real
     writeFileSync(join(d, "a_test.go"), `package fx\n\nimport "testing"\n\n${body}\n`);
     return d;
   };
-  test("a genuinely passing go test is not_run (was: pass), a failing one is never a pass", () => {
+  test("a genuinely passing go test is corroborated to pass by run(), a failing one is never a pass", () => {
     const pass = fixture('func TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal("x") } }');
-    expect(new RealBaseTestRunner(null).run(pass, [{ runner: "go", path: "a_test.go" }])).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    expect(new RealBaseTestRunner(null).run(pass, [{ runner: "go", path: "a_test.go" }])).toEqual({ pass: 1, fail: 0, not_run: 0 }); // the sync run() corroborates a Go exit 0 exactly as runEach does
     const failing = fixture('func TestAdd(t *testing.T) { if Add(1, 2) != 4 { t.Fatal("x") } }');
     const r = new RealBaseTestRunner(null).run(failing, [{ runner: "go", path: "a_test.go" }]);
     expect(r).toEqual({ pass: 0, fail: 1, not_run: 0 }); // HV1-03a: a go -json red that names a failing test is a kept per-file fail
   }, 60_000); // real go compiles cold on CI runners (8.7s seen on release run 37168233387)
+  test("a Wall file for an absent feature fails to build on base: red on base, and the same file passes once the feature exists", () => {
+    const d = fixture('func TestSub(t *testing.T) { if Sub(3, 1) != 2 { t.Fatal("x") } }');
+    expect(new RealBaseTestRunner(null).run(d, [{ runner: "go", path: "a_test.go" }])).toEqual({ pass: 0, fail: 1, not_run: 0 }); // undefined: Sub is a build failure before any test started
+    writeFileSync(join(d, "a.go"), "package fx\n\nfunc Add(a, b int) int { return a + b }\n\nfunc Sub(a, b int) int { return a - b }\n");
+    expect(new RealBaseTestRunner(null).run(d, [{ runner: "go", path: "a_test.go" }])).toEqual({ pass: 1, fail: 0, not_run: 0 });
+  }, 90_000);
+  test("MUTATION: a Wall file that builds on base is never red for a build error, and one that still cannot build never passes", () => {
+    const stillBroken = fixture('func TestSub(t *testing.T) { if Sub(3, 1) != 2 { t.Fatal("x") } }');
+    expect(new RealBaseTestRunner(null).run(stillBroken, [{ runner: "go", path: "a_test.go" }]).pass).toBe(0);
+    const passes = fixture('func TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal("x") } }');
+    expect(new RealBaseTestRunner(null).run(passes, [{ runner: "go", path: "a_test.go" }]).fail).toBe(0);
+  }, 90_000);
   test("a TestMain that prints a fake pass and exits 0 earns no pass", () => {
     const d = fixture('import "os"\nimport "fmt"\n\nfunc TestMain(m *testing.M) { fmt.Println("=== RUN   TestFake"); fmt.Println("--- PASS: TestFake (0.00s)"); fmt.Println("ok  \\texample.com/fx\\t0.001s"); os.Exit(0) }');
     expect(new RealBaseTestRunner(null).run(d, [{ runner: "go", path: "a_test.go" }])).toEqual({ pass: 0, fail: 0, not_run: 1 });
