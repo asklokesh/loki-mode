@@ -91,7 +91,7 @@ export interface RefereeDeps {
   /** A copy of the base tree to run the replacement against; null when none can be made (the replacement is then not red-on-base-proven and is refused). */
   baseTree?: (ctx: RunContext) => string | null;
 }
-export interface Arbitration { check: string; test: string; old_assertion: string; new_assertion: string; spec_quote: string; spec_quote_2: string; sha256: string; }
+export interface Arbitration { check: string; test: string; old_assertion: string; new_assertion: string; spec_quote: string; spec_quote_2: string; sha256: string; kind?: "legacy"; }
 
 /** Resume: folds every recorded `wall.arbitrated` event into the restored wall output, so the receipt lists the arbitrated Wall hash and still discloses the replaced assertion. A malformed event is ignored. */
 export function applyArbitrations(wall: Record<string, unknown>, events: readonly { type: string; data: Record<string, unknown> }[]): void {
@@ -107,7 +107,7 @@ export function applyArbitrations(wall: Record<string, unknown>, events: readonl
   if (got.length) wall.arbitrated = got;
 }
 
-const defaultRunCheck = (dir: string, ref: TestRef): "pass" | "fail" | "not_run" => { const r = new RealBaseTestRunner().run(dir, [ref]); return r.fail > 0 ? "fail" : r.pass > 0 && (r.not_run ?? 0) === 0 ? "pass" : "not_run"; };
+const defaultRunCheck = (dir: string, ref: TestRef): "pass" | "fail" | "not_run" => { const r = new RealBaseTestRunner(undefined, undefined, { PYTHONDONTWRITEBYTECODE: "1" }).run(dir, [ref]); return r.fail > 0 ? "fail" : r.pass > 0 && (r.not_run ?? 0) === 0 ? "pass" : "not_run"; };
 export function defaultBaseTree(ctx: RunContext): string | null {
   const dir = mkdtempSync(join(tmpdir(), "loki-e15-base-"));
   try { const g = safeGitSpawn(ctx.repoDir, ["archive", ctx.baseSha], { maxBuffer: 512 * 1024 * 1024 }); if (g.status !== 0) throw new Error("git archive failed"); execFileSync("tar", ["-x", "-C", dir], { input: g.stdout, stdio: ["pipe", "ignore", "ignore"], env: tokenFreeEnv() });
@@ -207,7 +207,10 @@ async function legacyReauthor(ctx: RunContext, first: SessionRunOptions, firstSe
         "Make every assertion follow from the task text alone, keep one negative-case assertion per acceptance line, and do not weaken coverage.", FINISH_LINE].join("\n\n") });
     const next = !au.killed && au.exit === 0 && existsSync(join(cwd, name)) ? readFileSync(join(cwd, name), "utf8") : "";
     if (next.trim() === "" || next === f.content) return null;
-    f.content = next; writeFileSync(f.path, next, "utf8"); const sf = (o.wall?.files as { path: string; sha256: string }[] | undefined)?.find((x) => x.path === f.path); if (sf) sf.sha256 = createHash("sha256").update(next).digest("hex");
+    f.content = next; writeFileSync(f.path, next, "utf8"); const sf = (o.wall?.files as { path: string; sha256: string }[] | undefined)?.find((x) => x.path === f.path), sha = createHash("sha256").update(next).digest("hex"); if (sf) sf.sha256 = sha;
+    const arb: Arbitration = { check: a.file, test: "(whole file)", old_assertion: "(not validated)", new_assertion: "(not validated)", spec_quote: oneLine(reason), spec_quote_2: "", sha256: sha, kind: "legacy" }; // a legacy rewrite is recorded like an arbitration, so seal caps it and a resume replays it
+    if (o.wall) (o.wall as Record<string, unknown>).arbitrated = [...(((o.wall as Record<string, unknown>).arbitrated as Arbitration[] | undefined) ?? []), arb];
+    ctx.emit("wall.arbitrated", "wall", { path: f.path, content: next, arbitration: arb });
     const rid = `${first.iterationId}-w`, brief = `The Wall test ${a.file} was re-authored because your conflict cited it. Its tests are read-only; continue the task against the updated file.\n\n${FINISH_LINE}`, sid = ctx.provider === "claude" ? readSessionId(ctx.repoDir, first.iterationId) : null;
     ids.push(rid);
     const s2 = await ctx.sessions.run({ ...first, iterationId: rid, brief: sid ? brief : `${first.brief}\n\n${brief}`, ...(sid ? { resumeSessionId: sid } : {}) });

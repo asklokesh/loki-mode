@@ -10,6 +10,7 @@ import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import { editScopeViolation, wallAnchor } from "../../src/util/wall_owned.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
 import { CONFLICT_CORRECTION, adjudicateWallConflict, answerMark, answeredTask, applyArbitrations, blockedCompletion, defaultBaseTree, effectiveEvents, type RefereeDeps } from "../../src/util/conflict_resume.ts";
+import { resumeMachineOpts } from "../../src/util/run_outputs.ts";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
 import type { RunContext, SessionResult, SessionRunOptions, SessionRunner, TestRef } from "../../src/engine10/types.ts";
 
@@ -151,7 +152,7 @@ describe("Wall referee", () => {
     const w = world(new Referees(A_GOOD, B_YES)); rmSync(join(w.repoDir, ".loki", "run", "wall"), { recursive: true, force: true });
     expect(await run(w)).toBeNull(); expect(readFileSync(w.path, "utf8")).toBe(ORIG); expect(w.wall.arbitrated).toBeUndefined();
   });
-  test("the receipt line names the check, old and new assertion and spec quote, and does not cap VERIFIED", () => {
+  test("verdictOf itself does not cap an arbitrated run (the cap lives in seal, see seal.test.ts)", () => {
     const pass = { name: "bun:a", cmd: "x", result: "pass" as const, duration_s: 1 };
     expect(verdictOf({ implement: { exit: "done" }, intake: {}, wall: { arbitrated: [{ check: WALL }] } } as never, [pass], false, false, false, true)).toBe("VERIFIED");
   });
@@ -397,6 +398,17 @@ describe("Wall arbitration survives a resume", () => {
       const forged = mkWall(); applyArbitrations(forged, [{ type: "wall.arbitrated", data: { path, content: "tampered", arbitration: { ...arb } } }]);
       expect((forged.files as { sha256: string }[])[0]!.sha256).toBe(sha(ORIG)); expect(forged.arbitrated).toBeUndefined(); // content must hash to the recorded sha
     } finally { rmSync(repoDir, { recursive: true, force: true }); }
+  });
+  test("resumeMachineOpts replays a post-stage wall.arbitrated event into the restored Wall output", () => {
+    const path = "/r/tests/loki_wall_x.py", mkEv = (seq: number, type: string, stage: string | null, data: Record<string, unknown>) => ({ type, stage, data, seq, ts: "2026-01-01T00:00:00Z", run: "r" }) as never;
+    const wallData = { files: [{ path, sha256: sha(ORIG), runner: "pytest" }], readOnlyFiles: [{ path, content: ORIG }] };
+    const arb = { check: "pytest:tests/loki_wall_x.py", test: "t", old_assertion: "a", new_assertion: "b", spec_quote: "q", sha256: sha(GOOD) };
+    const events = [mkEv(0, "run.started", null, {}), mkEv(1, "stage.completed", "intake", { base_sha: "b" }), mkEv(2, "stage.completed", "plan", {}), mkEv(3, "stage.completed", "wall", wallData), mkEv(4, "wall.arbitrated", "wall", { path, content: GOOD, arbitration: arb })];
+    const r = resumeMachineOpts({}, events, undefined, ["intake", ["plan", "wall"], "implement"] as const);
+    expect(r.ok).toBe(true); if (!r.ok) return;
+    const w = r.restored["wall"] as { files: { sha256: string }[]; readOnlyFiles: { content: string }[]; arbitrated?: unknown[] };
+    expect(w.arbitrated?.length).toBe(1); expect(w.files[0]!.sha256).toBe(sha(GOOD)); expect(w.readOnlyFiles[0]!.content).toBe(GOOD);
+    expect(wallData.files[0]!.sha256).toBe(sha(ORIG)); // the stored event data is never mutated
   });
   test("a declined arbitration records why, and changes nothing on resume", async () => {
     const repoDir = mkdtempSync(join(tmpdir(), "loki-e15-dec-")); const evs: { type: string; data: Record<string, unknown> }[] = [];

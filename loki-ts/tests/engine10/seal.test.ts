@@ -2164,14 +2164,14 @@ describe("#238 wall proven at committed path", () => {
   const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
   // resolves its fixture from its own dir: passes only where loc_fixture.txt sits beside it
   const SEALED = 'import { test, expect } from "bun:test"; import { readFileSync } from "node:fs"; test("loc", () => expect(readFileSync(`${import.meta.dir}/loc_fixture.txt`, "utf8")).toBe("ok\\n"));\n';
-  async function run(name: string, fixtureAtCommitted: boolean) {
+  async function run(name: string, fixtureAtCommitted: boolean, arbitrated = false) {
     noKey();
     const { repo, base } = makeRepo(name);
     mkdirSync(join(repo, "tests"), { recursive: true }); writeFileSync(join(repo, REL), "// agent\n");
     writeFileSync(join(repo, "loc_fixture.txt"), "ok\n"); // proven where the fixture is: the repo root
     if (fixtureAtCommitted) writeFileSync(join(repo, "tests/loc_fixture.txt"), "ok\n");
     const { ctx } = ctxFor(repo, base, "claude", {
-      wall: { files: [{ path: join(repo, REL), sha256: sha(SEALED) }], base_run: { pass: 0, fail: 1, not_run: 0 } },
+      wall: { files: [{ path: join(repo, REL), sha256: sha(SEALED) }], base_run: { pass: 0, fail: 1, not_run: 0 }, ...(arbitrated ? { arbitrated: [{ check: NAME, test: "loc", old_assertion: "old", new_assertion: "new", spec_quote: "the quote" }] } : {}) },
       verify: { checks: [{ name: NAME, cmd: `bun test ${REL}`, result: "pass", n: 1, duration_s: 1 }], target_checks: [NAME], flaky: [], wall_passed: true, duration_s: 1 },
     });
     mkdirSync(join(ctx.runDir, "wall"), { recursive: true }); writeFileSync(join(ctx.runDir, "wall/loki_wall_loc.test.ts"), SEALED);
@@ -2189,6 +2189,14 @@ describe("#238 wall proven at committed path", () => {
     const x = await run("loc-ok", true);
     expect(x.s.data.verdict).toBe("VERIFIED"); expect(x.s.data.wall_published).toBeDefined();
   }, 60000);
+  test("an applied Wall arbitration caps an otherwise VERIFIED run at PARTIAL, discloses it, and publishes nothing; a run without one keeps VERIFIED", async () => {
+    const x = await run("loc-arb", true, true);
+    expect(x.s.data.verdict).toBe("PARTIAL"); expect(x.r.verdict).toBe("PARTIAL");
+    expect(x.r.not_proven.some((n) => n.startsWith(`Wall assertion arbitrated (spec clause, two referees): ${NAME} test loc:`) && n.includes('"the quote"'))).toBe(true);
+    expect(x.s.data.wall_published).toBeUndefined();
+    const y = await run("loc-noarb", true, false);
+    expect(y.s.data.verdict).toBe("VERIFIED"); expect(y.r.not_proven.some((n) => n.startsWith("Wall assertion arbitrated"))).toBe(false);
+  }, 120000);
 });
 
 describe("Seal accuracy line (GAME10-03)", () => {
