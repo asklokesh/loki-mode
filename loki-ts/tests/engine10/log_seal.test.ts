@@ -5,7 +5,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
-import { receiptSha256 } from "../../src/engine10/stages/seal.ts";
+import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { loggedRun, type LoggedRun } from "./fixtures/verify/seal_corpus.ts";
 import { redactEnvelope, redactSecrets } from "../../src/util/redact.ts";
 import { main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
@@ -228,7 +228,7 @@ function resumed(mode: "reseal" | "publish", cancelled = true): ReturnType<typeo
   log.append("run.completed", null, {});
   log.sealLog();
   const lines = () => readFileSync(ev, "utf8").trim().split("\n");
-  return { dir, path: join(dir, "receipt.json"), lines, put: (l) => writeFileSync(ev, l.join("\n") + "\n") };
+  return { id, dir, path: join(dir, "receipt.json"), lines, put: (l) => writeFileSync(ev, l.join("\n") + "\n") };
 }
 describe("cancel then resume: the LAST run.completed pair is the one checked", () => {
   const isType = (l: string, t: string): boolean => JSON.parse(l).type === t;
