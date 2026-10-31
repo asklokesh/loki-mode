@@ -165,28 +165,32 @@ function goCount(out: string, ok?: boolean): number | null | undefined {
  *  .go file in the texts (plan, then task), or at the repo root without one; pkg is a sibling's package clause, else the planned file's stem. */
 const GO_SRC = /(?<![\w./-])((?:[\w.-]+\/)*[\w-]+)\.go(?!\w)/g;
 const GO_DIR = /(?<![\w./:$-])((?:[\w.-]+\/)*[\w-]*[A-Za-z0-9][\w-])\/(?![\w{]|\.\w)|\b(?:director(?:y|ies)|folder|dir)\s+`((?:[\w.-]+\/)*[\w-]+)`/g;
-const GO_PKG_PHRASE = /\bpackage\s+`?([A-Za-z_]\w*)`?/g;
+// A package name is taken only when tied to the directory: "package X" right after it ("as package X", "directory as package X") or "package main in <dir>";
+// "package" as an English noun elsewhere ("the npm package manager in api/") only shows the sentence talks about a package, the name stays the directory's.
+const GO_PKG_AFTER = /^[\s,(:;-]*(?:(?:directory|dir|folder)\s+)?(?:(?:as|named|called)\s+)?(?:the\s+)?package\s+`?(?!(?:for|is|that|which|with|and|to|the|in|of|a|an|name|path)\b)([A-Za-z_]\w*)`?/;
+const GO_MAIN_BEFORE = /\bpackage\s+main\s+(?:in|under|at|inside|within|into|to)\s+(?:the\s+)?(?:directory\s+)?$/;
+const goRel = (r: string): string => r.replace(/^(?:\.\/)+/, "");
 const GO_NON_PKG_WORD = /^(?:tests?|docs?|scripts?|vendor|node_modules)$/;
-const GO_PKG_WORD = /^(?:for|is|that|which|with|named|called|and|to|the|in|of|a|an|name|path)$/;
 /** Go's own ignore rule: testdata and any segment starting with _ or . never hold a package the toolchain builds. */
 const goIgnoredPath = (rel: string): boolean => rel.split("/").some((g) => g === "testdata" || g.startsWith("_") || g.startsWith("."));
 const goSiblingPkg = (dir: string): string | undefined => existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".go") && !f.endsWith("_test.go")).map((f) => /^package\s+(\w+)/m.exec(readFileSync(join(dir, f), "utf8"))?.[1]).find(Boolean) : undefined;
 export function plannedGoDir(repoDir: string, texts: string[]): { dir: string; pkg: string | null } {
   for (const t of texts) for (const m of t.matchAll(GO_SRC)) {
-    const stem = m[1]!, rel = dirname(`${stem}.go`); if (stem.endsWith("_test") || (rel !== "." && goIgnoredPath(rel))) continue;
+    const stem = goRel(m[1]!), rel = dirname(`${stem}.go`), base = stem.split("/").pop()!;
+    if (stem.endsWith("_test") || base.startsWith("_") || base.startsWith(".") || (rel !== "." && goIgnoredPath(rel))) continue;
     const dir = join(repoDir, rel === "." ? "" : rel);
-    return { dir, pkg: goSiblingPkg(dir) ?? (stem.split("/").pop() ?? null) };
+    return { dir, pkg: goSiblingPkg(dir) ?? base };
   }
-  // No .go file named: a named package directory. Per sentence, a directory counts when a "package X" phrase sits between its neighbouring directory mentions
-  // or it already holds a Go package; the phrase's package wins over the directory name, a sibling's package clause over both. Anything vaguer stays at the repo root.
+  // No .go file named: a named package directory (a leading ./ is fine, backslash paths stay at the root). Per sentence, a directory counts when the word "package" sits
+  // between its neighbouring directory mentions or it already holds a Go package; the package is a sibling's clause, else the one tied to the directory, else its name.
   for (const t of texts) for (const sentence of t.split(/(?<=[.!?])\s+|\n+/)) {
-    const ms = [...sentence.matchAll(GO_DIR)].filter((m) => { const r = (m[1] ?? m[2])!; return !goIgnoredPath(r) && !r.split("/").some((g) => GO_NON_PKG_WORD.test(g)); });
+    const ms = [...sentence.matchAll(GO_DIR)].filter((m) => { const r = goRel((m[1] ?? m[2])!); return !goIgnoredPath(r) && !r.split("/").some((g) => GO_NON_PKG_WORD.test(g)); });
     for (let i = 0; i < ms.length; i++) {
-      const rel = (ms[i]![1] ?? ms[i]![2])!, dir = join(repoDir, rel), sibling = goSiblingPkg(dir);
-      const region = sentence.slice(i === 0 ? 0 : ms[i - 1]!.index! + ms[i - 1]![0].length, i + 1 < ms.length ? ms[i + 1]!.index! : undefined);
-      const phrase = [...region.matchAll(GO_PKG_PHRASE)].map((x) => x[1]!).find((n) => !GO_PKG_WORD.test(n));
-      if (!phrase && !sibling) continue;
-      return { dir, pkg: sibling ?? phrase ?? (rel.split("/").pop() ?? null) };
+      const m = ms[i]!, rel = goRel((m[1] ?? m[2])!), dir = join(repoDir, rel), sibling = goSiblingPkg(dir);
+      const start = i === 0 ? 0 : ms[i - 1]!.index! + ms[i - 1]![0].length, end = i + 1 < ms.length ? ms[i + 1]!.index! : sentence.length;
+      const tied = GO_PKG_AFTER.exec(sentence.slice(m.index! + m[0].length, end))?.[1] ?? (GO_MAIN_BEFORE.test(sentence.slice(start, m.index!)) ? "main" : undefined);
+      if (!tied && !sibling && !/\bpackage\b/.test(sentence.slice(start, end))) continue;
+      return { dir, pkg: sibling ?? tied ?? (rel.split("/").pop() ?? null) };
     }
   }
   return { dir: repoDir, pkg: null };

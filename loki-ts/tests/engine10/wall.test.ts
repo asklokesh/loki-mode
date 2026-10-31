@@ -1503,6 +1503,39 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
     const r = await run("Put it in the pkg/rl/ directory as package rl.", "go", { "pkg/rl/a.go": "package ratelimit\n" });
     expect(r.files.map((f) => f.path)).toEqual(["pkg/rl/loki_wall_a_test.go"]); expect(r.brief).toContain('"package ratelimit"');
   });
+  test("Go greenfield: package as an English noun never names the package; the directory name does", async () => {
+    const a = await run("Use the npm package manager in api/.", "go");
+    expect(a.files.map((f) => f.path)).toEqual(["api/loki_wall_a_test.go"]); expect(a.brief).toContain('"package api"');
+    const b = await run("Use the package manager to install deps into deps/.", "go");
+    expect(b.files.map((f) => f.path)).toEqual(["deps/loki_wall_a_test.go"]); expect(b.brief).toContain('"package deps"');
+    expect((await run("Put it in shortener/ as package for the shortener.", "go")).brief).toContain('"package shortener"');
+  });
+  test("Go greenfield: a leading ./ is allowed, a backslash path stays at the root", async () => {
+    const a = await run("Put it in ./shortener/ as package shortener.", "go");
+    expect(a.files.map((f) => f.path)).toEqual(["shortener/loki_wall_a_test.go"]); expect(a.brief).toContain('"package shortener"');
+    expect((await run("Put it in ./internal/svc/ as package svc.", "go")).files.map((f) => f.path)).toEqual(["internal/svc/loki_wall_a_test.go"]);
+    expect((await run("Put it in shortener\\ as package shortener.", "go")).files.map((f) => f.path)).toEqual(["loki_wall_a_test.go"]);
+  });
+  test("Go greenfield: a .go stem starting with _ or . falls back like other ignored names", async () => {
+    expect((await run("Write _x.go.", "go")).files.map((f) => f.path)).toEqual(["loki_wall_a_test.go"]);
+    const r = await run("Write _x.go and ./util/real.go.", "go");
+    expect(r.files.map((f) => f.path)).toEqual(["util/loki_wall_a_test.go"]); expect(r.brief).toContain('"package real"');
+  });
+  test.skipIf(spawnSync("go", ["version"]).status !== 0)("Go greenfield: a planned testdata/gen.go never hosts the Wall, so go test actually runs it", async () => {
+    const { plannedGoDir } = await import("../../src/util/check_result.ts");
+    const repo = mkdtempSync(join(tmpdir(), "loki-walldir3-"));
+    try {
+      mkdirSync(join(repo, "shortener")); mkdirSync(join(repo, "testdata"));
+      writeFileSync(join(repo, "go.mod"), "module example.com/svc\n\ngo 1.21\n");
+      writeFileSync(join(repo, "shortener", "shortener.go"), "package shortener\nfunc Shorten(u string) string { return \"abc1\" + u }\n");
+      writeFileSync(join(repo, "testdata", "gen.go"), "//go:build ignore\n\npackage main\nfunc main() {}\n");
+      const p = plannedGoDir(repo, ["Generate fixtures with testdata/gen.go, then implement Shorten in shortener/shortener.go."]);
+      expect(p).toEqual({ dir: join(repo, "shortener"), pkg: "shortener" });
+      writeFileSync(join(p.dir, "loki_wall_a_test.go"), `package ${p.pkg}\nimport "testing"\nfunc TestLokiWallShorten(t *testing.T) { if Shorten("x") == "" { t.Fatal("empty") } }\n`);
+      const r = spawnSync("go", ["test", "-v", "./..."], { cwd: repo, encoding: "utf8" });
+      expect(r.status).toBe(0); expect(r.stdout).toContain("TestLokiWallShorten");
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
   test("control: a Go task naming no file or directory keeps the repo root, and tests/ or URL paths never count", async () => {
     expect((await run("Build a URL shortener, see https://example.com/docs/ and tests/ for style; GET /stats/ returns hits.", "go")).files.map((f) => f.path)).toEqual(["loki_wall_a_test.go"]);
   });
