@@ -1,11 +1,12 @@
 // engine10/testmap.ts -- runner detection and the impacted-test map (E-05). Runners come from real files only (ENGINE.md section 8). Each changed file maps to tests that import/reference it, unioned with a same-stem floor so Go or import-free tests never drop to zero (under-selecting is unsafe). Pure read. EngineTestMap extends types.ts TestMap without editing it.
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { listProjectFiles } from "../util/safe_git.ts";
 import { loadProjectApi } from "../project_model/resolve.ts"; import { languageBytes } from "../project_model/linguist.ts";
 import { attachScope, scopeRefs } from "../project_model/scope.ts";
+import { projectInterpreter, pytestPython } from "../util/python.ts"; export { projectInterpreter };
 import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
-import { GO_TEST_RE, JS_SPEC_RE, JS_TEST_RE, PY_TEST_RE, coveredStem, detectFromPackageJson, isTestFile, referencedBasenames } from "../util/test_file_text.ts";
+import { FOREIGN_SOURCE_RE, GO_TEST_RE, JS_SPEC_RE, JS_TEST_RE, PY_TEST_RE, STDLIB_RUNNERS, coveredStem, detectFromPackageJson, isTestFile, referencedBasenames } from "../util/test_file_text.ts";
 export { isTestFile };
 /** One command shape per runner (ENGINE.md section 8 table). `<files>` is a placeholder the  caller (E-09 verify) fills with the selected paths. `coarse: true` means the command always  runs the  whole suite: npm and cargo have no reliable per-file selection. */
 export interface CommandSpec { cmd: string; coarse: boolean; }
@@ -39,17 +40,6 @@ export const REPORT_RUNNERS: readonly { runner: RunnerName; find: RegExp; flags:
   { runner: "jest", find: /jest\b/, flags: "--json --outputFile=<report>", config: /^(?:jest\.config\..+|package\.json)$/, key: "jest" },
   { runner: "vitest", find: /vitest\b/, flags: "--reporter=junit --outputFile=<report>", config: /^(?:vitest|vite)\.config\..+$|^vitest\.workspace\..+$/ },
 ];
-/** Repo's own interpreter first (E-53): `<root>/.venv/bin/python`, then  `<root>/venv/bin/python`, else bare `python` on PATH. */
-function pytestPython(root: string): string {
-  for (const venv of [".venv", "venv"]) {
-    const bin = join(root, venv, "bin", "python");
-    if (existsSync(bin)) return bin;
-  }
-  return "python";
-}
-/** One runner resolver for a repo whose Project Model names no runner (FC-WALL-HARNESS-TOOLCHAIN-ON-FOREIGN-STACK). A source file in another language selects that language's own stdlib runner (python3 -m unittest, go test, cargo test) when its tool is on PATH; a source language with no stdlib runner here, or a missing tool, yields [] (Wall skips with NOT PROVEN, before any model session). Loki's own bun runs the Wall only when JS/TS holds at least as many source bytes as any other language (or the repo has no source at all: docs, plugins, config). The env switch LOKI_WALL_HARNESS_RUNNER=0 or no bun on PATH turns off the bun fallback only. */
-const STDLIB_RUNNERS: ReadonlyArray<{ ext: RegExp; runner: RunnerName; tool: string }> = [{ ext: /\.py$/, runner: "unittest", tool: "python3" }, { ext: /\.go$/, runner: "go", tool: "go" }, { ext: /\.rs$/, runner: "cargo", tool: "cargo" }, { ext: /\.java$/, runner: "javac", tool: "javac" }];
-const FOREIGN_SOURCE_RE = /\.(?:py|go|rs|java|kt|kts|scala|rb|php|cs|c|cc|cpp|cxx|h|hpp|swift|m|mm|ex|exs|erl|hs|clj|lua|pl|dart|r|jl|zig)$/i;
 /** HV1-03b: the tool each Java runner needs (the repo wrapper counts for maven and gradle). */
 const JAVA_TOOLS: Partial<Record<RunnerName, { tool: string; wrapper?: string }>> = { maven: { tool: "mvn", wrapper: "mvnw" }, gradle: { tool: "gradle", wrapper: "gradlew" }, javac: { tool: "javac" } };
 const javaToolOk = (r: RunnerName, env: NodeJS.ProcessEnv, root?: string): boolean => { const t = JAVA_TOOLS[r]; return !t || !!Bun.which(t.tool, { PATH: env.PATH ?? "" }) || (!!t.wrapper && !!root && existsSync(join(root, t.wrapper))); };
@@ -77,11 +67,6 @@ export function guessRunner(fileName: string, runners: RunnerName[], relPath?: s
   if (fileName.endsWith(".rs")) return runners.includes("cargo") && relPath !== undefined && CARGO_TEST_FILE_RE.test(relPath) ? "cargo" : null;
   if (fileName.endsWith(".java")) return (["maven", "gradle", "javac"] as const).find((r) => runners.includes(r)) ?? null; // HV1-03b: a Java test runs under the repo's own build tool, else plain javac
   return /\.[cm]?[jt]sx?$/.test(fileName) ? (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r)) ?? null : null; // a JS runner only ever runs a JS/TS file
-}
-/** TEN-COST-09: "project" when a repo-local interpreter exists (.venv, venv, or an in-repo VIRTUAL_ENV), else "system". Mirrors verify.ts resolveTool, which marks a system pytest result not_run. */
-export function projectInterpreter(root: string): "project" | "system" {
-  const ve = process.env["VIRTUAL_ENV"], inRepo = (p: string): boolean => { try { const r = relative(realpathSync(root), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
-  return [join(root, ".venv", "bin", "python"), join(root, "venv", "bin", "python"), ...(ve && inRepo(ve) ? [join(ve, "bin", "python")] : [])].some(existsSync) ? "project" : "system";
 }
 const readText = (p: string): string => { try { return readFileSync(p, "utf8"); } catch { return ""; } };
 const normalizeRel = (raw: string): string => raw.split(sep).join("/").replace(/^\.\//, "");
@@ -167,66 +152,4 @@ export function impactedRefs(map: TestMap, changedFiles: readonly string[]): Tes
 export class RealTestMapProvider implements TestMapProvider {
   async detect(repoDir: string): Promise<TestMap> { return buildTestMap(repoDir); }
   impacted(map: TestMap, changedFiles: string[]): TestRef[] { return impactedRefs(map, changedFiles); }
-}
-
-// RX-3b: tsconfig/jsconfig import resolution used by features/dependents.ts (this module owns import-to-path mapping for tests).
-export const posix = (p: string): string => normalize(p).split("\\").join("/").replace(/^\.\//, "");
-/** tsconfig/jsconfig resolution: `base` is the repo-relative baseUrl (null when unset), `paths` the compilerOptions.paths entries. */
-export interface JsResolve { base: string | null; paths: [string, string[]][] }
-export const inRepo = (p: string): boolean => p !== ".." && !p.startsWith("../") && !isAbsolute(p);
-// JSONC to JSON: drop // and /* */ comments outside strings, then trailing commas.
-function stripJsonc(t: string): string {
-  let o = "", i = 0;
-  while (i < t.length) {
-    const c = t[i]!, n = t[i + 1];
-    if (c === '"') { let j = i + 1; while (j < t.length && t[j] !== '"') j += t[j] === "\\" ? 2 : 1; o += t.slice(i, j + 1); i = j + 1; }
-    else if (c === "/" && n === "/") { while (i < t.length && t[i] !== "\n") i++; }
-    else if (c === "/" && n === "*") { const e = t.indexOf("*/", i + 2); i = e < 0 ? t.length : e + 2; }
-    else { o += c; i++; }
-  }
-  return o.replace(/,(\s*[}\]])/g, "$1");
-}
-interface CO { baseUrl?: string; paths?: Record<string, string[]>; pathsDir?: string }
-// A config or extends target must sit in the repo by path AND by realpath (a symlink to an outside file is refused).
-function realInRepo(repoDir: string, rel: string): boolean {
-  const root = realpathSync(repoDir), rp = realpathSync(join(repoDir, rel));
-  return rp === root || rp.startsWith(root + sep);
-}
-function readCompilerOptions(repoDir: string, rel: string, depth: number): CO | null {
-  try {
-    if (!inRepo(rel) || !realInRepo(repoDir, rel)) return null;
-    const cfg = JSON.parse(stripJsonc(readFileSync(join(repoDir, rel), "utf8"))) as { extends?: unknown; compilerOptions?: { baseUrl?: unknown; paths?: unknown } };
-    const co = cfg.compilerOptions ?? {}, here = dirname(rel);
-    // extends: a single relative file level only; package names, arrays and deeper chains are not followed.
-    const ext = cfg.extends, parent = depth === 0 && typeof ext === "string" && ext.startsWith(".") ? readCompilerOptions(repoDir, posix(join(here, /\.json$/.test(ext) ? ext : `${ext}.json`)), 1) : null;
-    const out: CO = { ...(parent ?? {}) };
-    if (typeof co.baseUrl === "string") out.baseUrl = posix(join(here, co.baseUrl));
-    if (co.paths && typeof co.paths === "object") { out.paths = co.paths as Record<string, string[]>; out.pathsDir = here; }
-    return out;
-  } catch { return null; }
-}
-/** Reads the repo-root tsconfig.json, else jsconfig.json; null when absent, unparsable or declaring neither baseUrl nor paths. Never throws. */
-export function readJsResolve(repoDir: string): JsResolve | null {
-  for (const f of ["tsconfig.json", "jsconfig.json"]) {
-    const co = readCompilerOptions(repoDir, f, 0); if (!co) continue;
-    // A baseUrl outside the repo disables alias resolution entirely (its paths would be relative to that outside directory).
-    if (co.baseUrl !== undefined && !inRepo(co.baseUrl)) return null;
-    const base = co.baseUrl ?? null;
-    // paths without a baseUrl resolve from the directory of the config that declares them.
-    const pbase = base ?? co.pathsDir ?? ".";
-    const paths = Object.entries(co.paths ?? {}).filter((e): e is [string, string[]] => Array.isArray(e[1])).map(([k, v]): [string, string[]] => [k, v.filter((x) => typeof x === "string").map((x) => posix(join(pbase, x)))]);
-    return base === null && paths.length === 0 ? null : { base, paths };
-  }
-  return null;
-}
-export function aliasCandidates(spec: string, cfg: JsResolve): string[] {
-  const out: string[] = [];
-  if (cfg.base !== null) out.push(posix(join(cfg.base, spec)));
-  for (const [pat, targets] of cfg.paths) {
-    const star = pat.indexOf("*"); let sub: string | null = null;
-    if (star < 0) sub = pat === spec ? "" : null;
-    else if (spec.length >= pat.length - 1 && spec.startsWith(pat.slice(0, star)) && spec.endsWith(pat.slice(star + 1))) sub = spec.slice(star, spec.length - (pat.length - star - 1));
-    if (sub !== null) { const v: string = sub; for (const t of targets) out.push(posix(t.replace("*", () => v))); }
-  }
-  return out.filter(inRepo);
 }

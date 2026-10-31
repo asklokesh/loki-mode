@@ -9,7 +9,7 @@
 import { commandExists, run } from "./shell.ts";
 import type { ShellResult } from "./shell.ts";
 import { accessSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { tokenFreeEnv } from "./safe_git.ts";
 import type { BaseConformanceRunner, BaseRunOutcome, PytestCounts, TestOutcome } from "../engine10/modernize/presealed_wall.ts";
 import { spawnSync } from "node:child_process";
@@ -446,4 +446,17 @@ function pytestConfigFor(root: string): string {
   if (has("tox.ini", /^\s*\[pytest\]/m)) return join(root, "tox.ini");
   if (has("setup.cfg", /^\s*\[tool:pytest\]/m)) return join(root, "setup.cfg");
   return "/dev/null";
+}
+/** Repo's own interpreter first (E-53): `<root>/.venv/bin/python`, then  `<root>/venv/bin/python`, else bare `python` on PATH. */
+export function pytestPython(root: string): string {
+  for (const venv of [".venv", "venv"]) {
+    const bin = join(root, venv, "bin", "python");
+    if (existsSync(bin)) return bin;
+  }
+  return "python";
+}
+/** TEN-COST-09: "project" when a repo-local interpreter exists (.venv, venv, or an in-repo VIRTUAL_ENV), else "system". Mirrors verify.ts resolveTool, which marks a system pytest result not_run. */
+export function projectInterpreter(root: string): "project" | "system" {
+  const ve = process.env["VIRTUAL_ENV"], inRepo = (p: string): boolean => { try { const r = relative(realpathSync(root), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
+  return [join(root, ".venv", "bin", "python"), join(root, "venv", "bin", "python"), ...(ve && inRepo(ve) ? [join(ve, "bin", "python")] : [])].some(existsSync) ? "project" : "system";
 }

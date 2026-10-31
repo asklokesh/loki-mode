@@ -1,6 +1,6 @@
 // E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
 import { createWatchdog, stallKillS, stallThresholdS } from "../runner/watchdog.ts";
-import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
+import { classifyExitCause, SAFE_BUN_FLAGS } from "../runner/worker_proc.ts"; export { classifyExitCause }; // exit-code table lives with MAX_TURNS_EXIT in worker_proc.ts
 import { neutralizeEngineMarkers, sdkAuthCause } from "../runner/retry_class.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { diffShortstat, diffSignature, untrackedList } from "../util/anti_loop.ts"; export { diffShortstat, diffSignature, untrackedList }; // watchdog diff signature lives with the other tree-change detectors
@@ -9,14 +9,14 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, write
 import { dirname, join } from "node:path";
 import { archivePriorCosts, writeProviderCost, stageMedianGapMs } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
-import { canonicalSessionPin, explicitSetupModel, PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
+import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
 import { hooks } from "./hooks.ts";
 import { readSessionId } from "../runner/session_resume.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
-import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
-import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
-import { clampBashTimeoutEnv, envWithPwd, pinBashShellEnv, killGroupWithGrace, reapLiveGroup } from "../runner/worker_proc.ts"; import { claudeTierToModel, engine10StaticPrefix } from "../runner/providers.ts"; import { idleGapMs, prefixParts, prefixSha } from "../util/cost_breakdown.ts";
+import { exitKind, routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
+import type { SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
+import { clampBashTimeoutEnv, envWithPwd, pinBashShellEnv, killGroupWithGrace, reapLiveGroup } from "../runner/worker_proc.ts"; import { engine10StaticPrefix, sessionPinModel } from "../runner/providers.ts"; export { sessionPinModel }; import { idleGapMs, prefixParts, prefixSha } from "../util/cost_breakdown.ts";
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
 import { calculateCostFromRecords, partialUsagePath, readEfficiencyDir, recordPartialStreamCost } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
@@ -37,15 +37,6 @@ export interface SessionRunnerConfig {
 }
 /** Recorded when a claude run has no configured model: the provider CLI runs its own default, exactly like raw `claude -p` (L1). */
 export { PROVIDER_DEFAULT_MODEL }; // label lives in util/claude_model.ts (a leaf the runner can import without a cycle)
-/** The model a LOKI_SESSION_MODEL pin names for a claude run (undefined when unset). Throws on an unrecognized value (never the provider default). opus|sonnet|haiku are themselves, fable collapses to opus as the bash resolver does, and a tier
- *  name takes that tier's configured model. An explicit haiku pin is honored without LOKI_ALLOW_HAIKU: the user asked for it; bash would dispatch sonnet there. */
-export function sessionPinModel(e: NodeJS.ProcessEnv = process.env): string | undefined {
-  const pin = canonicalSessionPin(e["LOKI_SESSION_MODEL"]);
-  if (!pin) return undefined;
-  if (pin === "fable") return "opus";
-  if (pin === "planning" || pin === "development" || pin === "fast") return explicitSetupModel(pin, e) ?? claudeTierToModel(pin);
-  return pin;
-}
 /** The model a session really runs: the override, else the session pin, else a configured pin, else the provider's own default (no --model flag, L1 never below raw). */
 export function resolveModel(provider: string): string {
   const e = process.env;
@@ -114,25 +105,6 @@ function parseMarkers(stdout: string): SessionMarkers {
   const doneMatch = /^\W*LOKI_ALREADY_DONE:\s*(.+)$/m.exec(stdout);
   const conflictMatch = /^\W*LOKI_SPEC_CONFLICT:\s*(.+)$/m.exec(stdout);
   return routerMarkers(stdout, { done: !doneMatch && !conflictMatch, alreadyDone: doneMatch ? doneMatch[1]!.trim() : null, specConflict: conflictMatch ? conflictMatch[1]!.trim() : null });
-}
-function exitKind(exit: number | null, killed: boolean, markers: SessionMarkers): ImplementExit | "error" {
-  if (killed) return "killed";
-  if (markers.specConflict) return "spec_conflict";
-  if (markers.alreadyDone) return "already_done";
-  if (exit === 0) return "done";
-  return "error";
-}
-// E-68 (augmentiq #52 P0): every exit code a provider call can produce, named. 125 and 143 are explicitly in scope (a container runtime or the shell itself can emit either). A code outside this table
-// still names the number: classifyExitCause never falls back to an un-named string.
-const EXIT_CAUSES: Readonly<Record<number, string>> = Object.fromEntries(([
-  [0, "success"], [1, "general error"], [2, "misuse of shell command"], [124, "timeout"], [125, "timeout or container failure"],
-  [126, "command not executable"], [127, "command not found"], [130, "SIGINT"], [137, "SIGKILL"], [143, "SIGTERM"], [98, "turn cap"],
-] as const).map(([code, what]) => [code, `exit ${code} (${what})`]));
-// E-68: a session child traps SIGTERM and exits 143, so classify from what the ENGINE knows (it sent the kill), never the child's code: killed always wins. killCause names which kill fired; it defaults to "limit".
-export function classifyExitCause(exit: number | null, killed: boolean, killCause?: "limit" | "aborted" | "stalled"): string {
-  if (killed) return killCause ?? "limit";
-  if (exit === null) return "external kill";
-  return EXIT_CAUSES[exit] ?? `exit ${exit} (unrecognized code)`;
 }
 const lastStageEnd = new WeakMap<SessionRunnerConfig, Map<string, number>>(); // per run: runner config -> stage -> last session end (epoch ms)
 /** Efficiency record plus cost event for one session; a run in another cwd (wall's temp dir) has its result-cost file copied into lokiRoot first, so seal can price it after that dir is gone. */

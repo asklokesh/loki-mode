@@ -60,7 +60,7 @@ import type {
   ProviderResult,
   SessionTier,
 } from "./types.ts";
-import { PROVIDER_DEFAULT_MODEL, explicitSetupModel, resolveClaudeModel } from "../util/claude_model.ts";
+import { PROVIDER_DEFAULT_MODEL, canonicalSessionPin, explicitSetupModel, resolveClaudeModel } from "../util/claude_model.ts";
 import { applyAliasPin, effortArgv, modelRouteEnv, modelRouteModel, otelPassthroughEnv } from "../providers/model_routes.ts";
 import { opencodeProvider } from "./provider_opencode.ts";
 import { cacheTtlFor } from "../util/cost_breakdown.ts";
@@ -1300,4 +1300,13 @@ export function aiderProvider(): ProviderInvoker {
       };
     },
   };
+}
+/** The model a LOKI_SESSION_MODEL pin names for a claude run (undefined when unset). Throws on an unrecognized value (never the provider default). opus|sonnet|haiku are themselves, fable collapses to opus as the bash resolver does, and a tier
+ *  name takes that tier's configured model. An explicit haiku pin is honored without LOKI_ALLOW_HAIKU: the user asked for it; bash would dispatch sonnet there. */
+export function sessionPinModel(e: NodeJS.ProcessEnv = process.env): string | undefined {
+  const pin = canonicalSessionPin(e["LOKI_SESSION_MODEL"]);
+  if (!pin) return undefined;
+  if (pin === "fable") return "opus";
+  if (pin === "planning" || pin === "development" || pin === "fast") return explicitSetupModel(pin, e) ?? claudeTierToModel(pin);
+  return pin;
 }

@@ -1,7 +1,7 @@
 // ROUTER-1 R1-09: session-runner routing helpers, kept outside the engine10 line budget. Every function is inert unless LOKI_ROUTER=1.
 import { readFileSync } from "node:fs";
 import { resolveModelAlias } from "../../engine10/sizing.ts";
-import { ROUTER_COST_FIELDS, type SessionMarkers } from "../../engine10/types.ts";
+import { ROUTER_COST_FIELDS, type ImplementExit, type SessionMarkers } from "../../engine10/types.ts";
 import { routerEnabled } from "./flag.ts";
 import { floorNoAdvisor, routerActive } from "./unit_model.ts";
 
@@ -30,4 +30,11 @@ export function routedCostFields(dest: string): Record<string, number> {
   if (!routerEnabled()) return out;
   try { const rec = JSON.parse(readFileSync(dest, "utf8")) as Record<string, unknown>; for (const k of ROUTER_COST_FIELDS) if (typeof rec[k] === "number") out[k] = rec[k] as number; } catch { /* no record or unreadable: no extra fields */ }
   return out;
+}
+export function exitKind(exit: number | null, killed: boolean, markers: SessionMarkers): ImplementExit | "error" {
+  if (killed) return "killed";
+  if (markers.specConflict) return "spec_conflict";
+  if (markers.alreadyDone) return "already_done";
+  if (exit === 0) return "done";
+  return "error";
 }

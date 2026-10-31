@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { listProjectFiles } from "../util/safe_git.ts";
 import { JS_SPEC_RE } from "../util/test_file_text.ts";
 import type { TestMap, TestRef } from "../engine10/types.ts";
-import { aliasCandidates, inRepo, posix, readJsResolve, type JsResolve } from "../engine10/testmap.ts";
+import { aliasCandidates, inRepo, posix, readJsResolve, type JsResolve } from "../util/js_resolve.ts";
 
 export const MAX_DEPENDENT_TESTS = 20; // hard cap on extra test files per verify; depth is fixed at 1
 const SCAN_MAX_BYTES = 48_000_000, SCAN_MAX_MS = 4000, FILE_MAX_BYTES = 256_000;
