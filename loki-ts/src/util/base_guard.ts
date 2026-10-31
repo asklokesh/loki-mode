@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 import { classifyCheck, goRunner } from "./check_result.ts";
 import { listRunIds } from "../commands/run_status.ts";
 import { safeGit } from "./safe_git.ts";
-import { isManifestPath } from "../supply/supply_guard.ts";
 import { isTestFile } from "./test_file_text.ts";
 import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 
@@ -202,7 +201,6 @@ export function addedSymlinkNotes(rawDiff: string[], planText: string | null): s
   return out;
 }
 
-const MANIFEST_META = new Set(["name", "version", "description", "license", "author", "private", "type", "main", "module", "types", "exports", "files", "bin", "keywords", "repository", "homepage", "bugs", "engines", "sideEffects", "workspaces", "publishConfig", "dependencies", "devDependencies", "peerDependencies", "optionalDependencies", "scripts"]);
 export interface DeclaredAdvisoryCtx {
   repoDir: string; runDir: string; baseSha: string;
   rawDiff: string[]; // diff-tree -z --raw list (meta, path pairs)
@@ -212,8 +210,7 @@ export interface DeclaredAdvisoryCtx {
 }
 const ADVISORY_PATH = /^(?:test configuration changed|runner config changed): (.+?)(?: \(.*\))?$|^symlink added by the change .*?\): (.+)$/;
 /** An advisory about a change the plan declared, or that a passing Wall requires, is disclosed and does not cap the verdict. Only ADDED paths qualify, so an edit to an existing file still caps,
- *  and so does anything the plan never declared. Config: the EXACT added path is in plan-scope.json, it is a package manifest (never a test-runner config, hook or setup file), its folder held
- *  no file at base (a new package), and its content wires no test runner (no runner key or section, a bare runner binary as test script). Symlink: it resolves, through every hop, to a regular file inside the repo that THIS diff added or modified and that is neither a test nor a Wall file, AND the
+ *  and so does anything the plan never declared. A config advisory (a new manifest included) always caps: no manifest content check has proven safe. Symlink: it resolves, through every hop, to a regular file inside the repo that THIS diff added or modified and that is neither a test nor a Wall file, AND the
  *  plan declared the link or a passing Wall names its path (or quotes its name). Everything else stays capping. */
 export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx): { capping: string[]; disclosed: string[] } {
   const added = new Set<string>(), changed = new Set<string>();
@@ -222,19 +219,6 @@ export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx)
   const wall = (): string => wallText ??= c.wallPaths.map((w) => { for (const f of [join(c.runDir, "wall", basename(w)), join(c.repoDir, w)]) try { return readFileSync(f, "utf8"); } catch { /* try next */ } return ""; }).join("\n");
   const esc = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const named = (f: string): boolean => new RegExp(`${f.includes("/") ? `(?<![\\w./-])${esc(f)}(?![\\w-])|` : ""}[/"'\`]${esc(basename(f))}(?=["'\`\\s);]|$)`).test(wall());
-  const newPackage = (f: string): boolean => { try { return safeGit(c.repoDir, ["ls-tree", "--name-only", c.baseSha, "--", `${dirname(f)}/`], { stdio: ["ignore", "pipe", "ignore"] }).trim() === "" && dirname(f) !== "."; } catch { return false; } };
-  const inert = (f: string): boolean => { // a new manifest wires no test runner: JSON carries only package metadata and a test script of plain words that name no file; any other format has no test, coverage or build-hook section
-    let t: string; try { t = readFileSync(join(c.repoDir, f), "utf8"); } catch { return false; }
-    if (!t.trimStart().startsWith("{")) return !/^\s*\[[^\]]*(?:test|cover|build-system)|backend-path|addopts|testpaths/im.test(t);
-    try {
-      const j = JSON.parse(t) as Record<string, unknown>, sc = (j.scripts ?? {}) as Record<string, unknown>;
-      if (Object.keys(j).some((k) => !MANIFEST_META.has(k))) return false;
-      if (Object.keys(sc).some((k) => k !== "test" && /^(?:pre|post)?(?:test|install|prepare|prepublish)/.test(k))) return false;
-      if (sc.test === undefined) return true;
-      const tok = typeof sc.test === "string" ? sc.test.trim().split(/\s+/) : [];
-      return tok.length > 0 && /^[\w-]+$/.test(tok[0]!) && tok.slice(1).every((x) => x.startsWith("-") ? /^-{1,2}[\w-]+(?:=[\w.-]+)?$/.test(x) : /^[\w-]+$/.test(x) && !existsSync(join(c.repoDir, dirname(f), x)) && !existsSync(join(c.repoDir, x)));
-    } catch { return false; }
-  };
   const linkOk = (f: string): boolean => {
     try {
       const root = realpathSync(c.repoDir), t = realpathSync(join(c.repoDir, f)), rel = relative(root, t);
@@ -244,7 +228,7 @@ export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx)
   const capping: string[] = [], disclosed: string[] = [];
   for (const n of notes) {
     const m = ADVISORY_PATH.exec(n), f = m?.[1] ?? m?.[2];
-    const ok = !!m && !!f && added.has(f) && c.wallPassedN && (m[2] ? linkOk(f) && (c.planFiles.includes(f) || named(f)) : c.planFiles.includes(f) && isManifestPath(f) && newPackage(f) && inert(f));
+    const ok = !!m && !!f && added.has(f) && c.wallPassedN && m[2] !== undefined && linkOk(f) && (c.planFiles.includes(f) || named(f));
     (ok ? disclosed : capping).push(n);
   }
   return { capping, disclosed };

@@ -661,14 +661,14 @@ describe("FC-09w case-insensitive registry, .npmrc, patchedDependencies targets"
 });
 
 // Class C: an advisory for a change the plan declared, or a link a passing Wall requires, is disclosed and never caps; every undeclared change still caps.
-describe("seal advisories for declared changes disclose and do not cap", () => {
+describe("seal advisories: a declared symlink is disclosed, a declared config change always caps", () => {
   const PK = JSON.stringify({ name: "validate", scripts: { test: "bun test" } }) + "\n", NOTE = "test configuration changed: packages/validate/package.json";
   const pkgEdits = { "packages/validate/package.json": PK, "packages/validate/validate.mjs": "export const ok = 1;\n", "tests/loki_wall_validate.test.mjs": "import '../packages/validate/validate.mjs';\n" };
   const WALL = { path: "tests/loki_wall_validate.test.mjs", text: "import '../packages/validate/validate.mjs';\n" };
-  test("a new package.json the plan declared (Wall passed, n>0) is disclosed, verdict VERIFIED", async () => {
-    const r = await sealRun({}, pkgEdits, { wallFile: WALL, notProven: [NOTE], planFiles: ["packages/validate/package.json"] });
-    expect(r.verdict).toBe("VERIFIED");
-    expect(r.not_proven.some((n) => n.startsWith(NOTE) && n.includes("disclosed, does not cap"))).toBe(true);
+  test("P0: a plain new package.json the plan declared (test script jest, Wall passed) still caps", async () => {
+    const r = await sealRun({}, { ...pkgEdits, "packages/validate/package.json": JSON.stringify({ name: "validate", scripts: { test: "jest" } }) + "\n" }, { wallFile: WALL, notProven: [NOTE], planFiles: ["packages/validate/package.json"] });
+    expect(r.verdict).toBe("PARTIAL");
+    expect(r.not_proven).toContain(NOTE);
   }, 30000);
   test("mutation: the same new package.json with no plan declaration still caps", async () => {
     const r = await sealRun({}, pkgEdits, { wallFile: WALL, notProven: [NOTE], planFiles: ["calc.ts"] });
@@ -743,9 +743,21 @@ describe("seal advisories for declared changes disclose and do not cap", () => {
     const r = await newPkg("v", { "packages/v/pyproject.toml": py, "packages/v/v/evil.py": "x = 1\n" }, "packages/v/pyproject.toml");
     expect(r.verdict).toBe("PARTIAL");
   }, 30000);
-  test("R1f: a declared new pyproject.toml with no pytest section is still disclosed, verdict VERIFIED", async () => {
+  test("R1f: even a declared new pyproject.toml with no test section caps", async () => {
     const r = await newPkg("v", { "packages/v/pyproject.toml": '[project]\nname = "v"\n' }, "packages/v/pyproject.toml");
-    expect(r.verdict).toBe("VERIFIED");
+    expect(r.verdict).toBe("PARTIAL");
+  }, 30000);
+  test("X1: a declared new package.json whose test script runs a plain-word local file caps", async () => {
+    const pk = JSON.stringify({ name: "v", scripts: { test: "node t" } }) + "\n";
+    expect((await newPkg("v", { "packages/v/package.json": pk, "packages/v/t.js": "process.exit(0)\n" }, "packages/v/package.json")).verdict).toBe("PARTIAL");
+  }, 30000);
+  test("X2: a declared new package.json that maps a test dependency to a local file: package caps", async () => {
+    const pk = JSON.stringify({ name: "v", devDependencies: { chai: "file:./fakechai" } }) + "\n";
+    expect((await newPkg("v", { "packages/v/package.json": pk, "packages/v/fakechai/index.js": "module.exports = {};\n" }, "packages/v/package.json")).verdict).toBe("PARTIAL");
+  }, 30000);
+  test("X4: a declared new go.mod with a replace directive to a local path caps", async () => {
+    const gm = "module v\n\ngo 1.21\n\nreplace example.com/dep => ./dep\n";
+    expect((await newPkg("v", { "packages/v/go.mod": gm, "packages/v/dep/dep.go": "package dep\n" }, "packages/v/go.mod")).verdict).toBe("PARTIAL");
   }, 30000);
   test("R4c: a link through a base link that the run retargeted out of the repo caps (a single readlink would pass)", async () => {
     const r = await sealRun({ "README.md": "doc\n" }, { "tests/loki_wall_bump.test.ts": LINKW.text }, { wallFile: LINKW, baseLinks: { hop: "README.md" }, links: { hop: "/etc/hosts", "tests/bump.sh": "../hop" } });
