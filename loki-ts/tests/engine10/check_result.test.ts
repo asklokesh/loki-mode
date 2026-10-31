@@ -2,7 +2,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { failIds } from "../../src/engine10/failures.ts";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { cargoCompilerReason, CARGO_RUNNER_REASON, CARGO_TOOLCHAIN_REASON, CARGO_UNLISTED_REASON, goRunner, spawnCollect, changedSymbols, checkProvenance, classifyCheck, corroboratePass, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, javaSummary, javaTestClass, fullSuiteCmd, readableFailIds, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
@@ -1190,6 +1190,19 @@ done
     const r = await spawnCollect("sleep", ["30"], { timeoutMs: 60_000, signal: ac.signal });
     expect(r.status).toBeNull(); expect(Date.now() - t0).toBeLessThan(5000);
   }, 15_000);
+  test("an aborted stage kills the whole group: a SIGTERM-ignoring grandchild holding the pipes sees SIGTERM then SIGKILL and is gone and the promise resolves null", async () => {
+    const d = mkdtempSync(join(tmpdir(), "loki-abort-")), pidFile = join(d, "gc.pid"), termFile = join(d, "term"); let gc = 0;
+    try {
+      const ac = new AbortController(), t0 = Date.now(); setTimeout(() => ac.abort(), 700);
+      const r = await spawnCollect("sh", ["-c", `trap '' TERM; (trap 'echo t > ${termFile}' TERM; while :; do sleep 0.2; done) & echo $! > ${pidFile}; while :; do sleep 1; done`], { cwd: d, timeoutMs: 60_000, signal: ac.signal });
+      gc = Number(readFileSync(pidFile, "utf8").trim());
+      expect(gc).toBeGreaterThan(1);
+      expect(r.status).toBeNull(); expect(Date.now() - t0).toBeLessThan(6000);
+      let alive = true; for (let i = 0; i < 20 && alive; i++) { try { process.kill(gc, 0); await new Promise((res) => setTimeout(res, 100)); } catch { alive = false; } }
+      expect(alive).toBe(false);
+      expect(existsSync(termFile)).toBe(true); // SIGTERM reached the grandchild first, then SIGKILL ended it
+    } finally { if (gc > 1) { try { process.kill(gc, "SIGKILL"); } catch { /* already gone */ } } rmSync(d, { recursive: true, force: true }); }
+  }, 20_000);
 });
 
 // A Wall file whose top level imports a module the task creates: red on base (import error), green only after implement.
