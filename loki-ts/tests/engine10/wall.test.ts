@@ -1404,11 +1404,11 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
     expect(r.files.map((f) => f.path)).toEqual(["loki_wall_a_test.go"]);
     expect(r.brief).not.toContain("Go: your test files");
   });
-  test("Go package order: an explicit package in the task beats the stem; a root file otherwise takes the go.mod module name without /vN", async () => {
+  test("Go package order: an explicit package in the task beats the stem; a root file otherwise takes the go.mod module name without /vN, and its stem only without one", async () => {
     expect((await run("Write ini.go, package `config`.", "go")).brief).toContain('"package config"');
     const r = await run("Write ini.go that parses INI.", "go", { "go.mod": "module example.com/acme/shortener/v2\n\ngo 1.22\n" });
     expect(r.brief).toContain('"package shortener"');
-    expect((await run("Write ini.go that parses INI.", "go")).brief).not.toContain("Go: your test files");
+    expect((await run("Write ini.go that parses INI.", "go")).brief).toContain('"package ini"'); // no go.mod: the file stem is the last resort
   });
   test("Go external test: the Wall's go.mod path (module plus directory, /v2 included) decides whether it is kept or discarded as vacuous", async () => {
     const wallFor = async (imp: string, seed: Record<string, string>, dir = "pkg/foo"): Promise<{ files: number; discarded: number }> => {

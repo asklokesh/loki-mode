@@ -170,6 +170,7 @@ const GO_DIR = /(?<![\w./:$-])((?:[\w.-]+\/)*[\w-]*[A-Za-z0-9][\w-])\/(?![\w{]|\
 const GO_PKG_AFTER = /^[\s,(:;-]*(?:(?:directory|dir|folder)\s+)?(?:(?:as|named|called)\s+)?(?:the\s+)?package\s+`?(?!(?:for|is|that|which|with|and|to|the|in|of|a|an|name|path)\b)([A-Za-z_]\w*)`?/;
 const GO_MAIN_BEFORE = /\bpackage\s+main\s+(?:in|under|at|inside|within|into|to)\s+(?:the\s+)?(?:directory\s+)?$/;
 const GO_IDENT = /^[A-Za-z_]\w*$/, GO_MAJOR = /^v\d+$/;
+const GO_KEYWORDS = new Set("break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var".split(" "));
 const goRel = (r: string): string => r.replace(/^(?:\.\/)+/, "");
 const GO_NON_PKG_WORD = /^(?:tests?|docs?|scripts?|vendor|node_modules)$/;
 /** Go's own ignore rule: testdata and any segment starting with _ or . never hold a package the toolchain builds. */
@@ -183,9 +184,13 @@ export function plannedGoDir(repoDir: string, texts: string[]): { dir: string; p
     // package main counts only when tied to this file (a main.go stem, "<file> as package main", "package main in <file>"), never from another path in the sentence
     const all = [...sentence.matchAll(GO_SRC)], k = all.findIndex((x) => x.index === m.index), after = sentence.slice(m.index! + m[0].length, all[k + 1]?.index ?? sentence.length), before = sentence.slice(k > 0 ? all[k - 1]!.index! + all[k - 1]![0].length : 0, m.index!);
     const tiedMain = base === "main" || GO_PKG_AFTER.exec(after)?.[1] === "main" || GO_MAIN_BEFORE.test(before);
-    // Go names a package after its directory; a root file has none to use, and a directory that is no identifier (url-shortener) or a major-version path (v2) falls back to the stem
-    const named = [rel === "." ? undefined : rel.split("/").pop()!, base].find((n) => n !== undefined && GO_IDENT.test(n) && !GO_MAJOR.test(n)) ?? null;
-    return { dir, pkg: goSiblingPkg(dir) ?? (tiedMain ? "main" : named) };
+    // Package order: a sibling's clause; only a backticked "package `X`" or "(package X)" in the task (every bare "package" is prose); package main tied to this file; the directory's name; a root file's go.mod module
+    // (last element, no /vN); and only when all of those give nothing, the file's stem. A name that is no identifier or is a major-version path (v2) is skipped, and none valid gives no brief line.
+    const em = /\bpackage\s+`([A-Za-z_]\w*)`|\(package\s+([A-Za-z_]\w*)\)/.exec(texts[texts.length - 1] ?? ""), explicit = em ? (em[1] ?? em[2]) : undefined;
+    const mod = rel === "." && existsSync(join(repoDir, "go.mod")) ? /^module\s+(\S+)/m.exec(readFileSync(join(repoDir, "go.mod"), "utf8"))?.[1]?.replace(/\/v\d+$/, "").split("/").pop() : undefined;
+    const okName = (n: string | undefined): n is string => n !== undefined && GO_IDENT.test(n) && !GO_MAJOR.test(n);
+    const named = [explicit !== undefined && !GO_KEYWORDS.has(explicit) ? explicit : undefined, tiedMain ? "main" : undefined, rel === "." ? undefined : rel.split("/").pop()!, mod, base].find(okName) ?? null;
+    return { dir, pkg: goSiblingPkg(dir) ?? named };
   }
   // No .go file named: a named package directory (a leading ./ is fine, backslash paths stay at the root). Per sentence, a directory counts when the word "package" sits
   // between its neighbouring directory mentions or it already holds a Go package; the package is a sibling's clause, else the one tied to the directory, else its name.
