@@ -24,9 +24,10 @@ function planOutputPath(runDir: string): string { return join(runDir, PLAN_OUTPU
 
 export { selectRelevantFiles };
 
-/** The plan session is also the consent gate and the cap sizer: keep it when the user is asked (LOKI_CONFIRM, or the intent card shown on a terminal), or when a task naming no files runs in a multi-package repo (nothing else would size the run cap). */
-export function keepsPlanForConsentOrCap(env: NodeJS.ProcessEnv, tty: boolean, named: number, packages: number): boolean {
-  return confirmRequested(env) || (intentCardEnabled(env) && tty) || (named === 0 && packages > 1);
+/** The plan session is also the consent gate and the cap sizer. LOKI_CONFIRM keeps it at every size; for a normal task it is also kept when the intent card is shown on a terminal, or when the task names no files in a multi-package repo (nothing else would size the run cap). A small task never plans. The counts are lazy: they are read only when reached. */
+export function keepsPlanForConsentOrCap(env: NodeJS.ProcessEnv, tty: boolean, size: string, named: () => number, packages: () => number): boolean {
+  if (confirmRequested(env)) return true;
+  return size === "normal" && ((intentCardEnabled(env) && tty) || (named() === 0 && packages() > 1));
 }
 
 /** Truncates the planner's output to at most `max` non-empty lines: engine-side enforcement, since nothing stops a session from writing more. */
@@ -70,7 +71,7 @@ export const planStage: Stage = {
     const mode = planMode();
     const pr = await planRoute(ctx.runDir, ctx.provider, process.env, ctx.repoDir); // R1-10 (runner/router/plan_route.ts): flag off adds nothing
     // FC-35: with the router on a task still plans (Opus must route it); only an explicit LOKI_E10_PLAN=0 skips, and records why. A large task keeps the plan session; small and normal fold the plan into the implement brief.
-    const skip = mode === "never" || (mode === "auto" && sz.size !== "large" && !pr.routed && !keepsPlanForConsentOrCap(process.env, process.stderr.isTTY === true, namedFiles(task, loaded).length, loadProjectApi(ctx.repoDir)?.packages().length ?? 0));
+    const skip = mode === "never" || (mode === "auto" && sz.size !== "large" && !pr.routed && !keepsPlanForConsentOrCap(process.env, process.stderr.isTTY === true, sz.size, () => namedFiles(task, loaded).length, () => loadProjectApi(ctx.repoDir)?.packages().length ?? 0));
     // E-64: wall.ts makes this same check to skip itself; a forced plan (LOKI_E10_PLAN=always) also forces "wall", since it still gets its own Wall.
     const path = mode === "always" ? "wall" : smallTaskPath(sz.size, hasRelevantTests(task, loaded, testMap, ctx.tests.impacted));
     ctx.emit("variant", null, { size: sz.size, reasons: sz.reasons, plan_mode: mode, plan_skipped: skip, wall_model: wallEnabled() ? wallFirstModel(sz.size) : null, wall_model_reauthor: wallEnabled() ? wallModel() : null, small_task_path: path, cascade: cascadeEnabled() });

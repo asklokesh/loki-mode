@@ -156,11 +156,26 @@ describe("engine10 E-45 sizing", () => {
     } finally { delete process.env.LOKI_CONFIRM; }
   });
 
-  it("the intent card shown on an attached terminal keeps the plan; LOKI_INTENT_CARD=0 does not", () => {
-    expect(keepsPlanForConsentOrCap({}, true, 1, 0)).toBe(true);
-    expect(keepsPlanForConsentOrCap({}, false, 1, 0)).toBe(false);
-    expect(keepsPlanForConsentOrCap({ LOKI_INTENT_CARD: "0" }, true, 1, 0)).toBe(false);
-    expect(keepsPlanForConsentOrCap({ LOKI_CONFIRM: "1", LOKI_INTENT_CARD: "0" }, false, 1, 0)).toBe(true);
+  it("the intent card shown on an attached terminal keeps the plan of a normal task only; LOKI_INTENT_CARD=0 does not; LOKI_CONFIRM keeps it at every size", () => {
+    const k = (env: NodeJS.ProcessEnv, tty: boolean, size: string) => keepsPlanForConsentOrCap(env, tty, size, () => 1, () => 0);
+    expect(k({}, true, "normal")).toBe(true);
+    expect(k({}, false, "normal")).toBe(false);
+    expect(k({}, true, "small")).toBe(false);
+    expect(k({ LOKI_INTENT_CARD: "0" }, true, "normal")).toBe(false);
+    expect(k({ LOKI_CONFIRM: "1", LOKI_INTENT_CARD: "0" }, false, "small")).toBe(true);
+    let reads = 0;
+    expect(keepsPlanForConsentOrCap({ LOKI_CONFIRM: "1" }, false, "small", () => { reads++; return 0; }, () => { reads++; return 2; })).toBe(true);
+    expect(reads).toBe(0);
+  });
+
+  it("small task on a terminal without LOKI_CONFIRM does not plan; with LOKI_CONFIRM=1 it plans; a normal task on a terminal plans", async () => {
+    await withStderrTty(true, async () => {
+      delete process.env.LOKI_CONFIRM; delete process.env.LOKI_E10_PLAN;
+      expect((await run("fix the off-by-one in mod1.ts", files(10))).calls.map((c) => c.stage)).not.toContain("plan");
+      expect((await run("x".repeat(700), files(10))).calls.map((c) => c.stage)).toContain("plan");
+      process.env.LOKI_CONFIRM = "1";
+      try { expect((await run("fix the off-by-one in mod1.ts", files(10))).calls.map((c) => c.stage)).toContain("plan"); } finally { delete process.env.LOKI_CONFIRM; }
+    });
   });
 
   it("a normal task naming no files plans in a multi-package repo (the plan sizes the cap) and skips in a single-package repo", async () => {
