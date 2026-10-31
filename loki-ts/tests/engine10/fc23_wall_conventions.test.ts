@@ -218,6 +218,25 @@ describe("FC-WALL-OUT-OF-REPO-TARGET", () => {
     expect(existsSync(join(repoDir, "tests", "loki_wall_a.test.ts"))).toBe(false);
     expect(JSON.stringify(r.data.discarded)).toContain("outside the repo");
   });
+  const DOTENV = "import { foo } from '../src/a';\nconst read = (p: string) => require('node:fs').readFileSync(p, 'utf8');\ntest('x', () => { expect(foo()).toBe(1); expect(read('backend/.env.example')).toContain('DB_URL'); });\n";
+  test("a Wall file reading backend/.env.example is re-asked once with the dotenv reason; a clean rewrite is kept", async () => {
+    const repoDir = cjsRepo(); const briefs: string[] = [];
+    const ctx = wallCtx(repoDir, (o) => { briefs.push(o.brief); writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), briefs.length === 1 ? DOTENV : "import { foo } from '../src/a';\ntest('x', () => { expect(foo()).toBe(1); });\n"); });
+    const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(briefs.length).toBe(2);
+    expect(briefs[1]).toContain("loki_wall_a.test.ts");
+    expect(briefs[1]).toContain("reads .env.example");
+    expect(r.data.discarded).toBeUndefined();
+  });
+  test("a Wall file that still reads the dotenv file after the rewrite is discarded, never installed", async () => {
+    const repoDir = cjsRepo(); let reasks = 0; const ids: string[] = [];
+    const ctx = wallCtx(repoDir, (o) => { ids.push(o.iterationId); if (o.iterationId.endsWith("-oor") && o.brief.includes("reads .env.example")) reasks++; writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), DOTENV); });
+    const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(ids).toEqual(["e10-fc23-wall", "e10-fc23-wall-oor", "e10-fc23-wall-r2", "e10-fc23-wall-r2-oor"]); // one re-ask per authoring round, and the file is re-authored once more before it is given up
+    expect(reasks).toBe(2);
+    expect(existsSync(join(repoDir, "tests", "loki_wall_a.test.ts"))).toBe(false);
+    expect(JSON.stringify(r.data.discarded)).toContain("reads .env.example");
+  });
   test("a clean repo-relative file triggers no extra session", async () => {
     const repoDir = cjsRepo({ "plugins/a/x.sh": "echo\n" }); let n = 0;
     const ctx = wallCtx(repoDir, (o) => { n++; writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), "const p = join(__dirname, '..', 'plugins', 'a');\ntest('x', () => { expect(p).toBeTruthy(); });\n"); });
