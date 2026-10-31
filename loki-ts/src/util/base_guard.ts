@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { classifyCheck, goRunner, sealedWallCopy } from "./check_result.ts";
 import { listRunIds } from "../commands/run_status.ts";
 import { safeGit } from "./safe_git.ts";
+import { addedManifestOk } from "./lock_ecosystems.ts";
 import { isTestFile } from "./test_file_text.ts";
 import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 
@@ -207,12 +208,14 @@ export interface DeclaredAdvisoryCtx {
   planFiles: string[]; // plan-scope.json "files"
   wallPaths: string[]; // repo-relative Wall test paths
   wallPassedN: boolean; // the Wall ran and passed with n > 0 in verify's raw checks
+  task?: string; // the user's task text (an added manifest may be named there instead of in the plan)
+  head?: string; // the sealed head commit: an added manifest is read from this blob, not from the working tree
 }
 const ADVISORY_PATH = /^(?:test configuration changed|runner config changed): (.+?)(?: \(.*\))?$|^symlink added by the change .*?\): (.+)$/;
 /** An advisory about a change the plan declared, or that a passing Wall requires, is disclosed and does not cap the verdict. Only ADDED paths qualify, so an edit to an existing file still caps,
- *  and so does anything the plan never declared. A config advisory (a new manifest included) always caps: no manifest content check has proven safe. Symlink: it resolves, through every hop, to a regular file inside the repo that THIS diff added or modified and that is neither a test nor a Wall file, AND the
+ *  and so does anything the plan never declared. A config advisory caps, except an ADDED workspace manifest that passes every addedManifestOk condition. Symlink: it resolves, through every hop, to a regular file inside the repo that THIS diff added or modified and that is neither a test nor a Wall file, AND the
  *  plan declared the link or a passing Wall names its path (or quotes its name). Everything else stays capping. */
-export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx): { capping: string[]; disclosed: string[] } {
+export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx): { capping: string[]; disclosed: string[]; extra?: string[] } {
   const added = new Set<string>(), changed = new Set<string>();
   for (let i = 0; i + 1 < c.rawDiff.length; i += 2) { const st = c.rawDiff[i]!.trim().split(" ").pop(); if (st === "A") added.add(c.rawDiff[i + 1]!); if (st === "A" || st === "M") changed.add(c.rawDiff[i + 1]!); }
   let wallText: string | null = null;
@@ -225,13 +228,13 @@ export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx)
       return !rel.startsWith("..") && !rel.split(sep).includes(".git") && statSync(t).isFile() && changed.has(rel.split(sep).join("/")) && !isTestFile(rel) && !c.wallPaths.includes(rel);
     } catch { return false; }
   };
-  const capping: string[] = [], disclosed: string[] = [];
+  const capping: string[] = [], disclosed: string[] = [], extra: string[] = [];
   for (const n of notes) {
     const m = ADVISORY_PATH.exec(n), f = m?.[1] ?? m?.[2];
-    const ok = !!m && !!f && added.has(f) && c.wallPassedN && m[2] !== undefined && linkOk(f) && (c.planFiles.includes(f) || named(f));
+    const ok = !!m && !!f && added.has(f) && c.wallPassedN && ((m[2] !== undefined && linkOk(f) && (c.planFiles.includes(f) || named(f))) || (m[1] !== undefined && addedManifestOk(f, c, wall(), esc, extra)));
     (ok ? disclosed : capping).push(n);
   }
-  return { capping, disclosed };
+  return extra.length ? { capping, disclosed, extra } : { capping, disclosed };
 }
 
 const RUN_BRANCH_RE = /^loki\/[A-Za-z0-9._\/-]+$/;

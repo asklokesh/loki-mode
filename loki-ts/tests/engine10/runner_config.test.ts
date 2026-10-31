@@ -5,6 +5,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { commitStage, sealStage } from "../../src/engine10/stages/seal.ts";
+import { splitDeclaredAdvisories } from "../../src/util/base_guard.ts";
+import { importSpecifiers } from "../../src/util/lock_ecosystems.ts";
 import { RUNNER_CONFIGS, runnerConfigNotes, testConfigChanged } from "../../src/features/runner_config.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 
@@ -22,6 +24,18 @@ function repo(files: Record<string, string>): { dir: string; base: string; edit:
 const pkg = (scripts: Record<string, string>, extra: Record<string, unknown> = {}): string => JSON.stringify({ name: "x", scripts, ...extra }, null, 2);
 
 describe("FC-09r testConfigChanged", () => {
+  test("exports conditions: an exports-only added manifest with a runner condition advises, a standard one does not, and editing a condition caps", () => {
+    const f = "packages/x/package.json", ex = (e: unknown): string => JSON.stringify({ name: "x", exports: e });
+    const r = repo({ "a.txt": "a" });
+    r.edit(f, ex({ ".": { import: "./i.mjs", require: "./i.cjs", default: "./i.mjs", types: "./i.d.ts" }, "./s": "./s.mjs" }));
+    expect(testConfigChanged(r.dir, r.base, [f])).toEqual([]);
+    r.edit(f, ex({ ".": { bun: "./stub.mjs", default: "./i.mjs" } }));
+    expect(testConfigChanged(r.dir, r.base, [f])).toEqual([f]);
+    const r2 = repo({ [f]: ex({ ".": { node: "./a.mjs", default: "./i.mjs" } }) });
+    expect(testConfigChanged(r2.dir, r2.base, [f])).toEqual([]);
+    r2.edit(f, ex({ ".": { node: "./b.mjs", default: "./i.mjs" } }));
+    expect(testConfigChanged(r2.dir, r2.base, [f])).toEqual([f]);
+  });
   test.each([["pretest"], ["posttest"], ["test:unit"], ["build"]])("package.json scripts.%s edit caps", (k) => {
     const r = repo({ "package.json": pkg({ test: "node --test", [k]: "echo a" }) });
     r.edit("package.json", pkg({ test: "node --test", [k]: "echo b" }));
@@ -394,7 +408,7 @@ function sealCtx(repo: string, base: string, over: Partial<Record<StageName, Rec
     cost: { read: () => ({ usd: null, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0 }) }, clock: { now: () => 0 }, outputs: () => outputs,
   };
 }
-type SealOpt = { links?: Record<string, string>; wallFile?: { path: string; text: string }; wallN?: number; notProven?: string[]; planFiles?: string[]; baseLinks?: Record<string, string> };
+type SealOpt = { links?: Record<string, string>; wallFile?: { path: string; text: string }; wallN?: number; notProven?: string[]; planFiles?: string[]; baseLinks?: Record<string, string>; task?: string };
 async function sealRun(baseFiles: Record<string, string>, edits: Record<string, string>, opt: SealOpt = {}): Promise<Receipt> {
   process.env["LOKI_RECEIPT_SIGNING_KEY"] = ""; process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(tmpdir(), "rcs-nokey", "k.pem");
   const { repo, base } = sealRepo(baseFiles, edits, opt.baseLinks);
@@ -404,6 +418,7 @@ async function sealRun(baseFiles: Record<string, string>, edits: Record<string, 
   if (opt.planFiles) writeFileSync(join(runDir, "plan-scope.json"), JSON.stringify({ files: opt.planFiles }));
   const over: Partial<Record<StageName, Record<string, unknown>>> = {};
   if (w) { over.wall = { files: [{ path: w.path, sha256: "ab".repeat(32) }] }; over.verify = { checks: [{ name: "bun test:calc.test.ts", cmd: "bun test", result: "pass", duration_s: 1, n: 1 }, { name: `bun test:${w.path}`, cmd: `bun test ${w.path}`, result: "pass", duration_s: 1, n: opt.wallN ?? 4 }], flaky: [], wall_passed: true, duration_s: 2, not_proven: opt.notProven ?? [] }; }
+  if (opt.task !== undefined) over.intake = { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "fix", resumed: false, task: opt.task };
   const ctx = sealCtx(repo, base, over);
   await commitStage.run(ctx, new AbortController().signal);
   const s = await sealStage.run(ctx, new AbortController().signal);
@@ -765,6 +780,119 @@ describe("seal advisories: a declared symlink is disclosed, a declared config ch
   }, 30000);
   test("R4: a link whose target is a base-tracked link out of the repo caps (every hop is resolved)", async () => {
     const r = await sealRun({}, { "tests/loki_wall_bump.test.ts": LINKW.text }, { wallFile: LINKW, baseLinks: { hop: "/etc/hosts" }, links: { "tests/bump.sh": "../hop" } });
+    expect(r.verdict).toBe("PARTIAL");
+  }, 30000);
+});
+
+describe("added workspace manifest: disclosed only when every condition holds", () => {
+  const F = "packages/x/package.json", NOTE = `test configuration changed: ${F}`;
+  const pk = (o: Record<string, unknown> = {}): string => JSON.stringify({ name: "@acme/x", version: "1.0.0", type: "module", exports: "./src/index.mjs", ...o }) + "\n";
+  const WALL = { path: "tests/loki_wall_x.test.mjs", text: 'import { x } from "../packages/x/src/index.mjs";\n' };
+  const files = (manifest: string, extra: Record<string, string> = {}): Record<string, string> => ({ [F]: manifest, "packages/x/src/index.mjs": "export const x = 1;\n", [WALL.path]: WALL.text, ...extra });
+  const BASE = { "packages/core/package.json": JSON.stringify({ name: "@acme/core", dependencies: { chai: "^4.0.0" } }) + "\n", "packages/core/lib/a.mjs": "export {};\n" };
+  const run = (manifest: string, o: { base?: Record<string, string>; extra?: Record<string, string>; plan?: string[]; task?: string; wall?: typeof WALL; wallN?: number } = {}): Promise<Receipt> =>
+    sealRun(o.base ?? BASE, files(manifest, o.extra), { wallFile: o.wall ?? WALL, wallN: o.wallN, notProven: [NOTE], planFiles: o.plan ?? [F], task: o.task });
+  const caps = async (r: Promise<Receipt>): Promise<void> => { const x = await r; expect(x.verdict).toBe("PARTIAL"); expect(x.not_proven).toContain(NOTE); };
+  test("D1: a named, wall-imported package.json with plain metadata is disclosed and the run is VERIFIED", async () => {
+    const r = await run(pk());
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.not_proven.some((n) => n.startsWith(NOTE) && n.includes("disclosed, does not cap"))).toBe(true);
+    expect(r.not_proven.some((n) => n.startsWith("supply guard WARNING") && n.includes(F))).toBe(true); // a note, never a cap
+  }, 30000);
+  test("D1b: named only by the task text (not in the plan) is disclosed", async () => {
+    expect((await run(pk(), { plan: [], task: `Create ${F} for the new package` })).verdict).toBe("VERIFIED");
+  }, 30000);
+  test("D1c: an exact-match scripts.test and workspace: deps (`*` and a version range) on a base package are disclosed", async () => {
+    const m = pk({ scripts: { test: "node --test" }, dependencies: { "@acme/core": "workspace:*" }, devDependencies: { "@acme/core2": "workspace:^1.0.0" } });
+    const base = { ...BASE, "packages/core2/package.json": JSON.stringify({ name: "@acme/core2" }) + "\n" };
+    expect((await run(m, { base })).verdict).toBe("VERIFIED");
+  }, 30000);
+  test("D1d: a real require() and a dynamic import() of the package name or its directory are disclosed", async () => {
+    expect((await run(pk(), { wall: { path: WALL.path, text: 'const x = require("@acme/x");\n' } })).verdict).toBe("VERIFIED");
+    expect((await run(pk(), { wall: { path: WALL.path, text: 'const x = await import("@acme/x/sub");\n' } })).verdict).toBe("VERIFIED");
+  }, 60000);
+  test("D1e: exports using only subpath, import, require, default and types keys (nested too) are disclosed", async () => {
+    const e = { ".": { import: { types: "./i.d.ts", default: "./src/index.mjs" }, require: "./src/index.cjs", default: "./src/index.mjs" }, "./sub": ["./src/s.mjs"] };
+    expect((await run(pk({ exports: e }))).verdict).toBe("VERIFIED");
+  }, 30000);
+  test("A1: a dependency named chai pointing by file: at an untouched base stub caps", async () => caps(run(pk({ devDependencies: { chai: "file:../../tests/fixtures/fake-chai" } }), { base: { ...BASE, "tests/fixtures/fake-chai/index.js": "module.exports = {};\n", "tests/fixtures/fake-chai/package.json": JSON.stringify({ name: "chai" }) + "\n" } })), 30000);
+  test("A2: a dependency named jest pointing by link: at a base directory caps, so does a bare relative spec", async () => {
+    await caps(run(pk({ devDependencies: { jest: "link:../core/lib" } })));
+    await caps(run(pk({ devDependencies: { shared: "../core/lib" } })));
+  }, 60000);
+  test("A3: a Wall that names the package only in a comment or inside another string caps", async () => {
+    for (const text of ['// import { x } from "../packages/x/src/index.mjs";\n/* require("@acme/x") */\nconsole.log(1);\n', 'const s = "import { x } from \'../packages/x/src/index.mjs\'";\n', 'const p = "packages/x/src/index.mjs";\nimport { y } from "packages/x/src/index.mjs";\n']) await caps(run(pk(), { wall: { path: WALL.path, text } }));
+  }, 90000);
+  test("A4: a workspace: alias spec (workspace:fake-chai@*) and workspace: with a path cap", async () => {
+    await caps(run(pk({ dependencies: { "@acme/core": "workspace:fake-chai@*" } })));
+    await caps(run(pk({ dependencies: { "@acme/core": "workspace:../core" } })));
+    await caps(run(pk({ dependencies: { "@acme/core": "workspace:" } })));
+  }, 90000);
+  test("N2b: a regex literal that looks like an import is not an import (caps); a real import after a quote-bearing regex and a division is still seen", async () => {
+    for (const text of ['const r = /from "@acme/x"/;\n', 'foo(/require("@acme/x")/);\nconst q = [/from "@acme/x"/];\nfunction f() {\n  return /import "@acme/x"/;\n}\n']) await caps(run(pk(), { wall: { path: WALL.path, text } }));
+    const ok = 'const r = /a"b/; const q = 4 / 2 / 1;\nimport { x } from "../packages/x/src/index.mjs";\n';
+    expect((await run(pk(), { wall: { path: WALL.path, text: ok } })).verdict).toBe("VERIFIED");
+  }, 90000);
+  test("N2b unit: importSpecifiers skips comments, strings, template text and regex literals, keeps real specifiers", () => {
+    expect(importSpecifiers('const r = /from "a\\/b"/;\n')).toEqual([]);
+    expect(importSpecifiers('x = /re"/; import a from "p/q"; // import b from "c"\n/* require("d") */ const s = "import e from \'f\'";\n')).toEqual(["p/q"]);
+    expect(importSpecifiers('const n = a / b; const m = c / d; require("k"); await import("m"); export * from "z"; import "side";\n')).toEqual(["k", "m", "z", "side"]);
+  });
+  test("N2c: a comment after a postfix ++/--, a {} division or a statement-position regex is not an import (caps); a real import beside an ambiguous ) or } is still seen", async () => {
+    for (const text of ['let i = 1; const q = i++ / 2 /* import "@acme/x" */;\n', 'const q = {} / 1 /* import "@acme/x" */;\n', 'let i = 1; const q = i-- / 2 // import "@acme/x"\n']) await caps(run(pk(), { wall: { path: WALL.path, text } }));
+    for (const ok of ['const a = f(1) / 2; const b = ({}) / 3;\nimport { x } from "../packages/x/src/index.mjs";\n', 'if (a) { b(); }\nconst c = (d) / 2 / 1;\nimport { x } from "../packages/x/src/index.mjs";\n']) expect((await run(pk(), { wall: { path: WALL.path, text: ok } })).verdict).toBe("VERIFIED");
+  }, 150000);
+  test("N2c unit: else, yield, await and a regex after ) or } hide their text; a specifier counts only when both readings find it", () => {
+    expect(importSpecifiers('if (a) {} else /from "validate"/.test(s);')).toEqual([]);
+    expect(importSpecifiers('function* g() { yield /from "validate"/; }')).toEqual([]);
+    expect(importSpecifiers('if (ok) /from "validate"/.test(s);')).toEqual([]);
+    expect(importSpecifiers('async function f() { await /from "validate"/.test(s); }')).toEqual([]);
+    expect(importSpecifiers('let i = 1; const q = i++ / 2 /* import "a" */; const r = i-- / 2 // import "b"\n')).toEqual([]);
+    expect(importSpecifiers('const q = {} / 1 /* import "a" */;')).toEqual([]);
+    expect(importSpecifiers('const q = f(a) / 2;\nimport x from "k";\nconst w = g(b) / 3;\nrequire("m");')).toEqual(["k", "m"]);
+    expect(importSpecifiers('const q = f(a) / 2; import x from "k"; const w = g(b) / 3; require("m");')).toEqual(["m"]);
+  });
+  test("N7: an exports map whose import and require targets differ is VERIFIED with an exact dual-package note; matching targets add no note", async () => {
+    const NOTE7 = `exports of ${F} gives import and require different targets (dual-package hazard: two copies of the module can load); disclosed, does not cap`;
+    for (const e of [{ ".": { import: "./src/index.mjs", require: "./src/index.cjs" } }, { import: "./a.mjs", require: "./b.cjs" }, { "./sub": [{ import: "./a.mjs", require: "./b.cjs" }] }]) {
+      const r = await run(pk({ exports: e }));
+      expect(r.verdict).toBe("VERIFIED");
+      expect(r.not_proven).toContain(NOTE7);
+    }
+    const same = await run(pk({ exports: { ".": { import: "./src/index.mjs", require: "./src/index.mjs", default: "./src/index.mjs" } } }));
+    expect(same.verdict).toBe("VERIFIED");
+    expect(same.not_proven.some((n) => n.includes("dual-package"))).toBe(false);
+  }, 120000);
+  test("E1: a conditional exports map (bun, node, test, development; top level or nested) caps", async () => {
+    for (const e of [{ ".": { bun: "./src/stub.mjs", default: "./src/index.mjs" } }, { ".": { import: { node: "./real.js", default: "./src/index.mjs" } } }, { test: "./src/stub.mjs", import: "./src/index.mjs" }, { ".": [{ development: "./d.mjs" }, "./src/index.mjs"] }]) await caps(run(pk({ exports: e })));
+  }, 120000);
+  test("D2: a postinstall script caps", async () => caps(run(pk({ scripts: { postinstall: "node ./p.js" } }))), 30000);
+  test("D2b: a prepare script caps", async () => caps(run(pk({ scripts: { prepare: "node ./p.js" } }))), 30000);
+  test("D2c: a test script running jest or a local file caps", async () => { await caps(run(pk({ scripts: { test: "jest" } }))); await caps(run(pk({ scripts: { test: "node t" } }))); }, 60000);
+  test("D3: a registry dependency caps", async () => caps(run(pk({ dependencies: { lodash: "^4.17.21" } }))), 30000);
+  test("D3b: a file: dep to a directory this run added caps", async () => caps(run(pk({ devDependencies: { chai: "file:./fake" } }), { extra: { "packages/x/fake/index.js": "module.exports = {};\n" } })), 30000);
+  test("D3c: a workspace: dep naming a package no base manifest declares caps", async () => caps(run(pk({ dependencies: { ghost: "workspace:*" } }))), 30000);
+  test("D3d: a package name that shadows a dependency the base uses caps", async () => caps(run(pk({ name: "chai" }))), 30000);
+  test("D3e: a file: dep to a base directory this run also edited caps", async () => caps(run(pk({ devDependencies: { shared: "file:../core/lib" } }), { extra: { "packages/core/lib/a.mjs": "export const edited = 1;\n" } })), 30000);
+  test("D9b: splitDeclaredAdvisories itself requires a passing Wall and an added file (positive control: the same input is disclosed with both)", () => {
+    const { repo, base } = sealRepo(BASE, files(pk()));
+    sh(repo, ["add", "-A"]); sh(repo, ["commit", "-qm", "run"]);
+    const head = sh(repo, ["rev-parse", "HEAD"]), rawDiff = execFileSync("git", ["diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", base, head, "--", ".", ":(exclude).loki"], { cwd: repo, encoding: "utf8" }).split("\0").filter(Boolean);
+    const ctx = { repoDir: repo, runDir: join(repo, ".loki/runs/r1"), baseSha: base, rawDiff, planFiles: [F], wallPaths: [WALL.path], task: "", head };
+    expect(splitDeclaredAdvisories([NOTE], { ...ctx, wallPassedN: true })).toEqual({ capping: [], disclosed: [NOTE] });
+    expect(splitDeclaredAdvisories([NOTE], { ...ctx, wallPassedN: false })).toEqual({ capping: [NOTE], disclosed: [] });
+    const asModified = rawDiff.map((x, i) => (rawDiff[i + 1] === F ? x.replace(/ A$/, " M") : x));
+    expect(splitDeclaredAdvisories([NOTE], { ...ctx, wallPassedN: true, rawDiff: asModified })).toEqual({ capping: [NOTE], disclosed: [] });
+  }, 30000);
+  test("D4: a path neither the plan nor the task names caps", async () => caps(run(pk(), { plan: ["packages/x/src/index.mjs"], task: "add the x package" })), 30000);
+  test("D5: a manifest the Wall does not import caps", async () => caps(run(pk(), { wall: { path: WALL.path, text: 'import { y } from "../packages/y/src/index.mjs";\n' } })), 30000);
+  test("D6: a loader hook key (jest, imports, workspaces) caps", async () => { for (const k of [{ jest: { testRunner: "./r.js" } }, { imports: { "#a": "./a.js" } }, { workspaces: ["packages/*"] }]) await caps(run(pk(k))); }, 90000);
+  test("D7: a manifest that already existed at base (an edit) caps", async () => caps(run(pk(), { base: { ...BASE, [F]: pk({ version: "0.0.1" }) } })), 30000);
+  test("D8: a package directory that already held files at base caps", async () => caps(run(pk(), { base: { ...BASE, "packages/x/old.mjs": "export {};\n" } })), 30000);
+  test("D9: a Wall that did not pass with n>0 caps", async () => caps(run(pk(), { wallN: 0 })), 30000);
+  test("D10: a pyproject.toml with the same shape is not disclosed (only package.json qualifies)", async () => {
+    const note = "test configuration changed: packages/x/pyproject.toml";
+    const r = await sealRun({}, { "packages/x/pyproject.toml": '[project]\nname = "x"\n', "packages/x/src/index.mjs": "export const x = 1;\n", [WALL.path]: WALL.text }, { wallFile: WALL, notProven: [note], planFiles: ["packages/x/pyproject.toml"] });
     expect(r.verdict).toBe("PARTIAL");
   }, 30000);
 });

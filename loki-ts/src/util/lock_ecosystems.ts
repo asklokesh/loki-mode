@@ -2,7 +2,7 @@
 // declarations). It lives here, not in src/project_model, because it must name package managers and manifests; project_model sources
 // name no language or framework (tests/project_model L0 self-check). Entries in tests/engine10/l0_guard.allowlist move with it. No existing util owns package-manager and lockfile names, so a new file is justified.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { safeGit } from "./safe_git.ts";
 
 export interface LockRule {
@@ -148,4 +148,103 @@ export function toolchainDropNotes(repoDir: string, dropped: string[], baseSha?:
   const n = new Map<string, number>();
   for (const f of toolchainOutputs(repoDir, dropped, baseSha)) { const p = f.split("/"), i = p.findIndex((x) => OUTPUT_DIRS.some((d) => d.dir === x)), k = p.slice(0, i + 1).join("/"); n.set(k, (n.get(k) ?? 0) + 1); }
   return [...n].map(([d, c]) => `toolchain build output left out of the commit: ${d}/ (${c} file${c === 1 ? "" : "s"})`);
+}
+
+export interface AddedManifestCtx { repoDir: string; baseSha: string; rawDiff: string[]; planFiles: string[]; wallPassedN: boolean; task?: string; head?: string }
+const MANIFEST_KEYS = new Set(["name", "version", "description", "private", "type", "main", "module", "types", "exports", "files", "license", "author", "repository", "keywords", "engines", "sideEffects", "homepage", "bugs", "scripts", "dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]);
+const SAFE_TEST_SCRIPTS = new Set(["node --test", "bun test"]);
+const DEP_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+const MAX_BASE_MANIFESTS = 200;
+const EXPORT_OK = new Set(["import", "require", "default", "types"]);
+/** Every "exports" node keyed by a condition other than a subpath ("." or "./x"), import, require, default or types (bun, node, test, development and so on), as `key:value` strings. Such a condition can send the
+ *  test runner different code from production. Nested maps and arrays are walked. */
+export function exportConds(x: unknown, out: string[] = []): string[] {
+  if (Array.isArray(x)) for (const v of x) exportConds(v, out);
+  else if (x && typeof x === "object") for (const [k, v] of Object.entries(x)) { if (k === "." || k.startsWith("./") || EXPORT_OK.has(k)) exportConds(v, out); else out.push(`${k}:${JSON.stringify(v)}`); }
+  return out;
+}
+const WORKSPACE_SPEC = /^workspace:(\*|\^|~|[\^~]?\d[\w.+-]*)$/;
+const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|case|void|delete|throw|in|of|instanceof|else|yield|await|do)$/;
+/** One lexical pass over `src`: comments and regex literals are dropped and every string literal is parked behind a placeholder. A `/` starts a regex at the start, after an operator or `(`, `,`, `=`, `:`, `[`, `!`, `&`, `|`,
+ *  `?`, `{`, `;`, after one of the words in REGEX_AFTER_WORD, and, when `amb` is true, after `)` or `}`. It is division after `++`, `--`, `]`, a word, a number or a string. Returns the specifiers read in this mode. */
+function lexSpecifiers(src: string, amb: boolean): string[] {
+  const lit: string[] = [], n = src.length;
+  let t = "", i = 0;
+  while (i < n) {
+    const c = src[i]!, d = src[i + 1];
+    if (c === "/" && d === "/") { const e = src.indexOf("\n", i); t += " "; i = e < 0 ? n : e; continue; }
+    if (c === "/" && d === "*") { const e = src.indexOf("*/", i + 2); t += " "; i = e < 0 ? n : e + 2; continue; }
+    if (c === '"' || c === "'" || c === "`") {
+      let k = i + 1;
+      while (k < n && src[k] !== c && (c === "`" || src[k] !== "\n")) k += src[k] === "\\" ? 2 : 1;
+      if (k < n && src[k] === c) { t += `\u0000${lit.push(src.slice(i + 1, k)) - 1}\u0000`; i = k + 1; continue; }
+    } else if (c === "/") {
+      const tail = t.trimEnd();
+      if (!/(\+\+|--)$/.test(tail) && (tail === "" || /[=(,:[!&|?{;+\-*%<>~^]$/.test(tail) || (amb && /[)}]$/.test(tail)) || REGEX_AFTER_WORD.test(tail))) {
+        let k = i + 1, cls = false;
+        for (; k < n && src[k] !== "\n"; k++) { const ch = src[k]!; if (ch === "\\") k++; else if (ch === "[") cls = true; else if (ch === "]") cls = false; else if (ch === "/" && !cls) break; }
+        if (k < n && src[k] === "/") { t += "\u0001"; i = k + 1; continue; }
+      }
+    }
+    t += c; i++;
+  }
+  const out: string[] = [];
+  for (const m of t.matchAll(/\bfrom\s*\u0000(\d+)\u0000|\bimport\s*\u0000(\d+)\u0000|\b(?:require|import)\s*\(\s*\u0000(\d+)\u0000\s*\)/g)) out.push(lit[Number(m[1] ?? m[2] ?? m[3])]!);
+  return out;
+}
+/** The module specifiers a source text imports: static `import ... from`, `export ... from`, side-effect `import "x"`, `require("x")` and `import("x")`, with comments, regex literals and the text of other strings
+ *  ignored. A `/` after `)` or `}` is ambiguous without a parser (`if (a) /re/.test(s)` and `{} /re/` start a regex, `f(a) / 2` and `({}) / 2` divide), and a misread in either direction can make a comment or
+ *  regex text look like an import. So the text is read twice, once with every `/` after `)` or `}` taken as a regex start and once as a division, and a specifier counts only as often as BOTH readings find it.
+ *  Where the two readings disagree an import is dropped, never invented, so the run caps. Residuals: a division misread as a regex elsewhere (for example after a word REGEX_AFTER_WORD names, or after `+`, `-`,
+ *  `*` where the left side is not a value) hides the text up to the next `/` on its line, which can only drop an import; template-literal `${}` bodies are read as plain string text, so an import inside one is not seen. */
+export function importSpecifiers(src: string): string[] {
+  const b = lexSpecifiers(src, false).slice(), out: string[] = [];
+  for (const x of lexSpecifiers(src, true)) { const k = b.indexOf(x); if (k >= 0) { b.splice(k, 1); out.push(x); } }
+  return out;
+}
+/** True when some exports node gives `import` and `require` different targets: a dual-package hazard (two copies of the module can load), not a test-only split, so it is disclosed and never caps. */
+export function exportsDiverge(x: unknown): boolean {
+  if (Array.isArray(x)) return x.some(exportsDiverge);
+  if (!x || typeof x !== "object") return false;
+  const o = x as Record<string, unknown>;
+  return ("import" in o && "require" in o && JSON.stringify(o["import"]) !== JSON.stringify(o["require"])) || Object.values(o).some(exportsDiverge);
+}
+/** Class D: a brand-new workspace package.json is disclosed (not capped) only when ALL hold: it is ADDED, in a directory that held no file at base; the plan or task names its path; a passing Wall
+ *  imports the package (a static import, require() or import() specifier, comments ignored, naming the package or a path into its directory); its keys are on a plain-metadata allowlist (no runner,
+ *  transpiler, imports, workspaces, overrides or bin keys, or any other loader hook); its "exports" use only subpath, import, require, default and types keys; it has no scripts, or only a bare `test` of
+ *  "node --test" / "bun test"; and every dependency is a `workspace:` spec (`*`, `^`, `~` or a version, never an alias) naming the package.json name of a base package. file:, link:, relative, registry
+ *  and any other spec caps. An unreadable or unparsable manifest, or a package name that shadows a name or dependency any base manifest uses, caps. When it passes and exports gives `import` and `require`
+ *  different targets, a dual-package note is pushed to `notes` (disclosed, the verdict is unchanged). */
+export function addedManifestOk(f: string, c: AddedManifestCtx, wall: string, esc: (x: string) => string, notes?: string[]): boolean {
+  if (basename(f) !== "package.json" || dirname(f) === "." || !c.wallPassedN) return false;
+  const dir = dirname(f), g = (a: string[]): string | null => { try { return safeGit(c.repoDir, a, { timeout: 20000 }).trim(); } catch { return null; } };
+  const mention = (t: string): boolean => new RegExp(`(?<![\\w./-])${esc(f)}(?![\\w-])`).test(t);
+  if (!(c.planFiles.includes(f) || mention(c.task ?? ""))) return false;
+  const lsDir = g(["ls-tree", "-r", "--name-only", c.baseSha, "--", dir]);
+  if (lsDir === null || lsDir !== "") return false; // a package living beside existing files can change how they resolve or run
+  const text = c.head ? g(["show", `${c.head}:${f}`]) : (() => { try { return readFileSync(join(c.repoDir, f), "utf8"); } catch { return null; } })();
+  let j: Record<string, unknown>;
+  try { const x = JSON.parse(text ?? "") as unknown; if (!x || typeof x !== "object" || Array.isArray(x)) return false; j = x as Record<string, unknown>; } catch { return false; }
+  if (Object.keys(j).some((k) => !MANIFEST_KEYS.has(k)) || typeof j["name"] !== "string" || !j["name"]) return false;
+  const name = j["name"] as string, sc = j["scripts"];
+  if (sc !== undefined) { if (!sc || typeof sc !== "object" || Array.isArray(sc)) return false; if (Object.entries(sc as Record<string, unknown>).some(([k, v]) => k !== "test" || typeof v !== "string" || !SAFE_TEST_SCRIPTS.has(v))) return false; }
+  if (exportConds(j["exports"]).length) return false;
+  const imported = importSpecifiers(wall).some((sp) => sp === name || sp.startsWith(`${name}/`) || (/^\.\.?\//.test(sp) && sp.replace(/^(?:\.{1,2}\/)+/, "").startsWith(`${dir}/`)));
+  if (!imported) return false;
+  const all = g(["ls-tree", "-r", "--name-only", c.baseSha]);
+  if (all === null) return false;
+  const baseManifests = all.split("\n").filter((p) => basename(p) === "package.json" && !p.split("/").includes("node_modules"));
+  if (baseManifests.length > MAX_BASE_MANIFESTS) return false;
+  const baseNames = new Set<string>(), baseDeps = new Set<string>();
+  for (const m of baseManifests) {
+    try { const b = JSON.parse(g(["show", `${c.baseSha}:${m}`]) ?? "") as Record<string, unknown>; if (typeof b["name"] === "string") baseNames.add(b["name"]); for (const fld of DEP_FIELDS) if (b[fld] && typeof b[fld] === "object") for (const d of Object.keys(b[fld] as object)) baseDeps.add(d); } catch { return false; }
+  }
+  if (baseDeps.has(name) || baseNames.has(name)) return false;
+  for (const fld of DEP_FIELDS) {
+    const d = j[fld]; if (d === undefined) continue;
+    if (!d || typeof d !== "object" || Array.isArray(d)) return false;
+    for (const [dn, spec] of Object.entries(d as Record<string, unknown>)) if (typeof spec !== "string" || !WORKSPACE_SPEC.test(spec) || !baseNames.has(dn)) return false;
+  }
+  if (exportsDiverge(j["exports"])) notes?.push(`exports of ${f} gives import and require different targets (dual-package hazard: two copies of the module can load); disclosed, does not cap`);
+  return true;
 }
