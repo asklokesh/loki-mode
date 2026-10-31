@@ -2,7 +2,7 @@
 // inspected (L0): the model itself says whether its conflict was only about Loki's own rules or about the task.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { readSessionId } from "../runner/session_resume.ts";
@@ -93,10 +93,26 @@ export interface RefereeDeps {
 }
 export interface Arbitration { check: string; test: string; old_assertion: string; new_assertion: string; spec_quote: string; spec_quote_2: string; sha256: string; }
 
+/** Resume: folds every recorded `wall.arbitrated` event into the restored wall output, so the receipt lists the arbitrated Wall hash and still discloses the replaced assertion. A malformed event is ignored. */
+export function applyArbitrations(wall: Record<string, unknown>, events: readonly { type: string; data: Record<string, unknown> }[]): void {
+  const files = wall.files as { path: string; sha256: string }[] | undefined, ro = wall.readOnlyFiles as { path: string; content: string }[] | undefined, got = [...((wall.arbitrated as Arbitration[] | undefined) ?? [])];
+  for (const e of events) {
+    if (e.type !== "wall.arbitrated") continue;
+    const a = e.data["arbitration"] as Arbitration | undefined, path = e.data["path"], content = e.data["content"];
+    if (!a || typeof a.sha256 !== "string" || typeof path !== "string" || typeof content !== "string" || createHash("sha256").update(content).digest("hex") !== a.sha256) continue;
+    const sf = files?.find((x) => x.path === path); if (!sf) continue;
+    sf.sha256 = a.sha256; const r = ro?.find((x) => x.path === path); if (r) r.content = content;
+    if (!got.some((g) => g.check === a.check && g.sha256 === a.sha256)) got.push(a);
+  }
+  if (got.length) wall.arbitrated = got;
+}
+
 const defaultRunCheck = (dir: string, ref: TestRef): "pass" | "fail" | "not_run" => { const r = new RealBaseTestRunner().run(dir, [ref]); return r.fail > 0 ? "fail" : r.pass > 0 && (r.not_run ?? 0) === 0 ? "pass" : "not_run"; };
-function defaultBaseTree(ctx: RunContext): string | null {
+export function defaultBaseTree(ctx: RunContext): string | null {
   const dir = mkdtempSync(join(tmpdir(), "loki-e15-base-"));
-  try { const g = safeGitSpawn(ctx.repoDir, ["archive", ctx.baseSha], { maxBuffer: 512 * 1024 * 1024 }); if (g.status !== 0) throw new Error("git archive failed"); execFileSync("tar", ["-x", "-C", dir], { input: g.stdout, stdio: ["pipe", "ignore", "ignore"], env: tokenFreeEnv() }); return dir; }
+  try { const g = safeGitSpawn(ctx.repoDir, ["archive", ctx.baseSha], { maxBuffer: 512 * 1024 * 1024 }); if (g.status !== 0) throw new Error("git archive failed"); execFileSync("tar", ["-x", "-C", dir], { input: g.stdout, stdio: ["pipe", "ignore", "ignore"], env: tokenFreeEnv() });
+    for (const v of [".venv", "venv"]) { const src = join(ctx.repoDir, v); if (existsSync(src) && !existsSync(join(dir, v))) symlinkSync(src, join(dir, v), "dir"); } // an untracked project interpreter is linked, not copied, so a Python Wall file can run on base (a linked env that cannot run the check still ends as not_run, and the arbitration declines)
+    return dir; }
   catch { rmSync(dir, { recursive: true, force: true }); return null; }
 }
 const readJson = (p: string): Record<string, unknown> | null => { try { const v = JSON.parse(readFileSync(p, "utf8")); return v && typeof v === "object" ? v as Record<string, unknown> : null; } catch { return null; } };
@@ -138,6 +154,7 @@ export async function adjudicateWallConflict(ctx: RunContext, first: SessionRunO
   if (!sf?.runner) return null;
   const ref: TestRef = { runner: sf.runner, path: a.file }, restore = (): void => { f.content = original; writeFileSync(f.path, original, "utf8"); };
   let base: string | null = null;
+  const declined = (why: string): void => { ctx.emit("wall.arbitrated", "wall", { path: f.path, declined: why }); }; // the only non-applied outcome recorded: why a proposed correction was refused
   try {
     const A = await refereeSession(ctx, first, `${first.iterationId}-wa`, task, { [name]: original }, REF_A(name), [name]); ids.push(...A.ids);
     const next = A.out[name] ?? "", v = A.verdict, test = typeof v?.test === "string" ? v.test : "";
@@ -155,9 +172,10 @@ export async function adjudicateWallConflict(ctx: RunContext, first: SessionRunO
     writeFileSync(f.path, next, "utf8");
     if (runCheck(ctx.repoDir, ref) !== "pass") { restore(); return null; }
     base = (deps.baseTree ?? defaultBaseTree)(ctx);
-    if (!base) { restore(); return null; }
+    if (!base) { restore(); declined("no copy of the base tree could be made, so red-on-base was not run"); return null; }
     mkdirSync(dirname(join(base, a.file)), { recursive: true }); writeFileSync(join(base, a.file), next, "utf8");
-    if (runCheck(base, ref) !== "fail") { restore(); return null; }
+    const onBase = runCheck(base, ref);
+    if (onBase !== "fail") { restore(); declined(onBase === "not_run" ? "the replacement could not be run on the base tree (not_run), so red-on-base is unproven" : "the replacement passes on the base tree, so it does not discriminate"); return null; }
     // apply: tree file, in-memory read-only copy, sealed sha and sealed copy together, then re-check against what the seal holds
     f.content = next; const sealedCopy = join(ctx.runDir, "wall", name);
     if (existsSync(dirname(sealedCopy))) writeFileSync(sealedCopy, next, "utf8");
@@ -168,6 +186,7 @@ export async function adjudicateWallConflict(ctx: RunContext, first: SessionRunO
     if (runCheck(ctx.repoDir, ref) !== "pass") { restore(); writeFileSync(sealedCopy, original, "utf8"); sf.sha256 = createHash("sha256").update(original).digest("hex"); return null; }
     const ch = changedAssertion(original, next), arb: Arbitration = { check: a.file, test, old_assertion: ch.old, new_assertion: ch.new, spec_quote: String(v.spec_quote), spec_quote_2: String(B.verdict.spec_quote), sha256: sf.sha256 };
     if (o.wall) (o.wall as Record<string, unknown>).arbitrated = [...(((o.wall as Record<string, unknown>).arbitrated as Arbitration[] | undefined) ?? []), arb];
+    ctx.emit("wall.arbitrated", "wall", { path: f.path, content: next, arbitration: arb }); // durable: a resume rebuilds the Wall hash and the NOT PROVEN disclosure from this event (applyArbitrations)
     const rid = `${first.iterationId}-w`, brief = `The Wall test ${a.file} was corrected against the task text (test ${test}). Its tests are read-only; continue the task against the updated file.\n\n${FINISH_LINE}`, sid = ctx.provider === "claude" ? readSessionId(ctx.repoDir, first.iterationId) : null;
     ids.push(rid);
     const s2 = await ctx.sessions.run({ ...first, iterationId: rid, brief: sid ? brief : `${first.brief}\n\n${brief}`, ...(sid ? { resumeSessionId: sid } : {}) });

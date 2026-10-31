@@ -1,14 +1,15 @@
 // FC-19: one LOKI_SPEC_CONFLICT correction round; no wording of the reason is inspected.
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fixStage } from "../../src/engine10/stages/fix.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
-import { wallAnchor } from "../../src/util/wall_owned.ts";
+import { editScopeViolation, wallAnchor } from "../../src/util/wall_owned.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
-import { CONFLICT_CORRECTION, adjudicateWallConflict, answerMark, answeredTask, blockedCompletion, effectiveEvents, type RefereeDeps } from "../../src/util/conflict_resume.ts";
+import { CONFLICT_CORRECTION, adjudicateWallConflict, answerMark, answeredTask, applyArbitrations, blockedCompletion, defaultBaseTree, effectiveEvents, type RefereeDeps } from "../../src/util/conflict_resume.ts";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
 import type { RunContext, SessionResult, SessionRunOptions, SessionRunner, TestRef } from "../../src/engine10/types.ts";
 
@@ -352,5 +353,79 @@ describe("in-place answer helpers", () => {
   test("answeredTask appends every recorded answer in order", () => {
     const t = answeredTask("do it", [ev(1, "run.resumed", null, { answered: true, answer: "one", question: "q1" }), ev(2, "run.resumed", null, { answered: true, answer: "two", question: "q2" }), ev(3, "run.resumed", null, {})]);
     expect(t).toBe('do it\n\nClarification answering "q1": one\n\nClarification answering "q2": two');
+  });
+});
+
+describe("Wall referee scope: a test body, not the code beside it", () => {
+  const PY = ["import os", "", "def test_hours():", "    assert parse('1h') == 3600", "", "def test_upper():", "    assert parse('1H') == 3600", ""].join("\n");
+  test("control: an edit inside the named test body is in scope", () => {
+    expect(editScopeViolation(PY, PY.replace("== 3600", "== 3601").replace("3601", "3600 + 0"), "test_hours")).toBeNull();
+  });
+  test("a decorator and import added right above the next test are not an edit of the previous test", () => {
+    const evil = PY.replace("    assert parse('1h') == 3600\n\ndef test_upper", "    assert parse('1h') == 3601\nimport pytest\n@pytest.mark.skip\ndef test_upper").replace("def test_upper():\n    assert parse('1H') == 3600\n\n", "def test_upper():\n    assert parse('1H') == 3600\n\n");
+    expect(editScopeViolation(PY, evil, "test_hours")).toMatch(/indentation|outside/);
+    const glued = ["def test_a():", "    assert 1 == 2", "def test_b():", "    assert 2 == 2", ""].join("\n");
+    expect(editScopeViolation(glued, glued.replace("def test_b", "@skip\ndef test_b"), "test_a")).toMatch(/indentation/);
+  });
+  test("a module-level reassignment appended after the last test is rejected", () => {
+    const evil = `${PY}test_upper = lambda: None\n`;
+    expect(editScopeViolation(PY, evil, "test_upper")).toMatch(/indentation|outside/);
+    expect(editScopeViolation(PY.trimEnd(), `${PY.trimEnd()}\ntest_upper = lambda: None`, "test_upper")).toMatch(/indentation/);
+  });
+  test("an added line deeper than the definition is still allowed after the last body line", () => {
+    expect(editScopeViolation(PY, PY.replace("    assert parse('1H') == 3600", "    assert parse('1H') == 3600\n    assert parse('2H') == 7200"), "test_upper")).toBeNull();
+  });
+});
+
+describe("Wall arbitration survives a resume", () => {
+  test("the emitted event rebuilds the arbitrated Wall hash and the disclosure on a restored wall output", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "loki-e15-res-")); const evs: { type: string; data: Record<string, unknown> }[] = [];
+    try {
+      mkdirSync(join(repoDir, "tests"), { recursive: true }); mkdirSync(join(repoDir, ".loki", "run", "wall"), { recursive: true });
+      const path = join(repoDir, WALL); writeFileSync(path, ORIG, "utf8"); writeFileSync(join(repoDir, ".loki", "run", "wall", WNAME), ORIG, "utf8");
+      const mkWall = (): Record<string, unknown> => ({ files: [{ path, sha256: sha(ORIG), runner: "bun" }], readOnlyFiles: [{ path, content: ORIG }] });
+      const live = mkWall(), s = new Referees(A_GOOD, B_YES), base = mkdtempSync(join(tmpdir(), "loki-e15-resbase-"));
+      const ctx = { ...ctxOf(s), repoDir, runDir: join(repoDir, ".loki", "run"), baseSha: "base", emit: (type: string, _s: unknown, data: Record<string, unknown>) => { evs.push({ type, data }); }, outputs: () => ({ wall: live, intake: { task: TASK } }) } as unknown as RunContext;
+      const deps: RefereeDeps = { baseTree: () => base, runCheck: (dir: string, ref: TestRef) => { const c = readFileSync(join(dir, ref.path), "utf8"); return dir === repoDir ? (/5430/.test(c) ? "fail" : "pass") : "fail"; } };
+      expect(await adjudicateWallConflict(ctx, first(), sess(CLAIM), [{ path, content: ORIG }], deps)).not.toBeNull();
+      expect(evs.filter((e) => e.type === "wall.arbitrated").length).toBe(1);
+      // a resumed run restores the wall stage.completed data as it was before the arbitration, then replays the events
+      const restored = mkWall(); applyArbitrations(restored, evs);
+      expect((restored.files as { sha256: string }[])[0]!.sha256).toBe(sha(GOOD)); expect((restored.readOnlyFiles as { content: string }[])[0]!.content).toBe(GOOD);
+      const arb = (restored.arbitrated as Record<string, string>[])[0]!; expect(arb).toMatchObject({ check: WALL, test: "parses padded", spec_quote: QUOTE, sha256: sha(GOOD) });
+      applyArbitrations(restored, evs); expect((restored.arbitrated as unknown[]).length).toBe(1); // replay is idempotent
+      const forged = mkWall(); applyArbitrations(forged, [{ type: "wall.arbitrated", data: { path, content: "tampered", arbitration: { ...arb } } }]);
+      expect((forged.files as { sha256: string }[])[0]!.sha256).toBe(sha(ORIG)); expect(forged.arbitrated).toBeUndefined(); // content must hash to the recorded sha
+    } finally { rmSync(repoDir, { recursive: true, force: true }); }
+  });
+  test("a declined arbitration records why, and changes nothing on resume", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "loki-e15-dec-")); const evs: { type: string; data: Record<string, unknown> }[] = [];
+    try {
+      mkdirSync(join(repoDir, "tests"), { recursive: true }); mkdirSync(join(repoDir, ".loki", "run", "wall"), { recursive: true });
+      const path = join(repoDir, WALL); writeFileSync(path, ORIG, "utf8"); writeFileSync(join(repoDir, ".loki", "run", "wall", WNAME), ORIG, "utf8");
+      const wall: Record<string, unknown> = { files: [{ path, sha256: sha(ORIG), runner: "pytest" }], readOnlyFiles: [{ path, content: ORIG }] };
+      const base = mkdtempSync(join(tmpdir(), "loki-e15-decbase-"));
+      const ctx = { ...ctxOf(new Referees(A_GOOD, B_YES)), repoDir, runDir: join(repoDir, ".loki", "run"), emit: (type: string, _s: unknown, data: Record<string, unknown>) => { evs.push({ type, data }); }, outputs: () => ({ wall, intake: { task: TASK } }) } as unknown as RunContext;
+      const deps: RefereeDeps = { baseTree: () => base, runCheck: (dir: string) => (dir === repoDir ? (/5430/.test(readFileSync(path, "utf8")) ? "fail" : "pass") : "not_run") };
+      expect(await adjudicateWallConflict(ctx, first(), sess(CLAIM), [{ path, content: ORIG }], deps)).toBeNull();
+      expect(evs).toEqual([{ type: "wall.arbitrated", data: { path, declined: expect.stringContaining("not_run") } }] as never);
+      expect(readFileSync(path, "utf8")).toBe(ORIG); applyArbitrations(wall, evs); expect(wall.arbitrated).toBeUndefined();
+    } finally { rmSync(repoDir, { recursive: true, force: true }); }
+  });
+});
+
+describe("base copy for red-on-base", () => {
+  test("an untracked project virtualenv is linked into the base copy, not copied", () => {
+    const repo = mkdtempSync(join(tmpdir(), "loki-e15-bt-")); let base: string | null = null;
+    try {
+      const g = (...a: string[]): void => { execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { stdio: "ignore" }); };
+      g("init", "-q"); writeFileSync(join(repo, "a.py"), "x = 1\n"); g("add", "a.py"); g("commit", "-q", "-m", "i");
+      mkdirSync(join(repo, ".venv", "bin"), { recursive: true }); writeFileSync(join(repo, ".venv", "bin", "python"), "");
+      const sha1 = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+      base = defaultBaseTree({ repoDir: repo, baseSha: sha1 } as RunContext);
+      expect(base).not.toBeNull(); expect(existsSync(join(base!, "a.py"))).toBe(true);
+      expect(lstatSync(join(base!, ".venv")).isSymbolicLink()).toBe(true); expect(existsSync(join(base!, ".venv", "bin", "python"))).toBe(true);
+    } finally { if (base) rmSync(base, { recursive: true, force: true }); rmSync(repo, { recursive: true, force: true }); }
+    expect(base !== null && existsSync(join(repo, ".venv"))).toBe(false);
   });
 });

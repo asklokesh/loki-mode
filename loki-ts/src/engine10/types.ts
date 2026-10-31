@@ -35,7 +35,7 @@ export const DEEP_IMPLEMENT_LIMIT_S = 1800; // ENGINE.md section 4: 480s, 1800s 
 export const MAX_FIX_ROUNDS = 2;
 export const EVENT_TYPES = [
   "run.started", "run.resumed", "stage.started", "stage.completed", "stage.failed", "stage.skipped",
-  "heartbeat", "session.started", "session.ended", "session.stalled", "cost", "budget", "wall.sealed", "wall.reauthor",
+  "heartbeat", "session.started", "session.ended", "session.stalled", "cost", "budget", "wall.sealed", "wall.reauthor", "wall.arbitrated",
   "tests.restored", "test.result", "test.scoped_out", "test.skipped_on_base", "fix.round", "already.satisfied", "spec.conflict",
   "session.group_reaped",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",

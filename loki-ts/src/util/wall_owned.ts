@@ -44,11 +44,17 @@ export function wallAnchor(reason: string, wall: readonly string[]): { file: str
 const DEF = /^[ \t]*(?:(?:export\s+)?(?:async\s+)?function\s+(test\w*)\b|(?:test|it)(?:\.\w+)*\s*\(\s*(["'`])(.+?)\2|(?:async\s+)?def\s+(test\w*)\s*\(|func\s+(Test\w*)\s*\(|(?:#\[test\]\s*)?fn\s+(test_\w+)\s*\()/;
 export interface TestSpan { name: string; start: number; end: number; } // lines [start, end)
 
-/** Test definitions of a Wall file in order; a span runs from its definition line to the next definition line (or the end of the file). */
+const indentOf = (l: string): number => (/^[ \t]*/.exec(l)![0]).replace(/\t/g, "        ").length;
+
+/** Test definitions of a Wall file in order; a span runs from its definition line through the last non-blank line indented deeper than the definition (its body), so code placed between two tests belongs to neither. */
 export function testSpans(content: string): TestSpan[] {
   const lines = content.split("\n"), defs: { name: string; start: number }[] = [];
   lines.forEach((l, i) => { const m = DEF.exec(l); if (m) defs.push({ name: m[1] ?? m[3] ?? m[4] ?? m[5] ?? m[6]!, start: i }); });
-  return defs.map((d, k) => ({ name: d.name, start: d.start, end: defs[k + 1]?.start ?? lines.length }));
+  return defs.map((d) => {
+    const ind = indentOf(lines[d.start]!); let end = d.start + 1;
+    for (let i = d.start + 1; i < lines.length; i++) { if (lines[i]!.trim() === "") continue; if (indentOf(lines[i]!) <= ind) break; end = i + 1; }
+    return { name: d.name, start: d.start, end };
+  });
 }
 
 /** Assertion-bearing lines: the number a replacement may never lower. */
@@ -66,6 +72,8 @@ export function editScopeViolation(before: string, after: string, name: string):
   const lo = p, hi = x.length - q; // changed original lines [lo, hi)
   if (lo <= sp.start) return "the edit touches the test definition line or lines before it"; // keeping the definition line verbatim is part of the scope
   if (hi > sp.end) return "the edit reaches outside the named test";
+  const ind = indentOf(x[sp.start]!), stray = y.slice(p, y.length - q).find((l) => l.trim() !== "" && indentOf(l) <= ind);
+  if (stray !== undefined) return `the edit adds a line at or above the indentation of the test definition (${stray.trim().slice(0, 60)}), outside the test body`; // a decorator, import or reassignment placed beside the test is not a change to its body
   return null;
 }
 

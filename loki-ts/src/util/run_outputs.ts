@@ -21,6 +21,7 @@ import { safeGit } from "./safe_git.ts";
 import { currentBranch } from "../e10ext/stop_restore.ts";
 import { shapeKeyForRun, sealedOutcomesByTier, tierOfModel, type ShapedReceipt } from "../runner/router/history.ts";
 import { formatPreModelLine, formatSummary, plainLine, type Outcome, type TierSeal, type PreModelTiming, type SummaryInput } from "../engine10/output.ts";
+import { applyArbitrations } from "./conflict_resume.ts";
 import { noteOf } from "./base_guard.ts";
 import { sourceId } from "../../../packages/control-plane/src/shipper/ship.ts";
 import { redactSecrets } from "./redact.ts";
@@ -321,6 +322,7 @@ export function resumeMachineOpts<F extends string>(ctx: Parameters<typeof seedR
   const all = events; events = effectiveEvents(all); // a pending answer hides the blocked attempt, so its conflicting stage and everything after it re-run
   const done = new Set<string>(STAGE_ORDER.filter((s) => (s === "intake" || s === "plan" || s === "wall" || s === "implement") && settled(events, s))), restored: StageOutputs = {};
   for (const s of done) { const e = events.findLast((x) => x.type === "stage.completed" && x.stage === s); if (e) restored[s] = e.data; }
+  if (restored["wall"]) { const wi = events.findLastIndex((x) => x.type === "stage.completed" && x.stage === "wall"); const w = restored["wall"] as Record<string, unknown>; restored["wall"] = { ...w, ...(Array.isArray(w["files"]) ? { files: (w["files"] as object[]).map((x) => ({ ...x })) } : {}), ...(Array.isArray(w["readOnlyFiles"]) ? { readOnlyFiles: (w["readOnlyFiles"] as object[]).map((x) => ({ ...x })) } : {}) }; applyArbitrations(restored["wall"], events.slice(wi + 1)); } // a Wall check arbitrated after its stage settled keeps its replacement hash and disclosure
   // D61-04: a deferred already-done hit lands on intake AFTER its stage.completed was written, so the flag is durable only in the supervisor-written already.attested event (SUPERVISOR_ONLY: a worker line of that type is dropped). It counts only if it precedes implement's stage.completed and no intent.revised follows it (stale evidence). Absent or malformed -> not satisfied (old logs restore as before).
   const hitIdx = events.findLastIndex((x) => x.type === "already.attested" && x.stage === "intake"), hit = hitIdx < 0 ? undefined : events[hitIdx], ev = hit?.data["evidence"];
   const implDone = events.findLastIndex((x) => x.type === "stage.completed" && x.stage === "implement");
