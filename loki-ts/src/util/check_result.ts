@@ -204,13 +204,18 @@ type Tri = 0 | 1 | 2;
 const triOr = (a: Tri, b: Tri): Tri => (a === YES || b === YES ? YES : a === UNKNOWN || b === UNKNOWN ? UNKNOWN : NO);
 const TOOL_ALIASES: Record<string, readonly string[]> = { cargo: ["cargo-nextest", "cross"] }; // cargo front ends: cross and cargo-nextest run cargo, so they count as cargo
 const INLINE_CODE_FLAGS = new Set(["-c", "-e", "-r", "-p", "--eval"]), INTERPRETERS = new Set(["python", "python3", "node", "ruby", "php"]);
-const GO_VERSIONED = /^go\d+(?:\.\d+){0,2}(?:rc\d+|beta\d+)?$/; // the golang.org/dl wrappers (go1.22, go1.22.3) run go
+const GO_VERSIONED = /^(?:go\d+(?:\.\d+){0,2}(?:rc\d+|beta\d+)?|gotip)$/; // the golang.org/dl wrappers (go1.22, go1.22.3, go1.23rc1, gotip) run go
 const wordIsTool = (tool: string, w: string): boolean => { const name = basename(w); return name === tool || (TOOL_ALIASES[tool]?.includes(name) ?? false) || (tool === "go" && GO_VERSIONED.test(name)); };
-/** A variable that stands for the tool: GO, CARGO, GOCMD, GO_BIN, CARGO_CMD (the tool name leads it or is one of its underscore parts). make DIR=go is not one. */
-const varNamesTool = (tool: string, v: string): boolean => { const l = v.toLowerCase(); return l.startsWith(tool) || l.split("_").includes(tool); };
+/** A variable that stands for the tool: GO, CARGO, GOCMD, GOTOOL, GO_BIN, CARGO_BIN (the tool name leads it or is one of its underscore parts). make DIR=go is not one, and neither are the tool's path and config variables. */
+const TOOL_PATH_VARS = new Set(["path", "root", "home", "dir", "cache", "modcache", "version", "toolchain", "flags", "os", "arch", "proxy"]);
+const varNamesTool = (tool: string, v: string): boolean => {
+  const l = v.toLowerCase(), last = l.split("_").pop()!;
+  if (l === "gobin" || TOOL_PATH_VARS.has(last) || (l.startsWith(tool) && TOOL_PATH_VARS.has(l.slice(tool.length)))) return false; // the tool's own path and config variables (GOPATH, GOROOT, CARGO_HOME, GO_VERSION) never name the binary
+  return l.startsWith(tool) || l.split("_").includes(tool);
+};
 const assignsTool = (tool: string, a: string): boolean => { const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(a); return m !== null && varNamesTool(tool, m[1]!) && (wordIsTool(tool, m[2]!) || varIsTool(tool, m[2]!)); };
 const SPAWN_API = /\b(?:system|popen|Popen|subprocess|check_output|check_call|exec|execFile|execFileSync|execSync|spawn|spawnSync|child_process|run|call)\b|`/;
-const DYNAMIC_CMD = /["']\s*\+\s*["']|\.join\(|\bchr\(|\bformat\(|\bf["']|%[sd]|\\x[0-9a-f]{2}|base64|fromCharCode|\$\{|\beval\b|\bgetattr\b|\bimport_module\b/;
+const DYNAMIC_CMD = /["']\s*\+\s*["']|["']\s+["']|\.join\(|\bchr\(|\bformat\(|\bf["']|%[sd]|\\x[0-9a-f]{2}|base64|fromCharCode|\$\{|\beval\b|\bgetattr\b|\bimport_module\b/;
 /** Inline interpreter code that runs the tool: `tool <arg>` text, the tool as a whole quoted argv element (subprocess.run(["go", "test"]), execFileSync("go", ["test"])), or code that spawns a process from a command built at run time (string concat, join, format), which cannot be read and so fails closed. */
 function inlineRunsTool(tool: string, code: string): boolean {
   if (new RegExp(`\\b${tool}\\s+\\S`).test(code) || new RegExp(`["'](?:[^"']*/)?${tool}["']`).test(code)) return true;

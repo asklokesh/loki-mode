@@ -1278,17 +1278,65 @@ done
     const pass = { result: "pass" as const, n: 3 };
     for (const line of ["pytest -q tests/go", "make test DIR=go", "make test GO=gcc", "make test", "npm test -- --grep cargo", "pytest -q tests/cross", "make test DIR=cargo", "make test CARGO=gcc", "python3 -c 'print(1)'", "${CC:-gcc} test"]) { expect([line, goRunner(line)]).toEqual([line, {}]); expect(await corroboratePass(pass, "", line, undefined, o)).toEqual(pass); }
   });
-  test("HV1-03j: a go or cargo run hidden by string concat, a list-form spawn, a prefix assignment, a tool-named make variable or a versioned go wrapper is not a pass", async () => {
-    const o = { cwd: tmpdir(), env: process.env }, CARGO_OK = "running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
-    const goLines = [`python3 -c 'import os; os.system("g"+"o test ./...")'`, `python3 -c 'import subprocess; subprocess.run(["go", "test", "./..."])'`, `node -e 'require("child_process").execFileSync("go", ["test"])'`, "GO=go make test", "env GO=go make test", "make GOCMD=go test", "make test GO=go1.22", "go1.22 test ./...", "GO=go1.22.3 make test"];
-    for (const line of goLines) {
-      expect([line, goRunner(line)]).toEqual([line, { runner: "go" }]);
-      expect([line, (await corroboratePass({ result: "pass", n: 2 }, GO_V, line, undefined, o)).result]).toEqual([line, "not_run"]);
-    }
-    for (const line of [`python3 -c 'import os; os.system("car"+"go test")'`, `python3 -c 'import subprocess; subprocess.run(["cargo", "test"])'`, "CARGO=cargo make test", "make CARGO_BIN=cargo test"]) expect([line, (await corroboratePass({ result: "pass", n: 2 }, CARGO_OK, line, undefined, o)).result]).toEqual([line, "not_run"]);
-    const pass = { result: "pass" as const, n: 3 };
-    for (const line of ["make test DIR=go", "DIR=go make test", "env CC=gcc make test", "make GOCMD=gcc test", "python3 -c 'print(\"a\"+\"b\")'", "pytest -q tests/go1"]) { expect([line, goRunner(line)]).toEqual([line, {}]); expect(await corroboratePass(pass, "", line, undefined, o)).toEqual(pass); }
-  });
+  // HV1-03j: one test per detection alternative, so removing any one alternative turns exactly its own line red.
+  const O3J = { cwd: tmpdir(), env: process.env }, CARGO_OK3J = "running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+  const goHidden: Array<[string, string]> = [
+    ["string concat", `python3 -c 'import os; os.system("g"+"o test ./...")'`],
+    ["adjacent quoted literals", `python3 -c "__import__('os').system('g' 'o test ./...')"`],
+    ["join", `python3 -c 'import os; os.system("".join(["g", "o", " test"]))'`],
+    ["format", `python3 -c 'import os; os.system("{}o test".format("g"))'`],
+    ["chr", `python3 -c 'import os; os.system(chr(103) + chr(111) + " test")'`],
+    ["percent format", `python3 -c 'import os; os.system("%so test" % "g")'`],
+    ["hex escape", `python3 -c 'import os; os.system("\\x67o test")'`],
+    ["base64", `python3 -c 'import os,base64; os.system(base64.b64decode("Z28gdGVzdA==").decode())'`],
+    ["eval", `python3 -c 'import os; os.system(eval(src))'`],
+    ["getattr", `python3 -c 'import os; getattr(os, "system")(src)'`],
+    ["import_module", `python3 -c 'import importlib; importlib.import_module("os").system(src)'`],
+    ["fromCharCode", `node -e 'require("child_process").execSync(String.fromCharCode(103, 111) + " test")'`],
+    ["template interpolation", "node -e 'require(\"child_process\").execSync(`${a}o test`)'"],
+    ["list-form python spawn", `python3 -c 'import subprocess; subprocess.run(["go", "test", "./..."])'`],
+    ["list-form node spawn", `node -e 'require("child_process").execFileSync("go", ["test"])'`],
+    ["prefix assignment", "GO=go make test"],
+    ["env prefix assignment", "env GO=go make test"],
+    ["tool-named make variable GOCMD", "make GOCMD=go test"],
+    ["tool-named make variable GOTOOL", "make GOTOOL=go test"],
+    ["versioned assignment go1.22", "make test GO=go1.22"],
+    ["versioned command go1.22", "go1.22 test ./..."],
+    ["versioned prefix assignment go1.22.3", "GO=go1.22.3 make test"],
+    ["release candidate wrapper go1.22rc1", "go1.22rc1 test ./..."],
+    ["beta wrapper go1.23beta2", "go1.23beta2 test ./..."],
+    ["gotip command", "gotip test ./..."],
+    ["gotip assignment", "make test GO=gotip"],
+  ];
+  for (const [what, line] of goHidden) {
+    test(`HV1-03j: go hidden by ${what} is not a pass`, async () => {
+      expect(goRunner(line)).toEqual({ runner: "go" });
+      expect((await corroboratePass({ result: "pass", n: 2 }, GO_V, line, undefined, O3J)).result).toBe("not_run");
+    });
+  }
+  const cargoHidden: Array<[string, string]> = [
+    ["string concat", `python3 -c 'import os; os.system("car"+"go test")'`],
+    ["adjacent quoted literals", `python3 -c "__import__('os').system('ca' 'rgo test')"`],
+    ["list-form spawn", `python3 -c 'import subprocess; subprocess.run(["cargo", "test"])'`],
+    ["prefix assignment", "CARGO=cargo make test"],
+    ["tool-named make variable", "make CARGO_BIN=cargo test"],
+  ];
+  for (const [what, line] of cargoHidden) {
+    test(`HV1-03j: cargo hidden by ${what} is not a pass`, async () => {
+      expect((await corroboratePass({ result: "pass", n: 2 }, CARGO_OK3J, line, undefined, O3J)).result).toBe("not_run");
+    });
+  }
+  // The tool's own path and config variables never name the binary, so an honest pass stays a pass.
+  const stillPass = ["make test DIR=go", "DIR=go make test", "env CC=gcc make test", "make GOCMD=gcc test", "python3 -c 'print(\"a\"+\"b\")'", "pytest -q tests/go1",
+    "GOPATH=$HOME/go npm test", "GOROOT=/usr/local/go pytest -q", "env GOPATH=/root/go make test", "CARGO_HOME=/opt/cargo npm test", "CARGO_TARGET_DIR=/tmp/cargo pytest", "make GO_VERSION=go1.22 test",
+    "GOBIN=/usr/local/go/bin npm test", "GOMODCACHE=/tmp/go pytest", "GOFLAGS=-mod=vendor npm test", "GOOS=linux make test", "GOPROXY=off npm test", "GOTOOLCHAIN=go1.22 make test"];
+  for (const line of stillPass) {
+    test(`HV1-03j: ${line} stays an honest pass`, async () => {
+      const pass = { result: "pass" as const, n: 3 };
+      expect(goRunner(line)).toEqual({});
+      expect(await corroboratePass(pass, "", line, undefined, O3J)).toEqual(pass);
+    });
+  }
   test("HV1-03i: a go run behind a default-value expansion of an unrelated variable name is not a pass", async () => {
     const o = { cwd: tmpdir(), env: process.env }, line = "${GOCMD:-go} test ./...";
     expect([line, goRunner(line)]).toEqual([line, { runner: "go" }]);
