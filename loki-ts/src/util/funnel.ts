@@ -8,6 +8,7 @@ import { REPO_ROOT, lokiDirFor } from "./paths.ts";
 import { listProjectFiles, tokenFreeEnv } from "./safe_git.ts";
 import { languageBytes } from "../project_model/linguist.ts";
 import { buildTestMap } from "../engine10/testmap.ts";
+import type { RunnerName } from "../engine10/types.ts";
 
 export type FunnelKind = "first_run_blocked" | "build_verified" | "run_started" | "run_finished";
 
@@ -53,7 +54,8 @@ export const RUN_PROVIDERS = ["claude", "codex", "cline", "aider", "opencode", "
 export const MODEL_TIERS = ["fast", "balanced", "deep", "mixed", "unknown"] as const;
 export const LANG_BUCKETS = ["python", "javascript", "typescript", "go", "rust", "java", "ruby", "php", "csharp", "c_cpp", "shell", "other"] as const;
 export const SIZE_BUCKETS = ["xs", "s", "m", "l", "xl"] as const;
-export const RUNNER_KINDS = ["pytest", "unittest", "vitest", "jest", "npm", "bun", "node", "go", "cargo", "maven", "gradle", "javac", "none", "unknown"] as const;
+/** The runner bucket is the Wall's own RunnerName (engine10/types.ts) plus none and unknown, so funnel.ts holds no runner literals; the schema enum is pinned to that type in funnel_run_events.test.ts. */
+export type RunnerKind = RunnerName | "none" | "unknown";
 export const COST_BUCKETS = ["lt_1", "lt_5", "lt_20", "ge_20", "unknown"] as const;
 export const TOKEN_BUCKETS = ["lt_100k", "lt_1m", "lt_10m", "ge_10m", "unknown"] as const;
 const LANG_EXTS: Readonly<Record<string, (typeof LANG_BUCKETS)[number]>> = { py: "python", js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript", ts: "typescript", tsx: "typescript", go: "go", rs: "rust", java: "java", rb: "ruby", php: "php", cs: "csharp", c: "c_cpp", h: "c_cpp", cc: "c_cpp", cpp: "c_cpp", hpp: "c_cpp", sh: "shell", bash: "shell" };
@@ -85,7 +87,7 @@ export const modelTier = (model: unknown, perModel?: unknown): (typeof MODEL_TIE
 const providerBucket = (v: unknown): (typeof RUN_PROVIDERS)[number] => (typeof v !== "string" ? "unknown" : ["claude", "codex", "cline", "aider", "opencode"].includes(v) ? (v as (typeof RUN_PROVIDERS)[number]) : "other");
 /** Repo-derived buckets: tracked file count, top language by linguist bytes, first detected test runner. Names and paths are read but only the bucket leaves. */
 function repoBuckets(cwd: string): string[] {
-  let size: (typeof SIZE_BUCKETS)[number] = "xs", lang: (typeof LANG_BUCKETS)[number] = "other", runner: (typeof RUNNER_KINDS)[number] = "unknown";
+  let size: (typeof SIZE_BUCKETS)[number] = "xs", lang: (typeof LANG_BUCKETS)[number] = "other", runner: RunnerKind = "unknown";
   try {
     const files = listProjectFiles(cwd);
     size = sizeBucket(files.length);
@@ -93,7 +95,7 @@ function repoBuckets(cwd: string): string[] {
     let best = 0;
     for (const [k, v] of bytes) if (v > best && (LANG_BUCKETS as readonly string[]).includes(k)) { best = v; lang = k as (typeof LANG_BUCKETS)[number]; }
   } catch { /* stays at the defaults */ }
-  try { const r = buildTestMap(cwd).runners[0]; runner = r && (RUNNER_KINDS as readonly string[]).includes(r) ? r : "none"; } catch { /* unknown */ }
+  try { const r = buildTestMap(cwd).runners[0]; runner = r ?? "none"; } catch { /* unknown */ }
   return [`lang_bucket=${lang}`, `repo_size_bucket=${size}`, `test_runner=${runner}`];
 }
 

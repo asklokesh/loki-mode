@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { COST_BUCKETS, LANG_BUCKETS, MODEL_TIERS, RUNNER_KINDS, RUN_PROVIDERS, SIZE_BUCKETS, TOKEN_BUCKETS, costBucket, modelTier, runFinishedArgs, sizeBucket, tokenBucket } from "../../src/util/funnel.ts";
+import type { RunnerName } from "../../src/engine10/types.ts";
+import { COST_BUCKETS, LANG_BUCKETS, MODEL_TIERS, RUN_PROVIDERS, SIZE_BUCKETS, TOKEN_BUCKETS, costBucket, modelTier, runFinishedArgs, sizeBucket, tokenBucket } from "../../src/util/funnel.ts";
 
 let cwd = "";
 const savedLokiDir = process.env["LOKI_DIR"];
@@ -142,10 +143,15 @@ describe("AN-06 cost bucket honesty and failover key", () => {
 describe("AN-06 schema and funnel.ts enum lists agree", () => {
   const schema = JSON.parse(readFileSync(join(import.meta.dir, "../../../autonomy/lib/telemetry-schema.json"), "utf8")) as { events: Record<string, Record<string, { values?: string[] }>> };
   const rf = schema.events["run_finished"]!;
-  const lists: Record<string, readonly string[]> = { provider: RUN_PROVIDERS, model_tier: MODEL_TIERS, lang_bucket: LANG_BUCKETS, repo_size_bucket: SIZE_BUCKETS, test_runner: RUNNER_KINDS, cost_bucket: COST_BUCKETS, token_bucket: TOKEN_BUCKETS };
+  const lists: Record<string, readonly string[]> = { provider: RUN_PROVIDERS, model_tier: MODEL_TIERS, lang_bucket: LANG_BUCKETS, repo_size_bucket: SIZE_BUCKETS, cost_bucket: COST_BUCKETS, token_bucket: TOKEN_BUCKETS };
   for (const [key, list] of Object.entries(lists)) {
     test(`run_finished.${key} schema enum equals the funnel.ts list`, () => { expect(rf[key]?.values).toEqual([...list]); });
   }
+  // Exhaustive over the Wall's RunnerName: adding a runner there fails to compile here until the schema enum is updated too.
+  const runnerNames: Record<RunnerName, true> = { pytest: true, unittest: true, vitest: true, jest: true, npm: true, bun: true, node: true, go: true, cargo: true, maven: true, gradle: true, javac: true };
+  test("run_finished.test_runner schema enum equals the Wall RunnerName plus none and unknown", () => {
+    expect(rf["test_runner"]?.values).toEqual([...Object.keys(runnerNames), "none", "unknown"]);
+  });
   test("every key runFinishedArgs can emit is in the run_finished schema", () => {
     receipt({ verdict: "VERIFIED", time: { total_s: 5, stages: { wall: 1 } }, cost: { fix_rounds: [{}], usd: 1, input_tokens: 1, output_tokens: 1 }, failover: [{}] });
     for (const p of runFinishedArgs(0, cwd).slice(1)) expect(Object.keys(rf)).toContain(p.slice(0, p.indexOf("=")));
