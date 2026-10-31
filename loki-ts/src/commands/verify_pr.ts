@@ -22,20 +22,72 @@ function textMatchesOrUnreadable(path: string, test: (txt: string) => boolean): 
 
 /** Changed in a PR, these always count as runner config whatever they hold: transpiler config (babel), interpreter startup hooks (sitecustomize.py, usercustomize.py, *.pth), mocha config, and anything under a __mocks__ directory (the runner applies those without the test asking, and a `roots` setting can move them out of the repo root). */
 const ALWAYS_CONFIG = /(?:^|\/)(?:babel\.config\.[\w.]+|\.babelrc(?:\.[\w.]+)?|(?:site|user)customize\.py|[^/]+\.pth|\.mocharc(?:\.[\w.]+)?)$|(?:^|\/)__mocks__\//;
-const OPEN = "\0open", NAMES = /^\s*(?:["'][\w.]+["']\s*(?:,\s*|$))*$/, DYNAMIC = /\b(?:setattr|exec|eval|compile|__import__|importlib|pluginmanager|__dict__)\b|\b(?:globals|vars)\s*\(/;
-/** Plugin modules named in a config text, or [OPEN] when its `pytest_plugins` cannot be fully read: an assignment that is not a closed literal of plain quoted module names (non-literal value, over-long annotation, no closer, a comment, adjacent strings or an escape inside it), or any other use of the name (+=, .append, .extend, globals(), an import), or a conftest that can set it or load plugins dynamically (setattr, exec, eval, globals(), pluginmanager and the like); the text is NFKC-normalized first, as Python does for identifiers. Each closer is found with indexOf from its opener and the scan resumes after each literal, so long lists parse and the scan stays linear. */
-function pluginMods(raw: string, py = false): string[] {
-  const txt = raw.normalize("NFKC"), dotted = (m: RegExpMatchArray) => m[1]!.replace(/\./g, "/"), named: string[] = [], a = /\bpytest_plugins\s*(?::[^=\n]{0,200})?=(?!=)\s*/g;
-  let n = 0, g: RegExpExecArray | null;
-  if (/\bpytest_plugins\s*:[^=\n]{201}/.test(txt) || (py && DYNAMIC.test(txt))) return [OPEN];
-  while ((g = a.exec(txt))) {
-    const i = a.lastIndex, o = txt[i]!, c = o === "[" ? "]" : o === "(" ? ")" : o === '"' || o === "'" ? o : "", e = c ? txt.indexOf(c, i + 1) : -1, end = /[ \t]*(?:#[^\n]*)?(?:\r?\n|$)/y;
-    end.lastIndex = e + 1;
-    if (e < 0 || !(c === o ? /^[\w.]+$/ : NAMES).test(txt.slice(i + 1, e)) || !end.test(txt)) return [OPEN];
-    named.push(...[...txt.slice(i, e + 1).matchAll(/["']([\w.]+)["']/g)].map(dotted)); n++; a.lastIndex = e + 1;
+const OPEN = "\0open", IMPORT = "\x01", PLUGIN = "\x02";
+/** Run by `python3 -I` on a conftest's text (stdin); the text is parsed with Python's own `ast` and never executed. Prints JSON `{plugins, imports}`, or exits non-zero (OPEN) when the file cannot be read as a plain conftest: a parse error; the `pytest_plugins` name used anywhere but a module-level assignment of a string or a list or tuple of ASCII `[\w.]+` strings; a string, name or attribute holding the plugin names, the plugin manager, `import_plugin`, `addopts` or a `-p` option; a name or attribute that sets, reads or builds attributes or code dynamically (setattr, getattr, delattr, exec, eval, compile except re.compile, __import__, globals, locals, vars, import_module, importlib, builtins, sys.modules, frames) or any dunder attribute. `imports` lists every module the file imports (relative ones keep their leading dots; `from m import n` lists m and m.n). */
+const SCAN = `
+import ast, json, re, sys, unicodedata
+nf = lambda s: unicodedata.normalize("NFKC", s)
+T = sys.argv[1]
+WORDS = (T, "pluginmanager", "import_plugin", "addopts")
+BAD = {"setattr", "getattr", "delattr", "exec", "eval", "compile", "__import__", "globals", "locals", "vars", "import_module", "importlib", "builtins", "__builtins__"}
+ATTR = BAD | {"modules", "f_globals", "f_locals", "_getframe", "currentframe", "stack"}
+OKDUNDER = {"__file__", "__name__", "__doc__", "__package__"}
+def stop(): raise SystemExit(1)
+tree = ast.parse(sys.stdin.buffer.read().decode("utf-8"))
+plugins, imports, canon = [], [], set()
+for st in tree.body:
+    t = v = None
+    if isinstance(st, ast.Assign) and len(st.targets) == 1: t, v = st.targets[0], st.value
+    elif isinstance(st, ast.AnnAssign) and st.value is not None: t, v = st.target, st.value
+    if not (isinstance(t, ast.Name) and t.id == T): continue
+    if isinstance(v, ast.Constant) and isinstance(v.value, str): vals = [v.value]
+    elif isinstance(v, (ast.List, ast.Tuple)) and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in v.elts): vals = [e.value for e in v.elts]
+    else: stop()
+    if not all(x.isascii() and re.fullmatch(r"[\\w.]+", x, re.A) for x in vals): stop()
+    canon.add(id(t)); plugins += vals
+for n in ast.walk(tree):
+    if id(n) in canon: continue
+    for _, val in ast.iter_fields(n):
+        for x in (val if isinstance(val, list) else [val]):
+            if isinstance(x, bytes): x = x.decode("latin-1")
+            if not isinstance(x, str): continue
+            z = nf(x).lower()
+            if any(w in z or w in x.lower() for w in WORDS) or re.match(r"\\s*-p", z): stop()
+    if isinstance(n, ast.Name) and (n.id in BAD or (n.id.startswith("__") and n.id.endswith("__") and n.id not in OKDUNDER)): stop()
+    if isinstance(n, ast.Attribute):
+        if n.attr.startswith("__") and n.attr.endswith("__"): stop()
+        if n.attr in ATTR and not (n.attr == "compile" and isinstance(n.value, ast.Name) and n.value.id == "re"): stop()
+    if isinstance(n, ast.Import):
+        for a in n.names:
+            if a.name.split(".")[0] in BAD: stop()
+            imports.append(a.name)
+    if isinstance(n, ast.ImportFrom):
+        base = "." * n.level + (n.module or "")
+        if (n.module or "").split(".")[0] in BAD: stop()
+        imports.append(base)
+        for a in n.names:
+            if a.name in ATTR: stop()
+            if a.name != "*": imports.append(base + ("" if base.endswith(".") else ".") + a.name)
+print(json.dumps({"plugins": plugins, "imports": imports}))
+`;
+/** The conftest text read by Python's parser (see SCAN), or null (OPEN) when python3 is missing, times out, exits non-zero or prints anything but the expected JSON. */
+function conftestScan(txt: string): { plugins: string[]; imports: string[] } | null {
+  try {
+    const r = spawnSync("python3", ["-I", "-c", SCAN, "pytest_plugins"], { input: txt, encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL", cwd: tmpdir(), env: tokenFreeEnv(process.env), maxBuffer: 1 << 24 });
+    if (r.error || r.status !== 0) return null;
+    const j = JSON.parse(r.stdout) as { plugins?: unknown; imports?: unknown };
+    return Array.isArray(j.plugins) && Array.isArray(j.imports) ? { plugins: j.plugins.map(String), imports: j.imports.map(String) } : null;
+  } catch { return null; }
+}
+/** Plugin modules named by `-p` in an ini, cfg or toml runner config (bare, quoted, list or attached form; `-p no:name` switches a plugin off), or [OPEN] when a named module is not a plain `[\w.]+` word (an escape, an adjacent quote, a non-ASCII letter), because the runner would load a different file than the text shows. */
+function iniPlugins(txt: string): string[] {
+  const out: string[] = [];
+  for (const m of txt.matchAll(/(?:^|[\s"'[,])-p["']?(?:\s*,)?\s*["']?([^\s,\]]*)/g)) {
+    const w = m[1]!.replace(/["']$/, "");
+    if (/^[\w.]+$/.test(w) && /^[\x00-\x7f]+$/.test(w)) out.push(w.replace(/\./g, "/"));
+    else if (w && !/^no:[\w.-]+$/.test(w)) return [OPEN];
   }
-  if ((txt.match(/\bpytest_plugins\b(?!\s*==)/g) ?? []).length !== n) return [OPEN];
-  return [...[...txt.matchAll(/(?:^|[\s"'\[,])-p["']?(?:\s*,)?\s*["']?([\w.]+)(?![\w.:])/g)].map(dotted), ...named];
+  return out;
 }
 /** Repo paths named by a runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest) and Python test-runner plugin modules (`-p`, bare, quoted or list form, in an ini, cfg or toml config; `pytest_plugins` in conftest.py; a dotted name maps to a path). Editing such a file changes what the runner loads even when the config itself is unchanged. */
 function configRefs(changed: readonly string[], roots: readonly string[]): Set<string> {
@@ -43,7 +95,11 @@ function configRefs(changed: readonly string[], roots: readonly string[]): Set<s
   for (const root of new Set(roots)) for (const d of dirs) for (const n of (() => { try { return readdirSync(join(root, d)); } catch { return []; } })()) {
     const r = REPORT_RUNNERS.find((x) => x.config.test(n)), ini = /\.(?:ini|cfg)$|^pyproject\.toml$|^conftest\.py$/.test(n); let txt: string;
     if ((!r && !ini) || (n.endsWith(".py") && n !== "conftest.py")) continue; try { txt = readFileSync(join(root, d, n), "utf8"); if (r?.key && !n.startsWith(r.runner)) txt = JSON.stringify((JSON.parse(txt) as Record<string, unknown>)[r.key] ?? ""); } catch { continue; }
-    for (const t of ini ? pluginMods(txt, n === "conftest.py") : [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) { if (t === OPEN) { out.add("\0" + posix.join(d, n)); continue; } const p = posix.normalize(posix.join(d, t)); if (/[a-z]/i.test(t) && !/[*?^$|()[\]\\{}<>\s]/.test(t) && !t.startsWith("/") && !p.startsWith("..")) out.add(p); }
+    const scan = n === "conftest.py" ? conftestScan(txt) : null, me = posix.join(d, n);
+    if (n === "conftest.py" && !scan) { out.add("\0" + me); continue; }
+    for (const m of scan?.imports ?? []) { const up = /^\.+/.exec(m)?.[0].length ?? 0, rest = m.slice(up).replace(/\./g, "/"); out.add(up ? `${IMPORT}${me}\t${posix.normalize(posix.join(d, ...Array(up - 1).fill(".."), rest))}` : `${PLUGIN}${me}\t${rest}`); }
+    for (const m of scan?.plugins ?? []) out.add(`${PLUGIN}${me}\t${m.replace(/\./g, "/")}`);
+    for (const t of scan ? scan.plugins.map((m) => m.replace(/\./g, "/")) : ini ? iniPlugins(txt) : [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) { if (t === OPEN) { out.add("\0" + me); continue; } const p = posix.normalize(posix.join(d, t)); if (/[a-z]/i.test(t) && !/[*?^$|()[\]\\{}<>\s]/.test(t) && !t.startsWith("/") && !p.startsWith("..")) out.add(p); }
   }
   return out;
 }
@@ -51,7 +107,9 @@ function configRefs(changed: readonly string[], roots: readonly string[]): Set<s
 export function runnerConfigChanged(changed: readonly string[], headDir: string, baseDir: string = headDir): string[] {
   const refs = configRefs(changed, [headDir, baseDir]), open = [...refs].filter((r) => r[0] === "\0").map((r) => r.slice(1));
   const hit = changed.filter((f) => f.endsWith(".py") && open.some((c) => f.startsWith(posix.dirname(c) === "." ? "" : posix.dirname(c) + "/")));
-  return [...hit, ...(hit.length ? open.map((c) => `${c} (pytest_plugins is not a closed literal)`) : [])].concat(changed.filter((f) => {
+  const via = [...refs].filter((r) => r[0] === IMPORT || r[0] === PLUGIN).map((r) => ({ anchored: r[0] === IMPORT, conftest: r.slice(1).split("\t")[0]!, mod: r.slice(1).split("\t")[1]! }));
+  const imported = changed.filter((f) => { const s = "/" + f.replace(/\.py$/, "").replace(/\/__init__$/, "") + "/"; return f.endsWith(".py") && !hit.includes(f) && via.some((v) => v.anchored ? v.mod === "" || s.startsWith("/" + v.mod + "/") : s.includes("/" + v.mod + "/")); });
+  return [...hit, ...imported, ...(hit.length ? open.map((c) => `${c} (pytest_plugins is not a closed literal)`) : []), ...(imported.length ? [...new Set(via.map((v) => v.conftest))].map((c) => `${c} (imports or loads a module the PR changed)`) : [])].concat(changed.filter((f) => {
     const b = basename(f), r = REPORT_RUNNERS.find((x) => x.config.test(b));
     if (ALWAYS_CONFIG.test(f) || refs.has(f) || refs.has(f.replace(/\.[^./]+$/, "")) || refs.has(f.replace(/\/__init__\.py$/, ""))) return true;
     const at = [headDir, baseDir].filter((d, i, a) => a.indexOf(d) === i && existsSync(join(d, f)));
@@ -59,7 +117,7 @@ export function runnerConfigChanged(changed: readonly string[], headDir: string,
     if (at.length === 0 || (r && !r.key)) return !!r || at.length > 0;
     if (!r && !/\.(?:ini|cfg|toml)$/.test(f)) return false;
     return at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => r ? !r.key || b.startsWith(r.runner) || r.key in (JSON.parse(txt) as object) : /^\s*\[[^\]\n]*test|^[ \t]*[\w."' \t-]*\bpytest\b["']?[ \t]*(?:\.|=[ \t]*\{)/im.test(txt)));
-  }).filter((f) => !hit.includes(f)));
+  }).filter((f) => !hit.includes(f) && !imported.includes(f)));
 }
 
 export interface PrRef { repo: string; number: number }

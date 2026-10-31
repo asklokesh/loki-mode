@@ -583,6 +583,23 @@ describe("verify-pr: an exit code alone is not proof", () => {
     ["N11 fullwidth low line in the name", { ...PLUG_REF, "conftest.py": "pytest＿plugins = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
     ["N17 pluginmanager.import_plugin in pytest_configure", { ...PLUG_REF, "conftest.py": "def pytest_configure(config):\n    config.pluginmanager.import_plugin(\"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
     ["N18 pluginmanager.register in pytest_configure", { ...PLUG_REF, "conftest.py": "import plug\ndef pytest_configure(config):\n    config.pluginmanager.register(plug)\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R01 locals() key built by implicit concatenation", { ...PLUG_REF, "conftest.py": "locals()[\"pytest_\" \"plugins\"] = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R02 module __setattr__ with a concatenated name", { ...PLUG_REF, "conftest.py": "import sys\nsys.modules[__name__].__setattr__(\"pytest_\" \"plugins\", [\"plug\"])\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R03 getattr(builtins, setattr) on the module", { ...PLUG_REF, "conftest.py": "import sys, builtins\ngetattr(builtins, \"set\" \"attr\")(sys.modules[__name__], \"pytest_\" \"plugins\", [\"plug\"])\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R04 __builtins__ exec with a concatenated name", { ...PLUG_REF, "conftest.py": "__builtins__[\"ex\" \"ec\"](\"pytest_\" \"plugins = ['plug']\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R05 getattr(config, pluginmanager).import_plugin", { ...PLUG_REF, "conftest.py": "def pytest_configure(config):\n    getattr(config, \"plugin\" \"manager\").import_plugin(\"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R06a star import of the edited module", { ...PLUG_REF, "conftest.py": "from plug import *\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R06b plain import of the edited module", { ...PLUG_REF, "conftest.py": "import plug\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R06c from-import of a name in the edited module", { ...PLUG_REF, "conftest.py": "from plug import x\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R06d relative from-import of the edited module", { ...PLUG_REF, "conftest.py": "from . import plug\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R06e import of a submodule of the edited package", { ...PLUG_REF, "conftest.py": "import plug.sub\n" }, { "plug/sub.py": HOOK }, 4, /plug\/sub\.py/],
+    ["R07 fullwidth plugin name, fullwidth module edited", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"\uff50lug\"]\n" }, { "ｐlug.py": HOOK }, 4, /ｐlug\.py/],
+    ["R14 type(sys).__setattr__ on the module", { ...PLUG_REF, "conftest.py": "import sys\ntype(sys).__setattr__(sys.modules[__name__], \"pytest_\" \"plugins\", [\"plug\"])\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R15 the plugin list read through a frame", { ...PLUG_REF, "conftest.py": "import sys\nsys._getframe().f_globals[\"pytest_\" + \"plugins\"] = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R16 a syntax error in the conftest", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"plug\"\n" }, { "plug.py": HOOK }, 4, /conftest\.py/],
+    ["R17 fullwidth -p module in an ini file", { ...PLUG_REF, "pytest.ini": "[pytest]\naddopts = -p \uff50lug\n" }, { "\uff50lug.py": HOOK }, 4, /pytest\.ini|\uff50lug\.py/],
+    ["R18 -p module spliced from adjacent quotes in an ini file", { ...PLUG_REF, "pytest.ini": "[pytest]\naddopts = -p \"pl\"ug\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["L1 conftest with stdlib imports, a regex and a fixture", { ...PLUG_REF, "conftest.py": "import os\nimport re\nimport pytest\n\nPAT = re.compile(\"x\")\n\n@pytest.fixture\ndef f():\n    return os.getcwd()\n" }, {  }, 0, /^$/],
     ["A13 package plugin __init__.py rewritten", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = \"-p plug\"\n", "plug.py": null, "plug/__init__.py": "# plugin\n" }, { "plug/__init__.py": HOOK }, 4, /plug\/__init__\.py/],
     ["a referenced plugin left unchanged while the bug is fixed", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = [\"-p\", \"plug\"]\n", "conftest.py": "pytest_plugins = [\"plug\"]\n" }, {}, 0, /^$/],
   ] as const)("a PR where %s", async (_n, baseEdits, edits, rc, reason) => {
@@ -641,6 +658,17 @@ describe("verify-pr: an exit code alone is not proof", () => {
     const r = runnerConfigChanged(["a.py"], d);
     expect(performance.now() - t0).toBeLessThan(1000);
     expect(r.join(" ")).toContain("a.py");
+  });
+
+  test("a conftest is NOT PROVEN when python3 cannot be run, never read by a fallback", () => {
+    const d = join(dir, "no-python");
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, "conftest.py"), "pytest_plugins = [\"plug\"]\n");
+    writeFileSync(join(d, "other.py"), "x = 1\n");
+    const path = process.env.PATH;
+    process.env.PATH = join(d, "empty-bin");
+    try { expect(runnerConfigChanged(["other.py"], d).join(" ")).toContain("other.py"); } finally { process.env.PATH = path; }
+    expect(runnerConfigChanged(["other.py"], d)).toEqual([]);
   });
 
   test("a 1MB unclosed pytest_plugins list is NOT PROVEN, not clean, and is read in under a second", () => {
