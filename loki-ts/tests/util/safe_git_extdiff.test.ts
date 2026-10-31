@@ -213,13 +213,15 @@ describe("FC-REVIEWER-GIT-CONFIG-EXEC round 2", () => {
   test("lazy fetch: a missing promisor object fires core.sshCommand in plain git and not under reviewerGitEnv", () => {
     rmSync(hit2, { force: true });
     tryRun(base(), "show", "lazy:missing.txt"); tryRun(base(), "show", "refs/heads/lazy"); tryRun(base(), "diff", "HEAD", "refs/heads/lazy");
-    const controlFired = fired().includes("sshcmd");
+    // LOKI_TEST_FORCE_LAZY_CONTROL_MISS=1 simulates a git that never lazy-fetches, to prove the guard below bites.
+    const controlFired = process.env["LOKI_TEST_FORCE_LAZY_CONTROL_MISS"] === "1" ? false : fired().includes("sshcmd");
     rmSync(hit2, { force: true });
     const env = safe();
     expect(env.GIT_NO_LAZY_FETCH).toBe("1");
     if (!controlFired) {
       // The positive control is the precondition: if this git never lazy-fetches over core.sshCommand here (the CI runner's
-      // git 2.56.0 did not), the not-fired check below proves nothing. Say so instead of passing silently.
+      // git 2.56.0 did not), the not-fired check below proves nothing. CI says so and moves on; a dev machine fails loudly.
+      if (!process.env["GITHUB_ACTIONS"]) throw new Error("lazy-fetch control did not fire: plain git did not run core.sshCommand for a missing promisor object, so the reviewerGitEnv check would prove nothing");
       console.warn(`SKIP lazy-fetch fire check: plain git ${execFileSync("git", ["--version"], { encoding: "utf8" }).trim()} did not run core.sshCommand for a missing promisor object, so reviewerGitEnv cannot be compared against it`);
       return;
     }
