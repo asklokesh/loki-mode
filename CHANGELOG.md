@@ -5,12 +5,6 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
-
-### Added
-
-- `loki trust` now shows each path's progress toward your earned-merge policy (for example "src/api: 12 of 20 VERIFIED, 0 reverts, 8 more needed") and why a path is refused (protected, reverted, or reverts unknown in a shallow clone); the merge gate reads the same rule, and auto-merge stays off by default.
-
 ## v11.95.0 (2026-10-31)
 
 `loki answer` now resumes a blocked run in place, a Wall test that contradicts the task is settled by two referees and caps the Seal at PARTIAL, implement sessions refuse file writes outside their worktree, and a test-command timeout now kills the whole runner process group.
