@@ -23,8 +23,6 @@ export function tornTail(raw: string): boolean {
   try { JSON.parse(last); return false; } catch { return true; }
 }
 
-/** The events the receipt hash actually covers: the line-aligned prefix of events.jsonl hashing to events_sha256 (verify_cmd checkEventLog's rule), cut at log.sealed.
- *  Lines appended after seal are unbound and prove nothing. Null when no prefix matches (checkEventLog already reports that as TAMPERED). */
 /** An answered run.resumed: answered:true with a string answer whose recorded answer_sha256 is the sha256 of that answer (what `loki answer` writes). */
 export const isAnsweredResume = (e: EventEnvelope): boolean => e.type === "run.resumed" && e.data["answered"] === true && typeof e.data["answer"] === "string" && e.data["answer_sha256"] === createHash("sha256").update(e.data["answer"]).digest("hex");
 /** True when the receipt.sealed at `seal` is an earlier attempt of an answered BLOCKED run: its next run.completed is a SPEC_CONFLICT that comes before `next`, and an answered resume follows it before `next`. */
@@ -33,6 +31,8 @@ export function answeredBlockedBetween(events: readonly EventEnvelope[], seal: n
   return c > seal && events[c]!.data["verdict"] === "SPEC_CONFLICT" && events.some((e, i) => i > c && i < next && isAnsweredResume(e));
 }
 
+/** The events the receipt hash actually covers: the line-aligned prefix of events.jsonl hashing to events_sha256 (verify_cmd checkEventLog's rule), cut at log.sealed.
+ *  Lines appended after seal are unbound and prove nothing. Null when no prefix matches (checkEventLog already reports that as TAMPERED). */
 function boundEvents(log: string, bound: string): EventEnvelope[] | null {
   if (!existsSync(log)) return null;
   const lines = readFileSync(log, "utf8").split("\n").filter((l) => l.trim() !== ""), h = createHash("sha256");

@@ -1,14 +1,15 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, createPublicKey } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { redactSecrets } from "../../src/util/redact.ts";
 import { loadSigningKey } from "../../src/util/receipt_signer.ts";
 import { runSupervisor, SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { readEvents } from "../../src/engine10/events.ts";
-import { findInterrupted, isCancelDone, resumeMain, resumePoint, resumePublish, phaseOf, startRecovery, type RunPrFn } from "../../src/util/run_outputs.ts";
+import { findInterrupted, isCancelDone, resumeFlag, resumeMain, resumePoint, resumePublish, phaseOf, startRecovery, type RunPrFn } from "../../src/util/run_outputs.ts";
 import { sealDrift, verifyLogSeals } from "../../src/util/seal_drift.ts";
 import { main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
@@ -182,6 +183,105 @@ test("A11b an unsigned worker-writable event spoofing answered does not widen th
   log.append("test.result", "verify", { name: "unit", cmd: "bun test", result: "pass" });
   seal(dir, id, ev, log, [{ name: "unit", cmd: "bun test", result: "pass" }], false); log.append("run.completed", null, { verdict: "VERIFIED" });
   expect(await cli(join(dir, "receipt.json"))).toContain("TAMPERED:receipt claims pass");
+});
+
+// Attack and contract rows against the answered-resume check: each mutant of isAnsweredResume / answeredBlockedBetween / boundEvents is killed by a row here.
+type Op = ["seal", string[]] | ["done", string] | ["resumed", Record<string, unknown>] | ["pass", string];
+/** A log built op by op through SupervisorLog.append, as the supervisor writes it (signed: every run.completed is chain-sealed). */
+function build(ops: Op[], signed = true): { dir: string; ev: string; rc: string } {
+  const id = `e10-r4-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  let log = new SupervisorLog(ev, id);
+  log.append("run.started", null, { provider: "claude" }); log.append("stage.started", "verify", {});
+  for (const op of ops) {
+    if (op[0] === "seal") seal(dir, id, ev, log, op[1].map((p) => ({ name: p, cmd: "x", result: "pass" })), signed);
+    else if (op[0] === "done") { log.append("run.completed", null, { verdict: op[1] }); if (signed) log.sealLog(); }
+    else if (op[0] === "resumed") { log = new SupervisorLog(ev, id); log.append("run.resumed", null, op[1]); }
+    else log.append("test.result", "verify", { name: op[1], cmd: "x", result: "pass" });
+  }
+  return { dir, ev, rc: join(dir, "receipt.json") };
+}
+const ANS = { answered: true, answer: "yes", answer_sha256: sha("yes"), question: "q" };
+const lib = async (rc: string): Promise<string> => (await verifyReceipt(rc)).verdict;
+const blockedThenAnswered = (resumed: Record<string, unknown>, signed = true): string => build([["seal", []], ["done", "SPEC_CONFLICT"], ["resumed", resumed], ["pass", "unit"], ["seal", ["unit"]], ["done", "VERIFIED"]], signed).rc;
+const ansOf = (answer: unknown, hashOf: string | Buffer = String(answer)): Record<string, unknown> => ({ answered: true, answer, answer_sha256: sha(hashOf), question: "q" });
+const lastLine = (ev: string): { seq: number } => JSON.parse(readFileSync(ev, "utf8").trim().split("\n").at(-1)!);
+test("A4 an answered run.resumed appended after the last seal (unsigned tail) is TAMPERED", async () => {
+  const r = build([["seal", []], ["done", "SPEC_CONFLICT"], ["pass", "unit"], ["seal", ["unit"]], ["done", "VERIFIED"]]);
+  appendFileSync(r.ev, JSON.stringify({ ...lastLine(r.ev), seq: lastLine(r.ev).seq + 1, type: "run.resumed", stage: null, data: ANS }) + "\n");
+  expect(await lib(r.rc)).toBe("TAMPERED");
+});
+test("A4b an answered resume after the LAST seal does not rescue an unanswered earlier seal", async () => {
+  expect(await lib(build([["seal", []], ["done", "SPEC_CONFLICT"], ["pass", "unit"], ["seal", ["unit"]], ["resumed", ANS], ["done", "VERIFIED"]]).rc)).toBe("TAMPERED");
+});
+test("A6b answered as the string \"true\" is TAMPERED", async () => {
+  expect(await lib(blockedThenAnswered({ ...ANS, answered: "true" }))).toBe("TAMPERED");
+});
+test("A12 an answered resume with no run.completed after the first seal is TAMPERED", async () => {
+  expect(await lib(build([["seal", []], ["resumed", ANS], ["pass", "unit"], ["seal", ["unit"]]]).rc)).toBe("TAMPERED");
+});
+test("A3 three seals with a plain resume after the middle one is TAMPERED", async () => {
+  expect(await lib(build([["seal", []], ["done", "SPEC_CONFLICT"], ["resumed", ANS], ["seal", []], ["done", "SPEC_CONFLICT"], ["resumed", {}], ["pass", "unit"], ["seal", ["unit"]], ["done", "VERIFIED"]]).rc)).toBe("TAMPERED");
+});
+test("A3b three seals where the middle attempt completed VERIFIED is TAMPERED", async () => {
+  expect(await lib(build([["seal", []], ["done", "SPEC_CONFLICT"], ["resumed", ANS], ["seal", []], ["done", "VERIFIED"], ["resumed", ANS], ["pass", "unit"], ["seal", ["unit"]], ["done", "VERIFIED"]]).rc)).toBe("TAMPERED");
+});
+test("C2 three seals, both earlier ones answered BLOCKED runs, is VERIFIED by the library and the verify composition", async () => {
+  const rc = build([["seal", []], ["done", "SPEC_CONFLICT"], ["resumed", ANS], ["seal", []], ["done", "SPEC_CONFLICT"], ["resumed", ANS], ["pass", "unit"], ["seal", ["unit"]], ["done", "VERIFIED"]]).rc;
+  expect(await lib(rc)).toBe("VERIFIED"); expect(await cli(rc)).toBe("VERIFIED");
+});
+test("A5 an answered resume BEFORE the SPEC_CONFLICT completion is TAMPERED", async () => {
+  expect(await lib(build([["seal", []], ["resumed", ANS], ["done", "SPEC_CONFLICT"], ["pass", "unit"], ["seal", ["unit"]], ["done", "VERIFIED"]]).rc)).toBe("TAMPERED");
+});
+test("T10 unsigned: an answer that comes only after the second seal does not cover the first two seals", async () => {
+  expect(await cli(build([["seal", []], ["done", "SPEC_CONFLICT"], ["seal", []], ["done", "SPEC_CONFLICT"], ["resumed", ANS], ["pass", "unit"], ["seal", ["unit"]], ["done", "VERIFIED"]], false).rc)).toContain("TAMPERED:receipt claims pass");
+});
+test("T8 unsigned: a deadbeef hash does not widen the bound", async () => {
+  expect(await cli(blockedThenAnswered({ ...ANS, answer_sha256: "deadbeef" }, false))).toContain("TAMPERED:receipt claims pass");
+});
+test("T9 unsigned: an honest answered run is UNSIGNED, not drift", async () => { expect(await cli(blockedThenAnswered(ANS, false))).toBe("UNSIGNED"); });
+test("T1 a numeric answer whose String() hash matches is TAMPERED", async () => { expect(await lib(blockedThenAnswered(ansOf(5)))).toBe("TAMPERED"); });
+test("T2 an array answer is TAMPERED", async () => { expect(await lib(blockedThenAnswered(ansOf(["yes"], "yes")))).toBe("TAMPERED"); });
+test("T3 a missing answer is TAMPERED", async () => { expect(await lib(blockedThenAnswered({ answered: true, answer_sha256: sha("undefined"), question: "q" }))).toBe("TAMPERED"); });
+test("T4 a missing answer_sha256 is TAMPERED", async () => { expect(await lib(blockedThenAnswered({ answered: true, answer: "yes", question: "q" }))).toBe("TAMPERED"); });
+test("T5 an uppercase hex answer_sha256 is TAMPERED", async () => { expect(await lib(blockedThenAnswered({ ...ANS, answer_sha256: sha("yes").toUpperCase() }))).toBe("TAMPERED"); });
+test("T6 an answer_sha256 with a trailing newline is TAMPERED", async () => { expect(await lib(blockedThenAnswered({ ...ANS, answer_sha256: sha("yes") + "\n" }))).toBe("TAMPERED"); });
+test("T7 an object answer is TAMPERED", async () => { expect(await lib(blockedThenAnswered(ansOf({ s: "yes" }, "[object Object]")))).toBe("TAMPERED"); });
+test("U1 a decomposed-unicode answer with its own hash is VERIFIED", async () => { const rc = blockedThenAnswered(ansOf("cafe\u0301")); expect(await lib(rc)).toBe("VERIFIED"); expect(await cli(rc)).toBe("VERIFIED"); });
+test("U2 a decomposed-unicode answer hashed in composed form is TAMPERED", async () => { expect(await lib(blockedThenAnswered(ansOf("cafe\u0301", "caf\u00e9")))).toBe("TAMPERED"); });
+test("U3 a lone-surrogate answer with its own hash is VERIFIED", async () => { expect(await lib(blockedThenAnswered(ansOf("x\ud800y")))).toBe("VERIFIED"); });
+test("U4 an astral-plane answer is VERIFIED", async () => { expect(await lib(blockedThenAnswered(ansOf("ok \u{1F600}")))).toBe("VERIFIED"); });
+test("U5 an empty answer is VERIFIED", async () => { expect(await lib(blockedThenAnswered(ansOf("")))).toBe("VERIFIED"); });
+test("U6 a hash over latin1 bytes instead of utf8 is TAMPERED", async () => { expect(await lib(blockedThenAnswered(ansOf("caf\u00e9", Buffer.from("caf\u00e9", "latin1"))))).toBe("TAMPERED"); });
+
+// An honest `loki answer` whose text is secret-shaped: the log redacts the stored answer, so the writer must hash the redacted text.
+test("redactSecrets is a fixpoint on the secret-shaped answers", () => {
+  for (const a of ["use api_key=abc123def for staging", "the key is sk-ABCDEFGHIJKLMNOPQRSTUVWX", "yes"]) expect(redactSecrets(redactSecrets(a))).toBe(redactSecrets(a));
+});
+/** An answer taken through the real resume writer (resumeFlag builds run.resumed's data) and the real SupervisorLog.append, then re-sealed and verified. */
+async function answeredThroughWriter(answer: string): Promise<{ stored: string; lib: string; cli: string }> {
+  const dir = mkdtempSync(join(root, "wr-")), id = `e10-r4-${n++}`, rd = join(dir, ".loki", "runs", id), ev = join(rd, "events.jsonl"), cwd = process.cwd();
+  tgit(dir, "init", "-q", "-b", "main"); tgit(dir, "commit", "-q", "--allow-empty", "-m", "i"); tgit(dir, "branch", `loki/${id}`);
+  const base = tgit(dir, "rev-parse", "HEAD"); mkdirSync(rd, { recursive: true });
+  let log = new SupervisorLog(ev, id);
+  log.append("run.started", null, { provider: "claude", model: "m" }); log.append("stage.completed", "intake", { base_sha: base, task: "t" });
+  log.append("stage.completed", "implement", { exit: "spec_conflict", spec_conflict_reason: "which one" });
+  seal(rd, id, ev, log, [], true); log.append("run.completed", null, { verdict: "SPEC_CONFLICT" }); log.sealLog();
+  const seen: { started?: Record<string, unknown> }[] = [];
+  process.chdir(dir);
+  try { expect(await resumeFlag(id, true, { out: () => {}, supervise: (async (o: never) => { seen.push(o); return { outcome: "VERIFIED" }; }) as never }, answer)).toBe(0); } finally { process.chdir(cwd); }
+  log = new SupervisorLog(ev, id); log.append("run.resumed", null, { ...seen[0]!.started!, phase: "stage" });
+  log.append("test.result", "verify", { name: "unit", cmd: "x", result: "pass" });
+  seal(rd, id, ev, log, [{ name: "unit", cmd: "x", result: "pass" }], true); log.append("run.completed", null, { verdict: "VERIFIED" }); log.sealLog();
+  const rc = join(rd, "receipt.json"), stored = String(readEvents(ev).find((e) => e.type === "run.resumed")!.data["answer"]);
+  return { stored, lib: await lib(rc), cli: await cli(rc) };
+}
+test("R1 an honest answer holding a token assignment goes through the real writer and verifies VERIFIED", async () => {
+  const r = await answeredThroughWriter("use api_key=abc123def for staging");
+  expect(r.stored).not.toContain("abc123def"); expect(r.lib).toBe("VERIFIED"); expect(r.cli).toBe("VERIFIED");
+});
+test("R1b an honest answer holding an sk- key goes through the real writer and verifies VERIFIED", async () => {
+  const r = await answeredThroughWriter("the key is sk-ABCDEFGHIJKLMNOPQRSTUVWX");
+  expect(r.stored).not.toContain("ABCDEFGHIJKLMNOPQRSTUVWX"); expect(r.lib).toBe("VERIFIED");
 });
 
 // Round 5: a cancelled publish-phase run goes findInterrupted -> resumePublish without resumePoint, so the seal check and the receipt file must carry the trust.
