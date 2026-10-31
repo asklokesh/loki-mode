@@ -391,7 +391,8 @@ fi
 # Same STOP-file run under a bash that has BASHPID (4+), where a subshell that inherits the EXIT trap can be told from the arming process.
 # The stub calls the exit cleanup from a subshell; only the arming-process guard keeps that from releasing the live parent's lock, so removing the guard turns this row red.
 # On bash 3.2 (the macOS /bin/bash that main() runs under above) BASHPID is unset and the guard falls back to $$, so the row above cannot tell the processes apart; this one is skipped there.
-MB4=""; for cand in /opt/homebrew/bin/bash /usr/local/bin/bash "$(command -v bash)"; do [ -x "$cand" ] && [ -n "$("$cand" -c 'echo "${BASHPID:-}"' 2>/dev/null)" ] && { MB4="$cand"; break; }; done
+bash4_on_path() { local d; local IFS=:; for d in $PATH; do [ -n "$d" ] && [ -x "$d/bash" ] && [ -n "$("$d/bash" -c 'echo "${BASHPID:-}"' 2>/dev/null)" ] && { printf '%s\n' "$d/bash"; return 0; }; done; return 1; }
+MB4="$(bash4_on_path || true)"
 if [ -z "$MB4" ]; then ok "main(): STOP-file subshell lock row needs bash 4+ (BASHPID); none on this host, skipped"; else
 mk2="$WORK/main-stop4"; MAIN_BASH="$MB4" main_run "$mk2" 'mkdir -p .loki; : > .loki/STOP; check_human_intervention; echo "$$" > "'"$mk2"'/mainpid"; safe_release_lock() { echo "${BASHPID:-$$}" >> "'"$mk2"'/released"; }; ( _loki_session_exit_cleanup ); return 0' on
 if [ "$(cat "$mk2/mainpid" 2>/dev/null)" != "" ] && [ "$(wc -l < "$mk2/released" 2>/dev/null | tr -d ' ')" = "1" ] && [ "$(cat "$mk2/released" 2>/dev/null)" = "$(cat "$mk2/mainpid" 2>/dev/null)" ] && [ "$(grep -c '"event": *"activation_first_run_finished"' "$mk2/events.log" 2>/dev/null)" = "1" ]; then
@@ -412,9 +413,7 @@ fi
 # F3: a subshell that inherits the EXIT trap must not release the live parent's session lock
 # BASHPID exists from bash 4; on 3.2 the guard falls back to $$ (same as _loki_remove_pgid_file), so this needs a newer bash.
 lk="$WORK/lock"; mkdir -p "$lk"; B4=""
-for cand in "$(command -v bash)" /opt/homebrew/bin/bash /usr/local/bin/bash; do
-    [ -x "$cand" ] && [ "$("$cand" -c 'echo "${BASHPID:-}"' 2>/dev/null)" != "" ] && { B4="$cand"; break; }
-done
+B4="$(bash4_on_path || true)"
 if [ -z "$B4" ]; then ok "session exit cleanup: subshell guard needs bash 4+ (BASHPID); none on this host, skipped"; else
 out="$(env -i PATH="/usr/bin:/bin" HOME="$lk" "$B4" -c "
     source '$REPO_ROOT/autonomy/run.sh' >/dev/null 2>&1

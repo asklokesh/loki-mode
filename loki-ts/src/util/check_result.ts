@@ -247,7 +247,7 @@ const varNamesTool = (tool: string, v: string): boolean => {
 const assignsTool = (tool: string, a: string): boolean => { const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(a); return m !== null && varNamesTool(tool, m[1]!) && (wordIsTool(tool, m[2]!) || varIsTool(tool, m[2]!)); };
 const SPAWN_API = /\b(?:system|popen|Popen|subprocess|check_output|check_call|exec|execFile|execFileSync|execSync|spawn|spawnSync|child_process|run|call)\b|`/;
 const DYNAMIC_CMD = /["']\s*\+\s*["']|["']\s+["']|\.join\(|\bchr\(|\bformat\(|\bf["']|%[sd]|\\x[0-9a-f]{2}|base64|fromCharCode|\$\{|\beval\b|\bgetattr\b|\bimport_module\b/;
-/** Inline interpreter code that runs the tool: `tool <arg>` text, the tool as a whole quoted argv element (subprocess.run(["go", "test"]), execFileSync("go", ["test"])), or code that spawns a process from a command built at run time (string concat, join, format), which cannot be read and so fails closed. */
+/** Inline interpreter code that runs the tool: `tool <arg>` text, the tool as a whole quoted argv element (a list-form spawn in Python or Node whose first element is the tool name), or code that spawns a process from a command built at run time (string concat, join, format), which cannot be read and so fails closed. */
 function inlineRunsTool(tool: string, code: string): boolean {
   if (new RegExp(`\\b${tool}\\s+\\S`).test(code) || new RegExp(`["'](?:[^"']*/)?${tool}["']`).test(code)) return true;
   return SPAWN_API.test(code) && DYNAMIC_CMD.test(code);
