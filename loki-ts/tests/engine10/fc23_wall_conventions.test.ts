@@ -342,6 +342,10 @@ describe("Go Wall that never references the package under test", () => {
     ["R7-import-comment", "package x_test\n\nimport (\n\t\"testing\"\n\t\"example.com/m/x\" // package under test\n)\n\nfunc TestA(t *testing.T) {\n\tif x.Foo() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
     ["R10-comment-in-string", "package x\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\tu := \"http://a/*b\"\n\tif Parse(u) != 3 {\n\t\tt.Fatal(\"*/\")\n\t}\n}\n", false],
     ["ext-dot-unrelated", "package x_test\n\nimport (\n\t\"testing\"\n\t. \"strings\"\n\t_ \"example.com/m/x\"\n)\n\nfunc TestA(t *testing.T) {\n\tif ToUpper(\"a\") != \"A\" {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["go-prefix-pkg-only", "package config\n\nimport (\n\t\"testing\"\n\t\"github.com/goccy/go-yaml\"\n)\n\nfunc TestA(t *testing.T) {\n\tvar v int\n\tif err := yaml.Unmarshal(nil, &v); err != nil {\n\t\tt.Fatal(err)\n\t}\n}\n", true],
+    ["go-prefix-pkg-calls-own", "package config\n\nimport (\n\t\"testing\"\n\t\"github.com/goccy/go-yaml\"\n)\n\nfunc TestA(t *testing.T) {\n\tvar v int\n\tif err := Decode(nil, &v); err != nil || yaml.X != 0 {\n\t\tt.Fatal(err)\n\t}\n}\n", false],
+    ["suffix-go-pkg-only", "package config\n\nimport (\n\t\"testing\"\n\t\"example.com/foo-go\"\n)\n\nfunc TestA(t *testing.T) {\n\tif foo.Bar() != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["major-version-pkg-only", "package config\n\nimport (\n\t\"testing\"\n\t\"example.com/x/foo/v2\"\n)\n\nfunc TestA(t *testing.T) {\n\tif foo.Bar() != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
     ["type-param-struct", "package x\n\nimport \"testing\"\n\ntype box[T any] struct {\n\tv T\n}\n\nfunc TestA(t *testing.T) {\n\tb := box[int]{v: 1}\n\tif b.v != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true]
   ];
   for (const [name, src, vacuous] of rows) test(`${vacuous ? "vacuous" : "real"}: ${name}`, () => {

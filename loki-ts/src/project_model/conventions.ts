@@ -149,7 +149,7 @@ function goUnreferenced(src: string): boolean {
   }
   const own = new Set<string>(["_", pkg[1]!, "true", "false", "nil", "iota"]);
   for (const w of "break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var any bool byte comparable complex64 complex128 error float32 float64 int int8 int16 int32 int64 rune string uint uint8 uint16 uint32 uint64 uintptr append cap clear close complex copy delete imag len make max min new panic print println real recover".split(" ")) own.add(w);
-  for (const s of specs) if (s.alias !== ".") own.add(s.alias && s.alias !== "_" ? s.alias : norm(lastOf(s.path)) || lastOf(s.path)), own.add(lastOf(s.path).replace(/[^\w]/g, ""));
+  for (const s of specs) if (s.alias !== ".") own.add(s.alias && s.alias !== "_" ? s.alias : norm(lastOf(s.path)) || lastOf(s.path)), own.add(lastOf(s.path).replace(/[^\w]/g, "")), own.add(norm(lastOf(s.path).replace(/^go-|-go$|\.go$/g, "")));
   const names = (t: string): string[] => t.match(/[A-Za-z_]\w*/g) ?? [];
   for (const m of body.matchAll(/\b(?:func|type)\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)/g)) own.add(m[1]!);
   for (const m of body.matchAll(/\b(?:var|const)\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)/g)) names(m[1]!).forEach((n) => own.add(n));
