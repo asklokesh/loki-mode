@@ -175,12 +175,12 @@ describe("loki issues run: epic split", () => {
 
   test("PR-FIRST-1: a PARTIAL slice with a PR carries its dependents (stacked on its branch); a PARTIAL slice with no PR stops them", async () => {
     const h = harness({ issues: [issue(12)], verdicts: { s1: { verdict: "PARTIAL" } } });
-    expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(0);
+    expect(await runIssues(["run", SLUG, "--triage", "--yes", "--parallel", "1"], h.inject)).toBe(0);
     expect(h.ran.map(h.sliceOf)).toEqual(["s1", "s2", "s3", "s4"]);
     expect(h.wtCreated.map((w) => w.base)).toEqual(["HEAD", "loki/e10-run1", "loki/e10-run2", "HEAD"]);
     expect(h.out.join("")).toContain("#12 s1 PARTIAL  pr https://github.com/o/r/pull/101  cost $1.50");
     const none = harness({ issues: [issue(12)], verdicts: { s1: { verdict: "PARTIAL", pr: false } } });
-    await runIssues(["run", SLUG, "--yes"], none.inject);
+    await runIssues(["run", SLUG, "--triage", "--yes", "--parallel", "1"], none.inject);
     expect(none.ran.map(none.sliceOf)).toEqual(["s1", "s4"]);
     expect(none.out.join("")).toContain("s2 title s2: SKIPPED (depends on s1, which was PARTIAL)");
   });
