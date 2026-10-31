@@ -1327,6 +1327,22 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
     expect(r.brief).toContain('"package shortener"');
     expect((await run("Write ini.go that parses INI.", "go")).brief).not.toContain("Go: your test files");
   });
+  test("Go external test: the Wall's go.mod path (module plus directory, /v2 included) decides whether it is kept or discarded as vacuous", async () => {
+    const wallFor = async (imp: string, seed: Record<string, string>, dir = "pkg/foo"): Promise<{ files: number; discarded: number }> => {
+      const s = setup({ runners: ["go"], tests: [] });
+      for (const [p, c] of Object.entries(seed)) { mkdirSync(join(s.repoDir, p, ".."), { recursive: true }); writeFileSync(join(s.repoDir, p), c, "utf8"); }
+      const sessions = new FakeSessionRunner((o) => { writeFileSync(join(o.cwd!, "loki_wall_a_test.go"), `package foo_test\n\nimport (\n\t"testing"\n\t"${imp}"\n)\n\nfunc TestA(t *testing.T) {\n\tif foo.Bar() != 1 {\n\t\tt.Fatal("bad")\n\t}\n}\n`); });
+      const ctx = fakeCtx(s.repoDir, s.runDir, sessions, { intake: { task: `Fix ${dir}/foo.go so Bar returns 1.`, testmap: s.testmap, repomap_ref: s.repomapRef } }, []);
+      try { const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } }); return { files: (r.data.files as unknown[]).length, discarded: ((r.data.discarded as unknown[]) ?? []).length }; }
+      finally { rmSync(s.repoDir, { recursive: true, force: true }); }
+    };
+    const seed = { "go.mod": "module example.com/m/v2\n\ngo 1.22\n", "pkg/foo/foo.go": "package foo\n\nfunc Bar() int { return 0 }\n" };
+    expect(await wallFor("example.com/m/v2/pkg/foo", seed)).toEqual({ files: 1, discarded: 0 });
+    expect(await wallFor("example.com/evil/foo", seed)).toEqual({ files: 0, discarded: 1 });
+    const nested = { "svc/go.mod": "module example.com/svc/v3\n\ngo 1.22\n", "svc/pkg/foo/foo.go": "package foo\n\nfunc Bar() int { return 0 }\n" };
+    expect(await wallFor("example.com/svc/v3/pkg/foo", nested, "svc/pkg/foo")).toEqual({ files: 1, discarded: 0 });
+    expect(await wallFor("example.com/evil/foo", nested, "svc/pkg/foo")).toEqual({ files: 0, discarded: 1 });
+  });
   // Only a backticked name or "(package X)" names the package; every other phrasing falls back to the directory (Go convention), because a wrong name always breaks the run.
   const pkgOf = async (task: string, seed: Record<string, string> = {}): Promise<string | null> => /each one starts with "package (\w+)"/.exec((await run(task, "go", seed)).brief)?.[1] ?? null;
   test.each<[string, string, string | null, Record<string, string>?]>([

@@ -338,6 +338,8 @@ describe("Go Wall that never references the package under test", () => {
     ["E13b-const-block", "package x\n\nimport \"testing\"\n\nconst (\n\ta, b = 1, 2\n\tc    = 3\n)\n\nfunc TestA(t *testing.T) {\n\tif a+b != c {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
     ["fuzz-vac", "package x\n\nimport \"testing\"\n\nfunc FuzzA(f *testing.F) {\n\tf.Add(\"x\")\n\tf.Fuzz(func(t *testing.T, s string) {\n\t\tif len(s) < 0 {\n\t\t\tt.Fatal(\"bad\")\n\t\t}\n\t})\n}\n", true],
     ["fuzz-ok", "package x\n\nimport \"testing\"\n\nfunc FuzzA(f *testing.F) {\n\tf.Add(\"x\")\n\tf.Fuzz(func(t *testing.T, s string) {\n\t\tif Parse(s) < 0 {\n\t\t\tt.Fatal(\"bad\")\n\t\t}\n\t})\n}\n", false],
+    ["G-sibling-prefix", "package foo_test\n\nimport (\n\t\"testing\"\n\t\"example.com/m/pkg/foo2\"\n)\n\nfunc TestA(t *testing.T) {\n\tif foo.Bar() != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true, "example.com/m/pkg/foo"],
+    ["G-subpkg-internal", "package foo_test\n\nimport (\n\t\"testing\"\n\t\"example.com/m/pkg/foo/internal\"\n)\n\nfunc TestA(t *testing.T) {\n\tif foo.Bar() != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true, "example.com/m/pkg/foo"],
     ["R6-go-prefix-module", "package thing_test\n\nimport (\n\t\"testing\"\n\t\"example.com/go-thing\"\n)\n\nfunc TestA(t *testing.T) {\n\tif thing.Foo() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false, "example.com/go-thing"],
     ["R7-import-comment", "package x_test\n\nimport (\n\t\"testing\"\n\t\"example.com/m/x\" // package under test\n)\n\nfunc TestA(t *testing.T) {\n\tif x.Foo() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
     ["R10-comment-in-string", "package x\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\tu := \"http://a/*b\"\n\tif Parse(u) != 3 {\n\t\tt.Fatal(\"*/\")\n\t}\n}\n", false],
