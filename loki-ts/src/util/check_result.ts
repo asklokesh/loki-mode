@@ -1512,13 +1512,30 @@ function buildFailedBeforeAnyTest(runner: RunnerName, raw: string): boolean {
     default: return false;
   }
 }
+/** A jest/vitest/bun suite that never loaded because the Wall test's OWN relative import names a repo file that does not exist (the feature is absent on base) is red on base, the JS twin of nodeIsRed
+ *  and pytestCollectionIsRed. Red only when the output holds at least one load-error line and EVERY such line is of that shape (importer is the test file on a path boundary, specifier starts with ./ or ../, no file,
+ *  directory, extension probe, .js-to-.ts stem or index resolves for it); a bare package, another importer, or any other error stays not_run (fail-safe). */
+function missingRelativeImportIsRed(f: TestRef, raw: string, repoDir: string): boolean {
+  const out = stripAnsi(raw), hits: { spec: string; importer: string }[] = [];
+  for (const m of out.matchAll(/Failed to load url (\S+) \(resolved id: [^)]*\) in (\S+?)\.(?: Does the file exist\?|\s|$)/g)) hits.push({ spec: m[1]!, importer: m[2]! }); // vitest
+  for (const m of out.matchAll(/Cannot find module ['"]([^'"]+)['"] from ['"]([^'"]+)['"]/g)) hits.push({ spec: m[1]!, importer: m[2]! }); // jest and bun
+  if (hits.length === 0) return false;
+  const abs = resolve(repoDir, f.path);
+  return hits.every(({ spec, importer }) => {
+    if (!/^\.\.?(?:\/|$)/.test(spec) || !(abs === importer || abs.endsWith("/" + importer.replace(/^\.\//, "")) || importer.endsWith("/" + f.path) || importer === f.path)) return false;
+    const target = resolve(dirname(abs), spec.replace(/[?#].*$/, ""));
+    const stem = target.replace(/\.(?:jsx?|mjs|cjs)$/, ""); // a NodeNext "../src/x.js" names x.ts: a config failure, never an absent feature
+    if (existsSync(target) && statSync(target).isDirectory()) return false;
+    return ![target, stem].some((t) => ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json"].some((x) => existsSync(t + x) && statSync(t + x).isFile())) && !["ts", "tsx", "js", "jsx", "mjs", "cjs"].some((x) => existsSync(join(target, `index.${x}`)));
+  });
+}
 export function classify(f: TestRef, status: number | null, output: string, repoDir: string, interpreter?: "project" | "system"): "pass" | "fail" | "not_run" {
   if (interpreter === "system") return "not_run";
   output = stripAnsi(output); // FC-69: every parser below reads plain text, whoever captured it
   if (status === null || status === 126 || status === 127) return "not_run"; if (status === 0) return f.runner !== "go" && classifyCheck({ kind: "test", ok: true, out: output, path: f.path }).result === "pass" ? "pass" : "not_run"; // go: a base pass is never uncorroborated here (corroboratePass runs where verify counts it) // FC-16: exit 0 with zero or unknown executed tests is not a pass
   if (f.runner === "unittest") return status === 1 && unittestCount(output, false) !== null ? (/unittest\.loader\._FailedTest|Failed to import test module/.test(output) ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "fail") : "not_run"; // red only on a trusted FAILED trailer; a module that failed to import is red only when the missing name is the repo's own (pytestCollectionIsRed), else not_run, as for pytest
   if (f.runner === "pytest") return status === 1 ? (pytestExit1IsRed(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
-  if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
+  if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 || missingRelativeImportIsRed(f, output, repoDir) ? "fail" : "not_run";
   if (f.runner === "maven" || f.runner === "gradle" || f.runner === "javac") { const j = javaSummary(output); return (j && j.failed > 0) || buildFailedBeforeAnyTest(f.runner, output) ? "fail" : "not_run"; } // HV1-03b: red only on a vouched summary that counts failures; a missing tool, no report or an unvouched report is not_run (verify's own exit-code path treats a compile error as fail, the safe direction)
   if (f.runner === "go" || f.runner === "cargo") return readableFailIds(f.runner, output).length > 0 || buildFailedBeforeAnyTest(f.runner, output) ? "fail" : "not_run"; // red on a readable failing test id, or on a toolchain build failure before any test started (the feature the Wall names is absent on base); a panic outside a test or unparsed output stays not_run
   return f.runner === "node" && nodeIsRed(f, output) ? "fail" : "not_run"; // npm: coarse (B2), never a per-file red
