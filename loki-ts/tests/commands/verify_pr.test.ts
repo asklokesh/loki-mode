@@ -523,6 +523,7 @@ describe("verify-pr: an exit code alone is not proof", () => {
   test.each([
     ["setup.cfg [tool:pytest] section removed", { "setup.cfg": "[flake8]\nmax-line-length = 100\n" }, 4, /setup\.cfg/],
     ["package.json jest key removed", { "package.json": '{"name":"x"}\n' }, 4, /package\.json/],
+    ["jest.config.json added with a moduleNameMapper stub", { "jest.config.json": '{"moduleNameMapper":{"^./add$":"<rootDir>/fake.js"}}\n' }, 4, /jest\.config\.json/],
     ["pyproject.toml pytest section removed", { "pyproject.toml": "[project]\nname = 'x'\n" }, 4, /pyproject\.toml/],
     ["only an unrelated setup.cfg section edited", { "setup.cfg": "[flake8]\nmax-line-length = 120\n" }, 0, /^$/],
     ["config kept untouched while the bug is fixed", { "add.py": PY_FIXED }, 0, /^$/],
@@ -577,6 +578,15 @@ describe("verify-pr: an exit code alone is not proof", () => {
     const r = await run({ ...meta, headSha: head }, { checkout: defaultCheckout, sandbox: (): SandboxResult => ({ status: "COMPLETED", exit_code: 0 }) }, issueFor("python3 -m pytest -q test_w.py"));
     expect(r.json.reasons.join(" ")).not.toMatch(/vendor\/lib/);
   }, 30_000);
+
+  test("runnerConfigChanged treats a dedicated jest.config.json as config at either side, while package.json is judged by its jest key", () => {
+    mkdirSync(join(dir, "head"), { recursive: true }); mkdirSync(join(dir, "base/sub"), { recursive: true });
+    writeFileSync(join(dir, "head/jest.config.json"), '{"moduleNameMapper":{"^./add$":"<rootDir>/fake.js"}}');
+    writeFileSync(join(dir, "base/sub/jest.config.json"), '{"testMatch":["**/*.test.js"]}');
+    writeFileSync(join(dir, "head/package.json"), '{"name":"x","version":"2"}');
+    writeFileSync(join(dir, "base/package.json"), '{"name":"x","version":"1"}');
+    expect(runnerConfigChanged(["jest.config.json", "sub/jest.config.json", "package.json"], join(dir, "head"), join(dir, "base"))).toEqual(["jest.config.json", "sub/jest.config.json"]);
+  });
 
   test("runnerConfigChanged flags jest, vitest and vite configs and a package.json with a jest key only", () => {
     const names = ["jest.config.js", "sub/vitest.config.ts", "vite.config.mts", "vitest.workspace.ts"];
