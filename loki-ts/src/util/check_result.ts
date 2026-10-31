@@ -1244,16 +1244,35 @@ export async function mapPool<T, R>(items: T[], jobs: number, fn: (item: T) => P
   await Promise.all(Array.from({ length: Math.min(Math.max(1, jobs), items.length) }, async () => { while (next < items.length && !stop()) { const i = next++; out[i] = await fn(items[i]!); } }));
   return out;
 }
-/** TEN-SPEED-19: async twin of the sync spawn used by RealBaseTestRunner: status is null on spawn error, signal or timeout; output is stdout and stderr merged by arrival. */
+/** SIGKILL a detached child's whole process group (never by name); a wrapper's grandchild runner otherwise survives and holds the stdio pipes. Errors (group gone, no group support) are ignored. */
+export function killGroup(pid: number | undefined): void { if (pid) try { process.kill(-pid, "SIGKILL"); } catch { /* group already gone */ } }
+// Bun's spawnSync ignores `detached`, so the sync path cannot lead its own process group. It runs the command through this launcher (a child of the same runtime) which does lead one, kills the whole group at the timeout and prints {status, output}.
+const GROUP_LAUNCHER = `const { spawn } = require("node:child_process"); const [cmd, args, cwd, ms] = JSON.parse(require("node:fs").readFileSync(0, "utf8")); const MAX = 1048576; let out = "", err = "", to = false, fin = false;
+const c = spawn(cmd, args, { cwd: cwd || undefined, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+const kill = (s) => { try { process.kill(-c.pid, s); } catch { try { c.kill(s); } catch {} } };
+const done = (code, sig) => { if (fin) return; fin = true; kill("SIGKILL"); process.stdout.write(JSON.stringify({ status: to || sig ? null : code, output: out + "\\n" + err })); process.exit(0); };
+setTimeout(() => { to = true; kill("SIGTERM"); setTimeout(() => done(null, 1), 1000); }, ms);
+const over = () => { if (out.length > MAX || err.length > MAX) { to = true; kill("SIGKILL"); } };
+c.stdout.on("data", (d) => { out += d; over(); }); c.stderr.on("data", (d) => { err += d; over(); });
+c.on("error", () => done(null, 1)); c.on("close", done); c.on("exit", (a, b) => setTimeout(() => done(a, b), 500)); `;
+/** Sync twin of spawnCollect with the same group-kill and timeout contract (status null on spawn error, signal or timeout). */
+export function spawnGroupSync(cmd: string, args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number }): { status: number | null; output: string } {
+  const r = spawnSync(process.execPath, ["-e", GROUP_LAUNCHER], { input: JSON.stringify([cmd, args, o.cwd ?? "", o.timeoutMs]), env: o.env, encoding: "utf8", timeout: o.timeoutMs + 5000, killSignal: "SIGKILL", maxBuffer: 16 * 1024 * 1024 });
+  try { return JSON.parse(r.stdout) as { status: number | null; output: string }; } catch { return { status: null, output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` }; }
+}
+/** TEN-SPEED-19: async twin of the sync spawn used by RealBaseTestRunner: status is null on spawn error, signal or timeout; output is stdout and stderr merged by arrival. The child leads its own process group: SIGTERM at the timeout, then SIGKILL to the group 1s later, and the result resolves on exit plus a short drain grace, never waiting on a grandchild that holds the pipes. */
 export function spawnCollect(cmd: string, args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number }): Promise<{ status: number | null; output: string }> {
   return new Promise((resolve) => {
     let out = "", err = "", error = false, done = false; const MAX = 1024 * 1024; // spawnSync parity: stdin EOF, default maxBuffer, "stdout\nstderr" join
-    const fin = (status: number | null) => { if (!done) { done = true; resolve({ status: error ? null : status, output: `${out}\n${err}` }); } };
-    const c = spawn(cmd, args, { cwd: o.cwd, env: o.env, timeout: o.timeoutMs, stdio: ["ignore", "pipe", "pipe"] });
-    const hard = setTimeout(() => { if (c.exitCode === null && c.signalCode === null) c.kill("SIGKILL"); }, o.timeoutMs + 1000); // spawn's timeout sends SIGTERM only; a child that ignores it is SIGKILLed 1s later (this handle only)
-    const over = () => { if (out.length > MAX || err.length > MAX) { error = true; c.kill("SIGTERM"); } };
+    const timers: NodeJS.Timeout[] = [];
+    const fin = (status: number | null) => { if (!done) { done = true; timers.forEach(clearTimeout); killGroup(c.pid); resolve({ status: error ? null : status, output: `${out}\n${err}` }); } };
+    const c = spawn(cmd, args, { cwd: o.cwd, env: o.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const term = () => { try { process.kill(-c.pid!, "SIGTERM"); } catch { c.kill("SIGTERM"); } };
+    timers.push(setTimeout(() => { error = true; term(); timers.push(setTimeout(() => { killGroup(c.pid); fin(null); }, 1000)); }, o.timeoutMs)); // spawn's own timeout would signal the direct child only
+    const over = () => { if (out.length > MAX || err.length > MAX) { error = true; killGroup(c.pid); } };
     c.stdout?.on("data", (d) => { out += d; over(); }); c.stderr?.on("data", (d) => { err += d; over(); });
-    c.on("error", () => { error = true; fin(null); }); c.on("close", (code, sig) => { clearTimeout(hard); fin(sig ? null : code); });
+    c.on("error", () => { error = true; fin(null); }); c.on("close", (code, sig) => fin(sig ? null : code));
+    c.on("exit", (code, sig) => { timers.push(setTimeout(() => fin(sig ? null : code), 500)); }); // drain grace; close normally wins
   });
 }
 // E-98a B2: .venv, then venv, then an in-repo (realpath under repoDir) VIRTUAL_ENV are "project";

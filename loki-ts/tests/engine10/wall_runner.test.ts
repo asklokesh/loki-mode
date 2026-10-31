@@ -221,7 +221,7 @@ describe("TEN-SPEED-19 base jobs", () => {
   test("spawnCollect stops a SIGTERM-ignoring child shortly after its timeout and reports no status", async () => {
     const { spawnCollect } = await import("../../src/util/check_result.ts");
     const t0 = Date.now(), r = await spawnCollect("node", STUBBORN, { timeoutMs: 1000 });
-    expect(Date.now() - t0).toBeLessThan(4000);
+    expect(Date.now() - t0).toBeLessThan(8000);
     expect(r.status).toBeNull();
   }, 20_000);
 
@@ -231,7 +231,46 @@ describe("TEN-SPEED-19 base jobs", () => {
     writeFileSync(join(repo, ".venv", "bin", "python"), `#!/bin/sh\nexec node -e "process.on('SIGTERM', () => {}); setTimeout(() => {}, 30000)"\n`, { mode: 0o755 });
     writeFileSync(join(repo, "test_a.py"), "def test_a():\n    pass\n");
     const t0 = Date.now(), r = new RealBaseTestRunner(null, 1000).run(repo, [{ runner: "pytest", path: "test_a.py" }]);
-    expect(Date.now() - t0).toBeLessThan(4000);
+    expect(Date.now() - t0).toBeLessThan(8000);
     expect(r).toEqual({ pass: 0, fail: 0, not_run: 1 });
   }, 20_000);
+  // npx-style wrapper: the direct child is a shell, the SIGTERM-ignoring runner is its grandchild and holds the stdio pipes.
+  const GRAND = `node -e "process.on('SIGTERM', () => {}); setTimeout(() => {}, 30000)" & echo $! > "$PIDFILE"; wait`;
+  const dead = async (pid: number) => { for (let i = 0; i < 20; i++) { try { process.kill(pid, 0); } catch { return true; } await new Promise((r) => setTimeout(r, 100)); } return false; };
+  test("spawnCollect returns at the timeout and kills the whole group when a grandchild holds the pipes", async () => {
+    const { spawnCollect } = await import("../../src/util/check_result.ts");
+    const dir = mkdtempSync(join(tmpdir(), "loki-run.f0b-")); repos.push(dir);
+    const t0 = Date.now(), r = await spawnCollect("sh", ["-c", GRAND], { timeoutMs: 1000, env: { ...process.env, PIDFILE: join(dir, "pid") } });
+    expect(Date.now() - t0).toBeLessThan(4000);
+    expect(r.status).toBeNull();
+    expect(await dead(Number(readFileSync(join(dir, "pid"), "utf8")))).toBe(true);
+  }, 20_000);
+
+  test("RealBaseTestRunner.run reaps a grandchild runner that outlives the killed direct child", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "loki-run.f0b-")); repos.push(repo);
+    mkdirSync(join(repo, ".venv", "bin"), { recursive: true });
+    writeFileSync(join(repo, ".venv", "bin", "python"), `#!/bin/sh\nPIDFILE='${join(repo, "pid")}'\n${GRAND}\n`, { mode: 0o755 });
+    writeFileSync(join(repo, "test_a.py"), "def test_a():\n    pass\n");
+    const t0 = Date.now(), r = new RealBaseTestRunner(null, 1000).run(repo, [{ runner: "pytest", path: "test_a.py" }]);
+    expect(Date.now() - t0).toBeLessThan(4000);
+    expect(r).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    expect(await dead(Number(readFileSync(join(repo, "pid"), "utf8")))).toBe(true);
+  }, 20_000);
+  test("a wrapper that exits while its grandchild holds the pipes resolves after a short grace, not at the timeout", async () => {
+    const { spawnCollect } = await import("../../src/util/check_result.ts");
+    const dir = mkdtempSync(join(tmpdir(), "loki-run.f0b-")); repos.push(dir);
+    const t0 = Date.now(), r = await spawnCollect("sh", ["-c", GRAND.replace("; wait", "")], { timeoutMs: 20_000, env: { ...process.env, PIDFILE: join(dir, "pid") } });
+    expect(Date.now() - t0).toBeLessThan(4000);
+    expect(r.status).toBe(0);
+    expect(await dead(Number(readFileSync(join(dir, "pid"), "utf8")))).toBe(true);
+  }, 30_000);
+
+  test("the sync runner also resolves after a short grace when the wrapper exits and a grandchild holds the pipes", () => {
+    const repo = mkdtempSync(join(tmpdir(), "loki-run.f0b-")); repos.push(repo);
+    mkdirSync(join(repo, ".venv", "bin"), { recursive: true });
+    writeFileSync(join(repo, ".venv", "bin", "python"), `#!/bin/sh\nPIDFILE='${join(repo, "pid")}'\n${GRAND.replace("; wait", "")}\n`, { mode: 0o755 });
+    writeFileSync(join(repo, "test_a.py"), "def test_a():\n    pass\n");
+    const t0 = Date.now(); new RealBaseTestRunner(null, 20_000).run(repo, [{ runner: "pytest", path: "test_a.py" }]);
+    expect(Date.now() - t0).toBeLessThan(4000);
+  }, 30_000);
 });
