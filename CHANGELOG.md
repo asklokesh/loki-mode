@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- A run that creates a brand-new workspace package (for example packages/validate/package.json) is no longer capped PARTIAL by "test configuration changed" when the Wall passes. The new manifest is disclosed only if the plan or task names its path, a passing Wall imports the package, its directory was empty at base, it has plain metadata keys only, no scripts (or only a bare `node --test` / `bun test`), and every dependency is a `workspace:` package or an untouched in-repo path. Any other new or edited manifest still caps.
+
 ## v11.94.0 (2026-10-31)
 
 Loki waits out Claude's 5-hour usage limit instead of failing, `loki start` exits 6 for a PARTIAL run, custom webhooks are now signed (breaking), `loki plan --fast` gives a one-screen plan, and receipts copied under another run id are refused. Seal and git hardening are tightened.

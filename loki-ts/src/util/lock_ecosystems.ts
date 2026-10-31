@@ -2,7 +2,7 @@
 // declarations). It lives here, not in src/project_model, because it must name package managers and manifests; project_model sources
 // name no language or framework (tests/project_model L0 self-check). Entries in tests/engine10/l0_guard.allowlist move with it. No existing util owns package-manager and lockfile names, so a new file is justified.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join, normalize } from "node:path";
 import { safeGit } from "./safe_git.ts";
 
 export interface LockRule {
@@ -148,4 +148,52 @@ export function toolchainDropNotes(repoDir: string, dropped: string[], baseSha?:
   const n = new Map<string, number>();
   for (const f of toolchainOutputs(repoDir, dropped, baseSha)) { const p = f.split("/"), i = p.findIndex((x) => OUTPUT_DIRS.some((d) => d.dir === x)), k = p.slice(0, i + 1).join("/"); n.set(k, (n.get(k) ?? 0) + 1); }
   return [...n].map(([d, c]) => `toolchain build output left out of the commit: ${d}/ (${c} file${c === 1 ? "" : "s"})`);
+}
+
+export interface AddedManifestCtx { repoDir: string; baseSha: string; rawDiff: string[]; planFiles: string[]; wallPassedN: boolean; task?: string; head?: string }
+const MANIFEST_KEYS = new Set(["name", "version", "description", "private", "type", "main", "module", "types", "exports", "files", "license", "author", "repository", "keywords", "engines", "sideEffects", "homepage", "bugs", "scripts", "dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]);
+const SAFE_TEST_SCRIPTS = new Set(["node --test", "bun test"]);
+const DEP_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+const MAX_BASE_MANIFESTS = 200;
+/** Class D: a brand-new workspace package.json is disclosed (not capped) only when ALL hold: it is ADDED, in a directory that held no file at base; the plan or task names its path; a passing Wall
+ *  imports the package (its directory or its name); its keys are on a plain-metadata allowlist (no runner, transpiler, imports, workspaces, overrides or bin keys, or any other loader hook); it has no scripts, or only
+ *  a bare `test` of "node --test" / "bun test" (so no lifecycle and no local-file script); and every dependency is a `workspace:` spec naming a package.json that existed at base, or a file:/link:/relative
+ *  path to something that existed at base and that this diff did not touch. A registry dependency, an unreadable or unparsable manifest, or a package name that shadows a name or dependency any base manifest uses, caps. */
+export function addedManifestOk(f: string, c: AddedManifestCtx, wall: string, esc: (x: string) => string): boolean {
+  if (basename(f) !== "package.json" || dirname(f) === "." || !c.wallPassedN) return false;
+  const dir = dirname(f), g = (a: string[]): string | null => { try { return safeGit(c.repoDir, a, { timeout: 20000 }).trim(); } catch { return null; } };
+  const mention = (t: string): boolean => new RegExp(`(?<![\\w./-])${esc(f)}(?![\\w-])`).test(t);
+  if (!(c.planFiles.includes(f) || mention(c.task ?? ""))) return false;
+  const lsDir = g(["ls-tree", "-r", "--name-only", c.baseSha, "--", dir]);
+  if (lsDir === null || lsDir !== "") return false; // a package living beside existing files can change how they resolve or run
+  const text = c.head ? g(["show", `${c.head}:${f}`]) : (() => { try { return readFileSync(join(c.repoDir, f), "utf8"); } catch { return null; } })();
+  let j: Record<string, unknown>;
+  try { const x = JSON.parse(text ?? "") as unknown; if (!x || typeof x !== "object" || Array.isArray(x)) return false; j = x as Record<string, unknown>; } catch { return false; }
+  if (Object.keys(j).some((k) => !MANIFEST_KEYS.has(k)) || typeof j["name"] !== "string" || !j["name"]) return false;
+  const name = j["name"] as string, sc = j["scripts"];
+  if (sc !== undefined) { if (!sc || typeof sc !== "object" || Array.isArray(sc)) return false; if (Object.entries(sc as Record<string, unknown>).some(([k, v]) => k !== "test" || typeof v !== "string" || !SAFE_TEST_SCRIPTS.has(v))) return false; }
+  if (!new RegExp(`(?<![\\w-])${esc(dir)}/|["'\`]${esc(name)}(?:/[^"'\`]*)?["'\`]`).test(wall)) return false;
+  const all = g(["ls-tree", "-r", "--name-only", c.baseSha]);
+  if (all === null) return false;
+  const baseFiles = all.split("\n"), baseManifests = baseFiles.filter((p) => basename(p) === "package.json" && !p.split("/").includes("node_modules"));
+  if (baseManifests.length > MAX_BASE_MANIFESTS) return false;
+  const baseNames = new Set<string>(), baseDeps = new Set<string>();
+  for (const m of baseManifests) {
+    try { const b = JSON.parse(g(["show", `${c.baseSha}:${m}`]) ?? "") as Record<string, unknown>; if (typeof b["name"] === "string") baseNames.add(b["name"]); for (const fld of DEP_FIELDS) if (b[fld] && typeof b[fld] === "object") for (const d of Object.keys(b[fld] as object)) baseDeps.add(d); } catch { return false; }
+  }
+  if (baseDeps.has(name) || baseNames.has(name)) return false;
+  const diffPaths = c.rawDiff.filter((_, i) => i % 2 === 1), touched = (p: string): boolean => diffPaths.some((x) => x === p || x.startsWith(`${p}/`));
+  for (const fld of DEP_FIELDS) {
+    const d = j[fld]; if (d === undefined) continue;
+    if (!d || typeof d !== "object" || Array.isArray(d)) return false;
+    for (const [dn, spec] of Object.entries(d as Record<string, unknown>)) {
+      if (typeof spec !== "string") return false;
+      if (spec.startsWith("workspace:")) { if (!baseNames.has(dn)) return false; continue; }
+      const m = /^(?:file:|link:)?(\.{1,2}\/.*)$/.exec(spec) ?? /^(?:file|link):(.+)$/.exec(spec);
+      if (!m || m[1]!.startsWith("/")) return false;
+      const t = normalize(join(dir, m[1]!)).split("\\").join("/");
+      if (t === "" || t.startsWith("..") || touched(t) || !baseFiles.some((p) => p === t || p.startsWith(`${t}/`))) return false;
+    }
+  }
+  return true;
 }
