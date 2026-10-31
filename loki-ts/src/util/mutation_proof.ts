@@ -11,7 +11,7 @@ export type MutationOutcome = "yes" | "no" | "inconclusive";
 export interface MutationProof { outcome: MutationOutcome; line: string; }
 export interface MutationTest { runner: string; path: string; }
 export interface MutationRunner { run(dir: string, files: MutationTest[]): { pass: number; fail: number; not_run?: number }; runEach?(dir: string, files: MutationTest[], jobs: number, corroborate: boolean, remaining?: () => number): Promise<({ pass: number; fail: number; not_run?: number } | undefined)[]>; } // runEach: same per-file result, a few files at once
-const envJobs = (raw: string | undefined): number => { const n = Number.parseInt(raw ?? "", 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 8) : 4; }; // LOKI_MUTATION_PROOF_JOBS: default 4, 1 = serial
+const envJobs = (raw: string | undefined): number => { const n = Number.parseInt(raw ?? "", 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 8) : 1; }; // LOKI_MUTATION_PROOF_JOBS: default 1 = serial (as LOKI_E10_BASE_JOBS / LOKI_E10_VERIFY_JOBS). Opt-in >1 is faster but can give a false "yes" on a Wall test with side effects outside the worktree.
 export interface MutationInput {
   repoDir: string; baseSha: string; runDir: string;
   wallFiles: { path: string }[]; // sealed Wall files as recorded by wall.ts (absolute or repo-relative)

@@ -132,13 +132,31 @@ describe("mutation proof outcomes", () => {
     const serial = await mutationProof(input(f, { ...over, env: { LOKI_MUTATION_PROOF_JOBS: "1" } })), conc = await mutationProof(input(f, { ...over, env: { LOKI_MUTATION_PROOF_JOBS: "4" } }));
     expect(serial.outcome).toBe("no"); expect(JSON.stringify(conc)).toBe(JSON.stringify(serial));
   });
+  test("nested untracked dir with its own node_modules: the confirming re-run keeps the dependency link (jobs>1)", async () => {
+    const f = fixture("nested-dep", 1); const names = ["newdir/loki_wall_n1.test.ts", "newdir/loki_wall_n2.test.ts"];
+    mkdirSync(join(f.repo, "newdir/node_modules/localpkg"), { recursive: true });
+    writeFileSync(join(f.repo, "newdir/node_modules/localpkg/index.js"), "module.exports = { v: 1 };\n"); writeFileSync(join(f.repo, "newdir/node_modules/localpkg/package.json"), '{"name":"localpkg","main":"index.js"}\n');
+    const body = (t: string) => `import { expect, test } from "bun:test";\nimport { v } from "localpkg";\nimport { writeFileSync, readFileSync } from "node:fs";\ntest("n", async () => { expect(v).toBe(1); writeFileSync(import.meta.dir + "/shared_state.txt", "${t}"); await Bun.sleep(500); expect(readFileSync(import.meta.dir + "/shared_state.txt", "utf8")).toBe("${t}"); });\n`;
+    names.forEach((n, k) => { writeFileSync(join(f.repo, n), body(String(k))); writeFileSync(join(f.runDir, "wall", n.split("/").pop()!), body(String(k))); });
+    const over = { wallFiles: names.map((w) => ({ path: join(f.repo, w) })), checks: names.map((w) => ({ name: `bun:${w}` })), runner: new RealBaseTestRunner(null) };
+    const serial = await mutationProof(input(f, { ...over, env: { LOKI_MUTATION_PROOF_JOBS: "1" } })), conc = await mutationProof(input(f, { ...over, env: { LOKI_MUTATION_PROOF_JOBS: "4" } }));
+    expect(serial.outcome).toBe("no"); expect(JSON.stringify(conc)).toBe(JSON.stringify(serial));
+  });
+  test("out-of-tree residue: the DEFAULT (jobs unset) proof is serial and gives no, equal to jobs=1", async () => {
+    const f = fixture("oot", 1); const tags = ["A", "B"], names = tags.map((t) => `loki_wall_o${t}.test.ts`);
+    const body = (t: string) => `import { expect, test } from "bun:test";\nimport { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";\nimport { join } from "node:path";\ntest("o", async () => { const out = join(import.meta.dir, "..", "out_${t}"), sh = join(import.meta.dir, "..", "shared.txt"); mkdirSync(out); writeFileSync(sh, "${t}"); await Bun.sleep(500); expect(readFileSync(sh, "utf8")).toBe("${t}"); rmSync(out, { recursive: true }); });\n`;
+    tags.forEach((t, k) => { writeFileSync(join(f.repo, names[k]!), body(t)); writeFileSync(join(f.runDir, "wall", names[k]!), body(t)); });
+    const over = { wallFiles: names.map((w) => ({ path: join(f.repo, w) })), checks: names.map((w) => ({ name: `bun:${w}` })), runner: new RealBaseTestRunner(null) };
+    const def = await mutationProof(input(f, { ...over, env: {} })), one = await mutationProof(input(f, { ...over, env: { LOKI_MUTATION_PROOF_JOBS: "1" } }));
+    expect(def.outcome).toBe("no"); expect(JSON.stringify(def)).toBe(JSON.stringify(one));
+  });
   test("a concurrent-only fail never yields yes; a fail that reproduces serially does", async () => {
     const f = fixture("conc-only", 1); const names = ["loki_wall_c1.test.ts", "loki_wall_c2.test.ts"];
     const over = { wallFiles: names.map((w) => ({ path: join(f.repo, w) })), checks: names.map((w) => ({ name: `bun:${w}` })) };
     for (const w of names) { writeFileSync(join(f.repo, w), wallBody(1)); writeFileSync(join(f.runDir, "wall", w), wallBody(1)); }
     const mkr = (serialFail: number) => ({ run: () => ({ pass: 1 - serialFail, fail: serialFail }), runEach: async (_d: string, t: unknown[]) => t.map((_, k) => ({ pass: k ? 1 : 0, fail: k ? 0 : 1 })) });
-    expect((await mutationProof(input(f, { ...over, runner: mkr(0) }))).outcome).toBe("no");
-    expect((await mutationProof(input(f, { ...over, runner: mkr(1) }))).outcome).toBe("yes");
+    expect((await mutationProof(input(f, { ...over, runner: mkr(0), env: { LOKI_MUTATION_PROOF_JOBS: "4" } }))).outcome).toBe("no");
+    expect((await mutationProof(input(f, { ...over, runner: mkr(1), env: { LOKI_MUTATION_PROOF_JOBS: "4" } }))).outcome).toBe("yes");
   });
   test("budget: the serial path builds the runner from the remaining budget per file", async () => {
     const f = fixture("budget-serial", 2); const names = ["loki_wall_b1.test.ts", "loki_wall_b2.test.ts", "loki_wall_b3.test.ts"], calls: number[] = [];
@@ -157,7 +175,7 @@ describe("mutation proof outcomes", () => {
     const f = fixture("budget-conc", 2); const names = ["loki_wall_q1.test.ts", "loki_wall_q2.test.ts"];
     for (const w of names) { writeFileSync(join(f.repo, w), wallBody(1)); writeFileSync(join(f.runDir, "wall", w), wallBody(1)); }
     const slow = { run: () => ({ pass: 0, fail: 1 }), runEach: async (_d: string, t: unknown[]) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1300); return t.map(() => ({ pass: 0, fail: 1 })); } };
-    const r = await mutationProof(input(f, { wallFiles: names.map((w) => ({ path: join(f.repo, w) })), checks: names.map((w) => ({ name: `bun:${w}` })), timeoutS: 1, runner: slow }));
+    const r = await mutationProof(input(f, { wallFiles: names.map((w) => ({ path: join(f.repo, w) })), checks: names.map((w) => ({ name: `bun:${w}` })), timeoutS: 1, env: { LOKI_MUTATION_PROOF_JOBS: "4" }, runner: slow }));
     expect(r.line).toBe("test fails without the fix: inconclusive (timeout)");
   });
   test("budget: runEach starts no new file once the budget is spent and a spent slot is a timeout", async () => {
