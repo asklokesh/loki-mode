@@ -48,7 +48,6 @@ export function checkScreens(runDir: string, screens: unknown): string | null {
   }
   return null;
 }
-
 export function pickScript(pkg: Record<string, unknown>): string | null {
   const s = (pkg["scripts"] ?? {}) as Record<string, string>;
   return ["dev", "preview", "start"].find((k) => typeof s[k] === "string") ?? null;
@@ -88,7 +87,6 @@ function openapiPaths(repoDir: string): string[] {
   }
   return [];
 }
-
 /** Playwright test library resolvable in the repo (never downloaded). */
 export const playwrightTestPkg = (repoDir: string): string | null => {
   const d = join(repoDir, "node_modules", "@playwright", "test");
@@ -119,7 +117,6 @@ async function recordE2eMedia(repoDir: string, runDir: string, relDir: string, b
     return rels.length > 0 ? { rels, skipped: null } : { rels, skipped: "playwright e2e video and trace skipped: no video or trace was produced" };
   } catch (e) { return { rels: [], skipped: `playwright e2e video and trace skipped: ${String((e as Error)?.message ?? e).slice(0, 120)}` }; }
 }
-
 export interface CaptureOpts { budgetMs?: number; maxRoutes?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv; onServer?: (pgid: number) => void } // onServer: the dev server's own process group, so a supervisor can reap it on a hard kill
 const DEFAULT_BUDGET_MS = 25_000; // well under the 60s seal stage limit
 const MAX_ROUTES = 5;

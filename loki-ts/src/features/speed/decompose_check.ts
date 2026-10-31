@@ -45,7 +45,6 @@ function crossSymbol(dag: Dag, map: RepoMap | null): string | null {
   }
   return null;
 }
-
 export function checkDag(dag: Dag, o: CheckOpts): { mode: "parallel" | "sequential"; reason: string } {
   if (dag.units.length < 2) return { mode: "sequential", reason: `${dag.units.length} unit(s), need at least 2` };
   const ratio = overlapRatio(dag);
@@ -81,7 +80,6 @@ export function parseConfirm(raw: string, dag: Dag): string[][] | null {
   }
   return out;
 }
-
 export function mergeUnits(dag: Dag, groups: string[][]): Dag {
   const byId = new Map(dag.units.map((u) => [u.id, u]));
   const member = new Set(groups.flatMap((g) => g.slice(1)));
@@ -102,7 +100,6 @@ export function mergeUnits(dag: Dag, groups: string[][]): Dag {
   }
   return { units, sharedFiles, edges };
 }
-
 export async function checkDecomposable(dag: Dag, o: CheckOpts): Promise<CheckResult> {
   const first = checkDag(dag, o);
   if (first.mode === "sequential" || !o.confirm) return { ...first, dag, confirmed: "none" };

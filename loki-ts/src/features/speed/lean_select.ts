@@ -22,7 +22,6 @@ export function selectSpecificFiles(task: string, repoMap: RepoMap, max: number 
   const scored = sets.map((toks, idx) => ({ path: entries[idx]!.path, score: specific.reduce((n, w) => n + (toks.has(w) ? 1 : 0), 0), idx }));
   return scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score || a.idx - b.idx).slice(0, max).map((s) => s.path);
 }
-
 export function speedLikelyFiles(task: string, map: RepoMap | null, env: NodeJS.ProcessEnv = process.env): string[] {
   if (env["LOKI_SPEED"] === "0" || !map) return [];
   try { return selectSpecificFiles(task, map); } catch { return []; }

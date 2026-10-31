@@ -21,7 +21,6 @@ export function buildStatement(receipt: Record<string, unknown>): Record<string,
   if (typeof tree === "string" && /^[0-9a-f]{40,64}$/.test(tree)) digest["gitTree"] = tree;
   return { _type: STATEMENT_TYPE, subject: [{ name: `git+commit:${head}`, digest }], predicateType: PREDICATE_TYPE, predicate: receipt };
 }
-
 export function signEnvelope(receipt: Record<string, unknown>, priv: KeyObject, kid: string): DsseEnvelope {
   const body = Buffer.from(JSON.stringify(buildStatement(receipt)), "utf8");
   return {
@@ -30,7 +29,6 @@ export function signEnvelope(receipt: Record<string, unknown>, priv: KeyObject, 
     signatures: [{ keyid: kid, sig: sign(null, pae(DSSE_PAYLOAD_TYPE, body), priv).toString("base64") }],
   };
 }
-
 export const isEnvelope = (x: unknown): x is DsseEnvelope => !!x && typeof x === "object" && typeof (x as DsseEnvelope).payloadType === "string" && typeof (x as DsseEnvelope).payload === "string" && Array.isArray((x as DsseEnvelope).signatures);
 
 export type EnvelopeCheck = { ok: true; receipt: Record<string, unknown>; kid: string } | { ok: false; unchecked?: boolean; reason: string };

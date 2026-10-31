@@ -241,7 +241,6 @@ export function sealContract(repoDir: string, body: object, rawDiff: string[], c
 // REQTRACE: requirement-to-check map, .loki/state/requirements-map.json. Requirements come from existing extractors only:
 // the PRD checklist (.loki/checklist/checklist.json), a loki-spec file (spec_file.ts parseSpec), or the requirements_contract.py
 // unit extractor. Checks are what actually ran. A requirement is covered only by a check that ran and passed. Doc: docs/spec-first-intent.md.
-export const REQ_MAP_REL = join(".loki", "state", "requirements-map.json");
 export interface Requirement { id: string; text: string; links: string[] }
 export interface RanCheck { id: string; label: string; passed: boolean }
 export interface MapEntry { id: string; text: string; checks: string[]; status: "covered" | "uncovered"; method: "explicit" | "heuristic" }
@@ -295,7 +294,6 @@ export function mapRequirements(reqs: Requirement[], ran: RanCheck[], revision: 
   });
   return { version: 1, revision, requirements: out };
 }
-
 /** Checklist source: every item is an explicit requirement, every verification entry a check; only passed === true counts. */
 export function fromChecklist(lokiDir: string): { reqs: Requirement[]; ran: RanCheck[] } | null {
   const p = join(lokiDir, "checklist", "checklist.json");
@@ -313,11 +311,9 @@ export function fromChecklist(lokiDir: string): { reqs: Requirement[]; ran: RanC
   }
   return reqs.length ? { reqs, ran } : null;
 }
-
 export function currentRevision(repoDir: string): string {
   try { return safeGit(repoDir, ["rev-parse", "HEAD"]).trim(); } catch { return "unknown"; }
 }
-
 /** Writes the map and returns it; null (nothing written, never a throw) when there is no requirement source. */
 export function writeRequirementsMap(repoDir: string, lokiDir: string, reqs: Requirement[] | null, ran: RanCheck[]): RequirementsMap | null {
   try {
@@ -327,13 +323,11 @@ export function writeRequirementsMap(repoDir: string, lokiDir: string, reqs: Req
     return m;
   } catch { return null; }
 }
-
 /** Runner and legacy-shaped runs: the checklist is both the requirement source and the check record. */
 export function writeFromChecklist(repoDir: string, lokiDir: string): RequirementsMap | null {
   const c = fromChecklist(lokiDir);
   return c ? writeRequirementsMap(repoDir, lokiDir, c.reqs, c.ran) : null;
 }
-
 /** engine10: spec snapshot criteria, else multi-unit task text; checks are the run's test.result events. */
 export function writeFromEngine10(repoDir: string, lokiDir: string, runDir: string, task: string | null, events: { type: string; data: Record<string, unknown> }[]): RequirementsMap | null {
   let reqs: Requirement[] | null = null;
@@ -351,9 +345,6 @@ export function writeFromEngine10(repoDir: string, lokiDir: string, runDir: stri
   if (!m) { try { rmSync(mapPath, { force: true }); } catch { /* best effort */ } }
   return m;
 }
-
-export function uncoveredCount(m: RequirementsMap | null): number { return m ? m.requirements.filter((r) => r.status === "uncovered").length : 0; }
-
 /** Reads the written map for the summary line; null when absent or malformed. */
 export function readRequirementsMap(lokiDir: string): RequirementsMap | null {
   try {
@@ -361,7 +352,6 @@ export function readRequirementsMap(lokiDir: string): RequirementsMap | null {
     return m.version === 1 && Array.isArray(m.requirements) ? m : null;
   } catch { return null; }
 }
-
 export function renderRequirementsMap(m: RequirementsMap): string {
   const cov = m.requirements.filter((r) => r.status === "covered").length;
   const lines = [`Requirements: ${cov}/${m.requirements.length} covered (revision ${m.revision.slice(0, 12)})`];

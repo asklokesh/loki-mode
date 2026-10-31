@@ -46,7 +46,6 @@ export function scopedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   out["LOKI_NO_BROWSER"] = "1";
   return out;
 }
-
 /** Cost of one backlog.py launch, summed from its per-unit summary rows (`<label> $0.17 <status>`). usd is null when no unit reported a dollar figure: unknown is never $0. */
 export interface GroupCost { usd: number | null; measured: number; unmeasured: number }
 export function parseGroupCost(stdout: string): GroupCost {
@@ -82,7 +81,6 @@ export function writeGroupCostRecord(repoDir: string, name: string, costs: Group
     recs.forEach((r, k) => atomicWriteJson(join(dir, `iteration-group-${name}-${String(k).padStart(3, "0")}.json`), r));
   } catch { /* cost reporting never fails the run */ }
 }
-
 const defaultLauncher: BacklogLauncher = (argv, env, cwd, onOut) => new Promise((resolve) => {
   const child = spawn("python3", argv, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
@@ -91,7 +89,6 @@ const defaultLauncher: BacklogLauncher = (argv, env, cwd, onOut) => new Promise(
   child.on("error", (e) => resolve({ code: 127, stdout: out + String(e) }));
   child.on("close", (c) => resolve({ code: c ?? 1, stdout: out }));
 });
-
 const git = (dir: string, args: string[]): string => {
   const r = safeGitSpawn(dir, args, { encoding: "utf8" });
   return r.status === 0 ? String(r.stdout).trim() : "";
@@ -109,7 +106,6 @@ export function testCommand(repoDir: string, env: NodeJS.ProcessEnv): string[] {
   if (found) return found.cmd.split(/\s+/);
   return [];
 }
-
 const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex");
 const UNIT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const GID_RE = /^g[a-z0-9]{1,30}$/;
@@ -135,7 +131,6 @@ function findResumable(repoDir: string, specSha: string, unitIds?: string[]): { 
   }
   return best ? { gid: best.gid, stored: best.stored } : null;
 }
-
 /** A harvested unit counts as done only if its receipt verifies (signed), reads VERIFIED, and its head is the unit branch tip. */
 async function unitDone(verifyReceipt: SealDeps["verifyReceipt"], repoDir: string, gid: string, n: number, id: string): Promise<boolean> {
   if (!UNIT_ID_RE.test(id)) return false;
@@ -146,7 +141,6 @@ async function unitDone(verifyReceipt: SealDeps["verifyReceipt"], repoDir: strin
   const tip = git(repoDir, ["rev-parse", "--verify", "--quiet", `refs/heads/loki/unit-${gid}-${n}`]);
   return tip !== "" && rec["head_sha"] === tip;
 }
-
 /** #283: a unit of an earlier group with the same card and base sha, whose receipt still verifies at its branch tip, is adopted into this group (receipt copied, branch ref pointed at the same tip) instead of dispatched. */
 async function adoptJournaled(verifyReceipt: SealDeps["verifyReceipt"], repoDir: string, dir: string, key: string, gid: string, n: number, id: string, task: string, specSha: string, say: (s: string) => void): Promise<boolean> {
   const e = readSliceJournal(dir, key);
@@ -167,17 +161,14 @@ async function adoptJournaled(verifyReceipt: SealDeps["verifyReceipt"], repoDir:
   say(`loki: unit ${id} reused from the slice journal (group ${e.gid}, same card and base)\n`);
   return true;
 }
-
 /** The card's exit-0 rule for unit receipts: every unit VERIFIED (ALREADY_SATISFIED does not pass). Shared by the fresh path and the resume short-circuit. */
 function allUnitsVerified(unitVerdicts: string[]): boolean {
   return unitVerdicts.every((x) => x === "VERIFIED");
 }
-
 function unitVerdictsOf(rec: Record<string, unknown>): string[] {
   const us = (rec["group"] as { units?: { verdict?: unknown }[] } | undefined)?.units;
   return Array.isArray(us) && us.length > 0 ? us.map((u) => String(u.verdict)) : ["MISSING"];
 }
-
 /** A group that ends FAILED (exit 1) seals a minimal receipt through the supplied refusal sealer, so the run is offline-verifiable and `loki verify <id>` names the reason. NOT_PROVEN already has a group receipt (or no seal at all) and is left alone. */
 export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, ctx: GroupCtx): Promise<number> {
   const out = ctx.say ?? ((s: string): void => { process.stderr.write(s); });
@@ -189,7 +180,6 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   if (sealed) out(`loki: refusal receipt ${sealed.receiptPath}; run: loki verify ${sealed.runId}\n`);
   return code;
 }
-
 async function runGroupCore(launcher: BacklogLauncher | undefined, dag: Dag, ctx: GroupCtx): Promise<number> {
   const say = ctx.say ?? ((s: string): void => { process.stderr.write(s); });
   const { repoDir, env } = ctx;

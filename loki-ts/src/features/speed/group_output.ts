@@ -37,7 +37,6 @@ export function formatUnitTable(units: UnitRow[]): string {
   const w = mins.map((m, i) => Math.max(m, ...cells.map((c) => c[i]!.length + 2)));
   return cells.map((c) => c.map((s, i) => (i < 4 ? s.padEnd(w[i]!) : s)).join("")).join("\n");
 }
-
 export interface GroupRendererOpts {
   write: (s: string) => void;
   isTTY: boolean;
@@ -45,7 +44,6 @@ export interface GroupRendererOpts {
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (t: unknown) => void;
 }
-
 export function createGroupRenderer(o: GroupRendererOpts) {
   const setT = o.setTimer ?? ((fn, ms) => {
     const t = setInterval(fn, ms);
@@ -80,7 +78,6 @@ export function createGroupRenderer(o: GroupRendererOpts) {
     },
   };
 }
-
 /** Producer: turns `backlog: unit-<group>-<n> <status>` lines (n is the 1-based DAG position) into group.started / group.unit events and feeds the renderer. */
 export function createGroupFeed(groupId: string, dagUnits: { id: string; deps?: string[] }[], r: { update(u: UnitRow[]): void }, now: () => number = Date.now) {
   const events: EventEnvelope[] = [];

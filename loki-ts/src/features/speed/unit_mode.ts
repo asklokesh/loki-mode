@@ -30,7 +30,6 @@ function readBounded(path: string): string | null {
     return buf.subarray(0, n).toString("utf8");
   } finally { closeSync(fd); }
 }
-
 function parseText(txt: string): UnitSpec | null {
   try {
     const j = JSON.parse(txt) as Record<string, unknown>, ws = strs(j.writeSet), pack = strs(j.pack), tb = j.tokenBudget;
@@ -44,7 +43,6 @@ function parseText(txt: string): UnitSpec | null {
 function parseSpec(path: string): UnitSpec | null {
   try { const txt = readBounded(path); return txt === null ? null : parseText(txt); } catch { return null; }
 }
-
 // Process-lifetime cache keyed by path: a spec (including a null from an invalid or missing one) is never re-read, so a fixed file needs a new process.
 const memo = new Map<string, UnitSpec | null>();
 /** The active unit spec, or null (speed off, no spec, unreadable or invalid: fail-safe to the ordinary run). Parsed once per path per process. */
@@ -55,7 +53,6 @@ export function unitSpec(env: NodeJS.ProcessEnv = process.env): UnitSpec | null 
   if (!memo.has(path)) memo.set(path, parseSpec(path));
   return memo.get(path) ?? null;
 }
-
 const arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 /** #317b: the one canonical identity of a unit spec (id, items, acceptance, writeSet, base). The seal writer (unitSpecReceiptBlock) and the slice-journal adoption check both hash through this, so they cannot drift. */
 export function unitSpecSha256(s: { id?: unknown; items?: unknown; acceptance?: unknown; writeSet?: unknown; base?: unknown }): string {
@@ -71,7 +68,6 @@ export function unitSpecReceiptBlock(env: NodeJS.ProcessEnv = process.env): { un
     return { unit_spec: { sha256: unitSpecSha256(JSON.parse(txt) as Record<string, unknown>) } };
   } catch { return {}; }
 }
-
 /** A path is inside the write set when it equals an entry or sits under an entry that ends in "/". */
 export const inWriteSet = (spec: UnitSpec, f: string): boolean => spec.writeSet.some((w) => (w.endsWith("/") ? f.startsWith(w) : f === w));
 
@@ -82,14 +78,12 @@ export function unitBrief(env: NodeJS.ProcessEnv = process.env): string | null {
   const files = s.pack.filter((f) => !/^([/~]|[A-Za-z]:[\\/])/.test(f) && !f.split(/[\\/]/).includes(".."));
   return files.length ? `Relevant files:\n${files.join("\n")}` : "";
 }
-
 /** D76: advisory. Files staged outside the write set (tests and new files included), to be flagged as outside stated scope; nothing is
  *  reverted. null when unit mode is off. */
 export function unitFlags(staged: Staged[], env: NodeJS.ProcessEnv = process.env, pre: Record<string, string> = {}): string[] | null {
   const s = unitSpec(env);
   return s ? staged.filter(({ f }) => !inWriteSet(s, f) && !Object.hasOwn(pre, f)).map(({ f }) => f) : null;
 }
-
 /** Env additions for the unit's worker. Never loosens or disables the run cap: result is min(existing, max(0.01, budget cost)), a plain
  *  decimal rounded up. A non-finite or non-positive rate leaves the existing cap unchanged (no override when there is none). */
 export function unitCapEnv(s: UnitSpec, usdPerMillionTokens: number, existingCapUsd?: number): Record<string, string> {
@@ -101,7 +95,6 @@ export function unitCapEnv(s: UnitSpec, usdPerMillionTokens: number, existingCap
   const v = Math.max(0.01, cost);
   return { LOKI_E10_MAX_COST_USD: ex !== null && ex <= v && ex <= 1e15 ? keep(ex) : fmt(ex === null ? v : Math.min(ex, v)) };
 }
-
 export const UNIT_NOT_PROVEN = (why: string): string => `NOT PROVEN: unit mode was requested but ${why}; no unfenced run was started`;
 export const DEFAULT_UNIT_USD_PER_MTOK = 15;
 

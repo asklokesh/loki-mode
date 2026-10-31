@@ -49,7 +49,6 @@ function packageRunner(content: string): string | null {
     return test.includes("bun test") ? "bun test" : (named ?? (test || null));
   } catch { return null; }
 }
-
 function pytestSection(content: string, header: RegExp): string[] {
   const lines = norm(content).split("\n");
   const at = lines.findIndex((l) => header.test(l));

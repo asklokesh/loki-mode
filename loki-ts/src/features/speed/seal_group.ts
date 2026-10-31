@@ -119,7 +119,6 @@ export async function verifyGroup(receiptPath: string, receipt: Record<string, u
   }
   return unchecked ? { verdict: "UNCHECKED", reason: `group: ${unchecked}` } : null;
 }
-
 /** Group receipt: one signed body over sealGroup's section, written to <groupDir>/receipt.json (tmp + rename). Reuses sealGroup and the cap rules; no second sealer.
  *  Throws (message names the problem) when group/manifest.json is missing or any unit sub-receipt fails to seal, so a bad group never gets a receipt. rh is seal.ts receiptSha256, injected. */
 export const GROUP_SCHEMA = "loki.v10.group/1";

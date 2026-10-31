@@ -22,7 +22,6 @@ export function answerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   e.LOKI_NO_BROWSER = "1";
   return e;
 }
-
 export interface BlockedRun { runId: string; task: string; question: string }
 /** Reads a run's task and question; returns the reason it cannot be resumed otherwise. */
 const MAX_ANSWER = 4000; // matches the control-plane write cap
@@ -40,7 +39,6 @@ export function readBlocked(repoDir: string, runId: string): BlockedRun | string
   if (typeof task !== "string" || !task) return `run ${runId} has no recorded task`;
   return { runId, task, question: clean(typeof why === "string" && why ? why : "the run is blocked on a spec conflict").slice(0, 500) };
 }
-
 export function newestBlocked(repoDir: string): string | null {
   const ids = listRunIds(runsRoot(process.env, repoDir));
   for (let i = ids.length - 1; i >= 0; i--) if (typeof readBlocked(repoDir, ids[i]!) !== "string") return ids[i]!;
@@ -55,7 +53,6 @@ export function readAnswerFile(answerDir: string, runId: string): string | null 
   }
   return null;
 }
-
 export async function runAnswer(args: string[], d: AnswerDeps): Promise<number> {
   let runId = "", text: string | undefined;
   for (let i = 0; i < args.length; i++) {
@@ -91,7 +88,6 @@ function realLaunch(argv: string[], env: NodeJS.ProcessEnv, cwd: string): Promis
     child.on("error", () => fin(1));
   });
 }
-
 export function runAnswerCli(args: string[]): Promise<number> {
   return runAnswer(args, {
     repoDir: process.cwd(), env: process.env, binPath: join(REPO_ROOT, "bin", "loki"),

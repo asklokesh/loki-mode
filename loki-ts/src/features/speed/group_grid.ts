@@ -11,7 +11,6 @@ export interface GridRow {
   stage: string;
   elapsedS: number | null;
 }
-
 export function groupGrid(repoDir: string, group: string, now: number = Date.now()): GridRow[] {
   const rows: GridRow[] = [];
   const root = runsRoot(process.env, repoDir);
@@ -43,7 +42,6 @@ export function renderGroupPage(group: string, rows: GridRow[]): string {
     `<style>body{font:13px/1.5 ui-monospace,monospace;padding:16px;background:#0b0b0c;color:#ddd}td,th{padding:2px 14px 2px 0;text-align:left}</style>` +
     `</head><body><h1>Group ${esc(group)}</h1>${body}</body></html>`;
 }
-
 export async function groupResponse(repoDir: string, group: string): Promise<Response> {
   return new Response(renderGroupPage(group, groupGrid(repoDir, group)), { headers: { "content-type": "text/html; charset=utf-8" } });
 }

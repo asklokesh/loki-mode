@@ -9,7 +9,6 @@ export interface DecomposeOpts {
   workspaces?: string[];
   maxFilesPerItem?: number;
 }
-
 export interface Unit {
   id: string;
   items: string[];
@@ -42,7 +41,6 @@ export function parseItems(spec: string): string[] {
   const t = spec.trim();
   return t ? [t] : [];
 }
-
 const MS_HEAD_RE = /^\s{0,3}#{1,6}\s+Milestone\s+(\d+)\s*(?:[:.-]\s*(.*?))?\s*#*\s*$/i;
 const MS_KEY_RE = /^milestones:\s*$/i;
 export interface Milestone { n: number; title: string; body: string }
@@ -71,7 +69,6 @@ export function parseMilestones(spec: string): Milestone[] {
   }
   return list.length >= 2 ? list : [];
 }
-
 export function moduleOf(path: string, workspaces: string[]): string {
   const ws = [...workspaces].sort((a, b) => b.length - a.length || (a < b ? -1 : 1)).find((w) => path === w || path.startsWith(`${w}/`));
   if (ws) return ws;
@@ -88,7 +85,6 @@ function mentioned(item: string, known: Set<string>): string[] {
   }
   return out;
 }
-
 export function decompose(spec: string, map: RepoMap, o: DecomposeOpts): Dag {
   const items = parseItems(spec);
   const known = new Set(map.files);

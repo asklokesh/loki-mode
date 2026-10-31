@@ -23,14 +23,12 @@ export function validateEnvelope(x: unknown): string | null {
   if ("deps" in x.data && (!Array.isArray(x.data.deps) || x.data.deps.some((d) => typeof d !== "string"))) return "deps must be a string array";
   return null;
 }
-
 export function makeEvent(
   run: string, seq: number, type: EventType | (string & {}), stage: EventEnvelope["stage"], data: Obj,
   ts: string = new Date().toISOString(),
 ): EventEnvelope {
   return { v: 1, seq, ts, run, type, stage, data };
 }
-
 function parseLine(line: string): EventEnvelope | null {
   if (line.trim() === "") return null;
   try {
@@ -40,7 +38,6 @@ function parseLine(line: string): EventEnvelope | null {
     return null; // torn or corrupt line
   }
 }
-
 /** Reads every valid event. A torn last line (or any unparseable line) is skipped. */
 export function readEvents(path: string): EventEnvelope[] {
   if (!existsSync(path)) return [];
@@ -51,7 +48,6 @@ export function readEvents(path: string): EventEnvelope[] {
   }
   return out;
 }
-
 /** The single writer. Opens with O_APPEND and writes each line in one write(2).  The constructor truncates a torn (unterminated) last line back to the last newline, so a tamper hash (E-03) must be seeded from the file AFTER construction, not before. */
 export class EventLog {
   private nextSeq: number;

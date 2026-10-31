@@ -38,7 +38,6 @@ export function parseTrackerRef(ref: string, env: NodeJS.ProcessEnv = process.en
   if (m) return { source: "linear", key: m[1]!.toUpperCase() };
   return null;
 }
-
 interface AdfNode { type?: string; text?: string; content?: AdfNode[] }
 /** Converts an Atlassian Document Format tree (or a plain string) to plain text. */
 export function adfToText(doc: unknown): string {
@@ -61,13 +60,11 @@ export function adfToText(doc: unknown): string {
   };
   return walk(doc as AdfNode, "").replace(/\n{3,}/g, "\n\n").trim();
 }
-
 function need(env: NodeJS.ProcessEnv, name: string, hint = ""): string {
   const v = env[name];
   if (!v) throw new Error(`${name} is not set (required for this issue ref${hint})`);
   return v;
 }
-
 async function fetchJira(ref: Extract<TrackerRef, { source: "jira" }>, f: FetchFn, env: NodeJS.ProcessEnv): Promise<TrackerIssue> {
   const base = (env.JIRA_BASE_URL || ref.site || need(env, "JIRA_BASE_URL", "; Jira intake needs JIRA_EMAIL, JIRA_API_TOKEN and JIRA_BASE_URL")).replace(/\/+$/, "");
   if (env.JIRA_BASE_URL && ref.site) {
@@ -93,7 +90,6 @@ async function fetchJira(ref: Extract<TrackerRef, { source: "jira" }>, f: FetchF
     repo: j.key ?? ref.key, state: null, closed_by_merged_pr: false,
   };
 }
-
 async function fetchLinear(ref: Extract<TrackerRef, { source: "linear" }>, f: FetchFn, env: NodeJS.ProcessEnv): Promise<TrackerIssue> {
   const key = need(env, "LINEAR_API_KEY", "; Linear intake needs LINEAR_API_KEY");
   const res = await f("https://api.linear.app/graphql", {
@@ -117,7 +113,6 @@ async function fetchLinear(ref: Extract<TrackerRef, { source: "linear" }>, f: Fe
 export async function fetchTrackerIssue(ref: TrackerRef, f: FetchFn = fetch, env: NodeJS.ProcessEnv = process.env): Promise<TrackerIssue> {
   return ref.source === "jira" ? fetchJira(ref, f, env) : fetchLinear(ref, f, env);
 }
-
 export async function fetchTrackerIssueToFile(ref: TrackerRef, outFile: string, f: FetchFn = fetch, env: NodeJS.ProcessEnv = process.env): Promise<TrackerIssue> {
   const issue = await fetchTrackerIssue(ref, f, env);
   writeFileSync(outFile, JSON.stringify(issue));

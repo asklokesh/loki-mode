@@ -33,7 +33,6 @@ export function providerSlots(env: NodeJS.ProcessEnv, provider?: string): { prov
   provider = (provider || env.LOKI_PROVIDER || "claude").toLowerCase();
   return { provider, slots: PROVIDER_SLOTS[provider] ?? 1 };
 }
-
 export interface RouteDeps {
   group?: GroupRunner;
   /** Test seam for the default group runner: replaces the backlog.py launcher. */
@@ -73,7 +72,6 @@ function readSpec(task: string, repoDir: string, cwd: string): SpecRead {
   } catch (e) { return { kind: "reject", reason: `spec file unreadable: ${(e as Error).message.split("\n")[0]}` }; }
   finally { if (fd >= 0) closeSync(fd); }
 }
-
 export async function maybeRunGroup(task: string, repoDir: string, env: NodeJS.ProcessEnv, deps: RouteDeps = {}): Promise<RouteResult> {
   if (env.LOKI_SPEED === "0") return { code: null, task };
   if (env.LOKI_UNIT_ID) return { code: null, task }; // a unit child never re-decomposes into a nested group

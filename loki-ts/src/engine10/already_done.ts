@@ -11,7 +11,6 @@ export interface AlreadyDoneResult {
   evidence: string[]; // the model's own citation first, then the deterministic hits behind it
   paths: string[]; // the hits' file paths (FC-15: checked against the PR target)
 }
-
 /** Runs the deterministic search, then, only on a candidate, one short confirmation session  (fast tier pinned to wallModel(), the same cheap-model pin E-45 uses for Wall). No candidate,  no  session call: findEvidence's own gate is what keeps this off the hot path. */
 export async function checkAlreadyDone(
   ctx: RunContext,
