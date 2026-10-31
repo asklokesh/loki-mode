@@ -164,8 +164,10 @@ function goCount(out: string, ok?: boolean): number | null | undefined {
  *  leading env / command / exec / time wrappers, VAR=val assignments and a path to go (/usr/local/go/bin/go) all resolving to go.
  *  Any `&&`, `;`, `||` or `|` segment that runs go counts. Chosen from the command, never from output. Detecting go too often
  *  only fails closed (exit 0 is not_run), so a doubtful wrapper is classified as go. */
-export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" } | Record<string, never> {
+/** The command word of each shell segment once leading env / command / exec / time wrappers, VAR=val assignments and env flags are skipped; the tokens after it follow. Shared by the go and cargo detection. */
+function segmentTools(cmd: string, args?: readonly string[]): { tool: string; rest: string[] }[] {
   const segs = args ? [[cmd, ...args]] : cmd.split(/&&|\|\||[;|\n]/).map((x) => x.trim().split(/\s+/).filter(Boolean));
+  const out: { tool: string; rest: string[] }[] = [];
   for (const t0 of segs) {
     const t = t0.map((x) => x.replace(/^["']|["']$/g, ""));
     let k = 0;
@@ -175,9 +177,12 @@ export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" 
       if (/^-/.test(x) && k > 0 && basename(t[k - 1]!) === "env") { if (x === "-u" || x === "-C" || x === "-S") k++; continue; }
       break;
     }
-    if (t[k] !== undefined && basename(t[k]!) === "go") return { runner: "go" };
+    if (t[k] !== undefined) out.push({ tool: basename(t[k]!), rest: t.slice(k + 1) });
   }
-  return {};
+  return out;
+}
+export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" } | Record<string, never> {
+  return segmentTools(cmd, args).some((s) => s.tool === "go") ? { runner: "go" } : {};
 }
 /** go test -json: every non-empty line is a test2json event (or a "go: " tool note), else null (parse doubt). The go command frames the test
  *  binary's stdout as events, but test or implementation code that prints \x16-marked lines can make the framing emit run/pass events for tests that never ran;
@@ -208,6 +213,7 @@ function goJson(out: string): { failed: boolean; failedTests: string[]; passed: 
   const passedNames = [...status].filter(([, v]) => v === "pass").map(([k]) => k);
   return { failed, failedTests: [...failedTests], passed: passedNames.length, passedNames, complete: !dirty && pkgs.size > 0 && [...pkgs].every((p) => starts.get(p) === 1 && done.get(p) === 1) }; // a torn stream or one with repeated starts, terminals or runs is doubt; a clean forged stream passes this and is caught by corroboratePass
 }
+export const CARGO_RUNNER_REASON = "test count could not be confirmed: a cargo target runner wraps both the test run and its listing";
 export const CARGO_UNLISTED_REASON = "test count could not be confirmed: the cargo summary does not match the tests cargo lists for the same command";
 /** A cargo pass is counted only when every libtest segment matches the runner's own listing, taken by running the same command with `-- --list` and `-- --list --ignored`.
  *  Threat model: libtest prints its results inside the process that runs the code under test, so code can print "test <name> ... ok" lines and a summary and exit 0
@@ -216,9 +222,22 @@ export const CARGO_UNLISTED_REASON = "test count could not be confirmed: the car
  *  name is in the ignored listing. A segment count that differs from the listing, a listing that fails, or a line with shell syntax or the --ignored, --include-ignored,
  *  --list, --format or --logfile libtest flags stays not_run. Residual risk, stated plainly: code that prints the exact listed names of its own binary with a matching
  *  summary still forges, and so do code that runs before main (a link-section constructor) and a `harness = false` target, which control the listing too. */
-async function corroborateCargoPass(c: Classified, out: string, toks: readonly string[], o: { cwd: string; env: NodeJS.ProcessEnv }): Promise<Classified> {
+/** A target runner (.cargo/config(.toml) in the cwd or any ancestor, CARGO_TARGET_*_RUNNER, or a runner on --config) wraps the test binary for the run AND the listing, so the listing is no longer the runner's own word. */
+function cargoRunnerConfigured(cwd: string, env: NodeJS.ProcessEnv, toks: readonly string[]): boolean {
+  if (Object.keys(env).some((k) => /^CARGO_TARGET_.+_RUNNER$/i.test(k)) || toks.some((t, i) => (t === "--config" ? /runner/i.test(toks[i + 1] ?? "") : t.startsWith("--config=") && /runner/i.test(t)))) return true;
+  for (let d = resolve(cwd), prev = ""; d !== prev; prev = d, d = dirname(d)) {
+    for (const f of ["config", "config.toml"]) {
+      const p = join(d, ".cargo", f);
+      if (!existsSync(p)) continue;
+      try { if (/^\s*"?runner"?\s*=|^\s*\[target\.[^\]]*\brunner\b/m.test(readFileSync(p, "utf8"))) return true; } catch { return true; } // unreadable config is doubt
+    }
+  }
+  return false;
+}
+async function corroborateCargoPass(c: Classified, out: string, toks: readonly string[], o: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }): Promise<Classified> {
   const refuse: Classified = { result: "not_run", reason: CARGO_UNLISTED_REASON }, dd = toks.indexOf("--");
-  const lib = dd < 0 ? [] : toks.slice(dd + 1), argv = ["test", ...toks.slice(2, dd < 0 ? undefined : dd), "--", ...lib.filter((t) => t !== "-q" && t !== "--quiet"), "--list"];
+  const lib = dd < 0 ? [] : toks.slice(dd + 1), argv = ["test", ...toks.slice(2, dd < 0 ? undefined : dd).filter((t) => t !== "-q" && t !== "--quiet"), "--", ...lib.filter((t) => t !== "-q" && t !== "--quiet"), "--list"]; // --quiet at cargo level would also reach the listing and drop its "N tests" footer
+  if (cargoRunnerConfigured(o.cwd, o.env, toks)) return { result: "not_run", reason: CARGO_RUNNER_REASON };
   if (toks.some((t) => /[&|;$`"'<>()\\]/.test(t)) || lib.some((t) => /^--(?:ignored|include-ignored|list|format|logfile)\b|^-Z/.test(t))) return refuse;
   const listing = async (extra: string[]): Promise<Set<string>[] | null> => {
     const r = await spawnCollect("cargo", [...argv, ...extra], { ...o, timeoutMs: 600_000 });
@@ -248,12 +267,14 @@ async function corroborateCargoPass(c: Classified, out: string, toks: readonly s
  *  before the runtime writes it) and a package with no statements (checked per package), cgo files or a //line directive all stay not_run, the fail-safe default. The re-run must also exit 0 with a complete
  *  stream that passes the same tests. Argv or a plain `go test [-json] [-run X] <pkgs>` line only; any other shape (extra flags, shell syntax) cannot be re-run and stays
  *  not_run. A non-pass result is returned unchanged. Residual risk, stated plainly: code that reproduces the cover tool's block table for its own source can still forge. */
-export async function corroboratePass(c: Classified, out: string, cmdOrLine: string, args: readonly string[] | undefined, o: { cwd: string; env: NodeJS.ProcessEnv }): Promise<Classified> {
+export async function corroboratePass(c: Classified, out: string, cmdOrLine: string, args: readonly string[] | undefined, o: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }): Promise<Classified> {
   const toks = args ? [cmdOrLine, ...args] : cmdOrLine.trim().split(/\s+/);
   if (c.result === "pass" && basename(toks[0] ?? "") === "cargo" && toks[1] === "test") return corroborateCargoPass(c, out, toks, o);
+  // an env / toolchain (+stable) / cd prefix puts cargo test out of reach of the listing check: refuse it the way a Go line it cannot re-run is refused
+  if (c.result === "pass" && segmentTools(cmdOrLine, args).some((s) => s.tool === "cargo" && s.rest.find((x) => !x.startsWith("+") && !x.startsWith("-")) === "test")) return { result: "not_run", reason: CARGO_UNLISTED_REASON };
   if (c.result !== "pass" || goRunner(cmdOrLine, args).runner !== "go") return c;
   const g = corroborateGoSteps(c, out, cmdOrLine, args, toks, o); let step = g.next();
-  while (!step.done) { const [cmd, a, to] = step.value; step = g.next(await spawnCollect(cmd, a, to)); }
+  while (!step.done) { const [cmd, a, to] = step.value; step = g.next(await spawnCollect(cmd, a, { ...to, ...(o.signal ? { signal: o.signal } : {}) })); }
   return step.value;
 }
 type SpawnRes = { status: number | null; output: string };
@@ -1270,15 +1291,17 @@ export function spawnGroupSync(cmd: string, args: string[], o: { cwd?: string; e
   try { return JSON.parse(r.stdout) as { status: number | null; output: string }; } catch { return { status: null, output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` }; }
 }
 /** TEN-SPEED-19: async twin of the sync spawn used by RealBaseTestRunner: status is null on spawn error, signal or timeout; output is stdout and stderr merged by arrival. The child leads its own process group: SIGTERM at the timeout, then SIGKILL to the group 1s later, and the result resolves on exit plus a short drain grace, never waiting on a grandchild that holds the pipes. */
-export function spawnCollect(cmd: string, args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number }): Promise<{ status: number | null; output: string }> {
+export function spawnCollect(cmd: string, args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal }): Promise<{ status: number | null; output: string }> {
   return new Promise((resolve) => {
     let out = "", err = "", error = false, done = false; const MAX = 1024 * 1024; // spawnSync parity: stdin EOF, default maxBuffer, "stdout\nstderr" join
     const timers: NodeJS.Timeout[] = [];
-    const fin = (status: number | null) => { if (!done) { done = true; timers.forEach(clearTimeout); killGroup(c.pid, "SIGKILL"); wd?.kill("SIGKILL"); resolve({ status: error ? null : status, output: `${out}\n${err}` }); } };
+    const fin = (status: number | null) => { if (!done) { done = true; timers.forEach(clearTimeout); o.signal?.removeEventListener("abort", abort); killGroup(c.pid, "SIGKILL"); wd?.kill("SIGKILL"); resolve({ status: error ? null : status, output: `${out}\n${err}` }); } };
     const c = spawn(cmd, args, { cwd: o.cwd, env: o.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     const wd = startWatchdog(c.pid);
     const term = () => { try { process.kill(-c.pid!, "SIGTERM"); } catch { c.kill("SIGTERM"); } };
     timers.push(setTimeout(() => { error = true; term(); timers.push(setTimeout(() => { killGroup(c.pid, "SIGKILL"); fin(null); }, 1000)); }, o.timeoutMs)); // spawn's own timeout would signal the direct child only
+    const abort = () => { error = true; term(); timers.push(setTimeout(() => { killGroup(c.pid, "SIGKILL"); fin(null); }, 1000)); }; // an aborted stage ends the whole group like the timeout does, never only the direct child
+    if (o.signal?.aborted) abort(); else o.signal?.addEventListener("abort", abort, { once: true });
     const over = () => { if (out.length > MAX || err.length > MAX) { error = true; killGroup(c.pid, "SIGKILL"); } };
     c.stdout?.on("data", (d) => { out += d; over(); }); c.stderr?.on("data", (d) => { err += d; over(); });
     c.on("error", () => { error = true; fin(null); }); c.on("close", (code, sig) => fin(sig ? null : code));

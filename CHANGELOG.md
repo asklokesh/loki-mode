@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- The cargo pass check no longer lets a forged pass through when the command carries an env, toolchain or cd prefix (`RUST_BACKTRACE=1 cargo test`, `cargo +stable test`, `env cargo test`, `cd . && cargo test`); those are not a counted pass, as for Go. `cargo test -q` no longer reads as not run because of its own `--quiet`. A cargo target runner (a `.cargo/config(.toml)` in the repo or any parent folder, a `CARGO_TARGET_*_RUNNER` variable or `--config` runner) wraps both the run and its listing, so such a pass is not counted. The listing runs now stop when the stage is aborted.
+
 ## v11.95.0 (2026-10-31)
 
 `loki answer` now resumes a blocked run in place, a Wall test that contradicts the task is settled by two referees and caps the Seal at PARTIAL, implement sessions refuse file writes outside their worktree, and a test-command timeout now kills the whole runner process group.
