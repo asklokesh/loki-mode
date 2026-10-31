@@ -364,6 +364,10 @@ describe("Go Wall that never references the package under test", () => {
     expect(vacuousCheck("a_test.go", own, "github.com/goccy/go-yaml")).toBeNull();
     expect(vacuousCheck("a_test.go", own, "example.com/m/yaml")).toContain(MSG);
     expect(vacuousCheck("a_test.go", own)).toContain(MSG);
+    const evil = own.replace("github.com/goccy/go-yaml", "example.com/evil/yaml");
+    expect(vacuousCheck("a_test.go", evil, "example.com/mod/yaml")).toContain(MSG);
+    const v2 = "package foo_test\n\nimport (\n\t\"testing\"\n\t\"example.com/m/v2/pkg/foo\"\n)\n\nfunc TestA(t *testing.T) {\n\tif foo.Bar() != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n";
+    expect(vacuousCheck("a_test.go", v2, "example.com/m/v2/pkg/foo")).toBeNull();
   });
   test("a file with no package clause or no Test or Fuzz func is not judged", () => {
     expect(vacuousCheck("a_test.go", `func TestA(t *testing.T) { if 1 != 2 { t.Fatal("x") } }\n`)).toBeNull();
