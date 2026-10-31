@@ -44,12 +44,15 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
     const add = git(i.repoDir, ["worktree", "add", "--detach", wt, i.baseSha], Math.max(1000, Math.min(30_000, remaining())));
     added = existsSync(wt) || add.status === 0;
     if (add.status !== 0) return np("could not create the base worktree");
+    const srcs: [string, string][] = [], reset = (): boolean => { // clean base tree for a confirming re-run: the concurrent run may have left files in the shared worktree; linked dependency dirs stay
+      if (git(wt as string, ["reset", "-q", "--hard", i.baseSha]).status !== 0 || git(wt as string, ["clean", "-fdxq", ...DEP_DIRS.flatMap((d) => ["-e", d])]).status !== 0) return false;
+      for (const [rel, src] of srcs) { mkdirSync(dirname(join(wt as string, rel)), { recursive: true }); writeFileSync(join(wt as string, rel), readFileSync(src)); } return true; };
     for (const rel of rels) { // sealed copy first (byte-exact what the run sealed), else the file in the working tree
       const sealed = join(i.runDir, "wall", basename(rel));
       if (!existsSync(sealed) && existsSync(join(i.runDir, "wall"))) return np(`sealed Wall copy missing: ${rel}`); // never substitute the working-tree file for a deleted sealed copy
       const src = existsSync(sealed) ? sealed : join(i.repoDir, rel);
       if (!existsSync(src)) return np(`Wall file missing: ${rel}`);
-      mkdirSync(dirname(join(wt, rel)), { recursive: true }); writeFileSync(join(wt, rel), readFileSync(src));
+      mkdirSync(dirname(join(wt, rel)), { recursive: true }); writeFileSync(join(wt, rel), readFileSync(src)); srcs.push([rel, src]);
     }
     // B1: the bare worktree has no installed dependencies; link each one that exists in the repo (root and every Wall file ancestor) so a missing package is never read as a failing test.
     for (const rel of rels) { const parts = rel.split("/").slice(0, -1); for (let n = 0; n <= parts.length; n++) { const anc = parts.slice(0, n).join("/"); for (const d of DEP_DIRS) { const src = join(i.repoDir, anc, d), dst = join(wt, anc, d); if (existsSync(src) && !existsSync(dst)) { try { symlinkSync(src, dst); } catch { /* the run decides */ } } } } }
@@ -61,7 +64,7 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
     if (rs.some((r) => !r)) return np("timeout");
     if (par && remaining() <= 0) return np("timeout"); // concurrent path: a passed deadline is a timeout before any verdict
     // A concurrent fail is not authoritative (children share the temp worktree): it counts only if it reproduces serially.
-    if (par) for (let k = 0; k < rs.length; k++) if (rs[k]!.fail > 0) { if (remaining() <= 0) return np("timeout"); rs[k] = mk().run(wt, [tests[k]!]); if (rs[k]!.fail > 0) break; }
+    if (par) for (let k = 0; k < rs.length; k++) if (rs[k]!.fail > 0) { if (remaining() <= 0) return np("timeout"); if (!reset()) return np("could not reset the base worktree"); rs[k] = mk().run(wt, [tests[k]!]); if (rs[k]!.fail > 0) break; }
     for (const r of rs) { pass += r!.pass; fail += r!.fail; notRun += r!.not_run ?? 0; }
     if (remaining() <= 0 && fail === 0) return np("timeout");
     if (fail > 0) return { outcome: "yes", line: `${LABEL}yes` };

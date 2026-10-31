@@ -124,6 +124,14 @@ describe("mutation proof outcomes", () => {
     const serial = await mutationProof(input(f, { ...over, env: { LOKI_MUTATION_PROOF_JOBS: "1" } })), conc = await mutationProof(input(f, { ...over, env: { LOKI_MUTATION_PROOF_JOBS: "4" } }));
     expect(serial.outcome).toBe("no"); expect(JSON.stringify(conc)).toBe(JSON.stringify(serial));
   });
+  test("leftover files from the concurrent run do not poison the confirming re-run (no EEXIST false yes)", async () => {
+    const f = fixture("leftover", 1); const tags = ["A", "B"], names = tags.map((t) => `loki_wall_l${t}.test.ts`);
+    const body = (t: string) => `import { expect, test } from "bun:test";\nimport { mkdirSync, readFileSync, writeFileSync } from "node:fs";\ntest("l", async () => { mkdirSync(import.meta.dir + "/out_${t}"); writeFileSync(import.meta.dir + "/shared_state.txt", "${t}"); await Bun.sleep(500); expect(readFileSync(import.meta.dir + "/shared_state.txt", "utf8")).toBe("${t}"); });\n`;
+    tags.forEach((t, k) => { writeFileSync(join(f.repo, names[k]!), body(t)); writeFileSync(join(f.runDir, "wall", names[k]!), body(t)); });
+    const over = { wallFiles: names.map((w) => ({ path: join(f.repo, w) })), checks: names.map((w) => ({ name: `bun:${w}` })), runner: new RealBaseTestRunner(null) };
+    const serial = await mutationProof(input(f, { ...over, env: { LOKI_MUTATION_PROOF_JOBS: "1" } })), conc = await mutationProof(input(f, { ...over, env: { LOKI_MUTATION_PROOF_JOBS: "4" } }));
+    expect(serial.outcome).toBe("no"); expect(JSON.stringify(conc)).toBe(JSON.stringify(serial));
+  });
   test("a concurrent-only fail never yields yes; a fail that reproduces serially does", async () => {
     const f = fixture("conc-only", 1); const names = ["loki_wall_c1.test.ts", "loki_wall_c2.test.ts"];
     const over = { wallFiles: names.map((w) => ({ path: join(f.repo, w) })), checks: names.map((w) => ({ name: `bun:${w}` })) };
