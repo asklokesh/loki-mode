@@ -522,7 +522,7 @@ function stagesResumable(repoDir: string, runId: string, events: readonly EventE
   try {
     const tl = trustedLog(events, readFileSync(join(repoDir, eventsRelPath(runId)), "utf8")), rp = resumePoint(tl.events, tl.raw);
     if (!rp.ok || rp.skip.length === 0) return false;
-    const base = events.findLast((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
+    const base = tl.events.findLast((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
     if (typeof base === "string" && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(base)) safeGit(repoDir, ["cat-file", "-e", `${base}^{commit}`]);
     return true;
   } catch { return false; }

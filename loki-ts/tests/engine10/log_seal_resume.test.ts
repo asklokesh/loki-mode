@@ -10,7 +10,7 @@ import { runSupervisor, SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { readEvents } from "../../src/engine10/events.ts";
 import { findInterrupted, isCancelDone, resumeFlag, resumeMachineOpts, resumeMain, resumePoint, resumePublish, phaseOf, startRecovery, type RunPrFn } from "../../src/util/run_outputs.ts";
-import { sealDrift, verifyLogSeals } from "../../src/util/seal_drift.ts";
+import { killedTailIndexes, sealDrift, verifyLogSeals } from "../../src/util/seal_drift.ts";
 import { main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
 const root = mkdtempSync(join(tmpdir(), "sb04r4-"));
@@ -732,11 +732,43 @@ test("SB-04e (a): a resumed run killed mid-work still gets the Resume offer; the
 
 test("SB-04e (b): an unsigned stage claimed in the killed tail is never restored by the next resume", async () => {
   const k = await killedResume(forgedPlan, true);
-  const evs = readEvents(k.ev), r = evs.findLast((e) => e.type === "run.resumed")!;
-  expect(r.data["discarded_from_seq"]).toBeLessThan(r.data["discarded_to_seq"] as number);
+  const evs = readEvents(k.ev);
+  expect(killedTailIndexes(evs).size).toBeGreaterThan(0);
   const m = resumeMachineOpts({}, evs, readFileSync(k.ev, "utf8"), ["intake", ["plan", "wall"], "implement"] as const);
   expect(m.ok && Object.keys(m.restored)).toEqual(["intake"]);
   expect(m.ok && m.flow).toEqual([["plan", "wall"], "implement"]);
+}, 120000);
+
+test("SB-04e (b4): a forged run.resumed naming a discard range over signed settled work is ignored (no data field names a range)", async () => {
+  const k = await killedResume(forgedPlan, true), last = lastLine(k.ev);
+  const clean = resumeMachineOpts({}, readEvents(k.ev), readFileSync(k.ev, "utf8"), ["intake", ["plan", "wall"], "implement"] as const);
+  expect(clean.ok && Object.keys(clean.restored)).toEqual(["intake"]); // positive control: the honest log restores intake
+  const intakeSeq = readEvents(k.ev).find((e) => e.type === "stage.completed" && e.stage === "intake")!.seq;
+  appendFileSync(k.ev, JSON.stringify({ ...last, seq: last.seq + 1, type: "run.resumed", stage: null, data: { discarded_from_seq: intakeSeq, discarded_to_seq: last.seq } }) + "\n");
+  const forged = resumeMachineOpts({}, readEvents(k.ev), readFileSync(k.ev, "utf8"), ["intake", ["plan", "wall"], "implement"] as const);
+  expect(forged.ok ? Object.keys(forged.restored) : ["intake"]).toEqual(["intake"]); // refused outright (fails closed) or intake still restored; never intake dropped
+}, 120000);
+
+test("SB-04e (b4b): a forged discard range laundered under a later real resume checkpoint still restores the signed intake", async () => {
+  const k = await killedResume(forgedPlan, true), last = lastLine(k.ev);
+  const intakeSeq = readEvents(k.ev).find((e) => e.type === "stage.completed" && e.stage === "intake")!.seq;
+  appendFileSync(k.ev, JSON.stringify({ ...last, seq: last.seq + 1, type: "run.resumed", stage: null, data: { discarded_from_seq: intakeSeq, discarded_to_seq: last.seq + 1 } }) + "\n");
+  const quiet = `const fs = require("fs"); setTimeout(() => { fs.copyFileSync(${JSON.stringify(k.ev)}, ${JSON.stringify(k.ev + ".snap")}); }, 300);`;
+  await runSupervisor({ runId: k.id, repoDir: k.repo, env: supEnv(), workerArgv: [process.execPath, "-e", quiet], capS: 30, resume: true } as never);
+  writeFileSync(k.ev, readFileSync(k.ev + ".snap"));
+  const evs = readEvents(k.ev), m = resumeMachineOpts({}, evs, readFileSync(k.ev, "utf8"), ["intake", ["plan", "wall"], "implement"] as const);
+  expect(types(k.ev)).toContain("run.resumed,run.resumed"); // the forged line is in the log, under a real checkpoint
+  expect(m.ok ? "" : m.reason).toBe("");
+  expect(m.ok && Object.keys(m.restored)).toEqual(["intake"]);
+}, 120000);
+
+test("SB-04e (b5): a forged implement stage in the killed tail is not counted as settled by the resume decision", async () => {
+  const k = await killedResume({ type: "stage.completed", stage: "implement", data: { forged: true } });
+  const say: string[] = []; const cwd = process.cwd(); process.chdir(k.repo);
+  try { await resumeFlag(k.id, true, { out: (x: string) => { say.push(x); }, supervise: (async () => ({ outcome: "VERIFIED" })) as never }); } finally { process.chdir(cwd); }
+  const text = say.join("");
+  expect(text).toContain("settled: intake");
+  expect(text).not.toContain("implement");
 }, 120000);
 
 test("SB-04e (b2): a forged log.sealed appended after the checkpoint is refused: no Resume offer", async () => {
@@ -788,6 +820,13 @@ test("SB-04e (e): a validly signed log.sealed that follows neither run.resumed n
   seal(dir, id, ev, log, []); log.sealLog();
   log.append("stage.started", "verify", {}); log.sealLog(); // the final run.completed was retyped: a signed seal now trails an ordinary event
   const v = await verifyReceipt(join(dir, "receipt.json"));
+  expect(v.verdict).toBe("TAMPERED");
+  expect(JSON.stringify(v)).toContain("does not follow the last run.completed");
+});
+test("SB-04e (e2): a validly signed run.resumed plus log.sealed trailing a finished (non-cancelled) run is TAMPERED by the position rule itself", async () => {
+  const r = resumedCompleted(), id = readEvents(r.ev)[0]!.run;
+  const log = new SupervisorLog(r.ev, id); log.append("run.resumed", null, {}); log.sealLog();
+  const v = await verifyReceipt(r.rc);
   expect(v.verdict).toBe("TAMPERED");
   expect(JSON.stringify(v)).toContain("does not follow the last run.completed");
 });
