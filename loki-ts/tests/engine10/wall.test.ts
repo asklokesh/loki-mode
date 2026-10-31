@@ -1462,7 +1462,7 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
     expect(r.brief).toContain('starts with "package shortener"');
   });
   test("Go greenfield: a backticked directory in the plan wins and a sibling package clause is kept", async () => {
-    const r = await run("Build a limiter.", "go", { "internal/rl/a.go": "package ratelimit\n" }, "Create the `internal/rl` directory.");
+    const r = await run("Build a limiter.", "go", { "internal/rl/a.go": "package ratelimit\n" }, "Create the directory `internal/rl`.");
     expect(r.files.map((f) => f.path)).toEqual(["internal/rl/loki_wall_a_test.go"]);
     expect(r.brief).toContain('"package ratelimit"');
   });
@@ -1480,6 +1480,28 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
       writeFileSync(join(p.dir, "shortener.go"), "package shortener\nfunc Code(u string) string { return \"abc1\" + u }\n");
       expect(go()).toBe(0);
     } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+  test("Go greenfield: Go-ignored paths never host the Wall, at any segment, for a directory or a .go file", async () => {
+    for (const task of ["Fixtures live in testdata/ as usual.", "Put helpers in internal/testdata/ as package fx.", "Examples go in _examples/ as package ex.", "Generate with testdata/gen.go.", "Tools in _tools/x.go.", "Hidden in .cache/ as package c."])
+      expect((await run(task, "go")).files.map((f) => f.path), task).toEqual(["loki_wall_a_test.go"]);
+  });
+  test("Go greenfield: vague prose falls back to the repo root, never a wrong directory", async () => {
+    for (const task of ["See the `config` package docs for style.", "done w/ care", "Read from $HOME/cache/ dir.", "Edit the build/ output? no, keep it simple.", "Mirror the layout of cmd/ for style."])
+      expect((await run(task, "go")).files.map((f) => f.path), task).toEqual(["loki_wall_a_test.go"]);
+  });
+  test("Go greenfield: the directory with the package phrase wins over a layout mention, and package main is kept", async () => {
+    const a = await run("Mirror the layout of cmd/ but put logic in internal/limiter/ as package limiter.", "go");
+    expect(a.files.map((f) => f.path)).toEqual(["internal/limiter/loki_wall_a_test.go"]); expect(a.brief).toContain('"package limiter"');
+    const b = await run("Use package main in cmd/server/.", "go");
+    expect(b.files.map((f) => f.path)).toEqual(["cmd/server/loki_wall_a_test.go"]); expect(b.brief).toContain('"package main"');
+  });
+  test("Go greenfield: another sentence's package phrase never names the directory's package", async () => {
+    const r = await run("Put the code in the shortener/ directory. Write package notes for the docs.", "go");
+    expect(r.files.map((f) => f.path)).toEqual(["loki_wall_a_test.go"]);
+  });
+  test("Go greenfield: a sibling's package clause wins over a conflicting package phrase", async () => {
+    const r = await run("Put it in the pkg/rl/ directory as package rl.", "go", { "pkg/rl/a.go": "package ratelimit\n" });
+    expect(r.files.map((f) => f.path)).toEqual(["pkg/rl/loki_wall_a_test.go"]); expect(r.brief).toContain('"package ratelimit"');
   });
   test("control: a Go task naming no file or directory keeps the repo root, and tests/ or URL paths never count", async () => {
     expect((await run("Build a URL shortener, see https://example.com/docs/ and tests/ for style; GET /stats/ returns hits.", "go")).files.map((f) => f.path)).toEqual(["loki_wall_a_test.go"]);
