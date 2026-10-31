@@ -1,6 +1,6 @@
 # Knowledge Compounding
 
-> Legacy engine note: this page documents the legacy engine (`loki start`, `LOKI_ENGINE=legacy`), which still ships in 11.92.0 and is being removed. For the current Loki 10 commands (`loki "<task>"`, `loki owner/repo#N`, `loki backlog`, `loki verify`) see [[Home]] and [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
+> Legacy engine note: this page documents the legacy engine (`loki start`, `LOKI_ENGINE=legacy`), which still ships in 11.93.0 and is being removed. For the current Loki 10 commands (`loki "<task>"`, `loki owner/repo#N`, `loki backlog`, `loki verify`) see [[Home]] and [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
 
 Structured solution extraction and retrieval system for cross-project intelligence (v5.30.0).
 

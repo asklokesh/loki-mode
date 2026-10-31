@@ -5,6 +5,27 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.93.0 (2026-10-30)
+
+The Wall catches failing tests earlier in the same session, fewer runs end PARTIAL for test-harness reasons, and the Claude Agent SDK moves to 0.3.314.
+
+### Added
+
+- The implement session now re-runs the repo's Wall and impacted tests when it tries to stop and, if they fail, fixes them in the same session (up to 2 rounds) instead of waiting for a separate fix session. The checks use the same runner, interpreter and harness-failure rules as verify, and never block on a test that was already failing before the task.
+- The usage governor accepts `--weekly-ceiling` (above 90, up to 100) to apply a verified weekly ceiling override. The default stays 90.
+
+### Changed
+
+- The Claude Agent SDK is updated from 0.3.312 to 0.3.314. The update adds a new startup failure reason (`sandbox_required_unavailable`) and a `blockWritesOutsideWorkingDirectories` setting to the SDK types, and clarifies sandbox and permission wording; no existing Loki behavior changes. The Docker image and the architecture reference pin the same version.
+- The Wall brief states that a task-named file keeps its path from the repo root, so a test no longer pulls the deliverable into `tests/`, and the brief stays under its size cap.
+- The commit step leaves untracked toolchain build output (a cargo `target` dir, `.gradle`, `node_modules`, `__pycache__`) out of the commit unless that directory already holds a tracked file, decides whether such a directory is yours against the run's base commit, and names each dropped directory in the receipt.
+- A symlink a passing Wall requires is disclosed in the receipt instead of capping the verdict. A new package manifest the plan declared still caps the verdict, and a test-runner hook, a link into an untouched file or out of the repo, and an undeclared change still cap.
+
+### Fixed
+
+- Fewer runs end PARTIAL for reasons the task did not cause: a Wall test that cannot build on the base now counts as failing there, a passing Go Wall file is accepted on the base, and an empty full suite is a note only when it was empty on the base too.
+- An empty package suite is only excused by the root baseline when the package is the repo root, and a repo profile from another revision is refused.
+
 ## v11.92.0 (2026-10-30)
 
 ### Added
