@@ -1174,7 +1174,9 @@ if why:
 "
   '
   run_check "bun run typecheck" "(cd loki-ts && bun run typecheck) 2>&1 | tail -5"
-  run_check "bun test" "(cd loki-ts && bun run test) 2>&1 | tail -5"
+  # pr-fast.yml runs bun test as its own --shard matrix (the serial suite outgrew the
+  # 15-minute job, measured per file 2026-10-31) and sets LOCAL_CI_BUN_OFFLOADED=1 here.
+  run_check "bun test" 'if [ -n "${LOCAL_CI_BUN_OFFLOADED:-}" ]; then echo "bun test runs in the pr-fast bun-test shard jobs"; else (cd loki-ts && bun run test) 2>&1 | tail -5; fi'
   # dist freshness: the committed loki-ts/dist/loki.js is the artifact npm/Docker
   # ship from and the bin/loki shim runs when newer than src. A stale or mangled
   # dist passes every other gate (bun tests import from src), so a forgotten
