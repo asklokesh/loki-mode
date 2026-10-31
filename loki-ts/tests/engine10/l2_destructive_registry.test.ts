@@ -50,7 +50,8 @@ export function scan(files: Array<[string, string]>): Record<string, number> {
       if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;
       if (/^\s*(legacy|cmd)\(/.test(line)) continue; // cli/registry.ts command names (`loki reset`, `loki restore`), not git argv
       if (/^\s*const QUEUE_SUBCOMMANDS\b/.test(line)) continue; // commands/queue.ts `loki queue rm` subcommand name, not git argv
-      const code = line.replace(/\bnew Set\(\[[^\]]*\]\)/g, ""); // a Set literal of names is membership data (e.g. cargo subcommands), never a git argv
+      if (/^\s*const (CARGO_GLOBAL_FLAGS|CARGO_OTHER_SUBS)\b/.test(line)) continue; // util/check_result.ts cargo subcommand-name sets, not git argv; a generic Set strip would also hide a Set spread into a git argv
+      const code = line;
       for (const v of VERBS) {
         const n = (code.match(new RegExp(`["'\`]${v}["'\`]\\s*[,\\]]`, "g")) ?? []).length;
         if (n > 0) found[`${rel}|${v}`] = (found[`${rel}|${v}`] ?? 0) + n;
@@ -78,9 +79,11 @@ describe("L2 destructive call registry", () => {
     const f = scan([["x.ts", '// git(["checkout", "--"])\n  git(root, ["checkout", base, "--", p]);\n  g(["--literal-pathspecs", "reset", "-q"]);']]);
     expect(f).toEqual({ "x.ts|checkout": 1, "x.ts|reset": 1 });
   });
-  test("a Set literal of subcommand names is not argv, but a git call on the same line is still counted", () => {
-    expect(scan([["z.ts", 'const SUBS = new Set(["build", "clean", "rm"]);']])).toEqual({});
-    expect(scan([["z.ts", 'const SUBS = new Set(["clean"]); git(root, ["clean", "-fd"]);']])).toEqual({ "z.ts|clean": 1 });
+  test("the named cargo subcommand sets are not argv", () => {
+    expect(scan([["z.ts", 'const CARGO_OTHER_SUBS = new Set(["build", "clean", "rm"]);']])).toEqual({});
+  });
+  test("a Set of git verbs later spread into a git argv is seen, not stripped", () => {
+    expect(scan([["z.ts", 'const ARGS = new Set(["clean", "-fd"]);\n  git(root, [...ARGS]);']])).toEqual({ "z.ts|clean": 1 });
   });
   test("positive control: destructive verbs are still seen through safeGit calls (FC-25)", () => {
     const f = scan([["y.ts", 'safeGit(repoDir, ["checkout", orig], { stdio: "ignore" });\n  safeGit(opts.repoDir, ["--literal-pathspecs", "reset", "-q", base, "--", f]);']]);
