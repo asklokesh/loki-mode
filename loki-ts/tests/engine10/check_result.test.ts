@@ -1042,7 +1042,7 @@ describe("cargo listing check residuals", () => {
     const d = crate(GOOD, { "rust-toolchain.toml": '[toolchain]\nchannel = "stable"\n' }); try { expect((await run(d, "cargo", ["test"])).result).toBe("pass"); } finally { rmSync(d, { recursive: true, force: true }); }
   }, 240_000);
   // A repo-committed compiler, wrapper, linker, linker-reaching rustflags or [env] PATH lets the repo rewrite the test binary.
-  const RF = "rustflags with a link, -B, -Wl or codegen-backend flag", CFG = ".cargo/config.toml";
+  const RF = "rustflags with a link, -B, -Wl, codegen-backend or llvm-plugins flag", CFG = ".cargo/config.toml";
   const isCompilerReason = (r?: string): boolean => /\(move it to CARGO_HOME, or for a wrapper use the RUSTC_WRAPPER env\)/.test(r ?? "");
   const cp = (cwd: string, env: NodeJS.ProcessEnv = process.env, args: string[] = ["test"]) => corroboratePass(pass2, TEST_OUT, "cargo", args, { cwd, env });
   const COMPILER_FORMS: [string, string, string][] = [
@@ -1067,6 +1067,24 @@ describe("cargo listing check residuals", () => {
     ["[env] PATH without force", '[env]\nPATH = { value = "/repo/bin" }\n', "[env] PATH"], ["[env] quoted PATH", "[env]\n\"PATH\" = \"/repo/bin\"\n", "[env] PATH"],
     ["[env.PATH] table", '[env.PATH]\nvalue = "/repo/bin"\nforce = true\n', "[env] PATH"], ["dotted env.PATH", 'env.PATH = "/repo/bin"\n', "[env] PATH"],
     ["inline env table", 'env = { PATH = "/repo/bin", A = "1" }\n', "[env] PATH"], ["[env] PATH after other keys", '[env]\nRUST_LOG = "debug"\nPATH = "/repo/bin"\n', "[env] PATH"],
+    // [env] LD_PRELOAD and DYLD_INSERT_LIBRARIES load repo code into every process cargo starts; -Zllvm-plugins loads a repo plugin into rustc
+    ["[env] LD_PRELOAD string", '[env]\nLD_PRELOAD = "/repo/evil.so"\n', "[env] LD_PRELOAD"], ["[env] LD_PRELOAD inline table", '[env]\nLD_PRELOAD = { value = "evil.so", relative = true }\n', "[env] LD_PRELOAD"],
+    ["[env] quoted LD_PRELOAD", "[env]\n\"LD_PRELOAD\" = \"/repo/evil.so\"\n", "[env] LD_PRELOAD"], ["[env.LD_PRELOAD] table", '[env.LD_PRELOAD]\nvalue = "evil.so"\n', "[env] LD_PRELOAD"],
+    ["dotted env.LD_PRELOAD", 'env.LD_PRELOAD = "/repo/evil.so"\n', "[env] LD_PRELOAD"], ["inline env table with LD_PRELOAD", 'env = { A = "1", LD_PRELOAD = "/repo/evil.so" }\n', "[env] LD_PRELOAD"],
+    ["[env] DYLD_INSERT_LIBRARIES", '[env]\nDYLD_INSERT_LIBRARIES = "/repo/evil.dylib"\n', "[env] DYLD_INSERT_LIBRARIES"], ["[env.DYLD_INSERT_LIBRARIES] table", '[env.DYLD_INSERT_LIBRARIES]\nvalue = "evil.dylib"\n', "[env] DYLD_INSERT_LIBRARIES"],
+    ["[env] LD_PRELOAD after other keys", '[env]\nRUST_LOG = "debug"\nLD_PRELOAD = "/repo/evil.so"\n', "[env] LD_PRELOAD"],
+    ["[env] LD_LIBRARY_PATH string", '[env]\nLD_LIBRARY_PATH = "/repo/lib"\n', "[env] LD_LIBRARY_PATH"], ["[env.LD_LIBRARY_PATH] table", '[env.LD_LIBRARY_PATH]\nvalue = "lib"\nrelative = true\n', "[env] LD_LIBRARY_PATH"],
+    ["[env] DYLD_LIBRARY_PATH string", '[env]\nDYLD_LIBRARY_PATH = "/repo/lib"\n', "[env] DYLD_LIBRARY_PATH"], ["[env.DYLD_LIBRARY_PATH] table", '[env.DYLD_LIBRARY_PATH]\nvalue = "lib"\nrelative = true\n', "[env] DYLD_LIBRARY_PATH"],
+    ["[env] DYLD_FALLBACK_LIBRARY_PATH string", '[env]\nDYLD_FALLBACK_LIBRARY_PATH = "/repo/lib"\n', "[env] DYLD_FALLBACK_LIBRARY_PATH"], ["[env.DYLD_FALLBACK_LIBRARY_PATH] table", '[env.DYLD_FALLBACK_LIBRARY_PATH]\nvalue = "lib"\nrelative = true\n', "[env] DYLD_FALLBACK_LIBRARY_PATH"],
+    ["[env] DYLD_FRAMEWORK_PATH string", '[env]\nDYLD_FRAMEWORK_PATH = "/repo/lib"\n', "[env] DYLD_FRAMEWORK_PATH"], ["[env.DYLD_FRAMEWORK_PATH] table", '[env.DYLD_FRAMEWORK_PATH]\nvalue = "lib"\nrelative = true\n', "[env] DYLD_FRAMEWORK_PATH"],
+    ["-Zllvm-plugins", '[build]\nrustflags = ["-Zllvm-plugins=/repo/p.so"]\n', RF], ["-Z llvm-plugins", '[build]\nrustflags = ["-Z", "llvm-plugins=/repo/p.so"]\n', RF],
+    ["a string -Zllvm-plugins", '[build]\nrustflags = "-Zllvm-plugins=/repo/p.so"\n', RF],
+    // cargo honors a quoted env table name, so quoting it must not hide a hijack name
+    ['quoted ["env"."LD_PRELOAD"] header', '["env"."LD_PRELOAD"]\nvalue = "x"\n', "[env] LD_PRELOAD"], ["single-quoted ['env'.LD_PRELOAD] header", "['env'.LD_PRELOAD]\nvalue = 'x'\n", "[env] LD_PRELOAD"],
+    ['quoted "env" inline table', '"env" = { LD_LIBRARY_PATH = "x" }\n', "[env] LD_LIBRARY_PATH"], ['quoted "env".DYLD_INSERT_LIBRARIES dotted key', '"env".DYLD_INSERT_LIBRARIES = "x"\n', "[env] DYLD_INSERT_LIBRARIES"],
+    ['quoted ["env"."PATH"] header', '["env"."PATH"]\nvalue = "x"\n', "[env] PATH"], ['quoted ["env"] table with a key', '["env"]\nLD_PRELOAD = "x"\n', "[env] LD_PRELOAD"],
+    ["[env] DYLD_FALLBACK_FRAMEWORK_PATH", '[env]\nDYLD_FALLBACK_FRAMEWORK_PATH = "/repo/fw"\n', "[env] DYLD_FALLBACK_FRAMEWORK_PATH"], ["[env] DYLD_VERSIONED_FRAMEWORK_PATH", '[env]\nDYLD_VERSIONED_FRAMEWORK_PATH = "/repo/fw"\n', "[env] DYLD_VERSIONED_FRAMEWORK_PATH"],
+    ["[env] LD_AUDIT", '[env]\nLD_AUDIT = "/repo/audit.so"\n', "[env] LD_AUDIT"], ["[env] DYLD_VERSIONED_LIBRARY_PATH", '[env]\nDYLD_VERSIONED_LIBRARY_PATH = "/repo/lib"\n', "[env] DYLD_VERSIONED_LIBRARY_PATH"],
   ];
   for (const [name, body, what] of COMPILER_FORMS) test(`a repo cargo config with ${name} is refused with its own reason`, async () => {
     const d = crate("", { [CFG]: body }), sub = join(d, "pkg"); mkdirSync(sub);
@@ -1079,7 +1097,7 @@ describe("cargo listing check residuals", () => {
   const OK_FORMS: [string, string][] = [
     ["bare fuse-ld=mold", '[build]\nrustflags = ["-C", "link-arg=-fuse-ld=mold"]\n'], ["bare fuse-ld=lld", '[build]\nrustflags = ["-Clink-arg=-fuse-ld=lld"]\n'],
     ["an honest config", '[build]\njobs = 2\nrustflags = ["--cfg", "tokio_unstable"]\n[env]\nRUST_LOG = "debug"\n'], ["a commented linker", '# linker = "x"\n[build]\njobs = 2 # rustc-wrapper = "x"\n'],
-    ["a commented env PATH", '[env]\n# PATH = "/repo/bin"\nRUST_LOG = "debug"\n'], ["an env PATH-like name", '[env]\nMY_PATH = "x"\nPATHEXT = "y"\n'], ["a path under another table", '[net]\nPATH = "x"\n'],
+    ["a commented env PATH", '[env]\n# PATH = "/repo/bin"\nRUST_LOG = "debug"\n'], ["an env PATH-like name", '[env]\nMY_PATH = "x"\nPATHEXT = "y"\n'], ["env LD_PRELOAD-like names", '[env]\nMY_LD_PRELOAD = "x"\nLD_PRELOADX = "y"\n'], ["a commented LD_PRELOAD", '[env]\n# LD_PRELOAD = "x"\n# DYLD_INSERT_LIBRARIES = "y"\nRUST_LOG = "debug"\n'], ["an llvm-args rustflag", '[build]\nrustflags = ["-C", "llvm-args=-x86-asm-syntax=intel"]\n'], ["a path under another table", '[net]\nPATH = "x"\n'],
   ];
   for (const [name, body] of OK_FORMS) test(`a repo cargo config with ${name} is not refused as compiler redirection`, async () => {
     const d = crate("", { [CFG]: body }); try { expect(isCompilerReason((await cp(d)).reason)).toBe(false); } finally { rmSync(d, { recursive: true, force: true }); }
@@ -1148,6 +1166,33 @@ describe("cargo listing check residuals", () => {
       writeFileSync(join(d, "member", "Cargo.toml"), `cargo-features = ["edition2024"]\n# cargo-features = ["profile-rustflags"]\n${PROFILE_TOML}`);
       expect(isCompilerReason((await cp(d)).reason)).toBe(false);
     } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  const PR_WHAT = "cargo-features profile-rustflags", ESC = "an escaped key, include or multi-line string";
+  const PROFILE_FORMS: [string, string, string][] = [
+    ["a quoted cargo-features key", '"cargo-features" = ["profile-rustflags"]\n', PR_WHAT], ["a single-quoted cargo-features key", "'cargo-features' = [\"profile-rustflags\"]\n", PR_WHAT],
+    ["a single-quoted profile-rustflags value", "cargo-features = ['profile-rustflags']\n", PR_WHAT], ["a spaced quoted key", '"cargo-features"   =   [ "edition2024" , "profile-rustflags" ]\n', PR_WHAT],
+    ["a multi-line array with a comment", 'cargo-features = [\n  "edition2024", # nightly\n  "profile-rustflags",\n]\n', PR_WHAT],
+    ["a unicode-escaped cargo-features key", '"cargo-featu\\u0072es" = ["profile-rustflags"]\n', ESC], ["a unicode-escaped profile-rustflags value", 'cargo-features = ["profile-rust\\u0066lags"]\n', ESC],
+    ["a long-escape key", '"cargo-featur\\U00000065s" = ["x"]\n', ESC],
+    // the top-level region ends by bracket depth, not at the first line starting with [; a backslash or multi-line quote anywhere in it is doubt
+    ["a line-continuation multi-line string value", '"cargo-features" = ["""profile-\\\nrustflags"""]\n', ESC], ["an array hiding the first table-looking line, escaped value", 'a = [\n[1]]\ncargo-features = ["profile-\\u0072ustflags"]\n', ESC],
+    ["a basic multi-line string hides a header", 'a = """\n[x]\n"""\n"cargo-featu\\u0072es" = ["profile-rustflags"]\n', ESC],
+    ["a literal multi-line string hides a header", "a = '''\n[x]\n'''\n\"cargo-featu\\u0072es\" = [\"profile-rustflags\"]\n", ESC],
+    ["an array hiding the first table-looking line, escaped quoted key", 'a = [\n[1]]\n"cargo-featu\\u0072es" = ["profile-rustflags"]\n', ESC], ["an array hiding the first table-looking line, literal value", 'a = [\n[1]]\ncargo-features = ["profile-rustflags"]\n', PR_WHAT],
+  ];
+  for (const [name, head, what] of PROFILE_FORMS) test(`a Cargo.toml with ${name} is refused naming the manifest`, async () => {
+    const d = crate("", { "Cargo.toml": `${head}${PROFILE_TOML}` });
+    try { expect([name, await cp(d)]).toEqual([name, { result: "not_run", reason: cargoCompilerReason(what, "Cargo.toml") }]); } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a normal manifest is not refused: escapes and unicode below the first table, an array of arrays above it", async () => {
+    for (const head of ['authors = ["Jos\u00e9"]\n', 'a = [\n[1]]\ncargo-features = ["edition2024"]\n', '']) {
+      const d = crate("", { "Cargo.toml": `${head}${PROFILE_TOML}description = "caf\\u00e9 \\U0001F600"\nauthors = ["Jos\u00e9 \u00dcber"]\n` });
+      try { expect([head, isCompilerReason((await cp(d)).reason)]).toEqual([head, false]); } finally { rmSync(d, { recursive: true, force: true }); }
+    }
+  });
+  test("a Cargo.toml with other cargo-features, or an escape only below the first table, is not refused for profile-rustflags", async () => {
+    const d = crate("", { "Cargo.toml": `cargo-features = ["edition2024"]\n${PROFILE_TOML}description = "Jos\\u00e9"\n`, "m/Cargo.toml": `"cargo-features" = ["edition2024"]\n${PROFILE_TOML}` });
+    try { expect(isCompilerReason((await cp(d)).reason)).toBe(false); } finally { rmSync(d, { recursive: true, force: true }); }
   });
   test.skipIf(!HAS_CARGO)("real cargo: a CARGO_HOME rustc-wrapper config and the RUSTC_WRAPPER variable stay accepted (sccache users)", async () => {
     const d = crate(GOOD), home = crate("", { "ch/.keep": "" }); try {
@@ -1222,6 +1267,85 @@ done
     for (const line of shapes("cargo", "test")) expect([line, await corroboratePass({ result: "pass", n: 2 }, "running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n", line, undefined, o)]).toEqual([line, { result: "not_run", reason: CARGO_UNLISTED_REASON }]);
     const pass = { result: "pass" as const, n: 3 };
     for (const line of ["pytest -q tests/go", "make test DIR=go", "npm test -- --grep cargo"]) { expect(goRunner(line)).toEqual({}); expect(await corroboratePass(pass, "", line, undefined, o)).toEqual(pass); }
+  });
+  test("HV1-03i: a go or cargo run hidden behind a variable, a make assignment, inline interpreter code or a cargo front end is not a pass", async () => {
+    const o = { cwd: tmpdir(), env: process.env }, CARGO_OK = "running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    for (const line of ["${GO:-go} test ./...", '"$GO" test ./...', "${GO} test ./...", 'bash -c "$GO test ./..."', `python3 -c 'import os; os.system("go test ./...")'`, "make test GO=go", "make test GO=/usr/local/go/bin/go", "make test GO=${GO:-go}"]) {
+      expect([line, goRunner(line)]).toEqual([line, { runner: "go" }]);
+      expect([line, (await corroboratePass({ result: "pass", n: 2 }, GO_V, line, undefined, o)).result]).toEqual([line, "not_run"]);
+    }
+    for (const line of ["cargo-nextest run", "${CARGO:-cargo} test", '"$CARGO" test', "make test CARGO=cargo", "cross test", `python3 -c 'import os; os.system("cargo test")'`]) expect([line, (await corroboratePass({ result: "pass", n: 2 }, CARGO_OK, line, undefined, o)).result]).toEqual([line, "not_run"]);
+    const pass = { result: "pass" as const, n: 3 };
+    for (const line of ["pytest -q tests/go", "make test DIR=go", "make test GO=gcc", "make test", "npm test -- --grep cargo", "pytest -q tests/cross", "make test DIR=cargo", "make test CARGO=gcc", "python3 -c 'print(1)'", "${CC:-gcc} test"]) { expect([line, goRunner(line)]).toEqual([line, {}]); expect(await corroboratePass(pass, "", line, undefined, o)).toEqual(pass); }
+  });
+  // HV1-03j: one test per detection alternative, so removing any one alternative turns exactly its own line red.
+  const O3J = { cwd: tmpdir(), env: process.env }, CARGO_OK3J = "running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+  const goHidden: Array<[string, string]> = [
+    ["string concat", `python3 -c 'import os; os.system("g"+"o test ./...")'`],
+    ["adjacent quoted literals", `python3 -c "__import__('os').system('g' 'o test ./...')"`],
+    ["join", `python3 -c 'import os; os.system("".join(["g", "o", " test"]))'`],
+    ["format", `python3 -c 'import os; os.system("{}o test".format("g"))'`],
+    ["chr", `python3 -c 'import os; os.system(chr(103) + chr(111) + " test")'`],
+    ["percent format", `python3 -c 'import os; os.system("%so test" % "g")'`],
+    ["hex escape", `python3 -c 'import os; os.system("\\x67o test")'`],
+    ["base64", `python3 -c 'import os,base64; os.system(base64.b64decode("Z28gdGVzdA==").decode())'`],
+    ["eval", `python3 -c 'import os; os.system(eval(src))'`],
+    ["getattr", `python3 -c 'import os; getattr(os, "system")(src)'`],
+    ["import_module", `python3 -c 'import importlib; importlib.import_module("os").system(src)'`],
+    ["fromCharCode", `node -e 'require("child_process").execSync(String.fromCharCode(103, 111) + " test")'`],
+    ["template interpolation", "node -e 'require(\"child_process\").execSync(`${a}o test`)'"],
+    ["list-form python spawn", `python3 -c 'import subprocess; subprocess.run(["go", "test", "./..."])'`],
+    ["list-form node spawn", `node -e 'require("child_process").execFileSync("go", ["test"])'`],
+    ["prefix assignment", "GO=go make test"],
+    ["env prefix assignment", "env GO=go make test"],
+    ["tool-named make variable GOCMD", "make GOCMD=go test"],
+    ["tool-named make variable GOTOOL", "make GOTOOL=go test"],
+    ["versioned assignment go1.22", "make test GO=go1.22"],
+    ["versioned command go1.22", "go1.22 test ./..."],
+    ["versioned prefix assignment go1.22.3", "GO=go1.22.3 make test"],
+    ["release candidate wrapper go1.22rc1", "go1.22rc1 test ./..."],
+    ["beta wrapper go1.23beta2", "go1.23beta2 test ./..."],
+    ["gotip command", "gotip test ./..."],
+    ["gotip assignment", "make test GO=gotip"],
+  ];
+  for (const [what, line] of goHidden) {
+    test(`HV1-03j: go hidden by ${what} is not a pass`, async () => {
+      expect(goRunner(line)).toEqual({ runner: "go" });
+      expect((await corroboratePass({ result: "pass", n: 2 }, GO_V, line, undefined, O3J)).result).toBe("not_run");
+    });
+  }
+  const cargoHidden: Array<[string, string]> = [
+    ["string concat", `python3 -c 'import os; os.system("car"+"go test")'`],
+    ["adjacent quoted literals", `python3 -c "__import__('os').system('ca' 'rgo test')"`],
+    ["list-form spawn", `python3 -c 'import subprocess; subprocess.run(["cargo", "test"])'`],
+    ["prefix assignment", "CARGO=cargo make test"],
+    ["tool-named make variable", "make CARGO_BIN=cargo test"],
+  ];
+  for (const [what, line] of cargoHidden) {
+    test(`HV1-03j: cargo hidden by ${what} is not a pass`, async () => {
+      expect((await corroboratePass({ result: "pass", n: 2 }, CARGO_OK3J, line, undefined, O3J)).result).toBe("not_run");
+    });
+  }
+  // The tool's own path and config variables never name the binary, so an honest pass stays a pass.
+  // Accepted limit (TOOL=go): these also read as an honest pass although they hand the tool to a Makefile through a non-tool name: `GO_VERSION=go make test`, `make test GOPATH=go`, `CARGO_HOME=cargo make test`.
+  const stillPass = ["make test DIR=go", "DIR=go make test", "env CC=gcc make test", "make GOCMD=gcc test", "python3 -c 'print(\"a\"+\"b\")'", "pytest -q tests/go1",
+    "GOPATH=$HOME/go npm test", "GOROOT=/usr/local/go pytest -q", "env GOPATH=/root/go make test", "CARGO_HOME=/opt/cargo npm test", "CARGO_TARGET_DIR=/tmp/cargo pytest", "make GO_VERSION=go1.22 test",
+    "GOBIN=/usr/local/go/bin npm test", "GOBIN=$HOME/go pytest", "GOMODCACHE=/tmp/go pytest", "GOFLAGS=-mod=vendor npm test", "GOOS=linux make test", "GOPROXY=off npm test", "GOTOOLCHAIN=go1.22 make test"];
+  for (const line of stillPass) {
+    test(`HV1-03j: ${line} stays an honest pass`, async () => {
+      const pass = { result: "pass" as const, n: 3 };
+      expect(goRunner(line)).toEqual({});
+      expect(await corroboratePass(pass, "", line, undefined, O3J)).toEqual(pass);
+    });
+  }
+  test("HV1-03i: a go run behind a default-value expansion of an unrelated variable name is not a pass", async () => {
+    const o = { cwd: tmpdir(), env: process.env }, line = "${GOCMD:-go} test ./...";
+    expect([line, goRunner(line)]).toEqual([line, { runner: "go" }]);
+    expect([line, (await corroboratePass({ result: "pass", n: 2 }, GO_V, line, undefined, o)).result]).toEqual([line, "not_run"]);
+  });
+  test("HV1-03i: a cargo run behind a default-value expansion of an unrelated variable name is not a pass", async () => {
+    const o = { cwd: tmpdir(), env: process.env }, line = "${X:-cargo} test", out = "running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    expect([line, (await corroboratePass({ result: "pass", n: 2 }, out, line, undefined, o)).result]).toEqual([line, "not_run"]);
   });
   test("spawnCollect leaves no watchdog child after a normal finish or an abort", async () => {
     const dogs = (): number[] => (spawnSync("ps", ["-ax", "-o", "pid=,command="], { encoding: "utf8" }).stdout ?? "").split("\n").filter((l) => l.includes(`const O = ${process.pid},`)).map((l) => Number(l.trim().split(/\s+/)[0]));
