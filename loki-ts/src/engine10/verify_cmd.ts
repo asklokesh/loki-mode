@@ -93,7 +93,8 @@ function checkLogSeal(receiptPath: string, hash: string, kid: unknown, given?: K
   const chain = verifyLogSeals(whole, events, { kid, given, expectSeal: true }); // every cancel seal, not only the last, must hash the lines before it
   if (chain) return { verdict: "TAMPERED", reason: chain };
   // sealLog only ever runs right after a run.completed, so the last log.sealed of an honest log sits at done+1; a later one means the final run.completed was retyped or deleted
-  if (events.findLastIndex((e) => e.type === "log.sealed") > done + 1) return { verdict: "TAMPERED", reason: "events.jsonl holds a log.sealed line that does not follow the last run.completed; the final run.completed was retyped or removed" };
+  // The extra log.sealed lines an honest log holds beyond done+1 are checkpoints the supervisor writes right after a run.resumed (resume) or a receipt.sealed (seal); each was already hashed and signature-checked by verifyLogSeals above, and anything else there still reads as a retyped run.completed.
+  if (events.some((e, i) => e.type === "log.sealed" && i > done + 1 && events[i - 1]!.type !== "run.resumed" && events[i - 1]!.type !== "receipt.sealed")) return { verdict: "TAMPERED", reason: "events.jsonl holds a log.sealed line that does not follow the last run.completed; the final run.completed was retyped or removed" };
   if (done < 0) return { verdict: "UNCHECKED", reason: "run did not complete, or the log was truncated (no run.completed in events.jsonl)" };
   const seal = events[done + 1], d = seal?.type === "log.sealed" ? seal.data : null;
   if (!d) return { verdict: "TAMPERED", reason: "events.jsonl has no signed log.sealed line after run.completed" };

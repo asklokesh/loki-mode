@@ -34,8 +34,10 @@ export function blockedCompletion(events: readonly EventEnvelope[], mark: number
   return c && c.data["verdict"] === "SPEC_CONFLICT" ? c : null;
 }
 
-/** The events a resume reasons over: with an answer pending, the blocked attempt's stage events from the conflicting stage on (plan when it declared the change out of repo, else implement), its run.completed and its log.sealed are dropped. Events after the answer are kept. */
+/** The events a resume reasons over: events a later run.resumed recorded as discarded (a hard-killed resume's unsigned tail) are dropped first; with an answer pending, the blocked attempt's stage events from the conflicting stage on (plan when it declared the change out of repo, else implement), its run.completed and its log.sealed are dropped. Events after the answer are kept. */
 export function effectiveEvents(events: readonly EventEnvelope[], assumeNext = false): readonly EventEnvelope[] {
+  const gone = events.flatMap((e) => (e.type === "run.resumed" && Number.isInteger(e.data["discarded_from_seq"]) && Number.isInteger(e.data["discarded_to_seq"]) ? [[e.data["discarded_from_seq"] as number, e.data["discarded_to_seq"] as number] as const] : [])); // a hard-killed resume's unsigned tail is never counted as settled work
+  if (gone.length) events = events.filter((e) => !gone.some(([a, b]) => e.seq >= a && e.seq <= b));
   const mark = answerMark(events, assumeNext);
   if (mark < 0 || !blockedCompletion(events, mark)) return events;
   const plan = events.slice(0, mark).findLast((e) => e.type === "stage.completed" && e.stage === "plan"), drop = new Set(plan?.data["out_of_repo"] === true ? FROM_PLAN : AFTER_PLAN);

@@ -9,7 +9,7 @@ import { loadSigningKey } from "../../src/util/receipt_signer.ts";
 import { runSupervisor, SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { readEvents } from "../../src/engine10/events.ts";
-import { findInterrupted, isCancelDone, resumeFlag, resumeMain, resumePoint, resumePublish, phaseOf, startRecovery, type RunPrFn } from "../../src/util/run_outputs.ts";
+import { findInterrupted, isCancelDone, resumeFlag, resumeMachineOpts, resumeMain, resumePoint, resumePublish, phaseOf, startRecovery, type RunPrFn } from "../../src/util/run_outputs.ts";
 import { sealDrift, verifyLogSeals } from "../../src/util/seal_drift.ts";
 import { main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
@@ -695,3 +695,99 @@ test("SB-04 r3: a real runSupervisor killed in the publish phase is offered by s
   writeFileSync(c.ev, l.slice(0, -1).join("\n") + "\n"); // the checkpoint cut: no signed boundary, so the same crash is refused
   expect(await resumeIn(c.repo, c.runPr)).toBe(5); expect(c.calls).toEqual([]);
 }, 120000);
+
+// A resumed run that is hard-killed: the supervisor signs a checkpoint right after run.resumed, so the next `loki start` still offers Resume and never counts the unsigned killed tail.
+/** A cancelled run on its branch, resumed by a real runSupervisor whose worker writes a stage event, then "killed": the log is restored to its state 300ms after that event. */
+async function killedResume(workerLine: Record<string, unknown>, again = false): Promise<{ repo: string; dir: string; ev: string; id: string }> {
+  const id = `e10-k${n++}`, repo = mkdtempSync(join(root, "kill-")), dir = join(repo, ".loki", "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo }); tgit(repo, "commit", "-q", "--allow-empty", "-m", "b"); tgit(repo, "branch", `loki/${id}`);
+  const pre = new SupervisorLog(ev, id); pre.append("run.started", null, { provider: "claude" }); pre.append("stage.completed", "intake", { base_sha: tgit(repo, "rev-parse", "HEAD"), task: "t" });
+  pre.append("run.completed", null, { verdict: "FAILED", cancelled: true, signal: "SIGTERM", outcome: "CANCELLED" }); pre.sealLog();
+  const code = `const fs = require("fs"); console.log(${JSON.stringify(JSON.stringify(workerLine))}); setTimeout(() => { fs.copyFileSync(${JSON.stringify(ev)}, ${JSON.stringify(ev + ".snap")}); }, 300);`;
+  await runSupervisor({ runId: id, repoDir: repo, env: supEnv(), workerArgv: [process.execPath, "-e", code], capS: 30, resume: true } as never);
+  writeFileSync(ev, readFileSync(ev + ".snap"));
+  if (again) { // the second resume is killed too, after it recorded run.resumed and its checkpoint
+    const quiet = `const fs = require("fs"); setTimeout(() => { fs.copyFileSync(${JSON.stringify(ev)}, ${JSON.stringify(ev + ".snap")}); }, 300);`;
+    await runSupervisor({ runId: id, repoDir: repo, env: supEnv(), workerArgv: [process.execPath, "-e", quiet], capS: 30, resume: true } as never);
+    writeFileSync(ev, readFileSync(ev + ".snap"));
+  }
+  return { repo, dir, ev, id };
+}
+const offer = async (repo: string): Promise<{ menu: string; resumed: number }> => {
+  const say: string[] = []; let resumed = 0;
+  const cwd = process.cwd(); process.chdir(repo);
+  try { await startRecovery(repo, "t", false, { out: (x: string) => { say.push(x); }, ask: async () => "", tty: true, supervise: (async () => { resumed++; return { outcome: "VERIFIED" }; }) as never }); } finally { process.chdir(cwd); }
+  return { menu: say.join(""), resumed };
+};
+const forgedPlan = { type: "stage.completed", stage: "plan", data: { forged: true } };
+
+test("SB-04e (a): a resumed run killed mid-work still gets the Resume offer; the supervisor signed a checkpoint right after run.resumed", async () => {
+  const k = await killedResume(forgedPlan);
+  const t = types(k.ev).split(",");
+  expect(t.slice(0, 8)).toEqual(["run.started", "stage.completed", "run.completed", "log.sealed", "run.resumed", "log.sealed", "capability.recorded", "stage.completed"]);
+  const o = await offer(k.repo);
+  expect(o.menu).toContain("1) Resume (continue from the settled stages) [default]");
+  expect(o.resumed).toBe(1);
+}, 120000);
+
+test("SB-04e (b): an unsigned stage claimed in the killed tail is never restored by the next resume", async () => {
+  const k = await killedResume(forgedPlan, true);
+  const evs = readEvents(k.ev), r = evs.findLast((e) => e.type === "run.resumed")!;
+  expect(r.data["discarded_from_seq"]).toBeLessThan(r.data["discarded_to_seq"] as number);
+  const m = resumeMachineOpts({}, evs, readFileSync(k.ev, "utf8"), ["intake", ["plan", "wall"], "implement"] as const);
+  expect(m.ok && Object.keys(m.restored)).toEqual(["intake"]);
+  expect(m.ok && m.flow).toEqual([["plan", "wall"], "implement"]);
+}, 120000);
+
+test("SB-04e (b2): a forged log.sealed appended after the checkpoint is refused: no Resume offer", async () => {
+  const k = await killedResume(forgedPlan), last = lastLine(k.ev);
+  appendFileSync(k.ev, JSON.stringify({ seq: last.seq + 1, ts: new Date().toISOString(), run: k.id, type: "log.sealed", stage: null, data: { kid: "x", events_sha256: "0".repeat(64), tampered: false, sig: "A".repeat(86) } }) + "\n");
+  const o = await offer(k.repo);
+  expect(o.menu).not.toContain("Resume (continue");
+  expect(o.resumed).toBe(0);
+}, 120000);
+
+test("SB-04e (b3): a torn killed tail leaves the torn-log refusal in force", async () => {
+  const k = await killedResume(forgedPlan);
+  appendFileSync(k.ev, '{"seq":99,"ts":"2026');
+  expect((await offer(k.repo)).resumed).toBe(0);
+}, 120000);
+
+/** A cancel pair, a resume checkpoint, a passing check, a receipt and a clean completion. */
+function resumedCompleted(): { dir: string; ev: string; rc: string } {
+  const id = `e10-r5-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  let log = new SupervisorLog(ev, id);
+  log.append("run.started", null, { provider: "claude" }); log.append("stage.started", "verify", {});
+  log.append("run.completed", null, { verdict: "FAILED", cancelled: true, signal: "SIGTERM", outcome: "CANCELLED" }); log.sealLog();
+  log = new SupervisorLog(ev, id); log.append("run.resumed", null, {}); log.sealLog();
+  log.append("test.result", "verify", { name: "unit", cmd: "bun test", result: "pass" });
+  seal(dir, id, ev, log, [{ name: "unit", cmd: "bun test", result: "pass" }]); log.sealLog();
+  log.append("run.completed", null, { verdict: "VERIFIED" }); log.sealLog();
+  return { dir, ev, rc: join(dir, "receipt.json") };
+}
+test("SB-04e (d): a completed run with an extra resume checkpoint verifies clean", async () => {
+  const r = resumedCompleted();
+  expect(types(r.ev)).toBe("run.started,stage.started,run.completed,log.sealed,run.resumed,log.sealed,test.result,receipt.sealed,log.sealed,run.completed,log.sealed");
+  expect((await verifyReceipt(r.rc)).verdict).toBe("VERIFIED");
+});
+test("SB-04e (c): an edit before the resume checkpoint is TAMPERED", async () => {
+  const r = resumedCompleted();
+  writeFileSync(r.ev, readFileSync(r.ev, "utf8").replace('"signal":"SIGTERM"', '"signal":"SIGINT"'));
+  expect((await verifyReceipt(r.rc)).verdict).toBe("TAMPERED");
+});
+test("SB-04e (c2): an edit to the resumed part between the checkpoint and the end is TAMPERED", async () => {
+  const r = resumedCompleted();
+  writeFileSync(r.ev, readFileSync(r.ev, "utf8").replace('"name":"unit"', '"name":"unix"'));
+  expect((await verifyReceipt(r.rc)).verdict).toBe("TAMPERED");
+});
+test("SB-04e (e): a validly signed log.sealed that follows neither run.resumed nor receipt.sealed, past the last run.completed, is TAMPERED", async () => {
+  const id = `e10-r5-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
+  let log = new SupervisorLog(ev, id);
+  log.append("run.started", null, { provider: "claude" }); log.append("run.completed", null, { verdict: "FAILED", cancelled: true, signal: "SIGTERM", outcome: "CANCELLED" }); log.sealLog();
+  log = new SupervisorLog(ev, id); log.append("run.resumed", null, {}); log.sealLog();
+  seal(dir, id, ev, log, []); log.sealLog();
+  log.append("stage.started", "verify", {}); log.sealLog(); // the final run.completed was retyped: a signed seal now trails an ordinary event
+  const v = await verifyReceipt(join(dir, "receipt.json"));
+  expect(v.verdict).toBe("TAMPERED");
+  expect(JSON.stringify(v)).toContain("does not follow the last run.completed");
+});
