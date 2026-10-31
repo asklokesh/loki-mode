@@ -28,7 +28,7 @@ import { readRunHistory, type RunOutcome } from "../../src/runner/router/history
 import { repoKey } from "../../src/engine10/cache.ts";
 import { readOriginUrl } from "../../src/util/engine_origin.ts";
 import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
-import { EXIT, formatSummary, outcomeOf, reasonOf } from "../../src/engine10/output.ts";
+import { renderReviewerBody } from "../../src/e10ext/reviewer_body.ts"; import { EXIT, formatSummary, outcomeOf, reasonOf } from "../../src/engine10/output.ts";
 import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes } from "../../src/util/base_guard.ts"; import { verifyStage } from "../../src/engine10/stages/verify.ts"; import { commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage, EXTERNAL_NO_WALL } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
@@ -696,7 +696,12 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
       return { ctx, r: receiptOf(await sealStage.run(ctx, new AbortController().signal)) };
     };
     const withTail = await mk("wft-yes", true), without = await mk("wft-no", false);
-    expect(withTail.r.not_proven).toContain(`Wall failure output kept: ${join(withTail.ctx.runDir, "wall-failure-tail.txt")}`);
+    const line = `Wall failure output kept: .loki/runs/r1/wall-failure-tail.txt`;
+    expect(withTail.r.not_proven).toContain(line);
+    expect(withTail.r.not_proven.join("\n")).not.toContain(withTail.ctx.repoDir); // repo-relative: no home directory in the receipt or the PR body
+    const body = renderReviewerBody({ verdict: withTail.r.verdict, draftReason: null, notProven: withTail.r.not_proven, receiptPath: null, receiptSha256: null, signed: null, runId: "r1", outputs: {} });
+    expect(body).toContain(line);
+    expect(body).not.toContain(withTail.ctx.repoDir); expect(body).not.toMatch(/(?:^|[\s`(])\/(?:Users|home|private|tmp|var)\//);
     expect(without.r.not_proven.some((n) => n.startsWith("Wall failure output kept"))).toBe(false);
     expect(withTail.r.verdict).toBe(without.r.verdict);
   }, 30000);

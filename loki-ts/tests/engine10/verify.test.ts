@@ -9,7 +9,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rm
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { EventType, RunContext, StageName, TestMap, TestRef } from "../../src/engine10/types.ts";
-import { WALL_FAILURE_TAIL_CAP, WALL_FAILURE_TAIL_FILE, writeWallFailureTail, changedFiles, runCheck, runLintChecks, runnerCmd, verifyStage, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
+import { WALL_FAILURE_TAIL_CAP, WALL_FAILURE_TAIL_FILE, writeWallFailureTail, wallTailOf, changedFiles, runCheck, runLintChecks, runnerCmd, verifyStage, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classifyRisk, diffFiles, markExecuted, recordRisk, type DiffFile } from "../../src/util/check_result.ts";
 import { readRiskSummary, withRiskLine } from "../../src/util/run_summary.ts";
 
@@ -822,6 +822,15 @@ describe("engine10 verify: red Wall failure tail", () => {
     const { f } = await wallRun(RED);
     expect(JSON.stringify(f.emitted)).not.toContain("sentinel-expected-9f3");
   }, 60_000);
+  test("a secret straddling the cap cut is redacted, not left with its prefix cut off", () => {
+    const tok = "ghp_" + "A1b2C3d4E5".repeat(4).slice(0, 36), keyed = "token=" + "Zq9".repeat(12);
+    for (const secret of [tok, keyed]) {
+      const out = "x".repeat(20000) + "\n" + secret + " " + "y".repeat(WALL_FAILURE_TAIL_CAP - 30);
+      const t = wallTailOf(out, "/repo");
+      expect(t.length).toBeLessThanOrEqual(WALL_FAILURE_TAIL_CAP);
+      expect(t).not.toContain(secret.slice(12)); // the part of the secret left after the cut must not survive unredacted
+    }
+  });
   test("output over the cap keeps only the tail, and a later green run removes the file", () => {
     const dir = mkdtempSync(join(tmpdir(), "e10-wft-")); cleanupDirs.push(dir);
     const out = "HEAD-MARK" + "x".repeat(WALL_FAILURE_TAIL_CAP * 2) + "TAIL-MARK";
