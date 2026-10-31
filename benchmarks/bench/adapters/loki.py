@@ -293,7 +293,8 @@ def _read_honesty(loki_dir):
 def _run_outcome(loki_dir, rc):
     """(outcome, source). The exit code decides the class and the receipt only
     refines within it: 0 is the receipt verdict when it is VERIFIED or
-    ALREADY_SATISFIED, else VERIFIED; 6 or 20 (the latter with
+    ALREADY_SATISFIED, VERIFIED with no receipt, and UNVERIFIED when the receipt
+    names any other verdict (a stale or mismatched receipt; fail closed); 6 or 20 (the latter with
     LOKI_DURABLE_STATE=1) is PARTIAL; any other code is FAILED whatever the
     receipt says (BUDGET_STOP or STALLED can carry a PARTIAL verdict). With no
     exit code the receipt verdict stands; with neither it is (None, None)."""
@@ -303,9 +304,11 @@ def _run_outcome(loki_dir, rc):
         verdict = receipt["verdict"].strip().upper()
     if isinstance(rc, int) and not isinstance(rc, bool):
         if rc == 0:
+            if verdict is None:
+                return "VERIFIED", "exit_code"
             if verdict in ("VERIFIED", "ALREADY_SATISFIED"):
                 return verdict, "receipt"
-            return "VERIFIED", "exit_code"
+            return "UNVERIFIED", "contradiction"
         if rc in (6, 20):
             return "PARTIAL", "exit_code"
         return "FAILED", "exit_code"
