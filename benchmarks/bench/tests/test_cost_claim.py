@@ -771,3 +771,36 @@ def test_usage_csv_rejects_ambiguous_exports(tmp_path):
     assert _run(*_base_args(f), "--usage-csv", str(p))[0] == 2
     p.write_text("date,cost_usd\n1,33.66\nTOTAL,33.66\n")
     assert _run(*_base_args(f), "--usage-csv", str(p))[0] == 2
+
+
+def _csv_total(tmp_path, text):
+    p = tmp_path / "u.csv"
+    p.write_text(text)
+    return cc.console_usd_from_csv(str(p))
+
+
+def test_usage_csv_total_row_in_any_non_cost_column_is_rejected(tmp_path):
+    import pytest
+    for bad in ("date,model,cost_usd\n1,m,2.0\n,Total,10\n",
+                "date,model,cost_usd\n1,m,2.0\n,Subtotal,10\n",
+                "date,model,note,cost_usd\n1,m,x,2.0\n1,m,TOTAL,10\n"):
+        with pytest.raises(ValueError):
+            _csv_total(tmp_path, bad)
+    assert _csv_total(tmp_path, "date,model,cost_usd\n1,totalizer-x,2.0\n") == 2.0
+
+
+def test_usage_csv_non_usd_currency_under_usd_header_is_rejected(tmp_path):
+    import pytest
+    ok = "date,currency,cost_usd\n1,USD,2.0\n2,usd,3.0\n"
+    assert _csv_total(tmp_path, ok) == 5.0
+    for bad in ("date,currency,cost_usd\n1,USD,2.0\n2,EUR,3.0\n",
+                "date,Currency,cost_usd\n1,,2.0\n"):
+        with pytest.raises(ValueError):
+            _csv_total(tmp_path, bad)
+
+
+def test_reconcile_with_no_run_rows_is_not_measured_never_a_number():
+    err, d = cc.reconcile([], 32.0)
+    assert err == "not measured" and "no run rows" in d["reason"], (err, d)
+    v = cc.cost_claim_verdict([], [], 0.5, run_rows=[], console_usd=32.0)
+    assert v["reconciliation_error"] == "not measured", v

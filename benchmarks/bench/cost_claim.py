@@ -92,6 +92,7 @@ def _arm_cost(rows):
 CONSOLE_COST_COLUMNS = ("cost_usd", "cost (usd)", "total_cost_usd",
                         "amount_usd")
 _TOTAL_ROW = re.compile(r"\s*(sub)?total\b", re.IGNORECASE)
+_CURRENCY_HEAD = re.compile(r"currency|ccy", re.IGNORECASE)
 _USD_CELL = re.compile(r"-?(\d{1,3}(,\d{3})+|\d+)(\.\d+)?")
 
 
@@ -99,8 +100,10 @@ def console_usd_from_csv(path):
     """Sum the usd cost column of an Anthropic console usage CSV export.
 
     The column is the first header (case-insensitive) in CONSOLE_COST_COLUMNS.
-    Only usd-named columns count. No such column, a total or subtotal row, or a
-    blank, non-numeric or badly comma-grouped cost cell raises ValueError: an
+    Only usd-named columns count, and any currency column must read USD on every
+    row. No such column, a total or subtotal word at the start of any non-cost
+    cell, a non-USD currency, or a blank, non-numeric or badly comma-grouped
+    cost cell raises ValueError: an
     unreadable export is never read as 0 and never summed twice.
     """
     import csv
@@ -112,11 +115,17 @@ def console_usd_from_csv(path):
             raise ValueError("usage csv %s has no cost column (headers: %s)"
                              % (path, ",".join(heads)))
         total = 0.0
-        first = reader.fieldnames[0]
+        others = [h for h in reader.fieldnames if h != col]
         for i, rec in enumerate(reader, start=2):
-            if _TOTAL_ROW.match(rec.get(first) or ""):
+            if any(isinstance(rec.get(h), str) and _TOTAL_ROW.match(rec[h])
+                   for h in others):
                 raise ValueError("usage csv %s line %d: total or subtotal row; "
                                  "export the itemised rows only" % (path, i))
+            for h in others:
+                if _CURRENCY_HEAD.search(h or "") and \
+                        (rec.get(h) or "").strip().upper() != "USD":
+                    raise ValueError("usage csv %s line %d: currency %r is not "
+                                     "USD" % (path, i, rec.get(h)))
             cell = (rec.get(col) or "").strip().replace("$", "", 1)
             if not _USD_CELL.fullmatch(cell):
                 raise ValueError("usage csv %s line %d: cost %r is not a number"
@@ -139,6 +148,8 @@ def reconcile(run_rows, console_usd):
     rows = list(run_rows)
     if console_usd is None:
         return "not measured", {"reason": "no console usage csv given"}
+    if not rows:
+        return "not measured", {"reason": "no run rows", "console_usd": console_usd}
     missing = sum(1 for r in rows if not _good_cost(r) or r.get("cost_partial"))
     if missing:
         return "not measured", {"reason": "%d run row(s) without a usable "
