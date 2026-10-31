@@ -425,12 +425,15 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(taskNamedPaths("Use Node.js, Vue.js, Next.js, Nuxt.js, Express.js, Three.js, D3.js and Chart.js")).toEqual([]);
     expect(taskNamedPaths("Create socket.js that handles connections, chart.js, electron.js and express.js, no Node.js")).toEqual(["socket.js", "chart.js", "electron.js", "express.js"]);
   });
-  test("taskNamedPaths decides a capitalised product-shaped name by its sentence context, not by a name list", () => {
-    expect(taskNamedPaths("Use Knex.js and Svelte.js with Fly.io")).toEqual([]);
-    expect(taskNamedPaths("PostgreSQL with Knex.js for migrations, real-time board via Socket.io")).toEqual([]);
+  test("taskNamedPaths: a capitalised product-shaped name is a file unless the prose evidence is direct", () => {
+    for (const [t, f] of [["Fix Button.js", "Button.js"], ["Fix the crash in Server.js", "Server.js"], ["Update the handler in App.js", "App.js"], ["App.js must render the list", "App.js"], ["Move App.js to the repo root", "App.js"], ["Change App.js to export default", "App.js"], ["The entry point is App.js at the repo root", "App.js"], ["Write the tests for App.js", "App.js"], ["Refactor Server.js", "Server.js"], ["Server.js should listen on PORT", "Server.js"], ["Put the component in Button.js", "Button.js"], ["Create a counter in App.js", "App.js"], ["Debug Server.js", "Server.js"], ["Implement the API in Server.js using Express", "Server.js"], ["Use App.js as the entry point", "App.js"], ["using Server.js as the entry", "Server.js"]] as const) expect([t, taskNamedPaths(t)]).toEqual([t, [f]]);
+    expect(taskNamedPaths("ThisArrOnly.js:3|literal rows assigned to this._phases\nHelperReturnThisSink.js:3|'getPhases' returns rows")).toEqual(["ThisArrOnly.js", "HelperReturnThisSink.js"]);
+    for (const t of ["Build a tiny Node.js CLI named `greet`", "Write Node.js code", "Create a Node.js script", "Build a Next.js app", "Use Next.js", "using Node.js to run it", "use Express.js for routing", "PostgreSQL with Knex.js for migrations, real-time board via Socket.io", "Use Knex.js and Svelte.js with Fly.io", "Build a single Node.js file named `retry.js`"]) expect([t, taskNamedPaths(t).filter((n) => /^[A-Z]/.test(n))]).toEqual([t, []]);
     expect(taskNamedPaths("Build a single Node.js file named `retry.js` that exports one function")).toEqual(["retry.js"]);
     expect(taskNamedPaths("Create Knex.js and add Widget.js next to lib/Other.js")).toEqual(["Knex.js", "Widget.js", "lib/Other.js"]);
-    expect(taskNamedPaths("Implement the loader in Main.py and edit README.md")).toEqual(["Main.py", "README.md"]);
+  });
+  test("a task naming Server.js while the run only added tests/Server.js still gets the misplaced note", () => {
+    expect(misplacedNamedNotes("Fix the crash in Server.js", [":000000 100644 0 0 A", "tests/Server.js"], "/nonexistent", "HEAD")).toEqual(["task names Server.js but it exists only at tests/Server.js"]);
   });
   test("a Bun.write target is still a created path through the generic write call", () => {
     const td = mkdtempSync(join(tmpdir(), "wp-bw-"));
