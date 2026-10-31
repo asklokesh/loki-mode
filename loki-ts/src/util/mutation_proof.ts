@@ -10,7 +10,8 @@ import { readScopeText } from "./run_cap.ts";
 export type MutationOutcome = "yes" | "no" | "inconclusive";
 export interface MutationProof { outcome: MutationOutcome; line: string; }
 export interface MutationTest { runner: string; path: string; }
-export interface MutationRunner { run(dir: string, files: MutationTest[]): { pass: number; fail: number; not_run?: number }; }
+export interface MutationRunner { run(dir: string, files: MutationTest[]): { pass: number; fail: number; not_run?: number }; runEach?(dir: string, files: MutationTest[], jobs: number): Promise<{ pass: number; fail: number; not_run?: number }[]>; } // runEach: same per-file result, a few files at once
+const PROOF_JOBS = 8;
 export interface MutationInput {
   repoDir: string; baseSha: string; runDir: string;
   wallFiles: { path: string }[]; // sealed Wall files as recorded by wall.ts (absolute or repo-relative)
@@ -29,7 +30,7 @@ export const DEP_DIRS = ["node_modules", ".venv", "venv"];
 const git = (cwd: string, args: string[], timeout = 30_000): { status: number } => { try { safeGit(cwd, args, { timeout }); return { status: 0 }; } catch { return { status: 1 }; } };
 
 /** Runs the proof. Never throws; the temp worktree is removed on every path with `git worktree remove --force <exact path>`. */
-export function mutationProof(i: MutationInput): MutationProof {
+export async function mutationProof(i: MutationInput): Promise<MutationProof> {
   const rels = i.wallFiles.map((f) => (isAbsolute(f.path) ? relative(i.repoDir, f.path) : f.path));
   if (rels.length === 0) return np("no Wall tests");
   const tests = rels.flatMap((rel) => { const c = i.checks.find((k) => k.name.endsWith(`:${rel}`)); const idx = c ? c.name.indexOf(":") : -1; return c && idx > 0 ? [{ runner: c.name.slice(0, idx), path: rel }] : []; });
@@ -53,9 +54,10 @@ export function mutationProof(i: MutationInput): MutationProof {
     // B1: the bare worktree has no installed dependencies; link each one that exists in the repo (root and every Wall file ancestor) so a missing package is never read as a failing test.
     for (const rel of rels) { const parts = rel.split("/").slice(0, -1); for (let n = 0; n <= parts.length; n++) { const anc = parts.slice(0, n).join("/"); for (const d of DEP_DIRS) { const src = join(i.repoDir, anc, d), dst = join(wt, anc, d); if (existsSync(src) && !existsSync(dst)) { try { symlinkSync(src, dst); } catch { /* the run decides */ } } } } }
     let pass = 0, fail = 0, notRun = 0;
-    for (const t of tests) {
-      if (remaining() <= 0) return np("timeout");
-      const r = (typeof i.runner === "function" ? i.runner(remaining()) : i.runner).run(wt, [t]); pass += r.pass; fail += r.fail; notRun += r.not_run ?? 0;
+    if (remaining() <= 0) return np("timeout");
+    const rn = typeof i.runner === "function" ? i.runner(remaining()) : i.runner;
+    for (const r of rn.runEach && tests.length > 1 ? await rn.runEach(wt, tests, PROOF_JOBS) : tests.map((t) => (remaining() <= 0 ? null : rn.run(wt as string, [t])))) {
+      if (!r) return np("timeout"); pass += r.pass; fail += r.fail; notRun += r.not_run ?? 0;
     }
     if (remaining() <= 0 && fail === 0) return np("timeout");
     if (fail > 0) return { outcome: "yes", line: `${LABEL}yes` };

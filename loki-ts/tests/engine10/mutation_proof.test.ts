@@ -15,7 +15,7 @@ const sh = (argv: string[], cwd: string): string => {
   return p.stdout.toString();
 };
 const WALL = "loki_wall_f.test.ts";
-const wallBody = (expected: number) => `import { expect, test } from "bun:test";\nimport { f } from "./src/f.ts";\ntest("f", () => { expect(f()).toBe(${expected}); });\n`;
+const wallBody = (expected: number) => `import { expect, test } from "bun:test";\nimport { f } from "./src/f.ts";\ntest("f", async () => { expect(f()).toBe(${expected}); });\n`;
 type Fx = { repo: string; base: string; head: string; runDir: string };
 // base: f() returns 1; head (the fix): f() returns 2. The Wall test expects `expected`.
 function fixture(name: string, expected: number): Fx {
@@ -41,72 +41,82 @@ beforeAll(() => { root = mkdtempSync(join(tmpdir(), "loki-mutproof-test-")); });
 afterAll(() => { rmSync(root, { recursive: true, force: true }); });
 
 describe("mutation proof outcomes", () => {
-  test("yes: the Wall test fails on the base tree without the fix", () => {
+  test("yes: the Wall test fails on the base tree without the fix", async () => {
     const f = fixture("yes", 2); const before = leftovers();
-    const r = mutationProof(input(f));
+    const r = await mutationProof(input(f));
     expect(r.outcome).toBe("yes"); expect(r.line).toBe("test fails without the fix: yes");
     expect(worktrees(f.repo)).toBe(1); expect(leftovers()).toBe(before);
   });
-  test("no: the Wall test passes on the base tree", () => {
-    const f = fixture("no", 1); const r = mutationProof(input(f));
+  test("no: the Wall test passes on the base tree", async () => {
+    const f = fixture("no", 1); const r = await mutationProof(input(f));
     expect(r.outcome).toBe("no"); expect(r.line).toStartWith("test fails without the fix: no"); expect(worktrees(f.repo)).toBe(1);
   });
-  test("inconclusive: no Wall tests, no recorded command, unknown base, runner that does not execute", () => {
+  test("inconclusive: no Wall tests, no recorded command, unknown base, runner that does not execute", async () => {
     const f = fixture("np", 2);
-    expect(mutationProof(input(f, { wallFiles: [] })).line).toBe("test fails without the fix: inconclusive (no Wall tests)");
-    expect(mutationProof(input(f, { checks: [] })).outcome).toBe("inconclusive");
-    const bad = mutationProof(input(f, { baseSha: "0".repeat(40) }));
+    expect((await mutationProof(input(f, { wallFiles: [] }))).line).toBe("test fails without the fix: inconclusive (no Wall tests)");
+    expect((await mutationProof(input(f, { checks: [] }))).outcome).toBe("inconclusive");
+    const bad = await mutationProof(input(f, { baseSha: "0".repeat(40) }));
     expect(bad.line).toBe("test fails without the fix: inconclusive (could not create the base worktree)");
-    const nr = mutationProof(input(f, { runner: { run: () => ({ pass: 0, fail: 0, not_run: 1 }) } }));
+    const nr = await mutationProof(input(f, { runner: { run: () => ({ pass: 0, fail: 0, not_run: 1 }) } }));
     expect(nr.outcome).toBe("inconclusive");
     expect(worktrees(f.repo)).toBe(1);
   });
-  test("inconclusive: timeout, and the worktree is still removed", () => {
+  test("inconclusive: timeout, and the worktree is still removed", async () => {
     const f = fixture("to", 2);
-    const r = mutationProof(input(f, { timeoutS: -1 }));
+    const r = await mutationProof(input(f, { timeoutS: -1 }));
     expect(r.line).toBe("test fails without the fix: inconclusive (timeout)"); expect(worktrees(f.repo)).toBe(1);
   });
-  test("negative timeout env falls back to 30s, not an already-past deadline", () => {
+  test("negative timeout env falls back to 30s, not an already-past deadline", async () => {
     for (const bad of ["-5", "0", "NaN", "Infinity", "abc"]) {
       const f = fixture(`negenv${bad.replace(/\W/g, "")}`, 2);
-      const r = mutationProof(input(f, { env: { LOKI_MUTATION_PROOF_TIMEOUT_S: bad } }));
+      const r = await mutationProof(input(f, { env: { LOKI_MUTATION_PROOF_TIMEOUT_S: bad } }));
       expect(r.outcome).toBe("yes");
     }
   });
-  test("worktree removed when the runner throws", () => {
+  test("worktree removed when the runner throws", async () => {
     const f = fixture("throw", 2); const before = leftovers();
-    const r = mutationProof(input(f, { runner: { run: () => { throw new Error("boom"); } } }));
+    const r = await mutationProof(input(f, { runner: { run: () => { throw new Error("boom"); } } }));
     expect(r.outcome).toBe("inconclusive"); expect(r.line).toContain("boom");
     expect(worktrees(f.repo)).toBe(1); expect(leftovers()).toBe(before);
   });
-  test("B1: an ignored local package is linked into the base worktree, so a passing Wall test is never a false yes", () => {
+  test("B1: an ignored local package is linked into the base worktree, so a passing Wall test is never a false yes", async () => {
     const f = fixture("dep", 1);
     mkdirSync(join(f.repo, "node_modules/localpkg"), { recursive: true });
     writeFileSync(join(f.repo, "node_modules/localpkg/index.js"), "module.exports = { v: 1 };\n");
     writeFileSync(join(f.repo, "node_modules/localpkg/package.json"), '{"name":"localpkg","main":"index.js"}\n');
-    const body = `import { expect, test } from "bun:test";\nimport { v } from "localpkg";\ntest("dep", () => { expect(v).toBe(1); });\n`;
+    const body = `import { expect, test } from "bun:test";\nimport { v } from "localpkg";\ntest("dep", async () => { expect(v).toBe(1); });\n`;
     writeFileSync(join(f.repo, WALL), body); writeFileSync(join(f.runDir, "wall", WALL), body);
-    const r = mutationProof(input(f));
+    const r = await mutationProof(input(f));
     expect(r.outcome).toBe("no"); expect(worktrees(f.repo)).toBe(1);
   });
-  test("B2: a slow runner is inconclusive (timeout) and the total stays under the clamp", () => {
+  test("B2: a slow runner is inconclusive (timeout) and the total stays under the clamp", async () => {
     const f = fixture("slow", 2); const t0 = Date.now();
-    const r = mutationProof(input(f, { timeoutS: 1, runner: () => ({ run: () => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1300); return { pass: 0, fail: 0, not_run: 0 }; } }) }));
+    const r = await mutationProof(input(f, { timeoutS: 1, runner: () => ({ run: () => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1300); return { pass: 0, fail: 0, not_run: 0 }; } }) }));
     expect(r.line).toBe("test fails without the fix: inconclusive (timeout)"); expect(Date.now() - t0).toBeLessThan(6000); expect(worktrees(f.repo)).toBe(1);
   });
-  test("N1: a Wall file without a recorded command is inconclusive", () => {
+  test("N1: a Wall file without a recorded command is inconclusive", async () => {
     const f = fixture("n1", 2);
-    const r = mutationProof(input(f, { wallFiles: [{ path: join(f.repo, WALL) }, { path: join(f.repo, "loki_wall_other.test.ts") }] }));
+    const r = await mutationProof(input(f, { wallFiles: [{ path: join(f.repo, WALL) }, { path: join(f.repo, "loki_wall_other.test.ts") }] }));
     expect(r.outcome).toBe("inconclusive");
   });
-  test("a deleted sealed Wall copy is reported, not replaced by the working-tree file", () => {
+  test("a deleted sealed Wall copy is reported, not replaced by the working-tree file", async () => {
     const f = fixture("sealedgone", 1);
     rmSync(join(f.runDir, "wall", WALL));
-    const r = mutationProof(input(f));
+    const r = await mutationProof(input(f));
     expect(r.outcome).toBe("inconclusive"); expect(r.line).toContain("sealed Wall copy missing"); expect(r.line).toContain(WALL);
     expect(worktrees(f.repo)).toBe(1);
   });
-  test("opt-out flag", () => {
+  test("the concurrent Wall run yields byte-identical proof lines to the serial run (yes, no)", async () => {
+    for (const [name, expected, outcome] of [["par-yes", 2, "yes"], ["par-no", 1, "no"]] as const) {
+      const f = fixture(name, expected); const extra = ["loki_wall_g.test.ts", "loki_wall_h.test.ts"];
+      for (const w of extra) { writeFileSync(join(f.repo, w), wallBody(1)); writeFileSync(join(f.runDir, "wall", w), wallBody(1)); }
+      const wallFiles = [WALL, ...extra].map((w) => ({ path: join(f.repo, w) })), checks = [WALL, ...extra].map((w) => ({ name: `bun:${w}` }));
+      const real = new RealBaseTestRunner(null), serial = { run: (d: string, t: { runner: string; path: string }[]) => real.run(d, t as never) }; // no runEach: the serial path
+      const a = await mutationProof(input(f, { wallFiles, checks, runner: serial })), b = await mutationProof(input(f, { wallFiles, checks, runner: real }));
+      expect(JSON.stringify(b)).toBe(JSON.stringify(a)); expect(b.outcome).toBe(outcome); expect(b.line).toBe(`test fails without the fix: ${outcome}${outcome === "no" ? " (warning: the Wall tests also pass on the old code)" : ""}`);
+    }
+  });
+  test("opt-out flag", async () => {
     expect(mutationEnabled({ LOKI_MUTATION_PROOF: "0" })).toBe(false);
     expect(mutationEnabled({})).toBe(true);
   });
