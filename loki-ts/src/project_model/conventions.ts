@@ -92,7 +92,7 @@ export function outOfRepoTarget(content: string): string | null {
 /** Go: true when the file has Test funcs, every body is empty or only t.Log/t.Skip calls, and nothing in the file can fail a test. Linear brace scan, no backtracking regex over the body. */
 function goVacuous(code: string): boolean {
   if (/\b\w+\.(?:Fatal|Fatalf|Error|Errorf|Fail|FailNow|Run)\b/.test(code)) return false;
-  const head = /func\s+Test\w*\(\s*\w+\s+\*testing\.T\s*\)\s*\{/g, trivialStmt = /^\w+\.(?:Log|Logf|Skip|Skipf|SkipNow)\(.*\)$/;
+  const head = /func\s+(?:Test|Fuzz)\w*\(\s*\w+\s+\*testing\.[TF]\s*\)\s*\{/g, trivialStmt = /^\w+\.(?:Log|Logf|Skip|Skipf|SkipNow)\(.*\)$/;
   let m: RegExpExecArray | null, n = 0;
   while ((m = head.exec(code))) {
     let d = 1, i = head.lastIndex, q = "";
@@ -104,6 +104,76 @@ function goVacuous(code: string): boolean {
     head.lastIndex = i; n++;
   }
   return n > 0;
+}
+
+/** One lexical pass over Go source, in source order: comments are blanked and each string, raw string and rune literal is replaced by a numbered placeholder (`"\u0001N"`), so a comment marker inside a string, or a quote inside a comment, can never be misread. */
+function goLex(src: string): { masked: string; strs: string[] } {
+  const strs: string[] = []; let out = "", i = 0;
+  while (i < src.length) {
+    const c = src[i]!, n = src[i + 1];
+    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; }
+    else if (c === "/" && n === "*") { const e = src.indexOf("*/", i + 2), end = e < 0 ? src.length : e + 2; out += src.slice(i, end).replace(/[^\n]/g, " "); i = end; }
+    else if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1; while (j < src.length && src[j] !== c && (c === "`" || src[j] !== "\n")) j += c !== "`" && src[j] === "\\" ? 2 : 1;
+      out += c === "'" ? "0" : `"\u0001${strs.push(src.slice(i + 1, j))}"`;
+      i = j + 1;
+    } else { out += c; i++; }
+  }
+  return { masked: out, strs };
+}
+const goClose = (t: string, at: number): number => { const o = t[at]!, c = o === "(" ? ")" : o === "[" ? "]" : "}"; let d = 0; for (let j = at; j < t.length; j++) { if (t[j] === o) d++; else if (t[j] === c && --d === 0) return j; } return -1; };
+/** Names declared by one Go parameter, result or type-parameter list: in the named form a lone entry shares the type that follows (`a, b int`), in the unnamed form every entry is a type. */
+function goGroupNames(list: string): string[] {
+  const segs: string[] = []; let d = 0, cur = "";
+  for (const ch of list) { if ("([{".includes(ch)) d++; else if (")]}".includes(ch)) d--; if (ch === "," && d === 0) { segs.push(cur); cur = ""; } else cur += ch; }
+  segs.push(cur);
+  const toks = segs.map((s) => s.trim().split(/\s+/).filter(Boolean)), named = toks.some((t) => t.length >= 2);
+  return toks.flatMap((t) => (named || t.length >= 2) && /^[A-Za-z_]\w*$/.test(t[0] ?? "") ? [t[0]!] : []);
+}
+/** Go: a Test or Fuzz file with a package clause that never references the package under test. An external `package x_test` must import the package it tests and use it (a dot import of that package is not judged); a same-package test must use an identifier it does not itself declare (its imports, parameters and results, type parameters, locals, var/const names, fields and keywords excluded; with a dot import present only lowercase names count, since a dot import brings in exported names only). Comments and string/rune literals are removed in one pass first. Files without a package clause or a Test/Fuzz func are not judged. */
+function goUnreferenced(src: string): boolean {
+  const { masked, strs } = goLex(src), code = masked.replace(/"\u0001\d+"/g, '""');
+  const pkg = /^\s*package\s+(\w+)/m.exec(code);
+  if (!pkg || !/\bfunc\s+(?:Test|Fuzz)\w*\s*\(/.test(code)) return false;
+  const specs: { alias: string; path: string }[] = [];
+  for (const d of masked.matchAll(/^[ \t]*import\s*\(([\s\S]*?)\)|^[ \t]*import[ \t]+([^\n(]*)$/gm)) for (const l of (d[1] ?? d[2] ?? "").split("\n")) { const m = /^[ \t]*(?:([\w.]+)[ \t]+)?"\u0001(\d+)"[ \t;]*$/.exec(l); if (m) specs.push({ alias: m[1] ?? "", path: strs[Number(m[2]) - 1]! }); }
+  const lastOf = (p: string): string => { const parts = p.split("/"); let l = parts.pop()!; if (/^v\d+$/.test(l) && parts.length) l = parts.pop()!; return l; };
+  const norm = (l: string): string => l.toLowerCase().replace(/[^a-z0-9_]/g, "");
+  const body = code.replace(/^\s*import\s*\([\s\S]*?\)/gm, " ").replace(/^\s*import\b.*$/gm, " ");
+  const dots = specs.filter((s) => s.alias === ".");
+  if (pkg[1]!.endsWith("_test")) {
+    const x = pkg[1]!.slice(0, -5), named = (p: string): boolean => [x, "go" + x, x + "go"].includes(norm(lastOf(p))); // go-x, x-go, x.go, x/v2 all name package x
+    const mine = specs.filter((s) => s.alias === x || (s.alias !== "_" && named(s.path)));
+    if (mine.some((s) => s.alias === ".")) return false;
+    return !mine.some((s) => { const nm = s.alias || x; return new RegExp(String.raw`(?<![\w.])${nm}\s*\.\s*[A-Za-z_]`).test(body); });
+  }
+  const own = new Set<string>(["_", pkg[1]!, "true", "false", "nil", "iota"]);
+  for (const w of "break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var any bool byte comparable complex64 complex128 error float32 float64 int int8 int16 int32 int64 rune string uint uint8 uint16 uint32 uint64 uintptr append cap clear close complex copy delete imag len make max min new panic print println real recover".split(" ")) own.add(w);
+  for (const s of specs) if (s.alias !== ".") own.add(s.alias && s.alias !== "_" ? s.alias : norm(lastOf(s.path)) || lastOf(s.path)), own.add(lastOf(s.path).replace(/[^\w]/g, "")), own.add(norm(lastOf(s.path).replace(/^go-|-go$|\.go$/g, "")));
+  const names = (t: string): string[] => t.match(/[A-Za-z_]\w*/g) ?? [];
+  for (const m of body.matchAll(/\b(?:func|type)\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)/g)) own.add(m[1]!);
+  for (const m of body.matchAll(/\b(?:var|const)\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)/g)) names(m[1]!).forEach((n) => own.add(n));
+  for (const m of body.matchAll(/^\s*(?:var|const)\s*\(([\s\S]*?)\n\s*\)/gm)) for (const l of m[1]!.split("\n")) { const d = /^\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)/.exec(l); if (d) names(d[1]!).forEach((n) => own.add(n)); }
+  for (const m of body.matchAll(/([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*:=/g)) names(m[1]!).forEach((n) => own.add(n));
+  for (const m of body.matchAll(/^\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s+[\w*\[\]{}.]+\s*$/gm)) names(m[1]!).forEach((n) => own.add(n)); // struct field declarations
+  for (const m of body.matchAll(/(?:^|[{,])\s*([A-Za-z_]\w*)\s*:(?!=)/gm)) own.add(m[1]!); // keyed literal fields and labels
+  const bracket = (at: number): number => { let j = at; while (/\s/.test(body[j] ?? "")) j++; if (body[j] === "[") { const e = goClose(body, j); if (e > 0) { goGroupNames(body.slice(j + 1, e)).forEach((n) => own.add(n)); return e + 1; } } return at; }; // type parameters
+  for (const m of body.matchAll(/\btype\s+[A-Za-z_]\w*/g)) bracket(m.index! + m[0].length);
+  for (const m of body.matchAll(/\bfunc\b/g)) {
+    let j = m.index! + 4; while (/\s/.test(body[j] ?? "")) j++;
+    const grab = (at: number): number => { const e = goClose(body, at); if (e < 0) return body.length; goGroupNames(body.slice(at + 1, e)).forEach((n) => own.add(n)); return e + 1; };
+    if (body[j] === "(") {
+      let k = grab(j); while (/\s/.test(body[k] ?? "")) k++;
+      if (/[A-Za-z_]/.test(body[k] ?? "")) { const nm = /^[A-Za-z_]\w*/.exec(body.slice(k))![0]; k = bracket(k + nm.length); while (/\s/.test(body[k] ?? "")) k++; if (body[k] === "(") k = grab(k); } // receiver, name, params
+      while (/\s/.test(body[k] ?? "")) k++; if (body[k] === "(") grab(k); // results
+    } else if (/[A-Za-z_]/.test(body[j] ?? "")) {
+      const nm = /^[A-Za-z_]\w*/.exec(body.slice(j))![0]; let k = bracket(j + nm.length); while (/\s/.test(body[k] ?? "")) k++;
+      if (body[k] === "(") { k = grab(k); while (/\s/.test(body[k] ?? "")) k++; if (body[k] === "(") grab(k); }
+    }
+  }
+  const lowerOnly = dots.length > 0;
+  for (const m of body.matchAll(/(?<![\w.])([A-Za-z_]\w*)/g)) if (!own.has(m[1]!) && !(lowerOnly && /^[A-Z]/.test(m[1]!))) return false;
+  return true;
 }
 
 /** TEN-MOAT-26: a generated Wall file that asserts nothing: its only assertions are tautologies (expect(true).toBe(true), assert True), its tests have empty bodies, or a shell file holds only true / exit 0 / ":". Such a file can never fail, so it proves nothing about the change. A JS/Python file with no tautology and no assertion but real calls is NOT flagged (it can still be red by throwing); a file that holds a tautology and no real assertion is flagged even if it also calls code. Go is judged per file: flagged only when every Test func body is empty or only t.Log/t.Skip and nothing can fail a test. Comments are ignored. Returns the reason, or null when the file is acceptable or its language is not recognised. */
@@ -133,7 +203,7 @@ export function vacuousCheck(fileName: string, content: string): string | null {
     const trivial = new RegExp(String.raw`^(?:true|:|exit\s+0|return\s+0|(?:/usr)?/bin/true|(?:echo|printf)(?:\s+${tok})*|test\s+(?:[1-9]\d*|${tok})|\[\[?\s+(?:[1-9]\d*|${tok})\s+\]\]?)$`);
     return lines.length === 0 || lines.every((l) => l.split(/&&|\|\||;/).map((x) => x.trim()).every((x) => x === "" || trivial.test(x))) ? reason : null;
   }
-  if (/_test\.go$/.test(fileName)) return goVacuous(strip(/(^|[^:])\/\/.*$/gm)) ? reason : null;
+  if (/_test\.go$/.test(fileName)) return goVacuous(strip(/(^|[^:])\/\/.*$/gm)) ? reason : goUnreferenced(content) ? "never references the package under test (an external _test package must import and use it; a same-package test must use an identifier the package declares outside this file); write a check that calls the changed code" : null;
   return null;
 }
 
