@@ -15,8 +15,11 @@ import { execFileSync, spawnSync, type ExecFileSyncOptions, type SpawnSyncOption
 export const SAFE_GIT_CONFIG: readonly string[] = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "core.sshCommand=", "-c", "protocol.ext.allow=never", "-c", "credential.helper=", "-c", "core.trustctime=true", "-c", "core.checkStat=default"];
 // allowToken keeps the user's credential helper and ssh command; fsmonitor, hooks and ext:: stay off.
 const CREDENTIAL_CONFIG: readonly string[] = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never"];
+// gpg programs run on signature display (%G?, %(signature), log.showSignature) and verification; a repo-set one is an arbitrary command.
+// userHooks callers keep the user's own signing setup, so these pairs are in the `off` set there (see safeGitArgs).
+const GPG_OFF: readonly string[] = ["gpg.program=false", "gpg.openpgp.program=false", "gpg.x509.program=false", "gpg.ssh.program=false"];
 // External diff, commit signing and a global attributes file: repo-chosen commands on diff/commit paths.
-const DRIVER_CONFIG: readonly string[] = ["-c", "diff.external=", "-c", "commit.gpgSign=false", "-c", "core.attributesFile=/dev/null"];
+const DRIVER_CONFIG: readonly string[] = ["-c", "diff.external=", "-c", "commit.gpgSign=false", "-c", "core.attributesFile=/dev/null", ...GPG_OFF.flatMap((v) => ["-c", v]), "-c", "log.showSignature=false"];
 // Worker-side content writes and commits restore these pairs (see SafeGitKeep); a token-holding call never does.
 const ATTRS_OFF = "core.attributesFile=/dev/null", HOOKS_OFF = "core.hooksPath=/dev/null", SIGN_OFF = "commit.gpgSign=false";
 const REPO_SCOPES: ReadonlySet<string> = new Set(["local", "worktree", "command"]);
@@ -207,7 +210,7 @@ function injectPackOpts(args: string[], opts: { flag: string; cmds: ReadonlySet<
  *  textconv driver is blanked too. A blanked driver with filter.<x>.required=true makes git error: callers see a throw, never a clean result. */
 export function safeGitArgs(args: readonly string[], allowToken = false, repoDir?: string, keep: SafeGitKeep = {}, env: NodeJS.ProcessEnv = process.env): string[] {
   if (keep.userHooks && allowToken) throw new Error("safeGit: userHooks with allowToken is refused (a hook would run holding the credential)");
-  const off = new Set([...(keep.repoDrivers ? [ATTRS_OFF] : []), ...(keep.userHooks ? [HOOKS_OFF, SIGN_OFF] : [])]);
+  const off = new Set([...(keep.repoDrivers ? [ATTRS_OFF] : []), ...(keep.userHooks ? [HOOKS_OFF, SIGN_OFF, ...GPG_OFF, "log.showSignature=false"] : [])]);
   const cfg = [...(allowToken ? CREDENTIAL_CONFIG : SAFE_GIT_CONFIG), ...DRIVER_CONFIG];
   const flags = cfg.flatMap((v, i) => (i % 2 === 1 && !off.has(v) ? [cfg[i - 1]!, v] : []));
   const net = allowToken && repoDir ? netCommandOverrides(repoDir, env) : { cfg: [], opts: [] };

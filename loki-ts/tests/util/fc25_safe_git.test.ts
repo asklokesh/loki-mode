@@ -293,6 +293,28 @@ test("hung git config: driverKeys and netCommandOverrides time out and fail clos
   }
 });
 
+test("a repo-set gpg program never runs for signature display or verification", () => {
+  const mark = join(root, "gpg-hit.txt"), prog = join(root, "gpg.sh");
+  writeFileSync(prog, `#!/bin/sh\necho "gpg $*" >> "${mark}"\nexit 1\n`); chmodSync(prog, 0o755);
+  const tree = g("rev-parse", "HEAD^{tree}").trim(), parent = g("rev-parse", "HEAD").trim();
+  const obj = `tree ${tree}\nparent ${parent}\nauthor t <t@t> 1700000000 +0000\ncommitter t <t@t> 1700000000 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n abc\n -----END PGP SIGNATURE-----\n\nsigned\n`;
+  const sha = execFileSync("git", ["hash-object", "-t", "commit", "-w", "--stdin"], { cwd: repo, input: obj, encoding: "utf8" }).trim();
+  g("update-ref", "refs/heads/gpgsigned", sha);
+  for (const k of ["gpg.program", "gpg.openpgp.program", "gpg.x509.program", "gpg.ssh.program"]) g("config", k, prog);
+  g("config", "log.showSignature", "true");
+  const cases: string[][] = [["rev-list", "--format=%G?", "-1", "gpgsigned"], ["rev-list", "--format=%GS", "-1", "gpgsigned"], ["for-each-ref", "--format=%(signature)", "refs/heads/gpgsigned"], ["log", "-1", "gpgsigned"], ["show", "-s", "gpgsigned"]];
+  try {
+    rmSync(mark, { force: true }); for (const c of cases) execFileSync("git", c, { cwd: repo, stdio: "ignore", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } });
+    expect(existsSync(mark)).toBe(true); // positive control: unhardened git does run the program
+    rmSync(mark, { force: true });
+    for (const c of cases) { safeGitSpawn(repo, c, { encoding: "utf8" }); try { safeGit(repo, c); } catch { /* a refusal is fine; only the marker matters */ } }
+    expect(existsSync(mark)).toBe(false);
+  } finally {
+    for (const k of ["gpg.program", "gpg.openpgp.program", "gpg.x509.program", "gpg.ssh.program", "log.showSignature"]) g("config", "--unset", k);
+    g("update-ref", "-d", "refs/heads/gpgsigned");
+  }
+});
+
 test("--shallow-file swallowing 'config' cannot smuggle a diff past the driver blanking", () => {
   const mark = join(root, "driver-hit.txt"), drv = join(root, "drv.sh");
   writeFileSync(drv, `#!/bin/sh\necho "driver $0" >> "${mark}"\ncat "$2" 2>/dev/null\nexit 0\n`); chmodSync(drv, 0o755);
