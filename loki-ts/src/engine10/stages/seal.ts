@@ -213,6 +213,7 @@ export const sealStage: Stage = {
     for (const rel of reprovedBad) notProven.add(`Wall test fails at its committed path: ${rel}`);
     if (reprovedBad.length > 0 && !wallDone) { await g(ctx)(["update-ref", "HEAD", "HEAD^"]); await g(ctx)(["read-tree", "HEAD"]); } // drop the child: nothing unproven is published
     const wallPub = wallPub0 && reprovedBad.length === 0, verdict: Verdict = reprovedBad.length > 0 ? "PARTIAL" : verdict3;
+    if (verdict === "VERIFIED") for (const n of wpAll.weak) notProven.add(n); // WALL-ASSERT-STRENGTH: a disclosure on the final VERIFIED verdict only, never an input to it
     if (wallGreenOnBase && verdict === "PARTIAL" && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done") notProven.add(WALL_GREEN_ON_BASE_REASON);
     if (!proof && !(wallGreenOnBase && verdict === "ALREADY_SATISFIED") && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = vraw; notProven.add(executed ? AGENT_ONLY_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);

@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { buildPlanBrief } from "../../src/engine10/stages/plan.ts";
 import { buildImplementBrief } from "../../src/engine10/stages/implement.ts";
-import { clauseBriefBlock, clauseGapOf, clauseLine, coveredClauses, extractClauses, generateSpec, loadSpecFile, parseSpec, renderSpec, slugify, specPrLine, specReceiptBlock, SpecError, specBriefBlock } from "../../src/util/spec_file.ts";
+import { clauseBriefBlock, clauseGapOf, clauseLine, coveredClauses, extractClauses, generateSpec, loadSpecFile, parseSpec, renderSpec, slugify, specPrLine, specReceiptBlock, SpecError, specBriefBlock, weakAssertionNote } from "../../src/util/spec_file.ts";
+import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import type { SessionResult, SessionRunner, SessionRunOptions } from "../../src/engine10/types.ts";
 
 const here = import.meta.dir;
@@ -274,7 +275,7 @@ describe("implement stage reads the run snapshot", () => {
 const PRD5 = [
   "# Search ranking", "", "Some background prose that is not a requirement.", "",
   "## Acceptance criteria", "", "- Results are ordered by recency", "- Ties break on id", "",
-  "## Edge cases", "", "1. The API returns 400 for an empty query", "- [ ] Docs mention the new flag", "",
+  "## Notes", "", "1. The API returns 400 for an empty query", "- [ ] Docs mention the new flag", "",
   "The service MUST NOT cache empty results. It is fast.",
 ].join("\n");
 
@@ -325,8 +326,34 @@ describe("acceptance clause extraction (generic, anchored)", () => {
     expect(extractClauses("Plain text. The tool MUST exit 2 on error.").clauses.map((c) => c.text)).toEqual(["The tool MUST exit 2 on error."]);
   });
   test("FALSEVER-CLAUSE recall: a bullet under any heading is a clause; scope-exclusion headings are not", () => {
-    const t = extractClauses(["## Errors", "- Syntax reports the offset", "- Arity names the function", "", "## Non-goals", "- GUI support", "", "## Notes:", "1. Be nice", "", "## Acceptance examples", "- 2+2 is 4", "", "## Out of scope", "- plugins"].join("\n")).clauses.map((c) => c.text);
-    expect(t).toEqual(["Syntax reports the offset", "Arity names the function", "2+2 is 4"]);
+    const t = extractClauses(["## Errors", "- Syntax reports the offset", "- Arity names the function", "", "## Non-goals", "- GUI support", "", "## Notes:", "1. Be nice", "", "## Examples", "- 1+2*3 gives 7", "", "## Out of scope", "- plugins", "", "## Will not do", "- macros"].join("\n")).clauses.map((c) => c.text);
+    expect(t).toEqual(["Syntax reports the offset", "Arity names the function", "Be nice", "1+2*3 gives 7"]);
+  });
+  test("a skip heading is the whole heading title: Will not crash, Future-dated payments and Future-proofing keep their bullets", () => {
+    const t = extractClauses(["## Will not crash", "- Bad input exits 2", "", "## Future-dated payments", "- Dates in the past are rejected", "", "## Future-proofing", "- Unknown keys are ignored", "", "## Out of scope for the tool", "- plugins"].join("\n")).clauses.map((c) => c.text);
+    expect(t).toEqual(["Bad input exits 2", "Dates in the past are rejected", "Unknown keys are ignored", "plugins"]);
+  });
+  test("background style headings (References, Alternatives, Glossary, Context, Rationale, Motivation, Appendix, Background) yield no clauses, with numbering, bold or a colon", () => {
+    const heads = ["## References", "## Alternatives", "## Glossary", "## Context", "## Rationale:", "## 3. Motivation", "### Appendix (informative)", "# **Background**", "## Future work", "## Non-goals", "## Won't do", "Out of scope:"];
+    for (const h of heads) expect(extractClauses([h, "- Something that reads like a bullet", ""].join("\n")).clauses.map((c) => c.text)).toEqual([]);
+  });
+  test("alternatives headings with a qualifier yield no clauses", () => {
+    for (const h of ["## Alternatives considered", "## Alternatives explored", "## Alternatives rejected", "## Considered alternatives", "### 2. Alternatives Considered:"]) {
+      expect(extractClauses([h, "- Use bit.ly (rejected: cost)"].join("\n")).clauses.map((c) => c.text)).toEqual([]);
+    }
+    expect(extractClauses("## Alternatives to cache\n- Entries expire after 5 minutes").clauses).toHaveLength(1);
+  });
+  test("Context and Background headings keep their requirement text and bullets; only exclusion titles take Title: text", () => {
+    expect(extractClauses("## Context: Billing\n- An invoice total equals the sum of its lines").clauses).toHaveLength(1);
+    expect(extractClauses("## Background: refunds should settle within 2 days\n- A refund older than 2 days is marked late").clauses.map((c) => c.text)).toEqual(["Background: refunds should settle within 2 days", "A refund older than 2 days is marked late"]); // a modal heading stays a clause over a list
+    expect(extractClauses("## Background: refunds should settle within 2 days\n\n## Notes\n").clauses.map((c) => c.text)).toEqual(["Background: refunds should settle within 2 days"]); // a leaf keeps it
+    expect(extractClauses("## Out of scope: anything about OAuth").clauses).toEqual([]);
+  });
+  test("a 14-section PRD with bullets only under real sections gives 14 clauses, skip sections add none", () => {
+    const secs: string[] = [];
+    for (let i = 1; i <= 14; i++) secs.push(`## Behavior ${i}`, `- Rule ${i} holds`, "");
+    secs.push("## References", "- RFC 1", "", "## Glossary", "- term", "", "## Alternatives", "- other");
+    expect(extractClauses(secs.join("\n")).clauses.length).toBe(14);
   });
   test("FALSEVER-CLAUSE recall: OpenAPI YAML yields one clause per operation and per status code its text names", () => {
     const yaml = ["openapi: 3.0.3", "info:", "  title: T", "paths:", "  /links:", "    post:", "      description: |", "        Bad body: 400. Success: 201 `{}`.", "  /links/{code}:", "    get:", "      description: Unknown code: 404.", "    delete:", "      description: 204 empty."].join("\n");
@@ -349,5 +376,195 @@ describe("acceptance clause extraction (generic, anchored)", () => {
     const f = new Fake((o) => writeFileSync(jsonPathOf(o.brief), JSON.stringify(CRIT)));
     const g = await generateSpec({ task: PRD5, repoDir: dir, sessions: f });
     expect(loadSpecFile(g.path).criteria.filter((x) => /^C\d: /.test(x))).toHaveLength(5);
+  });
+});
+
+// WALL-ASSERT-STRENGTH: a disclosure of assertions that only prove an error happened; never a verdict input
+describe("weakAssertionNote", () => {
+  const note = (rel: string, body: string): string | null => weakAssertionNote([{ rel, body }]);
+  const wall = (n: string): string => readFileSync(join(here, "fixtures", "wall", n), "utf8");
+  test("replay of the rejected rust-expr-prd Wall surfaces the bare max() is_err line", () => {
+    const n = note("tests/loki_wall_calc.rs", wall("rust_expr_rejected.rs"));
+    expect(n).toBe(NOTE(3, "tests/loki_wall_calc.rs:22,23,107"));
+    expect(wall("rust_expr_rejected.rs").split("\n")[106]).toContain('eval("max()"');
+  });
+  test("an accepted Wall with exact Err(Arity(..)) asserts shows no line", () => {
+    expect(note("tests/loki_wall_calc.rs", wall("rust_expr_exact.rs"))).toBeNull();
+  });
+  const NOTE = (n: number, at: string): string => `Wall assertion strength not measured: ${n} error assertion(s) do not name the expected error on the same line or the 3 lines after (${at}); the Wall is model-authored`;
+  const rows: [string, string, string][] = [
+    ["rust", "assert!(f(1).is_err());", "assert_eq!(f(1), Err(E::Arity));"],
+    ["rust with a message", 'assert!(f(1).is_err(), "arity");', "assert_eq!(f(1), Err(E::Arity));"],
+    ["rust debug_assert", "debug_assert!(f(1).is_err());", "assert_eq!(f(1), Err(E::Arity));"],
+    ["python", "with pytest.raises(Exception):\n    f()", "with pytest.raises(ValueError):\n    f()"],
+    ["python unittest", "self.assertRaises(Exception, f)", "self.assertRaises(KeyError, f)"],
+    ["js", "expect(() => f()).toThrow();", 'expect(() => f()).toThrow("bad input");'],
+    ["js rejects", "await expect(p).rejects.toThrow();", "await expect(p).rejects.toThrow(RangeError);"],
+    ["chai", "expect(f).to.throw();", "expect(f).to.throw(RangeError);"],
+    ["node:test throws", "assert.throws(() => f(1));", "assert.throws(() => f(1), /bad input/);"],
+    ["node:test rejects", "await assert.rejects(p);", "await assert.rejects(p, { name: 'RangeError' });"],
+    ["go", "if err == nil {\n  t.Fatal(\"x\")\n}", "if !errors.Is(err, ErrArity) {\n  t.Fatal(\"x\")\n}"],
+    ["go testify", "assert.Error(t, err)", "assert.ErrorIs(t, err, ErrArity)"],
+    ["go require with a message", 'require.Error(t, err, "arity")', "require.EqualError(t, err, \"arity\")"],
+    ["rust Err( on the next line", "assert!(r.is_err());", "assert!(r.is_err());\nassert_eq!(r, Err(E::Arity));"],
+    ["rust matches!", "assert!(r.is_err());", "assert!(r.is_err());\nassert!(matches!(kind, E::Arity));"],
+    ["go err != sentinel", "if err == nil {\n  t.Fatal(\"x\")\n}", "if err == nil {\n  t.Fatal(\"x\")\n}\nif err != ErrArity {\n  t.Fatal(\"y\")\n}"],
+    ["go err != Err-prefixed", "if err == nil {\n  t.Fatal(\"x\")\n}", "if err == nil {\n  t.Fatal(\"x\")\n}\nif err != ArityErr {\n  t.Fatal(\"y\")\n}"],
+    ["go Error() comparison", "if err == nil {\n  t.Fatal(\"x\")\n}", "if err == nil {\n  t.Fatal(\"x\")\n}\nif err.Error() != \"arity\" {\n  t.Fatal(\"y\")\n}"],
+    ["python exception value", "with pytest.raises(Exception) as e:\n    f()", "with pytest.raises(Exception) as e:\n    f()\nassert \"arity\" in str(e.value)"],
+    ["js error message", "expect(() => f()).toThrow();", "expect(() => f()).toThrow();\nexpect(e.message).toBe(\"arity\");"],
+    ["bats status", '[ "$status" -ne 0 ]', '[ "$status" -eq 2 ]'],
+    ["bats assert_failure", "assert_failure", "assert_failure 2"],
+    ["bats run !", "run ! tool --bad", 'run tool --bad\n  [ "$status" -eq 2 ]'],
+  ];
+  for (const [name, weak, strong] of rows) {
+    test(`${name}: a bare error check is listed with the exact note, a pinned one is not`, () => {
+      expect(note("w", `// clause: C1\n${weak}\n`)).toBe(NOTE(1, "w:2"));
+      expect(note("w", `// clause: C1\n${strong}\n`)).toBeNull();
+    });
+  }
+  test("a Go if err == nil whose body compares values is the success branch, not an error check", () => {
+    expect(note("w", "if err == nil {\n  if got != want {\n    t.Fatal(\"x\")\n  }\n}\n")).toBeNull();
+    expect(note("w", "if err == nil { if got != want { t.Fatal(\"x\") } }\n")).toBeNull();
+    expect(note("w", "if err == nil { t.Fatal(\"x\") }\n")).toBe(NOTE(1, "w:1"));
+  });
+  test("a pinning token on the next 3 lines of the same block suppresses the note; the 4th line or the next test does not", () => {
+    expect(note("w", 'if err == nil {\n  t.Fatal("x")\n}\nif !errors.Is(err, ErrArity) {\n}\n')).toBeNull();
+    expect(note("w", "assert!(f().is_err());\nlet e = f().unwrap_err();\n")).toBeNull();
+    expect(note("w", "assert.Error(t, err)\nassert.ErrorIs(t, err, ErrX)\n")).toBeNull();
+    expect(note("w", "require.Error(t, err)\nrequire.EqualError(t, err, \"x\")\n")).toBeNull();
+    expect(note("w", "require.Error(t, err)\nrequire.ErrorContains(t, err, \"x\")\n")).toBeNull();
+    expect(note("w", "assert!(f().is_err());\n\n\n\nlet e = f().unwrap_err();\n")).toBe(NOTE(1, "w:1"));
+    expect(note("w", "assert!(f().is_err());\n#[test]\nfn b() { let e = f().unwrap_err(); }\n")).toBe(NOTE(1, "w:1"));
+    expect(note("w", "run tool\nassert_failure\nassert_output --partial 'bad'\n")).toBeNull();
+    expect(note("w", 'run tool\n[ "$status" -ne 0 ]\n[[ "$output" == *bad* ]]\n')).toBeNull();
+    expect(note("w", "with pytest.raises(Exception) as excinfo:\n    f()\n")).toBeNull();
+    expect(note("w", "with self.assertRaises(Exception) as cm:\n    f()\nself.assertIn('x', str(cm.exception))\n")).toBeNull();
+  });
+  test("raises(Exception, match=...), a negated !x.is_err(), and is_none() are not error checks to disclose", () => {
+    expect(note("w", 'with pytest.raises(Exception, match="bad"):\n    f()\n')).toBeNull();
+    expect(note("w", "assert!(!f(1).is_err());\n")).toBeNull();
+    expect(note("w", "assert!(g().is_none());\n")).toBeNull();
+  });
+  test("node:test assert.throws that closes on its line with a second argument is not counted; one that spans lines is not guessed at", () => {
+    expect(note("w", "assert.throws(fn, { message: 'x' });\n")).toBeNull();
+    expect(note("w", "assert.throws(() => {\n  f();\n}, /x/);\n")).toBeNull();
+  });
+  test("a commented-out weak check is not counted", () => {
+    expect(note("w", "// assert!(f().is_err());\n# [ \"$status\" -ne 0 ]\n")).toBeNull();
+  });
+});
+
+// CLAUSE-HEADING: requirement text written on a heading line is a clause; a bare section title is not
+describe("heading lines that state a requirement", () => {
+  const texts = (s: string): string[] => extractClauses(s).clauses.map((c) => c.text);
+  const ERR_HEAD = "## Errors (`EvalError`, a public enum implementing `std::error::Error` and `PartialEq`)";
+  test("the rust-expr-prd Errors heading is a container over its bullets, and a clause as a leaf", () => {
+    expect(texts([ERR_HEAD, "- `EvalError::Arity(String)`: wrong argument count"].join("\n"))).toEqual(["`EvalError::Arity(String)`: wrong argument count"]);
+    expect(texts([ERR_HEAD, "", "## Other"].join("\n"))).toEqual([ERR_HEAD.slice(3)]);
+  });
+  test("a modal requirement heading stays a clause with bullets or a numbered list under it", () => {
+    expect(texts("## The parser must reject empty input\n\n1. Empty string\n2. Only spaces")).toEqual(["The parser must reject empty input", "Empty string", "Only spaces"]);
+    expect(texts("## The API must return 401 when the token is missing\n- The body names the header")).toEqual(["The API must return 401 when the token is missing", "The body names the header"]);
+    expect(texts("## The API will return 401 when the token is missing\n- The body names the header")).toHaveLength(2);
+    expect(texts("## Will not crash\n- Bad input exits 2")).toEqual(["Bad input exits 2"]);
+  });
+  test("a standard-reference heading keeps a colon requirement sentence; a bare or title-only one is no clause", () => {
+    expect(texts("## RFC 4180: fields containing a comma are wrapped in double quotes.")).toEqual(["RFC 4180: fields containing a comma are wrapped in double quotes."]);
+    expect(texts("## ISO 8601: dates must be written as YYYY-MM-DD.")).toHaveLength(1);
+    expect(texts("## RFC 4180")).toEqual([]);
+    expect(texts("## Overview")).toEqual([]);
+    expect(texts("## Will it scale?")).toEqual([]);
+  });
+  test("a numbered or blank-separated list under a non-modal heading makes it a container; prose does not", () => {
+    expect(texts("## Output should be sorted\nIt returns an error.\n\n## Next")).toEqual(["Output should be sorted"]);
+  });
+  test("an RFC-style title heading is not a clause, a bare Approach: over bullets leaves the bullets, a leaf Approach: sentence is a clause", () => {
+    expect(texts("# RFC 4180: Common Format and MIME Type for CSV Files.")).toEqual([]);
+    expect(texts("# Common Format and MIME Type for Comma-Separated Values (CSV) Files")).toEqual([]);
+    expect(texts("Approach:\n- Parse lazily\n- Emit tokens in order")).toEqual(["Parse lazily", "Emit tokens in order"]);
+    expect(texts("## Approach: the parser reads the whole input first.\n- Parse lazily\n- Emit tokens in order")).toEqual(["Parse lazily", "Emit tokens in order"]);
+    expect(texts("## Approach: the parser reads the whole input first.\n\n## Next")).toEqual(["Approach: the parser reads the whole input first."]);
+  });
+  test("when, where and if lines are questions only with a trailing question mark", () => {
+    expect(texts("## When the token is missing, the API must return 401")).toEqual(["When the token is missing, the API must return 401"]);
+    expect(texts("## Where the file is absent, the tool should exit 2")).toHaveLength(1);
+    expect(texts("## If the cache is cold the service should warm it")).toHaveLength(1);
+    expect(texts("## When should it retry?")).toEqual([]);
+    expect(texts("## Where should the file live?")).toEqual([]);
+    expect(texts("## If the token is missing, should the API return 401?")).toEqual([]);
+  });
+  // The cap goes through the real verdictOf with the gap clauseGapOf computes from the spec and the sealed Wall bodies.
+  const verdictFor = (spec: string, wall: string): string => {
+    const gap = clauseGapOf(extractClauses(spec), [wall]);
+    const pass = { name: "vitest:a", cmd: "x", result: "pass" as const, duration_s: 1 };
+    return verdictOf({ implement: { exit: "done" }, intake: {} } as never, [pass], false, false, false, true, false, [], [], [], gap);
+  };
+  test("verdictOf: an unproven heading clause caps VERIFIED at PARTIAL, a proven one does not", () => {
+    const spec = "## When the token is missing, the API must return 401\n\n## Other\n- It logs the request";
+    expect(extractClauses(spec).clauses.map((c) => c.id)).toEqual(["C1", "C2"]);
+    expect(verdictFor(spec, "// clause: C2\nexpect(log).toBe(1);\n")).toBe("PARTIAL");
+    expect(verdictFor(spec, "// clause: C1\nexpect(status).toBe(401);\n// clause: C2\nexpect(log).toBe(1);\n")).toBe("VERIFIED");
+  });
+  test("verdictOf: a dropped-before requirement heading now caps at PARTIAL when unproven, and a fully covered spec stays VERIFIED", () => {
+    const spec = "## The API must return 401 when the token is missing\n- The body names the header\n\n## RFC 4180: fields containing a comma are wrapped in double quotes.\n";
+    expect(extractClauses(spec).clauses.map((c) => c.id)).toEqual(["C1", "C2", "C3"]);
+    expect(verdictFor(spec, "// clause: C2\nassert!(a);\n// clause: C3\nassert!(b);\n")).toBe("PARTIAL"); // C1 unproven
+    expect(verdictFor(spec, "// clause: C1\nassert!(a);\n// clause: C2\nassert!(b);\n")).toBe("PARTIAL"); // C3 unproven
+    expect(verdictFor(spec, "// clause: C1\nassert!(a);\n// clause: C2\nassert!(b);\n// clause: C3\nassert!(c);\n")).toBe("VERIFIED"); // control: no inflation
+  });
+  test("verdictOf: a heading over bullets adds no heading clause, so proving the bullets is enough", () => {
+    const spec = "## Errors (`EvalError`, a public enum implementing `std::error::Error`)\n- Arity is reported\n- Syntax is reported";
+    expect(verdictFor(spec, "// clause: C1\nassert!(a);\n// clause: C2\nassert!(b);\n")).toBe("VERIFIED");
+    expect(verdictFor(spec, "// clause: C1\nassert!(a);\n")).toBe("PARTIAL");
+  });
+  test("must/should/shall verb alone makes a heading clause", () => {
+    expect(texts("## The parser must reject empty input")).toHaveLength(1);
+    expect(texts("## Output should be sorted")).toHaveLength(1);
+    expect(texts("## Callers shall retry")).toHaveLength(1);
+  });
+  test("implements alone makes a heading clause", () => {
+    expect(texts("## The error type implements Display")).toHaveLength(1);
+  });
+  test("a colon then a full sentence makes a heading clause", () => {
+    expect(texts("## Errors: every variant carries a message.")).toHaveLength(1);
+  });
+  test("bare titles yield none in markdown, setext and numbered headings", () => {
+    expect(texts("# Errors\n\n## API\n\n## Functions\n\n### Must have\n\n## Implementation notes\n\n## Section 2: Parsing")).toEqual([]);
+    expect(texts("Errors\n======\n\nAPI\n---\n")).toEqual([]);
+    expect(texts("1 Errors\n\n2.1 Functions\n\n3 Public API\n")).toEqual([]);
+  });
+  test("question-led, gerund-led and label headings are not requirements", () => {
+    for (const h of ["## What should happen", "## How it should work", "## Why you should care", "## Implementing the parser", "## Step 2: Install the dependencies with npm.", "## Example: a user signs up and gets an email.", "## Goal: make link shortening fast and reliable."]) expect(texts(h)).toEqual([]);
+  });
+  test("neighbouring headings stay correct", () => {
+    expect(texts("## Usage: overview")).toEqual([]);
+    expect(texts("## Step 2: Install")).toEqual([]);
+    expect(texts("### Must have\n\n### Must-haves\n\n### Should haves")).toEqual([]);
+    expect(texts("## The API must return JSON")).toHaveLength(1);
+  });
+  test("scope-exclusion headings still skip, even when they carry a requirement signal", () => {
+    expect(texts("## Non-goals: the tool should not parse YAML.\n- GUI support")).toEqual([]);
+    expect(texts("## Out of scope\n\n## Future work: we should add a GUI later.")).toEqual([]);
+    expect(texts("## Will not crash: the tool must exit 2 on bad input.")).toEqual(["Will not crash: the tool must exit 2 on bad input."]); // only a leading exclusion title skips
+  });
+  test("a heading clause shifts later ids, and an untagged one is a gap", () => {
+    const set = extractClauses([ERR_HEAD, "", "## Rules", "- one", "- two"].join("\n"));
+    expect(set.clauses.map((c) => c.id)).toEqual(["C1", "C2", "C3"]);
+    expect(clauseGapOf(set, ["// clause: C2\nassert!(true);\n// clause: C3\nassert!(true);\n"]).join(" ")).toContain("C1");
+  });
+  test("under the cap heading clauses rank after bullets: the kept bullets are exactly the ones a heading-free extractor keeps", () => {
+    const heads = [1, 2, 3, 4, 5].map((n) => `## The API must reject case ${n}`);
+    const bullets = Array.from({ length: 41 }, (_, i) => `- bullet ${i + 1}`);
+    const set = extractClauses([...heads, "", "## Details", ...bullets].join("\n"));
+    expect(set.clauses.map((c) => c.text)).toEqual(bullets.slice(0, 40).map((b) => b.slice(2))); // all 40 slots go to bullets; only bullet 41 falls off, as before headings counted
+    expect(set.clauses.map((c) => c.id)).toEqual(Array.from({ length: 40 }, (_, i) => `C${i + 1}`));
+    expect(set.dropped).toBe(6); // the one bullet plus the five heading clauses that found no room, all disclosed
+    const room = extractClauses([...heads.slice(0, 2), "", "## Details", ...bullets.slice(0, 36)].join("\n")); // 36 bullets leave 4 slots: both headings fit, in source order
+    expect(room.clauses.map((c) => c.text)).toEqual([...heads.slice(0, 2).map((h) => h.slice(3)), ...bullets.slice(0, 36).map((b) => b.slice(2))]);
+    expect(room.dropped).toBe(0);
+    const part = extractClauses([...heads, "", "## Details", ...bullets.slice(0, 37)].join("\n")); // 37 bullets leave 3 slots: the first three headings fill them
+    expect(part.clauses.map((c) => c.text)).toEqual([...heads.slice(0, 3).map((h) => h.slice(3)), ...bullets.slice(0, 37).map((b) => b.slice(2))]);
+    expect(part.dropped).toBe(2);
   });
 });
