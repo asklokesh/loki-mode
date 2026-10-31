@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { explainLines, defaultCheckout, defaultIssue, defaultPrMeta, defaultPackageSuites, defaultSandbox, bootRecord, parsePrRef, runnerConfigChanged, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
 import { extractChecks, judgeF2p, reportedCheck, reportShowsPass, REPORT_TOKEN, type SandboxResult } from "../../src/contrib/verify_pr_f2p.ts";
+import { HITS_TOKEN } from "../../src/engine10/testmap.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "vpr2-test-")); });
@@ -41,8 +41,10 @@ function fixture(kind: "fix" | "delete-test" | "noop" | "already-passing"): { ur
 let reportSeq = 0;
 const hostSandbox = (d: string, cmd: string) => {
   const rep = join(dir, `report-${reportSeq++}`);
-  const r = spawnSync("sh", ["-c", `{ ${cmd.split(REPORT_TOKEN).join(rep)}\n} 2>&1`], { cwd: d, stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" });
-  return { status: "COMPLETED" as const, exit_code: r.status, output: r.stdout, report: existsSync(rep) ? readFileSync(rep, "utf8") : undefined };
+  const r = spawnSync("sh", ["-c", `{ ${cmd.split(REPORT_TOKEN).join(rep).split(HITS_TOKEN).join("")}\n} 2>&1`], { cwd: d, stdio: ["ignore", "pipe", "ignore", "ignore", "ignore", "ignore", "ignore", "ignore", "ignore", cmd.includes(HITS_TOKEN) ? "pipe" : "ignore"], encoding: "utf8" });
+  // Same shape as the real sandbox: the host reads fd 9 from a pipe after the check exits; "E" means the pipe closed.
+  const hits = cmd.includes(HITS_TOKEN) ? `${String(r.output?.[9] ?? "").split("\n").filter((l) => l !== "").map((l) => `H ${l}`).join("\n")}\nE\n` : undefined;
+  return { status: "COMPLETED" as const, exit_code: r.status, output: r.stdout, report: existsSync(rep) ? readFileSync(rep, "utf8") : undefined, hits };
 };
 
 const TRUSTED = { author: "maint", authorAssociation: "MEMBER", updatedAt: "2026-10-01T00:00:00Z", repo: "o/r" };
@@ -647,6 +649,16 @@ describe("verify-pr: an exit code alone is not proof", () => {
     ["D03 late pluginmanager.register of a module a test already imported", { ...PLUG_REF, "test_add.py": "import plug\nfrom add import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", "conftest.py": "import sys\ndef pytest_collection_modifyitems(config, items):\n    config.pluginmanager.register(sys.modules[\"plug\"])\n" }, { "plug.py": "# changed\n" }, 4, /recorded in the sandbox.*plug\.py/],
     ["P04 a test module imports the edited code under test, no conftest hook", { ...PLUG_REF, "test_add.py": "import plug\nfrom add import add\n\ndef test_add():\n    assert add(1, 2) == 3\n" }, { "plug.py": "# changed\n" }, 0, /^$/],
     ["L2 conftest with ordinary string constants and an unrelated module edited", { ...PLUG_REF, "conftest.py": "import pytest\n\n@pytest.fixture\ndef tmp_data(tmp_path):\n    return tmp_path.joinpath(\"data\").read_text(encoding=\"utf-8\")\n" }, { "other.py": HOOK }, 0, /^$/],
+    ["FORGE1 injected record opener plus fd 9 redirect", { ...PLUG_REF, "conftest.py": "import plug\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import os, add\nos.write(9, b'-->\\n<!--LOKI_VPR_RECORD\\n{\"end\":0,\"h\":\"0\",\"err\":0,\"early\":1}\\n')\nos.dup2(os.open(os.devnull, os.O_WRONLY), 9)\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["FORGE2 ftruncate fd 9 plus forged terminator", { ...PLUG_REF, "conftest.py": "import plug\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import os, add\nos.ftruncate(9, 0)\nos.write(9, b'{\"end\":0,\"h\":\"0\",\"err\":0,\"early\":1}\\n')\nos.dup2(os.open(os.devnull, os.O_WRONLY), 9)\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["FORGE3 fd 9 redirected only", { ...PLUG_REF, "conftest.py": "import plug\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import os, add\nos.dup2(os.open(os.devnull, os.O_WRONLY), 9)\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["READ1 conftest execs a file read by a shell cat", { ...PLUG_REF, "conftest.py": "import subprocess\nexec(subprocess.check_output(\"cat plug.py\", shell=True))\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["READ2 conftest execs a file read through libc open", { ...PLUG_REF, "conftest.py": "import ctypes, os\nexec(os.read(ctypes.CDLL(None).open(b\"plug.py\", 0), 65536))\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["READ3 conftest execs a file opened relative to a dir fd", { ...PLUG_REF, "lib/plug.py": "# p\n", "conftest.py": "import os\nd = os.open(\"lib\", os.O_RDONLY)\nexec(os.read(os.open(\"plug.py\", os.O_RDONLY, dir_fd=d), 65536))\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "lib/plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["CTRL conftest execs a file read by open", { ...PLUG_REF, "conftest.py": "exec(open(\"plug.py\").read())\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /recorded in the sandbox.*plug\.py/],
+    ["READ4 conftest execs a file read by a child python with a scrubbed env", { ...PLUG_REF, "conftest.py": "import subprocess, sys\nexec(subprocess.check_output([sys.executable, \"-c\", \"print(open(chr(112)+'lug.py').read())\"], env={}))\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /load window|recorded in the sandbox/],
+    ["LINK1 conftest hard-links the changed file to a new name, then execs it", { ...PLUG_REF, "conftest.py": "import os\nos.link(\"plug.py\", \"alias.py\")\nexec(open(\"alias.py\").read())\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["EXIT1 conftest unchanged, a hit pipe killed by closing fd 9 before the changed file loads", { ...PLUG_REF, "conftest.py": "import os\nos.close(9)\nexec(open(\"plug.py\").read())\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /./],
     ["a referenced plugin left unchanged while the bug is fixed", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = [\"-p\", \"plug\"]\n", "conftest.py": "pytest_plugins = [\"plug\"]\n" }, {}, 0, /^$/],
   ] as const)("a PR where %s", async (_n, baseEdits, edits, rc, reason) => {
     const files: Record<string, string> = { ...SECTION_FILES };
@@ -695,34 +707,41 @@ describe("verify-pr: an exit code alone is not proof", () => {
     expect(performance.now() - t0).toBeLessThan(1000);
   }, 60_000);
 
-  const recSig = (lines: string[]) => lines.reduce((h, l) => createHash("sha256").update(`${h}|${l}`).digest("hex"), "0");
-  const recOf = (files: string[], over: Record<string, unknown> = {}) => {
-    const body = files.map((p) => JSON.stringify({ p }));
-    return `${PASS}\n<!--LOKI_VPR_RECORD\n${[...body, JSON.stringify({ end: files.length, h: recSig(body), err: 0, early: 1, ...over })].join("\n")}\n\n-->\n`;
-  };
+  const hitsOf = (files: string[], over: string[] = [], tail = "E\n") => `${["H {\"start\":1}", ...files.map((p) => `H ${JSON.stringify({ p })}`), ...over, 'H {"end":1,"err":0}'].join("\n")}\n${tail}`;
 
   test.each([
-    ["no record at all (python3 or pytest could not start)", PASS, /no load record/],
-    ["a record with no terminator", `${PASS}\n<!--LOKI_VPR_RECORD\n{"p":"a.py"}\n-->\n`, /no terminator/],
-    ["an unreadable record line", `${PASS}\n<!--LOKI_VPR_RECORD\nnot json\n-->\n`, /unreadable/],
-    ["a record never closed", `${PASS}\n<!--LOKI_VPR_RECORD\n{"p":"a.py"}\n`, /not closed/],
-    ["a record whose write failed", recOf(["a.py"], { err: 1 }), /does not match its terminator/],
-    ["a record whose chain was rewritten", recOf(["a.py"], { h: "0".repeat(64) }), /does not match its terminator/],
-    ["a record that ends early", recOf(["a.py"], { end: 2 }), /does not match its terminator/],
-    ["a record that never saw interpreter start", recOf(["a.py"], { early: 0 }), /does not match its terminator/],
-  ] as const)("a passing head with %s is NOT PROVEN (exit 4)", async (_n, report, reason) => {
+    ["no record at all (python3 or pytest could not start)", undefined, /no load record/],
+    ["a stream the reader never saw close (reader killed or stuck)", hitsOf(["a.py"], [], ""), /cut short/],
+    ["an unreadable line", hitsOf(["a.py"], ["H not json"]), /unreadable/],
+    ["a line that is not a hit", hitsOf(["a.py"], ["not a hit line"]), /unreadable/],
+    ["an unexpected record shape", hitsOf(["a.py"], ['H {"p":"a.py","q":1}']), /unexpected/],
+    ["a recorder write error", 'H {"start":1}\nH {"end":1,"err":1}\nE\n', /write error/],
+    ["no start line (the recorder was not first)", 'H {"end":1,"err":0}\nE\n', /0 start and 1 end/],
+    ["no terminator (pytest never reached collection)", 'H {"start":1}\nE\n', /1 start and 0 end/],
+    ["a second terminator (forged)", hitsOf(["a.py"], ['H {"end":1,"err":0}']), /1 start and 2 end/],
+    ["a second start (forged)", hitsOf(["a.py"], ['H {"start":1}']), /2 start and 1 end/],
+    ["a stream past its line cap", hitsOf(["a.py"], ["O"]), /line cap/],
+    ["a spawn in the load window", hitsOf(["a.py"], ['H {"x":"subprocess.Popen in the load window"}']), /cannot follow \(subprocess\.Popen/],
+    ["ctypes use in the load window", hitsOf(["a.py"], ['H {"x":"ctypes use"}']), /cannot follow \(ctypes use\)/],
+  ] as const)("a passing head with %s is NOT PROVEN (exit 4)", async (_n, hits, reason) => {
     const meta = repoWith(`rec-${_n.replace(/\W/g, "").slice(0, 24)}`, PY_FILES, { "add.py": PY_FIXED });
     let n = 0;
-    const r = await run(meta, { checkout: defaultCheckout, sandbox: () => (n++ === 0 ? { status: "COMPLETED", exit_code: 1 } : { status: "COMPLETED", exit_code: 0, report }) }, issueFor(PY_CHECK));
+    const r = await run(meta, { checkout: defaultCheckout, sandbox: () => (n++ === 0 ? { status: "COMPLETED", exit_code: 1 } : { status: "COMPLETED", exit_code: 0, report: PASS, hits }) }, issueFor(PY_CHECK));
     expect(r.rc).toBe(4);
     expect(r.json.reasons.join(" ")).toMatch(reason);
   }, 30_000);
+
+  test("a forged line cannot hide a hit that was written before it: the union of every hit line counts", () => {
+    const r = bootRecord(hitsOf(["plug.py"], ['H {"end":0,"h":"0","err":0,"early":1}', "H junk"]));
+    expect([...r.files]).toEqual(["plug.py"]);
+    expect(r.reason).toBeDefined();
+  });
 
   test("a complete record naming only unchanged files lets the pass stand, and one naming a changed file does not", async () => {
     const mk = (files: string[]) => {
       const meta = repoWith(`rec-ok-${files.join("").length}`, PY_FILES, { "add.py": PY_FIXED });
       let n = 0;
-      return run(meta, { checkout: defaultCheckout, sandbox: () => (n++ === 0 ? { status: "COMPLETED", exit_code: 1 } : { status: "COMPLETED", exit_code: 0, report: recOf(files) }) }, issueFor(PY_CHECK));
+      return run(meta, { checkout: defaultCheckout, sandbox: () => (n++ === 0 ? { status: "COMPLETED", exit_code: 1 } : { status: "COMPLETED", exit_code: 0, report: PASS, hits: hitsOf(files) }) }, issueFor(PY_CHECK));
     };
     const ok = await mk(["conftest.py", "test_add.py"]);
     expect([ok.rc, ok.json.verdict]).toEqual([0, "VERIFIED"]);
@@ -733,7 +752,7 @@ describe("verify-pr: an exit code alone is not proof", () => {
 
   test("a 1MB junk record is read in under a second and is NOT PROVEN", () => {
     const t0 = performance.now();
-    const r = bootRecord(`${PASS}\n<!--LOKI_VPR_RECORD\n${"x".repeat(1 << 20)}\n-->\n`);
+    const r = bootRecord(`H ${"x".repeat(1 << 20)}\n`);
     expect(performance.now() - t0).toBeLessThan(1000);
     expect(r.reason).toMatch(/unreadable/);
   });

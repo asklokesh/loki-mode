@@ -4,13 +4,13 @@
 // Exit codes align with `loki verify`: 0 VERIFIED, 2 NOT PROVEN because the sandbox was blocked/usage, 3 NOT PROVEN because
 // no proof exists to run (no linked issue or no trusted runnable check), 4 NOT PROVEN because the proof ran and failed.
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, posix } from "node:path";
 import { parseContract } from "../features/contract.ts";
 import { fetchIssue } from "../engine10/fetch_issue.ts";
-import { REPORT_RUNNERS } from "../engine10/testmap.ts";
+import { HITS_TOKEN, REPORT_RUNNERS } from "../engine10/testmap.ts";
 import { extractChecks, judgeF2p, referencedFiles, reportedCheck, REPORT_TOKEN, type SandboxResult } from "../contrib/verify_pr_f2p.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
@@ -22,12 +22,12 @@ function textMatchesOrUnreadable(path: string, test: (txt: string) => boolean): 
 
 /** Changed in a PR, these always count as runner config whatever they hold: transpiler config (babel), interpreter startup hooks (sitecustomize.py, usercustomize.py, *.pth), mocha config, and anything under a __mocks__ directory (the runner applies those without the test asking, and a `roots` setting can move them out of the repo root). */
 const ALWAYS_CONFIG = /(?:^|\/)(?:babel\.config\.[\w.]+|\.babelrc(?:\.[\w.]+)?|(?:site|user)customize\.py|[^/]+\.pth|\.mocharc(?:\.[\w.]+)?)$|(?:^|\/)__mocks__\//;
-/** Repo paths named by a JS or TS runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest). Editing such a file changes what the runner loads even when the config itself is unchanged. Python plugin loading is not read from text: the sandbox records what pytest, its plugins and its conftests load (see PYTEST_BOOT). */
+/** Repo paths named by a JS or TS runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest). Editing such a file changes what the runner loads even when the config itself is unchanged. Python plugin loading is not read from text: the sandbox records what pytest, its plugins and its conftests load (the runner's `boot` recorder). */
 function configRefs(changed: readonly string[], roots: readonly string[]): Set<string> {
   const out = new Set<string>(), dirs = new Set(changed.flatMap((f) => f.split("/").slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join("/")).concat("")));
   for (const root of new Set(roots)) for (const d of dirs) for (const n of (() => { try { return readdirSync(join(root, d)); } catch { return []; } })()) {
     const r = REPORT_RUNNERS.find((x) => x.config.test(n)); let txt: string;
-    if (!r || r.runner === "pytest") continue; try { txt = readFileSync(join(root, d, n), "utf8"); if (r.key && !n.startsWith(r.runner)) txt = JSON.stringify((JSON.parse(txt) as Record<string, unknown>)[r.key] ?? ""); } catch { continue; }
+    if (!r || r.boot) continue; try { txt = readFileSync(join(root, d, n), "utf8"); if (r.key && !n.startsWith(r.runner)) txt = JSON.stringify((JSON.parse(txt) as Record<string, unknown>)[r.key] ?? ""); } catch { continue; }
     for (const t of [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) { const p = posix.normalize(posix.join(d, t)); if (/[a-z]/i.test(t) && !/[*?^$|()[\]\\{}<>\s]/.test(t) && !t.startsWith("/") && !p.startsWith("..")) out.add(p); }
   }
   return out;
@@ -46,158 +46,29 @@ export function runnerConfigChanged(changed: readonly string[], headDir: string,
   });
 }
 
-/** Recorder (sitecustomize imports it, so it starts before pytest) written into the sandbox outside the repo copy. A sys.addaudithook writes one JSON line per repo file that an import, exec, compile, open, dlopen or process-start event names, immediately and unbuffered, to the inherited fd 9, while pytest is starting up (before pytest_sessionstart), while any conftest or plugin import is running, and while any hook that a repo conftest or repo plugin implements is being called, at any point in the session (depth set by loki_vpr_plugin); the module file of every plugin registered at any time is noted too. Each line extends a sha256 chain; the terminator `{"end": lines, "h": chain, "err": 0|1, "early": 0|1}` is written at pytest_unconfigure, the last hook, so deferred loading is inside the record. Path events fire before the named code runs, so PR code cannot unrecord itself, only add lines or break the chain. RESIDUAL, plainly: arbitrary PR code running in this same interpreter can forge any in-process record, including the junit report itself; this record raises the bar on config-loaded files and does not claim a hostile-process guarantee. Fixtures and test modules that import the code under test stay outside the window, so the normal case is not flagged. */
-const PYTEST_BOOT = `import hashlib, json, os, sys
-def _install():
-    root = os.environ.get("LOKI_VPR_ROOT", "")
-    roots = {os.path.abspath(root), os.path.realpath(root)} if root else set()
-    st = {"boot": True, "depth": 0, "n": 0, "h": "0", "busy": False, "err": not roots, "done": False, "early": False}
-    seen = set()
-    watch = {"import", "exec", "compile", "open", "ctypes.dlopen", "os.system", "subprocess.Popen", "os.exec", "os.posix_spawn", "os.spawn"}
-    def put(line):
-        data = (line + "\\n").encode()
-        try:
-            if os.write(9, data) != len(data): st["err"] = True
-        except OSError: st["err"] = True
-    def emit(rel):
-        line = json.dumps({"p": rel}, separators=(",", ":"))
-        st["h"] = hashlib.sha256((st["h"] + "|" + line).encode()).hexdigest()
-        st["n"] += 1
-        put(line)
-    def rels(p):
-        if isinstance(p, (bytes, os.PathLike)): p = os.fsdecode(p)
-        if not isinstance(p, str) or not p or p[0] == "<" or "\\0" in p: return []
-        a = os.path.abspath(p)
-        out = []
-        for q in (a, os.path.realpath(a)):
-            for rt in roots:
-                if q == rt or q.startswith(rt + os.sep):
-                    r = os.path.relpath(q, rt).replace(os.sep, "/")
-                    if r not in out: out.append(r)
-        return out
-    def paths(ev, a):
-        if ev in ("import", "compile"): return [a[1]]
-        if ev == "exec": return [getattr(a[0], "co_filename", None)]
-        if ev in ("open", "ctypes.dlopen"): return [a[0]]
-        out = []
-        for x in a[:3]:
-            for y in (x if isinstance(x, (list, tuple)) else [x]):
-                if isinstance(y, str) and ev == "os.system": out += y.split()
-                elif isinstance(y, (str, bytes, os.PathLike)): out.append(y)
-        return out
-    def hook(ev, a):
-        if ev not in watch or st["done"] or st["busy"] or not (st["boot"] or st["depth"] > 0): return
-        st["busy"] = True
-        try:
-            for p in paths(ev, a):
-                for r in rels(p):
-                    if ev == "open" and not st["depth"] and r.endswith((".ini", ".cfg", ".toml")): continue
-                    if r not in seen: seen.add(r); emit(r)
-        except Exception: st["err"] = True
-        finally: st["busy"] = False
-    def enter(): st["depth"] += 1
-    def leave(): st["depth"] = max(0, st["depth"] - 1)
-    def boot_end(): st["boot"] = False
-    def fail(): st["err"] = True
-    def early(): st["early"] = True
-    def note(p):
-        if st["done"] or st["busy"]: return
-        st["busy"] = True
-        try:
-            for r in rels(p):
-                if r not in seen: seen.add(r); emit(r)
-        except Exception: st["err"] = True
-        finally: st["busy"] = False
-    def inrepo(p):
-        f = getattr(p, "__file__", None)
-        if not f:
-            f = getattr(sys.modules.get(getattr(type(p), "__module__", ""), None), "__file__", None)
-        return bool(f) and bool(rels(f))
-    def finish():
-        if st["done"]: return
-        st["done"] = True
-        put(json.dumps({"end": st["n"], "h": st["h"], "err": 1 if st["err"] else 0, "early": 1 if st["early"] else 0}, separators=(",", ":")))
-    sys.addaudithook(hook)
-    return enter, leave, boot_end, fail, finish, early, note, inrepo
-enter, leave, boot_end, fail, finish, early, note, inrepo = _install()
-`;
-/** Shadows the interpreter's own sitecustomize on PYTHONPATH so the recorder starts first, then runs the next sitecustomize on sys.path (a distribution may use it to set up its site-packages). */
-const PYTEST_SITE = `import importlib.util, os, sys
-import loki_vpr_boot
-loki_vpr_boot.early()
-_me = os.path.dirname(os.path.abspath(__file__))
-for _d in sys.path:
-    _f = os.path.join(_d or ".", "sitecustomize.py")
-    if os.path.dirname(os.path.abspath(_f)) != _me and os.path.isfile(_f):
-        _s = importlib.util.spec_from_file_location("sitecustomize_next", _f)
-        _m = importlib.util.module_from_spec(_s)
-        _s.loader.exec_module(_m)
-        break
-`;
-/** The pytest half: wraps the plugin manager's conftest and plugin imports, monitors every hook call that has a repo-file implementation (a conftest or a repo-local plugin; installed third-party plugins are not PR-controlled and stay outside, a deviation from "any non-builtin plugin" that avoids flagging every PR on a framework plugin's own imports), notes the file of every plugin registered at any time, ends the start-up window at pytest_sessionstart and writes the terminator at pytest_unconfigure. Test-module collection and fixtures are outside the window: the issue's test and the code under test are meant to change. A conftest that implements pytest_runtest_call or pytest_pyfunc_call puts the test body in the window, which can only over-flag. */
-const PYTEST_PLUGIN = `import sys, pytest, loki_vpr_boot as b
-def _wrap(f):
-    def w(*a, **k):
-        b.enter()
-        try: return f(*a, **k)
-        finally: b.leave()
-    return w
-@pytest.hookimpl(tryfirst=True)
-def pytest_load_initial_conftests(early_config, parser, args):
-    pm = early_config.pluginmanager
-    for n in ("_importconftest", "import_plugin"):
-        try: setattr(pm, n, _wrap(getattr(pm, n)))
-        except Exception: b.fail()
-    try:
-        reg = pm.register
-        def register(plugin, name=None):
-            b.note(getattr(plugin, "__file__", None) or getattr(sys.modules.get(getattr(type(plugin), "__module__", ""), None), "__file__", None))
-            return reg(plugin, name)
-        pm.register = register
-        def before(hook_name, hook_impls, kwargs):
-            if any(b.inrepo(i.plugin) for i in hook_impls): b.enter()
-        def after(outcome, hook_name, hook_impls, kwargs):
-            if any(b.inrepo(i.plugin) for i in hook_impls): b.leave()
-        pm.add_hookcall_monitoring(before, after)
-    except Exception: b.fail()
-@pytest.hookimpl(tryfirst=True)
-def pytest_sessionstart(session): b.boot_end()
-@pytest.hookimpl(trylast=True)
-def pytest_unconfigure(config): b.finish()
-`;
-const REC_OPEN = "<!--LOKI_VPR_RECORD\n";
-/** Wraps a pytest check so the sandbox run also writes the load record: the recorder and plugin go to a fresh mktemp dir (PYTHONPATH, a sitecustomize that imports the recorder, PYTEST_ADDOPTS -p so it loads before any ini addopts plugin), fd 9 is opened append-only before the check starts, and once the check has exited the record is appended to the runner report inside an XML comment, after every PR process has finished. The check's own exit code is kept. */
-export function bootedPytest(cmd: string): string {
-  return [
-    'B=$(mktemp -d) || exit 125',
-    `cat >"$B/loki_vpr_boot.py" <<'LOKI_VPR_PY'\n${PYTEST_BOOT}LOKI_VPR_PY`,
-    `cat >"$B/loki_vpr_plugin.py" <<'LOKI_VPR_PY'\n${PYTEST_PLUGIN}LOKI_VPR_PY`,
-    `cat >"$B/sitecustomize.py" <<'LOKI_VPR_PY'\n${PYTEST_SITE}LOKI_VPR_PY`,
-    'exec 9>>"$B/rec"',
-    'export LOKI_VPR_ROOT="$(pwd -P)" PYTHONPATH="$B${PYTHONPATH:+:$PYTHONPATH}" PYTEST_ADDOPTS="-p loki_vpr_plugin ${PYTEST_ADDOPTS-}"',
-    cmd,
-    'rc=$?',
-    `{ printf '\\n${REC_OPEN.trim()}\\n'; cat "$B/rec"; printf '\\n-->\\n'; } >>${REPORT_TOKEN}`,
-    'exit $rc',
-  ].join("\n") + "\n";
-}
-/** Reads the record bootedPytest appended to the head report. `files` are the repo files named by lines before the first break in the chain (a forged or surviving line can only add a file); `reason` is set unless the record is complete: terminator present, line count and sha256 chain matching, no write error. */
-export function bootRecord(report: string | undefined): { files: Set<string>; reason?: string } {
-  const files = new Set<string>(), txt = report ?? "", at = txt.lastIndexOf(REC_OPEN);
-  if (at < 0) return { files, reason: "no load record came back from the sandbox (python3 or pytest could not start the recorder)" };
-  const lines = txt.slice(at + REC_OPEN.length).split("\n"), close = lines.lastIndexOf("-->");
-  let h = "0", torn = close < 0 ? "the load record is not closed" : "";
-  const body = (close < 0 ? lines : lines.slice(0, close)).filter((l) => l !== "");
-  let term: { end?: unknown; h?: unknown; err?: unknown; early?: unknown } | null = null;
-  for (const [i, l] of body.entries()) {
-    let j: { p?: unknown; end?: unknown; h?: unknown; err?: unknown; early?: unknown };
-    try { j = JSON.parse(l) as typeof j; } catch { torn ||= "the load record has an unreadable line"; break; }
-    if (typeof j.p === "string") { files.add(j.p); h = createHash("sha256").update(`${h}|${l}`).digest("hex"); continue; }
-    if (i === body.length - 1 && typeof j.end === "number") term = j; else torn ||= "the load record has an unexpected line";
-    break;
+/** Reads the hits stream the sandbox returned for a booted check: lines `H <json>`, `O` (the stream passed its line cap) and a last `E` only if the sandbox reader saw the pipe close cleanly. `files` is the union of every hit line anywhere in the stream (PR code can add lines, never remove one: its own file was recorded before it ran). `reason` is set unless the record is whole: exactly one start and one end line, no write error, no taint (a process spawn, ctypes or rename in the load window), no line that is not a well-formed hit, no line cap overflow, and the reader's clean end. */
+export function bootRecord(hits: string | undefined): { files: Set<string>; reason?: string } {
+  const files = new Set<string>();
+  if (hits === undefined) return { files, reason: "no load record came back from the sandbox (the hits channel or the recorder could not start)" };
+  const lines = hits.split("\n").filter((l) => l !== "");
+  let torn = "", starts = 0, ends = 0, err = 0, taint = "";
+  const end = lines[lines.length - 1] === "E";
+  for (const l of lines) {
+    if (l === "E") continue;
+    if (l === "O") { torn ||= "the load record passed its line cap"; continue; }
+    let j: { p?: unknown; start?: unknown; end?: unknown; err?: unknown; x?: unknown } | null = null;
+    try { j = l.startsWith("H ") ? JSON.parse(l.slice(2)) as typeof j : null; } catch { j = null; }
+    if (j === null || typeof j !== "object") { torn ||= "the load record has an unreadable line"; continue; }
+    if (typeof j.p === "string" && Object.keys(j).length === 1) files.add(j.p);
+    else if (j.start === 1 && Object.keys(j).length === 1) starts++;
+    else if (j.end === 1 && (j.err === 0 || j.err === 1) && Object.keys(j).length === 2) { ends++; err += Number(j.err); }
+    else if (typeof j.x === "string" && Object.keys(j).length === 1) taint ||= j.x;
+    else torn ||= "the load record has an unexpected line";
   }
-  if (!torn && !term) torn = "the load record has no terminator (pytest did not reach pytest_unconfigure)";
-  if (!torn && term && (term.end !== files.size || term.h !== h || term.err !== 0 || term.early !== 1)) torn = "the load record does not match its terminator (truncated, rewritten or a write failed)";
+  if (!torn && !end) torn = "the load record stream was cut short (the sandbox reader did not see it close)";
+  if (!torn && (starts !== 1 || ends !== 1)) torn = `the load record has ${starts} start and ${ends} end lines (the recorder did not run once through collection, or a line was forged)`;
+  if (!torn && err > 0) torn = "the recorder reported a write error";
+  if (!torn && taint) torn = `the PR code did something in the load window that the record cannot follow (${taint})`;
   return torn ? { files, reason: torn } : { files };
 }
 
@@ -210,7 +81,7 @@ export interface VerifyPrDeps {
   prMeta: (ref: PrRef) => PrMeta;
   issue: (ref: string) => IssueInfo;
   checkout: (ref: PrRef, meta: PrMeta, workDir: string) => Checkout;
-  /** A cmd containing REPORT_TOKEN is run with the token replaced by a fresh in-sandbox path whose file contents come back as `report`. */
+  /** A cmd containing REPORT_TOKEN is run with the token replaced by a fresh in-sandbox path whose file contents come back as `report`. A cmd containing HITS_TOKEN gets an append-only pipe on fd 9 whose stream comes back as `hits` (`H <line>` per line written, `O` past the line cap, a final `E` only if the reader saw it close). */
   sandbox: (dir: string, cmd: string) => SandboxResult;
   packageSuites: (baseDir: string, headDir: string, changed: readonly string[]) => PackageSuites;
   outDir: string;
@@ -292,17 +163,17 @@ export function defaultSandbox(dir: string, cmd: string, env: NodeJS.ProcessEnv 
   const image = env["LOKI_VPR_IMAGE"];
   if (!image) return { status: "BLOCKED", exit_code: null, detail: "LOKI_VPR_IMAGE is not set" };
   const out = mkdtempSync(join(tmpdir(), "loki-vpr-out-"));
-  const reporting = cmd.includes(REPORT_TOKEN);
+  const reporting = cmd.includes(REPORT_TOKEN), hitting = cmd.includes(HITS_TOKEN);
   const reportPath = `/work/.loki-vpr-${randomBytes(16).toString("hex")}`;
   try {
-    const r = spawnSync("bash", [join(REPO_ROOT, "scripts/verify-pr-sandbox.sh"), "--repo", dir, "--out", out, "--cmd", reporting ? cmd.split(REPORT_TOKEN).join(reportPath) : cmd, "--image", image, ...(reporting ? ["--report", reportPath] : [])], { env: tokenFreeEnv(env), encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });
+    const r = spawnSync("bash", [join(REPO_ROOT, "scripts/verify-pr-sandbox.sh"), "--repo", dir, "--out", out, "--cmd", (reporting ? cmd.split(REPORT_TOKEN).join(reportPath) : cmd).split(HITS_TOKEN).join(""), "--image", image, ...(reporting ? ["--report", reportPath] : []), ...(hitting ? ["--hits"] : [])], { env: tokenFreeEnv(env), encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });
     const res = join(out, "result.json");
     if (!existsSync(res)) return { status: r.status === 3 ? "BLOCKED" : "ERROR", exit_code: null, detail: (r.stderr ?? "").trim().slice(0, 200) || `runner rc ${r.status}` };
     const j = JSON.parse(readFileSync(res, "utf8")) as { status?: string; exit_code?: number | null; detail?: string };
     const st = j.status === "COMPLETED" || j.status === "TIMEOUT" || j.status === "BLOCKED" ? j.status : "ERROR";
     const outFile = join(out, "output.txt");
-    const repFile = join(out, "report.txt");
-    return { status: st, exit_code: typeof j.exit_code === "number" ? j.exit_code : null, detail: j.detail, output: existsSync(outFile) ? readFileSync(outFile, "utf8") : "", report: existsSync(repFile) ? readFileSync(repFile, "utf8") : undefined };
+    const repFile = join(out, "report.txt"), hitFile = join(out, "hits.txt");
+    return { status: st, exit_code: typeof j.exit_code === "number" ? j.exit_code : null, detail: j.detail, output: existsSync(outFile) ? readFileSync(outFile, "utf8") : "", report: existsSync(repFile) ? readFileSync(repFile, "utf8") : undefined, hits: existsSync(hitFile) ? readFileSync(hitFile, "utf8") : undefined };
   } catch (e) {
     return { status: "ERROR", exit_code: null, detail: String(e).slice(0, 200) };
   } finally {
@@ -371,14 +242,14 @@ export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): Verify
   for (const c of res.checks) {
     const rc = reportedCheck(c);
     if ("reason" in rc) return np(rc.reason);
-    if (rc.runner === "pytest") booted.add(c);
-    reported.set(c, rc.runner === "pytest" ? bootedPytest(rc.cmd) : rc.cmd);
+    if (rc.boot) booted.add(c);
+    reported.set(c, rc.boot ? rc.boot(rc.cmd) : rc.cmd);
   }
   const cfg = runnerConfigChanged(co.changed, co.headDir, co.baseDir);
   if (cfg.length > 0) return np(`the PR adds or changes test runner config, so a passing check is not proof: ${cfg.join(", ")}`);
   for (const c of res.checks) {
     const base = deps.sandbox(co.baseDir, c), head = deps.sandbox(co.headDir, reported.get(c)!);
-    const rec = booted.has(c) && head.status === "COMPLETED" ? bootRecord(head.report) : null, changedSet = new Set(co.changed);
+    const rec = booted.has(c) && head.status === "COMPLETED" ? bootRecord(head.hits) : null, changedSet = new Set(co.changed);
     const hit = rec ? [...rec.files].filter((f) => changedSet.has(f)) : [];
     if (hit.length > 0) return np(`the PR adds or changes files that pytest, a plugin or a conftest loads before it collects tests (recorded in the sandbox), so a passing check is not proof: ${hit.join(", ")}`);
     const o = judgeF2p(c, base, head);

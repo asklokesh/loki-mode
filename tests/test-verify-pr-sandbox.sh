@@ -84,6 +84,9 @@ case "$1" in
             mismatch) printf 'LOKI_VPR_END %s 0\n' "$N"; exit 7 ;;
             report) printf 'out\nLOKI_VPR_REPORT %s\n<testsuites>real</testsuites>\nLOKI_VPR_REPORT_END %s\nLOKI_VPR_END %s 0\n' "$N" "$N" "$N" ;;
             forged_report) printf 'LOKI_VPR_REPORT deadbeef\n<testsuites>fake</testsuites>\nLOKI_VPR_REPORT_END deadbeef\nLOKI_VPR_END %s 0\n' "$N" ;;
+            hits) printf 'out\nLOKI_VPR_HIT %s {"p":"a.py"}\nLOKI_VPR_HIT deadbeef {"p":"forged-nonce"}\nLOKI_VPR_HIT %s \nLOKI_VPR_HITS_END %s\nLOKI_VPR_END %s 0\n' "$N" "$N" "$N" "$N" ;;
+            hits_cut) printf 'LOKI_VPR_HIT %s {"p":"a.py"}\nLOKI_VPR_END %s 0\n' "$N" "$N" ;;
+            hits_over) printf 'LOKI_VPR_HIT %s {"p":"a.py"}\nLOKI_VPR_HITS_OVER %s\nLOKI_VPR_HITS_END %s\nLOKI_VPR_END %s 0\n' "$N" "$N" "$N" "$N" ;;
             slow) sleep 45 ;;
             exhausted) echo "cannot allocate memory" >&2; exit 125 ;;
             *) exit 1 ;;
@@ -118,6 +121,30 @@ rm -rf "$OUT"; FK_MODE=report LOKI_VPR_DOCKER="$FAKE" bash "$SB" --repo "$REPO" 
 [ "$(cat "$OUT/report.txt" 2>/dev/null)" = "<testsuites>real</testsuites>" ]; check "--report /work/NAME is accepted" $? "no report.txt"
 run_fake forged_report >/dev/null
 [ ! -e "$OUT/report.txt" ]; check "a report block without the run nonce is not extracted" $? "report.txt exists"
+# --hits: only nonce-bearing hit lines are extracted (as "H <line>"), the reader's clean end is "E", a cut stream has no "E", and the stream is kept out of output.txt.
+rm -rf "$OUT"; FK_MODE=hits LOKI_VPR_DOCKER="$FAKE" bash "$SB" --repo "$REPO" --out "$OUT" --cmd true --image i --hits >/dev/null 2>&1
+[ "$(cat "$OUT/hits.txt" 2>/dev/null)" = "$(printf 'H {"p":"a.py"}\nH \nE')" ] && ! grep -q 'p":"a.py' "$OUT/output.txt" && grep -q deadbeef "$OUT/output.txt"; check "--hits returns nonce-bearing hit lines and the reader end in hits.txt only" $? "hits: $(cat "$OUT/hits.txt" 2>/dev/null)"
+rm -rf "$OUT"; FK_MODE=hits_cut LOKI_VPR_DOCKER="$FAKE" bash "$SB" --repo "$REPO" --out "$OUT" --cmd true --image i --hits >/dev/null 2>&1
+[ "$(cat "$OUT/hits.txt" 2>/dev/null)" = 'H {"p":"a.py"}' ]; check "a hits stream with no reader end line has no E" $? "hits: $(cat "$OUT/hits.txt" 2>/dev/null)"
+rm -rf "$OUT"; FK_MODE=hits_over LOKI_VPR_DOCKER="$FAKE" bash "$SB" --repo "$REPO" --out "$OUT" --cmd true --image i --hits >/dev/null 2>&1
+[ "$(cat "$OUT/hits.txt" 2>/dev/null)" = "$(printf 'H {"p":"a.py"}\nO\nE')" ]; check "an over-cap hits stream is marked O" $? "hits: $(cat "$OUT/hits.txt" 2>/dev/null)"
+rm -rf "$OUT"; FK_MODE=ok LOKI_VPR_DOCKER="$FAKE" bash "$SB" --repo "$REPO" --out "$OUT" --cmd true --image i >/dev/null 2>&1
+[ ! -e "$OUT/hits.txt" ]; check "no hits.txt without --hits" $? "hits.txt exists"
+# The real in-container reader, run on the host with /cap swapped for a temp dir: a PR that closes, floods or rewrites fd 9 cannot drop a line already written, and a killed reader leaves no end line.
+WR="$(awk '/^WRAPPER=/{f=1} f{print} f&&/^exit "\$rc"\x27$/{exit}' "$SB" | sed -e "1s/^WRAPPER='//" -e '$s/\x27$//')"
+if [ -n "$WR" ] && command -v mkfifo >/dev/null 2>&1; then
+    HW="$T/hw"; mkdir -p "$HW/cap" "$HW/repo" "$HW/work"
+    runwrap() { # check command
+        local w="${WR//\/cap/$HW/cap}"; w="${w//\/repo\//$HW/repo/}"; w="${w//\/work/$HW/work}"
+        printf 'N1\n' | sh -c "$w" vpr "$1" 20 65536 "" 1 2>&1
+    }
+    o="$(runwrap 'printf "{\"p\":\"a.py\"}\n" >&9; exec 9>&-; exec 9>/dev/null; printf "{\"p\":\"b.py\"}\n" >&9' 2>&1)"
+    grep -qx 'LOKI_VPR_HIT N1 {"p":"a.py"}' <<<"$o" && grep -qx 'LOKI_VPR_HITS_END N1' <<<"$o"; check "wrapper reader re-emits fd 9 lines with the nonce and ends cleanly" $? "$o"
+    o="$(runwrap 'printf "a\n" >&9; (sleep 12 &)')"
+    grep -qx 'LOKI_VPR_HIT N1 a' <<<"$o" && ! grep -qx 'LOKI_VPR_HITS_END N1' <<<"$o"; check "a writer outliving the check leaves no reader end line (stream not trusted)" $? "$o"
+else
+    check "wrapper reader test (needs mkfifo and the WRAPPER block)" 1 "WRAPPER not extracted"
+fi
 for bad in /tmp/x /work/../x '/work/a b' /work/; do
     rc="$(rm -rf "$OUT"; LOKI_VPR_DOCKER="$FAKE" bash "$SB" --repo "$REPO" --out "$OUT" --cmd true --image i --report "$bad" >/dev/null 2>&1; echo $?)"
     [ "$rc" = 2 ]; check "--report '$bad' is refused" $? "rc=$rc"

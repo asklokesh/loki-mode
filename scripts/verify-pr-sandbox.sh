@@ -3,15 +3,18 @@
 #
 # Contract (VPR-1; consumed by VPR-2). See docs/v11/VERIFY-PR-SANDBOX.md.
 #   verify-pr-sandbox.sh --repo DIR --out DIR --cmd 'SHELL CMD' [--image IMG]
-#                        [--timeout SECS] [--max-output BYTES] [--report /work/NAME] [--print-argv]
+#                        [--timeout SECS] [--max-output BYTES] [--report /work/NAME] [--hits] [--print-argv]
 # Exit codes: 0 the check ran (read exit_code in result.json), 2 refused (bad
 # input), 3 BLOCKED (docker absent, daemon down, image missing, pool exhausted).
 # BLOCKED is never a verdict about the PR. Writes OUT/result.json, OUT/output.txt (the capped check output) and, when --report
 # names a file the check wrote, OUT/report.txt (that file, capped at 1 MiB, carried outside the output cap) only.
+# --hits gives the check an append-only pipe on fd 9 whose lines come back, outside the check's reach, as OUT/hits.txt:
+# one "H <line>" per line the check wrote, "O" when the stream passed the line cap, and a last "E" only if the reader saw
+# the pipe close cleanly (a reader killed or stuck leaves no "E").
 # Env: LOKI_VPR_IMAGE (default image), LOKI_VPR_DOCKER (docker binary, tests).
 set -uo pipefail
 
-REPO="" OUT="" CMD="" IMAGE="${LOKI_VPR_IMAGE:-}" TIMEOUT=120 MAX_OUT=65536 PRINT_ARGV=0 REPORT=""
+REPO="" OUT="" CMD="" IMAGE="${LOKI_VPR_IMAGE:-}" TIMEOUT=120 MAX_OUT=65536 PRINT_ARGV=0 REPORT="" HITS=""
 DOCKER="${LOKI_VPR_DOCKER:-docker}"
 
 die() { printf 'verify-pr-sandbox: %s\n' "$*" >&2; exit 2; }
@@ -25,6 +28,7 @@ while [ $# -gt 0 ]; do
         --timeout) [ $# -ge 2 ] || die "$1 needs a value"; TIMEOUT="$2"; shift 2 ;;
         --max-output) [ $# -ge 2 ] || die "$1 needs a value"; MAX_OUT="$2"; shift 2 ;;
         --report) [ $# -ge 2 ] || die "$1 needs a value"; REPORT="$2"; shift 2 ;;
+        --hits) HITS=1; shift ;;
         --print-argv) PRINT_ARGV=1; shift ;;
         *) die "unknown argument: $1" ;;
     esac
@@ -82,9 +86,22 @@ NAME="loki-vpr-$$-${NONCE:0:8}"
 WRAPPER='read -r N
 cp -a /repo/. /work/ 2>/dev/null || { echo "LOKI_VPR_END $N 125"; exit 125; }
 cd /work || exit 125
-LOKI_VPR_CMD="$1" T="$2" M="$3" R="$4"
+LOKI_VPR_CMD="$1" T="$2" M="$3" R="$4" H="$5"
+if [ -n "$H" ]; then
+mkfifo /cap/h || { echo "LOKI_VPR_END $N 125"; exit 125; }
+# The reader opens the fifo before the write end exists and holds no write end; each hit line is re-emitted on the container stdout with the nonce.
+( c=0; while IFS= read -r l; do c=$((c + 1)); if [ "$c" -le 20000 ]; then printf "LOKI_VPR_HIT %s %s\n" "$N" "$l"; elif [ "$c" -eq 20001 ]; then printf "LOKI_VPR_HITS_OVER %s\n" "$N"; fi; done </cap/h; printf "LOKI_VPR_HITS_END %s\n" "$N" ) &
+RP=$!
+exec 9>/cap/h
+rm -f /cap/h
+fi
 timeout -s KILL "$T" sh -c "$LOKI_VPR_CMD" </dev/null >/cap/out 2>&1
 rc=$?
+if [ -n "$H" ]; then
+exec 9>&-
+i=0; while kill -0 "$RP" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+kill -9 "$RP" 2>/dev/null
+fi
 head -c "$M" /cap/out
 if [ -n "$R" ] && [ -f "$R" ]; then printf "\nLOKI_VPR_REPORT %s\n" "$N"; head -c 1048576 "$R"; printf "\nLOKI_VPR_REPORT_END %s\n" "$N"; fi
 printf "\nLOKI_VPR_END %s %s\n" "$N" "$rc"
@@ -100,7 +117,7 @@ ARGV=(run --rm -i --name "$NAME" --pull never
     --workdir /work
     -v "$REPO_REAL:/repo:ro"
     -e "PATH=/usr/local/bin:/usr/bin:/bin" -e HOME=/work -e CI=1
-    "$IMAGE" sh -c "$WRAPPER" vpr "$CMD" "$TIMEOUT" "$MAX_OUT" "$REPORT")
+    "$IMAGE" sh -c "$WRAPPER" vpr "$CMD" "$TIMEOUT" "$MAX_OUT" "$REPORT" "$HITS")
 
 if [ "$PRINT_ARGV" = 1 ]; then
     printf '%s\n' "$DOCKER" "${ARGV[@]}"
@@ -142,7 +159,8 @@ elif [ -n "$end_line" ]; then
     rc="${end_line##* }"
     case "$rc" in ''|*[!0-9]*) rc=null ;; esac
     # Split the runner-written report (between nonce-bearing markers) from the capped check output.
-    awk -v n="$NONCE" -v rep="$RAW.report" 'BEGIN { b = "LOKI_VPR_REPORT " n; e = "LOKI_VPR_REPORT_END " n } $0 == b { r = 1; next } $0 == e { r = 0; next } r { print > rep; next } { print }' "$RAW" >"$RAW.main"
+    # Hit lines carry the nonce too, so only the wrapper's reader can emit them; a check's own output is told apart from them by that prefix.
+    awk -v n="$NONCE" -v rep="$RAW.report" -v hit="$RAW.hits" 'BEGIN { b = "LOKI_VPR_REPORT " n; e = "LOKI_VPR_REPORT_END " n; h = "LOKI_VPR_HIT " n " "; hl = length(h) } $0 == b { r = 1; next } $0 == e { r = 0; next } r { print > rep; next } index($0, h) == 1 { print "H " substr($0, hl + 1) > hit; next } $0 == "LOKI_VPR_HITS_OVER " n { print "O" > hit; next } $0 == "LOKI_VPR_HITS_END " n { print "E" > hit; next } { print }' "$RAW" >"$RAW.main"
     trunc=false
     [ "$(wc -c <"$RAW.main")" -ge "$MAX_OUT" ] && trunc=true
     # The wrapper exits with the check's code, so a sentinel that disagrees with docker's own exit code is not trusted.
@@ -150,6 +168,7 @@ elif [ -n "$end_line" ]; then
         write_result ERROR null false "sentinel exit $rc disagrees with container exit $drc"
     else
         [ ! -f "$RAW.report" ] || mv -f "$RAW.report" "$OUT_REAL/report.txt"
+        if [ -n "$HITS" ]; then : >"$RAW.hits.ok"; [ ! -f "$RAW.hits" ] || cat "$RAW.hits" >"$RAW.hits.ok"; mv -f "$RAW.hits.ok" "$OUT_REAL/hits.txt"; fi
         grep -av "^LOKI_VPR_END $NONCE " "$RAW.main" | head -c "$MAX_OUT" >"$OUT_REAL/.output.$$" && mv -f "$OUT_REAL/.output.$$" "$OUT_REAL/output.txt"
         if [ "$rc" = 137 ]; then write_result TIMEOUT 137 "$trunc" "check exceeded ${TIMEOUT}s"
         else write_result COMPLETED "$rc" "$trunc" "ok"; fi
@@ -159,5 +178,5 @@ elif grep -aqiE "cannot allocate|no space left|too many|pool overlaps|daemon" "$
 else
     write_result ERROR null false "no result sentinel (docker rc $drc)"
 fi
-rm -f "$RAW" "$RAW.err" "$RAW.main" "$RAW.report"
+rm -f "$RAW" "$RAW.err" "$RAW.main" "$RAW.report" "$RAW.hits" "$RAW.hits.ok"
 exit 0

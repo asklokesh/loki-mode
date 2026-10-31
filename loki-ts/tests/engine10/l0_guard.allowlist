@@ -101,8 +101,6 @@ src/util/check_result.ts	Gemfile
 # verify_pr derives the PR repo test suite from the PR own package manifest test script (read as data, never run on the host); goes away with Project Model sourcing of runner knowledge (11.3.3 L4).
 src/commands/verify_pr.ts	npm test
 src/commands/verify_pr.ts	package.json
-# verify_pr ships the sandbox-side pytest load recorder (a pytest plugin plus audit hook); it is the pytest-specific half of the runtime evidence record and goes away only if Project Model sourcing supplies a per-runner recorder (11.3.3 L4).
-src/commands/verify_pr.ts	pytest
 # FC-09r runner_config classifies runner-config paths (jest/vitest/pytest config, shared manifests compared base vs head by section) so a run cannot seal VERIFIED after editing the test runner; it only labels files the agent changed, never runs them. Goes away with Project Model sourcing of runner knowledge (11.3.3 L4).
 src/features/runner_config.ts	Cargo.toml
 src/features/runner_config.ts	go.mod
