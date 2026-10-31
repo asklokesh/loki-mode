@@ -312,27 +312,45 @@ describe("TEN-MOAT-26 vacuous check", () => {
 // Header and helpers of the Wall file loki 11.17.77 wrote for anthropics/claude-code#81826 (run e10-20261019T064138Z-a7ca; base tree ef7bfdc has no plugins/ralph-loop).
 const REAL_81826 = 'import { test, expect } from \'bun:test\';\\nimport { spawnSync } from \'node:child_process\';\\nimport { mkdtempSync, existsSync, readFileSync, writeFileSync } from \'node:fs\';\\nimport { tmpdir } from \'node:os\';\\nimport { join } from \'node:path\';\\n\\nconst ROOT = process.env.REPO_ROOT ?? process.cwd();\\nconst PLUGIN = join(ROOT, \'plugins\', \'ralph-loop\');\\nconst SETUP = join(PLUGIN, \'scripts\', \'setup-ralph-loop.sh\');\\nconst HOOK = join(PLUGIN, \'hooks\', \'stop-hook.sh\');\\nconst STATE = join(\'.claude\', \'ralph-loop.local.md\');\\n\\nconst env: Record<string, string> = { ...(process.env as Record<string, string>) };\\ndelete env.CLAUDE_CODE_SESSION_ID;\\n\\nfunction freshDir(): string {\\n  const dir = mkdtempSync(join(tmpdir(), \'loki-wall-ralph-\'));\\n  writeFileSync(join(dir, \'t.jsonl\'),\\n    \'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"still working"}]}}\\\n\');\\n  return dir;\\n}\\n\\nfunction setup(dir: string, value: string) {\\n  return spawnSync(\'bash\', [SETUP, \'do\', \'the\', \'task\', \'--max-iterations\', value],\\n    { cwd: dir, env, encoding: \'utf8\' });\\n}\\n\\nfunction hook(dir: string) {\\n  return spawnSync(\'bash\', [HOOK], {\\n    cwd: dir,\\n    env,\\n    encoding: \'utf8\',\\n    input: JSON.stringify({ session_id: \'s1\', transcript_path: join(dir, \'t.jsonl\') }),\\n  });\\n}\\n\\nfunction stateExists(dir: string): boolean {\\n  return existsSync(join(dir, STATE));\\n}\\n\\nfunction rounds(dir: string, n: number): void {\\n  for (let i = 0; i < n; i++) {\\n    if (!stateExists(dir)) break;\\n    hook(dir);\\n  }';
 describe("Go Wall that never references the package under test", () => {
-  const hdr = (pkg: string, extra = ""): string => `package ${pkg}\n\nimport (\n\t"testing"\n${extra}\t"example.com/m/x"\n)\n\n`;
-  const go = (name: string, src: string): string | null => vacuousCheck(name, src);
+  // Every row compiles and passes under a real `go test` (GOPROXY=off, GOTOOLCHAIN=local) against a package x with Foo, Double, foo and Parse; vacuous rows are the ones a green run proves nothing for.
   const MSG = "never references the package under test";
-  test("an external _test package with no x. reference is vacuous; a real x.Foo() call is not", () => {
-    expect(go("a_test.go", `${hdr("x_test")}func TestA(t *testing.T) {\n\tif 1+1 != 2 { t.Fatal("bad") }\n}\n`)).toContain(MSG);
-    expect(go("a_test.go", `${hdr("x_test")}func TestA(t *testing.T) {\n\tif x.Foo() != 2 { t.Fatal("bad") }\n}\n`)).toBeNull();
-    expect(go("a_test.go", `${hdr("x_test").replace('\t"example.com/m/x"', '\talias "example.com/m/x"')}func TestA(t *testing.T) {\n\tif alias.Foo() != 2 { t.Fatal("bad") }\n}\n`)).toBeNull();
+  const rows: [string, string, boolean][] = [
+    ["ext-vac", "package x_test\n\nimport (\n\t\"testing\"\n\t_ \"example.com/m/x\"\n)\n\nfunc TestA(t *testing.T) {\n\tif 1+1 != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["ext-ok", "package x_test\n\nimport (\n\t\"testing\"\n\t\"example.com/m/x\"\n)\n\nfunc TestA(t *testing.T) {\n\tif x.Foo() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
+    ["ext-alias-ok", "package x_test\n\nimport (\n\t\"testing\"\n\talias \"example.com/m/x\"\n)\n\nfunc TestA(t *testing.T) {\n\tif alias.Foo() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
+    ["ext-comment", "package x_test\n\nimport (\n\t\"testing\"\n\t_ \"example.com/m/x\"\n)\n\nfunc TestA(t *testing.T) {\n\t// x.Foo()\n\ts := \"x.Foo()\"\n\tif s == \"\" {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["ext-dot-ok", "package x_test\n\nimport (\n\t\"testing\"\n\t. \"example.com/m/x\"\n)\n\nfunc TestA(t *testing.T) {\n\tif Foo() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
+    ["E2-rawstring", "package x_test\n\nimport (\n\t\"testing\"\n\t_ \"example.com/m/x\"\n)\n\nvar s = `\n. \"fmt\"\n`\n\nfunc TestA(t *testing.T) {\n\tif len(s) < 0 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["E2b-blockcomment", "package x_test\n\nimport (\n\t\"testing\"\n\t_ \"example.com/m/x\"\n)\n\n/*\n. \"fmt\"\n*/\n\nfunc TestA(t *testing.T) {\n\tif 1 > 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["int-vac", "package x\n\nimport \"testing\"\n\nconst want = 3\n\nfunc TestA(t *testing.T) {\n\tgot := 3\n\tif got != want {\n\t\tt.Fatalf(\"bad %d\", got)\n\t}\n}\n", true],
+    ["int-ok", "package x\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\tif foo() != 3 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
+    ["int-comment", "package x\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\t// foo() is great\n\tn := 3\n\tif n != 3 {\n\t\tt.Fatal(\"foo()\")\n\t}\n}\n", true],
+    ["int-table-vac", "package x\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\ttests := []struct {\n\t\tname string\n\t\tin   int\n\t}{\n\t\t{name: \"a\", in: 1},\n\t}\n\tfor _, tt := range tests {\n\t\tt.Run(tt.name, func(t *testing.T) {\n\t\t\tif tt.in+1 != 2 {\n\t\t\t\tt.Fatal(\"bad\")\n\t\t\t}\n\t\t})\n\t}\n}\n", true],
+    ["int-table-ok", "package x\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\ttests := []struct {\n\t\tname string\n\t\tin   int\n\t}{\n\t\t{name: \"a\", in: 1},\n\t}\n\tfor _, tt := range tests {\n\t\tt.Run(tt.name, func(t *testing.T) {\n\t\t\tif Double(tt.in) != 2 {\n\t\t\t\tt.Fatal(\"bad\")\n\t\t\t}\n\t\t})\n\t}\n}\n", false],
+    ["E1-dot-unrelated", "package x\n\nimport (\n\t\"testing\"\n\t. \"strings\"\n)\n\nfunc TestA(t *testing.T) {\n\tif ToUpper(\"a\") != \"A\" {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["dot-int-ok", "package x\n\nimport (\n\t\"testing\"\n\t. \"strings\"\n)\n\nfunc TestA(t *testing.T) {\n\tif foo(ToUpper(\"a\")) != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
+    ["E3-shared-params", "package x\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\tf := func(a, b int) int { return a + b }\n\tif f(1, 2) != 3 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["E4-named-result", "package x\n\nimport \"testing\"\n\nfunc two() (n int) {\n\tn = 2\n\treturn\n}\n\nfunc TestA(t *testing.T) {\n\tif two() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["E5-type-param", "package x\n\nimport \"testing\"\n\nfunc id[T any](v T) T { return v }\n\nfunc TestA(t *testing.T) {\n\tif id(1) != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["E5b-type-params", "package x\n\nimport \"testing\"\n\nfunc pick[K comparable, V any](k K, v V) V { return v }\n\nfunc TestA(t *testing.T) {\n\tif pick(\"a\", 1) != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["E12-multi-var", "package x\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\tvar a, b = 1, 2\n\tif a+b != 3 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["E13-multi-const", "package x\n\nimport \"testing\"\n\nconst a, b = 1, 2\n\nfunc TestA(t *testing.T) {\n\tif a+b != 3 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["E13b-const-block", "package x\n\nimport \"testing\"\n\nconst (\n\ta, b = 1, 2\n\tc    = 3\n)\n\nfunc TestA(t *testing.T) {\n\tif a+b != c {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["fuzz-vac", "package x\n\nimport \"testing\"\n\nfunc FuzzA(f *testing.F) {\n\tf.Add(\"x\")\n\tf.Fuzz(func(t *testing.T, s string) {\n\t\tif len(s) < 0 {\n\t\t\tt.Fatal(\"bad\")\n\t\t}\n\t})\n}\n", true],
+    ["fuzz-ok", "package x\n\nimport \"testing\"\n\nfunc FuzzA(f *testing.F) {\n\tf.Add(\"x\")\n\tf.Fuzz(func(t *testing.T, s string) {\n\t\tif Parse(s) < 0 {\n\t\t\tt.Fatal(\"bad\")\n\t\t}\n\t})\n}\n", false],
+    ["R6-go-prefix-module", "package thing_test\n\nimport (\n\t\"testing\"\n\t\"example.com/go-thing\"\n)\n\nfunc TestA(t *testing.T) {\n\tif thing.Foo() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
+    ["R7-import-comment", "package x_test\n\nimport (\n\t\"testing\"\n\t\"example.com/m/x\" // package under test\n)\n\nfunc TestA(t *testing.T) {\n\tif x.Foo() != 2 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", false],
+    ["R10-comment-in-string", "package x\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\tu := \"http://a/*b\"\n\tif Parse(u) != 3 {\n\t\tt.Fatal(\"*/\")\n\t}\n}\n", false],
+    ["ext-dot-unrelated", "package x_test\n\nimport (\n\t\"testing\"\n\t. \"strings\"\n\t_ \"example.com/m/x\"\n)\n\nfunc TestA(t *testing.T) {\n\tif ToUpper(\"a\") != \"A\" {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true],
+    ["type-param-struct", "package x\n\nimport \"testing\"\n\ntype box[T any] struct {\n\tv T\n}\n\nfunc TestA(t *testing.T) {\n\tb := box[int]{v: 1}\n\tif b.v != 1 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n", true]
+  ];
+  for (const [name, src, vacuous] of rows) test(`${vacuous ? "vacuous" : "real"}: ${name}`, () => {
+    const r = vacuousCheck("a_test.go", src);
+    if (vacuous) expect(r).toContain(MSG); else expect(r).toBeNull();
   });
-  test("a same-package test that uses only its own literals and declarations is vacuous; one calling foo() is not", () => {
-    expect(go("a_test.go", `package x\n\nimport "testing"\n\nconst want = 3\n\nfunc TestA(t *testing.T) {\n\tgot := 3\n\tif got != want { t.Fatalf("bad %d", got) }\n}\n`)).toContain(MSG);
-    expect(go("a_test.go", `package x\n\nimport "testing"\n\nfunc TestA(t *testing.T) {\n\ttests := []struct {\n\t\tname string\n\t\tin int\n\t}{\n\t\t{name: "a", in: 1},\n\t}\n\tfor _, tt := range tests {\n\t\tt.Run(tt.name, func(t *testing.T) {\n\t\t\tif tt.in != 1 { t.Fatal("bad") }\n\t\t})\n\t}\n}\n`)).toContain(MSG);
-    expect(go("a_test.go", `package x\n\nimport "testing"\n\nfunc TestA(t *testing.T) {\n\tif foo() != 3 { t.Fatal("bad") }\n}\n`)).toBeNull();
-    expect(go("a_test.go", `package x\n\nimport "testing"\n\nfunc TestA(t *testing.T) {\n\ttests := []struct {\n\t\tname string\n\t\tin int\n\t}{\n\t\t{name: "a", in: 1},\n\t}\n\tfor _, tt := range tests {\n\t\tt.Run(tt.name, func(t *testing.T) {\n\t\t\tif Double(tt.in) != 2 { t.Fatal("bad") }\n\t\t})\n\t}\n}\n`)).toBeNull();
-  });
-  test("a reference that appears only inside a comment or string literal does not count", () => {
-    expect(go("a_test.go", `${hdr("x_test")}func TestA(t *testing.T) {\n\t// x.Foo()\n\ts := "x.Foo()"\n\tif s == "" { t.Fatal("bad") }\n}\n`)).toContain(MSG);
-    expect(go("a_test.go", `package x\n\nimport "testing"\n\nfunc TestA(t *testing.T) {\n\t// foo() is great\n\tn := 3\n\tif n != 3 { t.Fatal("foo()") }\n}\n`)).toContain(MSG);
-  });
-  test("a file with no package clause or no Test func is not judged", () => {
-    expect(go("a_test.go", `func TestA(t *testing.T) { if 1 != 2 { t.Fatal("x") } }\n`)).toBeNull();
-    expect(go("a_test.go", `package x\n\nfunc helper() int { return 1 }\n`)).toBeNull();
+  test("a file with no package clause or no Test or Fuzz func is not judged", () => {
+    expect(vacuousCheck("a_test.go", `func TestA(t *testing.T) { if 1 != 2 { t.Fatal("x") } }\n`)).toBeNull();
+    expect(vacuousCheck("a_test.go", `package x\n\nfunc helper() int { return 1 }\n`)).toBeNull();
   });
 });
 
