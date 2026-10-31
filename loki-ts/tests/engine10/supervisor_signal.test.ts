@@ -735,10 +735,11 @@ const body = {
   commit: async () => { git("add", "feature.txt"); try { git("diff", "--cached", "--quiet"); } catch { git("commit", "-q", "-m", "px5 change"); } return done; }, // idempotent: a resumed run re-runs commit over an already committed tree
   seal: async (c) => {
     if (CRASH === "seal-pre") await hang("seal-pre");
-    const b = { schema: "loki.v10.receipt/1", run_id: RID, verdict: "VERIFIED", not_proven: [], events_sha256: createHash("sha256").update(readFileSync(evPath)).digest("hex"), time: { wall_s: 0, stages: {} }, log_seal: true, checks: [{ name: "unit", cmd: "stub", result: "pass" }] };
+    const b = { schema: "loki.v10.receipt/1", run_id: RID, verdict: "VERIFIED", not_proven: [], events_sha256: createHash("sha256").update(readFileSync(evPath)).digest("hex"), time: { wall_s: 0, stages: {} }, log_seal: true, head_sha: git("rev-parse", "HEAD"), checks: [{ name: "unit", cmd: "stub", result: "pass" }] };
     const hash = receiptSha256(b);
     writeFileSync(receipt, JSON.stringify({ ...b, receipt_sha256: hash, verification: signReceipt(RID, hash) }, null, 2));
     c.emit("receipt.sealed", "seal", { receipt_sha256: hash, verdict: "VERIFIED", not_proven: [], path: receipt });
+    log.checkpoint(hash); // what the real supervisor does on receipt.sealed: a signed log.sealed plus an open run.state.json, which a publish resume now requires
     if (CRASH === "seal") await hang("seal");
     return { status: "completed", data: { verdict: "VERIFIED", receipt_sha256: hash, receipt_path: receipt, path: receipt, signed: true, not_proven: [] } };
   },
