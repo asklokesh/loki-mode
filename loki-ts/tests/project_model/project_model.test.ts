@@ -182,6 +182,21 @@ describe("discovery", () => {
     expect(tierSealFor(d, "r2").record?.["haiku"]).toMatchObject({ total: 1, verified: 1 });
   });
 
+  test("a run that reuses the committed project.json still records its shape in the run dir", async () => {
+    const d = repo();
+    const m = mock([RECORDED]);
+    await discoverProjectModel(ctxFor(d, m.runner), sig); // first run: session writes .loki/project.json
+    execFileSync("git", ["add", "-f", "--", PROJECT_FILE], { cwd: d, stdio: "pipe", env: process.env });
+    const runDir = join(d, ".loki", "runs", "r2");
+    const second = await discoverProjectModel({ ...ctxFor(d, m.runner), runId: "r2", runDir } as RunContext, sig);
+    expect(second.cached).toBe(true);
+    expect(second.attempts).toBe(0);
+    expect(m.briefs.length).toBe(1);
+    const written = JSON.parse(readFileSync(join(runDir, "project-model.answer.json"), "utf8"));
+    expect(written.key).toBe(second.model.key);
+    expect(written.status).toBe("ok");
+  });
+
   test("cache hit when hashes are unchanged, miss after a lockfile edit", async () => {
     const d = repo();
     const m = mock([RECORDED]);
