@@ -22,16 +22,16 @@ function textMatchesOrUnreadable(path: string, test: (txt: string) => boolean): 
 
 /** Changed in a PR, these always count as runner config whatever they hold: transpiler config (babel), interpreter startup hooks (sitecustomize.py, usercustomize.py, *.pth), mocha config, and anything under a __mocks__ directory (the runner applies those without the test asking, and a `roots` setting can move them out of the repo root). */
 const ALWAYS_CONFIG = /(?:^|\/)(?:babel\.config\.[\w.]+|\.babelrc(?:\.[\w.]+)?|(?:site|user)customize\.py|[^/]+\.pth|\.mocharc(?:\.[\w.]+)?)$|(?:^|\/)__mocks__\//;
-const OPEN = "\0open";
-/** Plugin modules named in a config text, or [OPEN] when its `pytest_plugins` cannot be fully read: an assignment that is not a closed literal (non-literal value, over-long annotation, no closer, a comment inside the literal), or any other use of the name (+=, .append, .extend, globals(), an import). Each closer is found with indexOf from its opener and the scan resumes after each literal, so long lists parse and the scan stays linear. */
-function pluginMods(txt: string): string[] {
-  const dotted = (m: RegExpMatchArray) => m[1]!.replace(/\./g, "/"), named: string[] = [], a = /\bpytest_plugins\s*(?::[^=\n]{0,200})?=(?!=)\s*/g;
+const OPEN = "\0open", NAMES = /^\s*(?:["'][\w.]+["']\s*(?:,\s*|$))*$/, DYNAMIC = /\b(?:setattr|exec|eval|compile|__import__|importlib|pluginmanager|__dict__)\b|\b(?:globals|vars)\s*\(/;
+/** Plugin modules named in a config text, or [OPEN] when its `pytest_plugins` cannot be fully read: an assignment that is not a closed literal of plain quoted module names (non-literal value, over-long annotation, no closer, a comment, adjacent strings or an escape inside it), or any other use of the name (+=, .append, .extend, globals(), an import), or a conftest that can set it or load plugins dynamically (setattr, exec, eval, globals(), pluginmanager and the like); the text is NFKC-normalized first, as Python does for identifiers. Each closer is found with indexOf from its opener and the scan resumes after each literal, so long lists parse and the scan stays linear. */
+function pluginMods(raw: string, py = false): string[] {
+  const txt = raw.normalize("NFKC"), dotted = (m: RegExpMatchArray) => m[1]!.replace(/\./g, "/"), named: string[] = [], a = /\bpytest_plugins\s*(?::[^=\n]{0,200})?=(?!=)\s*/g;
   let n = 0, g: RegExpExecArray | null;
-  if (/\bpytest_plugins\s*:[^=\n]{201}/.test(txt)) return [OPEN];
+  if (/\bpytest_plugins\s*:[^=\n]{201}/.test(txt) || (py && DYNAMIC.test(txt))) return [OPEN];
   while ((g = a.exec(txt))) {
     const i = a.lastIndex, o = txt[i]!, c = o === "[" ? "]" : o === "(" ? ")" : o === '"' || o === "'" ? o : "", e = c ? txt.indexOf(c, i + 1) : -1, end = /[ \t]*(?:#[^\n]*)?(?:\r?\n|$)/y;
     end.lastIndex = e + 1;
-    if (e < 0 || txt.slice(i, e).includes("#") || (c === o && txt.slice(i, e).includes("\n")) || !end.test(txt)) return [OPEN];
+    if (e < 0 || !(c === o ? /^[\w.]+$/ : NAMES).test(txt.slice(i + 1, e)) || !end.test(txt)) return [OPEN];
     named.push(...[...txt.slice(i, e + 1).matchAll(/["']([\w.]+)["']/g)].map(dotted)); n++; a.lastIndex = e + 1;
   }
   if ((txt.match(/\bpytest_plugins\b(?!\s*==)/g) ?? []).length !== n) return [OPEN];
@@ -43,7 +43,7 @@ function configRefs(changed: readonly string[], roots: readonly string[]): Set<s
   for (const root of new Set(roots)) for (const d of dirs) for (const n of (() => { try { return readdirSync(join(root, d)); } catch { return []; } })()) {
     const r = REPORT_RUNNERS.find((x) => x.config.test(n)), ini = /\.(?:ini|cfg)$|^pyproject\.toml$|^conftest\.py$/.test(n); let txt: string;
     if ((!r && !ini) || (n.endsWith(".py") && n !== "conftest.py")) continue; try { txt = readFileSync(join(root, d, n), "utf8"); if (r?.key && !n.startsWith(r.runner)) txt = JSON.stringify((JSON.parse(txt) as Record<string, unknown>)[r.key] ?? ""); } catch { continue; }
-    for (const t of ini ? pluginMods(txt) : [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) { if (t === OPEN) { out.add("\0" + posix.join(d, n)); continue; } const p = posix.normalize(posix.join(d, t)); if (/[a-z]/i.test(t) && !/[*?^$|()[\]\\{}<>\s]/.test(t) && !t.startsWith("/") && !p.startsWith("..")) out.add(p); }
+    for (const t of ini ? pluginMods(txt, n === "conftest.py") : [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) { if (t === OPEN) { out.add("\0" + posix.join(d, n)); continue; } const p = posix.normalize(posix.join(d, t)); if (/[a-z]/i.test(t) && !/[*?^$|()[\]\\{}<>\s]/.test(t) && !t.startsWith("/") && !p.startsWith("..")) out.add(p); }
   }
   return out;
 }
