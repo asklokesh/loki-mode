@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { explainLines, defaultCheckout, defaultIssue, defaultPrMeta, defaultPackageSuites, defaultSandbox, parsePrRef, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
-import { extractChecks, judgeF2p, reportedCheck, reportShowsPass, REPORT_TOKEN, runnerConfigChanged, type SandboxResult } from "../../src/contrib/verify_pr_f2p.ts";
+import { explainLines, defaultCheckout, defaultIssue, defaultPrMeta, defaultPackageSuites, defaultSandbox, bootRecord, parsePrRef, runnerConfigChanged, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
+import { extractChecks, judgeF2p, reportedCheck, reportShowsPass, REPORT_TOKEN, type SandboxResult } from "../../src/contrib/verify_pr_f2p.ts";
+import { HITS_TOKEN, pytestBoot } from "../../src/util/runner_boot.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "vpr2-test-")); });
@@ -39,9 +40,13 @@ function fixture(kind: "fix" | "delete-test" | "noop" | "already-passing"): { ur
 /** Trusted-fixture stand-in for the sandbox: runs the check on the host in the given dir. The real adapter is tested separately. */
 let reportSeq = 0;
 const hostSandbox = (d: string, cmd: string) => {
-  const rep = join(dir, `report-${reportSeq++}`);
-  const r = spawnSync("sh", ["-c", `{ ${cmd.split(REPORT_TOKEN).join(rep)}\n} 2>&1`], { cwd: d, stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" });
-  return { status: "COMPLETED" as const, exit_code: r.status, output: r.stdout, report: existsSync(rep) ? readFileSync(rep, "utf8") : undefined };
+  const rep = join(dir, `report-${reportSeq++}`), hitsFile = join(dir, `hits-${reportSeq}`);
+  const hitting = cmd.includes(HITS_TOKEN);
+  // fd 9 is an append-only file here (bun's spawnSync does not return a pipe on fd 9); the real sandbox reads a pipe.
+  const r = spawnSync("sh", ["-c", `${hitting ? `exec 9>>'${hitsFile}'\n` : ""}{ ${cmd.split(REPORT_TOKEN).join(rep).split(HITS_TOKEN).join("")}\n} 2>&1`], { cwd: d, stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" });
+  // "E" means the reader saw the stream close.
+  const hits = hitting ? `${(existsSync(hitsFile) ? readFileSync(hitsFile, "utf8") : "").split("\n").filter((l) => l !== "").map((l) => `H ${l}`).join("\n")}\nE\n` : undefined;
+  return { status: "COMPLETED" as const, exit_code: r.status, output: r.stdout, report: existsSync(rep) ? readFileSync(rep, "utf8") : undefined, hits };
 };
 
 const TRUSTED = { author: "maint", authorAssociation: "MEMBER", updatedAt: "2026-10-01T00:00:00Z", repo: "o/r" };
@@ -392,7 +397,7 @@ function repoWith(name: string, base: Record<string, string>, pr: Record<string,
   const repo = join(dir, `src-${name}`);
   mkdirSync(repo);
   git(repo, "init", "-q", "-b", "main");
-  for (const [f, c] of Object.entries(base)) writeFileSync(join(repo, f), c);
+  for (const [f, c] of Object.entries(base)) { mkdirSync(join(repo, f, ".."), { recursive: true }); writeFileSync(join(repo, f), c); }
   git(repo, "add", "."); git(repo, "commit", "-qm", "base");
   const baseSha = git(repo, "rev-parse", "HEAD");
   git(repo, "checkout", "-qb", "pr");
@@ -441,12 +446,12 @@ describe("verify-pr: an exit code alone is not proof", () => {
     expect(r.json.reasons.join(" ")).toContain("conftest.py");
   }, 60_000);
 
-  test("a preload already on base that the PR rewrites to exit 0 is caught by the missing pass record", async () => {
+  test("a preload already on base that the PR rewrites to exit 0 is runner config, though bunfig.toml stays", async () => {
     const base = { ...BUN_FILES, "bunfig.toml": '[test]\npreload = ["./pre.ts"]\n', "pre.ts": "export {};\n" };
     const meta = repoWith("preload-rewrite", base, { "pre.ts": 'import { afterAll } from "bun:test";\nafterAll(() => process.exit(0));\n' });
     const r = await run(meta, { checkout: defaultCheckout }, issueFor(BUN_CHECK));
     expect(r.rc).toBe(4);
-    expect(r.json.reasons.join(" ")).toContain("without a runner report");
+    expect(r.json.reasons.join(" ")).toMatch(/runner config.*pre\.ts/);
   }, 60_000);
 
   test("printed totals are never read: a test that prints fake totals and exits 0 is NOT PROVEN", async () => {
@@ -464,10 +469,10 @@ describe("verify-pr: an exit code alone is not proof", () => {
   });
 
   test("reportedCheck rewrites recognised runners and refuses go, cargo and unknown commands with a reason", () => {
-    expect(reportedCheck("cd a && bun test x.test.ts")).toEqual({ cmd: `cd a && bun test --reporter=junit --reporter-outfile=${REPORT_TOKEN} x.test.ts` });
-    expect(reportedCheck("python3 -m pytest -q t.py")).toEqual({ cmd: `python3 -m pytest --junitxml=${REPORT_TOKEN} -q t.py` });
-    expect(reportedCheck("npx jest a")).toEqual({ cmd: `npx jest --json --outputFile=${REPORT_TOKEN} a` });
-    expect(reportedCheck("npx vitest run")).toEqual({ cmd: `npx vitest --reporter=junit --outputFile=${REPORT_TOKEN} run` });
+    expect(reportedCheck("cd a && bun test x.test.ts")).toEqual({ cmd: `cd a && bun test --reporter=junit --reporter-outfile=${REPORT_TOKEN} x.test.ts`, runner: "bun" });
+    expect(reportedCheck("python3 -m pytest -q t.py")).toEqual({ cmd: `python3 -m pytest --junitxml=${REPORT_TOKEN} -q t.py`, runner: "pytest", boot: expect.any(Function) });
+    expect(reportedCheck("npx jest a")).toEqual({ cmd: `npx jest --json --outputFile=${REPORT_TOKEN} a`, runner: "jest" });
+    expect(reportedCheck("npx vitest run")).toEqual({ cmd: `npx vitest --reporter=junit --outputFile=${REPORT_TOKEN} run`, runner: "vitest" });
     for (const c of ["go test ./...", "cargo test", "sh t.sh", "node t.js"]) expect(reportedCheck(c)).toHaveProperty("reason");
     expect((reportedCheck("cargo test") as { reason: string }).reason).toContain("no stable report file");
   });
@@ -517,26 +522,163 @@ describe("verify-pr: an exit code alone is not proof", () => {
     expect(r.json.reasons.join(" ")).toMatch(/pytest\.ini|jest\.config\.js/);
   }, 30_000);
 
-  const PYC = "[tool:pytest]\naddopts = -q\n\n[flake8]\nmax-line-length = 100\n";
+  const PYC = "[tool:pytest]\naddopts = -q -p plug\n\n[flake8]\nmax-line-length = 100\n";
   const PASS = '<testsuites><testsuite><testcase name="a"/></testsuite></testsuites>';
-  const SECTION_FILES = { "setup.cfg": PYC, "package.json": '{"name":"x","jest":{"testEnvironment":"node"}}\n', "pyproject.toml": "[tool.pytest.ini_options]\naddopts = '-q'\n", "add.py": PY_FILES["add.py"], "test_add.py": PY_FILES["test_add.py"] };
+  const SECTION_FILES = { "setup.cfg": PYC, "package.json": '{"name":"x","main":"add.py","jest":{"testEnvironment":"node","setupFiles":["<rootDir>/jest.setup.js"]}}\n', "pyproject.toml": "[tool.pytest.ini_options]\naddopts = '-q'\n", "add.py": PY_FILES["add.py"], "test_add.py": PY_FILES["test_add.py"], "jest.setup.js": "// setup\n", "vitest.config.ts": 'export default { test: { setupFiles: ["./vsetup.ts"] } };\n', "vsetup.ts": "// setup\n", "plug.py": "# plugin\n", "tsconfig.json": '{"compilerOptions":{"strict":true}}\n' };
   test.each([
     ["setup.cfg [tool:pytest] section removed", { "setup.cfg": "[flake8]\nmax-line-length = 100\n" }, 4, /setup\.cfg/],
     ["package.json jest key removed", { "package.json": '{"name":"x"}\n' }, 4, /package\.json/],
     ["jest.config.json added with a moduleNameMapper stub", { "jest.config.json": '{"moduleNameMapper":{"^./add$":"<rootDir>/fake.js"}}\n' }, 4, /jest\.config\.json/],
     ["pyproject.toml pytest section removed", { "pyproject.toml": "[project]\nname = 'x'\n" }, 4, /pyproject\.toml/],
+    ["F1 a jest setupFiles target edited while package.json stays", { "jest.setup.js": "Math.random = () => 0;\n" }, 4, /jest\.setup\.js/],
+    ["F1 a vitest setupFiles target edited while the config stays", { "vsetup.ts": "globalThis.x = 1;\n" }, 4, /vsetup\.ts/],
+    ["F2 a root __mocks__ module added", { "__mocks__/fs.js": "module.exports = {};\n" }, 4, /__mocks__\/fs\.js/],
+    ["F3 babel.config.js added", { "babel.config.js": "module.exports = { plugins: ['./stub'] };\n" }, 4, /babel\.config\.js/],
+    ["F3 .babelrc added", { ".babelrc": '{"plugins":["./stub"]}\n' }, 4, /\.babelrc/],
+    ["F4 tsconfig.json path mapping added", { "tsconfig.json": '{"compilerOptions":{"paths":{"./add":["./fake"]}}}\n' }, 4, /tsconfig\.json/],
+    ["F5 sitecustomize.py added", { "sitecustomize.py": "import builtins\n" }, 4, /sitecustomize\.py/],
+    ["F5 a .pth file added", { "stub.pth": "import os\n" }, 4, /stub\.pth/],
+    ["F6 .mocharc.yml added", { ".mocharc.yml": "require: ./stub.js\n" }, 4, /\.mocharc\.yml/],
+    ["a tsconfig.json edit with no path mapping", { "tsconfig.json": '{"compilerOptions":{"strict":false}}\n' }, 0, /^$/],
     ["only an unrelated setup.cfg section edited", { "setup.cfg": "[flake8]\nmax-line-length = 120\n" }, 0, /^$/],
     ["config kept untouched while the bug is fixed", { "add.py": PY_FIXED }, 0, /^$/],
   ] as const)("a PR with %s", async (_n, edits, rc, reason) => {
     const base = _n.startsWith("only an unrelated") ? { ...SECTION_FILES, "setup.cfg": "[flake8]\nmax-line-length = 100\n" } : SECTION_FILES;
     const meta = repoWith(`sec-${_n.replace(/\W/g, "")}`, base, { "note.txt": "x\n" });
     const repo = meta.cloneUrl;
-    for (const [f, c] of Object.entries({ "add.py": PY_FIXED, ...edits })) writeFileSync(join(repo, f), c);
+    for (const [f, c] of Object.entries({ "add.py": PY_FIXED, ...edits })) { mkdirSync(join(repo, f, ".."), { recursive: true }); writeFileSync(join(repo, f), c); }
     git(repo, "add", "-A"); git(repo, "commit", "-qm", "edit");
     const head = git(repo, "rev-parse", "HEAD");
     git(repo, "update-ref", "refs/pull/7/head", head);
     let n = 0;
-    const r = await run({ ...meta, headSha: head }, { checkout: defaultCheckout, packageSuites: () => ({ suites: [], removed: [] }), sandbox: () => (n++ === 0 ? { status: "COMPLETED", exit_code: 1 } : { status: "COMPLETED", exit_code: 0, report: PASS }) }, issueFor(PY_CHECK));
+    const r = await run({ ...meta, headSha: head }, { checkout: defaultCheckout, packageSuites: () => ({ suites: [], removed: [] }) }, issueFor(PY_CHECK));
+    expect(r.rc).toBe(rc);
+    expect(r.json.reasons.join(" ")).toMatch(reason);
+  }, 30_000);
+
+  const HOOK = "import sys\nsys.exit(0)\n";
+  const MODS = Object.fromEntries(Array.from({ length: 450 }, (_, i) => [`mod${i}.py`, "# m\n"]));
+  const PLUG_REF = { "setup.cfg": "[flake8]\nmax-line-length = 100\n" };
+  test.each([
+    ["E1 pyproject addopts -p plugin module rewritten", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = \"-p plug\"\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["E4 pyproject addopts list plugin module rewritten", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = [\"-p\", \"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["E3 conftest pytest_plugins list module rewritten", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["E3 conftest pytest_plugins string module rewritten", { ...PLUG_REF, "conftest.py": "pytest_plugins = \"plug\"\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["F1 pytest_plugins list over 4096 chars, plug last", { ...PLUG_REF, ...MODS, "conftest.py": `pytest_plugins = [${Array.from({ length: 450 }, (_, i) => `"mod${i}"`).join(", ")}, "plug"]\n` }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["F2 pytest_plugins list over 4096 chars, plug first", { ...PLUG_REF, ...MODS, "conftest.py": `pytest_plugins = ["plug", ${Array.from({ length: 450 }, (_, i) => `"mod${i}"`).join(", ")}]\n` }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["F3 pytest_plugins tuple over 4096 chars", { ...PLUG_REF, ...MODS, "conftest.py": `pytest_plugins = (${Array.from({ length: 450 }, (_, i) => `"mod${i}"`).join(", ")}, "plug")\n` }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["F4 pytest_plugins opener followed by a 5000 char comment", { ...PLUG_REF, "conftest.py": `pytest_plugins = [  # ${"c".repeat(5000)}\n  "plug",\n]\n` }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["F5 pytest_plugins annotation over 200 chars", { ...PLUG_REF, "conftest.py": `from typing import List\npytest_plugins: List${" ".repeat(260)} = ["plug"]\n` }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["F6 pytest_plugins assigned a non-literal", { ...PLUG_REF, "conftest.py": "PLUGINS = ['plug']\npytest_plugins = PLUGINS\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["F7 pytest_plugins list plus an extra", { ...PLUG_REF, "conftest.py": "extra = [\"plug\"]\npytest_plugins = [] + extra\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["B1 closer bracket inside a comment in the list", { ...PLUG_REF, "a.py": "# a\n", "conftest.py": "pytest_plugins = [\"a\",  # ]\n  \"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["B2 closer paren inside a comment in the tuple", { ...PLUG_REF, "a.py": "# a\n", "conftest.py": "pytest_plugins = (\"a\",  # )\n  \"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["B3 pytest_plugins += a list", { ...PLUG_REF, "conftest.py": "pytest_plugins = []\npytest_plugins += [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["B4 pytest_plugins.append", { ...PLUG_REF, "conftest.py": "pytest_plugins = []\npytest_plugins.append(\"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["B5 pytest_plugins.extend", { ...PLUG_REF, "conftest.py": "pytest_plugins = []\npytest_plugins.extend([\"plug\"])\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["B6 globals() assignment of pytest_plugins", { ...PLUG_REF, "conftest.py": "globals()[\"pytest_plugins\"] = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["B7 pytest_plugins imported from another module", { ...PLUG_REF, "x.py": "pytest_plugins = [\"plug\"]\n", "conftest.py": "from x import pytest_plugins\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["N1 setattr on the module with a concatenated name", { ...PLUG_REF, "conftest.py": "import sys\nsetattr(sys.modules[__name__], \"pytest_\" + \"plugins\", [\"plug\"])\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["N2 exec of a concatenated assignment", { ...PLUG_REF, "conftest.py": "exec(\"pytest_\" \"plugins = ['plug']\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["N3 globals() with an implicitly concatenated key", { ...PLUG_REF, "conftest.py": "globals()[\"pytest_\" \"plugins\"] = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["N4 implicitly concatenated plugin name", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"pl\" \"ug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["N5 escaped plugin name", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"plu\\x67\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["N9 vars() with an implicitly concatenated key", { ...PLUG_REF, "conftest.py": "vars()[\"pytest_\" \"plugins\"] = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["N10 __dict__.update with a concatenated key", { ...PLUG_REF, "conftest.py": "import sys\nsys.modules[__name__].__dict__.update({\"pytest_\" \"plugins\": [\"plug\"]})\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["N11 fullwidth low line in the name", { ...PLUG_REF, "conftest.py": "pytest＿plugins = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["N17 pluginmanager.import_plugin in pytest_configure", { ...PLUG_REF, "conftest.py": "def pytest_configure(config):\n    config.pluginmanager.import_plugin(\"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["N18 pluginmanager.register in pytest_configure", { ...PLUG_REF, "conftest.py": "import plug\ndef pytest_configure(config):\n    config.pluginmanager.register(plug)\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R01 locals() key built by implicit concatenation", { ...PLUG_REF, "conftest.py": "locals()[\"pytest_\" \"plugins\"] = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R02 module __setattr__ with a concatenated name", { ...PLUG_REF, "conftest.py": "import sys\nsys.modules[__name__].__setattr__(\"pytest_\" \"plugins\", [\"plug\"])\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R03 getattr(builtins, setattr) on the module", { ...PLUG_REF, "conftest.py": "import sys, builtins\ngetattr(builtins, \"set\" \"attr\")(sys.modules[__name__], \"pytest_\" \"plugins\", [\"plug\"])\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R04 __builtins__ exec with a concatenated name", { ...PLUG_REF, "conftest.py": "__builtins__[\"ex\" \"ec\"](\"pytest_\" \"plugins = ['plug']\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R05 getattr(config, pluginmanager).import_plugin", { ...PLUG_REF, "conftest.py": "def pytest_configure(config):\n    getattr(config, \"plugin\" \"manager\").import_plugin(\"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R06a star import of the edited module", { ...PLUG_REF, "conftest.py": "from plug import *\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R06b plain import of the edited module", { ...PLUG_REF, "conftest.py": "import plug\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R06c from-import of a name in the edited module", { ...PLUG_REF, "conftest.py": "from plug import x\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R06d relative from-import of the edited module", { ...PLUG_REF, "__init__.py": "", "conftest.py": "from . import plug\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R06e import of a submodule of the edited package", { ...PLUG_REF, "plug.py": null, "plug/__init__.py": "", "plug/sub.py": "# s\n", "conftest.py": "import plug.sub\n" }, { "plug/sub.py": HOOK }, 4, /plug\/sub\.py/],
+    ["R07 fullwidth plugin name, fullwidth module edited", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"\uff50lug\"]\n" }, { "ｐlug.py": HOOK }, 4, /ｐlug\.py/],
+    ["R14 type(sys).__setattr__ on the module", { ...PLUG_REF, "conftest.py": "import sys\ntype(sys).__setattr__(sys.modules[__name__], \"pytest_\" \"plugins\", [\"plug\"])\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R14m object.__setattr__ on the module", { ...PLUG_REF, "conftest.py": "import sys\nobject.__setattr__(sys.modules[__name__], \"pytest_\" \"plugins\", [\"plug\"])\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R15 the plugin list read through a frame", { ...PLUG_REF, "conftest.py": "import sys\nsys._getframe().f_globals[\"pytest_\" + \"plugins\"] = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R16 a syntax error in the conftest", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"plug\"\n" }, { "plug.py": HOOK }, 4, /still fails on head/],
+    ["R17 fullwidth -p module in an ini file", { ...PLUG_REF, "pytest.ini": "[pytest]\naddopts = -p \uff50lug\n" }, { "\uff50lug.py": HOOK }, 4, /pytest\.ini|\uff50lug\.py/],
+    ["R18 -p module spliced from adjacent quotes in an ini file", { ...PLUG_REF, "pytest.ini": "[pytest]\naddopts = -p \"pl\"ug\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["L1 conftest with stdlib imports, a regex and a fixture", { ...PLUG_REF, "conftest.py": "import os\nimport re\nimport pytest\n\nPAT = re.compile(\"x\")\n\n@pytest.fixture\ndef f():\n    return os.getcwd()\n" }, {  }, 0, /^$/],
+    ["A13 package plugin __init__.py rewritten", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = \"-p plug\"\n", "plug.py": null, "plug/__init__.py": "# plugin\n" }, { "plug/__init__.py": HOOK }, 4, /plug\/__init__\.py/],
+    ["R08 line continuation in list", { ...PLUG_REF, "a.py": "# a\n", "conftest.py": "pytest_plugins = [\"a\", \\\n  \"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R09 comment in list no closer", { ...PLUG_REF, "a.py": "# a\n", "conftest.py": "pytest_plugins = [\"a\",  # note\n  \"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R10 nested tuple", { ...PLUG_REF, "conftest.py": "pytest_plugins = ((\"plug\",),)\n" }, { "plug.py": HOOK }, 4, /still fails on head/],
+    ["R11 adjacent strings in tuple", { ...PLUG_REF, "conftest.py": "pytest_plugins = (\"pl\"\n  \"ug\",)\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R12 continuation after equals", { ...PLUG_REF, "conftest.py": "pytest_plugins = \\\n  [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["R13 fullwidth identifier", { ...PLUG_REF, "xy.py": "# xy\n", "conftest.py": "ｐytest_plugins = (\"x\" \"y\", \"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["Z01 pkgutil.resolve_name of the edited module", { ...PLUG_REF, "conftest.py": "import pkgutil\npkgutil.resolve_name(\"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["Z10 aliased resolve_name of a concatenated name", { ...PLUG_REF, "conftest.py": "from pkgutil import resolve_name as r\nr(\"pl\" + \"ug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["Z02 runpy.run_module of the edited module", { ...PLUG_REF, "conftest.py": "import runpy\nrunpy.run_module(\"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["Z03 pytest.importorskip of the edited module", { ...PLUG_REF, "conftest.py": "import pytest\npytest.importorskip(\"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["Z04 InteractiveInterpreter running the edited file", { ...PLUG_REF, "conftest.py": "import code\ncode.InteractiveInterpreter().runsource(open(\"plug.py\").read())\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["Z05 PyRun_SimpleString importing the edited module", { ...PLUG_REF, "conftest.py": "import ctypes\nctypes.pythonapi.PyRun_SimpleString(b\"import plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["Z06 getattr chain built from concatenated names", { ...PLUG_REF, "conftest.py": "def pytest_configure(config):\n    getattr(getattr(config, \"plugin\" + \"manager\"), \"import\" + \"_plugin\")(\"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["Z07 getattr with a runtime attribute name", { ...PLUG_REF, "n.txt": "pluginmanager", "conftest.py": "def pytest_configure(config):\n    getattr(config, open(\"n.txt\").read().strip()).import_plugin(\"plug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["Z11 module name built by an f-string", { ...PLUG_REF, "conftest.py": "import pkgutil\nn = \"pl\"\npkgutil.resolve_name(f\"{n}ug\")\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["Z12 module name reversed by a slice", { ...PLUG_REF, "conftest.py": "import pkgutil\npkgutil.resolve_name(\"gulp\"[::-1])\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["Z13 module name decoded from base64", { ...PLUG_REF, "conftest.py": "import base64, pkgutil\npkgutil.resolve_name(base64.b64decode(\"cGx1Zw==\").decode())\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["Z14 module name joined from two named strings", { ...PLUG_REF, "conftest.py": "import pkgutil\na = \"pl\"\nb = \"ug\"\npkgutil.resolve_name(a + b)\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["F1 a pytest -p plugin module edited while setup.cfg stays", { "setup.cfg": PYC, "pyproject.toml": null }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["Z08 setup.cfg pytest11 entry point of a package that is not installed", { "setup.cfg": "[options.entry_points]\npytest11 =\n    myplug = plug\n" }, { "plug.py": HOOK }, 0, /^$/],
+    ["Z08b pyproject pytest11 entry point table of a package that is not installed", { ...PLUG_REF, "pyproject.toml": "[project.entry-points.pytest11]\nmyplug = \"plug:hooks\"\n" }, { "plug.py": HOOK }, 0, /^$/],
+    ["Y06 PR adds conftest importing edited module", { ...PLUG_REF }, { "conftest.py": "import plug\n", "plug.py": HOOK }, 4, /./],
+    ["Y07 PR adds conftest that exits 0", { ...PLUG_REF }, { "conftest.py": "import sys\nsys.exit(0)\n" }, 4, /./],
+    ["Y09 import_module aliased", { ...PLUG_REF, "conftest.py": "from importlib import import_module as m\nm(\"plug\")\n" }, { "plug.py": HOOK }, 4, /recorded in the sandbox.*plug\.py/],
+    ["Y11 benign control", { ...PLUG_REF, "conftest.py": "import zipimport, os\nzipimport\nimport sys\n" }, { "plug.py": HOOK }, 0, /^$/],
+    ["W01 os.path.basename of a path string", { ...PLUG_REF, "conftest.py": "import os, pkgutil\npkgutil.resolve_name(os.path.basename(\"a/plug\"))\n" }, { "plug.py": HOOK }, 4, /recorded in the sandbox.*plug\.py/],
+    ["W02 os.path.splitext of a file name", { ...PLUG_REF, "conftest.py": "import os, pkgutil\npkgutil.resolve_name(os.path.splitext(\"plug.txt\")[0])\n" }, { "plug.py": HOOK }, 4, /recorded in the sandbox.*plug\.py/],
+    ["W03 int.to_bytes decode", { ...PLUG_REF, "conftest.py": "import pkgutil\npkgutil.resolve_name((0x706c7567).to_bytes(4, \"big\").decode())\n" }, { "plug.py": HOOK }, 4, /recorded in the sandbox.*plug\.py/],
+    ["W04 str().join of parts", { ...PLUG_REF, "conftest.py": "import pkgutil\npkgutil.resolve_name(str().join([\"pl\", \"ug\"]))\n" }, { "plug.py": HOOK }, 4, /recorded in the sandbox.*plug\.py/],
+    ["W05 string.Template substitute", { ...PLUG_REF, "conftest.py": "import pkgutil\nfrom string import Template\npkgutil.resolve_name(Template(\"$a$b\").substitute(a=\"pl\", b=\"ug\"))\n" }, { "plug.py": HOOK }, 4, /recorded in the sandbox.*plug\.py/],
+    ["W06 BinOp of two calls", { ...PLUG_REF, "conftest.py": "import pkgutil\npkgutil.resolve_name(str(\"pl\") + str(\"ug\"))\n" }, { "plug.py": HOOK }, 4, /recorded in the sandbox.*plug\.py/],
+    ["W07 array tobytes decode", { ...PLUG_REF, "conftest.py": "import array, pkgutil\npkgutil.resolve_name(array.array(\"B\", [112, 108, 117, 103]).tobytes().decode())\n" }, { "plug.py": HOOK }, 4, /recorded in the sandbox.*plug\.py/],
+    ["W08 module name read from a repo file", { ...PLUG_REF, "names.txt": "plug\n", "conftest.py": "import pkgutil\npkgutil.resolve_name(open(\"names.txt\").read().strip())\n" }, { "plug.py": HOOK }, 4, /recorded in the sandbox.*plug\.py/],
+    ["W09 pathlib stem", { ...PLUG_REF, "conftest.py": "import pathlib, pkgutil\npkgutil.resolve_name(pathlib.Path(\"plug.txt\").stem)\n" }, { "plug.py": HOOK }, 4, /recorded in the sandbox.*plug\.py/],
+    ["W10 glob of repo py files", { ...PLUG_REF, "conftest.py": "import glob, pkgutil\nfor f in glob.glob(\"*.py\"):\n    pkgutil.resolve_name(f[:-3]) if f != \"conftest.py\" else None\n" }, { "plug.py": HOOK }, 4, /recorded in the sandbox.*plug\.py/],
+    ["W11 sorted chars joined via map", { ...PLUG_REF, "conftest.py": "import pkgutil\npkgutil.resolve_name(str().join(map(str, [\"p\", \"l\", \"u\", \"g\"])))\n" }, { "plug.py": HOOK }, 4, /recorded in the sandbox.*plug\.py/],
+    ["P01 f-string in conftest, unrelated module edited", { ...PLUG_REF, "conftest.py": "import pytest\n\n@pytest.fixture\ndef url():\n    return f\"http://localhost:{8000}\"\n" }, { "other.py": HOOK }, 0, /^$/],
+    ["P02 conftest string names the src dir", { ...PLUG_REF, "conftest.py": "import sys\nsys.path.insert(0, \"src\")\n" }, { "src/other.py": HOOK }, 0, /^$/],
+    ["P03 conftest marker word app", { ...PLUG_REF, "conftest.py": "import pytest\n\ndef pytest_configure(config):\n    config.addinivalue_line(\"markers\", \"app: tests of the app\")\n" }, { "app/views.py": HOOK }, 0, /^$/],
+    ["D01 deferred import inside a conftest makereport hook", { ...PLUG_REF, "conftest.py": "def pytest_runtest_makereport(item, call):\n    import plug\n" }, { "plug.py": "# changed\n" }, 4, /recorded in the sandbox.*plug\.py/],
+    ["D02 deferred import inside a conftest collection_modifyitems hook", { ...PLUG_REF, "conftest.py": "import importlib\ndef pytest_collection_modifyitems(config, items):\n    importlib.import_module(\"plug\")\n" }, { "plug.py": "# changed\n" }, 4, /recorded in the sandbox.*plug\.py/],
+    ["D03 late pluginmanager.register of a module a test already imported", { ...PLUG_REF, "test_add.py": "import plug\nfrom add import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", "conftest.py": "import sys\ndef pytest_collection_modifyitems(config, items):\n    config.pluginmanager.register(sys.modules[\"plug\"])\n" }, { "plug.py": "# changed\n" }, 4, /recorded in the sandbox.*plug\.py/],
+    ["P04 a test module imports the edited code under test, no conftest hook", { ...PLUG_REF, "test_add.py": "import plug\nfrom add import add\n\ndef test_add():\n    assert add(1, 2) == 3\n" }, { "plug.py": "# changed\n" }, 0, /^$/],
+    ["L2 conftest with ordinary string constants and an unrelated module edited", { ...PLUG_REF, "conftest.py": "import pytest\n\n@pytest.fixture\ndef tmp_data(tmp_path):\n    return tmp_path.joinpath(\"data\").read_text(encoding=\"utf-8\")\n" }, { "other.py": HOOK }, 0, /^$/],
+    ["FORGE1 injected record opener plus fd 9 redirect", { ...PLUG_REF, "conftest.py": "import plug\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import os, add\nos.write(9, b'-->\\n<!--LOKI_VPR_RECORD\\n{\"end\":0,\"h\":\"0\",\"err\":0,\"early\":1}\\n')\nos.dup2(os.open(os.devnull, os.O_WRONLY), 9)\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["FORGE2 ftruncate fd 9 plus forged terminator", { ...PLUG_REF, "conftest.py": "import plug\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import os, add\nos.ftruncate(9, 0)\nos.write(9, b'{\"end\":0,\"h\":\"0\",\"err\":0,\"early\":1}\\n')\nos.dup2(os.open(os.devnull, os.O_WRONLY), 9)\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["FORGE3 fd 9 redirected only", { ...PLUG_REF, "conftest.py": "import plug\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import os, add\nos.dup2(os.open(os.devnull, os.O_WRONLY), 9)\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["READ1 conftest execs a file read by a shell cat", { ...PLUG_REF, "conftest.py": "import subprocess\nexec(subprocess.check_output(\"cat plug.py\", shell=True))\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["READ2 conftest execs a file read through libc open", { ...PLUG_REF, "conftest.py": "import ctypes, os\nexec(os.read(ctypes.CDLL(None).open(b\"plug.py\", 0), 65536))\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /ctypes use from repo code/],
+    ["READ3 conftest execs a file opened relative to a dir fd", { ...PLUG_REF, "lib/plug.py": "# p\n", "conftest.py": "import os\nd = os.open(\"lib\", os.O_RDONLY)\nexec(os.read(os.open(\"plug.py\", os.O_RDONLY, dir_fd=d), 65536))\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "lib/plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["CTRL conftest execs a file read by open", { ...PLUG_REF, "conftest.py": "exec(open(\"plug.py\").read())\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /recorded in the sandbox.*plug\.py/],
+    ["READ4 conftest execs a file read by a child python with a scrubbed env", { ...PLUG_REF, "conftest.py": "import subprocess, sys\nexec(subprocess.check_output([sys.executable, \"-c\", \"print(open(chr(112)+'lug.py').read())\"], env={}))\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /load window|recorded in the sandbox/],
+    ["LINK1 conftest hard-links the changed file to a new name, then execs it", { ...PLUG_REF, "conftest.py": "import os\nos.link(\"plug.py\", \"alias.py\")\nexec(open(\"alias.py\").read())\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /recorded in the sandbox.*plug\.py|os\.link in the load window/],
+    ["PYC1 conftest renames a planted *.pyc.<digits> into __pycache__", { ...PLUG_REF, "conftest.py": "import os\nos.makedirs(\"__pycache__\", exist_ok=True)\nopen(\"x.pyc.123\", \"wb\").write(b\"z\")\nos.rename(\"x.pyc.123\", \"__pycache__/mod.cpython-314.pyc\")\n" }, { "add.py": "def add(a, b):\n    return a + b\n" }, 4, /os\.rename in the load window/],
+    ["PYC2 conftest calls the importlib loader set_data with its own bytes", { ...PLUG_REF, "conftest.py": "import importlib.machinery as m\nm.SourceFileLoader(\"mod\", \"plug.py\").set_data(\"__pycache__/mod.cpython-314.pyc\", b\"z\")\n" }, { "add.py": "def add(a, b):\n    return a + b\n" }, 4, /os\.rename in the load window/],
+    ["PYC3 conftest imports an unchanged sibling helper, the interpreter writes its pyc", { ...PLUG_REF, "conftest.py": "import helper\n", "helper.py": "X = 1\n" }, { "other.py": "# changed\n" }, 0, /^$/],
+    ["PYC4 conftest wraps importlib code_to_timestamp_pyc, then imports a sibling so the genuine chain writes the pyc", { ...PLUG_REF, "conftest.py": "import importlib._bootstrap_external as be\norig = be._code_to_timestamp_pyc\nbe._code_to_timestamp_pyc = lambda *a, **k: orig(*a, **k)\nimport helper\n", "helper.py": "X = 1\n" }, { "other.py": "# changed\n" }, 4, /os\.rename in the load window/],
+    ["PYC5 conftest wraps builtins.compile, then imports a sibling so the genuine chain writes the pyc", { ...PLUG_REF, "conftest.py": "import builtins\norig = builtins.compile\nbuiltins.compile = lambda *a, **k: orig(*a, **k)\nimport helper\n", "helper.py": "X = 1\n" }, { "other.py": "# changed\n" }, 4, /os\.rename in the load window/],
+    ["PYC6 conftest wraps the pytest assertion rewriter, then imports a test module so the rewrite chain writes the pyc", { ...PLUG_REF, "conftest.py": "import _pytest.assertion.rewrite as r\norig = r.rewrite_asserts\nr.rewrite_asserts = lambda *a, **k: orig(*a, **k)\nimport test_other\n", "test_other.py": "X = 1\n" }, { "other.py": "# changed\n" }, 4, /os\.rename in the load window/],
+    ["EXIT1 conftest unchanged, a hit pipe killed by closing fd 9 before the changed file loads", { ...PLUG_REF, "conftest.py": "import os\nos.close(9)\nexec(open(\"plug.py\").read())\n" }, { "add.py": "def add(a, b):\n    return a + b + 1\n", "plug.py": "import add\nadd.add = lambda a, b: a + b\n" }, 4, /./],
+    ["a referenced plugin left unchanged while the bug is fixed", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = [\"-p\", \"plug\"]\n", "conftest.py": "pytest_plugins = [\"plug\"]\n" }, {}, 0, /^$/],
+  ] as const)("a PR where %s", async (_n, baseEdits, edits, rc, reason) => {
+    const files: Record<string, string> = { ...SECTION_FILES };
+    for (const [f, c] of Object.entries(baseEdits)) { if (c === null) delete files[f]; else files[f] = c; }
+    const meta = repoWith(`plg-${_n.replace(/\W/g, "").slice(0, 28)}`, files, { "note.txt": "x\n" });
+    const repo = meta.cloneUrl;
+    for (const [f, c] of Object.entries({ "add.py": PY_FIXED, ...edits })) { mkdirSync(join(repo, f, ".."), { recursive: true }); writeFileSync(join(repo, f), c); }
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "edit");
+    const head = git(repo, "rev-parse", "HEAD");
+    git(repo, "update-ref", "refs/pull/7/head", head);
+    let n = 0;
+    const r = await run({ ...meta, headSha: head }, { checkout: defaultCheckout, packageSuites: () => ({ suites: [], removed: [] }) }, issueFor(PY_CHECK));
     expect(r.rc).toBe(rc);
     expect(r.json.reasons.join(" ")).toMatch(reason);
   }, 30_000);
@@ -559,6 +701,92 @@ describe("verify-pr: an exit code alone is not proof", () => {
     expect(r.rc).toBe(rc);
     if (rc === 4) expect(r.json.reasons.join(" ")).toMatch(/pytest\.ini|pyproject\.toml/);
   }, 60_000);
+
+  test.each([
+    ["pyproject.toml", "-p" + " ".repeat(1 << 20) + ":"],
+    ["conftest.py", "pytest_plugins=[".repeat(1 << 16)],
+  ])("a 1MB %s built to stall a parser is read in under a second", (name, body) => {
+    const d = join(dir, `redos-${name}`);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, name), name === "pyproject.toml" ? `[tool.pytest.ini_options]\naddopts = "${body}"\n` : body);
+    writeFileSync(join(d, "a.py"), "x = 1\n");
+    const t0 = performance.now();
+    runnerConfigChanged(["a.py"], d);
+    expect(performance.now() - t0).toBeLessThan(1000);
+  }, 60_000);
+
+  const hitsOf = (files: string[], over: string[] = [], tail = "E\n") => `${["H {\"start\":1}", ...files.map((p) => `H ${JSON.stringify({ p })}`), ...over, 'H {"end":1,"err":0}'].join("\n")}\n${tail}`;
+
+  test.each([
+    ["no record at all (python3 or pytest could not start)", undefined, /no load record/],
+    ["a stream the reader never saw close (reader killed or stuck)", hitsOf(["a.py"], [], ""), /cut short/],
+    ["an unreadable line", hitsOf(["a.py"], ["H not json"]), /unreadable/],
+    ["a line that is not a hit", hitsOf(["a.py"], ["not a hit line"]), /unreadable/],
+    ["an unexpected record shape", hitsOf(["a.py"], ['H {"p":"a.py","q":1}']), /unexpected/],
+    ["a recorder write error", 'H {"start":1}\nH {"end":1,"err":1}\nE\n', /write error/],
+    ["no start line (the recorder was not first)", 'H {"end":1,"err":0}\nE\n', /0 start and 1 end/],
+    ["no terminator (pytest never reached collection)", 'H {"start":1}\nE\n', /1 start and 0 end/],
+    ["a second terminator (forged)", hitsOf(["a.py"], ['H {"end":1,"err":0}']), /1 start and 2 end/],
+    ["a second start (forged)", hitsOf(["a.py"], ['H {"start":1}']), /2 start and 1 end/],
+    ["a stream past its line cap", hitsOf(["a.py"], ["O"]), /line cap/],
+    ["a spawn in the load window", hitsOf(["a.py"], ['H {"x":"subprocess.Popen in the load window"}']), /cannot follow \(subprocess\.Popen/],
+    ["ctypes use in the load window", hitsOf(["a.py"], ['H {"x":"ctypes use"}']), /cannot follow \(ctypes use\)/],
+  ] as const)("a passing head with %s is NOT PROVEN (exit 4)", async (_n, hits, reason) => {
+    const meta = repoWith(`rec-${_n.replace(/\W/g, "").slice(0, 24)}`, PY_FILES, { "add.py": PY_FIXED });
+    let n = 0;
+    const r = await run(meta, { checkout: defaultCheckout, sandbox: () => (n++ === 0 ? { status: "COMPLETED", exit_code: 1 } : { status: "COMPLETED", exit_code: 0, report: PASS, hits }) }, issueFor(PY_CHECK));
+    expect(r.rc).toBe(4);
+    expect(r.json.reasons.join(" ")).toMatch(reason);
+  }, 30_000);
+
+  test("a forged line cannot hide a hit that was written before it: the union of every hit line counts", () => {
+    const r = bootRecord(hitsOf(["plug.py"], ['H {"end":0,"h":"0","err":0,"early":1}', "H junk"]));
+    expect([...r.files]).toEqual(["plug.py"]);
+    expect(r.reason).toBeDefined();
+  });
+
+  test.each([["passes", "true", 0], ["fails", "exit 3", 3]] as const)("the recorder scratch dir is gone after a check that %s", (_n, cmd, rc) => {
+    const tmp = mkdtempSync(join(tmpdir(), "loki-vprboot-"));
+    try {
+      const r = spawnSync("bash", ["-c", pytestBoot(cmd)], { env: { PATH: process.env["PATH"] ?? "", TMPDIR: tmp }, encoding: "utf8" });
+      expect(r.status).toBe(rc);
+      expect(readdirSync(tmp)).toEqual([]);
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  test("the wrapped check runs with the user site off, so a user-site .pth cannot run before the recorder", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "loki-vprboot-"));
+    try {
+      const r = spawnSync("bash", ["-c", pytestBoot('python3 -c "import sys; print(sys.flags.no_user_site)"')], { env: { PATH: process.env["PATH"] ?? "", TMPDIR: tmp }, encoding: "utf8" });
+      expect(r.stdout.trim()).toBe("1");
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  test("a hit line written after the terminator still counts toward the union", () => {
+    const r = bootRecord(`H {"start":1}\nH {"end":1,"err":0}\nH {"p":"late.py"}\nE\n`);
+    expect([...r.files]).toEqual(["late.py"]);
+    expect(r.reason).toBeUndefined();
+  });
+
+  test("a complete record naming only unchanged files lets the pass stand, and one naming a changed file does not", async () => {
+    const mk = (files: string[]) => {
+      const meta = repoWith(`rec-ok-${files.join("").length}`, PY_FILES, { "add.py": PY_FIXED });
+      let n = 0;
+      return run(meta, { checkout: defaultCheckout, sandbox: () => (n++ === 0 ? { status: "COMPLETED", exit_code: 1 } : { status: "COMPLETED", exit_code: 0, report: PASS, hits: hitsOf(files) }) }, issueFor(PY_CHECK));
+    };
+    const ok = await mk(["conftest.py", "test_add.py"]);
+    expect([ok.rc, ok.json.verdict]).toEqual([0, "VERIFIED"]);
+    const bad = await mk(["conftest.py", "add.py"]);
+    expect(bad.rc).toBe(4);
+    expect(bad.json.reasons.join(" ")).toContain("add.py");
+  }, 30_000);
+
+  test("a 1MB junk record is read in under a second and is NOT PROVEN", () => {
+    const t0 = performance.now();
+    const r = bootRecord(`H ${"x".repeat(1 << 20)}\n`);
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(r.reason).toMatch(/unreadable/);
+  });
 
   test("a config path that cannot be read is treated as config, not skipped", () => {
     mkdirSync(join(dir, "unreadable.toml"));

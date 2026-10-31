@@ -5,14 +5,74 @@
 // no proof exists to run (no linked issue or no trusted runnable check), 4 NOT PROVEN because the proof ran and failed.
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, posix } from "node:path";
 import { parseContract } from "../features/contract.ts";
 import { fetchIssue } from "../engine10/fetch_issue.ts";
-import { extractChecks, judgeF2p, referencedFiles, reportedCheck, REPORT_TOKEN, runnerConfigChanged, type SandboxResult } from "../contrib/verify_pr_f2p.ts";
+import { REPORT_RUNNERS } from "../engine10/testmap.ts";
+import { HITS_TOKEN } from "../util/runner_boot.ts";
+import { extractChecks, judgeF2p, referencedFiles, reportedCheck, REPORT_TOKEN, type SandboxResult } from "../contrib/verify_pr_f2p.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
+
+/** Reads `path` and applies `test` to its text; an unreadable file counts as a hit (fail closed). */
+function textMatchesOrUnreadable(path: string, test: (txt: string) => boolean): boolean {
+  try { return test(readFileSync(path, "utf8")); } catch { return true; }
+}
+
+/** Changed in a PR, these always count as runner config whatever they hold: transpiler config (babel), interpreter startup hooks (sitecustomize.py, usercustomize.py, *.pth), mocha config, and anything under a __mocks__ directory (the runner applies those without the test asking, and a `roots` setting can move them out of the repo root). */
+const ALWAYS_CONFIG = /(?:^|\/)(?:babel\.config\.[\w.]+|\.babelrc(?:\.[\w.]+)?|(?:site|user)customize\.py|[^/]+\.pth|\.mocharc(?:\.[\w.]+)?)$|(?:^|\/)__mocks__\//;
+/** Repo paths named by a JS or TS runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest). Editing such a file changes what the runner loads even when the config itself is unchanged. Python plugin loading is not read from text: the sandbox records what the runner, its plugins and its conftests load (the runner's `boot` recorder). */
+function configRefs(changed: readonly string[], roots: readonly string[]): Set<string> {
+  const out = new Set<string>(), dirs = new Set(changed.flatMap((f) => f.split("/").slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join("/")).concat("")));
+  for (const root of new Set(roots)) for (const d of dirs) for (const n of (() => { try { return readdirSync(join(root, d)); } catch { return []; } })()) {
+    const r = REPORT_RUNNERS.find((x) => x.config.test(n)); let txt: string;
+    if (!r || r.boot) continue; try { txt = readFileSync(join(root, d, n), "utf8"); if (r.key && !n.startsWith(r.runner)) txt = JSON.stringify((JSON.parse(txt) as Record<string, unknown>)[r.key] ?? ""); } catch { continue; }
+    for (const t of [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) { const p = posix.normalize(posix.join(d, t)); if (/[a-z]/i.test(t) && !/[*?^$|()[\]\\{}<>\s]/.test(t) && !t.startsWith("/") && !p.startsWith("..")) out.add(p); }
+  }
+  return out;
+}
+/** Files the PR added, changed, renamed or deleted that configure or preload the test runner: each REPORT_RUNNERS entry's config file, and any ini, cfg or toml file with a section header naming a test runner (`[...test...]`). Both the base and the head version are judged, so a runner section or key removed from a file that stays (a shared ini, cfg or json config) counts like a deleted file. A config file named for its runner is always config; the `key` check applies only to a shared manifest such as the project manifest. A read failure or a path missing at both sides counts as config (fail closed). The PR's own code could end the run early or redirect which tests run, so the check cannot be trusted. */
+export function runnerConfigChanged(changed: readonly string[], headDir: string, baseDir: string = headDir): string[] {
+  const refs = configRefs(changed, [headDir, baseDir]);
+  return changed.filter((f) => {
+    const b = basename(f), r = REPORT_RUNNERS.find((x) => x.config.test(b));
+    if (ALWAYS_CONFIG.test(f) || refs.has(f) || refs.has(f.replace(/\.[^./]+$/, "")) || refs.has(f.replace(/\/__init__\.py$/, ""))) return true;
+    const at = [headDir, baseDir].filter((d, i, a) => a.indexOf(d) === i && existsSync(join(d, f)));
+    if (/^tsconfig[\w.-]*\.json$/.test(b)) return at.length === 0 || at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => /"(?:paths|baseUrl|rootDirs|extends)"\s*:/.test(txt)));
+    if (at.length === 0 || (r && !r.key)) return !!r || at.length > 0;
+    if (!r && !/\.(?:ini|cfg|toml)$/.test(f)) return false;
+    return at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => r ? !r.key || b.startsWith(r.runner) || r.key in (JSON.parse(txt) as object) : /^\s*\[[^\]\n]*test/im.test(txt) || REPORT_RUNNERS.some((x) => x.inline?.test(txt))));
+  });
+}
+
+/** Reads the hits stream the sandbox returned for a booted check: lines `H <json>`, `O` (the stream passed its line cap) and a last `E` only if the sandbox reader saw the pipe close cleanly. `files` is the union of every hit line anywhere in the stream (PR code can add lines, never remove one: its own file was recorded before it ran). `reason` is set unless the record is whole: exactly one start and one end line, no write error, no taint (a process spawn, ctypes or rename in the load window), no line that is not a well-formed hit, no line cap overflow, and the reader's clean end. */
+export function bootRecord(hits: string | undefined): { files: Set<string>; reason?: string } {
+  const files = new Set<string>();
+  if (hits === undefined) return { files, reason: "no load record came back from the sandbox (the hits channel or the recorder could not start)" };
+  const lines = hits.split("\n").filter((l) => l !== "");
+  let torn = "", starts = 0, ends = 0, err = 0, taint = "";
+  const end = lines[lines.length - 1] === "E";
+  for (const l of lines) {
+    if (l === "E") continue;
+    if (l === "O") { torn ||= "the load record passed its line cap"; continue; }
+    type Hit = { p?: unknown; start?: unknown; end?: unknown; err?: unknown; x?: unknown };
+    let j: Hit | null = null;
+    try { j = l.startsWith("H ") ? JSON.parse(l.slice(2)) as Hit : null; } catch { j = null; }
+    if (j === null || typeof j !== "object") { torn ||= "the load record has an unreadable line"; continue; }
+    if (typeof j.p === "string" && Object.keys(j).length === 1) files.add(j.p);
+    else if (j.start === 1 && Object.keys(j).length === 1) starts++;
+    else if (j.end === 1 && (j.err === 0 || j.err === 1) && Object.keys(j).length === 2) { ends++; err += Number(j.err); }
+    else if (typeof j.x === "string" && Object.keys(j).length === 1) taint ||= j.x;
+    else torn ||= "the load record has an unexpected line";
+  }
+  if (!torn && !end) torn = "the load record stream was cut short (the sandbox reader did not see it close)";
+  if (!torn && (starts !== 1 || ends !== 1)) torn = `the load record has ${starts} start and ${ends} end lines (the recorder did not run once through collection, or a line was forged)`;
+  if (!torn && err > 0) torn = "the recorder reported a write error";
+  if (!torn && taint) torn = `the PR code did something in the load window that the record cannot follow (${taint})`;
+  return torn ? { files, reason: torn } : { files };
+}
 
 export interface PrRef { repo: string; number: number }
 export interface PrMeta { baseSha: string; headSha: string; cloneUrl: string; issueRefs: string[] }
@@ -23,7 +83,7 @@ export interface VerifyPrDeps {
   prMeta: (ref: PrRef) => PrMeta;
   issue: (ref: string) => IssueInfo;
   checkout: (ref: PrRef, meta: PrMeta, workDir: string) => Checkout;
-  /** A cmd containing REPORT_TOKEN is run with the token replaced by a fresh in-sandbox path whose file contents come back as `report`. */
+  /** A cmd containing REPORT_TOKEN is run with the token replaced by a fresh in-sandbox path whose file contents come back as `report`. A cmd containing HITS_TOKEN gets an append-only pipe on fd 9 whose stream comes back as `hits` (`H <line>` per line written, `O` past the line cap, a final `E` only if the reader saw it close). */
   sandbox: (dir: string, cmd: string) => SandboxResult;
   packageSuites: (baseDir: string, headDir: string, changed: readonly string[]) => PackageSuites;
   outDir: string;
@@ -105,17 +165,17 @@ export function defaultSandbox(dir: string, cmd: string, env: NodeJS.ProcessEnv 
   const image = env["LOKI_VPR_IMAGE"];
   if (!image) return { status: "BLOCKED", exit_code: null, detail: "LOKI_VPR_IMAGE is not set" };
   const out = mkdtempSync(join(tmpdir(), "loki-vpr-out-"));
-  const reporting = cmd.includes(REPORT_TOKEN);
+  const reporting = cmd.includes(REPORT_TOKEN), hitting = cmd.includes(HITS_TOKEN);
   const reportPath = `/work/.loki-vpr-${randomBytes(16).toString("hex")}`;
   try {
-    const r = spawnSync("bash", [join(REPO_ROOT, "scripts/verify-pr-sandbox.sh"), "--repo", dir, "--out", out, "--cmd", reporting ? cmd.split(REPORT_TOKEN).join(reportPath) : cmd, "--image", image, ...(reporting ? ["--report", reportPath] : [])], { env: tokenFreeEnv(env), encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });
+    const r = spawnSync("bash", [join(REPO_ROOT, "scripts/verify-pr-sandbox.sh"), "--repo", dir, "--out", out, "--cmd", (reporting ? cmd.split(REPORT_TOKEN).join(reportPath) : cmd).split(HITS_TOKEN).join(""), "--image", image, ...(reporting ? ["--report", reportPath] : []), ...(hitting ? ["--hits"] : [])], { env: tokenFreeEnv(env), encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });
     const res = join(out, "result.json");
     if (!existsSync(res)) return { status: r.status === 3 ? "BLOCKED" : "ERROR", exit_code: null, detail: (r.stderr ?? "").trim().slice(0, 200) || `runner rc ${r.status}` };
     const j = JSON.parse(readFileSync(res, "utf8")) as { status?: string; exit_code?: number | null; detail?: string };
     const st = j.status === "COMPLETED" || j.status === "TIMEOUT" || j.status === "BLOCKED" ? j.status : "ERROR";
     const outFile = join(out, "output.txt");
-    const repFile = join(out, "report.txt");
-    return { status: st, exit_code: typeof j.exit_code === "number" ? j.exit_code : null, detail: j.detail, output: existsSync(outFile) ? readFileSync(outFile, "utf8") : "", report: existsSync(repFile) ? readFileSync(repFile, "utf8") : undefined };
+    const repFile = join(out, "report.txt"), hitFile = join(out, "hits.txt");
+    return { status: st, exit_code: typeof j.exit_code === "number" ? j.exit_code : null, detail: j.detail, output: existsSync(outFile) ? readFileSync(outFile, "utf8") : "", report: existsSync(repFile) ? readFileSync(repFile, "utf8") : undefined, hits: existsSync(hitFile) ? readFileSync(hitFile, "utf8") : undefined };
   } catch (e) {
     return { status: "ERROR", exit_code: null, detail: String(e).slice(0, 200) };
   } finally {
@@ -180,17 +240,23 @@ export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): Verify
     const gone = referencedFiles(c, co.baseDir).filter((p) => !existsSync(join(co.headDir, p)));
     if (gone.length > 0) return np(`test removed by the PR: ${gone.join(", ")}`);
   }
-  const reported = new Map<string, string>();
+  const reported = new Map<string, string>(), booted = new Set<string>();
   for (const c of res.checks) {
     const rc = reportedCheck(c);
     if ("reason" in rc) return np(rc.reason);
-    reported.set(c, rc.cmd);
+    if (rc.boot) booted.add(c);
+    reported.set(c, rc.boot ? rc.boot(rc.cmd) : rc.cmd);
   }
   const cfg = runnerConfigChanged(co.changed, co.headDir, co.baseDir);
   if (cfg.length > 0) return np(`the PR adds or changes test runner config, so a passing check is not proof: ${cfg.join(", ")}`);
   for (const c of res.checks) {
-    const o = judgeF2p(c, deps.sandbox(co.baseDir, c), deps.sandbox(co.headDir, reported.get(c)!));
+    const base = deps.sandbox(co.baseDir, c), head = deps.sandbox(co.headDir, reported.get(c)!);
+    const rec = booted.has(c) && head.status === "COMPLETED" ? bootRecord(head.hits) : null, changedSet = new Set(co.changed);
+    const hit = rec ? [...rec.files].filter((f) => changedSet.has(f)) : [];
+    if (hit.length > 0) return np(`the PR adds or changes files that the test runner, a plugin or a conftest loads before it collects tests (recorded in the sandbox), so a passing check is not proof: ${hit.join(", ")}`);
+    const o = judgeF2p(c, base, head);
     if (!o.ok) return { ...np(o.reason), blocked: o.blocked };
+    if (rec?.reason) return np(`${rec.reason}, so a passing check is not proof: ${c}`);
   }
   const ps = deps.packageSuites(co.baseDir, co.headDir, co.changed);
   if (ps.removed.length > 0) return np(`package test script removed by the PR: ${ps.removed.join(", ")}`);

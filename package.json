@@ -80,6 +80,8 @@
     "schemas/",
     "bin/",
     "bin/loki",
+    "scripts/vpr-pytest-boot/",
+    "scripts/verify-pr-sandbox.sh",
     "loki-ts/dist/",
     "loki-ts/data/",
     "benchmarks/seeded-defects/manifest.json",

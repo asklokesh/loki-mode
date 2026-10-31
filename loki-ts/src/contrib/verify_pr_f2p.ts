@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { REPORT_RUNNERS } from "../engine10/testmap.ts";
 
-export interface SandboxResult { status: "COMPLETED" | "TIMEOUT" | "ERROR" | "BLOCKED"; exit_code: number | null; detail?: string; output?: string; report?: string }
+export interface SandboxResult { status: "COMPLETED" | "TIMEOUT" | "ERROR" | "BLOCKED"; exit_code: number | null; detail?: string; output?: string; report?: string; hits?: string }
 export type F2pOutcome =
   | { ok: true }
   | { ok: false; blocked: boolean; reason: string };
@@ -37,10 +37,10 @@ export const REPORT_TOKEN = "__LOKI_REPORT__";
 export const RECOGNISED_RUNNERS = REPORT_RUNNERS.map((r) => r.runner).join(", ");
 
 /** Rewrites the first recognised runner in `check` so it writes a machine report to REPORT_TOKEN. The report is read back from the file, never from printed output the PR's tests could forge. Runners with no stable report file and unrecognised commands are returned as a reason, never trusted on exit code or printed totals. */
-export function reportedCheck(check: string): { cmd: string } | { reason: string } {
+export function reportedCheck(check: string): { cmd: string; runner: string; boot?: (cmd: string) => string } | { reason: string } {
   for (const r of REPORT_RUNNERS) {
     const m = new RegExp(String.raw`(?<![\w./-])${r.find.source}`).exec(check);
-    if (m) return { cmd: `${check.slice(0, m.index)}${m[0]} ${r.flags.replace("<report>", REPORT_TOKEN)}${check.slice(m.index + m[0].length)}` };
+    if (m) return { cmd: `${check.slice(0, m.index)}${m[0]} ${r.flags.replace("<report>", REPORT_TOKEN)}${check.slice(m.index + m[0].length)}`, runner: r.runner, boot: r.boot };
   }
   const why = "no recognised test runner in the check (runners with no stable report file, such as go and cargo, are not accepted)";
   return { reason: `check cannot be proven: ${why}. A Check must run one of ${RECOGNISED_RUNNERS}, which write a pass/fail report file that is read back; an exit code or printed totals alone is not proof: ${check}` };
@@ -62,22 +62,6 @@ export function reportShowsPass(report: string | undefined): boolean {
   const bad = (r.match(/<(?:failure|error)\b/g) ?? []).length;
   const counted = [...r.matchAll(/\b(?:failures|errors)="(\d+)"/g)].reduce((n, m) => n + Number(m[1]), 0);
   return cases - skipped > 0 && bad === 0 && counted === 0;
-}
-
-/** Reads `path` and applies `test` to its text; an unreadable file counts as a hit (fail closed). */
-function textMatchesOrUnreadable(path: string, test: (txt: string) => boolean): boolean {
-  try { return test(readFileSync(path, "utf8")); } catch { return true; }
-}
-
-/** Files the PR added, changed, renamed or deleted that configure or preload the test runner: each REPORT_RUNNERS entry's config file, and any ini, cfg or toml file with a section header naming a test runner (`[...test...]`). Both the base and the head version are judged, so a runner section or key removed from a file that stays (a shared ini, cfg or json config) counts like a deleted file. A config file named for its runner is always config; the `key` check applies only to a shared manifest such as the project manifest. A read failure or a path missing at both sides counts as config (fail closed). The PR's own code could end the run early or redirect which tests run, so the check cannot be trusted. */
-export function runnerConfigChanged(changed: readonly string[], headDir: string, baseDir: string = headDir): string[] {
-  return changed.filter((f) => {
-    const b = basename(f), r = REPORT_RUNNERS.find((x) => x.config.test(b));
-    const at = [headDir, baseDir].filter((d, i, a) => a.indexOf(d) === i && existsSync(join(d, f)));
-    if (at.length === 0 || (r && !r.key)) return !!r || at.length > 0;
-    if (!r && !/\.(?:ini|cfg|toml)$/.test(f)) return false;
-    return at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => r ? !r.key || b.startsWith(r.runner) || r.key in (JSON.parse(txt) as object) : /^\s*\[[^\]\n]*test|^[ \t]*[\w."' \t-]*\bpytest\b["']?[ \t]*(?:\.|=[ \t]*\{)/im.test(txt)));
-  });
 }
 
 /** Decides one check. `base` must exit non-zero and `head` must exit zero AND its runner-written report must show a pass (a bare exit 0 is not proof); any sandbox non-completion is NOT PROVEN, never a pass or a fail. */
