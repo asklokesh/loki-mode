@@ -1,7 +1,7 @@
 // E-15: Wall author (ENGINE.md 4). One provider session, cwd a fresh temp dir holding only task.md and repomap.txt (never sees the code), writes loki_wall_* tests, copied into the repo (never on abort/kill/timeout, E-54) and
 // sealed under <runDir>/wall/ (sha256 each); wall.sealed before Implement; clean base-tree pass short-circuits to already_satisfied. E-64: skipped outright on the small-task lean path (plan.ts logs the same decision).
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir } from "node:os"; import { goPackagePath } from "../../features/wall_manifest.ts";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { type RunContext, type RunnerName, type Stage, type StageResult, type TestMap, type TestRef, taskBlock } from "../types.ts";
 import { clauseDroppedNote, extractClauses, untaggedClauses, type ClauseSet } from "../../util/spec_file.ts";
@@ -104,7 +104,7 @@ export interface WallAuthored { kind: "authored"; staged?: boolean; model?: stri
 export type WallAuthorOutcome = { kind: "done"; result: StageResult } | WallAuthored;
 
 /** Session plus compile check. Writes only <runDir>/wall (sealed copies); repoDir is read, never written. */
-export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: { model: string; suffix: string; note?: string }): Promise<WallAuthorOutcome> {
+export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: { model: string; suffix: string; note?: string | undefined }): Promise<WallAuthorOutcome> {
   const done = (result: StageResult): WallAuthorOutcome => ({ kind: "done", result });
   if (signal.aborted) return done({ status: "failed", data: {}, reason: "aborted before wall started" });
   if (!wallEnabled()) return done({ status: "skipped", data: {}, reason: "LOKI_E10_WALL=0" });
@@ -154,7 +154,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   if (session.killed || session.exit === null) { rmSync(cwd, { recursive: true, force: true }); return done({ status: "failed", data: { iteration_ids: [iterationId], model }, reason: "wall session aborted, killed, or timed out", killed: true }); } // E-54: also covers killed-from-outside (exit:null, "killed before exiting" per types.ts)
   const casesBad = ingestWallCases(cwd, runners, ctx.repoDir); if (casesBad) { rmSync(cwd, { recursive: true, force: true }); return done({ status: "failed", data: { iteration_ids: [iterationId], model }, reason: casesBad }); } // CCR-06: invalid structured output fails closed with a named reason, never free-form code
   const planText = typeof prior.plan?.plan === "string" ? prior.plan.plan : null, repoFiles = repoMap?.files ?? [];
-  const goPkgPath = ((): string | undefined => { for (let d = targetDir; d.startsWith(ctx.repoDir); d = dirname(d)) { try { const m = /^module\s+(\S+)/m.exec(readFileSync(join(d, "go.mod"), "utf8")); if (m) { const rel = relative(d, targetDir); return rel ? `${m[1]}/${rel}` : m[1]; } } catch { /* no go.mod here */ } if (d === ctx.repoDir || d === dirname(d)) break; } return undefined; })(); // the Go package under test, by import path
+  const goPkgPath = goPackagePath((f) => { try { return readFileSync(f, "utf8"); } catch { return undefined; } }, ctx.repoDir, targetDir); // the Go package under test, by import path
   const oor = (): { name: string; why: string }[] => readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)).flatMap((name) => { const text = readFileSync(join(cwd, name), "utf8"), why = outOfRepoTarget(text) ?? vacuousCheck(name, text, goPkgPath) ?? phantomReason(phantomRepoPaths(text, name, targetDir, ctx.repoDir, planText, task), repoFiles, relative(ctx.repoDir, targetDir), pkg?.root ?? "", task); return why ? [{ name, why }] : []; });
   const bad1 = oor(); if (bad1.length > 0 && !wallCasesRunner(runners) && !signal.aborted && !ctx.overCap?.()) await ctx.sessions.run({ stage: "wall", brief: withStagePrefix(outOfRepoReask("Rewrite these Wall files in place, keeping the same names and acceptance coverage.", bad1)), tier: "development", model, iterationId: `${iterationId}-oor`, limitS: wallLimitS(sz.size), maxOutputTokens: wallOutputCap(), signal, cwd }); // FC-WALL-OUT-OF-REPO-TARGET: re-ask once in the same directory with the precise reason
   const oorBad = new Map(oor().map((b) => [b.name, b.why])), all = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)), held = stashHoldout({ runId: ctx.runId, repoDir: ctx.repoDir, srcDir: cwd, targetDir, names: all.filter((n) => !oorBad.has(n) && !conventionViolation(conv, n, readFileSync(join(cwd, n), "utf8"))), runnerOf: (n) => guessRunner(n, runners) }), generated = all.filter((n) => !held?.names.has(n)); // P12-05: the held-out subset never reaches the repo, runDir or the implementer
@@ -241,7 +241,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   removeHoldout(ctx.runId, ctx.repoDir);
   const r2Model = capToRunTier(wallModel(), ctx.model, ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE"]);
   ctx.emit("wall.reauthor", "wall", { from_model: cheap, to_model: r2Model, reason: killed ? "first author session killed or timed out" : green ? "first author green on the base tree" : "no usable test from the first author" });
-  const b = await wallAuthor(ctx, signal, { model: r2Model, suffix: "-r2", ...(dropped ? { note: reauthorNote(first.data) } : {}) }), second = b.kind === "done" ? b.result : await installWallAsync(ctx, b, ctx.repoDir, opts);
+  const b = await wallAuthor(ctx, signal, { model: r2Model, suffix: "-r2", note: dropped ? reauthorNote(first.data) : undefined }), second = b.kind === "done" ? b.result : await installWallAsync(ctx, b, ctx.repoDir, opts);
   const ids = [...((first.data.iteration_ids as string[] | undefined) ?? []), ...((second.data.iteration_ids as string[] | undefined) ?? [])];
   const still = second.status === "completed" && ((second.data.files as unknown[] | undefined) ?? []).length === 0 && dropped; // the one re-author is spent: a second empty Wall is disclosed, never retried
   return { ...second, data: { ...second.data, iteration_ids: ids, reauthored: true, ...(still ? { not_proven: [...((second.data.not_proven as string[] | undefined) ?? []), WALL_REAUTHOR_EXHAUSTED] } : {}) } }; // both tiers' spend reaches the ledger via iteration_ids
