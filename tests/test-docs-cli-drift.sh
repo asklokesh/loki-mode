@@ -123,6 +123,7 @@ awk '/^_docs_invoke_provider\(\) \{/{p=1} /^_docs_generate\(\) \{/{p=1} p{print}
     _docs_scan_project() { :; }; _docs_build_context() { echo ctx; }
     _docs_generate_template() { echo TEMPLATE; }
     _docs_write_manifest() { :; }
+    _loki_perm_argv_for() { _LOKI_CLAUDE_SHELL=/bin/bash; _LOKI_PERM_ARGV=(); }
     # shellcheck disable=SC1090
     . "$T4DIR/fns.sh"
     cd "$T4DIR/proj" || exit 1
