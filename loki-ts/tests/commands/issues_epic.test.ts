@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseDecomposition, renderEpicTree, type SliceResult } from "../../src/commands/issues_epic.ts";
+import { decomposeBrief, parseDecomposition, progressLine, renderEpicTree, runEpicSlices, type EpicProgress, type SliceResult } from "../../src/commands/issues_epic.ts";
 import { runIssues, type GhIssue, type IssuesRunDeps, type Triage } from "../../src/commands/issues_run.ts";
 import type { RunOpts, RunResult } from "../../src/commands/queue.ts";
 
@@ -263,5 +263,91 @@ describe("loki issues run: epic split", () => {
       expect(src).not.toMatch(/["'`]pr["'`]\s*,\s*["'`]create["'`]/);
       expect(src).not.toContain("engine10-push");
     }
+  });
+});
+
+describe("PR-first epics: a small cap, independent slices first, concurrent scheduling, a progress line", () => {
+  test("a split is capped at 4 slices: 4 pass, 5 are refused naming the cap", () => {
+    expect(parseDecomposition(plan(slice("a"), slice("b"), slice("c"), slice("d"))).ok).toBe(true);
+    const five = parseDecomposition(plan(slice("a"), slice("b"), slice("c"), slice("d"), slice("e")));
+    expect(five.ok).toBe(false);
+    if (!five.ok) expect(five.reason).toContain("at most 4");
+  });
+  test("the split prompt states the cap and prefers independent slices over chains", () => {
+    const b = decomposeBrief(SLUG, { number: 1, title: "t", body: "b", labels: [] } as unknown as GhIssue, "big", "/x.json");
+    expect(b).toContain("at most 4 slices");
+    expect(b).toContain("Prefer independent slices");
+    expect(b).toContain("at the same time");
+  });
+
+  const ok = (id: string, outcome = "VERIFIED"): SliceResult => ({ id, title: id, parent: null, outcome, pr: outcome.startsWith("FAILED") ? null : `https://x/pr/${id}`, cost: "$0.10", branch: `loki/${id}` });
+  const decomp = (...sl: ReturnType<typeof slice>[]) => {
+    const d = parseDecomposition(plan(...sl));
+    if (!d.ok) throw new Error(d.reason);
+    return d;
+  };
+  /** A runSlice whose slices finish only when released, recording what was running together. */
+  const gated = (verdict: Record<string, string> = {}) => {
+    const started: string[] = [], gates = new Map<string, () => void>(), peak = { n: 0 };
+    let live = 0;
+    const runSlice = (s: { id: string }, _k: number, _base: string | null) => new Promise<SliceResult>((res) => {
+      started.push(s.id); live++; peak.n = Math.max(peak.n, live);
+      gates.set(s.id, () => { live--; res(ok(s.id, verdict[s.id] ?? "VERIFIED")); });
+    });
+    return { started, gates, peak, runSlice };
+  };
+  const tick = () => new Promise((r) => setTimeout(r, 5));
+
+  test("independent roots start together under --parallel and a dependent waits for its parent", async () => {
+    const g = gated();
+    const done = runEpicSlices(decomp(slice("a"), slice("b"), slice("c", ["a"])), g.runSlice, () => {}, 3);
+    await tick();
+    expect(g.started).toEqual(["a", "b"]);
+    g.gates.get("a")!(); await tick();
+    expect(g.started).toEqual(["a", "b", "c"]);
+    g.gates.get("b")!(); g.gates.get("c")!();
+    expect((await done).map((r) => r.id)).toEqual(["a", "b", "c"]);
+    expect(g.peak.n).toBe(2);
+  });
+  test("the number running at once never exceeds --parallel; parallel 1 keeps one at a time", async () => {
+    const g = gated();
+    const done = runEpicSlices(decomp(slice("a"), slice("b"), slice("c"), slice("d")), g.runSlice, () => {}, 2);
+    await tick();
+    expect(g.started).toEqual(["a", "b"]);
+    g.gates.get("a")!(); await tick();
+    expect(g.started).toEqual(["a", "b", "c"]);
+    for (const id of ["b", "c"]) g.gates.get(id)!();
+    await tick(); g.gates.get("d")!(); await done;
+    expect(g.peak.n).toBe(2);
+    const one = gated();
+    const d1 = runEpicSlices(decomp(slice("a"), slice("b")), one.runSlice, () => {}, 1);
+    await tick();
+    expect(one.started).toEqual(["a"]);
+    one.gates.get("a")!(); await tick(); one.gates.get("b")!(); await d1;
+    expect(one.peak.n).toBe(1);
+  });
+  test("a failed root skips only its own dependents; the independent root still runs", async () => {
+    const g = gated({ a: "FAILED (exit 1)" });
+    const skipped: string[] = [];
+    const done = runEpicSlices(decomp(slice("a"), slice("b"), slice("c", ["a"])), g.runSlice, (r) => skipped.push(r.id), 3);
+    await tick(); g.gates.get("a")!(); g.gates.get("b")!();
+    const rs = await done;
+    expect(skipped).toEqual(["c"]);
+    expect(rs.map((r) => r.outcome.split(" ")[0])).toEqual(["FAILED", "VERIFIED", "SKIPPED"]);
+    expect(g.started).toEqual(["a", "b"]);
+  });
+  test("progress reports done, running and waiting, and the line names the epic", async () => {
+    const g = gated();
+    const seen: EpicProgress[] = [];
+    const done = runEpicSlices(decomp(slice("a"), slice("b", ["a"])), g.runSlice, () => {}, 2, (p) => seen.push({ ...p }));
+    await tick(); g.gates.get("a")!(); await tick(); g.gates.get("b")!(); await done;
+    expect(seen[0]).toEqual({ done: 0, running: 1, waiting: 1, total: 2 });
+    expect(seen[seen.length - 1]).toEqual({ done: 2, running: 0, waiting: 0, total: 2 });
+    expect(progressLine(7, { done: 1, running: 2, waiting: 1, total: 4 })).toBe("#7 epic: 1/4 slices done, 2 running, 1 waiting");
+  });
+  test("runIssues prints the epic progress line while slices run", async () => {
+    const h = harness({ issues: [issue(12)] });
+    expect(await runIssues(["run", SLUG, "--yes", "--parallel", "2"], h.inject)).toBe(0);
+    expect(h.out.join("")).toMatch(/#12 epic: \d+\/\d+ slices done, \d+ running, \d+ waiting/);
   });
 });

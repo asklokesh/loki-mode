@@ -1,7 +1,7 @@
 // MASS-2: `loki issues run` splits a too-large issue into stacked slices instead of skipping it.
 //   1. one Opus planning session returns a JSON split (Engine Law L0: the model decides the slices; the harness only
 //      checks the schema, refuses cycles and refuses a slice whose dependencies are not on one stack);
-//   2. slices run in dependency order, each as a normal engine10 run in its own worktree started on its stack parent's
+//   2. a split has at most MAX_SLICES slices; slices run in dependency order, those with satisfied dependencies concurrently up to --parallel, each as a normal engine10 run in its own worktree started on its stack parent's
 //      run branch (roots on HEAD), with the PR base set to that parent branch. The PR itself is the run's own PR stage;
 //   3. a slice that is not VERIFIED or PARTIAL with a PR stops its dependents, which are recorded SKIPPED with the reason;
 //   4. renderEpicTree prints the epic as a tree of slice, outcome, PR and cost.
@@ -29,7 +29,7 @@ export interface SliceResult {
 
 const ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 const MIN_SLICES = 2;
-const MAX_SLICES = 15;
+const MAX_SLICES = 4;
 
 const oneLine = (s: string): string => s.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/\s+/g, " ").trim();
 
@@ -122,7 +122,9 @@ export function decomposeBrief(slug: string, i: GhIssue, triageReason: string, o
     "You are planning how an autonomous coding agent should deliver one GitHub issue that is too large for a single pull request.",
     `A triage pass judged it too large: ${oneLine(triageReason)}`,
     "Split it into an ordered list of independently verifiable, PR-sized slices. Each slice becomes one pull request, opened as a stack:",
-    "a slice that depends on another is built on top of that slice's branch. Prefer a short chain; give a slice several dependencies only when they are already on one chain.",
+    "a slice that depends on another is built on top of that slice's branch.",
+    `Use at most ${MAX_SLICES} slices, and fewer when the issue allows. Prefer independent slices (empty depends_on) that can be built at the same time over a chain: add a dependency only when a slice cannot be built without the other's code. A long serial chain is a failure of the plan, because one failed slice skips everything after it.`,
+    "Give a slice several dependencies only when they are already on one chain.",
     "Do not edit, create or delete any repository file. You may read the repository to judge scope.",
     `Write exactly one JSON object to the file ${outPath} and nothing else to that file, in this form:`,
     '{"slices":[{"id":"s1","title":"<short title>","acceptance":["<checkable criterion>"],"depends_on":[],"files":["<path if known>"]}]}',
@@ -158,27 +160,47 @@ export function planComment(triageReason: string, slices: readonly Slice[]): str
 /** A slice may carry dependents only when it produced a pushed branch with a PR and did not fail or block. */
 export const stacksOn = (r: SliceResult | undefined): boolean => !!r && !!r.pr && !!r.branch && !/^(FAILED|BLOCKED|SKIPPED)/.test(r.outcome);
 
-/** Run one epic's slices in order. runSlice gets the parent's run branch (null for a root). */
+/** Run one epic's slices: every slice whose dependencies are satisfied starts at once, up to `parallel` at a time, so independent roots never wait on each other. runSlice gets the parent's run branch (null for a root). */
 export async function runEpicSlices(
   d: Extract<Decomposition, { ok: true }>,
   runSlice: (s: Slice, index: number, baseBranch: string | null) => Promise<SliceResult>,
   onSkip: (r: SliceResult) => void,
+  parallel = 1,
+  onProgress: (p: EpicProgress) => void = () => {},
 ): Promise<SliceResult[]> {
   const results = new Map<string, SliceResult>();
-  for (const [k, s] of d.slices.entries()) {
-    const bad = s.depends_on.find((dep) => !stacksOn(results.get(dep)));
-    if (bad) {
-      const why = results.get(bad)!.outcome.split(/[ ,(]/)[0];
-      const r: SliceResult = { id: s.id, title: s.title, parent: d.parent[s.id] ?? null, outcome: `SKIPPED (depends on ${bad}, which was ${why})`, pr: null, cost: "-" };
-      results.set(s.id, r);
-      onSkip(r);
-      continue;
+  const running = new Map<string, Promise<void>>();
+  const pending = new Set(d.slices.map((s) => s.id));
+  const total = d.slices.length;
+  const progress = (): void => onProgress({ done: results.size, running: running.size, waiting: pending.size, total });
+  while (pending.size > 0 || running.size > 0) {
+    for (const [k, s] of d.slices.entries()) {
+      if (!pending.has(s.id) || running.size >= Math.max(1, parallel)) continue;
+      if (!s.depends_on.every((dep) => results.has(dep))) continue;
+      pending.delete(s.id);
+      const bad = s.depends_on.find((dep) => !stacksOn(results.get(dep)));
+      if (bad) {
+        const why = results.get(bad)!.outcome.split(/[ ,(]/)[0];
+        const r: SliceResult = { id: s.id, title: s.title, parent: d.parent[s.id] ?? null, outcome: `SKIPPED (depends on ${bad}, which was ${why})`, pr: null, cost: "-" };
+        results.set(s.id, r);
+        onSkip(r);
+        continue;
+      }
+      const p = d.parent[s.id] ?? null;
+      const base = p ? results.get(p)!.branch! : null;
+      const job = runSlice(s, k, base).then((r) => { results.set(s.id, r); running.delete(s.id); progress(); });
+      running.set(s.id, job);
+      progress();
     }
-    const p = d.parent[s.id] ?? null;
-    results.set(s.id, await runSlice(s, k, p ? results.get(p)!.branch! : null));
+    if (running.size > 0) await Promise.race(running.values());
+    else if (pending.size > 0 && ![...pending].some((id) => d.slices.find((x) => x.id === id)!.depends_on.every((dep) => results.has(dep)))) break;
   }
   return d.slices.map((s) => results.get(s.id)!);
 }
+
+export interface EpicProgress { done: number; running: number; waiting: number; total: number }
+/** One line for the terminal while an epic's slices run. */
+export const progressLine = (n: number, p: EpicProgress): string => `#${n} epic: ${p.done}/${p.total} slices done, ${p.running} running, ${p.waiting} waiting`;
 
 export function renderEpicTree(n: number, title: string, rows: readonly SliceResult[]): string {
   const L = [`### #${n} ${oneLine(title)}`, ""];
