@@ -8,7 +8,7 @@ import type { FailureGroup } from "../failures.ts";
 import { hooks } from "../hooks.ts";
 import { treeFingerprint } from "../../util/anti_loop.ts";
 import { buildFixResumeBrief, currentDiff, holdoutNote, runFixSession } from "../../runner/session_resume.ts";
-import { adjudicateWallConflict, resumeAfterConflict } from "../../util/conflict_resume.ts"; import { accumulateWallDefects } from "../../util/wall_owned.ts"; import { type ReadOnlyFile, restoreReadOnly } from "./implement.ts";
+import { adjudicateWallConflict, resumeAfterConflict } from "../../util/conflict_resume.ts"; import { type ReadOnlyFile, restoreReadOnly } from "./implement.ts";
 import { installOwned } from "../../project_model/install.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
@@ -84,7 +84,7 @@ export const fixStage: Stage = {
       const last = r.ids[r.ids.length - 1]!, rc = await resumeAfterConflict(ctx, { ...sessionBase, iterationId: last, brief: fullBrief }, r.session);
       r = { ...r, session: rc.session, ids: rc.iterationId === last ? r.ids : [...r.ids, rc.iterationId] }; }
     const ro = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [], wd = r.session.markers.specConflict && !r.session.killed ? await adjudicateWallConflict(ctx, { ...sessionBase, iterationId: r.ids[r.ids.length - 1]!, brief: fullBrief }, r.session, ro) : null; if (wd) r = { ...r, session: wd.session, ids: [...r.ids, ...wd.ids] }; // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT
-    const testsReverted = restoreReadOnly(ro), wallDefect = wd?.defect ?? prior.fix?.wall_defect, wallDefects = accumulateWallDefects(prior.fix, wd?.defect); // the Wall is read-only after any fix pass; every drop stays on record across rounds
+    const testsReverted = restoreReadOnly(ro); // the Wall is read-only after any fix pass
     const treeAfter = treeFingerprint(ctx.repoDir, ctx.baseSha), conflict =r.session.markers.specConflict && !r.session.killed && treeBefore !== null && treeBefore === treeAfter ? r.session.markers.specConflict : null; // evidence: a claim from a round that edited the tree is work in progress, not an escape from the failure
     ctx.emit("fix.round", "fix", {
       round,
@@ -98,7 +98,7 @@ export const fixStage: Stage = {
     return {
       status: "completed",
       // Every round's session id, since each round replaces this stage's output.
-      data: { round, signatures, diagnosis: r.session.summary ?? null, groups_fed: groups.length, diff_stat: diffStat, tree_before: treeBefore, tree_after: treeAfter, ...(conflict ? { exit: "spec_conflict", spec_conflict_reason: conflict } : {}), killed: r.session.killed, tests_reverted: testsReverted, ...(wallDefect ? { wall_defect: wallDefect } : {}), ...(wallDefects.length ? { wall_defects: wallDefects } : {}), cascade: repeated, model: actualModel,
+      data: { round, signatures, diagnosis: r.session.summary ?? null, groups_fed: groups.length, diff_stat: diffStat, tree_before: treeBefore, tree_after: treeAfter, ...(conflict ? { exit: "spec_conflict", spec_conflict_reason: conflict } : {}), killed: r.session.killed, tests_reverted: testsReverted, cascade: repeated, model: actualModel,
         ...(stallEsc ? { stall_escalated: true } : {}), ...(climbed ? { route_escalation: climbed } : {}), iteration_ids: r.ids, session_id: r.sessionId, fix_resume: r.mode, ...(r.why ? { fix_resume_why: r.why } : {}),
         fix_rounds: [...((prior.fix?.fix_rounds as unknown[] | undefined) ?? []), { round, fix_resume: r.mode, cache_read_tokens: r.cacheRead }] },
     };

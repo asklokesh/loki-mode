@@ -10,7 +10,7 @@ import { cascadeDowngrade, haikuFirstDowngrade, loadRepoMap, namedFiles, sizeTas
 import { attemptsGate, runAttemptsOnCtx } from "../../features/attempts.ts"; // S41-13, default off
 import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
 import { classifyExitCause } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
-import { adjudicateWallConflict, resumeAfterConflict, resumeAfterEmptyDone } from "../../util/conflict_resume.ts"; import type { WallDefect } from "../../util/wall_owned.ts";
+import { adjudicateWallConflict, resumeAfterConflict, resumeAfterEmptyDone } from "../../util/conflict_resume.ts";
 import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
 import { routerActive } from "../../runner/router/unit_model.ts";
@@ -136,7 +136,7 @@ export const implementStage: Stage = {
     }
     if (rt && !signal.aborted) session = await routeEscalate(ctx, first, session, rt, ids); // triggers b/c: one redo on the next rung
     if (session.markers.specConflict && !session.killed) { const r = await resumeAfterConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; if (r.iterationId !== ids[ids.length - 1]) ids.push(r.iterationId); } // FC-19: one correction, then the conflict is believed
-    let wallDefect: WallDefect | null = null; if (session.markers.specConflict && !session.killed && !signal.aborted) { const w = await adjudicateWallConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, readOnly); if (w) { session = w.session; ids.push(...w.ids); wallDefect = w.defect; } } // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT: a Wall-anchored conflict is Loki's defect
+    if (session.markers.specConflict && !session.killed && !signal.aborted) { const w = await adjudicateWallConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, readOnly); if (w) { session = w.session; ids.push(...w.ids); } } // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT: a Wall-anchored conflict goes to the referee (record: outputs.wall.arbitrated)
     if (!signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && treeIsEmpty(ctx)) { const r = await resumeAfterEmptyDone(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; ids.push(r.iterationId); } // FC-43: one correction for a done exit with no change
 
     if (process.env.LOKI_E10_REPRO === "1" && !plan && !signal.aborted && !session.killed && session.exit === 0) { let bad: { name: string; why: string }[] = []; try { bad = outOfRepoTests(ctx.repoDir, changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); } catch { /* unreadable tree: no re-ask */ } if (bad.length) { const redo = `${first.iterationId}-oor`; ids.push(redo); session = await ctx.sessions.run({ ...unchained(), brief: withStagePrefix(outOfRepoReask("Rewrite these new test files in place, keeping the same names and what they reproduce.", bad)), iterationId: redo }); } } // TEN-QUALITY-44: the repro test gets the Wall's out-of-repo check and one re-ask
@@ -160,7 +160,7 @@ export const implementStage: Stage = {
       exit,
       already_done_evidence: session.markers.alreadyDone,
       spec_conflict_reason: session.markers.specConflict,
-      tests_reverted: testsReverted, ...(wallDefect ? { wall_defect: wallDefect } : {}),
+      tests_reverted: testsReverted,
       impacted_tests: impacted,
       cascade,
       ...(downgrade ? { model_downgrade: downgrade.note } : {}),

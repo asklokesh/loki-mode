@@ -72,6 +72,8 @@ export const wallLimitS = (size: TaskSize, env = process.env): number => {
 export const cascadeEnabled = (env = process.env): boolean => knob(env.LOKI_E10_CASCADE, ["1", "on", "true"]);
 /** Resolves a cli_alias (e.g. "sonnet") to its catalog model id; an id already, or an unknown alias, passes through unchanged. */
 export const resolveModelAlias = resolveClaudeModel;
+/** LOKI_E10_WALL_REFEREE: default on. =0/off/false restores the single unvalidated re-author of a conflicting Wall file (the legacy path), which never drops a check. */
+export const wallRefereeEnabled = (env = process.env): boolean => !knob(env.LOKI_E10_WALL_REFEREE, ["0", "off", "false"]);
 /** LOKI_E10_WALL_TIER (alias or id, default sonnet) resolved via providers/model_catalog.json cli_aliases. */
 export const wallModel = (env = process.env): string => resolveModelAlias(env.LOKI_E10_WALL_TIER || "sonnet");
 /** COST-11: first Wall author rung. Haiku for small/normal tasks, re-authored once on wallModel() when the result is unusable (wall.ts runWall).

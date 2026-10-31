@@ -1,6 +1,5 @@
 // E-10: commit and Seal (docs/v10/ENGINE.md sections 4, 9). Writes receipt.json and receipt.md, computes receipt_sha256, and signs natively with node:crypto Ed25519 (A-121; no python, no
 // `cryptography`). The key is the A-120 local key, created on first use. An empty token means UNSIGNED, never presented as attested.
-import { wallDropped } from "../../util/wall_owned.ts";
 import { sanitizeReason } from "../../util/redact.ts";
 import { specReceiptBlock } from "../../util/spec_file.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock, sealAccuracyBlock } from "../../util/run_outputs.ts";
 import { createHash } from "node:crypto"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
@@ -100,20 +99,20 @@ export const commitStage: Stage = {
 // Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus duration_s from section 5) are trusted; any other key seal reads puts a "not recorded" entry on NOT PROVEN when absent, so a producer cannot silently shape the receipt.
 export const wallGreenOnBaseOf = (o: Partial<Record<StageName, Obj>>): boolean => { const b = (o.wall?.base_run ?? {}) as Obj; return typeof b.pass === "number" && b.pass > 0 && b.fail === 0 && (typeof b.not_run === "number" ? b.not_run : 0) === 0; }; // D42 (3)/B1 (r2): green only with real passes, no failure, no not_run; shared by seal, wall.ts runWall
 export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean, proof: boolean, targetProof = false, uncovered: string[] = [], leanGap: string[] = []): Verdict {
-  const exit = o.implement?.exit, wd = wallDropped(o as never).length > 0;
+  const exit = o.implement?.exit;
   // FC-16: no success verdict without a Loki-executed check with n>0 and a pass; otherwise PARTIAL (NOT PROVEN, "no tests executed").
   if (o.commit?.failed !== true && strs(o.commit?.not_proven).length === 0 && (o.intake?.already_satisfied === true || exit === "already_done")) return (proof || wallGreenOnBase) && o.wall?.reproduction_green_on_base !== true ? "ALREADY_SATISFIED" : "PARTIAL"; // FC-VACUOUS-WALL-GREEN: a Wall green on base proves a claim, never makes the claim itself; GAME10-08b: recorded runtime evidence the Wall did not reproduce is never "already satisfied"
   if (exit === "spec_conflict") return "SPEC_CONFLICT"; if (o.commit?.failed === true || strs(o.commit?.not_proven).length > 0) return "FAILED"; // r3: an unrestored user file is never a clean verdict; A-104b r2: a failed commit never seals VERIFIED
   // Section 2: an empty diff without the LOKI_ALREADY_DONE marker is FAILED, never VERIFIED.
   if (emptyDiff) return "FAILED";
   // FC-21b (1): a limit-killed implement is VERIFIED only when the harness itself ran every check green, a Wall or task-named test passed with n>0 (targetProof), and the limit was recorded.
-  if (exit === "killed") return typeof o.implement?.limit_s === "number" && targetProof && uncovered.length === 0 && proof && !wallGreenOnBase && !verifyNotProven && !wd && checks.length > 0 && checks.every((c) => c.result === "pass") ? "VERIFIED" : "PARTIAL";
+  if (exit === "killed") return typeof o.implement?.limit_s === "number" && targetProof && uncovered.length === 0 && proof && !wallGreenOnBase && !verifyNotProven && checks.length > 0 && checks.every((c) => c.result === "pass") ? "VERIFIED" : "PARTIAL";
   if (typeof o.implement?.limit_s === "number") return "PARTIAL"; // A1: a limit that did not kill the session (an error or a throw) is never a clean verdict
   if (checks.some((c) => c.result === "fail")) return "FAILED";
   // E-98a B1: verify's own NOT PROVEN (e.g. a system interpreter) downgrades too -- never a silent VERIFIED.
   if (exit === "external" && !(Array.isArray(o.wall?.files) && o.wall.files.length > 0)) return "PARTIAL"; // FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED: an external diff has no watched implement session, so with no Wall file that ran it is never VERIFIED
   if (leanGap.length > 0) return "PARTIAL"; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: no Wall file ran and no passing check references a changed symbol, so nothing exercised the change
-  if (wd || exit === "killed" || checks.length === 0 || checks.some((c) => c.result !== "pass") || verifyNotProven || !proof || wallGreenOnBase) return "PARTIAL"; // FC-VACUOUS-WALL-GREEN: a Wall green on base discriminates nothing, so a changed tree is never VERIFIED on it
+  if (exit === "killed" || checks.length === 0 || checks.some((c) => c.result !== "pass") || verifyNotProven || !proof || wallGreenOnBase) return "PARTIAL"; // FC-VACUOUS-WALL-GREEN: a Wall green on base discriminates nothing, so a changed tree is never VERIFIED on it
   return "VERIFIED";
 }
 
@@ -215,7 +214,8 @@ export const sealStage: Stage = {
     if (wallGreenOnBase && verdict === "PARTIAL" && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done") notProven.add(WALL_GREEN_ON_BASE_REASON);
     if (!proof && !(wallGreenOnBase && verdict === "ALREADY_SATISFIED") && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = vraw; notProven.add(executed ? AGENT_ONLY_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
-    for (const n of [...strs(o.wall?.not_proven), ...wallDropped(o as never)]) notProven.add(n); // TEN-COST-09: a skipped Wall is disclosed, never read as passed
+    for (const n of strs(o.wall?.not_proven)) notProven.add(n);
+    for (const x of Array.isArray(o.wall?.arbitrated) ? (o.wall!.arbitrated as Obj[]) : []) notProven.add(`Wall assertion arbitrated (spec clause, two referees): ${String(x.check)} test ${String(x.test)}: old assertion ${JSON.stringify(x.old_assertion)} replaced by ${JSON.stringify(x.new_assertion)}; spec quote ${JSON.stringify(x.spec_quote)}`); // listed, never downgrades: the replacement passed every validator and both referees // TEN-COST-09: a skipped Wall is disclosed, never read as passed
     for (const d of Array.isArray(o.wall?.discarded) ? (o.wall!.discarded as Obj[]) : []) notProven.add(`wall test discarded: ${String(d.file)} (${String(d.reason)})`); // FC-23
     for (const d of Array.isArray(o.wall?.not_run_files) ? (o.wall!.not_run_files as Obj[]) : []) notProven.add(`Wall test not executed: ${String(d.file)}: ${String(d.reason)}`); // FC-69: never silent, on the receipt and the console NOT PROVEN line
     if (wallNotRun > 0 && ![...notProven].some((n) => n.startsWith("Wall test not executed:") || n.startsWith("wall test discarded:")) && !(Array.isArray(o.wall?.discarded) && (o.wall!.discarded as unknown[]).length > 0)) notProven.add(`Wall test not executed: ${wallNotRun} file(s), no reason recorded`);
