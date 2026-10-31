@@ -14,7 +14,7 @@ import { RealBaseTestRunner } from "../../src/engine10/stages/wall.ts";
 import { projectApi } from "../../src/project_model/api.ts";
 import { PROJECT_FILE } from "../../src/project_model/discover.ts";
 import { packageSuiteSpecs, wallRedOnBaseOf } from "../../src/project_model/package_suite.ts";
-import { baselineSuites, ensureProfile } from "../../src/runner/repo_profile.ts";
+import { baselineSuites, commandProfilePath, ensureProfile, loadProfile } from "../../src/runner/repo_profile.ts";
 import { loadProjectApi, siteFor } from "../../src/project_model/resolve.ts";
 import { PROJECT_MODEL_SCHEMA, type ModelCommand, type ProjectModel } from "../../src/project_model/schema.ts";
 
@@ -165,7 +165,7 @@ describe("FC-01 verify in a multi-root monorepo", () => {
     expect((await runWith("python3 -m pytest --version")).result).toBe("not_run");
   });
   describe("a full suite that ran 0 tests is a disclosed note only when the base suite was empty too", () => {
-    const zeroTests = async (headEcho: string, baseOut: string | null, targetPassed: boolean): Promise<{ checks: DeepCheck[]; np: string[] }> => {
+    const zeroTests = async (headEcho: string, baseOut: string | null, targetPassed: boolean, edit?: (p: NonNullable<ReturnType<typeof loadProfile>>) => void): Promise<{ checks: DeepCheck[]; np: string[] }> => {
       const { dir, base } = monorepo(true);
       const m = loadProjectApi(dir)!.model as ProjectModel;
       m.packages[0]!.commands.test = cmd(`echo "${headEcho}"`, "backend", "backend/package.json");
@@ -173,6 +173,7 @@ describe("FC-01 verify in a multi-root monorepo", () => {
       if (baseOut !== null) {
         const run = (): { code: number; timedOut: boolean; out: string } => ({ code: 0, timedOut: false, out: baseOut });
         ensureProfile(dir, { run }); baselineSuites(dir, packageSuiteSpecs(loadProjectApi(dir))!, { run });
+        if (edit) { const p = loadProfile(dir)!; edit(p); writeFileSync(commandProfilePath(dir), JSON.stringify(p)); }
       }
       const checks: DeepCheck[] = [], np = new Set<string>();
       await runFullSuite(ctxFor(dir, base, []), sig(), { targetPassed }, checks, np);
@@ -200,6 +201,19 @@ describe("FC-01 verify in a multi-root monorepo", () => {
     });
     test("MUTATION: a base that also skipped everything is not empty discovery", async () => {
       expect((await zeroTests(SKIPPED, SKIPPED, true)).checks.map((c) => c.result)).toEqual(["not_run"]);
+    });
+    test("MUTATION: a profile recorded on another revision than the base is refused, so a 0-test head stays not_run", async () => {
+      const r = await zeroTests(EMPTY, EMPTY, true, (p) => { p.revision = "0".repeat(40); });
+      expect(r.checks.map((c) => c.result)).toEqual(["not_run"]);
+      expect(r.np.some((n) => n.startsWith("n/a:"))).toBe(false);
+    });
+    test("MUTATION: a root baseline with the same command string never excuses a package in backend/", async () => {
+      const r = await zeroTests(EMPTY, EMPTY, true, (p) => {
+        delete p.suites;
+        p.baseline = { ...p.baseline, ran: true, command: `echo "${EMPTY}"`, exit_code: 0, zero_tests: true };
+      });
+      expect(r.checks.map((c) => c.result)).toEqual(["not_run"]);
+      expect(r.np.some((n) => n.startsWith("n/a:"))).toBe(false);
     });
   });
   test("the deep full suite runs each package's own test command in its own directory", async () => {

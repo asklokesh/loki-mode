@@ -443,11 +443,11 @@ export function baselineSuites(repoDir: string, specs: { name: string; cmd: stri
   } catch { return null; }
 }
 
-/** True only when the same full-suite command ran on exactly this base commit, exited 0 and discovered no tests (empty discovery, no skips), and `cls` is the head's empty discovery too: the suite was empty before the change as well, so it says nothing about the change. Anything else (no profile, other revision, unmatched command, base executed or skipped tests) is false, so the head's 0-test result stays not_run. */
-export function suiteEmptyOnBase(repoDir: string, baseSha: string | undefined, line: string, name: string, cls: Classified, out: string): boolean {
+/** True only when the same full-suite command ran on exactly this base commit, exited 0 and discovered no tests (empty discovery, no skips), and `cls` is the head's empty discovery too: the suite was empty before the change as well, so it says nothing about the change. Anything else (no profile, a package directory with no suites entry, other revision, unmatched command, base executed or skipped tests) is false, so the head's 0-test result stays not_run. */
+export function suiteEmptyOnBase(repoDir: string, baseSha: string | undefined, line: string, name: string, cls: Classified, out: string, cwd = "."): boolean {
   const p = baseSha ? loadProfile(repoDir) : null;
   if (!p || p.revision !== baseSha || !emptyDiscovery(cls, out)) return false;
-  const e = p.suites?.find((x) => x.command === name) ?? (normCmd(p.baseline.command ?? "") === normCmd(line) ? p.baseline : undefined);
+  const e = p.suites?.find((x) => x.command === name) ?? (cwd === "." && normCmd(p.baseline.command ?? "") === normCmd(line) ? p.baseline : undefined); // the root baseline speaks only for the repo root, never for a package directory
   return e?.ran === true && e.exit_code === 0 && e.zero_tests === true;
 }
 
