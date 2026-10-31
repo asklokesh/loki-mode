@@ -125,8 +125,8 @@ describe("engine10 E-45 sizing", () => {
     const brief = calls.find((c) => c.stage === "wall")!.brief;
     expect(brief.split("\n").filter((l) => l.startsWith("src/mod")).length).toBe(WALL_MAP_MAX_LINES);
     expect(brief.length).toBeLessThan(task.length + 9000);
-    const prevSpeed = process.env.LOKI_SPEED; process.env.LOKI_SPEED = "0"; // the speed stage prefix adds a fixed ~200 bytes; this pins the bare brief; measured fixed overhead 784 (TEN-COST-14 output budget line + TEN-QUALITY-14 negative-case sentence + FC-WALL-OUT-OF-REPO-TARGET repo-paths line)
-    try { expect(buildWallBrief(task).length).toBeLessThan(task.length + 790); } finally { if (prevSpeed === undefined) delete process.env.LOKI_SPEED; else process.env.LOKI_SPEED = prevSpeed; }
+    const prevSpeed = process.env.LOKI_SPEED; process.env.LOKI_SPEED = "0"; // the speed stage prefix adds a fixed ~200 bytes; this pins the bare brief; measured fixed overhead 918 (TEN-COST-14 output budget line + TEN-QUALITY-14 negative-case sentence + FC-WALL-OUT-OF-REPO-TARGET repo-paths line + task-named-file path sentence)
+    try { expect(buildWallBrief(task).length).toBeLessThan(task.length + 930); } finally { if (prevSpeed === undefined) delete process.env.LOKI_SPEED; else process.env.LOKI_SPEED = prevSpeed; }
   });
 
   it("missing inputs never size small", () => {
