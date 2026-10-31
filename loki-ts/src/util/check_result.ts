@@ -916,13 +916,15 @@ function summaryOf(a: Pick<RiskAssessment, "tier" | "computed" | "reasons" | "ov
 
 export const DEEP_ITEMS = ["full suite", "app boot", "council", "security scan"] as const;
 export const NOT_SELECTED = "not selected by risk tier: ";
+export const SECURITY_SCAN = "security scan";
 /** FC-SEAL-NA-AS-UNPROVEN: the deep checks a receipt lists as NOT PROVEN (the tier wanted them and they did not run) versus "not selected by risk tier" (the tier never asked). No usable risk record keeps every item NOT PROVEN (fail-safe); a full suite that verify executed is dropped. */
 export function deepGaps(risk: unknown, verifyChecks: { name?: unknown; result?: unknown }[], deepChecks: { name?: unknown; result?: unknown }[] = [], reviewRan = false): { notProven: string[]; notSelected: string[] } {
   const r = risk as { tier?: unknown; checks_selected?: unknown; checks_deferred?: unknown } | null | undefined, arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
   const ok = !!r && (r.tier === "low" || r.tier === "medium" || r.tier === "high") && Array.isArray(r.checks_selected) && Array.isArray(r.checks_deferred);
   const executed = (cs: { name?: unknown; result?: unknown }[], i: string): boolean => cs.some((c) => String(c.name).startsWith(i) && (c.result === "pass" || c.result === "fail"));
   const sel = ok ? arr(r?.checks_selected) : [], fullRan = executed(verifyChecks, "full suite") || (sel.includes("full test command") && !arr(r?.checks_deferred).includes("full test command"));
-  const items = DEEP_ITEMS.filter((i) => !(i === "full suite" ? fullRan : false) && !executed(deepChecks, i));
+  const verifyRan = (i: string): boolean => i === SECURITY_SCAN && verifyChecks.some((c) => c.name === i && (c.result === "pass" || c.result === "fail")); // PR-FIRST-4: verify runs the high tier's security scan before seal; only an exact-name executed check credits it, a not_run never does
+  const items = DEEP_ITEMS.filter((i) => !(i === "full suite" ? fullRan : false) && !executed(deepChecks, i) && !verifyRan(i));
   if (!ok) return { notProven: [...items], notSelected: [] };
   const low = r?.tier === "low", gap = (i: string): boolean => !low && (i === "full suite" ? sel.includes("full test command") || sel.includes("full suite") : sel.includes(i));
   const notProven = items.filter(gap), notSelected = items.filter((i) => !gap(i)).map((i) => NOT_SELECTED + i);
@@ -1207,9 +1209,11 @@ export type IgnoreSnapshot = { at: number; info_exclude: IgnoreSource; global_ex
  *  null when the listing failed. */
 const EXEC_NAMES = new Set([".gitignore", "pyvenv.cfg"]);
 const VENV_TOOL = /^(python[0-9.]*(\.exe)?|ruff(\.exe)?|pytest(\.exe)?|py\.test)$/;
+/** PR-FIRST-4: every ignored, untracked path. A repo with installed node_modules lists far past execFileSync's 1 MB default (FireLater: 6 MB, 85k paths), which threw ENOBUFS and nulled the snapshot on every run; a listing past this bound still throws (fail closed). */
+const listIgnoredFiles = (repoDir: string): string[] => safeGit(repoDir, ["-c", "core.quotePath=false", "ls-files", "--others", "--ignored", "--exclude-standard", "-z"], { maxBuffer: 256 * 1024 * 1024, timeout: 60_000 }).split("\0").filter((f) => f && !f.startsWith(".loki/"));
 function execFiles(repoDir: string): Record<string, string> | null {
   let all: string[];
-  try { all = safeGit(repoDir, ["-c", "core.quotePath=false", "ls-files", "--others", "--ignored", "--exclude-standard", "-z"]).split("\0").filter((f) => f && !f.startsWith(".loki/")); } catch { return null; }
+  try { all = listIgnoredFiles(repoDir); } catch { return null; }
   const roots = new Set([".venv", "venv", ...all.filter((f) => basename(f) === "pyvenv.cfg").map((f) => dirname(f))]);
   const inVenvBin = (f: string): boolean => { for (let d = dirname(f); d !== "." && d !== "/"; d = dirname(d)) if ((basename(d) === "bin" || basename(d) === "Scripts") && roots.has(dirname(d))) return true; return false; };
   const out: Record<string, string> = {};
@@ -1291,9 +1295,8 @@ export function ignoreRuleChanges(repoDir: string, snap: unknown, baseSha?: stri
     }
     if (gi.size) notes.push(`ignore rules changed while the run was in progress: ${[...gi].slice(0, 20).join(", ")} was added or edited, so git may hide files the run created`);
     if (hidden.length) notes.push(`an ignored file that can change what verify runs or imports was added or changed during the run: ${hidden.slice(0, 20).join(", ")}${hidden.length > 20 ? ` (+${hidden.length - 20} more)` : ""}`);
-    const listIgnored = (): string[] => safeGit(repoDir, ["-c", "core.quotePath=false", "ls-files", "--others", "--ignored", "--exclude-standard", "-z"]).split("\0").filter((f) => f && !f.startsWith(".loki/"));
     if (notes.length === 0) return [];
-    const made = listIgnored().filter((f) => { try { const st = statSync(join(repoDir, f)); return Math.max(st.birthtimeMs, st.mtimeMs) >= s.at!; } catch { return false; } });
+    const made = listIgnoredFiles(repoDir).filter((f) => { try { const st = statSync(join(repoDir, f)); return Math.max(st.birthtimeMs, st.mtimeMs) >= s.at!; } catch { return false; } });
     if (made.length) notes.push(`ignored file created during the run, hidden from the diff and the receipt: ${made.slice(0, 20).join(", ")}${made.length > 20 ? ` (+${made.length - 20} more)` : ""}`);
     return notes;
   } catch { return ["ignore rules could not be compared with the intake snapshot: git failed"]; }

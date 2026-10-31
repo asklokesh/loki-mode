@@ -233,6 +233,18 @@ describe("engine10 verify: weakened checks (A-115)", () => {
     expect(ignoreRuleChanges(dir, snap, base).length).toBe(1);
     expect(ignoreRuleChanges(dir, { ...snap, exec_files: null }, base).length).toBe(1);
 }, 60_000);
+  test("PR-FIRST-4: an ignored listing past 1 MB (installed node_modules) is still recorded and compared, never 'could not be listed'", () => {
+    const dir = hidRepo({ "a.py": "x\n" }), base = sh(dir, ["rev-parse", "HEAD"]), nm = join(dir, "node_modules", "pkg-with-a-long-enough-name-to-fill-the-listing");
+    writeFileSync(join(dir, ".git", "info", "exclude"), "node_modules/\n");
+    mkdirSync(nm, { recursive: true });
+    for (let i = 0; i < 16_000; i++) writeFileSync(join(nm, `module-file-${String(i).padStart(6, "0")}.js`), "");
+    expect(execFileSync("git", ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], { cwd: dir, maxBuffer: 1 << 30 }).length).toBeGreaterThan(1024 * 1024); // the listing is past execFileSync's 1 MB default
+    const snap = ignoreSnapshot(dir);
+    expect(snap.exec_files).not.toBeNull();
+    expect(ignoreRuleChanges(dir, snap, base)).toEqual([]);
+    mkdirSync(join(dir, "node_modules", ".venv", "bin"), { recursive: true }); writeFileSync(join(dir, "node_modules", ".venv", "pyvenv.cfg"), "home = /x\n"); // control: a change is still seen at this size
+    expect(ignoreRuleChanges(dir, snap, base).join("\n")).toContain("pyvenv.cfg");
+  }, 120_000);
   test("info/exclude the user had before the run, untouched, honest fix: no ignore-rule note", async () => {
     const d = await verify(TWO, { "impl.py": "def double(x):\n    return x * 2\n" }, TASK, py("test_target.py"), py("test_old.py"), false, (dir) => appendFileSync(join(dir, ".git", "info", "exclude"), "scratch.txt\nconftest.py\n"));
     expect(d.not_proven.filter((n) => /ignore/.test(n))).toEqual([]);

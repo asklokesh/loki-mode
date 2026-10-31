@@ -1,8 +1,8 @@
 // loki-ts/src/engine10/stages/deep.ts -- E-23 Deep verify (ENGINE.md section 4). Runs after Seal + PR: full suite, app-boot probe, council, secret scan; reports via engine10-push.sh (comment + addendum + status). A refused or unavailable check is NOT PROVEN, never red; only a failing full suite or a secret match is failure. Rule of Two: assertWorkerEnv asserts no real GitHub token, since the deep worker runs repo code and reads untrusted diffs. Council goes through the injectable CouncilRunner; unwired, it is NOT PROVEN, never passing.
 import { installOwned } from "../../project_model/install.ts";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { appProbe, type AppProbeResult } from "../../util/app_probe.ts";
 import { secureScanChanged } from "../../util/secure_scan.ts";
 import { postDeepResults } from "../../util/receipt_surface.ts";
@@ -61,6 +61,7 @@ export interface DeepOptions {
   secureScanPath?: string; // secure-scan.py override, tests only
   council?: CouncilRunner; changed?: string[]; proofFiles?: string[]; wallBaseRed?: boolean; targetPassed?: boolean; /* a Wall or task-named check already passed with n>0 */ // FC-SEAL-NA-AS-UNPROVEN: the diff and the Wall verdict decide whether a package without tests is N/A
   maxCouncilDiffBytes?: number;
+  scanAddedSince?: string; // PR-FIRST-4 (verify only): scan just the lines added since this commit, and the path of a file new since it, so a match already on base never fails the run
   fullSuiteTimeoutMs?: number;
   path?: string; // PATH override, tests only, so "missing tool" never depends on the host
   env?: NodeJS.ProcessEnv; // for assertWorkerEnv; defaults to process.env
@@ -134,16 +135,51 @@ async function runCouncilCheck(
   }
 }
 /** One "security scan" check over the changed files: secret-scan.sh's two matchers (sourced, never edited) plus secure-scan.py.  A secret hit or a HIGH secure-scan finding is fail; else a missing or broken scanner is not_run (NOT PROVEN), never pass. */
-async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
+export async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
   const scriptPath = opts.secretScanShPath ?? DEFAULT_SECRET_SCAN_SH, name = "security scan", cmd = "secret-scan.sh + secure-scan.py";
   if (!existsSync(scriptPath)) { checks.push({ name, cmd, result: "not_run", duration_s: 0 }); notProven.add(`not run: ${name} (secret-scan.sh not found)`); return; }
   if (changed.length === 0) { checks.push({ name, cmd, result: "pass", duration_s: 0 }); return; }
-  const inline = 'script="$1"; shift; . "$script" || exit 3; hit=0; for f in "$@"; do if _commit_scan_secret_file "$f" || _commit_path_looks_secret "$f"; then printf "%s\\n" "$f"; hit=1; fi; done; exit "$hit"';
-  const started = Date.now();
-  const r = await run(["bash", "-c", inline, "_", scriptPath, ...changed.map((f) => join(ctx.repoDir, f))], { cwd: ctx.repoDir, timeoutMs: 30_000 });
-  const sec = await secureScanChanged(ctx.repoDir, changed, opts.secureScanPath), gaps: string[] = [], reasons: string[] = [];
-  const hits = r.exitCode === 3 ? [] : r.stdout.split("\n").map((l) => l.trim()).filter(Boolean), high = sec.findings.filter((f) => String(f.severity).toUpperCase() === "HIGH");
-  if (r.exitCode === 3) gaps.push("secret-scan.sh failed to load");
+  const inline = 'script="$1"; mode="$2"; shift 2; . "$script" || exit 3; hit=0; for f in "$@"; do if { [ "$mode" != path ] && _commit_scan_secret_file "$f"; } || { [ "$mode" != content ] && _commit_path_looks_secret "$f"; }; then printf "%s\\n" "$f"; hit=1; fi; done; exit "$hit"';
+  // Every scan runs on repo-relative names (from repoDir, or from the added-lines copy), so a parent directory such as
+  // /home/u/credential-service/ never reaches the path heuristic.  A killed scan (null exit) is -1, never a clean 0 or 1.
+  const started = Date.now(), gaps: string[] = [], reasons: string[] = [], outs: { code: number; hits: string[] }[] = [];
+  const scan = async (mode: string, cwd: string, files: string[]): Promise<void> => {
+    if (!files.length) return;
+    const s = await run(["bash", "-c", inline, "_", scriptPath, mode, ...files], { cwd, timeoutMs: 30_000 });
+    outs.push({ code: s.exitCode ?? -1, hits: s.stdout.split("\n").map((l) => l.trim()).filter(Boolean) });
+  };
+  let sec: Awaited<ReturnType<typeof secureScanChanged>>;
+  if (opts.scanAddedSince) {
+    const base = opts.scanAddedSince, root = mkdtempSync(join(tmpdir(), "loki-verify-secscan-")), fresh: string[] = [], copied: string[] = [], unread: string[] = [];
+    try {
+      for (const f of changed) {
+        if (!existsSync(join(ctx.repoDir, f))) continue; // deleted: nothing added
+        const atBase = (await safeGitRun(ctx.repoDir, ["cat-file", "-e", `${base}:${f}`], { timeoutMs: 10_000 })).exitCode === 0;
+        let added: string | null = null;
+        if (atBase) {
+          // --text: a modified binary shows its added bytes, never a bare "Binary files differ" that reads as nothing added.
+          const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", "--text", "--no-renames", "-U0", base, "--", f], { timeoutMs: 20_000 });
+          if (d.exitCode !== 0) { unread.push(f); continue; } // a failed or killed diff is unread, never an empty (clean) file
+          added = d.stdout.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n");
+          if (!added) continue; // nothing added to this file
+        } else fresh.push(f);
+        mkdirSync(dirname(join(root, f)), { recursive: true });
+        if (added === null) copyFileSync(join(ctx.repoDir, f), join(root, f)); else writeFileSync(join(root, f), added + "\n");
+        copied.push(f);
+      }
+      if (unread.length > 0) gaps.push(`added lines could not be read: ${unread.join(", ")}`);
+      await scan("content", root, copied);
+      await scan("path", ctx.repoDir, fresh);
+      sec = await secureScanChanged(root, copied, opts.secureScanPath);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  } else {
+    await scan("both", ctx.repoDir, changed);
+    sec = await secureScanChanged(ctx.repoDir, changed, opts.secureScanPath);
+  }
+  // A hit printed before a scan died is still a hit; any exit outside 0 / 1-with-hits / 3 means the scan did not finish.
+  const hits = [...new Set(outs.filter((o) => o.code !== 3).flatMap((o) => o.hits))], high = sec.findings.filter((f) => String(f.severity).toUpperCase() === "HIGH");
+  if (outs.some((o) => o.code === 3)) gaps.push("secret-scan.sh failed to load");
+  for (const o of outs) if (o.code !== 0 && o.code !== 3 && !(o.code === 1 && o.hits.length > 0)) gaps.push(`secret scan did not finish (exit ${o.code})`);
   if (!sec.ok) gaps.push(sec.error ?? "secure-scan failed");
   if (hits.length > 0) reasons.push(`secret match: ${hits.join(", ")}`);
   if (high.length > 0) reasons.push(`secure-scan: ${high.map((f) => `${f.rule}: ${f.file}:${f.line}`).join(", ")}`);

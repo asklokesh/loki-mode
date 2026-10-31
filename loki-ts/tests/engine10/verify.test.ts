@@ -22,8 +22,8 @@ function git(dir: string, args: string[]): string {
 
 /** A fresh git repo, optionally seeded from fixtures/verify/<seed>, with one
  *  committed base state (so baseSha() is meaningful). */
-function mkRepo(seed?: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "e10-verify-"));
+function mkRepo(seed?: string, parent: string = tmpdir()): string {
+  const dir = mkdtempSync(join(parent, "e10-verify-"));
   cleanupDirs.push(dir);
   if (seed) cpSync(join(FIX, seed), dir, { recursive: true });
   writeFileSync(join(dir, "README.md"), "seed\n");
@@ -841,4 +841,104 @@ describe("engine10 verify: red Wall failure tail", () => {
     expect(writeWallFailureTail(dir, [])).toBeUndefined();
     expect(existsSync(join(dir, WALL_FAILURE_TAIL_FILE))).toBe(false);
   });
+});
+
+// PR-FIRST-4: the high tier's security scan runs in verify (before seal), so a high-tier receipt is not left waiting on the post-PR deep stage.
+describe("PR-FIRST-4 high-tier security scan in verify", () => {
+  const high = async (files: Record<string, string>, parent?: string) => {
+    const repoDir = mkRepo(undefined, parent);
+    for (const [f, body] of Object.entries(files)) { mkdirSync(dirname(join(repoDir, f)), { recursive: true }); writeFileSync(join(repoDir, f), body); }
+    const { ctx } = fakeCtx({ repoDir, baseSha: baseSha(repoDir) });
+    const r = await verifyStage.run(ctx, sig());
+    const sec = (r.data.checks as VerifyCheck[]).filter((c) => c.name === "security scan");
+    return { r, sec, risk: JSON.parse(readFileSync(join(repoDir, ".loki", "state", "risk-tier.json"), "utf8")) as { tier: string; checks_deferred: string[] } };
+  };
+  test("a clean high-tier change runs the scan, passes, and drops it from the deferred list", async () => {
+    const { sec, risk } = await high({ "src/auth/login.ts": "export const ok = 1;\n" });
+    expect(risk.tier).toBe("high");
+    expect(sec.map((c) => c.result)).toEqual(["pass"]);
+    expect(risk.checks_deferred).not.toContain("security scan");
+  }, 60_000);
+  test("a secret-looking file fails the scan, which is a failing check (never VERIFIED)", async () => {
+    const { r, sec } = await high({ "src/auth/credentials.json": "{}\n" });
+    expect(sec.map((c) => c.result)).toEqual(["fail"]);
+    expect(String(sec[0]!.reason)).toContain("credentials.json");
+    expect((r.data.failures_grouped as { signature: string }[]).some((g) => g.signature.startsWith("security scan"))).toBe(true);
+  }, 60_000);
+  test("only lines the run added are scanned: a key already on base never fails, the same key added by the run does", async () => {
+    const key = `const k = "${"AKIA" + "QWERTYUIOPASDFGH"}";\n`; // built at runtime so the repo's own leak scanner never sees a literal
+    const edited = async (added: string) => {
+      const repoDir = mkRepo();
+      mkdirSync(join(repoDir, "src", "auth"), { recursive: true });
+      writeFileSync(join(repoDir, "src", "auth", "keys.ts"), key);
+      git(repoDir, ["add", "-A"]); git(repoDir, ["commit", "-qm", "base with a key"]);
+      const base = baseSha(repoDir);
+      writeFileSync(join(repoDir, "src", "auth", "keys.ts"), key + added);
+      const { ctx } = fakeCtx({ repoDir, baseSha: base });
+      const r = await verifyStage.run(ctx, sig());
+      return (r.data.checks as VerifyCheck[]).filter((c) => c.name === "security scan");
+    };
+    expect((await edited("export const ok = 1;\n")).map((c) => c.result)).toEqual(["pass"]);
+    const bad = await edited(key.replace("k =", "k2 ="));
+    expect(bad.map((c) => c.result)).toEqual(["fail"]);
+    expect(String(bad[0]!.reason)).toContain("src/auth/keys.ts");
+  }, 120_000);
+  test("a scanner that cannot run (secret-scan.sh fails to load) is not_run, NOT PROVEN in verify's own list (caps the verdict), and stays deferred", async () => {
+    const bin = mkdtempSync(join(tmpdir(), "e10-verify-bin-")); cleanupDirs.push(bin);
+    writeFileSync(join(bin, "bash"), "#!/bin/sh\nexit 3\n"); chmodSync(join(bin, "bash"), 0o755); // the scan's bash cannot source the matcher script
+    const oldPath = process.env["PATH"];
+    try {
+      process.env["PATH"] = `${bin}:${oldPath ?? ""}`;
+      const { r, sec, risk } = await high({ "src/auth/login.ts": "export const ok = 1;\n" });
+      expect(sec.map((c) => c.result)).toEqual(["not_run"]);
+      expect((r.data.not_proven as string[]).some((n) => n.startsWith("not run: security scan (") && n.includes("secret-scan.sh failed to load"))).toBe(true);
+      expect(risk.checks_deferred).toContain("security scan");
+    } finally { process.env["PATH"] = oldPath; }
+  }, 60_000);
+  // A stub put first on PATH for one test: the stage's own bash or git resolves to it.
+  const withStub = async <T>(name: string, body: string, fn: () => Promise<T>): Promise<T> => {
+    const bin = mkdtempSync(join(tmpdir(), "e10-verify-bin-")); cleanupDirs.push(bin);
+    writeFileSync(join(bin, name), body); chmodSync(join(bin, name), 0o755);
+    const oldPath = process.env["PATH"];
+    try { process.env["PATH"] = `${bin}:${oldPath ?? ""}`; return await fn(); } finally { process.env["PATH"] = oldPath; }
+  };
+  test("a scan killed by a signal is not_run, never pass", async () => {
+    const { r, sec } = await withStub("bash", "#!/bin/sh\nkill -TERM $$\n", () => high({ "src/auth/login.ts": "export const ok = 1;\n" }));
+    expect(sec.map((c) => c.result)).toEqual(["not_run"]);
+    expect((r.data.not_proven as string[]).some((n) => n.startsWith("not run: security scan (") && n.includes("secret scan did not finish (exit "))).toBe(true);
+  }, 60_000);
+  test("a failed added-lines diff is never read as an empty (clean) file: the scan is not_run, not pass", async () => {
+    const repoDir = mkRepo();
+    mkdirSync(join(repoDir, "src", "auth"), { recursive: true });
+    writeFileSync(join(repoDir, "src", "auth", "keys.ts"), "export const a = 1;\n");
+    git(repoDir, ["add", "-A"]); git(repoDir, ["commit", "-qm", "base"]);
+    const base = baseSha(repoDir);
+    writeFileSync(join(repoDir, "src", "auth", "keys.ts"), `export const a = 1;\nconst k = "${"AKIA" + "QWERTYUIOPASDFGH"}";\n`);
+    const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+    const sec = await withStub("git", `#!/bin/sh\ncase " $* " in *" -U0 "*) exit 128;; esac\nexec "${realGit}" "$@"\n`, async () => {
+      const { ctx } = fakeCtx({ repoDir, baseSha: base });
+      return ((await verifyStage.run(ctx, sig())).data.checks as VerifyCheck[]).filter((c) => c.name === "security scan");
+    });
+    expect(sec.map((c) => c.result)).toEqual(["not_run"]);
+    expect(String(sec[0]!.reason)).toContain("added lines could not be read: src/auth/keys.ts");
+  }, 60_000);
+  test("a key appended to a binary file on base is scanned (the diff is read as text), next to a clean text edit", async () => {
+    const repoDir = mkRepo();
+    mkdirSync(join(repoDir, "src", "auth"), { recursive: true });
+    writeFileSync(join(repoDir, "src", "auth", "blob.bin"), Buffer.from([0, 1, 2, 0, 255, 0, 10]));
+    writeFileSync(join(repoDir, "src", "auth", "a.ts"), "export const a = 1;\n");
+    git(repoDir, ["add", "-A"]); git(repoDir, ["commit", "-qm", "base"]);
+    const base = baseSha(repoDir);
+    writeFileSync(join(repoDir, "src", "auth", "blob.bin"), Buffer.concat([Buffer.from([0, 1, 2, 0, 255, 0, 10]), Buffer.from(`k = "${"AKIA" + "QWERTYUIOPASDFGH"}"\n`)]));
+    writeFileSync(join(repoDir, "src", "auth", "a.ts"), "export const a = 2;\n");
+    const { ctx } = fakeCtx({ repoDir, baseSha: base });
+    const sec = ((await verifyStage.run(ctx, sig())).data.checks as VerifyCheck[]).filter((c) => c.name === "security scan");
+    expect(sec.map((c) => c.result)).toEqual(["fail"]);
+    expect(String(sec[0]!.reason)).toContain("secret match: src/auth/blob.bin");
+  }, 60_000);
+  test("a checkout under a directory named like a secret (credential-service) still passes a clean new file", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "credential-service-")); cleanupDirs.push(parent);
+    const { sec } = await high({ "src/auth/login.ts": "export const ok = 1;\n" }, parent);
+    expect(sec.map((c) => c.result)).toEqual(["pass"]);
+  }, 60_000);
 });
