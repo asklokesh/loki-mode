@@ -574,6 +574,13 @@ describe("heading lines that state a requirement", () => {
     expect(set.clauses.map((c) => c.text)).toEqual([req, ...others.slice(0, 39).map((b) => b.slice(2))]);
     expect(set.dropped).toBe(1); // only bullet 40 falls off; the repeated heading is not a second clause
   });
+  test("a heading that repeats a bullet in the middle of the list is still folded into it", () => {
+    const req = "The API must reject case 1";
+    const others = Array.from({ length: 40 }, (_, i) => `- bullet ${i + 1}`);
+    const set = extractClauses([`## ${req}`, "", ...others.slice(0, 20), `- ${req}`, ...others.slice(20)].join("\n")); // 41 distinct bullets, the repeat after 20 others
+    expect(set.clauses.map((c) => c.text)).toEqual([...others.slice(0, 20).map((b) => b.slice(2)), req, ...others.slice(20, 39).map((b) => b.slice(2))]);
+    expect(set.dropped).toBe(1);
+  });
   test("the dropped-clause note names the cap, not a position, because a dropped heading can precede kept bullets", () => {
     expect(clauseDroppedNote(1)).toBe("not_proven: 1 further acceptance clause over the 40 clause cap was not extracted");
     expect(clauseDroppedNote(6)).toBe("not_proven: 6 further acceptance clauses over the 40 clause cap were not extracted");
