@@ -8,7 +8,7 @@ import json, os, shlex, sys
 # a repo-file frame is on the calling stack (a plugin's own ctypes import is not PR code); the interpreter's own
 # __pycache__ .pyc write is the one rename that is not a taint, and only when the stack is exactly the genuine importlib
 # chain get_code, _cache_bytecode, set_data, _write_atomic or pytest's assertion-rewrite chain exec_module, _write_pyc
-# (code objects compared by identity); a pyc written into the recorder's own directory (nothing there is imported after start-up) is exempt, and only while every namespace that chain calls through (importlib, marshal, builtins, _imp, os and io, and for pytest its rewrite module) still holds the objects it held at start-up (pytest's rewrite module: when first seen fully loaded, before any later import can run PR code), so a patched code_to_pyc, source_to_code, marshal or compile turns the write into a taint, so PR code that renames a
+# (code objects compared by identity); the write is exempt only while every namespace that chain calls through (importlib, marshal, builtins, _imp, os and io, and for pytest its rewrite module) still holds the objects it held at start-up (pytest's rewrite module: when first seen fully loaded, before any later import can run PR code), so a patched code_to_pyc, source_to_code, marshal or compile turns the write into a taint, so PR code that renames a
 # planted .pyc itself, or calls set_data or _cache_bytecode with its own bytes, is a taint.
 def _install():
     root = os.environ.get("LOKI_VPR_ROOT", "")
@@ -58,7 +58,6 @@ def _install():
                     try: out += shlex.split(y)
                     except ValueError: emit("x:split", {"x": "unsplittable command string"})
         return out
-    here = os.path.dirname(os.path.abspath(__file__))
     snaps = {}
     def spaces(*mods):
         out = []
@@ -86,7 +85,6 @@ def _install():
         except Exception: return False
         head, _, tail = src.rpartition(".")
         if not (tail.isdigit() and head.endswith(".pyc") and dst.endswith(".pyc") and os.path.basename(os.path.dirname(dst)) == "__pycache__"): return False
-        if os.path.dirname(os.path.dirname(os.path.abspath(dst))) == here: return True
         f = sys._getframe(2)
         try:
             be = sys.modules["importlib._bootstrap_external"]
