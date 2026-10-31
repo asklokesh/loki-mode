@@ -1,5 +1,6 @@
 // A-103: real `node --test` runs on a bugrepo (off-by-one sum) through RealBaseTestRunner.
 // A Wall test that is not red for the right reason is discarded, never left in the tree.
+// select: not-src-walker (reads one src file, check_result.ts, by path; readdirSync lists only test temp dirs)
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
