@@ -162,7 +162,7 @@ function goCount(out: string, ok?: boolean): number | null | undefined {
   return lines.filter((x) => GO_PKG_RE.test(x)).every((x) => /\[no tests? (?:files|to run)\]/.test(x)) ? 0 : null;
 }
 /** Go is package-directory scoped: a test in tests/ cannot see root package code and only compiles through an implementer shim that is never committed. The Wall goes beside the first planned or named
- *  .go file in the texts (plan, then task), or at the repo root without one; pkg is a sibling's package clause, else the planned file's stem. */
+ *  .go file in the texts (plan, then task), or at the repo root without one; pkg is a sibling's package clause, else "main" when its sentence says package main, else the directory name (the file stem only at the repo root). */
 const GO_SRC = /(?<![\w./-])((?:[\w.-]+\/)*[\w-]+)\.go(?!\w)/g;
 const GO_DIR = /(?<![\w./:$-])((?:[\w.-]+\/)*[\w-]*[A-Za-z0-9][\w-])\/(?![\w{]|\.\w)|\b(?:director(?:y|ies)|folder|dir)\s+`((?:[\w.-]+\/)*[\w-]+)`/g;
 // A package name is taken only when tied to the directory: "package X" right after it ("as package X", "directory as package X") or "package main in <dir>";
@@ -175,11 +175,11 @@ const GO_NON_PKG_WORD = /^(?:tests?|docs?|scripts?|vendor|node_modules)$/;
 const goIgnoredPath = (rel: string): boolean => rel.split("/").some((g) => g === "testdata" || g.startsWith("_") || g.startsWith("."));
 const goSiblingPkg = (dir: string): string | undefined => existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".go") && !f.endsWith("_test.go")).map((f) => /^package\s+(\w+)/m.exec(readFileSync(join(dir, f), "utf8"))?.[1]).find(Boolean) : undefined;
 export function plannedGoDir(repoDir: string, texts: string[]): { dir: string; pkg: string | null } {
-  for (const t of texts) for (const m of t.matchAll(GO_SRC)) {
+  for (const t of texts) for (const sentence of t.split(/(?<=[.!?])\s+|\n+/)) for (const m of sentence.matchAll(GO_SRC)) {
     const stem = goRel(m[1]!), rel = dirname(`${stem}.go`), base = stem.split("/").pop()!;
     if (stem.endsWith("_test") || base.startsWith("_") || base.startsWith(".") || (rel !== "." && goIgnoredPath(rel))) continue;
     const dir = join(repoDir, rel === "." ? "" : rel);
-    return { dir, pkg: goSiblingPkg(dir) ?? (rel === "." ? base : rel.split("/").pop()!) }; // Go names a package after its directory; only a root file has no directory name to use
+    return { dir, pkg: goSiblingPkg(dir) ?? (/\bpackage\s+main\b/.test(sentence) ? "main" : rel === "." ? base : rel.split("/").pop()!) }; // Go names a package after its directory; only a root file has no directory name to use
   }
   // No .go file named: a named package directory (a leading ./ is fine, backslash paths stay at the root). Per sentence, a directory counts when the word "package" sits
   // between its neighbouring directory mentions or it already holds a Go package; the package is a sibling's clause, else the one tied to the directory, else its name.

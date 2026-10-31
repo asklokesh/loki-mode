@@ -1541,6 +1541,11 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
     expect(a.files.map((f) => f.path)).toEqual(["util/loki_wall_a_test.go"]); expect(a.brief).toContain('"package util"');
     expect((await run("Implement ini.go.", "go")).brief).toContain('"package ini"');
   });
+  test("Go greenfield: a planned file whose sentence says package main keeps main; another sentence's mention does not", async () => {
+    const a = await run("Write cmd/server/main.go as package main.", "go");
+    expect(a.files.map((f) => f.path)).toEqual(["cmd/server/loki_wall_a_test.go"]); expect(a.brief).toContain('"package main"');
+    expect((await run("Write util/real.go. Also add package main elsewhere.", "go")).brief).toContain('"package util"');
+  });
   test.skipIf(spawnSync("go", ["version"]).status !== 0)("Go greenfield: a util/real.go implementer in package util compiles with the Wall in the same package and the test runs", async () => {
     const { plannedGoDir } = await import("../../src/util/check_result.ts");
     const repo = mkdtempSync(join(tmpdir(), "loki-walldir3b-"));
