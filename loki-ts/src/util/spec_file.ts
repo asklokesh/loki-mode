@@ -53,9 +53,11 @@ const SKIP_HEAD = /^(?:#+\s*)?(?:\d+(?:\.\d+)*[.)]?\s*)?(?:\*\*|__)?\s*(?:(?:non
 const CLAUSE_HEAD = /accept|criteria|requirement|must/i, RFC2119 = /\b(?:MUST|SHALL)(?: NOT)?\b/, GWT = /^(?:given|when|then|and|but)\b/i;
 // A markdown heading that states a requirement is a clause too: a must/should/shall verb (not the bare "Must have" title), implements/implementing, or a colon then a full sentence. A bare title ("Errors", "API") is not.
 const HEAD_REQ = /\b(?:must|should|shall)\s+(?!haves?\b)[a-z]|\bimplements\s+\S|\w[^\n]*?\bimplementing\s+\S/i;
-// Question-led headings ("What should happen") and label headings ("Step 2: ...", "Example: ...", "Goal: ...") describe or introduce; they do not state a requirement.
-const HEAD_QUESTION = /^#+\s+(?:\d+(?:\.\d+)*[.)]?\s*)?(?:what|how|why|when|where|who|which)\b/i;
-const HEAD_LABEL = /^#+\s+(?:\d+(?:\.\d+)*[.)]?\s*)?(?:step|example|examples|goal|goals|note|notes|usage|overview|summary|task|tip)\b/i;
+// Question-led headings ("What should happen"; "When ...?" or "Where ...?" only with the trailing "?") and label or standard-title headings ("Step 2: ...", "Example: ...", "RFC 4180: ...") describe or introduce; they do not state a requirement.
+const HEAD_QUESTION = /^#+\s+(?:\d+(?:\.\d+)*[.)]?\s*)?(?:(?:what|how|why|who|which)\b|(?:when|where|if)\b[^\n]*\?\s*$)/i;
+const HEAD_LABEL = /^#+\s+(?:\d+(?:\.\d+)*[.)]?\s*)?(?:step|example|examples|goal|goals|note|notes|usage|overview|summary|task|tip|rfc|iso|ieee|ecma|w3c|ansi)\b/i;
+const LIST_ITEM = /^(?:[-*+]\s+|\d+[.)]\s+)/;
+const isHeadLine = (l: string): boolean => /^#+\s/.test(l) || (/:$/.test(l) && l.length <= 60 && !/^[-*+\d]/.test(l));
 const HEAD_SENTENCE = /:\s+\S+(?:\s+\S+){3,}[.!?]$/;
 const headStatesRequirement = (line: string): boolean => !HEAD_QUESTION.test(line) && (HEAD_REQ.test(line) || (!HEAD_LABEL.test(line) && HEAD_SENTENCE.test(line)));
 const normClause = (t: string): string => t.replace(/\s+/g, " ").trim();
@@ -84,12 +86,14 @@ export function extractClauses(text: string): ClauseSet {
     stripTemplate({ filter: (fn: (l: string) => boolean) => { lines.forEach((l, i) => { if (fn(l)) keep.add(i); }); return []; } });
     let under = false, skip = false, fence = false, gwt = -1;
     const anchorOf = (i: number): string => `${paged ? `p${pi + 1}:` : ""}l${i + 1}`;
+    // A heading over list items is a container: the items are the clauses. Only a leaf heading (no list item before the next heading) can be a clause itself.
+    const listFollows = (i: number): boolean => { for (let j = i + 1; j < lines.length; j++) { if (!keep.has(j)) continue; const t = lines[j]!.trim(); if (LIST_ITEM.test(t)) return true; if (t !== "" && isHeadLine(t)) return false; } return false; };
     for (const [i, raw] of lines.entries()) {
       if (/^\s*(```|~~~)/.test(raw)) { fence = !fence; continue; }
       if (fence || !keep.has(i)) continue;
       const line = raw.trim();
       if (line === "") { gwt = -1; continue; }
-      if (/^#+\s/.test(line) || (/:$/.test(line) && line.length <= 60 && !/^[-*+\d]/.test(line))) { under = CLAUSE_HEAD.test(line); skip = !under && SKIP_HEAD.test(line); gwt = -1; if (!skip && /^#+\s/.test(line) && headStatesRequirement(line)) out.push({ text: line.replace(/^#+\s+/, "").replace(/\*\*|__/g, ""), anchor: anchorOf(i) }); continue; }
+      if (isHeadLine(line)) { under = CLAUSE_HEAD.test(line); skip = !under && SKIP_HEAD.test(line); gwt = -1; if (!skip && /^#+\s/.test(line) && headStatesRequirement(line) && !listFollows(i)) out.push({ text: line.replace(/^#+\s+/, "").replace(/\*\*|__/g, ""), anchor: anchorOf(i) }); continue; }
       if (skip) continue;
       const item = /^(?:[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+)(.*)$/.exec(line);
       const body = (item ? item[1]! : line).replace(/\*\*|__/g, "");
