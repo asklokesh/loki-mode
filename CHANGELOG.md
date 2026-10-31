@@ -5,6 +5,23 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.100.0 (2026-10-31)
+
+`loki issues run` now runs each issue whole by default, up to 4 at once, and splits only an issue that is too large or failed whole, into at most 4 slices.
+
+### Changed
+
+- `loki issues run` starts work immediately: no triage pass by default, up to 4 issues in parallel, and an issue is split into stacked PRs only once, after a whole-issue attempt fails or hits its cost or time cap. `--triage` brings back the triage pass first. A whole-issue run that crashed, failed during setup or hit a spec conflict is never split into more paid runs. A split that comes back with more than 4 slices is re-asked once, the same as the triage path.
+- Headless runs (`loki issues run`, CI, piped) skip the separate planning session on small and normal tasks, folding planning into implement for a faster, cheaper PR. Interactive `loki start` on a terminal still plans normal tasks until a follow-up lands, and `LOKI_CONFIRM=1` always plans.
+- The cheaper-model start is off by default. It needs `LOKI_ROUTER=1` plus `LOKI_LEAN=1`, so default-config runs see no cost change.
+- The benchmark harness gains a lean Loki arm and counts a run as PR-ready only when its exit code agrees; a receipt can no longer turn a failed or contradicted run into a success.
+
+### Fixed
+
+- `loki issues run` no longer fails a PR when a test imports an existing `.js`-mapped module or a directory.
+- Secret scanning now reads the added-lines diff as text, so a key appended to a file that was binary on the base is scanned.
+- A lazy-fetch safety check that silently skipped on developer machines now fails loudly there; CI behavior is unchanged.
+
 ## v11.99.0 (2026-10-31)
 
 `loki issues run` splits a too-large issue into at most 4 slices, runs ready slices in parallel, and asks the planner once more when a split comes back over the cap.

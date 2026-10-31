@@ -2,7 +2,7 @@
 
 Loki Mode, by [Autonomi](https://www.autonomi.dev/), turns a spec or an issue into a verified pull request with a receipt you can check. This page covers installing it, a first run, and the options around it.
 
-**Version:** v11.99.0
+**Version:** v11.100.0
 
 **Engine note:** `loki start` is the primary command. `loki start`, `loki "<task>"`, `loki owner/repo#N` and `loki quick` all run the Loki 10 engine, whatever the flag order or input form (PRD file, issue ref, task or one-word brief). The previous loop runs only on `--engine legacy`, `LOKI_ENGINE=legacy`, or for one call when a flag Loki 10 cannot honor is present. See the [user guide](v10/GUIDE.md) and the [5-minute quickstart](QUICKSTART.md).
 
