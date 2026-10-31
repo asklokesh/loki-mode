@@ -21,20 +21,7 @@ describe("renderReviewerBody", () => {
     const at = ["## What the issue asked", "## What changed and why", "## How it was tested", "## NOT PROVEN", "## Receipt"].map((h) => body.indexOf(h));
     expect(at.every((n) => n >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
-    expect(body.startsWith("## Not proven\n")).toBe(true); // PR-FIRST-1: a PARTIAL body leads with what is unproven
-    expect(body.indexOf("## Not proven")).toBeLessThan(body.indexOf("## What the issue asked"));
-  });
-  it("PR-FIRST-1: the leading Not proven section lists the first 10 reasons and the total; VERIFIED has none", () => {
-    const many = Array.from({ length: 13 }, (_, k) => `reason ${k + 1}`);
-    const b = renderReviewerBody({ ...base, notProven: many });
-    const head = b.slice(0, b.indexOf("## What the issue asked"));
-    expect(head).toContain("13 things are not proven");
-    for (const r of many.slice(0, 10)) expect(head).toContain(`- ${r}\n`);
-    expect(head).not.toContain("reason 11");
-    expect(head).toContain("+3 more, total 13");
-    const v = renderReviewerBody({ ...base, verdict: "VERIFIED", draftReason: null, notProven: [] });
-    expect(v.startsWith("## What the issue asked")).toBe(true);
-    expect(v).not.toContain("## Not proven");
+    expect(body.startsWith("## What the issue asked")).toBe(true);
   });
   it("lists every contract criterion and the files in scope", () => {
     for (const c of ["handles empty input", "rejects bad tokens", "keeps old API", "src/parser.ts", "tests/parser.test.ts"]) expect(body).toContain(c);

@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_PUSH_GITLAB_SH, DEFAULT_PUSH_SH, issueLink, runPr, stage } from "../../src/engine10/stages/pr.ts"; import { pushErrLine } from "../../src/util/term_width.ts";
+import { DEFAULT_PUSH_GITLAB_SH, DEFAULT_PUSH_SH, issueLink, partialHead, runPr, stage } from "../../src/engine10/stages/pr.ts"; import { pushErrLine } from "../../src/util/term_width.ts";
 import { publishFallback } from "../../src/util/engine_origin.ts";
 import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { readEvents } from "../../src/engine10/events.ts"; import { stageCapability } from "../../src/engine10/worker.ts";
@@ -161,6 +161,28 @@ describe("engine10 pr stage", () => {
     const body = readFileSync(join(runDir, "pr-body.md"), "utf8");
     expect(body).toContain("\nRefs o/r#42\n");
     expect(body).not.toContain("Closes");
+  });
+
+  test("PR-FIRST-1: partialHead leads a PARTIAL with the first 10 reasons and the total; every other verdict gets none", () => {
+    const many = Array.from({ length: 13 }, (_, k) => `reason ${k + 1}`);
+    const head = partialHead("PARTIAL", many);
+    expect(head.startsWith("## Not proven\n")).toBe(true);
+    expect(head).toContain("13 things are not proven");
+    for (const r of many.slice(0, 10)) expect(head).toContain(`- ${r}\n`);
+    expect(head).not.toContain("reason 11");
+    expect(head).toContain("+3 more, total 13");
+    expect(partialHead("PARTIAL", ["only"])).toContain("1 thing is not proven");
+    expect(partialHead("PARTIAL", ["  "])).toBe("");
+    for (const v of ["VERIFIED", "FAILED", "SPEC_CONFLICT", "ALREADY_SATISFIED"] as const) expect(partialHead(v, many)).toBe("");
+  });
+
+  test("PR-FIRST-1: a PARTIAL PR body opens with Not proven, above the issue contract", async () => {
+    const script = writeStub(stubDir, logPath);
+    const { ctx } = makeCtx(repoDir, runDir, { verdict: "PARTIAL", notProven: ["lint failed"] });
+    await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+    const body = readFileSync(join(runDir, "pr-body.md"), "utf8");
+    expect(body.startsWith("## Not proven\n")).toBe(true);
+    expect(body.indexOf("## Not proven")).toBeLessThan(body.indexOf("## What the issue asked"));
   });
 
   test("issueLink: only VERIFIED closes; PARTIAL, FAILED, SPEC_CONFLICT and ALREADY_SATISFIED all say Refs", () => {
