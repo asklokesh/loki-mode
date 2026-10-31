@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RealBaseTestRunner } from "../../src/engine10/stages/wall.ts";
-import { plainTestEnv } from "../../src/util/check_result.ts";
+import { plainTestEnv, spawnGroupSync } from "../../src/util/check_result.ts";
 
 const SECRETS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK"];
 const saved: Record<string, string | undefined> = {};
@@ -41,5 +41,14 @@ describe("FC-87 plainTestEnv is token-free", () => {
     writeFileSync(join(repo, "tests", "wall_env.test.js"), body);
     const r = new RealBaseTestRunner(null, 60_000).run(repo, [{ path: "tests/wall_env.test.js", runner: "node" } as never]);
     expect(r).toEqual({ pass: 1, fail: 0, not_run: 0 });
+  });
+  test("the group launcher hands the command exactly the env it was given, never the parent env", () => {
+    plant(); process.env["LOKI_FC87_PARENT_ONLY"] = "1";
+    const probe = `console.log(JSON.stringify([process.env.LOKI_FC87_GIVEN ?? null, process.env.LOKI_FC87_PARENT_ONLY ?? null, process.env.GH_TOKEN ?? null]))`;
+    try {
+      const r = spawnGroupSync(process.execPath, ["-e", probe], { env: { PATH: process.env["PATH"] ?? "", LOKI_FC87_GIVEN: "yes" }, timeoutMs: 30_000 });
+      expect(r.status).toBe(0);
+      expect(r.output.trim()).toBe(JSON.stringify(["yes", null, null]));
+    } finally { delete process.env["LOKI_FC87_PARENT_ONLY"]; }
   });
 });

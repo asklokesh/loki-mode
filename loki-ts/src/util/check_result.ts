@@ -1254,9 +1254,9 @@ function startWatchdog(pgid: number | undefined): ChildProcess | undefined {
   const [bin, ...a] = watchdogArgv(); a[a.length - 1] = WATCHDOG.replace("__O__", String(process.pid)).replace("__G__", String(pgid));
   try { const w = spawn(bin!, a, { detached: true, stdio: "ignore", env: { PATH: process.env["PATH"] ?? "" } }); w.on("error", () => {}); w.unref(); return w; } catch { return undefined; }
 }
-// Bun's spawnSync ignores `detached`, so the sync path cannot lead its own process group. It runs the command through this launcher (a child of the same runtime) which does lead one, kills the whole group at the timeout and prints {status, output}.
-const GROUP_LAUNCHER = `const { spawn } = require("node:child_process"); const fs = require("node:fs"); const [cmd, args, cwd, ms, wd] = JSON.parse(fs.readFileSync(0, "utf8")); const MAX = 1048576; let out = "", err = "", to = false, fin = false;
-const c = spawn(cmd, args, { cwd: cwd || undefined, env: process.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+// Bun's spawnSync ignores `detached`, so the sync path cannot lead its own process group. It runs the command through this launcher (a child of the same runtime) which does lead one, kills the whole group at the timeout and prints {status, output}. The test env travels on stdin and the launcher itself gets only PATH, so the command never inherits the parent env.
+const GROUP_LAUNCHER = `const { spawn } = require("node:child_process"); const fs = require("node:fs"); const [cmd, args, cwd, ms, wd, env] = JSON.parse(fs.readFileSync(0, "utf8")); const MAX = 1048576; let out = "", err = "", to = false, fin = false;
+const c = spawn(cmd, args, { cwd: cwd || undefined, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
 let w; try { const a = wd.slice(1); a[a.length - 1] = a[a.length - 1].replace("__O__", String(process.pid)).replace("__G__", String(c.pid)); w = spawn(wd[0], a, { detached: true, stdio: "ignore", env: { PATH: process.env.PATH || "" } }); w.on("error", () => {}); } catch {}
 const kill = (s) => { try { process.kill(-c.pid, s); } catch { try { c.kill(s); } catch {} } };
 const done = (code, sig) => { if (fin) return; fin = true; kill("SIGKILL"); try { w.kill("SIGKILL"); } catch {} const b = Buffer.from(JSON.stringify({ status: to || sig ? null : code, output: out + "\\n" + err })); for (let i = 0; i < b.length;) { try { i += fs.writeSync(1, b, i); } catch (e) { if (e.code !== "EAGAIN") break; } } process.exit(0); };
@@ -1266,7 +1266,7 @@ c.stdout.on("data", (d) => { out += d; over(); }); c.stderr.on("data", (d) => { 
 c.on("error", () => done(null, 1)); c.on("close", done); c.on("exit", (a, b) => setTimeout(() => done(a, b), 500)); `;
 /** Sync twin of spawnCollect with the same group-kill and timeout contract (status null on spawn error, signal or timeout). */
 export function spawnGroupSync(cmd: string, args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number }): { status: number | null; output: string } {
-  const r = spawnSync(process.execPath, [...SAFE_BUN_FLAGS, "-e", GROUP_LAUNCHER], { input: JSON.stringify([cmd, args, o.cwd ?? "", o.timeoutMs, watchdogArgv()]), env: o.env, encoding: "utf8", timeout: o.timeoutMs + 5000, killSignal: "SIGKILL", maxBuffer: 16 * 1024 * 1024 });
+  const r = spawnSync(process.execPath, [...SAFE_BUN_FLAGS, "-e", GROUP_LAUNCHER], { input: JSON.stringify([cmd, args, o.cwd ?? "", o.timeoutMs, watchdogArgv(), o.env ?? plainTestEnv()]), env: { PATH: process.env["PATH"] ?? "" }, encoding: "utf8", timeout: o.timeoutMs + 5000, killSignal: "SIGKILL", maxBuffer: 16 * 1024 * 1024 });
   try { return JSON.parse(r.stdout) as { status: number | null; output: string }; } catch { return { status: null, output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` }; }
 }
 /** TEN-SPEED-19: async twin of the sync spawn used by RealBaseTestRunner: status is null on spawn error, signal or timeout; output is stdout and stderr merged by arrival. The child leads its own process group: SIGTERM at the timeout, then SIGKILL to the group 1s later, and the result resolves on exit plus a short drain grace, never waiting on a grandchild that holds the pipes. */
