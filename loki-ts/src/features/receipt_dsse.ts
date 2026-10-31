@@ -2,7 +2,7 @@
 // Ed25519 receipt key (the key type DSSE expresses natively: PureEdDSA over the PAE bytes). Reads seal.ts only.
 import { createPublicKey, sign, verify, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { jsonTooDeep } from "../util/receipt_signer.ts";
+import { jsonTooDeep, receiptShapeProblem } from "../util/receipt_signer.ts";
 
 export const DSSE_PAYLOAD_TYPE = "application/vnd.in-toto+json";
 export const STATEMENT_TYPE = "https://in-toto.io/Statement/v1";
@@ -62,6 +62,7 @@ export function outcomeOf(j: Record<string, unknown>): string {
 }
 /** A receipt found by run id must describe that run: an envelope's predicate.run_id, or a plain receipt's own run_id (seal always writes one), equals the id. */
 export function envelopeRunIdProblem(j: Record<string, unknown>, runId: string): string | null {
+  if (receiptShapeProblem(j)) return null; // a null, non-object or over-nested file is damaged, not a copy: the verifier's shape gate reports it as could-not-check (2), never TAMPERED
   if (!isEnvelope(j)) {
     if (j["schema"] !== "loki.v10.receipt/1" && j["schema"] !== "loki.v10.group/1") return null; // other kinds fail the verifier's own schema gate
     const own = j["run_id"];

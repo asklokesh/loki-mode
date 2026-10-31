@@ -23,7 +23,7 @@ describe("ulimitArgv", () => {
   });
   test("values travel as positional arguments, never in the script text", () => {
     const out = ulimitArgv(["w", "x"], { LOKI_ULIMIT_VMEM_KB: "1048576", LOKI_ULIMIT_NPROC: "64" });
-    expect(out.slice(0, 2)).toEqual(["/bin/sh", "-c"]);
+    expect(out.slice(0, 2)).toEqual(["/bin/bash", "-c"]);
     expect(out.slice(3)).toEqual(["sh", "1048576", "64", "w", "x"]);
     expect(out[2]).not.toMatch(/1048576|64/);
   });
@@ -36,7 +36,7 @@ describe("ulimitArgv", () => {
 
 describe("spawnWorker with limits", () => {
   test("NPROC=64: the worker sees ulimit -u 64", async () => {
-    const r = await run(["/bin/sh", "-c", "ulimit -u"], { ...baseEnv, LOKI_ULIMIT_NPROC: "64" });
+    const r = await run(["/bin/bash", "-c", "ulimit -u"], { ...baseEnv, LOKI_ULIMIT_NPROC: "64" });
     expect(r.lines).toEqual(["64"]);
     expect(r.code).toBe(0);
   });

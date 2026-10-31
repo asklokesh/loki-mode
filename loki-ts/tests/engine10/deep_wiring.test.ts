@@ -84,7 +84,7 @@ describe("E-48 deep verify spawn", () => {
   test("FC-WORKER-NO-PROCESS-LIMITS: the detached deep verify runs under the same LOKI_ULIMIT_NPROC wrapper as the worker", async () => {
     const dir = repo();
     const marker = join(dir, "deep-ulimit.txt");
-    const deepCode = `require("node:fs").writeFileSync(${JSON.stringify(marker)}, require("node:child_process").execFileSync("/bin/sh", ["-c", "ulimit -u"], { encoding: "utf8" }));\nBun.sleepSync(300);`;
+    const deepCode = `require("node:fs").writeFileSync(${JSON.stringify(marker)}, require("node:child_process").execFileSync("/bin/bash", ["-c", "ulimit -u"], { encoding: "utf8" }));\nBun.sleepSync(300);`;
     await runSupervisor({ runId: "e10-dw-ul", repoDir: dir, env: supEnv({ LOKI_ULIMIT_NPROC: "2000" }), workerArgv: DONE_WORKER, deepArgv: worker(deepCode), pr: prStep() });
     const started = readEvents(join(dir, ".loki/runs/e10-dw-ul/events.jsonl")).find((e) => e.type === "deep.started");
     expect(started).toBeTruthy();

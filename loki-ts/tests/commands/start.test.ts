@@ -987,7 +987,9 @@ describe("FC-BINARY-SPEC-READ-AS-UTF8 start entry wiring", () => {
     for (const [n, body] of Object.entries(scripts)) { writeFileSync(join(bin, n), `#!/bin/sh\n${body}\n`); chmodSync(join(bin, n), 0o755); }
     for (const a of [["init", "-q"], ["config", "user.name", "t"], ["config", "user.email", "t@example.com"], ["commit", "-q", "--allow-empty", "-m", "init"]]) spawnSync("git", a, { cwd: d });
     writeFileSync(join(d, file), "%PDF-binary");
-    const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", file, ...args], { cwd: d, encoding: "utf8", timeout: 25_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, ANTHROPIC_API_KEY: "sk-ant-test", OPENAI_API_KEY: "", LOKI_BUDGET_LIMIT: "" } });
+    // The dry-run preflight needs a claude CLI; a CI runner has none, so name a stub the way the sibling dry-run test does.
+    const fakeClaude = join(d, "fakeclaude"); writeFileSync(fakeClaude, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", file, ...args], { cwd: d, encoding: "utf8", timeout: 25_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, ANTHROPIC_API_KEY: "sk-ant-test", OPENAI_API_KEY: "", LOKI_BUDGET_LIMIT: "", LOKI_CLAUDE_CLI: fakeClaude } });
     return { r, d };
   };
   it("runStart swaps a .pdf prd for its extracted text before the engine sees it", () => {

@@ -313,14 +313,20 @@ describe("codexProvider invocation", () => {
 
 describe("claudeProvider invocation", () => {
   it("textOnly adds the no-tools flag and the write denylist; a normal call does not", async () => {
-    const argvLog = writeStub({ stdout: "ok" });
-    await claudeProvider().invoke(makeCall({ textOnly: true }));
-    const on = readArgv(argvLog);
-    expect(on).toContain("--tools=");
-    expect(on).toContain("--disallowedTools");
-    expect(on.join(" ")).toContain("Bash");
-    await claudeProvider().invoke(makeCall());
-    expect(readArgv(argvLog)).not.toContain("--tools=");
+    // The provider probes the literal `claude --help` for --tools; a CI runner has no claude, so seed the help text.
+    _resetClaudeHelpCacheForTest("  --tools <tools...>  built-in tools");
+    try {
+      const argvLog = writeStub({ stdout: "ok" });
+      await claudeProvider().invoke(makeCall({ textOnly: true }));
+      const on = readArgv(argvLog);
+      expect(on).toContain("--tools=");
+      expect(on).toContain("--disallowedTools");
+      expect(on.join(" ")).toContain("Bash");
+      await claudeProvider().invoke(makeCall());
+      expect(readArgv(argvLog)).not.toContain("--tools=");
+    } finally {
+      _resetClaudeHelpCacheForTest(null);
+    }
   });
 
   it("textOnlyArgv drops --tools= for a CLI that does not advertise it, so the label reads cwd-only", () => {
@@ -1160,15 +1166,21 @@ describe("providers advisor", () => {
       process.env["LOKI_CLAUDE_CLI"] = cli;
       process.env["LOKI_DIR"] = dir;
       process.env["LOKI_E10_STAGE"] = "implement";
-      await claudeProvider().invoke(call() as never);
-      const argv = readFileSync(log, "utf8").split("\n");
-      const i = argv.indexOf("--settings");
-      expect(i).toBeGreaterThan(-1);
-      expect(JSON.parse(argv[i + 1] as string)).toEqual({ permissions: { blockWritesOutsideWorkingDirectories: true } });
-      rmSync(log);
-      process.env["LOKI_E10_STAGE"] = "plan";
-      await claudeProvider().invoke(call() as never);
-      expect(readFileSync(log, "utf8")).not.toContain("--settings");
+      // --settings is gated on the literal `claude --help`; a CI runner has no claude, so seed the help text.
+      _resetClaudeHelpCacheForTest("  --settings <file-or-json>  load settings");
+      try {
+        await claudeProvider().invoke(call() as never);
+        const argv = readFileSync(log, "utf8").split("\n");
+        const i = argv.indexOf("--settings");
+        expect(i).toBeGreaterThan(-1);
+        expect(JSON.parse(argv[i + 1] as string)).toEqual({ permissions: { blockWritesOutsideWorkingDirectories: true } });
+        rmSync(log);
+        process.env["LOKI_E10_STAGE"] = "plan";
+        await claudeProvider().invoke(call() as never);
+        expect(readFileSync(log, "utf8")).not.toContain("--settings");
+      } finally {
+        _resetClaudeHelpCacheForTest(null);
+      }
     });
 
     test("advisor unavailable or flag off: no advisor in argv", async () => {
