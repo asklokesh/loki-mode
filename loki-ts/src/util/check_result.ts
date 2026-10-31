@@ -160,11 +160,9 @@ function goCount(out: string, ok?: boolean): number | null | undefined {
   if (lines.some((x) => /^(?:=== RUN|PASS$|FAIL$|testing: warning: no tests to run)/.test(x))) return 0;
   return lines.filter((x) => GO_PKG_RE.test(x)).every((x) => /\[no tests? (?:files|to run)\]/.test(x)) ? 0 : null;
 }
-/** One shared Go-runner detection for every caller (verify, deep, per-package suites): a shell command line or an argv, with
- *  leading env / command / exec / time wrappers, VAR=val assignments and a path to go (/usr/local/go/bin/go) all resolving to go.
- *  Any `&&`, `;`, `||` or `|` segment that runs go counts. Chosen from the command, never from output. Detecting go too often
- *  only fails closed (exit 0 is not_run), so a doubtful wrapper is classified as go. */
-/** The ONE command-shape test for every runner we corroborate (go, cargo). Every word of the command, split on whitespace and all shell punctuation, so a wrapper (nice, timeout, sh -c "...", bash -lc, a subshell, rustup run stable ...) cannot hide the tool: true when any word's basename is `tool`. */
+/** One shared Go-runner detection for every caller (verify, deep, per-package suites): a shell command line or an argv. Chosen from the command, never from output. The answer is tri-state (see runsTool): a command word in command position is the tool, or the command is fully resolved and does not run it, or some word could not be resolved and the old any-word rule decides. Detecting go too often only fails closed (exit 0 is not_run, and corroboratePass accepts only a plain `go test` line). */
+/** The ONE command-shape test for every runner we corroborate (go, cargo), tri-state. The narrow command-position answer is final only when every command word resolved to the tool itself, a known wrapper walked through, or a KNOWN non-tool runner (KNOWN_RUNNERS). An unknown command word, a variable command word ($GO) or a shell whose flags did not parse to -c leaves the command unresolved, and mentionsTool then falls back to the old any-word basename rule over the whole command, which fails closed. */
+const KNOWN_RUNNERS = new Set(["pytest", "python", "python3", "node", "npm", "yarn", "pnpm", "bun", "deno", "jest", "vitest", "mocha", "make", "cd", "echo", "true", "ruby", "rspec", "bundle", "mvn", "gradle", "dotnet", "php", "phpunit", "mix", "swift", "ctest", "tox"]);
 const SHELL_WORDS = new Set(["sh", "bash", "zsh", "dash", "ksh"]), RESERVED_WORDS = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "{", "}"]);
 // wrapper -> its flags that take a separate value (a value-less flag is skipped alone)
 const WRAPPERS: Record<string, readonly string[]> = { env: ["-u", "-C", "--unset", "--chdir"], nice: ["-n"], timeout: ["-s", "-k", "--signal", "--kill-after"], xargs: ["-n", "-L", "-P", "-I", "-s", "-d", "-E", "-a"], sudo: ["-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U"], doas: ["-u", "-C"], stdbuf: ["-i", "-o", "-e"], ionice: ["-c", "-n", "-p"], npx: ["-p", "--package"], bunx: [], pnpx: [], arch: [], taskset: ["-c"], chrt: [], time: ["-f", "-o"], command: [], exec: [], builtin: [], nohup: [], setsid: [], unbuffer: [], caffeinate: [], echo: [], printf: [] }; // echo and printf are doubtful wrappers on purpose: `echo go` stays a hit
@@ -183,25 +181,30 @@ function simpleCommands(line: string): string[][] {
   }
   endCmd(); return out;
 }
-/** Whether one simple command runs `tool`: the command word (after reserved words, VAR=val assignments, redirections and known wrappers with their flags) has basename `tool`. A path or argument named like the tool (pytest tests/go, make DIR=go, npm test -- --grep cargo) is not a run of it. */
-function runsTool(tool: string, words: readonly string[], depth: number): boolean {
+/** Whether one simple command runs `tool`, tri-state: NO (resolved, not the tool), YES (the command word after reserved words, VAR=val assignments, redirections and known wrappers with their flags has basename `tool`), UNKNOWN (an unknown or variable command word, or a shell whose flags did not parse to -c). A path or argument named like the tool (pytest tests/go, make DIR=go, npm test -- --grep cargo) is a resolved NO. */
+const NO = 0, YES = 1, UNKNOWN = 2;
+type Tri = 0 | 1 | 2;
+const triOr = (a: Tri, b: Tri): Tri => (a === YES || b === YES ? YES : a === UNKNOWN || b === UNKNOWN ? UNKNOWN : NO);
+function runsTool(tool: string, words: readonly string[], depth: number): Tri {
   let i = 0;
   for (;;) {
     while (i < words.length && (RESERVED_WORDS.has(words[i]!) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!) || /^\d*[<>]/.test(words[i]!))) i += /^\d*[<>]+$/.test(words[i]!) ? 2 : 1;
-    const w = words[i]; if (w === undefined) return false;
-    const name = basename(w); if (name === tool) return true;
+    const w = words[i]; if (w === undefined) return NO;
+    if (w.includes("$")) return UNKNOWN;
+    const name = basename(w); if (name === tool) return YES;
     if (SHELL_WORDS.has(name)) {
-      for (let j = i + 1; j < words.length && /^-/.test(words[j]!); j++) if (/^-[A-Za-z]*c[A-Za-z]*$/.test(words[j]!)) return depth < 4 && words[j + 1] !== undefined && anyCommandRuns(tool, words[j + 1]!, depth + 1);
-      return false;
+      for (let j = i + 1; j < words.length && /^-/.test(words[j]!); j++) if (/^-[A-Za-z]*c[A-Za-z]*$/.test(words[j]!)) return depth < 4 && words[j + 1] !== undefined && !/^-/.test(words[j + 1]!) ? anyCommandRuns(tool, words[j + 1]!, depth + 1) : UNKNOWN;
+      return UNKNOWN;
     }
-    if (name === "eval") return depth < 4 && anyCommandRuns(tool, words.slice(i + 1).join(" "), depth + 1);
+    if (name === "eval") return depth < 4 ? anyCommandRuns(tool, words.slice(i + 1).join(" "), depth + 1) : UNKNOWN;
     if (name === "rustup" && words[i + 1] === "run") { i += 3; continue; }
     if (["pnpm", "yarn", "bun", "npm"].includes(name) && ["exec", "x", "dlx"].includes(words[i + 1] ?? "")) { i += 2; continue; }
-    const vf = WRAPPERS[name]; if (!vf) return false;
+    const vf = WRAPPERS[name];
+    if (!vf) return KNOWN_RUNNERS.has(name) ? NO : UNKNOWN;
     i++;
     for (; i < words.length; i++) {
       const a = words[i]!;
-      if (name === "env" && a === "-S") return depth < 4 && words[i + 1] !== undefined && anyCommandRuns(tool, words[i + 1]!, depth + 1);
+      if (name === "env" && a === "-S") return depth < 4 && words[i + 1] !== undefined ? anyCommandRuns(tool, words[i + 1]!, depth + 1) : UNKNOWN;
       if (a === "--") continue;
       if (a.startsWith("-")) { if (vf.includes(a)) i++; continue; }
       if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(a) || (name === "timeout" && /^\d+(?:\.\d+)?[smhd]?$/.test(a))) continue;
@@ -209,15 +212,17 @@ function runsTool(tool: string, words: readonly string[], depth: number): boolea
     }
   }
 }
-const anyCommandRuns = (tool: string, line: string, depth = 0): boolean => simpleCommands(line).some((c) => runsTool(tool, c, depth));
-/** Whether the command (a shell line, or an argv) runs `tool` in command position. Detecting a tool too often only fails closed, but a mere path or argument named like it must not turn an honest pass into not_run. */
-function mentionsTool(tool: string, cmd: string, args?: readonly string[]): boolean {
-  if (!args) return anyCommandRuns(tool, cmd);
-  return runsTool(tool, [cmd, ...args], 0) || ([cmd, ...args].some((a) => /[;&|()`]/.test(a)) && anyCommandRuns(tool, [cmd, ...args].join(" "))); // an argv element carrying shell syntax is also read as a line
-}
+const anyCommandRuns = (tool: string, line: string, depth = 0): Tri => simpleCommands(line).reduce<Tri>((acc, c) => triOr(acc, runsTool(tool, c, depth)), NO);
 /** The command as a word list: an argv as is, a line split on whitespace. */
 const commandWords = (cmd: string, args?: readonly string[]): string[] => (args ? [cmd, ...args] : cmd.trim().split(/\s+/));
-/** One shared Go-runner detection for every caller (verify, deep, per-package suites): a shell command line or an argv in which ANY word is go (a path to go, an env or nice or timeout or sh -c wrapper, a subshell, a `&&` segment). Chosen from the command, never from output. Detecting go too often only fails closed (exit 0 is not_run, and corroboratePass accepts only a plain `go test` line), so a doubtful wrapper is classified as go. */
+/** Whether the command (a shell line, or an argv) runs `tool`. A resolved command answers from command position, so a mere path or argument named like the tool does not turn an honest pass into not_run; an unresolved one falls back to the old rule (ANY word whose basename is the tool), which only fails closed. */
+function mentionsTool(tool: string, cmd: string, args?: readonly string[]): boolean {
+  let r: Tri = args ? runsTool(tool, [cmd, ...args], 0) : anyCommandRuns(tool, cmd);
+  if (args && r !== YES && [cmd, ...args].some((a) => /[;&|()`]/.test(a))) r = triOr(r, anyCommandRuns(tool, [cmd, ...args].join(" "))); // an argv element carrying shell syntax is also read as a line
+  if (r !== UNKNOWN) return r === YES;
+  return commandWords(cmd, args).some((t) => t.split(/[\s"'`();&|<>${}\[\],=]+/).some((x) => x !== "" && basename(x) === tool));
+}
+/** One shared Go-runner detection for every caller (verify, deep, per-package suites): a shell command line or an argv, decided by the tri-state mentionsTool (command position when every command word resolved, otherwise the old any-word rule). Chosen from the command, never from output. Detecting go too often only fails closed (exit 0 is not_run, and corroboratePass accepts only a plain `go test` line). */
 export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" } | Record<string, never> {
   return mentionsTool("go", cmd, args) ? { runner: "go" } : {};
 }
