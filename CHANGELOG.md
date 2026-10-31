@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A Wall test that resolves a file the task names beside the test file (for example `join(import.meta.dir, "rotate.sh")` when the task says `rotate.sh`) is now rejected and re-asked before sealing, even when that file does not exist yet, so the implementer is no longer led to create it in `tests/` while the real grader runs it at the repo root.
-- A run whose task names a bare file (for example `rotate.sh`) but added it only under a subdirectory such as `tests/rotate.sh`, and not at the repo root, now ends PARTIAL with a NOT PROVEN line, for any language or Wall shape the static path scan cannot see.
+- A run whose task names a bare file (for example `rotate.sh`) but added it only under a subdirectory such as `tests/rotate.sh`, and not at the repo root, now ends PARTIAL with a NOT PROVEN line, for any language or Wall shape the static path scan cannot see. The check fires only when the copy sits under a test directory (tests, test, __tests__, spec); idiomatic layouts such as cmd/server/main.go, pkg/__init__.py or src/components/index.ts, test-support names (conftest.py, test_*, *_test.*, *.test.*) and a directory the task names are never flagged, an empty or comment-only root file beside the real one under tests/ keeps the cap, and only framework names such as Node.js or Vue.js (not App.js or Server.js) are treated as prose.
 
 ## v11.94.0 (2026-10-31)
 

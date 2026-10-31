@@ -347,6 +347,19 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(taskNamedPaths("Use a loop (e.g. find, i.e. not ls) on Node.js to write rotate.sh and ./lib/x.py")).toEqual(["rotate.sh", "lib/x.py"]);
     expect(misplacedNamedNotes("e.g. foo, i.e. bar, Node.js", [":000000 100644 0 0 A", "tests/e.g", ":000000 100644 0 0 A", "tests/Node.js"], "/nonexistent", "HEAD")).toEqual([]);
   });
+  test("misplacedNamedNotes fires only for a test-directory copy of a non-test name the task does not locate", () => {
+    const add = (f: string): string[] => [":000000 100644 0 0 A", f], note = (task: string, f: string): string[] => misplacedNamedNotes(task, add(f), "/nonexistent", "HEAD");
+    expect(note("Write rotate.sh", "tests/rotate.sh")).toEqual(["task names rotate.sh but it exists only at tests/rotate.sh"]);
+    expect(note("Write rotate.sh", "cmd/server/rotate.sh")).toEqual([]);
+    expect(note("Add test_utils.py", "tests/test_utils.py")).toEqual([]);
+    expect(note("Add conftest.py", "tests/conftest.py")).toEqual([]);
+    expect(note("Add util_test.go and x.test.ts", "tests/util_test.go")).toEqual([]);
+    expect(note("Write rotate.sh and keep fixtures in tests", "tests/rotate.sh")).toEqual([]);
+  });
+  test("taskNamedPaths keeps capitalised app files and drops only framework names", () => {
+    expect(taskNamedPaths("Write App.js, Server.js and Button.js at the repo root")).toEqual(["App.js", "Server.js", "Button.js"]);
+    expect(taskNamedPaths("Use Node.js, Vue.js, Next.js, Nuxt.js, Express.js, Three.js, D3.js and Chart.js")).toEqual([]);
+  });
   test("monorepo: process.cwd() paths resolve against the nearest package root of the test file and the repo root", () => {
     const repo = repoWith(); mkdirSync(join(repo, "packages/a/test"), { recursive: true }); mkdirSync(join(repo, "packages/a/src"), { recursive: true });
     writeFileSync(join(repo, "packages/a/package.json"), '{"name":"a","version":"1.0.0"}'); writeFileSync(join(repo, "packages/a/src/x.ts"), "x\n");

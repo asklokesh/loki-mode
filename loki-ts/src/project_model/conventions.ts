@@ -153,21 +153,28 @@ function nearestPackageRoot(testDir: string, repoDir: string, fileName: string):
 }
 const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSync|renameSync|symlinkSync|mkdir|writeFile|appendFile|cp|copyFile|rename|outputFile|ensureDir|mkdirp|write|Bun\.write)\(/g;
 
+const FRAMEWORK_JS = /^(?:Node|Vue|Next|Nuxt|Express|Three|D3|Chart|React|Angular|Ember|Backbone|Alpine|Svelte|Solid|Preact|Deno|Bun|Socket|Anime|Moment|Day|Underscore|Lodash|Handlebars|Mustache|Knockout|Meteor|Gatsby|Remix|Astro|Electron|Nest|Koa|Hapi|Fastify|P5|Phaser|Pixi|Babylon|Leaflet|Highcharts|Plotly|jQuery|Mocha|Jest|Cypress|Puppeteer)\.js$/i;
+const TEST_DIR = /^(?:tests?|__tests__|specs?)$/, TEST_NAME = /^(?:conftest\.py|test_.*|.*_test\..*|.*\.test\..*|.*\.spec\..*|.*_spec\..*)$/;
+const hollow = (body: string): boolean => body.split("\n").every((l) => { const t = l.trim(); return !t || /^(?:#|\/\/|\/\*|\*)/.test(t); }); // empty, whitespace or comment/shebang lines only
+
 /** Paths the task text names as files (a name with a letter-bearing extension, optionally dir-prefixed), normalized repo-relative; the greenfield counterpart of namedFiles, which only sees files already in the repo map. */
 export function taskNamedPaths(task: string): string[] {
   const names = [...task.matchAll(/(?<![\w./-])((?:\.\/)?(?:[\w.-]+\/)*[\w-]+\.[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*)(?![\w-]|\.\w)/g)].map((m) => m[1]!.replace(/^\.\//, ""));
-  return [...new Set(names.filter((n) => !/^[A-Za-z]\.[A-Za-z]$/.test(n) && !/^[A-Z][a-z]+\.js$/.test(n)))]; // "e.g", "i.e" and product names like "Node.js" are prose, never files
+  return [...new Set(names.filter((n) => !/^[A-Za-z]\.[A-Za-z]$/.test(n) && !FRAMEWORK_JS.test(n)))]; // "e.g", "i.e" and framework names like "Node.js" are prose, never files; an app file such as App.js stays a file
 }
 
 /** FALSEVER-WALLPATH-3: language-agnostic last check. The task names a bare file X (a repo-root file), the run added X only under a subdirectory (tests/X) and not at the repo root, and the task does not name that subdirectory path: the real grader runs X at the root, so the result is NOT PROVEN. Returns the note lines (empty when nothing is misplaced). */
 export function misplacedNamedNotes(task: string, rawDiff: string[], repoDir: string, head: string): string[] {
   const named = taskNamedPaths(task), added = rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() === "A" && rawDiff[i + 1] ? [rawDiff[i + 1]!] : []));
-  return named.filter((x) => !x.includes("/")).flatMap((x) => {
-    const hit = added.find((f) => f.includes("/") && basename(f) === x);
-    if (!hit || named.some((p) => p.endsWith(`/${x}`)) || safeGitSpawn(repoDir, ["cat-file", "-e", `${head}:${x}`], { timeout: 5000 }).status === 0) return [];
+  return named.filter((x) => !x.includes("/") && !TEST_NAME.test(x)).flatMap((x) => {
+    const hit = added.find((f) => f.includes("/") && basename(f) === x && TEST_DIR.test(f.split("/")[0]!)); // only a test directory copy stands in for the root file; cmd/server/main.go, pkg/__init__.py, src/components/index.ts are idiomatic
+    if (!hit || named.some((p) => p.endsWith(`/${x}`)) || taskNamesDir(task, dirname(hit))) return [];
+    const root = safeGitSpawn(repoDir, ["show", `${head}:${x}`], { timeout: 5000, encoding: "utf8" });
+    if (root.status === 0 && !hollow(root.stdout ?? "")) return []; // a real root file; an empty or stub one beside the real file under tests/ keeps the cap
     return [`task names ${x} but it exists only at ${hit}`];
   });
 }
+const taskNamesDir = (task: string, dir: string): boolean => new RegExp(`(?<![\\w.-])${dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/?(?![\\w-])`).test(task);
 
 /** FC-WALL-PHANTOM-PATH: repo paths a JS/TS test builds with join/resolve from the test dir, the cwd or a const derived from them (const assignments followed, calls split across lines joined) that do not exist in the base tree. process.cwd() is tried as the nearest package root of the test dir (verify runs a package's tests there) and as the repo root; a path existing under either passes. A path the plan names, creates (mkdir/write/cp/rename target), or that git ignores passes; write/expect/tmp lines are ignored. A path that stays inside the test dir is reported only when its first segment is absent from the test dir but present at the package or repo root (tests/plugins/x for plugins/x); fixtures the test dir lacks stay unreported. Returns repo-relative missing paths (max 3). */
 export function phantomRepoPaths(content: string, fileName: string, testDir: string, repoDir: string, planText: string | null, task: string | null = null): string[] {

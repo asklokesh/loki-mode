@@ -895,6 +895,24 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
       expect(r.not_proven.some((n) => n.startsWith("task names rotate.sh"))).toBe(false);
       expect(r.verdict).toBe("VERIFIED");
     }, 30000);
+    const LAYOUTS: [string, string, string][] = [["main.go", "cmd/server/main.go", "Write main.go for the server"], ["__init__.py", "pkg/__init__.py", "Add an __init__.py for pkg"], ["conftest.py", "tests/conftest.py", "Add a conftest.py inside tests/"], ["index.ts", "src/components/index.ts", "Add an index.ts barrel in src/components"], ["test_utils.py", "tests/test_utils.py", "Write test_utils.py with the helper tests"]];
+    for (const [name, at, task] of LAYOUTS) test(`idiomatic layout ${at} for ${name} stays VERIFIED`, async () => {
+      const r = await run(`wp3-lay-${name.replace(/\W/g, "")}`, task, [at]);
+      expect(r.not_proven.some((n) => n.startsWith(`task names ${name}`))).toBe(false);
+      if (name === "conftest.py") return; // the separate runner-config gate legitimately caps a new conftest; only the misplaced-file note is asserted
+      expect(r.verdict).toBe("VERIFIED");
+    }, 30000);
+    test("an empty root file beside the real tests/rotate.sh keeps the cap", async () => {
+      noKey();
+      const { repo, base } = makeRepo("wp3-stub");
+      writeFileSync(join(repo, "rotate.sh"), "");
+      mkdirSync(join(repo, "tests"), { recursive: true }); writeFileSync(join(repo, "tests/rotate.sh"), "#!/bin/sh\necho ok\n");
+      const { ctx } = ctxFor(repo, base, "claude", { intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, task: TASK } });
+      await commitStage.run(ctx, new AbortController().signal);
+      const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+      expect(r.not_proven).toContain("task names rotate.sh but it exists only at tests/rotate.sh");
+      expect(r.verdict).toBe("PARTIAL");
+    }, 30000);
     test("a task that names tests/rotate.sh explicitly stays VERIFIED", async () => {
       const r = await run("wp3-named", "Write tests/rotate.sh and call it rotate.sh in the docs", ["tests/rotate.sh"]);
       expect(r.not_proven.some((n) => n.startsWith("task names rotate.sh"))).toBe(false);
