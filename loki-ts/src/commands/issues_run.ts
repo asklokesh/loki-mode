@@ -15,7 +15,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { MAX_PARALLEL, makeDefaultRunner, queueAdd, queueRun, type ItemResult, type QueueDeps, type RunOpts, type RunResult } from "./queue.ts";
 import { estimateFor, startText, type EstimateResult } from "../runner/router/cost_preview.ts";
-import { makeSessionDecompose, parseDecomposition, planComment, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
+import { makeSessionDecompose, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { resolveModel } from "../engine10/session.ts";
@@ -44,7 +44,7 @@ export interface IssuesRunDeps {
   lokiDir: string;
   gh: (args: readonly string[]) => GhResult;
   triage: (slug: string, issue: GhIssue) => Promise<Triage>;
-  decompose: (slug: string, issue: GhIssue, triageReason: string) => Promise<string>; // the model's JSON split, validated here
+  decompose: (slug: string, issue: GhIssue, triageReason: string, note?: string) => Promise<string>; // the model's JSON split, validated here
   runner: QueueDeps["runner"];
   estimate: () => EstimateResult;
   confirm: (question: string) => Promise<boolean>;
@@ -286,6 +286,10 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
       let p: Decomposition;
       try {
         p = parseDecomposition(await d.decompose(slug, i, t.reason));
+        if (!p.ok && p.over !== undefined) {
+          d.out(`#${i.number} split had ${p.over} slices, over the cap; asking once more\n`);
+          p = parseDecomposition(await d.decompose(slug, i, t.reason, overCapNote(p.over)));
+        }
       } catch (e) {
         p = { ok: false, reason: `split call failed: ${e instanceof Error ? e.message : String(e)}` };
       }
@@ -365,7 +369,7 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
     await queueRun([], { lokiDir: runDir, runner: runOne, governor: noGovernor, now: d.now, out: sink, err: d.err, parallel: a.parallel, draft: a.draft, onResult });
   }
 
-  // MASS-2: each epic's slices, one at a time in dependency order, through the same runner and the run's own PR stage
+  // MASS-2: each epic's slices, concurrently where dependencies allow (up to --parallel), through the same runner and the run's own PR stage
   const trees: string[] = [];
   for (const e of epics) {
     const n = e.issue.number;
@@ -395,7 +399,7 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
       d.out(`#${n} ${s.id} ${verdict}  pr ${pr ?? "none"}  cost ${r.cost}\n`);
       return r;
     };
-    const results = await runEpicSlices(e.plan, runSlice, (r) => d.out(`#${n} ${r.id} ${r.title}: ${r.outcome}\n`));
+    const results = await runEpicSlices(e.plan, runSlice, (r) => d.out(`#${n} ${r.id} ${r.title}: ${r.outcome}\n`), a.parallel, (p) => d.out(`${progressLine(n, p)}\n`));
     const prs = results.filter((r) => r.pr).length;
     const failed = results.filter((r) => /^(FAILED|BLOCKED)/.test(r.outcome)).length;
     const skipped = results.filter((r) => r.outcome.startsWith("SKIPPED")).length;
@@ -446,7 +450,8 @@ export function triageBrief(slug: string, i: GhIssue): string {
   return [
     "You are triaging one GitHub issue for an autonomous coding agent that would attempt it as a single pull request in this repository.",
     "Do not edit, create or delete any file. You may read the repository to judge scope.",
-    "Decide exactly one: actionable (clear and small enough for one PR), needs-info (a maintainer must supply missing information first), too-large (needs several PRs or a design decision).",
+    "Decide exactly one: actionable (one PR can deliver it), needs-info (a maintainer must supply missing information first), too-large (one PR clearly cannot hold it).",
+    "Prefer actionable. A large-looking issue is still actionable when one coherent change can deliver it, even if that change touches many files. Answer too-large only when one PR clearly cannot hold the work, for example when it spans independent subsystems or needs a design decision first. When in doubt, answer actionable.",
     "End your reply with exactly one line in this form, and nothing after it:",
     "TRIAGE: <actionable|needs-info|too-large> | <one-line reason>",
     "",

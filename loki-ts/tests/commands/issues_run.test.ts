@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { coveredIssues, parseTriage, runIssues, type GhIssue, type IssuesRunDeps, type Triage } from "../../src/commands/issues_run.ts";
+import { coveredIssues, parseTriage, runIssues, triageBrief, type GhIssue, type IssuesRunDeps, type Triage } from "../../src/commands/issues_run.ts";
 import type { RunOpts, RunResult } from "../../src/commands/queue.ts";
 
 let dir: string;
@@ -360,5 +360,15 @@ describe("loki issues run", () => {
     h.inject.gh = (args) => (args[0] === "pr" ? { rc: 1, stdout: "", stderr: "HTTP 502" } : gh(args));
     expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(1);
     expect(h.triaged).toEqual([]);
+  });
+});
+
+describe("triage prompt is biased toward running the issue whole", () => {
+  test("it prefers actionable, reserves too-large for work one PR clearly cannot hold, and defaults to actionable when in doubt", () => {
+    const b = triageBrief("o/r", { number: 3, title: "big", body: "x", labels: [] } as unknown as GhIssue);
+    expect(b).toContain("Prefer actionable");
+    expect(b).toContain("one PR clearly cannot hold");
+    expect(b).toContain("When in doubt, answer actionable");
+    expect(b).not.toContain("needs several PRs");
   });
 });
