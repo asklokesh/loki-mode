@@ -838,6 +838,20 @@ describe("added workspace manifest: disclosed only when every condition holds", 
     expect(importSpecifiers('x = /re"/; import a from "p/q"; // import b from "c"\n/* require("d") */ const s = "import e from \'f\'";\n')).toEqual(["p/q"]);
     expect(importSpecifiers('const n = a / b; const m = c / d; require("k"); await import("m"); export * from "z"; import "side";\n')).toEqual(["k", "m", "z", "side"]);
   });
+  test("N2c: a comment after a postfix ++/--, a {} division or a statement-position regex is not an import (caps); a real import beside an ambiguous ) or } is still seen", async () => {
+    for (const text of ['let i = 1; const q = i++ / 2 /* import "@acme/x" */;\n', 'const q = {} / 1 /* import "@acme/x" */;\n', 'let i = 1; const q = i-- / 2 // import "@acme/x"\n']) await caps(run(pk(), { wall: { path: WALL.path, text } }));
+    for (const ok of ['const a = f(1) / 2; const b = ({}) / 3;\nimport { x } from "../packages/x/src/index.mjs";\n', 'if (a) { b(); }\nconst c = (d) / 2 / 1;\nimport { x } from "../packages/x/src/index.mjs";\n']) expect((await run(pk(), { wall: { path: WALL.path, text: ok } })).verdict).toBe("VERIFIED");
+  }, 150000);
+  test("N2c unit: else, yield, await and a regex after ) or } hide their text; a specifier counts only when both readings find it", () => {
+    expect(importSpecifiers('if (a) {} else /from "validate"/.test(s);')).toEqual([]);
+    expect(importSpecifiers('function* g() { yield /from "validate"/; }')).toEqual([]);
+    expect(importSpecifiers('if (ok) /from "validate"/.test(s);')).toEqual([]);
+    expect(importSpecifiers('async function f() { await /from "validate"/.test(s); }')).toEqual([]);
+    expect(importSpecifiers('let i = 1; const q = i++ / 2 /* import "a" */; const r = i-- / 2 // import "b"\n')).toEqual([]);
+    expect(importSpecifiers('const q = {} / 1 /* import "a" */;')).toEqual([]);
+    expect(importSpecifiers('const q = f(a) / 2;\nimport x from "k";\nconst w = g(b) / 3;\nrequire("m");')).toEqual(["k", "m"]);
+    expect(importSpecifiers('const q = f(a) / 2; import x from "k"; const w = g(b) / 3; require("m");')).toEqual(["m"]);
+  });
   test("N7: an exports map whose import and require targets differ is VERIFIED with an exact dual-package note; matching targets add no note", async () => {
     const NOTE7 = `exports of ${F} gives import and require different targets (dual-package hazard: two copies of the module can load); disclosed, does not cap`;
     for (const e of [{ ".": { import: "./src/index.mjs", require: "./src/index.cjs" } }, { import: "./a.mjs", require: "./b.cjs" }, { "./sub": [{ import: "./a.mjs", require: "./b.cjs" }] }]) {

@@ -164,12 +164,10 @@ export function exportConds(x: unknown, out: string[] = []): string[] {
   return out;
 }
 const WORKSPACE_SPEC = /^workspace:(\*|\^|~|[\^~]?\d[\w.+-]*)$/;
-const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|case|void|delete|throw|in|of)$/;
-/** The module specifiers a source text imports, read by one lexical pass: comments and regex literals are dropped and every string literal is parked behind a placeholder, so a specifier named in a comment,
- *  a regex or another string is not seen. Static `import ... from`, `export ... from`, side-effect `import "x"`, `require("x")` and `import("x")` count. A `/` starts a regex after an operator, `(`, `,`, `=`, `:`,
- *  `[`, `!`, `&`, `|`, `?`, `{`, `}`, `;`, `return` and the like, or at the start. That heuristic can misread a division as a regex (the text up to the next `/` on the line is then skipped: a real import is missed, so the
- *  run caps, the safe direction); the reverse misread needs a regex literal right after `)` or `]`, which only a Wall written to defeat this reader would contain, and the Wall is sealed before the agent runs. */
-export function importSpecifiers(src: string): string[] {
+const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|case|void|delete|throw|in|of|instanceof|else|yield|await|do)$/;
+/** One lexical pass over `src`: comments and regex literals are dropped and every string literal is parked behind a placeholder. A `/` starts a regex at the start, after an operator or `(`, `,`, `=`, `:`, `[`, `!`, `&`, `|`,
+ *  `?`, `{`, `;`, after one of the words in REGEX_AFTER_WORD, and, when `amb` is true, after `)` or `}`. It is division after `++`, `--`, `]`, a word, a number or a string. Returns the specifiers read in this mode. */
+function lexSpecifiers(src: string, amb: boolean): string[] {
   const lit: string[] = [], n = src.length;
   let t = "", i = 0;
   while (i < n) {
@@ -182,7 +180,7 @@ export function importSpecifiers(src: string): string[] {
       if (k < n && src[k] === c) { t += `\u0000${lit.push(src.slice(i + 1, k)) - 1}\u0000`; i = k + 1; continue; }
     } else if (c === "/") {
       const tail = t.trimEnd();
-      if (tail === "" || /[=(,:[!&|?{};+\-*%<>~^]$/.test(tail) || REGEX_AFTER_WORD.test(tail)) {
+      if (!/(\+\+|--)$/.test(tail) && (tail === "" || /[=(,:[!&|?{;+\-*%<>~^]$/.test(tail) || (amb && /[)}]$/.test(tail)) || REGEX_AFTER_WORD.test(tail))) {
         let k = i + 1, cls = false;
         for (; k < n && src[k] !== "\n"; k++) { const ch = src[k]!; if (ch === "\\") k++; else if (ch === "[") cls = true; else if (ch === "]") cls = false; else if (ch === "/" && !cls) break; }
         if (k < n && src[k] === "/") { t += "\u0001"; i = k + 1; continue; }
@@ -192,6 +190,16 @@ export function importSpecifiers(src: string): string[] {
   }
   const out: string[] = [];
   for (const m of t.matchAll(/\bfrom\s*\u0000(\d+)\u0000|\bimport\s*\u0000(\d+)\u0000|\b(?:require|import)\s*\(\s*\u0000(\d+)\u0000\s*\)/g)) out.push(lit[Number(m[1] ?? m[2] ?? m[3])]!);
+  return out;
+}
+/** The module specifiers a source text imports: static `import ... from`, `export ... from`, side-effect `import "x"`, `require("x")` and `import("x")`, with comments, regex literals and the text of other strings
+ *  ignored. A `/` after `)` or `}` is ambiguous without a parser (`if (a) /re/.test(s)` and `{} /re/` start a regex, `f(a) / 2` and `({}) / 2` divide), and a misread in either direction can make a comment or
+ *  regex text look like an import. So the text is read twice, once with every `/` after `)` or `}` taken as a regex start and once as a division, and a specifier counts only as often as BOTH readings find it.
+ *  Where the two readings disagree an import is dropped, never invented, so the run caps. Residuals: a division misread as a regex elsewhere (for example after a word REGEX_AFTER_WORD names, or after `+`, `-`,
+ *  `*` where the left side is not a value) hides the text up to the next `/` on its line, which can only drop an import; template-literal `${}` bodies are read as plain string text, so an import inside one is not seen. */
+export function importSpecifiers(src: string): string[] {
+  const b = lexSpecifiers(src, false).slice(), out: string[] = [];
+  for (const x of lexSpecifiers(src, true)) { const k = b.indexOf(x); if (k >= 0) { b.splice(k, 1); out.push(x); } }
   return out;
 }
 /** True when some exports node gives `import` and `require` different targets: a dual-package hazard (two copies of the module can load), not a test-only split, so it is disclosed and never caps. */
