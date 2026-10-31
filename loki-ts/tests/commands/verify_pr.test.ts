@@ -595,6 +595,19 @@ describe("verify-pr: an exit code alone is not proof", () => {
     if (rc === 4) expect(r.json.reasons.join(" ")).toMatch(/pytest\.ini|pyproject\.toml/);
   }, 60_000);
 
+  test.each([
+    ["pyproject.toml", "-p" + " ".repeat(1 << 20) + ":"],
+    ["conftest.py", "pytest_plugins=[".repeat(1 << 16)],
+  ])("a 1MB %s built to stall a parser is read in under a second", (name, body) => {
+    const d = join(dir, `redos-${name}`);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, name), name === "pyproject.toml" ? `[tool.pytest.ini_options]\naddopts = "${body}"\n` : body);
+    writeFileSync(join(d, "a.py"), "x = 1\n");
+    const t0 = performance.now();
+    runnerConfigChanged(["a.py"], d);
+    expect(performance.now() - t0).toBeLessThan(1000);
+  }, 60_000);
+
   test("a config path that cannot be read is treated as config, not skipped", () => {
     mkdirSync(join(dir, "unreadable.toml"));
     writeFileSync(join(dir, "unreadable.toml", "x"), "x\n");

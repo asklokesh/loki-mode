@@ -70,8 +70,8 @@ function textMatchesOrUnreadable(path: string, test: (txt: string) => boolean): 
 const ALWAYS_CONFIG = /(?:^|\/)(?:babel\.config\.[\w.]+|\.babelrc(?:\.[\w.]+)?|(?:site|user)customize\.py|[^/]+\.pth|\.mocharc(?:\.[\w.]+)?)$|(?:^|\/)__mocks__\//;
 function pluginMods(txt: string): string[] {
   const dotted = (m: RegExpMatchArray) => m[1]!.replace(/\./g, "/");
-  const named = [...txt.matchAll(/\bpytest_plugins\s*(?::[^=\n]*)?=\s*(\[[^\]]*\]|\([^)]*\)|["'][^"'\n]*["'])/g)].flatMap((g) => [...g[1]!.matchAll(/["']([\w.]+)["']/g)].map(dotted));
-  return [...[...txt.matchAll(/(?:^|[\s"'\[,])-p["']?\s*,?\s*["']?([\w.]+)(?![\w.:])/g)].map(dotted), ...named];
+  const named = [...txt.matchAll(/\bpytest_plugins\s*(?::[^=\n]{0,200})?=\s*(\[[^\]]{0,4096}\]|\([^)]{0,4096}\)|["'][^"'\n]{0,4096}["'])/g)].flatMap((g) => [...g[1]!.matchAll(/["']([\w.]+)["']/g)].map(dotted));
+  return [...[...txt.matchAll(/(?:^|[\s"'\[,])-p["']?(?:\s*,)?\s*["']?([\w.]+)(?![\w.:])/g)].map(dotted), ...named];
 }
 /** Repo paths named by a runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest) and pytest plugin modules (`-p`, bare, quoted or list form, in an ini, cfg or toml config; `pytest_plugins` in conftest.py; a dotted name maps to a path). Editing such a file changes what the runner loads even when the config itself is unchanged. */
 function configRefs(changed: readonly string[], roots: readonly string[]): Set<string> {
