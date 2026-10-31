@@ -2191,6 +2191,43 @@ describe("#238 wall proven at committed path", () => {
   }, 60000);
 });
 
+describe.skipIf(!Bun.which("go"))("a published in-package Go Wall is re-proven at its committed path with the real go toolchain", () => {
+  const REL = "loki_wall_ini_test.go", NAME = `go:${REL}`;
+  const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
+  const IMPL = "package ini\n\nfunc Two() int { return 2 }\n";
+  const WALLS: Record<string, string> = {
+    pass: 'package ini\n\nimport "testing"\n\nfunc TestTwo(t *testing.T) {\n\tif Two() != 2 {\n\t\tt.Fatal("two")\n\t}\n}\n',
+    skipped: 'package ini\n\nimport "testing"\n\nfunc TestTwo(t *testing.T) {\n\tt.Skip("later")\n}\n',
+    noFuncs: 'package ini\n\nimport "testing"\n\nfunc helper(t *testing.T) {}\n',
+  };
+  async function run(name: string, wall: string) {
+    noKey();
+    const { repo, base } = makeRepo(name);
+    writeFileSync(join(repo, "go.mod"), "module example.com/ini\n\ngo 1.20\n"); writeFileSync(join(repo, "ini.go"), IMPL); writeFileSync(join(repo, REL), "// agent\n");
+    const { ctx } = ctxFor(repo, base, "claude", {
+      wall: { files: [{ path: join(repo, REL), sha256: sha(wall) }], base_run: { pass: 0, fail: 1, not_run: 0 } },
+      verify: { checks: [{ name: NAME, cmd: "go test ./...", result: "pass", n: 1, duration_s: 1 }], target_checks: [NAME], flaky: [], wall_passed: true, duration_s: 1 },
+    });
+    mkdirSync(join(ctx.runDir, "wall"), { recursive: true }); writeFileSync(join(ctx.runDir, "wall", REL), wall);
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    return { s, r: receiptOf(s) };
+  }
+  test("a passing in-package Wall seals VERIFIED and publishes (the seal re-run corroborates a Go exit 0)", async () => {
+    const x = await run("go-pass", WALLS.pass!);
+    expect(x.r.not_proven ?? []).not.toContain(`Wall test fails at its committed path: ${REL}`);
+    expect(x.s.data.verdict).toBe("VERIFIED"); expect(x.s.data.wall_published).toBeDefined();
+  }, 120000);
+  test("a Wall whose only test is t.Skip never reproves as a pass", async () => {
+    const x = await run("go-skip", WALLS.skipped!);
+    expect(x.s.data.verdict).toBe("PARTIAL"); expect(x.r.not_proven).toContain(`Wall test fails at its committed path: ${REL}`);
+  }, 120000);
+  test("a Wall with no Test functions never reproves as a pass", async () => {
+    const x = await run("go-nofuncs", WALLS.noFuncs!);
+    expect(x.s.data.verdict).toBe("PARTIAL"); expect(x.r.not_proven).toContain(`Wall test fails at its committed path: ${REL}`);
+  }, 120000);
+});
+
 describe("Seal accuracy line (GAME10-03)", () => {
   const MODEL = "claude-opus-5-5", DAY = 86_400_000;
   const mk = (name: string, over: { row?: Record<string, unknown> | null; ver?: string | null; run?: Record<string, unknown>; ageDays?: number | null; corpusSha?: string } = {}) => {

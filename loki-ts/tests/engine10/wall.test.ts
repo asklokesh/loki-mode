@@ -1286,10 +1286,36 @@ describe("Wall directory follows the runner's test-visibility rule", () => {
     expect(r.files.map((f) => f.path)).toEqual(["loki_wall_a_test.go"]);
     expect(r.brief).toContain('starts with "package ini"');
   });
-  test("Go greenfield: a planned nested file puts the Wall in that package directory", async () => {
-    const r = await run("Build a rate limiter.", "go", {}, "Files: internal/limiter/limiter.go");
+  // Plan and Wall run in one parallel group, so in production the Wall sees only the task text; the plan text applies only on resume (the last test below feeds it).
+  test("Go greenfield: a nested file named in the task puts the Wall in that package directory", async () => {
+    const r = await run("Build a rate limiter in internal/limiter/limiter.go.", "go");
     expect(r.files.map((f) => f.path)).toEqual(["internal/limiter/loki_wall_a_test.go"]);
     expect(r.brief).toContain('"package limiter"');
+  });
+  test("Go package order: a stem that differs from its dir gives the dir (internal/store/memory.go is package store)", async () => {
+    const r = await run("Add internal/store/memory.go with an in-memory store.", "go");
+    expect(r.files.map((f) => f.path)).toEqual(["internal/store/loki_wall_a_test.go"]);
+    expect(r.brief).toContain('"package store"');
+  });
+  test("Go package order: cmd/x/main.go is package main", async () => {
+    const r = await run("Write cmd/x/main.go that prints hello.", "go");
+    expect(r.files.map((f) => f.path)).toEqual(["cmd/x/loki_wall_a_test.go"]);
+    expect(r.brief).toContain('"package main"');
+  });
+  test("Go package order: a hyphenated stem at the root has no valid identifier, so no package line is emitted", async () => {
+    const r = await run("Write word-wrap.go that wraps text.", "go");
+    expect(r.files.map((f) => f.path)).toEqual(["loki_wall_a_test.go"]);
+    expect(r.brief).not.toContain("Go: your test files");
+  });
+  test("Go package order: an explicit package in the task beats the stem; a root file otherwise takes the go.mod module name without /vN", async () => {
+    expect((await run("Write ini.go, package `config`.", "go")).brief).toContain('"package config"');
+    const r = await run("Write ini.go that parses INI.", "go", { "go.mod": "module example.com/acme/shortener/v2\n\ngo 1.22\n" });
+    expect(r.brief).toContain('"package shortener"');
+    expect((await run("Write ini.go that parses INI.", "go")).brief).not.toContain("Go: your test files");
+  });
+  test("Go greenfield: on resume the plan text names the file when the task does not", async () => {
+    const r = await run("Build a rate limiter.", "go", {}, "Files: internal/limiter/limiter.go");
+    expect(r.files.map((f) => f.path)).toEqual(["internal/limiter/loki_wall_a_test.go"]);
   });
   test("Go greenfield: a sibling's package clause wins over the file name", async () => {
     const r = await run("Extend util/extra.go with helpers.", "go", { "util/main.go": "package toolkit\n" });

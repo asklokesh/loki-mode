@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A Go task in a repo with no tests now gets its acceptance test beside the planned Go source file, in that file's package, instead of in tests/ where Go cannot see the package, so the run no longer ends PARTIAL at the seal re-run.
+- A Go task in a repo with no tests now gets its acceptance test beside the planned Go source file, with the package clause taken from a sibling file, the task, the directory or go.mod, instead of in tests/ where Go cannot see the package. The seal re-run of a published Go Wall now accepts a real passing Go test (exit 0 with executed tests) instead of reading it as not run, while a Wall whose tests are all skipped or that has no tests still does not reprove.
 
 ## v11.94.0 (2026-10-31)
 
