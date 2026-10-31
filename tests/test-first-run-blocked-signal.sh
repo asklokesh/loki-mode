@@ -374,6 +374,20 @@ else
     bad "main(): double INT rc=$(cat "$md/rc" 2>/dev/null) first_run_finished=$(grep -c 'activation_first_run_finished' "$md/events.log" 2>/dev/null)"
 fi
 
+# A run ended by a STOP file: the loop sees .loki/STOP through the real check_human_intervention, returns, and main() still sends first_run_finished once.
+# The session lock is released exactly once, by the arming process (a recorder replaces safe_release_lock and logs the releasing pid next to the main pid).
+mk="$WORK/main-stop"; main_run "$mk" 'mkdir -p .loki; : > .loki/STOP; check_human_intervention; echo "stop-rc=$?" > "'"$mk"'/stoprc"; main_pid=$$; echo "$main_pid" > "'"$mk"'/mainpid"; safe_release_lock() { echo "${BASHPID:-$$}" >> "'"$mk"'/released"; }; return 0' on
+if [ "$(cat "$mk/stoprc" 2>/dev/null)" = "stop-rc=2" ] && [ "$(grep -c '"event": *"activation_first_run_finished"' "$mk/events.log" 2>/dev/null)" = "1" ]; then
+    ok "main(): a STOP-file-ended run sends first_run_finished exactly once"
+else
+    bad "main(): STOP-file run stop=$(cat "$mk/stoprc" 2>/dev/null) first_run_finished=$(grep -c 'activation_first_run_finished' "$mk/events.log" 2>/dev/null)"
+fi
+if [ "$(wc -l < "$mk/released" 2>/dev/null | tr -d ' ')" = "1" ] && [ "$(cat "$mk/released" 2>/dev/null)" = "$(cat "$mk/mainpid" 2>/dev/null)" ]; then
+    ok "main(): the session lock is released once, by the arming process, on a STOP-file exit"
+else
+    bad "main(): STOP-file run lock releases=[$(tr '\n' ' ' < "$mk/released" 2>/dev/null)] main pid=$(cat "$mk/mainpid" 2>/dev/null)"
+fi
+
 mo="$WORK/main-off"; main_run "$mo" 'kill -TERM $$; sleep 5' off LOKI_SUPERVISED_BUILD=1
 mo_markers="$(find "$mo/h/.loki" -maxdepth 1 -name 'funnel*' 2>/dev/null | head -1)"
 if grep -q "\"event\": *\"activation_" "$mo/events.log" 2>/dev/null || [ -n "$mo_markers" ]; then
