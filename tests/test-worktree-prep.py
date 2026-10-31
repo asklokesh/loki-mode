@@ -83,6 +83,21 @@ class WorktreePrepTest(unittest.TestCase):
         self.assertEqual(res["deps_skipped"], [".venv"])
         self.assertFalse((Path(res["path"]) / ".venv").exists())
 
+    def test_partial_copy_failure_leaves_no_dep_dir(self):
+        nm = self.repo / "node_modules" / "pkg"
+        nm.mkdir(parents=True)
+        (nm / "ok.js").write_text("1\n")
+        locked = nm / "locked.js"
+        locked.write_text("2\n")
+        os.chmod(locked, 0)
+        try:
+            res = worktree_prep.prepare_worktree(str(self.repo), self.dest("wt7"), "b7")
+        finally:
+            os.chmod(locked, 0o644)
+        self.assertEqual(res["deps"], "skipped")
+        self.assertEqual(res["deps_skipped"], ["node_modules"])
+        self.assertFalse((Path(res["path"]) / "node_modules").exists())
+
     def test_lock_contention_times_out(self):
         import fcntl
         held = open(worktree_prep._lock_path(str(self.repo)), "w")
