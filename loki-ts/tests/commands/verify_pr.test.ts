@@ -392,7 +392,7 @@ function repoWith(name: string, base: Record<string, string>, pr: Record<string,
   const repo = join(dir, `src-${name}`);
   mkdirSync(repo);
   git(repo, "init", "-q", "-b", "main");
-  for (const [f, c] of Object.entries(base)) writeFileSync(join(repo, f), c);
+  for (const [f, c] of Object.entries(base)) { mkdirSync(join(repo, f, ".."), { recursive: true }); writeFileSync(join(repo, f), c); }
   git(repo, "add", "."); git(repo, "commit", "-qm", "base");
   const baseSha = git(repo, "rev-parse", "HEAD");
   git(repo, "checkout", "-qb", "pr");
@@ -541,6 +541,30 @@ describe("verify-pr: an exit code alone is not proof", () => {
   ] as const)("a PR with %s", async (_n, edits, rc, reason) => {
     const base = _n.startsWith("only an unrelated") ? { ...SECTION_FILES, "setup.cfg": "[flake8]\nmax-line-length = 100\n" } : SECTION_FILES;
     const meta = repoWith(`sec-${_n.replace(/\W/g, "")}`, base, { "note.txt": "x\n" });
+    const repo = meta.cloneUrl;
+    for (const [f, c] of Object.entries({ "add.py": PY_FIXED, ...edits })) { mkdirSync(join(repo, f, ".."), { recursive: true }); writeFileSync(join(repo, f), c); }
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "edit");
+    const head = git(repo, "rev-parse", "HEAD");
+    git(repo, "update-ref", "refs/pull/7/head", head);
+    let n = 0;
+    const r = await run({ ...meta, headSha: head }, { checkout: defaultCheckout, packageSuites: () => ({ suites: [], removed: [] }), sandbox: () => (n++ === 0 ? { status: "COMPLETED", exit_code: 1 } : { status: "COMPLETED", exit_code: 0, report: PASS }) }, issueFor(PY_CHECK));
+    expect(r.rc).toBe(rc);
+    expect(r.json.reasons.join(" ")).toMatch(reason);
+  }, 30_000);
+
+  const HOOK = "import sys\nsys.exit(0)\n";
+  const PLUG_REF = { "setup.cfg": "[flake8]\nmax-line-length = 100\n" };
+  test.each([
+    ["E1 pyproject addopts -p plugin module rewritten", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = \"-p plug\"\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["E4 pyproject addopts list plugin module rewritten", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = [\"-p\", \"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["E3 conftest pytest_plugins list module rewritten", { ...PLUG_REF, "conftest.py": "pytest_plugins = [\"plug\"]\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["E3 conftest pytest_plugins string module rewritten", { ...PLUG_REF, "conftest.py": "pytest_plugins = \"plug\"\n" }, { "plug.py": HOOK }, 4, /plug\.py/],
+    ["A13 package plugin __init__.py rewritten", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = \"-p plug\"\n", "plug.py": null, "plug/__init__.py": "# plugin\n" }, { "plug/__init__.py": HOOK }, 4, /plug\/__init__\.py/],
+    ["a referenced plugin left unchanged while the bug is fixed", { ...PLUG_REF, "pyproject.toml": "[tool.pytest.ini_options]\naddopts = [\"-p\", \"plug\"]\n", "conftest.py": "pytest_plugins = [\"plug\"]\n" }, {}, 0, /^$/],
+  ] as const)("a PR where %s", async (_n, baseEdits, edits, rc, reason) => {
+    const files: Record<string, string> = { ...SECTION_FILES };
+    for (const [f, c] of Object.entries(baseEdits)) { if (c === null) delete files[f]; else files[f] = c; }
+    const meta = repoWith(`plg-${_n.replace(/\W/g, "").slice(0, 28)}`, files, { "note.txt": "x\n" });
     const repo = meta.cloneUrl;
     for (const [f, c] of Object.entries({ "add.py": PY_FIXED, ...edits })) { mkdirSync(join(repo, f, ".."), { recursive: true }); writeFileSync(join(repo, f), c); }
     git(repo, "add", "-A"); git(repo, "commit", "-qm", "edit");

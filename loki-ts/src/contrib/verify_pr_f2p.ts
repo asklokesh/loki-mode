@@ -3,7 +3,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join, posix } from "node:path";
 import { REPORT_RUNNERS } from "../engine10/testmap.ts";
-
 export interface SandboxResult { status: "COMPLETED" | "TIMEOUT" | "ERROR" | "BLOCKED"; exit_code: number | null; detail?: string; output?: string; report?: string }
 export type F2pOutcome =
   | { ok: true }
@@ -11,7 +10,6 @@ export type F2pOutcome =
 
 const MAX_CHECKS = 5;
 const MAX_CMD = 500;
-
 /** Runnable checks the issue author wrote: `Check: \`cmd\`` lines and ```loki-check fences. Only the issue body is read, never the PR body. */
 export function extractChecks(issueBody: string): string[] {
   const out: string[] = [];
@@ -26,7 +24,6 @@ export function extractChecks(issueBody: string): string[] {
   }
   return out;
 }
-
 /** Repo-relative file paths a check command names that exist in `dir`. Used to detect a check whose test the PR deleted. */
 export function referencedFiles(cmd: string, dir: string): string[] {
   return cmd.split(/\s+/).map((t) => t.replace(/^["']|["']$/g, "")).filter((t) => t !== "" && !t.startsWith("-") && !t.startsWith("/") && !t.includes("..") && existsSync(join(dir, t)));
@@ -71,13 +68,18 @@ function textMatchesOrUnreadable(path: string, test: (txt: string) => boolean): 
 
 /** Changed in a PR, these always count as runner config whatever they hold: transpiler config (babel), interpreter startup hooks (sitecustomize.py, usercustomize.py, *.pth), mocha config, and anything under a __mocks__ directory (the runner applies those without the test asking, and a `roots` setting can move them out of the repo root). */
 const ALWAYS_CONFIG = /(?:^|\/)(?:babel\.config\.[\w.]+|\.babelrc(?:\.[\w.]+)?|(?:site|user)customize\.py|[^/]+\.pth|\.mocharc(?:\.[\w.]+)?)$|(?:^|\/)__mocks__\//;
-/** Repo paths named by a runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest) and `-p` plugin modules in an ini, cfg or toml config. Editing such a file changes what the runner loads even when the config itself is unchanged. */
+function pluginMods(txt: string): string[] {
+  const dotted = (m: RegExpMatchArray) => m[1]!.replace(/\./g, "/");
+  const named = [...txt.matchAll(/\bpytest_plugins\s*(?::[^=\n]*)?=\s*(\[[^\]]*\]|\([^)]*\)|["'][^"'\n]*["'])/g)].flatMap((g) => [...g[1]!.matchAll(/["']([\w.]+)["']/g)].map(dotted));
+  return [...[...txt.matchAll(/(?:^|[\s"'\[,])-p["']?\s*,?\s*["']?([\w.]+)(?![\w.:])/g)].map(dotted), ...named];
+}
+/** Repo paths named by a runner config at the root or in an ancestor dir of a changed file, at either side: quoted paths in a REPORT_RUNNERS config (setup files, global setup, module mapper targets, preload; only the runner's `key` of a shared manifest) and pytest plugin modules (`-p`, bare, quoted or list form, in an ini, cfg or toml config; `pytest_plugins` in conftest.py; a dotted name maps to a path). Editing such a file changes what the runner loads even when the config itself is unchanged. */
 function configRefs(changed: readonly string[], roots: readonly string[]): Set<string> {
   const out = new Set<string>(), dirs = new Set(changed.flatMap((f) => f.split("/").slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join("/")).concat("")));
   for (const root of new Set(roots)) for (const d of dirs) for (const n of (() => { try { return readdirSync(join(root, d)); } catch { return []; } })()) {
-    const r = REPORT_RUNNERS.find((x) => x.config.test(n)), ini = /\.(?:ini|cfg)$|^pyproject\.toml$/.test(n); let txt: string;
-    if ((!r && !ini) || n.endsWith(".py")) continue; try { txt = readFileSync(join(root, d, n), "utf8"); if (r?.key && !n.startsWith(r.runner)) txt = JSON.stringify((JSON.parse(txt) as Record<string, unknown>)[r.key] ?? ""); } catch { continue; }
-    for (const t of ini ? [...txt.matchAll(/(?:^|\s)-p\s*([\w.]+)(?![\w.:])/g)].map((m) => m[1]!.replace(/\./g, "/")) : [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) { const p = posix.normalize(posix.join(d, t)); if (/[a-z]/i.test(t) && !/[*?^$|()[\]\\{}<>\s]/.test(t) && !t.startsWith("/") && !p.startsWith("..")) out.add(p); }
+    const r = REPORT_RUNNERS.find((x) => x.config.test(n)), ini = /\.(?:ini|cfg)$|^pyproject\.toml$|^conftest\.py$/.test(n); let txt: string;
+    if ((!r && !ini) || (n.endsWith(".py") && n !== "conftest.py")) continue; try { txt = readFileSync(join(root, d, n), "utf8"); if (r?.key && !n.startsWith(r.runner)) txt = JSON.stringify((JSON.parse(txt) as Record<string, unknown>)[r.key] ?? ""); } catch { continue; }
+    for (const t of ini ? pluginMods(txt) : [...txt.matchAll(/["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!.replace(/^<rootDir>\//, ""))) { const p = posix.normalize(posix.join(d, t)); if (/[a-z]/i.test(t) && !/[*?^$|()[\]\\{}<>\s]/.test(t) && !t.startsWith("/") && !p.startsWith("..")) out.add(p); }
   }
   return out;
 }
@@ -86,7 +88,7 @@ export function runnerConfigChanged(changed: readonly string[], headDir: string,
   const refs = configRefs(changed, [headDir, baseDir]);
   return changed.filter((f) => {
     const b = basename(f), r = REPORT_RUNNERS.find((x) => x.config.test(b));
-    if (ALWAYS_CONFIG.test(f) || refs.has(f) || refs.has(f.replace(/\.[^./]+$/, ""))) return true;
+    if (ALWAYS_CONFIG.test(f) || refs.has(f) || refs.has(f.replace(/\.[^./]+$/, "")) || refs.has(f.replace(/\/__init__\.py$/, ""))) return true;
     const at = [headDir, baseDir].filter((d, i, a) => a.indexOf(d) === i && existsSync(join(d, f)));
     if (/^tsconfig[\w.-]*\.json$/.test(b)) return at.length === 0 || at.some((d) => textMatchesOrUnreadable(join(d, f), (txt) => /"(?:paths|baseUrl|rootDirs|extends)"\s*:/.test(txt)));
     if (at.length === 0 || (r && !r.key)) return !!r || at.length > 0;
