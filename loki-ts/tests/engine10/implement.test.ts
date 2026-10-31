@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { MAX_TURNS_EXIT } from "../../src/runner/worker_proc.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
-import { createSessionRunner } from "../../src/engine10/session.ts";
+import { createSessionRunner, childEnv } from "../../src/engine10/session.ts";
+const createChildEnv = (o: SessionRunOptions, provider: string) => childEnv(o, { provider } as never);
 import {
   buildImplementBrief,
   implementStage,
@@ -459,5 +460,37 @@ describe("engine10 implement stage: TEN-QUALITY-44 repro test out of repo", () =
   test("repro test out of repo: clean repro and flag-off runs are not re-asked", async () => {
     expect((await runWith('import { f } from "../src/f.ts";\n', "1")).briefs.length).toBe(1);
     expect((await runWith(BAD, undefined)).briefs.length).toBe(1);
+  });
+});
+
+describe("engine10 implement stage: in-session fix rounds", () => {
+  const withKnob = async (v: string | undefined, testmap: unknown, files = true) => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-stopchk-"));
+    if (files) writeFileSync(join(dir, "calc.test.ts"), "x\n");
+    const sessions = new FakeSessionRunner(doneResult);
+    const ctx = { ...fakeCtx(sessions, { intake: { task: "t", testmap }, plan: { plan: "p", relevant_files: ["calc.ts"] }, wall: { readOnlyFiles: [] } }), repoDir: dir };
+    ctx.tests.impacted = (map) => map.tests;
+    const old = process.env.LOKI_E10_STOP_CHECKS; if (v === undefined) delete process.env.LOKI_E10_STOP_CHECKS; else process.env.LOKI_E10_STOP_CHECKS = v;
+    try { await implementStage.run(ctx, new AbortController().signal); return sessions.lastOpts; }
+    finally { if (old === undefined) delete process.env.LOKI_E10_STOP_CHECKS; else process.env.LOKI_E10_STOP_CHECKS = old; rmSync(dir, { recursive: true, force: true }); }
+  };
+  const map = { runners: ["bun"], tests: [{ runner: "bun", path: "calc.test.ts" }] };
+  test("default on: the implement session carries the impacted test check, 2 rounds, a bounded budget", async () => {
+    const o = await withKnob(undefined, map);
+    expect(o?.stopChecks?.rounds).toBe(2);
+    expect(o?.stopChecks?.checks.map((c) => [c.cmd, ...c.args])).toEqual([["bun", "test", "calc.test.ts"]]);
+    expect(o?.stopChecks?.budgetS).toBeLessThanOrEqual(implementStage.limitS / 4);
+  });
+  test("no runner resolved, a missing file, or the knob off: no stop checks (behaviour unchanged)", async () => {
+    expect((await withKnob(undefined, { runners: [], tests: [] }))?.stopChecks).toBeUndefined();
+    expect((await withKnob(undefined, map, false))?.stopChecks).toBeUndefined();
+    expect((await withKnob("0", map))?.stopChecks).toBeUndefined();
+  });
+  test("childEnv hands the spec to the claude route only", () => {
+    const stopChecks = { checks: [{ cwd: "/r", cmd: "bun", args: ["test", "a"] }], rounds: 2, budgetS: 60 };
+    const o = { stage: "implement", brief: "b", tier: "development", iterationId: "i", limitS: 480, signal: new AbortController().signal, stopChecks } as SessionRunOptions;
+    expect(JSON.parse(String(createChildEnv(o, "claude").LOKI_E10_STOP_CHECKS))).toEqual(stopChecks);
+    expect(createChildEnv(o, "codex").LOKI_E10_STOP_CHECKS).toBeUndefined();
+    expect(createChildEnv({ ...o, stopChecks: undefined }, "claude").LOKI_E10_STOP_CHECKS).toBeUndefined();
   });
 });

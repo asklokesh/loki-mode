@@ -50,6 +50,7 @@ import { LEAN_PREFIX } from "../features/lean_prefix.ts";
 import { consumeSdkStream, type StreamMsg } from "./sdk_stream_parser.ts";
 import { writeSessionId } from "./session_resume.ts";
 import { createTrimHook } from "./trim.ts";
+import { createStopChecksHook, parseStopChecks, STOP_HOOK_MARGIN_S } from "./stop_checks.ts";
 import { advisorPair, probeAdvisor, ROUTER_ADVISOR_MODEL } from "./router/advisor_probe.ts";
 import { advisorOnlyEnabled, routerEnabled, sessionPlanEnabled } from "./router/flag.ts";
 import type {
@@ -912,6 +913,7 @@ export function sdkQueryProvider(): ProviderInvoker {
         // (FC-19) and empty-done (FC-43) resumes on claude, and the CH-03 chain under opt-in LOKI_E10_FIX_RESUME. It is read from process.env here, before the LOKI_E10_* strip above applies to the child's env.
         const resumeId = process.env["LOKI_E10_RESUME_SESSION"] || undefined;
         const permissionOpts = sdkPermissionOptions(call.cwd);
+        const stopSpec = process.env["LOKI_E10_STAGE"] ? parseStopChecks(process.env["LOKI_E10_STOP_CHECKS"]) : null; // read here, before the LOKI_E10_* strip applies to the child's env
         const q = query({
           prompt: call.prompt,
           options: {
@@ -929,9 +931,10 @@ export function sdkQueryProvider(): ProviderInvoker {
             // which deliberately drops LOKI_E10_* for the CHILD session) --
             // this hook runs in the parent process, so the flag applies to
             // THIS session regardless of what the child inherits.
-            ...(hostGuardRequired(call.cwd) || process.env["LOKI_E10_TRIM"] === "1"
+            ...(hostGuardRequired(call.cwd) || process.env["LOKI_E10_TRIM"] === "1" || stopSpec
               ? {
                   hooks: {
+                    ...(stopSpec ? { Stop: [{ timeout: stopSpec.budgetS + STOP_HOOK_MARGIN_S, hooks: [createStopChecksHook(stopSpec)] }] } : {}),
                     ...(hostGuardRequired(call.cwd)
                       ? {
                           PreToolUse: [{

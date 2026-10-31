@@ -289,6 +289,31 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
     }
   });
 
+  // In-session fix rounds: the Stop hook is installed only when the engine10 child env carries a valid spec, with a timeout past its budget.
+  it("engine10 session: query() gets a Stop hook with a bounded timeout when LOKI_E10_STOP_CHECKS is set, none when unset", async () => {
+    const keys = ["LOKI_E10_STAGE", "LOKI_E10_BRIEF", "LOKI_E10_STOP_CHECKS"] as const;
+    const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    process.env["LOKI_E10_STAGE"] = "implement"; process.env["LOKI_E10_BRIEF"] = "brief";
+    try {
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      delete process.env["LOKI_E10_STOP_CHECKS"];
+      stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
+      await sdkQueryProvider().invoke(call());
+      expect((lastQueryArgs?.options?.["hooks"] as Record<string, unknown> | undefined)?.["Stop"]).toBeUndefined();
+      process.env["LOKI_E10_STOP_CHECKS"] = JSON.stringify({ checks: [{ cwd: "/", cmd: "sh", args: ["-c", "exit 0"] }], rounds: 2, budgetS: 60, repoDir: "/", baseSha: "HEAD" });
+      stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
+      await sdkQueryProvider().invoke(call());
+      const stop = (lastQueryArgs?.options?.["hooks"] as { Stop?: { timeout?: number; hooks: unknown[] }[] } | undefined)?.Stop;
+      expect(stop?.length).toBe(1);
+      expect(stop![0]!.timeout).toBeGreaterThan(60);
+      expect(typeof stop![0]!.hooks[0]).toBe("function");
+      const env = lastQueryArgs?.options?.["env"] as Record<string, string>;
+      expect("LOKI_E10_STOP_CHECKS" in env).toBe(false);
+    } finally {
+      for (const k of keys) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+    }
+  });
+
   // S41-09: LOKI_E10_PREFIX=lean, default off (D41 item 2, D42 item 1).
   it("engine10 session, LOKI_E10_PREFIX=lean: query() gets a fixed-string systemPrompt", async () => {
     const prev = { stage: process.env["LOKI_E10_STAGE"], prefix: process.env["LOKI_E10_PREFIX"] };

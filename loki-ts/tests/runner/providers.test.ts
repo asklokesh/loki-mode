@@ -8,10 +8,10 @@
 
 // Read independently from the JSON so these assertions do not depend on resolveClaudeModel itself.
 const CATALOG_OPUS: string = JSON.parse(_rf(_join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers.claude.cli_aliases.opus;
-import { describe, expect, it, beforeEach, afterEach, test } from "bun:test";
+import { describe, expect, it, beforeEach, afterEach, afterAll, test } from "bun:test";
 import { resolveProvider, claudeProvider, codexProvider, clineProvider, aiderProvider, PROVIDER_COMMIT_HYGIENE, buildSdkLoopOptions, providerCallTimeoutMs, mergeDisallowedTools, engine10CacheTtlEnv, SDK_BUNDLED_CLAUDE_CODE, truthy, textOnlyArgv } from "../../src/runner/providers.ts";
 import type { ProviderInvocation } from "../../src/runner/types.ts";
-import { readFileSync as _rf, chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync as _rf, chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join as _join, join } from "node:path";
 import { _resetClaudeHelpCacheForTest, effortForTier, buildAutoFlags } from "../../src/providers/claude_flags.ts";
 import { effortArgv, recordEffort } from "../../src/providers/model_routes.ts";
@@ -1495,5 +1495,87 @@ describe("provider spawn PWD follows call.cwd (FC-PROVIDER-SPAWN-INHERITS-PARENT
       if (saved.cli === undefined) delete process.env["LOKI_OPENCODE_CLI"]; else process.env["LOKI_OPENCODE_CLI"] = saved.cli;
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("in-session fix rounds: Stop hook", () => {
+  const dir = mkdtempSync(join(tmpdir(), "loki-stophook-"));
+  const sh = (script: string) => ({ cwd: dir, cmd: "sh", args: ["-c", script] });
+  afterAll(() => { rmSync(dir, { recursive: true, force: true }); });
+  const run = async (spec: { checks: { cwd: string; cmd: string; args: string[] }[]; rounds: number; budgetS: number }, times = 1, signal?: AbortSignal, preDelayMs = 0) => {
+    const { createStopChecksHook } = await import("../../src/runner/stop_checks.ts");
+    const hook = createStopChecksHook({ repoDir: dir, baseSha: "HEAD", ...spec }); const out: Record<string, unknown>[] = [];
+    if (preDelayMs) await new Promise((r) => setTimeout(r, preDelayMs));
+    for (let i = 0; i < times; i++) out.push(await hook({}, undefined, { signal: signal ?? new AbortController().signal }));
+    return out;
+  };
+  test("a failing check blocks the stop and feeds the failure back", async () => {
+    const [r] = await run({ checks: [sh("echo FAILED test_x; exit 1")], rounds: 2, budgetS: 30 });
+    expect(r!.decision).toBe("block");
+    expect(String(r!.reason)).toContain("FAILED test_x");
+  });
+  test("a passing check adds zero rounds", async () => {
+    expect(await run({ checks: [sh("exit 0")], rounds: 2, budgetS: 30 })).toEqual([{}]);
+  });
+  test("the round cap is honored", async () => {
+    const out = await run({ checks: [sh("exit 1")], rounds: 2, budgetS: 30 }, 4);
+    expect(out.map((o) => o.decision)).toEqual(["block", "block", undefined, undefined]);
+  });
+  test("a missing tool allows the stop", async () => {
+    expect(await run({ checks: [{ cwd: dir, cmd: "loki-no-such-tool-xyz", args: [] }], rounds: 2, budgetS: 30 })).toEqual([{}]);
+  });
+  test("the deadline starts at the Stop call, not at hook construction: a long session still blocks a failing check", async () => {
+    const [r] = await run({ checks: [sh("echo STILL_RED; exit 1")], rounds: 2, budgetS: 1 }, 1, undefined, 1500);
+    expect(r!.decision).toBe("block");
+    expect(String(r!.reason)).toContain("STILL_RED");
+  });
+  test("the feedback forbids editing the read-only Wall files only, and allows an outdated non-Wall assertion", async () => {
+    const [r] = await run({ checks: [sh("exit 1")], rounds: 2, budgetS: 30 });
+    expect(String(r!.reason)).toContain("read-only Wall");
+    expect(String(r!.reason)).toContain("may update that assertion");
+    expect(String(r!.reason)).not.toContain("not the tests");
+  });
+  test("an aborted stage signal allows the stop and kills the check's process group", async () => {
+    const ac = new AbortController(); setTimeout(() => ac.abort(), 300);
+    const t0 = Date.now();
+    expect(await run({ checks: [sh("sleep 20; exit 1")], rounds: 2, budgetS: 30 }, 1, ac.signal)).toEqual([{}]);
+    expect(Date.now() - t0).toBeLessThan(5000);
+  });
+  test("a harness-owned load failure (same on the base commit) allows the stop; a protected Wall check still blocks", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "loki-stophook-repo-"));
+    try {
+      const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: repo, stdio: "ignore" });
+      git("init", "-q"); writeFileSync(join(repo, "a.txt"), "a\n"); git("add", "a.txt"); git("commit", "-q", "-m", "base");
+      const load = { cwd: repo, cmd: "sh", args: ["-c", "echo \"Cannot find module 'zzz-missing'\"; exit 1"] };
+      expect(await run({ checks: [load], rounds: 2, budgetS: 30, repoDir: repo } as never)).toEqual([{}]);
+      expect((await run({ checks: [{ ...load, protect: true }], rounds: 2, budgetS: 30, repoDir: repo } as never))[0]!.decision).toBe("block");
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+  test("planStopChecks: Wall tests first, red-on-base and system-interpreter tests skipped, knob off, no map", async () => {
+    const { planStopChecks } = await import("../../src/runner/stop_checks.ts");
+    mkdirSync(join(dir, ".loki", "state"), { recursive: true });
+    for (const f of ["w.test.ts", "a.test.ts", "red.test.ts"]) writeFileSync(join(dir, f), "x\n");
+    writeFileSync(join(dir, ".loki", "state", "repo-profile.json"), JSON.stringify({ baseline: { failing_ids: ["red.test.ts > boom"] } }));
+    const map = { runners: ["bun"], tests: [{ runner: "bun", path: "a.test.ts" }, { runner: "bun", path: "red.test.ts" }] };
+    const outputs = { intake: { testmap: map }, wall: { files: [{ path: join(dir, "w.test.ts"), runner: "bun" }] } };
+    const plan = planStopChecks(dir, outputs, new Set(["a.test.ts", "red.test.ts"]), 480, "HEAD", {});
+    expect(plan.stopChecks?.checks.map((c) => c.args.at(-1))).toEqual(["w.test.ts", "a.test.ts"]);
+    expect(plan.stopChecks?.checks[0]!.protect).toBe(true);
+    expect(plan.stopChecks?.checks[1]!.protect).toBeUndefined();
+    expect(planStopChecks(dir, outputs, new Set(["a.test.ts"]), 480, "HEAD", { LOKI_E10_STOP_CHECKS: "0" })).toEqual({});
+    expect(planStopChecks(dir, undefined, new Set(), 480, "HEAD", {})).toEqual({});
+  });
+  test("a check that outlives the stage budget is cut and never read as a failure", async () => {
+    const t0 = Date.now();
+    expect(await run({ checks: [sh("sleep 20; exit 1")], rounds: 2, budgetS: 2 })).toEqual([{}]);
+    expect(Date.now() - t0).toBeLessThan(6000);
+  });
+  test("parseStopChecks rejects absent or malformed specs", async () => {
+    const { parseStopChecks } = await import("../../src/runner/stop_checks.ts");
+    expect(parseStopChecks(undefined)).toBeNull();
+    expect(parseStopChecks("not json")).toBeNull();
+    expect(parseStopChecks(JSON.stringify({ checks: [], rounds: 2, budgetS: 9 }))).toBeNull();
+    expect(parseStopChecks(JSON.stringify({ checks: [{ cwd: "/", cmd: "x", args: [] }], rounds: 2, budgetS: 9 }))).toBeNull();
+    expect(parseStopChecks(JSON.stringify({ checks: [{ cwd: "/", cmd: "x", args: [] }], rounds: 2, budgetS: 9, repoDir: "/", baseSha: "b" }))?.rounds).toBe(2);
   });
 });

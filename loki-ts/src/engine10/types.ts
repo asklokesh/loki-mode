@@ -79,7 +79,7 @@ export interface SessionRunOptions {
   iterationId: string; // unique LOKI_ITERATION, e.g. e10-<run-id>-impl
   limitS: number;
   signal: AbortSignal;
-  cwd?: string; disallowedTools?: string; // Q18-04: comma list passed as --disallowedTools (read-only reviewer)
+  cwd?: string; stopChecks?: { checks: { cwd: string; cmd: string; args: string[]; protect?: boolean }[]; rounds: number; budgetS: number; repoDir: string; baseSha: string; installCreated?: unknown }; /* claude SDK route: repo checks run at each Stop; a failure blocks the stop and returns to the same session, `rounds` times at most, `budgetS` seconds in all; other routes ignore it */ disallowedTools?: string; // Q18-04: comma list passed as --disallowedTools (read-only reviewer)
   /** Pins this session's model for its tier (E-45 Wall on sonnet); unset inherits the run model. */
   model?: string;
   resumeSessionId?: string; // MW-2: provider session to resume (LOKI_E10_FIX_RESUME); unset starts fresh
