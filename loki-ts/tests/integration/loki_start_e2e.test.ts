@@ -41,6 +41,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 import { runAutonomous } from "../../src/runner/autonomous.ts";
+import { CHECK_AUTHOR_MAX_ATTEMPTS } from "../../src/runner/check_author.ts";
 import type {
   Clock,
   CouncilHook,
@@ -258,8 +259,14 @@ describe("loki start <prd> e2e (runAutonomous + stub provider)", () => {
     expect(code).toBe(0);
 
     // Provider invoked exactly 3 times -- proves >=2 cycles ran.
-    expect(provider.calls.length).toBe(3);
-    expect(provider.calls.length).toBeGreaterThanOrEqual(2);
+    // The walled check author runs first as text-only fast-tier side calls (the stub never
+    // writes valid checks, so it retries to its attempt cap); only mainLoop calls are RARV cycles.
+    const authorCalls = provider.calls.filter((c) => c.mainLoop !== true);
+    expect(authorCalls.length).toBe(CHECK_AUTHOR_MAX_ATTEMPTS);
+    expect(authorCalls.every((c) => c.tier === "fast")).toBe(true);
+    const loopCalls = provider.calls.filter((c) => c.mainLoop === true);
+    expect(loopCalls.length).toBe(3);
+    expect(loopCalls.length).toBeGreaterThanOrEqual(2);
 
     // Final terminal state must reflect max_iterations_reached (NOT a hang
     // and NOT max_retries_exceeded).
@@ -525,7 +532,8 @@ describe("loki start <prd> e2e (runAutonomous + stub provider)", () => {
 
     // Persistent failure -> max_retries_exceeded -> exit 1.
     expect(code).toBe(1);
-    expect(provider.calls.length).toBe(2);
+    expect(provider.calls.filter((c) => c.mainLoop !== true).length).toBe(CHECK_AUTHOR_MAX_ATTEMPTS);
+    expect(provider.calls.filter((c) => c.mainLoop === true).length).toBe(2);
     // FakeClock means no real sleeping happens, so what is left is JS overhead.
     // The point of this assertion is "the loop does not HANG" -- it must not sit
     // on a real backoff -- not "the machine is fast". A 2s bound was measuring

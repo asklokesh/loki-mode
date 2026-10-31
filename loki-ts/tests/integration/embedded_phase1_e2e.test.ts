@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  ADVISORY_REVIEWERS,
   runCodeReview,
 } from "../../src/runner/quality_gates.ts";
 import type { ReviewerFn } from "../../src/runner/quality_gates.ts";
@@ -84,7 +85,9 @@ function ctxAt(iter: number): RunnerContext {
 
 // Reviewer stub: emits one [Critical] finding consistently.
 const failReviewer: ReviewerFn = async ({ reviewer }) => {
-  if (reviewer.name === "architecture-strategist") {
+  // The advisory reviewers (ADVISORY_REVIEWERS) carry no veto, so the blocking finding comes from a
+  // reviewer that holds one.
+  if (!ADVISORY_REVIEWERS.has(reviewer.name)) {
     return "VERDICT: FAIL\nFINDINGS:\n- [Critical] dead duplicate at sdk/python/gauge/client.py:55";
   }
   return "VERDICT: PASS\nFINDINGS:\n- (none)";

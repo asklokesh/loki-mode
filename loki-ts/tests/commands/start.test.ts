@@ -8,10 +8,12 @@ import { setLoadAwareTimeout } from "../preload.ts";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { capSourceLine, dryRunStart, extractSpecText, runInternalSpecText, textifyBashArgs, textSpecPath, deployFlagError, isBashOnlyStart, missingPrdMessage, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
-import { EventLog } from "../../src/engine10/events.ts";
+import { SupervisorLog } from "../../src/engine10/supervisor.ts";
+import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { offerInterruptedRun, runStart, startRecoveryHooks } from "../../src/commands/start.ts";
@@ -939,24 +941,31 @@ describe("FC-BINARY-SPEC-READ-AS-UTF8 start entry wiring", () => {
 
 describe("SB-12: the resume offer is made once, by the parent, for loki start <spec>", () => {
   const RUN = "e10-20261015T000000Z-abcd";
-  let repo = "", cwd0 = "", out: string[] = [], asked = 0, prCalls = 0;
+  let repo = "", cwd0 = "", out: string[] = [], asked = 0, prCalls = 0, prevKey: (string | undefined)[] = [];
   const sh = (a: string[]): void => { execFileSync("git", a, { cwd: repo, stdio: "ignore" }); };
   const setup = (): void => {
     cwd0 = process.cwd(); repo = mkdtempSync(join(tmpdir(), "loki-sb12-")); out = []; asked = 0; prCalls = 0;
+    // The run is the crash shape the supervisor leaves in the publish phase: a signed receipt bound to the log, the signed checkpoint after receipt.sealed
+    // and an open run.state.json. A publish resume refuses anything less, so the offer would otherwise be correctly withheld.
+    prevKey = [process.env["LOKI_RECEIPT_SIGNING_KEY"], process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]];
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = ""; process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(repo, "..", `${basename(repo)}-key.pem`);
     sh(["init", "-q"]); sh(["remote", "add", "origin", "https://github.com/o/r.git"]);
-    mkdirSync(join(repo, ".loki", "runs", RUN), { recursive: true });
-    writeFileSync(join(repo, ".loki", "runs", RUN, "receipt.json"), '{"receipt_sha256":"abc"}\n');
-    const log = new EventLog(join(repo, ".loki", "runs", RUN, "events.jsonl"), RUN);
+    sh(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-q", "-m", "x"]); sh(["branch", `loki/${RUN}`]);
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(), dir = join(repo, ".loki", "runs", RUN), ev = join(dir, "events.jsonl");
+    mkdirSync(dir, { recursive: true });
+    const log = new SupervisorLog(ev, RUN);
     log.append("run.started", null, { provider: "claude", model: "m" });
     log.append("stage.completed", "intake", { task: "fix the bug", base_sha: "0".repeat(40) });
-    log.append("receipt.sealed", "seal", { verdict: "VERIFIED", receipt_sha256: "abc", path: "r" });
+    const body = { schema: "loki.v10.receipt/1", run_id: RUN, verdict: "VERIFIED", head_sha: head, not_proven: [], events_sha256: createHash("sha256").update(readFileSync(ev)).digest("hex"), time: { wall_s: 0, stages: {} }, log_seal: true, checks: [] }, hash = receiptSha256(body as never);
+    writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signReceipt(RUN, hash) }, null, 2));
+    log.append("receipt.sealed", "seal", { receipt_sha256: hash, verdict: "VERIFIED", not_proven: [], path: join(dir, "receipt.json") }); log.checkpoint(hash);
     writeFileSync(join(repo, "prd.md"), "fix the bug");
     process.chdir(repo);
     delete process.env["LOKI_NO_RESUME"]; delete process.env["LOKI_NONINTERACTIVE"];
-    sh(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-q", "-m", "x"]); sh(["branch", `loki/${RUN}`]);
     startRecoveryHooks.afterOffer = () => 97; // hermetic: a regressed offer returns 97 here instead of launching the runner
   };
-  const teardown = (): void => { process.chdir(cwd0); startRecoveryHooks.deps = undefined; startRecoveryHooks.afterOffer = undefined; delete process.env["LOKI_NO_RESUME"]; rmSync(repo, { recursive: true, force: true }); };
+  const restoreEnv = (k: string, v: string | undefined): void => { if (v === undefined) delete process.env[k]; else process.env[k] = v; };
+  const teardown = (): void => { process.chdir(cwd0); restoreEnv("LOKI_RECEIPT_SIGNING_KEY", prevKey[0]); restoreEnv("LOKI_RECEIPT_SIGNING_KEY_FILE", prevKey[1]); rmSync(join(repo, "..", `${basename(repo)}-key.pem`), { force: true }); startRecoveryHooks.deps = undefined; startRecoveryHooks.afterOffer = undefined; delete process.env["LOKI_NO_RESUME"]; rmSync(repo, { recursive: true, force: true }); };
   const hooks = (tty: boolean, ...answers: string[]): void => {
     const q = [...answers];
     startRecoveryHooks.deps = { tty, out: (s) => { out.push(s); }, ask: async () => { asked++; return q.shift() ?? null; }, runPr: async () => { prCalls++; return { status: "completed", data: { pr_url: "https://github.com/o/r/pull/9", draft: false, existing: null } }; } };

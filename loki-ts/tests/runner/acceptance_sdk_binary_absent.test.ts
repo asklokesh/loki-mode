@@ -160,7 +160,9 @@ describe("acceptance #1: SDK-full with the claude binary absent", () => {
     // green build. Pinned textually because constructing a real half-stream
     // requires the SDK present, which is exactly what this file cannot assume.
     const body = sdkProviderBody();
-    expect(body).toMatch(/sawResult \? res\.exitCode : 1/);
+    // A stream without a result is always exit 1. With a result, exitCode passes through
+    // unchanged except error_max_turns, which maps to the distinct harness-owned MAX_TURNS_EXIT.
+    expect(body).toMatch(/sawResult \? \(res\.maxTurns \? MAX_TURNS_EXIT : res\.exitCode\) : 1/);
   });
 
   it("documents the judge-path boundary: non-mainLoop delegates to the CLI", () => {
