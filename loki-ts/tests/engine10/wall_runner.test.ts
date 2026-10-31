@@ -296,6 +296,14 @@ describe("TEN-SPEED-19 base jobs", () => {
     const a = ["-c", "head -c 850000 /dev/zero | tr '\\0' a; echo; echo '1 passed'"]; const o = spawnSync("sh", a, { encoding: "utf8", env: plainTestEnv() });
     const r = spawnGroupSync("sh", a, { env: plainTestEnv(), timeoutMs: 20000 });
     expect(o.status).toBe(0); expect(r.status).toBe(0); expect(r.output.length).toBeGreaterThan(850000);
+    expect(r.output).toBe(`${o.stdout}\n${o.stderr}`); expect(r.output).toContain("\n1 passed\n"); // the full payload and its tail marker survive the pipe, so a single non-looping write cannot pass
+  }, 30_000);
+  test("a result of about 2 MB (both streams just under the cap) reaches the caller whole, tail marker included", async () => {
+    const { spawnGroupSync, plainTestEnv } = await import("../../src/util/check_result.ts");
+    const a = ["-c", "head -c 1000000 /dev/zero | tr '\\0' a; echo; echo TAIL_OUT; head -c 1000000 /dev/zero | tr '\\0' b >&2; echo >&2; echo TAIL_ERR >&2"];
+    const t0 = Date.now(), r = spawnGroupSync("sh", a, { env: plainTestEnv(), timeoutMs: 3000 });
+    expect(r.status).toBe(0); expect(r.output.length).toBe(1000000 + 1 + 9 + 1 + 1000000 + 1 + 9); expect(r.output.endsWith("\nbbbb\nTAIL_ERR\n") || r.output.endsWith("b\nTAIL_ERR\n")).toBe(true);
+    expect(r.output).toContain("a\nTAIL_OUT\n\n"); expect(Date.now() - t0).toBeLessThan(4000);
   }, 30_000);
   test("the launcher does not load a .env or bunfig preload from the process cwd into the test env", () => {
     const d = tmp("x3"); writeFileSync(join(d, ".env"), "LEAK_X3=yes\n"); writeFileSync(join(d, "bunfig.toml"), 'preload = ["./pre.js"]\n'); writeFileSync(join(d, "pre.js"), 'process.env.PRELOAD_X3 = "ran";\n');
