@@ -2,6 +2,8 @@
 # Stub claude CLI for the engine10 e2e test. Modes via E2E_STUB_MODE:
 #   done (default): the implement session appends multiply() to calc.ts
 #   already: the implement session changes nothing and claims already-done
+#   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
+# E2E_STUB_SPLIT (JSON text): the MASS-2 split planning session writes it to the file its brief names.
 # Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo).
 set -u
 if [ "${1:-}" = "--help" ]; then
@@ -39,8 +41,18 @@ if [ -n "${E2E_STUB_ENV_LOG:-}" ]; then echo "$stage GH_TOKEN=${GH_TOKEN:-} LOKI
 if [ "$is_wall" = 1 ] && [ "${E2E_STUB_MODE:-}" = "wallcolor" ]; then # FC-69: the Wall author writes one red-on-base test for multiply()
   printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n' > loki_wall_multiply.test.ts
 fi
+case "$prompt" in *"PR-sized slices"*)
+  if [ -n "${E2E_STUB_SPLIT:-}" ]; then
+    out="$(printf '%s\n' "$prompt" | sed -n 's/^Write exactly one JSON object to the file \(.*\) and nothing else to that file, in this form:$/\1/p' | head -1)"
+    [ -n "$out" ] && printf '%s\n' "$E2E_STUB_SPLIT" > "$out"
+  fi ;;
+esac
 if [ "$stage" = "implement" ]; then
-  if [ "${E2E_STUB_MODE:-done}" = "nochange" ]; then
+  sid="$(printf '%s\n' "$prompt" | sed -n 's/^Slice \([A-Za-z0-9_-]*\) of [0-9]* for .*/\1/p' | head -1)"
+  if [ "${E2E_STUB_MODE:-done}" = "slice" ] && [ -n "$sid" ]; then
+    printf '\nexport function slice_%s(): string {\n  return "%s";\n}\n' "$sid" "$sid" >> calc.ts
+    echo "LOKI_DONE"
+  elif [ "${E2E_STUB_MODE:-done}" = "nochange" ]; then
     echo "LOKI_DONE"
   elif [ "${E2E_STUB_MODE:-done}" = "stack" ]; then # tests/min/stacks.sh: replace the LOKI_STUB_INSERT marker in E2E_STUB_TARGET with E2E_STUB_SNIPPET
     python3 -I -c 'import os,sys; p=os.environ["E2E_STUB_TARGET"]; s=open(p).read(); open(p,"w").write(s.replace("// LOKI_STUB_INSERT", os.environ["E2E_STUB_SNIPPET"]))'

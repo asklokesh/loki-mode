@@ -162,8 +162,8 @@ export function planComment(triageReason: string, slices: readonly Slice[]): str
   ].join("\n");
 }
 
-/** A slice may carry dependents only when it produced a pushed branch with a PR and did not fail or block. */
-export const stacksOn = (r: SliceResult | undefined): boolean => !!r && !!r.pr && !!r.branch && !/^(FAILED|BLOCKED|SKIPPED)/.test(r.outcome);
+/** A slice may carry dependents only when it produced a pushed branch with a PR (a kept run branch when the epic runs without PRs) and did not fail or block. */
+export const stacksOn = (r: SliceResult | undefined, needPr = true): boolean => !!r && (!needPr || !!r.pr) && !!r.branch && !/^(FAILED|BLOCKED|SKIPPED)/.test(r.outcome);
 
 /** Run one epic's slices: every slice whose dependencies are satisfied starts at once, up to `parallel` at a time, so independent roots never wait on each other. runSlice gets the parent's run branch (null for a root). */
 export async function runEpicSlices(
@@ -172,6 +172,7 @@ export async function runEpicSlices(
   onSkip: (r: SliceResult) => void,
   parallel = 1,
   onProgress: (p: EpicProgress) => void = () => {},
+  needPr = true,
 ): Promise<SliceResult[]> {
   const results = new Map<string, SliceResult>();
   const running = new Map<string, Promise<void>>();
@@ -183,7 +184,7 @@ export async function runEpicSlices(
       if (!pending.has(s.id) || running.size >= Math.max(1, parallel)) continue;
       if (!s.depends_on.every((dep) => results.has(dep))) continue;
       pending.delete(s.id);
-      const bad = s.depends_on.find((dep) => !stacksOn(results.get(dep)));
+      const bad = s.depends_on.find((dep) => !stacksOn(results.get(dep), needPr));
       if (bad) {
         const why = results.get(bad)!.outcome.split(/[ ,(]/)[0];
         const r: SliceResult = { id: s.id, title: s.title, parent: d.parent[s.id] ?? null, outcome: `SKIPPED (depends on ${bad}, which was ${why})`, pr: null, cost: "-" };

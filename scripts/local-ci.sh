@@ -15,7 +15,8 @@ cd "$ROOT" || exit 2
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TESTS=(syntax hygiene version-consistency release-notes docker-and-zip-sources pack-contents
-       cli-entrypoints newcomer-path receipt-roundtrip redaction detect-gates typecheck dist-freshness engine10-e2e-stub one-line-goal stacks)
+       cli-entrypoints newcomer-path receipt-roundtrip redaction detect-gates typecheck dist-freshness engine10-e2e-stub one-line-goal stacks
+       decompose-and-intake)
 
 selected=("${TESTS[@]}")
 if [ -n "${LOCAL_CI_ONLY:-}" ]; then

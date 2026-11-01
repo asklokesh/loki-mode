@@ -9,7 +9,7 @@ import { type AlreadyDoneResult, buildAlreadyDoneCommentArgv, checkAlreadyDone, 
 import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_done_async.ts";
 import { hooks } from "../hooks.ts";
 import { snapshotContract } from "../../features/contract.ts";
-import { probeZeroChecks } from "./verify.ts"; import { stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
+import { lazyZeroBaseline, stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
 import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps, type DepsTiming, type IntakeTiming } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { ensureProfile, readinessNotice, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 import { ambiguityGate } from "../../features/spec_ambiguity.ts";
@@ -93,18 +93,18 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   mkdirSync(ctx.runDir, { recursive: true });
   const repomapRef = join(ctx.runDir, "repomap.json");
   const cacheDir = repoCacheDir(repoKey(null, ctx.repoDir)); // same dir sizing.ts and context.ts read; keyed by HEAD^{tree}, so an unchanged tree skips the repo walk and test detection
-  const tm: IntakeTiming = {}, lap = (): (() => number) => { const t = Date.now(); return () => Date.now() - t; }; let walkCached = true; const walkEnd = lap();
+  const tm: IntakeTiming = { setup: { ms: Date.now() - t0, at: 0 } }, lap = (): (() => number) => { const t = Date.now(); return () => Date.now() - t; }, at = (): number => Date.now() - t0; let walkCached = true; const walkAt = at(), walkEnd = lap(); // every phase carries `at`, its start in ms after intake began
   const repoMap = cachedRepoMap(cacheDir, tree, () => { walkCached = false; return buildRepoMap(ctx.repoDir); });
   writeFileSync(repomapRef, JSON.stringify(repoMap));
   let testmap = readTestMapCache(cacheDir, tree);
   if (!testmap) { walkCached = false; testmap = await ctx.tests.detect(ctx.repoDir); try { writeTestMapCache(cacheDir, tree, testmap); } catch { /* an unwritable cache only costs the next run a rebuild */ } }
-  tm.repo_walk = { ms: walkEnd(), cached: walkCached }; const baselineEnd = lap(), baselineOn = process.env.LOKI_REPO_BASELINE !== "0";
+  tm.repo_walk = { ms: walkEnd(), at: walkAt, cached: walkCached }; const baselineAt = at(), baselineEnd = lap(), baselineOn = process.env.LOKI_REPO_BASELINE !== "0";
   const built = baselineOn ? ensureProfile(ctx.repoDir) : null, baselineMs = baselineEnd(); // REPOMEM: commands + a baseline test run on the untouched tree, reused while the manifests are unchanged; never throws
   const readiness = built ? readinessNotice(ctx.repoDir, repoReadiness(built.profile)) : null; // once per repo and score: a repo-config grade is not part of every run's outcome
   if (readiness && process.env.LOKI_E10_READINESS_FOLD === "1") held.fold = readiness;
   else if (readiness) process.stderr.write(`${readiness}\n`); // FV-readiness-env-3; D48 default mode: the supervisor folds it into the last line instead
   // E-66: "already implemented" as a first-class outcome. A deterministic evidence search over repoMap/testmap/CHANGELOG, confirmed by one short cheap-model session that must cite files; no candidate evidence means no session call (checkAlreadyDone's own gate).
-  const already = speedEnabled() ? null : await checkAlreadyDone(ctx, signal, task, repoMap, testmap); // D61-04: LOKI_SPEED=1 defers it past intake
+  const adAt = at(), adEnd = lap(), already = speedEnabled() ? null : await checkAlreadyDone(ctx, signal, task, repoMap, testmap); tm.already_done = speedEnabled() ? { skipped: "deferred past intake (LOKI_SPEED)" } : { ms: adEnd(), at: adAt }; // D61-04: LOKI_SPEED=1 defers it past intake
   const alreadyData = (already: AlreadyDoneResult): Record<string, unknown> => {
     // The comment always exists (there is always something to tell the operator once evidence confirms no change is needed); only an issue run has somewhere to post it, so only that case gets an
     // argv. A text run gets the same body, but printed by the CLI (main(), below) instead -- posting an issue comment for a run with no issue would be meaningless.
@@ -119,15 +119,15 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   const stale = already ? unmergedEvidence(ctx.repoDir, already.paths, startBranch) : null;
   if (already && !stale) return { status: "completed", data: { ...base, ignore_snapshot: ignoreSnapshot(ctx.repoDir), ...alreadyData(already) } };
   if (stale) process.stderr.write(`engine10: ${stale.lokiOwn ? unmergedEvidenceNote(stale) : `evidence for the task is on ${stale.branch ?? "HEAD"} but not on ${stale.target}; implementing`}\n`); // L5/L6: the operator sees it when the run goes on to implement
-  const pmEnd = lap(), pm = await intakeProjectModel(ctx, signal, t0, testmap); tm.project_model = Object.keys(pm).length ? { ms: pmEnd(), cached: (pm["project_model"] as { cached?: boolean }).cached === true } : { skipped: "project model disabled or unavailable" }; const dt: DepsTiming = {}, depsData = await intakeDeps(ctx, signal, testmap.runners, dt);
-  tm.deps_install = dt.install ?? { skipped: "install step did not run" }; tm.suite_baseline = baselineOn ? { ms: baselineMs + (dt.baseline_ms ?? 0), cached: built?.reused ?? false } : { skipped: "LOKI_REPO_BASELINE=0" };
-  const zeroEnd = lap(), zero_baseline = await probeZeroChecks(ctx.repoDir, testmap.tests, signal); tm.zero_probe = testmap.tests.length ? { ms: zeroEnd() } : { skipped: "no detected test files" };
+  const pmAt = at(), pmEnd = lap(), pm = await intakeProjectModel(ctx, signal, t0, testmap); tm.project_model = Object.keys(pm).length ? { ms: pmEnd(), at: pmAt, cached: (pm["project_model"] as { cached?: boolean }).cached === true } : { skipped: "project model disabled or unavailable" }; const dt: DepsTiming = {}, depsAt = at(), depsData = await intakeDeps(ctx, signal, testmap.runners, dt);
+  tm.deps_install = dt.install && "ms" in dt.install ? { ...dt.install, at: depsAt } : dt.install ?? { skipped: "install step did not run" }; tm.suite_baseline = baselineOn ? { ms: baselineMs + (dt.baseline_ms ?? 0), at: baselineAt, cached: built?.reused ?? false } : { skipped: "LOKI_REPO_BASELINE=0" };
+  const zbAt = at(), zbEnd = lap(), zero_baseline = lazyZeroBaseline(ctx.repoDir); tm.zero_baseline = { ms: zbEnd(), at: zbAt }; tm.zero_probe = { skipped: "lazy: verify measures only its zero-run candidates on base (util/base_guard.ts lazyZeroBaseline)" }; // recorded last, after Loki's own install and baseline: since_ms is when an agent could first touch the environment
   const data = { ...base, ...(stale?.lokiOwn ? { unmerged_loki_work: { branch: stale.branch, target: stale.target, commits: stale.commits, message: unmergedEvidenceNote(stale) } } : {}), ...pm, ...depsData, zero_baseline, hidden_cfg: (() => { try { return hiddenRunnerConfigs(ctx.repoDir); } catch { return null; } })(), ignore_snapshot: ignoreSnapshot(ctx.repoDir), intake_timing: tm, repomap_ref: repomapRef, testmap, already_satisfied: false };
   if (speedEnabled()) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { if (unmergedEvidence(ctx.repoDir, a.paths, startBranch)) throw new Error("evidence not on the PR target"); Object.assign(data, alreadyData(a)); });
   return { status: "completed", data };
 }
 export const stage: Stage = {
   name: "intake",
-  ...STAGE_BUDGETS.intake, limitS: STAGE_BUDGETS.intake.limitS + INSTALL_CAP_MS / 1000 + SUITE_BASELINE_BUDGET_S + 120, // one table (types.ts); discovery gets what remains of its limit, plus the FC-DEPS-NOT-INSTALLED install and per-command baseline caps
+  ...STAGE_BUDGETS.intake, limitS: STAGE_BUDGETS.intake.limitS + INSTALL_CAP_MS / 1000 + SUITE_BASELINE_BUDGET_S, // one table (types.ts); discovery gets what remains of its limit, plus the FC-DEPS-NOT-INSTALLED install and per-command baseline caps
   run: (ctx, signal) => runIntake(ctx, signal),
 };

@@ -2,7 +2,7 @@
 // A run starts from the base the user asked for; only the ALREADY_SATISFIED claim must rest on the PR target, never on
 // commits that exist only in target..HEAD (Loki's own unmerged work or the user's own).
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -170,17 +170,69 @@ export function depsSeeHead(pkgDir: string, repoDir: string): boolean {
   } catch { return true; }
 }
 
+/** FC-REPO-SKIPPED-TEST-DOWNGRADES, lazy form. Intake no longer runs every test file once on the untouched base (that probe cost FireLater#24
+ *  120 of its 122 intake seconds). It records the moment the agent could first touch the environment (`since_ms`, after Loki's own install and
+ *  baseline) and the ignored entries that existed then; verify measures only its zero-run candidates, on the base worktree, and trusts that base run
+ *  as the pre-change measurement only while envChangedSince finds the environment as intake left it. Ignored entries are listed collapsed (one line
+ *  per wholly ignored directory); over IGNORED_CAP entries the list is null and every lazy candidate is withheld. Never throws. */
+const IGNORED_CAP = 5000;
+export function lazyZeroBaseline(repoDir: string): { lazy: true; since_ms: number; ignored: string[] | null } {
+  const raw = git(repoDir, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]);
+  const ignored = raw === null ? null : raw.split("\0").map((p) => p.replace(/\/$/, "")).filter((p) => p !== "" && p !== ".loki" && !p.startsWith(".loki/"));
+  return { lazy: true, since_ms: Date.now(), ignored: ignored && ignored.length <= IGNORED_CAP ? ignored : null };
+}
+/** The intake record as verify's candidate filter: an eager `zero` list (runs from before the lazy form) admits only its names; the lazy record
+ *  admits every candidate and hands zeroOnBase the guard inputs. A missing or malformed record admits nothing. */
+export interface ZeroGate { has: (name: string) => boolean; sinceMs?: number; ignored?: string[] | null }
+export function zeroGate(rec: unknown): ZeroGate {
+  const z = (rec && typeof rec === "object" ? rec : {}) as { zero?: unknown; lazy?: unknown; since_ms?: unknown; ignored?: unknown };
+  const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : []);
+  if (z.lazy === true && typeof z.since_ms === "number") return { has: () => true, sinceMs: z.since_ms, ignored: Array.isArray(z.ignored) ? strs(z.ignored) : null };
+  const names = new Set(strs(z.zero));
+  return { has: (n) => names.has(n) };
+}
+// Test runners write their own caches inside node_modules and .venv on every run (Loki's verify included); they hold no dependency code.
+const RUNNER_CACHE_DIRS = [".vite", ".vitest", ".cache", "__pycache__", ".pytest_cache"];
+/** True (withhold) unless the environment is as intake left it at `sinceMs`: every ignored entry intake listed still exists, and no entry under
+ *  `pkgDir`'s node_modules or .venv, and no ignored file intake listed, had its status changed since (ctime, which a process cannot set back;
+ *  one `find` walk that never follows symlinks; runner cache dirs pruned). Additions count as changes: an added nested package or .pth file can
+ *  change what runs. Ignored directories other than dependency dirs are checked for existence only. Any error withholds. */
+export function envChangedSince(repoDir: string, pkgDir: string, sinceMs: number, ignored: string[] | null): boolean {
+  if (ignored === null) return true;
+  let stampDir = "";
+  try {
+    const roots: string[] = [];
+    for (const rel of ignored) {
+      const st = statSync(join(repoDir, rel), { throwIfNoEntry: false }); // a dangling link reads as missing, which withholds
+      if (!st) return true;
+      if (!st.isDirectory()) roots.push(join(repoDir, rel));
+    }
+    for (const d of ["node_modules", ".venv"]) if (existsSync(join(pkgDir, d))) roots.push(join(pkgDir, d));
+    if (roots.length === 0) return false;
+    stampDir = mkdtempSync(join(tmpdir(), "loki-zero-stamp-"));
+    const stamp = join(stampDir, "since");
+    writeFileSync(stamp, "");
+    utimesSync(stamp, sinceMs / 1000, sinceMs / 1000);
+    const prune = RUNNER_CACHE_DIRS.flatMap((n, i) => [...(i ? ["-o"] : []), "-name", n]);
+    const out = execFileSync("find", ["-P", ...new Set(roots), "(", ...prune, ")", "-prune", "-o", "-cnewer", stamp, "-print", "-quit"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120000 });
+    return out.trim() !== "";
+  } catch { return true; } finally { if (stampDir) rmSync(stampDir, { recursive: true, force: true }); }
+}
+
 /** FC-ZERO-ON-BASE: for each zero-executed candidate run its command once in the base worktree `baseDir` (deps linked from the head checkout, never
  *  copied) and return the names that also execute zero tests there. A candidate whose deps can see head sources, or whose base run is cut, missing
- *  or not a zero, is left out (stays NOT PROVEN). `note` is called per excused name. */
+ *  or not a zero, is left out (stays NOT PROVEN). `note` is called per excused name. With a lazy `gate` (sinceMs set) a candidate is also left
+ *  out when envChangedSince finds the environment changed since intake: the base run then no longer stands for the untouched base. */
 export async function zeroOnBase(
   cands: { name: string; cmd: string; args: string[]; cwd: string }[], baseDir: string, repoDir: string,
   run: (c: { cmd: string; args: string[]; cwd: string }) => Promise<{ ok: boolean; cut: boolean; missing: boolean; out: string }>, note: (name: string) => void,
+  gate: Pick<ZeroGate, "sinceMs" | "ignored"> = {},
 ): Promise<string[]> {
-  const zero: string[] = [];
+  const zero: string[] = [], envMoved = new Map<string, boolean>(); // one guard walk per package dir per call
+  const moved = (src: string): boolean => { if (!envMoved.has(src)) envMoved.set(src, envChangedSince(repoDir, src, gate.sinceMs!, gate.ignored ?? null)); return envMoved.get(src)!; };
   for (const c of cands) {
     const src = join(repoDir, relative(baseDir, c.cwd));
-    if (depsSeeHead(src, repoDir)) continue;
+    if (depsSeeHead(src, repoDir) || (gate.sinceMs !== undefined && moved(src))) continue;
     for (const d of ["node_modules", ".venv"]) { try { if (existsSync(join(src, d)) && !existsSync(join(c.cwd, d))) symlinkSync(join(src, d), join(c.cwd, d)); } catch { /* no deps on base: not zero, stays fail-closed */ } }
     if (isZeroRun(c, await run(c))) { zero.push(c.name); note(c.name); }
   }
