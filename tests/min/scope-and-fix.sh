@@ -7,7 +7,8 @@
 #                test file is kept, and the run is VERIFIED.
 #   scope:       in the same run the session edits util.ts, which plan-scope.json (seeded with the task's calc.ts) does
 #                not name; the edit is kept and the receipt lists "outside stated scope: util.ts" without blocking.
-#   update:      an edit that keeps every assertion and only adds a test case is kept (not restored).
+#   update:      an edit that keeps every assertion and only adds a test case is kept (not restored), and the
+#                verdict stays below VERIFIED with the edited test named on the receipt.
 #   named:       the same edit is kept when the task names calc.test.ts.
 #   conflict:    implement writes a wrong multiply(); the fix session answers LOKI_SPEC_CONFLICT without editing;
 #                no retry session starts (one fix session, no "-r" iteration) and the run ends BLOCKED.
@@ -28,6 +29,7 @@
 #   5. loki-ts/src/util/wall_knobs.ts: wallConcurrent default back to sequential (the Wall finishes before implement).
 #   6. loki-ts/src/util/session_pin.ts: capToSessionPin returns the stage pin unchanged (the referee runs on sonnet).
 #   7. loki-ts/src/engine10/sizing.ts: smallTaskPath lean only for small tasks (the normal task runs a Wall session).
+#   8. loki-ts/src/engine10/stages/seal.ts: drop weakTests from the verdict cap (the update run reads VERIFIED).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -62,6 +64,8 @@ run_engine() {
     if [ -f "$REPO/.loki/engine.json" ]; then
         rid="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_id"])' "$REPO/.loki/engine.json" 2>/dev/null)"
         [ -n "$rid" ] && RUNDIR="$REPO/.loki/runs/$rid"
+        # the run ends with the checkout back on main and its work on loki/<rid>; look at that work there
+        [ -n "$rid" ] && git -C "$REPO" rev-parse -q --verify "refs/heads/loki/$rid" >/dev/null && git -C "$REPO" checkout -q "loki/$rid"
     fi
 }
 
@@ -88,10 +92,13 @@ notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(ope
 has "scope: the receipt lists the out-of-scope edit" "$notes" "outside stated scope: util.ts"
 grep -q 'MODE = 2' "$REPO/util.ts" && ok "scope: the out-of-scope edit is kept, not reverted" || bad "scope: the util.ts edit was dropped"
 
-run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=update
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=update LOKI_EXOGENOUS_PROOF=0 # proof opt-out: the edited test alone must cap, not the agent-only-proof rule
 grep -q 'add again' "$REPO/calc.test.ts" && ok "update: an edit that keeps every assertion and adds a case is kept" || { bad "update: an assertion-preserving edit to calc.test.ts was restored"; dump; }
 reverted="$(ev '[e["data"].get("tests_reverted") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"]')"
 case "$reverted" in *calc.test.ts*) bad "update: tests_reverted names calc.test.ts: $reverted" ;; *) ok "update: tests_reverted does not name calc.test.ts" ;; esac
+[ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "update: an edited existing test still caps the verdict ($(outcome))" || { bad "update: outcome is '$(outcome)' with an edited existing test"; dump; }
+notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+has "update: the receipt names the edited test" "$notes" "weakened test: calc.test.ts"
 
 run_engine "add a multiply(a, b) function to calc.ts and extend calc.test.ts" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=1
 grep -q 'add again' "$REPO/calc.test.ts" && ok "named: the task names calc.test.ts, so the edit is kept" || bad "named: the edit to a test the task names was restored"

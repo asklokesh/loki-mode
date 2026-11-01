@@ -815,20 +815,22 @@ const declNames = (line: string): string[] => {
   if (m) out.push(m[1]!);
   return out.filter((n) => !NOT_A_NAME.has(n));
 };
-/** Names a `git diff -U0` declares or modifies: declarations on added lines, plus the hunk's enclosing declaration (the @@ context) when the hunk removes lines or declares nothing itself. */
+/** Names a `git diff -U0` declares or modifies: declarations on added lines, plus the hunk's enclosing declaration (the @@ context) when the hunk removes code or declares nothing itself.
+ *  HONEST-VERIFIED: a removed line that is blank, comment-only, or re-added verbatim (a trailing-newline fix) removes no code, so it never credits the enclosing declaration; otherwise a test of the neighbouring function would hide an unexercised new one. */
 export function changedSymbols(diffU0: string): string[] {
   const out = new Set<string>();
-  let ctx = "", added: string[] = [], removed = 0;
+  let ctx = "", added: string[] = [], removed: string[] = [];
   const flush = (): void => {
     const own = stripComments(added.join("\n")).split("\n").flatMap(declNames); // strip over the whole hunk: a block comment can span added lines
     for (const n of own) out.add(n);
-    if (removed > 0 || own.length === 0) for (const n of declNames(ctx)) out.add(n);
-    added = []; removed = 0;
+    const kept = new Set(added.map((l) => l.trim())), removedCode = stripComments(removed.filter((l) => !kept.has(l.trim())).join("\n")).trim() !== "";
+    if (removedCode || own.length === 0) for (const n of declNames(ctx)) out.add(n);
+    added = []; removed = [];
   };
   for (const line of diffU0.split("\n")) {
     if (line.startsWith("@@")) { flush(); ctx = line.replace(/^@@[^@]*@@\s?/, ""); }
     else if (line.startsWith("+") && !line.startsWith("+++")) added.push(line.slice(1));
-    else if (line.startsWith("-") && !line.startsWith("---")) removed++;
+    else if (line.startsWith("-") && !line.startsWith("---")) removed.push(line.slice(1));
   }
   flush();
   return [...out];

@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.113.0 (2026-11-01)
+
+Correct runs now read VERIFIED, `loki <command> --help` never starts a run, and every run leaves your checkout on the branch you started from.
+
+### Fixed
+
+- On the head-to-head benchmark, 14 of 16 Loki runs now seal VERIFIED (was 4 of 16) with every hidden test still passing; the remaining 2 are a real gap (an edited existing test is the only evidence). Two false caps are gone: Python tests on the system interpreter no longer cap a repo that declares no dependencies, and the security scan now finds its script when Loki runs from the npm package (it had reported "not found" and capped every high-risk run at PARTIAL).
+- A change next to an existing function no longer counts that function as changed, so a passing test of it cannot hide a new, untested function.
+- Text whose first word is a Loki command (for example "status --help" or "config path", even passed as one argument) is refused with that command's help instead of starting an autonomous run.
+- Every outcome (VERIFIED, PARTIAL, FAILED, STALLED, BLOCKED, budget stop, Ctrl-C, SIGTERM) returns your checkout to the branch you started on with your own files untouched. Unfinished work is committed on the run branch as "loki: work in progress, not verified", and one line says where it is and how to see it.
+
 ## v11.112.0 (2026-11-01)
 
 A first run works with just an API key and shows every setup problem at once; repeating a task Loki already answered costs nothing.

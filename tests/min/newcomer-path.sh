@@ -125,7 +125,7 @@ run_goal "$REPO" "$BARE"; bare_rc=$RC; bare_out="$OUT"; bare_repo="$REPO"
 [ "$bare_rc" -eq 0 ] && ok "L034 key-only run on the bundled SDK exits 0" || { bad "L034 key-only run exited $bare_rc"; printf '%s\n' "$bare_out" | tail -15 | sed 's/^/    | /'; }
 printf '%s\n' "$bare_out" | grep -Eq '^Outcome:[[:space:]]+VERIFIED' && ok "L034 key-only run prints Outcome: VERIFIED" || bad "L034 key-only run did not reach VERIFIED"
 [ -s "$bare_repo.sdk.log" ] && ok "L034 sessions ran through the SDK binary ($(wc -l < "$bare_repo.sdk.log" | tr -d ' ') calls)" || bad "L034 the SDK binary never ran"
-grep -q 'export function multiply' "$bare_repo/calc.ts" && ok "L034 the session's change landed" || bad "L034 calc.ts has no multiply()"
+{ grep -q 'export function multiply' "$bare_repo/calc.ts" || git -C "$bare_repo" for-each-ref --format='%(refname:short)' 'refs/heads/loki/' | while read -r b; do git -C "$bare_repo" show "$b:calc.ts"; done | grep -q 'export function multiply'; } && ok "L034 the session's change landed (checkout or run branch)" || bad "L034 calc.ts has no multiply()"
 fixture_repo key-full
 run_goal "$REPO" "$FULLPATH"; full_rc=$RC; full_out="$OUT"; full_repo="$REPO"
 bare_outcome="$(printf '%s\n' "$bare_out" | sed -n 's/^Outcome:[[:space:]]*//p' | head -1)"
