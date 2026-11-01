@@ -23,8 +23,7 @@ import { claudeEffortLevels, claudeThinkingAccepted, claudeThinkingHasAdaptive, 
 
 // --disallowedTools tree-mutation guard for reviewer sessions. Byte-identical to
 // loki_review_guard_denylist in autonomy/lib/claude-flags.sh. Kept in this leaf
-// module so engine10 stages and runner/quality_gates.ts share one value without
-// the stages importing the SDK invoker.
+// module so engine10 stages share one value without importing the SDK invoker.
 export const REVIEW_GUARD_DENYLIST =
   "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*),Bash(git --exec-path:*),Bash(git diff --output:*),Bash(git diff --output=:*),Bash(git diff --ext-diff:*),Bash(git diff --no-index:*),Bash(git log --output:*),Bash(git log --output=:*),Bash(git log --ext-diff:*),Bash(git show --output:*),Bash(git show --output=:*),Bash(git show --ext-diff:*),Bash(git blame --output:*),Bash(git blame --output=:*),Bash(rg --pre:*),Bash(rg --pre=:*),Bash(rg --pre-glob:*),Bash(rg --pre-glob=:*),Bash(rg --hostname-bin:*),Bash(rg --hostname-bin=:*),Bash(find -delete:*),Bash(find -exec:*),Bash(find -execdir:*),Bash(find -ok:*),Bash(find -fprint:*),Bash(find -fprintf:*),Bash(find -fls:*),Bash(git * --output*),Bash(git * --ext-diff*),Bash(git * --no-index*),Bash(rg * --pre*),Bash(rg * --hostname-bin*),Bash(rg --pre*),Bash(rg --hostname-bin*),Bash(find * -delete*),Bash(find * -exec*),Bash(find * -execdir*),Bash(find * -fprint*),Bash(find * -fls*),Bash(find * -ok*)";
 
@@ -282,7 +281,7 @@ export async function ensureClaudeHelpCache(): Promise<void> {
     // process.env earlier would never reach this spawn and the real token
     // could leak to this literal `claude` invocation. Pass a fresh copy
     // explicitly, matching the convention every other claude/agent spawn in
-    // this codebase already uses (shell.ts run(), voter_agents.ts).
+    // this codebase already uses (shell.ts run()).
     const proc = Bun.spawn(["claude", "--help"], {
       stdout: "pipe",
       stderr: "pipe",
@@ -746,8 +745,8 @@ export function sessionResumeArgv(targetDir?: string): string[] {
 // opt-in env knob (LOKI_USE_CLAUDE_WORKFLOWS=1, default OFF) that turns ON the
 // Phase 2 read-only-analysis workflow dispatch. It is intentionally a pure env
 // check here; the provider gate (Claude-only) and the "ultracode: " prompt
-// prefixing live in runner/build_prompt.ts (useClaudeWorkflowsForAnalysis +
-// analysisInstruction), the one place the analysis prompt is composed. Workflows
+// prefixing live in the bash build_prompt (autonomy/run.sh), the one place the
+// analysis prompt is composed. Workflows
 // are Claude-provider-only and never touch the council, the 8 gates, the
 // evidence gate, or the RARV loop -- only the read-only codebase-analysis prompt.
 // ---------------------------------------------------------------------------

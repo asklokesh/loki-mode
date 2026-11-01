@@ -19,9 +19,8 @@
 // fails CLOSED -- it auto-approves nothing and a Critical/High code_review
 // BLOCK is never lifted by self-supplied evidence. counter-evidence is still
 // recorded here for audit, but it does not self-lift a trust-gate block. The
-// only adjudicated override that may legitimately lift a BLOCK is the Bun-route
-// real-LLM judge (quality_gates.ts maybeRunOverrideCouncil), which uses an
-// adjudicator the agent does not control.
+// Bun-route real-LLM judge that could adjudicate an override was removed with the
+// separate Bun loop, so no route lifts a BLOCK automatically.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";

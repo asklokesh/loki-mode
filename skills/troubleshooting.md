@@ -201,7 +201,6 @@ life of the run. None persists to a state file:
 
 - `council_circuit_breaker_triggered()` (`autonomy/completion-council.sh:397`) --
   stagnation and repeated done-signals
-- the repeated-signature breaker (`loki-ts/src/runner/recovery_policy.ts:91`)
 - the budget breaker (`loki-ts/src/runner/budget.ts:296`,
   `check_budget_limit()` in `autonomy/run.sh`), which writes
   `.loki/metrics/budget.json` and `.loki/signals/BUDGET_EXCEEDED`

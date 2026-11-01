@@ -168,9 +168,8 @@ async function runReflect(argv: readonly string[]): Promise<number> {
 // reviews and resumes via `rm .loki/PAUSE` (optionally directing the agent with
 // `.loki/HUMAN_INPUT.md`), both confirmed in autonomy/run.sh.
 //
-// The only adjudicated override that may legitimately lift a BLOCK is the
-// Bun-route real-LLM judge (quality_gates.ts maybeRunOverrideCouncil), which
-// uses an adjudicator the agent does not control; that path is unchanged here.
+// The Bun-route real-LLM judge that could adjudicate an override was removed with
+// the separate Bun loop, so no route lifts a BLOCK automatically.
 // counter-evidence on this bash route is still recorded for audit (transcript
 // written below) but never self-lifts.
 //
@@ -208,10 +207,7 @@ async function runOverride(argv: readonly string[]): Promise<number> {
     // agent both DISPUTES the finding and WRITES the counter-evidence file, so
     // any "proof" on disk is self-supplied and forgeable. Self-certification can
     // never lift a Critical/High trust-gate BLOCK: this stub auto-approves
-    // NOTHING -- every record returns REJECT_OVERRIDE (the safe direction). The
-    // legitimate adjudicated override is the Bun-route real-LLM judge
-    // (quality_gates.ts maybeRunOverrideCouncil), which the agent does not
-    // control; to proceed on this route the operator must fix the finding or use
+    // NOTHING -- every record returns REJECT_OVERRIDE (the safe direction). To proceed on this route the operator must fix the finding or use
     // the human-escape path (rm .loki/PAUSE, optionally .loki/HUMAN_INPUT.md).
     const stubJudge = async (input: {
       finding: import("../runner/findings_injector.ts").Finding;

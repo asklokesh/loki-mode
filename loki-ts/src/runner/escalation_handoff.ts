@@ -8,9 +8,8 @@
 // "what the human must decide" block -- so the operator can resume in seconds
 // instead of minutes.
 //
-// Wires into quality_gates.applyEscalation (lines 895-923) BEFORE the existing
-// writePauseSignal call. The PAUSE signal itself is NOT removed -- existing
-// tooling (dashboard, autonomous.ts loop) keeps reading it. This module only
+// Runs (via internal_phase1.ts) BEFORE the existing writePauseSignal call. The
+// PAUSE signal itself is NOT removed -- existing tooling (dashboard) keeps reading it. This module only
 // adds the human-readable doc on top.
 //
 // Default off: only fires when LOKI_HANDOFF_MD=1.

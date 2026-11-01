@@ -7,16 +7,14 @@
  * them at once. LOKI_SDK is an alias (1|on|judges -> judges; full -> full).
  *
  * WHY A TS COPY (not just the bash resolver): the bash resolver runs in run.sh
- * and its resolved env is inherited by child processes. But the Bun route
- * (cli.ts dispatch, reached via the bin/loki shim when LOKI_SDK_LOOP is truthy)
- * runs IN-PROCESS -- its SDK sites (providers.ts, voter_agents.ts,
- * quality_gates.ts) read LOKI_SDK_* fresh from process.env. Without this, an
- * operator who sets only LOKI_SDK_MODE=full and lands on the Bun route would see
- * the per-site flags UNSET (mode not honored). resolveSdkMode() closes that gap.
+ * and its resolved env is inherited by child processes. But the Bun CLI
+ * (cli.ts) runs IN-PROCESS -- its SDK sites (providers.ts) read LOKI_SDK_*
+ * fresh from process.env. Without this, an operator who sets only
+ * LOKI_SDK_MODE=full and reaches a Bun command would see the per-site flags
+ * UNSET (mode not honored). resolveSdkMode() closes that gap.
  *
- * PARITY: the TS SDK sites read with a MIX of predicates -- strict `=== "1"`
- * (voter_agents.ts, quality_gates.ts) and truthy() (providers.ts LOKI_SDK_LOOP).
- * So we write the literal string "1" / "0", which satisfies BOTH. Same table as
+ * PARITY: readers use either strict `=== "1"` or truthy() (providers.ts
+ * LOKI_SDK_LOOP). So we write the literal string "1" / "0", which satisfies BOTH. Same table as
  * the bash resolver; asserted against the shared fixture test/fixtures/
  * sdk-mode-table.json.
  *
