@@ -179,7 +179,7 @@ _chat_readiness() {
         t="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
         if [ -n "$t" ]; then out="$("$t" 5 claude auth status 2>/dev/null)" || out=""; else out="$(claude auth status 2>/dev/null)" || out=""; fi
         case "$out" in
-            *'"loggedIn"'*false*) prov="claude is logged out: claude login (or set ANTHROPIC_API_KEY)" ;;
+            *'"loggedIn"'*false*) prov="claude is logged out: claude auth login (or set ANTHROPIC_API_KEY)" ;;
         esac
     fi
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then

@@ -69,7 +69,7 @@ export function nextOf(result: RunResult, filesChanged: number | null, reason?: 
   if (result === "stopped") return r.startsWith("spec conflict") ? 'loki answer --text "<your decision>"' : r.startsWith("stalled") ? "loki chat --attach" : "loki status";
   if (r === "provider authentication failed" || r.startsWith("provider authentication failed: ")) {
     if (provider !== "claude") return `re-authenticate ${provider}, then loki doctor`;
-    return /api key/i.test(r) ? "replace or unset ANTHROPIC_API_KEY, or run claude login" : "claude login"; // an env key outranks the login, so claude login alone would not clear a rejected key
+    return /api key/i.test(r) ? "replace or unset ANTHROPIC_API_KEY, or run claude auth login" : "claude auth login"; // an env key outranks the login, so claude auth login alone would not clear a rejected key
   }
   if (r.startsWith("provider credit exhausted")) return "check provider billing, or loki start --provider <other>";
   if (r.startsWith("dirty tracked tree")) return "commit your edits or stash them yourself, then rerun the same command";

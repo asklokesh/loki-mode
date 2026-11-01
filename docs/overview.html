@@ -159,10 +159,12 @@ flowchart TB
   G --> H[Watch: dashboard,&lt;br/&gt;Control Plane, Slack]
   G --> I{Outcome}
   I -->|VERIFIED| J[Pull request&lt;br/&gt;with receipt]
+  I -->|PARTIAL| P[Draft pull request&lt;br/&gt;lists what is not proven]
   I -->|ALREADY_SATISFIED| K[Nothing to do&lt;br/&gt;no PR]
   I -->|BLOCKED| L[Answers one&lt;br/&gt;question from you]:::you
   L --> G
   J --> M([You review and merge]):::you
+  P --> M
   classDef you fill:#553DE9,stroke:#553DE9,color:#fff
   </pre></div>
 
@@ -185,7 +187,7 @@ flowchart TB
   <div class="grid g3">
     <div class="card ok"><h3>VERIFIED</h3><p>Your tests ran and passed. A pull request is waiting for you.</p></div>
     <div class="card ok"><h3>ALREADY_SATISFIED</h3><p>The work is already in your code. It shows you where, and opens no PR.</p></div>
-    <div class="card warn"><h3>PARTIAL</h3><p>Progress, but something is not proven. It lists exactly what.</p></div>
+    <div class="card warn"><h3>PARTIAL</h3><p>Progress, but something is not proven. It lists exactly what and opens a draft pull request.</p></div>
     <div class="card warn"><h3>BLOCKED</h3><p>The issue is ambiguous. It asks you one question instead of guessing.</p></div>
     <div class="card bad"><h3>FAILED</h3><p>It could not do it, and says why. It never calls failed work done.</p></div>
     <div class="card accent"><h3>Inside Claude Code</h3><p>Install <b>loki-seal</b>: <code>/plugin marketplace add asklokesh/loki-mode</code>, then <code>/plugin install loki-seal@loki-mode</code>. It blocks "done" while tests are red or weakened.</p></div>

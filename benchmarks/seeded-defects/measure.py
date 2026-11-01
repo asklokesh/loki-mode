@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Measure one named model against the seeded-defect corpus.
 
-Writes (or updates) results/wrong-pass.json, schema loki.seeded-defects.results/v3,
-the contract checked by tests/moat/p4-model-freedom.sh. v3 adds, per run, corpus_sha256
+Writes (or updates) results/wrong-pass.json, schema loki.seeded-defects.results/v3.
+v3 adds, per run, corpus_sha256
 and strata: one row per (language, runner) with the run's tier (its setup), n,
 wrong_pass and wilson_upper_95, the Wilson 95% upper bound on the wrong-pass rate, and
 measured_at (ISO UTC), the time of that run, which Seal reads for its 7-day staleness rule. A

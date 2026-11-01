@@ -23,7 +23,6 @@
 # every "python3 -c" / "python3 -" here runs -E (a PYTHONPATH empty component
 # would load a committed sitecustomize.py) and drops '' and '.' from sys.path
 # before any other import (a committed json.py would print the verdict).
-# Pinned by tests/moat/p2-honest-verdict.sh P2.council-readers-not-shadowed.
 #
 # Environment Variables:
 #   LOKI_COUNCIL_ENABLED          - Enable completion council (default: true)

@@ -35,7 +35,7 @@ export interface FixDeps {
 
 const PROVIDER_CLIS = ["claude", "codex", "cline", "aider", "opencode"] as const;
 const CLAUDE_INSTALL = ["npm", "install", "-g", "@anthropic-ai/claude-code"] as const;
-const CLAUDE_LOGIN = ["claude", "login"] as const;
+const CLAUDE_LOGIN = ["claude", "auth", "login"] as const;
 
 const defaultRunner: StepRunner = (argv) => {
   const [cmd, ...args] = argv;
@@ -148,13 +148,13 @@ export function applyDoctorFixes(cwd: string = process.cwd(), home: string = hom
   if (!has("claude")) {
     const installed = has("npm") ? runStep(CLAUDE_INSTALL, `Install claude (${CLAUDE_INSTALL.join(" ")})?`) : null;
     if (installed === null) {
-      manual.push("claude (default provider): npm install -g @anthropic-ai/claude-code   (then: claude login)");
+      manual.push("claude (default provider): npm install -g @anthropic-ai/claude-code   (then: claude auth login)");
     }
   }
   if (has("claude")) {
     const login = evaluateClaudeLogin((deps.loggedIn ?? (() => claudeAuthStatusLoggedIn()))());
-    if (login.status === "fail" && runStep(CLAUDE_LOGIN, `Run claude login now?`) === null) {
-      manual.push("claude login   (or set ANTHROPIC_API_KEY)");
+    if (login.status === "fail" && runStep(CLAUDE_LOGIN, `Run claude auth login now?`) === null) {
+      manual.push("claude auth login   (or set ANTHROPIC_API_KEY)");
     }
   }
   if (!providers.some((c) => has(c))) {

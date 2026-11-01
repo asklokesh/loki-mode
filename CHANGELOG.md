@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.108.1 (2026-11-01)
+
+### Fixed
+
+- Every login hint now says `claude auth login` (the Claude CLI has no `claude login` subcommand; the old hint opened a session with the prompt "login"). `loki doctor --fix` now runs `claude auth login`.
+- A split issue no longer waits 144 seconds on a false rate limit: a bare "429" inside a hash, run id or cost figure was read as an HTTP 429.
+- The README and overview now say a PARTIAL run opens a draft PR titled `[PARTIAL]`; contributor and architecture docs no longer cite removed tests.
+
 ## v11.108.0 (2026-11-01)
 
 Every run now teaches the next one: what went wrong, and what fixed it, is fed back into related runs.

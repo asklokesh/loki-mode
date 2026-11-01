@@ -120,7 +120,7 @@ mv loki-mode-${VERSION} ~/.claude/skills/loki-mode
 
 ## Setup requirements (LM-001)
 
-This is the authoritative statement of what Loki Mode needs to run a first task. It is checked by tests against one shared table, `autonomy/lib/setup-requirements.json`. `loki doctor`, `loki doctor --requirements`, `loki doctor --json` (key `requirements`), `loki setup`, and the runtime "provider CLI missing" errors all read that table, so wording and fixes match.
+This is the authoritative statement of what Loki Mode needs to run a first task. It mirrors one shared table, `autonomy/lib/setup-requirements.json`. `loki doctor`, `loki doctor --requirements`, `loki doctor --json` (key `requirements`), `loki setup`, and the runtime "provider CLI missing" errors all read that table, so wording and fixes match.
 
 Normal repository build dependencies (the toolchain of the project you point Loki at) are not Loki overhead and are not listed.
 
