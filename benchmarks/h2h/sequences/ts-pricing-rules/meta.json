@@ -1,0 +1,21 @@
+{
+  "lang": "ts",
+  "protected": ["test", "bunfig.toml"],
+  "steps": [
+    {
+      "id": "s1",
+      "hidden": { "percentOff.hidden.test.ts": "test/h2h_hidden_s1.test.ts" },
+      "hidden_cmd": ["bun", "test", "./test/h2h_hidden_s1.test.ts"]
+    },
+    {
+      "id": "s2",
+      "hidden": { "buyXGetY.hidden.test.ts": "test/h2h_hidden_s2.test.ts" },
+      "hidden_cmd": ["bun", "test", "./test/h2h_hidden_s2.test.ts"]
+    },
+    {
+      "id": "s3",
+      "hidden": { "registry.hidden.test.ts": "test/h2h_hidden_s3.test.ts" },
+      "hidden_cmd": ["bun", "test", "./test/h2h_hidden_s3.test.ts"]
+    }
+  ]
+}

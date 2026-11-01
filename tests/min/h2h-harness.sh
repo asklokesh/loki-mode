@@ -13,7 +13,10 @@
 #   --resume keeps the runs already in a results file and runs only the missing ones;
 #   Loki verdict agreement on fixed records and on the committed v11.104.0 result (5 of 16);
 #   oracle passes and noop fails every task in every language, and the task set keeps its
-#     shape (>=24 tasks, >=4 languages with 4 to 6 each, >=10 multi-file normal, >=4 hard).
+#     shape (>=24 tasks, >=4 languages with 4 to 6 each, >=10 multi-file normal, >=4 hard);
+#   the learning protocol (--sequences): reference solutions applied in order pass every step,
+#     an untouched repo passes none, no step ever sees another step's hidden file, lesson
+#     availability is read from the repo, and an earlier step's loki branch is never re-scored.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. benchmarks/h2h/h2h.py score(): `return 1 if rc == 0 else 0` -> `return 1`; the
@@ -26,6 +29,10 @@
 #   5. verdict_stats(): count exit 6 as a claim like exit 0; the v11.104.0 check must fail.
 #   6. main(): drop the `not in done` filter; both resume checks must fail.
 #   7. apply_oracle(): copy nothing; "oracle passes every task" must fail.
+#   8. loki_branch_checkout(): drop the `before` skip; "a branch left by an earlier step" must fail.
+#   9. run_sequence(): keep each step's hidden file after scoring; the stale-hidden check and the
+#      sequence runner's exit code must fail.
+#  10. lesson_counts(): count a worked example without a VERIFIED verdict; the counts check must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -142,6 +149,45 @@ check "task set: at least 4 languages" test "$(meta 'len({x["lang"] for x in m})
 check "task set: 4 to 6 tasks per language" test "$(meta 'all(4 <= sum(1 for y in m if y["lang"] == l) <= 6 for l in {x["lang"] for x in m})')" = True
 check "task set: at least 10 multi-file normal tasks" test "$(meta 'sum(1 for x in m if x["kind"] == "multifile" and x.get("difficulty", "normal") == "normal")')" -ge 10
 check "task set: at least 4 hard tasks" test "$(meta 'sum(1 for x in m if x.get("difficulty") == "hard")')" -ge 4
+
+# Learning protocol (--sequences): every step of every sequence runs in one repo copy. The reference
+# solutions applied in order pass each step's hidden tests, an untouched repo passes none, and no
+# step's hidden test file is ever present when a step starts.
+J="$T/seq.json"
+TMPDIR="$T" bash benchmarks/h2h/run.sh --sequences all --configs oracle,noop --jobs 4 --out "$J" >"$T/seq.log" 2>&1
+check "sequences oracle/noop: runner exits 0" test "$?" = 0
+nseq="$(find benchmarks/h2h/sequences -mindepth 2 -maxdepth 2 -name meta.json | wc -l | tr -d ' ')"
+check "sequences: at least 4 with 3 steps or more" test "$(python3 -I -c '
+import json, glob
+print(sum(1 for p in glob.glob("benchmarks/h2h/sequences/*/meta.json") if len(json.load(open(p))["steps"]) >= 3))')" -ge 4
+check "sequences: every one ran ($nseq)" test "$(runs 'len(d["sequences"])')" = "$nseq"
+check "sequences: oracle passes every step" test "$(runs 'all(r["pass"] for r in d["runs"] if r["config"] == "oracle") and any(r["config"] == "oracle" for r in d["runs"])')" = True
+check "sequences: noop passes no step" test "$(runs 'sum(r["pass"] for r in d["runs"] if r["config"] == "noop")')" = 0
+check "sequences: steps after the first ran in the same repo" test "$(runs 'sorted({r["step"] for r in d["runs"]})[:3]')" = "[1, 2, 3]"
+check "sequences: no earlier hidden test file is present when a step starts" test "$(runs 'sum(len(r["stale_hidden"]) for r in d["runs"])')" = 0
+# What Loki could learn from is read from the repo's lessons file; a branch an earlier step left
+# behind is never re-scored as this step's work.
+learn_out="$(cd benchmarks/h2h && python3 -I -c '
+import json, subprocess, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, ".")
+import h2h
+r = Path(tempfile.mkdtemp(dir=sys.argv[1]))
+(r / ".loki/memory/semantic").mkdir(parents=True)
+(r / ".loki/memory/semantic/pr-lessons.json").write_text(json.dumps({"version": 2, "lessons": [
+    {"kind": "run"}, {"kind": "receipt", "example": {"files": []}, "justified_by": {"verdict": "VERIFIED"}},
+    {"kind": "receipt", "example": {"files": []}, "justified_by": {"verdict": "PARTIAL"}}, {"kind": "receipt"}]}))
+print("counts", h2h.lesson_counts(r))
+g = lambda *a: subprocess.run(["git", "-C", str(r), *a], capture_output=True, text=True, check=True).stdout.strip()
+g("init", "-q", "-b", "main"); g("config", "user.email", "t@example.invalid"); g("config", "user.name", "t")
+(r / "a").write_text("1"); g("add", "a"); g("commit", "-q", "-m", "base"); base = g("rev-parse", "HEAD")
+g("checkout", "-q", "-b", "loki/a-old"); (r / "a").write_text("2"); g("commit", "-qam", "old")
+g("checkout", "-q", "main"); before = h2h.loki_branches(r)
+g("checkout", "-q", "-b", "loki/b-new"); (r / "a").write_text("3"); g("commit", "-qam", "new"); g("checkout", "-q", "main")
+print("picked", h2h.loki_branch_checkout(r, base, before))
+' "$T")"
+has "lessons: run, receipt and VERIFIED worked-example counts" "$learn_out" "counts {'run': 1, 'receipt': 3, 'worked_example': 1}"
+has "a branch left by an earlier step is skipped" "$learn_out" "picked loki/b-new"
 
 leftover="$(find "$T" -maxdepth 1 -name 'loki-h2h.*' | head -1)"
 check "runner removed its own temp dir" test -z "$leftover"

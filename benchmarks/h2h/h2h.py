@@ -33,6 +33,10 @@ TASKS_DIR = HERE / "tasks"
 CONFIGS = ["raw-haiku", "raw-opus", "loki-haiku", "loki-default"]
 # Offline configs for checking the task set itself: oracle applies tasks/<id>/solution, noop changes nothing.
 CHECK_CONFIGS = ["oracle", "noop"]
+# Learning protocol (--sequences): Loki on Haiku with what it learns from earlier runs in the same repo
+# (run lessons and the worked example from a VERIFIED receipt) on, versus both switched off.
+SEQUENCE_CONFIGS = ["loki-haiku-learn", "loki-haiku-nolearn"]
+SEQUENCES_DIR = HERE / "sequences"
 SCORE_TIMEOUT_S = 180
 NOISE = (".loki/", "node_modules/", "__pycache__/", ".pytest_cache/", ".bun/", "target/")
 
@@ -129,7 +133,7 @@ def contestant_cmd(config, task):
         # `command claude` skips any shell function named claude in an interactive profile.
         return ["bash", "-c", 'command claude "$@"', "claude", "-p", text, "--model", model,
                 "--output-format", "json", "--dangerously-skip-permissions"]
-    if config in ("loki-haiku", "loki-default"):
+    if config in ("loki-haiku", "loki-default") or config in SEQUENCE_CONFIGS:
         return ["bash", str(ROOT / "bin" / "loki"), text, "--no-pr"]
     raise ValueError(f"unknown config {config}")
 
@@ -142,6 +146,13 @@ def config_env(config, env):
         # it (stages/wall.ts capToRunTier). LOKI_MODEL_OVERRIDE is not used: it is a pin key for the Wall
         # re-author, so that call would climb back to sonnet (engine10/sizing.ts wallModel).
         env["LOKI_SESSION_MODEL"] = "haiku"
+    if config in SEQUENCE_CONFIGS:
+        env["LOKI_SESSION_MODEL"] = "haiku"
+    if config == "loki-haiku-nolearn":
+        # util/pr_lessons.ts: LOKI_NO_PR_LESSONS=1 empties retrieveLessons, LOKI_WORKED_EXAMPLE=0 drops the
+        # worked example (workedExampleFor and the brief's example files in e10ext/context.ts).
+        env["LOKI_WORKED_EXAMPLE"] = "0"
+        env["LOKI_NO_PR_LESSONS"] = "1"
     return env
 
 
@@ -190,14 +201,22 @@ def changed_files(repo, base):
     return sorted(n for n in names if not any(n.startswith(p) or f"/{p}" in n for p in NOISE))
 
 
-def loki_branch_checkout(repo, base):
+def loki_branches(repo):
+    out = git(repo, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/loki/")
+    return dict(line.split() for line in out.splitlines() if line.strip())
+
+
+def loki_branch_checkout(repo, base, before=None):
     """If the run left its work on a loki/<id> branch and the checkout itself still sits at
-    base, score the branch: that is what the user gets from the run."""
+    base, score the branch: that is what the user gets from the run. `before` (branch -> sha
+    from before the run) skips branches an earlier run in the same repo left behind."""
     head = git(repo, "rev-parse", "HEAD").strip()
     if head != base or git(repo, "status", "--porcelain", "--untracked-files=no").strip():
         return None
-    for br in git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/loki/").split():
-        if git(repo, "rev-parse", br).strip() != base:
+    for br, sha in loki_branches(repo).items():
+        if (before or {}).get(br) == sha:
+            continue
+        if sha != base:
             git(repo, "checkout", "-q", br)
             return br
     return None
@@ -417,6 +436,197 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
     return rec
 
 
+def load_sequence(seq_id):
+    d = SEQUENCES_DIR / seq_id
+    meta = json.loads((d / "meta.json").read_text())
+    steps = []
+    for st in meta["steps"]:
+        sd = d / "steps" / st["id"]
+        steps.append({**st, "dir": sd, "text": (sd / "task.txt").read_text().strip(), "lang": meta["lang"],
+                      "protected": meta.get("protected", []), "kind": "sequence", "task_id": f"{seq_id}/{st['id']}"})
+    return {"id": seq_id, "dir": d, "lang": meta["lang"], "steps": steps}
+
+
+def lesson_counts(repo):
+    """What Loki could learn from before a step: the repo's lessons file (util/pr_lessons.ts lessonsPath)."""
+    p = repo / ".loki" / "memory" / "semantic" / "pr-lessons.json"
+    try:
+        data = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return {"run": 0, "receipt": 0, "worked_example": 0}
+    items = data if isinstance(data, list) else data.get("lessons", []) if isinstance(data, dict) else []
+    return {
+        "run": sum(1 for x in items if isinstance(x, dict) and x.get("kind") == "run"),
+        "receipt": sum(1 for x in items if isinstance(x, dict) and x.get("kind") == "receipt"),
+        "worked_example": sum(1 for x in items if isinstance(x, dict) and x.get("kind") == "receipt" and x.get("example")
+                              and (x.get("justified_by") or {}).get("verdict") == "VERIFIED"),
+    }
+
+
+def run_sequence(config, seq, rep, work, timeout_s, keep_dir):
+    """Every step of one sequence, in order, in ONE repo copy with ONE throwaway HOME, so whatever
+    Loki records about a run is there for the next. Each step is scored by its own hidden tests,
+    which are removed again before the next step starts; the step's result (contestant work as
+    scored) is committed so the next step starts from a clean tree."""
+    d = Path(tempfile.mkdtemp(prefix=f"{config}.{seq['id']}.{rep}.", dir=work))
+    repo = d / "repo"
+    prepare_repo({"dir": seq["dir"]}, repo)
+    home = make_home(d / "home")
+    recs = []
+    for i, st in enumerate(seq["steps"], 1):
+        env = config_env(config, contestant_env(home, work))
+        base = git(repo, "rev-parse", "HEAD").strip()
+        hidden_names = [Path(dest).name for dest in st["hidden"].values()]
+        rec = {"config": config, "sequence": seq["id"], "step": i, "task": st["task_id"], "lang": seq["lang"], "rep": rep,
+               "lessons_before": lesson_counts(repo),
+               # Any step's hidden test file already in the repo when this step starts (must stay empty).
+               "stale_hidden": sorted(dest for other in seq["steps"] for dest in other["hidden"].values() if (repo / dest).exists())}
+        before = loki_branches(repo)
+        if config == "oracle":
+            apply_oracle(st, repo)
+            rc, secs, timed_out = 0, 0.0, False
+        elif config == "noop":
+            rc, secs, timed_out = 0, 0.0, False
+        else:
+            rc, secs, timed_out = run_contestant(contestant_cmd(config, st), repo, env, timeout_s,
+                                                 d / f"step{i}.out", d / f"step{i}.err")
+        leaked = [str(p.relative_to(repo)) for p in repo.rglob("*") if p.name in hidden_names]
+        branch = loki_branch_checkout(repo, base, before) if config.startswith("loki") else None
+        files = changed_files(repo, base)
+        if config.startswith("loki"):
+            m = loki_metrics(repo)
+            m["loki_outcome"] = LOKI_EXIT.get(rc, "OTHER")
+            m["loki_tail"] = tail_text(d / f"step{i}.out", 800)
+        else:
+            m = {"cost_usd": 0.0, "sessions": 0}
+        restore_protected(st, repo, base)
+        passed, tail = score(st, repo, env, d / f"step{i}.hidden.log")
+        for dest in st["hidden"].values():
+            (repo / dest).unlink(missing_ok=True)
+        git(repo, "add", "-A", "--", ".", ":(exclude).loki")
+        if git(repo, "status", "--porcelain", "--untracked-files=no").strip():
+            git(repo, "commit", "-q", "-m", f"h2h: state after step {i}")
+        rec.update({"pass": passed, "seconds": round(secs, 2), "exit_code": rc, "timed_out": timed_out,
+                    "files_changed": len(files), "files": files, "hidden_leaked_before_scoring": leaked,
+                    "scored_branch": branch, "hidden_tail": tail if not passed else "", **m})
+        recs.append(rec)
+    if not keep_dir:
+        shutil.rmtree(d, ignore_errors=True)
+    return recs
+
+
+def summarize_sequences(results, configs):
+    """Per config: step 1 (nothing to learn from yet) and the later steps separately."""
+    rows = []
+    for c in configs:
+        for label, pick in (("first", lambda r: r["step"] == 1), ("later", lambda r: r["step"] > 1)):
+            rs = [r for r in results if r["config"] == c and pick(r)]
+            if not rs:
+                continue
+            passed = sum(r["pass"] for r in rs)
+            costs = [r["cost_usd"] for r in rs if isinstance(r.get("cost_usd"), (int, float))]
+            rows.append({
+                "config": c, "steps": label, "n": len(rs), "passed": passed, "pass_ci95": wilson(passed, len(rs)),
+                "total_cost_usd": round(sum(costs), 4), "cost_per_pass_usd": round(sum(costs) / passed, 4) if passed else None,
+                "median_s": round(statistics.median(r["seconds"] for r in rs), 1),
+                "mean_sessions": round(statistics.mean(r.get("sessions") or 0 for r in rs), 2),
+                "mean_fix_rounds": round(statistics.mean(r.get("fix_rounds") or 0 for r in rs), 2),
+                "steps_with_worked_example_available": sum(1 for r in rs if r["lessons_before"]["worked_example"]),
+                "steps_with_run_lessons_available": sum(1 for r in rs if r["lessons_before"]["run"]),
+                **({k: v for k, v in verdict_stats(rs).items() if k in ("verdict_agree_n", "false_verified")} if c.startswith("loki") else {}),
+            })
+    return rows
+
+
+def main_sequences(a, ap):
+    configs = [c for c in a.configs.split(",") if c]
+    for c in configs:
+        if c not in SEQUENCE_CONFIGS + CHECK_CONFIGS:
+            ap.error(f"--sequences takes configs from {SEQUENCE_CONFIGS + CHECK_CONFIGS}")
+    all_seqs = sorted(p.name for p in SEQUENCES_DIR.iterdir() if (p / "meta.json").is_file()) if SEQUENCES_DIR.is_dir() else []
+    ids = all_seqs if a.sequences == "all" else [x for x in a.sequences.split(",") if x]
+    for x in ids:
+        if x not in all_seqs:
+            ap.error(f"unknown sequence {x}")
+    seqs = [load_sequence(x) for x in ids]
+    sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip() or "nogit"
+    out = Path(a.out) if a.out else HERE / "results" / f"{dt.date.today().isoformat()}-{sha}-learning.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp_root = Path(os.environ.get("TMPDIR") or "/tmp").resolve()
+    work = Path(tempfile.mkdtemp(prefix="loki-h2h.", dir=tmp_root))
+    results = json.loads(Path(a.resume).read_text())["runs"] if a.resume else []
+    done = {(r["config"], r["sequence"], r["rep"]) for r in results}
+    queue = [(rep, sq, c) for rep in range(1, a.reps + 1) for sq in seqs for c in configs if (c, sq["id"], rep) not in done]
+    lock = threading.Lock()
+    state = {"stopped": None}
+
+    def save():
+        doc = {"benchmark": "h2h-learning", "loki_sha": sha, "date": dt.datetime.now().isoformat(timespec="seconds"),
+               "configs": configs, "reps": a.reps, "jobs": a.jobs, "timeout_s": a.timeout, "stopped": state["stopped"],
+               "sequences": [sq["id"] for sq in seqs], "summary": summarize_sequences(results, configs), "runs": results}
+        out.write_text(json.dumps(doc, indent=2) + "\n")
+
+    def worker():
+        while True:
+            with lock:
+                if state["stopped"] or not queue:
+                    return
+                spent = ledger_total(a.ledger)
+                if a.budget is not None and spent >= a.budget:
+                    state["stopped"] = f"budget {a.budget} reached (ledger {spent:.4f})"
+                    return
+                rep, sq, c = queue.pop(0)
+                log(f"h2h: {c} sequence {sq['id']} rep {rep} (ledger ${spent:.4f}, {len(queue)} queued)")
+            try:
+                recs = run_sequence(c, sq, rep, work, a.timeout, a.keep)
+            except Exception as exc:
+                recs = [{"config": c, "sequence": sq["id"], "step": 0, "task": sq["id"], "rep": rep, "pass": 0, "seconds": 0.0,
+                         "exit_code": None, "timed_out": False, "files_changed": 0, "files": [], "cost_usd": None,
+                         "hidden_leaked_before_scoring": [], "lessons_before": {"run": 0, "receipt": 0, "worked_example": 0},
+                         "harness_error": repr(exc)[:300], "harness_traceback": traceback.format_exc()[-1500:]}]
+            with lock:
+                results.extend(recs)
+                if a.ledger and c not in CHECK_CONFIGS:
+                    with open(a.ledger, "a") as fh:
+                        for r in recs:
+                            fh.write(json.dumps({"config": c, "task": r["task"], "rep": rep, "cost_usd": r.get("cost_usd"),
+                                                 "at": dt.datetime.now().isoformat()}) + "\n")
+                for r in recs:
+                    log(f"h2h:   {c} {r['task']} rep {rep}: pass={r['pass']} exit={r['exit_code']} {r['seconds']}s "
+                        f"cost={r.get('cost_usd')} lessons_before={r['lessons_before']}")
+                save()
+
+    try:
+        if any(c not in CHECK_CONFIGS for c in configs) and queue:
+            ok, detail = auth_ok(work)
+            if not ok:
+                log(f"h2h: claude auth does not resolve under the throwaway HOME; refusing to run\n{detail}")
+                return 3
+        threads = [threading.Thread(target=worker) for _ in range(min(a.jobs, max(1, len(queue))))]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        if work.name.startswith("loki-h2h.") and work.parent == tmp_root and not a.keep:
+            shutil.rmtree(work, ignore_errors=True)
+    results.sort(key=lambda r: (configs.index(r["config"]) if r["config"] in configs else 99, r["sequence"], r["rep"], r["step"]))
+    save()
+    print("| config | steps | pass | 95% CI | $ / pass | median s | sessions | fix rounds | worked example available | run lessons available |")
+    print("|---|---|---|---|---|---|---|---|---|---|")
+    for r in summarize_sequences(results, configs):
+        ci = r["pass_ci95"]
+        cpp = f"{r['cost_per_pass_usd']:.4f}" if r["cost_per_pass_usd"] is not None else "-"
+        print(f"| {r['config']} | {r['steps']} | {r['passed']}/{r['n']} | {ci[0] * 100:.0f}-{ci[1] * 100:.0f}% | {cpp} | {r['median_s']} "
+              f"| {r['mean_sessions']} | {r['mean_fix_rounds']} | {r['steps_with_worked_example_available']}/{r['n']} "
+              f"| {r['steps_with_run_lessons_available']}/{r['n']} |")
+    print(f"\nresults: {out}")
+    if any(r["hidden_leaked_before_scoring"] or r.get("stale_hidden") for r in results):
+        log("h2h: hidden test files were visible to a contestant before scoring")
+        return 4
+    return 5 if any(r.get("harness_error") for r in results) else 0
+
+
 def pct(vals, q):
     if not vals:
         return None
@@ -527,11 +737,15 @@ def main(argv=None):
     ap.add_argument("--keep", action="store_true", help="keep each run's work dir and print its path")
     ap.add_argument("--jobs", type=int, default=1, help="runs in flight at once (default 1); the budget check can "
                     "overshoot by at most jobs-1 runs, and wall times are measured under that concurrency")
+    ap.add_argument("--sequences", default="", help="learning protocol: comma list of sequence ids under sequences/ "
+                    f"(or 'all'); configs from {SEQUENCE_CONFIGS + CHECK_CONFIGS}")
     ap.add_argument("--resume", default="", help="results JSON from an interrupted invocation: its runs are kept "
                     "and every (config, task, rep) already in it is skipped")
     a = ap.parse_args(argv)
     if a.reps < 1 or a.jobs < 1:
         ap.error("--reps and --jobs must be at least 1")
+    if a.sequences:
+        return main_sequences(a, ap)
 
     configs = [c for c in a.configs.split(",") if c]
     for c in configs:
