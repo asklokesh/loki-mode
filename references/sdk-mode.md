@@ -14,7 +14,7 @@ byte-identical to the bash `claude` route.
 |---|---|---|
 | `off` (default) | nothing (byte-identical to v7/v8 bash route) | default |
 | `judges` | the 7 one-shot JUDGE/TEXT sites (done-recognition, council-v2, code-review, completion-council VOTE, voter-agents, grill, prd-enrich). The RARV loop stays OFF. | recommended scale tier: no `claude` binary needed for judging, loop unchanged |
-| `full` | all of `judges` PLUS the RARV main loop (`LOKI_SDK_LOOP`) | pre-flight only this release; requires `bun` (the loop runs on the Bun runner). The loop default-flip is a later release |
+| `full` | all of `judges` (it also sets `LOKI_SDK_LOOP`, which no longer selects a loop: `loki start` runs the Loki 10 engine either way) | same as `judges` for `loki start` |
 
 Alias: `LOKI_SDK=1` == `judges`; `LOKI_SDK=full` == `full`.
 
@@ -22,8 +22,6 @@ Alias: `LOKI_SDK=1` == `judges`; `LOKI_SDK=full` == `full`.
 # Scale tier: judges on the SDK, loop on the existing route.
 LOKI_SDK_MODE=judges loki start ./prd.md
 
-# Pre-flight the full SDK engine (needs bun).
-LOKI_SDK_MODE=full loki start ./prd.md
 
 # See what one switch turned on.
 LOKI_SDK_MODE_DEBUG=1 LOKI_SDK_MODE=judges loki start ./prd.md
@@ -57,7 +55,7 @@ even `=0`, always wins over the mode):
 | `LOKI_SDK_VOTER_AGENTS` | voter-agents council |
 | `LOKI_SDK_GRILL` | grill (free-form text) |
 | `LOKI_SDK_PRD_ENRICH` | prd-enrich (free-form text) |
-| `LOKI_SDK_LOOP` | the RARV main loop (Bun runner) |
+| `LOKI_SDK_LOOP` | none: it once selected a separate Bun loop, which was removed; `loki start` prints a one-line notice when it is set |
 
 ```bash
 # Everything on the SDK EXCEPT code review (keep that on the bash claude route):

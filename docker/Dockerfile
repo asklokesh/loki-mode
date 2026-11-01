@@ -174,16 +174,15 @@ COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/dist/server.j
 COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/drizzle ./packages/control-plane/drizzle
 COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/ui/dist ./packages/control-plane/ui/dist
 
-# v8: the Agent SDK (@anthropic-ai/claude-agent-sdk) powers the opt-in
-# LOKI_SDK_LOOP=1 RARV loop via a DYNAMIC import in dist/loki.js, so it cannot be
+# v8: the Agent SDK (@anthropic-ai/claude-agent-sdk) powers the Loki 10 engine's
+# API-key sessions (no claude CLI) via a DYNAMIC import in dist/loki.js, so it cannot be
 # bundled into dist (unlike the raw @anthropic-ai/sdk judge bridge, which is a
 # static import and IS bundled). It also ships a per-platform NATIVE binary. So
 # it must exist in node_modules at runtime: install it into loki-ts/ (where the
 # dynamic import resolves from) with the correct platform binary. --no-save keeps
 # the committed package.json untouched; the version is pinned to match the source.
-# Default-off, so a base image without LOKI_SDK_LOOP never loads it; installing it
-# just makes the opt-in path work in the shipped image (the raw judge SDK is
-# already bundled and needs nothing here).
+# Loaded only on that path; installing it makes the API-key path work in the
+# shipped image (the raw judge SDK is already bundled and needs nothing here).
 # @anthropic-ai/sdk is pinned to the loki-ts/package.json version because npm
 # auto-installs the agent SDK's open-ended peer (>=0.93.0) at the newest release;
 # an upstream publish whose tarball had not propagated yet 404'd this step.

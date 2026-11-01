@@ -1,17 +1,9 @@
-// v8 Phase 4 Story 5 + RUN-25 iter 2: `loki start` on the Bun route. Parses the
-// reconciled flag surface into RunnerOpts / env and calls runAutonomous. Reached
-// from bin/loki ONLY when LOKI_SDK_LOOP is truthy (Story 6); until then the
-// default route still runs the bash cmd_start.
-//
-// T3(c) reconciliation (loop default-flip pre-flight): the bash cmd_start accepts
-// ~44 flags. This route now handles every RUNNER flag (value-flags -> RunnerOpts,
-// env-mapping flags -> process.env the lazily-imported runner reads, no-ops
-// accepted) and REJECTS only genuinely-unsupported flags. Pre-loop orchestration
-// flags (--parallel, --github, --sandbox, issue-mode, ...) are diverted BACK to
-// the bash route by bin/loki BEFORE this code runs, so they are never seen here
-// and never rejected -- the user gets full behavior. Deliberate drops
-// (--compliance, mirofish) are rejected loudly and documented. See
-// artifacts/ITER1-FLAG-RECONCILE.md.
+// `loki start` on the Bun route. Parses the start flag surface and runs the Loki 10 engine:
+// one engine10 run, N attempts (--attempts), a spec run (--spec / --spec-first) or a preview
+// (--dry-run). bin/loki sends a start here only for --attempts 2..5, --spec, --dry-run, and the
+// calls autonomy/route.sh leaves to this command (--help, the --workspace/--deploy front end);
+// every other start is routed straight to engine10 by route.sh. --workspace and --deploy are
+// handed to the bash front end (autonomy/loki) unchanged.
 
 import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { accessSync, constants as fsConstants, existsSync as pathExists, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -516,10 +508,9 @@ export function runInternalSpecText(args: readonly string[], cwd: string = proce
   return 0;
 }
 
-/** Which engine a parsed start runs: the 11.3.0 runner, unless --attempts was given (FC-38 scoped). */
-export function startEngine(o: ParsedStartOpts): "runner" | "attempts" | "spec" {
-  if (o.specPath !== undefined || o.specFirst) return "spec";
-  return o.attempts === undefined ? "runner" : "attempts";
+/** Which engine10 path a parsed start takes: a spec run, else N attempts (N=1, the default, is one plain engine10 run). */
+export function startEngine(o: ParsedStartOpts): "attempts" | "spec" {
+  return o.specPath !== undefined || o.specFirst ? "spec" : "attempts";
 }
 
 /** A jira:/linear: ref exports LOKI_WRITEBACK_ISSUE and LOKI_WRITEBACK_KIND so tracker writeback keys off the intake ref (returns a copy when set). */
@@ -624,14 +615,6 @@ export function scopedStartEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     if (v !== undefined && (START_ENV_NAMES.has(k) || START_ENV_PREFIXES.some((p) => k.startsWith(p)))) out[k] = v;
   }
   return out;
-}
-
-/** TEN-COST-41: the one-line effective run cap and its source; null when the runner's own `[runner] cap` note already names it (env, loki.yaml, default). */
-export async function capSourceLine(budgetLimit: number | undefined, repoDir: string, env: NodeJS.ProcessEnv): Promise<string | null> {
-  const { resolveCap, capNote } = await import("../e10ext/budget_cap.ts");
-  const c = resolveCap(budgetLimit !== undefined ? String(budgetLimit) : null, repoDir, env);
-  if ("error" in c) return null;
-  return budgetLimit !== undefined || c.source === "subscription" ? capNote(c.usd, c.source).replace("(--max-cost)", "(--budget-limit)") : null; // the start flag is --budget-limit, not engine10's --max-cost
 }
 
 /** TEN-UX-45: what `loki start --dry-run` prints; runs the real preflight (read-only: an uninitialised folder is reported, never git-initialised) and spends nothing. Returns the exit code. */
@@ -766,14 +749,7 @@ export async function runStart(args: readonly string[]): Promise<number> {
   }
   if (parsed.dryRun) return dryRunStart(parsed, process.cwd(), process.env);
   { const rec = await offerInterruptedRun(parsed, process.cwd()); if (rec !== null) return rec; }
-  if (startEngine(parsed) === "runner") {
-    const capLine = await capSourceLine(parsed.budgetLimit, process.cwd(), process.env);
-    if (capLine) process.stdout.write(`[runner] ${capLine}\n`);
-    if (startRecoveryHooks.afterOffer) return startRecoveryHooks.afterOffer(); // test seam: stop before any runner or engine dispatch
-    const { runAutonomous } = await import("../runner/autonomous.ts");
-    return runAutonomous(parsed);
-  }
-  if (startRecoveryHooks.afterOffer) return startRecoveryHooks.afterOffer();
+  if (startRecoveryHooks.afterOffer) return startRecoveryHooks.afterOffer(); // test seam: stop before any engine dispatch
   if (startEngine(parsed) === "spec") return runEngine10(process.cwd(), parsed, process.env, false);
   const { attempts, ...runnerOpts } = parsed;
   const { runAttempts, productionDeps } = await import("../runner/attempts.ts");

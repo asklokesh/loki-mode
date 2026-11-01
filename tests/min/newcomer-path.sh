@@ -14,6 +14,9 @@
 #              no bun and LOKI_PROVIDER=foo each exit 2 with the fix; none writes .loki/autonomy-state.json.
 #              quickstart in an empty folder and demo with no git identity still seal; LOKI_PRD_FILE is a bare
 #              start's PRD; bare start outside a repo shows the sample; data commands ignore the provider.
+#   One decision: autonomy/route.sh decides every start and quick shape, `start --attempts 1` included (stub bun and
+#              bash CLI print the argv each case reached); LOKI_SDK_LOOP=1 prints one notice naming the default engine
+#              and changes nothing else; `start --attempts 1` and LOKI_SDK_LOOP=1 each seal an engine10 receipt.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. skills/fixtures/demo-receipt/pubkey.jwk replaced with {}: the tour stops printing VERIFIED.
@@ -37,6 +40,12 @@
 #   15. autonomy/loki cmd_demo: no refusal for a --dir inside a repo: the outer-repo checks fail.
 #   16. autonomy/route.sh: `start --engine legacy` with no task left undecided: the printed resume command checks fail
 #       (Unknown option: --engine, exit 64).
+#   17. bin/loki: skip route.sh for --attempts again: the four --attempts 1 route checks and its receipt check fail.
+#   18. autonomy/route.sh: _route_task_first returns at once: the start/quick "<task>" --help and quick --workspace checks fail.
+#   19. bin/loki: drop the LOKI_SDK_LOOP notice: the three notice route checks and the notice-count check fail.
+#   20. bin/loki: no refusal for --attempts 1 on a legacy route: the --engine legacy route check fails.
+#   21. bin/loki: send LOKI_SDK_LOOP=1 start to the Bun start command before route.sh: three route checks and the
+#       LOKI_SDK_LOOP receipt check fail.
 # No network, no model, no real key: the fake key never leaves the machine (stubs answer every call).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -322,5 +331,54 @@ for cmd in "keys export" "verify --pubkey $T/none.jwk" "export --sarif" "verify"
     case "$out" in *"is not supported"*) bad "L009 LOKI_PROVIDER=foo blocks loki $cmd (exit $rc)" ;; *) ok "L009 LOKI_PROVIDER=foo does not block loki ${cmd%% $T*} (exit $rc)" ;; esac
 done
 no_legacy "$REPO" "LOKI_PROVIDER=foo"
+
+# ---------------------------------------------------------------------------
+echo "TEST: newcomer path (one start decision: autonomy/route.sh; no separate Bun loop)"
+# bin/loki + route.sh in a copy whose bun and bash CLI print the argv they were handed, so each case shows where it went.
+RT="$T/route-root"; mkdir -p "$RT/bin" "$RT/autonomy/lib" "$RT/loki-ts/dist" "$T/route-sb"
+cp bin/loki "$RT/bin/loki"; cp autonomy/route.sh "$RT/autonomy/route.sh"; cp autonomy/lib/sdk-mode.sh "$RT/autonomy/lib/sdk-mode.sh"; cp VERSION "$RT/VERSION"
+printf '// stub\n' > "$RT/loki-ts/dist/loki.js"
+printf '#!/usr/bin/env bash\necho "BASH: $*"\n' > "$RT/autonomy/loki"
+printf '#!/usr/bin/env bash\n[ "${1:-}" = --version ] && { echo 1.3.13; exit 0; }\na=(); for x in "$@"; do case "$x" in --no-env-file|--config=/dev/null|*/loki-ts/dist/loki.js) ;; *) a+=("$x") ;; esac; done\necho "BUN: ${a[*]}"\n' > "$T/route-sb/bun"
+chmod +x "$RT/autonomy/loki" "$T/route-sb/bun"
+RR="$T/route-repo"; mkdir -p "$RR"; git -C "$RR" init -q; printf 'Add x.\n' > "$RR/prd.md"
+rt() { (cd "$RR" && env -u LOKI_SDK_LOOP -u LOKI_SDK_MODE -u LOKI_PROVIDER -u LOKI_ENGINE -u LOKI_TS_ENTRY "$@" 2>&1 </dev/null) | tr '\n' '~'; }
+route_is() { # route_is "<description>" "<expected output, lines joined by ~>" [VAR=value ...] -- <loki args...>
+    local d="$1" want="$2" got; shift 2
+    local -a ev=(); while [ "$1" != "--" ]; do ev+=("$1"); shift; done; shift
+    got="$(rt ${ev[@]+"${ev[@]}"} PATH="$T/route-sb:/usr/bin:/bin" bash "$RT/bin/loki" "$@")"
+    [ "$got" = "$want" ] && ok "route: $d" || bad "route: $d (got: $got)"
+}
+route_is "start --attempts 1 <prd> runs engine10 like a plain start" "BUN: engine10 Add x.~" -- start --attempts 1 prd.md
+route_is "start --attempts 1 flag-first brief runs engine10" "BUN: engine10 fix x --no-pr~" -- start --attempts 1 --no-pr "fix x"
+route_is "start --attempts 1 with --parallel is refused by route.sh" "loki: flag --parallel is not supported by the Loki 10 engine; use 'loki queue run --parallel K' or 'loki issues run --parallel K' for parallel runs, or pass --engine legacy for --parallel~" -- start --attempts 1 "fix x" --parallel
+route_is "start --attempts 1 --engine legacy is refused, never the legacy loop" "loki: --attempts runs only the Loki 10 engine, but this call routes to the legacy engine (explicit: --engine legacy or LOKI_ENGINE=legacy); drop --attempts or the legacy request.~" -- start --attempts 1 --engine legacy prd.md
+route_is "start --attempts 3 goes to the Bun attempts command" "BUN: start --attempts 3 fix x~" -- start --attempts 3 "fix x"
+route_is "start <prd> runs engine10" "BUN: engine10 Add x.~" -- start prd.md
+route_is "start \"<task>\" --help shows the engine10 help" "BUN: engine10 fix the login bug --help~" -- start "fix the login bug" --help
+route_is "start owner/repo#N --help shows the engine10 help" "BUN: engine10 owner/repo#12 --help~" -- start owner/repo#12 --help
+route_is "start --help is the bash start help" "BASH: start --help~" -- start --help
+route_is "start --workspace stays with the front end" "BASH: start --workspace ws fix it now~" -- start --workspace ws "fix it now"
+route_is "quick \"<task>\" runs engine10 without a PR" "BUN: engine10 --no-pr fix the bug~" -- quick "fix the bug"
+route_is "quick \"<task>\" --help shows the engine10 help" "BUN: engine10 --no-pr fix the bug --help~" -- quick "fix the bug" --help
+route_is "quick --help is the bash quick help" "BASH: quick --help~" -- quick --help
+route_is "quick \"<task>\" --workspace goes to engine10 as given" "BUN: engine10 --no-pr fix x --workspace ws~" -- quick "fix x" --workspace ws
+SDKN="loki: LOKI_SDK_LOOP no longer selects a separate loop; the default engine is Loki 10 (engine10)."
+route_is "LOKI_SDK_LOOP=1 start <prd>: one-line notice, then engine10" "$SDKN~BUN: engine10 Add x.~" LOKI_SDK_LOOP=1 -- start prd.md
+route_is "LOKI_SDK_LOOP=true start --help: notice, then the bash start help" "$SDKN~BASH: start --help~" LOKI_SDK_LOOP=true -- start --help
+route_is "LOKI_SDK_LOOP=1 start --workspace: notice, then the front end" "$SDKN~BASH: start --workspace ws fix x~" LOKI_SDK_LOOP=1 -- start --workspace ws "fix x"
+route_is "LOKI_SDK_MODE=full start <prd>: no notice, engine10" "BUN: engine10 Add x.~" LOKI_SDK_MODE=full -- start prd.md
+route_is "LOKI_SDK_LOOP=1 quick: no notice (quick never had a separate loop)" "BUN: engine10 --no-pr fix the bug~" LOKI_SDK_LOOP=1 -- quick "fix the bug"
+[ ! -e loki-ts/src/runner/autonomous.ts ] && ! grep -q "runAutonomous" loki-ts/dist/loki.js && ok "the separate Bun loop (runAutonomous) is gone from src and the bundle" || bad "runAutonomous still ships"
+# The real engine: `start --attempts 1` and LOKI_SDK_LOOP=1 each seal an engine10 receipt and never write legacy state.
+fixture_repo l009-att1
+printf '# PRD\n\nAdd a multiply(a, b) function to calc.ts.\n' > "$REPO/prd.md"
+out="$(cd "$REPO" && "${l009_env[@]}" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009h.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start --attempts 1 ./prd.md --no-pr </dev/null 2>&1)"; rc=$?
+e10_receipt "$REPO" "start --attempts 1 ./prd.md"; no_legacy "$REPO" "start --attempts 1 ./prd.md"
+fixture_repo l009-sdkloop
+printf '# PRD\n\nAdd a multiply(a, b) function to calc.ts.\n' > "$REPO/prd.md"
+out="$(cd "$REPO" && "${l009_env[@]}" LOKI_SDK_LOOP=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009i.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start ./prd.md --no-pr </dev/null 2>&1)"; rc=$?
+[ "$(printf '%s\n' "$out" | grep -c 'LOKI_SDK_LOOP')" = 1 ] && ok "LOKI_SDK_LOOP=1 start prints the notice once" || bad "LOKI_SDK_LOOP=1 start notice count is $(printf '%s\n' "$out" | grep -c 'LOKI_SDK_LOOP')"
+e10_receipt "$REPO" "LOKI_SDK_LOOP=1 start ./prd.md"; no_legacy "$REPO" "LOKI_SDK_LOOP=1 start ./prd.md"
 
 finish

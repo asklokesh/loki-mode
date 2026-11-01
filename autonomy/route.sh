@@ -471,7 +471,7 @@ loki_route_dispatch() {
             fi
             ;;
     esac
-    if [ "$R_DECIDED" != "1" ]; then return 0; fi
+    if [ "$R_DECIDED" != "1" ]; then _route_task_first "$verb" "$@"; return 0; fi
     if [ -n "$R_ERR" ]; then echo "$R_ERR" >&2; return 8; fi
     if [ "$R_EXPLAIN" = "1" ]; then loki_route_print; return 7; fi
     if [ "$R_DRY" = "1" ]; then
@@ -482,6 +482,27 @@ loki_route_dispatch() {
     if [ -n "$R_NOTICE" ]; then echo "$R_NOTICE" >&2; fi
     R_VERB="$verb"
     # A front-end call keeps its argv untouched: bin/loki hands it to autonomy/loki, which runs the workspace or deploy chain.
-    if [ "$R_FRONT" = "1" ]; then R_DECIDED=0; fi
+    if [ "$R_FRONT" = "1" ]; then R_DECIDED=0; _route_task_first "$verb" "$@"; fi
     return 0
+}
+
+# _route_task_first VERB ARGS...: a start or quick call the resolver leaves to its own handler (--help, a front-end
+# flag) still runs engine10 when its first argument is the task: `loki start "<task>" --help` shows the engine10 help.
+# quick takes any first word; start takes a multi-word task or an issue ref, and never with --workspace or --deploy.
+# The args go to engine10 as given. Sets R_DECIDED=1 and R_E10=1 on a match; leaves R_* alone otherwise.
+# shellcheck disable=SC2034
+_route_task_first() {
+    local verb="$1" a
+    shift
+    case "$verb:${1:-}" in start:|start:-*|quick:|quick:-*) return 0 ;; start:*|quick:*) ;; *) return 0 ;; esac
+    if [ "$verb" = "start" ]; then
+        for a in "$@"; do
+            case "$a" in --workspace|--workspace=*|--deploy) return 0 ;; esac
+        done
+        case "$1" in *" "*) ;; *) [ "$(_route_classify "$1")" = "issue" ] || return 0 ;; esac
+        R_E10_ARGS=("$@")
+    else
+        R_E10_ARGS=(--no-pr "$@")
+    fi
+    R_DECIDED=1; R_E10=1; R_HARD=0; R_ENGINE=engine10; R_VERB="$verb"; R_SESSION_MODEL=""; R_E10_CAP_S=""
 }

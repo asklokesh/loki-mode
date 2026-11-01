@@ -66,12 +66,16 @@ case "${1:-}" in
 esac
 
 # v8.1: resolve the one-switch SDK mode (LOKI_SDK_MODE=off|judges|full) into the
-# per-site LOKI_SDK_* flags HERE, in the outermost shim, BEFORE the `start`
-# routing fork below reads LOKI_SDK_LOOP. Without this, `LOKI_SDK_MODE=full loki
-# start` would run the judges on the SDK but silently keep the RARV loop on the
-# legacy bash binary, because the routing decision predates autonomy/loki's own
-# resolve. Same idempotent lib all three entrypoints source; exported flags reach
-# the child (bash or Bun). No-op when the mode is unset.
+# per-site LOKI_SDK_* flags HERE, in the outermost shim, so every child (bash or
+# Bun) reads the same resolved flags. Same idempotent lib all three entrypoints
+# source. No-op when the mode is unset.
+# LOKI_SDK_LOOP once routed `loki start` to a separate Bun loop; that loop is gone and every start runs
+# the default engine. Read the user's own value before the mode resolver can set it.
+if [ "${1:-}" = "start" ]; then
+    case "${LOKI_SDK_LOOP:-}" in
+        1|true) echo "loki: LOKI_SDK_LOOP no longer selects a separate loop; the default engine is Loki 10 (engine10)." >&2 ;;
+    esac
+fi
 if [ -f "$REPO_ROOT/autonomy/lib/sdk-mode.sh" ]; then
     # shellcheck source=../autonomy/lib/sdk-mode.sh
     source "$REPO_ROOT/autonomy/lib/sdk-mode.sh"
@@ -646,14 +650,19 @@ fi
 
 # OC-ROUTE: normalize flags before the engine decision so argument order and input form
 # never change the engine (autonomy/route.sh; `loki route ...` and --explain-route print it).
+# route.sh is the only start and quick decision, `start --attempts 1` included (N=1 was stripped above).
 _R_APPLIED=0
-if [ -f "$REPO_ROOT/autonomy/route.sh" ] && { [ "$_LOKI_START_ATTEMPTS" != "1" ] || case " $* " in *" --explain-route "*) true ;; *) false ;; esac; }; then
+if [ -f "$REPO_ROOT/autonomy/route.sh" ]; then
     # shellcheck source=/dev/null
     . "$REPO_ROOT/autonomy/route.sh"
     _r_rc=0
     loki_route_dispatch "$@" || _r_rc=$?
     case "$_r_rc" in 7) exit 0 ;; 8) exit 2 ;; esac
     if [ "$R_DECIDED" = "1" ]; then
+        if [ "$_LOKI_START_ATTEMPTS" = "1" ] && [ "$R_ENGINE" = "legacy" ]; then
+            echo "loki: --attempts runs only the Loki 10 engine, but this call routes to the legacy engine ($R_REASON); drop --attempts or the legacy request." >&2
+            exit 2
+        fi
         _R_APPLIED=1
         if [ -n "$R_SESSION_MODEL" ]; then
             case "$R_SESSION_MODEL" in small) R_SESSION_MODEL=fast ;; medium) R_SESSION_MODEL=development ;; high) R_SESSION_MODEL=planning ;; esac
@@ -712,47 +721,6 @@ case "v10" in
                 unset _pa
                 ;;
             ""|-*) _e10=0 ;;
-            # quick: the lean small path, no PR (legacy quick never opened one). A flag-first
-            # call (--help, -v) stays on the legacy quick.
-            quick)
-                case "${2:-}" in
-                    ""|-*) _e10=0 ;;
-                    *) _e10=1; _e10_args=(--no-pr "${@:2}") ;;
-                esac
-                ;;
-            # D58: `loki start <issue ref|issue URL|"multi-word task">` takes the same v10 path as
-            # `loki <ref>`. This arm decides only when autonomy/route.sh did not (--attempts, --help, the
-            # --workspace/--deploy front end); route.sh sends a PRD file, a brief and a bare start to engine10.
-            start)
-                # --workspace and --deploy (with its companions) are run by the bash front end around the engine; never glue them into an engine10 task.
-                _e10_front=0
-                for _e10_a in "${@:2}"; do
-                    case "$_e10_a" in --workspace|--workspace=*|--deploy) _e10_front=1 ;; esac
-                done
-                unset _e10_a
-                case "${_e10_front}:${2:-}" in
-                    1:*) _e10=0 ;;
-                    0:*/*\#[0-9]*|0:http*://*/issues/*|0:http*://*/browse/*|0:jira:*|0:linear:*|0:https://linear.app/*/issue/*|0:*" "*)
-                        _e10=1; _e10_args=("${@:2}")
-                        if [ "$_LOKI_START_ATTEMPTS" = "1" ]; then
-                            _e10_hard=1  # FC-38: --attempts never falls back to the legacy engine
-                            # FC-37: engine10 has no --budget; unmapped it would be glued onto the task text. Its per-run cap is --max-cost.
-                            _e10_args=(); _e10_bnext=0
-                            for _e10_a in "${@:2}"; do
-                                if [ "$_e10_bnext" = "1" ]; then _e10_args+=("$_e10_a"); _e10_bnext=0; continue; fi
-                                case "$_e10_a" in
-                                    --budget|--budget-limit) _e10_args+=(--max-cost); _e10_bnext=1 ;;
-                                    --budget=*|--budget-limit=*) _e10_args+=("--max-cost=${_e10_a#*=}") ;;
-                                    *) _e10_args+=("$_e10_a") ;;
-                                esac
-                            done
-                            unset _e10_a _e10_bnext
-                        fi
-                        ;;
-                    *) _e10=0 ;;
-                esac
-                unset _e10_front
-                ;;
             # http*://*/issues/* also covers GitLab's /-/issues/ URLs.
             */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*) _e10=1 ;;
             *" "*) _e10=1 ;;
@@ -817,38 +785,11 @@ if ! command -v bun &>/dev/null; then
     exec "$BASH_CLI" "$@"
 fi
 
-# v8 Phase 4: route `start` to the Bun RARV loop ONLY when LOKI_SDK_LOOP is on.
-# Default (unset) keeps `loki start` on the bash cmd_start, byte-identical. This
-# guard is AFTER the legacy check (LOKI_LEGACY_BASH=1 still force-overrides to
-# bash above) and AFTER the bun-presence check (a bun-less host already fell to
-# bash). Accepts 1|true to match the flag's documented =1 usage; bash cannot
-# cheaply reproduce truthy()'s yes/on spellings, so those are not honored here
-# (documented divergence, same as other bin/loki bool guards). v8.1: LOKI_SDK_LOOP
-# may also be set by the mode resolver above (LOKI_SDK_MODE=full -> LOOP=1), so
-# `LOKI_SDK_MODE=full loki start` now correctly routes the loop to Bun here.
-#
-# RUN-25 iter 2 (T3(c) pre-flight): the Bun runAutonomous loop handles the RARV
-# loop only. Orchestration flags that do pre-loop work the Bun loop does NOT do
-# (git-worktree parallel streams, GitHub/issue import, Docker sandbox, the API
-# server, backgrounding, alternate spec sources) must run on the bash route so the
-# user gets FULL behavior even with the loop flag on. Scan the start args for any
-# such flag (or an issue-ref positional) and, if present, DIVERT back to bash
-# instead of taking the Bun fork. This is the "pre-loop handled, not rejected"
-# guarantee that makes the eventual loop default-flip a no-regression. Runner
-# flags (--simple, --allow-haiku, --regen-prd, --skip-memory, provider knobs) are
-# handled by start.ts and do NOT divert. See artifacts/ITER1-FLAG-RECONCILE.md.
-# FC-38 (scoped to --attempts; plain start keeps the 11.3.0 routing below): no `start --attempts` reaches the legacy loop (bash cmd_start, run.sh, runAutonomous).
-# Issue refs and multi-word tasks were sent to engine10 above; every other start (PRD path, brief,
-# flags) goes to the Bun start command, which runs engine10 and seals a receipt. A flag only the
-# legacy route honored, or a provider engine10 cannot invoke, is refused loudly instead.
+# `start --attempts 1` that route.sh left to its own handler (--help, the --workspace/--deploy front end, a bare
+# start outside a repo) goes to the Bun start command, never the legacy loop (FC-38). An option only the legacy
+# loop honored, or a provider engine10 cannot invoke, is refused loudly instead.
 if [ "${1:-}" = "start" ] && [ "$_LOKI_START_ATTEMPTS" = "1" ]; then
     _loki_attempts_refuse "${@:2}"
-    exec bun "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" "$@"
-fi
-if [ "${1:-}" = "start" ] && { [ "${LOKI_SDK_LOOP:-}" = "1" ] || [ "${LOKI_SDK_LOOP:-}" = "true" ]; }; then
-    if _loki_start_needs_bash "${@:2}"; then
-        exec "$BASH_CLI" "$@"
-    fi
     exec bun "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" "$@"
 fi
 

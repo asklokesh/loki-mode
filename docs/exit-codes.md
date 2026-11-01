@@ -67,8 +67,7 @@ Helm wires this up for you: `worker.exitCodes.terminalFailure` (default 20)
 feeds the Job's `podFailurePolicy`, so a deterministic failure fails the Job
 immediately instead of burning `backoffLimit`. Requires Kubernetes 1.31+.
 
-Both the bash runner and the Bun runner (`LOKI_SDK_LOOP`) implement this
-identically; a parity test asserts they agree status for status.
+The bash runner implements this contract.
 
 The default engine honors the same opt-in: with `LOKI_DURABLE_STATE=1` a run that
 ends FAILED, PARTIAL, BUDGET_STOP, BLOCKED (spec conflict) or STALLED exits 20
