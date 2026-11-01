@@ -132,7 +132,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const focus = namedFiles(task, repoMap);
   const runners: RunnerName[] = testMap ? harnessRunners(engineMap?.packageRunners?.[targetRoot] ?? (packageTests.length ? [...new Set(packageTests.map((t) => t.runner))] : testMap.runners), repoMap?.files ?? [], process.env, ctx.repoDir, focus) : [];
   if (!ctx.externalPatch && planMode() !== "always" && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean") {
-    return done({ status: "skipped", data: { size: sz.size }, reason: "small task with a relevant test: cascade skips Wall" });
+    return done({ status: "skipped", data: { size: sz.size }, reason: `${sz.size} task with a relevant visible test: Wall skipped, verify runs that test at the end` });
   }
 
   if (testMap && runners.length === 0) { const miss = missingStackTool(repoMap?.files ?? [], process.env, ctx.repoDir); return done({ status: "skipped", data: { size: sz.size, files: [], no_runner: true, skip_code: harnessSkipCode(), not_proven: [miss ? `Wall not run: ${miss.tool} is not installed on this machine, so this repo could not be tested (harness-owned); ${miss.install}` : "Wall skipped: no runnable test command for this stack"] }, reason: miss ? `${miss.tool} is not installed: the Wall cannot run this repo's tests (harness-owned, not proven); ${miss.install}` : "no runnable test command detected: the Wall cannot write a runnable check" }); } // FC-17: decided before any model session
