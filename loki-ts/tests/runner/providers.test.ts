@@ -195,6 +195,16 @@ describe("codexProvider invocation", () => {
     expect(argv[argv.length - 1]).toBe("build x");
   });
 
+  it("argv carries -c model_reasoning_effort=<level> because codex ignores the env vars", async () => {
+    writeCodexStub({ stdout: "ok" });
+    const p = codexProvider();
+    await p.invoke(makeCall({ provider: "codex", tier: "planning", prompt: "build x" }));
+    const argv = readFileSync(codexArgvLog, "utf8").split("\n").filter(Boolean);
+    const i = argv.indexOf("-c");
+    expect(i).toBeGreaterThan(-1);
+    expect(argv[i + 1]).toBe("model_reasoning_effort=xhigh");
+  });
+
   it("LOKI_CODEX_OUTPUT_LAST=false disables --output-last-message (v7.4.18)", async () => {
     process.env["LOKI_CODEX_OUTPUT_LAST"] = "false";
     writeCodexStub({ stdout: "ok" });

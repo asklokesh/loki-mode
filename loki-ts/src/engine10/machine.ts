@@ -6,7 +6,7 @@ import { treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
-import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
+import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
 import { repeatedNoopFix } from "../util/anti_loop.ts";
 
 /** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
@@ -58,6 +58,8 @@ export const hasFailures = (d: Obj | undefined): boolean => (Array.isArray(d?.fa
 const earlyExit = (d: Obj): boolean => d.already_satisfied === true;
 /** After a cap or limit kill, how long the machine waits for the aborted stage to settle before moving on. */
 const KILL_GRACE_MS = 2000;
+/** What verify leaves of the soft cap for one fix round and the tail (commit, seal, pr) when it sizes itself from the budget left. */
+const VERIFY_RESERVE_S = STAGE_BUDGETS.fix.limitS + STAGE_BUDGETS.commit.limitS + STAGE_BUDGETS.seal.limitS + STAGE_BUDGETS.pr.limitS;
 export function softCapS(capS: number): number { const plain = (capS * 14) / 15, budget = backstopS(capS) - ((STAGE_BUDGETS.commit.targetS ?? 0) + (STAGE_BUDGETS.seal.targetS ?? 0) + KILL_GRACE_MS / 1000 + 2); return Math.max(0, Math.min(plain, budget)); } // tightens 14/15 of capS so commit+seal's tail (plus a 2s margin: this clock starts after worker boot, the backstop's starts at spawn) fits before the backstop; when the tail can never fit at all (budget < 0), 0 still maximizes the gap to the backstop instead of the old plain-point fallback, which left as little as 0.17s to seal (E-67 round 5 REJECT finding 1)
 /** Stages that write to the working tree; only these journal a diff_stat. The concurrent wall (split) path runs beside implement and installs into a base copy, so a before/after delta would be implement's: it journals none (unmeasured). */
 const TREE_STAGES: ReadonlySet<string> = new Set(["wall", "implement", "fix"]);
@@ -65,6 +67,7 @@ const TREE_STAGES: ReadonlySet<string> = new Set(["wall", "implement", "fix"]);
 export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Promise<MachineResult> {
   const load = opts.load ?? defaultLoader(opts.stagesDir ?? join(import.meta.dir, "stages"));
   const outputs: Partial<Record<StageName, Obj>> = {};
+  const partials: Partial<Record<StageName, Obj>> = {}; // latest evidence a running stage published (verify), kept if the stage is stopped
   let capHit = false, fatal: string | null = null; if (opts.restored) Object.assign(outputs, opts.restored);
   const startMs = opts.startedAtMs ?? ctx.clock.now();
   if (ctx.startedAtMs === undefined) ctx.startedAtMs = startMs;
@@ -84,7 +87,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     if (k === "auth" || (k === "quota_exhausted" && !capReached())) fatal ??= `fatal:${k}`; if (ctx.overCap?.() || (k === "quota_exhausted" && capReached())) capCtl.abort(); // D60-5: dollar cap reached, stop the running stage too
     return r;
   } };
-  const sctx: MachineRunContext = { ...ctx, sessions, implementLeftS: () => implementStartMs === null ? Infinity : implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000, outputs: () => ({ ...outputs }), capHit: () => capHit, sessionIds: () => [...startedIds] };
+  const sctx: MachineRunContext = { ...ctx, sessions, implementLeftS: () => implementStartMs === null ? Infinity : implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000, outputs: () => ({ ...outputs }), capHit: () => capHit, sessionIds: () => [...startedIds], partial: (n, d) => { partials[n] = d; } };
   const elapsedS = (): number => (ctx.clock.now() - startMs) / 1000;
   /** FC-21b: the one post-plan resize. Never below the current cap or the elapsed time; recomputes capAtMs and re-arms the soft-cap timer. */
   const applyResize = (proposedS: number): void => {
@@ -102,6 +105,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     ctx.emit("cap.hit", name, { elapsed_s: elapsedS() });
   };
   let implementBudgetS = 0; const implementLimitS = (floorS: number): number => Math.max(floorS, Math.floor(softCapS(ctx.capS) - elapsedS() - (STAGE_BUDGETS.verify.limitS ?? 0))); // leaves verify's window before the soft cap
+  const verifyLimitS = (floorS: number): number => Math.max(floorS, Math.floor(softCapS(ctx.capS) - elapsedS() - VERIFY_RESERVE_S)); // verify gets the run budget left too, so the checks that prove the task are not cut at a fixed 120s; the soft cap still stops it
   /** Runs one stage; returns its result, or null when it was skipped. */
   const runStage = async (name: StageName, underCap: boolean): Promise<StageResult | null> => {
     const st = await load(name);
@@ -110,7 +114,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       return null;
     }
     if (underCap && capReached()) { markCap(name); return null; }
-    const limitS = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : st.limitS + (st.extraLimitS?.(sctx) ?? 0); if (name === "implement") { implementBudgetS = limitS; implementStartMs = ctx.clock.now(); } // FC-19: implement gets the run budget left, not a fixed 480s
+    const limitS = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : (name === "verify" && st.limitS >= STAGE_BUDGETS.verify.limitS ? verifyLimitS(st.limitS) : st.limitS) + (st.extraLimitS?.(sctx) ?? 0); if (name === "implement") { implementBudgetS = limitS; implementStartMs = ctx.clock.now(); } // FC-19: implement gets the run budget left, not a fixed 480s
     ctx.emit("stage.started", name, { target_s: st.targetS, limit_s: limitS, ...(name === "wall" ? { start_ms: ctx.clock.now() } : {}) });
     const t0 = ctx.clock.now();
     const dur = (): number => (ctx.clock.now() - t0) / 1000;
@@ -127,6 +131,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     const aborted = new Promise<null>((res) => ctl.signal.addEventListener("abort", () => res(null)));
     let r: StageResult | null;
     let p: Promise<StageResult> | undefined;
+    delete partials[name];
     try {
       p = st.run(sctx, ctl.signal);
       p.catch(() => {}); // a stage that rejects after being aborted is ignored
@@ -140,15 +145,18 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     if (why) {
       // Bounded grace so a killed stage is not still running when commit starts.
       if (why === "cap") markCap(name);
+      let settled = null as StageResult | null;
       if (p) {
         let graceTimer: ReturnType<typeof setTimeout> | undefined;
         await Promise.race([
-          p.then(() => {}, () => {}),
+          p.then((x) => { settled = x; }, () => {}),
           new Promise<void>((res) => { graceTimer = setTimeout(res, KILL_GRACE_MS); }),
         ]);
         clearTimeout(graceTimer);
       }
       r = { status: "failed", data: {}, reason: why, killed: true };
+      const kept = name === "verify" ? (settled?.status === "completed" ? settled.data : partials.verify) : undefined;
+      if (kept) { const prev = outputs.verify; outputs.verify = { ...kept, failures_grouped: prev?.failures_grouped ?? [], holdout_failed: prev?.holdout_failed ?? 0, not_proven: [...(Array.isArray(kept.not_proven) ? kept.not_proven : []), VERIFY_STOPPED_NOTE[why]], stopped_at: why, duration_s: dur() }; } // the checks that ran stay in the receipt; the note keeps the verdict below VERIFIED; the fix loop still reads what it read before the stop
       if (name === "implement" && why === "limit") { const ro = (outputs.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [], reverted = restoreReadOnly(ro).map((f) => relative(ctx.repoDir, f)); outputs.implement = { exit: "killed", limit_s: limitS, elapsed_s: dur(), ...(reverted.length ? { tests_reverted: reverted } : {}) }; } // FC-21 (a): the work that exists is verified, and seal reads exit=killed so the verdict can never be VERIFIED
     }
     const res = r as StageResult;

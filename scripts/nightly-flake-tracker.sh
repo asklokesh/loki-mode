@@ -16,7 +16,7 @@
 #   shell runner:   "<tick> Name PASSED" / "<cross> Name FAILED"
 # Output, per test seen both passing and failing on one SHA:
 #   FLIP <sha7> <test> pass=<labels> fail=<labels>
-#   BOARD: <slice line>
+#   FIX: <follow-up line>
 # A test failing in every observation of a SHA is reported as STABLE-FAIL
 # (a real defect, not a flake). Exit 0 = no flips, 1 = flips, 2 = usage error.
 set -uo pipefail
@@ -118,7 +118,7 @@ report="$(printf '%s\n' "$all" | awk -F'\t' '
             gsub(/^,|,$/, "", p); gsub(/^,|,$/, "", f)
             if (p != "" && f != "") {
                 printf "FLIP %s %s pass=%s fail=%s\n", substr(a[1], 1, 7), a[2], p, f
-                printf "BOARD: | FLAKE | fix flaky test \"%s\" (flipped on %s: pass in %s, fail in %s) | wait on a condition, no retries |\n", a[2], substr(a[1], 1, 7), p, f
+                printf "FIX: | FLAKE | fix flaky test \"%s\" (flipped on %s: pass in %s, fail in %s) | wait on a condition, no retries |\n", a[2], substr(a[1], 1, 7), p, f
             } else if (f != "") {
                 printf "STABLE-FAIL %s %s fail=%s\n", substr(a[1], 1, 7), a[2], f
             }

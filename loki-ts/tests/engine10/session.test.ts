@@ -213,6 +213,16 @@ describe("engine10 session", () => {
     expect(classifyExitCause(130, false)).toBe("exit 130 (SIGINT)");
     expect(classifyExitCause(137, false)).toBe("exit 137 (SIGKILL)");
     expect(classifyExitCause(143, false)).toBe("exit 143 (SIGTERM)");
+  });
+  test("a provider auth or credit tail names the cause and the fix; an unknown tail keeps the exit text", () => {
+    const auth = classifyExitCause(1, false, undefined, "[sdk-loop error: Not logged in · Please run /login]\n", "claude");
+    expect(auth).toContain("auth: ");
+    expect(auth).toContain("claude /login");
+    const credit = classifyExitCause(1, false, undefined, "Error: insufficient_quota: check your plan and billing details\n", "codex");
+    expect(credit).toContain("quota_exhausted: ");
+    expect(credit).toMatch(/credit/);
+    expect(classifyExitCause(1, false, undefined, "segfault in test runner\n", "claude")).toBe("exit 1 (general error)");
+    expect(classifyExitCause(1, true, "limit", "[sdk-loop error: Not logged in]", "claude")).toBe("limit");
     expect(classifyExitCause(null, true)).toBe("limit");
     expect(classifyExitCause(null, false)).toBe("external kill");
     // A code with no table entry still names the number: never a bare fallback string.

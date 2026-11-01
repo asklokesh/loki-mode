@@ -5,6 +5,31 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.101.0 (2026-10-31)
+
+A passing run is no longer turned into PARTIAL by verify's fixed time limit, run branches are cleaned up at run end with their history saved, Bash reads of secret files are denied, and an auth or credit failure names its cause and fix.
+
+### Added
+
+- When a Loki 10 run ends, Loki returns the checkout to the branch it started from (only when the tracked tree is clean; otherwise it prints how to return), removes the run's leftover temporary worktrees and deletes the `loki/e10-*` run branch. A pushed branch is deleted; an unpushed one is first saved as a verified git bundle under `.loki/runs/<run-id>/` with the restore command printed, and is kept if the bundle cannot be written. Run branches left by earlier runs are saved and removed the same way at the end of the next run. A passing run that published nothing, a resumable run, a live run and a branch checked out in any worktree keep their branch. `LOKI_KEEP_RUN_BRANCH=1` keeps every run branch, as before. Session id files now live in the run directory.
+- The Claude permission policy denies Bash reads of secret files (`.env*`, `.aws/`, `.ssh/`, `*.pem` and the rest of the shared `secret-paths.json` list) through common readers (`cat`, `head`, `grep`, `sed`, `source`, input redirects and others), in addition to the existing Read denies. Each refused tool call is recorded in the run's event log as `permission_denied` with a redacted input summary. The review council merges its guard list into the same `--disallowedTools` value instead of passing a second flag.
+- MiniMax-M3.1-Flash is the first MiniMax choice and the development and fast recommendation, with MiniMax-M3 kept for planning; the settings page offers it, and saved legacy or custom model IDs stay selectable.
+
+### Fixed
+
+- Verify no longer has a fixed 120 second limit: it gets the run budget left after reserving time for one fix round and commit, seal and PR. The Wall and task-named tests run first, and a verify stopped at its limit or the run cap keeps the checks that ran in the receipt (with a Not proven line that keeps the verdict below VERIFIED) instead of reporting "no tests executed, wall result not recorded".
+- An authentication or credit failure now names the provider's own message and the fix in the run's Reason line, for example `provider authentication failed: auth: ... (fix: run claude /login, or unset ANTHROPIC_API_KEY)`.
+- Codex now receives its reasoning effort as `-c model_reasoning_effort=<level>`. The codex CLI never read `LOKI_CODEX_REASONING_EFFORT` or `CODEX_MODEL_REASONING_EFFORT`, so every tier ran at the codex default effort.
+- Wall test runners are chosen from the package that owns the tests, so a nested fixture package's runner (for example vitest under a bun project) no longer decides the runner for the root package.
+- The moat suite checks the current PARTIAL contract (Loki opens a labelled draft PR; a FAILED run stays local), so main CI is green again.
+
+### Changed
+
+- Because a run that opened a PR now returns the checkout to the starting branch, `loki verify <run>` from that branch reads UNCHECKED, and the reason now says the checkout does not contain the sealed head and to check out the run's branch or PR head (for example `git fetch origin loki/<run-id> && git checkout --detach FETCH_HEAD`). The head drift check itself is unchanged.
+- GitHub Actions workflows use `actions/checkout` v7.0.1 and `actions/setup-node` v7.0.0, pinned by SHA. Every setup-node step sets `package-manager-cache: false`, so the automatic npm cache setup-node v5 and later turns on can never carry a poisoned cache into a job that holds the npm token.
+- The optional `@anthropic-ai/sdk` peer in the root lockfile moves to 1.3.0, matching `loki-ts`.
+- The repository's committed `.claude/settings.json` no longer registers Claude Code hooks; the hook scripts under `autonomy/hooks/` are unchanged and still installable.
+
 ## v11.100.0 (2026-10-31)
 
 `loki issues run` now runs each issue whole by default, up to 4 at once, and splits only an issue that is too large or failed whole, into at most 4 slices.

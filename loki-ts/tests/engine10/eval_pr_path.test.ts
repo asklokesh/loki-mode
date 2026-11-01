@@ -106,7 +106,9 @@ describe("engine10 eval PR path (E-41 plus E-42, local bare origin)", () => {
 
     const branch = `loki/${r.runId}`;
     // The branch was pushed to the bare origin (not just committed locally).
-    expect(git(r.origin, "rev-parse", `refs/heads/${branch}`)).toBe(git(r.repo, "rev-parse", "HEAD"));
+    expect(git(r.origin, "rev-parse", `refs/heads/${branch}`)).toBe(JSON.parse(readFileSync(join(r.runDir, "receipt.json"), "utf8")).head_sha);
+    // Run-end cleanup: a pushed run branch is deleted locally (its history is on the origin).
+    expect(() => git(r.repo, "rev-parse", "--verify", "-q", `refs/heads/${branch}`)).toThrow();
 
     const opened = r.events.filter((e) => e.type === "pr.opened");
     expect(opened.length).toBe(1);

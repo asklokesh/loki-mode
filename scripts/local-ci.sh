@@ -821,6 +821,12 @@ run_check_pyfile() {
 # and never claimed as hermetic-clean, since it was never actually checked.
 _lci_hermetic_scan() {
   local files f rc bindir home b tgt userbase spath failures="" ran=0 unchecked=0
+  # Per-file budget. A file near it can pass the normal run and time out the hermetic one, which is not a
+  # hermeticity failure, so a hermetic timeout (124) counts as unchecked, never as "fails hermetic".
+  local ht="${LOCAL_CI_HERMETIC_TIMEOUT:-90}"
+  # rustup proxies (cargo, rustc) find their toolchains under RUSTUP_HOME: toolchain bytes, no credentials
+  # (crates.io tokens live in CARGO_HOME, which stays unset).
+  local rustup="${RUSTUP_HOME:-$HOME/.rustup}"
 
   files="$(git diff --name-only --diff-filter=ACMR origin/main...HEAD -- tests loki-ts/tests 2>/dev/null \
     | grep -E '(^|/)test[-_][^/]+\.(sh|py)$|^loki-ts/tests/.*\.test\.ts$')" || true
@@ -830,7 +836,7 @@ _lci_hermetic_scan() {
   fi
 
   bindir="$(mktemp -d "${TMPDIR:-/tmp}/loki-hermetic-bin.XXXXXX")" || return 1
-  for b in bash bun python3 node timeout; do
+  for b in bash bun python3 node npm npx timeout go cargo rustc javac java mvn gradle; do  # toolchains present on the host only; the point is no gh and no credentials
     tgt="$(command -v "$b" 2>/dev/null)" && ln -sf "$tgt" "$bindir/$b"
   done
   userbase="$("$bindir/python3" -c 'import site; print(site.getuserbase())' 2>/dev/null)"
@@ -840,9 +846,9 @@ _lci_hermetic_scan() {
     [ -n "$f" ] && [ -f "$f" ] || continue
 
     case "$f" in
-      loki-ts/tests/*) ( cd loki-ts && timeout 30 bun test "${f#loki-ts/}" ) >/dev/null 2>&1 ;;
-      *.py)             timeout 30 python3 -m pytest -q "$f" >/dev/null 2>&1 ;;
-      *)                timeout 30 bash "$f" >/dev/null 2>&1 ;;
+      loki-ts/tests/*) ( cd loki-ts && timeout "$ht" bun test "${f#loki-ts/}" ) >/dev/null 2>&1 ;;
+      *.py)             timeout "$ht" python3 -m pytest -q "$f" >/dev/null 2>&1 ;;
+      *)                timeout "$ht" bash "$f" >/dev/null 2>&1 ;;
     esac
     rc=$?
     # Only a NORMAL pass is interesting: a file already red (or too slow to
@@ -858,17 +864,18 @@ _lci_hermetic_scan() {
     home="$(mktemp -d "${TMPDIR:-/tmp}/loki-hermetic-home.XXXXXX")" || { unchecked=$((unchecked + 1)); continue; }
     case "$f" in
       loki-ts/tests/*)
-        ( cd loki-ts && timeout 30 env -i HOME="$home" PYTHONUSERBASE="$userbase" GIT_CONFIG_NOSYSTEM=1 PATH="$spath" \
+        ( cd loki-ts && timeout "$ht" env -i HOME="$home" PYTHONUSERBASE="$userbase" RUSTUP_HOME="$rustup" GIT_CONFIG_NOSYSTEM=1 PATH="$spath" \
           bun test "${f#loki-ts/}" ) >/dev/null 2>&1 ;;
       *.py)
-        timeout 30 env -i HOME="$home" PYTHONUSERBASE="$userbase" GIT_CONFIG_NOSYSTEM=1 PATH="$spath" \
+        timeout "$ht" env -i HOME="$home" PYTHONUSERBASE="$userbase" RUSTUP_HOME="$rustup" GIT_CONFIG_NOSYSTEM=1 PATH="$spath" \
           python3 -m pytest -q "$f" >/dev/null 2>&1 ;;
       *)
-        timeout 30 env -i HOME="$home" PYTHONUSERBASE="$userbase" GIT_CONFIG_NOSYSTEM=1 PATH="$spath" \
+        timeout "$ht" env -i HOME="$home" PYTHONUSERBASE="$userbase" RUSTUP_HOME="$rustup" GIT_CONFIG_NOSYSTEM=1 PATH="$spath" \
           bash "$f" >/dev/null 2>&1 ;;
     esac
     rc=$?
     rm -rf "$home"
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then unchecked=$((unchecked + 1)); ran=$((ran - 1)); continue; fi
     [ "$rc" -eq 0 ] || failures="$failures $f"
   done <<< "$files"
 
@@ -1931,7 +1938,7 @@ run_check "tests/test-cli-session-v734.sh (session stamp + uuid parity + FIX D)"
 # tail -60, not -3: the rule failures print before the summary block, so a
 # 3-line capture would show only "moat: X of 9" and hide which rule fired.
 # Exit 2 (no release tag reachable, so the ratchet did not run) is a FAIL here.
-run_check "moat suite (tests/moat/run.sh: nine properties + pending ratchet)" "bash tests/moat/run.sh 2>&1 | tail -60"
+run_check "moat suite (tests/moat/run.sh: nine properties + pending ratchet)" "bash tests/moat/run.sh 2>&1 | grep -vE '^[[:space:]]*CASE [^ ]+ PASS ' | tail -400"
 run_check "tests/test-moat-runner.sh (every moat runner rule fires)" "bash tests/test-moat-runner.sh 2>&1 | tail -25"
 
 # ---------------------------------------------------------------------------

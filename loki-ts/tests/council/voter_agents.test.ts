@@ -407,11 +407,10 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
     const cap = { argv: [] as string[] };
     try {
       await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
-      const values = denyValues(cap.argv);
-      expect(values.length).toBeGreaterThanOrEqual(1);
-      // The voter guard is its own flag value, separate from the policy deny list.
-      expect(values.some((v) => v.startsWith("Edit,Write,NotebookEdit"))).toBe(true);
-      const denyList = values.join(",");
+      expect(cap.argv.filter((a) => a === "--disallowedTools")).toHaveLength(1); // merged, never a second flag
+      const idx = cap.argv.indexOf("--disallowedTools");
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const denyList = cap.argv[idx + 1] ?? "";
       // Mutating tools denied.
       expect(denyList).toContain("Edit");
       expect(denyList).toContain("Write");
@@ -457,6 +456,7 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
       const denyList = denyValues(cap.argv).join(",");
       for (const e of GUARD_ENTRIES) expect(denyList).not.toContain(e);
       expect(denyList).toContain("Read(//**/.ssh/**)");
+      expect(cap.argv.filter((a) => a === "--disallowedTools").length).toBeLessThanOrEqual(1);
     } finally {
       if (savedGuard === undefined) delete process.env["LOKI_REVIEW_TOOL_GUARD"];
       else process.env["LOKI_REVIEW_TOOL_GUARD"] = savedGuard;
@@ -472,6 +472,7 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
       await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
       const denyList = denyValues(cap.argv).join(",");
       for (const e of GUARD_ENTRIES) expect(denyList).not.toContain(e);
+      expect(cap.argv.filter((a) => a === "--disallowedTools").length).toBeLessThanOrEqual(1);
       // The voter still functions (agents + schema + prompt present).
       expect(cap.argv.includes("--agents")).toBe(true);
       expect(cap.argv[cap.argv.length - 2]).toBe("-p");

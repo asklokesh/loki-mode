@@ -799,7 +799,7 @@ describe("interrupted stage resume (FC-IMPLEMENT-RESUME-STARTS-OVER)", () => {
 describe("SIGKILL of a live session then resume (PX-5)", () => {
   test("the killed implement session is resumed by its recorded id, one session, measured latency", async () => {
     mkdirSync(join(repo, ".loki"), { recursive: true });
-    const file = join(repo, ".loki", "e10-session-r1-impl.json");
+    const file = join(repo, ".loki", "sessions", "e10-session-r1-impl.json"); // no run dir for "r1": the file goes under .loki/sessions/, never loose in .loki/
     const sessionSrc = join(import.meta.dir, "../../src/runner/session_resume.ts");
     const child = spawn(process.execPath, ["-e", `import { writeSessionId } from ${JSON.stringify(sessionSrc)}; writeSessionId(process.env.REPO, "r1-impl", { sessionId: "sess-sigkill" }); setInterval(() => {}, 1 << 30);`], { env: { ...process.env, REPO: repo }, stdio: "ignore" }); // the real writeSessionId runs in the child, which is then killed
     try {

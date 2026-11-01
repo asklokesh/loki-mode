@@ -133,26 +133,19 @@ test_settings_json() {
     fi
 }
 
-# Test 9: settings.json has required hook events
+# Test 9: the repo's committed settings.json registers no hooks. Hooks stay
+# opt-in per machine; a cloned checkout must not run scripts on session events.
 test_settings_hook_events() {
-    log_test "settings.json has required hook events"
-    EVENTS=$(python3 -c "
+    log_test "settings.json registers no hooks"
+    HAS_HOOKS=$(python3 -c "
 import json
 with open('$PROJECT_ROOT/.claude/settings.json') as f:
-    hooks = json.load(f).get('hooks', {})
-    print(' '.join(hooks.keys()))
+    print('yes' if 'hooks' in json.load(f) else 'no')
 ")
-    REQUIRED="SessionStart PreToolUse PostToolUse Stop PreCompact"
-    MISSING=""
-    for event in $REQUIRED; do
-        if ! echo "$EVENTS" | grep -q "$event"; then
-            MISSING="$MISSING $event"
-        fi
-    done
-    if [ -z "$MISSING" ]; then
-        pass "All required hook events present"
+    if [ "$HAS_HOOKS" = "no" ]; then
+        pass "No hooks block in the committed settings.json"
     else
-        fail "Missing hook events:$MISSING"
+        fail "The committed .claude/settings.json still has a hooks block"
     fi
 }
 

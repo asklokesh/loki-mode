@@ -245,7 +245,18 @@ describe("reviewer brief: tests that import the changed files", () => {
   });
 
   test("no runner detected: not measured, never a false 'no test'", () => {
-    const sec = renderBrief({ repoDir: dir, baseSha: base }).split("### Tests that import the changed files")[1]!.split("###")[0]!;
-    expect(sec).toContain("not measured (no test runner or test files detected)");
+    // Its own repo with no test files and no runner config: the shared fixture gains a bun:test file in an
+    // earlier test, and a framework import in a test file is runner evidence (testmap.ts, #233).
+    const bare = mkdtempSync(join(tmpdir(), "e10-brief-none-"));
+    try {
+      git(bare, ["init", "-q"]);
+      writeFileSync(join(bare, "a.ts"), "export const a = 1;\n");
+      git(bare, ["add", "-A"]); git(bare, ["-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "-m", "init"]);
+      const b1 = git(bare, ["rev-parse", "HEAD"]).trim();
+      writeFileSync(join(bare, "a.ts"), "export const a = 2;\n");
+      git(bare, ["add", "-A"]); git(bare, ["-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "-m", "chg"]);
+      const sec = renderBrief({ repoDir: bare, baseSha: b1 }).split("### Tests that import the changed files")[1]!.split("###")[0]!;
+      expect(sec).toContain("not measured (no test runner or test files detected)");
+    } finally { rmSync(bare, { recursive: true, force: true }); }
   });
 });

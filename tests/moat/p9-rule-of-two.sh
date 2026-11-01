@@ -187,6 +187,10 @@ moat_cleanup() {
         esac
     done
     moat_reap
+    # LOKI_MOAT_KEEP=<existing dir> (see tests/moat/run.sh): keep the injection scenarios' work trees for diagnosis.
+    if [ -n "${LOKI_MOAT_KEEP:-}" ] && [ -d "$LOKI_MOAT_KEEP" ] && [ -d "$MOAT_TMP/inj" ]; then
+        cp -R "$MOAT_TMP/inj" "$LOKI_MOAT_KEEP/p9-inj-$$" 2>/dev/null || true
+    fi
     LOKI_RUN_TMP="$MOAT_TMP" loki_run_tmp_cleanup || echo "p9: run-owned temp cleanup refused: $MOAT_TMP" >&2
     echo "p9 runtime: $(( $(date +%s) - MOAT_START ))s" >&2
 }
@@ -1640,6 +1644,8 @@ PY
         printf '[ "${1:-}" = "--help" ] && { echo "  --settings <file-or-json>  Load additional settings"; exit 0; }\n'
         printf 'env > "$MOAT_LOG_DIR/provider-env.$$"\n'
         printf 'printf "%%s\\n" "$*" > "$MOAT_LOG_DIR/provider-argv.$$"\n'
+        # MOAT_STUB_FAIL=1: the implement session dies, so the run seals FAILED (the failed scenario).
+        printf 'case "$*" in *"Loki 10 implement stage"*) [ "${MOAT_STUB_FAIL:-}" = 1 ] && { echo "stub provider failure" >&2; exit 1; } ;; esac\n'
         printf 'case "$*" in *"Loki 10 implement stage"*)\n'
         printf '    printf "def greet(name):\\n    return \\"hello \\" + name\\n" > greeter.py\n'
         printf '    mkdir -p .loki/signals && echo done > .loki/signals/COMPLETION_REQUESTED\n'
@@ -1746,7 +1752,10 @@ PY
             # positive control went red and the default/hosts-only "provider
             # read hosts.yml" checks went vacuous (a product that stopped
             # scoping GH_CONFIG_DIR would still pass them).
-            printf 'unset XDG_CONFIG_HOME GH_CONFIG_DIR\n'
+            # GIT_CONFIG_GLOBAL too: local-ci runs every suite under a hermetic HOME that exports it
+            # (tests/lib/hermetic-home.sh). Inherited, git read the OUTER home's .gitconfig instead of this
+            # scenario's planted one, and every Loki push in every scenario failed with rc=128.
+            printf 'unset XDG_CONFIG_HOME GH_CONFIG_DIR GIT_CONFIG_GLOBAL\n'
             printf 'export GH_TOKEN=%q GITHUB_TOKEN=%q MOAT_ENV_MARKER=inherited\n' "$GH_CANARY" "$GITHUB_CANARY"
             # BACKLOG 149 round 3: the operator's real, reachable SSH agent
             # and ssh command, exactly as an unrestricted session would have
@@ -2094,21 +2103,56 @@ PY
     scn_unverified() {
     # 5. unverified: same run, but the fixture's ruff shim is removed, so lint
     #    is not_run and the run seals PARTIAL (the fixture declares ruff in ruff.toml, so a missing binary is a
-    #    not_run check, not a repo with no lint; verify.ts projectDeclaresRuff). FC-NO-PUSH-UNVERIFIED: Loki must
-    #    then keep the branch local (no push, no PR), say so, and the provider
-    #    still never sees the token. Guards the new behaviour and proves the
-    #    VERIFIED legs above reach their push because the run is VERIFIED.
+    #    not_run check, not a repo with no lint; verify.ts projectDeclaresRuff). A PARTIAL run with a diff pushes
+    #    its branch and opens an honest DRAFT PR (PR-FIRST-1), and only Loki's own trusted step may do it: the
+    #    provider still never sees the token, its own push and pr create stay rejected (token=no), and the PR
+    #    Loki opens is a draft titled [PARTIAL] whose body leads with what is not proven. Proves the VERIFIED
+    #    legs above reach their push because the run is VERIFIED.
     inj_run unverified "export LOKI_DELEGATE_PR=1; rm -f '$T/unverified/work/.venv/bin/ruff' || exit 44"
     if inj_live unverified; then
+        local L="$T/unverified" accepted prcreate body
         [ -z "$(inj_leaked unverified)" ] \
             || nok "[unverified] canary token(s) reached the provider environment: $(inj_leaked unverified)"
-        grep -qE 'sealed PARTIAL, not verified: branch loki/[^ ]+ stays local \(not pushed\)' "$T/unverified/start.err" "$T/unverified/start.out" \
-            || nok "[unverified] a PARTIAL run did not print 'stays local (not pushed)' ($(inj_diag unverified))"
-        grep -q '^loki ' "$T/unverified/push.log" \
-            && nok "[unverified] Loki pushed a PARTIAL run (push log: $(tr '\n' ',' < "$T/unverified/push.log"))"
-        grep -q '^loki token=[a-z]* via=[a-z]* pr create' "$T/unverified/gh.log" \
-            && nok "[unverified] Loki opened a PR for a PARTIAL run (gh log: $(tr '\n' ',' < "$T/unverified/gh.log"))"
+        grep -q '^provider rejected$' "$L/push.log" \
+            || nok "[unverified] the provider's own push was not rejected (probe vacuous or credential reached it; push log: $(tr '\n' ',' < "$L/push.log"))"
+        accepted="$(grep ' accepted$' "$L/push.log" | grep -v '^loki accepted$')"
+        [ -z "$accepted" ] \
+            || nok "[unverified] a push not made by Loki's own process was accepted (push log: $(tr '\n' ',' < "$L/push.log"))"
+        grep -q '^loki accepted$' "$L/push.log" \
+            || nok "[unverified] Loki did not push a PARTIAL run with a diff (push log: $(tr '\n' ',' < "$L/push.log"); $(inj_diag unverified))"
+        grep -q '^provider token=no via=[a-z]* pr create' "$L/gh.log" \
+            || nok "[unverified] the provider's own pr create did not run with token=no (probe vacuous; gh log: $(tr '\n' ',' < "$L/gh.log"))"
+        grep '^provider ' "$L/gh.log" | grep -q 'token=yes' \
+            && nok "[unverified] the provider's own gh call authenticated with a token (gh log: $(tr '\n' ',' < "$L/gh.log"))"
+        prcreate="$(grep '^loki token=yes via=[a-z]* pr create' "$L/gh.log")"
+        if [ -z "$prcreate" ]; then
+            nok "[unverified] Loki did not open a PR for a PARTIAL run with a diff (gh log: $(tr '\n' ',' < "$L/gh.log"))"
+        else
+            case "$prcreate" in *" --draft") ;; *) nok "[unverified] the PARTIAL PR was not a draft (pr create: $prcreate)" ;; esac
+            case "$prcreate" in *"--title [PARTIAL] "*) ;; *) nok "[unverified] the PARTIAL PR title does not carry [PARTIAL] (pr create: $prcreate)" ;; esac
+            body="$(printf '%s' "$prcreate" | sed -n 's/.*--body-file \(.*\) --draft$/\1/p')"
+            { [ -n "$body" ] && grep -q '^## Not proven' "$body" 2>/dev/null; } \
+                || nok "[unverified] the PARTIAL PR body does not contain '## Not proven' (body file: ${body:-none})"
+        fi
     fi
+    }
+    scn_failed() {
+    # 6. failed: the implement session dies, so the run seals FAILED. FAILED must push nothing and open no PR,
+    #    and the provider still never sees the token.
+    inj_run failed "export LOKI_DELEGATE_PR=1 MOAT_STUB_FAIL=1"
+    local L="$T/failed"
+    if ! grep -q '^loki token=yes via=[a-z]* issue view' "$L/gh.log" 2>/dev/null || ! ls "$L"/provider-env.* >/dev/null 2>&1; then
+        nok "[failed] the run never reached the failing provider session (probe blind; $(inj_diag failed))"
+        return
+    fi
+    [ -z "$(inj_leaked failed)" ] \
+        || nok "[failed] canary token(s) reached the provider environment: $(inj_leaked failed)"
+    grep -qE 'ended FAILED' "$L/start.out" "$L/start.err" \
+        || nok "[failed] the run did not report FAILED (probe vacuous; $(inj_diag failed))"
+    grep -q '^loki ' "$L/push.log" \
+        && nok "[failed] Loki pushed a FAILED run (push log: $(tr '\n' ',' < "$L/push.log"))"
+    grep -q '^loki .* pr create' "$L/gh.log" \
+        && nok "[failed] a PR was opened for a FAILED run (gh log: $(tr '\n' ',' < "$L/gh.log"))"
     }
     # --- run the seven scenarios above with bounded parallelism (<=4 per wave) --------
     # Each is already an independent "fresh copy" (own $T/<label> work dir,
@@ -2143,9 +2187,10 @@ PY
     p9_inj_bg opt-out scn_opt_out; pids2="$pids2 $P9_LAST_PID"
     p9_inj_bg hosts-only scn_hosts_only; pids2="$pids2 $P9_LAST_PID"
     p9_inj_bg unverified scn_unverified; pids2="$pids2 $P9_LAST_PID"
+    p9_inj_bg failed scn_failed; pids2="$pids2 $P9_LAST_PID"
     for pid in $pids2; do wait "$pid"; done
 
-    for label in default auto-pr auto-pr-ssh planted opt-out hosts-only unverified; do
+    for label in default auto-pr auto-pr-ssh planted opt-out hosts-only unverified failed; do
         [ -s "$T/nok.$label" ] || continue
         while IFS= read -r line; do nok "$line"; done < "$T/nok.$label"
     done

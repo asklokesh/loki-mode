@@ -71,7 +71,7 @@ export function nextOf(result: RunResult, filesChanged: number | null, reason?: 
     if (provider !== "claude") return `re-authenticate ${provider}, then loki doctor`;
     return /api key/i.test(r) ? "replace or unset ANTHROPIC_API_KEY, or run claude login" : "claude login"; // an env key outranks the login, so claude login alone would not clear a rejected key
   }
-  if (r === "provider credit exhausted") return "check provider billing, or loki start --provider <other>";
+  if (r.startsWith("provider credit exhausted")) return "check provider billing, or loki start --provider <other>";
   if (r === "engine ended before sealing a receipt") return "loki doctor";
   if (/^[^:]+ failed(: |$)/.test(r)) return `loki chat --attach (ask why)${undo}`;
   return filesChanged ? "loki undo" : "loki doctor";

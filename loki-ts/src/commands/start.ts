@@ -790,7 +790,7 @@ export async function runStart(args: readonly string[]): Promise<number> {
       // Each attempt is one engine10 run in its own worktree: only engine10 seals the receipt the scorer reads.
       // Attempts never open PRs themselves; the winner alone is pushed and opened as a draft PR (see productionDeps.openPr).
       // Token-free: attempts never push (forced --no-pr; only push-pr after all attempts has credentials), so no attempt process needs GH_TOKEN or SSH_AUTH_SOCK.
-      const env = tokenFreeEnv({ ...process.env, LOKI_DIR: `${wt}/.loki` });
+      const env = tokenFreeEnv({ ...process.env, LOKI_DIR: `${wt}/.loki`, LOKI_KEEP_RUN_BRANCH: "1" }); // the attempts runner removes each attempt's worktree and branch itself
       delete env["LOKI_RUN_TMP"];
       return runEngine10(wt, attemptOpts, env, true);
     },

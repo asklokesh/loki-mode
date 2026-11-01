@@ -1165,6 +1165,8 @@ export function codexProvider(): ProviderInvoker {
         "exec",
         "--sandbox", "workspace-write",
         "--skip-git-repo-check",
+        // codex ignores the REASONING_EFFORT env vars; effort is a config override.
+        ...(effort ? ["-c", `model_reasoning_effort=${effort}`] : []),
       ];
 
       // Optional: web search (codex v0.125 --search).

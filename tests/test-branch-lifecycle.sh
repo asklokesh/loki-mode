@@ -4066,11 +4066,11 @@ br_case() {
         [ "$commit" = yes ] && { echo w > w.txt; git add w.txt; git commit -q -m work; }
         [ "$dirty" = yes ] && echo changed >> seed.txt
         _loki_restore_base_branch "$result" >/dev/null 2>&1
-        printf 'HEAD=%s BRANCHES=%s' "$(git rev-parse --abbrev-ref HEAD | sed 's/loki\/session-[0-9-]*/LOKI/')" "$(git branch --format='%(refname:short)' | sed 's/loki\/session-[0-9-]*/LOKI/' | sort | tr '\n' ',')"
+        printf 'HEAD=%s BRANCHES=%s' "$(git rev-parse --abbrev-ref HEAD | sed 's/loki\/session-[0-9-]*/LOKI/')" "$(git branch --format='%(refname:short)' | sed 's/loki\/session-[0-9-]*/LOKI/' | LC_ALL=C sort -f | tr '\n' ',')" # -f under C: the same order in every locale (env -i runs had LOKI first)
     )
 }
 o="$(br_case br1 1 no no)";  [ "$o" = "HEAD=develop BRANCHES=develop," ] && pass "failed session, no commits: back on develop, empty branch deleted" || fail "failed empty session" "$o"
-o="$(br_case br2 1 yes no)"; [ "$o" = "HEAD=LOKI BRANCHES=develop,LOKI," ] && pass "failed session with a commit: untouched (same rule as dropEmptyRunBranch)" || fail "failed session with commit" "$o"
+o="$(br_case br2 1 yes no)"; [ "$o" = "HEAD=LOKI BRANCHES=develop,LOKI," ] && pass "failed session with a commit: untouched" || fail "failed session with commit" "$o"
 o="$(br_case br3 0 yes no)"; [ "$o" = "HEAD=LOKI BRANCHES=develop,LOKI," ] && pass "successful session with commits stays on the session branch" || fail "successful session with commit" "$o"
 o="$(br_case br4 0 no no)";  [ "$o" = "HEAD=LOKI BRANCHES=develop,LOKI," ] && pass "successful session that committed nothing: untouched (VERIFIED is excluded, as in engine10)" || fail "successful empty session" "$o"
 o="$(br_case br7 130 no no)"; [ "$o" = "HEAD=LOKI BRANCHES=develop,LOKI," ] && pass "stop signal (130): untouched, the cleanup trap owns it" || fail "signal stop" "$o"

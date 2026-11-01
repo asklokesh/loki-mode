@@ -593,7 +593,8 @@ export async function runIssues(args: readonly string[], inject?: Partial<Issues
     }),
     triage: inject?.triage ?? makeSessionTriage(repoDir, lokiDir, provider),
     decompose: inject?.decompose ?? makeSessionDecompose(repoDir, lokiDir, provider),
-    runner: inject?.runner ?? ((ref, opts) => base(ref, { ...opts, env: userEnv })),
+    // A worktree slice keeps its run branch: a dependent slice stacks on it. The sweep after the batch saves and removes them.
+    runner: inject?.runner ?? ((ref, opts) => base(ref, { ...opts, env: opts.cwd ? { ...userEnv, LOKI_KEEP_RUN_BRANCH: "1" } : userEnv })),
     estimate: inject?.estimate ?? (() => estimateFor(repoDir, undefined, { model: resolveModel(provider), env: process.env })), // F2: rough prior when no history
     confirm: inject?.confirm ?? askYesNo,
     isTTY: inject?.isTTY ?? (!!process.stdin.isTTY && !!process.stdout.isTTY),
@@ -603,5 +604,7 @@ export async function runIssues(args: readonly string[], inject?: Partial<Issues
     out: inject?.out ?? ((s) => void process.stdout.write(s)),
     err: inject?.err ?? ((s) => void process.stderr.write(s)),
   };
-  return issuesRun(args.slice(1), d);
+  const rc = await issuesRun(args.slice(1), d);
+  if (!inject?.runner) d.err((await import("../util/base_guard.ts")).sweepRunBranches(repoDir, userEnv));
+  return rc;
 }

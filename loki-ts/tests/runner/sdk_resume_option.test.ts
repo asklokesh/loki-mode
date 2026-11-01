@@ -38,7 +38,8 @@ describe("sdkQueryProvider resume (MW-2)", () => {
     const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
     expect((await sdkQueryProvider().invoke(call())).exitCode).toBe(0);
     expect(seen!.options["resume"]).toBe("sess-old");
-    expect(JSON.parse(readFileSync(join(scratch, ".loki", "e10-session-r1-fix1.json"), "utf8"))).toEqual({ session_id: "sess-new" });
+    expect(JSON.parse(readFileSync(join(scratch, ".loki", "sessions", "e10-session-r1-fix1.json"), "utf8"))).toEqual({ session_id: "sess-new" });
+    expect(existsSync(join(scratch, ".loki", "e10-session-r1-fix1.json"))).toBe(false); // never loose in .loki/
   });
 
   it("without the variable there is no resume option, and outside engine10 no id file", async () => {
@@ -46,6 +47,7 @@ describe("sdkQueryProvider resume (MW-2)", () => {
     await sdkQueryProvider().invoke(call());
     expect("resume" in seen!.options).toBe(false);
     expect(existsSync(join(scratch, ".loki", "e10-session-0.json"))).toBe(false);
+    expect(existsSync(join(scratch, ".loki", "sessions", "e10-session-0.json"))).toBe(false);
   });
 });
 

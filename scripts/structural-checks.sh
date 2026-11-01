@@ -85,8 +85,9 @@ fi
 has_match() { perl -CSD -ne 'BEGIN{$p=shift} $f=1 if /$p/; END{exit !$f}' "$1" 2>/dev/null; }
 changed_chars() {
     local f rc=0 files base="$BASE"
-    # Vendored bytes: upstream refdiffs must stay byte-exact; dist maps embed third-party sources.
-    local excl=(. ":(exclude)loki-ts/dist/**" ":(exclude)eval/loki10/refdiff/**")
+    # Vendored bytes: upstream refdiffs must stay byte-exact; dist bundles and maps embed third-party sources
+    # (web-app/dist carries minified React and lucide text, rebuilt with new hashed names on every web-app build).
+    local excl=(. ":(exclude)loki-ts/dist/**" ":(exclude)web-app/dist/**" ":(exclude)eval/loki10/refdiff/**")
     # Emoji and dash scans see added lines only, so pre-existing text in a
     # touched file never blocks a slice; untracked files are scanned whole.
     local emoji='[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]' dash='[\x{2013}\x{2014}]'

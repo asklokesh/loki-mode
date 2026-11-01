@@ -146,6 +146,9 @@ function claimsWallPublish(repo: string, r: Obj, sealedHead: string, head: strin
   try { return typeof r["run_id"] === "string" && safeGit(repo, ["log", "--format=%B", `${sealedHead}..${head}`]).split("\n").includes(`Loki-Wall-Publish: ${r["run_id"]}`); } catch { return false; }
 }
 
+/** True when `head` contains `commit` (commit is an ancestor of or equal to head). Message-only: never changes a verdict. */
+const containsCommit = (repo: string, commit: string, head: string): boolean => { try { safeGit(repo, ["merge-base", "--is-ancestor", commit, head], { stdio: "ignore" }); return true; } catch { return false; } };
+
 export function sealDrift(given: string, r: Obj, env: NodeJS.ProcessEnv = process.env): Drift | null {
   let receiptPath = given;
   try { receiptPath = join(realpathSync(dirname(given)), basename(given)); } catch { /* keep the given path */ } // resolve the DIRECTORY only (as verifyReceipt/checkEventLog read the log from dirname(given)); a receipt.json symlink must not move the log and layout lookup
@@ -163,6 +166,7 @@ export function sealDrift(given: string, r: Obj, env: NodeJS.ProcessEnv = proces
       if (claimsWallPublish(repo, r, r["head_sha"], head)) return { verdict: "UNCHECKED", reason: `head drift: HEAD ${head} carries a Loki-Wall-Publish commit for this run that is not exactly its sealed Wall files (LOKI_VERIFY_ALLOW_HEAD_DRIFT=1 accepts)` }; // a trailer is a claim; a forged or hook-widened child is never benign
       const hit = overlap(repo, r["base_sha"], r["head_sha"], head);
       if (hit === null) return { verdict: "UNCHECKED", reason: `head drift: receipt head_sha ${r["head_sha"]} is not the current HEAD ${head} (LOKI_VERIFY_ALLOW_HEAD_DRIFT=1 accepts)` };
+      if (hit.length && !containsCommit(repo, r["head_sha"], head)) return { verdict: "UNCHECKED", reason: `head drift: the checkout (HEAD ${head}) does not contain the sealed head ${r["head_sha"]}, so sealed path(s) differ: ${hit.join(", ")}; check out the run's branch or PR head to verify it (LOKI_VERIFY_ALLOW_HEAD_DRIFT=1 accepts)` }; // run-end cleanup returns the user to their starting branch; name that instead of claiming an edit
       if (hit.length) return { verdict: "UNCHECKED", reason: `head drift: HEAD ${head} changed sealed path(s) after the seal: ${hit.join(", ")} (LOKI_VERIFY_ALLOW_HEAD_DRIFT=1 accepts)` };
     }
   }

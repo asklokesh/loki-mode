@@ -16,6 +16,7 @@
 // never abandon a build that would have succeeded. Never invert this default.
 
 import { redactSecrets } from "../util/redact.ts";
+import type { EventEnvelope } from "../engine10/types.ts";
 export type RetryClass = "transient" | "non_retryable";
 
 // Positively-identified PERMANENT failures. Every pattern here must describe a
@@ -123,6 +124,30 @@ export function sessionKind(r: { exit: number | null; stderrTail?: string }): st
   return sdk ? (sdk[1] ? "auth" : "quota_exhausted") : classifyFailure(t).reason;
 }
 
+// The one place a failed session's tail becomes a user-facing cause. Uses sessionKind (never a second regex set),
+// so the terminal Reason names the same class the fatal stop keys on. Null when no auth or credit class matches.
+const CAUSE_FIX: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  claude: { auth: "run `claude /login`, or unset ANTHROPIC_API_KEY", quota_exhausted: "add credit at console.anthropic.com or wait for the plan reset" },
+  codex: { auth: "run `codex login`", quota_exhausted: "add credit to the OpenAI account or wait for the plan reset" },
+};
+const CAUSE_FIX_DEFAULT: Readonly<Record<string, string>> = { auth: "re-authenticate the provider CLI (see `loki doctor`)", quota_exhausted: "add credit to the provider account or wait for the plan reset" };
+export function providerCause(tail: string | undefined, provider = "claude"): string | null {
+  const t = tail ?? "";
+  if (t.trim() === "") return null;
+  const klass = sessionKind({ exit: 1, stderrTail: t });
+  if (klass !== "auth" && klass !== "quota_exhausted") return null;
+  const line = t.split("\n").find((l) => sessionKind({ exit: 1, stderrTail: l }) === klass) ?? t.split("\n")[0]!;
+  const clean = redactSecrets(line.replace(/\[sdk-loop error: ?|\]\s*$/g, "").replace(/\s+/g, " ").trim()).slice(0, 200);
+  const fix = (CAUSE_FIX[provider] ?? CAUSE_FIX_DEFAULT)[klass] ?? CAUSE_FIX_DEFAULT[klass]!;
+  return `${klass}: ${clean} (fix: ${fix})`;
+}
+
+// The fatal stop keeps its fixed prefix (nextOf keys on it) and appends the provider's own line + fix when the failed stage recorded one (classifyExitCause, providerCause below).
+export function fatalReason(ev: EventEnvelope[], stop: string, authCause: string): string {
+  const base = ({ "fatal:quota_exhausted": "provider credit exhausted", "fatal:auth": "provider authentication failed" } as Record<string, string>)[stop] ?? stop;
+  const klass = stop.slice("fatal:".length), r = [...ev].reverse().find((e) => e.type === "stage.failed" && typeof e.data.reason === "string" && (e.data.reason as string).startsWith(`${klass}: `))?.data.reason as string | undefined;
+  return r ? `${base}: ${r.slice(klass.length + 2)}` : authCause ? `${base}: ${authCause}` : base;
+}
 export type WaitClock = { now(): number; sleep?(ms: number, signal?: AbortSignal): Promise<void> };
 const realSleep = (ms: number, signal?: AbortSignal): Promise<void> => new Promise((res) => {
   const t = setTimeout(res, Math.max(0, ms));

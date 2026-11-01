@@ -31,6 +31,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { createRequire } from "node:module";
 
 import { runAutonomous } from "../../src/runner/autonomous.ts";
 import type {
@@ -161,6 +162,11 @@ afterEach(() => {
   }
 });
 
+// The single secret-path list lives in the policy compiler (#303); the test reads it from there.
+const { secretBashDenies } = createRequire(import.meta.url)("../../../src/policies/claude_permissions.js") as {
+  secretBashDenies(): string[];
+};
+
 function baseOpts(overrides: Partial<RunnerOpts> = {}): RunnerOpts {
   return {
     cwd: tmpRoot,
@@ -213,6 +219,14 @@ describe("runAutonomous E2E with fake claude binary (stream-json)", () => {
       // w2-07: legacy also carries --disallowedTools <web + credential deny rules> right after the bypass flag.
       expect(argv[1]).toBe("--disallowedTools");
       expect(argv[2]).toContain("WebFetch");
+      // #303: the worker command line itself carries the Bash secret-file denies, so a bypassed Bash cat of a
+      // secret path is refused by Claude Code. Derived from the shared list, not re-typed here.
+      const workerDenied = (argv[2] ?? "").split(",");
+      const secretBash = secretBashDenies();
+      expect(secretBash.length).toBeGreaterThan(0);
+      for (const rule of secretBash) expect(workerDenied).toContain(rule);
+      expect(workerDenied).toContain("Bash(cat .env*)");
+      expect(workerDenied).toContain("Bash(* < .env*)");
       const modelIdx = argv.indexOf("--model");
       expect(modelIdx).toBeGreaterThan(-1);
       expect(argv[modelIdx + 1]?.length ?? 0).toBeGreaterThan(0);

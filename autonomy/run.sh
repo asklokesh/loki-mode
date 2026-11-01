@@ -2004,10 +2004,11 @@ _loki_surface_why_hint() {
 }
 
 # _loki_restore_base_branch (FC-EMPTY-RUN-BRANCH-LEFT-CHECKED-OUT, legacy sibling
-# of engine10 dropEmptyRunBranch): when a session ended non-zero and its branch
+# of engine10 finishRunBranch): when a session ended non-zero and its branch
 # tip is still the recorded start commit, nothing was committed. Put the checkout
-# back on the starting branch and delete that empty session branch. Same rule as
-# the engine10 side: a branch with any commit is never touched, a dirty tracked
+# back on the starting branch and delete that empty session branch. Narrower than
+# the engine10 side, which also bundles a branch with commits into .loki/runs/
+# before removing it: here a branch with any commit is never touched, a dirty tracked
 # tree keeps the branch and prints the way back, and a stop signal (130, 143) is
 # left alone because the cleanup trap owns it. Best-effort, never changes the
 # exit code.
@@ -26668,13 +26669,15 @@ if __name__ == "__main__":
             codex)
                 # Codex: Degraded mode - no stream-json, no agent tracking
                 # Uses positional prompt after exec subcommand
-                # Note: Effort is set via env var, not CLI flag
+                # Effort is passed as `-c model_reasoning_effort=<level>`; codex does not read the env vars below
                 # Uses dynamic tier from RARV phase (tier_param already set above)
                 local _loki_codex_effort="$tier_param"
                 if loki_is_supervised_simple_web; then
                     _loki_codex_effort="${LOKI_DRAFT_EFFORT:-medium}"
                 fi
                 local -a _loki_codex_pipe_status=()
+                local -a _loki_codex_effort_flag=()
+                [ -n "$_loki_codex_effort" ] && _loki_codex_effort_flag=(-c "model_reasoning_effort=${_loki_codex_effort}")
                 LOKI_CODEX_REASONING_EFFORT="$_loki_codex_effort" \
                 CODEX_MODEL_REASONING_EFFORT="$_loki_codex_effort" \
                 # Stamp BEFORE the call: the usage reader bounds its rollout
@@ -26685,6 +26688,7 @@ if __name__ == "__main__":
                 LOKI_DEADLINE_IDLE_TIMEOUT="${LOKI_PROVIDER_IDLE_TIMEOUT:-0}" \
                 _loki_with_deadline "${LOKI_PROVIDER_CALL_TIMEOUT:-0}" \
                 codex exec --sandbox workspace-write --skip-git-repo-check \
+                    "${_loki_codex_effort_flag[@]+"${_loki_codex_effort_flag[@]}"}" \
                     "$prompt" 2>&1 | tee -a "$log_file" "$agent_log" "$iter_output"
                 _loki_codex_pipe_status=("${PIPESTATUS[@]}")
                 exit_code="$(_loki_provider_pipeline_exit_code \

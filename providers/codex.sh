@@ -302,9 +302,9 @@ resolve_model_for_tier() {
 #                                   (default ON; writes the final response
 #                                   to ${LOKI_LOG_FILE}.last-message)
 #
-# Codex CLI uses CODEX_MODEL_REASONING_EFFORT env var for effort control.
-# LOKI_CODEX_REASONING_EFFORT is the canonical namespaced env var (v6.37.1+).
-# CODEX_MODEL_REASONING_EFFORT is supported for backward compatibility.
+# Effort is passed to codex as `-c model_reasoning_effort=<level>`. The codex
+# binary does not read LOKI_CODEX_REASONING_EFFORT or CODEX_MODEL_REASONING_EFFORT;
+# both are still exported for Loki's own wrappers.
 provider_invoke_with_tier() {
     local tier="$1"
     local prompt="$2"
@@ -334,6 +334,8 @@ provider_invoke_with_tier() {
     if [ "${LOKI_CODEX_WEB_SEARCH:-false}" = "true" ]; then
         pre_exec_flags+=(--search)
     fi
+    local effort_flag=()
+    [ -n "$effort" ] && effort_flag=(-c "model_reasoning_effort=${effort}")
     local extra_flags=()
     if [ "${LOKI_CODEX_OUTPUT_LAST:-true}" != "false" ] && [ -n "${LOKI_LOG_FILE:-}" ]; then
         extra_flags+=(--output-last-message "${LOKI_LOG_FILE}.last-message")
@@ -357,6 +359,7 @@ provider_invoke_with_tier() {
         exec \
         --sandbox workspace-write \
         --skip-git-repo-check \
+        "${effort_flag[@]+"${effort_flag[@]}"}" \
         "${model_flag[@]+"${model_flag[@]}"}" \
         "${extra_flags[@]+"${extra_flags[@]}"}" \
         "$prompt" "$@" < /dev/null
@@ -394,6 +397,7 @@ provider_invoke_argv() {
     effort="$(provider_get_tier_param "$tier" 2>/dev/null || printf '%s' "")"
 
     _LOKI_INVOKE_ARGV=(codex exec --sandbox workspace-write)
+    [ -n "$effort" ] && _LOKI_INVOKE_ARGV+=(-c "model_reasoning_effort=${effort}")
     [ -n "$model" ] && _LOKI_INVOKE_ARGV+=(--model "$model")
     _LOKI_INVOKE_ARGV+=("$prompt")
 

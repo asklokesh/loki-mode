@@ -134,6 +134,11 @@ for spec in "claude|claude|--model" "opencode|opencode|--model" "aider|aider|--m
 
   argv0=$(printf '%s\n' "$out" | sed -n 's/^ARGV0=//p' | head -1)
   tiermodel=$(printf '%s\n' "$out" | sed -n 's/^TIERMODEL=//p' | head -1)
+  # claude spawns through `env SHELL=/bin/bash claude ...` (agent Bash must not
+  # inherit a zsh alias); the program is the first element after env's NAME=VALUE pairs.
+  if [ "$argv0" = "env" ]; then
+    argv0=$(printf '%s\n' "$out" | sed -n 's/^ELEM=//p' | awk 'NR==1 && $0=="env" {next} /^[A-Za-z_][A-Za-z0-9_]*=/ {next} {print; exit}')
+  fi
 
   # POSITIVE marker, not grep-absence: assert argv[0] is the exact CLI binary.
   # A seam that failed to populate the array yields an empty argv0, which fails
@@ -258,6 +263,18 @@ for p in codex opencode aider cline; do
   else
     bad "$p: the hygiene sentence is missing or differs from providers/claude.sh"
   fi
+done
+
+echo
+echo "T7 -- codex receives effort as a -c model_reasoning_effort override"
+# The codex binary never reads LOKI_CODEX_REASONING_EFFORT or
+# CODEX_MODEL_REASONING_EFFORT, so the argv must carry the config override.
+for pair in planning:xhigh development:high fast:low; do
+  tier="${pair%%:*}"; want="${pair##*:}"
+  argv=$(_argv "$tier" | head -1)
+  printf '%s' "$argv" | grep -qF -- "-c model_reasoning_effort=$want" \
+    && ok "tier=$tier argv carries -c model_reasoning_effort=$want" \
+    || bad "tier=$tier argv lacks -c model_reasoning_effort=$want: $argv"
 done
 
 echo

@@ -33,6 +33,8 @@ export const BACKSTOP_GRACE_S = 30;
 export function backstopS(capS: number, graceS: number = BACKSTOP_GRACE_S): number { return capS - Math.min(graceS, capS / 30); } // supervisor.ts's backstop; machine.ts's soft cap stays under it
 export const DEEP_IMPLEMENT_LIMIT_S = 1800; // ENGINE.md section 4: 480s, 1800s with --deep
 export const MAX_FIX_ROUNDS = 2;
+/** NOT PROVEN line for a verify stopped before every selected check ran; it caps the verdict below VERIFIED. */
+export const VERIFY_STOPPED_NOTE = { limit: "verify stopped at its time limit before all checks ran", cap: "verify stopped at the run time cap before all checks ran" } as const;
 export const EVENT_TYPES = [
   "run.started", "run.resumed", "stage.started", "stage.completed", "stage.failed", "stage.skipped",
   "heartbeat", "session.started", "session.ended", "session.stalled", "cost", "budget", "wall.sealed", "wall.reauthor", "wall.arbitrated",
@@ -142,6 +144,7 @@ export interface RunContext {
   emit(type: EventType, stage: StageName | null, data: Record<string, unknown>): void;
   sessions: SessionRunner;
   implementLeftS?: () => number; // FC-19b: seconds left in the implement window; absent outside the machine
+  partial?: (stage: StageName, data: Record<string, unknown>) => void; // verify: the evidence gathered so far; the machine keeps the latest one when the stage is stopped at its limit or the cap; absent outside the machine
   failovers?: () => import("../runner/provider_failover.ts").FailoverRecord[]; // T9: read by seal
   tests: TestMapProvider;
   cost: CostReader;

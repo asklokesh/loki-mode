@@ -24,7 +24,14 @@ case "$prompt" in
   *) stage=other ;;
 esac
 is_wall=0; case "$prompt" in *"Loki 10 Wall author"*) is_wall=1 ;; esac
-if [ -n "${E2E_STUB_ARGV_LOG:-}" ]; then echo "$stage$flags" >> "$E2E_STUB_ARGV_LOG"; fi
+# One locked append per call: the argv line is several KB (the secret deny rules), and parallel stage calls
+# (plan beside wall) would otherwise interleave their writes into broken lines.
+if [ -n "${E2E_STUB_ARGV_LOG:-}" ]; then
+  lock="$E2E_STUB_ARGV_LOG.lock"; n=0
+  until mkdir "$lock" 2>/dev/null; do n=$((n + 1)); [ "$n" -gt 500 ] && break; sleep 0.01; done
+  echo "$stage$flags" >> "$E2E_STUB_ARGV_LOG"
+  rmdir "$lock" 2>/dev/null || true
+fi
 if [ -n "${E2E_STUB_LOG:-}" ]; then echo "$stage" >> "$E2E_STUB_LOG"; fi
 if [ -n "${E2E_STUB_PROMPT_LOG:-}" ]; then printf '%s\n' "$prompt" >> "$E2E_STUB_PROMPT_LOG.$stage$is_wall"; fi # CW-12: the full prompt of every call, one file per stage (wall prompts land in .other1)
 # What the session can see: the canary test asserts no GitHub token and no LOKI_LEGACY_BASH.

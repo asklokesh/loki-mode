@@ -350,13 +350,15 @@ log_test "claude permission argv: web tools and credential reads denied by defau
 _pw_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.pw.XXXXXX")"
 # shellcheck disable=SC2016
 _pw_probe='source "$1/providers/claude.sh" 2>/dev/null; _loki_claude_permission_argv; printf "%s|" "${_LOKI_PERM_ARGV[@]}"'
-_pw_want="--dangerously-skip-permissions|--disallowedTools|WebFetch,WebSearch,Read(//**/.env*),Read(//**/.aws/**),Read(//**/.ssh/**),Read(//**/*.pem)|"
+# The secret deny set (Read plus Bash rules, #303) comes from the one shared list in the policy compiler.
+_pw_secret=$(node -e 'var m=require(process.argv[1]);process.stdout.write(m.secretReadDenies().concat(m.secretBashDenies()).join(","))' "$PROVIDERS_DIR/../src/policies/claude_permissions.js")
+_pw_want="--dangerously-skip-permissions|--disallowedTools|WebFetch,WebSearch,${_pw_secret}|"
 _pw_leg=$(env -u LOKI_WEB_POLICY LOKI_PERMISSION_POLICY=legacy HOME="$_pw_dir" LOKI_PROJECT_DIR="$_pw_dir" bash -c "$_pw_probe" _ "$PROVIDERS_DIR/..")
 _pw_off=$(LOKI_WEB_POLICY=off LOKI_PERMISSION_POLICY=legacy HOME="$_pw_dir" LOKI_PROJECT_DIR="$_pw_dir" bash -c "$_pw_probe" _ "$PROVIDERS_DIR/..")
 _pw_allow=$(env -u LOKI_WEB_POLICY LOKI_PERMISSION_POLICY=compiled LOKI_WEB_ALLOW_DOMAINS=docs.python.org HOME="$_pw_dir" LOKI_MANAGED_SETTINGS="$_pw_dir/none.json" LOKI_PROJECT_DIR="$_pw_dir" bash -c "$_pw_probe" _ "$PROVIDERS_DIR/.." 2>/dev/null)
 rm -rf "$_pw_dir"
 if [ "$_pw_leg" = "$_pw_want" ] && [ "$_pw_off" = "--dangerously-skip-permissions|" ] \
-   && [ "$_pw_allow" = "--permission-mode|acceptEdits|--allowedTools|WebFetch(domain:docs.python.org)|--disallowedTools|WebSearch,Read(//**/.env*),Read(//**/.aws/**),Read(//**/.ssh/**),Read(//**/*.pem)|" ]; then
+   && [ "$_pw_allow" = "--permission-mode|acceptEdits|--allowedTools|WebFetch(domain:docs.python.org)|--disallowedTools|WebSearch,${_pw_secret}|" ]; then
     log_pass "default deny, opt-out, and domain allowlist on the bash route"
 else
     log_fail "web policy argv: leg=[$_pw_leg] off=[$_pw_off] allow=[$_pw_allow]"

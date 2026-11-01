@@ -574,7 +574,9 @@ test("C1, bidi, zero-width and OSC 8 characters in a forged run value never reac
 });
 
 // The supervisor's checkpoint: a signed log.sealed right after receipt.sealed plus a signed run.state.json, so a cut log tail cannot hide a tamper or forge what a publish resume trusts.
-const supEnv = (): NodeJS.ProcessEnv => ({ ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true", LOKI_CONTROL: "0" });
+// LOKI_KEEP_RUN_BRANCH=1: these cases let the supervisor finish and then roll the log back to simulate a kill; a real kill
+// never reaches run-end branch cleanup, so the run branch must survive the simulated one too.
+const supEnv = (): NodeJS.ProcessEnv => ({ ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true", LOKI_CONTROL: "0", LOKI_KEEP_RUN_BRANCH: "1" });
 /** A real supervised run whose worker emits receipt.sealed for a signed VERIFIED receipt; `before` runs in the worker before that line, `after` 700ms later. */
 async function supervised(after: string, before = ""): Promise<{ repo: string; dir: string; ev: string; id: string; ck: number; calls: { verdict: unknown }[]; runPr: RunPrFn }> {
   const id = `e10-d${n++}`, repo = mkdtempSync(join(root, "dur-")), dir = join(repo, ".loki", "runs", id), ev = join(dir, "events.jsonl"); mkdirSync(dir, { recursive: true });
@@ -673,7 +675,7 @@ async function supervisedCrash(): Promise<ReturnType<typeof publishRepo>> {
   const sealed = JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { receipt_sha256: hash, verdict: "VERIFIED", not_proven: [] } });
   const snap = `const fs = require("fs"); fs.copyFileSync(${JSON.stringify(ev)}, ${JSON.stringify(ev + ".snap")}); fs.copyFileSync(${JSON.stringify(join(dir, "run.state.json"))}, ${JSON.stringify(join(dir, "st.snap"))});`;
   const code = `console.log(${JSON.stringify(sealed)}); setTimeout(() => { ${snap} }, 700);`;
-  await runSupervisor({ runId: id, repoDir: repo, env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true", LOKI_CONTROL: "0" }, workerArgv: [process.execPath, "-e", code], capS: 30 } as never);
+  await runSupervisor({ runId: id, repoDir: repo, env: supEnv(), workerArgv: [process.execPath, "-e", code], capS: 30 } as never);
   writeFileSync(ev, readFileSync(ev + ".snap")); writeFileSync(join(dir, "run.state.json"), readFileSync(join(dir, "st.snap")));
   const calls: unknown[] = [];
   return { repo, dir, ev, id, calls, runPr: async (c) => { calls.push((c as { outputs: () => unknown }).outputs()); return { status: "completed", data: { pr_url: "https://github.com/o/r/pull/9", draft: false, existing: null } }; } } as ReturnType<typeof publishRepo>;

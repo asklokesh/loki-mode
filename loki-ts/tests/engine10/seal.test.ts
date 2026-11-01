@@ -31,6 +31,7 @@ import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
 import { renderReviewerBody } from "../../src/e10ext/reviewer_body.ts"; import { EXIT, formatSummary, outcomeOf, reasonOf } from "../../src/engine10/output.ts";
 import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes } from "../../src/util/base_guard.ts"; import { verifyStage } from "../../src/engine10/stages/verify.ts"; import { commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage, EXTERNAL_NO_WALL } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
+import { VERIFY_STOPPED_NOTE } from "../../src/engine10/types.ts"; import { NO_TESTS_REASON } from "../../src/util/check_result.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts"; import { getVersion } from "../../src/version.ts";
 import { RECEIPT_SIGNER_BASENAME } from "../../src/util/receipt_signer.ts";
@@ -603,6 +604,34 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
     expect(r.not_proven).toContain("tests ran on the system interpreter");
     expect(r.verdict).not.toBe("VERIFIED");
+  }, 30000);
+
+  // A verify stopped at its time limit keeps the checks that ran: the receipt carries them and wall_passed, the
+  // verdict is PARTIAL with the time-limit line, never "no tests executed" or "wall result not recorded by verify".
+  test("a verify stopped at its limit keeps its passing checks and wall result; PARTIAL with the time-limit line", async () => {
+    const sealed = async (name: string, stop: boolean) => {
+      noKey();
+      const { repo, base } = makeRepo(name);
+      const { ctx } = ctxFor(repo, base);
+      const seed = ctx.outputs();
+      const evidence = { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", n: 1, duration_s: 1.5 }], flaky: [], wall_passed: true, changed_files: ["a.txt"] };
+      const verify = { ...commitStage, name: "verify" as StageName, limitS: stop ? 0.2 : 5, run: async (c: RunContext) => {
+        c.partial?.("verify", evidence);
+        if (!stop) return { status: "completed" as const, data: evidence };
+        await new Promise((res) => setTimeout(res, 3000)); // ignores the abort past the grace, like the real stage's tail
+        return { status: "completed" as const, data: evidence };
+      } };
+      const stages: Record<string, typeof commitStage> = { verify, commit: commitStage, seal: sealStage };
+      await runMachine(ctx as never, { flow: ["verify", "commit", "seal"], restored: { intake: seed.intake!, wall: seed.wall!, implement: seed.implement! }, load: async (n: StageName) => stages[n] ?? null });
+      return receiptOf({ data: { receipt_path: join(repo, ".loki/runs/r1/receipt.json") } });
+    };
+    expect((await sealed("verify-limit-control", false)).verdict).toBe("VERIFIED"); // the same evidence from a verify that finished
+    const r = await sealed("verify-limit-stop", true);
+    expect(r.verdict).toBe("PARTIAL");
+    expect(r.not_proven).toContain(VERIFY_STOPPED_NOTE.limit);
+    expect(r.not_proven).not.toContain(NO_TESTS_REASON);
+    expect(r.not_proven).not.toContain("wall result not recorded by verify");
+    expect(r.checks.some((c) => c.name === "pytest" && c.result === "pass")).toBe(true);
   }, 30000);
 
   // FC-SEAL-NA-AS-UNPROVEN: N/A and "not selected by risk tier" are visible but are not gaps; a real gap still downgrades.

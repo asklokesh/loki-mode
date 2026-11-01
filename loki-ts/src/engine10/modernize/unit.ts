@@ -2,7 +2,7 @@
 // and equiv check (docs/v10/MODERNIZE.md section 3.4 "Execute in parallel"). Depends on M-13
 // (equiv.ts), M-14 (presealed_wall.ts).
 //
-// Binding requirements (BOARD.md M-15 notes, M-13/M-14 opus reviews, D42 (3)/(4)):
+// Binding requirements (M-13/M-14 opus reviews, D42 (3)/(4)):
 // (1) sealOracle runs with the card's normalizers BEFORE any implementation exists: it is runUnit's
 //     very first step, strictly before the injected `implement` callback (unit.test.ts's ordering
 //     test fails an `implement` that runs before the oracle.captured/oracle.flagged event exists).

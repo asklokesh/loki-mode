@@ -39,8 +39,8 @@ case "$out" in *"FLIP a0d599d suite b > flips pass=green fail=red"*) r=0 ;; *) r
 check "bun test flip reported with run labels" "$r"
 case "$out" in *"FLIP a0d599d Shell Thing pass=red fail=green"*) r=0 ;; *) r=1 ;; esac
 check "shell runner flip reported (ANSI and BOM stripped)" "$r"
-case "$out" in *"BOARD: | FLAKE |"*"suite b > flips"*) r=0 ;; *) r=1 ;; esac
-check "BOARD-ready slice line emitted" "$r"
+case "$out" in *"FIX: | FLAKE |"*"suite b > flips"*) r=0 ;; *) r=1 ;; esac
+check "follow-up FIX line emitted" "$r"
 case "$out" in *"STABLE-FAIL a0d599d suite c > always red"*) r=0 ;; *) r=1 ;; esac
 check "test red in every run is STABLE-FAIL, not a flake" "$r"
 case "$out" in *"FLIP a0d599d suite c"*|*"FLIP a0d599d suite a"*) r=1 ;; *) r=0 ;; esac

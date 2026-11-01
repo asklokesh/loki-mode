@@ -2,14 +2,12 @@
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { listProjectFiles } from "../util/safe_git.ts";
-import { loadProjectApi } from "../project_model/resolve.ts"; import { languageBytes } from "../project_model/linguist.ts"; import { pytestBoot } from "../util/runner_boot.ts";
+import { loadProjectApi } from "../project_model/resolve.ts"; import { languageBytes } from "../project_model/linguist.ts"; 
 import { attachScope, scopeRefs } from "../project_model/scope.ts";
 import { projectInterpreter, pytestPython } from "../util/python.ts"; export { projectInterpreter };
 import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
-import { FOREIGN_SOURCE_RE, GO_TEST_RE, JS_SPEC_RE, JS_TEST_RE, PY_TEST_RE, STDLIB_RUNNERS, coveredStem, detectFromPackageJson, isTestFile, referencedBasenames } from "../util/test_file_text.ts";
-export { isTestFile };
-/** One command shape per runner (ENGINE.md section 8 table). `<files>` is a placeholder the  caller (E-09 verify) fills with the selected paths. `coarse: true` means the command always  runs the  whole suite: npm and cargo have no reliable per-file selection. */
-export interface CommandSpec { cmd: string; coarse: boolean; }
+import { FOREIGN_SOURCE_RE, GO_TEST_RE, JS_SPEC_RE, JS_TEST_RE, PY_TEST_RE, STDLIB_RUNNERS, coveredStem, detectFromPackageJson, importedRunners, isTestFile, PYTEST_IMPORT_RE, referencedBasenames, scopeRunnersByPackage, COMMANDS, RUNNER_ORDER, guessRunner, type CommandSpec } from "../util/test_file_text.ts";
+export { isTestFile, COMMANDS, REPORT_RUNNERS, CARGO_TEST_FILE_RE, guessRunner, type CommandSpec } from "../util/test_file_text.ts"; // tables and guessRunner live in util/test_file_text.ts (core line budget)
 /** Extra fields beyond E-01's TestMap. `sourceRefs` is read back by `impacted()` and is not meant for callers outside this file. */
 export interface EngineTestMap extends TestMap {
   /** Repo-relative file that proved each detected runner. */
@@ -17,29 +15,10 @@ export interface EngineTestMap extends TestMap {
   commands: Partial<Record<RunnerName, CommandSpec>>;
   /** source basename -> repo-relative test paths that import/reference it. */
   readonly sourceRefs: Record<string, string[]>;
+  /** Package ownership and locally declared runners for each discovered test package. */
+  readonly testPackages: Record<string, string>;
+  readonly packageRunners: Record<string, RunnerName[]>;
 }
-const RUNNER_ORDER: readonly RunnerName[] = ["pytest", "vitest", "jest", "bun", "node", "npm", "go", "cargo", "maven", "gradle", "javac"];
-export const COMMANDS: Record<RunnerName, CommandSpec> = {
-  pytest: { cmd: "python -m pytest -q <files>", coarse: false },
-  unittest: { cmd: "python3 -m unittest <files>", coarse: false },
-  vitest: { cmd: "npx vitest run <files>", coarse: false },
-  jest: { cmd: "npx jest <files>", coarse: false },
-  bun: { cmd: "bun test <files>", coarse: false },
-  node: { cmd: "node --test <files>", coarse: false },
-  npm: { cmd: "npm test --silent", coarse: true },
-  go: { cmd: "go test ./<pkg dirs>", coarse: false },
-  cargo: { cmd: "cargo test", coarse: true },
-  maven: { cmd: "mvn test -Dtest=<class>", coarse: false },
-  gradle: { cmd: "gradle cleanTest test --tests <class>", coarse: false },
-  javac: { cmd: "javac + java <test class>", coarse: false },
-};
-/** Runners that can write a machine pass/fail report file: the invocation to find in a check command and the flags that name the report (`<report>` is replaced by the caller's path), `boot` (wraps the check in a sandbox script that records what the runner loads before it collects tests), `inline` (a text pattern for a pytest section or key in a shared ini, cfg or toml file), and `config`, the basenames that configure or preload that runner (a .json match counts only when it holds the entry's `key`). Go and cargo have no stable file reporter and are absent. verify-pr reads its verdict from that file, never from an exit code or printed totals. */
-export const REPORT_RUNNERS: readonly { runner: RunnerName; find: RegExp; flags: string; config: RegExp; key?: string; boot?: (cmd: string) => string; inline?: RegExp }[] = [
-  { runner: "bun", find: /bun test\b/, flags: "--reporter=junit --reporter-outfile=<report>", config: /^bunfig\.toml$/ },
-  { runner: "pytest", find: /(?:(?:python3?|py) -m )?py\.?test\b/, flags: "--junitxml=<report>", config: /^(?:conftest\.py|\.?pytest\.ini)$/, boot: pytestBoot, inline: /^[ \t]*[\w.\"' \t-]*\bpytest\b[\"']?[ \t]*(?:\.|=[ \t]*\{)/im },
-  { runner: "jest", find: /jest\b/, flags: "--json --outputFile=<report>", config: /^(?:jest\.config\..+|package\.json)$/, key: "jest" },
-  { runner: "vitest", find: /vitest\b/, flags: "--reporter=junit --outputFile=<report>", config: /^(?:vitest|vite)\.config\..+$|^vitest\.workspace\..+$/ },
-];
 /** HV1-03b: the tool each Java runner needs (the repo wrapper counts for maven and gradle). */
 const JAVA_TOOLS: Partial<Record<RunnerName, { tool: string; wrapper?: string }>> = { maven: { tool: "mvn", wrapper: "mvnw" }, gradle: { tool: "gradle", wrapper: "gradlew" }, javac: { tool: "javac" } };
 const javaToolOk = (r: RunnerName, env: NodeJS.ProcessEnv, root?: string): boolean => { const t = JAVA_TOOLS[r]; return !t || !!Bun.which(t.tool, { PATH: env.PATH ?? "" }) || (!!t.wrapper && !!root && existsSync(join(root, t.wrapper))); };
@@ -58,16 +37,6 @@ const pickHarnessRunners = (runners: RunnerName[], files: readonly string[], env
 /** RX-1: manifest -> the runner its own language toolchain ships (COMMANDS holds the command), plus that language's source extension. A manifest only makes a toolchain eligible; in a polyglot repo the focus files (changed or sealed) choose among the eligible ones by language, else the first eligible wins. */
 const TOOLCHAINS: readonly (readonly [RegExp, RunnerName, RegExp])[] = [[/(?:^|\/)package\.json$/, "node", /\.[cm]?[jt]sx?$/], [/(?:^|\/)go\.mod$/, "go", /\.go$/], [/(?:^|\/)Cargo\.toml$/, "cargo", /\.rs$/], [/(?:^|\/)pom\.xml$/, "maven", /\.java$/], [/(?:^|\/)(?:build|settings)\.gradle(?:\.kts)?$|(?:^|\/)gradlew$/, "gradle", /\.java$/], [/(?:^|\/)(?:pyproject\.toml|setup\.py|setup\.cfg|requirements(?:[-_.][\w.-]+)?\.txt|tox\.ini|pytest\.ini)$/, "pytest", /\.py$/]];
 const toolchainRunner = (files: readonly string[], focus: readonly string[] = []): RunnerName[] => { const el = TOOLCHAINS.filter(([m]) => files.some((f) => m.test(f))), votes = (t: (typeof TOOLCHAINS)[number]): number => focus.filter((f) => t[2].test(f)).length; return el.length ? [el.reduce((b, t) => (votes(t) > votes(b) ? t : b))[1]] : []; };
-/** Cargo selects one file only as `cargo test --test <stem>`, and only for an integration test directly under a tests/ directory. */
-export const CARGO_TEST_FILE_RE = /(?:^|\/)tests\/[^/]+\.rs$/;
-/** The runner that executes a Wall-authored file, by its extension; null when no runner of this repo can run it (wall.ts seals it unrun, verify skips it). relPath (repo-relative) decides a .rs file: cargo only under tests/, else null (FC-WALL-RUST-FILE-HAS-NO-RUNNER). */
-export function guessRunner(fileName: string, runners: RunnerName[], relPath?: string): RunnerName | null {
-  if (fileName.endsWith(".py")) return runners.includes("unittest") && !runners.includes("pytest") ? "unittest" : "pytest";
-  if (fileName.endsWith(".go")) return "go";
-  if (fileName.endsWith(".rs")) return runners.includes("cargo") && relPath !== undefined && CARGO_TEST_FILE_RE.test(relPath) ? "cargo" : null;
-  if (fileName.endsWith(".java")) return (["maven", "gradle", "javac"] as const).find((r) => runners.includes(r)) ?? null; // HV1-03b: a Java test runs under the repo's own build tool, else plain javac
-  return /\.[cm]?[jt]sx?$/.test(fileName) ? (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r)) ?? null : null; // a JS runner only ever runs a JS/TS file
-}
 const readText = (p: string): string => { try { return readFileSync(p, "utf8"); } catch { return ""; } };
 const normalizeRel = (raw: string): string => raw.split(sep).join("/").replace(/^\.\//, "");
 /** Synchronous core: scans `root`, returns the full detected map. `detect()` on TestMapProviderImpl just wraps this in a Promise per the interface. */
@@ -76,11 +45,14 @@ export function buildTestMap(root: string): EngineTestMap {
   const evidence: Partial<Record<RunnerName, string>> = {};
   const mark = (r: RunnerName, file: string): void => { if (!(r in evidence)) evidence[r] = file; };
   const jsText = new Map<string, string>();
+  const api = loadProjectApi(root);
   for (const rel of files) {
     const name = basename(rel);
     const full = join(root, rel);
-    if (JS_TEST_RE.test(name) && !evidence["node"] && /(?:from|require\()\s*['"]node:test['"]/.test(jsText.set(rel, readText(full)).get(rel)!)) mark("node", rel);
-    else if (name === "package.json") detectFromPackageJson(readText(full), rel, mark);
+    if (JS_TEST_RE.test(name)) {
+      const text = readText(full); jsText.set(rel, text);
+      for (const r of importedRunners(text)) mark(r, rel);
+    } else if (name === "package.json") detectFromPackageJson(readText(full), rel, mark);
     else if (name === "bunfig.toml") mark("bun", rel);
     else if (name === "pytest.ini" || name === "conftest.py") mark("pytest", rel);
     else if (name === "pyproject.toml" && /\[tool\.pytest/.test(readText(full))) mark("pytest", rel);
@@ -94,14 +66,16 @@ export function buildTestMap(root: string): EngineTestMap {
     else if (name === "pom.xml") mark("maven", rel);
     else if (/^(?:build|settings)\.gradle(?:\.kts)?$/.test(name) || name === "gradlew") mark("gradle", rel);
   }
-  // Per-file test entries exist only for narrowly-selectable runners: npm and cargo run the whole suite (coarse), so no individual file earns a TestRef for them.
-  const jsRunner: RunnerName | null = evidence["vitest"] ? "vitest" : evidence["jest"] ? "jest" : evidence["bun"] ? "bun" : evidence["node"] ? "node" : null;
+  const { ownerRoot, packageRunners } = scopeRunnersByPackage(files, evidence, jsText, api, RUNNER_ORDER, (rel) => readText(join(root, rel))); // #233: runners per owning package
   const tests: TestRef[] = [];
+  const testPackages: Record<string, string> = Object.create(null);
   for (const rel of files) {
-    const name = basename(rel);
-    if (JS_TEST_RE.test(name) && jsRunner) tests.push({ runner: jsRunner, path: rel });
-    else if (PY_TEST_RE.test(name) && evidence["pytest"]) tests.push({ runner: "pytest", path: rel });
-    else if (GO_TEST_RE.test(name) && evidence["go"]) tests.push({ runner: "go", path: rel });
+    const name = basename(rel), pkgRoot = ownerRoot(rel);
+    const scope = packageRunners.get(pkgRoot) ?? packageRunners.get(".") ?? [];
+    const jsRunner = JS_TEST_RE.test(name) ? (importedRunners(jsText.get(rel) ?? "")[0] ?? (["vitest", "jest", "bun", "node"] as const).find((r) => scope.includes(r))) : undefined;
+    if (jsRunner) { tests.push({ runner: jsRunner, path: rel }); testPackages[rel] = pkgRoot; }
+    else if (PY_TEST_RE.test(name) && (scope.includes("pytest") || PYTEST_IMPORT_RE.test(readText(join(root, rel))))) { tests.push({ runner: "pytest", path: rel }); testPackages[rel] = pkgRoot; }
+    else if (GO_TEST_RE.test(name) && scope.includes("go")) { tests.push({ runner: "go", path: rel }); testPackages[rel] = pkgRoot; }
   }
   // Object.create(null): keys come from grep'd file content, so a source named e.g. "constructor" must not collide with Object.prototype.
   const sourceRefs: Record<string, string[]> = Object.create(null);
@@ -116,8 +90,8 @@ export function buildTestMap(root: string): EngineTestMap {
   const runners = RUNNER_ORDER.filter((r) => r in evidence);
   const commands: Partial<Record<RunnerName, CommandSpec>> = {};
   for (const r of runners) commands[r] = r === "pytest" ? { ...COMMANDS.pytest, cmd: `${pytestPython(root)} -m pytest -q <files>` } : COMMANDS[r];
-  const map: EngineTestMap = { runners, tests, evidence, commands, sourceRefs };
-  attachScope(map, loadProjectApi(root), specs);
+  const map: EngineTestMap = { runners, tests, evidence, commands, sourceRefs, testPackages, packageRunners: Object.fromEntries(packageRunners) };
+  attachScope(map, api, specs);
   return map;
 }
 /** Test refs impacted by `changedFiles`: a changed test maps to itself; a changed source maps  to every test that imports/references its basename (built by `buildTestMap`'s grep, read back from `map.sourceRefs`). */

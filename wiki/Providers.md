@@ -27,7 +27,7 @@ Source: `providers/*.sh` (`PROVIDER_HAS_PARALLEL`, `PROVIDER_MAX_PARALLEL`, `PRO
 
 ## MiniMax API compatibility
 
-The `minimax` model catalog entry records API and model metadata. It is not a fifth value for `--provider`; use an existing CLI adapter with the compatible API protocol.
+The `minimax` model catalog entry records API and model metadata. It is not a fifth value for `--provider`; use an existing CLI adapter with the compatible API protocol. MiniMax-M3.1-Flash is the development/fast recommendation; MiniMax-M3 remains the planning option. Both support text, image, and video input with a 1M context window. Explicit saved or custom model IDs remain usable; the catalog is not an allowlist.
 
 ### Anthropic-compatible API
 
@@ -41,11 +41,11 @@ Choose the Base URL for the account region. Keep `/anthropic` as the end of the 
 ```bash
 export ANTHROPIC_BASE_URL="https://api.minimax.io/anthropic"
 export ANTHROPIC_API_KEY="<MINIMAX_API_KEY>"
-export LOKI_MODEL_OVERRIDE="MiniMax-M3"
+export LOKI_MODEL_OVERRIDE="MiniMax-M3.1-Flash"
 loki start ./prd.md --provider claude
 ```
 
-Set `ANTHROPIC_BASE_URL` to the China Base URL when required. Change `LOKI_MODEL_OVERRIDE` to `MiniMax-M2.7` to use that model.
+Set `ANTHROPIC_BASE_URL` to the China Base URL when required. Change `LOKI_MODEL_OVERRIDE` to `MiniMax-M3` to use that model. Keep the explicit model override: setting an endpoint alone does not select a MiniMax model.
 
 ### OpenAI-compatible API
 
@@ -59,11 +59,17 @@ Choose the Base URL for the account region. Keep `/v1` as the end of the Base UR
 ```bash
 export OPENAI_API_BASE="https://api.minimax.io/v1"
 export OPENAI_API_KEY="<MINIMAX_API_KEY>"
-export LOKI_AIDER_MODEL="openai/MiniMax-M3"
+export LOKI_AIDER_MODEL="openai/MiniMax-M3.1-Flash"
 loki start ./prd.md --provider aider
 ```
 
-Set `OPENAI_API_BASE` to the China Base URL when required. Change the model suffix to `MiniMax-M2.7` to use that model.
+Set `OPENAI_API_BASE` to the China Base URL when required. Change the model suffix to `MiniMax-M3` to use that model.
+
+MiniMax-M3.1-Flash uses adaptive thinking only; do not disable thinking or use effort `none`. Supported effort levels are `low`, `medium`, `high`, `xhigh`, and `max` (the API default). The OpenAI-compatible API uses `reasoning_effort`; the Anthropic-compatible API uses `output_config.effort`. Do not send `service_tier` or `reasoning_split=false` for Flash. CLI support for these controls depends on the installed client. MiniMax-M3 supports adaptive or disabled thinking and ignores effort.
+
+The gateway catalog uses `openrouter/minimax/minimax-m3.1-flash:free` and `openrouter/minimax/minimax-m3`. These are gateway route IDs, not direct API IDs; gateway limits and pricing are governed by the gateway. API metadata does not establish subscription or Coding Plan access.
+
+References: [models](https://platform.minimax.io/docs/guides/models-intro), [API compatibility](https://platform.minimax.io/docs/api-reference/text-anthropic-api).
 
 ---
 

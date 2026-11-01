@@ -713,6 +713,26 @@ describe("engine10 verify: verify jobs (TEN-SPEED-18)", () => {
   test("verify jobs: an invalid value falls back to 1", async () => {
     for (const v of ["0", "abc", "-2", ""]) expect((await runJobs(v)).emitted[0]).toBe("bun:a_slow.test.ts");
   }, 120_000);
+  test("the Wall tests run before the impacted tests, and each finished check is published as evidence so far", async () => {
+    const repoDir = mkRepo();
+    const sha = baseSha(repoDir);
+    writeFileSync(join(repoDir, "a_impacted.test.ts"), fast);
+    writeFileSync(join(repoDir, "z_loki_wall.test.ts"), fast.replace('"fast"', '"wall"'));
+    const tests: TestRef[] = ["a_impacted.test.ts", "z_loki_wall.test.ts"].map((path) => ({ runner: "bun", path }));
+    const { ctx, emitted } = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: ["bun"], tests }), impacted: (_m, files) => (files.length ? [tests[0]!] : []), outputs: { wall: { files: [{ path: "z_loki_wall.test.ts", runner: "bun" }] } } });
+    const snaps: Record<string, unknown>[] = [];
+    ctx.partial = (_n, d) => { snaps.push(d); };
+    const prev = process.env["LOKI_E10_VERIFY_JOBS"]; delete process.env["LOKI_E10_VERIFY_JOBS"];
+    try {
+      const r = await verifyStage.run(ctx, sig());
+      const names = (r.data.checks as VerifyCheck[]).filter((c) => c.name.startsWith("bun:")).map((c) => c.name);
+      expect(names).toEqual(["bun:z_loki_wall.test.ts", "bun:a_impacted.test.ts"]);
+      expect(emitted.filter((e) => e.type === "test.result" && String(e.data["name"]).startsWith("bun:")).map((e) => e.data["name"])).toEqual(names);
+      expect((snaps[0]!.checks as VerifyCheck[]).map((c) => `${c.name}=${c.result}`)).toEqual(["bun:z_loki_wall.test.ts=pass"]); // a stop after the first check still holds the Wall pass
+      expect(snaps[0]!.wall_passed).toBe(true);
+      expect(snaps[0]!.target_checks).toEqual(["bun:z_loki_wall.test.ts"]);
+    } finally { if (prev === undefined) delete process.env["LOKI_E10_VERIFY_JOBS"]; else process.env["LOKI_E10_VERIFY_JOBS"] = prev; }
+  }, 60_000);
 });
 
 describe("FC-LINT-TOOL-NEVER-USED-BY-PROJECT", () => {

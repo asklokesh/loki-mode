@@ -2,15 +2,19 @@
 // A run starts from the base the user asked for; only the ALREADY_SATISFIED claim must rest on the PR target, never on
 // commits that exist only in target..HEAD (Loki's own unmerged work or the user's own).
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyCheck, goRunner, sealedWallCopy } from "./check_result.ts";
-import { listRunIds } from "../commands/run_status.ts";
+import { LEGACY_BRANCHES_DIR, listRunIds } from "../commands/run_status.ts";
+import { runOwnerAlive } from "./run_pid.ts";
+import { findInterrupted } from "./run_outputs.ts";
+import { migrateSessionFiles } from "../runner/session_resume.ts";
 import { safeGit } from "./safe_git.ts";
 import { addedManifestOk } from "./lock_ecosystems.ts";
 import { isTestFile } from "./test_file_text.ts";
-import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
+import { currentBranch } from "../e10ext/stop_restore.ts";
 
 function git(repoDir: string, args: string[], timeout = 20000, extraEnv: Record<string, string> = {}): string | null {
   try {
@@ -237,23 +241,129 @@ export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx)
   return extra.length ? { capping, disclosed, extra } : { capping, disclosed };
 }
 
-const RUN_BRANCH_RE = /^loki\/[A-Za-z0-9._\/-]+$/;
+// Run-end cleanup. Every run ends with the user's checkout back on the branch it started from and no loki/e10-* branch left behind:
+// a branch is deleted only once its history is safe (pushed, reachable from another branch, remote or tag, or saved as a verified
+// git bundle under .loki/runs/<id>/). LOKI_KEEP_RUN_BRANCH=1 turns all of it off (the --attempts and issues-run worktree flows set it:
+// they manage their own branches). Never touches a non-loki branch, a branch checked out in any worktree, a live run's branch, or a run `loki start` can still resume.
+const E10_BRANCH_RE = /^loki\/(e10-[A-Za-z0-9-]+)$/;
+const RUN_TMP_WORKTREE_RE = /^(?:e10-base-|e10-loadown-|loki-mutproof-)/; // verify, load-owner and mutation-proof base worktrees (removed in their own finally; a SIGKILL leaks them)
+const NOT_ELSEWHERE = ["--not", "--remotes", "--tags", "--exclude=loki/*", "--branches"]; // commits only loki/ branches hold
 const tipOf = (repoDir: string, ref: string): string | null => {
   try { return safeGit(repoDir, ["rev-parse", "--verify", "-q", `${ref}^{commit}`], { stdio: ["ignore", "pipe", "ignore"] }).trim() || null; } catch { return null; }
 };
+export const keepRunBranch = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_KEEP_RUN_BRANCH === "1";
+export interface RunEnd { orig: string | null; pushed: boolean; deferred?: boolean; keepWork?: boolean; baseSha?: string | null }
+export interface BranchRecord { branch: string; head_sha: string; pushed: boolean; bundle: string | null; orig_branch?: string | null; deferred?: boolean }
+
+function checkedOut(repoDir: string): { branches: Set<string>; trees: { path: string; head: string; detached: boolean }[] } {
+  const branches = new Set<string>(), trees: { path: string; head: string; detached: boolean }[] = [];
+  for (const block of (git(repoDir, ["worktree", "list", "--porcelain"]) ?? "").split("\n\n")) {
+    const f = Object.fromEntries(block.split("\n").map((l) => [l.split(" ")[0], l.slice(l.indexOf(" ") + 1)]));
+    if (f.branch) branches.add(f.branch.replace(/^refs\/heads\//, ""));
+    if (f.worktree) trees.push({ path: f.worktree, head: f.HEAD ?? "", detached: "detached" in f });
+  }
+  return { branches, trees };
+}
+
+/** Removes base worktrees a killed verify left in the temp dir: detached at this run's base and named by the engine's own prefixes. */
+function removeRunWorktrees(repoDir: string, baseSha: string | null | undefined): void {
+  if (!baseSha) return;
+  const roots = [tmpdir()]; try { roots.push(realpathSync(tmpdir())); } catch { /* tmpdir only */ }
+  for (const t of checkedOut(repoDir).trees.slice(1)) {
+    const named = RUN_TMP_WORKTREE_RE.test(basename(t.path)) || RUN_TMP_WORKTREE_RE.test(basename(dirname(t.path)));
+    if (t.detached && t.head === baseSha && named && roots.some((r) => t.path.startsWith(r + sep))) git(repoDir, ["worktree", "remove", "--force", "--force", t.path]);
+  }
+}
+
+const deepAlive = (runDir: string): boolean => {
+  try {
+    const pid = readFileSync(join(runDir, "events.jsonl"), "utf8").split("\n").filter((l) => l.includes('"deep.started"')).map((l) => Number((JSON.parse(l) as { data?: { pid?: unknown } }).data?.pid)).pop();
+    if (!pid || !Number.isInteger(pid) || pid <= 1) return false;
+    process.kill(pid, 0); return true;
+  } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
+};
+const runLive = (runDir: string): boolean => runOwnerAlive(runDir) || deepAlive(runDir);
+const readRecord = (file: string): Partial<BranchRecord> | null => { try { return JSON.parse(readFileSync(file, "utf8")) as Partial<BranchRecord>; } catch { return null; } };
+
+/** Saves (when needed) and deletes one loki/ branch. `dir`/`stem` name the record and bundle files. Returns the restore line, a keep note, or "". */
+function settleBranch(repoDir: string, branch: string, dir: string, stem: string, pushed: boolean, extra: Partial<BranchRecord> = {}): { note: string; deleted: boolean } {
+  const tip = tipOf(repoDir, `refs/heads/${branch}`);
+  if (!tip) return { note: "", deleted: false };
+  const unique = pushed ? 0 : Number(git(repoDir, ["rev-list", "--count", `refs/heads/${branch}`, ...NOT_ELSEWHERE]) ?? NaN);
+  if (!Number.isInteger(unique)) return { note: `engine10: kept ${branch}: could not tell whether its commits exist elsewhere\n`, deleted: false };
+  let bundle: string | null = null;
+  try {
+    mkdirSync(dir, { recursive: true });
+    if (unique > 0) {
+      const file = join(dir, `${stem}.bundle`);
+      if (git(repoDir, ["bundle", "create", file, `refs/heads/${branch}`, ...NOT_ELSEWHERE], 120000) === null || git(repoDir, ["bundle", "verify", file], 120000) === null) throw new Error("bundle");
+      bundle = relative(repoDir, file);
+    }
+    writeFileSync(join(dir, `${stem}.json`), JSON.stringify({ ...extra, branch, head_sha: tip, pushed, bundle } satisfies BranchRecord, null, 2) + "\n");
+  } catch { return { note: `engine10: kept ${branch}: its ${unique} unpushed commit(s) could not be saved under ${relative(repoDir, dir)}\n`, deleted: false }; }
+  if (git(repoDir, ["update-ref", "-d", `refs/heads/${branch}`, tip]) === null) return { note: `engine10: could not delete ${branch}; remove it with: git branch -D ${branch}\n`, deleted: false };
+  return { note: bundle ? `engine10: run branch ${branch} removed, its history is saved; restore it with: git fetch ${bundle} ${branch}:${branch}\n` : "", deleted: true };
+}
+
+/** Puts the checkout back on `orig` when it sits on the run branch and the tracked tree is clean; never discards an edit. */
+function returnCheckout(repoDir: string, branch: string, orig: string | null): string | null {
+  const cur = currentBranch(repoDir);
+  if (cur !== branch) return null; // already back (a stop restores it) or the user moved on: left where it is
+  if (!orig || orig === branch) return `engine10: the checkout stays on ${branch}: the run did not record the branch it started from\n`;
+  if (git(repoDir, ["status", "--porcelain", "--untracked-files=no"]) !== "") return `engine10: the checkout stays on ${branch}: it has uncommitted changes; return with: git checkout ${orig}\n`;
+  return git(repoDir, ["checkout", "-q", orig]) === null ? `engine10: the checkout stays on ${branch}: git checkout ${orig} failed; return with: git checkout ${orig}\n` : null;
+}
 
 /**
- * FC-EMPTY-RUN-BRANCH-LEFT-CHECKED-OUT: a run that ended with its branch tip still at the run base_sha committed nothing. Put the user back on the
- * branch they started from and delete that empty `loki/` branch. A branch with any commit (the Wall's, a backstop) is never touched, nor is a
- * branch the user is not on or started from (they switched mid-run: left alone, noted). Returns a note to print, or null when nothing needed saying.
+ * The end of one run: return the checkout, remove leftover base worktrees, delete the run branch once its history is safe, migrate loose
+ * session files and sweep earlier runs' branches. Returns the lines to print. `deferred`: a detached deep verify still runs on the branch,
+ * so only a record is written and finishDeferredRun does the rest when it ends. `keepWork`: a passing run that published nothing keeps
+ * its branch checked out, since that branch is the result (a later run's sweep saves and removes it once the user has moved off it).
  */
-export function dropEmptyRunBranch(repoDir: string, orig: string | null, runBranch: unknown, baseSha: string | null): string | null {
-  if (!orig || !baseSha || typeof runBranch !== "string" || !RUN_BRANCH_RE.test(runBranch) || runBranch.includes("..") || runBranch === orig) return null;
-  const tip = tipOf(repoDir, `refs/heads/${runBranch}`);
-  if (tip === null || tip !== tipOf(repoDir, baseSha)) return null;
-  const cur = currentBranch(repoDir);
-  if (cur !== runBranch && cur !== orig) return `engine10: you moved to ${cur ?? "a detached HEAD"} during the run; left there. The run committed nothing; remove the empty branch with: git branch -D ${runBranch}\n`;
-  if (cur === runBranch && !restoreBranch(repoDir, orig)) return null; // restoreBranch already told the user how to return
-  try { safeGit(repoDir, ["update-ref", "-d", `refs/heads/${runBranch}`, tip], { stdio: "ignore" }); } catch { return `engine10: could not delete the empty run branch ${runBranch}: git branch -D ${runBranch}\n`; }
-  return null;
+export function finishRunBranch(repoDir: string, runId: string, end: RunEnd, env: NodeJS.ProcessEnv = process.env): string {
+  if (keepRunBranch(env) || !/^e10-[A-Za-z0-9-]+$/.test(runId)) return "";
+  const branch = `loki/${runId}`, runDir = join(repoDir, ".loki", "runs", runId), tip = tipOf(repoDir, `refs/heads/${branch}`);
+  try {
+    if (end.deferred && tip) {
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(runDir, "branch.json"), JSON.stringify({ branch, head_sha: tip, pushed: end.pushed, bundle: null, orig_branch: end.orig, deferred: true } satisfies BranchRecord, null, 2) + "\n");
+      return `engine10: the checkout stays on ${branch} while the background deep verify runs, then returns to ${end.orig ?? "the starting branch"}\n`;
+    }
+    removeRunWorktrees(repoDir, end.baseSha);
+    migrateSessionFiles(repoDir, runLive);
+    let notes = "";
+    const keepHere = end.keepWork === true && tip !== null && tipOf(repoDir, end.baseSha ?? "") !== tip;
+    if (tip && !keepHere) {
+      const stay = returnCheckout(repoDir, branch, end.orig);
+      if (stay) notes += stay;
+      else if (findInterrupted(repoDir, runId, true) === null) notes += settleBranch(repoDir, branch, runDir, "branch", end.pushed && tip !== null, { orig_branch: end.orig }).note; // a resumable run keeps its branch for `loki start`
+    }
+    return notes + sweepRunBranches(repoDir, env, runId);
+  } catch (e) { return `engine10: run-end cleanup skipped: ${(e as Error).message}\n`; }
+}
+
+/** Called by the deep worker when it ends: finishes the cleanup finishRunBranch deferred for this run. */
+export function finishDeferredRun(repoDir: string, runId: string, env: NodeJS.ProcessEnv = process.env): string {
+  const rec = readRecord(join(repoDir, ".loki", "runs", runId, "branch.json"));
+  if (!rec?.deferred || rec.branch !== `loki/${runId}`) return "";
+  const tip = tipOf(repoDir, `refs/heads/${rec.branch}`);
+  return finishRunBranch(repoDir, runId, { orig: rec.orig_branch ?? null, pushed: rec.pushed === true && tip === rec.head_sha }, env);
+}
+
+/** Saves and removes loki/e10-* branches earlier runs left: never a branch checked out anywhere, a live run's, or the resumable run's. */
+export function sweepRunBranches(repoDir: string, env: NodeJS.ProcessEnv = process.env, skipRunId?: string): string {
+  if (keepRunBranch(env)) return "";
+  const names = (git(repoDir, ["for-each-ref", "--format=%(refname:short)", "refs/heads/loki/"]) ?? "").split("\n").filter((b) => E10_BRANCH_RE.test(b));
+  if (names.length === 0) return "";
+  const busy = checkedOut(repoDir).branches, runs = join(repoDir, ".loki", "runs"), resumable = findInterrupted(repoDir, undefined, true)?.runId;
+  let removed = 0, saved = 0; const kept: string[] = [];
+  for (const branch of names) {
+    const id = E10_BRANCH_RE.exec(branch)![1]!, runDir = join(runs, id), own = existsSync(runDir);
+    if (id === skipRunId || id === resumable || busy.has(branch) || (own && runLive(runDir))) continue;
+    const rec = own ? readRecord(join(runDir, "branch.json")) : null, tip = tipOf(repoDir, `refs/heads/${branch}`);
+    const r = own ? settleBranch(repoDir, branch, runDir, "branch", rec?.pushed === true && rec.head_sha === tip) : settleBranch(repoDir, branch, join(runs, LEGACY_BRANCHES_DIR), id, false);
+    if (r.deleted) { removed++; if (r.note) saved++; } else if (r.note) kept.push(r.note);
+  }
+  if (removed === 0) return kept.join("");
+  return `engine10: removed ${removed} run branch(es) left by earlier runs${saved ? `; ${saved} with unpushed commits saved as bundles under .loki/runs/ (restore one with: git fetch <bundle> <branch>:<branch>)` : ""}\n${kept.join("")}`;
 }

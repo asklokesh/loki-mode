@@ -41,9 +41,10 @@ export function runsRoot(env: NodeJS.ProcessEnv, repoDir: string): string {
 }
 
 /** Run ids under a runs root, sorted. Ids embed a sortable UTC timestamp (e10-<ISO-ish>-<rand>), so the last is the newest. */
+export const LEGACY_BRANCHES_DIR = "legacy-branches"; // saved branches of earlier runs that have no run dir (util/base_guard.ts sweepRunBranches); not a run
 export function listRunIds(root: string): string[] {
   if (!existsSync(root)) return [];
-  return readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
+  return readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && d.name !== LEGACY_BRANCHES_DIR).map((d) => d.name).sort();
 }
 
 export function latestRunId(root: string): string | null {

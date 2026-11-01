@@ -254,7 +254,7 @@ export async function deepWorker(args: string[], deps: { sessions?: SessionRunne
   };
   const ac = new AbortController();
   for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => ac.abort());
-  const r = await runDeep(ctx, ac.signal, { council: sessionCouncil(sessions), ...deps.opts });
+  const r = await runDeep(ctx, ac.signal, { council: sessionCouncil(sessions), ...deps.opts }); process.stderr.write((await import("../../util/base_guard.ts")).finishDeferredRun(repoDir, runId)); // the run-end cleanup the supervisor deferred while this ran
   if (r.status !== "completed") { process.stderr.write(`engine10 deep-worker: ${r.reason ?? r.status}\n`); return 1; }
   return 0;
 }

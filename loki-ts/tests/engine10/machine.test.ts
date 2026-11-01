@@ -8,8 +8,8 @@ import { join } from "node:path";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { firstError, runCheck } from "../../src/engine10/stages/verify.ts";
 import { hooks } from "../../src/engine10/hooks.ts";
-import { FLOW, optional, runMachine, type MachineRunContext } from "../../src/engine10/machine.ts";
-import type { RunContext, Stage, StageName, StageResult } from "../../src/engine10/types.ts";
+import { FLOW, optional, runMachine, softCapS, type MachineRunContext } from "../../src/engine10/machine.ts";
+import { VERIFY_STOPPED_NOTE, type RunContext, type Stage, type StageName, type StageResult } from "../../src/engine10/types.ts";
 
 type Ev = { type: string; stage: StageName | null; data: Record<string, unknown> };
 
@@ -439,6 +439,34 @@ describe("engine10 machine", () => {
     const lim = events.find((e) => e.type === "stage.started" && e.stage === "implement")?.data.limit_s as number;
     expect(lim).toBeGreaterThan(480);
     expect(lim).toBeLessThan(900);
+  });
+
+  it("verify limit comes from the run budget left, not a fixed 120s, and stays inside the soft cap", async () => {
+    const limitAt = async (capS: number): Promise<number> => {
+      const { ctx, events } = fakeCtx(capS);
+      await runMachine(ctx, { load: loaderOf(all({ verify: { name: "verify", targetS: 60, limitS: 120, run: async () => ({ status: "completed", data: {} }) } })) });
+      return events.find((e) => e.type === "stage.started" && e.stage === "verify")?.data.limit_s as number;
+    };
+    const big = await limitAt(3600), mid = await limitAt(1530), small = await limitAt(400);
+    expect(big).toBeGreaterThan(mid); // grows with the budget left
+    expect(mid).toBeGreaterThan(120); // the run that went PARTIAL had about 900s unused behind a 120s verify
+    expect(mid).toBeLessThanOrEqual(Math.floor(softCapS(1530)) - 330); // leaves one fix round and the tail inside the soft cap
+    expect(big).toBeLessThan(softCapS(3600));
+    expect(small).toBe(120); // never below the stage's own limit
+  });
+
+  it("a verify stopped at its limit keeps the evidence it published, with the time-limit line", async () => {
+    const { ctx } = fakeCtx();
+    const verify: Stage = { name: "verify", targetS: 1, limitS: 0.1, run: async (c) => {
+      c.partial?.("verify", { checks: [{ name: "vitest:src/loki_wall_x.test.ts", result: "pass", n: 3 }], wall_passed: true });
+      await sleep(3000); // ignores the abort past the grace
+      return { status: "completed", data: {} };
+    } };
+    const r = await runMachine(ctx, { flow: ["verify", "commit"], load: loaderOf(all({ verify })) });
+    expect(r.outputs.verify?.checks).toEqual([{ name: "vitest:src/loki_wall_x.test.ts", result: "pass", n: 3 }]);
+    expect(r.outputs.verify?.wall_passed).toBe(true);
+    expect(r.outputs.verify?.not_proven).toEqual([VERIFY_STOPPED_NOTE.limit]);
+    expect(r.outputs.verify?.failures_grouped).toEqual([]); // the fix loop reads what it read before the stop
   });
 
   it("already satisfied jumps to commit and seal", async () => {

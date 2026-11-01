@@ -60,7 +60,9 @@ MOAT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PENDING="$MOAT_DIR/pending.txt"
 CASES="$MOAT_DIR/cases.txt"
 W="$(mktemp -d "${TMPDIR:-/tmp}/moat-run.XXXXXX")" || { echo "moat: cannot create a temp dir" >&2; exit 2; }
-trap 'rm -rf "$W"' EXIT
+# LOKI_MOAT_KEEP=<existing dir>: copy every property's raw stdout and stderr there before cleanup (diagnosis
+# when a gate prints only a tail).
+trap '[ -n "${LOKI_MOAT_KEEP:-}" ] && [ -d "${LOKI_MOAT_KEEP}" ] && mkdir -p "$LOKI_MOAT_KEEP/${W##*/}" && cp "$W"/p*.out "$W"/p*.err "$LOKI_MOAT_KEEP/${W##*/}"/ 2>/dev/null; rm -rf "$W"' EXIT
 
 NAMES=("" "portable proof" "honest verdict" "the Wall" "model freedom" "sovereignty" \
   "in-place brownfield" "no fabricated data" "load-bearing proof" "Rule of Two")
@@ -249,6 +251,10 @@ fi
 
 while read -r id; do
   fail "$(prop_of "$id")" "REGRESSION $id: FAIL but not listed in tests/moat/pending.txt"
+  # Name the cause where the gate prints it: the case's own FAIL line, then the property's stderr tail.
+  n="${id#P}"; n="${n%%.*}"
+  grep -h "^CASE $id FAIL" "$W/p$n.out" 2>/dev/null | cut -c1-16000 | fold -w 400 | sed 's/^/    why: /'
+  tail -n 15 "$W/p$n.err" 2>/dev/null | sed 's/^/    stderr: /'
 done < <(comm -23 "$W/fail.ids" "$W/pending.ids")
 while read -r id; do
   fail "$(prop_of "$id")" "PROMOTE $id: remove it from tests/moat/pending.txt"

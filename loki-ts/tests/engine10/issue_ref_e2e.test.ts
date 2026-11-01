@@ -372,6 +372,10 @@ describe("engine10 loki answer: a BLOCKED run resumes in place under the same ru
     expect((await exec(p, ["bash", BIN_LOKI, "acme/widgets#101"])).code).toBe(4);
     const runId = (JSON.parse(readFileSync(join(p.repo, ".loki", "engine.json"), "utf8")) as { run_id: string }).run_id;
     expect((await exec(p, [process.execPath, ENTRY, "answer", runId, "yes, clamp at zero"])).code).toBe(0);
+    // Run-end cleanup put the checkout back on main and deleted the pushed run branch: verify names that, not an edit.
+    const onMain = await exec(p, [process.execPath, ENTRY, "engine10", "verify", runId]);
+    expect(onMain.out).toContain("does not contain the sealed head");
+    git(p.repo, "fetch", "-q", "origin", `loki/${runId}`); git(p.repo, "checkout", "-q", "--detach", "FETCH_HEAD");
     const ver = await exec(p, [process.execPath, ENTRY, "engine10", "verify", runId]);
     expect(ver.out).not.toContain("TAMPERED");
     expect(ver.out).not.toContain("no test.result pass");

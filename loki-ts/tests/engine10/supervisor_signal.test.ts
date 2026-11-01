@@ -10,7 +10,9 @@ afterAll(() => { for (const r of roots) execFileSync("rm", ["-rf", r]); });
 const git = (dir: string, ...a: string[]): string => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" }).trim();
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const SUP = join(import.meta.dir, "../../src/engine10/supervisor.ts");
-import { baseLine, dropEmptyRunBranch } from "../../src/util/base_guard.ts";
+import { baseLine, finishDeferredRun, finishRunBranch, sweepRunBranches } from "../../src/util/base_guard.ts";
+import { writeRunPid } from "../../src/util/run_pid.ts";
+import { listRunIds } from "../../src/commands/run_status.ts";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { makeEvent, readEvents } from "../../src/engine10/events.ts";
 import { reasonOf } from "../../src/engine10/output.ts";
@@ -82,13 +84,13 @@ const fs = require("node:fs");
 const g = (...a) => execFileSync("git", a, { encoding: "utf8" }).trim();
 const base = g("rev-parse", "HEAD");
 g("checkout", "-b", "loki/e10-empty");
-${mode === "commit" ? 'fs.writeFileSync("w.txt", "wall\\n"); g("add", "w.txt"); g("-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "-m", "wall");' : ""}
+${mode === "commit" ? 'fs.writeFileSync("w.txt", "wall\\n"); g("add", "w.txt"); g("-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "-m", "wall"); fs.writeFileSync("../tip", g("rev-parse", "HEAD"));' : ""}
 ${mode === "switch" ? 'g("checkout", "-b", "user-branch");' : ""}
 ${mode === "dirty" ? 'fs.writeFileSync("a.txt", "agent edit\\n");' : ""}
 console.log(JSON.stringify({ type: "stage.completed", stage: "intake", data: { base_sha: base, branch: "loki/e10-empty" } }));
 process.exit(1);
 `;
-async function emptyRun(mode: EmptyMode): Promise<{ dir: string; err: string }> {
+async function emptyRun(mode: EmptyMode, extraEnv: Record<string, string> = {}): Promise<{ dir: string; err: string }> {
   const base = mkdtempSync(join(tmpdir(), "e10-empty-"));
   roots.push(base);
   const dir = join(base, "repo");
@@ -100,7 +102,7 @@ async function emptyRun(mode: EmptyMode): Promise<{ dir: string; err: string }> 
   writeFileSync(join(base, "drive.ts"), `import { runSupervisor } from ${JSON.stringify(SUP)};
 const r = await runSupervisor({ runId: "e10-empty", repoDir: ${JSON.stringify(dir)}, env: process.env, capS: 600, workerArgv: [process.execPath, ${JSON.stringify(join(base, "worker.js"))}], started: {} });
 process.exit(r.verdict === "FAILED" ? 0 : 3);`);
-  const sup = spawn(process.execPath, [join(base, "drive.ts")], { env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true" }, stdio: ["ignore", "ignore", "pipe"] });
+  const sup = spawn(process.execPath, [join(base, "drive.ts")], { env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true", ...extraEnv }, stdio: ["ignore", "ignore", "pipe"] });
   let err = ""; sup.stderr?.on("data", (d: Buffer) => { err += d.toString(); });
   const code = await new Promise<number | null>((r) => sup.on("exit", (c) => r(c)));
   expect(code).toBe(0);
@@ -117,31 +119,126 @@ describe("supervisor: a run that committed nothing", () => {
     expect(baseLine(dir)).toContain("base: main");
     expect(baseLine(dir)).not.toContain("loki/e10-empty");
   }, 30000);
-  test("positive control: a run branch with a commit is kept, HEAD stays on it", async () => {
-    const { dir } = await emptyRun("commit");
-    expect(git(dir, "branch", "--list", "loki/e10-empty")).toContain("loki/e10-empty");
-    expect(git(dir, "branch", "--show-current")).toBe("loki/e10-empty");
+  test("an unpushed run with a commit: back on main, branch removed, its bundle restores the exact commit", async () => {
+    const { dir, err } = await emptyRun("commit");
+    const tip = readFileSync(join(dir, "..", "tip"), "utf8").trim();
+    expect(git(dir, "branch", "--show-current")).toBe("main");
+    expect(git(dir, "branch", "--list", "loki/*")).toBe("");
+    const bundle = join(dir, ".loki", "runs", "e10-empty", "branch.bundle");
+    expect(existsSync(bundle)).toBe(true);
+    expect(JSON.parse(readFileSync(join(dir, ".loki", "runs", "e10-empty", "branch.json"), "utf8"))).toMatchObject({ branch: "loki/e10-empty", head_sha: tip, pushed: false });
+    expect(err).toContain("git fetch .loki/runs/e10-empty/branch.bundle loki/e10-empty:loki/e10-empty");
+    git(dir, "fetch", "-q", ".loki/runs/e10-empty/branch.bundle", "loki/e10-empty:loki/e10-empty");
+    expect(git(dir, "rev-parse", "loki/e10-empty")).toBe(tip);
   }, 30000);
-  test("the user switched branch mid-run: nothing is restored, the branch is kept, a note is printed", async () => {
-    const { dir, err } = await emptyRun("switch");
+  test("LOKI_KEEP_RUN_BRANCH=1 keeps the run branch checked out, as before", async () => {
+    const { dir } = await emptyRun("commit", { LOKI_KEEP_RUN_BRANCH: "1" });
+    expect(git(dir, "branch", "--show-current")).toBe("loki/e10-empty");
+    expect(existsSync(join(dir, ".loki", "runs", "e10-empty", "branch.bundle"))).toBe(false);
+  }, 30000);
+  test("the user switched branch mid-run: left on their branch, which is never touched; the empty run branch is removed", async () => {
+    const { dir } = await emptyRun("switch");
     expect(git(dir, "branch", "--show-current")).toBe("user-branch");
-    expect(git(dir, "branch", "--list", "loki/e10-empty")).toContain("loki/e10-empty");
-    expect(err).toContain("git branch -D loki/e10-empty");
+    expect(git(dir, "branch", "--list", "loki/e10-empty")).toBe("");
   }, 30000);
-  test("an uncommitted run edit blocks the checkout: stays on the run branch, edit kept, branch kept", async () => {
+  test("an uncommitted run edit is committed by the failure backstop, so it survives in the saved bundle", async () => {
     const { dir } = await emptyRun("dirty");
-    expect(git(dir, "branch", "--show-current")).toBe("loki/e10-empty");
-    expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("agent edit\n");
+    expect(git(dir, "branch", "--show-current")).toBe("main");
+    expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("base\n");
+    git(dir, "fetch", "-q", ".loki/runs/e10-empty/branch.bundle", "loki/e10-empty:loki/e10-empty");
+    expect(git(dir, "show", "loki/e10-empty:a.txt")).toBe("agent edit");
   }, 30000);
-  test("a non-loki branch name in the intake event is never deleted", () => {
-    const dir = mkdtempSync(join(tmpdir(), "e10-nl-")); roots.push(dir);
+});
+
+// Run-end cleanup (util/base_guard.ts): checkout returned, run branch saved then removed, earlier runs' branches swept.
+describe("run-end branch cleanup", () => {
+  const repo = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "e10-end-")); roots.push(dir);
     execFileSync("git", ["init", "-q", "-b", "main", dir]);
     git(dir, "config", "user.name", "t"); git(dir, "config", "user.email", "t@example.com");
     writeFileSync(join(dir, "a.txt"), "x\n"); git(dir, "add", "a.txt"); git(dir, "commit", "-q", "-m", "b");
-    git(dir, "branch", "mine");
-    const sha = git(dir, "rev-parse", "HEAD");
-    expect(dropEmptyRunBranch(dir, "main", "mine", sha)).toBeNull();
-    expect(git(dir, "branch", "--list", "mine")).toContain("mine");
+    return dir;
+  };
+  const commitOn = (dir: string, branch: string, file: string): string => {
+    git(dir, "checkout", "-q", "-B", branch); writeFileSync(join(dir, file), `${file}\n`); git(dir, "add", file); git(dir, "commit", "-q", "-m", file);
+    return git(dir, "rev-parse", "HEAD");
+  };
+  const env = { PATH: process.env.PATH ?? "" };
+  test("a pushed run branch is deleted with no bundle and the checkout returns to main", () => {
+    const dir = repo(); commitOn(dir, "loki/e10-p1", "p.txt");
+    finishRunBranch(dir, "e10-p1", { orig: "main", pushed: true }, env);
+    expect(git(dir, "branch", "--show-current")).toBe("main");
+    expect(git(dir, "branch", "--list", "loki/*")).toBe("");
+    expect(existsSync(join(dir, ".loki", "runs", "e10-p1", "branch.bundle"))).toBe(false);
+  });
+  test("uncommitted changes on the run branch are never clobbered: checkout and branch stay, one line says how to return", () => {
+    const dir = repo(); commitOn(dir, "loki/e10-u1", "u.txt"); writeFileSync(join(dir, "a.txt"), "user edit\n");
+    const note = finishRunBranch(dir, "e10-u1", { orig: "main", pushed: true }, env);
+    expect(note).toContain("the checkout stays on loki/e10-u1: it has uncommitted changes; return with: git checkout main");
+    expect(git(dir, "branch", "--show-current")).toBe("loki/e10-u1");
+    expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("user edit\n");
+    expect(git(dir, "branch", "--list", "loki/e10-u1")).toContain("loki/e10-u1");
+  });
+  test("a branch whose commits another branch already holds is deleted without a bundle", () => {
+    const dir = repo(); commitOn(dir, "loki/e10-m1", "m.txt"); git(dir, "branch", "-f", "keepme", "loki/e10-m1");
+    finishRunBranch(dir, "e10-m1", { orig: "main", pushed: false }, env);
+    expect(git(dir, "branch", "--list", "loki/*")).toBe("");
+    expect(git(dir, "branch", "--list", "keepme")).toContain("keepme");
+    expect(existsSync(join(dir, ".loki", "runs", "e10-m1", "branch.bundle"))).toBe(false);
+  });
+  test("a passing run that published nothing keeps its branch checked out (the result lives there)", () => {
+    const dir = repo(); commitOn(dir, "loki/e10-k1", "k.txt");
+    finishRunBranch(dir, "e10-k1", { orig: "main", pushed: false, keepWork: true, baseSha: git(dir, "rev-parse", "main") }, env);
+    expect(git(dir, "branch", "--show-current")).toBe("loki/e10-k1");
+  });
+  test("a deep verify still running defers the cleanup; it finishes when the deep worker ends", () => {
+    const dir = repo(); const tip = commitOn(dir, "loki/e10-d1", "d.txt");
+    expect(finishRunBranch(dir, "e10-d1", { orig: "main", pushed: true, deferred: true }, env)).toContain("background deep verify");
+    expect(git(dir, "branch", "--show-current")).toBe("loki/e10-d1");
+    expect(JSON.parse(readFileSync(join(dir, ".loki", "runs", "e10-d1", "branch.json"), "utf8"))).toMatchObject({ head_sha: tip, deferred: true, orig_branch: "main" });
+    finishDeferredRun(dir, "e10-d1", env);
+    expect(git(dir, "branch", "--show-current")).toBe("main");
+    expect(git(dir, "branch", "--list", "loki/*")).toBe("");
+  });
+  test("a leftover verify base worktree of this run is removed; the user's own worktrees are not", () => {
+    const dir = repo(), base = git(dir, "rev-parse", "HEAD"), tmp = mkdtempSync(join(tmpdir(), "e10-base-")), mine = mkdtempSync(join(tmpdir(), "user-wt-")); roots.push(tmp, mine);
+    git(dir, "worktree", "add", "-q", "--detach", join(tmp, "wt"), base); git(dir, "worktree", "add", "-q", "--detach", join(mine, "wt"), base);
+    commitOn(dir, "loki/e10-w1", "w.txt");
+    finishRunBranch(dir, "e10-w1", { orig: "main", pushed: true, baseSha: base }, env);
+    const list = git(dir, "worktree", "list");
+    expect(list).not.toContain(join(tmp, "wt")); expect(list).toContain("user-wt-");
+  });
+  test("earlier runs' branches are swept: unpushed ones bundled, the live run's, a checked-out one and non-loki branches untouched", () => {
+    const dir = repo();
+    const oldTip = commitOn(dir, "loki/e10-old1", "o.txt"); // no run dir: saved under legacy-branches
+    const ownTip = commitOn(dir, "loki/e10-own1", "w.txt"); mkdirSync(join(dir, ".loki", "runs", "e10-own1"), { recursive: true });
+    commitOn(dir, "loki/e10-live1", "l.txt"); const liveDir = join(dir, ".loki", "runs", "e10-live1"); mkdirSync(liveDir, { recursive: true });
+    writeRunPid(liveDir, "e10-live1");
+    commitOn(dir, "loki/e10-wt1", "t.txt"); git(dir, "checkout", "-q", "main");
+    const wtRoot = mkdtempSync(join(tmpdir(), "user-wt-")); roots.push(wtRoot); git(dir, "worktree", "add", "-q", join(wtRoot, "wt"), "loki/e10-wt1");
+    commitOn(dir, "feature", "f.txt"); commitOn(dir, "loki/other", "x2.txt"); git(dir, "checkout", "-q", "main");
+    const note = sweepRunBranches(dir, env);
+    const left = git(dir, "branch", "--list", "--format=%(refname:short)").split("\n").sort();
+    expect(left).toEqual(["feature", "loki/e10-live1", "loki/e10-wt1", "loki/other", "main"]);
+    expect(note).toContain("removed 2 run branch(es)");
+    git(dir, "fetch", "-q", ".loki/runs/legacy-branches/e10-old1.bundle", "loki/e10-old1:loki/e10-old1");
+    expect(git(dir, "rev-parse", "loki/e10-old1")).toBe(oldTip);
+    git(dir, "fetch", "-q", ".loki/runs/e10-own1/branch.bundle", "loki/e10-own1:loki/e10-own1");
+    expect(git(dir, "rev-parse", "loki/e10-own1")).toBe(ownTip);
+    expect(listRunIds(join(dir, ".loki", "runs"))).not.toContain("legacy-branches");
+  });
+  test("a sweep never deletes a branch whose bundle could not be written", () => {
+    const dir = repo(); commitOn(dir, "loki/e10-ro1", "r.txt"); git(dir, "checkout", "-q", "main");
+    mkdirSync(join(dir, ".loki", "runs", "e10-ro1"), { recursive: true }); chmodSync(join(dir, ".loki", "runs", "e10-ro1"), 0o500);
+    try { expect(sweepRunBranches(dir, env)).toContain("kept loki/e10-ro1"); } finally { chmodSync(join(dir, ".loki", "runs", "e10-ro1"), 0o700); }
+    expect(git(dir, "branch", "--list", "loki/e10-ro1")).toContain("loki/e10-ro1");
+  });
+  test("LOKI_KEEP_RUN_BRANCH=1 turns the sweep and the run-end cleanup off", () => {
+    const dir = repo(); commitOn(dir, "loki/e10-x1", "x.txt");
+    expect(finishRunBranch(dir, "e10-x1", { orig: "main", pushed: false }, { ...env, LOKI_KEEP_RUN_BRANCH: "1" })).toBe("");
+    git(dir, "checkout", "-q", "main");
+    expect(sweepRunBranches(dir, { ...env, LOKI_KEEP_RUN_BRANCH: "1" })).toBe("");
+    expect(git(dir, "branch", "--list", "loki/e10-x1")).toContain("loki/e10-x1");
   });
 });
 

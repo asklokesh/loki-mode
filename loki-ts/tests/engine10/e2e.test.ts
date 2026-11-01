@@ -265,8 +265,12 @@ describe("engine10 e2e (stub claude)", () => {
     const runId = r.runDir.split("/").pop()!;
     const opened = r.events.filter((e) => e.type === "pr.opened");
     expect(opened.map((e) => e.data.url)).toEqual([`local://${r.origin}#loki/${runId}`]);
-    expect(git(r.origin, "rev-parse", `refs/heads/loki/${runId}`)).toBe(git(r.repo, "rev-parse", "HEAD"));
-    expect(JSON.parse(readFileSync(join(r.runDir, "receipt.json"), "utf8")).repo).toBe(r.origin);
+    const receiptJson = JSON.parse(readFileSync(join(r.runDir, "receipt.json"), "utf8"));
+    expect(git(r.origin, "rev-parse", `refs/heads/loki/${runId}`)).toBe(receiptJson.head_sha);
+    // Run-end cleanup: the pushed run branch is deleted locally and the checkout is off it.
+    expect(() => git(r.repo, "rev-parse", "--verify", "-q", `refs/heads/loki/${runId}`)).toThrow();
+    expect(git(r.repo, "rev-parse", "--abbrev-ref", "HEAD")).not.toBe(`loki/${runId}`);
+    expect(receiptJson.repo).toBe(r.origin);
     const done = r.events.at(-2)!;
     expect(done.type).toBe("run.completed");
     expect(done.data.not_proven).toContain("commit status loki/deep-verify not set (local origin)");

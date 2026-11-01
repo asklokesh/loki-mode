@@ -1,8 +1,8 @@
 // MW-2 / CH-03: warm chain (plan, implement, fix 1..n) over one SDK session. plan -> implement is default ON (LOKI_E10_FIX_RESUME=0 opts out); fix rounds stay OFF, LOKI_E10_FIX_RESUME=1 opts in.
 // Lives outside engine10/ so the core line budget is untouched. Nothing here feeds a verdict: the seal path
 // reads only the engine-recorded mode string and cost-file token counts, never a transcript (see tests/engine10/fix_resume.test.ts).
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { safeGit } from "../util/safe_git.ts";
 import { classifyExitCause } from "../engine10/session.ts";
 import type { RunContext, SessionResult, SessionRunOptions } from "../engine10/types.ts";
@@ -35,12 +35,40 @@ export function planChain(ctx: RunContext, implementModel: string, planModel: st
   return { id };
 }
 
+/** Where an iteration's session file lives: its run directory (an iteration id starts with its run id), else .loki/sessions/.
+ *  Older releases wrote it loose in .loki/; readSessionId still reads there, and migrateSessionFiles moves those files. */
+export function sessionFilePath(repoDir: string, iterationId: string): string {
+  const loki = join(repoDir, ".loki"), parts = iterationId.split("-");
+  for (let n = parts.length - 1; n >= 2; n--) {
+    const id = parts.slice(0, n).join("-");
+    if (/^e10-[A-Za-z0-9-]+$/.test(id) && existsSync(join(loki, "runs", id))) return join(loki, "runs", id, `e10-session-${iterationId}.json`);
+  }
+  return join(loki, "sessions", `e10-session-${iterationId}.json`);
+}
+const legacySessionPath = (repoDir: string, iterationId: string): string => join(repoDir, ".loki", `e10-session-${iterationId}.json`);
+
+/** Moves loose .loki/e10-session-*.json files into their run directory (else .loki/sessions/). A file whose run directory
+ *  `isLive` reports as live stays put, so an older release still running there keeps reading it. Best effort; returns the count moved. */
+export function migrateSessionFiles(repoDir: string, isLive: (runDir: string) => boolean = () => false): number {
+  let moved = 0, names: string[] = [];
+  try { names = readdirSync(join(repoDir, ".loki")).filter((n) => /^e10-session-.+\.json$/.test(n)); } catch { return 0; }
+  for (const name of names) {
+    const iter = name.slice("e10-session-".length, -".json".length), from = legacySessionPath(repoDir, iter), dest = sessionFilePath(repoDir, iter), destDir = dirname(dest);
+    if (basename(dirname(destDir)) === "runs" && isLive(destDir)) continue;
+    try { mkdirSync(destDir, { recursive: true }); if (existsSync(dest)) rmSync(from, { force: true }); else renameSync(from, dest); moved++; } catch { /* left for the next run */ }
+  }
+  return moved;
+}
+
 /** The provider session id sdkQueryProvider wrote for this iteration, or null (CLI/other providers, missing file). */
 export function readSessionId(repoDir: string, iterationId: string): string | null {
-  try {
-    const v = (JSON.parse(readFileSync(join(repoDir, ".loki", `e10-session-${iterationId}.json`), "utf8")) as { session_id?: unknown }).session_id;
-    return typeof v === "string" && v ? v : null;
-  } catch { return null; }
+  for (const file of [sessionFilePath(repoDir, iterationId), legacySessionPath(repoDir, iterationId)]) {
+    try {
+      const v = (JSON.parse(readFileSync(file, "utf8")) as { session_id?: unknown }).session_id;
+      if (typeof v === "string" && v) return v;
+    } catch { /* not at this location */ }
+  }
+  return null;
 }
 
 /** A rerun of a stage (resume from implement or fix) continues the session its killed first attempt recorded under the SAME iteration id.
@@ -57,11 +85,11 @@ export function interruptedSession(ctx: RunContext, iterationId: string): { id: 
  *  still resumable (partial work lives in the session). A model_refusal_no_fallback turn is not: the refusal sits in
  *  that session's history, so any stale id is removed and the next iteration starts fresh. Best-effort. */
 export function writeSessionId(repoDir: string, iterationId: string, res: { sessionId?: string; refusedNoFallback?: boolean }): void {
-  const file = join(repoDir, ".loki", `e10-session-${iterationId}.json`);
+  const file = sessionFilePath(repoDir, iterationId);
   try {
-    if (res.refusedNoFallback || !res.sessionId) { if (res.refusedNoFallback) rmSync(file, { force: true }); return; }
+    if (res.refusedNoFallback || !res.sessionId) { if (res.refusedNoFallback) for (const f of [file, legacySessionPath(repoDir, iterationId)]) rmSync(f, { force: true }); return; }
     if (readSessionId(repoDir, iterationId) === res.sessionId) return; // idempotent: first frame and stream end write the same id
-    mkdirSync(join(repoDir, ".loki"), { recursive: true });
+    mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, JSON.stringify({ session_id: res.sessionId }));
   } catch { /* best-effort */ }
 }

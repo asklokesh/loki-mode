@@ -359,6 +359,11 @@ describe("reasonOf (A-130 round 4)", () => {
     expect(reasonOf([ev("stage.failed", "implement", { reason: "exit 1 (general error)" })], false, "fatal:quota_exhausted", "FAILED")).toBe("provider credit exhausted");
     expect(reasonOf([], false, "fatal:auth", "FAILED")).toBe("provider authentication failed");
   });
+  test("a fatal stop appends the failed stage's cause and fix", () => {
+    const f = (reason: string) => [ev("stage.failed", "implement", { reason })];
+    expect(reasonOf(f("auth: Not logged in (fix: run `claude /login`, or unset ANTHROPIC_API_KEY)"), false, "fatal:auth", "FAILED")).toBe("provider authentication failed: Not logged in (fix: run `claude /login`, or unset ANTHROPIC_API_KEY)");
+    expect(reasonOf(f("quota_exhausted: insufficient_quota (fix: add credit at console.anthropic.com or wait for the plan reset)"), false, "fatal:quota_exhausted", "FAILED")).toContain("provider credit exhausted: insufficient_quota (fix: add credit");
+  });
   test("FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG: a fatal auth stop names the provider's cause", () => {
     const e = [ev("session.ended", "implement", { exit: "error", cause: "exit 1 (general error)", provider_error: "Invalid API key \u00b7 Fix external API key" })];
     expect(reasonOf(e, false, "fatal:auth", "FAILED")).toBe("provider authentication failed: Invalid API key \u00b7 Fix external API key");
