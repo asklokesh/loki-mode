@@ -115,6 +115,15 @@ Only the extra already-done check (an issue's `state` and whether it was
 closed by a merged PR) is GitHub-only; a GitLab or Jira issue still runs,
 just without that extra signal.
 
+The task the agent works from is the issue's title and description plus an
+"Issue tracker context" section: the labels, and the comments of people the
+repo trusts. On GitHub that is comments by an OWNER, MEMBER or COLLABORATOR
+(the same rule `/loki` and comment steering use), never a bot, Loki's own
+comments or a hidden comment. Other comments are counted in `issue.json`
+(`comments_excluded`) and never quoted. Comments are capped at 16 KB, newest
+kept. The whole task stays quoted as untrusted data in every brief. Jira and
+Linear trust is set in `docs/trackers.md`.
+
 Flags, from the engine's own `--help`:
 
 - `--no-pr`: build and verify, but skip opening a pull request.
