@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Stub gh for tests/min/triage-router.sh: serves tests/min/fixtures/triage/issues.json offline.
+# Handles `gh issue list ...` and `gh issue view N ...`; anything else exits 1.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+[ -n "${TRIAGE_GH_LOG:-}" ] && echo "gh $*" >> "$TRIAGE_GH_LOG"
+[ "${1:-}" = "issue" ] || { echo "stub gh: unsupported: $*" >&2; exit 1; }
+case "${2:-}" in
+  list) exec python3 -I -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))))' "$here/issues.json" ;;
+  view) exec python3 -I -c 'import json,sys
+for i in json.load(open(sys.argv[1])):
+    if str(i["number"]) == sys.argv[2]:
+        print(json.dumps(i)); sys.exit(0)
+sys.stderr.write("stub gh: no issue %s\n" % sys.argv[2]); sys.exit(1)' "$here/issues.json" "${3:-}" ;;
+  *) echo "stub gh: unsupported: $*" >&2; exit 1 ;;
+esac
