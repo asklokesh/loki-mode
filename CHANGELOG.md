@@ -5,6 +5,20 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.108.0 (2026-11-01)
+
+Every run now teaches the next one: what went wrong, and what fixed it, is fed back into related runs.
+
+### Added
+
+- At the end of every run, Loki records lessons from the run's own record, with no model call: a failing check and its first error line, the change a fix round made that turned it green, restored test edits, spec conflicts, out-of-scope edits and stages that hit their time limit. A repeated mistake adds a sub-lesson to one lesson instead of a duplicate.
+- The next run's implement brief gets only the lessons that share files with its plan or words with its task, capped at 1200 bytes, so cost does not grow. A lesson whose mistake keeps coming back after it was shown is demoted.
+- `loki memory lessons` lists them with category, count, sub-lessons and files; `loki memory brief --task "..."` shows what a task would receive.
+
+### Fixed
+
+- Per-stage diff summaries in the run log were empty on newer git (2.55): the working-tree snapshot used an exclude pathspec that git rejects when the path is ignored.
+
 ## v11.107.1 (2026-11-01)
 
 ### Fixed

@@ -346,7 +346,8 @@ export function treeSnapshot(repoDir: string): string | null {
     dir = mkdtempSync(join(tmpdir(), "loki-snap-"));
     const env = { ...process.env, GIT_INDEX_FILE: join(dir, "index") };
     safeGit(repoDir, ["read-tree", "HEAD"], { env });
-    safeGit(repoDir, ["add", "-A", "--", ".", ":(exclude).loki"], { env });
+    safeGit(repoDir, ["add", "-A", "--", "."], { env }); // no ":(exclude).loki" pathspec: git 2.55 exits 1 when an exclude names an ignored path, which nulled every diff_stat
+    safeGit(repoDir, ["rm", "-r", "--cached", "-q", "--ignore-unmatch", "--", ".loki"], { env }); // .loki out of the snapshot whether or not it is ignored
     return safeGit(repoDir, ["write-tree"], { env }).trim() || null;
   } catch { return null; } finally { if (dir) rmSync(dir, { recursive: true, force: true }); }
 }
