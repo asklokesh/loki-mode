@@ -14,7 +14,7 @@ byte-identical to the bash `claude` route.
 |---|---|---|
 | `off` (default) | nothing (byte-identical to v7/v8 bash route) | default |
 | `judges` | the 7 one-shot JUDGE/TEXT sites (done-recognition, council-v2, code-review, completion-council VOTE, voter-agents, grill, prd-enrich). The RARV loop stays OFF. | recommended scale tier: no `claude` binary needed for judging, loop unchanged |
-| `full` | all of `judges` (it also sets `LOKI_SDK_LOOP`, which no longer selects a loop: `loki start` runs the Loki 10 engine either way) | same as `judges` for `loki start` |
+| `full` | all of `judges`, and sets `LOKI_SDK_LOOP` | `loki start` runs Loki 10 either way, and its Claude sessions use the Agent SDK unless `LOKI_E10_INVOKER=cli`. Under `full`, `--engine legacy` and `LOKI_ENGINE=legacy` are refused with one line: the bash loop has no SDK path |
 
 Alias: `LOKI_SDK=1` == `judges`; `LOKI_SDK=full` == `full`.
 

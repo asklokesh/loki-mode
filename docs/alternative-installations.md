@@ -136,7 +136,7 @@ A first task is ready when every required "All paths" item is present and at lea
 ### Execution paths
 
 - Claude Code CLI path: the default. `loki start` runs the `claude` binary you installed and logged in with `claude auth login`. `loki chat` (with the claude provider) and `loki edit` call the `claude` CLI directly.
-- Anthropic API-key path (Agent SDK, no `claude` CLI): `loki "<goal>"` needs only Anthropic credentials (for example `ANTHROPIC_API_KEY`), the bundled `@anthropic-ai/claude-agent-sdk` platform binary, and Bun. No `claude` CLI and no extra setting: the engine runs every session on the bundled SDK unless `LOKI_E10_INVOKER=cli`. Commands that stay on the bash route (for example `loki demo`, `loki quickstart`, and `loki start ./prd.md` without `LOKI_SDK_MODE=full`) still need a provider CLI on PATH.
+- Anthropic API-key path (Agent SDK, no `claude` CLI): `loki "<goal>"` needs only Anthropic credentials (for example `ANTHROPIC_API_KEY`), the bundled `@anthropic-ai/claude-agent-sdk` platform binary, and Bun. No `claude` CLI and no extra setting: the engine runs every session on the bundled SDK unless `LOKI_E10_INVOKER=cli`. `loki start ./prd.md` runs the same engine, whatever the PRD size. Only the bash loop needs a provider CLI on PATH: `loki start --engine legacy` (refused under `LOKI_SDK_MODE=full`, which has no CLI to fall back on) and the `--workspace` / `--deploy` front end.
 - Other provider CLIs: `codex` (degraded), `cline`, `aider`, `opencode`. Any one of them replaces the `claude` CLI for `loki start --provider <name>`. Loki never silently substitutes a different provider than the one requested.
 
 ### Install methods

@@ -519,9 +519,12 @@ export function writebackEnv(task: string, env: NodeJS.ProcessEnv): NodeJS.Proce
   return m ? { ...env, LOKI_WRITEBACK_ISSUE: m[2]!.toUpperCase(), LOKI_WRITEBACK_KIND: m[1]! } : env;
 }
 
-/** The engine10 argv for one start (pure; the cap flag reaches the plan route too). */
-export function engineArgv(o: ParsedStartOpts, task: string, forceNoPr: boolean): string[] {
-  const argv = o.specFirst ? [process.argv[1] ?? "", "engine10", "plan", task, "--spec"] : [process.argv[1] ?? "", "engine10", ...(task ? [task] : [])];
+/** The largest task passed to engine10 as one argument; a bigger PRD file goes as --task-file (mirrors _ROUTE_TASK_ARG_MAX in autonomy/route.sh). */
+export const TASK_ARG_MAX = 100000;
+
+/** The engine10 argv for one start (pure; the cap flag reaches the plan route too). taskFile replaces the task argument for a PRD over TASK_ARG_MAX. */
+export function engineArgv(o: ParsedStartOpts, task: string, forceNoPr: boolean, taskFile?: string): string[] {
+  const argv = o.specFirst ? [process.argv[1] ?? "", "engine10", "plan", task, "--spec"] : [process.argv[1] ?? "", "engine10", ...(taskFile ? ["--task-file", taskFile] : task ? [task] : [])];
   if (o.specPath) argv.push("--spec", o.specPath);
   if (o.specFirst) { if (o.provider) argv.push("--provider", o.provider); if (o.budgetLimit !== undefined) argv.push("--max-cost", String(o.budgetLimit)); return argv; }
   if (forceNoPr || o.noPr) argv.push("--no-pr");
@@ -533,9 +536,11 @@ export function engineArgv(o: ParsedStartOpts, task: string, forceNoPr: boolean)
 async function runEngine10(cwd: string, o: ParsedStartOpts, env: NodeJS.ProcessEnv, forceNoPr: boolean): Promise<number> {
   const { existsSync, readFileSync, statSync } = await import("node:fs");
   const spec = o.prdPath;
-  const task = spec !== "" && existsSync(spec) && statSync(spec).isFile() ? readFileSync(spec, "utf8") : spec;
+  const isFile = spec !== "" && existsSync(spec) && statSync(spec).isFile();
+  const task = isFile ? readFileSync(spec, "utf8") : spec;
   env = writebackEnv(task, env);
-  return await spawnEngine(cwd, engineArgv(o, task, forceNoPr), env);
+  const taskFile = isFile && !o.specFirst && Buffer.byteLength(task) > TASK_ARG_MAX ? resolve(spec) : undefined;
+  return await spawnEngine(cwd, engineArgv(o, task, forceNoPr, taskFile), env);
 }
 
 async function spawnEngine(cwd: string, argv: string[], env: NodeJS.ProcessEnv): Promise<number> {
