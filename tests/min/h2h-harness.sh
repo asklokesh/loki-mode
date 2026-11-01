@@ -33,6 +33,8 @@
 #   9. run_sequence(): keep each step's hidden file after scoring; the stale-hidden check and the
 #      sequence runner's exit code must fail.
 #  10. lesson_counts(): count a worked example without a VERIFIED verdict; the counts check must fail.
+#  11. commit_step_state(): `git add -A -- . ':(exclude).loki'`; both step-commit checks must fail
+#      (git refuses the pathspec once .loki is gitignored, which aborted the first paid learning run).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -185,9 +187,17 @@ g("checkout", "-q", "-b", "loki/a-old"); (r / "a").write_text("2"); g("commit", 
 g("checkout", "-q", "main"); before = h2h.loki_branches(r)
 g("checkout", "-q", "-b", "loki/b-new"); (r / "a").write_text("3"); g("commit", "-qam", "new"); g("checkout", "-q", "main")
 print("picked", h2h.loki_branch_checkout(r, base, before))
+# The step state commit works whether or not the contestant gitignored .loki, and never commits it.
+for ignored in (True, False):
+    (r / ".gitignore").write_text(".loki/\n" if ignored else "")
+    (r / ".loki/state.json").write_text("{}"); (r / "a").write_text("step" + str(ignored))
+    h2h.commit_step_state(r, 2)
+    print("step-commit", ignored, g("log", "-1", "--format=%s"), ".loki" in g("ls-tree", "-r", "--name-only", "HEAD"), g("status", "--porcelain", "--untracked-files=no") == "")
 ' "$T")"
 has "lessons: run, receipt and VERIFIED worked-example counts" "$learn_out" "counts {'run': 1, 'receipt': 3, 'worked_example': 1}"
 has "a branch left by an earlier step is skipped" "$learn_out" "picked loki/b-new"
+has "step state commits when .loki is gitignored, without .loki" "$learn_out" "step-commit True h2h: state after step 2 False True"
+has "step state commits when .loki is not gitignored, without .loki" "$learn_out" "step-commit False h2h: state after step 2 False True"
 
 leftover="$(find "$T" -maxdepth 1 -name 'loki-h2h.*' | head -1)"
 check "runner removed its own temp dir" test -z "$leftover"

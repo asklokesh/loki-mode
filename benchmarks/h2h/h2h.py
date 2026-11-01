@@ -463,6 +463,16 @@ def lesson_counts(repo):
     }
 
 
+def commit_step_state(repo, step):
+    """Commit the scored tree so the next step starts clean. Loki's own .loki state stays out of
+    the commit but stays on disk. A pathspec exclude is not used: once Loki has gitignored .loki,
+    git refuses any pathspec that names an ignored path."""
+    git(repo, "add", "-A", "--", ".")
+    git(repo, "reset", "-q", "--", ".loki", check=False)
+    if git(repo, "diff", "--cached", "--name-only").strip():
+        git(repo, "commit", "-q", "-m", f"h2h: state after step {step}")
+
+
 def run_sequence(config, seq, rep, work, timeout_s, keep_dir):
     """Every step of one sequence, in order, in ONE repo copy with ONE throwaway HOME, so whatever
     Loki records about a run is there for the next. Each step is scored by its own hidden tests,
@@ -503,9 +513,7 @@ def run_sequence(config, seq, rep, work, timeout_s, keep_dir):
         passed, tail = score(st, repo, env, d / f"step{i}.hidden.log")
         for dest in st["hidden"].values():
             (repo / dest).unlink(missing_ok=True)
-        git(repo, "add", "-A", "--", ".", ":(exclude).loki")
-        if git(repo, "status", "--porcelain", "--untracked-files=no").strip():
-            git(repo, "commit", "-q", "-m", f"h2h: state after step {i}")
+        commit_step_state(repo, i)
         rec.update({"pass": passed, "seconds": round(secs, 2), "exit_code": rc, "timed_out": timed_out,
                     "files_changed": len(files), "files": files, "hidden_leaked_before_scoring": leaked,
                     "scored_branch": branch, "hidden_tail": tail if not passed else "", **m})
