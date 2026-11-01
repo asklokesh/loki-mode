@@ -101,7 +101,7 @@ diag() {
     fi
     if [ -n "${DIAG_RERUN:-}" ]; then # a real-tool leg: rerun the engine's own check command by hand and show what the tool printed
         echo "    | rerun by hand in the run repo: $DIAG_RERUN"
-        ( cd "$REPO" && eval "$DIAG_RERUN" 2>&1 | tail -60 | sed 's/^/    | rerun | /'; echo "    | rerun exit: ${PIPESTATUS[0]}" )
+        ( cd "$REPO" && eval "$DIAG_RERUN" 2>&1 | tail -90 | sed 's/^/    | rerun | /'; echo "    | rerun exit: ${PIPESTATUS[0]}" )
     fi
     echo "    | last 60 lines of engine stdout+stderr:"
     printf '%s\n' "$OUT" | tail -60 | sed 's/^/    | /'
@@ -146,7 +146,7 @@ for spec in maven:mvn gradle:gradle dotnet:dotnet; do
         new_repo "$stack" "real-$stack"
         run_loki "$stack" "real-$stack" "$FIX/bin:$REALPATH_ENV"
         case "$stack" in
-            gradle) DIAG_RERUN='gradle --version | head -8; PATH="'"$REALPATH_ENV"'" gradle cleanTest test --tests demo.CalcTest -i --console=plain' ;;
+            gradle) DIAG_RERUN='gradle --version | head -8; PATH="'"$REALPATH_ENV"'" gradle cleanTest test --tests demo.CalcTest -i --console=plain -I /tmp/loki-gradle-init/test-logging.init.gradle; cat /tmp/loki-gradle-init/test-logging.init.gradle; ls build/test-results/test; head -c 1500 build/test-results/test/*.xml' ;;
             dotnet) DIAG_RERUN='dotnet --info | head -20; PATH="'"$REALPATH_ENV"'" dotnet test Calc.Tests/Calc.Tests.csproj --filter FullyQualifiedName~CalculatorTests --nologo --logger "console;verbosity=normal"' ;;
             *) DIAG_RERUN="" ;;
         esac
