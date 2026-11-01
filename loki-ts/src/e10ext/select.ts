@@ -1,7 +1,7 @@
 // S41-05 attempt-selection rule (docs/v10/SCORECARD-PLAN.md section 4 "Attempt selection (two attempts)", docs/v10/DECISIONS.md D42 (1)). Pure function: it reads results core already
 // computed by scoring each attempt's diff against the shared set S in the primary tree, and returns a choice only. It never runs a test, never decides pass/fail for Seal, and never
 // touches stages/ at runtime (D42 (1); the import-graph guard lives in tests/engine10/budget.test.ts next to the modernize cap). Core re-runs verify and Seal on whichever tree this picks.
-import type { TestRef } from "../engine10/types.ts"; import { isBlockingFail } from "../util/failure_memory.ts";
+import type { TestRef } from "../engine10/types.ts"; import { isBlockingFail } from "../util/failure_memory.ts"; import { changedSince } from "../util/check_result.ts";
 // D42 (1): seal.ts/verify.ts/wall.ts/verify_cmd.ts may be referenced only as `import type`.
 import type { VerifyCheck } from "../engine10/stages/verify.ts";
 
@@ -162,4 +162,23 @@ export function failedFirst<T extends TestRef>(tests: T[], prior: ReadonlyArray<
   const red = new Set((prior ?? []).filter((c) => c.result === "fail" && typeof c.name === "string").map((c) => c.name as string));
   if (red.size === 0) return tests;
   return [...tests.filter((t) => red.has(refName(t))), ...tests.filter((t) => !red.has(refName(t)))];
+}
+
+/** L025: a fix round's quick verify. `first` holds what can have changed or must prove the task: the checks that blocked the previous verify, the
+ *  Wall and task-named tests (`keep`), and tests impacted by files changed since that verify (`since`); `rest` is everything else, run only once
+ *  `first` holds no decisive failure, so the complete selection runs once, last. Order is preserved within each part. */
+export function quickSplit<T extends TestRef>(tests: T[], keep: ReadonlySet<string>, since: ReadonlyArray<TestRef>): { first: T[]; rest: T[] } {
+  const want = new Set([...keep, ...since.map(refName)]), first = tests.filter((t) => want.has(refName(t)));
+  return { first, rest: tests.filter((t) => !want.has(refName(t))) };
+}
+
+/** L025: the full suite and the secret scan each run at most this many times per run (the first verify and the complete verify at the end). */
+export const DEEP_RUNS_MAX = 2;
+export const QUICK_ONLY_NOTE = "quick re-verify only: the complete verify did not run after the last fix round";
+/** L025: verify after a fix round is quick: the previous verify's blocking check names and the paths changed since it (fileHashes). Null on a first
+ *  verify, an output without hashes (a stopped verify) or LOKI_E10_QUICK_VERIFY=0, which all run the complete selection. */
+export function quickScope(o: Record<string, Record<string, unknown> | undefined>, now: Record<string, string>): { blocking: Set<string>; since: string[] } | null {
+  const prev = o.verify, hashes = prev?.file_hashes, blocking = prev?.blocking_checks;
+  if (process.env["LOKI_E10_QUICK_VERIFY"] === "0" || typeof o.fix?.round !== "number" || !hashes || typeof hashes !== "object" || !Array.isArray(blocking)) return null;
+  return { blocking: new Set(blocking as string[]), since: changedSince(hashes as Record<string, string>, now) };
 }

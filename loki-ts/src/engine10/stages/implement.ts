@@ -8,7 +8,7 @@ import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts"
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { cascadeDowngrade, haikuFirstDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
 import { attemptsGate, runAttemptsOnCtx } from "../../features/attempts.ts"; // S41-13, default off
-import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
+import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
 import { classifyExitCause } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
 import { adjudicateWallConflict, resumeAfterConflict, resumeAfterEmptyDone } from "../../util/conflict_resume.ts";
 import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts";
@@ -47,7 +47,7 @@ export function buildImplementBrief(task: string, plan: string | null, impactedT
     ...(spec ? [spec] : []), // SPEC-FIRST-INTENT: the user-edited spec is the authoritative intent; absent adds nothing
     plan ? `Follow this plan:\n${plan}` : "No separate plan was made: plan the change yourself in this session, then implement it." + (process.env.LOKI_E10_REPRO === "1" ? " " + REPRO_LINE : ""), // TEN-QUALITY-08: default off, lean path only
     ...(repoMap ? [repoMap] : []),
-    impactedTests.length ? `Impacted tests (a starting hint, not a limit): ${impactedTests.join(", ")}.` : "Impacted tests: none known; run the project's full test command (a starting hint, not a limit).",
+    impactedTests.length ? `Impacted tests (a starting hint, not a limit): ${impactedTests.join(", ")}.` : "Impacted tests: none known; run the targeted tests for the code you change (the harness runs the full suite after you stop when the diff's risk tier is medium or high).",
     FINISH_LINE,
   ].join("\n\n"));
 }
@@ -121,6 +121,7 @@ export const implementStage: Stage = {
       signal,
       cwd: ctx.repoDir,
       ...(downgrade ? { model: downgrade.to } : {}),
+      ...suiteCmdsOpt(ctx.repoDir, prior.intake?.testmap), // L026: the stream parser counts in-session full-suite runs
       ...(resumeId ? { resumeSessionId: resumeId } : {}), ...planStopChecks(ctx.repoDir, prior, new Set(impacted), implementStage.limitS, ctx.baseSha), // in-session fix rounds, default on (LOKI_E10_STOP_CHECKS=0 off)
     };
     const unchained = (): SessionRunOptions => { const { resumeSessionId: _chained, ...rest } = first; return ownId ? { ...rest, brief: buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec), prior.intake?.assumptions) } : rest; }; // read at call time: the router may rewrite first.model; retries and conflict reruns never inherit the chain link

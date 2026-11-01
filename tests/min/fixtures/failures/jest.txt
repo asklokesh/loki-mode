@@ -1,0 +1,22 @@
+[31m[1m FAIL [0m src/calc.test.js
+  calc
+    [32m✓[0m adds (2 ms)
+    [31m✕[0m multiplies (3 ms)
+
+[1m[31m  ● calc › multiplies[0m
+
+    [2mexpect([0m[31mreceived[0m[2m).[0mtoBe[2m([0m[32mexpected[0m[2m)[0m
+
+    Expected: [32m12[0m
+    Received: [31m7[0m
+
+      [2m5 |[0m   test("multiplies", () => {
+    [31m[1m>[0m [2m6 |[0m     expect(multiply(3, 4)).toBe(12);
+      [2m  |[0m                            [31m[1m^[0m
+
+      [2mat Object.toBe ([0msrc/calc.test.js[2m:6:28)[0m
+
+[1mTest Suites: [0m[31m[1m1 failed[0m, 1 total
+[1mTests:       [0m[31m[1m1 failed[0m, [32m[1m1 passed[0m, 2 total
+[1mSnapshots:   [0m0 total
+[1mTime:[0m        0.412 s

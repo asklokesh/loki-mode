@@ -9,7 +9,7 @@ import { hooks } from "../hooks.ts";
 import { treeFingerprint } from "../../util/anti_loop.ts";
 import { buildFixResumeBrief, currentDiff, holdoutNote, runFixSession } from "../../runner/session_resume.ts";
 import { adjudicateWallConflict } from "../../util/conflict_resume.ts"; import { type ReadOnlyFile, restoreReadOnly } from "./implement.ts"; import { restoreBaseTests } from "../../util/test_guard.ts";
-import { installOwned } from "../../project_model/install.ts";
+import { installOwned } from "../../project_model/install.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
 function isTestFailure(g: FailureGroup): boolean { return !g.signature.startsWith("lint:") && g.signature !== "select-tests"; }
@@ -59,7 +59,7 @@ export const fixStage: Stage = {
     if (climbed) ctx.emit("route.escalated", "fix", { ...climbed });
     const prevDiag = (prior.fix?.diagnosis as string | undefined) ?? null; const chain = { sessionId: (prior.fix?.session_id ?? prior.implement?.session_id ?? null) as string | null, model: (prior.fix?.model ?? prior.implement?.model ?? ctx.model) as string };
     const effort = hooks.effort?.fix(round, testFailures.length > 0);
-    const sessionBase = { stage: "fix" as const, tier: "development" as const, limitS: fixStage.limitS, signal, cwd: ctx.repoDir, ...(effort ? { effort } : {}), ...(pinnedModel ? { model: pinnedModel } : {}), ...(routedPin ? { model: routedPin } : {}) };
+    const sessionBase = { stage: "fix" as const, tier: "development" as const, limitS: fixStage.limitS, signal, cwd: ctx.repoDir, ...suiteCmdsOpt(ctx.repoDir, prior.intake?.testmap), ...(effort ? { effort } : {}), ...(pinnedModel ? { model: pinnedModel } : {}), ...(routedPin ? { model: routedPin } : {}) };
     const fullBrief = buildFixBrief(task, groups, diffStat, repeated ? { priorDiagnosis: prevDiag } : undefined, holdoutFailed);
     let r = await runFixSession(ctx, sessionBase, `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel, fullBrief, buildFixResumeBrief(groups, diffStat, prevDiag, holdoutFailed)); // one session per round: a spec conflict starts no retry; the unchanged-tree rule below decides whether it is believed
     const ro = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [], wd = r.session.markers.specConflict && !r.session.killed ? await adjudicateWallConflict(ctx, { ...sessionBase, iterationId: r.ids[r.ids.length - 1]!, brief: fullBrief }, r.session, ro) : null; if (wd) r = { ...r, session: wd.session, ids: [...r.ids, ...wd.ids] }; // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT

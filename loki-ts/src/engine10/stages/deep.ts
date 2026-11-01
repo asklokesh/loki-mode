@@ -12,7 +12,7 @@ import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv } from "../../project_model/package_suite.ts";
-import { classifyCheck, corroboratePass, failureExcerpt, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { failIds } from "../failures.ts"; import { suiteEmptyOnBase } from "../../runner/repo_profile.ts";
+import { classifyCheck, corroboratePass, failureExcerpt, firstError, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { failIds } from "../failures.ts"; import { suiteEmptyOnBase } from "../../runner/repo_profile.ts";
 import { DEEP_CAP_S, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, STAGE_BUDGETS } from "../types.ts";
 import { REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
@@ -52,7 +52,7 @@ export function sessionCouncil(sessions: SessionRunner): CouncilRunner {
 }
 /** ReceiptCheck (types.ts) plus a `reason` field the contract does not carry,  the same disclosed-extra-field pattern testmap.ts's EngineTestMap and  verify.ts's VerifyCheck already use. */
 export interface DeepCheck extends ReceiptCheck {
-  reason?: string; ids?: string[]; excerpt?: string; // excerpt: redacted failure text for the fix brief; ids: failing test ids of the real run (failIds), read by verify's baseline attribution
+  reason?: string; ids?: string[]; first_error?: string; excerpt?: string; // first_error: the suite's first failing line (L005 stall signature); excerpt: redacted failure text for the fix brief; ids: failing test ids of the real run (failIds), read by verify's baseline attribution
 }
 export interface DeepOptions {
   pushScriptPath?: string;
@@ -103,7 +103,7 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
     if (lr) { checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS }); notProven.add(`${lr} (${name}; harness-owned)`); continue; } // FC-02: harness-owned, never a code failure
     const cls = await corroboratePass(classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...goRunner(spec.cmd, spec.args) }), out, spec.cmd, spec.args, { cwd: ctx.repoDir, env: suiteEnv(opts.path), signal });
     if (cls.result === "not_run" && r.exitCode === 0 && opts.targetPassed === true && suiteEmptyOnBase(ctx.repoDir, ctx.baseSha, [spec.cmd, ...spec.args].join(" "), [spec.cmd, ...spec.args].join(" "), cls, out)) { notProven.add(`${NA_PREFIX}${name} (ran 0 tests on base and head; the Wall or a task-named check passed with executed tests)`); continue; } // a full suite that discovers nothing is a disclosed note, not a gate, once a target check proved the change
-    checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: cls.result, duration_s: durationS, ...(cls.result === "fail" ? { ids: failIds(out), excerpt: failureExcerpt(out, ctx.repoDir) } : {}) }); // FC-16: exit 0 with no executed tests is not a pass
+    checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: cls.result, duration_s: durationS, ...(cls.result === "fail" ? { ids: failIds(out), first_error: firstError(out), excerpt: failureExcerpt(out, ctx.repoDir) } : {}) }); // FC-16: exit 0 with no executed tests is not a pass
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);
   }
 }

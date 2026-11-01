@@ -1,0 +1,15 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Calc -> /work/repo/Calc/bin/Debug/net8.0/Calc.dll
+  Calc.Tests -> /work/repo/Calc.Tests/bin/Debug/net8.0/Calc.Tests.dll
+Test run for /work/repo/Calc.Tests/bin/Debug/net8.0/Calc.Tests.dll (.NETCoreApp,Version=v8.0)
+A total of 1 test files matched the specified pattern.
+[31m  Failed Calc.Tests.CalcTests.Multiply [4 ms][0m
+[31m  Error Message:[0m
+[31m   Assert.Equal() Failure: Values differ
+Expected: 12
+Actual:   7[0m
+[31m  Stack Trace:[0m
+[31m     at Calc.Tests.CalcTests.Multiply() in /work/repo/Calc.Tests/CalcTests.cs:line 14[0m
+
+[31mFailed!  - Failed:     1, Passed:     1, Skipped:     0, Total:     2, Duration: 12 ms - Calc.Tests.dll (net8.0)[0m

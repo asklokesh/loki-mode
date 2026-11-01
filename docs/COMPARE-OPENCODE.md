@@ -93,7 +93,7 @@ that applies on every engine10 provider.
 
 `loki start` and `loki factory` run the Loki 10 engine for an issue reference or a multi-word task, when bun is available and the provider is claude, codex, cline, aider or opencode. A PRD file or a one-word argument takes the legacy engine, and so does a host with no bun or an unsupported `LOKI_PROVIDER` (those two print a one-line notice). On the Loki 10 path, `--provider opencode` and the default Claude path are the same loop: plan, implement, verify, seal, and a pull request unless you pass `--no-pr`. The receipt is still written with `--no-pr`, and `loki verify` checks it with no network.
 
-There is no transcript importer. A Claude Code or opencode session is not copied in. The handoff is the repository and the task. Inside one Loki run on the Claude SDK path, the plan session resumes into implement unless `LOKI_E10_FIX_RESUME=0`; other providers start implement fresh. `loki chat --attach` joins a run that is already going. `loki resume` continues a paused or interrupted run from its checkpoint.
+There is no transcript importer. A Claude Code or opencode session is not copied in. The handoff is the repository and the task. Inside one Loki run on the Claude SDK path, the plan session resumes into implement, and each fix round resumes the session before it, unless `LOKI_E10_FIX_RESUME=0`; other providers start implement fresh. `loki chat --attach` joins a run that is already going. `loki resume` continues a paused or interrupted run from its checkpoint.
 
 A rate limit is retried. A hard billing failure is not. A fix round that leaves the same failures stops fixing as STALLED with a receipt, and that receipt is not VERIFIED.
 

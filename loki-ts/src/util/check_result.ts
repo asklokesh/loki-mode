@@ -1142,6 +1142,15 @@ export function changedFiles(repoDir: string, baseSha: string, skip?: (f: string
   return [...new Set([...tracked, ...untracked])].filter((f) => !f.startsWith(".loki/") && !skip?.(f)); // skip: install-owned paths (FC-DEPS-NOT-INSTALLED)
 }
 
+/** L025: a content digest per changed path ("-" when the path is gone), recorded by each verify so the next one knows which files a fix round touched. */
+export function fileHashes(repoDir: string, files: string[]): Record<string, string> {
+  return Object.fromEntries(files.map((f) => { try { return [f, createHash("sha256").update(readFileSync(join(repoDir, f))).digest("hex").slice(0, 16)]; } catch { return [f, "-"]; } }));
+}
+/** L025: the paths whose content differs between two fileHashes records, including paths that left or joined the diff. */
+export function changedSince(prev: Record<string, string>, now: Record<string, string>): string[] {
+  return [...new Set([...Object.keys(prev), ...Object.keys(now)])].filter((f) => prev[f] !== now[f]).sort();
+}
+
 /** The skip-worktree paths that the effective sparse-checkout patterns genuinely exclude. core.sparseCheckout alone proves nothing (the
  *  implementer sets repo config), so the pattern file is evaluated by git itself: its lines are gitignore-syntax with last-match-wins, so a
  *  scratch repo takes them as info/exclude and `check-ignore --no-index` names the INCLUDED paths. Config off, file unreadable or any error
@@ -1377,7 +1386,8 @@ export function failureExcerpt(out: string, repoDir = "", cap = EXCERPT_GROUP_CA
   const take = (i: number, n = 1): void => { for (let k = 0; k < n && i + k < lines.length; k++) if (lines[i + k]!.trim()) pick.add(i + k); };
   lines.forEach((l, i) => {
     if (/^E\s/.test(l)) take(i);
-    else if (/^\s*(Expected|Received)\b/.test(l) || /^\s*expect\(.*\)\.\w+/.test(l)) take(i);
+    else if (/^\s*(Expected|Received|Actual)\b/.test(l) || /^\s*expect\(.*\)\.\w+/.test(l)) take(i);
+    else if (/^\s+[\w./-]+_test\.go:\d+: /.test(l) || /^\s*[-+] (?:Expected|Received)$/.test(l) || /\bAssert\.\w+\(\) Failure\b/.test(l)) take(i, /^\s*[-+] /.test(l) ? 1 : 2); // L005: go t.Errorf lines, vitest diff headers, xunit assertion messages
     else if (/^[\w./@-]+\.py:\d+: /.test(l)) take(i);
     else if (/AssertionError|^\s*(expected|actual)\b.*[:=]|^\s*(not ok|FAILED)\b/.test(l)) take(i, 3);
     else if (/^\s*--- FAIL/.test(l)) take(i, 4);
@@ -1674,8 +1684,8 @@ function goModDir(base: string, rel: string): string {
 }
 export function firstError(out: string): string { // the line naming the failing test, minus what varies between identical failures (A-113 stall signature)
   const goOut = (l: string): string => { try { const e = JSON.parse(l) as { Action?: string; Output?: string }; return typeof e.Action === "string" ? (e.Action === "output" || e.Action === "build-output" ? (e.Output ?? "") : "") : l; } catch { return l; } }; // Go json event stream: the failing line is inside the event's Output
-  const lines = out.slice(-65536).split("\n").map((l) => (l.startsWith("{") ? goOut(l) : l).trim()).filter(Boolean), l =lines.find((x) => /^(FAILED\s|\u25cf\s.*\u203a|not ok\s|_{3,}\s.+\s_{3,}$)/.test(x)) ?? lines.find((x) => /^[\w./-]+\.go:\d+:\d+: \S/.test(x)) /* go compiler line, before "FAIL pkg [build failed]" */ ?? lines.find((x) => /fail|error/i.test(x) && !/^(=|\u2713|ok\b|PASS)/.test(x)) ?? "";
-  return l.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
+  const lines = stripAnsi(out.slice(-65536)).split("\n").map((l) => (l.startsWith("{") ? goOut(l) : l).trim()).filter(Boolean), l =lines.find((x) => /^(FAILED\s|\u25cf\s.*\u203a|not ok\s|_{3,}\s.+\s_{3,}$|FAIL\s+\S.*\s>\s|\[ERROR\] (?!Tests run)\S+ .*<<< (?:FAILURE|ERROR)!)/.test(x)) /* L005: vitest "FAIL file > test" and surefire per-test lines are test-level */ ?? lines.find((x) => /^[\w./-]+\.go:\d+:\d+: \S/.test(x)) /* go compiler line, before "FAIL pkg [build failed]" */ ?? lines.find((x) => /fail|error/i.test(x) && !/^(=|\u2713|ok\b|PASS)/.test(x)) ?? "";
+  return l.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\b\d+(?:\.\d+)? ?(?:ms|s)\b\]?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
 }
 
 /** FC-PR-BODY-PUBLIC-HYGIENE: the one wording for a check that also fails on the base tree (verify's pre_red_checks). */

@@ -1,0 +1,7 @@
+[1m[33m● Validation Error:[0m
+
+  Module [1mts-jest[0m in the [1mtransform[0m option was not found.
+         [1m<rootDir>[0m is: /work/repo
+
+  [1mConfiguration Documentation:[0m
+  https://jestjs.io/docs/configuration

@@ -53,6 +53,7 @@ export function resolveModel(provider: string): string {
 // escalates. Per-message effort (mid-conversation output_config) is not exposed by the SDK; revisit when it is, instead of adding a new path.
 const EFFORT_RANK = ["low", "medium", "high", "xhigh", "max"];
 const sessionEffort = new Map<string, string>(); // provider session id -> effort it ran with, filled when a session closes
+export const rememberSessionEffort = (sessionId: string, effort: string): void => { sessionEffort.set(sessionId, effort); };
 /** Effort a call really runs at. A resumed session never drops below its recorded effort; a user LOKI_E10_EFFORT is explicit and always wins. */
 export function sessionEffortFor(opts: SessionRunOptions): { effort: string | undefined; escalated?: { from: string; to: string } } {
   const resolved = (hooks.effort?.resolve(opts.stage, opts.effort) ?? opts.effort);
@@ -74,6 +75,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   env["LOKI_E10_TIER"] = opts.tier; if (cfg.provider === "claude" && opts.stopChecks?.checks.length) env["LOKI_E10_STOP_CHECKS"] = JSON.stringify(opts.stopChecks); else delete env["LOKI_E10_STOP_CHECKS"]; // in-session fix rounds: only the per-call option sets it
   env["LOKI_E10_PROVIDER"] = cfg.provider;
   if (opts.disallowedTools) env["LOKI_E10_DISALLOWED_TOOLS"] = opts.disallowedTools; else delete env["LOKI_E10_DISALLOWED_TOOLS"];
+  if (opts.suiteCmds?.length) env["LOKI_E10_SUITE_CMDS"] = JSON.stringify(opts.suiteCmds); else delete env["LOKI_E10_SUITE_CMDS"]; // L026
   if (opts.resumeSessionId) env["LOKI_E10_RESUME_SESSION"] = opts.resumeSessionId; else delete env["LOKI_E10_RESUME_SESSION"]; // MW-2: only the per-call option sets it
   // Only ever ADD variables here; never blank an inherited var for a non-claude provider (LOKI_HOST_GUARD gates resolveProvider's fail-closed throw, providers.ts:63).
   if (cfg.provider === "claude") {
@@ -204,7 +206,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
           cfg.emit?.("session.ended", opts.stage, {
             session_id: sessionId, exit: exitKind(guard.ok ? code : 1, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), ...(authCause !== null ? { provider_error: authCause } : {}), duration_s: durationS, ...(killCause === "stalled" ? { reason: "stalled" } : {}),
           });
-          const psid = readSessionId(opts.cwd ?? process.cwd(), opts.iterationId), ran = sessionEffortFor(opts).effort; if (psid && ran) sessionEffort.set(psid, ran); // ER-05: what the next resume of this session must keep
+          const psid = readSessionId(opts.cwd ?? process.cwd(), opts.iterationId), ran = sessionEffortFor(opts).effort; if (psid && ran) rememberSessionEffort(psid, ran); // ER-05: what the next resume of this session must keep
           recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS, stdout + logText);
           untrack();
           resolve({ exit: guard.ok ? code : 1, markers, durationS, killed, summary: (stdout + logText).trim().slice(-4096), stderrTail: (guard.ok ? "" : `guard violation: ${guard.violations.map((v) => v.detail).join("; ")}\n`) + stderrTail.toString("utf8") + (logText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n") }); // only provider-written text is classified: child stderr and the SDK error line, never the agent transcript (A-113). The child echoes the provider's in-memory stderr (A-113b); only the claude CLI invoker returns one, since codex/cline/aider may print session activity on stderr (unmeasured)

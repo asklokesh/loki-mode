@@ -38,6 +38,7 @@ const LOAD_PATTERNS: [RegExp, string][] = [
   [/^(?:\S+: )?(?:line \d+: )?[\w.-]+: command not found$/m, "test runner executable not found"],
   [/^(?:\S+: )?\d+: [\w.-]+: not found$/m, "test runner executable not found (not installed)"], // POSIX sh: "sh: 1: <tool>: not found"
   [/^npm (?:error|ERR!) (?:npx )?canceled due to missing packages/m, "test runner package not installed"], // FC-DEPS-NOT-INSTALLED
+  [/^\s*\u25cf Validation Error:/m, "test runner configuration is invalid"], // L005: jest rejects its own config (unknown option, missing transform) before any test runs
 ];
 
 /** First line carrying the error, capped, for the NOT PROVEN reason. */
@@ -49,6 +50,7 @@ function firstLoadLine(out: string): string {
 
 /** Classifies a FAILED run's output (exit nonzero). A passing run must not be passed here. */
 export function classifyRunnerOutput(out: string): RunnerOutcome {
+  out = out.replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, ""); // L005: a raw runner stream still classifies (callers usually strip ANSI first)
   if (!hasRealTestFailure(out)) {
     for (const [re, why] of LOAD_PATTERNS) {
       if (re.test(out)) return { kind: "load_error", owner: "harness", reason: `runner could not load: ${why}: ${firstLoadLine(out)}` };

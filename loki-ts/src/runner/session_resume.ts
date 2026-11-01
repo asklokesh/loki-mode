@@ -1,4 +1,4 @@
-// MW-2 / CH-03: warm chain (plan, implement, fix 1..n) over one SDK session. plan -> implement is default ON (LOKI_E10_FIX_RESUME=0 opts out); fix rounds stay OFF, LOKI_E10_FIX_RESUME=1 opts in.
+// MW-2 / CH-03 / L006: warm chain (plan, implement, fix 1..n) over one SDK session, default ON for every link; LOKI_E10_FIX_RESUME=0 opts out.
 // Lives outside engine10/ so the core line budget is untouched. Nothing here feeds a verdict: the seal path
 // reads only the engine-recorded mode string and cost-file token counts, never a transcript (see tests/engine10/fix_resume.test.ts).
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -9,8 +9,8 @@ import type { RunContext, SessionResult, SessionRunOptions } from "../engine10/t
 
 /** Above this many first-turn prompt tokens a chain link starts fresh (a long resumed context costs more per turn than a cold write). */
 export const CHAIN_MAX_PROMPT_TOKENS = 100_000;
-/** CH-03: the warm chain is on only with LOKI_E10_FIX_RESUME=1. The default flips on after the RECEIPT-TRUTH resume-cost detection lands (a resumed session's total_cost_usd may be cumulative). */
-export const chainEnabled = (): boolean => process.env["LOKI_E10_FIX_RESUME"] === "1";
+/** L006: the warm chain is on unless LOKI_E10_FIX_RESUME=0. RECEIPT-TRUTH resume-cost detection (contrib/cost_records.ts resumeVerdicts) handles a resumed session's cumulative total_cost_usd. */
+export const chainEnabled = (): boolean => process.env["LOKI_E10_FIX_RESUME"] !== "0";
 
 /** first_turn_prompt_tokens the stream parser recorded for one iteration's result-cost file, or null. */
 export function readFirstTurnTokens(repoDir: string, iterationId: string): number | null {
@@ -22,7 +22,7 @@ export function readFirstTurnTokens(repoDir: string, iterationId: string): numbe
 
 /** CH-03: whether implement may resume plan's session. Same model, plan exited ok (its output carries a plan), SDK invoker, under 100K. */
 export function planChain(ctx: RunContext, implementModel: string, planModel: string): { id: string } | { why: string } {
-  if (process.env["LOKI_E10_FIX_RESUME"] === "0") return { why: "LOKI_E10_FIX_RESUME=0" }; // COST-5: plan -> implement is default-on; fix rounds stay opt-in via chainEnabled
+  if (!chainEnabled()) return { why: "LOKI_E10_FIX_RESUME=0" }; // COST-5 / L006: every chain link is default-on
   if (ctx.provider !== "claude" || process.env["LOKI_E10_INVOKER"] === "cli") return { why: "provider is not the SDK" };
   const plan = ctx.outputs().plan;
   const planIter = (plan?.iteration_ids as string[] | undefined)?.at(-1);
@@ -125,8 +125,8 @@ export interface FixSessionOutcome {
   cacheRead: number;
 }
 
-/** Runs one fix round's session. Default (flag unset): exactly one fresh session. LOKI_E10_FIX_RESUME=1: resume the latest session of
- *  the chain (implement, then each fix round) on the SAME model; any resume failure starts fresh and records why. */
+/** Runs one fix round's session. Default (L006): resume the latest session of the chain (implement, then each fix round) on the SAME model,
+ *  at the effort that session already runs (an effort change resets the prompt cache); any resume failure starts fresh and records why. LOKI_E10_FIX_RESUME=0: one fresh session. */
 export async function runFixSession(
   ctx: RunContext, base: Omit<SessionRunOptions, "iterationId" | "brief">, iterationId: string, priorIds: string[],
   chain: { sessionId: string | null; model: string }, actualModel: string, fullBrief: string, resumeBrief: string,
@@ -135,7 +135,7 @@ export async function runFixSession(
   const own = interruptedSession(ctx, iterationId);
   if ("id" in own) { mode = "resumed (interrupted session)"; resumeId = own.id; interrupted = true; }
   else if (chainEnabled()) {
-    if (ctx.provider !== "claude" || process.env["LOKI_E10_INVOKER"] === "cli") mode = "fallback (provider is not the SDK)";
+    if (ctx.provider !== "claude" || process.env["LOKI_E10_INVOKER"] === "cli") why = "provider is not the SDK"; // no resumable session: a plain fresh round, not a failed resume
     else if (!chain.sessionId) mode = "fallback (no session id recorded)";
     else if (actualModel !== chain.model) why = `model changed ${chain.model} -> ${actualModel}`; // L1: escalation or downgrade never keeps the old model
     else {
@@ -147,7 +147,8 @@ export async function runFixSession(
   }
   let iterId = iterationId;
   const ids = [...priorIds, iterId];
-  let session = await ctx.sessions.run({ ...base, iterationId: iterId, brief: interrupted ? INTERRUPTED_BRIEF : resumeId ? resumeBrief : fullBrief, ...(resumeId ? { resumeSessionId: resumeId } : {}) });
+  const { effort: _escalate, ...warm } = base; // L006: a chain resume keeps the effort the session was created with (session.ts sessionEffortFor), so round 1 reads the cache instead of resetting it
+  let session = await ctx.sessions.run({ ...(resumeId && !interrupted ? warm : base), iterationId: iterId, brief: interrupted ? INTERRUPTED_BRIEF : resumeId ? resumeBrief : fullBrief, ...(resumeId ? { resumeSessionId: resumeId } : {}) });
   if (resumeId && !session.killed && session.exit !== 0) { // never blocks: a failed resume reruns fresh with the original brief
     const err = (session as unknown as { stderrTail?: string }).stderrTail ?? "";
     if (interrupted) process.stderr.write(`fix: recorded session ${resumeId} was not resumable, starting a fresh session\n`);

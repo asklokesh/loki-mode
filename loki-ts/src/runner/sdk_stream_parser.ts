@@ -246,6 +246,7 @@ export async function consumeSdkStream(
   const toolsByTurn = new Map<string, Set<string>>();
   const skillReads: string[] = [];
   let toolResults = 0, toolErrors = 0, mcpToolCount: number | undefined, anonTurn = 0, mcpToolWarned = false;
+  const suiteCmds = parseSuiteCmds(process.env["LOKI_E10_SUITE_CMDS"]); let suiteRuns = 0; // L026: in-session runs of the repo's full-suite command, recorded only when the commands are known
   const toolTelemetry = (): Record<string, unknown> => {
     const perTurn = [...toolsByTurn.values()].map((t) => t.size);
     return {
@@ -253,6 +254,7 @@ export async function consumeSdkStream(
       ...(toolResults ? { tool_results: toolResults, tool_errors: toolErrors, tool_error_rate: toolErrors / toolResults } : {}),
       ...(mcpToolCount !== undefined ? { mcp_tool_count: mcpToolCount, mcp_tool_def_tokens_estimated: mcpToolCount * MCP_TOOL_DEF_TOKENS_EST } : {}),
       ...(skillReads.length ? { skill_module_read: skillReads } : {}),
+      ...(suiteCmds.length ? { full_suite_runs: suiteRuns } : {}),
     };
   };
 
@@ -329,6 +331,7 @@ export async function consumeSdkStream(
           const readPath = tool === "Read" ? input["file_path"] : undefined;
           const mod = typeof readPath === "string" ? /(?:^|\/)((?:skills|references)\/[^/]+\.md)$/.exec(readPath)?.[1] : undefined;
           if (mod && !skillReads.includes(mod)) skillReads.push(mod);
+          if (tool === "Bash" && typeof input["command"] === "string" && isSuiteRun(input["command"], suiteCmds)) suiteRuns++;
           bumpOrchestratorTool(agents, tool, toolDesc(tool, input));
 
           if (tool === "Task") {
@@ -565,6 +568,21 @@ function bumpOrchestratorTool(
   if (!o) return;
   o.tool_count = (o.tool_count ?? 0) + 1;
   o.current_task = desc ? `${tool}: ${desc.slice(0, 80)}` : `Using ${tool}...`;
+}
+
+/** L026: the suite command lines engine10 handed this session (LOKI_E10_SUITE_CMDS, a JSON array); [] when absent or malformed. */
+export function parseSuiteCmds(raw: string | undefined): string[] {
+  try { const v = JSON.parse(raw ?? "[]") as unknown; return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "") : []; } catch { return []; }
+}
+/** L026: true when one segment of a shell command runs a full-suite command: the same words (the executable compared by basename) followed only by flags
+ *  or redirections. A named test file or pattern is a targeted run, not the suite. Env assignments before the executable are skipped. */
+export function isSuiteRun(command: string, suites: string[]): boolean {
+  const words = (s: string): string[] => s.trim().split(/\s+/).filter(Boolean).map((w) => w.replace(/^['"]|['"]$/g, ""));
+  const base = (w: string): string => w.slice(w.lastIndexOf("/") + 1);
+  return command.split(/&&|\|\||;|\|/).some((seg) => {
+    const w = words(seg); while (w.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0]!)) w.shift();
+    return suites.some((s) => { const sw = words(s); return sw.length > 0 && w.length >= sw.length && base(w[0]!) === base(sw[0]!) && sw.slice(1).every((x, i) => w[i + 1] === x) && w.slice(sw.length).every((x) => x.startsWith("-") || /^\d?>/.test(x) || /^&?>/.test(x)); });
+  });
 }
 
 // toolDesc: mirror the Python per-tool description extraction exactly.

@@ -1,0 +1,8 @@
+=== RUN   TestAdd
+--- PASS: TestAdd (0.00s)
+=== RUN   TestMultiply
+    calc_test.go:12: [31mmultiply(3, 4) = 7, want 12[0m
+--- FAIL: TestMultiply (0.00s)
+FAIL
+FAIL	example.com/calc	0.004s
+FAIL

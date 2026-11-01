@@ -1,0 +1,19 @@
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.1, pytest-8.3.2, pluggy-1.5.0
+rootdir: /work/repo
+collected 3 items
+
+tests/test_calc.py [32m.[0m[31mF[0m[32m.[0m                                                 [100%]
+
+=================================== FAILURES ===================================
+[31m[1m________________________________ test_multiply _________________________________[0m
+
+    def test_multiply():
+>       assert multiply(3, 4) == 12
+[31mE       assert 7 == 12[0m
+[31mE        +  where 7 = multiply(3, 4)[0m
+
+[31mtests/test_calc.py[0m:9: AssertionError
+=========================== short test summary info ============================
+[31mFAILED[0m tests/test_calc.py::test_multiply - assert 7 == 12
+[31m========================= [1m1 failed[0m[31m, 2 passed in 0.03s =========================[0m

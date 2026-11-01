@@ -84,7 +84,8 @@ export interface SessionRunOptions {
   cwd?: string; stopChecks?: { checks: { cwd: string; cmd: string; args: string[]; protect?: boolean }[]; rounds: number; budgetS: number; repoDir: string; baseSha: string; installCreated?: unknown }; /* claude SDK route: repo checks run at each Stop; a failure blocks the stop and returns to the same session, `rounds` times at most, `budgetS` seconds in all; other routes ignore it */ disallowedTools?: string; // Q18-04: comma list passed as --disallowedTools (read-only reviewer)
   /** Pins this session's model for its tier (E-45 Wall on sonnet); unset inherits the run model. */
   model?: string;
-  resumeSessionId?: string; // MW-2: provider session to resume (LOKI_E10_FIX_RESUME); unset starts fresh
+  suiteCmds?: string[]; // L026: the repo's full-suite command lines; the stream parser records full_suite_runs per session
+  resumeSessionId?: string; // MW-2: provider session to resume (default on, LOKI_E10_FIX_RESUME=0 opts out); unset starts fresh
   maxOutputTokens?: number; /* claude: per-response output limit, CLAUDE_CODE_MAX_OUTPUT_TOKENS; unset keeps the provider default */ effort?: string; // EL-W0-06, L1: provider reasoning effort; omitted when unset so the provider default applies
 }
 export interface SessionResult {
