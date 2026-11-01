@@ -88,7 +88,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
     // Deterministic exit: no repo/test map needed, and never a session/LLM call.
     return { status: "completed", data: { ...common, ignore_snapshot: ignoreSnapshot(ctx.repoDir), task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true } };
   }
-  const gate = await triageGate(task, ctx, ambiguityGate(task, ctx.runDir)); const ambiguity = gate.data; // interactive: stop at a checkpoint with a resume offer; headless: assumptions go to the receipt; triage (features/triage.ts) stops a human or spec goal and records the class
+  const gate = triageGate(task, ctx.repoDir, ambiguityGate(task, ctx.runDir)); const ambiguity = gate.data; // interactive: stop at a checkpoint with a resume offer; headless: assumptions go to the receipt; triage (features/triage.ts) only records the class here, it never stops a direct run
   if (gate.stop) return { status: "failed", data: { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...gate.stop.failData }, reason: gate.stop.reason };
   mkdirSync(ctx.runDir, { recursive: true });
   const repomapRef = join(ctx.runDir, "repomap.json");

@@ -1,9 +1,6 @@
-// Triage router: implement, spec or human for one work item before a run is spent. New file: spec_ambiguity.ts only scores text, and issues_run.ts triage is an opt-in model call for `loki issues run`; nothing owned per-item routing for `loki backlog` and the one-line goal gate.
-import { join } from "node:path";
+// Triage router: implement, spec or human for one work item before a run is spent. New file: spec_ambiguity.ts only scores text, and issues_run.ts triage is an opt-in model call for `loki issues run`; nothing owned per-item routing for `loki backlog` (the only caller that skips work) or recording a class on a direct run.
 import { buildTestMap } from "../engine10/testmap.ts";
-import type { RunContext } from "../engine10/types.ts";
 import { ambiguityThreshold, scoreAmbiguity } from "./spec_ambiguity.ts";
-import { generateSpec, SPEC_DIR, slugify } from "../util/spec_file.ts";
 
 export type TriageClass = "implement" | "spec" | "human";
 export const TRIAGE_CLASSES: readonly TriageClass[] = ["implement", "spec", "human"];
@@ -67,29 +64,20 @@ export function repoSignals(repoDir: string): RepoSignals | undefined {
   try { const m = buildTestMap(repoDir); return { runners: m.runners, tests: m.tests.length }; } catch { return undefined; }
 }
 
-const shq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
 const validTriage = (x: unknown): { class: TriageClass; reason: string } | null => {
   const t = x as { class?: unknown; reason?: unknown } | null;
   return t && typeof t === "object" && TRIAGE_CLASSES.includes(t.class as TriageClass) ? { class: t.class as TriageClass, reason: typeof t.reason === "string" ? t.reason : "" } : null;
 };
 type Gate = { stop?: { failData: Record<string, unknown>; reason: string }; data: Record<string, unknown> };
 
-/** Intake hook around ambiguityGate. A backlog child carries its class in LOKI_TRIAGE_CLASS/LOKI_TRIAGE_REASON (recorded, never re-triaged). A one-line goal is triaged only when the ambiguity gate fired:
- *  human stops; spec stops with a drafted .loki/specs file (headless) or the gate's questions (interactive); LOKI_E10_ASSUME=1 still runs a spec item on recorded assumptions. LOKI_TRIAGE=0 turns the router off. */
-export async function triageGate(task: string, ctx: Pick<RunContext, "repoDir" | "sessions">, gate: Gate, env: NodeJS.ProcessEnv = process.env): Promise<Gate> {
+/** Intake hook around ambiguityGate: records, never routes. A direct run (`loki "<goal>"`, `loki start owner/repo#N`) always runs exactly as the gate decided; only `loki backlog` skips or drafts.
+ *  A backlog child carries its class in LOKI_TRIAGE_CLASS/LOKI_TRIAGE_REASON (recorded, never re-triaged); a direct run is triaged only when the ambiguity gate fired. LOKI_TRIAGE=0 records nothing. */
+export function triageGate(task: string, repoDir: string, gate: Gate, env: NodeJS.ProcessEnv = process.env): Gate {
   const given = validTriage({ class: env.LOKI_TRIAGE_CLASS, reason: env.LOKI_TRIAGE_REASON });
-  if (given) return { ...gate, data: { ...gate.data, triage: given } };
-  if (env.LOKI_TRIAGE === "0" || !(gate.stop || "ambiguity_score" in gate.data)) return gate;
-  const t = triageItem({ title: task }, repoSignals(ctx.repoDir)), triage = { class: t.class, reason: t.reason };
-  if (t.class === "human") return { data: {}, stop: { failData: { ...(gate.stop?.failData ?? {}), triage }, reason: `triage: human, not run: do it by hand, or rerun with LOKI_TRIAGE=0 to run it anyway (${t.reason})` } };
-  if (t.class === "implement" || env.LOKI_E10_ASSUME === "1") return { ...gate, data: { ...gate.data, triage: t.class === "implement" ? triage : { class: "implement", reason: `LOKI_E10_ASSUME=1: run on recorded assumptions (triage said spec: ${t.reason})` } } };
-  if (gate.stop) return { data: {}, stop: { failData: { ...gate.stop.failData, triage }, reason: `${gate.stop.reason}, or draft a spec: loki plan ${shq(task)} --spec` } };
-  const rel = join(SPEC_DIR, `${slugify(task)}.md`);
-  try { await generateSpec({ task, repoDir: ctx.repoDir, sessions: ctx.sessions }); } catch (e) { // an existing spec is kept and reused, never overwritten
-    const msg = (e as Error).message;
-    if (!/^spec exists/.test(msg)) return { data: {}, stop: { failData: { ...gate.data, triage }, reason: `triage: spec, but the draft failed: run loki plan ${shq(task)} --spec (${msg}; ${t.reason})` } };
-  }
-  return { data: {}, stop: { failData: { ...gate.data, triage, spec_draft: rel }, reason: `triage: spec, nothing run; edit or approve ${rel}, then run: loki start --spec ${rel} (${t.reason})` } };
+  const fired = Boolean(gate.stop) || "ambiguity_score" in gate.data;
+  if (!given && (env.LOKI_TRIAGE === "0" || !fired)) return gate;
+  const triage = given ?? (({ class: c, reason }) => ({ class: c, reason }))(triageItem({ title: task }, repoSignals(repoDir)));
+  return gate.stop ? { ...gate, stop: { ...gate.stop, failData: { ...gate.stop.failData, triage } } } : { ...gate, data: { ...gate.data, triage } };
 }
 
 /** Additive receipt block from intake's recorded triage; empty (key omitted, receipt hashes unchanged) when none. */

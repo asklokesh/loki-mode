@@ -9,16 +9,19 @@
 #   backlog run:     only implement issues launch (each child gets LOKI_TRIAGE_CLASS/REASON), every
 #                    spec issue gets .loki/specs/<slug>.md plus the exact `loki start --spec` command,
 #                    human issues are listed with the reason; --issues fetches bodies with gh issue view.
-#   one-line goal:   when the ambiguity gate fires, a spec goal drafts a spec and runs nothing, a human
-#                    goal is refused; a backlog child's class lands in the signed receipt and the PR line;
-#                    a clear goal is untouched (no triage key, receipt shape unchanged).
+#   direct run:      triage never stops or refuses `loki "<goal>"`: when the ambiguity gate fires, a
+#                    spec-class and a human-class goal both RUN to VERIFIED and carry the triage block in
+#                    the receipt; a backlog child's class lands in the signed receipt, the run events and
+#                    the PR line; a clear goal is untouched (no triage key, receipt shape unchanged).
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/features/triage.ts SECRET_OP_RE: replace the verb list with a word no issue uses
 #      (`never_matches`): issue 7 (rotate the production secret) classifies as implement and the
-#      classifier, backlog run and human-goal checks fail.
+#      classifier, backlog run and direct human-goal receipt checks fail.
 #   2. loki-ts/src/features/triage.ts triageItem: return class "implement" instead of "spec" for the
 #      vague rule: issues 4 and 5 classify as implement and are launched.
+#   3. loki-ts/src/features/triage.ts triageGate: return a stop for a spec-class direct run (as an
+#      early draft of this feature did): the direct spec goal exits 1 and its run checks fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -101,21 +104,23 @@ sel="$(cd "$REPO" && TRIAGE_GH_LOG="$T/gh.log" ${TO[@]+"${TO[@]}"} bash "$ROOT/b
 grep -q 'gh issue view 4' "$T/gh.log" 2>/dev/null && printf '%s\n' "$sel" | grep -q '^backlog: #4 spec ' && printf '%s\n' "$sel" | grep -q '^backlog: #7 human ' \
     && ok "backlog --issues: bodies fetched with gh issue view and triaged" || bad "backlog --issues: not triaged from fetched bodies"
 
-# 5. one-line goal through the engine (stub provider, headless)
+# 5. direct runs through the engine (stub provider, headless): triage records, never stops
 goal() { # goal <repo-name> <text> -> OUT, RC, REPO
     mkrepo "$1"; git -C "$REPO" remote remove origin
     OUT="$(cd "$REPO" && E2E_STUB_MODE=done E2E_STUB_LOG="$T/stub-$1.log" LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" \
         ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$2" </dev/null 2>&1)"; RC=$?
 }
 receipt_key() { python3 -I -c 'import glob,json,sys; r=[json.load(open(f)) for f in glob.glob(sys.argv[1] + "/.loki/runs/*/receipt.json")]; print(json.dumps(r[0].get("triage")) if r else "NO_RECEIPT")' "$1"; }
-goal amb "Make the calc module fast and robust somehow. TBD which functions. Maybe add caching or something?"
-[ "$RC" -ne 0 ] && ok "spec goal: stopped before any run (exit $RC)" || bad "spec goal: ran"
-f="$(printf '%s\n' "$OUT" | sed -n 's/.*loki start --spec \(\.loki\/specs\/[^ ,]*\.md\).*/\1/p' | head -1)"
-[ -n "$f" ] && [ -f "$REPO/$f" ] && ok "spec goal: spec drafted and the exact run command printed ($f)" || { bad "spec goal: no drafted spec command"; printf '%s\n' "$OUT" | grep Reason | sed 's/^/    | /'; }
-grep -q implement "$T/stub-amb.log" 2>/dev/null && bad "spec goal: the implement stage ran" || ok "spec goal: no implement session"
-goal hum "Rotate the production API key somehow, TBD. Maybe whatever works? Should it be weekly or monthly?"
-[ "$RC" -ne 0 ] && has "human goal: refused with the reason" "$OUT" "triage: human, not run" || bad "human goal: not refused (exit $RC)"
-grep -q implement "$T/stub-hum.log" 2>/dev/null && bad "human goal: the implement stage ran" || ok "human goal: no implement session"
+receipt_class() { python3 -I -c 'import glob,json,sys; r=[json.load(open(f)) for f in glob.glob(sys.argv[1] + "/.loki/runs/*/receipt.json")]; t=(r[0].get("triage") or {}) if r else {}; print("%s:%s" % (t.get("class"), "reason" if t.get("reason") else "noreason") if r else "NO_RECEIPT")' "$1"; }
+direct() { # direct <name> <class> <goal>: the direct run must not stop, must implement, and must record the class
+    goal "$1" "$3"
+    [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -Eq '^Outcome:[[:space:]]+VERIFIED' && ok "direct $2 goal: runs to VERIFIED (exit 0), not stopped by triage" || { bad "direct $2 goal: exit $RC, not VERIFIED"; printf '%s\n' "$OUT" | grep -E '^(Outcome|Reason)' | sed 's/^/    | /'; }
+    grep -q implement "$T/stub-$1.log" 2>/dev/null && ok "direct $2 goal: the implement session ran" || bad "direct $2 goal: no implement session"
+    [ -z "$(find "$REPO/.loki/specs" -name '*.md' 2>/dev/null)" ] && ok "direct $2 goal: no spec drafted" || bad "direct $2 goal: drafted a spec"
+    [ "$(receipt_class "$REPO")" = "$2:reason" ] && ok "direct $2 goal: receipt carries triage class $2 with a reason" || bad "direct $2 goal: receipt triage is $(receipt_class "$REPO")"
+}
+direct amb spec "Make the calc module fast and robust somehow. TBD which functions. Maybe add caching or something?"
+direct hum human "Rotate the production API key somehow, TBD. Maybe whatever works? Should it be weekly or monthly?"
 LOKI_TRIAGE_CLASS=implement LOKI_TRIAGE_REASON="concrete target (call)" goal child "add a multiply(a, b) function to calc.ts"
 [ "$RC" -eq 0 ] && [ "$(receipt_key "$REPO")" = '{"class": "implement", "reason": "concrete target (call)"}' ] && ok "backlog child: class and reason sealed in the receipt" || bad "backlog child: receipt triage is $(receipt_key "$REPO") (exit $RC)"
 grep -q '"triage":{"class":"implement"' "$REPO"/.loki/runs/*/events.jsonl 2>/dev/null && ok "backlog child: class recorded in the run events" || bad "backlog child: no triage in events.jsonl"
