@@ -34,18 +34,18 @@ the same path. `-v` means `--verbose`, `--budget` and `--budget-limit` mean
 `--no-dashboard` are accepted and ignored. A PRD file path that does not exist
 exits 2 with "PRD file not found".
 
-The previous loop (autonomy/run.sh) runs only when:
+`loki start` and `loki quick` with no task resume an interrupted run when there
+is one; otherwise they print the `loki "<goal>"` usage and exit 64. `loki demo`
+and `loki quickstart` build with `loki start <prd>`, so they run Loki 10 too.
 
-1. you pass `--engine legacy` or set `LOKI_ENGINE=legacy` (`--engine engine10`
-   forces Loki 10 and refuses a flag it cannot honor; the flag wins over the
-   variable), or
-2. the call carries a flag Loki 10 does not support (for example `--simple`,
-   `--complex`, `--parallel`, `--github`, `--sandbox`, `--max-iterations`).
-   Only that call goes to the previous loop, and one stderr line names the flag
-   and the engine chosen, or
-3. LOKI_PROVIDER (or `--provider`) names a provider Loki 10 has no invoker
-   for (anything but claude, codex, cline, aider, opencode), or bun is missing, or the
-   PRD is larger than 100000 bytes. One stderr line says why.
+A flag Loki 10 does not support (for example `--simple`, `--parallel`,
+`--github`, `--sandbox`, `--max-iterations`) is refused with exit 2 and a line
+naming its replacement. A provider other than claude, codex, cline, aider or
+opencode, or a machine with no working bun, also exits 2 with the fix.
+
+The previous loop (autonomy/run.sh) runs only when you pass `--engine legacy`
+or set `LOKI_ENGINE=legacy` (the flag wins over the variable), or when the PRD
+is larger than 100000 bytes (one stderr line says why).
 
 `loki <word>` with a single bare word stays the command namespace (`loki doctor`),
 so use `loki start <word>` for a one-word brief. A first argument starting with

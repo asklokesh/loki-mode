@@ -9,6 +9,9 @@
 #              them (exit code, outcome, verify checks); doctor exits 0 and lists both as optional.
 #   L035 all:  no git identity, no commits and a logged-out claude give one exit 2 with 3 numbered
 #              blockers; --dry-run prints the same list; running the printed fixes verbatim passes.
+#   L009 one engine: bare `loki start` and `loki quick` exit 64 with the loki "<goal>" usage; `loki start
+#              ./prd.md`, `loki quickstart <prd> --yes` and `loki demo --yes` each seal an engine10 receipt;
+#              no bun and LOKI_PROVIDER=foo each exit 2 with the fix; none writes .loki/autonomy-state.json.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. skills/fixtures/demo-receipt/pubkey.jwk replaced with {}: the tour stops printing VERIFIED.
@@ -16,6 +19,10 @@
 #      and run checks fail (no_provider).
 #   3. loki-ts/src/engine10/preflight.ts keeps only the first blocker: the L035 list checks fail.
 #   4. autonomy/lib/setup-requirements.json python3 level back to required: the doctor checks fail.
+#   5. autonomy/route.sh: a no-positional start returns undecided again (legacy cmd_start): the bare start checks fail.
+#   6. autonomy/quickstart.sh: build with `cmd_start "$target" --yes --no-plan` again: the quickstart receipt check fails.
+#   7. autonomy/loki cmd_demo: build with `cmd_start prd.md --simple --yes` again: the demo receipt check fails.
+#   8. bin/loki: no working bun sets _e10=0 (legacy fallback) instead of exit 2: the no-bun checks fail.
 # No network, no model, no real key: the fake key never leaves the machine (stubs answer every call).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -166,5 +173,49 @@ while IFS= read -r line; do
 done <<< "$blk"
 out="$(cd "$REPO" && "${l035_env[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$GOAL" --no-pr 2>&1)"; rc=$?
 [ -n "$(run_id "$REPO")" ] && [ "$rc" -ne 2 ] && ok "L035 after the printed fixes the next run passes preflight (exit $rc)" || { bad "L035 still refused after the printed fixes (exit $rc)"; printf '%s\n' "$out" | tail -6 | sed 's/^/    | /'; }
+
+# ---------------------------------------------------------------------------
+echo "TEST: newcomer path (L009: every first-run entry point runs the default engine, never the legacy loop)"
+# The legacy loop (autonomy/run.sh) writes .loki/autonomy-state.json; engine10 seals .loki/runs/e10-*/receipt.json.
+printf '[user]\n\tname = e2e\n\temail = e2e@example.invalid\n' > "$HOME/.gitconfig"
+l009_env=(env -u ANTHROPIC_API_KEY -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_PROVIDER -u LOKI_ENGINE PATH="$E2E/bin:$BARE" LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$E2E/bin/claude" E2E_STUB_MODE=done)
+no_legacy() { [ ! -e "$1/.loki/autonomy-state.json" ] && ok "L009 $2: no legacy state (.loki/autonomy-state.json)" || bad "L009 $2 ran the legacy loop"; }
+e10_receipt() { ls "$1"/.loki/runs/e10-*/receipt.json >/dev/null 2>&1 && ok "L009 $2: engine10 sealed a receipt" || bad "L009 $2: no .loki/runs/e10-*/receipt.json"; }
+fixture_repo l009-bare
+out="$(cd "$REPO" && "${l009_env[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start </dev/null 2>&1)"; rc=$?
+[ "$rc" -eq 64 ] && ok "L009 bare loki start exits 64" || bad "L009 bare loki start exited $rc"
+has "L009 bare loki start prints the goal usage" "$out" 'usage: loki "<goal>"'
+no_legacy "$REPO" "bare start"
+out="$(cd "$REPO" && "${l009_env[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" quick </dev/null 2>&1)"; rc=$?
+[ "$rc" -eq 64 ] && ok "L009 bare loki quick exits 64" || bad "L009 bare loki quick exited $rc"
+no_legacy "$REPO" "bare quick"
+fixture_repo l009-prd
+printf '# PRD\n\nAdd a multiply(a, b) function to calc.ts.\n' > "$REPO/prd.md"
+out="$(cd "$REPO" && "${l009_env[@]}" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009a.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start ./prd.md --no-pr </dev/null 2>&1)"; rc=$?
+e10_receipt "$REPO" "start ./prd.md"; no_legacy "$REPO" "start ./prd.md"
+fixture_repo l009-qs
+printf '# PRD\n\nAdd a multiply(a, b) function to calc.ts.\n' > "$T/l009-prd.md"
+# quickstart's plan step runs the PRD estimator, which needs python3 (absent from BARE).
+out="$(cd "$REPO" && "${l009_env[@]}" PATH="$E2E/bin:$PATH" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009b.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" quickstart "$T/l009-prd.md" --yes </dev/null 2>&1)"; rc=$?
+e10_receipt "$REPO" "quickstart <prd> --yes"; no_legacy "$REPO" "quickstart"
+DEMO="$T/l009-demo"
+out="$("${l009_env[@]}" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009c.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" demo --yes --dir "$DEMO" </dev/null 2>&1)"; rc=$?
+e10_receipt "$DEMO" "demo --yes"; no_legacy "$DEMO" "demo"
+# No working bun: exit 2 with the install command, nothing runs. bun on PATH is the only one (no bundled @oven/bun-* here).
+NOBUN="$T/nobun-bin"; mkdir -p "$NOBUN"
+for f in "$BARE"/*; do [ "${f##*/}" = bun ] || ln -s "$f" "$NOBUN/${f##*/}"; done
+fixture_repo l009-nobun
+if ls "$ROOT"/node_modules/@oven/bun-*/bin/bun >/dev/null 2>&1; then
+    ok "L009 no-bun leg not applicable: this checkout bundles bun"
+else
+    out="$(cd "$REPO" && "${l009_env[@]}" PATH="$E2E/bin:$NOBUN" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "fix the login bug" </dev/null 2>&1)"; rc=$?
+    [ "$rc" -eq 2 ] && ok "L009 no bun: exits 2" || bad "L009 no bun: exited $rc"
+    has "L009 no bun: prints the install command" "$out" "curl -fsSL https://bun.sh/install | bash"
+    no_legacy "$REPO" "no bun"
+fi
+out="$(cd "$REPO" && "${l009_env[@]}" LOKI_PROVIDER=foo ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "fix the login bug" </dev/null 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && ok "L009 LOKI_PROVIDER=foo exits 2" || bad "L009 LOKI_PROVIDER=foo exited $rc"
+has "L009 LOKI_PROVIDER=foo names the five providers" "$out" "claude, codex, cline, aider, opencode"
+no_legacy "$REPO" "LOKI_PROVIDER=foo"
 
 finish

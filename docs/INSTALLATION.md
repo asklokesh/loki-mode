@@ -225,6 +225,6 @@ There is no importer that copies a Claude Code or OpenCode transcript into a Lok
 ## Troubleshooting
 
 - `loki: command not found`: the global bin directory of your package manager is not on `PATH` (`npm prefix -g` shows where npm installs).
-- `the Loki 10 engine cannot run on this machine: no working bun`: install Bun, or reinstall without `--omit=optional`.
+- `the Loki 10 engine cannot run on this machine: no working bun` (exit 2, nothing runs): install Bun (`curl -fsSL https://bun.sh/install | bash`), or reinstall without `--omit=optional`.
 - A provider is missing: `loki doctor` names it and prints the install command.
 - Anything else: `loki doctor --json`, then [KNOWN-ISSUES.md](KNOWN-ISSUES.md), then `loki crash` to file a report.

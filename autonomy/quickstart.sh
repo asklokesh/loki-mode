@@ -4,21 +4,21 @@
 # `loki quickstart` is a thin orchestrator over three already-shipped pieces:
 #   1. the provider install offer (autonomy/provider-offer.sh, slice B)
 #   2. the honest cost estimator (show_prd_plan in autonomy/loki, slice A)
-#   3. cmd_start (autonomy/loki) for the actual build
+#   3. `loki start <prd>` (bin/loki -> the default engine, engine10) for the build
 # plus one new, deterministic, offline keyword matcher over templates/.
 #
-# It NEVER reimplements the runner and NEVER fabricates a number: every figure
-# in step 4 comes from the same estimator cmd_start will run with, so the quote
-# equals the charge by construction (the slice-A honesty keystone).
+# It NEVER reimplements the runner and NEVER fabricates a number: step 4 shows the
+# PRD estimator's figures, and the run prints the engine's own estimate on its
+# first line before any model session.
 #
 # Sourcing contract (load-bearing for tests): this file defines functions ONLY.
 # It runs no top-level command and never calls `main`. autonomy/loki sources it
 # near the top so cmd_quickstart and its helpers are in scope for the dispatch
 # case. Tests source it directly, override the _qs_non_interactive predicate, and
-# stub cmd_start / provider_offer_gate to prove the composition without spending
+# stub provider_offer_gate to prove the composition without spending
 # or starting a build. Because it is sourced (not a subprocess), it relies on the
 # caller (autonomy/loki) for SKILL_DIR, the color vars, show_prd_plan,
-# provider_offer_gate, and cmd_start; the test harness provides stubs for those
+# and provider_offer_gate; the test harness provides stubs for those
 # it does not exercise for real.
 
 # Guard against double-source.
@@ -449,9 +449,8 @@ _qs_selected_provider() {
 }
 
 # _qs_emit_plan <prd_path>: render the step-4 plan block from the REAL estimator.
-# Honesty invariant: NO LOKI_COMPLEXITY override is passed, so the complexity,
-# iterations, and cost are exactly what cmd_start will run with (cmd_start
-# auto-detects complexity from the same PRD). Returns 0 if a number was shown,
+# NO LOKI_COMPLEXITY override is passed: the figures are the PRD estimator's
+# auto-detected ones. Returns 0 if a number was shown,
 # non-zero if the estimator gave no result (caller falls back to a no-number
 # confirm, never fabricating a figure).
 _qs_emit_plan() {
@@ -1021,19 +1020,19 @@ _qs_help() {
 }
 
 # cmd_quickstart: the 4-step guided interview. Composes provider_offer_gate
-# (slice B), show_prd_plan (slice A), the template matcher, and cmd_start.
+# (slice B), show_prd_plan (slice A), the template matcher, and `loki start`.
 #
 # Order is load-bearing:
 #   argv validation -> non-TTY/CI gate (hint + exit 2) -> provider gate or skip ->
 #   step 2 (idea / PRD path) -> step 3 (template) -> step 4 (plan + confirm) ->
-#   write PRD to CWD -> cmd_start --yes --no-plan (subshelled; it execs the runner).
+#   write PRD to CWD -> `loki start <prd>` (engine10; subshelled).
 #
 # The non-TTY/CI gate admits two fully-specified shapes:
 #   loki quickstart "<idea>|<prd-path>" --yes
 #   loki quickstart "<idea>|<prd-path>" --dry-run
 # Execution requires argv consent; preview forbids it. Both paths skip prompts
 # and share template ranking plus the honest estimator. Only execution crosses
-# the provider, confirm, write, and cmd_start boundaries.
+# the provider, confirm, write, and build boundaries.
 cmd_quickstart() {
     local positional=""
     local assume_yes=false
@@ -1564,13 +1563,8 @@ cmd_quickstart() {
     # over a file the user already has. Staging in a temp file keeps the
     # brownfield path write-free in the user's directory.
     if [ "$use_brief_as_spec" = true ]; then
-        # The .md suffix is load-bearing, not cosmetic. cmd_start classifies a
-        # positional via detect_arg_type (loki:1675): an extensionless path is
-        # only reached by the late `[ -e "$arg" ]` branch, and BOTH PRD
-        # existence guards (loki:2962, loki:2985) are `case` arms matching
-        # *.md|*.json|*.txt|*.yaml|*.yml, so an extensionless spec silently
-        # skips the fail-fast checks. Naming it .md puts classification on the
-        # explicit extension branch and under those guards.
+        # The .md suffix keeps the spec on the router's PRD branch (autonomy/route.sh
+        # _route_classify), so `loki start` reads it as a PRD file.
         # BSD mktemp (stock macOS) does NOT substitute the X-run when a suffix
         # follows it: `mktemp foo.XXXXXX.md` creates the LITERAL file
         # "foo.XXXXXX.md". That is a fixed name, so a second concurrent
@@ -1586,9 +1580,7 @@ cmd_quickstart() {
         else
             prd_source="$_qs_stage"
         fi
-        # Not trap-cleaned on purpose: cmd_start EXECS the runner and never
-        # returns here, and the runner must still be able to read this spec.
-        # It lives in TMPDIR under a mktemp name, so the OS reaps it.
+        # Not trap-cleaned: it lives in TMPDIR under a mktemp name, so the OS reaps it.
         _qs_write_change_prd "$prd_source" "$brief" "$spec_mode"
     fi
 
@@ -1597,7 +1589,7 @@ cmd_quickstart() {
     # The plan is ALWAYS rendered, on both paths, from the same real estimator.
     # The non-interactive path shows it before execution rather than before a
     # prompt: the operator still gets the honest quote in the transcript, and it
-    # is still the figure cmd_start runs with, so the quote equals the charge.
+    # the run prints the engine's own estimate on its first line.
     if [ -n "$preview_prd_digest" ]; then
         local pre_estimate_digest=""
         if [ ! -f "$prd_source" ] || [ ! -r "$prd_source" ] || [ -L "$prd_source" ]; then
@@ -1646,7 +1638,7 @@ cmd_quickstart() {
 
     # The preview terminal boundary is intentionally immediately after the
     # shared estimator. Reaching it proves the same template and plan were
-    # rendered, while returning here makes the confirm, PRD copy, and cmd_start
+    # rendered, while returning here makes the confirm, PRD copy, and build
     # structurally unreachable.
     if [ "$dry_run" = true ]; then
         printf 'Preview complete. No provider was run, no file was written, and no build was started.\n'
@@ -1682,7 +1674,7 @@ cmd_quickstart() {
     # The change-request path deliberately lands NOTHING in the working tree.
     # The user asked for a change to code that already exists; dropping a
     # generated prd.md into their project is the unrequested write that made the
-    # original bug worse. The staged spec is handed to cmd_start directly.
+    # original bug worse. The staged spec is handed to `loki start` directly.
     local target="./prd.md"
     if [ "$use_brief_as_spec" = true ]; then
         target="$prd_source"
@@ -1766,24 +1758,12 @@ cmd_quickstart() {
     printf "  Tip: run 'loki dashboard start' in another terminal to watch in a browser.\n"
     printf '\n'
 
-    # ----- Compose with cmd_start -------------------------------------------
-    # Consent was collected in step 4, so --yes is correct. The plan was already
-    # shown in step 4, so --no-plan avoids double-printing it. No --simple: the
-    # estimate shown was the auto-detect estimate, and the runner's own
-    # complexity detection agrees with the estimator for the default PRD
-    # (verified: detect_complexity and show_prd_plan both classify the sample
-    # Todo app SIMPLE), so the quote matches the charge.
-    #
-    # cmd_start EXECS the runner (loki:1856, _loki_new_session_exec), so it never
-    # returns into this function. We wrap it in a subshell -- the exact pattern
-    # cmd_demo uses (loki:9337) -- so the exec replaces the SUBSHELL while the
-    # interactive controlling tty (and Ctrl+C) is preserved, the build runs in
-    # the foreground, and on failure this function's honest message stays
-    # reachable. We do NOT auto-open a dashboard: the default `loki start` does
-    # not start one (it is gated on --api, loki:1825), and starting one here
-    # would bind port 57374, which quickstart deliberately must not own.
+    # ----- Build on the default engine ---------------------------------------
+    # L009: consent was collected in step 4. `loki start <prd>` goes through bin/loki,
+    # whose router sends a PRD to engine10; quickstart never reaches the legacy loop.
+    # Subshelled so a failed start still reaches the honest message below.
     local start_exit=0
-    ( cmd_start "$target" --yes --no-plan ) || start_exit=$?
+    ( "$SKILL_DIR/bin/loki" start "$target" ) || start_exit=$?
 
     if [ "$start_exit" -ne 0 ]; then
         printf "%sThe build did not start cleanly. Run 'loki doctor' and try 'loki start ./prd.md'.%s\n" "$_QS_RED" "$_QS_NC" >&2
