@@ -1,0 +1,8 @@
+{
+  "lang": "py",
+  "kind": "multifile",
+  "hidden": { "test_cli_hidden.py": "tests/test_h2h_hidden.py" },
+  "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_h2h_hidden.py"],
+  "visible_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider"],
+  "protected": ["tests", "pytest.ini", "conftest.py"]
+}

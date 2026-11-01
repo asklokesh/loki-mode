@@ -1,0 +1,9 @@
+{
+  "name": "listkit",
+  "version": "0.3.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test"
+  }
+}

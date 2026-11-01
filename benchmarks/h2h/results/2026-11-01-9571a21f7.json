@@ -1,0 +1,2000 @@
+{
+  "benchmark": "h2h-b1",
+  "loki_sha": "9571a21f7",
+  "date": "2026-11-01T10:39:34",
+  "configs": [
+    "raw-haiku",
+    "raw-opus",
+    "loki-haiku",
+    "loki-default"
+  ],
+  "reps": 1,
+  "timeout_s": 600,
+  "stopped": null,
+  "summary": [
+    {
+      "config": "raw-haiku",
+      "n": 8,
+      "passed": 8,
+      "pass_rate": 1.0,
+      "median_s": 23.6,
+      "p90_s": 29.6,
+      "total_cost_usd": 0.0727,
+      "cost_per_task_usd": 0.0091,
+      "cost_unmeasured": 0,
+      "mean_sessions": 1,
+      "timeouts": 0
+    },
+    {
+      "config": "raw-opus",
+      "n": 8,
+      "passed": 8,
+      "pass_rate": 1.0,
+      "median_s": 26.7,
+      "p90_s": 30.5,
+      "total_cost_usd": 2.1103,
+      "cost_per_task_usd": 0.2638,
+      "cost_unmeasured": 0,
+      "mean_sessions": 1,
+      "timeouts": 0
+    },
+    {
+      "config": "loki-haiku",
+      "n": 8,
+      "passed": 7,
+      "pass_rate": 0.875,
+      "median_s": 36.4,
+      "p90_s": 66.3,
+      "total_cost_usd": 0.0903,
+      "cost_per_task_usd": 0.0113,
+      "cost_unmeasured": 0,
+      "mean_sessions": 2.75,
+      "timeouts": 0
+    },
+    {
+      "config": "loki-default",
+      "n": 8,
+      "passed": 6,
+      "pass_rate": 0.75,
+      "median_s": 42.2,
+      "p90_s": 100.1,
+      "total_cost_usd": 1.1564,
+      "cost_per_task_usd": 0.1446,
+      "cost_unmeasured": 0,
+      "mean_sessions": 2.88,
+      "timeouts": 0
+    }
+  ],
+  "runs": [
+    {
+      "config": "raw-haiku",
+      "task": "py-cache-ttl",
+      "kind": "feature",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 35.24,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 2,
+      "files": [
+        "cachelib/cache.py",
+        "tests/test_cache.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.01139486,
+      "sessions": 1,
+      "turns": 8,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-haiku.py-cache-ttl.1.9syhft0d"
+    },
+    {
+      "config": "raw-opus",
+      "task": "py-cache-ttl",
+      "kind": "feature",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 30.51,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 2,
+      "files": [
+        "cachelib/cache.py",
+        "tests/test_cache.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.29547320000000005,
+      "sessions": 1,
+      "turns": 5,
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-opus.py-cache-ttl.1.pn7f55uy"
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-cache-ttl",
+      "kind": "feature",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 37.16,
+      "exit_code": 6,
+      "timed_out": false,
+      "files_changed": 2,
+      "files": [
+        "cachelib/cache.py",
+        "tests/test_cache.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.007441975,
+      "stage_cost_usd": 0.007442,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 3,
+      "run_id": "e10-20261101T152020Z-322a",
+      "verdict": "PARTIAL",
+      "wall_s": 36.416,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0008,
+          "sessions": 1,
+          "seconds": 0.687,
+          "session_seconds": 4.301,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0029,
+          "sessions": 1,
+          "seconds": 12.791,
+          "session_seconds": 12.529,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0038,
+          "sessions": 1,
+          "seconds": 21.616,
+          "session_seconds": 21.566,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.891,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.061,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.157,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "claude-haiku-5-5",
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-haiku.py-cache-ttl.1.k67kjhv0"
+    },
+    {
+      "config": "loki-default",
+      "task": "py-cache-ttl",
+      "kind": "feature",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 48.42,
+      "exit_code": 6,
+      "timed_out": false,
+      "files_changed": 2,
+      "files": [
+        "cachelib/cache.py",
+        "tests/test_cache.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.13326806000000002,
+      "stage_cost_usd": 0.133268,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 3,
+      "run_id": "e10-20261101T152057Z-542e",
+      "verdict": "PARTIAL",
+      "wall_s": 47.69,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0197,
+          "sessions": 1,
+          "seconds": 0.699,
+          "session_seconds": 3.627,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0032,
+          "sessions": 1,
+          "seconds": 21.136,
+          "session_seconds": 20.868,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.1103,
+          "sessions": 1,
+          "seconds": 24.669,
+          "session_seconds": 24.61,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.781,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.054,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.136,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "claude (provider default)",
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-default.py-cache-ttl.1.2nl20w_l"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "py-csv-quotes",
+      "kind": "bugfix",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 21.82,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 2,
+      "files": [
+        "csvlite/parser.py",
+        "tests/test_parser.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.00849749,
+      "sessions": 1,
+      "turns": 6,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-haiku.py-csv-quotes.1.8d6te_kg"
+    },
+    {
+      "config": "raw-opus",
+      "task": "py-csv-quotes",
+      "kind": "bugfix",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 29.3,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 2,
+      "files": [
+        "csvlite/parser.py",
+        "tests/test_parser.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.270905,
+      "sessions": 1,
+      "turns": 5,
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-opus.py-csv-quotes.1.62xcrs2g"
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-csv-quotes",
+      "kind": "bugfix",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 20.74,
+      "exit_code": 6,
+      "timed_out": false,
+      "files_changed": 2,
+      "files": [
+        "csvlite/parser.py",
+        "tests/test_parser.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.00263357,
+      "stage_cost_usd": 0.002634,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261101T152238Z-d29e",
+      "verdict": "PARTIAL",
+      "wall_s": 20.019,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.595,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0026,
+          "sessions": 1,
+          "seconds": 18.231,
+          "session_seconds": 18.182,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.752,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.054,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.135,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-haiku.py-csv-quotes.1.855bcqq7"
+    },
+    {
+      "config": "loki-default",
+      "task": "py-csv-quotes",
+      "kind": "bugfix",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 19.1,
+      "exit_code": 6,
+      "timed_out": false,
+      "files_changed": 2,
+      "files": [
+        "csvlite/parser.py",
+        "tests/test_parser.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.058650900000000006,
+      "stage_cost_usd": 0.058651,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261101T152259Z-0e46",
+      "verdict": "PARTIAL",
+      "wall_s": 18.343,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.63,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0587,
+          "sessions": 1,
+          "seconds": 16.518,
+          "session_seconds": 16.461,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.749,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.057,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.141,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "claude (provider default)"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-default.py-csv-quotes.1.sp9vwjok"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "py-retry-decorator",
+      "kind": "feature",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 25.29,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 3,
+      "files": [
+        "netutil/http.py",
+        "netutil/retry.py",
+        "tests/test_retry.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.00906901,
+      "sessions": 1,
+      "turns": 8,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-haiku.py-retry-decorator.1.cctovknm"
+    },
+    {
+      "config": "raw-opus",
+      "task": "py-retry-decorator",
+      "kind": "feature",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 25.83,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 3,
+      "files": [
+        "netutil/http.py",
+        "netutil/retry.py",
+        "tests/test_retry.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.26896760000000003,
+      "sessions": 1,
+      "turns": 4,
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-opus.py-retry-decorator.1.5bmy04ve"
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-retry-decorator",
+      "kind": "feature",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 40.42,
+      "exit_code": 6,
+      "timed_out": false,
+      "files_changed": 3,
+      "files": [
+        "netutil/http.py",
+        "netutil/retry.py",
+        "tests/test_retry.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.006201145,
+      "stage_cost_usd": 0.006201,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261101T152410Z-6064",
+      "verdict": "PARTIAL",
+      "wall_s": 39.656,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.685,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0035,
+          "sessions": 1,
+          "seconds": 21.761,
+          "session_seconds": 21.474,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0027,
+          "sessions": 1,
+          "seconds": 16.102,
+          "session_seconds": 16.043,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.694,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.056,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.138,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "claude-haiku-5-5",
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-haiku.py-retry-decorator.1._zuig9hf"
+    },
+    {
+      "config": "loki-default",
+      "task": "py-retry-decorator",
+      "kind": "feature",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 45.77,
+      "exit_code": 6,
+      "timed_out": false,
+      "files_changed": 3,
+      "files": [
+        "netutil/http.py",
+        "netutil/retry.py",
+        "tests/test_retry.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.08904822500000001,
+      "stage_cost_usd": 0.089048,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261101T152451Z-f523",
+      "verdict": "PARTIAL",
+      "wall_s": 45.026,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.606,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0027,
+          "sessions": 1,
+          "seconds": 17.878,
+          "session_seconds": 17.602,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0863,
+          "sessions": 1,
+          "seconds": 25.015,
+          "session_seconds": 24.959,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.118,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.056,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.14,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "claude (provider default)",
+        "claude-haiku-5-5"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-default.py-retry-decorator.1.yxrxh5ck"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "py-todo-json",
+      "kind": "multifile",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 28.79,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 3,
+      "files": [
+        "tests/test_cli.py",
+        "todo/cli.py",
+        "todo/report.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.00996259,
+      "sessions": 1,
+      "turns": 9,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-haiku.py-todo-json.1.eybk8eyt"
+    },
+    {
+      "config": "raw-opus",
+      "task": "py-todo-json",
+      "kind": "multifile",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 21.28,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 3,
+      "files": [
+        "tests/test_cli.py",
+        "todo/cli.py",
+        "todo/report.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.271317,
+      "sessions": 1,
+      "turns": 5,
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-opus.py-todo-json.1.isb4pixu"
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-todo-json",
+      "kind": "multifile",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 35.56,
+      "exit_code": 6,
+      "timed_out": false,
+      "files_changed": 3,
+      "files": [
+        "tests/test_cli.py",
+        "todo/cli.py",
+        "todo/report.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.006531565,
+      "stage_cost_usd": 0.006532,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261101T152627Z-3890",
+      "verdict": "PARTIAL",
+      "wall_s": 34.778,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.633,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.003,
+          "sessions": 1,
+          "seconds": 17.587,
+          "session_seconds": 17.298,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0035,
+          "sessions": 1,
+          "seconds": 15.373,
+          "session_seconds": 15.313,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.779,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.059,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.139,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "claude-haiku-5-5",
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-haiku.py-todo-json.1.3jw0kjzh"
+    },
+    {
+      "config": "loki-default",
+      "task": "py-todo-json",
+      "kind": "multifile",
+      "lang": "py",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 38.68,
+      "exit_code": 6,
+      "timed_out": false,
+      "files_changed": 3,
+      "files": [
+        "tests/test_cli.py",
+        "todo/cli.py",
+        "todo/report.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.067786735,
+      "stage_cost_usd": 0.067787,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261101T152703Z-efc8",
+      "verdict": "PARTIAL",
+      "wall_s": 37.913,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.618,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0021,
+          "sessions": 1,
+          "seconds": 14.203,
+          "session_seconds": 13.722,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0657,
+          "sessions": 1,
+          "seconds": 21.889,
+          "session_seconds": 21.828,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.801,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.058,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.137,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "claude (provider default)",
+        "claude-haiku-5-5"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-default.py-todo-json.1.2gl0ban6"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "ts-cart-discounts",
+      "kind": "feature",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 29.56,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 4,
+      "files": [
+        "src/cart.ts",
+        "src/checkout.ts",
+        "src/discounts.ts",
+        "test/cart.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.01001038,
+      "sessions": 1,
+      "turns": 9,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-haiku.ts-cart-discounts.1.pvwhhqs2"
+    },
+    {
+      "config": "raw-opus",
+      "task": "ts-cart-discounts",
+      "kind": "feature",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 41.75,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 4,
+      "files": [
+        "src/cart.ts",
+        "src/checkout.ts",
+        "src/discounts.ts",
+        "test/cart.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.2676856,
+      "sessions": 1,
+      "turns": 3,
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-opus.ts-cart-discounts.1.fkzydzgx"
+    },
+    {
+      "config": "loki-haiku",
+      "task": "ts-cart-discounts",
+      "kind": "feature",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 91.11,
+      "exit_code": 4,
+      "timed_out": false,
+      "files_changed": 1,
+      "files": [
+        "test/loki_wall_discounts.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "bun test v1.3.13 (bf2e2cec)\n\ntest/h2h_hidden.test.ts:\n\n# Unhandled error between tests\n-------------------------------\n1 | })\n2 | {\n    ^\nSyntaxError: Export named 'InvalidDiscountError' not found in module '/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-haiku.ts-cart-discounts.1.zmbf6s73/repo/src/cart.ts'.\n      at loadAndEvaluateModule (2:1)\n-------------------------------\n\n\n 0 pass\n 1 fail\n 1 error\nRan 1 test across 1 file. [5.00ms]\n",
+      "cost_usd": 0.04434148,
+      "stage_cost_usd": 0.044341,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 5,
+      "run_id": "e10-20261101T152854Z-a00e",
+      "verdict": "SPEC_CONFLICT",
+      "wall_s": 90.287,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.003,
+          "sessions": 1,
+          "seconds": 15.494,
+          "session_seconds": 15.01,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0325,
+          "sessions": 2,
+          "seconds": 15.824,
+          "session_seconds": 31.499,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0088,
+          "sessions": 2,
+          "seconds": 57.851,
+          "session_seconds": 42.048,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.714,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.068,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.128,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-haiku.ts-cart-discounts.1.zmbf6s73"
+    },
+    {
+      "config": "loki-default",
+      "task": "ts-cart-discounts",
+      "kind": "feature",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 125.79,
+      "exit_code": 4,
+      "timed_out": false,
+      "files_changed": 1,
+      "files": [
+        "test/loki_wall_discounts.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "bun test v1.3.13 (bf2e2cec)\n\ntest/h2h_hidden.test.ts:\n\n# Unhandled error between tests\n-------------------------------\n1 | })\n2 | {\n    ^\nSyntaxError: Export named 'InvalidDiscountError' not found in module '/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-default.ts-cart-discounts.1.knz9jba7/repo/src/cart.ts'.\n      at loadAndEvaluateModule (2:1)\n-------------------------------\n\n\n 0 pass\n 1 fail\n 1 error\nRan 1 test across 1 file. [5.00ms]\n",
+      "cost_usd": 0.32681685499999996,
+      "stage_cost_usd": 0.326817,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 5,
+      "run_id": "e10-20261101T153025Z-ea90",
+      "verdict": "SPEC_CONFLICT",
+      "wall_s": 124.965,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0263,
+          "sessions": 1,
+          "seconds": 11.179,
+          "session_seconds": 10.706,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0188,
+          "sessions": 2,
+          "seconds": 19.44,
+          "session_seconds": 29.759,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.2817,
+          "sessions": 2,
+          "seconds": 93.147,
+          "session_seconds": 82.699,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.791,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.068,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.135,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "claude (provider default)",
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "sonnet"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-default.ts-cart-discounts.1.knz9jba7"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "ts-duration-fix",
+      "kind": "bugfix",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 17.97,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 2,
+      "files": [
+        "src/duration.ts",
+        "test/duration.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.00836561,
+      "sessions": 1,
+      "turns": 6,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-haiku.ts-duration-fix.1.nswxvwo5"
+    },
+    {
+      "config": "raw-opus",
+      "task": "ts-duration-fix",
+      "kind": "bugfix",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 27.12,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 2,
+      "files": [
+        "src/duration.ts",
+        "test/duration.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.2428898,
+      "sessions": 1,
+      "turns": 4,
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-opus.ts-duration-fix.1.8jaoba2t"
+    },
+    {
+      "config": "loki-haiku",
+      "task": "ts-duration-fix",
+      "kind": "bugfix",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 33.55,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 1,
+      "files": [
+        "src/duration.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.005424505,
+      "stage_cost_usd": 0.005425,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261101T153316Z-c372",
+      "verdict": "VERIFIED",
+      "wall_s": 32.802,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0028,
+          "sessions": 1,
+          "seconds": 16.147,
+          "session_seconds": 15.675,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0027,
+          "sessions": 1,
+          "seconds": 15.834,
+          "session_seconds": 15.781,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.353,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.056,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.157,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-haiku.ts-duration-fix.1.h5rjbtc5"
+    },
+    {
+      "config": "loki-default",
+      "task": "ts-duration-fix",
+      "kind": "bugfix",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 27.81,
+      "exit_code": 6,
+      "timed_out": false,
+      "files_changed": 2,
+      "files": [
+        "src/duration.ts",
+        "test/duration.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.077875,
+      "stage_cost_usd": 0.077875,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261101T153350Z-c0e7",
+      "verdict": "PARTIAL",
+      "wall_s": 27.059,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0155,
+          "sessions": 1,
+          "seconds": 9.269,
+          "session_seconds": 8.764,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0623,
+          "sessions": 1,
+          "seconds": 16.903,
+          "session_seconds": 16.852,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.424,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.057,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.142,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "claude (provider default)",
+        "sonnet"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-default.ts-duration-fix.1.xh60e_6r"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "ts-order-currency",
+      "kind": "multifile",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 21.33,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 5,
+      "files": [
+        "src/export.ts",
+        "src/format.ts",
+        "src/report.ts",
+        "src/types.ts",
+        "test/orders.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.00841281,
+      "sessions": 1,
+      "turns": 5,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-haiku.ts-order-currency.1.1870n9wa"
+    },
+    {
+      "config": "raw-opus",
+      "task": "ts-order-currency",
+      "kind": "multifile",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 26.26,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 5,
+      "files": [
+        "src/export.ts",
+        "src/format.ts",
+        "src/report.ts",
+        "src/types.ts",
+        "test/orders.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.2512896,
+      "sessions": 1,
+      "turns": 3,
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-opus.ts-order-currency.1.yf6gnr9b"
+    },
+    {
+      "config": "loki-haiku",
+      "task": "ts-order-currency",
+      "kind": "multifile",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 66.29,
+      "exit_code": 6,
+      "timed_out": false,
+      "files_changed": 6,
+      "files": [
+        "src/export.ts",
+        "src/format.ts",
+        "src/report.ts",
+        "src/types.ts",
+        "test/loki_wall_orders.test.ts",
+        "test/orders.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.01113498,
+      "stage_cost_usd": 0.011135,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 4,
+      "run_id": "e10-20261101T153506Z-b000",
+      "verdict": "PARTIAL",
+      "wall_s": 65.616,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0029,
+          "sessions": 1,
+          "seconds": 18.843,
+          "session_seconds": 18.366,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0025,
+          "sessions": 1,
+          "seconds": 15.811,
+          "session_seconds": 15.72,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0057,
+          "sessions": 2,
+          "seconds": 30.07,
+          "session_seconds": 30.018,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.483,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.072,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.129,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "claude-haiku-5-5",
+        "haiku"
+      ],
+      "event_types": [
+        "cap.sized",
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-haiku.ts-order-currency.1.bqrgjwcn"
+    },
+    {
+      "config": "loki-default",
+      "task": "ts-order-currency",
+      "kind": "multifile",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 100.12,
+      "exit_code": 4,
+      "timed_out": false,
+      "files_changed": 1,
+      "files": [
+        "test/loki_wall_currency.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "est/h2h_hidden.test.ts:27:37)\n(fail) CSV has a currency column after total [0.26ms]\n29 |   );\n30 |   expect(toCsv([])).toBe(\"id,customer,total,currency\");\n31 | });\n32 | \n33 | test(\"summarize totals per currency\", () => {\n34 |   expect(summarize(orders)).toEqual({\n                                 ^\nerror: expect(received).toEqual(expected)\n\n  {\n    \"count\": 5,\n-   \"totalsByCurrency\": {\n-     \"EUR\": 750,\n-     \"GBP\": 999,\n-     \"USD\": 2234,\n-   },\n+   \"totalCents\": 3983,\n  }\n\n- Expected  - 5\n+ Received  + 1\n\n      at <anonymous> (/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-default.ts-order-currency.1.4ngfitqi/repo/test/h2h_hidden.test.ts:34:29)\n(fail) summarize totals per currency [0.16ms]\n36 |     totalsByCurrency: { USD: 2234, EUR: 750, GBP: 999 },\n37 |   });\n38 | });\n39 | \n40 | test(\"summarize only lists currencies that appear\", () => {\n41 |   expect(summarize([orders[2]])).toEqual({ count: 1, totalsByCurrency: { GBP: 999 } });\n                                      ^\nerror: expect(received).toEqual(expected)\n\n  {\n    \"count\": 1,\n-   \"totalsByCurrency\": {\n-     \"GBP\": 999,\n-   },\n+   \"totalCents\": 999,\n  }\n\n- Expected  - 3\n+ Received  + 1\n\n      at <anonymous> (/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-default.ts-order-currency.1.4ngfitqi/repo/test/h2h_hidden.test.ts:41:34)\n(fail) summarize only lists currencies that appear [0.08ms]\n\n 0 pass\n 5 fail\n 5 expect() calls\nRan 5 tests across 1 file. [6.00ms]\n",
+      "cost_usd": 0.31421218999999995,
+      "stage_cost_usd": 0.314212,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 5,
+      "run_id": "e10-20261101T153612Z-bac9",
+      "verdict": "SPEC_CONFLICT",
+      "wall_s": 99.266,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0162,
+          "sessions": 1,
+          "seconds": 6.797,
+          "session_seconds": 6.32,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.031,
+          "sessions": 2,
+          "seconds": 18.648,
+          "session_seconds": 33.388,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.2671,
+          "sessions": 2,
+          "seconds": 72.904,
+          "session_seconds": 58.03,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.497,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.073,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.136,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "claude (provider default)",
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "sonnet"
+      ],
+      "event_types": [
+        "cap.sized",
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-default.ts-order-currency.1.4ngfitqi"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "ts-paginate-fix",
+      "kind": "bugfix",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 14.5,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 2,
+      "files": [
+        "src/paginate.ts",
+        "test/paginate.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.006995820000000001,
+      "sessions": 1,
+      "turns": 6,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-haiku.ts-paginate-fix.1.98zhyneu"
+    },
+    {
+      "config": "raw-opus",
+      "task": "ts-paginate-fix",
+      "kind": "bugfix",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 19.78,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 3,
+      "files": [
+        "src/paginate.ts",
+        "test/paginate.test.ts",
+        "test/users.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.24173440000000002,
+      "sessions": 1,
+      "turns": 4,
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false,
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/raw-opus.ts-paginate-fix.1.49zh287c"
+    },
+    {
+      "config": "loki-haiku",
+      "task": "ts-paginate-fix",
+      "kind": "bugfix",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 34.22,
+      "exit_code": 0,
+      "timed_out": false,
+      "files_changed": 1,
+      "files": [
+        "src/paginate.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.006627200000000001,
+      "stage_cost_usd": 0.006627,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 3,
+      "run_id": "e10-20261101T153827Z-f562",
+      "verdict": "VERIFIED",
+      "wall_s": 33.456,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0047,
+          "sessions": 2,
+          "seconds": 20.384,
+          "session_seconds": 25.294,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0019,
+          "sessions": 1,
+          "seconds": 12.357,
+          "session_seconds": 12.303,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.273,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.057,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.144,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-haiku.ts-paginate-fix.1.jw3rssow"
+    },
+    {
+      "config": "loki-default",
+      "task": "ts-paginate-fix",
+      "kind": "bugfix",
+      "lang": "ts",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 32.09,
+      "exit_code": 6,
+      "timed_out": false,
+      "files_changed": 2,
+      "files": [
+        "src/paginate.ts",
+        "test/paginate.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.08874789999999999,
+      "stage_cost_usd": 0.088748,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 3,
+      "run_id": "e10-20261101T153901Z-d106",
+      "verdict": "PARTIAL",
+      "wall_s": 31.391,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0369,
+          "sessions": 2,
+          "seconds": 7.548,
+          "session_seconds": 14.841,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0519,
+          "sessions": 1,
+          "seconds": 22.931,
+          "session_seconds": 22.878,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.456,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.06,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.159,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "claude (provider default)",
+        "claude-sonnet-5-5",
+        "sonnet"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "workdir": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-h2h.tzajf14n/loki-default.ts-paginate-fix.1.c13qaiy_"
+    }
+  ]
+}

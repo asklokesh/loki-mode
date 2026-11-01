@@ -8,6 +8,7 @@
 # E2E_STUB_FIX (fix sessions, told apart by LOKI_E10_STAGE=fix): conflict answers LOKI_SPEC_CONFLICT and edits
 # nothing; noprogress edits calc.ts without fixing multiply(). E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
 # per call; E2E_STUB_USAGE=<n> records n output tokens per session (input = prompt bytes / 4) as the session's cost.
+#   overlay: a plain `-p <task>` call copies E2E_STUB_OVERLAY over the cwd (h2h benchmark harness)
 # Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo).
 set -u
 if [ "${1:-}" = "--help" ]; then
@@ -62,6 +63,12 @@ case "$prompt" in # `loki plan --spec` (tests/min/triage-router.sh): write the s
     [ -n "$out" ] && printf '{"intent":"stub intent","criteria":["the stated change is made","a test covers it"]}\n' > "$out"
     ;;
 esac
+if [ "$stage" = "other" ] && [ "${E2E_STUB_MODE:-}" = "overlay" ]; then # tests/min/h2h-harness.sh: a raw `claude -p <task> --output-format json` contestant
+  if [ -n "${E2E_STUB_SEEN_LOG:-}" ]; then find . -path ./.git -prune -o -type f -print >> "$E2E_STUB_SEEN_LOG"; fi # every file the contestant could read
+  cp -R "$E2E_STUB_OVERLAY"/. .
+  echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0123,"modelUsage":{"stub-model":{}}}'
+  exit 0
+fi
 if [ "$stage" = "implement" ]; then
   if [ "${E2E_STUB_MODE:-done}" = "nochange" ]; then
     echo "LOKI_DONE"

@@ -1,0 +1,8 @@
+{
+  "lang": "ts",
+  "kind": "bugfix",
+  "hidden": { "paginate.hidden.test.ts": "test/h2h_hidden.test.ts" },
+  "hidden_cmd": ["bun", "test", "./test/h2h_hidden.test.ts"],
+  "visible_cmd": ["bun", "test"],
+  "protected": ["test", "bunfig.toml"]
+}
