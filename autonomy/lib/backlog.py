@@ -3,6 +3,7 @@
 
     loki backlog owner/repo --all | --label X | --issues 1,2,3
                  [--concurrency N] [--slots N] [--dry-run]
+    loki backlog jira:PROJ | linear:TEAM  (same options; Jira and Linear items)
 
 Each issue gets its own git worktree and branch (loki/backlog-N) beside the
 checkout; the launcher runs inside it. Success = the child exited 0 (the engine's
@@ -21,13 +22,21 @@ Passing unit branches are kept for the integrator; issue mode is unchanged.
 
 Triage: before anything runs, every issue is classified by the triage router
 (loki-ts/src/features/triage.ts, via `loki internal triage`) as implement (run
-it), spec (draft .loki/specs/<slug>.md with `loki plan --spec`, run nothing,
-print the command to run it after review) or human (never run headless; listed
-with the reason). --dry-run prints the class and reason per issue. A label
+it; a large issue, by the one rule in features/decompose.ts deliverables, runs
+and the engine splits it into slices), spec (vague or ambiguous: draft
+.loki/specs/<slug>.md with `loki plan --spec`, run nothing, print the command to
+run it after review) or human (never run headless; listed with the reason). --dry-run prints the class and reason per issue. A label
 loki:implement, loki:spec or loki:human forces the class; LOKI_TRIAGE=0 turns
 the router off (every issue runs, as before). The class and reason reach each
 child run as LOKI_TRIAGE_CLASS / LOKI_TRIAGE_REASON, which the engine records in
 the run events, the receipt and the PR body.
+
+Jira and Linear: `jira:PROJ` or `linear:TEAM` in place of owner/repo lists that
+project's open items with `loki internal tracker-list` (features/tracker_intake.ts,
+the same credentials as `loki jira:PROJ-1`), triages them the same way and runs
+each as `loki jira:PROJ-N` / `loki linear:TEAM-N` from the current checkout.
+--issues takes item numbers (12 means PROJ-12). A large Jira or Linear item runs
+as one run: the engine splits only GitHub issues today.
 
 Test seam: LOKI_BACKLOG_LAUNCHER replaces the real launcher (called with the
 issue ref, cwd = the issue worktree).
@@ -51,6 +60,7 @@ import worktree_prep  # noqa: E402
 
 REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+TRACKER_RE = re.compile(r"^(jira|linear):([A-Za-z][A-Za-z0-9_]*)$")
 
 
 def say(msg):
@@ -76,9 +86,37 @@ def origin_slug(cwd):
     return m.group(1) if m else ""
 
 
-def _issue(i):
+def _issue(i, repo):
+    """One work item. key: the job-table key; label: how it prints; ref: what the launcher runs; slug: branch suffix."""
     labels = [l.get("name", "") if isinstance(l, dict) else str(l) for l in i.get("labels") or []]
-    return {"number": i["number"], "title": i.get("title") or "", "body": i.get("body") or "", "labels": labels}
+    n = i["number"]
+    return {"number": n, "key": n, "label": "#%d" % n, "ref": "%s#%d" % (repo, n), "slug": str(n), "split": True,
+            "title": i.get("title") or "", "body": i.get("body") or "", "labels": labels}
+
+
+def list_tracker(spec, label, numbers, env):
+    """Jira/Linear items via `loki internal tracker-list` (features/tracker_intake.ts). Raises RuntimeError."""
+    source, project = spec.split(":", 1)
+    cmd = [os.path.join(REPO_ROOT, "bin", "loki"), "internal", "tracker-list", spec]
+    if label:
+        cmd += ["--label", label]
+    if numbers:
+        cmd += ["--issues", ",".join(str(n) for n in numbers)]
+    r = subprocess.run(cmd, capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+    try:
+        rows = json.loads(r.stdout) if r.returncode == 0 else None
+        if not isinstance(rows, list):
+            raise ValueError("not a list")
+        out = [{"number": int(x["number"]), "key": str(x["key"]), "label": str(x["key"]), "ref": "%s:%s" % (source, x["key"]),
+                "slug": str(x["key"]), "split": False, "title": str(x.get("title") or ""), "body": str(x.get("body") or ""),
+                "labels": [str(l) for l in x.get("labels") or []]} for x in rows]
+    except (ValueError, TypeError, KeyError):
+        why = (r.stderr.strip().splitlines() or ["no usable output"])[-1]
+        raise RuntimeError("listing %s failed (%s)" % (spec, why))
+    missing = sorted(set(numbers or []) - {i["number"] for i in out})
+    if missing:
+        raise RuntimeError("%s has no item %s" % (spec, ", ".join("%s-%d" % (project.upper(), n) for n in missing)))
+    return out
 
 
 def list_issues(repo, label, env):
@@ -89,7 +127,7 @@ def list_issues(repo, label, env):
     r = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if r.returncode != 0:
         raise RuntimeError("gh issue list failed: " + (r.stderr.strip().splitlines() or ["unknown error"])[0])
-    return sorted((_issue(i) for i in json.loads(r.stdout or "[]")), key=lambda i: i["number"])
+    return sorted((_issue(i, repo) for i in json.loads(r.stdout or "[]")), key=lambda i: i["number"])
 
 
 def view_issues(repo, numbers, env):
@@ -99,7 +137,7 @@ def view_issues(repo, numbers, env):
                            capture_output=True, text=True, env=env)
         if r.returncode != 0:
             raise RuntimeError("gh issue view %d failed: %s" % (n, (r.stderr.strip().splitlines() or ["unknown error"])[0]))
-        out.append(_issue(json.loads(r.stdout or "{}")))
+        out.append(_issue(json.loads(r.stdout or "{}"), repo))
     return out
 
 
@@ -107,12 +145,12 @@ TRIAGE_CLASSES = ("implement", "spec", "human")
 
 
 def triage(issues, top, env):
-    """-> {number: (class, reason)} from `loki internal triage`; raises RuntimeError (fail closed: nothing untriaged runs)."""
+    """-> {key: (class, reason)} from `loki internal triage`; raises RuntimeError (fail closed: nothing untriaged runs)."""
     if os.environ.get("LOKI_TRIAGE") == "0":
-        return {i["number"]: ("implement", "LOKI_TRIAGE=0: router off") for i in issues}
+        return {i["key"]: ("implement", "LOKI_TRIAGE=0: router off") for i in issues}
     if not issues:
         return {}
-    items = [{"id": i["number"], "title": i["title"], "body": i["body"], "labels": i["labels"]} for i in issues]
+    items = [{"id": i["key"], "title": i["title"], "body": i["body"], "labels": i["labels"], "split": i["split"]} for i in issues]
     r = subprocess.run([os.path.join(REPO_ROOT, "bin", "loki"), "internal", "triage", "--repo-dir", top],
                        input=json.dumps(items), capture_output=True, text=True, env=env)
     try:
@@ -120,7 +158,7 @@ def triage(issues, top, env):
         got = {row["id"]: (row["class"], row["reason"]) for row in rows if row.get("class") in TRIAGE_CLASSES}
     except (ValueError, TypeError, KeyError, AttributeError):
         got = None
-    if not got or set(got) != {i["number"] for i in issues}:
+    if not got or set(got) != {i["key"] for i in issues}:
         why = (r.stderr.strip().splitlines() or ["no usable output"])[-1]
         raise RuntimeError("triage failed (%s); fix it, or set LOKI_TRIAGE=0 to run every issue untriaged" % why)
     return got
@@ -283,8 +321,11 @@ def main(argv):
     ap.add_argument("--group", help="unit group id (default: the DAG's group, else g1)")
     a = ap.parse_args(argv)
 
-    if not REPO_RE.match(a.repo):
-        return die("repo must be owner/repo, got %r" % a.repo)
+    tracker = TRACKER_RE.match(a.repo)
+    if tracker and os.environ.get("LOKI_TRACKER_INTAKE") == "0":
+        return die("LOKI_TRACKER_INTAKE=0 disables Jira and Linear; unset it to run %s" % a.repo)
+    if not (REPO_RE.match(a.repo) or tracker):
+        return die("repo must be owner/repo, jira:PROJ or linear:TEAM, got %r" % a.repo)
     if not (a.all or a.label or a.issues or a.dag):
         return die("choose one of --all, --label X, --issues 1,2,3, --dag FILE")
     group, dag_units = None, []
@@ -329,7 +370,7 @@ def main(argv):
     top = git("rev-parse", "--show-toplevel").stdout.strip()
     if not top:
         return die("run this from a checkout of %s" % a.repo)
-    if origin_slug(top).lower() != a.repo.lower():
+    if not tracker and origin_slug(top).lower() != a.repo.lower():
         return die("this checkout's origin is %r, not %s; cd into a checkout of %s"
                    % (origin_slug(top) or "unknown", a.repo, a.repo))
 
@@ -345,8 +386,11 @@ def main(argv):
         u["base"] = sha
 
     try:
-        issues = (view_issues(a.repo, numbers, env) if numbers
-                  else list_issues(a.repo, a.label, env) if (a.all or a.label) else [])
+        if tracker:
+            issues = list_tracker(a.repo, a.label, numbers, env) if (numbers or a.all or a.label) else []
+        else:
+            issues = (view_issues(a.repo, numbers, env) if numbers
+                      else list_issues(a.repo, a.label, env) if (a.all or a.label) else [])
         klass = triage(issues, top, env)
     except RuntimeError as e:
         return die(redact(str(e), token), 1)
@@ -354,13 +398,14 @@ def main(argv):
     say("backlog: %s concurrency %d, %d issue(s)" % (a.repo, conc, len(issues))
         + (", %d unit(s) in group %s" % (len(dag_units), group) if dag_units else ""))
     for i in issues:
-        c, why = klass[i["number"]]
-        say("backlog: #%d %-9s %s | %s" % (i["number"], c, i["title"], why))
+        c, why = klass[i["key"]]
+        say("backlog: %s %-9s %s | %s" % (i["label"], c, i["title"], why))
     if a.dry_run:
-        n_of = lambda c: sum(1 for i in issues if klass[i["number"]][0] == c)  # noqa: E731
+        n_of = lambda c: sum(1 for i in issues if klass[i["key"]][0] == c)  # noqa: E731
+        n_large = sum(1 for i in issues if i["split"] and klass[i["key"]][0] == "implement" and klass[i["key"]][1].startswith("large ("))
         if issues:
-            say("backlog: dry run: %d would run, %d would get a drafted spec, %d need a human; nothing launched"
-                % (n_of("implement"), n_of("spec"), n_of("human")))
+            say("backlog: dry run: %d would run%s, %d would get a drafted spec, %d need a human; nothing launched"
+                % (n_of("implement"), " (%d split into slices)" % n_large if n_large else "", n_of("spec"), n_of("human")))
         for u in dag_units:
             say("backlog: would run unit %s-%d (%s) after: %s" % (group, u["n"], u["id"], ", ".join(u["deps"]) or "nothing"))
         return 0
@@ -395,25 +440,26 @@ def main(argv):
     day_cap = cfg.get("budgets", {}).get("per_day_usd")
 
     # Triage: only implement issues run; spec issues get a drafted spec, human issues are listed.
-    routed = {}  # number -> (ok, status) for issues that do not run
+    routed = {}  # key -> (ok, status) for issues that do not run
+    labels = {i["key"]: i["label"] for i in issues}
     for i in issues:
-        c, why = klass[i["number"]]
+        c, why = klass[i["key"]]
         if c == "human":
-            routed[i["number"]] = (True, "HUMAN: " + why)
+            routed[i["key"]] = (True, "HUMAN: " + why)
         elif c == "spec":
             ok, status = draft_spec(i, top, child_env)
-            routed[i["number"]] = (ok, "%s (%s)" % (status, why))
+            routed[i["key"]] = (ok, "%s (%s)" % (status, why))
         if c != "implement":
-            say("backlog: #%d %s" % (i["number"], routed[i["number"]][1]))
+            say("backlog: %s %s" % (i["label"], routed[i["key"]][1]))
 
     # One job table for issues and units: they share one slot pool.
     spec = {}
     for i in issues:
-        n = i["number"]
+        n = i["key"]
         if n in routed:
             continue
-        spec[n] = {"label": "#%d" % n, "branch": "loki/backlog-%d" % n, "wt": "issue-%d" % n,
-                   "cmd": [launcher, "%s#%d" % (a.repo, n)], "deps": [], "unit": False,
+        spec[n] = {"label": i["label"], "branch": "loki/backlog-%s" % i["slug"], "wt": "issue-%s" % i["slug"],
+                   "cmd": [launcher, i["ref"]], "deps": [], "unit": False,
                    "env": {"LOKI_TRIAGE_CLASS": klass[n][0], "LOKI_TRIAGE_REASON": klass[n][1]}}
     key_of = {u["id"]: "unit-%s-%d" % (group, u["n"]) for u in dag_units}
     for u in dag_units:
@@ -589,7 +635,7 @@ def main(argv):
     say("Summary: %s" % a.repo)
     say("%-14s %-10s %s" % ("ITEM", "COST", "RESULT"))
     for n, s in state.items():
-        say("%-14s %-10s %s" % (spec[n]["label"] if n in spec else "#%d" % n, ("$%.2f" % s["cost"] if s["cost"] is not None else "unmeasured" if s["ran"] else "-"), s["status"]))
+        say("%-14s %-10s %s" % (spec[n]["label"] if n in spec else labels[n], ("$%.2f" % s["cost"] if s["cost"] is not None else "unmeasured" if s["ran"] else "-"), s["status"]))
     measured = sum(s["cost"] or 0 for s in state.values())
     say("Total measured cost: $%.2f%s" % (measured, " (%d run(s) unmeasured, not counted as $0)" % unmeasured if unmeasured else ""))
     bad = [s for s in state.values() if not s["ok"]]

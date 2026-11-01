@@ -20,7 +20,7 @@ import { makeSessionDecompose, overCapNote, parseDecomposition, planComment, pro
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { resolveModel } from "../engine10/session.ts";
-import { sizeTask } from "../engine10/sizing.ts";
+import { deliverables } from "../features/decompose.ts";
 
 export interface GhIssue {
   number: number;
@@ -466,7 +466,8 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
 }
 
 /**
- * `loki start owner/repo#N` on an issue whose text sizes "large" by its structure (engine10/sizing.ts sizeTask, features/decompose.ts deliverables):
+ * `loki start owner/repo#N` (or a `loki backlog` child) on an issue that is large by features/decompose.ts deliverables (its structure, or an epic label;
+ * the same rule engine10/sizing.ts and the backlog triage router use):
  * the issue goes down the existing MASS-2 path instead of one whole-issue run, so each slice runs as its own small run, in dependency order
  * (one at a time). Engine Law L0 reconciliation, as in `loki issues run`: the size rule is deterministic and free (the E-45 cost path makes no model
  * call) and only decides whether to ask for a split; the split itself is the model's (one Opus planning session, schema-checked here). A refused split,
@@ -480,8 +481,9 @@ export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr:
   try { raw = JSON.parse(readFileSync(join(o.runDir, "issue.json"), "utf8")) as typeof raw; } catch { return null; }
   if (raw.provider !== "github" || typeof raw.repo !== "string" || !SLUG_RE.test(raw.repo) || typeof raw.number !== "number") return null;
   const issue: GhIssue = { number: raw.number, title: typeof raw.title === "string" ? raw.title : "", body: typeof raw.body === "string" ? raw.body : "", labels: Array.isArray(raw.labels) ? raw.labels.filter((l): l is string => typeof l === "string") : [] };
-  const size = sizeTask([issue.title, issue.body].filter(Boolean).join("\n\n"), null, null);
-  if (size.size !== "large") return null;
+  const st = deliverables([issue.title, issue.body].filter(Boolean).join("\n\n"), issue.labels);
+  if (!st.large) return null;
+  const size = { size: "large" as const, reasons: [`${st.reason}: decompose`] };
   const lokiDir = env["LOKI_DIR"] ?? join(o.repoDir, ".loki");
   const userEnv: NodeJS.ProcessEnv = groupEnv({ ...env }, o.capUsd ?? 0, o.repoDir); // one cap and one ledger for the whole issue: slices share the total, never a cap each
   const base = makeDefaultRunner(lokiDir);

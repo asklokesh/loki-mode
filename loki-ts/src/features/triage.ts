@@ -1,10 +1,12 @@
 // Triage router: implement, spec or human for one work item before a run is spent. New file: spec_ambiguity.ts only scores text, and issues_run.ts triage is an opt-in model call for `loki issues run`; nothing owned per-item routing for `loki backlog` (the only caller that skips work) or recording a class on a direct run.
 import { buildTestMap } from "../engine10/testmap.ts";
+import { deliverables } from "./decompose.ts";
 import { ambiguityThreshold, scoreAmbiguity } from "./spec_ambiguity.ts";
 
 export type TriageClass = "implement" | "spec" | "human";
 export const TRIAGE_CLASSES: readonly TriageClass[] = ["implement", "spec", "human"];
-export interface TriageItem { title: string; body?: string; labels?: readonly string[] }
+/** `split: false` marks an item the engine cannot split yet (a Jira or Linear ref); a large one then runs as one run. */
+export interface TriageItem { title: string; body?: string; labels?: readonly string[]; split?: boolean }
 /** Detected test runners and test-file count (engine10 testmap), reported in the implement reason. */
 export interface RepoSignals { runners: readonly string[]; tests: number }
 export interface TriageResult { class: TriageClass; reason: string; rule: string }
@@ -18,11 +20,6 @@ const SECRET_VAR_RE = /\b[A-Z][A-Z0-9]*_(?:SECRET|TOKEN|PASSWORD|API_KEY|PRIVATE
 const SECRET_OP_RE = /\b(?:rotat\w*|revok\w*|regenerat\w*|leak\w*|expos\w*|reset|replac\w*|renew\w*|invalidat\w*|hardcod\w*)\b/i;
 const PROD_RE = /\b(?:in|on|to|against|from)\s+(?:the\s+)?(?:production|prod)\b|\b(?:production|prod)\s+(?:database|db|servers?|cluster|environment|env|data|deploy(?:ment)?|secrets?|keys?|credentials?|config|traffic|users)\b/i;
 const DESTRUCTIVE_RE = /\b(?:drop\s+(?:table|database|schema)|truncate\s+table|delete\s+(?:all|every)\s+\w+|wipe|purge|force[- ]push|rm\s+-rf|destroy\s+(?:the\s+)?(?:cluster|database|bucket|environment))\b/i;
-// Large: an epic label or title, or a long task list.
-const EPIC_LABEL_RE = /^(?:epic|umbrella|tracking|meta)$/i;
-const EPIC_TITLE_RE = /^\s*(?:\[?(?:epic|umbrella|tracking)\]?)\b/i;
-const TASK_ITEM_RE = /^\s*[-*]\s+\[[ xX]\]\s+/gm;
-const MAX_TASK_ITEMS = 3, MAX_BODY_CHARS = 4000;
 // A concrete target or acceptance check: a code span, a call, a file path, a number, a quoted value, a stated expected result, or a stated change ("change X to Y").
 const ANCHORS: ReadonlyArray<[string, RegExp]> = [
   ["code", /`[^`\n]+`/], ["call", /\b[A-Za-z_]\w*\([^)]*\)/], ["file", /\b[\w./-]+\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|rb|php|cs|swift|c|h|cpp|md|json|ya?ml|toml|sh|sql|html|css)\b/],
@@ -30,7 +27,10 @@ const ANCHORS: ReadonlyArray<[string, RegExp]> = [
   ["stated change", /\b(?:change|set|rename|move|switch|update)\b[^.\n]{1,60}\bto\b/i],
 ];
 
-/** Deterministic class for one item. Rules, first match wins: override label, secrets/prod/destructive, large, ambiguous, vague, implement. Missing tests, UI and infra work still run: Loki writes its own tests and verifies once at the end. Total: it always decides, so no model call is needed. */
+/** Deterministic class for one item. Rules, first match wins: override label, secrets/prod/destructive, large, ambiguous, vague, implement. Large is
+ *  decided only by features/decompose.ts deliverables (the rule sizing and `loki start owner/repo#N` use) and runs: the engine splits it into
+ *  slices (MASS-2). Only vague or ambiguous items get a drafted spec. Missing tests, UI and infra work still run: Loki writes its own tests and
+ *  verifies once at the end. Total: it always decides, so no model call is needed. */
 export function triageItem(item: TriageItem, repo?: RepoSignals): TriageResult {
   const labels = (item.labels ?? []).map((l) => l.trim().toLowerCase()), body = item.body ?? "", text = `${item.title}\n\n${body}`;
   const forced = TRIAGE_CLASSES.find((c) => labels.includes(`loki:${c}`));
@@ -39,9 +39,8 @@ export function triageItem(item: TriageItem, repo?: RepoSignals): TriageResult {
   if (risk) return { class: "human", reason: `touches secrets ("${clip(risk, 40)}"); rotate or change them by hand`, rule: "secrets" };
   const prod = hit(PROD_RE, text) ?? hit(DESTRUCTIVE_RE, text);
   if (prod) return { class: "human", reason: `production or destructive operation ("${clip(prod, 40)}")`, rule: "prod" };
-  const items = (body.match(TASK_ITEM_RE) ?? []).length, epic = labels.find((l) => EPIC_LABEL_RE.test(l));
-  if (epic || EPIC_TITLE_RE.test(item.title) || items > MAX_TASK_ITEMS || body.length > MAX_BODY_CHARS)
-    return { class: "spec", reason: `large: ${epic ? `label ${epic}` : items > MAX_TASK_ITEMS ? `${items} task-list items` : EPIC_TITLE_RE.test(item.title) ? "epic title" : `${body.length} characters`}; split it in a spec first`, rule: "large" };
+  const size = deliverables(text, labels);
+  if (size.large) return { class: "implement", reason: `large (${size.reason}); ${item.split === false ? "runs as one run, Jira and Linear items do not split yet" : "runs split into slices"}`, rule: "large" };
   const amb = scoreAmbiguity(text), threshold = ambiguityThreshold();
   if (amb.score >= threshold) return { class: "spec", reason: `ambiguous: score ${amb.score} (threshold ${threshold}), e.g. "${clip(amb.hits[0]?.excerpt ?? "", 50)}"`, rule: "ambiguous" };
   const anchor = ANCHORS.find(([, re]) => re.test(text));
@@ -81,7 +80,7 @@ export function triagePrLine(intake: Record<string, unknown> | undefined): strin
   return t ? `\nTriage: ${t.class} (${t.reason})\n` : "";
 }
 
-/** `loki internal triage [--repo-dir DIR]`: JSON array of {id, title, body, labels} on stdin, JSON array of {id, class, reason, rule} on stdout. Used by `loki backlog`. */
+/** `loki internal triage [--repo-dir DIR]`: JSON array of {id, title, body, labels, split?} on stdin, JSON array of {id, class, reason, rule} on stdout. Used by `loki backlog`. */
 export async function runTriageCli(args: readonly string[]): Promise<number> {
   const i = args.indexOf("--repo-dir"), repoDir = i >= 0 ? args[i + 1] : process.cwd();
   if (!repoDir) { process.stderr.write("usage: loki internal triage [--repo-dir DIR] < items.json\n"); return 2; }
@@ -91,7 +90,7 @@ export async function runTriageCli(args: readonly string[]): Promise<number> {
   const repo = repoSignals(repoDir), str = (x: unknown): string => (typeof x === "string" ? x : "");
   const out = items.map((raw) => {
     const it = (raw ?? {}) as Record<string, unknown>, labels = Array.isArray(it.labels) ? it.labels.map((l) => (typeof l === "string" ? l : str((l as { name?: unknown } | null)?.name))) : [];
-    return { id: it.id ?? null, ...triageItem({ title: str(it.title), body: str(it.body), labels }, repo) };
+    return { id: it.id ?? null, ...triageItem({ title: str(it.title), body: str(it.body), labels, split: it.split !== false }, repo) };
   });
   process.stdout.write(`${JSON.stringify(out)}\n`);
   return 0;

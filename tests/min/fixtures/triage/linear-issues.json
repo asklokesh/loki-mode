@@ -1,0 +1,30 @@
+{
+  "data": {
+    "issues": {
+      "nodes": [
+        {
+          "identifier": "ENG-7",
+          "number": 7,
+          "title": "Search across projects",
+          "description": "## Solution\n1. Postgres full-text index\n2. search API route\n3. React search page\n4. saved searches\n\n## Acceptance Criteria\n- [ ] ranked results\n- [ ] filters\n- [ ] saved searches load\n- [ ] empty state",
+          "labels": { "nodes": [] }
+        },
+        {
+          "identifier": "ENG-4",
+          "number": 4,
+          "title": "Fix subtract(a, b) sign in calc.ts",
+          "description": "subtract(5, 3) returns -2; expected 2.",
+          "labels": { "nodes": [{ "name": "bug" }] }
+        },
+        {
+          "identifier": "ENG-5",
+          "number": 5,
+          "title": "Improve things",
+          "description": "",
+          "labels": { "nodes": [] }
+        }
+      ],
+      "pageInfo": { "hasNextPage": false, "endCursor": null }
+    }
+  }
+}

@@ -118,3 +118,85 @@ export async function fetchTrackerIssueToFile(ref: TrackerRef, outFile: string, 
   writeFileSync(outFile, JSON.stringify(issue));
   return issue;
 }
+
+// `loki backlog jira:PROJ | linear:TEAM`: list the open items of one Jira project or Linear team, normalized like a fetched issue, so the
+// backlog triages and runs them the way it does GitHub issues. Same credentials and fetch injection as the single-issue intake above.
+export type TrackerProject = { source: "jira" | "linear"; project: string };
+export interface TrackerListItem { key: string; number: number; title: string; body: string; labels: string[] }
+export interface TrackerSelector { label?: string; numbers?: readonly number[] }
+const MAX_LIST = 200;
+/** `jira:PROJ` or `linear:TEAM` (no issue number) -> the project to list; anything else is null. */
+export function parseTrackerProject(s: string, env: NodeJS.ProcessEnv = process.env): TrackerProject | null {
+  if (env.LOKI_TRACKER_INTAKE === "0") return null;
+  const m = /^(jira|linear):([A-Za-z][A-Za-z0-9_]*)$/.exec(s.trim());
+  if (!m || (m[1] === "jira" && !/^[A-Z][A-Z0-9_]*$/.test(m[2]!)) || (m[1] === "linear" && m[2]!.includes("_"))) return null;
+  return { source: m[1] as "jira" | "linear", project: m[2]!.toUpperCase() };
+}
+const byNumber = (a: TrackerListItem, b: TrackerListItem): number => a.number - b.number;
+const keyNumber = (key: string): number => Number(/-(\d+)$/.exec(key)?.[1] ?? 0);
+async function listJira(p: TrackerProject, sel: TrackerSelector, f: FetchFn, env: NodeJS.ProcessEnv): Promise<TrackerListItem[]> {
+  const hint = "; Jira intake needs JIRA_EMAIL, JIRA_API_TOKEN and JIRA_BASE_URL";
+  const base = need(env, "JIRA_BASE_URL", hint).replace(/\/+$/, ""), email = need(env, "JIRA_EMAIL", hint), token = need(env, "JIRA_API_TOKEN", hint);
+  const q = (v: string): string => `"${v.replace(/["\\]/g, "\\$&")}"`;
+  const jql = [sel.numbers?.length ? `key in (${sel.numbers.map((n) => `${p.project}-${n}`).join(", ")})` : `project = ${q(p.project)} AND statusCategory != Done`,
+    ...(sel.label ? [`labels = ${q(sel.label)}`] : [])].join(" AND ") + " ORDER BY key ASC";
+  const auth = Buffer.from(`${email}:${token}`).toString("base64"), out: TrackerListItem[] = [];
+  let page: string | undefined;
+  do {
+    const url = `${base}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&fields=summary,description,labels&maxResults=100${page ? `&nextPageToken=${encodeURIComponent(page)}` : ""}`;
+    const res = await f(url, { headers: { Authorization: `Basic ${auth}`, Accept: "application/json" } });
+    if (!res.ok) throw new Error(`Jira returned HTTP ${res.status} listing ${p.project}`);
+    const j = (await res.json()) as { issues?: { key?: string; fields?: { summary?: string; description?: unknown; labels?: string[] } }[]; nextPageToken?: string; isLast?: boolean };
+    for (const it of j.issues ?? []) {
+      if (!it.key) continue;
+      const fl = it.fields ?? {};
+      out.push({ key: it.key, number: keyNumber(it.key), title: fl.summary ?? it.key, body: adfToText(fl.description), labels: Array.isArray(fl.labels) ? fl.labels : [] });
+    }
+    page = j.isLast === true ? undefined : j.nextPageToken;
+  } while (page && out.length < MAX_LIST);
+  return out.slice(0, MAX_LIST).sort(byNumber);
+}
+async function listLinear(p: TrackerProject, sel: TrackerSelector, f: FetchFn, env: NodeJS.ProcessEnv): Promise<TrackerListItem[]> {
+  const key = need(env, "LINEAR_API_KEY", "; Linear intake needs LINEAR_API_KEY");
+  const filter: Record<string, unknown> = { team: { key: { eq: p.project } },
+    ...(sel.numbers?.length ? { number: { in: [...sel.numbers] } } : { state: { type: { nin: ["completed", "canceled"] } } }),
+    ...(sel.label ? { labels: { some: { name: { eq: sel.label } } } } : {}) };
+  const query = "query($filter: IssueFilter, $after: String) { issues(filter: $filter, first: 100, after: $after) { nodes { identifier number title description labels { nodes { name } } } pageInfo { hasNextPage endCursor } } }";
+  type Node = { identifier?: string; number?: number; title?: string; description?: string | null; labels?: { nodes?: { name?: string }[] } };
+  const out: TrackerListItem[] = [];
+  let after: string | null = null;
+  do {
+    const res = await f("https://api.linear.app/graphql", { method: "POST", headers: { Authorization: key, "Content-Type": "application/json" }, body: JSON.stringify({ query, variables: { filter, after } }) });
+    if (res.status === 401) throw new Error(`Linear rejected the credentials (HTTP 401); check LINEAR_API_KEY`);
+    if (!res.ok) throw new Error(`Linear returned HTTP ${res.status} listing ${p.project}`);
+    const j = (await res.json()) as { data?: { issues?: { nodes?: Node[]; pageInfo?: { hasNextPage?: boolean; endCursor?: string } } | null }; errors?: { message?: string }[] };
+    if (!j.data?.issues) throw new Error(`Linear returned errors listing ${p.project}; check LINEAR_API_KEY: ${j.errors?.[0]?.message ?? "no issues field"}`);
+    for (const n of j.data.issues.nodes ?? []) {
+      if (!n.identifier) continue;
+      out.push({ key: n.identifier, number: typeof n.number === "number" ? n.number : keyNumber(n.identifier), title: n.title ?? n.identifier, body: n.description ?? "",
+        labels: (n.labels?.nodes ?? []).map((l) => l.name ?? "").filter(Boolean) });
+    }
+    const pi = j.data.issues.pageInfo;
+    after = pi?.hasNextPage && pi.endCursor ? pi.endCursor : null;
+  } while (after && out.length < MAX_LIST);
+  return out.slice(0, MAX_LIST).sort(byNumber);
+}
+/** Open items of one Jira project or Linear team (or exactly `numbers`, any state), optionally only those with `label`; at most 200, by number. */
+export async function listTrackerIssues(p: TrackerProject, sel: TrackerSelector = {}, f: FetchFn = fetch, env: NodeJS.ProcessEnv = process.env): Promise<TrackerListItem[]> {
+  return p.source === "jira" ? listJira(p, sel, f, env) : listLinear(p, sel, f, env);
+}
+/** `loki internal tracker-list <jira:PROJ|linear:TEAM> [--label X] [--issues 1,2]`: JSON array of {key, number, title, body, labels} on stdout. Used by `loki backlog`. */
+export async function runTrackerListCli(args: readonly string[], f: FetchFn = fetch, env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  const usage = "usage: loki internal tracker-list <jira:PROJ|linear:TEAM> [--label X] [--issues 1,2,3]\n";
+  const p = parseTrackerProject(args[0] ?? "", env), li = args.indexOf("--label"), ii = args.indexOf("--issues");
+  const label = li >= 0 ? args[li + 1] : undefined, issues = ii >= 0 ? args[ii + 1] : undefined;
+  if (!p || (li >= 0 && !label) || (ii >= 0 && !/^\d+(,\d+)*$/.test(issues ?? ""))) { process.stderr.write(usage); return 2; }
+  try {
+    const items = await listTrackerIssues(p, { ...(label ? { label } : {}), ...(issues ? { numbers: issues.split(",").map(Number) } : {}) }, f, env);
+    process.stdout.write(`${JSON.stringify(items)}\n`);
+    return 0;
+  } catch (e) {
+    process.stderr.write(`loki internal tracker-list: ${(e as Error).message}\n`);
+    return 1;
+  }
+}

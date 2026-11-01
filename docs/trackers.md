@@ -7,6 +7,18 @@ loki jira:PROJ-123
 loki linear:ENG-42
 ```
 
+## Backlog
+
+`loki backlog` works a whole Jira project or Linear team the way it works GitHub issues: it lists the open items, triages each one (implement, spec or human), runs the implement items as `loki jira:PROJ-N` or `loki linear:TEAM-N` in their own worktrees of the current checkout, drafts a spec for the vague ones and lists the human ones.
+
+```bash
+loki backlog jira:PROJ --all --dry-run
+loki backlog linear:ENG --label loki
+loki backlog jira:PROJ --issues 12,14     # PROJ-12 and PROJ-14
+```
+
+Open means a Jira status category other than Done, or a Linear state other than completed or canceled. At most 200 items are listed. A large Jira or Linear item runs as one run: only GitHub issues are split into slices today, and the triage reason says so.
+
 ## Credentials (environment only)
 
 - Jira: `JIRA_EMAIL`, `JIRA_API_TOKEN` and `JIRA_BASE_URL` (for example `https://acme.atlassian.net`). `JIRA_BASE_URL` may be omitted when you pass an `atlassian.net` browse URL.

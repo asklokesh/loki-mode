@@ -46,7 +46,9 @@ export function parseItems(spec: string): string[] {
  *  Criteria, Definition of done) it is a criterion, as is a task-list checkbox anywhere else; a list with no heading or label above it counts as parts;
  *  items under any other markdown heading, or under a label naming context (Problem, Steps to reproduce, Expected, Environment), count as nothing.
  *  Only top-level items (indent under 2) count. `stack` is a backend word and a frontend word both present. Large = at least two of: parts >= 4,
- *  criteria >= 4, stack. Deterministic and pure: the E-45 sizing path makes no model call, so this only decides whether a split is asked for; the
+ *  criteria >= 4, stack. A declared epic (a label epic, umbrella, tracking or meta) is large on its own. This is the one definition of large:
+ *  engine10/sizing.ts sizeTask, commands/issues_run.ts startIssueEpic and the `loki backlog` triage router (features/triage.ts) all call it.
+ *  Deterministic and pure: the E-45 sizing path makes no model call, so this only decides whether a split is asked for; the
  *  split itself stays the model's (MASS-2, Engine Law L0). */
 export interface Deliverables { parts: number; criteria: number; stack: boolean; large: boolean; reason: string }
 const SOLUTION_WORD = /\b(solution|proposal|proposed|implementation|deliverables?|scope|requirements?|tasks?|features?|changes|goals?|plan|todo|work items?)\b/i;
@@ -57,7 +59,8 @@ const kindOf = (t: string): "solution" | "accept" | undefined => (ACCEPT_WORD.te
 const BACKEND_WORD = /\b(backend|back-end|server|api|endpoints?|routes?|database|sql|postgres(?:ql)?|mysql|sqlite|migrations?|fastify|express|django|flask|rails|graphql)\b/i;
 const FRONTEND_WORD = /\b(frontend|front-end|ui|react|vue|svelte|angular|components?|pages?|css|tailwind|dashboard|autocomplete)\b/i;
 export const LARGE_PARTS = 4, LARGE_CRITERIA = 4;
-export function deliverables(task: string): Deliverables {
+export const EPIC_LABEL_RE = /^(?:epic|umbrella|tracking|meta)$/i;
+export function deliverables(task: string, labels: readonly string[] = []): Deliverables {
   let section: "none" | "solution" | "accept" | "other" = "none", parts = 0, criteria = 0;
   for (const l of task.split(/\r?\n/)) {
     const item = LIST_RE.exec(l);
@@ -75,7 +78,9 @@ export function deliverables(task: string): Deliverables {
   }
   const stack = BACKEND_WORD.test(task) && FRONTEND_WORD.test(task);
   const hits = [parts >= LARGE_PARTS, criteria >= LARGE_CRITERIA, stack].filter(Boolean).length;
-  return { parts, criteria, stack, large: hits >= 2, reason: `structure: ${parts} solution part(s), ${criteria} acceptance criteria, ${stack ? "backend and frontend" : "one side of the stack"}` };
+  const epic = labels.map((l) => l.trim().toLowerCase()).find((l) => EPIC_LABEL_RE.test(l));
+  const structure = `structure: ${parts} solution part(s), ${criteria} acceptance criteria, ${stack ? "backend and frontend" : "one side of the stack"}`;
+  return { parts, criteria, stack, large: Boolean(epic) || hits >= 2, reason: epic ? `label ${epic}` : structure };
 }
 const MS_HEAD_RE = /^\s{0,3}#{1,6}\s+Milestone\s+(\d+)\s*(?:[:.-]\s*(.*?))?\s*#*\s*$/i;
 const MS_KEY_RE = /^milestones:\s*$/i;

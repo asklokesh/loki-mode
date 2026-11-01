@@ -1,0 +1,34 @@
+{
+  "isLast": true,
+  "issues": [
+    {
+      "key": "PROJ-3",
+      "fields": {
+        "summary": "Calculator v2 umbrella",
+        "labels": ["epic"],
+        "description": "Ship divide(a, b), power(a, b) and a history log in calc.ts."
+      }
+    },
+    {
+      "key": "PROJ-1",
+      "fields": {
+        "summary": "Add multiply(a, b) to calc.ts",
+        "labels": [],
+        "description": {
+          "type": "doc",
+          "content": [
+            { "type": "paragraph", "content": [{ "type": "text", "text": "Expected: multiply(2, 3) returns 6." }] }
+          ]
+        }
+      }
+    },
+    {
+      "key": "PROJ-2",
+      "fields": {
+        "summary": "Make the app feel nicer",
+        "labels": ["enhancement"],
+        "description": "Users say it could be better overall."
+      }
+    }
+  ]
+}

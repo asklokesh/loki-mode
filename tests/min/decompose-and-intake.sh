@@ -6,6 +6,9 @@
 #   epic:    `loki start owner/repo#24` on that epic takes the existing MASS-2 decompose path
 #            (commands/issues_run.ts startIssueEpic): the model's split (stub) is used, slice s1 runs, then s2
 #            stacked on s1's run branch, each as its own engine10 run with its own receipt, and no whole-issue run.
+#   backlog: `loki backlog acme/search --issues 25` on an issue that is large only by its epic label: triage marks it
+#            large through the same deliverables rule (no drafted spec), the child run takes the same MASS-2 split
+#            path, and every slice runs.
 #   lean:    `loki start "fix the off-by-one in paginate()"` sizes small and takes the lean path (no plan, no Wall).
 #   intake:  that run, on a repo with 1246 files, 240 test files that each pay an 80 ms process startup (the cost
 #            shape of FireLater's vitest suite) and 20 stale loki/e10-* branches holding unpushed commits, reaches
@@ -18,6 +21,10 @@
 #      sizing, epic and decompose-path assertions must fail.
 #   2. loki-ts/src/engine10/stages/intake.ts: put the eager zero probe back (every detected test file run once,
 #      120 s budget, before intake returns; rebuild dist); the intake and first-session timing assertions must fail.
+#   3. loki-ts/src/features/decompose.ts deliverables: drop the epic label signal (`large: hits >= 2`; rebuild dist):
+#      the backlog issue is no longer large, so the backlog split assertions fail.
+#   4. loki-ts/src/features/triage.ts triageItem: route large to class "spec" again (rebuild dist): the backlog issue
+#      gets a drafted spec instead of a run, so the backlog assertions fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -138,12 +145,16 @@ printf '%s\n' "$SIZES" | grep -Eq '^structured (small|normal) ' && ok "structure
 # --- epic: loki start owner/repo#24 goes down the MASS-2 decompose path, slice by slice --------------------------------
 cat > "$T/bin/gh" <<'GH'
 #!/usr/bin/env bash
-# Stub gh: authenticated, and `issue view` answers for acme/search#24 only (the epic, open).
+# Stub gh: authenticated, and `issue view` answers for acme/search#24 (the structural epic) and #25 (large only by
+# its epic label), both open.
 if [ "${1:-}" = "auth" ]; then exit 0; fi
-if [ "${1:-} ${2:-}" = "issue view" ] && [ "${3:-}" = "24" ]; then
+if [ "${1:-} ${2:-}" = "issue view" ] && { [ "${3:-}" = "24" ] || [ "${3:-}" = "25" ]; }; then
   case "$*" in
     *state,closedByPullRequestsReferences*) echo '{"state":"OPEN","closedByPullRequestsReferences":[]}' ;;
-    *) python3 -I -c 'import json, os; print(json.dumps({"number": 24, "title": os.environ["EPIC_TITLE"], "body": os.environ["EPIC_BODY"], "labels": [{"name": "enhancement"}], "author": {"login": "founder"}, "createdAt": "2026-11-01T00:00:00Z", "url": "https://github.com/acme/search/issues/24"}))' ;;
+    *) python3 -I -c 'import json, os, sys
+n = int(sys.argv[1])
+t, b, l = (os.environ["EPIC_TITLE"], os.environ["EPIC_BODY"], "enhancement") if n == 24 else ("Calculator v2 umbrella", "Add divide(a, b) and power(a, b) to calc.ts.", "epic")
+print(json.dumps({"number": n, "title": t, "body": b, "labels": [{"name": l}], "author": {"login": "founder"}, "createdAt": "2026-11-01T00:00:00Z", "url": "https://github.com/acme/search/issues/%d" % n}))' "$3" ;;
   esac
   exit 0
 fi
@@ -178,6 +189,27 @@ if [ -f "$EPIC_DIR/epic.json" ]; then
 else
     bad "no epic.json recorded for the epic run"
 fi
+
+# --- backlog: a large issue in `loki backlog` runs and splits through the same MASS-2 path, never a drafted spec -------
+B="$T/backlog"
+make_repo "$B" 0
+git -C "$B" remote add origin https://github.com/acme/search.git
+cat > "$T/launch-start" <<EOF
+#!/usr/bin/env bash
+# The real engine on the backlog's issue ref; --no-pr because the stub gh cannot open PRs.
+exec bash "$ROOT/bin/loki" start "\$1" --no-pr --max-cost 5
+EOF
+chmod +x "$T/launch-start"
+LOKI_BACKLOG_LAUNCHER="$T/launch-start" E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" run_loki "$B" "$T/backlog-stub.log" backlog acme/search --issues 25
+BLOG="$(cat "$B-backlog/logs/issue-25.log" 2>/dev/null)"
+printf '%s\n' "$OUT" | grep -E '^backlog: #25' | sed 's/^/    backlog: /'
+printf '%s\n' "$BLOG" | grep -E '^(loki:|#25)' | sed 's/^/    backlog child: /'
+[ "$RC" -eq 0 ] && ok "backlog run exits 0 (the large issue's slices all VERIFIED or PARTIAL)" || { bad "backlog run exited $RC"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+has "backlog: the label-only epic is large by the shared rule and runs (no drafted spec)" "$OUT" "backlog: #25 implement Calculator v2 umbrella | large (label epic); runs split into slices"
+[ ! -d "$B/.loki/specs" ] && ok "backlog: no spec drafted for the large issue" || bad "backlog: a spec was drafted for the large issue"
+has "backlog child: the same rule sizes it large at start" "$BLOG" "acme/search#25 sizes large (label epic: decompose)"
+has "backlog child: takes the MASS-2 split path (model split used)" "$BLOG" "#25 split into 2 slices: s1, s2<-s1"
+printf '%s\n' "$BLOG" | grep -q '^#25 s2 running (stacked on loki/e10-' && ok "backlog child: s2 runs stacked on s1, each slice its own run" || bad "backlog child: slices did not run stacked"
 
 # --- lean + intake speed: a one-line fix on a 1246-file repo with 20 stale run branches --------------------------------
 R="$T/big"
