@@ -174,6 +174,7 @@ f="$(pr_facts)"; set -- $f
 [ "$8" = failure ] && ok "a new failing id beyond the base-red ones keeps status failure" || bad "new full-suite failure gave status $8 ($f)"
 
 # Unit: every risk tier plans at most the one pre-seal reviewer, and the receipt credits "one reviewer" only from it.
+# The run start sits 60s back: readRiskRecord ignores a record older than the run, and a same-millisecond start raced it on Linux CI.
 U="$(cd "$ROOT/loki-ts" && bun -e '
 const { mkdtempSync, mkdirSync, writeFileSync } = require("node:fs"), { join } = require("node:path");
 const x = await import("./src/engine10/stages/xreview.ts"), cr = await import("./src/util/check_result.ts");
@@ -181,7 +182,7 @@ const out = [];
 for (const tier of ["low", "medium", "high"]) {
   const d = mkdtempSync(join(process.argv[1], "u-")); mkdirSync(join(d, ".loki", "state"), { recursive: true });
   writeFileSync(join(d, ".loki", "state", "risk-tier.json"), JSON.stringify({ tier }));
-  out.push(`${tier}=${x.reviewExtraLimitS({ repoDir: d, provider: "claude", capS: 3600, startedAtMs: Date.now(), clock: { now: () => Date.now() } }) > 0 ? 1 : 0}`);
+  out.push(`${tier}=${x.reviewExtraLimitS({ repoDir: d, provider: "claude", capS: 3600, startedAtMs: Date.now() - 60000, clock: { now: () => Date.now() } }) > 0 ? 1 : 0}`);
 }
 out.push(`block=${x.minVerdict("VERIFIED", { provider: "claude", level: "block", notes: [] })}`, `flag=${x.minVerdict("VERIFIED", { provider: "claude", level: "flag", notes: ["n"] })}`);
 const risk = { tier: "high", checks_selected: ["targeted tests", "one reviewer"], checks_deferred: ["one reviewer"] };
