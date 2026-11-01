@@ -9,7 +9,7 @@ import { hooks } from "../hooks.ts";
 import { treeFingerprint } from "../../util/anti_loop.ts";
 import { buildFixResumeBrief, currentDiff, holdoutNote, runFixSession } from "../../runner/session_resume.ts";
 import { adjudicateWallConflict } from "../../util/conflict_resume.ts"; import { type ReadOnlyFile, restoreReadOnly } from "./implement.ts"; import { restoreBaseTests } from "../../util/test_guard.ts";
-import { installOwned } from "../../project_model/install.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts";
+import { installOwned } from "../../project_model/install.ts"; import { relative, resolve } from "node:path"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
 function isTestFailure(g: FailureGroup): boolean { return !g.signature.startsWith("lint:") && g.signature !== "select-tests"; }
@@ -48,7 +48,7 @@ export const fixStage: Stage = {
     const treeBefore = treeFingerprint(ctx.repoDir, ctx.baseSha); // anti-loop: compared with tree_after in machine.ts
     // L1: escalation only goes up: a repeated test failure gets the strongest model (never below the run's) plus the prior diagnosis, before STALLED.
     const testFailures = groups.filter(isTestFailure);
-    const signatures = groups.map((g) => g.signature).sort().join("|");
+    const signatures = groups.filter((g) => !g.carried).map((g) => g.signature).sort().join("|"); // L025: a carried (not rerun) failure never makes a round look repeated
     const repeated = testFailures.length > 0 && prior.fix?.signatures === signatures;
     const downgrade = routed ? null : cascadeDowngrade(ctx.model); // the router replaces the opt-in downgrade list
     const reason = testFailures.map((g) => g.signature).join(", ");
@@ -61,7 +61,7 @@ export const fixStage: Stage = {
     const effort = hooks.effort?.fix(round, testFailures.length > 0);
     const sessionBase = { stage: "fix" as const, tier: "development" as const, limitS: fixStage.limitS, signal, cwd: ctx.repoDir, ...suiteCmdsOpt(ctx.repoDir, prior.intake?.testmap), ...(effort ? { effort } : {}), ...(pinnedModel ? { model: pinnedModel } : {}), ...(routedPin ? { model: routedPin } : {}) };
     const fullBrief = buildFixBrief(task, groups, diffStat, repeated ? { priorDiagnosis: prevDiag } : undefined, holdoutFailed);
-    let r = await runFixSession(ctx, sessionBase, `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel, fullBrief, buildFixResumeBrief(groups, diffStat, prevDiag, holdoutFailed)); // one session per round: a spec conflict starts no retry; the unchanged-tree rule below decides whether it is believed
+    let r = await runFixSession(ctx, sessionBase, `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel, fullBrief, buildFixResumeBrief(groups, diffStat, prevDiag, holdoutFailed, [...((prior.implement?.tests_reverted as string[] | undefined) ?? []), ...((prior.fix?.tests_reverted as string[] | undefined) ?? [])].map((f) => relative(ctx.repoDir, resolve(ctx.repoDir, f))))); // one session per round: a spec conflict starts no retry; the unchanged-tree rule below decides whether it is believed
     const ro = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [], wd = r.session.markers.specConflict && !r.session.killed ? await adjudicateWallConflict(ctx, { ...sessionBase, iterationId: r.ids[r.ids.length - 1]!, brief: fullBrief }, r.session, ro) : null; if (wd) r = { ...r, session: wd.session, ids: [...r.ids, ...wd.ids] }; // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT
     const testsReverted = [...restoreReadOnly(ro), ...restoreBaseTests(ctx.repoDir, ctx.baseSha, prior.intake)]; // the Wall and pre-existing tests are read-only after any fix pass
     const treeAfter = treeFingerprint(ctx.repoDir, ctx.baseSha), conflict =r.session.markers.specConflict && !r.session.killed && treeBefore !== null && treeBefore === treeAfter ? r.session.markers.specConflict : null; // evidence: a claim from a round that edited the tree is work in progress, not an escape from the failure

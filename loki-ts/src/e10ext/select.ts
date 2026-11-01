@@ -172,8 +172,6 @@ export function quickSplit<T extends TestRef>(tests: T[], keep: ReadonlySet<stri
   return { first, rest: tests.filter((t) => !want.has(refName(t))) };
 }
 
-/** L025: the full suite and the secret scan each run at most this many times per run (the first verify and the complete verify at the end). */
-export const DEEP_RUNS_MAX = 2;
 export const QUICK_ONLY_NOTE = "quick re-verify only: the complete verify did not run after the last fix round";
 /** L025: verify after a fix round is quick: the previous verify's blocking check names and the paths changed since it (fileHashes). Null on a first
  *  verify, an output without hashes (a stopped verify) or LOKI_E10_QUICK_VERIFY=0, which all run the complete selection. */

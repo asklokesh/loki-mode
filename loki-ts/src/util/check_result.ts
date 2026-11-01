@@ -1703,7 +1703,7 @@ export function failureGroup(c: { name: string; cmd: string; first_error?: strin
 }
 /** L005/L025: verify's fix-brief groups and blocking check names. An excerpt already shown (a suite repeating a per-file failure) is referenced, not
  *  repeated; excerpts share `cap` bytes. `quick` (set when this verify stopped quick: the previous output and every check name this one ran) carries the previous
- *  blocking checks this one did not rerun (the full suite), so the brief and the stall rule still see them. */
+ *  blocking checks this one did not rerun (the full suite), so the brief still shows them; marked carried, they never enter the stall comparison. */
 export function briefGroups<C extends { name: string; cmd: string; first_error?: string; ids?: string[] }>(blocking: C[], excerptOf: (c: C) => string, isSuite: (c: C) => boolean, cap: number, quick?: { prev?: Record<string, unknown>; ran: ReadonlySet<string> }): { groups: FailureGroup[]; names: string[] } {
   const seen = new Map<string, number>(), names = blocking.map((c) => c.name);
   const groups = blocking.map((c, i) => {
@@ -1713,7 +1713,7 @@ export function briefGroups<C extends { name: string; cmd: string; first_error?:
     return failureGroup(c, x, isSuite(c));
   });
   const prevNames = (quick?.prev?.blocking_checks as string[] | undefined) ?? [], prevGroups = (quick?.prev?.failures_grouped as FailureGroup[] | undefined) ?? [];
-  prevNames.forEach((n, i) => { const g = prevGroups[i]; if (g && quick && !quick.ran.has(n)) { names.push(n); groups.push({ ...g, sample: `${g.sample.split("\n")[0]}\n(not rerun since the fix; it runs again once the checks above pass)` }); } });
+  prevNames.forEach((n, i) => { const g = prevGroups[i]; if (g && quick && !quick.ran.has(n)) { names.push(n); groups.push({ ...g, carried: true, sample: `${g.sample.split("\n")[0]}\n(not rerun since the fix; it runs again once the checks above pass)` }); } });
   return { groups, names };
 }
 /** FC-PR-BODY-PUBLIC-HYGIENE: the one wording for a check that also fails on the base tree (verify's pre_red_checks). */

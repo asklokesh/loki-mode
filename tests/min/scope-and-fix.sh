@@ -25,16 +25,20 @@
 #           outputs (tests/min/fixtures/failures, raw ANSI included) have a non-empty excerpt, 0 ESC bytes and a
 #           signature longer than the check name; two vitest full-suite outputs with different failing ids give
 #           different signatures; the recorded jest Validation Error is harness-owned.
-#     L006: with LOKI_E10_FIX_RESUME unset a claude SDK fix round resumes the implement session and asks for no
-#           effort change, so a session created at medium stays at medium (no effort_escalation_cache_reset);
-#           LOKI_E10_FIX_RESUME=0 forces a fresh round at the fix effort.
+#     L006: a fix round is fresh by default; with LOKI_E10_FIX_RESUME=1 a claude SDK round resumes the implement session
+#           at the fix effort policy (high over implement's medium: an accepted cache reset), and its brief names the
+#           test files the harness restored.
 #     L025: the quick selection; a verify NOT PROVEN (a quick-only last verify) never seals VERIFIED.
 #     L026: the brief no longer invites the full suite; the stream parser records full_suite_runs per session.
 #   jest:        a stand-in npx prints the jest Validation Error for a committed jest test: 0 fix sessions.
 #   quick verify: a 2-round run at risk tier medium re-verifies round 1 quick and the last round complete, runs the
 #                full suite twice (3 before), ends VERIFIED, and the full-suite signature carries its first failing line.
 #   quick-only end: a no-progress run at tier medium ends on a quick verify that lists the missing complete verify
-#                as NOT PROVEN, stops after one round (the unrerun full suite still feeds the stall rule), not VERIFIED.
+#                as NOT PROVEN, stops STALLED after two rounds (a not-rerun suite failure never feeds the stall rule).
+#   stale stall: verify 1 fails calc.test.ts and the full suite; round 1 fixes the suite's cause only. The quick
+#                verify carries the suite failure without rerunning it, the run gets round 2 and ends VERIFIED.
+#   lint twice:  bash -n fails after implement and after round 1 while the suite passes; the verify after the last
+#                change runs the full suite again (3 runs) and the run ends VERIFIED.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/engine10/stages/implement.ts: drop restoreBaseTests from tests_reverted (the restore run fails).
@@ -48,9 +52,11 @@
 #   9. loki-ts/src/runner/runner_errors.ts: drop the Validation Error pattern (rebuild dist): the unit check fails and
 #       the jest run starts 2 fix sessions.
 #   10. loki-ts/src/util/check_result.ts: failureSignature ignores ids (the two full-suite signatures match).
-#   11. loki-ts/src/runner/session_resume.ts: chainEnabled back to opt-in === "1" (the three resume checks fail).
+#   11. loki-ts/src/runner/session_resume.ts: chainEnabled default-on !== "0" (the env-unset fresh-round check fails).
 #   12. loki-ts/src/e10ext/select.ts: quickScope always null (rebuild dist): scopes all complete, 3 suites.
 #   13. loki-ts/src/e10ext/context.ts: restore "including the package's full suite" (the brief check fails).
+#   14. loki-ts/src/engine10/machine.ts: sigOf compares carried groups too (rebuild dist): the stale stall run ends STALLED after 1 round.
+#   15. loki-ts/src/engine10/stages/verify.ts: skip the full suite from fix round 2 on (rebuild dist): lint twice runs the suite twice.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -165,14 +171,15 @@ grep -q '^wall ' "$ITERS" && { bad "lean normal: a Wall session ran despite a re
 mkdir -p "$T/l006" "$T/l026"
 cat > "$T/lean-fix.ts" <<TS
 import { readFileSync } from "node:fs";
+import "$ROOT/loki-ts/src/util/conflict_resume.ts"; // first: context.ts -> pr_lessons -> pr -> run_outputs -> conflict_resume is a cycle that only loads from this end
+import { FIXED_RULES } from "$ROOT/loki-ts/src/e10ext/context.ts";
 import { firstError, failureExcerpt } from "$ROOT/loki-ts/src/util/check_result.ts";
 import { failIds, failureGroup } from "$ROOT/loki-ts/src/engine10/failures.ts";
 import { classifyRunnerOutput } from "$ROOT/loki-ts/src/runner/runner_errors.ts";
-import { runFixSession } from "$ROOT/loki-ts/src/runner/session_resume.ts";
+import { buildFixResumeBrief, runFixSession } from "$ROOT/loki-ts/src/runner/session_resume.ts";
 import { rememberSessionEffort, sessionEffortFor } from "$ROOT/loki-ts/src/engine10/session.ts";
 import { quickSplit } from "$ROOT/loki-ts/src/e10ext/select.ts";
 import { verdictOf } from "$ROOT/loki-ts/src/engine10/stages/seal.ts";
-import { FIXED_RULES } from "$ROOT/loki-ts/src/e10ext/context.ts";
 import { buildImplementBrief } from "$ROOT/loki-ts/src/engine10/stages/implement.ts";
 import { consumeSdkStream, isSuiteRun } from "$ROOT/loki-ts/src/runner/sdk_stream_parser.ts";
 const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
@@ -194,15 +201,17 @@ delete process.env.LOKI_E10_FIX_RESUME; delete process.env.LOKI_E10_INVOKER; del
 const calls: Record<string, unknown>[] = [];
 const ctx = { provider: "claude", repoDir: "$T/l006", runId: "e10-x", outputs: () => ({}), sessions: { run: async (o: Record<string, unknown>) => { calls.push(o); return { exit: 0, killed: false, markers: {}, summary: null }; } }, cost: { read: () => ({ cacheReadTokens: 0 }) } } as never;
 const base = { stage: "fix", tier: "development", limitS: 180, signal: new AbortController().signal, cwd: "$T/l006", effort: "high" } as never;
-const r1 = await runFixSession(ctx, base, "e10-x-fix1", [], { sessionId: "S1", model: "m" }, "m", "FULL", "RESUME");
-res("L006 env unset: the fix round resumes the implement session", r1.mode === "resumed" && calls[0]!.resumeSessionId === "S1" && calls[0]!.brief === "RESUME");
-res("L006 env unset: the resumed call asks for no effort change", !("effort" in calls[0]!));
-rememberSessionEffort("S1", "medium");
-const warm = sessionEffortFor(calls[0] as never), cold = sessionEffortFor({ ...calls[0], effort: "high" } as never);
-res("L006 a resumed round 1 keeps the session effort (no effort_escalation_cache_reset)", warm.effort === "medium" && !warm.escalated && !!cold.escalated);
-process.env.LOKI_E10_FIX_RESUME = "0";
 const r0 = await runFixSession(ctx, base, "e10-x-fix1b", [], { sessionId: "S1", model: "m" }, "m", "FULL", "RESUME");
-res("L006 LOKI_E10_FIX_RESUME=0 forces a fresh round", r0.mode === "fresh" && !calls[1]!.resumeSessionId && calls[1]!.brief === "FULL" && calls[1]!.effort === "high");
+res("L006 env unset: a fresh fix round at the fix effort", r0.mode === "fresh" && !calls[0]!.resumeSessionId && calls[0]!.brief === "FULL" && calls[0]!.effort === "high");
+process.env.LOKI_E10_FIX_RESUME = "1";
+const r1 = await runFixSession(ctx, base, "e10-x-fix1", [], { sessionId: "S1", model: "m" }, "m", "FULL", "RESUME");
+res("L006 LOKI_E10_FIX_RESUME=1: the fix round resumes the implement session", r1.mode === "resumed" && calls[1]!.resumeSessionId === "S1" && calls[1]!.brief === "RESUME");
+res("L006 LOKI_E10_FIX_RESUME=1: the resumed call keeps the fix effort policy (high)", calls[1]!.effort === "high");
+rememberSessionEffort("S1", "medium");
+const up = sessionEffortFor(calls[1] as never);
+res("L006 a resumed round 1 escalates medium to high (cache reset accepted for the policy effort)", up.effort === "high" && up.escalated?.from === "medium");
+const rb = buildFixResumeBrief([{ signature: "bun:calc.test.ts", count: 1, sample: "bun test calc.test.ts" }], "calc.ts | 1 +", null, 0, ["calc.test.ts"]);
+res("L006 the resumed brief names the test files the harness restored", rb.includes("restored your edits") && rb.includes("calc.test.ts"));
 delete process.env.LOKI_E10_FIX_RESUME;
 
 const t = (p: string) => ({ runner: "bun" as const, path: p });
@@ -257,7 +266,29 @@ run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress LOKI_RISK_TIER=me
 last="$(ev '[e["data"] for e in E if e["type"]=="stage.completed" and e["stage"]=="verify"][-1]')"
 has "quick-only end: the last verify is quick" "$last" "'verify_scope': 'quick'"
 has "quick-only end: verify lists the missing complete verify as NOT PROVEN" "$last" "quick re-verify only"
-[ "$(fix_sessions)" = "1" ] && ok "quick-only end: one fix round, then STALLED (the unrerun full suite still counts toward the stall)" || { bad "quick-only end: $(fix_sessions) fix sessions (want 1)"; dump; }
+[ "$(fix_sessions)" = "2" ] && ok "quick-only end: two fix rounds, then STALLED (a not-rerun suite failure never counts toward the stall)" || { bad "quick-only end: $(fix_sessions) fix sessions (want 2)"; dump; }
 [ "$(outcome)" != "VERIFIED" ] && ok "quick-only end: not VERIFIED (Outcome $(outcome))" || bad "quick-only end: VERIFIED without a complete verify"
+
+# stale stall: verify 1 fails calc.test.ts (task-named, rerun by every quick verify) and the full suite (cfg.json, read by loader.test.ts, which
+# no changed file imports, so only the suite runs it). Round 1 fixes cfg.json, calc.test.ts still fails: the quick verify does not rerun the
+# suite, its old failure is carried, and the run must get round 2 (not STALLED) and end VERIFIED.
+mkdir -p "$T/seed-cfg"
+printf '{"ok": true}\n' > "$T/seed-cfg/cfg.json"
+printf 'import { expect, test } from "bun:test";\nimport { readFileSync } from "node:fs";\n\ntest("cfg", () => {\n  expect(JSON.parse(readFileSync(new URL("./cfg.json", import.meta.url), "utf8")).ok).toBe(true);\n});\n' > "$T/seed-cfg/loader.test.ts"
+SEED="$T/seed-cfg" run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_BREAK_CFG=1 E2E_STUB_FIX=cfgfirst LOKI_RISK_TIER=medium
+v1="$(ev '[g["signature"].split(" ")[0] + " " + g["signature"].split(" ")[1] for e in E if e["type"]=="stage.completed" and e["stage"]=="verify" for g in e["data"]["failures_grouped"]][:2]')"
+has "stale stall: verify 1 failed the full suite" "$v1" "full suite:"
+[ "$(fix_sessions)" = "2" ] && ok "stale stall: round 2 ran (a carried suite failure is not a repeat)" || { bad "stale stall: $(fix_sessions) fix sessions (want 2)"; dump; }
+[ "$(outcome)" = "VERIFIED" ] && ok "stale stall: run is VERIFIED" || { bad "stale stall: outcome is '$(outcome)', not VERIFIED"; dump; }
+
+# lint twice: tool.sh fails bash -n after implement and again (a new error) after round 1 while the suite passes; round 2 fixes it.
+# The final verify after the last change runs the full suite again, so the run seals VERIFIED (a 2-run suite cap sealed it PARTIAL).
+mkdir -p "$T/fakelint"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$T/fakelint/shellcheck"; chmod +x "$T/fakelint/shellcheck"
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_LINTBAD=1 E2E_STUB_FIX=linttwice LOKI_RISK_TIER=medium PATH="$T/fakelint:$FIX/bin:$PATH"
+suites="$(ev 'sum(1 for e in E if e["type"]=="test.result" and str(e["data"].get("name","")).startswith("full suite") and e["data"].get("result") in ("pass","fail"))')"
+[ "$(fix_sessions)" = "2" ] && ok "lint twice: two fix rounds" || { bad "lint twice: $(fix_sessions) fix sessions (want 2)"; dump; }
+[ "$suites" = "3" ] && ok "lint twice: the full suite ran in each complete verify (3)" || bad "lint twice: full suite ran $suites times (want 3)"
+[ "$(outcome)" = "VERIFIED" ] && ok "lint twice: run is VERIFIED" || { bad "lint twice: outcome is '$(outcome)', not VERIFIED"; dump; }
 
 finish

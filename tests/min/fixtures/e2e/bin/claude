@@ -9,6 +9,8 @@
 # E2E_STUB_TEST_EDIT=1: the implement session weakens calc.test.ts (adds a test.skip) and adds a new multiply.test.ts;
 # =update only appends a test case to calc.test.ts (assertions kept), plus the same new file.
 # E2E_STUB_SCOPE_EDIT=1: the implement session also edits util.ts (when the repo has one).
+# E2E_STUB_BREAK_CFG=1: it also writes {"ok": false} to cfg.json (when the repo has one); E2E_STUB_LINTBAD=1: it also writes a tool.sh
+# that fails bash -n. Fix modes: cfgfirst fixes cfg.json first, multiply() next; linttwice leaves tool.sh broken in a new way once, then fixes it.
 # E2E_STUB_FIX (fix sessions, told apart by LOKI_E10_STAGE=fix): conflict answers LOKI_SPEC_CONFLICT and edits
 # nothing; wallconflict does the same citing loki_wall_multiply.test.ts; noprogress edits calc.ts without fixing multiply();
 # fixit turns the wrong multiply() right; twostep needs two rounds. E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
@@ -64,6 +66,11 @@ if [ "${LOKI_E10_STAGE:-}" = "fix" ]; then # before the implement branch: a fix 
     wallconflict) echo "LOKI_SPEC_CONFLICT: loki_wall_multiply.test.ts:5 calls multiplyAll, which the task never asks for"; exit 0 ;;
     noprogress) printf '// stub fix pass\n' >> calc.ts; echo "LOKI_DONE"; exit 0 ;;
     fixit) python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; echo "LOKI_DONE"; exit 0 ;;
+    cfgfirst) if grep -q '"ok": false' cfg.json; then printf '{"ok": true}\n' > cfg.json
+      else python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; fi
+      echo "LOKI_DONE"; exit 0 ;;
+    linttwice) if grep -q BROKEN_A tool.sh; then printf '#!/usr/bin/env bash\necho BROKEN_B )\n' > tool.sh; else printf '#!/usr/bin/env bash\necho fixed\n' > tool.sh; fi
+      echo "LOKI_DONE"; exit 0 ;;
     twostep) # round 1 fixes multiply() but adds a failing extra.test.ts (a different failing set); round 2 fixes that test
       if [ -f extra.test.ts ]; then printf 'import { expect, test } from "bun:test";\nimport { add } from "./calc";\n\ntest("extra", () => {\n  expect(add(1, 1)).toBe(2);\n});\n' > extra.test.ts
       else python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; printf 'import { expect, test } from "bun:test";\nimport { add } from "./calc";\n\ntest("extra", () => {\n  expect(add(1, 1)).toBe(3);\n});\n' > extra.test.ts; fi
@@ -120,6 +127,8 @@ if [ "$stage" = "implement" ]; then
       printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(2, 5)).toBe(10);\n});\n' > multiply.test.ts
     fi
     if [ "${E2E_STUB_SCOPE_EDIT:-}" = "1" ] && [ -f util.ts ]; then printf 'export const MODE = 2;\n' >> util.ts; fi
+    if [ "${E2E_STUB_BREAK_CFG:-}" = "1" ] && [ -f cfg.json ]; then printf '{"ok": false}\n' > cfg.json; fi
+    if [ "${E2E_STUB_LINTBAD:-}" = "1" ]; then printf '#!/usr/bin/env bash\nif true; then\n  echo BROKEN_A\n' > tool.sh; fi
     if [ "${E2E_STUB_MODE:-}" = "wrong" ]; then
       printf '\nexport function multiply(a: number, b: number): number {\n  return a + b;\n}\n' >> calc.ts
     elif [ "${E2E_STUB_MODE:-}" = "localvar" ]; then # FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: multiply() with a local variable and a comment word a test could echo

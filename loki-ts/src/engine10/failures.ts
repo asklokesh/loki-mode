@@ -4,6 +4,7 @@ export interface FailureGroup {
   signature: string; // normalized reason: numbers and quoted values collapsed
   count: number;
   sample: string; // one raw (unnormalized) reason from the group
+  carried?: true; // L025: failed in the previous verify and was not rerun by this quick one; shown in the brief, never compared by the stall rule
 }
 const ID_LINE = /^(?:(?:FAILED|ERROR)\s+(\S+::\S*)(?:\s.*)?|\u25cf\s+(?!Console|Test suite failed)(.+)|not ok \d+ - (.+?)(?:\s+#.*)?|\u2716\s+(?!failing tests:)(.+?)(?:\s+\([\d.]+ms\))?|FAIL\s+(.+)|\u00d7\s+(.+?)(?:\s+\d+(?:\.\d+)?\s*m?s)?)$/;
 /** The runner's own failed-plus-errored count: pytest "N failed, M error", jest/vitest "Tests: N failed", node "fail N". */

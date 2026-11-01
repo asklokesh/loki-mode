@@ -218,7 +218,7 @@ Run state lives in `.loki/` inside each project and in `~/.loki/`. Uninstalling 
 
 `loki wow` runs one small task in a temporary repo when Claude or OpenCode is ready, and falls back to `loki tour` when it is not. `loki factory "<task>"` is `loki start` with the autonomy policy named first. `--cost-first` prefers a lower-cost model only when the advisor marks the route low risk. `--max-cost` and `budgets.per_run` stay the hard cap.
 
-There is no importer that copies a Claude Code or OpenCode transcript into a Loki run. Inside one Loki run, the plan session resumes into implement, and each fix round resumes the session before it, unless `LOKI_E10_FIX_RESUME=0`. A rate limit stays a retry; a hard billing failure does not (`loki-ts/src/runner/retry_class.ts`). Checkpoint resume is `loki resume`. The handoff from another tool is the repo plus the task: `loki start --provider opencode` or the default Claude path, then `loki chat --attach` to watch. The MCP server and the Claude plugin return the same receipt-capable results as the CLI.
+There is no importer that copies a Claude Code or OpenCode transcript into a Loki run. Inside one Loki run, the plan session resumes into implement unless `LOKI_E10_FIX_RESUME=0`. A rate limit stays a retry; a hard billing failure does not (`loki-ts/src/runner/retry_class.ts`). Checkpoint resume is `loki resume`. The handoff from another tool is the repo plus the task: `loki start --provider opencode` or the default Claude path, then `loki chat --attach` to watch. The MCP server and the Claude plugin return the same receipt-capable results as the CLI.
 
 ---
 

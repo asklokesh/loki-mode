@@ -238,7 +238,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   try {
     let jumped = false, resized = false, stopped: string | null = null;
     const sigs: string[] = [];
-    const sigOf = (d: Obj | undefined, r?: StageResult | null): string => r && r.status !== "completed" ? `verify-crashed-${sigs.length}` : JSON.stringify([...((d?.failures_grouped ?? []) as { signature?: string }[]).map((g) => g.signature).sort(), `holdout_failed=${d?.holdout_failed ?? 0}`]); // a crashed or timed-out verify leaves outputs.verify stale: record a marker that never matches (A-113b)
+    const sigOf = (d: Obj | undefined, r?: StageResult | null): string => r && r.status !== "completed" ? `verify-crashed-${sigs.length}` : JSON.stringify([...((d?.failures_grouped ?? []) as { signature?: string; carried?: boolean }[]).filter((g) => !g.carried).map((g) => g.signature).sort(), `holdout_failed=${d?.holdout_failed ?? 0}`]); // a crashed or timed-out verify leaves outputs.verify stale: record a marker that never matches (A-113b)
     for (const step of opts.flow ?? FLOW) {
       const group = (typeof step === "string" ? [step] : [...step]) as StageName[];
       let todo = group;

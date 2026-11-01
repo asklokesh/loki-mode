@@ -121,6 +121,12 @@ def config_env(config, env):
         # it (stages/wall.ts capToRunTier). LOKI_MODEL_OVERRIDE is not used: it is a pin key for the Wall
         # re-author, so that call would climb back to sonnet (engine10/sizing.ts wallModel).
         env["LOKI_SESSION_MODEL"] = "haiku"
+    if config.startswith("loki-"):
+        # A/B knob: H2H_LOKI_ENV="K=V,K=V" sets those variables on Loki contestants only (contestant_env drops inherited LOKI_*).
+        for kv in filter(None, os.environ.get("H2H_LOKI_ENV", "").split(",")):
+            k, _, v = kv.partition("=")
+            if k.startswith("LOKI_"):
+                env[k] = v
     return env
 
 
