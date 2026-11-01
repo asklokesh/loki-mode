@@ -6,6 +6,7 @@
 //   3. a slice that is not VERIFIED or PARTIAL with a PR stops its dependents, which are recorded SKIPPED with the reason;
 //   4. renderEpicTree prints the epic as a tree of slice, outcome, PR and cost.
 import type { GhIssue } from "./issues_run.ts";
+import { EXIT } from "../engine10/output.ts";
 
 export interface Slice {
   id: string;
@@ -25,6 +26,7 @@ export interface SliceResult {
   pr: string | null;
   cost: string;
   branch?: string | null;
+  rc?: number; // the slice run's exit code: 3 is its budget stop even when no receipt verdict was sealed
 }
 
 const ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
@@ -247,4 +249,21 @@ export function makeSessionDecompose(repoDir: string, lokiDir: string, provider:
     if (existsSync(outPath)) return readFileSync(outPath, "utf8");
     return r.summary ?? "";
   };
+}
+
+const col = (t: string): string => `${t}:`.padEnd(12); // engine10/output.ts summary label width
+/** The whole split issue as one run: BUDGET_STOP (exit 3) when any slice hit its budget, else FAILED (1) when any slice is not VERIFIED or
+ *  PARTIAL, else PARTIAL (6) when any is PARTIAL, else VERIFIED (0). Cost sums the slices; it is marked partial when a slice that ran has no
+ *  figure, and never reads $0.00 for an unknown. Printed in the engine's summary wording, so `loki backlog` parses it like any run. */
+export function epicOutcome(rows: readonly SliceResult[]): { outcome: "VERIFIED" | "PARTIAL" | "FAILED" | "BUDGET_STOP"; rc: number; lines: string } {
+  const budget = rows.find((r) => r.rc === 3 || /^BUDGET_STOP/.test(r.outcome));
+  const bad = rows.find((r) => !/^(VERIFIED|PARTIAL)/.test(r.outcome));
+  const outcome = budget ? "BUDGET_STOP" : bad ? "FAILED" : rows.some((r) => /^PARTIAL/.test(r.outcome)) ? "PARTIAL" : "VERIFIED";
+  const why = budget ?? bad ?? rows.find((r) => /^PARTIAL/.test(r.outcome));
+  const ran = rows.filter((r) => r.cost !== "-"), priced = ran.map((r) => /^\$(\d+(?:\.\d+)?)$/.exec(r.cost)).filter((m): m is RegExpExecArray => m !== null);
+  const usd = priced.reduce((a, m) => a + Number(m[1]), 0);
+  const cost = priced.length === 0 ? `not measured (${ran.length} slice run${ran.length === 1 ? "" : "s"})`
+    : priced.length < ran.length ? `partial: $${usd.toFixed(2)} for ${priced.length} of ${ran.length} slice runs` : `$${usd.toFixed(2)} (${ran.length} slice run${ran.length === 1 ? "" : "s"})`;
+  const lines = [`${col("Outcome")}${outcome}`, ...(why && outcome !== "VERIFIED" ? [`${col("Reason")}slice ${why.id}: ${oneLine(why.outcome)}`] : []), `${col("Cost")}${cost}`];
+  return { outcome, rc: EXIT[outcome], lines: `${lines.join("\n")}\n` };
 }

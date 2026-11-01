@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { MAX_PARALLEL, makeDefaultRunner, queueAdd, queueRun, type ItemResult, type QueueDeps, type RunOpts, type RunResult } from "./queue.ts";
 import { estimateFor, startText, type EstimateResult } from "../runner/router/cost_preview.ts";
-import { makeSessionDecompose, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
+import { epicOutcome, makeSessionDecompose, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { resolveModel } from "../engine10/session.ts";
@@ -451,7 +451,7 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
     }
     const prUrl = PR_URL_RE.exec(res.output)?.[0] ?? null;
     const verdict = res.verdict || (res.rc === 0 ? "COMPLETED (no proof verdict)" : `FAILED (exit ${res.rc})`);
-    const r: SliceResult = { id: s.id, title: s.title, parent, outcome: verdict, pr: prUrl, cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : "NOT RECORDED", branch: res.runId ? `loki/${res.runId}` : null };
+    const r: SliceResult = { id: s.id, title: s.title, parent, outcome: verdict, pr: prUrl, cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : "NOT RECORDED", branch: res.runId ? `loki/${res.runId}` : null, rc: res.rc };
     d.out(`#${n} ${s.id} ${verdict}  pr ${prUrl ?? "none"}  cost ${r.cost}\n`);
     return r;
   };
@@ -508,7 +508,9 @@ export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr:
   const r = await runOneEpic(d, raw.repo, { issue, plan }, 1, join(o.runDir, "slices"), !o.noPr);
   try { writeFileSync(join(o.runDir, "epic.json"), JSON.stringify({ issue: `${raw.repo}#${issue.number}`, size: size.size, reasons: size.reasons, slices: plan.slices, results: r.results }, null, 2) + "\n"); } catch { /* the printed tree still reports every slice */ }
   d.out(`\n${r.tree}${r.outcome}; cost ${r.cost}; ${r.time}\n`);
-  return r.results.every((x) => /^(VERIFIED|PARTIAL)/.test(x.outcome)) ? 0 : 1;
+  const agg = epicOutcome(r.results); // the standard Outcome/Reason/Cost lines, so `loki backlog` reads the true verdict and adds the cost to its day ledger
+  d.out(agg.lines);
+  return agg.rc;
 }
 
 /**

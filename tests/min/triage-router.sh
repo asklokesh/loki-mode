@@ -15,10 +15,12 @@
 #                    human issues are listed with the reason; --issues fetches bodies with gh issue view.
 #                    The large epic launches like any implement issue (the engine splits it: see
 #                    tests/min/decompose-and-intake.sh); only the vague issues get a drafted spec.
-#   jira:            `loki backlog jira:PROJ` lists a project's open items from an offline Jira stand-in
+#   jira:            `loki backlog jira:PROJ` (or jira:proj) lists a project's open items from an offline Jira stand-in
 #                    (tests/min/fixtures/triage/jira_server.py, no real credentials), triages them like
 #                    GitHub issues, launches `loki jira:PROJ-N` for implement items and drafts a spec for
-#                    the vague one; a large Jira item runs as one run (the engine splits only GitHub).
+#                    the vague one; a large Jira item runs as one run (the engine splits only GitHub). A key
+#                    that is not PROJ-<number> is refused before it names a path; a child keeps only its own
+#                    tracker's token (GitHub children get none).
 #   linear:          the Linear listing (features/tracker_intake.ts listTrackerIssues, fetch injected with
 #                    tests/min/fixtures/triage/linear-issues.json) asks for one team's open items and its
 #                    items triage the same way; `loki backlog linear:TEAM` names LINEAR_API_KEY when unset.
@@ -122,6 +124,7 @@ off="$(cd "$REPO" && LOKI_TRIAGE=0 ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" bac
 cat > "$T/launcher" <<'EOF'
 #!/usr/bin/env bash
 echo "$1 class=${LOKI_TRIAGE_CLASS:-} reason=${LOKI_TRIAGE_REASON:-}" >> "$LAUNCH_LOG"
+echo "$1 jira_token=${JIRA_API_TOKEN:+set} linear_key=${LINEAR_API_KEY:+set}" >> "$LAUNCH_LOG.env"
 echo "Outcome: VERIFIED"
 EOF
 chmod +x "$T/launcher"
@@ -136,7 +139,7 @@ has "dry run: the large epic is shown running split into slices" "$dry" "| large
 [ ! -e "$T/launch.log" ] && [ ! -d "$REPO/.loki/specs" ] && ok "dry run: nothing launched, no spec drafted" || bad "dry run: launched or drafted something"
 
 # 4. backlog run: implement runs, spec drafts, human is listed
-run="$(cd "$REPO" && E2E_STUB_LOG="$T/stub-backlog.log" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --all 2>&1)"; rc=$?
+run="$(cd "$REPO" && E2E_STUB_LOG="$T/stub-backlog.log" JIRA_API_TOKEN=jira_other LINEAR_API_KEY=lin_other ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --all 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "backlog run: exit 0" || { bad "backlog run: exit $rc"; printf '%s\n' "$run" | tail -12 | sed 's/^/    | /'; }
 launched="$(sed 's/ .*//' "$T/launch.log" 2>/dev/null | sort | tr '\n' ' ')"
 [ "$launched" = "example/calc#1 example/calc#2 example/calc#3 example/calc#6 example/calc#8 " ] && ok "backlog run: only implement issues launched (#1 #2 #3 #6 and the large #8)" || bad "backlog run: launched: ${launched:-nothing}"
@@ -169,12 +172,21 @@ printf '%s\n' "$jdry" | grep -Eq '^backlog: PROJ-1 implement +Add multiply\(a, b
 printf '%s\n' "$jdry" | grep -Eq '^backlog: PROJ-2 spec +.+ \| (vague|ambiguous)' && ok "jira: PROJ-2 (vague) triaged spec" || bad "jira: PROJ-2 not spec"
 has "jira: PROJ-3 (epic label) is large and runs as one run" "$jdry" "backlog: PROJ-3 implement Calculator v2 umbrella | large (label epic); runs as one run, Jira and Linear items do not split yet"
 has "jira dry run: summary counts" "$jdry" "dry run: 2 would run, 1 would get a drafted spec, 0 need a human; nothing launched"
-jrun="$(cd "$REPO" && LAUNCH_LOG="$T/jira-launch.log" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog jira:PROJ --all 2>&1)"; rc=$?
+jrun="$(cd "$REPO" && LAUNCH_LOG="$T/jira-launch.log" LINEAR_API_KEY=lin_other ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog jira:PROJ --all 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "jira run: exit 0" || { bad "jira run: exit $rc"; printf '%s\n' "$jrun" | tail -8 | sed 's/^/    | /'; }
 jl="$(sed 's/ .*//' "$T/jira-launch.log" 2>/dev/null | sort | tr '\n' ' ')"
 [ "$jl" = "jira:PROJ-1 jira:PROJ-3 " ] && ok "jira run: implement items launched as loki jira:PROJ-N (PROJ-1, PROJ-3)" || bad "jira run: launched: ${jl:-nothing}"
 jline="$(printf '%s\n' "$jrun" | grep '^PROJ-2 ' | head -1)"; jf="$(printf '%s\n' "$jline" | sed -n 's/.*loki start --spec \([^ ]*\).*/\1/p')"
 [ -n "$jf" ] && [ -f "$REPO/$jf" ] && ok "jira run: the vague PROJ-2 got a drafted spec and its run command" || bad "jira run: PROJ-2 has no drafted spec: $jline"
+[ "$(sort "$T/jira-launch.log.env" 2>/dev/null | tr '\n' ';')" = "jira:PROJ-1 jira_token=set linear_key=;jira:PROJ-3 jira_token=set linear_key=;" ] \
+    && ok "jira run: a Jira child keeps JIRA_API_TOKEN (intake, writeback) and never gets LINEAR_API_KEY" || bad "jira run: child tokens: $(tr '\n' ';' < "$T/jira-launch.log.env" 2>/dev/null)"
+[ "$(grep -c 'jira_token= linear_key=$' "$T/launch.log.env" 2>/dev/null)" = 5 ] && ok "backlog run: GitHub children get neither tracker token" || bad "backlog run: GitHub child tokens: $(tr '\n' ';' < "$T/launch.log.env" 2>/dev/null)"
+jlow="$(cd "$REPO" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog jira:proj --all --dry-run 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && printf '%s\n' "$jlow" | grep -q '^backlog: jira:PROJ concurrency' && printf '%s\n' "$jlow" | grep -q '^backlog: PROJ-1 implement' \
+    && ok "jira: lowercase jira:proj is the PROJ project" || bad "jira: jira:proj gave exit $rc: $(printf '%s\n' "$jlow" | tail -1)"
+jbad="$(cd "$REPO" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog jira:PROJ --label badkey 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && has "jira: an item key that is not PROJ-<number> is refused before any path uses it" "$jbad" 'unexpected issue key "../PROJ-9"' || bad "jira: bad key accepted (exit $rc): $(printf '%s\n' "$jbad" | tail -1)"
+[ -z "$(find "$T" -name '*PROJ-9*' 2>/dev/null)" ] && ok "jira: no worktree, branch dir or log made for the bad key" || bad "jira: a path was made for the bad key: $(find "$T" -name '*PROJ-9*' | head -1)"
 jsel="$(cd "$REPO" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog jira:PROJ --issues 1 --dry-run 2>&1)"
 grep -qF 'key in (PROJ-1) ORDER BY key ASC' "$T/jira.req" 2>/dev/null && ok "jira --issues 1: asks for exactly PROJ-1" || bad "jira --issues 1: wrong search: $(tail -1 "$T/jira.req" 2>/dev/null)"
 kill "$JPID" 2>/dev/null; wait "$JPID" 2>/dev/null; trap _min_cleanup EXIT

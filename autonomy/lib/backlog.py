@@ -7,8 +7,10 @@
 
 Each issue gets its own git worktree and branch (loki/backlog-N) beside the
 checkout; the launcher runs inside it. Success = the child exited 0 (the engine's
-ladder: 0 VERIFIED, 1 FAILED, 3 BUDGET_STOP, 4 BLOCKED, 5 STALLED). A draft PR
-from a failed run is still FAILED. Exit: 0 all ok, 3 only budget stops, 1 other
+ladder: 0 VERIFIED, 1 FAILED, 3 BUDGET_STOP, 4 BLOCKED, 5 STALLED, 6 PARTIAL). A
+draft PR from a failed run is still FAILED; a PARTIAL run counts only with its PR.
+A split issue prints one Outcome and one Cost line for all its slices, so its
+spend reaches the day ledger like any run. Exit: 0 all ok, 3 only budget stops, 1 other
 failures, 2 usage/config error.
 
 Unit mode (D61 slice 10): --dag FILE [--group G] also runs the units of a
@@ -61,6 +63,9 @@ import worktree_prep  # noqa: E402
 REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 TRACKER_RE = re.compile(r"^(jira|linear):([A-Za-z][A-Za-z0-9_]*)$")
+# A tracker item key names worktree, branch and log paths: only PROJECT-<number> of the listed project is accepted.
+ITEM_KEY_RE = r"^%s-\d+$"  # %s: the validated, uppercased project key
+TRACKER_SECRETS = {"jira": ("JIRA_API_TOKEN",), "linear": ("LINEAR_API_KEY",)}
 
 
 def say(msg):
@@ -109,10 +114,14 @@ def list_tracker(spec, label, numbers, env):
             raise ValueError("not a list")
         out = [{"number": int(x["number"]), "key": str(x["key"]), "label": str(x["key"]), "ref": "%s:%s" % (source, x["key"]),
                 "slug": str(x["key"]), "split": False, "title": str(x.get("title") or ""), "body": str(x.get("body") or ""),
-                "labels": [str(l) for l in x.get("labels") or []]} for x in rows]
+                "labels": [str(l) for l in x.get("labels") or []], "source": source} for x in rows]
     except (ValueError, TypeError, KeyError):
         why = (r.stderr.strip().splitlines() or ["no usable output"])[-1]
         raise RuntimeError("listing %s failed (%s)" % (spec, why))
+    key_re = re.compile(ITEM_KEY_RE % re.escape(project))
+    for i in out:
+        if not key_re.fullmatch(i["key"]) or not str(i["number"]) == i["key"].rsplit("-", 1)[1]:
+            raise RuntimeError("listing %s returned an invalid item key %r; refusing to use it in a path" % (spec, i["key"][:40]))
     missing = sorted(set(numbers or []) - {i["number"] for i in out})
     if missing:
         raise RuntimeError("%s has no item %s" % (spec, ", ".join("%s-%d" % (project.upper(), n) for n in missing)))
@@ -162,6 +171,11 @@ def triage(issues, top, env):
         why = (r.stderr.strip().splitlines() or ["no usable output"])[-1]
         raise RuntimeError("triage failed (%s); fix it, or set LOKI_TRIAGE=0 to run every issue untriaged" % why)
     return got
+
+
+def without(env, keys):
+    """A copy of env with keys removed."""
+    return {k: v for k, v in env.items() if k not in keys}
 
 
 def draft_spec(issue, top, env):
@@ -229,6 +243,8 @@ def parse_result(rc, text):
         return False, "BLOCKED: " + (reason or "see the run log"), usd
     if rc == 3:
         return False, "BUDGET_STOP: " + (reason or "run cost cap reached"), usd
+    if rc == 6:  # PARTIAL: some proof missing; counts as done only with its (draft) PR
+        return bool(pr), ("PARTIAL, PR " + pr.group(1)) if pr else "PARTIAL: " + (reason or "not every check proven"), usd
     return False, "FAILED: " + (reason or "exit %d" % rc), usd
 
 
@@ -322,6 +338,9 @@ def main(argv):
     a = ap.parse_args(argv)
 
     tracker = TRACKER_RE.match(a.repo)
+    if tracker:  # jira:proj is jira:PROJ: tracker project keys are uppercase
+        a.repo = "%s:%s" % (tracker.group(1), tracker.group(2).upper())
+        tracker = TRACKER_RE.match(a.repo)
     if tracker and os.environ.get("LOKI_TRACKER_INTAKE") == "0":
         return die("LOKI_TRACKER_INTAKE=0 disables Jira and Linear; unset it to run %s" % a.repo)
     if not (REPO_RE.match(a.repo) or tracker):
@@ -447,7 +466,7 @@ def main(argv):
         if c == "human":
             routed[i["key"]] = (True, "HUMAN: " + why)
         elif c == "spec":
-            ok, status = draft_spec(i, top, child_env)
+            ok, status = draft_spec(i, top, without(child_env, sum(TRACKER_SECRETS.values(), ())))
             routed[i["key"]] = (ok, "%s (%s)" % (status, why))
         if c != "implement":
             say("backlog: %s %s" % (i["label"], routed[i["key"]][1]))
@@ -460,7 +479,9 @@ def main(argv):
             continue
         spec[n] = {"label": i["label"], "branch": "loki/backlog-%s" % i["slug"], "wt": "issue-%s" % i["slug"],
                    "cmd": [launcher, i["ref"]], "deps": [], "unit": False,
-                   "env": {"LOKI_TRIAGE_CLASS": klass[n][0], "LOKI_TRIAGE_REASON": klass[n][1]}}
+                   "env": {"LOKI_TRIAGE_CLASS": klass[n][0], "LOKI_TRIAGE_REASON": klass[n][1]},
+                   # a child keeps only its own tracker's token (intake and writeback need it); the other tracker's never reaches it
+                   "drop": [k for src, keys in TRACKER_SECRETS.items() if src != i.get("source") for k in keys]}
     key_of = {u["id"]: "unit-%s-%d" % (group, u["n"]) for u in dag_units}
     for u in dag_units:
         k = key_of[u["id"]]
@@ -577,7 +598,7 @@ def main(argv):
             return
         log = os.path.join(wt_root, "logs", s["wt"] + ".log")
         with open(log, "w") as lf:
-            p = subprocess.Popen(s["cmd"], cwd=wt, env=dict(child_env, **s["env"]), stdout=lf,
+            p = subprocess.Popen(s["cmd"], cwd=wt, env=without(dict(child_env, **s["env"]), s.get("drop", ())), stdout=lf,
                                  stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
         running[k] = (p, log, wt)
         state[k].update(status="running", ran=True)

@@ -3,7 +3,8 @@
 Usage: python3 -I jira_server.py <port-file> <request-log>
 Binds 127.0.0.1 on a free port, writes the port to <port-file>, logs each
 request path (decoded) to <request-log>, and answers GET /rest/api/3/search/jql
-with jira-search.json when the request carries Basic auth. Anything else is 404.
+with jira-search.json when the request carries Basic auth (a query naming the
+label badkey gets one item whose key is ../PROJ-9). Anything else is 404.
 """
 import base64
 import http.server
@@ -25,8 +26,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(404 if auth == want else 401)
             self.end_headers()
             return
-        with open(os.path.join(HERE, "jira-search.json"), "rb") as f:
-            body = f.read()
+        if "badkey" in urllib.parse.unquote(self.path):  # a hostile key that would escape a worktree path
+            body = b'{"isLast": true, "issues": [{"key": "../PROJ-9", "fields": {"summary": "x", "labels": [], "description": "fix add() in calc.ts"}}]}'
+        else:
+            with open(os.path.join(HERE, "jira-search.json"), "rb") as f:
+                body = f.read()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

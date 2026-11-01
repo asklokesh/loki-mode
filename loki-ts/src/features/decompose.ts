@@ -60,7 +60,13 @@ const BACKEND_WORD = /\b(backend|back-end|server|api|endpoints?|routes?|database
 const FRONTEND_WORD = /\b(frontend|front-end|ui|react|vue|svelte|angular|components?|pages?|css|tailwind|dashboard|autocomplete)\b/i;
 export const LARGE_PARTS = 4, LARGE_CRITERIA = 4;
 export const EPIC_LABEL_RE = /^(?:epic|umbrella|tracking|meta)$/i;
-export function deliverables(task: string, labels: readonly string[] = []): Deliverables {
+/** The labels of the issue this engine run works on: the supervisor puts issue.json's labels in LOKI_E10_ISSUE_LABELS (a JSON string array)
+ *  for an issue run, so the stages' own sizeTask (plan, Wall, implement) applies the same epic-label signal as triage and startIssueEpic. */
+export const ISSUE_LABELS_ENV = "LOKI_E10_ISSUE_LABELS";
+export function issueLabelsFromEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+  try { const v = JSON.parse(env[ISSUE_LABELS_ENV] ?? "[]") as unknown; return Array.isArray(v) ? v.filter((l): l is string => typeof l === "string") : []; } catch { return []; }
+}
+export function deliverables(task: string, labels: readonly string[] = issueLabelsFromEnv()): Deliverables {
   let section: "none" | "solution" | "accept" | "other" = "none", parts = 0, criteria = 0;
   for (const l of task.split(/\r?\n/)) {
     const item = LIST_RE.exec(l);

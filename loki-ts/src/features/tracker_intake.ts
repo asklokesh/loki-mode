@@ -149,9 +149,13 @@ const MAX_LIST = 200;
 /** `jira:PROJ` or `linear:TEAM` (no issue number) -> the project to list; anything else is null. */
 export function parseTrackerProject(s: string, env: NodeJS.ProcessEnv = process.env): TrackerProject | null {
   if (env.LOKI_TRACKER_INTAKE === "0") return null;
-  const m = /^(jira|linear):([A-Za-z][A-Za-z0-9_]*)$/.exec(s.trim());
-  if (!m || (m[1] === "jira" && !/^[A-Z][A-Z0-9_]*$/.test(m[2]!)) || (m[1] === "linear" && m[2]!.includes("_"))) return null;
+  const m = /^(jira|linear):([A-Za-z][A-Za-z0-9_]*)$/.exec(s.trim()); // a lowercase project (jira:proj) is the same project: keys are uppercase
+  if (!m || (m[1] === "linear" && m[2]!.includes("_"))) return null;
   return { source: m[1] as "jira" | "linear", project: m[2]!.toUpperCase() };
+}
+/** An item key is used in worktree, branch and log paths: only PROJECT-<number> of the project that was asked for is accepted. */
+export function validItemKey(p: TrackerProject, key: string): boolean {
+  return new RegExp(`^${p.project}-\\d+$`).test(key) && (p.source === "jira" ? /^[A-Z][A-Z0-9_]*-\d+$/ : /^[A-Z][A-Z0-9]*-\d+$/).test(key);
 }
 const byNumber = (a: TrackerListItem, b: TrackerListItem): number => a.number - b.number;
 const keyNumber = (key: string): number => Number(/-(\d+)$/.exec(key)?.[1] ?? 0);
@@ -170,6 +174,7 @@ async function listJira(p: TrackerProject, sel: TrackerSelector, f: FetchFn, env
     const j = (await res.json()) as { issues?: { key?: string; fields?: { summary?: string; description?: unknown; labels?: string[] } }[]; nextPageToken?: string; isLast?: boolean };
     for (const it of j.issues ?? []) {
       if (!it.key) continue;
+      if (!validItemKey(p, it.key)) throw new Error(`Jira returned an unexpected issue key ${JSON.stringify(it.key).slice(0, 40)} listing ${p.project}`);
       const fl = it.fields ?? {};
       out.push({ key: it.key, number: keyNumber(it.key), title: fl.summary ?? it.key, body: adfToText(fl.description), labels: Array.isArray(fl.labels) ? fl.labels : [] });
     }
@@ -194,6 +199,7 @@ async function listLinear(p: TrackerProject, sel: TrackerSelector, f: FetchFn, e
     if (!j.data?.issues) throw new Error(`Linear returned errors listing ${p.project}; check LINEAR_API_KEY: ${j.errors?.[0]?.message ?? "no issues field"}`);
     for (const n of j.data.issues.nodes ?? []) {
       if (!n.identifier) continue;
+      if (!validItemKey(p, n.identifier)) throw new Error(`Linear returned an unexpected identifier ${JSON.stringify(n.identifier).slice(0, 40)} listing ${p.project}`);
       out.push({ key: n.identifier, number: typeof n.number === "number" ? n.number : keyNumber(n.identifier), title: n.title ?? n.identifier, body: n.description ?? "",
         labels: (n.labels?.nodes ?? []).map((l) => l.name ?? "").filter(Boolean) });
     }
