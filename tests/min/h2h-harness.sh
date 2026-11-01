@@ -16,7 +16,13 @@
 #     shape (>=24 tasks, >=4 languages with 4 to 6 each, >=10 multi-file normal, >=4 hard);
 #   the learning protocol (--sequences): reference solutions applied in order pass every step,
 #     an untouched repo passes none, no step ever sees another step's hidden file, lesson
-#     availability is read from the repo, and an earlier step's loki branch is never re-scored.
+#     availability is read from the repo, and an earlier step's loki branch is never re-scored;
+#   accepted without edit: a passing run that leaves test edits is not accepted, a clean one is,
+#     and the summary's acceptance Wilson interval and $ per accepted task are exact on fixed records;
+#   raw-haiku-verify sends the task text plus the verify sentence on Haiku (raw-haiku does not);
+#   the replay suite (--suite replay): the merged fix passes every task, the parent commit passes
+#     none, every task records a permissive license with its license file vendored, and the leak
+#     check flags hidden content (also over the visible test of the same name) but not namesakes.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. benchmarks/h2h/h2h.py score(): `return 1 if rc == 0 else 0` -> `return 1`; the
@@ -35,6 +41,14 @@
 #  10. lesson_counts(): count a worked example without a VERIFIED verdict; the counts check must fail.
 #  11. commit_step_state(): `git add -A -- . ':(exclude).loki'`; both step-commit checks must fail
 #      (git refuses the pathspec once .loki is gitignored, which aborted the first paid learning run).
+#  12. run_one(): `"accepted": int(bool(passed))`; the sabotage acceptance check must fail.
+#  13. test_edits(): drop the protected-path match; the sabotage test-edit list must lose bunfig.toml.
+#  14. hidden_leaks(): drop the content match; both replay "is a leak" checks must fail.
+#  15. hidden_leaks(): flag every file with a hidden name (the old name-only check); the replay
+#      runner reports leaks on every run and exits 4.
+#  16. contestant_cmd(): do not append VERIFY_SENTENCE; both verify-sentence checks must fail.
+#  17. summarize(): $ per accepted task divided by passes; the fixed-record check must fail.
+#  18. main(): ignore --suite; the replay self-check must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -88,6 +102,29 @@ printf 'throw new Error("preload sabotage");\n' > "$T/sabotage/test/boom.ts"
 printf '[test]\npreload = ["./test/boom.ts"]\n' > "$T/sabotage/bunfig.toml"
 run_case sabotage "$T/sabotage"
 check "edits to protected test paths are reverted before scoring" test "$(field "$J" 'r["pass"]')" = 1
+# Accepted without edit: hidden pass AND no test edits left in the tree. The sabotage run passes but leaves
+# test edits behind, so it is not accepted; the clean correct patch is.
+check "sabotage run passes but is not accepted without edit" test "$(field "$J" 'r["accepted"]')" = 0
+check "sabotage run records its test edits" test "$(field "$J" '",".join(r["test_edits"])')" = "bunfig.toml,test/boom.ts"
+check "clean correct patch is accepted without edit" test "$(field "$T/good.json" 'r["accepted"]')" = 1
+
+# raw-haiku-verify: the same task text plus the one verify sentence, on Haiku; raw-haiku gets the text alone.
+E2E_STUB_OVERLAY="$TDIR/solution" E2E_STUB_PROMPT_LOG="$T/verify.prompt" E2E_STUB_ARGV_LOG="$T/verify.argv" TMPDIR="$T" \
+    bash benchmarks/h2h/run.sh --configs raw-haiku-verify --tasks "$TASK" --out "$T/verify.json" >"$T/verify.log" 2>&1
+check "raw-haiku-verify: runner exits 0" test "$?" = 0
+check "raw-haiku-verify: correct patch passes" test "$(field "$T/verify.json" 'r["pass"]')" = 1
+verify_prompt="$(cat "$T/verify.prompt.other0" 2>/dev/null)"
+has "raw-haiku-verify: prompt carries the task text" "$verify_prompt" "$(head -1 "$TDIR/task.txt")"
+has "raw-haiku-verify: prompt carries the verify sentence" "$verify_prompt" "Before you finish, run the repository's tests and check that your change works."
+has "raw-haiku-verify: runs on Haiku" "$(cat "$T/verify.argv")" "--model haiku"
+E2E_STUB_OVERLAY="$TDIR/solution" E2E_STUB_PROMPT_LOG="$T/plain.prompt" TMPDIR="$T" \
+    bash benchmarks/h2h/run.sh --configs raw-haiku --tasks "$TASK" --out "$T/plain.json" >"$T/plain.log" 2>&1
+check "raw-haiku: prompt has no verify sentence" sh -c "! grep -q 'Before you finish' '$T/plain.prompt.other0'"
+cmd_out="$(cd benchmarks/h2h && python3 -I -c '
+import sys; sys.path.insert(0, "."); import h2h
+c = h2h.contestant_cmd("raw-opus-verify", {"text": "do X"})
+print("opus", c[c.index("--model") + 1], c[c.index("-p") + 1].endswith(h2h.VERIFY_SENTENCE))')"
+has "raw-opus-verify: Opus with the verify sentence" "$cmd_out" "opus opus True"
 
 # Repetitions in parallel: --reps 2 --jobs 2 gives one record per rep, both scored, and the summary
 # carries the Wilson interval and $ per passed task.
@@ -122,10 +159,16 @@ d = json.load(open("results/2026-11-01-9571a21f7.json"))
 v = h2h.verdict_stats([q for q in d["runs"] if q["config"].startswith("loki")])
 print("old", v["verdict_agree_n"], v["false_verified"], v["partial_pass"])
 print("wilson", h2h.wilson(0, 10), h2h.wilson(5, 10))
+a = lambda p, acc, cost: {"config": "raw-haiku", "task": "t", "exit_code": 0, "pass": p, "accepted": acc, "test_edits": [] if acc or not p else ["t.test.ts"], "seconds": 1.0, "timed_out": False, "cost_usd": cost, "sessions": 1}
+x = h2h.summarize([a(1, 1, 0.02), a(1, 0, 0.02), a(0, 0, 0.04), a(1, 1, 0.04)], ["raw-haiku"])[0]
+print("accepted", x["accepted"], x["accepted_n"], x["accept_ci95"], x["cost_per_accepted_usd"], x["cost_per_accepted_ci95"], x["runs_with_test_edits"], x["cost_per_pass_usd"])
 ')"
 has "verdict: agreement, false VERIFIED, PARTIAL split, missed passes, fix rounds" "$verdict_out" "agree 3 fv 1 pp 1 pf 1 mp 2 fr 0.67 cpp 0.02"
 has "verdict: the v11.104.0 result reads 5 of 16, 0 false VERIFIED, 11 PARTIAL passes" "$verdict_out" "old 5 0 11"
 has "wilson: 0/10 and 5/10" "$verdict_out" "wilson [0.0, 0.2775] [0.2366, 0.7634]"
+# 2 of 4 accepted, $0.12 over 4 runs: $0.06 per accepted task; its interval is $ per task over the Wilson bounds of 2/4.
+has "accepted: count, Wilson interval, \$ per accepted task and its interval" "$verdict_out" "accepted 2 4 [0.15, 0.85] 0.06 [0.0353, 0.2]"
+has "accepted: test-edit runs counted, \$ per pass unchanged" "$verdict_out" "1 0.04"
 
 # The task set checks itself: the reference solution passes every task's hidden tests and an
 # untouched repo passes none, across every language in the set.
@@ -198,6 +241,50 @@ has "lessons: run, receipt and VERIFIED worked-example counts" "$learn_out" "cou
 has "a branch left by an earlier step is skipped" "$learn_out" "picked loki/b-new"
 has "step state commits when .loki is gitignored, without .loki" "$learn_out" "step-commit True h2h: state after step 2 False True"
 has "step state commits when .loki is not gitignored, without .loki" "$learn_out" "step-commit False h2h: state after step 2 False True"
+
+# Replay suite (--suite replay): real closed issues replayed at the fix's parent commit, scored by the fix's
+# own test files at their own paths. The reference fix passes every task, the parent commit passes none, and
+# no run reports a leak (the visible test file of the same name is not the hidden one).
+J="$T/replay.json"
+TMPDIR="$T" bash benchmarks/h2h/run.sh --suite replay --configs oracle,noop --jobs 4 --out "$J" >"$T/replay.log" 2>&1
+check "replay oracle/noop: runner exits 0 (no leak, no harness error)" test "$?" = 0
+nrep="$(find benchmarks/h2h/replay -mindepth 2 -maxdepth 2 -name meta.json | wc -l | tr -d ' ')"
+check "replay: 6 to 10 tasks ($nrep)" test "$nrep" -ge 6 -a "$nrep" -le 10
+check "replay: self-check covered every task" test "$(runs 'len(d["tasks"])')" = "$nrep"
+check "replay: the merged fix passes every task" test "$(runs '[s["passed"] == s["n"] for s in d["summary"] if s["config"] == "oracle"]')" = "[True]"
+check "replay: the parent commit passes no task" test "$(runs '[s["passed"] for s in d["summary"] if s["config"] == "noop"]')" = "[0]"
+failed_oracle="$(runs '",".join(r["task"] for r in d["runs"] if r["config"] == "oracle" and not r["pass"])')"
+[ -z "$failed_oracle" ] || echo "  replay oracle failed on: $failed_oracle"
+check "replay: every task records a permissive license, its vendored license file, the issue and both commits" test "$(python3 -I -c '
+import json, glob, os
+ok = True
+for p in glob.glob("benchmarks/h2h/replay/*/meta.json"):
+    m = json.load(open(p)); s = m["source"]; d = os.path.dirname(p)
+    ok &= s["license"] in ("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause")
+    ok &= os.path.isfile(os.path.join(d, "repo", s["license_file"]))
+    ok &= all(len(s[k]) == 40 for k in ("fix_commit", "parent_commit")) and "/issues/" in s["issue"]
+    ok &= m["kind"] == "replay" and os.path.getsize(os.path.join(d, "task.txt")) > 0
+print(ok)')" = True
+# Leak check on a replay task: the hidden file is scored over the visible test of the same name, so only its
+# exact content counts as a leak; a new file that merely shares the name __init__.py does not.
+leak_out="$(cd benchmarks/h2h && python3 -I -c '
+import shutil, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "."); import h2h
+t = h2h.load_task("py-cachetools-grow-evict", h2h.SUITES["replay"])
+r = Path(tempfile.mkdtemp(dir=sys.argv[1])) / "repo"; base = h2h.prepare_repo(t, r)
+print("clean", h2h.hidden_leaks(t, r, base))
+(r / "src/cachetools/extra").mkdir(); (r / "src/cachetools/extra/__init__.py").write_text("x = 1\n")
+print("namesake", h2h.hidden_leaks(t, r, base))
+shutil.copyfile(t["dir"] / "hidden/tests/__init__.py", r / "src/cachetools/extra/__init__.py")
+print("copied", h2h.hidden_leaks(t, r, base))
+shutil.copyfile(t["dir"] / "hidden/tests/__init__.py", r / "tests/__init__.py")
+print("overlaid", h2h.hidden_leaks(t, r, base))
+' "$T")"
+has "replay leak check: clean copy" "$leak_out" "clean []"
+has "replay leak check: a namesake file is not a leak" "$leak_out" "namesake []"
+has "replay leak check: hidden content under another path is a leak" "$leak_out" "copied ['src/cachetools/extra/__init__.py']"
+has "replay leak check: hidden content over the visible test is a leak" "$leak_out" "overlaid ['src/cachetools/extra/__init__.py', 'tests/__init__.py']"
 
 leftover="$(find "$T" -maxdepth 1 -name 'loki-h2h.*' | head -1)"
 check "runner removed its own temp dir" test -z "$leftover"

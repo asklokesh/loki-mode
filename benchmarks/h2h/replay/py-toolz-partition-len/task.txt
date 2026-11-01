@@ -1,0 +1,30 @@
+`partition_all` outputs padding tokens on sequences with inaccurate `__len__`
+
+This is definitely an unusual edge case, but it really had me scratching my head for a little bit.
+
+I have a long-running process where I use [tqdm](https://tqdm.github.io) to display a progress bar. It works through an unknown number of items, but, at the start, I can estimate the total number, even though it might be slightly off. So I set tqdm’s `total` argument to the estimated total. This causes tqdm to set its iterator’s `__len__` to the estimated total. Then `partition_all` uses `__len__` as a shortcut to remove the padding tokens it adds to the batches. Since `__len__` isn’t accurate, a bunch of padding tokens get left in the resulting output.
+
+Here’s a really simplified example:
+
+```py
+def make_n(n):
+    for i in range(n):
+        yield i
+
+# This has no __len__
+five = make_n(5)
+
+# This has an incorrect __len__ of 7.
+progress = tqdm(five, total=7)
+
+for batch in toolz.partition_all(10, progress):
+    print(batch)
+
+# Prints: (0, 1, 2, 3, 4, '__no__pad__', '__no__pad__')
+```
+
+Obviously those `'__no__pad__'` strings shouldn’t be there.
+
+Here’s the shortcut code that causes the problem by relying on `__len__`: https://github.com/pytoolz/toolz/blob/08f2604f599847272d801c7f0467451de59fa33a/toolz/itertoolz.py#L731-L736
+
+Again, this is obviously a weird case (I can’t think of many other situations where I’d be dealing with an inaccurate `__len__`), but I’m wondering if it could be solved for by checking to make sure `prev[len(seq) % n - 1] is not no_pad`. If that check fails, then you could fall back to the binary search that’s used when `__len__` is not available.

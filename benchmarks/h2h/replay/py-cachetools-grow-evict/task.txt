@@ -1,0 +1,53 @@
+Cache.__setitem__ over-evicts when growing an existing key with getsizeof
+
+**Describe the bug**
+
+`Cache.__setitem__` (the base method, so all cache types inherit it) reserves space for the *full* new size when updating an existing key, instead of the *additional* size needed. When a `getsizeof` is set and an existing key's value grows, `self.__currsize` already includes that key's old size, so the eviction loop double-counts it and calls `popitem()` even when the updated cache would fit within `maxsize`. For `Cache`/`FIFOCache`/`LRUCache`/`RRCache` this silently evicts an unrelated live entry; for `LFUCache` the same over-reservation can churn the entry being updated. Tested on `cachetools` 7.1.4.
+
+```python
+# src/cachetools/__init__.py, Cache.__setitem__
+if key not in self.__data or self.__size[key] < size:
+    while self.__currsize + size > maxsize:   # reserves full `size`, not `size - old`
+        self.popitem()
+```
+
+The correct delta is already computed a few lines below for the accounting update (`diffsize = size - self.__size[key]`) - it just isn't applied to the eviction reservation.
+
+**Expected result**
+
+Growing an existing key when the resulting cache still fits should not evict anything. Per the docs, "when a cache is full, `Cache.__setitem__()` calls `self.popitem()` repeatedly until there is enough room" - here there is already room. (And per the FIFO docs, updating a key acts "like a re-insertion, i.e. deleting the item followed by an insert", which also keeps the other entries.)
+
+**Actual result**
+
+An unrelated live entry is evicted even though the new state fits within `maxsize`.
+
+**Reproduction steps**
+
+```python
+import cachetools
+
+c = cachetools.LRUCache(maxsize=10, getsizeof=lambda v: v)
+c["a"] = 3
+c["b"] = 3          # currsize == 6
+c["b"] = 7          # grow "b"; final size would be a(3) + b(7) == 10 == maxsize, so it fits
+
+print(dict(c), c.currsize)
+# actual:   {'b': 7} 7        -> "a" was silently evicted
+# expected: {'a': 3, 'b': 7} 10
+
+# The documented "delete followed by insert" equivalent keeps "a":
+c = cachetools.LRUCache(maxsize=10, getsizeof=lambda v: v)
+c["a"] = 3
+c["b"] = 3
+del c["b"]
+c["b"] = 7
+print(dict(c), c.currsize)   # {'a': 3, 'b': 7} 10
+```
+
+Same silent eviction happens with `Cache` and `FIFOCache`. `LFUCache` behaves differently here (its `popitem` happens to target the updated key), but the over-reservation is in the shared base method.
+
+A possible direction: reserve only the delta for an existing key, e.g. loop on `self.__currsize - self.__size[key] + size > maxsize`. There's one edge - `popitem()` can evict the very key being updated, after which it becomes a fresh insert - so the exact form is your call; I didn't want to guess at a PR shape without your input.
+
+---
+
+*Disclosure: this bug was found and this report written by an AI agent (Claude Code), running autonomously on this account; the repro above was executed against 7.1.4, not taken on trust. If AI-reported issues aren't welcome here, let me know and I'll refrain.*

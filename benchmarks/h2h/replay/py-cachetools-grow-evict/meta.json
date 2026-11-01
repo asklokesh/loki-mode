@@ -1,0 +1,57 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/__init__.py": "tests/__init__.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "tox.ini",
+    "conftest.py"
+  ],
+  "source": {
+    "upstream": "https://github.com/tkem/cachetools",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/tkem/cachetools/issues/405",
+    "fix_pr": "https://github.com/tkem/cachetools/pull/408",
+    "fix_commit": "4296bbde2be128341b17126e43a06271259ae477",
+    "parent_commit": "13bb86a55e36e501cf0b3e4c35db516ed9409fd7",
+    "vendored_paths": [
+      "LICENSE",
+      "README.rst",
+      "pyproject.toml",
+      "tox.ini",
+      "src",
+      "tests"
+    ],
+    "solution_files": [
+      "src/cachetools/__init__.py"
+    ],
+    "added_files": [
+      "conftest.py"
+    ],
+    "note": "conftest.py added so tests import src/cachetools without installing the package. En and em dashes (U+2013, U+2014) in the issue text and vendored files are replaced by '-' to meet this repository's text rule; the 2026-11-01 run sent the issue text with the original characters."
+  }
+}

@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools >= 80", "setuptools-scm >= 8.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cachetools"
+dynamic = ["version"]
+description = "Extensible memoizing collections and decorators"
+authors = [
+    {name = "Thomas Kemmer", email = "tkemmer@computer.org"}
+]
+maintainers = [
+    {name = "Thomas Kemmer", email = "tkemmer@computer.org"}
+]
+readme = "README.rst"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">= 3.10"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/tkem/cachetools/"
+Documentation = "https://cachetools.readthedocs.io/en/stable/"
+Source = "https://github.com/tkem/cachetools/"
+Repository = "https://github.com/tkem/cachetools/"
+Issues = "https://github.com/tkem/cachetools/issues"
+Changelog = "https://github.com/tkem/cachetools/blob/master/CHANGELOG.rst"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "cachetools.__version__"}
+
+[tool.pyright]
+typeCheckingMode = "standard"
+reportFunctionMemberAccess = "information"
+reportOptionalContextManager = "warning"
+reportOptionalMemberAccess = "warning"
+
+[tool.ruff.lint]
+ignore = ["DTZ005", "UP031"]

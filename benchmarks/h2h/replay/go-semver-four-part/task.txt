@@ -1,0 +1,25 @@
+NewConstraint method faulty behavior
+
+Used version: 3.1.1
+When I try to create a constraint with NewConstraint method I get following returns:
+
+**good Example**
+c, cErr := semver.NewConstraint("12.3.4.1234")
+c.String() = nil
+cErr = "improper constraint: 12.3.4.1234"
+
+**faulty behavior**
+c, cErr := semver.NewConstraint("12.**23**.4.1234")
+c.String() = "12.23.4 1234"
+cErr = nil
+
+or
+
+c, cErr := semver.NewConstraint("12.3.**34**.1234")
+c.String() = "12.3.34 1234"
+cErr = nil
+
+
+------------
+
+I would expect the same behavior as with "12.3.4.1234", means telling me its not a contraint..

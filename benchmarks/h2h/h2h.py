@@ -30,7 +30,13 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 TASKS_DIR = HERE / "tasks"
-CONFIGS = ["raw-haiku", "raw-opus", "loki-haiku", "loki-default"]
+# --suite replay: real closed issues from permissively licensed projects, replayed at the fix's parent commit
+# (replay/<id>/meta.json "source" records the upstream, license, issue, fix PR and both commits).
+SUITES = {"tasks": TASKS_DIR, "replay": HERE / "replay"}
+CONFIGS = ["raw-haiku", "raw-opus", "raw-haiku-verify", "raw-opus-verify", "loki-haiku", "loki-default"]
+# The -verify configs are raw Claude Code with the same task text plus this one sentence: what a careful user
+# types when driving Claude Code alone.
+VERIFY_SENTENCE = "Before you finish, run the repository's tests and check that your change works."
 # Offline configs for checking the task set itself: oracle applies tasks/<id>/solution, noop changes nothing.
 CHECK_CONFIGS = ["oracle", "noop"]
 # Learning protocol (--sequences): Loki on Haiku with what it learns from earlier runs in the same repo
@@ -52,8 +58,8 @@ def git(repo, *args, check=True):
     return r.stdout
 
 
-def load_task(task_id):
-    d = TASKS_DIR / task_id
+def load_task(task_id, tasks_dir=TASKS_DIR):
+    d = tasks_dir / task_id
     meta = json.loads((d / "meta.json").read_text())
     meta["id"] = task_id
     meta["dir"] = d
@@ -128,8 +134,10 @@ def prepare_repo(task, dest):
 
 def contestant_cmd(config, task):
     text = task["text"]
-    if config in ("raw-haiku", "raw-opus"):
-        model = config.split("-", 1)[1]
+    if config.startswith("raw-") and config in CONFIGS:
+        model = config.split("-")[1]
+        if config.endswith("-verify"):
+            text = f"{text}\n\n{VERIFY_SENTENCE}"
         # `command claude` skips any shell function named claude in an interactive profile.
         return ["bash", "-c", 'command claude "$@"', "claude", "-p", text, "--model", model,
                 "--output-format", "json", "--dangerously-skip-permissions"]
@@ -193,6 +201,47 @@ def run_contestant(cmd, cwd, env, timeout_s, out_path, err_path):
 
 def apply_oracle(task, repo):
     shutil.copytree(task["dir"] / "solution", repo, dirs_exist_ok=True)
+
+
+def hidden_leaks(task, repo, base):
+    """Hidden test files visible in the contestant's copy before scoring. A hidden file may be scored at
+    a new path or over a visible test file of the same name (replay tasks score the fix's own test file
+    at its own path). A file counts as leaked when it holds a hidden file's exact content under that
+    file's name, or when it is not in the base commit and carries the name of a hidden file that is
+    scored at a new path."""
+    base_files = set(git(repo, "ls-tree", "-r", "--name-only", base).splitlines())
+    content, new_names = {}, set()
+    for src, dest in task["hidden"].items():
+        content.setdefault(Path(dest).name, set()).add((task["dir"] / "hidden" / src).read_bytes())
+        if dest not in base_files:
+            new_names.add(Path(dest).name)
+    leaked = []
+    for p in repo.rglob("*"):
+        if p.name not in content or ".git" in p.relative_to(repo).parts or not p.is_file():
+            continue
+        rel = str(p.relative_to(repo))
+        if (rel not in base_files and p.name in new_names) or p.read_bytes() in content[p.name]:
+            leaked.append(rel)
+    return sorted(leaked)
+
+
+TEST_NAME_SUFFIXES = ("_test.py", "_test.go", ".test.ts", ".test.js", ".spec.ts", ".spec.js")
+TEST_DIRS = ("test", "tests", "__tests__")
+
+
+def test_edits(task, files):
+    """Changed files that are tests or test config: under a protected path, in a test directory, or named
+    like a test. They are reverted before scoring, but a user taking the change as-is would have to remove
+    them, so a run that leaves any is not accepted without edit."""
+    out = []
+    for f in files:
+        parts = f.split("/")
+        name = parts[-1]
+        if (any(f == p.rstrip("/") or f.startswith(p.rstrip("/") + "/") for p in task.get("protected", []))
+                or any(d in TEST_DIRS for d in parts[:-1]) or name == "conftest.py"
+                or (name.startswith("test_") and name.endswith(".py")) or name.endswith(TEST_NAME_SUFFIXES)):
+            out.append(f)
+    return out
 
 
 def changed_files(repo, base):
@@ -398,7 +447,6 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
     repo = d / "repo"
     base = prepare_repo(task, repo)
     env = config_env(config, contestant_env(make_home(d / "home"), work))
-    hidden_names = [Path(dest).name for dest in task["hidden"].values()]
     rec = {"config": config, "task": task["id"], "kind": task["kind"], "lang": task["lang"],
            "difficulty": task.get("difficulty", "normal"), "shape": task.get("shape"), "rep": rep}
     if config == "oracle":
@@ -411,9 +459,10 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
         rc, secs, timed_out = run_contestant(contestant_cmd(config, task), repo, env, timeout_s,
                                              d / "contestant.out", d / "contestant.err")
     # The hidden tests must not exist in the contestant's copy before scoring starts.
-    leaked = [str(p.relative_to(repo)) for p in repo.rglob("*") if p.name in hidden_names]
+    leaked = hidden_leaks(task, repo, base)
     branch = loki_branch_checkout(repo, base) if config.startswith("loki") else None
     files = changed_files(repo, base)
+    edits = test_edits(task, files)
     if config.startswith("raw"):
         m = raw_metrics(d / "contestant.out")
     elif config.startswith("loki"):
@@ -426,6 +475,8 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
     passed, tail = score(task, repo, env, d / "hidden.log")
     rec.update({
         "pass": passed, "seconds": round(secs, 2), "exit_code": rc, "timed_out": timed_out,
+        # Accepted without edit: the hidden tests pass on the tree as left, and no test edits remain in it.
+        "test_edits": edits, "accepted": int(bool(passed) and not edits),
         "files_changed": len(files), "files": files, "hidden_leaked_before_scoring": leaked,
         "scored_branch": branch, "hidden_tail": tail if not passed else "", **m,
     })
@@ -486,7 +537,6 @@ def run_sequence(config, seq, rep, work, timeout_s, keep_dir):
     for i, st in enumerate(seq["steps"], 1):
         env = config_env(config, contestant_env(home, work))
         base = git(repo, "rev-parse", "HEAD").strip()
-        hidden_names = [Path(dest).name for dest in st["hidden"].values()]
         rec = {"config": config, "sequence": seq["id"], "step": i, "task": st["task_id"], "lang": seq["lang"], "rep": rep,
                "lessons_before": lesson_counts(repo),
                # Any step's hidden test file already in the repo when this step starts (must stay empty).
@@ -500,7 +550,7 @@ def run_sequence(config, seq, rep, work, timeout_s, keep_dir):
         else:
             rc, secs, timed_out = run_contestant(contestant_cmd(config, st), repo, env, timeout_s,
                                                  d / f"step{i}.out", d / f"step{i}.err")
-        leaked = [str(p.relative_to(repo)) for p in repo.rglob("*") if p.name in hidden_names]
+        leaked = hidden_leaks(st, repo, base)
         branch = loki_branch_checkout(repo, base, before) if config.startswith("loki") else None
         files = changed_files(repo, base)
         if config.startswith("loki"):
@@ -694,6 +744,19 @@ def summarize(results, configs):
                                   sum(1 for r in rs if r.get("difficulty", "normal") == d)]
                               for d in sorted({r.get("difficulty", "normal") for r in rs})},
         }
+        scored = [r for r in rs if "accepted" in r]  # results written before accepted-without-edit existed lack it
+        if scored:
+            acc = sum(r["accepted"] for r in scored)
+            ci = wilson(acc, len(scored))
+            per_task = sum(r["cost_usd"] for r in scored if isinstance(r.get("cost_usd"), (int, float))) / len(scored)
+            row.update({
+                "accepted": acc, "accepted_n": len(scored), "accept_ci95": ci,
+                "runs_with_test_edits": sum(1 for r in scored if r.get("test_edits")),
+                "cost_per_accepted_usd": round(per_task / (acc / len(scored)), 4) if acc else None,
+                # $ per accepted task = $ per task / acceptance rate, so the acceptance rate's Wilson bounds give
+                # its interval (cost per task held at its measured mean).
+                "cost_per_accepted_ci95": [round(per_task / ci[1], 4), round(per_task / ci[0], 4) if ci[0] else None],
+            })
         if c.startswith("loki"):
             row.update(verdict_stats(rs))
         rows.append(row)
@@ -701,9 +764,9 @@ def summarize(results, configs):
 
 
 def markdown(rows, results, configs):
-    out = ["| config | pass | 95% CI | hard | median s | p90 s | total $ | $ / task | $ / pass | sessions | fix rounds "
-           "| verdict agrees | false VERIFIED | timeouts |",
-           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    out = ["| config | pass | 95% CI | accepted | 95% CI | hard | median s | p90 s | total $ | $ / task | $ / pass "
+           "| $ / accepted | sessions | fix rounds | verdict agrees | false VERIFIED | timeouts |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         unm = f" ({r['cost_unmeasured']} unmeasured)" if r["cost_unmeasured"] else ""
         ci = r["pass_ci95"]
@@ -711,9 +774,15 @@ def markdown(rows, results, configs):
         cpp = f"{r['cost_per_pass_usd']:.4f}" if r["cost_per_pass_usd"] is not None else "-"
         fr = r["mean_fix_rounds"] if r["mean_fix_rounds"] is not None else "-"
         agree = f"{r['verdict_agree_n']}/{r['n']} ({r['verdict_agreement'] * 100:.0f}%)" if "verdict_agreement" in r else "-"
+        if "accepted" in r:
+            aci = r["accept_ci95"]
+            acc = f"{r['accepted']}/{r['accepted_n']} | {aci[0] * 100:.0f}-{aci[1] * 100:.0f}%"
+            cpa = f"{r['cost_per_accepted_usd']:.4f}" if r["cost_per_accepted_usd"] is not None else "-"
+        else:
+            acc, cpa = "- | -", "-"
         out.append(f"| {r['config']} | {r['passed']}/{r['n']} ({r['pass_rate'] * 100:.0f}%) | {ci[0] * 100:.0f}-{ci[1] * 100:.0f}% "
-                   f"| {f'{hard[0]}/{hard[1]}' if hard else '-'} | {r['median_s']} | {r['p90_s']} "
-                   f"| {r['total_cost_usd']:.4f}{unm} | {r['cost_per_task_usd']:.4f} | {cpp} | {r['mean_sessions']} | {fr} "
+                   f"| {acc} | {f'{hard[0]}/{hard[1]}' if hard else '-'} | {r['median_s']} | {r['p90_s']} "
+                   f"| {r['total_cost_usd']:.4f}{unm} | {r['cost_per_task_usd']:.4f} | {cpp} | {cpa} | {r['mean_sessions']} | {fr} "
                    f"| {agree} | {r.get('false_verified', '-')} | {r['timeouts']} |")
     tasks = sorted({r["task"] for r in results})
     out += ["", "| task | " + " | ".join(configs) + " |", "|---|" + "---|" * len(configs)]
@@ -736,7 +805,9 @@ def ledger_total(path):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="benchmarks/h2h/run.sh", description=__doc__.splitlines()[0])
     ap.add_argument("--configs", default=",".join(CONFIGS), help=f"comma list from {CONFIGS + CHECK_CONFIGS}")
-    ap.add_argument("--tasks", default="", help="comma list of task ids (default: all)")
+    ap.add_argument("--suite", default="tasks", choices=sorted(SUITES), help="task suite: tasks (synthetic, default) "
+                    "or replay (real closed issues replayed at the fix's parent commit)")
+    ap.add_argument("--tasks", default="", help="comma list of task ids from the suite (default: all)")
     ap.add_argument("--reps", type=int, default=1)
     ap.add_argument("--timeout", type=int, default=600, help="contestant timeout in seconds (default 600)")
     ap.add_argument("--budget", type=float, default=None, help="stop before starting a run once the ledger total reaches this many USD")
@@ -759,15 +830,17 @@ def main(argv=None):
     for c in configs:
         if c not in CONFIGS + CHECK_CONFIGS:
             ap.error(f"unknown config {c}")
-    all_tasks = sorted(p.name for p in TASKS_DIR.iterdir() if (p / "meta.json").is_file())
+    tasks_dir = SUITES[a.suite]
+    all_tasks = sorted(p.name for p in tasks_dir.iterdir() if (p / "meta.json").is_file())
     task_ids = [t for t in a.tasks.split(",") if t] or all_tasks
     for t in task_ids:
         if t not in all_tasks:
-            ap.error(f"unknown task {t}")
-    tasks = [load_task(t) for t in task_ids]
+            ap.error(f"unknown task {t} in suite {a.suite}")
+    tasks = [load_task(t, tasks_dir) for t in task_ids]
 
     sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip() or "nogit"
-    out = Path(a.out) if a.out else HERE / "results" / f"{dt.date.today().isoformat()}-{sha}.json"
+    suffix = "" if a.suite == "tasks" else f"-{a.suite}"
+    out = Path(a.out) if a.out else HERE / "results" / f"{dt.date.today().isoformat()}-{sha}{suffix}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
 
     tmp_root = Path(os.environ.get("TMPDIR") or "/tmp").resolve()
@@ -797,8 +870,8 @@ def main(argv=None):
             except Exception as exc:  # a harness fault is recorded as a failed run, never dropped
                 rec = {"config": c, "task": task["id"], "kind": task["kind"], "lang": task["lang"],
                        "difficulty": task.get("difficulty", "normal"), "shape": task.get("shape"), "rep": rep,
-                       "pass": 0, "seconds": 0.0, "exit_code": None, "timed_out": False, "files_changed": 0, "files": [],
-                       "hidden_leaked_before_scoring": [], "cost_usd": None, "sessions": 0, "harness_error": repr(exc)[:300],
+                       "pass": 0, "accepted": 0, "test_edits": [], "seconds": 0.0, "exit_code": None, "timed_out": False,
+                       "files_changed": 0, "files": [], "hidden_leaked_before_scoring": [], "cost_usd": None, "sessions": 0, "harness_error": repr(exc)[:300],
                        "harness_traceback": traceback.format_exc()[-1500:]}
             with lock:
                 results.append(rec)
@@ -846,7 +919,7 @@ def main(argv=None):
 
 def write_results(out, results, configs, sha, a, stopped):
     doc = {
-        "benchmark": "h2h-b1", "loki_sha": sha, "date": dt.datetime.now().isoformat(timespec="seconds"),
+        "benchmark": "h2h-b1", "suite": a.suite, "loki_sha": sha, "date": dt.datetime.now().isoformat(timespec="seconds"),
         "configs": configs, "reps": a.reps, "jobs": a.jobs, "timeout_s": a.timeout, "stopped": stopped,
         "tasks": sorted({r["task"] for r in results}),
         "summary": summarize(results, configs), "runs": results,

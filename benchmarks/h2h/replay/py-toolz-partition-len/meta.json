@@ -1,0 +1,58 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "toolz/tests/test_itertoolz.py": "toolz/tests/test_itertoolz.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "toolz/tests",
+    "--deselect",
+    "toolz/tests/test_package.py::test_has_version"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "toolz/tests",
+    "--deselect",
+    "toolz/tests/test_package.py::test_has_version"
+  ],
+  "protected": [
+    "toolz/tests",
+    "pyproject.toml",
+    "tox.ini"
+  ],
+  "source": {
+    "upstream": "https://github.com/pytoolz/toolz",
+    "license": "BSD-3-Clause",
+    "license_file": "LICENSE.txt",
+    "issue": "https://github.com/pytoolz/toolz/issues/602",
+    "fix_pr": "https://github.com/pytoolz/toolz/pull/603",
+    "fix_commit": "5a7e078c941c990dcaca53ac6920e5d5c0b1475f",
+    "parent_commit": "1fb2b9f1b69ab664a264944f4eafc290acce127d",
+    "vendored_paths": [
+      "LICENSE.txt",
+      "README.rst",
+      "pyproject.toml",
+      "tox.ini",
+      "toolz",
+      "tlz"
+    ],
+    "solution_files": [
+      "toolz/itertoolz.py"
+    ],
+    "added_files": [],
+    "note": "test_package.py::test_has_version is deselected: it needs installed package metadata. Emoji codepoints are rewritten to meet this repository's text rule, without changing behaviour: in string literals as escapes (Go \\u2603, Python \\U0001F34E and similar), in comments and prose as text or removed."
+  }
+}
