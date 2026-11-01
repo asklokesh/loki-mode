@@ -3,7 +3,7 @@
 // reported as unknown. A success verdict (VERIFIED or ALREADY_SATISFIED) needs at least one Loki-executed check with n>0 and a
 // pass (hasExecutedProof). Every site that sets result "pass" for a test run routes through classifyCheck.
 
-import { repoTestCommand } from "./stack_tools.ts";
+import { gradleInitScript, repoTestCommand } from "./stack_tools.ts";
 import { dotnetBuildFailedBeforeAnyTest, dotnetFullCmd, dotnetSummary, dotnetTestCmd } from "./dotnet_test.ts";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { killGroup, SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
@@ -1629,7 +1629,7 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
     case "npm": return ["npm", ["test", "--silent"]];
     case "go": { const names = goTestNames(join(repoDir, t.path)); return ["go", ["test", "-json", ...(names.length ? ["-run", `^(${names.join("|")})$`] : []), `./${dirname(t.path)}`]]; } // one file: only its own Test functions
     case "maven": { const j = javaTestClass(t.path); return [wrapperOr(repoDir, "mvnw", "mvn"), ["-B", "test", `-Dtest=${j.cls.split(".").pop()}`, "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false"]]; }
-    case "gradle": { const j = javaTestClass(t.path); return [wrapperOr(repoDir, "gradlew", "gradle"), ["cleanTest", "test", "--tests", j.cls, "-i", "--console=plain"]]; } // cleanTest: an up-to-date test task would run nothing
+    case "gradle": { const j = javaTestClass(t.path); return [wrapperOr(repoDir, "gradlew", "gradle"), ["cleanTest", "test", "--tests", j.cls, "-i", "--console=plain", "-I", gradleInitScript()]]; } // R02: -I turns on per-test PASSED lines; cleanTest: an up-to-date test task would run nothing
     case "javac": { const j = javaTestClass(t.path); return ["bash", ["-c", JAVAC_WRAPPER, "loki-javac", j.root, j.cls, j.rel]]; }
     case "dotnet": return dotnetTestCmd(repoDir, t.path);
     case "cargo": return CARGO_TEST_FILE_RE.test(t.path) ? ["cargo", ["test", "--test", basename(t.path, ".rs")]] : ["cargo", ["test"]]; // a Wall-sealed tests/<name>.rs runs by itself
@@ -1653,7 +1653,7 @@ const BUILD_TOOL_RUNNERS: ReadonlySet<RunnerName> = new Set(["maven", "gradle", 
 /** FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER: the one full-suite command per runner. pytest resolves its interpreter exactly as a per-test run does (resolveTool: project .venv, else python3), never a bare `python` that python3-only hosts lack. */
 export function fullSuiteCmd(runner: RunnerName, repoDir: string): { cmd: string; args: string[]; interpreter?: Interpreter } {
   const own = BUILD_TOOL_RUNNERS.has(runner) ? repoTestCommand(repoDir) : null; if (own) return { cmd: "bash", args: ["-c", own] };
-  if (runner === "maven" || runner === "gradle") { const s = FULL_SUITE_STATIC[runner]; return { ...s, cmd: wrapperOr(repoDir, runner === "maven" ? "mvnw" : "gradlew", s.cmd) }; }
+  if (runner === "maven" || runner === "gradle") { const s = FULL_SUITE_STATIC[runner]; return { ...s, cmd: wrapperOr(repoDir, runner === "maven" ? "mvnw" : "gradlew", s.cmd), ...(runner === "gradle" ? { args: [...s.args, "-I", gradleInitScript()] } : {}) }; }
   if (runner === "dotnet") return dotnetFullCmd(repoDir);
   if (runner !== "pytest" && runner !== "unittest") return FULL_SUITE_STATIC[runner];
   const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python");

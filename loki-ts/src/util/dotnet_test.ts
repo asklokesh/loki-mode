@@ -5,7 +5,7 @@ import { dotnetProjectOf, dotnetTarget } from "./stack_tools.ts";
 
 export interface DotnetSummary { executed: number; failed: number; ids: string[]; }
 const num = (s: string | undefined): number => Number(s ?? "0");
-/** VSTest (every SDK to .NET 9): one `Passed!  - Failed: 0, Passed: 1, Skipped: 0, Total: 1, Duration: 2 ms - X.dll (net8.0)` line per test assembly, summed. Microsoft.Testing.Platform (.NET 10): a `Test run summary: Passed!` block with `total:`, `failed:`, `succeeded:`, `skipped:` lines. Skipped tests did not execute. `text` is ANSI-stripped output. */
+/** VSTest, two shapes: the one-line `Passed!  - Failed: ...` summary and the console logger's "Test Run Successful." block (what SDK 10 prints with `console;verbosity=normal`). VSTest (every SDK to .NET 9): one `Passed!  - Failed: 0, Passed: 1, Skipped: 0, Total: 1, Duration: 2 ms - X.dll (net8.0)` line per test assembly, summed. Microsoft.Testing.Platform (.NET 10): a `Test run summary: Passed!` block with `total:`, `failed:`, `succeeded:`, `skipped:` lines. Skipped tests did not execute. `text` is ANSI-stripped output. */
 export function dotnetSummary(text: string): DotnetSummary | null {
   const ls = text.split("\n").map((l) => l.trimEnd());
   let executed = 0, failed = 0, seen = 0, verdictOk = true;
@@ -22,6 +22,14 @@ export function dotnetSummary(text: string): DotnetSummary | null {
     const blk = ls.slice(i + 1, i + 12), pick = (k: string): number | null => { const x = blk.map((b) => new RegExp(`^\\s+${k}: (\\d+)$`).exec(b)).find(Boolean); return x ? num(x[1]) : null; };
     const [t, f, p, s] = [pick("total"), pick("failed"), pick("succeeded"), pick("skipped")];
     if (t === null || f === null || p === null || s === null || f + p + s !== t || (m[1] === "Passed") !== (f === 0)) { verdictOk = false; return; }
+    seen++; executed += f + p; failed += f;
+  });
+  ls.forEach((l, i) => { // the console logger at normal verbosity (what the engine asks for): "Test Run Successful." / "Test Run Failed." then "Total tests: N" and Passed/Failed/Skipped lines (a zero count is omitted)
+    const t = /^Total tests: (\d+)$/.exec(l), v = /^Test Run (Successful|Failed)\.$/.exec(ls[i - 1] ?? "");
+    if (!t) return;
+    const blk = ls.slice(i + 1, i + 6), pick = (k: string): number => { const x = blk.map((b) => new RegExp(`^\\s+${k}: (\\d+)$`).exec(b)).find(Boolean); return x ? num(x[1]) : 0; };
+    const [p, f, s] = [pick("Passed"), pick("Failed"), pick("Skipped")];
+    if (!v || p + f + s !== num(t[1]) || (v[1] === "Successful") !== (f === 0)) { verdictOk = false; return; }
     seen++; executed += f + p; failed += f;
   });
   if (!verdictOk || seen === 0 || executed === 0) return null;

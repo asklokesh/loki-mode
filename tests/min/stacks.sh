@@ -257,6 +257,10 @@ const out: Record<string, unknown> = {
   zero: dotnetSummary("Passed!  - Failed:     0, Passed:     0, Skipped:     0, Total:     0, Duration: 1 ms - A.dll (net8.0)"),
   none: dotnetSummary("Build succeeded.\n    0 Warning(s)"),
   twoAssemblies: dotnetSummary(pass + "\n" + pass),
+  legacyPass: dotnetSummary("  Passed Calc.Tests.CalculatorTests.AddsTwoNumbers [5 ms]\n\nTest Run Successful.\nTotal tests: 1\n     Passed: 1\n Total time: 0.6805 Seconds"),
+  legacyFail: dotnetSummary("  Failed A.B.M [3 ms]\n\nTest Run Failed.\nTotal tests: 3\n     Passed: 1\n     Failed: 1\n    Skipped: 1\n Total time: 1 Seconds"),
+  legacyLie: dotnetSummary("Test Run Successful.\nTotal tests: 2\n     Passed: 1\n     Failed: 1"),
+  legacyNoVerdict: dotnetSummary("Total tests: 1\n     Passed: 1"),
   mtp: dotnetSummary("Test run summary: Passed!\n  total: 4\n  failed: 0\n  succeeded: 4\n  skipped: 0\n  duration: 1s"),
   stackMaven: stackRunner(["pom.xml", "src/A.java"]), stackGradle: stackRunner(["build.gradle.kts", "A.java"]), stackDotnet: stackRunner(["src/App.csproj", "A.cs"]), stackNone: stackRunner(["main.rb"]),
   cs: guessRunner("FooTests.cs", ["dotnet"]), csNoRunner: guessRunner("FooTests.cs", ["maven"]),
@@ -276,6 +280,10 @@ jq_eq "a total that does not add up is unmeasured" 'd["badtotal"]' 'null'
 jq_eq "zero executed tests is unmeasured" 'd["zero"]' 'null'
 jq_eq "no summary is unmeasured" 'd["none"]' 'null'
 jq_eq "two assemblies are summed" 'd["twoAssemblies"]["executed"]' '4'
+jq_eq "the SDK 10 console logger block (Test Run Successful, Total tests) is read" 'd["legacyPass"]' '{"executed": 1, "failed": 0, "ids": []}'
+jq_eq "the console logger block with a failure counts it" 'd["legacyFail"]' '{"executed": 2, "failed": 1, "ids": ["A.B.M"]}'
+jq_eq "a Successful block that counts a failure is unmeasured" 'd["legacyLie"]' 'null'
+jq_eq "a Total tests block without its verdict line is unmeasured" 'd["legacyNoVerdict"]' 'null'
 jq_eq "the Microsoft.Testing.Platform summary is read" 'd["mtp"]' '{"executed": 4, "failed": 0, "ids": []}'
 jq_eq "maven, gradle, dotnet and none are detected from files" '[d["stackMaven"], d["stackGradle"], d["stackDotnet"], d["stackNone"]]' '["maven", "gradle", "dotnet", null]'
 jq_eq "a .cs test gets the dotnet runner only when the repo has it" '[d["cs"], d["csNoRunner"]]' '["dotnet", null]'

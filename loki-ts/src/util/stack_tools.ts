@@ -1,5 +1,6 @@
 // util/stack_tools.ts -- which build tool each JVM and .NET stack needs, whether it is installed, and how to install it. Split out of engine10/testmap.ts (core line budget). Pure apart from existsSync and Bun.which.
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunnerName } from "../engine10/types.ts";
 import { lokiYamlTexts, yamlKey } from "./yaml_key.ts";
@@ -78,4 +79,12 @@ export function dotnetProjectOf(repoDir: string, testRel: string): string | null
 export function repoTestCommand(repoDir: string): string | null {
   for (const t of lokiYamlTexts(repoDir)) { const v = yamlKey(t, "verify", "test_command"); if (v && v.length <= 500 && !/[\0\r\n]/.test(v)) return v; }
   return null;
+}
+
+/** Gradle prints a per-test PASSED line only when the build's testLogging asks for it (Gradle 9.8 prints none under -i), and verify counts tests from those lines. This init script turns the events on for every Test task without touching the repo's build files. Written once to a fixed path under the temp dir (content-checked each call). */
+const GRADLE_INIT = "allprojects { tasks.withType(Test).configureEach { testLogging { events 'passed', 'failed', 'skipped' } } }\n";
+export function gradleInitScript(): string {
+  const dir = join(tmpdir(), "loki-gradle-init"), p = join(dir, "test-logging.init.gradle");
+  try { if (readFileSync(p, "utf8") !== GRADLE_INIT) throw new Error("stale"); } catch { try { mkdirSync(dir, { recursive: true }); writeFileSync(p, GRADLE_INIT); } catch { /* unwritable temp dir: gradle then runs without it and the count is unmeasured, never a pass */ } }
+  return p;
 }
