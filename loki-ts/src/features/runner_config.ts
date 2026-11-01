@@ -9,6 +9,7 @@ type Sections = RegExp | readonly string[] | "go" | "tsconfig" | "cargo"; interf
 const PKG_KEYS = ["scripts", "jest", "overrides", "resolutions", "imports", "pnpm", "mocha", "vitest", "ava", "c8", "nyc", "babel", "bun", "patchedDependencies"] as const; // scripts is compared whole: pretest, posttest and test:* all count
 // FC-09w: macOS filesystems are case-insensitive, so PNPM-Workspace.yaml is read by pnpm. Every row is forced case-insensitive below, in one place.
 const RAW_CONFIGS: Spec[] = [
+  { re: /(^|\/)loki\.ya?ml$/ }, // R02: verify.test_command names the command verify runs for a build-tool stack
   { re: /(^|\/)(conftest\.py|(site|user)customize\.py|tox\.ini|bunfig\.toml|\.?pytest\.(ini|toml)|\.mocharc[\w.]*)$/ },
   { re: /(^|\/)(vitest|vite|jest)\.(config|workspace)\.[\w.]+$/ },
   { re: /(^|\/)\.cargo\/config(\.toml)?$/ },

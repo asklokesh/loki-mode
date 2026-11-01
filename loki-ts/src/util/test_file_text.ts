@@ -3,6 +3,7 @@ import { basename, dirname } from "node:path";
 import type { RunnerName } from "../engine10/types.ts";
 import type { ProjectApi } from "../project_model/api.ts";
 import { pytestBoot } from "./runner_boot.ts";
+import { CS_TEST_RE, JAVA_TEST_RE, jvmDotnetStem } from "./stack_tools.ts";
 export const NPM_DEFAULT_TEST = /no test specified/;
 export const JS_TEST_RE = /\.(test|spec)\.[cm]?[jt]sx?$/;
 export const PY_TEST_RE = /^(test_.+|.+_test)\.py$/;
@@ -11,7 +12,7 @@ export const RS_TEST_RE = /(^|\/)tests\/[^/]+\.rs$/; // a cargo integration test
 export const SH_TEST_RE = /(^|\/)(tests?|__tests__)\/[^/]+\.(sh|bash)$/;
 export function isTestFile(rel: string): boolean {
   const name = basename(rel);
-  return JS_TEST_RE.test(name) || PY_TEST_RE.test(name) || GO_TEST_RE.test(name) || RS_TEST_RE.test(rel) || SH_TEST_RE.test(rel) || /^test[-_].+\.(sh|bash)$/.test(name);
+  return JS_TEST_RE.test(name) || PY_TEST_RE.test(name) || GO_TEST_RE.test(name) || RS_TEST_RE.test(rel) || SH_TEST_RE.test(rel) || /^test[-_].+\.(sh|bash)$/.test(name) || JAVA_TEST_RE.test(rel) || CS_TEST_RE.test(rel);
 }
 export function detectFromPackageJson(text: string, rel: string, mark: (r: RunnerName, file: string) => void): void {
   let pkg: {
@@ -72,6 +73,7 @@ export function referencedBasenames(text: string): Set<string> {
 export function coveredStem(testPath: string): string {
   const name = basename(testPath);
   if (JS_TEST_RE.test(name)) return name.replace(JS_TEST_RE, "");
+  if (/\.(?:java|cs)$/.test(name)) return jvmDotnetStem(name);
   if (name.startsWith("test_")) return name.slice(5, -3);
   return name.replace(/_test\.(py|go)$/, "");
 }
@@ -107,7 +109,7 @@ export function scopeRunnersByPackage(files: readonly string[], evidence: Partia
 
 /** One command shape per runner (ENGINE.md section 8 table). `<files>` is a placeholder the  caller (E-09 verify) fills with the selected paths. `coarse: true` means the command always  runs the  whole suite: npm and cargo have no reliable per-file selection. */
 export interface CommandSpec { cmd: string; coarse: boolean; }
-export const RUNNER_ORDER: readonly RunnerName[] = ["pytest", "vitest", "jest", "bun", "node", "npm", "go", "cargo", "maven", "gradle", "javac"];
+export const RUNNER_ORDER: readonly RunnerName[] = ["pytest", "vitest", "jest", "bun", "node", "npm", "go", "cargo", "maven", "gradle", "javac", "dotnet"];
 export const COMMANDS: Record<RunnerName, CommandSpec> = {
   pytest: { cmd: "python -m pytest -q <files>", coarse: false },
   unittest: { cmd: "python3 -m unittest <files>", coarse: false },
@@ -121,6 +123,7 @@ export const COMMANDS: Record<RunnerName, CommandSpec> = {
   maven: { cmd: "mvn test -Dtest=<class>", coarse: false },
   gradle: { cmd: "gradle cleanTest test --tests <class>", coarse: false },
   javac: { cmd: "javac + java <test class>", coarse: false },
+  dotnet: { cmd: "dotnet test <project> --filter FullyQualifiedName~<Class>", coarse: false },
 };
 /** Runners that can write a machine pass/fail report file: the invocation to find in a check command and the flags that name the report (`<report>` is replaced by the caller's path), `boot` (wraps the check in a sandbox script that records what the runner loads before it collects tests), `inline` (a text pattern for a pytest section or key in a shared ini, cfg or toml file), and `config`, the basenames that configure or preload that runner (a .json match counts only when it holds the entry's `key`). Go and cargo have no stable file reporter and are absent. verify-pr reads its verdict from that file, never from an exit code or printed totals. */
 export const REPORT_RUNNERS: readonly { runner: RunnerName; find: RegExp; flags: string; config: RegExp; key?: string; boot?: (cmd: string) => string; inline?: RegExp }[] = [
@@ -137,5 +140,6 @@ export function guessRunner(fileName: string, runners: RunnerName[], relPath?: s
   if (fileName.endsWith(".go")) return "go";
   if (fileName.endsWith(".rs")) return runners.includes("cargo") && relPath !== undefined && CARGO_TEST_FILE_RE.test(relPath) ? "cargo" : null;
   if (fileName.endsWith(".java")) return (["maven", "gradle", "javac"] as const).find((r) => runners.includes(r)) ?? null; // HV1-03b: a Java test runs under the repo's own build tool, else plain javac
+  if (fileName.endsWith(".cs")) return runners.includes("dotnet") ? "dotnet" : null; // a C# test runs under `dotnet test` (xunit, NUnit and MSTest all report through it)
   return /\.[cm]?[jt]sx?$/.test(fileName) ? (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r)) ?? null : null; // a JS runner only ever runs a JS/TS file
 }

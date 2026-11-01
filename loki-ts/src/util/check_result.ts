@@ -3,6 +3,8 @@
 // reported as unknown. A success verdict (VERIFIED or ALREADY_SATISFIED) needs at least one Loki-executed check with n>0 and a
 // pass (hasExecutedProof). Every site that sets result "pass" for a test run routes through classifyCheck.
 
+import { repoTestCommand } from "./stack_tools.ts";
+import { dotnetBuildFailedBeforeAnyTest, dotnetFullCmd, dotnetSummary, dotnetTestCmd } from "./dotnet_test.ts";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { killGroup, SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { createHash } from "node:crypto";
@@ -678,7 +680,7 @@ export function testCount(raw: string, path?: string, ok?: boolean): number | nu
   const bu = bunCount(out), ut = unittestCount(out, ok);
   if (bu !== null) return bu;
   if (ut !== null) return ut;
-  const jv = javaSummary(out);
+  const jv = javaSummary(out) ?? dotnetSummary(out); // HV1-03b, R02: the JVM and .NET build tools' own summaries
   if (jv) return jv.executed;
   if (/^\s*(?:Test Files\s+0\b|No test files found)/m.test(out) && !/^\s*Tests?\s+\d/m.test(out)) return 0;
   const r = ran(out, path, ok);
@@ -752,7 +754,7 @@ export function classifyCheck(i: ClassifyInput): Classified {
   if (n === 0) return { result: "not_run", n: 0, reason: `${NO_TESTS_REASON} (ran 0 tests, empty or all skipped)` };
   if (!i.ok) return { result: "fail", ...(n !== null ? { n } : {}) };
   if (n === null) return { result: "not_run", reason: UNMEASURED_REASON };
-  const jv = javaSummary(text); if (jv && jv.failed > 0) return { result: "fail", n }; // HV1-03b: exit 0 with a Java report that counts failures contradicts itself; never a pass
+  const jv = javaSummary(text) ?? dotnetSummary(text); if (jv && jv.failed > 0) return { result: "fail", n }; // HV1-03b: exit 0 with a Java report that counts failures contradicts itself; never a pass
   return { result: "pass", n };
 }
 /** TEN-QUALITY-17: a test check that fails and then passes on ONE immediate rerun is flaky, not fail, so fix rounds are not spent on it.
@@ -1508,6 +1510,7 @@ function buildFailedBeforeAnyTest(runner: RunnerName, raw: string): boolean {
     case "cargo": return /^error: could not compile `[^`]+`/m.test(out) && !/^running \d+ tests?\b/m.test(out) && !/^test result: /m.test(out);
     case "javac": return /^\S+\.java:\d+: error: /m.test(out) && !/^LOKI_JAVA_TESTS: /m.test(out);
     case "maven": return /COMPILATION ERROR|Compilation failure/.test(out) && !/Tests run:/.test(out);
+    case "dotnet": return dotnetBuildFailedBeforeAnyTest(out);
     case "gradle": return /Execution failed for task ':[\w:-]*compile\w*Java'/.test(out) && !/\d+ tests? completed/.test(out);
     default: return false;
   }
@@ -1536,7 +1539,7 @@ export function classify(f: TestRef, status: number | null, output: string, repo
   if (f.runner === "unittest") return status === 1 && unittestCount(output, false) !== null ? (/unittest\.loader\._FailedTest|Failed to import test module/.test(output) ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "fail") : "not_run"; // red only on a trusted FAILED trailer; a module that failed to import is red only when the missing name is the repo's own (pytestCollectionIsRed), else not_run, as for pytest
   if (f.runner === "pytest") return status === 1 ? (pytestExit1IsRed(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
   if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 || missingRelativeImportIsRed(f, output, repoDir) ? "fail" : "not_run";
-  if (f.runner === "maven" || f.runner === "gradle" || f.runner === "javac") { const j = javaSummary(output); return (j && j.failed > 0) || buildFailedBeforeAnyTest(f.runner, output) ? "fail" : "not_run"; } // HV1-03b: red only on a vouched summary that counts failures; a missing tool, no report or an unvouched report is not_run (verify's own exit-code path treats a compile error as fail, the safe direction)
+  if (f.runner === "maven" || f.runner === "gradle" || f.runner === "javac" || f.runner === "dotnet") { const j = javaSummary(output) ?? dotnetSummary(output); return (j && j.failed > 0) || buildFailedBeforeAnyTest(f.runner, output) ? "fail" : "not_run"; } // HV1-03b: red only on a vouched summary that counts failures; a missing tool, no report or an unvouched report is not_run (verify's own exit-code path treats a compile error as fail, the safe direction)
   if (f.runner === "go" || f.runner === "cargo") return readableFailIds(f.runner, output).length > 0 || buildFailedBeforeAnyTest(f.runner, output) ? "fail" : "not_run"; // red on a readable failing test id, or on a toolchain build failure before any test started (the feature the Wall names is absent on base); a panic outside a test or unparsed output stays not_run
   return f.runner === "node" && nodeIsRed(f, output) ? "fail" : "not_run"; // npm: coarse (B2), never a per-file red
 }
@@ -1609,6 +1612,7 @@ export function goTestNames(file: string): string[] {
 // Command shapes exactly as ENGINE.md section 8's table names them per runner (npm/cargo are
 // "coarse": no per-file selection; go runs per package dir, also coarse below that grain).
 export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Interpreter?] {
+  const own = BUILD_TOOL_RUNNERS.has(t.runner) ? repoTestCommand(repoDir) : null; if (own) return ["bash", ["-c", own]]; // R02: the repo's committed verify.test_command
   switch (t.runner) {
     case "pytest": {
       const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python");
@@ -1627,6 +1631,7 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
     case "maven": { const j = javaTestClass(t.path); return [wrapperOr(repoDir, "mvnw", "mvn"), ["-B", "test", `-Dtest=${j.cls.split(".").pop()}`, "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false"]]; }
     case "gradle": { const j = javaTestClass(t.path); return [wrapperOr(repoDir, "gradlew", "gradle"), ["cleanTest", "test", "--tests", j.cls, "-i", "--console=plain"]]; } // cleanTest: an up-to-date test task would run nothing
     case "javac": { const j = javaTestClass(t.path); return ["bash", ["-c", JAVAC_WRAPPER, "loki-javac", j.root, j.cls, j.rel]]; }
+    case "dotnet": return dotnetTestCmd(repoDir, t.path);
     case "cargo": return CARGO_TEST_FILE_RE.test(t.path) ? ["cargo", ["test", "--test", basename(t.path, ".rs")]] : ["cargo", ["test"]]; // a Wall-sealed tests/<name>.rs runs by itself
   }
 }
@@ -1642,10 +1647,14 @@ const FULL_SUITE_STATIC: Record<Exclude<RunnerName, "pytest" | "unittest">, { cm
   maven: { cmd: "mvn", args: ["-B", "test"] },
   gradle: { cmd: "gradle", args: ["cleanTest", "test", "-i", "--console=plain"] },
   javac: { cmd: "bash", args: ["-c", JAVAC_WRAPPER, "loki-javac", ".", "-"] },
+  dotnet: { cmd: "dotnet", args: ["test"] }, // the real target comes from fullSuiteCmd (dotnetFullCmd)
 };
+const BUILD_TOOL_RUNNERS: ReadonlySet<RunnerName> = new Set(["maven", "gradle", "javac", "dotnet"]);
 /** FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER: the one full-suite command per runner. pytest resolves its interpreter exactly as a per-test run does (resolveTool: project .venv, else python3), never a bare `python` that python3-only hosts lack. */
 export function fullSuiteCmd(runner: RunnerName, repoDir: string): { cmd: string; args: string[]; interpreter?: Interpreter } {
+  const own = BUILD_TOOL_RUNNERS.has(runner) ? repoTestCommand(repoDir) : null; if (own) return { cmd: "bash", args: ["-c", own] };
   if (runner === "maven" || runner === "gradle") { const s = FULL_SUITE_STATIC[runner]; return { ...s, cmd: wrapperOr(repoDir, runner === "maven" ? "mvnw" : "gradlew", s.cmd) }; }
+  if (runner === "dotnet") return dotnetFullCmd(repoDir);
   if (runner !== "pytest" && runner !== "unittest") return FULL_SUITE_STATIC[runner];
   const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python");
   return { cmd, args: [...pre, ...(runner === "unittest" ? UNITTEST_DISCOVER_ARGS : ["-m", "pytest", "-q"])], ...(runner === "unittest" && interpreter === "system" ? {} : { interpreter }) };
