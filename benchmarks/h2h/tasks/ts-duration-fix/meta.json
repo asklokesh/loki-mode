@@ -1,4 +1,6 @@
 {
+  "difficulty": "normal",
+  "shape": "single-file",
   "lang": "ts",
   "kind": "bugfix",
   "hidden": { "duration.hidden.test.ts": "test/h2h_hidden.test.ts" },

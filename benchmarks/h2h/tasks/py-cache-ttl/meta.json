@@ -1,4 +1,6 @@
 {
+  "difficulty": "normal",
+  "shape": "single-file",
   "lang": "py",
   "kind": "feature",
   "hidden": { "test_cache_hidden.py": "tests/test_h2h_hidden.py" },

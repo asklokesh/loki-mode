@@ -1,4 +1,6 @@
 {
+  "difficulty": "normal",
+  "shape": "cross-module",
   "lang": "py",
   "kind": "multifile",
   "hidden": { "test_cli_hidden.py": "tests/test_h2h_hidden.py" },

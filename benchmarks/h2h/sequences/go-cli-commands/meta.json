@@ -1,0 +1,21 @@
+{
+  "lang": "go",
+  "protected": ["tests"],
+  "steps": [
+    {
+      "id": "s1",
+      "hidden": { "list_hidden_test.go": "tests/h2h_hidden_s1_test.go" },
+      "hidden_cmd": ["go", "test", "-count=1", "-run", "^TestHidden", "./tests/"]
+    },
+    {
+      "id": "s2",
+      "hidden": { "done_hidden_test.go": "tests/h2h_hidden_s2_test.go" },
+      "hidden_cmd": ["go", "test", "-count=1", "-run", "^TestHidden", "./tests/"]
+    },
+    {
+      "id": "s3",
+      "hidden": { "remove_hidden_test.go": "tests/h2h_hidden_s3_test.go" },
+      "hidden_cmd": ["go", "test", "-count=1", "-run", "^TestHidden", "./tests/"]
+    }
+  ]
+}
