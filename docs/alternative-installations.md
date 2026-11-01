@@ -136,14 +136,14 @@ A first task is ready when every required "All paths" item is present and at lea
 ### Execution paths
 
 - Claude Code CLI path: the default. `loki start` runs the `claude` binary you installed and logged in with `claude auth login`. `loki chat` (with the claude provider) and `loki edit` call the `claude` CLI directly.
-- Anthropic API-key path (Agent SDK, no `claude` CLI): opt-in. It needs `LOKI_SDK_MODE=full` (resolved to `LOKI_SDK_LOOP=1` by `bin/loki`), Anthropic credentials, the bundled `@anthropic-ai/claude-agent-sdk` platform binary, and Bun. It runs only on the Bun route of `loki start`; commands that stay on the bash route (for example `loki demo`, `loki quick`) still need a provider CLI on PATH. Without `LOKI_SDK_MODE=full`, an API key alone does not replace the `claude` CLI for the main loop.
+- Anthropic API-key path (Agent SDK, no `claude` CLI): `loki "<goal>"` needs only Anthropic credentials (for example `ANTHROPIC_API_KEY`), the bundled `@anthropic-ai/claude-agent-sdk` platform binary, and Bun. No `claude` CLI and no extra setting: the engine runs every session on the bundled SDK unless `LOKI_E10_INVOKER=cli`. Commands that stay on the bash route (for example `loki demo`, `loki quickstart`, and `loki start ./prd.md` without `LOKI_SDK_MODE=full`) still need a provider CLI on PATH.
 - Other provider CLIs: `codex` (degraded), `cline`, `aider`, `opencode`. Any one of them replaces the `claude` CLI for `loki start --provider <name>`. Loki never silently substitutes a different provider than the one requested.
 
 ### Install methods
 
 | Install method | What it provides | What you still need |
 | --- | --- | --- |
-| `npm install -g loki-mode` | Loki, a bundled Bun binary and the Claude Agent SDK as npm optional dependencies | Node 20+, python3, jq, git, curl, and one execution path above |
+| `npm install -g loki-mode` | Loki, a bundled Bun binary and the Claude Agent SDK as npm optional dependencies | Node 20+, git, curl, and one execution path above (python3 and jq are optional) |
 | `npm install -g loki-mode --omit=optional` (slim) | Loki only; no bundled Bun, no Agent SDK | Everything above, plus Bun from https://bun.sh for the Bun route. Without Bun, `bin/loki` falls back to the bash CLI. The API-key path is unavailable |
 | Homebrew (`brew install loki-mode`) | Loki | Same as npm, and install Bun yourself if you want the Bun route |
 | git clone | Loki sources | Same as npm; see the Git Clone section above for the clone steps |
@@ -163,8 +163,8 @@ Needed by every Loki command.
 | Requirement | Level | Check | Fix |
 | --- | --- | --- | --- |
 | Node.js 20 or newer | required | `node` on PATH, version 20.0 or newer | install Node 20+ from https://nodejs.org |
-| Python 3.8 or newer | required | `python3` on PATH, version 3.8 or newer | install python3 with your package manager (brew install python3) |
-| jq | required | `jq` on PATH | install jq with your package manager (brew install jq) |
+| Python 3.8 or newer (deep scans, Python repos, group runs; loki "<goal>" runs without it) | optional | `python3` on PATH, version 3.8 or newer | install python3 with your package manager (brew install python3) |
+| jq (loki status and the bash fallback CLI; loki "<goal>" runs without it) | optional | `jq` on PATH | install jq with your package manager (brew install jq) |
 | git | required | `git` on PATH | install git with your package manager (brew install git) |
 | curl | required | `curl` on PATH | install curl with your package manager (brew install curl) |
 | bash 4.0 or newer | optional | `bash` on PATH, version 4.0 or newer | install a newer bash (brew install bash); macOS ships 3.2 |
@@ -180,12 +180,11 @@ Loki drives the claude binary you installed and logged in.
 
 ### Anthropic API-key path (Agent SDK, no claude CLI)
 
-Opt-in with LOKI_SDK_MODE=full; the bundled Agent SDK runs the loop over HTTPS.
+loki "<goal>" runs on the bundled Agent SDK over HTTPS with only a key; no claude CLI and no extra setting.
 
 | Requirement | Level | Check | Fix |
 | --- | --- | --- | --- |
-| SDK loop enabled (LOKI_SDK_MODE=full) | required | `LOKI_SDK_LOOP` is `1` or `true` | export LOKI_SDK_MODE=full |
-| Anthropic credentials (API key, auth token or gateway URL) | required | one of `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` is set | export ANTHROPIC_API_KEY=<your key> |
+| Anthropic credentials (API key, OAuth token, auth token or gateway URL) | required | one of `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` is set | export ANTHROPIC_API_KEY=<your key> |
 | Claude Agent SDK platform binary (optional npm dependency) | required | executable `@anthropic-ai/claude-agent-sdk-<platform>/claude` in an installed node_modules | reinstall without --no-optional: npm install -g loki-mode (the SDK is an optionalDependency) |
 | Bun runtime (the SDK loop runs only on the Bun route) | required | `bun` on PATH, version 1.3 or newer | reinstall without --no-optional (npm bundles @oven/bun-*) or install from https://bun.sh |
 

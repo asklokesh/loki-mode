@@ -925,9 +925,13 @@ export function sdkQueryProvider(): ProviderInvoker {
         const resumeId = process.env["LOKI_E10_RESUME_SESSION"] || undefined;
         const permissionOpts = sdkPermissionOptions(call.cwd);
         const stopSpec = process.env["LOKI_E10_STAGE"] ? parseStopChecks(process.env["LOKI_E10_STOP_CHECKS"]) : null; // read here, before the LOKI_E10_* strip applies to the child's env
+        // L034: LOKI_SDK_NODE_MODULES (test seam, also read by doctor's sdkBinaryPresent) names the node_modules whose platform binary
+        // the SDK runs, so preflight, doctor and this invoker agree on one binary. Unset (production): the SDK resolves its own.
+        const sdkExe = process.env["LOKI_SDK_NODE_MODULES"] ? (await import("../commands/doctor.ts")).sdkBinaryPath(process.env) : null;
         const q = query({
           prompt: call.prompt,
           options: {
+            ...(sdkExe ? { pathToClaudeCodeExecutable: sdkExe } : {}),
             ...(resumeId ? { resume: resumeId } : {}),
             ...(defaultModel ? {} : { model: extra.model ?? model }),
             cwd: call.cwd,
