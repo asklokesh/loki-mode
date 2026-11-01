@@ -26,7 +26,7 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 | rollback | bun route, bash fallthrough | KEEP-MODERN | Checkpoint restore is engine-neutral |
 | backup | autonomy/loki | KEEP-MODERN | Enterprise retention and backup (D99 item 7) |
 | restore | autonomy/loki | KEEP-MODERN | Enterprise retention and backup (D99 item 7) |
-| proof | bun route, bash fallthrough | KEEP-MODERN | The Evidence Receipt moat |
+| proof | bun route, bash fallthrough | KEEP-MODERN | The Evidence Receipt |
 | receipt | bun route, bash fallthrough | DELETE | Alias of proof; shown only under 'loki help aliases' |
 | wiki | bun route, bash fallthrough | KEEP-MODERN | Bun-native knowledge feature |
 | control | bun route, bash fallthrough | KEEP-MODERN | D56 control plane, on by default |
@@ -34,7 +34,7 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 | intent | loki-ts/src/cli.ts | KEEP-MODERN | Read-only intent view |
 | kpis | loki-ts/src/cli.ts | KEEP-MODERN | Bun-native KPI report |
 | report | bun route, bash fallthrough | UPDATE | Mixed route; only kpis is Bun |
-| trust | bun route, bash fallthrough | KEEP-MODERN | Trust moat surface |
+| trust | bun route, bash fallthrough | KEEP-MODERN | Trust trajectory surface |
 | crash | bun route, bash fallthrough | KEEP-MODERN | Local-only crash plumbing |
 | contract | loki-ts/src/cli.ts | KEEP-MODERN | v10 delivery contract |
 | start | bun route, bash fallthrough | UPDATE | Forks between v10 and the SDK loop; flags still legacy-shaped |
@@ -59,7 +59,7 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 | init | autonomy/loki | UPDATE | Templates predate v10 |
 | template | autonomy/loki | KEEP-MODERN | Engine-neutral |
 | verify | autonomy/loki | UPDATE | Legacy proof vs v10 verify split |
-| keys | autonomy/loki | KEEP-MODERN | Trust moat |
+| keys | autonomy/loki | KEEP-MODERN | Receipt signing |
 | review | autonomy/loki | UPDATE | Gates are legacy-shaped |
 | dashboard | autonomy/loki | UPDATE | Overlaps Control Plane |
 | config | autonomy/loki | UPDATE | Mixed legacy keys |

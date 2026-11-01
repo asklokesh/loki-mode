@@ -89,6 +89,9 @@ tmp/
 # commit until they are refreshed to the current version and reviewed.
 HANDOFF.md
 # Internal strategy / roadmap / next-steps / MOAT specs -- hidden from the public repo.
+# All internal docs (roadmap, moat, competitor notes, strategy) live in internal/,
+# which is never committed and never packed.
+internal/
 artifacts/ROADMAP-*.md
 artifacts/STRATEGY.md
 artifacts/AUTONOMOUS-SESSION-*.md

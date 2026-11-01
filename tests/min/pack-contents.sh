@@ -10,6 +10,7 @@
 #      forbidden-entry check must fail.
 #   2. remove "tests/detect-mock-problems.sh" from package.json "files": the
 #      required-entry check must fail.
+#   3. create docs/SYNERGY-ROADMAP.md: the internal-doc check must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need npm
@@ -81,6 +82,10 @@ for e in entries:
     if e.startswith(("docs/v11/", "docs/certification/", "eval/", "demo/", "examples/", "vscode-extension/", "node_modules/")):
         forbidden.append(e)
 res("no test code, bytecode, cache or stale doc tree is packed", not forbidden, " ".join(forbidden[:8]))
+
+internal = [e for e in entries if e.startswith("internal/")
+            or re.search(r"(ROADMAP|BACKLOG|STRATEGY|MOAT|COMPETITIVE|SCORECARD)[^/]*\.(md|html|txt|json)$", e.split("/")[-1], re.I)]
+res("no internal roadmap, moat, strategy or competitor doc is packed", not internal, " ".join(internal[:8]))
 
 size = json.load(open(pack))[0]["size"]
 res("tarball is under 12 MB (%d bytes)" % size, size < 12 * 1024 * 1024)

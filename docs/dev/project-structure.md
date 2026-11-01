@@ -50,7 +50,6 @@ references/                 # Detailed documentation (21 files)
   deployment.md             # Cloud deployment instructions
   business-ops.md           # Business operation workflows
   mcp-integration.md        # MCP server capabilities
-  competitive-analysis.md   # Auto-Claude, MemOS, Dexter comparison
   confidence-routing.md     # Model selection by confidence
   cursor-learnings.md       # Cursor scaling patterns
   prompt-repetition.md      # Haiku prompt optimization
@@ -60,7 +59,6 @@ events/                     # Unified Event Bus (v5.17.0)
   bus.ts                    # TypeScript event bus
   emit.sh                   # Bash helper for emitting events
 docs/                       # Architecture documentation
-  SYNERGY-ROADMAP.md        # 5-pillar tool integration architecture
   CLI-INVENTORY.md          # Generated command inventory (from loki-ts/src/cli/registry.ts)
   v10/                      # User guides: GUIDE.md, GUIDE-MODERNIZE.md, DEPS.md
   dev/                      # Developer reference docs (this file and its siblings)

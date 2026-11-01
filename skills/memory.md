@@ -131,8 +131,8 @@ With managed memory on, a new project gets access to:
 
 Promotions from user-RW to org-RO are MANUAL only at v7.0.x. Use the
 Managed Agents API directly (`memory_stores.memories.create` against the
-org store) with human review. An MCP `loki-mode:loki_memory_promote` tool is on
-the roadmap but NOT shipped in v7.0.x; do not depend on it. Never
+org store) with human review. An MCP `loki-mode:loki_memory_promote` tool is not
+shipped in v7.0.x; do not depend on it. Never
 auto-promote.
 
 ## PII redaction

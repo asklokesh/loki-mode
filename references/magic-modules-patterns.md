@@ -602,29 +602,6 @@ If the A11y Advocate had flagged a `block`-severity contrast failure and no pers
 
 ---
 
-## 10. Comparison to Competitors
-
-Magic Modules fills the visual-component-generation gap in Loki Mode. The table below compares the approach to adjacent tools.
-
-| Tool | Spec-First | Multi-Persona Debate | Design Tokens | Dual Target (React + WC) | Registry with Freshness | Open Source |
-|------|-----------|---------------------|---------------|-------------------------|------------------------|-------------|
-| **Loki Magic Modules** | Yes | Yes (4 personas) | Yes (extracted + overridable) | Yes | Yes (SHA hashes) | Yes |
-| MagicModules (Nurik) | Yes | No | Partial | React only | Yes | Yes |
-| MoMoA (Meier) | No (code-first) | Yes | No | React only | No | Yes |
-| Replit Agent Design Canvas | Visual canvas | No | Partial | React only | No | No |
-| bolt.new Visual Inspector | No (prompt-first) | No | No | React only | No | No |
-| Cursor Compose | No | No | No | Depends on user | No | No |
-| v0 by Vercel | Prompt-first, editable preview | No | Partial | React only | No | Partial (hosted) |
-
-Key differentiators:
-
-- **Spec-first with debate** is unique. Other tools are either spec-first without critique, or code-first without a durable spec.
-- **Dual target generation** means a single spec can produce both a React component for the dashboard and a Web Component for Purple Lab.
-- **Registry with freshness** lets the system detect drift and regenerate automatically, which none of the prompt-first competitors offer.
-- **Deep integration with RARV and quality gates** means generated components participate in the same review lifecycle as hand-written code.
-
----
-
 ## See Also
 
 - `skills/magic-modules.md` -- skill module loaded by agents when the task matches magic-modules triggers

@@ -11,10 +11,19 @@
 # example paths for a user's own project (tests/users.test.ts) are not flagged;
 # the allowlist below covers other user-side or illustrative paths.
 #
+# Third check: internal strategy never ships. No tracked file may sit under
+# internal/ (the gitignored home for roadmap, moat, competitor and strategy docs),
+# no tracked doc may be named like one (ROADMAP, BACKLOG, STRATEGY, MOAT,
+# COMPETITIVE, SCORECARD), and no shipped markdown (README.md, SKILL.md, docs,
+# references, skills, wiki) may use the internal words "moat", "8090" or
+# "factory.ai". internal/ must stay gitignored.
+#
 # Planted defects used to prove this test can fail: add one en dash (U+2013) to
 # README.md, and separately one emoji (U+2705) to docs/INSTALLATION.md; each must be
 # reported by file and line. For the path check, add the sentence "See
-# `tests/test-plant.sh`." to README.md. Reverted afterwards.
+# `tests/test-plant.sh`." to README.md. For the internal check, add the word
+# "moat" to docs/QUICKSTART.md, and separately create docs/ROADMAP-PLANT.md and
+# `git add -f internal/plant.md`. Reverted afterwards.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -116,6 +125,34 @@ PY
 case "$paths_out" in
     "OK "*) ok "${paths_out#OK }" ;;
     *) bad "${paths_out#NO }" ;;
+esac
+
+internal_out="$(python3 -I - <<'PY'
+import re, subprocess
+files = [f for f in subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"]).decode().split("\0") if f]
+bad = []
+bad += ["tracked under internal/: " + f for f in files if f.startswith("internal/")]
+NAME = re.compile(r"(ROADMAP|BACKLOG|STRATEGY|MOAT|COMPETITIVE|SCORECARD)[^/]*\.(md|html|txt|json)$", re.I)
+bad += ["internal-looking doc name: " + f for f in files if NAME.search(f.split("/")[-1])]
+WORD = re.compile(r"\bmoat\b|\b8090\b|factory\.ai", re.I)
+shipped = [f for f in files if f.endswith(".md") and (f in ("README.md", "SKILL.md") or f.startswith(("docs/", "references/", "skills/", "wiki/")))]
+for f in shipped:
+    try:
+        text = open(f, encoding="utf-8").read()
+    except OSError:
+        continue
+    for n, line in enumerate(text.split("\n"), 1):
+        if WORD.search(line):
+            bad.append("internal word in %s:%d" % (f, n))
+if subprocess.run(["git", "check-ignore", "-q", "internal/x.md"]).returncode != 0:
+    bad.append("internal/ is not gitignored")
+print(("OK no internal strategy docs or words in %d shipped markdown files; internal/ is ignored" % len(shipped)) if not bad
+      else "NO %d internal-strategy leak(s): %s" % (len(bad), "; ".join(bad[:10])))
+PY
+)"
+case "$internal_out" in
+    "OK "*) ok "${internal_out#OK }" ;;
+    *) bad "${internal_out#NO }" ;;
 esac
 
 finish

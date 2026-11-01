@@ -40,7 +40,6 @@ receipt without a single packet leaving the machine.
 
 `loki proof verify` deserves emphasis: an auditor can re-check a receipt against
 the repository offline and get a genuine verdict, including detecting drift.
-That is the property competitors' dashboard-bound verification cannot have.
 
 ## The one required egress, stated plainly
 

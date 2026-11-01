@@ -8,12 +8,6 @@ went.
 "I paid for the AI's own mistakes" is one of the sharpest complaints in this
 category, and it is worth being precise about how our model differs.
 
-Most competitors sell credits. Lovable has already addressed the objection
-directly -- their "Try to fix" button does not consume credits, and their
-troubleshooting docs push you toward reverting or replanning instead of
-retrying the same prompt. That is a good policy and we are not claiming to have
-invented a better one.
-
 **Our model is different in kind: you bring your own provider credentials.** We
 never bill you, because we are never in the payment path. What we owe you
 instead is a hard ceiling and an honest account of what was spent -- which is

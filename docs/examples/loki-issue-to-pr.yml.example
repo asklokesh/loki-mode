@@ -24,7 +24,7 @@
 #   /loki explain      replies with the clause matrix (verdict, criteria, checks), <= 60 lines
 #   /loki reseal       re-runs the proof and sets the loki/receipt commit status on the PR head
 # Anyone else gets one reply naming the missing permission and nothing runs.
-# Moat 9: the step that reads the comment text (pr-command, "Parse the comment")
+# Rule of Two: the step that reads the comment text (pr-command, "Parse the comment")
 # holds no secret and no token; every later step receives only a whitelisted verb,
 # and the fix text travels as a file artifact. The loki/receipt status is set by
 # the sandboxed `loki verify-pr reseal` on the pushed head, never from agent output.

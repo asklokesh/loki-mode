@@ -329,7 +329,7 @@ LOKI_REVIEW_UNAVAILABLE_BLOCK=1   # default 1 (blocks under LOKI_HARD_GATES).
                                   # binary on PATH AND no reachable SDK judge),
                                   # code_review would otherwise pass with ZERO
                                   # review -- a fake-PASS that makes the blind
-                                  # 3-reviewer moat a no-op. Blocks instead. Set
+                                  # 3-reviewer gate a no-op. Blocks instead. Set
                                   # 0 for an honest degraded pass (a run that
                                   # deliberately has no reviewer). The raw-SDK
                                   # reviewer path (LOKI_SDK_CODE_REVIEW=1 + a key)
