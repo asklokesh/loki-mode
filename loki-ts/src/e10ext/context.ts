@@ -8,7 +8,7 @@ import { loadRepoMap } from "../engine10/sizing.ts";
 import type { RunContext, TestMap, TestRef } from "../engine10/types.ts";
 import { unitBrief } from "../features/speed/unit_mode.ts";
 import { signatureDigest } from "../util/ts_signatures.ts";
-import { readVerifiedCommand } from "./repomemory.ts"; import { profileBrief } from "../runner/repo_profile.ts";
+import { readVerifiedCommand } from "./repomemory.ts"; import { profileBrief } from "../runner/repo_profile.ts"; import { exampleFiles } from "../util/pr_lessons.ts";
 
 export interface ContextDeps {
   select: (task: string, map: RepoMap, max: number) => string[];
@@ -49,7 +49,7 @@ export function briefContext(ctx: RunContext, d: ContextDeps): string {
   const safe = (planned ?? []).filter((f) => !/^([/~]|[A-Za-z]:[\\/])/.test(f) && !f.split(/[\\/]/).includes(".."));
   let files = safe.length ? safe : map ? d.select(task, map, MAX_FILES) : [];
   if (!files.length && map) files = map.files.slice(0, MAX_FILES); // no plan and no keyword match: head of the map, same 20 cap
-  files = files.slice(0, MAX_FILES);
+  files = [...new Set([...exampleFiles(ctx.repoDir, task), ...files])].slice(0, MAX_FILES); // L043: the worked example's files lead (util/pr_lessons.ts workedExampleFor)
   const tm = o.intake?.testmap as TestMap | undefined;
   const refs = tm && files.length ? ctx.tests.impacted(tm, files).slice(0, MAX_TESTS) : [];
   const rel = (p: string): string => (p.startsWith(`${ctx.repoDir}/`) ? p.slice(ctx.repoDir.length + 1) : p);

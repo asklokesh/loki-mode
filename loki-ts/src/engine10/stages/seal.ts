@@ -12,7 +12,7 @@ import { discardIfSatisfied } from "../../e10ext/discard.ts";
 import { dropSet, formatChanged, parseStaged } from "../../e10ext/commit_filter.ts";
 import { flagOutsideScope } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
-import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts";
+import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts"; import { getVersion } from "../../version.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts";
 import { crossReview, minVerdict, modelReviewRan, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
@@ -310,7 +310,7 @@ export const sealStage: Stage = {
       resumed: o.intake?.resumed === true,
       events_sha256: sha256(existsSync(eventsPath) ? readFileSync(eventsPath) : ""),
       ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven, signal, ctx.emit)),
-      log_seal: true, toolchain: collectToolchain(), // TEN-GATES-22: tool versions that ran the checks, absent tools null; covered by receipt_sha256
+      log_seal: true, toolchain: collectToolchain(), loki_version: getVersion(), // TEN-GATES-22: tool versions that ran the checks, absent tools null; covered by receipt_sha256. loki_version keys the replay of an identical rerun (util/pr_lessons.ts knownVerdict)
       ...receiptBlock(process.env, cost.usd, cost.unmetered === true, totalS),
       ...(reviewReceipt(ctx.provider, xr).review ? { review: reviewReceipt(ctx.provider, xr).review } : {}),
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
@@ -340,7 +340,7 @@ export const sealStage: Stage = {
     const data = { ...(wallPub ? { wall_published: { files: wp.files.map((f) => f.rel), cmds: [...new Set(wp.files.map((f) => f.cmd))] } } : {}), receipt_path: path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven, ...(mp ? { mutation_line: mp.line } : {}), ...(routeBlock ? { route_line: routePrLine(routeBlock) } : {}) };
     try { recordRunVerdict(ctx.repoDir, ctx.runId, verdict); } catch { /* memory is best-effort */ }
     // v11.7 LESSONS: after the receipt files are final, outside the receipt body (receipt_sha256 is unchanged). Cited only when signed.
-    if (process.env["LOKI_AUTO_LEARN_PR"] !== "0") { try { appendReceiptFact(ctx.repoDir, { runId: ctx.runId, verdict, receiptSha256: signed ? hash : null, title: str(ctx.outputs().intake?.title) ?? `run ${ctx.runId}`, headSha: receipt.head_sha }); } catch { /* memory is best-effort */ } }
+    if (process.env["LOKI_AUTO_LEARN_PR"] !== "0") { try { appendReceiptFact(ctx.repoDir, { runId: ctx.runId, verdict, receiptSha256: signed ? hash : null, title: str(ctx.outputs().intake?.title) ?? `run ${ctx.runId}`, headSha: receipt.head_sha, receipt, task: str(o.intake?.task) }); } catch { /* memory is best-effort */ } }
     ctx.emit("receipt.sealed", "seal", { path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven, ...(routeBlock ? { route_line: routePrLine(routeBlock) } : {}) });
     return { status: "completed", data: { ...data, summary: `${verdict} receipt ${hash.slice(0, 12)} ${signed ? `SIGNED kid ${sig.kid}` : "UNSIGNED"}` } };
   },
