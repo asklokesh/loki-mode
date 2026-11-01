@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.105.0 (2026-11-01)
+
+`loki backlog` now sorts every issue before spending a run on it, and says why.
+
+### Added
+
+- Triage for `loki backlog`: each issue is classed implement, spec or human with a one-line reason. Implement issues run; vague or large issues get a drafted spec under `.loki/specs/` and the exact command to run it; issues that touch secrets, production or destructive operations are listed for a person and never run unattended. `--dry-run` prints the class and reason per issue. A `loki:implement`, `loki:spec` or `loki:human` label overrides one issue; `LOKI_TRIAGE=0` turns triage off.
+- The class and reason are recorded in the run events, the receipt (`triage`) and the PR body.
+
+### Unchanged
+
+- A direct `loki "<goal>"` or `loki start owner/repo#N` never stops or refuses because of triage; it records the class and runs as before.
+
 ## v11.104.0 (2026-11-01)
 
 A one-line `loki "<goal>"` now finishes in more setups without extra flags, and always ends with the exact command to run next.

@@ -39,6 +39,12 @@ if [ -n "${E2E_STUB_ENV_LOG:-}" ]; then echo "$stage GH_TOKEN=${GH_TOKEN:-} LOKI
 if [ "$is_wall" = 1 ] && [ "${E2E_STUB_MODE:-}" = "wallcolor" ]; then # FC-69: the Wall author writes one red-on-base test for multiply()
   printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n' > loki_wall_multiply.test.ts
 fi
+case "$prompt" in # `loki plan --spec` (tests/min/triage-router.sh): write the schema-checked criteria JSON to the path the brief names
+  *"You are the Loki spec stage."*)
+    out="$(printf '%s\n' "$prompt" | sed -n 's/.*to this exact file path: //p' | tail -1)"
+    [ -n "$out" ] && printf '{"intent":"stub intent","criteria":["the stated change is made","a test covers it"]}\n' > "$out"
+    ;;
+esac
 if [ "$stage" = "implement" ]; then
   if [ "${E2E_STUB_MODE:-done}" = "nochange" ]; then
     echo "LOKI_DONE"
