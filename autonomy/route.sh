@@ -4,8 +4,8 @@
 # order and input form never change the engine:
 #   engine10 is the default for a PRD file, an issue ref, a multi-word task and a
 #   one-word brief, whether the flags come first or last.
-#   The legacy engine runs only on --engine legacy / LOKI_ENGINE=legacy, and is refused
-#   under SDK mode. A flag never changes the engine: engine10 maps it or refuses it.
+#   The legacy engine runs only on --engine legacy / LOKI_ENGINE=legacy or for a PRD over
+#   120000 bytes, and is refused under SDK mode with claude. A flag never changes the engine.
 # Pure functions: no exec, no side effects except R_* globals and the printers.
 # Bash 3.2 compatible (no associative arrays, no ${var,,}).
 
@@ -20,8 +20,11 @@ _ROUTE_OPTVAL_FLAGS=" --mirofish "
 _ROUTE_FRONT_FLAGS=" --workspace --deploy --health-url --health-match --auto-rollback --destination --canary --domain "
 # Flags engine10 honors as-is.
 _ROUTE_E10_FLAGS=" --no-pr --deep --json --verbose --quiet --resume --provider --max-cost --spec --attempts --seal-existing "
-# The largest PRD passed to engine10 as one argument; a bigger one goes as --task-file (Linux MAX_ARG_STRLEN is 128 KiB).
+# The largest PRD passed to engine10 as one argument; a bigger one goes as --task-file.
 _ROUTE_TASK_ARG_MAX=100000
+# The largest PRD engine10 takes at all: it carries the task in env vars and CLI arguments, and Linux caps one
+# string at 128 KiB. A bigger PRD runs on the legacy engine, or is refused under SDK mode (no SDK path there).
+_ROUTE_PRD_MAX=120000
 # The most a run cap can reach (capCeilingS(true) in loki-ts/src/util/run_cap.ts: the subscription ceiling).
 _ROUTE_CAP_CEILING_S=3600
 # Accepted and dropped (no-ops on a non-interactive run).
@@ -41,6 +44,22 @@ _route_refusal_hint() {
 }
 
 _route_has() { case "$1" in *" $2 "*) return 0 ;; esac; return 1; }
+
+# _route_provider FLAG_VALUE: the provider a run would use (flag, LOKI_PROVIDER, .loki/state/provider, else claude).
+_route_provider() {
+    local p="$1"
+    if [ -z "$p" ]; then p="${LOKI_PROVIDER:-}"; fi
+    if [ -z "$p" ] && [ -f "${PWD}/.loki/state/provider" ]; then p="$(sed -n '1p' "${PWD}/.loki/state/provider" 2>/dev/null || true)"; fi
+    printf '%s' "${p:-claude}"
+}
+
+# _route_sdk_claude PROVIDER: true under SDK mode (LOKI_SDK_LOOP set, directly or by LOKI_SDK_MODE=full / LOKI_SDK=full)
+# for the claude provider, where the legacy bash loop has no Agent SDK path to run on.
+_route_sdk_claude() {
+    [ "$1" = "claude" ] || return 1
+    case "${LOKI_SDK_LOOP:-}" in 1|true) return 0 ;; esac
+    return 1
+}
 
 # _route_optval_consumes FLAG NEXT: whether an optional-value flag takes the next token as its value.
 _route_optval_consumes() {
@@ -219,11 +238,9 @@ loki_route_resolve() {
         engine10|e10|v10|10) engine_req=engine10 ;;
         *) R_ERR="loki: unknown engine '$engine_req' (use --engine legacy or --engine engine10)"; R_DECIDED=1; return 0 ;;
     esac
-    # The legacy bash loop has no Agent SDK path: under SDK mode it would fail without a claude CLI or switch to it.
-    if [ "$engine_req" = "legacy" ] && [ "$help" != "1" ]; then
-        case "${LOKI_SDK_LOOP:-}" in
-            1|true) R_ERR="loki: the legacy engine has no Agent SDK path; drop --engine legacy (and LOKI_ENGINE=legacy) to run Loki 10 on the SDK, or unset LOKI_SDK_MODE, LOKI_SDK and LOKI_SDK_LOOP to run the legacy engine on a provider CLI"; R_DECIDED=1; return 0 ;;
-        esac
+    # The legacy bash loop has no Agent SDK path: under SDK mode with claude it would fail without a claude CLI or switch to it.
+    if [ "$engine_req" = "legacy" ] && _route_sdk_claude "$(_route_provider "$provider_flag")"; then
+        R_ERR="loki: the legacy engine has no Agent SDK path; drop --engine legacy (and LOKI_ENGINE=legacy) to run Loki 10 on the SDK, or unset LOKI_SDK_MODE, LOKI_SDK and LOKI_SDK_LOOP to run the legacy engine on a provider CLI"; R_DECIDED=1; return 0
     fi
 
     # Input. A bare `loki start` takes LOKI_PRD_FILE as its PRD (documented in `loki start --help`).
@@ -295,12 +312,7 @@ loki_route_resolve() {
     fi
 
     # Provider and model (display only; engine10 resolves its own at run time).
-    R_PROVIDER="$provider_flag"
-    if [ -z "$R_PROVIDER" ]; then R_PROVIDER="${LOKI_PROVIDER:-}"; fi
-    if [ -z "$R_PROVIDER" ] && [ -f "${PWD}/.loki/state/provider" ]; then
-        R_PROVIDER="$(sed -n '1p' "${PWD}/.loki/state/provider" 2>/dev/null || true)"
-    fi
-    if [ -z "$R_PROVIDER" ]; then R_PROVIDER=claude; fi
+    R_PROVIDER="$(_route_provider "$provider_flag")"
     if [ -n "$session_model" ]; then
         R_MODEL="$session_model"
     elif [ -n "${LOKI_SESSION_MODEL:-}" ]; then
@@ -322,10 +334,12 @@ loki_route_resolve() {
 
     # Task text for engine10: a PRD file is read, anything else is the words. A PRD over
     # _ROUTE_TASK_ARG_MAX bytes goes as --task-file instead: Linux caps one argument at 128 KiB.
-    local task task_file="" sz
+    local task task_file="" sz=0
     if [ "$R_INPUT_TYPE" = "prd" ]; then
         sz=$(wc -c < "${positionals[0]}" 2>/dev/null | tr -d ' ' || echo 0)
-        if [ "${sz:-0}" -gt "$_ROUTE_TASK_ARG_MAX" ]; then
+        if [ "${sz:-0}" -gt "$_ROUTE_PRD_MAX" ]; then
+            task=""
+        elif [ "${sz:-0}" -gt "$_ROUTE_TASK_ARG_MAX" ]; then
             task=""
             task_file="$(cd "$(dirname -- "${positionals[0]}")" && pwd -P)/$(basename -- "${positionals[0]}")"
         else
@@ -380,6 +394,9 @@ loki_route_resolve() {
     if [ "$dry" = "1" ] && [ "$engine_req" != "legacy" ]; then R_DRY=1; fi
     if [ "$engine_req" = "legacy" ]; then
         R_ENGINE=legacy; R_REASON="explicit: --engine legacy or LOKI_ENGINE=legacy"
+    elif [ "$engine_req" = "engine10" ] && [ "${sz:-0}" -gt "$_ROUTE_PRD_MAX" ]; then
+        R_ERR="loki: this PRD is ${sz} bytes, over the ${_ROUTE_PRD_MAX}-byte limit of the Loki 10 engine; trim it below 120 KB, or drop --engine engine10 to run it on the legacy engine"
+        return 0
     elif [ "$engine_req" = "engine10" ]; then
         R_ENGINE=engine10; R_E10=1; R_HARD=1; R_REASON="explicit: --engine engine10"
     else
@@ -388,8 +405,16 @@ loki_route_resolve() {
             claude|codex|cline|aider|opencode) ;;
             *) R_ERR="loki: provider $R_PROVIDER is not supported; use one of: claude, codex, cline, aider, opencode"; return 0 ;;
         esac
-        R_ENGINE=engine10; R_E10=1
-        R_REASON="default: $R_INPUT_TYPE input runs on engine10 regardless of flag order"
+        if [ "${sz:-0}" -gt "$_ROUTE_PRD_MAX" ] && _route_sdk_claude "$R_PROVIDER"; then
+            R_ERR="loki: this PRD is ${sz} bytes, over the ${_ROUTE_PRD_MAX}-byte limit of the Loki 10 engine, and the legacy engine has no Agent SDK path; trim the PRD below 120 KB, or unset LOKI_SDK_MODE, LOKI_SDK and LOKI_SDK_LOOP to run the legacy engine on a provider CLI"
+            return 0
+        elif [ "${sz:-0}" -gt "$_ROUTE_PRD_MAX" ]; then
+            R_ENGINE=legacy; R_REASON="PRD is larger than ${_ROUTE_PRD_MAX} bytes (engine10 carries the task in single strings, capped at 128 KiB on Linux)"
+            R_NOTICE="loki: routing this call to the legacy engine: $R_REASON."
+        else
+            R_ENGINE=engine10; R_E10=1
+            R_REASON="default: $R_INPUT_TYPE input runs on engine10 regardless of flag order"
+        fi
     fi
     _route_adapter_and_diffs "$legacy_flag"
     return 0

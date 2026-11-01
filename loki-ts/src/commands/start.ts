@@ -521,6 +521,8 @@ export function writebackEnv(task: string, env: NodeJS.ProcessEnv): NodeJS.Proce
 
 /** The largest task passed to engine10 as one argument; a bigger PRD file goes as --task-file (mirrors _ROUTE_TASK_ARG_MAX in autonomy/route.sh). */
 export const TASK_ARG_MAX = 100000;
+/** The largest PRD engine10 takes at all (mirrors _ROUTE_PRD_MAX in autonomy/route.sh): it carries the task in single strings, capped at 128 KiB on Linux. */
+export const PRD_MAX = 120000;
 
 /** The engine10 argv for one start (pure; the cap flag reaches the plan route too). taskFile replaces the task argument for a PRD over TASK_ARG_MAX. */
 export function engineArgv(o: ParsedStartOpts, task: string, forceNoPr: boolean, taskFile?: string): string[] {
@@ -751,6 +753,10 @@ export async function runStart(args: readonly string[]): Promise<number> {
     const t = v ? textSpecPath(v, process.cwd(), process.env) : null;
     if (t && "error" in t) { process.stderr.write(t.error); return 2; }
     if (t) parsed[k] = t.path;
+  }
+  { // PRD_MAX: --attempts and --spec run only engine10, which cannot carry a bigger PRD.
+    const p = parsed.prdPath, sz = p !== "" && pathExists(p) && statSync(p).isFile() ? statSync(p).size : 0;
+    if (sz > PRD_MAX) { process.stderr.write(`start: this PRD is ${sz} bytes, over the ${PRD_MAX}-byte limit of the Loki 10 engine; trim it below 120 KB, or run it without --attempts or --spec (the legacy engine takes it)\n`); return 2; }
   }
   if (parsed.dryRun) return dryRunStart(parsed, process.cwd(), process.env);
   { const rec = await offerInterruptedRun(parsed, process.cwd()); if (rec !== null) return rec; }

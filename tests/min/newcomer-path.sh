@@ -17,8 +17,10 @@
 #   One decision: autonomy/route.sh decides every start and quick shape, `start --attempts 1` included (stub bun and
 #              bash CLI print the argv each case reached); LOKI_SDK_LOOP=1 prints one notice naming the default engine
 #              and changes nothing else; `start --attempts 1` and LOKI_SDK_LOOP=1 each seal an engine10 receipt.
-#              A PRD over 100000 bytes runs engine10 from a file (with LOKI_SDK_MODE=full and no claude CLI it seals
-#              on the SDK); under SDK mode --engine legacy and LOKI_ENGINE=legacy are refused in one line.
+#              A PRD up to 120000 bytes runs engine10 (over 100000 from a file; a 119 KB one seals on the claude CLI
+#              invoker and, with LOKI_SDK_MODE=full and no claude CLI, on the SDK); over 120000 it runs the legacy engine,
+#              or under SDK mode with claude is refused in one line, as are --engine legacy and LOKI_ENGINE=legacy;
+#              with another provider (codex) the legacy engine still runs.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. skills/fixtures/demo-receipt/pubkey.jwk replaced with {}: the tour stops printing VERIFIED.
@@ -48,9 +50,9 @@
 #   20. bin/loki: no refusal for --attempts 1 on a legacy route: the --engine legacy route check fails.
 #   21. bin/loki: send LOKI_SDK_LOOP=1 start to the Bun start command before route.sh: three route checks and the
 #       LOKI_SDK_LOOP receipt check fail.
-#   22. autonomy/route.sh: a PRD over 100000 bytes routes to the legacy engine again: the two big-PRD route checks
-#       and the three big-PRD SDK run checks fail.
+#   22. autonomy/route.sh: no 120000-byte cutoff (_ROUTE_PRD_MAX=10000000): the four 121000-byte route checks fail.
 #   23. autonomy/route.sh: no SDK-mode refusal for --engine legacy: the two refusal route checks fail.
+#   24. autonomy/route.sh: SDK-mode refusal for every provider: the three codex route checks fail.
 # No network, no model, no real key: the fake key never leaves the machine (stubs answer every call).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -374,13 +376,20 @@ route_is "LOKI_SDK_LOOP=true start --help: notice, then the bash start help" "$S
 route_is "LOKI_SDK_LOOP=1 start --workspace: notice, then the front end" "$SDKN~BASH: start --workspace ws fix x~" LOKI_SDK_LOOP=1 -- start --workspace ws "fix x"
 route_is "LOKI_SDK_MODE=full start <prd>: no notice, engine10" "BUN: engine10 Add x.~" LOKI_SDK_MODE=full -- start prd.md
 route_is "LOKI_SDK_LOOP=1 quick: no notice (quick never had a separate loop)" "BUN: engine10 --no-pr fix the bug~" LOKI_SDK_LOOP=1 -- quick "fix the bug"
-head -c 120000 /dev/zero | tr '\0' 'a' > "$RR/big.md"
-route_is "start <PRD over 100000 bytes> runs engine10 from a file" "BUN: engine10 --task-file $RR/big.md~" -- start big.md
-route_is "LOKI_SDK_MODE=full start <PRD over 100000 bytes> runs engine10, not the bash loop" "BUN: engine10 --task-file $RR/big.md~" LOKI_SDK_MODE=full -- start big.md
+head -c 119000 /dev/zero | tr '\0' 'a' > "$RR/mid.md"; head -c 121000 /dev/zero | tr '\0' 'a' > "$RR/big.md"
+route_is "start <119000-byte PRD> runs engine10 from a file" "BUN: engine10 --task-file $RR/mid.md~" -- start mid.md
+route_is "LOKI_SDK_MODE=full start <119000-byte PRD> runs engine10 from a file" "BUN: engine10 --task-file $RR/mid.md~" LOKI_SDK_MODE=full -- start mid.md
+BIGN="loki: routing this call to the legacy engine: PRD is larger than 120000 bytes (engine10 carries the task in single strings, capped at 128 KiB on Linux).~"
+route_is "start <121000-byte PRD> runs the legacy engine, never engine10" "${BIGN}BASH: start big.md~" -- start big.md
+route_is "LOKI_SDK_MODE=full start <121000-byte PRD> is refused in one line" "loki: this PRD is 121000 bytes, over the 120000-byte limit of the Loki 10 engine, and the legacy engine has no Agent SDK path; trim the PRD below 120 KB, or unset LOKI_SDK_MODE, LOKI_SDK and LOKI_SDK_LOOP to run the legacy engine on a provider CLI~" LOKI_SDK_MODE=full -- start big.md
+route_is "LOKI_SDK_MODE=full LOKI_PROVIDER=codex start <121000-byte PRD> runs the legacy engine" "${BIGN}BASH: start big.md~" LOKI_SDK_MODE=full LOKI_PROVIDER=codex -- start big.md
+route_is "start <121000-byte PRD> --engine engine10 is refused in one line" "loki: this PRD is 121000 bytes, over the 120000-byte limit of the Loki 10 engine; trim it below 120 KB, or drop --engine engine10 to run it on the legacy engine~" -- start big.md --engine engine10
 SDKL="loki: the legacy engine has no Agent SDK path; drop --engine legacy (and LOKI_ENGINE=legacy) to run Loki 10 on the SDK, or unset LOKI_SDK_MODE, LOKI_SDK and LOKI_SDK_LOOP to run the legacy engine on a provider CLI~"
 route_is "LOKI_SDK=full start --engine legacy is refused in one line" "$SDKL" LOKI_SDK=full -- start --engine legacy prd.md
 route_is "LOKI_SDK_MODE=full LOKI_ENGINE=legacy start is refused in one line" "$SDKL" LOKI_SDK_MODE=full LOKI_ENGINE=legacy -- start prd.md
 route_is "LOKI_SDK_MODE=judges start --engine legacy still runs the legacy engine" "BASH: start prd.md~" LOKI_SDK_MODE=judges -- start --engine legacy prd.md
+route_is "LOKI_SDK_MODE=full LOKI_PROVIDER=codex start --engine legacy still runs the legacy engine" "BASH: start prd.md~" LOKI_SDK_MODE=full LOKI_PROVIDER=codex -- start --engine legacy prd.md
+route_is "LOKI_SDK_MODE=full start --provider codex --engine legacy still runs the legacy engine" "BASH: start --provider codex prd.md~" LOKI_SDK_MODE=full -- start --provider codex --engine legacy prd.md
 [ ! -e loki-ts/src/runner/autonomous.ts ] && ! grep -q "runAutonomous" loki-ts/dist/loki.js && ok "the separate Bun loop (runAutonomous) is gone from src and the bundle" || bad "runAutonomous still ships"
 # The real engine: `start --attempts 1` and LOKI_SDK_LOOP=1 each seal an engine10 receipt and never write legacy state.
 fixture_repo l009-att1
@@ -392,14 +401,22 @@ printf '# PRD\n\nAdd a multiply(a, b) function to calc.ts.\n' > "$REPO/prd.md"
 out="$(cd "$REPO" && "${l009_env[@]}" LOKI_SDK_LOOP=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009i.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start ./prd.md --no-pr </dev/null 2>&1)"; rc=$?
 [ "$(printf '%s\n' "$out" | grep -c 'LOKI_SDK_LOOP')" = 1 ] && ok "LOKI_SDK_LOOP=1 start prints the notice once" || bad "LOKI_SDK_LOOP=1 start notice count is $(printf '%s\n' "$out" | grep -c 'LOKI_SDK_LOOP')"
 e10_receipt "$REPO" "LOKI_SDK_LOOP=1 start ./prd.md"; no_legacy "$REPO" "LOKI_SDK_LOOP=1 start ./prd.md"
-# A PRD over 100000 bytes under LOKI_SDK_MODE=full with only a key (no claude CLI on PATH) runs engine10 on the SDK.
+# A PRD just under the 120000-byte limit runs engine10 to a receipt, on the SDK (LOKI_SDK_MODE=full, only a key, no claude
+# CLI on PATH) and on the claude CLI invoker (the prompt reaches the CLI as an argument): no E2BIG on the way.
+bigprd() { { printf '# PRD\n\nAdd a multiply(a, b) function to calc.ts.\n\n<!-- '; head -c 118900 /dev/zero | tr '\0' 'x'; printf ' -->\n'; } > "$1"; }
+fixture_repo big-cli
+bigprd "$REPO/big.md"
+[ "$(wc -c < "$REPO/big.md" | tr -d ' ')" -gt 118000 ] && [ "$(wc -c < "$REPO/big.md" | tr -d ' ')" -le 120000 ] && ok "big PRD fixture is $(wc -c < "$REPO/big.md" | tr -d ' ') bytes" || bad "big PRD fixture size is off"
+out="$(cd "$REPO" && "${l009_env[@]}" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009j.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start ./big.md --no-pr </dev/null 2>&1)"; rc=$?
+case "$out" in *"Argument list too long"*|*E2BIG*|*"legacy engine"*) bad "119 KB PRD on the claude CLI invoker: E2BIG or legacy (exit $rc)" ;; *) ok "119 KB PRD on the claude CLI invoker: no E2BIG, no legacy (exit $rc)" ;; esac
+e10_receipt "$REPO" "119 KB PRD on the claude CLI invoker"; no_legacy "$REPO" "119 KB PRD on the claude CLI invoker"
 fixture_repo big-sdk
-{ printf '# PRD\n\nAdd a multiply(a, b) function to calc.ts.\n\n<!-- '; head -c 110000 /dev/zero | tr '\0' 'x'; printf ' -->\n'; } > "$REPO/big.md"
+bigprd "$REPO/big.md"
 out="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_E10_INVOKER -u LOKI_PROVIDER -u LOKI_ENGINE ANTHROPIC_BASE_URL=http://127.0.0.1:9 \
     PATH="$BARE" ANTHROPIC_API_KEY="$FAKEKEY" LOKI_SDK_NODE_MODULES="$SDKNM" LOKI_SDK_MODE=full E2E_STUB_MODE=done E2E_SDK_STUB_LOG="$REPO.sdk.log" \
     LOKI_RECEIPT_SIGNING_KEY_FILE="$REPO.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start ./big.md --no-pr </dev/null 2>&1)"; rc=$?
-case "$out" in *"not installed"*|*"No AI provider CLI"*|*"legacy engine"*) bad "big PRD under LOKI_SDK_MODE=full reached the bash loop (exit $rc)" ;; *) ok "big PRD under LOKI_SDK_MODE=full never reaches the bash loop (exit $rc)" ;; esac
-e10_receipt "$REPO" "big PRD, LOKI_SDK_MODE=full, no claude CLI"; no_legacy "$REPO" "big PRD, LOKI_SDK_MODE=full, no claude CLI"
-[ -s "$REPO.sdk.log" ] && ok "big PRD under LOKI_SDK_MODE=full ran its sessions on the SDK" || bad "big PRD under LOKI_SDK_MODE=full never ran the SDK binary"
+case "$out" in *"not installed"*|*"No AI provider CLI"*|*"legacy engine"*|*"Argument list too long"*|*E2BIG*) bad "119 KB PRD under LOKI_SDK_MODE=full reached the bash loop or E2BIG (exit $rc)" ;; *) ok "119 KB PRD under LOKI_SDK_MODE=full never reaches the bash loop (exit $rc)" ;; esac
+e10_receipt "$REPO" "119 KB PRD, LOKI_SDK_MODE=full, no claude CLI"; no_legacy "$REPO" "119 KB PRD, LOKI_SDK_MODE=full, no claude CLI"
+[ -s "$REPO.sdk.log" ] && ok "119 KB PRD under LOKI_SDK_MODE=full ran its sessions on the SDK" || bad "119 KB PRD under LOKI_SDK_MODE=full never ran the SDK binary"
 
 finish
