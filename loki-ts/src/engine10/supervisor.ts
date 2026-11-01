@@ -304,7 +304,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       process.stderr.write(`engine10: issue fetch failed: ${(err as Error).message.split("\n")[0]}\n`);
       return 2;
     }
-    if (!trackerRef && sealPatch === null && !deep && !json) { const ep = await (await import("../commands/issues_run.ts")).startIssueEpic({ repoDir, runDir, noPr, provider }); if (ep !== null) return ep; } // P12-46: an issue whose text sizes large by structure goes down the MASS-2 split, each slice its own run; null runs the single path below
+    if (!trackerRef && sealPatch === null && !deep && !json) { const ep = await (await import("../commands/issues_run.ts")).startIssueEpic({ repoDir, runDir, noPr, provider, capUsd: cap.usd }); if (ep !== null) return ep; } // P12-46: an issue whose text sizes large by structure goes down the MASS-2 split, each slice its own run; null runs the single path below
   }
   const routeStart = routeStartLine(process.env, provider); // FC-35: printed before any stage, so it states the pre-plan state only (route.json does not exist yet). R1-15: null unless LOKI_ROUTER is on, so the start line is byte-identical otherwise
   const costEst = encodeEstimate(process.env, repoDir, undefined, model); if (costEst) env.LOKI_E10_COST_ESTIMATE = costEst; // 11.3.0 T1: null under LOKI_COST_PREVIEW=0

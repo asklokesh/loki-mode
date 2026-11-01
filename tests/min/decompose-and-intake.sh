@@ -153,9 +153,12 @@ chmod +x "$T/bin/gh"
 E="$T/epic"
 make_repo "$E" 0
 SPLIT='{"slices":[{"id":"s1","title":"search backend","acceptance":["full-text search returns ranked rows"],"depends_on":[],"files":["calc.ts"]},{"id":"s2","title":"search UI","acceptance":["the search box shows ranked results"],"depends_on":["s1"],"files":["calc.ts"]}]}'
-E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" run_loki "$E" "$T/epic-stub.log" start acme/search#24 --no-pr
+E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" E2E_STUB_BUDGET_LOG="$T/epic-budget.log" run_loki "$E" "$T/epic-stub.log" start acme/search#24 --no-pr --max-cost 5
 printf '%s\n' "$OUT" | grep -E '^(loki:|#24)' | sed 's/^/    epic: /'
 [ "$RC" -eq 0 ] && ok "epic run exits 0 (every slice VERIFIED or PARTIAL)" || { bad "epic run exited $RC"; printf '%s\n' "$OUT" | tail -15 | sed 's/^/    | /'; }
+impl_budget="$(grep '^implement ' "$T/epic-budget.log" 2>/dev/null | sed 's/^implement //' | sort -u)"
+[ "$(grep -c '^implement ' "$T/epic-budget.log" 2>/dev/null)" -ge 2 ] && [ "$(printf '%s\n' "$impl_budget" | grep -c .)" = 1 ] && printf '%s' "$impl_budget" | grep -Eq '^limit=5 ledger=/.+' \
+    && ok "--max-cost 5 is one cap for the whole issue: every slice sees limit 5 and one shared ledger" || bad "slices do not share one cap and ledger: $(tr '\n' ';' < "$T/epic-budget.log" 2>/dev/null)"
 has "epic sizes large by structure at start" "$OUT" "acme/search#24 sizes large (structure: 8 solution part(s), 5 acceptance criteria, backend and frontend"
 has "epic takes the decompose path (model split used)" "$OUT" "#24 split into 2 slices: s1, s2<-s1"
 s1_line="$(printf '%s\n' "$OUT" | grep -n '^#24 s1 running' | head -1 | cut -d: -f1)"

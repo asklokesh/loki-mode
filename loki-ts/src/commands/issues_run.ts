@@ -8,6 +8,7 @@
 //   5. print one live line per issue, then a digest table, also written to .loki/issues-run/<ts>/digest.md.
 // MASS-2: a too-large issue is split by the model into stacked slices (commands/issues_epic.ts) unless --no-split.
 // Every external effect (gh, triage, runner, worktrees, prompt) is injectable so tests never call a provider.
+import { groupEnv } from "../e10ext/budget_cap.ts";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -472,7 +473,7 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
  * a non-GitHub issue, LOKI_SPEED=0 or a unit/slice child returns null and the caller runs the single path, which still sizes large (plan kept).
  * Slice receipts are copied to <runDir>/slices/ and the epic record to <runDir>/epic.json. Exit 0 only when every slice reached VERIFIED or PARTIAL.
  */
-export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr: boolean; provider: string; env?: NodeJS.ProcessEnv; inject?: Partial<EpicDeps & { decompose: IssuesRunDeps["decompose"] }> }): Promise<number | null> {
+export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr: boolean; provider: string; capUsd?: number; env?: NodeJS.ProcessEnv; inject?: Partial<EpicDeps & { decompose: IssuesRunDeps["decompose"] }> }): Promise<number | null> {
   const env = o.env ?? process.env;
   if (env["LOKI_SPEED"] === "0" || env["LOKI_UNIT_ID"]) return null;
   let raw: { provider?: unknown; repo?: unknown; number?: unknown; title?: unknown; body?: unknown; labels?: unknown };
@@ -482,7 +483,7 @@ export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr:
   const size = sizeTask([issue.title, issue.body].filter(Boolean).join("\n\n"), null, null);
   if (size.size !== "large") return null;
   const lokiDir = env["LOKI_DIR"] ?? join(o.repoDir, ".loki");
-  const userEnv: NodeJS.ProcessEnv = { ...env };
+  const userEnv: NodeJS.ProcessEnv = groupEnv({ ...env }, o.capUsd ?? 0, o.repoDir); // one cap and one ledger for the whole issue: slices share the total, never a cap each
   const base = makeDefaultRunner(lokiDir);
   const d: EpicDeps & { decompose: IssuesRunDeps["decompose"] } = {
     // A slice keeps its run branch: a dependent slice stacks on it (MASS-2); the next run's sweep saves and removes it.
