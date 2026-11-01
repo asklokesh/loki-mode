@@ -16,7 +16,7 @@ import { readSessionId } from "../runner/session_resume.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { exitKind, routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
-import { clampBashTimeoutEnv, envWithPwd, pinBashShellEnv, killGroupWithGrace, reapLiveGroup } from "../runner/worker_proc.ts"; import { engine10StaticPrefix, sessionPinModel } from "../runner/providers.ts"; export { sessionPinModel }; import { idleGapMs, prefixParts, prefixSha } from "../util/cost_breakdown.ts";
+import { clampBashTimeoutEnv, envWithPwd, pinBashShellEnv, killGroupWithGrace, reapLiveGroup } from "../runner/worker_proc.ts"; import { engine10StaticPrefix, sessionPinModel } from "../runner/providers.ts"; export { sessionPinModel }; import { capToSessionPin } from "../runner/model_rank.ts"; import { idleGapMs, prefixParts, prefixSha } from "../util/cost_breakdown.ts";
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
 import { calculateCostFromRecords, partialUsagePath, readEfficiencyDir, recordPartialStreamCost } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
@@ -140,7 +140,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
   return {
     run(opts: SessionRunOptions): Promise<SessionResult & { stderrTail: string }> {
-      if (cfg.provider === "opencode" && opts.model) opts = { ...opts, model: undefined }; // a stage pin (Wall's claude tier) cannot reach opencode; record the model it really runs
+      if (cfg.provider === "opencode" && opts.model) opts = { ...opts, model: undefined }; else if (cfg.provider === "claude" && opts.model) opts = { ...opts, model: capToSessionPin(opts.model) }; // a stage pin (Wall's claude tier) cannot reach opencode; a LOKI_SESSION_MODEL run never starts a session above its pin (runner/model_rank.ts)
       const start = Date.now();
       // A signal aborted before run() never fires the listener below, so it never spawns.
       if (opts.signal.aborted || sessionsCancelled()) return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true, stderrTail: "" });
