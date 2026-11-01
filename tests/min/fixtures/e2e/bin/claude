@@ -4,11 +4,14 @@
 #   already: the implement session changes nothing and claims already-done
 #   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
+#   wallphantom: the Wall author writes loki_wall_multiply.test.ts calling multiplyAll(), a name the task never asks for
+#     (red on base, still red after the correct multiply() lands); E2E_STUB_WALL_SLEEP=<s> makes that author session slow
 # E2E_STUB_TEST_EDIT=1: the implement session weakens calc.test.ts (adds a test.skip) and adds a new multiply.test.ts;
 # =update only appends a test case to calc.test.ts (assertions kept), plus the same new file.
 # E2E_STUB_SCOPE_EDIT=1: the implement session also edits util.ts (when the repo has one).
 # E2E_STUB_FIX (fix sessions, told apart by LOKI_E10_STAGE=fix): conflict answers LOKI_SPEC_CONFLICT and edits
-# nothing; noprogress edits calc.ts without fixing multiply(); fixit turns the wrong multiply() right. E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
+# nothing; wallconflict does the same citing loki_wall_multiply.test.ts; noprogress edits calc.ts without fixing multiply();
+# fixit turns the wrong multiply() right. E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
 # per call; E2E_STUB_USAGE=<n> records n output tokens per session (input = prompt bytes / 4) as the session's cost.
 #   overlay: a plain `-p <task>` call copies E2E_STUB_OVERLAY over the cwd (h2h benchmark harness)
 # E2E_STUB_SLEEP=<s>: the implement session sleeps after its edit, so a test can signal the run mid-session (tests/min/run-safety.sh).
@@ -56,9 +59,14 @@ fi
 if [ "${LOKI_E10_STAGE:-}" = "fix" ]; then # before the implement branch: a fix brief also carries the implement rules text
   case "${E2E_STUB_FIX:-}" in
     conflict) echo "LOKI_SPEC_CONFLICT: calc.test.ts:7 expects multiply(3, 4) to be 12"; exit 0 ;;
+    wallconflict) echo "LOKI_SPEC_CONFLICT: loki_wall_multiply.test.ts:5 calls multiplyAll, which the task never asks for"; exit 0 ;;
     noprogress) printf '// stub fix pass\n' >> calc.ts; echo "LOKI_DONE"; exit 0 ;;
     fixit) python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; echo "LOKI_DONE"; exit 0 ;;
   esac
+fi
+if [ "$is_wall" = 1 ] && [ "${E2E_STUB_MODE:-}" = "wallphantom" ]; then
+  [ -n "${E2E_STUB_WALL_SLEEP:-}" ] && sleep "$E2E_STUB_WALL_SLEEP"
+  printf 'import { expect, test } from "bun:test";\nimport * as calc from "./calc";\n\ntest("multiplyAll", () => {\n  expect((calc as unknown as { multiplyAll: (xs: number[]) => number }).multiplyAll([2, 3])).toBe(6);\n});\n' > loki_wall_multiply.test.ts
 fi
 if [ "$is_wall" = 1 ] && [ "${E2E_STUB_MODE:-}" = "wallcolor" ]; then # FC-69: the Wall author writes one red-on-base test for multiply()
   printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n' > loki_wall_multiply.test.ts
