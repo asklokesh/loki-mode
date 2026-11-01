@@ -41,8 +41,13 @@ export const runs = sqliteTable("runs", {
   measuredSessions: integer("measured_sessions").notNull(),
   totalSessions: integer("total_sessions").notNull(),
   tokenSessions: integer("token_sessions"), // FC-44: cost events that carried usage; null on rows ingested before it existed
-  inputTokens: integer("input_tokens").notNull(),
+  inputTokens: integer("input_tokens").notNull(), // L002: uncached input only (0007 recomputes older rows, which folded cache tokens in)
   outputTokens: integer("output_tokens").notNull(),
+  cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+  cacheCreationTokens: integer("cache_creation_tokens").notNull().default(0),
+  fixRounds: integer("fix_rounds").notNull().default(0), // fix.round events
+  escalations: integer("escalations").notNull().default(0), // escalated + route.escalated events
+  size: text("size"), // the plan stage's task size (small, normal, large); null when the run never sized
   wallS: real("wall_s"),
   lastSeq: integer("last_seq").notNull(),
   lastEventAt: text("last_event_at"),

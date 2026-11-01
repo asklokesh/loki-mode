@@ -15,6 +15,10 @@ import { join } from "node:path";
 import { lokiDir } from "../util/paths.ts";
 import { isGroupCostRecord } from "../metrics/kpis.ts";
 import { BOLD, YELLOW, NC } from "../util/colors.ts";
+import { readEvents } from "../engine10/events.ts";
+import { projectRun } from "../../../packages/control-plane/src/server/runs.ts";
+import { cacheReadShare, computeOutcomes, outcomesReport } from "../../../packages/control-plane/src/server/routes/stats.ts";
+import { effectiveVerdict } from "../../../packages/control-plane/src/server/integrity.ts";
 
 // ---- Types ----
 
@@ -457,6 +461,68 @@ function renderText(a: Aggregated, showEfficiency: boolean): string {
   return lines.join("\n");
 }
 
+// ---- Outcomes (L002): engine10 runs, read from .loki/runs/<id>/events.jsonl ----
+//
+// Each run goes through the control plane's own projection (runs.ts projectRun)
+// and metrics (routes/stats.ts computeOutcomes), so these numbers equal what
+// GET /v1/stats/outcomes reports for the same runs.
+
+type Outcome = ReturnType<typeof computeOutcomes>;
+type LocalRun = ReturnType<typeof projectRun>;
+
+function localRuns(loki: string, since: string | null): LocalRun[] {
+  const dir = join(loki, "runs");
+  if (!isDir(dir)) return [];
+  const out: LocalRun[] = [];
+  for (const id of readdirSync(dir).sort()) {
+    const evs = readEvents(join(dir, id, "events.jsonl"));
+    if (evs.length === 0) continue;
+    const row = projectRun(evs, "local", id);
+    if (since === null || (row.startedAt !== null && row.startedAt >= since)) out.push(row);
+  }
+  return out;
+}
+
+const nm = "not measured";
+const fmtPct = (v: number | null): string => (v === null ? nm : `${(v * 100).toFixed(1)}%`);
+const fmtNum = (v: number | null, unit = ""): string => (v === null ? nm : `${v}${unit}`);
+
+function outcomeLines(o: Outcome, indent: string): string[] {
+  const c = o.cost_per_verified_usd, w = o.wall_s.all;
+  const row = (k: string, v: string, n: string) => `${indent}${padRight(k, 24)}${padRight(v, 22)}${n}`;
+  const lines = [
+    row("Cost per VERIFIED run", c.value === null ? nm : `$${c.value}`, `n=${c.n} verified priced runs (${c.priced_runs} priced, ${c.unpriced_runs} unpriced)`),
+    row("First-pass rate", fmtPct(o.first_pass_rate.value), `n=${o.first_pass_rate.n} verifiable runs`),
+    row("Sessions p50 / p90", o.sessions.n ? `${o.sessions.p50} / ${o.sessions.p90}` : nm, `n=${o.sessions.n}`),
+    row("Fix rounds", o.fix_rounds.n ? `${o.fix_rounds.total} (mean ${o.fix_rounds.mean})` : nm, `n=${o.fix_rounds.n}`),
+    row("Escalations", o.escalations.n ? `${o.escalations.total} (mean ${o.escalations.mean})` : nm, `n=${o.escalations.n}`),
+    row("Cache-read share", fmtPct(o.cache_read_share.value), `n=${o.cache_read_share.n}`),
+    row("Wall time p50 / p95", w.n ? `${fmtNum(w.p50, "s")} / ${fmtNum(w.p95, "s")}` : nm, `n=${w.n}`),
+  ];
+  for (const [size, s] of Object.entries(o.wall_s.by_size)) lines.push(row(`  ${size}`, `${fmtNum(s.p50, "s")} / ${fmtNum(s.p95, "s")}`, `n=${s.n}`));
+  if (o.runs_tampered) lines.push(`${indent}${o.runs_tampered} tampered run(s) count only as failures.`);
+  return lines;
+}
+
+function renderOutcomes(rows: LocalRun[], json: boolean): string {
+  const report = outcomesReport(rows);
+  if (json) {
+    const runs = rows.map((r) => ({
+      run_id: r.runId, origin_repo: r.originRepo, status: r.endedAt ? "completed" : "running",
+      verdict: effectiveVerdict({ verdict: r.verdict, tampered: r.tampered === 1, attested: r.attested === 1, sig_checked: r.sigChecked === 1 }),
+      size: r.size, sessions: r.totalSessions, fix_rounds: r.fixRounds, escalations: r.escalations,
+      input_tokens: r.inputTokens, cache_read_tokens: r.cacheReadTokens, cache_creation_tokens: r.cacheCreationTokens, cache_read_share: cacheReadShare(r),
+      cost_usd: r.costUsd, wall_s: r.wallS,
+    }));
+    return JSON.stringify({ source: "events.jsonl", runs_total: rows.length, ...report, runs }, null, 2);
+  }
+  const lines = [`${BOLD}Loki Mode -- run outcomes${NC} (${rows.length} runs, ${report.runs_finished} finished, from .loki/runs/*/events.jsonl)`, ""];
+  lines.push(...outcomeLines(report, "  "));
+  const repos = Object.entries(report.by_repo);
+  if (repos.length > 1) for (const [repo, o] of repos) lines.push("", `${BOLD}${repo}${NC}`, ...outcomeLines(o, "  "));
+  return lines.join("\n");
+}
+
 // ---- Entry point ----
 
 export type StatsResult = {
@@ -476,6 +542,10 @@ const STATS_HELP = [
   "Options:",
   "  --json          JSON output (machine-readable)",
   "  --efficiency    Include cost/token efficiency breakdown",
+  "  --outcomes      Outcomes of this repo's runs (.loki/runs): cost per VERIFIED run,",
+  "                  first-pass rate, sessions, fix rounds, escalations, cache-read",
+  "                  share and wall time percentiles, each with its n",
+  "  --since <ISO>   With --outcomes: only runs started at or after this date",
   "  --help, -h      Show this help and exit",
   "",
   "See also: loki kpis, loki status",
@@ -484,15 +554,25 @@ const STATS_HELP = [
 export function computeStats(argv: readonly string[]): StatsResult {
   let showJson = false;
   let showEfficiency = false;
+  let showOutcomes = false;
+  let since: string | null = null;
   for (const arg of argv) {
     if (arg === "--help" || arg === "-h" || arg === "help") {
       return { exitCode: 0, stdout: STATS_HELP };
     }
   }
-  for (const arg of argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
     if (arg === "--json") showJson = true;
     else if (arg === "--efficiency") showEfficiency = true;
-    else {
+    else if (arg === "--outcomes") showOutcomes = true;
+    else if (arg === "--since" || arg.startsWith("--since=")) {
+      const v = arg === "--since" ? argv[++i] : arg.slice("--since=".length);
+      if (v === undefined || !/^\d{4}-\d{2}-\d{2}/.test(v) || Number.isNaN(Date.parse(v))) {
+        return { exitCode: 2, stdout: "", stderr: "--since needs an ISO date or timestamp (see: loki stats --help)" };
+      }
+      since = new Date(v).toISOString();
+    } else {
       return {
         exitCode: 2,
         stdout: "",
@@ -501,7 +581,11 @@ export function computeStats(argv: readonly string[]): StatsResult {
     }
   }
 
+  if (since !== null && !showOutcomes) {
+    return { exitCode: 2, stdout: "", stderr: "--since works with --outcomes (see: loki stats --help)" };
+  }
   const loki = lokiDir();
+  if (showOutcomes) return { exitCode: 0, stdout: renderOutcomes(localRuns(loki, since), showJson) };
   if (!isDir(loki)) {
     if (showJson) {
       return { exitCode: 0, stdout: '{"error": "No active session"}' };
@@ -521,9 +605,10 @@ export async function runStats(argv: readonly string[]): Promise<number> {
   // fire here to stay identical with the bash route (autonomy/loki `stats)`
   // arm). `report` is bash-only, so `report session` never reaches Bun --
   // emitting on the bare `stats` token cannot double-fire. Suppressed under
-  // --json/-q/--quiet by the shared helper.
+  // --json/-q/--quiet by the shared helper. `stats --outcomes` has no
+  // `report session` form (that is the legacy session panel), so it prints no pointer.
   const { emitDeprecatedAlias } = await import("../util/deprecated_alias.ts");
-  emitDeprecatedAlias("stats", "report session", argv);
+  if (!argv.includes("--outcomes")) emitDeprecatedAlias("stats", "report session", argv);
   const r = computeStats(argv);
   if (r.stdout) console.log(r.stdout);
   if (r.stderr) console.error(r.stderr);
