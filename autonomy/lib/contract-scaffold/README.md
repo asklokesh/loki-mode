@@ -18,14 +18,14 @@ The point: after `npm run codegen`, a page can only call hooks that the contract
 defines. A page referencing an endpoint the backend does not implement **fails
 typecheck** -- so a static-shell-passed-off-as-wired becomes impossible.
 
-## Proven (tests/test-contract-scaffold.sh, 7/7)
+## What it does
 
 - scaffold -> real `openapi.yaml`
 - real Orval codegen -> `useListBookmark` / `useCreateBookmark` / `useDeleteBookmark`
 - a page on a REAL endpoint typechecks
 - a page on a NON-CONTRACT endpoint **fails typecheck** (drift blocked)
 
-Proven on a throwaway `bookmark` resource -- **general by construction, no
+Shown on a throwaway `bookmark` resource -- **general by construction, no
 knowledge of any specific PRD** (anti-teaching-to-the-test).
 
 ## Status: STANDALONE + ADDITIVE -- wired into NO build lane
@@ -50,7 +50,7 @@ POST creates a row that survives to a later GET, DELETE removes it, one seed row
 the first screen is never blank. Every declared field is always bound (a partial
 POST persists cleanly, 201, never 500 -- a bug the FV harness caught).
 
-Proven (tests/test-backend-floor.sh, 6/6) on a throwaway `note` resource: generates,
+On a throwaway `note` resource it generates,
 starts, POST persists, partial POST persists, and **FV-1 reports
 functional_status=verified** -- the convergence. A static shell would fail this.
 
@@ -71,7 +71,7 @@ generated frontend looks DESIGNED, not default:
 Small touches that make users smile: friendly copy, a clear primary action,
 graceful loading/empty/error states, no raw hex (re-theme from one block).
 
-Proven (tests/test-design-system.sh, 8/8): no raw hex in components, all three
+What it gives you: no raw hex in components, all three
 states, dark theme, AND the tokenized ListView TYPECHECKS against the generated
 contract hooks (the contract even caught a wrong response-type assumption in the
 UI -- the spine working as designed).

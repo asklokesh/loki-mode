@@ -56,7 +56,7 @@ loki chat                                    # interactive alternative: Plan and
 
 Every run starts from a delivery contract derived from your task, writes checks from the task alone before touching code, implements, verifies, and ends in exactly one outcome: VERIFIED, ALREADY_SATISFIED, FAILED, BUDGET_STOP, BLOCKED or STALLED ([exit codes](docs/exit-codes.md)). If the contract cannot be satisfied as written, the run stops and asks one question instead of guessing.
 
-- **A pull request** written for a quick review: what the issue asked, what changed, how it was tested, and what was NOT PROVEN. Only a VERIFIED run pushes its branch and opens a PR; any other outcome keeps the branch local and prints where it is.
+- **A pull request** written for a quick review: what the issue asked, what changed, how it was tested, and what was NOT PROVEN. A VERIFIED run opens a ready PR; a PARTIAL run opens a draft PR titled `[PARTIAL]` that leads with what is not proven; any other outcome keeps the branch local and prints where it is.
 - **A signed receipt** at `.loki/runs/<run-id>/receipt.json`, signed with a local Ed25519 key created on first run.
 - **A specialist review** when the review council runs: it selects reviewers from a specialist pool (`agents/types.json`, scored by `run.sh:FOCUS_KEYWORDS`) by matching the changed files and diff against each reviewer's keywords.
 
@@ -90,7 +90,7 @@ A finished run prints a short summary (every run on both engines also ends with 
 Outcome:    VERIFIED
 PR:         https://github.com/owner/repo/pull/1
 Receipt:    sha256:2f9a41c7e0b3...
-NOT PROVEN: full suite, app boot, council, security scan
+NOT PROVEN: full suite, app boot, security scan
 Cost:       $0.42 (claude, 212k tokens)
 Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 ```
@@ -147,15 +147,15 @@ While it is running, runs on this machine ship to it automatically. Guides: [con
 
 Required:
 
-- Claude Code (`claude`), installed and logged in: the default provider and the only one with every feature. The bundled Agent SDK with `ANTHROPIC_API_KEY` can stand in on the main `loki start` path, but `loki edit` and `loki chat` call the `claude` CLI.
-- Python 3.8+ (`python3`)
+- Claude Code (`claude`), installed and logged in: the default provider and the only one with every feature. Or only `ANTHROPIC_API_KEY`: `loki "<goal>"` then runs on the bundled Agent SDK with no CLI and no extra setting, but `loki edit` and `loki chat` call the `claude` CLI.
 - Node.js 20+ (`node`; 22 LTS is the CI target)
-- `jq`
 - Git 2.x (`git`)
 - `curl`
 
 Optional:
 
+- Python 3.8+ (`python3`): deep scans, Python repos and group runs use it. `loki "<goal>"` runs without it.
+- `jq`: `loki status` and the bash fallback CLI use it.
 - Other coding CLIs: Codex, Cline, Aider, opencode (`--provider`). Ollama or an OpenRouter key for model routes.
 - Bun 1.3+ (`bun`) on your PATH (the npm package also bundles it).
 - Docker, to run Loki from the published image.

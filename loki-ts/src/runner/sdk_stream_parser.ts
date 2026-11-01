@@ -246,6 +246,7 @@ export async function consumeSdkStream(
   const toolsByTurn = new Map<string, Set<string>>();
   const skillReads: string[] = [];
   let toolResults = 0, toolErrors = 0, mcpToolCount: number | undefined, anonTurn = 0, mcpToolWarned = false;
+  let readsBeforeEdit = 0, firstEditSeen = false; // L022: Read/Grep/Glob/LS calls before the first file edit (how much exploring the brief left to do)
   const toolTelemetry = (): Record<string, unknown> => {
     const perTurn = [...toolsByTurn.values()].map((t) => t.size);
     return {
@@ -253,6 +254,7 @@ export async function consumeSdkStream(
       ...(toolResults ? { tool_results: toolResults, tool_errors: toolErrors, tool_error_rate: toolErrors / toolResults } : {}),
       ...(mcpToolCount !== undefined ? { mcp_tool_count: mcpToolCount, mcp_tool_def_tokens_estimated: mcpToolCount * MCP_TOOL_DEF_TOKENS_EST } : {}),
       ...(skillReads.length ? { skill_module_read: skillReads } : {}),
+      ...(perTurn.length ? { reads_before_first_edit: readsBeforeEdit, first_edit_seen: firstEditSeen } : {}),
     };
   };
 
@@ -325,6 +327,7 @@ export async function consumeSdkStream(
           const toolId = (item["id"] as string) ?? "";
           const input = (item["input"] as Record<string, unknown>) ?? {};
           const turnTools = toolsByTurn.get(turnId) ?? new Set<string>();
+          if (!firstEditSeen) { if (/^(Edit|MultiEdit|Write|NotebookEdit)$/.test(tool)) firstEditSeen = true; else if (/^(Read|Grep|Glob|LS)$/.test(tool) && !(toolId && turnTools.has(toolId))) readsBeforeEdit++; }
           turnTools.add(toolId || `anon${turnTools.size}`); toolsByTurn.set(turnId, turnTools);
           const readPath = tool === "Read" ? input["file_path"] : undefined;
           const mod = typeof readPath === "string" ? /(?:^|\/)((?:skills|references)\/[^/]+\.md)$/.exec(readPath)?.[1] : undefined;

@@ -369,3 +369,28 @@ export function suggestWord(typo: string, names: readonly string[]): string | un
 export function suggestCommand(typo: string): string | undefined {
   return suggestWord(typo, visibleCommands().flatMap((c) => [...allNames(c)]));
 }
+
+/** Words bin/loki routes before the registry is consulted (autonomy/route.sh). */
+const PRE_DISPATCH = ["route"];
+
+/**
+ * A goal is free text. A one-argument goal like "status --help", "config path" or
+ * "route start fix-the-bug" is a command typed inside quotes: its first word is a
+ * known command or alias and its second word is a flag, or (in at most three
+ * words) one of that command's subcommands or another command. Returns that
+ * command name, else null.
+ */
+export function commandShapedGoal(text: string): string | null {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length < 2) return null;
+  const first = words[0]!.toLowerCase(), second = words[1]!.toLowerCase();
+  const hit = findCommand(first);
+  if (!hit && !PRE_DISPATCH.includes(first)) return null;
+  const subs = new Set<string>();
+  const walk = (c: CmdSpec): void => { for (const s of c.subcommands ?? []) { allNames(s).forEach((n) => subs.add(n)); walk(s); } };
+  if (hit) walk(hit);
+  const commandWord = (w: string): boolean => findCommand(w) !== undefined || PRE_DISPATCH.includes(w);
+  if (second.startsWith("-")) return first;
+  // "update docs for the new API" is a goal; "config path" and "route start fix-the-bug" are commands: a word-for-word command line stays short.
+  return words.length <= 3 && (subs.has(second) || commandWord(second)) ? first : null;
+}

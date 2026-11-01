@@ -12,8 +12,9 @@ export function restoreBranch(repoDir: string, orig: string | null): boolean {
   if (!orig) return false;
   const run = currentBranch(repoDir); if (run === orig) return true;
   try {
-    // a checkout would carry the run's uncommitted edits onto the user's branch, so switch back only when the tracked tree is clean
-    if (safeGit(repoDir, ["status", "--porcelain", "--untracked-files=no"], { stdio: ["ignore", "pipe", "pipe"] }).trim()) throw new Error("dirty");
+    // a checkout would carry the run's uncommitted edits onto the user's branch, so switch back only when the tracked tree is clean;
+    // otherwise the run end commits that work on the run branch and finishRunBranch returns the checkout (util/base_guard.ts)
+    if (safeGit(repoDir, ["status", "--porcelain", "--untracked-files=no"], { stdio: ["ignore", "pipe", "pipe"] }).trim()) return false;
     safeGit(repoDir, ["checkout", orig], { stdio: "ignore" });
     return true;
   } catch { process.stderr.write(`engine10: stopped; tree left on run branch ${run ?? "(detached)"}, return with: git checkout ${orig}\n`); return false; }

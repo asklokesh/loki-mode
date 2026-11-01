@@ -6403,7 +6403,7 @@ LAST_ERROR_ACTIONS = {
 # provider. So we use LOKI_PROVIDER when it is set, and when it is not we list
 # every option LABELLED rather than presenting one provider's fix as the answer.
 PROVIDER_AUTH = {
-    "claude": "claude login   (or set ANTHROPIC_API_KEY)",
+    "claude": "claude auth login   (or set ANTHROPIC_API_KEY)",
     "codex": "codex login   (or set OPENAI_API_KEY)",
     "aider": "set the API key for your aider model (OPENAI_API_KEY / ANTHROPIC_API_KEY)",
     "cline": "re-enter the API key in Cline's provider settings",
@@ -23178,7 +23178,7 @@ try_print_provider_setup() {
     echo "loki try: no provider is ready for '$want'. Set up one of these, then run loki try again (or preview with --dry-run):"
     for p in $known; do
         case "$p" in
-            claude) hint="claude login   (or set ANTHROPIC_API_KEY)" ;;
+            claude) hint="claude auth login   (or set ANTHROPIC_API_KEY)" ;;
             codex) hint="codex login   (or set OPENAI_API_KEY)" ;;
             opencode) hint="opencode auth login" ;;
             aider) hint="install aider and set OPENAI_API_KEY or ANTHROPIC_API_KEY" ;;

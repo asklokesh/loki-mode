@@ -13,10 +13,23 @@
 #   unrelated: run 3 on an unrelated task gets no run-lessons block.
 #   cap:       with 12 long seeded lessons, `loki memory brief` keeps the run-lessons block within 1200 bytes.
 #   list:      `loki memory lessons` shows the category and sub-lessons.
+# Reuse past runs (same store, util/pr_lessons.ts knownVerdict, replayKnownVerdict, workedExampleFor):
+#   replay:    receipt.json carries loki_version; an identical rerun of a SPEC_CONFLICT task exits 4 in under 10s with
+#              0 sessions and no new run, prints the prior run id, its reason, `loki answer` and --fresh, and records a
+#              run.replayed event; --fresh, a changed task and a changed base sha each run the full pipeline.
+#   unit:      split history (SC, SC, AS, SC) never replays; ALREADY_SATISFIED replays (exit 0) only after 2 unanimous
+#              runs; PARTIAL, FAILED, an altered receipt and a changed task, base, loki_version or provider never replay;
+#              a 40-file VERIFIED run's exemplar stays within 2048 bytes.
+#   example:   a similar task (>= 3 shared identifier keywords) gets exactly one worked-example block within 1200 bytes
+#              and the exemplar's files in Relevant files (brief bytes with and without printed); fewer gets none.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/util/pr_lessons.ts learnFromRun: hash the run id into the lesson id (a repeat duplicates the class).
 #   2. loki-ts/src/util/pr_lessons.ts retrieveLessons: score a run lesson `runScore(...) || 1` (an unrelated run gets them).
+#   3. pr_lessons.ts REPLAY_MIN: ALREADY_SATISFIED 1 instead of 2 (one success replays).
+#   4. pr_lessons.ts replayKnownVerdict: ignore o.fresh (--fresh replays).
+#   5. pr_lessons.ts workedExampleFor: require 1 shared keyword instead of EXAMPLE_MIN_SHARED (an unrelated task gets one).
+#   6. pr_lessons.ts exampleFiles: return [] (the exemplar's files never reach Relevant files).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -41,7 +54,7 @@ new_repo() {
     LESSONS="$REPO/.loki/memory/semantic/pr-lessons.json"
 }
 
-# run_engine <n> <task> <env assignments...> -> RC, OUT, RID, PROMPTS (all prompts the stub classed as implement), ITERS
+# run_engine <n> <task> <env assignments...> -> RC, OUT, RID, PROMPTS (all prompts the stub classed as implement), ITERS. Extra loki args: XARGS array.
 run_engine() {
     local n="$1" task="$2"; shift 2
     PROMPTS="$T/prompt$n"; ITERS="$T/iters$n.log"; : > "$ITERS"
@@ -49,7 +62,7 @@ run_engine() {
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY \
         LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" LOKI_NO_COMPLETIONS=1 \
         E2E_STUB_PROMPT_LOG="$PROMPTS" E2E_STUB_ITER_LOG="$ITERS" LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" \
-        "$@" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$task" --no-pr 2>&1)"
+        "$@" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$task" --no-pr ${XARGS[@]+"${XARGS[@]}"} 2>&1)"
     RC=$?
     RID="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_id"])' "$REPO/.loki/engine.json" 2>/dev/null)"
 }
@@ -133,5 +146,146 @@ if [ "$capblk" -gt 0 ] && [ "$capblk" -le 1200 ]; then ok "cap: run-lessons bloc
 lst="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory lessons 2>&1)"
 has "list: loki memory lessons shows the category" "$lst" "category edited-existing-test, seen 2x"
 has "list: loki memory lessons shows a sub-lesson" "$lst" "- run $RID1: restored calc.test.ts"
+
+# ---- Reuse past runs (L007 replay, L043 worked example) ----
+nruns() { find "$REPO/.loki/runs" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' '; }
+sessions() { wc -l < "$ITERS" | tr -d ' '; }
+
+# replay: an identical SPEC_CONFLICT rerun returns the known verdict with no session.
+new_repo "$T/repo-replay"
+TASK_SC="add a multiply(a, b) function to calc.ts"
+run_engine 10 "$TASK_SC" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict
+RIDSC="$RID"; S10="$(sessions)"
+[ "$(outcome)" = "BLOCKED" ] && [ "$RC" -eq 4 ] && ok "replay: run 1 ends BLOCKED (SPEC_CONFLICT), exit 4, $S10 sessions" || { bad "replay: run 1 outcome '$(outcome)' rc $RC"; dump; }
+lv="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("loki_version"))' "$REPO/.loki/runs/$RIDSC/receipt.json" 2>/dev/null)"
+[ "$lv" = "$VERSION_NOW" ] && ok "replay: receipt.json records loki_version $lv" || bad "replay: receipt loki_version is '$lv', want $VERSION_NOW"
+before_runs="$(nruns)"; t0="$(date +%s)"
+run_engine 11 "$TASK_SC" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict
+dt=$(( $(date +%s) - t0 ))
+[ "$RC" -eq 4 ] && ok "replay: run 2 exits 4" || { bad "replay: run 2 exit $RC, want 4"; dump; }
+[ "$(sessions)" = "0" ] && [ "$(nruns)" = "$before_runs" ] && ok "replay: run 2 started 0 sessions and wrote no run (no session.started anywhere)" || bad "replay: run 2 sessions $(sessions), runs $before_runs -> $(nruns)"
+[ "$dt" -lt 10 ] && ok "replay: run 2 took ${dt}s (< 10s)" || bad "replay: run 2 took ${dt}s"
+has "replay: prints the prior run id" "$OUT" "Prior run:  $RIDSC"
+has "replay: prints the prior spec_conflict_reason" "$OUT" "Reason:     calc.test.ts:7 expects multiply(3, 4) to be 12"
+has "replay: offers loki answer" "$OUT" "loki answer $RIDSC --text"
+has "replay: offers --fresh" "$OUT" "rerun with --fresh"
+rep="$(tail -1 "$REPO/.loki/memory/replays.jsonl" 2>/dev/null)"
+has "replay: a run.replayed event is recorded" "$rep" '"type":"run.replayed"'
+has "replay: run.replayed names the prior run id" "$rep" "\"prior_run_id\":\"$RIDSC\""
+has "replay: run.replayed names the receipt sha256" "$rep" "\"receipt_sha256\":\"$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "$REPO/.loki/runs/$RIDSC/receipt.json")\""
+echo "    replay: identical rerun $S10 sessions -> $(sessions) sessions"
+# Negative cases on the same history: each runs the full pipeline.
+XARGS=(--fresh); run_engine 12 "$TASK_SC" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict; XARGS=()
+[ "$(sessions)" -ge 1 ] && ok "replay: --fresh runs the full pipeline ($(sessions) sessions)" || bad "replay: --fresh started no session"
+run_engine 13 "add a multiply(x, y) function to calc.ts" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict
+[ "$(sessions)" -ge 1 ] && ok "replay: a changed task runs the full pipeline ($(sessions) sessions)" || bad "replay: a changed task started no session"
+printf 'export const VERSION = 1;\n' > "$REPO/version.ts"; git -C "$REPO" add version.ts; git -C "$REPO" commit -q -m "new base"
+run_engine 14 "$TASK_SC" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict
+[ "$(sessions)" -ge 1 ] && ok "replay: a changed base sha runs the full pipeline ($(sessions) sessions)" || bad "replay: a changed base started no session"
+
+# Unit: the verdict rules on synthetic signed-shape receipts (history of task 231ec8a5ea41 on base dd6bee3845 included).
+U="$(cd "$ROOT/loki-ts" && SRC="$ROOT/loki-ts/src" UT="$T/unit" bun -e '
+const src = process.env.SRC, ut = process.env.UT;
+const L = await import(src + "/util/pr_lessons.ts"), { canonicalJson } = await import(src + "/util/receipt_signer.ts");
+const { createHash } = await import("node:crypto"), fs = await import("node:fs"), { join } = await import("node:path"), { execFileSync } = await import("node:child_process");
+const h = (s) => createHash("sha256").update(s).digest("hex"), V = (await import(src + "/version.ts")).getVersion();
+const TASK = "add the hosted feature", BASE = "dd6bee3845".padEnd(40, "0");
+let n = 0;
+const seal = (repo, verdict, o = {}) => {
+  const runId = `e10-unit-${++n}`, body = { schema: "loki.v10.receipt/1", run_id: runId, task: { source: "text", sha256: h(o.task ?? TASK) }, base_sha: o.base ?? BASE, head_sha: o.head ?? o.base ?? BASE,
+    checks: o.checks ?? [], verdict, loki_version: o.version ?? V, provider: "claude", model: "m", ...(verdict === "SPEC_CONFLICT" ? { spec_conflict_reason: "built in a hosted service, not in this repo" } : {}) };
+  const sha = h(canonicalJson(body)); fs.mkdirSync(join(repo, ".loki", "runs", runId), { recursive: true });
+  fs.writeFileSync(join(repo, ".loki", "runs", runId, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: sha, verification: { jwt: "x", kid: "k" } }));
+  L.appendReceiptFact(repo, { runId, verdict, receiptSha256: sha, title: o.task ?? TASK, receipt: body, task: o.task ?? TASK }); return runId;
+};
+const key = (o = {}) => ({ task_sha256: h(o.task ?? TASK), base_sha: o.base ?? BASE, loki_version: o.version ?? V, provider: o.provider ?? "claude", model: "m" });
+const repo = (name) => { const d = join(ut, name); fs.mkdirSync(d, { recursive: true }); return d; };
+const show = (r) => (r ? `${r.verdict} x${r.runs}` : "full pipeline");
+let d = repo("dd6bee"); for (const v of ["SPEC_CONFLICT", "SPEC_CONFLICT", "ALREADY_SATISFIED", "SPEC_CONFLICT"]) seal(d, v);
+console.log("unit dd6bee SC,SC,AS,SC ->", show(L.knownVerdict(d, key())));
+d = repo("sc1"); seal(d, "SPEC_CONFLICT"); console.log("unit SC x1 ->", show(L.knownVerdict(d, key())));
+console.log("unit SC x1 changed task ->", show(L.knownVerdict(d, key({ task: "add the hosted feature now" }))));
+console.log("unit SC x1 changed base ->", show(L.knownVerdict(d, key({ base: "980a166236".padEnd(40, "0") }))));
+console.log("unit SC x1 changed loki_version ->", show(L.knownVerdict(d, key({ version: "0.0.1" }))));
+console.log("unit SC x1 changed provider ->", show(L.knownVerdict(d, key({ provider: "codex" }))));
+d = repo("as"); seal(d, "ALREADY_SATISFIED"); console.log("unit AS x1 ->", show(L.knownVerdict(d, key())));
+seal(d, "ALREADY_SATISFIED"); console.log("unit AS x2 ->", show(L.knownVerdict(d, key())));
+d = repo("partial"); for (let i = 0; i < 3; i++) seal(d, "PARTIAL"); console.log("unit PARTIAL x3 ->", show(L.knownVerdict(d, key())));
+d = repo("failed"); for (let i = 0; i < 3; i++) seal(d, "FAILED"); console.log("unit FAILED x3 ->", show(L.knownVerdict(d, key())));
+d = repo("altered"); const ar = seal(d, "SPEC_CONFLICT"), rp = join(d, ".loki", "runs", ar, "receipt.json");
+fs.writeFileSync(rp, fs.readFileSync(rp, "utf8").replace("hosted service", "hosted servicf")); console.log("unit altered receipt ->", show(L.knownVerdict(d, key())));
+// replayKnownVerdict on a real repo: ALREADY_SATISFIED x2 at HEAD exits 0 with no session; --fresh does not replay.
+const g = repo("git"), git = (...a) => execFileSync("git", ["-C", g, ...a], { encoding: "utf8" }).trim();
+git("init", "-q", "-b", "main"); fs.writeFileSync(join(g, "a.ts"), "export const a = 1;\n"); git("add", "a.ts"); git("-c", "user.name=u", "-c", "user.email=u@e.x", "commit", "-q", "-m", "base");
+const head = git("rev-parse", "HEAD"); seal(g, "ALREADY_SATISFIED", { base: head }); seal(g, "ALREADY_SATISFIED", { base: head });
+const out = process.stdout.write.bind(process.stdout); let printed = ""; process.stdout.write = (s) => { printed += s; return true; };
+const rc = await L.replayKnownVerdict(g, TASK, { fresh: false, json: false, skip: false, provider: "claude", model: "m" }), rcf = await L.replayKnownVerdict(g, TASK, { fresh: true, json: false, skip: false, provider: "claude", model: "m" });
+process.stdout.write = out;
+console.log("unit replay AS x2 exit ->", rc, "| --fresh ->", rcf === null ? "full pipeline" : rcf, "|", printed.split("\n")[0]);
+// Exemplar byte cap: 40 long changed files and 40 long passing checks still store <= 2KB.
+const e = repo("exemplar"), ge = (...a) => execFileSync("git", ["-C", e, ...a], { encoding: "utf8" }).trim();
+ge("init", "-q", "-b", "main"); fs.writeFileSync(join(e, "seed.ts"), "x\n"); ge("add", "seed.ts"); ge("-c", "user.name=u", "-c", "user.email=u@e.x", "commit", "-q", "-m", "base"); const eb = ge("rev-parse", "HEAD");
+for (let i = 0; i < 40; i++) fs.writeFileSync(join(e, `module_with_a_rather_long_descriptive_name_number_${i}.ts`), "export const v = 1;\n".repeat(i + 1));
+ge("add", "."); ge("-c", "user.name=u", "-c", "user.email=u@e.x", "commit", "-q", "-m", "work"); const eh = ge("rev-parse", "HEAD");
+seal(e, "VERIFIED", { base: eb, head: eh, task: "add forty descriptive modules alpha beta gamma delta", checks: Array.from({ length: 40 }, (_, i) => ({ name: `test:tests/some/deeply/nested/directory/module_${i}.test.ts`, cmd: "bun test", result: "pass", duration_s: 1 })) });
+const ex = L.loadLessons(e).find((l) => l.example)?.example;
+console.log("unit exemplar bytes ->", ex ? Buffer.byteLength(JSON.stringify(ex)) : -1, "files", ex?.files.length, "tests", ex?.tests.length, "cap", L.EXEMPLAR_CAP);
+' 2>&1)"
+printf '%s\n' "$U" | sed 's/^/    /'
+has "unit: a split history (SC, SC, AS, SC on dd6bee3845) never replays" "$U" "unit dd6bee SC,SC,AS,SC -> full pipeline"
+has "unit: one SPEC_CONFLICT replays" "$U" "unit SC x1 -> SPEC_CONFLICT x1"
+has "unit: a changed task does not replay" "$U" "unit SC x1 changed task -> full pipeline"
+has "unit: a changed base sha does not replay" "$U" "unit SC x1 changed base -> full pipeline"
+has "unit: a changed loki_version does not replay" "$U" "unit SC x1 changed loki_version -> full pipeline"
+has "unit: a changed provider does not replay" "$U" "unit SC x1 changed provider -> full pipeline"
+has "unit: one ALREADY_SATISFIED does not replay" "$U" "unit AS x1 -> full pipeline"
+has "unit: two unanimous ALREADY_SATISFIED replay" "$U" "unit AS x2 -> ALREADY_SATISFIED x2"
+has "unit: PARTIAL never replays" "$U" "unit PARTIAL x3 -> full pipeline"
+has "unit: FAILED never replays" "$U" "unit FAILED x3 -> full pipeline"
+has "unit: an altered receipt never replays" "$U" "unit altered receipt -> full pipeline"
+has "unit: ALREADY_SATISFIED replay exits 0, --fresh runs the pipeline" "$U" "unit replay AS x2 exit -> 0 | --fresh -> full pipeline"
+exb="$(printf '%s\n' "$U" | sed -n 's/^unit exemplar bytes -> \([0-9-]*\) .*/\1/p')"
+[ -n "$exb" ] && [ "$exb" -gt 0 ] && [ "$exb" -le 2048 ] && ok "unit: the exemplar of a 40-file VERIFIED run stores $exb bytes (<= 2048)" || bad "unit: exemplar bytes '$exb'"
+
+# worked example: a VERIFIED run leaves an exemplar; a similar task gets it in its brief and Relevant files.
+new_repo "$T/repo-example"
+TASK_V="add multiply(a, b) to calc.ts returning the product of two numbers"
+TASK_S="add multiplyAll(numbers) to calc.ts returning the product of all numbers"
+run_engine 20 "$TASK_V" E2E_STUB_TEST_EDIT=1
+RIDV="$RID"
+[ "$(outcome)" = "VERIFIED" ] && ok "example: run V ends VERIFIED" || { bad "example: run V outcome '$(outcome)'"; dump; }
+exv="$(python3 -I -c 'import json,sys
+L=[l for l in json.load(open(sys.argv[1]))["lessons"] if l.get("example") and l["justified_by"]["run_id"]==sys.argv[2]]
+print(len(json.dumps(L[0]["example"],separators=(",",":"),ensure_ascii=False).encode()) if L else -1, " ".join(f["path"] for f in L[0]["example"]["files"]) if L else "")' "$LESSONS" "$RIDV")"
+exvb="${exv%% *}"; EXFILES="${exv#* }"
+[ "$exvb" -gt 0 ] && [ "$exvb" -le 2048 ] && ok "example: run V stored an exemplar of $exvb bytes (<= 2048): $EXFILES" || bad "example: exemplar of run V: '$exv'"
+git -C "$REPO" checkout -q main && git -C "$REPO" merge -q --ff-only "loki/$RIDV" # V's work accepted, as after its PR merges: its files are on the base
+cp -R "$REPO" "$T/repo-example-off"
+run_engine 21 "$TASK_S"
+B21="$(impl_bytes)"; P21="$PROMPTS.implement0"
+n_ex="$(grep -c "^Worked example from run " "$P21" 2>/dev/null)"
+[ "$n_ex" = "1" ] && grep -q "^Worked example from run $RIDV " "$P21" && ok "example: the similar task's brief has exactly one worked example, from run V" || bad "example: worked example blocks in the similar task's brief: $n_ex"
+exblk="$(python3 -I -c 'import sys
+s=open(sys.argv[1]).read(); a=s.find("\n\nWorked example from run "); t="</untrusted-worked-example>\n"; b=s.find(t, a)
+print(len(s[a:b+len(t)].encode()) if a>=0 and b>=0 else -1)' "$P21")"
+[ "$exblk" -gt 0 ] && [ "$exblk" -le 1200 ] && ok "example: the worked example block is $exblk bytes (<= 1200)" || bad "example: worked example block bytes $exblk"
+relf="$(python3 -I -c 'import sys
+s=open(sys.argv[1]).read(); a=s.find("Relevant files:\n"); print(s[a:s.find("\n\n", a)] if a>=0 else "")' "$P21")"
+for f in $EXFILES; do printf '%s\n' "$relf" | grep -qx "$f" && ok "example: exemplar file $f is in Relevant files" || bad "example: exemplar file $f missing from Relevant files"; done
+REPO="$T/repo-example-off"; LESSONS="$REPO/.loki/memory/semantic/pr-lessons.json"
+run_engine 22 "$TASK_S" LOKI_WORKED_EXAMPLE=0
+B22="$(impl_bytes)"
+grep -q "Worked example from run" "$PROMPTS.implement0" 2>/dev/null && bad "example: LOKI_WORKED_EXAMPLE=0 still injected a worked example" || ok "example: LOKI_WORKED_EXAMPLE=0 injects none"
+echo "    example: similar task implement brief $B21 bytes with the worked example, $B22 bytes without (same repo and history)"
+REPO="$T/repo-example"; LESSONS="$REPO/.loki/memory/semantic/pr-lessons.json"
+for tk in "add a divide(a, b) function to calc.ts" "document the install steps in README.md"; do
+    br="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "$tk" 2>&1)"
+    case "$br" in *"Worked example from run"*) bad "example: '$tk' (fewer than 3 shared keywords) got a worked example" ;; *) ok "example: '$tk' (fewer than 3 shared keywords) gets none" ;; esac
+done
+br="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "$TASK_S" 2>&1)"
+has "example: loki memory brief shows the worked example for the similar task" "$br" "Worked example from run"
+lst="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory lessons 2>&1)"
+has "example: loki memory lessons shows the exemplar" "$lst" "worked example: "
+has "example: loki memory lessons shows the replay key" "$lst" "replay key: task "
 
 finish

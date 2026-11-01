@@ -127,7 +127,7 @@ export function sessionKind(r: { exit: number | null; stderrTail?: string }): st
 // The one place a failed session's tail becomes a user-facing cause. Uses sessionKind (never a second regex set),
 // so the terminal Reason names the same class the fatal stop keys on. Null when no auth or credit class matches.
 const CAUSE_FIX: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  claude: { auth: "run `claude /login`, or unset ANTHROPIC_API_KEY", quota_exhausted: "add credit at console.anthropic.com or wait for the plan reset" },
+  claude: { auth: "run `claude auth login`, or unset ANTHROPIC_API_KEY", quota_exhausted: "add credit at console.anthropic.com or wait for the plan reset" },
   codex: { auth: "run `codex login`", quota_exhausted: "add credit to the OpenAI account or wait for the plan reset" },
 };
 const CAUSE_FIX_DEFAULT: Readonly<Record<string, string>> = { auth: "re-authenticate the provider CLI (see `loki doctor`)", quota_exhausted: "add credit to the provider account or wait for the plan reset" };

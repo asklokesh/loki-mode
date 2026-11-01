@@ -62,14 +62,14 @@ export function resultOf(outcome: Outcome): RunResult {
 
 /** The one "next:" suggestion; a failed or stopped run's reason (output.ts reasonOf) picks the exact fix. */
 export function nextOf(result: RunResult, filesChanged: number | null, reason?: string, provider = "claude", runId?: string, landNext = ""): string {
-  if (result === "verified") return filesChanged ? (landNext ? `loki diff, then ${landNext}` : "loki diff") : "loki status";
+  if (result === "verified") return filesChanged && landNext ? landNext : "loki status"; // the checkout is back on the start branch, so `loki diff` would show the user's own HEAD; the run-end line names the branch and how to see it
   if (result === "done-unverified") return "loki verify";
   const r = reason ?? "", undo = filesChanged ? "; loki undo to revert" : "";
   if (result === "stopped" && r === "cost/time cap reached") return `if the cost cap was hit, loki start --max-cost <higher>${runId ? ` (stopped run ${runId})` : ""}, then rerun the same task; if the time cap, rerun with more time`;
   if (result === "stopped") return r.startsWith("spec conflict") ? 'loki answer --text "<your decision>"' : r.startsWith("stalled") ? "loki chat --attach" : "loki status";
   if (r === "provider authentication failed" || r.startsWith("provider authentication failed: ")) {
     if (provider !== "claude") return `re-authenticate ${provider}, then loki doctor`;
-    return /api key/i.test(r) ? "replace or unset ANTHROPIC_API_KEY, or run claude login" : "claude login"; // an env key outranks the login, so claude login alone would not clear a rejected key
+    return /api key/i.test(r) ? "replace or unset ANTHROPIC_API_KEY, or run claude auth login" : "claude auth login"; // an env key outranks the login, so claude auth login alone would not clear a rejected key
   }
   if (r.startsWith("provider credit exhausted")) return "check provider billing, or loki start --provider <other>";
   if (r.startsWith("dirty tracked tree")) return "commit your edits or stash them yourself, then rerun the same command";
@@ -116,11 +116,17 @@ export function withNextLine(out: string, i: RunSummaryInput): string {
   return `${lines.join("\n")}\n`;
 }
 
+/** The run's own head: its kept loki/<runId> branch (the checkout is back on the start branch), else HEAD. */
+export function runHead(repoDir: string, runId: string): string {
+  const ref = `refs/heads/loki/${runId}`;
+  try { return /^e10-[A-Za-z0-9-]+$/.test(runId) && safeGit(repoDir, ["rev-parse", "--verify", "-q", `${ref}^{commit}`]).trim() ? ref : "HEAD"; } catch { return "HEAD"; }
+}
+
 /** Best-effort diff stat of the run range; null when git cannot answer. */
-export function diffStat(repoDir: string, base: string | null): { files: number; ins: number; del: number } | null {
+export function diffStat(repoDir: string, base: string | null, head = "HEAD"): { files: number; ins: number; del: number } | null {
   if (!base) return null;
   try {
-    const s = safeGit(repoDir, ["diff", "--shortstat", `${base}..HEAD`, "--", ".", ":(exclude).loki"]);
+    const s = safeGit(repoDir, ["diff", "--shortstat", `${base}..${head}`, "--", ".", ":(exclude).loki"]);
     const g = (re: RegExp): number => Number(re.exec(s)?.[1] ?? 0);
     return { files: g(/(\d+) files? changed/), ins: g(/(\d+) insertion/), del: g(/(\d+) deletion/) };
   } catch {

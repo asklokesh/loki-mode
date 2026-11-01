@@ -11,8 +11,6 @@ for the full analysis, including honest cold-start benchmarks (Bun is
 
 - `src/cli.ts` -- minimal CLI dispatcher (1 real command: `version`)
 - `src/version.ts` -- reads `../VERSION` (mirrors bash `cat VERSION`)
-- `tests/version.test.ts` -- 3 tests using `bun:test`
-- `scripts/bench.ts` -- side-by-side benchmark vs `autonomy/loki`
 
 ## Quickstart
 
@@ -24,11 +22,8 @@ brew install oven-sh/bun/bun
 cd loki-ts
 bun src/cli.ts version
 
-# Run tests
-bun test
-
-# Run side-by-side benchmark vs the production bash binary
-bun run bench
+# Run the repo's tests (scripts/local-ci.sh, the hermetic tests under tests/min/)
+bun run test
 ```
 
 ## What this proves

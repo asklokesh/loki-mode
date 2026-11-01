@@ -245,8 +245,8 @@ agents/                    Agent registry: types.json, hub install, managed regi
 benchmarks/                SWE-bench and HumanEval harnesses
 plugins/                   Claude Code plugin packaging
 .github/workflows/         release.yml, converge-dist-tags.yml,
-                           sdk-freshness.yml (the pre-push gate is
-                           scripts/local-ci.sh, run locally)
+                           sdk-freshness.yml, pr-fast.yml (runs
+                           scripts/local-ci.sh on every PR and push)
 SKILL.md                   Slim core skill (progressive disclosure entry)
 CLAUDE.md                  Project + agent operating instructions
 VERSION / package.json     Single source of version truth
@@ -326,8 +326,8 @@ docker/                            Container distribution (Dockerfiles, compose)
 - **Docker / Docker Compose** for distribution and for the multi-service,
   12-factor stacks Loki generates (web + database + cache with healthchecks).
 - **GitHub Actions** (`.github/workflows/`): `release.yml` (multi-channel
-  release), `converge-dist-tags.yml` and `sdk-freshness.yml`. The test suites
-  run locally through `scripts/local-ci.sh`, not in a workflow.
+  release), `converge-dist-tags.yml`, `sdk-freshness.yml` and `pr-fast.yml`,
+  which runs the hermetic tests (`scripts/local-ci.sh`) on every PR and push.
 
 ---
 

@@ -5,6 +5,100 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.114.0 (2026-11-01)
+
+Smaller models now get the exact code a task needs, inline, under a fixed budget.
+
+### Added
+
+- When implementation runs on Haiku or Sonnet, the brief carries the current code of the functions the task names or describes, the functions they call and their callers, each tagged with its file and line range, capped at about 6,000 tokens. Opus and the default model get the same brief as before. `LOKI_E10_CONTEXT_PACK=0` turns it off; `=1` turns it on for any model. On the head-to-head benchmark (Loki on Haiku, 8 tasks, 2 reps) every run still passed, implement turns fell from 7 to 5.5 at the median, total spend fell from $0.329 to $0.223, and the median cost per task stayed flat ($0.00285 to $0.00291).
+- The repo map now extracts classes, methods and functions for Java, Kotlin, C#, Go and Rust, so file ranking and signatures work on those repos. When nothing ranks, the brief leaves the file list out instead of listing the first files in the repo.
+- Each run records which files its brief carried and, at seal, how much of the code that changed the brief covered (context recall and precision). `loki stats --outcomes` reports median context recall over recent runs.
+
+## v11.113.0 (2026-11-01)
+
+Correct runs now read VERIFIED, `loki <command> --help` never starts a run, and every run leaves your checkout on the branch you started from.
+
+### Fixed
+
+- On the head-to-head benchmark, 14 of 16 Loki runs now seal VERIFIED (was 4 of 16) with every hidden test still passing; the remaining 2 are a real gap (an edited existing test is the only evidence). Two false caps are gone: Python tests on the system interpreter no longer cap a repo that declares no dependencies, and the security scan now finds its script when Loki runs from the npm package (it had reported "not found" and capped every high-risk run at PARTIAL).
+- A change next to an existing function no longer counts that function as changed, so a passing test of it cannot hide a new, untested function.
+- Text whose first word is a Loki command (for example "status --help" or "config path", even passed as one argument) is refused with that command's help instead of starting an autonomous run.
+- Every outcome (VERIFIED, PARTIAL, FAILED, STALLED, BLOCKED, budget stop, Ctrl-C, SIGTERM) returns your checkout to the branch you started on with your own files untouched. Unfinished work is committed on the run branch as "loki: work in progress, not verified", and one line says where it is and how to see it.
+
+## v11.112.0 (2026-11-01)
+
+A first run works with just an API key and shows every setup problem at once; repeating a task Loki already answered costs nothing.
+
+### Added
+
+- An API key alone runs `loki "<goal>"` on the bundled Claude SDK; the Claude CLI is no longer required. `loki doctor` counts the SDK as a provider.
+- Preflight lists every blocker in one pass (for example missing git identity, no commits and not logged in), numbered and in the order to fix them, each with a copy-paste command. `--dry-run` prints the same list.
+- Rerunning an identical task on the same base commit, provider, model and Loki version that already ended SPEC_CONFLICT (or ALREADY_SATISFIED twice) returns that verdict immediately with no model session, naming the earlier run and how to answer it or force a new run (`--fresh`; `LOKI_REPLAY=0` turns replay off). PARTIAL and FAILED runs are never replayed.
+- A task similar to a past VERIFIED run gets that run as a short worked example in its brief (at most 2 KB, replacing the one-line fact for that run); `LOKI_WORKED_EXAMPLE=0` turns it off.
+- Receipts record the Loki version that sealed them.
+
+### Changed
+
+- python3 and jq are optional for `loki "<goal>"`; doctor reports them as warnings.
+
+## v11.111.0 (2026-11-01)
+
+One review per run instead of two, and real outcome numbers per run and per repo.
+
+### Changed
+
+- The post-PR council session is gone. A run starts at most one model review, before the receipt is sealed, and that review's verdict still lowers the result (a block caps it at PARTIAL; a flag is listed as not proven). Measured on real runs, the council had cost 19 to 21 percent of a run's spend and its findings were discarded; receipts now match the summed session cost to the cent.
+- The detached deep verify runs only the full suite, app boot and security scan, with no model session. A full-suite failure that was already red on the base commit no longer marks the PR status as failed.
+
+### Added
+
+- `loki stats --outcomes` (and `GET /v1/stats/outcomes` on the control plane) reports cost per VERIFIED run, first-pass rate, sessions p50 and p90, fix rounds, escalations, cache-read share and wall time p50 and p95 by task size, each with its sample size; a value with no data reads "not measured". `--since` and per-repo views are supported.
+- Run records separate cached from uncached input tokens. `/v1/cost/repos` uses the same cost-per-verified definition, which no longer counts ALREADY_SATISFIED as a success.
+
+## v11.110.0 (2026-11-01)
+
+Issue runs now see what the team already said on the issue.
+
+### Added
+
+- `loki start owner/repo#N` reads the issue's labels and the comments of trusted authors (OWNER, MEMBER or COLLABORATOR on GitHub; the accounts in `LOKI_JIRA_STEER_ACTORS` and `LOKI_LINEAR_STEER_ACTORS` for Jira and Linear). Bot comments, Loki's own comments and comments from anyone else are left out and counted. The context is capped at 16 KB, newest first, and passed as quoted issue data, never as instructions. Linear issues now include their labels.
+
+### Fixed
+
+- The redaction speed check no longer flakes on slow runners (larger inputs, best of five, a 10x growth bound that a quadratic regression still fails at about 15x).
+
+## v11.109.0 (2026-11-01)
+
+Loki on Haiku now beats raw Claude Code on Haiku and on Opus on the repo's head-to-head benchmark: 8 of 8 tasks passed, faster and at a fraction of the cost.
+
+Measured with `benchmarks/h2h` (8 tasks in TypeScript and Python, scored by hidden tests neither side sees, 1 rep; results in `benchmarks/h2h/results/2026-11-01-33004105f.json`):
+
+| | pass | median seconds | cost per task |
+|---|---|---|---|
+| raw claude -p, Haiku | 8/8 | 22.2 | $0.0090 |
+| raw claude -p, Opus | 8/8 | 25.1 | $0.2596 |
+| Loki, Haiku | 8/8 | 18.6 | $0.0033 |
+| Loki, default model | 8/8 | 25.5 | $0.0828 |
+
+The previous release passed 6 of 8 on both Loki configurations; every loss was correct code discarded after Loki's own pre-written tests invented field names.
+
+### Changed
+
+- Tasks that already have a relevant test skip Loki's pre-written acceptance tests and go straight to implementation.
+- When Loki does write its own acceptance tests, it writes them alongside implementation instead of before (`LOKI_E10_WALL_CONCURRENT=0` restores the old order), with the repo's real signatures in front of the author.
+- When only Loki's own acceptance tests fail and the repo's own tests pass on the change, the work is delivered as PARTIAL with those tests named as not proven, instead of being discarded.
+- A run pinned to a model (for example Haiku) uses that model for every session, including the conflict referee.
+- A project-model discovery session that did not change the outcome no longer runs before implementation.
+
+## v11.108.1 (2026-11-01)
+
+### Fixed
+
+- Every login hint now says `claude auth login` (the Claude CLI has no `claude login` subcommand; the old hint opened a session with the prompt "login"). `loki doctor --fix` now runs `claude auth login`.
+- A split issue no longer waits 144 seconds on a false rate limit: a bare "429" inside a hash, run id or cost figure was read as an HTTP 429.
+- The README and overview now say a PARTIAL run opens a draft PR titled `[PARTIAL]`; contributor and architecture docs no longer cite removed tests.
+
 ## v11.108.0 (2026-11-01)
 
 Every run now teaches the next one: what went wrong, and what fixed it, is fed back into related runs.

@@ -26,6 +26,10 @@ Open means a Jira status category other than Done, or a Linear state other than 
 
 A missing variable stops the run with an error that names it. A Linear HTTP 401, or a GraphQL response with errors and no data, also names `LINEAR_API_KEY`.
 
+## Labels and comments
+
+Intake adds the issue's labels (Jira and Linear) to the task text, in an "Issue tracker context" section after the description. Comments are added only from people on the lists the trigger server already trusts to steer a run: `LOKI_JIRA_STEER_ACTORS` (Jira accountIds) and `LOKI_LINEAR_STEER_ACTORS` (Linear user ids), comma-separated, exact match. A display name never counts, and Loki's own comments are left out. With the list unset or empty, no comment is added. Kept comments also go into `issue.json` as a `comments` array, capped at 16 KB with the newest kept; the rest are only counted.
+
 ## Writeback
 
 When the run starts from a `jira:` or `linear:` ref, `loki start` exports `LOKI_WRITEBACK_ISSUE` with the issue key, and the same credentials used for intake enable writeback. With no ref, writeback stays off unless the legacy `LOKI_JIRA_URL`, `LOKI_JIRA_TOKEN`, `LOKI_JIRA_EMAIL` or `LOKI_LINEAR_TOKEN` variables are set. With nothing configured, no network call is made.

@@ -40,43 +40,13 @@ Loki Mode runs on two routes that share the same `.loki/` state contract:
 
 ## Running tests
 
-### TypeScript (Bun)
-
 ```bash
-cd loki-ts
-bun run typecheck       # tsc --noEmit, strict
-bun test                # full unit + parity + integration suite
-bun test --coverage     # coverage report (lcov + text summary)
+bun install --cwd loki-ts --frozen-lockfile   # one time
+bash scripts/local-ci.sh                      # every test under tests/min/, cheap ones first
+LOCAL_CI_ONLY=hygiene,syntax bash scripts/local-ci.sh   # a subset
 ```
 
-The full suite is ~550 tests / ~45 seconds and must be green before submitting.
-
-### Bash CLI dual-route tests
-
-```bash
-# Bun route (default if bun is on PATH)
-bash tests/test-cli-commands.sh
-
-# Bash route (LOKI_LEGACY_BASH=1 forces fallthrough)
-LOKI_LEGACY_BASH=1 bash tests/test-cli-commands.sh
-```
-
-Both routes must report 14/14 passed. Add new CLI tests to `tests/test-cli-commands.sh` when you add a new top-level command.
-
-### Bash syntax + Python
-
-```bash
-bash -n autonomy/run.sh
-bash -n autonomy/loki
-python3.12 -m pytest -q
-```
-
-### Dashboard E2E (Playwright)
-
-```bash
-loki dashboard start   # boots on http://127.0.0.1:57374
-cd packages/control-plane && bun test ./test/
-```
+The tests are hermetic and offline, call no model, and finish in under two minutes. The same command runs on every PR (`.github/workflows/pr-fast.yml`) and must be green before submitting. See [docs/TESTING.md](../docs/TESTING.md) for what each test guards.
 
 ## Adding a new ported command
 
@@ -85,37 +55,22 @@ If you are porting a bash command to the Bun route:
 1. Implement under `loki-ts/src/commands/<name>.ts` mirroring an existing command (e.g. `version.ts`, `status.ts`).
 2. Wire it into the dispatcher at `loki-ts/src/cli.ts`.
 3. Add the route token to `bin/loki:80` (the case statement).
-4. Add a unit test under `loki-ts/tests/commands/<name>.test.ts`.
-6. Verify both routes produce the same output (the parity matrix enforces this on every PR).
-
-## Adding a build_prompt parity fixture
-
-`loki-ts/tests/fixtures/build_prompt/` contains 60 sha256-checked fixtures covering different runner contexts. To add a new one:
-
-1. Create `fixture-N/` with `env.sh` (env vars), `prd.md`, optional `.loki/` scratch state, and `manifest.txt`.
-2. Run the bash baseline to produce `expected.txt`:
-   ```bash
-   bash loki-ts/tests/fixtures/build_prompt/run-bash.sh fixture-N
-   ```
-3. Compute `expected.sha256` and add an entry to `index.json`.
-4. Confirm `bun test loki-ts/tests/parity/build_prompt.test.ts` includes your new fixture and passes on macOS + Linux.
-
-If your fixture depends on filesystem traversal order (e.g. listing files in a directory), make sure both bash and TS sort deterministically -- the v7.4.9 magic-specs sort fix is the canonical example.
+4. Cover it in the existing `tests/min/` file that owns the concern (for a new top-level command, `tests/min/cli-entrypoints.sh`).
+5. Rebuild the bundle (`cd loki-ts && bun run build`) so `dist-freshness` passes.
 
 ## Pull Request Process
 
 1. **Fork** the repository and create a feature branch from `main`.
-2. **Install the local pre-push hook** (one-time): `./scripts/install-hooks.sh`. This points `core.hooksPath` at `.githooks/`, which runs `bash -n` and `pytest` before every push. Bypass once with `PRE_PUSH_SKIP=1 git push` if you genuinely need to.
+2. **Install the local pre-push hook** (one-time): `./scripts/install-hooks.sh`. This points `core.hooksPath` at `.githooks/`, which runs `bash -n` and the identity and secret checks before every push. Bypass once with `PRE_PUSH_SKIP=1 git push` if you genuinely need to.
 3. **Make your changes** following the code style guidelines below.
-4. **Run all tests** -- shell syntax validation, unit tests, and E2E tests where applicable.
+4. **Run all tests** with `bash scripts/local-ci.sh`.
 5. **Submit a PR** against `main` with a clear description of your changes.
 
 PRs are reviewed for correctness, code style, and test coverage. Please keep PRs focused on a single concern when possible.
 
 ### What to expect after submitting
 
-- All CI checks must pass: Tests (Python 3.10-3.13), Shell tests, Helm lint, Loki Quality Gate, Dashboard build verification, CLA. These are the gating checks.
-- The `claude-review` check is **skipped on fork PRs by design**. GitHub does not expose secrets or OIDC tokens to fork-triggered workflows, so the AI review action cannot run. This is not a failure on your part. Maintainers see the same review on the internal mirror.
+- The `fast-tier` check (`.github/workflows/pr-fast.yml`, which runs `bash scripts/local-ci.sh`) must pass.
 - **Version bumps are not your responsibility.** The maintainer bumps the 14 version locations as part of the release commit. Do not include version bumps in your PR; they will create merge conflicts with the release flow.
 - **A maintainer may re-implement your fix in their own commit** rather than merging your PR directly. This is done to keep release cadence and version-bump rules consistent across one author -- it is not a rejection of your work. Whenever this happens, you are explicitly credited in the CHANGELOG entry for that release. Past examples: PR #151, #152, #153 -> v6.77.1.
 

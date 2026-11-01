@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { NEW_LANG_EXT, langSignatures } from "./context_pack.ts";
 // TS/JS public-signature extraction (moved from features/wall_manifest.ts, which keeps the manifest layout): a comment/literal-aware
 // lexer that returns export heads with bodies, defaults and decorators masked. Pure; a file whose lexing is undecidable emits nothing.
 interface Item { head: string; raw: string; end: string; body: string | null; balanced: boolean }
@@ -544,6 +545,7 @@ export function signatureDigest(repoDir: string, files: string[], maxBytes = 400
     let sigs: string[] = [];
     if (/\.py$/.test(f)) sigs = pySignatures(src);
     else if (/\.[cm]?[jt]sx?$/.test(f) && !tsAmbiguous(src, jsx)) sigs = tsSignatures(src, jsx).flatMap((x) => x.split("\n"));
+    else if (NEW_LANG_EXT.test(f)) sigs = langSignatures(f, src); // L020: Java, Kotlin, C#, Go, Rust
     if (!sigs.length) continue;
     for (const l of [f, ...sigs.map((x) => (x.startsWith(" ") ? x : `  ${x}`))]) {
       const n = Buffer.byteLength(l) + 1;

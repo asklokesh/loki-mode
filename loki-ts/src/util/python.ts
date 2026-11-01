@@ -10,7 +10,7 @@ import { commandExists, run } from "./shell.ts";
 import type { ShellResult } from "./shell.ts";
 import { accessSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
-import { tokenFreeEnv } from "./safe_git.ts";
+import { safeGit, tokenFreeEnv } from "./safe_git.ts";
 import type { BaseConformanceRunner, BaseRunOutcome, PytestCounts, TestOutcome } from "../engine10/modernize/presealed_wall.ts";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -459,4 +459,19 @@ export function pytestPython(root: string): string {
 export function projectInterpreter(root: string): "project" | "system" {
   const ve = process.env["VIRTUAL_ENV"], inRepo = (p: string): boolean => { try { const r = relative(realpathSync(root), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
   return [join(root, ".venv", "bin", "python"), join(root, "venv", "bin", "python"), ...(ve && inRepo(ve) ? [join(ve, "bin", "python")] : [])].some(existsSync) ? "project" : "system";
+}
+/** The system-interpreter advisory (verify.ts) is a cap only when the repo declares a Python environment the system interpreter may not match.
+ *  True when any file in the tree at `ref` is a dependency manifest or lock (requirements*.txt, Pipfile, setup.py, poetry/uv/pdm lock,
+ *  conda environment), a setup.cfg with install_requires, or a pyproject.toml declaring dependencies. Fails closed: an unreadable tree is true. */
+export function declaresPythonEnv(root: string, ref: string): boolean {
+  const MANIFEST = /^(?:[\w.-]*requirements[\w.-]*\.(?:txt|in)|Pipfile(?:\.lock)?|setup\.py|poetry\.lock|uv\.lock|pdm\.lock|environment\.ya?ml|conda\.ya?ml)$/i;
+  const DEPS: Record<string, RegExp> = { "pyproject.toml": /^\s*(?:dependencies|optional-dependencies|requires)\s*=|^\s*\[(?:tool\.poetry|tool\.pdm|tool\.uv|project\.optional-dependencies|dependency-groups)/m, "setup.cfg": /^\s*install_requires\s*=/m };
+  try {
+    for (const f of safeGit(root, ["ls-tree", "-r", "-z", "--name-only", ref]).split("\0").filter(Boolean)) {
+      const b = f.slice(f.lastIndexOf("/") + 1);
+      if (MANIFEST.test(b)) return true;
+      if (DEPS[b] && DEPS[b]!.test(safeGit(root, ["show", `${ref}:${f}`]))) return true;
+    }
+    return false;
+  } catch { return true; }
 }

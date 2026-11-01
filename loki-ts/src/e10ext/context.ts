@@ -8,7 +8,8 @@ import { loadRepoMap } from "../engine10/sizing.ts";
 import type { RunContext, TestMap, TestRef } from "../engine10/types.ts";
 import { unitBrief } from "../features/speed/unit_mode.ts";
 import { signatureDigest } from "../util/ts_signatures.ts";
-import { readVerifiedCommand } from "./repomemory.ts"; import { profileBrief } from "../runner/repo_profile.ts";
+import { contextPack, packEnabled, type ContextPack } from "../util/context_pack.ts";
+import { readVerifiedCommand } from "./repomemory.ts"; import { profileBrief } from "../runner/repo_profile.ts"; import { exampleFiles } from "../util/pr_lessons.ts";
 
 export interface ContextDeps {
   select: (task: string, map: RepoMap, max: number) => string[];
@@ -38,9 +39,12 @@ const MAX_TESTS = 10;
 const shq = (w: string): string => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`);
 
 const detectedInterpreters = (tm: TestMap | undefined, repoDir: string, d: ContextDeps): string[] => [...new Set((tm?.runners ?? []).flatMap((runner) => { try { const c = d.cmd({ runner, path: "" } as TestRef, repoDir)[0]; return c ? [`${shq(c.startsWith(`${repoDir}/`) ? c.slice(repoDir.length + 1) : c)} (${runner})`] : []; } catch { return []; } }))]; // RUN5-C1i: executable per detected runner via the test-run resolver; none detected, none invented
-export function briefContext(ctx: RunContext, d: ContextDeps): string {
+export function briefContext(ctx: RunContext, d: ContextDeps): string { return briefRecord(ctx, d).text; }
+/** L021/L022: the brief context, the exact file list it names (brief_files) and, for a haiku or sonnet executor, the context pack it carries. No model (fix stage) or an Opus model: the text is byte-identical to briefContext before L021. */
+export interface BriefRecord { text: string; files: string[]; pack: Omit<ContextPack, "text"> | null }
+export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): BriefRecord {
   const unit = unitBrief(); // D61-11: a unit brief is its pack files only
-  if (unit !== null) return unit;
+  if (unit !== null) return { text: unit, files: unit ? unit.split("\n").slice(1) : [], pack: null };
   const o = ctx.outputs();
   const tree = o.intake?.tree as string | undefined;
   const task = (o.intake?.task as string | undefined) ?? "";
@@ -48,21 +52,27 @@ export function briefContext(ctx: RunContext, d: ContextDeps): string {
   const planned = o.plan?.relevant_files as string[] | undefined;
   const safe = (planned ?? []).filter((f) => !/^([/~]|[A-Za-z]:[\\/])/.test(f) && !f.split(/[\\/]/).includes(".."));
   let files = safe.length ? safe : map ? d.select(task, map, MAX_FILES) : [];
-  if (!files.length && map) files = map.files.slice(0, MAX_FILES); // no plan and no keyword match: head of the map, same 20 cap
-  files = files.slice(0, MAX_FILES);
+  files = [...new Set([...exampleFiles(ctx.repoDir, task), ...files])].slice(0, MAX_FILES); // L043: the worked example's files lead (util/pr_lessons.ts workedExampleFor)
   const tm = o.intake?.testmap as TestMap | undefined;
   const refs = tm && files.length ? ctx.tests.impacted(tm, files).slice(0, MAX_TESTS) : [];
   const rel = (p: string): string => (p.startsWith(`${ctx.repoDir}/`) ? p.slice(ctx.repoDir.length + 1) : p);
   const cmds = refs.map((t) => { const [c, a, , dir] = d.cmd(t, ctx.repoDir); return `${dir && dir !== "." ? `cd ${shq(dir)} && ` : ""}${[rel(c), ...a].map(shq).join(" ")}`; });
   const interps = cmds.length ? [] : detectedInterpreters(tm, ctx.repoDir, d); // no impacted test: still name the interpreter intake detected
   const verified = readVerifiedCommand(repoCacheDir(repoKey(null, ctx.repoDir)));
-  const sigs = process.env["LOKI_E10_SIGS"] === "0" || !files.length ? "" : signatureDigest(ctx.repoDir, files.slice(0, 5));
-  return [
+  // L020: no plan and no ranked file leaves the Relevant files block out (the head of `git ls-files` named files the task never touches)
+  const pack = model !== undefined && packEnabled(model) && files.length ? contextPack(ctx.repoDir, task, files, map?.entries ?? []) : null; // L021: haiku and sonnet only; Opus keeps today's bytes
+  const whole = new Set((pack?.spans ?? []).filter((s) => s.symbol === null).map((s) => s.path)); // a file the pack shows whole needs no signatures
+  const sigs = process.env["LOKI_E10_SIGS"] === "0" || !files.length ? "" : signatureDigest(ctx.repoDir, files.filter((f) => !whole.has(f)).slice(0, 5));
+  const text = [
     files.length ? `Relevant files:\n${files.join("\n")}` : "",
     sigs ? `Key signatures (read the files for bodies):\n${sigs}` : "",
+    pack ? pack.text : "",
     interps.length ? `Detected test interpreter (no test file to run yet; use exactly this executable, never a guessed one): ${interps.join(", ")}` : "",
     cmds.length ? `Impacted test commands:\n${cmds.join("\n")}` : "",
     verified ? `Last verified test command: ${verified}` : "",
     profileBrief(ctx.repoDir), // REPOMEM: validated repo commands + baseline-red tests; byte-stable for an unchanged profile
   ].filter(Boolean).join("\n\n");
+  if (!pack) return { text, files, pack: null };
+  const { text: _packText, ...record } = pack;
+  return { text, files: [...new Set([...files, ...pack.files])], pack: record };
 }

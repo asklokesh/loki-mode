@@ -1,0 +1,1 @@
+The rate limiter lets bursts straight through after an idle period and then starves callers. Allow must refill tokens in proportion to the elapsed time since the last refill, capped at the burst size, instead of resetting the bucket to full every second.

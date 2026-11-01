@@ -2,7 +2,7 @@
 
 Loki Mode, by [Autonomi](https://www.autonomi.dev/), turns a spec or an issue into a verified pull request with a receipt you can check. This page covers installing it, a first run, and the options around it.
 
-**Version:** v11.108.0
+**Version:** v11.114.0
 
 **Engine note:** `loki start` is the primary command. `loki start`, `loki "<task>"`, `loki owner/repo#N` and `loki quick` all run the Loki 10 engine, whatever the flag order or input form (PRD file, issue ref, task or one-word brief). The previous loop runs only on `--engine legacy`, `LOKI_ENGINE=legacy`, or for one call when a flag Loki 10 cannot honor is present. See the [user guide](v10/GUIDE.md) and the [5-minute quickstart](QUICKSTART.md).
 
@@ -58,14 +58,12 @@ Required (`loki doctor` fails without them):
 | Tool | Minimum |
 |------|---------|
 | Node.js | 20+ (22 LTS is the CI target) |
-| Python 3 | 3.8 |
 | git | any recent version |
-| jq | any |
 | curl | any |
 
-Plus a way to reach a model. Claude Code (`claude`) is the default provider and the only one with every feature, so the default path needs it installed and logged in: `npm install -g @anthropic-ai/claude-code`, then `claude auth login`. The bundled Claude Agent SDK with `ANTHROPIC_API_KEY` can stand in for the CLI on the engine10 path. `loki edit` and `loki chat` call the `claude` CLI directly. Every other provider CLI (`codex`, `cline`, `aider`, `opencode`) is optional.
+Plus a way to reach a model. Claude Code (`claude`) is the default provider and the only one with every feature, so the default path needs it installed and logged in: `npm install -g @anthropic-ai/claude-code`, then `claude auth login`. With only `ANTHROPIC_API_KEY` set, `loki "<goal>"` runs on the bundled Claude Agent SDK with no CLI and no extra setting. `loki edit` and `loki chat` call the `claude` CLI directly. Every other provider CLI (`codex`, `cline`, `aider`, `opencode`) is optional.
 
-Optional: Bun 1.3+ (bundled by the npm package), bash 4+ (recommended), Ollama or an OpenRouter key for non-Claude model routes.
+Optional: Python 3.8+ (deep scans, Python repos and group runs; `loki "<goal>"` runs without it), jq (`loki status` and the bash fallback CLI), Bun 1.3+ (bundled by the npm package), bash 4+ (recommended), Ollama or an OpenRouter key for non-Claude model routes.
 
 One command checks and configures all of this:
 
