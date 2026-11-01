@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.107.1 (2026-11-01)
+
+### Fixed
+
+- `--max-cost` now covers the whole issue when it splits into slices: every slice shares one cap and one spend ledger. Before, slices ignored the flag entirely.
+- Existing tests may be updated but not weakened. An edit that keeps every assertion and test case (a rename, an added case, a new expectation) is kept and listed on the receipt; a deletion, a dropped assertion or test case, or an added skip, only or xfail marker is restored. 11.106.0 restored every edit, which broke features that honestly change what an old test should check.
+
 ## v11.107.0 (2026-11-01)
 
 A multi-part issue now splits into slices that run in order, and a run reaches its first model session in about a second instead of minutes.

@@ -2,11 +2,12 @@
 # Implement and fix stages on the stub provider (tests/min/fixtures/e2e/bin/claude): the real bin/loki -> committed
 # Bun bundle -> engine10 on a throwaway repo. Pre-existing tests are read-only and the fix loop stops spending.
 # Asserts:
-#   restore:     the implement session edits calc.test.ts (a test file at the base commit) and adds multiply.test.ts;
+#   restore:     the implement session weakens calc.test.ts (a test file at the base commit: adds a test.skip) and adds multiply.test.ts;
 #                the calc.test.ts edit is restored after the session and named in implement.tests_reverted, the new
 #                test file is kept, and the run is VERIFIED.
 #   scope:       in the same run the session edits util.ts, which plan-scope.json (seeded with the task's calc.ts) does
 #                not name; the edit is kept and the receipt lists "outside stated scope: util.ts" without blocking.
+#   update:      an edit that keeps every assertion and only adds a test case is kept (not restored).
 #   named:       the same edit is kept when the task names calc.test.ts.
 #   conflict:    implement writes a wrong multiply(); the fix session answers LOKI_SPEC_CONFLICT without editing;
 #                no retry session starts (one fix session, no "-r" iteration) and the run ends BLOCKED.
@@ -76,6 +77,11 @@ has "restore: implement.tests_reverted names calc.test.ts" "$reverted" "'calc.te
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
 has "scope: the receipt lists the out-of-scope edit" "$notes" "outside stated scope: util.ts"
 grep -q 'MODE = 2' "$REPO/util.ts" && ok "scope: the out-of-scope edit is kept, not reverted" || bad "scope: the util.ts edit was dropped"
+
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=update
+grep -q 'add again' "$REPO/calc.test.ts" && ok "update: an edit that keeps every assertion and adds a case is kept" || { bad "update: an assertion-preserving edit to calc.test.ts was restored"; dump; }
+reverted="$(ev '[e["data"].get("tests_reverted") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"]')"
+case "$reverted" in *calc.test.ts*) bad "update: tests_reverted names calc.test.ts: $reverted" ;; *) ok "update: tests_reverted does not name calc.test.ts" ;; esac
 
 run_engine "add a multiply(a, b) function to calc.ts and extend calc.test.ts" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=1
 grep -q 'add again' "$REPO/calc.test.ts" && ok "named: the task names calc.test.ts, so the edit is kept" || bad "named: the edit to a test the task names was restored"
