@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.104.0 (2026-11-01)
+
+A one-line `loki "<goal>"` now finishes in more setups without extra flags, and always ends with the exact command to run next.
+
+### Changed
+
+- When no provider is named and the Claude CLI is not installed, Loki uses the first supported CLI on PATH (cline, codex, aider, opencode) and says which one it picked.
+- A GitHub remote without a `gh` login no longer stops the run: the result stays on a local branch and the summary prints the commands to log in, push and open the PR. A repo with no remote prints the exact merge command for the result branch.
+- A dirty working tree is still refused, and the message now says Loki never stashes or commits your edits and what to do instead.
+- An unknown one-word command now explains how to give Loki a goal as a sentence.
+
 ## v11.103.1 (2026-11-01)
 
 The package no longer carries internal planning material.

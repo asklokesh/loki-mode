@@ -24254,6 +24254,7 @@ main() {
             fi
             # Always point to the full command list, even with no near-miss match.
             echo "Run 'loki help' for the core commands, 'loki help all' for every command." >&2
+            echo "To give Loki a goal instead, write it as a sentence: loki \"<what you want done>\"" >&2
             exit 2
             ;;
     esac
