@@ -12,15 +12,19 @@ after the contestant process (and its whole process group) has exited.
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import platform
+import pwd
 import shutil
 import signal
 import statistics
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import traceback
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -30,7 +34,7 @@ CONFIGS = ["raw-haiku", "raw-opus", "loki-haiku", "loki-default"]
 # Offline configs for checking the task set itself: oracle applies tasks/<id>/solution, noop changes nothing.
 CHECK_CONFIGS = ["oracle", "noop"]
 SCORE_TIMEOUT_S = 180
-NOISE = (".loki/", "node_modules/", "__pycache__/", ".pytest_cache/", ".bun/")
+NOISE = (".loki/", "node_modules/", "__pycache__/", ".pytest_cache/", ".bun/", "target/")
 
 
 def log(msg):
@@ -53,11 +57,28 @@ def load_task(task_id):
     return meta
 
 
-def contestant_env(home):
+def toolchain_env(env, shared):
+    """Go and Rust must still resolve under the throwaway HOME: rustup's cargo proxy reads
+    $RUSTUP_HOME (default ~/.rustup), so both homes point at the real user's when they exist.
+    Go never downloads a toolchain and shares one build cache per benchmark invocation, so
+    compiling the standard library is not billed to every contestant's wall time."""
+    real = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    for var, sub in (("RUSTUP_HOME", ".rustup"), ("CARGO_HOME", ".cargo")):
+        if not env.get(var) and (real / sub).is_dir():
+            env[var] = str(real / sub)
+    env["GOTOOLCHAIN"] = "local"
+    if shared is not None:
+        env["GOCACHE"] = str(shared / "gocache")
+        env["GOPATH"] = str(shared / "gopath")
+    return env
+
+
+def contestant_env(home, shared=None):
     """The same scrubbed environment for every contestant: no parent Claude Code session
     variables, no inherited LOKI_* knobs, a throwaway HOME, no telemetry or update checks."""
     env = {k: v for k, v in os.environ.items()
            if not (k.startswith("CLAUDE") or k.startswith("LOKI_") or k in ("AI_AGENT", "CLAUDECODE"))}
+    toolchain_env(env, shared)
     env.update({
         "HOME": str(home),
         "LOKI_NO_COMPLETIONS": "1",
@@ -125,17 +146,19 @@ def config_env(config, env):
 
 
 def kill_group(pgid):
-    """Stops the process group the runner itself created for one contestant."""
+    """Stops the process group the runner itself created for one contestant. macOS answers
+    EPERM, not ESRCH, for a group whose remaining members are only zombies awaiting their
+    reaper; nothing in such a group can run, so it counts as gone."""
     for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 2)):
         try:
             os.killpg(pgid, sig)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             return
         deadline = time.time() + wait
         while time.time() < deadline:
             try:
                 os.killpg(pgid, 0)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 return
             time.sleep(0.2)
 
@@ -252,7 +275,7 @@ def loki_metrics(repo):
         cands = sorted((p for p in runs.iterdir() if (p / "events.jsonl").is_file()), key=lambda p: p.stat().st_mtime)
         run_dir = cands[-1] if cands else None
     if run_dir is None:
-        return {"cost_usd": None, "sessions": 0, "run_id": None, "stages": {}, "verdict": None, "models": []}
+        return {"cost_usd": None, "sessions": 0, "fix_rounds": 0, "run_id": None, "stages": {}, "verdict": None, "models": []}
     events = []
     for line in (run_dir / "events.jsonl").read_text().splitlines():
         try:
@@ -314,11 +337,28 @@ def loki_metrics(repo):
         "sessions": priced + unpriced + child_n,
         "run_id": rid,
         "verdict": cdata.get("verdict"),
+        # One fix.round event per fix session the engine ran (engine10/stages/fix.ts).
+        "fix_rounds": sum(1 for e in events if e.get("type") == "fix.round"),
+        "not_proven": [str(x)[:200] for x in (cdata.get("not_proven") or [])][:5],
+        "spec_conflict_reason": next((str((e.get("data") or {}).get("spec_conflict_reason"))[:300] for e in reversed(events)
+                                      if e.get("type") == "stage.completed" and (e.get("data") or {}).get("spec_conflict_reason")), None),
         "wall_s": cdata.get("wall_s"),
         "stages": {k: v for k, v in stages.items() if v["sessions"] or v["seconds"]},
         "models": sorted(models),
         "event_types": sorted({e.get("type") for e in events if e.get("type")}),
     }
+
+
+# bin/loki exit codes (loki-ts/src/engine10/output.ts EXIT). Only 0 is Loki's own claim that the
+# task is done and proven; 6 (PARTIAL) is reported separately because it is neither a claim nor a refusal.
+LOKI_EXIT = {0: "VERIFIED", 6: "PARTIAL", 1: "FAILED", 3: "BUDGET_STOP", 4: "BLOCKED", 5: "STALLED", 130: "CANCELLED", 143: "CANCELLED"}
+
+
+def tail_text(path, n):
+    try:
+        return Path(path).read_text(errors="replace")[-n:]
+    except OSError:
+        return ""
 
 
 def auth_ok(work):
@@ -338,9 +378,10 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
     d = Path(tempfile.mkdtemp(prefix=f"{config}.{task['id']}.{rep}.", dir=work))
     repo = d / "repo"
     base = prepare_repo(task, repo)
-    env = config_env(config, contestant_env(make_home(d / "home")))
+    env = config_env(config, contestant_env(make_home(d / "home"), work))
     hidden_names = [Path(dest).name for dest in task["hidden"].values()]
-    rec = {"config": config, "task": task["id"], "kind": task["kind"], "lang": task["lang"], "rep": rep}
+    rec = {"config": config, "task": task["id"], "kind": task["kind"], "lang": task["lang"],
+           "difficulty": task.get("difficulty", "normal"), "shape": task.get("shape"), "rep": rep}
     if config == "oracle":
         t0 = time.monotonic()
         apply_oracle(task, repo)
@@ -358,6 +399,8 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
         m = raw_metrics(d / "contestant.out")
     elif config.startswith("loki"):
         m = loki_metrics(repo)
+        m["loki_outcome"] = LOKI_EXIT.get(rc, "OTHER")
+        m["loki_tail"] = tail_text(d / "contestant.out", 800)
     else:
         m = {"cost_usd": 0.0, "sessions": 0}
     restore_protected(task, repo, base)
@@ -382,6 +425,34 @@ def pct(vals, q):
     return s[k]
 
 
+def wilson(k, n, z=1.959964):
+    """95% Wilson score interval for k passes out of n runs."""
+    if n == 0:
+        return None
+    p = k / n
+    den = 1 + z * z / n
+    mid = (p + z * z / (2 * n)) / den
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / den
+    return [round(max(0.0, mid - half), 4), round(min(1.0, mid + half), 4)]
+
+
+def verdict_stats(rs):
+    """Loki's own verdict against the hidden tests. Agreement counts exit 0 with a hidden pass and
+    any other exit with a hidden fail; PARTIAL (exit 6) is a disagreement when the hidden tests pass
+    and is also split out. false_verified (exit 0, hidden fail) is the worst error, counted on its own."""
+    n = len(rs)
+    partial = [r for r in rs if r["exit_code"] == 6]
+    agree = sum(1 for r in rs if (r["exit_code"] == 0) == bool(r["pass"]))
+    return {
+        "verdict_agreement": round(agree / n, 4) if n else None, "verdict_agree_n": agree,
+        "false_verified": sum(1 for r in rs if r["exit_code"] == 0 and not r["pass"]),
+        "missed_pass": sum(1 for r in rs if r["exit_code"] != 0 and r["pass"]),
+        "partial_pass": sum(1 for r in partial if r["pass"]), "partial_fail": sum(1 for r in partial if not r["pass"]),
+        "outcomes": {o: sum(1 for r in rs if (r.get("loki_outcome") or "OTHER") == o)
+                     for o in sorted({r.get("loki_outcome") or "OTHER" for r in rs})},
+    }
+
+
 def summarize(results, configs):
     rows = []
     for c in configs:
@@ -390,25 +461,42 @@ def summarize(results, configs):
             continue
         secs = [r["seconds"] for r in rs]
         costs = [r["cost_usd"] for r in rs if isinstance(r.get("cost_usd"), (int, float))]
-        rows.append({
-            "config": c, "n": len(rs), "passed": sum(r["pass"] for r in rs),
-            "pass_rate": round(sum(r["pass"] for r in rs) / len(rs), 4),
+        passed = sum(r["pass"] for r in rs)
+        row = {
+            "config": c, "n": len(rs), "passed": passed,
+            "pass_rate": round(passed / len(rs), 4), "pass_ci95": wilson(passed, len(rs)),
             "median_s": round(statistics.median(secs), 1), "p90_s": round(pct(secs, 0.9), 1),
             "total_cost_usd": round(sum(costs), 4), "cost_per_task_usd": round(sum(costs) / len(rs), 4),
+            "cost_per_pass_usd": round(sum(costs) / passed, 4) if passed else None,
             "cost_unmeasured": len(rs) - len(costs),
             "mean_sessions": round(statistics.mean(r.get("sessions") or 0 for r in rs), 2),
+            "mean_fix_rounds": round(statistics.mean(r.get("fix_rounds") or 0 for r in rs), 2) if c.startswith("loki") else None,
             "timeouts": sum(1 for r in rs if r["timed_out"]),
-        })
+            "by_difficulty": {d: [sum(r["pass"] for r in rs if r.get("difficulty", "normal") == d),
+                                  sum(1 for r in rs if r.get("difficulty", "normal") == d)]
+                              for d in sorted({r.get("difficulty", "normal") for r in rs})},
+        }
+        if c.startswith("loki"):
+            row.update(verdict_stats(rs))
+        rows.append(row)
     return rows
 
 
 def markdown(rows, results, configs):
-    out = ["| config | pass | median s | p90 s | total $ | $ / task | mean sessions | timeouts |",
-           "|---|---|---|---|---|---|---|---|"]
+    out = ["| config | pass | 95% CI | hard | median s | p90 s | total $ | $ / task | $ / pass | sessions | fix rounds "
+           "| verdict agrees | false VERIFIED | timeouts |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         unm = f" ({r['cost_unmeasured']} unmeasured)" if r["cost_unmeasured"] else ""
-        out.append(f"| {r['config']} | {r['passed']}/{r['n']} ({r['pass_rate'] * 100:.0f}%) | {r['median_s']} | {r['p90_s']} "
-                   f"| {r['total_cost_usd']:.4f}{unm} | {r['cost_per_task_usd']:.4f} | {r['mean_sessions']} | {r['timeouts']} |")
+        ci = r["pass_ci95"]
+        hard = r["by_difficulty"].get("hard")
+        cpp = f"{r['cost_per_pass_usd']:.4f}" if r["cost_per_pass_usd"] is not None else "-"
+        fr = r["mean_fix_rounds"] if r["mean_fix_rounds"] is not None else "-"
+        agree = f"{r['verdict_agree_n']}/{r['n']} ({r['verdict_agreement'] * 100:.0f}%)" if "verdict_agreement" in r else "-"
+        out.append(f"| {r['config']} | {r['passed']}/{r['n']} ({r['pass_rate'] * 100:.0f}%) | {ci[0] * 100:.0f}-{ci[1] * 100:.0f}% "
+                   f"| {f'{hard[0]}/{hard[1]}' if hard else '-'} | {r['median_s']} | {r['p90_s']} "
+                   f"| {r['total_cost_usd']:.4f}{unm} | {r['cost_per_task_usd']:.4f} | {cpp} | {r['mean_sessions']} | {fr} "
+                   f"| {agree} | {r.get('false_verified', '-')} | {r['timeouts']} |")
     tasks = sorted({r["task"] for r in results})
     out += ["", "| task | " + " | ".join(configs) + " |", "|---|" + "---|" * len(configs)]
     for t in tasks:
@@ -437,7 +525,13 @@ def main(argv=None):
     ap.add_argument("--ledger", default=os.environ.get("H2H_LEDGER", ""), help="JSONL file of spend across invocations (one line per run)")
     ap.add_argument("--out", default="", help="results JSON path (default results/<date>-<shortsha>.json)")
     ap.add_argument("--keep", action="store_true", help="keep each run's work dir and print its path")
+    ap.add_argument("--jobs", type=int, default=1, help="runs in flight at once (default 1); the budget check can "
+                    "overshoot by at most jobs-1 runs, and wall times are measured under that concurrency")
+    ap.add_argument("--resume", default="", help="results JSON from an interrupted invocation: its runs are kept "
+                    "and every (config, task, rep) already in it is skipped")
     a = ap.parse_args(argv)
+    if a.reps < 1 or a.jobs < 1:
+        ap.error("--reps and --jobs must be at least 1")
 
     configs = [c for c in a.configs.split(",") if c]
     for c in configs:
@@ -456,34 +550,64 @@ def main(argv=None):
 
     tmp_root = Path(os.environ.get("TMPDIR") or "/tmp").resolve()
     work = Path(tempfile.mkdtemp(prefix="loki-h2h.", dir=tmp_root))
-    results, stopped = [], None
+    results = json.loads(Path(a.resume).read_text())["runs"] if a.resume else []
+    done = {(r["config"], r["task"], r["rep"]) for r in results}
+    # Rep-major order: every config sees every task once before any second rep starts, so a budget
+    # stop leaves whole reps behind it rather than a config that has run every rep.
+    queue = [(rep, task, c) for rep in range(1, a.reps + 1) for task in tasks for c in configs
+             if (c, task["id"], rep) not in done]
+    lock = threading.Lock()
+    state = {"stopped": None}
+
+    def worker():
+        while True:
+            with lock:
+                if state["stopped"] or not queue:
+                    return
+                spent = ledger_total(a.ledger)
+                if a.budget is not None and spent >= a.budget:
+                    state["stopped"] = f"budget {a.budget} reached (ledger {spent:.4f})"
+                    return
+                rep, task, c = queue.pop(0)
+                log(f"h2h: {c} {task['id']} rep {rep} (ledger ${spent:.4f}, {len(queue)} queued)")
+            try:
+                rec = run_one(c, task, rep, work, a.timeout, a.keep)
+            except Exception as exc:  # a harness fault is recorded as a failed run, never dropped
+                rec = {"config": c, "task": task["id"], "kind": task["kind"], "lang": task["lang"],
+                       "difficulty": task.get("difficulty", "normal"), "shape": task.get("shape"), "rep": rep,
+                       "pass": 0, "seconds": 0.0, "exit_code": None, "timed_out": False, "files_changed": 0, "files": [],
+                       "hidden_leaked_before_scoring": [], "cost_usd": None, "sessions": 0, "harness_error": repr(exc)[:300],
+                       "harness_traceback": traceback.format_exc()[-1500:]}
+            with lock:
+                results.append(rec)
+                if a.ledger and c not in CHECK_CONFIGS:
+                    with open(a.ledger, "a") as fh:
+                        fh.write(json.dumps({"config": c, "task": task["id"], "rep": rep, "cost_usd": rec.get("cost_usd"),
+                                             "at": dt.datetime.now().isoformat()}) + "\n")
+                log(f"h2h:   {c} {task['id']} rep {rep}: pass={rec['pass']} exit={rec['exit_code']} {rec['seconds']}s "
+                    f"cost={rec.get('cost_usd')} sessions={rec.get('sessions')} files={rec['files_changed']}")
+                write_results(out, results, configs, sha, a, state["stopped"])
+
     try:
-        if any(c not in CHECK_CONFIGS for c in configs):
+        if any(c not in CHECK_CONFIGS for c in configs) and queue:
             ok, detail = auth_ok(work)
             if not ok:
                 log(f"h2h: claude auth does not resolve under the throwaway HOME; refusing to run\n{detail}")
                 return 3
-        for rep in range(1, a.reps + 1):
-            for task in tasks:
-                for c in configs:
-                    spent = ledger_total(a.ledger)
-                    if a.budget is not None and spent >= a.budget:
-                        stopped = f"budget {a.budget} reached (ledger {spent:.4f})"
-                        raise StopIteration
-                    log(f"h2h: {c} {task['id']} rep {rep} (ledger ${spent:.4f})")
-                    rec = run_one(c, task, rep, work, a.timeout, a.keep)
-                    results.append(rec)
-                    if a.ledger and c not in CHECK_CONFIGS:
-                        with open(a.ledger, "a") as fh:
-                            fh.write(json.dumps({"config": c, "task": task["id"], "cost_usd": rec.get("cost_usd"), "at": dt.datetime.now().isoformat()}) + "\n")
-                    log(f"h2h:   pass={rec['pass']} {rec['seconds']}s cost={rec.get('cost_usd')} sessions={rec.get('sessions')} files={rec['files_changed']}")
-                    write_results(out, results, configs, sha, a, stopped)
-    except StopIteration:
-        log(f"h2h: stopped: {stopped}")
+        threads = [threading.Thread(target=worker) for _ in range(min(a.jobs, max(1, len(queue))))]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        if state["stopped"]:
+            log(f"h2h: stopped: {state['stopped']}")
     finally:
         if work.name.startswith("loki-h2h.") and work.parent == tmp_root and not a.keep:
             shutil.rmtree(work, ignore_errors=True)
-    write_results(out, results, configs, sha, a, stopped)
+    order = {(c, t["id"], r): i for i, (r, t, c) in enumerate(
+        (r, t, c) for r in range(1, a.reps + 1) for t in tasks for c in configs)}
+    results.sort(key=lambda r: order.get((r["config"], r["task"], r["rep"]), len(order)))
+    write_results(out, results, configs, sha, a, state["stopped"])
     rows = summarize(results, configs)
     print(markdown(rows, results, configs))
     print(f"\nresults: {out}")
@@ -491,13 +615,18 @@ def main(argv=None):
     if leaks:
         log(f"h2h: hidden test files were present before scoring in {len(leaks)} runs")
         return 4
+    errors = [r for r in results if r.get("harness_error")]
+    if errors:
+        log(f"h2h: {len(errors)} runs hit a harness error (recorded as failed): {errors[0]['harness_error']}")
+        return 5
     return 0
 
 
 def write_results(out, results, configs, sha, a, stopped):
     doc = {
         "benchmark": "h2h-b1", "loki_sha": sha, "date": dt.datetime.now().isoformat(timespec="seconds"),
-        "configs": configs, "reps": a.reps, "timeout_s": a.timeout, "stopped": stopped,
+        "configs": configs, "reps": a.reps, "jobs": a.jobs, "timeout_s": a.timeout, "stopped": stopped,
+        "tasks": sorted({r["task"] for r in results}),
         "summary": summarize(results, configs), "runs": results,
     }
     out.write_text(json.dumps(doc, indent=2) + "\n")
