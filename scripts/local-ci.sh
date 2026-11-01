@@ -16,7 +16,7 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TESTS=(syntax hygiene version-consistency release-notes docker-and-zip-sources pack-contents
        cli-entrypoints newcomer-path receipt-roundtrip redaction detect-gates typecheck dist-freshness engine10-e2e-stub scope-and-fix one-line-goal stacks triage-router
-       decompose-and-intake h2h-harness learn-from-runs)
+       decompose-and-intake h2h-harness learn-from-runs issue-context)
 
 selected=("${TESTS[@]}")
 if [ -n "${LOCAL_CI_ONLY:-}" ]; then

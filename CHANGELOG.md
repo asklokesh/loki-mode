@@ -5,6 +5,41 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.110.0 (2026-11-01)
+
+Issue runs now see what the team already said on the issue.
+
+### Added
+
+- `loki start owner/repo#N` reads the issue's labels and the comments of trusted authors (OWNER, MEMBER or COLLABORATOR on GitHub; the accounts in `LOKI_JIRA_STEER_ACTORS` and `LOKI_LINEAR_STEER_ACTORS` for Jira and Linear). Bot comments, Loki's own comments and comments from anyone else are left out and counted. The context is capped at 16 KB, newest first, and passed as quoted issue data, never as instructions. Linear issues now include their labels.
+
+### Fixed
+
+- The redaction speed check no longer flakes on slow runners (larger inputs, best of five, a 10x growth bound that a quadratic regression still fails at about 15x).
+
+## v11.109.0 (2026-11-01)
+
+Loki on Haiku now beats raw Claude Code on Haiku and on Opus on the repo's head-to-head benchmark: 8 of 8 tasks passed, faster and at a fraction of the cost.
+
+Measured with `benchmarks/h2h` (8 tasks in TypeScript and Python, scored by hidden tests neither side sees, 1 rep; results in `benchmarks/h2h/results/2026-11-01-33004105f.json`):
+
+| | pass | median seconds | cost per task |
+|---|---|---|---|
+| raw claude -p, Haiku | 8/8 | 22.2 | $0.0090 |
+| raw claude -p, Opus | 8/8 | 25.1 | $0.2596 |
+| Loki, Haiku | 8/8 | 18.6 | $0.0033 |
+| Loki, default model | 8/8 | 25.5 | $0.0828 |
+
+The previous release passed 6 of 8 on both Loki configurations; every loss was correct code discarded after Loki's own pre-written tests invented field names.
+
+### Changed
+
+- Tasks that already have a relevant test skip Loki's pre-written acceptance tests and go straight to implementation.
+- When Loki does write its own acceptance tests, it writes them alongside implementation instead of before (`LOKI_E10_WALL_CONCURRENT=0` restores the old order), with the repo's real signatures in front of the author.
+- When only Loki's own acceptance tests fail and the repo's own tests pass on the change, the work is delivered as PARTIAL with those tests named as not proven, instead of being discarded.
+- A run pinned to a model (for example Haiku) uses that model for every session, including the conflict referee.
+- A project-model discovery session that did not change the outcome no longer runs before implementation.
+
 ## v11.108.1 (2026-11-01)
 
 ### Fixed

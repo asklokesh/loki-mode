@@ -7,11 +7,11 @@ import { scopedOutOf } from "../../project_model/scope.ts";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative } from "node:path";
-import { hiddenConfigChanged, testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds, failureGroup } from "../failures.ts";
+import { hiddenConfigChanged, testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { DEEP_RUNS_MAX, failedFirst, QUICK_ONLY_NOTE, quickScope, quickSplit } from "../../e10ext/select.ts"; import { dependentNotes, dependentTests } from "../../features/dependents.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { guessRunner, isTestFile } from "../testmap.ts";
-import { withoutStaleWall, failureExcerpt, truncateBytes, EXCERPT_TOTAL_CAP, changedFiles, hiddenEdits, ignoreRuleChanges, classifyCheck, corroboratePass, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount, SECURITY_SCAN, fileHashes } from "../../util/check_result.ts";
+import { withoutStaleWall, failureExcerpt, EXCERPT_TOTAL_CAP, changedFiles, hiddenEdits, ignoreRuleChanges, classifyCheck, corroboratePass, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount, SECURITY_SCAN, fileHashes, briefGroups } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
@@ -318,16 +318,7 @@ export const verifyStage: Stage = {
     const uncoveredChanged = changed.filter((f) => CODE_EXT.test(f) && !isTestFile(f) && !wallPaths.has(f) && !cfgChanged.includes(f) && !covered(f)); // FC-21b: changed code no passing impacted check ran; seal denies VERIFIED after a limit
     const flaky = checks.filter((c) => c.result === "flaky").map((c) => (isHold(c) ? "holdout" : c.name));
     // ponytail: real clustering is failures.ts, which depends on this stage; a naive 1:1 placeholder keeps the section-4 output key populated until that slice lands.
-    let excerptLeft = EXCERPT_TOTAL_CAP; // TEN-QUALITY-01: sample = rerun cmd + redacted excerpt, 6 KB across all groups
-    const blocking = checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name) && !isHold(c)), seen = new Map<string, number>(); // L005: an excerpt already shown (a suite repeating a per-file failure) is referenced, not repeated
-    const failuresGrouped = blocking.map((c, i) => {
-      const e = excerpts.get(c) ?? "", dup = e ? seen.get(e) : undefined; if (e && dup === undefined) seen.set(e, i + 1);
-      const x = dup !== undefined ? `(same output as failure ${dup})` : truncateBytes(e, Math.max(0, excerptLeft));
-      excerptLeft -= dup !== undefined ? 0 : Buffer.byteLength(x);
-      return failureGroup(c, x, suites.has(c));
-    });
-    const blockingNames = blocking.map((c) => c.name), prevV = ctx.outputs().verify, prevNames = (prevV?.blocking_checks as string[] | undefined) ?? [], prevGroups = (prevV?.failures_grouped as typeof failuresGrouped | undefined) ?? [];
-    if (qs && !complete) prevNames.forEach((n, i) => { if (prevGroups[i] && !checks.some((c) => c.name === n)) { blockingNames.push(n); failuresGrouped.push({ ...prevGroups[i]!, sample: `${prevGroups[i]!.sample.split("\n")[0]}\n(not rerun since the fix; it runs again once the checks above pass)` }); } }); // L025: a blocking check a quick verify did not rerun (the full suite) stays blocking, so the brief and the stall rule still see it
+    const { groups: failuresGrouped, names: blockingNames } = briefGroups(checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name) && !isHold(c)), (c) => excerpts.get(c) ?? "", (c) => suites.has(c), EXCERPT_TOTAL_CAP, qs && !complete ? { prev: ctx.outputs().verify, ran: new Set(checks.map((c) => c.name)) } : undefined); // TEN-QUALITY-01: sample = rerun cmd + redacted excerpt, 6 KB across all groups
     const pub = checks.map((c) => (isHold(c) ? pubHold(c) : c)), holdoutFailed = checks.filter((c) => c.result === "fail" && isHold(c) && !preRed.names.includes(c.name)).length; // C-C4b-c: pub leaves this stage, holdoutFailed (C-C4b) is the only form in which a held-out failure reaches the fix stage
     // E-98a/E-115: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter/ruff. A-115: test configuration edits and relevant checks with more skips than base are listed, which makes the verdict PARTIAL at seal.
     const inBase = (f: string): boolean => { try { safeGit(ctx.repoDir, ["cat-file", "-e", `${ctx.baseSha}:${f}`], { stdio: "ignore" }); return true; } catch { return false; } };

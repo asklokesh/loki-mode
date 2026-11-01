@@ -1,5 +1,5 @@
 // engine10/failures.ts -- failing test ids (A-112) and the FailureGroup shape fix.ts consumes (E-17). The per-runner parsers and groupFailures had no production caller (only their own tests) and were deleted by A-115.
-import { javaSummary, stripAnsi } from "../util/check_result.ts"; import { createHash } from "node:crypto"; import { dotnetSummary } from "../util/dotnet_test.ts";
+import { javaSummary, stripAnsi } from "../util/check_result.ts"; import { dotnetSummary } from "../util/dotnet_test.ts"; export { failureGroup, failureSignature } from "../util/check_result.ts"; // L005: one owner of failure-line normalizing
 export interface FailureGroup {
   signature: string; // normalized reason: numbers and quoted values collapsed
   count: number;
@@ -54,15 +54,4 @@ export function failIds(raw: string): string[] {
   const ids = [...new Set(output.split("\n").map((l) => ID_LINE.exec(l.trim())).flatMap((m) => (m ? [(m.slice(1).find(Boolean) ?? "").trim()] : [])).filter(Boolean))];
   const c = failCount(output);
   return c && ids.length >= c ? ids : [];
-}
-/** L005: the stall and brief signature of one failing check: its name, its first failing line, and for a suite check (one name, many tests) the failing ids,
- *  so two different failing sets inside one suite never read as the same stall. Ids are sorted; a long list keeps 3 plus a digest of the whole set. */
-export function failureSignature(c: { name: string; first_error?: string; ids?: string[] }, suite = false): string {
-  const ids = suite ? [...new Set(c.ids ?? [])].sort() : [];
-  const set = ids.length > 3 ? `${ids.slice(0, 3).join(", ")} (+${ids.length - 3} more, set ${createHash("sha256").update(ids.join("\n")).digest("hex").slice(0, 8)})` : ids.join(", ");
-  return [c.name, c.first_error, set ? `[${set}]` : ""].filter(Boolean).join(" ");
-}
-/** L005: one fix-brief group: the signature, and a sample that starts with the command that reruns the check, then its redacted excerpt. */
-export function failureGroup(c: { name: string; cmd: string; first_error?: string; ids?: string[] }, excerpt: string, suite = false): FailureGroup {
-  return { signature: failureSignature(c, suite), count: 1, sample: excerpt ? `${c.cmd}\n${excerpt}` : c.cmd };
 }

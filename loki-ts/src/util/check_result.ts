@@ -14,7 +14,7 @@ import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep 
 import { siteFor } from "../project_model/resolve.ts";
 import type { ProjectApi } from "../project_model/api.ts";
 import { CARGO_TEST_FILE_RE, isTestFile } from "../engine10/testmap.ts";
-import type { RunnerName, TestRef } from "../engine10/types.ts";
+import type { RunnerName, TestRef } from "../engine10/types.ts"; import type { FailureGroup } from "../engine10/failures.ts";
 import { declaresPythonDep } from "./lock_ecosystems.ts";
 import { UNITTEST_DISCOVER_ARGS } from "./python_build_check.ts";
 import { safeGit, safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
@@ -1688,6 +1688,32 @@ export function firstError(out: string): string { // the line naming the failing
   return l.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\b\d+(?:\.\d+)? ?(?:ms|s)\b\]?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
 }
 
+/** L005: the stall and brief signature of one failing check: its name, its first failing line, and for a suite check (one name, many tests) the failing ids,
+ *  so two different failing sets inside one suite never read as the same stall. Ids are sorted; a long list keeps 3 plus a digest of the whole set. */
+export function failureSignature(c: { name: string; first_error?: string; ids?: string[] }, suite = false): string {
+  const ids = suite ? [...new Set(c.ids ?? [])].sort() : [];
+  const set = ids.length > 3 ? `${ids.slice(0, 3).join(", ")} (+${ids.length - 3} more, set ${createHash("sha256").update(ids.join("\n")).digest("hex").slice(0, 8)})` : ids.join(", ");
+  return [c.name, c.first_error, set ? `[${set}]` : ""].filter(Boolean).join(" ");
+}
+/** L005: one fix-brief group: the signature, and a sample that starts with the command that reruns the check, then its redacted excerpt. */
+export function failureGroup(c: { name: string; cmd: string; first_error?: string; ids?: string[] }, excerpt: string, suite = false): FailureGroup {
+  return { signature: failureSignature(c, suite), count: 1, sample: excerpt ? `${c.cmd}\n${excerpt}` : c.cmd };
+}
+/** L005/L025: verify's fix-brief groups and blocking check names. An excerpt already shown (a suite repeating a per-file failure) is referenced, not
+ *  repeated; excerpts share `cap` bytes. `quick` (set when this verify stopped quick: the previous output and every check name this one ran) carries the previous
+ *  blocking checks this one did not rerun (the full suite), so the brief and the stall rule still see them. */
+export function briefGroups<C extends { name: string; cmd: string; first_error?: string; ids?: string[] }>(blocking: C[], excerptOf: (c: C) => string, isSuite: (c: C) => boolean, cap: number, quick?: { prev?: Record<string, unknown>; ran: ReadonlySet<string> }): { groups: FailureGroup[]; names: string[] } {
+  const seen = new Map<string, number>(), names = blocking.map((c) => c.name);
+  const groups = blocking.map((c, i) => {
+    const e = excerptOf(c), dup = e ? seen.get(e) : undefined; if (e && dup === undefined) seen.set(e, i + 1);
+    const x = dup !== undefined ? `(same output as failure ${dup})` : truncateBytes(e, Math.max(0, cap));
+    cap -= dup !== undefined ? 0 : Buffer.byteLength(x);
+    return failureGroup(c, x, isSuite(c));
+  });
+  const prevNames = (quick?.prev?.blocking_checks as string[] | undefined) ?? [], prevGroups = (quick?.prev?.failures_grouped as FailureGroup[] | undefined) ?? [];
+  prevNames.forEach((n, i) => { const g = prevGroups[i]; if (g && quick && !quick.ran.has(n)) { names.push(n); groups.push({ ...g, sample: `${g.sample.split("\n")[0]}\n(not rerun since the fix; it runs again once the checks above pass)` }); } });
+  return { groups, names };
+}
 /** FC-PR-BODY-PUBLIC-HYGIENE: the one wording for a check that also fails on the base tree (verify's pre_red_checks). */
 export const ALREADY_FAILING_ON_BASE = "already failing on base, not caused by this change";
 /** "fail" stays "fail" unless the check is base-red, then it carries the one shared label; every other result is unchanged. */
