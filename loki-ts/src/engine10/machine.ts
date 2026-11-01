@@ -7,7 +7,7 @@ import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
-import { repeatedNoopFix } from "../util/anti_loop.ts"; import { restoreBaseTests } from "../util/test_guard.ts";
+import { repeatedNoopFix } from "../util/anti_loop.ts"; import { restoreBaseTests } from "../util/test_guard.ts"; import { deliverOverWallConflict } from "../util/conflict_resume.ts";
 
 /** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
 interface WallSplit { author(ctx: RunContext, signal: AbortSignal): Promise<{ kind: string } & Record<string, unknown>>; install(ctx: RunContext, a: never, baseDir: string): StageResult; }
@@ -232,7 +232,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       }
     } catch (err) { r = { status: "failed", data: {}, reason: err instanceof Error ? err.message : String(err) }; }
     if (r.status === "completed") { outputs.wall = r.data; ctx.emit("stage.completed", "wall", { ...r.data, duration_s: dur() }); }
-    else if (r.status === "skipped") ctx.emit("stage.skipped", "wall", { ...r.data, reason: r.reason ?? "skipped by stage" });
+    else if (r.status === "skipped") { if (Array.isArray(r.data.not_proven)) outputs.wall = r.data; ctx.emit("stage.skipped", "wall", { ...r.data, reason: r.reason ?? "skipped by stage" }); } // TEN-COST-09: a skip that disclosed what it left unproven reaches seal, as runStage does
     else ctx.emit("stage.failed", "wall", { ...r.data, duration_s: dur(), reason: r.reason ?? "failed" });
   };
   try {
@@ -294,6 +294,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
             stopped = "stalled"; break;
           }
         }
+        if (!fatal && !capHit && stopped === null && await deliverOverWallConflict(outputs, ctx.repoDir, () => runStage("verify", true), (path, why) => ctx.emit("wall.arbitrated", "wall", { path, discarded: why }))) ctx.emit("spec.conflict", "implement", { delivered: true, reason: outputs.implement?.spec_conflict_reason ?? null }); // a Wall defect never discards correct code (util/conflict_resume.ts)
         if (fatal) { stopped = fatal; jumped = true; }
         if (capHit) jumped = true;
       }
