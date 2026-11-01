@@ -5,23 +5,23 @@ spawning the `claude` CLI. This is the enterprise / SaaS deploy path: a containe
 or worker runs with just `ANTHROPIC_API_KEY`, no interactive `claude` login and
 no user-managed CLI version drift.
 
-Everything here is OPT-IN and DEFAULT-OFF. With nothing set, the engine is
-byte-identical to the bash `claude` route.
+Everything here is OPT-IN and DEFAULT-OFF. With nothing set, the judge sites run on
+the `claude` CLI as before. (The Loki 10 engine's own sessions use the Agent SDK by
+default, with or without this knob, unless `LOKI_E10_INVOKER=cli`.)
 
 ## The one knob: `LOKI_SDK_MODE`
 
 | Value | What turns on | Use when |
 |---|---|---|
-| `off` (default) | nothing (byte-identical to v7/v8 bash route) | default |
+| `off` (default) | nothing: every judge site runs on the `claude` CLI | default |
 | `judges` | the 7 one-shot JUDGE/TEXT sites (done-recognition, council-v2, code-review, completion-council VOTE, voter-agents, grill, prd-enrich). The RARV loop stays OFF. | recommended scale tier: no `claude` binary needed for judging, loop unchanged |
-| `full` | all of `judges`, and sets `LOKI_SDK_LOOP` | `loki start` runs Loki 10 either way, and its Claude sessions use the Agent SDK unless `LOKI_E10_INVOKER=cli`. Under `full`, `--engine legacy` and `LOKI_ENGINE=legacy` are refused with one line: the bash loop has no SDK path |
+| `full` | all of `judges`, and sets `LOKI_SDK_LOOP` | `loki start` runs Loki 10 either way. With the claude provider, `full` refuses in one line anything that would reach the bash loop, which has no SDK path: `--engine legacy`, `LOKI_ENGINE=legacy`, and a PRD over 120000 bytes |
 
 Alias: `LOKI_SDK=1` == `judges`; `LOKI_SDK=full` == `full`.
 
 ```bash
 # Scale tier: judges on the SDK, loop on the existing route.
 LOKI_SDK_MODE=judges loki start ./prd.md
-
 
 # See what one switch turned on.
 LOKI_SDK_MODE_DEBUG=1 LOKI_SDK_MODE=judges loki start ./prd.md
@@ -55,7 +55,7 @@ even `=0`, always wins over the mode):
 | `LOKI_SDK_VOTER_AGENTS` | voter-agents council |
 | `LOKI_SDK_GRILL` | grill (free-form text) |
 | `LOKI_SDK_PRD_ENRICH` | prd-enrich (free-form text) |
-| `LOKI_SDK_LOOP` | none: it once selected a separate Bun loop, which was removed; `loki start` prints a one-line notice when it is set |
+| `LOKI_SDK_LOOP` | no site of its own (the separate Bun loop it selected was removed). While it is set, with the claude provider, `loki start` refuses the legacy engine in one line (`--engine legacy`, `LOKI_ENGINE=legacy`, a PRD over 120000 bytes); set directly, `loki start` also prints a one-line notice |
 
 ```bash
 # Everything on the SDK EXCEPT code review (keep that on the bash claude route):
@@ -72,8 +72,8 @@ LOKI_SDK_MODE=full LOKI_SDK_CODE_REVIEW=0 loki start ./prd.md
   table (bound to a shared test fixture), so the two routes never diverge.
 - **Requires a key.** The SDK route needs `ANTHROPIC_API_KEY` (or a gateway /
   Bedrock / Vertex base URL). Without it, every SDK site fail-closes to the bash
-  route. `full` additionally requires `bun` for the loop; on a bun-less host every
-  mode degrades to the legacy route.
+  route. `loki start` needs `bun` in every mode: on a host with no working bun it
+  exits 2 with the install command.
 
 Implementation: `autonomy/lib/sdk-mode.sh` (bash), `loki-ts/src/runner/sdk_mode.ts`
 (TypeScript).
