@@ -16,6 +16,7 @@ import { lokiDir } from "../util/paths.ts";
 import { isGroupCostRecord } from "../metrics/kpis.ts";
 import { BOLD, YELLOW, NC } from "../util/colors.ts";
 import { readEvents } from "../engine10/events.ts";
+import { contextRecallMedian } from "../util/context_pack.ts";
 import { projectRun } from "../../../packages/control-plane/src/server/runs.ts";
 import { cacheReadShare, computeOutcomes, outcomesReport } from "../../../packages/control-plane/src/server/routes/stats.ts";
 import { effectiveVerdict } from "../../../packages/control-plane/src/server/integrity.ts";
@@ -504,8 +505,9 @@ function outcomeLines(o: Outcome, indent: string): string[] {
   return lines;
 }
 
-function renderOutcomes(rows: LocalRun[], json: boolean): string {
+function renderOutcomes(rows: LocalRun[], json: boolean, loki: string): string {
   const report = outcomesReport(rows);
+  const cr = contextRecallMedian(join(loki, "runs")); // L022: how often the brief named the files the run changed
   if (json) {
     const runs = rows.map((r) => ({
       run_id: r.runId, origin_repo: r.originRepo, status: r.endedAt ? "completed" : "running",
@@ -514,10 +516,11 @@ function renderOutcomes(rows: LocalRun[], json: boolean): string {
       input_tokens: r.inputTokens, cache_read_tokens: r.cacheReadTokens, cache_creation_tokens: r.cacheCreationTokens, cache_read_share: cacheReadShare(r),
       cost_usd: r.costUsd, wall_s: r.wallS,
     }));
-    return JSON.stringify({ source: "events.jsonl", runs_total: rows.length, ...report, runs }, null, 2);
+    return JSON.stringify({ source: "events.jsonl", runs_total: rows.length, ...report, context_recall: { median: cr.median, n: cr.n, last_sealed_runs: cr.runs_considered }, runs }, null, 2);
   }
   const lines = [`${BOLD}Loki Mode -- run outcomes${NC} (${rows.length} runs, ${report.runs_finished} finished, from .loki/runs/*/events.jsonl)`, ""];
   lines.push(...outcomeLines(report, "  "));
+  lines.push(`  ${padRight("Context recall (median)", 24)}${padRight(cr.median === null ? nm : `${(cr.median * 100).toFixed(1)}%`, 22)}n=${cr.n} of the last ${cr.runs_considered} sealed runs`);
   const repos = Object.entries(report.by_repo);
   if (repos.length > 1) for (const [repo, o] of repos) lines.push("", `${BOLD}${repo}${NC}`, ...outcomeLines(o, "  "));
   return lines.join("\n");
@@ -544,7 +547,7 @@ const STATS_HELP = [
   "  --efficiency    Include cost/token efficiency breakdown",
   "  --outcomes      Outcomes of this repo's runs (.loki/runs): cost per VERIFIED run,",
   "                  first-pass rate, sessions, fix rounds, escalations, cache-read",
-  "                  share and wall time percentiles, each with its n",
+  "                  share, wall time percentiles and median context recall, each with its n",
   "  --since <ISO>   With --outcomes: only runs started at or after this date",
   "  --help, -h      Show this help and exit",
   "",
@@ -585,7 +588,7 @@ export function computeStats(argv: readonly string[]): StatsResult {
     return { exitCode: 2, stdout: "", stderr: "--since works with --outcomes (see: loki stats --help)" };
   }
   const loki = lokiDir();
-  if (showOutcomes) return { exitCode: 0, stdout: renderOutcomes(localRuns(loki, since), showJson) };
+  if (showOutcomes) return { exitCode: 0, stdout: renderOutcomes(localRuns(loki, since), showJson, loki) };
   if (!isDir(loki)) {
     if (showJson) {
       return { exitCode: 0, stdout: '{"error": "No active session"}' };

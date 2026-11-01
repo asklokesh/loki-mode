@@ -1,0 +1,1 @@
+Canadian invoices come out wrong. invoiceTotal has to charge 5% GST when the customer's country is CA, and tax must be rounded on each line item, half up to the cent, instead of once on the whole total.

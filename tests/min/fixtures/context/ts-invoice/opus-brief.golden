@@ -1,0 +1,26 @@
+Relevant files:
+src/invoice.ts
+src/customers.ts
+src/tax.ts
+
+Key signatures (read the files for bodies):
+src/invoice.ts
+  export interface LineItem {
+  sku: string;
+  unitCents: Cents;
+  qty: number;
+  }
+  export function lineSubtotal(item: LineItem): Cents
+  export function invoiceTotal(customer: Customer, items: LineItem[]): Cents
+src/customers.ts
+  export interface Customer {
+  id: string;
+  name: string;
+  country: string;
+  exempt?: boolean;
+  }
+  export function displayName(c: Customer): string
+  export function byCountry(list: Customer[], country: string): Customer[]
+src/tax.ts
+  export function rateFor(customer: Customer): number
+  export function isTaxExempt(customer: Customer): boolean
