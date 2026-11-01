@@ -13,6 +13,8 @@ export interface PreflightResult { fatal: string | null; warnings: string[]; blo
 async function sh(argv: readonly string[], opts: ShellOpts): Promise<ShellResult> { try { return await run(argv, opts); } catch { return { stdout: "", stderr: "", exitCode: 127 }; } } // run() throws (Bun.spawn) when argv[0] does not resolve at all; treated as a failed check, never a crash
 /** TEN-STABILITY-36: free MB on the repo volume (same statfsSync math as doctor checkDisk), null when unreadable. */
 function freeMb(dir: string, statfs: NonNullable<PreflightOptions["statfs"]>): number | null { try { const s = statfs(dir); return (Number(s.bavail) * Number(s.bsize)) / (1024 * 1024); } catch { return null; } }
+/** gh installed and logged in. TEN-SPEED-08: 10-min cache of a passing probe. */
+export const ghReady = (env: Record<string, string>): Promise<boolean> => ghAuthProbeCached(env, async () => (await sh(["gh", "--version"], { env, timeoutMs: 5000 })).exitCode === 0 && (await sh(["gh", "auth", "status"], { env, timeoutMs: 10000 })).exitCode === 0);
 export async function checkPreflight(o: PreflightOptions): Promise<PreflightResult> {
   const env = (o.env ?? process.env) as Record<string, string>; const warnings: string[] = []; const git = (a: string[]) => safeGitRun(o.repoDir, a, { env, timeoutMs: 10000 }); // FC-25: the supervisor holds the token; the repo config is untrusted
   const reads = () => Promise.all([git(["rev-parse", "--is-inside-work-tree"]), git(["config", "user.name"]), git(["config", "user.email"]), git(["rev-parse", "--verify", "-q", "HEAD^{commit}"])]); // TEN-SPEED-14: all four git reads start together; TEN-STABILITY-35: git init with nothing committed has no HEAD and dies later in worktree creation
@@ -47,7 +49,7 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
   if (o.runDir) { try { mkdirSync(o.runDir, { recursive: true }); writeFileSync(join(o.runDir, "preflight.json"), JSON.stringify({ provider: o.provider, auth_path, probe }) + "\n"); } catch { /* the record is evidence, never a gate */ } }
   if (authFatal) return { fatal: authFatal, warnings, blocker: "not_logged_in" };
   if (o.pr && GITHUB_ORIGIN_RE.test((await git(["config", "--get", "remote.origin.url"])).stdout.trim())) {
-    const ghOk = await ghAuthProbeCached(env, async () => (await sh(["gh", "--version"], { env, timeoutMs: 5000 })).exitCode === 0 && (await sh(["gh", "auth", "status"], { env, timeoutMs: 10000 })).exitCode === 0); // TEN-SPEED-08: 10-min cache of a passing probe
+    const ghOk = await ghReady(env);
     if (!ghOk) return { fatal: `gh (GitHub CLI) is missing or not authenticated; run gh auth login, or pass --no-pr`, warnings, blocker: "other" };
     const plan = await probePublish((await git(["config", "--get", "remote.origin.url"])).stdout.trim(), env); // R100-022: read at intake, never discovered after the work
     if (plan) { if (plan.warning) warnings.push(plan.warning); if (o.runDir) recordPublish(o.runDir, plan); }

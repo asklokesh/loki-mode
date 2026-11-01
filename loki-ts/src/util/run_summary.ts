@@ -61,8 +61,8 @@ export function resultOf(outcome: Outcome): RunResult {
 }
 
 /** The one "next:" suggestion; a failed or stopped run's reason (output.ts reasonOf) picks the exact fix. */
-export function nextOf(result: RunResult, filesChanged: number | null, reason?: string, provider = "claude", runId?: string): string {
-  if (result === "verified") return filesChanged ? "loki diff" : "loki status";
+export function nextOf(result: RunResult, filesChanged: number | null, reason?: string, provider = "claude", runId?: string, landNext = ""): string {
+  if (result === "verified") return filesChanged ? (landNext ? `loki diff, then ${landNext}` : "loki diff") : "loki status";
   if (result === "done-unverified") return "loki verify";
   const r = reason ?? "", undo = filesChanged ? "; loki undo to revert" : "";
   if (result === "stopped" && r === "cost/time cap reached") return `if the cost cap was hit, loki start --max-cost <higher>${runId ? ` (stopped run ${runId})` : ""}, then rerun the same task; if the time cap, rerun with more time`;
@@ -72,6 +72,7 @@ export function nextOf(result: RunResult, filesChanged: number | null, reason?: 
     return /api key/i.test(r) ? "replace or unset ANTHROPIC_API_KEY, or run claude login" : "claude login"; // an env key outranks the login, so claude login alone would not clear a rejected key
   }
   if (r.startsWith("provider credit exhausted")) return "check provider billing, or loki start --provider <other>";
+  if (r.startsWith("dirty tracked tree")) return "commit your edits or stash them yourself, then rerun the same command";
   if (r === "engine ended before sealing a receipt") return "loki doctor";
   if (/^[^:]+ failed(: |$)/.test(r)) return `loki chat --attach (ask why)${undo}`;
   return filesChanged ? "loki undo" : "loki doctor";
