@@ -94,8 +94,8 @@ if [ "$stage" = "implement" ]; then
     echo "LOKI_DONE"
   elif [ "${E2E_STUB_MODE:-done}" = "nochange" ]; then
     echo "LOKI_DONE"
-  elif [ "${E2E_STUB_MODE:-done}" = "stack" ]; then # tests/min/stacks.sh: replace the LOKI_STUB_INSERT marker in E2E_STUB_TARGET with E2E_STUB_SNIPPET
-    python3 -I -c 'import os,sys; p=os.environ["E2E_STUB_TARGET"]; s=open(p).read(); open(p,"w").write(s.replace("// LOKI_STUB_INSERT", os.environ["E2E_STUB_SNIPPET"]))'
+  elif [ "${E2E_STUB_MODE:-done}" = "stack" ]; then # tests/min/stacks.sh: replace the LOKI_STUB_INSERT marker (// or # comment) in E2E_STUB_TARGET with E2E_STUB_SNIPPET
+    python3 -I -c 'import os,sys; p=os.environ["E2E_STUB_TARGET"]; n=os.environ["E2E_STUB_SNIPPET"]; s=open(p).read(); open(p,"w").write(s.replace("// LOKI_STUB_INSERT", n).replace("# LOKI_STUB_INSERT", n))'
     echo "LOKI_DONE"
   elif [ "${E2E_STUB_MODE:-done}" = "already" ]; then
     echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"

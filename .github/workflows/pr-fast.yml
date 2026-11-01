@@ -43,11 +43,12 @@ jobs:
 
       # dist-freshness rebuilds loki-ts from source and engine10-e2e-stub runs the
       # committed bundle; the receipt test needs `cryptography` for the JWKS cases
-      # (it reports a skip, never a pass, without it).
+      # (it reports a skip, never a pass, without it); the engine10-e2e-stub python legs need
+      # pytest on the system interpreter (a failure, not a skip, when CI=true).
       - name: Install dependencies
         run: |
           bun install --cwd loki-ts --frozen-lockfile
-          python3 -m pip install cryptography
+          python3 -m pip install cryptography pytest
 
       # The whole gate: the hermetic tests under tests/min/ (syntax, CLI smoke,
       # engine end to end on the stub provider, receipts, release and
