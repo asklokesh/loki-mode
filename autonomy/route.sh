@@ -236,18 +236,23 @@ loki_route_resolve() {
         elif [ "$verb" = "bare" ] || [ -n "$front_flag" ] || [ "$engine_req" = "legacy" ]; then
             # Flag-first bare calls, the front end (--workspace, --deploy) and an explicit legacy request keep their own handlers.
             R_INPUT_TYPE=""; return 0
-        elif [ "$verb" = "start" ] && [ -z "$provider_flag" ] && [ -z "${LOKI_PROVIDER:-}" ] \
+        elif [ "$verb" = "start" ] && [ -z "$provider_flag" ] && [ -z "${LOKI_PROVIDER:-}" ] && [ -z "$legacy_flag" ] \
              && ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            # No repo, no task and no provider: cmd_start shows the offline sample receipt (README, `loki tour`) and spends nothing.
+            # No repo, no task, no provider and no legacy-only flag: cmd_start shows the offline sample receipt
+            # (README, `loki tour`) and spends nothing. A legacy-only flag is refused below like anywhere else.
             R_INPUT_TYPE=""; return 0
         else
             # L009: a bare `loki start` or `loki quick` runs engine10 with no task. It resumes an interrupted
             # run when there is one, otherwise prints the loki "<goal>" usage and exits 64. Never the legacy loop.
             R_INPUT_TYPE=none
             R_INPUT="(no task)"
-            if [ -f "${PWD}/.loki/autonomy-state.json" ] \
-               && grep -Eq '"status"[[:space:]]*:[[:space:]]*"(running|paused|interrupted)"' "${PWD}/.loki/autonomy-state.json" 2>/dev/null; then
-                R_NOTICE="loki: .loki/autonomy-state.json holds an interrupted run of the previous loop; run 'loki resume' for the command that continues it."
+            local top st prd
+            top="$(git rev-parse --show-toplevel 2>/dev/null || printf '%s' "$PWD")"
+            st="$top/.loki/autonomy-state.json"
+            if [ -f "$st" ] && grep -Eq '"status"[[:space:]]*:[[:space:]]*"(running|paused|interrupted)"' "$st" 2>/dev/null; then
+                prd="$(sed -n 's/.*"prdPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$st" | head -1)"
+                if [ -n "$prd" ] && [ -f "$prd" ]; then prd=" \"$prd\""; else prd=""; fi
+                R_NOTICE="loki: .loki/autonomy-state.json holds an interrupted run of the previous loop; continue it with: loki start --engine legacy$prd"
             fi
         fi
     elif [ "$npos" -eq 1 ]; then

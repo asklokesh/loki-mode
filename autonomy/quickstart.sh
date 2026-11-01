@@ -1675,16 +1675,6 @@ cmd_quickstart() {
     # The user asked for a change to code that already exists; dropping a
     # generated prd.md into their project is the unrequested write that made the
     # original bug worse. The staged spec is handed to `loki start` directly.
-    # L009: an empty folder that is not a repo becomes one after the PRD lands (as the old loop did), so the
-    # engine runs there; a non-empty folder is left for the engine to refuse with its fix.
-    local qs_fresh_repo=false _qs_f
-    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        qs_fresh_repo=true
-        for _qs_f in .[!.]* ..?* *; do
-            [ -e "$_qs_f" ] || continue
-            case "$_qs_f" in .DS_Store|.localized|Thumbs.db|desktop.ini) ;; *) qs_fresh_repo=false ;; esac
-        done
-    fi
     local target="./prd.md"
     if [ "$use_brief_as_spec" = true ]; then
         target="$prd_source"
@@ -1772,11 +1762,11 @@ cmd_quickstart() {
     # L009: consent was collected in step 4. `loki start <prd>` goes through bin/loki,
     # whose router sends a PRD to engine10; quickstart never reaches the legacy loop.
     # Subshelled so a failed start still reaches the honest message below.
-    if [ "$qs_fresh_repo" = true ] && [ "$use_brief_as_spec" != true ]; then
-        _loki_init_fresh_repo . "$target" || true
-    fi
+    # In a folder that is not a repo, the engine's first-run init (loki-ts/src/util/first_run_repo.ts) treats
+    # the PRD quickstart just wrote as part of an empty folder and commits it; any other file means the engine
+    # refuses with its fix. A brief path writes nothing here, so LOKI_FIRST_RUN_FILES names nothing present.
     local start_exit=0
-    ( "$SKILL_DIR/bin/loki" start "$target" ) || start_exit=$?
+    ( LOKI_FIRST_RUN_FILES="${target##*/}" "$SKILL_DIR/bin/loki" start "$target" ) || start_exit=$?
 
     if [ "$start_exit" -ne 0 ]; then
         printf "%sThe build did not start cleanly. Run 'loki doctor' and try 'loki start ./prd.md'.%s\n" "$_QS_RED" "$_QS_NC" >&2

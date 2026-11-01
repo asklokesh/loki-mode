@@ -5610,9 +5610,10 @@ print('\t'.join([
     # The spec path is what makes the command RESUME this run rather than start a
     # different one, so only interpolate it when it still exists on disk. A stale
     # path would produce a command that fails on paste.
-    local resume_cmd="loki start"
+    # This state belongs to the previous loop, so the command names it (a plain `loki start` runs engine10).
+    local resume_cmd="loki start --engine legacy"
     if [ -n "$prd_path" ] && [ -f "$prd_path" ]; then
-        resume_cmd="loki start \"$prd_path\""
+        resume_cmd="loki start --engine legacy \"$prd_path\""
     fi
 
     # A capped run needs DIFFERENT advice than an interrupted one: re-running it
@@ -17322,19 +17323,6 @@ cmd_factory() {
 }
 
 # Demo mode - build a real project from a bundled PRD template
-# L009: make a folder Loki created (or found empty) a git repository with a first commit, so the default
-# engine can run in it. A repo-local identity is set only when git has none; the user's own config is never
-# touched. Callers decide when a folder is theirs to initialise. Args: <dir> <files to commit...>
-_loki_init_fresh_repo() {
-    local dir="$1"; shift
-    git -C "$dir" init -q 2>/dev/null || return 1
-    git -C "$dir" symbolic-ref HEAD refs/heads/main 2>/dev/null || true
-    if [ -z "$(git -C "$dir" config user.name 2>/dev/null)" ] || [ -z "$(git -C "$dir" config user.email 2>/dev/null)" ]; then
-        git -C "$dir" config user.name "Loki Mode" && git -C "$dir" config user.email "loki@localhost"
-    fi
-    git -C "$dir" add -- "$@" 2>/dev/null && git -C "$dir" commit -q -m "loki: first commit" 2>/dev/null
-}
-
 cmd_demo() {
     # Handle --help
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -17586,10 +17574,8 @@ cmd_demo() {
     cp "$demo_prd" "$demo_dir/prd.md"
 
     # L009: the demo runs on the default engine (loki start prd.md -> engine10), never the legacy loop.
-    # engine10 needs a git repository with a first commit, even on a machine with no git identity.
-    if [ ! -d "$demo_dir/.git" ]; then
-        _loki_init_fresh_repo "$demo_dir" prd.md || true
-    fi
+    # The engine's first-run init (loki-ts/src/util/first_run_repo.ts) makes the folder a repo, committing the
+    # PRD named in LOKI_FIRST_RUN_FILES, with a repo-local identity when git has none.
     local run_args=(start prd.md)
     if [ -n "$provider" ]; then
         run_args+=(--provider "$provider")
@@ -17628,7 +17614,7 @@ cmd_demo() {
     echo ""
 
     local start_exit=0
-    (cd "$demo_dir" && "$SKILL_DIR/bin/loki" "${run_args[@]}") || start_exit=$?
+    (cd "$demo_dir" && LOKI_FIRST_RUN_FILES=prd.md "$SKILL_DIR/bin/loki" "${run_args[@]}") || start_exit=$?
 
     echo ""
     echo -e "${DIM}---------------------------------------${NC}"

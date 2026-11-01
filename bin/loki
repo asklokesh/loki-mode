@@ -462,6 +462,23 @@ _loki_bun() {
     done
     return 0
 }
+# No working bun for an engine10 command: say why and how to fix it, exit 2. A Homebrew install of loki-mode
+# (its own keg, not an npm install under Homebrew's node) is told the brew formula.
+_loki_no_bun_exit() {
+    local os arch
+    case "$(uname -s 2>/dev/null)" in
+        Darwin) os=darwin ;; Linux) os=linux ;; MINGW*|MSYS*|CYGWIN*) os=win32 ;; *) os=$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]') ;;
+    esac
+    case "$(uname -m 2>/dev/null)" in
+        arm64|aarch64) arch=aarch64 ;; x86_64|amd64) arch=x64 ;; *) arch=$(uname -m 2>/dev/null) ;;
+    esac
+    echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for ${os}-${arch} is $(_loki_bun_why))." >&2
+    case "$REPO_ROOT" in
+        */Cellar/loki-mode/*) echo "To fix: brew install oven-sh/bun/bun" >&2 ;;
+        *) echo "To fix: curl -fsSL https://bun.sh/install | bash   (or reinstall: npm install -g loki-mode, without --omit=optional)" >&2 ;;
+    esac
+    exit 2
+}
 # Reason text for the fallback notice: missing, or failed to start, exit N.
 _loki_bun_why() {
     local c rc
@@ -751,31 +768,21 @@ case "v10" in
         fi
         # L009: a run never falls back to the legacy loop. A provider engine10 cannot invoke, or a host with
         # no working bun, is refused with the fix. Data commands start no model session, so the provider is not
-        # checked for them, and a bare `loki verify` with no bun still reads proofs with the bash verify.
+        # checked for them; with no bun only a bare `loki verify` still reads proofs with the bash verify.
+        # `plan --spec` drafts the spec with a model session, so it is checked like a run.
         if [ "$_e10" = "1" ]; then
             case "${1:-}" in
-                keys|export|status|verify|dashboard|plan)
-                    if [ "$_e10_hard" = "0" ] && [ -z "$(_loki_bun)" ]; then _e10=0; fi
+                keys|export|status|verify|dashboard)
+                    if [ -z "$(_loki_bun)" ]; then
+                        if [ "$1" = "verify" ] && [ -z "${2:-}" ]; then _e10=0; else _loki_no_bun_exit; fi
+                    fi
                     ;;
                 *)
                     case "${LOKI_PROVIDER:-claude}" in
                         claude|codex|cline|aider|opencode) ;;
                         *) echo "loki: provider ${LOKI_PROVIDER:-} is not supported; use one of: claude, codex, cline, aider, opencode (LOKI_PROVIDER)." >&2; exit 2 ;;
                     esac
-                    if [ -z "$(_loki_bun)" ]; then
-                        case "$(uname -s 2>/dev/null)" in
-                            Darwin) _os=darwin ;; Linux) _os=linux ;; MINGW*|MSYS*|CYGWIN*) _os=win32 ;; *) _os=$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]') ;;
-                        esac
-                        case "$(uname -m 2>/dev/null)" in
-                            arm64|aarch64) _arch=aarch64 ;; x86_64|amd64) _arch=x64 ;; *) _arch=$(uname -m 2>/dev/null) ;;
-                        esac
-                        echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for ${_os}-${_arch} is $(_loki_bun_why))." >&2
-                        case "$REPO_ROOT" in
-                            */Cellar/*|*/homebrew/*|*/linuxbrew/*) echo "To fix: brew install oven-sh/bun/bun" >&2 ;;
-                            *) echo "To fix: curl -fsSL https://bun.sh/install | bash   (or reinstall: npm install -g loki-mode, without --omit=optional)" >&2 ;;
-                        esac
-                        exit 2
-                    fi
+                    [ -n "$(_loki_bun)" ] || _loki_no_bun_exit
                     ;;
             esac
         fi
