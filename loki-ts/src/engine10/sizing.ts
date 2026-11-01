@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { readRepoMapCache, repoCacheDir, repoKey } from "./cache.ts";
-import { speedLikelyFiles } from "../features/speed/lean_select.ts";
+import { speedLikelyFiles } from "../features/speed/lean_select.ts"; import { deliverables } from "../features/decompose.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts"; import { wallConcurrent } from "../util/wall_knobs.ts";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap, TestRef } from "./types.ts";
@@ -14,7 +14,7 @@ export function namedFiles(task: string, map: RepoMap | null): string[] {
   return (map?.files ?? []).filter((f) => new RegExp(`(?<![\\w.-])${escRe(basename(f).toLowerCase())}(?![\\w-]|\\.\\w)`).test(text));
 }
 
-/** P12-46: "large" = names more than LARGE_NAMED_FILES repo files; never lean, routed to decompose (a large unit never runs in parallel). */
+/** P12-46: "large" = names more than LARGE_NAMED_FILES repo files, or several independent deliverables by structure (features/decompose.ts deliverables); never lean, and an issue ref goes to the MASS-2 split (commands/issues_run.ts startIssueEpic). A large unit never runs in parallel. */
 export type TaskSize = "small" | "normal" | "large"; export const LARGE_NAMED_FILES = 8;
 /** C-F1 run4 knobs: LOKI_E10_SMALL_MAX_CHARS (positive number, default 600); a missing runner no longer forces normal (default); LOKI_E10_SMALL_NO_RUNNER=0 restores that disqualifier. */
 const noted = new Set<string>(); // one stderr note per name=value; a setting that was not honored must be visible, the returned number never changes
@@ -22,7 +22,7 @@ const noteOnce = (name: string, raw: string | undefined, why: string): void => {
 export const smallMaxChars = (env = process.env): number => { const n = Number(env.LOKI_E10_SMALL_MAX_CHARS); if (n > 0) return n; noteOnce("LOKI_E10_SMALL_MAX_CHARS", env.LOKI_E10_SMALL_MAX_CHARS, "is not a positive number; using 600"); return 600; };
 export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | null): { size: TaskSize; reasons: string[] } {
   const named = namedFiles(task, map).length;
-  if (named > LARGE_NAMED_FILES) return { size: "large", reasons: [`task names ${named} files > ${LARGE_NAMED_FILES}: decompose`] };
+  if (named > LARGE_NAMED_FILES) return { size: "large", reasons: [`task names ${named} files > ${LARGE_NAMED_FILES}: decompose`] }; const st = deliverables(task); if (st.large) return { size: "large", reasons: [`${st.reason}: decompose`] };
   const why = [
     !task.trim() && "no task text", task.length > smallMaxChars() && `task ${task.length} chars > ${smallMaxChars()}`,
     !map && "no repo map", (map?.files.length ?? 0) > 3000 && `repo ${map?.files.length} files > 3000`,

@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.107.0 (2026-11-01)
+
+A multi-part issue now splits into slices that run in order, and a run reaches its first model session in about a second instead of minutes.
+
+### Changed
+
+- `loki start owner/repo#N` on an issue with several deliverables (any two of: 4 or more solution parts, 4 or more acceptance criteria, both backend and frontend named) splits it into slices and runs them in order, each as its own small run. The model decides the split; if it declines, the issue runs as one run with planning kept. A one-line fix stays on the fast path.
+- Intake no longer runs every test file on the untouched base before starting. That probe now runs at verify time and only for test files that ran zero tests. On a real repo it had taken 120 of the 122 seconds before the first model session; on a 1246-file fixture intake went from 27.4s to 0.58s.
+
 ## v11.106.0 (2026-11-01)
 
 Runs stop spending money on fixes that cannot land, and the agent can no longer pass by editing tests that already existed.

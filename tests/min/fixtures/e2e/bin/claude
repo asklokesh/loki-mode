@@ -2,6 +2,7 @@
 # Stub claude CLI for the engine10 e2e test. Modes via E2E_STUB_MODE:
 #   done (default): the implement session appends multiply() to calc.ts
 #   already: the implement session changes nothing and claims already-done
+#   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
 # E2E_STUB_TEST_EDIT=1: the implement session also edits calc.test.ts and adds a new multiply.test.ts.
 # E2E_STUB_SCOPE_EDIT=1: the implement session also edits util.ts (when the repo has one).
@@ -9,6 +10,7 @@
 # nothing; noprogress edits calc.ts without fixing multiply(). E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
 # per call; E2E_STUB_USAGE=<n> records n output tokens per session (input = prompt bytes / 4) as the session's cost.
 #   overlay: a plain `-p <task>` call copies E2E_STUB_OVERLAY over the cwd (h2h benchmark harness)
+# E2E_STUB_SPLIT (JSON text): the MASS-2 split planning session writes it to the file its brief names.
 # Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo).
 set -u
 if [ "${1:-}" = "--help" ]; then
@@ -62,6 +64,11 @@ case "$prompt" in # `loki plan --spec` (tests/min/triage-router.sh): write the s
     out="$(printf '%s\n' "$prompt" | sed -n 's/.*to this exact file path: //p' | tail -1)"
     [ -n "$out" ] && printf '{"intent":"stub intent","criteria":["the stated change is made","a test covers it"]}\n' > "$out"
     ;;
+  *"PR-sized slices"*) # the MASS-2 split session (tests/min/decompose-and-intake.sh)
+    if [ -n "${E2E_STUB_SPLIT:-}" ]; then
+      out="$(printf '%s\n' "$prompt" | sed -n 's/^Write exactly one JSON object to the file \(.*\) and nothing else to that file, in this form:$/\1/p' | head -1)"
+      [ -n "$out" ] && printf '%s\n' "$E2E_STUB_SPLIT" > "$out"
+    fi ;;
 esac
 if [ "$stage" = "other" ] && [ "${E2E_STUB_MODE:-}" = "overlay" ]; then # tests/min/h2h-harness.sh: a raw `claude -p <task> --output-format json` contestant
   if [ -n "${E2E_STUB_SEEN_LOG:-}" ]; then find . -path ./.git -prune -o -type f -print >> "$E2E_STUB_SEEN_LOG"; fi # every file the contestant could read
@@ -70,7 +77,11 @@ if [ "$stage" = "other" ] && [ "${E2E_STUB_MODE:-}" = "overlay" ]; then # tests/
   exit 0
 fi
 if [ "$stage" = "implement" ]; then
-  if [ "${E2E_STUB_MODE:-done}" = "nochange" ]; then
+  sid="$(printf '%s\n' "$prompt" | sed -n 's/^Slice \([A-Za-z0-9_-]*\) of [0-9]* for .*/\1/p' | head -1)"
+  if [ "${E2E_STUB_MODE:-done}" = "slice" ] && [ -n "$sid" ]; then
+    printf '\nexport function slice_%s(): string {\n  return "%s";\n}\n' "$sid" "$sid" >> calc.ts
+    echo "LOKI_DONE"
+  elif [ "${E2E_STUB_MODE:-done}" = "nochange" ]; then
     echo "LOKI_DONE"
   elif [ "${E2E_STUB_MODE:-done}" = "stack" ]; then # tests/min/stacks.sh: replace the LOKI_STUB_INSERT marker in E2E_STUB_TARGET with E2E_STUB_SNIPPET
     python3 -I -c 'import os,sys; p=os.environ["E2E_STUB_TARGET"]; s=open(p).read(); open(p,"w").write(s.replace("// LOKI_STUB_INSERT", os.environ["E2E_STUB_SNIPPET"]))'

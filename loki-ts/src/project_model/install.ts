@@ -311,8 +311,8 @@ export function absentDepRoots(repoDir: string, model: ProjectApi | null | undef
  *  through prepareDeps (event deps.install per package; a failure is NOT PROVEN and the run goes on), then records the per-command
  *  baseline for the full-suite commands verify will run. Returns intake's data; deps_not_proven reaches the receipt via verify's not_proven. */
 /** Per-subphase intake wall time. A phase that did not run is `{ skipped: reason }`, never `{ ms: 0 }`. */
-export type PhaseTiming = { ms: number; cached?: boolean } | { skipped: string };
-export type IntakeTiming = Partial<Record<"repo_walk" | "project_model" | "deps_install" | "suite_baseline" | "zero_probe", PhaseTiming>>;
+export type PhaseTiming = { ms: number; at?: number; cached?: boolean } | { skipped: string }; // at: start offset in ms after intake began
+export type IntakeTiming = Partial<Record<"setup" | "repo_walk" | "already_done" | "project_model" | "deps_install" | "suite_baseline" | "zero_baseline" | "zero_probe", PhaseTiming>>;
 export interface DepsTiming { install?: PhaseTiming; baseline_ms?: number }
 export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit">, signal: AbortSignal, runners: RunnerName[], timing?: DepsTiming): Promise<Record<string, unknown>> {
   const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model), before = untrackedTops(ctx.repoDir), t0 = Date.now();
