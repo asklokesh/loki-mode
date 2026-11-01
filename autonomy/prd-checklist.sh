@@ -22,8 +22,7 @@
 # so every python3 here ignores PYTHON* env vars (an empty PYTHONPATH component
 # would load a committed sitecustomize.py) and every -c / - body drops '' and
 # '.' from sys.path before any other import (a committed json.py would print
-# the verdict). Pinned by tests/moat/p2-honest-verdict.sh
-# P2.checklist-verify-not-shadowed.
+# the verdict).
 #
 # S-204 (BACKLOG 53): -E alone still loads the user site-packages, whose .pth
 # "import" lines run at startup and can patch json.dump, so checklist-verify.py

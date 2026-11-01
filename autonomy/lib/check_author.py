@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check-author context (moat P3, interface A in tests/moat/p3-the-wall.sh).
+"""Check-author context for the Wall (interface A).
 
   check_author.py context --spec <file> --repo <dir>
   check_author.py accept  --spec <file> --repo <dir> --out <dir> [--context <file>] [--attempts N]

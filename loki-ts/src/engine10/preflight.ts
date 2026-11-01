@@ -42,7 +42,7 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
   if (env["LOKI_PREFLIGHT_PROBE"] !== "0" && !keyed) {
     if (o.provider === "claude") { // TEN-UX-01: a logged-out CLI fails before any spend; unknown stays a warning
       const li = claudeLoginProbeCached(cli, env); // TEN-UX-12 retry + TEN-SPEED-05 10-min cache of a successful probe live in doctor.ts
-      if (li === "no") { probe = "failed"; authFatal = "claude is not logged in; run: claude login (or set ANTHROPIC_API_KEY)"; }
+      if (li === "no") { probe = "failed"; authFatal = "claude is not logged in; run: claude auth login (or set ANTHROPIC_API_KEY)"; }
       else if (li === "") warnings.push("could not confirm the Claude login (claude auth status gave no answer); continuing"); else probe = "ok";
     } else { const pl = providerLoginIssue(o.provider, cli, env); if (pl?.fatal) { probe = "failed"; authFatal = pl.fatal; } else if (pl?.warn) warnings.push(pl.warn); else if (o.provider === "codex") probe = "ok"; } // TEN-ADOPTION-34
   }

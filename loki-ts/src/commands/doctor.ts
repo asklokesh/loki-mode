@@ -1333,8 +1333,8 @@ export function evaluateClaudeLogin(loggedIn: "yes" | "no" | ""): ClaudeLoginRes
     return {
       status: "fail",
       line: "Claude CLI is NOT logged in -- a build would stall instead of running",
-      fix: "Fix: claude login   (or set ANTHROPIC_API_KEY)",
-      blocker: "Claude CLI is not logged in. Fix: claude login (or set ANTHROPIC_API_KEY)",
+      fix: "Fix: claude auth login   (or set ANTHROPIC_API_KEY)",
+      blocker: "Claude CLI is not logged in. Fix: claude auth login (or set ANTHROPIC_API_KEY)",
     };
   }
   return {

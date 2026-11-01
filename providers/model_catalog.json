@@ -1,6 +1,6 @@
 {
   "_comment": "Canonical model catalog. Update this single file when a provider ships a new model. Providers/web-app/docs read from here.",
-  "_source_of_truth": "models[] is authoritative. Each entry's `tier` decides what that tier resolves to, first match wins, so order within models[] is load-bearing. The top-level latest_<tier> keys are DERIVED mirrors kept only for existing readers (dashboard/server.py, tools/probe-model-catalog.py, tests); never hand-edit them out of step with models[] -- tests/test-model-catalog-single-source.sh fails when they disagree. A provider whose models[] has no entry for a tier must declare `tier_fallback` saying which tier substitutes; there is no implicit fallback.",
+  "_source_of_truth": "models[] is authoritative. Each entry's `tier` decides what that tier resolves to, first match wins, so order within models[] is load-bearing. The top-level latest_<tier> keys are DERIVED mirrors kept only for existing readers (dashboard/server.py, tools/probe-model-catalog.py, tests); never hand-edit them out of step with models[]. A provider whose models[] has no entry for a tier must declare `tier_fallback` saying which tier substitutes; there is no implicit fallback.",
   "schema_version": 1,
   "updated": "2026-09-26",
   "providers": {

@@ -98,7 +98,7 @@ _PROVIDER_READINESS_COMMANDS = {
     ),
 }
 _PROVIDER_AUTH_ACTIONS = {
-    "claude": "Run 'claude login', unlock the macOS login keychain, then retry.",
+    "claude": "Run 'claude auth login', unlock the macOS login keychain, then retry.",
     "codex": "Run 'codex login', then retry.",
     "cline": "Run 'cline auth', then retry.",
     "aider": "Configure a provider with a non-interactive auth status command.",

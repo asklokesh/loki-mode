@@ -511,7 +511,7 @@ export function checkBudgetLimit(opts: CheckBudgetOptions = {}): CheckBudgetResu
 // ---------------------------------------------------------------------------
 
 // Generic patterns from run.sh detect_rate_limit() (case-insensitive grep -E).
-const RATE_LIMIT_PATTERN = /(429|rate.?limit|too many requests|quota exceeded|request limit|retry.?after)/i;
+const RATE_LIMIT_PATTERN = /(\b429\b|rate.?limit|too many requests|quota exceeded|request limit|retry.?after)/i; // \b429\b: a bare 429 inside a hash, run id or cost figure (sha256:...a429f..., $0.0429) is not a rate limit
 // Claude-specific reset format (run.sh parse_claude_reset_time()).
 const CLAUDE_RESET_PATTERN = /resets [0-9]+[ap]m/;
 // Retry-After header (case-insensitive).
