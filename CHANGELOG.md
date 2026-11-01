@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.110.0 (2026-11-01)
+
+Issue runs now see what the team already said on the issue.
+
+### Added
+
+- `loki start owner/repo#N` reads the issue's labels and the comments of trusted authors (OWNER, MEMBER or COLLABORATOR on GitHub; the accounts in `LOKI_JIRA_STEER_ACTORS` and `LOKI_LINEAR_STEER_ACTORS` for Jira and Linear). Bot comments, Loki's own comments and comments from anyone else are left out and counted. The context is capped at 16 KB, newest first, and passed as quoted issue data, never as instructions. Linear issues now include their labels.
+
+### Fixed
+
+- The redaction speed check no longer flakes on slow runners (larger inputs, best of five, a 10x growth bound that a quadratic regression still fails at about 15x).
+
 ## v11.109.0 (2026-11-01)
 
 Loki on Haiku now beats raw Claude Code on Haiku and on Opus on the repo's head-to-head benchmark: 8 of 8 tasks passed, faster and at a fraction of the cost.
