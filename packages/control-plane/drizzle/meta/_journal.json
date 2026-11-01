@@ -50,6 +50,13 @@
       "when": 1791052000000,
       "tag": "0006_token_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1791053000000,
+      "tag": "0007_outcome_metrics",
+      "breakpoints": true
     }
   ]
 }

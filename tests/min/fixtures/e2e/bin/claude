@@ -13,6 +13,7 @@
 # nothing; wallconflict does the same citing loki_wall_multiply.test.ts; noprogress edits calc.ts without fixing multiply();
 # fixit turns the wrong multiply() right. E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
 # per call; E2E_STUB_USAGE=<n> records n output tokens per session (input = prompt bytes / 4) as the session's cost.
+# E2E_STUB_REVIEW=PASS|FLAG|BLOCK: the seal cross-review session replies with that verdict (tests/min/engine10-e2e-stub.sh).
 #   overlay: a plain `-p <task>` call copies E2E_STUB_OVERLAY over the cwd (h2h benchmark harness)
 # E2E_STUB_SPLIT (JSON text): the MASS-2 split planning session writes it to the file its brief names.
 # Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo); E2E_STUB_BUDGET_LOG gets its LOKI_BUDGET_LIMIT and LEDGER.
@@ -32,6 +33,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 case "$prompt" in
+  *"code reviewer"*) stage=review ;; # any model review session: the seal cross-review, or a post-PR reviewer
   *"Loki 10 plan stage"*) stage=plan ;;
   *"Loki 10 implement stage"*) stage=implement ;;
   *) stage=other ;;
@@ -81,6 +83,10 @@ case "$prompt" in # `loki plan --spec` (tests/min/triage-router.sh): write the s
       [ -n "$out" ] && printf '%s\n' "$E2E_STUB_SPLIT" > "$out"
     fi ;;
 esac
+if [ "$stage" = review ]; then # the seal cross-review (stages/xreview.ts): E2E_STUB_REVIEW=PASS|FLAG|BLOCK answers in claude's --output-format json shape, with a cost
+  if [ -n "${E2E_STUB_REVIEW:-}" ]; then printf '{"type":"result","result":"VERDICT: %s\\n- stub reviewer concern","total_cost_usd":0.01}\n' "$E2E_STUB_REVIEW"; fi
+  exit 0
+fi
 if [ "$stage" = "other" ] && [ "${E2E_STUB_MODE:-}" = "overlay" ]; then # tests/min/h2h-harness.sh: a raw `claude -p <task> --output-format json` contestant
   if [ -n "${E2E_STUB_SEEN_LOG:-}" ]; then find . -path ./.git -prune -o -type f -print >> "$E2E_STUB_SEEN_LOG"; fi # every file the contestant could read
   cp -R "$E2E_STUB_OVERLAY"/. .

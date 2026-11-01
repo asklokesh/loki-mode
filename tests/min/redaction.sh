@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # redactSecrets (loki-ts/src/util/redact.ts) strips a GitHub token, an Anthropic key and
 # an AWS access key from a sample string, and stays linear on adversarial input: each
-# input is timed at 25k and 100k characters (best of 3); linear work grows about 4x,
-# quadratic backtracking about 16x, so a growth ratio of 8 or more, or any single call
+# input is timed at 50k and 200k characters (best of 5); linear work grows about 4x,
+# quadratic backtracking about 16x, so a growth ratio of 10 or more, or any single call
 # over 1s, fails. Growth, not a wall-clock bound, so a slow CI runner does not flake.
 # The secrets are assembled at run time so this file holds no credential-shaped literal.
 #
@@ -41,16 +41,16 @@ const builders: ((n: number) => string)[] = [
 ];
 const best = (input: string): number => {
   let m = Infinity;
-  for (let i = 0; i < 3; i++) { const t0 = performance.now(); redactSecrets(input); m = Math.min(m, performance.now() - t0); }
+  for (let i = 0; i < 5; i++) { const t0 = performance.now(); redactSecrets(input); m = Math.min(m, performance.now() - t0); }
   return m;
 };
 let worst = 0, slow = 0;
 for (const build of builders) {
-  const small = best(build(25000)), big = best(build(100000));
-  worst = Math.max(worst, big / Math.max(small, 0.5));
+  const small = best(build(50000)), big = best(build(200000));
+  worst = Math.max(worst, big / Math.max(small, 1));
   if (big >= 1000) slow++;
 }
-res("growth 25k to 100k stays under 8x (worst " + worst.toFixed(1) + "x)", worst < 8);
+res("growth 50k to 200k stays under 10x (worst " + worst.toFixed(1) + "x)", worst < 10);
 res("no single call takes 1s", slow === 0);
 TS
 

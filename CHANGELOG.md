@@ -5,6 +5,32 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.111.0 (2026-11-01)
+
+One review per run instead of two, and real outcome numbers per run and per repo.
+
+### Changed
+
+- The post-PR council session is gone. A run starts at most one model review, before the receipt is sealed, and that review's verdict still lowers the result (a block caps it at PARTIAL; a flag is listed as not proven). Measured on real runs, the council had cost 19 to 21 percent of a run's spend and its findings were discarded; receipts now match the summed session cost to the cent.
+- The detached deep verify runs only the full suite, app boot and security scan, with no model session. A full-suite failure that was already red on the base commit no longer marks the PR status as failed.
+
+### Added
+
+- `loki stats --outcomes` (and `GET /v1/stats/outcomes` on the control plane) reports cost per VERIFIED run, first-pass rate, sessions p50 and p90, fix rounds, escalations, cache-read share and wall time p50 and p95 by task size, each with its sample size; a value with no data reads "not measured". `--since` and per-repo views are supported.
+- Run records separate cached from uncached input tokens. `/v1/cost/repos` uses the same cost-per-verified definition, which no longer counts ALREADY_SATISFIED as a success.
+
+## v11.110.0 (2026-11-01)
+
+Issue runs now see what the team already said on the issue.
+
+### Added
+
+- `loki start owner/repo#N` reads the issue's labels and the comments of trusted authors (OWNER, MEMBER or COLLABORATOR on GitHub; the accounts in `LOKI_JIRA_STEER_ACTORS` and `LOKI_LINEAR_STEER_ACTORS` for Jira and Linear). Bot comments, Loki's own comments and comments from anyone else are left out and counted. The context is capped at 16 KB, newest first, and passed as quoted issue data, never as instructions. Linear issues now include their labels.
+
+### Fixed
+
+- The redaction speed check no longer flakes on slow runners (larger inputs, best of five, a 10x growth bound that a quadratic regression still fails at about 15x).
+
 ## v11.109.0 (2026-11-01)
 
 Loki on Haiku now beats raw Claude Code on Haiku and on Opus on the repo's head-to-head benchmark: 8 of 8 tasks passed, faster and at a fraction of the cost.
