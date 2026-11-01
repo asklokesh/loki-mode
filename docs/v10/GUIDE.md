@@ -278,7 +278,7 @@ same:
 ```
 PR:         https://github.com/owner/repo/pull/1
 Verdict:    VERIFIED
-NOT PROVEN: full suite, app boot, council, security scan
+NOT PROVEN: full suite, app boot, security scan
 Cost:       $0.42 (claude, 212k tokens)
 Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 ```
@@ -369,9 +369,10 @@ NOT PROVEN lists what a run did not verify, so a passing run is never read
 as more thorough than it was. One entry is unconditional, written by Seal
 every time:
 
-- **The deep checks**: `full suite, app boot, council, security scan`.
+- **The deep checks**: `full suite, app boot, security scan`.
   They are deferred to a separate deep-verify pass, so Seal always lists
-  all four at seal time.
+  all three at seal time. The deep pass starts no model session: the one
+  review of a run is the cross-review before Seal.
 
 Seal also adds an entry whenever it applies, for example: `cost not
 measured (no iteration ids recorded)`, `kill blocking not enforced` for

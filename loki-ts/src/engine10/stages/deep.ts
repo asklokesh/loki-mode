@@ -1,4 +1,4 @@
-// loki-ts/src/engine10/stages/deep.ts -- E-23 Deep verify (ENGINE.md section 4). Runs after Seal + PR: full suite, app-boot probe, council, secret scan; reports via engine10-push.sh (comment + addendum + status). A refused or unavailable check is NOT PROVEN, never red; only a failing full suite or a secret match is failure. Rule of Two: assertWorkerEnv asserts no real GitHub token, since the deep worker runs repo code and reads untrusted diffs. Council goes through the injectable CouncilRunner; unwired, it is NOT PROVEN, never passing.
+// loki-ts/src/engine10/stages/deep.ts -- E-23 Deep verify (ENGINE.md section 4). Runs after Seal + PR: full suite, app-boot probe, secret scan; reports via engine10-push.sh (comment + addendum + status). A refused or unavailable check is NOT PROVEN, never red; only a failing full suite (minus failures already red on base) or a secret match is failure. Rule of Two: assertWorkerEnv asserts no real GitHub token, since the deep worker runs repo code. L003: no model session here; the run's one review is seal's pre-seal xreview, whose verdict and cost reach the receipt.
 import { installOwned } from "../../project_model/install.ts";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,55 +12,24 @@ import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv } from "../../project_model/package_suite.ts";
-import { classifyCheck, corroboratePass, failureExcerpt, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { failIds } from "../failures.ts"; import { suiteEmptyOnBase } from "../../runner/repo_profile.ts";
+import { classifyCheck, corroboratePass, failureExcerpt, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { failIds } from "../failures.ts"; import { attributeFullSuite, suiteEmptyOnBase } from "../../runner/repo_profile.ts";
 import { DEEP_CAP_S, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, STAGE_BUDGETS } from "../types.ts";
-import { REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
 import { DEFAULT_PUSH_SH, SHA_RE } from "./pr.ts";
 /** RunContext plus the value this stage needs that E-03 will eventually  inject (same local-extension pattern pr.ts's PrContext already uses). */
 export type DeepContext = RunContext & {
   pinnedOrigin?: string;
 };
-export interface CouncilInput {
-  runId: string;
-  diff: string;
-  files: string[];
-}
-export interface CouncilOutcome {
-  findings: unknown[];
-}
-/** Tests inject a fake; deepStage defaults to sessionCouncil, bare runDeep has none (NOT PROVEN). */
-export interface CouncilRunner {
-  run(input: CouncilInput, signal: AbortSignal): Promise<CouncilOutcome>;
-}
-/** Q18-04: one read-only reviewer session in a scratch dir outside the repo, diff as a file. A kill, nonzero exit or empty review throws, so the check stays NOT PROVEN. */
-export function sessionCouncil(sessions: SessionRunner): CouncilRunner {
-  return { async run(input, signal) {
-    const cwd = mkdtempSync(join(tmpdir(), "loki-deep-council-"));
-    try {
-      writeFileSync(join(cwd, "diff.patch"), input.diff, "utf8");
-      const r = await sessions.run({ stage: "deep", tier: "development", iterationId: `${input.runId}-council`, limitS: COUNCIL_LIMIT_S, signal, cwd, disallowedTools: `${REVIEW_GUARD_DENYLIST},Bash`,
-        brief: `You are a read-only code reviewer. Read diff.patch (changed files: ${input.files.join(", ")}). Do not write or run anything. Reply with one line per defect, each starting "FINDING:", or "LGTM".` });
-      if (r.killed || r.exit !== 0) throw new Error(`reviewer session ${r.killed ? "killed" : `exit ${r.exit}`}`);
-      const text = (r.summary ?? "").trim();
-      if (!text) throw new Error("reviewer returned no review");
-      const lines = text.split("\n").map((l) => l.trim()), findings = lines.filter((l) => l.startsWith("FINDING:"));
-      if (findings.length === 0 && !lines.includes("LGTM")) throw new Error("reviewer reply has no LGTM or FINDING: line");
-      return { findings };
-    } finally { rmSync(cwd, { recursive: true, force: true }); }
-  } };
-}
 /** ReceiptCheck (types.ts) plus a `reason` field the contract does not carry,  the same disclosed-extra-field pattern testmap.ts's EngineTestMap and  verify.ts's VerifyCheck already use. */
 export interface DeepCheck extends ReceiptCheck {
-  reason?: string; ids?: string[]; excerpt?: string; // excerpt: redacted failure text for the fix brief; ids: failing test ids of the real run (failIds), read by verify's baseline attribution
+  reason?: string; ids?: string[]; excerpt?: string; base_red?: boolean; // base_red: a full-suite fail whose every failing id already failed on base (repo-profile suites), never a red status; excerpt: redacted failure text for the fix brief; ids: failing test ids of the real run (failIds), read by verify's baseline attribution
 }
 export interface DeepOptions {
   pushScriptPath?: string;
   secretScanShPath?: string;
   appProbe?: (repoDir: string, lokiDir: string) => Promise<AppProbeResult>; // TEN-GATES-06: defaults to util/app_probe.ts appProbe (boots via app-runner.sh, always stops)
   secureScanPath?: string; // secure-scan.py override, tests only
-  council?: CouncilRunner; changed?: string[]; proofFiles?: string[]; wallBaseRed?: boolean; targetPassed?: boolean; /* a Wall or task-named check already passed with n>0 */ // FC-SEAL-NA-AS-UNPROVEN: the diff and the Wall verdict decide whether a package without tests is N/A
-  maxCouncilDiffBytes?: number;
+  changed?: string[]; proofFiles?: string[]; wallBaseRed?: boolean; targetPassed?: boolean; /* a Wall or task-named check already passed with n>0 */ // FC-SEAL-NA-AS-UNPROVEN: the diff and the Wall verdict decide whether a package without tests is N/A
   scanAddedSince?: string; // PR-FIRST-4 (verify only): scan just the lines added since this commit, and the path of a file new since it, so a match already on base never fails the run
   fullSuiteTimeoutMs?: number;
   path?: string; // PATH override, tests only, so "missing tool" never depends on the host
@@ -68,8 +37,6 @@ export interface DeepOptions {
   pushExtraEnv?: Record<string, string>; // merged into the push child's env, tests only (e.g. a stub's own log path)
 }
 export const DEFAULT_SECRET_SCAN_SH = new URL("../../../../autonomy/lib/secret-scan.sh", import.meta.url).pathname;
-const MAX_COUNCIL_DIFF_BYTES = 400_000; // ENGINE.md section 2 cause 4: a 431361-byte context was refused
-const COUNCIL_LIMIT_S = 600;
 const FULL_SUITE_TIMEOUT_MS = 300_000; // 5 min per runner; deep's own stage limit (2700s) is the outer bound
 /** One check per detected runner, run to completion (no retry: flaky-rerun  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
 export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
@@ -113,26 +80,6 @@ async function runAppBoot(ctx: RunContext, opts: DeepOptions, checks: DeepCheck[
   try { r = await (opts.appProbe ?? appProbe)(ctx.repoDir, join(ctx.repoDir, ".loki")); } catch (err) { r = { checks: [{ name: "app boot", cmd: "autonomy/app-runner.sh", result: "not_run", duration_s: 0, reason: `app probe threw: ${(err as Error).message}` }], pid: null, url: null }; }
   if (!r.checks.some((c) => c.name === "app boot")) notProven.add("not run: app boot (app probe reported no result)");
   for (const c of r.checks) { if (c.result === "n/a") { notProven.add(`${NA_PREFIX}${c.name} (${c.reason ?? "not applicable"})`); continue; } checks.push(c as DeepCheck); if (c.result === "not_run") notProven.add(`not run: ${c.name} (${c.reason ?? "no reason given"})`); }
-}
-async function runCouncilCheck(
-  ctx: RunContext, changed: string[], baseSha: string, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>,
-): Promise<void> {
-  const codeFiles = changed.filter((f) => !f.endsWith(".md")); // "generated docs excluded" (ENGINE.md section 4)
-  if (codeFiles.length === 0) { notProven.add("council (no non-doc changes to review)"); return; }
-  if (!opts.council) { notProven.add("council (not wired: see the contract-gap note in stages/deep.ts)"); return; }
-  const diffResult = await safeGitRun(ctx.repoDir, ["diff", "--no-color", baseSha, "HEAD", "--", ...codeFiles], { timeoutMs: 20_000 });
-  if (diffResult.exitCode !== 0 || !diffResult.stdout.trim()) { notProven.add("council (refused: empty or failed diff, nothing to review)"); return; }
-  const diff = diffResult.stdout;
-  const maxBytes = opts.maxCouncilDiffBytes ?? MAX_COUNCIL_DIFF_BYTES;
-  if (Buffer.byteLength(diff, "utf8") > maxBytes) { notProven.add("council (context oversized, refused)"); return; }
-  const started = Date.now();
-  try {
-    const outcome = await opts.council.run({ runId: ctx.runId, diff, files: codeFiles }, signal);
-    checks.push({ name: "council", cmd: "dispatchClaudeAgents", result: "pass", duration_s: (Date.now() - started) / 1000 });
-    void outcome; // findings are informational for this slice; council blocking policy is not part of E-23's contract
-  } catch (err) {
-    notProven.add(`council (refused: ${(err as Error).message})`);
-  }
 }
 /** One "security scan" check over the changed files: secret-scan.sh's two matchers (sourced, never edited) plus secure-scan.py.  A secret hit or a HIGH secure-scan finding is fail; else a missing or broken scanner is not_run (NOT PROVEN), never pass. */
 export async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
@@ -195,10 +142,11 @@ export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepO
   const checks: DeepCheck[] = [];
   const notProven = new Set<string>();
   await runFullSuite(ctx, signal, { ...opts, changed }, checks, notProven);
+  const fa = attributeFullSuite(ctx.repoDir, ctx.baseSha, checks, [], changed); // L003: the same base attribution verify uses, so a suite already red on base never marks the PR red
+  for (const c of checks) if (fa.preExistingChecks.includes(c.name)) Object.assign(c, { base_red: true, reason: `every failing test id already failed on base ${ctx.baseSha.slice(0, 12)}` });
   await runAppBoot(ctx, opts, checks, notProven);
-  await runCouncilCheck(ctx, changed, ctx.baseSha, signal, opts, checks, notProven);
   await runSecretScan(ctx, changed, opts, checks, notProven);
-  const statusState: "success" | "failure" = checks.some((c) => c.result === "fail") ? "failure" : "success";
+  const statusState: "success" | "failure" = checks.some((c) => c.result === "fail" && !c.base_red) ? "failure" : "success";
   const notProvenList = [...notProven].filter((n) => !naNote(n)), notApplicable = [...notProven].filter(naNote).map(naText);
   const seal = ctx.outputs().seal as { receipt_sha256?: string } | undefined;
   const addendumBody = {
@@ -226,11 +174,11 @@ export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepO
 export const deepStage: Stage = {
   name: "deep",
   ...STAGE_BUDGETS.deep,
-  run: (ctx, signal) => runDeep(ctx as DeepContext, signal, { council: sessionCouncil(ctx.sessions) }),
+  run: (ctx, signal) => runDeep(ctx as DeepContext, signal),
 };
 export const stage = deepStage;
 /** `engine10 deep-worker <run-id> <provider> <model> <origin>`: the detached post-PR deep verify the supervisor spawns (origin is appended at spawn time). Stage outputs and base sha come from the run's event log; events go nowhere (the child's stdio is ignored and only the supervisor writes events.jsonl), results are posted by runDeep. Exit 0 once a verdict was posted or recorded, 1 when deep verify failed to run, 2 on bad args. */
-export async function deepWorker(args: string[], deps: { sessions?: SessionRunner; opts?: DeepOptions } = {}): Promise<number> {
+export async function deepWorker(args: string[], deps: { opts?: DeepOptions } = {}): Promise<number> {
   const [runId, provider = "claude", model = "", origin = ""] = args;
   if (!runId) { process.stderr.write("engine10 deep-worker: missing run id\n"); return 2; }
   const repoDir = process.cwd(), lokiRoot = join(repoDir, ".loki"), runDir = join(lokiRoot, "runs", runId);
@@ -239,9 +187,8 @@ export async function deepWorker(args: string[], deps: { sessions?: SessionRunne
   try { outputs = outputsFromEvents(readEvents(join(repoDir, eventsRelPath(runId)))); } catch (err) { process.stderr.write(`engine10 deep-worker: cannot read run events: ${(err as Error).message}\n`); return 1; }
   const baseSha = outputs["intake"]?.["base_sha"];
   if (typeof baseSha !== "string" || !baseSha) { process.stderr.write("engine10 deep-worker: run has no recorded base sha\n"); return 1; }
-  const { createSessionRunner, resolveModel } = await import("../session.ts");
-  const resolved = model || resolveModel(provider);
-  const sessions = deps.sessions ?? createSessionRunner({ provider, model: resolved, emit: () => {}, lokiRoot, remaining: () => null });
+  const resolved = model || (await import("../session.ts")).resolveModel(provider);
+  const sessions: SessionRunner = { run: () => Promise.reject(new Error("deep verify starts no model session (L003)")) }; // its cost could never reach the sealed receipt
   // ctx.model is the run's own model passed through (a DeepContext field, not a session option object); built without a conditional spread so the never-below-raw guard does not read it as a session pin.
   const pinned = origin ? { pinnedOrigin: origin } : {};
   const ctx: DeepContext = {
@@ -254,7 +201,7 @@ export async function deepWorker(args: string[], deps: { sessions?: SessionRunne
   };
   const ac = new AbortController();
   for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => ac.abort());
-  const r = await runDeep(ctx, ac.signal, { council: sessionCouncil(sessions), ...deps.opts }); process.stderr.write((await import("../../util/base_guard.ts")).finishDeferredRun(repoDir, runId)); // the run-end cleanup the supervisor deferred while this ran
+  const r = await runDeep(ctx, ac.signal, { ...deps.opts }); process.stderr.write((await import("../../util/base_guard.ts")).finishDeferredRun(repoDir, runId)); // the run-end cleanup the supervisor deferred while this ran
   if (r.status !== "completed") { process.stderr.write(`engine10 deep-worker: ${r.reason ?? r.status}\n`); return 1; }
   return 0;
 }

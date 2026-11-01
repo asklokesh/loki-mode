@@ -5,6 +5,7 @@ import type { Db } from "../db/migrate.ts";
 import { events, runs } from "../db/schema.ts";
 import { blockedQuestion } from "./answer.ts";
 import { diffStatFor } from "./diffstat.ts";
+import { cacheReadShare } from "./routes/stats.ts";
 import { effectiveVerdict, pubkeysFromEnv, sealedPrefix, SUCCESS_VERDICTS, verifyRunIntegrity } from "./integrity.ts";
 
 const str = (x: unknown): string | null => (typeof x === "string" ? x : null);
@@ -14,11 +15,16 @@ export function loadEvents(db: Db, sourceId: string, runId: string): EventEnvelo
     .map((r) => ({ v: 1, seq: r.seq, ts: r.ts, run: r.runId, type: r.type, stage: r.stage, data: r.data }) as EventEnvelope);
 }
 
-/** Rebuilds the runs projection row from stored events with the real fold(). The only writer of `runs`. */
-export function rebuildRun(db: Db, sourceId: string, runId: string): void {
-  const evs = loadEvents(db, sourceId, runId);
-  if (evs.length === 0) return;
-  const f = fold(sealedPrefix(evs)); // the verdict comes from the authenticated prefix; lines after the sealing line are unauthenticated
+/** The task size the plan stage recorded (`variant` data.size, else the plan stage's own data.size: small, normal or large); null when the run never sized. */
+const sizeOf = (evs: EventEnvelope[]): string | null =>
+  str(evs.findLast((e) => e.type === "variant" && typeof e.data.size === "string")?.data.size) ?? str(evs.findLast((e) => e.stage === "plan" && e.type.startsWith("stage.") && typeof e.data.size === "string")?.data.size);
+/** L002: event types counted per run. fix_rounds = fix.round lines; escalations = escalated (the worker stopped the run with a stop reason) plus route.escalated (the router climbed to a stronger model). */
+export const ESCALATION_EVENTS: ReadonlySet<string> = new Set(["escalated", "route.escalated"]);
+
+/** The runs-projection row for one run's events, without the ingest-owned conflict flag. The one event-to-row mapping: rebuildRun stores it and `loki stats --outcomes` reads local runs through it. */
+export function projectRun(evs: EventEnvelope[], sourceId: string, runId: string) {
+  const sealed = sealedPrefix(evs); // the verdict comes from the authenticated prefix; lines after the sealing line are unauthenticated
+  const f = fold(sealed);
   const keys = pubkeysFromEnv();
   const integ = verifyRunIntegrity(evs, { pubkeyFor: keys }); // EL-FC08b: tampered is the supervisor flag OR any ingest-side integrity failure
   const tampered = f.run.tampered || integ.tampered;
@@ -26,7 +32,7 @@ export function rebuildRun(db: Db, sourceId: string, runId: string): void {
   const sd = f.run.started?.data ?? {};
   const done = f.run.completed?.data ?? {};
   const pr = evs.find((e) => e.type === "pr.opened")?.data;
-  const row = {
+  return {
     sourceId, runId,
     originRepo: str(sd.origin_repo), issueRef: str(sd.issue_ref), taskSource: str(sd.task_source),
     provider: str(sd.provider), model: str(sd.model), groupId: str(sd.group_id), unitId: str(sd.unit_id),
@@ -34,11 +40,20 @@ export function rebuildRun(db: Db, sourceId: string, runId: string): void {
     verdict: f.run.verdict,
     prUrl: str(done.pr_url) ?? str(pr?.url), prDraft: typeof pr?.draft === "boolean" ? Number(pr.draft) : null,
     costUsd: f.cost.usd, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total, tokenSessions: tampered ? null : evs.filter((e) => e.type === "cost" && typeof e.data.input_tokens === "number").length,
-    inputTokens: f.cost.inputTokens + f.cost.cacheReadTokens + f.cost.cacheCreationTokens, outputTokens: f.cost.outputTokens,
+    // L002: input_tokens is uncached input only; cache reads and cache writes have their own columns
+    inputTokens: f.cost.inputTokens, outputTokens: f.cost.outputTokens, cacheReadTokens: f.cost.cacheReadTokens, cacheCreationTokens: f.cost.cacheCreationTokens,
+    fixRounds: sealed.filter((e) => e.type === "fix.round").length, escalations: sealed.filter((e) => ESCALATION_EVENTS.has(e.type)).length, size: sizeOf(sealed),
     wallS: typeof done.wall_s === "number" ? done.wall_s : null,
     lastSeq: f.lastSeq, lastEventAt: evs[evs.length - 1]?.ts ?? null, tampered: Number(tampered),
     attested: Number(integ.attested), sigChecked: Number(integ.sig_checked), integrityKeyFp: keys.fingerprint ?? "", integrityReasons: JSON.stringify(integ.reasons),
   };
+}
+
+/** Rebuilds the runs projection row from stored events with the real fold(). The only writer of `runs`. */
+export function rebuildRun(db: Db, sourceId: string, runId: string): void {
+  const evs = loadEvents(db, sourceId, runId);
+  if (evs.length === 0) return;
+  const row = projectRun(evs, sourceId, runId);
   // conflict is owned by ingest, so it is left out of the update set and survives a rebuild
   db.insert(runs).values(row).onConflictDoUpdate({ target: [runs.sourceId, runs.runId], set: row }).run();
 }
@@ -50,7 +65,8 @@ const parseRun = (r: typeof runs.$inferSelect) => ({
   group_id: r.groupId, unit_id: r.unitId, provider: r.provider, model: r.model, started_at: r.startedAt, ended_at: r.endedAt, verdict: r.verdict,
   pr_url: r.prUrl, pr_draft: r.prDraft === null ? null : r.prDraft === 1,
   cost_usd: r.costUsd, partial_usd: r.partialUsd, measured_sessions: r.measuredSessions, total_sessions: r.totalSessions, token_sessions: r.tokenSessions,
-  input_tokens: r.inputTokens, output_tokens: r.outputTokens, wall_s: r.wallS, last_seq: r.lastSeq,
+  input_tokens: r.inputTokens, output_tokens: r.outputTokens, cache_read_tokens: r.cacheReadTokens, cache_creation_tokens: r.cacheCreationTokens,
+  cache_read_share: cacheReadShare(r), fix_rounds: r.fixRounds, escalations: r.escalations, size: r.size, wall_s: r.wallS, last_seq: r.lastSeq,
   last_event_at: r.lastEventAt, tampered: r.tampered === 1, conflict: r.conflict === 1,
   attested: r.attested === 1, sig_checked: r.sigChecked === 1, integrity_reasons: reasonsOf(r.integrityReasons),
   effective_verdict: effectiveVerdict({ verdict: r.verdict, tampered: r.tampered === 1, attested: r.attested === 1, sig_checked: r.sigChecked === 1 }),
