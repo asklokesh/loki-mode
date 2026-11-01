@@ -17,8 +17,8 @@
 #     the project's); a change to a module no test imports, or to calc.py whose passing test never
 #     calls the new function, still caps (nothing exercised it; the stub replaces a comment line
 #     below add(), which must not credit add() as changed).
-#   PR runs (L003, local bare origin, deep worker awaited): one review session per
-#               run (the pre-seal cross-review), no -council iteration anywhere,
+#   PR runs (L003, local bare origin, deep worker awaited): with LOKI_REVIEW_DEFAULT=1, one review session per
+#               medium run (the pre-seal cross-review), no -council iteration anywhere,
 #               BLOCK caps at PARTIAL, a FLAG lands on the receipt, result-cost sum
 #               equals receipt cost on 3 draft runs, a full suite red only on base
 #               ids is status success and a new failing id stays failure.
@@ -40,6 +40,7 @@
 #      never-calls-multiply leg reads VERIFIED: the replaced comment credits add()).
 #   10. loki-ts/src/engine10/stages/deep.ts: DEFAULT_SECRET_SCAN_SH back to new URL("../../../../autonomy/...",
 #      import.meta.url) (rebuild dist); the high-tier leg reads "secret-scan.sh not found" and PARTIAL.
+#   11. loki-ts/src/engine10/stages/xreview.ts: reviewDefaultOn returns true (the default unit line must fail).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -181,7 +182,7 @@ run_pr() {
     git -C "$REPO" remote add origin "$D/origin.git"
     git -C "$REPO" push -q origin main
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u GH_TOKEN -u GITHUB_TOKEN \
-        -u LOKI_REVIEW_PROVIDER -u LOKI_XVENDOR_DEFAULT -u LOKI_RISK_TIER -u LOKI_PR_DRAFT \
+        -u LOKI_REVIEW_PROVIDER -u LOKI_REVIEW_DEFAULT -u LOKI_XVENDOR_DEFAULT -u LOKI_RISK_TIER -u LOKI_PR_DRAFT \
         LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" GH_CONFIG_DIR="$D/ghcfg" \
         E2E_STUB_MODE=done E2E_STUB_LOG="$D/stub.log" E2E_STUB_ITER_LOG="$D/iter.log" E2E_STUB_USAGE=10 \
         LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$D/k.pem" "$@" \
@@ -211,7 +212,7 @@ print(len(pr), bool(pr and pr[0]["data"].get("draft")), sum(e.get("type") == "de
 PY
 }
 
-run_pr block none LOKI_RISK_TIER=medium E2E_STUB_REVIEW=BLOCK
+run_pr block none LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=BLOCK
 f="$(pr_facts)"; set -- $f
 [ "$1" = 1 ] && [ "$3" = 1 ] && ok "medium PR run: PR opened and deep verify ran" || { bad "medium PR run facts: $f"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
 [ "$5" = 0 ] && ok "no result-cost file or event carries a -council iteration" || bad "council iteration found after the run ($5)"
@@ -220,7 +221,7 @@ f="$(pr_facts)"; set -- $f
 [ "$7" = True ] && ok "draft run: result-cost sum equals receipt cost to the cent" || bad "draft run: cost sum differs from the receipt"
 grep -q '"base_red"' "$RUNDIR/receipt-addendum-1.json" 2>/dev/null && bad "addendum marked a suite base_red with no red base" || ok "no base_red mark on a green base"
 
-run_pr flag none LOKI_RISK_TIER=medium E2E_STUB_REVIEW=FLAG LOKI_PR_DRAFT=1
+run_pr flag none LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=FLAG LOKI_PR_DRAFT=1
 f="$(pr_facts)"; set -- $f
 [ "$4" = 1 ] && [ "$5" = 0 ] && ok "FLAG run: one review session, no council" || bad "FLAG run facts: $f"
 grep -q 'cross-review flag (claude): stub reviewer concern' "$RUNDIR/receipt.json" && ok "reviewer FLAG finding lands on the receipt as NOT PROVEN" || bad "FLAG finding missing from the receipt"
@@ -238,8 +239,9 @@ f="$(pr_facts)"; set -- $f
 [ "$8" = failure ] && ok "a new failing id beyond the base-red ones keeps status failure" || bad "new full-suite failure gave status $8 ($f)"
 
 # Unit: every risk tier plans at most the one pre-seal reviewer, and the receipt credits "one reviewer" only from it.
+# The unconfigured same-vendor review is opt-in (LOKI_REVIEW_DEFAULT=1, xreview.ts reviewDefaultOn): without it no tier plans one.
 # The run start sits 60s back: readRiskRecord ignores a record older than the run, and a same-millisecond start raced it on Linux CI.
-U="$(cd "$ROOT/loki-ts" && bun -e '
+unit_review() { (cd "$ROOT/loki-ts" && env -u LOKI_REVIEW_PROVIDER -u LOKI_XVENDOR_DEFAULT "$@" bun -e '
 const { mkdtempSync, mkdirSync, writeFileSync } = require("node:fs"), { join } = require("node:path");
 const x = await import("./src/engine10/stages/xreview.ts"), cr = await import("./src/util/check_result.ts");
 const out = [];
@@ -252,8 +254,11 @@ out.push(`block=${x.minVerdict("VERIFIED", { provider: "claude", level: "block",
 const risk = { tier: "high", checks_selected: ["targeted tests", "one reviewer"], checks_deferred: ["one reviewer"] };
 out.push(`gapsReviewed=${cr.deepGaps(risk, [], [], true).notProven.join("|") || "-"}`, `gapsNot=${cr.deepGaps(risk, [], [], false).notProven.join("|") || "-"}`, `council=${cr.DEEP_ITEMS.includes("council")}`);
 console.log(out.join(" "));
-' "$T" 2>&1)"
+' "$T" 2>&1); }
+U="$(unit_review LOKI_REVIEW_DEFAULT=1)"
 [ "$U" = "low=0 medium=1 high=1 block=PARTIAL flag=VERIFIED gapsReviewed=- gapsNot=one reviewer council=false" ] \
     && ok "unit: reviewer planned on medium and high only, BLOCK caps at PARTIAL, one reviewer credited only by a run review" || bad "unit gave: $U"
+U="$(unit_review -u LOKI_REVIEW_DEFAULT)"
+case "$U" in "low=0 medium=0 high=0 "*) ok "unit: with no reviewer configured and no LOKI_REVIEW_DEFAULT, no tier plans a review session" ;; *) bad "unit (default) gave: $U" ;; esac
 
 finish

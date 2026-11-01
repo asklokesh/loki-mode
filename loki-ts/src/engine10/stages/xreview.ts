@@ -62,11 +62,13 @@ export function parseReview(p: ReviewProvider, out: string): CrossReview {
   const notes = level === "pass" ? [] : (reasons.length ? reasons : ["no reason given"]).map((r) => `cross-review ${level} (${p}): ${r}`);
   return { provider: p, level, notes };
 }
+/** Rule 6 (h2h 2026-11-01, 115 Loki runs): the unconfigured same-vendor review changed no verdict and was 74% of Loki-on-Haiku spend, so it is opt-in. A configured reviewer (loki.yaml review:, LOKI_REVIEW_PROVIDER, a reviewer agent) still runs. */
+export const reviewDefaultOn = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_REVIEW_DEFAULT"] === "1";
 // Review time box: 300s (real claude reviews often exceed 60s); LOKI_E10_REVIEW_BOX_S overrides (tests). Seal's limit grows by it when a review is planned.
 export const reviewBoxS = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_E10_REVIEW_BOX_S"]); return n > 0 ? n : 300; };
 function pickReviewer(ctx: RunContext, agent: ReturnType<typeof configuredReviewer>): { p: ReviewProvider | null; dflt: boolean } {
   const p = reviewProvider(ctx.repoDir, process.env, ctx.provider) ?? agent?.provider ?? null; if (p) return { p, dflt: false };
-  const ok = !isOff(process.env["LOKI_REVIEW_PROVIDER"]) && (ctx.provider === "claude" || ctx.provider === "codex") && ["medium", "high"].includes(String(readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier)); // FC-MEDIUM-REVIEWER-UNCREDITED + L003: medium and high promise "one reviewer", so with nothing configured run the run's own CLI (same vendor); LOKI_REVIEW_PROVIDER=off|none opts out
+  const ok = reviewDefaultOn() && !isOff(process.env["LOKI_REVIEW_PROVIDER"]) && (ctx.provider === "claude" || ctx.provider === "codex") && ["medium", "high"].includes(String(readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier)); // FC-MEDIUM-REVIEWER-UNCREDITED + L003: with nothing configured, medium and high run the run's own CLI as the one reviewer only when LOKI_REVIEW_DEFAULT=1; otherwise "one reviewer" stays on NOT PROVEN (never credited); LOKI_REVIEW_PROVIDER=off|none opts out
   return { p: ok ? (ctx.provider as ReviewProvider) : null, dflt: ok };
 }
 // Box clamped to the time left before the run backstop (minus 25s: seal tail + margin, 30s: diff/help-cache); below MIN_REVIEW_S (a claude review cannot finish sooner) no review runs.

@@ -148,10 +148,13 @@ def config_env(config, env):
         env["LOKI_SESSION_MODEL"] = "haiku"
     if config in SEQUENCE_CONFIGS:
         env["LOKI_SESSION_MODEL"] = "haiku"
+    if config == "loki-haiku-learn":
+        # util/pr_lessons.ts: lessons and the worked example reach the brief only on opt-in (lessonsInjected,
+        # workedExampleInjected); this arm turns both on.
+        env["LOKI_PR_LESSONS"] = "1"
+        env["LOKI_WORKED_EXAMPLE"] = "1"
     if config == "loki-haiku-nolearn":
-        # util/pr_lessons.ts: LOKI_NO_PR_LESSONS=1 empties retrieveLessons, LOKI_WORKED_EXAMPLE=0 drops the
-        # worked example (workedExampleFor and the brief's example files in e10ext/context.ts).
-        env["LOKI_WORKED_EXAMPLE"] = "0"
+        # LOKI_NO_PR_LESSONS=1 turns both off whatever else is set (also the default since lessons became opt-in).
         env["LOKI_NO_PR_LESSONS"] = "1"
     return env
 

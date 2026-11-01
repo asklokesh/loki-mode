@@ -9,7 +9,7 @@ import { safeGitSpawn } from "../util/safe_git.ts";
 export const wallManifestEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !["0", "off", "false", "no"].includes((env.LOKI_E10_WALL_MANIFEST ?? "").toLowerCase());
 const CONFIG = /^(package\.json|bunfig\.toml|(vitest|jest)\.config\.[cm]?[jt]s|pytest\.ini|pyproject\.toml|setup\.cfg|tox\.ini|go\.mod|Cargo\.toml)$/;
 const TESTISH = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$/;
-const SOURCE = /\.(py|[cm]?[jt]sx?)$/;
+const SOURCE = /\.(py|[cm]?[jt]sx?|go|rs)$/; // Go and Rust: signatures only (util/context_pack.ts langSignatures), so a Wall author sees the real constructor arguments
 const MAX_BLOB = 200_000, MAX_FILES = 300, MAX_NAMED = 5, GIT_TIMEOUT_MS = 5_000;
 // --no-replace-objects: a replace ref must never change what the sealed tree read returns.
 const git = (repoDir: string, args: string[], input?: string): Buffer | null => {

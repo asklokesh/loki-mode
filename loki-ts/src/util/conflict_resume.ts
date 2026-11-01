@@ -230,9 +230,11 @@ async function legacyReauthor(ctx: RunContext, first: SessionRunOptions, firstSe
 }
 
 // Delivery over a Wall conflict. The Wall author never sees the code, so a conflict the implementer (or a fix round that left the tree unchanged) raises
-// while only Wall files fail, and the repo's own tests ran and passed on a non-empty diff, is a Wall defect: it never discards correct code. The failing
-// Wall files leave the tree and the Wall, verify runs once more without them, and only when that verify is clean is the work delivered, with the files
-// named NOT PROVEN and the verdict capped at PARTIAL (a verify not_proven note). Anything short of that leaves the conflict standing as before (BLOCKED).
+// while only Wall files fail on a non-empty diff is a Wall defect: it never discards correct code. The failing Wall files leave the tree and the Wall,
+// verify runs once more without them, and only when that verify is clean AND one of the repo's own checks (a targeted test or the full suite) ran and
+// passed is the work delivered, with the files named NOT PROVEN and the verdict capped at PARTIAL (a verify not_proven note). A full-suite failure before
+// the re-verify does not stand in the way: a Wall file that breaks its directory's build (a Go package clause, a Rust call the crate cannot compile) fails
+// the whole suite, and the re-verify decides it. Anything short of that leaves the conflict standing as before (BLOCKED).
 export const WALL_CONFLICT_DISCARD = "the implementer reported it conflicts with the task while the repo's own tests pass on the change: Wall defect, discarded";
 type Outs = Partial<Record<string, Record<string, unknown>>>;
 const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
@@ -246,7 +248,6 @@ export function wallConflictDefects(o: Outs, repoDir: string): string[] | null {
   const isWall = (c: Record<string, unknown>): boolean => wallRel.has(fileOf(String(c.name))), wallFail = checks.filter((c) => isWall(c) && c.result === "fail");
   const own = checks.filter((c) => !isWall(c) && !String(c.name).startsWith("holdout") && !String(c.name).startsWith("full suite"));
   if (!wallFail.length || own.some((c) => c.result === "fail" && c.owner !== "harness" && !preRed.includes(String(c.name)))) return null;
-  if (!own.some((c) => c.result === "pass" && (typeof c.n !== "number" || c.n > 0))) return null; // the repo's own tests executed and passed
   if (!strList(v.changed_files).some((f) => !wallRel.has(f) && !f.startsWith(".loki/"))) return null; // nothing to deliver
   return [...new Set(wallFail.map((c) => fileOf(String(c.name))))];
 }
@@ -261,8 +262,10 @@ export async function deliverOverWallConflict(o: Outs, repoDir: string, reverify
   w.discarded = [...((w.discarded as unknown[] | undefined) ?? []), ...files.map((file) => ({ file, reason: WALL_CONFLICT_DISCARD }))];
   for (const f of files) emit(f, WALL_CONFLICT_DISCARD);
   await reverify();
-  const v = o.verify;
+  const v = o.verify, wallLeft = new Set(((w.files as { path: string }[] | undefined) ?? []).map((f) => (isAbsolute(f.path) ? relative(repoDir, f.path) : f.path)));
   if (!v || v.stopped_at || ((v.failures_grouped as unknown[] | undefined) ?? []).length > 0 || Number(v.holdout_failed ?? 0) > 0) return null; // the conflict stands; the discarded files stay listed
+  const ownPass = ((Array.isArray(v.checks) ? v.checks : []) as Record<string, unknown>[]).some((c) => c.result === "pass" && (typeof c.n !== "number" || c.n > 0) && !String(c.name).startsWith("holdout") && !wallLeft.has(String(c.name).slice(String(c.name).indexOf(":") + 1)));
+  if (!ownPass) return null; // the repo's own tests (targeted or the full suite) executed and passed on the delivered tree
   v.not_proven = [...strList(v.not_proven), `Delivered over an implementer conflict with the Wall: ${files.join(", ")} discarded as a Wall defect, so this change is proven only by the repo's own tests (${oneLine(String(o.implement?.spec_conflict_reason ?? ""))})`];
   o.implement = { ...o.implement, exit: "done", conflict_delivered: files };
   return files;
