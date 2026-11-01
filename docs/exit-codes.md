@@ -39,7 +39,7 @@ into the durable contract further down.
 | 2 | (preflight) | Usage, missing provider CLI or not a repository, before any spend |
 | 3 | BUDGET_STOP | A cost or time cap ended the run |
 | 4 | BLOCKED | Contradictory spec (SPEC_CONFLICT) |
-| 5 | STALLED | The same failure three times |
+| 5 | STALLED | A fix round left the same failures, so fixing stopped |
 | 6 | PARTIAL | Done but not fully proven; before this release PARTIAL exited 1 like FAILED |
 | 130 | CANCELLED | SIGINT or SIGTERM during a run (143 for SIGTERM) |
 

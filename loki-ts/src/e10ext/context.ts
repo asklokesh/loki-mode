@@ -21,8 +21,8 @@ export const FINISH_LINE = "Finish with exactly one line: LOKI_DONE, or LOKI_ALR
 export const FIXED_RULES = [
   "You are the Loki 10 implement stage, doing the complete task described below in this repository. Do whatever a senior engineer would do to finish it correctly: read, change and test as needed across any files the task requires.",
   "Rules:",
-  "- The Wall tests are read-only: do not edit or delete them. Existing test files are append-only: you may add new test functions, but never edit or delete an existing one.",
-  "- Exception: when the task text itself states the new expected value of an existing assertion, change only that literal in that assertion; never remove, skip or loosen an assertion, and never edit one the task text does not name.",
+  "- The Wall tests are read-only: do not edit or delete them. Test files that existed before this run are read-only too: the harness restores any edit to one after your session unless the task names that file or asks to change tests, so make your source change satisfy them and put new tests in new files.",
+  "- Exception: when the task names an existing test file or asks to change tests, change only what it asks; never remove, skip or loosen any other assertion. An existing test that contradicts the task otherwise is a spec conflict: cite it.",
   "- Run any tests you need, including the package's full suite (the Project Model commands below say how). The impacted tests named below are a starting hint, not a limit. The harness re-runs those checks after you stop; a pass that exists only in your reply does not count. Run tests with the exact command the Project Model lists, never a shortened variant that changes how imports resolve; never create files or symlinks in a test directory to make an import work.",
   "- Never leave a long-lived server running.",
   "- Never kill processes.",

@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.106.0 (2026-11-01)
+
+Runs stop spending money on fixes that cannot land, and the agent can no longer pass by editing tests that already existed.
+
+### Fixed
+
+- Test files that existed before the run are read-only for the agent: an edit or deletion is restored after the session unless the task names that file or asks to change tests. New test files are kept. On a real 48-file run this would have restored all 20 edits flagged as weakened tests.
+- A fix round that leaves the same failing tests ends the fix loop instead of starting another round.
+- A fix session that reports a conflict with the task is not retried.
+- A fix round stopped at its time limit now counts as a round, so the next round starts fresh instead of resuming the stopped session.
+- Fix sessions get a short brief: the failing tests, their rerun command and first error lines, and the diff of what the run changed.
+- When the plan names files, edits outside that list are listed on the receipt as out of scope.
+
 ## v11.105.0 (2026-11-01)
 
 `loki backlog` now sorts every issue before spending a run on it, and says why.

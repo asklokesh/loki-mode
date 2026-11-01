@@ -1,46 +1,30 @@
-// E-17: Fix rounds (ENGINE.md 4, 16). One fix round is one provider session with the same brief rules as implement, plus grouped verify failures, plan and diff stat. The machine loops [Fix -> Fast verify], calling this stage
+// E-17: Fix rounds (ENGINE.md 4, 16). One fix round is one provider session: the fixed rules, the task, the failing tests with their first error lines and the diff of the files the run changed (no plan, repo map or file list, so the session does not reread the repo). The machine loops [Fix -> Fast verify], calling this stage
 // again after each failure; MAX_FIX_ROUNDS caps rounds itself (a 3rd call is a no-op stage.skipped, moving to Seal/PARTIAL). Depends on session.ts/verify.ts only through types.ts shapes.
-import { briefCtx, buildImplementBrief, impactedTests } from "./implement.ts";
+import { withStagePrefix } from "../../features/lean_prefix.ts"; import { FINISH_LINE, FIXED_RULES } from "../../e10ext/context.ts";
 import { routedFix, routerActive } from "../../runner/router/unit_model.ts";
 import { cascadeDowngrade, escalationModel } from "../sizing.ts";
-import { MAX_FIX_ROUNDS, type RunContext, type Stage, type StageResult } from "../types.ts";
+import { MAX_FIX_ROUNDS, type RunContext, type Stage, type StageResult, taskBlock } from "../types.ts";
 import type { FailureGroup } from "../failures.ts";
 import { hooks } from "../hooks.ts";
 import { treeFingerprint } from "../../util/anti_loop.ts";
 import { buildFixResumeBrief, currentDiff, holdoutNote, runFixSession } from "../../runner/session_resume.ts";
-import { adjudicateWallConflict, resumeAfterConflict } from "../../util/conflict_resume.ts"; import { type ReadOnlyFile, restoreReadOnly } from "./implement.ts";
+import { adjudicateWallConflict } from "../../util/conflict_resume.ts"; import { type ReadOnlyFile, restoreReadOnly } from "./implement.ts"; import { restoreBaseTests } from "../../util/test_guard.ts";
 import { installOwned } from "../../project_model/install.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
 function isTestFailure(g: FailureGroup): boolean { return !g.signature.startsWith("lint:") && g.signature !== "select-tests"; }
 
-export function buildFixBrief(
-  task: string,
-  plan: string | null,
-  impactedTests: string[],
-  groups: FailureGroup[],
-  diffStat: string | null,
-  repoMap = "",
-  escalation?: { priorDiagnosis: string | null },
-  holdoutFailed = 0,
-): string {
-  const base = buildImplementBrief(task, plan, impactedTests, repoMap);
-  const groupsText = groups.length
-    ? groups.map((g, i) => `${i + 1}. (${g.count}x) ${g.signature}\n   sample: ${g.sample}`).join("\n")
-    : "(no grouped failures were provided)";
-  const diffText = diffStat ?? "(diff stat is not available)";
-  const located = groups[0]?.signature
-    ? `First failure signature (the harness found this; fix the code it names; do not hunt for a different bug; do not edit or delete an existing test):\n${groups[0].signature}`
-    : "";
-  return [
-    base,
-    "The previous Fast verify run failed. Fix these grouped failures:",
-    ...(located ? [located] : []),
-    groupsText,
+export function buildFixBrief(task: string, groups: FailureGroup[], diff: string | null, escalation?: { priorDiagnosis: string | null }, holdoutFailed = 0): string {
+  return withStagePrefix([ // FIXED_RULES leads (the cache-stable prefix implement shares) and FINISH_LINE closes
+    FIXED_RULES,
+    ...taskBlock(task),
+    "The previous Fast verify run failed. Fix the code these failures name; do not hunt for a different bug and do not edit or delete an existing test. Each sample starts with the command that reruns it:",
+    groups.length ? groups.map((g, i) => `${i + 1}. (${g.count}x) ${g.signature}\n   sample: ${g.sample}`).join("\n") : "(no grouped failures were provided)",
     ...holdoutNote(holdoutFailed),
-    `Diff so far:\n${diffText}`,
+    `Diff of the files this run changed:\n${diff ?? "(the diff is not available)"}`,
     ...(escalation ? [`ESCALATED ROUND: the same failure repeated after your previous fix. Re-read the full failure output above, find the root cause, and do not repeat the earlier approach.\nYour previous diagnosis: ${escalation.priorDiagnosis ?? "(none was recorded)"}`] : []),
-  ].join("\n\n");
+    FINISH_LINE,
+  ].join("\n\n"));
 }
 
 export const fixStage: Stage = {
@@ -58,11 +42,9 @@ export const fixStage: Stage = {
     const round = priorRound + 1;
 
     const task = (prior.intake?.task as string | undefined) ?? "";
-    const plan = (prior.plan?.plan as string | undefined) ?? null;
     const groups = (prior.verify?.failures_grouped as FailureGroup[] | undefined) ?? [];
     const holdoutFailed = (prior.verify?.holdout_failed as number | undefined) ?? 0;
-    const diffStat = currentDiff(ctx.repoDir, ctx.baseSha, 6000, round > 1, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created));
-    const repoMap = briefCtx(ctx);
+    const diffStat = currentDiff(ctx.repoDir, ctx.baseSha, 6000, true, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created)); // stat plus bounded hunks every round
     const treeBefore = treeFingerprint(ctx.repoDir, ctx.baseSha); // anti-loop: compared with tree_after in machine.ts
     // L1: escalation only goes up: a repeated test failure gets the strongest model (never below the run's) plus the prior diagnosis, before STALLED.
     const testFailures = groups.filter(isTestFailure);
@@ -78,13 +60,10 @@ export const fixStage: Stage = {
     const prevDiag = (prior.fix?.diagnosis as string | undefined) ?? null; const chain = { sessionId: (prior.fix?.session_id ?? prior.implement?.session_id ?? null) as string | null, model: (prior.fix?.model ?? prior.implement?.model ?? ctx.model) as string };
     const effort = hooks.effort?.fix(round, testFailures.length > 0);
     const sessionBase = { stage: "fix" as const, tier: "development" as const, limitS: fixStage.limitS, signal, cwd: ctx.repoDir, ...(effort ? { effort } : {}), ...(pinnedModel ? { model: pinnedModel } : {}), ...(routedPin ? { model: routedPin } : {}) };
-    const fullBrief = buildFixBrief(task, plan, impactedTests(ctx), groups, diffStat, repoMap, repeated ? { priorDiagnosis: prevDiag } : undefined, holdoutFailed);
-    let r = await runFixSession(ctx, sessionBase, `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel, fullBrief, buildFixResumeBrief(groups, diffStat, prevDiag, holdoutFailed));
-    if (r.session.markers.specConflict && !r.session.killed) { // FC-FIX-CONFLICT-STALLED: the implement rule (util/conflict_resume.ts), one correction and then the conflict is believed
-      const last = r.ids[r.ids.length - 1]!, rc = await resumeAfterConflict(ctx, { ...sessionBase, iterationId: last, brief: fullBrief }, r.session);
-      r = { ...r, session: rc.session, ids: rc.iterationId === last ? r.ids : [...r.ids, rc.iterationId] }; }
+    const fullBrief = buildFixBrief(task, groups, diffStat, repeated ? { priorDiagnosis: prevDiag } : undefined, holdoutFailed);
+    let r = await runFixSession(ctx, sessionBase, `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel, fullBrief, buildFixResumeBrief(groups, diffStat, prevDiag, holdoutFailed)); // one session per round: a spec conflict starts no retry; the unchanged-tree rule below decides whether it is believed
     const ro = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [], wd = r.session.markers.specConflict && !r.session.killed ? await adjudicateWallConflict(ctx, { ...sessionBase, iterationId: r.ids[r.ids.length - 1]!, brief: fullBrief }, r.session, ro) : null; if (wd) r = { ...r, session: wd.session, ids: [...r.ids, ...wd.ids] }; // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT
-    const testsReverted = restoreReadOnly(ro); // the Wall is read-only after any fix pass
+    const testsReverted = [...restoreReadOnly(ro), ...restoreBaseTests(ctx.repoDir, ctx.baseSha, prior.intake)]; // the Wall and pre-existing tests are read-only after any fix pass
     const treeAfter = treeFingerprint(ctx.repoDir, ctx.baseSha), conflict =r.session.markers.specConflict && !r.session.killed && treeBefore !== null && treeBefore === treeAfter ? r.session.markers.specConflict : null; // evidence: a claim from a round that edited the tree is work in progress, not an escape from the failure
     ctx.emit("fix.round", "fix", {
       round,

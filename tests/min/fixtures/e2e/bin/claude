@@ -2,6 +2,12 @@
 # Stub claude CLI for the engine10 e2e test. Modes via E2E_STUB_MODE:
 #   done (default): the implement session appends multiply() to calc.ts
 #   already: the implement session changes nothing and claims already-done
+#   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
+# E2E_STUB_TEST_EDIT=1: the implement session also edits calc.test.ts and adds a new multiply.test.ts.
+# E2E_STUB_SCOPE_EDIT=1: the implement session also edits util.ts (when the repo has one).
+# E2E_STUB_FIX (fix sessions, told apart by LOKI_E10_STAGE=fix): conflict answers LOKI_SPEC_CONFLICT and edits
+# nothing; noprogress edits calc.ts without fixing multiply(). E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
+# per call; E2E_STUB_USAGE=<n> records n output tokens per session (input = prompt bytes / 4) as the session's cost.
 # Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo).
 set -u
 if [ "${1:-}" = "--help" ]; then
@@ -36,6 +42,17 @@ if [ -n "${E2E_STUB_LOG:-}" ]; then echo "$stage" >> "$E2E_STUB_LOG"; fi
 if [ -n "${E2E_STUB_PROMPT_LOG:-}" ]; then printf '%s\n' "$prompt" >> "$E2E_STUB_PROMPT_LOG.$stage$is_wall"; fi # CW-12: the full prompt of every call, one file per stage (wall prompts land in .other1)
 # What the session can see: the canary test asserts no GitHub token and no LOKI_LEGACY_BASH.
 if [ -n "${E2E_STUB_ENV_LOG:-}" ]; then echo "$stage GH_TOKEN=${GH_TOKEN:-} LOKI_LEGACY_BASH=${LOKI_LEGACY_BASH:-} SEAL_PATCH=${LOKI_E10_SEAL_EXISTING_PATCH:-}" >> "$E2E_STUB_ENV_LOG"; fi
+if [ -n "${E2E_STUB_ITER_LOG:-}" ]; then echo "${LOKI_E10_STAGE:-none} ${LOKI_ITERATION:-none} ${#prompt}" >> "$E2E_STUB_ITER_LOG"; fi
+if [ -n "${E2E_STUB_USAGE:-}" ] && [ -n "${LOKI_ITERATION:-}" ]; then
+  mkdir -p .loki/metrics
+  printf '{"total_cost_usd":0.01,"input_tokens":%s,"output_tokens":%s,"cache_read_tokens":0,"cache_creation_tokens":0,"model":"stub","source":"e2e-stub"}\n' "$(( ${#prompt} / 4 ))" "$E2E_STUB_USAGE" > ".loki/metrics/result-cost-$LOKI_ITERATION.json"
+fi
+if [ "${LOKI_E10_STAGE:-}" = "fix" ]; then # before the implement branch: a fix brief also carries the implement rules text
+  case "${E2E_STUB_FIX:-}" in
+    conflict) echo "LOKI_SPEC_CONFLICT: calc.test.ts:7 expects multiply(3, 4) to be 12"; exit 0 ;;
+    noprogress) printf '// stub fix pass\n' >> calc.ts; echo "LOKI_DONE"; exit 0 ;;
+  esac
+fi
 if [ "$is_wall" = 1 ] && [ "${E2E_STUB_MODE:-}" = "wallcolor" ]; then # FC-69: the Wall author writes one red-on-base test for multiply()
   printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n' > loki_wall_multiply.test.ts
 fi
@@ -57,7 +74,14 @@ if [ "$stage" = "implement" ]; then
     if [ "${E2E_STUB_MODE:-}" = "tamper" ]; then for f in "$(git rev-parse --show-toplevel)"/.loki/runs/*/events.jsonl; do echo '{"v":1,"type":"forged"}' >> "$f"; done; fi
     if [ "${E2E_STUB_MODE:-}" = "scope" ] || [ "${E2E_STUB_MODE:-}" = "unrelated" ]; then echo 'DEBUG = False' >> settings.py; fi
     if [ "${E2E_STUB_MODE:-}" = "unrelated" ]; then echo "LOKI_DONE"; exit 0; fi
-    if [ "${E2E_STUB_MODE:-}" = "localvar" ]; then # FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: multiply() with a local variable and a comment word a test could echo
+    if [ "${E2E_STUB_TEST_EDIT:-}" = "1" ]; then
+      printf '\ntest("add again", () => {\n  expect(calc.add(1, 1)).toBe(2);\n});\n' >> calc.test.ts
+      printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(2, 5)).toBe(10);\n});\n' > multiply.test.ts
+    fi
+    if [ "${E2E_STUB_SCOPE_EDIT:-}" = "1" ] && [ -f util.ts ]; then printf 'export const MODE = 2;\n' >> util.ts; fi
+    if [ "${E2E_STUB_MODE:-}" = "wrong" ]; then
+      printf '\nexport function multiply(a: number, b: number): number {\n  return a + b;\n}\n' >> calc.ts
+    elif [ "${E2E_STUB_MODE:-}" = "localvar" ]; then # FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: multiply() with a local variable and a comment word a test could echo
       printf '\n// let users multiply two numbers\nexport function multiply(a: number, b: number): number {\n  const result = a * b;\n  return result;\n}\n' >> calc.ts
     else
     printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts

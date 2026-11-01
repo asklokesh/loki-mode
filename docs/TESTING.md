@@ -29,6 +29,7 @@ LOCAL_CI_ONLY=hygiene,pack-contents bash scripts/local-ci.sh   # a subset
 | `detect-gates` | the five `tests/detect-*.sh` quality gates that `autonomy/run.sh` executes pass a clean fixture and fail a defective one |
 | `dist-freshness` | the committed `loki-ts/dist` bundles equal a fresh build of `loki-ts/src`; `web-app/dist/index.html` references only assets that exist |
 | `engine10-e2e-stub` | the real engine, end to end on a stub provider: VERIFIED run, tampered run reads TAMPERED, the agent session never receives the GitHub token |
+| `scope-and-fix` | implement and fix stages on the stub provider: an edit to a pre-existing test is restored (kept when the task names the file), an out-of-scope edit is listed on the receipt, a fix-round spec conflict starts no retry, a fix round with no progress stops fixing |
 
 ## Adding a test
 
