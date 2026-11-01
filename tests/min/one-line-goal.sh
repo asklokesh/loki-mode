@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # R01 one-line goal: a bare `loki "<goal>"` (no flags) on the stub provider needs no flags and,
 # headless, asks nothing. Asserts, on throwaway repos:
-#   headless, no remote:   exit 0, VERIFIED, zero prompts, a local run branch, and the exact next
-#                          command (checkout + merge) printed.
+#   headless, no remote:   exit 0, VERIFIED, zero prompts, a local run branch holding the change, the
+#                          checkout back on main, and the exact next command (checkout + merge) printed.
 #   headless, GitHub remote but no gh login: exit 0 (was a refusal that said "pass --no-pr"), VERIFIED,
 #                          next command is `gh auth login && git push ... && gh pr create`.
 #   dirty tracked tree:    refused, the message names the one safe option, nothing was stashed.
@@ -64,7 +64,8 @@ printf '%s\n' "$OUT" | grep -Eq "$QUESTION_RE" && bad "headless asked a question
 br="$(git -C "$REPO" branch --list 'loki/*' | tr -d ' *')"
 [ -n "$br" ] && ok "no remote: the result is on a local branch ($br)" || bad "no remote: no local loki/ branch"
 has "no remote: next command is checkout + merge of that branch" "$OUT" "git checkout main && git merge --no-ff $br"
-grep -q 'export function multiply' "$REPO/calc.ts" && ok "no remote: the change is in the working tree" || bad "no remote: calc.ts has no multiply()"
+git -C "$REPO" show "$br:calc.ts" 2>/dev/null | grep -q 'export function multiply' && ok "no remote: the change is on that branch" || bad "no remote: $br has no multiply() in calc.ts"
+[ "$(git -C "$REPO" branch --show-current)" = main ] && ok "no remote: the checkout is back on main" || bad "no remote: the checkout is on '$(git -C "$REPO" branch --show-current)', not main"
 
 # 2. headless, GitHub remote, no gh login
 mkrepo ghno https://github.com/example/nothing.git

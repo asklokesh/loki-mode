@@ -52,6 +52,8 @@ run_engine() {
     if [ -f "$REPO/.loki/engine.json" ]; then
         rid="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_id"])' "$REPO/.loki/engine.json" 2>/dev/null)"
         [ -n "$rid" ] && RUNDIR="$REPO/.loki/runs/$rid"
+        # the run ends with the checkout back on main and its work on loki/<rid>; look at that work there
+        [ -n "$rid" ] && git -C "$REPO" rev-parse -q --verify "refs/heads/loki/$rid" >/dev/null && git -C "$REPO" checkout -q "loki/$rid"
     fi
 }
 

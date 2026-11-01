@@ -21,6 +21,16 @@ export function publishNote(reason: LocalReason | null): string {
   return reason === "gh_unauthenticated" ? "publish: gh is not logged in, so no PR will be opened; the result stays on a local branch (run gh auth login to get a PR next time)"
     : reason === "no_remote" ? "publish: no git remote, so the result stays on a local branch (git remote add origin <url> to get a PR next time)" : "";
 }
+/** A quoted command ("status --help", "config path") is never a goal: prints that command's help and the goal hint, returns 2. Null for real goal text. */
+export function refuseCommandGoal(task: string, env: NodeJS.ProcessEnv = process.env): number | null {
+  const { commandShapedGoal } = require("../cli/registry.ts") as typeof import("../cli/registry.ts");
+  const cmd = commandShapedGoal(task); if (cmd === null) return null;
+  process.stderr.write(`loki: "${task.trim().slice(0, 80)}" is a command, not a goal; nothing was started. Help for 'loki ${cmd}':\n`);
+  const { REPO_ROOT } = require("./paths.ts") as typeof import("./paths.ts");
+  require("node:child_process").spawnSync("bash", [`${REPO_ROOT}/bin/loki`, cmd, "--help"], { stdio: ["ignore", 2, 2], env: { ...env, LOKI_HELP_ONLY: "1" }, timeout: 20000 });
+  process.stderr.write(`To run the command, type it without quotes: loki ${task.trim().slice(0, 80)}\nTo give Loki a goal instead, write it as a sentence: loki "<what you want done>"\n`);
+  return 2;
+}
 /** The exact command that lands (or publishes) a local result; "" when a PR was opened or nothing changed. */
 export function landNext(reason: LocalReason | null, branch: string | null, orig: string | null): string {
   if (!reason || !branch) return "";

@@ -4,8 +4,8 @@ import { execFileSync, spawn, spawnSync } from "node:child_process"; import { cu
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
 import { redactEventData } from "../util/redact.ts"; import { localBranchNote, resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
 import { terminalWidth } from "../util/term_width.ts";
-import { diffStat, formatRunSummary, handoffSection, readRiskSummary, writeHandoff, withNextLine, withRiskLine, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT, RISKTIER
-import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
+import { diffStat, runHead, formatRunSummary, handoffSection, readRiskSummary, writeHandoff, withNextLine, withRiskLine, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT, RISKTIER
+import { commitUnsealedWork, guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path"; import { writeRunState } from "../util/seal_drift.ts";
@@ -229,6 +229,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const stages = allEvents.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number").map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })), // E-48 notify: Slack when configured, no-op otherwise
     pc = partialCost(allEvents, log.tampered, lokiRoot),
     summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, outcome, notProven, flaky: recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "flaky", folded.stages["verify"]?.data.flaky, cleanTreeId(opts.repoDir)), wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: summaryTokens(folded, allEvents.some((e) => e.type === "cost")), ...summaryCache(allEvents, log.tampered), partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total, stageShares: log.tampered ? null : stageShareText(allEvents), capUsd: Number(opts.started?.["max_cost_usd"]) > 0 ? Number(opts.started?.["max_cost_usd"]) : undefined } };
+  if (prUrl === null && (cancelled || !receiptVerdict || (verdict !== "VERIFIED" && verdict !== "PARTIAL" && verdict !== "ALREADY_SATISFIED"))) commitUnsealedWork(intact && !log.tampered, opts.repoDir, workerEnv, opts.runId, folded.stages["intake"]?.type === "stage.completed" ? folded.stages["intake"].data : undefined); // run safety: unsealed work is committed on the run branch so the checkout can return to the start branch (e10ext/commit_filter.ts)
   await slackEvent(env, "finished", { summary: formatSummary(summary), outcome: String(outcome), cost: summary.cost.usd != null ? `$${summary.cost.usd.toFixed(2)}` : "not measured", time: `${Math.round(wallS)}s`, receipt: log.tampered ? "TAMPERED" : receiptVerdict ? verdict : undefined }); rmRunPid(); process.off("exit", rmRunPid); const ib = folded.stages["intake"]; process.stderr.write(finishRunBranch(opts.repoDir, opts.runId, { orig: origBranch, pushed: prUrl !== null, deferred: allEvents.some((e) => e.type === "deep.started"), keepWork: !cancelled && prUrl === null && (verdict === "VERIFIED" || verdict === "PARTIAL"), baseSha: validBase(ib?.type === "stage.completed" ? ib.data.base_sha : null) }, env)); // D51-A4, replaces E-48 adapters/slack.ts call; run-end cleanup: back to the starting branch, run branch saved then removed (util/base_guard.ts)
   return { verdict, outcome, stop: stop ?? (receiptVerdict && allEvents.some((e) => e.type === "cap.hit") ? "cap" : null), receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
 }
@@ -267,6 +268,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   }
   if (!task && !fresh) { const rr = (await import("../util/run_outputs.ts")).startRecovery; try { const rd = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(), rec = await rr(rd, "", noPr); if (rec !== null) return rec; } catch { /* not a repo: the no-task error below */ } } // SB-12: a bare `loki start` offers or resumes an interrupted run
   if (!task) { process.stderr.write("engine10: no task given\n"); noteRefusal("prd_missing"); return 2; }
+  if (spec === null) { const r = (await import("../util/one_line_goal.ts")).refuseCommandGoal(task); if (r !== null) return r; } // run safety: "status --help" passed as one argument is a command typed in quotes, never a run
   let repoDir: string;
   try {
     repoDir = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim();
@@ -400,7 +402,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       .map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })),
   }, verbose);
   const rmap = await reqOnce(events), uncovered = rmap ? rmap.requirements.filter((r) => r.status === "uncovered").length : 0; // REQTRACE: same map the PR body used (or computed now when no PR stage ran)
-  const baseSha = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, hbs = typeof baseSha === "string" ? baseSha : null, ds = diffStat(repoDir, hbs);
+  const baseSha = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, hbs = typeof baseSha === "string" ? baseSha : null, ds = diffStat(repoDir, hbs, runHead(repoDir, runId));
   let handoffRef = ""; if (!json) { handoffRef = writeHandoff({ requirements: rmap?.requirements ?? null, sinceMs: t0, repoDir, runId, events, outcome: res.outcome, reason: reasonOf(events, res.tampered, res.stop, res.outcome), prUrl: res.prUrl, draft: res.verdict !== "VERIFIED", usd, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total, elapsedS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000), notProven: res.notProven, task, baseSha: hbs, stats: ds }) ? "review: .loki/review/HANDOFF.md" : ""; } // HANDOFF: written on every outcome; the pointer folds into the last line (D48 cap)
   // OC-OUTPUT: unified run summary, same format as the legacy engine (autonomy/lib/run-summary.sh)
   const rr = resultOf(res.outcome); if (res.outcome === "BUDGET_STOP" && cap.usd > 0) writeBudgetStop(repoDir, runId, { task: task.trim(), cap_usd: cap.usd, spent_usd: seed + (usd ?? 0), source: cap.source });

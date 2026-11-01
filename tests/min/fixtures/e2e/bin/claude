@@ -11,6 +11,7 @@
 # nothing; noprogress edits calc.ts without fixing multiply(); fixit turns the wrong multiply() right. E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
 # per call; E2E_STUB_USAGE=<n> records n output tokens per session (input = prompt bytes / 4) as the session's cost.
 #   overlay: a plain `-p <task>` call copies E2E_STUB_OVERLAY over the cwd (h2h benchmark harness)
+# E2E_STUB_SLEEP=<s>: the implement session sleeps after its edit, so a test can signal the run mid-session (tests/min/run-safety.sh).
 # E2E_STUB_SPLIT (JSON text): the MASS-2 split planning session writes it to the file its brief names.
 # Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo); E2E_STUB_BUDGET_LOG gets its LOKI_BUDGET_LIMIT and LEDGER.
 set -u
@@ -111,4 +112,5 @@ if [ "$stage" = "implement" ]; then
     echo "LOKI_DONE"
   fi
 fi
+if [ "$stage" = "implement" ] && [ -n "${E2E_STUB_SLEEP:-}" ]; then sleep "$E2E_STUB_SLEEP"; fi
 exit 0
