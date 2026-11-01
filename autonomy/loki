@@ -14877,11 +14877,14 @@ cmd_backlog() {
             echo "  --label X         Open issues with label X"
             echo "  --issues 1,2,3    Exactly these issue numbers"
             echo "  --concurrency N   Max runs in parallel (default: loki.yaml concurrency, else 2)"
-            echo "  --dry-run         List what would run; launch nothing"
+            echo "  --dry-run         Print each issue's triage class (implement, spec, human) and reason; launch nothing"
             echo ""
             echo "Run from a checkout of owner/repo. Each issue runs in its own worktree on loki/backlog-N."
+            echo "Triage: only implement issues run; spec issues get .loki/specs/<slug>.md and the command to run it;"
+            echo "human issues are listed with the reason. Label loki:implement|loki:spec|loki:human forces a class;"
+            echo "LOKI_TRIAGE=0 runs every issue untriaged."
             echo "Config: loki.yaml (repo root, then ~/.loki/loki.yaml); see docs/loki.yaml.example."
-            echo "Exit: 0 every issue ended VERIFIED or with a PR; 3 only budget stops; 1 otherwise; 2 usage."
+            echo "Exit: 0 every run ended VERIFIED or with a PR (spec and human issues do not fail it); 3 only budget stops; 1 otherwise; 2 usage."
             return 0
             ;;
     esac

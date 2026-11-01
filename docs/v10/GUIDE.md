@@ -346,6 +346,14 @@ on:
 
 `loki backlog` also takes `--all`, `--issues 1,2,3` and `--dry-run`. The nightly job runs the agent and a write token together, so label only issues you trust.
 
+Before anything runs, `loki backlog` triages every issue into one of three classes, each printed with a one-line reason (`--dry-run` prints only this and launches nothing):
+
+- `implement`: a concrete target (a file, function, value or expected result) in a repo with a runnable test check. Only these run.
+- `spec`: vague or large (an epic label or title, more than 3 task-list items, or an ambiguity score at the threshold). Loki drafts `.loki/specs/<slug>.md` with `loki plan --spec`, runs nothing, and prints `loki start --spec .loki/specs/<slug>.md` to run after you edit or approve it.
+- `human`: the issue touches secrets, production or a destructive operation. Never run headless; listed with the reason. Repos without tests, UI work and infra work still run: Loki writes its own tests and verifies once at the end.
+
+The rules are deterministic (issue text, labels, the repo test map and the ambiguity score); no model call decides a class. A run records its class and reason in the run events, the receipt (`triage`) and a `Triage:` line in the PR body. Overrides: the label `loki:implement`, `loki:spec` or `loki:human` forces that class for one issue; `LOKI_TRIAGE=0` turns the router off and runs every issue. Routing happens only in `loki backlog`. A direct `loki "<goal>"` or `loki start owner/repo#N` never stops or refuses because of triage: when the ambiguity gate fires it records the class and reason in the run events and the receipt, then runs exactly as before.
+
 ## NOT PROVEN
 
 NOT PROVEN lists what a run did not verify, so a passing run is never read
