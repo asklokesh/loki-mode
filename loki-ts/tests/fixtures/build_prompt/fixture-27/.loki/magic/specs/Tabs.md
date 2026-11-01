@@ -1,1 +1,0 @@
-# Tabs component spec

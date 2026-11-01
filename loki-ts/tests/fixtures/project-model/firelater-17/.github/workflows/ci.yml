@@ -1,6 +1,0 @@
-name: ci
-on: push
-jobs:
-  backend:
-    steps:
-      - run: cd backend && npm ci && npm test

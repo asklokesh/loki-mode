@@ -17,7 +17,7 @@ loki start owner/repo#123        # issue-mode
 
 ## Repository conventions
 - Stage files by name; never bulk-stage the whole tree.
-- Pre-push gate: `bash scripts/local-ci.sh` (fast tier). The FULL tier is diagnostic only. Never force-push, kill processes by name/pattern, or bypass branch protection. Never unpublish (npm deprecate is allowed).
+- Pre-push gate: `bash scripts/local-ci.sh` (runs the hermetic tests in `tests/min/`; one tier). Never force-push, kill processes by name/pattern, or bypass branch protection. Never unpublish (npm deprecate is allowed).
 - Extend, never duplicate: a feature goes into the existing module, command, test file or doc that already owns its concern. A new file needs a one-line justification that no existing file owns the concern. A replacement deletes the code it supersedes in the same change.
 - No emojis, no em dashes, no en dashes, anywhere (code, docs, commits, UI); remove any found on sight. SKILL.md stays under 500 lines with header AND footer version bumped together.
 - Harness code invariants (see `docs/dev/architecture-reference.md`): new always-on prompt text goes in the cache-stable prefix; `goal_score.ts` and `run.sh` change together, byte-mirrored; never invert smart-retry's fail-safe default.
@@ -141,6 +141,6 @@ loki_run_tmp_cleanup() {
 <!-- END LOKI_RUN_TMP_HELPERS -->
 
 ## Read when needed
-- `docs/dev/project-structure.md` - directory map, codebase knowledge graph, key functions, critical data flow, the MCP server (`mcp/server.py`, 48 tools); and `docs/dev/research-foundation.md` - the labs and papers this system is built on.
+- `docs/dev/project-structure.md` - directory map, codebase knowledge graph, key functions, critical data flow, the MCP server (`mcp/server.py`, 48 tools).
 - `docs/dev/architecture-reference.md` - the 8 quality gates, legacy healing, memory system, metrics, v8 harness knobs, RARV-C closure env vars.
 - `docs/dev/release-checklist.md` - full version-bump file list, dashboard build, pre-publish validation, distribution channels, local CI details.

@@ -1,6 +1,0 @@
-[project]
-name = "mixed-repo-fixture"
-version = "0.0.0"
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]

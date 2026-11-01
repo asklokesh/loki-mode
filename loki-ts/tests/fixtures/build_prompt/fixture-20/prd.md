@@ -1,1 +1,0 @@
-# Gate failures only PRD

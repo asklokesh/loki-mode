@@ -25,11 +25,11 @@ A spec that does not parse exits 2 before any run state is created, naming the f
 
 ## Unchanged without the flags
 
-Without `--spec` or `--spec-first`, `loki plan` stays on its existing route, `loki start` behaves as before, and the plan and implement briefs are byte-identical (pinned by golden fixtures in `loki-ts/tests/engine10/fixtures`).
+Without `--spec` or `--spec-first`, `loki plan` stays on its existing route, `loki start` behaves as before, and the plan and implement briefs are byte-identical.
 
 ## Requirement-to-check map (REQTRACE)
 
-File: `.loki/state/requirements-map.json`. Written after verification, before the run summary. Read-only view: `loki plan --requirements` (add `--json` for the raw file). Code: `loki-ts/src/features/contract.ts`; tests: `loki-ts/tests/features/contract.test.ts`.
+File: `.loki/state/requirements-map.json`. Written after verification, before the run summary. Read-only view: `loki plan --requirements` (add `--json` for the raw file). Code: `loki-ts/src/features/contract.ts`.
 
 ```json
 {"version":1,"revision":"<git sha at write time, or \"unknown\">","requirements":[

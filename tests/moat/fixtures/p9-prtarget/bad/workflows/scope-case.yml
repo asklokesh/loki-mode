@@ -1,8 +1,0 @@
-name: scope-case
-On:
-  Pull_Request_Target:
-Jobs:
-  cased:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo hi

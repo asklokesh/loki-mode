@@ -5,6 +5,22 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.102.0 (2026-11-01)
+
+A leaner Loki Mode: the package and repository carry only what the CLI and its distributions use, the Docker image runs every quality gate, and the project's own checks run in seconds.
+
+### Fixed
+
+- The Docker image now includes the quality-gate scripts (`tests/detect-*.sh`) that runs execute; before, Docker installs skipped those gates.
+- `loki queue` finds its usage governor in npm installs (`scripts/usage-governor.py` now ships in the package).
+- `loki bench` says plainly that the benchmark harness was removed and nothing ran, instead of pointing at a script that no longer exists.
+
+### Changed
+
+- The npm package drops from 913 to 789 files: old test suites, Python test folders and internal planning and research docs no longer ship. User documentation for shipped commands stays, and every repository path a shipped doc names now exists.
+- The repository keeps only what the CLI, npm, Docker, Homebrew and the GitHub Release use (about 4,500 files and 50 MB removed). The project's checks are now 14 fast hermetic tests (syntax, typecheck, CLI smoke, engine end to end on a stub provider including the token isolation check, receipt signing and verification, secret redaction, packaging, release notes and hygiene) that run in about 20 seconds, each proven to fail on a planted defect.
+- The `factory-operations` and `release-cadence` skill modules, which described developing Loki itself, are removed.
+
 ## v11.101.0 (2026-10-31)
 
 A passing run is no longer turned into PARTIAL by verify's fixed time limit, run branches are cleaned up at run end with their history saved, Bash reads of secret files are denied, and an auth or credit failure names its cause and fix.

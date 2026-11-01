@@ -962,9 +962,7 @@ Rules that make this safe to use, and safe to ship:
 - **Fail-safe.** A corrupt `.loki/agents/installed.json` leaves the normal
   battery intact rather than breaking code review.
 
-Works on both routes (Bun and `LOKI_LEGACY_BASH=1`). Tests:
-`tests/test-installed-agent-reviewer.sh`,
-`loki-ts/tests/runner/installed_agent_reviewer.test.ts`.
+Works on both routes (Bun and `LOKI_LEGACY_BASH=1`).
 
 ### Dispatch Pattern
 

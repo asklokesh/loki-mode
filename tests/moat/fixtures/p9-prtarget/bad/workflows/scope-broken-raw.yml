@@ -1,3 +1,0 @@
-name: scope-broken-raw
-on: pull_request_target
-jobs: [

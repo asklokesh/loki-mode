@@ -3,7 +3,7 @@ name: loki-mode
 description: Runs an autonomous software factory that knows what it is supposed to deliver and proves it did, with a signed receipt. Use when the user says Loki Mode or asks to build, fix or verify software autonomously.
 ---
 
-# Loki Mode v11.101.0
+# Loki Mode v11.102.0
 
 **Current entry points (Loki 10 engine):** `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"` run the Loki 10 engine and end with a signed receipt (`loki verify`). `loki backlog owner/repo --all` runs many issues in parallel. Guide: `docs/v10/GUIDE.md`. The skill instructions below, and `loki start`, describe the previous bash loop. PRD-file starts (`loki start ./prd.md`) and the opencode provider still run on it until FC38-SWEEP ports them; the legacy-engine command and the LOKI_ENGINE switch remain removed. Prefer `loki owner/repo#N` for issues.
 
@@ -208,8 +208,6 @@ Pick modules from this table, one hop from here. Each module over 100 lines open
 | Legacy healing, modernization | [healing.md](skills/healing.md) |
 | Plan deepening, knowledge extraction | [compound-learning.md](skills/compound-learning.md) |
 | Managed Agents memory, council, flag hierarchy | [memory.md](skills/memory.md) |
-| Several agent teams at once, WIP limits | [factory-operations.md](skills/factory-operations.md) |
-| Release, version bump, publish check | [release-cadence.md](skills/release-cadence.md) |
 | Adding your own gate, reviewer or agent | [extending.md](skills/extending.md) |
 
 ```
@@ -471,8 +469,8 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 
 ## Feature status
 
-Implemented, planned and deprecated items, with the version each landed in: `skills/release-cadence.md` section 7. `loki start` and the RARV skill loop are the legacy engine (planned removal); prefer `loki "<task>"` or `loki owner/repo#N`.
+Implemented, planned and deprecated items, with the version each landed in: `CHANGELOG.md`. `loki start` and the RARV skill loop are the legacy engine (planned removal); prefer `loki "<task>"` or `loki owner/repo#N`.
 
 ---
 
-**v11.101.0 | [Autonomi](https://www.autonomi.dev/) flagship product | core skill**
+**v11.102.0 | [Autonomi](https://www.autonomi.dev/) flagship product | core skill**

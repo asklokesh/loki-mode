@@ -140,7 +140,7 @@ WARN  Last updated 2026-01-02 (210 days ago) -- may be missing newer models
 ```
 
 The warning is **advisory only**. It never changes an exit code and never fails
-a build (`tests/test-model-catalog-staleness.sh` asserts exactly that). It also
+a build. It also
 makes no network call: doctor reads the local file's `updated` field and nothing
 else, so air-gapped operation (`docs/air-gapped.md`) is unaffected.
 
@@ -569,27 +569,6 @@ All CLI flags have been verified against actual CLI help output:
 | Codex | `--sandbox workspace-write` | v0.132.0 | Recommended (--full-auto deprecated 0.125+); legacy: `exec --dangerously-bypass-approvals-and-sandbox` |
 | Cline | `--auto-approve` | latest | Autonomous mode |
 | Aider | `--yes-always` | latest | Autonomous mode |
-
----
-
-## Test Coverage
-
-The multi-provider system has 180 tests across 5 test suites:
-
-| Test Suite | Tests | Coverage |
-|------------|-------|----------|
-| `test-provider-loader.sh` | 12 | Provider loading, validation |
-| `test-provider-invocation.sh` | 24 | Invoke functions, tier params |
-| `test-provider-degraded-mode.sh` | 19 | Degraded flags, capabilities |
-| `test-cli-provider-flag.sh` | 39 | CLI flag parsing, precedence |
-| `test-rate-limiting.sh` | 27 | Rate limit detection, backoff |
-
-Run tests:
-```bash
-for test in tests/test-provider-*.sh tests/test-cli-provider-flag.sh tests/test-rate-limiting.sh; do
-    bash "$test"
-done
-```
 
 ---
 

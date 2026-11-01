@@ -1,1 +1,0 @@
-Cold start with no .loki/ directory

@@ -197,9 +197,8 @@ The ONLY field is `blocker`, clamped to this fixed enum:
 
 Anything not on that list becomes `other`. It is deliberately coarse: `node` is
 enough to act on, and a version string or an install path would be a leak. It
-NEVER sends paths, versions, hostnames, spec text, or command lines -- a test
-(`tests/test-first-run-blocked-signal.sh`) feeds a filesystem path through the
-real emitter and fails the build if anything but `other` reaches the payload.
+NEVER sends paths, versions, hostnames, spec text, or command lines: anything
+but `other` is dropped before it reaches the payload.
 
 This document and the first-run notice describe ALL paths. The model is unified:
 opt-out always wins and disables everything; crash reporting and usage telemetry

@@ -1,1 +1,0 @@
-Warm restart with .loki/STATUS.txt set

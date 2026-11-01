@@ -1,8 +1,0 @@
-[
-  {
-    "id": "task-active-1",
-    "source": "api",
-    "type": "hotfix",
-    "payload": { "action": "Fix memory leak in component lifecycle" }
-  }
-]

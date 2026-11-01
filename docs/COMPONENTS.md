@@ -26,7 +26,7 @@ gates. It is provider-agnostic (Claude Code, OpenAI Codex CLI, Cline, Aider).
 | `skills/` | Markdown | On-demand skill modules (progressive disclosure) |
 | `references/` | Markdown | Detailed documentation |
 | `templates/` | Markdown | PRD templates per project archetype |
-| `benchmarks/` | Bash + Python | SWE-bench and HumanEval benchmark harness |
+| `benchmarks/` | Python | Seeded-defect corpus behind the receipt |
 | `plugins/` | JSON + Markdown | Claude Code plugin packaging |
 
 ---
@@ -400,23 +400,13 @@ PRD templates per project archetype. Used to bootstrap specs.
 
 ## benchmarks/
 
-The SWE-bench and HumanEval benchmark harness.
+The seeded-defect corpus the signed receipt cites.
 
-**Purpose:** Measure Loki's performance on standard coding benchmarks.
+**Purpose:** `benchmarks/seeded-defects/` holds the cases, `manifest.json` (its sha256 is the corpus version in a receipt) and `results/*.json` that `loki-ts/src/util/run_outputs.ts` reads to fill the receipt's `seeded_corpus` block.
 
 **Key files:**
-- `run-benchmarks.sh` - Entry point (`humaneval`, `swebench`).
-- `embedding-benchmark.py`, `prepare-submission.sh` - Embedding bench and
-  submission prep.
-- `datasets/`, `tasks/`, `results/`, `swebench/`, `swebench-pro-pilot/`,
-  `magic-ab/`, `bench/` - Data, tasks, and outputs.
-- `SCHEMA-adapter.md`, `SCHEMA-result.md`, `submission-template/` - Schemas.
-
-**Public interface:**
-- `./benchmarks/run-benchmarks.sh humaneval|swebench --execute --loki`.
-
-**Dependencies:**
-- `autonomy/` CLI for executing builds.
+- `seeded-defects/manifest.json`, `seeded-defects/results/` - Read at run time.
+- `seeded-defects/cases/`, `generate.py`, `measure.py` - The corpus and how it is built and measured.
 
 ---
 

@@ -235,7 +235,6 @@ Tool Action -> Memory Store -> Pattern Consolidation -> Tool Query
 | `.mcp.json` | MCP server config | Claude Code |
 | `.claude/settings.json` | Hook configuration | Claude Code |
 | `.loki/config/` | Provider settings | CLI, run.sh |
-| `vscode-extension/package.json` | Extension settings | VS Code |
 
 ## Future Synergy (v5.26+)
 

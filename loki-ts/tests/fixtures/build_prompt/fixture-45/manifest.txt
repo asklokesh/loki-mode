@@ -1,1 +1,0 @@
-Magic Modules with > 20 specs

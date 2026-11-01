@@ -6,7 +6,6 @@ guessed wrong" failure mode: code that ships a hardcoded secret or logs PII is
 wrong no matter what the PRD asked for.
 
 Implementation: `tests/detect-invariant-violations.sh`
-Tests: `tests/test-invariant-detector.sh`
 
 ## What this is (and is not)
 

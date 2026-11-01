@@ -152,9 +152,9 @@ Supported platforms are the `os` entries in `package.json` (darwin, linux).
 
 ### Requirements by path
 
-The tables below are generated from the shared source. Do not edit between the markers; run `UPDATE_CONTRACT=1 bun test tests/commands/doctor.test.ts` from `loki-ts` after editing the JSON, and the test fails if this block drifts.
+The tables below are generated from the shared requirements source. Do not edit between the markers.
 
-<!-- BEGIN GENERATED REQUIREMENTS (loki-ts/tests/commands/doctor.test.ts) -->
+<!-- BEGIN GENERATED REQUIREMENTS -->
 
 ### All paths
 

@@ -1,3 +1,0 @@
-# Report
-
-All tests passed.

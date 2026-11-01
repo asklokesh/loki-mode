@@ -1,1 +1,0 @@
-# Modal component spec

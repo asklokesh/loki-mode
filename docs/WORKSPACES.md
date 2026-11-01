@@ -1,6 +1,6 @@
 # Workspaces: one issue across several repos
 
-On by default. Set `LOKI_WORKSPACES=0` to disable. Design: `docs/v10/D51-PHASE-B.md`.
+On by default. Set `LOKI_WORKSPACES=0` to disable.
 
 Define a group of repos once in `loki.yaml`:
 
@@ -60,4 +60,3 @@ After `loki workspace run <name> <ref>` finishes, check the evidence rather than
 
 Not measured: no scale test exists for large repo counts. Claim only what you have run.
 
-`tests/workspace/99-e2e.sh` runs this whole check through both `autonomy/loki` and `bin/loki` with a stub launcher and a stub `gh`.

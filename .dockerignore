@@ -34,7 +34,8 @@ blog/
 
 # Source-only directories (not needed in Docker image)
 tests/
-!tests/docker/
+# run.sh executes these quality-gate scripts at runtime (package.json ships them too)
+!tests/detect-*.sh
 wiki/
 wiki-repo/
 demo/

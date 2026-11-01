@@ -2,7 +2,7 @@
 
 Default: Loki 10 engine for `loki start`, `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"`. `loki legacy` was removed in 11.0.0; the previous loop runs only on an explicit `--engine legacy` or `LOKI_ENGINE=legacy` (see Routing). <!-- loki10-default -->
 
-Loki 10 is the rewritten engine (docs/v10/ENGINE.md). Since the D48 flip it
+Loki 10 is the rewritten engine. Since the D48 flip it
 runs `loki "<task>"`, `loki owner/repo#N` (issue mode) and `loki quick
 "<task>"`, each printing one start line beginning `Loki 10 engine`, then the
 summary below. `loki start <issue ref | issue URL | "multi-word task">` takes
@@ -140,7 +140,7 @@ Flags, from the engine's own `--help`:
 (`loki-ts/src/engine10/supervisor.ts`) and take effect on a real run.
 
 `loki status`, `loki verify` and `loki dashboard` are all built on main
-(status.ts, verify_cmd.ts, dashboard/server.ts) and route through cli.ts's
+ and route through cli.ts's
 table like any other subcommand.
 
 The free-text and issue-ref run itself (the supervisor that plans, builds
@@ -334,7 +334,7 @@ is that function's real output, not a mockup.
 Both run on your own GitHub Actions minutes; there is no hosted service.
 
 - Issue to PR: copy `.github/workflows/loki-issue-to-pr.yml` into your repository. Label an issue `loki`, or comment `/loki` as an owner, member or collaborator, and it runs `loki owner/repo#N` (the Loki 10 engine) and opens a pull request with an evidence receipt. The agent job holds a read-only token; a separate publish job opens the PR. Set `ANTHROPIC_API_KEY` in repository secrets.
-- Nightly backlog: copy `examples/loki-nightly-backlog.yml` into `.github/workflows/`. Its `schedule:` trigger runs `loki backlog owner/repo --label loki`, one Loki 10 run per labeled open issue:
+- Nightly backlog: add a workflow in `.github/workflows/`. Its `schedule:` trigger runs `loki backlog owner/repo --label loki`, one Loki 10 run per labeled open issue:
 
 ```yaml
 on:
@@ -462,8 +462,7 @@ ready-to-paste values. Both accept `--json`.
 Model routing picks which Claude model does each stage of a run. It is OFF
 by default in 11.2.0. Set `LOKI_ROUTER=1` to opt in. `LOKI_ROUTER=0` is the
 explicit opt-out and keeps the exact pre-router model behavior, pins
-included (guarded by the opt-out golden test in
-`loki-ts/tests/engine10/router_optout_golden.test.ts`). Explicit
+included. Explicit
 `LOKI_MODEL_OVERRIDE` and `LOKI_CLAUDE_MODEL_DEVELOPMENT` still win and
 bypass the router. The other knobs are `LOKI_ROUTER_EXECUTOR` (post-flip
 default sonnet; haiku only by earned evidence), `LOKI_ROUTER_ESCALATE` (default sonnet) and `LOKI_ROUTER_ADVISOR`
@@ -535,12 +534,6 @@ In 11.2.0 the receipt carries a `route` block (initial decision, each
 escalation with its trigger, advisor availability and the share of requests
 above 100K), and `loki doctor` prints an advisor line. The executor and any
 fallback reason are also printed on the start line.
-
-### Comparing models
-
-`scripts/b9-scoreboard.sh` is the comparison harness for routed against raw
-runs on the B9 corpus, and it can emit shape defaults from those runs
-(lands in 11.2.0).
 
 ## After the flip
 

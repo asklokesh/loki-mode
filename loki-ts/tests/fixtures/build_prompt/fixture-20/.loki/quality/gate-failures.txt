@@ -1,2 +1,0 @@
-CRITICAL: Linter found 4 errors
-WARNING: Build slower than threshold

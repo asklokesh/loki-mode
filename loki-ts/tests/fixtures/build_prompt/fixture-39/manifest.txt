@@ -1,1 +1,0 @@
-Human input with embedded newlines (multi-line directive)

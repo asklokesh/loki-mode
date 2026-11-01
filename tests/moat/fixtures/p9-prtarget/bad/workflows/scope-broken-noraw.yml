@@ -1,5 +1,0 @@
-name: scope-broken-noraw
-on: [push
-jobs:
-  never:
-    runs-on: ubuntu-latest

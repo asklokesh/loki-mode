@@ -1,2 +1,0 @@
-Fixture 25: Playwright smoke test passed
-- Verifies: PLAYWRIGHT_SMOKE_TEST: PASSED message

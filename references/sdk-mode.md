@@ -78,7 +78,7 @@ LOKI_SDK_MODE=full LOKI_SDK_CODE_REVIEW=0 loki start ./prd.md
   mode degrades to the legacy route.
 
 Implementation: `autonomy/lib/sdk-mode.sh` (bash), `loki-ts/src/runner/sdk_mode.ts`
-(TypeScript). Shared parity fixture: `loki-ts/test/fixtures/sdk-mode-table.json`.
+(TypeScript).
 
 ## Dev-only OAuth auth (`LOKI_SDK_OAUTH_DEV`)
 
@@ -102,5 +102,4 @@ DEV ONLY, and deliberately gated so it can never affect production:
   SDK site fail-closes to the deterministic/bash fallback, same as a missing key.
 - Only wired for the JUDGE path (`sdk_invoker.ts`), not the agentic RARV loop.
 
-Implementation: `loki-ts/src/runner/oauth_dev.ts`. Gate tests:
-`loki-ts/test/runner/oauth_dev.test.ts`.
+Implementation: `loki-ts/src/runner/oauth_dev.ts`.

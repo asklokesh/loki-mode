@@ -1,1 +1,0 @@
-{"status": "not_load_bearing", "arms": [{"removed": "src/auth.ts", "tests_still_pass": true}], "note": "deleting the change left the suite green"}

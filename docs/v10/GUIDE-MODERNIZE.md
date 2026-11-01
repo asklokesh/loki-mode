@@ -2,7 +2,7 @@
 
 `loki modernize` converts a legacy codebase to a modern target with no
 human steps, using behavior captured from the old code as proof of
-equivalence. It is a v10 engine subcommand (docs/v10/MODERNIZE.md is the
+equivalence. It is a v10 engine subcommand (the
 design source of truth; this page is the user-facing summary).
 
 ## What it does

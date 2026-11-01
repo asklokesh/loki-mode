@@ -17,7 +17,7 @@
 
 **Phase 6 entry criteria (per founder call 2026-04-25, release_strategy memory):**
 - 30 consecutive days with zero parity-diff regressions on the Bun route
-- All 14 CLI tests passing on both routes (`tests/test-cli-commands.sh`)
+- All 14 CLI tests passing on both routes
 - Bun-parity matrix green on every workflow (added after v7.4.18 doctor-text drift bug)
 - No `LOKI_LEGACY_BASH=1` fallback invocations observed in telemetry over the soak window
 - Local CI gate (`scripts/local-ci.sh`) green on every push
@@ -52,7 +52,7 @@ Sources:
 
 For a trivial 1-line script, bash beats Bun by ~3 ms.
 
-#### Layer 2: real Loki workload (50 runs, side-by-side, scripts/bench.ts)
+#### Layer 2: real Loki workload
 
 | Runtime | `loki version` mean | vs bash |
 |---|---|---|
@@ -240,7 +240,7 @@ Local versions:
 
 These are real numbers from this exact Mac, not from a vendor blog. Run hyperfine yourself to reproduce.
 
-**Layer 2** (real Loki workload, 50 runs via `loki-ts/scripts/bench.ts`):
+**Layer 2** (real Loki workload, 50 runs):
 ```
 bash autonomy/loki version             106.71 ms (min 96.54, max 125.35)
 bun loki-ts/src/cli.ts version          12.36 ms (min 11.63, max 13.52)

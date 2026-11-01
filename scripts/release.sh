@@ -29,11 +29,9 @@
 # no commit, no push -- run this instead of hand-editing
 # VERSION, then commits the result itself.
 #
-# RELEASE GATE: before ANY bump (this includes --bump-only) the global guard
-# rows (scripts/global-guards.tsv) run against a clean worktree of HEAD; a red
-# row refuses the bump, exit 3 (RELEASE_GUARD_RED). No workflow run is required:
-# publishing never waits on a test job. --dry-run skips the gate since it
-# writes nothing. No environment variable skips the rows.
+# RELEASE GATE: none runs here. The tests under tests/min/ run in CI
+# (.github/workflows/pr-fast.yml) and locally (bash scripts/local-ci.sh); run it
+# before cutting a release. Publishing never waits on a test job.
 #
 # Files intentionally NOT bumped by this script (left to the maintainer):
 #   - vscode-extension/package.json: CLAUDE.md marks this DEPRECATED since
@@ -416,85 +414,9 @@ RELEASE_COMMIT_FILES="VERSION package.json SKILL.md docker/Dockerfile docker/Doc
 # --- Release gate ---------------------------------------------------------
 # Workflow names whose failed run at the cut SHA refuses a release. Empty until
 # the PR fast tier refusal signal lands. Every name here must match a `name:` in
-# .github/workflows/*.yml (tests/test-workflow-no-masked-failures.sh, R6).
+# .github/workflows/*.yml.
 # shellcheck disable=SC2034
 RELEASE_REQUIRED_WORKFLOWS=()
-
-# Cheap CI-only guards (global-guards.tsv R8 rows). Always run before a bump
-# so a release cannot cut on a tree a guard already rejects. Same runner as the
-# impacted gate (scripts/impacted-gate.sh --guards-only): per-row timeout, parallel.
-# No environment variable skips them. LOKI_RELEASE_GUARD_TIMEOUT (default 900s)
-# is the per-row limit. Guards run in a clean worktree of HEAD; a worktree failure exits 3.
-run_release_guard_rows() {
-    local out rc=0 started
-    # The guards read the working tree, so run them in a clean detached worktree of
-    # HEAD: the main checkout is dirty by design (usage-governor appends to tracked files).
-    local tmp_root dir wt
-    tmp_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || {
-        log_error "RELEASE_GUARD_RED: cannot resolve the temp root"
-        exit 3
-    }
-    # Sweep guard worktrees an interrupted release (SIGTERM) left registered. Only
-    # entries at <temp root>/loki-guard.*/guard-wt qualify; the parent is removed
-    # only if it is a real (non-symlink) loki-guard.* dir under the temp root.
-    local line stale_wt stale_dir
-    while IFS= read -r line; do
-        case "$line" in
-            "worktree ${tmp_root}"/loki-guard.*/guard-wt) ;;
-            *) continue ;;
-        esac
-        stale_wt="${line#worktree }"
-        stale_dir="$(dirname -- "$stale_wt")"
-        # Only a direct child of the temp root: no extra slash or .. component.
-        case "${stale_dir#"${tmp_root}"/}" in
-            */* | *..*) continue ;;
-        esac
-        git -C "$ROOT_DIR" worktree remove --force "$stale_wt" >/dev/null 2>&1 || true
-        case "$stale_dir" in
-            "${tmp_root}"/loki-guard.*)
-                if [ -d "$stale_dir" ] && [ ! -L "$stale_dir" ]; then rm -rf -- "$stale_dir"; fi ;;
-        esac
-    done < <(git -C "$ROOT_DIR" worktree list --porcelain 2>/dev/null)
-    git -C "$ROOT_DIR" worktree prune >/dev/null 2>&1 || true
-    dir="$(mktemp -d "${tmp_root}/loki-guard.XXXXXXXX")" || {
-        log_error "RELEASE_GUARD_RED: cannot create the guard temp dir"
-        exit 3
-    }
-    chmod 700 "$dir" || {
-        log_error "RELEASE_GUARD_RED: cannot chmod 700 the guard temp dir"
-        rmdir "$dir" 2>/dev/null || true
-        exit 3
-    }
-    wt="$dir/guard-wt"
-    if ! git -C "$ROOT_DIR" worktree add --detach "$wt" HEAD >/dev/null 2>&1; then
-        git -C "$ROOT_DIR" worktree remove --force "$wt" >/dev/null 2>&1 || true
-        rm -rf -- "$dir"
-        log_error "RELEASE_GUARD_RED: could not create a clean worktree of HEAD for the guard rows"
-        exit 3
-    fi
-    # bun rows need deps; node_modules is untracked so the clean worktree lacks it.
-    if [ -d "$ROOT_DIR/loki-ts/node_modules" ] && [ ! -e "$wt/loki-ts/node_modules" ] && [ -d "$wt/loki-ts" ]; then
-        ln -s "$ROOT_DIR/loki-ts/node_modules" "$wt/loki-ts/node_modules" || true
-    fi
-    log_step "Running global guard rows against a clean worktree of HEAD (scripts/impacted-gate.sh --guards-only)..."
-    started="$(date +%s)"
-    # env -u: a caller-exported LOKI_RUN_TMP would make the gate's loki_run_tmp_create refuse.
-    out="$(cd "$wt" && env -u LOKI_RUN_TMP IMPACTED_SUITE_TIMEOUT="${LOKI_RELEASE_GUARD_TIMEOUT:-900}" \
-        bash "$wt/scripts/impacted-gate.sh" --guards-only 2>&1)" || rc=$?
-    git -C "$ROOT_DIR" worktree remove --force "$wt" >/dev/null 2>&1 || true
-    case "$dir" in
-        "${tmp_root}"/loki-guard.*) if [ ! -L "$dir" ]; then rm -rf -- "$dir"; fi ;;
-    esac
-    git -C "$ROOT_DIR" worktree prune >/dev/null 2>&1 || true
-    printf '%s\n' "$out"
-    log_info "Guard rows took $(( $(date +%s) - started ))s"
-    if [ "$rc" -ne 0 ]; then
-        log_error "RELEASE_GUARD_RED: a global guard row failed; refusing to bump."
-        printf '%s\n' "$out" | grep -E '^rc=[0-9]+ ' | grep -v '^rc=0 ' | sed 's/^/  red row: /' >&2 || true
-        exit 3
-    fi
-    log_success "Global guard rows green"
-}
 
 # loki-ts/dist rebuilds are content-hashed (writeDeterministicDebugId
 # in loki-ts/scripts/build.ts) but the hash still shifts across checkouts
@@ -982,13 +904,6 @@ main() {
 
     if [ "$SHIP" = "true" ]; then
         ship_require_main_checkout
-    fi
-
-    # The guard rows run before ANY bump, --bump-only included. Skipped on
-    # --dry-run: it makes no changes, so it never needs to pass the "that
-    # exact tree is verified" bar.
-    if [ "$DRY_RUN" != "true" ]; then
-        run_release_guard_rows
     fi
 
     if [ "$BUMP_ONLY" = "true" ]; then

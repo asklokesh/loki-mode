@@ -220,78 +220,11 @@ Honest message to stderr naming the signals checked (Section 1), `return 1`.
 - Quote every path: `"$dir"`, `"$dir/package.json"`. Pass paths as argv to any python helper
   (never interpolate into a heredoc) -- mirror `_read_app_state` (`:5219`-`:5227`).
 - If a python heredoc is used (e.g. for `--json`), escape `$` that bash must not expand
-  (`\$`); follow `tests/check-heredoc-dollar-digit.sh` (the repo gate for `$1`/`$2` in heredocs).
+  (`\$`).
 - Clipboard pipeline always `|| true`; never let a missing tool or non-TTY abort.
 - Value-consuming flag shifts guarded (`[ $# -ge 2 ] && shift`) -- see `:5595`.
 - Capture sub-function exit into a local then `return $rc` (don't bare-return a non-zero call line
   under set -e) -- mirror `:5614`-`:5617`.
-- Must pass `tests/run-shellcheck.sh` clean.
-
----
-
-## 5. SDET test plan -- `tests/test-deploy.sh` (NEW)
-
-Structure mirrors `tests/test-preview-public.sh`: extract the contiguous deploy block by name anchor
-into a temp lib, source it, drive `cmd_deploy` and the pure helpers. `pass/fail` counters, `mktemp -d`
-WORKROOT, `trap cleanup EXIT INT TERM`. Color globals exported empty. Every un-runnable case emits a
-visible FAIL/SKIP -- never a silent pass. Fixtures live under temp dirs (fake package.json,
-Dockerfile, dist/index.html, requirements.txt).
-
-Extraction sanity (non-vacuity gate, like preview lines 113-126): assert all 4 deploy function
-defs are present in the extracted lib, else fail loudly and abort.
-
-### Test 1 (HEADLINE) -- NON-EXECUTION invariant
-- Build a `fake-bin` with stubs `vercel`, `netlify`, `flyctl`, `wrangler`, each:
-  `#!/usr/bin/env bash` -> `echo ran > "$SENTINEL_<name>"` -> `exit 0`.
-- Prepend `fake-bin` to PATH so `command -v` RESOLVES all four (CLIs DETECTED + printed).
-- Fixture: a Next.js project dir (package.json with `"next"`).
-- Run `cmd_deploy --dir <fixture>`; capture stdout.
-- Assert BOTH halves:
-  1. **NONE** of the four sentinels exists (no cloud CLI was invoked) -- the core invariant.
-  2. The expected command string (`vercel --prod`) **was printed** (proves non-vacuity -- a
-     deploy that prints nothing would pass half 1 falsely).
-- This is the highest-stakes test (echoes the real tunnel-CLI-launched-during-dev incident).
-
-### Test 2 -- Project-type detection (pure helper, per type)
-For each fixture (Next.js / static dist+index.html / Dockerfile / generic Node / Python), assert
-`_deploy_detect_type "$dir"` returns the expected label. Include a "none" fixture (empty dir) ->
-empty label.
-
-### Test 3 -- Option ordering / idiomatic-first (pure helper)
-With all four stubs on PATH, assert `_deploy_options_for_type next` lists Vercel before Netlify
-before Fly; static lists Netlify/Cloudflare before Vercel; Dockerfile lists Fly first. Assert the
-printed command strings are EXACTLY the LOCK 3 canonical forms (mutation-proof: a wrong flag fails).
-
-### Test 4 -- No-CLI-installed path
-Curated clean PATH with NONE of the four CLIs (build_clean_bin idiom, preview lines 191-201;
-symlink only coreutils). Next.js fixture. Assert: honest install hint printed (contains
-"Install one of the following" and at least the Vercel brew + URL) AND non-zero exit AND no sentinel.
-
-### Test 5 -- No-detected-project path
-Empty dir fixture. Assert honest "no deployable project" message naming signals + non-zero exit.
-
-### Test 6 -- Clipboard best-effort, never fatal
-- 6a: PATH with NO clipboard tool (clean bin) + Next.js fixture + on a non-TTY (`</dev/null` /
-  piped stdout). Assert exit 0 and the command still PRINTED (clipboard absence is non-fatal).
-- 6b (if a clipboard tool exists on host or via a fake `pbcopy` stub that writes a file): assert the
-  idiomatic command was copied AND the "copied to clipboard" note printed. Fake pbcopy is allowed to
-  run (it is not a cloud CLI). SKIP-safe if no TTY can be simulated.
-
-### Test 7 -- `--json` honesty (if implemented)
-Assert valid JSON; `options` empty when no CLI installed; non-empty with correct commands when stubs
-present. Suppresses the clipboard note.
-
-### Test 8 -- set -e safety / no-abort
-Run a representative `cmd_deploy` invocation inside a `set -e -o pipefail` subshell and assert it
-reaches a sentinel "ALIVE" echo after the call (proves no spurious abort), mirroring preview 1b
-(lines 304-314).
-
-### Wiring into `tests/run-all-tests.sh`
-Add next to the preview registration (`tests/run-all-tests.sh:204`):
-```
-run_test "Deploy Advisory (print-only, non-execution invariant)" "$SCRIPT_DIR/test-deploy.sh"
-```
-Also covered transitively by `tests/run-shellcheck.sh` and the mutation/mock detectors (gates #8/#9).
 
 ---
 
@@ -307,15 +240,6 @@ Also covered transitively by `tests/run-shellcheck.sh` and the mutation/mock det
 - `wiki/CLI-Reference.md` -- add the `deploy` command entry + options.
 - `skills/production.md` -- document the advisory
   deploy step in the production workflow.
-- Create this plan's sibling precedent set is `docs/PREVIEW-LINK-PLAN.md` / `docs/BUILD-HUD-PLAN.md`
-  -- this file (`docs/DEPLOY-PLAN.md`) is the matching plan artifact.
 
 ---
 
-## 7. Critical files for implementation
-
-- /Users/lokesh/git/loki-mode/autonomy/loki  (cmd_deploy + helpers as a contiguous block after cmd_preview ~:5649; dispatch arm next to preview ~:14966; "More commands" footer ~:728)
-- /Users/lokesh/git/loki-mode/autonomy/app-runner.sh  (detection signal source: next ~:800-813, vite ~:697, Dockerfile ~:759/:774, python ~:953, ${TARGET_DIR:-.} idiom ~:739)
-- /Users/lokesh/git/loki-mode/tests/test-deploy.sh  (NEW -- mirror tests/test-preview-public.sh)
-- /Users/lokesh/git/loki-mode/tests/run-all-tests.sh  (register the new test near :204)
-- /Users/lokesh/git/loki-mode/README.md  (line 447 Deploy row -> advisory-print)

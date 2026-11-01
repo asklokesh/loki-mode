@@ -39437,10 +39437,9 @@ cmd_bench() {
         # (.npmignore excludes benchmarks/). On a packaged install it is absent,
         # so degrade honestly instead of a bare "not found" that reads like a
         # broken install. Run it from a loki-mode source checkout.
-        echo "loki bench: the benchmark harness is not available in this install." >&2
-        echo "It is a development/research feature shipped only in the loki-mode source" >&2
-        echo "repository, not the published package. Clone the repo and run:" >&2
-        echo "  ./benchmarks/run-benchmarks.sh humaneval --execute --loki" >&2
+        echo "loki bench: the benchmark harness is not available." >&2
+        echo "It was removed from the loki-mode repository in v11.102.0 and is being rebuilt as a" >&2
+        echo "public head-to-head benchmark. Nothing was run." >&2
         return 0
     fi
     local sub="${1:-}"

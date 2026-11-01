@@ -25,7 +25,7 @@ The targets below should be treated as goals, not contracts. They will be revise
 
 | Property | Target | Measurement |
 |----------|--------|-------------|
-| Byte-divergence between Bash and Bun routes for the ported commands | 0 divergences | `tests/test-bash-bun-parity.sh` and the per-command parity suites (run on demand and in the Tests workflow) |
+| Byte-divergence between Bash and Bun routes for the ported commands | 0 divergences | the per-command parity suites (run on demand) |
 
 The eight commands currently in scope: `version`, `status`, `stats`, `doctor`, `provider show`, `provider list`, `memory list`, `memory index`.
 

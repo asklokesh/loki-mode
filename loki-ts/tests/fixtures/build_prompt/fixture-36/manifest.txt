@@ -1,1 +1,0 @@
-Gate failures > 50 entries

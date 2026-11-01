@@ -1,6 +1,0 @@
-{
-  "lint": {"passed": true},
-  "tests": {"status": "passed"},
-  "coverage": {"passed": false},
-  "security": true
-}

@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-# Usage: eval/loki10/summarize <results.jsonl> [--markdown|--json]
-exec python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.py" summarize "$@"

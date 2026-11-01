@@ -48,12 +48,9 @@ to cwd (`cost-attribute.py`, `run-replay.py`, `receipt-find.py`,
 
 ## The exit-code convention
 
-The tools that compose in CI share one convention. It is enforced by
-`tests/test_tool_exit_contract.py`, which walks the real directory rather than
-testing tools one at a time.
+The tools that compose in CI share one convention.
 
-Enforcement covers exactly **24** of them: that test globs `tools/*.py` (30
-files) and excludes six by name. The two shell tools, `preflight.sh` and
+The convention covers the CI-composable tools and excludes six by name. The two shell tools, `preflight.sh` and
 `verify-demo.sh`, are never globbed by it at all; they follow the convention by
 observation here, not by enforcement.
 
@@ -615,8 +612,7 @@ Model cost advisor -- /tmp/ws
     a measurement of your workload and does not predict that a cheaper model would
     complete YOUR task
 ```
-Exit 0 with no basis, by design. `tests/test_tool_exit_contract.py` pins this
-judgement so a future reader does not "fix" it: forcing an advisor non-zero
+Exit 0 with no basis, by design. This is a deliberate judgement: forcing an advisor non-zero
 trains operators to ignore a failing advisor.
 
 ---
@@ -660,7 +656,7 @@ $ python3 tools/hybrid_search.py council_should_stop --grep-only --top 3
 hybrid search: 'council_should_stop' [grep-only] (ripgrep not found, using grep)
 budget: 3000 tokens, 3 result(s)
 
-[1] tests/test-council-convergence-floor.sh:223  (match: grep, score: 0.016393)
+[1] autonomy/completion-council.sh:223  (match: grep, score: 0.016393)
     # The HARD floor in council_should_stop (ITERATION_COUNT < floor -> not allowed to
 ```
 `--semantic-only` requires the codebase index (see `index-codebase.py` below,
@@ -671,7 +667,7 @@ which currently does not run on Python 3.14). `--grep-only` needs nothing.
 ## Internal and maintenance
 
 Five of the tools below are excluded from the exit-code convention **by name** in
-`tests/test_tool_exit_contract.py` (the sixth named exclusion, `hybrid_search.py`,
+the convention (the sixth named exclusion, `hybrid_search.py`,
 is user-facing and appears under [Diagnose a run](#diagnose-a-run)). They are
 benchmark harnesses and repo maintenance scripts, not CI-composable gates.
 
@@ -748,7 +744,7 @@ adoptable.
 ### `regen-state-machine-refs.py`
 
 Verifies that every `file:line (function)` reference in
-`docs/architecture/STATE-MACHINES.md` still points at that function's definition.
+the state-machine reference doc still points at that function's definition.
 `--fix` rewrites stale numbers in place, `--strict` exits nonzero on drift (for
 CI).
 

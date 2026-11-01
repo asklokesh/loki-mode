@@ -4,26 +4,12 @@ Release steps and local CI details for maintainers.
 
 ## Local CI Before Every Push
 
-GitHub CI is the gate. Before pushing, run only syntax checks (`bash -n`, `py_compile`) plus the
-change's own tests, capped at 60 seconds. `.githooks/pre-push` enforces the
-repo-identity check, `bash -n` on `autonomy/run.sh` and `autonomy/loki`, and
-the red-main warning only; a push is not "done" until `git ls-remote origin
-refs/heads/main` matches `git rev-parse HEAD`. `scripts/local-ci.sh` remains
-available for diagnosis on a quiet cycle -- it is no longer a push
-precondition, fast tier or full.
-
-Slice gate (run before reporting a slice built; a reviewer reruns the same command):
-`bash scripts/select-tests.sh --gate [--suite tests/test-foo.sh]... [--no-loki-ts]`.
-It checks that HEAD contains the current origin/main (and names how far behind
-it is, never rebasing for you), runs exactly the `--guards-only` row set (the
-`scripts/global-guards.tsv` rows plus the marker-only walkers, from one shared emitter) one
-at a time and names any red row, runs each `--suite`, then runs full engine10
-(`bun run test:engine10` in loki-ts, through the slot queue when the tree has that script) unless `--no-loki-ts` says the slice
-touched no loki-ts source. Every row, suite and the engine10 run is bounded by
-`timeout -k 15` (`LOKI_GATE_ROW_TIMEOUT`, `LOKI_GATE_SUITE_TIMEOUT`, `LOKI_GATE_ENGINE10_TIMEOUT`);
-a timeout, an empty guard list, a failed fetch (unless `--no-fetch`) or a missing
-`bun` fails the gate. It prints a pass/fail summary per step and exits
-non-zero on any failure.
+`bash scripts/local-ci.sh` runs the hermetic tests under `tests/min/` (see `docs/TESTING.md`); it
+is the pre-push gate and the same command runs in `.github/workflows/pr-fast.yml`. `.githooks/pre-push`
+enforces the repo-identity check, `bash -n` on `autonomy/run.sh` and `autonomy/loki`, the secret scan,
+and the red-main warning; a push is not "done" until `git ls-remote origin refs/heads/main` matches
+the local HEAD. `scripts/release.sh` runs no test gate: run `bash scripts/local-ci.sh` before
+cutting a release.
 
 After a release ships, run post-release distribution validation:
 - npm: `npm pack loki-mode@<VERSION>`, untar, run `bash package/bin/loki version`
@@ -49,8 +35,7 @@ SKILL.md                                 # Header (line ~6) AND footer (last lin
 Dockerfile                               # LABEL version= AND org.opencontainers.image.version (both, or it drifts)
 docker/Dockerfile.sandbox                # Same two labels
 plugins/loki-mode/.claude-plugin/plugin.json  # "version": "X.Y.Z" (marketplace.json carries no version)
-server.json                              # "version" AND packages[loki-mode].version (MCP registry manifest; enforced by tests/test-server-json-current.sh)
-vscode-extension/package.json            # DEPRECATED v7.2.0, no longer published; bump only if vendoring
+server.json                              # "version" AND packages[loki-mode].version (MCP registry manifest; enforced by tests/test-server-json-current.sh and tests/min/version-consistency.sh)
 CLAUDE.md                                # Version pointer, if present
 dashboard/__init__.py                    # __version__ = "X.Y.Z"
 mcp/__init__.py                          # __version__ = "X.Y.Z"
@@ -126,7 +111,7 @@ For a manual push (`git push origin main`), run `bash scripts/local-ci.sh` first
 npm, then creates the tag and GitHub Release, builds/pushes Docker (including `:latest`), and updates the Homebrew tap. Do not manually
 create tags.
 
-Run the full Bun suite (including `tests/engine10`) only through `cd loki-ts && bun run test` or `bun run test:engine10`: both go through `scripts/test-slot.sh`, which allows at most 2 full runs per machine (`LOKI_ENGINE10_SLOTS` overrides; slots live in `~/.cache/loki-test-slots`, override `LOKI_TEST_SLOT_DIR`). A third run prints "waiting for a test slot" and starts when one frees; it is never killed, and a slot whose holder PID is dead is reclaimed. Filtered runs (`bun run test <file>`) take no slot. Never start the suite with a bare `bun test` for a full run. Test: `tests/test-test-slot.sh`.
+Run the engine end-to-end check alone with `cd loki-ts && bun run test:engine10` (it runs `tests/min/engine10-e2e-stub.sh` through `scripts/local-ci.sh`).
 
 Before pushing the release commit, run `bash scripts/release.sh --check-clean`: it exits 1 naming any tracked file (for example a stamped `loki-ts/dist/loki.js.map`) the commit left modified; `--bump-only` prints the "stage these files:" list.
 

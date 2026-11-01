@@ -14,8 +14,7 @@ rewrites both the facts and the headline into a mutually consistent lie and
 recomputes the integrity hash still passes verification, and the verifier
 honestly reports `generator_trusted: true`.
 
-That limitation is deliberately locked into the test suite
-(`tests/test-proof-forgery-defense.sh`, case c) rather than papered over.
+That limitation is stated here rather than papered over.
 
 **Signing is what closes that gap.** An Ed25519 attestation over the receipt
 digest lets a third party who holds your public key set confirm the receipt came
@@ -223,10 +222,6 @@ witnessed this build."
 - Signing: `autonomy/lib/proof-generator.py` (attestation block) and
   `autonomy/receipt_jwt.py` (`load_signing_key`)
 - Verification: `autonomy/lib/proof-verify.py`
-- Scope test: `tests/test-proof-forgery-defense.sh`
 - Attestation: `autonomy/receipt_jwt.py`; served by `autonomy/trigger-server.py`
   (`_attest`, `_handle_jwks`); checked by `loki_proof_attestation_check` and
-  `loki_remote_attestation_status` in `autonomy/loki`
-- Attestation tests: `tests/test-receipt-jwt-attestation.sh`,
-  `tests/test-remote-attestation-verdict.sh`, `tests/test-proof-verify-jwks.sh`,
-  `tests/test-receipt-signing-discoverability.sh`
+  `loki_remote_attestation_status` in `autonomy/loki`. `tests/min/receipt-roundtrip.sh` covers sign, verify and tamper.

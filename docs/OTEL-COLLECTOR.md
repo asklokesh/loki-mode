@@ -18,7 +18,3 @@ To use a subset of vendors, edit only `service.pipelines.traces.exporters` and l
 ## Receipt link
 
 When tracing was on, the receipt carries a signed `trace_id` (see `docs/AGENT-CHANGE-RECEIPT.md`). Search for that id in the backend to open the run's trace.
-
-## Offline check
-
-`bash tests/test-otel-collector-config.sh` parses the config, asserts the receiver, processor, exporters and traces pipeline, asserts every credential is an `${env:NAME}` placeholder (an optional `:-default` is allowed and must not be key-shaped), asserts that every required field still resolves to a non-empty default when a vendor's variables are unset, and maps the deterministic fixture in `tests/fixtures/otel/` (fixed run id and timestamps) to the golden span list. It makes no network call. When `otelcol-contrib` is on PATH it also runs `otelcol-contrib validate` with only `HONEYCOMB_API_KEY` set; that step is skipped, not passed, when the binary is absent. It does not contact a vendor; import into each vendor UI is not tested.

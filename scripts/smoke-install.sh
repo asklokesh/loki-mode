@@ -32,11 +32,10 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-# shellcheck source=../eval/loki10/lib-tmp.sh
-. "$REPO_ROOT/eval/loki10/lib-tmp.sh"
-loki_run_tmp_create || exit 2
-trap 'loki_run_tmp_cleanup' EXIT
-T="$LOKI_RUN_TMP"
+# Run-owned temp dir: created here, removed only if it is still the exact directory made here.
+T="$(mktemp -d "${TMPDIR:-/tmp}/loki-smoke.XXXXXXXX")" || exit 2
+T="$(cd "$T" && pwd -P)"
+trap 'case "$T" in */loki-smoke.*) [ -d "$T" ] && [ ! -L "$T" ] && rm -rf -- "$T" ;; esac' EXIT
 
 : >"$LOG" || { echo "cannot write log: $LOG" >&2; exit 2; }
 FAILS=0

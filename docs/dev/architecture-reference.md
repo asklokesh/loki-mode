@@ -82,7 +82,7 @@ time-to-first-preview write-once (bash route only).
 
 ## Anthropic SDK upgrade capability matrix (RQ-104, 2026-10-23)
 
-Pins (exact, all sites): `@anthropic-ai/sdk` 0.124.0 -> 1.3.0 (loki-ts/package.json, loki-ts/bun.lock, docker/Dockerfile peer pin); `@anthropic-ai/claude-agent-sdk` 0.3.293 -> 0.3.314 (loki-ts/package.json, package.json, package-lock.json, bun.lock, docker/Dockerfile). `tests/test-sdk-version-sync.sh` asserts both. Sources: sdk CHANGELOG 0.125.0..1.3.0, agent-sdk CHANGELOG 0.3.294..0.3.314.
+Pins (exact, all sites): `@anthropic-ai/sdk` 0.124.0 -> 1.3.0 (loki-ts/package.json, loki-ts/bun.lock, docker/Dockerfile peer pin); `@anthropic-ai/claude-agent-sdk` 0.3.293 -> 0.3.314 (loki-ts/package.json, package.json, package-lock.json, bun.lock, docker/Dockerfile). Sources: sdk CHANGELOG 0.125.0..1.3.0, agent-sdk CHANGELOG 0.3.294..0.3.314.
 
 | Change | Status |
 |---|---|
@@ -98,7 +98,7 @@ Pins (exact, all sites): `@anthropic-ai/sdk` 0.124.0 -> 1.3.0 (loki-ts/package.j
 | agent-sdk 0.3.302 refused structured output now an error with no payload | NOT AFFECTED: quality_gates.ts:1616 reads `e["structured_output"]` and fails closed to null when it is absent or not an object (falls back to parsing `result`); a refusal with no payload therefore yields null, the same outcome as before. Refusals are also handled by sdk_stream_parser.ts refusal frames |
 | agent-sdk 0.3.300 `thinking: disabled` runs adaptive on models that cannot disable | NOT ADOPTED: providers.ts:846 query() options pass no thinking setting |
 | agent-sdk 0.3.302 fork subagents on by default in SDK sessions | NOT ADOPTED: accepted default, effect on Loki runs unmeasured; `CLAUDE_CODE_FORK_SUBAGENT=0` is the opt-out |
-| agent-sdk 0.3.302 omitted `permissionMode` defaults to `default` on third-party providers | N/A: Loki always passes an explicit permissionMode (providers/claude_flags.ts:1052) |
+| agent-sdk 0.3.302 omitted `permissionMode` defaults to `default` on third-party providers | N/A: Loki always passes an explicit permissionMode |
 | agent-sdk 0.3.301 full-disk login refresh error is `invalid_request`, not `authentication_failed` | NOT ADOPTED: sdk_stream_parser.ts:278 keys only on `authentication_failed`; a full-disk refresh failure surfaces as a generic error, accepted until observed |
 | agent-sdk 0.3.300 PreToolUse/PermissionRequest `updatedInput` validated, unknown keys dropped | N/A: runSdkHostGuard (providers.ts:784) returns no updatedInput |
 | agent-sdk 0.3.296 `claude_code_version` in the initialize control response | NOT ADOPTED: SDK_BUNDLED_CLAUDE_CODE (providers.ts:364) is read before any session starts and is guarded by a test against the installed SDK claudeCodeVersion; the initialize value only exists after spawn |
@@ -117,7 +117,7 @@ Default-on in the Bun runner (see `CHANGELOG.md` v7.x entries; documented in `sk
 - `LOKI_AUTO_LEARNINGS` -- auto-write structured learnings per code_review cycle. Optional `LOKI_AUTO_LEARNINGS_EPISODE=1` also writes the learning into the episode store.
   **Bun route only.** This var has ZERO occurrences in `autonomy/run.sh` and `autonomy/loki` (measured; controls: `LOKI_HANDOFF_MD` returns 2, `LOKI_INJECT_FINDINGS` returns 3), so "set to `1` to force-enable on the bash route" does not apply to this knob -- there is nothing on bash to enable. The bash route DOES have a learnings store (`init_learnings_db`, `run.sh`); what is Bun-only is the automatic per-code_review-cycle write.
 - `LOKI_HANDOFF_MD` -- write a structured handoff doc before iteration close.
-- `LOKI_REVIEW_ADVISORY` -- default on (`0` restores blocking). architecture-strategist, maintainer-mergeability and test-coverage-auditor are mandatory to run, not to block: they still run and their findings are recorded (`advisory: true` per reviewer plus `advisory_critical` / `advisory_high` in the review `aggregate.json`, one display-only row in the Evidence Receipt), but they carry no veto. `has_blocking` ignores them; security-sentinel and the other reviewers still block. maintainer-mergeability and test-coverage-auditor are routed to haiku at every tier. Bun: `ADVISORY_REVIEWERS` in `loki-ts/src/runner/quality_gates.ts`; bash: `_is_advisory_reviewer` in `autonomy/run.sh` (parity-locked in `tests/test-mergeability-review.sh`).
+- `LOKI_REVIEW_ADVISORY` -- default on (`0` restores blocking). architecture-strategist, maintainer-mergeability and test-coverage-auditor are mandatory to run, not to block: they still run and their findings are recorded (`advisory: true` per reviewer plus `advisory_critical` / `advisory_high` in the review `aggregate.json`, one display-only row in the Evidence Receipt), but they carry no veto. `has_blocking` ignores them; security-sentinel and the other reviewers still block. maintainer-mergeability and test-coverage-auditor are routed to haiku at every tier. Bun: `ADVISORY_REVIEWERS` in `loki-ts/src/runner/quality_gates.ts`; bash: `_is_advisory_reviewer` in `autonomy/run.sh`.
 
 These knobs together implement the RARV-C (closure) loop: findings -> override council -> learnings -> handoff. Reference: `skills/quality-gates.md`, `CHANGELOG.md` entries from v7.x for default-on flip and override-council semantics.
 
@@ -132,7 +132,7 @@ These knobs together implement the RARV-C (closure) loop: findings -> override c
 
 ## Project memory across runs
 
-extract_learnings_from_session (autonomy/run.sh) mirrors learnings and decisions into .loki/memory/learnings/project-*.jsonl. get_relevant_learnings adds a bounded newest-first project_memory list (15 entries, LOKI_PROJECT_MEMORY_MAX_CHARS, default 2000) to .loki/state/relevant-learnings.json at run start. LOKI_PROJECT_MEMORY=0 disables both. Test: tests/test-project-memory.sh.
+extract_learnings_from_session (autonomy/run.sh) mirrors learnings and decisions into .loki/memory/learnings/project-*.jsonl. get_relevant_learnings adds a bounded newest-first project_memory list (15 entries, LOKI_PROJECT_MEMORY_MAX_CHARS, default 2000) to .loki/state/relevant-learnings.json at run start. LOKI_PROJECT_MEMORY=0 disables both.
 
 ## Verdicts, composite receipts and the autonomy ladder (v11.7.0)
 - Two sets: receipt verdicts (`engine10/types.ts` Verdict: VERIFIED, PARTIAL, ALREADY_SATISFIED, SPEC_CONFLICT, FAILED) and run outcomes (`engine10/output.ts` Outcome adds BUDGET_STOP, BLOCKED, STALLED, CANCELLED; exit ladder EXIT). Only receipt verdicts are sealed.
@@ -145,7 +145,7 @@ extract_learnings_from_session (autonomy/run.sh) mirrors learnings and decisions
 
 ### Python anthropic SDK (RQ-105: pinned `anthropic==2.3.0`)
 
-`mcp/requirements.txt` pins the Python SDK exactly (was `>=0.40,<1.0.0`; the resolver landed on 0.125.0). Requires Python >=3.10 (Ubuntu 24.04 image ships 3.12). The SDK runs on `httpx2`; no repo code passes `httpx` objects to it. v2.0.0 changes (API version 2026-10-21): `temperature`/`top_p`/`top_k` removed from Messages (no call site uses them), Admin API field renames (unused). Python-side call sites: `memory/managed_memory/client.py` (the only importer) and `providers/managed.py` (lazy import, `tests/managed/test_registry_lazy.py` contract unchanged).
+`mcp/requirements.txt` pins the Python SDK exactly (was `>=0.40,<1.0.0`; the resolver landed on 0.125.0). Requires Python >=3.10 (Ubuntu 24.04 image ships 3.12). The SDK runs on `httpx2`; no repo code passes `httpx` objects to it. v2.0.0 changes (API version 2026-10-21): `temperature`/`top_p`/`top_k` removed from Messages (no call site uses them), Admin API field renames (unused). Python-side call sites: `memory/managed_memory/client.py` (the only importer) and `providers/managed.py` (lazy import).
 
 | Capability (SDK release notes 0.40 to 2.2.0) | Status | Evidence / reason |
 | --- | --- | --- |

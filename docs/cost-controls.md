@@ -59,7 +59,7 @@ The number lives in one file, `loki-ts/data/model-pricing.json`
 - Bash: `autonomy/run.sh` (`BUDGET_LIMIT`) and the help text through
   `loki_budget_default_usd` in `autonomy/loki`.
 
-`loki-ts/tests/engine10/budget_cap.test.ts` asserts that this document, the JSON
+This document, the JSON
 file, the TypeScript constant, the bash default and the CLI help all state the same
 number. Change the JSON file and the document together.
 
@@ -159,7 +159,7 @@ SIGINT or SIGTERM during an engine10 run:
    run as `cancelled`, distinct from `FAILED`.
 6. The run summary is printed with `Outcome: CANCELLED` and the process exits **130**.
 
-The test `loki-ts/tests/engine10/supervisor_signal.test.ts` drives this with a stub
+This is driven with a stub
 provider that sleeps.
 
 ## Hitting a cap is a FAILURE, not a success

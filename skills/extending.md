@@ -16,9 +16,7 @@
 **When to load:** you want to add your own reviewer, agent, or gate to the RARV
 loop without editing engine files.
 
-Read this before writing an extension. Every claim below is cited to source, and
-the one live seam is exercised by `tests/test-installed-agent-reviewer.sh`
-(10 tests, wired into `tests/run-all-tests.sh:732`).
+Read this before writing an extension. Every claim below is cited to source.
 
 ## What is actually extensible today
 
@@ -80,9 +78,8 @@ REVIEWERS: ['architecture-strategist', 'maintainer-mergeability',
             'eng-frontend', 'security-sentinel', 'a11y-auditor']
 ```
 
-The silent case (a diff matching none of the agent's keywords leaves it out of
-the pool) is covered by the `stays silent on a diff its keywords do not match`
-case in `tests/test-installed-agent-reviewer.sh`.
+The silent case: a diff matching none of the agent's keywords leaves it out of
+the pool.
 
 ## Three invariants you cannot override
 
@@ -121,15 +118,11 @@ The command in that field did not run. Covered by the test
 ## `src/plugins/` is NOT a seam (status: unwired)
 
 `src/plugins/` contains `GatePlugin`, `AgentPlugin`, `MCPPlugin`,
-`IntegrationPlugin`, a loader and a validator, with 84 passing tests in
-`tests/plugins/`.
+`IntegrationPlugin`, a loader and a validator.
 
 **Status: not wired.** No engine file calls any of it, and the loop will never
 call it. There is no `require` of `src/plugins` in
-`autonomy/run.sh`, `autonomy/loki`, or anywhere outside its own tests, and
-`tests/plugins/` is absent from the `test` script in `package.json`, from
-`tests/run-all-tests.sh`, and from `scripts/local-ci.sh` -- so those 84 tests do
-not run in CI.
+`autonomy/run.sh`, `autonomy/loki`, or anywhere outside its own files.
 
 Do not register a gate through `GatePlugin` expecting the loop to execute it.
 Registration succeeds and nothing ever calls the gate. It is documented here so

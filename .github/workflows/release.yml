@@ -88,6 +88,11 @@ jobs:
       - name: Install loki-ts dependencies
         run: bun install --cwd loki-ts --frozen-lockfile
 
+      # Same check as the PR gate: every files entry resolves, runtime files are
+      # packed, no test code, bytecode or stale doc tree is.
+      - name: Check tarball contents (tests/min/pack-contents.sh)
+        run: bash tests/min/pack-contents.sh
+
       - name: Pack once and verify the PACKED tarball carries a fresh dist
         run: |
           # prepack rebuilds loki-ts/dist DURING pack and swallows a failed
@@ -376,10 +381,15 @@ jobs:
           # loki-mode-claude-code (extract to ~/.claude/skills/).
           cp SKILL.md README.md VERSION CHANGELOG.md release/loki-mode/
           cp LICENSE release/loki-mode/ 2>/dev/null || true
-          for d in references examples tests scripts autonomy dashboard memory skills providers \
+          for d in references autonomy dashboard memory skills providers \
                    events templates learning mcp completions integrations; do
             cp -r "$d" release/loki-mode/
           done
+          # Runtime-read files only (run.sh quality gates, sandbox verify, queue governor); no test suites.
+          mkdir -p release/loki-mode/tests release/loki-mode/scripts
+          cp tests/detect-*.sh release/loki-mode/tests/
+          cp -r scripts/vpr-pytest-boot scripts/verify-pr-sandbox.sh scripts/usage-governor.py release/loki-mode/scripts/
+          test -f release/loki-mode/tests/detect-mock-problems.sh
           (cd release && zip -qr "loki-mode-claude-code-${V}.zip" loki-mode && tar -czf "loki-mode-claude-code-${V}.tar.gz" loki-mode)
           # Brew source asset, attached at creation (releases are immutable).
           git archive --format=tar.gz --prefix="loki-mode-${V}/" -o "release/loki-mode-${V}.tar.gz" HEAD

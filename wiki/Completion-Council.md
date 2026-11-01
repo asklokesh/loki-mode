@@ -1,6 +1,6 @@
 # Completion Council
 
-> Legacy engine note: this page documents the legacy engine (`loki start`, `LOKI_ENGINE=legacy`), which still ships in 11.101.0 and is being removed. For the current Loki 10 commands (`loki "<task>"`, `loki owner/repo#N`, `loki backlog`, `loki verify`) see [[Home]] and [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
+> Legacy engine note: this page documents the legacy engine (`loki start`, `LOKI_ENGINE=legacy`), which still ships in 11.102.0 and is being removed. For the current Loki 10 commands (`loki "<task>"`, `loki owner/repo#N`, `loki backlog`, `loki verify`) see [[Home]] and [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
 
 Multi-agent definition-of-done system for autonomous session completion (v5.25.0).
 
@@ -45,8 +45,7 @@ The council tracks git diff hashes between iterations to detect stagnation:
 > claiming done) while `total_done_signals` is monotonic and is what arms the
 > done-signal valve. Stagnation force-stops at 2x
 > `LOKI_COUNCIL_STAGNATION_LIMIT`, matching bash. See
-> `loki-ts/src/runner/council.ts` and
-> `loki-ts/tests/council/track_iteration_valves.test.ts`.
+> `loki-ts/src/runner/council.ts`.
 >
 > A force-stop is **not** a council approval: it means the run was halted to
 > stop it burning budget, and the work is NOT verified-complete.

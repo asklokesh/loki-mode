@@ -86,11 +86,8 @@ git checkout -b feature/my-feature
 bash -n autonomy/run.sh
 bash -n autonomy/loki
 
-# Shell unit tests
-bash tests/test-provider-loader.sh
-
-# Control Plane tests
-cd packages/control-plane && bun test ./test/ && cd ..
+# Repository test set (hermetic, offline)
+bash scripts/local-ci.sh
 ```
 
 ### Commit Changes
@@ -141,8 +138,7 @@ gh pr create
 | Category | Tool | Command |
 |----------|------|---------|
 | Shell syntax | `bash -n` | `bash -n autonomy/run.sh` |
-| Shell unit | bash | `bash tests/test-provider-loader.sh` |
-| Control Plane | bun test | `cd packages/control-plane && bun test ./test/` |
+| Repository tests | bash | `bash scripts/local-ci.sh` |
 
 ### Shell Syntax Validation
 
@@ -154,11 +150,10 @@ bash -n autonomy/loki
 bash -n autonomy/completion-council.sh
 ```
 
-### Shell Unit Tests
+### Repository Tests
 
 ```bash
-# Provider loader tests (12 tests)
-bash tests/test-provider-loader.sh
+bash scripts/local-ci.sh
 ```
 
 ### Dashboard E2E Tests (Playwright)

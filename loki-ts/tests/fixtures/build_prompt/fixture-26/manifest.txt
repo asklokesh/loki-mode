@@ -1,2 +1,0 @@
-Fixture 26: Playwright smoke test failed
-- Verifies: PLAYWRIGHT_SMOKE_TEST: FAILED with failing checks + first 3 errors

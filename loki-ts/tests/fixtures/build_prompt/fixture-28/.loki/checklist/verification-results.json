@@ -1,1 +1,0 @@
-{"passed": 7, "failed": 1, "total": 8, "items": [{"id": "a2", "passed": false, "reason": "no logout endpoint"}]}
