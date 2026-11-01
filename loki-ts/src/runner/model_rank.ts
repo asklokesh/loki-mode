@@ -21,6 +21,8 @@ export function haikuFirstDowngrade(runModel: string, env = process.env): { from
 }
 /** Auxiliary stage pins (project model, Wall re-author, already-done) never run above the run's own model: a haiku run keeps them on haiku. An explicit user pin (any env key in pinKeys set) is returned exactly; an unknown run model ranks top, so nothing is capped. */
 export const capToRunTier = (pin: string, runModel: string, pinKeys: readonly string[], env = process.env): string => pinKeys.some((k) => !!env[k]) || !runModel || modelRank(pin) <= modelRank(runModel) ? pin : runModel;
+/** A LOKI_SESSION_MODEL run never starts a session above its pin: a stage pin that ranks higher (Wall author, referee, already-done, project model) runs on the pin. No pin, or no stage pin: unchanged. */
+export const capToSessionPin = (model: string | undefined, env = process.env): string | undefined => { const pin = sessionPinModel(env); return model && pin && modelRank(model) > modelRank(pin) ? pin : model; };
 const klass = (m: string): string => resolveModelAlias(m).toLowerCase();
 export type EscalationTrigger = "code_fail" | "escalate_marker" | "spec_conflict" | "limit_kill" | "stall";
 export interface UnitEscalation { unit: string; from: string; to: string; trigger: EscalationTrigger; evidence: string }

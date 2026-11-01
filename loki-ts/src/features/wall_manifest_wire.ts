@@ -5,7 +5,8 @@ import { basename, dirname } from "node:path";
 import { buildWallManifest, type ManifestFile } from "./wall_manifest.ts";
 import { safeGitSpawn } from "../util/safe_git.ts";
 
-export const wallManifestEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => ["1", "on", "true", "yes"].includes((env.LOKI_E10_WALL_MANIFEST ?? "").toLowerCase());
+/** On by default: the Wall author is grounded in the real exported names and types of the files the task names (repomap.txt carries paths only, so a blind author invents field names). LOKI_E10_WALL_MANIFEST=0/off/false/no turns it off. */
+export const wallManifestEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !["0", "off", "false", "no"].includes((env.LOKI_E10_WALL_MANIFEST ?? "").toLowerCase());
 const CONFIG = /^(package\.json|bunfig\.toml|(vitest|jest)\.config\.[cm]?[jt]s|pytest\.ini|pyproject\.toml|setup\.cfg|tox\.ini|go\.mod|Cargo\.toml)$/;
 const TESTISH = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$/;
 const SOURCE = /\.(py|[cm]?[jt]sx?)$/;
