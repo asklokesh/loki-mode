@@ -1,7 +1,7 @@
 // E-04: repo map for Intake (ENGINE.md section 3 "repomap.ts: file list + top level symbols, size-capped"). Deterministic, no LLM: `git ls-files` plus a best-effort regex scan (Python methods are Class.method). Caps files, bytes and symbols per file so a huge repo cannot blow up Intake's 15s/60s limit.
 import { closeSync, openSync, readSync } from "node:fs";
 import { safeGit } from "../util/safe_git.ts";
-import { join } from "node:path"; import { excludedPaths } from "../project_model/linguist.ts";
+import { join } from "node:path"; import { excludedPaths } from "../project_model/linguist.ts"; import { NEW_LANG_EXT, langSymbols } from "../util/context_pack.ts";
 export interface RepoMapEntry {
   path: string;
   symbols: string[]; // exported names, best effort
@@ -20,7 +20,7 @@ const maxFilesCap = (): number => {
 };
 const MAX_SCAN_BYTES = 256_000; // per file, for symbol extraction only
 const MAX_SYMBOLS = 300; // per file
-const SOURCE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|py)$/;
+const SOURCE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|py|java|kt|kts|cs|go|rs)$/; // L020: Java, Kotlin, C#, Go and Rust symbols come from util/context_pack.ts
 const SYMBOL_RE = /^export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|interface|type|enum)\s+([A-Za-z0-9_$]+)/gm;
 const PY_SYMBOL_RE = /^(?:(?:async\s+)?def\s+(\w+)|class\s+(\w+))|^([ \t]+)(?:async\s+)?def\s+(\w+)/gm;
 /** git ls-files, capped. Returns [] (never throws) outside a git repo. */
@@ -48,7 +48,7 @@ export function buildRepoMap(repoDir: string, maxFiles: number = maxFilesCap()):
   const entries: RepoMapEntry[] = [];
   for (const rel of files) {
     if (!SOURCE_EXT.test(rel)) continue;
-    const symbols = topLevelSymbols(join(repoDir, rel), rel.endsWith(".py") ? PY_SYMBOL_RE : SYMBOL_RE);
+    const symbols = NEW_LANG_EXT.test(rel) ? langSymbols(join(repoDir, rel), MAX_SYMBOLS) : topLevelSymbols(join(repoDir, rel), rel.endsWith(".py") ? PY_SYMBOL_RE : SYMBOL_RE);
     if (symbols.length > 0) entries.push({ path: rel, symbols });
   }
   return { files, entries, truncated };

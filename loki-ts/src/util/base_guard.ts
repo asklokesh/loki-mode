@@ -366,11 +366,18 @@ function returnCheckout(repoDir: string, branch: string, orig: string | null): s
   return git(repoDir, ["checkout", "-q", orig]) === null ? `engine10: the checkout stays on ${branch}: git checkout ${orig} failed; return with: git checkout ${orig}\n` : null;
 }
 
+/** The one line naming where a kept run branch's work is and how to look at it; "" when the branch is gone (settleBranch named the bundle) or still checked out. */
+function workLine(repoDir: string, branch: string, orig: string | null): string {
+  if (!tipOf(repoDir, `refs/heads/${branch}`) || currentBranch(repoDir) === branch) return "";
+  return `engine10: the run's work is on branch ${branch}; your checkout is back on ${orig ?? "the starting branch"}; see it with: git diff ${orig ?? "HEAD"}...${branch}\n`;
+}
+
 /**
  * The end of one run: return the checkout, remove leftover base worktrees, delete the run branch once its history is safe, migrate loose
  * session files and sweep earlier runs' branches. Returns the lines to print. `deferred`: a detached deep verify still runs on the branch,
  * so only a record is written and finishDeferredRun does the rest when it ends. `keepWork`: a passing run that published nothing keeps
- * its branch checked out, since that branch is the result (a later run's sweep saves and removes it once the user has moved off it).
+ * its branch, since that branch is the result (a later run's sweep saves and removes it). Every outcome puts the checkout back on the
+ * start branch and prints one line naming where the run's work is.
  */
 export function finishRunBranch(repoDir: string, runId: string, end: RunEnd, env: NodeJS.ProcessEnv = process.env): string {
   if (keepRunBranch(env) || !/^e10-[A-Za-z0-9-]+$/.test(runId)) return "";
@@ -385,11 +392,12 @@ export function finishRunBranch(repoDir: string, runId: string, end: RunEnd, env
     migrateSessionFiles(repoDir, runLive);
     let notes = "";
     const keepHere = end.keepWork === true && tip !== null && tipOf(repoDir, end.baseSha ?? "") !== tip;
+    const stay = tip ? returnCheckout(repoDir, branch, end.orig) : null; // run safety: every outcome returns the checkout to the start branch, a kept branch included
+    if (stay) notes += stay;
     if (tip && !keepHere) {
-      const stay = returnCheckout(repoDir, branch, end.orig);
-      if (stay) notes += stay;
-      else if (findInterrupted(repoDir, runId, true) === null) notes += settleBranch(repoDir, branch, runDir, "branch", end.pushed && tip !== null, { orig_branch: end.orig }).note; // a resumable run keeps its branch for `loki start`
+      if (!stay && findInterrupted(repoDir, runId, true) === null) notes += settleBranch(repoDir, branch, runDir, "branch", end.pushed && tip !== null, { orig_branch: end.orig }).note; // a resumable run keeps its branch for `loki start`
     }
+    if (!stay) notes += workLine(repoDir, branch, end.orig);
     return notes + sweepRunBranches(repoDir, env, runId);
   } catch (e) { return `engine10: run-end cleanup skipped: ${(e as Error).message}\n`; }
 }

@@ -51,3 +51,23 @@ export function guardedBackstop(intact: boolean, repoDir: string, workerEnv: Nod
   backstopCommit(repoDir, workerEnv, runId, b, preexistingDirty, installCreated, untrackedBlobs);
   return null;
 }
+
+/** Run safety: before the checkout returns to the user's branch, whatever the run left uncommitted (any outcome without a PR: FAILED,
+ *  STALLED, BLOCKED, BUDGET_STOP, a SIGINT/SIGTERM cancel) becomes one WIP commit on its own branch, so `git checkout <start>` neither
+ *  refuses nor carries the run's edits onto the user's branch. Only on loki/<runId>, with an intact log and a valid intake base. Every
+ *  path that was dirty or untracked at intake stays exactly where it is, edited or not: those are the user's files. True when it committed. */
+export function commitUnsealedWork(intact: boolean, repoDir: string, workerEnv: NodeJS.ProcessEnv, runId: string, intake: Record<string, unknown> | undefined): boolean {
+  if (!intact || !intake || validBase(intake["base_sha"]) === null) return false;
+  const g = (args: string[]) => safeGit(repoDir, args, { env: workerEnv });
+  try {
+    if (g(["symbolic-ref", "-q", "--short", "HEAD"]).trim() !== `loki/${runId}`) return false;
+    const keys = (o: unknown): string[] => (o && typeof o === "object" ? Object.keys(o) : []);
+    const users = [...keys(intake["preexisting_dirty"]), ...keys(intake["preexisting_untracked_blobs"]), ...(Array.isArray(intake["preexisting_untracked"]) ? (intake["preexisting_untracked"] as unknown[]).map(String) : [])];
+    g(["add", "-A", "--", "."]);
+    const keep = g(["--literal-pathspecs", "ls-files", "--cached", "-z", "--", ".loki", ...new Set(users)]).split("\0").filter(Boolean);
+    if (keep.length > 0) g(["--literal-pathspecs", "reset", "-q", "HEAD", "--", ...keep]);
+    try { g(["diff", "--cached", "--quiet"]); return false; } catch (e) { if ((e as { status?: number }).status !== 1) return false; }
+    g(["commit", "-q", "-m", `loki: work in progress, not verified (${runId})`, "-m", `Loki-Run: ${runId}`]);
+    return true;
+  } catch { return false; }
+}

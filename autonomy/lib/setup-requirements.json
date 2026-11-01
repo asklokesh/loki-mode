@@ -4,13 +4,13 @@
   "paths": [
     { "id": "common", "title": "All paths", "summary": "Needed by every Loki command" },
     { "id": "claude-cli", "title": "Claude Code CLI path (default, loki start)", "summary": "Loki drives the claude binary you installed and logged in" },
-    { "id": "api-key-sdk", "title": "Anthropic API-key path (Agent SDK, no claude CLI)", "summary": "Opt-in with LOKI_SDK_MODE=full; the bundled Agent SDK runs the loop over HTTPS" },
+    { "id": "api-key-sdk", "title": "Anthropic API-key path (Agent SDK, no claude CLI)", "summary": "loki \"<goal>\" runs on the bundled Agent SDK over HTTPS with only a key; no claude CLI and no extra setting" },
     { "id": "other-providers", "title": "Other provider CLIs", "summary": "codex (degraded), cline, aider, opencode: any one replaces the claude CLI" }
   ],
   "requirements": [
     { "id": "node", "path": "common", "level": "required", "kind": "command", "target": "node", "min": "20.0", "label": "Node.js 20 or newer", "fix": "install Node 20+ from https://nodejs.org" },
-    { "id": "python3", "path": "common", "level": "required", "kind": "command", "target": "python3", "min": "3.8", "label": "Python 3.8 or newer", "fix": "install python3 with your package manager (brew install python3)" },
-    { "id": "jq", "path": "common", "level": "required", "kind": "command", "target": "jq", "label": "jq", "fix": "install jq with your package manager (brew install jq)" },
+    { "id": "python3", "path": "common", "level": "optional", "kind": "command", "target": "python3", "min": "3.8", "label": "Python 3.8 or newer (deep scans, Python repos, group runs; loki \"<goal>\" runs without it)", "fix": "install python3 with your package manager (brew install python3)" },
+    { "id": "jq", "path": "common", "level": "optional", "kind": "command", "target": "jq", "label": "jq (loki status and the bash fallback CLI; loki \"<goal>\" runs without it)", "fix": "install jq with your package manager (brew install jq)" },
     { "id": "git", "path": "common", "level": "required", "kind": "command", "target": "git", "label": "git", "fix": "install git with your package manager (brew install git)" },
     { "id": "curl", "path": "common", "level": "required", "kind": "command", "target": "curl", "label": "curl", "fix": "install curl with your package manager (brew install curl)" },
     { "id": "bash", "path": "common", "level": "optional", "kind": "command", "target": "bash", "min": "4.0", "label": "bash 4.0 or newer", "fix": "install a newer bash (brew install bash); macOS ships 3.2" },
@@ -18,8 +18,7 @@
 
     { "id": "claude", "path": "claude-cli", "level": "required", "kind": "command", "target": "claude", "label": "claude CLI on PATH (then log in: claude auth login)", "fix": "npm install -g @anthropic-ai/claude-code" },
 
-    { "id": "sdk-mode", "path": "api-key-sdk", "level": "required", "kind": "env_value", "target": ["LOKI_SDK_LOOP"], "values": ["1", "true"], "label": "SDK loop enabled (LOKI_SDK_MODE=full)", "fix": "export LOKI_SDK_MODE=full" },
-    { "id": "sdk-credentials", "path": "api-key-sdk", "level": "required", "kind": "env_any", "target": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"], "label": "Anthropic credentials (API key, auth token or gateway URL)", "fix": "export ANTHROPIC_API_KEY=<your key>" },
+    { "id": "sdk-credentials", "path": "api-key-sdk", "level": "required", "kind": "env_any", "target": ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"], "label": "Anthropic credentials (API key, OAuth token, auth token or gateway URL)", "fix": "export ANTHROPIC_API_KEY=<your key>" },
     { "id": "sdk-binary", "path": "api-key-sdk", "level": "required", "kind": "sdk_binary", "target": "@anthropic-ai/claude-agent-sdk", "label": "Claude Agent SDK platform binary (optional npm dependency)", "fix": "reinstall without --no-optional: npm install -g loki-mode (the SDK is an optionalDependency)" },
     { "id": "sdk-bun", "path": "api-key-sdk", "level": "required", "kind": "command", "target": "bun", "min": "1.3", "label": "Bun runtime (the SDK loop runs only on the Bun route)", "fix": "reinstall without --no-optional (npm bundles @oven/bun-*) or install from https://bun.sh" },
 
