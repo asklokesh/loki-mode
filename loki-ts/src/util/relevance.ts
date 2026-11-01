@@ -71,7 +71,11 @@ function withTrackedNamed(task: string, repoMap: RepoMap, repoDir: string): Entr
 }
 
 export function rankRelevant(task: string, repoMap: RepoMap, max: number, repoDir?: string): PickedFile[] {
-  const entries = repoMap.truncated && repoDir ? withTrackedNamed(task, repoMap, repoDir) : repoMap.entries;
+  const mapped = repoMap.truncated && repoDir ? withTrackedNamed(task, repoMap, repoDir) : repoMap.entries;
+  const known = new Set(mapped.map((e) => e.path)); // L020: a tracked file the task names joins the ranking even when no symbol was found in it
+  const bare = repoMap.files.filter((f) => !known.has(f)).map((path) => ({ path, symbols: [] as string[] }));
+  const bareHits = bare.length ? namedPaths(task, bare) : new Map<string, string>();
+  const entries = bareHits.size ? [...mapped, ...bare.filter((e) => bareHits.has(e.path))] : mapped;
   const words = taskKeywords(task);
   const named = namedPaths(task, entries);
   if (words.length === 0 && named.size === 0) return [];

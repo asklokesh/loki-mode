@@ -1,0 +1,1 @@
+register_user lets the same person sign up twice when the email differs only in case or surrounding spaces. Emails must be compared trimmed and case-insensitively everywhere, and a duplicate registration must raise DuplicateEmail.

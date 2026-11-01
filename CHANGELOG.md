@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.114.0 (2026-11-01)
+
+Smaller models now get the exact code a task needs, inline, under a fixed budget.
+
+### Added
+
+- When implementation runs on Haiku or Sonnet, the brief carries the current code of the functions the task names or describes, the functions they call and their callers, each tagged with its file and line range, capped at about 6,000 tokens. Opus and the default model get the same brief as before. `LOKI_E10_CONTEXT_PACK=0` turns it off; `=1` turns it on for any model. On the head-to-head benchmark (Loki on Haiku, 8 tasks, 2 reps) every run still passed, implement turns fell from 7 to 5.5 at the median, total spend fell from $0.329 to $0.223, and the median cost per task stayed flat ($0.00285 to $0.00291).
+- The repo map now extracts classes, methods and functions for Java, Kotlin, C#, Go and Rust, so file ranking and signatures work on those repos. When nothing ranks, the brief leaves the file list out instead of listing the first files in the repo.
+- Each run records which files its brief carried and, at seal, how much of the code that changed the brief covered (context recall and precision). `loki stats --outcomes` reports median context recall over recent runs.
+
 ## v11.113.0 (2026-11-01)
 
 Correct runs now read VERIFIED, `loki <command> --help` never starts a run, and every run leaves your checkout on the branch you started from.
