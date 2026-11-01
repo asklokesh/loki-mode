@@ -3496,7 +3496,7 @@ validate_api_keys() {
             fi
             log_error "Claude Code is installed but not logged in -- the build would stall instead of running."
             log_error "Log in once, then retry:"
-            log_error "    claude login"
+            log_error "    claude auth login"
             log_error "(or set ANTHROPIC_API_KEY, or LOKI_SKIP_AUTH_PREFLIGHT=1 to bypass this check)"
             return 1
         elif [[ "$_login_state" == "expired" ]]; then
@@ -3505,7 +3505,7 @@ validate_api_keys() {
             fi
             log_error "Your Claude Code login has expired -- the build would stall instead of running."
             log_error "Fix it in one step, then retry:"
-            log_error "    claude login"
+            log_error "    claude auth login"
             log_error "(or set ANTHROPIC_API_KEY, or LOKI_SKIP_AUTH_PREFLIGHT=1 to bypass this check)"
             return 1
         fi
@@ -3611,7 +3611,7 @@ except Exception:
             if [[ "$_expired" == "expired" ]]; then
                 log_error "Your Claude Code login has expired -- the build would stall instead of running."
                 log_error "Fix it in one step, then retry:"
-                log_error "    claude login"
+                log_error "    claude auth login"
                 log_error "(or set ANTHROPIC_API_KEY, or LOKI_SKIP_AUTH_PREFLIGHT=1 to bypass this check)"
                 return 1
             fi

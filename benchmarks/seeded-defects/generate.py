@@ -4,10 +4,9 @@
 The corpus measures Seal accuracy: every case is a small program with one
 seeded defect whose own visible tests still pass ("green tests, wrong
 product"). A sound verifier must never seal one (expected_verdict NOT_SEALED).
-Contract: tests/moat/p4-model-freedom.sh (P4.seeded-defect-corpus-present).
 
 Layout written next to this script:
-  manifest.json            the corpus index read by the moat checker
+  manifest.json            the corpus index
   cases/SD-NNNN/spec.md    the requirement the code must meet
   cases/SD-NNNN/src.py     the implementation, carrying the seeded defect
   cases/SD-NNNN/test_visible.py  the tests a builder shipped (they pass)

@@ -16,7 +16,7 @@ LOCAL_CI_ONLY=hygiene,pack-contents bash scripts/local-ci.sh   # a subset
 | Test | Guards |
 | --- | --- |
 | `syntax` | `bash -n` on every shipped shell script, a Python parse of every shipped module, `node --check` on the JS entrypoints |
-| `hygiene` | no emoji and no en or em dashes in any tracked or new text file; every repo path named in README, SKILL, skills, references, docs and wiki markdown exists |
+| `hygiene` | no emoji and no en or em dashes in any tracked or new text file; every repo path named in README, SKILL, skills, references, docs and wiki markdown exists; shipped login hints use `claude auth login` (the Claude CLI has no bare login subcommand) |
 | `version-consistency` | VERSION agrees with package.json, server.json, the plugin manifest, SKILL.md, both Dockerfiles, the Helm charts, dashboard and MCP package versions, and the committed Bun bundle |
 | `release-notes` | `scripts/release-notes.sh` extracts a complete CHANGELOG section for VERSION and refuses a missing, empty, unfinished or placeholder one |
 | `docker-and-zip-sources` | every Docker COPY source and every path the release zip step copies exists in git |

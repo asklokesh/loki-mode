@@ -439,8 +439,7 @@ running with no worker at all and no error anywhere.
 Be precise here, because a security review will be:
 
 - **Verification is air-gapped.** The deterministic checks make no network
-  calls. Proven offline, not asserted: `tests/test-airgap-verify.sh` blackholes
-  every proxy variable, strips the environment, and still gets a real verdict.
+  calls.
 - **Generation is not.** Every provider we ship calls a hosted API. A fully
   offline build needs a model served inside your network.
 
