@@ -2,6 +2,7 @@
 # Stub claude CLI for the engine10 e2e test. Modes via E2E_STUB_MODE:
 #   done (default): the implement session appends multiply() to calc.ts
 #   already: the implement session changes nothing and claims already-done
+#   overlay: a plain `-p <task>` call copies E2E_STUB_OVERLAY over the cwd (h2h benchmark harness)
 # Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo).
 set -u
 if [ "${1:-}" = "--help" ]; then
@@ -38,6 +39,12 @@ if [ -n "${E2E_STUB_PROMPT_LOG:-}" ]; then printf '%s\n' "$prompt" >> "$E2E_STUB
 if [ -n "${E2E_STUB_ENV_LOG:-}" ]; then echo "$stage GH_TOKEN=${GH_TOKEN:-} LOKI_LEGACY_BASH=${LOKI_LEGACY_BASH:-} SEAL_PATCH=${LOKI_E10_SEAL_EXISTING_PATCH:-}" >> "$E2E_STUB_ENV_LOG"; fi
 if [ "$is_wall" = 1 ] && [ "${E2E_STUB_MODE:-}" = "wallcolor" ]; then # FC-69: the Wall author writes one red-on-base test for multiply()
   printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n' > loki_wall_multiply.test.ts
+fi
+if [ "$stage" = "other" ] && [ "${E2E_STUB_MODE:-}" = "overlay" ]; then # tests/min/h2h-harness.sh: a raw `claude -p <task> --output-format json` contestant
+  if [ -n "${E2E_STUB_SEEN_LOG:-}" ]; then find . -path ./.git -prune -o -type f -print >> "$E2E_STUB_SEEN_LOG"; fi # every file the contestant could read
+  cp -R "$E2E_STUB_OVERLAY"/. .
+  echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0123,"modelUsage":{"stub-model":{}}}'
+  exit 0
 fi
 if [ "$stage" = "implement" ]; then
   if [ "${E2E_STUB_MODE:-done}" = "nochange" ]; then

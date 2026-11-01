@@ -1,0 +1,9 @@
+{
+  "name": "orderdesk",
+  "version": "2.4.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test"
+  }
+}
