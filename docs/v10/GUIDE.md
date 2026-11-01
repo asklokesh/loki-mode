@@ -34,9 +34,12 @@ the same path. `-v` means `--verbose`, `--budget` and `--budget-limit` mean
 `--no-dashboard` are accepted and ignored. A PRD file path that does not exist
 exits 2 with "PRD file not found".
 
-`loki start` and `loki quick` with no task resume an interrupted run when there
-is one; otherwise they print the `loki "<goal>"` usage and exit 64. `loki demo`
-and `loki quickstart` build with `loki start <prd>`, so they run Loki 10 too.
+Inside a git repository, `loki start` and `loki quick` with no task resume an
+interrupted run when there is one; otherwise they print the `loki "<goal>"`
+usage and exit 64. A bare `loki start` takes `LOKI_PRD_FILE` as its PRD, and
+outside a repository it shows the offline sample receipt. `loki demo` and
+`loki quickstart` build with `loki start <prd>`, so they run Loki 10 too; in an
+empty folder they create the repository first.
 
 A flag Loki 10 does not support (for example `--simple`, `--parallel`,
 `--github`, `--sandbox`, `--max-iterations`) is refused with exit 2 and a line

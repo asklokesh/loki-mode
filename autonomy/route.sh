@@ -33,6 +33,7 @@ _route_refusal_hint() {
         --worktree|-w) echo "engine10 runs each attempt in its own isolated worktree already; drop the flag, or pass --engine legacy for a git-worktree run" ;;
         --detach|-d) echo "run it in the background yourself ('nohup loki start ... &') or queue it with 'loki queue run', or pass --engine legacy for --detach" ;;
         --parallel) echo "use 'loki queue run --parallel K' or 'loki issues run --parallel K' for parallel runs, or pass --engine legacy for --parallel" ;;
+        --issue) echo "give the issue as the task instead: loki start owner/repo#N (or the issue URL)" ;;
         *) echo "drop it, or pass --engine legacy to run the legacy loop with it" ;;
     esac
 }
@@ -217,7 +218,10 @@ loki_route_resolve() {
         *) R_ERR="loki: unknown engine '$engine_req' (use --engine legacy or --engine engine10)"; R_DECIDED=1; return 0 ;;
     esac
 
-    # Input.
+    # Input. A bare `loki start` takes LOKI_PRD_FILE as its PRD (documented in `loki start --help`).
+    if [ "${#positionals[@]}" -eq 0 ] && [ "$verb" = "start" ] && [ -n "${LOKI_PRD_FILE:-}" ]; then
+        positionals+=("$LOKI_PRD_FILE")
+    fi
     local npos=${#positionals[@]}
     if [ "$npos" -eq 0 ]; then
         R_INPUT_TYPE=none
@@ -232,11 +236,19 @@ loki_route_resolve() {
         elif [ "$verb" = "bare" ] || [ -n "$front_flag" ] || [ "$engine_req" = "legacy" ]; then
             # Flag-first bare calls, the front end (--workspace, --deploy) and an explicit legacy request keep their own handlers.
             R_INPUT_TYPE=""; return 0
+        elif [ "$verb" = "start" ] && [ -z "$provider_flag" ] && [ -z "${LOKI_PROVIDER:-}" ] \
+             && ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            # No repo, no task and no provider: cmd_start shows the offline sample receipt (README, `loki tour`) and spends nothing.
+            R_INPUT_TYPE=""; return 0
         else
             # L009: a bare `loki start` or `loki quick` runs engine10 with no task. It resumes an interrupted
             # run when there is one, otherwise prints the loki "<goal>" usage and exits 64. Never the legacy loop.
             R_INPUT_TYPE=none
             R_INPUT="(no task)"
+            if [ -f "${PWD}/.loki/autonomy-state.json" ] \
+               && grep -Eq '"status"[[:space:]]*:[[:space:]]*"(running|paused|interrupted)"' "${PWD}/.loki/autonomy-state.json" 2>/dev/null; then
+                R_NOTICE="loki: .loki/autonomy-state.json holds an interrupted run of the previous loop; run 'loki resume' for the command that continues it."
+            fi
         fi
     elif [ "$npos" -eq 1 ]; then
         R_INPUT_TYPE=$(_route_classify "${positionals[0]}")

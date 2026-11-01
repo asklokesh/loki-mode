@@ -17322,6 +17322,19 @@ cmd_factory() {
 }
 
 # Demo mode - build a real project from a bundled PRD template
+# L009: make a folder Loki created (or found empty) a git repository with a first commit, so the default
+# engine can run in it. A repo-local identity is set only when git has none; the user's own config is never
+# touched. Callers decide when a folder is theirs to initialise. Args: <dir> <files to commit...>
+_loki_init_fresh_repo() {
+    local dir="$1"; shift
+    git -C "$dir" init -q 2>/dev/null || return 1
+    git -C "$dir" symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+    if [ -z "$(git -C "$dir" config user.name 2>/dev/null)" ] || [ -z "$(git -C "$dir" config user.email 2>/dev/null)" ]; then
+        git -C "$dir" config user.name "Loki Mode" && git -C "$dir" config user.email "loki@localhost"
+    fi
+    git -C "$dir" add -- "$@" 2>/dev/null && git -C "$dir" commit -q -m "loki: first commit" 2>/dev/null
+}
+
 cmd_demo() {
     # Handle --help
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -17573,12 +17586,10 @@ cmd_demo() {
     cp "$demo_prd" "$demo_dir/prd.md"
 
     # L009: the demo runs on the default engine (loki start prd.md -> engine10), never the legacy loop.
-    # engine10 needs a git repository with a first commit; without a git identity the commit is skipped and
-    # the engine's preflight names that blocker with its fix.
+    # engine10 needs a git repository with a first commit, even on a machine with no git identity.
     if [ ! -d "$demo_dir/.git" ]; then
-        git -C "$demo_dir" init -q 2>/dev/null || true
+        _loki_init_fresh_repo "$demo_dir" prd.md || true
     fi
-    git -C "$demo_dir" add prd.md 2>/dev/null && git -C "$demo_dir" commit -q -m "loki demo: Simple Todo App PRD" 2>/dev/null || true
     local run_args=(start prd.md)
     if [ -n "$provider" ]; then
         run_args+=(--provider "$provider")
