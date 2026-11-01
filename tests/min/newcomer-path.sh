@@ -34,6 +34,9 @@
 #   13. autonomy/route.sh: no-repo sample branch without the legacy-flag guard: the outside-a-repo --openspec,
 #       --bmad-project and --issue checks fail (they reach the legacy loop).
 #   14. bin/loki: plan back in the data-command arm: the plan --spec provider checks fail.
+#   15. autonomy/loki cmd_demo: no GIT_CEILING_DIRECTORIES for a demo folder inside a repo: the outer-repo checks fail.
+#   16. autonomy/route.sh: `start --engine legacy` with no task left undecided: the printed resume command checks fail
+#       (Unknown option: --engine, exit 64).
 # No network, no model, no real key: the fake key never leaves the machine (stubs answer every call).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -250,6 +253,41 @@ out="$(cd "$REPO/sub" && "${l009_env[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/lo
 has "L009 bare start (from a subfolder) names the previous-loop run and its resume command" "$out" "continue it with: loki start --engine legacy"
 out="$(cd "$REPO" && "${l009_env[@]}" PATH="$E2E/bin:$PATH" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" resume </dev/null 2>&1)"; rc=$?
 has "L009 loki resume gives the previous loop's resume command" "$out" "loki start --engine legacy"
+# The printed command itself works: it reaches the previous loop's start (which here stops at its provider check,
+# since BARE has no provider CLI), never "Unknown option: --engine" (exit 64).
+note="$(cd "$REPO" && "${l009_env[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start </dev/null 2>&1)"
+rcmd="$(printf '%s\n' "$note" | sed -n 's/.*continue it with: //p' | head -1)"
+[ "$rcmd" = "loki start --engine legacy" ] && ok "L009 printed resume command: $rcmd" || bad "L009 printed resume command is '$rcmd'"
+out="$(cd "$REPO" && env PATH="$BARE" ${TO[@]+"${TO[@]}"} bash -c "${rcmd/#loki/bash $ROOT/bin/loki}" </dev/null 2>&1)"; rc=$?
+case "$out" in *"Unknown option"*) bad "L009 printed resume command is refused: Unknown option (exit $rc)" ;; *) [ "$rc" -ne 64 ] && ok "L009 printed resume command reaches the previous loop's start (exit $rc)" || bad "L009 printed resume command exited 64" ;; esac
+has "L009 printed resume command stops at the legacy provider check here" "$out" "No AI provider CLI found"
+# A demo folder inside someone else's repo becomes its own repo; the enclosing checkout is never touched.
+OUTER="$T/l009-outer"; mkdir -p "$OUTER"
+git -C "$OUTER" init -q -b main; printf 'x\n' > "$OUTER/a.txt"; git -C "$OUTER" add a.txt
+git -C "$OUTER" -c user.name=o -c user.email=o@example.invalid commit -q -m outer; printf 'mine\n' > "$OUTER/untracked.txt"
+before="$(git -C "$OUTER" reflog | wc -l | tr -d ' ') $(git -C "$OUTER" symbolic-ref --short HEAD) $(git -C "$OUTER" rev-parse HEAD) $(cat "$OUTER/.git/info/exclude" 2>/dev/null | shasum | cut -c1-12) $(git -C "$OUTER" branch --list | wc -l | tr -d ' ')"
+out="$("${l009_env[@]}" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009g.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" demo --yes --dir "$OUTER/demo-x" </dev/null 2>&1)"; rc=$?
+after="$(git -C "$OUTER" reflog | wc -l | tr -d ' ') $(git -C "$OUTER" symbolic-ref --short HEAD) $(git -C "$OUTER" rev-parse HEAD) $(cat "$OUTER/.git/info/exclude" 2>/dev/null | shasum | cut -c1-12) $(git -C "$OUTER" branch --list | wc -l | tr -d ' ')"
+[ "$before" = "$after" ] && ok "L009 demo inside a repo: outer reflog, branch, HEAD, exclude and branch list untouched" || bad "L009 demo inside a repo changed the outer repo ($before -> $after)"
+[ ! -e "$OUTER/.loki" ] && ok "L009 demo inside a repo: no .loki at the outer root" || bad "L009 demo inside a repo wrote .loki at the outer root"
+[ "$(cat "$OUTER/untracked.txt")" = mine ] && ok "L009 demo inside a repo: outer untracked file kept" || bad "L009 demo inside a repo changed the outer untracked file"
+[ "$(git -C "$OUTER/demo-x" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$OUTER/demo-x" && pwd -P)" ] && ok "L009 demo inside a repo: demo folder is its own repo" || bad "L009 demo inside a repo: demo folder is not its own repo"
+e10_receipt "$OUTER/demo-x" "demo inside a repo"
+# First-run init details: a directory named in LOKI_FIRST_RUN_FILES never counts as a file Loki wrote, and a user's
+# global name is kept when only the email is missing.
+fr() { # fr <dir> <global gitconfig> <first-run files> -> init result JSON
+    env -i HOME="$HOME" PATH="$PATH" GIT_CONFIG_GLOBAL="$2" GIT_CONFIG_NOSYSTEM=1 bun -e '
+const { initEmptyRepo } = await import(process.argv[1] + "/loki-ts/src/util/first_run_repo.ts");
+console.log(JSON.stringify(await initEmptyRepo(process.argv[2], { ...process.env, LOKI_FIRST_RUN_FILES: process.argv[3] })));' "$ROOT" "$1" "$3"
+}
+FRD="$T/l009-fr-dir"; mkdir -p "$FRD/prd.md"
+has "L009 first-run init: a directory named in LOKI_FIRST_RUN_FILES is not a written file" "$(fr "$FRD" /dev/null prd.md)" "not empty"
+FRN="$T/l009-fr-name"; mkdir -p "$FRN"; printf '# PRD\n' > "$FRN/prd.md"; printf '[user]\n\tname = Real Person\n' > "$T/name-only.gitconfig"
+r="$(fr "$FRN" "$T/name-only.gitconfig" prd.md)"
+[ "$(GIT_CONFIG_GLOBAL="$T/name-only.gitconfig" git -C "$FRN" config user.name)" = "Real Person" ] && ok "L009 first-run init keeps the global name" || bad "L009 first-run init overrode the global name ($r)"
+[ "$(git -C "$FRN" config --local user.email)" = "loki@localhost" ] && ok "L009 first-run init sets only the missing email" || bad "L009 first-run init did not set the missing email"
+[ -z "$(git -C "$FRN" config --local user.name)" ] && ok "L009 first-run init sets no repo-local name when the user has one" || bad "L009 first-run init set a repo-local name"
+[ "$(git -C "$FRN" ls-files)" = "prd.md" ] && ok "L009 first-run init commits the PRD it was told about" || bad "L009 first-run init did not commit prd.md"
 # --issue N points to the issue-ref form.
 out="$(cd "$REPO" && "${l009_env[@]}" bash "$ROOT/bin/loki" start --issue 5 </dev/null 2>&1)"; rc=$?
 has "L009 --issue N points to loki start owner/repo#N" "$out" "loki start owner/repo#N"

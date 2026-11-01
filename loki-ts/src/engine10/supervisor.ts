@@ -278,6 +278,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     process.stderr.write(`engine10: ${i.notice}\n`);
     try { repoDir = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(); } catch { process.stderr.write("engine10: not inside a git repository\n"); noteRefusal("not_a_repo"); return 2; }
   }
+  delete process.env.LOKI_FIRST_RUN_FILES; // read only by the first-run init above; never handed to a model session
   const olg = await import("../util/one_line_goal.ts"); // R01: infer provider and publish mode instead of refusing; the one-line note says what was assumed
   const inferred = olg.inferProvider(process.env, providerNamed); if (inferred) { provider = inferred.provider; process.env.LOKI_PROVIDER = provider; process.stderr.write(`${inferred.note}\n`); }
   let localReason: import("../util/one_line_goal.ts").LocalReason | null = null, origBranch: string | null = null; try { origBranch = safeGit(repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]).trim() || null; } catch { /* detached HEAD: landNext falls back to main */ }

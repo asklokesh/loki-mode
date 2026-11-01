@@ -233,9 +233,14 @@ loki_route_resolve() {
         if [ "$sp" = "1" ]; then
             R_INPUT_TYPE=spec
             R_INPUT="(from --spec)"
-        elif [ "$verb" = "bare" ] || [ -n "$front_flag" ] || [ "$engine_req" = "legacy" ]; then
-            # Flag-first bare calls, the front end (--workspace, --deploy) and an explicit legacy request keep their own handlers.
+        elif [ "$verb" = "bare" ] || [ -n "$front_flag" ]; then
+            # Flag-first bare calls and the front end (--workspace, --deploy) keep their own handlers.
             R_INPUT_TYPE=""; return 0
+        elif [ "$engine_req" = "legacy" ]; then
+            # `loki start --engine legacy` (the previous loop's resume command): decided, so bin/loki hands the legacy
+            # CLI the args without --engine, which it does not know.
+            R_DECIDED=1; R_ENGINE=legacy; R_REASON="explicit: --engine legacy or LOKI_ENGINE=legacy"; R_INPUT_TYPE=none; R_INPUT="(no task)"
+            return 0
         elif [ "$verb" = "start" ] && [ -z "$provider_flag" ] && [ -z "${LOKI_PROVIDER:-}" ] && [ -z "$legacy_flag" ] \
              && ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
             # No repo, no task, no provider and no legacy-only flag: cmd_start shows the offline sample receipt
