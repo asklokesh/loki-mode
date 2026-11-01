@@ -441,7 +441,7 @@ The JSON carries `engine`, `adapter`, `provider`, `model`, `input_type`, `input`
 
 - Argument order never changes the route: flags first or last, `--prd FILE` or a positional file, `--provider X` or `LOKI_PROVIDER=X`, `--engine X` or `LOKI_ENGINE=X` all resolve identically (the flag wins over the env var).
 - Default engine is `engine10` for a PRD file (`.md`, `.json`, `.yaml`), an issue reference (`owner/repo#N` or an issue URL), a multi-word task and a one-word brief.
-- The legacy engine runs only on `--engine legacy` or `LOKI_ENGINE=legacy`, for one call when a flag engine10 does not support is present (a notice is printed), for a provider with no engine10 invoker, or for a PRD larger than 100000 bytes.
+- The legacy engine runs only on `--engine legacy` or `LOKI_ENGINE=legacy`, or for a PRD larger than 100000 bytes. A flag engine10 does not support, a provider with no engine10 invoker, and a machine with no working bun each exit 2 with the fix. Inside a repository, `loki start` or `loki quick` with no task exits 64 with the `loki "<goal>"` usage (after offering to resume an interrupted run); outside one, a bare `loki start` shows the offline sample receipt and exits 0.
 - `--engine engine10` with an unsupported flag is refused (exit 2) instead of rerouted.
 - A missing PRD file path is a usage error (exit 2).
 - Adapter is `<engine>:<provider>`, with the legacy engine written `legacy-bash:<provider>`.

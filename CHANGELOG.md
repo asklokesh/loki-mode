@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.115.0 (2026-11-01)
+
+Every documented way to start Loki now runs the current engine; the old bash loop runs only when asked for by name.
+
+### Changed
+
+- Bare `loki start` inside a git repo resumes an interrupted run if there is one, otherwise prints how to give a goal (`loki "<goal>"`, exit 64). Outside a repo it still shows the offline sample receipt. It no longer starts the old loop.
+- `loki quickstart` and `loki demo` build with the current engine and seal a signed receipt; an empty folder with no git identity gets a repo with a repo-local identity, and your own git config is never touched. `loki demo --dir` pointing inside another repo is refused.
+- `LOKI_PRD_FILE=./prd.md loki start` uses that file as the PRD.
+- Without Bun, Loki prints the install command for your install method instead of falling back to the old loop; an unknown `LOKI_PROVIDER` names the five supported providers. Commands that start no model session (`keys export`, `verify`, `export --sarif`, `status`) are no longer refused for an unknown provider.
+- Old-loop-only flags (`--openspec`, `--bmad-project`, `--issue`) are refused with the replacement (`--issue N` points to `loki start owner/repo#N`); `loki start --engine legacy` still reaches the old loop, and `loki resume` prints that exact command for an interrupted old-loop run.
+- About 120 lines of fallback code removed.
+
 ## v11.114.0 (2026-11-01)
 
 Smaller models now get the exact code a task needs, inline, under a fixed budget.

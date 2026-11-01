@@ -267,7 +267,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     if (!task) task = spec.task;
   }
   if (!task && !fresh) { const rr = (await import("../util/run_outputs.ts")).startRecovery; try { const rd = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(), rec = await rr(rd, "", noPr); if (rec !== null) return rec; } catch { /* not a repo: the no-task error below */ } } // SB-12: a bare `loki start` offers or resumes an interrupted run
-  if (!task) { process.stderr.write("engine10: no task given\n"); noteRefusal("prd_missing"); return 2; }
+  if (!task) { process.stderr.write('loki: no goal given.\nusage: loki "<goal>"   (or: loki start <prd.md | owner/repo#N>)\n'); noteRefusal("prd_missing"); return 64; } // L009: a bare `loki start` or `loki quick` ends here (after the interrupted-run offer), never in the legacy loop
   if (spec === null) { const r = (await import("../util/one_line_goal.ts")).refuseCommandGoal(task); if (r !== null) return r; } // run safety: "status --help" passed as one argument is a command typed in quotes, never a run
   let repoDir: string;
   try {
@@ -278,6 +278,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     process.stderr.write(`engine10: ${i.notice}\n`);
     try { repoDir = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(); } catch { process.stderr.write("engine10: not inside a git repository\n"); noteRefusal("not_a_repo"); return 2; }
   }
+  delete process.env.LOKI_FIRST_RUN_FILES; // read only by the first-run init above; never handed to a model session
   const olg = await import("../util/one_line_goal.ts"); // R01: infer provider and publish mode instead of refusing; the one-line note says what was assumed
   const inferred = olg.inferProvider(process.env, providerNamed); if (inferred) { provider = inferred.provider; process.env.LOKI_PROVIDER = provider; process.stderr.write(`${inferred.note}\n`); }
   let localReason: import("../util/one_line_goal.ts").LocalReason | null = null, origBranch: string | null = null; try { origBranch = safeGit(repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]).trim() || null; } catch { /* detached HEAD: landNext falls back to main */ }
