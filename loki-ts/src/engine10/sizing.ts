@@ -55,8 +55,8 @@ export function hasRelevantTests(task: string, map: RepoMap | null, tests: TestM
 export const WALL_TINY_MAX_CHARS = 300, WALL_TINY_BOUND = "Tiny task: write exactly one test file with at most 6 assertions unless more acceptance lines exist, then exactly one per acceptance line.";
 export const isTinyGreenfield = (size: TaskSize, task: string, tests: TestMap | null): boolean => size === "small" && task.length <= WALL_TINY_MAX_CHARS && !tests?.runners.length && !tests?.tests.length;
 
-/** "lean" skips Plan+Wall (one implement session); "wall" keeps Wall (medium/large, or small with no relevant tests). */
-export type SmallTaskPath = "lean" | "wall"; export const smallTaskPath = (size: TaskSize, relevantTests: boolean): SmallTaskPath => (size === "small" && relevantTests ? "lean" : "wall");
+/** "lean" skips Plan+Wall (one implement session): any small or normal task whose named files have a relevant visible test, which verify runs once at the end; "wall" keeps Wall (large, or no relevant test). */
+export type SmallTaskPath = "lean" | "wall"; export const smallTaskPath = (size: TaskSize, relevantTests: boolean): SmallTaskPath => (size !== "large" && relevantTests ? "lean" : "wall");
 const knob = (v: string | undefined, words: string[]): boolean => words.includes((v ?? "").toLowerCase());
 /** LOKI_E10_PLAN: 0/off/never skips, 1/on/always forces, anything else sizes. */
 export const planMode = (env = process.env): "auto" | "always" | "never" =>
