@@ -5,6 +5,22 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.112.0 (2026-11-01)
+
+A first run works with just an API key and shows every setup problem at once; repeating a task Loki already answered costs nothing.
+
+### Added
+
+- An API key alone runs `loki "<goal>"` on the bundled Claude SDK; the Claude CLI is no longer required. `loki doctor` counts the SDK as a provider.
+- Preflight lists every blocker in one pass (for example missing git identity, no commits and not logged in), numbered and in the order to fix them, each with a copy-paste command. `--dry-run` prints the same list.
+- Rerunning an identical task on the same base commit, provider, model and Loki version that already ended SPEC_CONFLICT (or ALREADY_SATISFIED twice) returns that verdict immediately with no model session, naming the earlier run and how to answer it or force a new run (`--fresh`; `LOKI_REPLAY=0` turns replay off). PARTIAL and FAILED runs are never replayed.
+- A task similar to a past VERIFIED run gets that run as a short worked example in its brief (at most 2 KB, replacing the one-line fact for that run); `LOKI_WORKED_EXAMPLE=0` turns it off.
+- Receipts record the Loki version that sealed them.
+
+### Changed
+
+- python3 and jq are optional for `loki "<goal>"`; doctor reports them as warnings.
+
 ## v11.111.0 (2026-11-01)
 
 One review per run instead of two, and real outcome numbers per run and per repo.

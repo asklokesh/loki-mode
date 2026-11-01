@@ -128,7 +128,8 @@ export function sdkSearchRoots(env: Record<string, string | undefined>, root: st
   return [resolve(root, "node_modules"), resolve(root, "loki-ts/node_modules"), resolve(root, ".."), resolve(root, "../..")];
 }
 
-export function sdkBinaryPresent(env: Record<string, string | undefined>, root: string = REPO_ROOT): boolean {
+/** The first executable Agent SDK platform binary under the search roots, or null. */
+export function sdkBinaryPath(env: Record<string, string | undefined>, root: string = REPO_ROOT): string | null {
   for (const nm of sdkSearchRoots(env, root)) {
     const scope = resolve(nm, "@anthropic-ai");
     if (!existsSync(scope)) continue;
@@ -136,10 +137,26 @@ export function sdkBinaryPresent(env: Record<string, string | undefined>, root: 
     try { names = readdirSync(scope); } catch { continue; }
     for (const n of names) {
       if (!n.startsWith("claude-agent-sdk-")) continue;
-      try { accessSync(resolve(scope, n, "claude"), fsConstants.X_OK); return true; } catch { /* keep looking */ }
+      const bin = resolve(scope, n, "claude");
+      try { accessSync(bin, fsConstants.X_OK); return bin; } catch { /* keep looking */ }
     }
   }
-  return false;
+  return null;
+}
+
+export function sdkBinaryPresent(env: Record<string, string | undefined>, root: string = REPO_ROOT): boolean {
+  return sdkBinaryPath(env, root) !== null;
+}
+
+/**
+ * L034: `loki "<goal>"` can run claude on the bundled Agent SDK with no claude CLI: the engine10 invoker
+ * is the SDK unless LOKI_E10_INVOKER=cli (engine10/session.ts), so this needs only the credentials and the
+ * platform binary of the api-key-sdk path in the requirements table. Preflight and doctor share it.
+ */
+export function claudeSdkReady(env: Record<string, string | undefined>, sdkBinary: () => boolean = () => sdkBinaryPresent(env)): boolean {
+  if (env["LOKI_E10_INVOKER"] === "cli") return false;
+  const creds = requirementById("sdk-credentials")?.target ?? [];
+  return (Array.isArray(creds) ? creds : [creds]).some((k) => (env[k] ?? "").trim() !== "") && sdkBinary();
 }
 
 export interface EvalDeps {
@@ -753,8 +770,9 @@ type ToolSpec = {
 const NODE_MIN = (requirementMin("node") ?? "20.0").split(".")[0];
 const TOOL_SPECS: readonly ToolSpec[] = [
   { displayName: `Node.js (>= ${NODE_MIN})`, jsonName: "Node.js", cmd: "node", required: "required", min: `${NODE_MIN}.0` },
-  { displayName: "Python 3 (>= 3.8)", jsonName: "Python 3", cmd: "python3", required: "required", min: "3.8" },
-  { displayName: "jq", jsonName: "jq", cmd: "jq", required: "required" },
+  // L050: measured optional for loki "<goal>" (tests/min/newcomer-path.sh runs it with neither on PATH and gets the control outcome).
+  { displayName: "Python 3 (>= 3.8, optional: deep scans, Python repos, group runs)", jsonName: "Python 3", cmd: "python3", required: "recommended", min: "3.8" },
+  { displayName: "jq (optional: loki status, bash fallback CLI)", jsonName: "jq", cmd: "jq", required: "recommended" },
   { displayName: "git", jsonName: "git", cmd: "git", required: "required" },
   { displayName: "curl", jsonName: "curl", cmd: "curl", required: "required" },
   { displayName: "bash (>= 4.0)", jsonName: "bash", cmd: "bash", required: "recommended", min: "4.0" },
@@ -1154,13 +1172,16 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
   const anyProviderFound = ["claude", "codex", "cline", "aider", "opencode"].some(
     (p) => checks.find((c) => c.command === p)?.found === true,
   );
+  const sdkReady = !anyProviderFound && claudeSdkReady(process.env); // L034: same pass the text path prints for the bundled SDK
   const aiProvider: AiProviderCheck = {
     found: anyProviderFound,
-    status: anyProviderFound ? "pass" : "fail",
+    status: anyProviderFound || sdkReady ? "pass" : "fail",
     required: "required",
     detail: anyProviderFound
       ? null
-      : `No AI provider CLI. Fix: ${requirementFix("claude") ?? "npm install -g @anthropic-ai/claude-code"}`,
+      : sdkReady
+        ? 'Bundled Claude Agent SDK is usable: loki "<goal>" needs no separate CLI'
+        : `No AI provider CLI. Fix: ${requirementFix("claude") ?? "npm install -g @anthropic-ai/claude-code"}`,
   };
   statuses.push(aiProvider.status);
 
@@ -1508,7 +1529,7 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
 
   // Required section
   process.stdout.write(`${CYAN}Required:${NC}\n`);
-  for (const cmd of ["node", "python3", "jq", "git", "curl"]) {
+  for (const cmd of ["node", "git", "curl"]) {
     const c = byCmd.get(cmd)!;
     process.stdout.write(formatToolLine(c) + "\n");
     bump(tally, c.status);
@@ -1573,9 +1594,9 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
     // of the bash loop, and a second copy would drift), shell out to the SAME
     // shared helper the bash doctor calls. Fails closed: a missing helper, a
     // spawn error, or any non-zero status all keep today's blocker verbatim.
-    let sdkUsable = false;
+    let sdkUsable = claudeSdkReady(process.env); // L034: loki "<goal>" runs on the bundled SDK with only a key
     const sdkOfferScript = resolve(REPO_ROOT, "autonomy/provider-offer.sh");
-    if (existsSync(sdkOfferScript)) {
+    if (!sdkUsable && existsSync(sdkOfferScript)) {
       const probe = helperSpawn("bash", [sdkOfferScript, "detect-sdk"], { stdio: "ignore" });
       sdkUsable = probe.status === 0;
     }
@@ -1585,7 +1606,7 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
       // `loki start` and false for demo/quick/quickstart, which stay on bash and
       // require a binary on PATH -- so a green doctor was followed by exit 2.
       process.stdout.write(
-        `  ${badge("pass")}  Bundled Claude Agent SDK is usable -- 'loki start' needs no separate CLI\n`,
+        `  ${badge("pass")}  Bundled Claude Agent SDK is usable -- loki "<goal>" needs no separate CLI\n`,
       );
       process.stdout.write(
         `         ${YELLOW}Note: loki demo/quick/quickstart still need a provider CLI on PATH${NC}\n`,
@@ -1853,8 +1874,8 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
     );
     bump(tally, "warn");
   }
-  const cryptoProbe = helperSpawn("python3", ["-c", "import cryptography"], { stdio: "ignore" });
-  if (helperTimedOut(cryptoProbe)) {
+  const cryptoProbe = byCmd.get("python3")?.found ? helperSpawn("python3", ["-c", "import cryptography"], { stdio: "ignore" }) : null; // L050: no python3 is its own optional row; engine receipts are signed by node:crypto
+  if (!cryptoProbe) { /* nothing to add */ } else if (helperTimedOut(cryptoProbe)) {
     process.stdout.write(
       `  ${badge("warn")}  Receipt signing: python3 'cryptography' check timed out (skipped)\n`,
     );
@@ -1881,6 +1902,11 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
   if (bunCheck) {
     process.stdout.write(formatToolLine(bunCheck) + "\n");
     bump(tally, bunCheck.status);
+  }
+  for (const cmd of ["python3", "jq"]) { // L050: optional, a miss warns and never blocks
+    const c = byCmd.get(cmd)!;
+    process.stdout.write(formatToolLine(c) + "\n");
+    bump(tally, c.status);
   }
 
   const disk = deps.diskVolumes ? diskCheckFromVolumes(deps.diskVolumes) : checkDisk();
@@ -2184,7 +2210,7 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
   if (sdkOnly) {
     // SDK-only host: quickstart and demo need a binary on PATH, so recommending
     // them here would be a green doctor pointing at an exit 2.
-    process.stdout.write(`Next: loki start ./prd.md (runs on the bundled SDK, no CLI install needed)\n`);
+    process.stdout.write(`Next: loki "<goal>" (runs on the bundled SDK, no CLI install needed)\n`);
     process.stdout.write(`      For loki quickstart/demo: npm install -g @anthropic-ai/claude-code\n`);
   } else {
     process.stdout.write(
@@ -2194,8 +2220,8 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
       `      or loki demo (builds a sample todo app end to end) or loki start ./prd.md\n`,
     );
   }
-  // A-123: the last stdout line. Byte-mirrors cmd_doctor. The key state is read
-  // WITHOUT creating a key (auto_generate=False).
+  // A-123: the last stdout line. The key state is read WITHOUT creating a key, by the
+  // same node:crypto signer the engine seals receipts with (L050: no python3 needed).
   const id = process.env["LOKI_PROVIDER"] || readEffectiveProvider() || "claude";
   const modelRun = helperSpawn(
     "bash",
@@ -2203,50 +2229,17 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
     { encoding: "utf8" },
   );
   const model = (modelRun.stdout ?? "").toString().trim() || "default";
-  const keyRun = helperSpawn(
-    "python3",
-    ["-E", "-c", READY_KEY_PY, resolve(REPO_ROOT, "autonomy")],
-    { encoding: "utf8" },
-  );
-  const key = (keyRun.stdout ?? "").toString().trim();
-  const keyState = helperTimedOut(keyRun)
-    ? "receipts unsigned: signing key check timed out (skipped)"
-    : key.startsWith("kid ")
-    ? `receipts signed (${key})`
-    : key === "none"
-      ? "receipts will be signed on first run"
-      : key === "bad"
-        ? "receipts unsigned: signing key could not be loaded"
-        : "receipts unsigned: python3 cryptography package missing";
+  const { createPublicKey } = await import("node:crypto");
+  const signer = await import("../util/receipt_signer.ts");
+  const key = signer.loadSigningKey(false);
+  const keyState = key
+    ? `receipts signed (kid ${signer.kidOf(createPublicKey(key)).slice(0, 8)})`
+    : signer.signingKeyProblem()
+      ? "receipts unsigned: signing key could not be loaded"
+      : "receipts will be signed on first run";
   process.stdout.write(`Ready: ${id} (${model}), ${keyState}\n`);
   return 0;
 }
-
-// Read-only signing-key probe for the Ready line. auto_generate=False: doctor
-// must never create a key. Same logic as the python block in cmd_doctor.
-const READY_KEY_PY = `
-import os, sys
-sys.path[:] = [p for p in sys.path if p not in ("", ".")]
-sys.path.insert(0, sys.argv[1])
-from receipt_jwt import load_signing_key, _CRYPTO_AVAILABLE, RECEIPT_SIGNER_BASENAME
-if not _CRYPTO_AVAILABLE:
-    print("nocrypto")
-else:
-    k, kid = load_signing_key(auto_generate=False)
-    if kid:
-        print("kid " + kid[:8])
-    elif os.environ.get("LOKI_RECEIPT_SIGNING_KEY", "").strip():
-        print("bad")
-    else:
-        # A-122: a missing key FILE is auto-generated on first use when its nearest
-        # existing ancestor directory is writable; an existing file that did not
-        # load (corrupt/unreadable) or an unwritable location is unusable.
-        f = os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip() or os.path.expanduser("~/.loki/keys/receipt-ed25519.pem")
-        d = os.path.dirname(os.path.abspath(f))
-        while not os.path.isdir(d) and os.path.dirname(d) != d:
-            d = os.path.dirname(d)
-        print("bad" if os.path.lexists(f) or not os.access(d, os.W_OK | os.X_OK) else "none")
-`;
 
 // ---------- Public entry point -----------------------------------------------
 

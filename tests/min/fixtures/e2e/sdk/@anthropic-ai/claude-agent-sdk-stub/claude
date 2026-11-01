@@ -1,0 +1,30 @@
+#!/usr/bin/env bun
+// Stub Agent SDK platform binary for the API-key path test (tests/min/newcomer-path.sh). The bundled
+// SDK spawns it as it would its own claude binary, speaking stream-json on stdin/stdout. Each user turn
+// is handed to the e2e CLI stub (tests/min/fixtures/e2e/bin/claude -p <prompt>) and its stdout comes back as the result,
+// so the engine sees the same session behaviour as the CLI-invoker test. No network, no model.
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+
+const cliStub = join(import.meta.dir, "..", "..", "..", "bin", "claude");
+const sessionId = `stub-${process.pid}`;
+const send = (o: unknown) => process.stdout.write(`${JSON.stringify(o)}\n`);
+const textOf = (content: unknown): string =>
+  typeof content === "string" ? content : Array.isArray(content) ? content.map((b) => (b && typeof b === "object" && "text" in b ? String((b as { text: unknown }).text) : "")).join("") : "";
+if (process.env.E2E_SDK_STUB_LOG) spawnSync("/bin/sh", ["-c", 'echo sdk-stub >> "$E2E_SDK_STUB_LOG"']);
+
+for await (const line of createInterface({ input: process.stdin })) {
+  let msg: { type?: string; request_id?: string; request?: { subtype?: string }; message?: { content?: unknown } };
+  try { msg = JSON.parse(line); } catch { continue; }
+  if (msg.type === "control_request") {
+    send({ type: "control_response", response: { subtype: "success", request_id: msg.request_id, response: msg.request?.subtype === "initialize" ? { commands: [], models: [], output_style: "default", available_output_styles: ["default"] } : {} } });
+    continue;
+  }
+  if (msg.type !== "user") continue;
+  const r = spawnSync(cliStub, ["-p", textOf(msg.message?.content)], { encoding: "utf8", env: process.env, maxBuffer: 64 * 1024 * 1024 });
+  const out = (r.stdout ?? "").trim();
+  send({ type: "system", subtype: "init", session_id: sessionId, cwd: process.cwd(), model: "stub", tools: [], mcp_servers: [], permissionMode: "bypassPermissions", apiKeySource: "ANTHROPIC_API_KEY" });
+  send({ type: "assistant", session_id: sessionId, parent_tool_use_id: null, message: { id: "msg_stub", type: "message", role: "assistant", model: "stub", content: [{ type: "text", text: out }], stop_reason: "end_turn", usage: { input_tokens: 0, output_tokens: 0 } } });
+  send({ type: "result", subtype: "success", is_error: false, result: out, session_id: sessionId, num_turns: 1, duration_ms: 1, duration_api_ms: 0, total_cost_usd: 0, usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, modelUsage: {}, permission_denials: [] });
+}
