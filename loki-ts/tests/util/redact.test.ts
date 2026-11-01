@@ -300,13 +300,18 @@ describe("redaction survives glue (a secret directly after a word char)", () => 
   test("a non-secret neighbour of a distinctive prefix stays unredacted", () => {
     for (const s of ["monkey-" + h32, "xSK" + h32, "9key-" + h32, "dckr_pat_abc", "ya29.short", "SG.short.tok", "dapi-docs", "pypi-package", "dop_v1_" + "a".repeat(63)]) expect(redactSecrets(s)).toBe(s);
   });
-  test("linear on 100k-char adversarial input (under 50ms each)", () => {
-    const inputs = ["a".repeat(100000), "a".repeat(100000) + "token", "x".repeat(100000) + "token=" + "y".repeat(100000), "a_".repeat(50000) + "token", "-".repeat(100000),
-      "token".repeat(20000), "token=".repeat(16667), "SG.".repeat(33333), "ya29.".repeat(20000), "key-".repeat(25000), "dapi".repeat(25000), "dckr_pat_".repeat(11111), "SK".repeat(50000), "pypi-AgEI".repeat(11111)];
-    for (const big of inputs) {
-      const t0 = performance.now();
-      redactSecrets(big);
-      expect(performance.now() - t0).toBeLessThan(50);
+  // ReDoS guard by growth, not by a wall-clock bound: a fixed 50ms limit flaked on shared CI runners (52ms, 69ms on
+  // linear code). Each adversarial input is timed at n and 4n (best of 3); linear work grows about 4x, quadratic
+  // backtracking about 16x, so a ratio over 8 or any single call over 1s is a regression. Planted check: an O(n^2)
+  // loop added to redactSecrets reads a ratio of about 11 and fails.
+  test("linear on 100k-char adversarial input (growth from 25k to 100k stays linear)", () => {
+    const builders: ((n: number) => string)[] = [(n) => "a".repeat(n), (n) => "a".repeat(n) + "token", (n) => "x".repeat(n) + "token=" + "y".repeat(n), (n) => "a_".repeat(n / 2) + "token", (n) => "-".repeat(n),
+      (n) => "token".repeat(n / 5), (n) => "token=".repeat(Math.floor(n / 6)), (n) => "SG.".repeat(Math.floor(n / 3)), (n) => "ya29.".repeat(n / 5), (n) => "key-".repeat(n / 4), (n) => "dapi".repeat(n / 4), (n) => "dckr_pat_".repeat(Math.floor(n / 9)), (n) => "SK".repeat(n / 2), (n) => "pypi-AgEI".repeat(Math.floor(n / 9))];
+    const best = (input: string): number => { let m = Infinity; for (let i = 0; i < 3; i++) { const t0 = performance.now(); redactSecrets(input); m = Math.min(m, performance.now() - t0); } return m; };
+    for (const build of builders) {
+      const small = best(build(25000)), big = best(build(100000));
+      expect(big).toBeLessThan(1000);
+      expect(big / Math.max(small, 0.5)).toBeLessThan(8);
     }
   });
 });
