@@ -2,7 +2,7 @@
 // sealed under <runDir>/wall/ (sha256 each); wall.sealed before Implement; clean base-tree pass short-circuits to already_satisfied. E-64: skipped outright on the small-task lean path (plan.ts logs the same decision).
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { goModulePath, goPackagePath } from "../../runner/repo_profile.ts";
+import { goPackagePath } from "../../runner/repo_profile.ts";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { type RunContext, type RunnerName, type Stage, type StageResult, type TestMap, type TestRef, taskBlock } from "../types.ts";
 import { clauseDroppedNote, extractClauses, untaggedClauses, type ClauseSet } from "../../util/spec_file.ts";
@@ -145,9 +145,9 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
 
   const srcTexts = [typeof prior.plan?.plan === "string" ? prior.plan.plan : "", task], targetDir = wallTargetDir(ctx.repoDir, existingTests, runners, srcTexts), pkg = api?.packageOf(`${relative(ctx.repoDir, targetDir)}/x`); // FC-23: the target package's own module system, read by a parser
   const conv = readPackageConventions(join(ctx.repoDir, pkg?.root ?? targetRoot), pkg?.runner ?? null);
-  const readText = (f: string): string | undefined => { try { return readFileSync(f, "utf8"); } catch { return undefined; } }, arities = runners.includes("cargo") ? rustArities(ctx.repoDir) : new Map<string, number>();
-  // A Wall file the target's own compiler would reject is discarded before it reaches the tree (never a fix round, never a block): a module-system clash, a Go package clause the directory cannot build with, or a Rust call whose argument count no definition in the crate has.
-  const reject = (name: string, content: string): string | null => conventionViolation(conv, name, content) ?? goPackageClash(targetDir, name, content) ?? rustCallClash(ctx.repoDir, name, content, task, arities);
+  const readText = (f: string): string | undefined => { try { return readFileSync(f, "utf8"); } catch { return undefined; } };
+  // A Wall file the target's own compiler would reject is discarded before it reaches the tree (never a fix round, never a block): a module-system clash or a Go package clause the directory cannot build with. A Rust argument-count clash depends on the code implement writes, so installCore decides it after implement (wallInstallReject).
+  const reject = (name: string, content: string): string | null => conventionViolation(conv, name, content) ?? goPackageClash(targetDir, name, content);
   const cwd = mkdtempSync(join(tmpdir(), "loki-e15-wall-"));
   const wm = wallManifestFor(ctx.repoDir, tree, task); // D77: flag-gated, null (as if off) on any failure
   for (const [n, c] of [["task.md", task], ["repomap.txt", repomapText], ...(wm ? [["wall_manifest.txt", wm.text]] : [])] as [string, string][]) writeFileSync(join(cwd, n), c, "utf8");
@@ -168,8 +168,8 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   if (session.killed || session.exit === null) { rmSync(cwd, { recursive: true, force: true }); return done({ status: "failed", data: { iteration_ids: [iterationId], model }, reason: "wall session aborted, killed, or timed out", killed: true }); } // E-54: also covers killed-from-outside (exit:null, "killed before exiting" per types.ts)
   const casesBad = ingestWallCases(cwd, runners, ctx.repoDir); if (casesBad) { rmSync(cwd, { recursive: true, force: true }); return done({ status: "failed", data: { iteration_ids: [iterationId], model }, reason: casesBad }); } // CCR-06: invalid structured output fails closed with a named reason, never free-form code
   const planText = typeof prior.plan?.plan === "string" ? prior.plan.plan : null, repoFiles = repoMap?.files ?? [];
-  const goPkgPath = goPackagePath(readText, ctx.repoDir, targetDir), goModPath = goModulePath(readText, ctx.repoDir, targetDir); // the Go package under test, by import path
-  const oor = (): { name: string; why: string }[] => readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)).flatMap((name) => { const text = readFileSync(join(cwd, name), "utf8"), why = outOfRepoTarget(text) ?? dotenvFileRead(text) ?? vacuousCheck(name, text, goPkgPath, goModPath) ?? phantomReason(phantomRepoPaths(text, name, targetDir, ctx.repoDir, planText, task), repoFiles, relative(ctx.repoDir, targetDir), pkg?.root ?? "", task); return why ? [{ name, why }] : []; });
+  const goPkgPath = goPackagePath(readText, ctx.repoDir, targetDir), planned = runners.includes("go") ? plannedGoDir(ctx.repoDir, srcTexts) : null, goTested = planned?.pkg && planned.dir !== targetDir ? goPackagePath(readText, ctx.repoDir, planned.dir) : undefined; // the Wall directory's import path, and the package under test when the Wall sits elsewhere (a black-box tests/ package)
+  const oor = (): { name: string; why: string }[] => readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)).flatMap((name) => { const text = readFileSync(join(cwd, name), "utf8"), why = outOfRepoTarget(text) ?? dotenvFileRead(text) ?? vacuousCheck(name, text, goPkgPath, goTested) ?? phantomReason(phantomRepoPaths(text, name, targetDir, ctx.repoDir, planText, task), repoFiles, relative(ctx.repoDir, targetDir), pkg?.root ?? "", task); return why ? [{ name, why }] : []; });
   const bad1 = oor(); if (bad1.length > 0 && !wallCasesRunner(runners) && !signal.aborted && !ctx.overCap?.()) await ctx.sessions.run({ stage: "wall", brief: withStagePrefix(outOfRepoReask("Rewrite these Wall files in place, keeping the same names and acceptance coverage.", bad1)), tier: "development", model, iterationId: `${iterationId}-oor`, limitS: wallLimitS(sz.size), maxOutputTokens: wallOutputCap(), signal, cwd }); // FC-WALL-OUT-OF-REPO-TARGET: re-ask once in the same directory with the precise reason
   const oorBad = new Map(oor().map((b) => [b.name, b.why])), all = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)), held = stashHoldout({ runId: ctx.runId, repoDir: ctx.repoDir, srcDir: cwd, targetDir, names: all.filter((n) => !oorBad.has(n) && !reject(n, readFileSync(join(cwd, n), "utf8"))), runnerOf: (n) => guessRunner(n, runners) }), generated = all.filter((n) => !held?.names.has(n)); // P12-05: the held-out subset never reaches the repo, runDir or the implementer
   const sealedDir = sealStageDir(ctx.runId, ctx.repoDir); rmSync(sealedDir, { recursive: true, force: true }); // staged outside the repo tree; publishSealed moves it to <runDir>/wall at install
@@ -186,6 +186,12 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   return { kind: "authored", ...(generated.length > 0 ? { staged: true } : {}), model, iterationId, task, sizeName: sz.size, runners, targetDir, generated, contents, discarded, ...(clauseSet.clauses.length ? { clauses: clauseSet } : {}), ...(evidence ? { evidence } : {}), ...(wm ? { manifestSha256: wm.sha256 } : {}), ...(held ? { holdoutDir: held.dir } : {}) };
 }
 
+/** The install-time compile check, run once implement has written its code: a Rust Wall call whose argument count no definition in the crate has AS IT NOW STANDS (so a task that changes a constructor keeps the test that proves it). `afterImplement` false (the sequential Wall installs before implement): nothing is decided here; the delivery over a Wall conflict handles a Wall file that then fails to compile. */
+export function wallInstallReject(repoDir: string, task: string, runners: RunnerName[], afterImplement: boolean): (name: string, content: string) => string | null {
+  if (!afterImplement || !runners.includes("cargo")) return () => null;
+  let ar: ReturnType<typeof rustArities> | null = null;
+  return (name, content) => name.endsWith(".rs") ? rustCallClash(repoDir, name, content, task, (ar ??= rustArities(repoDir))) : null;
+}
 /** Copy the sealed files into repoDir, emit wall.sealed, run the base run in baseDir, drop not_run files. */
 export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions = {}): StageResult { const g = installCore(ctx, a, baseDir, opts), first = g.next(); if (first.done) return first.value as StageResult; return g.next(null).value as StageResult; } // TEN-SPEED-19: sequential base run; installWallAsync runs it concurrently
 export async function installWallAsync(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions = {}): Promise<StageResult> { const g = installCore(ctx, a, baseDir, opts), first = g.next(); if (first.done) return first.value as StageResult; const y = first.value as { runner: BaseTestRunner; tests: TestRef[] }, jobs = baseJobs();
@@ -193,8 +199,10 @@ export async function installWallAsync(ctx: RunContext, a: WallAuthored, baseDir
 function* installCore(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions): Generator<{ runner: BaseTestRunner; tests: TestRef[] }, StageResult, BaseEachResult[] | null> {
   const { generated, contents, discarded, targetDir, runners } = a;
   if (generated.length > 0) { mkdirSync(targetDir, { recursive: true }); if (!publishSealed(ctx.runId, ctx.repoDir, ctx.runDir) && a.staged) return { status: "failed", data: {}, reason: "wall sealed copies missing: the staged Wall directory in the system temp directory was removed before install" }; } const sealedFiles: WallSealedFile[] = [], readOnlyFiles: ReadOnlyFile[] = [], wallTests: TestRef[] = [];
+  const late = wallInstallReject(ctx.repoDir, a.task, runners, baseDir !== ctx.repoDir);
   for (const name of generated) {
     const content = contents.get(name); if (content === undefined) continue; // discarded: sealed copy only
+    const lateWhy = late(name, content); if (lateWhy) { discarded.push({ file: name, reason: `${lateWhy}; wall test did not compile against the implemented code` }); continue; }
     const dest = join(targetDir, name), runner = guessRunner(name, runners, relative(ctx.repoDir, dest));
     writeFileSync(dest, content, "utf8");
     sealedFiles.push({ path: dest, sha256: sha256(content), ...(runner ? { runner } : {}) }); readOnlyFiles.push({ path: dest, content });

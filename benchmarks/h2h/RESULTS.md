@@ -39,14 +39,18 @@ What changed, and what each change did on these runs (Loki on Haiku, 48 runs eac
   Wall files are discarded. Before, it needed a passing targeted own test before the re-verify,
   which a Go Wall file that breaks its whole directory's build never allows.
 - **Wall tests that cannot compile are discarded before they reach the tree.** A Go file whose
-  package clause differs from its directory's, and a Rust call whose argument count no definition
-  in the crate has, are dropped and listed NOT PROVEN, with no fix session spent on them. The Go
-  brief now names the directory's package and the import path of the package under test, the
-  Wall manifest carries Go and Rust signatures, and a black-box `package tests` file that imports
-  the module's package is no longer misread as vacuous. Fix sessions: 14 before, 10 after.
-- **The unconfigured default review is opt-in (`LOKI_REVIEW_DEFAULT=1`).** It ran on 17 of 48 runs,
+  package clause differs from its directory's is dropped when written; a Rust call whose argument
+  count no definition in the crate has is dropped at install, after implement, so a task that
+  changes a constructor keeps the test that proves it (an explicit `Type::method(&mut x, ..)` call
+  counts its receiver). Both are listed NOT PROVEN, with no fix session spent on them. The Go brief
+  now names the directory's package and the import path of the package under test, the Wall
+  manifest carries Go and Rust signatures, and a black-box `package tests` file that imports the
+  package under test is no longer misread as vacuous. Fix sessions: 14 before, 10 after.
+- **The unconfigured default review is opt-in for medium risk (`LOKI_REVIEW_DEFAULT=1`) and stays
+  on for high risk** (auth, payments, migrations, CI, public API). It ran on 17 of 48 runs,
   changed no verdict, and was $1.29 of $1.92 (67%) of Loki's spend and 323 of 341 seal seconds.
-  A configured reviewer still runs. Review sessions: 17 before, 0 after.
+  A configured reviewer still runs. Review sessions: 17 before, 0 after (in that run the default
+  was off for every tier; the review-fixes run below keeps it on for high risk).
 - **The separate already-done session runs for issue tasks only.** On a direct task the implement
   session already answers LOKI_ALREADY_DONE itself. **The Project Model discovery session is skipped
   when one runner sits at the repo root** even when that runner lists no test files (cargo). Intake
@@ -62,6 +66,23 @@ Verdict agreement did not improve (29/48): 12 of the 18 passing runs that end PA
 no Wall file ran and no passing check names a changed symbol.
 
 Spend for these two runs and the probes behind them: $5.70 on their own ledger.
+
+After review fixes (`results/2026-11-01-win-bench-v2-review-fixes.json`, Loki on Haiku only, 2 reps,
+v11.115.0 merged in): the Wall-conflict delivery counts only the repo's own tests (a test check with
+n > 0 or a full-suite pass, never lint or the security scan), the Rust argument-count rule is decided
+after implement, the Go black-box exemption needs the package under test itself, and the default
+review stays on for high risk on the run's own model.
+
+| config | pass | 95% CI | $ per passed task | median s | p90 s | sessions | verdict agrees | false VERIFIED |
+|---|---|---|---|---|---|---|---|---|
+| loki-haiku | 47/48 | 89.1-99.6% | 0.0131 | 29.0 | 174.3 | 1.90 | 29/48 | 1 |
+
+The one failure is py-semver-range (rep 1): a lean-path run (a relevant visible test, so no Wall)
+read VERIFIED while the hidden `intersects` tests failed. The v11.114.0 baseline had the same false
+VERIFIED on the same task. Five tasks reached the high risk tier (py-invoice-rounding,
+ts-cart-discounts, ts-cron-next, rs-expr-eval, rs-interval-set), so their runs got the default
+review: 8 review sessions, $0.052 in total on Haiku.
+Spend: $1.15 on its own ledger.
 
 ## Protocol
 

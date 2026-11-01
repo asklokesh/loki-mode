@@ -40,7 +40,9 @@
 #      never-calls-multiply leg reads VERIFIED: the replaced comment credits add()).
 #   10. loki-ts/src/engine10/stages/deep.ts: DEFAULT_SECRET_SCAN_SH back to new URL("../../../../autonomy/...",
 #      import.meta.url) (rebuild dist); the high-tier leg reads "secret-scan.sh not found" and PARTIAL.
-#   11. loki-ts/src/engine10/stages/xreview.ts: reviewDefaultOn returns true (the default unit line must fail).
+#   11. loki-ts/src/engine10/stages/xreview.ts: reviewDefaultOn returns true (the default unit line reads medium=1), or false
+#       for high (it reads high=0).
+#   12. loki-ts/src/engine10/stages/xreview.ts: drop the run-model pin for the default review (the high-tier leg reads no --model haiku).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -139,7 +141,9 @@ outcome() { printf '%s\n' "$OUT" | sed -n 's/^Outcome:[[:space:]]*\([A-Z_]*\).*/
 SYS="tests ran on the system interpreter"
 # High tier through the BUNDLE (LOKI_TS_ENTRY is dist/loki.js): the security scan must find its script from the package
 # root. A path relative to the bundle file points outside the package and reads "secret-scan.sh not found" (PARTIAL).
-LOKI_RISK_TIER=high run_engine done
+LOKI_RISK_TIER=high LOKI_SESSION_MODEL=haiku E2E_STUB_ARGV_LOG="$T/high-argv.log" run_engine done
+rv="$(grep '^review ' "$T/high-argv.log" 2>/dev/null | grep -o -- '--model [^ ]*' | sort -u | tr '\n' ' ')"
+[ "$rv" = "--model haiku " ] && ok "high tier: the default review runs (on by default for high risk), on the run's own Haiku pin" || bad "high tier: review --model arguments '$rv' (want one review on haiku)"
 scan="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(" ".join(c["result"] for c in json.load(open(sys.argv[1]))["checks"] if c["name"]=="security scan"))' "$RUNDIR/receipt.json" 2>/dev/null)"
 [ "$scan" = "pass" ] && ok "high tier through the bundle: the security scan ran and passed" || { bad "high tier through the bundle: security scan result '$scan'"; printf '%s\n' "$OUT" | grep -E '^(Outcome|NOT PROVEN)' | sed 's/^/    | /'; }
 printf '%s\n' "$OUT" | grep -Eq '^Outcome:[[:space:]]+VERIFIED' && ok "high tier through the bundle: VERIFIED" || bad "high tier through the bundle: not VERIFIED"
@@ -239,7 +243,7 @@ f="$(pr_facts)"; set -- $f
 [ "$8" = failure ] && ok "a new failing id beyond the base-red ones keeps status failure" || bad "new full-suite failure gave status $8 ($f)"
 
 # Unit: every risk tier plans at most the one pre-seal reviewer, and the receipt credits "one reviewer" only from it.
-# The unconfigured same-vendor review is opt-in (LOKI_REVIEW_DEFAULT=1, xreview.ts reviewDefaultOn): without it no tier plans one.
+# The unconfigured same-vendor review stays on for high risk and is opt-in for medium (LOKI_REVIEW_DEFAULT=1, xreview.ts reviewDefaultOn).
 # The run start sits 60s back: readRiskRecord ignores a record older than the run, and a same-millisecond start raced it on Linux CI.
 unit_review() { (cd "$ROOT/loki-ts" && env -u LOKI_REVIEW_PROVIDER -u LOKI_XVENDOR_DEFAULT "$@" bun -e '
 const { mkdtempSync, mkdirSync, writeFileSync } = require("node:fs"), { join } = require("node:path");
@@ -259,6 +263,6 @@ U="$(unit_review LOKI_REVIEW_DEFAULT=1)"
 [ "$U" = "low=0 medium=1 high=1 block=PARTIAL flag=VERIFIED gapsReviewed=- gapsNot=one reviewer council=false" ] \
     && ok "unit: reviewer planned on medium and high only, BLOCK caps at PARTIAL, one reviewer credited only by a run review" || bad "unit gave: $U"
 U="$(unit_review -u LOKI_REVIEW_DEFAULT)"
-case "$U" in "low=0 medium=0 high=0 "*) ok "unit: with no reviewer configured and no LOKI_REVIEW_DEFAULT, no tier plans a review session" ;; *) bad "unit (default) gave: $U" ;; esac
+case "$U" in "low=0 medium=0 high=1 "*) ok "unit: with no reviewer configured and no LOKI_REVIEW_DEFAULT, only the high tier plans a review session" ;; *) bad "unit (default) gave: $U" ;; esac
 
 finish

@@ -507,8 +507,6 @@ export function goPackagePath(read: (file: string) => string | undefined, repoDi
   const m = goModuleOf(read, repoDir, targetDir); if (!m) return undefined;
   const rel = relative(m.dir, targetDir); return rel ? `${m.path}/${rel}` : m.path;
 }
-/** The module path that owns `targetDir` (for telling the module's own packages from stdlib and third-party imports). */
-export const goModulePath = (read: (file: string) => string | undefined, repoDir: string, targetDir: string): string | undefined => goModuleOf(read, repoDir, targetDir)?.path;
 
 /** FC-GO-PACKAGE-ID-CHANGED-FILE: a go id is "pkg" (package-only fail, build failure) or "pkg::Test", pkg an import path, so the
  *  changed-file substring guard can never match it. True when a changed .go file sits in the id's package directory: the import path

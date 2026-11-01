@@ -10,6 +10,7 @@ import { ignoredPaths, safeGitRun } from "../../util/safe_git.ts"; export { igno
 import { readRiskRecord } from "../../util/run_summary.ts"; import { capWhole, reviewFlagLines } from "../../util/reviewer_brief.ts";
 import { writeReviewerCost } from "../../providers/provider_cost.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
+import { capToSessionPin } from "../../runner/model_rank.ts";
 import { backstopS, type RunContext, type Verdict } from "../types.ts";
 export type ReviewLevel = "pass" | "flag" | "block" | "not_run";
 export type ReviewedBy = "model" | "deterministic" | "none";
@@ -62,13 +63,13 @@ export function parseReview(p: ReviewProvider, out: string): CrossReview {
   const notes = level === "pass" ? [] : (reasons.length ? reasons : ["no reason given"]).map((r) => `cross-review ${level} (${p}): ${r}`);
   return { provider: p, level, notes };
 }
-/** Rule 6 (h2h 2026-11-01, 115 Loki runs): the unconfigured same-vendor review changed no verdict and was 74% of Loki-on-Haiku spend, so it is opt-in. A configured reviewer (loki.yaml review:, LOKI_REVIEW_PROVIDER, a reviewer agent) still runs. */
-export const reviewDefaultOn = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_REVIEW_DEFAULT"] === "1";
+/** Rule 6 (h2h 2026-11-01, 115 Loki runs): the unconfigured same-vendor review changed no verdict and was 74% of Loki-on-Haiku spend. It stays on by default for the high tier (auth, crypto, payments, migrations, CI, public API: no ready PR there without a review) and is opt-in for medium (LOKI_REVIEW_DEFAULT=1). A configured reviewer (loki.yaml review:, LOKI_REVIEW_PROVIDER, a reviewer agent) always runs. */
+export const reviewDefaultOn = (tier: string, env: NodeJS.ProcessEnv = process.env): boolean => tier === "high" || (tier === "medium" && env["LOKI_REVIEW_DEFAULT"] === "1");
 // Review time box: 300s (real claude reviews often exceed 60s); LOKI_E10_REVIEW_BOX_S overrides (tests). Seal's limit grows by it when a review is planned.
 export const reviewBoxS = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_E10_REVIEW_BOX_S"]); return n > 0 ? n : 300; };
 function pickReviewer(ctx: RunContext, agent: ReturnType<typeof configuredReviewer>): { p: ReviewProvider | null; dflt: boolean } {
   const p = reviewProvider(ctx.repoDir, process.env, ctx.provider) ?? agent?.provider ?? null; if (p) return { p, dflt: false };
-  const ok = reviewDefaultOn() && !isOff(process.env["LOKI_REVIEW_PROVIDER"]) && (ctx.provider === "claude" || ctx.provider === "codex") && ["medium", "high"].includes(String(readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier)); // FC-MEDIUM-REVIEWER-UNCREDITED + L003: with nothing configured, medium and high run the run's own CLI as the one reviewer only when LOKI_REVIEW_DEFAULT=1; otherwise "one reviewer" stays on NOT PROVEN (never credited); LOKI_REVIEW_PROVIDER=off|none opts out
+  const ok = reviewDefaultOn(String(readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier)) && !isOff(process.env["LOKI_REVIEW_PROVIDER"]) && (ctx.provider === "claude" || ctx.provider === "codex"); // FC-MEDIUM-REVIEWER-UNCREDITED + L003: with nothing configured, high (and medium with LOKI_REVIEW_DEFAULT=1) runs the run's own CLI as the one reviewer; otherwise "one reviewer" stays on NOT PROVEN (never credited); LOKI_REVIEW_PROVIDER=off|none opts out
   return { p: ok ? (ctx.provider as ReviewProvider) : null, dflt: ok };
 }
 // Box clamped to the time left before the run backstop (minus 25s: seal tail + margin, 30s: diff/help-cache); below MIN_REVIEW_S (a claude review cannot finish sooner) no review runs.
@@ -81,7 +82,7 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   const tier = readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier, medium = tier === "medium";
   let hy: string[] = [], hyOk = false, hyNote = ""; // medium: the deterministic hygiene scan of files the run added (no model call); it can only add a flag, never lift a verdict
   if (medium) { const a = await safeGitRun(ctx.repoDir, ["diff", "--no-color", "--name-only", "-z", "--diff-filter=A", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null); if (a && a.exitCode === 0) { hyOk = true; const added = a.stdout.split("\0").filter(Boolean); const box = Number(process.env["LOKI_E10_HYGIENE_BOX_MS"]), ig = await ignoredPaths(ctx.repoDir, added, box > 0 ? box : 20000); if (ig) hy = hygieneFindings(added, ig); else { hy = hygieneFindings(added, new Set()); hyOk = false; hyNote = "hygiene scan unavailable (git check-ignore did not complete): NOT PROVEN that run-added files are free of ignored or build artifacts"; } } }
-  const pin = medium && p === "claude" ? fastTierModel(process.env) : undefined; // medium reviews on the fast tier (same mapping as the plan session); an agent-configured model wins (agent?.model || pin, so an empty one falls back to the pin); high and low are unchanged
+  const pin = medium && p === "claude" ? fastTierModel(process.env) : dflt && p === "claude" && ctx.model ? capToSessionPin(ctx.model) : undefined; // medium reviews on the fast tier (same mapping as the plan session); the unconfigured high-tier default review runs on the run's own model, never above a LOKI_SESSION_MODEL pin (a Haiku run reviews on Haiku); an agent-configured model wins (agent?.model || pin, so an empty one falls back to the pin)
   const tag = <T extends CrossReview>(r: T): T => {
     const modelRan = r.level !== "not_run", level = hy.length && (r.level === "pass" || r.level === "not_run") ? "flag" : r.level;
     return { ...r, level, notes: hyNote ? [...r.notes, hyNote] : r.notes, ...(hy.length ? { hygiene: hy } : {}), reviewed_by: modelRan ? "model" : hyOk ? "deterministic" : "none", ...(modelRan && p === "claude" && (agent?.model || pin) ? { reviewer_model: (agent?.model || pin)! } : {}), ...(dflt ? { same_vendor_default: true } : {}) };

@@ -152,7 +152,7 @@ with no gain in pass rate. Set each to `1` to turn it on.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `LOKI_REVIEW_DEFAULT` | off | With no reviewer configured, a medium or high risk run asks its own CLI for one code review before seal. Off, the receipt lists "one reviewer" as not proven. A configured reviewer (`review:` in loki.yaml, `LOKI_REVIEW_PROVIDER`, a reviewer agent) runs either way. |
+| `LOKI_REVIEW_DEFAULT` | off | With no reviewer configured, a medium risk run asks its own CLI for one code review before seal. Off, the receipt lists "one reviewer" as not proven. A high risk run gets that review by default either way, and a configured reviewer (`review:` in loki.yaml, `LOKI_REVIEW_PROVIDER`, a reviewer agent) always runs. |
 | `LOKI_PR_LESSONS` | off | Adds lessons from earlier runs and merged PRs to the implement brief. Lessons are recorded either way. |
 | `LOKI_WORKED_EXAMPLE` | off | Adds the closest earlier VERIFIED run as a short worked example to the implement brief. |
 | `LOKI_E10_ALREADY_DONE_CHECK` | off | Runs the separate already-done confirmation on a direct task too. Issue tasks always get it; on a direct task the implement session reports already-done itself. |

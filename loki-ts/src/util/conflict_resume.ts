@@ -237,6 +237,12 @@ async function legacyReauthor(ctx: RunContext, first: SessionRunOptions, firstSe
 // the whole suite, and the re-verify decides it. Anything short of that leaves the conflict standing as before (BLOCKED).
 export const WALL_CONFLICT_DISCARD = "the implementer reported it conflicts with the task while the repo's own tests pass on the change: Wall defect, discarded";
 type Outs = Partial<Record<string, Record<string, unknown>>>;
+/** A check that proves the repo's own tests ran green: a full-suite pass, or a test check that counted n > 0 tests. Lint, the security scan, test selection, held-out and Wall checks never count. */
+export const ownTestPassed = (c: Record<string, unknown>, wall: ReadonlySet<string>): boolean => {
+  const name = String(c.name ?? "");
+  if (c.result !== "pass" || /^(lint:|security scan|select-tests|holdout)/.test(name) || wall.has(name.slice(name.indexOf(":") + 1))) return false;
+  return name.startsWith("full suite:") || (typeof c.n === "number" && c.n > 0);
+};
 const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 /** The Wall files a conflict can be delivered over, or null when the conflict must stand. A full-suite check may fail only because it ran those Wall files; the re-verify decides it. */
 export function wallConflictDefects(o: Outs, repoDir: string): string[] | null {
@@ -264,8 +270,7 @@ export async function deliverOverWallConflict(o: Outs, repoDir: string, reverify
   await reverify();
   const v = o.verify, wallLeft = new Set(((w.files as { path: string }[] | undefined) ?? []).map((f) => (isAbsolute(f.path) ? relative(repoDir, f.path) : f.path)));
   if (!v || v.stopped_at || ((v.failures_grouped as unknown[] | undefined) ?? []).length > 0 || Number(v.holdout_failed ?? 0) > 0) return null; // the conflict stands; the discarded files stay listed
-  const ownPass = ((Array.isArray(v.checks) ? v.checks : []) as Record<string, unknown>[]).some((c) => c.result === "pass" && (typeof c.n !== "number" || c.n > 0) && !String(c.name).startsWith("holdout") && !wallLeft.has(String(c.name).slice(String(c.name).indexOf(":") + 1)));
-  if (!ownPass) return null; // the repo's own tests (targeted or the full suite) executed and passed on the delivered tree
+  if (!((Array.isArray(v.checks) ? v.checks : []) as Record<string, unknown>[]).some((c) => ownTestPassed(c, wallLeft))) return null; // the repo's own tests (targeted or the full suite) executed and passed on the delivered tree
   v.not_proven = [...strList(v.not_proven), `Delivered over an implementer conflict with the Wall: ${files.join(", ")} discarded as a Wall defect, so this change is proven only by the repo's own tests (${oneLine(String(o.implement?.spec_conflict_reason ?? ""))})`];
   o.implement = { ...o.implement, exit: "done", conflict_delivered: files };
   return files;

@@ -144,7 +144,7 @@ function goGroupNames(list: string): string[] {
   return toks.flatMap((t) => (named || t.length >= 2) && /^[A-Za-z_]\w*$/.test(t[0] ?? "") ? [t[0]!] : []);
 }
 /** Go: a Test or Fuzz file with a package clause that never references the package under test. An external `package x_test` must import the package it tests and use it (a dot import of that package is not judged); a same-package test must use an identifier it does not itself declare (its imports, parameters and results, type parameters, locals, var/const names, fields and keywords excluded; with a dot import present only lowercase names count, since a dot import brings in exported names only). Comments and string/rune literals are removed in one pass first. Files without a package clause or a Test/Fuzz func are not judged. */
-function goUnreferenced(src: string, goPkgPath?: string, goModPath?: string): boolean {
+function goUnreferenced(src: string, goPkgPath?: string, goTestedPath?: string): boolean {
   const { masked, strs } = goLex(src), code = masked.replace(/"\u0001\d+"/g, '""');
   const pkg = /^\s*package\s+(\w+)/m.exec(code);
   if (!pkg || !/\bfunc\s+(?:Test|Fuzz)\w*\s*\(/.test(code)) return false;
@@ -155,8 +155,8 @@ function goUnreferenced(src: string, goPkgPath?: string, goModPath?: string): bo
   const norm = (l: string): string => l.toLowerCase().replace(/[^a-z0-9_]/g, "");
   const body = code.replace(/^\s*import\s*\([\s\S]*?\)/gm, " ").replace(/^\s*import\b.*$/gm, " ");
   const dots = specs.filter((s) => s.alias === ".");
-  // A black-box test package (a tests/ directory of only _test.go files) tests another package of the same module: importing it and calling it qualified is a reference.
-  if (goModPath && specs.some((s) => s.alias !== "_" && s.alias !== "." && s.path !== goPkgPath && (s.path === goModPath || s.path.startsWith(`${goModPath}/`)) && new RegExp(String.raw`(?<![\w.])${s.alias || lastOf(s.path)}\s*\.\s*[A-Za-z_]`).test(body))) return false;
+  // A black-box test package (a tests/ directory of only _test.go files) tests the package the task changes: importing THAT package and calling it qualified is a reference. Any other import, of the same module or not, is not.
+  if (goTestedPath && specs.some((s) => s.alias !== "_" && s.alias !== "." && s.path === goTestedPath && new RegExp(String.raw`(?<![\w.])${s.alias || lastOf(s.path)}\s*\.\s*[A-Za-z_]`).test(body))) return false;
   if (pkg[1]!.endsWith("_test")) {
     const x = pkg[1]!.slice(0, -5), nameOf = (p: string): string => { const parts = p.split("/"); let l = parts.pop()!; if (/^v\d+$/.test(l) && parts.length) l = parts.pop()!; return norm(l); }; // no .vN strip: gopkg.in/yaml.v3 is not package yaml
     const named = (p: string): boolean => goPkgPath !== undefined ? p === goPkgPath || (p.startsWith(goPkgPath + "/") && /^v\d+$/.test(p.slice(goPkgPath.length + 1))) : nameOf(p) === x; // the package under test is identified by its import path (module path plus the Wall's directory, plus an optional /vN) when known; the name match is only for an unknown path, since a go-x or x-go name also names an unrelated dependency
@@ -194,7 +194,7 @@ function goUnreferenced(src: string, goPkgPath?: string, goModPath?: string): bo
 }
 
 /** TEN-MOAT-26: a generated Wall file that asserts nothing: its only assertions are tautologies (expect(true).toBe(true), assert True), its tests have empty bodies, or a shell file holds only true / exit 0 / ":". Such a file can never fail, so it proves nothing about the change. A JS/Python file with no tautology and no assertion but real calls is NOT flagged (it can still be red by throwing); a file that holds a tautology and no real assertion is flagged even if it also calls code. Go is judged per file: flagged only when every Test func body is empty or only t.Log/t.Skip and nothing can fail a test. Comments are ignored. Returns the reason, or null when the file is acceptable or its language is not recognised. */
-export function vacuousCheck(fileName: string, content: string, goPkgPath?: string, goModPath?: string): string | null {
+export function vacuousCheck(fileName: string, content: string, goPkgPath?: string, goTestedPath?: string): string | null {
   const reason = "asserts nothing (no assertion, or only an always-true one such as true or exit 0); write a check that fails when the behavior is absent";
   const strip = (re: RegExp): string => content.replace(/\/\*[\s\S]*?\*\//g, "").replace(re, "$1");
   if (/\.[cm]?[jt]sx?$/.test(fileName)) {
@@ -220,7 +220,7 @@ export function vacuousCheck(fileName: string, content: string, goPkgPath?: stri
     const trivial = new RegExp(String.raw`^(?:true|:|exit\s+0|return\s+0|(?:/usr)?/bin/true|(?:echo|printf)(?:\s+${tok})*|test\s+(?:[1-9]\d*|${tok})|\[\[?\s+(?:[1-9]\d*|${tok})\s+\]\]?)$`);
     return lines.length === 0 || lines.every((l) => l.split(/&&|\|\||;/).map((x) => x.trim()).every((x) => x === "" || trivial.test(x))) ? reason : null;
   }
-  if (/_test\.go$/.test(fileName)) return goVacuous(strip(/(^|[^:])\/\/.*$/gm)) ? reason : goUnreferenced(content, goPkgPath, goModPath) ? "never references the package under test (an external _test package must import and use it; a same-package test must use an identifier the package declares outside this file); write a check that calls the changed code" : null;
+  if (/_test\.go$/.test(fileName)) return goVacuous(strip(/(^|[^:])\/\/.*$/gm)) ? reason : goUnreferenced(content, goPkgPath, goTestedPath) ? "never references the package under test (an external _test package must import and use it; a same-package test must use an identifier the package declares outside this file); write a check that calls the changed code" : null;
   return null;
 }
 
@@ -239,9 +239,10 @@ function rustItems(code: string, open: number): string[] | null {
   return null;
 }
 const RUST_SKIP_DIRS = new Set(["target", "tests", "benches", "examples", ".git", ".loki", "node_modules"]);
-/** Argument counts of the crate's own associated functions and methods ("Type.fn" to count, self receivers excluded), read from non-test .rs files. A name defined twice with different counts is left out (unknown). */
-export function rustArities(repoDir: string, maxFiles = 200): Map<string, number> {
-  const out = new Map<string, number>(), clash = new Set<string>(), files: string[] = [];
+/** Argument counts of the crate's own associated functions and methods ("Type.fn" to {n: count without the self receiver, self: whether it takes one}), read from non-test .rs files. A name defined twice with different shapes is left out (unknown). */
+export interface RustArity { n: number; self: boolean }
+export function rustArities(repoDir: string, maxFiles = 200): Map<string, RustArity> {
+  const out = new Map<string, RustArity>(), clash = new Set<string>(), files: string[] = [];
   const walk = (d: string, depth: number): void => { if (depth > 6 || files.length >= maxFiles) return; let names: string[] = []; try { names = readdirSync(d); } catch { return; } for (const n of names) { const f = join(d, n); if (RUST_SKIP_DIRS.has(n)) continue; if (n.endsWith(".rs")) files.push(f); else if (!n.includes(".")) walk(f, depth + 1); } };
   walk(repoDir, 0);
   for (const f of files) {
@@ -251,22 +252,22 @@ export function rustArities(repoDir: string, maxFiles = 200): Map<string, number
       const parts = sp.name.split("."); if (parts.length !== 2 || sp.container) continue;
       const at = starts[sp.start - 1] ?? 0, m = new RegExp(`\\bfn\\s+${parts[1]}\\b[^(]*\\(`).exec(code.slice(at, at + 2000)); if (!m) continue;
       const items = rustItems(code, at + m.index + m[0].length); if (!items) continue;
-      const n = items.filter((x) => !/^(?:&\s*(?:'\w+\s+)?)?(?:mut\s+)?self\b/.test(x)).length, key = `${parts[0]}.${parts[1]}`;
-      if (out.has(key) && out.get(key) !== n) clash.add(key); else out.set(key, n);
+      const own = items.filter((x) => !/^(?:&\s*(?:'\w+\s+)?)?(?:mut\s+)?self\b/.test(x)), key = `${parts[0]}.${parts[1]}`, shape = { n: own.length, self: own.length < items.length }, prev = out.get(key);
+      if (prev && (prev.n !== shape.n || prev.self !== shape.self)) clash.add(key); else out.set(key, shape);
     }
   }
   for (const k of clash) out.delete(k);
   return out;
 }
-/** A Rust Wall file that calls `Type::f(...)` with a different argument count than the crate's own `fn f` in `impl Type`: Rust has no overloading, so the file cannot compile against the code the task keeps. A function the task text names (`Type::f` or `fn f`) is skipped, since the task may change its signature. Null when nothing clashes or nothing is known. */
-export function rustCallClash(repoDir: string, fileName: string, content: string, task: string, arities: Map<string, number> = rustArities(repoDir)): string | null {
+/** A Rust Wall file that calls `Type::f(...)` with an argument count the crate's own `fn f` in `impl Type` does not take (a method called in the explicit form `Type::f(&mut x, ...)` counts its receiver): Rust has no overloading, so the file cannot compile. Callers pass the arities of the code as implement left it. A function the task text names (`Type::f` or `fn f`) is skipped. Null when nothing clashes or nothing is known. */
+export function rustCallClash(repoDir: string, fileName: string, content: string, task: string, arities: Map<string, RustArity> = rustArities(repoDir)): string | null {
   if (!fileName.endsWith(".rs") || arities.size === 0) return null;
   const code = rustCode(content);
   for (const m of code.matchAll(/\b([A-Z]\w*)::([a-z_]\w*)\s*\(/g)) {
     const want = arities.get(`${m[1]}.${m[2]}`); if (want === undefined) continue;
     if (new RegExp(`\\b${m[1]}::${m[2]}\\b|\\bfn\\s+${m[2]}\\b`).test(task)) continue;
     const got = rustItems(code, m.index! + m[0].length)?.length;
-    if (got !== undefined && got !== want) return `calls ${m[1]}::${m[2]} with ${got} argument(s) but the crate defines it with ${want}; Rust has no overloading, so this file cannot compile`;
+    if (got !== undefined && got !== want.n && !(want.self && got === want.n + 1)) return `calls ${m[1]}::${m[2]} with ${got} argument(s) but the crate defines it with ${want.n}${want.self ? " plus self" : ""}; Rust has no overloading, so this file cannot compile`;
   }
   return null;
 }
