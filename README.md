@@ -90,7 +90,7 @@ A finished run prints a short summary (every run on both engines also ends with 
 Outcome:    VERIFIED
 PR:         https://github.com/owner/repo/pull/1
 Receipt:    sha256:2f9a41c7e0b3...
-NOT PROVEN: full suite, app boot, council, security scan
+NOT PROVEN: full suite, app boot, security scan
 Cost:       $0.42 (claude, 212k tokens)
 Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 ```
