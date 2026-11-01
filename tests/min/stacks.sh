@@ -89,7 +89,20 @@ run_loki() {
 }
 
 outcome() { printf '%s\n' "$OUT" | sed -n 's/^Outcome:[[:space:]]*\([A-Z_]*\).*/\1/p' | head -1; }
-tail_out() { printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
+# diag: everything needed to read a failed leg from a CI log (engine stdout and stderr, NOT PROVEN, receipt checks, verify events)
+diag() {
+    echo "    ---- diagnostics (rc ${RC:-?}) ----"
+    printf '%s\n' "$OUT" | grep -E '^(NOT PROVEN|Reason):' | sed 's/^/    | /'
+    if [ -n "${RECEIPT:-}" ]; then
+        python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print("receipt checks:", json.dumps(r.get("checks"),indent=1)); print("receipt not_proven:", json.dumps(r.get("not_proven"),indent=1))' "$RECEIPT" 2>&1 | sed 's/^/    | /'
+        grep -hE '"type":"(test\.result|stage\.failed|stage\.skipped|stage\.completed|test\.scoped_out)"|stage\.failed|test\.result' "$(dirname "$RECEIPT")/events.jsonl" 2>/dev/null | cut -c1-700 | sed 's/^/    | ev /'
+    else
+        echo "    | no receipt.json under $REPO/.loki/runs"
+    fi
+    echo "    | last 60 lines of engine stdout+stderr:"
+    printf '%s\n' "$OUT" | tail -60 | sed 's/^/    | /'
+}
+tail_out() { diag; }
 receipt_cmds() { [ -n "$RECEIPT" ] && python3 -I -c 'import json,sys; [print(c.get("cmd","")) for c in json.load(open(sys.argv[1])).get("checks",[]) if c.get("result")=="pass"]' "$RECEIPT"; }
 
 expect_verified() { # expect_verified <label> <cmd needle>

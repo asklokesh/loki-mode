@@ -52,6 +52,16 @@ jobs:
       # The whole gate: the hermetic tests under tests/min/ (syntax, CLI smoke,
       # engine end to end on the stub provider, receipts, release and
       # packaging checks, quality-gate scripts, hygiene).
+      # TEMPORARY debug step (R02 CI investigation): remove before merge.
+      - name: Toolchain versions (debug)
+        run: |
+          command -v mvn gradle dotnet java || true
+          mvn -version || true
+          gradle --version || true
+          dotnet --list-sdks || true
+          dotnet --list-runtimes || true
+          java -version || true
+
       # ubuntu-latest ships mvn, gradle and dotnet: LOKI_STACKS_REQUIRE=1 makes the real-toolchain
       # legs of tests/min/stacks.sh mandatory here (locally a missing tool prints SKIP).
       - name: Run scripts/local-ci.sh
