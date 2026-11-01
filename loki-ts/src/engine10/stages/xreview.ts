@@ -1,5 +1,5 @@
 // B4: opt-in cross-lab review between verify and seal. A second provider reads the committed diff read-only and may only DOWNGRADE the verdict (flag adds NOT PROVEN, block caps at PARTIAL). Off
-// unless loki.yaml `review:`, LOKI_REVIEW_PROVIDER or LOKI_XVENDOR_DEFAULT is set; a medium-tier run with none of these reviews with its own CLI (LOKI_REVIEW_PROVIDER=off|none opts out).
+// unless loki.yaml `review:`, LOKI_REVIEW_PROVIDER or LOKI_XVENDOR_DEFAULT is set; a medium- or high-tier run with none of these reviews with its own CLI (LOKI_REVIEW_PROVIDER=off|none opts out). L003: this is the run's only review session.
 import { join } from "node:path";
 import { asProvider, isOff, loadReviewStageAgent, reviewCli, reviewProvider, xvendorDefault, type ReviewProvider } from "../../council/role_agents.ts";
 export { reviewProvider, xvendorDefault, type ReviewProvider } from "../../council/role_agents.ts"; // re-exported: callers and tests import the review provider pick from here
@@ -66,7 +66,7 @@ export function parseReview(p: ReviewProvider, out: string): CrossReview {
 export const reviewBoxS = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_E10_REVIEW_BOX_S"]); return n > 0 ? n : 300; };
 function pickReviewer(ctx: RunContext, agent: ReturnType<typeof configuredReviewer>): { p: ReviewProvider | null; dflt: boolean } {
   const p = reviewProvider(ctx.repoDir, process.env, ctx.provider) ?? agent?.provider ?? null; if (p) return { p, dflt: false };
-  const ok = !isOff(process.env["LOKI_REVIEW_PROVIDER"]) && (ctx.provider === "claude" || ctx.provider === "codex") && readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier === "medium"; // FC-MEDIUM-REVIEWER-UNCREDITED: medium promises "one reviewer", so with nothing configured run the run's own CLI (same vendor); LOKI_REVIEW_PROVIDER=off|none opts out
+  const ok = !isOff(process.env["LOKI_REVIEW_PROVIDER"]) && (ctx.provider === "claude" || ctx.provider === "codex") && ["medium", "high"].includes(String(readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier)); // FC-MEDIUM-REVIEWER-UNCREDITED + L003: medium and high promise "one reviewer", so with nothing configured run the run's own CLI (same vendor); LOKI_REVIEW_PROVIDER=off|none opts out
   return { p: ok ? (ctx.provider as ReviewProvider) : null, dflt: ok };
 }
 // Box clamped to the time left before the run backstop (minus 25s: seal tail + margin, 30s: diff/help-cache); below MIN_REVIEW_S (a claude review cannot finish sooner) no review runs.

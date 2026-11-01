@@ -3,8 +3,8 @@
 // Unmeasured = no priced session (subscription or local provider): never summed as 0.
 import { gte } from "drizzle-orm";
 import { runs } from "../../db/schema.ts";
-import { effectiveVerdict, SUCCESS_VERDICTS } from "../integrity.ts";
 import type { RouteCtx } from "./index.ts";
+import { costPerVerified } from "./stats.ts";
 
 export const COST_DIMS = ["day", "model", "repo", "provider"] as const;
 type CostDim = (typeof COST_DIMS)[number];
@@ -14,39 +14,40 @@ export const DEFAULT_API_KEY_CAP_USD = 100;
 
 const NONE = "unknown";
 type Run = typeof runs.$inferSelect;
-type Acc = { key: Record<string, string>; runs: number; measured_runs: number; partial_runs: number; unmeasured_runs: number; measured_usd: number; partial_usd: number; input_tokens: number; output_tokens: number; tk: number; tn: number };
-const mk = (key: Record<string, string>): Acc => ({ key, runs: 0, measured_runs: 0, partial_runs: 0, unmeasured_runs: 0, measured_usd: 0, partial_usd: 0, input_tokens: 0, output_tokens: 0, tk: 0, tn: 0 });
+type Acc = { key: Record<string, string>; runs: number; measured_runs: number; partial_runs: number; unmeasured_runs: number; measured_usd: number; partial_usd: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; tk: number; tn: number };
+const mk = (key: Record<string, string>): Acc => ({ key, runs: 0, measured_runs: 0, partial_runs: 0, unmeasured_runs: 0, measured_usd: 0, partial_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, tk: 0, tn: 0 });
 const add = (a: Acc, r: Run) => {
   a.runs++;
   if (r.costUsd !== null) { a.measured_runs++; a.measured_usd += r.costUsd; }
   else if (r.measuredSessions > 0) { a.partial_runs++; a.partial_usd += r.partialUsd; }
   else a.unmeasured_runs++;
-  a.input_tokens += r.inputTokens;
+  a.input_tokens += r.inputTokens; // L002: uncached input; cache reads and writes are summed apart
   a.output_tokens += r.outputTokens;
+  a.cache_read_tokens += r.cacheReadTokens;
+  a.cache_creation_tokens += r.cacheCreationTokens;
   if (r.tokenSessions !== null) { a.tk += r.tokenSessions; a.tn += r.totalSessions; } // FC-44: sessions that carried usage, of all cost events
 };
 const dimVal = (d: CostDim, r: Run): string =>
   d === "day" ? (r.startedAt ? r.startedAt.slice(0, 10) : NONE) : d === "model" ? (r.model ?? NONE) : d === "provider" ? (r.provider ?? NONE) : (r.originRepo ?? NONE);
 const round = (n: number) => Math.round(n * 1e6) / 1e6;
-const out = (a: Acc) => ({ ...a.key, runs: a.runs, measured_runs: a.measured_runs, partial_runs: a.partial_runs, unmeasured_runs: a.unmeasured_runs, measured_usd: round(a.measured_usd), partial_usd: round(a.partial_usd), input_tokens: a.input_tokens, output_tokens: a.output_tokens, ...(a.tk < a.tn ? { token_sessions: a.tk, token_sessions_total: a.tn } : {}) });
+const out = (a: Acc) => ({ ...a.key, runs: a.runs, measured_runs: a.measured_runs, partial_runs: a.partial_runs, unmeasured_runs: a.unmeasured_runs, measured_usd: round(a.measured_usd), partial_usd: round(a.partial_usd), input_tokens: a.input_tokens, output_tokens: a.output_tokens, cache_read_tokens: a.cache_read_tokens, cache_creation_tokens: a.cache_creation_tokens, ...(a.tk < a.tn ? { token_sessions: a.tk, token_sessions_total: a.tn } : {}) });
 
 export function mount(ctx: RouteCtx): void {
-  // B8: per-repo breakdown. total_usd sums measured runs only (never invents a zero); avg_usd is over measured runs; verified = plain attested success display verdict.
+  // B8: per-repo breakdown. total_usd sums measured runs only (never invents a zero); avg_usd is over measured runs.
+  // L002: verified_runs and usd_per_verified come from stats.ts costPerVerified, the one cost-per-VERIFIED definition (plain VERIFIED only, finished priced runs).
   ctx.app.get("/v1/cost/repos", (c) => {
-    const g = new Map<string, { runs: number; priced: number; usd: number; verified: number }>();
+    const g = new Map<string, Run[]>();
     for (const r of ctx.db.select().from(runs).all()) {
       const k = r.originRepo ?? "(unknown)";
-      const a = g.get(k) ?? { runs: 0, priced: 0, usd: 0, verified: 0 };
-      a.runs++;
-      if (r.costUsd !== null) { a.priced++; a.usd += r.costUsd; }
-      const ev = effectiveVerdict({ verdict: r.verdict, tampered: r.tampered === 1, attested: r.attested === 1, sig_checked: r.sigChecked === 1 });
-      if (ev !== null && SUCCESS_VERDICTS.has(ev)) a.verified++;
-      g.set(k, a);
+      g.set(k, [...(g.get(k) ?? []), r]);
     }
-    const rows = [...g.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([repo, a]) => ({
-      repo, runs: a.runs, total_usd: round(a.usd), avg_usd: a.priced ? round(a.usd / a.priced) : null,
-      verified_runs: a.verified, usd_per_verified: a.verified ? round(a.usd / a.verified) : null,
-    }));
+    const rows = [...g.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([repo, rs]) => {
+      const priced = rs.filter((r) => r.costUsd !== null), usd = priced.reduce((t, r) => t + r.costUsd!, 0), cpv = costPerVerified(rs);
+      return {
+        repo, runs: rs.length, total_usd: round(usd), avg_usd: priced.length ? round(usd / priced.length) : null,
+        verified_runs: cpv.verified_runs, usd_per_verified: cpv.value, usd_per_verified_n: cpv.n,
+      };
+    });
     return c.json({ rows });
   });
   ctx.app.get("/v1/stats/cost", (c) => {

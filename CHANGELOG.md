@@ -5,6 +5,20 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.111.0 (2026-11-01)
+
+One review per run instead of two, and real outcome numbers per run and per repo.
+
+### Changed
+
+- The post-PR council session is gone. A run starts at most one model review, before the receipt is sealed, and that review's verdict still lowers the result (a block caps it at PARTIAL; a flag is listed as not proven). Measured on real runs, the council had cost 19 to 21 percent of a run's spend and its findings were discarded; receipts now match the summed session cost to the cent.
+- The detached deep verify runs only the full suite, app boot and security scan, with no model session. A full-suite failure that was already red on the base commit no longer marks the PR status as failed.
+
+### Added
+
+- `loki stats --outcomes` (and `GET /v1/stats/outcomes` on the control plane) reports cost per VERIFIED run, first-pass rate, sessions p50 and p90, fix rounds, escalations, cache-read share and wall time p50 and p95 by task size, each with its sample size; a value with no data reads "not measured". `--since` and per-repo views are supported.
+- Run records separate cached from uncached input tokens. `/v1/cost/repos` uses the same cost-per-verified definition, which no longer counts ALREADY_SATISFIED as a success.
+
 ## v11.110.0 (2026-11-01)
 
 Issue runs now see what the team already said on the issue.
