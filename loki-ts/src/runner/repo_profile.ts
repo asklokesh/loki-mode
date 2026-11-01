@@ -493,14 +493,19 @@ function split(failing: { name: string; ids?: string[]; eligible: boolean; base:
     line: `baseline: ${pre.length} pre-existing failing check(s) (not blocking), ${introduced.length} introduced${introduced.length ? " (blocking)" : ""}` };
 }
 
-/** The Go import path of `targetDir`: the nearest module file at or above it (never above `repoDir`) gives the module path, then the relative directory is appended. `read` returns a file's text or undefined; pure otherwise. */
-export function goPackagePath(read: (file: string) => string | undefined, repoDir: string, targetDir: string): string | undefined {
+/** The nearest go.mod at or above `targetDir` (never above `repoDir`): its directory and module path. `read` returns a file's text or undefined; pure otherwise. */
+function goModuleOf(read: (file: string) => string | undefined, repoDir: string, targetDir: string): { dir: string; path: string } | undefined {
   for (let d = targetDir; d.startsWith(repoDir); d = dirname(d)) {
     const m = /^module\s+(\S+)/m.exec(read(join(d, "go.mod")) ?? "");
-    if (m) { const rel = relative(d, targetDir); return rel ? `${m[1]}/${rel}` : m[1]; }
+    if (m) return { dir: d, path: m[1]! };
     if (d === repoDir || d === dirname(d)) break;
   }
   return undefined;
+}
+/** The Go import path of `targetDir`: the module path, then the relative directory appended. */
+export function goPackagePath(read: (file: string) => string | undefined, repoDir: string, targetDir: string): string | undefined {
+  const m = goModuleOf(read, repoDir, targetDir); if (!m) return undefined;
+  const rel = relative(m.dir, targetDir); return rel ? `${m.path}/${rel}` : m.path;
 }
 
 /** FC-GO-PACKAGE-ID-CHANGED-FILE: a go id is "pkg" (package-only fail, build failure) or "pkg::Test", pkg an import path, so the

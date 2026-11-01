@@ -295,8 +295,11 @@ function runScore(l: Lesson, tw: Set<string>, likely: readonly string[]): number
 }
 
 /** Lessons whose text or file path shares vocabulary with the task (run lessons also by the files the run will likely touch), best first. Empty when nothing relates. */
+/** Rule 6 (h2h learning pilot 2026-11-01: 46% more cost per passed task, no pass gain): lessons are always recorded but reach a brief only with LOKI_PR_LESSONS=1, and a worked example only with LOKI_WORKED_EXAMPLE=1. LOKI_NO_PR_LESSONS=1 turns both off. */
+export const lessonsInjected = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_PR_LESSONS"] === "1" && env["LOKI_NO_PR_LESSONS"] !== "1";
+export const workedExampleInjected = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_WORKED_EXAMPLE"] === "1" && env["LOKI_NO_PR_LESSONS"] !== "1";
 export function retrieveLessons(repoDir: string, task: string, limit = 3, likelyFiles: readonly string[] = []): Lesson[] {
-  if (process.env["LOKI_NO_PR_LESSONS"] === "1") return [];
+  if (!lessonsInjected() && !workedExampleInjected()) return [];
   const tw = words(task), likely = likelyFiles.filter((f) => typeof f === "string" && f !== "");
   if (tw.size === 0 && likely.length === 0) return [];
   const local = loadLessons(repoDir), ex = workedExampleFor(repoDir, task);
@@ -305,7 +308,7 @@ export function retrieveLessons(repoDir: string, task: string, limit = 3, likely
     .filter((l) => !isDemoted(l))
     .map((l) => { if (l.kind === "run") return { l, n: runScore(l, tw, likely) }; let n = 0; for (const w of words(`${l.text} ${l.source.path ?? ""}`)) if (tw.has(w)) n++; return { l, n }; })
     .filter((x) => x.n > 0).sort((a, b) => b.n - a.n || lessonConfidence(b.l) - lessonConfidence(a.l)).slice(0, limit).map((x) => x.l)
-    .filter((l) => l.id !== ex?.id).concat(ex ? [ex] : []); // the closest VERIFIED run rides along as the one worked example, outside the limit
+    .filter((l) => lessonsInjected() && l.id !== ex?.id).concat(ex ? [ex] : []); // the closest VERIFIED run rides along as the one worked example, outside the limit
 }
 
 /** The receipt fields a fact keeps: the replay key (task, base, Loki version, provider, model) and the exemplar inputs (base..head diff, passing checks). */
@@ -410,7 +413,7 @@ function exemplarOf(repoDir: string, r: FactReceipt, task: string, title: string
 
 /** The closest VERIFIED run for this task: most shared identifier keywords (at least EXAMPLE_MIN_SHARED), newest on a tie. Null when none qualifies. */
 export function workedExampleFor(repoDir: string, task: string): Lesson | null {
-  if (process.env["LOKI_WORKED_EXAMPLE"] === "0" || process.env["LOKI_NO_PR_LESSONS"] === "1") return null;
+  if (!workedExampleInjected()) return null;
   const tw = identWords(task);
   let best: { l: Lesson; n: number } | null = null;
   for (const l of loadLessons(repoDir)) {
