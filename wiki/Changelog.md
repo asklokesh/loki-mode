@@ -16,7 +16,7 @@ Major arc. Everything SDK-related is opt-in and default-off, so an unset config 
 ### [7.121.5] - 2026-07-04
 
 Chore (non-functional):
-- **Keep non-public scratch out of the CLI repo.** Added `.gitignore` rules so internal/local-only material never ships to users or npm: Codex provider scratch (`.codex/`, `AGENTS.md`), harness scratch (`.loki-verify/`, `.claude/launch.json`, `tmp/`), generated per-build output docs (`HANDOFF.md`), internal strategy / roadmap / MOAT specs, and build/test/e2e output plus screenshots under `artifacts/`. Curated artifacts can still be force-added when genuinely meant to ship. No runtime, CLI, or API change.
+- **Keep non-public scratch out of the CLI repo.** Added `.gitignore` rules so internal/local-only material never ships to users or npm: Codex provider scratch (`.codex/`, `AGENTS.md`), harness scratch (`.loki-verify/`, `.claude/launch.json`, `tmp/`), generated per-build output docs (`HANDOFF.md`), internal planning docs, and build/test/e2e output plus screenshots under `artifacts/`. Curated artifacts can still be force-added when genuinely meant to ship. No runtime, CLI, or API change.
 
 ### [7.121.4] - 2026-07-04
 
@@ -41,7 +41,7 @@ Fixed (trust / accuracy):
 ### [7.121.0] - 2026-07-03
 
 Fixed (trust / accuracy, the non-convergence driver behind "no progress"):
-- **Checklist `grep_codebase` now uses extended-regex (`grep -E`).** LLM-emitted patterns are ERE/PCRE-flavored (`app\.get\('/api/tasks'`, `router.get\('/tasks'|...`), which errored under grep's BRE default; the old code collapsed both not-found and error to `failing`. Genuinely-present, tested, curl-verified endpoints read `failing`, and the completion council's `critical_checklist_failures` hard gate blocked a correct build until it timed out (a fake red). Now `-E` runs first; a valid absent pattern is still an honest `failing` (moat intact), and a pattern that still cannot parse falls back to a fixed-string retry, else becomes `pending` (`None`), never a hard false.
+- **Checklist `grep_codebase` now uses extended-regex (`grep -E`).** LLM-emitted patterns are ERE/PCRE-flavored (`app\.get\('/api/tasks'`, `router.get\('/tasks'|...`), which errored under grep's BRE default; the old code collapsed both not-found and error to `failing`. Genuinely-present, tested, curl-verified endpoints read `failing`, and the completion council's `critical_checklist_failures` hard gate blocked a correct build until it timed out (a fake red). Now `-E` runs first; a valid absent pattern is still an honest `failing`, and a pattern that still cannot parse falls back to a fixed-string retry, else becomes `pending` (`None`), never a hard false.
 - **`tests_pass` is runner-agnostic.** The verifier ran the project's OWN declared test command instead of hardcoding `npx jest`, so a genuinely-passing vitest or unittest suite no longer reads "tests not run."
 
 ### [7.120.0] - 2026-07-02

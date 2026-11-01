@@ -236,15 +236,6 @@ Tool Action -> Memory Store -> Pattern Consolidation -> Tool Query
 | `.claude/settings.json` | Hook configuration | Claude Code |
 | `.loki/config/` | Provider settings | CLI, run.sh |
 
-## Future Synergy (v5.26+)
-
-Per SYNERGY-ROADMAP.md:
-
-1. **Memory as Central Hub** - All tools query and contribute to memory
-2. **Smart State Sync** - Coordinated state with conflict resolution
-3. **Cross-Tool Learning** - Every interaction improves all tools
-4. **Unified Dashboard** - Same experience everywhere
-
 ---
 
 *Document Version: 1.1*

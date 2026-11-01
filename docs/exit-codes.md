@@ -187,7 +187,6 @@ that used to return a misleading code now return the table's value:
 A real finding keeps precedence: an empty diff that also carries a below-threshold
 finding (for example spec drift) still exits 1, and a blocking finding still exits 2.
 CI gates that tested `[ $rc -eq 1 ]` for these inputs must move to `[ $rc -ne 0 ]`.
-The moat case `P2.verify-exit-contract` is no longer pending and is enforced.
 
 ### `loki verify --fast`
 

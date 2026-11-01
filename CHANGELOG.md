@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.103.1 (2026-11-01)
+
+The package no longer carries internal planning material.
+
+### Fixed
+
+- Removed a competitor survey from the shipped reference docs, along with competitor comparisons and speculative roadmap sections in the cost-controls, air-gapped, tool-integration, memory and Magic Modules docs. The command inventory describes each command plainly.
+- The release checks now fail if a planning, roadmap or competitor document is committed or packed.
+
 ## v11.103.0 (2026-11-01)
 
 Maven, Gradle and .NET repos now reach a verified result with no configuration, and a missing toolchain is named with how to install it.

@@ -127,7 +127,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   }),
   cmd("backup", "KEEP-MODERN", "bash", "Back up dashboard state (audit log, checkpoint) with a sha256 manifest", "Enterprise retention and backup (D99 item 7)", { flags: [str("--dir", "<path>", "State directory (default ~/.loki/dashboard)"), str("--out", "<archive>", "Archive path (default ./loki-backup-<timestamp>.tar.gz)")] }),
   cmd("restore", "KEEP-MODERN", "bash", "Restore dashboard state from a verified backup archive", "Enterprise retention and backup (D99 item 7)", { flags: [str("--dir", "<path>", "State directory (default ~/.loki/dashboard)"), bool("--force", "Replace a non-empty state directory (old one is kept aside)"), str("--sha256", "<hex>", "Expected archive digest when no .sha256 sidecar exists")], positionals: [{ name: "archive", type: "path" }] }),
-  cmd("proof", "KEEP-MODERN", "both", "Inspect and share proof-of-run receipts", "The Evidence Receipt moat", {
+  cmd("proof", "KEEP-MODERN", "both", "Inspect and share proof-of-run receipts", "The Evidence Receipt", {
     aliases: ["receipt"],
     subcommands: [
       sub("list", "List receipts"),
@@ -170,7 +170,7 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("release-notes", "Changes in a <from>..<to> range", { flags: [str("--format", "<text|json>", "Output format")] }),
     ],
   }),
-  cmd("trust", "KEEP-MODERN", "both", "Trust trajectory from proof history", "Trust moat surface", { flags: [bool("--json", "Print the trust trajectory as JSON")], subcommands: [sub("detail", "Trust metrics detail")] }),
+  cmd("trust", "KEEP-MODERN", "both", "Trust trajectory from proof history", "Trust trajectory surface", { flags: [bool("--json", "Print the trust trajectory as JSON")], subcommands: [sub("detail", "Trust metrics detail")] }),
   cmd("crash", "KEEP-MODERN", "both", "Inspect or submit scrubbed crash reports", "Local-only crash plumbing", {
     subcommands: [sub("list", "List stored crash reports"), sub("show", "Show one scrubbed crash report"), sub("submit", "Submit a scrubbed crash report"),sub("help", "Show crash usage")],
   }),
@@ -207,7 +207,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("init", "UPDATE", "bash", "Scaffold from a template", "Templates predate v10", { flags: [str("-t", "<template>", "Template name")] }),
   cmd("template", "KEEP-MODERN", "bash", "Manage PRD templates", "Engine-neutral"),
   cmd("verify", "UPDATE", "bash", "Deterministic PR verification", "Legacy proof vs v10 verify split", { flags: [bool("--fast", "PR-scoped fast verify"), bool("--pr", "PR mode"), json, dyn("--base", "branches", "Base branch")], positionals: [{ name: "base", type: "dynamic", dynamic: "branches" }] }),
-  cmd("keys", "KEEP-MODERN", "bash", "Receipt-signing keys", "Trust moat", { subcommands: [sub("export", "Print the public signing key (JWK)")] }),
+  cmd("keys", "KEEP-MODERN", "bash", "Receipt-signing keys", "Receipt signing", { subcommands: [sub("export", "Print the public signing key (JWK)")] }),
   cmd("review", "UPDATE", "bash", "Standalone code review with quality gates", "Gates are legacy-shaped"),
   cmd("dashboard", "UPDATE", "bash", "Operations UI server", "Overlaps Control Plane", { subcommands: [sub("start", "Start"), sub("stop", "Stop"), sub("status", "Status"), sub("url", "Print URL"), sub("open", "Open in browser")] }),
   cmd("config", "UPDATE", "bash", "Manage configuration", "Mixed legacy keys", { subcommands: [sub("show", "Show config"), sub("list", "List config (alias of show)"), sub("init", "Create config"), sub("edit", "Edit config"), sub("path", "Print config path"), sub("set", "Set a value"), sub("get", "Get a value")] }),

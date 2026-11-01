@@ -368,7 +368,7 @@ Detailed reference documentation backing the slim skill modules.
 - `legacy-healing-patterns.md`, `quality-control.md`, `confidence-routing.md`.
 - `memory-system.md`, `mcp-integration.md`.
 - `openai-patterns.md`, `lab-research-patterns.md`, `advanced-patterns.md`,
-  `tool-orchestration.md`, `agent-types.md`, `competitive-analysis.md`,
+  `tool-orchestration.md`, `agent-types.md`,
   `cursor-learnings.md`, `prompt-repetition.md`, `business-ops.md`,
   `invariant-checks.md`, `magic-modules-patterns.md`,
   `magic-rarv-integration.md`.
