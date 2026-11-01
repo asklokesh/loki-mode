@@ -81,8 +81,8 @@ export function repoTestCommand(repoDir: string): string | null {
   return null;
 }
 
-/** Gradle prints a per-test PASSED line only when the build's testLogging asks for it (Gradle 9.8 prints none under -i), and verify counts tests from those lines. This init script turns the events on for every Test task without touching the repo's build files. Written once to a fixed path under the temp dir (content-checked each call). */
-const GRADLE_INIT = "allprojects { tasks.withType(Test).configureEach { testLogging { events 'passed', 'failed', 'skipped' } } }\n";
+/** Verify counts Gradle tests from "Class > method PASSED|FAILED|SKIPPED" lines, but Gradle 9.8.2 printed none for a passing run even under -i with testLogging events on (CI run 41267030960; the JUnit XML did list the test). This init script prints exactly that line from an afterTest listener for every Test task, without touching the repo's build files. Written once to a fixed path under the temp dir (content-checked each call). */
+const GRADLE_INIT = "allprojects { tasks.withType(Test).configureEach { afterTest { d, r -> println \"${d.className} > ${d.name} ${r.resultType.name() == 'SUCCESS' ? 'PASSED' : r.resultType.name() == 'FAILURE' ? 'FAILED' : 'SKIPPED'}\" } } }\n";
 export function gradleInitScript(): string {
   const dir = join(tmpdir(), "loki-gradle-init"), p = join(dir, "test-logging.init.gradle");
   try { if (readFileSync(p, "utf8") !== GRADLE_INIT) throw new Error("stale"); } catch { try { mkdirSync(dir, { recursive: true }); writeFileSync(p, GRADLE_INIT); } catch { /* unwritable temp dir: gradle then runs without it and the count is unmeasured, never a pass */ } }
