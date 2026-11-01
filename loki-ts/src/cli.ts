@@ -288,6 +288,8 @@ async function dispatch(argv: readonly string[]): Promise<number> {
           "  sdk-text        (v8) The free-form (no-schema) sibling of sdk-judge for",
           "                  prose sites (grill, prd-enrich). Prints raw text; same",
           "                  fail-closed contract.",
+          "  triage          Classify work items (JSON on stdin) as implement, spec",
+          "                  or human with a one-line reason. Driven by loki backlog.",
           "",
           "Phase 1 (RARV-C closure) env vars:",
           "  LOKI_INJECT_FINDINGS=1   Persist structured reviewer findings to",
@@ -366,6 +368,10 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       if (subcmd === "exec-manifest") {
         const { runInternalExecManifest } = await import("./commands/internal_exec_manifest.ts");
         return runInternalExecManifest(rest.slice(1));
+      }
+      if (subcmd === "triage") {
+        const { runTriageCli } = await import("./features/triage.ts");
+        return runTriageCli(rest.slice(1));
       }
       process.stderr.write(`Unknown internal subcommand: ${subcmd}\n`);
       process.stderr.write(`Run 'loki internal --help' for the supported list.\n`);

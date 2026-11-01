@@ -1,0 +1,10 @@
+[
+  {"number": 1, "title": "Add multiply(a, b) to calc.ts", "body": "Export a `multiply(a, b)` function from calc.ts that returns a * b. Acceptance: calc.test.ts asserts multiply(3, 4) returns 12.", "labels": [{"name": "enhancement"}]},
+  {"number": 2, "title": "add() concatenates string input", "body": "Steps to reproduce: call add(\"1\", 2) from calc.ts.\nExpected: it throws a TypeError.\nActual: it returns \"12\".\nAdd a regression test to calc.test.ts.", "labels": [{"name": "bug"}]},
+  {"number": 3, "title": "Add subtract(a, b) with a unit test", "body": "Export `subtract(a, b)` from calc.ts returning a - b, covered by a test in calc.test.ts.", "labels": []},
+  {"number": 4, "title": "Improve performance", "body": "The app feels slow. Make it faster.", "labels": []},
+  {"number": 5, "title": "Make onboarding better", "body": "New users struggle to get started. Onboarding should be nicer and more intuitive.", "labels": [{"name": "enhancement"}]},
+  {"number": 6, "title": "Restyle the header button", "body": "The header button looks off. Change its color to the brand blue and fix the padding so it matches the mockup.", "labels": [{"name": "ui"}]},
+  {"number": 7, "title": "Rotate the production Stripe secret key", "body": "The prod STRIPE_SECRET_KEY was printed in a build log. Rotate it and update calc.ts config loading to read the new key.", "labels": [{"name": "security"}]},
+  {"number": 8, "title": "Epic: calculator v2", "body": "Ship the calculator v2 in one go.\n\n- [ ] Add a divide(a, b) function with zero handling\n- [ ] Add a power(a, b) function\n- [ ] Add a CLI entry point that reads expressions from stdin\n- [ ] Add a history log of past results\n- [ ] Publish the package to npm\n- [ ] Write user documentation", "labels": [{"name": "epic"}]}
+]
