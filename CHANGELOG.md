@@ -5,6 +5,22 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.103.0 (2026-11-01)
+
+Maven, Gradle and .NET repos now reach a verified result with no configuration, and a missing toolchain is named with how to install it.
+
+### Added
+
+- .NET support: Loki detects `.csproj`, `.sln`, `.slnx` and `global.json`, runs `dotnet test` scoped to the affected test classes, and writes its acceptance tests for xUnit, NUnit or MSTest in the test project. Both the VSTest and Microsoft.Testing.Platform summaries (including SDK 10's block form) are read; a contradictory or empty summary is unmeasured, never a pass.
+- `verify.test_command` in `loki.yaml` lets a JVM or .NET repo commit its own test command. Its output must still carry the build tool's test summary, and editing `loki.yaml` during a run caps the verdict, so the agent cannot rewrite the command to pass.
+
+### Fixed
+
+- Maven and Gradle runs no longer end "PARTIAL: no tests to run": Java test files now enter the test map, and a changed class selects its tests by name and by reference.
+- Gradle results are counted on every Gradle version: Loki passes an init script that prints each test's outcome, without touching the repo's build files.
+- The repo's own `./mvnw` or `./gradlew` is used when Maven or Gradle is not installed.
+- When a toolchain is missing, the receipt names it and how to install it (for example the .NET SDK download page) and the run is never VERIFIED.
+
 ## v11.102.0 (2026-11-01)
 
 A leaner Loki Mode: the package and repository carry only what the CLI and its distributions use, the Docker image runs every quality gate, and the project's own checks run in seconds.

@@ -12,11 +12,12 @@ import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, isTinyGreenfield, WALL_TINY_BOUND, loadRepoMap, namedFiles, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallOutputCap, wallModel, capToRunTier } from "../sizing.ts";
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { publishSealed, removeHoldout, sealStageDir, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
-import { clauseEvidenceBlock, evidenceOf, ingestWallCases, wallCasesBrief, wallCasesRunner, withUnreproducedEvidence, type WallEvidence } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingJavaTool, projectInterpreter, type EngineTestMap } from "../testmap.ts";
+import { clauseEvidenceBlock, evidenceOf, ingestWallCases, wallCasesBrief, wallCasesRunner, withUnreproducedEvidence, type WallEvidence } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingStackTool, projectInterpreter, type EngineTestMap } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { sealedWallDir, baseJobs, classify, plannedGoDir, goPackageBrief, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, spawnGroupSync, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, dotenvFileRead, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
+import { dotnetTestProject } from "../../util/stack_tools.ts";
 const WALL_PREFIX = "loki_wall_";
 
 export interface WallSealedFile { path: string; sha256: string; runner?: RunnerName; } // path: absolute, in the repo working tree
@@ -96,6 +97,7 @@ export function loadTaskText(ctx: RunContext, fromPrior: string | undefined): st
 // only compiles through an implementer shim that is never committed, so the Wall goes beside the first planned or named .go file (the repo root without one). Every other runner sees code from a top-level tests/.
 function wallTargetDir(repoDir: string, existingTests: TestRef[], runners: RunnerName[] = [], texts: string[] = []): string {
   const first = existingTests[0];
+  if (!first && runners.includes("dotnet")) return join(repoDir, dirname(dotnetTestProject(repoDir) ?? "tests/x")); // R02: the Wall file must live inside a test project
   if (!first && runners.some((r) => r === "maven" || r === "gradle" || r === "javac")) return join(repoDir, "src", "test", "java"); // HV1-03b: the build tool only sees Java tests here
   if (!first && runners.includes("go")) return plannedGoDir(repoDir, texts).dir;
   return first ? join(repoDir, dirname(first.path)) : join(repoDir, "tests");
@@ -133,7 +135,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
     return done({ status: "skipped", data: { size: sz.size }, reason: "small task with a relevant test: cascade skips Wall" });
   }
 
-  if (testMap && runners.length === 0) { const miss = missingJavaTool(repoMap?.files ?? [], process.env, ctx.repoDir); return done({ status: "skipped", data: { size: sz.size, files: [], no_runner: true, skip_code: harnessSkipCode(), not_proven: [miss ? `Wall not run: ${miss} is not installed on this machine, so this Java repo could not be tested (harness-owned)` : "Wall skipped: no runnable test command for this stack"] }, reason: miss ? `${miss} is not installed: the Wall cannot run Java tests (harness-owned, not proven)` : "no runnable test command detected: the Wall cannot write a runnable check" }); } // FC-17: decided before any model session
+  if (testMap && runners.length === 0) { const miss = missingStackTool(repoMap?.files ?? [], process.env, ctx.repoDir); return done({ status: "skipped", data: { size: sz.size, files: [], no_runner: true, skip_code: harnessSkipCode(), not_proven: [miss ? `Wall not run: ${miss.tool} is not installed on this machine, so this repo could not be tested (harness-owned); ${miss.install}` : "Wall skipped: no runnable test command for this stack"] }, reason: miss ? `${miss.tool} is not installed: the Wall cannot run this repo's tests (harness-owned, not proven); ${miss.install}` : "no runnable test command detected: the Wall cannot write a runnable check" }); } // FC-17: decided before any model session
 
   // TEN-COST-09: a pytest-only Wall under the system interpreter is classified not_run (classify, notRunReason), so the author session would be paid for and discarded. Skip it before any session ONLY when the holdout is off: with it on, held files never go through the base-run classify and verify runs them on the system interpreter, which drives fix rounds and the seal, so the Wall must still run. The held count is unknown before authoring, so ratio 0 is the only provable zero. Seal reads not_proven and the verdict can never be VERIFIED by this Wall.
   if (testMap && runners.every((r) => r === "pytest") && projectInterpreter(ctx.repoDir) === "system" && wallHoldoutRatio() === 0) return done({ status: "skipped", data: { size: sz.size, files: [], no_interpreter: true, not_proven: ["Wall skipped: no project test interpreter"] }, reason: "Wall skipped: no project test interpreter" });
