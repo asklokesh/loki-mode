@@ -181,7 +181,7 @@ export function searchMemory(root: string, text: string): MemoryHit[] {
 function lessonJson(l: Lesson): Record<string, unknown> {
   const settled = l.uses.filter((u) => u.verdict !== null);
   const verified = settled.filter((u) => u.verdict === "VERIFIED").length;
-  return { id: l.id, text: l.text, source: l.source, uses: l.uses.length, verified_ratio: settled.length ? verified / settled.length : null };
+  return { id: l.id, text: l.text, source: l.source, uses: l.uses.length, verified_ratio: settled.length ? verified / settled.length : null, ...(l.kind === "run" ? { kind: l.kind, category: l.category, seen: l.seen, subs: l.subs, files: l.files } : {}) };
 }
 
 // "Did you mean" line for a mistyped flag, or empty when no allowed flag is close.

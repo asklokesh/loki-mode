@@ -8,7 +8,7 @@
 # =update only appends a test case to calc.test.ts (assertions kept), plus the same new file.
 # E2E_STUB_SCOPE_EDIT=1: the implement session also edits util.ts (when the repo has one).
 # E2E_STUB_FIX (fix sessions, told apart by LOKI_E10_STAGE=fix): conflict answers LOKI_SPEC_CONFLICT and edits
-# nothing; noprogress edits calc.ts without fixing multiply(). E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
+# nothing; noprogress edits calc.ts without fixing multiply(); fixit turns the wrong multiply() right. E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
 # per call; E2E_STUB_USAGE=<n> records n output tokens per session (input = prompt bytes / 4) as the session's cost.
 #   overlay: a plain `-p <task>` call copies E2E_STUB_OVERLAY over the cwd (h2h benchmark harness)
 # E2E_STUB_SPLIT (JSON text): the MASS-2 split planning session writes it to the file its brief names.
@@ -56,6 +56,7 @@ if [ "${LOKI_E10_STAGE:-}" = "fix" ]; then # before the implement branch: a fix 
   case "${E2E_STUB_FIX:-}" in
     conflict) echo "LOKI_SPEC_CONFLICT: calc.test.ts:7 expects multiply(3, 4) to be 12"; exit 0 ;;
     noprogress) printf '// stub fix pass\n' >> calc.ts; echo "LOKI_DONE"; exit 0 ;;
+    fixit) python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; echo "LOKI_DONE"; exit 0 ;;
   esac
 fi
 if [ "$is_wall" = 1 ] && [ "${E2E_STUB_MODE:-}" = "wallcolor" ]; then # FC-69: the Wall author writes one red-on-base test for multiply()
