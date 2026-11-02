@@ -781,8 +781,8 @@ for f in "${CHANGED[@]}"; do
     esac
 
     # R4: changed loki-ts/src -> matching bun tests + typecheck. Match on the
-    # src-relative path minus extension ("runner/council"), not the bare
-    # basename ("council") -- the bare word appears as ordinary English in
+    # src-relative path minus extension ("runner/budget"), not the bare
+    # basename ("budget") -- the bare word appears as ordinary English in
     # nearly every test file's comments and false-positives almost the whole
     # suite.
     case "$f" in
@@ -796,7 +796,7 @@ for f in "${CHANGED[@]}"; do
             fi
             # shell suites guard loki-ts/src files too. Select any shell
             # suite that names the file's full path, or (for a command module,
-            # loki-ts/src/commands/X.ts) that runs it as "loki X". A bun-only
+            # loki-ts/src/commands/<name>.ts) that runs it as "loki <name>". A bun-only
             # selection let a doctor.ts slice skip tests/test-doctor-blocker-
             # parity.sh and go red in Tier B.
             grep_and_emit R3 shell_test "$f" "$(all_test_files)"

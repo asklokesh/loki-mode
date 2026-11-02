@@ -1,14 +1,13 @@
 // Phase 1 (v7.5.0) -- the missing writer for .loki/state/relevant-learnings.json.
 //
 // Plan reference: /Users/lokesh/.claude/plans/polished-waddling-stardust.md
-// Part B "Phase 1". The pre-v7.5.0 build_prompt.ts:175 instructs the LLM to
+// Part B "Phase 1". The pre-v7.5.0 prompt builder instructed the LLM to
 // "CHECK .loki/state/relevant-learnings.json for cross-project learnings"
 // but no orchestrator code writes the file. Templates in
 // references/core-workflow.md:123-149 describe a Mistakes & Learnings loop
 // that depends on this file. This module is the writer that closes the loop.
 //
-// Default ON in the Bun runner: the callers (quality_gates.ts,
-// internal_phase1.ts) fire the file write on `LOKI_AUTO_LEARNINGS !== "0"`, so
+// Default ON: the caller (internal_phase1.ts, the bash route's phase1 hooks) fires the file write on `LOKI_AUTO_LEARNINGS !== "0"`, so
 // relevant-learnings.json is populated unless explicitly disabled with
 // LOKI_AUTO_LEARNINGS=0. The env gate lives at the call sites, not here.
 // The episodic-memory bridge is a SEPARATE, default-OFF enrichment: both
@@ -226,7 +225,6 @@ function defaultBridgeFailureLog(msg: string): void {
 }
 
 // Convenience: derive a Learning from a code-review Finding and append it.
-// Used by quality_gates.ts after runCodeReview.
 export async function appendFromGateFailure(
   lokiDir: string,
   iteration: number,
@@ -255,8 +253,7 @@ export async function appendFromGateFailure(
   );
 }
 
-// Read the current learnings file. Used by build_prompt.ts to surface a
-// short summary to the next iteration.
+// Read the current learnings file (a short summary for the next iteration).
 export function loadLearnings(lokiDir: string): LearningsFile {
   return loadOrInit(fileFor(lokiDir));
 }

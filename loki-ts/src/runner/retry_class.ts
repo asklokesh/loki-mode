@@ -32,8 +32,8 @@ export type RetryClass = "transient" | "non_retryable";
 //
 // SCAN-TARGET HAZARD, and this is why the patterns below are narrower than they
 // look like they "should" be. The text handed to classifyFailure is the agent's
-// ENTIRE captured output (autonomous.ts:856-860 reads capturedOutputPath, the
-// same file checkCompletionPromise parses at autonomous.ts:835) -- up to 64KB of
+// ENTIRE captured output (the caller reads capturedOutputPath, the
+// same file the completion-promise check parses) -- up to 64KB of
 // the agent's own prose, test logs, and fixtures. It is NOT a provider error
 // envelope. So any pattern that is also ordinary APPLICATION vocabulary matches
 // an agent that merely BUILT that feature: a bare "401" appears in every auth

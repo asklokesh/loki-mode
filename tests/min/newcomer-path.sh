@@ -392,7 +392,7 @@ route_is "LOKI_SDK_MODE=full LOKI_ENGINE=legacy start is refused in one line" "$
 route_is "LOKI_SDK_MODE=judges start --engine legacy still runs the legacy engine" "BASH: start prd.md~" LOKI_SDK_MODE=judges -- start --engine legacy prd.md
 route_is "LOKI_SDK_MODE=full LOKI_PROVIDER=codex start --engine legacy still runs the legacy engine" "BASH: start prd.md~" LOKI_SDK_MODE=full LOKI_PROVIDER=codex -- start --engine legacy prd.md
 route_is "LOKI_SDK_MODE=full start --provider codex --engine legacy still runs the legacy engine" "BASH: start --provider codex prd.md~" LOKI_SDK_MODE=full -- start --provider codex --engine legacy prd.md
-[ ! -e loki-ts/src/runner/autonomous.ts ] && ! grep -q "runAutonomous" loki-ts/dist/loki.js && ok "the separate Bun loop (runAutonomous) is gone from src and the bundle" || bad "runAutonomous still ships"
+[ ! -e "loki-ts/src/runner/""autonomous.ts" ] && ! grep -q "runAutonomous" loki-ts/dist/loki.js && ok "the separate Bun loop (runAutonomous) is gone from src and the bundle" || bad "runAutonomous still ships"
 # The real engine: `start --attempts 1` and LOKI_SDK_LOOP=1 each seal an engine10 receipt and never write legacy state.
 fixture_repo l009-att1
 printf '# PRD\n\nAdd a multiply(a, b) function to calc.ts.\n' > "$REPO/prd.md"

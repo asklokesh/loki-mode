@@ -1331,7 +1331,7 @@ async def lsp_find_definition_by_name(symbol: str,
 # DIAGNOSTICS WRITER (P1-5 quality gate)
 # ============================================================
 #
-# The LSP-diagnostics quality gate (loki-ts/src/runner/quality_gates.ts,
+# The LSP-diagnostics quality gate (formerly also the Bun gate runner,
 # runLSPDiagnostics) READS <lokiDir>/quality/lsp-diagnostics.json but nothing
 # wrote it -- the gate was inert. This is the WRITER, invoked the same way on
 # both routes (Bun gate calls `python3 -m mcp.lsp_proxy --write-diagnostics`;
@@ -1341,7 +1341,7 @@ async def lsp_find_definition_by_name(symbol: str,
 # here.
 #
 # It enumerates the changed files itself (HEAD~1 -> --cached -> ls-files,
-# mirroring runStaticAnalysis's chain in quality_gates.ts so file selection
+# the same chain the bash static-analysis gate uses, so file selection
 # cannot diverge from the sibling static-analysis gate), queries each
 # supported file via the SAME in-process LSP client cache (_get_or_spawn_client,
 # one process for all files -- not python3-per-file), aggregates, and writes
@@ -1374,7 +1374,7 @@ def _writer_loki_dir() -> str:
 
 def _writer_changed_files(root: str) -> List[str]:
     """Return changed files relative to `root`, mirroring the HEAD~1 ->
-    --cached -> ls-files chain in runStaticAnalysis (quality_gates.ts). An
+    --cached -> ls-files chain of the bash static-analysis gate. An
     empty-but-successful `git diff HEAD~1 HEAD` is honored as "no changes
     this iteration" and does NOT fall through to ls-files (parity with the
     tryGit null-vs-empty distinction in the TS gate)."""

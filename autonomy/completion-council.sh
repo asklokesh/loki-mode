@@ -2031,7 +2031,7 @@ runner = d.get('runner', 'none')
 passed = d.get('pass')
 status = d.get('status', '')
 # BACKLOG 89: a recorded failure count above zero is a failure whatever "pass"
-# says, as the Bun gate reads it (quality_gates.ts artifactCount): a numeric
+# says: a numeric
 # failed_count wins, the legacy numeric failed is the fallback, and anything
 # else (null, missing, a bool) is unmeasured, never a failure and never 0.
 def _count(v):
@@ -3295,8 +3295,7 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
                 # output; the downstream parse already greps VOTE/REASON/ISSUES.
                 # CAVEMAN_DEFAULT_MODE=off suppression is preserved (see above).
                 # bash-F3: timeout-guard the provider subcall so a hung CLI can
-                # not stall the whole council. Default 600s matches the Bun route
-                # (council.ts LOKI_COUNCIL_TIMEOUT_MS=600000).
+                # not stall the whole council. Default 600s.
                 # bash-F4 (WAVE10 SAFE-DEFAULT): capture the subcall exit code so a
                 # timeout (124) is NOT silently routed into council_heuristic_review.
                 # The heuristic fallback defaults to APPROVE on benign evidence, so
@@ -3502,7 +3501,7 @@ REASON: one-line justification citing path:line evidence"
                 # v7.41.3 BUG A: full capture, no tail-truncation (see member
                 # subcall note). CAVEMAN_DEFAULT_MODE=off suppression preserved.
                 # bash-F3: timeout-guard the devil's-advocate subcall (same 600s
-                # default as the member subcalls / Bun council.ts). An empty
+                # default as the member subcalls). An empty
                 # verdict on timeout hits the conservative REJECT fallback below.
                 verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" env "SHELL=$_co_shell" CAVEMAN_DEFAULT_MODE=off claude "${_co_argv[@]}" -p 2>/dev/null)
             fi
