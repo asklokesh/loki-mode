@@ -37,7 +37,7 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 | trust | bun route, bash fallthrough | KEEP-MODERN | Trust trajectory surface |
 | crash | bun route, bash fallthrough | KEEP-MODERN | Local-only crash plumbing |
 | contract | loki-ts/src/cli.ts | KEEP-MODERN | v10 delivery contract |
-| start | bun route, bash fallthrough | UPDATE | Forks between v10 and the SDK loop; flags still legacy-shaped |
+| start | bun route, bash fallthrough | UPDATE | One engine (engine10); flags still legacy-shaped |
 | slack | loki-ts/src/cli.ts | KEEP-MODERN | Bun-native integration |
 | queue | loki-ts/src/cli.ts | KEEP-MODERN | Governor-aware batch of issue-mode runs |
 | issues | loki-ts/src/cli.ts | KEEP-MODERN | Mass issue pickup on the T7 queue |
