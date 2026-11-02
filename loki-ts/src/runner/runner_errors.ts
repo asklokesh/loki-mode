@@ -1,6 +1,7 @@
 // FC-02 / Engine Law L5: one shared classifier for "the test runner could not load or collect" versus "a test failed".
 // A load or collection error is an ERROR owned by the harness (cwd, config, install, import path), never by the code
 // under test, so it must not drive fix rounds or count toward STALLED. Used by verify.ts, wall.ts and deep.ts.
+import { stripAnsi } from "../util/check_result.ts";
 // ponytail: text-pattern based, like failures.ts; a real failed-test count in the same output always wins (mixed output is a code failure).
 
 export interface RunnerOutcome {
@@ -38,6 +39,7 @@ const LOAD_PATTERNS: [RegExp, string][] = [
   [/^(?:\S+: )?(?:line \d+: )?[\w.-]+: command not found$/m, "test runner executable not found"],
   [/^(?:\S+: )?\d+: [\w.-]+: not found$/m, "test runner executable not found (not installed)"], // POSIX sh: "sh: 1: <tool>: not found"
   [/^npm (?:error|ERR!) (?:npx )?canceled due to missing packages/m, "test runner package not installed"], // FC-DEPS-NOT-INSTALLED
+  [/^\s*\u25cf Validation Error:/m, "test runner configuration is invalid"], // L005: jest rejects its own config (unknown option, missing transform) before any test runs
 ];
 
 /** First line carrying the error, capped, for the NOT PROVEN reason. */
@@ -49,6 +51,7 @@ function firstLoadLine(out: string): string {
 
 /** Classifies a FAILED run's output (exit nonzero). A passing run must not be passed here. */
 export function classifyRunnerOutput(out: string): RunnerOutcome {
+  out = stripAnsi(out); // L005: a raw runner stream still classifies (callers usually strip ANSI first)
   if (!hasRealTestFailure(out)) {
     for (const [re, why] of LOAD_PATTERNS) {
       if (re.test(out)) return { kind: "load_error", owner: "harness", reason: `runner could not load: ${why}: ${firstLoadLine(out)}` };

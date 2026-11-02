@@ -5,7 +5,7 @@
 import { readRepoMapCache, repoCacheDir, repoKey } from "../engine10/cache.ts";
 import type { RepoMap } from "../engine10/repomap.ts";
 import { loadRepoMap } from "../engine10/sizing.ts";
-import type { RunContext, TestMap, TestRef } from "../engine10/types.ts";
+import { FINISH_LINE, type RunContext, type TestMap, type TestRef } from "../engine10/types.ts";
 import { unitBrief } from "../features/speed/unit_mode.ts";
 import { signatureDigest } from "../util/ts_signatures.ts";
 import { contextPack, packEnabled, type ContextPack } from "../util/context_pack.ts";
@@ -18,13 +18,13 @@ export interface ContextDeps {
 
 // S41-10b: the implement/fix brief's leading block. A plain constant, no task text or interpolation, so
 // every brief starts with the same bytes (cache-stable prefix). Per-task context is appended after it. E-150: repeated verbatim as the brief's last line (recency); same bytes every task.
-export const FINISH_LINE = "Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason; cite test as path:line>.";
+export { FINISH_LINE }; // defined in engine10/types.ts, a leaf module, so conflict_resume and steer import it without a cycle through this file
 export const FIXED_RULES = [
   "You are the Loki 10 implement stage, doing the complete task described below in this repository. Do whatever a senior engineer would do to finish it correctly: read, change and test as needed across any files the task requires.",
   "Rules:",
   "- The Wall tests are read-only: do not edit or delete them. Test files that existed before this run are read-only too: the harness restores any edit to one after your session unless the task names that file or asks to change tests, so make your source change satisfy them and put new tests in new files.",
   "- Exception: when the task names an existing test file or asks to change tests, change only what it asks; never remove, skip or loosen any other assertion. An existing test that contradicts the task otherwise is a spec conflict: cite it.",
-  "- Run any tests you need, including the package's full suite (the Project Model commands below say how). The impacted tests named below are a starting hint, not a limit. The harness re-runs those checks after you stop; a pass that exists only in your reply does not count. Run tests with the exact command the Project Model lists, never a shortened variant that changes how imports resolve; never create files or symlinks in a test directory to make an import work.",
+  "- Run the impacted tests named below and any other targeted tests you need (the Project Model commands below say how), not the package's full suite: after you stop the harness re-runs your checks, and the full suite when the diff's risk tier is medium or high; a pass that exists only in your reply does not count. Run tests with the exact command the Project Model lists, never a shortened variant that changes how imports resolve; never create files or symlinks in a test directory to make an import work.",
   "- Never leave a long-lived server running.",
   "- Never kill processes.",
   "- Write no documentation unless the task explicitly asks for it. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.",

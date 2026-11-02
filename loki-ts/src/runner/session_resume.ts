@@ -1,4 +1,4 @@
-// MW-2 / CH-03: warm chain (plan, implement, fix 1..n) over one SDK session. plan -> implement is default ON (LOKI_E10_FIX_RESUME=0 opts out); fix rounds stay OFF, LOKI_E10_FIX_RESUME=1 opts in.
+// MW-2 / CH-03: warm chain (plan, implement, fix 1..n) over one SDK session. plan -> implement is default ON (LOKI_E10_FIX_RESUME=0 opts out); fix rounds stay opt-in (LOKI_E10_FIX_RESUME=1).
 // Lives outside engine10/ so the core line budget is untouched. Nothing here feeds a verdict: the seal path
 // reads only the engine-recorded mode string and cost-file token counts, never a transcript (see tests/engine10/fix_resume.test.ts).
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -9,7 +9,8 @@ import type { RunContext, SessionResult, SessionRunOptions } from "../engine10/t
 
 /** Above this many first-turn prompt tokens a chain link starts fresh (a long resumed context costs more per turn than a cold write). */
 export const CHAIN_MAX_PROMPT_TOKENS = 100_000;
-/** CH-03: the warm chain is on only with LOKI_E10_FIX_RESUME=1. The default flips on after the RECEIPT-TRUTH resume-cost detection lands (a resumed session's total_cost_usd may be cumulative). */
+/** CH-03 / L006: fix rounds resume the chain only with LOKI_E10_FIX_RESUME=1. A resumed round runs at the fix effort policy (high, then xhigh), so round 1 resets the
+ *  prompt cache anyway, and 32 real loki-haiku h2h runs (8 tasks x 2 reps x on/off) entered no fix round, so no saving is measured that would justify default-on. */
 export const chainEnabled = (): boolean => process.env["LOKI_E10_FIX_RESUME"] === "1";
 
 /** first_turn_prompt_tokens the stream parser recorded for one iteration's result-cost file, or null. */
@@ -96,8 +97,10 @@ export function writeSessionId(repoDir: string, iterationId: string, res: { sess
 
 /** MW-2: the new user turn of a resumed round; the session already holds the task, plan and earlier work. */
 export function holdoutNote(n: number): string[] { return n > 0 ? [`${n} hidden acceptance check${n === 1 ? "" : "s"} failed. Their content is withheld; re-read the task and make the behavior correct for inputs the visible tests do not cover.`] : []; } // C-C4b: the only form in which a held-out failure reaches a fix brief
-export function buildFixResumeBrief(groups: { signature: string; count: number; sample: string }[], diffStat: string | null, priorDiagnosis: string | null, holdoutFailed = 0): string {
-  return ["The Fast verify run failed. Fix these grouped failures:", ...groups.map((g, i) => `${i + 1}. (${g.count}x) ${g.signature}\n   sample: ${g.sample}`), ...holdoutNote(holdoutFailed), `Diff so far:\n${diffStat ?? "(diff stat is not available)"}`, `Your previous diagnosis: ${priorDiagnosis ?? "(none was recorded)"}`].join("\n\n");
+/** L006: a resumed session still remembers its own test edits, so the brief names the ones the harness restored. */
+export function buildFixResumeBrief(groups: { signature: string; count: number; sample: string }[], diffStat: string | null, priorDiagnosis: string | null, holdoutFailed = 0, reverted: string[] = []): string {
+  return ["The Fast verify run failed. Fix these grouped failures:", ...groups.map((g, i) => `${i + 1}. (${g.count}x) ${g.signature}\n   sample: ${g.sample}`), ...holdoutNote(holdoutFailed),
+    ...(reverted.length ? [`The harness restored your edits to these read-only test files after your last turn; they are back to their original content, so do not edit them again: ${[...new Set(reverted)].join(", ")}`] : []), `Diff so far:\n${diffStat ?? "(diff stat is not available)"}`, `Your previous diagnosis: ${priorDiagnosis ?? "(none was recorded)"}`].join("\n\n");
 }
 
 /** TEN-QUALITY-07: the live diff against the run base, computed fresh each fix round (no stage records one). Stat always; bounded hunks
@@ -125,8 +128,8 @@ export interface FixSessionOutcome {
   cacheRead: number;
 }
 
-/** Runs one fix round's session. Default (flag unset): exactly one fresh session. LOKI_E10_FIX_RESUME=1: resume the latest session of
- *  the chain (implement, then each fix round) on the SAME model; any resume failure starts fresh and records why. */
+/** Runs one fix round's session. Default: exactly one fresh session. LOKI_E10_FIX_RESUME=1: resume the latest session of the chain (implement, then each fix round)
+ *  on the SAME model at the fix effort policy (raising effort over implement's resets the prompt cache); any resume failure starts fresh and records why. */
 export async function runFixSession(
   ctx: RunContext, base: Omit<SessionRunOptions, "iterationId" | "brief">, iterationId: string, priorIds: string[],
   chain: { sessionId: string | null; model: string }, actualModel: string, fullBrief: string, resumeBrief: string,

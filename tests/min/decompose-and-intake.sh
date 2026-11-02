@@ -6,6 +6,18 @@
 #   epic:    `loki start owner/repo#24` on that epic takes the existing MASS-2 decompose path
 #            (commands/issues_run.ts startIssueEpic): the model's split (stub) is used, slice s1 runs, then s2
 #            stacked on s1's run branch, each as its own engine10 run with its own receipt, and no whole-issue run.
+#   backlog: `loki backlog acme/search --issues 25,24` on #25, large only by its epic label: triage marks it large
+#            through the same deliverables rule (no drafted spec), the child run takes the same MASS-2 split path,
+#            every slice runs, the split prints one standard Outcome (the true aggregate, PARTIAL here) and one Cost
+#            line, that cost lands in the backlog day ledger, and the day cap then stops #24 from launching.
+#   pr mode: `loki start acme/search#25` in the default PR mode (a local bare origin, so slice draft PRs publish offline as
+#            local:// URLs) prints one PR line per slice, and backlog's parser counts that PARTIAL split as done.
+#   outcome: the split's aggregate (commands/issues_epic.ts epicOutcome): FAILED (exit 1) when a slice really failed, which
+#            outranks BUDGET_STOP (exit 3), then PARTIAL (exit 6), then VERIFIED; exit codes via exitCodeOf
+#            (LOKI_DURABLE_STATE=1 gives 20). The Cost line sums unrounded slice figures plus every planning session (a
+#            re-ask included); a refused split reports its planning on a Split planning line that backlog adds.
+#   labels:  engine10's own sizing sees the issue's labels: when the split is refused (the stub writes no split) and
+#            `loki start acme/search#25` runs the issue as one run, its plan stage still sizes the epic-label issue large.
 #   lean:    `loki start "fix the off-by-one in paginate()"` sizes small and takes the lean path (no plan, no Wall).
 #   intake:  that run, on a repo with 1246 files, 240 test files that each pay an 80 ms process startup (the cost
 #            shape of FireLater's vitest suite) and 20 stale loki/e10-* branches holding unpushed commits, reaches
@@ -18,9 +30,19 @@
 #      sizing, epic and decompose-path assertions must fail.
 #   2. loki-ts/src/engine10/stages/intake.ts: put the eager zero probe back (every detected test file run once,
 #      120 s budget, before intake returns; rebuild dist); the intake and first-session timing assertions must fail.
-#   3. loki-ts/src/commands/issues_epic.ts: put back the old strList (refuse a list over its cap or any entry over 500
+#   3. loki-ts/src/features/decompose.ts deliverables: drop the epic label signal (`large: hits >= 2`; rebuild dist):
+#      the backlog issue is no longer large, so the backlog split assertions fail.
+#   4. loki-ts/src/features/triage.ts triageItem: route large to class "spec" again (rebuild dist): the backlog issue
+#      gets a drafted spec instead of a run, so the backlog assertions fail.
+#   5. loki-ts/src/commands/issues_epic.ts epicOutcome: drop the Cost line (rebuild dist): the split's spend never
+#      reaches the day ledger and #24 launches past the day cap, so the ledger and day-cap assertions fail.
+#   6. loki-ts/src/commands/issues_epic.ts epicOutcome: report VERIFIED whenever every slice is VERIFIED or PARTIAL
+#      (the old exit 0; rebuild dist): the outcome and backlog PARTIAL assertions fail.
+#   7. loki-ts/src/commands/issues_epic.ts epicOutcome: drop the PR lines (rebuild dist): the PR-mode split prints no PR
+#      line and backlog reads its PARTIAL as a failure, so both pr mode assertions fail.
+#   8. loki-ts/src/commands/issues_epic.ts: put back the old strList (refuse a list over its cap or any entry over 500
 #      characters); the split repair assertion must fail (p.ok false). Clipping criteria (or keeping long paths) fails it too.
-#   4. loki-ts/src/commands/issues_run.ts splitWithReask: re-ask only when `p.over !== undefined`; the split repair
+#   9. loki-ts/src/commands/issues_run.ts splitWithReask: re-ask only when `p.over !== undefined`; the split repair
 #      assertion must fail (one call, no exact-error note).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -142,12 +164,16 @@ printf '%s\n' "$SIZES" | grep -Eq '^structured (small|normal) ' && ok "structure
 # --- epic: loki start owner/repo#24 goes down the MASS-2 decompose path, slice by slice --------------------------------
 cat > "$T/bin/gh" <<'GH'
 #!/usr/bin/env bash
-# Stub gh: authenticated, and `issue view` answers for acme/search#24 only (the epic, open).
+# Stub gh: authenticated, and `issue view` answers for acme/search#24 (the structural epic) and #25 (large only by
+# its epic label), both open.
 if [ "${1:-}" = "auth" ]; then exit 0; fi
-if [ "${1:-} ${2:-}" = "issue view" ] && [ "${3:-}" = "24" ]; then
+if [ "${1:-} ${2:-}" = "issue view" ] && { [ "${3:-}" = "24" ] || [ "${3:-}" = "25" ]; }; then
   case "$*" in
     *state,closedByPullRequestsReferences*) echo '{"state":"OPEN","closedByPullRequestsReferences":[]}' ;;
-    *) python3 -I -c 'import json, os; print(json.dumps({"number": 24, "title": os.environ["EPIC_TITLE"], "body": os.environ["EPIC_BODY"], "labels": [{"name": "enhancement"}], "author": {"login": "founder"}, "createdAt": "2026-11-01T00:00:00Z", "url": "https://github.com/acme/search/issues/24"}))' ;;
+    *) python3 -I -c 'import json, os, sys
+n = int(sys.argv[1])
+t, b, l = (os.environ["EPIC_TITLE"], os.environ["EPIC_BODY"], "enhancement") if n == 24 else ("Calculator v2 umbrella", "Add divide(a, b) and power(a, b) to calc.ts.", "epic")
+print(json.dumps({"number": n, "title": t, "body": b, "labels": [{"name": l}], "author": {"login": "founder"}, "createdAt": "2026-11-01T00:00:00Z", "url": "https://github.com/acme/search/issues/%d" % n}))' "$3" ;;
   esac
   exit 0
 fi
@@ -159,7 +185,9 @@ make_repo "$E" 0
 SPLIT='{"slices":[{"id":"s1","title":"search backend","acceptance":["full-text search returns ranked rows"],"depends_on":[],"files":["calc.ts"]},{"id":"s2","title":"search UI","acceptance":["the search box shows ranked results"],"depends_on":["s1"],"files":["calc.ts"]}]}'
 E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" E2E_STUB_BUDGET_LOG="$T/epic-budget.log" run_loki "$E" "$T/epic-stub.log" start acme/search#24 --no-pr --max-cost 5
 printf '%s\n' "$OUT" | grep -E '^(loki:|#24)' | sed 's/^/    epic: /'
-[ "$RC" -eq 0 ] && ok "epic run exits 0 (every slice VERIFIED or PARTIAL)" || { bad "epic run exited $RC"; printf '%s\n' "$OUT" | tail -15 | sed 's/^/    | /'; }
+[ "$RC" -eq 6 ] && printf '%s\n' "$OUT" | grep -Eq '^Outcome: +PARTIAL$' && printf '%s\n' "$OUT" | grep -Eq '^Reason: +slice s1: PARTIAL' \
+    && ok "epic run reports the true aggregate: PARTIAL slices give Outcome PARTIAL and exit 6, not VERIFIED" || { bad "epic run: exit $RC, outcome $(printf '%s\n' "$OUT" | grep '^Outcome:')"; printf '%s\n' "$OUT" | tail -15 | sed 's/^/    | /'; }
+printf '%s\n' "$OUT" | grep -Eq '^Cost: +(not measured|partial: \$|\$)' && ok "epic run prints one standard Cost line for all its slices" || bad "epic run printed no standard Cost line"
 rl="$(bun --no-env-file --config=/dev/null -e 'const m = await import(process.argv[1]); process.stdout.write(["Receipt: sha256:5efb429c0d", "cost $0.0429", "HTTP 429 Too Many Requests"].map((t) => m.isRateLimited(t)).join(","))' "$ROOT/loki-ts/src/runner/budget.ts" 2>&1)"
 [ "$rl" = "false,false,true" ] && ok "slice retry: a 429 inside a hash or cost is not a rate limit; an HTTP 429 is" || bad "rate-limit detection: $rl (want false,false,true)"
 impl_budget="$(grep '^implement ' "$T/epic-budget.log" 2>/dev/null | sed 's/^implement //' | sort -u)"
@@ -200,6 +228,83 @@ console.log(out.join(" "));
 ' 2>&1)"
 [ "$SPLITR" = "true 20 520 true s1 src/a.ts true 2 true" ] && ok "split repair: a 520-char criterion is kept whole, empties dropped, 25 criteria merged to 20 with no text lost, a 600-char path dropped, duplicate deps dropped; an empty acceptance list is re-asked once with the exact error" \
     || bad "split repair gave: $SPLITR (want: true 20 520 true s1 src/a.ts true 2 true)"
+
+# --- backlog: a large issue in `loki backlog` runs and splits through the same MASS-2 path, never a drafted spec -------
+B="$T/backlog"
+make_repo "$B" 0
+git -C "$B" remote add origin https://github.com/acme/search.git
+cat > "$T/launch-start" <<EOF
+#!/usr/bin/env bash
+# The real engine on the backlog's issue ref; --no-pr because the stub gh cannot open PRs.
+exec bash "$ROOT/bin/loki" start "\$1" --no-pr --max-cost 5
+EOF
+chmod +x "$T/launch-start"
+LOKI_BACKLOG_LAUNCHER="$T/launch-start" LOKI_BUDGET_PER_DAY_USD=0.001 E2E_STUB_USAGE=2000 E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" \
+    run_loki "$B" "$T/backlog-stub.log" backlog acme/search --issues 25,24 --concurrency 1
+BLOG="$(cat "$B-backlog/logs/issue-25.log" 2>/dev/null)"
+printf '%s\n' "$OUT" | grep -E '^backlog: #2[45]' | sed 's/^/    backlog: /'
+printf '%s\n' "$BLOG" | grep -E '^(loki:|#25|Outcome:|Reason:|Cost:)' | sed 's/^/    backlog child: /'
+[ "$RC" -eq 1 ] && ok "backlog run exits 1 (a PARTIAL item without a PR and a day-cap stop are not success)" || { bad "backlog run exited $RC"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+printf '%s\n' "$OUT" | grep -q '^backlog: #25 PARTIAL: slice s1: PARTIAL' && ok "backlog: two PARTIAL slices read PARTIAL, not VERIFIED" || bad "backlog: #25 status is $(printf '%s\n' "$OUT" | grep '^backlog: #25 [A-Z]' | tail -1)"
+child_usd="$(printf '%s\n' "$BLOG" | sed -n 's/^Cost: *\(partial: \)\{0,1\}\$\([0-9.]*\).*/\2/p' | head -1)"
+day_usd="$(python3 -I -c 'import datetime,json,os,sys; print(json.load(open(os.path.expanduser("~/.loki/backlog-spend.json"))).get(datetime.date.today().isoformat(), ""))' 2>/dev/null)"
+echo "    ledger: split Cost line \$${child_usd:-none}, day ledger today \$${day_usd:-none}"
+python3 -I -c 'import sys; a, b = sys.argv[1], sys.argv[2]; sys.exit(0 if a and b and float(a) > 0 and abs(float(a) - float(b)) < 1e-6 else 1)' "${child_usd:-}" "${day_usd:-}" \
+    && ok "backlog: the split item's summed slice cost is added to the day ledger" || bad "backlog: day ledger (${day_usd:-none}) does not hold the split cost (${child_usd:-none})"
+printf '%s\n' "$OUT" | grep -q '^backlog: #24 BUDGET_STOP: daily budget \$0.00 reached' && [ ! -e "$B-backlog/logs/issue-24.log" ] \
+    && ok "backlog: the day cap, reached by the split's cost, stops the next launch (#24 never starts)" || bad "backlog: #24 was not stopped by the day cap: $(printf '%s\n' "$OUT" | grep '^backlog: #24' | tail -1)"
+has "backlog: the label-only epic is large by the shared rule and runs (no drafted spec)" "$OUT" "backlog: #25 implement Calculator v2 umbrella | large (label epic); runs split into slices"
+[ ! -d "$B/.loki/specs" ] && ok "backlog: no spec drafted for the large issue" || bad "backlog: a spec was drafted for the large issue"
+has "backlog child: the same rule sizes it large at start" "$BLOG" "acme/search#25 sizes large (label epic: decompose)"
+has "backlog child: takes the MASS-2 split path (model split used)" "$BLOG" "#25 split into 2 slices: s1, s2<-s1"
+printf '%s\n' "$BLOG" | grep -q '^#25 s2 running (stacked on loki/e10-' && ok "backlog child: s2 runs stacked on s1, each slice its own run" || bad "backlog child: slices did not run stacked"
+
+# --- PR mode: a split in the default PR mode prints a PR line per slice, and backlog counts its PARTIAL as done -------
+P="$T/prmode"
+make_repo "$P" 0
+git init -q --bare "$T/prmode-origin.git"
+git -C "$P" remote add origin "$T/prmode-origin.git"
+git -C "$P" push -q origin main
+E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" run_loki "$P" "$T/prmode-stub.log" start acme/search#25 --max-cost 5
+printf '%s\n' "$OUT" | grep -E '^(#25 s[12] (PARTIAL|VERIFIED)|Outcome:|Reason:|PR:|Cost:)' | sed 's/^/    pr mode: /'
+npr="$(printf '%s\n' "$OUT" | grep -cE '^PR: +local:///.+#loki/')"
+[ "$npr" = 2 ] && ok "pr mode: the split prints one PR line per slice draft PR (2)" || { bad "pr mode: $npr PR line(s), want 2 (exit $RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
+PRSTATUS="$(printf '%s' "$OUT" | python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import backlog; ok, st, usd = backlog.parse_result(int(sys.argv[2]), sys.stdin.read()); print("%s %s" % (ok, st))' "$ROOT/autonomy/lib" "$RC" 2>&1)"
+echo "    pr mode: backlog reads: $PRSTATUS"
+case "$PRSTATUS" in "True PARTIAL, PR local:///"*) ok "pr mode: backlog counts the PARTIAL split with its draft PRs as done" ;; *) bad "pr mode: backlog reads the PR-mode split as: $PRSTATUS" ;; esac
+
+# --- outcome: the split's aggregate verdict, exit code and cost line (pure) -------------------------------------------
+AGG="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { epicOutcome } = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
+const row = (id, outcome, usd, rc, extra = {}) => ({ id, title: id, parent: null, outcome, pr: null, cost: usd === undefined ? "-" : usd === null ? "NOT RECORDED" : "$" + usd.toFixed(2), usd, rc, ...extra });
+const cases = {
+  verified: [[row("s1", "VERIFIED", 0.104, 0), row("s2", "VERIFIED", 0.204, 0)], [0.004]],
+  partial: [[row("s1", "VERIFIED", 0.1, 0), row("s2", "PARTIAL", 0.2, 6, { pr: "https://github.com/acme/search/pull/9" })], []],
+  budget: [[row("s1", "VERIFIED", 0.1, 0), row("s2", "FAILED (exit 3)", null, 3, { budget: true }), row("s3", "SKIPPED (dependency s2 did not pass)", undefined)], [0.05, 0.05]],
+  failed_beats_budget: [[row("s1", "FAILED", 0.05, 1), row("s2", "FAILED (exit 3)", 0.1, 3, { budget: true })], []],
+};
+for (const [k, [rows, plan]] of Object.entries(cases)) { const o = epicOutcome(rows, plan, {}); console.log(k + " " + o.outcome + " " + o.rc + " | " + o.lines.trim().split("\n").join(" | ")); }
+const d = epicOutcome(cases.budget[0], [], { LOKI_DURABLE_STATE: "1" }); console.log("durable " + d.outcome + " " + d.rc);' 2>&1)"
+printf '%s\n' "$AGG" | sed 's/^/    outcome: /'
+printf '%s\n' "$AGG" | grep -q '^verified VERIFIED 0 | Outcome: *VERIFIED | Cost: *\$0.31 (2 slice runs + 1 planning session)$' \
+    && ok "outcome: every slice VERIFIED gives VERIFIED, exit 0; cost sums unrounded slice figures plus the planning session (0.104+0.204+0.004 = 0.31, not 0.30)" || bad "outcome: all-VERIFIED case wrong"
+printf '%s\n' "$AGG" | grep -q '^partial PARTIAL 6 | Outcome: *PARTIAL | Reason: *slice s2: PARTIAL | PR: *https://github.com/acme/search/pull/9 | Cost: ' && ok "outcome: any PARTIAL slice gives PARTIAL, exit 6, with a PR line per slice PR" || bad "outcome: PARTIAL case wrong"
+printf '%s\n' "$AGG" | grep -q '^budget BUDGET_STOP 3 | Outcome: *BUDGET_STOP | Reason: *slice s2: FAILED (exit 3) | Cost: *partial: \$0.20 for 3 of 4 (2 slice runs + 2 planning sessions)$' \
+    && ok "outcome: a slice budget stop gives BUDGET_STOP, exit 3; a re-asked split counts both planning sessions; cost marked partial" || bad "outcome: budget case wrong"
+printf '%s\n' "$AGG" | grep -q '^failed_beats_budget FAILED 1 ' && ok "outcome: a real FAILED slice outranks a budget stop (FAILED, exit 1)" || bad "outcome: FAILED did not outrank the budget stop"
+printf '%s\n' "$AGG" | grep -q '^durable BUDGET_STOP 20$' && ok "outcome: exit codes go through exitCodeOf (LOKI_DURABLE_STATE=1 gives 20)" || bad "outcome: LOKI_DURABLE_STATE exit code wrong"
+BL="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import backlog
+print(backlog.parse_result(1, "loki: split refused (x); running the issue as one run\nSplit planning: $0.40 (0 slice runs + 1 planning session)\nOutcome:    FAILED\nCost:       $1.10 (claude)\n")[2])' "$ROOT/autonomy/lib" 2>&1)"
+[ "$BL" = "1.5" ] && ok "outcome: backlog adds a refused split's planning cost to the run's cost (0.40 + 1.10)" || bad "outcome: backlog counted $BL for a refused split, want 1.5"
+
+# --- labels: engine10's own sizing sees the issue's epic label (split refused, so the issue runs as one run) ----------
+L="$T/labels"
+make_repo "$L" 0
+E2E_STUB_MODE=done run_loki "$L" "$T/labels-stub.log" start acme/search#25 --no-pr --max-cost 5
+LEV="$(ls "$L"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
+lsize="$(python3 -I -c 'import json,sys; print(next((json.loads(l)["data"].get("size") for l in open(sys.argv[1]) if "\"variant\"" in l and json.loads(l)["type"] == "variant"), "none"))' "$LEV" 2>/dev/null)"
+case "$OUT" in *"running the issue as one run"*) [ "$lsize" = "large" ] && ok "labels: the epic-label issue sizes large in engine10's own plan stage, as in triage" || bad "labels: engine10 sized the epic-label issue '${lsize:-none}' (rc $RC)" ;; *) bad "labels: the issue did not fall back to one run" ;; esac
+printf '%s\n' "$OUT" | grep -Eq '^Split planning: .*\(0 slice runs \+ 1 planning session\)$' && ok "refused split: its planning session is reported on a Split planning line backlog adds" || bad "refused split: no Split planning line: $(printf '%s\n' "$OUT" | grep -i 'split' | head -3 | tr '\n' ';')"
 
 # --- lean + intake speed: a one-line fix on a 1246-file repo with 20 stale run branches --------------------------------
 R="$T/big"
