@@ -527,6 +527,17 @@ ok = all("pilot" in m and "qualified" in m for m in ms)
 ok &= all(m["pilot"]["runs"] >= 2 and m["pilot"]["passed"] / m["pilot"]["runs"] < 0.5 and len(m["source"]["solution_files"]) >= 2 for m in ms if m["qualified"])
 ok &= all(m.get("excluded_because") for m in ms if not m["qualified"])
 print(ok, sum(m["qualified"] for m in ms) >= 8)')" = "True True"
+check "hard: every task's pilot counts and engine match the committed pilot results file" test "$(python3 -I -c '
+import json, glob, os
+d = json.load(open("benchmarks/h2h/results/2026-11-01-2499d6aee-hard-pilot.json"))
+c = {}
+for r in d["runs"]:
+    c.setdefault(r["task"], [0, 0]); c[r["task"]][0] += bool(r["pass"]); c[r["task"]][1] += 1
+ok = d["configs"] == ["raw-haiku-verify"] and d["provenance"][0]["dirty_count"] == 0
+for p in glob.glob("benchmarks/h2h/fixtures/hard/*/meta.json"):
+    pl = json.load(open(p))["pilot"]; t = os.path.basename(os.path.dirname(p))
+    ok &= pl["config"] == "raw-haiku-verify" and [pl["passed"], pl["runs"]] == c.get(t) and pl["engine_sha"] == d["provenance"][0]["engine_sha"]
+print(ok)')" = True
 q_out="$(cd benchmarks/h2h && python3 -I -c '
 import json, sys; sys.path.insert(0, "."); import h2h
 ids = sorted(p.name for p in h2h.SUITES["hard"].iterdir() if (p / "meta.json").is_file())

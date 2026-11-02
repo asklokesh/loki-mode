@@ -55,7 +55,10 @@ v11.116.0 engine merged from main. Tool versions are in the file (bun 1.3.13, Cl
   rule otherwise bans.
 - **Selection rule.** A task qualifies only if the fix touches 2 or more files and raw Haiku with
   the verify sentence passed under half of its pilot runs (2 runs per task over the 19 candidates of
-  the time, $0.78). 11 met it. 3 of those were excluded because the fix's tests need something the
+  the time, $0.78). Pilot results file: `results/2026-11-01-2499d6aee-hard-pilot.json` (38 runs,
+  $0.78 recorded, citable flag true with the same provenance gap as below: the expr `internal/`
+  files were gitignored at 2499d6aee). Each task's `meta.json` pilot counts must match it
+  (`tests/min/h2h-harness.sh`). 11 met it. 3 of those were excluded because the fix's tests need something the
   issue cannot tell anyone: a class the fix adds (sqlparse `TypedLiteral`), a method the fix adds
   (`Function.get_window`), and one of two valid HTTP header shapes (chi #446's `Allow`). The chi
   candidate was then removed altogether: its merged fix fills the `Allow` header by iterating a Go
