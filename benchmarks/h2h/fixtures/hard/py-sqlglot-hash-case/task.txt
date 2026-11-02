@@ -1,0 +1,22 @@
+Expressions: some case-sensitive nodes compare equal
+
+### Situation:
+
+The hash algorithm on exp.Expression look for a case-sensitive flag : **_hash_raw_args**
+
+The flag is currently set for exp.Literal and exp.Identifier. 
+
+### Problem: 
+Some nodes does not have the flag and are wrongly considered case-insensitive.
+
+### Example:
+```python
+from sqlglot.optimizer import optimize
+q = "SELECT * FROM (SELECT j ->> 'Key' AS v FROM t) AS x JOIN (SELECT j ->> 'key' AS v FROM t) AS y ON x.v = y.v"
+print(optimize(parse_one(q, dialect="postgres"), schema={"t": {"j": "JSONB"}}, dialect="postgres").sql(dialect="postgres"))
+```
+### Result: 
+```sql
+WITH "x" AS (SELECT "t"."j" ->> 'Key' AS "v" FROM "t" AS "t") SELECT "x"."v" AS "v", "y"."v" AS "v" FROM "x" AS "x" JOIN "x" AS "y" ON "x"."v" = "y"."v"
+```
+-> since wrapper nodes of 'Key' and 'key' are considered equals, the optimizer rewrite the query (using a cte for 'Key'), which drop 'key'

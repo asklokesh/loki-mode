@@ -1,0 +1,60 @@
+WithContext doesn't work with 2 functions within 1 call
+
+Hi @antonmedv 
+
+If there are 2 patched function calls within 1 function call, it doesn't compile.
+
+https://go.dev/play/p/9dH2e9KuF2d
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/expr-lang/expr"
+)
+
+type env struct {
+	Ctx context.Context `expr:"ctx"`
+}
+
+func main() {
+	p, err := expr.Compile(
+		"now2().After(date2())",
+		expr.Env(env{}),
+		expr.WithContext("ctx"),
+		expr.Function(
+			"now2",
+			func(params ...any) (any, error) { return time.Now(), nil },
+			new(func(context.Context) time.Time),
+		),
+		expr.Function(
+			"date2",
+			func(params ...any) (any, error) { return time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), nil },
+			new(func(context.Context) time.Time),
+		),
+	)
+	if err != nil {
+		panic(err)
+	}
+	r, err := expr.Run(p, &env{Ctx: context.Background()})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(r)
+}
+```
+
+Output:
+```
+panic: not enough arguments to call date2 (1:14)
+	 | now2().After(date2())
+	 | .............^
+
+goroutine 1 [running]:
+main.main()
+	/tmp/sandbox2261374222/prog.go:32 +0x2d5
+```

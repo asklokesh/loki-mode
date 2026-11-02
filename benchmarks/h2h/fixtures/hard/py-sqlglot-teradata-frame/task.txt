@@ -1,0 +1,49 @@
+Teradata: window aggregates with ORDER BY and no frame clause silently become running totals when transpiled
+
+**Before you file an issue**
+- Read dialect: `teradata`
+- Write dialect: `snowflake` (also reproduces with `duckdb`, `postgres` and other ANSI-default targets)
+- Reproduced on `main` @ `a00dc2e5c`
+
+**Fully reproducible code snippet**
+
+```python
+import sqlglot
+
+sql = "SELECT p, d, x, SUM(x) OVER (PARTITION BY p ORDER BY d) AS s FROM t"
+for w in ("snowflake", "duckdb", "postgres"):
+    print(w, sqlglot.transpile(sql, read="teradata", write=w)[0])
+```
+
+Current output (identical for all three targets):
+```sql
+SELECT p, d, x, SUM(x) OVER (PARTITION BY p ORDER BY d NULLS FIRST) AS s FROM t
+```
+
+In Teradata, a window aggregate that has `ORDER BY` but no `ROWS` clause covers the **whole partition**. ANSI-default engines such as Snowflake, DuckDB and Postgres use `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`, which is a **running total**. The query transpiles without error, but it silently returns different numbers.
+
+For rows `(p='A', d=1, x=10), ('A', 2, 20), ('A', 3, 30)`:
+
+| d | Teradata `s` | Transpiled `s` |
+|---|---|---|
+| 1 | 60 | 10 |
+| 2 | 60 | 30 |
+| 3 | 60 | 60 |
+
+**Expected output** (Snowflake, for example):
+```sql
+SELECT p, d, x, SUM(x) OVER (PARTITION BY p ORDER BY d NULLS FIRST ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS s FROM t
+```
+
+**Scope**
+- Teradata's docs list the affected window aggregates: AVG, CORR, COUNT, COVAR_POP/SAMP, MAX, MIN, REGR_*, STDDEV_POP/SAMP, SUM, VAR_POP/SAMP.
+- The docs say `FIRST_VALUE`/`LAST_VALUE` have a different default, so they need separate handling.
+- Ranking and navigation functions (`ROW_NUMBER`, `RANK`, `LAG`, `LEAD`, …) take no frame and aren't affected.
+- Windows without `ORDER BY` already cover the whole partition in every engine, so they're unaffected.
+
+**Possible approach**
+When the Teradata parser reads an aggregate window that has `ORDER BY` and no frame, it could attach an explicit `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`. The Teradata generator could then leave that default frame out, so Teradata→Teradata round trips stay unchanged.
+
+**Official Documentation**
+- Teradata, *The Window Specification → ANSI Compliance*: https://docs.teradata.com/r/Enterprise_IntelliFlex_VMware/SQL-Functions-Expressions-and-Predicates/Ordered-Analytical/Window-Aggregate-Functions/The-Window-Specification/ANSI-Compliance. Key line: "Teradata SQL window aggregate functions use ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING."
+- Snowflake, *Window function syntax and usage*: https://docs.snowflake.com/sql-reference/functions-window-syntax

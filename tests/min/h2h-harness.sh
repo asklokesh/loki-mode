@@ -19,6 +19,16 @@
 #     availability is read from the repo, and an earlier step's loki branch is never re-scored;
 #     every learning arm sets its knobs explicitly; step_learning() counts a step's own recurring-class
 #     mistakes, the ones an earlier step already made (repeats), and reads lessons-injected.json.
+#   accepted without edit: a passing run that weakens a pre-existing test or changes test config is
+#     not accepted, appended cases and new test files are, and the acceptance Wilson interval and
+#     $ per accepted task are exact on fixed records; provenance, model pins, per-session models,
+#     VERIFIED recall and the hard suite's selection rule are checked on fixed inputs;
+#   raw-haiku-verify sends the task text plus the verify sentence on Haiku (raw-haiku does not);
+#   replay and hard tasks are pinned specs (meta.json and task.txt only): a tiny local upstream proves the
+#     snapshot is rebuilt at the pinned commits, matched against snapshot_sha256, cached, and refused on a
+#     digest mismatch, a wrong patch count or an unfetchable commit; the fix passes and the parent fails; the
+#     leak check flags hidden content (also over the visible test of the same name) but not namesakes;
+#     H2H_SELFCHECK_FETCH=1 also runs oracle/noop over every real replay and hard task.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. benchmarks/h2h/h2h.py score(): `return 1 if rc == 0 else 0` -> `return 1`; the
@@ -37,9 +47,35 @@
 #  10. lesson_counts(): count a worked example without a VERIFIED verdict; the counts check must fail.
 #  11. commit_step_state(): `git add -A -- . ':(exclude).loki'`; both step-commit checks must fail
 #      (git refuses the pathspec once .loki is gitignored, which aborted the first paid learning run).
-#  12. step_learning(): drop the `in before_ids` filter (every mistake counts as a repeat); the repeats check must fail.
-#  13. loki_env_overrides(): drop the refused-key check; the three refusal checks must fail.
-#  13. config_env(): leave LOKI_WORKED_EXAMPLE unset in the lessons arm; the arms check must fail.
+#  12. run_one(): `"accepted": int(bool(passed))`; the sabotage acceptance check must fail.
+#  13. test_edits(): drop the protected-path match; the sabotage test-edit list must lose bunfig.toml.
+#  14. hidden_leaks(): drop the content match; both replay "is a leak" checks must fail.
+#  15. hidden_leaks(): flag every file with a hidden name (the old name-only check); the replay
+#      runner reports leaks on every run and exits 4.
+#  16. contestant_cmd(): do not append VERIFY_SENTENCE; both verify-sentence checks must fail.
+#  17. summarize(): $ per accepted task divided by passes; the fixed-record check must fail.
+#  18. main(): ignore --suite; the replay self-check must fail.
+#  19. test_weakening(): count every changed pre-existing test (appended cases too); the acceptance
+#      case list must fail. 20. ignore added skip markers; same check. 21. ignore test config files;
+#      the sabotage acceptance checks and the case list must fail.
+#  22. run_one(): accept on pass alone, ignoring weakening; the sabotage acceptance check must fail.
+#  23. provenance_gate(): never refuse; the dirty-tree check must fail. 24. provenance(): count
+#      results files as dirt; both provenance checks must fail.
+#  25. verdict_stats(): VERIFIED recall over all runs; the recall check must fail.
+#  26. loki_metrics(): drop session_models; the per-session model check must fail.
+#  27. config_env(): pin every Loki config to haiku; the pin check must fail.
+#  28. select_tasks(): keep unqualified tasks; the selection check must fail.
+#  29. step_learning(): drop the `in before_ids` filter (every mistake counts as a repeat); the repeats check must fail.
+#  30. config_env(): leave LOKI_WORKED_EXAMPLE unset in the lessons arm; the arms check must fail.
+#  31. loki_env_overrides(): drop the refused-key check; the three refusal checks must fail.
+#  32. materialize(): skip the digest comparison; the tampered-snapshot check must fail.
+#  33. materialize(): ignore the patch count; the patch-count check must fail.
+#  34. materialize(): drop the temp-dir cleanup; the no-partial check must fail.
+#  35. materialize(): drop the .complete reuse; the cached check must fail (the upstream is gone).
+#  36. load_task(): never materialize; the build check must fail.
+#  37. provenance(): drop the gitignored entries; the gitignored-input check must fail.
+#  38. inside(): accept any path; the escape check must fail (a file lands outside the build dir).
+#  39. materialize(): trust a cached snapshot without re-hashing it; the cache-tamper check must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -93,6 +129,100 @@ printf 'throw new Error("preload sabotage");\n' > "$T/sabotage/test/boom.ts"
 printf '[test]\npreload = ["./test/boom.ts"]\n' > "$T/sabotage/bunfig.toml"
 run_case sabotage "$T/sabotage"
 check "edits to protected test paths are reverted before scoring" test "$(field "$J" 'r["pass"]')" = 1
+# Accepted without edit: hidden pass AND no test edits left in the tree. The sabotage run passes but leaves
+# test edits behind, so it is not accepted; the clean correct patch is.
+check "sabotage run passes but is not accepted without edit" test "$(field "$J" 'r["accepted"]')" = 0
+check "sabotage run records its test edits" test "$(field "$J" '",".join(r["test_edits"])')" = "bunfig.toml,test/boom.ts"
+check "clean correct patch is accepted without edit" test "$(field "$T/good.json" 'r["accepted"]')" = 1
+check "sabotage run: only the new test config counts against acceptance" test "$(field "$J" '",".join(r["test_weakened"])')" = "bunfig.toml"
+# What counts against acceptance: a pre-existing test file deleted, with a line removed or changed, or with
+# an added skip; and any test config change. A new test file, or new cases appended to an existing one, do not.
+weak_out="$(cd benchmarks/h2h && python3 -I -c '
+import subprocess, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "."); import h2h
+r = Path(tempfile.mkdtemp(dir=sys.argv[1]))
+g = lambda *a: subprocess.run(["git", "-C", str(r), *a], capture_output=True, text=True, check=True).stdout.strip()
+g("init", "-q", "-b", "main"); g("config", "user.email", "t@example.invalid"); g("config", "user.name", "t")
+(r / "tests").mkdir()
+base_text = "def test_a():\n    assert f(1) == 1\n    assert f(2) == 2\n"
+for n in ("test_a.py", "test_b.py", "test_c.py", "test_d.py", "test_e.py"):
+    (r / "tests" / n).write_text(base_text)
+g("add", "-A"); g("commit", "-q", "-m", "base"); base = g("rev-parse", "HEAD")
+(r / "tests/test_a.py").write_text(base_text + "\n\ndef test_new():\n    assert f(3) == 3\n")
+(r / "tests/test_b.py").write_text(base_text.replace("    assert f(2) == 2\n", ""))
+(r / "tests/test_c.py").write_text("import pytest\n\n@pytest.mark.skip\n" + base_text)
+(r / "tests/test_d.py").write_text(base_text.replace("f(2) == 2", "f(2) is not None"))
+(r / "tests/test_e.py").unlink()
+(r / "tests/test_new.py").write_text("def test_x():\n    assert True\n")
+(r / "conftest.py").write_text("collect_ignore = [\"tests\"]\n")
+files = sorted(["tests/test_a.py", "tests/test_b.py", "tests/test_c.py", "tests/test_d.py", "tests/test_e.py", "tests/test_new.py", "conftest.py"])
+print("weak", h2h.test_weakening(r, base, h2h.test_edits({"protected": ["tests"]}, files)))
+' "$T")"
+has "acceptance: appended cases and new test files pass; dropped, changed, skipped, deleted tests and test config count" "$weak_out" "weak ['conftest.py', 'tests/test_b.py', 'tests/test_c.py', 'tests/test_d.py', 'tests/test_e.py']"
+
+# raw-haiku-verify: the same task text plus the one verify sentence, on Haiku; raw-haiku gets the text alone.
+E2E_STUB_OVERLAY="$TDIR/solution" E2E_STUB_PROMPT_LOG="$T/verify.prompt" E2E_STUB_ARGV_LOG="$T/verify.argv" TMPDIR="$T" \
+    bash benchmarks/h2h/run.sh --configs raw-haiku-verify --tasks "$TASK" --out "$T/verify.json" >"$T/verify.log" 2>&1
+check "raw-haiku-verify: runner exits 0" test "$?" = 0
+check "raw-haiku-verify: correct patch passes" test "$(field "$T/verify.json" 'r["pass"]')" = 1
+verify_prompt="$(cat "$T/verify.prompt.other0" 2>/dev/null)"
+has "raw-haiku-verify: prompt carries the task text" "$verify_prompt" "$(head -1 "$TDIR/task.txt")"
+has "raw-haiku-verify: prompt carries the verify sentence" "$verify_prompt" "Before you finish, run the repository's tests and check that your change works."
+has "raw-haiku-verify: runs on Haiku" "$(cat "$T/verify.argv")" "--model haiku"
+E2E_STUB_OVERLAY="$TDIR/solution" E2E_STUB_PROMPT_LOG="$T/plain.prompt" TMPDIR="$T" \
+    bash benchmarks/h2h/run.sh --configs raw-haiku --tasks "$TASK" --out "$T/plain.json" >"$T/plain.log" 2>&1
+check "raw-haiku: prompt has no verify sentence" sh -c "! grep -q 'Before you finish' '$T/plain.prompt.other0'"
+cmd_out="$(cd benchmarks/h2h && python3 -I -c '
+import sys; sys.path.insert(0, "."); import h2h
+c = h2h.contestant_cmd("raw-opus-verify", {"text": "do X"})
+print("opus", c[c.index("--model") + 1], c[c.index("-p") + 1].endswith(h2h.VERIFY_SENTENCE))')"
+has "raw-opus-verify: Opus with the verify sentence" "$cmd_out" "opus opus True"
+# Loki model pins and the per-session model record: loki-haiku/-sonnet/-opus pin the whole run, loki-default
+# pins nothing; every cost event's model is kept in order with its stage.
+pin_out="$(cd benchmarks/h2h && python3 -I -c '
+import json, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "."); import h2h
+print("pins", [h2h.config_env(c, {}).get("LOKI_SESSION_MODEL") for c in ("loki-haiku", "loki-sonnet", "loki-opus", "loki-default")])
+print("rawmodel", h2h.contestant_cmd("raw-sonnet", {"text": "x"})[7], h2h.contestant_cmd("raw-sonnet-verify", {"text": "x"})[5].endswith(h2h.VERIFY_SENTENCE))
+r = Path(tempfile.mkdtemp(dir=sys.argv[1])); d = r / ".loki/runs/run1"; d.mkdir(parents=True)
+ev = [{"type": "cost", "stage": "plan", "ts": "2026-01-01T00:00:00Z", "data": {"usd": 0.01, "model": "claude-sonnet-4"}},
+      {"type": "cost", "stage": "implement", "ts": "2026-01-01T00:00:01Z", "data": {"usd": 0.02, "model": "claude-haiku-4"}},
+      {"type": "cost", "stage": "implement", "ts": "2026-01-01T00:00:02Z", "data": {"usd": 0.03, "model": "claude-haiku-4"}}]
+(d / "events.jsonl").write_text("\n".join(json.dumps(e) for e in ev) + "\n")
+m = h2h.loki_metrics(r)
+print("sessions", m["session_models"], m["sessions"])
+' "$T")"
+has "loki pins: haiku, sonnet, opus, and none for loki-default" "$pin_out" "pins ['haiku', 'sonnet', 'opus', None]"
+has "raw-sonnet and raw-sonnet-verify run on Sonnet, the latter with the verify sentence" "$pin_out" "rawmodel sonnet True"
+# Provenance gate: a clean commit is citable (results files do not count as dirt); an uncommitted change makes
+# the tree dirty, Loki configs then refuse to run unless --allow-dirty, and raw configs still run.
+prov_out="$(cd benchmarks/h2h && python3 -I -c '
+import subprocess, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "."); import h2h
+r = Path(tempfile.mkdtemp(dir=sys.argv[1]))
+g = lambda *a: subprocess.run(["git", "-C", str(r), *a], capture_output=True, text=True, check=True).stdout.strip()
+g("init", "-q", "-b", "main"); g("config", "user.email", "t@example.invalid"); g("config", "user.name", "t")
+(r / "engine.ts").write_text("1"); (r / ".gitignore").write_text("internal/\n__pycache__/\n"); g("add", "-A"); g("commit", "-q", "-m", "base")
+(r / "benchmarks/h2h/results").mkdir(parents=True); (r / "benchmarks/h2h/results/x.json").write_text("{}")
+(r / "benchmarks/h2h/__pycache__").mkdir(); (r / "benchmarks/h2h/__pycache__/h2h.cpython-314.pyc").write_text("x")
+p = h2h.provenance(r)
+print("clean", p["citable"], p["engine_sha"] == g("rev-parse", "HEAD"), p["dirty_count"], h2h.provenance_gate(["loki-haiku"], p, False))
+(r / "engine.ts").write_text("2")
+p = h2h.provenance(r)
+print("dirty", p["citable"], p["dirty"], h2h.provenance_gate(["loki-haiku"], p, False) is not None, h2h.provenance_gate(["loki-haiku"], p, True), h2h.provenance_gate(["raw-haiku"], p, False))
+(r / "engine.ts").write_text("1"); (r / "benchmarks/h2h/fixtures/t/repo/internal").mkdir(parents=True)
+(r / "benchmarks/h2h/fixtures/t/repo/internal/pkg.go").write_text("package internal\n")
+p = h2h.provenance(r)
+print("ignored", p["citable"], p["dirty"], h2h.provenance_gate(["loki-haiku"], p, False) is not None)
+' "$T")"
+has "provenance: a clean commit is citable, results files are not dirt, Loki may run" "$prov_out" "clean True True 0 None"
+has "provenance: an uncommitted change is not citable; Loki refuses unless --allow-dirty; raw runs" "$prov_out" "dirty False ['engine.ts'] True None None"
+has "provenance: a gitignored benchmark input is not citable (bytecode is not dirt); Loki refuses" "$prov_out" "ignored False ['benchmarks/h2h/fixtures/t/repo/internal/pkg.go (gitignored)'] True"
+check "results file records its provenance and citability" test "$(field "$T/good.json" '0') $(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(isinstance(d["citable"], bool), bool(d["provenance"][0]["engine_sha"]), "bun" in d["provenance"][0])' "$T/good.json")" = "0 True True True"
+has "loki per-session models recorded in order with their stage" "$pin_out" "sessions [['plan', 'claude-sonnet-4'], ['implement', 'claude-haiku-4'], ['implement', 'claude-haiku-4']] 3"
 
 # Repetitions in parallel: --reps 2 --jobs 2 gives one record per rep, both scored, and the summary
 # carries the Wilson interval and $ per passed task.
@@ -123,14 +253,22 @@ def r(rc, p, fr=0): return {"config": "loki-haiku", "task": "t", "exit_code": rc
 rows = h2h.summarize([r(0, 1), r(0, 0), r(6, 1, 2), r(6, 0, 1), r(4, 0), r(4, 1, 1)], ["loki-haiku"])
 x = rows[0]
 print("agree", x["verdict_agree_n"], "fv", x["false_verified"], "pp", x["partial_pass"], "pf", x["partial_fail"], "mp", x["missed_pass"], "fr", x["mean_fix_rounds"], "cpp", x["cost_per_pass_usd"])
+print("recall", x["verified_recall"])
 d = json.load(open("results/2026-11-01-9571a21f7.json"))
 v = h2h.verdict_stats([q for q in d["runs"] if q["config"].startswith("loki")])
 print("old", v["verdict_agree_n"], v["false_verified"], v["partial_pass"])
 print("wilson", h2h.wilson(0, 10), h2h.wilson(5, 10))
+a = lambda p, acc, cost: {"config": "raw-haiku", "task": "t", "exit_code": 0, "pass": p, "accepted": acc, "test_edits": [] if acc or not p else ["t.test.ts"], "seconds": 1.0, "timed_out": False, "cost_usd": cost, "sessions": 1}
+x = h2h.summarize([a(1, 1, 0.02), a(1, 0, 0.02), a(0, 0, 0.04), a(1, 1, 0.04)], ["raw-haiku"])[0]
+print("accepted", x["accepted"], x["accepted_n"], x["accept_ci95"], x["cost_per_accepted_usd"], x["cost_per_accepted_ci95"], x["runs_with_test_edits"], x["cost_per_pass_usd"])
 ')"
 has "verdict: agreement, false VERIFIED, PARTIAL split, missed passes, fix rounds" "$verdict_out" "agree 3 fv 1 pp 1 pf 1 mp 2 fr 0.67 cpp 0.02"
+has "verdict: VERIFIED recall is VERIFIED passes over all passes (1 of 3)" "$verdict_out" "recall 0.3333"
 has "verdict: the v11.104.0 result reads 5 of 16, 0 false VERIFIED, 11 PARTIAL passes" "$verdict_out" "old 5 0 11"
 has "wilson: 0/10 and 5/10" "$verdict_out" "wilson [0.0, 0.2775] [0.2366, 0.7634]"
+# 2 of 4 accepted, $0.12 over 4 runs: $0.06 per accepted task; its interval is $ per task over the Wilson bounds of 2/4.
+has "accepted: count, Wilson interval, \$ per accepted task and its interval" "$verdict_out" "accepted 2 4 [0.15, 0.85] 0.06 [0.0353, 0.2]"
+has "accepted: test-edit runs counted, \$ per pass unchanged" "$verdict_out" "1 0.04"
 
 # H2H_LOKI_ENV: extra LOKI_* variables for Loki contestants only; a model pin or learning-arm key is refused.
 knob() { H2H_LOKI_ENV="$1" python3 -I -c '
@@ -234,6 +372,180 @@ has "step state commits when .loki is not gitignored, without .loki" "$learn_out
 has "learning arms: learn opts in to lessons and the worked example, nolearn turns them off" "$learn_out" "arms [('LOKI_PR_LESSONS', '1'), ('LOKI_WORKED_EXAMPLE', '1')] [('LOKI_NO_PR_LESSONS', '1')]"
 has "learning arms: lessons-only and example-only set both knobs explicitly" "$learn_out" "arms2 [('LOKI_PR_LESSONS', '1'), ('LOKI_WORKED_EXAMPLE', '0')] [('LOKI_PR_LESSONS', '0'), ('LOKI_WORKED_EXAMPLE', '1')]"
 has "step learning: recurring-class mistakes, repeats of an earlier step's class, injected bytes and ids" "$learn_out" "learning ['run-a', 'run-n'] ['run-a'] 190 ['run-a']"
+
+# Replay and hard suites keep only meta.json and task.txt here; the snapshot is rebuilt from the upstream at the
+# pinned commits and must match meta's snapshot_sha256. Offline: a tiny local upstream proves the rebuild, the
+# cache, every refusal, oracle/noop scoring and the leak check. H2H_SELFCHECK_FETCH=1 also fetches every real
+# replay and hard task and runs their oracle/noop self-check (network, about a minute on a cold cache).
+export H2H_CACHE="${H2H_CACHE:-$T/h2h-cache}"
+UP="$T/upstream-tiny"
+mkdir -p "$UP/calc" "$UP/tests"
+git -C "$UP" init -q -b main
+git -C "$UP" config user.name t; git -C "$UP" config user.email t@example.invalid; git -C "$UP" config commit.gpgsign false
+printf 'MIT License\n' >"$UP/LICENSE"
+printf 'def add(a, b):\n    return a - b  # BUG\n' >"$UP/calc/core.py"
+printf 'def twice(x):\n    return x\n' >"$UP/calc/util.py"
+: >"$UP/calc/__init__.py"
+printf 'from calc.core import add\n\n\ndef test_add_zero():\n    assert add(1, 0) == 1\n' >"$UP/tests/test_core.py"
+printf 'not vendored\n' >"$UP/NOTES.txt"
+git -C "$UP" add -A; git -C "$UP" commit -qm parent
+printf 'def add(a, b):\n    return a + b\n' >"$UP/calc/core.py"
+printf 'def twice(x):\n    return 2 * x\n' >"$UP/calc/util.py"
+printf 'from calc.core import add\nfrom calc.util import twice\n\n\ndef test_add_zero():\n    assert add(1, 0) == 1\n\n\ndef test_add():\n    assert add(2, 3) == 5 and twice(2) == 4\n' >"$UP/tests/test_core.py"
+git -C "$UP" add -A; git -C "$UP" commit -qm fix
+tiny_out="$(cd benchmarks/h2h && python3 -I -c '
+import json, os, shutil, subprocess, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "."); import h2h
+T, UP = Path(sys.argv[1]), Path(sys.argv[2])
+g = lambda *a: subprocess.run(["git", "-C", str(UP), *a], capture_output=True, text=True, check=True).stdout
+parent, fix = g("rev-parse", "HEAD~1").strip(), g("rev-parse", "HEAD").strip()
+# The expected snapshot, written out independently of the fetch path.
+exp = T / "tiny-expected"
+for rel, body in (("repo/LICENSE", "MIT License\n"), ("repo/calc/__init__.py", ""),
+                  ("repo/calc/core.py", "def add(a, b):\n    return a - b  # wrong sign\n"),
+                  ("repo/calc/util.py", "def twice(x):\n    return x\n"),
+                  ("repo/tests/test_core.py", "from calc.core import add\n\n\ndef test_add_zero():\n    assert add(1, 0) == 1\n"),
+                  ("repo/conftest.py", "# added by the harness\n"),
+                  ("hidden/tests/test_core.py", g("show", f"{fix}:tests/test_core.py")),
+                  ("solution/calc/core.py", g("show", f"{fix}:calc/core.py")), ("solution/calc/util.py", g("show", f"{fix}:calc/util.py"))):
+    (exp / rel).parent.mkdir(parents=True, exist_ok=True); (exp / rel).write_text(body)
+meta = {"difficulty": "normal", "shape": "multi-file", "lang": "py", "kind": "replay",
+        "hidden": {"tests/test_core.py": "tests/test_core.py"},
+        "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"],
+        "visible_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"], "protected": ["tests"],
+        "snapshot_sha256": h2h.snapshot_digest(exp),
+        "source": {"upstream": UP.as_uri(), "license": "MIT", "license_file": "LICENSE", "parent_commit": parent, "fix_commit": fix,
+                   "vendored_paths": ["LICENSE", "calc", "tests"], "solution_files": ["calc/core.py", "calc/util.py"],
+                   "add_files": {"conftest.py": "# added by the harness\n"},
+                   "patch_files": {"repo/calc/core.py": [["# BUG", "# wrong sign", 1]]}}}
+suite = T / "tiny-suite"
+def put(tid, m):
+    (suite / tid).mkdir(parents=True, exist_ok=True)
+    (suite / tid / "meta.json").write_text(json.dumps(m)); (suite / tid / "task.txt").write_text("add() subtracts\n")
+put("py-tiny", meta)
+t = h2h.load_task("py-tiny", suite)
+d = t["dir"]
+print("built", d.parent == Path(os.environ["H2H_CACHE"]) / "tasks", sorted(p.name for p in d.iterdir()),
+      (d / "repo/NOTES.txt").exists(), (d / "repo/calc/core.py").read_text().endswith("# wrong sign\n"),
+      (d / "repo/conftest.py").is_file(), (d / "hidden/tests/test_core.py").read_text().count("def test_") == 2)
+moved = UP.with_name("upstream-moved"); UP.rename(moved); shutil.rmtree(Path(os.environ["H2H_CACHE"]) / "git")
+print("cached", h2h.load_task("py-tiny", suite)["dir"] == d)
+moved.rename(UP)
+hf = d / "hidden/tests/test_core.py"; keep = hf.read_bytes(); hf.write_bytes(keep + b"\n")
+try:
+    h2h.load_task("py-tiny", suite); print("tamper built")
+except RuntimeError as e:
+    print("tamper", "refused" if "not snapshot_sha256" in str(e) else str(e))
+hf.write_bytes(keep)
+def refused(tid, **edit):
+    m = json.loads(json.dumps(meta)); src = edit.pop("source", {}); m.update(edit); m["source"].update(src); put(tid, m)
+    try:
+        h2h.load_task(tid, suite); return "built"
+    except RuntimeError as e:
+        return "refused: " + ("digest" if "does not match" in str(e) else "patch" if "occurs" in str(e) else "fetch" if "cannot fetch" in str(e)
+                              else "escape" if "leaves the snapshot" in str(e) else str(e))
+print("tampered", refused("py-tiny-b", snapshot_sha256="0" * 64))
+print("patchcount", refused("py-tiny-c", snapshot_sha256="1" * 64, source={"patch_files": {"repo/calc/core.py": [["# BUG", "# x", 2]]}}))
+print("unfetchable", refused("py-tiny-d", snapshot_sha256="2" * 64, source={"parent_commit": "f" * 40}))
+print("escape", refused("py-tiny-e", snapshot_sha256="3" * 64, source={"add_files": {"../../escape.txt": "x"}}),
+      refused("py-tiny-f", snapshot_sha256="4" * 64, source={"patch_files": {"/tmp/escape.txt": [["a", "b", 1]]}}),
+      [str(p) for p in Path(os.environ["H2H_CACHE"]).rglob("escape.txt")])
+print("no-partial", sorted(p.name for p in (Path(os.environ["H2H_CACHE"]) / "tasks").iterdir()) == [d.name])
+work = T / "tiny-work"; work.mkdir()
+o, n = h2h.run_one("oracle", t, 1, work, 120, False), h2h.run_one("noop", t, 1, work, 120, False)
+print("score", o["pass"], n["pass"], o["hidden_leaked_before_scoring"], n["hidden_leaked_before_scoring"])
+# Leak check: the hidden file is scored over the visible test of the same name, so only its exact content counts.
+r = Path(tempfile.mkdtemp(dir=T)) / "repo"; base = h2h.prepare_repo(t, r)
+print("clean", h2h.hidden_leaks(t, r, base))
+(r / "calc/tests").mkdir(); (r / "calc/tests/test_core.py").write_text("x = 1\n")
+print("namesake", h2h.hidden_leaks(t, r, base))
+shutil.copyfile(d / "hidden/tests/test_core.py", r / "calc/tests/test_core.py")
+print("copied", h2h.hidden_leaks(t, r, base))
+shutil.copyfile(d / "hidden/tests/test_core.py", r / "tests/test_core.py")
+print("overlaid", h2h.hidden_leaks(t, r, base))
+' "$T" "$UP" 2>&1)"
+has "pinned task: rebuilt in the cache from the upstream with only the vendored paths, the patch, the added file and the fix tests" "$tiny_out" "built True ['.complete', 'hidden', 'repo', 'solution'] False True True True"
+has "pinned task: a built snapshot is reused without the upstream or the git cache" "$tiny_out" "cached True"
+has "pinned task: a snapshot that does not match snapshot_sha256 is refused" "$tiny_out" "tampered refused: digest"
+has "pinned task: a patch target with the wrong count is refused" "$tiny_out" "patchcount refused: patch"
+has "pinned task: an unfetchable commit is refused" "$tiny_out" "unfetchable refused: fetch"
+has "pinned task: a cached snapshot edited after it was built is refused" "$tiny_out" "tamper refused"
+has "pinned task: an add_files or patch_files path outside the snapshot is refused before anything is written" "$tiny_out" "escape refused: escape refused: escape []"
+has "pinned task: a refused build leaves nothing in the cache" "$tiny_out" "no-partial True"
+has "pinned task: the fix passes, the parent fails, no leak" "$tiny_out" "score 1 0 [] []"
+has "leak check: clean copy" "$tiny_out" "clean []"
+has "leak check: a namesake file is not a leak" "$tiny_out" "namesake []"
+has "leak check: hidden content under another path is a leak" "$tiny_out" "copied ['calc/tests/test_core.py']"
+has "leak check: hidden content over the visible test is a leak" "$tiny_out" "overlaid ['calc/tests/test_core.py', 'tests/test_core.py']"
+
+# Every replay and hard task is a pinned spec: no snapshot is committed, and each records a permissive license,
+# the license file among its vendored paths, the issue, both commits and the snapshot digest.
+spec_check='
+import json, glob, os, re, sys
+ok, n = True, 0
+for p in glob.glob(sys.argv[1] + "/*/meta.json"):
+    m = json.load(open(p)); s = m["source"]; d = os.path.dirname(p); n += 1
+    ok &= sorted(os.listdir(d)) == ["meta.json", "task.txt"] and os.path.getsize(os.path.join(d, "task.txt")) > 0
+    ok &= s["license"] in ("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause") and m["kind"] == "replay"
+    ok &= any(s["license_file"] == v or s["license_file"].startswith(v.rstrip("/") + "/") for v in s["vendored_paths"])
+    ok &= all(re.fullmatch("[0-9a-f]{40}", s[k]) is not None for k in ("fix_commit", "parent_commit")) and "/issues/" in s["issue"]
+    ok &= re.fullmatch("[0-9a-f]{64}", m["snapshot_sha256"]) is not None and s["upstream"].startswith("https://github.com/")
+    ok &= all(re.fullmatch("[0-9a-f]{40}", sm["commit"]) is not None for sm in (s.get("submodules") or {}).values())
+    if sys.argv[2] == "hard":
+        ok &= len(s["solution_files"]) >= 2 and m["difficulty"] == "hard"
+print(ok, n)'
+nrep="$(python3 -I -c "$spec_check" benchmarks/h2h/replay replay)"
+check "replay: every task is a pinned spec with a permissive license, its license file, the issue and both commits" test "${nrep% *}" = True
+check "replay: 6 to 10 tasks (${nrep#* })" test "${nrep#* }" -ge 6 -a "${nrep#* }" -le 10
+nhard="$(python3 -I -c "$spec_check" benchmarks/h2h/fixtures/hard hard)"
+check "hard: every task is a pinned multi-file spec with a permissive license, its license file, the issue and both commits" test "${nhard% *}" = True
+check "hard: at least 8 candidate tasks (${nhard#* })" test "${nhard#* }" -ge 8
+
+if [ "${H2H_SELFCHECK_FETCH:-0}" = 1 ]; then
+    for suite in replay hard; do
+        J="$T/$suite.json"
+        case "$suite" in replay) n="${nrep#* }" ;; *) n="${nhard#* }" ;; esac
+        TMPDIR="$T" bash benchmarks/h2h/run.sh --suite "$suite" --configs oracle,noop --jobs 4 --out "$J" >"$T/$suite.log" 2>&1
+        check "$suite oracle/noop: runner exits 0 (snapshots rebuilt, no leak, no harness error)" test "$?" = 0
+        check "$suite: self-check covered every task ($n)" test "$(runs 'len(d["tasks"])')" = "$n"
+        check "$suite: the merged fix passes every task" test "$(runs '[s["passed"] == s["n"] for s in d["summary"] if s["config"] == "oracle"]')" = "[True]"
+        check "$suite: the parent commit passes no task" test "$(runs '[s["passed"] for s in d["summary"] if s["config"] == "noop"]')" = "[0]"
+        failed_oracle="$(runs '",".join(r["task"] for r in d["runs"] if r["config"] == "oracle" and not r["pass"])')"
+        [ -z "$failed_oracle" ] || echo "  $suite oracle failed on: $failed_oracle"
+    done
+else
+    echo "  SKIP: replay and hard oracle/noop self-checks fetch upstream snapshots (set H2H_SELFCHECK_FETCH=1)"
+fi
+
+# Selection rule: a hard task qualifies only if its fix touches 2+ files and raw-haiku-verify passed under half
+# of its pilot runs; a paid run without --tasks takes only qualifying tasks.
+check "hard: every qualified task meets the selection rule, and every candidate records its pilot" test "$(python3 -I -c '
+import json, glob
+ms = [json.load(open(p)) for p in glob.glob("benchmarks/h2h/fixtures/hard/*/meta.json")]
+ok = all("pilot" in m and "qualified" in m for m in ms)
+ok &= all(m["pilot"]["runs"] >= 2 and m["pilot"]["passed"] / m["pilot"]["runs"] < 0.5 and len(m["source"]["solution_files"]) >= 2 for m in ms if m["qualified"])
+ok &= all(m.get("excluded_because") for m in ms if not m["qualified"])
+print(ok, sum(m["qualified"] for m in ms) >= 8)')" = "True True"
+check "hard: every task's pilot counts and engine match the committed pilot results file" test "$(python3 -I -c '
+import json, glob, os
+d = json.load(open("benchmarks/h2h/results/2026-11-01-2499d6aee-hard-pilot.json"))
+c = {}
+for r in d["runs"]:
+    c.setdefault(r["task"], [0, 0]); c[r["task"]][0] += bool(r["pass"]); c[r["task"]][1] += 1
+ok = d["configs"] == ["raw-haiku-verify"] and d["provenance"][0]["dirty_count"] == 0
+for p in glob.glob("benchmarks/h2h/fixtures/hard/*/meta.json"):
+    pl = json.load(open(p))["pilot"]; t = os.path.basename(os.path.dirname(p))
+    ok &= pl["config"] == "raw-haiku-verify" and [pl["passed"], pl["runs"]] == c.get(t) and pl["engine_sha"] == d["provenance"][0]["engine_sha"]
+print(ok)')" = True
+q_out="$(cd benchmarks/h2h && python3 -I -c '
+import json, sys; sys.path.insert(0, "."); import h2h
+ids = sorted(p.name for p in h2h.SUITES["hard"].iterdir() if (p / "meta.json").is_file())
+ts = [dict(json.loads((h2h.SUITES["hard"] / i / "meta.json").read_text()), id=i) for i in ids]
+paid = h2h.select_tasks(ts, ["raw-haiku", "loki-haiku"], False)
+print("select", all(t["qualified"] for t in paid), len(paid) == sum(t["qualified"] for t in ts) < len(ts),
+      len(h2h.select_tasks(ts, ["oracle", "noop"], False)) == len(ts), len(h2h.select_tasks(ts, ["raw-haiku"], True)) == len(ts))')"
+has "hard: paid runs take only qualifying tasks; the self-check and named tasks take every one" "$q_out" "select True True True True"
 
 leftover="$(find "$T" -maxdepth 1 -name 'loki-h2h.*' | head -1)"
 check "runner removed its own temp dir" test -z "$leftover"
