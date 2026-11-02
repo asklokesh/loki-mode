@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Stand-in npx for tests/min/run-safety.sh: `npx [--no-install] vitest ...` runs the stand-in vitest next to this file; anything else goes to
+# the next npx on PATH.
+here="$(cd "$(dirname "$0")" && pwd -P)"
+[ "${1:-}" = "--no-install" ] && shift
+if [ "${1:-}" = "vitest" ]; then shift; exec python3 -I "$here/vitest" "$@"; fi
+IFS=: read -r -a dirs <<< "$PATH"
+for d in "${dirs[@]}"; do
+  [ "$(cd "$d" 2>/dev/null && pwd -P)" = "$here" ] && continue
+  [ -x "$d/npx" ] && exec "$d/npx" "$@"
+done
+echo "npx: not found" >&2; exit 127
