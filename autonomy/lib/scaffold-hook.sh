@@ -14,13 +14,9 @@
 # lets the normal build proceed -- it can only ADD a starting skeleton, never
 # remove or overwrite existing code.
 #
-# PARITY: this is a bash-only ORCHESTRATION seam in run_autonomous, NOT part of
-# the byte-mirrored build_prompt() contract (build_prompt.ts is unchanged). It
-# mirrors the LOKI_SENTRUX_GATE precedent, which is likewise bash-orchestration
-# only (not behavior-mirrored in the bun runner). Because it is DEFAULT-OFF, the
-# bun default path is unaffected. When the bun runner (loki-ts autonomous.ts,
-# currently a skeleton port) reaches run_autonomous behavior parity, it should
-# mirror this opt-in gate.
+# This is a bash-only ORCHESTRATION seam in run_autonomous, not part of
+# build_prompt(). It follows the LOKI_SENTRUX_GATE precedent, which is likewise
+# bash-orchestration only. It is DEFAULT-OFF.
 
 # Is the target dir greenfield (no meaningful source yet)? Ignores .loki, .git,
 # the PRD, and dotfiles. Echoes "yes"/"no".

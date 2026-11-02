@@ -17,7 +17,7 @@
 //   FAILED     autonomy/run.sh:26289, :26294
 //
 // Both routes persist the RARV name: bash at run.sh:22295, Bun via
-// updateCurrentPhase (loki-ts/src/runner/autonomous.ts:670 -> state.ts:632).
+// updateCurrentPhase (loki-ts/src/runner/state.ts).
 
 export type DisplayPhase =
   | 'not-started'

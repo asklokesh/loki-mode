@@ -71,7 +71,7 @@ AVAILABLE with its reason rather than approximated by a nearby field:
 
 Nearby numbers exist that would each make a plausible-looking proxy, and all
 are deliberately refused. `last_confidence` is a real number, but it lives in
-council STATE (loki-ts/src/runner/council.ts:129) as a single run-level scalar,
+council STATE (autonomy/completion-council.sh) as a single run-level scalar,
 not per voter and not in the transcript; joining it onto voters would invent a
 per-voter confidence that was never recorded. `.loki/state/uncertainty.json`
 holds BOOLEAN uncertainty proxies, not a confidence, and cannot be read as one.

@@ -1,16 +1,15 @@
 // Phase 1 (v7.5.0) -- structured human-handoff document.
 //
 // Plan reference: /Users/lokesh/.claude/plans/polished-waddling-stardust.md
-// Part B "Phase 1". The pre-v7.5.0 PAUSE_LIMIT path at quality_gates.ts:902-908
+// Part B "Phase 1". The pre-v7.5.0 PAUSE_LIMIT path in the quality-gate escalation
 // just writes an empty `.loki/PAUSE` file and lets the operator dig through
 // the review directories. This module produces a single markdown handoff with
 // the failing finding, all attempted fixes, counter-evidence rejected, and a
 // "what the human must decide" block -- so the operator can resume in seconds
 // instead of minutes.
 //
-// Wires into quality_gates.applyEscalation (lines 895-923) BEFORE the existing
-// writePauseSignal call. The PAUSE signal itself is NOT removed -- existing
-// tooling (dashboard, autonomous.ts loop) keeps reading it. This module only
+// Runs (via internal_phase1.ts) BEFORE the existing writePauseSignal call. The
+// PAUSE signal itself is NOT removed -- existing tooling (dashboard) keeps reading it. This module only
 // adds the human-readable doc on top.
 //
 // Default off: only fires when LOKI_HANDOFF_MD=1.

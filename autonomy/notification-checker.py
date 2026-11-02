@@ -265,7 +265,7 @@ def check_quality_gate(trigger, loki_dir, iteration, notifications):
     defect as the budget key, in the same file.
 
     gate-failures.txt is the canonical failure source used by
-    proof-generator.py:413 and loki-ts build_prompt.ts, so this
+    proof-generator.py:413 and run.sh build_prompt, so this
     reuses a proven contract rather than introducing a second one.
     """
     failures_file = Path(loki_dir) / "quality" / "gate-failures.txt"
@@ -273,7 +273,7 @@ def check_quality_gate(trigger, loki_dir, iteration, notifications):
     try:
         if failures_file.exists():
             # Cap the read: a pathological file must not be loaded whole
-            # (same reason as build_prompt.ts:707).
+            # (same reason as proof-generator.py:413).
             raw = failures_file.read_text(errors="replace")[:8000]
             seen = set()
             for name in raw.replace("\n", ",").split(","):

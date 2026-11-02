@@ -504,7 +504,7 @@ async def list_runs(
         # These routes are real and mounted, but the SQL store behind them has
         # NO RUNTIME WRITER: the only writers are this module and
         # dashboard/runs.py, both API-side, while the actual run lifecycle
-        # writes to the filesystem (autonomy/run.sh, runner/council.ts,
+        # writes to the filesystem (autonomy/run.sh, autonomy/completion-council.sh,
         # runner/checkpoint.ts). dashboard/runs.py contains zero filesystem
         # references. So for every real `loki start` this returned [].
         #
