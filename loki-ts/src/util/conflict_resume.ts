@@ -2,7 +2,7 @@
 // inspected (L0): the model itself says whether its conflict was only about Loki's own rules or about the task.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { readSessionId } from "../runner/session_resume.ts";
@@ -11,7 +11,7 @@ import { capToRunTier, wallModel } from "../engine10/sizing.ts";
 const refereeModel = (ctx: RunContext): string => capToRunTier(wallModel(), ctx.model, ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE"]);
 import { assertionCount, changedAssertion, changedRegion, editScopeViolation, quoteInSpec, testSpans, wallAnchor, type WallDefect } from "./wall_owned.ts";
 import { safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
-import { sealedWallCopy, sealedWallDir } from "./check_result.ts";
+import { sealedWallCopy, sealedWallDir, WALL_FAILURE_TAIL_FILE } from "./check_result.ts";
 import { killedTailIndexes } from "./seal_drift.ts";
 import { vacuousCheck } from "../project_model/conventions.ts";
 import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
@@ -262,13 +262,13 @@ export function wallSignature(o: Outs, repoDir: string): string {
   return JSON.stringify(checks.filter((c) => c.result === "fail" && wall.has(String(c.name).slice(String(c.name).indexOf(":") + 1))).map((c) => [String(c.name), [...strList(c.ids)].sort(), String(c.first_error ?? "")]).sort());
 }
 const wallRelOf = (o: Outs, repoDir: string): Set<string> => new Set((((o.wall?.files as { path: string }[] | undefined) ?? [])).map((f) => (isAbsolute(f.path) ? relative(repoDir, f.path) : f.path)));
-/** The failing Wall files when every other failing check of the last verify is harness-owned, pre-existing or known red (verify's known_red_checks), else
- *  null. `strict` (a Wall-only failure, no conflict): a failing full suite counts too unless it is known red (its failing ids are all base-red or Wall
- *  ids). The conflict path leaves the full suite out: a Wall file that breaks its directory's build fails the whole suite, and the re-verify decides it. */
+/** The failing Wall files when every other failing check of the last verify is harness-owned, pre-existing or known red failing the same way as on
+ *  base (verify's known_red_same_error; a known-red check failing differently is fix-round input, never excused), else null. `strict` (a Wall-only
+ *  failure, no conflict): a failing full suite counts too unless it is known red (its failing ids are all same-error base-red or Wall ids). The conflict path leaves the full suite out: a Wall file that breaks its directory's build fails the whole suite, and the re-verify decides it. */
 function wallFailures(o: Outs, repoDir: string, strict = false): string[] | null {
   const v = o.verify, w = o.wall;
   if (!v || !w || o.plan?.out_of_repo === true || Number(v.holdout_failed ?? 0) > 0) return null;
-  const wallRel = wallRelOf(o, repoDir), fileOf = (n: string): string => n.slice(n.indexOf(":") + 1), checks = (Array.isArray(v.checks) ? v.checks : []) as Record<string, unknown>[], excused = new Set([...strList(v.pre_red_checks), ...strList(v.known_red_checks)]);
+  const wallRel = wallRelOf(o, repoDir), fileOf = (n: string): string => n.slice(n.indexOf(":") + 1), checks = (Array.isArray(v.checks) ? v.checks : []) as Record<string, unknown>[], excused = new Set([...strList(v.pre_red_checks), ...strList(v.known_red_same_error)]);
   const isWall = (c: Record<string, unknown>): boolean => wallRel.has(fileOf(String(c.name))), wallFail = checks.filter((c) => isWall(c) && c.result === "fail");
   const own = checks.filter((c) => !isWall(c) && !String(c.name).startsWith("holdout") && (strict || !String(c.name).startsWith("full suite")));
   if (!wallFail.length || own.some((c) => c.result === "fail" && c.owner !== "harness" && !excused.has(String(c.name)))) return null;
@@ -284,33 +284,43 @@ export function wallConflictDefects(o: Outs, repoDir: string): string[] | null {
   return wallFailures(o, repoDir);
 }
 /** Sets the defective Wall files aside, re-runs verify once, and delivers (implement.exit "done", sealed PARTIAL) only when that verify has no failure
- *  and one of the repo's own tests passed. A Wall-only delivery that does not succeed puts everything back (the Wall files, the Wall record and the
- *  verify the run had) and records no discard or note, so the run ends with its Wall evidence; a conflict that does not deliver stands as before
- *  (BLOCKED, the discarded files listed). Returns the files set aside, or null. */
-export async function deliverOverWallConflict(o: Outs, repoDir: string, reverify: () => Promise<unknown>, emit: (file: string, reason: string) => void): Promise<string[] | null> {
+ *  left that the receipt would count (every failing check is pre-existing, harness-owned, or known red failing the same way as on base, promoted to
+ *  pre-existing here) and one of the repo's own tests passed. A Wall-only delivery that does not succeed puts everything back (the Wall files with
+ *  their mode, the Wall record, the verify the run had and its wall-failure tail) and records no discard or note; `restored` then gets the verify put
+ *  back so the run's last verify event matches the receipt. A conflict that does not deliver stands as before (BLOCKED, the discarded files listed).
+ *  Returns the files set aside, or null. */
+export async function deliverOverWallConflict(o: Outs, repoDir: string, reverify: () => Promise<unknown>, emit: (file: string, reason: string) => void, opts: { runDir?: string; restored?: (verify: Record<string, unknown>) => void } = {}): Promise<string[] | null> {
   const files = wallConflictDefects(o, repoDir), w = o.wall, conflict = o.implement?.exit === "spec_conflict";
   if (!files || !w) return null;
   const reason = conflict ? WALL_CONFLICT_DISCARD : WALL_ONLY_DISCARD, gone = (p: string): boolean => files.includes(isAbsolute(p) ? relative(repoDir, p) : p);
-  const saved = { files: w.files, readOnlyFiles: w.readOnlyFiles, verify: o.verify, bytes: files.map((f) => { try { return readFileSync(join(repoDir, f)); } catch { return null; } }) };
+  const read = (p: string): Buffer | null => { try { return readFileSync(p); } catch { return null; } }, modeOf = (p: string): number | null => { try { return statSync(p).mode & 0o7777; } catch { return null; } };
+  const tailFile = opts.runDir ? join(opts.runDir, WALL_FAILURE_TAIL_FILE) : null;
+  const saved = { files: w.files, readOnlyFiles: w.readOnlyFiles, verify: o.verify, bytes: files.map((f) => read(join(repoDir, f))), modes: files.map((f) => modeOf(join(repoDir, f))), tail: tailFile ? read(tailFile) : null };
   const record = (): void => { w.discarded = [...((w.discarded as unknown[] | undefined) ?? []), ...files.map((file) => ({ file, reason }))]; for (const f of files) emit(f, reason); };
   for (const f of files) rmSync(join(repoDir, f), { force: true });
   w.files = ((w.files as { path: string }[] | undefined) ?? []).filter((f) => !gone(f.path));
   w.readOnlyFiles = ((w.readOnlyFiles as { path: string }[] | undefined) ?? []).filter((f) => !gone(f.path));
   if (conflict) record();
   await reverify();
-  const v = o.verify, wallLeft = wallRelOf(o, repoDir);
+  const v = o.verify, wallLeft = wallRelOf(o, repoDir), checks = ((Array.isArray(v?.checks) ? v.checks : []) as Record<string, unknown>[]);
+  // A check still failing that is red on base by every failing id AND with the same error (verify's known_red_same_error) is excused as pre-existing,
+  // listed by id; any other failing check (a known-red check failing differently included) keeps the verdict down, so the delivery does not happen.
+  const pre = strList(v?.pre_red_checks), same = new Set(strList(v?.known_red_same_error)), kr = strList(v?.known_red_checks).filter((n) => same.has(n) && !pre.includes(n)), excused = new Set([...pre, ...kr]);
   const delivered = !!v && !v.stopped_at && ((v.failures_grouped as unknown[] | undefined) ?? []).length === 0 && Number(v.holdout_failed ?? 0) === 0
-    && ((Array.isArray(v.checks) ? v.checks : []) as Record<string, unknown>[]).some((c) => ownTestPassed(c, wallLeft)); // the repo's own tests (targeted or the full suite) executed and passed on the delivered tree
+    && checks.every((c) => c.result !== "fail" || c.owner === "harness" || excused.has(String(c.name)))
+    && checks.some((c) => ownTestPassed(c, wallLeft)); // the repo's own tests (targeted or the full suite) executed and passed on the delivered tree
   if (!delivered || !v) {
-    if (!conflict) { files.forEach((f, i) => { const b = saved.bytes[i]; if (b) writeFileSync(join(repoDir, f), b); }); w.files = saved.files; w.readOnlyFiles = saved.readOnlyFiles; o.verify = saved.verify; }
+    if (!conflict) {
+      files.forEach((f, i) => { const b = saved.bytes[i], m = saved.modes[i]; if (b) { writeFileSync(join(repoDir, f), b); if (m !== null && m !== undefined) { try { chmodSync(join(repoDir, f), m); } catch { /* the bytes are back; a mode the FS refuses stays default */ } } } });
+      if (tailFile) { try { if (saved.tail) writeFileSync(tailFile, saved.tail); else rmSync(tailFile, { force: true }); } catch { /* diagnostics only */ } }
+      w.files = saved.files; w.readOnlyFiles = saved.readOnlyFiles; o.verify = saved.verify;
+      if (saved.verify) opts.restored?.(saved.verify);
+    }
     return null; // a conflict stands with the discarded files listed; a Wall-only failure stands with its Wall back in place
   }
   if (!conflict) record();
   v.not_proven = [...strList(v.not_proven), conflict ? `Delivered over an implementer conflict with the Wall: ${files.join(", ")} discarded as a Wall defect, so this change is proven only by the repo's own tests (${oneLine(String(o.implement?.spec_conflict_reason ?? ""))})` : `Loki's own acceptance tests still failed after a fix round: ${files.join(", ")} set aside, so this change is proven only by the repo's own tests`];
-  // Delivered: a check still failing that is red on base by every failing id AND with the same error (verify's known_red_same_error) is excused as
-  // pre-existing, listed by id; a known-red check failing differently keeps the A-112 rule (excused only with progress) and keeps the verdict down.
-  const pre = strList(v.pre_red_checks), same = new Set(strList(v.known_red_same_error)), kr = strList(v.known_red_checks).filter((n) => same.has(n) && !pre.includes(n));
-  if (kr.length) { v.pre_red_checks = [...pre, ...kr]; v.pre_red = [...strList(v.pre_red), ...(((Array.isArray(v.checks) ? v.checks : []) as Record<string, unknown>[]).filter((c) => kr.includes(String(c.name))).flatMap((c) => strList(c.ids)))]; }
+  if (kr.length) { v.pre_red_checks = [...pre, ...kr]; v.pre_red = [...strList(v.pre_red), ...checks.filter((c) => kr.includes(String(c.name))).flatMap((c) => strList(c.ids))]; }
   o.implement = { ...o.implement, exit: "done", conflict_delivered: files };
   return files;
 }

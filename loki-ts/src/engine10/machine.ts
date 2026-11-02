@@ -307,7 +307,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
           }
         }
         const wasConflict = outputs.implement?.exit === "spec_conflict";
-        if (!fatal && !capHit && stopped === null && await deliverOverWallConflict(outputs, ctx.repoDir, () => runStage("verify", true), (path, why) => ctx.emit("wall.arbitrated", "wall", { path, discarded: why })) && wasConflict) ctx.emit("spec.conflict", "implement", { delivered: true, reason: outputs.implement?.spec_conflict_reason ?? null }); // a Wall defect never discards correct code (util/conflict_resume.ts)
+        if (!fatal && !capHit && stopped === null && await deliverOverWallConflict(outputs, ctx.repoDir, () => runStage("verify", true), (path, why) => ctx.emit("wall.arbitrated", "wall", { path, discarded: why }), { runDir: ctx.runDir, restored: (v) => ctx.emit("stage.completed", "verify", { ...v, restored: true }) }) && wasConflict) ctx.emit("spec.conflict", "implement", { delivered: true, reason: outputs.implement?.spec_conflict_reason ?? null }); // a Wall defect never discards correct code (util/conflict_resume.ts)
         if (fatal) { stopped = fatal; jumped = true; }
         if (capHit) jumped = true;
       }

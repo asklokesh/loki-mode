@@ -44,6 +44,8 @@
 #      characters); the split repair assertion must fail (p.ok false). Clipping criteria (or keeping long paths) fails it too.
 #   9. loki-ts/src/commands/issues_run.ts splitWithReask: re-ask only when `p.over !== undefined`; the split repair
 #      assertion must fail (one call, no exact-error note).
+#  10. loki-ts/src/commands/issues_epic.ts parseDecomposition: drop files_dropped (or sliceTask's dropped-paths line); the split
+#      repair assertion must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -220,14 +222,16 @@ const m = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts"
 const r = await import(process.env.ROOT + "/loki-ts/src/commands/issues_run.ts");
 const fl = JSON.stringify({ slices: [{ id: "s1", title: "backend", acceptance: ["x".repeat(520), "", "  ", ...Array.from({ length: 24 }, (_, i) => "c" + i)], files: ["src/a.ts", "y".repeat(600)] }, { id: "s2", title: "ui", acceptance: ["ok"], depends_on: ["s1", "s1"] }] });
 const p = m.parseDecomposition(fl), out = [p.ok, p.ok && p.slices[0].acceptance.length, p.ok && p.slices[0].acceptance[0].length, p.ok && p.slices[0].acceptance[19] === "c18; c19; c20; c21; c22; c23", p.ok && p.slices[1].depends_on.join(","), p.ok && p.slices[0].files.join(",")];
+const many = m.parseDecomposition(JSON.stringify({ slices: [{ id: "s1", title: "a", acceptance: ["x"], files: Array.from({ length: 53 }, (_, i) => "f" + i + ".ts") }, { id: "s2", title: "b", acceptance: ["y"] }] }));
+out.push(p.ok && p.slices[0].files_dropped, many.ok && many.slices[0].files.length + "+" + many.slices[0].files_dropped, many.ok && m.sliceTask("acme/x", { number: 1, title: "t", body: "", labels: [] }, many.slices[0], 0, 2, null).includes("3 more paths were listed for this slice and dropped"), many.ok && many.slices[1].files_dropped === undefined);
 const notes = []; let calls = 0;
 const d = { out: () => {}, decompose: async (_s, _i, _r, note) => { calls++; notes.push(note ?? ""); return calls === 1 ? JSON.stringify({ slices: [{ id: "s1", title: "a", acceptance: [] }, { id: "s2", title: "b", acceptance: ["x"] }] }) : fl; } };
 const q = await r.splitWithReask(d, "acme/x", { number: 1, title: "t", body: "b", labels: [] }, "large");
 out.push(q.ok, calls, (notes[1] ?? "").includes("s1: acceptance must be a list"));
 console.log(out.join(" "));
 ' 2>&1)"
-[ "$SPLITR" = "true 20 520 true s1 src/a.ts true 2 true" ] && ok "split repair: a 520-char criterion is kept whole, empties dropped, 25 criteria merged to 20 with no text lost, a 600-char path dropped, duplicate deps dropped; an empty acceptance list is re-asked once with the exact error" \
-    || bad "split repair gave: $SPLITR (want: true 20 520 true s1 src/a.ts true 2 true)"
+[ "$SPLITR" = "true 20 520 true s1 src/a.ts 1 50+3 true true true 2 true" ] && ok "split repair: a 520-char criterion is kept whole, empties dropped, 25 criteria merged to 20 with no text lost, a 600-char path dropped, duplicate deps dropped, dropped paths counted and named in the slice task; an empty acceptance list is re-asked once with the exact error" \
+    || bad "split repair gave: $SPLITR (want: true 20 520 true s1 src/a.ts 1 50+3 true true true 2 true)"
 
 # --- backlog: a large issue in `loki backlog` runs and splits through the same MASS-2 path, never a drafted spec -------
 B="$T/backlog"

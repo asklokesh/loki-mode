@@ -14,6 +14,8 @@ export interface Slice {
   acceptance: string[];
   depends_on: string[];
   files: string[];
+  /** Paths the model listed that were dropped (past the 50-path cap, or too long to be a path); the slice task says how many. */
+  files_dropped?: number;
 }
 
 export type Decomposition = { ok: true; slices: Slice[]; parent: Record<string, string | null> } | { ok: false; reason: string; over?: number };
@@ -90,7 +92,8 @@ export function parseDecomposition(text: string): Decomposition {
     if (!deps) return { ok: false, reason: `${o.id}: depends_on must be a list of slice ids` };
     const files = o.files === undefined ? [] : strList(o.files, 50);
     if (!files) return { ok: false, reason: `${o.id}: files must be a list of paths` };
-    slices.push({ id: o.id, title: oneLine(o.title), acceptance, depends_on: [...new Set(deps)], files });
+    const listed = Array.isArray(o.files) ? new Set(o.files.filter((x): x is string => typeof x === "string").map(oneLine).filter((x) => x !== "")).size : 0, dropped = listed - files.length;
+    slices.push({ id: o.id, title: oneLine(o.title), acceptance, depends_on: [...new Set(deps)], files, ...(dropped > 0 ? { files_dropped: dropped } : {}) });
   }
   for (const s of slices) for (const d of s.depends_on) if (!seen.has(d)) return { ok: false, reason: `${s.id} depends on unknown slice ${d}` };
 
@@ -166,6 +169,7 @@ export function sliceTask(slug: string, epic: GhIssue, s: Slice, index: number, 
       (parent ? ` The branch already contains slice ${parent} and everything it depends on.` : ""),
     `Acceptance criteria: ${s.acceptance.map((a, k) => `(${k + 1}) ${a}`).join("; ")}`,
     s.files.length ? `Likely files: ${s.files.join(", ")}` : "",
+    s.files_dropped ? `${s.files_dropped} more ${s.files_dropped === 1 ? "path was" : "paths were"} listed for this slice and dropped (past the 50-path cap, or too long to be a path); find the rest from the criteria.` : "",
     `Parent issue: ${oneLine(epic.title)}`,
   ].filter(Boolean).join("\n\n");
 }

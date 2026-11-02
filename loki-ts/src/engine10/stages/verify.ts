@@ -40,7 +40,9 @@ import { type SkipCode, changedSymbols, firstFileLineAnchor, runnerCmd, commandF
 const excerpts = new WeakMap<object, string>();
 const suites = new WeakSet<object>(); // L005: full-suite checks, whose signature also carries the failing ids
 const failTails = new WeakMap<object, string>(); // WALL-FAILOUT: redacted tail of a failed check's output, read only by writeWallFailureTail
-export const WALL_FAILURE_TAIL_FILE = "wall-failure-tail.txt", WALL_FAILURE_TAIL_CAP = 16384;
+const headErrors = new WeakMap<object, Map<string, string>>(); // each failing id's error line, read from the whole output (never the cut tail), for sameErrors
+export { WALL_FAILURE_TAIL_FILE } from "../../util/check_result.ts"; import { WALL_FAILURE_TAIL_FILE } from "../../util/check_result.ts";
+export const WALL_FAILURE_TAIL_CAP = 16384;
 /** Redact the whole output first, then keep the tail: a secret straddling the cut would lose its prefix and escape redaction. */
 export const wallTailOf = (out: string, repoDir: string): string => redactSecrets(stripAnsi(out).replace(/\r/g, "").split(repoDir.replace(/\/+$/, "") + "/").join("")).slice(-WALL_FAILURE_TAIL_CAP);
 /** The last Wall run's failing output, kept in the run dir so a Wall that stays red can be diagnosed. Overwritten each run; a green run removes it. Held-out checks never get a tail. Returns the file name when written. */
@@ -121,7 +123,7 @@ export async function runCheck(
   const reason = c.reason;
   const anchor = result === "fail" ? firstFileLineAnchor(attempt.out.slice(-65536)) : null;
   const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out), ...(anchor ? { anchor } : {}) } : result === "pass" && kind === "test" ? { n: c.n ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(attempt.missing ? { skip_code: "tool_not_on_path" as const } : {}), ...(c.owner ? { owner: "harness" as const } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
-  if (result === "fail" && !opts.opaque && !isHold(check)) { excerpts.set(check, failureExcerpt(attempt.out, ctx.repoDir)); failTails.set(check, wallTailOf(attempt.out, ctx.repoDir)); }
+  if (result === "fail" && !opts.opaque && !isHold(check)) { excerpts.set(check, failureExcerpt(attempt.out, ctx.repoDir)); failTails.set(check, wallTailOf(attempt.out, ctx.repoDir)); headErrors.set(check, errorsById(attempt.out)); }
   checks.push(check); if (opts.opaque && check.result !== "pass" && check.reason) recordHoldoutTriage(ctx.runDir, { check: name, result: check.result, reason: check.reason }); // C-C4b-c-b: real reason stays out of the event below
   ctx.emit("test.result", "verify", opts.opaque ? { ...pubHold(check) } : { ...check });
   return check;
@@ -198,7 +200,7 @@ async function runVitestBatches(ctx: RunContext, tests: TestRef[], api: ProjectA
       if (!result) continue; // not vouched for: runCheck runs it alone
       const outText = b?.out ?? a.out, anchor = result === "fail" ? firstFileLineAnchor(outText) : null;
       const check: VerifyCheck = { name: testCheckName(x.t), cmd: x.tc.argv.join(" "), result, duration_s: share, ...(result === "fail" ? { first_error: firstError(outText), ids: failIds(outText), ...(anchor ? { anchor } : {}) } : result === "pass" ? { n: ca.n ?? 0, sk: skipped(a.out) } : {}) };
-      if (result === "fail") { excerpts.set(check, failureExcerpt(outText, ctx.repoDir)); failTails.set(check, wallTailOf(outText, ctx.repoDir)); }
+      if (result === "fail") { excerpts.set(check, failureExcerpt(outText, ctx.repoDir)); failTails.set(check, wallTailOf(outText, ctx.repoDir)); headErrors.set(check, errorsById(outText)); }
       got.set(check.name, check); ctx.emit("test.result", "verify", { ...check }); onCheck(check);
     }
   }
@@ -217,9 +219,12 @@ function changedSymbolsFirst(ctx: RunContext, tests: TestRef[], changed: string[
   return [...hits, ...tests.filter((t) => !hits.includes(t))];
 }
 /** The error line each failing id reports: vitest/jest print it on the first non-blank line after "FAIL  <id>", pytest after "FAILED <id> - ".
- *  Normalized as the stall signature is (numbers, durations and absolute paths dropped), so a base worktree path never makes two equal errors differ. */
+ *  Only what differs between two runs of the same failure is normalized: timestamps, durations and absolute paths (with any :line:col), so a base
+ *  worktree path never makes two equal errors differ. Every other number is kept: "expected 5 to be 6" and "expected 999 to be 6" differ. */
 export function errorsById(out: string): Map<string, string> {
-  const norm = (l: string): string => l.replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/\d+(?:\.\d+)?/g, "N").replace(/\s+/g, " ").trim();
+  const norm = (l: string): string => l
+    .replace(/\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/g, "<ts>").replace(/\b\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\b/g, "<ts>")
+    .replace(/(^|[\s(])\/(?:[\w.@-]+\/)*[\w.@-]+(?::\d+){0,2}/g, "$1<path>").replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|us|µs|ns|min)\b/g, "<dur>").replace(/\s+/g, " ").trim();
   const lines = stripAnsi(out).split("\n").map((l) => l.trim()), m = new Map<string, string>();
   for (const [i, l] of lines.entries()) {
     const py = /^FAILED (\S+::\S*) - (.+)$/.exec(l); if (py) { m.set(py[1]!, norm(py[2]!)); continue; }
@@ -228,11 +233,17 @@ export function errorsById(out: string): Map<string, string> {
   }
   return m;
 }
-/** True when every failing id the head names with an error line fails on base with the same normalized line, and at least one id could be compared. */
-export function sameErrors(head: string, base: string, ids: string[] | undefined): boolean {
-  const h = errorsById(head), b = errorsById(base), named = (ids ?? []).filter((i) => h.has(i));
-  return named.length > 0 && named.every((i) => b.get(i) === h.get(i));
+/** True when every failing id has an error line on head and fails on base with the same normalized line. An id with no head error line (its FAIL
+ *  line was never printed or was cut) or none on base is not the same error. failIds also lists a test's bare title (vitest's "× title" line): it
+ *  stands for the full ids that end in " > title". `head` is the output or its errorsById map. */
+export function sameErrors(head: string | Map<string, string>, base: string, ids: string[] | undefined): boolean {
+  const h = typeof head === "string" ? errorsById(head) : head, b = errorsById(base), all = ids ?? [];
+  const keys = (i: string): string[] => (h.has(i) ? [i] : [...h.keys()].filter((k) => k.endsWith(` > ${i}`)));
+  return all.length > 0 && all.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => b.get(k) === h.get(k)); });
 }
+/** A failing check the next fix round is given: not pre-existing, not held out, and not known red failing the same way as on base (a known-red check
+ *  failing with a different error on head is something the change did, so it is fix-round input). */
+export const feedsFixRound = (c: { name: string; result: string }, pre: { names: string[]; knownRed: string[]; sameError: string[] }): boolean => c.result === "fail" && !pre.names.includes(c.name) && !pre.sameError.includes(c.name) && !isHoldoutCheck(c.name);
 type Counts = { run: number; skipped: number };
 type BaseSubtraction = { ids: string[]; names: string[]; knownRed: string[]; sameError: string[]; weak: string[]; zero: string[]; cnt: Record<string, { b: Counts; h: Counts }> };
 /** A-112: a test check red on head, in a file the diff did not touch, whose every failing id is also red on a pristine detached base  worktree (never a reset of the implement tree, D42 (2)) is  pre_red: ids go to NOT PROVEN,  seal skips it in the verdict, the check
@@ -292,8 +303,8 @@ async function subtractBase(
     {
       for (const { c } of un) {
         if (rel.has(c.name) || c.result !== "fail" || !c.ids?.length || !c.ids.every((i) => base.get(c)?.red.includes(i))) continue;
-        out.knownRed.push(c.name); // red on base by every failing id: never fix-round input, whatever the target did
-        if (sameErrors(failTails.get(c) ?? "", base.get(c)!.out, c.ids)) out.sameError.push(c.name); // and failing the same way: a delivery may excuse it as pre-existing
+        out.knownRed.push(c.name); // red on base by every failing id
+        if (sameErrors(headErrors.get(c) ?? "", base.get(c)!.out, c.ids)) out.sameError.push(c.name); // and failing the same way: never fix-round input, and a delivery may excuse it as pre-existing; a different error feeds the fix round
         if (progress || dep.has(c.name)) { // RX-3: a dependent-only check needs no progress proof
           out.names.push(c.name);
           out.ids.push(...c.ids);
@@ -443,9 +454,9 @@ export const verifyStage: Stage = {
       for (const c of full) { const k: VerifyCheck = { name: c.name, cmd: c.cmd, result: c.result as VerifyCheck["result"], duration_s: c.duration_s, ...(c.reason ? { reason: c.reason } : {}), ...(c.count ? { count: c.count } : {}), ...(c.result === "fail" ? { ...(c.ids ? { ids: c.ids } : {}), ...(c.first_error ? { first_error: c.first_error } : {}) } : {}) }; suites.add(k); checks.push(k); ctx.emit("test.result", "verify", { ...k }); if (c.excerpt) excerpts.set(k, c.excerpt); } // P12-01: full-suite checks leave the same test.result evidence per-file checks do
       const fa = attributeFullSuite(ctx.repoDir, ctx.baseSha, full, checks.filter((c) => c.result === "fail" && !suites.has(c) && !preRed.names.includes(c.name)).flatMap((c) => c.ids ?? []), changed); preRed.names.push(...fa.preExistingChecks); preRed.ids.push(...fa.preExistingIds); attr.introducedChecks.push(...fa.introducedChecks); attr.line = [attr.line, fa.line].filter(Boolean).join("; ") || null; // REPOMEM: same attribution for the full suite
       if (full.some((c) => c.result === "pass" || c.result === "fail")) { ranDeeper.push("full test command", "full suite"); risk = markExecuted(risk, ranDeeper); recordRisk(ctx.repoDir, risk); }
-      // A full-suite failure whose every failing id is one a base-red check or a Wall check already reports adds nothing a fix round could act on.
-      const known = new Set(checks.filter((c) => c.result === "fail" && (preRed.knownRed.includes(c.name) || wallNames0.has(c.name))).flatMap((c) => c.ids ?? []));
-      for (const c of full) if (c.result === "fail" && c.ids?.length && c.ids.every((i) => known.has(i)) && !preRed.names.includes(c.name)) preRed.knownRed.push(c.name);
+      // A full-suite failure whose every failing id is one a same-error base-red check or a Wall check already reports adds nothing a fix round could act on.
+      const known = new Set(checks.filter((c) => c.result === "fail" && (preRed.sameError.includes(c.name) || wallNames0.has(c.name))).flatMap((c) => c.ids ?? []));
+      for (const c of full) if (c.result === "fail" && c.ids?.length && c.ids.every((i) => known.has(i)) && !preRed.names.includes(c.name)) { preRed.knownRed.push(c.name); preRed.sameError.push(c.name); }
     }
     if (risk && risk.tier === "high" && !signal.aborted && complete) { // PR-FIRST-4: the high tier's security scan runs here, before seal, so a receipt never leaves it to the post-PR deep stage (spawned only after VERIFIED). A fail blocks VERIFIED, a not_run (scanner missing or broken) caps at PARTIAL; only a pass or fail is credited
       const { runSecretScan } = await import("./deep.ts");
@@ -458,7 +469,7 @@ export const verifyStage: Stage = {
     const uncoveredChanged = changed.filter((f) => CODE_EXT.test(f) && !isTestFile(f) && !wallPaths.has(f) && !cfgChanged.includes(f) && !covered(f)); // FC-21b: changed code no passing impacted check ran; seal denies VERIFIED after a limit
     const flaky = checks.filter((c) => c.result === "flaky").map((c) => (isHold(c) ? "holdout" : c.name));
     // ponytail: real clustering is failures.ts, which depends on this stage; a naive 1:1 placeholder keeps the section-4 output key populated until that slice lands.
-    const { groups: failuresGrouped, names: blockingNames } = briefGroups(checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name) && !preRed.knownRed.includes(c.name) && !isHold(c)), (c) => excerpts.get(c) ?? "", (c) => suites.has(c), EXCERPT_TOTAL_CAP, qs && !complete ? { prev: ctx.outputs().verify, ran: new Set(checks.map((c) => c.name)) } : undefined); // known red (every failing id red on base, or a full suite repeating base-red and Wall ids) never feeds a fix round; TEN-QUALITY-01: sample = rerun cmd + redacted excerpt, 6 KB across all groups
+    const { groups: failuresGrouped, names: blockingNames } = briefGroups(checks.filter((c) => feedsFixRound(c, preRed)), (c) => excerpts.get(c) ?? "", (c) => suites.has(c), EXCERPT_TOTAL_CAP, qs && !complete ? { prev: ctx.outputs().verify, ran: new Set(checks.map((c) => c.name)) } : undefined); // known red failing the same way as on base (or a full suite repeating those and Wall ids) never feeds a fix round; a different error does; TEN-QUALITY-01: sample = rerun cmd + redacted excerpt, 6 KB across all groups
     const pub = checks.map((c) => (isHold(c) ? pubHold(c) : c)), holdoutFailed = checks.filter((c) => c.result === "fail" && isHold(c) && !preRed.names.includes(c.name)).length; // C-C4b-c: pub leaves this stage, holdoutFailed (C-C4b) is the only form in which a held-out failure reaches the fix stage
     // E-98a/E-115: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter/ruff. A-115: test configuration edits and relevant checks with more skips than base are listed, which makes the verdict PARTIAL at seal.
     const inBase = (f: string): boolean => { try { safeGit(ctx.repoDir, ["cat-file", "-e", `${ctx.baseSha}:${f}`], { stdio: "ignore" }); return true; } catch { return false; } };
