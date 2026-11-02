@@ -911,6 +911,14 @@ def ledger_total(path):
     return sum(json.loads(l).get("cost_usd") or 0 for l in Path(path).read_text().splitlines() if l.strip())
 
 
+def select_tasks(tasks, configs, named):
+    """A suite with a selection rule (fixtures/hard: the fix touches 2+ files and raw-haiku-verify passed under
+    half its pilot runs) runs only qualifying tasks unless tasks are named; the oracle/noop self-check covers all."""
+    if named or all(c in CHECK_CONFIGS for c in configs):
+        return tasks
+    return [t for t in tasks if t.get("qualified", True)]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="benchmarks/h2h/run.sh", description=__doc__.splitlines()[0])
     ap.add_argument("--configs", default=",".join(CONFIGS), help=f"comma list from {CONFIGS + CHECK_CONFIGS}")
@@ -947,7 +955,7 @@ def main(argv=None):
     for t in task_ids:
         if t not in all_tasks:
             ap.error(f"unknown task {t} in suite {a.suite}")
-    tasks = [load_task(t, tasks_dir) for t in task_ids]
+    tasks = select_tasks([load_task(t, tasks_dir) for t in task_ids], configs, bool(a.tasks))
 
     prov = provenance()
     blocked = provenance_gate(configs, prov, a.allow_dirty)

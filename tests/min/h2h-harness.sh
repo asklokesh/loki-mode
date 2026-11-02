@@ -362,7 +362,7 @@ J="$T/hard.json"
 TMPDIR="$T" bash benchmarks/h2h/run.sh --suite hard --configs oracle,noop --jobs 4 --out "$J" >"$T/hard.log" 2>&1
 check "hard oracle/noop: runner exits 0 (no leak, no harness error)" test "$?" = 0
 nhard="$(find benchmarks/h2h/fixtures/hard -mindepth 2 -maxdepth 2 -name meta.json | wc -l | tr -d ' ')"
-check "hard: 8 to 10 tasks ($nhard)" test "$nhard" -ge 8 -a "$nhard" -le 10
+check "hard: at least 8 candidate tasks ($nhard)" test "$nhard" -ge 8
 check "hard: self-check covered every task" test "$(runs 'len(d["tasks"])')" = "$nhard"
 check "hard: the merged fix passes every task" test "$(runs '[s["passed"] == s["n"] for s in d["summary"] if s["config"] == "oracle"]')" = "[True]"
 check "hard: the parent commit passes no task" test "$(runs '[s["passed"] for s in d["summary"] if s["config"] == "noop"]')" = "[0]"
@@ -377,6 +377,23 @@ for p in glob.glob("benchmarks/h2h/fixtures/hard/*/meta.json"):
     ok &= os.path.isfile(os.path.join(d, "repo", s["license_file"])) and m["difficulty"] == "hard"
     ok &= all(len(s[k]) == 40 for k in ("fix_commit", "parent_commit")) and "/issues/" in s["issue"]
 print(ok)')" = True
+# Selection rule: a hard task qualifies only if its fix touches 2+ files and raw-haiku-verify passed under half
+# of its pilot runs; a paid run without --tasks takes only qualifying tasks.
+check "hard: every qualified task meets the selection rule, and every candidate records its pilot" test "$(python3 -I -c '
+import json, glob
+ms = [json.load(open(p)) for p in glob.glob("benchmarks/h2h/fixtures/hard/*/meta.json")]
+ok = all("pilot" in m and "qualified" in m for m in ms)
+ok &= all(m["pilot"]["runs"] >= 2 and m["pilot"]["passed"] / m["pilot"]["runs"] < 0.5 and len(m["source"]["solution_files"]) >= 2 for m in ms if m["qualified"])
+ok &= all(m.get("excluded_because") for m in ms if not m["qualified"])
+print(ok, sum(m["qualified"] for m in ms) >= 8)')" = "True True"
+q_out="$(cd benchmarks/h2h && python3 -I -c '
+import sys; sys.path.insert(0, "."); import h2h
+ids = sorted(p.name for p in h2h.SUITES["hard"].iterdir() if (p / "meta.json").is_file())
+ts = [h2h.load_task(i, h2h.SUITES["hard"]) for i in ids]
+paid = h2h.select_tasks(ts, ["raw-haiku", "loki-haiku"], False)
+print("select", all(t["qualified"] for t in paid), len(paid) == sum(t["qualified"] for t in ts) < len(ts),
+      len(h2h.select_tasks(ts, ["oracle", "noop"], False)) == len(ts), len(h2h.select_tasks(ts, ["raw-haiku"], True)) == len(ts))')"
+has "hard: paid runs take only qualifying tasks; the self-check and named tasks take every one" "$q_out" "select True True True True"
 
 leftover="$(find "$T" -maxdepth 1 -name 'loki-h2h.*' | head -1)"
 check "runner removed its own temp dir" test -z "$leftover"

@@ -69,5 +69,13 @@
       "sqlglot/_version.py"
     ],
     "note": "sqlglot/_version.py added (setuptools_scm writes it on install). AGENTS.md and CLAUDE.md are not vendored. tests/dialects/test_bigquery.py is ignored: it imports pytz, which is not in the benchmark toolchain. tests/dialects/test_dialect.py::TestDialect::test_lazy_load is deselected: it runs a python executable named python, which the benchmark toolchain does not provide. Only part of tests/ is vendored (the dialect tests, the expression, parser, generator and transpile tests and their fixtures) to keep the snapshot small."
-  }
+  },
+  "pilot": {
+    "config": "raw-haiku-verify",
+    "passed": 1,
+    "runs": 2,
+    "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
+  },
+  "qualified": false,
+  "excluded_because": "raw-haiku-verify passed 1 of 2 pilot runs (the rule needs under 50%)"
 }

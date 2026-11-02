@@ -54,5 +54,13 @@
     ],
     "added_files": [],
     "note": "_examples is not vendored (it imports packages outside the standard library). Only the root package is scored: middleware's TestWrapWriterHTTP2 needs a local TLS listener and fails offline."
-  }
+  },
+  "pilot": {
+    "config": "raw-haiku-verify",
+    "passed": 0,
+    "runs": 2,
+    "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
+  },
+  "qualified": false,
+  "excluded_because": "the fix's test requires one Allow header line per method; a single comma-separated Allow header, which HTTP also allows, fails it"
 }

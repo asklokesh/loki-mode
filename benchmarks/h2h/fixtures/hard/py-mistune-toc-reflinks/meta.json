@@ -54,5 +54,13 @@
       "conftest.py"
     ],
     "note": "conftest.py added so tests import src/mistune without installing the package."
-  }
+  },
+  "pilot": {
+    "config": "raw-haiku-verify",
+    "passed": 2,
+    "runs": 2,
+    "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
+  },
+  "qualified": false,
+  "excluded_because": "raw-haiku-verify passed 2 of 2 pilot runs (the rule needs under 50%)"
 }
