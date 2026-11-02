@@ -1,4 +1,6 @@
 {
+  "difficulty": "normal",
+  "shape": "cross-module",
   "lang": "ts",
   "kind": "multifile",
   "hidden": { "orders.hidden.test.ts": "test/h2h_hidden.test.ts" },

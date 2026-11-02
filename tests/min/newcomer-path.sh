@@ -9,6 +9,11 @@
 #              them (exit code, outcome, verify checks); doctor exits 0 and lists both as optional.
 #   L035 all:  no git identity, no commits and a logged-out claude give one exit 2 with 3 numbered
 #              blockers; --dry-run prints the same list; running the printed fixes verbatim passes.
+#   L009 one engine: bare `loki start` and `loki quick` exit 64 with the loki "<goal>" usage; `loki start
+#              ./prd.md`, `loki quickstart <prd> --yes` and `loki demo --yes` each seal an engine10 receipt;
+#              no bun and LOKI_PROVIDER=foo each exit 2 with the fix; none writes .loki/autonomy-state.json.
+#              quickstart in an empty folder and demo with no git identity still seal; LOKI_PRD_FILE is a bare
+#              start's PRD; bare start outside a repo shows the sample; data commands ignore the provider.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. skills/fixtures/demo-receipt/pubkey.jwk replaced with {}: the tour stops printing VERIFIED.
@@ -16,6 +21,22 @@
 #      and run checks fail (no_provider).
 #   3. loki-ts/src/engine10/preflight.ts keeps only the first blocker: the L035 list checks fail.
 #   4. autonomy/lib/setup-requirements.json python3 level back to required: the doctor checks fail.
+#   5. autonomy/route.sh: a no-positional start returns undecided again (legacy cmd_start): the bare start checks fail.
+#   6. autonomy/quickstart.sh: build with `cmd_start "$target" --yes --no-plan` again: the quickstart receipt check fails.
+#   7. autonomy/loki cmd_demo: build with `cmd_start prd.md --simple --yes` again: the demo receipt check fails.
+#   8. bin/loki: no working bun sets _e10=0 (legacy fallback) instead of exit 2: the no-bun checks fail.
+#   9. autonomy/quickstart.sh: no LOKI_FIRST_RUN_FILES for the PRD it wrote: the empty-folder quickstart checks fail (exit 2).
+#   10. loki-ts/src/util/first_run_repo.ts: no repo-local identity fallback: the no-identity demo, empty-folder and
+#       no-template brief checks fail.
+#   11. bin/loki: drop the data-command arm (provider checked for every engine10 call): keys export, verify,
+#       export --sarif and the no-bun bare verify checks fail.
+#   12. autonomy/route.sh: ignore LOKI_PRD_FILE: the LOKI_PRD_FILE start checks fail (exit 64).
+#   13. autonomy/route.sh: no-repo sample branch without the legacy-flag guard: the outside-a-repo --openspec,
+#       --bmad-project and --issue checks fail (they reach the legacy loop).
+#   14. bin/loki: plan back in the data-command arm: the plan --spec provider checks fail.
+#   15. autonomy/loki cmd_demo: no refusal for a --dir inside a repo: the outer-repo checks fail.
+#   16. autonomy/route.sh: `start --engine legacy` with no task left undecided: the printed resume command checks fail
+#       (Unknown option: --engine, exit 64).
 # No network, no model, no real key: the fake key never leaves the machine (stubs answer every call).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -166,5 +187,140 @@ while IFS= read -r line; do
 done <<< "$blk"
 out="$(cd "$REPO" && "${l035_env[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$GOAL" --no-pr 2>&1)"; rc=$?
 [ -n "$(run_id "$REPO")" ] && [ "$rc" -ne 2 ] && ok "L035 after the printed fixes the next run passes preflight (exit $rc)" || { bad "L035 still refused after the printed fixes (exit $rc)"; printf '%s\n' "$out" | tail -6 | sed 's/^/    | /'; }
+
+# ---------------------------------------------------------------------------
+echo "TEST: newcomer path (L009: every first-run entry point runs the default engine, never the legacy loop)"
+# The legacy loop (autonomy/run.sh) writes .loki/autonomy-state.json; engine10 seals .loki/runs/e10-*/receipt.json.
+printf '[user]\n\tname = e2e\n\temail = e2e@example.invalid\n' > "$HOME/.gitconfig"
+l009_env=(env -u ANTHROPIC_API_KEY -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_PROVIDER -u LOKI_ENGINE PATH="$E2E/bin:$BARE" LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$E2E/bin/claude" E2E_STUB_MODE=done)
+no_legacy() { [ ! -e "$1/.loki/autonomy-state.json" ] && ok "L009 $2: no legacy state (.loki/autonomy-state.json)" || bad "L009 $2 ran the legacy loop"; }
+e10_receipt() { ls "$1"/.loki/runs/e10-*/receipt.json >/dev/null 2>&1 && ok "L009 $2: engine10 sealed a receipt" || bad "L009 $2: no .loki/runs/e10-*/receipt.json"; }
+fixture_repo l009-bare
+out="$(cd "$REPO" && "${l009_env[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start </dev/null 2>&1)"; rc=$?
+[ "$rc" -eq 64 ] && ok "L009 bare loki start exits 64" || bad "L009 bare loki start exited $rc"
+has "L009 bare loki start prints the goal usage" "$out" 'usage: loki "<goal>"'
+no_legacy "$REPO" "bare start"
+out="$(cd "$REPO" && "${l009_env[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" quick </dev/null 2>&1)"; rc=$?
+[ "$rc" -eq 64 ] && ok "L009 bare loki quick exits 64" || bad "L009 bare loki quick exited $rc"
+no_legacy "$REPO" "bare quick"
+fixture_repo l009-prd
+printf '# PRD\n\nAdd a multiply(a, b) function to calc.ts.\n' > "$REPO/prd.md"
+out="$(cd "$REPO" && "${l009_env[@]}" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009a.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start ./prd.md --no-pr </dev/null 2>&1)"; rc=$?
+e10_receipt "$REPO" "start ./prd.md"; no_legacy "$REPO" "start ./prd.md"
+fixture_repo l009-qs
+printf '# PRD\n\nAdd a multiply(a, b) function to calc.ts.\n' > "$T/l009-prd.md"
+# quickstart's plan step runs the PRD estimator, which needs python3 (absent from BARE).
+out="$(cd "$REPO" && "${l009_env[@]}" PATH="$E2E/bin:$PATH" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009b.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" quickstart "$T/l009-prd.md" --yes </dev/null 2>&1)"; rc=$?
+e10_receipt "$REPO" "quickstart <prd> --yes"; no_legacy "$REPO" "quickstart"
+NOID=(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1) # a machine with no git identity
+DEMO="$T/l009-demo"
+out="$("${l009_env[@]}" "${NOID[@]}" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009c.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" demo --yes --dir "$DEMO" </dev/null 2>&1)"; rc=$?
+e10_receipt "$DEMO" "demo --yes with no git identity"; no_legacy "$DEMO" "demo"
+# quickstart in an EMPTY folder that is not a repo, with no git identity: quickstart writes prd.md, then makes the repo.
+QSE="$T/l009-qs-empty"; mkdir -p "$QSE"
+out="$(cd "$QSE" && "${l009_env[@]}" "${NOID[@]}" PATH="$E2E/bin:$PATH" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009d.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" quickstart "$T/l009-prd.md" --yes </dev/null 2>&1)"; rc=$?
+[ "$rc" -ne 2 ] && ok "L009 quickstart in an empty folder does not exit 2 (exit $rc)" || { bad "L009 quickstart in an empty folder exited 2"; printf '%s\n' "$out" | tail -4 | sed 's/^/    | /'; }
+e10_receipt "$QSE" "quickstart in an empty folder"; no_legacy "$QSE" "quickstart in an empty folder"
+# quickstart with a brief that matches no template writes no file; the empty folder plus no identity still runs.
+QSB="$T/l009-qs-brief"; mkdir -p "$QSB"
+out="$(cd "$QSB" && "${l009_env[@]}" "${NOID[@]}" PATH="$E2E/bin:$PATH" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009f.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" quickstart "zxqv wibble frobnicator quuxifier" --yes </dev/null 2>&1)"; rc=$?
+[ "$rc" -ne 2 ] && ok "L009 quickstart brief with no template, empty folder, no identity: not exit 2 (exit $rc)" || { bad "L009 quickstart brief with no template exited 2"; printf '%s\n' "$out" | tail -4 | sed 's/^/    | /'; }
+e10_receipt "$QSB" "quickstart brief with no template"; no_legacy "$QSB" "quickstart brief with no template"
+# LOKI_PRD_FILE is the PRD of a bare start (loki start --help documents it).
+fixture_repo l009-prdenv
+printf '# PRD\n\nAdd a multiply(a, b) function to calc.ts.\n' > "$REPO/prd.md"
+out="$(cd "$REPO" && "${l009_env[@]}" LOKI_PRD_FILE=./prd.md LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009e.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start --no-pr </dev/null 2>&1)"; rc=$?
+[ "$rc" -ne 64 ] && ok "L009 LOKI_PRD_FILE start is not the no-goal usage (exit $rc)" || bad "L009 LOKI_PRD_FILE start ignored the PRD (exit 64)"
+e10_receipt "$REPO" "LOKI_PRD_FILE start"
+# Bare start outside a repo shows the offline sample receipt and spends nothing (README).
+NR="$T/l009-norepo"; mkdir -p "$NR"
+out="$(cd "$NR" && "${l009_env[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start </dev/null 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "L009 bare start outside a repo exits 0" || bad "L009 bare start outside a repo exited $rc"
+has "L009 bare start outside a repo shows the sample receipt" "$out" "Showing a real receipt"
+no_legacy "$NR" "bare start outside a repo"
+# A legacy-only flag outside a repo is refused like anywhere else; it never reaches the legacy loop.
+mkdir -p "$NR/spec"
+for fl in "--openspec $NR/spec --yes" "--bmad-project $NR/spec" "--issue 5"; do
+    out="$(cd "$NR" && "${l009_env[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start ${fl} </dev/null 2>&1)"; rc=$?
+    [ "$rc" -eq 2 ] && ok "L009 start ${fl%% *} outside a repo exits 2" || bad "L009 start ${fl%% *} outside a repo exited $rc"
+    has "L009 start ${fl%% *} outside a repo is refused" "$out" "is not supported by the Loki 10 engine"
+    no_legacy "$NR" "start ${fl%% *} outside a repo"
+done
+# An interrupted run of the previous loop is named, with how to resume it.
+fixture_repo l009-oldrun
+mkdir -p "$REPO/.loki" "$REPO/sub"; printf '{"status": "interrupted", "iteration": 3, "prdPath": ""}\n' > "$REPO/.loki/autonomy-state.json"
+out="$(cd "$REPO/sub" && "${l009_env[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start </dev/null 2>&1)"; rc=$?
+has "L009 bare start (from a subfolder) names the previous-loop run and its resume command" "$out" "continue it with: loki start --engine legacy"
+out="$(cd "$REPO" && "${l009_env[@]}" PATH="$E2E/bin:$PATH" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" resume </dev/null 2>&1)"; rc=$?
+has "L009 loki resume gives the previous loop's resume command" "$out" "loki start --engine legacy"
+# The printed command itself works: it reaches the previous loop's start (which here stops at its provider check,
+# since BARE has no provider CLI), never "Unknown option: --engine" (exit 64).
+note="$(cd "$REPO" && "${l009_env[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start </dev/null 2>&1)"
+rcmd="$(printf '%s\n' "$note" | sed -n 's/.*continue it with: //p' | head -1)"
+[ "$rcmd" = "loki start --engine legacy" ] && ok "L009 printed resume command: $rcmd" || bad "L009 printed resume command is '$rcmd'"
+out="$(cd "$REPO" && env PATH="$BARE" ${TO[@]+"${TO[@]}"} bash -c "${rcmd/#loki/bash $ROOT/bin/loki}" </dev/null 2>&1)"; rc=$?
+case "$out" in *"Unknown option"*) bad "L009 printed resume command is refused: Unknown option (exit $rc)" ;; *) [ "$rc" -ne 64 ] && ok "L009 printed resume command reaches the previous loop's start (exit $rc)" || bad "L009 printed resume command exited 64" ;; esac
+has "L009 printed resume command stops at the legacy provider check here" "$out" "No AI provider CLI found"
+# A demo --dir inside someone else's repo is refused with one line; the enclosing checkout is never touched.
+OUTER="$T/l009-outer"; mkdir -p "$OUTER"
+git -C "$OUTER" init -q -b main; printf 'x\n' > "$OUTER/a.txt"; git -C "$OUTER" add a.txt
+git -C "$OUTER" -c user.name=o -c user.email=o@example.invalid commit -q -m outer; printf 'mine\n' > "$OUTER/untracked.txt"
+before="$(git -C "$OUTER" reflog | wc -l | tr -d ' ') $(git -C "$OUTER" symbolic-ref --short HEAD) $(git -C "$OUTER" rev-parse HEAD) $(git -C "$OUTER" branch --list | wc -l | tr -d ' ')"
+out="$("${l009_env[@]}" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009g.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" demo --yes --dir "$OUTER/demo-x" </dev/null 2>&1)"; rc=$?
+after="$(git -C "$OUTER" reflog | wc -l | tr -d ' ') $(git -C "$OUTER" symbolic-ref --short HEAD) $(git -C "$OUTER" rev-parse HEAD) $(git -C "$OUTER" branch --list | wc -l | tr -d ' ')"
+[ "$rc" -eq 2 ] && ok "L009 demo --dir inside a repo exits 2" || bad "L009 demo --dir inside a repo exited $rc"
+has "L009 demo --dir inside a repo says why" "$out" "is inside the git repository"
+[ "$before" = "$after" ] && ok "L009 demo --dir inside a repo: outer reflog, branch, HEAD and branch list untouched" || bad "L009 demo --dir inside a repo changed the outer repo ($before -> $after)"
+[ ! -e "$OUTER/.loki" ] && [ ! -e "$OUTER/demo-x" ] && ok "L009 demo --dir inside a repo: nothing written in the outer repo" || bad "L009 demo --dir inside a repo wrote into the outer repo"
+[ "$(cat "$OUTER/untracked.txt")" = mine ] && ok "L009 demo --dir inside a repo: outer untracked file kept" || bad "L009 demo --dir inside a repo changed the outer untracked file"
+# First-run init details: a directory named in LOKI_FIRST_RUN_FILES never counts as a file Loki wrote, and a user's
+# global name is kept when only the email is missing.
+fr() { # fr <dir> <global gitconfig> <first-run files> -> init result JSON
+    env -i HOME="$HOME" PATH="$PATH" GIT_CONFIG_GLOBAL="$2" GIT_CONFIG_NOSYSTEM=1 bun -e '
+const { initEmptyRepo } = await import(process.argv[1] + "/loki-ts/src/util/first_run_repo.ts");
+console.log(JSON.stringify(await initEmptyRepo(process.argv[2], { ...process.env, LOKI_FIRST_RUN_FILES: process.argv[3] })));' "$ROOT" "$1" "$3"
+}
+FRD="$T/l009-fr-dir"; mkdir -p "$FRD/prd.md"
+has "L009 first-run init: a directory named in LOKI_FIRST_RUN_FILES is not a written file" "$(fr "$FRD" /dev/null prd.md)" "not empty"
+FRN="$T/l009-fr-name"; mkdir -p "$FRN"; printf '# PRD\n' > "$FRN/prd.md"; printf '[user]\n\tname = Real Person\n' > "$T/name-only.gitconfig"
+r="$(fr "$FRN" "$T/name-only.gitconfig" prd.md)"
+[ "$(GIT_CONFIG_GLOBAL="$T/name-only.gitconfig" git -C "$FRN" config user.name)" = "Real Person" ] && ok "L009 first-run init keeps the global name" || bad "L009 first-run init overrode the global name ($r)"
+[ "$(git -C "$FRN" config --local user.email)" = "loki@localhost" ] && ok "L009 first-run init sets only the missing email" || bad "L009 first-run init did not set the missing email"
+[ -z "$(git -C "$FRN" config --local user.name)" ] && ok "L009 first-run init sets no repo-local name when the user has one" || bad "L009 first-run init set a repo-local name"
+[ "$(git -C "$FRN" ls-files)" = "prd.md" ] && ok "L009 first-run init commits the PRD it was told about" || bad "L009 first-run init did not commit prd.md"
+# --issue N points to the issue-ref form.
+out="$(cd "$REPO" && "${l009_env[@]}" bash "$ROOT/bin/loki" start --issue 5 </dev/null 2>&1)"; rc=$?
+has "L009 --issue N points to loki start owner/repo#N" "$out" "loki start owner/repo#N"
+# No working bun: exit 2 with the install command, nothing runs. bun on PATH is the only one (no bundled @oven/bun-* here).
+NOBUN="$T/nobun-bin"; mkdir -p "$NOBUN"
+for f in "$BARE"/*; do [ "${f##*/}" = bun ] || ln -s "$f" "$NOBUN/${f##*/}"; done
+fixture_repo l009-nobun
+if ls "$ROOT"/node_modules/@oven/bun-*/bin/bun >/dev/null 2>&1; then
+    ok "L009 no-bun leg not applicable: this checkout bundles bun"
+else
+    out="$(cd "$REPO" && "${l009_env[@]}" PATH="$E2E/bin:$NOBUN" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "fix the login bug" </dev/null 2>&1)"; rc=$?
+    [ "$rc" -eq 2 ] && ok "L009 no bun: exits 2" || bad "L009 no bun: exited $rc"
+    has "L009 no bun: prints the install command" "$out" "curl -fsSL https://bun.sh/install | bash"
+    no_legacy "$REPO" "no bun"
+    # A bare verify needs no model: with no bun it reads the run with the bash verify instead of refusing.
+    out="$(cd "$T/l009-prd" && "${l009_env[@]}" PATH="$E2E/bin:$NOBUN" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" verify </dev/null 2>&1)"; rc=$?
+    case "$out" in *"no working bun"*) bad "L009 no bun: bare verify refused (exit $rc)" ;; *) ok "L009 no bun: bare verify falls back to the bash verify (exit $rc)" ;; esac
+    out="$(cd "$T/l009-prd" && "${l009_env[@]}" PATH="$E2E/bin:$NOBUN" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" verify e10-20260101T000000Z-abcd </dev/null 2>&1)"; rc=$?
+    [ "$rc" -eq 2 ] && ok "L009 no bun: verify <run-id> exits 2" || bad "L009 no bun: verify <run-id> exited $rc"
+    has "L009 no bun: verify <run-id> prints the install command" "$out" "curl -fsSL https://bun.sh/install | bash"
+fi
+out="$(cd "$REPO" && "${l009_env[@]}" LOKI_PROVIDER=foo ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "fix the login bug" </dev/null 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && ok "L009 LOKI_PROVIDER=foo exits 2" || bad "L009 LOKI_PROVIDER=foo exited $rc"
+has "L009 LOKI_PROVIDER=foo names the five providers" "$out" "claude, codex, cline, aider, opencode"
+# plan --spec drafts the spec in a model session, so it checks the provider like a run.
+out="$(cd "$T/l009-prd" && "${l009_env[@]}" LOKI_PROVIDER=foo ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" plan "add a multiply function" --spec </dev/null 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && ok "L009 LOKI_PROVIDER=foo plan --spec exits 2" || bad "L009 LOKI_PROVIDER=foo plan --spec exited $rc"
+has "L009 LOKI_PROVIDER=foo plan --spec prints the provider fix" "$out" "use one of: claude, codex, cline, aider, opencode"
+# Commands that start no model session never check the provider.
+for cmd in "keys export" "verify --pubkey $T/none.jwk" "export --sarif" "verify"; do
+    out="$(cd "$T/l009-prd" && "${l009_env[@]}" LOKI_PROVIDER=foo LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009a.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" ${cmd} </dev/null 2>&1)"; rc=$?
+    case "$out" in *"is not supported"*) bad "L009 LOKI_PROVIDER=foo blocks loki $cmd (exit $rc)" ;; *) ok "L009 LOKI_PROVIDER=foo does not block loki ${cmd%% $T*} (exit $rc)" ;; esac
+done
+no_legacy "$REPO" "LOKI_PROVIDER=foo"
 
 finish

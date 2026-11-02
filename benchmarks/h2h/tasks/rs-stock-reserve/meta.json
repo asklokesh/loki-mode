@@ -1,0 +1,10 @@
+{
+  "lang": "rust",
+  "kind": "multifile",
+  "difficulty": "normal",
+  "shape": "cross-module",
+  "hidden": { "h2h_hidden.rs": "tests/h2h_hidden.rs" },
+  "hidden_cmd": ["cargo", "test", "-q", "--offline", "--test", "h2h_hidden"],
+  "visible_cmd": ["cargo", "test", "-q", "--offline"],
+  "protected": ["tests", "Cargo.toml"]
+}

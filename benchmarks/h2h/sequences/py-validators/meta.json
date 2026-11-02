@@ -1,0 +1,21 @@
+{
+  "lang": "py",
+  "protected": ["tests", "pytest.ini", "conftest.py"],
+  "steps": [
+    {
+      "id": "s1",
+      "hidden": { "test_email_hidden.py": "tests/test_h2h_hidden_s1.py" },
+      "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_h2h_hidden_s1.py"]
+    },
+    {
+      "id": "s2",
+      "hidden": { "test_phone_hidden.py": "tests/test_h2h_hidden_s2.py" },
+      "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_h2h_hidden_s2.py"]
+    },
+    {
+      "id": "s3",
+      "hidden": { "test_form_hidden.py": "tests/test_h2h_hidden_s3.py" },
+      "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_h2h_hidden_s3.py"]
+    }
+  ]
+}

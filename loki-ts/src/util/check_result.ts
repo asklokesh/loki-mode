@@ -209,7 +209,22 @@ export function plannedGoDir(repoDir: string, texts: string[]): { dir: string; p
   }
   return { dir: repoDir, pkg: null };
 }
-export const goPackageBrief = (repoDir: string, targetDir: string, runners: readonly string[], texts: string[]): string => { const p = runners.includes("go") ? plannedGoDir(repoDir, texts) : null; return p?.pkg && p.dir === targetDir ? `\n\nGo: your test files sit in the package directory, so each one starts with "package ${p.pkg}" and uses the package's identifiers directly.` : ""; };
+/** The package a Go directory already declares: a non-test file's clause, else a test file's clause without its _test suffix (a black-box tests/ directory holds only _test.go files); undefined with no .go file. */
+export const goDirPackage = (dir: string): string | undefined => goSiblingPkg(dir) ?? (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith("_test.go")).map((f) => /^package\s+(\w+)/m.exec(readFileSync(join(dir, f), "utf8"))?.[1]?.replace(/_test$/, "")).find(Boolean) : undefined);
+/** A Go Wall file whose package clause the directory it lands in cannot build with (Go allows one package per directory, plus its external <pkg>_test). Null when it fits or the directory holds no Go file yet. */
+export function goPackageClash(dir: string, name: string, content: string): string | null {
+  if (!name.endsWith(".go")) return null;
+  const want = goDirPackage(dir), got = /^\s*package\s+(\w+)/m.exec(content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, ""))?.[1];
+  return !want || !got || got === want || got === `${want}_test` ? null : `Go package clause "package ${got}" does not match "package ${want}" of the directory it lands in, so that directory would not build`;
+}
+/** The Wall author's Go package line. In the package directory: that package, identifiers used directly. In another directory that already holds Go files (a black-box tests/ package): that directory's package, with the package under test imported by its import path (importPathOf, from go.mod). */
+export const goPackageBrief = (repoDir: string, targetDir: string, runners: readonly string[], texts: string[], importPathOf?: (dir: string) => string | undefined): string => {
+  if (!runners.includes("go")) return "";
+  const p = plannedGoDir(repoDir, texts);
+  if (p.pkg && p.dir === targetDir) return `\n\nGo: your test files sit in the package directory, so each one starts with "package ${p.pkg}" and uses the package's identifiers directly.`;
+  const here = goDirPackage(targetDir), imp = p.pkg && p.dir !== targetDir ? importPathOf?.(p.dir) : undefined;
+  return here ? `\n\nGo: your test files are copied into ${relative(repoDir, targetDir) || "the repository root"}/, whose existing Go files declare "package ${here}". Start each file with "package ${here}"; any other package clause breaks that directory's build and the file is discarded.${imp ? ` Import the package under test as "${imp}" and call its identifiers qualified (${p.pkg}.Name).` : ""}` : "";
+};
 /** One shared Go-runner detection for every caller (verify, deep, per-package suites): a shell command line or an argv. Chosen from the command, never from output. The answer is tri-state (see runsTool): a command word in command position is the tool, or the command is fully resolved and does not run it, or some word could not be resolved and the old any-word rule decides. Detecting go too often only fails closed (exit 0 is not_run, and corroboratePass accepts only a plain `go test` line). */
 /** The ONE command-shape test for every runner we corroborate (go, cargo), tri-state. The narrow command-position answer is final only when every command word resolved to the tool itself, a known wrapper walked through, or a KNOWN non-tool runner (KNOWN_RUNNERS). An unknown command word, a variable command word ($GO) or a shell whose flags did not parse to -c leaves the command unresolved, and mentionsTool then falls back to the old any-word basename rule over the whole command, which fails closed. */
 const KNOWN_RUNNERS = new Set(["pytest", "python", "python3", "node", "npm", "yarn", "pnpm", "bun", "deno", "jest", "vitest", "mocha", "make", "cd", "echo", "true", "ruby", "rspec", "bundle", "mvn", "gradle", "dotnet", "php", "phpunit", "mix", "swift", "ctest", "tox"]);

@@ -33,6 +33,7 @@ _route_refusal_hint() {
         --worktree|-w) echo "engine10 runs each attempt in its own isolated worktree already; drop the flag, or pass --engine legacy for a git-worktree run" ;;
         --detach|-d) echo "run it in the background yourself ('nohup loki start ... &') or queue it with 'loki queue run', or pass --engine legacy for --detach" ;;
         --parallel) echo "use 'loki queue run --parallel K' or 'loki issues run --parallel K' for parallel runs, or pass --engine legacy for --parallel" ;;
+        --issue) echo "give the issue as the task instead: loki start owner/repo#N (or the issue URL)" ;;
         *) echo "drop it, or pass --engine legacy to run the legacy loop with it" ;;
     esac
 }
@@ -217,7 +218,10 @@ loki_route_resolve() {
         *) R_ERR="loki: unknown engine '$engine_req' (use --engine legacy or --engine engine10)"; R_DECIDED=1; return 0 ;;
     esac
 
-    # Input.
+    # Input. A bare `loki start` takes LOKI_PRD_FILE as its PRD (documented in `loki start --help`).
+    if [ "${#positionals[@]}" -eq 0 ] && [ "$verb" = "start" ] && [ -n "${LOKI_PRD_FILE:-}" ]; then
+        positionals+=("$LOKI_PRD_FILE")
+    fi
     local npos=${#positionals[@]}
     if [ "$npos" -eq 0 ]; then
         R_INPUT_TYPE=none
@@ -226,10 +230,36 @@ loki_route_resolve() {
             if [ "${passthru[$k]}" = "--spec" ]; then sp=1; fi
             k=$((k + 1))
         done
-        # No positional and no --spec: not ours (bare `loki start` auto-detects a PRD).
-        if [ "$sp" = "0" ]; then R_INPUT_TYPE=""; return 0; fi
-        R_INPUT_TYPE=spec
-        R_INPUT="(from --spec)"
+        if [ "$sp" = "1" ]; then
+            R_INPUT_TYPE=spec
+            R_INPUT="(from --spec)"
+        elif [ "$verb" = "bare" ] || [ -n "$front_flag" ]; then
+            # Flag-first bare calls and the front end (--workspace, --deploy) keep their own handlers.
+            R_INPUT_TYPE=""; return 0
+        elif [ "$engine_req" = "legacy" ]; then
+            # `loki start --engine legacy` (the previous loop's resume command): decided, so bin/loki hands the legacy
+            # CLI the args without --engine, which it does not know.
+            R_DECIDED=1; R_ENGINE=legacy; R_REASON="explicit: --engine legacy or LOKI_ENGINE=legacy"; R_INPUT_TYPE=none; R_INPUT="(no task)"
+            return 0
+        elif [ "$verb" = "start" ] && [ -z "$provider_flag" ] && [ -z "${LOKI_PROVIDER:-}" ] && [ -z "$legacy_flag" ] \
+             && ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            # No repo, no task, no provider and no legacy-only flag: cmd_start shows the offline sample receipt
+            # (README, `loki tour`) and spends nothing. A legacy-only flag is refused below like anywhere else.
+            R_INPUT_TYPE=""; return 0
+        else
+            # L009: a bare `loki start` or `loki quick` runs engine10 with no task. It resumes an interrupted
+            # run when there is one, otherwise prints the loki "<goal>" usage and exits 64. Never the legacy loop.
+            R_INPUT_TYPE=none
+            R_INPUT="(no task)"
+            local top st prd
+            top="$(git rev-parse --show-toplevel 2>/dev/null || printf '%s' "$PWD")"
+            st="$top/.loki/autonomy-state.json"
+            if [ -f "$st" ] && grep -Eq '"status"[[:space:]]*:[[:space:]]*"(running|paused|interrupted)"' "$st" 2>/dev/null; then
+                prd="$(sed -n 's/.*"prdPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$st" | head -1)"
+                if [ -n "$prd" ] && [ -f "$prd" ]; then prd=" \"$prd\""; else prd=""; fi
+                R_NOTICE="loki: .loki/autonomy-state.json holds an interrupted run of the previous loop; continue it with: loki start --engine legacy$prd"
+            fi
+        fi
     elif [ "$npos" -eq 1 ]; then
         R_INPUT_TYPE=$(_route_classify "${positionals[0]}")
         # Only `loki start` sends a PR URL to verify-pr (_route_pr_mode); on any other verb engine10 runs it as a brief.
@@ -286,14 +316,16 @@ loki_route_resolve() {
     local task
     if [ "$R_INPUT_TYPE" = "prd" ]; then
         task=$(cat "${positionals[0]}" 2>/dev/null || true)
-    elif [ "$R_INPUT_TYPE" = "spec" ]; then
+    elif [ "$R_INPUT_TYPE" = "spec" ] || [ "$R_INPUT_TYPE" = "none" ]; then
         task=""
     else
         task="${positionals[*]}"
     fi
     if [ "$verb" = "quick" ]; then R_E10_ARGS+=(--no-pr); fi
     if [ -n "$task" ]; then R_E10_ARGS+=("$task"); fi
-    R_E10_ARGS+=("${passthru[@]+"${passthru[@]}"}")
+    R_E10_ARGS+=(${passthru[@]+"${passthru[@]}"})
+    # No task: `--` sends engine10 to the run path (interrupted-run offer, then the goal usage), not its command table.
+    if [ "$R_INPUT_TYPE" = "none" ]; then R_E10_ARGS+=(--); fi
 
     # --prd and --brief name the input themselves; a second input would have glued its words into the task.
     if [ -n "$input_flag" ] && [ "$npos" -gt 1 ]; then
@@ -336,11 +368,12 @@ loki_route_resolve() {
     elif [ "$engine_req" = "engine10" ]; then
         R_ENGINE=engine10; R_E10=1; R_HARD=1; R_REASON="explicit: --engine engine10"
     else
+        # L009: a provider with no engine10 invoker is refused, never sent to the legacy loop.
         case "$R_PROVIDER" in
             claude|codex|cline|aider|opencode) ;;
-            *) why="provider $R_PROVIDER has no engine10 invoker (use claude, codex, cline, aider or opencode)" ;;
+            *) R_ERR="loki: provider $R_PROVIDER is not supported; use one of: claude, codex, cline, aider, opencode"; return 0 ;;
         esac
-        if [ -z "$why" ] && [ "$R_INPUT_TYPE" = "prd" ]; then
+        if [ "$R_INPUT_TYPE" = "prd" ]; then
             local sz
             sz=$(wc -c < "${positionals[0]}" 2>/dev/null | tr -d ' ' || echo 0)
             if [ "${sz:-0}" -gt 100000 ]; then why="PRD is larger than 100000 bytes (engine10 takes the task as one argument)"; fi

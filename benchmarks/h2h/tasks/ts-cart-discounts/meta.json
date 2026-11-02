@@ -1,4 +1,6 @@
 {
+  "difficulty": "normal",
+  "shape": "cross-module",
   "lang": "ts",
   "kind": "feature",
   "hidden": { "cart.hidden.test.ts": "test/h2h_hidden.test.ts" },

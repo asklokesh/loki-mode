@@ -1,0 +1,1 @@
+Add strip_accents(text) to textkit/transforms.py. It removes accents and other combining marks and keeps everything else, using unicodedata NFKD decomposition: "Crème Brûlée" gives "Creme Brulee", "naïve café" gives "naive cafe", "Ångström" gives "Angstrom" and plain ASCII comes back unchanged.
