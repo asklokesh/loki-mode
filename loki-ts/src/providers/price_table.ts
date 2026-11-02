@@ -1,14 +1,26 @@
 // PARITY-COST: per-model USD price table (per 1M tokens) used ONLY to estimate cost for providers whose CLI
 // does not print a dollar figure (codex, cline, aider). Anything priced from this table is flagged estimated=true.
 // The Claude path never reads this file; it keeps using runner/budget.ts and provider-reported dollars.
+// Every model loki-ts/data/model-pricing.json prices (the one table runner/budget.ts reads) is taken from it;
+// the rows below are only the models that file does not carry.
 
 import { readFileSync, statSync } from "node:fs";
+import pricingJson from "../../data/model-pricing.json" with { type: "json" };
 
 export interface Price { input: number; output: number; cachedInput?: number }
 
 /** USD per 1M tokens. Longest-substring match, case-insensitive. Update as vendors publish new prices. */
+const FROM_PRICING_JSON: Record<string, Price> = Object.fromEntries(
+  Object.entries(pricingJson.pricing as Record<string, { input: number; output: number; cache_read?: number }>).map(([k, v]) => [
+    k.toLowerCase(),
+    typeof v.cache_read === "number" ? { input: v.input, output: v.output, cachedInput: v.cache_read } : { input: v.input, output: v.output },
+  ]),
+);
 export const PRICE_TABLE: Readonly<Record<string, Price>> = Object.freeze({
-  "gpt-5.3-codex": { input: 1.75, output: 14.0, cachedInput: 0.175 },
+  ...FROM_PRICING_JSON,
+  "claude-opus": FROM_PRICING_JSON["opus"]!,
+  "claude-sonnet": FROM_PRICING_JSON["sonnet"]!,
+  "claude-haiku": FROM_PRICING_JSON["haiku"]!,
   "gpt-5-codex": { input: 1.25, output: 10.0, cachedInput: 0.125 },
   // Mini and nano tiers: OpenAI API pricing page https://openai.com/api/pricing/ (per 1M tokens).
   // Longest-substring match means these must exist or "gpt-5-mini" resolves to the full "gpt-5" entry.
@@ -22,9 +34,6 @@ export const PRICE_TABLE: Readonly<Record<string, Price>> = Object.freeze({
   "gpt-4o": { input: 2.5, output: 10.0, cachedInput: 1.25 },
   "o4-mini": { input: 1.1, output: 4.4, cachedInput: 0.275 },
   "o3": { input: 2.0, output: 8.0, cachedInput: 0.5 },
-  "claude-opus": { input: 4.0, output: 20.0, cachedInput: 0.2 },
-  "claude-sonnet": { input: 2.0, output: 10.0, cachedInput: 0.1 },
-  "claude-haiku": { input: 0.1, output: 0.5, cachedInput: 0.01 },
   "gemini-2.5-pro": { input: 1.25, output: 10.0 },
   "gemini": { input: 1.25, output: 10.0 },
   "deepseek": { input: 0.28, output: 0.42 },

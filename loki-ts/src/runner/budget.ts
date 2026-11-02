@@ -14,6 +14,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import pricingJson from "../../data/model-pricing.json" with { type: "json" };
 import { atomicWriteText } from "../util/atomic.ts";
 import { inferenceGeoMultiplier } from "../providers/model_routes.ts";
 import { lokiDir } from "../util/paths.ts";
@@ -39,15 +40,10 @@ export function loadDefaultMaxCostUsd(dataDirs: string[][] = [["..", "..", "data
   return DEFAULT_FALLBACK_USD;
 }
 
-// Phase J (v7.5.26): rolling pricing table extracted to
-// loki-ts/data/model-pricing.json so the pricing dict can be updated
-// without a code change (just JSON edit + release). Hardcoded fallback
-// preserved in `_FALLBACK_PRICING` for the case where the JSON file is
-// missing (e.g. broken install, bundle stripped). Both bash route and
-// Bun route still read the same pricing values (bash uses the hardcoded
-// values in run.sh check_budget_limit() since shell-side JSON parsing is heavier
-// than the maintenance gain). The JSON file is the source of truth for
-// the Bun route; bash will catch up when it next ports cost calc.
+// The one price table: loki-ts/data/model-pricing.json, imported so the bundle carries it. A runtime read
+// resolved ../../data from dist/loki.js, a path that does not exist, so every shipped build priced from a
+// hand-copied fallback table that had drifted from the JSON (no gpt-5.6 or claude-fable-5 rows).
+// autonomy/run.sh, the dashboard and the Python tools read the same file at run time.
 type PricingEntry = {
   input: number;
   output: number;
@@ -63,84 +59,27 @@ type PricingEntry = {
 };
 type PricingMap = Record<string, PricingEntry>;
 
-const _FALLBACK_PRICING: PricingMap = {
-  // Fable 5: top-tier advisory model at 2x Opus. Kept in sync with the bash
-  // route (run.sh pricing tables) and providers/model_catalog.json so a fable
-  // run never silently prices at the sonnet fallback (a 3.3x undercount).
-  // Cache tiers included: without them the cost loop falls back to the input
-  // rate for cache reads, a 10x overcharge on the dominant term.
-  fable: { input: 10.0, output: 50.0, cache_read: 0.25, cache_write: 12.5, cache_write_5m: 12.5, cache_write_1h: 20 },
-  opus: { input: 4.0, output: 20.0, cache_read: 0.2, cache_write: 5, cache_write_5m: 5, cache_write_1h: 8 },
-  sonnet: { input: 2.0, output: 10.0, cache_read: 0.1, cache_write: 2.5, cache_write_5m: 2.5, cache_write_1h: 4 },
-  // The haiku alias resolves to claude-haiku-5-5 (providers/model_catalog.json),
-  // so it carries the same row, over_100k tier included.
-  haiku: {
-    input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125, cache_write_5m: 0.125, cache_write_1h: 0.2,
-    over_100k: { input: 0.5, output: 2.5, cache_read: 0.05, cache_write: 0.625, cache_write_5m: 0.625, cache_write_1h: 1.0 },
-  },
-  // Exact-id key: kept so a dated id never resolves through the family
-  // substring match to a different row (Haiku 4.5 is priced differently).
-  // Exact id for the previous Haiku, still in the catalog: the haiku alias now
-  // prices as 5.5, so 4.5 must not resolve through it (page: $1/$5).
-  "claude-haiku-4-5": { input: 1.0, output: 5.0, cache_read: 0.1, cache_write: 1.25, cache_write_5m: 1.25, cache_write_1h: 2.0 },
-  "claude-haiku-5-5": {
-    input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125,
-    over_100k: { input: 0.5, output: 2.5, cache_read: 0.05, cache_write: 0.625 },
-  },
-  "gpt-5.3-codex": { input: 1.75, output: 14.0, cache_read: 0.175, cache_write: 2.1875 },
-};
-
-function _loadPricing(): PricingMap {
-  // Resolve relative to this module so the JSON is found in both source
-  // and bundled execution (bun --cwd works either way).
-  try {
-    const moduleDir = dirname(fileURLToPath(import.meta.url));
-    const jsonPath = resolve(moduleDir, "..", "..", "data", "model-pricing.json");
-    if (!existsSync(jsonPath)) return _FALLBACK_PRICING;
-    const raw = JSON.parse(readFileSync(jsonPath, "utf8")) as Record<string, unknown>;
-    const pricing = raw["pricing"];
-    if (!pricing || typeof pricing !== "object") return _FALLBACK_PRICING;
-    const out: PricingMap = {};
-    for (const [key, value] of Object.entries(pricing as Record<string, unknown>)) {
-      if (
-        value !== null &&
-        typeof value === "object" &&
-        typeof (value as PricingEntry).input === "number" &&
-        typeof (value as PricingEntry).output === "number"
-      ) {
-        // Carry the cache tiers through. Copying only input/output silently
-        // dropped them, so the `?? p.input` fallback in the cost loop charged
-        // cache reads at the FULL input rate -- a 10x overcharge on the term
-        // that dominates real traffic (a measured iteration: 797,496
-        // cache-read vs 10,272 input tokens). The two routes then disagreed
-        // 4.2x on the same run.
-        const _e = value as PricingEntry;
-        out[key] = {
-          input: _e.input,
-          output: _e.output,
-          ...(typeof _e.cache_read === "number" ? { cache_read: _e.cache_read } : {}),
-          ...(typeof _e.cache_write === "number" ? { cache_write: _e.cache_write } : {}),
-          ...(typeof _e.cache_write_5m === "number" ? { cache_write_5m: _e.cache_write_5m } : {}),
-          ...(typeof _e.cache_write_1h === "number" ? { cache_write_1h: _e.cache_write_1h } : {}),
-          ...(_e.over_100k && typeof _e.over_100k.input === "number" && typeof _e.over_100k.output === "number"
-            ? { over_100k: _e.over_100k }
-            : {}),
-        };
-      }
-    }
-    // Any required key missing? Fall back rather than ship partial.
-    for (const k of Object.keys(_FALLBACK_PRICING)) {
-      if (!(k in out)) return _FALLBACK_PRICING;
-    }
-    return out;
-  } catch {
-    return _FALLBACK_PRICING;
+// Carry the cache tiers through: copying only input/output made the `?? p.input` fallback in the cost loop
+// charge cache reads at the full input rate, a 10x overcharge on the term that dominates real traffic.
+function pricingFromJson(pricing: Record<string, unknown>): PricingMap {
+  const out: PricingMap = {};
+  for (const [key, value] of Object.entries(pricing)) {
+    const e = value as PricingEntry | null;
+    if (e === null || typeof e !== "object" || typeof e.input !== "number" || typeof e.output !== "number") continue;
+    out[key] = {
+      input: e.input,
+      output: e.output,
+      ...(typeof e.cache_read === "number" ? { cache_read: e.cache_read } : {}),
+      ...(typeof e.cache_write === "number" ? { cache_write: e.cache_write } : {}),
+      ...(typeof e.cache_write_5m === "number" ? { cache_write_5m: e.cache_write_5m } : {}),
+      ...(typeof e.cache_write_1h === "number" ? { cache_write_1h: e.cache_write_1h } : {}),
+      ...(e.over_100k && typeof e.over_100k.input === "number" && typeof e.over_100k.output === "number" ? { over_100k: e.over_100k } : {}),
+    };
   }
+  return out;
 }
 
-export const PRICING: Readonly<Record<string, PricingEntry>> = Object.freeze(
-  _loadPricing(),
-);
+export const PRICING: Readonly<Record<string, PricingEntry>> = Object.freeze(pricingFromJson(pricingJson.pricing));
 
 const DEFAULT_PRICING_KEY = "sonnet";
 
