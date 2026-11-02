@@ -136,7 +136,7 @@ export const implementStage: Stage = {
       const retry = `${first.iterationId}f`; ids.push(retry);
       session = await ctx.sessions.run({ ...unchained(), iterationId: retry });
     }
-    if (rt && !signal.aborted) session = await routeEscalate(ctx, first, session, rt, ids); // triggers b/c: one redo on the next rung
+    if (rt && !signal.aborted) session = await routeEscalate(ctx, first, session, rt, ids, () => treeIsEmpty(ctx)); // triggers b/c (and, under the preset, a no-diff already-done claim): one redo on the next rung
     if (session.markers.specConflict && !session.killed) { const r = await resumeAfterConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; if (r.iterationId !== ids[ids.length - 1]) ids.push(r.iterationId); } // FC-19: one correction, then the conflict is believed
     if (session.markers.specConflict && !session.killed && !signal.aborted) { const w = await adjudicateWallConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, readOnly); if (w) { session = w.session; ids.push(...w.ids); } } // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT: a Wall-anchored conflict goes to the referee (record: outputs.wall.arbitrated)
     if (!signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && treeIsEmpty(ctx)) { const r = await resumeAfterEmptyDone(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; ids.push(r.iterationId); } // FC-43: one correction for a done exit with no change

@@ -18,15 +18,15 @@ export const capToRunTier = (pin: string, runModel: string, pinKeys: readonly st
 /** A LOKI_SESSION_MODEL run never starts a session above its pin: a stage pin that ranks higher (Wall author, referee, already-done, project model) runs on the pin. No pin, or no stage pin: unchanged. */
 export const capToSessionPin = (model: string | undefined, env = process.env): string | undefined => { const pin = sessionPinModel(env); return model && pin && modelRank(model) > modelRank(pin) ? pin : model; };
 const klass = (m: string): string => resolveModelAlias(m).toLowerCase();
-export type EscalationTrigger = "code_fail" | "escalate_marker" | "spec_conflict" | "limit_kill" | "stall";
+export type EscalationTrigger = "code_fail" | "escalate_marker" | "spec_conflict" | "limit_kill" | "stall" | "already_done_claim";
 export interface UnitEscalation { unit: string; from: string; to: string; trigger: EscalationTrigger; evidence: string }
-const EVENT: Record<EscalationTrigger, EscalationEvent> = { code_fail: { kind: "code_fail_repeat" }, escalate_marker: { kind: "escalate_marker" }, spec_conflict: { kind: "spec_conflict" }, limit_kill: { kind: "limit_kill" }, stall: { kind: "stall" } };
+const EVENT: Record<EscalationTrigger, EscalationEvent> = { code_fail: { kind: "code_fail_repeat" }, escalate_marker: { kind: "escalate_marker" }, spec_conflict: { kind: "spec_conflict" }, limit_kill: { kind: "limit_kill" }, stall: { kind: "stall" }, already_done_claim: { kind: "escalate_marker" } }; // an already-done claim with no diff is weak evidence: one rung, like LOKI_ESCALATE
 /** ROUTER-1: per work unit ("run" for a single-unit run) ladder step, driven by decision.ts nextState. Only code-owned evidence reaches this (a harness-owned failure never does). A SPEC_CONFLICT confirmed on sonnet is BLOCKED, not a climb. decision.ts lacks one case, kept here: LOKI_ESCALATE on a run that already sits on sonnet goes to opus. Opus and unknown ids return null (never lowered). */
 export function climb(unit: string, current: string, trigger: EscalationTrigger, evidence: string): UnitEscalation | null {
   const k = klass(current);
   const model = k.includes("haiku") ? "haiku" : k.includes("sonnet") ? "sonnet" : null;
   if (!model) return null;
   const t = nextState({ model, swapped: false }, EVENT[trigger]);
-  const next = t.action === "none" || t.action === "blocked" || t.action === "stalled" ? (model === "sonnet" && trigger === "escalate_marker" ? "opus" : null) : t.state.model;
+  const next = t.action === "none" || t.action === "blocked" || t.action === "stalled" ? (model === "sonnet" && (trigger === "escalate_marker" || trigger === "already_done_claim") ? "opus" : null) : t.state.model;
   return next && next !== model ? { unit, from: current, to: resolveModelAlias(next), trigger, evidence: redactSecrets(evidence).slice(0, 300) } : null; // the evidence (a spec conflict, a failure sample) reaches events and the receipt: secrets redacted first
 }

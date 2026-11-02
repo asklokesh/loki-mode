@@ -316,6 +316,23 @@ if [ "$_cf_has" = "1" ]; then
 fi
 unset _cf_has _cf_out _cf_a
 
+# LOKI_IMPLEMENT_HAIKU_FIRST was removed: a set value maps to LOKI_ROUTER=auto
+# when LOKI_ROUTER is unset, then is cleared so neither engine notes it twice
+# (the TS twin is legacyHaikuFirst in loki-ts/src/util/cost_profile.ts).
+case "${LOKI_IMPLEMENT_HAIKU_FIRST:-}" in
+    ""|0|false|FALSE) ;;
+    *)
+        if [ -n "${LOKI_ROUTER:-}" ]; then
+            _hf_why="LOKI_ROUTER=${LOKI_ROUTER} is already set and wins."
+        else
+            export LOKI_ROUTER=auto
+            _hf_why="Mapped to LOKI_ROUTER=auto (Haiku executes implement and fix)."
+        fi
+        echo "Note: 'LOKI_IMPLEMENT_HAIKU_FIRST' is deprecated and has no effect of its own since the router auto preset. ${_hf_why} Accepted for back-compat only." >&2
+        unset LOKI_IMPLEMENT_HAIKU_FIRST _hf_why
+        ;;
+esac
+
 # --haiku opts implement and fix onto haiku (LOKI_ROUTER=auto plus the lean levers).
 # The default model stays the provider default, the same one a raw claude
 # session uses. A failed check climbs to sonnet (the router ladder, runner/router/unit_model.ts).
@@ -325,6 +342,10 @@ for _hk_a in "$@"; do
     case "$_hk_a" in --haiku) _hk_has=1 ;; esac
 done
 if [ "$_hk_has" = "1" ]; then
+    case "${LOKI_ROUTER:-auto}" in
+        auto|AUTO|Auto) ;;
+        *) echo "--haiku: LOKI_ROUTER=${LOKI_ROUTER} is already set and wins; the auto preset is not applied" >&2 ;;
+    esac
     : "${LOKI_ROUTER:=auto}"
     : "${LOKI_E10_TRIM:=1}"
     : "${LOKI_E10_SMALL_NO_RUNNER:=1}"

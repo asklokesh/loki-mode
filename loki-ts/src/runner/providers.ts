@@ -423,6 +423,7 @@ export function planRouterSession(args: {
   const env = args.env ?? process.env;
   const routed = routerEnabled(env);
   if (!routed && !advisorOnlyEnabled(env)) return null;
+  if (routed && routerPreset(env) && /opus/i.test(args.model)) return null; // LOKI_ROUTER=auto: an Opus executor (a plan, or a fix round that climbed to Opus) gets no Opus advisor
   const probe = probeAdvisor(env, "claude", args.claudeCodeVersion, args.runDir, advisorPair(env, args.model));
   // Advisor alone (#246): the advisor and nothing else. No executor swap, no compact window, so the only variable is the advisor.
   if (!routed) return probe.available ? { model: args.model, settings: { advisorModel: ROUTER_ADVISOR_MODEL } } : null;

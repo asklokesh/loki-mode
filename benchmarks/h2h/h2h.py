@@ -30,7 +30,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 TASKS_DIR = HERE / "tasks"
-CONFIGS = ["raw-haiku", "raw-opus", "loki-haiku", "loki-default"]
+# loki-haiku-flag is `loki start --haiku` as a user types it (no env pin): the cheap-model opt-in route.
+CONFIGS = ["raw-haiku", "raw-opus", "loki-haiku", "loki-default", "loki-haiku-flag"]
 # Offline configs for checking the task set itself: oracle applies tasks/<id>/solution, noop changes nothing.
 CHECK_CONFIGS = ["oracle", "noop"]
 # Learning protocol (--sequences): Loki on Haiku with what it learns from earlier runs in the same repo.
@@ -138,6 +139,8 @@ def contestant_cmd(config, task):
                 "--output-format", "json", "--dangerously-skip-permissions"]
     if config in ("loki-haiku", "loki-default") or config in SEQUENCE_CONFIGS:
         return ["bash", str(ROOT / "bin" / "loki"), text, "--no-pr"]
+    if config == "loki-haiku-flag":
+        return ["bash", str(ROOT / "bin" / "loki"), text, "--no-pr", "--haiku"]
     raise ValueError(f"unknown config {config}")
 
 

@@ -5,15 +5,22 @@
 # owned model selection per session (scope-and-fix owns read-only tests and fix-loop stopping on a fixed model).
 # Asserts:
 #   unit:     routerMode auto; the preset executor (Haiku, LOKI_ALLOW_HAIKU=false -> Sonnet, LOKI_ROUTER_EXECUTOR wins); the route
-#             record source "preset"; hardReason (large, many non-test source files); a fix round never starts below implement's
+#             record source "preset"; hardReason from task evidence only (large, truncated map, a task naming more than 4
+#             non-test files; never repo size); a fix round never starts below implement's
 #             model; a climb's evidence is redacted; providers.ts keeps the Haiku executor on a stage the advisor is not scoped to
-#             (the no-advisor floor still raises Haiku when the router is not the preset); --model (LOKI_SESSION_MODEL) is a pin.
+#             (the no-advisor floor still raises Haiku when the router is not the preset); --model (LOKI_SESSION_MODEL) and
+#             LOKI_MODEL_DEVELOPMENT are pins; an Opus executor gets no Opus advisor under the preset; the
+#             LOKI_IMPLEMENT_HAIKU_FIRST and kept-LOKI_ROUTER notes (TS start path).
 #   small:    implement on haiku, no plan session, no advisor on implement, VERIFIED; the start line names the preset and the
 #             downgrade; the receipt route block records executor haiku, source preset.
 #   fix:      a wrong first attempt: the fix round climbs to sonnet (routedFix) with the opus advisor attached; no opus executor.
 #   conflict: Haiku answers a spec conflict on implement: one redo on sonnet (routeEscalate) delivers it; the conflict text's
 #             secret never reaches events.jsonl or receipt.json; the fix round that follows a wrong sonnet redo is not on haiku.
-#   hard:     a repo with 12 non-test source files: the plan session runs on opus with the preset plan instruction.
+#   hard:     a repo with 12 more source files and a one-file task: no plan session; a task naming 6 files: the plan session
+#             runs on opus, with no advisor, and the preset plan instruction.
+#   already:  Haiku claims already-done with no diff: one sonnet redo (trigger already_done_claim).
+#   notice:   LOKI_IMPLEMENT_HAIKU_FIRST=1 prints the deprecation note once and maps to LOKI_ROUTER=auto; --haiku with
+#             LOKI_ROUTER=1 prints one line and keeps LOKI_ROUTER=1.
 #   default:  without LOKI_ROUTER=auto (stray LOKI_ROUTER_EXECUTOR=haiku set) nothing is routed: no haiku, no advisor.
 #   pins:     LOKI_SESSION_MODEL=sonnet wins over the preset; LOKI_ALLOW_HAIKU=false makes the executor sonnet.
 #
@@ -25,6 +32,13 @@
 #   5. model_rank.ts climb: evidence not redacted (unit: the token stays in the climb evidence; the run record is also redacted downstream).
 #   6. decision.ts envOverride: drop LOKI_SESSION_MODEL (pins leg: implement on haiku under --model sonnet).
 #   7. plan.ts: plan every task under the preset (small leg: a plan session runs).
+#   8. sizing.ts hardReason: count repo files instead of task-named files (unit, and hard leg: a one-file task gets an opus plan).
+#   9. decision.ts envOverride: drop LOKI_MODEL_DEVELOPMENT (unit: devpin).
+#  10. providers.ts planRouterSession: drop the opus-executor no-advisor line (unit, and hard leg: plan advisor opus).
+#  11. implement_route.ts routeEscalate: never treat a no-diff already-done claim as a climb (already leg).
+#  12. bin/loki: drop the LOKI_IMPLEMENT_HAIKU_FIRST mapping (notice legs).
+#  13. bin/loki: drop the kept-LOKI_ROUTER line for --haiku (notice leg).
+#  14. start.ts: drop the kept-LOKI_ROUTER line for --haiku (unit: tsnote).
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
 need git
@@ -39,18 +53,21 @@ TO=(); command -v timeout >/dev/null 2>&1 && TO=(timeout 120)
 TOKEN="ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab"
 
 # --- unit: the pure decisions, through the source -------------------------------------------------------------------
-U="$(cd "$ROOT/loki-ts" && env -u LOKI_SESSION_MODEL -u LOKI_MODEL_OVERRIDE -u LOKI_CLAUDE_MODEL_DEVELOPMENT -u LOKI_MODEL_DEVELOPMENT -u LOKI_ROUTER_EXECUTOR -u LOKI_ALLOW_HAIKU LOKI_ROUTER=auto \
-  TOKEN="$TOKEN" bun -e '
+U="$(cd "$ROOT/loki-ts" && env -u LOKI_SESSION_MODEL -u LOKI_MODEL_OVERRIDE -u LOKI_CLAUDE_MODEL_DEVELOPMENT -u LOKI_MODEL_DEVELOPMENT -u LOKI_ROUTER_EXECUTOR -u LOKI_ALLOW_HAIKU -u LOKI_IMPLEMENT_HAIKU_FIRST -u LOKI_COST_PROFILE LOKI_ROUTER=auto \
+  LOKI_DIR="$T/unit-loki" TOKEN="$TOKEN" bun -e '
 import { routerMode, presetExecutor } from "./src/runner/router/flag.ts";
 import { routeRecord, routedFix, routerActive } from "./src/runner/router/unit_model.ts";
 import { hardReason } from "./src/engine10/sizing.ts";
 import { climb } from "./src/runner/model_rank.ts";
 import { planRouterSession } from "./src/runner/providers.ts";
+import { legacyHaikuFirst, routerKeptNote } from "./src/util/cost_profile.ts";
+import { parseStartArgs } from "./src/commands/start.ts";
 const files = (n) => ({ files: Array.from({ length: n }, (_, i) => `src/f${i}.ts`).concat(["tests/a.test.ts", "b_test.go"]), entries: [], truncated: false });
 const out = [];
 out.push(`mode=${routerMode({ LOKI_ROUTER: "auto" })}`, `exec=${presetExecutor({}).model}`, `nohaiku=${presetExecutor({ LOKI_ALLOW_HAIKU: "false" }).model}`, `fixed=${presetExecutor({ LOKI_ROUTER_EXECUTOR: "sonnet" }).model}`);
 const rr = routeRecord("claude (provider default)", undefined); out.push(`record=${rr.source}:${rr.model}:${rr.valid}`);
-out.push(`hard:small10=${hardReason("small", files(10))}`, `hard:small11=${hardReason("small", files(11)) !== null}`, `hard:large=${hardReason("large", files(1))}`);
+const named = (n) => "change " + Array.from({ length: n }, (_, i) => `f${i}.ts`).join(", ") + " and a.test.ts";
+out.push(`hard:bigrepo=${hardReason("normal", files(50), "fix the add function")}`, `hard:names4=${hardReason("normal", files(12), named(4))}`, `hard:names5=${hardReason("normal", files(12), named(5)) !== null}`, `hard:large=${hardReason("large", files(1), "x")}`, `hard:trunc=${hardReason("small", { ...files(1), truncated: true }, "x") !== null}`);
 const lint = [{ signature: "lint:eslint" }];
 const f = routedFix("claude (provider default)", { implement: { route_model: "claude-sonnet-5-5" }, fix: { model: "claude-haiku-5-5" } }, { repeated: false, stall: false, groups: lint, reason: "lint" });
 out.push(`nodescend=${f.pin}`);
@@ -61,11 +78,20 @@ const keep = planRouterSession({ model: "claude-haiku-5-5", runDir: "/nonexisten
 const fix = planRouterSession({ model: "claude-sonnet-5-5", runDir: "/nonexistent", claudeCodeVersion: "2.1.316", env: { LOKI_ROUTER: "auto" } });
 const r1 = planRouterSession({ model: "claude-haiku-5-5", runDir: "/nonexistent", claudeCodeVersion: "2.1.316", env: { LOKI_ROUTER: "1", LOKI_ADVISOR_SCOPE: "off" } });
 out.push(`scopeoff=${JSON.stringify(keep)}`, `fixadv=${fix?.settings?.advisorModel}`, `router1floor=${r1?.model}`);
-out.push(`pin=${routerActive({ LOKI_ROUTER: "auto", LOKI_SESSION_MODEL: "sonnet" })}`);
+out.push(`pin=${routerActive({ LOKI_ROUTER: "auto", LOKI_SESSION_MODEL: "sonnet" })}`, `devpin=${routerActive({ LOKI_ROUTER: "auto", LOKI_MODEL_DEVELOPMENT: "sonnet" })}`);
+out.push(`opusadv=${JSON.stringify(planRouterSession({ model: "claude-opus-5-5", runDir: "/nonexistent", claudeCodeVersion: "2.1.316", env: { LOKI_ROUTER: "auto" } }))}`, `opusadv1=${planRouterSession({ model: "claude-opus-5-5", runDir: "/nonexistent", claudeCodeVersion: "2.1.316", env: { LOKI_ROUTER: "1" } })?.settings?.advisorModel}`);
+out.push(`adc=${climb("run", "claude-haiku-5-5", "already_done_claim", "x")?.to}`);
+const le = { LOKI_IMPLEMENT_HAIKU_FIRST: "1" }, set = {}; const ln = legacyHaikuFirst(le, (k, v) => { set[k] = v; });
+const le2 = { LOKI_IMPLEMENT_HAIKU_FIRST: "1", LOKI_ROUTER: "1" }, set2 = {}; const ln2 = legacyHaikuFirst(le2, (k, v) => { set2[k] = v; });
+out.push(`legacy=${set.LOKI_ROUTER}:${ln.startsWith("Note: \u0027LOKI_IMPLEMENT_HAIKU_FIRST\u0027 is deprecated")}:${"LOKI_IMPLEMENT_HAIKU_FIRST" in le}`, `legacykept=${set2.LOKI_ROUTER ?? "unset"}:${ln2.includes("LOKI_ROUTER=1 is already set and wins")}`);
+out.push(`kept=${routerKeptNote("--haiku", { LOKI_ROUTER: "1" }) !== ""}:${routerKeptNote("--haiku", { LOKI_ROUTER: "auto" })}:${routerKeptNote("--haiku", {})}`);
+const errs = []; const pe = {}; const saved = process.env.LOKI_ROUTER; process.env.LOKI_ROUTER = "1";
+parseStartArgs(["--haiku", "--cost", "lean", "task"], (x) => errs.push(x), () => {}, (k, v) => { pe[k] = v; }); process.env.LOKI_ROUTER = saved;
+out.push(`tsnote=${errs.filter((e) => e.includes("is already set and wins")).length}:${pe.LOKI_ROUTER ?? "unset"}`);
 console.log(out.join(" "));
 ' 2>&1)"
-want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:small10=null hard:small11=true hard:large=task sized large nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false"
-[ "$U" = "$want" ] && ok "unit: preset executor and record, hardReason, never descend, redacted climb evidence, scoped advisor keeps the executor, --model pins" || bad "unit gave: $U"
+want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=true nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 legacy=auto:true:false legacykept=unset:true kept=true:: tsnote=1:unset"
+[ "$U" = "$want" ] && ok "unit: preset executor and record, hardReason on task evidence only, never descend, redacted climb evidence, scoped advisor keeps the executor, --model and LOKI_MODEL_DEVELOPMENT pin, no opus advisor on an opus executor, an already-done claim climbs, the LOKI_IMPLEMENT_HAIKU_FIRST and kept-router notes" || bad "unit gave: $U"
 
 # --- e2e on the stub provider ---------------------------------------------------------------------------------------
 # run_engine <task> <env...> -> REPO, OUT, RUNDIR, ROUTES ("<stage> <iteration> model=<m> advisor=<a> wall=<0|1>" per session)
@@ -80,10 +106,10 @@ run_engine() {
     git -C "$REPO" config user.email e2e@example.invalid
     git -C "$REPO" add -- .
     git -C "$REPO" commit -q -m base
-    OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_SESSION_MODEL -u LOKI_ROUTER_EXECUTOR -u LOKI_ALLOW_HAIKU -u LOKI_RECEIPT_SIGNING_KEY \
+    OUT="$(cd "$REPO" && env -u LOKI_IMPLEMENT_HAIKU_FIRST -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_SESSION_MODEL -u LOKI_ROUTER_EXECUTOR -u LOKI_ALLOW_HAIKU -u LOKI_RECEIPT_SIGNING_KEY \
         LOKI_ROUTER=auto LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" LOKI_NO_COMPLETIONS=1 \
         E2E_STUB_ROUTE_LOG="$ROUTES" E2E_STUB_PROMPT_LOG="$d/prompt" LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" \
-        "$@" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$task" --no-pr 2>&1)"
+        "$@" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$task" --no-pr ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} 2>&1)"
     RUNDIR=""
     if [ -f "$REPO/.loki/engine.json" ]; then
         rid="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_id"])' "$REPO/.loki/engine.json" 2>/dev/null)"
@@ -123,9 +149,24 @@ run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit E2E_STUB_IMPL_CONFLICT
 case "$(model_of fix)" in ""|*haiku*) bad "conflict: the fix after a sonnet redo ran '$(model_of fix)'"; dump ;; *) ok "conflict: the fix after a sonnet redo never descends to haiku ($(model_of fix))" ;; esac
 
 HARD_REPO=1 run_engine "$TASK" E2E_STUB_MODE=done
-[ "$(model_of plan)" = "opus" ] && ok "hard: opus planned the hard task" || { bad "hard: plan on '$(model_of plan)'"; dump; }
+[ -z "$(model_of plan)" ] && ok "hard: a large repo alone gets no plan session (repo size is not task evidence)" || { bad "hard: plan on '$(model_of plan)' for a one-file task"; dump; }
+HARD_REPO=1 run_engine "add a multiply(a, b) function to calc.ts and re-export it from m1.ts, m2.ts, m3.ts, m4.ts and m5.ts" E2E_STUB_MODE=done
+[ "$(model_of plan)" = "opus" ] && ok "hard: opus planned a task naming 6 files" || { bad "hard: plan on '$(model_of plan)'"; dump; }
+[ "$(adv_of plan)" = "none" ] && ok "hard: the opus plan carried no opus advisor" || bad "hard: plan advisor '$(adv_of plan)'"
 has "hard: the plan brief asks for files, pitfalls and the proving test" "$(cat "$(dirname "$ROUTES")"/prompt.plan* 2>/dev/null)" "the pitfalls"
 [ "$(model_of implement)" = "haiku" ] && ok "hard: haiku implemented the plan" || bad "hard: implement on '$(model_of implement)'"
+
+run_engine "$TASK" E2E_STUB_MODE=already
+[ "$(model_of implement)" = "haiku sonnet" ] && ok "already: Haiku's no-diff already-done claim got one sonnet redo" || { bad "already: implement models '$(model_of implement)'"; dump; }
+grep -q '"already_done_claim"' "$RUNDIR/events.jsonl" 2>/dev/null && ok "already: the climb is recorded as already_done_claim" || bad "already: no already_done_claim climb in events.jsonl"
+
+run_engine "$TASK" E2E_STUB_MODE=done LOKI_ROUTER= LOKI_IMPLEMENT_HAIKU_FIRST=1
+has "notice: LOKI_IMPLEMENT_HAIKU_FIRST prints the deprecation note" "$OUT" "Note: 'LOKI_IMPLEMENT_HAIKU_FIRST' is deprecated"
+[ "$(model_of implement)" = "haiku" ] && ok "notice: LOKI_IMPLEMENT_HAIKU_FIRST maps to LOKI_ROUTER=auto (implement on haiku)" || { bad "notice: implement on '$(model_of implement)'"; dump; }
+[ "$(printf '%s\n' "$OUT" | grep -c "LOKI_IMPLEMENT_HAIKU_FIRST' is deprecated")" = 1 ] && ok "notice: the deprecation note prints once" || bad "notice: the deprecation note count is not 1"
+EXTRA_ARGS=(--haiku); run_engine "$TASK" E2E_STUB_MODE=done LOKI_ROUTER=1; EXTRA_ARGS=()
+[ "$(printf '%s\n' "$OUT" | grep -c -- "--haiku: LOKI_ROUTER=1 is already set and wins")" = 1 ] && ok "notice: --haiku with LOKI_ROUTER=1 prints one line and the explicit value wins" || { bad "notice: no single kept-router line"; dump; }
+case "$OUT" in *"route: auto preset"*) bad "notice: --haiku overrode LOKI_ROUTER=1" ;; *) ok "notice: --haiku did not override LOKI_ROUTER=1" ;; esac
 
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit LOKI_ROUTER= LOKI_ROUTER_EXECUTOR=haiku
 grep -q 'model=[^ ]*haiku' "$ROUTES" && bad "default: a session ran on haiku without the preset" || ok "default: without LOKI_ROUTER=auto no session runs on haiku"

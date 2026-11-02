@@ -15,7 +15,7 @@ import type { ProviderName, SessionTier } from "../runner/types.ts";
 import { tokenFreeEnv, safeGitRun } from "../util/safe_git.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { GENERIC_TIERS, VALID_TIERS } from "../util/claude_model.ts";
-import { applyCostProfile, COST_PROFILES } from "../util/cost_profile.ts";
+import { applyCostProfile, COST_PROFILES, legacyHaikuFirst, routerKeptNote } from "../util/cost_profile.ts";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 import { suggestWord } from "../cli/registry.ts";
 import { VALID_PROVIDERS } from "../runner/router/cost_preview.ts";
@@ -187,6 +187,7 @@ export function parseStartArgs(
     return 0;
   }
 
+  const legacy = legacyHaikuFirst(process.env, applyEnv); if (legacy) err(legacy + "\n"); // removed LOKI_IMPLEMENT_HAIKU_FIRST maps to LOKI_ROUTER=auto
   const attemptsMode = hasAttemptsFlag(args);
   const specMode = hasSpecFlag(args);
   if (attemptsMode && specMode) {
@@ -235,6 +236,7 @@ export function parseStartArgs(
       }
       const boolEnv = BOOL_ENV_FLAGS.get(name);
       if (name === "--haiku") { // the lean profile's levers plus LOKI_COST_FIRST; explicit env wins
+        const kept = routerKeptNote("--haiku", process.env); if (kept) err(kept + "\n");
         for (const [k, v] of Object.entries({ ...COST_PROFILES.lean, LOKI_COST_FIRST: "1" })) {
           if (process.env[k] === undefined || process.env[k] === "") applyEnv(k, v);
         }
@@ -328,6 +330,7 @@ export function parseStartArgs(
     }
   }
   try {
+    const kept = (costRaw ?? "").trim().toLowerCase() === "lean" && !args.includes("--haiku") ? routerKeptNote("--cost lean", process.env) : ""; if (kept) err(kept + "\n");
     const note = applyCostProfile(costRaw, process.env, applyEnv, process.env["LOKI_DIR"] ?? ".loki");
     if (note) out(note + "\n");
   } catch (e) {

@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { readRepoMapCache, repoCacheDir, repoKey } from "./cache.ts";
 import { speedLikelyFiles } from "../features/speed/lean_select.ts"; import { deliverables } from "../features/decompose.ts";
-import { resolveClaudeModel } from "../util/claude_model.ts"; import { wallConcurrent } from "../util/wall_knobs.ts";
+import { resolveClaudeModel } from "../util/claude_model.ts"; import { isTestFile } from "../util/test_file_text.ts"; import { wallConcurrent } from "../util/wall_knobs.ts";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap, TestRef } from "./types.ts";
 
@@ -32,18 +32,14 @@ export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | nul
   return why.length ? { size: "normal", reasons: why } : { size: "small", reasons: [`task ${task.length} chars, names ${named} files`] };
 }
 
-/** More non-test source files than this makes a task hard. Measured on benchmarks/h2h: every bench v2 repo has at most 5, every hard-suite repo at least 12. */
-export const HARD_SRC_FILES = 10;
-const SRC_RE = /\.(ts|tsx|js|jsx|mjs|py|go|rs|java|kt|rb|php|cs|c|cc|cpp|h|hpp|swift|scala)$/;
-const TEST_RE = /(^|\/)(tests?|__tests__|spec|testdata)\/|[._-](test|spec)\.[a-z]+$|_test\.go$|(^|\/)test_[^/]*$/i;
-/** Non-test source files in a file list. */
-export const srcFileCount = (files: readonly string[]): number => files.filter((f) => SRC_RE.test(f) && !TEST_RE.test(f)).length;
-/** Why a task is hard (finding the place to change is the work): sized large, a truncated repo map, or more than HARD_SRC_FILES source files. Null otherwise. */
-export function hardReason(size: TaskSize, map: RepoMap | null): string | null {
+/** A task that names more non-test repo files than this is hard (between the "normal" bar of 2 and the "large" bar of LARGE_NAMED_FILES). */
+export const HARD_NAMED_FILES = 4;
+/** Why a task is hard, from task evidence only, never repo size: sized large (deliverables() or more than LARGE_NAMED_FILES named files), a truncated repo map, or the task naming more than HARD_NAMED_FILES non-test files. Null otherwise. */
+export function hardReason(size: TaskSize, map: RepoMap | null, task: string): string | null {
   if (size === "large") return "task sized large";
   if (map?.truncated) return "repo map truncated at the file cap";
-  const n = srcFileCount(map?.files ?? []);
-  return n > HARD_SRC_FILES ? `repo has ${n} non-test source files > ${HARD_SRC_FILES}` : null;
+  const n = namedFiles(task, map).filter((f) => !isTestFile(f)).length;
+  return n > HARD_NAMED_FILES ? `task names ${n} non-test files > ${HARD_NAMED_FILES}` : null;
 }
 
 /** Best-effort RepoMap load from intake's repomap_ref; missing/unreadable is null, never a crash. */
