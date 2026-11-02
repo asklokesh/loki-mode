@@ -65,7 +65,7 @@ REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 TRACKER_RE = re.compile(r"^(jira|linear):([A-Za-z][A-Za-z0-9_]*)$")
 # A tracker item key names worktree, branch and log paths: only PROJECT-<number> of the listed project is accepted.
 ITEM_KEY_RE = r"^%s-\d+$"  # %s: the validated, uppercased project key
-TRACKER_SECRETS = {"jira": ("JIRA_API_TOKEN",), "linear": ("LINEAR_API_KEY",)}
+TRACKER_SECRETS = {"jira": ("JIRA_API_TOKEN", "JIRA_TOKEN", "LOKI_JIRA_TOKEN"), "linear": ("LINEAR_API_KEY", "LOKI_LINEAR_TOKEN")}  # each tracker's token and its aliases
 
 
 def say(msg):
@@ -232,10 +232,13 @@ def add_spend(usd):
 
 def parse_result(rc, text):
     """-> (ok, status line text, cost_usd or None)."""
-    pr = re.search(r"^PR:\s+(https?://\S+)", text, re.M)
+    pr = re.search(r"^PR:\s+((?:https?|local)://\S+)", text, re.M)  # local://: published to a local bare origin (engine10-push.sh)
     why = re.search(r"^Reason:\s+(.+)$", text, re.M)
     cost = re.search(r"^Cost:\s+(?:partial:\s+)?\$([0-9]+(?:\.[0-9]+)?)", text, re.M)
     usd = float(cost.group(1)) if cost else None
+    plan = re.search(r"^Split planning:\s+(?:partial:\s+)?\$([0-9]+(?:\.[0-9]+)?)", text, re.M)  # a refused split's planning sessions
+    if plan:
+        usd = (usd or 0.0) + float(plan.group(1))
     reason = why.group(1).strip() if why else ""
     if rc == 0:
         return True, ("PR " + pr.group(1)) if pr else "VERIFIED", usd
@@ -490,7 +493,7 @@ def main(argv):
                    "deps": [key_of[d] for d in u["deps"]],
                    "env": {"LOKI_GROUP_ID": group, "LOKI_UNIT_ID": u["id"], "LOKI_UNIT_N": str(u["n"]),
                            "LOKI_UNIT_DEPS": ",".join(u["deps"]), "LOKI_UNIT_WRITE_SET": "\n".join(u["write_set"])},
-                   "done": u["done"], "base": u["base"]}
+                   "done": u["done"], "base": u["base"], "drop": sum(TRACKER_SECRETS.values(), ())}  # a unit is a text task: no tracker token
         if u["spec"]:  # frozen group acceptance for unit_mode (wall.ts)
             spec[k]["env"].update(LOKI_UNIT_SPEC=u["spec"], LOKI_SPEED="1")
     state = {k: {"status": "queued", "ok": None, "cost": None, "ran": False} for k in spec}

@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { MAX_PARALLEL, makeDefaultRunner, queueAdd, queueRun, type ItemResult, type QueueDeps, type RunOpts, type RunResult } from "./queue.ts";
 import { estimateFor, startText, type EstimateResult } from "../runner/router/cost_preview.ts";
-import { epicOutcome, makeSessionDecompose, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
+import { epicOutcome, makeSessionDecompose, splitCost, splitCostText, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { resolveModel } from "../engine10/session.ts";
@@ -450,8 +450,9 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
       d.worktree.remove(name, wt);
     }
     const prUrl = PR_URL_RE.exec(res.output)?.[0] ?? null;
+    const budget = res.rc === 3 || /^Outcome:\s+BUDGET_STOP\b/m.test(res.output);
     const verdict = res.verdict || (res.rc === 0 ? "COMPLETED (no proof verdict)" : `FAILED (exit ${res.rc})`);
-    const r: SliceResult = { id: s.id, title: s.title, parent, outcome: verdict, pr: prUrl, cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : "NOT RECORDED", branch: res.runId ? `loki/${res.runId}` : null, rc: res.rc };
+    const r: SliceResult = { id: s.id, title: s.title, parent, outcome: verdict, pr: prUrl, cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : "NOT RECORDED", branch: res.runId ? `loki/${res.runId}` : null, rc: res.rc, usd: typeof res.costUsd === "number" ? res.costUsd : null, budget };
     d.out(`#${n} ${s.id} ${verdict}  pr ${prUrl ?? "none"}  cost ${r.cost}\n`);
     return r;
   };
@@ -459,9 +460,8 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
   const prs = results.filter((r) => r.pr).length;
   const failed = results.filter((r) => /^(FAILED|BLOCKED)/.test(r.outcome)).length;
   const skipped = results.filter((r) => r.outcome.startsWith("SKIPPED")).length;
-  const usd = results.map((r) => /^\$(\d+\.\d+)$/.exec(r.cost)).filter((m): m is RegExpExecArray => m !== null).reduce((sum, m) => sum + Number(m[1]), 0);
-  const anyUnmetered = results.some((r) => r.cost === "NOT RECORDED");
-  const cost = results.length - skipped === 0 ? "-" : anyUnmetered ? `NOT RECORDED${usd > 0 ? ` (at least $${usd.toFixed(2)})` : ""}` : `$${usd.toFixed(2)}`;
+  const c = splitCost(results); // the one sum (issues_epic.ts), unrounded slice figures
+  const cost = c.slices === 0 ? "-" : c.measured < c.parts ? `NOT RECORDED${c.usd ? ` (at least $${c.usd.toFixed(2)})` : ""}` : `$${(c.usd ?? 0).toFixed(2)}`;
   return { results, outcome: `split: ${results.length} slices, ${prs} PRs, ${failed} failed, ${skipped} skipped`, cost, time: secs((Date.now() - t0) / 1000), tree: renderEpicTree(n, e.issue.title, results) };
 }
 
@@ -472,7 +472,9 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
  * (one at a time). Engine Law L0 reconciliation, as in `loki issues run`: the size rule is deterministic and free (the E-45 cost path makes no model
  * call) and only decides whether to ask for a split; the split itself is the model's (one Opus planning session, schema-checked here). A refused split,
  * a non-GitHub issue, LOKI_SPEED=0 or a unit/slice child returns null and the caller runs the single path, which still sizes large (plan kept).
- * Slice receipts are copied to <runDir>/slices/ and the epic record to <runDir>/epic.json. Exit 0 only when every slice reached VERIFIED or PARTIAL.
+ * Slice receipts are copied to <runDir>/slices/ and the epic record to <runDir>/epic.json. The exit code and the Outcome, PR and Cost lines are the
+ * whole split's (issues_epic.ts epicOutcome): FAILED 1, BUDGET_STOP 3, PARTIAL 6, VERIFIED 0. A refused split prints the planning cost as a
+ * `Split planning:` line before the single run, so `loki backlog` still counts it.
  */
 export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr: boolean; provider: string; capUsd?: number; env?: NodeJS.ProcessEnv; inject?: Partial<EpicDeps & { decompose: IssuesRunDeps["decompose"] }> }): Promise<number | null> {
   const env = o.env ?? process.env;
@@ -486,7 +488,7 @@ export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr:
   const size = { size: "large" as const, reasons: [`${st.reason}: decompose`] };
   const lokiDir = env["LOKI_DIR"] ?? join(o.repoDir, ".loki");
   const userEnv: NodeJS.ProcessEnv = groupEnv({ ...env }, o.capUsd ?? 0, o.repoDir); // one cap and one ledger for the whole issue: slices share the total, never a cap each
-  const base = makeDefaultRunner(lokiDir);
+  const base = makeDefaultRunner(lokiDir), planUsd: (number | null)[] = []; // one entry per decompose session, the re-ask included
   const d: EpicDeps & { decompose: IssuesRunDeps["decompose"] } = {
     // A slice keeps its run branch: a dependent slice stacks on it (MASS-2); the next run's sweep saves and removes it.
     runner: (ref, opts) => base(ref, { ...opts, env: opts.cwd ? { ...userEnv, LOKI_KEEP_RUN_BRANCH: "1" } : userEnv }),
@@ -494,7 +496,7 @@ export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr:
     out: (s) => void process.stdout.write(s),
     err: (s) => void process.stderr.write(s),
     worktree: makeWorktrees(o.repoDir),
-    decompose: makeSessionDecompose(o.repoDir, lokiDir, o.provider),
+    decompose: makeSessionDecompose(o.repoDir, lokiDir, o.provider, (usd) => planUsd.push(usd)),
     ...o.inject,
   };
   const why = size.reasons.join("; ");
@@ -502,13 +504,14 @@ export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr:
   const plan = await splitWithReask(d, raw.repo, issue, `deterministic sizing: ${why}`);
   if (!plan.ok) {
     d.out(`loki: split refused (${clip(plan.reason, 160)}); running the issue as one run\n`);
+    if (planUsd.length) d.out(`Split planning: ${splitCostText(splitCost([], planUsd))}\n`); // the single run's own Cost line never includes it
     return null;
   }
   d.out(`#${issue.number} split into ${plan.slices.length} slices: ${plan.slices.map((s) => s.id + (plan.parent[s.id] ? `<-${plan.parent[s.id]}` : "")).join(", ")}\n`);
   const r = await runOneEpic(d, raw.repo, { issue, plan }, 1, join(o.runDir, "slices"), !o.noPr);
   try { writeFileSync(join(o.runDir, "epic.json"), JSON.stringify({ issue: `${raw.repo}#${issue.number}`, size: size.size, reasons: size.reasons, slices: plan.slices, results: r.results }, null, 2) + "\n"); } catch { /* the printed tree still reports every slice */ }
-  d.out(`\n${r.tree}${r.outcome}; cost ${r.cost}; ${r.time}\n`);
-  const agg = epicOutcome(r.results); // the standard Outcome/Reason/Cost lines, so `loki backlog` reads the true verdict and adds the cost to its day ledger
+  d.out(`\n${r.tree}${r.outcome}; ${r.time}\n`);
+  const agg = epicOutcome(r.results, planUsd); // the standard Outcome/Reason/PR/Cost lines (the one cost sum), so `loki backlog` reads the true verdict and cost
   d.out(agg.lines);
   return agg.rc;
 }
@@ -525,7 +528,7 @@ export function wholeRunTooLarge(pr: string | null | undefined, res: Pick<RunRes
   return res.verdict === "FAILED" && res.didWork === true;
 }
 
-const PR_URL_RE = /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/;
+const PR_URL_RE = /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+|local:\/\/\/[^\s#]+#[A-Za-z0-9._\/-]+/; // local://: a run published to a local bare origin (engine10-push.sh, E-41)
 
 /** The per-run USD band and its label: measured history, else the labelled rough prior (F2), else null (NOT AVAILABLE). */
 function perRun(est: EstimateResult): { usd: [number, number]; tilde: string; label: string } | null {

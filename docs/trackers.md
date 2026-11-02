@@ -17,7 +17,7 @@ loki backlog linear:ENG --label loki
 loki backlog jira:PROJ --issues 12,14     # PROJ-12 and PROJ-14
 ```
 
-The project key is case-insensitive (`jira:proj` is `jira:PROJ`). An item whose key is not `PROJ-<number>` stops the listing before anything runs. Each run gets only its own tracker's token: a Jira run never sees `LINEAR_API_KEY`, a Linear run never sees `JIRA_API_TOKEN`, and a GitHub run sees neither. Open means a Jira status category other than Done, or a Linear state other than completed or canceled. At most 200 items are listed. A large Jira or Linear item runs as one run: only GitHub issues are split into slices today, and the triage reason says so.
+The project key is case-insensitive (`jira:proj` is `jira:PROJ`). An item whose key is not `PROJ-<number>` stops the listing before anything runs. Each run gets only its own tracker's token: a Jira run never sees `LINEAR_API_KEY` or `LOKI_LINEAR_TOKEN`, a Linear run never sees `JIRA_API_TOKEN`, `JIRA_TOKEN` or `LOKI_JIRA_TOKEN`, and a GitHub run or a `--dag` unit sees none of them. Open means a Jira status category other than Done, or a Linear state other than completed or canceled. At most 200 items are listed. A large Jira or Linear item runs as one run: only GitHub issues are split into slices today, and the triage reason says so.
 
 ## Credentials (environment only)
 

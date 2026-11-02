@@ -124,7 +124,7 @@ off="$(cd "$REPO" && LOKI_TRIAGE=0 ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" bac
 cat > "$T/launcher" <<'EOF'
 #!/usr/bin/env bash
 echo "$1 class=${LOKI_TRIAGE_CLASS:-} reason=${LOKI_TRIAGE_REASON:-}" >> "$LAUNCH_LOG"
-echo "$1 jira_token=${JIRA_API_TOKEN:+set} linear_key=${LINEAR_API_KEY:+set}" >> "$LAUNCH_LOG.env"
+echo "$1 jira_token=${JIRA_API_TOKEN:+set}${JIRA_TOKEN:+alias}${LOKI_JIRA_TOKEN:+alias} linear_key=${LINEAR_API_KEY:+set}${LOKI_LINEAR_TOKEN:+alias}" >> "$LAUNCH_LOG.env"
 echo "Outcome: VERIFIED"
 EOF
 chmod +x "$T/launcher"
@@ -139,7 +139,7 @@ has "dry run: the large epic is shown running split into slices" "$dry" "| large
 [ ! -e "$T/launch.log" ] && [ ! -d "$REPO/.loki/specs" ] && ok "dry run: nothing launched, no spec drafted" || bad "dry run: launched or drafted something"
 
 # 4. backlog run: implement runs, spec drafts, human is listed
-run="$(cd "$REPO" && E2E_STUB_LOG="$T/stub-backlog.log" JIRA_API_TOKEN=jira_other LINEAR_API_KEY=lin_other ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --all 2>&1)"; rc=$?
+run="$(cd "$REPO" && E2E_STUB_LOG="$T/stub-backlog.log" JIRA_API_TOKEN=jira_other JIRA_TOKEN=j2 LOKI_JIRA_TOKEN=j3 LINEAR_API_KEY=lin_other LOKI_LINEAR_TOKEN=l2 ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --all 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "backlog run: exit 0" || { bad "backlog run: exit $rc"; printf '%s\n' "$run" | tail -12 | sed 's/^/    | /'; }
 launched="$(sed 's/ .*//' "$T/launch.log" 2>/dev/null | sort | tr '\n' ' ')"
 [ "$launched" = "example/calc#1 example/calc#2 example/calc#3 example/calc#6 example/calc#8 " ] && ok "backlog run: only implement issues launched (#1 #2 #3 #6 and the large #8)" || bad "backlog run: launched: ${launched:-nothing}"
@@ -172,7 +172,7 @@ printf '%s\n' "$jdry" | grep -Eq '^backlog: PROJ-1 implement +Add multiply\(a, b
 printf '%s\n' "$jdry" | grep -Eq '^backlog: PROJ-2 spec +.+ \| (vague|ambiguous)' && ok "jira: PROJ-2 (vague) triaged spec" || bad "jira: PROJ-2 not spec"
 has "jira: PROJ-3 (epic label) is large and runs as one run" "$jdry" "backlog: PROJ-3 implement Calculator v2 umbrella | large (label epic); runs as one run, Jira and Linear items do not split yet"
 has "jira dry run: summary counts" "$jdry" "dry run: 2 would run, 1 would get a drafted spec, 0 need a human; nothing launched"
-jrun="$(cd "$REPO" && LAUNCH_LOG="$T/jira-launch.log" LINEAR_API_KEY=lin_other ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog jira:PROJ --all 2>&1)"; rc=$?
+jrun="$(cd "$REPO" && LAUNCH_LOG="$T/jira-launch.log" LINEAR_API_KEY=lin_other LOKI_LINEAR_TOKEN=l2 ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog jira:PROJ --all 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "jira run: exit 0" || { bad "jira run: exit $rc"; printf '%s\n' "$jrun" | tail -8 | sed 's/^/    | /'; }
 jl="$(sed 's/ .*//' "$T/jira-launch.log" 2>/dev/null | sort | tr '\n' ' ')"
 [ "$jl" = "jira:PROJ-1 jira:PROJ-3 " ] && ok "jira run: implement items launched as loki jira:PROJ-N (PROJ-1, PROJ-3)" || bad "jira run: launched: ${jl:-nothing}"
@@ -180,7 +180,10 @@ jline="$(printf '%s\n' "$jrun" | grep '^PROJ-2 ' | head -1)"; jf="$(printf '%s\n
 [ -n "$jf" ] && [ -f "$REPO/$jf" ] && ok "jira run: the vague PROJ-2 got a drafted spec and its run command" || bad "jira run: PROJ-2 has no drafted spec: $jline"
 [ "$(sort "$T/jira-launch.log.env" 2>/dev/null | tr '\n' ';')" = "jira:PROJ-1 jira_token=set linear_key=;jira:PROJ-3 jira_token=set linear_key=;" ] \
     && ok "jira run: a Jira child keeps JIRA_API_TOKEN (intake, writeback) and never gets LINEAR_API_KEY" || bad "jira run: child tokens: $(tr '\n' ';' < "$T/jira-launch.log.env" 2>/dev/null)"
-[ "$(grep -c 'jira_token= linear_key=$' "$T/launch.log.env" 2>/dev/null)" = 5 ] && ok "backlog run: GitHub children get neither tracker token" || bad "backlog run: GitHub child tokens: $(tr '\n' ';' < "$T/launch.log.env" 2>/dev/null)"
+[ "$(grep -c 'jira_token= linear_key=$' "$T/launch.log.env" 2>/dev/null)" = 5 ] && ok "backlog run: GitHub children get no tracker token or alias (JIRA_TOKEN, LOKI_JIRA_TOKEN, LOKI_LINEAR_TOKEN)" || bad "backlog run: GitHub child tokens: $(tr '\n' ';' < "$T/launch.log.env" 2>/dev/null)"
+printf '{"group":"g1","units":[{"id":"u1","items":["add a multiply(a, b) function to calc.ts"],"writeSet":["calc.ts"]}],"edges":[]}\n' > "$T/dag.json"
+dagout="$(cd "$REPO" && LAUNCH_LOG="$T/dag-launch.log" JIRA_API_TOKEN=x JIRA_TOKEN=x LOKI_JIRA_TOKEN=x LINEAR_API_KEY=x LOKI_LINEAR_TOKEN=x ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --dag "$T/dag.json" 2>&1)"
+[ "$(cat "$T/dag-launch.log.env" 2>/dev/null)" = "add a multiply(a, b) function to calc.ts jira_token= linear_key=" ] && ok "backlog --dag: a unit child gets no tracker token or alias" || bad "backlog --dag: unit child tokens: $(cat "$T/dag-launch.log.env" 2>/dev/null) $(printf '%s\n' "$dagout" | tail -2)"
 jlow="$(cd "$REPO" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog jira:proj --all --dry-run 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && printf '%s\n' "$jlow" | grep -q '^backlog: jira:PROJ concurrency' && printf '%s\n' "$jlow" | grep -q '^backlog: PROJ-1 implement' \
     && ok "jira: lowercase jira:proj is the PROJ project" || bad "jira: jira:proj gave exit $rc: $(printf '%s\n' "$jlow" | tail -1)"

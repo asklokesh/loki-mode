@@ -6,7 +6,7 @@
 //   3. a slice that is not VERIFIED or PARTIAL with a PR stops its dependents, which are recorded SKIPPED with the reason;
 //   4. renderEpicTree prints the epic as a tree of slice, outcome, PR and cost.
 import type { GhIssue } from "./issues_run.ts";
-import { EXIT } from "../engine10/output.ts";
+import { exitCodeOf, labelCol } from "../engine10/output.ts";
 
 export interface Slice {
   id: string;
@@ -26,7 +26,9 @@ export interface SliceResult {
   pr: string | null;
   cost: string;
   branch?: string | null;
-  rc?: number; // the slice run's exit code: 3 is its budget stop even when no receipt verdict was sealed
+  rc?: number; // the slice run's exit code
+  usd?: number | null; // the slice run's own unrounded cost; null when it reported none
+  budget?: boolean; // the slice hit its budget (exit 3, or an Outcome: BUDGET_STOP line when LOKI_DURABLE_STATE maps every failure to 20)
 }
 
 const ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
@@ -225,7 +227,8 @@ export function renderEpicTree(n: number, title: string, rows: readonly SliceRes
 }
 
 /** One Opus planning session through the engine's own session runner; returns the JSON text it wrote (or its reply). */
-export function makeSessionDecompose(repoDir: string, lokiDir: string, provider: string): (slug: string, issue: GhIssue, triageReason: string, note?: string) => Promise<string> {
+/** `onCost` gets each decompose session's cost (null when unmeasured), so the split's cost line counts the planning sessions too. */
+export function makeSessionDecompose(repoDir: string, lokiDir: string, provider: string, onCost?: (usd: number | null) => void): (slug: string, issue: GhIssue, triageReason: string, note?: string) => Promise<string> {
   return async (slug, issue, triageReason, note) => {
     const { mkdirSync, readFileSync, existsSync } = await import("node:fs");
     const { join } = await import("node:path");
@@ -234,7 +237,8 @@ export function makeSessionDecompose(repoDir: string, lokiDir: string, provider:
     const dir = join(lokiDir, "issues-run", "decompose");
     mkdirSync(dir, { recursive: true });
     const outPath = join(dir, `issue-${issue.number}-${Date.now()}.json`);
-    const runner = createSessionRunner({ provider, lokiRoot: lokiDir });
+    let usd: number | null = null;
+    const runner = createSessionRunner({ provider, lokiRoot: lokiDir, emit: (type, _stage, data) => { if (type === "cost" && typeof data.usd === "number") usd = (usd ?? 0) + data.usd; } });
     const r = (await runner.run({
       stage: "plan",
       brief: decomposeBrief(slug, issue, triageReason, outPath, note),
@@ -246,24 +250,34 @@ export function makeSessionDecompose(repoDir: string, lokiDir: string, provider:
       // Opus decides the split (claude only, never over the user's own model override), like the routed plan stage.
       ...(provider === "claude" && envOverride(process.env) === null ? { model: "opus" } : {}),
     })) as { exit: number | null; summary?: string };
+    onCost?.(usd);
     if (existsSync(outPath)) return readFileSync(outPath, "utf8");
     return r.summary ?? "";
   };
 }
 
-const col = (t: string): string => `${t}:`.padEnd(12); // engine10/output.ts summary label width
-/** The whole split issue as one run: BUDGET_STOP (exit 3) when any slice hit its budget, else FAILED (1) when any slice is not VERIFIED or
- *  PARTIAL, else PARTIAL (6) when any is PARTIAL, else VERIFIED (0). Cost sums the slices; it is marked partial when a slice that ran has no
- *  figure, and never reads $0.00 for an unknown. Printed in the engine's summary wording, so `loki backlog` parses it like any run. */
-export function epicOutcome(rows: readonly SliceResult[]): { outcome: "VERIFIED" | "PARTIAL" | "FAILED" | "BUDGET_STOP"; rc: number; lines: string } {
-  const budget = rows.find((r) => r.rc === 3 || /^BUDGET_STOP/.test(r.outcome));
-  const bad = rows.find((r) => !/^(VERIFIED|PARTIAL)/.test(r.outcome));
-  const outcome = budget ? "BUDGET_STOP" : bad ? "FAILED" : rows.some((r) => /^PARTIAL/.test(r.outcome)) ? "PARTIAL" : "VERIFIED";
-  const why = budget ?? bad ?? rows.find((r) => /^PARTIAL/.test(r.outcome));
-  const ran = rows.filter((r) => r.cost !== "-"), priced = ran.map((r) => /^\$(\d+(?:\.\d+)?)$/.exec(r.cost)).filter((m): m is RegExpExecArray => m !== null);
-  const usd = priced.reduce((a, m) => a + Number(m[1]), 0);
-  const cost = priced.length === 0 ? `not measured (${ran.length} slice run${ran.length === 1 ? "" : "s"})`
-    : priced.length < ran.length ? `partial: $${usd.toFixed(2)} for ${priced.length} of ${ran.length} slice runs` : `$${usd.toFixed(2)} (${ran.length} slice run${ran.length === 1 ? "" : "s"})`;
-  const lines = [`${col("Outcome")}${outcome}`, ...(why && outcome !== "VERIFIED" ? [`${col("Reason")}slice ${why.id}: ${oneLine(why.outcome)}`] : []), `${col("Cost")}${cost}`];
-  return { outcome, rc: EXIT[outcome], lines: `${lines.join("\n")}\n` };
+/** The one cost sum of a split: slices that ran (a SKIPPED slice never did) plus the planning sessions, from unrounded figures. `parts` counts
+ *  every figure that should exist, `measured` those that do; usd is null when none does, never $0.00 for an unknown. */
+export function splitCost(rows: readonly SliceResult[], planUsd: readonly (number | null)[] = []): { usd: number | null; measured: number; parts: number; slices: number; planning: number } {
+  const ran = rows.filter((r) => r.cost !== "-"), figures = [...ran.map((r) => (typeof r.usd === "number" ? r.usd : null)), ...planUsd];
+  const known = figures.filter((u): u is number => u !== null);
+  return { usd: known.length ? known.reduce((a, u) => a + u, 0) : null, measured: known.length, parts: figures.length, slices: ran.length, planning: planUsd.length };
+}
+/** The cost text shared by the epic tree footer and the Cost line. */
+export function splitCostText(c: ReturnType<typeof splitCost>): string {
+  const what = `${c.slices} slice run${c.slices === 1 ? "" : "s"}${c.planning ? ` + ${c.planning} planning session${c.planning === 1 ? "" : "s"}` : ""}`;
+  return c.usd === null ? `not measured (${what})` : c.measured < c.parts ? `partial: $${c.usd.toFixed(2)} for ${c.measured} of ${c.parts} (${what})` : `$${c.usd.toFixed(2)} (${what})`;
+}
+/** The whole split issue as one run. FAILED (exit 1) when a slice really failed (not VERIFIED, PARTIAL or SKIPPED, and not a budget stop),
+ *  else BUDGET_STOP (exit 3) when a slice hit its budget, else PARTIAL (exit 6) when any slice is PARTIAL, else VERIFIED (0); exit codes go
+ *  through exitCodeOf, so LOKI_DURABLE_STATE applies as on any run. One PR line per slice PR, one Cost line (splitCost). Printed in the engine's
+ *  summary wording, so `loki backlog` parses it like any run: it counts a PARTIAL with a PR as done and adds the cost to its day ledger. */
+export function epicOutcome(rows: readonly SliceResult[], planUsd: readonly (number | null)[] = [], env: NodeJS.ProcessEnv = process.env): { outcome: "VERIFIED" | "PARTIAL" | "FAILED" | "BUDGET_STOP"; rc: number; lines: string } {
+  const isBudget = (r: SliceResult): boolean => r.budget === true || /^BUDGET_STOP/.test(r.outcome);
+  const failed = rows.find((r) => !isBudget(r) && !/^(VERIFIED|PARTIAL|SKIPPED)/.test(r.outcome)), budget = rows.find(isBudget);
+  const outcome = failed ? "FAILED" : budget ? "BUDGET_STOP" : rows.some((r) => /^PARTIAL/.test(r.outcome)) ? "PARTIAL" : "VERIFIED";
+  const why = failed ?? budget ?? rows.find((r) => /^PARTIAL/.test(r.outcome));
+  const lines = [`${labelCol("Outcome")}${outcome}`, ...(why && outcome !== "VERIFIED" ? [`${labelCol("Reason")}slice ${why.id}: ${oneLine(why.outcome)}`] : []),
+    ...rows.filter((r) => r.pr).map((r) => `${labelCol("PR")}${r.pr}`), `${labelCol("Cost")}${splitCostText(splitCost(rows, planUsd))}`];
+  return { outcome, rc: exitCodeOf(outcome, env), lines: `${lines.join("\n")}\n` };
 }
