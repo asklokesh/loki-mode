@@ -1,6 +1,6 @@
 # Loki Mode Documentation
 
-**The flagship product of [Autonomi](https://www.autonomi.dev/) -- an autonomous, spec-driven build system with a built-in trust layer. It does not call work done until it is verified: the RARV-C closure loop, 8 quality gates, the completion council, and the verified-completion evidence gate all have to clear before completion is accepted. Provider-agnostic: Claude Code, OpenAI Codex CLI, Cline, and Aider.**
+**The flagship product of [Autonomi](https://www.autonomi.dev/) -- an autonomous, spec-driven build system with a built-in trust layer. It does not call work done until it is verified: the RARV-C closure loop, 8 quality gates, the completion council, and the verified-completion evidence gate all have to clear before completion is accepted. Providers: Claude Code (CLI or Anthropic Agent SDK) and opencode (any model, including OpenRouter).**
 
 > Spec-driven: turn a spec -- a PRD, GitHub issue, YAML feature file, or any natural-language brief -- into a fully deployed, production-ready application, with verification built in so "done" means verified, not just attempted.
 
@@ -28,7 +28,7 @@ Loki Mode is a free, source-available autonomous coding agent that:
 - **Spec-driven development** - Any spec (PRD, GitHub issue, OpenAPI/YAML doc, or one-line brief) drives the build end to end
 - **Executes complete SDLC phases** - From requirements to deployment
 - **Manages multiple AI agents** - Parallel execution across git worktrees
-- **Provider-agnostic** - runs on Claude Code (Tier 1), Cline (Tier 2), Codex / Aider (Tier 3 degraded), and opencode (model-agnostic); no vendor lock-in. Gemini CLI deprecated v7.5.18.
+- **Two providers** - Claude Code (Tier 1, CLI or Anthropic Agent SDK) and opencode (model-agnostic, OpenRouter). codex, cline, aider and gemini were removed.
 - **MCP server** - 48 tools (47 always available; `loki_memory_redact` is gated on `LOKI_MANAGED_AGENTS`/`LOKI_MANAGED_MEMORY`) plus 3 resources and 2 prompts for integration with MCP-aware clients. Launch with `loki mcp`.
 - **Learns across projects** - Cross-project memory improves over time
 - **Provides enterprise controls** - Authentication, audit logging, sandboxing
@@ -56,7 +56,7 @@ Loki Mode is a free, source-available autonomous coding agent that:
 
 - **Zero Configuration** - Works out of the box with sensible defaults
 - **Spec to Production** - Provide a spec (PRD markdown, GitHub issue, YAML brief), Loki handles the rest
-- **Provider-Agnostic** - runs on Claude, Cline, Codex, Aider, or opencode, no vendor lock-in (Gemini deprecated v7.5.18)
+- **Model choice** - runs on Claude, or on any OpenRouter or local model through opencode
 - **LSP Grounding** - First-class agent tools for symbol verification via `mcp/lsp_proxy.py` (v7.7.0+; pyright, typescript-language-server, gopls, rust-analyzer, jdtls; lsp_get_diagnostics regression fully fixed v7.7.14)
 - **Cross-Project Learning** - AI improves from every session
 - **Dark Dashboard** - Vercel/Linear-inspired dark theme with sidebar navigation (replaces the deprecated VS Code extension as of v7.2.0)
@@ -70,7 +70,7 @@ Loki Mode is a free, source-available autonomous coding agent that:
 - **Staged Autonomy** - Approval gates for sensitive operations
 - **8-Gate Quality System** - Static analysis, test suite (pass/fail), blind 3-reviewer code review with severity blocking, anti-sycophancy Devil's Advocate, mock-integrity detection, test-mutation detection, documentation coverage (v6.75.0), and Magic Modules debate; plus a conditional backward-compatibility auditor (healing mode, v6.67.0, not numbered), the verified-completion evidence gate with inconclusive disclosure (v7.28.0), and held-out spec evals for anti-reward-hacking (v7.28.0)
 - **Guided First Build** - `loki quickstart`: four questions to a running build, with the real cost estimate shown before any spend, and a consent-gated Claude Code install offer when no provider is found (v7.29.0)
-- **Completion Council** - 3-member voting system with anti-sycophancy checks, plus a confidence-spike re-check that forces an EXTRA verification when the agent claims near-certainty (strictly additive -- it can never skip a gate; v8.0.0, see [[Completion Council]])
+- **Completion Council** - 3-member voting system with anti-sycophancy checks (strictly additive -- it can never skip a gate; v8.0.0, see [[Completion Council]])
 - **Anthropic Agent SDK route** - Opt-in, default-off claude-binary-free path: the RARV loop on `@anthropic-ai/claude-agent-sdk` and judges on the raw SDK, behind the single switch `LOKI_SDK_MODE` (`off`/`judges`/`full`). Unset is byte-identical to the claude-CLI route (v8.0.0)
 - **Harness intelligence** - Prompt-cache discipline (stable prefix / volatile tail at an explicit cache breakpoint), hill-climbable goal scoring (flags a goal with no measurable success condition; advisory only), and smart retry (stops early on permanent failures, still retries anything unrecognized) (v8.0.0)
 - **Security Hardening** - Path traversal, XSS, injection, and memory leak protections
@@ -93,12 +93,12 @@ Loki Mode is a free, source-available autonomous coding agent that:
 | YAML brief)      |     |                  |     |                  |
 +------------------+     +------------------+     +------------------+
                                |
-         +-----------+-------------+-----------+
-         |           |             |           |
-    +---------+ +---------+ +---------+ +---------+
-    | Claude  | | Cline   | | Codex   | | Aider   |
-    |(Tier 1) | |(Tier 2) | |(Tier 3) | |(Tier 3) |
-    +---------+ +---------+ +---------+ +---------+
+         +-----------+-------------+
+         |                         |
+    +---------+              +----------+
+    | Claude  |              | opencode |
+    |(Tier 1) |              |(any model)|
+    +---------+              +----------+
          |
     +----+----+----+----+
     |    |    |    |    |
@@ -119,7 +119,7 @@ Loki Mode is a free, source-available autonomous coding agent that:
 
 ## Version History
 
-Current Version: **11.118.1** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
+Current Version: **11.122.0** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
 
 See [[Changelog]] for detailed release notes.
 

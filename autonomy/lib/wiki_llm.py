@@ -4,7 +4,7 @@ Keeps every paid-call and grounding-guarantee concern in one place so the
 generator and the ask script behave identically.
 
 LLM stub contract (CI-safe, zero paid calls in tests):
-  LOKI_WIKI_LLM_STUB unset       -> call the real provider (claude -p / codex / ...)
+  LOKI_WIKI_LLM_STUB unset       -> call the real provider (claude -p)
                                     via the same mechanism loki docs uses; if no
                                     provider is on PATH, return None (callers then
                                     fall back to extractive/template output).
@@ -94,9 +94,6 @@ def invoke_llm(prompt, timeout=120, lean=False):
 
     cmds = {
         "claude": ["claude", "-p", prompt],
-        "codex": ["codex", "exec", "--sandbox", "workspace-write", prompt],
-        "cline": ["cline", "-y", prompt],
-        "aider": ["aider", "--message", prompt, "--yes-always", "--no-auto-commits"],
     }
     base = cmds.get(provider)
     if base is None or not _which(base[0]):

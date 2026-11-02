@@ -50,10 +50,10 @@
       "src/mistune/directives/toc.py",
       "src/mistune/toc.py"
     ],
-    "added_files": [
-      "conftest.py"
-    ],
-    "note": "conftest.py added so tests import src/mistune without installing the package."
+    "note": "conftest.py added so tests import src/mistune without installing the package.",
+    "add_files": {
+      "conftest.py": "# Added by the benchmark harness, not part of the upstream project: makes src/ importable\n# without installing the package.\nimport os\nimport sys\n\nsys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), \"src\"))\n"
+    }
   },
   "pilot": {
     "config": "raw-haiku-verify",
@@ -62,5 +62,6 @@
     "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
   },
   "qualified": false,
-  "excluded_because": "raw-haiku-verify passed 2 of 2 pilot runs (the rule needs under 50%)"
+  "excluded_because": "raw-haiku-verify passed 2 of 2 pilot runs (the rule needs under 50%)",
+  "snapshot_sha256": "1120d660d45f6f3e9215e3ead3dd4f2e5cfec68bd95bcef03bcd4f9e18d9ea3e"
 }

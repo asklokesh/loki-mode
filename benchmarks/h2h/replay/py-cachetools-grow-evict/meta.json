@@ -49,9 +49,10 @@
     "solution_files": [
       "src/cachetools/__init__.py"
     ],
-    "added_files": [
-      "conftest.py"
-    ],
-    "note": "conftest.py added so tests import src/cachetools without installing the package. En and em dashes (U+2013, U+2014) in the issue text and vendored files are replaced by '-' to meet this repository's text rule; the 2026-11-01 run sent the issue text with the original characters."
-  }
+    "note": "conftest.py added so tests import src/cachetools without installing the package. En and em dashes (U+2013, U+2014) in the issue text and vendored files are replaced by '-' to meet this repository's text rule; the 2026-11-01 run sent the issue text with the original characters.",
+    "add_files": {
+      "conftest.py": "# Added by the benchmark harness, not part of the upstream project: makes src/ importable\n# without installing the package.\nimport os\nimport sys\n\nsys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), \"src\"))\n"
+    }
+  },
+  "snapshot_sha256": "ad1ebb6d448247080fd051f29d458537bd3de2c43f5a225edfa8c6f5da72d252"
 }

@@ -14,14 +14,15 @@ Named after the Norse god of mischief, Loki Mode operates autonomously and can s
 
 ### Is Loki Mode free?
 
-Yes, Loki Mode is entirely free. It is source-available under the BUSL-1.1 license. You can provide your own API keys for Claude or Codex (or use free alternatives), which may have their own pricing, but Loki Mode itself costs nothing.
+Yes, Loki Mode is entirely free. It is source-available under the BUSL-1.1 license. You can provide your own API keys for Claude or OpenRouter (or use free local models through opencode), which may have their own pricing, but Loki Mode itself costs nothing.
 
 ### What AI providers are supported?
 
 - **Claude Code** (Full features - recommended)
-- **OpenAI Codex CLI** (Degraded mode)
-- **Cline CLI** (Degraded mode)
-- **Aider** (Degraded mode)
+- **Anthropic API key through the Agent SDK** (same claude provider, no CLI login)
+- **opencode** (any model, including OpenRouter; sequential)
+
+codex, cline, aider and gemini were removed; selecting one exits 2 with a line naming claude and opencode.
 
 ---
 
@@ -181,17 +182,16 @@ export LOKI_ENTERPRISE_AUDIT=true
 - Parallel execution needed
 - Best quality results
 
-**Codex/Cline/Aider** for:
+**opencode** for:
+- OpenRouter or other non-Claude models
+- Local models
 - Cost optimization
-- Simple projects
-- Provider preference
 
-### What's "degraded mode"?
+### What does opencode not support?
 
-When using Codex, Cline, or Aider, some features aren't available:
+With opencode, some features aren't available:
 - No parallel agents (sequential only)
 - No Task tool (subagents)
-- No MCP integration
 
 Loki Mode automatically adjusts to work within these limitations.
 
@@ -201,7 +201,7 @@ No, provider is set at session start. To change:
 
 ```bash
 loki stop
-loki start ./prd.md --provider codex
+loki start ./prd.md --provider opencode
 ```
 
 ---

@@ -1,5 +1,5 @@
 # Loki Mode - Claude Code Skill
-Autonomous spec-to-product system: takes a PRD, GitHub issue, OpenAPI/JSON/YAML doc, or one-line brief to a deployed product via the RARV-C closure loop. Provider-agnostic: Claude Code, OpenAI Codex CLI, Cline, Aider, opencode. Flagship product of [Autonomi](https://www.autonomi.dev/).
+Autonomous spec-to-product system: takes a PRD, GitHub issue, OpenAPI/JSON/YAML doc, or one-line brief to a deployed product via the RARV-C closure loop. Providers: Claude Code (CLI or Anthropic Agent SDK) and opencode (any model, including OpenRouter). Flagship product of [Autonomi](https://www.autonomi.dev/).
 
 ## Quick Start
 
@@ -12,7 +12,7 @@ loki start owner/repo#123        # issue-mode
 ## Core concepts
 - RARV cycle: **R**eason -> **A**ct -> **R**eflect -> **V**erify, every iteration.
 - Models: Opus for planning/architecture only; Sonnet for development and functional testing; Haiku for unit tests, monitoring, and parallelizable work.
-- Providers: Claude Code full (Tier 1); Cline reduced (Tier 2); Codex CLI/Aider degraded, sequential (Tier 3); opencode model-agnostic. Gemini CLI is DEPRECATED; `LOKI_PROVIDER=gemini` exits with a migration message. See `providers/*.sh`.
+- Providers: Claude Code (Tier 1, full) and opencode (model-agnostic, OpenRouter); the Agent SDK path serves API-key users under `claude`. codex, cline, aider and gemini were removed and exit 2 with a migration line (`loki_removed_provider_message` in `providers/loader.sh`). See `providers/*.sh`.
 - Version: see `VERSION` (semver: MAJOR = architecture change, MINOR = feature, PATCH = fix). Full release steps: `docs/dev/release-checklist.md`.
 
 ## Repository conventions
@@ -20,7 +20,7 @@ loki start owner/repo#123        # issue-mode
 - Pre-push gate: `bash scripts/local-ci.sh` (runs the hermetic tests in `tests/min/`; one tier). Never force-push, kill processes by name/pattern, or bypass branch protection. Never unpublish (npm deprecate is allowed).
 - Extend, never duplicate: a feature goes into the existing module, command, test file or doc that already owns its concern. A new file needs a one-line justification that no existing file owns the concern. A replacement deletes the code it supersedes in the same change.
 - No emojis, no em dashes, no en dashes, anywhere (code, docs, commits, UI); remove any found on sight. SKILL.md stays under 500 lines with header AND footer version bumped together.
-- Harness code invariants (see `docs/dev/architecture-reference.md`): new always-on prompt text goes in the cache-stable prefix; `goal_score.ts` and `run.sh` change together, byte-mirrored; never invert smart-retry's fail-safe default.
+- Harness code invariants (see `docs/dev/architecture-reference.md`): new always-on prompt text goes in the cache-stable prefix; never invert smart-retry's fail-safe default.
 
 ## Cleanup (mandatory before reporting any task done)
 Every temp file and background process goes under one run-owned directory

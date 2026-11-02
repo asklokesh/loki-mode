@@ -63,7 +63,6 @@ Where the default applies:
 | --- | --- | --- |
 | engine10 (`loki "<task>"`, the Loki 10 engine) | Only when an API key is set (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`). A subscription run (no key) has no dollar cap. | Ends the run `BUDGET_STOP`, exit 3. |
 | Bash loop (`loki start`, `autonomy/run.sh`) | Always, key or not. | Pauses the run (writes `.loki/PAUSE` and `.loki/signals/BUDGET_EXCEEDED`); remove both to resume. |
-| Bun SDK loop (`LOKI_SDK_LOOP`) | No default. Opt in with `BUDGET_LIMIT`. | Stops the loop when the limit is reached. |
 
 The README and the engine guide have shown different figures in the past (100 and
 20). The figure above is the code's, and the two guides follow it.
@@ -215,9 +214,6 @@ One table in `loki-ts/src/providers/provider_guard.ts` (`CAPABILITIES`) records 
 | provider | engine | cost | budget kill | cancel (pgroup) | sandbox flags | receipt | resume | guard scan | kill blocking |
 |---|---|---|---|---|---|---|---|---|---|
 | claude | engine10 | measured | post-iteration | yes | none | yes | yes | native | native |
-| codex | engine10 | estimated | post-iteration | yes | --sandbox workspace-write | yes | no | post-iteration | none |
-| cline | engine10 | estimated | post-iteration | yes | none | yes | no | post-iteration | none |
-| aider | engine10 | estimated | post-iteration | yes | --no-auto-commits | yes | no | post-iteration | none |
 | opencode | engine10 | none | none | yes | none | yes | no | post-iteration | none |
 
 ### Parallel units and groups

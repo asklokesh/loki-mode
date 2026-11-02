@@ -40,7 +40,7 @@ export interface CockpitState {
   iteration: number;
   phase: string;
   tier: string; // opus | sonnet | haiku
-  provider: string; // claude | codex | ...
+  provider: string; // claude | opencode
   verdict: Verdict;
   budgetUsd: number;
   budgetLimitUsd?: number;

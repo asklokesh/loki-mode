@@ -6,7 +6,7 @@ purpose, key files, public interface, and dependencies on other components.
 Loki Mode is an autonomous spec-to-product system. It takes a spec (PRD, GitHub
 issue, OpenAPI/JSON/YAML, or one-line brief) to a deployed product through the
 RARV-C closure loop (Reason - Act - Reflect - Verify - Close) with 8 quality
-gates. It is provider-agnostic (Claude Code, OpenAI Codex CLI, Cline, Aider).
+gates. It runs on Claude Code (CLI or Anthropic Agent SDK) and opencode (any model, including OpenRouter).
 
 ## Component Map
 
@@ -93,10 +93,8 @@ provider abstraction, and metrics.
 **Key files:**
 - `src/cli.ts` - CLI entry.
 - `src/version.ts` - Version reporting.
-- `src/runner/` - Autonomous run loop, state, RARV phasing.
+- `src/runner/` - Provider invocation, budget, state and the attempts runner used by the Loki 10 engine.
 - `src/runner/providers.ts` - Provider abstraction with automatic failover.
-- `src/runner/council.ts` - Completion-council hook: convergence tracking, the stagnation and done-signal force-stop valves, and the v8 confidence-spike re-check.
-- `src/runner/goal_score.ts` - Goal-measurability scoring (v8.0.0). Advisory only; flags a goal the loop cannot hill-climb. Byte-mirrored in `autonomy/run.sh`.
 - `src/runner/retry_class.ts` - Failure classification (v8.0.0). Separates transient failures from positively-identified permanent ones; unrecognized failures stay transient.
 - `src/council/` - Reviewer council and verdict logic.
 - `src/commands/` - Command implementations.
@@ -158,21 +156,18 @@ across projects.
 Multi-provider support. Shell-sourceable provider configs and a model registry
 shared by both the bash route and loki-ts.
 
-**Purpose:** Abstract over Claude Code, Cline, Codex CLI, and Aider with tiered
-capability degradation.
+**Purpose:** Abstract over Claude Code and opencode.
 
 **Key files:**
 - `claude.sh` - Claude Code (Tier 1: full features).
-- `cline.sh` - Cline (Tier 2: reduced parallelism).
-- `codex.sh` - OpenAI Codex CLI (Tier 3: degraded, sequential).
-- `aider.sh` - Aider (Tier 3: degraded).
+- `opencode.sh` - opencode (model-agnostic, sequential; OpenRouter via `OPENROUTER_API_KEY`).
 - Non-Claude engine10 sessions run under `loki-ts/src/providers/provider_guard.ts` (timeout, budget stop, post-iteration diff scan with revert).
 - `loader.sh` - Provider loader utility.
 - `models.sh`, `model_catalog.json` - Model name registry and catalog.
 - `managed.py` - Managed provider client.
 
-Note: Gemini CLI was deprecated in v7.5.18; `LOKI_PROVIDER=gemini` exits with a
-migration message.
+Note: codex, cline, aider and gemini were removed; selecting one exits 2 with a
+one-line migration message (`loki_removed_provider_message` in `loader.sh`).
 
 **Public interface:**
 - `--provider <name>` flag, `LOKI_PROVIDER` env var.

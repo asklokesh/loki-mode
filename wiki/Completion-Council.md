@@ -1,6 +1,6 @@
 # Completion Council
 
-> Legacy engine note: this page documents the legacy engine (`loki start`, `LOKI_ENGINE=legacy`), which still ships in 11.118.1 and is being removed. For the current Loki 10 commands (`loki "<task>"`, `loki owner/repo#N`, `loki backlog`, `loki verify`) see [[Home]] and [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
+> Legacy engine note: this page documents the legacy engine (`loki start`, `LOKI_ENGINE=legacy`), which still ships in 11.122.0 and is being removed. For the current Loki 10 commands (`loki "<task>"`, `loki owner/repo#N`, `loki backlog`, `loki verify`) see [[Home]] and [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
 
 Multi-agent definition-of-done system for autonomous session completion (v5.25.0).
 
@@ -37,46 +37,19 @@ The council tracks git diff hashes between iterations to detect stagnation:
 - After `LOKI_COUNCIL_STAGNATION_LIMIT` consecutive iterations with no git changes, a circuit breaker triggers and forces session completion
 - This prevents infinite loops where the AI is not making meaningful progress
 
-> **Route parity (v8.0.0):** both force-stop valves now run on the default
-> (bash) route AND the opt-in Agent SDK loop (`LOKI_SDK_MODE=full`). The TS
-> route persists its convergence counters to `.loki/council/state.json`, so they
-> survive a runner restart. Two counters with different reset rules drive the
-> valves: `done_signals` is consecutive (it resets the moment the agent stops
+> **Valves:** both force-stop valves run on the bash route. Two counters with
+> different reset rules drive the valves: `done_signals` is consecutive (it resets the moment the agent stops
 > claiming done) while `total_done_signals` is monotonic and is what arms the
 > done-signal valve. Stagnation force-stops at 2x
-> `LOKI_COUNCIL_STAGNATION_LIMIT`, matching bash. See
-> `loki-ts/src/runner/council.ts`.
+> `LOKI_COUNCIL_STAGNATION_LIMIT`. See `autonomy/completion-council.sh`.
 >
 > A force-stop is **not** a council approval: it means the run was halted to
 > stop it burning budget, and the work is NOT verified-complete.
 
 ### Confidence-Spike Re-Check (v8.0.0)
 
-An agent asserting maximal confidence is not evidence the work is done: a jump
-to near-certainty correlates with the agent having stopped looking, not with
-correctness. Loki already refuses to treat a self-report as a gate, and this
-adds the cheap complement.
-
-When the agent's self-reported confidence spikes, the **done-signal** force-stop
-is delayed by exactly one iteration, so the claim gets verified instead of
-terminated on. A spike is either a jump of at least
-`LOKI_CONFIDENCE_SPIKE_DELTA` points (default `40`), or arrival at
-`LOKI_CONFIDENCE_SPIKE_MIN` (default `90`) having not been there before -- the
-second arm matters because an agent that opens at 100 never "jumps".
-
-Three properties make this safe rather than a liability:
-
-- **Strictly additive.** A spike can only ever ADD a verification pass. There is
-  deliberately no path by which high confidence skips, shortens, or satisfies a
-  gate -- that would be a false-green vector. High confidence makes the engine
-  look harder, never less hard.
-- **Never delays stagnation.** Only the done-signal valve is delayed. A stagnant
-  build still fails cheap no matter how confident the agent sounds.
-- **One-shot.** The delay is consumed on use, so a run that keeps re-spiking
-  cannot postpone the valve forever and turn a safety valve into a budget leak.
-
-Inert unless the agent actually emits a confidence figure. Opt out with
-`LOKI_CONFIDENCE_SPIKE=0`. See `loki-ts/src/runner/council.ts`.
+Removed. The confidence-spike re-check (`LOKI_CONFIDENCE_SPIKE`, `_DELTA`, `_MIN`) lived only in the
+separate Bun loop, which was removed in v11.119.0; neither the bash loop nor Loki 10 reads these variables.
 
 ### Anti-Sycophancy
 

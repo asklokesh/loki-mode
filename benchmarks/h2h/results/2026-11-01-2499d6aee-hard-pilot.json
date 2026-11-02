@@ -1,0 +1,1458 @@
+{
+  "benchmark": "h2h-b1",
+  "suite": "hard",
+  "loki_sha": "2499d6aee",
+  "date": "2026-11-01T20:56:08",
+  "citable": true,
+  "provenance": [
+    {
+      "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a",
+      "dirty_count": 0,
+      "dirty": [],
+      "citable": true,
+      "bun": "1.3.13",
+      "claude_cli": "2.1.316 (Claude Code)",
+      "python": "3.14.6",
+      "go": "go version go1.26.3 darwin/arm64",
+      "platform": "macOS-27.2-arm64-arm-64bit-Mach-O"
+    }
+  ],
+  "configs": [
+    "raw-haiku-verify"
+  ],
+  "reps": 2,
+  "jobs": 4,
+  "timeout_s": 900,
+  "stopped": null,
+  "tasks": [
+    "go-chi-allow-header",
+    "go-expr-autoderef",
+    "go-expr-withcontext",
+    "py-click-help-option-cls",
+    "py-click-show-default-prompt",
+    "py-mistune-codespan-escape",
+    "py-mistune-md-leading-newlines",
+    "py-mistune-toc-reflinks",
+    "py-sqlglot-hash-case",
+    "py-sqlglot-mysql-stddev",
+    "py-sqlglot-mysql-timestampadd",
+    "py-sqlglot-search-cycle",
+    "py-sqlglot-snowflake-idents",
+    "py-sqlglot-teradata-frame",
+    "py-sqlparse-compare-expr",
+    "py-sqlparse-window-over",
+    "py-tomlkit-array-remove",
+    "py-tomlkit-table-update",
+    "py-tomlkit-value-bool"
+  ],
+  "summary": [
+    {
+      "config": "raw-haiku-verify",
+      "n": 38,
+      "passed": 14,
+      "pass_rate": 0.3684,
+      "pass_ci95": [
+        0.2338,
+        0.5272
+      ],
+      "median_s": 90.3,
+      "p90_s": 170.7,
+      "total_cost_usd": 0.7824,
+      "cost_per_task_usd": 0.0206,
+      "cost_per_pass_usd": 0.0559,
+      "cost_unmeasured": 0,
+      "mean_sessions": 1,
+      "mean_fix_rounds": null,
+      "timeouts": 0,
+      "by_difficulty": {
+        "hard": [
+          14,
+          38
+        ]
+      },
+      "accepted": 13,
+      "accepted_n": 38,
+      "accept_ci95": [
+        0.2121,
+        0.5011
+      ],
+      "runs_with_test_edits": 38,
+      "runs_weakening_tests": 2,
+      "cost_per_accepted_usd": 0.0602,
+      "cost_per_accepted_ci95": [
+        0.0411,
+        0.0971
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "config": "raw-haiku-verify",
+      "task": "go-chi-allow-header",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 96.7,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "mux_test.go"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/mux_test.go b/mux_test.go\nindex 68fc94c..5396dec 100644\n--- a/mux_test.go\n+++ b/mux_test.go\n@@ -206,6 +206,46 @@ func TestMuxBasic(t *testing.T) {\n \t}\n }\n \n+func TestMuxMethodNotAllowedAllowHeader(t *testing.T) {\n+\tr := NewRouter()\n+\tr.Get(\"/resource\", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(\"get\")) })\n+\tr.Post(\"/resource\", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(\"post\")) })\n+\tr.Route(\"/sub\", func(r Router) {\n+\t\tr.Put(\"/{id}\", func(w http.ResponseWriter, r *http.Request) {})\n+\t\tr.Delete(\"/{id}\", func(w http.ResponseWriter, r *http.Request) {})\n+\t})\n+\n+\tts := httptest.NewServer(r)\n+\tdefer ts.Close()\n+\n+\tcases := []struct {\n+\t\tmethod, path, allow string\n+\t}{\n+\t\t{\"PUT\", \"/resource\", \"GET, POST\"},\n+\t\t{\"DELETE\", \"/resource\", \"GET, POST\"},\n+\t\t{\"PATCH\", \"/sub/42\", \"DELETE, PUT\"},\n+\t}\n+\tfor _, c := range cases {\n+\t\tresp, _ := testRequest(t, ts, c.method, c.path, nil)\n+\t\tif resp.StatusCode != 405 {\n+\t\t\tt.Fatalf(\"%s %s: expected 405, got %d\", c.method, c.path, resp.StatusCode)\n+\t\t}\n+\t\tif got := resp.Header.Get(\"Allow\"); got != c.allow {\n+\t\t\tt.Fatalf(\"%s %s: expected Allow %q, got %q\", c.method, c.path, c.allow, got)\n+\t\t}\n+\t}\n+\n+\t// A custom 405 handler still gets the Allow header set beforehand.\n+\tr.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {\n+\t\tw.WriteHeader(405)\n+\t\tw.Write([]byte(\"custom\"))\n+\t})\n+\tresp, body := testRequest(t, ts, \"PUT\", \"/resource\", nil)\n+\tif resp.Header.Get(\"Allow\") != \"GET, POST\" || body != \"custom\" {\n+\t\tt.Fatalf(\"custom 405: Allow=%q body=%q\", resp.Header.Get(\"Allow\"), body)\n+\t}\n+}\n+\n func TestMuxMounts(t *testing.T) {\n \tr := NewRouter()\n \n",
+      "files_changed": 2,
+      "files": [
+        "mux.go",
+        "mux_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "--- FAIL: TestMethodNotAllowed (0.00s)\n    --- FAIL: TestMethodNotAllowed/Unregistered_Method (0.00s)\n        mux_test.go:426: Allow header should contain 2 headers: GET, HEAD. Received:  [GET, HEAD]\nFAIL\nFAIL\tgithub.com/go-chi/chi/v5\t1.039s\nFAIL\n",
+      "cost_usd": 0.01344993,
+      "sessions": 1,
+      "turns": 14,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "go-expr-autoderef",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 53.54,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "test/deref/deref_test.go"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/test/deref/deref_test.go b/test/deref/deref_test.go\nindex 8df682f..0f33622 100644\n--- a/test/deref/deref_test.go\n+++ b/test/deref/deref_test.go\n@@ -337,3 +337,28 @@ func TestDeref_keep_pointer_if_arg_in_interface(t *testing.T) {\n \trequire.NoError(t, err)\n \trequire.Equal(t, 43, out)\n }\n+\n+func TestDeref_mapKeyAndCondition(t *testing.T) {\n+\ts := \"foo\"\n+\tb := true\n+\tenv := map[string]any{\n+\t\t\"ptr\": &s,\n+\t\t\"bp\":  &b,\n+\t\t\"bar\": 42,\n+\t}\n+\tt.Run(\"map literal index\", func(t *testing.T) {\n+\t\tout, err := expr.Eval(`{foo: bar}[ptr]`, env)\n+\t\trequire.NoError(t, err)\n+\t\trequire.Equal(t, 42, out)\n+\t})\n+\tt.Run(\"member index\", func(t *testing.T) {\n+\t\tout, err := expr.Eval(`m[ptr]`, map[string]any{\"ptr\": &s, \"m\": map[string]any{\"foo\": 1}})\n+\t\trequire.NoError(t, err)\n+\t\trequire.Equal(t, 1, out)\n+\t})\n+\tt.Run(\"conditional\", func(t *testing.T) {\n+\t\tout, err := expr.Eval(`bp ? 1 : 0`, env)\n+\t\trequire.NoError(t, err)\n+\t\trequire.Equal(t, 1, out)\n+\t})\n+}\n",
+      "files_changed": 2,
+      "files": [
+        "compiler/compiler.go",
+        "test/deref/deref_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "5: \n            \tError Trace:\t/private/tmp/claude-501/-Users-lokesh-lokimode-anthropic/ea0bdc33-bd76-40cf-add4-e7b520c55a21/scratchpad/bench-lead-2/hardtmp/loki-h2h.o787wvxj/raw-haiku-verify.go-expr-autoderef.1.kc99fj9m/repo/test/issues/836/issue_test.go:95\n            \tError:      \tReceived unexpected error:\n            \t            \tnon-integer slice index *int (1:5)\n            \t            \t | arr[ptrInt:ptrInt]\n            \t            \t | ....^\n            \tTest:       \tTestIssue836/slice_with_pointer_indices\nFAIL\nFAIL\tgithub.com/expr-lang/expr/test/issues/836\t0.119s\nok  \tgithub.com/expr-lang/expr/test/issues/840\t0.086s\nok  \tgithub.com/expr-lang/expr/test/issues/844\t0.081s\nok  \tgithub.com/expr-lang/expr/test/issues/854\t0.093s\nok  \tgithub.com/expr-lang/expr/test/issues/857\t0.078s\n?   \tgithub.com/expr-lang/expr/test/mock\t[no test files]\nok  \tgithub.com/expr-lang/expr/test/operator\t0.087s\nok  \tgithub.com/expr-lang/expr/test/operator/issues584\t0.138s\nok  \tgithub.com/expr-lang/expr/test/patch\t0.082s\nok  \tgithub.com/expr-lang/expr/test/patch/set_type\t0.083s\nok  \tgithub.com/expr-lang/expr/test/pipes\t0.088s\n?   \tgithub.com/expr-lang/expr/test/playground\t[no test files]\nok  \tgithub.com/expr-lang/expr/test/time\t0.077s\nok  \tgithub.com/expr-lang/expr/types\t0.072s\nok  \tgithub.com/expr-lang/expr/vm\t0.267s\n?   \tgithub.com/expr-lang/expr/vm/func_types\t[no test files]\nok  \tgithub.com/expr-lang/expr/vm/runtime\t0.082s\n?   \tgithub.com/expr-lang/expr/vm/runtime/helpers\t[no test files]\nFAIL\n",
+      "cost_usd": 0.01665602,
+      "sessions": 1,
+      "turns": 16,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "go-expr-withcontext",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 69.21,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "patcher/with_context_test.go"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/patcher/with_context_test.go b/patcher/with_context_test.go\nindex 2787053..1cfbb33 100644\n--- a/patcher/with_context_test.go\n+++ b/patcher/with_context_test.go\n@@ -3,6 +3,7 @@ package patcher_test\n import (\n \t\"context\"\n \t\"testing\"\n+\t\"time\"\n \n \t\"github.com/expr-lang/expr/internal/testify/require\"\n \n@@ -152,3 +153,29 @@ func TestWithContext_issue529(t *testing.T) {\n \trequire.NoError(t, err)\n \trequire.Equal(t, 2, out)\n }\n+\n+func TestWithContext_two_context_calls_in_one_expression(t *testing.T) {\n+\ttype env struct {\n+\t\tCtx context.Context `expr:\"ctx\"`\n+\t}\n+\tprogram, err := expr.Compile(\n+\t\t\"now2().After(date2())\",\n+\t\texpr.Env(env{}),\n+\t\texpr.WithContext(\"ctx\"),\n+\t\texpr.Function(\n+\t\t\t\"now2\",\n+\t\t\tfunc(params ...any) (any, error) { return time.Now(), nil },\n+\t\t\tnew(func(context.Context) time.Time),\n+\t\t),\n+\t\texpr.Function(\n+\t\t\t\"date2\",\n+\t\t\tfunc(params ...any) (any, error) { return time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), nil },\n+\t\t\tnew(func(context.Context) time.Time),\n+\t\t),\n+\t)\n+\trequire.NoError(t, err)\n+\n+\toutput, err := expr.Run(program, &env{Ctx: context.Background()})\n+\trequire.NoError(t, err)\n+\trequire.Equal(t, true, output)\n+}\n",
+      "files_changed": 1,
+      "files": [
+        "patcher/with_context_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "vlzcvogg/repo/test/issues/823/issue_test.go:82\n        \tError:      \tReceived unexpected error:\n        \t            \tinvalid number of arguments: expected 1, got 0 (1:14)\n        \t            \t | Now2().After(Date2())\n        \t            \t | .............^\n        \tTest:       \tTestIssue823_EnvMethods\nFAIL\nFAIL\tgithub.com/expr-lang/expr/test/issues/823\t0.118s\nok  \tgithub.com/expr-lang/expr/test/issues/830\t0.097s\nok  \tgithub.com/expr-lang/expr/test/issues/836\t0.089s\nok  \tgithub.com/expr-lang/expr/test/issues/840\t0.146s\nok  \tgithub.com/expr-lang/expr/test/issues/844\t0.133s\nok  \tgithub.com/expr-lang/expr/test/issues/854\t0.127s\nok  \tgithub.com/expr-lang/expr/test/issues/857\t0.130s\nok  \tgithub.com/expr-lang/expr/test/issues/888\t0.126s\nok  \tgithub.com/expr-lang/expr/test/issues/924\t0.106s\n?   \tgithub.com/expr-lang/expr/test/mock\t[no test files]\nok  \tgithub.com/expr-lang/expr/test/operator\t0.104s\nok  \tgithub.com/expr-lang/expr/test/operator/issues584\t0.128s\nok  \tgithub.com/expr-lang/expr/test/patch\t0.089s\nok  \tgithub.com/expr-lang/expr/test/patch/set_type\t0.082s\nok  \tgithub.com/expr-lang/expr/test/pipes\t0.118s\n?   \tgithub.com/expr-lang/expr/test/playground\t[no test files]\nok  \tgithub.com/expr-lang/expr/test/time\t0.098s\nok  \tgithub.com/expr-lang/expr/types\t0.112s\nok  \tgithub.com/expr-lang/expr/vm\t0.246s\n?   \tgithub.com/expr-lang/expr/vm/func_types\t[no test files]\nok  \tgithub.com/expr-lang/expr/vm/runtime\t0.105s\n?   \tgithub.com/expr-lang/expr/vm/runtime/helpers\t[no test files]\nFAIL\n",
+      "cost_usd": 0.018091080000000002,
+      "sessions": 1,
+      "turns": 15,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-click-help-option-cls",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 58.0,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_custom_classes.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_custom_classes.py b/tests/test_custom_classes.py\nindex 314842b..3041c82 100644\n--- a/tests/test_custom_classes.py\n+++ b/tests/test_custom_classes.py\n@@ -110,3 +110,21 @@ def test_group_group_class_self(runner):\n     group = CustomGroup()\n     subgroup = group.group()(lambda: None)\n     assert type(subgroup) is CustomGroup\n+\n+\n+def test_help_option_custom_cls_is_flag(runner):\n+    class CustomOption(click.Option):\n+        pass\n+\n+    @click.command()\n+    @click.help_option(\"-h\", \"--help\", cls=CustomOption)\n+    def cli():\n+        pass\n+\n+    result = runner.invoke(cli, [\"--help\"])\n+    assert result.exit_code == 0\n+    assert \"Show this message and exit.\" in result.output\n+\n+    result = runner.invoke(cli, [\"-h\"])\n+    assert result.exit_code == 0\n+    assert \"Show this message and exit.\" in result.output\n",
+      "files_changed": 2,
+      "files": [
+        "src/click/decorators.py",
+        "tests/test_custom_classes.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.01210176,
+      "sessions": 1,
+      "turns": 11,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-click-show-default-prompt",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 80.96,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_termui.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/test_termui.py b/tests/test_termui.py\nindex 026e8fc..c561143 100644\n--- a/tests/test_termui.py\n+++ b/tests/test_termui.py\n@@ -717,6 +717,19 @@ def test_false_show_default_cause_no_default_display_in_prompt(runner):\n     assert \"my-default-value\" not in result.output\n \n \n+def test_show_default_string_replaces_default_in_prompt(runner):\n+    @click.command()\n+    @click.option(\"--name\", default=\"default\", show_default=\"show_default\", prompt=True)\n+    def cmd(name):\n+        click.echo(f\"name={name}\")\n+\n+    # The string is shown in place of the default value, but the default is still used\n+    result = runner.invoke(cmd, input=\"\\n\")\n+    assert \"Name [show_default]: \" in result.output\n+    assert \"[default]\" not in result.output\n+    assert \"name=default\" in result.output\n+\n+\n REPEAT = object()\n \"\"\"Sentinel value to indicate that the prompt is expected to be repeated.\n \n",
+      "files_changed": 5,
+      "files": [
+        "CHANGES.rst",
+        "src/click/core.py",
+        "src/click/termui.py",
+        "tests/test_termui.py",
+        "uv.lock"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "\n        string in parentheses instead of the actual default value,\n        matching the help text behavior. See pallets/click#2836.\"\"\"\n    \n        option_kwargs = {\"show_default\": show_default, \"prompt\": True}\n        if default is not UNSET:\n            option_kwargs[\"default\"] = default\n    \n        @click.command()\n        @click.option(\"--arg1\", **option_kwargs)\n        def cmd(arg1):\n            click.echo(arg1)\n    \n        result = runner.invoke(cmd, input=user_input, standalone_mode=False)\n        prompt_line = result.output.split(\"\\n\")[0]\n        if in_prompt is not None:\n>           assert in_prompt in prompt_line\nE           AssertionError: assert '(computed at runtime)' in 'Arg1 [computed at runtime]: value'\n\ntests/test_termui.py:768: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_options.py::test_string_show_default_shows_custom_string_in_prompt\nFAILED tests/test_termui.py::test_string_show_default_in_prompt[simple-string]\nFAILED tests/test_termui.py::test_string_show_default_in_prompt[string-with-spaces]\nFAILED tests/test_termui.py::test_string_show_default_in_prompt[unicode] - As...\nFAILED tests/test_termui.py::test_string_show_default_in_prompt[numeric-default]\nFAILED tests/test_termui.py::test_string_show_default_in_prompt[default-is-none]\nFAILED tests/test_termui.py::test_string_show_default_in_prompt[default-is-unset]\n7 failed, 1365 passed, 24 skipped, 30062 deselected, 1 xfailed in 5.35s\n",
+      "cost_usd": 0.020701850000000004,
+      "sessions": 1,
+      "turns": 24,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-mistune-codespan-escape",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 34.01,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_misc.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_misc.py b/tests/test_misc.py\nindex f57c53b..03522de 100644\n--- a/tests/test_misc.py\n+++ b/tests/test_misc.py\n@@ -109,3 +109,11 @@ class TestMiscCases(TestCase):\n         result = md('foo\\n- bar\\n\\ntable')\n         expected = '<p>foo</p>\\n<ul>\\n<li>bar</li>\\n</ul>\\n<p>table</p>'\n         self.assertEqual(result.strip(), expected)\n+\n+\n+def test_codespan_raw_not_escaped():\n+    # codespan raw in AST must be unescaped; HTML renderer escapes it once\n+    md = mistune.create_markdown(renderer='ast')\n+    tokens = md('`&<>`')\n+    assert tokens == [{'type': 'paragraph', 'children': [{'type': 'codespan', 'raw': '&<>'}]}]\n+    assert mistune.html('`&<>`') == '<p><code>&amp;&lt;&gt;</code></p>\\n'\n",
+      "files_changed": 3,
+      "files": [
+        "src/mistune/inline_parser.py",
+        "src/mistune/renderers/html.py",
+        "tests/test_misc.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.012575320000000003,
+      "sessions": 1,
+      "turns": 14,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-mistune-md-leading-newlines",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 118.85,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_renderers.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_renderers.py b/tests/test_renderers.py\nindex d2abc48..55fbfdb 100644\n--- a/tests/test_renderers.py\n+++ b/tests/test_renderers.py\n@@ -43,6 +43,11 @@ class TestMarkdownRendererRoundTrip(TestCase):\n             self.to_html(text),\n         )\n \n+    def test_leading_blank_lines_are_kept(self):\n+        self.assertEqual(self.reformat(\"\\n\\n\\n\\nabc\"), \"\\n\\n\\n\\nabc\\n\")\n+        self.assertEqual(self.reformat(\"  \\n\\nabc\\n\"), \"\\n\\nabc\\n\")\n+        self.assert_round_trip(\"\\n\\n\\n\\nabc\")\n+\n     def test_escaped_block_markers(self):\n         # an escaped leading marker is literal text, not a new block\n         for marker in (r\"\\*\", r\"\\-\", r\"\\+\", r\"\\#\", r\"\\##\", r\"\\>\", r\"1\\.\", r\"3\\)\"):\n",
+      "files_changed": 3,
+      "files": [
+        "src/mistune/block_parser.py",
+        "src/mistune/renderers/markdown.py",
+        "tests/test_renderers.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.0321807,
+      "sessions": 1,
+      "turns": 27,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-mistune-toc-reflinks",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 41.62,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_directives.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_directives.py b/tests/test_directives.py\nindex 27576e5..c3bfafb 100644\n--- a/tests/test_directives.py\n+++ b/tests/test_directives.py\n@@ -76,6 +76,14 @@ class TestCustomizeToc(BaseTestCase):\n         self.assertIn('<a href=\"#t-1\">h1</a>', html)\n \n \n+class TestTocReferenceLinks(BaseTestCase):\n+    def test_ref_link_in_heading(self):\n+        md = create_markdown(escape=False, plugins=[RSTDirective([TableOfContents()])])\n+        html = md(\".. toc::\\n\\n# [link ref][ref]\\n\\n[ref]: example.com\\n\")\n+        self.assertIn('<a href=\"#toc_1\">link ref</a>', html)\n+        self.assertNotIn(\"[link ref][ref]\", html.split(\"</details>\")[0])\n+\n+\n class TestDirectiveInclude(BaseTestCase):\n     md = create_markdown(escape=False, plugins=[RSTDirective([Include()])])  # type: ignore[list-item]\n \n",
+      "files_changed": 3,
+      "files": [
+        "src/mistune/directives/toc.py",
+        "src/mistune/toc.py",
+        "tests/test_directives.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.013421670000000002,
+      "sessions": 1,
+      "turns": 13,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlglot-hash-case",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 170.66,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_expressions.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/test_expressions.py b/tests/test_expressions.py\nindex 1aad243..d64754c 100644\n--- a/tests/test_expressions.py\n+++ b/tests/test_expressions.py\n@@ -571,6 +571,12 @@ class TestExprs(unittest.TestCase):\n             },\n         )\n \n+    def test_hash_case_sensitive_json_path_keys(self):\n+        upper = parse_one(\"SELECT j ->> 'Key' FROM t\", dialect=\"postgres\").selects[0]\n+        lower = parse_one(\"SELECT j ->> 'key' FROM t\", dialect=\"postgres\").selects[0]\n+        self.assertNotEqual(upper, lower)\n+        self.assertNotEqual(hash(upper), hash(lower))\n+\n     def test_hash_invalidated_on_append(self):\n         expr = parse_one(\"SELECT a\")\n         hash(expr)  # populate the cached _hash\n",
+      "files_changed": 2,
+      "files": [
+        "sqlglot/expressions/query.py",
+        "tests/test_expressions.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "rectly\n        for agg in (exp.AnonymousAggFunc, exp.CombinedAggFunc):\n>           self.assertNotEqual(\n                agg(this=\"sumMap\", expressions=[]), agg(this=\"summap\", expressions=[])\n            )\nE           AssertionError: AnonymousAggFunc(this=sumMap) == AnonymousAggFunc(this=summap)\n\ntests/test_expressions.py:102: AssertionError\n----------------------------- Captured stdout call -----------------------------\nuuuuuuuuuu\n=========================== short test summary info ============================\nSUBFAILED[E'{}'] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[$${}$$] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[CREATE FUNCTION f() AS $${}$$] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[U&'{}'] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[N'{}'] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[JSON_EXTRACT(x, '$[\"{}\", \"b\"]')] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[x::?{}] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[:{}] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[CREATE DEFINER=`{}`@`%` VIEW v AS SELECT 1] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nFAILED tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text - As...\n10 failed, 169 passed, 3 deselected, 1172 subtests passed in 17.97s\n",
+      "cost_usd": 0.016897799999999998,
+      "sessions": 1,
+      "turns": 18,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlglot-mysql-stddev",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 146.35,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/dialects/test_mysql.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/dialects/test_mysql.py b/tests/dialects/test_mysql.py\nindex 2232306..4f1e1c9 100644\n--- a/tests/dialects/test_mysql.py\n+++ b/tests/dialects/test_mysql.py\n@@ -818,6 +818,31 @@ class TestMySQL(Validator):\n         )\n \n     def test_canonical_functions(self):\n+        # In MySQL, STD/STDDEV/VARIANCE are population functions, unlike the bare\n+        # STDDEV/VARIANCE in other dialects, which are sample functions\n+        self.validate_all(\n+            \"SELECT STDDEV_POP(x), VAR_POP(x)\",\n+            read={\n+                \"mysql\": \"SELECT STDDEV(x), VARIANCE(x)\",\n+                \"postgres\": \"SELECT STDDEV_POP(x), VAR_POP(x)\",\n+            },\n+            write={\n+                \"duckdb\": \"SELECT STDDEV_POP(x), VAR_POP(x)\",\n+                \"mysql\": \"SELECT STDDEV_POP(x), VAR_POP(x)\",\n+            },\n+        )\n+        self.validate_all(\n+            \"SELECT STDDEV_POP(x)\",\n+            read={\"mysql\": \"SELECT STD(x)\"},\n+        )\n+        self.validate_all(\n+            \"SELECT STDDEV_SAMP(x), VAR_SAMP(x)\",\n+            read={\"duckdb\": \"SELECT STDDEV(x), VARIANCE(x)\"},\n+            write={\n+                \"duckdb\": \"SELECT STDDEV_SAMP(x), VARIANCE(x)\",\n+                \"mysql\": \"SELECT STDDEV_SAMP(x), VAR_SAMP(x)\",\n+            },\n+        )\n         self.validate_identity(\"SELECT LEFT('str', 2)\", \"SELECT LEFT('str', 2)\")\n         self.validate_identity(\"SELECT INSTR('str', 'substr')\", \"SELECT LOCATE('substr', 'str')\")\n         self.validate_identity(\"SELECT UCASE('foo')\", \"SELECT UPPER('foo')\")\n",
+      "files_changed": 11,
+      "files": [
+        "sqlglot.egg-info/PKG-INFO",
+        "sqlglot.egg-info/SOURCES.txt",
+        "sqlglot.egg-info/dependency_links.txt",
+        "sqlglot.egg-info/requires.txt",
+        "sqlglot.egg-info/scm_file_list.json",
+        "sqlglot.egg-info/scm_version.json",
+        "sqlglot.egg-info/top_level.txt",
+        "sqlglot/_version.py",
+        "sqlglot/generators/mysql.py",
+        "sqlglot/parsers/mysql.py",
+        "tests/dialects/test_mysql.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.023590560000000003,
+      "sessions": 1,
+      "turns": 23,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlglot-mysql-timestampadd",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 218.47,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/dialects/test_mysql.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/dialects/test_mysql.py b/tests/dialects/test_mysql.py\nindex edfb57e..b29657a 100644\n--- a/tests/dialects/test_mysql.py\n+++ b/tests/dialects/test_mysql.py\n@@ -103,6 +103,21 @@ class TestMySQL(Validator):\n             \"SELECT STDDEV_POP(x), VAR_POP(x), STDDEV_SAMP(x), VAR_SAMP(x) FROM t\"\n         )\n \n+    def test_timestampadd(self):\n+        self.validate_identity(\n+            \"SELECT TIMESTAMPADD(MONTH, 1, '2024-01-31')\",\n+            \"SELECT DATE_ADD('2024-01-31', INTERVAL 1 MONTH)\",\n+        )\n+        self.validate_all(\n+            \"SELECT TIMESTAMPADD(MONTH, 1, '2024-01-31')\",\n+            write={\n+                \"duckdb\": \"SELECT CAST('2024-01-31' AS DATE) + INTERVAL 1 MONTH\",\n+                \"mysql\": \"SELECT DATE_ADD('2024-01-31', INTERVAL 1 MONTH)\",\n+                \"postgres\": \"SELECT '2024-01-31' + INTERVAL '1 MONTH'\",\n+                \"snowflake\": \"SELECT TIMESTAMPADD(MONTH, 1, '2024-01-31')\",\n+            },\n+        )\n+\n     def test_insert_value(self):\n         self.validate_identity(\"INSERT INTO t VALUE (1)\", \"INSERT INTO t VALUES (1)\")\n         self.validate_identity(\n",
+      "files_changed": 3,
+      "files": [
+        "sqlglot/generators/postgres.py",
+        "sqlglot/parsers/mysql.py",
+        "tests/dialects/test_mysql.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "===================================\n_ TestMySQL.test_mysql [SELECT TIMESTAMPADD(MONTH, 1, '2024-01-31') -> duckdb] _\ntests/dialects/test_dialect.py:108: in validate_all\n    self.assertEqual(\nE   AssertionError: \"SELECT CAST('2024-01-31' AS DATE) + INTERVAL 1 MONTH\" != \"SELECT CAST('2024-01-31' AS TIMESTAMP) + INTERVAL 1 MONTH\"\nE   - SELECT CAST('2024-01-31' AS DATE) + INTERVAL 1 MONTH\nE   ?                             ^ ^^\nE   + SELECT CAST('2024-01-31' AS TIMESTAMP) + INTERVAL 1 MONTH\nE   ?                             ^^^^^^ ^^\n_ TestMySQL.test_mysql [SELECT TIMESTAMPADD(SECOND, 30, '2024-01-01 12:00:00') -> duckdb] _\ntests/dialects/test_dialect.py:108: in validate_all\n    self.assertEqual(\nE   AssertionError: \"SELECT CAST('2024-01-01 12:00:00' AS DATE) + INTERVAL 30 SECOND\" != \"SELECT CAST('2024-01-01 12:00:00' AS TIMESTAMP) + INTERVAL 30 SECOND\"\nE   - SELECT CAST('2024-01-01 12:00:00' AS DATE) + INTERVAL 30 SECOND\nE   ?                                      ^ ^^\nE   + SELECT CAST('2024-01-01 12:00:00' AS TIMESTAMP) + INTERVAL 30 SECOND\nE   ?                                      ^^^^^^ ^^\n=========================== short test summary info ============================\nSUBFAILED[SELECT TIMESTAMPADD(MONTH, 1, '2024-01-31') -> duckdb] tests/dialects/test_mysql.py::TestMySQL::test_mysql\nSUBFAILED[SELECT TIMESTAMPADD(SECOND, 30, '2024-01-01 12:00:00') -> duckdb] tests/dialects/test_mysql.py::TestMySQL::test_mysql\n2 failed, 835 passed, 1 deselected, 12347 subtests passed in 4.60s\n",
+      "cost_usd": 0.020727930000000002,
+      "sessions": 1,
+      "turns": 23,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlglot-search-cycle",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 137.44,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/dialects/test_oracle.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/dialects/test_oracle.py b/tests/dialects/test_oracle.py\nindex 804eb24..97fa257 100644\n--- a/tests/dialects/test_oracle.py\n+++ b/tests/dialects/test_oracle.py\n@@ -413,6 +413,18 @@ class TestOracle(Validator):\n         self.validate_identity(\"L2_DISTANCE(x, y)\")\n         self.validate_identity(\"BITMAP_OR_AGG(x)\")\n \n+    def test_recursive_cte_search_and_cycle(self):\n+        self.validate_identity(\n+            \"WITH dup_hiredate(eid, emp_last, mgr_id, reportLevel, hire_date, job_id) AS (SELECT employee_id, last_name, manager_id, 0 AS reportLevel, hire_date, job_id FROM employees WHERE manager_id IS NULL UNION ALL SELECT e.employee_id, e.last_name, e.manager_id, r.reportLevel + 1 AS reportLevel, e.hire_date, e.job_id FROM dup_hiredate r, employees e WHERE r.eid = e.manager_id) SEARCH DEPTH FIRST BY hire_date SET order1 CYCLE hire_date SET is_cycle TO 'Y' DEFAULT 'N' SELECT LPAD(' ', 2 * reportLevel) || emp_last AS emp_name, eid, mgr_id, hire_date, job_id, is_cycle FROM dup_hiredate ORDER BY order1\"\n+        )\n+        self.validate_identity(\n+            \"WITH t(id, parent_id) AS (SELECT id, parent_id FROM tree UNION ALL SELECT tr.id, tr.parent_id FROM t, tree tr WHERE tr.parent_id = t.id) CYCLE id SET is_cycle TO 1 DEFAULT 0 SELECT * FROM t\"\n+        )\n+        self.validate_identity(\n+            \"WITH t(id, a, b) AS (SELECT id, a, b FROM tree UNION ALL SELECT tr.id, tr.a, tr.b FROM t, tree tr WHERE tr.id = t.id) CYCLE id, a SET is_cycle TO 'Y' DEFAULT 'N' SELECT * FROM t\",\n+            \"WITH t(id, a, b) AS (SELECT id, a, b FROM tree UNION ALL SELECT tr.id, tr.a, tr.b FROM t, tree tr WHERE tr.id = t.id) CYCLE id, a SET is_cycle TO 'Y' DEFAULT 'N' SELECT * FROM t\",\n+        )\n+\n     def test_pivot_syntax_restrictions(self):\n         \"\"\"Oracle only accepts simple column names in a (UN)PIVOT's FOR clause and IN-list\n         (ORA-01748), and rejects AS before the operator's alias (ORA-03048). The aggregate\n",
+      "files_changed": 4,
+      "files": [
+        "sqlglot/expressions/query.py",
+        "sqlglot/generator.py",
+        "sqlglot/parser.py",
+        "tests/dialects/test_oracle.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.026278260000000005,
+      "sessions": 1,
+      "turns": 18,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlglot-snowflake-idents",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 149.95,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/dialects/test_snowflake.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/dialects/test_snowflake.py b/tests/dialects/test_snowflake.py\nindex dffd4ae..ea9176f 100644\n--- a/tests/dialects/test_snowflake.py\n+++ b/tests/dialects/test_snowflake.py\n@@ -3541,6 +3541,28 @@ class TestSnowflake(Validator):\n             },\n         )\n \n+    def test_keyword_identifiers(self):\n+        # Words that are keywords in other dialects but plain identifiers in Snowflake\n+        for sql in (\n+            \"SELECT returning FROM t\",\n+            \"SELECT glob FROM t\",\n+            \"SELECT using FROM t\",\n+            \"SELECT lateral FROM t\",\n+            \"SELECT pivot, unpivot FROM t\",\n+            \"CREATE TABLE returning (x INT)\",\n+            \"CREATE TABLE concurrently (x INT)\",\n+            \"CREATE TABLE t (exclude INT)\",\n+            \"DESCRIBE TABLE pivot\",\n+        ):\n+            with self.subTest(sql):\n+                self.validate_identity(sql)\n+\n+        # Keyword-like words still act as keywords where the grammar expects them\n+        self.validate_identity(\"SELECT a FROM x JOIN y USING (id)\")\n+        self.validate_identity(\n+            \"SELECT * FROM t, LATERAL FLATTEN(input => c) AS f(SEQ, KEY, PATH, INDEX, VALUE, THIS)\"\n+        )\n+\n     def test_chained_pivots(self):\n         self.validate_identity(\n             \"SELECT * FROM t UNPIVOT(a FOR b IN (c, d)) UNPIVOT(e FOR f IN (g, h))\"\n",
+      "files_changed": 3,
+      "files": [
+        "sqlglot/parser.py",
+        "sqlglot/parsers/snowflake.py",
+        "tests/dialects/test_snowflake.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "\n        formatted_sql, start_context, highlight, end_context = highlight_sql(\n            sql=self.sql,\n            positions=[(token.start, token.end)],\n            context_length=self.error_message_context,\n        )\n        formatted_message = f\"{message}. Line {token.line}, Col: {token.col}.\\n  {formatted_sql}\"\n    \n        error = ParseError.new(\n            formatted_message,\n            description=message,\n            line=token.line,\n            col=token.col,\n            start_context=start_context,\n            highlight=highlight,\n            end_context=end_context,\n        )\n    \n        if self.error_level == ErrorLevel.IMMEDIATE:\n>           raise error\nE           sqlglot.errors.ParseError: Required keyword: 'this' missing for <class 'sqlglot.expressions.query.Lateral'>. Line 1, Col: 16.\nE             SELECT 1 \u001b[4mlateral\u001b[0m\n\nsqlglot/parser.py:2174: ParseError\n=========================== short test summary info ============================\nSUBFAILED(alias='returning') tests/dialects/test_snowflake.py::TestSnowflake::test_unreserved_keywords_as_identifiers\nSUBFAILED(alias='glob') tests/dialects/test_snowflake.py::TestSnowflake::test_unreserved_keywords_as_identifiers\nSUBFAILED(alias='using') tests/dialects/test_snowflake.py::TestSnowflake::test_unreserved_keywords_as_identifiers\nSUBFAILED(alias='lateral') tests/dialects/test_snowflake.py::TestSnowflake::test_unreserved_keywords_as_identifiers\n4 failed, 836 passed, 1 deselected, 12364 subtests passed in 6.23s\n",
+      "cost_usd": 0.03823000000000002,
+      "sessions": 1,
+      "turns": 35,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlglot-teradata-frame",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 194.51,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/dialects/test_teradata.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/dialects/test_teradata.py b/tests/dialects/test_teradata.py\nindex 7e47e23..8e197bb 100644\n--- a/tests/dialects/test_teradata.py\n+++ b/tests/dialects/test_teradata.py\n@@ -369,3 +369,43 @@ class TestTeradata(Validator):\n             \"SET QUERY_BAND = 'NONE' FOR SESSION\"\n         )  # quoted NONE should remain quoted\n         self.validate_identity(\"SET QUERY_BAND = '' FOR SESSION\")\n+\n+    def test_window_aggregate_default_frame(self):\n+        # Teradata's window aggregates with ORDER BY and no frame cover the whole partition\n+        self.validate_all(\n+            \"SELECT p, d, x, SUM(x) OVER (PARTITION BY p ORDER BY d) AS s FROM t\",\n+            read={\n+                \"teradata\": \"SELECT p, d, x, SUM(x) OVER (PARTITION BY p ORDER BY d) AS s FROM t\",\n+            },\n+            write={\n+                \"teradata\": \"SELECT p, d, x, SUM(x) OVER (PARTITION BY p ORDER BY d) AS s FROM t\",\n+                \"duckdb\": \"SELECT p, d, x, SUM(x) OVER (PARTITION BY p ORDER BY d NULLS FIRST ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS s FROM t\",\n+                \"snowflake\": \"SELECT p, d, x, SUM(x) OVER (PARTITION BY p ORDER BY d NULLS FIRST ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS s FROM t\",\n+                \"postgres\": \"SELECT p, d, x, SUM(x) OVER (PARTITION BY p ORDER BY d NULLS FIRST ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS s FROM t\",\n+            },\n+        )\n+        # Without ORDER BY the window already covers the whole partition, so no frame is added\n+        self.validate_all(\n+            \"SELECT SUM(x) OVER (PARTITION BY p) FROM t\",\n+            write={\n+                \"snowflake\": \"SELECT SUM(x) OVER (PARTITION BY p) FROM t\",\n+                \"teradata\": \"SELECT SUM(x) OVER (PARTITION BY p) FROM t\",\n+            },\n+        )\n+        # Ranking functions take no frame\n+        self.validate_all(\n+            \"SELECT ROW_NUMBER() OVER (ORDER BY d) FROM t\",\n+            write={\n+                \"snowflake\": \"SELECT ROW_NUMBER() OVER (ORDER BY d NULLS FIRST) FROM t\",\n+            },\n+        )\n+        # An explicit frame is kept as written, both for Teradata and for other targets\n+        self.validate_identity(\n+            \"SELECT SUM(x) OVER (ORDER BY d ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t\"\n+        )\n+        self.validate_all(\n+            \"SELECT AVG(x) OVER (ORDER BY d ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t\",\n+            write={\n+                \"snowflake\": \"SELECT AVG(x) OVER (ORDER BY d NULLS FIRST ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t\",\n+            },\n+        )\n",
+      "files_changed": 3,
+      "files": [
+        "sqlglot/generators/teradata.py",
+        "sqlglot/parsers/teradata.py",
+        "tests/dialects/test_teradata.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": " FROM t\",\n            write={\n                \"snowflake\": \"SELECT RANK() OVER (ORDER BY d NULLS FIRST), ROW_NUMBER() OVER (ORDER BY d NULLS FIRST), LAG(x) OVER (ORDER BY d NULLS FIRST), FIRST_VALUE(x) OVER (ORDER BY d NULLS FIRST) FROM t\",\n            },\n        )\n        self.validate_identity(\n            \"SELECT SUM(x) OVER (ORDER BY d ROWS UNBOUNDED PRECEDING) FROM t\",\n            \"SELECT SUM(x) OVER (ORDER BY d ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t\",\n        )\n>       self.validate_identity(\n            \"SELECT AVG(x) OVER (ORDER BY d ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t\",\n            \"SELECT AVG(x) OVER (ORDER BY d) FROM t\",\n        )\n\ntests/dialects/test_teradata.py:406: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \ntests/dialects/test_dialect.py:64: in validate_identity\n    self.assertEqual(\nE   AssertionError: 'SELE[21 chars] BY d) FROM t' != 'SELE[21 chars] BY d ROWS BETWEEN UNBOUNDED PRECEDING AND UNB[20 chars]OM t'\nE   - SELECT AVG(x) OVER (ORDER BY d) FROM t\nE   + SELECT AVG(x) OVER (ORDER BY d ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t\n----------------------------- Captured stdout call -----------------------------\nuuuuuuuu\n=========================== short test summary info ============================\nFAILED tests/dialects/test_teradata.py::TestTeradata::test_window_aggregate_default_frame\n1 failed, 785 passed, 1 deselected, 11398 subtests passed in 4.09s\n",
+      "cost_usd": 0.034492209999999995,
+      "sessions": 1,
+      "turns": 25,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlparse-compare-expr",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 102.63,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_grouping.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/test_grouping.py b/tests/test_grouping.py\nindex 34f7459..7f9a241 100644\n--- a/tests/test_grouping.py\n+++ b/tests/test_grouping.py\n@@ -409,6 +409,31 @@ def test_identifier_consumes_ordering():\n     assert ids[1].get_ordering() is None\n \n \n+@pytest.mark.parametrize('expr', [\n+    \"a > current_date\",\n+    \"a > current_timestamp\",\n+    \"a > (current_date - interval '6' month)\",\n+])\n+def test_comparison_with_datetime_keywords(expr):\n+    # Keyword operands such as current_date must still form a Comparison\n+    p = sqlparse.parse(\"SELECT * FROM t WHERE \" + expr)[0]\n+    where = p.tokens[-1]\n+    assert isinstance(where, sql.Where)\n+    assert any(isinstance(tk, sql.Comparison) for tk in where.tokens)\n+\n+\n+def test_comparison_with_datetime_keyword_operand_not_parenthesized():\n+    p = sqlparse.parse(\n+        \"SELECT * FROM t WHERE date_parse(s, '%Y%m%d') > current_date\"\n+        \" - interval '6' month\")[0]\n+    where = p.tokens[-1]\n+    comparison = [tk for tk in where.tokens\n+                  if isinstance(tk, sql.Comparison)]\n+    assert len(comparison) == 1\n+    assert comparison[0].left.get_real_name() == 'date_parse'\n+    assert comparison[0].right.value == 'current_date'\n+\n+\n def test_comparison_with_keywords():\n     # issue90\n     # in fact these are assignments, but for now we don't distinguish them\n",
+      "files_changed": 2,
+      "files": [
+        "sqlparse/engine/grouping.py",
+        "tests/test_grouping.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "\n==================================== ERRORS ====================================\n___________________ ERROR collecting tests/test_grouping.py ____________________\ntests/test_grouping.py:38: in <module>\n    ('select a from b where c < d + interval \\'1 day\\'', sql.Identifier, sql.TypedLiteral),\n                                                                         ^^^^^^^^^^^^^^^^\nE   AttributeError: module 'sqlparse.sql' has no attribute 'TypedLiteral'\n=========================== short test summary info ============================\nERROR tests/test_grouping.py - AttributeError: module 'sqlparse.sql' has no a...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.22s\n",
+      "cost_usd": 0.029180840000000003,
+      "sessions": 1,
+      "turns": 24,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlparse-window-over",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 50.64,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_regressions.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/test_regressions.py b/tests/test_regressions.py\nindex 29cb502..3ec3ffa 100644\n--- a/tests/test_regressions.py\n+++ b/tests/test_regressions.py\n@@ -449,4 +449,28 @@ def test_copy_issue672():\n def test_primary_key_issue740():\n     p = sqlparse.parse('PRIMARY KEY')[0]\n     assert len(p.tokens) == 1\n-    assert p.tokens[0].ttype == T.Keyword\n\\ No newline at end of file\n+    assert p.tokens[0].ttype == T.Keyword\n+\n+def test_window_function_over_clause_is_grouped_with_function():\n+    # Window functions ``func(...) OVER (...)`` must stay together so the\n+    # surrounding select list is still split into individual identifiers.\n+    query = (\"SELECT uid \"\n+             \", ROW_NUMBER() OVER ( PARTITION BY table.col_a ORDER BY \"\n+             \"table.col_b DESC ) AS row \"\n+             \", full_name AS name \"\n+             \", another_column AS acol \"\n+             \", ROW_NUMBER() OVER ( PARTITION BY table.col_c ORDER BY \"\n+             \"table.col_d ASC ) AS row_lo \"\n+             \", ROW_NUMBER() OVER ( PARTITION BY table.col_e ORDER BY \"\n+             \"table.col_f DESC ) AS row_hi \"\n+             \", last_column AS lc \"\n+             \"FROM table\")\n+    p = sqlparse.parse(query)[0]\n+    id_list = [t for t in p.tokens if isinstance(t, sql.IdentifierList)]\n+    assert len(id_list) == 1\n+    identifiers = list(id_list[0].get_identifiers())\n+    assert [i.get_alias() for i in identifiers\n+            if isinstance(i, sql.Identifier)] == [\n+        'row', 'name', 'acol', 'row_lo', 'row_hi', 'lc']\n+    assert p.tokens[0].ttype is T.Keyword.DML\n+    assert p.token_next_by(m=(T.Keyword, 'FROM'))[1] is not None\n",
+      "files_changed": 3,
+      "files": [
+        "sqlparse/engine/grouping.py",
+        "sqlparse/sql.py",
+        "tests/test_regressions.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "on)\n        assert isinstance(p.tokens[0].tokens[0].tokens[0], sql.Function)\n        p = sqlparse.parse('foo(c1) over win1 as bar')[0]\n>       assert isinstance(p.tokens[0], sql.Identifier)\nE       AssertionError: assert False\nE        +  where False = isinstance(<Function 'foo(c1)' at 0x1096FA570>, <class 'sqlparse.sql.Identifier'>)\nE        +    where <class 'sqlparse.sql.Identifier'> = sql.Identifier\n\ntests/test_grouping.py:189: AssertionError\n____________________________ test_grouping_function ____________________________\n\n    def test_grouping_function():\n        p = sqlparse.parse('foo()')[0]\n        assert isinstance(p.tokens[0], sql.Function)\n        p = sqlparse.parse('foo(null, bar)')[0]\n        assert isinstance(p.tokens[0], sql.Function)\n        assert len(list(p.tokens[0].get_parameters())) == 2\n        p = sqlparse.parse('foo(5) over win1')[0]\n        assert isinstance(p.tokens[0], sql.Function)\n        assert len(list(p.tokens[0].get_parameters())) == 1\n>       assert isinstance(p.tokens[0].get_window(), sql.Identifier)\n                          ^^^^^^^^^^^^^^^^^^^^^^\nE       AttributeError: 'Function' object has no attribute 'get_window'\n\ntests/test_grouping.py:398: AttributeError\n=========================== short test summary info ============================\nFAILED tests/test_grouping.py::test_grouping_identifier_function - AssertionE...\nFAILED tests/test_grouping.py::test_grouping_function - AttributeError: 'Func...\n2 failed, 448 passed, 3 xfailed in 0.84s\n",
+      "cost_usd": 0.019194640000000002,
+      "sessions": 1,
+      "turns": 15,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-tomlkit-array-remove",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 64.71,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_items.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/test_items.py b/tests/test_items.py\nindex cefb29e..8b4e493 100644\n--- a/tests/test_items.py\n+++ b/tests/test_items.py\n@@ -1032,3 +1032,13 @@ def test_removal_of_arrayitem_with_extra_whitespace():\n     docstr = doc.as_string()\n     parse(docstr)\n     assert docstr == expected\n+\n+\n+def test_removal_of_arrayitem_keeps_valid_serialization_when_comma_is_separated_by_comment():\n+    doc = parse('x = [\\n\"one\" # comment one\\n, # comment two\\n]')\n+    x = doc[\"x\"]\n+    assert isinstance(x, Array)\n+    x.remove(\"one\")\n+    docstr = doc.as_string()\n+    assert docstr == \"x = [\\n # comment two\\n]\"\n+    assert doc[\"x\"].unwrap() == []\n",
+      "files_changed": 2,
+      "files": [
+        "tests/test_items.py",
+        "tomlkit/items.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "ts here\n    '4'#g\n    #    comments there\n     ,'5' #h\n        #   comments everywhere\n     # so many comments\n    ,'6' ,\n          # you get a comment\n    # you get a comment\n       '7' ,#j\n    # everybody gets a comment!!!\n     \"8\"#c\n    ,\"9\",  \\n  \"10\"\n    ]\n    \"\"\"\n>       assert expected == parse(expected).as_string()\nE       assert '\\nx = [\\n   ...\\n  \"10\"\\n]\\n' == '\\nx = [\\n   ...\\n  \"10\"\\n]\\n'\nE         \nE           \nE           x = [\nE               '0'#a\nE           ,#b\nE           \nE               # comment...\nE         \nE         ...Full output truncated (25 lines hidden), use '-vv' to show\n\ntests/test_items.py:1065: AssertionError\n_________________ test_array_item_removal_newline_restore_next _________________\n\n    def test_array_item_removal_newline_restore_next():\n        expected = \"x = [\\n  '0',\\n    '2'\\n]\"\n    \n        docstr = \"x = [\\n  '0',\\n    '1','2'\\n]\"\n        doc = parse(docstr)\n        doc[\"x\"].remove(\"1\")\n>       assert doc.as_string() == expected\nE       assert \"x = [\\n  '0','2'\\n]\" == \"x = [\\n  '0',\\n    '2'\\n]\"\nE         \nE           x = [\nE         -   '0',\nE         +   '0','2'\nE         ?       +++\nE         -     '2'\nE           ]\n\ntests/test_items.py:1080: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_items.py::test_badly_formatted_array_and_item_removal - ass...\nFAILED tests/test_items.py::test_array_item_removal_newline_restore_next - as...\n2 failed, 862 passed in 7.20s\n",
+      "cost_usd": 0.01275242,
+      "sessions": 1,
+      "turns": 12,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-tomlkit-table-update",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 88.22,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_items.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_items.py b/tests/test_items.py\nindex e3f93c7..f6dcdb8 100644\n--- a/tests/test_items.py\n+++ b/tests/test_items.py\n@@ -887,3 +887,15 @@ def test_copy_copy():\n     classifiers = result[\"tool\"][\"poetry\"][\"classifiers\"]\n     new = copy.copy(classifiers)\n     assert new == classifiers\n+\n+\n+def test_table_update_with_document_nests_subtables():\n+    example = \"[entry]\\nfoo = 'bar'\"\n+    subentry = \"bar = 23\\n\\n[subentry]\\n'subkey' = 'subvalue'\"\n+\n+    doc = parse(example)\n+    doc[\"entry\"].update(parse(subentry))\n+\n+    output = api.dumps(doc)\n+    assert \"[entry.subentry]\" in output\n+    assert api.loads(output)[\"entry\"][\"subentry\"] == {\"subkey\": \"subvalue\"}\n",
+      "files_changed": 2,
+      "files": [
+        "tests/test_items.py",
+        "tomlkit/items.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.018625410000000002,
+      "sessions": 1,
+      "turns": 17,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-tomlkit-value-bool",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 75.86,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_api.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/test_api.py b/tests/test_api.py\nindex 4d24844..af1d466 100644\n--- a/tests/test_api.py\n+++ b/tests/test_api.py\n@@ -301,3 +301,14 @@ def test_add_dotted_key():\n     table = tomlkit.table()\n     table.add(tomlkit.key([\"foo\", \"bar\"]), 1)\n     assert table.as_string() == \"foo.bar = 1\\n\"\n+\n+\n+@pytest.mark.parametrize(\"raw\", [\"test\", \"fest\", \"tru\", \"t\", \"f\", \"truex\", \"falsey\", \"NoTest\"])\n+def test_value_rejects_invalid_bool_like_strings(raw):\n+    with pytest.raises(tomlkit.exceptions.ParseError):\n+        tomlkit.value(raw)\n+\n+\n+@pytest.mark.parametrize((\"raw\", \"expected\"), [(\"true\", True), (\"false\", False), (\"true # c\", True)])\n+def test_value_parses_bool_literals(raw, expected):\n+    assert tomlkit.value(raw) == expected\n",
+      "files_changed": 3,
+      "files": [
+        "tests/test_api.py",
+        "tomlkit/parser.py",
+        "tomlkit/source.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "ue[]\",\n            \"false{a=1}\",\n        ],\n    )\n    def test_value_rejects_values_with_appendage(raw):\n        \"\"\"Values that appear valid at the beginning but leave chars unparsed are rejected.\"\"\"\n>       with pytest.raises(tomlkit.exceptions.ParseError):\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE       Failed: DID NOT RAISE <class 'tomlkit.exceptions.ParseError'>\n\ntests/test_api.py:375: Failed\n________________ test_value_rejects_values_with_appendage[[][]] ________________\n\nraw = '[][]'\n\n    @pytest.mark.parametrize(\n        \"raw\",\n        [\n            '\"foo\"1.2',\n            \"truefalse\",\n            \"1.0false\",\n            \"100true\",\n            \"truetrue\",\n            \"falsefalse\",\n            \"1.2.3.4\",\n            \"[][]\",\n            \"{a=[][]}[]\",\n            \"true[]\",\n            \"false{a=1}\",\n        ],\n    )\n    def test_value_rejects_values_with_appendage(raw):\n        \"\"\"Values that appear valid at the beginning but leave chars unparsed are rejected.\"\"\"\n>       with pytest.raises(tomlkit.exceptions.ParseError):\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE       Failed: DID NOT RAISE <class 'tomlkit.exceptions.ParseError'>\n\ntests/test_api.py:375: Failed\n=========================== short test summary info ============================\nFAILED tests/test_api.py::test_value_rejects_values_with_appendage[\"foo\"1.2]\nFAILED tests/test_api.py::test_value_rejects_values_with_appendage[[][]] - Fa...\n2 failed, 770 passed, 1 deselected in 7.58s\n",
+      "cost_usd": 0.015087130000000004,
+      "sessions": 1,
+      "turns": 15,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "go-chi-allow-header",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 93.64,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "mux_test.go"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/mux_test.go b/mux_test.go\nindex 68fc94c..9411362 100644\n--- a/mux_test.go\n+++ b/mux_test.go\n@@ -1809,3 +1809,40 @@ func BenchmarkMux(b *testing.B) {\n \t\t})\n \t}\n }\n+\n+func TestMuxMethodNotAllowedAllowHeader(t *testing.T) {\n+\tr := NewRouter()\n+\tr.Get(\"/resource\", func(w http.ResponseWriter, r *http.Request) {})\n+\tr.Post(\"/resource\", func(w http.ResponseWriter, r *http.Request) {})\n+\tr.Put(\"/other\", func(w http.ResponseWriter, r *http.Request) {})\n+\n+\t// default 405 handler must advertise the supported methods\n+\tw := httptest.NewRecorder()\n+\tr.ServeHTTP(w, httptest.NewRequest(\"DELETE\", \"/resource\", nil))\n+\tif w.Code != http.StatusMethodNotAllowed {\n+\t\tt.Fatalf(\"expected 405, got %d\", w.Code)\n+\t}\n+\tif got := w.Header().Get(\"Allow\"); got != \"GET, POST\" {\n+\t\tt.Fatalf(\"expected Allow %q, got %q\", \"GET, POST\", got)\n+\t}\n+\n+\t// a custom 405 handler still gets the Allow header\n+\tr.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {\n+\t\tw.WriteHeader(http.StatusMethodNotAllowed)\n+\t})\n+\tw = httptest.NewRecorder()\n+\tr.ServeHTTP(w, httptest.NewRequest(\"PUT\", \"/resource\", nil))\n+\tif got := w.Header().Get(\"Allow\"); got != \"GET, POST\" {\n+\t\tt.Fatalf(\"expected Allow %q with custom handler, got %q\", \"GET, POST\", got)\n+\t}\n+\n+\t// a path that matches no route is a 404 and must not get an Allow header\n+\tw = httptest.NewRecorder()\n+\tr.ServeHTTP(w, httptest.NewRequest(\"GET\", \"/missing\", nil))\n+\tif w.Code != http.StatusNotFound {\n+\t\tt.Fatalf(\"expected 404, got %d\", w.Code)\n+\t}\n+\tif got := w.Header().Get(\"Allow\"); got != \"\" {\n+\t\tt.Fatalf(\"expected no Allow header on 404, got %q\", got)\n+\t}\n+}\n",
+      "files_changed": 2,
+      "files": [
+        "mux.go",
+        "mux_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "--- FAIL: TestMethodNotAllowed (0.00s)\n    --- FAIL: TestMethodNotAllowed/Unregistered_Method (0.00s)\n        mux_test.go:426: Allow header should contain 2 headers: GET, HEAD. Received:  [GET, HEAD]\nFAIL\nFAIL\tgithub.com/go-chi/chi/v5\t0.833s\nFAIL\n",
+      "cost_usd": 0.013011029999999998,
+      "sessions": 1,
+      "turns": 11,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "go-expr-autoderef",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 92.36,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "expr_test.go"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/expr_test.go b/expr_test.go\nindex 01ccdee..8a3170d 100644\n--- a/expr_test.go\n+++ b/expr_test.go\n@@ -2883,3 +2883,34 @@ func TestIssue807(t *testing.T) {\n \t\tt.Fatalf(\"expected 'in' operator to return false for unexported field\")\n \t}\n }\n+\n+func TestExpr_autoderef_map_key_and_condition(t *testing.T) {\n+\ts := \"foo\"\n+\tb := true\n+\tf := false\n+\tenv := map[string]any{\n+\t\t\"bar\": \"x\",\n+\t\t\"ptr\": &s,\n+\t\t\"bp\":  &b,\n+\t\t\"fp\":  &f,\n+\t}\n+\n+\ttests := []struct {\n+\t\tcode   string\n+\t\texpect any\n+\t}{\n+\t\t{`{foo: bar}[ptr]`, \"x\"},\n+\t\t{`{foo: \"bar\"}[ptr]`, \"bar\"},\n+\t\t{`bp ? 1 : 0`, 1},\n+\t\t{`fp ? 1 : 0`, 0},\n+\t}\n+\tfor _, tt := range tests {\n+\t\tt.Run(tt.code, func(t *testing.T) {\n+\t\t\tprogram, err := expr.Compile(tt.code, expr.Env(env))\n+\t\t\trequire.NoError(t, err)\n+\t\t\tout, err := expr.Run(program, env)\n+\t\t\trequire.NoError(t, err)\n+\t\t\trequire.Equal(t, tt.expect, out)\n+\t\t})\n+\t}\n+}\n",
+      "files_changed": 3,
+      "files": [
+        "checker/checker.go",
+        "compiler/compiler.go",
+        "expr_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "5: \n            \tError Trace:\t/private/tmp/claude-501/-Users-lokesh-lokimode-anthropic/ea0bdc33-bd76-40cf-add4-e7b520c55a21/scratchpad/bench-lead-2/hardtmp/loki-h2h.o787wvxj/raw-haiku-verify.go-expr-autoderef.2.si8c0vb1/repo/test/issues/836/issue_test.go:95\n            \tError:      \tReceived unexpected error:\n            \t            \tnon-integer slice index *int (1:5)\n            \t            \t | arr[ptrInt:ptrInt]\n            \t            \t | ....^\n            \tTest:       \tTestIssue836/slice_with_pointer_indices\nFAIL\nFAIL\tgithub.com/expr-lang/expr/test/issues/836\t0.115s\nok  \tgithub.com/expr-lang/expr/test/issues/840\t0.084s\nok  \tgithub.com/expr-lang/expr/test/issues/844\t0.096s\nok  \tgithub.com/expr-lang/expr/test/issues/854\t0.087s\nok  \tgithub.com/expr-lang/expr/test/issues/857\t0.093s\n?   \tgithub.com/expr-lang/expr/test/mock\t[no test files]\nok  \tgithub.com/expr-lang/expr/test/operator\t0.099s\nok  \tgithub.com/expr-lang/expr/test/operator/issues584\t0.103s\nok  \tgithub.com/expr-lang/expr/test/patch\t0.101s\nok  \tgithub.com/expr-lang/expr/test/patch/set_type\t0.100s\nok  \tgithub.com/expr-lang/expr/test/pipes\t0.089s\n?   \tgithub.com/expr-lang/expr/test/playground\t[no test files]\nok  \tgithub.com/expr-lang/expr/test/time\t0.084s\nok  \tgithub.com/expr-lang/expr/types\t0.089s\nok  \tgithub.com/expr-lang/expr/vm\t0.185s\n?   \tgithub.com/expr-lang/expr/vm/func_types\t[no test files]\nok  \tgithub.com/expr-lang/expr/vm/runtime\t0.065s\n?   \tgithub.com/expr-lang/expr/vm/runtime/helpers\t[no test files]\nFAIL\n",
+      "cost_usd": 0.0297293,
+      "sessions": 1,
+      "turns": 28,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "go-expr-withcontext",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 53.11,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "patcher/with_context_test.go"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/patcher/with_context_test.go b/patcher/with_context_test.go\nindex 2787053..a871eb1 100644\n--- a/patcher/with_context_test.go\n+++ b/patcher/with_context_test.go\n@@ -3,6 +3,7 @@ package patcher_test\n import (\n \t\"context\"\n \t\"testing\"\n+\t\"time\"\n \n \t\"github.com/expr-lang/expr/internal/testify/require\"\n \n@@ -152,3 +153,28 @@ func TestWithContext_issue529(t *testing.T) {\n \trequire.NoError(t, err)\n \trequire.Equal(t, 2, out)\n }\n+\n+func TestWithContext_two_context_functions_in_one_expression(t *testing.T) {\n+\ttype env struct {\n+\t\tCtx context.Context `expr:\"ctx\"`\n+\t}\n+\n+\tprogram, err := expr.Compile(\n+\t\t\"now2().After(date2())\",\n+\t\texpr.Env(env{}),\n+\t\texpr.WithContext(\"ctx\"),\n+\t\texpr.Function(\"now2\",\n+\t\t\tfunc(params ...any) (any, error) { return time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC), nil },\n+\t\t\tnew(func(context.Context) time.Time),\n+\t\t),\n+\t\texpr.Function(\"date2\",\n+\t\t\tfunc(params ...any) (any, error) { return time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), nil },\n+\t\t\tnew(func(context.Context) time.Time),\n+\t\t),\n+\t)\n+\trequire.NoError(t, err)\n+\n+\toutput, err := expr.Run(program, &env{Ctx: context.Background()})\n+\trequire.NoError(t, err)\n+\trequire.Equal(t, true, output)\n+}\n",
+      "files_changed": 1,
+      "files": [
+        "patcher/with_context_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "nw87lnyi/repo/test/issues/823/issue_test.go:82\n        \tError:      \tReceived unexpected error:\n        \t            \tinvalid number of arguments: expected 1, got 0 (1:14)\n        \t            \t | Now2().After(Date2())\n        \t            \t | .............^\n        \tTest:       \tTestIssue823_EnvMethods\nFAIL\nFAIL\tgithub.com/expr-lang/expr/test/issues/823\t0.105s\nok  \tgithub.com/expr-lang/expr/test/issues/830\t0.087s\nok  \tgithub.com/expr-lang/expr/test/issues/836\t0.087s\nok  \tgithub.com/expr-lang/expr/test/issues/840\t0.098s\nok  \tgithub.com/expr-lang/expr/test/issues/844\t0.093s\nok  \tgithub.com/expr-lang/expr/test/issues/854\t0.105s\nok  \tgithub.com/expr-lang/expr/test/issues/857\t0.082s\nok  \tgithub.com/expr-lang/expr/test/issues/888\t0.086s\nok  \tgithub.com/expr-lang/expr/test/issues/924\t0.087s\n?   \tgithub.com/expr-lang/expr/test/mock\t[no test files]\nok  \tgithub.com/expr-lang/expr/test/operator\t0.088s\nok  \tgithub.com/expr-lang/expr/test/operator/issues584\t0.086s\nok  \tgithub.com/expr-lang/expr/test/patch\t0.082s\nok  \tgithub.com/expr-lang/expr/test/patch/set_type\t0.079s\nok  \tgithub.com/expr-lang/expr/test/pipes\t0.092s\n?   \tgithub.com/expr-lang/expr/test/playground\t[no test files]\nok  \tgithub.com/expr-lang/expr/test/time\t0.087s\nok  \tgithub.com/expr-lang/expr/types\t0.081s\nok  \tgithub.com/expr-lang/expr/vm\t0.240s\n?   \tgithub.com/expr-lang/expr/vm/func_types\t[no test files]\nok  \tgithub.com/expr-lang/expr/vm/runtime\t0.065s\n?   \tgithub.com/expr-lang/expr/vm/runtime/helpers\t[no test files]\nFAIL\n",
+      "cost_usd": 0.015375640000000001,
+      "sessions": 1,
+      "turns": 14,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-click-help-option-cls",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 47.14,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_options.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_options.py b/tests/test_options.py\nindex b7267c1..1d04344 100644\n--- a/tests/test_options.py\n+++ b/tests/test_options.py\n@@ -1061,3 +1061,21 @@ def test_duplicate_names_warning(runner, opts_one, opts_two):\n \n     with pytest.warns(UserWarning):\n         runner.invoke(cli, [])\n+\n+\n+@pytest.mark.parametrize(\"args\", [[\"-h\"], [\"--help\"]])\n+def test_help_option_custom_cls_is_flag(runner, args):\n+    # A custom Option subclass passed as ``cls`` must still get the help\n+    # option defaults (flag, eager, not exposed), not require a value.\n+    class CustomOption(click.Option):\n+        pass\n+\n+    @click.command()\n+    @click.help_option(\"-h\", \"--help\", cls=CustomOption)\n+    def cli():\n+        \"\"\"Help text.\"\"\"\n+\n+    result = runner.invoke(cli, args)\n+    assert result.exit_code == 0\n+    assert \"Show this message and exit.\" in result.output\n+    assert \"requires an argument\" not in result.output\n",
+      "files_changed": 2,
+      "files": [
+        "src/click/decorators.py",
+        "tests/test_options.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.014908329999999997,
+      "sessions": 1,
+      "turns": 14,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-click-show-default-prompt",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 78.11,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_options.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/test_options.py b/tests/test_options.py\nindex c2bf1e9..640c744 100644\n--- a/tests/test_options.py\n+++ b/tests/test_options.py\n@@ -649,6 +649,19 @@ def test_dynamic_default_help_text(runner):\n     assert \"(current user)\" in result.output\n \n \n+def test_show_default_string_in_prompt(runner):\n+    @click.command()\n+    @click.option(\"--name\", default=\"default\", show_default=\"show_default\", prompt=True)\n+    def cmd(name):\n+        print(\"Hello,\", name)\n+\n+    result = runner.invoke(cmd, [], input=\"\\n\")\n+    assert result.exit_code == 0\n+    assert \"Name [show_default]:\" in result.output\n+    assert \"[default]\" not in result.output\n+    assert \"Hello, default\" in result.output\n+\n+\n def test_dynamic_default_help_special_method(runner):\n     class Value:\n         def __call__(self):\n",
+      "files_changed": 4,
+      "files": [
+        "CHANGES.rst",
+        "src/click/core.py",
+        "src/click/termui.py",
+        "tests/test_options.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "pt should display that\n        string in parentheses instead of the actual default value,\n        matching the help text behavior. See pallets/click#2836.\"\"\"\n    \n        option_kwargs = {\"show_default\": show_default, \"prompt\": True}\n        if default is not UNSET:\n            option_kwargs[\"default\"] = default\n    \n        @click.command()\n        @click.option(\"--arg1\", **option_kwargs)\n        def cmd(arg1):\n            click.echo(arg1)\n    \n        result = runner.invoke(cmd, input=user_input, standalone_mode=False)\n        prompt_line = result.output.split(\"\\n\")[0]\n        if in_prompt is not None:\n>           assert in_prompt in prompt_line\nE           AssertionError: assert '(computed at runtime)' in 'Arg1: value'\n\ntests/test_termui.py:768: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_options.py::test_string_show_default_shows_custom_string_in_prompt\nFAILED tests/test_termui.py::test_string_show_default_in_prompt[simple-string]\nFAILED tests/test_termui.py::test_string_show_default_in_prompt[string-with-spaces]\nFAILED tests/test_termui.py::test_string_show_default_in_prompt[unicode] - As...\nFAILED tests/test_termui.py::test_string_show_default_in_prompt[numeric-default]\nFAILED tests/test_termui.py::test_string_show_default_in_prompt[default-is-none]\nFAILED tests/test_termui.py::test_string_show_default_in_prompt[default-is-unset]\n7 failed, 1365 passed, 24 skipped, 30062 deselected, 1 xfailed in 4.43s\n",
+      "cost_usd": 0.016537629999999998,
+      "sessions": 1,
+      "turns": 16,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-mistune-codespan-escape",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 30.36,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_misc.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_misc.py b/tests/test_misc.py\nindex f57c53b..a26f371 100644\n--- a/tests/test_misc.py\n+++ b/tests/test_misc.py\n@@ -109,3 +109,12 @@ class TestMiscCases(TestCase):\n         result = md('foo\\n- bar\\n\\ntable')\n         expected = '<p>foo</p>\\n<ul>\\n<li>bar</li>\\n</ul>\\n<p>table</p>'\n         self.assertEqual(result.strip(), expected)\n+\n+\n+def test_codespan_special_chars_not_double_escaped():\n+    import mistune\n+\n+    ast = mistune.create_markdown(renderer=\"ast\")(r\"`&<>`\")\n+    assert ast[0][\"children\"][0][\"raw\"] == \"&<>\"\n+    html = mistune.html(r\"`&<>` and `&amp;`\")\n+    assert html == \"<p><code>&amp;&lt;&gt;</code> and <code>&amp;amp;</code></p>\\n\"\n",
+      "files_changed": 3,
+      "files": [
+        "src/mistune/inline_parser.py",
+        "src/mistune/renderers/html.py",
+        "tests/test_misc.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.01018688,
+      "sessions": 1,
+      "turns": 10,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-mistune-md-leading-newlines",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 117.05,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_renderers.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_renderers.py b/tests/test_renderers.py\nindex d2abc48..30ae84e 100644\n--- a/tests/test_renderers.py\n+++ b/tests/test_renderers.py\n@@ -379,6 +379,13 @@ class TestMarkdownRendererPlugins(TestCase):\n         self.assertEqual(md(\"~~gone~~, ==marked== and ^^inserted^^\\n\"), \"~~gone~~, ==marked== and ^^inserted^^\\n\")\n         self.assertEqual(md(\"~~a **b** c~~\\n\"), \"~~a **b** c~~\\n\")\n \n+    def test_leading_blank_lines_preserved(self):\n+        md = create_markdown(renderer=\"ast\")\n+        renderer = MarkdownRenderer()\n+        self.assertEqual(renderer(md(\"\\n\\n\\n\\nabc\"), state=BlockState()), \"\\n\\n\\n\\nabc\\n\")\n+        # blank lines between blocks are still implied by the block itself\n+        self.assertEqual(renderer(md(\"\\n\\nabc\\n\\n\\ndef\"), state=BlockState()), \"\\n\\nabc\\n\\ndef\\n\")\n+\n     def test_standalone_list_item(self):\n         renderer = MarkdownRenderer()\n         token = {\n",
+      "files_changed": 3,
+      "files": [
+        "src/mistune/block_parser.py",
+        "src/mistune/renderers/markdown.py",
+        "tests/test_renderers.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.029321319999999998,
+      "sessions": 1,
+      "turns": 26,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-mistune-toc-reflinks",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 38.86,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_directives.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_directives.py b/tests/test_directives.py\nindex 27576e5..dfcf29a 100644\n--- a/tests/test_directives.py\n+++ b/tests/test_directives.py\n@@ -53,6 +53,17 @@ class TestCustomizeToc(BaseTestCase):\n         self.assertIn('<h1 id=\"t-1\">h1</h1>', html)\n         self.assertIn('<a href=\"#t-1\">h1</a>', html)\n \n+    def test_toc_reference_links(self):\n+        md = create_markdown(\n+            escape=False,\n+            plugins=[\n+                RSTDirective([TableOfContents()]),\n+            ],\n+        )\n+        html = md(\".. toc::\\n\\n# [link ref][ref]\\n\\n[ref]: example.com\\n\")\n+        self.assertIn('<li><a href=\"#toc_1\">link ref</a></li>', html)\n+        self.assertNotIn(\"[link ref][ref]</a>\", html)\n+\n     def test_fenced_toc(self):\n         md = create_markdown(\n             escape=False,\n",
+      "files_changed": 3,
+      "files": [
+        "src/mistune/directives/toc.py",
+        "src/mistune/toc.py",
+        "tests/test_directives.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.01358456,
+      "sessions": 1,
+      "turns": 13,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlglot-hash-case",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 154.5,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_expressions.py"
+      ],
+      "test_weakened": [
+        "tests/test_expressions.py"
+      ],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/test_expressions.py b/tests/test_expressions.py\nindex 1aad243..a852eff 100644\n--- a/tests/test_expressions.py\n+++ b/tests/test_expressions.py\n@@ -3,7 +3,7 @@ import math\n import sys\n import unittest\n \n-from sqlglot import ParseError, alias, exp, parse_one\n+from sqlglot import ParseError, alias, exp, jsonpath, parse_one\n \n \n class TestExprs(unittest.TestCase):\n@@ -571,6 +571,17 @@ class TestExprs(unittest.TestCase):\n             },\n         )\n \n+    def test_hash_case_sensitive_json_keys(self):\n+        key_upper = parse_one(\"SELECT j -> 'Key'\", read=\"postgres\").selects[0]\n+        key_lower = parse_one(\"SELECT j -> 'key'\", read=\"postgres\").selects[0]\n+        self.assertNotEqual(key_upper, key_lower)\n+        self.assertNotEqual(hash(key_upper), hash(key_lower))\n+        self.assertEqual(key_upper, parse_one(\"SELECT j -> 'Key'\", read=\"postgres\").selects[0])\n+\n+        # list-valued args (JSONPathUnion.expressions) must stay hashable\n+        union = jsonpath.parse(\"$[0,1]\")\n+        self.assertEqual(hash(union), hash(jsonpath.parse(\"$[0,1]\")))\n+\n     def test_hash_invalidated_on_append(self):\n         expr = parse_one(\"SELECT a\")\n         hash(expr)  # populate the cached _hash\n",
+      "files_changed": 3,
+      "files": [
+        "sqlglot/expressions/core.py",
+        "sqlglot/expressions/query.py",
+        "tests/test_expressions.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "read)\n                )\n    \n        # ClickHouse only builds these for exact-case names, so construct them directly\n        for agg in (exp.AnonymousAggFunc, exp.CombinedAggFunc):\n>           self.assertNotEqual(\n                agg(this=\"sumMap\", expressions=[]), agg(this=\"summap\", expressions=[])\n            )\nE           AssertionError: AnonymousAggFunc(this=sumMap) == AnonymousAggFunc(this=summap)\n\ntests/test_expressions.py:102: AssertionError\n----------------------------- Captured stdout call -----------------------------\nuuuuuuuuuu\n=========================== short test summary info ============================\nSUBFAILED[E'{}'] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[$${}$$] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[CREATE FUNCTION f() AS $${}$$] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[U&'{}'] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[N'{}'] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[x::?{}] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[:{}] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nSUBFAILED[CREATE DEFINER=`{}`@`%` VIEW v AS SELECT 1] tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text\nFAILED tests/test_expressions.py::TestExprs::test_eq_case_sensitive_text - As...\n9 failed, 169 passed, 3 deselected, 1173 subtests passed in 15.36s\n",
+      "cost_usd": 0.02312156,
+      "sessions": 1,
+      "turns": 24,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlglot-mysql-stddev",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 107.54,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/dialects/test_mysql.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/dialects/test_mysql.py b/tests/dialects/test_mysql.py\nindex 2232306..2afbf20 100644\n--- a/tests/dialects/test_mysql.py\n+++ b/tests/dialects/test_mysql.py\n@@ -839,6 +839,30 @@ class TestMySQL(Validator):\n                 \"tsql\": \"CHAR(10)\",\n             },\n         )\n+        # MySQL's STDDEV, STD and VARIANCE are population functions, not sample ones\n+        self.validate_all(\n+            \"SELECT STDDEV(x), STD(x), VARIANCE(x)\",\n+            write={\n+                \"mysql\": \"SELECT STDDEV_POP(x), STDDEV_POP(x), VAR_POP(x)\",\n+                \"duckdb\": \"SELECT STDDEV_POP(x), STDDEV_POP(x), VAR_POP(x)\",\n+            },\n+        )\n+        self.validate_all(\n+            \"SELECT STDDEV_POP(x), VAR_POP(x)\",\n+            read={\"duckdb\": \"SELECT STDDEV_POP(x), VARIANCE_POP(x)\"},\n+            write={\n+                \"mysql\": \"SELECT STDDEV_POP(x), VAR_POP(x)\",\n+                \"duckdb\": \"SELECT STDDEV_POP(x), VAR_POP(x)\",\n+            },\n+        )\n+        self.validate_all(\n+            \"SELECT STDDEV_SAMP(x), VAR_SAMP(x)\",\n+            read={\"duckdb\": \"SELECT STDDEV(x), VARIANCE(x)\"},\n+            write={\n+                \"mysql\": \"SELECT STDDEV_SAMP(x), VAR_SAMP(x)\",\n+                \"duckdb\": \"SELECT STDDEV_SAMP(x), VARIANCE(x)\",\n+            },\n+        )\n         self.validate_identity(\"CREATE TABLE t (foo VARBINARY(5))\")\n         self.validate_all(\n             \"CREATE TABLE t (foo BLOB)\",\n",
+      "files_changed": 3,
+      "files": [
+        "sqlglot/generators/mysql.py",
+        "sqlglot/parsers/mysql.py",
+        "tests/dialects/test_mysql.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.021839710000000005,
+      "sessions": 1,
+      "turns": 18,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlglot-mysql-timestampadd",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 130.53,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/dialects/test_mysql.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/dialects/test_mysql.py b/tests/dialects/test_mysql.py\nindex edfb57e..1ffaecb 100644\n--- a/tests/dialects/test_mysql.py\n+++ b/tests/dialects/test_mysql.py\n@@ -9,6 +9,17 @@ from tests.dialects.test_dialect import Validator\n class TestMySQL(Validator):\n     dialect = \"mysql\"\n \n+    def test_timestampadd(self):\n+        self.validate_all(\n+            \"SELECT TIMESTAMPADD(MONTH, 1, '2024-01-31')\",\n+            write={\n+                \"mysql\": \"SELECT DATE_ADD('2024-01-31', INTERVAL 1 MONTH)\",\n+                \"duckdb\": \"SELECT CAST('2024-01-31' AS DATE) + INTERVAL 1 MONTH\",\n+                \"postgres\": \"SELECT '2024-01-31' + INTERVAL '1 MONTH'\",\n+                \"snowflake\": \"SELECT TIMESTAMPADD(MONTH, 1, '2024-01-31')\",\n+            },\n+        )\n+\n     def test_xor_precedence(self):\n         for sql, root, left, right in (\n             (\"TRUE XOR FALSE AND FALSE\", exp.Xor, exp.Boolean, exp.And),\n",
+      "files_changed": 3,
+      "files": [
+        "sqlglot/generators/postgres.py",
+        "sqlglot/parsers/mysql.py",
+        "tests/dialects/test_mysql.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "===================================\n_ TestMySQL.test_mysql [SELECT TIMESTAMPADD(MONTH, 1, '2024-01-31') -> duckdb] _\ntests/dialects/test_dialect.py:108: in validate_all\n    self.assertEqual(\nE   AssertionError: \"SELECT CAST('2024-01-31' AS DATE) + INTERVAL 1 MONTH\" != \"SELECT CAST('2024-01-31' AS TIMESTAMP) + INTERVAL 1 MONTH\"\nE   - SELECT CAST('2024-01-31' AS DATE) + INTERVAL 1 MONTH\nE   ?                             ^ ^^\nE   + SELECT CAST('2024-01-31' AS TIMESTAMP) + INTERVAL 1 MONTH\nE   ?                             ^^^^^^ ^^\n_ TestMySQL.test_mysql [SELECT TIMESTAMPADD(SECOND, 30, '2024-01-01 12:00:00') -> duckdb] _\ntests/dialects/test_dialect.py:108: in validate_all\n    self.assertEqual(\nE   AssertionError: \"SELECT CAST('2024-01-01 12:00:00' AS DATE) + INTERVAL 30 SECOND\" != \"SELECT CAST('2024-01-01 12:00:00' AS TIMESTAMP) + INTERVAL 30 SECOND\"\nE   - SELECT CAST('2024-01-01 12:00:00' AS DATE) + INTERVAL 30 SECOND\nE   ?                                      ^ ^^\nE   + SELECT CAST('2024-01-01 12:00:00' AS TIMESTAMP) + INTERVAL 30 SECOND\nE   ?                                      ^^^^^^ ^^\n=========================== short test summary info ============================\nSUBFAILED[SELECT TIMESTAMPADD(MONTH, 1, '2024-01-31') -> duckdb] tests/dialects/test_mysql.py::TestMySQL::test_mysql\nSUBFAILED[SELECT TIMESTAMPADD(SECOND, 30, '2024-01-01 12:00:00') -> duckdb] tests/dialects/test_mysql.py::TestMySQL::test_mysql\n2 failed, 835 passed, 1 deselected, 12347 subtests passed in 4.51s\n",
+      "cost_usd": 0.019289929999999997,
+      "sessions": 1,
+      "turns": 21,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlglot-search-cycle",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 132.72,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/dialects/test_oracle.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/dialects/test_oracle.py b/tests/dialects/test_oracle.py\nindex 804eb24..f28c3f1 100644\n--- a/tests/dialects/test_oracle.py\n+++ b/tests/dialects/test_oracle.py\n@@ -1090,3 +1090,14 @@ CONNECT BY PRIOR employee_id = manager_id AND LEVEL <= 4\"\"\"\n             \"CREATE TRIGGER view_insert INSTEAD OF INSERT ON employee_view FOR EACH ROW BEGIN INSERT INTO employees (id, name, dept_id) VALUES (:NEW.id, :NEW.name, :NEW.dept_id) END\",\n             check_command_warning=True,\n         )\n+\n+    def test_recursive_cte_search_and_cycle(self):\n+        self.validate_identity(\n+            \"WITH dup_hiredate(eid, emp_last, mgr_id, reportLevel, hire_date, job_id) AS (SELECT employee_id, last_name, manager_id, 0 AS reportLevel, hire_date, job_id FROM employees WHERE manager_id IS NULL UNION ALL SELECT e.employee_id, e.last_name, e.manager_id, r.reportLevel + 1 AS reportLevel, e.hire_date, e.job_id FROM dup_hiredate r, employees e WHERE r.eid = e.manager_id) SEARCH DEPTH FIRST BY hire_date SET order1 CYCLE hire_date SET is_cycle TO 'Y' DEFAULT 'N' SELECT LPAD(' ', 2 * reportLevel) || emp_last AS emp_name, eid, mgr_id, hire_date, job_id, is_cycle FROM dup_hiredate ORDER BY order1\",\n+        )\n+        self.validate_identity(\n+            \"WITH t(id) AS (SELECT 1 FROM dual UNION ALL SELECT t.id + 1 FROM t WHERE t.id < 5) CYCLE id SET is_cycle TO 'Y' DEFAULT 'N' SELECT * FROM t\",\n+        )\n+        self.validate_identity(\n+            \"WITH t(id) AS (SELECT 1 FROM dual UNION ALL SELECT t.id + 1 FROM t WHERE t.id < 5) SEARCH BREADTH FIRST BY id SET ord SELECT * FROM t ORDER BY ord\",\n+        )\n",
+      "files_changed": 4,
+      "files": [
+        "sqlglot/expressions/query.py",
+        "sqlglot/generator.py",
+        "sqlglot/parser.py",
+        "tests/dialects/test_oracle.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": ">\n\n    def test_recursive_cte(self):\n        cte = \"WITH dup_hiredate(eid, emp_last, mgr_id, reportLevel, hire_date, job_id) AS (SELECT employee_id, last_name, manager_id, 0 AS reportLevel, hire_date, job_id FROM employees WHERE manager_id IS NULL UNION ALL SELECT e.employee_id, e.last_name, e.manager_id, r.reportLevel + 1 AS reportLevel, e.hire_date, e.job_id FROM dup_hiredate r, employees e WHERE r.eid = e.manager_id)\"\n        select = \"SELECT LPAD(' ', 2 * reportLevel) || emp_last AS emp_name, eid, mgr_id, hire_date, job_id\"\n        search = \"SEARCH DEPTH FIRST BY hire_date SET order1\"\n        cycle = \"CYCLE hire_date SET is_cycle TO 'Y' DEFAULT 'N'\"\n    \n        self.validate_identity(f\"{cte} {search} {select} FROM dup_hiredate ORDER BY order1\")\n        self.validate_identity(f\"{cte} {cycle} {select}, is_cycle FROM dup_hiredate\")\n    \n        with_ = self.validate_identity(\n            f\"{cte} {search} {cycle} {select}, is_cycle FROM dup_hiredate ORDER BY order1\"\n        ).args[\"with_\"]\n        self.assertEqual(with_.args[\"search\"].args[\"kind\"], \"DEPTH\")\n>       self.assertEqual(with_.args[\"cycle\"].args[\"kind\"], \"CYCLE\")\n                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE       KeyError: 'kind'\n\ntests/dialects/test_oracle.py:689: KeyError\n=========================== short test summary info ============================\nFAILED tests/dialects/test_oracle.py::TestOracle::test_recursive_cte - KeyErr...\n1 failed, 772 passed, 1 deselected, 11277 subtests passed in 4.39s\n",
+      "cost_usd": 0.024526199999999998,
+      "sessions": 1,
+      "turns": 23,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlglot-snowflake-idents",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 216.34,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/dialects/test_snowflake.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/dialects/test_snowflake.py b/tests/dialects/test_snowflake.py\nindex dffd4ae..7c02af0 100644\n--- a/tests/dialects/test_snowflake.py\n+++ b/tests/dialects/test_snowflake.py\n@@ -7145,3 +7145,12 @@ FROM SEMANTIC_VIEW(\n         self.validate_identity(\"UNDROP TABLE db.schema.my_table\")\n         self.validate_identity(\"UNDROP SNAPSHOT IDENTIFIER('my_snap')\")\n         self.validate_identity(\"UNDROP SNAPSHOT my_snap RENAME TO new_snap\")\n+\n+    def test_non_reserved_keywords_as_identifiers(self):\n+        self.validate_identity(\"SELECT returning FROM t\")\n+        self.validate_identity(\"SELECT glob FROM t\")\n+        self.validate_identity(\"CREATE TABLE returning (x INT)\")\n+        self.validate_identity(\"CREATE TABLE concurrently (x INT)\")\n+        self.validate_identity(\"CREATE TABLE t (exclude INT)\")\n+        self.validate_identity(\"SELECT * EXCLUDE (a) FROM t\")\n+        self.validate_identity(\"CREATE INDEX CONCURRENTLY i ON t(x)\")\n",
+      "files_changed": 4,
+      "files": [
+        "sqlglot/dialects/snowflake.py",
+        "sqlglot/parser.py",
+        "sqlglot/parsers/snowflake.py",
+        "tests/dialects/test_snowflake.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": ".col}.\\n  {formatted_sql}\"\n    \n        error = ParseError.new(\n            formatted_message,\n            description=message,\n            line=token.line,\n            col=token.col,\n            start_context=start_context,\n            highlight=highlight,\n            end_context=end_context,\n        )\n    \n        if self.error_level == ErrorLevel.IMMEDIATE:\n>           raise error\nE           sqlglot.errors.ParseError: Expected table name but got <Token token_type: TokenType.SENTINEL, text: SENTINEL, line: 1, col: 1, start: 0, end: 0, comments: []>. Line 1, Col: 22.\nE             DESCRIBE TABLE \u001b[4munpivot\u001b[0m\n\nsqlglot/parser.py:2174: ParseError\n=========================== short test summary info ============================\nSUBFAILED(name='using') tests/dialects/test_snowflake.py::TestSnowflake::test_unreserved_keywords_as_identifiers\nSUBFAILED(name='lateral') tests/dialects/test_snowflake.py::TestSnowflake::test_unreserved_keywords_as_identifiers\nSUBFAILED(alias='using') tests/dialects/test_snowflake.py::TestSnowflake::test_unreserved_keywords_as_identifiers\nSUBFAILED(alias='lateral') tests/dialects/test_snowflake.py::TestSnowflake::test_unreserved_keywords_as_identifiers\nSUBFAILED(describe='pivot') tests/dialects/test_snowflake.py::TestSnowflake::test_unreserved_keywords_as_identifiers\nSUBFAILED(describe='unpivot') tests/dialects/test_snowflake.py::TestSnowflake::test_unreserved_keywords_as_identifiers\n6 failed, 836 passed, 1 deselected, 12362 subtests passed in 10.39s\n",
+      "cost_usd": 0.032375949999999994,
+      "sessions": 1,
+      "turns": 29,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlglot-teradata-frame",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 207.4,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/dialects/test_teradata.py"
+      ],
+      "test_weakened": [
+        "tests/dialects/test_teradata.py"
+      ],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/dialects/test_teradata.py b/tests/dialects/test_teradata.py\nindex 7e47e23..10b6111 100644\n--- a/tests/dialects/test_teradata.py\n+++ b/tests/dialects/test_teradata.py\n@@ -1,4 +1,4 @@\n-from sqlglot import exp\n+from sqlglot import exp, parse_one, transpile\n from tests.dialects.test_dialect import Validator\n \n \n@@ -369,3 +369,41 @@ class TestTeradata(Validator):\n             \"SET QUERY_BAND = 'NONE' FOR SESSION\"\n         )  # quoted NONE should remain quoted\n         self.validate_identity(\"SET QUERY_BAND = '' FOR SESSION\")\n+\n+    def test_window_default_frame(self):\n+        # Teradata: aggregate windows with ORDER BY and no frame cover the whole partition,\n+        # so the transpiled output must spell that frame out for ANSI-default engines\n+        self.assertEqual(\n+            transpile(\n+                \"SELECT p, d, x, SUM(x) OVER (PARTITION BY p ORDER BY d) AS s FROM t\",\n+                read=\"teradata\",\n+                write=\"snowflake\",\n+            )[0],\n+            \"SELECT p, d, x, SUM(x) OVER (PARTITION BY p ORDER BY d NULLS FIRST \"\n+            \"ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS s FROM t\",\n+        )\n+        self.assertEqual(\n+            transpile(\n+                \"SELECT COUNT(*) OVER (PARTITION BY p ORDER BY d) AS c FROM t\",\n+                read=\"teradata\",\n+                write=\"duckdb\",\n+            )[0],\n+            \"SELECT COUNT(*) OVER (PARTITION BY p ORDER BY d NULLS FIRST \"\n+            \"ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS c FROM t\",\n+        )\n+\n+        # Teradata -> Teradata round trips are unchanged\n+        self.validate_identity(\"SUM(x) OVER (PARTITION BY p ORDER BY d)\")\n+        self.validate_identity(\"COUNT(*) OVER (PARTITION BY p ORDER BY d)\")\n+        self.validate_identity(\n+            \"SUM(x) OVER (PARTITION BY p ORDER BY d ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)\"\n+        )\n+\n+        # Not affected: no ORDER BY, or functions that take no frame\n+        self.validate_identity(\"SUM(x) OVER (PARTITION BY p)\")\n+        self.validate_identity(\"ROW_NUMBER() OVER (PARTITION BY p ORDER BY d)\")\n+\n+        # Generating Teradata must not mutate the input tree\n+        expression = parse_one(\"SUM(x) OVER (PARTITION BY p ORDER BY d)\", read=\"teradata\")\n+        self.assertEqual(expression.sql(\"teradata\"), \"SUM(x) OVER (PARTITION BY p ORDER BY d)\")\n+        self.assertIsNotNone(expression.find(exp.WindowSpec))\n",
+      "files_changed": 3,
+      "files": [
+        "sqlglot/generators/teradata.py",
+        "sqlglot/parsers/teradata.py",
+        "tests/dialects/test_teradata.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.03963760999999998,
+      "sessions": 1,
+      "turns": 32,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlparse-compare-expr",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 55.33,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_grouping.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/test_grouping.py b/tests/test_grouping.py\nindex 34f7459..683bf42 100644\n--- a/tests/test_grouping.py\n+++ b/tests/test_grouping.py\n@@ -559,3 +559,17 @@ def test_aliased_literal_without_as():\n     p = sqlparse.parse('1 foo')[0].tokens\n     assert len(p) == 1\n     assert p[0].get_alias() == 'foo'\n+\n+\n+def test_comparison_with_niladic_keyword_operand():\n+    # Comparison operands that are tokenized as keywords (e.g. CURRENT_DATE)\n+    # must group the same way with or without parentheses.\n+    p = sqlparse.parse('a > current_date')[0]\n+    assert len(p.tokens) == 1\n+    assert isinstance(p.tokens[0], sql.Comparison)\n+    assert p.tokens[0].right.value == 'current_date'\n+\n+    p = sqlparse.parse('a > current_date - 1')[0]\n+    assert isinstance(p.tokens[0], sql.Comparison)\n+    assert isinstance(p.tokens[0].right, sql.Operation)\n+    assert p.tokens[0].right.value == 'current_date - 1'\n",
+      "files_changed": 2,
+      "files": [
+        "sqlparse/engine/grouping.py",
+        "tests/test_grouping.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "\n==================================== ERRORS ====================================\n___________________ ERROR collecting tests/test_grouping.py ____________________\ntests/test_grouping.py:38: in <module>\n    ('select a from b where c < d + interval \\'1 day\\'', sql.Identifier, sql.TypedLiteral),\n                                                                         ^^^^^^^^^^^^^^^^\nE   AttributeError: module 'sqlparse.sql' has no attribute 'TypedLiteral'\n=========================== short test summary info ============================\nERROR tests/test_grouping.py - AttributeError: module 'sqlparse.sql' has no a...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.23s\n",
+      "cost_usd": 0.01909622,
+      "sessions": 1,
+      "turns": 16,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-sqlparse-window-over",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 40.45,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_grouping.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/test_grouping.py b/tests/test_grouping.py\nindex e90243b..bc3554f 100644\n--- a/tests/test_grouping.py\n+++ b/tests/test_grouping.py\n@@ -662,3 +662,21 @@ def test_grouping_as_cte():\n def test_grouping_create_table():\n     p = sqlparse.parse(\"create table db.tbl (a string)\")[0].tokens\n     assert p[4].value == \"db.tbl\"\n+\n+\n+def test_grouping_window_function_over_clause():\n+    # Window functions (\"func() OVER (...)\") must stay one Function so that\n+    # the columns after them are still split into separate Identifiers.\n+    query = (\"SELECT uid, ROW_NUMBER() OVER (PARTITION BY a ORDER BY b DESC) AS row, \"\n+             \"full_name AS name, ROW_NUMBER() OVER (PARTITION BY c ORDER BY d ASC) AS row_lo, \"\n+             \"last_column AS lc FROM table\")\n+    p = sqlparse.parse(query)[0]\n+    idlist = p.tokens[2]\n+    assert isinstance(idlist, sql.IdentifierList)\n+    identifiers = list(idlist.get_identifiers())\n+    assert [str(i) for i in identifiers if isinstance(i, sql.Identifier)] == [\n+        'ROW_NUMBER() OVER (PARTITION BY a ORDER BY b DESC) AS row',\n+        'full_name AS name',\n+        'ROW_NUMBER() OVER (PARTITION BY c ORDER BY d ASC) AS row_lo',\n+        'last_column AS lc']\n+    assert p.tokens[4].normalized == 'FROM'\n",
+      "files_changed": 2,
+      "files": [
+        "sqlparse/engine/grouping.py",
+        "tests/test_grouping.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "on)\n        assert isinstance(p.tokens[0].tokens[0].tokens[0], sql.Function)\n        p = sqlparse.parse('foo(c1) over win1 as bar')[0]\n>       assert isinstance(p.tokens[0], sql.Identifier)\nE       AssertionError: assert False\nE        +  where False = isinstance(<Function 'foo(c1)' at 0x109816570>, <class 'sqlparse.sql.Identifier'>)\nE        +    where <class 'sqlparse.sql.Identifier'> = sql.Identifier\n\ntests/test_grouping.py:189: AssertionError\n____________________________ test_grouping_function ____________________________\n\n    def test_grouping_function():\n        p = sqlparse.parse('foo()')[0]\n        assert isinstance(p.tokens[0], sql.Function)\n        p = sqlparse.parse('foo(null, bar)')[0]\n        assert isinstance(p.tokens[0], sql.Function)\n        assert len(list(p.tokens[0].get_parameters())) == 2\n        p = sqlparse.parse('foo(5) over win1')[0]\n        assert isinstance(p.tokens[0], sql.Function)\n        assert len(list(p.tokens[0].get_parameters())) == 1\n>       assert isinstance(p.tokens[0].get_window(), sql.Identifier)\n                          ^^^^^^^^^^^^^^^^^^^^^^\nE       AttributeError: 'Function' object has no attribute 'get_window'\n\ntests/test_grouping.py:398: AttributeError\n=========================== short test summary info ============================\nFAILED tests/test_grouping.py::test_grouping_identifier_function - AssertionE...\nFAILED tests/test_grouping.py::test_grouping_function - AttributeError: 'Func...\n2 failed, 448 passed, 3 xfailed in 0.55s\n",
+      "cost_usd": 0.012894880000000001,
+      "sessions": 1,
+      "turns": 11,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-tomlkit-array-remove",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 68.84,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_items.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/test_items.py b/tests/test_items.py\nindex cefb29e..8eaae8c 100644\n--- a/tests/test_items.py\n+++ b/tests/test_items.py\n@@ -1032,3 +1032,13 @@ def test_removal_of_arrayitem_with_extra_whitespace():\n     docstr = doc.as_string()\n     parse(docstr)\n     assert docstr == expected\n+\n+\n+def test_removal_of_arrayitem_leaves_no_dangling_comma():\n+    doc = parse('x = [\\n\"one\" # comment one\\n, # comment two\\n]')\n+    x = doc[\"x\"]\n+    assert isinstance(x, Array)\n+    x.remove(\"one\")\n+    docstr = doc.as_string()\n+    assert parse(docstr).unwrap() == {\"x\": []}\n+    assert docstr == 'x = [\\n # comment two\\n]'\n",
+      "files_changed": 2,
+      "files": [
+        "tests/test_items.py",
+        "tomlkit/items.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "s here\n    '4'#g\n    #    comments there\n     ,'5' #h\n        #   comments everywhere\n     # so many comments\n    ,'6' ,\n          # you get a comment\n    # you get a comment\n       '7' ,#j\n    # everybody gets a comment!!!\n     \"8\"#c\n    ,\"9\",  \\n  \"10\"\n    ]\n    \"\"\"\n>       assert expected == parse(expected).as_string()\nE       assert '\\nx = [\\n   ...\\n  \"10\"\\n]\\n' == '\\nx = [\\n   ...\\n  \"10\"\\n]\\n'\nE         \nE           \nE           x = [\nE               '0'#a\nE           ,#b\nE           \nE               # comment...\nE         \nE         ...Full output truncated (25 lines hidden), use '-vv' to show\n\ntests/test_items.py:1065: AssertionError\n_________________ test_array_item_removal_newline_restore_next _________________\n\n    def test_array_item_removal_newline_restore_next():\n        expected = \"x = [\\n  '0',\\n    '2'\\n]\"\n    \n        docstr = \"x = [\\n  '0',\\n    '1','2'\\n]\"\n        doc = parse(docstr)\n        doc[\"x\"].remove(\"1\")\n>       assert doc.as_string() == expected\nE       assert \"x = [\\n  '0','2'\\n]\" == \"x = [\\n  '0',\\n    '2'\\n]\"\nE         \nE           x = [\nE         -   '0',\nE         +   '0','2'\nE         ?       +++\nE         -     '2'\nE           ]\n\ntests/test_items.py:1080: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_items.py::test_badly_formatted_array_and_item_removal - ass...\nFAILED tests/test_items.py::test_array_item_removal_newline_restore_next - as...\n2 failed, 862 passed in 12.89s\n",
+      "cost_usd": 0.0158861,
+      "sessions": 1,
+      "turns": 13,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-tomlkit-table-update",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 108.99,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_items.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_items.py b/tests/test_items.py\nindex e3f93c7..9ec68ca 100644\n--- a/tests/test_items.py\n+++ b/tests/test_items.py\n@@ -887,3 +887,16 @@ def test_copy_copy():\n     classifiers = result[\"tool\"][\"poetry\"][\"classifiers\"]\n     new = copy.copy(classifiers)\n     assert new == classifiers\n+\n+\n+def test_update_table_with_parsed_document_nests_subtables():\n+    example = \"[entry]\\nfoo = 'bar'\"\n+    subentry = \"bar = 23\\n\\n[subentry]\\n'subkey' = 'subvalue'\"\n+\n+    doc = parse(example)\n+    doc[\"entry\"].update(parse(subentry))\n+\n+    assert doc.unwrap() == {\n+        \"entry\": {\"foo\": \"bar\", \"bar\": 23, \"subentry\": {\"subkey\": \"subvalue\"}}\n+    }\n+    assert \"[entry.subentry]\" in doc.as_string()\n",
+      "files_changed": 2,
+      "files": [
+        "tests/test_items.py",
+        "tomlkit/items.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.02256635,
+      "sessions": 1,
+      "turns": 20,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-tomlkit-value-bool",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "multi-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 71.44,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_api.py"
+      ],
+      "test_weakened": [],
+      "accepted": 0,
+      "test_diff": "diff --git a/tests/test_api.py b/tests/test_api.py\nindex 4d24844..d376ac7 100644\n--- a/tests/test_api.py\n+++ b/tests/test_api.py\n@@ -301,3 +301,14 @@ def test_add_dotted_key():\n     table = tomlkit.table()\n     table.add(tomlkit.key([\"foo\", \"bar\"]), 1)\n     assert table.as_string() == \"foo.bar = 1\\n\"\n+\n+\n+@pytest.mark.parametrize(\"raw\", [\"test\", \"fest\", \"tru\", \"fals\", \"True\", \"NoTest\"])\n+def test_value_rejects_invalid_bool_like_strings(raw):\n+    with pytest.raises(UnexpectedCharError):\n+        tomlkit.value(raw)\n+\n+\n+def test_value_parses_bool_literals():\n+    assert tomlkit.value(\"true\").value is True\n+    assert tomlkit.value(\"false\").value is False\n",
+      "files_changed": 2,
+      "files": [
+        "tests/test_api.py",
+        "tomlkit/source.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": ":\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE       Failed: DID NOT RAISE <class 'tomlkit.exceptions.ParseError'>\n\ntests/test_api.py:375: Failed\n=========================== short test summary info ============================\nFAILED tests/test_api.py::test_value_rejects_values_having_true_prefix[truee]\nFAILED tests/test_api.py::test_value_rejects_values_having_true_prefix[truely]\nFAILED tests/test_api.py::test_value_rejects_values_having_true_prefix[true-thoughts]\nFAILED tests/test_api.py::test_value_rejects_values_having_true_prefix[true_hip_hop]\nFAILED tests/test_api.py::test_value_rejects_values_having_false_prefix[falsee]\nFAILED tests/test_api.py::test_value_rejects_values_having_false_prefix[falsely]\nFAILED tests/test_api.py::test_value_rejects_values_having_false_prefix[false-ideas]\nFAILED tests/test_api.py::test_value_rejects_values_having_false_prefix[false_prophet]\nFAILED tests/test_api.py::test_value_rejects_values_with_appendage[\"foo\"1.2]\nFAILED tests/test_api.py::test_value_rejects_values_with_appendage[truefalse]\nFAILED tests/test_api.py::test_value_rejects_values_with_appendage[truetrue]\nFAILED tests/test_api.py::test_value_rejects_values_with_appendage[falsefalse]\nFAILED tests/test_api.py::test_value_rejects_values_with_appendage[[][]] - Fa...\nFAILED tests/test_api.py::test_value_rejects_values_with_appendage[true[]] - ...\nFAILED tests/test_api.py::test_value_rejects_values_with_appendage[false{a=1}]\n15 failed, 757 passed, 1 deselected in 4.59s\n",
+      "cost_usd": 0.014294689999999997,
+      "sessions": 1,
+      "turns": 16,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    }
+  ]
+}

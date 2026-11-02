@@ -91,7 +91,7 @@ recompute it.
 | 5 | Mock Integrity Detector | Tautological assertions, internal-mock ratio, tests that do not import source (`tests/detect-mock-problems.sh`); HIGH blocks | Semantic correctness of mocks (whether a mock faithfully models the real dependency) | Yes (HIGH blocks) | `LOKI_GATE_MOCK=false` |
 | 6 | Test Mutation Detector | Assertion-value churn alongside implementation changes (test-fitting), low assertion density (`tests/detect-test-mutations.sh`); HIGH blocks | Logically-correct-but-weak assertions | Yes (HIGH blocks) | `LOKI_GATE_MUTATION=false` |
 | 7 | Documentation Coverage | README presence, docs freshness within 10 commits, API docs for exported symbols in packages | Whether the docs are accurate or useful | Yes | `LOKI_GATE_DOC_COVERAGE=false` |
-| 8 | Magic Modules Debate | Spec-vs-implementation debate findings on generated Magic Modules | Issues outside the Magic Modules debate scope | **No, advisory by default on both routes.** bash blocks only with `LOKI_GATE_MAGIC_DEBATE_BLOCKING=true` (`autonomy/run.sh:12925`); Bun self-skips unless `LOKI_GATE_MAGIC_DEBATE="true"` (`loki-ts/src/runner/quality_gates.ts:2520`). Measured before this was flipped advisory: 3 of 4 personas returned block on a deliberately thorough spec, so enforcing it would have blocked nearly every build. | `LOKI_GATE_MAGIC_DEBATE=false` |
+| 8 | Magic Modules Debate | Spec-vs-implementation debate findings on generated Magic Modules | Issues outside the Magic Modules debate scope | **No, advisory by default.** bash blocks only with `LOKI_GATE_MAGIC_DEBATE_BLOCKING=true` (`autonomy/run.sh:12925`). Measured before this was flipped advisory: 3 of 4 personas returned block on a deliberately thorough spec, so enforcing it would have blocked nearly every build. | `LOKI_GATE_MAGIC_DEBATE=false` |
 
 The three advisory default-on gates (LSP diagnostics, semantic
 test-authenticity, invariant/property) are documented in their own table under
@@ -187,20 +187,9 @@ the next section).
 
 This is the FROZEN knob scheme. All flags accept `true` or `1`.
 
-**Route scope (honest disclosure):** Bun-route parity is ACHIEVED for the
-default-ON behavior. The Bun runner
-(`loki-ts/src/runner/quality_gates.ts` `readToggles`) now defaults all three
-advisory gates ON (`LOKI_GATE_SEMANTIC_TESTS`, `LOKI_GATE_INVARIANTS`,
-`LOKI_GATE_LSP_DIAGNOSTICS` each `flag(X, true)`), matching the bash
-`loki start` route (`autonomy/run.sh`), with blocking behind the same opt-in
-`*_BLOCK` flags. Semantic and invariant findings surface into the next
-iteration's prompt via the `build_prompt` readers
-(`buildSemanticFindingsBlock` + `buildInvariantFindingsBlock`). The one real
-remaining gap is a SURFACING ASYMMETRY: LSP runs default-ON on the Bun route,
-but its advisory findings are NOT yet injected into the Bun prompt (LSP
-contributes only the grounding instruction, not its diagnostics block). That
-prompt-injection parity is still pending for LSP on the Bun route. This mirrors
-the "Reachability note" at the end of this file for the v7.5.0 Phase 1 flags.
+**Route scope:** these gates run on the bash `loki start` loop (`autonomy/run.sh`),
+default-ON for surfacing with blocking behind the opt-in `*_BLOCK` flags. The Bun
+quality-gate runner that once mirrored them was removed with the separate Bun loop.
 
 | Gate | Surfacing (advisory, default-ON, opt-out) | Blocking (opt-in, default-OFF) |
 |------|--------------------------------------------|--------------------------------|
@@ -324,18 +313,6 @@ LOKI_REVIEW_ADVISORY=1            # default 1. architecture-strategist,
                                   # findings but cannot veto. Set 0 to make
                                   # them blocking again.
 
-LOKI_REVIEW_UNAVAILABLE_BLOCK=1   # default 1 (blocks under LOKI_HARD_GATES).
-                                  # When NO reviewer can run at all (no claude
-                                  # binary on PATH AND no reachable SDK judge),
-                                  # code_review would otherwise pass with ZERO
-                                  # review -- a fake-PASS that makes the blind
-                                  # 3-reviewer gate a no-op. Blocks instead. Set
-                                  # 0 for an honest degraded pass (a run that
-                                  # deliberately has no reviewer). The raw-SDK
-                                  # reviewer path (LOKI_SDK_CODE_REVIEW=1 + a key)
-                                  # counts as available, so this only fires with
-                                  # no reviewer at all.
-
 LOKI_GATE_TEST_COVERAGE_BLOCK=0   # default 0 (advisory, bash-parity). By default
                                   # a failing test suite is surfaced and the
                                   # completion-council evidence gate is the
@@ -397,7 +374,7 @@ protect nuance; development / fast / unknown iterations stay at the conservative
 `LOKI_CAVEMAN_LEVEL` overrides the inference entirely, and the never-raise-a-
 user's-lower-global-level guard still applies.
 
-Claude-provider-only: on Codex / Cline / Aider the run is byte-identical to
+Claude-provider-only: on opencode the run is byte-identical to
 before. Vendor-less: Loki ships no copy of caveman and bootstraps the pinned
 version on demand (idempotent, cached under `.loki/`). Savings are real but
 bounded (output tokens only); there is no price API, so Loki discloses the
@@ -466,10 +443,10 @@ block completion independently, regardless of the inconclusive state.
 **Override-judge knobs (v7.5.4+):**
 
 ```bash
-LOKI_OVERRIDE_JUDGES=claude,codex    # csv of provider names for the
+LOKI_OVERRIDE_JUDGES=claude,opencode # csv of provider names for the
                                      # 3-judge override council. Defaults
                                      # to the available installed providers
-                                     # (claude, codex, cline, aider).
+                                     # (claude, opencode).
 LOKI_OVERRIDE_REAL_JUDGE=0           # force the deterministic stub-judge
                                      # path (hermetic CI / cost control).
                                      # Default: 1 = real provider-backed
@@ -478,16 +455,9 @@ LOKI_OVERRIDE_REAL_JUDGE=0           # force the deterministic stub-judge
                                      # or transient provider failure.
 ```
 
-Implementation: `loki-ts/src/runner/quality_gates.ts:760` (judge dispatch),
-`:780` (csv parse), `:987` (real-judge gate).
-
-**Reachability note (v7.5.0/v7.5.1)**: these flags activate inside the
-Bun runtime. Today `loki start <prd>` routes through the bash runner via
-`bin/loki` shim fall-through, so the flags do not yet trigger on a real
-`loki start`. They DO activate in any code path that calls
-`loki-ts/src/runner/runQualityGates` directly (e.g. tests, programmatic
-integration). End-to-end activation lands when Part A Phase 4 wires the
-Bun `start` route. See CHANGELOG v7.5.0 NOT-tested section.
+**Reachability note:** these knobs were read only by the Bun quality-gate runner,
+which was removed with the separate Bun loop. On the bash loop the override lands in
+the deterministic stub (see `docs/dev/architecture-reference.md`).
 
 ### Counter-evidence file format (`.loki/state/counter-evidence-<iter>.json`)
 
@@ -517,7 +487,7 @@ real provider-backed judges land in Phase 2 of Part B.
 at `.loki/state/gate-counter-<iter>.json` is now incremented under a
 cross-process file lock via `withFileLockSync` in
 `loki-ts/src/util/atomic.ts`. Concurrent gate runs (parallel worktrees,
-overlapping `runQualityGates` invocations) no longer race the
+overlapping gate invocations) no longer race the
 read-modify-write, so override-council quotas and per-finding counters
 remain consistent across processes. The lock file lives at
 `.loki/state/gate-counter-<iter>.json.lock` and is released even on

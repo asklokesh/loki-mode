@@ -1,6 +1,6 @@
 # Notifications
 
-> Legacy engine note: this page documents the legacy engine (`loki start`, `LOKI_ENGINE=legacy`), which still ships in 11.118.1 and is being removed. For the current Loki 10 commands (`loki "<task>"`, `loki owner/repo#N`, `loki backlog`, `loki verify`) see [[Home]] and [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
+> Legacy engine note: this page documents the legacy engine (`loki start`, `LOKI_ENGINE=legacy`), which still ships in 11.122.0 and is being removed. For the current Loki 10 commands (`loki "<task>"`, `loki owner/repo#N`, `loki backlog`, `loki verify`) see [[Home]] and [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
 
 Multi-channel notification system for Slack, Discord, custom webhooks, and dashboard triggers.
 
@@ -60,7 +60,7 @@ The Notifications section in the dashboard (keyboard shortcut: Cmd+0) has two ta
 
 ### Provider Support
 
-Notification triggers work with all providers (Claude, Codex, Cline, Aider, opencode). The trigger evaluation reads from `.loki/` flat files which are provider-agnostic.
+Notification triggers work with all providers (Claude, opencode). The trigger evaluation reads from `.loki/` flat files which are provider-agnostic.
 
 ---
 

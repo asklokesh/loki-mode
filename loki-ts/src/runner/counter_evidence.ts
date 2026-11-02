@@ -7,7 +7,7 @@
 // council votes; 2-of-3 approval lifts the BLOCK and writes the override
 // reasoning into episodic memory.
 //
-// Closest existing precedent: `councilEvaluate` in council.ts:373 (3-voter
+// Closest precedent: the completion council's 3-voter evaluation (3-voter
 // pattern). The override-on-REJECT direction is new architecture.
 //
 // Default ON: the live bash route (run.sh, LOKI_OVERRIDE_COUNCIL:-1) runs the
@@ -19,9 +19,8 @@
 // fails CLOSED -- it auto-approves nothing and a Critical/High code_review
 // BLOCK is never lifted by self-supplied evidence. counter-evidence is still
 // recorded here for audit, but it does not self-lift a trust-gate block. The
-// only adjudicated override that may legitimately lift a BLOCK is the Bun-route
-// real-LLM judge (quality_gates.ts maybeRunOverrideCouncil), which uses an
-// adjudicator the agent does not control.
+// Bun-route real-LLM judge that could adjudicate an override was removed with the
+// separate Bun loop, so no route lifts a BLOCK automatically.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -73,8 +72,7 @@ export type OverrideOutcome = {
 };
 
 // Judge function -- the override council fans out to 3 of these. Production
-// wires this to the existing 4-provider abstraction (claude/codex/
-// cline/aider). Tests inject deterministic stubs.
+// wires this to the provider abstraction (claude/opencode). Tests inject deterministic stubs.
 export type OverrideJudgeFn = (input: {
   finding: Finding;
   evidence: CounterEvidence;

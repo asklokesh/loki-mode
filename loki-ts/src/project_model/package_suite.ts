@@ -5,14 +5,14 @@
 import { isAbsolute, join, relative } from "node:path";
 import { harnessLoadReason } from "../runner/load_owner.ts";
 import { suiteEmptyOnBase } from "../runner/repo_profile.ts";
-import { classifyCheck, corroboratePass, failureExcerpt, fullSuiteCmd, goRunner, exitCodedId, isExitCodedScript, NO_TESTS_REASON, plainTestEnv, stripAnsi } from "../util/check_result.ts";
+import { classifyCheck, corroboratePass, failureExcerpt, firstError, fullSuiteCmd, goRunner, exitCodedId, isExitCodedScript, NO_TESTS_REASON, plainTestEnv, stripAnsi } from "../util/check_result.ts";
 import { run, shellWord } from "../util/shell.ts";
 import { failIds } from "../engine10/failures.ts";
 import type { RunnerName } from "../engine10/types.ts";
 import type { ProjectApi } from "./api.ts";
 import { isMultiRoot, loadProjectApi } from "./resolve.ts";
 
-interface SuiteCheck { name: string; cmd: string; result: "pass" | "fail" | "not_run"; duration_s: number; ids?: string[]; excerpt?: string; count?: string }
+interface SuiteCheck { name: string; cmd: string; result: "pass" | "fail" | "not_run"; duration_s: number; ids?: string[]; first_error?: string; excerpt?: string; count?: string }
 
 /** One full-suite command: `name` and `cmd` are the check's own fields, `run` is what executes in the repo-relative `cwd`. */
 export interface SuiteSpec { name: string; cmd: string; cwd: string; run: string }
@@ -29,6 +29,10 @@ export function fullSuiteSpecs(repoDir: string, runners: RunnerName[]): SuiteSpe
   return packageSuiteSpecs(loadProjectApi(repoDir)) ?? runners.map((r) => { const f = fullSuiteCmd(r, repoDir), c = [f.cmd, ...f.args].join(" "); return { name: `full suite: ${r}`, cmd: c, cwd: ".", run: [f.cmd, ...f.args].map(shellWord).join(" ") }; }); // run goes through bash -c: an absolute .venv interpreter under a spaced path must stay one word
 }
 
+/** L026: the full-suite command lines of this repo, handed to an implement or fix session so its stream parser can count in-session full-suite runs. */
+export function suiteCmdsOpt(repoDir: string, testmap: unknown): { suiteCmds?: string[] } {
+  try { const runners = (testmap as { runners?: RunnerName[] } | undefined)?.runners ?? [], cmds = fullSuiteSpecs(repoDir, runners).map((s) => s.run); return cmds.length ? { suiteCmds: cmds } : {}; } catch { return {}; }
+}
 /** FC-FULLSUITE-ANSI-IDS: the plain child env (FC-69) for a full-suite run, with the caller's PATH override when present. */
 export function suiteEnv(path?: string): Record<string, string> { return path ? { ...plainTestEnv(), PATH: path } : plainTestEnv(); }
 
@@ -68,7 +72,7 @@ export async function runPackageSuites(
     if (lr) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`${lr} (${name}; harness-owned)`); continue; }
     const cls = await corroboratePass(classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...goRunner(line), exitCoded: isExitCodedScript(line) }), out, line, undefined, { cwd: join(repoDir, cwd), env: suiteEnv(opts.path), signal }); // FC-FULL-SUITE-EXIT-CODED-SCRIPT
     if (cls.result === "not_run" && r.exitCode === 0 && opts.targetPassed === true && suiteEmptyOnBase(repoDir, opts.baseSha, line, cmd, cls, out, cwd)) { notProven.add(`${NA_PREFIX}${name} (ran 0 tests on base and head; the Wall or a task-named check passed with executed tests)`); continue; } // a full suite that discovers nothing is a disclosed note, not a gate, once a target check proved the change
-    checks.push({ name, cmd, result: cls.result, duration_s, ...(cls.count ? { count: cls.count } : {}), ...(cls.result === "fail" ? { ids: cls.count ? [exitCodedId(line, out, repoDir) ?? []].flat() as string[] : failIds(out), excerpt: failureExcerpt(out, repoDir) } : {}) });
+    checks.push({ name, cmd, result: cls.result, duration_s, ...(cls.count ? { count: cls.count } : {}), ...(cls.result === "fail" ? { ids: cls.count ? [exitCodedId(line, out, repoDir) ?? []].flat() as string[] : failIds(out), first_error: firstError(out), excerpt: failureExcerpt(out, repoDir) } : {}) });
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);
   }
   // FC-SEAL-NA-AS-UNPROVEN: a package with no test command is N/A only beside a suite that really ran; changed files it owns with no Wall proof (or an unknown diff) stay NOT PROVEN.

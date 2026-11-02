@@ -5,6 +5,72 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.122.0 (2026-11-02)
+
+Benchmark v3: hard and replay suites of real closed issues, rebuilt from pinned upstream commits.
+
+### Added
+
+- `benchmarks/h2h` gains a replay suite (8 recent closed issues) and a hard suite (8 multi-file issues that raw Haiku with a verify instruction failed in a pilot), plus Sonnet, Opus and verify-sentence configs. Results on the hard suite are in `benchmarks/h2h/results/2026-11-01-e13f3dd72-hard.json`, measured on the Loki engine at commits e13f3dd72 and 0d2071933 (before v11.120.0), not on this release: Loki on Haiku passed 0 of 24 runs (raw Haiku 1 of 24); Loki on Opus passed 5 of 24 at $1.23 per passed task against raw Opus 3 of 24 at $4.92. All passes came from 2 of the 8 tasks. See `benchmarks/h2h/RESULTS.md`, which also lists the provenance caveat (two task packages were present but gitignored at the run commits; they are now pinned by digest) and a post-run scoring-command change no verdict depended on.
+- Task repositories are no longer stored in this repository: each task keeps only its description and pinned commits, and the harness fetches and rebuilds it at run time into `~/.cache/loki-h2h`, refusing any rebuild or cached copy whose digest does not match.
+- A benchmark run is not citable when the benchmark tree has uncommitted or gitignored files.
+
+Nothing changes for `loki start` or the npm package.
+
+### Fixed
+
+- The redaction speed test no longer fails under machine load: a sub-millisecond baseline timing produced a false 12.3x growth ratio. A real quadratic slowdown still fails it (15.5x).
+
+## v11.121.0 (2026-11-02)
+
+Loki supports exactly Claude Code, an Anthropic API key, and opencode (OpenRouter included).
+
+### Removed
+
+- Codex, Cline, Aider and Gemini support is removed. Choosing one (`--provider`, `LOKI_PROVIDER`, `loki provider set|info|models|show`, the dashboard, the control plane or the GitHub Action) exits 2 with one line naming the supported providers and how to switch. Run `loki provider set claude` or `--provider opencode` to continue.
+
+### Fixed
+
+- `--provider opencode --model openrouter/<vendor>/<model>` now runs that model in opencode; before, the model was sent to the Claude route and opencode ran without one.
+- An OpenRouter model with no credential anywhere opencode reads one (`OPENROUTER_API_KEY`, opencode's `auth.json`, global or project `opencode.json`/`.jsonc`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`) is refused before any session starts, with the fix printed. A config that cannot be parsed warns and continues. Key values are never printed.
+- `loki doctor` reports whether an OpenRouter key is set.
+
+## v11.120.1 (2026-11-02)
+
+About 10,400 lines of runner code that no longer ran are removed; nothing changes at runtime.
+
+### Removed
+
+- 15 modules left unused when v11.119.0 removed the separate Bun run loop (the old council, prompt builder, goal scoring, quality gates, recovery and queue modules under `loki-ts/src/runner/`). The shipped bundle contains the same 603 source files as before.
+- `LOKI_CONFIDENCE_SPIKE` and four other settings that only those modules read (`LOKI_PROMPT_ADVISOR`, `LOKI_PROMPT_LENGTH`, `LOKI_PROMPT_SCREENSHOT`, `LOKI_REVIEW_UNAVAILABLE_BLOCK`) have had no effect since v11.119.0; their documentation is removed.
+
+### Fixed
+
+- Docs and code comments that pointed at the deleted files are corrected, and `LOKI_AUTO_LEARNINGS` is documented as working on the default route. A local check now fails when any file names a `loki-ts/src` path that does not exist.
+
+## v11.120.0 (2026-11-01)
+
+Cheaper fix rounds, and loki backlog runs large issues and Jira or Linear projects.
+
+### Changed
+
+- Fix rounds: the fix brief names the real failing tests and first failing line (bun, vitest, Maven Surefire, go, xunit), so two different failing sets are no longer read as one stall. A jest config "Validation Error" costs no fix round; it is recorded as NOT PROVEN.
+- Verify after a fix round reruns what can have changed first (failed checks, the Wall, task-named and impacted tests), then the rest of the selection and the full suite in the same verify once that part is green. A run never ends VERIFIED on a partial verify. `LOKI_E10_QUICK_VERIFY=0` restores the old behavior.
+- The implement brief no longer asks the model to run the full suite; the harness runs it after the session on medium and high risk.
+- `loki backlog`: a large issue now runs as slices (the same path `loki start owner/repo#N` takes) instead of getting a drafted spec. "Large" has one definition, shared by backlog triage, sizing and the epic split.
+- `loki backlog jira:PROJ` and `loki backlog linear:TEAM` list a project's open items, triage them, and run each one. A large Jira or Linear item still runs as one run.
+- `benchmarks/h2h`: `H2H_LOKI_ENV` sets variables on Loki contestants only, for on/off comparisons.
+
+## v11.119.0 (2026-11-01)
+
+One start decision: the separate Bun run loop is gone, and every start path uses the default engine or says why not.
+
+### Changed
+
+- Removed the separate Bun run loop (about 1,500 lines). `loki start --attempts 1`, `LOKI_SDK_LOOP=1` and `LOKI_SDK_MODE=full` now run the default engine; `LOKI_SDK_LOOP=1` prints one line saying so. One script (`autonomy/route.sh`) now makes every start decision.
+- A PRD over 100 KB still runs on the legacy engine, as before. Under `LOKI_SDK_MODE=full` with Claude, where the legacy engine has no SDK path, it now stops with one line explaining how to proceed instead of failing with "provider CLI not installed"; `--engine legacy` under SDK mode with Claude is refused the same way.
+- `start --attempts 1` behaves like a plain start: runner-only flags such as `--simple` are refused, `--max-duration` is honored and a PR URL goes to PR verification.
+
 ## v11.118.1 (2026-11-01)
 
 The Docker images build again.

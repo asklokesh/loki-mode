@@ -56,7 +56,7 @@ Bun-native commands:
   trust <subcmd>         Trust trajectory derived from proof-of-run history
   crash <subcmd>         Inspect or submit scrubbed local crash reports
   contract <spec.md>     Print the spec delivery contract and write .loki/contract.json
-  start [flags]          Run the RARV autonomous loop (Bun route, LOKI_SDK_LOOP)
+  start [flags]          Run the Loki 10 engine (--attempts N, --dry-run)
                          (--spec-first writes .loki/specs/<slug>.md and stops; --spec FILE runs against the edited spec)
   plan <task> --spec     Write the acceptance criteria to .loki/specs/<slug>.md for you to edit
   slack serve [--port N] [--host H]   Serve the Slack inbound handler (needs SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET)
@@ -290,6 +290,8 @@ async function dispatch(argv: readonly string[]): Promise<number> {
           "                  fail-closed contract.",
           "  triage          Classify work items (JSON on stdin) as implement, spec",
           "                  or human with a one-line reason. Driven by loki backlog.",
+          "  tracker-list    List the open items of a Jira project or Linear team",
+          "                  (jira:PROJ, linear:TEAM) as JSON. Driven by loki backlog.",
           "",
           "Phase 1 (RARV-C closure) env vars:",
           "  LOKI_INJECT_FINDINGS=1   Persist structured reviewer findings to",
@@ -373,15 +375,17 @@ async function dispatch(argv: readonly string[]): Promise<number> {
         const { runTriageCli } = await import("./features/triage.ts");
         return runTriageCli(rest.slice(1));
       }
+      if (subcmd === "tracker-list") {
+        const { runTrackerListCli } = await import("./features/tracker_intake.ts");
+        return runTrackerListCli(rest.slice(1));
+      }
       process.stderr.write(`Unknown internal subcommand: ${subcmd}\n`);
       process.stderr.write(`Run 'loki internal --help' for the supported list.\n`);
       return 2;
     }
 
     case "start": {
-      // v8 Phase 4: the RARV autonomous loop on the Bun route. Reached from
-      // bin/loki only when LOKI_SDK_LOOP is truthy (the default route still runs
-      // the bash cmd_start). Parses the supported flag subset -> runAutonomous.
+      // The Loki 10 engine for --attempts, --spec and --dry-run (see the header of commands/start.ts).
       const { runStart } = await import("./commands/start.ts");
       return runStart(rest);
     }

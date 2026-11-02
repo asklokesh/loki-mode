@@ -56,7 +56,6 @@
       "expr.go",
       "patcher/with_context.go"
     ],
-    "added_files": [],
     "note": "docs, debug, docgen and repl are not vendored (debug and repl are separate modules with external dependencies)."
   },
   "pilot": {
@@ -65,5 +64,6 @@
     "runs": 2,
     "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
   },
-  "qualified": true
+  "qualified": true,
+  "snapshot_sha256": "9cd5f0ec611e40cd184ad3abc9fdd0a3fbac39513beec83c26d64d0fa3e6d33f"
 }

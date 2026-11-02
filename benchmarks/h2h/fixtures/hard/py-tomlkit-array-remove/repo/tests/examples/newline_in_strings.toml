@@ -1,5 +1,0 @@
-this = "this\\nthat\\nmore"
-foo = """bar
-baz
-qux
-"""

@@ -8,7 +8,7 @@ Complete reference for all Loki Mode environment variables.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOKI_PROVIDER` | `claude` | AI provider: claude, codex, cline, aider, opencode |
+| `LOKI_PROVIDER` | `claude` | AI provider: claude or opencode (codex, cline, aider and gemini were removed and exit 2) |
 | `LOKI_MAX_RETRIES` | `50` | Maximum retry attempts |
 | `LOKI_BASE_WAIT` | `60` | Base wait time (seconds) |
 | `LOKI_MAX_WAIT` | `3600` | Maximum wait time (seconds) |
@@ -182,9 +182,6 @@ export LOKI_COMPLETION_PROMISE="ALL TESTS PASSING 100%"
 | `LOKI_COUNCIL_MIN_ITERATIONS` | `3` | Minimum iterations before council runs |
 | `LOKI_COUNCIL_CONVERGENCE_WINDOW` | `3` | Iterations to track for convergence |
 | `LOKI_COUNCIL_STAGNATION_LIMIT` | `5` | Max iterations with no git changes |
-| `LOKI_CONFIDENCE_SPIKE` | `1` (on) | Confidence-spike re-check (v8.0.0). When the agent's self-reported confidence jumps to near-certainty, the done-signal force-stop is delayed by ONE iteration so the claim is verified rather than trusted. Strictly additive: it can only add a verification pass, never skip, shorten, or satisfy a gate, and it never delays the stagnation valve. The delay is one-shot, so a repeatedly-spiking run cannot postpone the valve indefinitely. Set `0` to opt out. |
-| `LOKI_CONFIDENCE_SPIKE_DELTA` | `40` | Confidence jump (in points) that counts as a spike (v8.0.0) |
-| `LOKI_CONFIDENCE_SPIKE_MIN` | `90` | Absolute confidence level that counts as a spike on first arrival, so an agent that opens at 100 (and therefore never "jumps") still triggers a re-check (v8.0.0) |
 
 **Example - Disable council:**
 ```bash

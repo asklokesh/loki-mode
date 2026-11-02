@@ -38,8 +38,8 @@ iptables -A DOCKER-USER -p tcp --dport 53 -j ACCEPT
 # Allow HTTPS to AI API endpoints only
 # Anthropic (Claude)
 iptables -A DOCKER-USER -d api.anthropic.com -p tcp --dport 443 -j ACCEPT
-# OpenAI (Codex)
-iptables -A DOCKER-USER -d api.openai.com -p tcp --dport 443 -j ACCEPT
+# OpenRouter (opencode with an openrouter/... model)
+iptables -A DOCKER-USER -d openrouter.ai -p tcp --dport 443 -j ACCEPT
 
 # Drop all other outbound traffic from the isolated network
 iptables -A DOCKER-USER -s 172.28.0.0/16 -j DROP

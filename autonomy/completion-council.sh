@@ -2031,7 +2031,7 @@ runner = d.get('runner', 'none')
 passed = d.get('pass')
 status = d.get('status', '')
 # BACKLOG 89: a recorded failure count above zero is a failure whatever "pass"
-# says, as the Bun gate reads it (quality_gates.ts artifactCount): a numeric
+# says: a numeric
 # failed_count wins, the legacy numeric failed is the fallback, and anything
 # else (null, missing, a bool) is unmeasured, never a failure and never 0.
 def _count(v):
@@ -3121,10 +3121,6 @@ council_member_review() {
                 command -v claude >/dev/null 2>&1 || { log_error "Claude CLI not found"; return 1; }
             fi
             ;;
-        codex) command -v codex >/dev/null 2>&1 || { log_error "Codex CLI not found"; return 1; } ;;
-        gemini) command -v gemini >/dev/null 2>&1 || { log_error "Gemini CLI not found"; return 1; } ;;
-        cline) command -v cline >/dev/null 2>&1 || { log_error "Cline CLI not found"; return 1; } ;;
-        aider) command -v aider >/dev/null 2>&1 || { log_error "Aider not found"; return 1; } ;;
     esac
 
     local evidence
@@ -3295,8 +3291,7 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
                 # output; the downstream parse already greps VOTE/REASON/ISSUES.
                 # CAVEMAN_DEFAULT_MODE=off suppression is preserved (see above).
                 # bash-F3: timeout-guard the provider subcall so a hung CLI can
-                # not stall the whole council. Default 600s matches the Bun route
-                # (council.ts LOKI_COUNCIL_TIMEOUT_MS=600000).
+                # not stall the whole council. Default 600s.
                 # bash-F4 (WAVE10 SAFE-DEFAULT): capture the subcall exit code so a
                 # timeout (124) is NOT silently routed into council_heuristic_review.
                 # The heuristic fallback defaults to APPROVE on benign evidence, so
@@ -3306,30 +3301,6 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
                 # $? equal timeout's 124 when the CLI is killed. _provider_rc is read
                 # after the case to force a conservative REJECT on timeout.
                 verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" env "SHELL=$_cm_shell" CAVEMAN_DEFAULT_MODE=off claude "${_cm_argv[@]}" -p 2>/dev/null)
-                _provider_rc=$?
-            fi
-            ;;
-        codex)
-            if command -v codex &>/dev/null; then
-                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" codex exec --sandbox workspace-write "$prompt" 2>/dev/null)
-                _provider_rc=$?
-            fi
-            ;;
-        gemini)
-            if command -v gemini &>/dev/null; then
-                verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" gemini 2>/dev/null)
-                _provider_rc=$?
-            fi
-            ;;
-        cline)
-            if command -v cline &>/dev/null; then
-                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" cline -y "$prompt" 2>/dev/null)
-                _provider_rc=$?
-            fi
-            ;;
-        aider)
-            if command -v aider &>/dev/null; then
-                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null)
                 _provider_rc=$?
             fi
             ;;
@@ -3403,10 +3374,6 @@ council_devils_advocate() {
                 command -v claude >/dev/null 2>&1 || { log_error "Claude CLI not found"; return 1; }
             fi
             ;;
-        codex) command -v codex >/dev/null 2>&1 || { log_error "Codex CLI not found"; return 1; } ;;
-        gemini) command -v gemini >/dev/null 2>&1 || { log_error "Gemini CLI not found"; return 1; } ;;
-        cline) command -v cline >/dev/null 2>&1 || { log_error "Cline CLI not found"; return 1; } ;;
-        aider) command -v aider >/dev/null 2>&1 || { log_error "Aider not found"; return 1; } ;;
     esac
 
     local evidence
@@ -3502,29 +3469,9 @@ REASON: one-line justification citing path:line evidence"
                 # v7.41.3 BUG A: full capture, no tail-truncation (see member
                 # subcall note). CAVEMAN_DEFAULT_MODE=off suppression preserved.
                 # bash-F3: timeout-guard the devil's-advocate subcall (same 600s
-                # default as the member subcalls / Bun council.ts). An empty
+                # default as the member subcalls). An empty
                 # verdict on timeout hits the conservative REJECT fallback below.
                 verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" env "SHELL=$_co_shell" CAVEMAN_DEFAULT_MODE=off claude "${_co_argv[@]}" -p 2>/dev/null)
-            fi
-            ;;
-        codex)
-            if command -v codex &>/dev/null; then
-                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" codex exec --sandbox workspace-write "$prompt" 2>/dev/null)
-            fi
-            ;;
-        gemini)
-            if command -v gemini &>/dev/null; then
-                verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" gemini 2>/dev/null)
-            fi
-            ;;
-        cline)
-            if command -v cline &>/dev/null; then
-                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" cline -y "$prompt" 2>/dev/null)
-            fi
-            ;;
-        aider)
-            if command -v aider &>/dev/null; then
-                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null)
             fi
             ;;
         *)

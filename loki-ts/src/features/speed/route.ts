@@ -28,7 +28,7 @@ export interface GroupCtx { task: string; repoDir: string; env: NodeJS.ProcessEn
 export type GroupRunner = (dag: Dag, ctx: GroupCtx) => Promise<number>;
 
 /** Parallel unit slots per provider (providers/*.sh PROVIDER_MAX_PARALLEL). Unknown providers are sequential: never guess parallel. */
-const PROVIDER_SLOTS: Record<string, number> = { claude: 10, codex: 2, cline: 1, aider: 1, opencode: 1 };
+const PROVIDER_SLOTS: Record<string, number> = { claude: 10, opencode: 1 };
 export function providerSlots(env: NodeJS.ProcessEnv, provider?: string): { provider: string; slots: number } {
   provider = (provider || env.LOKI_PROVIDER || "claude").toLowerCase();
   return { provider, slots: PROVIDER_SLOTS[provider] ?? 1 };

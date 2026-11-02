@@ -25,10 +25,8 @@ body:
       label: Provider
       options:
         - Claude Code
-        - Cline
-        - OpenAI Codex CLI
-        - Google Gemini CLI
-        - Aider
+        - Claude Agent SDK (API key)
+        - opencode
     validations:
       required: true
   - type: textarea

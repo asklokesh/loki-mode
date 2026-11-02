@@ -19,7 +19,6 @@
 - [Parallelization Strategy (Claude Only)](#parallelization-strategy-claude-only)
 - [Extended Thinking Mode](#extended-thinking-mode)
   - [Claude Adaptive Thinking (Effort Parameter)](#claude-adaptive-thinking-effort-parameter)
-  - [Codex --sandbox workspace-write Flag](#codex---sandbox-workspace-write-flag)
 - [Prompt Repetition for Haiku](#prompt-repetition-for-haiku)
 - [Advanced Parameters](#advanced-parameters)
 - [Confidence-Based Routing](#confidence-based-routing)
@@ -104,35 +103,25 @@ For diffs that move money or mutate infrastructure (payments, billing, spend aut
 
 ## Multi-Provider Support (v5.0.0)
 
-Loki Mode supports five AI providers. The authoritative list is
-`SUPPORTED_PROVIDERS` in `providers/loader.sh:8`; each provider's capability
-flags live in its own `providers/<name>.sh`. Claude has full features. Every
-other provider runs sequentially (no Task tool, no parallel agents), but only
-those with `PROVIDER_DEGRADED=true` are flagged degraded.
+Loki Mode supports two provider CLIs. The authoritative list is
+`SUPPORTED_PROVIDERS` in `providers/loader.sh`; each provider's capability
+flags live in its own `providers/<name>.sh`.
 
 | Provider | Full Features | `PROVIDER_DEGRADED` | CLI Flag |
 |----------|---------------|---------------------|----------|
-| **Claude Code** | Yes | false (`providers/claude.sh:104`) | `--provider claude` (default) |
-| **OpenAI Codex CLI** | No | true (`providers/codex.sh:180`) | `--provider codex` |
-| **Cline CLI** | No | false (`providers/cline.sh:97`) | `--provider cline` |
-| **Aider** | No | true (`providers/aider.sh:95`) | `--provider aider` |
-| **opencode** | No | false (`providers/opencode.sh:66`) | `--provider opencode` |
+| **Claude Code** (CLI, or the Anthropic Agent SDK with an API key) | Yes | false | `--provider claude` (default) |
+| **opencode** (75+ model providers, OpenRouter included) | No | false | `--provider opencode` |
 
-Only **codex** and **aider** are flagged degraded. Cline and opencode are
-sequential but not degraded, so do not describe them as degraded-mode providers.
+codex, cline, aider and gemini were removed; selecting one exits 2 with one
+migration line naming claude and opencode.
 
 **opencode** is the model-agnostic route: it reaches 75+ model providers, so it
-is the path to cheap/open models. It is sequential like the others
+is the path to cheap/open models, including every OpenRouter model as
+`openrouter/<vendor>/<model>` (with `OPENROUTER_API_KEY` set). It is sequential
 (`PROVIDER_HAS_SUBAGENTS=false`, `PROVIDER_HAS_PARALLEL=false`,
-`PROVIDER_HAS_TASK_TOOL=false` at `providers/opencode.sh:61-63`) but it does
-support MCP (`PROVIDER_HAS_MCP=true`, `:64`), which is why it is not marked
-degraded.
-
-**Degraded mode limitations:**
-- No Task tool (cannot spawn subagents)
-- No parallel execution (sequential RARV cycle only)
-- No MCP server integration (Codex has MCP support but not yet integrated with Loki)
-- Single model with parameter adjustment (effort/thinking level)
+`PROVIDER_HAS_TASK_TOOL=false` in `providers/opencode.sh`) but it does support
+MCP (`PROVIDER_HAS_MCP=true`), which is why it is not marked degraded. It uses
+one `provider/model` for every tier (`LOKI_OPENCODE_MODEL`).
 
 ---
 
@@ -140,11 +129,11 @@ degraded.
 
 **Default (v5.3.0):** Haiku disabled for quality. All tasks use Opus or Sonnet.
 
-| Tier | Purpose | Claude (default) | Claude (--allow-haiku) | Codex |
-|------|---------|------------------|------------------------|-------|
-| **planning** | PRD analysis, architecture, system design | opus | opus | effort=xhigh |
-| **development** | Feature implementation, complex bugs, tests | opus | sonnet | effort=high |
-| **fast** | Unit tests, docs, linting, simple tasks | sonnet | haiku | effort=low |
+| Tier | Purpose | Claude (default) | Claude (--allow-haiku) | opencode |
+|------|---------|------------------|------------------------|----------|
+| **planning** | PRD analysis, architecture, system design | opus | opus | `LOKI_OPENCODE_MODEL` |
+| **development** | Feature implementation, complex bugs, tests | opus | sonnet | `LOKI_OPENCODE_MODEL` |
+| **fast** | Unit tests, docs, linting, simple tasks | sonnet | haiku | `LOKI_OPENCODE_MODEL` |
 
 ### Enabling Haiku
 
@@ -177,11 +166,11 @@ When Haiku is enabled:
 | **fast** | All other operations (parallel for Claude) | Unit tests, docs, bash commands, linting, monitoring |
 
 **Claude-specific model names:** opus, sonnet, haiku (haiku requires --allow-haiku flag)
-**Codex effort levels:** xhigh, high, medium, low
+**opencode effort:** `LOKI_EFFORT` maps to opencode `--variant` (catalog-clamped)
 
 ## Task Tool Examples (Claude Only)
 
-**NOTE:** Task tool is Claude-specific. Codex, Cline, and Aider run in degraded mode without subagents.
+**NOTE:** Task tool is Claude-specific. opencode runs sequentially without subagents.
 
 ```python
 # Planning tier (opus) for Bootstrap, Discovery, Architecture
@@ -206,7 +195,7 @@ if [ "${PROVIDER_HAS_TASK_TOOL:-false}" = "true" ]; then
     # Claude: Use Task tool with parallel agents
     Task(model="haiku", description="Run tests", prompt="...")
 else
-    # Codex/Cline/Aider: Run sequentially without subagents
+    # opencode: Run sequentially without subagents
     # Execute RARV cycle in main thread
 fi
 ```
@@ -233,7 +222,7 @@ fi
 
 ## Parallelization Strategy (Claude Only)
 
-**NOTE:** Parallelization requires Task tool, which is Claude-specific. Codex, Cline, and Aider run sequentially.
+**NOTE:** Parallelization requires Task tool, which is Claude-specific. opencode runs sequentially.
 
 ```python
 # Claude: Launch 10+ Haiku agents in parallel for unit test suite
@@ -242,7 +231,7 @@ for test_file in test_files:
          description=f"Run unit tests: {test_file}",
          run_in_background=True)
 
-# Codex/Cline/Aider: Run tests sequentially (no parallelization)
+# opencode: Run tests sequentially (no parallelization)
 for test_file in test_files:
     run_test(test_file)  # Sequential execution
 ```
@@ -273,7 +262,7 @@ Task(
 
 Claude models support an `effort` parameter that controls reasoning depth without requiring thinking prefixes. This is separate from extended thinking and applies at the API level.
 
-A lower effort does not reliably shorten Opus 5 answers. On the Bun route only, and never under LOKI_SIMPLE=1 (set automatically for small tasks, it drops these lines), LOKI_PROMPT_LENGTH=1 adds a prefix line that asks for short replies, and LOKI_PROMPT_ADVISOR=1 with the router on adds the advisor timing and brevity line. The bash route never carries either line. Separately, on the SDK route only (the CLI route never reads the router effort), a router-on Sonnet executor that has the advisor attached runs at medium effort unless LOKI_E10_EFFORT is set.
+A lower effort does not reliably shorten Opus 5 answers. On the SDK route only (the CLI route never reads the router effort), a router-on Sonnet executor that has the advisor attached runs at medium effort unless LOKI_E10_EFFORT is set.
 
 | Effort Level | When to Use | Token Impact |
 |--------------|-------------|--------------|
@@ -291,26 +280,11 @@ Per-model API defaults (an explicit value equal to the default behaves like omit
 | Claude Sonnet 5.5, Claude Sonnet 5, Claude Opus 5, Claude Opus 4.8, Claude Opus 4.7 | `high` | yes | yes |
 | Claude Opus 4.6, Claude Sonnet 4.6 | `high` | no | yes |
 
-Loki's resolver (one function per engine, pinned equal by tests): `loki_effort_for_tier` in `autonomy/lib/claude-flags.sh` and `effortForTier` in `loki-ts/src/providers/claude_flags.ts`. Tiers: planning=xhigh, development=high, fast=medium, plus one notch up when complexity is `complex` (never auto-reaches `max`). Codex uses its own `PROVIDER_EFFORT_*` table in `providers/codex.sh` (fast=low), resolved in TS by `codexEffortForTier` in the same module.
+Loki's resolver (one function per engine, pinned equal by tests): `loki_effort_for_tier` in `autonomy/lib/claude-flags.sh` and `effortForTier` in `loki-ts/src/providers/claude_flags.ts`. Tiers: planning=xhigh, development=high, fast=medium, plus one notch up when complexity is `complex` (never auto-reaches `max`).
 
 **Length:** on Claude Opus 5, effort controls thinking volume and does not reliably shorten visible responses. State the wanted length and verbosity in the prompt.
 
 **Note:** The effort parameter and thinking prefixes serve different purposes. Effort controls the model's internal reasoning budget; thinking prefixes guide the structure of the response.
-
-### Codex --sandbox workspace-write Flag
-
-Codex CLI deprecated `--full-auto` in v0.125+ (removed from `codex exec --help`,
-emits a deprecation warning if used). The documented replacement is
-`--sandbox workspace-write`. The `exec` subcommand is non-interactive by default
-(approval: never), so the sandbox flag alone keeps the loop autonomous:
-
-```bash
-# Recommended (codex 0.125+)
-codex exec --sandbox workspace-write "$prompt"
-
-# Legacy (still supported)
-codex exec --dangerously-bypass-approvals-and-sandbox "$prompt"
-```
 
 ## Prompt Repetition for Haiku
 
@@ -556,13 +530,10 @@ Task(
 )
 ```
 
-For Codex (degraded mode):
+For opencode (one model for every tier):
 ```python
-# Map tiers to effort levels
-TIER_MAPPING = {
-    "codex": {"HIGH": "xhigh", "MEDIUM": "high", "LOW": "low"},
-}
-effort_level = TIER_MAPPING[provider][determine_tier(task)]
+# Every tier resolves to the same provider/model; escalate by changing LOKI_OPENCODE_MODEL
+model = os.environ.get("LOKI_OPENCODE_MODEL", "openrouter/deepseek/deepseek-v3.2")
 ```
 
 ### Metrics for Tier Optimization

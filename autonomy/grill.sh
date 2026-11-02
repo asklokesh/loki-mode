@@ -151,12 +151,6 @@ grill_check_provider() {
                 return $GRILL_EXIT_ERROR
             fi
             ;;
-        codex)
-            if ! command -v codex >/dev/null 2>&1; then
-                _grill_err "Codex CLI not found."
-                return $GRILL_EXIT_ERROR
-            fi
-            ;;
         *)
             # v8.2.0: capability, not identity. Must stay in lockstep with the
             # matching arm in grill_invoke_provider -- this gate runs FIRST, so
@@ -164,7 +158,7 @@ grill_check_provider() {
             if type provider_invoke_argv >/dev/null 2>&1; then
                 return 0
             fi
-            _grill_err "grill currently supports the claude and codex providers (got: $provider)"
+            _grill_err "grill currently supports the claude provider (got: $provider)"
             return $GRILL_EXIT_ERROR
             ;;
     esac
@@ -299,22 +293,6 @@ sys.stdout.write(str(d.get("result", "")) if isinstance(d, dict) else raw)' 2>/d
             printf '%s\n' "$out"
             return 0
             ;;
-        codex)
-            if ! command -v codex >/dev/null 2>&1; then
-                _grill_err "Codex CLI not found."
-                return $GRILL_EXIT_ERROR
-            fi
-            local out
-            local _cx_extra=()
-            [ "$role" = "check_author" ] && _cx_extra=(--skip-git-repo-check)
-            out="$(printf '%s' "$prompt" | _grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" codex exec --sandbox workspace-write ${_cx_extra[@]+"${_cx_extra[@]}"} - 2>/dev/null)"
-            if [ -z "$out" ]; then
-                _grill_err "provider returned no output"
-                return $GRILL_EXIT_ERROR
-            fi
-            printf '%s\n' "$out"
-            return 0
-            ;;
         *)
             # v8.2.0 TIMEOUT SEAM. Previously any other provider was a hard
             # error. A provider exposing provider_invoke_argv builds a REAL argv
@@ -342,7 +320,7 @@ sys.stdout.write(str(d.get("result", "")) if isinstance(d, dict) else raw)' 2>/d
                 printf '%s\n' "$out"
                 return 0
             fi
-            _grill_err "grill currently supports the claude and codex providers (got: $provider)"
+            _grill_err "grill currently supports the claude provider (got: $provider)"
             return $GRILL_EXIT_ERROR
             ;;
     esac
@@ -377,7 +355,7 @@ OPTIONS:
     -h, --help    Show this help.
 
 ENVIRONMENT:
-    LOKI_PROVIDER        Provider to use (claude default; codex supported).
+    LOKI_PROVIDER        Provider to use (claude default; opencode via provider_invoke_argv).
     LOKI_GRILL_MODEL     Claude model for the interrogation (default: sonnet).
     LOKI_GRILL_TIMEOUT   Per-invocation timeout in seconds (default: 180).
 

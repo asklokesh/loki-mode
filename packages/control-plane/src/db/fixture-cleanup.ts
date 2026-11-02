@@ -8,7 +8,7 @@ import { audit } from "./prune.ts";
 
 export const FIXTURE_REPO = "acme/widget";
 const DONE = "fixture.cleanup.v2.done"; // v2 (R2, A3b/A3f): also origin_repo-null test rows, runs in HOME or a non-repo dir, and FAILED runs with no run dir
-/** Run ids that only test suites write (e37-cline/codex/aider, e10-sig, e10-sg1/sg2). */
+/** Run ids that only test suites write (e37-*, e10-sig, e10-sg1/sg2). */
 export const TEST_RUN_ID = /^(e37-|e10-sig|e10-sg)/;
 
 export const tempRoots = (): string[] => {

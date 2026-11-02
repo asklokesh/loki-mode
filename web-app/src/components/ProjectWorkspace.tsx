@@ -2123,7 +2123,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                               <label className="block text-xs font-semibold text-muted-accessible uppercase tracking-wider mb-2">Provider</label>
                               <p className="text-xs text-muted mb-2">Provider for the next build: <span className="font-semibold text-ink capitalize">{selectedProvider}</span></p>
                               <div className="flex gap-2">
-                                {['claude', 'codex', 'gemini'].map(p => (
+                                {['claude', 'opencode'].map(p => (
                                   <button
                                     key={p}
                                     // The server only switches the provider when no build is running.

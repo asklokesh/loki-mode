@@ -133,8 +133,8 @@ loki logs --follow  # Monitor progress
 ### Use Different Provider
 
 ```bash
-loki start my-app.md --provider codex
-loki start my-app.md --provider cline
+# opencode with an OpenRouter model (needs OPENROUTER_API_KEY)
+loki start my-app.md --provider opencode --model openrouter/deepseek/deepseek-v3.2
 ```
 
 ### Enable Parallel Mode

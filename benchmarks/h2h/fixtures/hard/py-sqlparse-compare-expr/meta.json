@@ -49,7 +49,6 @@
       "sqlparse/keywords.py",
       "sqlparse/sql.py"
     ],
-    "added_files": [],
     "note": "tests/test_cli.py is ignored: its stream handling fails on Python 3.14 on the parent and on the fix alike."
   },
   "pilot": {
@@ -59,5 +58,6 @@
     "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
   },
   "qualified": false,
-  "excluded_because": "the fix's tests use sql.TypedLiteral, a class the fix itself adds"
+  "excluded_because": "the fix's tests use sql.TypedLiteral, a class the fix itself adds",
+  "snapshot_sha256": "c756e3083662d710227be5d47b65d0dda60c7078e0fbeabaff455504b294c842"
 }

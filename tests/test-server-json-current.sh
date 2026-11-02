@@ -112,7 +112,7 @@ else:
     try: check("VS Code",json.loads(urllib.parse.unquote(m.group(1))))
     except Exception as e: fails.append("VS Code payload undecodable: %s" % e)
 kw=json.load(open(root+'/package.json')).get('keywords',[])
-bad=[k for k in kw if 'gemini' in k.lower()]
+bad=[k for k in kw if any(n in k.lower() for n in ('gemini','codex','cline','aider'))]
 if bad: fails.append("package.json keywords include deprecated provider terms: %r" % bad)
 else: print("  [PASS] package.json keywords have no deprecated provider name")
 for f in fails: print("  [FAIL] "+f)

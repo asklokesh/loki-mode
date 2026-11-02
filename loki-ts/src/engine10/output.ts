@@ -97,7 +97,7 @@ export interface SummaryInput {
     /** Cache read tokens and dollars saved vs the plain input rate. undefined: not reported by this caller; null: unmeasured ("cache not measured"); 0 is a real measured zero. */
     cacheReadTokens?: number | null;
     cacheSavedUsd?: number | null;
-    /** Shown in parens when usd is null, e.g. "codex reports tokens only". */
+    /** Shown in parens when usd is null, e.g. "opencode reports no usage". */
     note?: string | null;
     /** E-69: some sessions priced, some not (usd above is null because the run isn't FULLY  measured). Renders "partial: $X for N of M sessions" instead of "not measured". Omit,  or leave  measuredSessions 0, for a run with no priced sessions at all. */
     partialUsd?: number;
@@ -114,7 +114,7 @@ export function formatTierSeal(t: TierSeal): string {
   const tier = t.tier ? plainLine(t.tier, 40) : "", usd = t.topTierCostAvoidedUsd, rec = (k: string): string => { const c = t.record && Object.hasOwn(t.record, k) ? t.record[k] : undefined; return c && c.total > 0 ? `${k} sealed ${c.verified} of ${c.total}` : `${k} not measured`; };
   return `${tier ? `${tier} tier sealed` : "sealed tier not measured"}; top-tier cost avoided ${typeof usd === "number" && Number.isFinite(usd) && usd >= 0 ? `$${usd.toFixed(2)}` : "not measured"}; parity here: ${tier ? rec(tier) : "not measured"}, ${rec(TOP_TIER)}`;
 }
-function labelCol(text: string): string { return `${text}:`.padEnd(LABEL_WIDTH); }
+export function labelCol(text: string): string { return `${text}:`.padEnd(LABEL_WIDTH); }
 function cacheText(c: SummaryInput["cost"]): string {
   if (c.cacheReadTokens === undefined && c.cacheSavedUsd === undefined) return "";
   return c.cacheReadTokens == null || c.cacheSavedUsd == null ? "; cache not measured" : `; cache read ${formatTokens(c.cacheReadTokens)} tokens, saved $${c.cacheSavedUsd.toFixed(2)}`;

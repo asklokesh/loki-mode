@@ -66,11 +66,10 @@ export async function runAskJob(db: Db, messageId: string, o: WorkerOpts): Promi
     writeFileSync(mcpConfigPath, JSON.stringify(buildMcpConfig(toolsServer, o.dbPath)), { mode: 0o600 });
     const inv = buildInvocation({
       provider: thread.provider, model: thread.model, mcpConfigPath, jobDir, maxUsd, bin: o.bin,
-      mcpCommand: { command: "bun", args: [toolsServer] },
     });
     if (!inv.ok) return fail(inv.error);
     const provider = thread.provider as AskProvider;
-    const mcpEnv = provider === "claude" ? {} : { LOKI_CONTROL_DB: o.dbPath }; // codex and opencode take MCP via flags/config and inherit env
+    const mcpEnv = provider === "claude" ? {} : { LOKI_CONTROL_DB: o.dbPath }; // opencode takes MCP via its config and inherits env
     return await new Promise<AskStatus>((resolve) => {
       const [cmd, ...args] = inv.argv;
       let child;

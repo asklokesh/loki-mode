@@ -15,7 +15,8 @@
     "no:cacheprovider",
     "tests",
     "--deselect",
-    "tests/test_items.py::test_dates_behave_like_dates"
+    "tests/test_items.py::test_dates_behave_like_dates",
+    "--ignore=tests/test_toml_spec_tests.py"
   ],
   "visible_cmd": [
     "python3",
@@ -26,7 +27,8 @@
     "no:cacheprovider",
     "tests",
     "--deselect",
-    "tests/test_items.py::test_dates_behave_like_dates"
+    "tests/test_items.py::test_dates_behave_like_dates",
+    "--ignore=tests/test_toml_spec_tests.py"
   ],
   "protected": [
     "tests",
@@ -54,8 +56,7 @@
       "tomlkit/parser.py",
       "tomlkit/source.py"
     ],
-    "added_files": [],
-    "note": "The tests/toml-test submodule is vendored at its pinned commit (toml-lang/toml-test, MIT). tests/test_items.py::test_dates_behave_like_dates is deselected: it fails on Python 3.13 and later (date and datetime comparison) on the parent and on the fix alike.",
+    "note": "The tests/toml-test submodule is vendored at its pinned commit (toml-lang/toml-test, MIT). tests/test_items.py::test_dates_behave_like_dates is deselected: it fails on Python 3.13 and later (date and datetime comparison) on the parent and on the fix alike. tests/test_toml_spec_tests.py is ignored: it imports PyYAML, which is not in the benchmark toolchain.",
     "submodules": {
       "tests/toml-test": {
         "upstream": "https://github.com/toml-lang/toml-test",
@@ -74,5 +75,6 @@
     "runs": 2,
     "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
   },
-  "qualified": true
+  "qualified": true,
+  "snapshot_sha256": "a70684b562595ab67b0c44e20f7e7a65f0a157fd38abd438bae6be67c9ef6339"
 }

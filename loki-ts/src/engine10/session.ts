@@ -52,7 +52,7 @@ export function resolveModel(provider: string): string {
 // ER-05 / g09-47: effort is part of the cached prefix key, so a resumed session keeps the effort it was created with unless the stage
 // escalates. Per-message effort (mid-conversation output_config) is not exposed by the SDK; revisit when it is, instead of adding a new path.
 const EFFORT_RANK = ["low", "medium", "high", "xhigh", "max"];
-const sessionEffort = new Map<string, string>(); // provider session id -> effort it ran with, filled when a session closes
+const sessionEffort = new Map<string, string>(); export const rememberSessionEffort = (sessionId: string, effort: string): void => { sessionEffort.set(sessionId, effort); }; // provider session id -> effort it ran with, filled when a session closes
 /** Effort a call really runs at. A resumed session never drops below its recorded effort; a user LOKI_E10_EFFORT is explicit and always wins. */
 export function sessionEffortFor(opts: SessionRunOptions): { effort: string | undefined; escalated?: { from: string; to: string } } {
   const resolved = (hooks.effort?.resolve(opts.stage, opts.effort) ?? opts.effort);
@@ -74,7 +74,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   env["LOKI_E10_TIER"] = opts.tier; if (cfg.provider === "claude" && opts.stopChecks?.checks.length) env["LOKI_E10_STOP_CHECKS"] = JSON.stringify(opts.stopChecks); else delete env["LOKI_E10_STOP_CHECKS"]; // in-session fix rounds: only the per-call option sets it
   env["LOKI_E10_PROVIDER"] = cfg.provider;
   if (opts.disallowedTools) env["LOKI_E10_DISALLOWED_TOOLS"] = opts.disallowedTools; else delete env["LOKI_E10_DISALLOWED_TOOLS"];
-  if (opts.resumeSessionId) env["LOKI_E10_RESUME_SESSION"] = opts.resumeSessionId; else delete env["LOKI_E10_RESUME_SESSION"]; // MW-2: only the per-call option sets it
+  if (opts.suiteCmds?.length) env["LOKI_E10_SUITE_CMDS"] = JSON.stringify(opts.suiteCmds); else delete env["LOKI_E10_SUITE_CMDS"]; if (opts.resumeSessionId) env["LOKI_E10_RESUME_SESSION"] = opts.resumeSessionId; else delete env["LOKI_E10_RESUME_SESSION"]; // MW-2: only the per-call option sets it
   // Only ever ADD variables here; never blank an inherited var for a non-claude provider (LOKI_HOST_GUARD gates resolveProvider's fail-closed throw, providers.ts:63).
   if (cfg.provider === "claude") {
     // LOKI_E10_INVOKER=cli selects the claude CLI invoker (falls back to "legacy" when LOKI_SDK_LOOP is unset).
@@ -120,7 +120,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
     mkdirSync(dirname(dest), { recursive: true });
     writeFileSync(dest, JSON.stringify({ total_cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, model, source: UNMETERED }));
   }
-  const pcost = existsSync(dest) ? null : writeProviderCost(dest, cfg.provider, model, opts.brief, outText); // PARITY-COST: codex/cline/aider priced from output usage or sizes, estimated=true; feeds the same cap path
+  const pcost = existsSync(dest) ? null : writeProviderCost(dest, cfg.provider, model, opts.brief, outText); // PARITY-COST: opencode priced from prompt/response sizes, estimated=true; feeds the same cap path
   const effort = sessionEffortFor(opts).effort;
   // #306: hash the whole cached prefix (system text, tool list incl. per-session denials, thinking, effort, brief), from the function providers.ts builds it with.
   const penv = { ...process.env, ...(cfg.provider === "claude" && process.env["LOKI_E10_PREFIX"] === undefined ? { LOKI_E10_PREFIX: "lean" } : {}) }, sp = engine10StaticPrefix(penv);
@@ -204,10 +204,10 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
           cfg.emit?.("session.ended", opts.stage, {
             session_id: sessionId, exit: exitKind(guard.ok ? code : 1, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), ...(authCause !== null ? { provider_error: authCause } : {}), duration_s: durationS, ...(killCause === "stalled" ? { reason: "stalled" } : {}),
           });
-          const psid = readSessionId(opts.cwd ?? process.cwd(), opts.iterationId), ran = sessionEffortFor(opts).effort; if (psid && ran) sessionEffort.set(psid, ran); // ER-05: what the next resume of this session must keep
+          const psid = readSessionId(opts.cwd ?? process.cwd(), opts.iterationId), ran = sessionEffortFor(opts).effort; if (psid && ran) rememberSessionEffort(psid, ran); // ER-05: what the next resume of this session must keep
           recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS, stdout + logText);
           untrack();
-          resolve({ exit: guard.ok ? code : 1, markers, durationS, killed, summary: (stdout + logText).trim().slice(-4096), stderrTail: (guard.ok ? "" : `guard violation: ${guard.violations.map((v) => v.detail).join("; ")}\n`) + stderrTail.toString("utf8") + (logText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n") }); // only provider-written text is classified: child stderr and the SDK error line, never the agent transcript (A-113). The child echoes the provider's in-memory stderr (A-113b); only the claude CLI invoker returns one, since codex/cline/aider may print session activity on stderr (unmeasured)
+          resolve({ exit: guard.ok ? code : 1, markers, durationS, killed, summary: (stdout + logText).trim().slice(-4096), stderrTail: (guard.ok ? "" : `guard violation: ${guard.violations.map((v) => v.detail).join("; ")}\n`) + stderrTail.toString("utf8") + (logText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n") }); // only provider-written text is classified: child stderr and the SDK error line, never the agent transcript (A-113). The child echoes the provider's in-memory stderr (A-113b); only the claude CLI invoker returns one, since opencode may print session activity on stderr (unmeasured)
         });
       });
     },

@@ -25,9 +25,10 @@ The system is built around a few load-bearing principles:
   run-start commit, tests recorded a real command and exited zero, and no gate
   was skipped. Every build emits an Evidence Receipt that a skeptic can
   re-derive independently.
-- **Provider-agnostic execution.** The same workflow runs on Claude Code,
-  OpenAI Codex CLI, Cline, and Aider, with automatic failover. Feature richness
-  degrades gracefully by provider tier rather than failing.
+- **Provider-agnostic execution.** The same workflow runs on Claude Code (the
+  CLI, or the Anthropic Agent SDK with an API key) and opencode (any model,
+  including OpenRouter), with automatic failover. Feature richness degrades
+  gracefully by provider rather than failing.
 - **Filesystem as the system bus.** Components do not share memory. They
   communicate through `.loki/` state files (session, queue, checkpoints,
   findings, memory), which makes the system inspectable, resumable, and
@@ -103,8 +104,8 @@ runner (`loki-ts/src/runner/`) is the default; the Bash engine
             v                v       v            v          |
     +---------------+  +-----------+ +---------+ +----------+ |
     |   Providers   |  |  Quality  | | Memory  | |  Events  | |
-    | claude/codex/ |  |  Gates +  | | engine  | |   bus    |<+
-    | cline/aider   |  |  Council  | | (RAG,   | | (py/ts/  |
+    | claude/       |  |  Gates +  | | engine  | |   bus    |<+
+    | opencode      |  |  Council  | | (RAG,   | | (py/ts/  |
     | (failover)    |  | (8 gates) | | vector) | |   sh)    |
     +-------+-------+  +-----------+ +----+----+ +----------+
             |                            |
@@ -126,25 +127,24 @@ same state, which is what makes runs resumable and independently verifiable.
 
 A representative end-to-end flow:
 
-1. **Entry.** `loki start ./prd.md` (CLI dispatch in `autonomy/loki`) resolves
-   the provider and execs the orchestration engine. The TS runner
-   (`loki-ts/src/runner/autonomous.ts`) is default; `LOKI_LEGACY_BASH=1` selects
-   `autonomy/run.sh`.
+1. **Entry.** `loki start ./prd.md` (`bin/loki`, which asks `autonomy/route.sh`
+   for the engine) runs the Loki 10 engine (`loki-ts/src/engine10`). The previous
+   bash loop (`autonomy/run.sh`) runs only on `--engine legacy` or
+   `LOKI_LEGACY_BASH=1`.
 2. **Complexity and tier.** The engine detects complexity and maps the iteration
-   to a model tier (`rarv.ts` / `run.sh:get_rarv_tier`).
-3. **Prompt construction.** `build_prompt.ts` (`run.sh:build_prompt`) assembles
+   to a model tier (`run.sh:get_rarv_tier`).
+3. **Prompt construction.** `run.sh:build_prompt` assembles
    the iteration prompt: RARV instructions, SDLC phase, retrieved memory context
    (`memory/retrieval.py` via the RAG injector), queued tasks, and checklist
    status.
 4. **Provider invocation.** The prompt is dispatched to the selected provider
    (`providers.ts`). Claude Code runs with full features (subagents, parallel
-   worktrees, Task tool, MCP); Codex/Cline/Aider run in degraded, sequential
-   modes. Failures trigger failover to the next available provider.
+   worktrees, Task tool, MCP); opencode runs sequentially. Failures trigger failover to the next available provider.
 5. **Reflect and verify.** Post-iteration, the engine runs checklist
    verification (`autonomy/checklist-verify.py`), manages the app runner
    (`autonomy/app-runner.sh`), and runs Playwright smoke tests.
-6. **Review.** `quality_gates.ts` (`run.sh:run_code_review`) runs the 8 gates and
-   the blind 3-reviewer council (`loki-ts/src/council/voter_agents.ts`). Findings
+6. **Review.** `run.sh:run_code_review` runs the 8 gates and the blind
+   3-reviewer council (`autonomy/lib/voter-agents.sh`). Findings
    are scored; Critical/High block. An override council can lift a BLOCK only
    when a non-empty evidence artifact backs a trusted proof type.
 7. **Close.** Structured findings are persisted
@@ -196,8 +196,7 @@ loki-ts/                   Default Bun/TypeScript runtime
 
 providers/                 Provider configs (shell-sourceable)
   claude.sh                Claude Code - Tier 1 (full features)
-  cline.sh                 Cline - Tier 2
-  codex.sh / aider.sh      Codex / Aider - Tier 3 (degraded, sequential)
+  opencode.sh              opencode - model-agnostic (OpenRouter, sequential)
   loader.sh / models.sh    Provider loader and model registry
   model_catalog.json       Model catalog (probed)
 
@@ -320,7 +319,7 @@ docker/                            Container distribution (Dockerfiles, compose)
 - **Model Context Protocol (MCP)** as a first-class integration surface
   (`mcp/server.py`): tools, resources, and prompts, plus an LSP proxy for
   code intelligence (references, definitions, symbols).
-- **Provider CLIs** (Claude Code, OpenAI Codex CLI, Cline, Aider) as the model
+- **Provider CLIs** (Claude Code, opencode) and the Anthropic Agent SDK as the model
   execution layer, abstracted behind shell-sourceable provider configs and the
   TS providers module.
 - **Docker / Docker Compose** for distribution and for the multi-service,

@@ -41,10 +41,40 @@ _LOKI_BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-]{10,255}$")
 _KEY_RE = re.compile(r"^[A-Za-z0-9_\-.]{10,512}$")
-_PROVIDER_KEY_ENV = {"claude": "ANTHROPIC_API_KEY", "codex": "OPENAI_API_KEY"}
-_PROVIDER_BIN = {"claude": "claude", "codex": "codex"}
-_SECRET_FILES = {"github": "github", "claude_api_key": "claude_api_key", "codex_api_key": "codex_api_key"}
+# opencode reaches OpenRouter models (openrouter/<vendor>/<model>) with OPENROUTER_API_KEY.
+_PROVIDER_KEY_ENV = {"claude": "ANTHROPIC_API_KEY", "opencode": "OPENROUTER_API_KEY"}
+_PROVIDER_BIN = {"claude": "claude", "opencode": "opencode"}
+_SECRET_FILES = {"github": "github", "claude_api_key": "claude_api_key", "opencode_api_key": "opencode_api_key"}
 _lock = threading.RLock()
+
+
+_LOADER_SH = Path(__file__).resolve().parent.parent / "providers" / "loader.sh"
+
+
+def _loader_text() -> str:
+    try:
+        return _LOADER_SH.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _loader_array(name: str) -> tuple:
+    m = re.search(r"^" + name + r"=\((.*)\)$", _loader_text(), re.M)
+    return tuple(t.strip('"') for t in m.group(1).split()) if m else ()
+
+
+def supported_providers() -> tuple:
+    """SUPPORTED_PROVIDERS from providers/loader.sh (the runtime's own list)."""
+    return _loader_array("SUPPORTED_PROVIDERS") or ("claude", "opencode")
+
+
+def removed_provider_message(name: str) -> str:
+    """The CLI's one-line migration message for a removed provider, read from
+    loki_removed_provider_message in providers/loader.sh; "" when NAME was never removed."""
+    if name not in _loader_array("REMOVED_PROVIDERS"):
+        return ""
+    m = re.search(r'printf "(loki: provider \'%s\'[^"]*?)\\n" "\$1"', _loader_text())
+    return m.group(1).replace("%s", name) if m else f"loki: provider '{name}' is no longer supported."
 
 
 def _pick(table: dict, key):
@@ -278,7 +308,7 @@ class RunIn(BaseModel):
 @router.get("/api/onboarding/state", dependencies=_scope("read"))
 def onboarding_state():
     detected = []
-    for n in ("claude", "codex"):
+    for n in _PROVIDER_BIN:
         v = _cli_version(n)
         if v:
             detected.append({"name": n, "version": v})
@@ -290,7 +320,7 @@ def onboarding_state():
 @router.post("/api/onboarding/provider", dependencies=_scope("control"))
 def set_provider(body: ProviderIn):
     if body.provider not in _PROVIDER_KEY_ENV:
-        raise HTTPException(400, "provider must be claude or codex")
+        raise HTTPException(400, removed_provider_message(body.provider) or "provider must be claude or opencode")
     if body.api_key:
         if not _KEY_RE.match(body.api_key):
             raise HTTPException(400, "api key format not accepted")
@@ -380,7 +410,7 @@ def _child_env(token: str) -> dict:
     prov = _cfg().get("provider")
     if prov:
         e["LOKI_PROVIDER"] = prov
-        key = _read_secret(prov + "_api_key")
+        key = _read_secret(prov + "_api_key") if prov in _PROVIDER_KEY_ENV else None
         if key:
             e[_PROVIDER_KEY_ENV[prov]] = key
     return e

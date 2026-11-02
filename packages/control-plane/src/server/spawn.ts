@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { REMOVED_PROVIDERS, removedProviderMessage, VALID_PROVIDERS } from "../../../../loki-ts/src/runner/types.ts";
 
 const ISSUE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}#[1-9][0-9]{0,8}$/;
 // A free-text task: letters, digits, spaces and a small punctuation set. No colon, quotes, backticks, $, ;, &, |, <, >, parens, braces, backslash or control chars.
@@ -17,8 +18,10 @@ export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
 }
 
 // Optional run fields, each mapped to one known loki flag (or env var) and validated against an allowlist. Nothing else is accepted.
-const PROVIDERS = new Set(["claude", "codex", "cline", "aider", "opencode"]);
+const PROVIDERS = VALID_PROVIDERS; // the CLI's own list (loki start); a removed provider gets the CLI's migration line
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+// opencode ids are provider/model, e.g. openrouter/deepseek/deepseek-v3.2 (OpenRouter through opencode).
+const OPENCODE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._/:~-]{0,127}$/;
 const BUDGET = /^(?:[1-9][0-9]{0,5}|0)(?:\.[0-9]{1,2})?$/;
 const WORKSPACE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
@@ -66,12 +69,13 @@ export function planStart(body: unknown, known: string[], bin = "loki", env: Nod
   if (refusal) return { ok: false, error: refusal };
   const opt = (v: unknown): string | undefined => (v === undefined || v === null || v === "" ? undefined : typeof v === "number" && Number.isFinite(v) ? String(v) : typeof v === "string" ? v : "\0bad");
   const provider = opt(b.provider), model = opt(b.model), budget = opt(b.budget), workspace = opt(b.workspace);
-  if (provider !== undefined && !PROVIDERS.has(provider)) return { ok: false, error: "provider must be one of: " + [...PROVIDERS].join(", ") };
-  if (model !== undefined && !MODEL.test(model)) return { ok: false, error: "model must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}" };
+  if (provider !== undefined && !PROVIDERS.has(provider)) return { ok: false, error: REMOVED_PROVIDERS.has(provider) ? removedProviderMessage(provider).trim() : "provider must be one of: " + [...PROVIDERS].join(", ") };
+  const opencode = (provider ?? env.LOKI_PROVIDER) === "opencode";
+  if (model !== undefined && !(opencode ? OPENCODE_MODEL : MODEL).test(model)) return { ok: false, error: opencode ? "model must be an opencode provider/model id such as openrouter/deepseek/deepseek-v3.2" : "model must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}" };
   if (budget !== undefined && (!BUDGET.test(budget) || Number(budget) <= 0)) return { ok: false, error: "budget must be a positive USD amount such as 5 or 5.00" };
   if (workspace !== undefined && !WORKSPACE.test(workspace)) return { ok: false, error: "workspace must be a workspace name from loki.yaml (letters, digits, _ -)" };
   if (workspace !== undefined && (provider !== undefined || budget !== undefined)) return { ok: false, error: "workspace runs do not take provider or budget; set them per repo in loki.yaml" };
-  const runEnv: Record<string, string> = model !== undefined ? { LOKI_SESSION_MODEL: model } : {};
+  const runEnv: Record<string, string> = model === undefined ? {} : opencode ? { LOKI_OPENCODE_MODEL: model } : { LOKI_SESSION_MODEL: model }; // opencode reads -m only from LOKI_OPENCODE_MODEL
   // A workspace run is `loki workspace run <name> <ref>` (the existing multi-repo path). Otherwise free text goes as an explicit brief, never auto-detected as a PRD path.
   if (workspace !== undefined) return { ok: true, argv: [bin, "workspace", "run", workspace, target], cwd, env: runEnv };
   const flags = [...(provider !== undefined ? ["--provider", provider] : []), ...(budget !== undefined ? ["--budget", budget] : [])];

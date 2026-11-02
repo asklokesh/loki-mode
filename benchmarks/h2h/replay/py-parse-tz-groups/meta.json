@@ -48,7 +48,16 @@
     "solution_files": [
       "parse/__init__.py"
     ],
-    "added_files": [],
-    "note": "pyproject.toml addopts: the --cov options were removed (pytest-cov is not in the benchmark toolchain). tests/check_typing.py is ignored: it needs typing_extensions."
-  }
+    "note": "pyproject.toml addopts: the --cov options were removed (pytest-cov is not in the benchmark toolchain). tests/check_typing.py is ignored: it needs typing_extensions.",
+    "patch_files": {
+      "repo/pyproject.toml": [
+        [
+          "--cov=parse --cov-report=term-missing --cov-append --cov-branch ",
+          "",
+          1
+        ]
+      ]
+    }
+  },
+  "snapshot_sha256": "58996f8491b3cb277477aedb16c7f0d26bb0ab5147826539f2b2db8c190f0866"
 }

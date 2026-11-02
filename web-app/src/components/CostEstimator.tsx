@@ -29,7 +29,6 @@ interface CostEstimatorProps {
 // Deprecated provider entry removed (S-143); unknown provider falls back to Claude rates below.
 const PROVIDER_RATES: Record<string, { input: number; output: number; label: string }> = {
   claude: { input: 0.003, output: 0.015, label: 'Claude (Sonnet)' },
-  codex: { input: 0.002, output: 0.008, label: 'Codex (GPT-4o)' },
 };
 
 const COMPLEXITY_MULTIPLIERS: Record<string, { tokens: number; label: string; iters: number }> = {

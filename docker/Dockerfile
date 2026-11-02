@@ -23,13 +23,13 @@ RUN bun run build:all
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="11.118.1"
+LABEL version="11.122.0"
 # v7.4.5 fix (BUG-3): override the OCI-standard image.version label that
 # BuildKit auto-injects from the FROM ubuntu:24.04 base. Registries and
 # scanners read this; without the override they reported the Ubuntu version
 # (24.04) instead of the Loki Mode version.
-LABEL org.opencontainers.image.version="11.118.1"
-LABEL description="Loki Mode by Autonomi - Autonomous spec-to-product system (RARV-C closure loop). Provider-agnostic: Claude Code, Codex CLI, Cline, Aider"
+LABEL org.opencontainers.image.version="11.122.0"
+LABEL description="Loki Mode by Autonomi - Autonomous spec-to-product system (RARV-C closure loop). Providers: Claude Code (CLI or Agent SDK) and opencode"
 LABEL url="https://www.autonomi.dev/"
 
 # Prevent interactive prompts during install
@@ -96,7 +96,7 @@ RUN npm install -g npm@latest \
 # first `claude -p` with "No AI provider CLI found" -- the image cannot run a
 # single RARV iteration (regression fixed v7.45.0). Auth is supplied at run
 # time via ANTHROPIC_API_KEY (default) or a mounted Claude Code OAuth
-# credentials file (see docs/DOCKER.md). Codex/Cline/Aider remain
+# credentials file (see docs/DOCKER.md). opencode remains
 # bring-your-own-CLI in Docker.
 # Use the RECOMMENDED native installer (curl install.sh) rather than the npm
 # package: the npm path pulls the native binary via a per-platform OPTIONAL
@@ -176,16 +176,15 @@ COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/dist/server.j
 COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/drizzle ./packages/control-plane/drizzle
 COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/ui/dist ./packages/control-plane/ui/dist
 
-# v8: the Agent SDK (@anthropic-ai/claude-agent-sdk) powers the opt-in
-# LOKI_SDK_LOOP=1 RARV loop via a DYNAMIC import in dist/loki.js, so it cannot be
+# v8: the Agent SDK (@anthropic-ai/claude-agent-sdk) powers the Loki 10 engine's
+# API-key sessions (no claude CLI) via a DYNAMIC import in dist/loki.js, so it cannot be
 # bundled into dist (unlike the raw @anthropic-ai/sdk judge bridge, which is a
 # static import and IS bundled). It also ships a per-platform NATIVE binary. So
 # it must exist in node_modules at runtime: install it into loki-ts/ (where the
 # dynamic import resolves from) with the correct platform binary. --no-save keeps
 # the committed package.json untouched; the version is pinned to match the source.
-# Default-off, so a base image without LOKI_SDK_LOOP never loads it; installing it
-# just makes the opt-in path work in the shipped image (the raw judge SDK is
-# already bundled and needs nothing here).
+# Loaded only on that path; installing it makes the API-key path work in the
+# shipped image (the raw judge SDK is already bundled and needs nothing here).
 # @anthropic-ai/sdk is pinned to the loki-ts/package.json version because npm
 # auto-installs the agent SDK's open-ended peer (>=0.93.0) at the newest release;
 # an upstream publish whose tarball had not propagated yet 404'd this step.

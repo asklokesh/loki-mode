@@ -11,10 +11,10 @@ authors = [
 keywords = [
     "agent-orchestration", "ai", "ai-agents", "anthropic",
     "automation", "autonomous",
-    "claude", "claude-code", "cli", "code-generation", "codex", "coding-assistant", "consensus",
+    "claude", "claude-code", "cli", "code-generation", "coding-assistant", "consensus",
     "developer-tools", "devtools", "distributed-systems",
     "embeddings", "enterprise",
-    "gemini", "gemini-cli", "gpt",
+    "gpt",
     "hive-mind",
     "large-language-model", "llm", "loki-mode",
     "machine-learning", "mcp", "mistral", "model-context-protocol", "multi-agent",

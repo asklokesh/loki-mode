@@ -49,7 +49,23 @@
     "solution_files": [
       "constraints.go"
     ],
-    "added_files": [],
-    "note": "Emoji codepoints are rewritten to meet this repository's text rule, without changing behaviour: in string literals as escapes (Go \\u2603, Python \\U0001F34E and similar), in comments and prose as text or removed."
-  }
+    "note": "Emoji codepoints are rewritten to meet this repository's text rule, without changing behaviour: in string literals as escapes (Go \\u2603, Python \\U0001F34E and similar), in comments and prose as text or removed.",
+    "patch_files": {
+      "hidden/version_test.go": [
+        [
+          "foo\u2603",
+          "foo\\u2603",
+          2
+        ]
+      ],
+      "repo/version_test.go": [
+        [
+          "foo\u2603",
+          "foo\\u2603",
+          2
+        ]
+      ]
+    }
+  },
+  "snapshot_sha256": "4904163a468884ebeb69860cea39f455a7a7bf8d6ace15a6f724b1f1e468f710"
 }

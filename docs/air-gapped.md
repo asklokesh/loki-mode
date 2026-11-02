@@ -72,18 +72,18 @@ With a non-claude provider selected, `loki start` on the default (bash) route
 and `loki quickstart` never prompt the `claude` CLI, even when one is
 installed: PRD enrichment, done recognition, the council voters, the USAGE.md
 refresh and the quickstart intent check fall back to their deterministic
-paths. The opt-in Bun loop (`LOKI_SDK_LOOP=1`) is not yet held to this.
+paths.
 `LOKI_ALLOW_CLAUDE_SIDECALLS=1` restores those claude calls, and the audit then lists them as REQUIRED egress, so it cannot read air-gap ready.
 
 **We cannot run a build with no model at all.** Nobody can. What we can do is
 let you point at a model you host. Only a local-weights provider clears the
-required line: opencode, cline or aider with an `ollama/` or `lmstudio/` model
-id in that provider's own variable (for example
+required line: opencode with an `ollama/` or `lmstudio/` model
+id in its own variable (for example
 `LOKI_OPENCODE_MODEL=ollama/qwen2.5-coder`). An Ollama cloud model (a `:cloud`
 or `-cloud` tag) runs on ollama.com and is still reported as required. The
 verdict comes from the model id; the audit does not read where your Ollama or
 LM Studio endpoint listens, so confirm that yourself. An in-network gateway for
-claude or codex (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) keeps traffic inside
+claude (`ANTHROPIC_BASE_URL`) keeps traffic inside
 your network, but the audit still counts it as required egress.
 
 Telemetry is ON by default for an individual interactive install and auto-off

@@ -10,10 +10,11 @@ import { cancelJob, runAskJob } from "../../ask/worker.ts";
 import { isLoopbackHost } from "../auth.ts";
 import { audit } from "../audit.ts";
 import type { RouteCtx } from "./index.ts";
+import { REMOVED_PROVIDERS, removedProviderMessage, VALID_PROVIDERS } from "../../../../../loki-ts/src/runner/types.ts";
 import { createSse } from "./stream.ts";
 
 export const MAX_QUESTION = 4000;
-const PROVIDERS = new Set(["claude", "codex", "cline", "aider", "opencode"]); // opencode and cline and aider are refused by buildInvocation
+const PROVIDERS = VALID_PROVIDERS; // the CLI's own list; opencode is refused by buildInvocation (no read-only guard)
 const num = (v: string | undefined, d: number) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d; };
 export const askEnabled = (): boolean => process.env.LOKI_CP_ASK === "1";
 
@@ -62,7 +63,7 @@ export function mount(ctx: RouteCtx): void {
       threadId = t.id; provider = t.provider; model = t.model; repo = t.repo;
     } else {
       provider = typeof body.provider === "string" && body.provider ? body.provider : process.env.LOKI_ASK_PROVIDER || "claude";
-      if (!PROVIDERS.has(provider)) return c.json({ error: "provider must be one of: claude, codex" }, 400);
+      if (!PROVIDERS.has(provider)) return c.json({ error: REMOVED_PROVIDERS.has(provider) ? removedProviderMessage(provider).trim() : "provider must be claude" }, 400);
       model = typeof body.model === "string" && body.model ? body.model : null;
       if (model !== null && !MODEL_RE.test(model)) return c.json({ error: "model must match [A-Za-z0-9][A-Za-z0-9._/-]{0,79}" }, 400);
       repo = typeof body.repo === "string" && body.repo ? body.repo : null;

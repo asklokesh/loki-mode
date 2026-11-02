@@ -13,11 +13,8 @@
 //   .loki/quality/reviews/<id>/<reviewer>.txt   (the actual prose with [Severity] markers)
 //
 // This module reads both, parses the per-reviewer text with the same regex
-// quality_gates.ts:548 uses to detect blocking severity, and returns
-// structured Finding records for build_prompt.ts to inject.
-//
-// Default off: build_prompt.ts only calls into this module when
-// LOKI_INJECT_FINDINGS=1.
+// the code review uses to detect blocking severity, and returns structured
+// Finding records. Callers: internal_phase1.ts and the override-council modules.
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -61,7 +58,7 @@ function parseReviewerOutput(
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
     // Strip leading "- " or "* " bullet markers; reviewer prompts ask for them
-    // (quality_gates.ts:556-561 buildReviewerPrompt) but tolerate variation.
+    // (the reviewer prompt format) but tolerate variation.
     const stripped = trimmed.replace(/^[-*]\s*/, "");
     const m = SEVERITY_RE.exec(stripped);
     // v7.5.8: explicitly check both capture groups exist instead of using
@@ -88,7 +85,7 @@ function parseReviewerOutput(
 }
 
 // Locate the most recent review directory under <lokiDir>/quality/reviews/.
-// Reviews are named "review-<ts>-<iteration>" by quality_gates.ts:614-616, so
+// Reviews are named "review-<ts>-<iteration>" by the code-review gate, so
 // lexicographic sort picks the latest by timestamp. We honor an explicit iter
 // filter so the integration test can replay a known run.
 export function findLatestReviewDir(lokiDir: string, iter?: number): string | null {
@@ -183,8 +180,7 @@ export function loadPreviousFindings(lokiDir: string, iter?: number): LoadFindin
   return { reviewDir, reviewId, iteration, findings };
 }
 
-// Render findings as a prompt-ready block. Used by build_prompt.ts when
-// LOKI_INJECT_FINDINGS=1. Format chosen to be greppable and short so it
+// Render findings as a prompt-ready block. Format chosen to be greppable and short so it
 // does not blow up the token budget.
 export function renderFindingsForPrompt(findings: readonly Finding[]): string {
   if (findings.length === 0) return "";

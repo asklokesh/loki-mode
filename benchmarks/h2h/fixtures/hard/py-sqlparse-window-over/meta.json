@@ -47,7 +47,6 @@
       "sqlparse/engine/grouping.py",
       "sqlparse/sql.py"
     ],
-    "added_files": [],
     "note": ""
   },
   "pilot": {
@@ -57,5 +56,6 @@
     "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
   },
   "qualified": false,
-  "excluded_because": "the fix's tests call Function.get_window(), a method the fix itself adds"
+  "excluded_because": "the fix's tests call Function.get_window(), a method the fix itself adds",
+  "snapshot_sha256": "09a00c631bcdfd3903abb685128bd8e874f1230d4e3a698841ceed022724ff49"
 }

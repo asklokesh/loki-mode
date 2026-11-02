@@ -50,6 +50,27 @@
 #                Neither leg runs a Project Model discovery session (one runner at the root, even when cargo lists no test files).
 #                Probe: a task that changes Calc::new() to Calc::new(base) keeps the Wall test calling Calc::new(5) (the Rust
 #                argument count is decided after implement) and reads VERIFIED.
+#   lean fix loop, unit level (bun over loki-ts/src):
+#     L005: failing ids parse from every checked-in failure output (cargo and bun included); fix-brief groups built
+#           from the pytest, jest, vitest, go test, surefire and dotnet failure
+#           outputs (tests/min/fixtures/failures, raw ANSI included) have a non-empty excerpt, 0 ESC bytes and a
+#           signature longer than the check name; two vitest full-suite outputs with different failing ids give
+#           different signatures; the recorded jest Validation Error is harness-owned.
+#     L006: a fix round is fresh by default; with LOKI_E10_FIX_RESUME=1 a claude SDK round resumes the implement session
+#           at the fix effort policy (high over implement's medium: an accepted cache reset), and its brief names the
+#           test files the harness restored.
+#     L025: the quick selection; a verify NOT PROVEN (a quick-only last verify) never seals VERIFIED.
+#     L026: the brief no longer invites the full suite; the stream parser records full_suite_runs per session.
+#   jest:        a stand-in npx prints the jest Validation Error for a committed jest test: 0 fix sessions.
+#   quick verify: a 2-round run at risk tier medium re-verifies round 1 quick and the last round complete, runs the
+#                full suite twice (3 before), ends VERIFIED, and the full-suite signature carries its first failing line.
+#   quick-only end: a no-progress run at tier medium ends on a quick verify that lists the missing complete verify
+#                as NOT PROVEN; the targeted failure is unchanged, so the quick verify reruns the suite (a harness run,
+#                no model session) to settle the stall: STALLED after one round, the suite ran twice.
+#   stale stall: verify 1 fails calc.test.ts and the full suite; round 1 fixes the suite's cause only. The quick
+#                verify reruns the suite to settle the stall, finds it fixed, the run gets round 2 and ends VERIFIED.
+#   lint twice:  bash -n fails after implement and after round 1 while the suite passes; the verify after the last
+#                change runs the full suite again (3 runs) and the run ends VERIFIED.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/engine10/stages/implement.ts: drop restoreBaseTests from tests_reverted (the restore run fails).
@@ -57,7 +78,7 @@
 #   3. loki-ts/src/e10ext/scope.ts: ignore plan-scope.json in flagOutsideScope (the receipt no longer lists util.ts).
 #   4. loki-ts/src/util/conflict_resume.ts: deliverOverWallConflict returns null (the wall defect run ends BLOCKED).
 #   5. loki-ts/src/util/wall_knobs.ts: wallConcurrent default back to sequential (the Wall finishes before implement).
-#   6. loki-ts/src/util/session_pin.ts: capToSessionPin returns the stage pin unchanged (the referee runs on sonnet).
+#   6. loki-ts/src/runner/model_rank.ts: capToSessionPin returns the stage pin unchanged (the referee runs on sonnet).
 #   7. loki-ts/src/engine10/sizing.ts: smallTaskPath lean only for small tasks (the normal task runs a Wall session).
 #   8. loki-ts/src/engine10/stages/seal.ts: drop weakTests from the verdict cap (the update run reads VERIFIED).
 #   9. loki-ts/src/engine10/supervisor.ts: keepWork back to VERIFIED or PARTIAL only (the blocked run's branch is gone).
@@ -70,18 +91,30 @@
 #  16. loki-ts/src/engine10/stages/wall.ts: Rust arity decided at author time on base signatures (grounding reads before=rejected,
 #      and the constructor-change probe loses its Wall test and is not VERIFIED).
 #  17. loki-ts/src/project_model/conventions.ts goUnreferenced: accept any same-module import (grounding reads otherpkg=ok).
-#  18. loki-ts/src/engine10/stages/seal.ts: drop pubGap from verdictOf (the agent-only run reads VERIFIED).
-#  19. loki-ts/src/engine10/stages/seal.ts unexercisedPublic: count tests the run touched (the agent-only run reads VERIFIED).
-#  20. loki-ts/src/util/check_result.ts corroborateGoSteps: refuse a package with no GoFiles again (the go wall leg has no passing Go check).
-#  21. loki-ts/src/util/context_pack.ts pySpans: drop the ended-block pop (public unit reads pyif=-, the def lands in class K).
-#  22. loki-ts/src/engine10/testmap.ts impactedRefs: drop the Go package block (go map reads no tests).
-#  23. loki-ts/src/engine10/stages/implement.ts: skip resumeAfterAlreadyDone (the already run reads ALREADY_SATISFIED).
-#  24. loki-ts/src/engine10/testmap.ts: key Go imports on the last path segment again (go map module path reads api_test.go).
-#  25. loki-ts/src/util/check_result.ts corroborateGoSteps: drop the per-package import check (go cover reads pass).
-#  26. loki-ts/src/engine10/stages/implement.ts: no challenge after the empty-done correction (the empty-done path is not challenged).
-#  27. loki-ts/src/engine10/stages/implement.ts: already_done exit regardless of edits (the editalready run loses multiply).
-#  28. loki-ts/src/util/check_result.ts codeOnly: stop stripping strings (public unit reads strings=-).
-#  29. loki-ts/src/util/check_result.ts addedPublicFunctions: count a TS constructor (public unit reads tsclass=constructor+allow).
+#  18. loki-ts/src/runner/runner_errors.ts: drop the Validation Error pattern (rebuild dist): the unit check fails and
+#       the jest run starts 2 fix sessions.
+#  19. loki-ts/src/util/check_result.ts: failureSignature ignores ids (the two full-suite signatures match).
+#  20. loki-ts/src/runner/session_resume.ts: chainEnabled default-on !== "0" (the env-unset fresh-round check fails).
+#  21. loki-ts/src/e10ext/select.ts: quickScope always null (rebuild dist): scopes all complete, 3 suites.
+#  22. loki-ts/src/e10ext/context.ts: restore "including the package's full suite" (the brief check fails).
+#  23. loki-ts/src/engine10/machine.ts: sigOf compares carried groups too (rebuild dist): the stale stall run ends STALLED after 1 round.
+#  24. loki-ts/src/engine10/stages/verify.ts: skip the full suite from fix round 2 on (rebuild dist): lint twice runs the suite twice.
+#  25. loki-ts/src/engine10/failures.ts: failIds ignores bun output (rebuild dist): the bun id checks fail and the stale stall
+#      run ends STALLED (two failing sets in the bun suite share one signature).
+#  26. loki-ts/src/engine10/stages/verify.ts: never settle a stall with a suite rerun (rebuild dist): the quick-only run takes
+#      2 fix sessions and runs the suite once.
+#  27. loki-ts/src/engine10/stages/seal.ts: drop pubGap from verdictOf (the agent-only run reads VERIFIED).
+#  28. loki-ts/src/engine10/stages/seal.ts unexercisedPublic: count tests the run touched (the agent-only run reads VERIFIED).
+#  29. loki-ts/src/util/check_result.ts corroborateGoSteps: refuse a package with no GoFiles again (the go wall leg has no passing Go check).
+#  30. loki-ts/src/util/context_pack.ts pySpans: drop the ended-block pop (public unit reads pyif=-, the def lands in class K).
+#  31. loki-ts/src/engine10/testmap.ts impactedRefs: drop the Go package block (go map reads no tests).
+#  32. loki-ts/src/engine10/stages/implement.ts: skip resumeAfterAlreadyDone (the already run reads ALREADY_SATISFIED).
+#  33. loki-ts/src/engine10/testmap.ts: key Go imports on the last path segment again (go map module path reads api_test.go).
+#  34. loki-ts/src/util/check_result.ts corroborateGoSteps: drop the per-package import check (go cover reads pass).
+#  35. loki-ts/src/engine10/stages/implement.ts: no challenge after the empty-done correction (the empty-done path is not challenged).
+#  36. loki-ts/src/engine10/stages/implement.ts: already_done exit regardless of edits (the editalready run loses multiply).
+#  37. loki-ts/src/util/check_result.ts codeOnly: stop stripping strings (public unit reads strings=-).
+#  38. loki-ts/src/util/check_result.ts addedPublicFunctions: count a TS constructor (public unit reads tsclass=constructor+allow).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -133,6 +166,7 @@ run_engine() {
     git -C "$REPO" init -q -b main
     git -C "$REPO" config user.name e2e
     git -C "$REPO" config user.email e2e@example.invalid
+    if [ -n "${SEED:-}" ]; then cp -R "$SEED"/. "$REPO"/; fi # extra committed files (a jest config and test, cfg.json and its loader test)
     git -C "$REPO" add -- .
     git -C "$REPO" commit -q -m base
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY \
@@ -222,6 +256,134 @@ run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHAR
 [ "$(ev 'next((e["data"].get("size") for e in E if e["type"]=="variant" and "size" in e["data"]), None)')" = "normal" ] && ok "lean normal: the task sized normal" || bad "lean normal: the task did not size normal"
 grep -q '^wall ' "$ITERS" && { bad "lean normal: a Wall session ran despite a relevant visible test"; dump; } || ok "lean normal: no Wall session"
 [ "$(outcome)" = "VERIFIED" ] && ok "lean normal: run is VERIFIED" || { bad "lean normal: outcome is '$(outcome)'"; dump; }
+# ---------------------------------------------------------------- lean fix loop, unit level (L005, L006, L025, L026)
+mkdir -p "$T/l006" "$T/l026"
+cat > "$T/lean-fix.ts" <<TS
+import { readFileSync } from "node:fs";
+import { FIXED_RULES } from "$ROOT/loki-ts/src/e10ext/context.ts";
+import { firstError, failureExcerpt } from "$ROOT/loki-ts/src/util/check_result.ts";
+import { failIds, failureGroup } from "$ROOT/loki-ts/src/engine10/failures.ts";
+import { classifyRunnerOutput } from "$ROOT/loki-ts/src/runner/runner_errors.ts";
+import { buildFixResumeBrief, runFixSession } from "$ROOT/loki-ts/src/runner/session_resume.ts";
+import { rememberSessionEffort, sessionEffortFor } from "$ROOT/loki-ts/src/engine10/session.ts";
+import { quickSplit } from "$ROOT/loki-ts/src/e10ext/select.ts";
+import { verdictOf } from "$ROOT/loki-ts/src/engine10/stages/seal.ts";
+import { buildImplementBrief } from "$ROOT/loki-ts/src/engine10/stages/implement.ts";
+import { consumeSdkStream, isSuiteRun } from "$ROOT/loki-ts/src/runner/sdk_stream_parser.ts";
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const FX = "$ROOT/tests/min/fixtures/failures/";
+const group = (f: string, suite = false) => { const out = readFileSync(FX + f, "utf8"); return failureGroup({ name: "full suite: x", cmd: "runner cmd", first_error: firstError(out), ids: failIds(out) }, failureExcerpt(out, "/work/repo"), suite); };
+for (const f of ["pytest", "jest", "vitest", "gotest", "surefire", "dotnet"]) {
+  const g = group(f + ".txt"), body = g.sample.split("\n").slice(1).join("\n");
+  res("L005 " + f + ": the brief group has a non-empty excerpt", body.trim() !== "");
+  res("L005 " + f + ": the brief group has 0 ESC (0x1b) bytes", !Buffer.from(g.signature + g.sample).includes(0x1b));
+  res("L005 " + f + ": the signature names the failure, not only the check", g.signature.length > "full suite: x".length);
+}
+const a = group("vitest-suite-a.txt", true), b = group("vitest-suite-b.txt", true);
+res("L005 full suite: the signature carries the failing ids", a.signature.includes("divides") && b.signature.includes("subtracts"));
+res("L005 full suite: two different failing sets give two stall signatures", a.signature !== b.signature);
+const ba = group("bun-suite-a.txt", true), bb = group("bun-suite-b.txt", true);
+res("L005 bun full suite: failing ids parsed from (fail) and colored lines", ba.signature.includes("calc > divides") && bb.signature.includes("calc > adds"));
+res("L005 bun full suite: two different failing sets give two stall signatures", ba.signature !== bb.signature);
+for (const f of ["pytest", "jest", "vitest", "gotest", "surefire", "dotnet", "cargo", "bun-suite-a", "bun-suite-b"]) res("L005 " + f + ": failing test ids parsed", failIds(readFileSync(FX + f + ".txt", "utf8")).length > 0);
+const jv = classifyRunnerOutput(readFileSync(FX + "jest-validation.txt", "utf8"));
+res("L005 jest Validation Error is harness-owned", jv.kind === "load_error" && jv.owner === "harness");
+
+delete process.env.LOKI_E10_FIX_RESUME; delete process.env.LOKI_E10_INVOKER; delete process.env.LOKI_E10_EFFORT;
+const calls: Record<string, unknown>[] = [];
+const ctx = { provider: "claude", repoDir: "$T/l006", runId: "e10-x", outputs: () => ({}), sessions: { run: async (o: Record<string, unknown>) => { calls.push(o); return { exit: 0, killed: false, markers: {}, summary: null }; } }, cost: { read: () => ({ cacheReadTokens: 0 }) } } as never;
+const base = { stage: "fix", tier: "development", limitS: 180, signal: new AbortController().signal, cwd: "$T/l006", effort: "high" } as never;
+const r0 = await runFixSession(ctx, base, "e10-x-fix1b", [], { sessionId: "S1", model: "m" }, "m", "FULL", "RESUME");
+res("L006 env unset: a fresh fix round at the fix effort", r0.mode === "fresh" && !calls[0]!.resumeSessionId && calls[0]!.brief === "FULL" && calls[0]!.effort === "high");
+process.env.LOKI_E10_FIX_RESUME = "1";
+const r1 = await runFixSession(ctx, base, "e10-x-fix1", [], { sessionId: "S1", model: "m" }, "m", "FULL", "RESUME");
+res("L006 LOKI_E10_FIX_RESUME=1: the fix round resumes the implement session", r1.mode === "resumed" && calls[1]!.resumeSessionId === "S1" && calls[1]!.brief === "RESUME");
+res("L006 LOKI_E10_FIX_RESUME=1: the resumed call keeps the fix effort policy (high)", calls[1]!.effort === "high");
+rememberSessionEffort("S1", "medium");
+const up = sessionEffortFor(calls[1] as never);
+res("L006 a resumed round 1 escalates medium to high (cache reset accepted for the policy effort)", up.effort === "high" && up.escalated?.from === "medium");
+const rb = buildFixResumeBrief([{ signature: "bun:calc.test.ts", count: 1, sample: "bun test calc.test.ts" }], "calc.ts | 1 +", null, 0, ["calc.test.ts"]);
+res("L006 the resumed brief names the test files the harness restored", rb.includes("restored your edits") && rb.includes("calc.test.ts"));
+delete process.env.LOKI_E10_FIX_RESUME;
+
+const t = (p: string) => ({ runner: "bun" as const, path: p });
+const sp = quickSplit([t("wall.test.ts"), t("a.test.ts"), t("b.test.ts"), t("c.test.ts")], new Set(["bun:wall.test.ts", "bun:b.test.ts"]), [t("c.test.ts")]);
+res("L025 quick selection: blocking, Wall and impacted-since tests first, the rest after", sp.first.map((x) => x.path).join() === "wall.test.ts,b.test.ts,c.test.ts" && sp.rest.map((x) => x.path).join() === "a.test.ts");
+const pass = [{ name: "bun:a.test.ts", cmd: "bun test a.test.ts", result: "pass", duration_s: 0 }] as never;
+res("L025 a run whose last verify was quick-only never seals VERIFIED", verdictOf({ implement: { exit: "done" } }, pass, false, true, false, true) !== "VERIFIED" && verdictOf({ implement: { exit: "done" } }, pass, false, false, false, true) === "VERIFIED");
+
+res("L026 brief: no invitation to run the full suite", !FIXED_RULES.includes("including the package's full suite") && FIXED_RULES.includes("not the package's full suite") && FIXED_RULES.includes("medium or high"));
+const nb = buildImplementBrief("task", null, []);
+res("L026 brief: with no impacted tests it names targeted tests, not the full test command", !nb.includes("run the project's full test command") && nb.includes("medium or high"));
+res("L026 parser: a full-suite command line counts", isSuiteRun("cd pkg && bun test", ["bun test"]) && isSuiteRun("CI=1 npx vitest run --reporter=dot 2>&1", ["npx vitest run"]));
+res("L026 parser: a targeted run does not count", !isSuiteRun("bun test calc.test.ts", ["bun test"]) && !isSuiteRun("npx vitest run src/a.test.ts", ["npx vitest run"]));
+process.env.LOKI_E10_SUITE_CMDS = JSON.stringify(["bun test"]);
+const tool = (id: string, command: string) => ({ type: "assistant", message: { id, content: [{ type: "tool_use", id: "t" + id, name: "Bash", input: { command } }] } });
+await consumeSdkStream([tool("1", "bun test"), tool("2", "bun test calc.test.ts"), tool("3", "cd . && bun test --bail"), { type: "result", subtype: "success", total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 1 }, session_id: "s" }] as never, { cwd: "$T/l026", iteration: "it1", hookEventsEnabled: false, write: () => {} });
+const rc = JSON.parse(readFileSync("$T/l026/.loki/metrics/result-cost-it1.json", "utf8"));
+res("L026 parser: result-cost records full_suite_runs per session (2 of 3 Bash calls)", rc.full_suite_runs === 2);
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/lean-fix.ts" 2>&1)"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+printf '%s\n' "$out" | grep -q '^OK ' || { bad "lean-fix unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+
+# ---------------------------------------------------------------- lean fix loop on the stub provider
+# jest: a committed jest test of util.ts (the stub's scope edit touches util.ts, so verify selects it) whose runner, a stand-in
+# npx, prints the recorded jest Validation Error on head and base alike.
+mkdir -p "$T/seed-jest" "$T/fakejest"
+printf 'module.exports = {};\n' > "$T/seed-jest/jest.config.js"
+printf 'import { expect, test } from "@jest/globals";\nimport { VERSION } from "./util";\n\ntest("version", () => {\n  expect(VERSION).toBeGreaterThan(0);\n});\n' > "$T/seed-jest/util.jest.test.ts"
+cp "$ROOT/tests/min/fixtures/failures/jest-validation.txt" "$T/fakejest/out.txt"
+printf '#!/usr/bin/env bash\ncase " $* " in *" jest "*) cat "%s/out.txt"; exit 1 ;; esac\nexit 127\n' "$T/fakejest" > "$T/fakejest/npx"
+chmod +x "$T/fakejest/npx"
+SEED="$T/seed-jest" run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_SCOPE_EDIT=1 E2E_STUB_FIX=fixit PATH="$T/fakejest:$FIX/bin:$PATH"
+n="$(fix_sessions)"
+ran="$(ev '[e["data"].get("result") for e in E if e["type"]=="test.result" and "util.jest" in str(e["data"].get("name",""))]')"
+has "jest Validation Error: verify ran the jest check" "$ran" "'not_run'"
+[ "$n" = "0" ] && ok "jest Validation Error: harness-owned, 0 fix sessions" || { bad "jest Validation Error: $n fix sessions (want 0)"; dump; }
+
+# twostep: round 1 fixes multiply() but adds a failing extra.test.ts, round 2 fixes that. Risk tier medium runs the full suite.
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=twostep LOKI_RISK_TIER=medium
+scopes="$(ev '[e["data"].get("verify_scope") for e in E if e["type"]=="stage.completed" and e["stage"]=="verify"]')"
+suites="$(ev 'sum(1 for e in E if e["type"]=="test.result" and str(e["data"].get("name","")).startswith("full suite") and e["data"].get("result") in ("pass","fail"))')"
+[ "$scopes" = "['complete', 'quick', 'complete']" ] && ok "quick verify: round 1 is re-verified quick, the last round complete" || { bad "quick verify: verify scopes $scopes"; dump; }
+[ "$suites" = "2" ] && ok "quick verify: the full suite ran 2 times in a 2-round run (was 3)" || bad "quick verify: the full suite ran $suites times (want 2)"
+[ "$(outcome)" = "VERIFIED" ] && ok "quick verify: the 2-round run is VERIFIED" || { bad "quick verify: outcome is '$(outcome)', not VERIFIED"; dump; }
+sig="$(ev '[g["signature"] for e in E if e["type"]=="fix.round" for g in e["data"]["groups"] if g["signature"].startswith("full suite")][0]')"
+case "$sig" in "full suite: bun "?*) ok "full suite signature carries its first failing line: $sig" ;; *) bad "full suite signature is only the check name: '$sig'" ;; esac
+
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress LOKI_RISK_TIER=medium
+last="$(ev '[e["data"] for e in E if e["type"]=="stage.completed" and e["stage"]=="verify"][-1]')"
+has "quick-only end: the last verify is quick" "$last" "'verify_scope': 'quick'"
+has "quick-only end: verify lists the missing complete verify as NOT PROVEN" "$last" "quick re-verify only"
+suites="$(ev 'sum(1 for e in E if e["type"]=="test.result" and str(e["data"].get("name","")).startswith("full suite") and e["data"].get("result") in ("pass","fail"))')"
+[ "$(fix_sessions)" = "1" ] && ok "quick-only end: one fix round, then STALLED (the same targeted failure settles the stall with a suite rerun)" || { bad "quick-only end: $(fix_sessions) fix sessions (want 1)"; dump; }
+[ "$suites" = "2" ] && ok "quick-only end: the stall was settled by one harness suite rerun, not a model session" || bad "quick-only end: full suite ran $suites times (want 2)"
+[ "$(outcome)" != "VERIFIED" ] && ok "quick-only end: not VERIFIED (Outcome $(outcome))" || bad "quick-only end: VERIFIED without a complete verify"
+
+# stale stall: verify 1 fails calc.test.ts (task-named, rerun by every quick verify) and the full suite (cfg.json, read by loader.test.ts, which
+# no changed file imports, so only the suite runs it). Round 1 fixes cfg.json, calc.test.ts still fails: the quick verify does not rerun the
+# suite, its old failure is carried, and the run must get round 2 (not STALLED) and end VERIFIED.
+mkdir -p "$T/seed-cfg"
+printf '{"ok": true}\n' > "$T/seed-cfg/cfg.json"
+printf 'import { expect, test } from "bun:test";\nimport { readFileSync } from "node:fs";\n\ntest("cfg", () => {\n  expect(JSON.parse(readFileSync(new URL("./cfg.json", import.meta.url), "utf8")).ok).toBe(true);\n});\n' > "$T/seed-cfg/loader.test.ts"
+SEED="$T/seed-cfg" run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_BREAK_CFG=1 E2E_STUB_FIX=cfgfirst LOKI_RISK_TIER=medium
+v1="$(ev '[g["signature"].split(" ")[0] + " " + g["signature"].split(" ")[1] for e in E if e["type"]=="stage.completed" and e["stage"]=="verify" for g in e["data"]["failures_grouped"]][:2]')"
+has "stale stall: verify 1 failed the full suite" "$v1" "full suite:"
+[ "$(fix_sessions)" = "2" ] && ok "stale stall: round 2 ran (the suite rerun shows the suite fixed, so this is not a repeat)" || { bad "stale stall: $(fix_sessions) fix sessions (want 2)"; dump; }
+[ "$(outcome)" = "VERIFIED" ] && ok "stale stall: run is VERIFIED" || { bad "stale stall: outcome is '$(outcome)', not VERIFIED"; dump; }
+
+# lint twice: tool.sh fails bash -n after implement and again (a new error) after round 1 while the suite passes; round 2 fixes it.
+# The final verify after the last change runs the full suite again, so the run seals VERIFIED (a 2-run suite cap sealed it PARTIAL).
+mkdir -p "$T/fakelint"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$T/fakelint/shellcheck"; chmod +x "$T/fakelint/shellcheck"
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_LINTBAD=1 E2E_STUB_FIX=linttwice LOKI_RISK_TIER=medium PATH="$T/fakelint:$FIX/bin:$PATH"
+suites="$(ev 'sum(1 for e in E if e["type"]=="test.result" and str(e["data"].get("name","")).startswith("full suite") and e["data"].get("result") in ("pass","fail"))')"
+[ "$(fix_sessions)" = "2" ] && ok "lint twice: two fix rounds" || { bad "lint twice: $(fix_sessions) fix sessions (want 2)"; dump; }
+[ "$suites" = "3" ] && ok "lint twice: the full suite ran in each complete verify (3)" || bad "lint twice: full suite ran $suites times (want 3)"
+[ "$(outcome)" = "VERIFIED" ] && ok "lint twice: run is VERIFIED" || { bad "lint twice: outcome is '$(outcome)', not VERIFIED"; dump; }
 
 run_engine "$TASK" E2E_STUB_MODE=agentonly LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"

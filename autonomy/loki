@@ -319,7 +319,7 @@ LOKI_DIR="${LOKI_DIR:-.loki}"
 export LOKI_DIR
 
 # v7.7.34: launch the autonomous runner as a SESSION/PROCESS-GROUP LEADER so the
-# whole tree (orchestrator + the claude/codex/aider agent pipeline + monitors)
+# whole tree (orchestrator + the claude/opencode agent pipeline + monitors)
 # shares one process group and can be killed atomically with `kill -- -PGID`.
 # Without this, stopping the orchestrator pid orphans the agent child (it
 # reparents to init and keeps editing files), which is the "dashboard says
@@ -1930,7 +1930,7 @@ show_help_all() {
     echo "list with 'loki help aliases'."
     echo ""
     echo "Options for 'start':"
-    echo "  --provider NAME  AI provider: claude (default), codex, cline, aider, opencode"
+    echo "  --provider NAME  AI provider: claude (default) or opencode"
     echo "  (model route: set LOKI_MODEL_ROUTE, e.g. ollama/qwen3-coder; there is no --model flag)"
     echo "  --simple         Force simple complexity tier (3 phases)"
     echo "  --complex        Force complex complexity tier (8 phases)"
@@ -1981,21 +1981,20 @@ show_help_all() {
     echo ""
     echo "  # Providers + model routing"
     echo "  loki provider list            # Show available providers, including opencode"
-    echo "  loki provider set codex       # Switch active provider"
+    echo "  loki provider set opencode    # Switch active provider"
     echo "  # Cheap / open models (DeepSeek, GLM, MiniMax, Kimi) via OpenRouter:"
-    echo "  loki provider set aider       # aider + cline reach any OpenRouter model"
     echo "  export OPENROUTER_API_KEY=sk-or-..."
-    echo "  loki start ./prd.md           # defaults to deepseek-v3.2 (open weights)"
-    echo "  # Pick a specific model:"
-    echo "  export LOKI_AIDER_MODEL=openrouter/z-ai/glm-4.6"
+    echo "  loki start ./prd.md --provider opencode --model openrouter/deepseek/deepseek-v3.2"
+    echo "  # Or pin it for every run:"
+    echo "  export LOKI_OPENCODE_MODEL=openrouter/z-ai/glm-4.6"
     echo ""
     echo "  # Anthropic-PROTOCOL gateways (LiteLLM, Bedrock proxies, self-hosted):"
     echo "  export ANTHROPIC_BASE_URL=https://your-gateway/v1 \\\\"
     echo "         LOKI_MODEL_OVERRIDE=<model-id-your-gateway-serves>"
     echo "  # NOTE: this routes Claude Code itself, so the endpoint must speak the"
     echo "  #       Anthropic /v1/messages API. OpenRouter does NOT -- it serves"
-    echo "  #       only the OpenAI-shaped /v1/chat/completions. Use the aider or"
-    echo "  #       cline route above for OpenRouter."
+    echo "  #       only the OpenAI-shaped /v1/chat/completions. Use the opencode"
+    echo "  #       route above for OpenRouter."
     echo ""
     echo "  # Cross-project context (Phase F)"
     echo "  # Drop .loki/app.json with {schema_version:1,app_id:myapp,members:[ui,api]}"
@@ -2628,7 +2627,7 @@ _loki_start_handoff() {
 _loki_start_flag_kind() {
     _LOKI_START_FLAG_KIND=""
     case "${1%%=*}" in
-        --provider|--brief|--budget|--cost|--prd|--issue|--isolation|--aider-model|--aider-flags|--cline-model|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--mirofish-docker) _LOKI_START_FLAG_KIND=value ;;
+        --provider|--brief|--budget|--cost|--prd|--issue|--isolation|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--mirofish-docker) _LOKI_START_FLAG_KIND=value ;;
         --mirofish) _LOKI_START_FLAG_KIND=optional ;;
         --parallel|--allow-haiku|--haiku|--regen-prd|--regenerate-prd|--regen|--fresh-prd|--bg|--background|--simple|--complex|--github|--no-dashboard|--api|--sandbox|--skip-memory|--yes|-y|--quiet|--mirofish-bg|--no-mirofish|--no-plan|--fast|--repo-fast|--full|--repo-full|--dry-run|--no-start|--worktree|-w|--pr|--prepare-pr|--ship|--detach|-d|--help|-h|--resume|--) _LOKI_START_FLAG_KIND=bool ;;
         *) return 1 ;;
@@ -2972,7 +2971,7 @@ cmd_start() {
                 echo "                        building locally; polls until the job finishes."
                 echo "                        Token from LOKI_REMOTE_TOKEN / LOKI_REMOTE_TOKEN_FILE"
                 echo "                        (never an argument). Env: LOKI_REMOTE_URL."
-                echo "  --provider NAME       AI provider: claude (default), codex, cline, aider, opencode"
+                echo "  --provider NAME       AI provider: claude (default) or opencode"
                 echo "  (model route: set LOKI_MODEL_ROUTE, for example ollama/qwen3-coder; no --model flag)"
                 echo "  --allow-haiku        Enable Haiku model for the fast tier (default: disabled)"
                 echo "  --simple              Force simple complexity tier (3 phases)"
@@ -3057,7 +3056,7 @@ cmd_start() {
                 echo "  loki start PROJ-456                     # ISSUE mode (Jira)"
                 echo "  loki start owner/repo#789               # ISSUE mode (GitHub specific repo)"
                 echo "  loki start --issue 123 --ship           # Explicit issue, full automation"
-                echo "  loki start --provider codex             # Use OpenAI Codex CLI"
+                echo "  loki start --provider opencode          # Use opencode (any model, incl. OpenRouter)"
                 echo "  loki start --bmad-project ./my-project  # Start from BMAD artifacts"
                 echo "  loki start --openspec ./openspec/changes/my-feature  # From OpenSpec change"
                 echo "  loki start --yes                        # Skip confirmation prompt"
@@ -3097,52 +3096,13 @@ cmd_start() {
                     args+=("--provider" "$provider")
                     shift 2
                 else
-                    echo -e "${RED}--provider requires a value (claude, codex, cline, aider, opencode)${NC}"
+                    echo -e "${RED}--provider requires a value (claude or opencode)${NC}"
                     exit 1
                 fi
                 ;;
             --provider=*)
                 provider="${1#*=}"
                 args+=("--provider" "$provider")
-                shift
-                ;;
-            --aider-model)
-                if [[ -n "${2:-}" ]]; then
-                    export LOKI_AIDER_MODEL="$2"
-                    shift 2
-                else
-                    echo -e "${RED}--aider-model requires a value${NC}"
-                    exit 1
-                fi
-                ;;
-            --aider-model=*)
-                export LOKI_AIDER_MODEL="${1#*=}"
-                shift
-                ;;
-            --aider-flags)
-                if [[ -n "${2:-}" ]]; then
-                    export LOKI_AIDER_FLAGS="$2"
-                    shift 2
-                else
-                    echo -e "${RED}--aider-flags requires a value${NC}"
-                    exit 1
-                fi
-                ;;
-            --aider-flags=*)
-                export LOKI_AIDER_FLAGS="${1#*=}"
-                shift
-                ;;
-            --cline-model)
-                if [[ -n "${2:-}" ]]; then
-                    export LOKI_CLINE_MODEL="$2"
-                    shift 2
-                else
-                    echo -e "${RED}--cline-model requires a value${NC}"
-                    exit 1
-                fi
-                ;;
-            --cline-model=*)
-                export LOKI_CLINE_MODEL="${1#*=}"
                 shift
                 ;;
             --parallel)
@@ -3657,7 +3617,7 @@ cmd_start() {
     # is deliberately narrower than it.
     #
     # provider_offer_gate passes when ANY provider is on PATH, so `--provider
-    # codex` on a claude-only machine sails through it and dies much later in
+    # opencode` on a claude-only machine sails through it and dies much later in
     # the runner. And when NOTHING is installed the gate offers to install
     # CLAUDE, which is a nudge toward substituting a provider the user did not
     # ask for. An explicit choice that cannot be honoured is an error, never a
@@ -3679,7 +3639,7 @@ cmd_start() {
         # Single source: SUPPORTED_PROVIDERS in providers/loader.sh.
         local _pf_known
         _pf_known="$(sed -n 's/^SUPPORTED_PROVIDERS=(\(.*\))$/\1/p' "$_LOKI_SCRIPT_DIR/../providers/loader.sh" 2>/dev/null | tr -d '"' | head -1)"
-        [ -n "$_pf_known" ] || _pf_known="claude codex cline aider opencode"
+        [ -n "$_pf_known" ] || _pf_known="claude opencode"
         case " $_pf_known " in
             *" $_pf_explicit "*) ;;
             *)
@@ -3698,9 +3658,6 @@ cmd_start() {
         echo "Install it:" >&2
         case "$_pf_explicit" in
             claude)   echo "  npm install -g @anthropic-ai/claude-code" >&2 ;;
-            codex)    echo "  npm install -g @openai/codex" >&2 ;;
-            cline)    echo "  npm install -g cline" >&2 ;;
-            aider)    echo "  pip install aider-chat" >&2 ;;
             opencode) echo "  npm install -g opencode-ai" >&2 ;;
             *)        echo "  No install command is known for '$_pf_explicit'." >&2 ;;
         esac
@@ -3710,7 +3667,7 @@ cmd_start() {
             echo "Re-run with one of those, e.g. loki start --provider ${_pf_installed%% *}" >&2
         else
             echo "No supported provider CLI is installed on this machine." >&2
-            echo "Supported providers: claude, codex, cline, aider, opencode" >&2
+            echo "Supported providers: claude, opencode" >&2
         fi
         echo "" >&2
         echo "Loki will not silently run a different provider than the one you asked for." >&2
@@ -4382,7 +4339,7 @@ cmd_start() {
     # can drop the marker when the originating process is no longer alive
     # (SIGKILL / crash paths that skip our cleanup hooks).
     case "$provider" in
-        claude|codex|cline|aider|opencode)
+        claude|opencode)
             mkdir -p "$LOKI_DIR/state" 2>/dev/null || true
             printf '%s:%s:%s\n' "$provider" "$(date +%s)" "$$" \
                 > "$LOKI_DIR/state/.cli-provider.tmp" 2>/dev/null \
@@ -4401,7 +4358,7 @@ cmd_start() {
             --action "provider_selection" \
             --key "provider" \
             --value "$provider" \
-            --rejected '["'"$([ "$provider" != "claude" ] && echo "claude" || echo "codex")'", "'"$([ "$provider" != "cline" ] && echo "cline" || echo "aider")'"]' \
+            --rejected "[\"$([ "$provider" != "claude" ] && echo claude || echo opencode)\"]" \
             --confidence 0.95
     fi
 
@@ -4617,8 +4574,8 @@ _kill_pid() {
 }
 
 # v7.7.34 group-kill, factored (loki-stop-F1). Reaps the orchestrator's whole
-# process group via the recorded pgid so the autonomous agent (claude/codex/
-# aider), which shares the orchestrator group and would otherwise reparent to
+# process group via the recorded pgid so the autonomous agent (claude/
+# opencode), which shares the orchestrator group and would otherwise reparent to
 # init and keep editing files, is killed atomically. This is the SAME logic the
 # no-arg `loki stop` path used inline; it is now shared so the by-id path
 # (`loki stop <session-id>`) gets identical reaping instead of skipping it.
@@ -4777,7 +4734,7 @@ cmd_stop() {
             # loki-stop-F1: group-kill FIRST (v7.7.34 discipline), scoped to THIS
             # session's recorded pgid. Without this the by-id path reaped only the
             # orchestrator pid (via _stop_session_by_id -> _kill_pid), leaving the
-            # autonomous agent (claude/codex/aider) -- which shares the
+            # autonomous agent (claude/opencode) -- which shares the
             # orchestrator's process group -- to reparent to init and keep editing
             # files. That is exactly the v7.7.34 orphaned-agent bug, reopened on
             # the by-id path. The pgid is session-scoped: run.sh writes it next to
@@ -4877,7 +4834,7 @@ cmd_stop() {
         # Stop global session
         touch "$LOKI_DIR/STOP"
 
-        # v7.7.34: group-kill first. The autonomous agent (claude/codex/aider)
+        # v7.7.34: group-kill first. The autonomous agent (claude/opencode)
         # shares the orchestrator's process group (the runner is launched as a
         # session leader), so signaling the whole group reaps the orchestrator
         # AND the agent child atomically. Killing only the orchestrator pid lets
@@ -6405,10 +6362,7 @@ LAST_ERROR_ACTIONS = {
 # every option LABELLED rather than presenting one provider's fix as the answer.
 PROVIDER_AUTH = {
     "claude": "claude auth login   (or set ANTHROPIC_API_KEY)",
-    "codex": "codex login   (or set OPENAI_API_KEY)",
-    "aider": "set the API key for your aider model (OPENAI_API_KEY / ANTHROPIC_API_KEY)",
-    "cline": "re-enter the API key in Cline's provider settings",
-    "opencode": "opencode auth login",
+    "opencode": "opencode auth login   (or set OPENROUTER_API_KEY for openrouter/<vendor>/<model>)",
 }
 
 
@@ -6941,18 +6895,12 @@ cmd_status() {
     # Show provider with capability
     local capability="full features"
     case "$current_provider" in
-        codex|aider)
-            capability="degraded mode"
-            ;;
-        cline)
-            capability="near-full mode"
-            ;;
         opencode)
             capability="model-agnostic mode"
             ;;
     esac
     echo -e "${CYAN}Provider:${NC} $current_provider ($capability)"
-    echo -e "${DIM}  Switch with: loki provider set <claude|codex|cline|aider|opencode>${NC}"
+    echo -e "${DIM}  Switch with: loki provider set <claude|opencode>${NC}"
     echo ""
 
     # Show running sessions (v6.4.0 - concurrent session support)
@@ -7188,7 +7136,7 @@ def _read_cli_provider(loki_dir):
             return None, False
         prov = parts[0]
         ts = int(parts[1])
-        if prov not in ('claude', 'codex', 'cline', 'aider', 'opencode'):
+        if prov not in ('claude', 'opencode'):
             return None, False
         if time.time() - ts > 86400:
             return None, False
@@ -7838,9 +7786,9 @@ _cmd_provider_help() {
             echo "Examples:"
             echo "  loki provider show"
             echo "  loki provider set claude"
-            echo "  loki provider set codex"
+            echo "  loki provider set opencode"
             echo "  loki provider list"
-            echo "  loki provider info codex"
+            echo "  loki provider info opencode"
             echo "  loki provider models"
 }
 
@@ -7863,12 +7811,6 @@ cmd_provider_show() {
         claude)
             echo -e "${GREEN}Status:${NC}   Full features (subagents, parallel, MCP)"
             ;;
-        cline)
-            echo -e "${GREEN}Status:${NC}   Near-full mode (subagents, MCP, 12+ providers)"
-            ;;
-        codex|aider)
-            echo -e "${YELLOW}Status:${NC}   Degraded mode (sequential only)"
-            ;;
         opencode)
             echo -e "${GREEN}Status:${NC}   Model-agnostic mode (75+ providers, MCP)"
             ;;
@@ -7890,22 +7832,22 @@ cmd_provider_set() {
 
     if [ -z "$new_provider" ]; then
         echo -e "${RED}Error: Provider name required${NC}"
-        echo "Usage: loki provider set <claude|codex|cline|aider|opencode>"
+        echo "Usage: loki provider set <claude|opencode>"
         exit 2
     fi
 
-    # Validate provider
+    # Validate provider. Removed providers print the one migration line
+    # (providers/loader.sh owns the list and the text).
+    if loki_is_removed_provider "$new_provider"; then
+        loki_removed_provider_message "$new_provider" >&2
+        exit 2
+    fi
     case "$new_provider" in
-        gemini)
-            echo -e "${RED}Error: Provider 'gemini' is deprecated as of v7.5.18 and has been removed.${NC}"
-            echo "Active providers: claude, codex, cline, aider, opencode"
-            exit 1
-            ;;
-        claude|codex|cline|aider|opencode)
+        claude|opencode)
             ;;
         *)
             echo -e "${RED}Error: Invalid provider '$new_provider'${NC}"
-            echo "Valid providers: claude, codex, cline, aider, opencode"
+            echo "Valid providers: claude, opencode"
             exit 1
             ;;
     esac
@@ -7917,15 +7859,6 @@ cmd_provider_set() {
         case "$new_provider" in
             claude)
                 echo "Install: npm install -g @anthropic-ai/claude-code"
-                ;;
-            codex)
-                echo "Install: npm install -g @openai/codex"
-                ;;
-            cline)
-                echo "Install: npm install -g cline"
-                ;;
-            aider)
-                echo "Install: pip install aider-chat"
                 ;;
             opencode)
                 echo "Install: npm install -g opencode-ai"
@@ -7957,22 +7890,10 @@ cmd_provider_list() {
 
     # Check which CLIs are installed
     local claude_status="${RED}not installed${NC}"
-    local codex_status="${RED}not installed${NC}"
-    local cline_status="${RED}not installed${NC}"
-    local aider_status="${RED}not installed${NC}"
     local opencode_status="${RED}not installed${NC}"
 
     if command -v claude &> /dev/null; then
         claude_status="${GREEN}installed${NC}"
-    fi
-    if command -v codex &> /dev/null; then
-        codex_status="${GREEN}installed${NC}"
-    fi
-    if command -v cline &> /dev/null; then
-        cline_status="${GREEN}installed${NC}"
-    fi
-    if command -v aider &> /dev/null; then
-        aider_status="${GREEN}installed${NC}"
     fi
     if command -v opencode &> /dev/null; then
         opencode_status="${GREEN}installed${NC}"
@@ -7983,22 +7904,6 @@ cmd_provider_list() {
     [ "$current" = "claude" ] && marker=" ${CYAN}(current)${NC}"
     echo -e "  claude  - Claude Code (Anthropic)     $claude_status$marker"
 
-    marker=""
-    [ "$current" = "codex" ] && marker=" ${CYAN}(current)${NC}"
-    echo -e "  codex   - Codex CLI (OpenAI)          $codex_status$marker"
-
-    marker=""
-    [ "$current" = "cline" ] && marker=" ${CYAN}(current)${NC}"
-    echo -e "  cline   - Cline (multi-provider)      $cline_status$marker"
-
-    marker=""
-    [ "$current" = "aider" ] && marker=" ${CYAN}(current)${NC}"
-    echo -e "  aider   - Aider (terminal pair prog)  $aider_status$marker"
-
-    # opencode was absent here while auto_detect_provider() has selected it
-    # since v8.64.0, so `loki provider list` under-reported a provider the
-    # runner will happily choose -- the same drift that blocked opencode-only
-    # machines outright until v8.76.0.
     marker=""
     [ "$current" = "opencode" ] && marker=" ${CYAN}(current)${NC}"
     echo -e "  opencode - opencode (multi-provider)  $opencode_status$marker"
@@ -8028,46 +7933,6 @@ cmd_provider_info() {
             echo ""
             echo "Status:      Full features"
             ;;
-        codex)
-            echo "Name:        Codex CLI"
-            echo "Vendor:      OpenAI"
-            echo "CLI:         codex"
-            echo "Flag:        --sandbox workspace-write"
-            echo ""
-            echo "Features:"
-            echo "  - Autonomous mode"
-            echo "  - Sequential only (no subagents)"
-            echo ""
-            echo "Status:      Degraded mode"
-            ;;
-        cline)
-            echo "Name:        Cline CLI (Multi-Provider)"
-            echo "Vendor:      Cline (supports 12+ providers)"
-            echo "CLI:         cline"
-            echo "Flag:        -y (YOLO mode)"
-            echo ""
-            echo "Features:"
-            echo "  - Autonomous mode"
-            echo "  - Subagent support"
-            echo "  - MCP server support"
-            echo "  - 12+ model providers"
-            echo ""
-            echo "Status:      Near-full mode (Tier 2)"
-            ;;
-        aider)
-            echo "Name:        Aider (18+ Providers)"
-            echo "Vendor:      Aider (supports 18+ providers)"
-            echo "CLI:         aider"
-            echo "Flag:        --yes-always"
-            echo ""
-            echo "Features:"
-            echo "  - Autonomous mode"
-            echo "  - 18+ model providers"
-            echo "  - Architect mode (dual model)"
-            echo "  - Built-in lint/test integration"
-            echo ""
-            echo "Status:      Degraded mode (Tier 3)"
-            ;;
         opencode)
             echo "Name:        opencode (75+ Providers)"
             echo "Vendor:      opencode (model-agnostic registry)"
@@ -8077,6 +7942,7 @@ cmd_provider_info() {
             echo "Features:"
             echo "  - Autonomous mode"
             echo "  - 75+ model providers and custom endpoints"
+            echo "  - OpenRouter: export OPENROUTER_API_KEY, model openrouter/<vendor>/<model>"
             echo "  - Local model support"
             echo "  - MCP server support"
             echo ""
@@ -8104,7 +7970,7 @@ cmd_provider_models() {
 
     # opencode ships a provider file and a catalog entry, so omitting it here
     # under-reported what this command claims to show ("all providers").
-    local providers=("claude" "codex" "cline" "aider" "opencode")
+    local providers=("claude" "opencode")
     for provider in "${providers[@]}"; do
         local provider_file="$script_dir/providers/${provider}.sh"
         [ -f "$provider_file" ] || continue
@@ -8126,30 +7992,11 @@ cmd_provider_models() {
             tier_upper=$(echo "$tier" | tr '[:lower:]' '[:upper:]')
             local source="default"
 
-            # Single-model providers (aider, cline) only chain through their own env var
-            # and LOKI_MODEL_DEVELOPMENT -- they ignore per-tier and generic tier vars
-            if [ "$provider" = "aider" ]; then
-                if [ -n "${LOKI_AIDER_MODEL+x}" ]; then
-                    source="LOKI_AIDER_MODEL"
-                elif [ -n "${LOKI_MODEL_DEVELOPMENT+x}" ]; then
-                    source="LOKI_MODEL_DEVELOPMENT"
-                fi
-            elif [ "$provider" = "cline" ]; then
-                if [ -n "${LOKI_CLINE_MODEL+x}" ]; then
-                    source="LOKI_CLINE_MODEL"
-                elif [ -n "${LOKI_MODEL_DEVELOPMENT+x}" ]; then
-                    source="LOKI_MODEL_DEVELOPMENT"
-                fi
-            elif [ "$provider" = "codex" ]; then
-                # Codex uses single LOKI_CODEX_MODEL or generic tier vars
-                if [ -n "${LOKI_CODEX_MODEL+x}" ]; then
-                    source="LOKI_CODEX_MODEL"
-                else
-                    local generic_var="LOKI_MODEL_${tier_upper}"
-                    eval "local gval=\${$generic_var+x}"
-                    if [ -n "$gval" ]; then
-                        source="$generic_var"
-                    fi
+            if [ "$provider" = "opencode" ]; then
+                # opencode takes "provider/model" ids from LOKI_OPENCODE_MODEL only
+                # (the global tier vars carry Claude aliases).
+                if [ -n "${LOKI_OPENCODE_MODEL+x}" ]; then
+                    source="LOKI_OPENCODE_MODEL"
                 fi
             else
                 # Multi-tier providers (claude): check provider-specific per-tier, then generic
@@ -8191,27 +8038,14 @@ cmd_provider_models() {
             esac
 
             # An EMPTY resolved model is a real, supported state, not a lookup
-            # failure: providers/codex.sh sets CODEX_DEFAULT_MODEL="" on purpose
-            # so no --model flag is passed and Codex resolves an
-            # account-appropriate default (a hardcoded name broke ChatGPT-account
-            # users outright). Say that plainly instead of printing a blank
-            # column. Deliberately NOT filled in from the catalog: this table
-            # reports what will be DISPATCHED, and the catalog id would be a
-            # guess this file is documented as unable to make.
+            # failure: no --model flag is passed and the provider CLI resolves its
+            # own default. Say that plainly instead of printing a blank column.
             [ -n "$value" ] || value="(provider default -- no --model sent)"
 
             printf "    %-8s %-14s %-38s (source: %s)\n" \
                 "$generic" "(${tier})" "$value" "$source"
         done
 
-        # Show extra info per provider
-        if [ "$provider" = "codex" ]; then
-            local effort_p effort_d effort_f
-            effort_p=$(bash -c "source '$provider_file' 2>/dev/null; echo \$PROVIDER_EFFORT_PLANNING")
-            effort_d=$(bash -c "source '$provider_file' 2>/dev/null; echo \$PROVIDER_EFFORT_DEVELOPMENT")
-            effort_f=$(bash -c "source '$provider_file' 2>/dev/null; echo \$PROVIDER_EFFORT_FAST")
-            echo "    Effort:      planning=$effort_p, development=$effort_d, fast=$effort_f"
-        fi
         echo ""
     done
 }
@@ -8880,7 +8714,7 @@ cmd_welcome_terminal() {
     echo ""
     echo -e "  ${CYAN}Closure loop + council${NC}   Every change is verified by a unanimous council."
     echo -e "  ${CYAN}Cross-project memory${NC}     Lessons compound, so agents stop repeating mistakes."
-    echo -e "  ${CYAN}Provider-agnostic${NC}        Claude, Codex, Cline, or Aider. Your keys, your infra."
+    echo -e "  ${CYAN}Provider-agnostic${NC}        Claude Code, or any model through opencode. Your keys, your infra."
     echo ""
     echo -e "  Try it now:   ${BOLD}loki tour${NC} (a real sample result, no provider, no key, no spend)"
     echo -e "  Quick start:  ${BOLD}loki quickstart${NC} (from your idea) or ${BOLD}loki start ./prd.md${NC} (from a spec)"
@@ -12467,7 +12301,7 @@ cmd_run() {
                 echo "  --dry-run          Preview generated PRD without starting"
                 echo "  --no-start         Generate PRD but don't start execution"
                 echo "  --output FILE      Save PRD to custom path"
-                echo "  --provider NAME    AI provider: claude (default), codex, cline, aider, opencode"
+                echo "  --provider NAME    AI provider: claude (default) or opencode"
                 echo "  --parallel         Enable parallel mode with git worktrees"
                 echo "  --bg, --background Run in background mode"
                 echo "  --simple           Force simple complexity tier"
@@ -12499,7 +12333,7 @@ cmd_run() {
                 echo "  loki run PROJ-789                        # Jira issue"
                 echo "  loki run https://gitlab.com/o/r/-/issues/42  # GitLab issue"
                 echo "  loki run 123 --dry-run                   # Preview PRD"
-                echo "  loki run 123 --parallel --provider codex # Parallel mode with Codex"
+                echo "  loki run 123 --provider opencode         # Run with opencode"
                 echo "  loki run 123 --worktree                  # Isolated branch"
                 echo "  loki run 123 --pr                        # Auto-create PR"
                 echo "  loki run 123 --ship                      # Full automation: PR + merge"
@@ -12543,7 +12377,7 @@ cmd_run() {
                     # v7.7.11 (council fix): validate against canonical set; include
                     # PID so reader can drop the marker when originating process is gone.
                     case "$2" in
-                        claude|codex|cline|aider|opencode)
+                        claude|opencode)
                             mkdir -p "${LOKI_DIR:-.loki}/state" 2>/dev/null || true
                             printf '%s:%s:%s\n' "$2" "$(date +%s)" "$$" \
                                 > "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" 2>/dev/null \
@@ -12563,7 +12397,7 @@ cmd_run() {
                 # UT2-13: Record CLI provider at parse time (atomic write).
                 # v7.7.11 (council fix): validate + include PID.
                 case "$provider_override" in
-                    claude|codex|cline|aider|opencode)
+                    claude|opencode)
                         mkdir -p "${LOKI_DIR:-.loki}/state" 2>/dev/null || true
                         printf '%s:%s:%s\n' "$provider_override" "$(date +%s)" "$$" \
                             > "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" 2>/dev/null \
@@ -13229,7 +13063,7 @@ cmd_issue() {
                 echo "  --output FILE      Save PRD to custom path (default: .loki/prd-issue-N.md)"
                 echo ""
                 echo "Options passed to 'start' (when --start is used):"
-                echo "  --provider NAME    AI provider: claude (default), codex, cline, aider, opencode"
+                echo "  --provider NAME    AI provider: claude (default) or opencode"
                 echo "  --parallel         Enable parallel mode with git worktrees"
                 echo "  --bg, --background Run in background mode"
                 echo ""
@@ -14654,7 +14488,7 @@ cmd_config() {
             echo "  model.planning       Model for planning tier"
             echo "  model.development    Model for development tier"
             echo "  model.fast           Model for fast tier"
-            echo "  provider             Default AI provider: claude, codex, cline, aider, opencode"
+            echo "  provider             Default AI provider: claude, opencode"
             echo "  issue.provider       Default issue provider: github, gitlab, jira, azure_devops"
             echo "  blind_validation     Blind validation mode: true, false (default: true)"
             echo "  adversarial_testing  Adversarial testing: true, false (default: true)"
@@ -14717,13 +14551,10 @@ cmd_config_set() {
             esac
             ;;
         provider)
+            if loki_is_removed_provider "$value"; then loki_removed_provider_message "$value" >&2; return 2; fi
             case "$value" in
-                gemini)
-                    echo -e "${RED}Invalid provider: 'gemini' is deprecated as of v7.5.18. Active providers: claude, codex, cline, aider, opencode${NC}"
-                    return 1
-                    ;;
-                claude|codex|cline|aider|opencode) ;;
-                *) echo -e "${RED}Invalid provider: $value (expected: claude, codex, cline, aider, opencode)${NC}"; return 1 ;;
+                claude|opencode) ;;
+                *) echo -e "${RED}Invalid provider: $value (expected: claude, opencode)${NC}"; return 1 ;;
             esac
             ;;
         issue.provider)
@@ -14873,6 +14704,7 @@ cmd_backlog() {
             echo -e "${BOLD}loki backlog${NC} - run a v10 issue-mode run for every matching open issue"
             echo ""
             echo "Usage: loki backlog owner/repo (--all | --label X | --issues 1,2,3) [--concurrency N] [--dry-run]"
+            echo "       loki backlog jira:PROJ | linear:TEAM  (same options; --issues 12 means PROJ-12)"
             echo ""
             echo "  --all             Every open issue"
             echo "  --label X         Open issues with label X"
@@ -14880,8 +14712,10 @@ cmd_backlog() {
             echo "  --concurrency N   Max runs in parallel (default: loki.yaml concurrency, else 2)"
             echo "  --dry-run         Print each issue's triage class (implement, spec, human) and reason; launch nothing"
             echo ""
-            echo "Run from a checkout of owner/repo. Each issue runs in its own worktree on loki/backlog-N."
-            echo "Triage: only implement issues run; spec issues get .loki/specs/<slug>.md and the command to run it;"
+            echo "Run from a checkout of owner/repo (for Jira or Linear, the checkout the work lands in)."
+            echo "Each issue runs in its own worktree on loki/backlog-N. Jira and Linear use the credentials in docs/trackers.md."
+            echo "Triage: implement issues run, and a large one is split into slices that each run on their own;"
+            echo "vague or ambiguous (spec) issues get .loki/specs/<slug>.md and the command to run it;"
             echo "human issues are listed with the reason. Label loki:implement|loki:spec|loki:human forces a class;"
             echo "LOKI_TRIAGE=0 runs every issue untriaged."
             echo "Config: loki.yaml (repo root, then ~/.loki/loki.yaml); see docs/loki.yaml.example."
@@ -15239,7 +15073,7 @@ cmd_setup_skill() {
             echo "Usage: loki setup-skill [options]"
             echo ""
             echo "Installs the Loki Mode skill into each detected provider CLI's"
-            echo "skills directory: ~/.claude/skills/, ~/.codex/skills/, etc."
+            echo "skills directory: ~/.claude/skills/."
             echo ""
             echo "Options:"
             echo "  --claude-code  Merge the Loki plugin into Claude Code settings (see --claude-code --help)"
@@ -15259,9 +15093,6 @@ cmd_setup_skill() {
 
     local skill_targets=(
         "$HOME/.claude/skills/loki-mode:Claude Code"
-        "$HOME/.codex/skills/loki-mode:Codex CLI"
-        "$HOME/.cline/skills/loki-mode:Cline CLI"
-        "$HOME/.aider/skills/loki-mode:Aider CLI"
     )
 
     local created=0
@@ -15696,11 +15527,7 @@ _loki_airgap_audit() {
             model_host="${ANTHROPIC_BASE_URL:-https://api.anthropic.com}"
             model_note="Claude Code inference. An in-network gateway (ANTHROPIC_BASE_URL) keeps it inside your network but is still counted as required egress here; only a local-weights provider clears it."
             ;;
-        codex)
-            model_host="${OPENAI_BASE_URL:-https://api.openai.com}"
-            model_note="Codex inference. An in-network gateway (OPENAI_BASE_URL) is still counted as required egress here; only a local-weights provider clears it."
-            ;;
-        opencode|cline|aider)
+        opencode)
             model_host="${OPENAI_BASE_URL:-${OPENROUTER_API_KEY:+https://openrouter.ai}}"
             # Local ONLY on positive evidence: a model id naming a local runtime.
             # An unset endpoint is not that evidence -- the opencode catalog
@@ -15708,12 +15535,7 @@ _loki_airgap_audit() {
             # Judge only the ACTIVE provider's model variable (the one
             # providers/<provider>.sh reads): another provider's local model
             # says nothing about where this provider sends inference.
-            local model_var model_id
-            case "$provider" in
-                opencode) model_var="LOKI_OPENCODE_MODEL" model_id="${LOKI_OPENCODE_MODEL:-}" ;;
-                cline)    model_var="LOKI_CLINE_MODEL"    model_id="${LOKI_CLINE_MODEL:-}" ;;
-                aider)    model_var="LOKI_AIDER_MODEL"    model_id="${LOKI_AIDER_MODEL:-}" ;;
-            esac
+            local model_var="LOKI_OPENCODE_MODEL" model_id="${LOKI_OPENCODE_MODEL:-}"
             # An Ollama cloud model (tag ending ":cloud" or "-cloud") runs on
             # ollama.com through the local daemon (docs.ollama.com/cloud), so
             # naming ollama is not evidence of local inference regardless of
@@ -15738,7 +15560,7 @@ _loki_airgap_audit() {
                 if [ "$ollama_host_local" = "1" ]; then
                     model_host="local weights"
                     model_required="no"
-                    model_note="Local model runtime named by $model_var=$model_id. Judged from the model id (and OLLAMA_HOST when set): the endpoint set in the opencode, cline or aider config is not read, so confirm it is on this host or inside your network."
+                    model_note="Local model runtime named by $model_var=$model_id. Judged from the model id (and OLLAMA_HOST when set): the endpoint set in the opencode config is not read, so confirm it is on this host or inside your network."
                 else
                     model_host="$OLLAMA_HOST"
                     model_note="OLLAMA_HOST points at a remote host; inference leaves it. Unset OLLAMA_HOST or point it at loopback for zero-egress inference."
@@ -15794,7 +15616,7 @@ egress = [{
     "name": "model_inference",
     "host": os.environ["_AG_HOST"],
     "required": req,
-    "disable": "use a local-weights provider (opencode, cline or aider with a local ollama/ or lmstudio/ model id)",
+    "disable": "use a local-weights provider (opencode with a local ollama/ or lmstudio/ model id)",
     "note": os.environ["_AG_NOTE"],
 }, {
     "name": "telemetry",
@@ -17077,7 +16899,7 @@ wow_provider_ready() {
             [ -e "${HOME}/.claude.json" ] || [ -d "${HOME}/.claude" ] || return 1
             return 0
             ;;
-        opencode|codex|cline|aider)
+        opencode)
             command -v "$p" >/dev/null 2>&1
             ;;
         *)
@@ -17178,7 +17000,7 @@ cmd_wow() {
                 echo "  --offline     Always show the offline sample"
                 echo "  --dry-run     Print the plan. No model call, no spend"
                 echo "  --keep        Keep the temp repo (default: removed after the receipt is printed)"
-                echo "  --provider P  claude (default) or opencode, codex, cline, aider"
+                echo "  --provider P  claude (default) or opencode"
                 echo "  --max-cost N  Hard per-run cap in USD, a positive number (default 2). budgets.per_run still applies"
                 echo ""
                 echo "loki tour stays the offline sample. loki tour --live is this command."
@@ -17219,8 +17041,8 @@ cmd_wow() {
 
     local use_provider="${provider:-${LOKI_PROVIDER:-claude}}"
     case "$use_provider" in
-        claude|opencode|codex|cline|aider) ;;
-        *) echo "loki wow: unknown provider '$use_provider' (use claude, opencode, codex, cline or aider)" >&2; return 2 ;;
+        claude|opencode) ;;
+        *) echo "loki wow: unknown provider '$use_provider' (use claude or opencode)" >&2; return 2 ;;
     esac
     if ! wow_provider_ready "$use_provider"; then
         if [ "$dry_run" = true ]; then
@@ -17353,7 +17175,7 @@ cmd_demo() {
         echo "  loki wow                         # Live mini-task, or the offline sample with no key"
         echo "  loki demo                        # Build todo app in temp dir"
         echo "  loki demo --dir ~/demo-project   # Build in specific directory"
-        echo "  loki demo --provider codex       # Use Codex instead of Claude"
+        echo "  loki demo --provider opencode    # Use opencode instead of Claude"
         return 0
     fi
 
@@ -18238,7 +18060,7 @@ INSTRUCTIONS:
                 echo -e "${CYAN}[AI] Analyzing $svc_name failure with ${LOKI_PROVIDER:-claude}...${NC}"
 
                 # 4. LET AI FIX: Run loki quick with the AI prompt
-                # The AI provider (claude/codex/ollama) decides what to fix
+                # The AI provider (claude/opencode) decides what to fix
                 fix_count=$((fix_count + 1))
                 echo -e "${CYAN}[FIX] Attempt $fix_count/$max_fixes${NC}"
 
@@ -18799,7 +18621,7 @@ ENDGITIGNORE
     # opencode here made `loki provider list` under-report a provider the
     # runner will happily select -- the same drift that blocked
     # opencode-only machines entirely until v8.76.0.
-    for _pcli in claude cline codex aider opencode; do
+    for _pcli in claude opencode; do
         if command -v "$_pcli" &>/dev/null; then
             _has_provider=true
             break
@@ -18810,7 +18632,7 @@ ENDGITIGNORE
         echo -e "${YELLOW}Note: No AI provider CLI detected.${NC}"
         echo "  Install at least one before running 'loki start':"
         echo "    npm install -g @anthropic-ai/claude-code   (recommended)"
-        echo "    npm install -g @openai/codex"
+        echo "    npm install -g opencode-ai                 (any model, including OpenRouter)"
         echo ""
         echo "  Then verify your setup: ${BOLD}loki doctor${NC}"
     fi
@@ -19797,23 +19619,11 @@ except Exception: pass
                             fi
                         done; } && phase_exit=0 || phase_exit=$?
                     ;;
-                codex)
-                    (cd "$codebase_path" && codex exec --sandbox workspace-write "$phase_prompt" 2>&1) || phase_exit=$?
-                    ;;
-                cline)
-                    (cd "$codebase_path" && cline -y "$phase_prompt" 2>&1) || phase_exit=$?
-                    ;;
-                aider)
-                    local aider_model="${LOKI_AIDER_MODEL:-claude-3.7-sonnet}"
-                    local aider_flags="${LOKI_AIDER_FLAGS:-}"
-                    # shellcheck disable=SC2086
-                    (cd "$codebase_path" && aider --message "$phase_prompt" --yes-always --no-auto-commits --model "$aider_model" $aider_flags 2>&1) || phase_exit=$?
-                    ;;
                 opencode)
                     (cd "$codebase_path" && source "$_LOKI_SCRIPT_DIR/../providers/opencode.sh" && provider_invoke "$phase_prompt" 2>&1) || phase_exit=$?
                     ;;
                 *)
-                    echo -e "${RED}Error: Unknown provider '${provider_name}'. Supported: claude, codex, cline, aider, opencode${NC}"
+                    echo -e "${RED}Error: Unknown provider '${provider_name}'. Supported: claude, opencode${NC}"
                     phase_exit=1
                     ;;
             esac
@@ -19974,17 +19784,8 @@ except Exception: pass
                         fi
                     done; } && doc_exit=0 || doc_exit=$?
                 ;;
-            codex)
-                (cd "$codebase_path" && codex exec --sandbox workspace-write "$doc_prompt" 2>&1) || doc_exit=$?
-                ;;
-            cline)
-                (cd "$codebase_path" && cline -y "$doc_prompt" 2>&1) || doc_exit=$?
-                ;;
-            aider)
-                local aider_model="${LOKI_AIDER_MODEL:-claude-3.7-sonnet}"
-                local aider_flags="${LOKI_AIDER_FLAGS:-}"
-                # shellcheck disable=SC2086
-                (cd "$codebase_path" && aider --message "$doc_prompt" --yes-always --no-auto-commits --model "$aider_model" $aider_flags 2>&1) || doc_exit=$?
+            opencode)
+                (cd "$codebase_path" && source "$_LOKI_SCRIPT_DIR/../providers/opencode.sh" && provider_invoke "$doc_prompt" 2>&1) || doc_exit=$?
                 ;;
         esac
 
@@ -21041,25 +20842,13 @@ except Exception: pass
                     fi
                 done && heal_exit=0 || heal_exit=$?
             ;;
-        codex)
-            (cd "$codebase_path" && codex exec --sandbox workspace-write "$heal_prompt" 2>&1) || heal_exit=$?
-            ;;
-        cline)
-            (cd "$codebase_path" && cline -y "$heal_prompt" 2>&1) || heal_exit=$?
-            ;;
-        aider)
-            local aider_model="${LOKI_AIDER_MODEL:-claude-3.7-sonnet}"
-            local aider_flags="${LOKI_AIDER_FLAGS:-}"
-            # shellcheck disable=SC2086
-            (cd "$codebase_path" && aider --message "$heal_prompt" --yes-always --no-auto-commits --model "$aider_model" $aider_flags 2>&1) || heal_exit=$?
-            ;;
         opencode)
             (cd "$codebase_path" && source "$_LOKI_SCRIPT_DIR/../providers/opencode.sh" && provider_invoke "$heal_prompt" 2>&1) || heal_exit=$?
             ;;
         # BUG-HEAL-003: Unknown provider should error, not silently succeed
         *)
             echo -e "${RED}Error: Unknown provider: $provider${NC}"
-            echo "Supported providers: claude, codex, cline, aider, opencode"
+            echo "Supported providers: claude, opencode"
             return 1
             ;;
     esac
@@ -21849,12 +21638,12 @@ PYEOF
                 mkdir -p "$loki_dir/state"
                 local current_provider
                 current_provider=$(cat "$loki_dir/state/provider" 2>/dev/null || echo "claude")
-                local chain="${LOKI_FAILOVER_CHAIN:-claude,codex,cline}"
+                local chain="${LOKI_FAILOVER_CHAIN:-claude,opencode}"
 
                 cat > "$failover_file" << FEOF
 {
   "enabled": true,
-  "chain": $(printf '%s' "$chain" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip().split(",")))' 2>/dev/null || echo '["claude","codex","cline"]'),
+  "chain": $(printf '%s' "$chain" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip().split(",")))' 2>/dev/null || echo '["claude","opencode"]'),
   "currentProvider": "$current_provider",
   "primaryProvider": "$current_provider",
   "lastFailover": null,
@@ -21897,7 +21686,7 @@ with open(failover_file, 'w') as f: json.dump(d, f, indent=2)
                 local IFS=','
                 for p in $new_chain; do
                     case "$p" in
-                        claude|codex|cline|aider|opencode) ;;
+                        claude|opencode) ;;
                         *) echo -e "${RED}Error: invalid provider '$p' in chain${NC}"; return 1 ;;
                     esac
                 done
@@ -21931,9 +21720,9 @@ with open(failover_file, 'w') as f: json.dump(d, f, indent=2)
                     source "$script_dir/../providers/loader.sh"
                 fi
 
-                local chain_providers="claude,codex,cline"
+                local chain_providers="claude,opencode"
                 if [ -f "$failover_file" ]; then
-                    chain_providers=$(_FAILOVER_FILE="$failover_file" python3 -c "import json, os; print(','.join(json.load(open(os.environ['_FAILOVER_FILE'])).get('chain', ['claude','codex','cline'])))" 2>/dev/null || echo "claude,codex,cline")
+                    chain_providers=$(_FAILOVER_FILE="$failover_file" python3 -c "import json, os; print(','.join(json.load(open(os.environ['_FAILOVER_FILE'])).get('chain', ['claude','opencode'])))" 2>/dev/null || echo "claude,opencode")
                 fi
 
                 local IFS=','
@@ -21958,8 +21747,7 @@ with open(failover_file, 'w') as f: json.dump(d, f, indent=2)
                     local has_key=false
                     case "$p" in
                         claude) [ -n "${ANTHROPIC_API_KEY:-}" ] && has_key=true ;;
-                        codex) [ -n "${OPENAI_API_KEY:-}" ] && has_key=true ;;
-                        cline|aider) has_key=true ;;  # Key check varies
+                        opencode) has_key=true ;;  # opencode auth login or a provider key (e.g. OPENROUTER_API_KEY)
                     esac
 
                     if [ "$has_key" = "true" ]; then
@@ -21999,7 +21787,7 @@ with open(failover_file, 'w') as f: json.dump(d, f, indent=2)
                 echo "  (no args)        Show failover status and health"
                 echo "  --enable         Enable auto-failover"
                 echo "  --disable        Disable auto-failover"
-                echo "  --chain X,Y,Z    Set failover chain (e.g., claude,codex,cline)"
+                echo "  --chain X,Y,Z    Set failover chain (e.g., claude,opencode)"
                 echo "  --test           Test all providers in chain"
                 echo "  --reset          Reset failover state to defaults"
                 echo "  --help, -h       Show this help"
@@ -22734,7 +22522,7 @@ if integration_count > 3 or complexity in ('complex', 'enterprise'):
     recommended_provider = 'Claude'
     provider_reason = 'Full feature support needed (subagents, parallel, MCP)'
 elif complexity == 'simple' and endpoint_count == 0:
-    recommended_provider = 'Any (Claude/Codex/Cline)'
+    recommended_provider = 'Any (Claude or opencode)'
     provider_reason = 'Simple project works with all providers'
 else:
     recommended_provider = 'Claude'
@@ -23077,10 +22865,7 @@ try_print_provider_setup() {
     for p in $known; do
         case "$p" in
             claude) hint="claude auth login   (or set ANTHROPIC_API_KEY)" ;;
-            codex) hint="codex login   (or set OPENAI_API_KEY)" ;;
-            opencode) hint="opencode auth login" ;;
-            aider) hint="install aider and set OPENAI_API_KEY or ANTHROPIC_API_KEY" ;;
-            cline) hint="install the cline CLI and configure its API key" ;;
+            opencode) hint="opencode auth login   (or export OPENROUTER_API_KEY)" ;;
             *) hint="install the $p CLI (no login command is mapped for it)" ;;
         esac
         echo "  $p: $hint"
@@ -23144,7 +22929,7 @@ cmd_try() {
                 echo ""
                 echo "Options:"
                 echo "  --dry-run     Clone, then print the clone path, the task and an estimate. No model call, no spend"
-                echo "  --provider P  claude (default) or opencode, codex, cline, aider"
+                echo "  --provider P  claude (default) or opencode"
                 echo "  --max-cost N  Hard per-run cap in USD, a positive number (default 2)"
                 echo "  --help, -h    Show this help"
                 echo ""
@@ -23200,8 +22985,8 @@ cmd_try() {
     fi
     local use_provider="${provider:-${LOKI_PROVIDER:-claude}}"
     case "$use_provider" in
-        claude|opencode|codex|cline|aider) ;;
-        *) echo "loki try: unknown provider '$use_provider' (use claude, opencode, codex, cline or aider)" >&2; return 2 ;;
+        claude|opencode) ;;
+        *) echo "loki try: unknown provider '$use_provider' (use claude or opencode)" >&2; return 2 ;;
     esac
     if [ "$dry_run" != true ] && ! wow_provider_ready "$use_provider"; then
         try_print_provider_setup "$use_provider" >&2
@@ -23459,12 +23244,15 @@ main() {
         export LOKI_TTY_INTERACTIVE=1
     fi
 
-    # v7.5.18: early guard -- LOKI_PROVIDER=gemini is no longer supported.
-    if [ "${LOKI_PROVIDER:-}" = "gemini" ]; then
-        echo -e "${RED}Error: Provider 'gemini' is deprecated as of v7.5.18 and has been removed.${NC}" >&2
-        echo "Active providers: claude, codex, cline, aider, opencode" >&2
-        echo "Unset LOKI_PROVIDER or use: LOKI_PROVIDER=claude" >&2
-        exit 1
+    # A removed provider (REMOVED_PROVIDERS, providers/loader.sh) exits 2 with the one
+    # migration line. providers/loader.sh (variables and functions only) owns the
+    # list and the text; sourcing it here also defines the helpers for
+    # `loki provider set` and `loki config set provider`.
+    # shellcheck source=/dev/null
+    . "$_LOKI_SCRIPT_DIR/../providers/loader.sh"
+    if loki_is_removed_provider "${LOKI_PROVIDER:-}"; then
+        loki_removed_provider_message "${LOKI_PROVIDER:-}" >&2
+        exit 2
     fi
 
     if [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = "--no-open" ]; }; then
@@ -24335,7 +24123,7 @@ _run_ultracode() {
         fi
     fi
 
-    # 1. Provider gate: workflows are Claude-only. On Codex/Cline/Aider, print the
+    # 1. Provider gate: workflows are Claude-only. On opencode, print the
     #    honest message and exit CLEANLY (0) with ZERO invocation. Never break the
     #    other providers.
     local _provider="${LOKI_PROVIDER:-claude}"
@@ -32891,21 +32679,8 @@ USER TASK: ${prompt}"
                     _loki_perm_argv_for "$PWD" >/dev/null 2>&1 || true
                     SHELL="$_LOKI_CLAUDE_SHELL" claude -p "$full_prompt" 2>&1 || agent_exit=$?
                     ;;
-                codex)
-                    codex exec --sandbox workspace-write "$full_prompt" 2>&1 || agent_exit=$?
-                    ;;
-                cline)
-                    cline -y "$full_prompt" 2>&1 || agent_exit=$?
-                    ;;
-                aider)
-                    aider --message "$full_prompt" --yes-always --no-auto-commits < /dev/null 2>&1 || agent_exit=$?
-                    ;;
                 opencode)
-                    # Mirrors the working arm in the phase dispatcher (see the
-                    # opencode case alongside aider there). opencode was listed
-                    # as an active provider and accepted by `loki provider set`,
-                    # but this case had no arm, so `loki agent run` printed the
-                    # persona banner and then died with "Unknown provider".
+                    # Mirrors the opencode arm in the phase dispatcher.
                     (source "$_LOKI_SCRIPT_DIR/../providers/opencode.sh" && provider_invoke "$full_prompt" 2>&1) || agent_exit=$?
                     ;;
                 *)
@@ -33031,9 +32806,6 @@ $diff"
 
             case "$provider" in
                 claude)  _loki_perm_argv_for "$PWD" >/dev/null 2>&1 || true; SHELL="$_LOKI_CLAUDE_SHELL" claude -p "$review_prompt" 2>&1 ;;
-                codex)   codex exec --sandbox workspace-write "$review_prompt" 2>&1 ;;
-                cline)   cline -y "$review_prompt" 2>&1 ;;
-                aider)   aider --message "$review_prompt" --yes-always --no-auto-commits < /dev/null 2>&1 ;;
                 opencode) (source "$_LOKI_SCRIPT_DIR/../providers/opencode.sh" && provider_invoke "$review_prompt" 2>&1) ;;
                 *)       echo -e "${RED}Unknown provider: $provider${NC}"; return 1 ;;
             esac
@@ -34809,15 +34581,6 @@ try:
 except Exception:
     pass' 2>/dev/null)
             fi
-            ;;
-        codex)
-            result=$($t_prefix codex exec --sandbox workspace-write "$prompt" 2>/dev/null) || exit_code=$?
-            ;;
-        cline)
-            result=$($t_prefix cline -y "$prompt" 2>/dev/null) || exit_code=$?
-            ;;
-        aider)
-            result=$($t_prefix aider --message "$prompt" --yes-always --no-auto-commits < /dev/null 2>/dev/null) || exit_code=$?
             ;;
         *)
             log_error "Unknown provider: $provider"
@@ -36886,7 +36649,6 @@ except Exception:
     #
     # Concretely, this is what reported 2 CRITICAL findings on the v8 PR:
     #   sk-ant-xxx                 (loki-ts/test/runner/oauth_dev.test.ts)
-    #   sk-ant-test-not-called     (loki-ts/tests/runner/quality_gates.test.ts)
     # Both exist to prove the SDK path fails closed without a real key. Flagging
     # them trains people to ignore CRITICAL, which is how a real one gets missed.
     local _ci_secret_deny='(test|example|sample|fixture|dummy|fake|placeholder|redacted|changeme|your[-_]|xxx+|not[-_]called|\$\{|\$[A-Za-z_]|process\.env|os\.(environ|getenv)|<[^>]*>)'
@@ -39821,7 +39583,7 @@ print(json.dumps(json.load(open(os.environ['LOKI_PROOF_JSON'])), indent=2))
             #
             # The second positional accepts either a local proof id or an
             # explicit receipt path. That lets a Loki run use its short id while
-            # Codex, Claude Code, Cursor, Factory, or any other executor can hand
+            # Claude Code, opencode, Cursor, or any other executor can hand
             # over a provider-neutral proof.json without copying it into .loki.
             local contract="${1:-}"
             local receipt_ref="${2:-}"

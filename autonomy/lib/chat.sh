@@ -58,7 +58,7 @@ Loki chat commands:
   /verify [path] [--max-age 7d]  loki verify (a receipt path, group receipt, or age limit)
   /receipt           loki receipt
   /model <id>        set model for this session
-  /provider <name>   switch provider (claude, codex, cline, aider, opencode)
+  /provider <name>   switch provider (claude, opencode)
   /cost              loki cost
   /merge <args>      loki merge (pr <pr>, watch <pr> to repair red CI, run, list)
   /diff              git diff --stat plus diff
@@ -346,10 +346,7 @@ _chat_send() {
         source "${_LOKI_SCRIPT_DIR:-.}/../providers/loader.sh" 2>/dev/null || exit 1
         load_provider "$_CHAT_PROVIDER" >/dev/null 2>&1 || { _chat_load_fail "$_CHAT_PROVIDER"; exit 1; }
         case "$_CHAT_PROVIDER" in
-            codex) codex exec --sandbox read-only --skip-git-repo-check "$prompt" < /dev/null ;;
             opencode) opencode run --agent plan --model "$PROVIDER_MODEL_DEVELOPMENT" "$prompt" < /dev/null ;;
-            aider) aider --message "$prompt" --yes-always --no-auto-commits --dry-run --model "$AIDER_DEFAULT_MODEL" < /dev/null 2>&1 ;;
-            cline) cline --plan "$prompt" < /dev/null ;;
             *) provider_invoke "$prompt" ;;
         esac
     ) || rc=$?
@@ -554,8 +551,8 @@ Question: $line" || true
                 if [ -n "$rest" ]; then _CHAT_MODEL="$rest"; echo "model: $rest"; else echo "model: ${_CHAT_MODEL:-default}"; fi ;;
             /provider)
                 case "$rest" in
-                    claude|codex|cline|aider|opencode) _CHAT_PROVIDER="$rest"; _CHAT_STARTED=0; echo "provider: $rest" ;;
-                    *) echo "usage: /provider claude|codex|cline|aider|opencode (now: $_CHAT_PROVIDER)" ;;
+                    claude|opencode) _CHAT_PROVIDER="$rest"; _CHAT_STARTED=0; echo "provider: $rest" ;;
+                    *) echo "usage: /provider claude|opencode (now: $_CHAT_PROVIDER)" ;;
                 esac ;;
             *)
                 local _sg; _sg="$(_chat_suggest "$cmd")"

@@ -65,26 +65,20 @@ npm install -g @anthropic-ai/claude-code
 claude auth login
 ```
 
-### OpenAI Codex CLI
+### opencode (any model, including OpenRouter)
 
-Codex runs in degraded mode (sequential execution only).
-
-```bash
-# Install Codex CLI
-npm install -g @openai/codex-cli
-
-# Authenticate
-codex login
-```
-
-### Cline CLI
-
-Cline runs in degraded mode (sequential execution only).
+opencode runs sequentially and reaches 75+ model providers.
 
 ```bash
-# Install Cline CLI
-npm install -g cline
+# Install opencode
+npm install -g opencode-ai
+
+# OpenRouter: export the key (or run `opencode auth login` and pick OpenRouter)
+export OPENROUTER_API_KEY=sk-or-...
+loki start ./prd.md --provider opencode --model openrouter/deepseek/deepseek-v3.2
 ```
+
+codex, cline, aider and gemini are no longer supported; selecting one exits 2 with a line naming claude and opencode.
 
 ---
 

@@ -1,17 +1,9 @@
-// v8 Phase 4 Story 5 + RUN-25 iter 2: `loki start` on the Bun route. Parses the
-// reconciled flag surface into RunnerOpts / env and calls runAutonomous. Reached
-// from bin/loki ONLY when LOKI_SDK_LOOP is truthy (Story 6); until then the
-// default route still runs the bash cmd_start.
-//
-// T3(c) reconciliation (loop default-flip pre-flight): the bash cmd_start accepts
-// ~44 flags. This route now handles every RUNNER flag (value-flags -> RunnerOpts,
-// env-mapping flags -> process.env the lazily-imported runner reads, no-ops
-// accepted) and REJECTS only genuinely-unsupported flags. Pre-loop orchestration
-// flags (--parallel, --github, --sandbox, issue-mode, ...) are diverted BACK to
-// the bash route by bin/loki BEFORE this code runs, so they are never seen here
-// and never rejected -- the user gets full behavior. Deliberate drops
-// (--compliance, mirofish) are rejected loudly and documented. See
-// artifacts/ITER1-FLAG-RECONCILE.md.
+// `loki start` on the Bun route. Parses the start flag surface and runs the Loki 10 engine:
+// one engine10 run, N attempts (--attempts), a spec run (--spec / --spec-first) or a preview
+// (--dry-run). bin/loki sends a start here only for --attempts 2..5, --spec, --dry-run, and the
+// calls autonomy/route.sh leaves to this command (--help, the --workspace/--deploy front end);
+// every other start is routed straight to engine10 by route.sh. --workspace and --deploy are
+// handed to the bash front end (autonomy/loki) unchanged.
 
 import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { accessSync, constants as fsConstants, existsSync as pathExists, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -26,7 +18,7 @@ import { GENERIC_TIERS, VALID_TIERS } from "../util/claude_model.ts";
 import { applyCostProfile, COST_PROFILES } from "../util/cost_profile.ts";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 import { suggestWord } from "../cli/registry.ts";
-import { VALID_PROVIDERS } from "../runner/router/cost_preview.ts";
+import { VALID_PROVIDERS, unsupportedProviderMessage } from "../runner/types.ts";
 
 function argVal(args: readonly string[], flag: string): string | undefined {
   // First occurrence wins; both "--flag value" and "--flag=value" forms (TEN-COST-35).
@@ -52,16 +44,12 @@ const VALUE_FLAGS = new Set([
   "--max-wait",
   "--prd", // explicit spec path (overrides positional)
   "--brief", // one-liner spec text
-  // provider-specific env-mapping value flags (only affect that provider)
-  "--aider-model",
-  "--aider-flags",
-  "--cline-model",
   "--cost", // TEN-COST-01: cost profile (lean|off); also LOKI_COST_PROFILE
 ]);
 
 // TEN-STABILITY-33: free-text value flags. A missing, empty or dash-leading value is an error (use --flag=-x for a dash-leading value).
 // TEN-UX-48: --provider, --session-model, --cost and --spec take a required value too.
-const TEXT_VALUE_FLAGS = new Set(["--prd", "--brief", "--completion-promise", "--aider-model", "--aider-flags", "--cline-model", "--provider", "--session-model", "--cost", "--spec"]);
+const TEXT_VALUE_FLAGS = new Set(["--prd", "--brief", "--completion-promise", "--provider", "--session-model", "--cost", "--spec"]);
 
 // RUNNER boolean env-mapping flags: no value token; set an env var the runner
 // already reads (or, for --skip-memory, now reads -- see build_prompt/runner).
@@ -150,7 +138,7 @@ export interface ParsedStartOpts {
 
 export const START_USAGE =
   "usage: loki start <spec> [--max-iterations N] [--max-retries N] [--budget-limit USD]\n" +
-  "                        [--provider claude|codex|cline|aider|opencode] [--session-model small|medium|high|opus|sonnet|haiku]\n" +
+  "                        [--provider claude|opencode] [--session-model small|medium|high|opus|sonnet|haiku]\n" +
   "                        [--completion-promise TEXT] [--base-wait S] [--max-wait S]\n" +
   "                        [--prd FILE | --brief TEXT] [--simple|--complex] [--allow-haiku]\n" +
   "                        [--regen-prd] [--skip-memory] [--cost lean|off] [--haiku]\n" +
@@ -294,17 +282,9 @@ export function parseStartArgs(
     return 2;
   }
 
-  // Apply provider-specific env-mapping VALUE flags (runner reads them per provider).
-  const aiderModel = argVal(args, "--aider-model");
-  if (aiderModel) applyEnv("LOKI_AIDER_MODEL", aiderModel);
-  const aiderFlags = argVal(args, "--aider-flags");
-  if (aiderFlags) applyEnv("LOKI_AIDER_FLAGS", aiderFlags);
-  const clineModel = argVal(args, "--cline-model");
-  if (clineModel) applyEnv("LOKI_CLINE_MODEL", clineModel);
-
   const providerRaw = argVal(args, "--provider");
   if (providerRaw && !VALID_PROVIDERS.has(providerRaw)) {
-    err(`start: unknown --provider '${providerRaw}' (use one of: ${[...VALID_PROVIDERS].join(", ")})\n`);
+    err(unsupportedProviderMessage("start", "--provider", providerRaw));
     return 2;
   }
   // Generic capability vocabulary (small|medium|high) is translated onto the
@@ -516,10 +496,9 @@ export function runInternalSpecText(args: readonly string[], cwd: string = proce
   return 0;
 }
 
-/** Which engine a parsed start runs: the 11.3.0 runner, unless --attempts was given (FC-38 scoped). */
-export function startEngine(o: ParsedStartOpts): "runner" | "attempts" | "spec" {
-  if (o.specPath !== undefined || o.specFirst) return "spec";
-  return o.attempts === undefined ? "runner" : "attempts";
+/** Which engine10 path a parsed start takes: a spec run, else N attempts (N=1, the default, is one plain engine10 run). */
+export function startEngine(o: ParsedStartOpts): "attempts" | "spec" {
+  return o.specPath !== undefined || o.specFirst ? "spec" : "attempts";
 }
 
 /** A jira:/linear: ref exports LOKI_WRITEBACK_ISSUE and LOKI_WRITEBACK_KIND so tracker writeback keys off the intake ref (returns a copy when set). */
@@ -527,6 +506,9 @@ export function writebackEnv(task: string, env: NodeJS.ProcessEnv): NodeJS.Proce
   const m = /^(jira|linear):([A-Za-z][A-Za-z0-9_]*-\d+)$/.exec(task.trim());
   return m ? { ...env, LOKI_WRITEBACK_ISSUE: m[2]!.toUpperCase(), LOKI_WRITEBACK_KIND: m[1]! } : env;
 }
+
+/** The largest PRD engine10 takes (mirrors _ROUTE_PRD_MAX in autonomy/route.sh): it carries the task in single strings, capped at 128 KiB on Linux. */
+export const PRD_MAX = 100000;
 
 /** The engine10 argv for one start (pure; the cap flag reaches the plan route too). */
 export function engineArgv(o: ParsedStartOpts, task: string, forceNoPr: boolean): string[] {
@@ -616,7 +598,7 @@ export function deployFlagError(args: readonly string[]): string | null {
 }
 
 const START_ENV_NAMES = new Set(["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "TMPDIR", "LANG", "TZ", "CI", "NO_COLOR", "SSH_AUTH_SOCK", "LOKI_RUN_TMP"]);
-const START_ENV_PREFIXES = ["LOKI_", "LC_", "XDG_", "NODE_", "BUN_", "ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_", "GEMINI_", "GOOGLE_", "OPENROUTER_", "OLLAMA_", "AWS_", "AZURE_", "GH_", "GITHUB_"];
+const START_ENV_PREFIXES = ["LOKI_", "LC_", "XDG_", "NODE_", "BUN_", "ANTHROPIC_", "CLAUDE_", "OPENAI_", "GEMINI_", "GOOGLE_", "OPENROUTER_", "OLLAMA_", "AWS_", "AZURE_", "GH_", "GITHUB_"];
 /** Scoped child env for the bash divert: an explicit allowlist (plan section 3), never the whole env plus unrelated secrets. */
 export function scopedStartEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
@@ -626,18 +608,10 @@ export function scopedStartEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out;
 }
 
-/** TEN-COST-41: the one-line effective run cap and its source; null when the runner's own `[runner] cap` note already names it (env, loki.yaml, default). */
-export async function capSourceLine(budgetLimit: number | undefined, repoDir: string, env: NodeJS.ProcessEnv): Promise<string | null> {
-  const { resolveCap, capNote } = await import("../e10ext/budget_cap.ts");
-  const c = resolveCap(budgetLimit !== undefined ? String(budgetLimit) : null, repoDir, env);
-  if ("error" in c) return null;
-  return budgetLimit !== undefined || c.source === "subscription" ? capNote(c.usd, c.source).replace("(--max-cost)", "(--budget-limit)") : null; // the start flag is --budget-limit, not engine10's --max-cost
-}
-
 /** TEN-UX-45: what `loki start --dry-run` prints; runs the real preflight (read-only: an uninitialised folder is reported, never git-initialised) and spends nothing. Returns the exit code. */
 export async function dryRunStart(o: ParsedStartOpts, repoDir: string, env: NodeJS.ProcessEnv, out: (s: string) => void = (s) => process.stdout.write(s), err: (s: string) => void = (s) => process.stderr.write(s)): Promise<number> {
   const provider = o.provider ?? (env["LOKI_PROVIDER"] || "claude");
-  if (!VALID_PROVIDERS.has(provider)) { err(`start: unknown LOKI_PROVIDER '${provider}' (use one of: ${[...VALID_PROVIDERS].join(", ")})\n`); return 2; }
+  if (!VALID_PROVIDERS.has(provider)) { err(unsupportedProviderMessage("start", "LOKI_PROVIDER", provider)); return 2; }
   const { resolveCap, capNote } = await import("../e10ext/budget_cap.ts");
   const cap = resolveCap(o.budgetLimit !== undefined ? String(o.budgetLimit) : null, repoDir, env);
   if ("error" in cap) { err(`start: ${cap.error}\n`); return 2; }
@@ -764,16 +738,19 @@ export async function runStart(args: readonly string[]): Promise<number> {
     if (t && "error" in t) { process.stderr.write(t.error); return 2; }
     if (t) parsed[k] = t.path;
   }
+  { // PRD_MAX: this command runs only engine10 (attempts, --spec, or the --dry-run preview of one), which cannot carry a bigger PRD.
+    const p = parsed.prdPath, sz = p !== "" && pathExists(p) && statSync(p).isFile() ? statSync(p).size : 0;
+    if (sz > PRD_MAX) {
+      const how = parsed.attempts !== undefined || parsed.specPath !== undefined || parsed.specFirst
+        ? "trim it below 100 KB, or run it without --attempts or --spec (the legacy engine takes it)"
+        : "a run without --dry-run takes it on the legacy engine (refused under LOKI_SDK_MODE=full with claude), or trim it below 100 KB";
+      process.stderr.write(`start: this PRD is ${sz} bytes, over the ${PRD_MAX}-byte limit of the Loki 10 engine; ${how}\n`);
+      return 2;
+    }
+  }
   if (parsed.dryRun) return dryRunStart(parsed, process.cwd(), process.env);
   { const rec = await offerInterruptedRun(parsed, process.cwd()); if (rec !== null) return rec; }
-  if (startEngine(parsed) === "runner") {
-    const capLine = await capSourceLine(parsed.budgetLimit, process.cwd(), process.env);
-    if (capLine) process.stdout.write(`[runner] ${capLine}\n`);
-    if (startRecoveryHooks.afterOffer) return startRecoveryHooks.afterOffer(); // test seam: stop before any runner or engine dispatch
-    const { runAutonomous } = await import("../runner/autonomous.ts");
-    return runAutonomous(parsed);
-  }
-  if (startRecoveryHooks.afterOffer) return startRecoveryHooks.afterOffer();
+  if (startRecoveryHooks.afterOffer) return startRecoveryHooks.afterOffer(); // test seam: stop before any engine dispatch
   if (startEngine(parsed) === "spec") return runEngine10(process.cwd(), parsed, process.env, false);
   const { attempts, ...runnerOpts } = parsed;
   const { runAttempts, productionDeps } = await import("../runner/attempts.ts");
