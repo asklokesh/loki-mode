@@ -17,7 +17,8 @@
 #   conflict: Haiku answers a spec conflict on implement: one redo on sonnet (routeEscalate) delivers it; the conflict text's
 #             secret never reaches events.jsonl or receipt.json; the fix round that follows a wrong sonnet redo is not on haiku.
 #   hard:     a repo with 12 more source files and a one-file task: no plan session, also with the repo map truncated
-#             (LOKI_E10_REPOMAP_MAX_FILES=3); index.ts named in a repo with 6 index.ts: no plan; a task naming 6 files: the plan session
+#             (LOKI_E10_REPOMAP_MAX_FILES=3); index.ts named in a repo with 6 index.ts: no plan; three spelled-out
+#             paths in a two-package monorepo: no plan; a task naming 6 files: the plan session
 #             runs on opus, with no advisor, and the preset plan instruction.
 #   already:  Haiku claims already-done with no diff: one sonnet redo (trigger already_done_claim).
 #   notice:   LOKI_IMPLEMENT_HAIKU_FIRST=1 prints the deprecation note once and maps to LOKI_ROUTER=auto; --haiku with
@@ -42,6 +43,8 @@
 #  14. start.ts: drop the kept-LOKI_ROUTER line for --haiku (unit: tsnote).
 #  15. sizing.ts hardReason: a truncated repo map counts as hard (unit: trunc; hard leg: truncated map plans).
 #  16. sizing.ts namedDistinct: count matched repo paths, not names as written (unit: mono1; hard leg: monorepo index.ts plans).
+#  17. sizing.ts namedDistinct: add every matched basename even when a spelled-out path has it (unit: spelled3; hard leg:
+#      three spelled-out paths in a two-package monorepo plan).
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
 need git
@@ -72,6 +75,8 @@ const rr = routeRecord("claude (provider default)", undefined); out.push(`record
 const named = (n) => "change " + Array.from({ length: n }, (_, i) => `f${i}.ts`).join(", ") + " and a.test.ts";
 out.push(`hard:bigrepo=${hardReason("normal", files(50), "fix the add function")}`, `hard:names4=${hardReason("normal", files(12), named(4))}`, `hard:names5=${hardReason("normal", files(12), named(5)) !== null}`, `hard:large=${hardReason("large", files(1), "x")}`, `hard:trunc=${hardReason("small", { ...files(1), truncated: true }, "fix the add function")}`);
 const mono = { files: Array.from({ length: 6 }, (_, i) => `pkg${i}/index.ts`), entries: [], truncated: false };
+const pk = { files: ["web", "api"].flatMap((p) => ["index", "utils", "types"].map((n) => `packages/${p}/src/${n}.ts`)), entries: [], truncated: false };
+out.push(`hard:spelled3=${hardReason("normal", pk, "Fix the date bug in packages/web/src/index.ts, packages/web/src/utils.ts and packages/web/src/types.ts")}`, `hard:suffix=${hardReason("normal", { files: ["src/index.ts", "packages/a/src/index.ts", "a/x.ts", "b/x.ts", "c/x.ts", "d/x.ts"], entries: [], truncated: false }, "Fix src/index.ts")}`);
 out.push(`hard:mono1=${hardReason("normal", mono, "fix the export in index.ts")}`, `hard:mono5=${hardReason("normal", mono, "fix pkg0/index.ts, pkg1/index.ts, pkg2/index.ts, pkg3/index.ts and pkg4/index.ts") !== null}`);
 const lint = [{ signature: "lint:eslint" }];
 const f = routedFix("claude (provider default)", { implement: { route_model: "claude-sonnet-5-5" }, fix: { model: "claude-haiku-5-5" } }, { repeated: false, stall: false, groups: lint, reason: "lint" });
@@ -92,7 +97,7 @@ parseStartArgs(["--haiku", "--cost", "lean", "task"], (x) => errs.push(x), () =>
 out.push(`tsnote=${errs.filter((e) => e.includes("is already set and wins")).length}:${pe.LOKI_ROUTER ?? "unset"}`);
 console.log(out.join(" "));
 ' 2>&1)"
-want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=null hard:mono1=null hard:mono5=true nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 kept=true:: tsnote=1:unset"
+want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=null hard:spelled3=null hard:suffix=null hard:mono1=null hard:mono5=true nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 kept=true:: tsnote=1:unset"
 [ "$U" = "$want" ] && ok "unit: preset executor and record, hardReason on task evidence only, never descend, redacted climb evidence, scoped advisor keeps the executor, --model and LOKI_MODEL_DEVELOPMENT pin, no opus advisor on an opus executor, an already-done claim climbs, the kept-router note" || bad "unit gave: $U"
 
 # --- e2e on the stub provider ---------------------------------------------------------------------------------------
@@ -102,6 +107,7 @@ run_engine() {
     d="$(mktemp -d "$T/run.XXXXXX")"
     REPO="$d/repo"; ROUTES="$d/routes.log"; : > "$ROUTES"
     cp -R "$FIX/repo" "$REPO"
+    [ -n "${PKG_REPO:-}" ] && for p in web api; do mkdir -p "$REPO/packages/$p/src"; for n in index utils types; do printf 'export const %s = 1;\n' "$n" > "$REPO/packages/$p/src/$n.ts"; done; done
     [ -n "${MONO_REPO:-}" ] && for i in 1 2 3 4 5 6; do mkdir -p "$REPO/pkg$i"; printf 'export const v = %s;\n' "$i" > "$REPO/pkg$i/index.ts"; done
     [ -n "${HARD_REPO:-}" ] && { mkdir -p "$REPO/lib"; for i in $(seq 1 12); do printf 'export const v%s = %s;\n' "$i" "$i" > "$REPO/lib/m$i.ts"; done; }
     git -C "$REPO" init -q -b main
@@ -157,6 +163,8 @@ HARD_REPO=1 run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_REPOMAP_MAX_FILES=3
 [ -z "$(model_of plan)" ] && ok "hard: a truncated repo map alone gets no plan session (truncation is repo size)" || { bad "hard: plan on '$(model_of plan)' with a truncated map and a one-file task"; dump; }
 MONO_REPO=1 run_engine "add a multiply(a, b) function to calc.ts and export it from index.ts" E2E_STUB_MODE=done
 [ -z "$(model_of plan)" ] && ok "hard: a basename six repo files share counts once (no plan session)" || { bad "hard: plan on '$(model_of plan)' for a task naming index.ts in a monorepo"; dump; }
+PKG_REPO=1 run_engine "Fix the date bug in packages/web/src/index.ts, packages/web/src/utils.ts and packages/web/src/types.ts" E2E_STUB_MODE=done
+[ -z "$(model_of plan)" ] && ok "hard: three spelled-out paths in a two-package monorepo count three (no plan session)" || { bad "hard: plan on '$(model_of plan)' for a three-file task in a two-package monorepo"; dump; }
 HARD_REPO=1 run_engine "add a multiply(a, b) function to calc.ts and re-export it from m1.ts, m2.ts, m3.ts, m4.ts and m5.ts" E2E_STUB_MODE=done
 [ "$(model_of plan)" = "opus" ] && ok "hard: opus planned a task naming 6 files" || { bad "hard: plan on '$(model_of plan)'"; dump; }
 [ "$(adv_of plan)" = "none" ] && ok "hard: the opus plan carried no opus advisor" || bad "hard: plan advisor '$(adv_of plan)'"

@@ -34,10 +34,14 @@ export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | nul
 
 /** A task that names more distinct non-test files than this is hard (between the "normal" bar of 2 and the "large" bar of LARGE_NAMED_FILES). */
 export const HARD_NAMED_FILES = 4;
-/** Distinct non-test files the task names, as written: a path the task spells out counts once per path, a bare basename counts once however many repo files share it ("fix index.ts" in a monorepo is 1). */
+/** Distinct non-test files the task names, as written: each path the task spells out (as a whole token, so "src/index.ts" inside
+ *  "packages/web/src/index.ts" is not a second one) counts once; a bare basename counts once however many repo files share it, and not
+ *  at all when a spelled-out path already has that basename ("fix index.ts" in a monorepo is 1; three spelled-out paths are 3). A root file has no path to spell out, so its name is a bare basename. */
 export function namedDistinct(task: string, map: RepoMap | null): number {
-  const text = task.toLowerCase();
-  return new Set(namedFiles(task, map).filter((f) => !isTestFile(f)).map((f) => (text.includes(f.toLowerCase()) ? f.toLowerCase() : basename(f).toLowerCase()))).size;
+  const text = task.toLowerCase(), named = namedFiles(task, map).filter((f) => !isTestFile(f)).map((f) => f.toLowerCase());
+  const spelled = new Set(named.filter((f) => f.includes("/") && new RegExp(`(?<![\\w./-])${escRe(f)}(?![\\w-]|\\.\\w)`).test(text)));
+  const spelledBase = new Set([...spelled].map((f) => basename(f)));
+  return spelled.size + new Set(named.map((f) => basename(f)).filter((b) => !spelledBase.has(b))).size;
 }
 /** Why a task is hard, from task evidence only, never repo size (a truncated repo map is repo size, so it never counts): sized large (deliverables() or more than LARGE_NAMED_FILES named files), or the task naming more than HARD_NAMED_FILES distinct non-test files. Null otherwise. */
 export function hardReason(size: TaskSize, map: RepoMap | null, task: string): string | null {
