@@ -6,14 +6,14 @@ import { withStagePrefix } from "../../features/lean_prefix.ts"; import { outOfR
 import { learningsBlock, lessonsForBrief } from "../../util/pr_lessons.ts"; export { learningsBlock }; // learningsBlock lives with the other brief-note helpers
 import { FINISH_LINE, FIXED_RULES, briefRecord, type BriefRecord } from "../../e10ext/context.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
-import { cascadeDowngrade, haikuFirstDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
+import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
 import { attemptsGate, runAttemptsOnCtx } from "../../features/attempts.ts"; // S41-13, default off
 import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
 import { classifyExitCause } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
 import { adjudicateWallConflict, resumeAfterConflict, resumeAfterEmptyDone } from "../../util/conflict_resume.ts";
 import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
-import { routerActive } from "../../runner/router/unit_model.ts"; import { autoConflictClimb, recordAutoImplement } from "../../runner/router/auto_route.ts";
+import { routerActive } from "../../runner/router/unit_model.ts";
 import { type ImplementExit, type RunContext, type SessionRunOptions, type Stage, type StageResult, type TestMap, taskBlock } from "../types.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { sha256 } from "./seal.ts"; import { restoreBaseTests } from "../../util/test_guard.ts";
 import { assumptionsBlock } from "../../features/spec_ambiguity.ts";
@@ -97,7 +97,7 @@ export const implementStage: Stage = {
     const impacted = impactedTests(ctx);
     const readOnly = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [];
     const routed = routerActive();
-    const downgrade = routed ? null : cascadeDowngrade(ctx.model) ?? haikuFirstDowngrade(ctx.model); // the router replaces the opt-in downgrade lists; haiku-first (TEN-COST-16) only when the cascade is off
+    const downgrade = routed ? null : cascadeDowngrade(ctx.model); // the router (LOKI_ROUTER=auto for Haiku first) replaces the opt-in downgrade list
     const cascade = downgrade !== null;
     if (downgrade) process.stderr.write(`${downgrade.note}\n`);
     const lessons = lessonsForBrief(ctx.repoDir, ctx.runId, task, [...((prior.plan?.relevant_files as string[] | undefined) ?? []), ...impacted], ctx.runDir); // T6: reviewer lessons plus run lessons on the relevant files or their impacted tests (util/pr_lessons.ts), tagged as used by this run and recorded in lessons-injected.json
@@ -125,7 +125,7 @@ export const implementStage: Stage = {
     const unchained = (): SessionRunOptions => { const { resumeSessionId: _chained, ...rest } = first; return ownId ? { ...rest, brief: buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec), prior.intake?.assumptions) } : rest; }; // read at call time: the router may rewrite first.model; retries and conflict reruns never inherit the chain link
     // ROUTER-1: per-unit ladder from the plan's route record (runner/router/unit_model.ts). Flag off: none of this runs.
     const size = sizeTask(task, loadRepoMap(prior.intake?.repomap_ref as string | undefined), (prior.intake?.testmap as TestMap | undefined) ?? null).size;
-    const rt = routed ? routeStart(ctx, first, prior.plan, size) : null; if (!rt) recordAutoImplement(ctx, plan !== null); // auto routing: Haiku is the run model, recorded with its reason
+    const rt = routed ? routeStart(ctx, first, prior.plan, size) : null;
     // S41-13: LOKI_E10_ATTEMPTS=2 on a normal-size task with a non-empty predicted S runs two attempts; the worker env is already token-scrubbed (asserted inside).
     const two = attemptsGate({ size, predictedS: impacted.length }) ? await runAttemptsOnCtx(ctx, first, signal, impacted, { wallPaths: readOnly.map((f) => relative(ctx.repoDir, f.path)), wallContent: Object.fromEntries(readOnly.map((f) => [relative(ctx.repoDir, f.path), f.content])), check: (c, t, sg, out) => { const tc = commandFor(t, c.repoDir, loadProjectApi(c.repoDir)); return runCheck(c, `${t.runner}:${t.path}`, tc.cmd, tc.args, sg, out as VerifyCheck[], { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); } }) : null;
     let session = two ? two.session : await ctx.sessions.run(first);
@@ -139,7 +139,6 @@ export const implementStage: Stage = {
     if (rt && !signal.aborted) session = await routeEscalate(ctx, first, session, rt, ids); // triggers b/c: one redo on the next rung
     if (session.markers.specConflict && !session.killed) { const r = await resumeAfterConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; if (r.iterationId !== ids[ids.length - 1]) ids.push(r.iterationId); } // FC-19: one correction, then the conflict is believed
     if (session.markers.specConflict && !session.killed && !signal.aborted) { const w = await adjudicateWallConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, readOnly); if (w) { session = w.session; ids.push(...w.ids); } } // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT: a Wall-anchored conflict goes to the referee (record: outputs.wall.arbitrated)
-    if (!rt && !signal.aborted) session = await autoConflictClimb(ctx, unchained(), session, ids); // auto routing (c): a conflict Haiku repeated gets one Sonnet session
     if (!signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && treeIsEmpty(ctx)) { const r = await resumeAfterEmptyDone(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; ids.push(r.iterationId); } // FC-43: one correction for a done exit with no change
 
     if (process.env.LOKI_E10_REPRO === "1" && !plan && !signal.aborted && !session.killed && session.exit === 0) { let bad: { name: string; why: string }[] = []; try { bad = outOfRepoTests(ctx.repoDir, changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); } catch { /* unreadable tree: no re-ask */ } if (bad.length) { const redo = `${first.iterationId}-oor`; ids.push(redo); session = await ctx.sessions.run({ ...unchained(), brief: withStagePrefix(outOfRepoReask("Rewrite these new test files in place, keeping the same names and what they reproduce.", bad)), iterationId: redo }); } } // TEN-QUALITY-44: the repro test gets the Wall's out-of-repo check and one re-ask

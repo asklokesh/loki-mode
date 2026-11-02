@@ -20717,8 +20717,9 @@ pricing = {
     'gpt-5.6-terra': {'input': 2.00, 'output': 12.00},
     'gpt-5.6-luna': {'input': 0.20, 'output': 1.20},
 }
-# The literal rows above are the fallback only. loki-ts/data/model-pricing.json is
-# the single source the TS gate reads; its rows override these by key.
+# Legacy bash loop only (the engine never runs this function). The literal rows above are the fallback for a
+# missing loki-ts/data/model-pricing.json, kept so this gate never prices records at zero; the file is the
+# one source the TS engine imports, and its rows override these by key.
 try:
     with open('${SCRIPT_DIR}/../loki-ts/data/model-pricing.json') as pf:
         for k, v in json.load(pf)['pricing'].items():

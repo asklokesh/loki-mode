@@ -24,7 +24,6 @@ import { mkdirSync, existsSync, readFileSync, realpathSync, appendFileSync, writ
 import { delimiter, dirname, join, isAbsolute, relative, resolve, sep } from "node:path";
 import { run as shellRun, shellQuote } from "../util/shell.ts";
 import { envWithPwd, MAX_TURNS_EXIT } from "./worker_proc.ts";
-import { REPO_ROOT } from "../util/paths.ts";
 import { neutralizeEngineMarkers } from "./retry_class.ts"; // FC-AGENT-TEXT-FORGES-ENGINE-MARKER: a provider CLI stdout is agent text
 import {
   buildAutoFlags,
@@ -50,9 +49,10 @@ import { LEAN_PREFIX } from "../features/lean_prefix.ts";
 import { consumeSdkStream, type StreamMsg } from "./sdk_stream_parser.ts";
 import { writeSessionId } from "./session_resume.ts";
 import { createTrimHook } from "./trim.ts";
+import { createHostGuardHook, HOST_GUARD_SCRIPT, hookTimeoutSeconds } from "./host_guard.ts";
 import { createStopChecksHook, parseStopChecks, STOP_HOOK_MARGIN_S } from "./stop_checks.ts";
 import { advisorPair, probeAdvisor, ROUTER_ADVISOR_MODEL } from "./router/advisor_probe.ts";
-import { advisorOnlyEnabled, autoAdvisorModel, routerEnabled, sessionPlanEnabled } from "./router/flag.ts";
+import { advisorOnlyEnabled, routerEnabled, routerPreset, sessionPlanEnabled } from "./router/flag.ts";
 import type {
   ProviderInvocation,
   ProviderInvoker,
@@ -347,16 +347,8 @@ function hostGuardRequired(cwd: string): boolean {
   });
 }
 
-// Host-guard hook timeout, seconds. Mirrors _loki_hook_timeout in autonomy/run.sh
-// (same env var, same default, same validation); parity test: tests/runner/hook_timeout_parity.test.ts.
-export const HOOK_TIMEOUT_DEFAULT_S = 30;
-export function hookTimeoutSeconds(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env["LOKI_HOOK_TIMEOUT"] ?? "";
-  return /^[1-9][0-9]{0,4}$/.test(raw) ? Number(raw) : HOOK_TIMEOUT_DEFAULT_S;
-}
-
 export function hostGuardSettingsJson(): string {
-  const hookPath = resolve(REPO_ROOT, "autonomy", "hooks", "validate-bash.sh");
+  const hookPath = HOST_GUARD_SCRIPT;
   if (!existsSync(hookPath)) throw new Error(`host command guard hook is missing: ${hookPath}`);
   return JSON.stringify({
     hooks: {
@@ -382,7 +374,7 @@ const hasNoPriceCliff = (m: string): boolean => /sonnet|opus/i.test(m) && !/haik
 
 // Claude Code version bundled in the pinned Agent SDK. A test (providers.test.ts, "providers advisor" block) asserts this equals the
 // installed SDK's claudeCodeVersion, so an SDK bump that forgets it fails CI instead of silently mis-probing.
-export const SDK_BUNDLED_CLAUDE_CODE = "2.1.314";
+export const SDK_BUNDLED_CLAUDE_CODE = "2.1.316";
 function bundledClaudeCodeVersion(): string {
   return SDK_BUNDLED_CLAUDE_CODE;
 }
@@ -430,11 +422,6 @@ export function planRouterSession(args: {
 }): RouterSessionPlan | null {
   const env = args.env ?? process.env;
   const routed = routerEnabled(env);
-  const autoAdv = autoAdvisorModel(env);
-  if (!routed && !advisorOnlyEnabled(env) && autoAdv) { // auto routing (router/auto_route.ts): this one session carries the advisor; unavailable means the executor runs alone, never a swap
-    const p = probeAdvisor(env, "claude", args.claudeCodeVersion, args.runDir, { executor: args.model, advisor: autoAdv });
-    return p.available ? { model: args.model, settings: { advisorModel: autoAdv, ...(hasNoPriceCliff(args.model) ? {} : { autoCompactWindow: ROUTER_AUTO_COMPACT_WINDOW }) } } : null;
-  }
   if (!routed && !advisorOnlyEnabled(env)) return null;
   const probe = probeAdvisor(env, "claude", args.claudeCodeVersion, args.runDir, advisorPair(env, args.model));
   // Advisor alone (#246): the advisor and nothing else. No executor swap, no compact window, so the only variable is the advisor.
@@ -449,6 +436,7 @@ export function planRouterSession(args: {
       },
     };
   }
+  if (routerPreset(env) && env["LOKI_ADVISOR_SCOPE"] === "off") return null; // LOKI_ROUTER=auto: a stage the advisor is not scoped to (implement, Wall) keeps its executor; the no-advisor floor is for an advisor that is unavailable, not one Loki left off
   return { model: isHaikuModel(args.model) ? "sonnet" : args.model, advisorReason: probe.reason };
 }
 
@@ -713,11 +701,9 @@ const ENGINE10_TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep"];
 /** The engine10 inputs to the cached prefix that do not vary per call: tool list, system text and the dynamic-section switch.
  *  buildSdkLoopOptions applies exactly this, and session.ts hashes exactly this (prefixParts), so the cache-cause key cannot drift. */
 export function engine10StaticPrefix(env: Readonly<Record<string, string | undefined>>): { tools: string[]; systemPrompt?: string; excludeDynamic: boolean } {
-  return {
-    tools: ENGINE10_TOOLS,
-    ...(env["LOKI_E10_PREFIX"] === "lean" ? { systemPrompt: LEAN_PREFIX } : {}),
-    excludeDynamic: env["LOKI_E10_STABLE_PREFIX"] !== "0",
-  };
+  // excludeDynamicSections applies only to the claude_code preset; the lean string replaces the preset, so it is never set with it.
+  const lean = env["LOKI_E10_PREFIX"] === "lean";
+  return { tools: ENGINE10_TOOLS, ...(lean ? { systemPrompt: LEAN_PREFIX } : {}), excludeDynamic: !lean && env["LOKI_E10_STABLE_PREFIX"] !== "0" };
 }
 export function buildSdkLoopOptions(args: {
   tier: string | undefined;
@@ -748,13 +734,11 @@ export function buildSdkLoopOptions(args: {
     out.tools = sp.tools;
     out.noAppend = true;
     out.strictMcpConfig = true; // no MCP servers at all, ambient .mcp.json included
-    // S41-09: LOKI_E10_PREFIX=lean, default off. A fixed string replaces the
-    // claude_code preset so every stage/task shares a byte-identical leading
-    // block (cache-stable prefix, D41 item 2). Flag off: unchanged preset below.
+    // S41-09: LOKI_E10_PREFIX=lean (session.ts default) replaces the claude_code preset with one fixed string, so every
+    // stage and task shares a byte-identical leading block. CP-01 (D99): with the preset instead (LOKI_E10_PREFIX unset
+    // or off), cwd, repo status and memory leave the system prompt; LOKI_E10_STABLE_PREFIX=0 opts out.
     if (sp.systemPrompt) out.systemPrompt = sp.systemPrompt;
-    // CP-01 (D99): cwd, repo status and memory leave the system prompt (moved to the first user message) so the
-    // leading block is byte-identical across stages and runs. ON by default; LOKI_E10_STABLE_PREFIX=0 opts out.
-    if (sp.excludeDynamic) out.excludeDynamic = true;
+    else if (sp.excludeDynamic) out.excludeDynamic = true;
   }
 
   // MCP tools: reuse the exact bundle the shell route writes (loki-mode server +
@@ -822,56 +806,6 @@ export function resolveSystemPrompt(
   return autonomyAppendEnabled() && !extra.noAppend
     ? { type: "preset", preset: "claude_code", append: autonomyAppendText() }
     : { type: "preset", preset: "claude_code" };
-}
-
-function hostGuardDecision(reason: string) {
-  return {
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse" as const,
-      permissionDecision: "deny" as const,
-      permissionDecisionReason: reason,
-    },
-  };
-}
-
-async function runSdkHostGuard(input: unknown, cwd: string) {
-  const hookPath = resolve(REPO_ROOT, "autonomy", "hooks", "validate-bash.sh");
-  try {
-    const proc = Bun.spawn({
-      cmd: ["bash", hookPath],
-      cwd,
-      env: envWithPwd({
-        ...process.env,
-        LOKI_HOST_GUARD: "1",
-        LOKI_TARGET_DIR: cwd,
-      }, cwd),
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    // Fail closed on timeout: kill the hook and deny (same budget as the CLI route).
-    let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; proc.kill(9); }, hookTimeoutSeconds() * 1000);
-    proc.stdin.write(JSON.stringify(input));
-    proc.stdin.end();
-    let stdout: string;
-    let exitCode: number;
-    try {
-      [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    } finally {
-      clearTimeout(timer);
-    }
-    if (timedOut) return hostGuardDecision("LOKI_HOST_GUARD: hook timed out, so the Bash command was denied.");
-    const parsed = JSON.parse(stdout) as {
-      hookSpecificOutput?: { permissionDecision?: string };
-    };
-    const decision = parsed.hookSpecificOutput?.permissionDecision;
-    if (exitCode === 0 && decision === "allow") return parsed;
-    if (exitCode !== 0 && decision === "deny") return parsed;
-    return hostGuardDecision("LOKI_HOST_GUARD: invalid hook verdict was denied.");
-  } catch {
-    return hostGuardDecision("LOKI_HOST_GUARD: hook execution failed, so the Bash command was denied.");
-  }
 }
 
 export function sdkQueryProvider(): ProviderInvoker {
@@ -946,7 +880,7 @@ export function sdkQueryProvider(): ProviderInvoker {
             ...(process.env["LOKI_E10_DISALLOWED_TOOLS"] ? { disallowedTools: mergeDisallowedTools(permissionOpts.disallowedTools, process.env["LOKI_E10_DISALLOWED_TOOLS"]) } : {}), // Q18-04: merged with, never replacing, the policy deny list
             includePartialMessages: true, // live delta streaming
             includeHookEvents: true, // hooks arrive as system messages (parser)
-            // S41-11: LOKI_E10_TRIM=1, default off. Read directly from
+            // S41-11: LOKI_E10_TRIM=1 (bin/loki sets it for a task, a PRD and `loki start`). Read directly from
             // process.env (not the spread-and-stripped `env` object below,
             // which deliberately drops LOKI_E10_* for the CHILD session) --
             // this hook runs in the parent process, so the flag applies to
@@ -959,7 +893,7 @@ export function sdkQueryProvider(): ProviderInvoker {
                       ? {
                           PreToolUse: [{
                             matcher: "Bash",
-                            hooks: [(input: unknown) => runSdkHostGuard(input, call.cwd)],
+                            hooks: [createHostGuardHook(call.cwd)], // in-process; validate-bash.sh runs only for a command one of its rules could deny
                           }],
                         }
                       : {}),

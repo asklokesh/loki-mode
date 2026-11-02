@@ -32,6 +32,20 @@ export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | nul
   return why.length ? { size: "normal", reasons: why } : { size: "small", reasons: [`task ${task.length} chars, names ${named} files`] };
 }
 
+/** More non-test source files than this makes a task hard. Measured on benchmarks/h2h: every bench v2 repo has at most 5, every hard-suite repo at least 12. */
+export const HARD_SRC_FILES = 10;
+const SRC_RE = /\.(ts|tsx|js|jsx|mjs|py|go|rs|java|kt|rb|php|cs|c|cc|cpp|h|hpp|swift|scala)$/;
+const TEST_RE = /(^|\/)(tests?|__tests__|spec|testdata)\/|[._-](test|spec)\.[a-z]+$|_test\.go$|(^|\/)test_[^/]*$/i;
+/** Non-test source files in a file list. */
+export const srcFileCount = (files: readonly string[]): number => files.filter((f) => SRC_RE.test(f) && !TEST_RE.test(f)).length;
+/** Why a task is hard (finding the place to change is the work): sized large, a truncated repo map, or more than HARD_SRC_FILES source files. Null otherwise. */
+export function hardReason(size: TaskSize, map: RepoMap | null): string | null {
+  if (size === "large") return "task sized large";
+  if (map?.truncated) return "repo map truncated at the file cap";
+  const n = srcFileCount(map?.files ?? []);
+  return n > HARD_SRC_FILES ? `repo has ${n} non-test source files > ${HARD_SRC_FILES}` : null;
+}
+
 /** Best-effort RepoMap load from intake's repomap_ref; missing/unreadable is null, never a crash. */
 export function loadRepoMap(repomapRef: string | undefined): RepoMap | null {
   try { return repomapRef && existsSync(repomapRef) ? JSON.parse(readFileSync(repomapRef, "utf8")) as RepoMap : null; } catch { return null; }
@@ -68,7 +82,7 @@ export const wallLimitS = (size: TaskSize, env = process.env): number => {
   if (Number.isFinite(n) && n > 0) { if (n > 300) noteOnce("LOKI_E10_WALL_LIMIT_S", raw, "exceeds the 300s maximum; using 300"); return Math.min(300, n); }
   noteOnce("LOKI_E10_WALL_LIMIT_S", raw, `is not a positive number; using ${dflt}`); return dflt;
 };
-/** Engine Law L1 (amended 2026-11-01): Haiku may be the executor when the user opts in (LOKI_AUTO_ROUTE=1, runner/router/auto_route.ts; default flips only on an h2h win), and escalation only goes up. The cascade is OFF unless LOKI_E10_CASCADE=1/on/true opts in, which also keeps auto routing off. */
+/** Engine Law L1 (supersedes D31's sonnet-first default; amended 2026-11-01: Haiku may execute when the user asks, LOKI_ROUTER=auto): the cascade is OFF unless LOKI_E10_CASCADE=1/on/true opts in. Off means implement and fix run on the run's own model, as a raw session would. Escalation only goes up. */
 export const cascadeEnabled = (env = process.env): boolean => knob(env.LOKI_E10_CASCADE, ["1", "on", "true"]);
 /** Resolves a cli_alias (e.g. "sonnet") to its catalog model id; an id already, or an unknown alias, passes through unchanged. */
 export const resolveModelAlias = resolveClaudeModel;
@@ -83,4 +97,4 @@ export const wallFirstModel = (size: TaskSize, env = process.env): string => {
 /** E-64: the cascade's first implement call pins to the same sonnet alias Wall already uses (E-45). */
 export const cascadeImplementModel = wallModel;
 
-export { capToRunTier, modelRank, escalationModel, cascadeDowngrade, haikuFirstDowngrade } from "../runner/model_rank.ts"; export { wallConcurrent, wallMaxTokens, wallOutputCap } from "../util/wall_knobs.ts"; // L1 model ordering and the Wall knobs live outside the engine10 line budget
+export { capToRunTier, modelRank, escalationModel, cascadeDowngrade } from "../runner/model_rank.ts"; export { wallConcurrent, wallMaxTokens, wallOutputCap } from "../util/wall_knobs.ts"; // L1 model ordering and the Wall knobs live outside the engine10 line budget

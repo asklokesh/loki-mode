@@ -19,12 +19,15 @@ export interface RouteRecordInput {
   shapeKey: string | null;
   /** Set when no plan session ran (plan disabled): the record says why nothing routed. */
   skipReason?: string | null;
+  /** LOKI_ROUTER=auto: the preset executor (flag.ts presetExecutor), applied to implement and fix. */
+  preset?: { model: string; reason: string };
 }
 
 /** Record in the shape buildRouteBlock reads. Always emitted while the router is on: a route, or the reason there is none. */
 export function buildRouteRecord(i: RouteRecordInput): Record<string, unknown> {
   const notProven = [...i.notProven, ...(i.planModelNote ? [`plan model: NOT PROVEN (owner provider): ${i.planModelNote}`] : [])];
   const base = { plan_model: i.planModel, shape_key: i.shapeKey, route_not_proven: notProven, applied: PER_UNIT_EXECUTORS_APPLIED };
+  if (i.preset) return { ...base, applied: true, routed: true, executor: i.preset.model, source: "preset", reason: `${i.preset.reason}${i.skipReason ? `; ${i.skipReason}` : ""}`, units: [] };
   if (i.units.length === 0) {
     const why = i.skipReason ?? i.notProven[0] ?? "no per-unit routes returned";
     return { ...base, routed: false, executor: "sonnet", source: "default", reason: `no plan route (NOT PROVEN): ${why}`, units: [] };

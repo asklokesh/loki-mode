@@ -2,7 +2,7 @@
 import { cascadeEnabled, cascadeImplementModel, resolveModelAlias } from "../engine10/sizing.ts";
 import { PROVIDER_DEFAULT_MODEL, sessionPinModel } from "../engine10/session.ts";
 import { nextState, type EscalationEvent } from "./router/decision.ts";
-import { autoExecutor, autoRouteActive } from "./router/auto_route.ts";
+import { redactSecrets } from "../util/redact.ts";
 
 /** L1: relative strength of a model id or alias; unknown ids rank top so they are never treated as weaker than the run model. */
 export const modelRank = (m: string): number => { const id = resolveModelAlias(m).toLowerCase(); return ["haiku", "sonnet", "opus", "fable"].findIndex((t) => id.includes(t)) + (id.match(/haiku|sonnet|opus|fable/) ? 0 : 5); };
@@ -13,17 +13,10 @@ export function cascadeDowngrade(runModel: string, env = process.env): { from: s
   const to = cascadeImplementModel(env);
   return cascadeEnabled(env) && modelRank(to) < modelRank(runModel) ? { from: runModel, to, note: `model downgraded by cascade: ${runModel} -> ${to} (opt-in)` } : null;
 }
-/** TEN-COST-16: LOKI_IMPLEMENT_HAIKU_FIRST=1/on/true opts the first implement session onto the cheapest tier. OFF by default (Law L1). */
-export const haikuFirstEnabled = (env = process.env): boolean => ["1", "on", "true"].includes((env["LOKI_IMPLEMENT_HAIKU_FIRST"] ?? "").toLowerCase());
-/** TEN-COST-16: the haiku-first pin for the first implement session only; null when off or when the run model is not stronger. Fix rounds never use it: a failed verify always escalates to the run model, so no haiku attempt that failed verify ships. */
-export function haikuFirstDowngrade(runModel: string, env = process.env): { from: string; to: string; note: string } | null {
-  const to = resolveModelAlias("haiku");
-  return haikuFirstEnabled(env) && modelRank(to) < modelRank(runModel) ? { from: runModel, to, note: `model downgraded by haiku-first: ${runModel} -> ${to} (opt-in; a failed verify escalates to ${runModel})` } : null;
-}
 /** Auxiliary stage pins (project model, Wall re-author, already-done) never run above the run's own model: a haiku run keeps them on haiku. An explicit user pin (any env key in pinKeys set) is returned exactly; an unknown run model ranks top, so nothing is capped. */
 export const capToRunTier = (pin: string, runModel: string, pinKeys: readonly string[], env = process.env): string => pinKeys.some((k) => !!env[k]) || !runModel || modelRank(pin) <= modelRank(runModel) ? pin : runModel;
-/** A LOKI_SESSION_MODEL run never starts a session above its pin: a stage pin that ranks higher (Wall author, referee, already-done, project model) runs on the pin. An auto-routed run caps the same way at its executor, except a session auto routing granted (advisor, climb). No pin, or no stage pin: unchanged. */
-export const capToSessionPin = (model: string | undefined, env = process.env, grant?: string): string | undefined => { const pin = sessionPinModel(env) ?? (!grant && autoRouteActive(env) ? autoExecutor() : undefined); return model && pin && modelRank(model) > modelRank(pin) ? pin : model; };
+/** A LOKI_SESSION_MODEL run never starts a session above its pin: a stage pin that ranks higher (Wall author, referee, already-done, project model) runs on the pin. No pin, or no stage pin: unchanged. */
+export const capToSessionPin = (model: string | undefined, env = process.env): string | undefined => { const pin = sessionPinModel(env); return model && pin && modelRank(model) > modelRank(pin) ? pin : model; };
 const klass = (m: string): string => resolveModelAlias(m).toLowerCase();
 export type EscalationTrigger = "code_fail" | "escalate_marker" | "spec_conflict" | "limit_kill" | "stall";
 export interface UnitEscalation { unit: string; from: string; to: string; trigger: EscalationTrigger; evidence: string }
@@ -35,5 +28,5 @@ export function climb(unit: string, current: string, trigger: EscalationTrigger,
   if (!model) return null;
   const t = nextState({ model, swapped: false }, EVENT[trigger]);
   const next = t.action === "none" || t.action === "blocked" || t.action === "stalled" ? (model === "sonnet" && trigger === "escalate_marker" ? "opus" : null) : t.state.model;
-  return next && next !== model ? { unit, from: current, to: resolveModelAlias(next), trigger, evidence: evidence.slice(0, 300) } : null;
+  return next && next !== model ? { unit, from: current, to: resolveModelAlias(next), trigger, evidence: redactSecrets(evidence).slice(0, 300) } : null; // the evidence (a spec conflict, a failure sample) reaches events and the receipt: secrets redacted first
 }

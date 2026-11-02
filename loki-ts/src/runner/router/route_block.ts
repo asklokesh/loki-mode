@@ -5,8 +5,7 @@
 // (`route`, written by R1-11) and the R1-08 cost fields; when the router is on but nothing was recorded the
 // block says "not routed" with the reason, never a guessed executor.
 import { ADVISOR_ERROR_LIMIT } from "./advisor_probe.ts";
-import { routerEnabled } from "./flag.ts";
-import { AUTO_START_LINE, autoRouteActive } from "./auto_route.ts";
+import { presetExecutor, routerEnabled, routerPreset } from "./flag.ts";
 export interface RouteEscalation { trigger: string; from: string; to: string; evidence: string }
 /** One row per work unit. A per-run route renders as the single unit "run". */
 export interface RouteUnit { id: string; executor: string; applied: boolean; assigned_by: string; reason: string; escalations: RouteEscalation[] }
@@ -54,9 +53,10 @@ const s0 = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v
  * The receipt route block (derived from route.json) is the record of what was assigned. Null when the router is off.
  */
 export function routeStartLine(env: Record<string, string | undefined>, provider: string): string | null {
-  if (!routerEnabled(env)) return autoRouteActive(env, provider) ? AUTO_START_LINE : null; // auto routing names itself; with a pin or LOKI_AUTO_ROUTE=0 nothing is added
+  if (!routerEnabled(env)) return null;
   const fixed = (env["LOKI_ROUTER_EXECUTOR"] ?? "").trim();
   const why = advisorUnavailableReason(env, provider);
+  if (routerPreset(env)) { const p = presetExecutor(env); return `route: auto preset, ${modelLabel(p.model)} executes implement and fix, Opus plans a hard task, climbs on failure${why ? `, advisor unavailable: ${why}` : ", advisor opus on plan and fix"}`; }
   const exec = `route: decided at plan time, per-unit executors not applied (stages run the run model)${fixed ? `, ${modelLabel(fixed)} requested by LOKI_ROUTER_EXECUTOR` : ""}`;
   if (why) return `${exec}, advisor unavailable: ${why}`;
   return `${exec}, advisor opus: Opus routes at plan time`;

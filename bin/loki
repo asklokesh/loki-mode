@@ -312,21 +312,21 @@ if [ "$_cf_has" = "1" ]; then
 fi
 unset _cf_has _cf_out _cf_a
 
-# --haiku opts the first implement onto haiku (the existing lean levers).
+# --haiku opts implement and fix onto haiku (LOKI_ROUTER=auto plus the lean levers).
 # The default model stays the provider default, the same one a raw claude
-# session uses. A failed check still climbs back (haikuFirstDowngrade).
+# session uses. A failed check climbs to sonnet (the router ladder, runner/router/unit_model.ts).
 # Explicit env wins. Stripped so neither engine treats it as an unknown flag.
 _hk_has=0
 for _hk_a in "$@"; do
     case "$_hk_a" in --haiku) _hk_has=1 ;; esac
 done
 if [ "$_hk_has" = "1" ]; then
-    : "${LOKI_IMPLEMENT_HAIKU_FIRST:=1}"
+    : "${LOKI_ROUTER:=auto}"
     : "${LOKI_E10_TRIM:=1}"
     : "${LOKI_E10_SMALL_NO_RUNNER:=1}"
     : "${LOKI_E10_SMALL_MAX_CHARS:=1200}"
     : "${LOKI_COST_FIRST:=1}"
-    export LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS LOKI_COST_FIRST
+    export LOKI_ROUTER LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS LOKI_COST_FIRST
     _hk_out=()
     for _hk_a in "$@"; do
         [ "$_hk_a" = "--haiku" ] || _hk_out+=("$_hk_a")

@@ -89,20 +89,19 @@ loki start "fix the login redirect loop" --no-pr
 `loki quick "<task>"` is the small-task entry. It runs the same engine
 without opening a pull request (the legacy quick never opened one), and the
 engine's own sizing picks the lean path for a small task: Plan and Wall are
-skipped and implement runs on your run's model.
-
-`LOKI_AUTO_ROUTE=1` (with no model pinned) turns on auto routing (Engine Law
-L1, as amended 2026-11-01): Haiku plans, implements and fixes; the platform advisor tool
-(Opus) is attached to the plan session of a large task, or of a normal task in
-a repo with more than 1500 files, and to the first fix round after a failed
-verify on a code-owned failure; after two failed Haiku rounds the executor
-climbs to Sonnet. Escalation only ever goes up. The start line says
-`route: auto`, every decision and its reason is a `route` event, and the
-receipt's `routing` block lists the decisions and the model of every session.
-`--model <m>` (LOKI_SESSION_MODEL) pins one model for the whole run instead;
-`LOKI_AUTO_ADVISOR` is `off`, `sonnet` or `opus`. It is opt-in because on the
-hard benchmark suite it passed fewer tasks than the provider's default model. `LOKI_E10_CASCADE=1` (the sonnet start) and
-`LOKI_ROUTER=1` (the per-unit Opus router) turn auto routing off.
+skipped and implement runs on your run's own model, like a raw session.
+`LOKI_E10_CASCADE=1` opts in to the cheaper sonnet start (it prints and
+records the downgrade); a repeated test failure always escalates up, never
+down (Engine Law L1).
+`LOKI_ROUTER=auto` (also set by `--haiku` and `--cost lean`) is the router's
+auto preset (Engine Law L1, as amended 2026-11-01, allows Haiku as the
+executor when asked for): Haiku runs implement and fix, Opus writes the plan
+of a hard task (sized large, or a repo with more than 10 non-test source
+files), the Opus advisor tool is attached to plan and fix, and a code-owned
+failure, a stall or a spec conflict climbs the router's ladder (Sonnet, then
+Opus). The start line names the downgrade and the route; the receipt's route
+block records the executor and every climb. `LOKI_ROUTER_EXECUTOR` picks
+another executor; `LOKI_ALLOW_HAIKU=false` makes it Sonnet.
 `loki quick --help` prints the help; `loki quick -v "<task>"` runs on Loki 10 with
 `--verbose`.
 
