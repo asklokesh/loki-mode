@@ -13,7 +13,12 @@
 #   compiled:   under LOKI_PERMISSION_POLICY=compiled an allowed command gets no decision from either, and a
 #               denied one is still denied;
 #   wiring:     the SDK route's PreToolUse hook is createHostGuardHook and providers.ts no longer spawns the script;
-#   speed:      the median in-process verdict on the ordinary commands is under 5 ms (the script takes ~0.3 s).
+#   speed:      the median in-process verdict on the ordinary commands is under 5 ms (the script takes ~0.3 s);
+#   adversarial: each 32 KB input built to make a backtracking pattern blow up (a heredoc of repeated `curl|`,
+#               `base64|`, `eval`, fork-bomb heads, digit runs, dash runs, ...) is decided in under 50 ms, in a child
+#               process killed after 20 s so a regression fails instead of hanging;
+#   linear chains: on 4,000 random short commands the indexOf chains give exactly the matches of the script's
+#               "A .* B .* C" patterns they replace.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards), all in host_guard.ts:
 #   1. drop the RM_WORD check; the recursive-delete-of-a-temp-root cases fail parity.
@@ -30,6 +35,9 @@
 #  11. drop the cwd containment line; the outside-workspace case fails.
 #  12. treat a blank command as present (drop PY_BLANK); the blank and \x1c cases fail.
 #  13. return ALLOW under the compiled policy; the compiled case fails.
+#  14. put back the old regex for the curl|wget rule, /(?:curl|wget)[\s\S]*\|[\s\S]*sh/; the 32 KB `curl|`
+#      heredoc takes minutes, the child is killed at 20 s and the adversarial check fails.
+#  15. drop `pos = end` in inOrder (steps no longer in order); the random-command comparison fails (186 of 4000).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -157,6 +165,58 @@ if [ -n "$checks" ] && [ "$checks" -ge 150 ] && [ "$fails" = "0" ]; then
     ok "in-process hook matches validate-bash.sh on every corpus command ($checks checks)"
 else
     bad "host guard parity: ${checks:-0} checks, $fails failed$(head -c 400 "$T/drive.err")"
+fi
+
+cat > "$T/adv.ts" <<'TS'
+// 32 KB inputs shaped to make a backtracking pattern blow up; prints one line per case with its ms.
+const { scriptRuleMayApply } = await import(process.argv[2]!);
+const K = 32768;
+const rep = (u: string) => u.repeat(Math.ceil(K / u.length));
+const cases: Record<string, string> = {
+  "curl| heredoc": `cat <<'EOF'\n${rep("curl|")}\nEOF`, "wget |": rep("wget |"), "base64|": rep("base64|"), "eval": rep("eval "),
+  "eval $": rep("eval $"), "fork heads": rep(":(){ |"), "rm .loki/": rep("rm .loki/"), "digits": rep("1"), "dashes": `x ${rep("-")}`,
+  "PORT": rep("PORT "), "slashes": `/rm${rep("/")}x`, "backslashes": rep("\\\\"), "env -S": `env ${rep("-S")}`, "sh -x": `sh ${rep("-x")}`,
+};
+for (const [k, c] of Object.entries(cases)) {
+  const t0 = performance.now(); scriptRuleMayApply(c, {});
+  console.log(`ADV ${(performance.now() - t0).toFixed(2)} ${k}`);
+}
+console.log("ADV-DONE");
+TS
+adv="$(cd "$ROOT/loki-ts" && bun -e '
+const p = Bun.spawn({ cmd: [process.execPath, process.argv[1], process.argv[2]], stdout: "pipe", stderr: "inherit" });
+const timer = setTimeout(() => p.kill(9), 20000);
+process.stdout.write(await new Response(p.stdout).text()); await p.exited; clearTimeout(timer);' "$T/adv.ts" "$ROOT/loki-ts/src/runner/host_guard.ts" 2>&1)"
+printf '%s\n' "$adv" | sed 's/^/    /'
+slow="$(printf '%s\n' "$adv" | awk '$1 == "ADV" && $2 + 0 >= 50' | wc -l | tr -d ' ')"
+nadv="$(printf '%s\n' "$adv" | grep -c '^ADV [0-9]')"
+if printf '%s\n' "$adv" | grep -q '^ADV-DONE' && [ "$nadv" -ge 14 ] && [ "$slow" = "0" ]; then
+    ok "every 32 KB adversarial input decided in under 50 ms ($nadv cases)"
+else
+    bad "adversarial inputs: $nadv decided, $slow at 50 ms or more, finished: $(printf '%s\n' "$adv" | grep -c '^ADV-DONE') (killed at 20 s if 0)"
+fi
+
+fuzz="$(cd "$ROOT/loki-ts" && bun -e '
+const { rawRule } = await import(process.argv[1]);
+// The script patterns the chains replace (validate-bash.sh BLOCKED_PATTERNS, `.` widened to any char): safe on short text.
+const old = [/eval[\s\S]*base64/, /base64[\s\S]*\|[\s\S]*sh/, /\$\(base64/, /eval[\s\S]*\$\(/, /(?:curl|wget)[\s\S]*\|[\s\S]*sh/,
+  /rm [\s\S]*\.loki\/(?:council\/|config\.yaml|logs\/bash-audit|session\.lock)/, /> \.loki\/(?:council\/|config\.yaml)/, /:\(\) *\{[\s\S]*\|[\s\S]*&/];
+const parts = ["curl", "wget", "|", "sh", "s", "h", "eval", "base64", "$(", "$", "(", "rm ", ".loki/council/", ".loki/config.yaml", "> ",
+  ".loki/session.lock", ":()", ":() {", ":(){", " ", "{", "&", "x", "\n", "cu", "rl"];
+let seed = 7; const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+let diff = 0, hits = 0, ex = "";
+for (let i = 0; i < 4000; i++) {
+  let s = ""; const len = 1 + rnd(9); for (let j = 0; j < len; j++) s += parts[rnd(parts.length)];
+  const want = old.some((r) => r.test(s)), got = rawRule(s) !== null;
+  if (want) hits++;
+  if (want !== got) { diff++; ex ||= JSON.stringify(s); }
+}
+console.log(`${diff} ${hits} ${ex}`);' "$ROOT/loki-ts/src/runner/host_guard.ts" 2>&1)"
+set -- $fuzz
+if [ "${1:-x}" = "0" ] && [ "${2:-0}" -ge 200 ]; then
+    ok "indexOf chains match the replaced patterns on 4000 random commands (${2} matches)"
+else
+    bad "indexOf chains differ from the replaced patterns: $fuzz"
 fi
 
 P="$ROOT/loki-ts/src/runner/providers.ts"

@@ -261,4 +261,26 @@ divs="$(grep -rnE "$DIV" packages/control-plane/src loki-ts/src | wc -l | tr -d 
 [ "$divs" = "1" ] && ok "one place divides spend by verified runs" || bad "found $divs per-verified divisions: $(grep -rnE "$DIV" packages/control-plane/src loki-ts/src | head -3)"
 grep -q 'costPerVerified(rs)' packages/control-plane/src/server/routes/cost.ts && ok "/v1/cost/repos reads costPerVerified" || bad "/v1/cost/repos does not read costPerVerified"
 
+# Prices: loki-ts/data/model-pricing.json is the one table the engine reads, imported so the bundle carries it (a
+# runtime read from dist/loki.js looked in a directory that does not exist). Every engine price equals its JSON row,
+# the estimate table for codex/cline/aider prices a current id from it and leaves an older id unpriced (null dollars,
+# so a cap warns) instead of charging the current family rate, and no TS file reads the JSON at run time.
+# Planted defects: spread FROM_PRICING_JSON instead of VERSIONED_IDS in price_table.ts (claude-3-5-haiku is then priced
+# at $0.10/$0.50) and the "older id unpriced" case fails; put back a readFileSync of model-pricing.json in
+# model_routes.ts and the one-reader check fails.
+pr="$(cd "$ROOT/loki-ts" && bun -e '
+const j = (await import("./data/model-pricing.json", { with: { type: "json" } })).default;
+const { PRICING, loadDefaultMaxCostUsd } = await import("./src/runner/budget.ts");
+const { priceFor } = await import("./src/providers/price_table.ts");
+const { buildProviderCost } = await import("./src/providers/provider_cost.ts");
+const { inferenceGeoMultiplier } = await import("./src/providers/model_routes.ts");
+const rows = Object.entries(j.pricing);
+const same = rows.every(([k, v]) => PRICING[k] && PRICING[k].input === v.input && PRICING[k].output === v.output && PRICING[k].cache_read === v.cache_read) && Object.keys(PRICING).length === rows.length;
+const cur = ["claude-haiku-5-5", "claude-opus-5-5", "gpt-5.6-luna"].every((m) => { const p = priceFor(m); const r = j.pricing[m] ?? j.pricing[m.split("-")[1]]; return p.matched && p.price.input === r.input && p.price.output === r.output; });
+const old = ["claude-3-5-haiku-20241022", "claude-3-opus-20240229", "claude-3-5-sonnet-20241022"].every((m) => buildProviderCost("codex", m, "x".repeat(400), "y".repeat(400))?.total_cost_usd === null);
+console.log([same, cur, old, loadDefaultMaxCostUsd() === j.default_max_cost_usd, inferenceGeoMultiplier({ LOKI_INFERENCE_GEO: "us" }) === j.inference_geo_multipliers.us].join(" "));' 2>&1)"
+[ "$pr" = "true true true true true" ] && ok "prices: engine table equals the JSON; current ids priced from it; older ids unpriced; cap and geo multiplier from it" || bad "prices (engine=json current older cap geo): $pr"
+readers="$(grep -rln 'model-pricing' loki-ts/src | xargs grep -l 'readFileSync' | xargs grep -n 'model-pricing.json"' | grep -v '^[^:]*:[0-9]*:import ' || true)"
+[ -z "$readers" ] && ok "no loki-ts/src file reads model-pricing.json at run time" || bad "runtime readers of model-pricing.json: $readers"
+
 finish

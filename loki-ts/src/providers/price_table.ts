@@ -16,8 +16,12 @@ const FROM_PRICING_JSON: Record<string, Price> = Object.fromEntries(
     typeof v.cache_read === "number" ? { input: v.input, output: v.output, cachedInput: v.cache_read } : { input: v.input, output: v.output },
   ]),
 );
+// Only versioned ids (claude-haiku-5-5, gpt-5.6-luna) are substring keys. The bare family aliases (haiku, opus, sonnet,
+// fable) would also match older ids such as claude-3-5-haiku-20241022 ($0.80/$4) at the current rate; the
+// current-generation claude-<family> prefixes below carry the alias rows instead, and an older id stays unpriced.
+const VERSIONED_IDS = Object.fromEntries(Object.entries(FROM_PRICING_JSON).filter(([k]) => k.includes("-")));
 export const PRICE_TABLE: Readonly<Record<string, Price>> = Object.freeze({
-  ...FROM_PRICING_JSON,
+  ...VERSIONED_IDS,
   "claude-opus": FROM_PRICING_JSON["opus"]!,
   "claude-sonnet": FROM_PRICING_JSON["sonnet"]!,
   "claude-haiku": FROM_PRICING_JSON["haiku"]!,

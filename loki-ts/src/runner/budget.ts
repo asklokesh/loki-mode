@@ -12,8 +12,7 @@
 // (the BUDGET_EOF heredocs).
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import pricingJson from "../../data/model-pricing.json" with { type: "json" };
 import { atomicWriteText } from "../util/atomic.ts";
 import { inferenceGeoMultiplier } from "../providers/model_routes.ts";
@@ -21,23 +20,11 @@ import { lokiDir } from "../util/paths.ts";
 import { type CostResult, type EfficiencySessionInfo, num, writeEfficiencyRecord } from "../engine10/cost.ts";
 
 // LM-002: the default per-run cap (default_max_cost_usd) lives in loki-ts/data/model-pricing.json, also read by autonomy/run.sh and autonomy/loki.
-// The data dir is ../../data from src/runner (this file) and ../data from the bundled dist; the literal is only the last-resort fallback, and a test pins it to the file.
-const DEFAULT_FALLBACK_USD = 100;
-let pricingFallbackWarned = false;
-export function resetPricingFallbackWarning(): void { pricingFallbackWarned = false; }
-export function loadDefaultMaxCostUsd(dataDirs: string[][] = [["..", "..", "data"], ["..", "data"]]): number {
-  const here = dirname(fileURLToPath(import.meta.url));
-  for (const rel of dataDirs) {
-    try {
-      const j = JSON.parse(readFileSync(resolve(here, ...rel, "model-pricing.json"), "utf8")) as { default_max_cost_usd?: unknown };
-      if (typeof j.default_max_cost_usd === "number" && Number.isFinite(j.default_max_cost_usd) && j.default_max_cost_usd > 0) return j.default_max_cost_usd;
-    } catch { /* try the next location */ }
-  }
-  if (!pricingFallbackWarned) {
-    pricingFallbackWarned = true;
-    process.stderr.write(`loki: warning: model-pricing.json is missing or unreadable (looked in ${dataDirs.map((r) => resolve(here, ...r)).join(", ")}); using fallback default max cost $${DEFAULT_FALLBACK_USD}\n`);
-  }
-  return DEFAULT_FALLBACK_USD;
+// Read from the imported JSON (bundled at build time, so it cannot be missing at run time).
+export function loadDefaultMaxCostUsd(): number {
+  const v: unknown = pricingJson.default_max_cost_usd;
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
+  throw new Error("loki-ts/data/model-pricing.json: default_max_cost_usd must be a positive number");
 }
 
 // The one price table: loki-ts/data/model-pricing.json, imported so the bundle carries it. A runtime read

@@ -63,16 +63,41 @@ const DASH_C_ARG = /(?:^|[\s;&|()`])-[^\s;&|()`]*c/;
 const ENV_WORD = word("env");
 const ENV_SPLIT_ARG = /(?:^|[\s;&|()`])(?:-S|--split-string)(?=$|[\s;&|()`])/;
 // Raw-text rules: the explicit port claims and the BLOCKED_PATTERNS list, each widened (`.` spans lines, a
-// value check dropped, `$\(base64` read literally) so it matches whenever the script's pattern does.
-const RAW_RULES: Array<[string, RegExp]> = [
-  ["port", /PORT[\s\x1c-\x1f\x85]*=|--port|--publish|http\.server/],
-  ["pattern", /rm -rf (?:\/|~|\$HOME|\.loki|\.\/\.loki)/],
-  ["pattern", /> \/dev\/sd|mkfs[. ]|dd if=\/dev\/zero|chmod -R 777 \//],
-  ["pattern", /eval[\s\S]*base64|base64[\s\S]*\|[\s\S]*sh|\$\(base64|eval[\s\S]*\$\(/],
-  ["pattern", /(?:curl|wget)[\s\S]*\|[\s\S]*sh/],
-  ["pattern", /rm [\s\S]*\.loki\/(?:council\/|config\.yaml|logs\/bash-audit|session\.lock)|> \.loki\/(?:council\/|config\.yaml)/],
-  ["pattern", /:\(\) *\{[\s\S]*\|[\s\S]*&/],
+// value check dropped, `$\(base64` read literally) so it matches whenever the script's pattern does. Every shape
+// "A .* B .* C" is an indexOf chain, never a regex: `[\s\S]*` twice is cubic on a long heredoc of repeated A,
+// and this callback runs synchronously in the engine (a 12 KB `curl|` heredoc held it for 9.7 s).
+
+/** True when the steps occur in order, each starting at or after the end of the previous one (any alternative per step).
+ *  The earliest-ending alternative at each step leaves the most text for the rest, so one pass decides it. */
+export function inOrder(text: string, ...steps: string[][]): boolean {
+  let pos = 0;
+  for (const alts of steps) {
+    let end = -1;
+    for (const a of alts) {
+      const i = text.indexOf(a, pos);
+      if (i >= 0 && (end < 0 || i + a.length < end)) end = i + a.length;
+    }
+    if (end < 0) return false;
+    pos = end;
+  }
+  return true;
+}
+const LOKI_STATE = [".loki/council/", ".loki/config.yaml", ".loki/logs/bash-audit", ".loki/session.lock"];
+const FORK_HEAD = /:\(\) *\{/;
+const RAW_RULES: Array<[string, (c: string) => boolean]> = [
+  ["port", (c) => /PORT[\s\x1c-\x1f\x85]*=|--port|--publish|http\.server/.test(c)],
+  ["pattern", (c) => /rm -rf (?:\/|~|\$HOME|\.loki|\.\/\.loki)/.test(c)],
+  ["pattern", (c) => /> \/dev\/sd|mkfs[. ]|dd if=\/dev\/zero|chmod -R 777 \//.test(c)],
+  ["pattern", (c) => inOrder(c, ["eval"], ["base64"]) || inOrder(c, ["base64"], ["|"], ["sh"]) || c.includes("$(base64") || inOrder(c, ["eval"], ["$("])],
+  ["pattern", (c) => inOrder(c, ["curl", "wget"], ["|"], ["sh"])],
+  ["pattern", (c) => inOrder(c, ["rm "], LOKI_STATE) || c.includes("> .loki/council/") || c.includes("> .loki/config.yaml")],
+  ["pattern", (c) => { const m = FORK_HEAD.exec(c); return m !== null && inOrder(c.slice(m.index + m[0].length), ["|"], ["&"]); }],
 ];
+/** The first raw-text rule the command matches ("port" or "pattern"), or null. */
+export function rawRule(command: string): string | null {
+  for (const [name, hit] of RAW_RULES) if (hit(command)) return name;
+  return null;
+}
 
 /**
  * The name of the first script rule this command could trigger, or null when none can (the script would allow it).
@@ -82,9 +107,10 @@ export function scriptRuleMayApply(command: string, env: NodeJS.ProcessEnv = pro
   if (env["LOKI_SUPERVISED_BUILD"] === "1" && env["LOKI_BUILD_PROFILE"] === "simple-web") return "simple-web";
   if (command.includes("\0")) return "nul"; // bash drops NUL bytes from the script's copy, which can join two words into one
   if (!shlexBalanced(command.replace(/\n/g, " ; "))) return "unparsed";
-  for (const [name, re] of RAW_RULES) if (re.test(command)) return name;
+  const raw = rawRule(command);
+  if (raw) return raw;
   // The script reads words with quotes removed (shlex) and with fd duplications (2>&1) cut (the rm check); test both forms.
-  for (const text of [command, command.replace(/[0-9]*>&[0-9]+/g, "")]) {
+  for (const text of [command, command.replace(/(?<![0-9])[0-9]*>&[0-9]+/g, "")]) { // the lookbehind enters a digit run once: same matches, linear
     const s = text.replace(/["'\\]/g, "");
     if (RM_WORD.test(s)) return "rm";
     if (HOST_WORD.test(s)) return "host";
