@@ -16,7 +16,9 @@
 #     shape (>=24 tasks, >=4 languages with 4 to 6 each, >=10 multi-file normal, >=4 hard);
 #   the learning protocol (--sequences): reference solutions applied in order pass every step,
 #     an untouched repo passes none, no step ever sees another step's hidden file, lesson
-#     availability is read from the repo, and an earlier step's loki branch is never re-scored.
+#     availability is read from the repo, and an earlier step's loki branch is never re-scored;
+#     every learning arm sets its knobs explicitly; step_learning() counts a step's own recurring-class
+#     mistakes, the ones an earlier step already made (repeats), and reads lessons-injected.json.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. benchmarks/h2h/h2h.py score(): `return 1 if rc == 0 else 0` -> `return 1`; the
@@ -35,6 +37,8 @@
 #  10. lesson_counts(): count a worked example without a VERIFIED verdict; the counts check must fail.
 #  11. commit_step_state(): `git add -A -- . ':(exclude).loki'`; both step-commit checks must fail
 #      (git refuses the pathspec once .loki is gitignored, which aborted the first paid learning run).
+#  12. step_learning(): drop the `in before_ids` filter (every mistake counts as a repeat); the repeats check must fail.
+#  13. config_env(): leave LOKI_WORKED_EXAMPLE unset in the lessons arm; the arms check must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -159,9 +163,9 @@ J="$T/seq.json"
 TMPDIR="$T" bash benchmarks/h2h/run.sh --sequences all --configs oracle,noop --jobs 4 --out "$J" >"$T/seq.log" 2>&1
 check "sequences oracle/noop: runner exits 0" test "$?" = 0
 nseq="$(find benchmarks/h2h/sequences -mindepth 2 -maxdepth 2 -name meta.json | wc -l | tr -d ' ')"
-check "sequences: at least 4 with 3 steps or more" test "$(python3 -I -c '
+check "sequences: at least 8 with 3 steps or more" test "$(python3 -I -c '
 import json, glob
-print(sum(1 for p in glob.glob("benchmarks/h2h/sequences/*/meta.json") if len(json.load(open(p))["steps"]) >= 3))')" -ge 4
+print(sum(1 for p in glob.glob("benchmarks/h2h/sequences/*/meta.json") if len(json.load(open(p))["steps"]) >= 3))')" -ge 8
 check "sequences: every one ran ($nseq)" test "$(runs 'len(d["sequences"])')" = "$nseq"
 check "sequences: oracle passes every step" test "$(runs 'all(r["pass"] for r in d["runs"] if r["config"] == "oracle") and any(r["config"] == "oracle" for r in d["runs"])')" = True
 check "sequences: noop passes no step" test "$(runs 'sum(r["pass"] for r in d["runs"] if r["config"] == "noop")')" = 0
@@ -193,15 +197,28 @@ for ignored in (True, False):
     (r / ".loki/state.json").write_text("{}"); (r / "a").write_text("step" + str(ignored))
     h2h.commit_step_state(r, 2)
     print("step-commit", ignored, g("log", "-1", "--format=%s"), ".loki" in g("ls-tree", "-r", "--name-only", "HEAD"), g("status", "--porcelain", "--untracked-files=no") == "")
-# Lesson injection is opt-in in the engine, so the learn arm must turn it on and the nolearn arm must not.
+# Every arm sets its knobs explicitly, so an engine default never decides which arm is which.
 pick = lambda c: {k: v for k, v in h2h.config_env(c, {}).items() if k in ("LOKI_PR_LESSONS", "LOKI_WORKED_EXAMPLE", "LOKI_NO_PR_LESSONS")}
 print("arms", sorted(pick("loki-haiku-learn").items()), sorted(pick("loki-haiku-nolearn").items()))
+print("arms2", sorted(pick("loki-haiku-lessons").items()), sorted(pick("loki-haiku-example").items()))
+# One step: its own mistakes, the repeats among them, and what it was told.
+(r / ".loki/runs/e10-b").mkdir(parents=True)
+(r / ".loki/runs/e10-b/lessons-injected.json").write_text(json.dumps({"ids": ["run-a"], "run_ids": ["run-a"], "bytes": 210, "run_bytes": 190, "worked": None}))
+sub = lambda rid: {"run_id": rid, "text": "x", "files": [], "at": "t"}
+(r / ".loki/memory/semantic/pr-lessons.json").write_text(json.dumps({"version": 2, "lessons": [
+    {"id": "run-a", "kind": "run", "category": "check-failed", "seen": 2, "subs": [sub("e10-a"), sub("e10-b")]},
+    {"id": "run-n", "kind": "run", "category": "edited-existing-test", "seen": 1, "subs": [sub("e10-b")]},
+    {"id": "run-t", "kind": "run", "category": "stage-time-limit", "seen": 2, "subs": [sub("e10-a"), sub("e10-b")]}]}))
+sl = h2h.step_learning(r, {"run-a", "run-t"}, "e10-b")
+print("learning", sl["mistakes"], sl["repeats"], sl["injected_run_bytes"], sl["injected_ids"])
 ' "$T")"
 has "lessons: run, receipt and VERIFIED worked-example counts" "$learn_out" "counts {'run': 1, 'receipt': 3, 'worked_example': 1}"
 has "a branch left by an earlier step is skipped" "$learn_out" "picked loki/b-new"
 has "step state commits when .loki is gitignored, without .loki" "$learn_out" "step-commit True h2h: state after step 2 False True"
 has "step state commits when .loki is not gitignored, without .loki" "$learn_out" "step-commit False h2h: state after step 2 False True"
 has "learning arms: learn opts in to lessons and the worked example, nolearn turns them off" "$learn_out" "arms [('LOKI_PR_LESSONS', '1'), ('LOKI_WORKED_EXAMPLE', '1')] [('LOKI_NO_PR_LESSONS', '1')]"
+has "learning arms: lessons-only and example-only set both knobs explicitly" "$learn_out" "arms2 [('LOKI_PR_LESSONS', '1'), ('LOKI_WORKED_EXAMPLE', '0')] [('LOKI_PR_LESSONS', '0'), ('LOKI_WORKED_EXAMPLE', '1')]"
+has "step learning: recurring-class mistakes, repeats of an earlier step's class, injected bytes and ids" "$learn_out" "learning ['run-a', 'run-n'] ['run-a'] 190 ['run-a']"
 
 leftover="$(find "$T" -maxdepth 1 -name 'loki-h2h.*' | head -1)"
 check "runner removed its own temp dir" test -z "$leftover"

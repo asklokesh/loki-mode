@@ -1,0 +1,1 @@
+Add Lcm(a, b int) int to mathx/mathx.go. It returns the least common multiple of a and b, always non-negative, and 0 when either is 0: Lcm(4, 6) is 12, Lcm(-3, 5) is 15, Lcm(0, 9) is 0.

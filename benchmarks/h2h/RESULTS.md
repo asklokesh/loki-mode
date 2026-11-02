@@ -226,6 +226,52 @@ file: `results/2026-11-01-7359dab35-learning.json`.
   both arms. The one first-step failure is the same Go Wall package clash as in the main run.
 - This is a pilot: 24 later steps per arm cannot detect a modest effect. It does not support
   the claim that what Loki learns from earlier runs improves pass rate or cost on this set.
+- What the learn arm could be given: no run lesson on any later step (its records show none on
+  file), the receipt facts of earlier steps (1 or 2 on file before every later step), which the
+  v11.116.0 retrieval injects as review lessons ("Run X sealed PARTIAL: <title>") when they share
+  a word with the task, and the worked example. The cost gap is one run: `ts-pricing-rules` rep 3
+  step 3 cost $0.106, while every other learn-arm step cost $0.002 to $0.007; without it the learn
+  arm's later steps cost $0.0041 per pass against nolearn's $0.0061.
+
+## Learning protocol v2 (8 sequences)
+
+Results files: `results/2026-11-01-learning-v2-after.json` (lessons, example and nolearn arms on
+the reworked retrieval) and `results/2026-11-01-learning-v2-before.json` (the v11.116.0 engine
+with both opted in, run from a checkout of that release with this harness and these sequences).
+
+- **What changed in retrieval** (util/pr_lessons.ts). A run lesson reaches the brief only when
+  its class can recur on a file (a failing check, a restored test edit, a spec conflict) and it
+  touches a file the run will touch (plan relevant files, their impacted tests, the files the
+  task names). Out-of-scope and time-limit lessons, and receipt facts, never do. One imperative
+  line per lesson, a 400-byte block (was 1200), and the worked example only for a near-duplicate
+  task. A check that blocks the session stop is now learned too (it was never recorded), and each
+  run writes `lessons-injected.json`.
+- **Protocol.** 8 sequences: the 4 above plus 4 new ones of 4 steps (`py-unit-registry`,
+  `ts-format-catalog`, `go-mathx-registry`, `py-textkit-doctest`), each with a repo convention
+  enforced by a visible test that no task text mentions (register the new function in a separate
+  registry file, add it to `__all__` with a doctest, reject non-numbers). Loki on Haiku, 3 reps.
+
+| arm | later steps pass | 95% CI | $ per passed task | later steps with a lesson injected | repeat mistakes |
+|---|---|---|---|---|---|
+| nolearn | 55/60 | 82-96% | 0.0041 | 0 | 0/60 |
+| lessons (new retrieval) | 54/60 | 80-95% | 0.0042 | 0 | 0/60 |
+| example (new retrieval) | 55/60 | 82-96% | 0.0038 | 0 | 0/60 |
+| learn (v11.116.0 retrieval) | 54/60 | 80-95% | 0.0043 | not recorded | 0/60 |
+
+- Paired by sequence, step and rep against nolearn: lessons -0.017 pass rate (95% -0.100 to
+  +0.050), cost per pass 1.005x (0.89 to 1.14); example 0.000 (-0.083 to +0.083), 0.922x
+  (0.81 to 1.04); v11.116.0 learn -0.017 (-0.083 to +0.050), 1.036x (0.93 to 1.16).
+- **Nothing was injected.** Haiku met every convention first time: every first step passed in
+  every arm (24/24), no check blocked a stop, and only 4 to 6 of 60 later steps per arm recorded
+  any recurring-class mistake, none of them a repeat of an earlier step's. The new arms were
+  therefore given exactly the brief nolearn was, and their differences are run-to-run noise.
+- **What the old retrieval would have taught.** On every rep of the 4 new sequences step 1
+  correctly edited the registry file the convention requires, and Loki recorded that as an
+  out-of-scope edit ("change only the files the task needs"). The v11.116.0 retrieval injects
+  that lesson whenever its file overlaps the next task; the new retrieval never injects it.
+- **Decision.** Lessons and the worked example stay opt-in. The lessons arm misses the rule
+  (54/60 is below 55/60); the example arm meets it (55/60, 0.92x) only vacuously, with zero
+  examples injected, so it is not evidence either way.
 
 ## Spend
 
@@ -237,6 +283,9 @@ file: `results/2026-11-01-7359dab35-learning.json`.
   $0.05 smoke run, $0.49 in total. A first attempt stopped after step 1 on a harness fault (fixed
   and covered by the stub test since); its step-1 costs were not recorded and, at the measured
   step-1 cost, came to under $0.10.
+- Learning protocol v2, on its own ledger: $1.20 against a $12 budget ($1.18 for the 336 steps
+  in the two results files, $0.02 for a one-rep, two-sequence probe kept on disk to read the
+  lesson categories).
 
 ## Reproduce
 
@@ -245,6 +294,8 @@ bash benchmarks/h2h/run.sh --configs oracle,noop                     # task self
 bash benchmarks/h2h/run.sh --reps 3 --jobs 4 --budget 38.5 --ledger spend.jsonl
 bash benchmarks/h2h/run.sh --sequences all --configs loki-haiku-learn,loki-haiku-nolearn \
     --reps 3 --jobs 4 --budget 9.2 --ledger learning.jsonl
+bash benchmarks/h2h/run.sh --sequences all --configs loki-haiku-lessons,loki-haiku-example,loki-haiku-nolearn \
+    --reps 3 --jobs 4 --budget 12 --ledger learning-v2.jsonl
 ```
 
 Real configs need a logged-in `claude` CLI plus python3, pytest, bun, go and cargo.
