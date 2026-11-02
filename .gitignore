@@ -73,7 +73,7 @@ vscode-extension/.loki/
 # Stray test artifacts (accidentally committed in v6.50.0; ignore going forward)
 .loki-test-tmp/
 .gstack/
-internal/
+/internal/
 artifacts/competitive-analysis/
 
 # Local-only, non-public, or generated scratch -- never ship to users / npm.
@@ -91,7 +91,7 @@ HANDOFF.md
 # Internal strategy / roadmap / next-steps / MOAT specs -- hidden from the public repo.
 # All internal docs (roadmap, moat, competitor notes, strategy) live in internal/,
 # which is never committed and never packed.
-internal/
+/internal/
 artifacts/ROADMAP-*.md
 artifacts/STRATEGY.md
 artifacts/AUTONOMOUS-SESSION-*.md
