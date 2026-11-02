@@ -5,7 +5,7 @@
 # Provides true autonomy by auto-resuming on rate limits or interruptions
 #
 # How it works:
-# 1. Launches AI provider CLI with Loki Mode prompt (supports Claude, Codex, Gemini)
+# 1. Launches AI provider CLI with Loki Mode prompt (Claude Code or opencode)
 # 2. Monitors the process - when Claude exits, checks exit code
 # 3. On rate limit (exit code != 0), waits with exponential backoff
 # 4. Restarts automatically, telling Claude to resume from checkpoint

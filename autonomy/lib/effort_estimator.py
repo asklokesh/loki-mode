@@ -268,10 +268,6 @@ def _llm_estimate(canon_inputs, timeout=18):
     provider = os.environ.get("LOKI_PROVIDER", "claude")
     cmds = {
         "claude": ["claude", "-p", prompt],
-        "codex": ["codex", "exec", "--sandbox", "read-only", prompt],
-        "cline": ["cline", "-y", prompt],
-        "aider": ["aider", "--message", prompt, "--yes-always",
-                  "--no-auto-commits"],
     }
     base = cmds.get(provider)
     if base is None or not _which(base[0]):

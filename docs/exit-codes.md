@@ -442,6 +442,11 @@ The JSON carries `engine`, `adapter`, `provider`, `model`, `input_type`, `input`
 - Default engine is `engine10` for a PRD file (`.md`, `.json`, `.yaml`), an issue reference (`owner/repo#N` or an issue URL), a multi-word task and a one-word brief.
 - The legacy engine runs only on `--engine legacy` or `LOKI_ENGINE=legacy`, or for a PRD larger than 100000 bytes (engine10 carries the task in single strings, capped at 128 KiB on Linux). Under `LOKI_SDK_MODE=full`, `LOKI_SDK=full` or `LOKI_SDK_LOOP=1` with the claude provider, each of these exits 2 with one line instead: the bash loop has no SDK path. A flag engine10 does not support, a provider with no engine10 invoker, and a machine with no working bun each exit 2 with the fix. Inside a repository, `loki start` or `loki quick` with no task exits 64 with the `loki "<goal>"` usage (after offering to resume an interrupted run); outside one, a bare `loki start` shows the offline sample receipt and exits 0.
 - `--engine engine10` with an unsupported flag is refused (exit 2) instead of rerouted.
+- A removed provider (`codex`, `cline`, `aider`, `gemini`), from `--provider` or `LOKI_PROVIDER`, exits 2 before any routing, for every command, with one line:
+
+  ```
+  loki: provider 'codex' is no longer supported. Supported providers: claude (Claude Code CLI, or an Anthropic API key through the Agent SDK) and opencode (any model, including OpenRouter via OPENROUTER_API_KEY). Switch with --provider claude or --provider opencode, or unset LOKI_PROVIDER.
+  ```
 - A missing PRD file path is a usage error (exit 2).
 - Adapter is `<engine>:<provider>`, with the legacy engine written `legacy-bash:<provider>`.
 - Claude Code is the primary provider. The `loki chat` surface does not use this router; it is a separate interactive entry point.
@@ -468,11 +473,6 @@ The table below is rendered from live `loki route --json` output.
 | `start owner/repo#5 --provider claude` | engine10 | engine10:claude | none | default: issue input runs on engine10 regardless of flag order |
 | `start https://github.com/owner/repo/issues/5` | engine10 | engine10:claude | none | default: issue input runs on engine10 regardless of flag order |
 | `start hello` | engine10 | engine10:claude | none | default: brief input runs on engine10 regardless of flag order |
-| `start p.md --provider codex` | engine10 | engine10:codex | 1 listed | default: prd input runs on engine10 regardless of flag order |
-| `start --provider codex p.md` | engine10 | engine10:codex | 1 listed | default: prd input runs on engine10 regardless of flag order |
-| `LOKI_PROVIDER=codex start p.md` | engine10 | engine10:codex | 1 listed | default: prd input runs on engine10 regardless of flag order |
-| `start p.md --provider cline` | engine10 | engine10:cline | 1 listed | default: prd input runs on engine10 regardless of flag order |
-| `start p.md --provider aider` | engine10 | engine10:aider | 1 listed | default: prd input runs on engine10 regardless of flag order |
 | `start p.md --provider opencode` | engine10 | engine10:opencode | 1 listed | default: prd input runs on engine10 regardless of flag order |
 | `start p.md --engine legacy` | legacy | legacy-bash:claude | 1 listed | explicit: --engine legacy or LOKI_ENGINE=legacy |
 | `start --engine legacy p.md` | legacy | legacy-bash:claude | 1 listed | explicit: --engine legacy or LOKI_ENGINE=legacy |

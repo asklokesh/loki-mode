@@ -17,9 +17,7 @@
 #     - opencode.ai/docs/providers documents 75+ providers and custom
 #       OpenAI-compatible endpoints.
 #     - anomalyco/opencode: 190,871 stars, release v1.18.9 (2026-07-28), pushed
-#       same week. Actively developed. (By contrast aider's last release is
-#       v0.86.0 from 2025-08-09, and Roo Code is archived, Continue read-only --
-#       so opencode, not aider, is the durable cheap-model route.)
+#       same week. Actively developed, so it is the durable cheap-model route.
 #
 #   Cost context: see docs/ROUTING-EVIDENCE.md (measurement source, date and
 #   caveats for the MiniMax M2.5 vs Claude Opus 4.6 cost-parity figures).
@@ -52,7 +50,7 @@ PROVIDER_SUBCOMMAND="run"
 # non-interactive. It is not: without --auto the run stalls on the first
 # permission prompt with no TTY to answer it, which is indistinguishable from a
 # hang. This is opencode's equivalent of claude's --dangerously-skip-permissions
-# and aider's --yes-always, both of which their providers already pass.
+# which providers/claude.sh already passes.
 PROVIDER_AUTONOMOUS_FLAG="--auto"
 PROVIDER_PROMPT_FLAG=""
 PROVIDER_PROMPT_POSITIONAL=true
@@ -105,8 +103,7 @@ provider_version() {
 
 # provider_get_tier_param -- map a loki tier to an opencode model id.
 # opencode has no opus/sonnet/haiku tier concept, so all three tiers resolve to
-# one model unless the operator overrides per tier. This mirrors the codex
-# provider, where tier flattening is already an accepted shape.
+# one model unless the operator overrides per tier.
 provider_get_tier_param() {
     local tier="${1:-development}"
     case "$tier" in

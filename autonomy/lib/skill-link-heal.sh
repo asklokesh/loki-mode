@@ -150,7 +150,7 @@ loki_skill_link_heal() {
     fi
     run_v="$(head -n 1 "$root_p/VERSION" 2>/dev/null | tr -d '[:space:]')"
 
-    for rel in .claude .codex .cline .aider; do
+    for rel in .claude; do
         link="$home/$rel/skills/loki-mode"
         [ -L "$link" ] || continue
         tgt="$(readlink "$link" 2>/dev/null)" || continue

@@ -12,8 +12,8 @@ interface ComparisonRow {
 const COMPARISON_DATA: ComparisonRow[] = [
   // AI Models
   { feature: 'Claude (Opus/Sonnet/Haiku)', category: 'AI Models', lokiMode: true, boltNew: false, replit: false, lovable: true },
-  { feature: 'GPT-4o / Codex', category: 'AI Models', lokiMode: true, boltNew: true, replit: true, lovable: false },
-  { feature: '5-provider auto-failover', category: 'AI Models', lokiMode: true, boltNew: false, replit: false, lovable: false },
+  { feature: 'Any model via opencode (OpenRouter, local)', category: 'AI Models', lokiMode: true, boltNew: false, replit: false, lovable: false },
+  { feature: 'Provider auto-failover (Claude Code, opencode)', category: 'AI Models', lokiMode: true, boltNew: false, replit: false, lovable: false },
   // Quality
   { feature: '8 automated quality gates', category: 'Quality', lokiMode: true, boltNew: false, replit: false, lovable: false },
   { feature: 'Blind 3-reviewer code review', category: 'Quality', lokiMode: true, boltNew: false, replit: false, lovable: false },

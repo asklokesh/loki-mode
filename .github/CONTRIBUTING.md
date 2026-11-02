@@ -100,7 +100,7 @@ SKILL.md              # Core skill definition
 bin/loki              # CLI entry point (routes to loki-ts or autonomy/)
 loki-ts/              # Bun runtime and the Loki 10 engine
 autonomy/             # Bash runtime and CLI (run.sh, loki)
-providers/            # Provider adapters (Claude, Codex, Cline, Aider, opencode)
+providers/            # Provider adapters (Claude, opencode)
 skills/               # On-demand skill modules
 references/           # Detailed documentation
 memory/               # Memory system (Python)

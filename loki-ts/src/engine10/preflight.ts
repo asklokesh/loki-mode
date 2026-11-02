@@ -6,7 +6,7 @@ import { claudeLoginProbeCached, claudeSdkReady, ghAuthProbeCached, providerAuth
 import { initEmptyRepo, NOT_A_REPO } from "../util/first_run_repo.ts";
 import { probePublish, recordPublish } from "../util/engine_origin.ts";
 import { run, type ShellOpts, type ShellResult } from "../util/shell.ts"; import { noteRefusal, type PreflightBlocker } from "../util/funnel.ts";
-const CLI_ENV_VAR: Record<string, string> = { claude: "LOKI_CLAUDE_CLI", codex: "LOKI_CODEX_CLI", cline: "LOKI_CLINE_CLI", aider: "LOKI_AIDER_CLI", opencode: "LOKI_OPENCODE_CLI" }; // provider name doubles as its default CLI
+export const CLI_ENV_VAR: Record<string, string> = { claude: "LOKI_CLAUDE_CLI", opencode: "LOKI_OPENCODE_CLI" }; // provider name doubles as its default CLI
 const GITHUB_ORIGIN_RE = /^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/;
 export interface PreflightOptions { repoDir: string; provider: string; pr: boolean; env?: Record<string, string | undefined>; runDir?: string; statfs?: (path: string) => { bavail: number | bigint; bsize: number | bigint } }
 export interface PreflightResult { fatal: string | null; warnings: string[]; blocker?: PreflightBlocker; blockers?: PreflightBlocker[] } // AN-08: blocker is the first refusing check's class; L035: blockers lists every one, in fatal's numbered order
@@ -44,7 +44,7 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
       const li = claudeLoginProbeCached(cli, env); // TEN-UX-12 retry + TEN-SPEED-05 10-min cache of a successful probe live in doctor.ts
       if (li === "no") { probe = "failed"; add(true, "not_logged_in", "claude is not logged in; run: claude auth login (or set ANTHROPIC_API_KEY)"); }
       else if (li === "") warnings.push("could not confirm the Claude login (claude auth status gave no answer); continuing"); else probe = "ok";
-    } else { const pl = providerLoginIssue(o.provider, cli, env); if (pl?.fatal) { probe = "failed"; add(true, "not_logged_in", pl.fatal); } else if (pl?.warn) warnings.push(pl.warn); else if (o.provider === "codex") probe = "ok"; } // TEN-ADOPTION-34
+    } else { const pl = providerLoginIssue(o.provider, cli, env, o.repoDir); if (pl?.fatal) { probe = "failed"; add(true, "not_logged_in", pl.fatal); } else if (pl?.warn) warnings.push(pl.warn); } // TEN-ADOPTION-34
   }
   if (o.runDir && hits.every(([b]) => b === "not_logged_in")) { try { mkdirSync(o.runDir, { recursive: true }); writeFileSync(join(o.runDir, "preflight.json"), JSON.stringify({ provider: o.provider, auth_path, probe }) + "\n"); } catch { /* the record is evidence, never a gate */ } }
   if (o.pr && repoOk && GITHUB_ORIGIN_RE.test((await git(["config", "--get", "remote.origin.url"])).stdout.trim())) {

@@ -374,7 +374,7 @@ protect nuance; development / fast / unknown iterations stay at the conservative
 `LOKI_CAVEMAN_LEVEL` overrides the inference entirely, and the never-raise-a-
 user's-lower-global-level guard still applies.
 
-Claude-provider-only: on Codex / Cline / Aider the run is byte-identical to
+Claude-provider-only: on opencode the run is byte-identical to
 before. Vendor-less: Loki ships no copy of caveman and bootstraps the pinned
 version on demand (idempotent, cached under `.loki/`). Savings are real but
 bounded (output tokens only); there is no price API, so Loki discloses the
@@ -443,10 +443,10 @@ block completion independently, regardless of the inconclusive state.
 **Override-judge knobs (v7.5.4+):**
 
 ```bash
-LOKI_OVERRIDE_JUDGES=claude,codex    # csv of provider names for the
+LOKI_OVERRIDE_JUDGES=claude,opencode # csv of provider names for the
                                      # 3-judge override council. Defaults
                                      # to the available installed providers
-                                     # (claude, codex, cline, aider).
+                                     # (claude, opencode).
 LOKI_OVERRIDE_REAL_JUDGE=0           # force the deterministic stub-judge
                                      # path (hermetic CI / cost control).
                                      # Default: 1 = real provider-backed

@@ -396,7 +396,7 @@ export function computeKpis(lokiDir: string, opts: { sinceMs?: number } = {}): K
 
   const efficiency = deriveEfficiency(records);
   // Records present but every measured field zero (the shape a pre-v8.51.0
-  // codex run wrote). Cost reads UNKNOWN rather than $0.00; say why.
+  // non-Claude run wrote). Cost reads UNKNOWN rather than $0.00; say why.
   if (records.length > 0 && efficiency.total_cost_usd === null) {
     notes.push(
       `${records.length} efficiency record(s) present but no token/cost values recorded (cost UNKNOWN, not zero; tokens UNKNOWN)`,

@@ -22,7 +22,7 @@ Input and output guardrails, blocking vs parallel execution, tripwire handling a
 
 ## Override Council (v7.5.4)
 
-The override council closes the RARV-C cycle with real provider judges (Claude/Codex) rather than scripted heuristics. Each judge reviews the iteration outcome independently and casts a binding ALLOW or BLOCK vote. A unanimous ALLOW closes the iteration; any BLOCK reopens REASON with the judge's rationale appended to CONTINUITY.md. See Phase 1 RARV-C closure in `references/core-workflow.md`.
+The override council closes the RARV-C cycle with real provider judges (Claude, or opencode when selected) rather than scripted heuristics. Each judge reviews the iteration outcome independently and casts a binding ALLOW or BLOCK vote. A unanimous ALLOW closes the iteration; any BLOCK reopens REASON with the judge's rationale appended to CONTINUITY.md. See Phase 1 RARV-C closure in `references/core-workflow.md`.
 
 ---
 

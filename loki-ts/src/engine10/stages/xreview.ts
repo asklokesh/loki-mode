@@ -35,15 +35,13 @@ export function reviewReceipt(builder: string, xr: CrossReview | null, env: Node
   const obs = xr?.hygiene?.length ? { observations: xr.hygiene.map((f) => `committed build or cache artifact: ${f}`) } : {}; // an observation, never a not-proven claim
   if (xr?.same_vendor_default && !xvendorDefault(env)) return { review: { provider: xr.provider, vendor_differs: false, same_vendor: true, defaulted: true, level: xr.level, ran: reviewRanWording(xr), ...obs }, notProven: [] }; // medium default review: same-vendor, disclosed on the receipt
   if (!xvendorDefault(env)) return xr ? { review: { provider: xr.provider, vendor_differs: false, level: xr.level, ran: reviewRanWording(xr), ...obs }, notProven: [] } : { notProven: [] };
-  const differs = modelReviewRan(xr) && xr.provider !== builder && (builder === "claude" || builder === "codex"); // a review that did not run is not cross-vendor evidence
+  const differs = modelReviewRan(xr) && xr.provider !== builder && builder === "claude"; // a review that did not run is not cross-vendor evidence
   return { review: { provider: xr?.provider ?? null, vendor_differs: differs, ran: reviewRanWording(xr), ...(xr?.reviewer_model ? { reviewer_model: xr.reviewer_model } : {}), ...obs }, notProven: differs ? [] : ["judge shares builder vendor or none configured"] };
 }
-/** Read-only argv: codex runs in its read-only sandbox; claude gets the shared read-only inspect allowlist and mutation denylist (FC-XREVIEW-BLIND-TOOLS: a blanket Bash deny left it reviewing blind). */
+/** Read-only argv: claude gets the shared read-only inspect allowlist and mutation denylist (FC-XREVIEW-BLIND-TOOLS: a blanket Bash deny left it reviewing blind). */
 export function reviewArgv(p: ReviewProvider, prompt: string, env: NodeJS.ProcessEnv = process.env, model?: string, flagSupported: (f: string) => boolean = (f) => claudeFlagSupported(f)): string[] {
   const cli = reviewCli(p, env);
-  return p === "codex"
-    ? [cli, "exec", "--sandbox", "read-only", prompt]
-    : [cli, "-p", prompt, ...(model ? ["--model", model] : []), "--allowedTools", REVIEW_ALLOWLIST_NO_GIT, "--disallowedTools", REVIEW_GUARD_DENYLIST, "--permission-mode", "dontAsk", ...leanReviewerFlags({ env, flagSupported, settingSources: "", tools: "Read,Grep,Glob,Bash" }), "--output-format", "json"];
+  return [cli, "-p", prompt, ...(model ? ["--model", model] : []), "--allowedTools", REVIEW_ALLOWLIST_NO_GIT, "--disallowedTools", REVIEW_GUARD_DENYLIST, "--permission-mode", "dontAsk", ...leanReviewerFlags({ env, flagSupported, settingSources: "", tools: "Read,Grep,Glob,Bash" }), "--output-format", "json"];
 }
 /** OC-AGENTS: a configured reviewer or council agent (see council/role_agents.ts) supplies the reviewer persona, its provider and, for a claude judge, its model. None configured: null, behavior unchanged. */
 /** FC-XREVIEW-BLIND-TOOLS: tell the reviewer its limits so a sandbox limit is never raised as a concern about the work. */
@@ -69,7 +67,7 @@ export const reviewDefaultOn = (tier: string, env: NodeJS.ProcessEnv = process.e
 export const reviewBoxS = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_E10_REVIEW_BOX_S"]); return n > 0 ? n : 300; };
 function pickReviewer(ctx: RunContext, agent: ReturnType<typeof configuredReviewer>): { p: ReviewProvider | null; dflt: boolean } {
   const p = reviewProvider(ctx.repoDir, process.env, ctx.provider) ?? agent?.provider ?? null; if (p) return { p, dflt: false };
-  const ok = reviewDefaultOn(String(readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier)) && !isOff(process.env["LOKI_REVIEW_PROVIDER"]) && (ctx.provider === "claude" || ctx.provider === "codex"); // FC-MEDIUM-REVIEWER-UNCREDITED + L003: with nothing configured, high (and medium with LOKI_REVIEW_DEFAULT=1) runs the run's own CLI as the one reviewer; otherwise "one reviewer" stays on NOT PROVEN (never credited); LOKI_REVIEW_PROVIDER=off|none opts out
+  const ok = reviewDefaultOn(String(readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier)) && !isOff(process.env["LOKI_REVIEW_PROVIDER"]) && ctx.provider === "claude"; // FC-MEDIUM-REVIEWER-UNCREDITED + L003: with nothing configured, high (and medium with LOKI_REVIEW_DEFAULT=1) runs the run's own CLI as the one reviewer; otherwise "one reviewer" stays on NOT PROVEN (never credited); LOKI_REVIEW_PROVIDER=off|none opts out
   return { p: ok ? (ctx.provider as ReviewProvider) : null, dflt: ok };
 }
 // Box clamped to the time left before the run backstop (minus 25s: seal tail + margin, 30s: diff/help-cache); below MIN_REVIEW_S (a claude review cannot finish sooner) no review runs.

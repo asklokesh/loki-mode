@@ -28,16 +28,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CATALOG_PATH = REPO_ROOT / "providers" / "model_catalog.json"
 
 # Patterns that look like provider model IDs. Conservative -- only the well
-# defined Claude/Codex/Gemini families today.
+# defined Claude family today (opencode ids are free-form provider/model).
 PATTERNS: dict[str, list[re.Pattern[str]]] = {
     "claude": [
         re.compile(r"\bclaude-(?:opus|sonnet|haiku)-\d+(?:-\d+)?(?:-\d{8})?\b"),
-    ],
-    "codex": [
-        re.compile(r"\bgpt-\d+(?:\.\d+)?-codex\b"),
-    ],
-    "gemini": [
-        re.compile(r"\bgemini-\d+(?:\.\d+)?-(?:pro|flash)(?:-(?:preview|exp|latest))?\b"),
     ],
 }
 
@@ -46,12 +40,6 @@ PATTERNS: dict[str, list[re.Pattern[str]]] = {
 SOURCES: dict[str, list[str]] = {
     "claude": [
         "https://docs.claude.com/en/about-claude/models/overview",
-    ],
-    "codex": [
-        "https://platform.openai.com/docs/models",
-    ],
-    "gemini": [
-        "https://ai.google.dev/gemini-api/docs/models",
     ],
 }
 

@@ -172,7 +172,7 @@ Command shape: `bin/loki route start <input> --json`. The representative inputs 
 | `acme/widgets#42` (issue ref) | issue | engine10 | engine10:claude |
 | `./api.yaml` and `./api.json` (OpenAPI/JSON spec) | prd | engine10 | engine10:claude |
 | `./prd.md --resume` (flagged) | prd | engine10 | engine10:claude |
-| `./prd.md --provider codex` (flagged, other provider) | prd | engine10 | engine10:codex |
+| `./prd.md --provider opencode` (flagged, other provider) | prd | engine10 | engine10:opencode |
 | `./prd.md --engine legacy` (legacy-mode flag) | prd | legacy | legacy-bash:claude (runs `autonomy/run.sh`) |
 
 Other flag outcomes from the same probe: `--parallel` and `--legacy` are refused on the default engine with a message pointing to `loki queue run --parallel K` or `--engine legacy`. `LOKI_LEGACY_BASH=1 loki route ...` answers `Unknown command: route` because that rollback flag forces every command through bash, which has no `route`. Every default-path input lands on engine10; the bash loop is reachable only through an explicit `--engine legacy` (or `LOKI_ENGINE=legacy`) and the `LOKI_LEGACY_BASH=1` rollback.

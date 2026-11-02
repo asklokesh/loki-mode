@@ -38,7 +38,11 @@ const DEFAULT_HOST = '127.0.0.1';
 const PROJECT_DIR = process.env.LOKI_PROJECT_DIR || process.cwd();
 
 // Security constants
-const VALID_PROVIDERS = ['claude', 'codex', 'cline', 'aider'];
+const VALID_PROVIDERS = ['claude', 'opencode'];
+// Restated from loki-ts/src/runner/types.ts (REMOVED_PROVIDERS, removedProviderMessage); keep byte-identical.
+const REMOVED_PROVIDERS = ['codex', 'cline', 'aider', 'gemini'];
+const removedProviderMessage = (provider) =>
+  `loki: provider '${provider}' is no longer supported. Supported providers: claude (Claude Code CLI, or an Anthropic API key through the Agent SDK) and opencode (any model, including OpenRouter via OPENROUTER_API_KEY). Switch with --provider claude or --provider opencode, or unset LOKI_PROVIDER.`;
 const MAX_BODY_SIZE = 1024 * 1024; // 1MB limit
 const MAX_LOG_LINES = 1000;
 const LOKI_DIR = path.join(PROJECT_DIR, '.loki');
@@ -233,7 +237,7 @@ class ProcessManager {
 
     // Validate provider (security: prevent command injection)
     if (!VALID_PROVIDERS.includes(provider)) {
-      throw new Error(`Invalid provider: ${provider}. Must be one of: ${VALID_PROVIDERS.join(', ')}`);
+      throw new Error(REMOVED_PROVIDERS.includes(provider) ? removedProviderMessage(provider) : `Invalid provider: ${provider}. Must be one of: ${VALID_PROVIDERS.join(', ')}`);
     }
 
     // Validate PRD path (security: prevent path traversal)

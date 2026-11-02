@@ -19,9 +19,9 @@ LOKI_MODEL_CATALOG="${LOKI_MODEL_CATALOG:-$_LOKI_MODELS_SH_DIR/model_catalog.jso
 # GENERIC CAPABILITY TIERS. Callers should ask for small|medium|high and never
 # name a vendor model. medium is the DEFAULT.
 #
-#   small  -> the cheap/fast model   (claude: haiku, codex: luna)
-#   medium -> the workhorse          (claude: sonnet, codex: terra)  [default]
-#   high   -> the expensive/best     (claude: opus,   codex: sol)
+#   small  -> the cheap/fast model   (claude: haiku)
+#   medium -> the workhorse          (claude: sonnet)  [default]
+#   high   -> the expensive/best     (claude: opus)
 #
 # WHY AN ALIAS LAYER RATHER THAN A RENAME: the catalog already keys models by
 # planning/development/fast and several call sites depend on those names. This
@@ -44,7 +44,7 @@ loki_tier_alias() {
 }
 
 # Return the "latest_<tier>" id for a provider from the catalog.
-# Args: $1 provider (claude|codex|cline|aider|opencode)
+# Args: $1 provider (claude|opencode)
 #       $2 tier     (planning|development|fast, or small|medium|high)
 loki_latest_model() {
     local provider="${1:-claude}"
@@ -93,9 +93,8 @@ if not p:
     # empty with rc=1. That makes "bring your own endpoint" a dead end, which is
     # the opposite of model-agnostic.
     #
-    # A "generic" key turns the unknown case into a first-class one. It is the
-    # same shape codex already uses (all three tiers collapsed onto one model),
-    # so this generalizes an accepted pattern rather than inventing a mechanism.
+    # A "generic" key turns the unknown case into a first-class one: all three
+    # tiers collapse onto one model, declared with tier_fallback.
     #
     # The env-override chain above still wins, so an operator naming a specific
     # model per tier is never overridden by this default.
@@ -111,7 +110,7 @@ if not p:
 # alias, notes per model); the top-level keys carry nothing it does not.
 #
 # ORDER IS LOAD-BEARING: a provider may declare several models at one tier
-# (codex lists gpt-5.3-codex and o3 both as planning). First match wins, so the
+# (opencode lists several development models). First match wins, so the
 # FIRST entry at a tier is the default. Reordering models[] changes what real
 # builds dispatch. tests/test-model-catalog-single-source.sh pins this.
 models = [m for m in p.get("models", []) if isinstance(m, dict)]
@@ -119,9 +118,9 @@ model = next((m.get("id") for m in models if m.get("tier") == tier), None)
 
 if not model:
     # No entry at this tier. Falling back must be DECLARED, never accidental:
-    # codex genuinely runs one model for every tier and varies reasoning effort
-    # instead, so an absent tier is legitimate for it -- but silently walking to
-    # some other tier is how you end up dispatching a model nobody chose. The
+    # a provider may run one model for every tier, so an absent tier is
+    # legitimate -- but silently walking to some other tier is how you end up
+    # dispatching a model nobody chose. The
     # provider states the substitution in the catalog as tier_fallback, and we
     # honor only that.
     fallback_tier = (p.get("tier_fallback") or {}).get(tier)

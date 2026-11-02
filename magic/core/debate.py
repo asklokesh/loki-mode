@@ -507,17 +507,10 @@ class DebateRunner:
         provider = self.provider.lower()
         if provider == "claude":
             return ["claude", *self._permission_argv(), "-p", prompt]
-        if provider == "codex":
-            # Codex uses `exec --sandbox workspace-write` with the prompt as
-            # positional (codex 0.132.0 deprecated --full-auto; workspace-write
-            # is the documented replacement, exec is non-interactive by default).
-            return ["codex", "exec", "--sandbox", "workspace-write", prompt]
-        if provider == "gemini":
-            return ["gemini", "--approval-mode=yolo", prompt]
-        if provider == "cline":
-            return ["cline", "--auto", "-p", prompt]
-        if provider == "aider":
-            return ["aider", "--yes", "--message", prompt]
+        if provider == "opencode":
+            # Same argv as loki-ts/src/runner/provider_opencode.ts: run --auto [-m provider/model] <prompt>.
+            model = os.environ.get("LOKI_OPENCODE_MODEL", "").strip()
+            return ["opencode", "run", "--auto", *(["-m", model] if model else []), prompt]
         raise DebateProviderError(f"Unknown provider: {self.provider!r}")
 
     # ---- Parsing ------------------------------------------------------

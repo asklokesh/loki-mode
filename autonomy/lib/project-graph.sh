@@ -561,7 +561,7 @@ _lpg_find_git_root() {
 #
 # Resolve the per-directory memory/conventions file for the layered doc walker.
 # Prefers AGENTS.md (the agents.md standard: plain Markdown, nearest-file-wins,
-# read natively by Claude Code/Codex/etc.) and falls back to CLAUDE.md only when
+# read natively by Claude Code/opencode/etc.) and falls back to CLAUDE.md only when
 # AGENTS.md is absent in that directory. The two are never merged. The reader
 # (_lpg_read_layer / _append_layer) is filename-agnostic, so this is the single
 # point that decides which file each layer site reads.

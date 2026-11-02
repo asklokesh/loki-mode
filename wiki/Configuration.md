@@ -393,7 +393,7 @@ Claude Code skill that compresses the model's OUTPUT tokens only (keeping all
 technical substance). It is ACTIVATED on free-form generation (the main RARV dev
 loop) and HARD-SUPPRESSED on every trust-gate subcall (council votes, code-review
 verdict, evidence parses), so it can never change a verdict or completion
-decision. Claude-provider-only; on Codex / Cline / Aider the run is unaffected.
+decision. Claude-provider-only; on opencode the run is unaffected.
 
 ```bash
 export LOKI_CAVEMAN=0                 # opt out (default on)

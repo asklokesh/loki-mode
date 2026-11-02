@@ -7,8 +7,8 @@
 // no SSH agent while the agent runs.
 //
 // Mirrors _loki_withhold_github_tokens in autonomy/run.sh. The runner reads
-// spec text and spawns agents (claude CLI, the Agent SDK query(), codex,
-// cline, aider, council voters) that all inherit process.env, so a token left
+// spec text and spawns agents (claude CLI, the Agent SDK query(), opencode,
+// council voters) that all inherit process.env, so a token left
 // there is one prompt injection away from a push. Unlike bash, the Bun runner
 // has no post-session push or PR step of its own (issue refs and PR creation
 // run on the bash route), so the token is dropped from the process outright.

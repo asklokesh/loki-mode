@@ -97,7 +97,7 @@ export interface SummaryInput {
     /** Cache read tokens and dollars saved vs the plain input rate. undefined: not reported by this caller; null: unmeasured ("cache not measured"); 0 is a real measured zero. */
     cacheReadTokens?: number | null;
     cacheSavedUsd?: number | null;
-    /** Shown in parens when usd is null, e.g. "codex reports tokens only". */
+    /** Shown in parens when usd is null, e.g. "opencode reports no usage". */
     note?: string | null;
     /** E-69: some sessions priced, some not (usd above is null because the run isn't FULLY  measured). Renders "partial: $X for N of M sessions" instead of "not measured". Omit,  or leave  measuredSessions 0, for a run with no priced sessions at all. */
     partialUsd?: number;

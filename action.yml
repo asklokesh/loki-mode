@@ -1,5 +1,5 @@
 name: 'Loki Mode Code Review'
-description: 'Multi-agent autonomous code review using loki-mode. Supports Claude, Codex, Cline, and Aider providers.'
+description: 'Multi-agent autonomous code review using loki-mode. Supports Claude Code and opencode providers.'
 author: 'asklokesh'
 
 branding:
@@ -12,7 +12,7 @@ inputs:
     required: false
     default: 'review'
   provider:
-    description: 'AI provider: claude, codex, cline, or aider'
+    description: 'AI provider: claude or opencode'
     required: false
     default: 'claude'
   budget_limit:
@@ -92,20 +92,23 @@ runs:
               echo "Installed: $(claude --version 2>/dev/null || echo 'unknown')"
             fi
             ;;
-          codex)
-            if command -v codex &>/dev/null; then
-              echo "OpenAI Codex CLI already installed: $(codex --version 2>/dev/null || echo 'unknown')"
+          opencode)
+            if command -v opencode &>/dev/null; then
+              echo "opencode CLI already installed: $(opencode --version 2>/dev/null || echo 'unknown')"
             else
-              echo "--- Installing OpenAI Codex CLI ---"
-              npm install -g @openai/codex
-              echo "Installed: $(codex --version 2>/dev/null || echo 'unknown')"
+              echo "--- Installing opencode CLI ---"
+              npm install -g opencode-ai
+              echo "Installed: $(opencode --version 2>/dev/null || echo 'unknown')"
             fi
             ;;
-          cline|aider)
-            echo "Provider '$ACTION_PROVIDER' uses no dedicated CLI install step here; ensure its prerequisites are available in the runner."
-            ;;
           *)
-            echo "::error::Unknown provider '$ACTION_PROVIDER'. Supported: claude, codex, cline, aider"
+            # shellcheck source=/dev/null
+            source "$GITHUB_ACTION_PATH/providers/loader.sh"
+            if loki_is_removed_provider "$ACTION_PROVIDER"; then
+              echo "::error::$(loki_removed_provider_message "$ACTION_PROVIDER")"
+              exit 2
+            fi
+            echo "::error::Unknown provider '$ACTION_PROVIDER'. Supported: claude, opencode"
             exit 1
             ;;
         esac
@@ -135,20 +138,20 @@ runs:
               exit 1
             fi
             ;;
-          codex)
-            if [ -n "${OPENAI_API_KEY:-}" ]; then
-              echo "OPENAI_API_KEY is set"
+          opencode)
+            if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+              echo "OPENROUTER_API_KEY is set"
             else
-              echo "::error::OPENAI_API_KEY is not set. Add it as a repository secret and pass it via env: in your workflow."
+              echo "::warning::OPENROUTER_API_KEY is not set. opencode needs it for openrouter/<vendor>/<model> ids (other opencode providers read their own keys). Add it as a repository secret and pass it via env: in your workflow."
               echo ""
               echo "Example workflow configuration:"
               echo "  - uses: asklokesh/loki-mode@v5"
               echo "    with:"
               echo "      github_token: \${{ secrets.GITHUB_TOKEN }}"
-              echo "      provider: codex"
+              echo "      provider: opencode"
               echo "    env:"
-              echo "      OPENAI_API_KEY: \${{ secrets.OPENAI_API_KEY }}"
-              exit 1
+              echo "      OPENROUTER_API_KEY: \${{ secrets.OPENROUTER_API_KEY }}"
+              echo "      LOKI_OPENCODE_MODEL: openrouter/deepseek/deepseek-v3.2"
             fi
             ;;
         esac

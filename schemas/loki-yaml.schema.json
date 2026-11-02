@@ -9,7 +9,7 @@
     "provider": {
       "description": "Default provider. Env override: LOKI_PROVIDER.",
       "type": "string",
-      "enum": ["claude", "codex", "cline", "aider", "opencode"]
+      "enum": ["claude", "opencode"]
     },
     "models": {
       "type": "object",

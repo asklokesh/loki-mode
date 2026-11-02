@@ -118,8 +118,8 @@ printf '%s\n' "$PTY_OUT" | grep -Eq 'Outcome:[[:space:]]+VERIFIED' && ok "intera
 
 # 5. provider inference: claude absent, another supported CLI present
 mkdir -p "$T/pbin"
-printf '#!/bin/sh\necho codex 0\n' > "$T/pbin/codex"; chmod +x "$T/pbin/codex"
+printf '#!/bin/sh\necho opencode 0\n' > "$T/pbin/opencode"; chmod +x "$T/pbin/opencode"
 inf="$(PBIN="$T/pbin" bun --no-env-file --config=/dev/null -e 'const m = await import(process.env.ROOT + "/loki-ts/src/util/one_line_goal.ts"); const a = m.inferProvider({ PATH: process.env.PBIN }, false); const b = m.inferProvider({ PATH: process.env.PBIN }, true); const c = m.inferProvider({ PATH: process.env.PBIN + ":" + process.env.FIXDIR + "/bin" }, false); console.log(a?.provider + " " + b + " " + c)' 2>&1)"
-[ "$inf" = "codex null null" ] && ok "provider inference: codex when claude is missing; none when named or claude present" || bad "provider inference gave: $inf"
+[ "$inf" = "opencode null null" ] && ok "provider inference: opencode when claude is missing; none when named or claude present" || bad "provider inference gave: $inf"
 
 finish
