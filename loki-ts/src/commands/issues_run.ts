@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { MAX_PARALLEL, makeDefaultRunner, queueAdd, queueRun, type ItemResult, type QueueDeps, type RunOpts, type RunResult } from "./queue.ts";
 import { estimateFor, startText, type EstimateResult } from "../runner/router/cost_preview.ts";
-import { makeSessionDecompose, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
+import { invalidSplitNote, makeSessionDecompose, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { resolveModel } from "../engine10/session.ts";
@@ -397,13 +397,14 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
   return 0;
 }
 
-// One decompose call, re-asked once with the cap and count when the split came back over the cap; a thrown call is a refused split.
-async function splitWithReask(d: Pick<IssuesRunDeps, "decompose" | "out">, slug: string, i: GhIssue, reason: string): Promise<Decomposition> {
+// One decompose call, re-asked once when the split is refused: with the cap and count when it came back over the cap, else with the exact
+// validation error. A thrown call is a refused split.
+export async function splitWithReask(d: Pick<IssuesRunDeps, "decompose" | "out">, slug: string, i: GhIssue, reason: string): Promise<Decomposition> {
   try {
     let p = parseDecomposition(await d.decompose(slug, i, reason));
-    if (!p.ok && p.over !== undefined) {
-      d.out(`#${i.number} split had ${p.over} slices, over the cap; asking once more\n`);
-      p = parseDecomposition(await d.decompose(slug, i, reason, overCapNote(p.over)));
+    if (!p.ok) {
+      d.out(p.over !== undefined ? `#${i.number} split had ${p.over} slices, over the cap; asking once more\n` : `#${i.number} split refused (${clip(p.reason, 160)}); asking once more\n`);
+      p = parseDecomposition(await d.decompose(slug, i, reason, p.over !== undefined ? overCapNote(p.over) : invalidSplitNote(p.reason)));
     }
     return p;
   } catch (e) {

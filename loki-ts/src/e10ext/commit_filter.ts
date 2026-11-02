@@ -55,7 +55,8 @@ export function guardedBackstop(intact: boolean, repoDir: string, workerEnv: Nod
 /** Run safety: before the checkout returns to the user's branch, whatever the run left uncommitted (any outcome without a PR: FAILED,
  *  STALLED, BLOCKED, BUDGET_STOP, a SIGINT/SIGTERM cancel) becomes one WIP commit on its own branch, so `git checkout <start>` neither
  *  refuses nor carries the run's edits onto the user's branch. Only on loki/<runId>, with an intact log and a valid intake base. Every
- *  path that was dirty or untracked at intake stays exactly where it is, edited or not: those are the user's files. True when it committed. */
+ *  path that was dirty or untracked at intake, and everything under .loki/ (a deletion included), stays exactly where it is, edited or not: those are
+ *  the user's files. True when it committed. */
 export function commitUnsealedWork(intact: boolean, repoDir: string, workerEnv: NodeJS.ProcessEnv, runId: string, intake: Record<string, unknown> | undefined): boolean {
   if (!intact || !intake || validBase(intake["base_sha"]) === null) return false;
   const g = (args: string[]) => safeGit(repoDir, args, { env: workerEnv });
@@ -64,7 +65,9 @@ export function commitUnsealedWork(intact: boolean, repoDir: string, workerEnv: 
     const keys = (o: unknown): string[] => (o && typeof o === "object" ? Object.keys(o) : []);
     const users = [...keys(intake["preexisting_dirty"]), ...keys(intake["preexisting_untracked_blobs"]), ...(Array.isArray(intake["preexisting_untracked"]) ? (intake["preexisting_untracked"] as unknown[]).map(String) : [])];
     g(["add", "-A", "--", "."]);
-    const keep = g(["--literal-pathspecs", "ls-files", "--cached", "-z", "--", ".loki", ...new Set(users)]).split("\0").filter(Boolean);
+    // A deletion is no longer in the index after `add -A`, so ls-files alone misses it: also take every staged change (deletions included) under
+    // .loki and the user's paths. Without this the WIP commit deleted a repo's tracked legacy .loki files (FireLater tracks four) on the run branch.
+    const spec = ["--", ".loki", ...new Set(users)], keep = [...new Set([...g(["--literal-pathspecs", "ls-files", "--cached", "-z", ...spec]).split("\0"), ...g(["--literal-pathspecs", "diff", "--cached", "--name-only", "--no-renames", "-z", ...spec]).split("\0")].filter(Boolean))];
     if (keep.length > 0) g(["--literal-pathspecs", "reset", "-q", "HEAD", "--", ...keep]);
     try { g(["diff", "--cached", "--quiet"]); return false; } catch (e) { if ((e as { status?: number }).status !== 1) return false; }
     g(["commit", "-q", "-m", `loki: work in progress, not verified (${runId})`, "-m", `Loki-Run: ${runId}`]);

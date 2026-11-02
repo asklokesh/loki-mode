@@ -18,6 +18,10 @@
 #      sizing, epic and decompose-path assertions must fail.
 #   2. loki-ts/src/engine10/stages/intake.ts: put the eager zero probe back (every detected test file run once,
 #      120 s budget, before intake returns; rebuild dist); the intake and first-session timing assertions must fail.
+#   3. loki-ts/src/commands/issues_epic.ts: put back the old strList (refuse a list over its cap or any entry over 500
+#      characters); the split repair assertion must fail (p.ok false).
+#   4. loki-ts/src/commands/issues_run.ts splitWithReask: re-ask only when `p.over !== undefined`; the split repair
+#      assertion must fail (one call, no exact-error note).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -180,6 +184,22 @@ if [ -f "$EPIC_DIR/epic.json" ]; then
 else
     bad "no epic.json recorded for the epic run"
 fi
+
+# --- split repair: a list detail is repaired, any other refusal is re-asked once with the exact error ------------------------
+# FireLater#24 (v11.116.0): one 520-character acceptance criterion refused the whole split and the epic ran as one 413 s session.
+SPLITR="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const m = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
+const r = await import(process.env.ROOT + "/loki-ts/src/commands/issues_run.ts");
+const fl = JSON.stringify({ slices: [{ id: "s1", title: "backend", acceptance: ["x".repeat(520), "", "  ", ...Array.from({ length: 24 }, (_, i) => "c" + i)] }, { id: "s2", title: "ui", acceptance: ["ok"], depends_on: ["s1", "s1"] }] });
+const p = m.parseDecomposition(fl), out = [p.ok, p.ok && p.slices[0].acceptance.length, p.ok && p.slices[0].acceptance[0].length, p.ok && p.slices[0].acceptance[19].includes("c23"), p.ok && p.slices[1].depends_on.join(",")];
+const notes = []; let calls = 0;
+const d = { out: () => {}, decompose: async (_s, _i, _r, note) => { calls++; notes.push(note ?? ""); return calls === 1 ? JSON.stringify({ slices: [{ id: "s1", title: "a", acceptance: [] }, { id: "s2", title: "b", acceptance: ["x"] }] }) : fl; } };
+const q = await r.splitWithReask(d, "acme/x", { number: 1, title: "t", body: "b", labels: [] }, "large");
+out.push(q.ok, calls, (notes[1] ?? "").includes("s1: acceptance must be a list"));
+console.log(out.join(" "));
+' 2>&1)"
+[ "$SPLITR" = "true 20 500 true s1 true 2 true" ] && ok "split repair: a 520-char criterion is clipped, empties dropped, 26 criteria merged to 20, duplicate deps dropped; an empty acceptance list is re-asked once with the exact error" \
+    || bad "split repair gave: $SPLITR (want: true 20 500 true s1 true 2 true)"
 
 # --- lean + intake speed: a one-line fix on a 1246-file repo with 20 stale run branches --------------------------------
 R="$T/big"

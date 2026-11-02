@@ -8,7 +8,8 @@
 #     (red on base, still red after the correct multiply() lands); E2E_STUB_WALL_SLEEP=<s> makes that author session slow
 # E2E_STUB_WALL (Wall author, any mode): gopkg writes loki_wall_calc_test.go as "package calc" (the tests/ directory is
 #   "package tests"); rsnew writes loki_wall_calc.rs calling Calc::new() where the crate defines Calc::new(base); rsbase writes a
-#   correct test calling Calc::new(5) for a task that changes Calc::new() to Calc::new(base) (tests/min/scope-and-fix.sh)
+#   correct test calling Calc::new(5) for a task that changes Calc::new() to Calc::new(base) (tests/min/scope-and-fix.sh); vitestred writes a vitest
+#   loki_wall_search.test.ts whose C2 never passes (tests/min/run-safety.sh: a Wall-only failure is delivered as PARTIAL)
 # E2E_STUB_TEST_EDIT=1: the implement session weakens calc.test.ts (adds a test.skip) and adds a new multiply.test.ts;
 # =update only appends a test case to calc.test.ts (assertions kept), plus the same new file.
 # E2E_STUB_SCOPE_EDIT=1: the implement session also edits util.ts (when the repo has one).
@@ -82,6 +83,13 @@ fi
 if [ "$is_wall" = 1 ] && [ "${E2E_STUB_WALL:-}" = "rsbase" ]; then # a correct Rust Wall test for a constructor the task changes from new() to new(base)
   printf 'use calc::Calc;\n\n#[test]\nfn starts_from_base() {\n    assert_eq!(Calc::new(5).add(1), 6);\n}\n' > loki_wall_calc.rs
 fi
+if [ "$is_wall" = 1 ] && [ "${E2E_STUB_WALL:-}" = "vitestred" ]; then # a vitest Wall test for a useSearch hook: C1 passes once the hook exists, C2 (ts_rank) never does
+  printf '%s\n' 'import { test, expect } from "vitest";' 'import { existsSync, readFileSync } from "node:fs";' 'import { dirname, join } from "node:path";' \
+    'let root = process.cwd();' 'while (!existsSync(join(root, "frontend")) && dirname(root) !== root) root = dirname(root);' \
+    'const src = readFileSync(join(root, "frontend/src/hooks/useApi.ts"), "utf8");' \
+    'test("C1 a search hook calls the search API", () => { expect(src).toMatch(/useSearch/); });' \
+    'test("C2 results are ranked with ts_rank", () => { expect(src).toMatch(/ts_rank/); });' > loki_wall_search.test.ts
+fi
 if [ "$is_wall" = 1 ] && [ "${E2E_STUB_MODE:-}" = "wallcolor" ]; then # FC-69: the Wall author writes one red-on-base test for multiply()
   printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n' > loki_wall_multiply.test.ts
 fi
@@ -90,6 +98,11 @@ case "$prompt" in # `loki plan --spec` (tests/min/triage-router.sh): write the s
     out="$(printf '%s\n' "$prompt" | sed -n 's/.*to this exact file path: //p' | tail -1)"
     [ -n "$out" ] && printf '{"intent":"stub intent","criteria":["the stated change is made","a test covers it"]}\n' > "$out"
     ;;
+  *"Project Model discovery step"*) # E2E_STUB_PROJECT (JSON text): the project-model answer, written to the path the brief names
+    if [ -n "${E2E_STUB_PROJECT:-}" ]; then
+      out="$(printf '%s\n' "$prompt" | sed -n 's/^Write ONLY a JSON object to this file (absolute path): //p' | head -1)"
+      [ -n "$out" ] && printf '%s\n' "$E2E_STUB_PROJECT" > "$out"
+    fi ;;
   *"PR-sized slices"*) # the MASS-2 split session (tests/min/decompose-and-intake.sh)
     if [ -n "${E2E_STUB_SPLIT:-}" ]; then
       out="$(printf '%s\n' "$prompt" | sed -n 's/^Write exactly one JSON object to the file \(.*\) and nothing else to that file, in this form:$/\1/p' | head -1)"

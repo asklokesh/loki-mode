@@ -50,10 +50,19 @@ function extractJson(text: string): unknown {
   return undefined;
 }
 
-const strList = (v: unknown, max: number): string[] | null =>
-  Array.isArray(v) && v.length <= max && v.every((x) => typeof x === "string" && x.trim() !== "" && x.length <= 500) ? (v as string[]).map(oneLine) : null;
+const ITEM_MAX = 500;
+const clipItem = (s: string): string => (s.length <= ITEM_MAX ? s : `${s.slice(0, ITEM_MAX - 3).trimEnd()}...`);
+/** A list of strings, repaired instead of refused (FireLater#24: one 520-character criterion threw the whole split away). Each entry goes on one
+ *  line; empty and non-string entries are dropped; duplicates are dropped; an entry over ITEM_MAX characters is clipped; entries past `max` are
+ *  merged into the last one kept when `merge` is set (criteria: nothing the model wrote is lost), else dropped (paths). Null only for a non-list. */
+const strList = (v: unknown, max: number, merge = false): string[] | null => {
+  if (!Array.isArray(v)) return null;
+  const items = [...new Set(v.filter((x): x is string => typeof x === "string").map(oneLine).filter((x) => x !== ""))];
+  if (merge && items.length > max) items.splice(max - 1, items.length, items.slice(max - 1).join("; "));
+  return items.slice(0, max).map(clipItem);
+};
 
-/** Validate the model's split and order it. Never invents, merges or renames a slice. */
+/** Validate the model's split and order it. List fields are repaired (strList); a slice is never invented, merged or renamed. */
 export function parseDecomposition(text: string): Decomposition {
   const j = extractJson(text);
   if (j === undefined || j === null || typeof j !== "object" || Array.isArray(j)) return { ok: false, reason: "no JSON object in the reply" };
@@ -71,9 +80,9 @@ export function parseDecomposition(text: string): Decomposition {
     if (seen.has(o.id)) return { ok: false, reason: `duplicate slice id ${o.id}` };
     seen.add(o.id);
     if (typeof o.title !== "string" || !o.title.trim() || o.title.length > 200) return { ok: false, reason: `${o.id}: title must be a non-empty string of at most 200 characters` };
-    const acceptance = strList(o.acceptance, 20);
-    if (!acceptance || acceptance.length === 0) return { ok: false, reason: `${o.id}: acceptance must be 1-20 non-empty strings` };
-    const deps = o.depends_on === undefined ? [] : strList(o.depends_on, MAX_SLICES);
+    const acceptance = strList(o.acceptance, 20, true);
+    if (!acceptance || acceptance.length === 0) return { ok: false, reason: `${o.id}: acceptance must be a list holding at least one non-empty string` };
+    const deps = o.depends_on === undefined ? [] : strList(o.depends_on, Infinity); // every id is checked below: an unknown one is refused, never dropped
     if (!deps) return { ok: false, reason: `${o.id}: depends_on must be a list of slice ids` };
     const files = o.files === undefined ? [] : strList(o.files, 50);
     if (!files) return { ok: false, reason: `${o.id}: files must be a list of paths` };
@@ -120,6 +129,9 @@ export function parseDecomposition(text: string): Decomposition {
 /** The re-ask sent once when a split came back over the cap: names the cap and the count it got. */
 export const overCapNote = (got: number): string =>
   `Your previous split had ${got} slices but the limit is ${MAX_SLICES}. Merge related slices so the plan has at most ${MAX_SLICES}, and write the corrected JSON object to the file.`;
+/** The re-ask sent once for any other refused split: the exact validation error, so the model corrects that one thing. */
+export const invalidSplitNote = (reason: string): string =>
+  `Your previous split was refused: ${oneLine(reason)}. Fix that and write the corrected JSON object to the file, in the same form.`;
 
 export function decomposeBrief(slug: string, i: GhIssue, triageReason: string, outPath: string, note = ""): string {
   return [

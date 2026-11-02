@@ -4,9 +4,9 @@ import { installHint } from "../../util/stack_tools.ts";
 import { atomicWriteText } from "../../util/atomic.ts"; import { redactSecrets } from "../../util/redact.ts";
 import { installOwned } from "../../project_model/install.ts";
 import { scopedOutOf } from "../../project_model/scope.ts";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path"; import { MANIFESTS } from "../../contrib/wall_snapshot.ts"; import { classifyRunnerOutput } from "../../runner/runner_errors.ts";
 import { hiddenConfigChanged, testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst } from "../../e10ext/select.ts"; import { dependentNotes, dependentTests } from "../../features/dependents.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
@@ -15,7 +15,7 @@ import { withoutStaleWall, failureExcerpt, truncateBytes, EXCERPT_TOTAL_CAP, cha
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { baseDepsLinker, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
 interface ImplementOutput { exit?: ImplementExit; }
@@ -35,7 +35,7 @@ export interface VerifyCheck {
   owner?: "harness"; skip_code?: SkipCode; /* machine-readable twin of the "<cmd> not found on PATH" reason */ // FC-02: the runner could not load or collect; not_run, never a code failure
 }
 export { runnerCmd, commandFor, firstError } from "../../util/check_result.ts"; // one owner: check_result.ts (test invocation resolver and failure-line normalizer)
-import { type SkipCode, firstFileLineAnchor, runnerCmd, commandFor, firstError, resolveTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
+import { type SkipCode, changedSymbols, firstFileLineAnchor, runnerCmd, commandFor, firstError, resolveTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
 /** TEN-QUALITY-01: stage-local failure excerpts keyed by check object; never on VerifyCheck, never emitted, never set for a held-out check. */
 const excerpts = new WeakMap<object, string>();
 const failTails = new WeakMap<object, string>(); // WALL-FAILOUT: redacted tail of a failed check's output, read only by writeWallFailureTail
@@ -125,8 +125,92 @@ export async function runCheck(
   ctx.emit("test.result", "verify", opts.opaque ? { ...pubHold(check) } : { ...check });
   return check;
 }
+
+// L027: one vitest process per package for all its selected files, instead of one process per file. FireLater#24: a change to a shared module
+// selected about 45 frontend page tests; one process each took 150 s of a verify that then hit its limit twice, while the whole frontend suite in
+// one process took 11 s. A batched file is reported as the text vitest prints for that file alone, so every shared parser (ran, skipped, failIds,
+// firstError, failureExcerpt) reads it exactly as a per-file run. A file the batch cannot vouch for (no report, a load or collect error, zero
+// executed tests) runs alone through runCheck as before. LOKI_E10_VERIFY_BATCH=0 turns batching off.
+export const verifyBatchOn = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_E10_VERIFY_BATCH"] !== "0";
+const BATCH_MIN = 2;
+const batchTimeoutMs = (files: number): number => Math.max(CHECK_TIMEOUT_MS, Math.min(300_000, files * 5_000));
+interface VitestAssertion { status?: unknown; title?: unknown; ancestorTitles?: unknown; failureMessages?: unknown }
+type FileRun = { ok: boolean; out: string };
+/** A plain per-file vitest command (check_result.ts runnerCmd): `npx --no-install vitest run <file>`; anything else (a repo test command) is never batched. */
+const vitestFile = (t: TestRef, c: { cmd: string; args: string[] }): boolean => t.runner === "vitest" && c.cmd === "npx" && c.args.length === 4 && c.args[0] === "--no-install" && c.args[1] === "vitest" && c.args[2] === "run";
+/** One file's assertion results rendered as vitest's default reporter prints that file run alone (non-TTY). */
+export function vitestFileText(rel: string, asserts: VitestAssertion[]): FileRun {
+  const st = (a: VitestAssertion): string => String(a.status ?? ""), path = (a: VitestAssertion): string => [...(Array.isArray(a.ancestorTitles) ? a.ancestorTitles.map(String) : []), String(a.title ?? "")].join(" > ");
+  const failed = asserts.filter((a) => st(a) === "failed"), passed = asserts.filter((a) => st(a) === "passed").length, skippedN = asserts.length - failed.length - passed;
+  const lines = [` ${failed.length ? "❯" : "✓"} ${rel} (${asserts.length} tests${failed.length ? ` | ${failed.length} failed` : ""}${skippedN ? ` | ${skippedN} skipped` : ""}) 0ms`]; // the duration vitest prints: firstError strips it, so the stall signature is byte-equal to a per-file run's
+  for (const a of asserts) if (st(a) === "passed" || st(a) === "failed") lines.push(`   ${st(a) === "failed" ? "×" : "✓"} ${String(a.title ?? "")} 0ms`);
+  lines.push("");
+  for (const a of failed) lines.push(` FAIL  ${rel} > ${path(a)}`, ...(Array.isArray(a.failureMessages) ? a.failureMessages.map((m) => String(m).slice(0, 4000)) : []), "");
+  const parts = [failed.length ? `${failed.length} failed` : "", passed ? `${passed} passed` : "", skippedN ? `${skippedN} skipped` : ""].filter(Boolean).join(" | ");
+  lines.push(` Test Files  ${failed.length ? "1 failed" : "1 passed"} (1)`, `      Tests  ${parts} (${asserts.length})`);
+  return { ok: failed.length === 0, out: lines.join("\n") };
+}
+/** One `vitest run` of `rels` (paths as vitest takes them from `cwd`) with the JSON reporter writing to a Loki-owned temp file. Per-file results keyed
+ *  by the rel given; a file with no assertion results or a suite-level error is left out (the caller runs it alone). Null when the run gave no
+ *  readable report (cut by its timeout or the stage, tool missing, malformed JSON). */
+export async function vitestBatch(cwd: string, rels: string[], signal: AbortSignal, opts: { timeoutMs?: number; path?: string } = {}): Promise<Map<string, FileRun> | null> {
+  const dir = mkdtempSync(join(tmpdir(), "loki-vbatch-")), file = join(dir, "report.json");
+  try {
+    const r = await runOnce("npx", ["--no-install", "vitest", "run", "--reporter=json", `--outputFile=${file}`, ...rels], cwd, signal, { timeoutMs: opts.timeoutMs ?? batchTimeoutMs(rels.length), group: true, ...(opts.path ? { path: opts.path } : {}) });
+    if (r.cut || r.missing || !existsSync(file)) return null;
+    const rep = JSON.parse(readFileSync(file, "utf8")) as { testResults?: { name?: unknown; message?: unknown; assertionResults?: unknown }[] };
+    const real = (p: string): string => { try { return realpathSync(p); } catch { return p; } }, byAbs = new Map<string, string>();
+    for (const rel of rels) for (const p of [resolve(cwd, rel), real(resolve(cwd, rel))]) byAbs.set(p, rel);
+    const out = new Map<string, FileRun>();
+    for (const tr of rep.testResults ?? []) {
+      const rel = byAbs.get(String(tr.name ?? "")), asserts = Array.isArray(tr.assertionResults) ? (tr.assertionResults as VitestAssertion[]) : [];
+      if (rel && asserts.length > 0 && !(typeof tr.message === "string" && tr.message.trim() !== "")) out.set(rel, vitestFileText(rel, asserts));
+    }
+    return out;
+  } catch { return null; } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+/** The batched form of runCheck for vitest files grouped by package: one run, then one batched rerun of the files that failed (fail-then-pass is
+ *  "flaky", as in runCheck). Records and emits a check only for a file the batch vouches for: a pass with n > 0, or a fail on both runs that is not
+ *  a runner load error. Returns the checks keyed by check name; every other file is left for runCheck. */
+async function runVitestBatches(ctx: RunContext, tests: TestRef[], api: ProjectApi | null, signal: AbortSignal, onCheck: (c: VerifyCheck) => void): Promise<Map<string, VerifyCheck>> {
+  const got = new Map<string, VerifyCheck>(), groups = new Map<string, { t: TestRef; tc: ReturnType<typeof commandFor> }[]>();
+  for (const t of tests) { const tc = commandFor(t, ctx.repoDir, api); if (vitestFile(t, tc)) groups.set(tc.cwd, [...(groups.get(tc.cwd) ?? []), { t, tc }]); }
+  for (const [cwd, g] of groups) {
+    if (g.length < BATCH_MIN || signal.aborted) continue;
+    const rel = (x: { tc: { args: string[] } }): string => x.tc.args[x.tc.args.length - 1]!, t0 = Date.now();
+    const first = await vitestBatch(cwd, g.map(rel), signal);
+    if (!first) continue;
+    const classify = (f: FileRun): ReturnType<typeof classifyCheck> => classifyCheck({ kind: "test", ok: f.ok, cut: false, missing: false, out: f.out });
+    const failing = g.filter((x) => { const f = first.get(rel(x)); return f !== undefined && classify(f).result === "fail" && classifyRunnerOutput(f.out).kind !== "load_error"; });
+    const second = failing.length && !signal.aborted ? await vitestBatch(cwd, failing.map(rel), signal) : null;
+    const share = (Date.now() - t0) / 1000 / g.length;
+    for (const x of g) {
+      const a = first.get(rel(x)); if (!a) continue;
+      const ca = classify(a), b = ca.result === "fail" && failing.includes(x) ? second?.get(rel(x)) : undefined, cb = b ? classify(b) : null;
+      const result: VerifyCheck["result"] | null = ca.result === "pass" && (ca.n ?? 0) > 0 ? "pass" : cb?.result === "pass" ? "flaky" : cb?.result === "fail" ? "fail" : null;
+      if (!result) continue; // not vouched for: runCheck runs it alone
+      const outText = b?.out ?? a.out, anchor = result === "fail" ? firstFileLineAnchor(outText) : null;
+      const check: VerifyCheck = { name: testCheckName(x.t), cmd: x.tc.argv.join(" "), result, duration_s: share, ...(result === "fail" ? { first_error: firstError(outText), ids: failIds(outText), ...(anchor ? { anchor } : {}) } : result === "pass" ? { n: ca.n ?? 0, sk: skipped(a.out) } : {}) };
+      if (result === "fail") { excerpts.set(check, failureExcerpt(outText, ctx.repoDir)); failTails.set(check, wallTailOf(outText, ctx.repoDir)); }
+      got.set(check.name, check); ctx.emit("test.result", "verify", { ...check }); onCheck(check);
+    }
+  }
+  return got;
+}
+/** Selected tests that exercise a symbol the diff declares or changes (check_result.ts changedSymbols) run first, so a stage stopped at its limit
+ *  has run the tests most likely to catch this change. Order is otherwise kept. */
+function changedSymbolsFirst(ctx: RunContext, tests: TestRef[], changed: string[]): TestRef[] {
+  const code = changed.filter((f) => CODE_EXT.test(f) && !isTestFile(f));
+  if (code.length === 0 || tests.length < 2) return tests;
+  let names: string[] = [];
+  try { names = changedSymbols(safeGit(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, "--", ...code], { timeout: 20000 })).filter((n) => n.length >= 3); } catch { return tests; }
+  if (names.length === 0) return tests;
+  const re = new RegExp(`\\b(?:${names.map((n) => n.replace(/[$]/g, "\\$")).join("|")})\\b`);
+  const hits = tests.filter((t) => { try { return re.test(readFileSync(join(ctx.repoDir, t.path), "utf8")); } catch { return false; } });
+  return [...hits, ...tests.filter((t) => !hits.includes(t))];
+}
 type Counts = { run: number; skipped: number };
-type BaseSubtraction = { ids: string[]; names: string[]; weak: string[]; zero: string[]; cnt: Record<string, { b: Counts; h: Counts }> };
+type BaseSubtraction = { ids: string[]; names: string[]; knownRed: string[]; weak: string[]; zero: string[]; cnt: Record<string, { b: Counts; h: Counts }> };
 /** A-112: a test check red on head, in a file the diff did not touch, whose every failing id is also red on a pristine detached base  worktree (never a reset of the implement tree, D42 (2)) is  pre_red: ids go to NOT PROVEN,  seal skips it in the verdict, the check
  *  stays  "fail" and in the fix loop unless the TARGET progressed: a passing Wall test, or a relevant test (`rel`: impacted  tests of the task-named  files, the lean-path Wall stand-in)  that failed on base, now passes and ran no fewer tests (absent or skipped is
  *  not green). Relevant checks  are never pre_red. Base  reruns get no node_modules or .venv: a dependency-only failure yields no ids (failIds needs  the count covered).  A-115: a relevant check that passes with more skipped or deselected tests than  base is `weak`:
@@ -137,7 +221,7 @@ async function subtractBase(
   ctx: RunContext, api: ProjectApi | null, checks: VerifyCheck[], tests: TestRef[], changed: string[],
   wall: Set<string>, rel: Set<string>, signal: AbortSignal, zeroOk = true, zeroIntake: ZeroGate = zeroGate(null), dep: ReadonlySet<string> = new Set(),
 ): Promise<BaseSubtraction> {
-  const out: BaseSubtraction = { ids: [], names: [], weak: [], zero: [], cnt: {} };
+  const out: BaseSubtraction = { ids: [], names: [], knownRed: [], weak: [], zero: [], cnt: {} };
   const pairs = checks.flatMap((c) => {
     const t = tests.find((x) => testCheckName(x) === c.name);
     return t ? [{ c, t }] : [];
@@ -150,12 +234,27 @@ async function subtractBase(
   try {
     git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, ctx.baseSha]);
     const base = new Map<VerifyCheck, { red: string[]; n: number; sk: number }>();
-    for (const { c, t } of new Set([...un, ...sus])) {
-      const bc = commandFor(t, dir, api);
-      const b = await runOnce(bc.cmd, bc.args, bc.cwd, signal, {});
-      const red = !b.ok && !b.cut ? failIds(b.out) : [];
-      base.set(c, { red, n: ran(b.out) ?? summaryPassFailCount(b.out), sk: skipped(b.out) });
+    const record = (c: VerifyCheck, b: { ok: boolean; cut?: boolean; out: string }): void => { base.set(c, { red: !b.ok && !b.cut ? failIds(b.out) : [], n: ran(b.out) ?? summaryPassFailCount(b.out), sk: skipped(b.out) }); };
+    // Relevant passes first, on a base without dependencies (their counts are compared as before). Only failing untouched checks need a base run
+    // after that: a passing one's base result is never read.
+    for (const { c, t } of sus) { const bc = commandFor(t, dir, api); record(c, await runOnce(bc.cmd, bc.args, bc.cwd, signal, {})); }
+    const red = un.filter(({ c }) => c.result === "fail" && c.ids?.length && !base.has(c));
+    // A suite that needs its dependencies (a vitest package with its own node_modules) yields no ids on a bare base, so its pre-existing failures
+    // could never be told apart from new ones (FireLater#24: 23 page tests red on base were fed to the fix rounds). The head's dependency dirs are
+    // linked in only when no dependency manifest changed and baseDepsLinker's guards hold (fail closed otherwise); vitest files run batched per package.
+    const link = changed.some((f) => MANIFESTS.test(f)) ? null : baseDepsLinker(dir, ctx.repoDir, zeroIntake);
+    const cmds = red.map((p) => ({ ...p, bc: commandFor(p.t, dir, api) }));
+    for (const bc of new Set(cmds.map((x) => x.bc.cwd))) link?.(bc);
+    if (verifyBatchOn() && !signal.aborted) {
+      const byCwd = new Map<string, typeof cmds>();
+      for (const x of cmds) if (vitestFile(x.t, x.bc)) byCwd.set(x.bc.cwd, [...(byCwd.get(x.bc.cwd) ?? []), x]);
+      for (const [cwd, g] of byCwd) {
+        if (g.length < BATCH_MIN || signal.aborted) continue;
+        const res = await vitestBatch(cwd, g.map((x) => x.bc.args[3]!), signal);
+        for (const x of g) { const f = res?.get(x.bc.args[3]!); if (f) record(x.c, f); }
+      }
     }
+    for (const { c, bc } of cmds) if (!base.has(c) && !signal.aborted) record(c, await runOnce(bc.cmd, bc.args, bc.cwd, signal, {}));
     out.zero = await zeroOnBase(zc.map(({ c, t }) => ({ name: c.name, ...commandFor(t, dir, api) })), dir, ctx.repoDir, (r) => runOnce(r.cmd, r.args, r.cwd, signal, {}), (n) => ctx.emit("test.skipped_on_base", "verify", { note: `skipped on base: ${n}`, check: n }), zeroIntake);
     out.weak = sus
       .filter(({ c }) => (c.sk ?? 0) > base.get(c)!.sk || (c.n ?? 0) < base.get(c)!.n)
@@ -168,7 +267,9 @@ async function subtractBase(
       || sus.some(({ c }) => !out.weak.includes(c.name) && base.get(c)!.red.length > 0 && (c.n ?? 0) >= base.get(c)!.n);
     {
       for (const { c } of un) {
-        if ((progress || dep.has(c.name)) && !rel.has(c.name) && c.result === "fail" && c.ids?.length && c.ids.every((i) => base.get(c)!.red.includes(i))) { // RX-3: a dependent-only check needs no progress proof
+        if (rel.has(c.name) || c.result !== "fail" || !c.ids?.length || !c.ids.every((i) => base.get(c)?.red.includes(i))) continue;
+        out.knownRed.push(c.name); // red on base by every failing id: never fix-round input, whatever the target did
+        if (progress || dep.has(c.name)) { // RX-3: a dependent-only check needs no progress proof
           out.names.push(c.name);
           out.ids.push(...c.ids);
         }
@@ -252,7 +353,7 @@ export const verifyStage: Stage = {
     // FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER: run every sealed Wall path, never only those the runner's discovery lists (loki_wall_x.py is not a pytest-discovered name). No project runner: a Wall-sealed file runs with Loki's bun (harness), as before.
     const wallTests = [...wallPaths].flatMap((p): TestRef[] => { const rec = recorded.get(p), found = map.tests.find((t) => t.path === p && (!rec || t.runner === rec)); if (found) return [found]; const runner = rec ?? guessRunner(basename(p), map.runners, p); return runner && (runner !== "bun" || map.runners.includes("bun") || /[._](?:test|spec)\.[cm]?[jt]sx?$/.test(p)) ? [{ runner, path: p }] : []; }); // harness: `bun test <name>` skips any name bun does not discover as a test (*.test, *_test, *.spec, *_spec)
     const dep = dependentTests(ctx.repoDir, map, changed, [...impacted, ...changedTestFiles, ...wallTests, ...relevant]), depNames = new Set(dep.tests.map(testCheckName)); // RX-3
-    const tests = failedFirst(dedupeTests([...wallTests, ...relevant, ...changedTestFiles, ...impacted, ...dep.tests]), (ctx.outputs().verify as { checks?: Array<{ name?: unknown; result?: unknown }> } | undefined)?.checks); // TEN-SPEED-07; the Wall and task-named tests that prove the task run first, so a stage stopped at its limit has already run them
+    const tests = failedFirst(dedupeTests([...wallTests, ...relevant, ...changedTestFiles, ...changedSymbolsFirst(ctx, impacted, changed), ...dep.tests]),(ctx.outputs().verify as { checks?: Array<{ name?: unknown; result?: unknown }> } | undefined)?.checks); // TEN-SPEED-07; the Wall and task-named tests that prove the task run first, so a stage stopped at its limit has already run them
     // The evidence so far, published after every check: a verify stopped at its limit or the cap keeps the checks that ran (machine.ts), never "no tests executed". wall_passed follows the final rule below: false on any failure, true only when every Wall and holdout check ran and passed.
     const done: VerifyCheck[] = [], wallNames0 = new Set(wallTests.map(testCheckName)), targets0 = new Set([...wallTests, ...relevant].map(testCheckName)), wallDropped0 = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p));
     let holdN: number | null = wall.holdout_dir ? null : 0; // held-out Wall checks to run; null until they are staged
@@ -265,7 +366,17 @@ export const verifyStage: Stage = {
     const scopedOut = scopedOutOf(map); // FC-22: audit trail for package-scoped selection (LOKI_E10_SCOPE=1)
     if (scopedOut.length) ctx.emit("test.scoped_out", "verify", { tests: scopedOut });
     // TEN-SPEED-18: LOKI_E10_VERIFY_JOBS bounds concurrent test processes; mapPool keeps the selected (failed-first) order whatever order they finish in
-    checks.push(...(await mapPool(tests, verifyJobs(), async (t) => { const tc = commandFor(t, ctx.repoDir, api), slot: VerifyCheck[] = []; await runCheck(ctx, testCheckName(t), tc.cmd, tc.args, signal, slot, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: [...wallTests, ...relevant].includes(t), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); done.push(...slot); publish(); return slot; }, () => signal.aborted)).flat());
+    const runAlone = (list: TestRef[]): Promise<VerifyCheck[][]> => mapPool(list, verifyJobs(), async (t) => { const tc = commandFor(t, ctx.repoDir, api), slot: VerifyCheck[] = []; await runCheck(ctx, testCheckName(t), tc.cmd, tc.args, signal, slot, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: [...wallTests, ...relevant].includes(t), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); done.push(...slot); publish(); return slot; }, () => signal.aborted);
+    // L027: Wall tests and non-vitest tests run alone and first; then the task-named vitest files batched per package, then the other vitest files
+    // batched per package (a stage stopped at its limit has run the Wall and task-named tests); a file a batch does not vouch for runs alone last.
+    const batchable = (t: TestRef): boolean => verifyBatchOn() && t.runner === "vitest" && !wallNames0.has(testCheckName(t)), byName = new Map<string, VerifyCheck[]>();
+    const alone = async (list: TestRef[]): Promise<void> => { (await runAlone(list)).forEach((s, i) => { if (s) byName.set(testCheckName(list[i]!), s); }); };
+    await alone(tests.filter((t) => !batchable(t)));
+    for (const part of [tests.filter((t) => batchable(t) && targets0.has(testCheckName(t))), tests.filter((t) => batchable(t) && !targets0.has(testCheckName(t)))]) {
+      for (const [n, c] of await runVitestBatches(ctx, part, api, signal, (c) => { done.push(c); publish(); })) byName.set(n, [c]);
+    }
+    await alone(tests.filter((t) => batchable(t) && !byName.has(testCheckName(t))));
+    checks.push(...tests.flatMap((t) => byName.get(testCheckName(t)) ?? [])); // the selected order, whichever way each check ran
     const hold = wall.holdout_dir ? stageHoldout(wall.holdout_dir, ctx.repoDir) : null; if (hold && !hold.missing.length) holdN = hold.tests.length; // P12-05: held-out Wall tests, copied in under neutral names for this run only, blocking (protect), named holdout:N internally and "holdout" in every record that leaves this stage
     try { for (const [i, h] of (hold?.tests ?? []).entries()) { if (signal.aborted) break; const t = h as TestRef, tc = commandFor(t, ctx.repoDir, api); await runCheck(ctx, `holdout:${i + 1}`, tc.cmd, tc.args, signal, checks, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: true, opaque: true, ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); publish(); } } finally { hold?.cleanup(); }
     if (hold?.missing.length) { for (const m of hold.missing) recordHoldoutTriage(ctx.runDir, { check: "holdout:store", result: "not_run", reason: m }); const k: VerifyCheck = { name: "holdout:store", cmd: "holdout", result: "not_run", duration_s: 0, reason: "holdout store unavailable", owner: "harness" }; checks.push(k); ctx.emit("test.result", "verify", { ...pubHold(k) }); } // C-C4b-c: a store failure is a harness/infrastructure failure (not_run, no fix round), never a test failure the fixer sees; the missing-file text stays out of the log
@@ -297,6 +408,9 @@ export const verifyStage: Stage = {
       for (const c of full) { const k: VerifyCheck = { name: c.name, cmd: c.cmd, result: c.result as VerifyCheck["result"], duration_s: c.duration_s, ...(c.reason ? { reason: c.reason } : {}), ...(c.count ? { count: c.count } : {}) }; checks.push(k); ctx.emit("test.result", "verify", { ...k }); if (c.excerpt) excerpts.set(k, c.excerpt); } // P12-01: full-suite checks leave the same test.result evidence per-file checks do
       const fa = attributeFullSuite(ctx.repoDir, ctx.baseSha, full, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).flatMap((c) => c.ids ?? []), changed); preRed.names.push(...fa.preExistingChecks); preRed.ids.push(...fa.preExistingIds); attr.introducedChecks.push(...fa.introducedChecks); attr.line = [attr.line, fa.line].filter(Boolean).join("; ") || null; // REPOMEM: same attribution for the full suite
       if (full.some((c) => c.result === "pass" || c.result === "fail")) { ranDeeper.push("full test command", "full suite"); risk = markExecuted(risk, ranDeeper); recordRisk(ctx.repoDir, risk); }
+      // A full-suite failure whose every failing id is one a base-red check or a Wall check already reports adds nothing a fix round could act on.
+      const known = new Set(checks.filter((c) => c.result === "fail" && (preRed.knownRed.includes(c.name) || wallNames0.has(c.name))).flatMap((c) => c.ids ?? []));
+      for (const c of full) if (c.result === "fail" && c.ids?.length && c.ids.every((i) => known.has(i)) && !preRed.names.includes(c.name)) preRed.knownRed.push(c.name);
     }
     if (risk && risk.tier === "high" && !signal.aborted) { // PR-FIRST-4: the high tier's security scan runs here, before seal, so a receipt never leaves it to the post-PR deep stage (spawned only after VERIFIED). A fail blocks VERIFIED, a not_run (scanner missing or broken) caps at PARTIAL; only a pass or fail is credited
       const { runSecretScan } = await import("./deep.ts");
@@ -311,7 +425,7 @@ export const verifyStage: Stage = {
     // ponytail: real clustering is failures.ts, which depends on this stage; a naive 1:1 placeholder keeps the section-4 output key populated until that slice lands.
     let excerptLeft = EXCERPT_TOTAL_CAP; // TEN-QUALITY-01: sample = rerun cmd + redacted excerpt, 6 KB across all groups
     const failuresGrouped = checks
-      .filter((c) => c.result === "fail" && !preRed.names.includes(c.name) && !isHold(c))
+      .filter((c) => c.result === "fail" && !preRed.names.includes(c.name) && !preRed.knownRed.includes(c.name) && !isHold(c)) // known red (every failing id red on base, or a full suite repeating base-red and Wall ids) never feeds a fix round
       .map((c) => {
         const x = isHold(c) ? "" : truncateBytes(excerpts.get(c) ?? "", Math.max(0, excerptLeft));
         excerptLeft -= Buffer.byteLength(x);
@@ -326,7 +440,7 @@ export const verifyStage: Stage = {
     const wallDropped = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p)); // FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: sealed, but no runner of this repo can run it
     notProven.push(...wallDropped.map((p) => `Wall test not executed: ${p}: ${NO_RUNNER_REASON}`));
     const wallNames = new Set(wallTests.map(testCheckName)), wallRun = checks.filter((c) => wallNames.has(c.name) || isHold(c)), wallFailTail = writeWallFailureTail(ctx.runDir, checks.filter((c) => wallNames.has(c.name) && c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, out: failTails.get(c) ?? "" }))), wallPassed = wallRun.some((c) => c.result === "fail") ? false : wallRun.length > 0 && wallDropped.length === 0 && wallRun.every((c) => c.result === "pass") ? true : undefined; // the receipt's wall.passed: false on any failure, true only when every Wall and holdout check ran and passed, unset otherwise
-    return { status: "completed", data: { checks: pub, flaky, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: failuresGrouped, holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size ? { not_applicable: [...fullNotProven].filter(naNote).map(naText) } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, skipped_on_base: preRed.zero, ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
+    return { status: "completed", data: { checks: pub, flaky, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: failuresGrouped, holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size ? { not_applicable: [...fullNotProven].filter(naNote).map(naText) } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}),skipped_on_base: preRed.zero, ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
   },
 };
 export const stage = verifyStage;
