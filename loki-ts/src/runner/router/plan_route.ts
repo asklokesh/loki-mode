@@ -3,7 +3,7 @@ import { MAX_SCOPE_BYTES, PLAN_SCOPE_FILE, readScopeText } from "../../util/run_
 import { claudeCodeVersionForRoute } from "../providers.ts";
 import { envOverride, parseUnits } from "./decision.ts";
 import { advisorPair, probeAdvisor, type AdvisorProbe } from "./advisor_probe.ts";
-import { routerEnabled } from "./flag.ts";
+import { presetExecutor, routerEnabled, routerPreset } from "./flag.ts";
 import { buildRouteRecord, writeRouteRecord } from "./route_record.ts";
 import { shapeKeyForRun } from "./history.ts";
 import { modelRank } from "../model_rank.ts";
@@ -12,9 +12,14 @@ import { clampToMaxTier, runFloor } from "./unit_model.ts";
 // R1-10: Opus is the router. The model picks each unit's executor; the harness only validates the schema (L0).
 export const ROUTER_UNITS_INSTRUCTION = 'In the same JSON file (<scope>) also add "units": [{"id":"<unit id>","kind":"<short kind>","executor":"sonnet"|"haiku","reason":"<=200 chars"}], one entry per work unit of your plan. The default executor is sonnet. Assign haiku to a unit only when you judge it safe for that unit and say why in reason. Give the Wall acceptance-test unit the id "wall".';
 
+/** LOKI_ROUTER=auto: Opus plans a hard task for a smaller executor instead of routing units, so the plan names places, decisions and the proving test. */
+export const PRESET_PLAN_INSTRUCTION = "A smaller model will implement your plan without re-deriving it. In those lines name the exact files and functions to change, the steps, the pitfalls (edge cases the task implies, behaviour that must not change) and the test to add or run that proves the fix.";
+
 type Pin = { model: string } | Record<string, never>;
 export interface PlanRoute {
   routed: boolean;
+  /** LOKI_ROUTER=auto (flag.ts routerPreset): no unit routing; the preset executor is recorded. */
+  preset: boolean;
   advisor: AdvisorProbe | null;
   pinOpus: boolean;
   pin: Pin;
@@ -51,22 +56,24 @@ export async function planRoute(runDir: string, provider: string, env: NodeJS.Pr
     cached = bad ? { units: [], notProven: [bad] } : parseUnits(scope, advisorAvailable);
     return cached;
   };
+  const preset = routerPreset(env);
   const out: PlanRoute = {
     routed,
+    preset,
     advisor,
     pinOpus,
     pin: pinOpus ? { model: "opus" } : {},
     pinFor: (onSonnet, runModel) => (onSonnet ? { model: planFallbackModel(runModel) } : out.pin),
     planModel: (fastModel) => (pinOpus ? "opus" : provider === "claude" ? fastModel : "provider default"),
     units: () => {
-      if (!routed) return {};
+      if (!routed || preset) return {};
       const parsed = parse();
       return { units: parsed.units, route_not_proven: parsed.notProven };
     },
     record: (o) => {
       if (!routed) return null;
-      const parsed = o.skipReason ? { units: [], notProven: [] as string[] } : parse();
-      const rec = buildRouteRecord({ units: parsed.units, notProven: parsed.notProven, planModel: o.planModel, planModelNote: o.planModelNote ?? null, shapeKey, skipReason: o.skipReason });
+      const parsed = o.skipReason || preset ? { units: [], notProven: [] as string[] } : parse();
+      const rec = buildRouteRecord({ units: parsed.units, notProven: parsed.notProven, planModel: o.planModel, planModelNote: o.planModelNote ?? null, shapeKey, skipReason: o.skipReason, ...(preset ? { preset: presetExecutor(env) } : {}) });
       writeRouteRecord(runDir, rec);
       return rec;
     },

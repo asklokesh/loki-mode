@@ -54,7 +54,7 @@ export interface Resolved { model: string; source: ResolvedSource; reason: strin
 
 /** User bypass: these win over the router and are recorded with source "override". LOKI_ROUTER_EXECUTOR is NOT one; it is a route input that passes every floor. */
 export function envOverride(env: Record<string, string | undefined>): string | null {
-  for (const k of ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_DEVELOPMENT"]) { const v = (env[k] ?? "").trim(); if (v) return v; }
+  for (const k of ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_DEVELOPMENT", "LOKI_MODEL_DEVELOPMENT", "LOKI_SESSION_MODEL"]) { const v = (env[k] ?? "").trim(); if (v) return v; } // the same pins session.ts honours, plus --model (LOKI_SESSION_MODEL): a whole-run pin the router never routes under
   return null;
 }
 

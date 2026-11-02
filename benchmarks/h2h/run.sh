@@ -15,7 +15,8 @@
 # --dangerously-skip-permissions`), raw-<model>-verify (the same, with one sentence appended asking
 # it to run the repo's tests and check its change), loki-haiku, loki-sonnet, loki-opus (bin/loki
 # <task> --no-pr with LOKI_SESSION_MODEL pinned to that model), loki-default (bin/loki with no
-# model setting, so Loki's own routing picks the model).
+# model setting, so Loki's own routing picks the model), loki-haiku-flag (bin/loki <task>
+# --no-pr --haiku).
 # Suites: tasks/ (synthetic, the default), replay/ (--suite replay: real closed issues from
 # permissively licensed projects, replayed at the fix's parent commit and scored by the fix's own
 # test files; meta.json "source" records license, issue, fix PR and commits) and fixtures/hard/

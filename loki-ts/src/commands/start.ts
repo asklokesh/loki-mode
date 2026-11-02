@@ -15,7 +15,7 @@ import type { ProviderName, SessionTier } from "../runner/types.ts";
 import { tokenFreeEnv, safeGitRun } from "../util/safe_git.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { GENERIC_TIERS, VALID_TIERS } from "../util/claude_model.ts";
-import { applyCostProfile, COST_PROFILES } from "../util/cost_profile.ts";
+import { applyCostProfile, COST_PROFILES, routerKeptNote } from "../util/cost_profile.ts";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 import { suggestWord } from "../cli/registry.ts";
 import { VALID_PROVIDERS, unsupportedProviderMessage } from "../runner/types.ts";
@@ -148,8 +148,8 @@ export const START_USAGE =
   "  <spec> = a PRD path, or a one-line brief. (Issue refs / --github / --parallel /\n" +
   "  --sandbox, opencode, and other shell-adapter paths run on the bash route automatically.)\n" +
   "  --workspace NAME  run the loki.yaml workspace NAME for the brief; --deploy deploys after the run through the gated loki deploy --execute\n" +
-  "  --cost lean|off   opt-in cost profile (also LOKI_COST_PROFILE=lean): sets LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set; recorded in .loki/cost-profile.json\n" +
-  "  --haiku          opt in to haiku for the first implement (same levers as --cost lean, plus LOKI_COST_FIRST=1). A failed check climbs back. The default model is the provider default, same as a raw session\n" +
+  "  --cost lean|off   opt-in cost profile (also LOKI_COST_PROFILE=lean): sets LOKI_ROUTER=auto, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set; recorded in .loki/cost-profile.json\n" +
+  "  --haiku          opt in to Haiku for implement and fix (LOKI_ROUTER=auto, the lean levers, plus LOKI_COST_FIRST=1). A failed check climbs to Sonnet. Without it the model is the provider default, same as a raw session\n" +
   "  Proof            loki start sets LOKI_MUTATION_STRICT=1 and LOKI_E10_TRIM=1 unless you set them. A behavior change is VERIFIED only when a Wall test fails on the old code. Tool logs are trimmed before the next turn. Opt out with either var set to 0\n" +
   "  --fresh       skip the offer to resume an interrupted or cancelled run (also LOKI_NO_RESUME=1); without it, loki start offers to resume or start fresh itself\n" +
   "  --dry-run     validate every flag, run the preflight and print the provider, model and cost cap this run would use, then exit 0 without spending a token\n" +
@@ -231,6 +231,7 @@ export function parseStartArgs(
       }
       const boolEnv = BOOL_ENV_FLAGS.get(name);
       if (name === "--haiku") { // the lean profile's levers plus LOKI_COST_FIRST; explicit env wins
+        const kept = routerKeptNote("--haiku", process.env); if (kept) err(kept + "\n");
         for (const [k, v] of Object.entries({ ...COST_PROFILES.lean, LOKI_COST_FIRST: "1" })) {
           if (process.env[k] === undefined || process.env[k] === "") applyEnv(k, v);
         }
@@ -316,6 +317,7 @@ export function parseStartArgs(
     }
   }
   try {
+    const kept = (costRaw ?? "").trim().toLowerCase() === "lean" && !args.includes("--haiku") ? routerKeptNote("--cost lean", process.env) : ""; if (kept) err(kept + "\n");
     const note = applyCostProfile(costRaw, process.env, applyEnv, process.env["LOKI_DIR"] ?? ".loki");
     if (note) out(note + "\n");
   } catch (e) {

@@ -99,6 +99,18 @@ skipped and implement runs on your run's own model, like a raw session.
 `LOKI_E10_CASCADE=1` opts in to the cheaper sonnet start (it prints and
 records the downgrade); a repeated test failure always escalates up, never
 down (Engine Law L1).
+`LOKI_ROUTER=auto` (also set by `--haiku` and `--cost lean`) is the router's
+auto preset (Engine Law L1, as amended 2026-11-01, allows Haiku as the
+executor when asked for): Haiku runs implement and fix, Opus writes the plan
+of a hard task (judged from the task, never the repo size: sized large, or
+a task naming more than 4 distinct non-test files), the Opus advisor tool is
+attached to a fix round on Haiku or Sonnet (never to an Opus session), a
+Haiku implement that claims the work is already done with no diff climbs one
+rung, and a code-owned
+failure, a stall or a spec conflict climbs the router's ladder (Sonnet, then
+Opus). The start line names the downgrade and the route; the receipt's route
+block records the executor and every climb. `LOKI_ROUTER_EXECUTOR` picks
+another executor; `LOKI_ALLOW_HAIKU=false` makes it Sonnet.
 `loki quick --help` prints the help; `loki quick -v "<task>"` runs on Loki 10 with
 `--verbose`.
 
@@ -494,9 +506,11 @@ ready-to-paste values. Both accept `--json`.
 Model routing picks which Claude model does each stage of a run. It is OFF
 by default in 11.2.0. Set `LOKI_ROUTER=1` to opt in. `LOKI_ROUTER=0` is the
 explicit opt-out and keeps the exact pre-router model behavior, pins
-included. Explicit
-`LOKI_MODEL_OVERRIDE` and `LOKI_CLAUDE_MODEL_DEVELOPMENT` still win and
-bypass the router. The other knobs are `LOKI_ROUTER_EXECUTOR` (post-flip
+included. Explicit `LOKI_MODEL_OVERRIDE`, `LOKI_CLAUDE_MODEL_DEVELOPMENT`,
+`LOKI_MODEL_DEVELOPMENT` and `LOKI_SESSION_MODEL` (set by `--model`) still
+win and bypass the router. `LOKI_SESSION_MODEL` and `LOKI_MODEL_DEVELOPMENT`
+joined this list in the auto-preset change, so a `LOKI_ROUTER=1` run with
+`--model` set now runs every session on that model instead of routing. The other knobs are `LOKI_ROUTER_EXECUTOR` (post-flip
 default sonnet; haiku only by earned evidence), `LOKI_ROUTER_ESCALATE` (default sonnet) and `LOKI_ROUTER_ADVISOR`
 (default opus; `off` disables the advisor). The router engine itself lands in
 11.2.0; the pieces below marked "shipped in 11.1.0" are already in the code.

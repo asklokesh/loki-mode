@@ -44,7 +44,7 @@ import { createTrimHook } from "./trim.ts";
 import { createHostGuardHook, HOST_GUARD_SCRIPT, hookTimeoutSeconds } from "./host_guard.ts";
 import { createStopChecksHook, parseStopChecks, STOP_HOOK_MARGIN_S } from "./stop_checks.ts";
 import { advisorPair, probeAdvisor, ROUTER_ADVISOR_MODEL } from "./router/advisor_probe.ts";
-import { advisorOnlyEnabled, routerEnabled, sessionPlanEnabled } from "./router/flag.ts";
+import { advisorOnlyEnabled, routerEnabled, routerPreset, sessionPlanEnabled } from "./router/flag.ts";
 import type {
   ProviderInvocation,
   ProviderInvoker,
@@ -409,6 +409,7 @@ export function planRouterSession(args: {
   const env = args.env ?? process.env;
   const routed = routerEnabled(env);
   if (!routed && !advisorOnlyEnabled(env)) return null;
+  if (routed && routerPreset(env) && /opus/i.test(args.model)) return null; // LOKI_ROUTER=auto: an Opus executor (a plan, or a fix round that climbed to Opus) gets no Opus advisor
   const probe = probeAdvisor(env, "claude", args.claudeCodeVersion, args.runDir, advisorPair(env, args.model));
   // Advisor alone (#246): the advisor and nothing else. No executor swap, no compact window, so the only variable is the advisor.
   if (!routed) return probe.available ? { model: args.model, settings: { advisorModel: ROUTER_ADVISOR_MODEL } } : null;
@@ -422,6 +423,7 @@ export function planRouterSession(args: {
       },
     };
   }
+  if (routerPreset(env) && env["LOKI_ADVISOR_SCOPE"] === "off") return null; // LOKI_ROUTER=auto: a stage the advisor is not scoped to (implement, Wall) keeps its executor; the no-advisor floor is for an advisor that is unavailable, not one Loki left off
   return { model: isHaikuModel(args.model) ? "sonnet" : args.model, advisorReason: probe.reason };
 }
 
