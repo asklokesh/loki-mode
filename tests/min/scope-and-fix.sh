@@ -21,6 +21,14 @@
 #                file and the referee runs; the run is delivered PARTIAL (not BLOCKED) with multiply() in calc.ts and
 #                the Wall file listed as discarded, and no session (Wall author and referee included) runs off haiku.
 #   lean normal: a normal-size task with a relevant visible test runs no Wall session at all.
+#   agent-only:  the same lean task, but the session also adds an exported square() that only its own new test calls:
+#                the run is PARTIAL and the receipt names square as unexercised by an agent-independent test.
+#   public unit: addedPublicSymbols keeps only added public functions (Python top-level and class methods without a
+#                leading underscore, exported Go funcs and methods on exported types minus interface methods, Rust pub fn,
+#                TS export).
+#   go map:      a changed Go file maps to the tests of its own package and to any test importing that package.
+#   already:     an implement session that claims LOKI_ALREADY_DONE on an unchanged tree gets one challenge ("-a"); the
+#                stub then makes the change and the run is VERIFIED with multiply() delivered, not ALREADY_SATISFIED.
 #   deliver:     unit: a Go-shaped conflict (the Wall file and the full suite fail, no targeted own check ran) discards
 #                the Wall file and delivers once the re-verify's full suite passes; a re-verify with no passing own
 #                check, or an own targeted check that fails, keeps the conflict standing.
@@ -55,6 +63,12 @@
 #  16. loki-ts/src/engine10/stages/wall.ts: Rust arity decided at author time on base signatures (grounding reads before=rejected,
 #      and the constructor-change probe loses its Wall test and is not VERIFIED).
 #  17. loki-ts/src/project_model/conventions.ts goUnreferenced: accept any same-module import (grounding reads otherpkg=ok).
+#  18. loki-ts/src/engine10/stages/seal.ts: drop pubGap from verdictOf (the agent-only run reads VERIFIED).
+#  19. loki-ts/src/engine10/stages/seal.ts unexercisedPublic: count tests the run touched (the agent-only run reads VERIFIED).
+#  20. loki-ts/src/util/check_result.ts corroborateGoSteps: refuse a package with no GoFiles again (the go wall leg has no passing Go check).
+#  21. loki-ts/src/util/check_result.ts addedPublicSymbols: count a Python def nested in a def (public unit reads wrapper).
+#  22. loki-ts/src/engine10/testmap.ts impactedRefs: drop the Go package block (go map reads no tests).
+#  23. loki-ts/src/engine10/stages/implement.ts: skip resumeAfterAlreadyDone (the already run reads ALREADY_SATISFIED).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -196,6 +210,32 @@ run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHAR
 grep -q '^wall ' "$ITERS" && { bad "lean normal: a Wall session ran despite a relevant visible test"; dump; } || ok "lean normal: no Wall session"
 [ "$(outcome)" = "VERIFIED" ] && ok "lean normal: run is VERIFIED" || { bad "lean normal: outcome is '$(outcome)'"; dump; }
 
+run_engine "$TASK" E2E_STUB_MODE=agentonly LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+[ "$(outcome)" = "PARTIAL" ] && ok "agent-only: an added public function only the session's own test calls caps the run at PARTIAL" || { bad "agent-only: outcome is '$(outcome)'"; dump; }
+has "agent-only: the receipt names the unexercised function" "$notes" "no agent-independent passing test calls these added public functions: square"
+case "$notes" in *"functions: multiply"*|*"functions: square, multiply"*) bad "agent-only: multiply (called by the visible test) was named too: $notes" ;; *) ok "agent-only: multiply, which the visible test calls, is not named" ;; esac
+
+P="$(cd "$ROOT/loki-ts" && bun -e '
+const cr = await import("./src/util/check_result.ts");
+const d = ["+++ b/r.py", "@@ -0,0 +1 @@", "+def satisfies(v, r):", "+    \"\"\"the function is good\"\"\"", "+def _cmp(a):", "+class Range:", "+    def intersects(self, o):", "+        def inner():", "+def retry(n):", "+    def wrapper(f):",
+  "+++ b/a.ts", "@@", "+export const MODE = 2;", "+export const f = (x: number) => x;", "+export function g() {", "+function h() {",
+  "+++ b/r.rs", "@@", "+    pub fn reserve(&mut self) {", "+    fn hidden() {",
+  "+++ b/x.go", "@@", "+func NewBucket() *Bucket {", "+func helper() {", "+func (b *Bucket) Allow(n float64) bool {", "+func (h minHeap) Len() int {", "+func (e *UnknownErr) Error() string {", "+type Bucket struct {"].join("\n");
+console.log(JSON.stringify(cr.addedPublicSymbols(d)));' 2>&1)"
+[ "$P" = '["satisfies","intersects","retry","f","g","reserve","NewBucket","Allow"]' ] && ok "public unit: only added public functions are read" || bad "public unit gave: $P"
+run_engine "$TASK" E2E_STUB_MODE=alreadyfirst LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+grep -q -- '-a ' "$ITERS" && ok "already: the already-done claim got one challenge session" || { bad "already: no challenge session ran"; dump; }
+[ "$(outcome)" = "VERIFIED" ] && grep -q 'export function multiply' "$REPO/calc.ts" && ok "already: after the challenge the change was made and VERIFIED" || { bad "already: outcome '$(outcome)', multiply present: $(grep -c 'export function multiply' "$REPO/calc.ts")"; dump; }
+GM="$(cd "$ROOT/loki-ts" && bun -e '
+const tm = await import("./src/engine10/testmap.ts"), { mkdtempSync, writeFileSync, mkdirSync } = require("node:fs"), { join } = require("node:path");
+const r = mkdtempSync(join(process.argv[1], "gomap-")); for (const d of ["notes", "tests", "other"]) mkdirSync(join(r, d));
+writeFileSync(join(r, "go.mod"), "module example.com/app\n\ngo 1.21\n"); writeFileSync(join(r, "notes", "store.go"), "package notes\n"); writeFileSync(join(r, "notes", "store_test.go"), "package notes\n");
+writeFileSync(join(r, "other", "o.go"), "package other\n"); writeFileSync(join(r, "other", "o_test.go"), "package other\n");
+writeFileSync(join(r, "tests", "visible_test.go"), "package tests\n\nimport \"example.com/app/notes\"\n");
+const m = await tm.buildTestMap(r); console.log(tm.impactedRefs(m, ["notes/store.go"]).map((t) => t.path).sort().join(","));' "$T" 2>&1)"
+[ "$GM" = "notes/store_test.go,tests/visible_test.go" ] && ok "go map: a changed Go file maps to its package's own tests and to a black-box test importing its package, not to other packages" || bad "go map gave: $GM"
+
 # deliver: the delivery over a Wall conflict decides on the re-verify, so a Go Wall file that breaks its package's build
 # (the full suite fails, no targeted check of the repo's own ran) no longer keeps correct code out.
 D="$(cd "$ROOT/loki-ts" && bun -e '
@@ -272,6 +312,10 @@ for tool in go cargo; do
         case "$pn" in *"wall test discarded"*) bad "rust wall: the Wall test for a changed constructor was discarded: $pn" ;; *) ok "rust wall: a Wall test calling the constructor the task changed is kept" ;; esac
         [ "$(outcome)" = VERIFIED ] && ok "rust wall: the constructor change is VERIFIED by its kept Wall test" || { bad "rust wall: constructor-change outcome '$(outcome)'"; dump; }
         REPO="$P_REPO"; ITERS="$P_ITERS"
+    fi
+    if [ "$tool" = go ]; then
+        gc="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(" ".join(c["name"]+"="+c["result"] for c in json.load(open(sys.argv[1]))["checks"] if c["name"].startswith(("go:","full suite: go"))))' "$RUNDIR/receipt.json" 2>/dev/null)"
+        case "$gc" in *"=pass"*) ok "go wall: a test in the black-box tests/ package is corroborated and passes ($gc)" ;; *) bad "go wall: no Go check passed in the tests/ package: '$gc'" ;; esac
     fi
     grep -q -- '-project-model' "$ITERS" && bad "$label: a Project Model discovery session ran on a one-runner repo" || ok "$label: no Project Model discovery session (one runner at the root resolves it)"
     find "$REPO" -name "$wf" -not -path '*/.loki/*' | grep -q . && bad "$label: the rejected Wall file reached the tree" || ok "$label: the rejected Wall file never reached the tree"

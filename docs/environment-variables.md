@@ -139,6 +139,8 @@ behaviour has a switch rather than a fork.
 | `LOKI_SCOPED_CHANGE` | auto | Forces the scoped-change profile on (`1`) or off (`0`). Auto-detected from an issue-sourced spec on a repository with real history. Never disables a trust gate; it skips phases irrelevant to a scoped fix. |
 | `LOKI_RISK_TIER` | computed | Raises the verification tier (`low`, `medium`, `high`) above the one computed from the diff. Lowering is ignored unless `LOKI_RISK_OVERRIDE_REASON` is also set. |
 | `LOKI_RISK_OVERRIDE_REASON` | unset | Recorded reason that lets `LOKI_RISK_TIER` lower the computed tier. Stored in the risk record and shown in the run summary. |
+| `LOKI_E10_PUBLIC_GAP` | on | `0` stops capping a run at PARTIAL when an added public function is called by no agent-independent passing test. |
+| `LOKI_E10_ALREADY_DONE_CHALLENGE` | on | `0` believes an implement session's first LOKI_ALREADY_DONE without the one challenge resume. |
 
 `LOKI_INJECT_FINDINGS=0` is the one to think twice about. Without it the model
 is told to fix problems without being told which, so it re-derives them from

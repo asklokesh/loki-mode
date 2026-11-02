@@ -3,9 +3,68 @@
 Loki against raw Claude Code (`claude -p`) on the same coding tasks, scored only by hidden tests.
 This page states the protocol and the latest numbers, including where Loki loses.
 
-Latest run: `results/2026-11-01-win-bench-v2-after.json` (raw Haiku and Loki on Haiku, 24 tasks, 2
-reps, after the changes below), against `results/2026-11-01-65440abaf-before.json` (the v11.114.0
-engine, same protocol, run the same day). The four-config run further down is the v11.113.0 engine.
+Latest runs: `results/2026-11-02-honest-and-lean-after.json` (synthetic suite) and
+`results/2026-11-02-honest-and-lean-replay-after.json` (replay suite), see the next section. Older
+runs further down name their own engine.
+
+## Honest VERIFIED and fewer sessions (v11.116.0 to this change)
+
+Synthetic suite, 24 tasks, 2 reps, raw-haiku and loki-haiku in one invocation:
+
+| run | config | pass | 95% CI | $ per passed task | median s | p90 s | sessions | verdict agrees | false VERIFIED |
+|---|---|---|---|---|---|---|---|---|---|
+| before (v11.116.0, `2026-11-01-win-bench-v2-review-fixes.json`) | loki-haiku | 47/48 | 89.1-99.6% | 0.0131 | 29.0 | 174.3 | 1.90 | 29/48 | 1 |
+| after | raw-haiku | 48/48 | 92.6-100% | 0.0186 | 27.5 | 169.9 | 1.00 | - | - |
+| after | loki-haiku | 48/48 | 92.6-100% | 0.0108 | 23.5 | 165.5 | 1.58 | 22/48 | 0 |
+
+Replay suite (8 real closed issues), 2 reps, raw-haiku-verify and loki-haiku in one invocation each:
+
+| run | config | pass | $ per passed task | median s | sessions | false VERIFIED |
+|---|---|---|---|---|---|---|
+| before (v11.116.0, `2026-11-02-a020485b4-replay-before.json`) | raw-haiku-verify | 12/16 | 0.0176 | 36.5 | 1.00 | - |
+| before | loki-haiku | 10/16 | 0.0107 | 44.4 | 1.19 | 2 |
+| after | raw-haiku-verify | 12/16 | 0.0195 | 42.8 | 1.00 | - |
+| after | loki-haiku | 12/16 | 0.0087 | 51.8 | 1.19 | 1 |
+
+What changed:
+
+- **An added public function no agent-independent test calls caps the run at PARTIAL**, named on the
+  receipt. A passing Wall file or a test file the run did not touch counts; tests the implementer
+  wrote or edited do not. This is what made py-semver-range read VERIFIED while its hidden
+  `intersects` tests failed. Python top-level defs and class methods, exported Go funcs and methods
+  (minus standard interface methods), Rust `pub fn` and TS exports are tracked. False VERIFIED on
+  the synthetic suite: 1 before, 0 after. The cost is verdict agreement (29 to 22 of 48): passing
+  feature tasks proven only by the implementer's own tests now read PARTIAL, which is what they are.
+- **Go tests in a black-box `tests/` package are corroborated and mapped.** Go corroboration used to
+  refuse any package with no non-test files, so every check in `tests/` read not_run ("no tests
+  executed"). It now proves such a package through the coverage of the module packages it imports.
+  A changed Go file now maps to its own package's tests and to every test importing its package.
+  Go runs reading VERIFIED: 0 of 12 before, 4 of 12 after.
+- **Fewer Wall sessions.** With Go visible tests mapped, Go tasks with a relevant visible test take
+  the lean path. Wall sessions: 30 in 48 runs before, 19 after; sessions per run 1.90 to 1.58.
+- **An already-done claim gets one challenge before it is believed** (boltons #393). The issue's
+  example asserted today's output with the expected lines commented out; the implementer ran it,
+  saw it pass and finished LOKI_ALREADY_DONE with no change (ALREADY_SATISFIED or PARTIAL "no tests
+  executed"). The challenge asks it to reproduce the defect the prose describes first. Boltons:
+  0 of 2 before, 2 of 2 after (and 3 of 3 in a separate check).
+
+Measured alternatives (loki-haiku only, 2 reps):
+
+| variant | pass | $ per passed task | median s | sessions | verdict agrees | false VERIFIED |
+|---|---|---|---|---|---|---|
+| Wall also on lean tasks whose text names a new `name(` callable | 48/48 | 0.0157 | 29.7 | 2.08 | 28/48 | 0 |
+| no Wall at all (`2026-11-02-no-wall-probe.json`) | 48/48 | 0.0068 | 21.8 | 1.00 | 8/48 | 0 |
+
+The first buys back 6 VERIFIED verdicts for 45% more cost per passed task; it was not kept. With no
+Wall, Loki costs 0.37 times raw Haiku per passed task at one session, but only 8 of 48 runs can be
+VERIFIED. That is a product decision, so the Wall stays.
+
+What still fails: go-semver-four-part (semver #185) still reads VERIFIED in 1 of 2 runs while the
+hidden case `12.3.34~ 1.2.3` fails. The cap does not catch it: the change modifies functions the
+repo's own passing tests already call, and the missing case is not in the issue. Raw Haiku misses
+it too. py-toolz-partition-len fails for every config, as before.
+
+Spend for these runs: $4.18 on their own ledger.
 
 ## Loki on Haiku against raw Haiku, before and after the Wall and session fixes
 
@@ -83,9 +142,7 @@ VERIFIED on the same task. Five tasks reached the high risk tier (py-invoice-rou
 ts-cart-discounts, ts-cron-next, rs-expr-eval, rs-interval-set), so their runs got the default
 review: 8 review sessions, $0.052 in total on Haiku.
 Spend: $1.15 on its own ledger.
-Latest run: `results/2026-11-01-2100eda48-replay.json`, the replay suite (real closed issues, see
-[Replay suite](#replay-suite-real-closed-issues)), Loki at commit 2100eda48 (v11.114.0 engine).
-Synthetic suite: `results/2026-11-01-0ff237642.json` (Loki at commit 0ff237642, the v11.113.0 engine).
+The replay suite's first run below is `results/2026-11-01-2100eda48-replay.json` (v11.114.0 engine).
 
 ## Replay suite (real closed issues)
 

@@ -1,0 +1,2221 @@
+{
+  "benchmark": "h2h-b1",
+  "suite": "replay",
+  "loki_sha": "2644cb425",
+  "date": "2026-11-01T20:53:49",
+  "configs": [
+    "raw-haiku-verify",
+    "loki-haiku"
+  ],
+  "reps": 2,
+  "jobs": 4,
+  "timeout_s": 600,
+  "stopped": null,
+  "tasks": [
+    "go-semver-dirty-lte",
+    "go-semver-four-part",
+    "py-boltons-research-tuples",
+    "py-cachetools-grow-evict",
+    "py-cachetools-ttl-overflow",
+    "py-moreit-value-chain",
+    "py-parse-tz-groups",
+    "py-toolz-partition-len"
+  ],
+  "summary": [
+    {
+      "config": "raw-haiku-verify",
+      "n": 16,
+      "passed": 12,
+      "pass_rate": 0.75,
+      "pass_ci95": [
+        0.505,
+        0.8982
+      ],
+      "median_s": 42.8,
+      "p90_s": 97.9,
+      "total_cost_usd": 0.2335,
+      "cost_per_task_usd": 0.0146,
+      "cost_per_pass_usd": 0.0195,
+      "cost_unmeasured": 0,
+      "mean_sessions": 1,
+      "mean_fix_rounds": null,
+      "timeouts": 0,
+      "by_difficulty": {
+        "normal": [
+          12,
+          16
+        ]
+      },
+      "accepted": 0,
+      "accepted_n": 16,
+      "accept_ci95": [
+        0.0,
+        0.1936
+      ],
+      "runs_with_test_edits": 16,
+      "cost_per_accepted_usd": null,
+      "cost_per_accepted_ci95": [
+        0.0754,
+        null
+      ]
+    },
+    {
+      "config": "loki-haiku",
+      "n": 16,
+      "passed": 12,
+      "pass_rate": 0.75,
+      "pass_ci95": [
+        0.505,
+        0.8982
+      ],
+      "median_s": 51.8,
+      "p90_s": 63.4,
+      "total_cost_usd": 0.1043,
+      "cost_per_task_usd": 0.0065,
+      "cost_per_pass_usd": 0.0087,
+      "cost_unmeasured": 0,
+      "mean_sessions": 1.19,
+      "mean_fix_rounds": 0,
+      "timeouts": 0,
+      "by_difficulty": {
+        "normal": [
+          12,
+          16
+        ]
+      },
+      "accepted": 2,
+      "accepted_n": 16,
+      "accept_ci95": [
+        0.035,
+        0.3602
+      ],
+      "runs_with_test_edits": 14,
+      "cost_per_accepted_usd": 0.0522,
+      "cost_per_accepted_ci95": [
+        0.0181,
+        0.1863
+      ],
+      "verdict_agreement": 0.3125,
+      "verdict_agree_n": 5,
+      "false_verified": 1,
+      "missed_pass": 10,
+      "partial_pass": 10,
+      "partial_fail": 3,
+      "outcomes": {
+        "PARTIAL": 13,
+        "VERIFIED": 3
+      }
+    }
+  ],
+  "runs": [
+    {
+      "config": "raw-haiku-verify",
+      "task": "go-semver-dirty-lte",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 38.21,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "constraints_test.go"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "constraints.go",
+        "constraints_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.0100657,
+      "sessions": 1,
+      "turns": 7,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "go-semver-dirty-lte",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 33.21,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "constraints_dirty_lte_test.go"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "constraints.go",
+        "constraints_dirty_lte_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T014627Z-8797",
+      "hidden_tail": "",
+      "cost_usd": 0.00616444,
+      "stage_cost_usd": 0.006164,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261102T014627Z-8797",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 31.862,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 4.023,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0062,
+          "sessions": 1,
+          "seconds": 22.597,
+          "session_seconds": 22.177,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 4.442,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.083,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.34,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "reading the task  4s\n[implement] implementing  4s  (intake done 4s)\n[verify] verifying  3s  (implement done 23s)\nOutcome:    VERIFIED\nPR:         none\nReceipt:    sha256:1f371cd1c8712394ce1b49f909fdb93821a26ff6ea0d9bc20b510401b51e0e22\nNOT PROVEN: repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 117k tokens; cache read 82k tokens, saved $0.01)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       32s (intake 4s, implement 23s, verify 4s, commit 0s, seal 0s; slowest: implement 71%); next: loki status; 7 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "go-semver-four-part",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 78.5,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "constraints_test.go"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "constraints.go",
+        "constraints_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "--- FAIL: TestNewConstraint (0.00s)\n    constraints_test.go:248: expected but did not get error for: 12.3.34~ 1.2.3\nFAIL\nFAIL\tgithub.com/Masterminds/semver/v3\t0.100s\nFAIL\n",
+      "cost_usd": 0.02107759,
+      "sessions": 1,
+      "turns": 19,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "go-semver-four-part",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 41.91,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "constraints_fourpart_test.go"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "constraints.go",
+        "constraints_fourpart_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T014627Z-b41f",
+      "hidden_tail": "--- FAIL: TestNewConstraint (0.00s)\n    constraints_test.go:248: expected but did not get error for: 12.3.34~ 1.2.3\nFAIL\nFAIL\tgithub.com/Masterminds/semver/v3\t0.095s\nFAIL\n",
+      "cost_usd": 0.006088235,
+      "stage_cost_usd": 0.006088,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261102T014627Z-b41f",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "scope not determined; all edits committed",
+        "no passing check references a changed symbol and no Wall file ran: init",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 40.849,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 4.024,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0061,
+          "sessions": 1,
+          "seconds": 32.448,
+          "session_seconds": 32.088,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 3.692,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.105,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.232,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "nt] implementing  4s  (intake done 4s)\n[verify] verifying  3s  (implement done 32s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:c6216a6d7a68e298bb6ca37053f64e6ebb851d4e4962b564cb1eb04c4d34f78b\nNOT PROVEN: scope not determined; all edits committed, no passing check references a changed symbol and no Wall file ran: init, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 63k tokens; cache read 33k tokens, saved $0.00)\nTime:       41s (intake 4s, implement 32s, verify 4s, commit 0s, seal 0s; slowest: implement 79%)\nNext:       loki verify  (2 files changed (+23 -1)); 7 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-boltons-research-tuples",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 97.89,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_iterutils.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "boltons/iterutils.py",
+        "tests/test_iterutils.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.021839839999999996,
+      "sessions": 1,
+      "turns": 10,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-boltons-research-tuples",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 86.86,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [],
+      "accepted": 1,
+      "files_changed": 1,
+      "files": [
+        "boltons/iterutils.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T014706Z-8b78",
+      "hidden_tail": "",
+      "cost_usd": 0.01170328,
+      "stage_cost_usd": 0.011703,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261102T014706Z-8b78",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "tests ran on the system interpreter",
+        "scope not determined; all edits committed",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 85.642,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 2.172,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0117,
+          "sessions": 2,
+          "seconds": 80.728,
+          "session_seconds": 80.061,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.57,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.098,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.349,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "y-done check pin); estimate: ~$0.19-$0.63 (first run in this repo)\n[implement] implementing  3s  (intake done 2s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:10f31863ecd18cc5fc246245b84b0a00d0e2f3c45cee00acb829f813ad060eb0\nNOT PROVEN: tests ran on the system interpreter, scope not determined; all edits committed, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 306k tokens; cache read 268k tokens, saved $0.02)\nTime:       1m26s (intake 2s, implement 1m20s, verify 2s, commit 0s, seal 0s; slowest: implement 94%)\nNext:       loki verify  (1 file changed (+26 -4)); 13 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-cachetools-grow-evict",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 36.8,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/__init__.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "src/cachetools/__init__.py",
+        "tests/__init__.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.01117564,
+      "sessions": 1,
+      "turns": 10,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-cachetools-grow-evict",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 52.87,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_setitem_grow.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "src/cachetools/__init__.py",
+        "tests/test_setitem_grow.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T014746Z-83d5",
+      "hidden_tail": "",
+      "cost_usd": 0.00553354,
+      "stage_cost_usd": 0.005534,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261102T014746Z-83d5",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "not run: lint:ruff",
+        "tests ran on the system interpreter",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 51.229,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 5.821,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0055,
+          "sessions": 1,
+          "seconds": 24.492,
+          "session_seconds": 23.186,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 19.176,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.072,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.235,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": " run in this repo)\n[intake] reading the task  3s\n[implement] implementing  4s  (intake done 6s)\n[verify] verifying  3s  (implement done 24s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:457d71175568e06cdede536440a4517fb548e5e191a78e064a30598dbe5645c2\nNOT PROVEN: not run: lint:ruff, tests ran on the system interpreter, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 91k tokens; cache read 59k tokens, saved $0.01)\nTime:       51s (intake 6s, implement 24s, verify 19s, commit 0s, seal 0s; slowest: implement 47%)\nNext:       loki verify  (2 files changed (+58 -7)); 27 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 85/100 (B) - run `loki doctor --repo` for 2 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-cachetools-ttl-overflow",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 38.53,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_ttl.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "src/cachetools/__init__.py",
+        "tests/test_ttl.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.012194869999999998,
+      "sessions": 1,
+      "turns": 10,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-cachetools-ttl-overflow",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 32.8,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_ttl_overflow.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "src/cachetools/__init__.py",
+        "tests/test_ttl_overflow.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T014834Z-8677",
+      "hidden_tail": "",
+      "cost_usd": 0.00466396,
+      "stage_cost_usd": 0.004664,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261102T014834Z-8677",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "not run: lint:ruff",
+        "tests ran on the system interpreter",
+        "scope not determined; all edits committed",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 31.844,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 4.815,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0047,
+          "sessions": 1,
+          "seconds": 19.312,
+          "session_seconds": 18.763,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 7.029,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.072,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.234,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "sk  4s\n[implement] implementing  4s  (intake done 5s)\n[verify] verifying  4s  (implement done 19s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:5824fbc184feceb5cdc526d45f1cd1d11e86a34370d1d7066bb1612037c5f21f\nNOT PROVEN: not run: lint:ruff, tests ran on the system interpreter, scope not determined; all edits committed, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 82k tokens; cache read 54k tokens, saved $0.00)\nTime:       32s (intake 5s, implement 19s, verify 7s, commit 0s, seal 0s; slowest: implement 60%)\nNext:       loki verify  (2 files changed (+20 -1)); 14 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 85/100 (B) - run `loki doctor --repo` for 2 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-moreit-value-chain",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 27.3,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_more.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "more_itertools/more.py",
+        "tests/test_more.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.00916044,
+      "sessions": 1,
+      "turns": 9,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-moreit-value-chain",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 53.22,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_value_chain_regression.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "more_itertools/more.py",
+        "tests/test_value_chain_regression.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T014841Z-c32e",
+      "hidden_tail": "",
+      "cost_usd": 0.00471317,
+      "stage_cost_usd": 0.004713,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261102T014841Z-c32e",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "not run: lint:ruff",
+        "tests ran on the system interpreter",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 51.256,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 8.729,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0047,
+          "sessions": 1,
+          "seconds": 19.857,
+          "session_seconds": 19.18,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 21.349,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.15,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.295,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "rst run in this repo)\n[intake] reading the task  3s\n[implement] implementing  3s  (intake done 9s)\n[verify] verifying  3s  (implement done 20s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:44f83deb83d65ae4f637e476e16320bd02db5327faa2e55e9776b7bc655f7f07\nNOT PROVEN: not run: lint:ruff, tests ran on the system interpreter, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 99k tokens; cache read 71k tokens, saved $0.01)\nTime:       51s (intake 9s, implement 20s, verify 21s, commit 0s, seal 0s; slowest: verify 42%)\nNext:       loki verify  (2 files changed (+30 -1)); 17 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 55/100 (D) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-parse-tz-groups",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 29.99,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_bugs.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "parse/__init__.py",
+        "tests/test_bugs.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.012601949999999999,
+      "sessions": 1,
+      "turns": 12,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-parse-tz-groups",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 63.44,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_tz_group_index.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "parse/__init__.py",
+        "tests/test_tz_group_index.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T014910Z-32f0",
+      "hidden_tail": "",
+      "cost_usd": 0.013859920000000001,
+      "stage_cost_usd": 0.01386,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261102T014910Z-32f0",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "tests ran on the system interpreter",
+        "scope not determined; all edits committed",
+        "no passing check references a changed symbol and no Wall file ran: (no declared symbol)",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 62.233,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0068,
+          "sessions": 1,
+          "seconds": 21.147,
+          "session_seconds": 20.065,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0071,
+          "sessions": 1,
+          "seconds": 32.402,
+          "session_seconds": 30.459,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 7.205,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.185,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.517,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "PR:         none\nReceipt:    sha256:5842e9774a398266ba303df76aceeb9951b0a31ce6a4b9f34c19e4383b36d89c\nNOT PROVEN: tests ran on the system interpreter, scope not determined; all edits committed, no passing check references a changed symbol and no Wall file ran: (no declared symbol), repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 291k tokens; cache read 216k tokens, saved $0.02)\nSpend:      intake 49%, implement 51%; top: implement; saved $1.21 vs top tier\nTime:       1m02s (intake 21s, implement 31s, verify 7s, commit 0s, seal 1s; slowest: implement 51%); next: loki verify; 7 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 60/100 (D) - run `loki doctor --repo` for 4 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-toolz-partition-len",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 50.96,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "toolz/itertoolz.py",
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "tition_all(2, [1, 2, 3, 4])) == [(1, 2), (3, 4)]\n        assert list(partition_all(3, range(5))) == [(0, 1, 2), (3, 4)]\n        assert list(partition_all(2, [])) == []\n    \n        # Regression test: https://github.com/pytoolz/toolz/issues/387\n        class NoCompare:\n            def __eq__(self, other):\n                if self.__class__ == other.__class__:\n                    return True\n                raise ValueError()\n        obj = NoCompare()\n        result = [(obj, obj, obj, obj), (obj, obj, obj)]\n        assert list(partition_all(4, [obj]*7)) == result\n        assert list(partition_all(4, iter([obj]*7))) == result\n    \n        # Test invalid __len__: https://github.com/pytoolz/toolz/issues/602\n        class ListWithBadLength(list):\n            def __init__(self, contents, off_by=1):\n                self.off_by = off_by\n                super().__init__(contents)\n    \n            def __len__(self):\n                return super().__len__() + self.off_by\n    \n        too_long_list = ListWithBadLength([1, 2], off_by=+1)\n>       assert raises(LookupError, lambda: list(partition_all(5, too_long_list)))\nE       assert False\nE        +  where False = raises(LookupError, <function test_partition_all.<locals>.<lambda> at 0x107201850>)\n\ntoolz/tests/test_itertoolz.py:368: AssertionError\n=========================== short test summary info ============================\nFAILED toolz/tests/test_itertoolz.py::test_partition_all - assert False\n1 failed, 179 passed, 1 deselected in 0.41s\n",
+      "cost_usd": 0.013738630000000003,
+      "sessions": 1,
+      "turns": 11,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-toolz-partition-len",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 0,
+      "seconds": 54.84,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "toolz/tests/test_partition_all_len.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "toolz/itertoolz.py",
+        "toolz/tests/test_partition_all_len.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T014915Z-71ca",
+      "hidden_tail": "tition_all(2, [1, 2, 3, 4])) == [(1, 2), (3, 4)]\n        assert list(partition_all(3, range(5))) == [(0, 1, 2), (3, 4)]\n        assert list(partition_all(2, [])) == []\n    \n        # Regression test: https://github.com/pytoolz/toolz/issues/387\n        class NoCompare:\n            def __eq__(self, other):\n                if self.__class__ == other.__class__:\n                    return True\n                raise ValueError()\n        obj = NoCompare()\n        result = [(obj, obj, obj, obj), (obj, obj, obj)]\n        assert list(partition_all(4, [obj]*7)) == result\n        assert list(partition_all(4, iter([obj]*7))) == result\n    \n        # Test invalid __len__: https://github.com/pytoolz/toolz/issues/602\n        class ListWithBadLength(list):\n            def __init__(self, contents, off_by=1):\n                self.off_by = off_by\n                super().__init__(contents)\n    \n            def __len__(self):\n                return super().__len__() + self.off_by\n    \n        too_long_list = ListWithBadLength([1, 2], off_by=+1)\n>       assert raises(LookupError, lambda: list(partition_all(5, too_long_list)))\nE       assert False\nE        +  where False = raises(LookupError, <function test_partition_all.<locals>.<lambda> at 0x1097a5850>)\n\ntoolz/tests/test_itertoolz.py:368: AssertionError\n=========================== short test summary info ============================\nFAILED toolz/tests/test_itertoolz.py::test_partition_all - assert False\n1 failed, 179 passed, 1 deselected in 0.41s\n",
+      "cost_usd": 0.00619071,
+      "stage_cost_usd": 0.006191,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261102T014915Z-71ca",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "tests ran on the system interpreter",
+        "pre red: toolz/tests/test_package.py::test_has_version",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 51.489,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 3.641,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0062,
+          "sessions": 1,
+          "seconds": 29.709,
+          "session_seconds": 28.839,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 16.654,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.111,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.304,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "he task  3s\n[implement] implementing  3s  (intake done 4s)\n[verify] verifying  3s  (implement done 30s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:1a95c2d53f25353d06a99bd6595cb7e0ab6c585a750f38b352127c810603cbb1\nNOT PROVEN: tests ran on the system interpreter, pre red: toolz/tests/test_package.py::test_has_version, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 112k tokens; cache read 79k tokens, saved $0.01)\nTime:       51s (intake 4s, implement 30s, verify 17s, commit 0s, seal 0s; slowest: implement 58%)\nNext:       loki verify  (2 files changed (+41 -3)); 18 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 45/100 (F) - run `loki doctor --repo` for 4 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "go-semver-dirty-lte",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 55.38,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "constraints_test.go"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "constraints.go",
+        "constraints_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.017531710000000002,
+      "sessions": 1,
+      "turns": 15,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "go-semver-dirty-lte",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 35.93,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "dirty_range_test.go"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "constraints.go",
+        "dirty_range_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T015006Z-a714",
+      "hidden_tail": "",
+      "cost_usd": 0.004814205,
+      "stage_cost_usd": 0.004814,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261102T015006Z-a714",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 34.742,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 5.238,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0048,
+          "sessions": 1,
+          "seconds": 22.858,
+          "session_seconds": 22.351,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 5.677,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.114,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.327,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "reading the task  3s\n[implement] implementing  3s  (intake done 5s)\n[verify] verifying  3s  (implement done 23s)\nOutcome:    VERIFIED\nPR:         none\nReceipt:    sha256:273a69f051c8414d3769b34d92d0172c854ff391ff5aa1156727ad2ab5192646\nNOT PROVEN: repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 120k tokens; cache read 98k tokens, saved $0.01)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       35s (intake 5s, implement 23s, verify 6s, commit 0s, seal 0s; slowest: implement 66%); next: loki status; 7 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "go-semver-four-part",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 51.49,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "constraints_test.go"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "constraints.go",
+        "constraints_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "--- FAIL: TestNewConstraint (0.00s)\n    constraints_test.go:248: expected but did not get error for: 12.3.34~ 1.2.3\nFAIL\nFAIL\tgithub.com/Masterminds/semver/v3\t0.101s\nFAIL\n",
+      "cost_usd": 0.01871593,
+      "sessions": 1,
+      "turns": 13,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "go-semver-four-part",
+      "kind": "replay",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 57.22,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "constraints_fourpart_test.go"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "constraints.go",
+        "constraints_fourpart_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T015015Z-af83",
+      "hidden_tail": "--- FAIL: TestNewConstraint (0.00s)\n    constraints_test.go:248: expected but did not get error for: 12.3.34~ 1.2.3\nFAIL\nFAIL\tgithub.com/Masterminds/semver/v3\t0.109s\nFAIL\n",
+      "cost_usd": 0.007225125000000001,
+      "stage_cost_usd": 0.007225,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261102T015015Z-af83",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "scope not determined; all edits committed",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 55.843,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.49,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0072,
+          "sessions": 1,
+          "seconds": 45.433,
+          "session_seconds": 45.098,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 8.042,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.118,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.337,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "ng  3s  (intake done 1s)\n[verify] verifying  3s  (implement done 45s)\nOutcome:    VERIFIED\nPR:         none\nReceipt:    sha256:28178fd2e6f1db31ec6803659cc51f8f30fc1c9e1d86c94d24dbd6d56dd23fe1\nNOT PROVEN: scope not determined; all edits committed, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 119k tokens; cache read 91k tokens, saved $0.01)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       56s (intake 1s, implement 45s, verify 8s, commit 0s, seal 0s; slowest: implement 81%); next: loki status; 7 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-boltons-research-tuples",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 99.89,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_iterutils.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "boltons/iterutils.py",
+        "tests/test_iterutils.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.024987210000000003,
+      "sessions": 1,
+      "turns": 19,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-boltons-research-tuples",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 50.14,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_research_tuples.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "boltons/iterutils.py",
+        "tests/test_research_tuples.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T015043Z-c1ac",
+      "hidden_tail": "",
+      "cost_usd": 0.006929835,
+      "stage_cost_usd": 0.00693,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261102T015043Z-c1ac",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "tests ran on the system interpreter",
+        "scope not determined; all edits committed",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 49.004,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 2.1,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0069,
+          "sessions": 1,
+          "seconds": 45.211,
+          "session_seconds": 44.91,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.827,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.067,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.237,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "ready-done check pin); estimate: ~$0.19-$0.63 (first run in this repo)\n[implement] implementing  3s  (intake done 2s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:c548366afca1c8107399b55afc69abb34df2d4e8ce5eae588e39d417acd305ad\nNOT PROVEN: tests ran on the system interpreter, scope not determined; all edits committed, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 104k tokens; cache read 75k tokens, saved $0.01)\nTime:       49s (intake 2s, implement 45s, verify 1s, commit 0s, seal 0s; slowest: implement 92%)\nNext:       loki verify  (2 files changed (+55 -4)); 11 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-cachetools-grow-evict",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 48.01,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/__init__.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "src/cachetools/__init__.py",
+        "tests/__init__.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.011356590000000003,
+      "sessions": 1,
+      "turns": 11,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-cachetools-grow-evict",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 53.69,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [],
+      "accepted": 1,
+      "files_changed": 1,
+      "files": [
+        "src/cachetools/__init__.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T015113Z-dafd",
+      "hidden_tail": "",
+      "cost_usd": 0.0039818200000000005,
+      "stage_cost_usd": 0.003982,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261102T015113Z-dafd",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "not run: lint:ruff",
+        "tests ran on the system interpreter",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 52.43,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 5.463,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.004,
+          "sessions": 1,
+          "seconds": 22.296,
+          "session_seconds": 21.038,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 23.672,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.079,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.367,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "irst run in this repo)\n[intake] reading the task  3s\n[implement] implementing  4s  (intake done 5s)\n[verify] verifying  4s  (implement done 22s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:736739ed1b4979555514930575b400f00e97803aa9524dd43250e4dd284e4f8f\nNOT PROVEN: not run: lint:ruff, tests ran on the system interpreter, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 91k tokens; cache read 71k tokens, saved $0.01)\nTime:       52s (intake 5s, implement 22s, verify 24s, commit 0s, seal 0s; slowest: verify 45%)\nNext:       loki verify  (1 file changed (+10 -1)); 27 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 85/100 (B) - run `loki doctor --repo` for 2 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-cachetools-ttl-overflow",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 41.45,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_ttl.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "src/cachetools/__init__.py",
+        "tests/test_ttl.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.011704860000000003,
+      "sessions": 1,
+      "turns": 11,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-cachetools-ttl-overflow",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 41.27,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_ttl_overflow.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "src/cachetools/__init__.py",
+        "tests/test_ttl_overflow.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T015202Z-fc0b",
+      "hidden_tail": "",
+      "cost_usd": 0.003600315,
+      "stage_cost_usd": 0.0036,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261102T015202Z-fc0b",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "not run: lint:ruff",
+        "tests ran on the system interpreter",
+        "scope not determined; all edits committed",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 40.135,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 4.98,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0036,
+          "sessions": 1,
+          "seconds": 23.39,
+          "session_seconds": 22.912,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 10.925,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.095,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.319,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "  4s\n[implement] implementing  3s  (intake done 5s)\n[verify] verifying  3s  (implement done 23s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:47d41b9b27fb321259fa45310abdf5f89589dca88539fc687f847124a550a211\nNOT PROVEN: not run: lint:ruff, tests ran on the system interpreter, scope not determined; all edits committed, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 100k tokens; cache read 83k tokens, saved $0.01)\nTime:       40s (intake 5s, implement 23s, verify 11s, commit 0s, seal 0s; slowest: implement 58%)\nNext:       loki verify  (2 files changed (+18 -1)); 14 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 85/100 (B) - run `loki doctor --repo` for 2 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-moreit-value-chain",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 29.49,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_more.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "more_itertools/more.py",
+        "tests/test_more.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.009330130000000002,
+      "sessions": 1,
+      "turns": 9,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-moreit-value-chain",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 50.79,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_value_chain_regression.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "more_itertools/more.py",
+        "tests/test_value_chain_regression.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T015222Z-3618",
+      "hidden_tail": "",
+      "cost_usd": 0.0035233200000000004,
+      "stage_cost_usd": 0.003523,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261102T015222Z-3618",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "not run: lint:ruff",
+        "tests ran on the system interpreter",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 49.597,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 7.69,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0035,
+          "sessions": 1,
+          "seconds": 22.06,
+          "session_seconds": 21.531,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 18.944,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.208,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.301,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "run in this repo)\n[intake] reading the task  4s\n[implement] implementing  4s  (intake done 8s)\n[verify] verifying  3s  (implement done 22s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:b34ad9ae5d1630bc93b76c31dac67a992f593230cae5dab845e5fe20e14d993c\nNOT PROVEN: not run: lint:ruff, tests ran on the system interpreter, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 100k tokens; cache read 83k tokens, saved $0.01)\nTime:       50s (intake 8s, implement 22s, verify 19s, commit 0s, seal 0s; slowest: implement 44%)\nNext:       loki verify  (2 files changed (+28 -1)); 17 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 55/100 (D) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-parse-tz-groups",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 37.93,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_parse.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "parse/__init__.py",
+        "tests/test_parse.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.01498621,
+      "sessions": 1,
+      "turns": 13,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-parse-tz-groups",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 1,
+      "seconds": 55.51,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_datetime_tz_groups.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "parse/__init__.py",
+        "tests/test_datetime_tz_groups.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T015249Z-39d0",
+      "hidden_tail": "",
+      "cost_usd": 0.010935325,
+      "stage_cost_usd": 0.010935,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261102T015249Z-39d0",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "tests ran on the system interpreter",
+        "scope not determined; all edits committed",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 53.654,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0071,
+          "sessions": 1,
+          "seconds": 25.486,
+          "session_seconds": 24.328,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0039,
+          "sessions": 1,
+          "seconds": 17.112,
+          "session_seconds": 16.744,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 7.599,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.713,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 2.124,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "g  4s  (implement done 17s)\n[seal] sealing the receipt  3s  (commit done 1s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:cb1a6128f7c45c1ba83cb06bcb893a1467f6328b1bc2a3128542f82f42b6b8d7\nNOT PROVEN: tests ran on the system interpreter, scope not determined; all edits committed, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 238k tokens; cache read 180k tokens, saved $0.02)\nSpend:      intake 65%, implement 35%; top: intake; saved $0.95 vs top tier\nTime:       54s (intake 25s, implement 17s, verify 8s, commit 1s, seal 2s; slowest: intake 47%); next: loki verify; 8 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 60/100 (D) - run `loki doctor --repo` for 4 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku-verify",
+      "task": "py-toolz-partition-len",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 44.1,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "toolz/itertoolz.py",
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "tition_all(2, [1, 2, 3, 4])) == [(1, 2), (3, 4)]\n        assert list(partition_all(3, range(5))) == [(0, 1, 2), (3, 4)]\n        assert list(partition_all(2, [])) == []\n    \n        # Regression test: https://github.com/pytoolz/toolz/issues/387\n        class NoCompare:\n            def __eq__(self, other):\n                if self.__class__ == other.__class__:\n                    return True\n                raise ValueError()\n        obj = NoCompare()\n        result = [(obj, obj, obj, obj), (obj, obj, obj)]\n        assert list(partition_all(4, [obj]*7)) == result\n        assert list(partition_all(4, iter([obj]*7))) == result\n    \n        # Test invalid __len__: https://github.com/pytoolz/toolz/issues/602\n        class ListWithBadLength(list):\n            def __init__(self, contents, off_by=1):\n                self.off_by = off_by\n                super().__init__(contents)\n    \n            def __len__(self):\n                return super().__len__() + self.off_by\n    \n        too_long_list = ListWithBadLength([1, 2], off_by=+1)\n>       assert raises(LookupError, lambda: list(partition_all(5, too_long_list)))\nE       assert False\nE        +  where False = raises(LookupError, <function test_partition_all.<locals>.<lambda> at 0x10b68d850>)\n\ntoolz/tests/test_itertoolz.py:368: AssertionError\n=========================== short test summary info ============================\nFAILED toolz/tests/test_itertoolz.py::test_partition_all - assert False\n1 failed, 179 passed, 1 deselected in 0.72s\n",
+      "cost_usd": 0.013037140000000003,
+      "sessions": 1,
+      "turns": 10,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-toolz-partition-len",
+      "kind": "replay",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 2,
+      "pass": 0,
+      "seconds": 40.25,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "toolz/tests/test_partition_all_len.py"
+      ],
+      "accepted": 0,
+      "files_changed": 2,
+      "files": [
+        "toolz/itertoolz.py",
+        "toolz/tests/test_partition_all_len.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261102T015302Z-d213",
+      "hidden_tail": "tition_all(2, [1, 2, 3, 4])) == [(1, 2), (3, 4)]\n        assert list(partition_all(3, range(5))) == [(0, 1, 2), (3, 4)]\n        assert list(partition_all(2, [])) == []\n    \n        # Regression test: https://github.com/pytoolz/toolz/issues/387\n        class NoCompare:\n            def __eq__(self, other):\n                if self.__class__ == other.__class__:\n                    return True\n                raise ValueError()\n        obj = NoCompare()\n        result = [(obj, obj, obj, obj), (obj, obj, obj)]\n        assert list(partition_all(4, [obj]*7)) == result\n        assert list(partition_all(4, iter([obj]*7))) == result\n    \n        # Test invalid __len__: https://github.com/pytoolz/toolz/issues/602\n        class ListWithBadLength(list):\n            def __init__(self, contents, off_by=1):\n                self.off_by = off_by\n                super().__init__(contents)\n    \n            def __len__(self):\n                return super().__len__() + self.off_by\n    \n        too_long_list = ListWithBadLength([1, 2], off_by=+1)\n>       assert raises(LookupError, lambda: list(partition_all(5, too_long_list)))\nE       assert False\nE        +  where False = raises(LookupError, <function test_partition_all.<locals>.<lambda> at 0x107d21850>)\n\ntoolz/tests/test_itertoolz.py:368: AssertionError\n=========================== short test summary info ============================\nFAILED toolz/tests/test_itertoolz.py::test_partition_all - assert False\n1 failed, 179 passed, 1 deselected in 0.37s\n",
+      "cost_usd": 0.0043928,
+      "stage_cost_usd": 0.004393,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261102T015302Z-d213",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "tests ran on the system interpreter",
+        "pre red: toolz/tests/test_package.py::test_has_version",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 36.53,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.247,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0044,
+          "sessions": 1,
+          "seconds": 22.933,
+          "session_seconds": 22.634,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 9.476,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.942,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.428,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "in this repo)\n[implement] implementing  3s  (intake done 1s)\n[verify] verifying  3s  (implement done 23s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:a144059e18c6ca55097d3f656cef4b4ff86f19877e93d5027aed04f56a66fe2e\nNOT PROVEN: tests ran on the system interpreter, pre red: toolz/tests/test_package.py::test_has_version, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 92k tokens; cache read 71k tokens, saved $0.01)\nTime:       37s (intake 1s, implement 23s, verify 9s, commit 1s, seal 1s; slowest: implement 63%)\nNext:       loki verify  (2 files changed (+45 -1)); 18 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 45/100 (F) - run `loki doctor --repo` for 4 fix(es)\n"
+    }
+  ]
+}

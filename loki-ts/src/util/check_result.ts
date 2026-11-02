@@ -591,14 +591,23 @@ function* corroborateGoSteps(c: Classified, out: string, cmdOrLine: string, args
   };
   try {
     const want = new Set(names.map((n) => n.slice(0, n.indexOf("::")))), expected = new Set<string>();
-    const ls: SpawnRes = yield ["go", ["list", "-json=ImportPath,Dir,GoFiles,CgoFiles", ...where], spawnOpts];
-    if (ls.status !== 0) return refuse;
-    const perPkg = new Map<string, number>(); // statement blocks found per passing package; a package that stays at 0 (never listed, or no statements) has nothing to prove
-    for (const chunk of ls.output.split(/\n(?=\{\n)/)) {
-      let pk: { ImportPath?: string; Dir?: string; GoFiles?: string[]; CgoFiles?: string[] };
-      try { pk = JSON.parse(chunk) as typeof pk; } catch { return refuse; }
-      if (!pk.ImportPath || !want.has(pk.ImportPath)) continue;
-      if (!pk.Dir || !pk.GoFiles?.length || pk.CgoFiles?.length) return refuse; // cgo files are rewritten by the go command, so their block table is not computable here: not_run (a genuine cgo package is a false not_run)
+    type GoPkg = { ImportPath?: string; Dir?: string; GoFiles?: string[]; CgoFiles?: string[]; TestImports?: string[]; XTestImports?: string[]; Standard?: boolean; Module?: { Main?: boolean } };
+    const listed = (out: string): GoPkg[] | null => { const r: GoPkg[] = []; for (const chunk of out.split(/\n(?=\{\n)/)) { try { r.push(JSON.parse(chunk) as GoPkg); } catch { return null; } } return r; };
+    const ls: SpawnRes = yield ["go", ["list", "-json=ImportPath,Dir,GoFiles,CgoFiles,TestImports,XTestImports", ...where], spawnOpts];
+    const top = ls.status === 0 ? listed(ls.output) : null; if (!top) return refuse;
+    // A black-box test package (a tests/ directory holding only _test.go files) has no statements of its own: the proof is the coverage of the main-module packages its tests import (-coverpkg), every one of their blocks in the profile.
+    const cover = new Map<string, GoPkg>(), testOnly: string[] = [];
+    for (const pk of top) if (pk.ImportPath && want.has(pk.ImportPath)) { if (pk.GoFiles?.length) cover.set(pk.ImportPath, pk); else testOnly.push(...(pk.TestImports ?? []), ...(pk.XTestImports ?? [])); }
+    const viaImports = [...new Set(testOnly)].filter((i) => !cover.has(i) && !want.has(i));
+    if (top.some((pk) => pk.ImportPath && want.has(pk.ImportPath) && !pk.GoFiles?.length) && viaImports.length) {
+      const li: SpawnRes = yield ["go", ["list", "-e", "-json=ImportPath,Dir,GoFiles,CgoFiles,Standard,Module", ...viaImports], spawnOpts];
+      const deps = li.status === 0 ? listed(li.output) : null; if (!deps) return refuse;
+      for (const pk of deps) if (pk.ImportPath && !pk.Standard && pk.Module?.Main === true && pk.GoFiles?.length) cover.set(pk.ImportPath, pk);
+    }
+    if (cover.size === 0 || [...want].some((pk) => !cover.has(pk) && !top.some((t) => t.ImportPath === pk && !t.GoFiles?.length))) return refuse; // every passing package is proven by its own blocks or, test-only, by those of the module packages it imports
+    const perPkg = new Map<string, number>(); // statement blocks found per covered package; a package that stays at 0 (no statements) has nothing to prove
+    for (const pk of cover.values()) {
+      if (!pk.ImportPath || !pk.Dir || !pk.GoFiles?.length || pk.CgoFiles?.length) return refuse; // cgo files are rewritten by the go command, so their block table is not computable here: not_run (a genuine cgo package is a false not_run)
       perPkg.set(pk.ImportPath, 0);
       for (const f of pk.GoFiles) {
         if (/^\s*(?:\/\/line |\/\*line )/m.test(readFileSync(join(pk.Dir, f), "utf8"))) return refuse; // a //line directive (goyacc, ragel, templ) makes the profile name another file than the source: not provable, so not_run
@@ -611,13 +620,14 @@ function* corroborateGoSteps(c: Classified, out: string, cmdOrLine: string, args
         trip.forEach((m, k) => { const cols = +m[3]!; expected.add(`${pk.ImportPath}/${f}:${m[1]}.${cols & 0xffff},${m[2]}.${(cols >>> 16) & 0xffff} ${nums[k]![1]}`); });
       }
     }
-    if (![...want].every((pk) => (perPkg.get(pk) ?? 0) > 0)) return refuse;
-    const r: SpawnRes = yield ["go", ["test", "-json", "-count=1", `-coverprofile=${prof}`, ...run, ...where], spawnOpts];
+    if (![...cover.keys()].every((pk) => (perPkg.get(pk) ?? 0) > 0)) return refuse;
+    const viaPkg = [...cover.keys()].some((pk) => !want.has(pk));
+    const r: SpawnRes = yield ["go", ["test", "-json", "-count=1", `-coverprofile=${prof}`, ...(viaPkg ? [`-coverpkg=${[...cover.keys()].join(",")}`] : []), ...run, ...where], spawnOpts];
     const second = goJson(stripAnsi(r.output));
     if (r.status !== 0 || !second || second.failed || !second.complete) return refuse;
     const again = new Set(second.passedNames);
     if (!names.every((n) => again.has(n))) return refuse;
-    const got = [...profBlocks()].filter((k) => [...want].some((pk) => k.startsWith(`${pk}/`) && !k.slice(pk.length + 1).includes("/")));
+    const got = [...profBlocks()].filter((k) => [...cover.keys()].some((pk) => k.startsWith(`${pk}/`) && !k.slice(pk.length + 1).includes("/")));
     return got.length === expected.size && got.every((k) => expected.has(k)) ? c : refuse;
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
@@ -850,7 +860,39 @@ export function changedSymbols(diffU0: string): string[] {
   flush();
   return [...out];
 }
+const GO_INTERFACE_METHODS = new Set(["Error", "String", "GoString", "Format", "Unwrap", "Is", "As", "Len", "Less", "Swap", "Push", "Pop"]); // methods that satisfy a standard interface (error, fmt.Stringer, sort/heap.Interface): called by the library, rarely by name in a test
+/** HONEST-VERIFIED-2: the public functions (not types or constants) a `git diff -U0` ADDS, per file language. Python: a top-level def, or a def directly inside a class, whose name has no leading underscore (a function nested in a function is private). Go: an exported func, or an exported method on an exported receiver type (sort.Interface methods on an unexported type are not API). Rust: `pub fn`. TS/JS: an `export`ed function or arrow const. Other languages add nothing (no cap). */
+export function addedPublicSymbols(diffU0: string): string[] {
+  const out = new Set<string>(); let lang = "", blocks: { indent: number; kind: "class" | "def" }[] = [];
+  for (const line of diffU0.split("\n")) {
+    const f = /^\+\+\+ b\/(.+)$/.exec(line); if (f) { const p = f[1]!; lang = /\.py$/.test(p) ? "py" : /\.go$/.test(p) ? "go" : /\.rs$/.test(p) ? "rs" : /\.[cm]?[jt]sx?$/.test(p) ? "ts" : ""; blocks = []; continue; }
+    if (line.startsWith("@@")) { blocks = []; continue; }
+    if (!lang || !line.startsWith("+") || line.startsWith("+++")) continue;
+    const code = stripComments(line.slice(1));
+    if (lang === "py") {
+      const m = /^(\s*)(?:async\s+)?(def|class)\s+([A-Za-z_]\w*)/.exec(code); if (!m) continue;
+      const indent = m[1]!.length; while (blocks.length && blocks[blocks.length - 1]!.indent >= indent) blocks.pop();
+      const parent = blocks[blocks.length - 1];
+      if (m[2] === "def" && !m[3]!.startsWith("_") && (indent === 0 || parent?.kind === "class")) out.add(m[3]!);
+      blocks.push({ indent, kind: m[2] as "class" | "def" });
+    } else if (lang === "go") {
+      const fn = /^func\s+([A-Z]\w*)\s*[[(]/.exec(code), meth = /^func\s*\(\s*\w*\s*\*?\s*([A-Za-z_]\w*)[^)]*\)\s*([A-Z]\w*)\s*\(/.exec(code);
+      if (fn) out.add(fn[1]!); else if (meth && /^[A-Z]/.test(meth[1]!) && !GO_INTERFACE_METHODS.has(meth[2]!)) out.add(meth[2]!);
+    } else if (lang === "rs") {
+      const m = /\bpub(?:\([^)]*\))?\s+(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+"[^"]*"\s+)?fn\s+([A-Za-z_]\w*)/.exec(code); if (m) out.add(m[1]!);
+    } else {
+      const m = /^export\s+(?:default\s+)?(?:async\s+)?function\*?\s+([A-Za-z_$][\w$]*)/.exec(code) ?? /^export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*(?::[^=]*)?=>|[A-Za-z_$][\w$]*\s*=>)/.exec(code);
+      if (m) out.add(m[1]!);
+    }
+  }
+  return [...out];
+}
 /** Symbols that no test source references as a whole word; every symbol when none is referenced, or when the diff declared none (then "(no declared symbol)"). Empty means some passing test source mentions a changed symbol. */
+/** Every symbol of `symbols` that no source references as a whole word (unlike symbolGap, one reference does not clear the rest). */
+export function unreferenced(symbols: readonly string[], sources: readonly string[]): string[] {
+  const code = sources.map(stripComments);
+  return symbols.filter((sym) => !code.some((src) => new RegExp(`(?<![\\w$])${sym.replace(/[$]/g, "\\$")}(?![\\w$])`).test(src)));
+}
 export function symbolGap(symbols: readonly string[], testSources: readonly string[]): string[] {
   if (symbols.length === 0) return ["(no declared symbol)"];
   const ref = (sym: string, src: string): boolean => new RegExp(`(?<![\\w$])${sym.replace(/[$]/g, "\\$")}(?![\\w$])`).test(src);

@@ -81,6 +81,7 @@ export function buildTestMap(root: string): EngineTestMap {
     const names = referencedBasenames(text);
     names.add(coveredStem(t.path));
     if (/\.(?:java|cs)$/.test(t.path)) for (const w of pascalWords(text)) names.add(w); // R02: a Java or C# test names the classes it exercises
+    if (t.runner === "go") for (const m of text.matchAll(/"([\w.\-~]+(?:\/[\w.\-~]+)+)"/g)) names.add(`go:${m[1]!.split("/").pop()!}`); // a Go test exercises the packages it imports: keyed by the package directory's name (impactedRefs looks a changed .go file up by its directory)
     for (const n of names) { (sourceRefs[n] ??= []).push(t.path); }
   }
   const runners = RUNNER_ORDER.filter((r) => r in evidence);
@@ -115,6 +116,10 @@ export function impactedRefs(map: TestMap, changedFiles: readonly string[]): Tes
     const entry = stem === "index" || stem === "__init__" || (stem === "mod" && extname(rel) === ".rs");
     if (entry && dirname(rel) !== ".") stems.push(basename(dirname(rel)));
     for (const s of stems) for (const p of sourceRefs[s] ?? []) add(map.tests.find((t) => t.path === p));
+    if (extname(rel) === ".go") { // Go is package-scoped: the package's own tests (same directory) and every test importing its directory
+      for (const t of map.tests) if (t.runner === "go" && dirname(t.path) === dirname(rel)) add(t);
+      if (dirname(rel) !== ".") for (const p of sourceRefs[`go:${basename(dirname(rel))}`] ?? []) add(map.tests.find((t) => t.path === p));
+    }
   }
   return scopeRefs(map, changedFiles.map(normalizeRel), out);
 }

@@ -2,8 +2,10 @@
 # Stub claude CLI for the engine10 e2e test. Modes via E2E_STUB_MODE:
 #   done (default): the implement session appends multiply() to calc.ts
 #   already: the implement session changes nothing and claims already-done
+#   alreadyfirst: the first implement session claims already-done; the already-done challenge resume makes the multiply() change
 #   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
+#   agentonly: multiply() plus an exported square() that only the session's own square.test.ts calls (tests/min/scope-and-fix.sh)
 #   wallphantom: the Wall author writes loki_wall_multiply.test.ts calling multiplyAll(), a name the task never asks for
 #     (red on base, still red after the correct multiply() lands); E2E_STUB_WALL_SLEEP=<s> makes that author session slow
 # E2E_STUB_WALL (Wall author, any mode): gopkg writes loki_wall_calc_test.go as "package calc" (the tests/ directory is
@@ -118,6 +120,8 @@ if [ "$stage" = "implement" ]; then
     echo "LOKI_DONE"
   elif [ "${E2E_STUB_MODE:-done}" = "already" ]; then
     echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"
+  elif [ "${E2E_STUB_MODE:-done}" = "alreadyfirst" ] && ! printf '%s' "$prompt" | grep -q "You finished with LOKI_ALREADY_DONE"; then # claims done first; the challenge (below) makes the change
+    echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"
   else
     if [ "${E2E_STUB_MODE:-}" = "tamper" ]; then for f in "$(git rev-parse --show-toplevel)"/.loki/runs/*/events.jsonl; do echo '{"v":1,"type":"forged"}' >> "$f"; done; fi
     if [ "${E2E_STUB_MODE:-}" = "scope" ] || [ "${E2E_STUB_MODE:-}" = "unrelated" ]; then echo 'DEBUG = False' >> settings.py; fi
@@ -130,6 +134,9 @@ if [ "$stage" = "implement" ]; then
     if [ "${E2E_STUB_SCOPE_EDIT:-}" = "1" ] && [ -f util.ts ]; then printf 'export const MODE = 2;\n' >> util.ts; fi
     if [ "${E2E_STUB_MODE:-}" = "wrong" ]; then
       printf '\nexport function multiply(a: number, b: number): number {\n  return a + b;\n}\n' >> calc.ts
+    elif [ "${E2E_STUB_MODE:-}" = "agentonly" ]; then # multiply() (the visible test exercises it) plus square(), which only a test this session writes calls
+      printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function square(a: number): number {\n  return a * a;\n}\n' >> calc.ts
+      printf 'import { expect, test } from "bun:test";\nimport { square } from "./calc";\n\ntest("square", () => {\n  expect(square(3)).toBe(9);\n});\n' > square.test.ts
     elif [ "${E2E_STUB_MODE:-}" = "localvar" ]; then # FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: multiply() with a local variable and a comment word a test could echo
       printf '\n// let users multiply two numbers\nexport function multiply(a: number, b: number): number {\n  const result = a * b;\n  return result;\n}\n' >> calc.ts
     else
