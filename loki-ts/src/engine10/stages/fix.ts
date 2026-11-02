@@ -1,7 +1,7 @@
 // E-17: Fix rounds (ENGINE.md 4, 16). One fix round is one provider session: the fixed rules, the task, the failing tests with their first error lines and the diff of the files the run changed (no plan, repo map or file list, so the session does not reread the repo). The machine loops [Fix -> Fast verify], calling this stage
 // again after each failure; MAX_FIX_ROUNDS caps rounds itself (a 3rd call is a no-op stage.skipped, moving to Seal/PARTIAL). Depends on session.ts/verify.ts only through types.ts shapes.
 import { withStagePrefix } from "../../features/lean_prefix.ts"; import { FINISH_LINE, FIXED_RULES } from "../../e10ext/context.ts";
-import { routedFix, routerActive } from "../../runner/router/unit_model.ts";
+import { routedFix, routerActive } from "../../runner/router/unit_model.ts"; import { autoFixRound, autoRouteActive } from "../../runner/router/auto_route.ts";
 import { cascadeDowngrade, escalationModel } from "../sizing.ts";
 import { MAX_FIX_ROUNDS, type RunContext, type Stage, type StageResult, taskBlock } from "../types.ts";
 import type { FailureGroup } from "../failures.ts";
@@ -35,7 +35,7 @@ export const fixStage: Stage = {
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     const prior = ctx.outputs();
     const priorRound = (prior.fix?.round as number | undefined) ?? 0;
-    const routed = routerActive(), stallEsc = routed && prior.fix?.stall_escalated === true; // R1-13: a stall escalation grants one extra round on the next rung
+    const routed = routerActive(), auto = !routed && autoRouteActive(process.env, ctx.provider), stallEsc = (routed || auto) && prior.fix?.stall_escalated === true; // R1-13: a stall escalation grants one extra round on the next rung
     if (priorRound >= MAX_FIX_ROUNDS + (stallEsc ? 1 : 0)) {
       return { status: "skipped", data: { round: priorRound }, reason: "fix rounds exhausted" };
     }
@@ -52,14 +52,15 @@ export const fixStage: Stage = {
     const repeated = testFailures.length > 0 && prior.fix?.signatures === signatures;
     const downgrade = routed ? null : cascadeDowngrade(ctx.model); // the router replaces the opt-in downgrade list
     const reason = testFailures.map((g) => g.signature).join(", ");
-    const pinnedModel = repeated ? escalationModel(ctx.model) : downgrade && testFailures.length === 0 ? downgrade.to : undefined;
+    const pinnedModel = auto ? undefined : repeated ? escalationModel(ctx.model) : downgrade && testFailures.length === 0 ? downgrade.to : undefined; // auto routing decides its own climb (Sonnet, never Opus)
+    const ar = auto ? autoFixRound(ctx, round, groups, prior.fix?.stall_pending === true) : null; // (b) the advisor on round 1, (c) Sonnet from round 2, code-owned failures only
     const { pin: routedPin, climbed } = routed ? routedFix(ctx.model, prior, { repeated, stall: prior.fix?.stall_pending === true, groups, reason }) : { pin: undefined, climbed: null };
-    const actualModel = routedPin ?? pinnedModel ?? ctx.model;
+    const actualModel = ar?.model ?? routedPin ?? pinnedModel ?? ctx.model;
     if (downgrade && pinnedModel === downgrade.to) process.stderr.write(`${downgrade.note}\n`);
     if (climbed) ctx.emit("route.escalated", "fix", { ...climbed });
     const prevDiag = (prior.fix?.diagnosis as string | undefined) ?? null; const chain = { sessionId: (prior.fix?.session_id ?? prior.implement?.session_id ?? null) as string | null, model: (prior.fix?.model ?? prior.implement?.model ?? ctx.model) as string };
     const effort = hooks.effort?.fix(round, testFailures.length > 0);
-    const sessionBase = { stage: "fix" as const, tier: "development" as const, limitS: fixStage.limitS, signal, cwd: ctx.repoDir, ...(effort ? { effort } : {}), ...(pinnedModel ? { model: pinnedModel } : {}), ...(routedPin ? { model: routedPin } : {}) };
+    const sessionBase = { stage: "fix" as const, tier: "development" as const, limitS: fixStage.limitS, signal, cwd: ctx.repoDir, ...(effort ? { effort } : {}), ...(pinnedModel ? { model: pinnedModel } : {}), ...(routedPin ? { model: routedPin } : {}), ...(ar && ar.model !== ctx.model ? { model: ar.model, routeGrant: ar.decision } : {}), ...(ar?.advisor ? { advisorModel: ar.advisor } : {}) };
     const fullBrief = buildFixBrief(task, groups, diffStat, repeated ? { priorDiagnosis: prevDiag } : undefined, holdoutFailed);
     let r = await runFixSession(ctx, sessionBase, `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel, fullBrief, buildFixResumeBrief(groups, diffStat, prevDiag, holdoutFailed)); // one session per round: a spec conflict starts no retry; the unchanged-tree rule below decides whether it is believed
     const ro = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [], wd = r.session.markers.specConflict && !r.session.killed ? await adjudicateWallConflict(ctx, { ...sessionBase, iterationId: r.ids[r.ids.length - 1]!, brief: fullBrief }, r.session, ro) : null; if (wd) r = { ...r, session: wd.session, ids: [...r.ids, ...wd.ids] }; // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT

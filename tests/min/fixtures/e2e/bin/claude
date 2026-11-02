@@ -20,11 +20,16 @@
 #   overlay: a plain `-p <task>` call copies E2E_STUB_OVERLAY over the cwd (h2h benchmark harness)
 # E2E_STUB_SLEEP=<s>: the implement session sleeps after its edit, so a test can signal the run mid-session (tests/min/run-safety.sh).
 # E2E_STUB_SPLIT (JSON text): the MASS-2 split planning session writes it to the file its brief names.
+# E2E_STUB_ROUTE_LOG gets "<LOKI_E10_STAGE> <iteration> model=<--model> advisor=<advisorModel> wall=<0|1>" per call.
 # Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo); E2E_STUB_BUDGET_LOG gets its LOKI_BUDGET_LIMIT and LEDGER.
 set -u
 if [ "${1:-}" = "--help" ]; then
   echo "Usage: claude [options] -p <prompt>"
   echo "  --dangerously-skip-permissions --model <m> --settings <json> -p, --print"
+  exit 0
+fi
+if [ "${1:-}" = "--version" ]; then # the advisor probe (providers.ts installedClaudeCodeVersion) reads this; a version call is not a session
+  echo "2.1.316 (Claude Code)"
   exit 0
 fi
 if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then # TEN-STABILITY-09: the P9 login probe in preflight reads this
@@ -52,6 +57,11 @@ if [ -n "${E2E_STUB_ARGV_LOG:-}" ]; then
   rmdir "$lock" 2>/dev/null || true
 fi
 if [ -n "${E2E_STUB_LOG:-}" ]; then echo "$stage" >> "$E2E_STUB_LOG"; fi
+if [ -n "${E2E_STUB_ROUTE_LOG:-}" ]; then # one line per session: engine stage, iteration, --model value, advisorModel from --settings (tests/min/auto-route.sh)
+  r_model="$(printf '%s' "$flags" | grep -o -- '--model [^ ]*' | head -1 | cut -d' ' -f2)"
+  r_adv="$(printf '%s' "$flags" | grep -o '"advisorModel":"[^"]*"' | head -1 | cut -d'"' -f4)"
+  echo "${LOKI_E10_STAGE:-none} ${LOKI_ITERATION:-none} model=${r_model:-none} advisor=${r_adv:-none} wall=$is_wall" >> "$E2E_STUB_ROUTE_LOG"
+fi
 if [ -n "${E2E_STUB_BUDGET_LOG:-}" ]; then echo "$stage limit=${LOKI_BUDGET_LIMIT:-} ledger=${LOKI_BUDGET_LEDGER:-}" >> "$E2E_STUB_BUDGET_LOG"; fi
 if [ -n "${E2E_STUB_PROMPT_LOG:-}" ]; then printf '%s\n' "$prompt" >> "$E2E_STUB_PROMPT_LOG.$stage$is_wall"; fi # CW-12: the full prompt of every call, one file per stage (wall prompts land in .other1)
 # What the session can see: the canary test asserts no GitHub token and no LOKI_LEGACY_BASH.

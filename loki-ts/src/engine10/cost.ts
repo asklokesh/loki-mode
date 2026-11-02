@@ -44,7 +44,7 @@ export interface CostResult {
 }
 /** R1-08: router telemetry is recorded only when the router flag is on (1/true/on, same as the router flag readers), so LOKI_ROUTER unset or 0  leaves the result-cost file and CostResult byte-identical to pre-router. Shared by the stream parser. */
 export function routerTelemetryOn(env: Record<string, string | undefined> = process.env): boolean {
-  return sessionPlanEnabled(env); // the router, or the advisor alone (#246: a parity run must show the advisor attached)
+  return sessionPlanEnabled(env) || env["LOKI_AUTO_ROUTED"] === "1"; // the router, the advisor alone (#246: a parity run must show the advisor attached), or an auto-routed session (its over-100K share is measured)
 }
 export function num(v: unknown): number { return typeof v === "number" && Number.isFinite(v) ? v : 0; }
 

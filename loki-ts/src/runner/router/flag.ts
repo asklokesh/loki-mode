@@ -22,5 +22,8 @@ export function advisorOnlyEnabled(env: Record<string, string | undefined> = pro
   return v === "1" || v === "true" || v === "on";
 }
 
-/** True when a session plan applies: the router is on, or the advisor was asked for on its own. */
-export const sessionPlanEnabled = (env: Record<string, string | undefined> = process.env): boolean => routerEnabled(env) || advisorOnlyEnabled(env);
+/** Auto routing (auto_route.ts) asked for the advisor on this one session: session.ts childEnv sets LOKI_AUTO_ADVISOR_MODEL in the child env only. */
+export const autoAdvisorModel = (env: Record<string, string | undefined> = process.env): string | null => (env.LOKI_AUTO_ADVISOR_MODEL ?? "").trim() || null;
+
+/** True when a session plan applies: the router is on, the advisor was asked for on its own, or auto routing attached it to this session. */
+export const sessionPlanEnabled = (env: Record<string, string | undefined> = process.env): boolean => routerEnabled(env) || advisorOnlyEnabled(env) || autoAdvisorModel(env) !== null;

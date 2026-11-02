@@ -7,6 +7,7 @@ import { envOverride, unitRedo } from "./decision.ts";
 import { routerEnabled } from "./flag.ts";
 import { historyRaisedRoute, type RunExecutor } from "./history.ts";
 import { climb, modelRank, type UnitEscalation } from "../model_rank.ts";
+import { autoRouteActive, autoStallClimb } from "./auto_route.ts";
 
 export type StageOutputs = Partial<Record<string, Record<string, unknown> | undefined>>;
 export interface RouteRecord { model: string; source: string; reason: string; valid: boolean }
@@ -75,8 +76,9 @@ export function routedFix(runModel: string, out: StageOutputs, o: { repeated: bo
   return { pin: climbed?.to ?? (cur !== runModel ? cur : undefined), climbed };
 }
 
-/** R1-13: a verify stall may climb once, only on a code-owned failure and only when the router is active (a lint-only or harness-owned stall, or a user override, is unchanged). The same routedFix decides here and in the fix stage. */
+/** R1-13: a verify stall may climb once, only on a code-owned failure and only when the router or auto routing is active (a lint-only or harness-owned stall, or a user override, is unchanged). The same routedFix decides here and in the fix stage. */
 export function stallClimb(runModel: string, out: StageOutputs, reason: string): UnitEscalation | null {
+  if (!routerActive() && autoRouteActive()) return autoStallClimb(out, reason); // auto routing (c): a stalled Haiku round climbs once to Sonnet
   if (!routerActive() || out["fix"]?.["stall_escalated"]) return null;
   const groups = (out["verify"]?.["failures_grouped"] as { signature: string }[] | undefined) ?? [];
   return routedFix(runModel, out, { repeated: false, stall: true, groups, reason }).climbed;

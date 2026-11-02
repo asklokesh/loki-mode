@@ -2,16 +2,16 @@
 // engine10 start line and recorded on run.started (key only when non-empty, so receipt hashes stay stable).
 import { cascadeEnabled, cascadeImplementModel, planMode, resolveModelAlias, wallEnabled, wallModel } from "../engine10/sizing.ts";
 import { cascadeDowngrade, haikuFirstEnabled } from "./model_rank.ts";
-import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
+import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts"; import { autoExecutor, autoRouteActive } from "./router/auto_route.ts";
 import { routerEnabled } from "./router/flag.ts"; import { leanEnabled, routerActive } from "./router/unit_model.ts"; import { envOverride } from "./router/decision.ts"; // FC-35: with the router on the plan session is pinned to Opus, so "plan sonnet (fast tier)" is not a downgrade
 export interface ModelDowngrade { stage: string; model: string; reason: string }
 const weak = (m: string | undefined): m is string => !!m && /sonnet|haiku/i.test(m);
 /** Model the plan session's fast tier resolves to (mirrors session.ts childEnv: only LOKI_MODEL_OVERRIDE rewrites the tier). */
 export function fastTierModel(env: NodeJS.ProcessEnv = process.env): string {
-  return env.LOKI_MODEL_OVERRIDE || env.LOKI_CLAUDE_MODEL_FAST || env.LOKI_MODEL_FAST || (env.LOKI_ALLOW_HAIKU === "true" ? "haiku" : "sonnet");
+  return env.LOKI_MODEL_OVERRIDE || env.LOKI_CLAUDE_MODEL_FAST || env.LOKI_MODEL_FAST || (autoRouteActive(env) ? autoExecutor() : env.LOKI_ALLOW_HAIKU === "true" ? "haiku" : "sonnet"); // auto: the fast tier is the executor too (session.ts childEnv)
 }
 export function modelDowngrades(provider: string, env: NodeJS.ProcessEnv = process.env, runModel: string = env.LOKI_CLAUDE_MODEL_DEVELOPMENT || env.LOKI_MODEL_DEVELOPMENT || PROVIDER_DEFAULT_MODEL): ModelDowngrade[] {
-  if (provider !== "claude") return [];
+  if (provider !== "claude" || autoRouteActive(env, provider)) return []; // auto routing runs Haiku by design; the start line names the route instead (route_block.ts routeStartLine)
   if (weak(env.LOKI_MODEL_OVERRIDE)) return [{ stage: "all", model: env.LOKI_MODEL_OVERRIDE, reason: "LOKI_MODEL_OVERRIDE" }];
   const devName = env.LOKI_CLAUDE_MODEL_DEVELOPMENT ? "LOKI_CLAUDE_MODEL_DEVELOPMENT" : "LOKI_MODEL_DEVELOPMENT";
   if (weak(env[devName])) return [{ stage: "implement", model: env[devName]!, reason: devName }]; // the run itself is weak: auxiliaries are not weaker

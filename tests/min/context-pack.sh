@@ -18,7 +18,7 @@
 #   end to end:     real bin/loki -> committed bundle -> engine10 on the stub provider, LOKI_SESSION_MODEL=haiku: the
 #                   implement prompt carries the pack, the implement stage.completed event carries brief_files and
 #                   context_pack, and the seal stage.completed event and receipt carry context_recall 1; the same
-#                   run on the default model sends no pack but still records brief_files and the coverage.
+#                   run on the provider default model (LOKI_AUTO_ROUTE=0) sends no pack but still records brief_files and the coverage.
 #   loki stats --outcomes --json reports the median context recall of those runs.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
@@ -218,7 +218,7 @@ else
     bad "e2e haiku: no run events"; printf '%s\n' "$OUT" | tail -30 | sed 's/^/    | /'
 fi
 
-run_e2e default
+run_e2e default LOKI_AUTO_ROUTE=0 # the provider default model; with no pin auto routing runs Haiku, which gets the pack like the haiku leg
 if [ -f "$RUNDIR/events.jsonl" ]; then
     case "$(cat "$T/default.prompt.implement0" 2>/dev/null)" in *"Code that matters"*) bad "e2e default model: the prompt carries a pack" ;; "") bad "e2e default model: no implement prompt captured" ;; *) ok "e2e default model: no pack in the implement prompt" ;; esac
     v="$(ev implement '"src/invoice.ts" in d.get("brief_files", []) and "context_pack" not in d')"; [ "$v" = True ] && ok "e2e default model: brief_files recorded, no context_pack" || bad "e2e default model: record wrong ($v)"

@@ -18,7 +18,7 @@ import { isTestFile } from "../testmap.ts";
 import { crossReview, minVerdict, modelReviewRan, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
 import { STAGE_BUDGETS, type RunnerName, type Obj, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type Verdict } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
-import { loadRouteRecord } from "../../runner/router/route_record.ts";
+import { loadRouteRecord } from "../../runner/router/route_record.ts"; import { autoRoutingReceipt } from "../../runner/router/auto_route.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
@@ -316,7 +316,7 @@ export const sealStage: Stage = {
       ...receiptBlock(process.env, cost.usd, cost.unmetered === true, totalS),
       ...(reviewReceipt(ctx.provider, xr).review ? { review: reviewReceipt(ctx.provider, xr).review } : {}),
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
-      ...(routeBlock ? { route: routeBlock } : {}),
+      ...(routeBlock ? { route: routeBlock } : {}), ...autoRoutingReceipt(ctx.runDir, join(ctx.repoDir, ".loki"), iterIds), // auto routing decisions and per-session models; absent when auto did not route
       ...(supply.block ? { supply: supply.block } : {}),
       ...specReceiptBlock(process.env), ...triageReceiptBlock(o.intake), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(), ...sealAccuracyBlock(rawDiff.filter((_, i) => i % 2 === 1), checks, ctx.model), ...contextCoverageBlock(o.implement, rawDiff, ctx.repoDir), // GAME10-03; L022 context recall and precision
     };

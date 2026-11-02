@@ -68,7 +68,7 @@ export const wallLimitS = (size: TaskSize, env = process.env): number => {
   if (Number.isFinite(n) && n > 0) { if (n > 300) noteOnce("LOKI_E10_WALL_LIMIT_S", raw, "exceeds the 300s maximum; using 300"); return Math.min(300, n); }
   noteOnce("LOKI_E10_WALL_LIMIT_S", raw, `is not a positive number; using ${dflt}`); return dflt;
 };
-/** Engine Law L1 (supersedes D31's sonnet-first default): the cascade is OFF unless LOKI_E10_CASCADE=1/on/true opts in. Off means implement and fix run on the run's own model, as a raw session would. */
+/** Engine Law L1 (amended 2026-11-01): with no pin the run model is the auto executor, Haiku (runner/router/auto_route.ts), and escalation only goes up. The cascade is OFF unless LOKI_E10_CASCADE=1/on/true opts in, which also turns auto routing off. */
 export const cascadeEnabled = (env = process.env): boolean => knob(env.LOKI_E10_CASCADE, ["1", "on", "true"]);
 /** Resolves a cli_alias (e.g. "sonnet") to its catalog model id; an id already, or an unknown alias, passes through unchanged. */
 export const resolveModelAlias = resolveClaudeModel;

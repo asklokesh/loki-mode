@@ -6,6 +6,7 @@
 // block says "not routed" with the reason, never a guessed executor.
 import { ADVISOR_ERROR_LIMIT } from "./advisor_probe.ts";
 import { routerEnabled } from "./flag.ts";
+import { AUTO_START_LINE, autoRouteActive } from "./auto_route.ts";
 export interface RouteEscalation { trigger: string; from: string; to: string; evidence: string }
 /** One row per work unit. A per-run route renders as the single unit "run". */
 export interface RouteUnit { id: string; executor: string; applied: boolean; assigned_by: string; reason: string; escalations: RouteEscalation[] }
@@ -53,7 +54,7 @@ const s0 = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v
  * The receipt route block (derived from route.json) is the record of what was assigned. Null when the router is off.
  */
 export function routeStartLine(env: Record<string, string | undefined>, provider: string): string | null {
-  if (!routerEnabled(env)) return null;
+  if (!routerEnabled(env)) return autoRouteActive(env, provider) ? AUTO_START_LINE : null; // auto routing names itself; with a pin or LOKI_AUTO_ROUTE=0 nothing is added
   const fixed = (env["LOKI_ROUTER_EXECUTOR"] ?? "").trim();
   const why = advisorUnavailableReason(env, provider);
   const exec = `route: decided at plan time, per-unit executors not applied (stages run the run model)${fixed ? `, ${modelLabel(fixed)} requested by LOKI_ROUTER_EXECUTOR` : ""}`;

@@ -16,6 +16,7 @@ import { applyIntent, confirmRequested, intentCardEnabled, INTENT_CARD_INSTRUCTI
 import { loadProjectApi } from "../../project_model/resolve.ts";
 import { behaviorChangeInstruction, mutationStrict, readBehaviorChange } from "../../util/mutation_proof.ts";
 import { reviewerBriefEnabled } from "../../util/reviewer_brief.ts";
+import { autoPlanDecision, autoRouteActive, recordAuto } from "../../runner/router/auto_route.ts";
 
 const MAX_PLAN_LINES = 10;
 const PLAN_OUTPUT_FILENAME = "plan-output.txt";
@@ -70,8 +71,10 @@ export const planStage: Stage = {
     const sz = sizeTask(task, loaded, testMap); // E-45: a small task skips this session and the implementer plans
     const mode = planMode();
     const pr = await planRoute(ctx.runDir, ctx.provider, process.env, ctx.repoDir); // R1-10 (runner/router/plan_route.ts): flag off adds nothing
+    const ap = autoRouteActive(process.env, ctx.provider) ? autoPlanDecision(sz.size, loaded) : null; // auto routing (a): a large task or a big repo plans with the advisor attached
+    if (ap) recordAuto(ctx, "plan", ap);
     // FC-35: with the router on a task still plans (Opus must route it); only an explicit LOKI_E10_PLAN=0 skips, and records why. A large task keeps the plan session; small and normal fold the plan into the implement brief.
-    const skip = mode === "never" || (mode === "auto" && sz.size !== "large" && !pr.routed && !keepsPlanForConsentOrCap(process.env, process.stderr.isTTY === true, sz.size, () => namedFiles(task, loaded).length, () => loadProjectApi(ctx.repoDir)?.packages().length ?? 0));
+    const skip = mode === "never" || (mode === "auto" && sz.size !== "large" && !pr.routed && !ap?.fire && !keepsPlanForConsentOrCap(process.env, process.stderr.isTTY === true, sz.size, () => namedFiles(task, loaded).length, () => loadProjectApi(ctx.repoDir)?.packages().length ?? 0));
     // E-64: wall.ts makes this same check to skip itself; a forced plan (LOKI_E10_PLAN=always) also forces "wall", since it still gets its own Wall.
     const path = mode === "always" ? "wall" : smallTaskPath(sz.size, hasRelevantTests(task, loaded, testMap, ctx.tests.impacted));
     ctx.emit("variant", null, { size: sz.size, reasons: sz.reasons, plan_mode: mode, plan_skipped: skip, wall_model: wallEnabled() ? wallFirstModel(sz.size) : null, wall_model_reauthor: wallEnabled() ? wallModel() : null, small_task_path: path, cascade: cascadeEnabled() });
@@ -92,7 +95,7 @@ export const planStage: Stage = {
       limitS: planStage.limitS,
       signal,
       cwd: ctx.repoDir,
-      ...pr.pinFor(onSonnet, ctx.model),
+      ...pr.pinFor(onSonnet, ctx.model), ...(ap?.fire && ap.advisor ? { advisorModel: ap.advisor } : {}),
     });
     let session = await runPlan(false);
     let planModel = pr.planModel(fastTierModel(process.env));

@@ -13,7 +13,7 @@ import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
 import { hooks } from "./hooks.ts";
 import { readSessionId } from "../runner/session_resume.ts";
-import { routerEnabled } from "../runner/router/flag.ts";
+import { routerEnabled } from "../runner/router/flag.ts"; import { autoChildEnv, autoExecutor, autoRouteActive } from "../runner/router/auto_route.ts";
 import { exitKind, routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 import { clampBashTimeoutEnv, envWithPwd, pinBashShellEnv, killGroupWithGrace, reapLiveGroup } from "../runner/worker_proc.ts"; import { engine10StaticPrefix, sessionPinModel } from "../runner/providers.ts"; export { sessionPinModel }; import { capToSessionPin } from "../runner/model_rank.ts"; import { idleGapMs, prefixParts, prefixSha } from "../util/cost_breakdown.ts";
@@ -37,7 +37,7 @@ export interface SessionRunnerConfig {
 }
 /** Recorded when a claude run has no configured model: the provider CLI runs its own default, exactly like raw `claude -p` (L1). */
 export { PROVIDER_DEFAULT_MODEL }; // label lives in util/claude_model.ts (a leaf the runner can import without a cycle)
-/** The model a session really runs: the override, else the session pin, else a configured pin, else the provider's own default (no --model flag, L1 never below raw). */
+/** The model a session really runs: the override, else the session pin, else a configured pin, else the auto executor (Haiku, runner/router/auto_route.ts), else with LOKI_AUTO_ROUTE=0 the provider's own default (no --model flag). */
 export function resolveModel(provider: string): string {
   const e = process.env;
   if (e.LOKI_MODEL_OVERRIDE) return e.LOKI_MODEL_OVERRIDE;
@@ -47,7 +47,7 @@ export function resolveModel(provider: string): string {
   if (pinned) return pinned;
   if (provider === "opencode") return (e.LOKI_OPENCODE_MODEL ?? "").trim() || "opencode default (unreported)"; // opencode takes -m from LOKI_OPENCODE_MODEL only
   if (provider !== "claude") return `${provider} (model not recorded)`;
-  return e.LOKI_CLAUDE_MODEL_DEVELOPMENT || e.LOKI_MODEL_DEVELOPMENT || PROVIDER_DEFAULT_MODEL;
+  return e.LOKI_CLAUDE_MODEL_DEVELOPMENT || e.LOKI_MODEL_DEVELOPMENT || (autoRouteActive(e) ? autoExecutor() : PROVIDER_DEFAULT_MODEL); // auto routing (no pin): Haiku executes; LOKI_AUTO_ROUTE=0 keeps the provider default
 }
 // ER-05 / g09-47: effort is part of the cached prefix key, so a resumed session keeps the effort it was created with unless the stage
 // escalates. Per-message effort (mid-conversation output_config) is not exposed by the SDK; revisit when it is, instead of adding a new path.
@@ -86,6 +86,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
     if (env["LOKI_E10_PREFIX"] === undefined) env["LOKI_E10_PREFIX"] = "lean"; // TEN-COST-13: lean cache-stable prefix by default; an explicit user value (including off) wins
     const forced = process.env["LOKI_MODEL_OVERRIDE"] || sessionPinModel(process.env); // the override, else the session pin (after the override, ahead of the per-tier vars; throws on an unrecognized pin)
     if (forced) for (const t of ["PLANNING", "DEVELOPMENT", "FAST"]) env[`LOKI_CLAUDE_MODEL_${t}`] = forced;
+    else if (autoRouteActive(process.env)) { for (const t of ["PLANNING", "DEVELOPMENT", "FAST"]) if (!env[`LOKI_CLAUDE_MODEL_${t}`] && !env[`LOKI_MODEL_${t}`]) env[`LOKI_CLAUDE_MODEL_${t}`] = autoExecutor(); autoChildEnv(env, opts.advisorModel); } // auto: every tier the user left unset runs the executor (a per-call pin below still wins); the advisor only where the stage asked
   }
   if (cfg.provider === "claude" && (!opts.model || opts.model === PROVIDER_DEFAULT_MODEL) && resolveModel("claude") === PROVIDER_DEFAULT_MODEL) env["LOKI_E10_MODEL_DEFAULT"] = "1"; // providers.ts then omits --model
   const { effort, escalated } = sessionEffortFor(opts); // ER-01: a user LOKI_E10_EFFORT (already in env) wins over opts and the policy; ER-05: a resumed session keeps its effort
@@ -140,7 +141,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
   return {
     run(opts: SessionRunOptions): Promise<SessionResult & { stderrTail: string }> {
-      if (cfg.provider === "opencode" && opts.model) opts = { ...opts, model: undefined }; else if (cfg.provider === "claude" && opts.model) opts = { ...opts, model: capToSessionPin(opts.model) }; // a stage pin (Wall's claude tier) cannot reach opencode; a LOKI_SESSION_MODEL run never starts a session above its pin (runner/model_rank.ts)
+      if (cfg.provider === "opencode" && opts.model) opts = { ...opts, model: undefined }; else if (cfg.provider === "claude" && opts.model) opts = { ...opts, model: capToSessionPin(opts.model, process.env, opts.routeGrant) }; // a stage pin (Wall's claude tier) cannot reach opencode; a LOKI_SESSION_MODEL run never starts a session above its pin (runner/model_rank.ts)
       const start = Date.now();
       // A signal aborted before run() never fires the listener below, so it never spawns.
       if (opts.signal.aborted || sessionsCancelled()) return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true, stderrTail: "" });

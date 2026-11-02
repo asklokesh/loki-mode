@@ -52,7 +52,7 @@ import { writeSessionId } from "./session_resume.ts";
 import { createTrimHook } from "./trim.ts";
 import { createStopChecksHook, parseStopChecks, STOP_HOOK_MARGIN_S } from "./stop_checks.ts";
 import { advisorPair, probeAdvisor, ROUTER_ADVISOR_MODEL } from "./router/advisor_probe.ts";
-import { advisorOnlyEnabled, routerEnabled, sessionPlanEnabled } from "./router/flag.ts";
+import { advisorOnlyEnabled, autoAdvisorModel, routerEnabled, sessionPlanEnabled } from "./router/flag.ts";
 import type {
   ProviderInvocation,
   ProviderInvoker,
@@ -430,6 +430,11 @@ export function planRouterSession(args: {
 }): RouterSessionPlan | null {
   const env = args.env ?? process.env;
   const routed = routerEnabled(env);
+  const autoAdv = autoAdvisorModel(env);
+  if (!routed && !advisorOnlyEnabled(env) && autoAdv) { // auto routing (router/auto_route.ts): this one session carries the advisor; unavailable means the executor runs alone, never a swap
+    const p = probeAdvisor(env, "claude", args.claudeCodeVersion, args.runDir, { executor: args.model, advisor: autoAdv });
+    return p.available ? { model: args.model, settings: { advisorModel: autoAdv, ...(hasNoPriceCliff(args.model) ? {} : { autoCompactWindow: ROUTER_AUTO_COMPACT_WINDOW }) } } : null;
+  }
   if (!routed && !advisorOnlyEnabled(env)) return null;
   const probe = probeAdvisor(env, "claude", args.claudeCodeVersion, args.runDir, advisorPair(env, args.model));
   // Advisor alone (#246): the advisor and nothing else. No executor swap, no compact window, so the only variable is the advisor.
