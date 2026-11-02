@@ -3,17 +3,18 @@
 Loki against raw Claude Code (`claude -p`) on the same coding tasks, scored only by hidden tests.
 This page states the protocol and the latest numbers, including where Loki loses.
 
-Latest runs: `results/2026-11-02-5063feb95.json` (synthetic suite) and
-`results/2026-11-02-5063feb95-replay.json` (replay suite), both from the clean commit 5063feb95,
-which holds the engine change below (`citable: true`). Older runs further down name their own engine.
+Latest runs: `results/2026-11-02-52904268a.json` (synthetic suite) and
+`results/2026-11-02-52904268a-replay.json` (replay suite), both from the clean commit 52904268a
+(the engine change below merged with v11.122.0, `citable: true`). The earlier citable pair from
+commit 5063feb95 is kept beside them. Older runs further down name their own engine.
 
 The hard suite (`results/2026-11-01-e13f3dd72-hard.json`, 10 configs on 8 real multi-file fixes) is in
 [Hard suite](#hard-suite-real-multi-file-fixes-selected-so-raw-haiku-fails).
 
-## Honest VERIFIED and fewer sessions (commit 5063feb95)
+## Honest VERIFIED and fewer sessions (commits 5063feb95 and 52904268a)
 
-Both runs: 2 reps, `--jobs 4`, the raw config and loki-haiku in one invocation, from clean commit
-5063feb95. The "before" rows are the v11.116.0 runs in the sections below; they are **not citable**
+Each run: 2 reps, `--jobs 4`, the raw config and loki-haiku in one invocation, from a clean commit
+(5063feb95, then 52904268a after merging v11.122.0). The "before" rows are the v11.116.0 runs in the sections below; they are **not citable**
 under the provenance rule (see Citability), so they are context, not a measured baseline.
 
 Synthetic suite, 24 tasks:
@@ -23,6 +24,8 @@ Synthetic suite, 24 tasks:
 | before (v11.116.0, not citable) | loki-haiku | 47/48 | 89.1-99.6% | 0.0131 | 29.0 | 174.3 | 1.90 | 29/48 | 1 |
 | 5063feb95 | raw-haiku | 48/48 | 92.6-100% | 0.0201 | 27.2 | 167.6 | 1.00 | - | - |
 | 5063feb95 | loki-haiku | 48/48 | 92.6-100% | 0.0108 | 24.4 | 155.7 | 1.58 | 33/48 | 0 |
+| 52904268a | raw-haiku | 48/48 | 92.6-100% | 0.0202 | 27.3 | 201.3 | 1.00 | - | - |
+| 52904268a | loki-haiku | 48/48 | 92.6-100% | 0.0112 | 27.7 | 183.1 | 1.56 | 31/48 | 0 |
 
 Replay suite, 8 real closed issues:
 
@@ -30,12 +33,22 @@ Replay suite, 8 real closed issues:
 |---|---|---|---|---|---|---|
 | 5063feb95 | raw-haiku-verify | 13/16 | 0.0169 | 41.5 | 1.00 | - |
 | 5063feb95 | loki-haiku | 12/16 | 0.0092 | 45.6 | 1.25 | 1 |
+| 52904268a | raw-haiku-verify | 12/16 | 0.0181 | 40.5 | 1.00 | - |
+| 52904268a | loki-haiku | 12/16 | 0.0097 | 40.6 | 1.25 | 2 |
 
-On the synthetic suite no run read VERIFIED while its hidden tests failed. On the replay suite one
-did: go-semver-four-part (semver #185), rep 2. The issue does not state the hidden case
-`12.3.34~ 1.2.3`, and the change modifies functions the repo's own passing tests already call, so
-the added-function cap cannot see it. Raw Haiku with the verify sentence passed that task once in two
-runs, Loki on Haiku in neither, so on the replay suite Loki trails it by one task.
+On the synthetic suite no run read VERIFIED while its hidden tests failed, in either commit's run.
+On the replay suite it did happen: go-semver-four-part (semver #185), rep 2 at 5063feb95 and both
+reps at 52904268a. The issue does not state the hidden case `12.3.34~ 1.2.3`, and the change
+modifies functions the repo's own passing tests already call, so the added-function cap cannot see
+it. At 5063feb95 raw Haiku with the verify sentence passed that task once in two runs and Loki on
+Haiku in neither (Loki trailed by one task); at 52904268a neither passed it and the two tie at 12/16.
+On the replay suite Loki's verdict is also cautious: at 52904268a only 4 of 16 runs read VERIFIED
+(all four on Go tasks, two of them false), and 10 passing Python runs read PARTIAL.
+
+At 52904268a, Loki on Haiku costs 45% less per passed task than raw Haiku on the synthetic suite
+($0.0112 vs $0.0202) and 46% less than raw Haiku with the verify sentence on the replay suite
+($0.0097 vs $0.0181), at the same pass count and about the same median time. Wall sessions: 17 in
+48 synthetic runs, 0 in the replay runs.
 
 What changed:
 
@@ -68,7 +81,8 @@ session, but only 8 of 48 runs VERIFIED. The Wall stays; dropping it is a produc
 
 Still failing: go-semver-four-part as above, and py-toolz-partition-len for every config.
 
-Spend for the two citable runs: $3.47 on their own ledger (earlier uncitable runs: $4.18).
+Spend for the two citable runs: $3.47 at 5063feb95 and $1.84 at 52904268a, each on its own ledger
+(earlier uncitable runs: $4.18).
 
 **Citability.** A results file counts only if it was produced from a clean commit: the harness now
 stamps every results file with the engine commit, the tool versions and a `citable` flag, and refuses
