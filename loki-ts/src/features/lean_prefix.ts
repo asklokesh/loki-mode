@@ -7,9 +7,8 @@ export const LEAN_PREFIX =
   "You are Loki, an autonomous coding agent. Follow the task prompt exactly " +
   "and report only what you did.";
 
-// Parallel-tool-calls directive, the one TS source: the bash/Bun shared prefix (LSP_GROUNDING in
-// runner/build_prompt.ts) and every engine10 stage brief (STAGE_PREFIX) use it. Byte-mirrored with
-// _loki_parallel_tool_calls_instruction in autonomy/run.sh.
+// Parallel-tool-calls directive, the one TS source: every engine10 stage brief (STAGE_PREFIX) uses it.
+// Byte-mirrored with _loki_parallel_tool_calls_instruction in autonomy/run.sh.
 export const PARALLEL_TOOL_CALLS_INSTRUCTION =
   `PARALLEL_TOOL_CALLS: When issuing independent read-only operations (reads, greps, file lookups, LSP checks) that do not depend on each other, issue them in a single message so they run in parallel; do not serialize independent lookups.`;
 

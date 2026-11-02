@@ -11,7 +11,7 @@
 // well-typed and silently dropped otherwise -- the schema file remains the
 // authoritative spec for upstream Claude consumers.
 //
-// Reconciliation with AgentVerdict (council.ts:128-133):
+// Reconciliation with AgentVerdict (defined below):
 //   schema.findings[i].vote        -> AgentVerdict.verdict
 //   schema.findings[i].confidence  -> dropped (not on AgentVerdict in v7.5.20)
 //   schema.findings[i].severity    -> dropped (top-level hint; issues carry it)
@@ -27,7 +27,16 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve as resolvePath, dirname, relative, isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { URL_RE, ANCHOR_RE, EXTENSIONLESS } from "../util/check_result.ts";
-import type { AgentVerdict, Severity } from "../runner/council.ts";
+
+export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+
+/** One reviewer's verdict, as validateFinding and parseMultiResponse return it. */
+export type AgentVerdict = {
+  role: string;
+  verdict: "APPROVE" | "REJECT" | "CANNOT_VALIDATE";
+  reason: string;
+  issues: { severity: Severity; description: string }[];
+};
 
 // Resolve loki-ts/data relative to this module. The data dir is ../../data from src/council and ../data from the bundled dist/loki.js (the package
 // ships only loki-ts/data/), the same candidate pair runner/budget.ts uses; the first candidate holding finding-schema.json wins.

@@ -318,69 +318,6 @@ export function saveState(ctx: SaveStateContext): string {
   return target;
 }
 
-// v7.4.4 (BUG-24): runner-shaped adapter for autonomous.ts persistState.
-// autonomous.ts:42 declares saveState(ctx, status, exitCode) but state.ts's
-// public saveState takes a single SaveStateContext. Calling the public one
-// with extra args silently produced malformed JSON (positional args ignored,
-// the `ctx` arg was a RunnerContext lacking SaveStateContext fields). This
-// adapter bridges the two shapes and is the marker key autonomous.ts now
-// gates on via tryImport.
-import type { RunnerContext as LoopRunnerContext } from "./types.ts";
-
-export async function saveStateForRunner(
-  ctx: LoopRunnerContext,
-  status: string,
-  exitCode: number,
-): Promise<void> {
-  // PARITY (state vs prompt split): bash writes state.prdPath from the GLOBAL
-  // PRD_PATH (run.sh run_autonomous()), never repointed by PRD-reuse persistence; only the
-  // LOCAL prd_path (run.sh run_autonomous()) is repointed for the prompt + reuse decision.
-  // autonomous.ts threads the ORIGINAL user path onto ctx as `statePrdPath`
-  // (set unconditionally to a string, possibly ""), while ctx.prdPath carries
-  // the resolved/persisted path for the prompt builder. Record statePrdPath so
-  // the persisted .loki/generated-prd.md never overwrites what state records.
-  // The `?? ctx.prdPath` branch only guards hypothetical non-loop callers that
-  // never set the field; the loop always sets it, so it is always used.
-  const orig = (ctx as LoopRunnerContext & { statePrdPath?: string })
-    .statePrdPath;
-  const prdForState = orig !== undefined ? orig : ctx.prdPath;
-  saveState({
-    retryCount: ctx.retryCount,
-    iterationCount: ctx.iterationCount,
-    status,
-    exitCode,
-    prdPath: prdForState,
-    pid: process.pid,
-    maxRetries: ctx.maxRetries,
-    baseWait: ctx.baseWaitSeconds,
-    lokiDirOverride: ctx.lokiDir,
-  });
-}
-
-export async function loadStateForRunner(ctx: LoopRunnerContext): Promise<void> {
-  // Read the on-disk state and re-hydrate the runner counters. Idempotent:
-  // missing file -> no-op; corrupt -> backed-up + counters reset to 0.
-  const result = loadState({ lokiDirOverride: ctx.lokiDir });
-  ctx.retryCount = result.retryCount;
-  ctx.iterationCount = result.iterationCount;
-  // A session starting at iteration 0 has run nothing yet, so a leftover
-  // freshness marker or unit-tests.pass is a previous session's evidence.
-  // Iterations restart at 0; keeping them would let an old pass:true read as
-  // this iteration's result (mirrors bash load_state).
-  if (result.iterationCount === 0) {
-    const quality = join(resolveLokiDir(ctx.lokiDir), "quality");
-    // test-results.json too: with the marker gone the receipt falls back to its
-    // status and would report a previous session's run as this one.
-    for (const f of [".test-results.iter", "unit-tests.pass", "test-results.json"]) {
-      try {
-        unlinkSync(join(quality, f));
-      } catch {
-        // absent is the common case
-      }
-    }
-  }
-}
-
 // --- load_state ------------------------------------------------------------
 
 // Result mirrors the side-effects bash sets globally
