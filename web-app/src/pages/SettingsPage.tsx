@@ -98,27 +98,6 @@ const PROVIDERS: ProviderDef[] = [
     defaultModel: 'claude-opus-4-7',
   },
   {
-    id: 'codex',
-    name: 'Codex',
-    description: 'OpenAI Codex CLI -- degraded mode',
-    models: ['gpt-5.3-codex', 'o3', 'o4-mini'],
-    defaultModel: 'gpt-5.3-codex',
-  },
-  {
-    id: 'cline',
-    name: 'Cline',
-    description: 'VS Code extension -- sequential mode',
-    models: ['claude-opus-4-7', 'claude-sonnet-4-6', 'gpt-4.1'],
-    defaultModel: 'claude-opus-4-7',
-  },
-  {
-    id: 'aider',
-    name: 'Aider',
-    description: 'Terminal-based pair programming',
-    models: ['claude-opus-4-7', 'claude-sonnet-4-6', 'gpt-4.1', 'ollama_chat/deepseek-coder'],
-    defaultModel: 'claude-opus-4-7',
-  },
-  {
     id: 'opencode',
     name: 'opencode',
     description: 'Model-agnostic CLI -- 75+ providers, local models',
@@ -217,7 +196,8 @@ export default function SettingsPage() {
   const [providerKeys, setProviderKeys] = useState<Record<string, string>>(() => loadSetting('providerKeys', {}));
   const [providerModels, setProviderModels] = useState<Record<string, string>>(() => loadSetting('providerModels', {}));
   const [providerPriority, setProviderPriority] = useState<string[]>(() =>
-    loadSetting('providerPriority', ['claude', 'codex', 'cline', 'aider', 'opencode'])
+    // A saved order may still name a removed provider; keep only the ones offered here.
+    loadSetting<string[]>('providerPriority', ['claude', 'opencode']).filter((id) => PROVIDERS.some((p) => p.id === id))
   );
   const [settingDefault, setSettingDefault] = useState<string | null>(null);
   const [defaultResults, setDefaultResults] = useState<Record<string, { ok: boolean; message: string }>>({});

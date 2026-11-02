@@ -471,7 +471,7 @@ jobs:
           SHA256=$(sha256sum "${RUNNER_TEMP}/${ASSET}" | cut -d' ' -f1)
           cat > "${RUNNER_TEMP}/loki-mode.rb.tpl" << 'FORMULA_EOF'
           class LokiMode < Formula
-            desc "Autonomous coding agent platform CLI for Claude Code, Codex CLI, Cline, and Aider"
+            desc "Autonomous coding agent platform CLI for Claude Code and opencode"
             homepage "https://github.com/asklokesh/loki-mode"
             url "https://github.com/asklokesh/loki-mode/releases/download/vVERSION_PLACEHOLDER/loki-mode-VERSION_PLACEHOLDER.tar.gz"
             sha256 "SHA256_PLACEHOLDER"

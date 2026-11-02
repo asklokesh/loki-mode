@@ -184,8 +184,8 @@ print("\n".join(lines))
                 BLOCK)
                     # THE TWO LISTS DISAGREE, and preflight is the first surface
                     # that shows both at once. auto_detect_provider iterates
-                    # claude cline codex aider opencode; doctor's ai_provider
-                    # checks only the first four. On an opencode-only machine
+                    # every supported provider; doctor's ai_provider once
+                    # checked fewer. On an opencode-only machine
                     # this printed "would select: opencode" directly above
                     # "No AI provider CLI" -- a self-contradicting report.
                     # Neither producer is editable from here, so the

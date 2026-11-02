@@ -50,7 +50,7 @@ loki-mode/
   CHANGELOG.md           # Release history
 
   autonomy/              # Runtime and CLI (run.sh, loki, completion-council.sh)
-  providers/             # Multi-provider support (Claude, Codex, Cline, Aider, opencode)
+  providers/             # Provider support (Claude, opencode)
   skills/                # On-demand skill modules
   references/            # Detailed documentation
   memory/                # Memory system (Python)

@@ -4,16 +4,12 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { probeAllowed, ttlCache, type RouteCtx } from "./index.ts";
+import { PROVIDERS } from "../../../../../loki-ts/src/runner/types.ts";
 
-const ORDER = ["claude", "codex", "cline", "aider", "opencode"] as const;
-const DEPRECATED = ["gemini"] as const;
+const ORDER = PROVIDERS; // the CLI's one list (loki-ts/src/runner/types.ts)
 const AUTH_ENV: Record<string, string[]> = {
   claude: ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"],
-  codex: ["OPENAI_API_KEY"],
-  cline: ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"],
-  aider: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"],
-  opencode: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"],
-  gemini: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+  opencode: ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
 };
 const DEFAULT_TIMEOUT_MS = 3000;
 
@@ -74,7 +70,7 @@ function loadCatalog(dir: string | null): { providers: Record<string, CatalogPro
 
 export async function listProviders(timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
   const cat = loadCatalog(providersDir());
-  const names = [...ORDER, ...DEPRECATED];
+  const names = [...ORDER];
   const rows = await Promise.all(names.map(async (name) => {
     const probe = await probeCli(name, timeoutMs);
     const envNames = AUTH_ENV[name] ?? [];
@@ -86,7 +82,6 @@ export async function listProviders(timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unk
     const models = (cp?.models ?? []).filter((m) => m.id).map((m) => ({ id: m.id as string, alias: m.alias ?? null, tier: m.tier ?? null }));
     return {
       id: name,
-      deprecated: (DEPRECATED as readonly string[]).includes(name),
       installed: probe.installed,
       version: probe.version,
       probe: probe.probe,

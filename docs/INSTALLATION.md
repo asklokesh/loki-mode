@@ -2,7 +2,7 @@
 
 Loki Mode, by [Autonomi](https://www.autonomi.dev/), turns a spec or an issue into a verified pull request with a receipt you can check. This page covers installing it, a first run, and the options around it.
 
-**Version:** v11.120.1
+**Version:** v11.121.0
 
 **Engine note:** `loki start` is the primary command. `loki start`, `loki "<task>"`, `loki owner/repo#N` and `loki quick` all run the Loki 10 engine, whatever the flag order or input form (PRD file, issue ref, task or one-word brief). The previous loop runs only on `--engine legacy`, `LOKI_ENGINE=legacy`, or for one call when a flag Loki 10 cannot honor is present. See the [user guide](v10/GUIDE.md) and the [5-minute quickstart](QUICKSTART.md).
 
@@ -20,7 +20,7 @@ brew tap asklokesh/tap && brew install loki-mode  # Homebrew
 
 The Loki 10 engine runs on Bun. The npm package bundles a Bun binary for macOS and Linux (x64 and arm64) as an optional dependency, so a plain npm install needs nothing else. With Homebrew, install Bun too if you do not have it: `brew install oven-sh/bun/bun`.
 
-The npm postinstall step repoints any stale skill links and installs shell completions (skipped in CI or with `LOKI_NO_COMPLETIONS=1`). It never fails the install. To install the Loki skill into each detected provider CLI (`~/.claude/skills/`, `~/.codex/skills/`, ...), run:
+The npm postinstall step repoints any stale skill links and installs shell completions (skipped in CI or with `LOKI_NO_COMPLETIONS=1`). It never fails the install. To install the Loki skill into each detected provider CLI (`~/.claude/skills/`, `~/.config/opencode/`), run:
 
 ```bash
 loki setup-skill
@@ -61,7 +61,7 @@ Required (`loki doctor` fails without them):
 | git | any recent version |
 | curl | any |
 
-Plus a way to reach a model. Claude Code (`claude`) is the default provider and the only one with every feature, so the default path needs it installed and logged in: `npm install -g @anthropic-ai/claude-code`, then `claude auth login`. With only `ANTHROPIC_API_KEY` set, `loki "<goal>"` runs on the bundled Claude Agent SDK with no CLI and no extra setting. `loki edit` and `loki chat` call the `claude` CLI directly. Every other provider CLI (`codex`, `cline`, `aider`, `opencode`) is optional.
+Plus a way to reach a model. Claude Code (`claude`) is the default provider and the only one with every feature, so the default path needs it installed and logged in: `npm install -g @anthropic-ai/claude-code`, then `claude auth login`. With only `ANTHROPIC_API_KEY` set, `loki "<goal>"` runs on the bundled Claude Agent SDK with no CLI and no extra setting. `loki edit` and `loki chat` call the `claude` CLI directly. The only other provider is `opencode` (optional; any model, including OpenRouter via `OPENROUTER_API_KEY`). codex, cline, aider and gemini were removed and exit 2 with a migration line.
 
 Optional: Python 3.8+ (deep scans, Python repos and group runs; `loki "<goal>"` runs without it), jq (`loki status` and the bash fallback CLI), Bun 1.3+ (bundled by the npm package), bash 4+ (recommended), Ollama or an OpenRouter key for non-Claude model routes.
 
@@ -155,12 +155,9 @@ See [control-plane-migration.md](control-plane-migration.md) and [control-plane-
 | Provider | Notes |
 |----------|-------|
 | `claude` | Default (Tier 1). Full feature set. |
-| `cline` | Full feature set; small local models may fail tool use. Engine10 cost parsed or estimated, guardrail scan. |
-| `codex` | Sequential only. Engine10 cost parsed or estimated, guardrail scan, `--sandbox workspace-write`. |
-| `aider` | Sequential only; `ollama_chat/<model>` works for local models. Engine10 cost reported or estimated, guardrail scan, `--no-auto-commits`. |
-| `opencode` | Sequential only. Supported in engine10 (`--provider opencode`); cost not measured. Install with `npm install -g opencode-ai`; model via `LOKI_OPENCODE_MODEL=provider/model`. |
+| `opencode` | Sequential only. Supported in engine10 (`--provider opencode`); cost not measured. Install with `npm install -g opencode-ai`; model via `LOKI_OPENCODE_MODEL=provider/model` or `--model`; OpenRouter models are `openrouter/<vendor>/<model>` with `OPENROUTER_API_KEY` set. |
 
-When `LOKI_PROVIDER` is unset, Loki uses the first installed CLI in this order: `claude`, `cline`, `codex`, `aider`, `opencode`. An explicit `LOKI_PROVIDER` or `--provider NAME` always wins.
+When `LOKI_PROVIDER` is unset, Loki uses the first installed CLI in this order: `claude`, `opencode`. An explicit `LOKI_PROVIDER` or `--provider NAME` always wins.
 
 ### Model routes and local models
 

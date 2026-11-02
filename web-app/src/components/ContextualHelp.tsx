@@ -74,5 +74,5 @@ export const HELP_TOOLTIPS = {
   rarvCycle:
     'Reason, Act, Reflect, Verify -- the AI\'s thinking process. Each iteration follows this cycle to produce high-quality results.',
   providerSelector:
-    'Choose which AI model powers your builds. Claude offers full features, while Codex runs in degraded mode.',
+    'Choose which AI model powers your builds. Claude offers full features; opencode runs any model, including OpenRouter models.',
 };

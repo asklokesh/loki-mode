@@ -5,7 +5,6 @@ import { Badge, Card, EmptyState, Spinner, StatusDot, Table } from "../../design
 
 export interface ProviderRow {
   id: string;
-  deprecated: boolean;
   installed: boolean;
   version: string | null;
   probe: "ok" | "timeout" | "error" | "not_found";
@@ -46,7 +45,6 @@ export function ModelsPage() {
     <span key="n" style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
       <StatusDot state={p.installed ? "active" : "idle"} label={p.installed ? "installed" : "not installed"} />
       <strong>{p.id}</strong>
-      {p.deprecated ? <Badge tone="warning">deprecated</Badge> : null}
     </span>,
     cliCell(p),
     p.auth_present ? <Badge key="a" tone="success">auth present</Badge> : <Badge key="a" tone="neutral">no auth env set</Badge>,

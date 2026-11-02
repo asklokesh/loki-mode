@@ -18,7 +18,7 @@ npm install -g @anthropic-ai/claude-code
 claude auth login
 ```
 
-Other coding CLIs (codex, cline, aider, opencode) are optional. Full list:
+The other supported coding CLI, opencode, is optional (any model, including OpenRouter). Full list:
 [INSTALLATION.md](INSTALLATION.md).
 
 ## 2. Set up
@@ -101,7 +101,7 @@ time. Use `loki quick "<task>"` when you want a verify loop.
 loki models --local                              # finds Ollama, LM Studio, llama.cpp, vLLM
 LOKI_MODEL_ROUTE=ollama/qwen3-coder loki start prd.md
 LOKI_MODEL_ROUTE=openrouter/deepseek/deepseek-v3.2 loki start prd.md   # needs OPENROUTER_API_KEY
-loki start --provider codex prd.md               # another coding CLI
+loki start --provider opencode --model openrouter/deepseek/deepseek-v3.2 prd.md   # opencode via OpenRouter
 ```
 
 Routes: `openrouter`, `ollama`, `lmstudio`, `llamacpp`, `vllm`, and `custom`

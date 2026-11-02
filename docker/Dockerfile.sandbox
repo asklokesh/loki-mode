@@ -16,7 +16,7 @@
 #
 # Note: Alpine was considered but rejected due to:
 #   - musl libc compatibility issues with Node.js native modules
-#   - Claude/Codex/Gemini CLI npm packages may have glibc dependencies
+#   - Claude Code and opencode CLI npm packages may have glibc dependencies
 #   - Debian slim provides good balance of size and compatibility
 #===============================================================================
 
@@ -80,18 +80,14 @@ WORKDIR /opt/cli-install
 # which is precisely the silent-broken-install this validation now blocks. The
 # single-stage Dockerfile likewise installs claude without --ignore-scripts.
 # This is the official Anthropic package (trusted source), so running its
-# postinstall is acceptable; the optional codex/gemini installs below keep
+# postinstall is acceptable; the optional opencode install below keeps
 # --ignore-scripts as defense in depth.
 RUN npm install -g @anthropic-ai/claude-code \
     && claude --version
 
-# Codex CLI (OpenAI) - install if available
-RUN npm install -g @openai/codex --ignore-scripts 2>/dev/null || \
-    echo "Codex CLI not available on npm, will need manual install"
-
-# Gemini CLI (Google) - install if available
-RUN npm install -g @google/gemini-cli --ignore-scripts 2>/dev/null || \
-    echo "Gemini CLI not available on npm, will need manual install"
+# opencode CLI (model-agnostic, OpenRouter via OPENROUTER_API_KEY) - install if available
+RUN npm install -g opencode-ai --ignore-scripts 2>/dev/null || \
+    echo "opencode CLI not available on npm, will need manual install"
 
 #-------------------------------------------------------------------------------
 # Stage 2: Runtime - Minimal production image
@@ -99,8 +95,8 @@ RUN npm install -g @google/gemini-cli --ignore-scripts 2>/dev/null || \
 FROM debian:bookworm-slim AS runtime
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="11.120.1"
-LABEL org.opencontainers.image.version="11.120.1"
+LABEL version="11.121.0"
+LABEL org.opencontainers.image.version="11.121.0"
 LABEL description="Security-hardened sandbox for Loki Mode by Autonomi"
 LABEL url="https://www.autonomi.dev/"
 LABEL org.opencontainers.image.source="https://github.com/asklokesh/claudeskill-loki-mode"

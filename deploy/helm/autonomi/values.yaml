@@ -496,7 +496,7 @@ config:
   logLevel: "INFO"
   # Exported as LOKI_MAX_WORKERS; no runtime code reads it today
   maxWorkers: "4"
-  # Provider (claude, codex, cline, aider, opencode)
+  # Provider (claude, opencode)
   provider: "claude"
   # Control Plane bind address (LOKI_CONTROL_HOST). Name kept for compatibility.
   dashboardHost: "0.0.0.0"

@@ -46,12 +46,9 @@ iptables -A DOCKER-USER -p tcp --dport 53 -j ACCEPT
 # Allow HTTPS to AI API endpoints only
 # Anthropic (Claude)
 iptables -A DOCKER-USER -d api.anthropic.com -p tcp --dport 443 -j ACCEPT
-# OpenAI (Codex)
-iptables -A DOCKER-USER -d api.openai.com -p tcp --dport 443 -j ACCEPT
-# Add one rule per endpoint your chosen provider actually calls. Cline, Aider,
-# and opencode are model-agnostic, so their endpoints depend on your config.
-# The Gemini rule that used to sit here was removed with the provider (v7.5.18);
-# do not re-add an allowlist entry for a provider you are not running.
+# Add one rule per endpoint your chosen provider actually calls. opencode is
+# model-agnostic, so its endpoint depends on your config (for OpenRouter:
+# openrouter.ai). Do not add an allowlist entry for a provider you are not running.
 
 # Drop all other outbound traffic from the isolated network
 iptables -A DOCKER-USER -s 172.28.0.0/16 -j DROP

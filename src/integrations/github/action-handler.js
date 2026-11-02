@@ -12,7 +12,7 @@
  * Allowed provider values. The workflow_dispatch REST API can supply any
  * string even when the YAML declares a choice type, so we validate here.
  */
-var ALLOWED_PROVIDERS = ['claude', 'codex', 'cline', 'aider'];
+var ALLOWED_PROVIDERS = ['claude', 'opencode'];
 
 /**
  * Label-to-configuration mapping.
@@ -22,9 +22,7 @@ const LABEL_CONFIG_MAP = {
   'loki-mode': { enabled: true },
   'loki-priority-high': { priority: 'high' },
   'loki-priority-low': { priority: 'low' },
-  'loki-provider-codex': { provider: 'codex' },
-  'loki-provider-cline': { provider: 'cline' },
-  'loki-provider-aider': { provider: 'aider' },
+  'loki-provider-opencode': { provider: 'opencode' },
   'loki-dry-run': { dryRun: true },
 };
 

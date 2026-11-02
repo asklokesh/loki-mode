@@ -13,7 +13,7 @@ match the code, the code is the bug; please open an issue.
   version, error type, and sanitized stack signatures). It NEVER includes your
   code, prompts, PRDs, file paths, environment values, API keys, repository
   names, emails, or IP addresses. (This statement scopes to telemetry and
-  diagnostics; provider CLIs you configure, such as Claude or Codex, make their
+  diagnostics; provider CLIs you configure, such as Claude Code or opencode, make their
   own network calls under your own credentials and are governed by their vendors.)
 - Enterprise / CI / air-gapped deployments are safe out of the box: collection
   AUTO-DISABLES (no opt-out needed) when any of these is detected -- CI
@@ -98,7 +98,7 @@ paths, keys, or repo names -- only anonymous diagnostics.
   |---|---|---|
   | `installed` | first command ever run | `first_command` (a known loki subcommand, else `other`) |
   | `cli_command` | each command | `command` (a known loki subcommand, else `other`) |
-  | `session_start` | a run starts (legacy engine) | `provider` (claude, codex, cline, aider, opencode), `complexity` (simple, standard, complex), `parallel` (true or false) |
+  | `session_start` | a run starts (legacy engine) | `provider` (claude, opencode), `complexity` (simple, standard, complex), `parallel` (true or false) |
   | `session_end` | a run ends (legacy engine) | `provider`, `duration` (seconds), `iterations` (count), `result` (exit code 0 to 255) |
   | `dashboard_start` | the dashboard starts | none |
   | `first_start_attempted` | first `loki start`, strict opt-in (section 4) | `entry` (a known loki subcommand, else `other`) |

@@ -41,18 +41,15 @@ WALK_MAX_ENTRIES = 200000
 
 # Provider CLI state the confined process must be able to write. Each entry was
 # checked against a machine with the CLI installed (~/.claude, ~/.claude.json,
-# ~/.codex, ~/.config/opencode, ~/.local/share/opencode, ~/.cache/opencode,
-# ~/.cline, ~/.aider*). A trailing * is a prefix glob inside HOME.
+# ~/.config/opencode, ~/.local/share/opencode, ~/.cache/opencode). A trailing *
+# is a prefix glob inside HOME.
 PROVIDER_WRITE_PATHS: dict[str, tuple[str, ...]] = {
     "claude": ("~/.claude", "~/.claude.json"),
-    "codex": ("~/.codex",),
     "opencode": (
         "~/.config/opencode",
         "~/.local/share/opencode",
         "~/.cache/opencode",
     ),
-    "cline": ("~/.cline",),
-    "aider": ("~/.aider*",),
 }
 
 INSTALL_HINT = {

@@ -63,7 +63,7 @@ const TRANSIENT_OVERRIDE =
   /\b(?:rate[_ -]?limit|429\b|overloaded|please try again|temporarily unavailable|timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|502\b|503\b|504\b|529\b|bad gateway|gateway time-?out|service unavailable)/i;
 
 // Provider billing wording that is unambiguous even when sent with a 429: OpenAI
-// and Gemini both return exhausted-funds errors under 429, so this must beat the
+// and Google models (reachable through opencode) return exhausted-funds errors under 429, so this must beat the
 // override. Deliberately narrow: bare "insufficient quota" or RESOURCE_EXHAUSTED
 // also appear in per-minute rate limits and stay transient.
 const BILLING_STRONG = /\b(?:insufficient_quota|check your plan and billing details)/i;
@@ -128,7 +128,7 @@ export function sessionKind(r: { exit: number | null; stderrTail?: string }): st
 // so the terminal Reason names the same class the fatal stop keys on. Null when no auth or credit class matches.
 const CAUSE_FIX: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   claude: { auth: "run `claude auth login`, or unset ANTHROPIC_API_KEY", quota_exhausted: "add credit at console.anthropic.com or wait for the plan reset" },
-  codex: { auth: "run `codex login`", quota_exhausted: "add credit to the OpenAI account or wait for the plan reset" },
+  opencode: { auth: "run `opencode auth login`, or export OPENROUTER_API_KEY for openrouter/<vendor>/<model> ids", quota_exhausted: "add credit to the model provider account (OpenRouter: openrouter.ai/settings/credits) or wait for the plan reset" },
 };
 const CAUSE_FIX_DEFAULT: Readonly<Record<string, string>> = { auth: "re-authenticate the provider CLI (see `loki doctor`)", quota_exhausted: "add credit to the provider account or wait for the plan reset" };
 export function providerCause(tail: string | undefined, provider = "claude"): string | null {

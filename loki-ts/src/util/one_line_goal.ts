@@ -1,8 +1,9 @@
 // R01 one-line goal: `loki "<goal>"` infers what the user would otherwise have to pass. Kept outside the size-capped engine10 core.
 // No new gate, reviewer or evidence format: only defaults (provider, publish mode, the exact next command) for inputs a person left out.
 import { claudeSdkReady } from "../commands/doctor.ts";
-export const PROVIDER_ORDER =["claude", "cline", "codex", "aider", "opencode"] as const; // tier order from CLAUDE.md: full, reduced, degraded
-const CLI_ENV_VAR: Record<string, string> = { claude: "LOKI_CLAUDE_CLI", codex: "LOKI_CODEX_CLI", cline: "LOKI_CLINE_CLI", aider: "LOKI_AIDER_CLI", opencode: "LOKI_OPENCODE_CLI" };
+import { CLI_ENV_VAR } from "../engine10/preflight.ts";
+import { PROVIDERS } from "../runner/types.ts";
+export const PROVIDER_ORDER = PROVIDERS; // providers/loader.sh auto_detect_provider order
 const installed = (p: string, env: Record<string, string | undefined>): boolean => !!Bun.which((env[CLI_ENV_VAR[p]!] ?? "").trim() || p, { PATH: env.PATH ?? process.env.PATH ?? "" });
 /** The provider to use when the user named none: claude when its CLI resolves or a key can run it on the bundled SDK (L034), else the first installed supported CLI. Null keeps the caller's default (and its install hint). */
 export function inferProvider(env: Record<string, string | undefined>, named: boolean): { provider: string; note: string } | null {

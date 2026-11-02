@@ -27,7 +27,6 @@ export function recordIsMeasured(rec: unknown, skip?: string): boolean {
 const DEFAULT_PRICING: Record<string, Rec> = {
   fable: { input: 10, output: 50 }, "claude-fable-5": { input: 10, output: 50 },
   opus: { input: 5, output: 25 }, sonnet: { input: 2, output: 10 }, haiku: { input: 1, output: 5 },
-  "gpt-5.3-codex": { input: 1.5, output: 12 },
   "gpt-5.6-sol": { input: 2.5, output: 20 }, "gpt-5.6-terra": { input: 1.5, output: 12 }, "gpt-5.6-luna": { input: 0.5, output: 4 },
 };
 

@@ -72,8 +72,6 @@ _SYSTEM_RUNTIME_READ_PATHS = (
 _SYSTEM_CHILD_PATHS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
 _PROVIDER_AUTH_COMMANDS = {
     "claude": ("claude", "auth", "status"),
-    "codex": ("codex", "login", "status"),
-    "cline": ("cline", "auth", "status"),
 }
 _PROVIDER_READINESS_COMMANDS = {
     # P12-26b scoped out: fixed sandboxed printf probe that must run Bash; a restrictive
@@ -99,9 +97,7 @@ _PROVIDER_READINESS_COMMANDS = {
 }
 _PROVIDER_AUTH_ACTIONS = {
     "claude": "Run 'claude auth login', unlock the macOS login keychain, then retry.",
-    "codex": "Run 'codex login', then retry.",
-    "cline": "Run 'cline auth', then retry.",
-    "aider": "Configure a provider with a non-interactive auth status command.",
+    "opencode": "Set OPENROUTER_API_KEY (or run 'opencode auth login'), then retry.",
 }
 
 

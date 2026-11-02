@@ -17,13 +17,8 @@
 //   buildMcpConfigArgv(targetDir) -> ["--mcp-config", "<loki>", "<user?>"]
 //   mcpLaunchFor(provider, targetDir) -> {argv, env, reason?} per-provider launch:
 //     claude   -> buildMcpConfigArgv (byte-identical to the pre-CW-10 argv)
-//     codex    -> `-c mcp_servers.<n>.command=..` / `.args=[..]` / `.env={..}` overrides
-//                 (never writes ~/.codex/config.toml); env values go to launch.env and
-//                 `.env_vars=[names]`, never onto argv
 //     opencode -> env OPENCODE_CONFIG_CONTENT = {"mcp":{<n>:{type:"local",command:[..],enabled:true}}}
-//     cline    -> empty launch + reason (no per-invocation MCP path; global settings untouched)
-//     aider    -> empty launch + reason (no MCP support)
-//   Servers for the non-claude providers: Loki bundle, then the project
+//   Servers for opencode: Loki bundle, then the project
 //   <targetDir>/.mcp.json ONLY under LOKI_MCP_PROJECT=1 (an untrusted repo must not
 //   start commands by default), then the ~/.claude/mcp.json overlay; the bundle wins
 //   a name collision, then project over overlay. Bash mirror: loki_mcp_launch_for.
@@ -243,48 +238,10 @@ function collectServers(targetDir: string): Record<string, McpServer> {
   return ordered;
 }
 
-function clineVersion(): string {
-  try {
-    const r = spawnSync("cline", ["--version"], { encoding: "utf8", timeout: 5000, env: tokenFreeEnv(process.env) });
-    if (r.status === 0) {
-      const line = (r.stdout ?? "").split("\n")[0]?.trim() ?? "";
-      if (line) return line;
-    }
-  } catch {
-    // fall through
-  }
-  return "unknown";
-}
-
 export function mcpLaunchFor(provider: string, targetDir: string): McpLaunch {
   switch (provider) {
     case "claude":
       return { argv: buildMcpConfigArgv(targetDir), env: {} };
-    case "codex": {
-      // Secrets never ride argv (readable by `ps`): env values go to the codex process
-      // env and the server lists the names in `env_vars` (codex forwards them).
-      // env_vars names share one namespace, so a later server whose value for a name
-      // conflicts with an earlier one is skipped and named in `reason`.
-      const argv: string[] = [];
-      const env: Record<string, string> = {};
-      const skipped: string[] = [];
-      for (const [name, srv] of Object.entries(collectServers(targetDir))) {
-        const names = Object.keys(srv.env).filter((k) => SERVER_NAME_RE.test(k));
-        if (names.some((k) => k in env && env[k] !== srv.env[k])) {
-          skipped.push(name);
-          continue;
-        }
-        argv.push("-c", `mcp_servers.${name}.command=${JSON.stringify(srv.command)}`);
-        argv.push("-c", `mcp_servers.${name}.args=${JSON.stringify(srv.args)}`);
-        if (names.length > 0) {
-          for (const k of names) env[k] = srv.env[k] as string;
-          argv.push("-c", `mcp_servers.${name}.env_vars=${JSON.stringify(names)}`);
-        }
-      }
-      const out: McpLaunch = { argv, env };
-      if (skipped.length > 0) out.reason = `mcp: skipped ${skipped.join(",")} (env name conflict)`;
-      return out;
-    }
     case "opencode": {
       const mcp: Record<string, unknown> = {};
       for (const [name, srv] of Object.entries(collectServers(targetDir))) {
@@ -298,10 +255,6 @@ export function mcpLaunchFor(provider: string, targetDir: string): McpLaunch {
       }
       return { argv: [], env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ mcp }) } };
     }
-    case "cline":
-      return { argv: [], env: {}, reason: `mcp: unsupported (cline ${clineVersion()})` };
-    case "aider":
-      return { argv: [], env: {}, reason: "mcp: unsupported (aider has no MCP support)" };
     default:
       return { argv: [], env: {}, reason: `mcp: unsupported (provider ${provider})` };
   }

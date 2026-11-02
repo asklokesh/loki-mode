@@ -29,7 +29,7 @@
 #                                  emission fails.
 #   loki_mcp_launch_for         -- emit the per-provider MCP launch as one compact JSON
 #                                  object {"argv":[..],"env":{..}[,"reason":".."]}
-#                                  for claude|codex|opencode|cline|aider. Mirror of
+#                                  for claude|opencode. Mirror of
 #                                  mcpLaunchFor in loki-ts/src/providers/mcp_config.ts;
 #                                  tests/providers parity test reads both.
 #
@@ -231,19 +231,19 @@ loki_mcp_config_argv() {
 
 # ---------- Per-provider MCP launch (CW-10) ----------
 # Usage: loki_mcp_launch_for <provider> [target_dir]
-# claude: the pre-CW-10 --mcp-config paths, unchanged. codex: `-c mcp_servers.*`
-# overrides. opencode: env OPENCODE_CONFIG_CONTENT. cline/aider/unknown: empty
-# launch plus a reason. Servers for codex/opencode: Loki bundle, project
+# claude: the pre-CW-10 --mcp-config paths, unchanged. opencode: env
+# OPENCODE_CONFIG_CONTENT. unknown: empty launch plus a reason. Servers for
+# opencode: Loki bundle, project
 # <target_dir>/.mcp.json only when LOKI_MCP_PROJECT=1, ~/.claude/mcp.json overlay;
 # bundle wins a name collision, then project over overlay. `${...}` stays literal.
 loki_mcp_launch_for() {
     local provider="${1:-}" target="${2:-${TARGET_DIR:-.}}"
-    local claude_argv="" user_path="" project_path="" lsp_detected=0 lsp_bin cline_ver="unknown" line
+    local claude_argv="" user_path="" project_path="" lsp_detected=0 lsp_bin
     case "$provider" in
         claude)
             claude_argv=$(TARGET_DIR="$target" loki_mcp_config_argv) || return 1
             ;;
-        codex | opencode)
+        opencode)
             TARGET_DIR="$target" loki_mcp_config_path >/dev/null || return 1
             user_path=$(loki_user_mcp_config_path)
             if [ "${LOKI_MCP_PROJECT:-}" = "1" ]; then
@@ -256,16 +256,8 @@ loki_mcp_launch_for() {
                 fi
             done
             ;;
-        cline)
-            if command -v cline >/dev/null 2>&1; then
-                line=$(cline --version 2>/dev/null | head -n 1) || line=""
-                line="${line#"${line%%[![:space:]]*}"}"
-                line="${line%"${line##*[![:space:]]}"}"
-                [ -n "$line" ] && cline_ver="$line"
-            fi
-            ;;
     esac
-    _MCP_PROVIDER="$provider" _MCP_CLAUDE_ARGV="$claude_argv" _MCP_USER="$user_path"         _MCP_PROJECT="$project_path" _MCP_LSP="$lsp_detected" _MCP_CLINE_VER="$cline_ver"         python3 -c '
+    _MCP_PROVIDER="$provider" _MCP_CLAUDE_ARGV="$claude_argv" _MCP_USER="$user_path"         _MCP_PROJECT="$project_path" _MCP_LSP="$lsp_detected"         python3 -c '
 import json, os, re
 prov = os.environ["_MCP_PROVIDER"]
 NAME = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -322,21 +314,6 @@ def servers():
 res = {"argv": [], "env": {}}
 if prov == "claude":
     res["argv"] = ["--mcp-config"] + os.environ["_MCP_CLAUDE_ARGV"].split()
-elif prov == "codex":
-    skipped = []
-    for n, s in servers().items():
-        names = [k for k in s["env"] if NAME.match(k)]
-        if any(k in res["env"] and res["env"][k] != s["env"][k] for k in names):
-            skipped.append(n)
-            continue
-        res["argv"] += ["-c", "mcp_servers.%s.command=%s" % (n, dumps(s["command"]))]
-        res["argv"] += ["-c", "mcp_servers.%s.args=%s" % (n, dumps(s["args"]))]
-        if names:
-            for k in names:
-                res["env"][k] = s["env"][k]
-            res["argv"] += ["-c", "mcp_servers.%s.env_vars=%s" % (n, dumps(names))]
-    if skipped:
-        res["reason"] = "mcp: skipped %s (env name conflict)" % ",".join(skipped)
 elif prov == "opencode":
     mcp = {}
     for n, s in servers().items():
@@ -345,10 +322,6 @@ elif prov == "opencode":
             e["environment"] = s["env"]
         mcp[n] = e
     res["env"] = {"OPENCODE_CONFIG_CONTENT": dumps({"mcp": mcp})}
-elif prov == "cline":
-    res["reason"] = "mcp: unsupported (cline %s)" % os.environ["_MCP_CLINE_VER"]
-elif prov == "aider":
-    res["reason"] = "mcp: unsupported (aider has no MCP support)"
 else:
     res["reason"] = "mcp: unsupported (provider %s)" % prov
 print(dumps(res))

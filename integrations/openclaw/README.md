@@ -79,7 +79,7 @@ Example pipeline:
 
 | Env Var | Description | Default |
 |---------|-------------|---------|
-| LOKI_PROVIDER | AI provider (claude/codex/gemini) | claude |
+| LOKI_PROVIDER | AI provider (claude/opencode) | claude |
 | LOKI_BUDGET_LIMIT | Cost limit in USD | unlimited |
 | LOKI_MAX_PARALLEL_AGENTS | Max concurrent agents | 10 |
 | LOKI_COMPLEXITY | Force complexity tier (simple/standard/complex) | auto |

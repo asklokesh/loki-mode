@@ -88,7 +88,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
       sources.push(path);
       continue;
     }
-    // The file parsed, so its tokens are real even when total_cost_usd is absent (a codex/tokens-only session): capture them regardless of a dollar figure below (dropping them was the E-06 bug).
+    // The file parsed, so its tokens are real even when total_cost_usd is absent (a tokens-only session): capture them regardless of a dollar figure below (dropping them was the E-06 bug).
     if (typeof rec["input_tokens"] === "number" || typeof rec["output_tokens"] === "number") tokenSessions++; // a file that reported no token key is unknown, not a measured zero (reviewer cost records)
     const inTok = num(rec["input_tokens"]);
     const outTok = num(rec["output_tokens"]);

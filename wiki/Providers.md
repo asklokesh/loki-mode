@@ -1,33 +1,31 @@
 # Providers
 
-Loki is provider-agnostic: the autonomy loop is the product, and the coding CLI underneath is swappable. Supported providers: Claude Code, OpenAI Codex CLI, Cline, Aider, and opencode.
+Loki is provider-agnostic: the autonomy loop is the product, and the coding CLI underneath is swappable. Supported providers: Claude Code (including the Anthropic Agent SDK path for API-key users) and opencode (any model, including OpenRouter).
 
 ---
 
 ## Overview
 
-Loki Mode supports five active AI providers with different capability levels, plus historical/upcoming entries:
-
 | Provider | Status | Task Tool | Parallel | MCP | Context | Degraded |
 |----------|--------|-----------|----------|-----|---------|----------|
-| **Claude** | Active (Tier 1, Full, E2E-verified) | Yes | Yes | Yes | 1M | No |
-| **Cline** | Experimental (Tier 2) - community-tested | No | No | Yes | 200K | No |
-| **Codex** | Experimental (Tier 3) - community-tested | No | Yes (max 2) | Yes | 400K | Yes |
-| **Aider** | Experimental (Tier 3) - community-tested | No | No | No | 200K | Yes |
-| **opencode** | Experimental (model-agnostic) | No | No | Yes | varies | No |
-| **Google Gemini CLI** | DEPRECATED v7.5.18 | -- | -- | -- | -- | -- |
+| **Claude** (`--provider claude`) | Active (Tier 1, Full, E2E-verified) | Yes | Yes | Yes | 1M | No |
+| **opencode** (`--provider opencode`) | Active (model-agnostic, OpenRouter) | No | No | Yes | varies | No |
 
 Source: `providers/*.sh` (`PROVIDER_HAS_PARALLEL`, `PROVIDER_MAX_PARALLEL`, `PROVIDER_HAS_MCP`, `PROVIDER_CONTEXT_WINDOW`, `PROVIDER_DEGRADED`).
 
-**Status note (2026-06-09):** Claude Code is the primary, fully supported provider and the one Loki Mode is built for; it is the only provider we E2E-verify ourselves with real spec-to-code builds. Codex, Cline, and Aider have working wiring but no end-to-end verified build on our side, so they are labeled experimental (community-tested). Codex on a fresh non-git directory previously failed with "Not inside a trusted directory"; the harness now passes `--skip-git-repo-check`.
+**Anthropic API key, no CLI login:** the claude provider also runs through the Anthropic Agent SDK (`@anthropic-ai/claude-agent-sdk`, `@anthropic-ai/sdk`). Set `ANTHROPIC_API_KEY` and keep `--provider claude`.
 
-**Note on Gemini:** Upstream Gemini CLI was deprecated by Google. Loki removed the runtime in v7.5.18. `LOKI_PROVIDER=gemini` exits with a clear migration message pointing to Claude/Codex/Cline/Aider.
+**Removed providers:** codex, cline, aider and gemini are no longer supported. `--provider <name>` or `LOKI_PROVIDER=<name>` for any of them exits 2 with one line:
+
+```
+loki: provider 'codex' is no longer supported. Supported providers: claude (Claude Code CLI, or an Anthropic API key through the Agent SDK) and opencode (any model, including OpenRouter via OPENROUTER_API_KEY). Switch with --provider claude or --provider opencode, or unset LOKI_PROVIDER.
+```
 
 ---
 
 ## MiniMax API compatibility
 
-The `minimax` model catalog entry records API and model metadata. It is not a fifth value for `--provider`; use an existing CLI adapter with the compatible API protocol. MiniMax-M3.1-Flash is the development/fast recommendation; MiniMax-M3 remains the planning option. Both support text, image, and video input with a 1M context window. Explicit saved or custom model IDs remain usable; the catalog is not an allowlist.
+The `minimax` model catalog entry records API and model metadata. It is not a value for `--provider`; use the claude provider with the Anthropic-compatible API, or opencode. MiniMax-M3.1-Flash is the development/fast recommendation; MiniMax-M3 remains the planning option. Both support text, image, and video input with a 1M context window. Explicit saved or custom model IDs remain usable; the catalog is not an allowlist.
 
 ### Anthropic-compatible API
 
@@ -47,23 +45,9 @@ loki start ./prd.md --provider claude
 
 Set `ANTHROPIC_BASE_URL` to the China Base URL when required. Change `LOKI_MODEL_OVERRIDE` to `MiniMax-M3` to use that model. Keep the explicit model override: setting an endpoint alone does not select a MiniMax model.
 
-### OpenAI-compatible API
+### Through opencode or OpenRouter
 
-Choose the Base URL for the account region. Keep `/v1` as the end of the Base URL; the client appends `/chat/completions` when it sends a request.
-
-| Region | Base URL |
-|--------|----------|
-| Global | `https://api.minimax.io/v1` |
-| China | `https://api.minimaxi.com/v1` |
-
-```bash
-export OPENAI_API_BASE="https://api.minimax.io/v1"
-export OPENAI_API_KEY="<MINIMAX_API_KEY>"
-export LOKI_AIDER_MODEL="openai/MiniMax-M3.1-Flash"
-loki start ./prd.md --provider aider
-```
-
-Set `OPENAI_API_BASE` to the China Base URL when required. Change the model suffix to `MiniMax-M3` to use that model.
+Use opencode with an OpenRouter route, for example `loki start ./prd.md --provider opencode --model openrouter/minimax/minimax-m3`, with `OPENROUTER_API_KEY` set.
 
 MiniMax-M3.1-Flash uses adaptive thinking only; do not disable thinking or use effort `none`. Supported effort levels are `low`, `medium`, `high`, `xhigh`, and `max` (the API default). The OpenAI-compatible API uses `reasoning_effort`; the Anthropic-compatible API uses `output_config.effort`. Do not send `service_tier` or `reasoning_split=false` for Flash. CLI support for these controls depends on the installed client. MiniMax-M3 supports adaptive or disabled thinking and ignores effort.
 
@@ -79,12 +63,12 @@ When multiple sources specify a provider, Loki picks the first match in this ord
 
 | Priority | Source | Scope | Example |
 |---|---|---|---|
-| 1 | `loki start --provider NAME` | Per-invocation CLI flag | `loki start --provider codex ./prd.md` |
+| 1 | `loki start --provider NAME` | Per-invocation CLI flag | `loki start --provider opencode ./prd.md` |
 | 2 | `.loki/state/provider` | Per-project saved value | `loki provider set claude` writes this file |
-| 3 | `LOKI_PROVIDER` env var | Shell session default | `export LOKI_PROVIDER=cline` |
+| 3 | `LOKI_PROVIDER` env var | Shell session default | `export LOKI_PROVIDER=opencode` |
 | 4 | `claude` | Built-in default | (no config) |
 
-**Important:** `loki status` reflects the **SAVED** value, not the env var. If you set `LOKI_PROVIDER=cline` in your shell but ran `loki provider set claude` earlier in this project, `loki status` will show `claude`. To make a per-project choice persist, use `loki provider set NAME`.
+**Important:** `loki status` reflects the **SAVED** value, not the env var. If you set `LOKI_PROVIDER=opencode` in your shell but ran `loki provider set claude` earlier in this project, `loki status` will show `claude`. To make a per-project choice persist, use `loki provider set NAME`.
 
 `loki status --json` includes a `provider_source` field with values `"saved"`, `"env"`, or `"default"` so scripts can verify why a value was chosen.
 
@@ -142,159 +126,35 @@ export LOKI_PROVIDER=claude
 
 ---
 
-## OpenAI Codex CLI
-
-Degraded mode with sequential execution only.
-
-### Installation
-
-```bash
-# Install Codex CLI
-npm install -g @openai/codex-cli
-
-# Authenticate
-codex login
-```
-
-### Model
-
-| Model | Context | Notes |
-|-------|---------|-------|
-| gpt-5.3-codex | 128K | Official model for Codex CLI v0.98+ |
-
-### Invocation
-
-```bash
-# What Loki's harness runs (codex 0.125+; the --skip-git-repo-check is
-# required on fresh non-git directories). exec is non-interactive by default
-# (approval: never), so --sandbox workspace-write alone keeps it autonomous.
-codex exec --sandbox workspace-write --skip-git-repo-check
-
-# Note: --full-auto was deprecated in codex v0.125+ and is gone from the help
-# text; --sandbox workspace-write is the documented replacement.
-
-# Legacy
-codex exec --dangerously-bypass-approvals-and-sandbox
-```
-
-### Limitations
-
-- No Task tool (sequential only)
-- No parallel agents
-- No MCP integration
-- Single model (uses effort parameter)
-
-### Configuration
-
-```bash
-# Set as provider
-loki provider set codex
-
-# Or via environment
-export LOKI_PROVIDER=codex
-
-# Start with Codex
-loki start ./prd.md --provider codex
-```
-
-### Effort Parameter
-
-Codex uses an effort parameter instead of model tiers:
-
-```
-effort: low    -> Quick responses
-effort: medium -> Balanced (default)
-effort: high   -> Thorough analysis
-```
-
----
-
-## Cline CLI
-
-Degraded mode with sequential execution only.
-
-### Installation
-
-```bash
-# Install Cline CLI
-npm install -g cline
-```
-
-### Invocation
-
-```bash
-# Autonomous mode (what the runtime actually passes)
-cline -y
-```
-
-### Limitations
-
-- No Task tool (sequential only)
-- No parallel agents
-- No MCP integration
-
-### Configuration
-
-```bash
-# Set as provider
-loki provider set cline
-
-# Or via environment
-export LOKI_PROVIDER=cline
-
-# Start with Cline
-loki start ./prd.md --provider cline
-```
-
----
-
-## Aider
-
-Degraded mode with sequential execution. Supports 18+ model backends.
-
-### Installation
-
-```bash
-pip install aider-chat
-```
-
-### Invocation
-
-```bash
-aider --yes-always
-```
-
-### Limitations
-
-- No Task tool (sequential only)
-- No parallel agents
-- No MCP integration
-
-### Configuration
-
-```bash
-# Set as provider
-loki provider set aider
-
-# Or via environment
-export LOKI_PROVIDER=aider
-
-# Start with Aider
-loki start ./prd.md --provider aider
-```
-
----
-
 ## opencode
 
-Model-agnostic route: opencode reaches many model providers (including any
-OpenAI-compatible endpoint and local models) through its own registry.
+Model-agnostic route: opencode reaches many model providers (OpenRouter, any
+OpenAI-compatible endpoint, local models) through its own registry.
 Sequential execution, MCP supported.
+
+### Installation
+
+```bash
+npm install -g opencode-ai
+```
+
+### OpenRouter
+
+opencode reads `OPENROUTER_API_KEY` from the environment (or stores it with
+`opencode auth login`, choosing OpenRouter). With the key set,
+`opencode models openrouter` lists the OpenRouter models as
+`openrouter/<vendor>/<model>`; without it opencode reports
+`Provider not found: openrouter`. Loki passes the key through unchanged.
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+loki start ./prd.md --provider opencode --model openrouter/deepseek/deepseek-v3.2
+```
 
 ### Invocation
 
 ```bash
-opencode run --auto "<prompt>"
+opencode run --auto -m <provider/model> "<prompt>"
 ```
 
 ### Configuration
@@ -308,6 +168,10 @@ export LOKI_OPENCODE_MODEL=openrouter/deepseek/deepseek-v3.2
 
 loki start ./prd.md --provider opencode
 ```
+
+With `--provider opencode`, any `--model` value becomes opencode's `-m`. With
+`--provider claude`, `--model openrouter/<id>` sets a Claude Code model route
+(`LOKI_MODEL_ROUTE`) that points the claude CLI at OpenRouter instead.
 
 ---
 
@@ -326,10 +190,8 @@ loki provider show
 loki provider list
 # Output:
 # Available providers:
-#   claude  (installed, default)
-#   codex   (installed)
-#   cline   (installed)
-#   aider   (installed)
+#   claude    (installed, default)
+#   opencode  (installed)
 ```
 
 ### Get Provider Info
@@ -348,14 +210,14 @@ loki provider info claude
 
 ```bash
 # Persists across sessions
-loki provider set codex
+loki provider set opencode
 ```
 
 ### Per-Session Override
 
 ```bash
 # Override for single session
-loki start ./prd.md --provider cline
+loki start ./prd.md --provider opencode
 ```
 
 ---
@@ -373,7 +235,7 @@ Spawn parallel subagents for:
 - Documentation
 ```
 
-**Codex/Cline/Aider:** Not supported
+**opencode:** Not supported
 ```
 All tasks run sequentially in main context
 ```
@@ -386,7 +248,7 @@ export LOKI_PARALLEL_MODE=true
 export LOKI_MAX_PARALLEL_SESSIONS=3
 ```
 
-**Codex/Cline/Aider:** Sequential only
+**opencode:** Sequential only
 ```
 Each task completes before next begins
 ```
@@ -396,30 +258,7 @@ Each task completes before next begins
 | Provider | Context | Effective Use |
 |----------|---------|---------------|
 | Claude | 200K | Large codebases |
-| Codex | 128K | Medium projects |
-| Cline | varies | Depends on backend model |
-| Aider | varies | Depends on backend model |
 | opencode | varies | Depends on backend model |
-
----
-
-## Degraded Mode Behavior
-
-When using Codex, Cline, or Aider:
-
-1. **No Parallel Agents** - Tasks run sequentially
-2. **No Task Tool** - Cannot spawn subagents
-3. **No MCP** - Limited to built-in tools
-4. **Single Model** - No tier selection
-5. **Longer Execution** - Same work takes more time
-
-### Automatic Fallbacks
-
-Loki Mode automatically adjusts when in degraded mode:
-
-- Phases run sequentially instead of parallel
-- Code review uses single pass instead of 3-reviewer
-- Research tasks inline instead of background
 
 ---
 
@@ -433,21 +272,10 @@ Loki Mode automatically adjusts when in degraded mode:
 - Using MCP integrations
 - Speed is important
 
-### Use Codex When:
+### Use opencode When:
 
-- OpenAI ecosystem preference
-- Simpler, focused tasks
-- Cost optimization needed
-- Sequential workflow acceptable
-
-### Use Cline When:
-
-- Flexible model backend needed
-- Sequential workflow acceptable
-
-### Use Aider When:
-
-- 18+ model backend flexibility needed
+- You want an OpenRouter model or another non-Claude model
+- You run local models (Ollama, LM Studio, llama.cpp)
 - Sequential workflow acceptable
 
 ---
@@ -457,11 +285,11 @@ Loki Mode automatically adjusts when in degraded mode:
 ### Provider Not Found
 
 ```bash
-loki provider info codex
-# Error: Provider 'codex' not installed
+loki provider info opencode
+# Error: Provider 'opencode' not installed
 
 # Solution: Install the CLI
-npm install -g @openai/codex-cli
+npm install -g opencode-ai
 ```
 
 ### Authentication Failed
@@ -469,8 +297,9 @@ npm install -g @openai/codex-cli
 ```bash
 # Re-authenticate
 claude auth login
-codex login
+opencode auth login
 ```
+
 
 ### Wrong Provider Used
 
