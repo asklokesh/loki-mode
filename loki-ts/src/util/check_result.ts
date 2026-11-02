@@ -20,6 +20,7 @@ import { UNITTEST_DISCOVER_ARGS } from "./python_build_check.ts";
 import { safeGit, safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
 import { redactSecrets, UNSAFE_TERMINAL_CHARS_RE } from "./redact.ts";
 import { clauseGapOf, extractClauses, weakAssertionNote } from "./spec_file.ts";
+import { langOf, symbolSpans } from "./context_pack.ts";
 
 /** FC-69: the ONE child env for every harness-run test or verify command. A user's FORCE_COLOR=3 makes node:test, pytest, jest and
  *  friends emit ANSI that defeats line-anchored result parsers; FORCE_COLOR=0 + NO_COLOR=1 keeps the output plain. CI is left as is.
@@ -596,8 +597,8 @@ function* corroborateGoSteps(c: Classified, out: string, cmdOrLine: string, args
     const ls: SpawnRes = yield ["go", ["list", "-json=ImportPath,Dir,GoFiles,CgoFiles,TestImports,XTestImports", ...where], spawnOpts];
     const top = ls.status === 0 ? listed(ls.output) : null; if (!top) return refuse;
     // A black-box test package (a tests/ directory holding only _test.go files) has no statements of its own: the proof is the coverage of the main-module packages its tests import (-coverpkg), every one of their blocks in the profile.
-    const cover = new Map<string, GoPkg>(), testOnly: string[] = [];
-    for (const pk of top) if (pk.ImportPath && want.has(pk.ImportPath)) { if (pk.GoFiles?.length) cover.set(pk.ImportPath, pk); else testOnly.push(...(pk.TestImports ?? []), ...(pk.XTestImports ?? [])); }
+    const cover = new Map<string, GoPkg>(), testOnly: string[] = [], ownImports: string[][] = [];
+    for (const pk of top) if (pk.ImportPath && want.has(pk.ImportPath)) { if (pk.GoFiles?.length) cover.set(pk.ImportPath, pk); else { const imps = [...(pk.TestImports ?? []), ...(pk.XTestImports ?? [])]; testOnly.push(...imps); ownImports.push(imps); } }
     const viaImports = [...new Set(testOnly)].filter((i) => !cover.has(i) && !want.has(i));
     if (top.some((pk) => pk.ImportPath && want.has(pk.ImportPath) && !pk.GoFiles?.length) && viaImports.length) {
       const li: SpawnRes = yield ["go", ["list", "-e", "-json=ImportPath,Dir,GoFiles,CgoFiles,Standard,Module", ...viaImports], spawnOpts];
@@ -605,6 +606,7 @@ function* corroborateGoSteps(c: Classified, out: string, cmdOrLine: string, args
       for (const pk of deps) if (pk.ImportPath && !pk.Standard && pk.Module?.Main === true && pk.GoFiles?.length) cover.set(pk.ImportPath, pk);
     }
     if (cover.size === 0 || [...want].some((pk) => !cover.has(pk) && !top.some((t) => t.ImportPath === pk && !t.GoFiles?.length))) return refuse; // every passing package is proven by its own blocks or, test-only, by those of the module packages it imports
+    if (ownImports.some((imps) => !imps.some((i) => cover.has(i)))) return refuse; // each test-only package needs a module package of its own to prove; one that imports none never passes beside another that does
     const perPkg = new Map<string, number>(); // statement blocks found per covered package; a package that stays at 0 (no statements) has nothing to prove
     for (const pk of cover.values()) {
       if (!pk.ImportPath || !pk.Dir || !pk.GoFiles?.length || pk.CgoFiles?.length) return refuse; // cgo files are rewritten by the go command, so their block table is not computable here: not_run (a genuine cgo package is a false not_run)
@@ -861,43 +863,56 @@ export function changedSymbols(diffU0: string): string[] {
   return [...out];
 }
 const GO_INTERFACE_METHODS = new Set(["Error", "String", "GoString", "Format", "Unwrap", "Is", "As", "Len", "Less", "Swap", "Push", "Pop"]); // methods that satisfy a standard interface (error, fmt.Stringer, sort/heap.Interface): called by the library, rarely by name in a test
-/** HONEST-VERIFIED-2: the public functions (not types or constants) a `git diff -U0` ADDS, per file language. Python: a top-level def, or a def directly inside a class, whose name has no leading underscore (a function nested in a function is private). Go: an exported func, or an exported method on an exported receiver type (sort.Interface methods on an unexported type are not API). Rust: `pub fn`. TS/JS: an `export`ed function or arrow const. Other languages add nothing (no cap). */
-export function addedPublicSymbols(diffU0: string): string[] {
-  const out = new Set<string>(); let lang = "", blocks: { indent: number; kind: "class" | "def" }[] = [];
-  for (const line of diffU0.split("\n")) {
-    const f = /^\+\+\+ b\/(.+)$/.exec(line); if (f) { const p = f[1]!; lang = /\.py$/.test(p) ? "py" : /\.go$/.test(p) ? "go" : /\.rs$/.test(p) ? "rs" : /\.[cm]?[jt]sx?$/.test(p) ? "ts" : ""; blocks = []; continue; }
-    if (line.startsWith("@@")) { blocks = []; continue; }
-    if (!lang || !line.startsWith("+") || line.startsWith("+++")) continue;
-    const code = stripComments(line.slice(1));
-    if (lang === "py") {
-      const m = /^(\s*)(?:async\s+)?(def|class)\s+([A-Za-z_]\w*)/.exec(code); if (!m) continue;
-      const indent = m[1]!.length; while (blocks.length && blocks[blocks.length - 1]!.indent >= indent) blocks.pop();
-      const parent = blocks[blocks.length - 1];
-      if (m[2] === "def" && !m[3]!.startsWith("_") && (indent === 0 || parent?.kind === "class")) out.add(m[3]!);
-      blocks.push({ indent, kind: m[2] as "class" | "def" });
-    } else if (lang === "go") {
-      const fn = /^func\s+([A-Z]\w*)\s*[[(]/.exec(code), meth = /^func\s*\(\s*\w*\s*\*?\s*([A-Za-z_]\w*)[^)]*\)\s*([A-Z]\w*)\s*\(/.exec(code);
-      if (fn) out.add(fn[1]!); else if (meth && /^[A-Z]/.test(meth[1]!) && !GO_INTERFACE_METHODS.has(meth[2]!)) out.add(meth[2]!);
-    } else if (lang === "rs") {
-      const m = /\bpub(?:\([^)]*\))?\s+(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+"[^"]*"\s+)?fn\s+([A-Za-z_]\w*)/.exec(code); if (m) out.add(m[1]!);
-    } else {
-      const m = /^export\s+(?:default\s+)?(?:async\s+)?function\*?\s+([A-Za-z_$][\w$]*)/.exec(code) ?? /^export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*(?::[^=]*)?=>|[A-Za-z_$][\w$]*\s*=>)/.exec(code);
-      if (m) out.add(m[1]!);
-    }
+/** HONEST-VERIFIED-2: languages whose added public functions are tracked (the cap and its claim cover exactly these). */
+export const API_FILE_EXT = /\.(?:[cm]?[jt]sx?|py|go|rs)$/;
+// Not API: generated code, type declarations, and test support code that lives outside *_test/test_* files.
+const GENERATED_PATH = /(?:\.pb\.go|_pb2(?:_grpc)?\.pyi?|\.pb\.[cm]?[jt]s|[._-]gen(?:erated)?\.\w+|\.d\.[cm]?ts)$/;
+const TEST_SUPPORT_PATH = /(^|\/)(?:tests?|__tests__|spec|testutils?|testhelpers?|test_?helpers?|testing|testdata|fixtures?|mocks?)\/|(^|\/)conftest\.py$/;
+const GENERATED_HEADER = /^\s*(?:\/\/|#)\s*Code generated .* DO NOT EDIT\.?\s*$|@generated\b/m;
+/** True when `path` holds no public API a test is owed: a test file, test support code, a generated file or a type declaration file. */
+export const notApiFile = (path: string, src = ""): boolean => !API_FILE_EXT.test(path) || isTestFile(path) || TEST_SUPPORT_PATH.test(path) || GENERATED_PATH.test(path) || GENERATED_HEADER.test(src.slice(0, 2000));
+const tsExportList = (src: string): Set<string> => new Set([...src.matchAll(/^\s*export\s*\{([^}]*)\}/gm)].flatMap((m) => m[1]!.split(",").map((x) => x.trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean)).concat([...src.matchAll(/^\s*export\s+default\s+([A-Za-z_$][\w$]*)\s*;?\s*$/gm)].map((m) => m[1]!)));
+/** HONEST-VERIFIED-2: the public functions `head` defines that `base` (the file at the run base, "" for a new file) does not, by qualified name, so a signature-only edit or a moved body is not "added". Spans come from util/context_pack.ts symbolSpans (Python nesting read from the whole file, not from a diff hunk). Public: Python names with no leading underscore on the function or its class (a function nested in a function is private); Go exported funcs, `var X = func`, and exported methods on exported types (standard interface methods excluded); Rust `pub fn`; TS/JS functions and arrow consts that are exported (`export function`, `export const`, `export { f }`), and non-private methods of exported classes. */
+export function addedPublicFunctions(path: string, head: string, base: string): string[] {
+  if (notApiFile(path, head)) return [];
+  const lang = langOf(path); if (lang !== "py" && lang !== "go" && lang !== "rs" && lang !== "ts") return [];
+  const spans = symbolSpans(path, head), had = new Set(symbolSpans(path, base).map((x) => x.name)), byName = new Map(spans.map((x) => [x.name, x]));
+  const lines = head.split("\n"), exported = lang === "ts" ? tsExportList(head) : new Set<string>(), out = new Set<string>();
+  const declOf = (start: number): string => lines.slice(start - 1, start + 4).find((l) => !/^\s*@/.test(l)) ?? "";
+  for (const sp of spans) {
+    if (sp.container || had.has(sp.name)) continue;
+    const parts = sp.name.split("."), name = parts[parts.length - 1]!, parent = parts.length > 1 ? byName.get(parts.slice(0, -1).join(".")) : undefined, decl = declOf(sp.start);
+    if (lang === "py") { if (/^\s*(?:async\s+)?def\s/.test(decl) && parts.every((x) => !x.startsWith("_"))) out.add(name); continue; }
+    if (lang === "go") { const recv = /^func\s*\(\s*\w*\s*\*?\s*([A-Za-z_]\w*)/.exec(decl)?.[1]; if (/^func\b/.test(decl) && /^[A-Z]/.test(name) && (recv === undefined ? true : /^[A-Z]/.test(recv) && !GO_INTERFACE_METHODS.has(name))) out.add(name); continue; }
+    if (lang === "rs") { if (/\bpub(?:\([^)]*\))?\s+(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+"[^"]*"\s+)?fn\s/.test(decl)) out.add(name); continue; }
+    const fnLike = /\bfunction\b|=>|^\s*(?:(?:public|static|async|override|readonly|get|set)\s+)*[A-Za-z_$][\w$]*\s*(?:<[^>]*>)?\s*\(/.test(decl);
+    if (!fnLike) continue;
+    if (parent) { const cls = declOf(parent.start); if ((/^\s*export\s/.test(cls) || exported.has(parent.name)) && !/^\s*(?:private|protected)\b|#/.test(decl)) out.add(name); }
+    else if (/^\s*export\s/.test(decl) || exported.has(name)) out.add(name);
   }
+  if (lang === "go") { const vars = (src: string): Set<string> => new Set([...src.matchAll(/^var\s+([A-Z]\w*)\s*=\s*func\b/gm)].map((m) => m[1]!)); const was = vars(base); for (const v of vars(head)) if (!was.has(v)) out.add(v); }
   return [...out];
 }
-/** Symbols that no test source references as a whole word; every symbol when none is referenced, or when the diff declared none (then "(no declared symbol)"). Empty means some passing test source mentions a changed symbol. */
-/** Every symbol of `symbols` that no source references as a whole word (unlike symbolGap, one reference does not clear the rest). */
+/** Source text with comments AND string literals blanked, so a name inside a string ("intersects" in a message) is never a reference. */
+const codeOnly = (src: string): string => stripComments(src.replace(/"""[\s\S]*?"""|'''[\s\S]*?'''|`(?:\\[\s\S]|[^`\\])*`|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, '""'));
+const refRe = (sym: string): RegExp => new RegExp(`(?<![\\w$])${sym.replace(/[$]/g, "\\$")}(?![\\w$])`);
+/** Every symbol that no source references as a whole word in code (comments and strings stripped). */
 export function unreferenced(symbols: readonly string[], sources: readonly string[]): string[] {
-  const code = sources.map(stripComments);
-  return symbols.filter((sym) => !code.some((src) => new RegExp(`(?<![\\w$])${sym.replace(/[$]/g, "\\$")}(?![\\w$])`).test(src)));
+  const code = sources.map(codeOnly);
+  return symbols.filter((sym) => !code.some((src) => refRe(sym).test(src)));
 }
+/** Symbols that no test source references as a whole word; every symbol when none is referenced, or when the diff declared none (then "(no declared symbol)"). Empty means some passing test source mentions a changed symbol. */
 export function symbolGap(symbols: readonly string[], testSources: readonly string[]): string[] {
   if (symbols.length === 0) return ["(no declared symbol)"];
-  const ref = (sym: string, src: string): boolean => new RegExp(`(?<![\\w$])${sym.replace(/[$]/g, "\\$")}(?![\\w$])`).test(src);
-  const code = testSources.map(stripComments);
-  return code.some((src) => symbols.some((sym) => ref(sym, src))) ? [] : [...symbols];
+  return unreferenced(symbols, testSources).length === symbols.length ? [...symbols] : [];
+}
+/** Indirect coverage: starting from the functions a test references, every function a covered function calls (in the changed files, at HEAD) is covered too, so a helper split out of an API a test calls is not reported. Returns the names of `unexercised` that stay uncovered. */
+export function exercisedViaCallers(unexercised: readonly string[], referenced: (name: string) => boolean, files: readonly { path: string; src: string }[]): string[] {
+  const bodies = files.flatMap((f) => { const lines = codeOnly(f.src).split("\n"); return symbolSpans(f.path, f.src).filter((x) => !x.container).map((x) => ({ name: x.name.split(".").pop()!, body: lines.slice(x.start, x.end).join("\n") })); });
+  const calls = (body: string, f: string): boolean => new RegExp(`(?<![\\w$.])${f.replace(/[$]/g, "\\$")}\\s*\\(|\\.${f.replace(/[$]/g, "\\$")}\\s*\\(`).test(body);
+  const covered = new Set(bodies.map((b) => b.name).filter(referenced));
+  for (let grew = true; grew;) { grew = false; for (const b of bodies) if (covered.has(b.name)) for (const c of bodies) if (!covered.has(c.name) && calls(b.body, c.name)) { covered.add(c.name); grew = true; } }
+  return unexercised.filter((f) => !covered.has(f));
 }
 /** TEN-GATES-14: per-gate legibility for `loki verify --explain`. exogenous/independent evidence is exogenous; agent_authored and llm_judge are agent-influenced; absent or unknown provenance is unrecorded, never exogenous. */
 export interface ExplainGate { name: string; class: "exogenous" | "agent-influenced" | "unrecorded"; provenance: string | null; result: string; n: number | null; evidence: string }

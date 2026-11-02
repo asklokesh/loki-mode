@@ -3,6 +3,8 @@
 #   done (default): the implement session appends multiply() to calc.ts
 #   already: the implement session changes nothing and claims already-done
 #   alreadyfirst: the first implement session claims already-done; the already-done challenge resume makes the multiply() change
+#   emptythenalready: LOKI_DONE with no change, LOKI_ALREADY_DONE in reply to the empty-done correction, the change on the challenge
+#   editalready: adds multiply() and answers LOKI_ALREADY_DONE every time
 #   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
 #   agentonly: multiply() plus an exported square() that only the session's own square.test.ts calls (tests/min/scope-and-fix.sh)
@@ -122,6 +124,11 @@ if [ "$stage" = "implement" ]; then
     echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"
   elif [ "${E2E_STUB_MODE:-done}" = "alreadyfirst" ] && ! printf '%s' "$prompt" | grep -q "You finished with LOKI_ALREADY_DONE"; then # claims done first; the challenge (below) makes the change
     echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"
+  elif [ "${E2E_STUB_MODE:-done}" = "emptythenalready" ] && ! printf '%s' "$prompt" | grep -q "You finished with LOKI_ALREADY_DONE"; then # LOKI_DONE with no change, then already-done in reply to the empty-done correction; the challenge makes the change
+    if printf '%s' "$prompt" | grep -q "working tree has no change against the base"; then echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"; else echo "LOKI_DONE"; fi
+  elif [ "${E2E_STUB_MODE:-done}" = "editalready" ]; then # adds multiply() and still claims already-done, also after the challenge
+    grep -q 'export function multiply' calc.ts || printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts
+    echo "LOKI_ALREADY_DONE: calc.ts:1 multiply exists"
   else
     if [ "${E2E_STUB_MODE:-}" = "tamper" ]; then for f in "$(git rev-parse --show-toplevel)"/.loki/runs/*/events.jsonl; do echo '{"v":1,"type":"forged"}' >> "$f"; done; fi
     if [ "${E2E_STUB_MODE:-}" = "scope" ] || [ "${E2E_STUB_MODE:-}" = "unrelated" ]; then echo 'DEBUG = False' >> settings.py; fi

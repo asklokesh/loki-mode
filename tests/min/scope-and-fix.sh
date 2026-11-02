@@ -23,12 +23,19 @@
 #   lean normal: a normal-size task with a relevant visible test runs no Wall session at all.
 #   agent-only:  the same lean task, but the session also adds an exported square() that only its own new test calls:
 #                the run is PARTIAL and the receipt names square as unexercised by an agent-independent test.
-#   public unit: addedPublicSymbols keeps only added public functions (Python top-level and class methods without a
-#                leading underscore, exported Go funcs and methods on exported types minus interface methods, Rust pub fn,
-#                TS export).
-#   go map:      a changed Go file maps to the tests of its own package and to any test importing that package.
+#   public unit: addedPublicFunctions reads the file at HEAD against the base: a method added to an existing class, a def
+#                under a module-level if, Go `var X = func`, TS exported-class methods and `export { f }`, Rust pub fn count;
+#                a private class, a nested def, a signature-only edit, a .d.ts, a .pb.go, test helpers outside test files,
+#                interface methods and non-function consts do not. Names inside strings are no reference; a helper whose
+#                caller a test calls is covered.
+#   go map:      a changed Go file maps to the tests of its own package and to any test importing that package by its
+#                module import path (internal/json never maps to a test importing encoding/json).
+#   go cover:    (go installed) a tests-only package that imports no module package is never corroborated beside one that does.
 #   already:     an implement session that claims LOKI_ALREADY_DONE on an unchanged tree gets one challenge ("-a"); the
-#                stub then makes the change and the run is VERIFIED with multiply() delivered, not ALREADY_SATISFIED.
+#                stub then makes the change and the run is VERIFIED with multiply() delivered, not ALREADY_SATISFIED. No
+#                empty-done correction ("-e") follows a challenge. A claim made in reply to the empty-done correction is
+#                challenged too. A session that edits and still claims already-done keeps its edit and never reads
+#                ALREADY_SATISFIED.
 #   deliver:     unit: a Go-shaped conflict (the Wall file and the full suite fail, no targeted own check ran) discards
 #                the Wall file and delivers once the re-verify's full suite passes; a re-verify with no passing own
 #                check, or an own targeted check that fails, keeps the conflict standing.
@@ -66,9 +73,14 @@
 #  18. loki-ts/src/engine10/stages/seal.ts: drop pubGap from verdictOf (the agent-only run reads VERIFIED).
 #  19. loki-ts/src/engine10/stages/seal.ts unexercisedPublic: count tests the run touched (the agent-only run reads VERIFIED).
 #  20. loki-ts/src/util/check_result.ts corroborateGoSteps: refuse a package with no GoFiles again (the go wall leg has no passing Go check).
-#  21. loki-ts/src/util/check_result.ts addedPublicSymbols: count a Python def nested in a def (public unit reads wrapper).
+#  21. loki-ts/src/util/context_pack.ts pySpans: drop the ended-block pop (public unit reads pyif=-, the def lands in class K).
 #  22. loki-ts/src/engine10/testmap.ts impactedRefs: drop the Go package block (go map reads no tests).
 #  23. loki-ts/src/engine10/stages/implement.ts: skip resumeAfterAlreadyDone (the already run reads ALREADY_SATISFIED).
+#  24. loki-ts/src/engine10/testmap.ts: key Go imports on the last path segment again (go map module path reads api_test.go).
+#  25. loki-ts/src/util/check_result.ts corroborateGoSteps: drop the per-package import check (go cover reads pass).
+#  26. loki-ts/src/engine10/stages/implement.ts: no challenge after the empty-done correction (the empty-done path is not challenged).
+#  27. loki-ts/src/engine10/stages/implement.ts: already_done exit regardless of edits (the editalready run loses multiply).
+#  28. loki-ts/src/util/check_result.ts codeOnly: stop stripping strings (public unit reads strings=-).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -218,15 +230,39 @@ case "$notes" in *"functions: multiply"*|*"functions: square, multiply"*) bad "a
 
 P="$(cd "$ROOT/loki-ts" && bun -e '
 const cr = await import("./src/util/check_result.ts");
-const d = ["+++ b/r.py", "@@ -0,0 +1 @@", "+def satisfies(v, r):", "+    \"\"\"the function is good\"\"\"", "+def _cmp(a):", "+class Range:", "+    def intersects(self, o):", "+        def inner():", "+def retry(n):", "+    def wrapper(f):",
-  "+++ b/a.ts", "@@", "+export const MODE = 2;", "+export const f = (x: number) => x;", "+export function g() {", "+function h() {",
-  "+++ b/r.rs", "@@", "+    pub fn reserve(&mut self) {", "+    fn hidden() {",
-  "+++ b/x.go", "@@", "+func NewBucket() *Bucket {", "+func helper() {", "+func (b *Bucket) Allow(n float64) bool {", "+func (h minHeap) Len() int {", "+func (e *UnknownErr) Error() string {", "+type Bucket struct {"].join("\n");
-console.log(JSON.stringify(cr.addedPublicSymbols(d)));' 2>&1)"
-[ "$P" = '["satisfies","intersects","retry","f","g","reserve","NewBucket","Allow"]' ] && ok "public unit: only added public functions are read" || bad "public unit gave: $P"
+const f = (p, head, base = "") => cr.addedPublicFunctions(p, head, base).join("+") || "-";
+const o = [
+  "pyclass=" + f("r.py", "class Range:\n    def a(self):\n        pass\n    def intersects(self, o):\n        return True\n", "class Range:\n    def a(self):\n        pass\n"),
+  "pyif=" + f("r.py", "class _K:\n    pass\nif True:\n    def compat(x):\n        pass\n"),
+  "pyprivcls=" + f("r.py", "class _Impl:\n    def run(self):\n        pass\n"),
+  "pynested=" + f("r.py", "def retry(n):\n    def wrapper(f):\n        pass\n    return wrapper\n"),
+  "pysig=" + f("r.py", "def satisfies(v, r, strict=False):\n    pass\n", "def satisfies(v, r):\n    pass\n"),
+  "tsclass=" + f("a.ts", "export class Bucket {\n  allow(n: number) {\n    return 1;\n  }\n  private hidden() {\n  }\n}\n"),
+  "tsprivcls=" + f("a.ts", "class Bucket {\n  allow(n: number) {\n    return 1;\n  }\n}\n"),
+  "tslist=" + f("a.ts", "function foo() {\n}\nfunction bar() {\n}\nexport { foo };\n"),
+  "dts=" + f("a.d.ts", "export function declared(): void;\n"),
+  "tsconst=" + f("a.ts", "export const MODE = 2;\nexport const g = (x: number) => x;\n"),
+  "govar=" + f("x.go", "package x\n\nvar Parse = func(s string) int { return 0 }\n"),
+  "goiface=" + f("x.go", "package x\n\nfunc (h minHeap) Push(x any) {\n}\nfunc (e *Err) Error() string {\n  return \"\"\n}\nfunc New() int {\n  return 0\n}\n"),
+  "pbgo=" + f("api.pb.go", "package x\n\nfunc (x *Req) GetName() string {\n  return \"\"\n}\n"),
+  "testutil=" + f("internal/testutil/h.go", "package t\n\nfunc MustOpen() {\n}\n"),
+  "helpers=" + f("tests/helpers.py", "def make():\n    pass\n"),
+  "rs=" + f("src/lib.rs", "pub struct A;\nimpl A {\n    pub fn new() -> Self { A }\n    fn hid(&self) {}\n}\npub fn free() {}\n"),
+  "strings=" + cr.unreferenced(["intersects", "run"], ["assert \"intersects\" in doc\nrunner.run()"]).join("+"),
+  "indirect=" + cr.exercisedViaCallers(["validateEmail", "orphan"], (n) => n === "signup", [{ path: "s.ts", src: "export function signup(e: string) {\n  return validateEmail(e);\n}\nexport function validateEmail(e: string) {\n  return e.includes(\"@\");\n}\nexport function orphan() {\n  return 1;\n}\n" }]).join("+"),
+];
+console.log(o.join(" "));' 2>&1)"
+[ "$P" = "pyclass=intersects pyif=compat pyprivcls=- pynested=retry pysig=- tsclass=allow tsprivcls=- tslist=foo dts=- tsconst=g govar=Parse goiface=New pbgo=- testutil=- helpers=- rs=new+free strings=intersects indirect=orphan" ] && ok "public unit: added public functions are read from the file at HEAD against the base, not from diff hunks" || bad "public unit gave: $P"
 run_engine "$TASK" E2E_STUB_MODE=alreadyfirst LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
 grep -q -- '-a ' "$ITERS" && ok "already: the already-done claim got one challenge session" || { bad "already: no challenge session ran"; dump; }
 [ "$(outcome)" = "VERIFIED" ] && grep -q 'export function multiply' "$REPO/calc.ts" && ok "already: after the challenge the change was made and VERIFIED" || { bad "already: outcome '$(outcome)', multiply present: $(grep -c 'export function multiply' "$REPO/calc.ts")"; dump; }
+grep -q -- '-e ' "$ITERS" && bad "already: an empty-done correction followed the challenge (double spend)" || ok "already: no empty-done correction after the challenge"
+run_engine "$TASK" E2E_STUB_MODE=emptythenalready LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+grep -q -- '-e ' "$ITERS" && grep -q -- '-e-a ' "$ITERS" && ok "already: a claim made in reply to the empty-done correction was challenged" || { bad "already: no challenge after the empty-done reply"; dump; }
+[ "$(outcome)" = "VERIFIED" ] && grep -q 'export function multiply' "$REPO/calc.ts" && ok "already: the change landed after that challenge" || { bad "already (empty-done path): outcome '$(outcome)'"; dump; }
+run_engine "$TASK" E2E_STUB_MODE=editalready LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+[ "$(outcome)" != "ALREADY_SATISFIED" ] && [ -n "$(outcome)" ] && ok "already: an already-done claim over edits never reads ALREADY_SATISFIED ($(outcome))" || { bad "already: edits plus a claim read '$(outcome)'"; dump; }
+grep -q 'export function multiply' "$REPO/calc.ts" && ok "already: the edit made before the claim is kept on the run branch" || { bad "already: the edit was discarded"; dump; }
 GM="$(cd "$ROOT/loki-ts" && bun -e '
 const tm = await import("./src/engine10/testmap.ts"), { mkdtempSync, writeFileSync, mkdirSync } = require("node:fs"), { join } = require("node:path");
 const r = mkdtempSync(join(process.argv[1], "gomap-")); for (const d of ["notes", "tests", "other"]) mkdirSync(join(r, d));
@@ -235,6 +271,13 @@ writeFileSync(join(r, "other", "o.go"), "package other\n"); writeFileSync(join(r
 writeFileSync(join(r, "tests", "visible_test.go"), "package tests\n\nimport \"example.com/app/notes\"\n");
 const m = await tm.buildTestMap(r); console.log(tm.impactedRefs(m, ["notes/store.go"]).map((t) => t.path).sort().join(","));' "$T" 2>&1)"
 [ "$GM" = "notes/store_test.go,tests/visible_test.go" ] && ok "go map: a changed Go file maps to its package's own tests and to a black-box test importing its package, not to other packages" || bad "go map gave: $GM"
+GJ="$(cd "$ROOT/loki-ts" && bun -e '
+const tm = await import("./src/engine10/testmap.ts"), { mkdtempSync, writeFileSync, mkdirSync } = require("node:fs"), { join } = require("node:path");
+const r = mkdtempSync(join(process.argv[1], "gomap2-")); for (const d of ["internal/json", "api", "pkg/util", "tests"]) mkdirSync(join(r, d), { recursive: true });
+writeFileSync(join(r, "go.mod"), "module example.com/app\n\ngo 1.21\n"); writeFileSync(join(r, "internal/json/enc.go"), "package json\n"); writeFileSync(join(r, "api/api.go"), "package api\n"); writeFileSync(join(r, "pkg/util/u.go"), "package util\n");
+writeFileSync(join(r, "api/api_test.go"), "package api\n\nimport (\n\t\"encoding/json\"\n\t\"testing\"\n)\n"); writeFileSync(join(r, "tests/x_test.go"), "package tests\n\nimport \"example.com/app/pkg/util\"\n");
+const m = await tm.buildTestMap(r); console.log(["internal/json/enc.go", "pkg/util/u.go"].map((f) => f + "=" + (tm.impactedRefs(m, [f]).map((t) => t.path).join(",") || "-")).join(" "));' "$T" 2>&1)"
+[ "$GJ" = "internal/json/enc.go=- pkg/util/u.go=tests/x_test.go" ] && ok "go map: imports are keyed on the module import path (internal/json is not encoding/json)" || bad "go map (module path) gave: $GJ"
 
 # deliver: the delivery over a Wall conflict decides on the re-verify, so a Go Wall file that breaks its package's build
 # (the full suite fails, no targeted check of the repo's own ran) no longer keeps correct code out.
@@ -314,6 +357,11 @@ for tool in go cargo; do
         REPO="$P_REPO"; ITERS="$P_ITERS"
     fi
     if [ "$tool" = go ]; then
+        GC="$(cd "$REPO" && mkdir -p tests2 && printf 'package tests2\n\nimport "testing"\n\nfunc TestNothing(t *testing.T) {}\n' > tests2/n_test.go && cd "$ROOT/loki-ts" && bun -e '
+const cr = await import("./src/util/check_result.ts"), { spawnSync } = require("node:child_process"), cwd = process.argv[1], out = [];
+for (const pk of [["./tests", "./tests2"], ["./tests"]]) { const r = spawnSync("go", ["test", "-json", ...pk], { cwd, encoding: "utf8" }); out.push(pk.join("+") + "=" + cr.corroborateGoPassSync({ result: "pass", n: 1 }, r.stdout, "go", ["test", "-json", ...pk], { cwd, env: process.env }).result); }
+console.log(out.join(" "));' "$REPO" 2>&1; rm -rf "$REPO/tests2")"
+        [ "$GC" = "./tests+./tests2=not_run ./tests=pass" ] && ok "go cover: a tests-only package with no module package of its own never passes beside one that has one" || bad "go cover gave: $GC"
         gc="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(" ".join(c["name"]+"="+c["result"] for c in json.load(open(sys.argv[1]))["checks"] if c["name"].startswith(("go:","full suite: go"))))' "$RUNDIR/receipt.json" 2>/dev/null)"
         case "$gc" in *"=pass"*) ok "go wall: a test in the black-box tests/ package is corroborated and passes ($gc)" ;; *) bad "go wall: no Go check passed in the tests/ package: '$gc'" ;; esac
     fi

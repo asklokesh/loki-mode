@@ -22,7 +22,7 @@ import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
-import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicSymbols, unreferenced, isExecutedProof, CODE_FILE_EXT, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
+import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, unreferenced, isExecutedProof, CODE_FILE_EXT, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
@@ -40,38 +40,34 @@ const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? 
 export const EXTERNAL_MODEL_LABEL = "external (no Loki implement session)", EXTERNAL_DIFF_NOT_ISOLATED = "Wall author not filesystem-isolated from the external diff", EXTERNAL_NO_WALL = "external diff sealed with no Wall file that ran; the only checks are the repo's existing tests"; // CW-12 B2/B3
 const externalRun = (o: Partial<Record<StageName, Record<string, unknown>>>): boolean => o.implement?.exit === "external";
 export const LEAN_NO_SYMBOL = "no passing check references a changed symbol and no Wall file ran";
-/** FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: with no Wall file that ran (and no already-satisfied claim), the changed code is exercised only if a passing pre-existing test source names a symbol the diff declares or modifies. Returns the unreferenced symbols; empty when a Wall ran, the run is external (its own rule), the diff has no non-test code file, or a test references one. */
-async function leanSymbolGap(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[]): Promise<string[]> {
-  if (externalRun(o) || (Array.isArray(o.wall?.files) && o.wall.files.length > 0) || o.intake?.already_satisfied === true || o.implement?.exit === "already_done") return [];
-  const code: string[] = [];
-  for (let i = 0; i + 1 < rawDiff.length; i += 2) { const st = rawDiff[i]!.trim().split(" ").pop() ?? "", f = rawDiff[i + 1]!; if (st !== "D" && CODE_FILE_EXT.test(f) && !isTestFile(f)) code.push(f); }
-  if (code.length === 0) return [];
-  const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...code], { timeoutMs: 20000 });
-  if (d.exitCode !== 0) return [];
-  const sources: string[] = [];
-  for (const c of vraw) if (isExecutedProof(c as { result?: unknown; n?: unknown })) { const n = String(c.name ?? ""), p = n.slice(n.indexOf(":") + 1); if (n.includes(":") && isTestFile(p)) try { sources.push(readFileSync(join(ctx.repoDir, p), "utf8")); } catch { /* unreadable test: contributes no reference */ } }
-  return symbolGap(changedSymbols(d.stdout), sources);
-}
 export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these added public functions";
-/** HONEST-VERIFIED-2: an added public function counts as exercised only when an agent-independent passing test source names it: a Wall file that passed, or a test file the run did not touch (a full-suite pass contributes every untouched test file). Tests the implementer wrote or edited never clear it. Returns the unexercised names; [] when none, or for an already-satisfied or external run (their own rules). */
-async function unexercisedPublic(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[]): Promise<string[]> {
-  if (externalRun(o) || o.intake?.already_satisfied === true || o.implement?.exit === "already_done") return [];
-  const touched = new Set<string>(), code: string[] = [];
-  for (let i = 0; i + 1 < rawDiff.length; i += 2) { const st = rawDiff[i]!.trim().split(" ").pop() ?? "", f = rawDiff[i + 1]!; touched.add(f); if (st !== "D" && CODE_FILE_EXT.test(f) && !isTestFile(f)) code.push(f); }
-  if (code.length === 0) return [];
-  const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...code], { timeoutMs: 20000 });
-  if (d.exitCode !== 0) return [];
-  const added = addedPublicSymbols(d.stdout); if (added.length === 0) return [];
-  const wall = new Set(((o.wall?.files as { path: string }[] | undefined) ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)));
+/** The two symbol rules, from one read of the diff and the passing checks.
+ *  lean (FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL): with no Wall file that ran, the changed code is exercised only if a passing test source names a symbol the diff declares or modifies; the unreferenced symbols, or [].
+ *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, or a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file). Tests the implementer wrote or edited never clear it. LOKI_E10_PUBLIC_GAP=0 turns it off.
+ *  Both are [] for an external run (its own rule) and an already-satisfied claim. */
+async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[]): Promise<{ lean: string[]; pub: string[] }> {
+  const none = { lean: [], pub: [] };
+  if (externalRun(o) || o.intake?.already_satisfied === true || o.implement?.exit === "already_done") return none;
+  const touched = new Set<string>(), code: string[] = [], added: string[] = [];
+  for (let i = 0; i + 1 < rawDiff.length; i += 2) { const st = rawDiff[i]!.trim().split(" ").pop() ?? "", f = rawDiff[i + 1]!; touched.add(f); if (st !== "D" && (CODE_FILE_EXT.test(f) || API_FILE_EXT.test(f)) && !isTestFile(f)) code.push(f); if (st === "A") added.push(f); }
+  if (code.length === 0) return none;
   const read = (p: string): string => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return ""; } };
-  const paths = new Set<string>();
-  for (const c of vraw) {
-    if (!isExecutedProof(c as { result?: unknown; n?: unknown }) && !(c.result === "pass" && String(c.name ?? "").startsWith("full suite:"))) continue;
-    const n = String(c.name ?? ""), p = n.slice(n.indexOf(":") + 1);
-    if (n.startsWith("full suite:")) { const ls = await safeGitRun(ctx.repoDir, ["ls-files", "-z"], { timeoutMs: 20000 }); if (ls.exitCode === 0) for (const t of ls.stdout.split("\0")) if (t && isTestFile(t) && !touched.has(t)) paths.add(t); }
-    else if (n.includes(":") && isTestFile(p) && (wall.has(p) || !touched.has(p))) paths.add(p);
-  }
-  return unreferenced(added, [...paths].map(read));
+  const executed = vraw.filter((c) => isExecutedProof(c as { result?: unknown; n?: unknown })), testOf = (c: Obj): string | null => { const n = String(c.name ?? ""), p = n.slice(n.indexOf(":") + 1); return n.includes(":") && !n.startsWith("full suite:") && isTestFile(p) ? p : null; };
+  const allSources = executed.map(testOf).filter((p): p is string => p !== null).map(read);
+  const ranWall = Array.isArray(o.wall?.files) && o.wall.files.length > 0, leanFiles = code.filter((f) => CODE_FILE_EXT.test(f));
+  let lean: string[] = [];
+  if (!ranWall && leanFiles.length) { const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...leanFiles], { timeoutMs: 20000 }); if (d.exitCode === 0) lean = symbolGap(changedSymbols(d.stdout), allSources); }
+  if (process.env["LOKI_E10_PUBLIC_GAP"] === "0") return { lean, pub: [] };
+  const files = code.filter((f) => API_FILE_EXT.test(f)).map((path) => ({ path, src: read(path) }));
+  const fns: string[] = [];
+  for (const f of files) { const base = added.includes(f.path) ? "" : (await safeGitRun(ctx.repoDir, ["show", `${ctx.baseSha}:${f.path}`], { timeoutMs: 20000 })); const b = typeof base === "string" ? base : base.exitCode === 0 ? base.stdout : null; if (b !== null) fns.push(...addedPublicFunctions(f.path, f.src, b)); }
+  if (fns.length === 0) return { lean, pub: [] };
+  const wall = new Set(((o.wall?.files as { path: string }[] | undefined) ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)));
+  const paths = new Set(executed.map(testOf).filter((p): p is string => p !== null && (wall.has(p) || !touched.has(p))));
+  if (executed.some((c) => String(c.name ?? "").startsWith("full suite:"))) { const ls = await safeGitRun(ctx.repoDir, ["ls-files", "-z"], { timeoutMs: 20000 }); if (ls.exitCode === 0) for (const t of ls.stdout.split("\0")) if (t && isTestFile(t) && !touched.has(t)) paths.add(t); }
+  const sources = [...paths].map(read), named = new Set(fns.filter((f) => unreferenced([f], sources).length === 0));
+  const refd = (name: string): boolean => named.has(name) || unreferenced([name], sources).length === 0;
+  return { lean, pub: exercisedViaCallers([...new Set(fns)].filter((f) => !named.has(f)), refd, files) };
 }
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
 
@@ -217,7 +213,7 @@ export const sealStage: Stage = {
     const grp = sealGroup(ctx.runDir, receiptSha256 as never); // D61-13: inert without group/manifest.json
     const executed = hasExecutedProof(vraw), proof = process.env["LOKI_EXOGENOUS_PROOF"] === "0" ? executed : hasExogenousProof(vraw, pctx); // FC-16: executed n>0 pass from verify's raw checks (a Wall green on base proves only a claim, inside verdictOf); TEN-GATES-02 (D104): that pass must be agent-independent (LOKI_EXOGENOUS_PROOF=0 opts out)
     const uncoveredAfterLimit = o.implement?.exit === "killed" ? strs(o.verify?.uncovered_changed) : []; // FC-21b: changed code no passing impacted check covered; limit path only
-    const leanGap = diffOk ? await leanSymbolGap(ctx, o, rawDiff, head, vraw) : [], pubGap = diffOk && process.env["LOKI_E10_PUBLIC_GAP"] !== "0" ? await unexercisedPublic(ctx, o, rawDiff, head, vraw) : []; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL; HONEST-VERIFIED-2
+    const { lean: leanGap, pub: pubGap } = diffOk ? await symbolGaps(ctx, o, rawDiff, head, vraw) : { lean: [], pub: [] }; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL; HONEST-VERIFIED-2
     const wpAll = publishableWall(ctx.repoDir, ctx.runDir, o, process.env, loadTaskText(ctx, str(o.intake?.task) ?? undefined)); // pure read of the sealed copies; publishing still happens only on VERIFIED
     const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name)) && c.repo_skipped !== true), !diffOk || diff.stdout === "", capVerify.length > 0 || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap], wpAll.notes, wpAll.clauseGap), grp);
 

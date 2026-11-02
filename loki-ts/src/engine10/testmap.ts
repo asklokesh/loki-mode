@@ -74,6 +74,8 @@ export function buildTestMap(root: string): EngineTestMap {
   }
   // Object.create(null): keys come from grep'd file content, so a source named e.g. "constructor" must not collide with Object.prototype.
   const sourceRefs: Record<string, string[]> = Object.create(null);
+  const goMods = files.filter((f) => basename(f) === "go.mod").map((f) => ({ dir: dirname(f), path: /^module\s+(\S+)/m.exec(readText(join(root, f)))?.[1] })).filter((m): m is { dir: string; path: string } => !!m.path).sort((a, b) => b.path.length - a.path.length);
+  const goImportDir = (imp: string): string | null => { const m = goMods.find((x) => imp === x.path || imp.startsWith(`${x.path}/`)); if (!m) return null; const rel = join(m.dir, imp.slice(m.path.length + 1)); return rel === "" ? "." : rel; };
   const specs: Record<string, string[]> = Object.create(null);
   for (const t of tests) {
     const text = jsText.get(t.path) ?? readText(join(root, t.path));
@@ -81,7 +83,7 @@ export function buildTestMap(root: string): EngineTestMap {
     const names = referencedBasenames(text);
     names.add(coveredStem(t.path));
     if (/\.(?:java|cs)$/.test(t.path)) for (const w of pascalWords(text)) names.add(w); // R02: a Java or C# test names the classes it exercises
-    if (t.runner === "go") for (const m of text.matchAll(/"([\w.\-~]+(?:\/[\w.\-~]+)+)"/g)) names.add(`go:${m[1]!.split("/").pop()!}`); // a Go test exercises the packages it imports: keyed by the package directory's name (impactedRefs looks a changed .go file up by its directory)
+    if (t.runner === "go") for (const m of text.matchAll(/"([\w.\-~]+(?:\/[\w.\-~]+)*)"/g)) { const d = goImportDir(m[1]!); if (d !== null) names.add(`godir:${d}`); } // a Go test exercises the module packages it imports: keyed by the imported package's repo directory, resolved through the repo's go.mod module paths (never by the last path segment, so internal/json is not encoding/json)
     for (const n of names) { (sourceRefs[n] ??= []).push(t.path); }
   }
   const runners = RUNNER_ORDER.filter((r) => r in evidence);
@@ -118,7 +120,7 @@ export function impactedRefs(map: TestMap, changedFiles: readonly string[]): Tes
     for (const s of stems) for (const p of sourceRefs[s] ?? []) add(map.tests.find((t) => t.path === p));
     if (extname(rel) === ".go") { // Go is package-scoped: the package's own tests (same directory) and every test importing its directory
       for (const t of map.tests) if (t.runner === "go" && dirname(t.path) === dirname(rel)) add(t);
-      if (dirname(rel) !== ".") for (const p of sourceRefs[`go:${basename(dirname(rel))}`] ?? []) add(map.tests.find((t) => t.path === p));
+      for (const p of sourceRefs[`godir:${dirname(rel)}`] ?? []) add(map.tests.find((t) => t.path === p));
     }
   }
   return scopeRefs(map, changedFiles.map(normalizeRel), out);
