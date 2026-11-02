@@ -73,6 +73,9 @@
 #  34. materialize(): drop the temp-dir cleanup; the no-partial check must fail.
 #  35. materialize(): drop the .complete reuse; the cached check must fail (the upstream is gone).
 #  36. load_task(): never materialize; the build check must fail.
+#  37. provenance(): drop the gitignored entries; the gitignored-input check must fail.
+#  38. inside(): accept any path; the escape check must fail (a file lands outside the build dir).
+#  39. materialize(): trust a cached snapshot without re-hashing it; the cache-tamper check must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -202,16 +205,22 @@ sys.path.insert(0, "."); import h2h
 r = Path(tempfile.mkdtemp(dir=sys.argv[1]))
 g = lambda *a: subprocess.run(["git", "-C", str(r), *a], capture_output=True, text=True, check=True).stdout.strip()
 g("init", "-q", "-b", "main"); g("config", "user.email", "t@example.invalid"); g("config", "user.name", "t")
-(r / "engine.ts").write_text("1"); g("add", "-A"); g("commit", "-q", "-m", "base")
+(r / "engine.ts").write_text("1"); (r / ".gitignore").write_text("internal/\n__pycache__/\n"); g("add", "-A"); g("commit", "-q", "-m", "base")
 (r / "benchmarks/h2h/results").mkdir(parents=True); (r / "benchmarks/h2h/results/x.json").write_text("{}")
+(r / "benchmarks/h2h/__pycache__").mkdir(); (r / "benchmarks/h2h/__pycache__/h2h.cpython-314.pyc").write_text("x")
 p = h2h.provenance(r)
 print("clean", p["citable"], p["engine_sha"] == g("rev-parse", "HEAD"), p["dirty_count"], h2h.provenance_gate(["loki-haiku"], p, False))
 (r / "engine.ts").write_text("2")
 p = h2h.provenance(r)
 print("dirty", p["citable"], p["dirty"], h2h.provenance_gate(["loki-haiku"], p, False) is not None, h2h.provenance_gate(["loki-haiku"], p, True), h2h.provenance_gate(["raw-haiku"], p, False))
+(r / "engine.ts").write_text("1"); (r / "benchmarks/h2h/fixtures/t/repo/internal").mkdir(parents=True)
+(r / "benchmarks/h2h/fixtures/t/repo/internal/pkg.go").write_text("package internal\n")
+p = h2h.provenance(r)
+print("ignored", p["citable"], p["dirty"], h2h.provenance_gate(["loki-haiku"], p, False) is not None)
 ' "$T")"
 has "provenance: a clean commit is citable, results files are not dirt, Loki may run" "$prov_out" "clean True True 0 None"
 has "provenance: an uncommitted change is not citable; Loki refuses unless --allow-dirty; raw runs" "$prov_out" "dirty False ['engine.ts'] True None None"
+has "provenance: a gitignored benchmark input is not citable (bytecode is not dirt); Loki refuses" "$prov_out" "ignored False ['benchmarks/h2h/fixtures/t/repo/internal/pkg.go (gitignored)'] True"
 check "results file records its provenance and citability" test "$(field "$T/good.json" '0') $(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(isinstance(d["citable"], bool), bool(d["provenance"][0]["engine_sha"]), "bun" in d["provenance"][0])' "$T/good.json")" = "0 True True True"
 has "loki per-session models recorded in order with their stage" "$pin_out" "sessions [['plan', 'claude-sonnet-4'], ['implement', 'claude-haiku-4'], ['implement', 'claude-haiku-4']] 3"
 
@@ -423,15 +432,25 @@ print("built", d.parent == Path(os.environ["H2H_CACHE"]) / "tasks", sorted(p.nam
 moved = UP.with_name("upstream-moved"); UP.rename(moved); shutil.rmtree(Path(os.environ["H2H_CACHE"]) / "git")
 print("cached", h2h.load_task("py-tiny", suite)["dir"] == d)
 moved.rename(UP)
+hf = d / "hidden/tests/test_core.py"; keep = hf.read_bytes(); hf.write_bytes(keep + b"\n")
+try:
+    h2h.load_task("py-tiny", suite); print("tamper built")
+except RuntimeError as e:
+    print("tamper", "refused" if "not snapshot_sha256" in str(e) else str(e))
+hf.write_bytes(keep)
 def refused(tid, **edit):
     m = json.loads(json.dumps(meta)); src = edit.pop("source", {}); m.update(edit); m["source"].update(src); put(tid, m)
     try:
         h2h.load_task(tid, suite); return "built"
     except RuntimeError as e:
-        return "refused: " + ("digest" if "does not match" in str(e) else "patch" if "occurs" in str(e) else "fetch" if "cannot fetch" in str(e) else str(e))
+        return "refused: " + ("digest" if "does not match" in str(e) else "patch" if "occurs" in str(e) else "fetch" if "cannot fetch" in str(e)
+                              else "escape" if "leaves the snapshot" in str(e) else str(e))
 print("tampered", refused("py-tiny-b", snapshot_sha256="0" * 64))
 print("patchcount", refused("py-tiny-c", snapshot_sha256="1" * 64, source={"patch_files": {"repo/calc/core.py": [["# BUG", "# x", 2]]}}))
 print("unfetchable", refused("py-tiny-d", snapshot_sha256="2" * 64, source={"parent_commit": "f" * 40}))
+print("escape", refused("py-tiny-e", snapshot_sha256="3" * 64, source={"add_files": {"../../escape.txt": "x"}}),
+      refused("py-tiny-f", snapshot_sha256="4" * 64, source={"patch_files": {"/tmp/escape.txt": [["a", "b", 1]]}}),
+      [str(p) for p in Path(os.environ["H2H_CACHE"]).rglob("escape.txt")])
 print("no-partial", sorted(p.name for p in (Path(os.environ["H2H_CACHE"]) / "tasks").iterdir()) == [d.name])
 work = T / "tiny-work"; work.mkdir()
 o, n = h2h.run_one("oracle", t, 1, work, 120, False), h2h.run_one("noop", t, 1, work, 120, False)
@@ -451,6 +470,8 @@ has "pinned task: a built snapshot is reused without the upstream or the git cac
 has "pinned task: a snapshot that does not match snapshot_sha256 is refused" "$tiny_out" "tampered refused: digest"
 has "pinned task: a patch target with the wrong count is refused" "$tiny_out" "patchcount refused: patch"
 has "pinned task: an unfetchable commit is refused" "$tiny_out" "unfetchable refused: fetch"
+has "pinned task: a cached snapshot edited after it was built is refused" "$tiny_out" "tamper refused"
+has "pinned task: an add_files or patch_files path outside the snapshot is refused before anything is written" "$tiny_out" "escape refused: escape refused: escape []"
 has "pinned task: a refused build leaves nothing in the cache" "$tiny_out" "no-partial True"
 has "pinned task: the fix passes, the parent fails, no leak" "$tiny_out" "score 1 0 [] []"
 has "leak check: clean copy" "$tiny_out" "clean []"

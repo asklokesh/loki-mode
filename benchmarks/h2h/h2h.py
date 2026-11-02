@@ -77,13 +77,19 @@ def _version(cmd):
 def provenance(root=ROOT):
     """What produced a results file: the exact engine commit, whether the tree had uncommitted changes
     (anything other than results files), and the tool versions. A run from a dirty tree is not citable:
-    its numbers belong to code nobody can check out."""
+    its numbers belong to code nobody can check out. Gitignored files under benchmarks/ count as dirt too
+    (Python bytecode aside): a benchmark input the commit does not hold cannot be checked out either."""
     r = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True)
     st = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True)
+    ig = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--ignored", "--untracked-files=all", "--", "benchmarks"],
+                        capture_output=True, text=True)
     dirty = [line[3:] for line in st.stdout.splitlines() if line[3:] and not line[3:].startswith(RESULTS_PREFIX)]
+    ignored = [line[3:] for line in ig.stdout.splitlines() if line.startswith("!! ")
+               and "__pycache__/" not in line and not line.endswith(".pyc")]
+    dirty += [f"{p} (gitignored)" for p in ignored]
     return {
         "engine_sha": r.stdout.strip() or None, "dirty_count": len(dirty), "dirty": dirty[:30],
-        "citable": bool(r.stdout.strip()) and st.returncode == 0 and not dirty,
+        "citable": bool(r.stdout.strip()) and st.returncode == 0 and ig.returncode == 0 and not dirty,
         "bun": _version(["bun", "--version"]), "claude_cli": _version(["bash", "-c", "command claude --version"]),
         "python": platform.python_version(), "go": _version(["go", "version"]), "platform": platform.platform(),
     }
@@ -165,6 +171,21 @@ def git_archive(gd, sha, paths, dest):
         tf.extractall(dest, filter="data")
 
 
+def inside(root, rel):
+    """root/rel, refused unless it stays inside root: no absolute path, no "..", no symlink on the way."""
+    parts = Path(rel).parts
+    if not parts or Path(rel).is_absolute() or ".." in parts:
+        raise RuntimeError(f"h2h: path {rel!r} leaves the snapshot")
+    p = root
+    for part in parts:
+        p = p / part
+        if p.is_symlink():
+            raise RuntimeError(f"h2h: path {rel!r} goes through a symlink")
+    if not p.resolve().is_relative_to(root.resolve()):
+        raise RuntimeError(f"h2h: path {rel!r} leaves the snapshot")
+    return p
+
+
 def materialize(task_id, meta):
     """Builds the task snapshot exactly as it was benchmarked: `git archive` of the vendored paths at the parent
     commit (plus pinned submodules), the fix's test files as hidden/, its other changed files as solution/, then
@@ -172,6 +193,9 @@ def materialize(task_id, meta):
     s, want = meta["source"], meta["snapshot_sha256"]
     dest = cache_root() / "tasks" / f"{task_id}-{want[:16]}"
     if (dest / ".complete").is_file():
+        got = snapshot_digest(dest)  # a cached snapshot is re-checked on every load: anything may have edited it
+        if got != want:
+            raise RuntimeError(f"h2h: {task_id}: cached snapshot {dest} has digest {got}, not snapshot_sha256 {want}; delete it to rebuild")
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix=f".{task_id}.", dir=dest.parent))
@@ -183,14 +207,14 @@ def materialize(task_id, meta):
         upstream_commit(s["upstream"], s["fix_commit"])
         for sub, files in (("hidden", list(meta["hidden"])), ("solution", s["solution_files"])):
             for f in files:
-                out = tmp / sub / f
+                out = inside(tmp, f"{sub}/{f}")
                 out.parent.mkdir(parents=True, exist_ok=True)
                 out.write_bytes(subprocess.run(["git", "-C", str(gd), "show", f"{s['fix_commit']}:{f}"], capture_output=True, check=True).stdout)
         for rel, content in (s.get("add_files") or {}).items():
-            (tmp / "repo" / rel).write_text(content)
+            inside(tmp, f"repo/{rel}").write_text(content)
         # patch_files: {"repo/<path>": [[old, new, count], ...]}; each old must occur exactly count times.
         for rel, pairs in (s.get("patch_files") or {}).items():
-            t = (tmp / rel).read_text()
+            t = inside(tmp, rel).read_text()
             for old, new, count in pairs:
                 if t.count(old) != count:
                     raise RuntimeError(f"h2h: {task_id}: patch target in {rel} occurs {t.count(old)} times, expected {count}")

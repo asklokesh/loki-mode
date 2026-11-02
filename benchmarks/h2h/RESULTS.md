@@ -28,6 +28,22 @@ Results file: `results/2026-11-01-e13f3dd72-hard.json`, **citable**: every invoc
 ran from a clean commit (e13f3dd72, then 0d2071933, which changes only a test comment), on the
 v11.116.0 engine merged from main. Tool versions are in the file (bun 1.3.13, Claude CLI 2.1.316).
 
+- **Provenance gap.** "Clean" at those two commits did not cover every input. The expr snapshots'
+  `internal/` packages (102 files, in go-expr-autoderef and go-expr-withcontext) were on disk but
+  matched the then-unanchored `internal/` ignore rule, so neither commit holds them and the
+  clean-tree check could not see them. They were added in d915fd672 (the snapshot builder was last
+  modified at 20:36, before either run commit, and was not changed after). They are now pinned by
+  each task's `snapshot_sha256`. The provenance gate now treats any gitignored file under
+  `benchmarks/` (Python bytecode aside) as dirt, so a run like this one would now be marked not
+  citable.
+- **Scoring command changed after the run.** 2ec9b75d6 (after this run) added
+  `--ignore=tests/test_toml_spec_tests.py` to the tomlkit tasks' test commands (that file needs
+  PyYAML) and `-W ignore::pytest.PytestRemovedIn10Warning` to the click tasks' (newer pytest warns on
+  a pattern in click's tests, and click turns warnings into errors). This makes the commands work on
+  CI. No verdict depended on it. The change can only turn a fail into a pass, by skipping that file
+  or that warning, and none of the 83 failing runs on the affected tasks (tomlkit #408 and #165,
+  click #2836) mentions the skipped file, the warning or yaml in its recorded failure tail.
+
 - **Candidates.** 18 closed issues in `fixtures/hard/` from sqlglot, tomlkit, click, sqlparse,
   mistune and expr (MIT or BSD-3-Clause; each `meta.json` records license, issue, fix PR and
   commits). Each is replayed at the fix's parent commit and scored by the fix's own test files at
@@ -88,7 +104,8 @@ turns), not that it solves more.
   check under the same throwaway HOME ($0.045, on the ledger) showed that default is
   `claude-opus-5-5`. So `loki-default` here is in effect Loki on Opus with a Sonnet intake.
 - **Verdicts.** Loki almost never claims VERIFIED on these tasks: 1 VERIFIED in 96 runs, and it was
-  wrong (loki-default, go-expr-withcontext rep 3). VERIFIED recall is 0: none of the 10 Loki runs
+  wrong (loki-default, go-expr-withcontext rep 3). That run was an ALREADY_SATISFIED seal with 0 files
+  changed: Loki judged the issue already fixed and changed nothing. VERIFIED recall is 0: none of the 10 Loki runs
   whose work passed the hidden tests was sealed VERIFIED; all ended PARTIAL. Agreement is high
   only because nearly everything failed and nearly everything was PARTIAL.
 - **Accepted.** 3 passing raw runs changed existing tests of expr's patcher to compile against a
@@ -120,7 +137,11 @@ BLOCKED.
 **Threats.** 8 tasks, 2 of which carry every pass: one task more or less for any config moves its
 rate by 4 points per run and 12.5 points per task. The selection rule picks tasks raw Haiku fails, so raw Haiku's 1 of 24 is
 low by construction (regression to the mean would favour it on a fresh draw). Contestants had
-network access and could look up the upstream fix.
+network access and could look up the upstream fix. They also have local disk access. The fix commit
+(in the bare git cache) and the rebuilt `hidden/` and `solution/` trees sit at a predictable path,
+`~/.cache/loki-h2h` by default. Contestants get a throwaway HOME, but the cache path is reachable by
+absolute path. This is not new: the vendored tree had the same files inside this repository. The
+mitigation is running contestants in a container with restricted egress, which is in progress.
 
 ## Replay suite (real closed issues)
 
@@ -163,7 +184,11 @@ change that fixed it.
   The result must match `meta.json` `snapshot_sha256` (every path, executable bit and content), or
   the task is refused. Each digest was taken from the vendored snapshot the results below were
   measured on, and every one of the 26 tasks rebuilds to it. Cache: `$H2H_CACHE`, default
-  `${XDG_CACHE_HOME:-~/.cache}/loki-h2h` (about 25 MB for all 26 tasks).
+  `${XDG_CACHE_HOME:-~/.cache}/loki-h2h`: for all 26 tasks, about 25 MB of git cache plus about
+  69 MB of rebuilt trees. A cold build takes about a minute. A cached snapshot is hashed again on every
+  load (0.4 s for all 26) and refused if it was edited. Every `add_files`, `patch_files`, hidden and
+  solution path must stay inside the build directory (no absolute path, no `..`, no symlink on the
+  way) before anything is written.
 - **Configs.** `raw-haiku` and `loki-haiku` as below. `raw-haiku-verify` and `raw-opus-verify` are
   raw `claude -p` with the same task text plus one sentence: "Before you finish, run the
   repository's tests and check that your change works." That is the fair baseline: what a careful
