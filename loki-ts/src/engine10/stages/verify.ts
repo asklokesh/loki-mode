@@ -40,7 +40,7 @@ import { type SkipCode, changedSymbols, firstFileLineAnchor, runnerCmd, commandF
 const excerpts = new WeakMap<object, string>();
 const suites = new WeakSet<object>(); // L005: full-suite checks, whose signature also carries the failing ids
 const failTails = new WeakMap<object, string>(); // WALL-FAILOUT: redacted tail of a failed check's output, read only by writeWallFailureTail
-const headErrors = new WeakMap<object, Map<string, string>>(); // each failing id's error line, read from the whole output (never the cut tail), for sameErrors
+const headErrors = new WeakMap<object, Map<string, string[]>>(); // each failing id's error line, read from the whole output (never the cut tail), for sameErrors
 export { WALL_FAILURE_TAIL_FILE } from "../../util/check_result.ts"; import { WALL_FAILURE_TAIL_FILE } from "../../util/check_result.ts";
 export const WALL_FAILURE_TAIL_CAP = 16384;
 /** Redact the whole output first, then keep the tail: a secret straddling the cut would lose its prefix and escape redaction. */
@@ -218,28 +218,31 @@ function changedSymbolsFirst(ctx: RunContext, tests: TestRef[], changed: string[
   const hits = tests.filter((t) => { try { return re.test(readFileSync(join(ctx.repoDir, t.path), "utf8")); } catch { return false; } });
   return [...hits, ...tests.filter((t) => !hits.includes(t))];
 }
-/** The error line each failing id reports: vitest/jest print it on the first non-blank line after "FAIL  <id>", pytest after "FAILED <id> - ".
+/** Every error line each failing id reports, sorted (a multiset: test.each and duplicate titles give one id several failures): vitest/jest print it
+ *  on the first non-blank line after "FAIL  <id>" (consecutive FAIL lines vitest groups under one error share it), pytest after "FAILED <id> - ".
  *  Only what differs between two runs of the same failure is normalized: timestamps, durations and absolute paths (with any :line:col), so a base
  *  worktree path never makes two equal errors differ. Every other number is kept: "expected 5 to be 6" and "expected 999 to be 6" differ. */
-export function errorsById(out: string): Map<string, string> {
+export function errorsById(out: string): Map<string, string[]> {
   const norm = (l: string): string => l
     .replace(/\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/g, "<ts>").replace(/\b\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\b/g, "<ts>")
     .replace(/(^|[\s(])\/(?:[\w.@-]+\/)*[\w.@-]+(?::\d+){0,2}/g, "$1<path>").replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|us|µs|ns|min)\b/g, "<dur>").replace(/\s+/g, " ").trim();
-  const lines = stripAnsi(out).split("\n").map((l) => l.trim()), m = new Map<string, string>();
+  const lines = stripAnsi(out).split("\n").map((l) => l.trim()), m = new Map<string, string[]>(), add = (id: string, e: string): void => { m.set(id, [...(m.get(id) ?? []), e]); };
   for (const [i, l] of lines.entries()) {
-    const py = /^FAILED (\S+::\S*) - (.+)$/.exec(l); if (py) { m.set(py[1]!, norm(py[2]!)); continue; }
+    const py = /^FAILED (\S+::\S*) - (.+)$/.exec(l); if (py) { add(py[1]!, norm(py[2]!)); continue; }
     const v = /^FAIL\s+(.+)$/.exec(l); if (!v) continue;
-    const next = lines.slice(i + 1).find((x) => x !== ""); if (next !== undefined) m.set(v[1]!.trim(), norm(next));
+    const next = lines.slice(i + 1).find((x) => x !== "" && !/^FAIL\s/.test(x)); if (next !== undefined) add(v[1]!.trim(), norm(next));
   }
+  for (const [k, e] of m) m.set(k, e.sort());
   return m;
 }
-/** True when every failing id has an error line on head and fails on base with the same normalized line. An id with no head error line (its FAIL
+/** True when every failing id has error lines on head and fails on base with the same normalized lines, the same number of times (equal sorted
+ *  multisets: a test.each case newly failing with another error under the same id is a different error). An id with no head error line (its FAIL
  *  line was never printed or was cut) or none on base is not the same error. failIds also lists a test's bare title (vitest's "× title" line): it
  *  stands for the full ids that end in " > title". `head` is the output or its errorsById map. */
-export function sameErrors(head: string | Map<string, string>, base: string, ids: string[] | undefined): boolean {
-  const h = typeof head === "string" ? errorsById(head) : head, b = errorsById(base), all = ids ?? [];
+export function sameErrors(head: string | Map<string, string[]>, base: string, ids: string[] | undefined): boolean {
+  const h = typeof head === "string" ? errorsById(head) : head, b = errorsById(base), all = ids ?? [], eq = (x: string[] = [], y: string[] = []): boolean => x.length === y.length && x.every((e, n) => e === y[n]);
   const keys = (i: string): string[] => (h.has(i) ? [i] : [...h.keys()].filter((k) => k.endsWith(` > ${i}`)));
-  return all.length > 0 && all.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => b.get(k) === h.get(k)); });
+  return all.length > 0 && all.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => eq(b.get(k), h.get(k))); });
 }
 /** A failing check the next fix round is given: not pre-existing, not held out, and not known red failing the same way as on base (a known-red check
  *  failing with a different error on head is something the change did, so it is fix-round input). */
