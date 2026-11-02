@@ -6,12 +6,19 @@
 #   learn:     run 1 (wrong multiply(), a fix round that changes nothing, an edit to the pre-existing calc.test.ts)
 #              ends STALLED and writes a check-failed lesson whose sub-lesson carries the first error line and run 1's
 #              id, plus an edited-existing-test lesson naming calc.test.ts.
-#   related:   run 2 on a related task gets those lessons in its implement brief (byte count printed).
+#   related:   run 2 on a related task gets those lessons (LOKI_PR_LESSONS=1), one imperative line each led by
+#              the file it is about, no run ids, and <runDir>/lessons-injected.json records the ids and bytes.
 #   merge:     run 2 repeats both mistakes (then its fix round turns the check green); each class stays ONE lesson
 #              with two sub-lessons, the check-failed one records the fix-round change, and run 2's use tag is marked
 #              recurred.
 #   unrelated: run 3 on an unrelated task gets no run-lessons block.
-#   cap:       with 12 long seeded lessons, `loki memory brief` keeps the run-lessons block within 1200 bytes.
+#   cap:       with 12 long seeded lessons, `loki memory brief` keeps the run-lessons block within 400 bytes.
+#   precise:   a stage-time-limit or out-of-scope lesson on the task's file is never injected; a check-failed lesson on
+#              another file is never injected however many words it shares; a receipt fact never reaches a brief;
+#              a spec conflict is injected by the symbols its reason names; with LOKI_PR_LESSONS unset (the default)
+#              nothing is injected.
+#   stop:      a check that blocked the session stop (runner/stop_checks.ts) is written to .loki/state/stop-blocks.jsonl
+#              and becomes a check-failed lesson at run end; the file is consumed and a stale line is dropped.
 #   list:      `loki memory lessons` shows the category and sub-lessons.
 # Reuse past runs (same store, util/pr_lessons.ts knownVerdict, replayKnownVerdict, workedExampleFor):
 #   replay:    receipt.json carries loki_version; an identical rerun of a SPEC_CONFLICT task exits 4 in under 10s with
@@ -20,8 +27,9 @@
 #   unit:      split history (SC, SC, AS, SC) never replays; ALREADY_SATISFIED replays (exit 0) only after 2 unanimous
 #              runs; PARTIAL, FAILED, an altered receipt and a changed task, base, loki_version or provider never replay;
 #              a 40-file VERIFIED run's exemplar stays within 2048 bytes.
-#   example:   a similar task (>= 3 shared identifier keywords) gets exactly one worked-example block within 1200 bytes
-#              and the exemplar's files in Relevant files (brief bytes with and without printed); fewer gets none.
+#   example:   a near-duplicate task (>= 3 shared identifier keywords AND Jaccard >= 0.5) gets exactly one worked-example
+#              block within 1200 bytes and the exemplar's files in Relevant files (brief bytes with and without printed);
+#              fewer shared keywords, or many shared but a low Jaccard, gets none.
 #   default:   with neither LOKI_PR_LESSONS nor LOKI_WORKED_EXAMPLE set (the default, rule 6), the same similar task gets
 #              no worked example and no run-lessons block, and the run still records its lesson. Every other leg opts in.
 #
@@ -32,7 +40,13 @@
 #   4. pr_lessons.ts replayKnownVerdict: ignore o.fresh (--fresh replays).
 #   5. pr_lessons.ts workedExampleFor: require 1 shared keyword instead of EXAMPLE_MIN_SHARED (an unrelated task gets one).
 #   6. pr_lessons.ts exampleFiles: return [] (the exemplar's files never reach Relevant files).
-#   7. pr_lessons.ts lessonsInjected/workedExampleInjected: return true (the default leg gets lessons and an example).
+#   7. pr_lessons.ts lessonsInjected/workedExampleInjected: return true (the default legs get lessons and an example).
+#   8. pr_lessons.ts runScore: drop the RECURRING category check (the stage-time-limit lesson is injected).
+#   9. pr_lessons.ts runScore: return the shared-word score without a file overlap (the other-file lesson is injected).
+#  10. pr_lessons.ts retrieveLessons: drop `l.kind !== "receipt"` (the receipt fact reaches the brief).
+#  11. pr_lessons.ts RUN_LESSON_CAP: 1200 (the 400-byte cap check fails).
+#  12. runner/stop_checks.ts createStopChecksHook: drop the recordStopBlock call (no stop lesson).
+#  13. pr_lessons.ts workedExampleFor: drop the EXAMPLE_MIN_JACCARD test (the low-Jaccard task gets an example).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -44,7 +58,8 @@ echo "TEST: learn from runs on the stub provider"
 
 FIX="$ROOT/tests/min/fixtures/e2e"
 export LOKI_TS_ENTRY="$ROOT/loki-ts/dist/loki.js"
-export LOKI_PR_LESSONS=1 LOKI_WORKED_EXAMPLE=1 # lesson injection is opt-in; these legs test it on, the default leg unsets both
+unset LOKI_NO_PR_LESSONS
+export LOKI_PR_LESSONS=1 LOKI_WORKED_EXAMPLE=1 # lesson injection is opt-in; these legs test it on, the default legs unset both
 UNSET=()
 TO=(); command -v timeout >/dev/null 2>&1 && TO=(timeout 120)
 
@@ -83,7 +98,7 @@ print(eval(sys.argv[2]))' "$LESSONS" "$1" 2>/dev/null
 block() {
     [ -f "$1" ] || return 0
     python3 -I -c 'import sys
-s=open(sys.argv[1]).read(); a=s.find("\n\nLessons from earlier runs on this repo"); b=s.find("</untrusted-run-lessons>\n", a)
+s=open(sys.argv[1]).read(); a=s.find("\n\nLessons from earlier runs here"); b=s.find("</untrusted-run-lessons>\n", a)
 print(s[a:b+len("</untrusted-run-lessons>\n")] if a>=0 and b>=0 else "", end="")' "$1"
 }
 impl_bytes() { awk '$1=="implement"{print $3; exit}' "$ITERS"; }
@@ -111,12 +126,18 @@ echo "    run 1 ($RID1): $(lq 'len(L)') run lessons: $(lq '", ".join(l["category
 # Run 2: a related task reads them, then repeats both mistakes (its fix round turns the check green).
 run_engine 2 "add a divide(a, b) function to calc.ts" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit E2E_STUB_TEST_EDIT=1
 RID2="$RID"; B2="$(block "$PROMPTS.implement0")"
+printf '%s\n' "$B2" | sed 's/^/    | /'
 has "related: run 2 brief carries the run-lessons block" "$B2" "<untrusted-run-lessons>"
-has "related: run 2 brief carries the check-failed lesson" "$B2" "[check-failed"
-has "related: run 2 brief carries run 1's sub-lesson" "$B2" "run $RID1: "
-has "related: run 2 brief carries the edited-existing-test lesson" "$B2" "[edited-existing-test"
+has "related: run 2 brief carries the check-failed lesson as one imperative line" "$B2" "pass; it failed last run"
+has "related: run 2 brief carries the edited-existing-test lesson led by the test file" "$B2" "- calc.test.ts: do not edit this existing test"
+case "$B2" in *"run $RID1"*) bad "related: run 2 brief still carries run ids" ;; *) ok "related: no run ids in the block" ;; esac
+nonline="$(printf '%s\n' "$B2" | sed '1,4d;$d' | grep -vc '^- ')"
+[ "$nonline" = "0" ] && ok "related: every lesson is one line starting with '- '" || bad "related: $nonline body lines are not one-line lessons"
+inj="$REPO/.loki/runs/$RID2/lessons-injected.json"
+injb="$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["run_bytes"], len(d["run_ids"]))' "$inj" 2>/dev/null)"
+[ "${injb%% *}" = "$(block "$PROMPTS.implement0" | wc -c | tr -d ' ')" ] && [ "${injb#* }" -ge 2 ] && ok "related: lessons-injected.json records $injb (run-lesson bytes, ids) matching the brief" || bad "related: lessons-injected.json '$injb' vs block $(block "$PROMPTS.implement0" | wc -c | tr -d ' ') bytes"
 echo "    run 2 ($RID2): implement brief $(impl_bytes) bytes (same task with no history: $BEFORE bytes), run-lessons block $(block "$PROMPTS.implement0" | wc -c | tr -d ' ') bytes"
-[ "$(block "$PROMPTS.implement0" | wc -c)" -le 1200 ] && ok "cap: run 2's injected run-lessons block is within 1200 bytes" || bad "cap: run 2's run-lessons block is over 1200 bytes"
+[ "$(block "$PROMPTS.implement0" | wc -c)" -le 400 ] && ok "cap: run 2's injected run-lessons block is within 400 bytes" || bad "cap: run 2's run-lessons block is over 400 bytes"
 [ "$(outcome)" = "VERIFIED" ] && ok "merge: run 2 ends VERIFIED after its fix round" || { bad "merge: run 2 outcome is '$(outcome)', not VERIFIED"; dump; }
 [ "$(lq 'sum(1 for l in L if l["category"]=="edited-existing-test")')" = "1" ] && ok "merge: one edited-existing-test lesson, not a duplicate" || bad "merge: edited-existing-test lessons: $(lq 'sum(1 for l in L if l["category"]=="edited-existing-test")')"
 [ "$(lq '[len(l["subs"]) for l in L if l["category"]=="edited-existing-test"]')" = "[2]" ] && ok "merge: it holds two sub-lessons (runs 1 and 2)" || bad "merge: sub-lessons: $(lq '[len(l["subs"]) for l in L if l["category"]=="edited-existing-test"]')"
@@ -144,9 +165,51 @@ json.dump(j,open(p,"w"))' "$LESSONS"
 (cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "add a modulo(a, b) function to calc.ts" > "$T/cap.txt" 2>&1)
 # `memory brief` trims the leading blank lines, so the two the brief carries are added back before counting.
 capblk="$(python3 -I -c 'import sys
-s=open(sys.argv[1]).read(); a=s.find("Lessons from earlier runs on this repo"); t="</untrusted-run-lessons>\n"; b=s.find(t, a)
+s=open(sys.argv[1]).read(); a=s.find("Lessons from earlier runs here"); t="</untrusted-run-lessons>\n"; b=s.find(t, a)
 print(len(("\n\n"+s[a:b+len(t)]).encode()) if a>=0 and b>=0 else -1)' "$T/cap.txt")"
-if [ "$capblk" -gt 0 ] && [ "$capblk" -le 1200 ]; then ok "cap: run-lessons block is $capblk bytes with $(lq 'len(L)') run lessons stored (cap 1200)"; else bad "cap: run-lessons block is $capblk bytes (want 1..1200)"; fi
+if [ "$capblk" -gt 0 ] && [ "$capblk" -le 400 ]; then ok "cap: run-lessons block is $capblk bytes with $(lq 'len(L)') run lessons stored (cap 400)"; else bad "cap: run-lessons block is $capblk bytes (want 1..400)"; fi
+
+# Precise: only a recurring class on a file this run will touch reaches the brief; receipts never do.
+python3 -I -c 'import json,sys
+p=sys.argv[1]; j=json.load(open(p)); j["lessons"]=[l for l in j["lessons"] if not l["id"].startswith("run-seed")]
+src={"pr":"run:seed","pr_url":"","comment_url":"","kind":"run","author":"loki"}
+def run(i,cat,text,files,sub="first error: boom"): return {"id":i,"kind":"run","category":cat,"text":text,"source":src,"learned_at":"2026-01-01T00:00:00Z","uses":[],"subs":[{"run_id":"seed","text":sub,"files":files,"at":"2026-01-01T00:00:00Z"}],"seen":1,"files":files,"terms":[]}
+j["lessons"]+= [run("run-plant-limit","stage-time-limit","The implement stage hit its time limit; PLANTLIMIT",["power.ts"]),
+  run("run-plant-scope","out-of-scope-edit","Edits outside the stated scope were flagged; PLANTSCOPE",["power.ts"]),
+  run("run-plant-other","check-failed","Check bun:other.test.ts failed: power exponent calc modulo PLANTOTHER",["other.ts","other.test.ts"]),
+  run("run-plant-spec","spec-conflict","A run here stopped on a spec conflict; check the requirement against the existing tests before editing",[],"reason: squareRoot of negativeInput must throw RangeError PLANTSPEC"),
+  {"id":"rcp-plant","kind":"receipt","text":"Run e10-x sealed VERIFIED: add power(a, b) to power.ts PLANTRECEIPT","source":{"pr":"run:x","pr_url":"","comment_url":"","kind":"receipt","author":"loki"},"learned_at":"2026-01-01T00:00:00Z","uses":[],"justified_by":{"run_id":"e10-x","receipt_sha256":None,"verdict":"unverified"}}]
+json.dump(j,open(p,"w"))' "$LESSONS"
+pb="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "add a power(base, exponent) function to power.ts" 2>&1)"
+case "$pb" in *boom*|*PLANTLIMIT*|*PLANTSCOPE*) bad "precise: a stage-time-limit or out-of-scope lesson reached the brief" ;; *) ok "precise: stage-time-limit and out-of-scope lessons on the task's own file are not injected" ;; esac
+case "$pb" in *PLANTOTHER*) bad "precise: a check-failed lesson on another file reached the brief" ;; *) ok "precise: a check-failed lesson on another file is not injected despite shared words" ;; esac
+case "$pb" in *PLANTRECEIPT*) bad "precise: a receipt fact reached the brief" ;; *) ok "precise: a receipt fact never reaches the brief" ;; esac
+sb="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "make squareRoot reject negativeInput values" 2>&1)"
+has "precise: a spec conflict is injected by the symbols its reason names" "$sb" "a run stopped on a spec conflict (squareRoot of negativeInput"
+ob="$(cd "$REPO" && env -u LOKI_PR_LESSONS LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "add a modulo(a, b) function to calc.ts" 2>&1)"
+case "$ob" in *untrusted-run-lessons*) bad "default: run lessons injected with LOKI_PR_LESSONS unset" ;; *) ok "default: no run lessons with LOKI_PR_LESSONS unset, though related lessons exist" ;; esac
+
+# Stop: a blocked stop is recorded by the real hook and learned at run end; a stale line is dropped and the file consumed.
+S="$(cd "$ROOT/loki-ts" && SRC="$ROOT/loki-ts/src" SD="$T/stop" bun -e '
+const src = process.env.SRC, d = process.env.SD, fs = await import("node:fs"), { join } = await import("node:path");
+fs.mkdirSync(d, { recursive: true });
+const SC = await import(src + "/runner/stop_checks.ts"), L = await import(src + "/util/pr_lessons.ts");
+const p = SC.stopBlocksPath(d); fs.mkdirSync(join(d, ".loki", "state"), { recursive: true });
+fs.writeFileSync(p, JSON.stringify({ at: "2000-01-01T00:00:00.000Z", name: "pytest:tests/stale_test.py", first_error: "STALE" }) + "\n");
+const since = new Date(Date.now() - 1000).toISOString();
+const hook = SC.createStopChecksHook({ checks: [{ cwd: d, cmd: "sh", args: ["-c", "echo FAILED tests/test_conventions.py::test_registered - AssertionError: register km_to_miles; exit 1"], name: "pytest:tests/test_conventions.py" }], rounds: 1, budgetS: 20, repoDir: d, baseSha: "HEAD" });
+const r = await hook({}, undefined, {});
+console.log("stop decision", r.decision ?? "none", "| file lines", fs.existsSync(p) ? fs.readFileSync(p, "utf8").trim().split("\n").length : 0);
+const found = L.learnFromRun(d, "e10-stop-1", [{ type: "run.started", stage: null, data: {}, ts: since }], "VERIFIED");
+const ls = L.loadLessons(d).filter((l) => l.kind === "run");
+console.log("stop lessons", JSON.stringify(ls.map((l) => [l.category, l.text, l.subs.map((s) => s.text), l.files])));
+console.log("stop consumed", !fs.existsSync(p), "| stale learned", ls.some((l) => l.text.includes("STALE")));
+' 2>&1)"
+printf '%s\n' "$S" | sed 's/^/    /'
+has "stop: a failing stop check blocks the stop and is recorded (stale line + this block)" "$S" "stop decision block | file lines 2"
+has "stop: the blocked check becomes a check-failed lesson named by its verify check name" "$S" '"check-failed","Check pytest:tests/test_conventions.py failed'
+has "stop: its sub-lesson says it blocked the session stop" "$S" "blocked the session stop: "
+has "stop: the stop-blocks file is consumed and the stale line is not learned" "$S" "stop consumed true | stale learned false"
 
 lst="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory lessons 2>&1)"
 has "list: loki memory lessons shows the category" "$lst" "category edited-existing-test, seen 2x"
@@ -291,9 +354,9 @@ grep -q "untrusted-run-lessons\|untrusted-worked-example" "$PROMPTS.implement0" 
 nles1="$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["lessons"]))' "$LESSONS" 2>/dev/null)"
 [ -n "$nles0" ] && [ -n "$nles1" ] && [ "$nles1" -gt "$nles0" ] && ok "default: the run still recorded its lesson ($nles0 -> $nles1)" || bad "default: lessons before $nles0, after $nles1 (recording must stay on)"
 REPO="$T/repo-example"; LESSONS="$REPO/.loki/memory/semantic/pr-lessons.json"
-for tk in "add a divide(a, b) function to calc.ts" "document the install steps in README.md"; do
+for tk in "add a divide(a, b) function to calc.ts" "document the install steps in README.md" "add multiply(a, b) to calc.ts returning the product of two numbers, with overflow checks, logging, metrics and validation of inputs"; do
     br="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "$tk" 2>&1)"
-    case "$br" in *"Worked example from run"*) bad "example: '$tk' (fewer than 3 shared keywords) got a worked example" ;; *) ok "example: '$tk' (fewer than 3 shared keywords) gets none" ;; esac
+    case "$br" in *"Worked example from run"*) bad "example: '$tk' (not a near-duplicate) got a worked example" ;; *) ok "example: '$tk' (not a near-duplicate) gets none" ;; esac
 done
 br="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "$TASK_S" 2>&1)"
 has "example: loki memory brief shows the worked example for the similar task" "$br" "Worked example from run"
