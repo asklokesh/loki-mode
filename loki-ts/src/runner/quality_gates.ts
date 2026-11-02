@@ -2403,7 +2403,7 @@ export async function runCodeReview(
 // Each panel slot is a provider-backed judge function that fires one
 // fast-tier provider call against (finding, evidence) and returns a
 // classified verdict. Panel composition controlled by:
-//   - LOKI_OVERRIDE_JUDGES (csv): provider names (claude, codex, cline, aider)
+//   - LOKI_OVERRIDE_JUDGES (csv): provider names (claude, opencode)
 //   - LOKI_OVERRIDE_PANEL_SIZE (int, default 3): clamp panel to N judges
 //
 // Returns null when:
@@ -2429,9 +2429,10 @@ async function tryBuildRealJudgePanel(
     .map((s) => s.trim().toLowerCase())
     .filter((s) => s.length > 0);
   if (names.length === 0) {
-    // Default trio: distinct providers so a model-specific bias does not
-    // sweep the panel. Each is the fastest tier of its provider.
-    names = ["claude", "codex", "cline"];
+    // Default: distinct providers so a model-specific bias does not sweep the
+    // panel. Each is the fastest tier of its provider. Approval needs 2 votes,
+    // so a missing CLI (its judge fails safe to REJECT) keeps the BLOCK.
+    names = ["claude", "opencode"];
   }
   const sizeRaw = process.env["LOKI_OVERRIDE_PANEL_SIZE"];
   const size = sizeRaw && Number.parseInt(sizeRaw, 10) > 0
@@ -2452,7 +2453,7 @@ async function tryBuildRealJudgePanel(
     let invoker: import("./types.ts").ProviderInvoker;
     try {
       invoker = await provMod.resolveProvider(
-        name as "claude" | "codex" | "cline" | "aider",
+        name as import("./types.ts").ProviderName,
       );
     } catch (err) {
       log(`Override council: provider ${name} unresolved (${(err as Error).message})`);
@@ -2460,7 +2461,7 @@ async function tryBuildRealJudgePanel(
     }
     judges.push({
       name: `judge-${name}`,
-      fn: makeProviderJudge(invoker, name as "claude" | "codex" | "cline" | "aider"),
+      fn: makeProviderJudge(invoker, name as import("./types.ts").ProviderName),
     });
   }
 
@@ -2470,7 +2471,7 @@ async function tryBuildRealJudgePanel(
 
 function makeProviderJudge(
   invoker: import("./types.ts").ProviderInvoker,
-  providerName: "claude" | "codex" | "cline" | "aider",
+  providerName: import("./types.ts").ProviderName,
 ): RealJudgeFn {
   return async (input) => {
     const prompt = buildJudgePrompt(input.finding, input.evidence);
@@ -2572,7 +2573,7 @@ function classifyJudgeResponse(
 // v7.5.4: provider-backed judges with 3-LLM panel by default.
 // Three judge slots fan out across whichever providers are configured:
 //   - LOKI_OVERRIDE_JUDGES env (comma-separated provider names) overrides.
-//   - Default: ["claude", "codex", "cline"] -- 3 distinct providers so a
+//   - Default: ["claude", "opencode"] -- distinct providers so a
 //     model-specific bias does not sweep the panel.
 //   - Falls back to the deterministic stub-judge (TRUSTED_PROOFS check)
 //     when LOKI_OVERRIDE_REAL_JUDGE=0 OR a provider's CLI is missing OR

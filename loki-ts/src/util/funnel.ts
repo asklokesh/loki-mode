@@ -50,7 +50,7 @@ const RUN_STAGES = ["intake", "plan", "wall", "implement", "verify", "fix", "com
 const nonNeg = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v < 1e9 ? Math.round(v) : null);
 
 /** AN-06: stratification buckets. Every value is a member of a fixed list (mirrored in autonomy/lib/telemetry-schema.json); nothing is a path, a name or an exact count. Unknown reads "unknown", never a number. */
-export const RUN_PROVIDERS = ["claude", "codex", "cline", "aider", "opencode", "other", "unknown"] as const;
+export const RUN_PROVIDERS = ["claude", "opencode", "other", "unknown"] as const;
 export const MODEL_TIERS = ["fast", "balanced", "deep", "mixed", "unknown"] as const;
 export const LANG_BUCKETS = ["python", "javascript", "typescript", "go", "rust", "java", "ruby", "php", "csharp", "c_cpp", "shell", "other"] as const;
 export const SIZE_BUCKETS = ["xs", "s", "m", "l", "xl"] as const;
@@ -84,7 +84,7 @@ export const modelTier = (model: unknown, perModel?: unknown): (typeof MODEL_TIE
   const tiers = new Set((names.length ? names : typeof model === "string" ? [model] : []).map(tierOfModel));
   return tiers.size === 0 || tiers.has("unknown") ? "unknown" : tiers.size === 1 ? [...tiers][0]! : "mixed";
 };
-const providerBucket = (v: unknown): (typeof RUN_PROVIDERS)[number] => (typeof v !== "string" ? "unknown" : ["claude", "codex", "cline", "aider", "opencode"].includes(v) ? (v as (typeof RUN_PROVIDERS)[number]) : "other");
+const providerBucket = (v: unknown): (typeof RUN_PROVIDERS)[number] => (typeof v !== "string" ? "unknown" : ["claude", "opencode"].includes(v) ? (v as (typeof RUN_PROVIDERS)[number]) : "other");
 /** Repo-derived buckets: tracked file count, top language by linguist bytes, first detected test runner. Names and paths are read but only the bucket leaves. */
 function repoBuckets(cwd: string): string[] {
   let size: (typeof SIZE_BUCKETS)[number] = "xs", lang: (typeof LANG_BUCKETS)[number] = "other", runner: RunnerKind = "unknown";

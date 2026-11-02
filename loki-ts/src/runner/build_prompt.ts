@@ -1,7 +1,7 @@
 // build_prompt.ts -- Bun port of bash build_prompt() (autonomy/run.sh).
 //
 // Parity-CRITICAL function. Assembles the autonomous-loop prompt that the
-// orchestrator hands to Claude / Codex / Cline / Aider. The function is read-only
+// orchestrator hands to the provider (Claude or opencode). The function is read-only
 // w.r.t. .loki/ state: it only consumes files and env vars, never writes.
 //
 // Two output shapes are produced (selected by env vars):
@@ -12,7 +12,7 @@
 //
 // And two provider modes inside layout (1):
 //   - Full provider (Claude): full RARV / SDLC / autonomy / memory blocks.
-//   - PROVIDER_DEGRADED=true (Codex / Aider): minimal coding-assistant prefix
+//   - PROVIDER_DEGRADED=true (a degraded provider config): minimal coding-assistant prefix
 //     plus dynamic tail with priority/queue/PRD content.
 //
 // All bash variable expansion is resolved BEFORE assembling the prompt string,
@@ -376,7 +376,7 @@ const LSP_GROUNDING_INSTRUCTION =
   `LSP_GROUNDING: When the loki-mode-lsp-proxy MCP server is available, prefer LSP tools for symbol verification BEFORE writing code that references those symbols. Workflow: (1) Need to call \`foo.bar()\` you have not already read? -> mcp__loki-mode-lsp-proxy__lsp_check_exists with symbol='bar' (sub-200ms when cached). If exists:false, do NOT write the call -- use mcp__loki-mode-lsp-proxy__lsp_workspace_symbols with the concept name to find the real symbol, or use Read to see the actual API. (2) Just edited a file? -> mcp__loki-mode-lsp-proxy__lsp_get_diagnostics on that file to see new errors before the next iteration. (3) Need to jump to a definition by name (no file:line known)? -> mcp__loki-mode-lsp-proxy__lsp_find_definition_by_name. Skip these tools silently when the server is not available -- check the tool list, do not retry on errors. Goal: eliminate hallucinated API calls before they ship. ${PARALLEL_TOOL_CALLS_INSTRUCTION}`;
 
 // AGENTS.md instruction (agents.md standard: plain Markdown at repo root,
-// nearest-file-wins, read natively by Claude Code/Codex/etc.). Loki prefers
+// nearest-file-wins, read natively by Claude Code, opencode and other agent CLIs). Loki prefers
 // AGENTS.md and falls back to CLAUDE.md only when AGENTS.md is absent; the two
 // are never merged. Parity with bash: run.sh build_prompt() $agents_md_instruction.
 // Kept byte-identical to the bash route (same precedent as AUTONOMY_OVERRIDE_TEXT
@@ -1008,7 +1008,7 @@ function findEngineFile(rel: string): string | null {
 // Returns "" on absent/empty metrics, a non-zero exit, or a missing python3, so
 // an unmeasured run adds NOTHING to the prompt (no dangling header).
 //
-// DELIBERATELY NOT on the PROVIDER_DEGRADED path (Codex / Aider), same as
+// DELIBERATELY NOT on the PROVIDER_DEGRADED path, same as
 // goalSharpening above: those providers carry a minimal instruction set by
 // design, and this is steering advice, not a requirement. Mirrored in bash --
 // the degraded assembly there does not emit $efficiency_trend either.

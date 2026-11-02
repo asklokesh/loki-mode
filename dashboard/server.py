@@ -1354,7 +1354,7 @@ else:
     app.include_router(api_operator_router)
 
 # D51 Phase A: first-run onboarding + backlog API and its /start page.
-from .api_start import router as api_start_router
+from .api_start import router as api_start_router, removed_provider_message, supported_providers
 app.include_router(api_start_router)
 from .api_runs_v1 import router as api_runs_v1_router
 app.include_router(api_runs_v1_router)
@@ -1543,7 +1543,7 @@ async def agent_card() -> dict:
             "agents": 41,
             "swarms": 8,
             "quality_gates": 8,
-            "providers": ["claude", "codex", "cline", "aider"],
+            "providers": list(supported_providers()),
             "streaming": True,
             "pushNotifications": False,
             "stateTransitionHistory": True,
@@ -3241,9 +3241,7 @@ _START_MODEL_ALLOWLIST = ("haiku", "sonnet", "opus")
 # on a non-Claude provider, and they resolve per-provider through
 # providers/models.sh (loki_tier_alias): small -> fast, medium -> development,
 # high -> planning. Accepting them here is what makes the start-time picker work
-# on codex at all -- the Claude aliases above are meaningless there, so before
-# this every value a codex user could pick normalized to "" and was silently
-# dropped, and the run started on the provider default with no feedback.
+# on opencode at all -- the Claude aliases above are meaningless there.
 _START_MODEL_GENERIC_TIERS = ("small", "medium", "high")
 
 
@@ -3273,8 +3271,8 @@ def _normalize_start_model(raw: str | None) -> str:
 # into `claude --model`. They must not change.
 #
 # What the dashboard OFFERS is a separate question, and it was the bug: the
-# picker rendered those four Claude aliases on every run, so a codex session was
-# offered Haiku/Sonnet/Opus/Fable, none of which codex can dispatch. The offer
+# picker rendered those four Claude aliases on every run, so an opencode session
+# was offered Haiku/Sonnet/Opus/Fable, which it does not dispatch. The offer
 # set below is derived from the RUNNING session's provider plus the canonical
 # providers/model_catalog.json, so the picker never names a model the active
 # provider cannot run.
@@ -3360,7 +3358,7 @@ def _provider_model_offers(provider: str) -> list[dict]:
     Every other provider is offered the generic tiers (small/medium/high), which
     are provider-independent, each annotated with the concrete model id the
     catalog says that provider dispatches. That is what makes the picker read
-    "medium -> gpt-5.6-terra" on codex and "medium -> <catalog sonnet id>" on claude
+    "medium -> <catalog opencode id>" on opencode and "medium -> <catalog sonnet id>" on claude
     without the frontend knowing a single model id.
     """
     if provider == "claude":
@@ -3993,18 +3991,18 @@ class StartBuildRequest(BaseModel):
     def validate_provider(self) -> None:
         """Validate provider is from the supported list.
 
-        Mirrors providers/loader.sh SUPPORTED_PROVIDERS so the dashboard
-        rejects providers the runtime rejects. gemini was deprecated in
-        v7.5.18 (runtime removed); accepting it here let the dashboard
-        report a false "Build started" while run.sh killed the child on the
-        deprecation guard.
+        Reads providers/loader.sh SUPPORTED_PROVIDERS so the dashboard
+        rejects providers the runtime rejects (accepting one the runtime
+        refuses reported a false "Build started"). A removed provider gets
+        the CLI's own migration line.
         """
-        allowed = ["claude", "codex", "cline", "aider"]
+        allowed = supported_providers()
         if self.provider not in allowed:
-            raise ValueError(
+            msg = removed_provider_message(self.provider)
+            raise ValueError(msg or (
                 f"Invalid provider: {self.provider}. "
                 f"Must be one of: {', '.join(allowed)}"
-            )
+            ))
 
 
 def _validate_prd_path(raw_path: str, project_dir: _Path) -> _Path:
@@ -4598,8 +4596,8 @@ async def start_build(request: Request, body: StartBuildRequest):
             # it names a capability class, not a model, and each provider
             # resolves its own latest model for that class via
             # providers/models.sh. Pinning the LOKI_CLAUDE_MODEL_* triple here
-            # would be actively wrong: those variables are inert on codex and
-            # every other non-Claude provider, so the pin would silently do
+            # would be actively wrong: those variables are inert on opencode,
+            # so the pin would silently do
             # nothing. LOKI_SESSION_MODEL is the correct and only lever.
             popen_env["LOKI_SESSION_MODEL"] = start_model
         else:
@@ -5831,7 +5829,7 @@ def _find_orchestrator_pids_for_dir(project_dir: _Path) -> list[int]:
     #   1. /loki-run-*.sh  -- the orchestrator temp script.
     #   2. [LOKI-AUTONOMY-AGENT]  -- the sentinel Loki injects as the first line
     #      of the agent's --append-system-prompt (v7.7.34). This matches the
-    #      claude/codex/aider AGENT process, which has no "loki-run" in its argv
+    #      provider AGENT process, which has no "loki-run" in its argv
     #      and (critically) survives as an orphan (PPID 1) when the orchestrator
     #      is killed -- the cause of "dashboard says stopped but it keeps
     #      running". An interactive provider session never carries this sentinel,
@@ -7764,8 +7762,6 @@ _DEFAULT_PRICING = {
     # Exact ids (a lookup by recorded model string must not fall back to sonnet)
     "claude-haiku-4-5": {"input": 1.00, "output": 5.00, "cache_read": 0.1, "cache_write": 1.25, "cache_write_1h": 2},
     "claude-haiku-5-5": {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2},
-    # OpenAI Codex
-    "gpt-5.3-codex": {"input": 1.75, "output": 14.00},
     # gpt-5.6 line: sol (high) / terra (medium, default) / luna (small).
     # Rates from developers.openai.com/api/docs/pricing (read 2026-10-08),
     # Standard tier, short context (up to 272K). tests/test-pricing-parity.sh pins them.
@@ -8367,7 +8363,7 @@ def _compute_cost_timeline() -> dict:
         for data in records:
             # A PRESENT FILE IS NOT A MEASUREMENT. This previously flipped on
             # for any parseable record, so the all-zero records a pre-v8.51.0
-            # codex run wrote reported total_usd $0.00 with cost_recorded True
+            # non-Claude run wrote reported total_usd $0.00 with cost_recorded True
             # -- the endpoint asserting the run was FREE. Same predicate as
             # /api/cost so the two cost readers cannot disagree.
             measured = _record_is_measured(data)
@@ -8616,7 +8612,6 @@ _PROVIDER_LABELS = {
     "opus": "Opus 5.5",
     "sonnet": "Sonnet 5.5",
     "haiku": "Haiku 5.5",
-    "gpt-5.3-codex": "GPT-5.3 Codex",
     "gpt-5.6-sol": "GPT-5.6 Sol",
     "gpt-5.6-terra": "GPT-5.6 Terra",
     "gpt-5.6-luna": "GPT-5.6 Luna",
@@ -8637,9 +8632,6 @@ _MODEL_PROVIDERS = {
     "opus": "claude",
     "sonnet": "claude",
     "haiku": "claude",
-    "gpt-5.3-codex": "codex",
-    "cline-default": "cline",
-    "aider-default": "aider",
 }
 
 

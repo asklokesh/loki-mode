@@ -22,7 +22,7 @@ autonomy/lib/efficiency_cost.py, imported and never restated. But that
 predicate is satisfied by cost OR tokens, and this gate is about tokens, so it
 is fed the FOUR TOKEN FIELDS ONLY. Feeding it cost_usd as well would be a hole
 in this specific gate: a record carrying a real cost and no usage (the exact
-shape codex wrote before v8.51.0) makes collect_efficiency return
+shape a non-Claude provider wrote before v8.51.0) makes collect_efficiency return
 available=True with integer-zero token counts, and this gate would report
 "WITHIN BUDGET: 0 output tokens" for a run whose tokens were never recorded.
 Verified, not theoretical. Choosing which fields to ask about is not a second

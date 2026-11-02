@@ -5,7 +5,27 @@
 PROVIDERS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # List of supported providers
-SUPPORTED_PROVIDERS=("claude" "codex" "cline" "aider" "opencode")
+SUPPORTED_PROVIDERS=("claude" "opencode")
+
+# Providers that were supported once and are now refused with one migration line.
+# Mirror of REMOVED_PROVIDERS / removedProviderMessage in
+# loki-ts/src/runner/router/cost_preview.ts (tests/min/providers-supported.sh
+# checks the two messages are byte-identical).
+REMOVED_PROVIDERS=("codex" "cline" "aider" "gemini")
+
+# loki_removed_provider_message NAME -- the one line a removed provider prints.
+loki_removed_provider_message() {
+    printf "loki: provider '%s' is no longer supported. Supported providers: claude (Claude Code CLI, or an Anthropic API key through the Agent SDK) and opencode (any model, including OpenRouter via OPENROUTER_API_KEY). Switch with --provider claude or --provider opencode, or unset LOKI_PROVIDER.\n" "$1"
+}
+
+# loki_is_removed_provider NAME -- 0 when NAME is a removed provider.
+loki_is_removed_provider() {
+    local p
+    for p in "${REMOVED_PROVIDERS[@]}"; do
+        [ "$p" = "${1:-}" ] && return 0
+    done
+    return 1
+}
 
 # Default provider
 DEFAULT_PROVIDER="claude"
@@ -216,10 +236,9 @@ print_capability_matrix() {
 }
 
 # Auto-detect best available provider
-# BUG-PROV-007 fix: includes every supported provider in priority order
-# Priority: Claude (Tier 1, full) > Cline (Tier 2, near-full) > Codex/Aider (Tier 3, degraded) > opencode
+# Priority: Claude (Tier 1, full) > opencode (model-agnostic)
 auto_detect_provider() {
-    for p in claude cline codex aider opencode; do
+    for p in claude opencode; do
         if check_provider_installed "$p"; then
             echo "$p"
             return 0

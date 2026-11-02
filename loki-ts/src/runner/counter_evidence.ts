@@ -73,8 +73,7 @@ export type OverrideOutcome = {
 };
 
 // Judge function -- the override council fans out to 3 of these. Production
-// wires this to the existing 4-provider abstraction (claude/codex/
-// cline/aider). Tests inject deterministic stubs.
+// wires this to the provider abstraction (claude/opencode). Tests inject deterministic stubs.
 export type OverrideJudgeFn = (input: {
   finding: Finding;
   evidence: CounterEvidence;

@@ -280,7 +280,7 @@ loki notify test
 
 ### Wrong Provider
 
-**Symptom:** Using Codex when Claude expected.
+**Symptom:** Using opencode when Claude expected.
 
 **Solution:**
 ```bash
@@ -292,14 +292,26 @@ loki provider set claude
 
 **Symptom:**
 ```
-Error: Provider 'codex' not installed
+Error: Provider 'opencode' not installed
 ```
 
 **Solution:**
 ```bash
 # Install the missing CLI
-npm install -g @openai/codex-cli
-codex login
+npm install -g opencode-ai
+opencode auth login
+```
+
+### Removed Provider
+
+**Symptom:** `loki: provider 'codex' is no longer supported. ...` and exit code 2.
+
+**Solution:** codex, cline, aider and gemini were removed. Use `--provider claude`
+or `--provider opencode` (opencode reaches OpenRouter models with
+`OPENROUTER_API_KEY`), or unset `LOKI_PROVIDER`:
+```bash
+unset LOKI_PROVIDER
+loki provider set claude
 ```
 
 ---

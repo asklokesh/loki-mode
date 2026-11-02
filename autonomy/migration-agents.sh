@@ -17,7 +17,7 @@
 #   agent_characterization_tester "/path/to/code" "/path/to/migration"
 #   migration_agent_dispatch "archaeologist" "/path/to/code" "/path/to/migration"
 #
-# Each function echoes a structured prompt suitable for claude/codex/gemini.
+# Each function echoes a structured prompt suitable for claude or opencode.
 # The migration directory stores all artifacts (docs/, tests/, seams.json, etc).
 #
 # Environment Variables:

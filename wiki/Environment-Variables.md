@@ -8,7 +8,7 @@ Complete reference for all Loki Mode environment variables.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOKI_PROVIDER` | `claude` | AI provider: claude, codex, cline, aider, opencode |
+| `LOKI_PROVIDER` | `claude` | AI provider: claude or opencode (codex, cline, aider and gemini were removed and exit 2) |
 | `LOKI_MAX_RETRIES` | `50` | Maximum retry attempts |
 | `LOKI_BASE_WAIT` | `60` | Base wait time (seconds) |
 | `LOKI_MAX_WAIT` | `3600` | Maximum wait time (seconds) |

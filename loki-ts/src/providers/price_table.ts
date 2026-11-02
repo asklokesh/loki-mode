@@ -1,5 +1,6 @@
-// PARITY-COST: per-model USD price table (per 1M tokens) used ONLY to estimate cost for providers whose CLI
-// does not print a dollar figure (codex, cline, aider). Anything priced from this table is flagged estimated=true.
+// PARITY-COST: per-model USD price table (per 1M tokens) used ONLY to estimate cost for a provider whose CLI
+// does not print a dollar figure (opencode, whose openrouter/<vendor>/<model> ids match these rows by substring).
+// Anything priced from this table is flagged estimated=true.
 // The Claude path never reads this file; it keeps using runner/budget.ts and provider-reported dollars.
 // Every model loki-ts/data/model-pricing.json prices (the one table runner/budget.ts reads) is taken from it;
 // the rows below are only the models that file does not carry.
@@ -25,7 +26,6 @@ export const PRICE_TABLE: Readonly<Record<string, Price>> = Object.freeze({
   "claude-opus": FROM_PRICING_JSON["opus"]!,
   "claude-sonnet": FROM_PRICING_JSON["sonnet"]!,
   "claude-haiku": FROM_PRICING_JSON["haiku"]!,
-  "gpt-5-codex": { input: 1.25, output: 10.0, cachedInput: 0.125 },
   // Mini and nano tiers: OpenAI API pricing page https://openai.com/api/pricing/ (per 1M tokens).
   // Longest-substring match means these must exist or "gpt-5-mini" resolves to the full "gpt-5" entry.
   "gpt-5-mini": { input: 0.25, output: 2.0, cachedInput: 0.025 },
@@ -38,8 +38,7 @@ export const PRICE_TABLE: Readonly<Record<string, Price>> = Object.freeze({
   "gpt-4o": { input: 2.5, output: 10.0, cachedInput: 1.25 },
   "o4-mini": { input: 1.1, output: 4.4, cachedInput: 0.275 },
   "o3": { input: 2.0, output: 8.0, cachedInput: 0.5 },
-  "gemini-2.5-pro": { input: 1.25, output: 10.0 },
-  "gemini": { input: 1.25, output: 10.0 },
+  "gemini": { input: 1.25, output: 10.0 }, // Google model family (openrouter/google/...), reached through opencode
   "deepseek": { input: 0.28, output: 0.42 },
   "minimax": { input: 0.3, output: 1.2 },
 });

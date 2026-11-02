@@ -220,7 +220,7 @@ except Exception:
 # Decide whether model verification can be attempted.
 #
 # v8.2.0: this used to require LOKI_PROVIDER=claude specifically, so a user on
-# codex/opencode/cline/aider silently lost done-recognition. That is a
+# opencode silently lost done-recognition. That is a
 # CAPABILITY question, not an identity question -- the real requirement is "can
 # we reach a model AND bound the call with a timeout". Any provider exposing the
 # argv seam (provider_invoke_argv, see providers/claude.sh) satisfies both.

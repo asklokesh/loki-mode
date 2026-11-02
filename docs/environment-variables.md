@@ -23,7 +23,7 @@ with nowhere to look them up.
 |---|---|---|
 | `LOKI_PRD_FILE` | none | Path to a spec file, as an alternative to the positional argument. |
 | `LOKI_MAX_ITERATIONS` | `1000` | Hard cap on iterations. Reaching it is a deterministic terminal failure, not a success. Also in `config schema`. |
-| `LOKI_BUDGET_LIMIT` | `100.00` | Spend cap in USD on the previous loop (the Loki 10 engine uses `--max-cost`, `budgets.per_run` or a default of $100 only when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set; none on a subscription). Also enforced by kill on codex, cline, aider and opencode in the Loki 10 engine. Breaching it **pauses** the run (writes `.loki/PAUSE` and saves state); it never kills work or discards a deliverable. Remove `.loki/PAUSE` to resume, or raise the cap. Set to `""` for no cap. A warning is logged at 80%. |
+| `LOKI_BUDGET_LIMIT` | `100.00` | Spend cap in USD on the previous loop (the Loki 10 engine uses `--max-cost`, `budgets.per_run` or a default of $100 only when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set; none on a subscription). Also enforced by kill on opencode in the Loki 10 engine. Breaching it **pauses** the run (writes `.loki/PAUSE` and saves state); it never kills work or discards a deliverable. Remove `.loki/PAUSE` to resume, or raise the cap. Set to `""` for no cap. A warning is logged at 80%. |
 | `LOKI_MAX_DURATION` | unset (no cap) | Wall-clock cap in seconds. Stops cleanly at the next iteration boundary with a `max_duration_reached` terminal status. `loki start --max-duration` also accepts `90m` / `2h`. |
 | `LOKI_AUTO_CONFIRM` | unset | `true`/`false` to control prompts. Takes precedence over `CI`. |
 | `LOKI_CONFIG_DUMP` | `0` | `1` prints the resolved configuration and exits **without starting a run or spending anything**. |
@@ -38,7 +38,7 @@ interact and why hitting one is a failure rather than a success.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `LOKI_PROVIDER` | `claude` | `claude`, `cline`, `codex`, `aider`, or `opencode`. |
+| `LOKI_PROVIDER` | `claude` | `claude` or `opencode`. `codex`, `cline`, `aider` and `gemini` were removed and exit 2 with a migration line. |
 | `LOKI_SESSION_MODEL` | `medium` | The capability tier for the run: `small`, `medium`, or `high`. See below. |
 | `LOKI_MAX_TIER` | unlimited | Caps model tier, so a run cannot escalate past what you are willing to pay for. |
 | `LOKI_MODEL_OVERRIDE` | unset | Overrides the resolved model outright. A route spec (`ollama/<id>`) works too. |
@@ -61,11 +61,11 @@ interact and why hitting one is a failure rather than a success.
 You do not need to know any vendor's model names. Ask for a capability class
 and each provider supplies its own latest model in that class:
 
-| Tier | Means | Claude | Codex | Cline / Aider / OpenCode |
-|---|---|---|---|---|
-| `small` | cheap and fast | `claude-haiku-4-5` | account default | `deepseek-chat` |
-| `medium` | the workhorse (**default**) | `claude-sonnet-5` | account default | `deepseek-v3.2` |
-| `high` | the most capable | `claude-opus-4-8` | account default | `deepseek-v3.2` |
+| Tier | Means | Claude | opencode |
+|---|---|---|---|
+| `small` | cheap and fast | `claude-haiku-4-5` | `deepseek-chat` |
+| `medium` | the workhorse (**default**) | `claude-sonnet-5` | `deepseek-v3.2` |
+| `high` | the most capable | `claude-opus-4-8` | `deepseek-v3.2` |
 
 ```bash
 LOKI_SESSION_MODEL=small loki start ./prd.md    # or: loki start --session-model small ./prd.md
@@ -79,9 +79,7 @@ use, so setting it explicitly changes nothing. The older spellings
 **To see what a tier actually resolves to on your machine, run `loki provider
 models`.** It prints the dispatched model per tier per provider along with
 which environment variable set it, so you can verify what you will really get
-rather than trusting the table above. Codex deliberately shows a provider
-default: it sends no `--model` flag and lets Codex pick a model appropriate to
-your account, because a hardcoded name breaks ChatGPT-account users.
+rather than trusting the table above.
 
 Override a single tier for one provider with `LOKI_<PROVIDER>_MODEL_<TIER>`
 (for example `LOKI_CLAUDE_MODEL_FAST=claude-haiku-4-5`), or every tier at once

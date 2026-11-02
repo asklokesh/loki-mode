@@ -109,7 +109,7 @@ Real-time context window monitoring with three tabs:
 | **Timeline** | Per-iteration bar chart of token usage. Compaction events shown as dashed separators. |
 | **Breakdown** | Per-iteration input/output/cache stacked bars with cost breakdown. |
 
-Provider-agnostic: works with Claude (session JSONL parsing), Codex, Cline, and Aider (direct token reporting).
+Provider-agnostic: works with Claude (session JSONL parsing) and opencode.
 
 Keyboard shortcut: `Cmd+9`
 

@@ -1495,7 +1495,7 @@ async def loki_memory_capture_session_summary(
     structured Episode into the project's .loki/memory/ store. Solves
     the diagnosis root cause where memory only captured during `loki
     start` sessions, missing all interactive Claude Code / Cursor /
-    Cline / Aider work.
+    opencode work.
 
     Args:
         goal: Short description of what the session tried to accomplish

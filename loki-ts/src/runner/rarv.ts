@@ -15,7 +15,6 @@
 import { existsSync, readdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 import { resolveClaudeModel } from "../util/claude_model.ts";
-import { codexEffortForTier } from "../providers/claude_flags.ts";
 
 // ---------------------------------------------------------------------------
 // RARV tier mapping
@@ -23,7 +22,7 @@ import { codexEffortForTier } from "../providers/claude_flags.ts";
 
 export type RarvTier = "planning" | "development" | "fast" | "fable";
 export type RarvPhase = "REASON" | "ACT" | "REFLECT" | "VERIFY";
-export type Provider = "claude" | "codex" | "cline" | "aider" | "opencode";
+export type Provider = "claude" | "opencode";
 
 export interface GetRarvTierOptions {
   // When set and `legacy` is false, the session-pinned model overrides the
@@ -135,12 +134,6 @@ export function getProviderTierParam(tier: RarvTier | string, provider: Provider
         default:
           return "sonnet";
       }
-    case "codex":
-      return codexEffortForTier(tier);
-    case "cline":
-      return process.env["CLINE_DEFAULT_MODEL"] ?? process.env["LOKI_CLINE_MODEL"] ?? "default";
-    case "aider":
-      return process.env["AIDER_DEFAULT_MODEL"] ?? process.env["LOKI_AIDER_MODEL"] ?? resolveClaudeModel("opus");
     case "opencode":
       return process.env["LOKI_OPENCODE_MODEL"] ?? "default";
     default:

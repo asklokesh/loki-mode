@@ -234,23 +234,24 @@ Claude is the default provider and the only CLI pre-installed in this image.
 | Provider | Tier | In this image | Notes |
 |----------|------|---------------|-------|
 | Claude Code | Tier 1 (default) | Yes | Full feature support (subagents, parallel, Task tool, MCP) |
-| OpenAI Codex CLI | Tier 3 | No | Degraded mode (sequential only). Install the CLI in a derived image. |
-| Cline | Tier 2 | No | Reduced parallelism. Install the CLI in a derived image. |
-| Aider | Tier 3 | No | Degraded mode. Install the CLI in a derived image. |
+| opencode | Model-agnostic | No | Any model, including OpenRouter. Install the CLI in a derived image. |
 
-To use a Tier 2/3 provider, build a derived image that installs that provider's CLI, then set `LOKI_PROVIDER` and the relevant API key. Example skeleton:
+codex, cline, aider and gemini were removed; `LOKI_PROVIDER` set to one of them exits 2 with a migration line.
+
+To use opencode, build a derived image that installs its CLI, then set `LOKI_PROVIDER` and the relevant API key. Example skeleton:
 
 ```dockerfile
 FROM asklokesh/loki-mode:latest
 USER root
-# install your provider CLI here (for example, the Codex CLI)
+RUN npm install -g opencode-ai
 USER loki
 ```
 
 ```bash
 docker run -it \
-  -e LOKI_PROVIDER=codex \
-  -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+  -e LOKI_PROVIDER=opencode \
+  -e LOKI_OPENCODE_MODEL=openrouter/deepseek/deepseek-v3.2 \
+  -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
   -v "$(pwd)":/workspace \
   your-derived-image start prd.md
 ```
@@ -287,14 +288,14 @@ docker run -it \
 | Variable | Description |
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | Anthropic API key (Auth Method 1, default for Claude provider) |
-| `OPENAI_API_KEY` | OpenAI API key (required only for the Codex provider in a derived image) |
+| `OPENROUTER_API_KEY` | OpenRouter key (for the opencode provider with an `openrouter/...` model, in a derived image) |
 | `GITHUB_TOKEN` | GitHub personal access token |
 
 ### Core Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOKI_PROVIDER` | AI provider: `claude`, `codex`, `cline`, `aider` | `claude` |
+| `LOKI_PROVIDER` | AI provider: `claude` or `opencode` | `claude` |
 | `LOKI_MAX_ITERATIONS` | Max autonomous iteration cycles | `1000` |
 | `LOKI_MAX_RETRIES` | Max retry attempts per iteration | `50` |
 | `LOKI_DASHBOARD` | Enable dashboard server | `true` |
@@ -369,7 +370,7 @@ docker run -it \
 ### Start Options
 
 ```
---provider NAME     AI provider: claude (default), codex, cline, aider
+--provider NAME     AI provider: claude (default) or opencode
 --parallel          Enable parallel mode with git worktrees
 --bg, --background  Run in background
 --simple            Force simple complexity tier

@@ -482,16 +482,16 @@ Audit: ~/.loki/dashboard/audit/*.jsonl
                          |   (claude)     |
                          +-------+--------+
                                  |
-         +-----------------------+-----------------------+
-         |                       |                       |
-         v                       v                       v
-+--------+--------+    +--------+--------+    +--------+--------+
-|     CLAUDE      |    |     CODEX       |    |  CLINE/AIDER    |
-| Full features   |    | Degraded mode   |    | Degraded mode   |
-| - Task tool     |    | - Sequential    |    | - Sequential    |
-| - Parallel      |    | - No subagents  |    | - No subagents  |
-| - MCP           |    | - No MCP        |    | - No MCP        |
-+-----------------+    +-----------------+    +-----------------+
+         +-----------------------+
+         |                       |
+         v                       v
++--------+--------+    +--------+--------+
+|     CLAUDE      |    |    OPENCODE     |
+| Full features   |    | Any model       |
+| - Task tool     |    | - OpenRouter    |
+| - Parallel      |    | - Sequential    |
+| - MCP           |    | - MCP           |
++-----------------+    +-----------------+
 ```
 
 ---

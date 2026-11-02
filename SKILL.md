@@ -15,7 +15,7 @@ description: Runs an autonomous software factory that knows what it is supposed 
 
 **Evidence Receipt (verify it yourself).** Every run writes a receipt to `.loki/proofs/<run_id>/` (opt out with `LOKI_PROOF=0`) that separates deterministic FACTS (git diff with base/head SHAs and a `diff_sha256`, the test command + exit code, the build command + exit code, each gate verdict) from AI ASSESSMENTS (the council verdict, labeled judgment not proof). The headline is computed only from the facts: VERIFIED (tests ran a real command and exited 0, diff non-empty, nothing skipped), VERIFIED WITH GAPS (each gap listed by name), or NOT VERIFIED (a check ran and failed). Inspect and re-check with `loki proof list|show <id>|verify <id>` (aliased `loki receipt`); `loki proof verify` re-hashes the receipt (tamper) and re-derives the diff from the recorded base SHA against the live repo (drift), exiting 0 clean / 1 tamper-or-drift / 2 could not check (64 usage, 66 unknown id; see `docs/exit-codes.md`). This is honesty-of-done, not a claim that the code is bug-free.
 
-**Provider-agnostic (stable since v5.0.0):** runs on Claude/Codex/Cline/Aider with abstract model tiers and degraded mode for non-Claude providers; no vendor lock-in. Gemini deprecated v7.5.18. See `skills/providers.md`. **Legacy track (v8.0.0):** the Anthropic Agent SDK route (see below), spec-mode expansion for OpenAPI/GraphQL/Postman contracts, the runtime-boot and secret-leak evidence axes, and `loki steer` / `loki why` for mid-run control. Earlier tracks: LSP grounding as a first-class agent tool (v7.7.x) and Phase 1 RARV-C closure (real provider judges, gate-failure flock, synthetic PRD e2e, status `--json`).
+**Providers:** Claude Code (full), the Anthropic Agent SDK path for API-key users (still `--provider claude`), and opencode (any model, including OpenRouter). codex, cline, aider and gemini were removed and exit 2 with a migration line. See `skills/providers.md`. **Legacy track (v8.0.0):** the Anthropic Agent SDK route (see below), spec-mode expansion for OpenAPI/GraphQL/Postman contracts, the runtime-boot and secret-leak evidence axes, and `loki steer` / `loki why` for mid-run control. Earlier tracks: LSP grounding as a first-class agent tool (v7.7.x) and Phase 1 RARV-C closure (real provider judges, gate-failure flock, synthetic PRD e2e, status `--json`).
 
 **Runtime migration:** Bash-to-Bun migration. `bin/loki` is the router: the commands in its Bun-route `case` (read-only ones such as `version`, `status`, `stats`, `doctor`, `provider`, `memory`, plus stateful ones such as `rollback`, `trust`, `proof`/`receipt`, `control`, `answer`) run through `loki-ts/src/cli.ts` on Bun; the rest, and some flag forms (for example `doctor --airgap`, `trust detail`), run on Bash (`autonomy/loki`). `start` is Bash by default and goes to Bun only for the SDK loop (`LOKI_SDK_LOOP=1`) or Loki 10 engine inputs (issue refs, multi-word tasks). Read `bin/loki` and `cli.ts` for the exact set rather than trusting a list here. Rollback: `LOKI_LEGACY_BASH=1`. See `docs/architecture/ADR-001-runtime-migration.md`.
 
@@ -113,17 +113,17 @@ These rules guide autonomous operation. Test results and code quality always tak
 
 **Default since v5.3.0 (reaffirmed in v7.5.13):** Haiku disabled for quality. Use `--allow-haiku` or `LOKI_ALLOW_HAIKU=true` to enable.
 
-| Task Type | Tier | Claude (default) | Claude (--allow-haiku) | Codex (GPT-5.3) |
-|-----------|------|------------------|------------------------|------------------|
-| Spec analysis, architecture, system design | **planning** | opus | opus | effort=xhigh |
-| Feature implementation, complex bugs | **development** | opus | sonnet | effort=high |
-| Code review (planned: 3 parallel reviewers) | **development** | opus | sonnet | effort=high |
-| Integration tests, E2E, deployment | **development** | opus | sonnet | effort=high |
-| Unit tests, linting, docs, simple fixes | **fast** | sonnet | haiku | effort=low |
+| Task Type | Tier | Claude (default) | Claude (--allow-haiku) |
+|-----------|------|------------------|------------------------|
+| Spec analysis, architecture, system design | **planning** | opus | opus |
+| Feature implementation, complex bugs | **development** | opus | sonnet |
+| Code review (planned: 3 parallel reviewers) | **development** | opus | sonnet |
+| Integration tests, E2E, deployment | **development** | opus | sonnet |
+| Unit tests, linting, docs, simple fixes | **fast** | sonnet | haiku |
 
 **Parallelization rule (Claude only):** Launch independent tasks in parallel.
 
-**Degraded mode (Codex/Cline/Aider):** No parallel agents or Task tool. Codex has MCP support. Runs RARV cycle sequentially. See `skills/model-selection.md`.
+**opencode:** one `provider/model` for every tier (`LOKI_OPENCODE_MODEL`), no parallel agents or Task tool, MCP supported. Runs the RARV cycle sequentially. See `skills/model-selection.md`.
 
 **Git worktree parallelism:** For true parallel feature development, use `--parallel` flag with run.sh. See `skills/parallel-workflows.md`.
 
@@ -200,7 +200,7 @@ Pick modules from this table, one hop from here. Each module over 100 lines open
 | Artifacts, reports | [artifacts.md](skills/artifacts.md) |
 | Parallel features, git worktrees, 50+ agents | [parallel-workflows.md](skills/parallel-workflows.md) |
 | GitHub issues, PRs, syncing | [github-integration.md](skills/github-integration.md) |
-| Multi-provider (Codex, Cline, Aider) | [providers.md](skills/providers.md) |
+| Providers (Claude, Agent SDK, opencode/OpenRouter) | [providers.md](skills/providers.md) |
 | OpenSpec delta context, brownfield changes | [openspec-integration.md](skills/openspec-integration.md) |
 | MiroFish validation, `--mirofish` | [mirofish-integration.md](skills/mirofish-integration.md) |
 | Writing documentation, `loki docs` | [documentation.md](skills/documentation.md) |
@@ -252,9 +252,7 @@ loki start --issue 123                       # Explicit issue mode (overrides de
 
 # With provider selection (supports .md and .json PRDs)
 loki start --provider claude ./prd.md        # Default, full features
-loki start --provider codex ./prd.json       # GPT-5.3 Codex, degraded mode
-loki start --provider cline ./prd.md         # Cline CLI, degraded mode
-loki start --provider aider ./prd.md         # Aider (18+ providers), degraded mode
+loki start --provider opencode --model openrouter/deepseek/deepseek-v3.2 ./prd.md  # opencode via OpenRouter (OPENROUTER_API_KEY)
 
 # Parallel and auto-merge (legacy loop only; the default engine refuses these flags)
 loki start ./prd.md --parallel --engine legacy
@@ -275,10 +273,9 @@ loki docker --image IMG start prd.md          # override the image
 
 **Provider capabilities:**
 - **Claude**: Opus 4.6, 1M context (beta), 128K output, adaptive thinking, agent teams, full features (Task tool, parallel agents, MCP)
-- **Codex**: GPT-5.3, 400K context, 128K output, MCP support, --full-auto mode, degraded (sequential only, no Task tool)
-- **Cline**: Multi-provider CLI, degraded mode (sequential only, no Task tool)
-- **Aider**: 18+ provider backends, degraded mode (sequential only, no Task tool)
-- **Google Gemini CLI**: DEPRECATED starting v7.5.18 (upstream deprecated; runtime removed)
+- **Claude via the Agent SDK**: same provider, for `ANTHROPIC_API_KEY` users without a CLI login
+- **opencode**: 75+ model providers including OpenRouter (`openrouter/<vendor>/<model>`), MCP support, sequential only (no Task tool)
+- **Removed**: codex, cline, aider, gemini (selecting one exits 2 naming claude and opencode)
 
 ---
 

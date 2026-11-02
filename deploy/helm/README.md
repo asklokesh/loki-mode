@@ -458,7 +458,7 @@ report air-gap ready while a required one remains. It also names what it does
 not audit: package installs for the built app, the dashboard venv and
 quality-gate tools, and the delegate PR to your git remote. On a default install
 the required line is model inference to the provider API. The output names the
-remediation, which is a local-weights model (an in-network claude or codex
+remediation, which is a local-weights model (an in-network claude or opencode
 gateway is still counted as required egress):
 
 ```bash

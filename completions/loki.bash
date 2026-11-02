@@ -18,10 +18,8 @@ _loki_completion() {
         start|quick)
             # If the previous word was --provider, show provider names
             if [[ "$prev" == "--provider" ]]; then
-                # Active providers (loki rejects gemini since v7.5.18; cline/aider
-                # are supported). Keep in sync with providers/loader.sh
-                # SUPPORTED_PROVIDERS.
-                COMPREPLY=( $(compgen -W "claude cline codex aider opencode" -- "$cur") )
+                # Keep in sync with providers/loader.sh SUPPORTED_PROVIDERS.
+                COMPREPLY=( $(compgen -W "claude opencode" -- "$cur") )
                 return 0
             fi
 

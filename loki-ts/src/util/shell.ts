@@ -1,6 +1,6 @@
 // Bun.$ wrapper with timeout, structured errors, exit-code propagation.
 // Foundation for every command port that needs to call out to system tools
-// (claude, codex, jq, git, docker, curl, etc.).
+// (claude, opencode, jq, git, docker, curl, etc.).
 import { $ } from "bun";
 import { envWithPwd, killGroup } from "../runner/worker_proc.ts";
 
@@ -22,7 +22,7 @@ export type ShellOpts = {
 // v7.77.0 (W77-D LOW): cap how many bytes we slurp from a child's stdout.
 // Children here are trusted + time-bounded, so this is a defensive ceiling
 // against a runaway producer wedging the parent's heap, not a security
-// boundary. 16MB is far above any real CLI output (claude/codex verdicts,
+// boundary. 16MB is far above any real CLI output (claude/opencode verdicts,
 // git/docker/jq output) we parse. Output beyond the cap is truncated.
 export const MAX_STDOUT_BYTES = 16 * 1024 * 1024;
 
@@ -88,7 +88,7 @@ export class ShellError extends Error {
 //
 // v7.5.2 fixes (bug-hunt H6):
 //   - SIGTERM -> SIGKILL escalation: a subprocess that ignores SIGTERM
-//     (common with python wrappers, codex/claude shells trapping signals)
+//     (common with python wrappers, opencode/claude shells trapping signals)
 //     used to deadlock the await Promise.all forever. Now SIGTERM first,
 //     then SIGKILL after a 2s grace, so the timeout actually fires.
 //   - Timer cleanup in finally: if `new Response(proc.stdout).text()`

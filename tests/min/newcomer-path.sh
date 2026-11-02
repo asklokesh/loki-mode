@@ -311,11 +311,11 @@ else
 fi
 out="$(cd "$REPO" && "${l009_env[@]}" LOKI_PROVIDER=foo ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "fix the login bug" </dev/null 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && ok "L009 LOKI_PROVIDER=foo exits 2" || bad "L009 LOKI_PROVIDER=foo exited $rc"
-has "L009 LOKI_PROVIDER=foo names the five providers" "$out" "claude, codex, cline, aider, opencode"
+has "L009 LOKI_PROVIDER=foo names the two providers" "$out" "use one of: claude, opencode"
 # plan --spec drafts the spec in a model session, so it checks the provider like a run.
 out="$(cd "$T/l009-prd" && "${l009_env[@]}" LOKI_PROVIDER=foo ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" plan "add a multiply function" --spec </dev/null 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && ok "L009 LOKI_PROVIDER=foo plan --spec exits 2" || bad "L009 LOKI_PROVIDER=foo plan --spec exited $rc"
-has "L009 LOKI_PROVIDER=foo plan --spec prints the provider fix" "$out" "use one of: claude, codex, cline, aider, opencode"
+has "L009 LOKI_PROVIDER=foo plan --spec prints the provider fix" "$out" "use one of: claude, opencode"
 # Commands that start no model session never check the provider.
 for cmd in "keys export" "verify --pubkey $T/none.jwk" "export --sarif" "verify"; do
     out="$(cd "$T/l009-prd" && "${l009_env[@]}" LOKI_PROVIDER=foo LOKI_RECEIPT_SIGNING_KEY_FILE="$T/l009a.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" ${cmd} </dev/null 2>&1)"; rc=$?

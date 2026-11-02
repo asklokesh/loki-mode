@@ -7,7 +7,7 @@
 // As of v6.82.0 the default detection path is the structured signal written
 // by the loki_complete_task MCP tool to .loki/signals/TASK_COMPLETION_CLAIMED.
 // A fallback signal, .loki/signals/COMPLETION_REQUESTED, is also honored: it is
-// the ONLY completion signal available to degraded providers (Codex/Aider) that
+// the ONLY completion signal available to degraded providers that
 // lack the MCP tool and are told to `touch` the file directly. The legacy
 // grep-based completion-promise text match is retained behind the
 // LOKI_LEGACY_COMPLETION_MATCH=true env flag for rollback parity with bash.
@@ -54,7 +54,7 @@ export async function checkCompletionPromise(
   }
 
   // (a2) Fallback signal: .loki/signals/COMPLETION_REQUESTED. Degraded providers
-  //      (Codex/Aider) that lack the loki_complete_task MCP tool are instructed
+  //      (no MCP) that lack the loki_complete_task MCP tool are instructed
   //      by build_prompt.ts:188-190 to `touch` this file directly, so it is the
   //      ONLY completion signal available to them. Presence alone is sufficient;
   //      bash synthesizes a payload even when the file is empty

@@ -43,8 +43,8 @@ export function loadReviewStageAgent(repoDir: string, env: NodeJS.ProcessEnv = p
 }
 
 // Review provider selection (moved from engine10/stages/xreview.ts to keep the engine core inside its line budget).
-export type ReviewProvider = "codex" | "claude";
-export const asProvider = (v: string | undefined): ReviewProvider | null => { const s = v?.trim().toLowerCase(); return s === "codex" || s === "claude" ? s : null; }; export const isOff = (v: string | undefined): boolean => /^(off|none|false|0)$/i.test(v?.trim() ?? "");
+export type ReviewProvider = "claude";
+export const asProvider = (v: string | undefined): ReviewProvider | null => { const s = v?.trim().toLowerCase(); return s === "claude" ? s : null; }; export const isOff = (v: string | undefined): boolean => /^(off|none|false|0)$/i.test(v?.trim() ?? "");
 /** Explicit setting: env wins over loki.yaml top-level `review:`. A provider, "off", or undefined (nothing set). */
 export function explicitReview(repoDir: string, env: NodeJS.ProcessEnv): ReviewProvider | "off" | undefined {
   const flag = xvendorDefault(env); // explicit off is only meaningful (and only honoured) with the flag on; off keeps the pre-XV-1 behaviour
@@ -63,10 +63,7 @@ export function vendorAvailable(p: ReviewProvider, env: NodeJS.ProcessEnv = proc
   const cli = reviewCli(p, env);
   return !!Bun.which(cli, { PATH: env["PATH"] ?? process.env["PATH"] ?? "" });
 }
-/** Explicit setting always wins (including `off`). With LOKI_XVENDOR_DEFAULT=1 and nothing set, the other vendor than the builder when its CLI is installed. Else null (off). */
-export function reviewProvider(repoDir: string, env: NodeJS.ProcessEnv = process.env, builder?: string): ReviewProvider | null {
-  const x = explicitReview(repoDir, env); if (x) return x === "off" ? null : x;
-  if (!xvendorDefault(env)) return null;
-  const other: ReviewProvider | null = builder === "claude" ? "codex" : builder === "codex" ? "claude" : null;
-  return other && vendorAvailable(other, env) ? other : null;
+/** Explicit setting always wins (including `off`). Nothing set: null (off). The XV-1 other-vendor default had one pair, and its non-Claude half is a removed provider, so there is no other vendor to default to. */
+export function reviewProvider(repoDir: string, env: NodeJS.ProcessEnv = process.env, _builder?: string): ReviewProvider | null {
+  const x = explicitReview(repoDir, env); return x && x !== "off" ? x : null;
 }

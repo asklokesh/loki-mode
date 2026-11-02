@@ -242,21 +242,30 @@ if [ -z "${LOKI_TELEMETRY_DISABLED:-}" ] && [ "${DO_NOT_TRACK:-}" != "1" ] && [ 
     fi
 fi
 
-# v7.5.18: Guard against deprecated LOKI_PROVIDER=gemini before routing.
-# Fires for all commands (Bun-routed and bash-routed) so users get a clear
-# error regardless of which subcommand they invoke.
-if [ "${LOKI_PROVIDER:-}" = "gemini" ]; then
-    echo "Error: Provider 'gemini' is deprecated as of v7.5.18 and has been removed." >&2
-    echo "Active providers: claude, codex, cline, aider, opencode" >&2
-    echo "Unset LOKI_PROVIDER or use: LOKI_PROVIDER=claude" >&2
-    exit 1
-fi
+# A removed provider (REMOVED_PROVIDERS) exits 2 with one migration line,
+# from LOKI_PROVIDER or a --provider flag, before any routing, so every command
+# (Bun-routed and bash-routed) says the same thing. The list and the message live
+# in providers/loader.sh (side-effect free: variables and functions only).
+# shellcheck source=/dev/null
+source "$REPO_ROOT/providers/loader.sh"
+_rp_name="${LOKI_PROVIDER:-}"; _rp_next=0
+for _rp_a in "$@"; do
+    loki_is_removed_provider "$_rp_name" && break
+    if [ "$_rp_next" = "1" ]; then _rp_name="$_rp_a"; _rp_next=0; continue; fi
+    case "$_rp_a" in
+        --provider) _rp_next=1 ;;
+        --provider=*) _rp_name="${_rp_a#--provider=}" ;;
+    esac
+done
+if loki_is_removed_provider "$_rp_name"; then loki_removed_provider_message "$_rp_name" >&2; exit 2; fi
+unset _rp_next _rp_a _rp_name
 
 # OC-MODELS: `loki start|quick ... --model <id>` (also flag-first). One place maps the flag to
 # env before ANY engine/route decision, so engine10, the Bun start command and the legacy
-# loop all see the same thing. Route specs (openrouter|ollama|lmstudio|llamacpp|vllm|custom/<id>)
-# set LOKI_MODEL_ROUTE (claude child only); tier names and Claude aliases become --session-model;
-# any other id sets LOKI_OPENCODE_MODEL for opencode or LOKI_MODEL_OVERRIDE otherwise.
+# loop all see the same thing. With --provider opencode every id (openrouter/<vendor>/<model>
+# included) is opencode's own provider/model and sets LOKI_OPENCODE_MODEL. For claude, route specs
+# (openrouter|ollama|lmstudio|llamacpp|vllm|custom/<id>) set LOKI_MODEL_ROUTE; tier names and
+# Claude aliases become --session-model; any other id sets LOKI_MODEL_OVERRIDE.
 case "${1:-}" in
     start|quick|--model|--model=*)
         _lm_has=0
@@ -276,14 +285,14 @@ case "${1:-}" in
             done
             if [ -n "$_lm_model" ]; then
                 [ -n "$_lm_prov" ] || _lm_prov="${LOKI_PROVIDER:-claude}"
-                case "$_lm_model" in
-                    openrouter/*|ollama/*|lmstudio/*|llamacpp/*|vllm/*|custom/*) export LOKI_MODEL_ROUTE="$_lm_model" ;;
-                    small|medium|high|opus|sonnet|haiku) _lm_out+=(--session-model "$_lm_model") ;;
-                    *)
-                        if [ "$_lm_prov" = "opencode" ]; then export LOKI_OPENCODE_MODEL="$_lm_model"
-                        else export LOKI_MODEL_OVERRIDE="$_lm_model"; fi
-                        ;;
-                esac
+                if [ "$_lm_prov" = "opencode" ]; then export LOKI_OPENCODE_MODEL="$_lm_model"
+                else
+                    case "$_lm_model" in
+                        openrouter/*|ollama/*|lmstudio/*|llamacpp/*|vllm/*|custom/*) export LOKI_MODEL_ROUTE="$_lm_model" ;;
+                        small|medium|high|opus|sonnet|haiku) _lm_out+=(--session-model "$_lm_model") ;;
+                        *) export LOKI_MODEL_OVERRIDE="$_lm_model" ;;
+                    esac
+                fi
             else
                 echo "loki: --model requires a value (for example ollama/qwen3-coder or openrouter/<id>)." >&2
                 exit 2
@@ -394,7 +403,7 @@ _loki_print_autonomy() {
 # needs-bash divert, LOKI_LEGACY_BASH, and the no-Bun fallthrough. An emit down
 # in run.sh would be bash-route-only and would report installs climbing while
 # starts sat near zero under LOKI_SDK_MODE=full, which is exactly the blind spot
-# this is meant to close. Placed after the gemini guard (that path exits) and
+# this is meant to close. Placed after the removed-provider guard (that path exits) and
 # before the LOKI_LEGACY_BASH check (which execs).
 #
 # `run` is the deprecated start alias and `quick` is grouped with them in the
@@ -576,8 +585,8 @@ _loki_attempts_refuse() {
         exit 2
     fi
     case "${LOKI_PROVIDER:-claude}" in
-        claude|codex|cline|aider|opencode) ;;
-        *) echo "loki: the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline, aider or opencode." >&2; exit 2 ;;
+        claude|opencode) ;;
+        *) echo "loki: the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude or opencode." >&2; exit 2 ;;
     esac
 }
 
@@ -779,8 +788,8 @@ case "v10" in
                     ;;
                 *)
                     case "${LOKI_PROVIDER:-claude}" in
-                        claude|codex|cline|aider|opencode) ;;
-                        *) echo "loki: provider ${LOKI_PROVIDER:-} is not supported; use one of: claude, codex, cline, aider, opencode (LOKI_PROVIDER)." >&2; exit 2 ;;
+                        claude|opencode) ;;
+                        *) echo "loki: provider ${LOKI_PROVIDER:-} is not supported; use one of: claude, opencode (LOKI_PROVIDER)." >&2; exit 2 ;;
                     esac
                     [ -n "$(_loki_bun)" ] || _loki_no_bun_exit
                     ;;

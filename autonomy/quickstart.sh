@@ -417,17 +417,9 @@ _qs_template_exists() {
 # for the same institutionalized reason it states: "the selected provider is
 # always whatever auto_detect_provider returns, never re-derived here."
 #
-# Step 1 used to re-derive that list inline as `for _p in claude codex cline
-# aider`, which was wrong in two independent ways once v8.64.0 made provider
-# selection automatic:
-#   1. opencode was MISSING. On an opencode-only machine the loop set found=""
-#      and, worse, detect_any_provider (provider-offer.sh:67, the same stale
-#      four) returned 1, so quickstart took the install-offer branch and told a
-#      perfectly working machine "No provider available; cannot start a build",
-#      pushing a redundant `npm install -g @anthropic-ai/claude-code`.
-#   2. codex and cline were SWAPPED relative to auto_detect_provider's
-#      claude cline codex aider opencode, so a machine with both was told
-#      "Found: codex" while the runner would really pick cline.
+# Step 1 used to re-derive that list inline, which drifted from the runner:
+# opencode was missing, so an opencode-only machine was told "No provider
+# available; cannot start a build".
 #
 # Subshelled and path-derived from THIS FILE (never SKILL_DIR, which is unset
 # when tests source this standalone), so a missing or broken loader degrades

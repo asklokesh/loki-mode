@@ -95,8 +95,8 @@ Purple Lab supports multiple AI providers for building your projects:
 **Claude (Recommended)**
 Full-featured provider with parallel execution, sub-agents, and the Task tool. Best for complex, multi-file projects.
 
-**Codex**
-OpenAI's code-specialized model. Runs in degraded mode (sequential only, no Task tool). Good for focused coding tasks.
+**opencode**
+Model-agnostic CLI. Reaches OpenRouter models (openrouter/<vendor>/<model>) with OPENROUTER_API_KEY, plus local models. Sequential only, no Task tool.
 
 You can select a provider from the settings or specify it per-build in the project configuration.`,
   },

@@ -737,9 +737,9 @@ $ python3 tools/probe-model-catalog.py
 To adopt a new model: edit providers/model_catalog.json -> bump latest_<tier>
 and add to models[]. Then re-run this script to confirm it disappears from new_candidates.
 ```
-`--strict` exits nonzero when new models are found. Note it still probes a
-`gemini` section; Gemini was removed as a provider, so those candidates are not
-adoptable.
+`--strict` exits nonzero when new models are found. Note it may still probe
+sections for removed providers; Loki supports only claude and opencode, so
+those candidates are not adoptable.
 
 ### `regen-state-machine-refs.py`
 

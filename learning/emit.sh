@@ -48,7 +48,7 @@
 # Examples:
 #   # User preference signal
 #   ./emit.sh user_preference --source cli --action "provider_selection" \
-#       --key "provider" --value "claude" --rejected '["codex", "gemini"]'
+#       --key "provider" --value "claude" --rejected '["opencode"]'
 #
 #   # Error pattern signal
 #   ./emit.sh error_pattern --source cli --action "cmd_start" \

@@ -10,7 +10,7 @@
 # Bash 3.2 compatible (no associative arrays, no ${var,,}).
 
 # Flags that take a separate value token.
-_ROUTE_VALUE_FLAGS=" --provider --budget --budget-limit --max-cost --max-iterations --max-retries --session-model --completion-promise --base-wait --max-wait --prd --brief --attempts --spec --aider-model --aider-flags --cline-model --isolation --output --engine --mirofish-rounds --mirofish-timeout --max-duration --log-level --compliance --cost --remote --issue --bmad-project --openspec --mirofish-docker --destination --domain --env-file --health-url --health-match --workspace --config --vars --seal-existing "
+_ROUTE_VALUE_FLAGS=" --provider --budget --budget-limit --max-cost --max-iterations --max-retries --session-model --completion-promise --base-wait --max-wait --prd --brief --attempts --spec --isolation --output --engine --mirofish-rounds --mirofish-timeout --max-duration --log-level --compliance --cost --remote --issue --bmad-project --openspec --mirofish-docker --destination --domain --env-file --health-url --health-match --workspace --config --vars --seal-existing "
 # Flags whose value is optional (cmd_start reads one only when it is present): --mirofish takes a URL (a token that does not
 # start with --, as _loki_start_optval_consumes). Declared here so a refused one still consumes its value. --parallel is NOT
 # here: cmd_start treats it as a plain boolean (_loki_start_flag_kind), so "--parallel 3" leaves 3 as a positional.
@@ -354,9 +354,9 @@ loki_route_resolve() {
     fi
     if [ -n "$provider_flag" ] && [ "$engine_req" != "legacy" ]; then
         case "$provider_flag" in
-            claude|codex|cline|aider|opencode) ;;
+            claude|opencode) ;;
             *)
-                R_ERR="loki: --provider $provider_flag has no Loki 10 engine invoker (use claude, codex, cline, aider or opencode, or pass --engine legacy)"
+                R_ERR="loki: --provider $provider_flag has no Loki 10 engine invoker (use claude or opencode, or pass --engine legacy)"
                 return 0 ;;
         esac
     fi
@@ -370,8 +370,8 @@ loki_route_resolve() {
     else
         # L009: a provider with no engine10 invoker is refused, never sent to the legacy loop.
         case "$R_PROVIDER" in
-            claude|codex|cline|aider|opencode) ;;
-            *) R_ERR="loki: provider $R_PROVIDER is not supported; use one of: claude, codex, cline, aider, opencode"; return 0 ;;
+            claude|opencode) ;;
+            *) R_ERR="loki: provider $R_PROVIDER is not supported; use one of: claude, opencode"; return 0 ;;
         esac
         if [ "$R_INPUT_TYPE" = "prd" ]; then
             local sz
@@ -407,7 +407,7 @@ _route_adapter_and_diffs() {
     fi
     case "$R_PROVIDER" in
         claude) ;;
-        codex|cline|aider|opencode)
+        opencode)
             R_CAPDIFF+=("provider $R_PROVIDER has no Claude Code Task-tool subagents (providers/$R_PROVIDER.sh)") ;;
         *)
             R_CAPDIFF+=("provider $R_PROVIDER has no engine10 invoker") ;;
