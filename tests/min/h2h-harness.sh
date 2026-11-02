@@ -303,11 +303,15 @@ for ignored in (True, False):
     (r / ".loki/state.json").write_text("{}"); (r / "a").write_text("step" + str(ignored))
     h2h.commit_step_state(r, 2)
     print("step-commit", ignored, g("log", "-1", "--format=%s"), ".loki" in g("ls-tree", "-r", "--name-only", "HEAD"), g("status", "--porcelain", "--untracked-files=no") == "")
+# Lesson injection is opt-in in the engine, so the learn arm must turn it on and the nolearn arm must not.
+pick = lambda c: {k: v for k, v in h2h.config_env(c, {}).items() if k in ("LOKI_PR_LESSONS", "LOKI_WORKED_EXAMPLE", "LOKI_NO_PR_LESSONS")}
+print("arms", sorted(pick("loki-haiku-learn").items()), sorted(pick("loki-haiku-nolearn").items()))
 ' "$T")"
 has "lessons: run, receipt and VERIFIED worked-example counts" "$learn_out" "counts {'run': 1, 'receipt': 3, 'worked_example': 1}"
 has "a branch left by an earlier step is skipped" "$learn_out" "picked loki/b-new"
 has "step state commits when .loki is gitignored, without .loki" "$learn_out" "step-commit True h2h: state after step 2 False True"
 has "step state commits when .loki is not gitignored, without .loki" "$learn_out" "step-commit False h2h: state after step 2 False True"
+has "learning arms: learn opts in to lessons and the worked example, nolearn turns them off" "$learn_out" "arms [('LOKI_PR_LESSONS', '1'), ('LOKI_WORKED_EXAMPLE', '1')] [('LOKI_NO_PR_LESSONS', '1')]"
 
 # Replay suite (--suite replay): real closed issues replayed at the fix's parent commit, scored by the fix's
 # own test files at their own paths. The reference fix passes every task, the parent commit passes none, and

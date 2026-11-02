@@ -3,9 +3,21 @@
 Loki against raw Claude Code (`claude -p`) on the same coding tasks, scored only by hidden tests.
 This page states the protocol and the latest numbers, including where Loki loses.
 
-Latest run: `results/2026-11-01-2100eda48-replay.json`, the replay suite (real closed issues, see
-[Replay suite](#replay-suite-real-closed-issues)), Loki at commit 2100eda48 (v11.114.0 engine).
-Synthetic suite: `results/2026-11-01-0ff237642.json` (Loki at commit 0ff237642, the v11.113.0 engine).
+Latest run: `results/2026-11-01-win-bench-v2-after.json` (raw Haiku and Loki on Haiku, 24 tasks, 2
+reps, after the changes below), against `results/2026-11-01-65440abaf-before.json` (the v11.114.0
+engine, same protocol, run the same day). The four-config run further down is the v11.113.0 engine.
+The replay suite below (`results/2026-11-01-2100eda48-replay.json`, real closed issues) ran on
+the v11.114.0 engine at commit 2100eda48.
+
+**Citability.** A results file counts only if it was produced from a clean commit: the harness now
+stamps every results file with the engine commit, the tool versions and a `citable` flag, and refuses
+to run Loki configs from a tree with uncommitted changes. The v11.116.0 before/after files are
+**not citable**: `2026-11-01-win-bench-v2-after.json` records that it ran from uncommitted code,
+and `2026-11-01-65440abaf-before.json` and `2026-11-01-win-bench-v2-review-fixes.json` record
+commits (65440abaf, 38b31e8cc) that are on no published branch, since they predate the release
+squash, so nobody can check out the code they measured. The replay file ran Loki from a clean engine commit
+(2100eda48) with the benchmark harness changes not yet committed (committed in 070d72ea4), so it
+is not citable under this rule either.
 
 ## Replay suite (real closed issues)
 
@@ -113,6 +125,82 @@ one task against plain raw Haiku (more-itertools).
   not show whether any did.
 - Two hidden tests check behaviour the issue does not ask for (go-semver-four-part, toolz). That is
   what replaying a real fix measures, and it hits every config alike.
+## Loki on Haiku against raw Haiku, before and after the Wall and session fixes
+
+Same 24 tasks, 2 reps each, `--jobs 4`, `raw-haiku,loki-haiku`. Raw Haiku was rerun in each
+invocation, so each row compares runs made under the same load.
+
+| run | config | pass | 95% CI | $ per passed task | median s | p90 s | sessions | verdict agrees | false VERIFIED |
+|---|---|---|---|---|---|---|---|---|---|
+| before (v11.114.0) | raw-haiku | 48/48 | 92.6-100% | 0.0171 | 28.0 | 206.7 | 1.00 | - | - |
+| before (v11.114.0) | loki-haiku | 42/48 | 75.3-94.1% | 0.0457 | 44.0 | 167.6 | 2.83 | 30/48 | 1 |
+| after | raw-haiku | 48/48 | 92.6-100% | 0.0192 | 29.3 | 170.7 | 1.00 | - | - |
+| after | loki-haiku | 48/48 | 92.6-100% | 0.0126 | 27.8 | 177.8 | 1.96 | 29/48 | 0 |
+
+After the changes Loki on Haiku passes every task raw Haiku passes, at 0.66 times its cost per
+passed task and 0.95 times its median time in the same invocation. It still runs about two
+sessions per task against one.
+
+Before, all six Loki losses ended with no code in the scored tree: 4 BLOCKED by Loki's own Wall
+tests (two Go package clashes, a Rust `Order::new()` call against `Order::new(id: &str)`, a Rust
+Wall assertion that contradicts the task), 1 STALLED on a Wall failure, and 1 VERIFIED that the
+hidden tests failed (py-semver-range; the default reviewer flagged the bug, but a flag never
+lowers a verdict).
+
+What changed, and what each change did on these runs (Loki on Haiku, 48 runs each):
+
+- **A run's code always reaches its branch.** Every unpublished run keeps its `loki/<id>` branch,
+  BLOCKED and FAILED included; before, only VERIFIED and PARTIAL did, and a blocked run's code went
+  into a bundle file only. BLOCKED or STALLED runs with an empty scored tree: 5 before, 0 after.
+- **A Loki Wall test never blocks delivery.** The delivery over a Wall conflict now decides on the
+  re-verify: the repo's own checks (a targeted test or the full suite) must run and pass once the
+  Wall files are discarded. Before, it needed a passing targeted own test before the re-verify,
+  which a Go Wall file that breaks its whole directory's build never allows.
+- **Wall tests that cannot compile are discarded before they reach the tree.** A Go file whose
+  package clause differs from its directory's is dropped when written; a Rust call whose argument
+  count no definition in the crate has is dropped at install, after implement, so a task that
+  changes a constructor keeps the test that proves it (an explicit `Type::method(&mut x, ..)` call
+  counts its receiver). Both are listed NOT PROVEN, with no fix session spent on them. The Go brief
+  now names the directory's package and the import path of the package under test, the Wall
+  manifest carries Go and Rust signatures, and a black-box `package tests` file that imports the
+  package under test is no longer misread as vacuous. Fix sessions: 14 before, 10 after.
+- **The unconfigured default review is opt-in for medium risk (`LOKI_REVIEW_DEFAULT=1`) and stays
+  on for high risk** (auth, payments, migrations, CI, public API). It ran on 17 of 48 runs,
+  changed no verdict, and was $1.29 of $1.92 (67%) of Loki's spend and 323 of 341 seal seconds.
+  A configured reviewer still runs. Review sessions: 17 before, 0 after (in that run the default
+  was off for every tier; the review-fixes run below keeps it on for high risk).
+- **The separate already-done session runs for issue tasks only.** On a direct task the implement
+  session already answers LOKI_ALREADY_DONE itself. **The Project Model discovery session is skipped
+  when one runner sits at the repo root** even when that runner lists no test files (cargo). Intake
+  sessions: 20 before, 0 after; the Rust discovery session alone took 12 s serial per run.
+- **Lessons and worked examples are recorded but not injected by default** (`LOKI_PR_LESSONS=1`,
+  `LOKI_WORKED_EXAMPLE=1` opt in), after the learning pilot below.
+
+Where Loki still costs more than raw: the Wall runs on the 13 tasks without a relevant visible
+test (all Go and Rust tasks and ts-cron-next), 35 Wall sessions in 48 runs, and Wall assertions
+that contradict the task still cost a fix round (10 fix sessions). One run (rs-roman-strict, rep 2)
+ended BLOCKED on such an assertion; its code was on the run branch and passed the hidden tests.
+Verdict agreement did not improve (29/48): 12 of the 18 passing runs that end PARTIAL are Go tasks, where
+no Wall file ran and no passing check names a changed symbol.
+
+Spend for these two runs and the probes behind them: $5.70 on their own ledger.
+
+After review fixes (`results/2026-11-01-win-bench-v2-review-fixes.json`, Loki on Haiku only, 2 reps,
+v11.115.0 merged in): the Wall-conflict delivery counts only the repo's own tests (a test check with
+n > 0 or a full-suite pass, never lint or the security scan), the Rust argument-count rule is decided
+after implement, the Go black-box exemption needs the package under test itself, and the default
+review stays on for high risk on the run's own model.
+
+| config | pass | 95% CI | $ per passed task | median s | p90 s | sessions | verdict agrees | false VERIFIED |
+|---|---|---|---|---|---|---|---|---|
+| loki-haiku | 47/48 | 89.1-99.6% | 0.0131 | 29.0 | 174.3 | 1.90 | 29/48 | 1 |
+
+The one failure is py-semver-range (rep 1): a lean-path run (a relevant visible test, so no Wall)
+read VERIFIED while the hidden `intersects` tests failed. The v11.114.0 baseline had the same false
+VERIFIED on the same task. Five tasks reached the high risk tier (py-invoice-rounding,
+ts-cart-discounts, ts-cron-next, rs-expr-eval, rs-interval-set), so their runs got the default
+review: 8 review sessions, $0.052 in total on Haiku.
+Spend: $1.15 on its own ledger.
 
 ## Protocol
 

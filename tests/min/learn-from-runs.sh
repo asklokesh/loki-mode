@@ -22,6 +22,8 @@
 #              a 40-file VERIFIED run's exemplar stays within 2048 bytes.
 #   example:   a similar task (>= 3 shared identifier keywords) gets exactly one worked-example block within 1200 bytes
 #              and the exemplar's files in Relevant files (brief bytes with and without printed); fewer gets none.
+#   default:   with neither LOKI_PR_LESSONS nor LOKI_WORKED_EXAMPLE set (the default, rule 6), the same similar task gets
+#              no worked example and no run-lessons block, and the run still records its lesson. Every other leg opts in.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/util/pr_lessons.ts learnFromRun: hash the run id into the lesson id (a repeat duplicates the class).
@@ -30,6 +32,7 @@
 #   4. pr_lessons.ts replayKnownVerdict: ignore o.fresh (--fresh replays).
 #   5. pr_lessons.ts workedExampleFor: require 1 shared keyword instead of EXAMPLE_MIN_SHARED (an unrelated task gets one).
 #   6. pr_lessons.ts exampleFiles: return [] (the exemplar's files never reach Relevant files).
+#   7. pr_lessons.ts lessonsInjected/workedExampleInjected: return true (the default leg gets lessons and an example).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -41,6 +44,8 @@ echo "TEST: learn from runs on the stub provider"
 
 FIX="$ROOT/tests/min/fixtures/e2e"
 export LOKI_TS_ENTRY="$ROOT/loki-ts/dist/loki.js"
+export LOKI_PR_LESSONS=1 LOKI_WORKED_EXAMPLE=1 # lesson injection is opt-in; these legs test it on, the default leg unsets both
+UNSET=()
 TO=(); command -v timeout >/dev/null 2>&1 && TO=(timeout 120)
 
 new_repo() {
@@ -59,7 +64,7 @@ run_engine() {
     local n="$1" task="$2"; shift 2
     PROMPTS="$T/prompt$n"; ITERS="$T/iters$n.log"; : > "$ITERS"
     git -C "$REPO" checkout -q -- . 2>/dev/null; git -C "$REPO" clean -qfd -e .loki 2>/dev/null
-    OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY \
+    OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY ${UNSET[@]+"${UNSET[@]}"} \
         LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" LOKI_NO_COMPLETIONS=1 \
         E2E_STUB_PROMPT_LOG="$PROMPTS" E2E_STUB_ITER_LOG="$ITERS" LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" \
         "$@" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$task" --no-pr ${XARGS[@]+"${XARGS[@]}"} 2>&1)"
@@ -261,6 +266,7 @@ exvb="${exv%% *}"; EXFILES="${exv#* }"
 [ "$exvb" -gt 0 ] && [ "$exvb" -le 2048 ] && ok "example: run V stored an exemplar of $exvb bytes (<= 2048): $EXFILES" || bad "example: exemplar of run V: '$exv'"
 git -C "$REPO" checkout -q main && git -C "$REPO" merge -q --ff-only "loki/$RIDV" # V's work accepted, as after its PR merges: its files are on the base
 cp -R "$REPO" "$T/repo-example-off"
+cp -R "$REPO" "$T/repo-example-default"
 run_engine 21 "$TASK_S"
 B21="$(impl_bytes)"; P21="$PROMPTS.implement0"
 n_ex="$(grep -c "^Worked example from run " "$P21" 2>/dev/null)"
@@ -277,6 +283,13 @@ run_engine 22 "$TASK_S" LOKI_WORKED_EXAMPLE=0
 B22="$(impl_bytes)"
 grep -q "Worked example from run" "$PROMPTS.implement0" 2>/dev/null && bad "example: LOKI_WORKED_EXAMPLE=0 still injected a worked example" || ok "example: LOKI_WORKED_EXAMPLE=0 injects none"
 echo "    example: similar task implement brief $B21 bytes with the worked example, $B22 bytes without (same repo and history)"
+REPO="$T/repo-example-default"; LESSONS="$REPO/.loki/memory/semantic/pr-lessons.json"
+nles0="$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["lessons"]))' "$LESSONS" 2>/dev/null)"
+UNSET=(-u LOKI_PR_LESSONS -u LOKI_WORKED_EXAMPLE); run_engine 23 "$TASK_S"; UNSET=()
+grep -q "Worked example from run" "$PROMPTS.implement0" 2>/dev/null && bad "default: a worked example was injected with nothing opted in" || ok "default: no worked example in the brief by default"
+grep -q "untrusted-run-lessons\|untrusted-worked-example" "$PROMPTS.implement0" 2>/dev/null && bad "default: a lessons block was injected with nothing opted in" || ok "default: no lessons block in the brief by default"
+nles1="$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["lessons"]))' "$LESSONS" 2>/dev/null)"
+[ -n "$nles0" ] && [ -n "$nles1" ] && [ "$nles1" -gt "$nles0" ] && ok "default: the run still recorded its lesson ($nles0 -> $nles1)" || bad "default: lessons before $nles0, after $nles1 (recording must stay on)"
 REPO="$T/repo-example"; LESSONS="$REPO/.loki/memory/semantic/pr-lessons.json"
 for tk in "add a divide(a, b) function to calc.ts" "document the install steps in README.md"; do
     br="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "$tk" 2>&1)"
