@@ -1,0 +1,83 @@
+{
+  "difficulty": "hard",
+  "shape": "multi-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_options.py": "tests/test_options.py",
+    "tests/test_termui.py": "tests/test_termui.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests",
+    "--deselect",
+    "tests/test_imports.py::test_light_imports",
+    "--deselect",
+    "tests/test_utils.py::test_echo_via_pager",
+    "--deselect",
+    "tests/test_utils.py::test_expand_args",
+    "-W",
+    "ignore::pytest.PytestRemovedIn10Warning"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests",
+    "--deselect",
+    "tests/test_imports.py::test_light_imports",
+    "--deselect",
+    "tests/test_utils.py::test_echo_via_pager",
+    "--deselect",
+    "tests/test_utils.py::test_expand_args",
+    "-W",
+    "ignore::pytest.PytestRemovedIn10Warning"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "tox.ini",
+    "conftest.py"
+  ],
+  "source": {
+    "upstream": "https://github.com/pallets/click",
+    "license": "BSD-3-Clause",
+    "license_file": "LICENSE.txt",
+    "issue": "https://github.com/pallets/click/issues/2836",
+    "fix_pr": "https://github.com/pallets/click/pull/3328",
+    "fix_commit": "76552ff1e8c85837f911fc34037e702ae4327eda",
+    "parent_commit": "8c95c73bd5ef89eac638f85f1904a104ba4b1a32",
+    "vendored_paths": [
+      "LICENSE.txt",
+      "README.md",
+      "CHANGES.rst",
+      "pyproject.toml",
+      "src",
+      "tests"
+    ],
+    "solution_files": [
+      "src/click/core.py",
+      "src/click/termui.py"
+    ],
+    "note": "conftest.py added so tests import src/click without installing the package. Deselected because they fail in the benchmark environment on the parent and on the fix alike: tests/test_imports.py::test_light_imports, tests/test_utils.py::test_echo_via_pager, tests/test_utils.py::test_expand_args. -W ignore::pytest.PytestRemovedIn10Warning: newer pytest releases warn on a pattern in tests/test_basic.py, and click's filterwarnings=error would turn that into a collection error.",
+    "add_files": {
+      "conftest.py": "# Added by the benchmark harness, not part of the upstream project: makes src/ importable\n# without installing the package.\nimport os\nimport sys\n\nsys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), \"src\"))\n"
+    }
+  },
+  "pilot": {
+    "config": "raw-haiku-verify",
+    "passed": 0,
+    "runs": 2,
+    "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
+  },
+  "qualified": true,
+  "snapshot_sha256": "7dfdd98a2a974bf7b57afea67b1f7148f28c70d0708afb7ba5c2e5e3639a17c4"
+}

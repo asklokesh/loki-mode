@@ -5,6 +5,22 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.122.0 (2026-11-02)
+
+Benchmark v3: hard and replay suites of real closed issues, rebuilt from pinned upstream commits.
+
+### Added
+
+- `benchmarks/h2h` gains a replay suite (8 recent closed issues) and a hard suite (8 multi-file issues that raw Haiku with a verify instruction failed in a pilot), plus Sonnet, Opus and verify-sentence configs. Results on the hard suite are in `benchmarks/h2h/results/2026-11-01-e13f3dd72-hard.json`, measured on the Loki engine at commits e13f3dd72 and 0d2071933 (before v11.120.0), not on this release: Loki on Haiku passed 0 of 24 runs (raw Haiku 1 of 24); Loki on Opus passed 5 of 24 at $1.23 per passed task against raw Opus 3 of 24 at $4.92. All passes came from 2 of the 8 tasks. See `benchmarks/h2h/RESULTS.md`, which also lists the provenance caveat (two task packages were present but gitignored at the run commits; they are now pinned by digest) and a post-run scoring-command change no verdict depended on.
+- Task repositories are no longer stored in this repository: each task keeps only its description and pinned commits, and the harness fetches and rebuilds it at run time into `~/.cache/loki-h2h`, refusing any rebuild or cached copy whose digest does not match.
+- A benchmark run is not citable when the benchmark tree has uncommitted or gitignored files.
+
+Nothing changes for `loki start` or the npm package.
+
+### Fixed
+
+- The redaction speed test no longer fails under machine load: a sub-millisecond baseline timing produced a false 12.3x growth ratio. A real quadratic slowdown still fails it (15.5x).
+
 ## v11.121.0 (2026-11-02)
 
 Loki supports exactly Claude Code, an Anthropic API key, and opencode (OpenRouter included).
