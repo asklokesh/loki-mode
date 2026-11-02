@@ -17,16 +17,19 @@
 # <task> --no-pr with LOKI_SESSION_MODEL pinned to that model), loki-default (bin/loki with no
 # model setting, so Loki's own routing picks the model).
 # Suites: tasks/ (synthetic, the default), replay/ (--suite replay: real closed issues from
-# permissively licensed projects, vendored at the fix's parent commit and scored by the fix's own
+# permissively licensed projects, replayed at the fix's parent commit and scored by the fix's own
 # test files; meta.json "source" records license, issue, fix PR and commits) and fixtures/hard/
-# (--suite hard: the same format, multi-file fixes in larger projects).
+# (--suite hard: the same format, multi-file fixes in larger projects). Replay and hard tasks keep
+# only meta.json and task.txt here; repo/, hidden/ and solution/ are fetched from the upstream at
+# the pinned commits on first use, checked against meta.json snapshot_sha256 and cached in
+# $H2H_CACHE (default ${XDG_CACHE_HOME:-~/.cache}/loki-h2h).
 # Tasks live in <suite>/<id>/: repo/ (the snapshot, visible tests included), task.txt
 # (what the user types), hidden/ (acceptance tests, copied in only after the contestant
 # exits), solution/ (a reference overlay used by the oracle config) and meta.json.
 # Every contestant gets a fresh git copy, a throwaway HOME (only the Claude credential
 # store is linked) and a 600s timeout. Results: results/<date>-<shortsha>.json plus a
 # markdown table on stdout. Needs python3, git, bun, pytest, go and cargo; real configs need
-# a logged-in claude CLI.
+# a logged-in claude CLI; replay and hard tasks need network on first use (to github.com).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 exec python3 -I "$here/h2h.py" "$@"

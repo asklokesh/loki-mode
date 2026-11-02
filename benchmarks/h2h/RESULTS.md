@@ -30,11 +30,13 @@ v11.116.0 engine merged from main. Tool versions are in the file (bun 1.3.13, Cl
 
 - **Candidates.** 18 closed issues in `fixtures/hard/` from sqlglot, tomlkit, click, sqlparse,
   mistune and expr (MIT or BSD-3-Clause; each `meta.json` records license, issue, fix PR and
-  commits). Each is vendored at the fix's parent commit and scored by the fix's own test files at
-  their own paths, together with the rest of the project's suite. The merged fix passes all 18 and
-  the parent commit passes none (checked on every PR by `tests/min/h2h-harness.sh`). The snapshots
-  live under `fixtures/` because their own tests need characters (emoji, dashes) this repository's
-  text rule otherwise bans.
+  commits). Each is replayed at the fix's parent commit and scored by the fix's own test files at
+  their own paths, together with the rest of the project's suite. Only `meta.json` and `task.txt`
+  are in this repository: the snapshot is fetched from the upstream at the pinned commits on first
+  use and cached outside it (see "Snapshots" below). The merged fix passes all 18 and the parent
+  commit passes none (`tests/min/h2h-harness.sh` with `H2H_SELFCHECK_FETCH=1`). The tasks live
+  under `fixtures/` because two issue texts keep characters (emoji, dashes) this repository's text
+  rule otherwise bans.
 - **Selection rule.** A task qualifies only if the fix touches 2 or more files and raw Haiku with
   the verify sentence passed under half of its pilot runs (2 runs per task over the 19 candidates of
   the time, $0.78). 11 met it. 3 of those were excluded because the fix's tests need something the
@@ -129,9 +131,9 @@ change that fixed it.
 - **Tasks.** `replay/<id>/`, 6 Python and 2 Go. `task.txt` is the issue title and body as written.
   The hidden tests are the test files the merged fix changed, taken from the fix commit and scored
   at their own paths, run with the rest of the project's suite (so a fix that breaks other tests
-  fails). The snapshot is vendored (`repo/`, with the project's license file); nothing is cloned at
-  run time. `meta.json` "source" records the upstream, license, issue, fix PR, fix and parent
-  commits, and every change made to the snapshot.
+  fails). `meta.json` "source" records the upstream, license, issue, fix PR, fix and parent
+  commits, and every change made to the snapshot; the snapshot itself is fetched at run time (see
+  "Snapshots" below).
 
 | task | project (license) | issue |
 |---|---|---|
@@ -149,9 +151,19 @@ change that fixed it.
   toolz: `test_package.py::test_has_version` deselected (needs installed metadata). In all tasks,
   en and em dashes and emoji were rewritten to meet this repository's text rule (escapes inside
   string literals, so behaviour is unchanged); the run below used the snapshot and issue text
-  before that rewrite, which differ only in those characters.
+  before that rewrite, which differ only in those characters. These changes are recorded as
+  `add_files` and `patch_files` in `meta.json` and applied when the snapshot is rebuilt.
 - **Self-check.** The merged fix passes all 8 tasks and the parent commit passes none
-  (`--suite replay --configs oracle,noop`, run by `tests/min/h2h-harness.sh` on every PR).
+  (`--suite replay --configs oracle,noop`, run by `tests/min/h2h-harness.sh` with
+  `H2H_SELFCHECK_FETCH=1`).
+- **Snapshots.** Replay and hard tasks were first vendored in this repository (about 1.4 million
+  lines). They are now rebuilt on first use: a shallow fetch of the pinned parent and fix commits
+  (and any pinned submodule) into a bare cache, `git archive` of the vendored paths, the fix's test
+  files as `hidden/`, its other changed files as `solution/`, then `add_files` and `patch_files`.
+  The result must match `meta.json` `snapshot_sha256` (every path, executable bit and content), or
+  the task is refused. Each digest was taken from the vendored snapshot the results below were
+  measured on, and every one of the 26 tasks rebuilds to it. Cache: `$H2H_CACHE`, default
+  `${XDG_CACHE_HOME:-~/.cache}/loki-h2h` (about 25 MB for all 26 tasks).
 - **Configs.** `raw-haiku` and `loki-haiku` as below. `raw-haiku-verify` and `raw-opus-verify` are
   raw `claude -p` with the same task text plus one sentence: "Before you finish, run the
   repository's tests and check that your change works." That is the fair baseline: what a careful
@@ -522,6 +534,7 @@ bash benchmarks/h2h/run.sh --suite replay --configs oracle,noop     # replay sel
 bash benchmarks/h2h/run.sh --suite replay --configs raw-haiku,raw-haiku-verify,raw-opus-verify,loki-haiku \
     --reps 2 --jobs 4 --budget 15 --ledger replay.jsonl
 bash benchmarks/h2h/run.sh --suite hard --configs oracle,noop       # all 18 hard candidates, no model
+H2H_SELFCHECK_FETCH=1 bash tests/min/h2h-harness.sh                 # the harness test plus both fetched self-checks
 bash benchmarks/h2h/run.sh --suite hard --reps 3 --jobs 4 --timeout 900 --budget 73 --ledger hard.jsonl \
     --configs raw-haiku,raw-haiku-verify,raw-sonnet,raw-sonnet-verify,raw-opus,raw-opus-verify,loki-haiku,loki-sonnet,loki-opus,loki-default
 bash benchmarks/h2h/run.sh --sequences all --configs loki-haiku-learn,loki-haiku-nolearn \

@@ -59,7 +59,6 @@
       "tomlkit/container.py",
       "tomlkit/items.py"
     ],
-    "added_files": [],
     "note": "The tests/toml-test submodule is vendored at its pinned commit (toml-lang/toml-test, MIT). tests/test_items.py::test_dates_behave_like_dates and ::test_times_behave_like_times are deselected: they fail on Python 3.13 and later on the parent and on the fix alike. tests/test_toml_spec_tests.py is ignored: it imports PyYAML, which is not in the benchmark toolchain.",
     "submodules": {
       "tests/toml-test": {
@@ -80,5 +79,6 @@
     "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
   },
   "qualified": false,
-  "excluded_because": "raw-haiku-verify passed 2 of 2 pilot runs (the rule needs under 50%)"
+  "excluded_because": "raw-haiku-verify passed 2 of 2 pilot runs (the rule needs under 50%)",
+  "snapshot_sha256": "cbad219dfccdd685a10b791436b5f3d3abb8f58d80988c4128e22389c6abd7c3"
 }

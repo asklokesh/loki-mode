@@ -1,5 +1,0 @@
-no_whitespace = """hello \
-    world"""
-
-has_whitespace = """hello \
-    world"""

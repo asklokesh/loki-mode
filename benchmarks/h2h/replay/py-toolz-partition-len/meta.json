@@ -52,7 +52,16 @@
     "solution_files": [
       "toolz/itertoolz.py"
     ],
-    "added_files": [],
-    "note": "test_package.py::test_has_version is deselected: it needs installed package metadata. Emoji codepoints are rewritten to meet this repository's text rule, without changing behaviour: in string literals as escapes (Go \\u2603, Python \\U0001F34E and similar), in comments and prose as text or removed."
-  }
+    "note": "test_package.py::test_has_version is deselected: it needs installed package metadata. Emoji codepoints are rewritten to meet this repository's text rule, without changing behaviour: in string literals as escapes (Go \\u2603, Python \\U0001F34E and similar), in comments and prose as text or removed.",
+    "patch_files": {
+      "repo/README.rst": [
+        [
+          " \ud83d\ude80",
+          "",
+          1
+        ]
+      ]
+    }
+  },
+  "snapshot_sha256": "3b0f96775d40590951d41bacbd7cab443bac7f4b021e8b059507a6cb7b83eb72"
 }

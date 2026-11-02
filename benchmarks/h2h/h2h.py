@@ -11,6 +11,8 @@ after the contestant process (and its whole process group) has exited.
 
 import argparse
 import datetime as dt
+import hashlib
+import io
 import json
 import math
 import os
@@ -22,6 +24,7 @@ import signal
 import statistics
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -34,7 +37,8 @@ TASKS_DIR = HERE / "tasks"
 # --suite replay: real closed issues from permissively licensed projects, replayed at the fix's parent commit
 # (replay/<id>/meta.json "source" records the upstream, license, issue, fix PR and both commits).
 # --suite hard: the same format, chosen for multi-file fixes in larger projects. It lives under fixtures/
-# because its upstream snapshots keep characters (emoji, en and em dashes) that their own tests need.
+# because two issue texts keep characters (emoji, en and em dashes) this repository's text rule bans.
+# Both keep only meta.json and task.txt; materialize() rebuilds the snapshot from the pinned commits.
 SUITES = {"tasks": TASKS_DIR, "replay": HERE / "replay", "hard": HERE / "fixtures" / "hard"}
 CONFIGS = ["raw-haiku", "raw-sonnet", "raw-opus", "raw-haiku-verify", "raw-sonnet-verify", "raw-opus-verify",
            "loki-haiku", "loki-sonnet", "loki-opus", "loki-default"]
@@ -110,9 +114,101 @@ def load_task(task_id, tasks_dir=TASKS_DIR):
     d = tasks_dir / task_id
     meta = json.loads((d / "meta.json").read_text())
     meta["id"] = task_id
-    meta["dir"] = d
+    meta["dir"] = materialize(task_id, meta) if "snapshot_sha256" in meta else d
     meta["text"] = (d / "task.txt").read_text().strip()
     return meta
+
+
+# Replay and hard tasks keep only meta.json and task.txt in this repository. The snapshot (repo/, hidden/,
+# solution/) is rebuilt on first use from the upstream at the pinned commits and cached outside the repository.
+def cache_root():
+    return Path(os.environ.get("H2H_CACHE") or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "loki-h2h")
+
+
+def snapshot_digest(root):
+    """sha256 over every file under repo/, hidden/ and solution/: path, executable bit and content."""
+    h = hashlib.sha256()
+    files = sorted((p.relative_to(root).as_posix(), p) for sub in ("repo", "hidden", "solution") if (root / sub).is_dir()
+                   for p in (root / sub).rglob("*") if p.is_file() or p.is_symlink())
+    for rel, p in files:
+        body = ("link:" + os.readlink(p)).encode() if p.is_symlink() else p.read_bytes()
+        h.update(f"{rel}\0{os.access(p, os.X_OK) and not p.is_symlink():d}\0{hashlib.sha256(body).hexdigest()}\n".encode())
+    return h.hexdigest()
+
+
+def upstream_commit(url, sha):
+    """A bare cache repository for url holding commit sha (a shallow fetch of exactly that commit)."""
+    gd = cache_root() / "git" / (re.sub(r"[^A-Za-z0-9._-]+", "_", url.split("://", 1)[-1]).strip("_") + ".git")
+    if not (gd / "HEAD").is_file():
+        gd.parent.mkdir(parents=True, exist_ok=True)
+        tmp = Path(tempfile.mkdtemp(prefix=".init.", dir=gd.parent))
+        git(tmp, "init", "-q", "--bare")
+        try:
+            tmp.rename(gd)
+        except OSError:  # another invocation created it first
+            shutil.rmtree(tmp, ignore_errors=True)
+    has = lambda: subprocess.run(["git", "-C", str(gd), "cat-file", "-e", f"{sha}^{{commit}}"], capture_output=True).returncode == 0
+    if not has():
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+        r = subprocess.run(["git", "-C", str(gd), "fetch", "-q", "--depth=1", "--no-tags", url, sha], capture_output=True, text=True, env=env)
+        if r.returncode != 0 or not has():
+            raise RuntimeError(f"h2h: cannot fetch {sha} from {url}: {r.stderr.strip()}")
+    return gd
+
+
+def git_archive(gd, sha, paths, dest):
+    dest.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run(["git", "-C", str(gd), "archive", "--format=tar", sha, *paths], capture_output=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"h2h: git archive {sha} failed: {r.stderr.decode(errors='replace').strip()}")
+    with tarfile.open(fileobj=io.BytesIO(r.stdout)) as tf:
+        tf.extractall(dest, filter="data")
+
+
+def materialize(task_id, meta):
+    """Builds the task snapshot exactly as it was benchmarked: `git archive` of the vendored paths at the parent
+    commit (plus pinned submodules), the fix's test files as hidden/, its other changed files as solution/, then
+    meta's add_files and patch_files. The result must match meta's snapshot_sha256, or the task is refused."""
+    s, want = meta["source"], meta["snapshot_sha256"]
+    dest = cache_root() / "tasks" / f"{task_id}-{want[:16]}"
+    if (dest / ".complete").is_file():
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(prefix=f".{task_id}.", dir=dest.parent))
+    try:
+        gd = upstream_commit(s["upstream"], s["parent_commit"])
+        git_archive(gd, s["parent_commit"], s["vendored_paths"], tmp / "repo")
+        for path, sm in (s.get("submodules") or {}).items():
+            git_archive(upstream_commit(sm["upstream"], sm["commit"]), sm["commit"], sm["vendored_paths"], tmp / "repo" / path)
+        upstream_commit(s["upstream"], s["fix_commit"])
+        for sub, files in (("hidden", list(meta["hidden"])), ("solution", s["solution_files"])):
+            for f in files:
+                out = tmp / sub / f
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_bytes(subprocess.run(["git", "-C", str(gd), "show", f"{s['fix_commit']}:{f}"], capture_output=True, check=True).stdout)
+        for rel, content in (s.get("add_files") or {}).items():
+            (tmp / "repo" / rel).write_text(content)
+        # patch_files: {"repo/<path>": [[old, new, count], ...]}; each old must occur exactly count times.
+        for rel, pairs in (s.get("patch_files") or {}).items():
+            t = (tmp / rel).read_text()
+            for old, new, count in pairs:
+                if t.count(old) != count:
+                    raise RuntimeError(f"h2h: {task_id}: patch target in {rel} occurs {t.count(old)} times, expected {count}")
+                t = t.replace(old, new)
+            (tmp / rel).write_text(t)
+        got = snapshot_digest(tmp)
+        if got != want:
+            raise RuntimeError(f"h2h: {task_id}: snapshot digest {got} does not match meta.json snapshot_sha256 {want}")
+        (tmp / ".complete").write_text(got + "\n")
+        try:
+            tmp.rename(dest)
+        except OSError:  # another invocation finished it first
+            if not (dest / ".complete").is_file():
+                raise
+    finally:
+        if tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
+    return dest
 
 
 def toolchain_env(env, shared):

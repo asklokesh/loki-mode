@@ -24,9 +24,11 @@
 #     $ per accepted task are exact on fixed records; provenance, model pins, per-session models,
 #     VERIFIED recall and the hard suite's selection rule are checked on fixed inputs;
 #   raw-haiku-verify sends the task text plus the verify sentence on Haiku (raw-haiku does not);
-#   the replay suite (--suite replay): the merged fix passes every task, the parent commit passes
-#     none, every task records a permissive license with its license file vendored, and the leak
-#     check flags hidden content (also over the visible test of the same name) but not namesakes.
+#   replay and hard tasks are pinned specs (meta.json and task.txt only): a tiny local upstream proves the
+#     snapshot is rebuilt at the pinned commits, matched against snapshot_sha256, cached, and refused on a
+#     digest mismatch, a wrong patch count or an unfetchable commit; the fix passes and the parent fails; the
+#     leak check flags hidden content (also over the visible test of the same name) but not namesakes;
+#     H2H_SELFCHECK_FETCH=1 also runs oracle/noop over every real replay and hard task.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. benchmarks/h2h/h2h.py score(): `return 1 if rc == 0 else 0` -> `return 1`; the
@@ -66,6 +68,11 @@
 #  29. step_learning(): drop the `in before_ids` filter (every mistake counts as a repeat); the repeats check must fail.
 #  30. config_env(): leave LOKI_WORKED_EXAMPLE unset in the lessons arm; the arms check must fail.
 #  31. loki_env_overrides(): drop the refused-key check; the three refusal checks must fail.
+#  32. materialize(): skip the digest comparison; the tampered-snapshot check must fail.
+#  33. materialize(): ignore the patch count; the patch-count check must fail.
+#  34. materialize(): drop the temp-dir cleanup; the no-partial check must fail.
+#  35. materialize(): drop the .complete reuse; the cached check must fail (the upstream is gone).
+#  36. load_task(): never materialize; the build check must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -357,70 +364,139 @@ has "learning arms: learn opts in to lessons and the worked example, nolearn tur
 has "learning arms: lessons-only and example-only set both knobs explicitly" "$learn_out" "arms2 [('LOKI_PR_LESSONS', '1'), ('LOKI_WORKED_EXAMPLE', '0')] [('LOKI_PR_LESSONS', '0'), ('LOKI_WORKED_EXAMPLE', '1')]"
 has "step learning: recurring-class mistakes, repeats of an earlier step's class, injected bytes and ids" "$learn_out" "learning ['run-a', 'run-n'] ['run-a'] 190 ['run-a']"
 
-# Replay suite (--suite replay): real closed issues replayed at the fix's parent commit, scored by the fix's
-# own test files at their own paths. The reference fix passes every task, the parent commit passes none, and
-# no run reports a leak (the visible test file of the same name is not the hidden one).
-J="$T/replay.json"
-TMPDIR="$T" bash benchmarks/h2h/run.sh --suite replay --configs oracle,noop --jobs 4 --out "$J" >"$T/replay.log" 2>&1
-check "replay oracle/noop: runner exits 0 (no leak, no harness error)" test "$?" = 0
-nrep="$(find benchmarks/h2h/replay -mindepth 2 -maxdepth 2 -name meta.json | wc -l | tr -d ' ')"
-check "replay: 6 to 10 tasks ($nrep)" test "$nrep" -ge 6 -a "$nrep" -le 10
-check "replay: self-check covered every task" test "$(runs 'len(d["tasks"])')" = "$nrep"
-check "replay: the merged fix passes every task" test "$(runs '[s["passed"] == s["n"] for s in d["summary"] if s["config"] == "oracle"]')" = "[True]"
-check "replay: the parent commit passes no task" test "$(runs '[s["passed"] for s in d["summary"] if s["config"] == "noop"]')" = "[0]"
-failed_oracle="$(runs '",".join(r["task"] for r in d["runs"] if r["config"] == "oracle" and not r["pass"])')"
-[ -z "$failed_oracle" ] || echo "  replay oracle failed on: $failed_oracle"
-check "replay: every task records a permissive license, its vendored license file, the issue and both commits" test "$(python3 -I -c '
-import json, glob, os
-ok = True
-for p in glob.glob("benchmarks/h2h/replay/*/meta.json"):
-    m = json.load(open(p)); s = m["source"]; d = os.path.dirname(p)
-    ok &= s["license"] in ("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause")
-    ok &= os.path.isfile(os.path.join(d, "repo", s["license_file"]))
-    ok &= all(len(s[k]) == 40 for k in ("fix_commit", "parent_commit")) and "/issues/" in s["issue"]
-    ok &= m["kind"] == "replay" and os.path.getsize(os.path.join(d, "task.txt")) > 0
-print(ok)')" = True
-# Leak check on a replay task: the hidden file is scored over the visible test of the same name, so only its
-# exact content counts as a leak; a new file that merely shares the name __init__.py does not.
-leak_out="$(cd benchmarks/h2h && python3 -I -c '
-import shutil, sys, tempfile
+# Replay and hard suites keep only meta.json and task.txt here; the snapshot is rebuilt from the upstream at the
+# pinned commits and must match meta's snapshot_sha256. Offline: a tiny local upstream proves the rebuild, the
+# cache, every refusal, oracle/noop scoring and the leak check. H2H_SELFCHECK_FETCH=1 also fetches every real
+# replay and hard task and runs their oracle/noop self-check (network, about a minute on a cold cache).
+export H2H_CACHE="${H2H_CACHE:-$T/h2h-cache}"
+UP="$T/upstream-tiny"
+mkdir -p "$UP/calc" "$UP/tests"
+git -C "$UP" init -q -b main
+git -C "$UP" config user.name t; git -C "$UP" config user.email t@example.invalid; git -C "$UP" config commit.gpgsign false
+printf 'MIT License\n' >"$UP/LICENSE"
+printf 'def add(a, b):\n    return a - b  # BUG\n' >"$UP/calc/core.py"
+printf 'def twice(x):\n    return x\n' >"$UP/calc/util.py"
+: >"$UP/calc/__init__.py"
+printf 'from calc.core import add\n\n\ndef test_add_zero():\n    assert add(1, 0) == 1\n' >"$UP/tests/test_core.py"
+printf 'not vendored\n' >"$UP/NOTES.txt"
+git -C "$UP" add -A; git -C "$UP" commit -qm parent
+printf 'def add(a, b):\n    return a + b\n' >"$UP/calc/core.py"
+printf 'def twice(x):\n    return 2 * x\n' >"$UP/calc/util.py"
+printf 'from calc.core import add\nfrom calc.util import twice\n\n\ndef test_add_zero():\n    assert add(1, 0) == 1\n\n\ndef test_add():\n    assert add(2, 3) == 5 and twice(2) == 4\n' >"$UP/tests/test_core.py"
+git -C "$UP" add -A; git -C "$UP" commit -qm fix
+tiny_out="$(cd benchmarks/h2h && python3 -I -c '
+import json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
 sys.path.insert(0, "."); import h2h
-t = h2h.load_task("py-cachetools-grow-evict", h2h.SUITES["replay"])
-r = Path(tempfile.mkdtemp(dir=sys.argv[1])) / "repo"; base = h2h.prepare_repo(t, r)
+T, UP = Path(sys.argv[1]), Path(sys.argv[2])
+g = lambda *a: subprocess.run(["git", "-C", str(UP), *a], capture_output=True, text=True, check=True).stdout
+parent, fix = g("rev-parse", "HEAD~1").strip(), g("rev-parse", "HEAD").strip()
+# The expected snapshot, written out independently of the fetch path.
+exp = T / "tiny-expected"
+for rel, body in (("repo/LICENSE", "MIT License\n"), ("repo/calc/__init__.py", ""),
+                  ("repo/calc/core.py", "def add(a, b):\n    return a - b  # wrong sign\n"),
+                  ("repo/calc/util.py", "def twice(x):\n    return x\n"),
+                  ("repo/tests/test_core.py", "from calc.core import add\n\n\ndef test_add_zero():\n    assert add(1, 0) == 1\n"),
+                  ("repo/conftest.py", "# added by the harness\n"),
+                  ("hidden/tests/test_core.py", g("show", f"{fix}:tests/test_core.py")),
+                  ("solution/calc/core.py", g("show", f"{fix}:calc/core.py")), ("solution/calc/util.py", g("show", f"{fix}:calc/util.py"))):
+    (exp / rel).parent.mkdir(parents=True, exist_ok=True); (exp / rel).write_text(body)
+meta = {"difficulty": "normal", "shape": "multi-file", "lang": "py", "kind": "replay",
+        "hidden": {"tests/test_core.py": "tests/test_core.py"},
+        "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"],
+        "visible_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"], "protected": ["tests"],
+        "snapshot_sha256": h2h.snapshot_digest(exp),
+        "source": {"upstream": UP.as_uri(), "license": "MIT", "license_file": "LICENSE", "parent_commit": parent, "fix_commit": fix,
+                   "vendored_paths": ["LICENSE", "calc", "tests"], "solution_files": ["calc/core.py", "calc/util.py"],
+                   "add_files": {"conftest.py": "# added by the harness\n"},
+                   "patch_files": {"repo/calc/core.py": [["# BUG", "# wrong sign", 1]]}}}
+suite = T / "tiny-suite"
+def put(tid, m):
+    (suite / tid).mkdir(parents=True, exist_ok=True)
+    (suite / tid / "meta.json").write_text(json.dumps(m)); (suite / tid / "task.txt").write_text("add() subtracts\n")
+put("py-tiny", meta)
+t = h2h.load_task("py-tiny", suite)
+d = t["dir"]
+print("built", d.parent == Path(os.environ["H2H_CACHE"]) / "tasks", sorted(p.name for p in d.iterdir()),
+      (d / "repo/NOTES.txt").exists(), (d / "repo/calc/core.py").read_text().endswith("# wrong sign\n"),
+      (d / "repo/conftest.py").is_file(), (d / "hidden/tests/test_core.py").read_text().count("def test_") == 2)
+moved = UP.with_name("upstream-moved"); UP.rename(moved); shutil.rmtree(Path(os.environ["H2H_CACHE"]) / "git")
+print("cached", h2h.load_task("py-tiny", suite)["dir"] == d)
+moved.rename(UP)
+def refused(tid, **edit):
+    m = json.loads(json.dumps(meta)); src = edit.pop("source", {}); m.update(edit); m["source"].update(src); put(tid, m)
+    try:
+        h2h.load_task(tid, suite); return "built"
+    except RuntimeError as e:
+        return "refused: " + ("digest" if "does not match" in str(e) else "patch" if "occurs" in str(e) else "fetch" if "cannot fetch" in str(e) else str(e))
+print("tampered", refused("py-tiny-b", snapshot_sha256="0" * 64))
+print("patchcount", refused("py-tiny-c", snapshot_sha256="1" * 64, source={"patch_files": {"repo/calc/core.py": [["# BUG", "# x", 2]]}}))
+print("unfetchable", refused("py-tiny-d", snapshot_sha256="2" * 64, source={"parent_commit": "f" * 40}))
+print("no-partial", sorted(p.name for p in (Path(os.environ["H2H_CACHE"]) / "tasks").iterdir()) == [d.name])
+work = T / "tiny-work"; work.mkdir()
+o, n = h2h.run_one("oracle", t, 1, work, 120, False), h2h.run_one("noop", t, 1, work, 120, False)
+print("score", o["pass"], n["pass"], o["hidden_leaked_before_scoring"], n["hidden_leaked_before_scoring"])
+# Leak check: the hidden file is scored over the visible test of the same name, so only its exact content counts.
+r = Path(tempfile.mkdtemp(dir=T)) / "repo"; base = h2h.prepare_repo(t, r)
 print("clean", h2h.hidden_leaks(t, r, base))
-(r / "src/cachetools/extra").mkdir(); (r / "src/cachetools/extra/__init__.py").write_text("x = 1\n")
+(r / "calc/tests").mkdir(); (r / "calc/tests/test_core.py").write_text("x = 1\n")
 print("namesake", h2h.hidden_leaks(t, r, base))
-shutil.copyfile(t["dir"] / "hidden/tests/__init__.py", r / "src/cachetools/extra/__init__.py")
+shutil.copyfile(d / "hidden/tests/test_core.py", r / "calc/tests/test_core.py")
 print("copied", h2h.hidden_leaks(t, r, base))
-shutil.copyfile(t["dir"] / "hidden/tests/__init__.py", r / "tests/__init__.py")
+shutil.copyfile(d / "hidden/tests/test_core.py", r / "tests/test_core.py")
 print("overlaid", h2h.hidden_leaks(t, r, base))
-' "$T")"
-has "replay leak check: clean copy" "$leak_out" "clean []"
-has "replay leak check: a namesake file is not a leak" "$leak_out" "namesake []"
-has "replay leak check: hidden content under another path is a leak" "$leak_out" "copied ['src/cachetools/extra/__init__.py']"
-has "replay leak check: hidden content over the visible test is a leak" "$leak_out" "overlaid ['src/cachetools/extra/__init__.py', 'tests/__init__.py']"
+' "$T" "$UP" 2>&1)"
+has "pinned task: rebuilt in the cache from the upstream with only the vendored paths, the patch, the added file and the fix tests" "$tiny_out" "built True ['.complete', 'hidden', 'repo', 'solution'] False True True True"
+has "pinned task: a built snapshot is reused without the upstream or the git cache" "$tiny_out" "cached True"
+has "pinned task: a snapshot that does not match snapshot_sha256 is refused" "$tiny_out" "tampered refused: digest"
+has "pinned task: a patch target with the wrong count is refused" "$tiny_out" "patchcount refused: patch"
+has "pinned task: an unfetchable commit is refused" "$tiny_out" "unfetchable refused: fetch"
+has "pinned task: a refused build leaves nothing in the cache" "$tiny_out" "no-partial True"
+has "pinned task: the fix passes, the parent fails, no leak" "$tiny_out" "score 1 0 [] []"
+has "leak check: clean copy" "$tiny_out" "clean []"
+has "leak check: a namesake file is not a leak" "$tiny_out" "namesake []"
+has "leak check: hidden content under another path is a leak" "$tiny_out" "copied ['calc/tests/test_core.py']"
+has "leak check: hidden content over the visible test is a leak" "$tiny_out" "overlaid ['calc/tests/test_core.py', 'tests/test_core.py']"
 
-# Hard suite (--suite hard): the same replay format, chosen for multi-file fixes in larger projects.
-J="$T/hard.json"
-TMPDIR="$T" bash benchmarks/h2h/run.sh --suite hard --configs oracle,noop --jobs 4 --out "$J" >"$T/hard.log" 2>&1
-check "hard oracle/noop: runner exits 0 (no leak, no harness error)" test "$?" = 0
-nhard="$(find benchmarks/h2h/fixtures/hard -mindepth 2 -maxdepth 2 -name meta.json | wc -l | tr -d ' ')"
-check "hard: at least 8 candidate tasks ($nhard)" test "$nhard" -ge 8
-check "hard: self-check covered every task" test "$(runs 'len(d["tasks"])')" = "$nhard"
-check "hard: the merged fix passes every task" test "$(runs '[s["passed"] == s["n"] for s in d["summary"] if s["config"] == "oracle"]')" = "[True]"
-check "hard: the parent commit passes no task" test "$(runs '[s["passed"] for s in d["summary"] if s["config"] == "noop"]')" = "[0]"
-failed_oracle="$(runs '",".join(r["task"] for r in d["runs"] if r["config"] == "oracle" and not r["pass"])')"
-[ -z "$failed_oracle" ] || echo "  hard oracle failed on: $failed_oracle"
-check "hard: every task is a multi-file fix with a permissive license, its license file, the issue and both commits" test "$(python3 -I -c '
-import json, glob, os
-ok = True
-for p in glob.glob("benchmarks/h2h/fixtures/hard/*/meta.json"):
-    m = json.load(open(p)); s = m["source"]; d = os.path.dirname(p)
-    ok &= s["license"] in ("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause") and len(s["solution_files"]) >= 2
-    ok &= os.path.isfile(os.path.join(d, "repo", s["license_file"])) and m["difficulty"] == "hard"
-    ok &= all(len(s[k]) == 40 for k in ("fix_commit", "parent_commit")) and "/issues/" in s["issue"]
-print(ok)')" = True
+# Every replay and hard task is a pinned spec: no snapshot is committed, and each records a permissive license,
+# the license file among its vendored paths, the issue, both commits and the snapshot digest.
+spec_check='
+import json, glob, os, re, sys
+ok, n = True, 0
+for p in glob.glob(sys.argv[1] + "/*/meta.json"):
+    m = json.load(open(p)); s = m["source"]; d = os.path.dirname(p); n += 1
+    ok &= sorted(os.listdir(d)) == ["meta.json", "task.txt"] and os.path.getsize(os.path.join(d, "task.txt")) > 0
+    ok &= s["license"] in ("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause") and m["kind"] == "replay"
+    ok &= any(s["license_file"] == v or s["license_file"].startswith(v.rstrip("/") + "/") for v in s["vendored_paths"])
+    ok &= all(re.fullmatch("[0-9a-f]{40}", s[k]) is not None for k in ("fix_commit", "parent_commit")) and "/issues/" in s["issue"]
+    ok &= re.fullmatch("[0-9a-f]{64}", m["snapshot_sha256"]) is not None and s["upstream"].startswith("https://github.com/")
+    ok &= all(re.fullmatch("[0-9a-f]{40}", sm["commit"]) is not None for sm in (s.get("submodules") or {}).values())
+    if sys.argv[2] == "hard":
+        ok &= len(s["solution_files"]) >= 2 and m["difficulty"] == "hard"
+print(ok, n)'
+nrep="$(python3 -I -c "$spec_check" benchmarks/h2h/replay replay)"
+check "replay: every task is a pinned spec with a permissive license, its license file, the issue and both commits" test "${nrep% *}" = True
+check "replay: 6 to 10 tasks (${nrep#* })" test "${nrep#* }" -ge 6 -a "${nrep#* }" -le 10
+nhard="$(python3 -I -c "$spec_check" benchmarks/h2h/fixtures/hard hard)"
+check "hard: every task is a pinned multi-file spec with a permissive license, its license file, the issue and both commits" test "${nhard% *}" = True
+check "hard: at least 8 candidate tasks (${nhard#* })" test "${nhard#* }" -ge 8
+
+if [ "${H2H_SELFCHECK_FETCH:-0}" = 1 ]; then
+    for suite in replay hard; do
+        J="$T/$suite.json"
+        case "$suite" in replay) n="${nrep#* }" ;; *) n="${nhard#* }" ;; esac
+        TMPDIR="$T" bash benchmarks/h2h/run.sh --suite "$suite" --configs oracle,noop --jobs 4 --out "$J" >"$T/$suite.log" 2>&1
+        check "$suite oracle/noop: runner exits 0 (snapshots rebuilt, no leak, no harness error)" test "$?" = 0
+        check "$suite: self-check covered every task ($n)" test "$(runs 'len(d["tasks"])')" = "$n"
+        check "$suite: the merged fix passes every task" test "$(runs '[s["passed"] == s["n"] for s in d["summary"] if s["config"] == "oracle"]')" = "[True]"
+        check "$suite: the parent commit passes no task" test "$(runs '[s["passed"] for s in d["summary"] if s["config"] == "noop"]')" = "[0]"
+        failed_oracle="$(runs '",".join(r["task"] for r in d["runs"] if r["config"] == "oracle" and not r["pass"])')"
+        [ -z "$failed_oracle" ] || echo "  $suite oracle failed on: $failed_oracle"
+    done
+else
+    echo "  SKIP: replay and hard oracle/noop self-checks fetch upstream snapshots (set H2H_SELFCHECK_FETCH=1)"
+fi
+
 # Selection rule: a hard task qualifies only if its fix touches 2+ files and raw-haiku-verify passed under half
 # of its pilot runs; a paid run without --tasks takes only qualifying tasks.
 check "hard: every qualified task meets the selection rule, and every candidate records its pilot" test "$(python3 -I -c '
@@ -431,9 +507,9 @@ ok &= all(m["pilot"]["runs"] >= 2 and m["pilot"]["passed"] / m["pilot"]["runs"] 
 ok &= all(m.get("excluded_because") for m in ms if not m["qualified"])
 print(ok, sum(m["qualified"] for m in ms) >= 8)')" = "True True"
 q_out="$(cd benchmarks/h2h && python3 -I -c '
-import sys; sys.path.insert(0, "."); import h2h
+import json, sys; sys.path.insert(0, "."); import h2h
 ids = sorted(p.name for p in h2h.SUITES["hard"].iterdir() if (p / "meta.json").is_file())
-ts = [h2h.load_task(i, h2h.SUITES["hard"]) for i in ids]
+ts = [dict(json.loads((h2h.SUITES["hard"] / i / "meta.json").read_text()), id=i) for i in ids]
 paid = h2h.select_tasks(ts, ["raw-haiku", "loki-haiku"], False)
 print("select", all(t["qualified"] for t in paid), len(paid) == sum(t["qualified"] for t in ts) < len(ts),
       len(h2h.select_tasks(ts, ["oracle", "noop"], False)) == len(ts), len(h2h.select_tasks(ts, ["raw-haiku"], True)) == len(ts))')"

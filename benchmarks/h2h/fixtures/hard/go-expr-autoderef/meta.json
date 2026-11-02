@@ -56,7 +56,6 @@
       "checker/checker.go",
       "compiler/compiler.go"
     ],
-    "added_files": [],
     "note": "docs, debug, docgen and repl are not vendored (debug and repl are separate modules with external dependencies)."
   },
   "pilot": {
@@ -65,5 +64,6 @@
     "runs": 2,
     "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
   },
-  "qualified": true
+  "qualified": true,
+  "snapshot_sha256": "21d0eb642ce75e0ced6cf94bebac095475967fb50612357372bd93609d36dd01"
 }

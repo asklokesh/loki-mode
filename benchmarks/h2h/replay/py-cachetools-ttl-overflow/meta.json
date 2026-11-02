@@ -49,9 +49,10 @@
     "solution_files": [
       "src/cachetools/__init__.py"
     ],
-    "added_files": [
-      "conftest.py"
-    ],
-    "note": "conftest.py added so tests import src/cachetools without installing the package."
-  }
+    "note": "conftest.py added so tests import src/cachetools without installing the package.",
+    "add_files": {
+      "conftest.py": "# Added by the benchmark harness, not part of the upstream project: makes src/ importable\n# without installing the package.\nimport os\nimport sys\n\nsys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), \"src\"))\n"
+    }
+  },
+  "snapshot_sha256": "d49cc7eb2750d05fc8b02d6fa936dddb0504eb947392b28f024062c0ef2d3701"
 }
