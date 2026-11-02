@@ -3,10 +3,269 @@
 Loki against raw Claude Code (`claude -p`) on the same coding tasks, scored only by hidden tests.
 This page states the protocol and the latest numbers, including where Loki loses.
 
-Latest run: `results/2026-11-01-win-bench-v2-after.json` (raw Haiku and Loki on Haiku, 24 tasks, 2
+Latest citable run: `results/2026-11-01-e13f3dd72-hard.json`, the hard suite (10 configs on 8 real
+multi-file fixes, see [Hard suite](#hard-suite-real-multi-file-fixes-selected-so-raw-haiku-fails)).
+
+Synthetic suite: `results/2026-11-01-win-bench-v2-after.json` (raw Haiku and Loki on Haiku, 24 tasks, 2
 reps, after the changes below), against `results/2026-11-01-65440abaf-before.json` (the v11.114.0
 engine, same protocol, run the same day). The four-config run further down is the v11.113.0 engine.
+The replay suite below (`results/2026-11-01-2100eda48-replay.json`, real closed issues) ran on
+the v11.114.0 engine at commit 2100eda48.
 
+**Citability.** A results file counts only if it was produced from a clean commit: the harness now
+stamps every results file with the engine commit, the tool versions and a `citable` flag, and refuses
+to run Loki configs from a tree with uncommitted changes. The v11.116.0 before/after files are
+**not citable**: `2026-11-01-win-bench-v2-after.json` records that it ran from uncommitted code,
+and `2026-11-01-65440abaf-before.json` and `2026-11-01-win-bench-v2-review-fixes.json` record
+commits (65440abaf, 38b31e8cc) that are on no published branch, since they predate the release
+squash, so nobody can check out the code they measured. The replay file ran Loki from a clean engine commit
+(2100eda48) with the benchmark harness changes not yet committed (committed in 070d72ea4), so it
+is not citable under this rule either.
+
+## Hard suite (real multi-file fixes, selected so raw Haiku fails)
+
+Results file: `results/2026-11-01-e13f3dd72-hard.json`, **citable**: every invocation that wrote it
+ran from a clean commit (e13f3dd72, then 0d2071933, which changes only a test comment), on the
+v11.116.0 engine merged from main. Tool versions are in the file (bun 1.3.13, Claude CLI 2.1.316).
+
+- **Provenance gap.** "Clean" at those two commits did not cover every input. The expr snapshots'
+  `internal/` packages (102 files, in go-expr-autoderef and go-expr-withcontext) were on disk but
+  matched the then-unanchored `internal/` ignore rule, so neither commit holds them and the
+  clean-tree check could not see them. They were added in d915fd672 (the snapshot builder was last
+  modified at 20:36, before either run commit, and was not changed after). They are now pinned by
+  each task's `snapshot_sha256`. The provenance gate now treats any gitignored file under
+  `benchmarks/` (Python bytecode aside) as dirt, so a run like this one would now be marked not
+  citable.
+- **Scoring command changed after the run.** 2ec9b75d6 (after this run) added
+  `--ignore=tests/test_toml_spec_tests.py` to the tomlkit tasks' test commands (that file needs
+  PyYAML) and `-W ignore::pytest.PytestRemovedIn10Warning` to the click tasks' (newer pytest warns on
+  a pattern in click's tests, and click turns warnings into errors). This makes the commands work on
+  CI. No verdict depended on it. The change can only turn a fail into a pass, by skipping that file
+  or that warning, and none of the 83 failing runs on the affected tasks (tomlkit #408 and #165,
+  click #2836) mentions the skipped file, the warning or yaml in its recorded failure tail.
+
+- **Candidates.** 18 closed issues in `fixtures/hard/` from sqlglot, tomlkit, click, sqlparse,
+  mistune and expr (MIT or BSD-3-Clause; each `meta.json` records license, issue, fix PR and
+  commits). Each is replayed at the fix's parent commit and scored by the fix's own test files at
+  their own paths, together with the rest of the project's suite. Only `meta.json` and `task.txt`
+  are in this repository: the snapshot is fetched from the upstream at the pinned commits on first
+  use and cached outside it (see "Snapshots" below). The merged fix passes all 18 and the parent
+  commit passes none (`tests/min/h2h-harness.sh` with `H2H_SELFCHECK_FETCH=1`). The tasks live
+  under `fixtures/` because two issue texts keep characters (emoji, dashes) this repository's text
+  rule otherwise bans.
+- **Selection rule.** A task qualifies only if the fix touches 2 or more files and raw Haiku with
+  the verify sentence passed under half of its pilot runs (2 runs per task over the 19 candidates of
+  the time, $0.78). Pilot results file: `results/2026-11-01-2499d6aee-hard-pilot.json` (38 runs,
+  $0.78 recorded, citable flag true with the same provenance gap as below: the expr `internal/`
+  files were gitignored at 2499d6aee). Each task's `meta.json` pilot counts must match it
+  (`tests/min/h2h-harness.sh`). 11 met it. 3 of those were excluded because the fix's tests need something the
+  issue cannot tell anyone: a class the fix adds (sqlparse `TypedLiteral`), a method the fix adds
+  (`Function.get_window`), and one of two valid HTTP header shapes (chi #446's `Allow`). The chi
+  candidate was then removed altogether: its merged fix fills the `Allow` header by iterating a Go
+  map, so the fix's own test (which expects `GET, HEAD` in that order) fails about one run in six
+  (4 of 24 runs of the fix under 8-way parallel load), which made the self-check flaky.
+  **8 qualify**: expr #836 and #823, click #2836, sqlglot #8598, #8808 and #8805, tomlkit #408 and
+  #165. A paid run without `--tasks` takes only those. The target was 20 or more; the candidates
+  gave 8.
+- **Configs.** Raw `claude -p` on Haiku, Sonnet and Opus, each also with the verify sentence; Loki
+  pinned to Haiku, Sonnet or Opus (`LOKI_SESSION_MODEL`); and `loki-default`, Loki with no model pin
+  so its own routing picks. 3 reps, `--jobs 4`, timeout 900 s.
+- **Accepted without edit** now means the hidden tests pass and the run weakened no existing test:
+  a pre-existing test file deleted, with a line removed or changed, or with an added skip, or any
+  test config changed. New test files and appended cases are fine. Each record keeps its test diff.
+
+| 8 tasks x 3 reps | pass | 95% CI | accepted | $ per task | $ per passed task | median s | p90 s | sessions |
+|---|---|---|---|---|---|---|---|---|
+| raw-haiku | 1/24 | 0.7-20.2% | 0/24 | 0.0198 | 0.4756 | 63.3 | 158.0 | 1 |
+| raw-haiku-verify | 0/24 | 0-13.8% | 0/24 | 0.0219 | - | 79.2 | 206.0 | 1 |
+| raw-sonnet | 0/24 | 0-13.8% | 0/24 | 0.1975 | - | 51.4 | 88.5 | 1 |
+| raw-sonnet-verify | 1/24 | 0.7-20.2% | 1/24 | 0.1951 | 4.6815 | 43.0 | 86.3 | 1 |
+| raw-opus | 3/24 | 4.3-31.0% | 2/24 | 0.6155 | 4.9236 | 104.2 | 215.3 | 1 |
+| raw-opus-verify | 3/24 | 4.3-31.0% | 2/24 | 0.6313 | 5.0508 | 118.8 | 256.1 | 1 |
+| loki-haiku | 0/24 | 0-13.8% | 0/24 | 0.0171 | - | 92.5 | 159.9 | 1.54 |
+| loki-sonnet | 1/24 | 0.7-20.2% | 1/24 | 0.1411 | 3.3852 | 61.6 | 288.4 | 1.50 |
+| loki-opus | 5/24 | 9.2-40.5% | 5/24 | 0.2556 | 1.2271 | 83.1 | 362.8 | 1.50 |
+| loki-default | 4/24 | 6.7-35.9% | 4/24 | 0.2216 | 1.3296 | 81.0 | 307.6 | 1.50 |
+
+**Headline.** Loki on Haiku does not match raw Sonnet or raw Opus here: it passes 0 of 24, raw
+Sonnet 0 of 24 (1 with the verify sentence), raw Opus 3 of 24. Loki with default routing passes 4
+of 24 against raw Opus's 3 at 0.27 times raw Opus's cost per passed task ($1.33 against $4.92), and
+Loki pinned to Opus passes 5 of 24 at $1.23 per passed task (0.25 times). Every interval overlaps,
+and all the passes come from 2 of the 8 tasks, so this shows Loki on a strong model is cheaper per
+run than raw on the same model (Opus: $0.26 against $0.62 per task; raw Opus took a median of 16.5
+turns), not that it solves more.
+
+| Loki config | VERIFIED | PARTIAL | BLOCKED or STALLED | verdict agrees | false VERIFIED | VERIFIED recall | models per session (count) |
+|---|---|---|---|---|---|---|---|
+| loki-haiku | 0 | 19 | 5 | 24/24 | 0 | - (no passes) | haiku 37 |
+| loki-sonnet | 0 | 20 | 4 | 23/24 | 0 | 0 of 1 | sonnet 36 |
+| loki-opus | 0 | 21 | 3 | 19/24 | 0 | 0 of 5 | opus 30, sonnet 6 |
+| loki-default | 1 | 19 | 4 | 19/24 | 1 | 0 of 4 | provider default 30, sonnet 6 |
+
+- **Which models ran.** Pinned runs used their pin for implement and fix sessions; the 6 Sonnet
+  sessions in each of loki-opus and loki-default are all intake sessions on the two tomlkit tasks. Default routing leaves implement and fix to the Claude CLI's default model; a one-call
+  check under the same throwaway HOME ($0.045, on the ledger) showed that default is
+  `claude-opus-5-5`. So `loki-default` here is in effect Loki on Opus with a Sonnet intake.
+- **Verdicts.** Loki almost never claims VERIFIED on these tasks: 1 VERIFIED in 96 runs, and it was
+  wrong (loki-default, go-expr-withcontext rep 3). That run was an ALREADY_SATISFIED seal with 0 files
+  changed: Loki judged the issue already fixed and changed nothing. VERIFIED recall is 0: none of the 10 Loki runs
+  whose work passed the hidden tests was sealed VERIFIED; all ended PARTIAL. Agreement is high
+  only because nearly everything failed and nearly everything was PARTIAL.
+- **Accepted.** 3 passing raw runs changed existing tests of expr's patcher to compile against a
+  pointer receiver they introduced (raw-haiku rep 2, raw-opus rep 3) or rewrote the issue's own test
+  (raw-opus-verify rep 1), so they are not accepted. Every passing Loki run is accepted.
+
+| task | raw-haiku | raw-haiku-verify | raw-sonnet | raw-sonnet-verify | raw-opus | raw-opus-verify | loki-haiku | loki-sonnet | loki-opus | loki-default |
+|---|---|---|---|---|---|---|---|---|---|---|
+| go-expr-autoderef | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
+| go-expr-withcontext | 1/3 | 0/3 | 0/3 | 1/3 | 2/3 | 1/3 | 0/3 | 1/3 | 3/3 | 2/3 |
+| py-click-show-default-prompt | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
+| py-sqlglot-hash-case | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
+| py-sqlglot-mysql-timestampadd | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
+| py-sqlglot-snowflake-idents | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
+| py-tomlkit-array-remove | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
+| py-tomlkit-value-bool | 0/3 | 0/3 | 0/3 | 0/3 | 1/3 | 2/3 | 0/3 | 0/3 | 2/3 | 2/3 |
+
+**Why runs fail.** 6 of the 8 tasks were never passed by any config in 30 runs each. The failing
+runs made changes and missed cases the fix's tests check, for example: sqlglot #8808 expects exact
+DuckDB and Postgres output strings (raw Opus wrote `CAST(... AS TIMESTAMP) + INTERVAL` where the fix
+writes the bare literal); sqlglot #8598 needs case-sensitive equality on node types beyond the one
+the issue shows (`AnonymousAggFunc(sumMap)` against `summap`); click #2836 expects the custom default
+in parentheses and for defaults of `None`; tomlkit #408 expects exact whitespace after removing an
+array item; tomlkit #165 expects every value with a `true` prefix to be rejected. Loki's sessions
+ended PARTIAL on most of these; on sqlglot #8805
+10 of 12 Loki runs stalled in the fix loop and 2 ended BLOCKED, and 4 runs on tomlkit #165 ended
+BLOCKED.
+
+**Threats.** 8 tasks, 2 of which carry every pass: one task more or less for any config moves its
+rate by 4 points per run and 12.5 points per task. The selection rule picks tasks raw Haiku fails, so raw Haiku's 1 of 24 is
+low by construction (regression to the mean would favour it on a fresh draw). Contestants had
+network access and could look up the upstream fix. They also have local disk access. The fix commit
+(in the bare git cache) and the rebuilt `hidden/` and `solution/` trees sit at a predictable path,
+`~/.cache/loki-h2h` by default. Contestants get a throwaway HOME, but the cache path is reachable by
+absolute path. This is not new: the vendored tree had the same files inside this repository. The
+mitigation is running contestants in a container with restricted egress, which is in progress.
+
+## Replay suite (real closed issues)
+
+The synthetic tasks below are written for the benchmark. The replay suite is real work: 8 closed
+issues from permissively licensed open source projects, each replayed at the parent commit of the
+change that fixed it.
+
+- **Tasks.** `replay/<id>/`, 6 Python and 2 Go. `task.txt` is the issue title and body as written.
+  The hidden tests are the test files the merged fix changed, taken from the fix commit and scored
+  at their own paths, run with the rest of the project's suite (so a fix that breaks other tests
+  fails). `meta.json` "source" records the upstream, license, issue, fix PR, fix and parent
+  commits, and every change made to the snapshot; the snapshot itself is fetched at run time (see
+  "Snapshots" below).
+
+| task | project (license) | issue |
+|---|---|---|
+| go-semver-dirty-lte | Masterminds/semver (MIT) | #141 range against a version with missing parts fails |
+| go-semver-four-part | Masterminds/semver (MIT) | #185 NewConstraint accepts some four-part versions |
+| py-boltons-research-tuples | mahmoud/boltons (BSD-3-Clause) | #393 `research` skips identical small tuples |
+| py-cachetools-grow-evict | tkem/cachetools (MIT) | #405 growing an existing key over-evicts |
+| py-cachetools-ttl-overflow | tkem/cachetools (MIT) | #440 failed TTL expiry leaves an unusable entry |
+| py-moreit-value-chain | more-itertools (MIT) | #1250 value_chain swallows a TypeError |
+| py-parse-tz-groups | r1chardj0n3s/parse (MIT) | #262 fields after `%z` are shifted |
+| py-toolz-partition-len | pytoolz/toolz (BSD-3-Clause) | #602 partition_all pads on an inaccurate `__len__` |
+
+- **Snapshot changes.** parse: pytest-cov options removed from `addopts`, `tests/check_typing.py`
+  ignored (needs typing_extensions). cachetools: a `conftest.py` puts `src/` on the import path.
+  toolz: `test_package.py::test_has_version` deselected (needs installed metadata). In all tasks,
+  en and em dashes and emoji were rewritten to meet this repository's text rule (escapes inside
+  string literals, so behaviour is unchanged); the run below used the snapshot and issue text
+  before that rewrite, which differ only in those characters. These changes are recorded as
+  `add_files` and `patch_files` in `meta.json` and applied when the snapshot is rebuilt.
+- **Self-check.** The merged fix passes all 8 tasks and the parent commit passes none
+  (`--suite replay --configs oracle,noop`, run by `tests/min/h2h-harness.sh` with
+  `H2H_SELFCHECK_FETCH=1`).
+- **Snapshots.** Replay and hard tasks were first vendored in this repository (about 1.4 million
+  lines). They are now rebuilt on first use: a shallow fetch of the pinned parent and fix commits
+  (and any pinned submodule) into a bare cache, `git archive` of the vendored paths, the fix's test
+  files as `hidden/`, its other changed files as `solution/`, then `add_files` and `patch_files`.
+  The result must match `meta.json` `snapshot_sha256` (every path, executable bit and content), or
+  the task is refused. Each digest was taken from the vendored snapshot the results below were
+  measured on, and every one of the 26 tasks rebuilds to it. Cache: `$H2H_CACHE`, default
+  `${XDG_CACHE_HOME:-~/.cache}/loki-h2h`: for all 26 tasks, about 25 MB of git cache plus about
+  69 MB of rebuilt trees. A cold build takes about a minute. A cached snapshot is hashed again on every
+  load (0.4 s for all 26) and refused if it was edited. Every `add_files`, `patch_files`, hidden and
+  solution path must stay inside the build directory (no absolute path, no `..`, no symlink on the
+  way) before anything is written.
+- **Configs.** `raw-haiku` and `loki-haiku` as below. `raw-haiku-verify` and `raw-opus-verify` are
+  raw `claude -p` with the same task text plus one sentence: "Before you finish, run the
+  repository's tests and check that your change works." That is the fair baseline: what a careful
+  user gets from Claude Code alone.
+- **Accepted without edit (old definition, used for this run only).** The hidden tests pass on the
+  tree as the run left it, and the run left no test edits in it (a changed file under a protected
+  path, in a test directory, or named like a test). Test edits are reverted before scoring in every
+  case, so they never affect pass or fail. The harness now uses a narrower definition (see the hard
+  suite): only a weakened pre-existing test or a test config change counts, so new test files and
+  appended cases are fine. These runs did not keep their diffs, so they cannot be rescored; under
+  the new definition Loki's 10 passes would all count as accepted (it only added new test files),
+  and the raw configs' cannot be determined.
+- **Run.** `--suite replay --reps 2 --jobs 4`, timeout 600 s, on its own ledger with a $15 budget.
+
+### Results
+
+| 2 reps | pass | 95% CI | accepted | 95% CI | median s | total $ | $ per task | $ per passed task | $ per accepted task |
+|---|---|---|---|---|---|---|---|---|---|
+| raw-haiku | 10/16 | 38.6-81.5% | 0/16 | 0-19.4% | 37.8 | 0.2012 | 0.0126 | 0.0201 | none accepted (at least 0.0650) |
+| raw-haiku-verify | 12/16 | 50.5-89.8% | 0/16 | 0-19.4% | 48.2 | 0.2299 | 0.0144 | 0.0192 | none accepted (at least 0.0742) |
+| raw-opus-verify | 14/16 | 64.0-96.5% | 0/16 | 0-19.4% | 41.6 | 5.4410 | 0.3401 | 0.3886 | none accepted (at least 1.7565) |
+| loki-haiku | 10/16 | 38.6-81.5% | 0/16 | 0-19.4% | 40.6 | 0.1353 | 0.0085 | 0.0135 | none accepted (at least 0.0437) |
+
+The interval for $ per accepted task is $ per task divided by the Wilson bounds of the acceptance
+rate; with 0 accepted its upper bound is unbounded, so only the lower bound is shown.
+
+- **Loki on Haiku against raw Haiku with the verify sentence (same model, fair baseline):** 2 fewer
+  passes (10 against 12 of 16, intervals overlap) at 0.70 times the cost per passed task and 0.84
+  times the median time. Against plain raw Haiku: the same 10 passes at 0.67 times the cost per
+  passed task.
+- **Against raw Opus with the verify sentence:** 4 fewer passes (10 against 14 of 16) at 0.035
+  times the cost per passed task.
+- **Accepted without edit is 0 for every config.** Every passing run left test edits behind. The
+  raw configs added tests to an existing test file (14, 16 and 16 runs for raw-haiku,
+  raw-haiku-verify and raw-opus-verify); Loki added a new test file (14 runs). By this definition no
+  config produced a change a user could take without editing it, so the metric does not separate
+  the configs here. A user who keeps regression tests would count every pass.
+- **Loki's verdict:** VERIFIED 4 runs (2 hidden passes, 2 hidden fails), PARTIAL 12 (8 hidden
+  passes, 4 hidden fails). Verdict agreement 6 of 16. These are the first VERIFIED runs on a hidden
+  fail in this benchmark (both on go-semver-four-part).
+
+| task | raw-haiku | raw-haiku-verify | raw-opus-verify | loki-haiku |
+|---|---|---|---|---|
+| go-semver-dirty-lte | 2/2 | 2/2 | 2/2 | 2/2 |
+| go-semver-four-part | 0/2 | 0/2 | 2/2 | 0/2 |
+| py-boltons-research-tuples | 2/2 | 2/2 | 2/2 | 0/2 |
+| py-cachetools-grow-evict | 2/2 | 2/2 | 2/2 | 2/2 |
+| py-cachetools-ttl-overflow | 2/2 | 2/2 | 2/2 | 2/2 |
+| py-moreit-value-chain | 0/2 | 2/2 | 2/2 | 2/2 |
+| py-parse-tz-groups | 2/2 | 2/2 | 2/2 | 2/2 |
+| py-toolz-partition-len | 0/2 | 0/2 | 0/2 | 0/2 |
+
+### Every loss, with its reason
+
+| task | config | failed | reason |
+|---|---|---|---|
+| py-boltons-research-tuples | loki-haiku | 2 of 2 | The implement session changed no file; the run ended PARTIAL with "no tests executed". Every raw config fixed it. |
+| go-semver-four-part | loki-haiku | 2 of 2 | Loki rejected the four-part versions in the issue and ended VERIFIED, but the fix's tests also require `12.3.34~ 1.2.3` to be rejected, which the issue does not mention. |
+| go-semver-four-part | raw-haiku, raw-haiku-verify | 2 of 2 each | Same missing case. Only raw Opus covered it. |
+| py-moreit-value-chain | raw-haiku | 2 of 2 | The session ended after 2 and 4 turns with no change to the tree. |
+| py-toolz-partition-len | every config | 2 of 2 each | The fix's test requires a LookupError when `__len__` overstates the length; the issue asks only that no padding tokens appear. No config inferred the exception. |
+
+Loki on Haiku loses one task to raw Haiku with the verify sentence (boltons) and wins none; it wins
+one task against plain raw Haiku (more-itertools).
+
+### Threats to validity
+
+- 8 tasks and 2 reps: 16 runs per config. A 2-pass difference is well inside the intervals.
+- Several issues are recent and very precise (some name the cause and a fix). Older, terse issues
+  are harder; the suite has 2 of those (#141, #185).
+- Contestants had network access and could in principle look up the upstream fix. The records do
+  not show whether any did.
+- Two hidden tests check behaviour the issue does not ask for (go-semver-four-part, toolz). That is
+  what replaying a real fix measures, and it hits every config alike.
 ## Loki on Haiku against raw Haiku, before and after the Wall and session fixes
 
 Same 24 tasks, 2 reps each, `--jobs 4`, `raw-haiku,loki-haiku`. Raw Haiku was rerun in each
@@ -275,6 +534,13 @@ with both opted in, run from a checkout of that release with this harness and th
 
 ## Spend
 
+- Hard suite, on its own ledger: $56.42 against an $80 cap. Qualifying pilot $0.78 (38 runs of
+  raw-haiku-verify), default-model check $0.05, main run $55.60 over 240 runs (raw Opus $14.77, raw
+  Opus with the verify sentence $15.15, raw Sonnet $4.74 and $4.68, Loki on Opus $6.14, Loki
+  default $5.32, Loki on Sonnet $3.39, raw Haiku $0.48 and $0.53, Loki on Haiku $0.41).
+- Replay run, on its own ledger: $6.01 against a $15 budget ($0.57 for raw-haiku, raw-haiku-verify
+  and loki-haiku over 48 runs, $5.44 for raw-opus-verify over 16 runs). The oracle and noop
+  self-checks cost nothing.
 - Main run: $38.23 recorded in its results file (231 runs). Ledger total including $0.90 of
   pilot runs used to calibrate task difficulty and one $0.02 diagnostic rerun: $39.14, under the
   $40 cap. The budget check stops before starting a run, so up to 3 in-flight runs finish after
@@ -292,6 +558,13 @@ with both opted in, run from a checkout of that release with this harness and th
 ```bash
 bash benchmarks/h2h/run.sh --configs oracle,noop                     # task self-check, no model
 bash benchmarks/h2h/run.sh --reps 3 --jobs 4 --budget 38.5 --ledger spend.jsonl
+bash benchmarks/h2h/run.sh --suite replay --configs oracle,noop     # replay self-check, no model
+bash benchmarks/h2h/run.sh --suite replay --configs raw-haiku,raw-haiku-verify,raw-opus-verify,loki-haiku \
+    --reps 2 --jobs 4 --budget 15 --ledger replay.jsonl
+bash benchmarks/h2h/run.sh --suite hard --configs oracle,noop       # all 18 hard candidates, no model
+H2H_SELFCHECK_FETCH=1 bash tests/min/h2h-harness.sh                 # the harness test plus both fetched self-checks
+bash benchmarks/h2h/run.sh --suite hard --reps 3 --jobs 4 --timeout 900 --budget 73 --ledger hard.jsonl \
+    --configs raw-haiku,raw-haiku-verify,raw-sonnet,raw-sonnet-verify,raw-opus,raw-opus-verify,loki-haiku,loki-sonnet,loki-opus,loki-default
 bash benchmarks/h2h/run.sh --sequences all --configs loki-haiku-learn,loki-haiku-nolearn \
     --reps 3 --jobs 4 --budget 9.2 --ledger learning.jsonl
 bash benchmarks/h2h/run.sh --sequences all --configs loki-haiku-lessons,loki-haiku-example,loki-haiku-nolearn \

@@ -1,0 +1,26 @@
+MySQL STDDEV and VARIANCE are transpiled as sample instead of population
+
+**Before you file an issue**
+- Read dialect: `mysql` / `duckdb`
+- Write dialect: `duckdb` / `mysql`
+- Reproduced on 30.22.0 and on `main` @ `b9c5f8d4a`
+  
+**Fully reproducible code snippet**
+In MySQL, `STDDEV` and `VARIANCE` are population functions (synonyms for `STDDEV_POP` and `VAR_POP`), but sqlglot treats them as the sample versions, so the result changes when transpiling to or from MySQL.
+```python
+import sqlglot
+sqlglot.transpile("SELECT STDDEV(x), VARIANCE(x)", read="mysql", write="duckdb")
+# ['SELECT STDDEV(x), VARIANCE(x)']
+# expected: ['SELECT STDDEV_POP(x), VAR_POP(x)']
+ 
+sqlglot.transpile("SELECT STDDEV(x), VARIANCE(x)", read="duckdb", write="mysql")
+# ['SELECT STDDEV(x), VARIANCE(x)']
+# expected: ['SELECT STDDEV_SAMP(x), VAR_SAMP(x)']
+```
+MySQL's `STD(x)` is also population, but it isn't recognized and is passed through as `STD(x)`.
+
+I ran into this while working on an ibis fix (ibis-project/ibis#12161).
+
+**Official Documentation**
+- MySQL: https://dev.mysql.com/doc/refman/8.4/en/aggregate-functions.html#function_stddev and https://dev.mysql.com/doc/refman/8.4/en/aggregate-functions.html#function_variance
+- DuckDB: https://duckdb.org/docs/stable/sql/functions/aggregates (`stddev` is an alias of `stddev_samp`)

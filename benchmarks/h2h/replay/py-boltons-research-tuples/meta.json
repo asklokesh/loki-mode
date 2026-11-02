@@ -1,0 +1,89 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_iterutils.py": "tests/test_iterutils.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "setup.cfg",
+    "tox.ini"
+  ],
+  "source": {
+    "upstream": "https://github.com/mahmoud/boltons",
+    "license": "BSD-3-Clause",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/mahmoud/boltons/issues/393",
+    "fix_pr": "https://github.com/mahmoud/boltons/pull/394",
+    "fix_commit": "17374731bcc404908726a65734f941d789f23a78",
+    "parent_commit": "ce7c7d2b15ea189c1284a48d742a7862bfae8606",
+    "vendored_paths": [
+      "LICENSE",
+      "README.md",
+      "pyproject.toml",
+      "setup.cfg",
+      "tox.ini",
+      "boltons",
+      "tests"
+    ],
+    "solution_files": [
+      "boltons/iterutils.py"
+    ],
+    "note": "En and em dashes (U+2013, U+2014) in the issue text and vendored files are replaced by '-' to meet this repository's text rule; the 2026-11-01 run sent the issue text with the original characters. Emoji codepoints are rewritten to meet this repository's text rule, without changing behaviour: in string literals as escapes (Go \\u2603, Python \\U0001F34E and similar), in comments and prose as text or removed.",
+    "patch_files": {
+      "repo/README.md": [
+        [
+          "\u2014",
+          "-",
+          2
+        ]
+      ],
+      "repo/boltons/strutils.py": [
+        [
+          "\u2013",
+          "-",
+          8
+        ]
+      ],
+      "repo/tests/test_strutils.py": [
+        [
+          "\ud83c\udf4e",
+          "\\U0001F34E",
+          2
+        ],
+        [
+          "\ud83c\udf4c",
+          "\\U0001F34C",
+          2
+        ],
+        [
+          "\ud83c\udf52",
+          "\\U0001F352",
+          2
+        ]
+      ]
+    }
+  },
+  "snapshot_sha256": "538c4b1eb0d65ecfbf3e64762c960b7d3e4f09583e6375ba7d4fa9666bf777b7"
+}

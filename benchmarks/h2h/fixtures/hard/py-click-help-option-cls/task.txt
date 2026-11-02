@@ -1,0 +1,167 @@
+Regression: Help option subclassing no longer works with verion 8.1.8
+
+Click 8.18 has a regression wrt. to help with Option subclasses.
+
+This was found in this issue originally:
+- https://github.com/aboutcode-org/scancode-toolkit/issues/4044
+
+This was introduced in this PR by @kdeldycke :wave: :
+- https://github.com/pallets/click/pull/2563
+
+It breaks code that uses option subclasses. 
+
+
+- This code works in 8.1.7 and  8.1.8 with no custom class
+```Python
+import click
+
+@click.command()
+@click.help_option("-h", "--help")
+def scancode():
+    """OK in pkg:pypi/click@8.1.8 and pkg:pypi/click@8.1.7"""
+    pass
+
+
+if __name__ == "__main__":
+    scancode()
+```
+and then with 8.1.7 and 8.1.8:
+```
+$ python  works.py --help
+Usage: works.py [OPTIONS]
+
+  Regression in pkg:pypi/click@8.1.8
+
+Options:
+  -h, --help  Show this message and exit.
+```
+
+
+
+
+- This code works in 8.1.7 and fails in 8.1.8 with a custom class
+```Python
+import click
+
+
+class PluggableCommandLineOption(click.Option):
+    pass
+
+
+@click.command()
+@click.help_option("-h", "--help", cls=PluggableCommandLineOption)
+def scancode():
+    """Regression in pkg:pypi/click@8.1.8"""
+    pass
+
+
+if __name__ == "__main__":
+    scancode()
+```
+
+and then with 8.1.7
+```
+ python  failing.py --help
+Usage: failing.py [OPTIONS]
+
+  Regression in pkg:pypi/click@8.1.8
+
+Options:
+  -h, --help  Show this message and exit.
+
+
+$ python  failing.py -h
+Usage: failing.py [OPTIONS]
+
+  Regression in pkg:pypi/click@8.1.8
+
+Options:
+  -h, --help  Show this message and exit.
+
+```
+
+and then with 8.1.8
+```
+$ python  failing.py -h
+Error: Option '-h' requires an argument.
+
+
+$ python  failing.py --help
+Error: Option '--help' requires an argument.
+
+
+```
+
+
+
+- This code works more or less in 8.1.7 and 8.1.8 with custom class and no "--help" option
+```Python
+import click
+
+
+class PluggableCommandLineOption(click.Option):
+    pass
+
+
+@click.command()
+@click.help_option("-h", cls=PluggableCommandLineOption)
+def scancode():
+    """Regression in pkg:pypi/click@8.1.8"""
+    pass
+
+
+if __name__ == "__main__":
+    scancode()
+
+```
+and then with 8.1.7
+```
+$ python  works2.py -h
+Usage: works2.py [OPTIONS]
+
+  Regression in pkg:pypi/click@8.1.8
+
+Options:
+  -h      Show this message and exit.
+  --help  Show this message and exit.
+```
+
+and then with 8.1.7
+```
+$ python  works2.py --help
+Usage: works2.py [OPTIONS]
+
+  Regression in pkg:pypi/click@8.1.8
+
+Options:
+  -h      Show this message and exit.
+  --help  Show this message and exit
+```
+
+and then with 8.1.8
+```
+$ python  works2.py -h
+Error: Option '-h' requires an argument.
+
+```
+and then with 8.1.8 note the changes in `-h TEXT`
+```
+$ python  works2.py --help
+Usage: works2.py [OPTIONS]
+
+  Regression in pkg:pypi/click@8.1.8
+
+Options:
+  -h TEXT
+  --help   Show this message and exit.
+
+```
+
+
+
+
+
+Environment:
+
+- Python version: 3.9 to 3.11
+- Click version: 8.1.8

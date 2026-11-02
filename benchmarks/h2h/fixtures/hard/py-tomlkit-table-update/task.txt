@@ -1,0 +1,46 @@
+Table.update(TOMLDocument) is missing a nesting level
+
+Trying to update a Table `entry` from a TOMLDocument should insert the top-level entries of the document into the table `entry`, however it inserts them at the top level. Test case:
+
+```python
+import tomlkit
+import tomli
+
+
+def test_parsed_subentry():
+    example = "[entry]\nfoo = 'bar'"
+    subentry = "bar = 23\n\n[subentry]\n'subkey' = 'subvalue'"
+
+    doc_tomlkit = tomlkit.loads(example)
+    doc_tomli = tomlkit.loads(example)
+
+    doc_tomlkit["entry"].update(tomlkit.loads(subentry))
+    doc_tomli["entry"].update(tomli.loads(subentry))
+
+    doc_tomlkit_output = tomlkit.dumps(doc_tomlkit)
+    doc_tomli_output = tomlkit.dumps(doc_tomli)
+
+    print("## Inserted tomli-parsed subentry ##", doc_tomli_output, sep="\n")
+    print("## Inserted tomlkit-parsed subentry ##", doc_tomlkit_output, sep="\n")
+
+    assert tomli.loads(doc_tomlkit_output) == tomli.loads(doc_tomli_output)
+```
+
+Output: 
+```toml
+## Inserted tomli-parsed subentry ##
+[entry]
+foo = 'bar'
+bar = 23
+
+[entry.subentry]
+subkey = "subvalue"
+
+## Inserted tomlkit-parsed subentry ##
+[entry]
+foo = 'bar'
+bar = 23
+
+[subentry]
+'subkey' = 'subvalue'
+```

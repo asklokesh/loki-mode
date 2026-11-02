@@ -4,6 +4,9 @@
 # input is timed at 50k and 200k characters (best of 5); linear work grows about 4x,
 # quadratic backtracking about 16x, so a growth ratio of 10 or more, or any single call
 # over 1s, fails. Growth, not a wall-clock bound, so a slow CI runner does not flake.
+# The 50k time is floored at 5ms: sub-millisecond timings under machine load gave a
+# false 12.3x ratio (v11.122.0 release gate, 2026-11-02); quadratic work on 50k
+# characters takes far longer than 5ms, so the floor does not hide it.
 # The secrets are assembled at run time so this file holds no credential-shaped literal.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
@@ -47,7 +50,7 @@ const best = (input: string): number => {
 let worst = 0, slow = 0;
 for (const build of builders) {
   const small = best(build(50000)), big = best(build(200000));
-  worst = Math.max(worst, big / Math.max(small, 1));
+  worst = Math.max(worst, big / Math.max(small, 5));
   if (big >= 1000) slow++;
 }
 res("growth 50k to 200k stays under 10x (worst " + worst.toFixed(1) + "x)", worst < 10);

@@ -11,16 +11,20 @@ after the contestant process (and its whole process group) has exited.
 
 import argparse
 import datetime as dt
+import hashlib
+import io
 import json
 import math
 import os
 import platform
 import pwd
+import re
 import shutil
 import signal
 import statistics
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -30,7 +34,20 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 TASKS_DIR = HERE / "tasks"
-CONFIGS = ["raw-haiku", "raw-opus", "loki-haiku", "loki-default"]
+# --suite replay: real closed issues from permissively licensed projects, replayed at the fix's parent commit
+# (replay/<id>/meta.json "source" records the upstream, license, issue, fix PR and both commits).
+# --suite hard: the same format, chosen for multi-file fixes in larger projects. It lives under fixtures/
+# because two issue texts keep characters (emoji, en and em dashes) this repository's text rule bans.
+# Both keep only meta.json and task.txt; materialize() rebuilds the snapshot from the pinned commits.
+SUITES = {"tasks": TASKS_DIR, "replay": HERE / "replay", "hard": HERE / "fixtures" / "hard"}
+CONFIGS = ["raw-haiku", "raw-sonnet", "raw-opus", "raw-haiku-verify", "raw-sonnet-verify", "raw-opus-verify",
+           "loki-haiku", "loki-sonnet", "loki-opus", "loki-default"]
+# Loki pinned to one model for the whole run (every stage, escalation and Wall re-author); loki-default has
+# no pin, so Loki's own routing picks the model per stage.
+LOKI_PINS = {"loki-haiku": "haiku", "loki-sonnet": "sonnet", "loki-opus": "opus"}
+# The -verify configs are raw Claude Code with the same task text plus this one sentence: what a careful user
+# types when driving Claude Code alone.
+VERIFY_SENTENCE = "Before you finish, run the repository's tests and check that your change works."
 # Offline configs for checking the task set itself: oracle applies tasks/<id>/solution, noop changes nothing.
 CHECK_CONFIGS = ["oracle", "noop"]
 # Learning protocol (--sequences): Loki on Haiku with what it learns from earlier runs in the same repo.
@@ -44,6 +61,50 @@ SCORE_TIMEOUT_S = 180
 NOISE = (".loki/", "node_modules/", "__pycache__/", ".pytest_cache/", ".bun/", "target/")
 
 
+RESULTS_PREFIX = "benchmarks/h2h/results/"
+
+
+def _version(cmd):
+    """First output line of a version command, run in an empty directory so it can read nothing of the repo."""
+    try:
+        with tempfile.TemporaryDirectory() as empty:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=empty, stdin=subprocess.DEVNULL)
+        return (r.stdout or r.stderr).strip().splitlines()[0] if (r.stdout or r.stderr).strip() else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def provenance(root=ROOT):
+    """What produced a results file: the exact engine commit, whether the tree had uncommitted changes
+    (anything other than results files), and the tool versions. A run from a dirty tree is not citable:
+    its numbers belong to code nobody can check out. Gitignored files under benchmarks/ count as dirt too
+    (Python bytecode aside): a benchmark input the commit does not hold cannot be checked out either."""
+    r = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True)
+    st = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True)
+    ig = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--ignored", "--untracked-files=all", "--", "benchmarks"],
+                        capture_output=True, text=True)
+    dirty = [line[3:] for line in st.stdout.splitlines() if line[3:] and not line[3:].startswith(RESULTS_PREFIX)]
+    ignored = [line[3:] for line in ig.stdout.splitlines() if line.startswith("!! ")
+               and "__pycache__/" not in line and not line.endswith(".pyc")]
+    dirty += [f"{p} (gitignored)" for p in ignored]
+    return {
+        "engine_sha": r.stdout.strip() or None, "dirty_count": len(dirty), "dirty": dirty[:30],
+        "citable": bool(r.stdout.strip()) and st.returncode == 0 and ig.returncode == 0 and not dirty,
+        "bun": _version(["bun", "--version"]), "claude_cli": _version(["bash", "-c", "command claude --version"]),
+        "python": platform.python_version(), "go": _version(["go", "version"]), "platform": platform.platform(),
+    }
+
+
+def provenance_gate(configs, prov, allow_dirty):
+    """Loki configs never run from a dirty tree unless --allow-dirty is given, and then the results are
+    stamped not citable. Returns an error message, or None when the run may go ahead."""
+    if any(c.startswith("loki") for c in configs) and not prov["citable"] and not allow_dirty:
+        return (f"refusing to run Loki configs from a tree that is not at a clean commit ({prov['dirty_count']} uncommitted "
+                f"paths, e.g. {', '.join(prov['dirty'][:3]) or 'no git'}); commit first, or pass --allow-dirty to record "
+                "results marked not citable")
+    return None
+
+
 def log(msg):
     print(msg, file=sys.stderr, flush=True)
 
@@ -55,13 +116,123 @@ def git(repo, *args, check=True):
     return r.stdout
 
 
-def load_task(task_id):
-    d = TASKS_DIR / task_id
+def load_task(task_id, tasks_dir=TASKS_DIR):
+    d = tasks_dir / task_id
     meta = json.loads((d / "meta.json").read_text())
     meta["id"] = task_id
-    meta["dir"] = d
+    meta["dir"] = materialize(task_id, meta) if "snapshot_sha256" in meta else d
     meta["text"] = (d / "task.txt").read_text().strip()
     return meta
+
+
+# Replay and hard tasks keep only meta.json and task.txt in this repository. The snapshot (repo/, hidden/,
+# solution/) is rebuilt on first use from the upstream at the pinned commits and cached outside the repository.
+def cache_root():
+    return Path(os.environ.get("H2H_CACHE") or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "loki-h2h")
+
+
+def snapshot_digest(root):
+    """sha256 over every file under repo/, hidden/ and solution/: path, executable bit and content."""
+    h = hashlib.sha256()
+    files = sorted((p.relative_to(root).as_posix(), p) for sub in ("repo", "hidden", "solution") if (root / sub).is_dir()
+                   for p in (root / sub).rglob("*") if p.is_file() or p.is_symlink())
+    for rel, p in files:
+        body = ("link:" + os.readlink(p)).encode() if p.is_symlink() else p.read_bytes()
+        h.update(f"{rel}\0{os.access(p, os.X_OK) and not p.is_symlink():d}\0{hashlib.sha256(body).hexdigest()}\n".encode())
+    return h.hexdigest()
+
+
+def upstream_commit(url, sha):
+    """A bare cache repository for url holding commit sha (a shallow fetch of exactly that commit)."""
+    gd = cache_root() / "git" / (re.sub(r"[^A-Za-z0-9._-]+", "_", url.split("://", 1)[-1]).strip("_") + ".git")
+    if not (gd / "HEAD").is_file():
+        gd.parent.mkdir(parents=True, exist_ok=True)
+        tmp = Path(tempfile.mkdtemp(prefix=".init.", dir=gd.parent))
+        git(tmp, "init", "-q", "--bare")
+        try:
+            tmp.rename(gd)
+        except OSError:  # another invocation created it first
+            shutil.rmtree(tmp, ignore_errors=True)
+    has = lambda: subprocess.run(["git", "-C", str(gd), "cat-file", "-e", f"{sha}^{{commit}}"], capture_output=True).returncode == 0
+    if not has():
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+        r = subprocess.run(["git", "-C", str(gd), "fetch", "-q", "--depth=1", "--no-tags", url, sha], capture_output=True, text=True, env=env)
+        if r.returncode != 0 or not has():
+            raise RuntimeError(f"h2h: cannot fetch {sha} from {url}: {r.stderr.strip()}")
+    return gd
+
+
+def git_archive(gd, sha, paths, dest):
+    dest.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run(["git", "-C", str(gd), "archive", "--format=tar", sha, *paths], capture_output=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"h2h: git archive {sha} failed: {r.stderr.decode(errors='replace').strip()}")
+    with tarfile.open(fileobj=io.BytesIO(r.stdout)) as tf:
+        tf.extractall(dest, filter="data")
+
+
+def inside(root, rel):
+    """root/rel, refused unless it stays inside root: no absolute path, no "..", no symlink on the way."""
+    parts = Path(rel).parts
+    if not parts or Path(rel).is_absolute() or ".." in parts:
+        raise RuntimeError(f"h2h: path {rel!r} leaves the snapshot")
+    p = root
+    for part in parts:
+        p = p / part
+        if p.is_symlink():
+            raise RuntimeError(f"h2h: path {rel!r} goes through a symlink")
+    if not p.resolve().is_relative_to(root.resolve()):
+        raise RuntimeError(f"h2h: path {rel!r} leaves the snapshot")
+    return p
+
+
+def materialize(task_id, meta):
+    """Builds the task snapshot exactly as it was benchmarked: `git archive` of the vendored paths at the parent
+    commit (plus pinned submodules), the fix's test files as hidden/, its other changed files as solution/, then
+    meta's add_files and patch_files. The result must match meta's snapshot_sha256, or the task is refused."""
+    s, want = meta["source"], meta["snapshot_sha256"]
+    dest = cache_root() / "tasks" / f"{task_id}-{want[:16]}"
+    if (dest / ".complete").is_file():
+        got = snapshot_digest(dest)  # a cached snapshot is re-checked on every load: anything may have edited it
+        if got != want:
+            raise RuntimeError(f"h2h: {task_id}: cached snapshot {dest} has digest {got}, not snapshot_sha256 {want}; delete it to rebuild")
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(prefix=f".{task_id}.", dir=dest.parent))
+    try:
+        gd = upstream_commit(s["upstream"], s["parent_commit"])
+        git_archive(gd, s["parent_commit"], s["vendored_paths"], tmp / "repo")
+        for path, sm in (s.get("submodules") or {}).items():
+            git_archive(upstream_commit(sm["upstream"], sm["commit"]), sm["commit"], sm["vendored_paths"], tmp / "repo" / path)
+        upstream_commit(s["upstream"], s["fix_commit"])
+        for sub, files in (("hidden", list(meta["hidden"])), ("solution", s["solution_files"])):
+            for f in files:
+                out = inside(tmp, f"{sub}/{f}")
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_bytes(subprocess.run(["git", "-C", str(gd), "show", f"{s['fix_commit']}:{f}"], capture_output=True, check=True).stdout)
+        for rel, content in (s.get("add_files") or {}).items():
+            inside(tmp, f"repo/{rel}").write_text(content)
+        # patch_files: {"repo/<path>": [[old, new, count], ...]}; each old must occur exactly count times.
+        for rel, pairs in (s.get("patch_files") or {}).items():
+            t = inside(tmp, rel).read_text()
+            for old, new, count in pairs:
+                if t.count(old) != count:
+                    raise RuntimeError(f"h2h: {task_id}: patch target in {rel} occurs {t.count(old)} times, expected {count}")
+                t = t.replace(old, new)
+            (tmp / rel).write_text(t)
+        got = snapshot_digest(tmp)
+        if got != want:
+            raise RuntimeError(f"h2h: {task_id}: snapshot digest {got} does not match meta.json snapshot_sha256 {want}")
+        (tmp / ".complete").write_text(got + "\n")
+        try:
+            tmp.rename(dest)
+        except OSError:  # another invocation finished it first
+            if not (dest / ".complete").is_file():
+                raise
+    finally:
+        if tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
+    return dest
 
 
 def toolchain_env(env, shared):
@@ -131,24 +302,26 @@ def prepare_repo(task, dest):
 
 def contestant_cmd(config, task):
     text = task["text"]
-    if config in ("raw-haiku", "raw-opus"):
-        model = config.split("-", 1)[1]
+    if config.startswith("raw-") and config in CONFIGS:
+        model = config.split("-")[1]
+        if config.endswith("-verify"):
+            text = f"{text}\n\n{VERIFY_SENTENCE}"
         # `command claude` skips any shell function named claude in an interactive profile.
         return ["bash", "-c", 'command claude "$@"', "claude", "-p", text, "--model", model,
                 "--output-format", "json", "--dangerously-skip-permissions"]
-    if config in ("loki-haiku", "loki-default") or config in SEQUENCE_CONFIGS:
+    if config in LOKI_PINS or config == "loki-default" or config in SEQUENCE_CONFIGS:
         return ["bash", str(ROOT / "bin" / "loki"), text, "--no-pr"]
     raise ValueError(f"unknown config {config}")
 
 
 def config_env(config, env):
-    if config == "loki-haiku":
+    if config in LOKI_PINS:
         # LOKI_SESSION_MODEL is the whole-run pin (loki-ts/src/engine10/session.ts resolveModel and
         # childEnv; runner/providers.ts sessionPinModel): every stage tier runs haiku, escalation stays
         # on the pinned model (runner/model_rank.ts escalationModel) and the Wall re-author is capped to
         # it (stages/wall.ts capToRunTier). LOKI_MODEL_OVERRIDE is not used: it is a pin key for the Wall
         # re-author, so that call would climb back to sonnet (engine10/sizing.ts wallModel).
-        env["LOKI_SESSION_MODEL"] = "haiku"
+        env["LOKI_SESSION_MODEL"] = LOKI_PINS[config]
     if config in SEQUENCE_CONFIGS:
         env["LOKI_SESSION_MODEL"] = "haiku"
     # util/pr_lessons.ts lessonsInjected (LOKI_PR_LESSONS, "0" off) and workedExampleInjected (LOKI_WORKED_EXAMPLE, "1" on).
@@ -225,6 +398,87 @@ def run_contestant(cmd, cwd, env, timeout_s, out_path, err_path):
 
 def apply_oracle(task, repo):
     shutil.copytree(task["dir"] / "solution", repo, dirs_exist_ok=True)
+
+
+def hidden_leaks(task, repo, base):
+    """Hidden test files visible in the contestant's copy before scoring. A hidden file may be scored at
+    a new path or over a visible test file of the same name (replay tasks score the fix's own test file
+    at its own path). A file counts as leaked when it holds a hidden file's exact content under that
+    file's name, or when it is not in the base commit and carries the name of a hidden file that is
+    scored at a new path."""
+    base_files = set(git(repo, "ls-tree", "-r", "--name-only", base).splitlines())
+    content, new_names = {}, set()
+    for src, dest in task["hidden"].items():
+        content.setdefault(Path(dest).name, set()).add((task["dir"] / "hidden" / src).read_bytes())
+        if dest not in base_files:
+            new_names.add(Path(dest).name)
+    leaked = []
+    for p in repo.rglob("*"):
+        if p.name not in content or ".git" in p.relative_to(repo).parts or not p.is_file():
+            continue
+        rel = str(p.relative_to(repo))
+        if (rel not in base_files and p.name in new_names) or p.read_bytes() in content[p.name]:
+            leaked.append(rel)
+    return sorted(leaked)
+
+
+TEST_NAME_SUFFIXES = ("_test.py", "_test.go", ".test.ts", ".test.js", ".spec.ts", ".spec.js")
+TEST_DIRS = ("test", "tests", "__tests__")
+
+
+def test_edits(task, files):
+    """Changed files that are tests or test config: under a protected path, in a test directory, or named
+    like a test. Informational; acceptance uses test_weakening()."""
+    out = []
+    for f in files:
+        parts = f.split("/")
+        name = parts[-1]
+        if (any(f == p.rstrip("/") or f.startswith(p.rstrip("/") + "/") for p in task.get("protected", []))
+                or any(d in TEST_DIRS for d in parts[:-1]) or name == "conftest.py"
+                or (name.startswith("test_") and name.endswith(".py")) or name.endswith(TEST_NAME_SUFFIXES)):
+            out.append(f)
+    return out
+
+
+# An added line that switches a test off (pytest, unittest, Go, bun/jest/vitest, Rust).
+SKIP_MARKERS = re.compile(r"pytest\.mark\.(skip|skipif|xfail)\b|pytest\.(skip|xfail)\(|unittest\.(skip|skipIf|skipUnless|expectedFailure)\b"
+                          r"|@skip\b|\bt\.Skip(f|Now)?\(|\b(test|it|describe)\.(skip|todo|only)\b|\bx(it|describe|test)\(|#\[ignore\]")
+TEST_CONFIG_NAMES = ("conftest.py", "pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml", "bunfig.toml", "go.mod",
+                     "jest.config.js", "jest.config.ts", "vitest.config.ts", "Cargo.toml")
+
+
+def _subsequence(small, big):
+    it = iter(big)
+    return all(any(x == y for y in it) for x in small)
+
+
+def test_weakening(repo, base, edits):
+    """The test edits a user would have to undo: a pre-existing test file deleted, or with any of its lines
+    removed or changed (anything other than inserting new lines), or with an added line that skips a test;
+    and any change to test or build config (a new conftest.py or bunfig.toml can switch tests off). New test
+    files and new test cases appended to an existing file are normal and do not count."""
+    base_files = set(git(repo, "ls-tree", "-r", "--name-only", base).splitlines())
+    out = []
+    for f in edits:
+        name = f.rsplit("/", 1)[-1]
+        if name in TEST_CONFIG_NAMES:
+            out.append(f)
+            continue
+        if f not in base_files:
+            continue
+        p = repo / f
+        if not p.is_file():
+            out.append(f)
+            continue
+        old = [l.strip() for l in git(repo, "show", f"{base}:{f}").splitlines() if l.strip()]
+        new = [l.strip() for l in p.read_text(errors="replace").splitlines() if l.strip()]
+        added = list(new)
+        for l in old:
+            if l in added:
+                added.remove(l)
+        if not _subsequence(old, new) or any(SKIP_MARKERS.search(l) for l in added):
+            out.append(f)
+    return out
 
 
 def changed_files(repo, base):
@@ -337,6 +591,7 @@ def loki_metrics(repo):
     started = {}
     stage_cost_total, priced, unpriced = 0.0, 0, 0
     models = set()
+    session_models = []  # [stage, model] for every model session, in order
     for e in events:
         st = e.get("stage") or "run"
         s = stages.setdefault(st, {"cost_usd": 0.0, "sessions": 0, "seconds": 0.0, "session_seconds": 0.0, "runs": 0})
@@ -356,6 +611,7 @@ def loki_metrics(repo):
                 unpriced += 1
             if data.get("model"):
                 models.add(str(data["model"]))
+            session_models.append([st, str(data.get("model") or "unknown")])
             if isinstance(data.get("duration_ms"), (int, float)):
                 s["session_seconds"] += data["duration_ms"] / 1000
     child_usd, child_n = 0.0, 0
@@ -396,6 +652,7 @@ def loki_metrics(repo):
         "wall_s": cdata.get("wall_s"),
         "stages": {k: v for k, v in stages.items() if v["sessions"] or v["seconds"]},
         "models": sorted(models),
+        "session_models": session_models,
         "event_types": sorted({e.get("type") for e in events if e.get("type")}),
     }
 
@@ -430,7 +687,6 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
     repo = d / "repo"
     base = prepare_repo(task, repo)
     env = config_env(config, contestant_env(make_home(d / "home"), work))
-    hidden_names = [Path(dest).name for dest in task["hidden"].values()]
     rec = {"config": config, "task": task["id"], "kind": task["kind"], "lang": task["lang"],
            "difficulty": task.get("difficulty", "normal"), "shape": task.get("shape"), "rep": rep}
     if config == "oracle":
@@ -443,9 +699,13 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
         rc, secs, timed_out = run_contestant(contestant_cmd(config, task), repo, env, timeout_s,
                                              d / "contestant.out", d / "contestant.err")
     # The hidden tests must not exist in the contestant's copy before scoring starts.
-    leaked = [str(p.relative_to(repo)) for p in repo.rglob("*") if p.name in hidden_names]
+    leaked = hidden_leaks(task, repo, base)
     branch = loki_branch_checkout(repo, base) if config.startswith("loki") else None
     files = changed_files(repo, base)
+    edits = test_edits(task, files)
+    weakened = test_weakening(repo, base, edits)
+    # Kept so acceptance can be audited or recomputed after the work dir is gone (untracked files are not in it).
+    test_diff = git(repo, "diff", base, "--", *edits)[-6000:] if edits else ""
     if config.startswith("raw"):
         m = raw_metrics(d / "contestant.out")
     elif config.startswith("loki"):
@@ -458,6 +718,9 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
     passed, tail = score(task, repo, env, d / "hidden.log")
     rec.update({
         "pass": passed, "seconds": round(secs, 2), "exit_code": rc, "timed_out": timed_out,
+        # Accepted without edit: the hidden tests pass on the tree as left, and it weakens no existing test.
+        "test_edits": edits, "test_weakened": weakened, "accepted": int(bool(passed) and not weakened),
+        "test_diff": test_diff,
         "files_changed": len(files), "files": files, "hidden_leaked_before_scoring": leaked,
         "scored_branch": branch, "hidden_tail": tail if not passed else "", **m,
     })
@@ -545,7 +808,6 @@ def run_sequence(config, seq, rep, work, timeout_s, keep_dir):
     for i, st in enumerate(seq["steps"], 1):
         env = config_env(config, contestant_env(home, work))
         base = git(repo, "rev-parse", "HEAD").strip()
-        hidden_names = [Path(dest).name for dest in st["hidden"].values()]
         rec = {"config": config, "sequence": seq["id"], "step": i, "task": st["task_id"], "lang": seq["lang"], "rep": rep,
                "lessons_before": lesson_counts(repo),
                # Any step's hidden test file already in the repo when this step starts (must stay empty).
@@ -560,7 +822,7 @@ def run_sequence(config, seq, rep, work, timeout_s, keep_dir):
         else:
             rc, secs, timed_out = run_contestant(contestant_cmd(config, st), repo, env, timeout_s,
                                                  d / f"step{i}.out", d / f"step{i}.err")
-        leaked = [str(p.relative_to(repo)) for p in repo.rglob("*") if p.name in hidden_names]
+        leaked = hidden_leaks(st, repo, base)
         branch = loki_branch_checkout(repo, base, before) if config.startswith("loki") else None
         files = changed_files(repo, base)
         if config.startswith("loki"):
@@ -624,7 +886,15 @@ def main_sequences(a, ap):
         if x not in all_seqs:
             ap.error(f"unknown sequence {x}")
     seqs = [load_sequence(x) for x in ids]
-    sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip() or "nogit"
+    prov = provenance()
+    blocked = provenance_gate(configs, prov, a.allow_dirty)
+    if blocked:
+        log(f"h2h: {blocked}")
+        return 6
+    if not prov["citable"]:
+        log(f"h2h: DIRTY TREE ({prov['dirty_count']} uncommitted paths): these results are NOT CITABLE")
+    provs = [prov] + (json.loads(Path(a.resume).read_text()).get("provenance", []) if a.resume else [])
+    sha = (prov["engine_sha"] or "nogit")[:9]
     out = Path(a.out) if a.out else HERE / "results" / f"{dt.date.today().isoformat()}-{sha}-learning.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp_root = Path(os.environ.get("TMPDIR") or "/tmp").resolve()
@@ -637,6 +907,7 @@ def main_sequences(a, ap):
 
     def save():
         doc = {"benchmark": "h2h-learning", "loki_sha": sha, "date": dt.datetime.now().isoformat(timespec="seconds"),
+               "citable": all(p["citable"] for p in provs), "provenance": provs,
                "configs": configs, "reps": a.reps, "jobs": a.jobs, "timeout_s": a.timeout, "stopped": state["stopped"],
                "loki_env": loki_env_overrides(), "sequences": [sq["id"] for sq in seqs], "summary": summarize_sequences(results, configs), "runs": results}
         out.write_text(json.dumps(doc, indent=2) + "\n")
@@ -732,6 +1003,10 @@ def verdict_stats(rs):
         "verdict_agreement": round(agree / n, 4) if n else None, "verdict_agree_n": agree,
         "false_verified": sum(1 for r in rs if r["exit_code"] == 0 and not r["pass"]),
         "missed_pass": sum(1 for r in rs if r["exit_code"] != 0 and r["pass"]),
+        # VERIFIED recall: of the runs whose work passed the hidden tests, the share Loki sealed VERIFIED. Read
+        # next to false_verified, so a config cannot look safe by never claiming VERIFIED.
+        "verified_recall": (round(sum(1 for r in rs if r["exit_code"] == 0 and r["pass"]) / sum(1 for r in rs if r["pass"]), 4)
+                            if any(r["pass"] for r in rs) else None),
         "partial_pass": sum(1 for r in partial if r["pass"]), "partial_fail": sum(1 for r in partial if not r["pass"]),
         "outcomes": {o: sum(1 for r in rs if (r.get("loki_outcome") or "OTHER") == o)
                      for o in sorted({r.get("loki_outcome") or "OTHER" for r in rs})},
@@ -761,6 +1036,20 @@ def summarize(results, configs):
                                   sum(1 for r in rs if r.get("difficulty", "normal") == d)]
                               for d in sorted({r.get("difficulty", "normal") for r in rs})},
         }
+        scored = [r for r in rs if "accepted" in r]  # results written before accepted-without-edit existed lack it
+        if scored:
+            acc = sum(r["accepted"] for r in scored)
+            ci = wilson(acc, len(scored))
+            per_task = sum(r["cost_usd"] for r in scored if isinstance(r.get("cost_usd"), (int, float))) / len(scored)
+            row.update({
+                "accepted": acc, "accepted_n": len(scored), "accept_ci95": ci,
+                "runs_with_test_edits": sum(1 for r in scored if r.get("test_edits")),
+                "runs_weakening_tests": sum(1 for r in scored if r.get("test_weakened")),
+                "cost_per_accepted_usd": round(per_task / (acc / len(scored)), 4) if acc else None,
+                # $ per accepted task = $ per task / acceptance rate, so the acceptance rate's Wilson bounds give
+                # its interval (cost per task held at its measured mean).
+                "cost_per_accepted_ci95": [round(per_task / ci[1], 4), round(per_task / ci[0], 4) if ci[0] else None],
+            })
         if c.startswith("loki"):
             row.update(verdict_stats(rs))
         rows.append(row)
@@ -768,9 +1057,9 @@ def summarize(results, configs):
 
 
 def markdown(rows, results, configs):
-    out = ["| config | pass | 95% CI | hard | median s | p90 s | total $ | $ / task | $ / pass | sessions | fix rounds "
-           "| verdict agrees | false VERIFIED | timeouts |",
-           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    out = ["| config | pass | 95% CI | accepted | 95% CI | hard | median s | p90 s | total $ | $ / task | $ / pass "
+           "| $ / accepted | sessions | fix rounds | verdict agrees | false VERIFIED | timeouts |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         unm = f" ({r['cost_unmeasured']} unmeasured)" if r["cost_unmeasured"] else ""
         ci = r["pass_ci95"]
@@ -778,9 +1067,15 @@ def markdown(rows, results, configs):
         cpp = f"{r['cost_per_pass_usd']:.4f}" if r["cost_per_pass_usd"] is not None else "-"
         fr = r["mean_fix_rounds"] if r["mean_fix_rounds"] is not None else "-"
         agree = f"{r['verdict_agree_n']}/{r['n']} ({r['verdict_agreement'] * 100:.0f}%)" if "verdict_agreement" in r else "-"
+        if "accepted" in r:
+            aci = r["accept_ci95"]
+            acc = f"{r['accepted']}/{r['accepted_n']} | {aci[0] * 100:.0f}-{aci[1] * 100:.0f}%"
+            cpa = f"{r['cost_per_accepted_usd']:.4f}" if r["cost_per_accepted_usd"] is not None else "-"
+        else:
+            acc, cpa = "- | -", "-"
         out.append(f"| {r['config']} | {r['passed']}/{r['n']} ({r['pass_rate'] * 100:.0f}%) | {ci[0] * 100:.0f}-{ci[1] * 100:.0f}% "
-                   f"| {f'{hard[0]}/{hard[1]}' if hard else '-'} | {r['median_s']} | {r['p90_s']} "
-                   f"| {r['total_cost_usd']:.4f}{unm} | {r['cost_per_task_usd']:.4f} | {cpp} | {r['mean_sessions']} | {fr} "
+                   f"| {acc} | {f'{hard[0]}/{hard[1]}' if hard else '-'} | {r['median_s']} | {r['p90_s']} "
+                   f"| {r['total_cost_usd']:.4f}{unm} | {r['cost_per_task_usd']:.4f} | {cpp} | {cpa} | {r['mean_sessions']} | {fr} "
                    f"| {agree} | {r.get('false_verified', '-')} | {r['timeouts']} |")
     tasks = sorted({r["task"] for r in results})
     out += ["", "| task | " + " | ".join(configs) + " |", "|---|" + "---|" * len(configs)]
@@ -800,11 +1095,21 @@ def ledger_total(path):
     return sum(json.loads(l).get("cost_usd") or 0 for l in Path(path).read_text().splitlines() if l.strip())
 
 
+def select_tasks(tasks, configs, named):
+    """A suite with a selection rule (fixtures/hard: the fix touches 2+ files and raw-haiku-verify passed under
+    half its pilot runs) runs only qualifying tasks unless tasks are named; the oracle/noop self-check covers all."""
+    if named or all(c in CHECK_CONFIGS for c in configs):
+        return tasks
+    return [t for t in tasks if t.get("qualified", True)]
+
+
 def main(argv=None):
     loki_env_overrides()  # refuse a bad H2H_LOKI_ENV before any run starts
     ap = argparse.ArgumentParser(prog="benchmarks/h2h/run.sh", description=__doc__.splitlines()[0])
     ap.add_argument("--configs", default=",".join(CONFIGS), help=f"comma list from {CONFIGS + CHECK_CONFIGS}")
-    ap.add_argument("--tasks", default="", help="comma list of task ids (default: all)")
+    ap.add_argument("--suite", default="tasks", choices=sorted(SUITES), help="task suite: tasks (synthetic, default) "
+                    "or replay (real closed issues replayed at the fix's parent commit)")
+    ap.add_argument("--tasks", default="", help="comma list of task ids from the suite (default: all)")
     ap.add_argument("--reps", type=int, default=1)
     ap.add_argument("--timeout", type=int, default=600, help="contestant timeout in seconds (default 600)")
     ap.add_argument("--budget", type=float, default=None, help="stop before starting a run once the ledger total reaches this many USD")
@@ -817,6 +1122,8 @@ def main(argv=None):
                     f"(or 'all'); configs from {SEQUENCE_CONFIGS + CHECK_CONFIGS}")
     ap.add_argument("--resume", default="", help="results JSON from an interrupted invocation: its runs are kept "
                     "and every (config, task, rep) already in it is skipped")
+    ap.add_argument("--allow-dirty", action="store_true", help="run Loki configs from a tree with uncommitted changes; "
+                    "the results file is stamped citable: false")
     a = ap.parse_args(argv)
     if a.reps < 1 or a.jobs < 1:
         ap.error("--reps and --jobs must be at least 1")
@@ -827,15 +1134,25 @@ def main(argv=None):
     for c in configs:
         if c not in CONFIGS + CHECK_CONFIGS:
             ap.error(f"unknown config {c}")
-    all_tasks = sorted(p.name for p in TASKS_DIR.iterdir() if (p / "meta.json").is_file())
+    tasks_dir = SUITES[a.suite]
+    all_tasks = sorted(p.name for p in tasks_dir.iterdir() if (p / "meta.json").is_file())
     task_ids = [t for t in a.tasks.split(",") if t] or all_tasks
     for t in task_ids:
         if t not in all_tasks:
-            ap.error(f"unknown task {t}")
-    tasks = [load_task(t) for t in task_ids]
+            ap.error(f"unknown task {t} in suite {a.suite}")
+    tasks = select_tasks([load_task(t, tasks_dir) for t in task_ids], configs, bool(a.tasks))
 
-    sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip() or "nogit"
-    out = Path(a.out) if a.out else HERE / "results" / f"{dt.date.today().isoformat()}-{sha}.json"
+    prov = provenance()
+    blocked = provenance_gate(configs, prov, a.allow_dirty)
+    if blocked:
+        log(f"h2h: {blocked}")
+        return 6
+    if not prov["citable"]:
+        log(f"h2h: DIRTY TREE ({prov['dirty_count']} uncommitted paths): these results are NOT CITABLE")
+    a.provenance = [prov] + (json.loads(Path(a.resume).read_text()).get("provenance", []) if a.resume else [])
+    sha = (prov["engine_sha"] or "nogit")[:9]
+    suffix = "" if a.suite == "tasks" else f"-{a.suite}"
+    out = Path(a.out) if a.out else HERE / "results" / f"{dt.date.today().isoformat()}-{sha}{suffix}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
 
     tmp_root = Path(os.environ.get("TMPDIR") or "/tmp").resolve()
@@ -865,8 +1182,8 @@ def main(argv=None):
             except Exception as exc:  # a harness fault is recorded as a failed run, never dropped
                 rec = {"config": c, "task": task["id"], "kind": task["kind"], "lang": task["lang"],
                        "difficulty": task.get("difficulty", "normal"), "shape": task.get("shape"), "rep": rep,
-                       "pass": 0, "seconds": 0.0, "exit_code": None, "timed_out": False, "files_changed": 0, "files": [],
-                       "hidden_leaked_before_scoring": [], "cost_usd": None, "sessions": 0, "harness_error": repr(exc)[:300],
+                       "pass": 0, "accepted": 0, "test_edits": [], "test_weakened": [], "seconds": 0.0, "exit_code": None, "timed_out": False,
+                       "files_changed": 0, "files": [], "hidden_leaked_before_scoring": [], "cost_usd": None, "sessions": 0, "harness_error": repr(exc)[:300],
                        "harness_traceback": traceback.format_exc()[-1500:]}
             with lock:
                 results.append(rec)
@@ -914,7 +1231,10 @@ def main(argv=None):
 
 def write_results(out, results, configs, sha, a, stopped):
     doc = {
-        "benchmark": "h2h-b1", "loki_sha": sha, "date": dt.datetime.now().isoformat(timespec="seconds"),
+        "benchmark": "h2h-b1", "suite": a.suite, "loki_sha": sha, "date": dt.datetime.now().isoformat(timespec="seconds"),
+        # Every invocation that added runs to this file, newest first; citable only if all of them were.
+        "citable": all(p["citable"] for p in getattr(a, "provenance", [])) if getattr(a, "provenance", None) else None,
+        "provenance": getattr(a, "provenance", []),
         "configs": configs, "reps": a.reps, "jobs": a.jobs, "timeout_s": a.timeout, "stopped": stopped,
         "loki_env": loki_env_overrides(), "tasks": sorted({r["task"] for r in results}),
         "summary": summarize(results, configs), "runs": results,
