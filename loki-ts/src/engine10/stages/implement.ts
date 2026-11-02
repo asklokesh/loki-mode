@@ -6,7 +6,7 @@ import { withStagePrefix } from "../../features/lean_prefix.ts"; import { outOfR
 import { learningsBlock, lessonsForBrief } from "../../util/pr_lessons.ts"; export { learningsBlock }; // learningsBlock lives with the other brief-note helpers
 import { FINISH_LINE, FIXED_RULES, briefRecord, type BriefRecord } from "../../e10ext/context.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
-import { cascadeDowngrade, haikuFirstDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
+import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
 import { attemptsGate, runAttemptsOnCtx } from "../../features/attempts.ts"; // S41-13, default off
 import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
 import { classifyExitCause } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
@@ -97,7 +97,7 @@ export const implementStage: Stage = {
     const impacted = impactedTests(ctx);
     const readOnly = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [];
     const routed = routerActive();
-    const downgrade = routed ? null : cascadeDowngrade(ctx.model) ?? haikuFirstDowngrade(ctx.model); // the router replaces the opt-in downgrade lists; haiku-first (TEN-COST-16) only when the cascade is off
+    const downgrade = routed ? null : cascadeDowngrade(ctx.model); // the router (LOKI_ROUTER=auto for Haiku first) replaces the opt-in downgrade list
     const cascade = downgrade !== null;
     if (downgrade) process.stderr.write(`${downgrade.note}\n`);
     const lessons = lessonsForBrief(ctx.repoDir, ctx.runId, task, [...((prior.plan?.relevant_files as string[] | undefined) ?? []), ...impacted], ctx.runDir); // T6: reviewer lessons plus run lessons on the relevant files or their impacted tests (util/pr_lessons.ts), tagged as used by this run and recorded in lessons-injected.json
@@ -136,7 +136,7 @@ export const implementStage: Stage = {
       const retry = `${first.iterationId}f`; ids.push(retry);
       session = await ctx.sessions.run({ ...unchained(), iterationId: retry });
     }
-    if (rt && !signal.aborted) session = await routeEscalate(ctx, first, session, rt, ids); // triggers b/c: one redo on the next rung
+    if (rt && !signal.aborted) session = await routeEscalate(ctx, first, session, rt, ids, () => treeIsEmpty(ctx)); // triggers b/c (and, under the preset, a no-diff already-done claim): one redo on the next rung
     if (session.markers.specConflict && !session.killed) { const r = await resumeAfterConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; if (r.iterationId !== ids[ids.length - 1]) ids.push(r.iterationId); } // FC-19: one correction, then the conflict is believed
     if (session.markers.specConflict && !session.killed && !signal.aborted) { const w = await adjudicateWallConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, readOnly); if (w) { session = w.session; ids.push(...w.ids); } } // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT: a Wall-anchored conflict goes to the referee (record: outputs.wall.arbitrated)
     if (!signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && treeIsEmpty(ctx)) { const r = await resumeAfterEmptyDone(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; ids.push(r.iterationId); } // FC-43: one correction for a done exit with no change

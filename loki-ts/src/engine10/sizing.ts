@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { readRepoMapCache, repoCacheDir, repoKey } from "./cache.ts";
 import { speedLikelyFiles } from "../features/speed/lean_select.ts"; import { deliverables } from "../features/decompose.ts";
-import { resolveClaudeModel } from "../util/claude_model.ts"; import { wallConcurrent } from "../util/wall_knobs.ts";
+import { resolveClaudeModel } from "../util/claude_model.ts"; import { isTestFile } from "../util/test_file_text.ts"; import { wallConcurrent } from "../util/wall_knobs.ts";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap, TestRef } from "./types.ts";
 
@@ -30,6 +30,24 @@ export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | nul
     (!tests || (!tests.runners.length && process.env.LOKI_E10_SMALL_NO_RUNNER === "0")) && "no test runner detected", named > 2 && `task names ${named} files > 2`,
   ].filter((w): w is string => typeof w === "string");
   return why.length ? { size: "normal", reasons: why } : { size: "small", reasons: [`task ${task.length} chars, names ${named} files`] };
+}
+
+/** A task that names more distinct non-test files than this is hard (between the "normal" bar of 2 and the "large" bar of LARGE_NAMED_FILES). */
+export const HARD_NAMED_FILES = 4;
+/** Distinct non-test files the task names, as written: each path the task spells out (as a whole token, so "src/index.ts" inside
+ *  "packages/web/src/index.ts" is not a second one) counts once; a bare basename counts once however many repo files share it, and not
+ *  at all when a spelled-out path already has that basename ("fix index.ts" in a monorepo is 1; three spelled-out paths are 3). A root file has no path to spell out, so its name is a bare basename. */
+export function namedDistinct(task: string, map: RepoMap | null): number {
+  const text = task.toLowerCase(), named = namedFiles(task, map).filter((f) => !isTestFile(f)).map((f) => f.toLowerCase());
+  const spelled = new Set(named.filter((f) => f.includes("/") && new RegExp(`(?<![\\w./-])${escRe(f)}(?![\\w-]|\\.\\w)`).test(text)));
+  const spelledBase = new Set([...spelled].map((f) => basename(f)));
+  return spelled.size + new Set(named.map((f) => basename(f)).filter((b) => !spelledBase.has(b))).size;
+}
+/** Why a task is hard, from task evidence only, never repo size (a truncated repo map is repo size, so it never counts): sized large (deliverables() or more than LARGE_NAMED_FILES named files), or the task naming more than HARD_NAMED_FILES distinct non-test files. Null otherwise. */
+export function hardReason(size: TaskSize, map: RepoMap | null, task: string): string | null {
+  if (size === "large") return "task sized large";
+  const n = namedDistinct(task, map);
+  return n > HARD_NAMED_FILES ? `task names ${n} distinct non-test files > ${HARD_NAMED_FILES}` : null;
 }
 
 /** Best-effort RepoMap load from intake's repomap_ref; missing/unreadable is null, never a crash. */
@@ -68,7 +86,7 @@ export const wallLimitS = (size: TaskSize, env = process.env): number => {
   if (Number.isFinite(n) && n > 0) { if (n > 300) noteOnce("LOKI_E10_WALL_LIMIT_S", raw, "exceeds the 300s maximum; using 300"); return Math.min(300, n); }
   noteOnce("LOKI_E10_WALL_LIMIT_S", raw, `is not a positive number; using ${dflt}`); return dflt;
 };
-/** Engine Law L1 (supersedes D31's sonnet-first default): the cascade is OFF unless LOKI_E10_CASCADE=1/on/true opts in. Off means implement and fix run on the run's own model, as a raw session would. */
+/** Engine Law L1 (supersedes D31's sonnet-first default; amended 2026-11-01: Haiku may execute when the user asks, LOKI_ROUTER=auto): the cascade is OFF unless LOKI_E10_CASCADE=1/on/true opts in. Off means implement and fix run on the run's own model, as a raw session would. Escalation only goes up. */
 export const cascadeEnabled = (env = process.env): boolean => knob(env.LOKI_E10_CASCADE, ["1", "on", "true"]);
 /** Resolves a cli_alias (e.g. "sonnet") to its catalog model id; an id already, or an unknown alias, passes through unchanged. */
 export const resolveModelAlias = resolveClaudeModel;
@@ -83,4 +101,4 @@ export const wallFirstModel = (size: TaskSize, env = process.env): string => {
 /** E-64: the cascade's first implement call pins to the same sonnet alias Wall already uses (E-45). */
 export const cascadeImplementModel = wallModel;
 
-export { capToRunTier, modelRank, escalationModel, cascadeDowngrade, haikuFirstDowngrade } from "../runner/model_rank.ts"; export { wallConcurrent, wallMaxTokens, wallOutputCap } from "../util/wall_knobs.ts"; // L1 model ordering and the Wall knobs live outside the engine10 line budget
+export { capToRunTier, modelRank, escalationModel, cascadeDowngrade } from "../runner/model_rank.ts"; export { wallConcurrent, wallMaxTokens, wallOutputCap } from "../util/wall_knobs.ts"; // L1 model ordering and the Wall knobs live outside the engine10 line budget

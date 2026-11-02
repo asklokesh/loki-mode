@@ -1937,7 +1937,7 @@ show_help_all() {
     echo "  --no-dashboard   Disable web dashboard"
     echo "  --isolation LVL  Per-run isolation dial: none (default) | worktree | docker"
     echo "  --skip-memory    Skip loading memory context at startup"
-    echo "  --cost PROFILE   Opt-in cost profile: lean sets LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set (also LOKI_COST_PROFILE)"
+    echo "  --cost PROFILE   Opt-in cost profile: lean sets LOKI_ROUTER=auto, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set (also LOKI_COST_PROFILE)"
     echo "  --spec FILE      Run against an edited spec (written by 'loki plan <task> --spec'; see also --spec-first)"
     echo "  --fresh-prd      Regenerate the PRD from the codebase (no-PRD runs; ignores the reusable generated PRD)"
     echo "  --compliance PRESET  Enable compliance mode (default|healthcare|fintech|government)"
@@ -2660,9 +2660,15 @@ _loki_e10_resume_map() {
 
 # TEN-COST-01 lean levers (the bash twin of COST_PROFILES.lean in loki-ts/src/util/cost_profile.ts).
 # Fills only unset variables, so explicit env wins. Shared by --cost lean and --haiku.
+# $1 names the flag for the one line printed when an explicit LOKI_ROUTER wins.
 loki_lean_levers() {
-    : "${LOKI_IMPLEMENT_HAIKU_FIRST:=1}" "${LOKI_E10_TRIM:=1}" "${LOKI_E10_SMALL_NO_RUNNER:=1}" "${LOKI_E10_SMALL_MAX_CHARS:=1200}"
-    export LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS
+    case "${LOKI_ROUTER:-auto}" in
+        auto|AUTO|Auto) ;;
+        *) [ -n "${_LOKI_ROUTER_KEPT_NOTED:-}" ] || echo "${1:---cost lean}: LOKI_ROUTER=${LOKI_ROUTER} is already set and wins; the auto preset is not applied" >&2
+           _LOKI_ROUTER_KEPT_NOTED=1 ;;
+    esac
+    : "${LOKI_ROUTER:=auto}" "${LOKI_E10_TRIM:=1}" "${LOKI_E10_SMALL_NO_RUNNER:=1}" "${LOKI_E10_SMALL_MAX_CHARS:=1200}"
+    export LOKI_ROUTER LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS
 }
 
 # --haiku opt-in: the lean levers plus LOKI_COST_FIRST=1. Does not change the
@@ -2672,7 +2678,7 @@ loki_apply_haiku_optin() {
     local _a
     for _a in "$@"; do
         [ "$_a" = "--haiku" ] || continue
-        loki_lean_levers
+        loki_lean_levers --haiku
         : "${LOKI_COST_FIRST:=1}"
         export LOKI_COST_FIRST
         return 0
@@ -2990,8 +2996,8 @@ cmd_start() {
                 echo "                        --regenerate-prd, --regen, or LOKI_PRD_REGEN=1)"
                 echo "  --compliance PRESET   Enable compliance mode (default|healthcare|fintech|government)"
                 echo "  --budget USD          Per-run cost cap (default $(loki_budget_default_usd); auto-pause when exceeded)"
-                echo "  --cost PROFILE        Opt-in cost profile: lean (LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1, LOKI_E10_SMALL_MAX_CHARS=1200 unless already set) or off"
-                echo "  --haiku                Opt in to haiku for the first implement. Same levers as --cost lean, plus LOKI_COST_FIRST=1. A failed check climbs back to the session model. Default is the provider model"
+                echo "  --cost PROFILE        Opt-in cost profile: lean (LOKI_ROUTER=auto, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1, LOKI_E10_SMALL_MAX_CHARS=1200 unless already set) or off"
+                echo "  --haiku                Opt in to Haiku for implement and fix (LOKI_ROUTER=auto, the --cost lean levers, plus LOKI_COST_FIRST=1). A failed check climbs to Sonnet, then Opus. An explicit LOKI_ROUTER wins. Default is the provider model"
                 echo "  Proof                 Default LOKI_MUTATION_STRICT=1 and LOKI_E10_TRIM=1. A behavior change is VERIFIED only when a Wall test fails on the old code. Tool logs are trimmed before the next turn; a command's tail is kept. Opt out: LOKI_MUTATION_STRICT=0, LOKI_E10_TRIM=0"
                 echo "  --bmad-project PATH   Use BMAD Method project artifacts as input"
                 echo "  --openspec PATH       Use OpenSpec change directory as input"
@@ -3432,9 +3438,9 @@ cmd_start() {
             --cost|--cost=*)
                 if [[ "$1" == --cost=* ]]; then _cost_val="${1#*=}"; _cost_n=1; else _cost_val="${2:-}"; _cost_n=2; fi
                 case "$_cost_val" in
-                    lean) loki_lean_levers
+                    lean) loki_lean_levers "--cost lean"
                           export LOKI_COST_PROFILE=lean
-                          echo "cost profile lean: LOKI_IMPLEMENT_HAIKU_FIRST=$LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM=$LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER=$LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS=$LOKI_E10_SMALL_MAX_CHARS" ;;
+                          echo "cost profile lean: LOKI_ROUTER=$LOKI_ROUTER LOKI_E10_TRIM=$LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER=$LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS=$LOKI_E10_SMALL_MAX_CHARS" ;;
                     off) ;;
                     *) echo -e "${RED}--cost must be lean or off${NC}" >&2; exit 2 ;;
                 esac
@@ -17137,8 +17143,8 @@ cmd_factory() {
         echo "When the contract cannot be satisfied the run stops with one question (BLOCKED)."
         echo "The summary still prints outcome, receipt, cost and the next command."
         echo ""
-        echo "loki start keeps the provider model. Pass --haiku (or --cost lean) to try haiku for"
-        echo "the first implement; a failed check climbs back. --max-cost stays the hard cap."
+        echo "loki start keeps the provider model. Pass --haiku (or --cost lean) to run implement and"
+        echo "fix on Haiku (LOKI_ROUTER=auto); a failed check climbs to Sonnet. --max-cost stays the hard cap."
         return 0
     fi
     exec "$SKILL_DIR/bin/loki" start "$@"

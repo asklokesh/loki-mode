@@ -5,6 +5,20 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.124.0 (2026-11-02)
+
+--haiku costs 25% less per passed task, and Opus plans only when the task itself is big.
+
+### Changed
+
+- `--haiku` and `--cost lean` now turn on the router's auto preset (`LOKI_ROUTER=auto`): Haiku runs implement and fix, and a failure the code owns climbs to Sonnet, then Opus; it never steps back down. An Opus plan runs only when the task is sized large or names more than 4 distinct non-test files, never because the repo is large. An implement that claims the work is already done but changes nothing climbs one tier. An Opus executor gets no Opus advisor.
+- On bench v2 (24 tasks x 2 reps): the new `--haiku` passed 48/48 at $0.0433 per passed task, against 47/48 at $0.0574 for the old `--haiku` (`benchmarks/h2h/results/2026-11-02-pr471-new-haiku-5eef084a0.json`, run on 5eef084a0; `benchmarks/h2h/results/2026-11-02-pr471-old-haiku-4c51599fb.json`, run on 4c51599fb, which is v11.120.1 plus the benchmark config). About half of the difference is run-to-run variation in a stage this change does not touch, and one of the 48 passes was a run Loki marked BLOCKED. It still costs 2.4x raw Haiku ($0.0182) per passed task; most of that is the acceptance-test stage, which is the next fix.
+- `LOKI_MODEL_DEVELOPMENT` and `--model` now override the preset like `LOKI_CLAUDE_MODEL_DEVELOPMENT`.
+
+### Deprecated
+
+- `LOKI_IMPLEMENT_HAIKU_FIRST` prints a one-time note and maps to `LOKI_ROUTER=auto` when `LOKI_ROUTER` is unset. With an explicit `LOKI_ROUTER`, `--haiku` and `--cost lean` print one line and keep your value.
+
 ## v11.123.0 (2026-11-02)
 
 Large multi-part issues finish: the split is repaired, vitest runs once per package, and Loki's own test never costs correct work.

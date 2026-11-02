@@ -4,9 +4,10 @@
 import { resolveModelAlias } from "../../engine10/sizing.ts";
 import { PROVIDER_DEFAULT_MODEL, resolveModel, sessionPinModel } from "../../engine10/session.ts";
 import { envOverride, unitRedo } from "./decision.ts";
-import { routerEnabled } from "./flag.ts";
+import { presetExecutor, routerEnabled, routerPreset } from "./flag.ts";
 import { historyRaisedRoute, type RunExecutor } from "./history.ts";
 import { climb, modelRank, type UnitEscalation } from "../model_rank.ts";
+import { redactSecrets } from "../../util/redact.ts";
 
 export type StageOutputs = Partial<Record<string, Record<string, unknown> | undefined>>;
 export interface RouteRecord { model: string; source: string; reason: string; valid: boolean }
@@ -50,6 +51,7 @@ const leanStart = (runModel: string, size: string | undefined, env: Record<strin
 
 /** The route record for the single "run" unit: haiku only with a valid record, otherwise the run floor (LEAN-5: sonnet for a small or normal unit when size is given and lean is on). Callers gate on routerActive(). */
 export function routeRecord(runModel: string, plan: Record<string, unknown> | undefined, historyFloor?: () => RunExecutor, size?: string, env: Record<string, string | undefined> = process.env): RouteRecord {
+  if (routerPreset(env)) { const p = presetExecutor(env); return { model: resolveModelAlias(p.model), source: "preset", reason: p.reason, valid: true }; } // LOKI_ROUTER=auto: the executor is the preset's; climbs start from it
   const v = validHaikuRoute(plan);
   const h = v && historyFloor ? historyRaisedRoute(v.reason, historyFloor()) : null; // P12-32b: history is read only when the cheapest tier is on the table, and can only raise
   if (h) return { model: resolveModelAlias(h.model), source: "history", reason: h.reason, valid: true };
@@ -61,12 +63,13 @@ export function routeRecord(runModel: string, plan: Record<string, unknown> | un
 /** The fix-round model under the router, or the stall escalation decision (stall: true). Climbs only on code-owned evidence; a lint-only or harness-owned failure never does. */
 export function routedFix(runModel: string, out: StageOutputs, o: { repeated: boolean; stall: boolean; groups: readonly { signature: string }[]; reason: string }): { pin: string | undefined; climbed: UnitEscalation | null } {
   const rec = routeRecord(runModel, out["plan"]);
-  const carried = String(out["fix"]?.["model"] ?? out["implement"]?.["route_model"] ?? rec.model);
+  const impl = String(out["implement"]?.["route_model"] ?? rec.model), last = String(out["fix"]?.["model"] ?? impl);
+  const carried = modelRank(last) >= modelRank(impl) ? last : impl; // never descend: a fix round starts from max(last fix model, implement's model incl. its climbs)
   const floor = runFloor(runModel);
   const cur = !rec.valid && modelRank(carried) < modelRank(floor) ? floor : carried; // a below-run model carries only with a valid route record
   const lean = leanEnabled() && routerPinsAllowed() && modelRank(carried) >= modelRank("sonnet") && modelRank(carried) < modelRank(floor); // LEAN-5: a sonnet-first unit carries as it is until the first code-owned failure
   const tests = o.groups.filter((g) => !g.signature.startsWith("lint:") && g.signature !== "select-tests").length;
-  if (lean && tests > 0) { const to = runModel === PROVIDER_DEFAULT_MODEL ? undefined : runModel; return { pin: to, climbed: { unit: "run", from: carried, to: to ?? floor, trigger: o.stall ? "stall" : "code_fail", evidence: o.reason.slice(0, 300) } }; } // exactly one rung: the run model (today's default), then the normal ladder owns it
+  if (lean && tests > 0) { const to = runModel === PROVIDER_DEFAULT_MODEL ? undefined : runModel; return { pin: to, climbed: { unit: "run", from: carried, to: to ?? floor, trigger: o.stall ? "stall" : "code_fail", evidence: redactSecrets(o.reason).slice(0, 300) } }; } // exactly one rung: the run model (today's default), then the normal ladder owns it
   if (lean) return { pin: carried, climbed: null }; // a lint-only or harness-owned failure keeps the sonnet-first unit where it is
   const redo = unitRedo(isHaiku(cur) ? "haiku" : "sonnet", tests > 0 ? "code" : "harness") === "redo-sonnet"; // B4: a haiku unit with a code-owned failure is redone on sonnet
   const raised = tests > 0 && (o.repeated || o.stall || redo) ? climb("run", cur, o.stall ? "stall" : "code_fail", o.reason) : null;

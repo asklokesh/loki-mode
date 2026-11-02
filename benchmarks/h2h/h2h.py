@@ -41,7 +41,8 @@ TASKS_DIR = HERE / "tasks"
 # Both keep only meta.json and task.txt; materialize() rebuilds the snapshot from the pinned commits.
 SUITES = {"tasks": TASKS_DIR, "replay": HERE / "replay", "hard": HERE / "fixtures" / "hard"}
 CONFIGS = ["raw-haiku", "raw-sonnet", "raw-opus", "raw-haiku-verify", "raw-sonnet-verify", "raw-opus-verify",
-           "loki-haiku", "loki-sonnet", "loki-opus", "loki-default"]
+           "loki-haiku", "loki-sonnet", "loki-opus", "loki-default", "loki-haiku-flag"]
+# loki-haiku-flag is `loki start --haiku` as a user types it (no env pin): the cheap-model opt-in route.
 # Loki pinned to one model for the whole run (every stage, escalation and Wall re-author); loki-default has
 # no pin, so Loki's own routing picks the model per stage.
 LOKI_PINS = {"loki-haiku": "haiku", "loki-sonnet": "sonnet", "loki-opus": "opus"}
@@ -311,6 +312,8 @@ def contestant_cmd(config, task):
                 "--output-format", "json", "--dangerously-skip-permissions"]
     if config in LOKI_PINS or config == "loki-default" or config in SEQUENCE_CONFIGS:
         return ["bash", str(ROOT / "bin" / "loki"), text, "--no-pr"]
+    if config == "loki-haiku-flag":
+        return ["bash", str(ROOT / "bin" / "loki"), text, "--no-pr", "--haiku"]
     raise ValueError(f"unknown config {config}")
 
 
