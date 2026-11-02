@@ -1,0 +1,43 @@
+bun test v1.3.13 (bf2e2cec)
+
+b.test.ts:
+1 | import { expect, test } from "bun:test";
+2 | test("subtracts", () => { expect(5 - 3).toBe(1); });
+                                            ^
+error: expect(received).toBe(expected)
+
+Expected: 1
+Received: 2
+
+      at <anonymous> (/work/repo/b.test.ts:2:41)
+(fail) subtracts [0.18ms]
+
+a.test.ts:
+1 | import { expect, test, describe } from "bun:test";
+2 | describe("calc", () => {
+3 |  test("multiplies", () => { expect(3 + 4).toBe(12); });
+                                              ^
+error: expect(received).toBe(expected)
+
+Expected: 12
+Received: 7
+
+      at <anonymous> (/work/repo/a.test.ts:3:43)
+(fail) calc > multiplies [0.09ms]
+1 | import { expect, test, describe } from "bun:test";
+2 | describe("calc", () => {
+3 |  test("multiplies", () => { expect(3 + 4).toBe(12); });
+4 |  test("adds", () => { expect(1 + 1).toBe(3); });
+                                        ^
+error: expect(received).toBe(expected)
+
+Expected: 3
+Received: 2
+
+      at <anonymous> (/work/repo/a.test.ts:4:37)
+(fail) calc > adds [0.07ms]
+
+ 1 pass
+ 3 fail
+ 4 expect() calls
+Ran 4 tests across 2 files. [8.00ms]

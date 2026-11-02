@@ -1,0 +1,18 @@
+[[1m[34mINFO[0m] -------------------------------------------------------
+[[1m[34mINFO[0m]  T E S T S
+[[1m[34mINFO[0m] -------------------------------------------------------
+[[1m[34mINFO[0m] Running com.example.CalcTest
+[[31m[1mERROR[0m] [31mTests [0mrun: 2, [31m[1mFailures: 1[0m, Errors: 0, Skipped: 0, Time elapsed: 0.031 s[31m[1m <<< FAILURE![0m -- in com.example.CalcTest
+[[31m[1mERROR[0m] com.example.CalcTest.testMultiply -- Time elapsed: 0.004 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: expected: <12> but was: <7>
+	at com.example.CalcTest.testMultiply(CalcTest.java:14)
+
+[[1m[34mINFO[0m]
+[[1m[34mINFO[0m] Results:
+[[1m[34mINFO[0m]
+[[31m[1mERROR[0m] [31mFailures: [0m
+[[31m[1mERROR[0m] [31m  CalcTest.testMultiply:14 expected: <12> but was: <7>[0m
+[[1m[34mINFO[0m]
+[[31m[1mERROR[0m] [31mTests run: 2, Failures: 1, Errors: 0, Skipped: 0[0m
+[[1m[34mINFO[0m]
+[[1m[34mINFO[0m] [31mBUILD FAILURE[0m
