@@ -1,0 +1,223 @@
+# Table of Contents
+
+## No TOC
+
+```````````````````````````````` example
+none
+.
+<p>none</p>
+````````````````````````````````
+
+```````````````````````````````` example
+# H1
+## H2
+.
+<h1>H1</h1>
+<h2>H2</h2>
+````````````````````````````````
+
+
+## Simple TOC
+
+```````````````````````````````` example
+.. toc::
+
+# H1
+## H2
+.
+<details class="toc" open>
+<summary>Table of Contents</summary>
+<ul>
+<li><a href="#toc_1">H1</a>
+<ul>
+<li><a href="#toc_2">H2</a></li>
+</ul>
+</li>
+</ul>
+</details>
+<h1 id="toc_1">H1</h1>
+<h2 id="toc_2">H2</h2>
+````````````````````````````````
+
+## Invalid Option
+
+```````````````````````````````` example
+# H1
+## H2
+
+.. toc::
+   :max-level: s
+.
+<h1>H1</h1>
+<h2>H2</h2>
+<div class="error"><pre>"max-level" option MUST be integer</pre></div>
+````````````````````````````````
+
+```````````````````````````````` example
+# H1
+## H2
+.. toc::
+   :max-level: 9
+.
+<h1>H1</h1>
+<h2>H2</h2>
+<div class="error"><pre>"max-level" option MUST be <= 3</pre></div>
+````````````````````````````````
+
+```````````````````````````````` example
+# H1
+## H2
+.. toc::
+   :min-level: 2
+   :max-level: 1
+.
+<h1>H1</h1>
+<h2>H2</h2>
+<div class="error"><pre>"min-level" option MUST be less than "max-level" option</pre></div>
+````````````````````````````````
+
+
+## Complex
+
+```````````````````````````````` example
+# H1
+## H2
+### H3
+#### H4
+# H1 B
+# H1 `C`
+
+.. toc:: Contents
+   :max-level: 3
+.
+<h1 id="toc_1">H1</h1>
+<h2 id="toc_2">H2</h2>
+<h3 id="toc_3">H3</h3>
+<h4 id="toc_4">H4</h4>
+<h1 id="toc_5">H1 B</h1>
+<h1 id="toc_6">H1 <code>C</code></h1>
+<details class="toc" open>
+<summary>Contents</summary>
+<ul>
+<li><a href="#toc_1">H1</a>
+<ul>
+<li><a href="#toc_2">H2</a>
+<ul>
+<li><a href="#toc_3">H3</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#toc_5">H1 B</a></li>
+<li><a href="#toc_6">H1 C</a></li>
+</ul>
+</details>
+````````````````````````````````
+
+## Insane
+
+```````````````````````````````` example
+# H1
+### H3
+## H2
+#### H4
+### H3 B
+# H1 B
+.. toc::
+.
+<h1 id="toc_1">H1</h1>
+<h3 id="toc_2">H3</h3>
+<h2 id="toc_3">H2</h2>
+<h4 id="toc_4">H4</h4>
+<h3 id="toc_5">H3 B</h3>
+<h1 id="toc_6">H1 B</h1>
+<details class="toc" open>
+<summary>Table of Contents</summary>
+<ul>
+<li><a href="#toc_1">H1</a>
+<ul>
+<li><a href="#toc_2">H3</a></li>
+<li><a href="#toc_3">H2</a>
+<ul>
+<li><a href="#toc_5">H3 B</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#toc_6">H1 B</a></li>
+</ul>
+</details>
+````````````````````````````````
+
+```````````````````````````````` example
+### H3
+## H2
+# H1
+.. toc::
+.
+<h3 id="toc_1">H3</h3>
+<h2 id="toc_2">H2</h2>
+<h1 id="toc_3">H1</h1>
+<details class="toc" open>
+<summary>Table of Contents</summary>
+<ul>
+<li><a href="#toc_1">H3</a></li>
+<li><a href="#toc_2">H2</a></li>
+<li><a href="#toc_3">H1</a></li>
+</ul>
+</details>
+````````````````````````````````
+
+## Link in Heading
+
+
+```````````````````````````````` example
+# [foo](/bar)
+.. toc::
+.
+<h1 id="toc_1"><a href="/bar">foo</a></h1>
+<details class="toc" open>
+<summary>Table of Contents</summary>
+<ul>
+<li><a href="#toc_1">foo</a></li>
+</ul>
+</details>
+````````````````````````````````
+
+## HTML in Heading
+
+```````````````````````````````` example
+# <em>H1</em>
+.. toc::
+.
+<h1 id="toc_1"><em>H1</em></h1>
+<details class="toc" open>
+<summary>Table of Contents</summary>
+<ul>
+<li><a href="#toc_1">H1</a></li>
+</ul>
+</details>
+````````````````````````````````
+
+## Collapse TOC
+
+```````````````````````````````` example
+.. toc::
+   :collapse:
+
+# H1
+## H2
+.
+<details class="toc">
+<summary>Table of Contents</summary>
+<ul>
+<li><a href="#toc_1">H1</a>
+<ul>
+<li><a href="#toc_2">H2</a></li>
+</ul>
+</li>
+</ul>
+</details>
+<h1 id="toc_1">H1</h1>
+<h2 id="toc_2">H2</h2>
+````````````````````````````````

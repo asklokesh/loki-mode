@@ -1,0 +1,59 @@
+[tool.poetry]
+name = "tomlkit"
+version = "0.13.2"
+description = "Style preserving TOML library"
+authors = [
+    "Sébastien Eustace <sebastien@eustace.io>",
+    "Frost Ming <me@frostming.com>"
+]
+license = "MIT"
+
+readme = "README.md"
+
+homepage = "https://github.com/sdispater/tomlkit"
+repository = "https://github.com/sdispater/tomlkit"
+
+include = [
+  { path = "tomlkit/py.typed" },
+  { path = "tests", format = "sdist" },
+  { path = "docs", format = "sdist" },
+  { path = "CHANGELOG.md", format = "sdist" },
+]
+
+[tool.poetry.dependencies]
+python = ">=3.8"
+
+[tool.poetry.dev-dependencies]
+pytest = "^7.2.0"
+pytest-cov = "^4.0.0"
+PyYAML = "^6.0"
+pre-commit = "^2.20.0"
+mypy = "^0.990"
+Sphinx = "^4.3.2"
+furo = "^2022.9.29"
+
+[tool.ruff.lint]
+extend-select = [
+  "I",    # isort
+  "B",    # flake8-bugbear
+  "C4",   # flake8-comprehensions
+  "PGH",  # pygrep-hooks
+  "RUF",  # ruff
+  "W",    # pycodestyle
+  "YTT",  # flake8-2020
+]
+extend-ignore = ["B018", "B019", "RUF018"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.isort]
+known-first-party = ["tomlkit"]
+known-third-party = ["pytest"]
+force-single-line = true
+lines-after-imports = 2
+lines-between-types = 1
+
+[build-system]
+requires = ["poetry-core>=1.0.0a9"]
+build-backend = "poetry.core.masonry.api"

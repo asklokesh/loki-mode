@@ -16,6 +16,7 @@ import math
 import os
 import platform
 import pwd
+import re
 import shutil
 import signal
 import statistics
@@ -32,8 +33,14 @@ ROOT = HERE.parent.parent
 TASKS_DIR = HERE / "tasks"
 # --suite replay: real closed issues from permissively licensed projects, replayed at the fix's parent commit
 # (replay/<id>/meta.json "source" records the upstream, license, issue, fix PR and both commits).
-SUITES = {"tasks": TASKS_DIR, "replay": HERE / "replay"}
-CONFIGS = ["raw-haiku", "raw-opus", "raw-haiku-verify", "raw-opus-verify", "loki-haiku", "loki-default"]
+# --suite hard: the same format, chosen for multi-file fixes in larger projects. It lives under fixtures/
+# because its upstream snapshots keep characters (emoji, en and em dashes) that their own tests need.
+SUITES = {"tasks": TASKS_DIR, "replay": HERE / "replay", "hard": HERE / "fixtures" / "hard"}
+CONFIGS = ["raw-haiku", "raw-sonnet", "raw-opus", "raw-haiku-verify", "raw-sonnet-verify", "raw-opus-verify",
+           "loki-haiku", "loki-sonnet", "loki-opus", "loki-default"]
+# Loki pinned to one model for the whole run (every stage, escalation and Wall re-author); loki-default has
+# no pin, so Loki's own routing picks the model per stage.
+LOKI_PINS = {"loki-haiku": "haiku", "loki-sonnet": "sonnet", "loki-opus": "opus"}
 # The -verify configs are raw Claude Code with the same task text plus this one sentence: what a careful user
 # types when driving Claude Code alone.
 VERIFY_SENTENCE = "Before you finish, run the repository's tests and check that your change works."
@@ -45,6 +52,44 @@ SEQUENCE_CONFIGS = ["loki-haiku-learn", "loki-haiku-nolearn"]
 SEQUENCES_DIR = HERE / "sequences"
 SCORE_TIMEOUT_S = 180
 NOISE = (".loki/", "node_modules/", "__pycache__/", ".pytest_cache/", ".bun/", "target/")
+
+
+RESULTS_PREFIX = "benchmarks/h2h/results/"
+
+
+def _version(cmd):
+    """First output line of a version command, run in an empty directory so it can read nothing of the repo."""
+    try:
+        with tempfile.TemporaryDirectory() as empty:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=empty, stdin=subprocess.DEVNULL)
+        return (r.stdout or r.stderr).strip().splitlines()[0] if (r.stdout or r.stderr).strip() else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def provenance(root=ROOT):
+    """What produced a results file: the exact engine commit, whether the tree had uncommitted changes
+    (anything other than results files), and the tool versions. A run from a dirty tree is not citable:
+    its numbers belong to code nobody can check out."""
+    r = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True)
+    st = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True)
+    dirty = [line[3:] for line in st.stdout.splitlines() if line[3:] and not line[3:].startswith(RESULTS_PREFIX)]
+    return {
+        "engine_sha": r.stdout.strip() or None, "dirty_count": len(dirty), "dirty": dirty[:30],
+        "citable": bool(r.stdout.strip()) and st.returncode == 0 and not dirty,
+        "bun": _version(["bun", "--version"]), "claude_cli": _version(["bash", "-c", "command claude --version"]),
+        "python": platform.python_version(), "go": _version(["go", "version"]), "platform": platform.platform(),
+    }
+
+
+def provenance_gate(configs, prov, allow_dirty):
+    """Loki configs never run from a dirty tree unless --allow-dirty is given, and then the results are
+    stamped not citable. Returns an error message, or None when the run may go ahead."""
+    if any(c.startswith("loki") for c in configs) and not prov["citable"] and not allow_dirty:
+        return (f"refusing to run Loki configs from a tree that is not at a clean commit ({prov['dirty_count']} uncommitted "
+                f"paths, e.g. {', '.join(prov['dirty'][:3]) or 'no git'}); commit first, or pass --allow-dirty to record "
+                "results marked not citable")
+    return None
 
 
 def log(msg):
@@ -141,19 +186,19 @@ def contestant_cmd(config, task):
         # `command claude` skips any shell function named claude in an interactive profile.
         return ["bash", "-c", 'command claude "$@"', "claude", "-p", text, "--model", model,
                 "--output-format", "json", "--dangerously-skip-permissions"]
-    if config in ("loki-haiku", "loki-default") or config in SEQUENCE_CONFIGS:
+    if config in LOKI_PINS or config == "loki-default" or config in SEQUENCE_CONFIGS:
         return ["bash", str(ROOT / "bin" / "loki"), text, "--no-pr"]
     raise ValueError(f"unknown config {config}")
 
 
 def config_env(config, env):
-    if config == "loki-haiku":
+    if config in LOKI_PINS:
         # LOKI_SESSION_MODEL is the whole-run pin (loki-ts/src/engine10/session.ts resolveModel and
         # childEnv; runner/providers.ts sessionPinModel): every stage tier runs haiku, escalation stays
         # on the pinned model (runner/model_rank.ts escalationModel) and the Wall re-author is capped to
         # it (stages/wall.ts capToRunTier). LOKI_MODEL_OVERRIDE is not used: it is a pin key for the Wall
         # re-author, so that call would climb back to sonnet (engine10/sizing.ts wallModel).
-        env["LOKI_SESSION_MODEL"] = "haiku"
+        env["LOKI_SESSION_MODEL"] = LOKI_PINS[config]
     if config in SEQUENCE_CONFIGS:
         env["LOKI_SESSION_MODEL"] = "haiku"
     if config == "loki-haiku-learn":
@@ -234,8 +279,7 @@ TEST_DIRS = ("test", "tests", "__tests__")
 
 def test_edits(task, files):
     """Changed files that are tests or test config: under a protected path, in a test directory, or named
-    like a test. They are reverted before scoring, but a user taking the change as-is would have to remove
-    them, so a run that leaves any is not accepted without edit."""
+    like a test. Informational; acceptance uses test_weakening()."""
     out = []
     for f in files:
         parts = f.split("/")
@@ -243,6 +287,47 @@ def test_edits(task, files):
         if (any(f == p.rstrip("/") or f.startswith(p.rstrip("/") + "/") for p in task.get("protected", []))
                 or any(d in TEST_DIRS for d in parts[:-1]) or name == "conftest.py"
                 or (name.startswith("test_") and name.endswith(".py")) or name.endswith(TEST_NAME_SUFFIXES)):
+            out.append(f)
+    return out
+
+
+# An added line that switches a test off (pytest, unittest, Go, bun/jest/vitest, Rust).
+SKIP_MARKERS = re.compile(r"pytest\.mark\.(skip|skipif|xfail)\b|pytest\.(skip|xfail)\(|unittest\.(skip|skipIf|skipUnless|expectedFailure)\b"
+                          r"|@skip\b|\bt\.Skip(f|Now)?\(|\b(test|it|describe)\.(skip|todo|only)\b|\bx(it|describe|test)\(|#\[ignore\]")
+TEST_CONFIG_NAMES = ("conftest.py", "pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml", "bunfig.toml", "go.mod",
+                     "jest.config.js", "jest.config.ts", "vitest.config.ts", "Cargo.toml")
+
+
+def _subsequence(small, big):
+    it = iter(big)
+    return all(any(x == y for y in it) for x in small)
+
+
+def test_weakening(repo, base, edits):
+    """The test edits a user would have to undo: a pre-existing test file deleted, or with any of its lines
+    removed or changed (anything other than inserting new lines), or with an added line that skips a test;
+    and any change to test or build config (a new conftest.py or bunfig.toml can switch tests off). New test
+    files and new test cases appended to an existing file are normal and do not count."""
+    base_files = set(git(repo, "ls-tree", "-r", "--name-only", base).splitlines())
+    out = []
+    for f in edits:
+        name = f.rsplit("/", 1)[-1]
+        if name in TEST_CONFIG_NAMES:
+            out.append(f)
+            continue
+        if f not in base_files:
+            continue
+        p = repo / f
+        if not p.is_file():
+            out.append(f)
+            continue
+        old = [l.strip() for l in git(repo, "show", f"{base}:{f}").splitlines() if l.strip()]
+        new = [l.strip() for l in p.read_text(errors="replace").splitlines() if l.strip()]
+        added = list(new)
+        for l in old:
+            if l in added:
+                added.remove(l)
+        if not _subsequence(old, new) or any(SKIP_MARKERS.search(l) for l in added):
             out.append(f)
     return out
 
@@ -357,6 +442,7 @@ def loki_metrics(repo):
     started = {}
     stage_cost_total, priced, unpriced = 0.0, 0, 0
     models = set()
+    session_models = []  # [stage, model] for every model session, in order
     for e in events:
         st = e.get("stage") or "run"
         s = stages.setdefault(st, {"cost_usd": 0.0, "sessions": 0, "seconds": 0.0, "session_seconds": 0.0, "runs": 0})
@@ -376,6 +462,7 @@ def loki_metrics(repo):
                 unpriced += 1
             if data.get("model"):
                 models.add(str(data["model"]))
+            session_models.append([st, str(data.get("model") or "unknown")])
             if isinstance(data.get("duration_ms"), (int, float)):
                 s["session_seconds"] += data["duration_ms"] / 1000
     child_usd, child_n = 0.0, 0
@@ -416,6 +503,7 @@ def loki_metrics(repo):
         "wall_s": cdata.get("wall_s"),
         "stages": {k: v for k, v in stages.items() if v["sessions"] or v["seconds"]},
         "models": sorted(models),
+        "session_models": session_models,
         "event_types": sorted({e.get("type") for e in events if e.get("type")}),
     }
 
@@ -466,6 +554,9 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
     branch = loki_branch_checkout(repo, base) if config.startswith("loki") else None
     files = changed_files(repo, base)
     edits = test_edits(task, files)
+    weakened = test_weakening(repo, base, edits)
+    # Kept so acceptance can be audited or recomputed after the work dir is gone (untracked files are not in it).
+    test_diff = git(repo, "diff", base, "--", *edits)[-6000:] if edits else ""
     if config.startswith("raw"):
         m = raw_metrics(d / "contestant.out")
     elif config.startswith("loki"):
@@ -478,8 +569,9 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
     passed, tail = score(task, repo, env, d / "hidden.log")
     rec.update({
         "pass": passed, "seconds": round(secs, 2), "exit_code": rc, "timed_out": timed_out,
-        # Accepted without edit: the hidden tests pass on the tree as left, and no test edits remain in it.
-        "test_edits": edits, "accepted": int(bool(passed) and not edits),
+        # Accepted without edit: the hidden tests pass on the tree as left, and it weakens no existing test.
+        "test_edits": edits, "test_weakened": weakened, "accepted": int(bool(passed) and not weakened),
+        "test_diff": test_diff,
         "files_changed": len(files), "files": files, "hidden_leaked_before_scoring": leaked,
         "scored_branch": branch, "hidden_tail": tail if not passed else "", **m,
     })
@@ -610,7 +702,15 @@ def main_sequences(a, ap):
         if x not in all_seqs:
             ap.error(f"unknown sequence {x}")
     seqs = [load_sequence(x) for x in ids]
-    sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip() or "nogit"
+    prov = provenance()
+    blocked = provenance_gate(configs, prov, a.allow_dirty)
+    if blocked:
+        log(f"h2h: {blocked}")
+        return 6
+    if not prov["citable"]:
+        log(f"h2h: DIRTY TREE ({prov['dirty_count']} uncommitted paths): these results are NOT CITABLE")
+    provs = [prov] + (json.loads(Path(a.resume).read_text()).get("provenance", []) if a.resume else [])
+    sha = (prov["engine_sha"] or "nogit")[:9]
     out = Path(a.out) if a.out else HERE / "results" / f"{dt.date.today().isoformat()}-{sha}-learning.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp_root = Path(os.environ.get("TMPDIR") or "/tmp").resolve()
@@ -623,6 +723,7 @@ def main_sequences(a, ap):
 
     def save():
         doc = {"benchmark": "h2h-learning", "loki_sha": sha, "date": dt.datetime.now().isoformat(timespec="seconds"),
+               "citable": all(p["citable"] for p in provs), "provenance": provs,
                "configs": configs, "reps": a.reps, "jobs": a.jobs, "timeout_s": a.timeout, "stopped": state["stopped"],
                "sequences": [sq["id"] for sq in seqs], "summary": summarize_sequences(results, configs), "runs": results}
         out.write_text(json.dumps(doc, indent=2) + "\n")
@@ -718,6 +819,10 @@ def verdict_stats(rs):
         "verdict_agreement": round(agree / n, 4) if n else None, "verdict_agree_n": agree,
         "false_verified": sum(1 for r in rs if r["exit_code"] == 0 and not r["pass"]),
         "missed_pass": sum(1 for r in rs if r["exit_code"] != 0 and r["pass"]),
+        # VERIFIED recall: of the runs whose work passed the hidden tests, the share Loki sealed VERIFIED. Read
+        # next to false_verified, so a config cannot look safe by never claiming VERIFIED.
+        "verified_recall": (round(sum(1 for r in rs if r["exit_code"] == 0 and r["pass"]) / sum(1 for r in rs if r["pass"]), 4)
+                            if any(r["pass"] for r in rs) else None),
         "partial_pass": sum(1 for r in partial if r["pass"]), "partial_fail": sum(1 for r in partial if not r["pass"]),
         "outcomes": {o: sum(1 for r in rs if (r.get("loki_outcome") or "OTHER") == o)
                      for o in sorted({r.get("loki_outcome") or "OTHER" for r in rs})},
@@ -755,6 +860,7 @@ def summarize(results, configs):
             row.update({
                 "accepted": acc, "accepted_n": len(scored), "accept_ci95": ci,
                 "runs_with_test_edits": sum(1 for r in scored if r.get("test_edits")),
+                "runs_weakening_tests": sum(1 for r in scored if r.get("test_weakened")),
                 "cost_per_accepted_usd": round(per_task / (acc / len(scored)), 4) if acc else None,
                 # $ per accepted task = $ per task / acceptance rate, so the acceptance rate's Wilson bounds give
                 # its interval (cost per task held at its measured mean).
@@ -805,6 +911,14 @@ def ledger_total(path):
     return sum(json.loads(l).get("cost_usd") or 0 for l in Path(path).read_text().splitlines() if l.strip())
 
 
+def select_tasks(tasks, configs, named):
+    """A suite with a selection rule (fixtures/hard: the fix touches 2+ files and raw-haiku-verify passed under
+    half its pilot runs) runs only qualifying tasks unless tasks are named; the oracle/noop self-check covers all."""
+    if named or all(c in CHECK_CONFIGS for c in configs):
+        return tasks
+    return [t for t in tasks if t.get("qualified", True)]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="benchmarks/h2h/run.sh", description=__doc__.splitlines()[0])
     ap.add_argument("--configs", default=",".join(CONFIGS), help=f"comma list from {CONFIGS + CHECK_CONFIGS}")
@@ -823,6 +937,8 @@ def main(argv=None):
                     f"(or 'all'); configs from {SEQUENCE_CONFIGS + CHECK_CONFIGS}")
     ap.add_argument("--resume", default="", help="results JSON from an interrupted invocation: its runs are kept "
                     "and every (config, task, rep) already in it is skipped")
+    ap.add_argument("--allow-dirty", action="store_true", help="run Loki configs from a tree with uncommitted changes; "
+                    "the results file is stamped citable: false")
     a = ap.parse_args(argv)
     if a.reps < 1 or a.jobs < 1:
         ap.error("--reps and --jobs must be at least 1")
@@ -839,9 +955,17 @@ def main(argv=None):
     for t in task_ids:
         if t not in all_tasks:
             ap.error(f"unknown task {t} in suite {a.suite}")
-    tasks = [load_task(t, tasks_dir) for t in task_ids]
+    tasks = select_tasks([load_task(t, tasks_dir) for t in task_ids], configs, bool(a.tasks))
 
-    sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip() or "nogit"
+    prov = provenance()
+    blocked = provenance_gate(configs, prov, a.allow_dirty)
+    if blocked:
+        log(f"h2h: {blocked}")
+        return 6
+    if not prov["citable"]:
+        log(f"h2h: DIRTY TREE ({prov['dirty_count']} uncommitted paths): these results are NOT CITABLE")
+    a.provenance = [prov] + (json.loads(Path(a.resume).read_text()).get("provenance", []) if a.resume else [])
+    sha = (prov["engine_sha"] or "nogit")[:9]
     suffix = "" if a.suite == "tasks" else f"-{a.suite}"
     out = Path(a.out) if a.out else HERE / "results" / f"{dt.date.today().isoformat()}-{sha}{suffix}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -873,7 +997,7 @@ def main(argv=None):
             except Exception as exc:  # a harness fault is recorded as a failed run, never dropped
                 rec = {"config": c, "task": task["id"], "kind": task["kind"], "lang": task["lang"],
                        "difficulty": task.get("difficulty", "normal"), "shape": task.get("shape"), "rep": rep,
-                       "pass": 0, "accepted": 0, "test_edits": [], "seconds": 0.0, "exit_code": None, "timed_out": False,
+                       "pass": 0, "accepted": 0, "test_edits": [], "test_weakened": [], "seconds": 0.0, "exit_code": None, "timed_out": False,
                        "files_changed": 0, "files": [], "hidden_leaked_before_scoring": [], "cost_usd": None, "sessions": 0, "harness_error": repr(exc)[:300],
                        "harness_traceback": traceback.format_exc()[-1500:]}
             with lock:
@@ -923,6 +1047,9 @@ def main(argv=None):
 def write_results(out, results, configs, sha, a, stopped):
     doc = {
         "benchmark": "h2h-b1", "suite": a.suite, "loki_sha": sha, "date": dt.datetime.now().isoformat(timespec="seconds"),
+        # Every invocation that added runs to this file, newest first; citable only if all of them were.
+        "citable": all(p["citable"] for p in getattr(a, "provenance", [])) if getattr(a, "provenance", None) else None,
+        "provenance": getattr(a, "provenance", []),
         "configs": configs, "reps": a.reps, "jobs": a.jobs, "timeout_s": a.timeout, "stopped": stopped,
         "tasks": sorted({r["task"] for r in results}),
         "summary": summarize(results, configs), "runs": results,

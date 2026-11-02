@@ -1,0 +1,61 @@
+{
+  "difficulty": "hard",
+  "shape": "multi-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_grouping.py": "tests/test_grouping.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml"
+  ],
+  "source": {
+    "upstream": "https://github.com/andialbrecht/sqlparse",
+    "license": "BSD-3-Clause",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/andialbrecht/sqlparse/issues/701",
+    "fix_pr": "https://github.com/andialbrecht/sqlparse/pull/768",
+    "fix_commit": "e03b74e608b71dd06824c2cb42421c0d790248e3",
+    "parent_commit": "d8f81471cfc2c39ac43128e2a0c8cc67c313cc40",
+    "vendored_paths": [
+      "LICENSE",
+      "README.rst",
+      "pyproject.toml",
+      "sqlparse",
+      "tests"
+    ],
+    "solution_files": [
+      "sqlparse/engine/grouping.py",
+      "sqlparse/sql.py"
+    ],
+    "added_files": [],
+    "note": ""
+  },
+  "pilot": {
+    "config": "raw-haiku-verify",
+    "passed": 0,
+    "runs": 2,
+    "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
+  },
+  "qualified": false,
+  "excluded_because": "the fix's tests call Function.get_window(), a method the fix itself adds"
+}

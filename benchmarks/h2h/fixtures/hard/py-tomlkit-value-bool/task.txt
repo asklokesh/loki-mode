@@ -1,0 +1,25 @@
+Bug: tomlkit.value("test") returns True
+
+Since tomlkit `0.8.0` all strings starting with lowercase letter `t` are converted to `True` and all strings starting with `f` are coverted to `False` if using the `tomlkit.value(...)` call.
+
+E.g.: Install tomlkit `0.8.0` into a fresh venv and using `python3`:
+```sh
+❯ python3                   
+Python 3.10.0 (default, Oct 22 2021, 13:24:07) [Clang 13.0.0 (clang-1300.0.29.3)] on darwin
+Type "help", "copyright", "credits" or "license" for more information.
+>>> import tomlkit
+>>> tomlkit.value("test")
+True
+>>> tomlkit.value("fest")
+False
+>>> tomlkit.value("NoTest")
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "/Users/robot/test/test123/lib/python3.10/site-packages/tomlkit/api.py", line 149, in value
+    return Parser(raw)._parse_value()
+  File "/Users/robot/test/test123/lib/python3.10/site-packages/tomlkit/parser.py", line 598, in _parse_value
+    raise self.parse_error(UnexpectedCharError, c)
+tomlkit.exceptions.UnexpectedCharError: Unexpected character: 'N' at line 1 col 0
+```
+
+**I would expect that all these strings throw an error like it is done in `0.7.2`.**

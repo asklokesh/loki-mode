@@ -1,0 +1,35 @@
+[bug]: MySQL TIMESTAMPADD is not parsed, so transpilation passes it through verbatim
+
+### Description
+
+MySQL's `TIMESTAMPADD(unit, interval, datetime)` is not mapped in the MySQL parser, so it parses as an `Anonymous` node and is emitted verbatim for every target dialect, including dialects that do not have that function.
+
+### Repro
+
+```python
+import sqlglot
+sqlglot.transpile("SELECT TIMESTAMPADD(MONTH, 1, '2024-01-31')", read="mysql", write="duckdb")[0]
+# "SELECT TIMESTAMPADD(MONTH, 1, CAST('2024-01-31' AS DATE))"
+```
+
+DuckDB has no `TIMESTAMPADD` function, so the transpiled query fails there:
+
+```
+Catalog Error: Scalar Function with name timestampadd does not exist!
+```
+
+The same passthrough happens for postgres, spark, and every other target.
+
+### Root cause
+
+`sqlglot/parsers/mysql.py` maps `TIMESTAMPDIFF` via `build_date_delta(exp.TimestampDiff)` but has no `TIMESTAMPADD` entry, and the base parser does not map it either. The generator side already handles `exp.TimestampAdd` for MySQL, DuckDB, Spark, Snowflake, and BigQuery, so only the parser mapping is missing for those dialects.
+
+Adding `"TIMESTAMPADD": build_date_delta(exp.TimestampAdd)` to the MySQL parser makes `mysql -> duckdb` produce `SELECT CAST('2024-01-31' AS DATE) + INTERVAL 1 MONTH` (verified locally, executes correctly in DuckDB) and round-trips `mysql -> mysql` to `DATE_ADD('2024-01-31', INTERVAL 1 MONTH)`.
+
+### Additional note
+
+The postgres generator has no `TimestampAdd` transform, so even with the parser mapping, `mysql -> postgres` currently emits `TIMESTAMP_ADD('2024-01-31', 1, MONTH)`, which is not valid Postgres. That transform would be needed too for a complete fix.
+
+### Version
+
+Tested against main (commit feb0e08).

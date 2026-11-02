@@ -1,0 +1,66 @@
+{
+  "difficulty": "hard",
+  "shape": "multi-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/fixtures/fenced_toc.txt": "tests/fixtures/fenced_toc.txt",
+    "tests/fixtures/hook_toc.txt": "tests/fixtures/hook_toc.txt",
+    "tests/fixtures/rst_toc.txt": "tests/fixtures/rst_toc.txt"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "conftest.py"
+  ],
+  "source": {
+    "upstream": "https://github.com/lepture/mistune",
+    "license": "BSD-3-Clause",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/lepture/mistune/issues/426",
+    "fix_pr": "https://github.com/lepture/mistune/pull/427",
+    "fix_commit": "c82ad09675a5603166cf34bf1682953b56efb9ae",
+    "parent_commit": "c85632528f6f3d9d974bfae300716ac997a8d2c1",
+    "vendored_paths": [
+      "LICENSE",
+      "README.md",
+      "pyproject.toml",
+      "src",
+      "tests"
+    ],
+    "solution_files": [
+      "src/mistune/directives/toc.py",
+      "src/mistune/toc.py"
+    ],
+    "added_files": [
+      "conftest.py"
+    ],
+    "note": "conftest.py added so tests import src/mistune without installing the package."
+  },
+  "pilot": {
+    "config": "raw-haiku-verify",
+    "passed": 2,
+    "runs": 2,
+    "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
+  },
+  "qualified": false,
+  "excluded_because": "raw-haiku-verify passed 2 of 2 pilot runs (the rule needs under 50%)"
+}

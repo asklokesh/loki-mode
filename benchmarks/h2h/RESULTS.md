@@ -144,6 +144,16 @@ review: 8 review sessions, $0.052 in total on Haiku.
 Spend: $1.15 on its own ledger.
 The replay suite's first run below is `results/2026-11-01-2100eda48-replay.json` (v11.114.0 engine).
 
+**Citability.** A results file counts only if it was produced from a clean commit: the harness now
+stamps every results file with the engine commit, the tool versions and a `citable` flag, and refuses
+to run Loki configs from a tree with uncommitted changes. The v11.116.0 before/after files are
+**not citable**: `2026-11-01-win-bench-v2-after.json` records that it ran from uncommitted code,
+and `2026-11-01-65440abaf-before.json` and `2026-11-01-win-bench-v2-review-fixes.json` record
+commits (65440abaf, 38b31e8cc) that are on no published branch, since they predate the release
+squash, so nobody can check out the code they measured. The replay file ran Loki from a clean engine commit
+(2100eda48) with the benchmark harness changes not yet committed (committed in 070d72ea4), so it
+is not citable under this rule either.
+
 ## Replay suite (real closed issues)
 
 The synthetic tasks below are written for the benchmark. The replay suite is real work: 8 closed
@@ -180,9 +190,14 @@ change that fixed it.
   raw `claude -p` with the same task text plus one sentence: "Before you finish, run the
   repository's tests and check that your change works." That is the fair baseline: what a careful
   user gets from Claude Code alone.
-- **Accepted without edit.** The hidden tests pass on the tree as the run left it, and the run left
-  no test edits in it (a changed file under a protected path, in a test directory, or named like a
-  test). Test edits are reverted before scoring in every case, so they never affect pass or fail.
+- **Accepted without edit (old definition, used for this run only).** The hidden tests pass on the
+  tree as the run left it, and the run left no test edits in it (a changed file under a protected
+  path, in a test directory, or named like a test). Test edits are reverted before scoring in every
+  case, so they never affect pass or fail. The harness now uses a narrower definition (see the hard
+  suite): only a weakened pre-existing test or a test config change counts, so new test files and
+  appended cases are fine. These runs did not keep their diffs, so they cannot be rescored; under
+  the new definition Loki's 10 passes would all count as accepted (it only added new test files),
+  and the raw configs' cannot be determined.
 - **Run.** `--suite replay --reps 2 --jobs 4`, timeout 600 s, on its own ledger with a $15 budget.
 
 ### Results

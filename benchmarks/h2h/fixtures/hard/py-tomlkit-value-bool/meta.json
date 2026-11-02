@@ -1,0 +1,78 @@
+{
+  "difficulty": "hard",
+  "shape": "multi-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_api.py": "tests/test_api.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests",
+    "--deselect",
+    "tests/test_items.py::test_dates_behave_like_dates"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests",
+    "--deselect",
+    "tests/test_items.py::test_dates_behave_like_dates"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "tox.ini"
+  ],
+  "source": {
+    "upstream": "https://github.com/python-poetry/tomlkit",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/python-poetry/tomlkit/issues/165",
+    "fix_pr": "https://github.com/python-poetry/tomlkit/pull/168",
+    "fix_commit": "193b859d97afd703a70e76f347a3c198abc3dc74",
+    "parent_commit": "7b450661e02d161cbf9a3bec3b3955cbcb64efef",
+    "vendored_paths": [
+      "LICENSE",
+      "README.md",
+      "pyproject.toml",
+      "tox.ini",
+      "tomlkit",
+      "tests"
+    ],
+    "solution_files": [
+      "tomlkit/api.py",
+      "tomlkit/parser.py",
+      "tomlkit/source.py"
+    ],
+    "added_files": [],
+    "note": "The tests/toml-test submodule is vendored at its pinned commit (toml-lang/toml-test, MIT). tests/test_items.py::test_dates_behave_like_dates is deselected: it fails on Python 3.13 and later (date and datetime comparison) on the parent and on the fix alike.",
+    "submodules": {
+      "tests/toml-test": {
+        "upstream": "https://github.com/toml-lang/toml-test",
+        "commit": "27837d38aa7cc9ff385ed1316a8fef68394395dd",
+        "license": "MIT",
+        "vendored_paths": [
+          "COPYING",
+          "tests"
+        ]
+      }
+    }
+  },
+  "pilot": {
+    "config": "raw-haiku-verify",
+    "passed": 0,
+    "runs": 2,
+    "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
+  },
+  "qualified": true
+}

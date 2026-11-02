@@ -1,0 +1,123 @@
+Fix problems that commonmark has.
+
+
+## Links
+
+Links can't contain links.
+
+```````````````````````````````` example
+[<https://example.com>](/foo)
+.
+<p><a href="/foo">&lt;https://example.com&gt;</a></p>
+````````````````````````````````
+
+```````````````````````````````` example
+[<name@example.com>](/foo)
+.
+<p><a href="/foo">&lt;name@example.com&gt;</a></p>
+````````````````````````````````
+
+## Emphasis
+
+`<em>` doesn't contain `<em>`, `<strong>` doesn't contain `<strong>`.
+
+```````````````````````````````` example
+*_em_* __**strong**__ ______m______
+.
+<p><em>_em_</em> <strong>**strong**</strong> ______m______</p>
+````````````````````````````````
+
+### Non aggressive emphasis
+
+```````````````````````````````` example
+*a **b c* d**
+.
+<p><em>a **b c</em> d**</p>
+````````````````````````````````
+
+While CommonMark would render it into:
+
+```
+<p><em>a <em><em>b c</em> d</em></em></p>
+```
+
+```````````````````````````````` example
+*a **b c* d**
+.
+<p><em>a **b c</em> d**</p>
+````````````````````````````````
+
+While CommonMark would render it into:
+
+```
+<p><em>a <em><em>b c</em> d</em></em></p>
+```
+
+What if the string is:
+
+```````````````````````````````` example
+*a **b c* d
+.
+<p><em>a **b c</em> d</p>
+````````````````````````````````
+
+CommonMark would still be a mess:
+
+```
+<p>*a *<em>b c</em> d</p>
+```
+
+
+## Max depth
+
+
+```````````````````````````````` example
+> > > > > > > > b
+.
+<blockquote>
+<blockquote>
+<blockquote>
+<blockquote>
+<blockquote>
+<blockquote>
+<p>&gt; &gt; b</p>
+</blockquote>
+</blockquote>
+</blockquote>
+</blockquote>
+</blockquote>
+</blockquote>
+````````````````````````````````
+
+
+```````````````````````````````` example
+- a
+  - b
+    - c
+      - d
+        - e
+          - f
+            - g
+              - h
+.
+<ul>
+<li>a<ul>
+<li>b<ul>
+<li>c<ul>
+<li>d<ul>
+<li>e<ul>
+<li>f
+- g
+- h</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+````````````````````````````````
