@@ -49,6 +49,16 @@
 #  16. contestant_cmd(): do not append VERIFY_SENTENCE; both verify-sentence checks must fail.
 #  17. summarize(): $ per accepted task divided by passes; the fixed-record check must fail.
 #  18. main(): ignore --suite; the replay self-check must fail.
+#  19. test_weakening(): count every changed pre-existing test (appended cases too); the acceptance
+#      case list must fail. 20. ignore added skip markers; same check. 21. ignore test config files;
+#      the sabotage acceptance checks and the case list must fail.
+#  22. run_one(): accept on pass alone, ignoring weakening; the sabotage acceptance check must fail.
+#  23. provenance_gate(): never refuse; the dirty-tree check must fail. 24. provenance(): count
+#      results files as dirt; both provenance checks must fail.
+#  25. verdict_stats(): VERIFIED recall over all runs; the recall check must fail.
+#  26. loki_metrics(): drop session_models; the per-session model check must fail.
+#  27. config_env(): pin every Loki config to haiku; the pin check must fail.
+#  28. select_tasks(): keep unqualified tasks; the selection check must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
