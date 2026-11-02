@@ -217,7 +217,28 @@ def config_env(config, env):
     if config == "loki-haiku-nolearn":
         # LOKI_NO_PR_LESSONS=1 turns both off whatever else is set.
         env["LOKI_NO_PR_LESSONS"] = "1"
+    if config.startswith("loki-"):
+        env.update(loki_env_overrides())  # validated at startup; Loki contestants only (raw configs never see them)
     return env
+
+
+# Keys an A/B knob may not set: the model pin and model routing (a config's own model), and the learning arms' knobs.
+LOKI_ENV_REFUSED = ("LOKI_SESSION_MODEL", "LOKI_MODEL_OVERRIDE", "LOKI_PROVIDER", "LOKI_PR_LESSONS", "LOKI_WORKED_EXAMPLE", "LOKI_NO_PR_LESSONS")
+LOKI_ENV_REFUSED_PREFIX = ("LOKI_MODEL_", "LOKI_CLAUDE_MODEL", "LOKI_CODEX_MODEL", "LOKI_OPENCODE_MODEL")
+
+
+def loki_env_overrides():
+    """H2H_LOKI_ENV="LOKI_X=1,LOKI_Y=0": extra variables for Loki contestants, for on/off comparisons. Returns {} when unset;
+    exits on a malformed entry or a refused key, so a knob can never silently change a config's model or learning arm."""
+    out = {}
+    for kv in filter(None, (x.strip() for x in os.environ.get("H2H_LOKI_ENV", "").split(","))):
+        k, eq, v = kv.partition("=")
+        if not eq or not k.startswith("LOKI_"):
+            raise SystemExit(f"h2h: H2H_LOKI_ENV entry {kv!r} is not LOKI_NAME=value")
+        if k in LOKI_ENV_REFUSED or k.startswith(LOKI_ENV_REFUSED_PREFIX):
+            raise SystemExit(f"h2h: H2H_LOKI_ENV may not set {k} (it overrides a config's model pin or learning arm)")
+        out[k] = v
+    return out
 
 
 def kill_group(pgid):
@@ -768,7 +789,7 @@ def main_sequences(a, ap):
         doc = {"benchmark": "h2h-learning", "loki_sha": sha, "date": dt.datetime.now().isoformat(timespec="seconds"),
                "citable": all(p["citable"] for p in provs), "provenance": provs,
                "configs": configs, "reps": a.reps, "jobs": a.jobs, "timeout_s": a.timeout, "stopped": state["stopped"],
-               "sequences": [sq["id"] for sq in seqs], "summary": summarize_sequences(results, configs), "runs": results}
+               "loki_env": loki_env_overrides(), "sequences": [sq["id"] for sq in seqs], "summary": summarize_sequences(results, configs), "runs": results}
         out.write_text(json.dumps(doc, indent=2) + "\n")
 
     def worker():
@@ -963,6 +984,7 @@ def select_tasks(tasks, configs, named):
 
 
 def main(argv=None):
+    loki_env_overrides()  # refuse a bad H2H_LOKI_ENV before any run starts
     ap = argparse.ArgumentParser(prog="benchmarks/h2h/run.sh", description=__doc__.splitlines()[0])
     ap.add_argument("--configs", default=",".join(CONFIGS), help=f"comma list from {CONFIGS + CHECK_CONFIGS}")
     ap.add_argument("--suite", default="tasks", choices=sorted(SUITES), help="task suite: tasks (synthetic, default) "
@@ -1094,7 +1116,7 @@ def write_results(out, results, configs, sha, a, stopped):
         "citable": all(p["citable"] for p in getattr(a, "provenance", [])) if getattr(a, "provenance", None) else None,
         "provenance": getattr(a, "provenance", []),
         "configs": configs, "reps": a.reps, "jobs": a.jobs, "timeout_s": a.timeout, "stopped": stopped,
-        "tasks": sorted({r["task"] for r in results}),
+        "loki_env": loki_env_overrides(), "tasks": sorted({r["task"] for r in results}),
         "summary": summarize(results, configs), "runs": results,
     }
     out.write_text(json.dumps(doc, indent=2) + "\n")

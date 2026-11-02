@@ -1,9 +1,10 @@
 // engine10/failures.ts -- failing test ids (A-112) and the FailureGroup shape fix.ts consumes (E-17). The per-runner parsers and groupFailures had no production caller (only their own tests) and were deleted by A-115.
-import { javaSummary, stripAnsi } from "../util/check_result.ts"; import { dotnetSummary } from "../util/dotnet_test.ts";
+import { javaSummary, stripAnsi } from "../util/check_result.ts"; import { dotnetSummary } from "../util/dotnet_test.ts"; export { failureGroup, failureSignature } from "../util/check_result.ts"; // L005: one owner of failure-line normalizing
 export interface FailureGroup {
   signature: string; // normalized reason: numbers and quoted values collapsed
   count: number;
   sample: string; // one raw (unnormalized) reason from the group
+  carried?: true; // L025: failed in the previous verify and was not rerun by this quick one; shown in the brief, never compared by the stall rule
 }
 const ID_LINE = /^(?:(?:FAILED|ERROR)\s+(\S+::\S*)(?:\s.*)?|\u25cf\s+(?!Console|Test suite failed)(.+)|not ok \d+ - (.+?)(?:\s+#.*)?|\u2716\s+(?!failing tests:)(.+?)(?:\s+\([\d.]+ms\))?|FAIL\s+(.+)|\u00d7\s+(.+?)(?:\s+\d+(?:\.\d+)?\s*m?s)?)$/;
 /** The runner's own failed-plus-errored count: pytest "N failed, M error", jest/vitest "Tests: N failed", node "fail N". */
@@ -46,9 +47,18 @@ function goCargoIds(output: string): string[] | null {
   return count && u.length >= count ? u : [];
 }
 
+/** L005: bun test ids "file::name" from "(fail) name" (or a colored "✗ name") under each "file:" header, against the summed " N fail"; null when not bun output. */
+function bunIds(output: string): string[] | null {
+  const lines = output.split("\n"), count = lines.reduce((a, l) => a + +(/^\s*(\d+) fail$/.exec(l)?.[1] ?? 0), 0), ids: string[] = []; let file = "";
+  if (!lines.some((l) => /^Ran \d+ tests? across \d+ files?\./.test(l.trim()))) return null;
+  for (const l of lines) { const f = /^([\w./@-]+\.[cm]?[jt]sx?):$/.exec(l.trim()), m = /^(?:\(fail\)|✗)\s+(.+?)(?:\s+\[[\d.]+m?s\])?$/.exec(l.trim()); if (f) file = f[1]!; else if (m) ids.push(`${file}::${m[1]!.trim()}`); }
+  const u = [...new Set(ids)];
+  return count && u.length >= count ? u : [];
+}
 export function failIds(raw: string): string[] {
   const output = stripAnsi(raw), gc = goCargoIds(output);
   if (gc) return gc;
+  const bun = bunIds(output); if (bun) return bun;
   const jv = javaSummary(output) ?? dotnetSummary(output); // HV1-03b: surefire / gradle / javac-wrapper ids, only when they cover the vouched failed count
   if (jv) return jv.failed > 0 && jv.ids.length >= jv.failed ? jv.ids : [];
   const ids = [...new Set(output.split("\n").map((l) => ID_LINE.exec(l.trim())).flatMap((m) => (m ? [(m.slice(1).find(Boolean) ?? "").trim()] : [])).filter(Boolean))];
