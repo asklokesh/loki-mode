@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.118.1 (2026-11-01)
+
+The Docker images build again.
+
+### Fixed
+
+- v11.118.0's Docker image build failed because the engine source now imports the bundled price table (`loki-ts/data/model-pricing.json`) and the build stage did not copy it; npm, Homebrew and the SDKs were unaffected. Both Docker build stages now copy it, and a release check fails when a build stage that copies the engine source misses any file that source imports from outside it.
+
 ## v11.118.0 (2026-11-01)
 
 Shell commands in a run no longer wait on a safety subprocess, operator permission policies work again, and model prices come from one table.
