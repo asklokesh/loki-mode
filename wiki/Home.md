@@ -70,7 +70,7 @@ Loki Mode is a free, source-available autonomous coding agent that:
 - **Staged Autonomy** - Approval gates for sensitive operations
 - **8-Gate Quality System** - Static analysis, test suite (pass/fail), blind 3-reviewer code review with severity blocking, anti-sycophancy Devil's Advocate, mock-integrity detection, test-mutation detection, documentation coverage (v6.75.0), and Magic Modules debate; plus a conditional backward-compatibility auditor (healing mode, v6.67.0, not numbered), the verified-completion evidence gate with inconclusive disclosure (v7.28.0), and held-out spec evals for anti-reward-hacking (v7.28.0)
 - **Guided First Build** - `loki quickstart`: four questions to a running build, with the real cost estimate shown before any spend, and a consent-gated Claude Code install offer when no provider is found (v7.29.0)
-- **Completion Council** - 3-member voting system with anti-sycophancy checks, plus a confidence-spike re-check that forces an EXTRA verification when the agent claims near-certainty (strictly additive -- it can never skip a gate; v8.0.0, see [[Completion Council]])
+- **Completion Council** - 3-member voting system with anti-sycophancy checks (strictly additive -- it can never skip a gate; v8.0.0, see [[Completion Council]])
 - **Anthropic Agent SDK route** - Opt-in, default-off claude-binary-free path: the RARV loop on `@anthropic-ai/claude-agent-sdk` and judges on the raw SDK, behind the single switch `LOKI_SDK_MODE` (`off`/`judges`/`full`). Unset is byte-identical to the claude-CLI route (v8.0.0)
 - **Harness intelligence** - Prompt-cache discipline (stable prefix / volatile tail at an explicit cache breakpoint), hill-climbable goal scoring (flags a goal with no measurable success condition; advisory only), and smart retry (stops early on permanent failures, still retries anything unrecognized) (v8.0.0)
 - **Security Hardening** - Path traversal, XSS, injection, and memory leak protections
@@ -119,7 +119,7 @@ Loki Mode is a free, source-available autonomous coding agent that:
 
 ## Version History
 
-Current Version: **11.120.0** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
+Current Version: **11.120.1** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
 
 See [[Changelog]] for detailed release notes.
 

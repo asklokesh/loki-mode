@@ -61,15 +61,11 @@ Four measured-harness disciplines on the trust core. None can weaken a gate.
   that orders the prompt; it sets no `cache_control` header. The ordering rule
   above still matters on every route -- a stable prefix is what any cache, ours
   or the CLI's, can reuse.
-- **Confidence-spike re-check** (`loki-ts/src/runner/council.ts`): delays the
-  done-signal force-stop by ONE iteration when self-reported confidence spikes.
-  Strictly additive (never skips a gate), never delays the stagnation valve,
-  one-shot so a re-spiking run cannot postpone the valve forever.
-  `LOKI_CONFIDENCE_SPIKE=0` / `_DELTA` (40) / `_MIN` (90).
-- **Goal scoring** (`loki-ts/src/runner/goal_score.ts`): flags a
+- **Confidence-spike re-check**: removed. It lived only in the separate Bun loop
+  (removed in v11.119.0); `LOKI_CONFIDENCE_SPIKE` and its `_DELTA` / `_MIN` have no reader.
+- **Goal scoring** (`autonomy/run.sh`): flags a
   `COMPLETION_PROMISE` with no measurable target. Advisory only. Suppressed for
-  an absent goal and in perpetual mode. **Byte-mirrored in `autonomy/run.sh`** --
-  edit BOTH or the `build_prompt` parity fixtures diverge. `LOKI_GOAL_SCORING=0`.
+  an absent goal and in perpetual mode. `LOKI_GOAL_SCORING=0`.
 - **Smart retry** (`loki-ts/src/runner/retry_class.ts`): exits early on a
   positively-identified permanent failure. **Fail-safe direction is
   load-bearing**: unrecognized failures stay TRANSIENT and retry as before; rate
@@ -95,7 +91,7 @@ Pins (exact, all sites): `@anthropic-ai/sdk` 0.124.0 -> 1.3.0 (loki-ts/package.j
 | sdk 0.129.0 `between_tools` thinking | NOT ADOPTED: judge path clamps thinking by effort (sdk_invoker.ts clampThinkingForEffort); between_tools is not offered to judges |
 | sdk 0.135.0/0.136.0 streaming fixes (unread stream close, unknown SSE events) | NOT ADOPTED: sdk_invoker does not stream |
 | sdk 0.130.0-1.2.0 Admin API (analytics, spend limits, RBAC, plugins, webhooks, message threads, usage/cost reports), Managed Agents additions | NOT ADOPTED: no Loki feature calls these APIs |
-| agent-sdk 0.3.302 refused structured output now an error with no payload | NOT AFFECTED: quality_gates.ts:1616 reads `e["structured_output"]` and fails closed to null when it is absent or not an object (falls back to parsing `result`); a refusal with no payload therefore yields null, the same outcome as before. Refusals are also handled by sdk_stream_parser.ts refusal frames |
+| agent-sdk 0.3.302 refused structured output now an error with no payload | NOT AFFECTED: refusals are handled by sdk_stream_parser.ts refusal frames |
 | agent-sdk 0.3.300 `thinking: disabled` runs adaptive on models that cannot disable | NOT ADOPTED: providers.ts:846 query() options pass no thinking setting |
 | agent-sdk 0.3.302 fork subagents on by default in SDK sessions | NOT ADOPTED: accepted default, effect on Loki runs unmeasured; `CLAUDE_CODE_FORK_SUBAGENT=0` is the opt-out |
 | agent-sdk 0.3.302 omitted `permissionMode` defaults to `default` on third-party providers | N/A: Loki always passes an explicit permissionMode |
@@ -108,16 +104,16 @@ Pins (exact, all sites): `@anthropic-ai/sdk` 0.124.0 -> 1.3.0 (loki-ts/package.j
 
 ## Phase 1 / RARV-C Closure Env Vars
 
-Default-on in the Bun runner (see `CHANGELOG.md` v7.x entries; documented in `skills/quality-gates.md:88-110`). Set to `0` to disable; set to `1` to force-enable on the bash route.
+Default-on on the bash loop: `autonomy/run.sh` runs them through `loki internal phase1-hooks` (`loki-ts/src/commands/internal_phase1.ts`) after code review. Set to `0` to disable (see `CHANGELOG.md` v7.x entries and `skills/quality-gates.md`).
 
 - `LOKI_INJECT_FINDINGS` -- inject structured per-finding records into the next-iteration prompt; persists `.loki/state/findings-<iter>.json` after aggregation.
 - `LOKI_OVERRIDE_COUNCIL` -- enable the 3-judge override council on a BLOCK verdict. Requires `LOKI_INJECT_FINDINGS=1` (operator setting only this var alone is a no-op).
   **The BLOCK-LIFT arm never adjudicates on the bash loop.** The Bun loop that ran it was removed; on the bash loop (`--engine legacy`) the override lands in a stub that returns `REJECT_OVERRIDE` for every record (`loki-ts/src/commands/internal_phase1.ts:215-227`). Counter-evidence is still parsed and an `override-<iter>.json` transcript is still written, so the feature looks live in the artifacts while never being able to lift a BLOCK.
   This fail-closed direction is DELIBERATE, not a bug: on the agent-authored route the gated agent writes its own counter-evidence, so mechanical verification is forgeable. On bash the only exits from a Critical/High BLOCK are to fix the finding or to use the human-escape path (`rm .loki/PAUSE`). Documented here because the heading above says "default-on" and, for this one knob's block-lift, that is not true.
 - `LOKI_AUTO_LEARNINGS` -- auto-write structured learnings per code_review cycle. Optional `LOKI_AUTO_LEARNINGS_EPISODE=1` also writes the learning into the episode store.
-  **Bun route only.** This var has ZERO occurrences in `autonomy/run.sh` and `autonomy/loki` (measured; controls: `LOKI_HANDOFF_MD` returns 2, `LOKI_INJECT_FINDINGS` returns 3), so "set to `1` to force-enable on the bash route" does not apply to this knob -- there is nothing on bash to enable. The bash route DOES have a learnings store (`init_learnings_db`, `run.sh`); what is Bun-only is the automatic per-code_review-cycle write.
+  Read by `internal_phase1.ts` (`LOKI_AUTO_LEARNINGS !== "0"`), which `autonomy/run.sh` calls through `loki internal phase1-hooks`; the variable itself never appears in `run.sh`.
 - `LOKI_HANDOFF_MD` -- write a structured handoff doc before iteration close.
-- `LOKI_REVIEW_ADVISORY` -- default on (`0` restores blocking). architecture-strategist, maintainer-mergeability and test-coverage-auditor are mandatory to run, not to block: they still run and their findings are recorded (`advisory: true` per reviewer plus `advisory_critical` / `advisory_high` in the review `aggregate.json`, one display-only row in the Evidence Receipt), but they carry no veto. `has_blocking` ignores them; security-sentinel and the other reviewers still block. maintainer-mergeability and test-coverage-auditor are routed to haiku at every tier. Bun: `ADVISORY_REVIEWERS` in `loki-ts/src/runner/quality_gates.ts`; bash: `_is_advisory_reviewer` in `autonomy/run.sh`.
+- `LOKI_REVIEW_ADVISORY` -- default on (`0` restores blocking). architecture-strategist, maintainer-mergeability and test-coverage-auditor are mandatory to run, not to block: they still run and their findings are recorded (`advisory: true` per reviewer plus `advisory_critical` / `advisory_high` in the review `aggregate.json`, one display-only row in the Evidence Receipt), but they carry no veto. `has_blocking` ignores them; security-sentinel and the other reviewers still block. maintainer-mergeability and test-coverage-auditor are routed to haiku at every tier. Implemented by `_is_advisory_reviewer` in `autonomy/run.sh`.
 
 These knobs together implement the RARV-C (closure) loop: findings -> override council -> learnings -> handoff. Reference: `skills/quality-gates.md`, `CHANGELOG.md` entries from v7.x for default-on flip and override-council semantics.
 

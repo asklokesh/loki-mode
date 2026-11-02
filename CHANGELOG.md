@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.120.1 (2026-11-02)
+
+About 10,400 lines of runner code that no longer ran are removed; nothing changes at runtime.
+
+### Removed
+
+- 15 modules left unused when v11.119.0 removed the separate Bun run loop (the old council, prompt builder, goal scoring, quality gates, recovery and queue modules under `loki-ts/src/runner/`). The shipped bundle contains the same 603 source files as before.
+- `LOKI_CONFIDENCE_SPIKE` and four other settings that only those modules read (`LOKI_PROMPT_ADVISOR`, `LOKI_PROMPT_LENGTH`, `LOKI_PROMPT_SCREENSHOT`, `LOKI_REVIEW_UNAVAILABLE_BLOCK`) have had no effect since v11.119.0; their documentation is removed.
+
+### Fixed
+
+- Docs and code comments that pointed at the deleted files are corrected, and `LOKI_AUTO_LEARNINGS` is documented as working on the default route. A local check now fails when any file names a `loki-ts/src` path that does not exist.
+
 ## v11.120.0 (2026-11-01)
 
 Cheaper fix rounds, and loki backlog runs large issues and Jira or Linear projects.

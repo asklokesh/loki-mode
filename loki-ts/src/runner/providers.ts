@@ -7,7 +7,7 @@
 //   providers/claude.sh:1-200  -- Tier 1, full features
 //   providers/opencode.sh      -- model-agnostic (runner/provider_opencode.ts)
 //
-// Contract: autonomous.ts:167 dynamically imports this module and invokes
+// Contract: callers import this module and invoke
 // `resolveProvider(name)` to obtain a `ProviderInvoker` (see runner/types.ts:90).
 //
 // The dispatch table always returns an invoker; an unknown name throws.
