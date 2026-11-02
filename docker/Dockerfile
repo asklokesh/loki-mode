@@ -14,6 +14,8 @@ RUN bun install --frozen-lockfile
 COPY packages/control-plane/ ./
 COPY loki-ts/tsconfig.json /src/loki-ts/tsconfig.json
 COPY loki-ts/src/ /src/loki-ts/src/
+# loki-ts/src imports ../../data/model-pricing.json (the one price table), so data/ sits next to src/.
+COPY loki-ts/data/ /src/loki-ts/data/
 # routes/config.ts imports ../../../../../schemas/loki-yaml.schema.json (10.8.0 docker build failed without it)
 COPY schemas/ /src/schemas/
 RUN bun run build:all
