@@ -37,7 +37,14 @@ TASKS_DIR = HERE / "tasks"
 # because its upstream snapshots keep characters (emoji, en and em dashes) that their own tests need.
 SUITES = {"tasks": TASKS_DIR, "replay": HERE / "replay", "hard": HERE / "fixtures" / "hard"}
 CONFIGS = ["raw-haiku", "raw-sonnet", "raw-opus", "raw-haiku-verify", "raw-sonnet-verify", "raw-opus-verify",
-           "loki-haiku", "loki-sonnet", "loki-opus", "loki-default"]
+           "loki-haiku", "loki-sonnet", "loki-opus", "loki-default", "loki-auto", "loki-auto-final", "loki-auto-wall"]
+# The router's auto preset (LOKI_ROUTER=auto) and two experiment arms on top of it: an Opus final pass on weak proof
+# (LOKI_ROUTER_FINAL=1), and a forced Wall written by Opus from the task (plan always, Wall tier opus, no Haiku first author).
+LOKI_ENV_CONFIGS = {
+    "loki-auto": {"LOKI_ROUTER": "auto"},
+    "loki-auto-final": {"LOKI_ROUTER": "auto", "LOKI_ROUTER_FINAL": "1"},
+    "loki-auto-wall": {"LOKI_ROUTER": "auto", "LOKI_E10_PLAN": "always", "LOKI_E10_WALL_FIRST": "0", "LOKI_E10_WALL_TIER": "opus"},
+}
 # Loki pinned to one model for the whole run (every stage, escalation and Wall re-author); loki-default has
 # no pin, so Loki's own routing picks the model per stage.
 LOKI_PINS = {"loki-haiku": "haiku", "loki-sonnet": "sonnet", "loki-opus": "opus"}
@@ -189,12 +196,13 @@ def contestant_cmd(config, task):
         # `command claude` skips any shell function named claude in an interactive profile.
         return ["bash", "-c", 'command claude "$@"', "claude", "-p", text, "--model", model,
                 "--output-format", "json", "--dangerously-skip-permissions"]
-    if config in LOKI_PINS or config == "loki-default" or config in SEQUENCE_CONFIGS:
+    if config in LOKI_PINS or config == "loki-default" or config in LOKI_ENV_CONFIGS or config in SEQUENCE_CONFIGS:
         return ["bash", str(ROOT / "bin" / "loki"), text, "--no-pr"]
     raise ValueError(f"unknown config {config}")
 
 
 def config_env(config, env):
+    env.update(LOKI_ENV_CONFIGS.get(config, {}))
     if config in LOKI_PINS:
         # LOKI_SESSION_MODEL is the whole-run pin (loki-ts/src/engine10/session.ts resolveModel and
         # childEnv; runner/providers.ts sessionPinModel): every stage tier runs haiku, escalation stays
@@ -513,6 +521,8 @@ def loki_metrics(repo):
         "models": sorted(models),
         "session_models": session_models,
         "event_types": sorted({e.get("type") for e in events if e.get("type")}),
+        "routes": [{"type": e.get("type"), "stage": e.get("stage"), **{k: (e.get("data") or {}).get(k) for k in ("model", "source", "from", "to", "trigger")}}
+                   for e in events if e.get("type") in ("route", "route.escalated")],
     }
 
 
