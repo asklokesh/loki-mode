@@ -50,16 +50,16 @@ function extractJson(text: string): unknown {
   return undefined;
 }
 
-const ITEM_MAX = 500;
-const clipItem = (s: string): string => (s.length <= ITEM_MAX ? s : `${s.slice(0, ITEM_MAX - 3).trimEnd()}...`);
+const PATH_MAX = 500;
 /** A list of strings, repaired instead of refused (FireLater#24: one 520-character criterion threw the whole split away). Each entry goes on one
- *  line; empty and non-string entries are dropped; duplicates are dropped; an entry over ITEM_MAX characters is clipped; entries past `max` are
- *  merged into the last one kept when `merge` is set (criteria: nothing the model wrote is lost), else dropped (paths). Null only for a non-list. */
+ *  line; empty, non-string and duplicate entries are dropped. With `merge` (criteria) nothing the model wrote is lost: no entry is shortened, and
+ *  entries past `max` are joined into the last one kept. Without it (paths, ids) an entry over PATH_MAX characters cannot be a path and is dropped,
+ *  as are entries past `max`. Null only for a non-list. */
 const strList = (v: unknown, max: number, merge = false): string[] | null => {
   if (!Array.isArray(v)) return null;
-  const items = [...new Set(v.filter((x): x is string => typeof x === "string").map(oneLine).filter((x) => x !== ""))];
+  const items = [...new Set(v.filter((x): x is string => typeof x === "string").map(oneLine).filter((x) => x !== "" && (merge || x.length <= PATH_MAX)))];
   if (merge && items.length > max) items.splice(max - 1, items.length, items.slice(max - 1).join("; "));
-  return items.slice(0, max).map(clipItem);
+  return items.slice(0, max);
 };
 
 /** Validate the model's split and order it. List fields are repaired (strList); a slice is never invented, merged or renamed. */

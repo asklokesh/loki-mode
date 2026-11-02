@@ -133,6 +133,7 @@ export async function runCheck(
 // executed tests) runs alone through runCheck as before. LOKI_E10_VERIFY_BATCH=0 turns batching off.
 export const verifyBatchOn = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_E10_VERIFY_BATCH"] !== "0";
 const BATCH_MIN = 2;
+const UNHANDLED_RE = /Unhandled (?:Errors?|Rejection)\b/;
 const batchTimeoutMs = (files: number): number => Math.max(CHECK_TIMEOUT_MS, Math.min(300_000, files * 5_000));
 interface VitestAssertion { status?: unknown; title?: unknown; ancestorTitles?: unknown; failureMessages?: unknown }
 type FileRun = { ok: boolean; out: string };
@@ -151,20 +152,25 @@ export function vitestFileText(rel: string, asserts: VitestAssertion[]): FileRun
   return { ok: failed.length === 0, out: lines.join("\n") };
 }
 /** One `vitest run` of `rels` (paths as vitest takes them from `cwd`) with the JSON reporter writing to a Loki-owned temp file. Per-file results keyed
- *  by the rel given; a file with no assertion results or a suite-level error is left out (the caller runs it alone). Null when the run gave no
- *  readable report (cut by its timeout or the stage, tool missing, malformed JSON). */
+ *  by the rel given. A pass needs the file's own status "passed"; a file with no assertion results, a suite-level error, or status "failed" with
+ *  every assertion passed (a describe-level hook that throws) is left out, and the caller runs it alone. Null (vouch for nothing) when the run gave
+ *  no readable report (cut by its timeout or the stage, tool missing, malformed JSON), printed an unhandled error, or exited nonzero with no failed file. */
 export async function vitestBatch(cwd: string, rels: string[], signal: AbortSignal, opts: { timeoutMs?: number; path?: string } = {}): Promise<Map<string, FileRun> | null> {
   const dir = mkdtempSync(join(tmpdir(), "loki-vbatch-")), file = join(dir, "report.json");
   try {
-    const r = await runOnce("npx", ["--no-install", "vitest", "run", "--reporter=json", `--outputFile=${file}`, ...rels], cwd, signal, { timeoutMs: opts.timeoutMs ?? batchTimeoutMs(rels.length), group: true, ...(opts.path ? { path: opts.path } : {}) });
-    if (r.cut || r.missing || !existsSync(file)) return null;
-    const rep = JSON.parse(readFileSync(file, "utf8")) as { testResults?: { name?: unknown; message?: unknown; assertionResults?: unknown }[] };
+    // The default reporter beside the JSON one: an unhandled error or rejection is printed there and nowhere in the JSON (vitest 2.1.9 and 4.0.16).
+    const r = await runOnce("npx", ["--no-install", "vitest", "run", "--reporter=json", "--reporter=default", `--outputFile.json=${file}`, ...rels], cwd, signal, { timeoutMs: opts.timeoutMs ?? batchTimeoutMs(rels.length), group: true, ...(opts.path ? { path: opts.path } : {}) });
+    if (r.cut || r.missing || !existsSync(file) || UNHANDLED_RE.test(r.out)) return null; // an unhandled error belongs to no file: the batch vouches for nothing
+    const rep = JSON.parse(readFileSync(file, "utf8")) as { testResults?: { name?: unknown; status?: unknown; message?: unknown; assertionResults?: unknown }[] };
+    const tests = rep.testResults ?? [], failedFile = (tr: (typeof tests)[number]): boolean => tr.status === "failed";
+    if (!r.ok && !tests.some(failedFile)) return null; // a nonzero exit no file's status explains
     const real = (p: string): string => { try { return realpathSync(p); } catch { return p; } }, byAbs = new Map<string, string>();
     for (const rel of rels) for (const p of [resolve(cwd, rel), real(resolve(cwd, rel))]) byAbs.set(p, rel);
     const out = new Map<string, FileRun>();
-    for (const tr of rep.testResults ?? []) {
-      const rel = byAbs.get(String(tr.name ?? "")), asserts = Array.isArray(tr.assertionResults) ? (tr.assertionResults as VitestAssertion[]) : [];
-      if (rel && asserts.length > 0 && !(typeof tr.message === "string" && tr.message.trim() !== "")) out.set(rel, vitestFileText(rel, asserts));
+    for (const tr of tests) {
+      const rel = byAbs.get(String(tr.name ?? "")), asserts = Array.isArray(tr.assertionResults) ? (tr.assertionResults as VitestAssertion[]) : [], f = rel ? vitestFileText(rel, asserts) : null;
+      if (!rel || !f || asserts.length === 0 || (typeof tr.message === "string" && tr.message.trim() !== "")) continue; // a load or collect error: run alone
+      if (f.ok ? tr.status === "passed" : failedFile(tr)) out.set(rel, f); // a failed file with every assertion passed (a hook that throws) runs alone
     }
     return out;
   } catch { return null; } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -209,8 +215,25 @@ function changedSymbolsFirst(ctx: RunContext, tests: TestRef[], changed: string[
   const hits = tests.filter((t) => { try { return re.test(readFileSync(join(ctx.repoDir, t.path), "utf8")); } catch { return false; } });
   return [...hits, ...tests.filter((t) => !hits.includes(t))];
 }
+/** The error line each failing id reports: vitest/jest print it on the first non-blank line after "FAIL  <id>", pytest after "FAILED <id> - ".
+ *  Normalized as the stall signature is (numbers, durations and absolute paths dropped), so a base worktree path never makes two equal errors differ. */
+export function errorsById(out: string): Map<string, string> {
+  const norm = (l: string): string => l.replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/\d+(?:\.\d+)?/g, "N").replace(/\s+/g, " ").trim();
+  const lines = stripAnsi(out).split("\n").map((l) => l.trim()), m = new Map<string, string>();
+  for (const [i, l] of lines.entries()) {
+    const py = /^FAILED (\S+::\S*) - (.+)$/.exec(l); if (py) { m.set(py[1]!, norm(py[2]!)); continue; }
+    const v = /^FAIL\s+(.+)$/.exec(l); if (!v) continue;
+    const next = lines.slice(i + 1).find((x) => x !== ""); if (next !== undefined) m.set(v[1]!.trim(), norm(next));
+  }
+  return m;
+}
+/** True when every failing id the head names with an error line fails on base with the same normalized line, and at least one id could be compared. */
+export function sameErrors(head: string, base: string, ids: string[] | undefined): boolean {
+  const h = errorsById(head), b = errorsById(base), named = (ids ?? []).filter((i) => h.has(i));
+  return named.length > 0 && named.every((i) => b.get(i) === h.get(i));
+}
 type Counts = { run: number; skipped: number };
-type BaseSubtraction = { ids: string[]; names: string[]; knownRed: string[]; weak: string[]; zero: string[]; cnt: Record<string, { b: Counts; h: Counts }> };
+type BaseSubtraction = { ids: string[]; names: string[]; knownRed: string[]; sameError: string[]; weak: string[]; zero: string[]; cnt: Record<string, { b: Counts; h: Counts }> };
 /** A-112: a test check red on head, in a file the diff did not touch, whose every failing id is also red on a pristine detached base  worktree (never a reset of the implement tree, D42 (2)) is  pre_red: ids go to NOT PROVEN,  seal skips it in the verdict, the check
  *  stays  "fail" and in the fix loop unless the TARGET progressed: a passing Wall test, or a relevant test (`rel`: impacted  tests of the task-named  files, the lean-path Wall stand-in)  that failed on base, now passes and ran no fewer tests (absent or skipped is
  *  not green). Relevant checks  are never pre_red. Base  reruns get no node_modules or .venv: a dependency-only failure yields no ids (failIds needs  the count covered).  A-115: a relevant check that passes with more skipped or deselected tests than  base is `weak`:
@@ -221,7 +244,7 @@ async function subtractBase(
   ctx: RunContext, api: ProjectApi | null, checks: VerifyCheck[], tests: TestRef[], changed: string[],
   wall: Set<string>, rel: Set<string>, signal: AbortSignal, zeroOk = true, zeroIntake: ZeroGate = zeroGate(null), dep: ReadonlySet<string> = new Set(),
 ): Promise<BaseSubtraction> {
-  const out: BaseSubtraction = { ids: [], names: [], knownRed: [], weak: [], zero: [], cnt: {} };
+  const out: BaseSubtraction = { ids: [], names: [], knownRed: [], sameError: [], weak: [], zero: [], cnt: {} };
   const pairs = checks.flatMap((c) => {
     const t = tests.find((x) => testCheckName(x) === c.name);
     return t ? [{ c, t }] : [];
@@ -233,8 +256,8 @@ async function subtractBase(
   const git = (args: string[]): void => { safeGit(ctx.repoDir, args, { stdio: "ignore", repoDrivers: true }); }; // worktree add checks out base content
   try {
     git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, ctx.baseSha]);
-    const base = new Map<VerifyCheck, { red: string[]; n: number; sk: number }>();
-    const record = (c: VerifyCheck, b: { ok: boolean; cut?: boolean; out: string }): void => { base.set(c, { red: !b.ok && !b.cut ? failIds(b.out) : [], n: ran(b.out) ?? summaryPassFailCount(b.out), sk: skipped(b.out) }); };
+    const base = new Map<VerifyCheck, { red: string[]; n: number; sk: number; out: string }>();
+    const record = (c: VerifyCheck, b: { ok: boolean; cut?: boolean; out: string }): void => { base.set(c, { red: !b.ok && !b.cut ? failIds(b.out) : [], n: ran(b.out) ?? summaryPassFailCount(b.out), sk: skipped(b.out), out: b.cut ? "" : b.out }); };
     // Relevant passes first, on a base without dependencies (their counts are compared as before). Only failing untouched checks need a base run
     // after that: a passing one's base result is never read.
     for (const { c, t } of sus) { const bc = commandFor(t, dir, api); record(c, await runOnce(bc.cmd, bc.args, bc.cwd, signal, {})); }
@@ -269,6 +292,7 @@ async function subtractBase(
       for (const { c } of un) {
         if (rel.has(c.name) || c.result !== "fail" || !c.ids?.length || !c.ids.every((i) => base.get(c)?.red.includes(i))) continue;
         out.knownRed.push(c.name); // red on base by every failing id: never fix-round input, whatever the target did
+        if (sameErrors(failTails.get(c) ?? "", base.get(c)!.out, c.ids)) out.sameError.push(c.name); // and failing the same way: a delivery may excuse it as pre-existing
         if (progress || dep.has(c.name)) { // RX-3: a dependent-only check needs no progress proof
           out.names.push(c.name);
           out.ids.push(...c.ids);
@@ -440,7 +464,7 @@ export const verifyStage: Stage = {
     const wallDropped = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p)); // FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: sealed, but no runner of this repo can run it
     notProven.push(...wallDropped.map((p) => `Wall test not executed: ${p}: ${NO_RUNNER_REASON}`));
     const wallNames = new Set(wallTests.map(testCheckName)), wallRun = checks.filter((c) => wallNames.has(c.name) || isHold(c)), wallFailTail = writeWallFailureTail(ctx.runDir, checks.filter((c) => wallNames.has(c.name) && c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, out: failTails.get(c) ?? "" }))), wallPassed = wallRun.some((c) => c.result === "fail") ? false : wallRun.length > 0 && wallDropped.length === 0 && wallRun.every((c) => c.result === "pass") ? true : undefined; // the receipt's wall.passed: false on any failure, true only when every Wall and holdout check ran and passed, unset otherwise
-    return { status: "completed", data: { checks: pub, flaky, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: failuresGrouped, holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size ? { not_applicable: [...fullNotProven].filter(naNote).map(naText) } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}),skipped_on_base: preRed.zero, ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
+    return { status: "completed", data: { checks: pub, flaky, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: failuresGrouped, holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size ? { not_applicable: [...fullNotProven].filter(naNote).map(naText) } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}), ...(preRed.sameError.length ? { known_red_same_error: preRed.sameError } : {}),skipped_on_base: preRed.zero, ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
   },
 };
 export const stage = verifyStage;
