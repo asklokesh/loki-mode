@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+# Stand-in vitest for tests/min/run-safety.sh (no network, no node_modules; its own dir so no other test sees it on PATH).
+# `vitest run [--reporter=json [--reporter=default] --outputFile=F | --outputFile.json=F] [files...]` in a package dir: each test(...)
+# line is one test; it fails when the line holds /*red*/, or when it asserts toMatch(/WORD/) on the source file the test reads and
+# that file lacks WORD (the Wall tests of the e2e stub); else it passes. The first describe("...") title is the ancestor.
+# A file holding /*hookfail*/ fails in a describe-level afterAll with every test passed (JSON: status "failed", assertions passed); a
+# file holding /*unhandled*/ passes its tests but raises an unhandled rejection (JSON: status "passed"; only the default reporter names
+# it; exit 1). Both are what real vitest 2.1.9, 4.0.16, 4.1.12 and 5.1.0 report. The default reporter prints what the real one prints (non-TTY); the
+# JSON reporter writes vitest's report to F. Every call appends "<cwd> json=<0|1> files=<n>" to FAKE_VITEST_LOG.
+import json, os, re, sys
+
+args = [a for a in sys.argv[1:] if a != "run"]
+as_json = "--reporter=json" in args
+show_default = not as_json or "--reporter=default" in args
+out_file = next((a.split("=", 1)[1] for a in args if a.startswith(("--outputFile=", "--outputFile.json="))), None)
+files = [a for a in args if not a.startswith("--")]
+cwd = os.getcwd()
+if not files:
+    for d, dirs, names in os.walk(cwd):
+        dirs[:] = [x for x in dirs if x != "node_modules"]
+        files += [os.path.relpath(os.path.join(d, n), cwd) for n in names if n.endswith(".test.ts")]
+    files.sort()
+log = os.environ.get("FAKE_VITEST_LOG")
+if log:
+    with open(log, "a") as f:
+        f.write("%s json=%d files=%d\n" % (cwd, 1 if as_json else 0, len(files)))
+
+results = []  # (rel, ancestors, [(title, status)], hookfail, unhandled)
+for rel in files:
+    text = open(os.path.join(cwd, rel)).read()
+    anc = re.findall(r'describe\("([^"]+)"', text)[:1]
+    src = None  # a Wall-style test reads one source file (readFileSync(join(root, "<path>"))) and asserts toMatch(/WORD/) on it
+    pm = re.search(r'readFileSync\(join\(root, "([^"]+)"\)', text)
+    if pm:
+        d = cwd
+        while not os.path.exists(os.path.join(d, pm.group(1))) and os.path.dirname(d) != d:
+            d = os.path.dirname(d)
+        try:
+            src = open(os.path.join(d, pm.group(1))).read()
+        except OSError:
+            src = ""
+    tests = []
+    for line in text.splitlines():
+        m = re.search(r'\btest\("([^"]+)"', line)
+        if m:
+            w = re.search(r'toMatch\(/(\w+)/\)', line)
+            red = "/*red*/" in line or (w is not None and src is not None and w.group(1) not in src)
+            tests.append((m.group(1), "failed" if red else "passed"))
+    results.append((rel, anc, tests, "/*hookfail*/" in text, "/*unhandled*/" in text))
+
+file_failed = lambda tests, hook: hook or any(s == "failed" for _, s in tests)
+if as_json:
+    rep = {"numTotalTests": sum(len(r[2]) for r in results), "success": not any(file_failed(r[2], r[3]) or r[4] for r in results), "testResults": []}
+    for rel, anc, tests, hook, _unh in results:
+        rep["testResults"].append({"name": os.path.realpath(os.path.join(cwd, rel)), "status": "failed" if file_failed(tests, hook) else "passed", "message": "",
+                                   "assertionResults": [{"status": s, "title": t, "ancestorTitles": anc, "fullName": " ".join(anc + [t]), "failureMessages": ["AssertionError: expected value to match"] if s == "failed" else []} for t, s in tests]})
+    with open(out_file, "w") as f:
+        json.dump(rep, f)
+if show_default:
+    print(" RUN  v4.0.16 %s\n" % cwd)
+    for rel, anc, tests, hook, _unh in results:
+        bad = [t for t, s in tests if s == "failed"]
+        print(" %s %s (%d tests%s) 3ms" % ("❯" if bad or hook else "✓", rel, len(tests), " | %d failed" % len(bad) if bad else ""))
+        for t, s in tests:
+            print("   %s %s 1ms" % ("×" if s == "failed" else "✓", t))
+    print("")
+    for rel, anc, tests, hook, _unh in results:
+        for t, s in tests:
+            if s == "failed":
+                print(" FAIL  %s > %s\nAssertionError: expected value to match\n" % (rel, " > ".join(anc + [t])))
+        if hook:
+            print(" FAIL  %s > %s\nError: teardown boom\n" % (rel, " > ".join(anc + ["afterAll"])))
+    nf = sum(1 for r in results if file_failed(r[2], r[3]))
+    failed = sum(1 for r in results for _, s in r[2] if s == "failed")
+    passed = sum(1 for r in results for _, s in r[2] if s == "passed")
+    print(" Test Files  %s (%d)" % (" | ".join(x for x in ["%d failed" % nf if nf else "", "%d passed" % (len(results) - nf) if len(results) - nf else ""] if x), len(results)))
+    print("      Tests  %s (%d)" % (" | ".join(x for x in ["%d failed" % failed if failed else "", "%d passed" % passed if passed else ""] if x), failed + passed))
+    if any(r[4] for r in results):
+        print("\n⎯⎯⎯ Unhandled Errors ⎯⎯⎯\n\nVitest caught 1 unhandled error during the test run.\n⎯⎯ Unhandled Rejection ⎯⎯\nError: unhandled boom")
+    print("   Duration  10ms")
+sys.exit(1 if any(file_failed(r[2], r[3]) or r[4] for r in results) else 0)

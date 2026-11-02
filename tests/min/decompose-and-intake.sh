@@ -40,6 +40,12 @@
 #      (the old exit 0; rebuild dist): the outcome and backlog PARTIAL assertions fail.
 #   7. loki-ts/src/commands/issues_epic.ts epicOutcome: drop the PR lines (rebuild dist): the PR-mode split prints no PR
 #      line and backlog reads its PARTIAL as a failure, so both pr mode assertions fail.
+#   8. loki-ts/src/commands/issues_epic.ts: put back the old strList (refuse a list over its cap or any entry over 500
+#      characters); the split repair assertion must fail (p.ok false). Clipping criteria (or keeping long paths) fails it too.
+#   9. loki-ts/src/commands/issues_run.ts splitWithReask: re-ask only when `p.over !== undefined`; the split repair
+#      assertion must fail (one call, no exact-error note).
+#  10. loki-ts/src/commands/issues_epic.ts parseDecomposition: drop files_dropped (or sliceTask's dropped-paths line); the split
+#      repair assertion must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -209,6 +215,24 @@ else
     bad "no epic.json recorded for the epic run"
 fi
 
+# --- split repair: a list detail is repaired, any other refusal is re-asked once with the exact error ------------------------
+# FireLater#24 (v11.116.0): one 520-character acceptance criterion refused the whole split and the epic ran as one 413 s session.
+SPLITR="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const m = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
+const r = await import(process.env.ROOT + "/loki-ts/src/commands/issues_run.ts");
+const fl = JSON.stringify({ slices: [{ id: "s1", title: "backend", acceptance: ["x".repeat(520), "", "  ", ...Array.from({ length: 24 }, (_, i) => "c" + i)], files: ["src/a.ts", "y".repeat(600)] }, { id: "s2", title: "ui", acceptance: ["ok"], depends_on: ["s1", "s1"] }] });
+const p = m.parseDecomposition(fl), out = [p.ok, p.ok && p.slices[0].acceptance.length, p.ok && p.slices[0].acceptance[0].length, p.ok && p.slices[0].acceptance[19] === "c18; c19; c20; c21; c22; c23", p.ok && p.slices[1].depends_on.join(","), p.ok && p.slices[0].files.join(",")];
+const many = m.parseDecomposition(JSON.stringify({ slices: [{ id: "s1", title: "a", acceptance: ["x"], files: Array.from({ length: 53 }, (_, i) => "f" + i + ".ts") }, { id: "s2", title: "b", acceptance: ["y"] }] }));
+out.push(p.ok && p.slices[0].files_dropped, many.ok && many.slices[0].files.length + "+" + many.slices[0].files_dropped, many.ok && m.sliceTask("acme/x", { number: 1, title: "t", body: "", labels: [] }, many.slices[0], 0, 2, null).includes("3 more paths were listed for this slice and dropped"), many.ok && many.slices[1].files_dropped === undefined);
+const notes = []; let calls = 0;
+const d = { out: () => {}, decompose: async (_s, _i, _r, note) => { calls++; notes.push(note ?? ""); return calls === 1 ? JSON.stringify({ slices: [{ id: "s1", title: "a", acceptance: [] }, { id: "s2", title: "b", acceptance: ["x"] }] }) : fl; } };
+const q = await r.splitWithReask(d, "acme/x", { number: 1, title: "t", body: "b", labels: [] }, "large");
+out.push(q.ok, calls, (notes[1] ?? "").includes("s1: acceptance must be a list"));
+console.log(out.join(" "));
+' 2>&1)"
+[ "$SPLITR" = "true 20 520 true s1 src/a.ts 1 50+3 true true true 2 true" ] && ok "split repair: a 520-char criterion is kept whole, empties dropped, 25 criteria merged to 20 with no text lost, a 600-char path dropped, duplicate deps dropped, dropped paths counted and named in the slice task; an empty acceptance list is re-asked once with the exact error" \
+    || bad "split repair gave: $SPLITR (want: true 20 520 true s1 src/a.ts 1 50+3 true true true 2 true)"
+
 # --- backlog: a large issue in `loki backlog` runs and splits through the same MASS-2 path, never a drafted spec -------
 B="$T/backlog"
 make_repo "$B" 0
@@ -284,7 +308,7 @@ E2E_STUB_MODE=done run_loki "$L" "$T/labels-stub.log" start acme/search#25 --no-
 LEV="$(ls "$L"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
 lsize="$(python3 -I -c 'import json,sys; print(next((json.loads(l)["data"].get("size") for l in open(sys.argv[1]) if "\"variant\"" in l and json.loads(l)["type"] == "variant"), "none"))' "$LEV" 2>/dev/null)"
 case "$OUT" in *"running the issue as one run"*) [ "$lsize" = "large" ] && ok "labels: the epic-label issue sizes large in engine10's own plan stage, as in triage" || bad "labels: engine10 sized the epic-label issue '${lsize:-none}' (rc $RC)" ;; *) bad "labels: the issue did not fall back to one run" ;; esac
-printf '%s\n' "$OUT" | grep -Eq '^Split planning: .*\(0 slice runs \+ 1 planning session\)$' && ok "refused split: its planning session is reported on a Split planning line backlog adds" || bad "refused split: no Split planning line: $(printf '%s\n' "$OUT" | grep -i 'split' | head -3 | tr '\n' ';')"
+printf '%s\n' "$OUT" | grep -Eq '^Split planning: .*\(0 slice runs \+ 2 planning sessions\)$' && ok "refused split: both planning sessions (the refusal is re-asked once) are reported on a Split planning line backlog adds" || bad "refused split: no Split planning line for 2 sessions: $(printf '%s\n' "$OUT" | grep -i 'split' | head -6 | tr '\n' ';')"
 
 # --- lean + intake speed: a one-line fix on a 1246-file repo with 20 stale run branches --------------------------------
 R="$T/big"

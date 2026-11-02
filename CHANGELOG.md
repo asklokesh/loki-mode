@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.123.0 (2026-11-02)
+
+Large multi-part issues finish: the split is repaired, vitest runs once per package, and Loki's own test never costs correct work.
+
+### Fixed
+
+- A large multi-part issue (for example a monorepo epic) is split into slices even when the model's split has an over-long acceptance item; a split that is still refused is asked for once more with the exact reason.
+- Verify runs each package's selected vitest files in one process instead of one process per file (on a FireLater-shaped monorepo fixture: 7.2 s instead of 73.5 s). A file is never counted as passing when it fails alone: a throwing hook, an unhandled error, an import error or a file with no tests runs on its own, and a batch with an unhandled error counts for nothing. Checked against real vitest 2, 4 and 5.
+- Tests that were already failing on the base commit with the same error are not sent to fix rounds; a test that fails differently, including another case under a repeated `test.each` title, still is. The base run reuses the checkout's installed dependencies when no manifest changed.
+- When only Loki's own acceptance test still fails after a fix round that made no progress on it, and the repo's own tests pass on the delivered tree, the work is delivered as PARTIAL with that test named, instead of further fix rounds. If that delivery does not hold, everything is restored and the receipt, log and summary agree.
+- The checkout returns to your branch after a run: your own uncommitted `.loki` deletions are never committed onto the run branch, and Loki removes only its own leftover acceptance-test file, and only when its bytes match the receipt.
+- In a monorepo, Loki's acceptance test runs its base check inside the right package.
+
 ## v11.122.0 (2026-11-02)
 
 Benchmark v3: hard and replay suites of real closed issues, rebuilt from pinned upstream commits.
