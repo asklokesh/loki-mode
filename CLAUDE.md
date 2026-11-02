@@ -20,7 +20,7 @@ loki start owner/repo#123        # issue-mode
 - Pre-push gate: `bash scripts/local-ci.sh` (runs the hermetic tests in `tests/min/`; one tier). Never force-push, kill processes by name/pattern, or bypass branch protection. Never unpublish (npm deprecate is allowed).
 - Extend, never duplicate: a feature goes into the existing module, command, test file or doc that already owns its concern. A new file needs a one-line justification that no existing file owns the concern. A replacement deletes the code it supersedes in the same change.
 - No emojis, no em dashes, no en dashes, anywhere (code, docs, commits, UI); remove any found on sight. SKILL.md stays under 500 lines with header AND footer version bumped together.
-- Harness code invariants (see `docs/dev/architecture-reference.md`): new always-on prompt text goes in the cache-stable prefix; `goal_score.ts` and `run.sh` change together, byte-mirrored; never invert smart-retry's fail-safe default.
+- Harness code invariants (see `docs/dev/architecture-reference.md`): new always-on prompt text goes in the cache-stable prefix; never invert smart-retry's fail-safe default.
 
 ## Cleanup (mandatory before reporting any task done)
 Every temp file and background process goes under one run-owned directory

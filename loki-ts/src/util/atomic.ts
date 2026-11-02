@@ -2,9 +2,8 @@
 //
 // Extracted from loki-ts/src/runner/learnings_writer.ts so the same
 // proven primitive is available to other call sites that suffer from
-// concurrent read-mutate-write races on .loki/ JSON files (notably
-// quality_gates.ts gate-failure-count.json updates from parallel
-// worktrees -- bug-hunt H2 / honest-audit gap #5).
+// concurrent read-mutate-write races on .loki/ JSON files (bug-hunt H2 /
+// honest-audit gap #5).
 //
 // Provides:
 //   - atomicWriteJson(target, data): tmp+rename. Per-process counter

@@ -1,4 +1,4 @@
-// loki-ts/src/engine10/warm.ts -- D61 slice 5: warm engine. In-memory repo map, test map and
+// loki-ts/src/features/warm.ts -- D61 slice 5: warm engine. In-memory repo map, test map and
 // intake results keyed by (repoDir, HEAD^{tree}, dirty-file hash), served over a unix socket (never
 // a TCP port). On by default; LOKI_SPEED=0 turns it off. The cold path stays the reference: a miss or a dead daemon never changes a result, it only costs time.
 import { createHash } from "node:crypto";

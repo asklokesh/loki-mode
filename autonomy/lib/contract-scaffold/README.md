@@ -33,7 +33,7 @@ knowledge of any specific PRD** (anti-teaching-to-the-test).
 This is a capability module, like FV-1 was. It changes zero existing build
 behavior. **Wiring it into the default build lane is the gated next step** (the
 M1->"M1-wire" fork, analogous to FV-1->FV-2): that step touches the parity-locked
-`run.sh`/`build_prompt.ts` core, reclassifies what every build produces, and
+`run.sh` build_prompt core, reclassifies what every build produces, and
 requires bash+bun parity work + council review + founder sign-off. Do NOT wire it
 in as a solo/rushed action.
 
@@ -79,5 +79,5 @@ UI -- the spine working as designed).
 ## Next (wiring, see the plan)
 
 - Wire M1+M2+M3 into the build lane (GATED: touches parity-locked run.sh/
-  build_prompt.ts core -> bash+bun parity + council + founder sign-off).
+  run.sh build_prompt core -> council + founder sign-off).
 - Wire the FV harness into the completion verdict (FV-2, founder-gated).

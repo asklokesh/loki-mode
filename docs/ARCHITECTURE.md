@@ -131,8 +131,8 @@ A representative end-to-end flow:
    bash loop (`autonomy/run.sh`) runs only on `--engine legacy` or
    `LOKI_LEGACY_BASH=1`.
 2. **Complexity and tier.** The engine detects complexity and maps the iteration
-   to a model tier (`rarv.ts` / `run.sh:get_rarv_tier`).
-3. **Prompt construction.** `build_prompt.ts` (`run.sh:build_prompt`) assembles
+   to a model tier (`run.sh:get_rarv_tier`).
+3. **Prompt construction.** `run.sh:build_prompt` assembles
    the iteration prompt: RARV instructions, SDLC phase, retrieved memory context
    (`memory/retrieval.py` via the RAG injector), queued tasks, and checklist
    status.
@@ -143,8 +143,8 @@ A representative end-to-end flow:
 5. **Reflect and verify.** Post-iteration, the engine runs checklist
    verification (`autonomy/checklist-verify.py`), manages the app runner
    (`autonomy/app-runner.sh`), and runs Playwright smoke tests.
-6. **Review.** `quality_gates.ts` (`run.sh:run_code_review`) runs the 8 gates and
-   the blind 3-reviewer council (`loki-ts/src/council/voter_agents.ts`). Findings
+6. **Review.** `run.sh:run_code_review` runs the 8 gates and the blind
+   3-reviewer council (`autonomy/lib/voter-agents.sh`). Findings
    are scored; Critical/High block. An override council can lift a BLOCK only
    when a non-empty evidence artifact backs a trusted proof type.
 7. **Close.** Structured findings are persisted
