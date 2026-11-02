@@ -1,12 +1,13 @@
 // In-session fix rounds. One owner for the Stop hook the claude SDK route installs (providers.ts) and for choosing which checks it runs (engine10 implement stage).
 // A failing check blocks the stop and goes back into the SAME session instead of a separate fix session. The round cap is per query() call: a resumed or retried session gets its own rounds.
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, relative } from "node:path";
 import { classifyCheck, commandFor, firstError, goRunner } from "../util/check_result.ts";
 import { loadProjectApi } from "../project_model/resolve.ts";
 import { installOwned } from "../project_model/install.ts";
 import { guessRunner } from "../engine10/testmap.ts";
 import { harnessLoadReason } from "./load_owner.ts";
+import { redactSecrets } from "../util/redact.ts";
 import type { TestMap, TestRef } from "../engine10/types.ts";
 
 export interface StopCheck { cwd: string; cmd: string; args: string[]; protect?: boolean; name?: string } // protect: a Wall test, never harness-owned (as in verify); name: the verify check name (runner:path), so a blocked stop and a failed verify check are one lesson class
@@ -43,11 +44,21 @@ export function parseStopChecks(raw: string | undefined): StopChecksSpec | null 
 
 const STOP_CHECK_TIMEOUT_MS = 60_000, STOP_FEEDBACK_CHARS = 3000;
 /** A Stop hook that runs the spec's checks with verify's own runner (plain env, process-group kill on abort and on close) and classifier. Only a classified failure that is not a harness load error blocks the stop; a missing tool, a timeout, a not_run, a harness failure or an abort allows it, so behaviour is unchanged. The clock starts at each Stop call, never at session start. Verify, the Wall and Seal still judge afterwards. */
-/** A check that blocked a stop is a mistake the session made, even when the next round fixes it: one JSON line per block in
- *  .loki/state/stop-blocks.jsonl, which learn-from-runs (util/pr_lessons.ts learnFromRun) consumes at run end. Best-effort. */
+/** A check that blocked a stop is a mistake the session made, even when the next round fixes it: one JSON line per block, tagged
+ *  with the run id (engine10/worker.ts sets LOKI_E10_RUN_ID), in .loki/state/stop-blocks.jsonl, which util/pr_lessons.ts
+ *  takeStopBlocks consumes per run at run end. Error text is redacted before it is written; the file never grows past
+ *  STOP_BLOCKS_MAX_BYTES; nothing is written without a run id or with LOKI_RUN_LESSONS=0. Best-effort. */
 export const stopBlocksPath = (repoDir: string): string => join(repoDir, ".loki", "state", "stop-blocks.jsonl");
-function recordStopBlock(repoDir: string, name: string, err: string): void {
-  try { mkdirSync(join(repoDir, ".loki", "state"), { recursive: true }); appendFileSync(stopBlocksPath(repoDir), JSON.stringify({ at: new Date().toISOString(), name: name.slice(0, 200), first_error: err.slice(0, 300) }) + "\n"); } catch { /* evidence only */ }
+export const STOP_BLOCKS_MAX_BYTES = 64 * 1024;
+export function recordStopBlock(repoDir: string, name: string, err: string, env: NodeJS.ProcessEnv = process.env): void {
+  const runId = env["LOKI_E10_RUN_ID"];
+  if (!runId || env["LOKI_RUN_LESSONS"] === "0") return;
+  try {
+    const p = stopBlocksPath(repoDir);
+    if (existsSync(p) && statSync(p).size >= STOP_BLOCKS_MAX_BYTES) return;
+    mkdirSync(join(repoDir, ".loki", "state"), { recursive: true });
+    appendFileSync(p, JSON.stringify({ at: new Date().toISOString(), run_id: runId.slice(0, 128), name: redactSecrets(name).slice(0, 200), first_error: redactSecrets(err).slice(0, 300) }) + "\n");
+  } catch { /* evidence only */ }
 }
 export function createStopChecksHook(spec: StopChecksSpec): (input: unknown, toolUseId?: unknown, opts?: { signal?: AbortSignal }) => Promise<Record<string, unknown>> {
   let used = 0; // runOnce is loaded lazily: verify.ts pulls the engine10 graph, which must not load with providers.ts

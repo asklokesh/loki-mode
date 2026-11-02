@@ -100,7 +100,7 @@ export const implementStage: Stage = {
     const downgrade = routed ? null : cascadeDowngrade(ctx.model) ?? haikuFirstDowngrade(ctx.model); // the router replaces the opt-in downgrade lists; haiku-first (TEN-COST-16) only when the cascade is off
     const cascade = downgrade !== null;
     if (downgrade) process.stderr.write(`${downgrade.note}\n`);
-    const lessons = lessonsForBrief(ctx.repoDir, ctx.runId, task, [...((prior.plan?.relevant_files as string[] | undefined) ?? []), ...impacted], ctx.runDir); // T6: reviewer lessons plus run lessons on the relevant files or their impacted tests (util/pr_lessons.ts), tagged as used by this run and recorded in lessons-injected.json| undefined) ?? [], ctx.runDir); // T6: reviewer lessons plus file-scoped run lessons (util/pr_lessons.ts), tagged as used by this run and recorded in lessons-injected.json
+    const lessons = lessonsForBrief(ctx.repoDir, ctx.runId, task, [...((prior.plan?.relevant_files as string[] | undefined) ?? []), ...impacted], ctx.runDir); // T6: reviewer lessons plus run lessons on the relevant files or their impacted tests (util/pr_lessons.ts), tagged as used by this run and recorded in lessons-injected.json
     const bc = briefCtx(ctx, routed ? undefined : downgrade?.to ?? ctx.model), repoMap = bc.text + lessons + learningsBlock(ctx.repoDir); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths
 
     const spec = specFor(ctx);

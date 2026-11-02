@@ -15,10 +15,12 @@
 #   cap:       with 12 long seeded lessons, `loki memory brief` keeps the run-lessons block within 400 bytes.
 #   precise:   a stage-time-limit or out-of-scope lesson on the task's file is never injected; a check-failed lesson on
 #              another file is never injected however many words it shares; a receipt fact never reaches a brief;
-#              a spec conflict is injected by the symbols its reason names; with LOKI_PR_LESSONS unset (the default)
-#              nothing is injected.
-#   stop:      a check that blocked the session stop (runner/stop_checks.ts) is written to .loki/state/stop-blocks.jsonl
-#              and becomes a check-failed lesson at run end; the file is consumed and a stale line is dropped.
+#              a spec conflict is injected by the symbols its reason names, never by its fixed boilerplate (review
+#              probe); with LOKI_PR_LESSONS unset (the default) nothing is injected.
+#   stop:      a check that blocked the session stop (runner/stop_checks.ts) is written, redacted and tagged with its run
+#              id, to .loki/state/stop-blocks.jsonl and becomes a check-failed lesson at that run's end; only that run's
+#              lines are consumed (another run's stay, stale ones go), LOKI_RUN_LESSONS=0 and a cancel still consume
+#              them, nothing is written with recording off, and the file is size-capped.
 #   list:      `loki memory lessons` shows the category and sub-lessons.
 # Reuse past runs (same store, util/pr_lessons.ts knownVerdict, replayKnownVerdict, workedExampleFor):
 #   replay:    receipt.json carries loki_version; an identical rerun of a SPEC_CONFLICT task exits 4 in under 10s with
@@ -47,6 +49,8 @@
 #  11. pr_lessons.ts RUN_LESSON_CAP: 1200 (the 400-byte cap check fails).
 #  12. runner/stop_checks.ts createStopChecksHook: drop the recordStopBlock call (no stop lesson).
 #  13. pr_lessons.ts workedExampleFor: drop the EXAMPLE_MIN_JACCARD test (the low-Jaccard task gets an example).
+#  14. pr_lessons.ts runScore: score a spec conflict on its fixed text plus its reasons (the boilerplate probe gets it).
+#  15. pr_lessons.ts takeStopBlocks: take every line, not only this run's (another run's line is consumed).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -186,30 +190,46 @@ case "$pb" in *PLANTOTHER*) bad "precise: a check-failed lesson on another file 
 case "$pb" in *PLANTRECEIPT*) bad "precise: a receipt fact reached the brief" ;; *) ok "precise: a receipt fact never reaches the brief" ;; esac
 sb="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "make squareRoot reject negativeInput values" 2>&1)"
 has "precise: a spec conflict is injected by the symbols its reason names" "$sb" "a run stopped on a spec conflict (squareRoot of negativeInput"
+# Review probe: the spec-conflict lesson's fixed sentence shares "check", "requirement", "existing", "tests", "before", "editing"
+# with this unrelated task; only its recorded reason may count, so it must not be injected.
+qb="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "check the requirement against the existing tests before editing the changelog" 2>&1)"
+case "$qb" in *PLANTSPEC*|*"spec conflict"*) bad "precise: a spec conflict matched an unrelated task on its boilerplate words" ;; *) ok "precise: a spec conflict never matches on its fixed boilerplate text" ;; esac
 ob="$(cd "$REPO" && env -u LOKI_PR_LESSONS LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "add a modulo(a, b) function to calc.ts" 2>&1)"
 case "$ob" in *untrusted-run-lessons*) bad "default: run lessons injected with LOKI_PR_LESSONS unset" ;; *) ok "default: no run lessons with LOKI_PR_LESSONS unset, though related lessons exist" ;; esac
 
-# Stop: a blocked stop is recorded by the real hook and learned at run end; a stale line is dropped and the file consumed.
+# Stop: a blocked stop is recorded by the real hook under its run id, redacted, and learned at that run's end only; another
+# run's recent line survives, a stale one is dropped, LOKI_RUN_LESSONS=0 and a cancelled run still consume their lines, the size is capped.
 S="$(cd "$ROOT/loki-ts" && SRC="$ROOT/loki-ts/src" SD="$T/stop" bun -e '
 const src = process.env.SRC, d = process.env.SD, fs = await import("node:fs"), { join } = await import("node:path");
 fs.mkdirSync(d, { recursive: true });
 const SC = await import(src + "/runner/stop_checks.ts"), L = await import(src + "/util/pr_lessons.ts");
-const p = SC.stopBlocksPath(d); fs.mkdirSync(join(d, ".loki", "state"), { recursive: true });
-fs.writeFileSync(p, JSON.stringify({ at: "2000-01-01T00:00:00.000Z", name: "pytest:tests/stale_test.py", first_error: "STALE" }) + "\n");
-const since = new Date(Date.now() - 1000).toISOString();
-const hook = SC.createStopChecksHook({ checks: [{ cwd: d, cmd: "sh", args: ["-c", "echo FAILED tests/test_conventions.py::test_registered - AssertionError: register km_to_miles; exit 1"], name: "pytest:tests/test_conventions.py" }], rounds: 1, budgetS: 20, repoDir: d, baseSha: "HEAD" });
+const p = SC.stopBlocksPath(d), lines = () => (fs.existsSync(p) ? fs.readFileSync(p, "utf8").trim().split("\n").filter(Boolean) : []);
+fs.mkdirSync(join(d, ".loki", "state"), { recursive: true });
+fs.writeFileSync(p, [{ at: "2000-01-01T00:00:00.000Z", run_id: "e10-dead", name: "pytest:tests/stale_test.py", first_error: "STALE" },
+  { at: new Date().toISOString(), run_id: "e10-other", name: "pytest:tests/other_test.py", first_error: "OTHERRUN" }].map((o) => JSON.stringify(o)).join("\n") + "\n");
+process.env.LOKI_E10_RUN_ID = "e10-stop-1";
+const hook = SC.createStopChecksHook({ checks: [{ cwd: d, cmd: "sh", args: ["-c", "echo FAILED tests/test_conventions.py::test_registered - AssertionError: key AKIAABCDEFGHIJKLMNOP; exit 1"], name: "pytest:tests/test_conventions.py" }], rounds: 1, budgetS: 20, repoDir: d, baseSha: "HEAD" });
 const r = await hook({}, undefined, {});
-console.log("stop decision", r.decision ?? "none", "| file lines", fs.existsSync(p) ? fs.readFileSync(p, "utf8").trim().split("\n").length : 0);
-const found = L.learnFromRun(d, "e10-stop-1", [{ type: "run.started", stage: null, data: {}, ts: since }], "VERIFIED");
+console.log("stop decision", r.decision ?? "none", "| file lines", lines().length, "| redacted", !fs.readFileSync(p, "utf8").includes("AKIAABCDEFGHIJKLMNOP"));
+L.learnFromRun(d, "e10-stop-1", [{ type: "run.started", stage: null, data: {}, ts: new Date().toISOString() }], "VERIFIED");
 const ls = L.loadLessons(d).filter((l) => l.kind === "run");
 console.log("stop lessons", JSON.stringify(ls.map((l) => [l.category, l.text, l.subs.map((s) => s.text), l.files])));
-console.log("stop consumed", !fs.existsSync(p), "| stale learned", ls.some((l) => l.text.includes("STALE")));
+console.log("stop left", JSON.stringify(lines().map((x) => JSON.parse(x).run_id)), "| learned other or stale", ls.some((l) => /STALE|OTHERRUN/.test(JSON.stringify(l))));
+process.env.LOKI_E10_RUN_ID = "e10-off"; SC.recordStopBlock(d, "pytest:tests/a_test.py", "x", { LOKI_E10_RUN_ID: "e10-off" });
+process.env.LOKI_RUN_LESSONS = "0"; L.learnFromRun(d, "e10-off", [], "FAILED"); delete process.env.LOKI_RUN_LESSONS;
+SC.recordStopBlock(d, "pytest:tests/a_test.py", "x", { LOKI_E10_RUN_ID: "e10-cancel" }); L.takeStopBlocks(d, "e10-cancel");
+console.log("stop after off and cancel", JSON.stringify(lines().map((x) => JSON.parse(x).run_id)));
+SC.recordStopBlock(d, "pytest:tests/a_test.py", "x", { LOKI_E10_RUN_ID: "e10-noisy", LOKI_RUN_LESSONS: "0" });
+for (let i = 0; i < 400; i++) SC.recordStopBlock(d, "pytest:tests/a_test.py", "y".repeat(290), { LOKI_E10_RUN_ID: "e10-big" });
+console.log("stop capped", fs.statSync(p).size <= SC.STOP_BLOCKS_MAX_BYTES + 512, "| recording off wrote", lines().some((x) => x.includes("e10-noisy")));
 ' 2>&1)"
-printf '%s\n' "$S" | sed 's/^/    /'
-has "stop: a failing stop check blocks the stop and is recorded (stale line + this block)" "$S" "stop decision block | file lines 2"
+printf '%s\n' "$S" | sed 's/^/    /' | cut -c1-260
+has "stop: a failing stop check blocks the stop and is recorded next to the other runs' lines" "$S" "stop decision block | file lines 3 | redacted true"
 has "stop: the blocked check becomes a check-failed lesson named by its verify check name" "$S" '"check-failed","Check pytest:tests/test_conventions.py failed'
 has "stop: its sub-lesson says it blocked the session stop" "$S" "blocked the session stop: "
-has "stop: the stop-blocks file is consumed and the stale line is not learned" "$S" "stop consumed true | stale learned false"
+has "stop: only this run's lines are taken; another run's recent line stays, a stale one is dropped" "$S" 'stop left ["e10-other"] | learned other or stale false'
+has "stop: LOKI_RUN_LESSONS=0 and a cancelled run still consume their own lines" "$S" 'stop after off and cancel ["e10-other"]'
+has "stop: the file is size-capped and nothing is written with recording off" "$S" "stop capped true | recording off wrote false"
 
 lst="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory lessons 2>&1)"
 has "list: loki memory lessons shows the category" "$lst" "category edited-existing-test, seen 2x"
