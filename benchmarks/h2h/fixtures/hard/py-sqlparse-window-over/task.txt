@@ -1,0 +1,90 @@
+Incorrect parsing of expressions in SELECT when "<Window Function> OVER ( ... )" is present
+
+When there is a Window Function (e.g., `ROW_NUMBER()`) followed by `OVER ( ... )` in the expressions after the `SELECT` statement, these expressions are not split correctly into individual `Identifier`s. For example, let's have
+
+    query = ("SELECT uid "
+             ", ROW_NUMBER() OVER ( PARTITION BY table.col_a ORDER BY table.col_b DESC ) AS row "
+             ", full_name AS name "
+             ", another_column AS acol "
+             ", ROW_NUMBER() OVER ( PARTITION BY table.col_c ORDER BY table.col_d ASC ) AS row_lo "
+             ", ROW_NUMBER() OVER ( PARTITION BY table.col_e ORDER BY table.col_f DESC ) AS row_hi "
+             ", last_column AS lc "
+             "FROM table")
+
+which returns seven columns (`uid`, `row`, `name`, `acol`, `row_lo`, `row_hi`, `lc`). One would expect this to be parsed as (excl. whitespaces and punctuation):
+
+  * `<DML> SELECT`
+  * `<IdentifierList>`
+    * `<Identifier> uid`
+    * `<Identifier> row`
+    * `<Identifier> name`
+    * `<Identifier> acol`
+    * `<Identifier> row_lo`
+    * `<Identifier> row_hi`
+    * `<Identifier> lc`
+  * `<Keyword> FROM`
+  * `<Keyword> table`
+    
+However, `parse(query)` returns the following:
+
+    [<DML 'SELECT' at 0x2269219A1C0>,
+     <Whitespace ' ' at 0x2269219A220>,
+     <IdentifierList 'uid , ...' at 0x226921CF510>,
+     <Whitespace ' ' at 0x2269219A520>,
+     <Keyword 'OVER' at 0x2269219A580>,
+     <Whitespace ' ' at 0x2269219A5E0>,
+     <IdentifierList '( PART...' at 0x226921CF5F0>,
+     <Whitespace ' ' at 0x226921CC4C0>,
+     <Keyword 'OVER' at 0x226921CC520>,
+     <Whitespace ' ' at 0x226921CC580>,
+     <IdentifierList '( PART...' at 0x226921CF660>,
+     <Whitespace ' ' at 0x226921CB100>,
+     <Keyword 'OVER' at 0x226921CB160>,
+     <Whitespace ' ' at 0x226921CB1C0>,
+     <IdentifierList '( PART...' at 0x226921CF6D0>,
+     <Whitespace ' ' at 0x226921CBDC0>,
+     <Keyword 'FROM' at 0x226921CBE20>,
+     <Whitespace ' ' at 0x226921CBE80>,
+     <Keyword 'table' at 0x226921CBEE0>]
+
+where selected tokens from the list above consist of:
+
+  * `<IdentifierList 'uid , ...' at 0x226921CF510>` (value: `uid , ROW_NUMBER()`):
+
+        [<Keyword 'uid' at 0x2269219A280>,
+         <Whitespace ' ' at 0x2269219A2E0>,
+         <Punctuation ',' at 0x2269219A3A0>,
+         <Whitespace ' ' at 0x2269219A340>,
+         <Function 'ROW_NU...' at 0x226921BC890>]  # i.e., just "ROW_NUMBER()" without "OVER ( ... )"
+    
+  * `<IdentifierList '( PART...' at 0x226921CF5F0>` (value: `( PARTITION BY table.col_a ORDER BY table.col_b DESC ) AS row , full_name AS name , another_column AS acol , ROW_NUMBER()`):
+
+        [<Identifier '( PART...' at 0x226921CF040>,  # this belongs to the previous "ROW_NUMBER() ..."
+         <Whitespace ' ' at 0x226921A9C40>,
+         <Punctuation ',' at 0x226921A9CA0>,
+         <Whitespace ' ' at 0x226921A9D00>,
+         <Identifier 'full_n...' at 0x226921BCDD0>,  # this should have been a separate Identifier "one level up"
+         <Whitespace ' ' at 0x226921A9F40>,
+         <Punctuation ',' at 0x226921A9FA0>,
+         <Whitespace ' ' at 0x226921CC040>,
+         <Identifier 'anothe...' at 0x226921BCF90>,  # this should have been a separate Identifier "one level up"
+         <Whitespace ' ' at 0x226921CC280>,
+         <Punctuation ',' at 0x226921CC2E0>,
+         <Whitespace ' ' at 0x226921CC340>,
+         <Function 'ROW_NU...' at 0x226921BC970>]    # again, just "ROW_NUMBER()" without "OVER ( ... )" + should have been "one level up"
+
+  * `<IdentifierList '( PART...' at 0x226921CF660>` (value: `( PARTITION BY table.col_c ORDER BY table.col_d ASC ) AS row_lo , ROW_NUMBER()`)
+
+        [<Identifier '( PART...' at 0x226921CF3C0>,  # this belongs to the previous "ROW_NUMBER() ..."
+         <Whitespace ' ' at 0x226921CCE80>,
+         <Punctuation ',' at 0x226921CCEE0>,
+         <Whitespace ' ' at 0x226921CCF40>,
+         <Function 'ROW_NU...' at 0x226921BCAC0>]    # again, just "ROW_NUMBER()" without "OVER ( ... )" + should have been "one level up"
+
+  * `<IdentifierList '( PART...' at 0x226921CF6D0>` (value: `( PARTITION BY table.col_e ORDER BY table.col_f DESC ) AS row_hi , last_column AS lc`)
+
+        [<Identifier '( PART...' at 0x226921CF4A0>,  # this belongs to the previous "ROW_NUMBER() ..."
+         <Whitespace ' ' at 0x226921CBAC0>,
+         <Punctuation ',' at 0x226921CBB20>,
+         <Whitespace ' ' at 0x226921CBB80>,
+         <Identifier 'last_c...' at 0x226921CF200>] # this should have been a separate Identifier "one level up"

@@ -1,0 +1,72 @@
+{
+  "difficulty": "hard",
+  "shape": "multi-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_options.py": "tests/test_options.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests",
+    "--deselect",
+    "tests/test_imports.py::test_light_imports",
+    "--deselect",
+    "tests/test_utils.py::test_echo_via_pager",
+    "--deselect",
+    "tests/test_utils.py::test_expand_args"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests",
+    "--deselect",
+    "tests/test_imports.py::test_light_imports",
+    "--deselect",
+    "tests/test_utils.py::test_echo_via_pager",
+    "--deselect",
+    "tests/test_utils.py::test_expand_args"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "tox.ini",
+    "conftest.py"
+  ],
+  "source": {
+    "upstream": "https://github.com/pallets/click",
+    "license": "BSD-3-Clause",
+    "license_file": "LICENSE.txt",
+    "issue": "https://github.com/pallets/click/issues/2832",
+    "fix_pr": "https://github.com/pallets/click/pull/2840",
+    "fix_commit": "c9f7d9d8a02f0cf9b24db6210b083e687a5cf020",
+    "parent_commit": "0bf333e1b77b4ae0e85d387531b38930fc657f12",
+    "vendored_paths": [
+      "LICENSE.txt",
+      "README.md",
+      "CHANGES.rst",
+      "pyproject.toml",
+      "tox.ini",
+      "src",
+      "tests"
+    ],
+    "solution_files": [
+      "src/click/__init__.py",
+      "src/click/core.py",
+      "src/click/decorators.py"
+    ],
+    "added_files": [
+      "conftest.py"
+    ],
+    "note": "conftest.py added so tests import src/click without installing the package. Deselected because they fail in the benchmark environment on the parent and on the fix alike: tests/test_imports.py::test_light_imports, tests/test_utils.py::test_echo_via_pager, tests/test_utils.py::test_expand_args."
+  }
+}

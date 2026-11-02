@@ -9,14 +9,17 @@
 #   bash benchmarks/h2h/run.sh --configs oracle,noop            offline task self-check (no model)
 #   bash benchmarks/h2h/run.sh --budget 25 --ledger spend.jsonl stop before a run once spend reaches $25
 #   bash benchmarks/h2h/run.sh --suite replay --configs oracle,noop    replay suite self-check
+#   bash benchmarks/h2h/run.sh --suite hard --configs oracle,noop      hard suite self-check
 #
-# Configs: raw-haiku, raw-opus (`command claude -p <task> --model M --output-format json
-# --dangerously-skip-permissions`), raw-haiku-verify, raw-opus-verify (the same, with one sentence
-# appended asking it to run the repo's tests and check its change), loki-haiku (bin/loki <task>
-# --no-pr with LOKI_SESSION_MODEL=haiku), loki-default (bin/loki with no model setting).
-# Suites: tasks/ (synthetic, the default) and replay/ (--suite replay: real closed issues from
+# Configs: raw-haiku, raw-sonnet, raw-opus (`command claude -p <task> --model M --output-format json
+# --dangerously-skip-permissions`), raw-<model>-verify (the same, with one sentence appended asking
+# it to run the repo's tests and check its change), loki-haiku, loki-sonnet, loki-opus (bin/loki
+# <task> --no-pr with LOKI_SESSION_MODEL pinned to that model), loki-default (bin/loki with no
+# model setting, so Loki's own routing picks the model).
+# Suites: tasks/ (synthetic, the default), replay/ (--suite replay: real closed issues from
 # permissively licensed projects, vendored at the fix's parent commit and scored by the fix's own
-# test files; meta.json "source" records license, issue, fix PR and commits).
+# test files; meta.json "source" records license, issue, fix PR and commits) and fixtures/hard/
+# (--suite hard: the same format, multi-file fixes in larger projects).
 # Tasks live in <suite>/<id>/: repo/ (the snapshot, visible tests included), task.txt
 # (what the user types), hidden/ (acceptance tests, copied in only after the contestant
 # exits), solution/ (a reference overlay used by the oracle config) and meta.json.

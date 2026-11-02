@@ -1,0 +1,7 @@
+Include Allow header in 405 Method Not Allowed response
+
+At the moment the default [methodNotAllowedHandler](https://github.com/go-chi/chi/blob/43097498be03c1a12a01dd82d36f4465cde9bcb4/mux.go#L457) doesn't include an `Allow` header containing the resource's supported methods.
+
+I've made a minimal runnable example here: [https://play.golang.org/p/CSUjlf8e30S](https://play.golang.org/p/CSUjlf8e30S)
+
+According to the [HTTP RFC](https://tools.ietf.org/html/rfc7231#section-6.5.5) the `Allow` header must be included in 405 responses, so it would be good if there is a way that chi could support this.

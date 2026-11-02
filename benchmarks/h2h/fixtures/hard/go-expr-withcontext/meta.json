@@ -1,0 +1,62 @@
+{
+  "difficulty": "hard",
+  "shape": "multi-file",
+  "lang": "go",
+  "kind": "replay",
+  "hidden": {
+    "test/issues/823/issue_test.go": "test/issues/823/issue_test.go"
+  },
+  "hidden_cmd": [
+    "go",
+    "test",
+    "-count=1",
+    "./..."
+  ],
+  "visible_cmd": [
+    "go",
+    "test",
+    "-count=1",
+    "./..."
+  ],
+  "protected": [
+    "test",
+    "testdata",
+    "expr_test.go"
+  ],
+  "source": {
+    "upstream": "https://github.com/expr-lang/expr",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/expr-lang/expr/issues/823",
+    "fix_pr": "https://github.com/expr-lang/expr/pull/883",
+    "fix_commit": "94ec86d333889229c4190a0d91fb9b031d02b116",
+    "parent_commit": "40bda0b3736f9fc5d96c02f970d0ef55748c3ed9",
+    "vendored_paths": [
+      "LICENSE",
+      "README.md",
+      "go.mod",
+      "ast",
+      "builtin",
+      "checker",
+      "compiler",
+      "conf",
+      "file",
+      "internal",
+      "optimizer",
+      "parser",
+      "patcher",
+      "test",
+      "testdata",
+      "types",
+      "vm",
+      "expr.go",
+      "expr_test.go"
+    ],
+    "solution_files": [
+      "expr.go",
+      "patcher/with_context.go"
+    ],
+    "added_files": [],
+    "note": "docs, debug, docgen and repl are not vendored (debug and repl are separate modules with external dependencies)."
+  }
+}

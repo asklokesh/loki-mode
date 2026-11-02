@@ -1,0 +1,6 @@
+Auto-dereferencing not working
+
+In some cases auto-deref is not working. 
+
+- Map access `{foo: bar}[ptr]`, where ptr is `*string`
+- Cond `ptr ? 1 : 0`, where ptr is `*bool`

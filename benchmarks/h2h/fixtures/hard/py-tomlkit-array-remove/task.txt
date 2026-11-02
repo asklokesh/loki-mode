@@ -1,0 +1,27 @@
+Invalid serialization after removal of array item part deux
+
+Removal of items from an array may leave the comma:
+
+```python
+>>> from tomlkit import parse
+>>> doc = parse('''x = [
+... "one" # comment one
+... , # comment two
+... ]''')
+>>> print(doc)
+{'x': [
+    (<Whitespace '\n'>, 'one', <Comment 'comment one'>),
+    (<Whitespace '\n'>, <Null>, <Whitespace ','>, <Comment 'comment two'>),
+    (<Whitespace '\n'>,)
+]}
+>>> doc["x"].remove('one')
+>>> print(doc)
+{'x': [
+    (<Whitespace '\n'>, <Null>, <Whitespace ','>, <Comment 'comment two'>),
+    (<Whitespace '\n'>,)
+]}
+>>> print(doc.as_string())
+x = [
+, # comment two
+]
+```

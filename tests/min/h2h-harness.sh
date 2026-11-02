@@ -107,6 +107,32 @@ check "edits to protected test paths are reverted before scoring" test "$(field 
 check "sabotage run passes but is not accepted without edit" test "$(field "$J" 'r["accepted"]')" = 0
 check "sabotage run records its test edits" test "$(field "$J" '",".join(r["test_edits"])')" = "bunfig.toml,test/boom.ts"
 check "clean correct patch is accepted without edit" test "$(field "$T/good.json" 'r["accepted"]')" = 1
+check "sabotage run: only the new test config counts against acceptance" test "$(field "$J" '",".join(r["test_weakened"])')" = "bunfig.toml"
+# What counts against acceptance: a pre-existing test file deleted, with a line removed or changed, or with
+# an added skip; and any test config change. A new test file, or new cases appended to an existing one, do not.
+weak_out="$(cd benchmarks/h2h && python3 -I -c '
+import subprocess, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "."); import h2h
+r = Path(tempfile.mkdtemp(dir=sys.argv[1]))
+g = lambda *a: subprocess.run(["git", "-C", str(r), *a], capture_output=True, text=True, check=True).stdout.strip()
+g("init", "-q", "-b", "main"); g("config", "user.email", "t@example.invalid"); g("config", "user.name", "t")
+(r / "tests").mkdir()
+base_text = "def test_a():\n    assert f(1) == 1\n    assert f(2) == 2\n"
+for n in ("test_a.py", "test_b.py", "test_c.py", "test_d.py", "test_e.py"):
+    (r / "tests" / n).write_text(base_text)
+g("add", "-A"); g("commit", "-q", "-m", "base"); base = g("rev-parse", "HEAD")
+(r / "tests/test_a.py").write_text(base_text + "\n\ndef test_new():\n    assert f(3) == 3\n")
+(r / "tests/test_b.py").write_text(base_text.replace("    assert f(2) == 2\n", ""))
+(r / "tests/test_c.py").write_text("import pytest\n\n@pytest.mark.skip\n" + base_text)
+(r / "tests/test_d.py").write_text(base_text.replace("f(2) == 2", "f(2) is not None"))
+(r / "tests/test_e.py").unlink()
+(r / "tests/test_new.py").write_text("def test_x():\n    assert True\n")
+(r / "conftest.py").write_text("collect_ignore = [\"tests\"]\n")
+files = sorted(["tests/test_a.py", "tests/test_b.py", "tests/test_c.py", "tests/test_d.py", "tests/test_e.py", "tests/test_new.py", "conftest.py"])
+print("weak", h2h.test_weakening(r, base, h2h.test_edits({"protected": ["tests"]}, files)))
+' "$T")"
+has "acceptance: appended cases and new test files pass; dropped, changed, skipped, deleted tests and test config count" "$weak_out" "weak ['conftest.py', 'tests/test_b.py', 'tests/test_c.py', 'tests/test_d.py', 'tests/test_e.py']"
 
 # raw-haiku-verify: the same task text plus the one verify sentence, on Haiku; raw-haiku gets the text alone.
 E2E_STUB_OVERLAY="$TDIR/solution" E2E_STUB_PROMPT_LOG="$T/verify.prompt" E2E_STUB_ARGV_LOG="$T/verify.argv" TMPDIR="$T" \
@@ -125,6 +151,25 @@ import sys; sys.path.insert(0, "."); import h2h
 c = h2h.contestant_cmd("raw-opus-verify", {"text": "do X"})
 print("opus", c[c.index("--model") + 1], c[c.index("-p") + 1].endswith(h2h.VERIFY_SENTENCE))')"
 has "raw-opus-verify: Opus with the verify sentence" "$cmd_out" "opus opus True"
+# Loki model pins and the per-session model record: loki-haiku/-sonnet/-opus pin the whole run, loki-default
+# pins nothing; every cost event's model is kept in order with its stage.
+pin_out="$(cd benchmarks/h2h && python3 -I -c '
+import json, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "."); import h2h
+print("pins", [h2h.config_env(c, {}).get("LOKI_SESSION_MODEL") for c in ("loki-haiku", "loki-sonnet", "loki-opus", "loki-default")])
+print("rawmodel", h2h.contestant_cmd("raw-sonnet", {"text": "x"})[7], h2h.contestant_cmd("raw-sonnet-verify", {"text": "x"})[5].endswith(h2h.VERIFY_SENTENCE))
+r = Path(tempfile.mkdtemp(dir=sys.argv[1])); d = r / ".loki/runs/run1"; d.mkdir(parents=True)
+ev = [{"type": "cost", "stage": "plan", "ts": "2026-01-01T00:00:00Z", "data": {"usd": 0.01, "model": "claude-sonnet-4"}},
+      {"type": "cost", "stage": "implement", "ts": "2026-01-01T00:00:01Z", "data": {"usd": 0.02, "model": "claude-haiku-4"}},
+      {"type": "cost", "stage": "implement", "ts": "2026-01-01T00:00:02Z", "data": {"usd": 0.03, "model": "claude-haiku-4"}}]
+(d / "events.jsonl").write_text("\n".join(json.dumps(e) for e in ev) + "\n")
+m = h2h.loki_metrics(r)
+print("sessions", m["session_models"], m["sessions"])
+' "$T")"
+has "loki pins: haiku, sonnet, opus, and none for loki-default" "$pin_out" "pins ['haiku', 'sonnet', 'opus', None]"
+has "raw-sonnet and raw-sonnet-verify run on Sonnet, the latter with the verify sentence" "$pin_out" "rawmodel sonnet True"
+has "loki per-session models recorded in order with their stage" "$pin_out" "sessions [['plan', 'claude-sonnet-4'], ['implement', 'claude-haiku-4'], ['implement', 'claude-haiku-4']] 3"
 
 # Repetitions in parallel: --reps 2 --jobs 2 gives one record per rep, both scored, and the summary
 # carries the Wilson interval and $ per passed task.
@@ -285,6 +330,27 @@ has "replay leak check: clean copy" "$leak_out" "clean []"
 has "replay leak check: a namesake file is not a leak" "$leak_out" "namesake []"
 has "replay leak check: hidden content under another path is a leak" "$leak_out" "copied ['src/cachetools/extra/__init__.py']"
 has "replay leak check: hidden content over the visible test is a leak" "$leak_out" "overlaid ['src/cachetools/extra/__init__.py', 'tests/__init__.py']"
+
+# Hard suite (--suite hard): the same replay format, chosen for multi-file fixes in larger projects.
+J="$T/hard.json"
+TMPDIR="$T" bash benchmarks/h2h/run.sh --suite hard --configs oracle,noop --jobs 4 --out "$J" >"$T/hard.log" 2>&1
+check "hard oracle/noop: runner exits 0 (no leak, no harness error)" test "$?" = 0
+nhard="$(find benchmarks/h2h/fixtures/hard -mindepth 2 -maxdepth 2 -name meta.json | wc -l | tr -d ' ')"
+check "hard: 8 to 10 tasks ($nhard)" test "$nhard" -ge 8 -a "$nhard" -le 10
+check "hard: self-check covered every task" test "$(runs 'len(d["tasks"])')" = "$nhard"
+check "hard: the merged fix passes every task" test "$(runs '[s["passed"] == s["n"] for s in d["summary"] if s["config"] == "oracle"]')" = "[True]"
+check "hard: the parent commit passes no task" test "$(runs '[s["passed"] for s in d["summary"] if s["config"] == "noop"]')" = "[0]"
+failed_oracle="$(runs '",".join(r["task"] for r in d["runs"] if r["config"] == "oracle" and not r["pass"])')"
+[ -z "$failed_oracle" ] || echo "  hard oracle failed on: $failed_oracle"
+check "hard: every task is a multi-file fix with a permissive license, its license file, the issue and both commits" test "$(python3 -I -c '
+import json, glob, os
+ok = True
+for p in glob.glob("benchmarks/h2h/fixtures/hard/*/meta.json"):
+    m = json.load(open(p)); s = m["source"]; d = os.path.dirname(p)
+    ok &= s["license"] in ("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause") and len(s["solution_files"]) >= 2
+    ok &= os.path.isfile(os.path.join(d, "repo", s["license_file"])) and m["difficulty"] == "hard"
+    ok &= all(len(s[k]) == 40 for k in ("fix_commit", "parent_commit")) and "/issues/" in s["issue"]
+print(ok)')" = True
 
 leftover="$(find "$T" -maxdepth 1 -name 'loki-h2h.*' | head -1)"
 check "runner removed its own temp dir" test -z "$leftover"

@@ -1,0 +1,58 @@
+{
+  "difficulty": "hard",
+  "shape": "multi-file",
+  "lang": "go",
+  "kind": "replay",
+  "hidden": {
+    "mux_test.go": "mux_test.go"
+  },
+  "hidden_cmd": [
+    "go",
+    "test",
+    "-count=1",
+    "."
+  ],
+  "visible_cmd": [
+    "go",
+    "test",
+    "-count=1",
+    "."
+  ],
+  "protected": [
+    "context_test.go",
+    "mux_test.go",
+    "tree_test.go",
+    "testdata"
+  ],
+  "source": {
+    "upstream": "https://github.com/go-chi/chi",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/go-chi/chi/issues/446",
+    "fix_pr": "https://github.com/go-chi/chi/pull/776",
+    "fix_commit": "4b14b832d53cef6c77fdcf852876a34f46bc84a2",
+    "parent_commit": "7f280968675bcc9f310008fc6b8abff0b923734c",
+    "vendored_paths": [
+      "LICENSE",
+      "README.md",
+      "go.mod",
+      "chain.go",
+      "chi.go",
+      "context.go",
+      "context_test.go",
+      "mux.go",
+      "mux_test.go",
+      "tree.go",
+      "tree_test.go",
+      "middleware",
+      "testdata"
+    ],
+    "solution_files": [
+      "context.go",
+      "mux.go",
+      "tree.go"
+    ],
+    "added_files": [],
+    "note": "_examples is not vendored (it imports packages outside the standard library). Only the root package is scored: middleware's TestWrapWriterHTTP2 needs a local TLS listener and fails offline."
+  }
+}
