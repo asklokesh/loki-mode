@@ -54,6 +54,44 @@ SCORE_TIMEOUT_S = 180
 NOISE = (".loki/", "node_modules/", "__pycache__/", ".pytest_cache/", ".bun/", "target/")
 
 
+RESULTS_PREFIX = "benchmarks/h2h/results/"
+
+
+def _version(cmd):
+    """First output line of a version command, run in an empty directory so it can read nothing of the repo."""
+    try:
+        with tempfile.TemporaryDirectory() as empty:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=empty, stdin=subprocess.DEVNULL)
+        return (r.stdout or r.stderr).strip().splitlines()[0] if (r.stdout or r.stderr).strip() else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def provenance(root=ROOT):
+    """What produced a results file: the exact engine commit, whether the tree had uncommitted changes
+    (anything other than results files), and the tool versions. A run from a dirty tree is not citable:
+    its numbers belong to code nobody can check out."""
+    r = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True)
+    st = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True)
+    dirty = [line[3:] for line in st.stdout.splitlines() if line[3:] and not line[3:].startswith(RESULTS_PREFIX)]
+    return {
+        "engine_sha": r.stdout.strip() or None, "dirty_count": len(dirty), "dirty": dirty[:30],
+        "citable": bool(r.stdout.strip()) and st.returncode == 0 and not dirty,
+        "bun": _version(["bun", "--version"]), "claude_cli": _version(["bash", "-c", "command claude --version"]),
+        "python": platform.python_version(), "go": _version(["go", "version"]), "platform": platform.platform(),
+    }
+
+
+def provenance_gate(configs, prov, allow_dirty):
+    """Loki configs never run from a dirty tree unless --allow-dirty is given, and then the results are
+    stamped not citable. Returns an error message, or None when the run may go ahead."""
+    if any(c.startswith("loki") for c in configs) and not prov["citable"] and not allow_dirty:
+        return (f"refusing to run Loki configs from a tree that is not at a clean commit ({prov['dirty_count']} uncommitted "
+                f"paths, e.g. {', '.join(prov['dirty'][:3]) or 'no git'}); commit first, or pass --allow-dirty to record "
+                "results marked not citable")
+    return None
+
+
 def log(msg):
     print(msg, file=sys.stderr, flush=True)
 
@@ -661,7 +699,15 @@ def main_sequences(a, ap):
         if x not in all_seqs:
             ap.error(f"unknown sequence {x}")
     seqs = [load_sequence(x) for x in ids]
-    sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip() or "nogit"
+    prov = provenance()
+    blocked = provenance_gate(configs, prov, a.allow_dirty)
+    if blocked:
+        log(f"h2h: {blocked}")
+        return 6
+    if not prov["citable"]:
+        log(f"h2h: DIRTY TREE ({prov['dirty_count']} uncommitted paths): these results are NOT CITABLE")
+    provs = [prov] + (json.loads(Path(a.resume).read_text()).get("provenance", []) if a.resume else [])
+    sha = (prov["engine_sha"] or "nogit")[:9]
     out = Path(a.out) if a.out else HERE / "results" / f"{dt.date.today().isoformat()}-{sha}-learning.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp_root = Path(os.environ.get("TMPDIR") or "/tmp").resolve()
@@ -674,6 +720,7 @@ def main_sequences(a, ap):
 
     def save():
         doc = {"benchmark": "h2h-learning", "loki_sha": sha, "date": dt.datetime.now().isoformat(timespec="seconds"),
+               "citable": all(p["citable"] for p in provs), "provenance": provs,
                "configs": configs, "reps": a.reps, "jobs": a.jobs, "timeout_s": a.timeout, "stopped": state["stopped"],
                "sequences": [sq["id"] for sq in seqs], "summary": summarize_sequences(results, configs), "runs": results}
         out.write_text(json.dumps(doc, indent=2) + "\n")
@@ -769,6 +816,10 @@ def verdict_stats(rs):
         "verdict_agreement": round(agree / n, 4) if n else None, "verdict_agree_n": agree,
         "false_verified": sum(1 for r in rs if r["exit_code"] == 0 and not r["pass"]),
         "missed_pass": sum(1 for r in rs if r["exit_code"] != 0 and r["pass"]),
+        # VERIFIED recall: of the runs whose work passed the hidden tests, the share Loki sealed VERIFIED. Read
+        # next to false_verified, so a config cannot look safe by never claiming VERIFIED.
+        "verified_recall": (round(sum(1 for r in rs if r["exit_code"] == 0 and r["pass"]) / sum(1 for r in rs if r["pass"]), 4)
+                            if any(r["pass"] for r in rs) else None),
         "partial_pass": sum(1 for r in partial if r["pass"]), "partial_fail": sum(1 for r in partial if not r["pass"]),
         "outcomes": {o: sum(1 for r in rs if (r.get("loki_outcome") or "OTHER") == o)
                      for o in sorted({r.get("loki_outcome") or "OTHER" for r in rs})},
@@ -875,6 +926,8 @@ def main(argv=None):
                     f"(or 'all'); configs from {SEQUENCE_CONFIGS + CHECK_CONFIGS}")
     ap.add_argument("--resume", default="", help="results JSON from an interrupted invocation: its runs are kept "
                     "and every (config, task, rep) already in it is skipped")
+    ap.add_argument("--allow-dirty", action="store_true", help="run Loki configs from a tree with uncommitted changes; "
+                    "the results file is stamped citable: false")
     a = ap.parse_args(argv)
     if a.reps < 1 or a.jobs < 1:
         ap.error("--reps and --jobs must be at least 1")
@@ -893,7 +946,15 @@ def main(argv=None):
             ap.error(f"unknown task {t} in suite {a.suite}")
     tasks = [load_task(t, tasks_dir) for t in task_ids]
 
-    sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip() or "nogit"
+    prov = provenance()
+    blocked = provenance_gate(configs, prov, a.allow_dirty)
+    if blocked:
+        log(f"h2h: {blocked}")
+        return 6
+    if not prov["citable"]:
+        log(f"h2h: DIRTY TREE ({prov['dirty_count']} uncommitted paths): these results are NOT CITABLE")
+    a.provenance = [prov] + (json.loads(Path(a.resume).read_text()).get("provenance", []) if a.resume else [])
+    sha = (prov["engine_sha"] or "nogit")[:9]
     suffix = "" if a.suite == "tasks" else f"-{a.suite}"
     out = Path(a.out) if a.out else HERE / "results" / f"{dt.date.today().isoformat()}-{sha}{suffix}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -975,6 +1036,9 @@ def main(argv=None):
 def write_results(out, results, configs, sha, a, stopped):
     doc = {
         "benchmark": "h2h-b1", "suite": a.suite, "loki_sha": sha, "date": dt.datetime.now().isoformat(timespec="seconds"),
+        # Every invocation that added runs to this file, newest first; citable only if all of them were.
+        "citable": all(p["citable"] for p in getattr(a, "provenance", [])) if getattr(a, "provenance", None) else None,
+        "provenance": getattr(a, "provenance", []),
         "configs": configs, "reps": a.reps, "jobs": a.jobs, "timeout_s": a.timeout, "stopped": stopped,
         "tasks": sorted({r["task"] for r in results}),
         "summary": summarize(results, configs), "runs": results,

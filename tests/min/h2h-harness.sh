@@ -169,6 +169,26 @@ print("sessions", m["session_models"], m["sessions"])
 ' "$T")"
 has "loki pins: haiku, sonnet, opus, and none for loki-default" "$pin_out" "pins ['haiku', 'sonnet', 'opus', None]"
 has "raw-sonnet and raw-sonnet-verify run on Sonnet, the latter with the verify sentence" "$pin_out" "rawmodel sonnet True"
+# Provenance gate: a clean commit is citable (results files do not count as dirt); an uncommitted change makes
+# the tree dirty, Loki configs then refuse to run unless --allow-dirty, and raw configs still run.
+prov_out="$(cd benchmarks/h2h && python3 -I -c '
+import subprocess, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "."); import h2h
+r = Path(tempfile.mkdtemp(dir=sys.argv[1]))
+g = lambda *a: subprocess.run(["git", "-C", str(r), *a], capture_output=True, text=True, check=True).stdout.strip()
+g("init", "-q", "-b", "main"); g("config", "user.email", "t@example.invalid"); g("config", "user.name", "t")
+(r / "engine.ts").write_text("1"); g("add", "-A"); g("commit", "-q", "-m", "base")
+(r / "benchmarks/h2h/results").mkdir(parents=True); (r / "benchmarks/h2h/results/x.json").write_text("{}")
+p = h2h.provenance(r)
+print("clean", p["citable"], p["engine_sha"] == g("rev-parse", "HEAD"), p["dirty_count"], h2h.provenance_gate(["loki-haiku"], p, False))
+(r / "engine.ts").write_text("2")
+p = h2h.provenance(r)
+print("dirty", p["citable"], p["dirty"], h2h.provenance_gate(["loki-haiku"], p, False) is not None, h2h.provenance_gate(["loki-haiku"], p, True), h2h.provenance_gate(["raw-haiku"], p, False))
+' "$T")"
+has "provenance: a clean commit is citable, results files are not dirt, Loki may run" "$prov_out" "clean True True 0 None"
+has "provenance: an uncommitted change is not citable; Loki refuses unless --allow-dirty; raw runs" "$prov_out" "dirty False ['engine.ts'] True None None"
+check "results file records its provenance and citability" test "$(field "$T/good.json" '0') $(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(isinstance(d["citable"], bool), bool(d["provenance"][0]["engine_sha"]), "bun" in d["provenance"][0])' "$T/good.json")" = "0 True True True"
 has "loki per-session models recorded in order with their stage" "$pin_out" "sessions [['plan', 'claude-sonnet-4'], ['implement', 'claude-haiku-4'], ['implement', 'claude-haiku-4']] 3"
 
 # Repetitions in parallel: --reps 2 --jobs 2 gives one record per rep, both scored, and the summary
@@ -200,6 +220,7 @@ def r(rc, p, fr=0): return {"config": "loki-haiku", "task": "t", "exit_code": rc
 rows = h2h.summarize([r(0, 1), r(0, 0), r(6, 1, 2), r(6, 0, 1), r(4, 0), r(4, 1, 1)], ["loki-haiku"])
 x = rows[0]
 print("agree", x["verdict_agree_n"], "fv", x["false_verified"], "pp", x["partial_pass"], "pf", x["partial_fail"], "mp", x["missed_pass"], "fr", x["mean_fix_rounds"], "cpp", x["cost_per_pass_usd"])
+print("recall", x["verified_recall"])
 d = json.load(open("results/2026-11-01-9571a21f7.json"))
 v = h2h.verdict_stats([q for q in d["runs"] if q["config"].startswith("loki")])
 print("old", v["verdict_agree_n"], v["false_verified"], v["partial_pass"])
@@ -209,6 +230,7 @@ x = h2h.summarize([a(1, 1, 0.02), a(1, 0, 0.02), a(0, 0, 0.04), a(1, 1, 0.04)], 
 print("accepted", x["accepted"], x["accepted_n"], x["accept_ci95"], x["cost_per_accepted_usd"], x["cost_per_accepted_ci95"], x["runs_with_test_edits"], x["cost_per_pass_usd"])
 ')"
 has "verdict: agreement, false VERIFIED, PARTIAL split, missed passes, fix rounds" "$verdict_out" "agree 3 fv 1 pp 1 pf 1 mp 2 fr 0.67 cpp 0.02"
+has "verdict: VERIFIED recall is VERIFIED passes over all passes (1 of 3)" "$verdict_out" "recall 0.3333"
 has "verdict: the v11.104.0 result reads 5 of 16, 0 false VERIFIED, 11 PARTIAL passes" "$verdict_out" "old 5 0 11"
 has "wilson: 0/10 and 5/10" "$verdict_out" "wilson [0.0, 0.2775] [0.2366, 0.7634]"
 # 2 of 4 accepted, $0.12 over 4 runs: $0.06 per accepted task; its interval is $ per task over the Wilson bounds of 2/4.
