@@ -4,9 +4,7 @@
 // Logic lives here because engine10/cost.ts is at the core line cap. Fails closed: a record whose dollar figure is
 // missing, non-finite, negative or all-zero-usage (E-69, same rule as sumResultCosts) makes its stage's usd (and the total) null, never a silent 0.
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import pricingJson from "../../data/model-pricing.json" with { type: "json" };
 export interface StageCost {
   usd: number | null;
   sessions: number;
@@ -29,21 +27,13 @@ let topRate: Rate | null | undefined;
  *  null when the table is unreadable: savings then reads "not measured". */
 export function topTierRate(): Rate | null {
   if (topRate !== undefined) return topRate;
-  topRate = null;
-  const here = dirname(fileURLToPath(import.meta.url));
-  for (const rel of [["..", "..", "data"], ["..", "data"]]) {
-    try {
-      const rows = (JSON.parse(readFileSync(resolve(here, ...rel, "model-pricing.json"), "utf8")) as { pricing?: Record<string, Record<string, unknown>> }).pricing ?? {};
-      let best: Rate | null = null;
-      for (const [k, v] of Object.entries(rows)) {
-        const n = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
-        if (k.startsWith("gpt-") || !n(v["input"]) || !n(v["output"])) continue;
-        if (!best || v["output"] > best.output) best = { input: v["input"], output: v["output"], read: n(v["cache_read"]) ? v["cache_read"] : v["input"], write: n(v["cache_write_5m"]) ? v["cache_write_5m"] : n(v["cache_write"]) ? v["cache_write"] : v["input"] };
-      }
-      if (best) return (topRate = best);
-    } catch { /* try next location */ }
+  let best: Rate | null = null;
+  for (const [k, v] of Object.entries(pricingJson.pricing as Record<string, Record<string, unknown>>)) {
+    const n = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+    if (k.startsWith("gpt-") || !n(v["input"]) || !n(v["output"])) continue;
+    if (!best || v["output"] > best.output) best = { input: v["input"], output: v["output"], read: n(v["cache_read"]) ? v["cache_read"] : v["input"], write: n(v["cache_write_5m"]) ? v["cache_write_5m"] : n(v["cache_write"]) ? v["cache_write"] : v["input"] };
   }
-  return topRate;
+  return (topRate = best);
 }
 const TOKEN_KEYS = ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"] as const;
 /** Savings = cost of every session's tokens at the top tier minus the actual dollars. null (never 0) when any session lacks a valid dollar figure

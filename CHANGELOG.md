@@ -5,6 +5,20 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.118.0 (2026-11-01)
+
+Shell commands in a run no longer wait on a safety subprocess, operator permission policies work again, and model prices come from one table.
+
+### Changed
+
+- The safety check on each shell command a run makes is decided in-process in about 0.2 ms instead of starting a 0.3 s bash script. Commands any rule of that script could deny (deletes, Docker, host control, port claims, nested shells, unparsable text and the dangerous-pattern list) still go to the script and get its verdict unchanged; an adversarial review of 3,386 disguised commands found none the script denies that the new path allows. Every check is linear in command length, so a long command cannot stall a run.
+- Agent SDK 0.3.316 (bundled Claude Code 2.1.316).
+
+### Fixed
+
+- With an operator permission policy in place, every shell command was denied because the script's intentionally empty answer was read as a failure.
+- The shipped package could not find its price file and used an outdated copy, so newer models were priced wrong (some estimates several times too high). All engine readers now use the one bundled price table; older model ids it does not list stay unpriced, so cost caps warn instead of trusting a guess.
+
 ## v11.117.0 (2026-11-01)
 
 Learning from earlier runs is more precise and safer; it stays off by default until a benchmark shows it pays.
