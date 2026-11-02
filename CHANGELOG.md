@@ -5,6 +5,43 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.117.0 (2026-11-01)
+
+Learning from earlier runs is more precise and safer; it stays off by default until a benchmark shows it pays.
+
+### Changed
+
+- With `LOKI_PR_LESSONS=1`, a lesson reaches the next run only if it is a failing check, a restored test edit or a spec conflict and it concerns a file that run will touch. Each lesson is one line led by its file, the block is capped at 400 bytes (was 1200), and "edited outside the plan" notes and run summaries are never passed on, so a repo convention that needs an extra file is no longer taught as a mistake.
+- With `LOKI_WORKED_EXAMPLE=1`, a past run is offered as an example only for a near-duplicate task.
+- A check that blocks a session from stopping is now recorded as a lesson (secrets redacted, per run, capped, cleaned when lessons are off or a run is cancelled). Each run writes `.loki/runs/<id>/lessons-injected.json` with what it received.
+- Default runs are unchanged: with both settings off the brief is identical to the previous release. A larger learning benchmark (8 task sequences, 3 reps) could not separate lessons on from off, because Loki on Haiku made almost no repeatable mistakes there, so both stay opt-in.
+
+## v11.116.0 (2026-11-01)
+
+Loki on Haiku now matches raw Claude Code on Haiku on a 24-task benchmark at about two-thirds of the cost per passed task.
+
+Measured with `benchmarks/h2h` (24 tasks in TypeScript, Python, Go and Rust, scored by hidden tests neither side sees, 2 reps; results in `benchmarks/h2h/results/`):
+
+| | pass | cost per passed task | median seconds | sessions per task |
+|---|---|---|---|---|
+| raw claude -p, Haiku | 48/48 | $0.0161 to $0.0192 | 28.0 to 29.3 | 1.00 |
+| Loki on Haiku, v11.114.0 | 42/48 | $0.0457 | 44.0 | 2.83 |
+| Loki on Haiku, this release | 47/48 | $0.0131 | 29.0 | 1.90 |
+
+Correction: the v11.109.0 notes said Loki on Haiku beat raw Claude Code; that came from 8 tasks run once and did not hold on this larger benchmark, where v11.113.0 and v11.114.0 lost on pass rate, cost and time. The one remaining failure here is a run that read VERIFIED while a hidden test failed (also present before this release); it is being worked on.
+
+### Fixed
+
+- A run that does not publish a PR keeps its `loki/<run>` branch whatever its outcome, so blocked or failed work is never thrown away; your checkout still returns to the branch you started on.
+- When only Loki's own acceptance tests conflict with the change, the work is delivered as PARTIAL only if the repo's own tests (a test check that ran at least one test, or the full suite) run and pass on the re-check; lint and the security scan never count.
+- Loki's own acceptance tests that cannot compile are discarded before they reach your tree: a Go test file whose package does not match its directory, or a Rust call whose argument count matches no function after the change. The Go test author is told the directory's package and import path, and the test author sees Go and Rust signatures.
+
+### Changed
+
+- The default review runs for high-risk changes only (auth, security, payments paths), on the run's own model; set `LOKI_REVIEW_DEFAULT=1` to review medium-risk changes too.
+- The separate already-done check runs for issue tasks only; a project-model discovery session no longer runs when one test runner sits at the repo root.
+- Lessons and worked examples from earlier runs are still recorded but not added to prompts by default (`LOKI_PR_LESSONS=1`, `LOKI_WORKED_EXAMPLE=1` to opt in); a learning pilot showed higher cost with no pass gain.
+
 ## v11.115.0 (2026-11-01)
 
 Every documented way to start Loki now runs the current engine; the old bash loop runs only when asked for by name.

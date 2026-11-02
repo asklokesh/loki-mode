@@ -144,6 +144,19 @@ behaviour has a switch rather than a fork.
 is told to fix problems without being told which, so it re-derives them from
 scratch every iteration -- the slowest and least accurate way to converge.
 
+### Opt-in extras
+
+These add a model session or prompt text and are off by default, because the
+head-to-head benchmark (`benchmarks/h2h/RESULTS.md`) showed them adding cost
+with no gain in pass rate. Set each to `1` to turn it on.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `LOKI_REVIEW_DEFAULT` | off | With no reviewer configured, a medium risk run asks its own CLI for one code review before seal. Off, the receipt lists "one reviewer" as not proven. A high risk run gets that review by default either way, and a configured reviewer (`review:` in loki.yaml, `LOKI_REVIEW_PROVIDER`, a reviewer agent) always runs. |
+| `LOKI_PR_LESSONS` | off | Adds lessons from earlier runs and merged PRs to the implement brief: only a failing check, a restored test edit or a spec conflict on a file this run will touch, one line each, at most 400 bytes. Each run's injected lessons are recorded in `.loki/runs/<id>/lessons-injected.json`. Lessons are recorded either way, including checks that blocked a session stop. |
+| `LOKI_WORKED_EXAMPLE` | off | Adds an earlier VERIFIED run as a short worked example to the implement brief, only when the new task is a near-duplicate of it. |
+| `LOKI_E10_ALREADY_DONE_CHECK` | off | Runs the separate already-done confirmation on a direct task too. Issue tasks always get it; on a direct task the implement session reports already-done itself. |
+
 ### Verification depth (risk tier)
 
 The v10 verify stage classifies risk on the diff (the artifact), never on the
