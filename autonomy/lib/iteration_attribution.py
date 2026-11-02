@@ -216,7 +216,7 @@ def prompt_block(loki_dir):
         # give, and it survives into every downstream decision the agent makes.
         #
         # Measured on the real FireLater run: every iteration rendered "$0.00"
-        # because codex wrote no usage before v8.51.0. The honesty rule was
+        # because that provider wrote no usage before v8.51.0. The honesty rule was
         # already documented at the top of this file ("reported as null, not as
         # $0.00") and only the summary path honoured it; the per-iteration line
         # did not.

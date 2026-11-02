@@ -99,108 +99,6 @@
         }
       ]
     },
-    "codex": {
-      "latest_planning": "gpt-5.6-sol",
-      "latest_development": "gpt-5.6-terra",
-      "latest_fast": "gpt-5.6-luna",
-      "models": [
-        {
-          "id": "gpt-5.6-sol",
-          "tier": "planning",
-          "notes": "high tier. OpenAI: 'Frontier model for complex professional work'. Verified against developers.openai.com/api/docs/models."
-        },
-        {
-          "id": "gpt-5.6-terra",
-          "tier": "development",
-          "notes": "medium tier, the DEFAULT. OpenAI: balances performance with affordability."
-        },
-        {
-          "id": "gpt-5.6-luna",
-          "tier": "fast",
-          "notes": "small tier. OpenAI: budget-conscious, high-volume."
-        },
-        {
-          "id": "gpt-5.3-codex",
-          "tier": "legacy",
-          "notes": "Prior default, superseded by the gpt-5.6 line. Kept discoverable, not dispatched."
-        },
-        {
-          "id": "o3",
-          "tier": "planning",
-          "notes": "Alternative planning model. NOT the default -- gpt-5.3-codex is listed first and first match wins."
-        },
-        {
-          "id": "o4-mini",
-          "tier": "legacy",
-          "notes": "Was tier=fast, which made the cheap tier resolve to o4-mini while latest_fast said gpt-5.3-codex. Codex does not differentiate tiers by model, so it is not any tier's default; parked at tier=legacy so it stays discoverable without being dispatched."
-        }
-      ],
-      "notes": "Codex uses a single model with effort level (xhigh/high/low) for tier differentiation, so development and fast declare an explicit tier_fallback to planning rather than naming separate models."
-    },
-    "cline": {
-      "effort": {"flag": null, "levels": [], "unsupported": true, "cli": "cline (not installed here; its documented flags -y and -m include no effort or reasoning option)", "_comment": "Cline exposes no effort or reasoning flag, so LOKI_EFFORT is recorded as unsupported and no flag is emitted."},
-      "latest_planning": "openrouter/deepseek/deepseek-v3.2",
-      "latest_development": "openrouter/deepseek/deepseek-v3.2",
-      "latest_fast": "openrouter/deepseek/deepseek-chat",
-      "models": [
-        {
-          "id": "openrouter/deepseek/deepseek-v3.2",
-          "tier": "planning",
-          "open_weights": true
-        },
-        {
-          "id": "openrouter/deepseek/deepseek-v3.2",
-          "tier": "development",
-          "open_weights": true
-        },
-        {
-          "id": "openrouter/deepseek/deepseek-chat",
-          "tier": "fast",
-          "open_weights": true
-        },
-        {
-          "id": "openrouter/z-ai/glm-4.6",
-          "tier": "development",
-          "open_weights": true
-        }
-      ]
-    },
-    "aider": {
-      "effort": {"flag": "--reasoning-effort", "levels": ["low", "medium", "high"], "default": "medium", "cli": "aider 0.86.2", "_comment": "Verified from aider --help (--reasoning-effort sets the reasoning_effort API parameter). A model entry may carry its own effort block, which wins over this provider default."},
-      "latest_planning": "openrouter/deepseek/deepseek-v3.2",
-      "latest_development": "openrouter/deepseek/deepseek-v3.2",
-      "latest_fast": "openrouter/deepseek/deepseek-chat",
-      "models": [
-        {
-          "id": "openrouter/deepseek/deepseek-v3.2",
-          "tier": "planning",
-          "open_weights": true
-        },
-        {
-          "id": "openrouter/deepseek/deepseek-v3.2",
-          "tier": "development",
-          "open_weights": true
-        },
-        {
-          "id": "openrouter/deepseek/deepseek-chat",
-          "tier": "fast",
-          "open_weights": true
-        },
-        {
-          "id": "openrouter/minimax/minimax-m3.1-flash:free",
-          "tier": "development"
-        },
-        {
-          "id": "openrouter/minimax/minimax-m3",
-          "tier": "development"
-        },
-        {
-          "id": "ollama_chat/deepseek-coder",
-          "tier": "fast",
-          "open_weights": true
-        }
-      ]
-    },
     "opencode": {
       "effort": {"flag": "--variant", "levels": ["low", "medium", "high"], "default": "medium", "cli": "opencode 1.18.9", "_comment": "Verified from opencode run --help (--variant: provider-specific reasoning effort). A model entry may carry its own effort block, which wins over this provider default."},
       "latest_planning": "openrouter/deepseek/deepseek-v3.2",
@@ -243,7 +141,7 @@
       ]
     },
     "generic": {
-      "_comment": "Fallback for ANY provider not named above (bring-your-own endpoint). All three tiers collapse to one open model, the same shape codex uses, declared via tier_fallback. Override per tier with LOKI_<PROVIDER>_MODEL_<TIER> or wholesale with LOKI_<PROVIDER>_MODEL.",
+      "_comment": "Fallback for ANY provider not named above (bring-your-own endpoint). All three tiers collapse to one open model, declared via tier_fallback. Override per tier with LOKI_<PROVIDER>_MODEL_<TIER> or wholesale with LOKI_<PROVIDER>_MODEL.",
       "latest_planning": "openrouter/deepseek/deepseek-v3.2",
       "latest_development": "openrouter/deepseek/deepseek-v3.2",
       "latest_fast": "openrouter/deepseek/deepseek-v3.2",
@@ -260,7 +158,7 @@
       ]
     },
     "minimax": {
-      "_comment": "Catalog-only compatibility metadata. MiniMax is not a fifth --provider value; select these models through the existing Claude or Aider adapters with the matching endpoint variables.",
+      "_comment": "Catalog-only compatibility metadata. MiniMax is not a --provider value; select these models through the Claude adapter (anthropic_base_url) or opencode with the matching endpoint variables.",
       "latest_planning": "MiniMax-M3",
       "latest_development": "MiniMax-M3.1-Flash",
       "latest_fast": "MiniMax-M3.1-Flash",

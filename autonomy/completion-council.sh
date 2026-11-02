@@ -3121,10 +3121,6 @@ council_member_review() {
                 command -v claude >/dev/null 2>&1 || { log_error "Claude CLI not found"; return 1; }
             fi
             ;;
-        codex) command -v codex >/dev/null 2>&1 || { log_error "Codex CLI not found"; return 1; } ;;
-        gemini) command -v gemini >/dev/null 2>&1 || { log_error "Gemini CLI not found"; return 1; } ;;
-        cline) command -v cline >/dev/null 2>&1 || { log_error "Cline CLI not found"; return 1; } ;;
-        aider) command -v aider >/dev/null 2>&1 || { log_error "Aider not found"; return 1; } ;;
     esac
 
     local evidence
@@ -3308,30 +3304,6 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
                 _provider_rc=$?
             fi
             ;;
-        codex)
-            if command -v codex &>/dev/null; then
-                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" codex exec --sandbox workspace-write "$prompt" 2>/dev/null)
-                _provider_rc=$?
-            fi
-            ;;
-        gemini)
-            if command -v gemini &>/dev/null; then
-                verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" gemini 2>/dev/null)
-                _provider_rc=$?
-            fi
-            ;;
-        cline)
-            if command -v cline &>/dev/null; then
-                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" cline -y "$prompt" 2>/dev/null)
-                _provider_rc=$?
-            fi
-            ;;
-        aider)
-            if command -v aider &>/dev/null; then
-                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null)
-                _provider_rc=$?
-            fi
-            ;;
         *)
             # v8.2.0 TIMEOUT SEAM. Any provider exposing provider_invoke_argv can
             # cast a real council vote instead of falling straight to the
@@ -3402,10 +3374,6 @@ council_devils_advocate() {
                 command -v claude >/dev/null 2>&1 || { log_error "Claude CLI not found"; return 1; }
             fi
             ;;
-        codex) command -v codex >/dev/null 2>&1 || { log_error "Codex CLI not found"; return 1; } ;;
-        gemini) command -v gemini >/dev/null 2>&1 || { log_error "Gemini CLI not found"; return 1; } ;;
-        cline) command -v cline >/dev/null 2>&1 || { log_error "Cline CLI not found"; return 1; } ;;
-        aider) command -v aider >/dev/null 2>&1 || { log_error "Aider not found"; return 1; } ;;
     esac
 
     local evidence
@@ -3504,26 +3472,6 @@ REASON: one-line justification citing path:line evidence"
                 # default as the member subcalls). An empty
                 # verdict on timeout hits the conservative REJECT fallback below.
                 verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" env "SHELL=$_co_shell" CAVEMAN_DEFAULT_MODE=off claude "${_co_argv[@]}" -p 2>/dev/null)
-            fi
-            ;;
-        codex)
-            if command -v codex &>/dev/null; then
-                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" codex exec --sandbox workspace-write "$prompt" 2>/dev/null)
-            fi
-            ;;
-        gemini)
-            if command -v gemini &>/dev/null; then
-                verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" gemini 2>/dev/null)
-            fi
-            ;;
-        cline)
-            if command -v cline &>/dev/null; then
-                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" cline -y "$prompt" 2>/dev/null)
-            fi
-            ;;
-        aider)
-            if command -v aider &>/dev/null; then
-                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null)
             fi
             ;;
         *)

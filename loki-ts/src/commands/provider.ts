@@ -8,23 +8,18 @@ import { commandExists, commandVersion } from "../util/shell.ts";
 import { BOLD, CYAN, GREEN, YELLOW, RED, DIM, NC } from "../util/colors.ts";
 import { lokiDir } from "../util/paths.ts";
 import { suggestWord } from "../cli/registry.ts";
+import { PROVIDERS, REMOVED_PROVIDERS, removedProviderMessage, type ProviderName } from "../runner/types.ts";
 
-type Provider = "claude" | "cline" | "codex" | "aider" | "opencode";
+type Provider = ProviderName;
 
 // Must match auto_detect_provider() in providers/loader.sh, in ITS order --
-// the order is the selection priority, not a display preference. Omitting
-// opencode made `loki provider list` under-report a provider the runner has
-// selected since v8.64.0, the same drift that blocked opencode-only machines
-// outright until v8.76.0.
-const ALL_PROVIDERS: readonly Provider[] = ["claude", "cline", "codex", "aider", "opencode"];
+// the order is the selection priority, not a display preference.
+const ALL_PROVIDERS: readonly Provider[] = PROVIDERS;
 
 // Per-provider install hint, byte-matching autonomy/loki doctor_provider_install_cmd.
 // Shared by `loki doctor` and `loki provider list`.
 export const PROVIDER_INSTALL: Readonly<Record<string, string>> = {
   claude: "npm install -g @anthropic-ai/claude-code",
-  codex: "npm install -g @openai/codex",
-  cline: "npm install -g cline",
-  aider: "pip install aider-chat",
   opencode: "npm install -g opencode-ai",
 };
 
@@ -60,13 +55,6 @@ export function runProviderShow(positional?: string): number {
     case "claude":
       process.stdout.write(`${GREEN}Status:${NC}   Full features (subagents, parallel, MCP)\n`);
       break;
-    case "cline":
-      process.stdout.write(`${GREEN}Status:${NC}   Near-full mode (subagents, MCP, 12+ providers)\n`);
-      break;
-    case "codex":
-    case "aider":
-      process.stdout.write(`${YELLOW}Status:${NC}   Degraded mode (sequential only)\n`);
-      break;
     case "opencode":
       process.stdout.write(`${GREEN}Status:${NC}   Model-agnostic mode (75+ providers, MCP)\n`);
       break;
@@ -87,12 +75,9 @@ export function runProviderShow(positional?: string): number {
   return 0;
 }
 
-// Tiers per CLAUDE.md: claude full (1), cline reduced (2), codex/aider degraded (3), opencode model-agnostic.
+// Tiers per CLAUDE.md: claude full (1), opencode model-agnostic.
 const PROVIDER_TIER: Readonly<Record<Provider, string>> = {
   claude: "1",
-  cline: "2",
-  codex: "3",
-  aider: "3",
   opencode: "model-agnostic",
 };
 
@@ -127,9 +112,6 @@ export async function runProviderList(): Promise<number> {
   // Bash output preserves exact column alignment via padded labels.
   const rows: ReadonlyArray<readonly [Provider, string]> = [
     ["claude", "claude  - Claude Code (Anthropic)    "],
-    ["codex", "codex   - Codex CLI (OpenAI)         "],
-    ["cline", "cline   - Cline (multi-provider)     "],
-    ["aider", "aider   - Aider (terminal pair prog) "],
     ["opencode", "opencode - opencode (multi-provider) "],
   ];
 
@@ -179,10 +161,10 @@ export function printProviderHelp(): number {
   process.stdout.write(`Examples:\n`);
   process.stdout.write(`  loki provider show\n`);
   process.stdout.write(`  loki provider set claude\n`);
-  process.stdout.write(`  loki provider set codex\n`);
+  process.stdout.write(`  loki provider set opencode\n`);
   process.stdout.write(`  loki provider list\n`);
   process.stdout.write(`  loki provider list --json\n`);
-  process.stdout.write(`  loki provider info codex\n`);
+  process.stdout.write(`  loki provider info opencode\n`);
   process.stdout.write(`  loki provider models\n`);
   return 0;
 }
@@ -190,6 +172,9 @@ export function printProviderHelp(): number {
 export async function runProvider(argv: readonly string[]): Promise<number> {
   const sub = argv[0] ?? "show";
   const rest = argv.slice(1);
+  // A removed provider named to any subcommand (show, info, set, models) gets the one migration line, exit 2.
+  const removed = rest.find((a) => REMOVED_PROVIDERS.has(a));
+  if (removed) { process.stderr.write(removedProviderMessage(removed)); return 2; }
   switch (sub) {
     case "show":
     case "current":

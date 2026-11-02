@@ -74,7 +74,7 @@ _PO_INSTALL_CMD="npm install -g @anthropic-ai/claude-code"
 # check, so the fix is the missing NAME, never a looser mechanism.
 detect_any_provider() {
     local _dp
-    for _dp in claude cline codex aider opencode; do
+    for _dp in claude opencode; do
         command -v "$_dp" >/dev/null 2>&1 && return 0
     done
     return 1
@@ -297,7 +297,7 @@ offer_provider_install() {
         printf '\n'
         printf 'Install a provider when ready:\n'
         printf '  %s   (then: claude auth login)\n' "$_PO_INSTALL_CMD"
-        printf '  Other supported providers: codex, cline, aider.\n'
+        printf '  Other supported provider: opencode (any model, including OpenRouter).\n'
         return 0
     fi
 
@@ -330,8 +330,8 @@ offer_provider_install() {
         printf '  %s\n' "$_PO_INSTALL_CMD"
         printf '  claude auth login\n'
         printf '\n'
-        printf "Already have a provider via another method? Make sure 'claude' (or codex,\n"
-        printf "cline, aider) is on your PATH, then run 'loki doctor'.\n"
+        printf "Already have a provider via another method? Make sure 'claude' (or\n"
+        printf "opencode) is on your PATH, then run 'loki doctor'.\n"
         [ "$mode" = "gate" ] && return 2
         return 0
     fi
@@ -365,7 +365,7 @@ offer_provider_install() {
         *)
             printf 'Skipped. Install a provider when ready:\n'
             printf '  %s   (then: claude auth login)\n' "$_PO_INSTALL_CMD"
-            printf 'Other supported providers: codex, cline, aider.\n'
+            printf 'Other supported provider: opencode (any model, including OpenRouter).\n'
             [ "$mode" = "gate" ] && return 2
             return 0
             ;;
@@ -422,12 +422,8 @@ _provider_gate_emit_blocked() {
 # providers/loader.sh auto_detect_provider, not of PATH. It also covers opencode,
 # which the older block never listed.
 #
-# THE ORDER IS NOT SUPPORTED_PROVIDERS. auto_detect_provider walks
-# claude cline codex aider opencode; SUPPORTED_PROVIDERS is declared
-# claude codex cline aider opencode -- codex and cline are SWAPPED. Marking the
-# first installed entry of SUPPORTED_PROVIDERS would name codex on a machine
-# where a build would really pick cline. So the selected provider is always
-# whatever auto_detect_provider returns, never re-derived here.
+# The selected provider is always whatever auto_detect_provider returns, never
+# re-derived here, so this section cannot drift from the runner's choice.
 #
 # DEGRADES SILENTLY. Requirement: if loader.sh cannot be sourced, the section is
 # skipped rather than erroring. Everything runs inside one subshell, so a missing

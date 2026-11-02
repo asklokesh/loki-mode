@@ -8,7 +8,7 @@
 # Secrets never live here. Every credential key holds the NAME of an
 # environment variable (UPPER_CASE); the value is read from your environment.
 
-# claude | codex | cline | aider | opencode          (env: LOKI_PROVIDER)
+# claude | opencode          (env: LOKI_PROVIDER)
 provider: claude
 
 models:

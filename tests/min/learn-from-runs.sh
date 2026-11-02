@@ -295,7 +295,7 @@ d = repo("sc1"); seal(d, "SPEC_CONFLICT"); console.log("unit SC x1 ->", show(L.k
 console.log("unit SC x1 changed task ->", show(L.knownVerdict(d, key({ task: "add the hosted feature now" }))));
 console.log("unit SC x1 changed base ->", show(L.knownVerdict(d, key({ base: "980a166236".padEnd(40, "0") }))));
 console.log("unit SC x1 changed loki_version ->", show(L.knownVerdict(d, key({ version: "0.0.1" }))));
-console.log("unit SC x1 changed provider ->", show(L.knownVerdict(d, key({ provider: "codex" }))));
+console.log("unit SC x1 changed provider ->", show(L.knownVerdict(d, key({ provider: "opencode" }))));
 d = repo("as"); seal(d, "ALREADY_SATISFIED"); console.log("unit AS x1 ->", show(L.knownVerdict(d, key())));
 seal(d, "ALREADY_SATISFIED"); console.log("unit AS x2 ->", show(L.knownVerdict(d, key())));
 d = repo("partial"); for (let i = 0; i < 3; i++) seal(d, "PARTIAL"); console.log("unit PARTIAL x3 ->", show(L.knownVerdict(d, key())));

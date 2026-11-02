@@ -12,9 +12,6 @@ Best for: contributors, development, or environments without npm/brew.
 # Clone to Claude Code skills directory
 git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
 
-# Optionally symlink for other providers:
-ln -sf ~/.claude/skills/loki-mode ~/.codex/skills/loki-mode
-
 # Optionally add CLI to PATH:
 ln -sf ~/.claude/skills/loki-mode/bin/loki /usr/local/bin/loki
 ```
@@ -75,7 +72,7 @@ jobs:
 ```
 
 **Prerequisites:**
-- API key for your provider (set as repository secret): `ANTHROPIC_API_KEY` (Claude, recommended) or `OPENAI_API_KEY` (Codex).
+- API key for your provider (set as repository secret): `ANTHROPIC_API_KEY` (Claude, recommended) or `OPENROUTER_API_KEY` (opencode with an OpenRouter model).
 - The action auto-installs `loki-mode` and `@anthropic-ai/claude-code`
 
 **Action Inputs:**
@@ -83,7 +80,7 @@ jobs:
 | Input | Default | Description |
 |-------|---------|-------------|
 | `mode` | `review` | `review`, `fix`, or `test` |
-| `provider` | `claude` | `claude` (recommended), `cline`, `codex`, `aider`, or `opencode`. |
+| `provider` | `claude` | `claude` (recommended) or `opencode`. codex, cline, aider and gemini were removed and exit 2. |
 | `budget_limit` | `5.00` | Max cost in USD (passed to the Loki 10 engine as `--max-cost`) |
 | `max_iterations` | `3` | Max RARV cycles |
 | `github_token` | (required) | GitHub token for PR comments |
@@ -137,7 +134,8 @@ A first task is ready when every required "All paths" item is present and at lea
 
 - Claude Code CLI path: the default. `loki start` runs the `claude` binary you installed and logged in with `claude auth login`. `loki chat` (with the claude provider) and `loki edit` call the `claude` CLI directly.
 - Anthropic API-key path (Agent SDK, no `claude` CLI): `loki "<goal>"` needs only Anthropic credentials (for example `ANTHROPIC_API_KEY`), the bundled `@anthropic-ai/claude-agent-sdk` platform binary, and Bun. No `claude` CLI and no extra setting: the engine runs every session on the bundled SDK unless `LOKI_E10_INVOKER=cli`. `loki start ./prd.md` runs the same engine for a PRD up to 100000 bytes. A provider CLI on PATH is still needed by `loki demo` and `loki quickstart` (their provider check runs before the run starts), and by anything that reaches the bash loop: `loki start --engine legacy`, a PRD over 100000 bytes, and the `--workspace` / `--deploy` front end. Under `LOKI_SDK_MODE=full` with the claude provider, `--engine legacy` and a PRD over 100000 bytes are refused in one line instead.
-- Other provider CLIs: `codex` (degraded), `cline`, `aider`, `opencode`. Any one of them replaces the `claude` CLI for `loki start --provider <name>`. Loki never silently substitutes a different provider than the one requested.
+- opencode CLI path: `opencode` replaces the `claude` CLI for `loki start --provider opencode` and reaches any model, including OpenRouter (see [opencode with OpenRouter](#opencode-with-openrouter)). Loki never silently substitutes a different provider than the one requested.
+- Removed: codex, cline, aider and gemini. Selecting one exits 2 with one line naming claude and opencode.
 
 ### Install methods
 
@@ -190,13 +188,10 @@ loki "<goal>" runs on the bundled Agent SDK over HTTPS with only a key; no claud
 
 ### Other provider CLIs
 
-codex (degraded), cline, aider, opencode: any one replaces the claude CLI.
+opencode: replaces the claude CLI and reaches any model, including OpenRouter.
 
 | Requirement | Level | Check | Fix |
 | --- | --- | --- | --- |
-| codex CLI | optional | `codex` on PATH | npm install -g @openai/codex |
-| cline CLI | optional | `cline` on PATH | npm install -g cline |
-| aider CLI | optional | `aider` on PATH | pip install aider-chat |
 | opencode CLI | optional | `opencode` on PATH | npm install -g opencode-ai |
 
 ### When an optional dependency is missing
@@ -207,6 +202,21 @@ codex (degraded), cline, aider, opencode: any one replaces the claude CLI.
 | @oven/bun-* (Bun) | bin/loki falls back to the bash CLI (slower). The api-key-sdk path is unavailable because the SDK loop runs only on Bun. |
 
 <!-- END GENERATED REQUIREMENTS -->
+
+### opencode with OpenRouter
+
+Supported providers are Claude Code (`--provider claude`, the default; API-key users run it through the Anthropic Agent SDK with no CLI) and opencode (`--provider opencode`). opencode reaches OpenRouter directly:
+
+```bash
+npm install -g opencode-ai
+export OPENROUTER_API_KEY=sk-or-...        # or: opencode auth login, then choose OpenRouter
+opencode models openrouter | head           # lists openrouter/<vendor>/<model> ids
+loki start --provider opencode --model openrouter/deepseek/deepseek-v3.2 ./prd.md
+```
+
+Without the key, `opencode models openrouter` reports `Provider not found: openrouter`. `LOKI_OPENCODE_MODEL=openrouter/<vendor>/<model>` sets the model without the flag. Loki passes `OPENROUTER_API_KEY` through unchanged and runs `opencode run --auto -m <model> <prompt>`.
+
+The Claude path can reach OpenRouter too, through a model route: `loki start --model openrouter/<id> ./prd.md` with `--provider claude` (or `LOKI_MODEL_ROUTE=openrouter/<id>`) points the claude CLI at OpenRouter with `OPENROUTER_API_KEY`.
 
 ### Install smoke test
 

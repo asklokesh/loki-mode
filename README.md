@@ -123,10 +123,11 @@ Core verbs: [docs/CLI-CORE-VERBS.md](docs/CLI-CORE-VERBS.md). Every command (gen
 
 ### Models, providers and local models
 
-Claude Code is the default Tier-1 provider. `--provider codex|cline|aider|opencode` (or `LOKI_PROVIDER`) picks another; on all of them the Loki 10 engine enforces the wall-clock limit and a post-iteration guard scan, and measures cost for codex, cline and aider (parsed from CLI output or estimated, flagged `estimated`) so `--max-cost` applies. For OpenRouter or a local model, set `LOKI_MODEL_ROUTE=<kind>/<id>` (kinds: `openrouter`, `ollama`, `lmstudio`, `llamacpp`, `vllm`, `custom`) before `loki start`; `loki models --local` finds local runtimes and prints ready-to-paste values.
+Two providers are supported. Claude Code is the default Tier-1 provider (the `claude` CLI, or, with only `ANTHROPIC_API_KEY`, the Anthropic Agent SDK). `--provider opencode` (or `LOKI_PROVIDER=opencode`) runs opencode, which reaches any model, including OpenRouter: export `OPENROUTER_API_KEY` and pass `--model openrouter/<vendor>/<model>`; the Loki 10 engine enforces the wall-clock limit and a post-iteration guard scan there. codex, cline, aider and gemini were removed and exit 2 with a one-line migration message. To keep the Claude harness on OpenRouter or a local model, set `LOKI_MODEL_ROUTE=<kind>/<id>` (kinds: `openrouter`, `ollama`, `lmstudio`, `llamacpp`, `vllm`, `custom`) before `loki start`; `loki models --local` finds local runtimes and prints ready-to-paste values.
 
 ```bash
 LOKI_MODEL_ROUTE=ollama/qwen3-coder loki start prd.md
+OPENROUTER_API_KEY=sk-or-... loki start --provider opencode --model openrouter/deepseek/deepseek-v3.2 prd.md
 ```
 
 ## Control Plane
@@ -156,7 +157,7 @@ Optional:
 
 - Python 3.8+ (`python3`): deep scans, Python repos and group runs use it. `loki "<goal>"` runs without it.
 - `jq`: `loki status` and the bash fallback CLI use it.
-- Other coding CLIs: Codex, Cline, Aider, opencode (`--provider`). Ollama or an OpenRouter key for model routes.
+- opencode (`--provider opencode`) for any model, including OpenRouter. Ollama or an OpenRouter key for model routes.
 - Bun 1.3+ (`bun`) on your PATH (the npm package also bundles it).
 - Docker, to run Loki from the published image.
 

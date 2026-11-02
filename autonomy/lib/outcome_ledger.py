@@ -67,7 +67,7 @@ EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 # 9 receipts:
 #
 #   8 of 9 carry base_sha="" and head_sha=1385e71c. That commit touches TWO files
-#   (providers/codex.sh, tests/test-provider-degraded-mode.sh) while the receipts
+#   (a provider config and its test) while the receipts
 #   attest to EIGHT including autonomy/telemetry.sh. They are not the same change.
 #   The 9th carries base_sha=4b825dc6 (empty tree) and 4017 files.
 #

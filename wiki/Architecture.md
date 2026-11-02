@@ -1,6 +1,6 @@
 # Architecture
 
-> Legacy engine note: this page documents the legacy engine (`loki start`, `LOKI_ENGINE=legacy`), which still ships in 11.120.1 and is being removed. For the current Loki 10 commands (`loki "<task>"`, `loki owner/repo#N`, `loki backlog`, `loki verify`) see [[Home]] and [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
+> Legacy engine note: this page documents the legacy engine (`loki start`, `LOKI_ENGINE=legacy`), which still ships in 11.121.0 and is being removed. For the current Loki 10 commands (`loki "<task>"`, `loki owner/repo#N`, `loki backlog`, `loki verify`) see [[Home]] and [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
 
 State machines and component diagrams for Loki Mode.
 
@@ -482,16 +482,16 @@ Audit: ~/.loki/dashboard/audit/*.jsonl
                          |   (claude)     |
                          +-------+--------+
                                  |
-         +-----------------------+-----------------------+
-         |                       |                       |
-         v                       v                       v
-+--------+--------+    +--------+--------+    +--------+--------+
-|     CLAUDE      |    |     CODEX       |    |  CLINE/AIDER    |
-| Full features   |    | Degraded mode   |    | Degraded mode   |
-| - Task tool     |    | - Sequential    |    | - Sequential    |
-| - Parallel      |    | - No subagents  |    | - No subagents  |
-| - MCP           |    | - No MCP        |    | - No MCP        |
-+-----------------+    +-----------------+    +-----------------+
+         +-----------------------+
+         |                       |
+         v                       v
++--------+--------+    +--------+--------+
+|     CLAUDE      |    |    OPENCODE     |
+| Full features   |    | Any model       |
+| - Task tool     |    | - OpenRouter    |
+| - Parallel      |    | - Sequential    |
+| - MCP           |    | - MCP           |
++-----------------+    +-----------------+
 ```
 
 ---

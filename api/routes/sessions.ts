@@ -23,6 +23,13 @@ import {
   successResponse,
 } from "../middleware/error.ts";
 
+// Restated from loki-ts/src/runner/types.ts (VALID_PROVIDERS, REMOVED_PROVIDERS, removedProviderMessage);
+// api/ ships without loki-ts/src, so it cannot import them. Keep the message byte-identical.
+const SUPPORTED_PROVIDERS: string[] = ["claude", "opencode"];
+const REMOVED_PROVIDERS: string[] = ["codex", "cline", "aider", "gemini"];
+const removedProviderMessage = (provider: string): string =>
+  `loki: provider '${provider}' is no longer supported. Supported providers: claude (Claude Code CLI, or an Anthropic API key through the Agent SDK) and opencode (any model, including OpenRouter via OPENROUTER_API_KEY). Switch with --provider claude or --provider opencode, or unset LOKI_PROVIDER.`;
+
 /**
  * POST /api/sessions - Start a new session
  */
@@ -38,9 +45,11 @@ export async function startSession(req: Request): Promise<Response> {
 
   // Validate provider
   const provider = data.provider || "claude";
-  if (!["claude", "codex", "cline", "aider"].includes(provider)) {
+  if (!SUPPORTED_PROVIDERS.includes(provider)) {
     throw new LokiApiError(
-      `Invalid provider: ${provider}. Must be one of: claude, codex, cline, aider`,
+      REMOVED_PROVIDERS.includes(provider)
+        ? removedProviderMessage(provider)
+        : `Invalid provider: ${provider}. Must be one of: ${SUPPORTED_PROVIDERS.join(", ")}`,
       ErrorCodes.VALIDATION_ERROR
     );
   }
@@ -51,7 +60,7 @@ export async function startSession(req: Request): Promise<Response> {
     "provider",
     provider,
     {
-      alternativesRejected: ["claude", "codex", "cline", "aider"].filter((p) => p !== provider),
+      alternativesRejected: SUPPORTED_PROVIDERS.filter((p) => p !== provider),
       context: {
         hasPrd: !!data.prdPath,
         options: data.options,

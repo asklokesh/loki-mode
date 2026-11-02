@@ -314,6 +314,26 @@ def _clear_tracked_pids() -> None:
 # ---------------------------------------------------------------------------
 
 
+
+# The providers Loki runs (providers/loader.sh SUPPORTED_PROVIDERS). This app
+# ships standalone (web-app/Dockerfile copies only web-app files), so the list
+# and the CLI's migration line for removed providers are restated here.
+_SUPPORTED_PROVIDERS = ("claude", "opencode")
+_REMOVED_PROVIDERS = ("codex", "cline", "aider", "gemini")
+
+
+def _check_provider(v: str) -> str:
+    if v in _SUPPORTED_PROVIDERS:
+        return v
+    if v in _REMOVED_PROVIDERS:
+        raise ValueError(
+            f"loki: provider '{v}' is no longer supported. Supported providers: claude (Claude Code CLI, "
+            "or an Anthropic API key through the Agent SDK) and opencode (any model, including OpenRouter "
+            "via OPENROUTER_API_KEY). Switch with --provider claude or --provider opencode, or unset LOKI_PROVIDER."
+        )
+    raise ValueError(f"Unknown provider '{v}'. Allowed: {', '.join(_SUPPORTED_PROVIDERS)}")
+
+
 class StartRequest(BaseModel):
     prd: str
     provider: str = "claude"
@@ -324,10 +344,7 @@ class StartRequest(BaseModel):
     @classmethod
     def validate_provider(cls, v: str) -> str:
         # BUG-E2E-006: Validate provider to prevent injection via unknown providers
-        allowed = {"claude", "codex", "gemini", "cline", "aider"}
-        if v not in allowed:
-            raise ValueError(f"Unknown provider '{v}'. Allowed: {', '.join(sorted(allowed))}")
-        return v
+        return _check_provider(v)
 
 
 class QuickStartRequest(BaseModel):
@@ -338,10 +355,7 @@ class QuickStartRequest(BaseModel):
     @classmethod
     def validate_provider(cls, v: str) -> str:
         # BUG-E2E-006: Validate provider to prevent injection via unknown providers
-        allowed = {"claude", "codex", "gemini", "cline", "aider"}
-        if v not in allowed:
-            raise ValueError(f"Unknown provider '{v}'. Allowed: {', '.join(sorted(allowed))}")
-        return v
+        return _check_provider(v)
 
 
 class StopResponse(BaseModel):
@@ -3574,12 +3588,10 @@ async def get_provider() -> JSONResponse:
 @app.post("/api/provider/set")
 async def set_provider(req: ProviderSetRequest) -> JSONResponse:
     """Set the default provider for future sessions."""
-    allowed = {"claude", "codex", "gemini"}
-    if req.provider not in allowed:
-        return JSONResponse(
-            status_code=400,
-            content={"error": f"Invalid provider. Must be one of: {', '.join(sorted(allowed))}"},
-        )
+    try:
+        _check_provider(req.provider)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
     # Persist to config
     config_dir = Path.home() / ".loki"
     config_dir.mkdir(parents=True, exist_ok=True)

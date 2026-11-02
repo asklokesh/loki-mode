@@ -25,9 +25,10 @@ The system is built around a few load-bearing principles:
   run-start commit, tests recorded a real command and exited zero, and no gate
   was skipped. Every build emits an Evidence Receipt that a skeptic can
   re-derive independently.
-- **Provider-agnostic execution.** The same workflow runs on Claude Code,
-  OpenAI Codex CLI, Cline, and Aider, with automatic failover. Feature richness
-  degrades gracefully by provider tier rather than failing.
+- **Provider-agnostic execution.** The same workflow runs on Claude Code (the
+  CLI, or the Anthropic Agent SDK with an API key) and opencode (any model,
+  including OpenRouter), with automatic failover. Feature richness degrades
+  gracefully by provider rather than failing.
 - **Filesystem as the system bus.** Components do not share memory. They
   communicate through `.loki/` state files (session, queue, checkpoints,
   findings, memory), which makes the system inspectable, resumable, and
@@ -103,8 +104,8 @@ runner (`loki-ts/src/runner/`) is the default; the Bash engine
             v                v       v            v          |
     +---------------+  +-----------+ +---------+ +----------+ |
     |   Providers   |  |  Quality  | | Memory  | |  Events  | |
-    | claude/codex/ |  |  Gates +  | | engine  | |   bus    |<+
-    | cline/aider   |  |  Council  | | (RAG,   | | (py/ts/  |
+    | claude/       |  |  Gates +  | | engine  | |   bus    |<+
+    | opencode      |  |  Council  | | (RAG,   | | (py/ts/  |
     | (failover)    |  | (8 gates) | | vector) | |   sh)    |
     +-------+-------+  +-----------+ +----+----+ +----------+
             |                            |
@@ -138,8 +139,7 @@ A representative end-to-end flow:
    status.
 4. **Provider invocation.** The prompt is dispatched to the selected provider
    (`providers.ts`). Claude Code runs with full features (subagents, parallel
-   worktrees, Task tool, MCP); Codex/Cline/Aider run in degraded, sequential
-   modes. Failures trigger failover to the next available provider.
+   worktrees, Task tool, MCP); opencode runs sequentially. Failures trigger failover to the next available provider.
 5. **Reflect and verify.** Post-iteration, the engine runs checklist
    verification (`autonomy/checklist-verify.py`), manages the app runner
    (`autonomy/app-runner.sh`), and runs Playwright smoke tests.
@@ -196,8 +196,7 @@ loki-ts/                   Default Bun/TypeScript runtime
 
 providers/                 Provider configs (shell-sourceable)
   claude.sh                Claude Code - Tier 1 (full features)
-  cline.sh                 Cline - Tier 2
-  codex.sh / aider.sh      Codex / Aider - Tier 3 (degraded, sequential)
+  opencode.sh              opencode - model-agnostic (OpenRouter, sequential)
   loader.sh / models.sh    Provider loader and model registry
   model_catalog.json       Model catalog (probed)
 
@@ -320,7 +319,7 @@ docker/                            Container distribution (Dockerfiles, compose)
 - **Model Context Protocol (MCP)** as a first-class integration surface
   (`mcp/server.py`): tools, resources, and prompts, plus an LSP proxy for
   code intelligence (references, definitions, symbols).
-- **Provider CLIs** (Claude Code, OpenAI Codex CLI, Cline, Aider) as the model
+- **Provider CLIs** (Claude Code, opencode) and the Anthropic Agent SDK as the model
   execution layer, abstracted behind shell-sourceable provider configs and the
   TS providers module.
 - **Docker / Docker Compose** for distribution and for the multi-service,

@@ -25,7 +25,7 @@ const schema = {
       },
       provider: {
         type: 'string',
-        enum: ['claude', 'codex', 'cline', 'aider'],
+        enum: ['claude', 'opencode'],
         description: 'AI provider to use (default: claude)',
         default: 'claude'
       }

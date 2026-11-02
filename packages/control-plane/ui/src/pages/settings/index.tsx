@@ -10,7 +10,7 @@ interface Field { path: string[]; label: string; kind: Kind; options?: string[];
 interface Section { id: string; title: string; hint: string; fields: Field[] }
 
 export const SECTIONS: Section[] = [
-  { id: "provider", title: "Provider", hint: "Default provider. A CLI flag or LOKI_PROVIDER overrides it.", fields: [{ path: ["provider"], label: "Provider", kind: "select", options: ["claude", "codex", "cline", "aider", "opencode"] }] },
+  { id: "provider", title: "Provider", hint: "Default provider. A CLI flag or LOKI_PROVIDER overrides it.", fields: [{ path: ["provider"], label: "Provider", kind: "select", options: ["claude", "opencode"] }] },
   { id: "models", title: "Models", hint: "Model names passed to the provider.", fields: [
     { path: ["models", "default"], label: "Default model", kind: "text" }, { path: ["models", "cheap"], label: "Cheap model", kind: "text" }] },
   { id: "git", title: "Git", hint: "Name of the environment variable that holds your GitHub token. The token itself is never stored here.", fields: [

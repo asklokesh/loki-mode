@@ -4,16 +4,16 @@
 Parses provider session files to extract token usage data
 and writes tracking information to .loki/context/tracking.json.
 
-Provider-agnostic: supports Claude, Codex, and Gemini CLIs.
+Provider-agnostic: supports the Claude Code and opencode CLIs.
 - Claude: parses session JSONL from ~/.claude/projects/
-- Codex/Gemini: accepts token data via --tokens-input/--tokens-output CLI args
+- opencode: accepts token data via --tokens-input/--tokens-output CLI args
 - All providers: can accept --session-file to specify session file directly
 
 Called by run.sh after each RARV iteration.
 
 Usage:
     python3 context-tracker.py --iteration N --loki-dir .loki [--window-size N] [--model ID]
-    python3 context-tracker.py --iteration N --loki-dir .loki --provider codex \
+    python3 context-tracker.py --iteration N --loki-dir .loki --provider opencode \
         --tokens-input 5000 --tokens-output 2000
     python3 context-tracker.py --iteration N --loki-dir .loki --session-file /path/to/session.jsonl
 """
@@ -28,7 +28,7 @@ from pathlib import Path
 
 
 # Default pricing (USD per million tokens) - provider-specific overrides below
-# NOTE (fable): this table is keyed by PROVIDER (claude/codex/gemini), not by
+# NOTE (fable): this table is keyed by PROVIDER (claude), not by
 # model, so it cannot price Fable distinctly from Opus/Sonnet under "claude".
 # It is intentionally NOT refactored for the fable change: this table is an
 # ESTIMATE-ONLY fallback for context-window projections. The authoritative
@@ -43,26 +43,11 @@ PRICING_BY_PROVIDER = {
         "cache_read": 0.10,
         "cache_creation": 2.5,
     },
-    "codex": {
-        "input": 2.0,
-        "output": 8.0,
-        "cache_read": 0.0,
-        "cache_creation": 0.0,
-    },
-    "gemini": {
-        "input": 1.25,
-        "output": 5.0,
-        "cache_read": 0.0,
-        "cache_creation": 0.0,
-    },
 }
 
 # Last-resort window for providers whose models carry no context_window in
 # providers/model_catalog.json (the catalog owns Claude model capacity).
-FALLBACK_WINDOW_SIZES = {
-    "codex": 200000,
-    "gemini": 1000000,
-}
+FALLBACK_WINDOW_SIZES = {}
 DEFAULT_WINDOW_SIZE = 200000
 CATALOG_PATH = Path(__file__).resolve().parent.parent / "providers" / "model_catalog.json"
 
@@ -116,7 +101,7 @@ def find_session_file(provider, session_file_arg=None):
     """Find the most recently modified session file for the given provider.
 
     Args:
-        provider: 'claude', 'codex', or 'gemini'
+        provider: 'claude' or 'opencode'
         session_file_arg: explicit path from --session-file flag
 
     Returns:
@@ -141,7 +126,7 @@ def find_session_file(provider, session_file_arg=None):
         jsonl_files = sorted(session_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
         return jsonl_files[0] if jsonl_files else None
 
-    # For codex/gemini, no standard session file location yet
+    # For opencode, no standard session file location yet
     # They rely on --tokens-input/--tokens-output args instead
     return None
 
@@ -249,7 +234,7 @@ def update_tracking(loki_dir, iteration, window_size, provider="claude", model=N
         iteration: Current RARV iteration number
         window_size: Context window size in tokens (0 = resolve from the catalog)
         model: Run model id used to look up the window (default: model seen in the session)
-        provider: Provider name (claude, codex, gemini)
+        provider: Provider name (claude, opencode)
         session_file: Explicit path to session file (optional)
         direct_tokens: Dict with input/output token counts for non-Claude providers
     """
@@ -403,8 +388,8 @@ def main():
     parser.add_argument("--loki-dir", default=".loki", help="Path to .loki directory")
     parser.add_argument("--window-size", type=int, default=0,
                         help="Context window size in tokens (0 = auto-detect from provider)")
-    parser.add_argument("--provider", default="claude", choices=["claude", "codex", "gemini"],
-                        help="LLM provider (claude, codex, gemini)")
+    parser.add_argument("--provider", default="claude", choices=["claude", "opencode"],
+                        help="LLM provider (claude, opencode)")
     parser.add_argument("--model", default=None,
                         help="Run model id for the catalog window lookup (default: model seen in the session)")
     parser.add_argument("--session-file", default=None,

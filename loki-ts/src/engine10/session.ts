@@ -120,7 +120,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
     mkdirSync(dirname(dest), { recursive: true });
     writeFileSync(dest, JSON.stringify({ total_cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, model, source: UNMETERED }));
   }
-  const pcost = existsSync(dest) ? null : writeProviderCost(dest, cfg.provider, model, opts.brief, outText); // PARITY-COST: codex/cline/aider priced from output usage or sizes, estimated=true; feeds the same cap path
+  const pcost = existsSync(dest) ? null : writeProviderCost(dest, cfg.provider, model, opts.brief, outText); // PARITY-COST: opencode priced from prompt/response sizes, estimated=true; feeds the same cap path
   const effort = sessionEffortFor(opts).effort;
   // #306: hash the whole cached prefix (system text, tool list incl. per-session denials, thinking, effort, brief), from the function providers.ts builds it with.
   const penv = { ...process.env, ...(cfg.provider === "claude" && process.env["LOKI_E10_PREFIX"] === undefined ? { LOKI_E10_PREFIX: "lean" } : {}) }, sp = engine10StaticPrefix(penv);
@@ -207,7 +207,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
           const psid = readSessionId(opts.cwd ?? process.cwd(), opts.iterationId), ran = sessionEffortFor(opts).effort; if (psid && ran) rememberSessionEffort(psid, ran); // ER-05: what the next resume of this session must keep
           recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS, stdout + logText);
           untrack();
-          resolve({ exit: guard.ok ? code : 1, markers, durationS, killed, summary: (stdout + logText).trim().slice(-4096), stderrTail: (guard.ok ? "" : `guard violation: ${guard.violations.map((v) => v.detail).join("; ")}\n`) + stderrTail.toString("utf8") + (logText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n") }); // only provider-written text is classified: child stderr and the SDK error line, never the agent transcript (A-113). The child echoes the provider's in-memory stderr (A-113b); only the claude CLI invoker returns one, since codex/cline/aider may print session activity on stderr (unmeasured)
+          resolve({ exit: guard.ok ? code : 1, markers, durationS, killed, summary: (stdout + logText).trim().slice(-4096), stderrTail: (guard.ok ? "" : `guard violation: ${guard.violations.map((v) => v.detail).join("; ")}\n`) + stderrTail.toString("utf8") + (logText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n") }); // only provider-written text is classified: child stderr and the SDK error line, never the agent transcript (A-113). The child echoes the provider's in-memory stderr (A-113b); only the claude CLI invoker returns one, since opencode may print session activity on stderr (unmeasured)
         });
       });
     },

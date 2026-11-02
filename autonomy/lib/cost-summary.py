@@ -10,7 +10,7 @@ reading 90% from cache costs roughly a tenth of the same run reading fresh --
 and nothing on the CLI surfaced it.
 
 THE HONESTY RULE THIS INHERITS. Unmeasured is not free. That confusion shipped
-to a user on four separate surfaces (v8.51.0 through v8.54.0: the codex
+to a user on four separate surfaces (v8.51.0 through v8.54.0: a provider
 dispatch recorded no tokens, the receipt said {"usd": 0.0, "available": true},
 the PROMPT said "$0.00" per iteration, and the verifier never checked). Each
 was fixed in isolation. This is a fifth surface reading the same records, so it
@@ -133,7 +133,7 @@ def summarize(workspace="."):
         # UNPRICED IS NOT FREE. record_is_measured() is field-agnostic: a record
         # with real tokens but cost_usd 0 is "measured" on the strength of its
         # tokens, and the cost slot would then render $0.0000 -- the headline
-        # rule inverted, on a shape that actually ships. Codex tiers can record
+        # rule inverted, on a shape that actually ships. An unpriced model can record
         # tokens with no priced cost, and the real FireLater records wrote an
         # explicit "cost_usd": 0 rather than omitting the key.
         #

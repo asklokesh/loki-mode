@@ -40,13 +40,13 @@ function _loki {
                         '--offline[Always show the offline sample]' \
                         '--dry-run[Print the plan, no model call]' \
                         '--keep[Keep the temp repo]' \
-                        '--provider[Provider]:provider:(claude opencode codex cline aider)' \
+                        '--provider[Provider]:provider:(claude opencode)' \
                         '--max-cost[Hard per-run cap in USD]:usd:'
                     ;;
                 try)
                     _arguments \
                         '--dry-run[Clone, print the task and estimate, no model call]' \
-                        '--provider[Provider]:provider:(claude opencode codex cline aider)' \
+                        '--provider[Provider]:provider:(claude opencode)' \
                         '--max-cost[Hard per-run cap in USD]:usd:'
                     ;;
                 control)
@@ -149,7 +149,7 @@ function _loki {
                     _arguments \
                         '1:verb:(start quick)' \
                         '--json[Output machine-readable JSON]' \
-                        '--provider[AI provider]:provider name:(claude cline codex aider opencode)' \
+                        '--provider[AI provider]:provider name:(claude opencode)' \
                         '--model[Model or route override]:model:' \
                         '--no-pr[Skip the pull request]' \
                         '--max-cost[Spend cap in USD]:amount:' \
@@ -435,7 +435,7 @@ function _loki_commands {
 function _loki_start {
     # Rule: list every flag bin/loki routes (Bun/engine10 ones such as --model, --max-cost, --spec, --no-pr too), not only cmd_start's own.
     _arguments \
-        '--provider[AI provider]:provider name:(claude cline codex aider opencode)' \
+        '--provider[AI provider]:provider name:(claude opencode)' \
         '--parallel[Parallel mode]' \
         '--brief[Zero-config brief mode]:brief text:' \
         '--worktree[Git worktree isolation]' \

@@ -180,7 +180,7 @@ def collect_efficiency(loki_dir):
     # exactly that.
     #
     # Measured on the real FireLater run: four efficiency records, every token
-    # field 0 (codex wrote no usage before v8.51.0), and collect_efficiency
+    # field 0 (that provider wrote no usage before v8.51.0), and collect_efficiency
     # returned {'usd': 0.0, ..., 'available': True}.
     #
     # A run that did work necessarily consumed tokens. So "available" now means
