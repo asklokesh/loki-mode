@@ -6,7 +6,7 @@
 import { appendFileSync, closeSync, constants, fstatSync, readdirSync, lstatSync, mkdirSync, linkSync, openSync, readFileSync, readSync, renameSync, statSync, lutimesSync, rmSync, unlinkSync, writeFileSync, existsSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { basename, join } from "node:path";
-import { FINISH_LINE } from "../e10ext/context.ts";
+import { FINISH_LINE } from "../engine10/types.ts";
 
 export const STEER_MAX_BYTES = 1024 * 1024;
 export const STEER_STAGES: ReadonlySet<string> = new Set(["plan", "implement"]);

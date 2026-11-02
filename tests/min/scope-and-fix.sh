@@ -36,7 +36,8 @@
 #                Probe: a task that changes Calc::new() to Calc::new(base) keeps the Wall test calling Calc::new(5) (the Rust
 #                argument count is decided after implement) and reads VERIFIED.
 #   lean fix loop, unit level (bun over loki-ts/src):
-#     L005: fix-brief groups built from the checked-in pytest, jest, vitest, go test, surefire and dotnet failure
+#     L005: failing ids parse from every checked-in failure output (cargo and bun included); fix-brief groups built
+#           from the pytest, jest, vitest, go test, surefire and dotnet failure
 #           outputs (tests/min/fixtures/failures, raw ANSI included) have a non-empty excerpt, 0 ESC bytes and a
 #           signature longer than the check name; two vitest full-suite outputs with different failing ids give
 #           different signatures; the recorded jest Validation Error is harness-owned.
@@ -49,9 +50,10 @@
 #   quick verify: a 2-round run at risk tier medium re-verifies round 1 quick and the last round complete, runs the
 #                full suite twice (3 before), ends VERIFIED, and the full-suite signature carries its first failing line.
 #   quick-only end: a no-progress run at tier medium ends on a quick verify that lists the missing complete verify
-#                as NOT PROVEN, stops STALLED after two rounds (a not-rerun suite failure never feeds the stall rule).
+#                as NOT PROVEN; the targeted failure is unchanged, so the quick verify reruns the suite (a harness run,
+#                no model session) to settle the stall: STALLED after one round, the suite ran twice.
 #   stale stall: verify 1 fails calc.test.ts and the full suite; round 1 fixes the suite's cause only. The quick
-#                verify carries the suite failure without rerunning it, the run gets round 2 and ends VERIFIED.
+#                verify reruns the suite to settle the stall, finds it fixed, the run gets round 2 and ends VERIFIED.
 #   lint twice:  bash -n fails after implement and after round 1 while the suite passes; the verify after the last
 #                change runs the full suite again (3 runs) and the run ends VERIFIED.
 #
@@ -82,6 +84,10 @@
 #  22. loki-ts/src/e10ext/context.ts: restore "including the package's full suite" (the brief check fails).
 #  23. loki-ts/src/engine10/machine.ts: sigOf compares carried groups too (rebuild dist): the stale stall run ends STALLED after 1 round.
 #  24. loki-ts/src/engine10/stages/verify.ts: skip the full suite from fix round 2 on (rebuild dist): lint twice runs the suite twice.
+#  25. loki-ts/src/engine10/failures.ts: failIds ignores bun output (rebuild dist): the bun id checks fail and the stale stall
+#      run ends STALLED (two failing sets in the bun suite share one signature).
+#  26. loki-ts/src/engine10/stages/verify.ts: never settle a stall with a suite rerun (rebuild dist): the quick-only run takes
+#      2 fix sessions and runs the suite once.
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -227,7 +233,6 @@ grep -q '^wall ' "$ITERS" && { bad "lean normal: a Wall session ran despite a re
 mkdir -p "$T/l006" "$T/l026"
 cat > "$T/lean-fix.ts" <<TS
 import { readFileSync } from "node:fs";
-import "$ROOT/loki-ts/src/util/conflict_resume.ts"; // first: context.ts -> pr_lessons -> pr -> run_outputs -> conflict_resume is a cycle that only loads from this end
 import { FIXED_RULES } from "$ROOT/loki-ts/src/e10ext/context.ts";
 import { firstError, failureExcerpt } from "$ROOT/loki-ts/src/util/check_result.ts";
 import { failIds, failureGroup } from "$ROOT/loki-ts/src/engine10/failures.ts";
@@ -250,6 +255,10 @@ for (const f of ["pytest", "jest", "vitest", "gotest", "surefire", "dotnet"]) {
 const a = group("vitest-suite-a.txt", true), b = group("vitest-suite-b.txt", true);
 res("L005 full suite: the signature carries the failing ids", a.signature.includes("divides") && b.signature.includes("subtracts"));
 res("L005 full suite: two different failing sets give two stall signatures", a.signature !== b.signature);
+const ba = group("bun-suite-a.txt", true), bb = group("bun-suite-b.txt", true);
+res("L005 bun full suite: failing ids parsed from (fail) and colored lines", ba.signature.includes("calc > divides") && bb.signature.includes("calc > adds"));
+res("L005 bun full suite: two different failing sets give two stall signatures", ba.signature !== bb.signature);
+for (const f of ["pytest", "jest", "vitest", "gotest", "surefire", "dotnet", "cargo", "bun-suite-a", "bun-suite-b"]) res("L005 " + f + ": failing test ids parsed", failIds(readFileSync(FX + f + ".txt", "utf8")).length > 0);
 const jv = classifyRunnerOutput(readFileSync(FX + "jest-validation.txt", "utf8"));
 res("L005 jest Validation Error is harness-owned", jv.kind === "load_error" && jv.owner === "harness");
 
@@ -322,7 +331,9 @@ run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress LOKI_RISK_TIER=me
 last="$(ev '[e["data"] for e in E if e["type"]=="stage.completed" and e["stage"]=="verify"][-1]')"
 has "quick-only end: the last verify is quick" "$last" "'verify_scope': 'quick'"
 has "quick-only end: verify lists the missing complete verify as NOT PROVEN" "$last" "quick re-verify only"
-[ "$(fix_sessions)" = "2" ] && ok "quick-only end: two fix rounds, then STALLED (a not-rerun suite failure never counts toward the stall)" || { bad "quick-only end: $(fix_sessions) fix sessions (want 2)"; dump; }
+suites="$(ev 'sum(1 for e in E if e["type"]=="test.result" and str(e["data"].get("name","")).startswith("full suite") and e["data"].get("result") in ("pass","fail"))')"
+[ "$(fix_sessions)" = "1" ] && ok "quick-only end: one fix round, then STALLED (the same targeted failure settles the stall with a suite rerun)" || { bad "quick-only end: $(fix_sessions) fix sessions (want 1)"; dump; }
+[ "$suites" = "2" ] && ok "quick-only end: the stall was settled by one harness suite rerun, not a model session" || bad "quick-only end: full suite ran $suites times (want 2)"
 [ "$(outcome)" != "VERIFIED" ] && ok "quick-only end: not VERIFIED (Outcome $(outcome))" || bad "quick-only end: VERIFIED without a complete verify"
 
 # stale stall: verify 1 fails calc.test.ts (task-named, rerun by every quick verify) and the full suite (cfg.json, read by loader.test.ts, which
@@ -334,7 +345,7 @@ printf 'import { expect, test } from "bun:test";\nimport { readFileSync } from "
 SEED="$T/seed-cfg" run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_BREAK_CFG=1 E2E_STUB_FIX=cfgfirst LOKI_RISK_TIER=medium
 v1="$(ev '[g["signature"].split(" ")[0] + " " + g["signature"].split(" ")[1] for e in E if e["type"]=="stage.completed" and e["stage"]=="verify" for g in e["data"]["failures_grouped"]][:2]')"
 has "stale stall: verify 1 failed the full suite" "$v1" "full suite:"
-[ "$(fix_sessions)" = "2" ] && ok "stale stall: round 2 ran (a carried suite failure is not a repeat)" || { bad "stale stall: $(fix_sessions) fix sessions (want 2)"; dump; }
+[ "$(fix_sessions)" = "2" ] && ok "stale stall: round 2 ran (the suite rerun shows the suite fixed, so this is not a repeat)" || { bad "stale stall: $(fix_sessions) fix sessions (want 2)"; dump; }
 [ "$(outcome)" = "VERIFIED" ] && ok "stale stall: run is VERIFIED" || { bad "stale stall: outcome is '$(outcome)', not VERIFIED"; dump; }
 
 # lint twice: tool.sh fails bash -n after implement and again (a new error) after round 1 while the suite passes; round 2 fixes it.

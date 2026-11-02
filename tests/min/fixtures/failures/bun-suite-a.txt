@@ -1,0 +1,44 @@
+[0m[1mbun test [0m[2mv1.3.13 (bf2e2cec)[0m
+[0m
+b.test.ts:
+[0m[1m1 |[0m [0m[35mimport[0m { expect, test } [0m[35mfrom[0m [0m[32m"bun:test"[0m[0m[2m;[0m
+[0m[1m2 |[0m test([0m[32m"subtracts"[0m, () => { expect([0m[33m5[0m - [0m[33m3[0m)[0m[3m[1m.toBe[0m([0m[33m1[0m)[0m[2m;[0m })[0m[2m;[0m
+                                            [31m[1m^[0m
+[0m[31merror[0m[2m:[0m [1m[2mexpect([0m[31mreceived[0m[2m).[0mtoBe[2m([0m[32mexpected[0m[2m)[0m
+
+Expected: [32m1[0m
+Received: [31m2[0m
+[0m
+[0m      [2mat [0m[0m[2m<anonymous>[0m[2m ([0m[0m[36m[2m/work/repo/[0m[36mb.test.ts[0m[2m:[0m[33m2[0m[2m:[33m41[0m[2m)[0m
+[0m[31m✗[0m[0m[1m subtracts[0m [0m[2m[0.19ms[0m[2m][0m
+[0m
+a.test.ts:
+[0m[1m1 |[0m [0m[35mimport[0m { expect, test, describe } [0m[35mfrom[0m [0m[32m"bun:test"[0m[0m[2m;[0m
+[0m[1m2 |[0m describe([0m[32m"calc"[0m, () => {
+[0m[1m3 |[0m  test([0m[32m"multiplies"[0m, () => { expect([0m[33m3[0m + [0m[33m4[0m)[0m[3m[1m.toBe[0m([0m[33m12[0m)[0m[2m;[0m })[0m[2m;[0m
+                                              [31m[1m^[0m
+[0m[31merror[0m[2m:[0m [1m[2mexpect([0m[31mreceived[0m[2m).[0mtoBe[2m([0m[32mexpected[0m[2m)[0m
+
+Expected: [32m12[0m
+Received: [31m7[0m
+[0m
+[0m      [2mat [0m[0m[2m<anonymous>[0m[2m ([0m[0m[36m[2m/work/repo/[0m[36ma.test.ts[0m[2m:[0m[33m3[0m[2m:[33m43[0m[2m)[0m
+[0m[31m✗[0m [0mcalc[2m >[0m[1m multiplies[0m [0m[2m[0.08ms[0m[2m][0m
+[0m[1m1 |[0m [0m[35mimport[0m { expect, test, describe } [0m[35mfrom[0m [0m[32m"bun:test"[0m[0m[2m;[0m
+[0m[1m2 |[0m describe([0m[32m"calc"[0m, () => {
+[0m[1m3 |[0m  test([0m[32m"multiplies"[0m, () => { expect([0m[33m3[0m + [0m[33m4[0m)[0m[3m[1m.toBe[0m([0m[33m12[0m)[0m[2m;[0m })[0m[2m;[0m
+[0m[1m4 |[0m  test([0m[32m"adds"[0m, () => { expect([0m[33m1[0m + [0m[33m1[0m)[0m[3m[1m.toBe[0m([0m[33m2[0m)[0m[2m;[0m })[0m[2m;[0m
+[0m[1m5 |[0m  test([0m[32m"divides"[0m, () => { expect([0m[33m8[0m / [0m[33m2[0m)[0m[3m[1m.toBe[0m([0m[33m5[0m)[0m[2m;[0m })[0m[2m;[0m
+                                           [31m[1m^[0m
+[0m[31merror[0m[2m:[0m [1m[2mexpect([0m[31mreceived[0m[2m).[0mtoBe[2m([0m[32mexpected[0m[2m)[0m
+
+Expected: [32m5[0m
+Received: [31m4[0m
+[0m
+[0m      [2mat [0m[0m[2m<anonymous>[0m[2m ([0m[0m[36m[2m/work/repo/[0m[36ma.test.ts[0m[2m:[0m[33m5[0m[2m:[33m40[0m[2m)[0m
+[0m[31m✗[0m [0mcalc[2m >[0m[1m divides[0m [0m[2m[0.11ms[0m[2m][0m
+
+[0m[32m 1 pass[0m
+[0m[31m 3 fail[0m
+ 4 expect() calls
+Ran 4 tests across 2 files. [0m[2m[[1m8.00ms[0m[2m][0m

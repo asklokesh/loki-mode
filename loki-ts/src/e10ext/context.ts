@@ -5,7 +5,7 @@
 import { readRepoMapCache, repoCacheDir, repoKey } from "../engine10/cache.ts";
 import type { RepoMap } from "../engine10/repomap.ts";
 import { loadRepoMap } from "../engine10/sizing.ts";
-import type { RunContext, TestMap, TestRef } from "../engine10/types.ts";
+import { FINISH_LINE, type RunContext, type TestMap, type TestRef } from "../engine10/types.ts";
 import { unitBrief } from "../features/speed/unit_mode.ts";
 import { signatureDigest } from "../util/ts_signatures.ts";
 import { contextPack, packEnabled, type ContextPack } from "../util/context_pack.ts";
@@ -18,7 +18,7 @@ export interface ContextDeps {
 
 // S41-10b: the implement/fix brief's leading block. A plain constant, no task text or interpolation, so
 // every brief starts with the same bytes (cache-stable prefix). Per-task context is appended after it. E-150: repeated verbatim as the brief's last line (recency); same bytes every task.
-export const FINISH_LINE = "Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason; cite test as path:line>.";
+export { FINISH_LINE }; // defined in engine10/types.ts, a leaf module, so conflict_resume and steer import it without a cycle through this file
 export const FIXED_RULES = [
   "You are the Loki 10 implement stage, doing the complete task described below in this repository. Do whatever a senior engineer would do to finish it correctly: read, change and test as needed across any files the task requires.",
   "Rules:",

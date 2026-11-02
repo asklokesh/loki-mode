@@ -1,0 +1,25 @@
+[1m[32m   Compiling[0m calc v0.1.0 (/work/repo)
+[1m[32m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+[1m[32m     Running[0m unittests src/lib.rs (target/debug/deps/calc-5c9b1381b3177be3)
+
+running 2 tests
+test tests::adds ... ok
+test tests::multiplies ... FAILED
+
+failures:
+
+---- tests::multiplies stdout ----
+
+thread 'tests::multiplies' panicked at src/lib.rs:8:23:
+assertion `left == right` failed
+  left: 7
+ right: 12
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::multiplies
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[31merror[0m[1m:[0m test failed, to rerun pass `--lib`

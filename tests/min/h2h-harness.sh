@@ -38,6 +38,7 @@
 #  11. commit_step_state(): `git add -A -- . ':(exclude).loki'`; both step-commit checks must fail
 #      (git refuses the pathspec once .loki is gitignored, which aborted the first paid learning run).
 #  12. step_learning(): drop the `in before_ids` filter (every mistake counts as a repeat); the repeats check must fail.
+#  13. loki_env_overrides(): drop the refused-key check; the three refusal checks must fail.
 #  13. config_env(): leave LOKI_WORKED_EXAMPLE unset in the lessons arm; the arms check must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -131,13 +132,27 @@ has "verdict: agreement, false VERIFIED, PARTIAL split, missed passes, fix round
 has "verdict: the v11.104.0 result reads 5 of 16, 0 false VERIFIED, 11 PARTIAL passes" "$verdict_out" "old 5 0 11"
 has "wilson: 0/10 and 5/10" "$verdict_out" "wilson [0.0, 0.2775] [0.2366, 0.7634]"
 
+# H2H_LOKI_ENV: extra LOKI_* variables for Loki contestants only; a model pin or learning-arm key is refused.
+knob() { H2H_LOKI_ENV="$1" python3 -I -c '
+import sys; sys.path.insert(0, sys.argv[1]); import h2h
+try:
+    o = h2h.loki_env_overrides(); print("ok", sorted(o.items()), h2h.config_env("loki-haiku", {}).get("LOKI_SESSION_MODEL"), "LOKI_E10_FIX_RESUME" in h2h.config_env("raw-haiku", {}))
+except SystemExit as e:
+    print("refused", e)' "$ROOT/benchmarks/h2h"; }
+has "loki env: a plain LOKI_ knob reaches Loki contestants, the haiku pin stays, raw configs never see it" "$(knob LOKI_E10_FIX_RESUME=1)" "ok [('LOKI_E10_FIX_RESUME', '1')] haiku False"
+has "loki env: the model pin is refused" "$(knob LOKI_SESSION_MODEL=opus)" "refused h2h: H2H_LOKI_ENV may not set LOKI_SESSION_MODEL"
+has "loki env: a model route key is refused" "$(knob LOKI_MODEL_OVERRIDE=opus)" "refused"
+has "loki env: a learning-arm knob is refused" "$(knob LOKI_PR_LESSONS=1)" "refused h2h: H2H_LOKI_ENV may not set LOKI_PR_LESSONS"
+has "loki env: a non-LOKI entry is refused" "$(knob PATH=/tmp)" "refused"
+
 # The task set checks itself: the reference solution passes every task's hidden tests and an
 # untouched repo passes none, across every language in the set.
 need go
 need cargo
 J="$T/selfcheck.json"
-TMPDIR="$T" bash benchmarks/h2h/run.sh --configs oracle,noop --jobs 4 --out "$J" >"$T/selfcheck.log" 2>&1
+TMPDIR="$T" H2H_LOKI_ENV=LOKI_E10_FIX_RESUME=1 bash benchmarks/h2h/run.sh --configs oracle,noop --jobs 4 --out "$J" >"$T/selfcheck.log" 2>&1
 check "oracle/noop self-check: runner exits 0" test "$?" = 0
+check "loki env: the results file records H2H_LOKI_ENV" test "$(runs 'd.get("loki_env")')" = "{'LOKI_E10_FIX_RESUME': '1'}"
 ntasks="$(find benchmarks/h2h/tasks -mindepth 2 -maxdepth 2 -name meta.json | wc -l | tr -d ' ')"
 check "self-check covered every task ($ntasks)" test "$(runs 'len(d["tasks"])')" = "$ntasks"
 check "oracle passes every task" test "$(runs '[s["passed"] == s["n"] for s in d["summary"] if s["config"] == "oracle"]')" = "[True]"

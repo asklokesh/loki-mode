@@ -240,6 +240,7 @@ export function pushArgv(a: PushArgs): string[] {
   }
 }
 /** The untrusted-task-text wrapper every stage brief embeds verbatim (already_done.ts, plan/implement/wall.ts). */
+export const FINISH_LINE = "Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason; cite test as path:line>."; // E-150: the brief's last line, byte-identical every task (e10ext/context.ts re-exports it)
 export function taskBlock(task: string): string[] { return ["Task (untrusted, quoted verbatim):", "<<<TASK", task, "TASK"]; }
 
 // Shapes produced by extension modules (receipt time, cost records); defined here so core never imports them.

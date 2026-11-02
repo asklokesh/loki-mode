@@ -1159,9 +1159,14 @@ export function changedFiles(repoDir: string, baseSha: string, skip?: (f: string
   return [...new Set([...tracked, ...untracked])].filter((f) => !f.startsWith(".loki/") && !skip?.(f)); // skip: install-owned paths (FC-DEPS-NOT-INSTALLED)
 }
 
-/** L025: a content digest per changed path ("-" when the path is gone), recorded by each verify so the next one knows which files a fix round touched. */
+/** One file digest: a symlink by its target, a file over 4 MB by its size, else the sha256 of its bytes; throws when unreadable. */
+export function sha256File(abs: string): string {
+  const st = lstatSync(abs);
+  return st.isSymbolicLink() ? `link:${readlinkSync(abs)}` : st.size > 4_000_000 ? `big:${st.size}` : createHash("sha256").update(readFileSync(abs)).digest("hex");
+}
+/** L025: a digest per changed path ("-" when the path is gone), recorded by each verify so the next one knows which files a fix round touched. */
 export function fileHashes(repoDir: string, files: string[]): Record<string, string> {
-  return Object.fromEntries(files.map((f) => { try { return [f, createHash("sha256").update(readFileSync(join(repoDir, f))).digest("hex").slice(0, 16)]; } catch { return [f, "-"]; } }));
+  return Object.fromEntries(files.map((f) => { try { return [f, sha256File(join(repoDir, f))]; } catch { return [f, "-"]; } }));
 }
 /** L025: the paths whose content differs between two fileHashes records, including paths that left or joined the diff. */
 export function changedSince(prev: Record<string, string>, now: Record<string, string>): string[] {
@@ -1248,7 +1253,7 @@ function execFiles(repoDir: string): Record<string, string> | null {
   for (const f of all) {
     if (!(EXEC_NAMES.has(basename(f)) || (VENV_TOOL.test(basename(f)) && inVenvBin(f)))) continue;
     const abs = join(repoDir, f);
-    try { const st = lstatSync(abs); out[f] = st.isSymbolicLink() ? `link:${readlinkSync(abs)}` : st.size > 4_000_000 ? `big:${st.size}` : createHash("sha256").update(readFileSync(abs)).digest("hex"); } catch { out[f] = "unreadable"; }
+    try { out[f] = sha256File(abs); } catch { out[f] = "unreadable"; }
   }
   return out;
 }

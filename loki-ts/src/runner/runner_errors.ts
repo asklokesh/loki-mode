@@ -1,6 +1,7 @@
 // FC-02 / Engine Law L5: one shared classifier for "the test runner could not load or collect" versus "a test failed".
 // A load or collection error is an ERROR owned by the harness (cwd, config, install, import path), never by the code
 // under test, so it must not drive fix rounds or count toward STALLED. Used by verify.ts, wall.ts and deep.ts.
+import { stripAnsi } from "../util/check_result.ts";
 // ponytail: text-pattern based, like failures.ts; a real failed-test count in the same output always wins (mixed output is a code failure).
 
 export interface RunnerOutcome {
@@ -50,7 +51,7 @@ function firstLoadLine(out: string): string {
 
 /** Classifies a FAILED run's output (exit nonzero). A passing run must not be passed here. */
 export function classifyRunnerOutput(out: string): RunnerOutcome {
-  out = out.replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, ""); // L005: a raw runner stream still classifies (callers usually strip ANSI first)
+  out = stripAnsi(out); // L005: a raw runner stream still classifies (callers usually strip ANSI first)
   if (!hasRealTestFailure(out)) {
     for (const [re, why] of LOAD_PATTERNS) {
       if (re.test(out)) return { kind: "load_error", owner: "harness", reason: `runner could not load: ${why}: ${firstLoadLine(out)}` };
