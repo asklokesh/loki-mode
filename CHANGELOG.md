@@ -5,6 +5,39 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.118.1 (2026-11-01)
+
+The Docker images build again.
+
+### Fixed
+
+- v11.118.0's Docker image build failed because the engine source now imports the bundled price table (`loki-ts/data/model-pricing.json`) and the build stage did not copy it; npm, Homebrew and the SDKs were unaffected. Both Docker build stages now copy it, and a release check fails when a build stage that copies the engine source misses any file that source imports from outside it.
+
+## v11.118.0 (2026-11-01)
+
+Shell commands in a run no longer wait on a safety subprocess, operator permission policies work again, and model prices come from one table.
+
+### Changed
+
+- The safety check on each shell command a run makes is decided in-process in about 0.2 ms instead of starting a 0.3 s bash script. Commands any rule of that script could deny (deletes, Docker, host control, port claims, nested shells, unparsable text and the dangerous-pattern list) still go to the script and get its verdict unchanged; an adversarial review of 3,386 disguised commands found none the script denies that the new path allows. Every check is linear in command length, so a long command cannot stall a run.
+- Agent SDK 0.3.316 (bundled Claude Code 2.1.316).
+
+### Fixed
+
+- With an operator permission policy in place, every shell command was denied because the script's intentionally empty answer was read as a failure.
+- The shipped package could not find its price file and used an outdated copy, so newer models were priced wrong (some estimates several times too high). All engine readers now use the one bundled price table; older model ids it does not list stay unpriced, so cost caps warn instead of trusting a guess.
+
+## v11.117.0 (2026-11-01)
+
+Learning from earlier runs is more precise and safer; it stays off by default until a benchmark shows it pays.
+
+### Changed
+
+- With `LOKI_PR_LESSONS=1`, a lesson reaches the next run only if it is a failing check, a restored test edit or a spec conflict and it concerns a file that run will touch. Each lesson is one line led by its file, the block is capped at 400 bytes (was 1200), and "edited outside the plan" notes and run summaries are never passed on, so a repo convention that needs an extra file is no longer taught as a mistake.
+- With `LOKI_WORKED_EXAMPLE=1`, a past run is offered as an example only for a near-duplicate task.
+- A check that blocks a session from stopping is now recorded as a lesson (secrets redacted, per run, capped, cleaned when lessons are off or a run is cancelled). Each run writes `.loki/runs/<id>/lessons-injected.json` with what it received.
+- Default runs are unchanged: with both settings off the brief is identical to the previous release. A larger learning benchmark (8 task sequences, 3 reps) could not separate lessons on from off, because Loki on Haiku made almost no repeatable mistakes there, so both stay opt-in.
+
 ## v11.116.0 (2026-11-01)
 
 Loki on Haiku now matches raw Claude Code on Haiku on a 24-task benchmark at about two-thirds of the cost per passed task.

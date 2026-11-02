@@ -3,7 +3,7 @@ import { installOwned } from "../../project_model/install.ts";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { withStagePrefix } from "../../features/lean_prefix.ts"; import { outOfRepoReask, outOfRepoTests } from "../../project_model/conventions.ts";
-import { formatLessonsForBrief, learningsBlock, recordUse, retrieveLessons } from "../../util/pr_lessons.ts"; export { learningsBlock }; // learningsBlock lives with the other brief-note helpers
+import { learningsBlock, lessonsForBrief } from "../../util/pr_lessons.ts"; export { learningsBlock }; // learningsBlock lives with the other brief-note helpers
 import { FINISH_LINE, FIXED_RULES, briefRecord, type BriefRecord } from "../../e10ext/context.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { cascadeDowngrade, haikuFirstDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
@@ -100,9 +100,8 @@ export const implementStage: Stage = {
     const downgrade = routed ? null : cascadeDowngrade(ctx.model) ?? haikuFirstDowngrade(ctx.model); // the router replaces the opt-in downgrade lists; haiku-first (TEN-COST-16) only when the cascade is off
     const cascade = downgrade !== null;
     if (downgrade) process.stderr.write(`${downgrade.note}\n`);
-    const lessons = retrieveLessons(ctx.repoDir, task, 3, (prior.plan?.relevant_files as string[] | undefined) ?? []); // T6: reviewer lessons from earlier merged PRs plus run lessons (util/pr_lessons.ts learnFromRun), tagged as used by this run
-    try { recordUse(ctx.repoDir, ctx.runId, lessons.map((l) => l.id)); } catch { /* memory is best-effort */ }
-    const bc = briefCtx(ctx, routed ? undefined : downgrade?.to ?? ctx.model), repoMap = bc.text + formatLessonsForBrief(lessons) + learningsBlock(ctx.repoDir); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths
+    const lessons = lessonsForBrief(ctx.repoDir, ctx.runId, task, [...((prior.plan?.relevant_files as string[] | undefined) ?? []), ...impacted], ctx.runDir); // T6: reviewer lessons plus run lessons on the relevant files or their impacted tests (util/pr_lessons.ts), tagged as used by this run and recorded in lessons-injected.json
+    const bc = briefCtx(ctx, routed ? undefined : downgrade?.to ?? ctx.model), repoMap = bc.text + lessons + learningsBlock(ctx.repoDir); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths
 
     const spec = specFor(ctx);
     // CH-03: resume plan's session on the same model (never when routed: per-unit models differ). Wall, verify and seal never join the chain. planChain owns eligibility; `!plan` here only keeps plan_chain out of the data when plan was skipped.

@@ -1,0 +1,1 @@
+Add formatOrdinal(n: number): string to src/format.ts: 1 gives "1st", 2 "2nd", 3 "3rd", 4 "4th", 11 "11th", 12 "12th", 13 "13th", 21 "21st", 102 "102nd", 111 "111th" and 0 "0th". A value that is not a non-negative integer (for example 1.5 or -1) throws RangeError("n must be a non-negative integer").

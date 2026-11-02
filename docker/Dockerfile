@@ -14,6 +14,8 @@ RUN bun install --frozen-lockfile
 COPY packages/control-plane/ ./
 COPY loki-ts/tsconfig.json /src/loki-ts/tsconfig.json
 COPY loki-ts/src/ /src/loki-ts/src/
+# loki-ts/src imports ../../data/model-pricing.json (the one price table), so data/ sits next to src/.
+COPY loki-ts/data/ /src/loki-ts/data/
 # routes/config.ts imports ../../../../../schemas/loki-yaml.schema.json (10.8.0 docker build failed without it)
 COPY schemas/ /src/schemas/
 RUN bun run build:all
@@ -21,12 +23,12 @@ RUN bun run build:all
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="11.116.0"
+LABEL version="11.118.1"
 # v7.4.5 fix (BUG-3): override the OCI-standard image.version label that
 # BuildKit auto-injects from the FROM ubuntu:24.04 base. Registries and
 # scanners read this; without the override they reported the Ubuntu version
 # (24.04) instead of the Loki Mode version.
-LABEL org.opencontainers.image.version="11.116.0"
+LABEL org.opencontainers.image.version="11.118.1"
 LABEL description="Loki Mode by Autonomi - Autonomous spec-to-product system (RARV-C closure loop). Provider-agnostic: Claude Code, Codex CLI, Cline, Aider"
 LABEL url="https://www.autonomi.dev/"
 
