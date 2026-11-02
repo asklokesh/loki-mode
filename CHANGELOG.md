@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.117.0 (2026-11-01)
+
+Learning from earlier runs is more precise and safer; it stays off by default until a benchmark shows it pays.
+
+### Changed
+
+- With `LOKI_PR_LESSONS=1`, a lesson reaches the next run only if it is a failing check, a restored test edit or a spec conflict and it concerns a file that run will touch. Each lesson is one line led by its file, the block is capped at 400 bytes (was 1200), and "edited outside the plan" notes and run summaries are never passed on, so a repo convention that needs an extra file is no longer taught as a mistake.
+- With `LOKI_WORKED_EXAMPLE=1`, a past run is offered as an example only for a near-duplicate task.
+- A check that blocks a session from stopping is now recorded as a lesson (secrets redacted, per run, capped, cleaned when lessons are off or a run is cancelled). Each run writes `.loki/runs/<id>/lessons-injected.json` with what it received.
+- Default runs are unchanged: with both settings off the brief is identical to the previous release. A larger learning benchmark (8 task sequences, 3 reps) could not separate lessons on from off, because Loki on Haiku made almost no repeatable mistakes there, so both stay opt-in.
+
 ## v11.116.0 (2026-11-01)
 
 Loki on Haiku now matches raw Claude Code on Haiku on a 24-task benchmark at about two-thirds of the cost per passed task.

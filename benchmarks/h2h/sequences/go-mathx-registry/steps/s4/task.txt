@@ -1,0 +1,1 @@
+Add Pow(base, exp int) (int, error) to mathx/mathx.go. It returns base raised to the power exp by repeated multiplication, with Pow(x, 0) equal to 1 for any x (including 0): Pow(2, 10) is 1024 and Pow(-3, 3) is -27. A negative exp returns 0 and an error whose message is "negative exponent".

@@ -1,0 +1,1 @@
+Add celsius_to_fahrenheit(celsius) to units/converters.py, next to the existing meters_to_feet and feet_to_meters. It returns celsius * 9 / 5 + 32 rounded to 2 decimal places, so celsius_to_fahrenheit(37.5) is 99.5 and celsius_to_fahrenheit(-40) is -40.0.

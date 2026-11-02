@@ -1,0 +1,1 @@
+Add IsPrime(n int) bool to mathx/mathx.go. It reports whether n is a prime number; anything below 2 is not prime. IsPrime(2) and IsPrime(97) are true, IsPrime(1), IsPrime(0), IsPrime(-7) and IsPrime(91) are false.
