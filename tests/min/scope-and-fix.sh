@@ -81,6 +81,7 @@
 #  26. loki-ts/src/engine10/stages/implement.ts: no challenge after the empty-done correction (the empty-done path is not challenged).
 #  27. loki-ts/src/engine10/stages/implement.ts: already_done exit regardless of edits (the editalready run loses multiply).
 #  28. loki-ts/src/util/check_result.ts codeOnly: stop stripping strings (public unit reads strings=-).
+#  29. loki-ts/src/util/check_result.ts addedPublicFunctions: count a TS constructor (public unit reads tsclass=constructor+allow).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -237,7 +238,7 @@ const o = [
   "pyprivcls=" + f("r.py", "class _Impl:\n    def run(self):\n        pass\n"),
   "pynested=" + f("r.py", "def retry(n):\n    def wrapper(f):\n        pass\n    return wrapper\n"),
   "pysig=" + f("r.py", "def satisfies(v, r, strict=False):\n    pass\n", "def satisfies(v, r):\n    pass\n"),
-  "tsclass=" + f("a.ts", "export class Bucket {\n  allow(n: number) {\n    return 1;\n  }\n  private hidden() {\n  }\n}\n"),
+  "tsclass=" + f("a.ts", "export class Bucket {\n  constructor(n: number) {\n  }\n  allow(n: number) {\n    return 1;\n  }\n  private hidden() {\n  }\n}\n"),
   "tsprivcls=" + f("a.ts", "class Bucket {\n  allow(n: number) {\n    return 1;\n  }\n}\n"),
   "tslist=" + f("a.ts", "function foo() {\n}\nfunction bar() {\n}\nexport { foo };\n"),
   "dts=" + f("a.d.ts", "export function declared(): void;\n"),

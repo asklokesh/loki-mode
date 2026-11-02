@@ -886,7 +886,7 @@ export function addedPublicFunctions(path: string, head: string, base: string): 
     if (lang === "go") { const recv = /^func\s*\(\s*\w*\s*\*?\s*([A-Za-z_]\w*)/.exec(decl)?.[1]; if (/^func\b/.test(decl) && /^[A-Z]/.test(name) && (recv === undefined ? true : /^[A-Z]/.test(recv) && !GO_INTERFACE_METHODS.has(name))) out.add(name); continue; }
     if (lang === "rs") { if (/\bpub(?:\([^)]*\))?\s+(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+"[^"]*"\s+)?fn\s/.test(decl)) out.add(name); continue; }
     const fnLike = /\bfunction\b|=>|^\s*(?:(?:public|static|async|override|readonly|get|set)\s+)*[A-Za-z_$][\w$]*\s*(?:<[^>]*>)?\s*\(/.test(decl);
-    if (!fnLike) continue;
+    if (!fnLike || name === "constructor") continue; // a constructor is called as `new Class`, so the class name is the reference (seal checks classes through their methods)
     if (parent) { const cls = declOf(parent.start); if ((/^\s*export\s/.test(cls) || exported.has(parent.name)) && !/^\s*(?:private|protected)\b|#/.test(decl)) out.add(name); }
     else if (/^\s*export\s/.test(decl) || exported.has(name)) out.add(name);
   }
