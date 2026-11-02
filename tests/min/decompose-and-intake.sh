@@ -304,7 +304,7 @@ E2E_STUB_MODE=done run_loki "$L" "$T/labels-stub.log" start acme/search#25 --no-
 LEV="$(ls "$L"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
 lsize="$(python3 -I -c 'import json,sys; print(next((json.loads(l)["data"].get("size") for l in open(sys.argv[1]) if "\"variant\"" in l and json.loads(l)["type"] == "variant"), "none"))' "$LEV" 2>/dev/null)"
 case "$OUT" in *"running the issue as one run"*) [ "$lsize" = "large" ] && ok "labels: the epic-label issue sizes large in engine10's own plan stage, as in triage" || bad "labels: engine10 sized the epic-label issue '${lsize:-none}' (rc $RC)" ;; *) bad "labels: the issue did not fall back to one run" ;; esac
-printf '%s\n' "$OUT" | grep -Eq '^Split planning: .*\(0 slice runs \+ 1 planning session\)$' && ok "refused split: its planning session is reported on a Split planning line backlog adds" || bad "refused split: no Split planning line: $(printf '%s\n' "$OUT" | grep -i 'split' | head -3 | tr '\n' ';')"
+printf '%s\n' "$OUT" | grep -Eq '^Split planning: .*\(0 slice runs \+ 2 planning sessions\)$' && ok "refused split: both planning sessions (the refusal is re-asked once) are reported on a Split planning line backlog adds" || bad "refused split: no Split planning line for 2 sessions: $(printf '%s\n' "$OUT" | grep -i 'split' | head -6 | tr '\n' ';')"
 
 # --- lean + intake speed: a one-line fix on a 1246-file repo with 20 stale run branches --------------------------------
 R="$T/big"

@@ -246,11 +246,14 @@ export const ownTestPassed = (c: Record<string, unknown>, wall: ReadonlySet<stri
 const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 /** True when the implementer finished (LOKI_DONE), at least one fix round ran, and the only failures left are Loki's own Wall tests (no holdout
  *  failure; every other failing check, a full suite included, is harness-owned, pre-existing or known red on base) while one of the repo's own test
- *  checks passed. Loki's self-written tests never cost the user correct work: such a run is delivered as PARTIAL (deliverOverWallConflict). */
+ *  checks passed. Loki's self-written tests never cost the user correct work: such a run is delivered as PARTIAL (deliverOverWallConflict).
+ *  A quick re-verify (L025, verify_scope "quick") stops at the failing Wall, so the repo's own tests did not run in it: there every check the last
+ *  verify blocked on must have rerun (no carried group), and the own-test proof is left to the delivery re-verify, which demands it on that tree. */
 export function wallOnlyAfterFix(o: Outs, repoDir: string): boolean {
   const v = o.verify;
-  return o.implement?.exit === "done" && Number(o.fix?.round ?? 0) >= 1 && !!v && !v.stopped_at && wallFailures(o, repoDir, true) !== null
-    && ((Array.isArray(v.checks) ? v.checks : []) as Record<string, unknown>[]).some((c) => ownTestPassed(c, wallRelOf(o, repoDir)));
+  if (o.implement?.exit !== "done" || Number(o.fix?.round ?? 0) < 1 || !v || v.stopped_at || wallFailures(o, repoDir, true) === null) return false;
+  if (v.verify_scope === "quick") return !((v.failures_grouped as { carried?: unknown }[] | undefined) ?? []).some((g) => g.carried === true);
+  return ((Array.isArray(v.checks) ? v.checks : []) as Record<string, unknown>[]).some((c) => ownTestPassed(c, wallRelOf(o, repoDir)));
 }
 /** What the Wall says now: each failing Wall check with its sorted failing ids and first error. Equal signatures around a fix round mean the round
  *  made no progress on the Wall (machine.ts then stops fixing a Wall-only failure); a different one means the round moved it, so rounds continue. */
