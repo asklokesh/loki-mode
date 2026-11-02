@@ -14,8 +14,8 @@ import { hasRelevantTests, isTinyGreenfield, WALL_TINY_BOUND, loadRepoMap, named
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { publishSealed, removeHoldout, sealStageDir, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { clauseEvidenceBlock, evidenceOf, ingestWallCases, wallCasesBrief, wallCasesRunner, withUnreproducedEvidence, type WallEvidence } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingStackTool, projectInterpreter, type EngineTestMap } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
-import { sealedWallDir, baseJobs, classify, plannedGoDir, goPackageBrief, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, spawnGroupSync, stripAnsi } from "../../util/check_result.ts";
-import { conventionViolation, conventionsBrief, dotenvFileRead, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
+import { sealedWallDir, baseJobs, classify, plannedGoDir, goPackageBrief, goPackageClash, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, spawnGroupSync, stripAnsi } from "../../util/check_result.ts";
+import { conventionViolation, conventionsBrief, dotenvFileRead, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, rustArities, rustCallClash, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
 import { dotnetTestProject } from "../../util/stack_tools.ts";
 const WALL_PREFIX = "loki_wall_";
@@ -145,6 +145,9 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
 
   const srcTexts = [typeof prior.plan?.plan === "string" ? prior.plan.plan : "", task], targetDir = wallTargetDir(ctx.repoDir, existingTests, runners, srcTexts), pkg = api?.packageOf(`${relative(ctx.repoDir, targetDir)}/x`); // FC-23: the target package's own module system, read by a parser
   const conv = readPackageConventions(join(ctx.repoDir, pkg?.root ?? targetRoot), pkg?.runner ?? null);
+  const readText = (f: string): string | undefined => { try { return readFileSync(f, "utf8"); } catch { return undefined; } };
+  // A Wall file the target's own compiler would reject is discarded before it reaches the tree (never a fix round, never a block): a module-system clash or a Go package clause the directory cannot build with. A Rust argument-count clash depends on the code implement writes, so installCore decides it after implement (wallInstallReject).
+  const reject = (name: string, content: string): string | null => conventionViolation(conv, name, content) ?? goPackageClash(targetDir, name, content);
   const cwd = mkdtempSync(join(tmpdir(), "loki-e15-wall-"));
   const wm = wallManifestFor(ctx.repoDir, tree, task); // D77: flag-gated, null (as if off) on any failure
   for (const [n, c] of [["task.md", task], ["repomap.txt", repomapText], ...(wm ? [["wall_manifest.txt", wm.text]] : [])] as [string, string][]) writeFileSync(join(cwd, n), c, "utf8");
@@ -153,7 +156,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const model = retry?.model ?? wallFirstModel(sz.size), iterationId = `${ctx.runId}-wall${retry?.suffix ?? ""}`; // COST-11
   const session = await ctx.sessions.run({
     stage: "wall",
-    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? [], relative(ctx.repoDir, targetDir), clauseSet, evidence, isTinyGreenfield(sz.size, task, testMap)) + wallCasesBrief(runners) + goPackageBrief(ctx.repoDir, targetDir, runners, srcTexts) + (retry?.note ? `\n\n${retry.note}` : ""), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
+    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? [], relative(ctx.repoDir, targetDir), clauseSet, evidence, isTinyGreenfield(sz.size, task, testMap)) + wallCasesBrief(runners) + goPackageBrief(ctx.repoDir, targetDir, runners, srcTexts, (d) => goPackagePath(readText, ctx.repoDir, d)) + (retry?.note ? `\n\n${retry.note}` : ""), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
     tier: "development",
     model,
@@ -165,17 +168,17 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   if (session.killed || session.exit === null) { rmSync(cwd, { recursive: true, force: true }); return done({ status: "failed", data: { iteration_ids: [iterationId], model }, reason: "wall session aborted, killed, or timed out", killed: true }); } // E-54: also covers killed-from-outside (exit:null, "killed before exiting" per types.ts)
   const casesBad = ingestWallCases(cwd, runners, ctx.repoDir); if (casesBad) { rmSync(cwd, { recursive: true, force: true }); return done({ status: "failed", data: { iteration_ids: [iterationId], model }, reason: casesBad }); } // CCR-06: invalid structured output fails closed with a named reason, never free-form code
   const planText = typeof prior.plan?.plan === "string" ? prior.plan.plan : null, repoFiles = repoMap?.files ?? [];
-  const goPkgPath = goPackagePath((f) => { try { return readFileSync(f, "utf8"); } catch { return undefined; } }, ctx.repoDir, targetDir); // the Go package under test, by import path
-  const oor = (): { name: string; why: string }[] => readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)).flatMap((name) => { const text = readFileSync(join(cwd, name), "utf8"), why = outOfRepoTarget(text) ?? dotenvFileRead(text) ?? vacuousCheck(name, text, goPkgPath) ?? phantomReason(phantomRepoPaths(text, name, targetDir, ctx.repoDir, planText, task), repoFiles, relative(ctx.repoDir, targetDir), pkg?.root ?? "", task); return why ? [{ name, why }] : []; });
+  const goPkgPath = goPackagePath(readText, ctx.repoDir, targetDir), planned = runners.includes("go") ? plannedGoDir(ctx.repoDir, srcTexts) : null, goTested = planned?.pkg && planned.dir !== targetDir ? goPackagePath(readText, ctx.repoDir, planned.dir) : undefined; // the Wall directory's import path, and the package under test when the Wall sits elsewhere (a black-box tests/ package)
+  const oor = (): { name: string; why: string }[] => readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)).flatMap((name) => { const text = readFileSync(join(cwd, name), "utf8"), why = outOfRepoTarget(text) ?? dotenvFileRead(text) ?? vacuousCheck(name, text, goPkgPath, goTested) ?? phantomReason(phantomRepoPaths(text, name, targetDir, ctx.repoDir, planText, task), repoFiles, relative(ctx.repoDir, targetDir), pkg?.root ?? "", task); return why ? [{ name, why }] : []; });
   const bad1 = oor(); if (bad1.length > 0 && !wallCasesRunner(runners) && !signal.aborted && !ctx.overCap?.()) await ctx.sessions.run({ stage: "wall", brief: withStagePrefix(outOfRepoReask("Rewrite these Wall files in place, keeping the same names and acceptance coverage.", bad1)), tier: "development", model, iterationId: `${iterationId}-oor`, limitS: wallLimitS(sz.size), maxOutputTokens: wallOutputCap(), signal, cwd }); // FC-WALL-OUT-OF-REPO-TARGET: re-ask once in the same directory with the precise reason
-  const oorBad = new Map(oor().map((b) => [b.name, b.why])), all = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)), held = stashHoldout({ runId: ctx.runId, repoDir: ctx.repoDir, srcDir: cwd, targetDir, names: all.filter((n) => !oorBad.has(n) && !conventionViolation(conv, n, readFileSync(join(cwd, n), "utf8"))), runnerOf: (n) => guessRunner(n, runners) }), generated = all.filter((n) => !held?.names.has(n)); // P12-05: the held-out subset never reaches the repo, runDir or the implementer
+  const oorBad = new Map(oor().map((b) => [b.name, b.why])), all = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)), held = stashHoldout({ runId: ctx.runId, repoDir: ctx.repoDir, srcDir: cwd, targetDir, names: all.filter((n) => !oorBad.has(n) && !reject(n, readFileSync(join(cwd, n), "utf8"))), runnerOf: (n) => guessRunner(n, runners) }), generated = all.filter((n) => !held?.names.has(n)); // P12-05: the held-out subset never reaches the repo, runDir or the implementer
   const sealedDir = sealStageDir(ctx.runId, ctx.repoDir); rmSync(sealedDir, { recursive: true, force: true }); // staged outside the repo tree; publishSealed moves it to <runDir>/wall at install
   if (generated.length > 0) mkdirSync(sealedDir, { recursive: true });
 
   const contents = new Map<string, string>();
   const discarded: { file: string; reason: string }[] = []; // FC-23: a file the package's own compiler would reject is harness-owned: sealed copy only, never in the tree
   for (const name of generated) {
-    const content = readFileSync(join(cwd, name), "utf8"), oorWhy = oorBad.get(name), bad = oorWhy ?? conventionViolation(conv, name, content);
+    const content = readFileSync(join(cwd, name), "utf8"), oorWhy = oorBad.get(name), bad = oorWhy ?? reject(name, content);
     writeFileSync(join(sealedDir, name), content, "utf8");
     if (oorWhy) discarded.push({ file: name, reason: `${oorWhy}; wall test discarded after one rewrite request` }); else if (bad) discarded.push({ file: name, reason: `${bad}; wall test did not compile under the package config` }); else contents.set(name, content);
   }
@@ -183,6 +186,12 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   return { kind: "authored", ...(generated.length > 0 ? { staged: true } : {}), model, iterationId, task, sizeName: sz.size, runners, targetDir, generated, contents, discarded, ...(clauseSet.clauses.length ? { clauses: clauseSet } : {}), ...(evidence ? { evidence } : {}), ...(wm ? { manifestSha256: wm.sha256 } : {}), ...(held ? { holdoutDir: held.dir } : {}) };
 }
 
+/** The install-time compile check, run once implement has written its code: a Rust Wall call whose argument count no definition in the crate has AS IT NOW STANDS (so a task that changes a constructor keeps the test that proves it). `afterImplement` false (the sequential Wall installs before implement): nothing is decided here; the delivery over a Wall conflict handles a Wall file that then fails to compile. */
+export function wallInstallReject(repoDir: string, task: string, runners: RunnerName[], afterImplement: boolean): (name: string, content: string) => string | null {
+  if (!afterImplement || !runners.includes("cargo")) return () => null;
+  let ar: ReturnType<typeof rustArities> | null = null;
+  return (name, content) => name.endsWith(".rs") ? rustCallClash(repoDir, name, content, task, (ar ??= rustArities(repoDir))) : null;
+}
 /** Copy the sealed files into repoDir, emit wall.sealed, run the base run in baseDir, drop not_run files. */
 export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions = {}): StageResult { const g = installCore(ctx, a, baseDir, opts), first = g.next(); if (first.done) return first.value as StageResult; return g.next(null).value as StageResult; } // TEN-SPEED-19: sequential base run; installWallAsync runs it concurrently
 export async function installWallAsync(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions = {}): Promise<StageResult> { const g = installCore(ctx, a, baseDir, opts), first = g.next(); if (first.done) return first.value as StageResult; const y = first.value as { runner: BaseTestRunner; tests: TestRef[] }, jobs = baseJobs();
@@ -190,8 +199,10 @@ export async function installWallAsync(ctx: RunContext, a: WallAuthored, baseDir
 function* installCore(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions): Generator<{ runner: BaseTestRunner; tests: TestRef[] }, StageResult, BaseEachResult[] | null> {
   const { generated, contents, discarded, targetDir, runners } = a;
   if (generated.length > 0) { mkdirSync(targetDir, { recursive: true }); if (!publishSealed(ctx.runId, ctx.repoDir, ctx.runDir) && a.staged) return { status: "failed", data: {}, reason: "wall sealed copies missing: the staged Wall directory in the system temp directory was removed before install" }; } const sealedFiles: WallSealedFile[] = [], readOnlyFiles: ReadOnlyFile[] = [], wallTests: TestRef[] = [];
+  const late = wallInstallReject(ctx.repoDir, a.task, runners, baseDir !== ctx.repoDir);
   for (const name of generated) {
     const content = contents.get(name); if (content === undefined) continue; // discarded: sealed copy only
+    const lateWhy = late(name, content); if (lateWhy) { discarded.push({ file: name, reason: `${lateWhy}; wall test did not compile against the implemented code` }); continue; }
     const dest = join(targetDir, name), runner = guessRunner(name, runners, relative(ctx.repoDir, dest));
     writeFileSync(dest, content, "utf8");
     sealedFiles.push({ path: dest, sha256: sha256(content), ...(runner ? { runner } : {}) }); readOnlyFiles.push({ path: dest, content });

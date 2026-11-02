@@ -3,8 +3,86 @@
 Loki against raw Claude Code (`claude -p`) on the same coding tasks, scored only by hidden tests.
 This page states the protocol and the latest numbers, including where Loki loses.
 
-Latest run: `results/2026-11-01-0ff237642.json` (Loki at commit 0ff237642, the v11.113.0 engine).
-v11.114.0 shipped while this ran; these numbers do not cover it.
+Latest run: `results/2026-11-01-win-bench-v2-after.json` (raw Haiku and Loki on Haiku, 24 tasks, 2
+reps, after the changes below), against `results/2026-11-01-65440abaf-before.json` (the v11.114.0
+engine, same protocol, run the same day). The four-config run further down is the v11.113.0 engine.
+
+## Loki on Haiku against raw Haiku, before and after the Wall and session fixes
+
+Same 24 tasks, 2 reps each, `--jobs 4`, `raw-haiku,loki-haiku`. Raw Haiku was rerun in each
+invocation, so each row compares runs made under the same load.
+
+| run | config | pass | 95% CI | $ per passed task | median s | p90 s | sessions | verdict agrees | false VERIFIED |
+|---|---|---|---|---|---|---|---|---|---|
+| before (v11.114.0) | raw-haiku | 48/48 | 92.6-100% | 0.0171 | 28.0 | 206.7 | 1.00 | - | - |
+| before (v11.114.0) | loki-haiku | 42/48 | 75.3-94.1% | 0.0457 | 44.0 | 167.6 | 2.83 | 30/48 | 1 |
+| after | raw-haiku | 48/48 | 92.6-100% | 0.0192 | 29.3 | 170.7 | 1.00 | - | - |
+| after | loki-haiku | 48/48 | 92.6-100% | 0.0126 | 27.8 | 177.8 | 1.96 | 29/48 | 0 |
+
+After the changes Loki on Haiku passes every task raw Haiku passes, at 0.66 times its cost per
+passed task and 0.95 times its median time in the same invocation. It still runs about two
+sessions per task against one.
+
+Before, all six Loki losses ended with no code in the scored tree: 4 BLOCKED by Loki's own Wall
+tests (two Go package clashes, a Rust `Order::new()` call against `Order::new(id: &str)`, a Rust
+Wall assertion that contradicts the task), 1 STALLED on a Wall failure, and 1 VERIFIED that the
+hidden tests failed (py-semver-range; the default reviewer flagged the bug, but a flag never
+lowers a verdict).
+
+What changed, and what each change did on these runs (Loki on Haiku, 48 runs each):
+
+- **A run's code always reaches its branch.** Every unpublished run keeps its `loki/<id>` branch,
+  BLOCKED and FAILED included; before, only VERIFIED and PARTIAL did, and a blocked run's code went
+  into a bundle file only. BLOCKED or STALLED runs with an empty scored tree: 5 before, 0 after.
+- **A Loki Wall test never blocks delivery.** The delivery over a Wall conflict now decides on the
+  re-verify: the repo's own checks (a targeted test or the full suite) must run and pass once the
+  Wall files are discarded. Before, it needed a passing targeted own test before the re-verify,
+  which a Go Wall file that breaks its whole directory's build never allows.
+- **Wall tests that cannot compile are discarded before they reach the tree.** A Go file whose
+  package clause differs from its directory's is dropped when written; a Rust call whose argument
+  count no definition in the crate has is dropped at install, after implement, so a task that
+  changes a constructor keeps the test that proves it (an explicit `Type::method(&mut x, ..)` call
+  counts its receiver). Both are listed NOT PROVEN, with no fix session spent on them. The Go brief
+  now names the directory's package and the import path of the package under test, the Wall
+  manifest carries Go and Rust signatures, and a black-box `package tests` file that imports the
+  package under test is no longer misread as vacuous. Fix sessions: 14 before, 10 after.
+- **The unconfigured default review is opt-in for medium risk (`LOKI_REVIEW_DEFAULT=1`) and stays
+  on for high risk** (auth, payments, migrations, CI, public API). It ran on 17 of 48 runs,
+  changed no verdict, and was $1.29 of $1.92 (67%) of Loki's spend and 323 of 341 seal seconds.
+  A configured reviewer still runs. Review sessions: 17 before, 0 after (in that run the default
+  was off for every tier; the review-fixes run below keeps it on for high risk).
+- **The separate already-done session runs for issue tasks only.** On a direct task the implement
+  session already answers LOKI_ALREADY_DONE itself. **The Project Model discovery session is skipped
+  when one runner sits at the repo root** even when that runner lists no test files (cargo). Intake
+  sessions: 20 before, 0 after; the Rust discovery session alone took 12 s serial per run.
+- **Lessons and worked examples are recorded but not injected by default** (`LOKI_PR_LESSONS=1`,
+  `LOKI_WORKED_EXAMPLE=1` opt in), after the learning pilot below.
+
+Where Loki still costs more than raw: the Wall runs on the 13 tasks without a relevant visible
+test (all Go and Rust tasks and ts-cron-next), 35 Wall sessions in 48 runs, and Wall assertions
+that contradict the task still cost a fix round (10 fix sessions). One run (rs-roman-strict, rep 2)
+ended BLOCKED on such an assertion; its code was on the run branch and passed the hidden tests.
+Verdict agreement did not improve (29/48): 12 of the 18 passing runs that end PARTIAL are Go tasks, where
+no Wall file ran and no passing check names a changed symbol.
+
+Spend for these two runs and the probes behind them: $5.70 on their own ledger.
+
+After review fixes (`results/2026-11-01-win-bench-v2-review-fixes.json`, Loki on Haiku only, 2 reps,
+v11.115.0 merged in): the Wall-conflict delivery counts only the repo's own tests (a test check with
+n > 0 or a full-suite pass, never lint or the security scan), the Rust argument-count rule is decided
+after implement, the Go black-box exemption needs the package under test itself, and the default
+review stays on for high risk on the run's own model.
+
+| config | pass | 95% CI | $ per passed task | median s | p90 s | sessions | verdict agrees | false VERIFIED |
+|---|---|---|---|---|---|---|---|---|
+| loki-haiku | 47/48 | 89.1-99.6% | 0.0131 | 29.0 | 174.3 | 1.90 | 29/48 | 1 |
+
+The one failure is py-semver-range (rep 1): a lean-path run (a relevant visible test, so no Wall)
+read VERIFIED while the hidden `intersects` tests failed. The v11.114.0 baseline had the same false
+VERIFIED on the same task. Five tasks reached the high risk tier (py-invoice-rounding,
+ts-cart-discounts, ts-cron-next, rs-expr-eval, rs-interval-set), so their runs got the default
+review: 8 review sessions, $0.052 in total on Haiku.
+Spend: $1.15 on its own ledger.
 
 ## Protocol
 
@@ -148,6 +226,52 @@ file: `results/2026-11-01-7359dab35-learning.json`.
   both arms. The one first-step failure is the same Go Wall package clash as in the main run.
 - This is a pilot: 24 later steps per arm cannot detect a modest effect. It does not support
   the claim that what Loki learns from earlier runs improves pass rate or cost on this set.
+- What the learn arm could be given: no run lesson on any later step (its records show none on
+  file), the receipt facts of earlier steps (1 or 2 on file before every later step), which the
+  v11.116.0 retrieval injects as review lessons ("Run X sealed PARTIAL: <title>") when they share
+  a word with the task, and the worked example. The cost gap is one run: `ts-pricing-rules` rep 3
+  step 3 cost $0.106, while every other learn-arm step cost $0.002 to $0.007; without it the learn
+  arm's later steps cost $0.0041 per pass against nolearn's $0.0061.
+
+## Learning protocol v2 (8 sequences)
+
+Results files: `results/2026-11-01-learning-v2-after.json` (lessons, example and nolearn arms on
+the reworked retrieval) and `results/2026-11-01-learning-v2-before.json` (the v11.116.0 engine
+with both opted in, run from a checkout of that release with this harness and these sequences).
+
+- **What changed in retrieval** (util/pr_lessons.ts). A run lesson reaches the brief only when
+  its class can recur on a file (a failing check, a restored test edit, a spec conflict) and it
+  touches a file the run will touch (plan relevant files, their impacted tests, the files the
+  task names). Out-of-scope and time-limit lessons, and receipt facts, never do. One imperative
+  line per lesson, a 400-byte block (was 1200), and the worked example only for a near-duplicate
+  task. A check that blocks the session stop is now learned too (it was never recorded), and each
+  run writes `lessons-injected.json`.
+- **Protocol.** 8 sequences: the 4 above plus 4 new ones of 4 steps (`py-unit-registry`,
+  `ts-format-catalog`, `go-mathx-registry`, `py-textkit-doctest`), each with a repo convention
+  enforced by a visible test that no task text mentions (register the new function in a separate
+  registry file, add it to `__all__` with a doctest, reject non-numbers). Loki on Haiku, 3 reps.
+
+| arm | later steps pass | 95% CI | $ per passed task | later steps with a lesson injected | repeat mistakes |
+|---|---|---|---|---|---|
+| nolearn | 55/60 | 82-96% | 0.0041 | 0 | 0/60 |
+| lessons (new retrieval) | 54/60 | 80-95% | 0.0042 | 0 | 0/60 |
+| example (new retrieval) | 55/60 | 82-96% | 0.0038 | 0 | 0/60 |
+| learn (v11.116.0 retrieval) | 54/60 | 80-95% | 0.0043 | not recorded | 0/60 |
+
+- Paired by sequence, step and rep against nolearn: lessons -0.017 pass rate (95% -0.100 to
+  +0.050), cost per pass 1.005x (0.89 to 1.14); example 0.000 (-0.083 to +0.083), 0.922x
+  (0.81 to 1.04); v11.116.0 learn -0.017 (-0.083 to +0.050), 1.036x (0.93 to 1.16).
+- **Nothing was injected.** Haiku met every convention first time: every first step passed in
+  every arm (24/24), no check blocked a stop, and only 4 to 6 of 60 later steps per arm recorded
+  any recurring-class mistake, none of them a repeat of an earlier step's. The new arms were
+  therefore given exactly the brief nolearn was, and their differences are run-to-run noise.
+- **What the old retrieval would have taught.** On every rep of the 4 new sequences step 1
+  correctly edited the registry file the convention requires, and Loki recorded that as an
+  out-of-scope edit ("change only the files the task needs"). The v11.116.0 retrieval injects
+  that lesson whenever its file overlaps the next task; the new retrieval never injects it.
+- **Decision.** Lessons and the worked example stay opt-in. The lessons arm misses the rule
+  (54/60 is below 55/60); the example arm meets it (55/60, 0.92x) only vacuously, with zero
+  examples injected, so it is not evidence either way.
 
 ## Spend
 
@@ -159,6 +283,9 @@ file: `results/2026-11-01-7359dab35-learning.json`.
   $0.05 smoke run, $0.49 in total. A first attempt stopped after step 1 on a harness fault (fixed
   and covered by the stub test since); its step-1 costs were not recorded and, at the measured
   step-1 cost, came to under $0.10.
+- Learning protocol v2, on its own ledger: $1.20 against a $12 budget ($1.18 for the 336 steps
+  in the two results files, $0.02 for a one-rep, two-sequence probe kept on disk to read the
+  lesson categories).
 
 ## Reproduce
 
@@ -167,6 +294,8 @@ bash benchmarks/h2h/run.sh --configs oracle,noop                     # task self
 bash benchmarks/h2h/run.sh --reps 3 --jobs 4 --budget 38.5 --ledger spend.jsonl
 bash benchmarks/h2h/run.sh --sequences all --configs loki-haiku-learn,loki-haiku-nolearn \
     --reps 3 --jobs 4 --budget 9.2 --ledger learning.jsonl
+bash benchmarks/h2h/run.sh --sequences all --configs loki-haiku-lessons,loki-haiku-example,loki-haiku-nolearn \
+    --reps 3 --jobs 4 --budget 12 --ledger learning-v2.jsonl
 ```
 
 Real configs need a logged-in `claude` CLI plus python3, pytest, bun, go and cargo.

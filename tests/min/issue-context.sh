@@ -11,6 +11,8 @@
 #            not trusted, Loki's own comments never count); an empty list adds none; Linear intake also adds labels.
 #   briefs:  `loki start acme/calc#7` on the stub provider: a criterion stated only in a trusted comment appears in
 #            the captured plan and implement briefs; text from an untrusted comment appears in neither.
+#   already: that issue run still runs intake's already-done check (an issue can be stale); the direct-task skip
+#            that saves the session on a text task never applies to it.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/engine10/fetch_issue.ts: make isTrustedGithubComment return true for any association
@@ -20,6 +22,7 @@
 #      list assertion must fail.
 #   4. loki-ts/src/features/tracker_intake.ts: drop the LOKI_COMMENT_MARKER filter in pickTrusted; the Jira list
 #      assertion must fail (Loki's own writeback comment is quoted).
+#   5. loki-ts/src/engine10/stages/intake.ts: alreadyDoneCheckOn returns false (rebuild dist); the already assertion must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -169,5 +172,10 @@ for s in plan implement; do
         bad "no $s brief captured (rc $RC)"
     fi
 done
+ad="$(python3 -I -c 'import json,sys
+rid=json.load(open(sys.argv[1]+"/.loki/engine.json"))["run_id"]
+E=[json.loads(l) for l in open(sys.argv[1]+"/.loki/runs/"+rid+"/events.jsonl") if l.strip()]
+print(json.dumps(next(e["data"].get("intake_timing",{}).get("already_done") for e in E if e["type"]=="stage.completed" and e["stage"]=="intake")))' "$R" 2>&1)"
+case "$ad" in *"direct task"*|""|null|*Error*) bad "already: the issue run skipped the already-done check: $ad" ;; *) ok "already: the issue run still runs the already-done check ($ad)" ;; esac
 
 finish

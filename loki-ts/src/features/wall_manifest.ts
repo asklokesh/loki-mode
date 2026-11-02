@@ -7,6 +7,7 @@
 import { join } from "node:path";
 import { pySignatures } from "../util/python.ts";
 import { tsAmbiguous, tsSignatures } from "../util/ts_signatures.ts";
+import { langSignatures } from "../util/context_pack.ts";
 export interface ManifestFile { path: string; content: string }
 
 export const MANIFEST_MAX_LINES = 400;
@@ -146,7 +147,7 @@ export function buildWallManifest(files: readonly ManifestFile[], taskModules: r
   for (const path of mods) {
     const f = all.find((x) => x.path === path);
     if (!f) continue;
-    out.push("", `## signatures: ${path}`, ...(path.endsWith(".py") ? pySignatures(f.content) : safeTs(f.content, path)));
+    out.push("", `## signatures: ${path}`, ...(path.endsWith(".py") ? pySignatures(f.content) : /\.(go|rs)$/.test(path) ? langSignatures(path, f.content) : safeTs(f.content, path)));
   }
   out.push("", "## style examples");
   const named = new Set(excl.flatMap((m) => [baseOf(m).toLowerCase(), ...stemsOfTarget(m)]));

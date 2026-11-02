@@ -133,10 +133,12 @@ export function hasNestedManifest(repoDir: string): boolean {
 
 /** Intake's deterministic signals already name the runner and the test units: every detected test file runs under one detected runner, and no
  *  package manifest lives below the root. A second runner no test maps to (a package.json "test" script beside bun, say) names no unit, so it
- *  does not reopen the question. The repo-root behavior consumers keep for an unknown model is then the right one, so no session is spent. */
+ *  does not reopen the question. A runner that lists no test files (cargo runs the whole crate, so its test map is coarse and empty) resolves the
+ *  same way when it is the only runner: one root package with one known runner. The repo-root behavior consumers keep for an unknown model is
+ *  then the right one, so no session is spent. */
 export function signalsResolve(tm: { runners: readonly string[]; tests: readonly { runner: string }[] } | undefined, repoDir?: string): boolean {
   const r = tm?.tests[0]?.runner;
-  return !!tm && r !== undefined && tm.runners.includes(r) && tm.tests.every((t) => t.runner === r) && (repoDir === undefined || !hasNestedManifest(repoDir));
+  return !!tm && (r !== undefined ? tm.runners.includes(r) && tm.tests.every((t) => t.runner === r) : tm.runners.length === 1) && (repoDir === undefined || !hasNestedManifest(repoDir));
 }
 
 /** `budgetS` is the time this call may use in total (the caller derives it from the stage budget). */

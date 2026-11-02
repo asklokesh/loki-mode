@@ -15,7 +15,7 @@ default, with or without this knob, unless `LOKI_E10_INVOKER=cli`.)
 |---|---|---|
 | `off` (default) | nothing: every judge site runs on the `claude` CLI | default |
 | `judges` | the 7 one-shot JUDGE/TEXT sites (done-recognition, council-v2, code-review, completion-council VOTE, voter-agents, grill, prd-enrich). The RARV loop stays OFF. | recommended scale tier: no `claude` binary needed for judging, loop unchanged |
-| `full` | all of `judges`, and sets `LOKI_SDK_LOOP` | `loki start` runs Loki 10 either way. With the claude provider, `full` refuses in one line anything that would reach the bash loop, which has no SDK path: `--engine legacy`, `LOKI_ENGINE=legacy`, and a PRD over 120000 bytes |
+| `full` | all of `judges`, and sets `LOKI_SDK_LOOP` | `loki start` runs Loki 10 either way. With the claude provider, `full` refuses in one line anything that would reach the bash loop, which has no SDK path: `--engine legacy`, `LOKI_ENGINE=legacy`, and a PRD over 100000 bytes |
 
 Alias: `LOKI_SDK=1` == `judges`; `LOKI_SDK=full` == `full`.
 
@@ -55,7 +55,7 @@ even `=0`, always wins over the mode):
 | `LOKI_SDK_VOTER_AGENTS` | voter-agents council |
 | `LOKI_SDK_GRILL` | grill (free-form text) |
 | `LOKI_SDK_PRD_ENRICH` | prd-enrich (free-form text) |
-| `LOKI_SDK_LOOP` | no site of its own (the separate Bun loop it selected was removed). While it is set, with the claude provider, `loki start` refuses the legacy engine in one line (`--engine legacy`, `LOKI_ENGINE=legacy`, a PRD over 120000 bytes); set directly, `loki start` also prints a one-line notice |
+| `LOKI_SDK_LOOP` | no site of its own (the separate Bun loop it selected was removed). While it is set, with the claude provider, `loki start` refuses the legacy engine in one line (`--engine legacy`, `LOKI_ENGINE=legacy`, a PRD over 100000 bytes); set directly, `loki start` also prints a one-line notice |
 
 ```bash
 # Everything on the SDK EXCEPT code review (keep that on the bash claude route):

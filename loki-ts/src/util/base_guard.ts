@@ -375,7 +375,7 @@ function workLine(repoDir: string, branch: string, orig: string | null): string 
 /**
  * The end of one run: return the checkout, remove leftover base worktrees, delete the run branch once its history is safe, migrate loose
  * session files and sweep earlier runs' branches. Returns the lines to print. `deferred`: a detached deep verify still runs on the branch,
- * so only a record is written and finishDeferredRun does the rest when it ends. `keepWork`: a passing run that published nothing keeps
+ * so only a record is written and finishDeferredRun does the rest when it ends. `keepWork`: a run that published nothing (whatever its verdict) keeps
  * its branch, since that branch is the result (a later run's sweep saves and removes it). Every outcome puts the checkout back on the
  * start branch and prints one line naming where the run's work is.
  */

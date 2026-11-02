@@ -41,6 +41,8 @@ function loadIssue(path: string): IssueFields {
   const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
   return { state: typeof raw.state === "string" ? raw.state.toLowerCase() : null, closed_by_merged_pr: raw.closed_by_merged_pr === true };
 }
+/** The separate already-done confirmation session runs for issue tasks (an issue can be stale) and when LOKI_E10_ALREADY_DONE_CHECK=1. A direct task skips it: the implement session already answers LOKI_ALREADY_DONE with file:line evidence, so the outcome stays reachable without a second session (h2h 2026-11-01: 20 of 48 runs paid for it, none was already done). */
+export const alreadyDoneCheckOn = (source: "text" | "issue", env: NodeJS.ProcessEnv = process.env): boolean => source === "issue" || env.LOKI_E10_ALREADY_DONE_CHECK === "1";
 /** True only on a deterministic, positive signal: a false negative (state unknown) must never claim already-done. */
 function isAlreadyDone(issue: IssueFields): boolean { return issue.state === "closed" || issue.closed_by_merged_pr === true; }
 export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: IntakeOptions = {}): Promise<StageResult> {
@@ -104,7 +106,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   if (readiness && process.env.LOKI_E10_READINESS_FOLD === "1") held.fold = readiness;
   else if (readiness) process.stderr.write(`${readiness}\n`); // FV-readiness-env-3; D48 default mode: the supervisor folds it into the last line instead
   // E-66: "already implemented" as a first-class outcome. A deterministic evidence search over repoMap/testmap/CHANGELOG, confirmed by one short cheap-model session that must cite files; no candidate evidence means no session call (checkAlreadyDone's own gate).
-  const adAt = at(), adEnd = lap(), already = speedEnabled() ? null : await checkAlreadyDone(ctx, signal, task, repoMap, testmap); tm.already_done = speedEnabled() ? { skipped: "deferred past intake (LOKI_SPEED)" } : { ms: adEnd(), at: adAt }; // D61-04: LOKI_SPEED=1 defers it past intake
+  const adOn = alreadyDoneCheckOn(source), adAt = at(), adEnd = lap(), already = speedEnabled() || !adOn ? null : await checkAlreadyDone(ctx, signal, task, repoMap, testmap); tm.already_done = !adOn ? { skipped: "direct task: the implement session reports LOKI_ALREADY_DONE itself" } : speedEnabled() ? { skipped: "deferred past intake (LOKI_SPEED)" } : { ms: adEnd(), at: adAt }; // D61-04: LOKI_SPEED=1 defers it past intake
   const alreadyData = (already: AlreadyDoneResult): Record<string, unknown> => {
     // The comment always exists (there is always something to tell the operator once evidence confirms no change is needed); only an issue run has somewhere to post it, so only that case gets an
     // argv. A text run gets the same body, but printed by the CLI (main(), below) instead -- posting an issue comment for a run with no issue would be meaningless.
@@ -123,7 +125,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   tm.deps_install = dt.install && "ms" in dt.install ? { ...dt.install, at: depsAt } : dt.install ?? { skipped: "install step did not run" }; tm.suite_baseline = baselineOn ? { ms: baselineMs + (dt.baseline_ms ?? 0), at: baselineAt, cached: built?.reused ?? false } : { skipped: "LOKI_REPO_BASELINE=0" };
   const zbAt = at(), zbEnd = lap(), zero_baseline = lazyZeroBaseline(ctx.repoDir); tm.zero_baseline = { ms: zbEnd(), at: zbAt }; tm.zero_probe = { skipped: "lazy: verify measures only its zero-run candidates on base (util/base_guard.ts lazyZeroBaseline)" }; // recorded last, after Loki's own install and baseline: since_ms is when an agent could first touch the environment
   const data = { ...base, ...(stale?.lokiOwn ? { unmerged_loki_work: { branch: stale.branch, target: stale.target, commits: stale.commits, message: unmergedEvidenceNote(stale) } } : {}), ...pm, ...depsData, zero_baseline, hidden_cfg: (() => { try { return hiddenRunnerConfigs(ctx.repoDir); } catch { return null; } })(), ignore_snapshot: ignoreSnapshot(ctx.repoDir), intake_timing: tm, repomap_ref: repomapRef, testmap, already_satisfied: false };
-  if (speedEnabled()) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { if (unmergedEvidence(ctx.repoDir, a.paths, startBranch)) throw new Error("evidence not on the PR target"); Object.assign(data, alreadyData(a)); });
+  if (speedEnabled() && adOn) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { if (unmergedEvidence(ctx.repoDir, a.paths, startBranch)) throw new Error("evidence not on the PR target"); Object.assign(data, alreadyData(a)); });
   return { status: "completed", data };
 }
 export const stage: Stage = {

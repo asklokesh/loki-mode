@@ -1,0 +1,27 @@
+{
+  "lang": "py",
+  "convention": "every converter is registered in units/registry.py CONVERTERS and rejects non-numbers with TypeError (tests/test_conventions.py); no task text mentions it",
+  "protected": ["tests", "pytest.ini", "conftest.py"],
+  "steps": [
+    {
+      "id": "s1",
+      "hidden": { "test_celsius_hidden.py": "tests/test_h2h_hidden_s1.py" },
+      "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_h2h_hidden_s1.py"]
+    },
+    {
+      "id": "s2",
+      "hidden": { "test_km_hidden.py": "tests/test_h2h_hidden_s2.py" },
+      "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_h2h_hidden_s2.py"]
+    },
+    {
+      "id": "s3",
+      "hidden": { "test_kg_hidden.py": "tests/test_h2h_hidden_s3.py" },
+      "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_h2h_hidden_s3.py"]
+    },
+    {
+      "id": "s4",
+      "hidden": { "test_liters_hidden.py": "tests/test_h2h_hidden_s4.py" },
+      "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_h2h_hidden_s4.py"]
+    }
+  ]
+}

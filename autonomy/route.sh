@@ -5,7 +5,7 @@
 #   engine10 is the default for a PRD file, an issue ref, a multi-word task and a
 #   one-word brief, whether the flags come first or last.
 #   The legacy engine runs only on --engine legacy / LOKI_ENGINE=legacy or for a PRD over
-#   120000 bytes, and is refused under SDK mode with claude. A flag never changes the engine.
+#   100000 bytes, and is refused under SDK mode with claude. A flag never changes the engine.
 # Pure functions: no exec, no side effects except R_* globals and the printers.
 # Bash 3.2 compatible (no associative arrays, no ${var,,}).
 
@@ -20,11 +20,10 @@ _ROUTE_OPTVAL_FLAGS=" --mirofish "
 _ROUTE_FRONT_FLAGS=" --workspace --deploy --health-url --health-match --auto-rollback --destination --canary --domain "
 # Flags engine10 honors as-is.
 _ROUTE_E10_FLAGS=" --no-pr --deep --json --verbose --quiet --resume --provider --max-cost --spec --attempts --seal-existing "
-# The largest PRD passed to engine10 as one argument; a bigger one goes as --task-file.
-_ROUTE_TASK_ARG_MAX=100000
-# The largest PRD engine10 takes at all: it carries the task in env vars and CLI arguments, and Linux caps one
-# string at 128 KiB. A bigger PRD runs on the legacy engine, or is refused under SDK mode (no SDK path there).
-_ROUTE_PRD_MAX=120000
+# The largest PRD engine10 takes: it carries the task in env vars and CLI arguments (with a context pack added under
+# --session-model), and Linux caps one string at 128 KiB. A bigger PRD runs on the legacy engine, or is refused under
+# SDK mode with claude (the legacy engine has no SDK path).
+_ROUTE_PRD_MAX=100000
 # The most a run cap can reach (capCeilingS(true) in loki-ts/src/util/run_cap.ts: the subscription ceiling).
 _ROUTE_CAP_CEILING_S=3600
 # Accepted and dropped (no-ops on a non-interactive run).
@@ -332,16 +331,12 @@ loki_route_resolve() {
     fi
     R_SESSION_MODEL="$session_model"
 
-    # Task text for engine10: a PRD file is read, anything else is the words. A PRD over
-    # _ROUTE_TASK_ARG_MAX bytes goes as --task-file instead: Linux caps one argument at 128 KiB.
-    local task task_file="" sz=0
+    # Task text for engine10: a PRD file is read, anything else is the words. A PRD over _ROUTE_PRD_MAX never reaches engine10.
+    local task sz=0
     if [ "$R_INPUT_TYPE" = "prd" ]; then
         sz=$(wc -c < "${positionals[0]}" 2>/dev/null | tr -d ' ' || echo 0)
         if [ "${sz:-0}" -gt "$_ROUTE_PRD_MAX" ]; then
             task=""
-        elif [ "${sz:-0}" -gt "$_ROUTE_TASK_ARG_MAX" ]; then
-            task=""
-            task_file="$(cd "$(dirname -- "${positionals[0]}")" && pwd -P)/$(basename -- "${positionals[0]}")"
         else
             task=$(cat "${positionals[0]}" 2>/dev/null || true)
         fi
@@ -352,7 +347,6 @@ loki_route_resolve() {
     fi
     if [ "$verb" = "quick" ]; then R_E10_ARGS+=(--no-pr); fi
     if [ -n "$task" ]; then R_E10_ARGS+=("$task"); fi
-    if [ -n "$task_file" ]; then R_E10_ARGS+=(--task-file "$task_file"); fi
     R_E10_ARGS+=(${passthru[@]+"${passthru[@]}"})
     # No task: `--` sends engine10 to the run path (interrupted-run offer, then the goal usage), not its command table.
     if [ "$R_INPUT_TYPE" = "none" ]; then R_E10_ARGS+=(--); fi
@@ -395,7 +389,7 @@ loki_route_resolve() {
     if [ "$engine_req" = "legacy" ]; then
         R_ENGINE=legacy; R_REASON="explicit: --engine legacy or LOKI_ENGINE=legacy"
     elif [ "$engine_req" = "engine10" ] && [ "${sz:-0}" -gt "$_ROUTE_PRD_MAX" ]; then
-        R_ERR="loki: this PRD is ${sz} bytes, over the ${_ROUTE_PRD_MAX}-byte limit of the Loki 10 engine; trim it below 120 KB, or drop --engine engine10 to run it on the legacy engine"
+        R_ERR="loki: this PRD is ${sz} bytes, over the ${_ROUTE_PRD_MAX}-byte limit of the Loki 10 engine; trim it below 100 KB, or drop --engine engine10 to run it on the legacy engine"
         return 0
     elif [ "$engine_req" = "engine10" ]; then
         R_ENGINE=engine10; R_E10=1; R_HARD=1; R_REASON="explicit: --engine engine10"
@@ -406,7 +400,7 @@ loki_route_resolve() {
             *) R_ERR="loki: provider $R_PROVIDER is not supported; use one of: claude, codex, cline, aider, opencode"; return 0 ;;
         esac
         if [ "${sz:-0}" -gt "$_ROUTE_PRD_MAX" ] && _route_sdk_claude "$R_PROVIDER"; then
-            R_ERR="loki: this PRD is ${sz} bytes, over the ${_ROUTE_PRD_MAX}-byte limit of the Loki 10 engine, and the legacy engine has no Agent SDK path; trim the PRD below 120 KB, or unset LOKI_SDK_MODE, LOKI_SDK and LOKI_SDK_LOOP to run the legacy engine on a provider CLI"
+            R_ERR="loki: this PRD is ${sz} bytes, over the ${_ROUTE_PRD_MAX}-byte limit of the Loki 10 engine, and the legacy engine has no Agent SDK path; trim the PRD below 100 KB, or unset LOKI_SDK_MODE, LOKI_SDK and LOKI_SDK_LOOP to run the legacy engine on a provider CLI"
             return 0
         elif [ "${sz:-0}" -gt "$_ROUTE_PRD_MAX" ]; then
             R_ENGINE=legacy; R_REASON="PRD is larger than ${_ROUTE_PRD_MAX} bytes (engine10 carries the task in single strings, capped at 128 KiB on Linux)"

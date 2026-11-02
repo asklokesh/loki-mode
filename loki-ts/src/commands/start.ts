@@ -519,14 +519,12 @@ export function writebackEnv(task: string, env: NodeJS.ProcessEnv): NodeJS.Proce
   return m ? { ...env, LOKI_WRITEBACK_ISSUE: m[2]!.toUpperCase(), LOKI_WRITEBACK_KIND: m[1]! } : env;
 }
 
-/** The largest task passed to engine10 as one argument; a bigger PRD file goes as --task-file (mirrors _ROUTE_TASK_ARG_MAX in autonomy/route.sh). */
-export const TASK_ARG_MAX = 100000;
-/** The largest PRD engine10 takes at all (mirrors _ROUTE_PRD_MAX in autonomy/route.sh): it carries the task in single strings, capped at 128 KiB on Linux. */
-export const PRD_MAX = 120000;
+/** The largest PRD engine10 takes (mirrors _ROUTE_PRD_MAX in autonomy/route.sh): it carries the task in single strings, capped at 128 KiB on Linux. */
+export const PRD_MAX = 100000;
 
-/** The engine10 argv for one start (pure; the cap flag reaches the plan route too). taskFile replaces the task argument for a PRD over TASK_ARG_MAX. */
-export function engineArgv(o: ParsedStartOpts, task: string, forceNoPr: boolean, taskFile?: string): string[] {
-  const argv = o.specFirst ? [process.argv[1] ?? "", "engine10", "plan", task, "--spec"] : [process.argv[1] ?? "", "engine10", ...(taskFile ? ["--task-file", taskFile] : task ? [task] : [])];
+/** The engine10 argv for one start (pure; the cap flag reaches the plan route too). */
+export function engineArgv(o: ParsedStartOpts, task: string, forceNoPr: boolean): string[] {
+  const argv = o.specFirst ? [process.argv[1] ?? "", "engine10", "plan", task, "--spec"] : [process.argv[1] ?? "", "engine10", ...(task ? [task] : [])];
   if (o.specPath) argv.push("--spec", o.specPath);
   if (o.specFirst) { if (o.provider) argv.push("--provider", o.provider); if (o.budgetLimit !== undefined) argv.push("--max-cost", String(o.budgetLimit)); return argv; }
   if (forceNoPr || o.noPr) argv.push("--no-pr");
@@ -538,11 +536,9 @@ export function engineArgv(o: ParsedStartOpts, task: string, forceNoPr: boolean,
 async function runEngine10(cwd: string, o: ParsedStartOpts, env: NodeJS.ProcessEnv, forceNoPr: boolean): Promise<number> {
   const { existsSync, readFileSync, statSync } = await import("node:fs");
   const spec = o.prdPath;
-  const isFile = spec !== "" && existsSync(spec) && statSync(spec).isFile();
-  const task = isFile ? readFileSync(spec, "utf8") : spec;
+  const task = spec !== "" && existsSync(spec) && statSync(spec).isFile() ? readFileSync(spec, "utf8") : spec;
   env = writebackEnv(task, env);
-  const taskFile = isFile && !o.specFirst && Buffer.byteLength(task) > TASK_ARG_MAX ? resolve(spec) : undefined;
-  return await spawnEngine(cwd, engineArgv(o, task, forceNoPr, taskFile), env);
+  return await spawnEngine(cwd, engineArgv(o, task, forceNoPr), env);
 }
 
 async function spawnEngine(cwd: string, argv: string[], env: NodeJS.ProcessEnv): Promise<number> {
@@ -754,9 +750,15 @@ export async function runStart(args: readonly string[]): Promise<number> {
     if (t && "error" in t) { process.stderr.write(t.error); return 2; }
     if (t) parsed[k] = t.path;
   }
-  { // PRD_MAX: --attempts and --spec run only engine10, which cannot carry a bigger PRD.
+  { // PRD_MAX: this command runs only engine10 (attempts, --spec, or the --dry-run preview of one), which cannot carry a bigger PRD.
     const p = parsed.prdPath, sz = p !== "" && pathExists(p) && statSync(p).isFile() ? statSync(p).size : 0;
-    if (sz > PRD_MAX) { process.stderr.write(`start: this PRD is ${sz} bytes, over the ${PRD_MAX}-byte limit of the Loki 10 engine; trim it below 120 KB, or run it without --attempts or --spec (the legacy engine takes it)\n`); return 2; }
+    if (sz > PRD_MAX) {
+      const how = parsed.attempts !== undefined || parsed.specPath !== undefined || parsed.specFirst
+        ? "trim it below 100 KB, or run it without --attempts or --spec (the legacy engine takes it)"
+        : "a run without --dry-run takes it on the legacy engine (refused under LOKI_SDK_MODE=full with claude), or trim it below 100 KB";
+      process.stderr.write(`start: this PRD is ${sz} bytes, over the ${PRD_MAX}-byte limit of the Loki 10 engine; ${how}\n`);
+      return 2;
+    }
   }
   if (parsed.dryRun) return dryRunStart(parsed, process.cwd(), process.env);
   { const rec = await offerInterruptedRun(parsed, process.cwd()); if (rec !== null) return rec; }

@@ -48,7 +48,7 @@ opencode, or a machine with no working bun, also exits 2 with the fix.
 
 The previous loop (autonomy/run.sh) runs only when you pass `--engine legacy`
 or set `LOKI_ENGINE=legacy` (the flag wins over the variable), or when the PRD
-is larger than 120000 bytes (one stderr line says why).
+is larger than 100000 bytes (one stderr line says why).
 
 `loki <word>` with a single bare word stays the command namespace (`loki doctor`),
 so use `loki start <word>` for a one-word brief. A first argument starting with
