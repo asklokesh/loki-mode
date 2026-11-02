@@ -7,6 +7,9 @@ Latest runs: `results/2026-11-02-5063feb95.json` (synthetic suite) and
 `results/2026-11-02-5063feb95-replay.json` (replay suite), both from the clean commit 5063feb95,
 which holds the engine change below (`citable: true`). Older runs further down name their own engine.
 
+The hard suite (`results/2026-11-01-e13f3dd72-hard.json`, 10 configs on 8 real multi-file fixes) is in
+[Hard suite](#hard-suite-real-multi-file-fixes-selected-so-raw-haiku-fails).
+
 ## Honest VERIFIED and fewer sessions (commit 5063feb95)
 
 Both runs: 2 reps, `--jobs 4`, the raw config and loki-haiku in one invocation, from clean commit
@@ -154,6 +157,100 @@ commits (65440abaf, 38b31e8cc) that are on no published branch, since they preda
 squash, so nobody can check out the code they measured. The replay file ran Loki from a clean engine commit
 (2100eda48) with the benchmark harness changes not yet committed (committed in 070d72ea4), so it
 is not citable under this rule either.
+
+## Hard suite (real multi-file fixes, selected so raw Haiku fails)
+
+Results file: `results/2026-11-01-e13f3dd72-hard.json`, **citable**: every invocation that wrote it
+ran from a clean commit (e13f3dd72, then 0d2071933, which changes only a test comment), on the
+v11.116.0 engine merged from main. Tool versions are in the file (bun 1.3.13, Claude CLI 2.1.316).
+
+- **Candidates.** 19 closed issues in `fixtures/hard/` from sqlglot, tomlkit, click, sqlparse,
+  mistune, expr and chi (MIT or BSD-3-Clause; each `meta.json` records license, issue, fix PR and
+  commits). Each is vendored at the fix's parent commit and scored by the fix's own test files at
+  their own paths, together with the rest of the project's suite. The merged fix passes all 19 and
+  the parent commit passes none (checked on every PR by `tests/min/h2h-harness.sh`). The snapshots
+  live under `fixtures/` because their own tests need characters (emoji, dashes) this repository's
+  text rule otherwise bans.
+- **Selection rule.** A task qualifies only if the fix touches 2 or more files and raw Haiku with
+  the verify sentence passed under half of its pilot runs (2 runs per task, $0.78). 11 met it. 3 of
+  those are excluded because the fix's tests need something the issue cannot tell anyone: a class
+  the fix adds (sqlparse `TypedLiteral`), a method the fix adds (`Function.get_window`), and one of
+  two valid HTTP header shapes (chi's `Allow`). **8 qualify**: expr #836 and #823, click #2836,
+  sqlglot #8598, #8808 and #8805, tomlkit #408 and #165. A paid run without `--tasks` takes only
+  those. The target was 20 or more; the candidates gave 8.
+- **Configs.** Raw `claude -p` on Haiku, Sonnet and Opus, each also with the verify sentence; Loki
+  pinned to Haiku, Sonnet or Opus (`LOKI_SESSION_MODEL`); and `loki-default`, Loki with no model pin
+  so its own routing picks. 3 reps, `--jobs 4`, timeout 900 s.
+- **Accepted without edit** now means the hidden tests pass and the run weakened no existing test:
+  a pre-existing test file deleted, with a line removed or changed, or with an added skip, or any
+  test config changed. New test files and appended cases are fine. Each record keeps its test diff.
+
+| 8 tasks x 3 reps | pass | 95% CI | accepted | $ per task | $ per passed task | median s | p90 s | sessions |
+|---|---|---|---|---|---|---|---|---|
+| raw-haiku | 1/24 | 0.7-20.2% | 0/24 | 0.0198 | 0.4756 | 63.3 | 158.0 | 1 |
+| raw-haiku-verify | 0/24 | 0-13.8% | 0/24 | 0.0219 | - | 79.2 | 206.0 | 1 |
+| raw-sonnet | 0/24 | 0-13.8% | 0/24 | 0.1975 | - | 51.4 | 88.5 | 1 |
+| raw-sonnet-verify | 1/24 | 0.7-20.2% | 1/24 | 0.1951 | 4.6815 | 43.0 | 86.3 | 1 |
+| raw-opus | 3/24 | 4.3-31.0% | 2/24 | 0.6155 | 4.9236 | 104.2 | 215.3 | 1 |
+| raw-opus-verify | 3/24 | 4.3-31.0% | 2/24 | 0.6313 | 5.0508 | 118.8 | 256.1 | 1 |
+| loki-haiku | 0/24 | 0-13.8% | 0/24 | 0.0171 | - | 92.5 | 159.9 | 1.54 |
+| loki-sonnet | 1/24 | 0.7-20.2% | 1/24 | 0.1411 | 3.3852 | 61.6 | 288.4 | 1.50 |
+| loki-opus | 5/24 | 9.2-40.5% | 5/24 | 0.2556 | 1.2271 | 83.1 | 362.8 | 1.50 |
+| loki-default | 4/24 | 6.7-35.9% | 4/24 | 0.2216 | 1.3296 | 81.0 | 307.6 | 1.50 |
+
+**Headline.** Loki on Haiku does not match raw Sonnet or raw Opus here: it passes 0 of 24, raw
+Sonnet 0 of 24 (1 with the verify sentence), raw Opus 3 of 24. Loki with default routing passes 4
+of 24 against raw Opus's 3 at 0.27 times raw Opus's cost per passed task ($1.33 against $4.92), and
+Loki pinned to Opus passes 5 of 24 at $1.23 per passed task (0.25 times). Every interval overlaps,
+and all the passes come from 2 of the 8 tasks, so this shows Loki on a strong model is cheaper per
+run than raw on the same model (Opus: $0.26 against $0.62 per task; raw Opus took a median of 16.5
+turns), not that it solves more.
+
+| Loki config | VERIFIED | PARTIAL | BLOCKED or STALLED | verdict agrees | false VERIFIED | VERIFIED recall | models per session (count) |
+|---|---|---|---|---|---|---|---|
+| loki-haiku | 0 | 19 | 5 | 24/24 | 0 | - (no passes) | haiku 37 |
+| loki-sonnet | 0 | 20 | 4 | 23/24 | 0 | 0 of 1 | sonnet 36 |
+| loki-opus | 0 | 21 | 3 | 19/24 | 0 | 0 of 5 | opus 30, sonnet 6 |
+| loki-default | 1 | 19 | 4 | 19/24 | 1 | 0 of 4 | provider default 30, sonnet 6 |
+
+- **Which models ran.** Pinned runs used their pin for implement and fix sessions; the 6 Sonnet
+  sessions in each of loki-opus and loki-default are all intake sessions on the two tomlkit tasks. Default routing leaves implement and fix to the Claude CLI's default model; a one-call
+  check under the same throwaway HOME ($0.045, on the ledger) showed that default is
+  `claude-opus-5-5`. So `loki-default` here is in effect Loki on Opus with a Sonnet intake.
+- **Verdicts.** Loki almost never claims VERIFIED on these tasks: 1 VERIFIED in 96 runs, and it was
+  wrong (loki-default, go-expr-withcontext rep 3). VERIFIED recall is 0: none of the 10 Loki runs
+  whose work passed the hidden tests was sealed VERIFIED; all ended PARTIAL. Agreement is high
+  only because nearly everything failed and nearly everything was PARTIAL.
+- **Accepted.** 3 passing raw runs changed existing tests of expr's patcher to compile against a
+  pointer receiver they introduced (raw-haiku rep 2, raw-opus rep 3) or rewrote the issue's own test
+  (raw-opus-verify rep 1), so they are not accepted. Every passing Loki run is accepted.
+
+| task | raw-haiku | raw-haiku-verify | raw-sonnet | raw-sonnet-verify | raw-opus | raw-opus-verify | loki-haiku | loki-sonnet | loki-opus | loki-default |
+|---|---|---|---|---|---|---|---|---|---|---|
+| go-expr-autoderef | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
+| go-expr-withcontext | 1/3 | 0/3 | 0/3 | 1/3 | 2/3 | 1/3 | 0/3 | 1/3 | 3/3 | 2/3 |
+| py-click-show-default-prompt | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
+| py-sqlglot-hash-case | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
+| py-sqlglot-mysql-timestampadd | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
+| py-sqlglot-snowflake-idents | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
+| py-tomlkit-array-remove | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
+| py-tomlkit-value-bool | 0/3 | 0/3 | 0/3 | 0/3 | 1/3 | 2/3 | 0/3 | 0/3 | 2/3 | 2/3 |
+
+**Why runs fail.** 6 of the 8 tasks were never passed by any config in 30 runs each. The failing
+runs made changes and missed cases the fix's tests check, for example: sqlglot #8808 expects exact
+DuckDB and Postgres output strings (raw Opus wrote `CAST(... AS TIMESTAMP) + INTERVAL` where the fix
+writes the bare literal); sqlglot #8598 needs case-sensitive equality on node types beyond the one
+the issue shows (`AnonymousAggFunc(sumMap)` against `summap`); click #2836 expects the custom default
+in parentheses and for defaults of `None`; tomlkit #408 expects exact whitespace after removing an
+array item; tomlkit #165 expects every value with a `true` prefix to be rejected. Loki's sessions
+ended PARTIAL on most of these; on sqlglot #8805
+10 of 12 Loki runs stalled in the fix loop and 2 ended BLOCKED, and 4 runs on tomlkit #165 ended
+BLOCKED.
+
+**Threats.** 8 tasks, 2 of which carry every pass: one task more or less for any config moves its
+rate by 4 points per run and 12.5 points per task. The selection rule picks tasks raw Haiku fails, so raw Haiku's 1 of 24 is
+low by construction (regression to the mean would favour it on a fresh draw). Contestants had
+network access and could look up the upstream fix.
 
 ## Replay suite (real closed issues)
 
@@ -453,6 +550,10 @@ with both opted in, run from a checkout of that release with this harness and th
 
 ## Spend
 
+- Hard suite, on its own ledger: $56.42 against an $80 cap. Qualifying pilot $0.78 (38 runs of
+  raw-haiku-verify), default-model check $0.05, main run $55.60 over 240 runs (raw Opus $14.77, raw
+  Opus with the verify sentence $15.15, raw Sonnet $4.74 and $4.68, Loki on Opus $6.14, Loki
+  default $5.32, Loki on Sonnet $3.39, raw Haiku $0.48 and $0.53, Loki on Haiku $0.41).
 - Replay run, on its own ledger: $6.01 against a $15 budget ($0.57 for raw-haiku, raw-haiku-verify
   and loki-haiku over 48 runs, $5.44 for raw-opus-verify over 16 runs). The oracle and noop
   self-checks cost nothing.
@@ -476,6 +577,9 @@ bash benchmarks/h2h/run.sh --reps 3 --jobs 4 --budget 38.5 --ledger spend.jsonl
 bash benchmarks/h2h/run.sh --suite replay --configs oracle,noop     # replay self-check, no model
 bash benchmarks/h2h/run.sh --suite replay --configs raw-haiku,raw-haiku-verify,raw-opus-verify,loki-haiku \
     --reps 2 --jobs 4 --budget 15 --ledger replay.jsonl
+bash benchmarks/h2h/run.sh --suite hard --configs oracle,noop       # all 19 hard candidates, no model
+bash benchmarks/h2h/run.sh --suite hard --reps 3 --jobs 4 --timeout 900 --budget 73 --ledger hard.jsonl \
+    --configs raw-haiku,raw-haiku-verify,raw-sonnet,raw-sonnet-verify,raw-opus,raw-opus-verify,loki-haiku,loki-sonnet,loki-opus,loki-default
 bash benchmarks/h2h/run.sh --sequences all --configs loki-haiku-learn,loki-haiku-nolearn \
     --reps 3 --jobs 4 --budget 9.2 --ledger learning.jsonl
 bash benchmarks/h2h/run.sh --sequences all --configs loki-haiku-lessons,loki-haiku-example,loki-haiku-nolearn \
