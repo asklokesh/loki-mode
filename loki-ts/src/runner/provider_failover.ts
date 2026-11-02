@@ -1,6 +1,7 @@
 // T9 provider failover v1: when a stage session fails with a classified provider outage or rate limit, retry that stage once on the
 // next provider. A code failure is never an outage; a removed provider is never chosen. LOKI_FAILOVER=0 leaves the runner untouched.
 import type { SessionResult, SessionRunOptions, SessionRunner } from "../engine10/types.ts";
+import { PROVIDERS } from "./types.ts";
 
 export interface FailoverRecord {
   stage: string;
@@ -11,7 +12,7 @@ export interface FailoverRecord {
   note?: string; // "failover: none available" when to is null
 }
 export const NONE_AVAILABLE = "failover: none available";
-const DEFAULT_ORDER = ["claude", "opencode"]; // providers/loader.sh auto_detect_provider order
+const DEFAULT_ORDER: readonly string[] = PROVIDERS; // providers/loader.sh auto_detect_provider order
 const ALLOWED = new Set(DEFAULT_ORDER); // removed and unknown names can never be chosen
 
 // Provider wire text only: scanned on the child's stderr tail and the SDK error line, never the agent transcript.

@@ -9,7 +9,7 @@ SUPPORTED_PROVIDERS=("claude" "opencode")
 
 # Providers that were supported once and are now refused with one migration line.
 # Mirror of REMOVED_PROVIDERS / removedProviderMessage in
-# loki-ts/src/runner/router/cost_preview.ts (tests/min/providers-supported.sh
+# loki-ts/src/runner/types.ts (tests/min/providers-supported.sh
 # checks the two messages are byte-identical).
 REMOVED_PROVIDERS=("codex" "cline" "aider" "gemini")
 

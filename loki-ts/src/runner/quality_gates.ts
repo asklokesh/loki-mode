@@ -41,6 +41,7 @@
 // production default.
 
 import { REVIEW_GUARD_DENYLIST } from "../providers/claude_flags.ts";
+import { PROVIDERS } from "./types.ts";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -2432,7 +2433,7 @@ async function tryBuildRealJudgePanel(
     // Default: distinct providers so a model-specific bias does not sweep the
     // panel. Each is the fastest tier of its provider. Approval needs 2 votes,
     // so a missing CLI (its judge fails safe to REJECT) keeps the BLOCK.
-    names = ["claude", "opencode"];
+    names = [...PROVIDERS];
   }
   const sizeRaw = process.env["LOKI_OVERRIDE_PANEL_SIZE"];
   const size = sizeRaw && Number.parseInt(sizeRaw, 10) > 0

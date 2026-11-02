@@ -143,8 +143,7 @@ export interface Capability {
   source: string;
 }
 
-export const PROVIDERS = ["claude", "opencode"] as const;
-export type ProviderName = (typeof PROVIDERS)[number];
+export { PROVIDERS, type ProviderName } from "../runner/types.ts";
 
 const E10_COMMON = "loki-ts/src/engine10/session.ts (detached spawn, killGroupWithGrace, recordCost, watchBudget), loki-ts/src/providers/provider_guard.ts, loki-ts/src/e10ext/budget_cap.ts";
 const U = "unknown" as const;

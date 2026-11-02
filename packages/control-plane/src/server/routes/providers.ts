@@ -4,8 +4,9 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { probeAllowed, ttlCache, type RouteCtx } from "./index.ts";
+import { PROVIDERS } from "../../../../../loki-ts/src/runner/types.ts";
 
-const ORDER = ["claude", "opencode"] as const;
+const ORDER = PROVIDERS; // the CLI's one list (loki-ts/src/runner/types.ts)
 const AUTH_ENV: Record<string, string[]> = {
   claude: ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"],
   opencode: ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],

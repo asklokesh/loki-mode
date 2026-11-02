@@ -2,7 +2,8 @@
 // No new gate, reviewer or evidence format: only defaults (provider, publish mode, the exact next command) for inputs a person left out.
 import { claudeSdkReady } from "../commands/doctor.ts";
 import { CLI_ENV_VAR } from "../engine10/preflight.ts";
-export const PROVIDER_ORDER = ["claude", "opencode"] as const; // providers/loader.sh auto_detect_provider order
+import { PROVIDERS } from "../runner/types.ts";
+export const PROVIDER_ORDER = PROVIDERS; // providers/loader.sh auto_detect_provider order
 const installed = (p: string, env: Record<string, string | undefined>): boolean => !!Bun.which((env[CLI_ENV_VAR[p]!] ?? "").trim() || p, { PATH: env.PATH ?? process.env.PATH ?? "" });
 /** The provider to use when the user named none: claude when its CLI resolves or a key can run it on the bundled SDK (L034), else the first installed supported CLI. Null keeps the caller's default (and its install hint). */
 export function inferProvider(env: Record<string, string | undefined>, named: boolean): { provider: string; note: string } | null {

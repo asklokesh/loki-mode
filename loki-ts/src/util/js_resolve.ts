@@ -7,7 +7,7 @@ export const posix = (p: string): string => normalize(p).split("\\").join("/").r
 export interface JsResolve { base: string | null; paths: [string, string[]][] }
 export const inRepo = (p: string): boolean => p !== ".." && !p.startsWith("../") && !isAbsolute(p);
 // JSONC to JSON: drop // and /* */ comments outside strings, then trailing commas.
-function stripJsonc(t: string): string {
+export function stripJsonc(t: string): string {
   let o = "", i = 0;
   while (i < t.length) {
     const c = t[i]!, n = t[i + 1];

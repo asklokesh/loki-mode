@@ -5,10 +5,11 @@
 // file owns the contract surface so the loop in autonomous.ts compiles even
 // while those modules are still being written.
 
-export type ProviderName = "claude" | "opencode";
-
-// The one provider list for `loki start`, `loki estimate` and the control plane. Dependency-free so any caller can import it.
-export const VALID_PROVIDERS: ReadonlySet<string> = new Set(["claude", "opencode"]);
+// The one provider list (selection order: providers/loader.sh SUPPORTED_PROVIDERS and auto_detect_provider). Dependency-free so any
+// caller (loki start, estimate, doctor, failover, the control plane) imports it instead of restating it.
+export const PROVIDERS = ["claude", "opencode"] as const;
+export type ProviderName = (typeof PROVIDERS)[number];
+export const VALID_PROVIDERS: ReadonlySet<string> = new Set(PROVIDERS);
 /** Providers that were supported once; each is refused with one migration line. Mirror of REMOVED_PROVIDERS in providers/loader.sh. */
 export const REMOVED_PROVIDERS: ReadonlySet<string> = new Set(["codex", "cline", "aider", "gemini"]);
 /** Byte-identical to loki_removed_provider_message in providers/loader.sh (tests/min/providers-supported.sh compares them). */

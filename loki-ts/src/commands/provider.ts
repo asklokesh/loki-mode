@@ -8,13 +8,13 @@ import { commandExists, commandVersion } from "../util/shell.ts";
 import { BOLD, CYAN, GREEN, YELLOW, RED, DIM, NC } from "../util/colors.ts";
 import { lokiDir } from "../util/paths.ts";
 import { suggestWord } from "../cli/registry.ts";
-import { REMOVED_PROVIDERS, removedProviderMessage } from "../runner/types.ts";
+import { PROVIDERS, REMOVED_PROVIDERS, removedProviderMessage, type ProviderName } from "../runner/types.ts";
 
-type Provider = "claude" | "opencode";
+type Provider = ProviderName;
 
 // Must match auto_detect_provider() in providers/loader.sh, in ITS order --
 // the order is the selection priority, not a display preference.
-const ALL_PROVIDERS: readonly Provider[] = ["claude", "opencode"];
+const ALL_PROVIDERS: readonly Provider[] = PROVIDERS;
 
 // Per-provider install hint, byte-matching autonomy/loki doctor_provider_install_cmd.
 // Shared by `loki doctor` and `loki provider list`.
@@ -38,10 +38,6 @@ function defaultProvider(positional: string | undefined, saved: string): string 
 }
 
 export function runProviderShow(positional?: string): number {
-  if (positional && REMOVED_PROVIDERS.has(positional)) {
-    process.stderr.write(removedProviderMessage(positional));
-    return 2;
-  }
   if (positional && !(ALL_PROVIDERS as readonly string[]).includes(positional)) {
     process.stderr.write(
       `${RED}Error: unknown provider '${positional}'. Valid providers: ${ALL_PROVIDERS.join(", ")}${NC}\n`,
@@ -176,6 +172,9 @@ export function printProviderHelp(): number {
 export async function runProvider(argv: readonly string[]): Promise<number> {
   const sub = argv[0] ?? "show";
   const rest = argv.slice(1);
+  // A removed provider named to any subcommand (show, info, set, models) gets the one migration line, exit 2.
+  const removed = rest.find((a) => REMOVED_PROVIDERS.has(a));
+  if (removed) { process.stderr.write(removedProviderMessage(removed)); return 2; }
   switch (sub) {
     case "show":
     case "current":

@@ -44,7 +44,7 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
       const li = claudeLoginProbeCached(cli, env); // TEN-UX-12 retry + TEN-SPEED-05 10-min cache of a successful probe live in doctor.ts
       if (li === "no") { probe = "failed"; add(true, "not_logged_in", "claude is not logged in; run: claude auth login (or set ANTHROPIC_API_KEY)"); }
       else if (li === "") warnings.push("could not confirm the Claude login (claude auth status gave no answer); continuing"); else probe = "ok";
-    } else { const pl = providerLoginIssue(o.provider, cli, env); if (pl?.fatal) { probe = "failed"; add(true, "not_logged_in", pl.fatal); } else if (pl?.warn) warnings.push(pl.warn); } // TEN-ADOPTION-34
+    } else { const pl = providerLoginIssue(o.provider, cli, env, o.repoDir); if (pl?.fatal) { probe = "failed"; add(true, "not_logged_in", pl.fatal); } else if (pl?.warn) warnings.push(pl.warn); } // TEN-ADOPTION-34
   }
   if (o.runDir && hits.every(([b]) => b === "not_logged_in")) { try { mkdirSync(o.runDir, { recursive: true }); writeFileSync(join(o.runDir, "preflight.json"), JSON.stringify({ provider: o.provider, auth_path, probe }) + "\n"); } catch { /* the record is evidence, never a gate */ } }
   if (o.pr && repoOk && GITHUB_ORIGIN_RE.test((await git(["config", "--get", "remote.origin.url"])).stdout.trim())) {

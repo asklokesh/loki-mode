@@ -3,8 +3,8 @@
 # bundled Agent SDK) and opencode (any model, OpenRouter included). codex, cline,
 # aider and gemini were removed. Asserts:
 #   removed:  each removed name exits 2 with the one migration line, through
-#             --provider X, --provider=X, LOKI_PROVIDER=X, `loki provider show X`
-#             and `loki estimate --provider X`; the bash and Bun messages are
+#             --provider X, --provider=X, LOKI_PROVIDER=X, `loki provider show|info|models X`
+#             and `loki estimate --provider X`; api/ and web-app/ restate the same lists and message; the bash and Bun messages are
 #             byte-identical; an unknown name still gets the supported list.
 #   claude:   an engine10 run on the stub claude CLI ends VERIFIED.
 #   opencode: an engine10 run with --provider opencode --model
@@ -44,12 +44,15 @@ expect_msg() { printf "loki: provider '%s' is no longer supported. Supported pro
 mkdir -p "$T/empty"
 for p in codex cline aider gemini; do
     want="$(expect_msg "$p")"
-    for form in flag eq env show estimate; do
+    for form in flag eq env show info infojson models estimate; do
         case "$form" in
             flag) out="$(cd "$T/empty" && bash "$ROOT/bin/loki" start --provider "$p" "add a function" </dev/null 2>&1)"; rc=$? ;;
             eq) out="$(cd "$T/empty" && bash "$ROOT/bin/loki" start "--provider=$p" ./prd.md </dev/null 2>&1)"; rc=$? ;;
             env) out="$(cd "$T/empty" && LOKI_PROVIDER="$p" bash "$ROOT/bin/loki" status </dev/null 2>&1)"; rc=$? ;;
             show) out="$(cd "$T/empty" && bash "$ROOT/bin/loki" provider show "$p" </dev/null 2>&1)"; rc=$? ;;
+            info) out="$(cd "$T/empty" && bash "$ROOT/bin/loki" provider info "$p" </dev/null 2>&1)"; rc=$? ;;
+            infojson) out="$(cd "$T/empty" && bash "$ROOT/bin/loki" provider info "$p" --json </dev/null 2>&1)"; rc=$? ;;
+            models) out="$(cd "$T/empty" && bash "$ROOT/bin/loki" provider models "$p" </dev/null 2>&1)"; rc=$? ;;
             estimate) out="$(cd "$T/empty" && bash "$ROOT/bin/loki" estimate --provider "$p" </dev/null 2>&1)"; rc=$? ;;
         esac
         if [ "$rc" -eq 2 ] && [ "$out" = "$want" ]; then ok "$p ($form): exit 2, one migration line"
@@ -68,6 +71,35 @@ sh="$(bash -c '. "$1/providers/loader.sh"; for p in codex cline aider gemini; do
 ts_list="$(cd "$ROOT/loki-ts" && bun -e 'const t = await import("./src/runner/types.ts"); console.log([...t.VALID_PROVIDERS].join(" ") + "|" + [...t.REMOVED_PROVIDERS].join(" "))' 2>&1)"
 sh_list="$(bash -c '. "$1/providers/loader.sh"; echo "${SUPPORTED_PROVIDERS[*]}|${REMOVED_PROVIDERS[*]}"' _ "$ROOT")"
 [ "$ts_list" = "$sh_list" ] && [ "$sh_list" = "claude opencode|codex cline aider gemini" ] && ok "one provider list on both sides: $sh_list" || bad "lists differ: ts=$ts_list sh=$sh_list"
+# Restatements in files that ship without loki-ts/src or providers/ (api/, web-app/): same lists, same bytes.
+# Read from source without importing (the servers start on import): the TS/JS template and the Python function via ast.
+rest="$(python3 -I - "$ROOT" "$sh_list" "$sh" <<'PY'
+import ast, re, sys
+root, want_list, want_msg = sys.argv[1], sys.argv[2], sys.argv[3]
+names = ["codex", "cline", "aider", "gemini"]
+def arr(src, name):
+    m = re.search(r"const %s(?:: string\[\])? = \[([^\]]*)\]" % name, src)
+    return " ".join(re.findall(r"['\"]([a-z]+)['\"]", m.group(1))) if m else "?"
+out = []
+for f in ("api/routes/sessions.ts", "api/server.js"):
+    src = open(f"{root}/{f}").read()
+    m = re.search(r"removedProviderMessage = \(\w+(?:: string)?\)(?:: string)? =>\s*`([^`]*)`", src)
+    msg = "".join(re.sub(r"\$\{\w+\}", n, m.group(1)) + "\n" for n in names) if m else "?"
+    lst = arr(src, "SUPPORTED_PROVIDERS" if f.endswith(".ts") else "VALID_PROVIDERS") + "|" + arr(src, "REMOVED_PROVIDERS")
+    out.append(f"{f}: list={'ok' if lst == want_list else lst} msg={'ok' if msg.rstrip(chr(10)) == want_msg.rstrip(chr(10)) else 'DIFF'}")
+tree = ast.parse(open(f"{root}/web-app/server.py").read())
+keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "") in ("_SUPPORTED_PROVIDERS", "_REMOVED_PROVIDERS") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name == "_check_provider")]
+ns = {}; exec(compile(ast.Module(body=keep, type_ignores=[]), "web-app/server.py", "exec"), ns)
+msg = ""
+for n in names:
+    try: ns["_check_provider"](n)
+    except ValueError as e: msg += str(e) + "\n"
+lst = " ".join(ns.get("_SUPPORTED_PROVIDERS", ())) + "|" + " ".join(ns.get("_REMOVED_PROVIDERS", ()))
+out.append(f"web-app/server.py: list={'ok' if lst == want_list else lst} msg={'ok' if msg.rstrip(chr(10)) == want_msg.rstrip(chr(10)) else 'DIFF'}")
+print("\n".join(out))
+PY
+)"
+[ "$(printf '%s\n' "$rest" | grep -c 'list=ok msg=ok')" -eq 3 ] && ok "api/ and web-app/ restate the same lists and byte-identical message" || { bad "restated provider lists or message drifted:"; printf '%s\n' "$rest" | sed 's/^/    | /'; }
 out="$(cd "$T/empty" && bash "$ROOT/bin/loki" estimate --provider foo </dev/null 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "use one of: claude, opencode" && ok "unknown provider: the supported list (estimate exit 1)" || bad "unknown provider: rc=$rc out=$out"
 
@@ -117,6 +149,31 @@ run_engine nokey PATH="$OCBIN:$FIX/bin:$PATH" E2E_OPENCODE_LOG="$T/nokey/oc.log"
 [ "$RC" -ne 0 ] && [ ! -s "$T/nokey/oc.log" ] && printf '%s\n' "$OUT" | grep -q 'export OPENROUTER_API_KEY' \
     && ok "opencode openrouter model with no key: refused before any session, names OPENROUTER_API_KEY" \
     || { bad "no-key run: rc=$RC sessions=$(wc -l < "$T/nokey/oc.log" 2>/dev/null || echo 0)"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /'; }
+
+# opencode also takes the OpenRouter key from its config (provider.openrouter, often "{env:NAME}"): a JSONC global config
+# with a comment lets the run start with no OPENROUTER_API_KEY.
+mkdir -p "$T/cfg/opencode"
+printf '{\n  // OpenRouter via config, key from another env var\n  "provider": { "openrouter": { "options": { "apiKey": "{env:MY_OR_KEY}" } } },\n}\n' > "$T/cfg/opencode/opencode.jsonc"
+run_engine cfgkey PATH="$OCBIN:$FIX/bin:$PATH" XDG_CONFIG_HOME="$T/cfg" E2E_OPENCODE_LOG="$T/cfgkey/oc.log" -- --provider opencode --model openrouter/deepseek/deepseek-v3.2
+[ -s "$T/cfgkey/oc.log" ] && ! printf '%s\n' "$OUT" | grep -q 'needs OpenRouter credentials' \
+    && ok "opencode openrouter key in opencode.jsonc (provider.openrouter): the run starts" \
+    || { bad "config-file key: refused or no session (rc=$RC)"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /'; }
+# Every other source, straight against the preflight check: only "no source at all" refuses; an unreadable config warns.
+mkdir -p "$T/src/home" "$T/src/proj" "$T/src/bad"
+printf '{"provider":{"openrouter":{}}}' > "$T/src/proj/opencode.json"
+printf '{"provider": {"openrouter": ' > "$T/src/bad/opencode.json"
+printf '{"provider":{"openrouter":{"options":{"apiKey":"sk-or-SECRETVALUE"}}}}' > "$T/src/explicit.json"
+srcs="$(cd "$ROOT/loki-ts" && T="$T" bun -e '
+const { providerLoginIssue } = await import("./src/commands/doctor.ts");
+const T = process.env.T, base = { HOME: `${T}/src/home`, LOKI_OPENCODE_MODEL: "openrouter/deepseek/deepseek-v3.2" };
+const kind = (env, repo) => { const r = providerLoginIssue("opencode", "opencode", { ...base, ...env }, repo); return r?.fatal ? "fatal" : r?.warn ? "warn" : "ok"; };
+const all = JSON.stringify([providerLoginIssue("opencode", "opencode", { ...base, OPENCODE_CONFIG: `${T}/src/explicit.json` })]);
+console.log([kind({}), kind({ OPENCODE_CONFIG_CONTENT: "{\"provider\":{\"openrouter\":{\"options\":{\"apiKey\":\"sk-or-SECRETVALUE\"}}}}" }),
+  kind({ OPENCODE_CONFIG: `${T}/src/explicit.json` }), kind({}, `${T}/src/proj`), kind({}, `${T}/src/bad`),
+  kind({ OPENCODE_CONFIG_CONTENT: "{\"provider\":{\"anthropic\":{}}}" }), all.includes("SECRETVALUE") ? "leak" : "noleak"].join(" "));' 2>&1)"
+[ "$srcs" = "fatal ok ok ok warn fatal noleak" ] \
+    && ok "OpenRouter sources: none refuses; OPENCODE_CONFIG_CONTENT, OPENCODE_CONFIG and project opencode.json pass; an unparseable config warns; no value printed" \
+    || bad "OpenRouter sources (none content config project unparseable other-provider leak): $srcs"
 
 # --- no removed provider name in shipped code ------------------------------
 # Allowed: the removed lists and message, GEMINI.md (an agent-rules file name), and model-family price/key rows

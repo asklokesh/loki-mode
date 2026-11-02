@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { tokenFreeEnv } from "../util/safe_git.ts";
+import { PROVIDERS } from "../runner/types.ts";
 import { claudeAuthStatusLoggedIn, evaluateClaudeLogin } from "./doctor.ts";
 
 export interface FixResult {
@@ -33,7 +34,7 @@ export interface FixDeps {
   loggedIn?: () => "yes" | "no" | "";
 }
 
-const PROVIDER_CLIS = ["claude", "opencode"] as const;
+const PROVIDER_CLIS = PROVIDERS;
 const CLAUDE_INSTALL = ["npm", "install", "-g", "@anthropic-ai/claude-code"] as const;
 const CLAUDE_LOGIN = ["claude", "auth", "login"] as const;
 
