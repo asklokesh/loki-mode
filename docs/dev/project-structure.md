@@ -6,9 +6,6 @@
 SKILL.md                    # Slim core skill (~410 lines) - progressive disclosure
 providers/                  # Multi-provider support (5 providers)
   claude.sh                 # Claude Code - full features (Tier 1)
-  cline.sh                  # Cline - Tier 2
-  codex.sh                  # OpenAI Codex CLI - degraded mode (Tier 3)
-  aider.sh                  # Aider - degraded mode (Tier 3)
   opencode.sh               # opencode - model-agnostic mode
   loader.sh                 # Provider loader utility
   models.sh                 # Model name registry
@@ -116,7 +113,7 @@ Verified against v7.5.13 source on 2026-04-29. Line numbers drift; re-verify wit
 
 ### Critical Data Flow
 
-A PRD enters via `loki start` (`autonomy/loki:622`), which execs `run.sh`. The `run_autonomous()` loop (`autonomy/run.sh:10253`) builds prompts via `build_prompt()` (`autonomy/run.sh:8987`) injecting RARV instructions, SDLC phases, memory context, queue tasks, and checklist status. The provider is invoked (Claude via `-p` flag, Codex via `exec --sandbox workspace-write` with `CODEX_MODEL_REASONING_EFFORT` env var, Cline/Aider sequentially). Post-iteration, the system runs checklist verification, app runner management, playwright smoke tests, and code review. Completion is determined by a council vote (`council_should_stop` at `autonomy/completion-council.sh:1605`), completion promise text, or max iterations. All components communicate through `.loki/` filesystem state files.
+A PRD enters via `loki start` (`autonomy/loki:622`), which execs `run.sh`. The `run_autonomous()` loop (`autonomy/run.sh:10253`) builds prompts via `build_prompt()` (`autonomy/run.sh:8987`) injecting RARV instructions, SDLC phases, memory context, queue tasks, and checklist status. The provider is invoked (Claude via `-p` flag, opencode via `run --auto -m <provider/model>`). Post-iteration, the system runs checklist verification, app runner management, playwright smoke tests, and code review. Completion is determined by a council vote (`council_should_stop` at `autonomy/completion-council.sh:1605`), completion promise text, or max iterations. All components communicate through `.loki/` filesystem state files.
 
 **Deprecated entrypoints:**
 - `loki run <issue-ref>` is a deprecated alias for `loki start <issue-ref>` since v6.84.0. Emits a `cli_command_deprecated` telemetry event. See `autonomy/loki:4436-4456`. Prefer `loki start`.

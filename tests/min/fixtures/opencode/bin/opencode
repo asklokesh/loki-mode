@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Stub opencode CLI for tests/min/providers-supported.sh. Loki invokes
+#   opencode run --auto [-m provider/model] [--variant v] [LOKI_OPENCODE_FLAGS...] <prompt>
+# This logs the argv (minus the prompt) and whether OPENROUTER_API_KEY reached it
+# (E2E_OPENCODE_LOG), then hands the prompt to the e2e claude stub (tests/min/fixtures/e2e/bin/claude), so the
+# same fixture behavior (plan, wall, implement) answers for opencode.
+set -u
+if [ "${1:-}" = "--version" ]; then echo "1.18.9"; exit 0; fi
+[ "${1:-}" = "run" ] || { echo "stub opencode: expected 'run', got '${1:-}'" >&2; exit 64; }
+shift
+args=("$@")
+n=${#args[@]}
+[ "$n" -gt 0 ] || { echo "stub opencode: no prompt" >&2; exit 64; }
+prompt="${args[$((n - 1))]}"
+if [ -n "${E2E_OPENCODE_LOG:-}" ]; then
+    printf 'argv=%s key=%s\n' "${args[*]:0:$((n - 1))}" "${OPENROUTER_API_KEY:+set}" >> "$E2E_OPENCODE_LOG"
+fi
+exec "$(dirname "$0")/../../e2e/bin/claude" -p "$prompt"

@@ -7,8 +7,7 @@ in either of two targets:
     - Web Component extending LokiElement (Shadow DOM, scoped styles)
 
 Inspired by MagicModules (Roman Nurik) React engine, adapted to Loki
-Mode's provider abstraction so the same spec works with claude, codex,
-gemini, cline, or aider.
+Mode's provider abstraction so the same spec works with claude or opencode.
 
 Rules followed by this module:
 
@@ -42,7 +41,7 @@ from typing import Dict, List, Optional
 
 # Providers supported by the Loki Mode runtime. Any value outside this
 # set is treated as claude to stay safe.
-_SUPPORTED_PROVIDERS = {"claude", "codex", "gemini", "cline", "aider"}
+_SUPPORTED_PROVIDERS = {"claude", "opencode"}
 
 # Default timeout in seconds for a single provider invocation. Matches
 # the 120s used by the shell _docs_invoke_provider helper.
@@ -179,20 +178,9 @@ class ComponentGenerator:
 
         if provider == "claude":
             cmd = base_cmd + [binary, "-p", prompt]
-        elif provider == "codex":
-            cmd = base_cmd + [binary, "exec", "--sandbox", "workspace-write", prompt]
-        elif provider == "gemini":
-            cmd = base_cmd + [binary, "--approval-mode=yolo", prompt]
-        elif provider == "cline":
-            cmd = base_cmd + [binary, "-y", prompt]
-        elif provider == "aider":
-            cmd = base_cmd + [
-                binary,
-                "--message",
-                prompt,
-                "--yes-always",
-                "--no-auto-commits",
-            ]
+        elif provider == "opencode":
+            model = os.environ.get("LOKI_OPENCODE_MODEL", "").strip()
+            cmd = base_cmd + [binary, "run", "--auto", *(["-m", model] if model else []), prompt]
         else:
             return ""
 
@@ -200,7 +188,6 @@ class ComponentGenerator:
             completed = subprocess.run(
                 cmd,
                 cwd=str(self.project_dir),
-                input="" if provider == "aider" else None,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout_seconds + 5,

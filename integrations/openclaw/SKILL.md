@@ -13,7 +13,7 @@ description: "Launch Loki Mode autonomous SDLC agent. Handles PRD-to-deployment 
 
 ## Prerequisites
 - `loki` CLI installed on the host (via `npm install -g loki-mode` or Homebrew)
-- One of: Claude Code, Codex CLI, or Gemini CLI installed
+- One of: Claude Code or opencode installed
 - Corresponding API key set (ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY)
 
 ## How to invoke
@@ -28,7 +28,7 @@ Key flags:
 - `--bg`: Background mode (session outlives the tool call)
 - `--yes`: Skip confirmation prompts
 - `--no-dashboard`: Avoid port conflicts in sandboxed environments
-- `--provider <claude|codex|gemini>`: Select AI provider (default: claude)
+- `--provider <claude|opencode>`: Select AI provider (default: claude)
 - `--budget <amount>`: Set cost limit in USD (auto-pause when exceeded)
 
 ### Monitor progress
@@ -42,7 +42,7 @@ The JSON output contains:
 - `status`: inactive, running, paused, stopped, completed, unknown
 - `phase`: Current SDLC phase (e.g., BOOTSTRAP, DISCOVERY, ARCHITECTURE, DEVELOPMENT, QA, DEPLOYMENT)
 - `iteration`: Current iteration number
-- `provider`: Which AI provider is active (claude, codex, gemini)
+- `provider`: Which AI provider is active (claude, opencode)
 - `pid`: Process ID of the running session (null if not running)
 - `elapsed_time`: Seconds since session start
 - `dashboard_url`: URL of the web dashboard (null if disabled)

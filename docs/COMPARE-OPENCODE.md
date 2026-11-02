@@ -16,7 +16,7 @@ Loki can also drive opencode as a provider (`loki start --provider opencode`).
 | Learning curve | `loki start` is the factory. Policy, receipt, and cost route are printed by that command. `loki help` lists the rest | Learn one TUI | Loki if you do not want a second verb |
 | Interactive coding | `loki chat`: Plan/Build modes, slash commands, `--attach` | Full TUI with sessions and rich editing flow | opencode |
 | Small changes | `loki edit` (one pass, diff, opt-in verify and receipt) | Prompt in the TUI or `opencode run` | Even |
-| Provider flexibility | Claude default; codex, cline, aider, opencode; OpenRouter and local routes | Very wide provider catalog, first-class | opencode |
+| Provider flexibility | Claude default (CLI or Agent SDK); opencode; OpenRouter and local routes | Very wide provider catalog, first-class | opencode |
 | Local models | `loki models --local`, `LOKI_MODEL_ROUTE=ollama/...`, lmstudio, llamacpp, vllm, custom URL | Local providers via config | Even |
 | Multi-agent | Role agents, council review, custom agents in `.loki/agents/*.md`, the run view names the active stage | Configurable agents and subagents | Loki when you want the receipt to name who ran |
 | Cost control | Same provider model as a raw session. Tool logs are trimmed before the next turn so a long run does not resend them. `--max-cost` and `budgets.per_run` are hard caps. `--haiku` or `--cost lean` opts the first implement onto haiku; a failed check climbs back. `--cost-first` (or `LOKI_COST_FIRST=1`, also set by `--haiku`) keeps a haiku route only when the advisor marks the risk low; a history floor, no advisor, or an explicit model override still raise it | User watches the TUI | Loki when the result has to be a check the model did not grade |
@@ -55,10 +55,11 @@ PR, then diff stat, diff, cost and time. `--verify`, `--receipt`, `--commit`
 and `--dry-run` are opt-in. Claude provider only for now.
 
 **Provider flexibility.** opencode has the broader provider catalog. Loki's
-Tier-1 provider is Claude Code; codex, cline, aider and opencode are optional.
-On those, the Loki 10 engine now measures cost (parsed or estimated, flagged
-`estimated`) so `--max-cost` applies, and enforces the wall-clock limit,
-`BUDGET_LIMIT` kill and a post-iteration guard scan. Kill blocking is still
+Tier-1 provider is Claude Code; opencode is the optional second provider and
+reaches OpenRouter (`--model openrouter/<vendor>/<model>` with
+`OPENROUTER_API_KEY`). On opencode the Loki 10 engine enforces the wall-clock
+limit, `BUDGET_LIMIT` kill and a post-iteration guard scan; cost is not
+measured. Kill blocking is still
 Claude-only and receipts say so (`kill blocking not enforced`).
 
 **Local models.** `loki models --local` probes Ollama, LM Studio, llama.cpp and
@@ -91,7 +92,7 @@ that applies on every engine10 provider.
 
 ## Switching from Claude Code or opencode
 
-`loki start` and `loki factory` run the Loki 10 engine for an issue reference or a multi-word task, when bun is available and the provider is claude, codex, cline, aider or opencode. A PRD file or a one-word argument takes the legacy engine, and so does a host with no bun or an unsupported `LOKI_PROVIDER` (those two print a one-line notice). On the Loki 10 path, `--provider opencode` and the default Claude path are the same loop: plan, implement, verify, seal, and a pull request unless you pass `--no-pr`. The receipt is still written with `--no-pr`, and `loki verify` checks it with no network.
+`loki start` and `loki factory` run the Loki 10 engine for an issue reference or a multi-word task, when bun is available and the provider is claude or opencode. A PRD file and a one-word argument run on it too; a host with no bun or an unsupported `LOKI_PROVIDER` exits 2 with the fix (codex, cline, aider and gemini print a one-line migration message). On the Loki 10 path, `--provider opencode` and the default Claude path are the same loop: plan, implement, verify, seal, and a pull request unless you pass `--no-pr`. The receipt is still written with `--no-pr`, and `loki verify` checks it with no network.
 
 There is no transcript importer. A Claude Code or opencode session is not copied in. The handoff is the repository and the task. Inside one Loki run on the Claude SDK path, the plan session resumes into implement unless `LOKI_E10_FIX_RESUME=0`; other providers start implement fresh. `loki chat --attach` joins a run that is already going. `loki resume` continues a paused or interrupted run from its checkpoint.
 

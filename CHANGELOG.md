@@ -5,6 +5,20 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.121.0 (2026-11-02)
+
+Loki supports exactly Claude Code, an Anthropic API key, and opencode (OpenRouter included).
+
+### Removed
+
+- Codex, Cline, Aider and Gemini support is removed. Choosing one (`--provider`, `LOKI_PROVIDER`, `loki provider set|info|models|show`, the dashboard, the control plane or the GitHub Action) exits 2 with one line naming the supported providers and how to switch. Run `loki provider set claude` or `--provider opencode` to continue.
+
+### Fixed
+
+- `--provider opencode --model openrouter/<vendor>/<model>` now runs that model in opencode; before, the model was sent to the Claude route and opencode ran without one.
+- An OpenRouter model with no credential anywhere opencode reads one (`OPENROUTER_API_KEY`, opencode's `auth.json`, global or project `opencode.json`/`.jsonc`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`) is refused before any session starts, with the fix printed. A config that cannot be parsed warns and continues. Key values are never printed.
+- `loki doctor` reports whether an OpenRouter key is set.
+
 ## v11.120.1 (2026-11-02)
 
 About 10,400 lines of runner code that no longer ran are removed; nothing changes at runtime.

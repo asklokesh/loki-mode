@@ -281,7 +281,7 @@ the file to exist at runtime.
     "cooldown_until": "2025-01-20T10:40:42Z",
     "failure_window_start": "2025-01-20T10:34:50Z"
   },
-  "api/codex": {
+  "api/opencode": {
     "state": "HALF_OPEN",
     "failure_count": 0,
     "success_count": 1,

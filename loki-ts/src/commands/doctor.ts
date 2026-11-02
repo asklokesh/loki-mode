@@ -33,6 +33,8 @@ import { classifyFailure } from "../runner/retry_class.ts";
 import { withholdGithubTokens } from "../runner/github_token.ts";
 import { tokenFreeEnv } from "../util/safe_git.ts";
 import { GATEWAY_LANE_LOSS, gatewayLaneLabel } from "../providers/model_routes.ts";
+import { stripJsonc } from "../util/js_resolve.ts";
+import { PROVIDERS } from "../runner/types.ts";
 
 // ---------- Setup requirements per execution path -----------------------------
 // The table lives in autonomy/lib/setup-requirements.json (one source for doctor, loki setup,
@@ -629,9 +631,6 @@ type SkillEntry = { name: string; dir: string; id: string };
 
 const SKILL_ENTRIES: readonly SkillEntry[] = [
   { name: "Claude Code", dir: ".claude/skills/loki-mode", id: "claude" },
-  { name: "Codex CLI", dir: ".codex/skills/loki-mode", id: "codex" },
-  { name: "Cline CLI", dir: ".cline/skills/loki-mode", id: "cline" },
-  { name: "Aider CLI", dir: ".aider/skills/loki-mode", id: "aider" },
 ];
 
 type SkillStatus = {
@@ -782,9 +781,6 @@ const TOOL_SPECS: readonly ToolSpec[] = [
   // ~3-5x speedup.
   { displayName: "Bun (>= 1.3)", jsonName: "Bun", cmd: "bun", required: "recommended", min: "1.3" },
   { displayName: "Claude CLI", jsonName: "Claude CLI", cmd: "claude", required: "optional" },
-  { displayName: "Codex CLI", jsonName: "Codex CLI", cmd: "codex", required: "optional" },
-  { displayName: "Cline CLI", jsonName: "Cline CLI", cmd: "cline", required: "optional" },
-  { displayName: "Aider CLI", jsonName: "Aider CLI", cmd: "aider", required: "optional" },
   { displayName: "opencode CLI", jsonName: "opencode CLI", cmd: "opencode", required: "optional" },
 ];
 
@@ -1163,13 +1159,13 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
   statuses.push(disk.status);
 
   // AGGREGATE PROVIDER CHECK, mirroring autonomy/loki:cmd_doctor_json. Each
-  // provider CLI is individually optional -- Claude, Codex, Cline, Aider, or opencode
+  // provider CLI is individually optional -- Claude or opencode
   // -- so none can be marked required on its own. Having NONE is a blocker,
   // and the text path on both routes reports it as one.
   //
   // Without this, --json reported zero failures and ok true on a host that
   // cannot run a build, disagreeing with the same command's own exit code.
-  const anyProviderFound = ["claude", "codex", "cline", "aider", "opencode"].some(
+  const anyProviderFound = PROVIDERS.some(
     (p) => checks.find((c) => c.command === p)?.found === true,
   );
   const sdkReady = !anyProviderFound && claudeSdkReady(process.env); // L034: same pass the text path prints for the bundled SDK
@@ -1236,30 +1232,52 @@ export function providerProbeEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.P
   return out;
 }
 
-// TEN-ADOPTION-34: non-claude login state for preflight. codex has `login status` (exit code; fatal only on "Not logged in"); cline, aider and opencode keep varied keys/files, so they only warn.
+// TEN-ADOPTION-34: opencode login state for preflight. opencode keeps varied keys/files, so it only warns, except an
+// openrouter/<vendor>/<model> id with no OpenRouter credential source at all: opencode then fails with "Provider not found:
+// openrouter" (verified, opencode 1.18.9), so preflight refuses before any spend. A config that cannot be read never refuses.
 const PROVIDER_API_KEY_VARS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "XAI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY"];
-export function providerLoginIssue(provider: string, cli: string, env: Record<string, string | undefined>): { fatal?: string; warn?: string } | null {
+export function providerLoginIssue(provider: string, cli: string, env: Record<string, string | undefined>, repoDir?: string): { fatal?: string; warn?: string } | null {
   const home = env.HOME || homedir(); const key = (k: string) => !!env[k]?.trim();
-  if (provider === "codex") {
-    if (key("OPENAI_API_KEY") || key("CODEX_API_KEY")) return null;
-    const r = spawnSync(cli, ["login", "status"], { env: providerProbeEnv(env), encoding: "utf8", timeout: 5000, cwd: tmpdir() }) /* FC-TEST-LEAKS-INTO-REPO: a probe never runs in the caller checkout */;
-    if (r.status === 0) return null;
-    const said = `${r.stdout}${r.stderr}`; return /not logged in/i.test(said) || classifyFailure(said).reason === "auth" /* CW-14: the one auth pattern set, shared with the run-time classifier */ ? { fatal: "codex is not logged in; run: codex login (or set OPENAI_API_KEY)" } : { warn: "could not confirm the Codex login (codex login status gave no answer); continuing" };
+  const authFile = join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json");
+  const model = (env.LOKI_OPENCODE_MODEL ?? "").trim();
+  if (provider === "opencode" && model.startsWith("openrouter/") && !key("OPENROUTER_API_KEY")) {
+    const src = opencodeProviderSource(env, home, authFile, "openrouter", repoDir);
+    if (src === "none") return { fatal: `opencode model ${model} needs OpenRouter credentials; run: export OPENROUTER_API_KEY=<your key> (or opencode auth login, then pick OpenRouter, or define provider.openrouter in opencode.json)` };
+    if (src === "unreadable") return { warn: `could not read every opencode config to confirm OpenRouter credentials for ${model}; continuing` };
+    return null; // found: a login or config names openrouter
   }
-  if (PROVIDER_API_KEY_VARS.some(key) || (provider === "opencode" && existsSync(join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"))) || (provider === "cline" && existsSync(join(home, ".cline")))) return null;
-  return provider === "aider" || provider === "opencode" || provider === "cline" ? { warn: `no ${provider} login or API key found (set a provider API key such as ANTHROPIC_API_KEY or OPENAI_API_KEY${provider === "opencode" ? ", or run: opencode auth login" : ""}); continuing` } : null;
+  if (PROVIDER_API_KEY_VARS.some(key) || (provider === "opencode" && existsSync(authFile))) return null;
+  return provider === "opencode" ? { warn: "no opencode login or API key found (set a provider API key such as OPENROUTER_API_KEY or ANTHROPIC_API_KEY, or run: opencode auth login); continuing" } : null;
+}
+/** Whether any place opencode reads credentials from names `providerId`: auth.json (a map keyed by provider id), or a config
+ *  (OPENCODE_CONFIG_CONTENT, OPENCODE_CONFIG, the global and project opencode.json/.jsonc) defining provider.<id>. Only that key's
+ *  presence is checked; the parsed text is dropped at once and no value is kept or printed. "unreadable": no source found, and
+ *  at least one config exists that could not be parsed. */
+export function opencodeProviderSource(env: Record<string, string | undefined>, home: string, authFile: string, providerId: string, repoDir?: string): "found" | "none" | "unreadable" {
+  let unreadable = false;
+  const has = (text: string, inProvider: boolean): boolean => {
+    try { const j = JSON.parse(stripJsonc(text)) as Record<string, unknown> | null; const m = inProvider ? (j?.["provider"] as Record<string, unknown> | undefined) : j; return !!m && typeof m === "object" && providerId in m; }
+    catch { unreadable = true; return false; }
+  };
+  const file = (p: string, inProvider: boolean): boolean => { if (!existsSync(p)) return false; try { return has(readFileSync(p, "utf8"), inProvider); } catch { unreadable = true; return false; } };
+  if (file(authFile, false)) return "found";
+  if (env.OPENCODE_CONFIG_CONTENT?.trim() && has(env.OPENCODE_CONFIG_CONTENT, true)) return "found";
+  const cfgDir = join(env.XDG_CONFIG_HOME || join(home, ".config"), "opencode");
+  const configs = [env.OPENCODE_CONFIG?.trim() || "", join(cfgDir, "opencode.json"), join(cfgDir, "opencode.jsonc"), join(cfgDir, "config.json"),
+    ...(repoDir ? [join(repoDir, "opencode.json"), join(repoDir, "opencode.jsonc"), join(repoDir, ".opencode", "opencode.json"), join(repoDir, ".opencode", "opencode.jsonc")] : [])].filter(Boolean);
+  for (const c of configs) if (file(c, true)) return "found";
+  return unreadable ? "unreadable" : "none";
 }
 
 // CW-14: which credential a provider would use, by NAME only (never a value). Zero spawns, zero network.
 export type ProviderAuthRow = { provider: string; auth_path: string };
-export const AUTH_PROVIDERS = ["claude", "codex", "cline", "aider", "opencode"] as const;
+export const AUTH_PROVIDERS = PROVIDERS;
 export function providerAuthPath(provider: string, env: Record<string, string | undefined>): string {
   const home = env.HOME || homedir(); const set = (k: string) => !!env[k]?.trim();
-  const own = provider === "claude" ? ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] : provider === "codex" ? ["OPENAI_API_KEY", "CODEX_API_KEY"] : PROVIDER_API_KEY_VARS;
+  const own = provider === "claude" ? ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] : PROVIDER_API_KEY_VARS;
   const v = own.find(set); if (v) return `${v === "CLAUDE_CODE_OAUTH_TOKEN" ? "oauth_token" : "api_key"}:${v}`;
   if (provider === "opencode" && existsSync(join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"))) return "cli_login:opencode";
-  if (provider === "cline" && existsSync(join(home, ".cline"))) return "cli_login:cline";
-  return provider === "claude" || provider === "codex" ? `cli_login:${provider}` : "none";
+  return provider === "claude" ? "cli_login:claude" : "none";
 }
 export function providerAuthRows(env: Record<string, string | undefined> = process.env): ProviderAuthRow[] {
   return AUTH_PROVIDERS.map((provider) => ({ provider, auth_path: providerAuthPath(provider, env) }));
@@ -1293,10 +1311,10 @@ export function claudeAuthStatusLoggedIn(cli = "claude", env: NodeJS.ProcessEnv 
 
 // R100-001: one answer to "can the first `loki start` run with no setup?". A provider counts when its CLI is installed
 // and its login is confirmed by the probe the preflight already uses: claude via `claude auth status` (or an API key),
-// codex via `codex login status`, opencode/cline via their auth files, and any of them via a provider API key.
+// opencode via its auth file, and either via a provider API key.
 // providerLoginIssue returns null only when a login or key was found, so a warn-only result is not a login.
 export function providerAutodetected(checks: { command: string; found: boolean; path: string | null }[], env: NodeJS.ProcessEnv = process.env): boolean {
-  return ["claude", "codex", "cline", "aider", "opencode"].some((p) => {
+  return PROVIDERS.some((p) => {
     const c = checks.find((x) => x.command === p);
     if (!c?.found) return false;
     const cli = c.path ?? p;
@@ -1499,7 +1517,7 @@ function printHelp(): void {
   process.stdout.write(`            update check, REQUIRED or optional, and how to disable\n`);
   process.stdout.write(`            each. Exits non-zero while a required egress remains.\n\n`);
   process.stdout.write(`Checks: node, python3, jq, git, curl, bash version,\n`);
-  process.stdout.write(`        claude/codex CLIs, and disk space.\n`);
+  process.stdout.write(`        claude/opencode CLIs, and disk space.\n`);
 }
 
 // Adoption signal: which CLASS of dependency stopped this first run. Mapped to a
@@ -1548,7 +1566,7 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
 
   // AI Providers
   process.stdout.write(`${CYAN}AI Providers:${NC}\n`);
-  const providerCmds = ["claude", "codex", "cline", "aider", "opencode"];
+  const providerCmds = [...PROVIDERS];
   // Per-provider install hint, byte-matching the bash route's
   // doctor_provider_install_cmd (removed from autonomy/loki with the bash doctor). The bash route writes this
   // hint to STDERR (run.sh doctor_check_provider, `>&2`), so it must go to STDERR
@@ -1670,7 +1688,7 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
   // API Keys (presence only -- never echo values)
   process.stdout.write(`${CYAN}API Keys:${NC}\n`);
   const claudeFound = byCmd.get("claude")?.found ?? false;
-  const codexFound = byCmd.get("codex")?.found ?? false;
+  const opencodeFound = byCmd.get("opencode")?.found ?? false;
   const env = process.env;
   if (env["ANTHROPIC_API_KEY"]) {
     process.stdout.write(`  ${badge("pass")}  ANTHROPIC_API_KEY is set\n`);
@@ -1694,12 +1712,12 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
     if (login.blocker) tally.blockers.push(login.blocker);
     bump(tally, login.status);
   }
-  if (env["OPENAI_API_KEY"]) {
-    process.stdout.write(`  ${badge("pass")}  OPENAI_API_KEY is set\n`);
+  if (env["OPENROUTER_API_KEY"]) {
+    process.stdout.write(`  ${badge("pass")}  OPENROUTER_API_KEY is set (opencode openrouter/<vendor>/<model> ids)\n`);
     bump(tally, "pass");
-  } else if (codexFound) {
+  } else if (opencodeFound) {
     process.stdout.write(
-      `  ${DIM}  --  ${NC}  OPENAI_API_KEY not set (Codex CLI uses its own login)\n`,
+      `  ${DIM}  --  ${NC}  OPENROUTER_API_KEY not set (needed for opencode openrouter/ models, or run: opencode auth login)\n`,
     );
   }
   const cloudRows = evaluateCloudAuth(env);
@@ -2251,7 +2269,7 @@ export interface DoctorDeps { roundTrip?: RoundTripRunner; diskVolumes?: DiskVol
 const defaultRoundTrip: RoundTripRunner = async () => {
   const provider = process.env["LOKI_PROVIDER"] || "claude";
   const prompt = "Reply with the single word OK";
-  const args = provider === "claude" ? ["-p", prompt] : provider === "codex" ? ["exec", prompt] : null;
+  const args = provider === "claude" ? ["-p", prompt] : provider === "opencode" ? ["run", prompt] : null;
   if (!args) return { ok: false, detail: `round-trip unsupported for provider ${provider}` };
   const r = spawnSync(provider, args, { encoding: "utf8", timeout: 60000, env: providerProbeEnv() });
   if (r.error) return { ok: false, detail: String(r.error.message).slice(0, 200) };

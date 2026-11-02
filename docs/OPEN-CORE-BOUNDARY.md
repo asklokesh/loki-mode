@@ -19,7 +19,7 @@ today.
 Everything that exists today, including:
 
 - The full RARV-C autonomous loop (`loki start`), all providers
-  (Claude/Cline/Codex/Aider), multi-project, dashboard, memory system.
+  (Claude Code, the Anthropic Agent SDK, opencode), multi-project, dashboard, memory system.
 - 3-reviewer council + RARV-C closure (the trust engine).
 - proof-of-run generation and local inspection: `loki proof list|show|open`.
 - Sharing a proof to a GitHub Gist: `loki proof share <id>` (uses your own `gh`

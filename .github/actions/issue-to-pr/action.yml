@@ -35,7 +35,7 @@ inputs:
     required: false
     default: ''
   provider:
-    description: 'AI provider: claude, codex, cline, aider, or opencode'
+    description: 'AI provider: claude or opencode'
     required: false
     default: 'claude'
   budget_limit:

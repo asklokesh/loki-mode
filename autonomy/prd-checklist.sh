@@ -156,7 +156,7 @@ checklist_init() {
 # result. Once per spec sha256, at most 2 attempts. A failed author leaves the
 # critical failing sentinel (council_checklist_gate then BLOCKs) and freeze
 # refuses any checklist.json the implementer writes afterwards.
-# Only claude gets hard no-tools; codex and seam providers are cwd-only and are
+# Only claude gets hard no-tools; seam providers (opencode) are cwd-only and are
 # reported as such, never as tool-denied.
 CHECKLIST_AUTHOR_REQUIRED=${CHECKLIST_AUTHOR_REQUIRED:-false}
 CHECKLIST_AUTHOR_MAX_ATTEMPTS=2

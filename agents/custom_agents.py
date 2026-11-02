@@ -14,7 +14,7 @@ PERMISSIONS = ("plan", "edit", "full")
 KEYS = ("name", "description", "model", "provider", "tools", "deny", "permission", "role")
 LIST_KEYS = ("tools", "deny")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-PROVIDERS = ("claude", "codex", "cline", "aider", "opencode")
+PROVIDERS = ("claude", "opencode")
 # Tools a plan-permission agent must not use when exported to Claude Code.
 PLAN_DENY = ["Edit", "Write", "NotebookEdit", "Bash"]
 

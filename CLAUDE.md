@@ -1,5 +1,5 @@
 # Loki Mode - Claude Code Skill
-Autonomous spec-to-product system: takes a PRD, GitHub issue, OpenAPI/JSON/YAML doc, or one-line brief to a deployed product via the RARV-C closure loop. Provider-agnostic: Claude Code, OpenAI Codex CLI, Cline, Aider, opencode. Flagship product of [Autonomi](https://www.autonomi.dev/).
+Autonomous spec-to-product system: takes a PRD, GitHub issue, OpenAPI/JSON/YAML doc, or one-line brief to a deployed product via the RARV-C closure loop. Providers: Claude Code (CLI or Anthropic Agent SDK) and opencode (any model, including OpenRouter). Flagship product of [Autonomi](https://www.autonomi.dev/).
 
 ## Quick Start
 
@@ -12,7 +12,7 @@ loki start owner/repo#123        # issue-mode
 ## Core concepts
 - RARV cycle: **R**eason -> **A**ct -> **R**eflect -> **V**erify, every iteration.
 - Models: Opus for planning/architecture only; Sonnet for development and functional testing; Haiku for unit tests, monitoring, and parallelizable work.
-- Providers: Claude Code full (Tier 1); Cline reduced (Tier 2); Codex CLI/Aider degraded, sequential (Tier 3); opencode model-agnostic. Gemini CLI is DEPRECATED; `LOKI_PROVIDER=gemini` exits with a migration message. See `providers/*.sh`.
+- Providers: Claude Code (Tier 1, full) and opencode (model-agnostic, OpenRouter); the Agent SDK path serves API-key users under `claude`. codex, cline, aider and gemini were removed and exit 2 with a migration line (`loki_removed_provider_message` in `providers/loader.sh`). See `providers/*.sh`.
 - Version: see `VERSION` (semver: MAJOR = architecture change, MINOR = feature, PATCH = fix). Full release steps: `docs/dev/release-checklist.md`.
 
 ## Repository conventions

@@ -494,34 +494,6 @@ except Exception:
                 result='{"verdict":"INCONCLUSIVE","justification":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
             fi
             ;;
-        codex)
-            if command -v codex &>/dev/null; then
-                result=$(codex exec -q "$full_prompt" 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","justification":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
-            else
-                result='{"verdict":"INCONCLUSIVE","justification":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
-            fi
-            ;;
-        gemini)
-            if command -v gemini &>/dev/null; then
-                result=$(echo "$full_prompt" | gemini 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","justification":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
-            else
-                result='{"verdict":"INCONCLUSIVE","justification":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
-            fi
-            ;;
-        cline)
-            if command -v cline &>/dev/null; then
-                result=$(cline -y "$full_prompt" 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","justification":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
-            else
-                result='{"verdict":"INCONCLUSIVE","justification":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
-            fi
-            ;;
-        aider)
-            if command -v aider &>/dev/null; then
-                result=$(aider --message "$full_prompt" --yes-always --no-auto-commits --no-git 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","justification":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
-            else
-                result='{"verdict":"INCONCLUSIVE","justification":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
-            fi
-            ;;
         *)
             # v8.2.0 TIMEOUT SEAM. A provider exposing provider_invoke_argv gets
             # a real reviewer instead of an automatic INCONCLUSIVE. The argv is a

@@ -272,7 +272,7 @@ sequenceDiagram
     <tr><td>Stages</td><td><code>loki-ts/src/engine10/stages/</code></td><td>intake, plan, wall, implement, verify, fix, seal, commit, pr, deep</td></tr>
     <tr><td>Run control</td><td><code>supervisor.ts</code>, <code>machine.ts</code></td><td>Caps, kill handling, the state machine itself</td></tr>
     <tr><td>Model choice</td><td><code>sizing.ts</code></td><td>Lean path for small tasks; sonnet first, escalate on a real test failure</td></tr>
-    <tr><td>Providers</td><td><code>adapters/</code></td><td>Claude Code, Codex, Cline, Aider via <code>--provider</code></td></tr>
+    <tr><td>Providers</td><td><code>adapters/</code></td><td>Claude Code (CLI or Agent SDK) and opencode (OpenRouter) via <code>--provider</code></td></tr>
     <tr><td>Run records</td><td><code>.loki/runs/&lt;id&gt;/</code></td><td><code>events.jsonl</code> with a signed final line, receipt files</td></tr>
     <tr><td>Signing key</td><td><code>~/.loki/keys/</code></td><td>Local Ed25519 key, created on first run; <code>loki keys export</code></td></tr>
     <tr><td>Control Plane</td><td><code>packages/control-plane/</code></td><td>Bun, Hono, Drizzle; SQLite locally, Postgres when deployed <span class="pill preview">Preview</span></td></tr>
@@ -310,8 +310,7 @@ flowchart TB
   end
   subgraph Models["Model providers you pick"]
     CC[Claude Code]
-    CX[Codex]
-    CL[Cline / Aider]
+    OC[opencode / OpenRouter]
   end
   subgraph Forge["Git host"]
     ISS[Issues]
@@ -440,7 +439,7 @@ flowchart LR
     <h2>Proof, any model, your infrastructure.</h2>
     <div class="grid g3" style="margin-top:12px">
       <div class="card accent"><h3>Proof</h3><p>A signed receipt anyone can re-check offline. It states what was proven and what was not.</p></div>
-      <div class="card accent"><h3>Any model</h3><p>Claude Code, Codex, Cline or Aider. Switch models without switching tools.</p></div>
+      <div class="card accent"><h3>Any model</h3><p>Claude Code, or opencode with any OpenRouter model. Switch models without switching tools.</p></div>
       <div class="card accent"><h3>Runs where code lives</h3><p>Local, container or cluster, with your own keys.</p></div>
     </div>
   </div>

@@ -89,12 +89,14 @@ T
             cat <<'T'
 Providers
 
-Claude Code is the default and the only Tier 1 provider.
+Supported providers: claude (Claude Code CLI, or an Anthropic API key through
+the Agent SDK) and opencode (any model, including OpenRouter).
   loki provider list           Providers and install status
-  loki provider set codex      Switch provider (claude, codex, cline, aider, opencode)
-  loki start ./prd.md --provider cline
+  loki provider set opencode   Switch provider (claude, opencode)
+  loki start ./prd.md --provider opencode
 
-Tier 2: cline. Tier 3 (sequential, degraded): codex, aider. opencode is model-agnostic.
+opencode with OpenRouter: export OPENROUTER_API_KEY=sk-or-..., then
+  loki start ./prd.md --provider opencode --model openrouter/<vendor>/<model>
 T
             ;;
         agents)

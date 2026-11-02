@@ -527,7 +527,7 @@ loki_ultrareview_enabled() {
 # fan out into many background subagents. They are triggered by the `ultracode`
 # keyword in a prompt and fire under `claude -p` (verified empirically: a headless
 # workflow returned "The workflow finished"). They are:
-#   - Claude-PROVIDER-ONLY (no Codex/Cline/Aider equivalent),
+#   - Claude-PROVIDER-ONLY (no opencode equivalent),
 #   - require claude CLI >= 2.1.154,
 #   - cost meaningfully MORE than a normal run (a trivial workflow observed at
 #     ~$0.71 vs ~$0.01 for a plain read; there is NO price API so we never quote

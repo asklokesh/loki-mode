@@ -77,13 +77,13 @@ paths.
 
 **We cannot run a build with no model at all.** Nobody can. What we can do is
 let you point at a model you host. Only a local-weights provider clears the
-required line: opencode, cline or aider with an `ollama/` or `lmstudio/` model
-id in that provider's own variable (for example
+required line: opencode with an `ollama/` or `lmstudio/` model
+id in its own variable (for example
 `LOKI_OPENCODE_MODEL=ollama/qwen2.5-coder`). An Ollama cloud model (a `:cloud`
 or `-cloud` tag) runs on ollama.com and is still reported as required. The
 verdict comes from the model id; the audit does not read where your Ollama or
 LM Studio endpoint listens, so confirm that yourself. An in-network gateway for
-claude or codex (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) keeps traffic inside
+claude (`ANTHROPIC_BASE_URL`) keeps traffic inside
 your network, but the audit still counts it as required egress.
 
 Telemetry is ON by default for an individual interactive install and auto-off

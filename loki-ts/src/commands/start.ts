@@ -18,7 +18,7 @@ import { GENERIC_TIERS, VALID_TIERS } from "../util/claude_model.ts";
 import { applyCostProfile, COST_PROFILES } from "../util/cost_profile.ts";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 import { suggestWord } from "../cli/registry.ts";
-import { VALID_PROVIDERS } from "../runner/router/cost_preview.ts";
+import { VALID_PROVIDERS, unsupportedProviderMessage } from "../runner/types.ts";
 
 function argVal(args: readonly string[], flag: string): string | undefined {
   // First occurrence wins; both "--flag value" and "--flag=value" forms (TEN-COST-35).
@@ -44,16 +44,12 @@ const VALUE_FLAGS = new Set([
   "--max-wait",
   "--prd", // explicit spec path (overrides positional)
   "--brief", // one-liner spec text
-  // provider-specific env-mapping value flags (only affect that provider)
-  "--aider-model",
-  "--aider-flags",
-  "--cline-model",
   "--cost", // TEN-COST-01: cost profile (lean|off); also LOKI_COST_PROFILE
 ]);
 
 // TEN-STABILITY-33: free-text value flags. A missing, empty or dash-leading value is an error (use --flag=-x for a dash-leading value).
 // TEN-UX-48: --provider, --session-model, --cost and --spec take a required value too.
-const TEXT_VALUE_FLAGS = new Set(["--prd", "--brief", "--completion-promise", "--aider-model", "--aider-flags", "--cline-model", "--provider", "--session-model", "--cost", "--spec"]);
+const TEXT_VALUE_FLAGS = new Set(["--prd", "--brief", "--completion-promise", "--provider", "--session-model", "--cost", "--spec"]);
 
 // RUNNER boolean env-mapping flags: no value token; set an env var the runner
 // already reads (or, for --skip-memory, now reads -- see build_prompt/runner).
@@ -142,7 +138,7 @@ export interface ParsedStartOpts {
 
 export const START_USAGE =
   "usage: loki start <spec> [--max-iterations N] [--max-retries N] [--budget-limit USD]\n" +
-  "                        [--provider claude|codex|cline|aider|opencode] [--session-model small|medium|high|opus|sonnet|haiku]\n" +
+  "                        [--provider claude|opencode] [--session-model small|medium|high|opus|sonnet|haiku]\n" +
   "                        [--completion-promise TEXT] [--base-wait S] [--max-wait S]\n" +
   "                        [--prd FILE | --brief TEXT] [--simple|--complex] [--allow-haiku]\n" +
   "                        [--regen-prd] [--skip-memory] [--cost lean|off] [--haiku]\n" +
@@ -286,17 +282,9 @@ export function parseStartArgs(
     return 2;
   }
 
-  // Apply provider-specific env-mapping VALUE flags (runner reads them per provider).
-  const aiderModel = argVal(args, "--aider-model");
-  if (aiderModel) applyEnv("LOKI_AIDER_MODEL", aiderModel);
-  const aiderFlags = argVal(args, "--aider-flags");
-  if (aiderFlags) applyEnv("LOKI_AIDER_FLAGS", aiderFlags);
-  const clineModel = argVal(args, "--cline-model");
-  if (clineModel) applyEnv("LOKI_CLINE_MODEL", clineModel);
-
   const providerRaw = argVal(args, "--provider");
   if (providerRaw && !VALID_PROVIDERS.has(providerRaw)) {
-    err(`start: unknown --provider '${providerRaw}' (use one of: ${[...VALID_PROVIDERS].join(", ")})\n`);
+    err(unsupportedProviderMessage("start", "--provider", providerRaw));
     return 2;
   }
   // Generic capability vocabulary (small|medium|high) is translated onto the
@@ -610,7 +598,7 @@ export function deployFlagError(args: readonly string[]): string | null {
 }
 
 const START_ENV_NAMES = new Set(["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "TMPDIR", "LANG", "TZ", "CI", "NO_COLOR", "SSH_AUTH_SOCK", "LOKI_RUN_TMP"]);
-const START_ENV_PREFIXES = ["LOKI_", "LC_", "XDG_", "NODE_", "BUN_", "ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_", "GEMINI_", "GOOGLE_", "OPENROUTER_", "OLLAMA_", "AWS_", "AZURE_", "GH_", "GITHUB_"];
+const START_ENV_PREFIXES = ["LOKI_", "LC_", "XDG_", "NODE_", "BUN_", "ANTHROPIC_", "CLAUDE_", "OPENAI_", "GEMINI_", "GOOGLE_", "OPENROUTER_", "OLLAMA_", "AWS_", "AZURE_", "GH_", "GITHUB_"];
 /** Scoped child env for the bash divert: an explicit allowlist (plan section 3), never the whole env plus unrelated secrets. */
 export function scopedStartEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
@@ -623,7 +611,7 @@ export function scopedStartEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 /** TEN-UX-45: what `loki start --dry-run` prints; runs the real preflight (read-only: an uninitialised folder is reported, never git-initialised) and spends nothing. Returns the exit code. */
 export async function dryRunStart(o: ParsedStartOpts, repoDir: string, env: NodeJS.ProcessEnv, out: (s: string) => void = (s) => process.stdout.write(s), err: (s: string) => void = (s) => process.stderr.write(s)): Promise<number> {
   const provider = o.provider ?? (env["LOKI_PROVIDER"] || "claude");
-  if (!VALID_PROVIDERS.has(provider)) { err(`start: unknown LOKI_PROVIDER '${provider}' (use one of: ${[...VALID_PROVIDERS].join(", ")})\n`); return 2; }
+  if (!VALID_PROVIDERS.has(provider)) { err(unsupportedProviderMessage("start", "LOKI_PROVIDER", provider)); return 2; }
   const { resolveCap, capNote } = await import("../e10ext/budget_cap.ts");
   const cap = resolveCap(o.budgetLimit !== undefined ? String(o.budgetLimit) : null, repoDir, env);
   if ("error" in cap) { err(`start: ${cap.error}\n`); return 2; }

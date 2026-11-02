@@ -83,7 +83,7 @@ loki start [SPEC_FILE] [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--provider {claude\|codex\|cline\|aider}` | Select AI provider (default: claude) |
+| `--provider {claude\|opencode}` | Select AI provider (default: claude). codex, cline, aider and gemini were removed and exit 2 |
 | `--parallel` | Enable parallel mode with git worktrees |
 | `--bg, --background` | Run in background |
 | `--simple` | Force simple complexity (3 phases) |
@@ -105,11 +105,8 @@ loki start ./my-app-prd.md
 # Analyze existing codebase (no spec needed)
 loki start
 
-# Use OpenAI Codex as provider
-loki start ./prd.md --provider codex
-
-# Use Cline as provider
-loki start ./prd.md --provider cline
+# Use opencode with an OpenRouter model (needs OPENROUTER_API_KEY)
+loki start ./prd.md --provider opencode --model openrouter/deepseek/deepseek-v3.2
 
 # Run in background with parallel mode
 loki start ./prd.md --background --parallel
@@ -249,7 +246,7 @@ of its own and does not touch the council, the 8 quality gates, the evidence
 gate, or the RARV loop.
 
 Claude-provider-only and opt-in. Requires the claude CLI >= 2.1.154 with
-workflows enabled. On Codex/Cline/Aider, an older CLI, or with workflows
+workflows enabled. On opencode, an older CLI, or with workflows
 disabled, it prints an honest message and exits cleanly without invoking
 anything. A cost-class disclosure prints every time (workflows spawn many agents
 and cost meaningfully more than a normal run; no dollar figure is shown because
@@ -605,7 +602,7 @@ LOKI_GITHUB_PR_LABEL=automated # Label for created PRs
 
 ### `loki provider`
 
-Manage AI providers (Claude, Codex, Cline, Aider, opencode).
+Manage AI providers (Claude, opencode).
 
 ```bash
 loki provider [SUBCOMMAND]
@@ -616,7 +613,7 @@ loki provider [SUBCOMMAND]
 | Command | Description |
 |---------|-------------|
 | `show` | Display current provider |
-| `set {claude\|codex\|cline\|aider}` | Set default provider |
+| `set {claude\|opencode}` | Set default provider |
 | `list` | List available providers with status |
 | `info [provider]` | Get detailed provider information |
 
@@ -626,18 +623,14 @@ loki provider [SUBCOMMAND]
 # Show current provider
 loki provider show
 
-# Switch to OpenAI Codex
-loki provider set codex
-
-# Switch to Cline
-loki provider set cline
+# Switch to opencode
+loki provider set opencode
 
 # List all providers and their CLI status
 loki provider list
 
 # Get detailed info about a provider
-loki provider info cline
-loki provider info codex
+loki provider info opencode
 ```
 
 ---
@@ -1418,7 +1411,7 @@ loki grill [<spec-path>] [options]
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOKI_PROVIDER` | `claude` | Provider to use (`claude` or `codex`). |
+| `LOKI_PROVIDER` | `claude` | Provider to use (`claude` or `opencode`). |
 | `LOKI_GRILL_MODEL` | `sonnet` | Claude model for the interrogation. |
 | `LOKI_GRILL_TIMEOUT` | `180` | Per-invocation timeout in seconds. |
 
@@ -1719,7 +1712,7 @@ loki doctor --json
 loki doctor --airgap
 ```
 
-Checks: Node.js, Python 3, jq, git, curl, Claude CLI, Codex CLI, bash 4.0+
+Checks: Node.js, Python 3, jq, git, curl, Claude CLI, opencode CLI, bash 4.0+
 
 ---
 
@@ -1972,8 +1965,7 @@ loki resume
 ```bash
 # Run the same spec with different providers
 loki start ./prd.md --provider claude
-loki start ./prd.md --provider codex
-loki start ./prd.md --provider cline
+loki start ./prd.md --provider opencode --model openrouter/deepseek/deepseek-v3.2
 ```
 
 ---
@@ -1983,7 +1975,7 @@ loki start ./prd.md --provider cline
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOKI_MAX_ITERATIONS` | 1000 | Max loop iterations before exit |
-| `LOKI_PROVIDER` | claude | AI provider (claude/codex/cline/aider/opencode) |
+| `LOKI_PROVIDER` | claude | AI provider (claude/opencode) |
 | `LOKI_DASHBOARD` | true | Enable web dashboard |
 | `LOKI_DASHBOARD_PORT` | 57374 | Dashboard port |
 | `LOKI_BUDGET_LIMIT` | (none) | Cost budget limit in USD |

@@ -1,7 +1,19 @@
 // Shared provider types: the invocation contract providers.ts and provider_opencode.ts implement,
 // and the provider and tier names start.ts and engine10 read.
 
-export type ProviderName = "claude" | "codex" | "cline" | "aider" | "opencode";
+// The one provider list (selection order: providers/loader.sh SUPPORTED_PROVIDERS and auto_detect_provider). Dependency-free so any
+// caller (loki start, estimate, doctor, failover, the control plane) imports it instead of restating it.
+export const PROVIDERS = ["claude", "opencode"] as const;
+export type ProviderName = (typeof PROVIDERS)[number];
+export const VALID_PROVIDERS: ReadonlySet<string> = new Set(PROVIDERS);
+/** Providers that were supported once; each is refused with one migration line. Mirror of REMOVED_PROVIDERS in providers/loader.sh. */
+export const REMOVED_PROVIDERS: ReadonlySet<string> = new Set(["codex", "cline", "aider", "gemini"]);
+/** Byte-identical to loki_removed_provider_message in providers/loader.sh (tests/min/providers-supported.sh compares them). */
+export const removedProviderMessage = (name: string): string =>
+  `loki: provider '${name}' is no longer supported. Supported providers: claude (Claude Code CLI, or an Anthropic API key through the Agent SDK) and opencode (any model, including OpenRouter via OPENROUTER_API_KEY). Switch with --provider claude or --provider opencode, or unset LOKI_PROVIDER.\n`;
+/** The one refusal for a provider name `loki start`/`loki estimate` cannot run: the migration line for a removed one, the supported list otherwise. */
+export const unsupportedProviderMessage = (cmd: string, flag: string, name: string): string =>
+  REMOVED_PROVIDERS.has(name) ? removedProviderMessage(name) : `${cmd}: unknown ${flag} '${name}' (use one of: ${[...VALID_PROVIDERS].join(", ")})\n`;
 
 export type SessionTier = "planning" | "development" | "fast" | string;
 

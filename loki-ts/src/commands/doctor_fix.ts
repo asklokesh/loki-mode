@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { tokenFreeEnv } from "../util/safe_git.ts";
+import { PROVIDERS } from "../runner/types.ts";
 import { claudeAuthStatusLoggedIn, evaluateClaudeLogin } from "./doctor.ts";
 
 export interface FixResult {
@@ -33,7 +34,7 @@ export interface FixDeps {
   loggedIn?: () => "yes" | "no" | "";
 }
 
-const PROVIDER_CLIS = ["claude", "codex", "cline", "aider", "opencode"] as const;
+const PROVIDER_CLIS = PROVIDERS;
 const CLAUDE_INSTALL = ["npm", "install", "-g", "@anthropic-ai/claude-code"] as const;
 const CLAUDE_LOGIN = ["claude", "auth", "login"] as const;
 
@@ -158,7 +159,7 @@ export function applyDoctorFixes(cwd: string = process.cwd(), home: string = hom
     }
   }
   if (!providers.some((c) => has(c))) {
-    manual.push("No provider CLI found: install claude (above), or codex/cline/aider/opencode, then log in. `loki setup` is optional: loki start needs no setup once one provider is logged in.");
+    manual.push("No provider CLI found: install claude (above), or opencode, then log in. `loki setup` is optional: loki start needs no setup once one provider is logged in.");
   }
   if (!has("bun")) {
     manual.push("bun (optional, bundled by the npm package): see https://bun.sh");

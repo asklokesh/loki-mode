@@ -5,9 +5,9 @@
 # `loki doctor` (health) remain separate entry points.
 #
 # REQUIRED (doctor fails without them): node >= 20, python3 >= 3.8, jq, git, curl
-# AT LEAST ONE of: a provider CLI (claude, codex, cline, aider, opencode) or the
+# AT LEAST ONE of: a provider CLI (claude, opencode) or the
 #   bundled Claude Agent SDK with credentials. Claude Code is the default.
-# OPTIONAL: bun (bundled by npm), bash >= 4, codex/cline/aider/opencode, ollama.
+# OPTIONAL: bun (bundled by npm), bash >= 4, opencode, ollama.
 
 _lsw_ask() {
     # _lsw_ask PROMPT DEFAULT -> echoes the answer; DEFAULT when --yes or no TTY
@@ -56,7 +56,7 @@ _lsw_help() {
     echo "Usage: loki setup [--yes] [--provider NAME] [--model ROUTE] [--budget USD] [--global] [--check]"
     echo ""
     echo "  --yes, -y         Non-interactive: accept defaults, never prompt"
-    echo "  --provider NAME   claude (default), codex, cline, aider, opencode"
+    echo "  --provider NAME   claude (default) or opencode"
     echo "  --model ROUTE     claude (default), ollama/<model>, openrouter/<vendor>/<model>"
     echo "  --budget USD      Spend cap in USD (default: none)"
     echo "  --global          Write to ~/.config/loki-mode instead of .loki/config"
@@ -102,7 +102,7 @@ cmd_setup() {
     echo ""
     echo "2. Provider CLI (Claude Code is the default and the only Tier-1 provider)"
     local p
-    for p in codex cline aider opencode; do
+    for p in opencode; do
         _lsw_tool "$p" OPTIONAL "$(_lsw_fix "$p" "see 'loki doctor' for the command")" || true
     done
     if command -v claude >/dev/null 2>&1; then
@@ -139,7 +139,7 @@ cmd_setup() {
 
     echo ""
     echo "3. Provider and model route"
-    [ -z "$provider" ] && provider="$(_lsw_ask "Provider (claude|codex|cline|aider|opencode)" claude)"
+    [ -z "$provider" ] && provider="$(_lsw_ask "Provider (claude|opencode)" claude)"
     [ -z "$model" ] && model="$(_lsw_ask "Model route (claude | ollama/<model> | openrouter/<vendor>/<model>)" claude)"
     echo ""
     echo "4. Spend cap"

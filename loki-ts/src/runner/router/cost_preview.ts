@@ -6,6 +6,7 @@ import { repoKey } from "../../engine10/cache.ts";
 import { resolveModel } from "../../engine10/session.ts";
 import { appendRunOutcome, readRunHistory, shapeKeyForRepo, WALL_KIND, type RunOutcome } from "./history.ts";
 import { readOriginUrl } from "../../util/engine_origin.ts";
+import { REMOVED_PROVIDERS, VALID_PROVIDERS, unsupportedProviderMessage } from "../types.ts";
 
 export const MIN_RUNS = 3;
 const WINDOW = 20;
@@ -151,8 +152,7 @@ Examples:
 See also: loki cost --detail (what a run ALREADY spent)
 `;
 
-// Same provider list as `loki start` (commands/start.ts imports it). Only claude has a closed model vocabulary; other providers take free-form model ids.
-export const VALID_PROVIDERS: ReadonlySet<string> = new Set(["claude", "codex", "cline", "aider", "opencode"]);
+// Provider list: runner/types.ts (shared with `loki start` and the control plane). Only claude has a closed model vocabulary; opencode takes free-form provider/model ids.
 const CLAUDE_MODEL_RE = /^(claude-[A-Za-z0-9._-]+|opus|sonnet|haiku|small|medium|high)$/i;
 
 /** `loki estimate`: one estimator, the one `loki start` prints. resolve maps a provider to its start model. */
@@ -172,7 +172,7 @@ export function runEstimate(args: readonly string[], d: { repoDir: string; env: 
     else if (a === "--iterations" || a.startsWith("--iterations=")) { err("loki estimate: --iterations was removed; the estimate now comes from this repo's run history (same as 'loki start'). Run 'loki estimate --help'.\n"); return 1; }
     else { err(`Unknown option: ${a}\nRun 'loki estimate --help' for usage.\n`); return 1; }
   }
-  if (!VALID_PROVIDERS.has(provider)) { err(`loki estimate: unknown --provider '${provider}' (use one of: ${[...VALID_PROVIDERS].join(", ")})\n`); return 1; }
+  if (!VALID_PROVIDERS.has(provider)) { err(unsupportedProviderMessage("loki estimate", "--provider", provider)); return REMOVED_PROVIDERS.has(provider) ? 2 : 1; }
   if (model !== undefined && provider === "claude" && !CLAUDE_MODEL_RE.test(model)) { err(`loki estimate: unknown --model '${model}' for provider claude (use a claude-* model id or opus, sonnet, haiku)\n`); return 1; }
   if (!previewOn(d.env)) { out(json ? '{"ok":false,"reason":"cost preview is off (LOKI_COST_PREVIEW=0)"}\n' : "estimate: OFF (LOKI_COST_PREVIEW=0)\n"); return 0; }
   const r = estimateFor(d.repoDir, d.cacheRoot, { model: model ?? (d.resolve ?? resolveModel)(provider), env: d.env });

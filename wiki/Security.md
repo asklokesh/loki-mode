@@ -78,8 +78,8 @@ Loki Mode uses your existing CLI authentication:
 # Claude
 claude auth login
 
-# Codex
-codex login
+# opencode (OpenRouter and other model providers)
+opencode auth login
 ```
 
 Credentials are managed by the provider CLIs, not Loki Mode.
