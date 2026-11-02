@@ -11,7 +11,8 @@
 #
 # Configs: raw-haiku, raw-opus (`command claude -p <task> --model M --output-format json
 # --dangerously-skip-permissions`), loki-haiku (bin/loki <task> --no-pr with
-# LOKI_SESSION_MODEL=haiku), loki-default (bin/loki with no model setting).
+# LOKI_SESSION_MODEL=haiku), loki-default (bin/loki with no model setting), loki-haiku-flag
+# (bin/loki <task> --no-pr --haiku).
 # Tasks live in tasks/<id>/: repo/ (the snapshot, visible tests included), task.txt
 # (what the user types), hidden/ (acceptance tests, copied in only after the contestant
 # exits), solution/ (a reference overlay used by the oracle config) and meta.json.
