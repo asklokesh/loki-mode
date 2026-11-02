@@ -1,0 +1,31 @@
+Failed TTL expiration calculation leaves an unusable cache entry
+
+**Describe the bug**
+
+On current master (9976f1a), `TTLCache.__setitem__` inserts the value and creates its expiration link before computing `timer() + ttl`. If that expression raises, the rejected entry remains in the cache with an unset expiration. A subsequent membership check raises `TypeError` instead of reporting that the entry was not inserted.
+
+The documented datetime/timedelta timer combination can produce this without an invalid type, for example when the expiration falls beyond datetime's range.
+
+**Expected result**
+
+An insertion whose expiration cannot be computed should raise the original arithmetic error without adding an unusable entry.
+
+**Actual result**
+
+The insertion raises `OverflowError`, then checking membership raises `TypeError: '<' not supported between instances of 'datetime.datetime' and 'NoneType'`.
+
+**Reproduction steps**
+
+```python
+from datetime import datetime, timedelta
+from cachetools import TTLCache
+
+cache = TTLCache(maxsize=1, ttl=timedelta(days=1), timer=lambda: datetime.max)
+try:
+    cache['overflow'] = 1
+except OverflowError:
+    pass
+print('overflow' in cache)  # raises TypeError
+```
+
+I have a small fix that computes the expiration before mutating the cache, with a regression test. The full tox suite passes locally.

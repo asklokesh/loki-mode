@@ -1,0 +1,57 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_ttl.py": "tests/test_ttl.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "tox.ini",
+    "conftest.py"
+  ],
+  "source": {
+    "upstream": "https://github.com/tkem/cachetools",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/tkem/cachetools/issues/440",
+    "fix_pr": "https://github.com/tkem/cachetools/pull/441",
+    "fix_commit": "39f9dd234aabc0859c703e7d9747fbefe7133f4c",
+    "parent_commit": "f4f288579dc3c8f82f62d0eaca7774303d9d3768",
+    "vendored_paths": [
+      "LICENSE",
+      "README.rst",
+      "pyproject.toml",
+      "tox.ini",
+      "src",
+      "tests"
+    ],
+    "solution_files": [
+      "src/cachetools/__init__.py"
+    ],
+    "added_files": [
+      "conftest.py"
+    ],
+    "note": "conftest.py added so tests import src/cachetools without installing the package."
+  }
+}

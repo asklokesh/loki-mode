@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "parse"
+dynamic = ["version"]
+readme = "README.rst"
+description = "parse() is the opposite of format()"
+license = "MIT"
+classifiers = [
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[[project.authors]]
+name = "Richard Jones"
+email = "richard@python.org"
+
+[[project.maintainers]]
+name = "Wim Jeantine-Glenn"
+email = "hey@wimglenn.com"
+
+[project.urls]
+homepage = "https://github.com/r1chardj0n3s/parse"
+
+[tool.setuptools.dynamic]
+version = {attr = "parse.__version__"}
+
+[tool.distutils.bdist_wheel]
+universal = true
+
+[tool.pytest.ini_options]
+addopts = "--doctest-modules --doctest-glob=README.rst"

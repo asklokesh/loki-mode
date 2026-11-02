@@ -1,0 +1,22 @@
+Comparison against dirty versions fails
+
+I notice that with v3.0.1 and v.3.0.2 the comparison fails when the constraint is build with a dirty version (eg. 4.5).
+
+```go
+  func main() {
+	versionConstraint, err := semver.NewConstraint("1.5.0 - 4.5")
+	if err != nil {
+		return
+	}
+
+	currVersion, err := semver.NewVersion("3.7.0")
+	if err != nil {
+		return
+	}
+
+	fmt.Println(versionConstraint.Check(currVersion))
+}
+```
+   
+In The Go Playground, where v.1.5.0 is used, there is no such a bug.
+From debugging I see that the problem is in constraints.go, line 404 (v3.0.1)

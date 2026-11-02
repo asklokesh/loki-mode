@@ -1,0 +1,16 @@
+Fields after a datetime format containing %z are shifted: %z's capture groups are not counted
+
+With a strftime-style field that contains `%z`, every positional field after it returns the wrong value:
+
+```python
+>>> from parse import parse
+>>> r = parse("{:%Y-%m-%d %H:%M:%S%z}|{}", "2020-03-04 05:06:07+0200|abc")
+>>> r[1]
+'00'          # expected 'abc'
+```
+
+Cause: `dt_format_to_regex["%z"]` is `[+|-][0-9]{2}(:?[0-9]{2})?(:?[0-9]{2})?`, which has two capturing groups, but the `any(k in type for k in dt_format_to_regex)` branch of `Parser._handle_field` only sets `s` and `conv[group]`; it does not advance `self._group_index` by the number of groups inside the pattern (the `%` and `n` branches, and the `ti`/`tg`/… types, do). The later fields then read the wrong groups. Depending on the format the result is a wrong value, as above, or a `TypeError` from a converter given the wrong text.
+
+Reproduced on 1.22.3 (master 0d2d28f).
+
+Possible fix: count the groups of the generated pattern, e.g. `self._group_index += re.compile(s).groups` in that branch, or make the `%z` groups non-capturing (`(?:...)`). Happy to send a PR with a test if you would take one.

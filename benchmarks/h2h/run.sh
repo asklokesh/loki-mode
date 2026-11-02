@@ -8,11 +8,16 @@
 #   bash benchmarks/h2h/run.sh --configs raw-haiku,loki-haiku --tasks py-csv-quotes --reps 3
 #   bash benchmarks/h2h/run.sh --configs oracle,noop            offline task self-check (no model)
 #   bash benchmarks/h2h/run.sh --budget 25 --ledger spend.jsonl stop before a run once spend reaches $25
+#   bash benchmarks/h2h/run.sh --suite replay --configs oracle,noop    replay suite self-check
 #
 # Configs: raw-haiku, raw-opus (`command claude -p <task> --model M --output-format json
-# --dangerously-skip-permissions`), loki-haiku (bin/loki <task> --no-pr with
-# LOKI_SESSION_MODEL=haiku), loki-default (bin/loki with no model setting).
-# Tasks live in tasks/<id>/: repo/ (the snapshot, visible tests included), task.txt
+# --dangerously-skip-permissions`), raw-haiku-verify, raw-opus-verify (the same, with one sentence
+# appended asking it to run the repo's tests and check its change), loki-haiku (bin/loki <task>
+# --no-pr with LOKI_SESSION_MODEL=haiku), loki-default (bin/loki with no model setting).
+# Suites: tasks/ (synthetic, the default) and replay/ (--suite replay: real closed issues from
+# permissively licensed projects, vendored at the fix's parent commit and scored by the fix's own
+# test files; meta.json "source" records license, issue, fix PR and commits).
+# Tasks live in <suite>/<id>/: repo/ (the snapshot, visible tests included), task.txt
 # (what the user types), hidden/ (acceptance tests, copied in only after the contestant
 # exits), solution/ (a reference overlay used by the oracle config) and meta.json.
 # Every contestant gets a fresh git copy, a throwaway HOME (only the Claude credential
