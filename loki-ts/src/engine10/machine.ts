@@ -6,8 +6,8 @@ import { treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
-import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
-import { repeatedNoopFix } from "../util/anti_loop.ts"; import { restoreBaseTests } from "../util/test_guard.ts"; import { deliverOverWallConflict } from "../util/conflict_resume.ts";
+import { backstopS, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
+import { repeatedNoopFix } from "../util/anti_loop.ts"; import { restoreBaseTests } from "../util/test_guard.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
 
 /** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
 interface WallSplit { author(ctx: RunContext, signal: AbortSignal): Promise<{ kind: string } & Record<string, unknown>>; install(ctx: RunContext, a: never, baseDir: string): StageResult; }
@@ -54,6 +54,13 @@ function defaultLoader(dir: string) {
 }
 const harnessOnlyFail = (d: Obj | undefined): boolean => { const f = (Array.isArray(d?.checks) ? (d.checks as Obj[]) : []).filter((c) => c?.result === "fail"); return f.length > 0 && f.every((c) => c.owner === "harness"); }; // a harness-owned failure never feeds a fix round or a STALLED stop
 export const hasFailures = (d: Obj | undefined): boolean => (Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0 && !harnessOnlyFail(d)) || (typeof d?.holdout_failed === "number" && d.holdout_failed > 0); // C-C4b: a held-out failure is only an opaque count
+/** The fix loop's input after a verify stopped at its limit: the earlier failure groups minus those whose check the stopped verify saw pass
+ *  (FireLater#24: fix round 2 was fed a Wall failure the stopped verify had already seen pass, 27 of 27). A group belongs to the check whose
+ *  name is its signature or prefixes it (verify.ts: `${name} ${first_error}`). */
+export function stillFailing(groups: unknown, kept: unknown): unknown[] {
+  const g = Array.isArray(groups) ? (groups as { signature?: unknown }[]) : [], green = (Array.isArray(kept) ? (kept as Obj[]) : []).filter((c) => c?.result === "pass" || c?.result === "flaky").map((c) => String(c.name));
+  return g.filter((x) => { const s = String(x?.signature ?? ""); return !green.some((n) => s === n || s.startsWith(`${n} `)); });
+}
 // Only already_satisfied short-circuits to the tail. spec_conflict still runs verify (E-98b) but no fix round (FC-FIX-OVER-CONFLICT); seal reads implement.exit off outputs for the verdict.
 const earlyExit = (d: Obj): boolean => d.already_satisfied === true;
 /** After a cap or limit kill, how long the machine waits for the aborted stage to settle before moving on. */
@@ -105,6 +112,9 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     ctx.emit("cap.hit", name, { elapsed_s: elapsedS() });
   };
   let implementBudgetS = 0; const implementLimitS = (floorS: number): number => Math.max(floorS, Math.floor(softCapS(ctx.capS) - elapsedS() - (STAGE_BUDGETS.verify.limitS ?? 0))); // leaves verify's window before the soft cap
+  // A fix round scales with the task the plan sized: the cap grows with the packages and files in scope (run_cap.ts), so a round on a 1490 s
+  // FireLater-sized cap gets 298 s instead of being killed at 180 s; a default 900 s cap keeps 180 s, and a round never gets more than twice that.
+  const fixLimitS = (baseS: number): number => Math.max(baseS, Math.min(2 * baseS, Math.round((baseS * ctx.capS) / DEFAULT_CAP_S)));
   const verifyLimitS = (floorS: number): number => Math.max(floorS, Math.floor(softCapS(ctx.capS) - elapsedS() - VERIFY_RESERVE_S)); // verify gets the run budget left too, so the checks that prove the task are not cut at a fixed 120s; the soft cap still stops it
   /** Runs one stage; returns its result, or null when it was skipped. */
   const runStage = async (name: StageName, underCap: boolean): Promise<StageResult | null> => {
@@ -114,7 +124,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       return null;
     }
     if (underCap && capReached()) { markCap(name); return null; }
-    const limitS = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : (name === "verify" && st.limitS >= STAGE_BUDGETS.verify.limitS ? verifyLimitS(st.limitS) : st.limitS) + (st.extraLimitS?.(sctx) ?? 0); if (name === "implement") { implementBudgetS = limitS; implementStartMs = ctx.clock.now(); } // FC-19: implement gets the run budget left, not a fixed 480s
+    const limitS = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : (name === "verify" && st.limitS >= STAGE_BUDGETS.verify.limitS ? verifyLimitS(st.limitS) : name === "fix" ? fixLimitS(st.limitS) : st.limitS) + (st.extraLimitS?.(sctx) ?? 0); if (name === "implement") { implementBudgetS = limitS; implementStartMs = ctx.clock.now(); } // FC-19: implement gets the run budget left, not a fixed 480s
     ctx.emit("stage.started", name, { target_s: st.targetS, limit_s: limitS, ...(name === "wall" ? { start_ms: ctx.clock.now() } : {}) });
     const t0 = ctx.clock.now();
     const dur = (): number => (ctx.clock.now() - t0) / 1000;
@@ -156,7 +166,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       }
       r = { status: "failed", data: {}, reason: why, killed: true };
       const kept = name === "verify" ? (settled?.status === "completed" ? settled.data : partials.verify) : undefined;
-      if (kept) { const prev = outputs.verify; outputs.verify = { ...kept, failures_grouped: prev?.failures_grouped ?? [], holdout_failed: prev?.holdout_failed ?? 0, not_proven: [...(Array.isArray(kept.not_proven) ? kept.not_proven : []), VERIFY_STOPPED_NOTE[why]], stopped_at: why, duration_s: dur() }; } // the checks that ran stay in the receipt; the note keeps the verdict below VERIFIED; the fix loop still reads what it read before the stop
+      if (kept) { const prev = outputs.verify; outputs.verify = { ...kept, failures_grouped: stillFailing(prev?.failures_grouped, kept.checks), holdout_failed: prev?.holdout_failed ?? 0, not_proven: [...(Array.isArray(kept.not_proven) ? kept.not_proven : []), VERIFY_STOPPED_NOTE[why]], stopped_at: why, duration_s: dur() }; } // the checks that ran stay in the receipt; the note keeps the verdict below VERIFIED; the fix loop reads the earlier groups minus those the stopped verify saw pass
       if (name === "implement" && why === "limit") { const ro = (outputs.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [], reverted = [...restoreReadOnly(ro).map((f) => relative(ctx.repoDir, f)), ...restoreBaseTests(ctx.repoDir, ctx.baseSha, outputs.intake)]; outputs.implement = { exit: "killed", limit_s: limitS, elapsed_s: dur(), ...(reverted.length ? { tests_reverted: reverted } : {}) }; } // FC-21 (a): the work that exists is verified, and seal reads exit=killed so the verdict can never be VERIFIED
       if (name === "fix") outputs.fix = settled?.status === "completed" ? { ...settled.data, killed: true } : { ...outputs.fix, round: Number(outputs.fix?.round ?? 0) + 1, killed: true }; // a killed round still counts, so the next round gets its own iteration id instead of resuming the killed session
     }
@@ -269,6 +279,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
         let noopSig: string | null = null; // anti-loop: the verify signature that fed the last fix round that left the tree unchanged
         for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
+          const wallBefore = wallSignature(outputs, ctx.repoDir);
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;
           if (fx.status === "completed" && outputs.fix?.exit === "spec_conflict") { outputs.implement = { ...outputs.implement, exit: "spec_conflict", spec_conflict_reason: outputs.fix.spec_conflict_reason ?? null }; break; } // FC-FIX-CONFLICT-STALLED: a confirmed fix-round conflict is the implement conflict for seal, output and the supervisor
@@ -283,6 +294,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
           const v = await runStage("verify", true);
           sigs.push(sigOf(outputs.verify, v));
           if (mustJump("verify", v)) break;
+          if (wallOnlyAfterFix(outputs, ctx.repoDir) && wallSignature(outputs, ctx.repoDir) === wallBefore) break; // only Loki's own Wall still fails, the same tests the same way, while the repo's own tests pass: the round made no progress on it, so delivery below decides; a round that moved the Wall gets the rounds left
           if (hasFailures(outputs.verify) && sigs.length >= 2 && sigs.slice(-2).every((x) => x === sigs[sigs.length - 1])) { // no progress: the round left the same failing set, so another round would only spend
             // A stall may climb once, only on a code-owned failure (a lint-only or harness-owned stall is unchanged); the same routedFix decides here and in the fix stage.
             const up = stallClimb(ctx.model, outputs, sigs[sigs.length - 1] ?? "");
@@ -294,7 +306,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
             stopped = "stalled"; break;
           }
         }
-        if (!fatal && !capHit && stopped === null && await deliverOverWallConflict(outputs, ctx.repoDir, () => runStage("verify", true), (path, why) => ctx.emit("wall.arbitrated", "wall", { path, discarded: why }))) ctx.emit("spec.conflict", "implement", { delivered: true, reason: outputs.implement?.spec_conflict_reason ?? null }); // a Wall defect never discards correct code (util/conflict_resume.ts)
+        const wasConflict = outputs.implement?.exit === "spec_conflict";
+        if (!fatal && !capHit && stopped === null && await deliverOverWallConflict(outputs, ctx.repoDir, () => runStage("verify", true), (path, why) => ctx.emit("wall.arbitrated", "wall", { path, discarded: why }), { runDir: ctx.runDir, restored: (v) => ctx.emit("stage.completed", "verify", { ...v, restored: true }) }) && wasConflict) ctx.emit("spec.conflict", "implement", { delivered: true, reason: outputs.implement?.spec_conflict_reason ?? null }); // a Wall defect never discards correct code (util/conflict_resume.ts)
         if (fatal) { stopped = fatal; jumped = true; }
         if (capHit) jumped = true;
       }

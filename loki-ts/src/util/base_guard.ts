@@ -2,6 +2,7 @@
 // A run starts from the base the user asked for; only the ALREADY_SATISFIED claim must rest on the PR target, never on
 // commits that exist only in target..HEAD (Loki's own unmerged work or the user's own).
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -112,7 +113,9 @@ export function baseLine(repoDir: string): string {
   const t = resolveBase(repoDir, undefined, false);
   const sk = stackedOnLokiRun(repoDir, t);
   const b = git(repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]) ?? "detached HEAD";
-  return `PR target: ${t ? t.ref : "unresolved"}, base: ${sk ? `${sk.target} (${sk.message})` : b}`;
+  // A leftover run branch with no commits of its own (a cancelled run) sits on the PR target's tip: name the target, which is what the run builds on.
+  const same = !sk && t && /^loki\//.test(b) && git(repoDir, ["rev-parse", "-q", "--verify", "HEAD^{commit}"]) === git(repoDir, ["rev-parse", "-q", "--verify", `${t.ref}^{commit}`]);
+  return `PR target: ${t ? t.ref : "unresolved"}, base: ${sk ? `${sk.target} (${sk.message})` : same ? t!.ref : b}`;
 }
 
 /** The recorded note from an intake stage.completed data object (null when absent). */
@@ -228,15 +231,27 @@ export async function zeroOnBase(
   run: (c: { cmd: string; args: string[]; cwd: string }) => Promise<{ ok: boolean; cut: boolean; missing: boolean; out: string }>, note: (name: string) => void,
   gate: Pick<ZeroGate, "sinceMs" | "ignored"> = {},
 ): Promise<string[]> {
-  const zero: string[] = [], envMoved = new Map<string, boolean>(); // one guard walk per package dir per call
-  const moved = (src: string): boolean => { if (!envMoved.has(src)) envMoved.set(src, envChangedSince(repoDir, src, gate.sinceMs!, gate.ignored ?? null)); return envMoved.get(src)!; };
+  const zero: string[] = [], link = baseDepsLinker(baseDir, repoDir, gate);
   for (const c of cands) {
-    const src = join(repoDir, relative(baseDir, c.cwd));
-    if (depsSeeHead(src, repoDir) || (gate.sinceMs !== undefined && moved(src))) continue;
-    for (const d of ["node_modules", ".venv"]) { try { if (existsSync(join(src, d)) && !existsSync(join(c.cwd, d))) symlinkSync(join(src, d), join(c.cwd, d)); } catch { /* no deps on base: not zero, stays fail-closed */ } }
+    if (!link(c.cwd)) continue;
     if (isZeroRun(c, await run(c))) { zero.push(c.name); note(c.name); }
   }
   return zero;
+}
+
+/** Links the head checkout's dependency dirs (node_modules, .venv) into a package dir of the base worktree `baseDir`, never copied, so a base run
+ *  of a suite that needs its dependencies can run at all. The returned function answers false (nothing linked, the base run stays without
+ *  dependencies: fail closed) when the head's deps can see head sources (depsSeeHead) or, with a lazy `gate`, when envChangedSince finds the
+ *  environment changed since intake. One guard walk per package dir. Shared by zeroOnBase and verify's base-red subtraction. */
+export function baseDepsLinker(baseDir: string, repoDir: string, gate: Pick<ZeroGate, "sinceMs" | "ignored"> = {}): (cwd: string) => boolean {
+  const seen = new Map<string, boolean>();
+  return (cwd) => {
+    const src = join(repoDir, relative(baseDir, cwd));
+    if (!seen.has(src)) seen.set(src, !(depsSeeHead(src, repoDir) || (gate.sinceMs !== undefined && envChangedSince(repoDir, src, gate.sinceMs, gate.ignored ?? null))));
+    if (!seen.get(src)) return false;
+    for (const d of ["node_modules", ".venv"]) { try { if (existsSync(join(src, d)) && !existsSync(join(cwd, d))) symlinkSync(join(src, d), join(cwd, d)); } catch { /* no deps on base: stays fail-closed */ } }
+    return true;
+  };
 }
 
 /** True when one finished run of a test command executed zero tests (the shared mapping of 0 tests to not_run; a cut or missing run never counts). */
@@ -357,13 +372,34 @@ function settleBranch(repoDir: string, branch: string, dir: string, stem: string
   return { note: bundle ? `engine10: run branch ${branch} removed, its history is saved; restore it with: git fetch ${bundle} ${branch}:${branch}\n` : "", deleted: true };
 }
 
-/** Puts the checkout back on `orig` when it sits on the run branch and the tracked tree is clean; never discards an edit. */
+/** Puts the checkout back on `orig` when it sits on the run branch and the tracked tree is clean apart from `.loki/` (Loki's own state dir, never
+ *  committed by a run: FireLater tracks four legacy .loki files deleted from its tree long before any current run). Never discards an edit: a plain
+ *  `git checkout` carries such changes along and refuses when one would be overwritten. */
 function returnCheckout(repoDir: string, branch: string, orig: string | null): string | null {
   const cur = currentBranch(repoDir);
   if (cur !== branch) return null; // already back (a stop restores it) or the user moved on: left where it is
   if (!orig || orig === branch) return `engine10: the checkout stays on ${branch}: the run did not record the branch it started from\n`;
-  if (git(repoDir, ["status", "--porcelain", "--untracked-files=no"]) !== "") return `engine10: the checkout stays on ${branch}: it has uncommitted changes; return with: git checkout ${orig}\n`;
+  let dirty: string | null; // raw, never trimmed: a porcelain entry starts with a status column that may be a space
+  try { dirty = safeGit(repoDir, ["status", "--porcelain", "-z", "--untracked-files=no", "--no-renames"], { timeout: 20000 }); } catch { dirty = null; }
+  if (dirty === null || dirty.split("\0").filter(Boolean).some((l) => !l.slice(3).startsWith(".loki/"))) return `engine10: the checkout stays on ${branch}: it has uncommitted changes; return with: git checkout ${orig}\n`;
   return git(repoDir, ["checkout", "-q", orig]) === null ? `engine10: the checkout stays on ${branch}: git checkout ${orig} failed; return with: git checkout ${orig}\n` : null;
+}
+
+/** Removes this run's Wall test files that are still untracked in the user's tree at run end (a run that published no Wall commit leaves them
+ *  there, and the next run inherits them as untracked files). Only a file whose bytes hash to the sealed sha256 in this run's receipt is removed,
+ *  so an edit the user made is never lost; the sealed copy stays under .loki/runs/<id>/wall/. Returns the repo-relative paths removed. */
+export function removeOwnWallFiles(repoDir: string, runId: string): string[] {
+  let files: { path?: unknown; sha256?: unknown }[] = [];
+  try { files = (JSON.parse(readFileSync(join(repoDir, ".loki", "runs", runId, "receipt.json"), "utf8")) as { wall?: { files?: typeof files } }).wall?.files ?? []; } catch { return []; }
+  const gone: string[] = [];
+  for (const f of files) {
+    if (typeof f.path !== "string" || typeof f.sha256 !== "string") continue;
+    const abs = resolve(repoDir, f.path), rel = relative(repoDir, abs);
+    if (rel.startsWith("..") || rel.startsWith(".loki/") || !basename(rel).startsWith("loki_wall_")) continue;
+    if (git(repoDir, ["ls-files", "--error-unmatch", "--", rel]) !== null) continue; // tracked: committed on purpose (a published Wall), never removed
+    try { if (createHash("sha256").update(readFileSync(abs)).digest("hex") !== f.sha256) continue; rmSync(abs); gone.push(rel); } catch { /* missing or unreadable: nothing to remove */ }
+  }
+  return gone;
 }
 
 /** The one line naming where a kept run branch's work is and how to look at it; "" when the branch is gone (settleBranch named the bundle) or still checked out. */
@@ -391,6 +427,8 @@ export function finishRunBranch(repoDir: string, runId: string, end: RunEnd, env
     removeRunWorktrees(repoDir, end.baseSha);
     migrateSessionFiles(repoDir, runLive);
     let notes = "";
+    const wallGone = removeOwnWallFiles(repoDir, runId); // the run's own untracked Wall files never stay behind in the user's tree
+    if (wallGone.length) notes += `engine10: removed Loki's own acceptance test ${wallGone.join(", ")} from your tree; its sealed copy is under .loki/runs/${runId}/wall/\n`;
     const keepHere = end.keepWork === true && tip !== null && tipOf(repoDir, end.baseSha ?? "") !== tip;
     const stay = tip ? returnCheckout(repoDir, branch, end.orig) : null; // run safety: every outcome returns the checkout to the start branch, a kept branch included
     if (stay) notes += stay;

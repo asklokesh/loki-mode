@@ -1736,6 +1736,8 @@ export function briefGroups<C extends { name: string; cmd: string; first_error?:
   prevNames.forEach((n, i) => { const g = prevGroups[i]; if (g && quick && !quick.ran.has(n)) { names.push(n); groups.push({ ...g, carried: true, sample: `${g.sample.split("\n")[0]}\n(not rerun since the fix; it runs again once the checks above pass)` }); } });
   return { groups, names };
 }
+/** WALL-FAILOUT: the run-dir file holding the last Wall run's failing output (verify.ts writeWallFailureTail; a failed Wall-only delivery puts it back). */
+export const WALL_FAILURE_TAIL_FILE = "wall-failure-tail.txt";
 /** FC-PR-BODY-PUBLIC-HYGIENE: the one wording for a check that also fails on the base tree (verify's pre_red_checks). */
 export const ALREADY_FAILING_ON_BASE = "already failing on base, not caused by this change";
 /** "fail" stays "fail" unless the check is base-red, then it carries the one shared label; every other result is unchanged. */
