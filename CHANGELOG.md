@@ -5,6 +5,24 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.119.0 (2026-11-01)
+
+One start decision: the separate Bun run loop is gone, and every start path uses the default engine or says why not.
+
+### Changed
+
+- Removed the separate Bun run loop (about 1,500 lines). `loki start --attempts 1`, `LOKI_SDK_LOOP=1` and `LOKI_SDK_MODE=full` now run the default engine; `LOKI_SDK_LOOP=1` prints one line saying so. One script (`autonomy/route.sh`) now makes every start decision.
+- A PRD over 100 KB still runs on the legacy engine, as before. Under `LOKI_SDK_MODE=full` with Claude, where the legacy engine has no SDK path, it now stops with one line explaining how to proceed instead of failing with "provider CLI not installed"; `--engine legacy` under SDK mode with Claude is refused the same way.
+- `start --attempts 1` behaves like a plain start: runner-only flags such as `--simple` are refused, `--max-duration` is honored and a PR URL goes to PR verification.
+
+## v11.118.1 (2026-11-01)
+
+The Docker images build again.
+
+### Fixed
+
+- v11.118.0's Docker image build failed because the engine source now imports the bundled price table (`loki-ts/data/model-pricing.json`) and the build stage did not copy it; npm, Homebrew and the SDKs were unaffected. Both Docker build stages now copy it, and a release check fails when a build stage that copies the engine source misses any file that source imports from outside it.
+
 ## v11.118.0 (2026-11-01)
 
 Shell commands in a run no longer wait on a safety subprocess, operator permission policies work again, and model prices come from one table.
