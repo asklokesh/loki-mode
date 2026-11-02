@@ -158,7 +158,7 @@ export function vitestFileText(rel: string, asserts: VitestAssertion[]): FileRun
 export async function vitestBatch(cwd: string, rels: string[], signal: AbortSignal, opts: { timeoutMs?: number; path?: string } = {}): Promise<Map<string, FileRun> | null> {
   const dir = mkdtempSync(join(tmpdir(), "loki-vbatch-")), file = join(dir, "report.json");
   try {
-    // The default reporter beside the JSON one: an unhandled error or rejection is printed there and nowhere in the JSON (vitest 2.1.9 and 4.0.16).
+    // The default reporter beside the JSON one: an unhandled error or rejection is printed there and nowhere in the JSON (vitest 2.1.9, 4.0.16, 4.1.12, 5.1.0).
     const r = await runOnce("npx", ["--no-install", "vitest", "run", "--reporter=json", "--reporter=default", `--outputFile.json=${file}`, ...rels], cwd, signal, { timeoutMs: opts.timeoutMs ?? batchTimeoutMs(rels.length), group: true, ...(opts.path ? { path: opts.path } : {}) });
     if (r.cut || r.missing || !existsSync(file) || UNHANDLED_RE.test(r.out)) return null; // an unhandled error belongs to no file: the batch vouches for nothing
     const rep = JSON.parse(readFileSync(file, "utf8")) as { testResults?: { name?: unknown; status?: unknown; message?: unknown; assertionResults?: unknown }[] };

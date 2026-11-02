@@ -5,7 +5,7 @@
 # that file lacks WORD (the Wall tests of the e2e stub); else it passes. The first describe("...") title is the ancestor.
 # A file holding /*hookfail*/ fails in a describe-level afterAll with every test passed (JSON: status "failed", assertions passed); a
 # file holding /*unhandled*/ passes its tests but raises an unhandled rejection (JSON: status "passed"; only the default reporter names
-# it; exit 1). Both are what real vitest 2.1.9 and 4.0.16 report. The default reporter prints what the real one prints (non-TTY); the
+# it; exit 1). Both are what real vitest 2.1.9, 4.0.16, 4.1.12 and 5.1.0 report. The default reporter prints what the real one prints (non-TTY); the
 # JSON reporter writes vitest's report to F. Every call appends "<cwd> json=<0|1> files=<n>" to FAKE_VITEST_LOG.
 import json, os, re, sys
 

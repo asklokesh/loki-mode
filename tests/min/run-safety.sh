@@ -42,6 +42,15 @@
 #   6. loki-ts/src/engine10/stages/verify.ts: drop knownRed from the failures_grouped filter;
 #      the mono fix-input check fails. Set LOKI_E10_VERIFY_BATCH=0 in the run: the one-process
 #      check fails.
+#   7. loki-ts/src/engine10/stages/verify.ts vitestBatch: vouch for a pass on assertions alone (drop the
+#      status "passed" check); the batch check fails (a throwing afterAll is recorded as a pass).
+#   8. verify.ts vitestBatch: drop the UNHANDLED_RE check; the batch check fails on the mixed
+#      pass/fail/unhandled case (a failed file explains the exit, so only the banner catches it).
+#   9. loki-ts/src/util/conflict_resume.ts wallFailures: ignore strict (skip the full suite on the
+#      Wall-only path); the delivery check fails. Skip the restore after a failed re-verify: it fails too.
+#  10. verify.ts sameErrors: excuse every known-red id whatever its first error; the delivery check fails.
+#  11. loki-ts/src/engine10/machine.ts: break after one Wall-only round whatever wallSignature says; the
+#      mono2 two-round check fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -229,7 +238,8 @@ console.log(look(real) === look(synth) ? "same" : look(real) + " vs " + look(syn
 [ "$PAR" = same ] && ok "a batched vitest file gives the same count, ids, first error and result as the file run alone" || bad "batched vs per-file parse differs: $PAR"
 
 # A batch vouches only for what a file run alone would say: a file whose afterAll throws (status failed, every test passed) runs alone, and
-# an unhandled rejection anywhere makes the batch vouch for nothing (real vitest 2.1.9 and 4.0.16 report both this way; stand-in vitest).
+# an unhandled rejection anywhere makes the batch vouch for nothing, also when a failed file already explains the nonzero exit (a mixed
+# pass/fail/unhandled batch: only the unhandled banner catches it). Real vitest 2.1.9, 4.0.16, 4.1.12 and 5.1.0 report these this way; stand-in vitest.
 B="$T/vbatch"; mkdir -p "$B"
 printf 'import { test } from "vitest";\ntest("fine", () => {});\n' > "$B/fine.test.ts"
 printf 'import { test } from "vitest";\n/*hookfail*/\ntest("ok", () => {});\n' > "$B/hook.test.ts"
@@ -239,10 +249,10 @@ VB="$(B="$B" ROOT="$ROOT" PATH="$FIX/vitest-bin:$PATH" bun --no-env-file --confi
 const v = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/verify.ts"), sig = new AbortController().signal;
 const show = (m) => (m ? [...m.entries()].map(([k, f]) => k.replace(".test.ts", "") + ":" + f.ok).sort().join(",") : "null");
 const out = [];
-for (const fs of [["fine.test.ts", "hook.test.ts"], ["fine.test.ts", "unh.test.ts"], ["fine.test.ts", "red.test.ts", "hook.test.ts"]]) out.push(show(await v.vitestBatch(process.env.B, fs, sig)));
+for (const fs of [["fine.test.ts", "hook.test.ts"], ["fine.test.ts", "unh.test.ts"], ["fine.test.ts", "red.test.ts", "hook.test.ts"], ["fine.test.ts", "red.test.ts", "unh.test.ts"]]) out.push(show(await v.vitestBatch(process.env.B, fs, sig)));
 console.log(out.join(" | "));
 ' 2>&1)"
-[ "$VB" = "fine:true | null | fine:true,red:false" ] && ok "batch: a throwing afterAll runs alone, an unhandled rejection voids the batch, assertion failures stay vouched" || bad "batch vouching gave: $VB (want: fine:true | null | fine:true,red:false)"
+[ "$VB" = "fine:true | null | fine:true,red:false | null" ] && ok "batch: a throwing afterAll runs alone, an unhandled rejection voids the batch even beside a failed file, assertion failures stay vouched" || bad "batch vouching gave: $VB (want: fine:true | null | fine:true,red:false | null)"
 
 # The same monorepo, but the fix round moves the Wall (E2E_STUB_FIX=rank makes C2 pass, C3 still fails): that round made progress on the Wall, so
 # the next round runs; round 2 changes nothing on the Wall, and only then is the work delivered PARTIAL.
