@@ -1,0 +1,74 @@
+{
+  "difficulty": "hard",
+  "shape": "multi-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_toml_document.py": "tests/test_toml_document.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests",
+    "--deselect",
+    "tests/test_items.py::test_dates_behave_like_dates",
+    "--deselect",
+    "tests/test_items.py::test_times_behave_like_times"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests",
+    "--deselect",
+    "tests/test_items.py::test_dates_behave_like_dates",
+    "--deselect",
+    "tests/test_items.py::test_times_behave_like_times"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "tox.ini"
+  ],
+  "source": {
+    "upstream": "https://github.com/python-poetry/tomlkit",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/python-poetry/tomlkit/issues/230",
+    "fix_pr": "https://github.com/python-poetry/tomlkit/pull/234",
+    "fix_commit": "5bc89eda4e1dd4bab05ec0d20e5962d56d1786d9",
+    "parent_commit": "7194daeb5a951a2c1d54bd909968323912f941d8",
+    "vendored_paths": [
+      "LICENSE",
+      "README.md",
+      "pyproject.toml",
+      "tox.ini",
+      "tomlkit",
+      "tests"
+    ],
+    "solution_files": [
+      "tomlkit/container.py",
+      "tomlkit/items.py"
+    ],
+    "added_files": [],
+    "note": "The tests/toml-test submodule is vendored at its pinned commit (toml-lang/toml-test, MIT). tests/test_items.py::test_dates_behave_like_dates and ::test_times_behave_like_times are deselected: they fail on Python 3.13 and later on the parent and on the fix alike.",
+    "submodules": {
+      "tests/toml-test": {
+        "upstream": "https://github.com/toml-lang/toml-test",
+        "commit": "27837d38aa7cc9ff385ed1316a8fef68394395dd",
+        "license": "MIT",
+        "vendored_paths": [
+          "COPYING",
+          "tests"
+        ]
+      }
+    }
+  }
+}

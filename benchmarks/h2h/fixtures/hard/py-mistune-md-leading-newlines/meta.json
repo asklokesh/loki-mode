@@ -1,0 +1,56 @@
+{
+  "difficulty": "hard",
+  "shape": "multi-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_renderers.py": "tests/test_renderers.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "conftest.py"
+  ],
+  "source": {
+    "upstream": "https://github.com/lepture/mistune",
+    "license": "BSD-3-Clause",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/lepture/mistune/issues/366",
+    "fix_pr": "https://github.com/lepture/mistune/pull/481",
+    "fix_commit": "5569f20ae7f16690377ff6d1d5c1a667643f850a",
+    "parent_commit": "e9975d4693c4a95b7f63671f8ff2dfe5a60d2cee",
+    "vendored_paths": [
+      "LICENSE",
+      "README.md",
+      "pyproject.toml",
+      "src",
+      "tests"
+    ],
+    "solution_files": [
+      "src/mistune/block_parser.py",
+      "src/mistune/renderers/markdown.py"
+    ],
+    "added_files": [
+      "conftest.py"
+    ],
+    "note": "conftest.py added so tests import src/mistune without installing the package."
+  }
+}

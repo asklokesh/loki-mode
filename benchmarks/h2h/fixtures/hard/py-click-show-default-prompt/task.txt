@@ -1,0 +1,27 @@
+`show_default` as a string isn't used in prompts as the default shown
+
+The behavior of `click.Option("--name", default="default", show_default="show_default", prompt=True)` is different for the help text and for the prompt.
+
+Help: 👍 
+```
+Usage: foo.py [OPTIONS]
+
+Options:
+  --name TEXT  [default: (show_default)]
+  --help       Show this message and exit.
+```
+
+Prompt: 👎 
+```
+Name [default]:
+```
+
+Ideally, this would also show the `show_default`:
+```
+Name [show_default]:
+```
+
+Environment:
+
+- Python version: 3.11.6
+- Click version: 8.1.6

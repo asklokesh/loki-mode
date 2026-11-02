@@ -1,0 +1,35 @@
+Reference links not rendered in table of contents links
+
+Reference links are not rendered in table of contents links (they are left as `[link][ref]`). Inline links and other formatting do seem to work (specifically, the HTML is stripped).
+
+I think the root cause is similar to https://github.com/lepture/mistune/issues/378#issuecomment-3678197092, state not being passed around when the TOC `ul` is rendered; the fix probably involves passing the parent state to `normalize_toc_item` [here](https://github.com/lepture/mistune/blob/4adac1c6e7e14e7deeb1bf6c6cd8c6816f537691/src/mistune/toc.py#L63).
+
+This did use to work in v2; together with the fact that links are allowed in headings, I'd tend to consider it a regression.
+
+Repro (mistune 3.1.4):
+
+```python
+>>> from mistune import *
+>>> from mistune.directives import *
+>>> md = create_markdown(plugins=[RSTDirective([TableOfContents()])])
+>>> s = """
+... .. toc::
+... # **bold**
+... # [inline link](example.com) 
+... # [link ref][ref]
+... [ref]: example.com
+... """
+>>> print(md(s))
+<details class="toc" open>
+<summary>Table of Contents</summary>
+<ul>
+<li><a href="#toc_1">bold</a></li>
+<li><a href="#toc_2">inline link</a></li>
+<li><a href="#toc_3">[link ref][ref]</a></li>
+</ul>
+</details>
+<h1 id="toc_1"><strong>bold</strong></h1>
+<h1 id="toc_2"><a href="example.com">inline link</a></h1>
+<h1 id="toc_3"><a href="example.com">link ref</a></h1>
+
+```

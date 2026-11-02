@@ -1,0 +1,55 @@
+{
+  "difficulty": "hard",
+  "shape": "multi-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_grouping.py": "tests/test_grouping.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests",
+    "--ignore=tests/test_cli.py"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests",
+    "--ignore=tests/test_cli.py"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml"
+  ],
+  "source": {
+    "upstream": "https://github.com/andialbrecht/sqlparse",
+    "license": "BSD-3-Clause",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/andialbrecht/sqlparse/issues/438",
+    "fix_pr": "https://github.com/andialbrecht/sqlparse/pull/513",
+    "fix_commit": "e9729390c0274392f2c1883f629e473a6914ce60",
+    "parent_commit": "aa0b85e3f754284244f6900fe90cee505a3509f5",
+    "vendored_paths": [
+      "LICENSE",
+      "README.rst",
+      "sqlparse",
+      "tests"
+    ],
+    "solution_files": [
+      "sqlparse/engine/grouping.py",
+      "sqlparse/keywords.py",
+      "sqlparse/sql.py"
+    ],
+    "added_files": [],
+    "note": "tests/test_cli.py is ignored: its stream handling fails on Python 3.14 on the parent and on the fix alike."
+  }
+}

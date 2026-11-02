@@ -1,0 +1,45 @@
+Comparison not being correctly parsed when not encapsulated in parentheses
+
+Basically, a Comparison `TokenList` is not able to be parsed if if after the operator the text is not encapsulated in parentheses. Given this query:
+
+```
+SELECT *
+FROM telemetry_core_parquet
+WHERE date_parse(submission_date_s3, '%Y%m%d') > (current_date - interval '6' month)
+```
+
+The result of parsing and looking at the `Comparison` `TokenList` is as expected:
+```
+In [27]: parsed = sqlparse.parse("""SELECT * FROM telemetry_core_parquet WHERE date_parse(submission_date_s3, '%Y%m%d') > (current_date - interval '6' month)""")
+
+In [28]: parsed[0].tokens[10].tokens
+Out[28]:
+[<Keyword 'WHERE' at 0x10D6E0668>,
+ <Whitespace ' ' at 0x10D6E06D0>,
+ <Comparison 'date_p...' at 0x10D6CA1D0>]
+```
+
+However, if I remove the parentheses from after the `>`, it is still valid SQL but fails to parse as a `TokenList`, and instead parses as just a list of `Token`. Here, I would expect the `Where` `TokenList` to have the `Comparison` `TokenList`, as above.:
+```
+n [22]: parsed = sqlparse.parse(""" SELECT * FROM telemetry_core_parquet WHERE date_parse(submission_date_s3, '%Y%m%d') > current_date - interval '6' month""")
+
+In [26]: parsed[0].tokens[10].tokens
+Out[26]:
+[<Keyword 'WHERE' at 0x10DA469A8>,
+ <Whitespace ' ' at 0x10DA46A10>,
+ <Function 'date_p...' at 0x10D809850>,
+ <Whitespace ' ' at 0x10DA46D50>,
+ <Comparison '>' at 0x10DA46DB8>,
+ <Whitespace ' ' at 0x10DA46E20>,
+ <Keyword 'curren...' at 0x10DA46E88>,
+ <Whitespace ' ' at 0x10DA46EF0>,
+ <Operator '-' at 0x10DA46F58>,
+ <Whitespace ' ' at 0x10D6E0050>,
+ <Builtin 'interv...' at 0x10D6E00B8>,
+ <Whitespace ' ' at 0x10D6E0120>,
+ <Single "'6'" at 0x10DA46C80>,
+ <Whitespace ' ' at 0x10D6E01F0>,
+ <Keyword 'month' at 0x10D6E0258>]
+```
+
+Note: I'm willing to put in a PR to fix this if someone can point me in the right direction.
