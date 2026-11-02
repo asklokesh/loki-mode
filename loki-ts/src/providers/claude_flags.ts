@@ -277,7 +277,7 @@ export async function ensureClaudeHelpCache(): Promise<void> {
   try {
     // Rule of Two (moat P9): Bun.spawn without an explicit `env` uses Bun's own
     // env snapshot taken at process startup, NOT the live process.env -- so the
-    // sentinel/scoping withholdGithubTokens() (autonomous.ts) applies to
+    // sentinel/scoping withholdGithubTokens() (runner/github_token.ts) applies to
     // process.env earlier would never reach this spawn and the real token
     // could leak to this literal `claude` invocation. Pass a fresh copy
     // explicitly, matching the convention every other claude/agent spawn in

@@ -58,7 +58,7 @@ function parseReviewerOutput(
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
     // Strip leading "- " or "* " bullet markers; reviewer prompts ask for them
-    // (quality_gates.ts:556-561 buildReviewerPrompt) but tolerate variation.
+    // (the reviewer prompt format) but tolerate variation.
     const stripped = trimmed.replace(/^[-*]\s*/, "");
     const m = SEVERITY_RE.exec(stripped);
     // v7.5.8: explicitly check both capture groups exist instead of using
@@ -85,7 +85,7 @@ function parseReviewerOutput(
 }
 
 // Locate the most recent review directory under <lokiDir>/quality/reviews/.
-// Reviews are named "review-<ts>-<iteration>" by quality_gates.ts:614-616, so
+// Reviews are named "review-<ts>-<iteration>" by the code-review gate, so
 // lexicographic sort picks the latest by timestamp. We honor an explicit iter
 // filter so the integration test can replay a known run.
 export function findLatestReviewDir(lokiDir: string, iter?: number): string | null {

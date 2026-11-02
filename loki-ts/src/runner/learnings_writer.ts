@@ -1,7 +1,7 @@
 // Phase 1 (v7.5.0) -- the missing writer for .loki/state/relevant-learnings.json.
 //
 // Plan reference: /Users/lokesh/.claude/plans/polished-waddling-stardust.md
-// Part B "Phase 1". The pre-v7.5.0 build_prompt.ts:175 instructs the LLM to
+// Part B "Phase 1". The pre-v7.5.0 prompt builder instructed the LLM to
 // "CHECK .loki/state/relevant-learnings.json for cross-project learnings"
 // but no orchestrator code writes the file. Templates in
 // references/core-workflow.md:123-149 describe a Mistakes & Learnings loop

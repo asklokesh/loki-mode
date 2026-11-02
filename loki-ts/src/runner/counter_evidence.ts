@@ -7,7 +7,7 @@
 // council votes; 2-of-3 approval lifts the BLOCK and writes the override
 // reasoning into episodic memory.
 //
-// Closest existing precedent: `councilEvaluate` in council.ts:373 (3-voter
+// Closest precedent: the completion council's 3-voter evaluation (3-voter
 // pattern). The override-on-REJECT direction is new architecture.
 //
 // Default ON: the live bash route (run.sh, LOKI_OVERRIDE_COUNCIL:-1) runs the

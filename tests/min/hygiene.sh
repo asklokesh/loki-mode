@@ -22,10 +22,14 @@
 # `claude login`, which the Claude CLI does not have; the command is
 # `claude auth login`.
 #
+# Fifth check: every loki-ts/src path named in any tracked text file (code comments included, not
+# only docs) exists, so a deleted module cannot live on as a pointer or a mirror note.
+#
 # Planted defects used to prove this test can fail: add one en dash (U+2013) to
 # README.md, and separately one emoji (U+2705) to docs/INSTALLATION.md; each must be
 # reported by file and line. For the path check, add the sentence "See
-# `tests/test-plant.sh`." to README.md. For the internal check, add the word
+# `tests/test-plant.sh`." to README.md. For the fifth check, add to loki-ts/src/cli.ts a comment naming a
+# file that does not exist under loki-ts/src (for example runner/plant_gone.ts, written with the prefix). For the internal check, add the word
 # "moat" to docs/QUICKSTART.md, and separately create docs/ROADMAP-PLANT.md and
 # `git add -f internal/plant.md`. For the login check, change "claude auth login"
 # to "claude login" in loki-ts/src/util/run_summary.ts. Reverted afterwards.
@@ -101,7 +105,7 @@ import os, re, subprocess
 ROOTS = ["tests", "scripts", "docs", "skills", "loki-ts", "benchmarks", "eval", "examples", "demo", "references", "autonomy",
          "providers", "tools", "wiki", "packages", "dashboard", "deploy", "vscode-extension"]
 ALLOW = [r"^deploy/loki-", r"^docs/(comments|prd\.md|api\.html|AGENTS\.md)$", r"^\.github/", r"^wiki/My-Page\.md$",
-         r"^dashboard/(terminal|static/?)$", r"^scripts/CI$", r"^loki-ts/src/runner/runQualityGates$", r"^loki-ts/runner$",
+         r"^dashboard/(terminal|static/?)$", r"^scripts/CI$", r"^loki-ts/runner$",
          r"^tests/(a\.py|Quick|monitoring|unit/?|load\.js)$", r"^autonomy/hooks/$"]
 TEST_REPO = re.compile(r"^tests/(test[-_][^/]*|run-[^/]*|check-[^/]*|(moat|managed|managed_memory|real-run|workspace|commands|fixtures|cli|council|memory|e2e|plugins|dashboard)(/.*)?)$")
 tracked = [f for f in subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"]).decode().split("\0") if f]
@@ -130,6 +134,38 @@ PY
 case "$paths_out" in
     "OK "*) ok "${paths_out#OK }" ;;
     *) bad "${paths_out#NO }" ;;
+esac
+
+# Every loki-ts/src path named anywhere (code comments included, not only docs) must exist: a deleted module
+# must not live on as a pointer or a "mirrors X" note. CHANGELOG.md is history; built bundles and lock files are skipped.
+srcpaths_out="$(python3 -I - <<'PY'
+import os, re, subprocess
+tracked = [f for f in subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"]).decode().split("\0") if f]
+tset = set(tracked)
+dirs = {"/".join(t.split("/")[:i]) for t in tracked for i in range(1, len(t.split("/")))}
+SKIP = re.compile(r"^(CHANGELOG\.md|loki-ts/dist/|web-app/dist/|benchmarks/h2h/results/)|node_modules/|package-lock\.json$|\.lock$")
+rx = re.compile(r"(?<![A-Za-z0-9_.~$/-])(loki-ts/src/[A-Za-z0-9_./-]*[A-Za-z0-9_])")
+bad, n_files = [], 0
+for f in tracked:
+    if SKIP.search(f) or not os.path.isfile(f):
+        continue
+    try:
+        txt = open(f, encoding="utf-8").read()
+    except (UnicodeDecodeError, OSError):
+        continue
+    n_files += 1
+    for n, line in enumerate(txt.split("\n"), 1):
+        for m in rx.finditer(line):
+            q = m.group(1).rstrip(".")
+            if q not in tset and q not in dirs:
+                bad.append("%s:%d %s" % (f, n, q))
+print(("OK checked %d text files, every named loki-ts/src path exists" % n_files) if not bad
+      else "NO %d dangling loki-ts/src path(s): %s" % (len(bad), " ".join(bad[:15])))
+PY
+)"
+case "$srcpaths_out" in
+    "OK "*) ok "${srcpaths_out#OK }" ;;
+    *) bad "${srcpaths_out#NO }" ;;
 esac
 
 internal_out="$(python3 -I - <<'PY'

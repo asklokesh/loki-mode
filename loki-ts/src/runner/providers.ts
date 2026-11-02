@@ -9,7 +9,7 @@
 //   providers/codex.sh:1-190   -- Tier 3, degraded
 //   providers/aider.sh:1-145   -- Tier 3, degraded
 //
-// Contract: autonomous.ts:167 dynamically imports this module and invokes
+// Contract: callers import this module and invoke
 // `resolveProvider(name)` to obtain a `ProviderInvoker` (see runner/types.ts:90).
 //
 // Phase 5 progress:

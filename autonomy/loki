@@ -36886,7 +36886,6 @@ except Exception:
     #
     # Concretely, this is what reported 2 CRITICAL findings on the v8 PR:
     #   sk-ant-xxx                 (loki-ts/test/runner/oauth_dev.test.ts)
-    #   sk-ant-test-not-called     (loki-ts/tests/runner/quality_gates.test.ts)
     # Both exist to prove the SDK path fails closed without a real key. Flagging
     # them trains people to ignore CRITICAL, which is how a real one gets missed.
     local _ci_secret_deny='(test|example|sample|fixture|dummy|fake|placeholder|redacted|changeme|your[-_]|xxx+|not[-_]called|\$\{|\$[A-Za-z_]|process\.env|os\.(environ|getenv)|<[^>]*>)'

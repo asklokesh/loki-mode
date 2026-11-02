@@ -3,7 +3,6 @@
 
 Single implementation called by both routes:
   - bash:  autonomy/run.sh generate_proof_of_run() via python3
-  - Bun:   loki-ts/src/runner/proof.ts via spawn
 
 Assembles the frozen proof.json schema v1.0 from .loki/ state, runs the
 redaction chokepoint exactly once, computes an integrity hash, and writes
@@ -341,7 +340,7 @@ def _test_results_fresh(quality_dir):
     test-results.json together with .test-results.iter; they are this
     iteration's evidence only when that marker holds this iteration's number.
     Both loop callers always pass the iteration as ITERATION_COUNT (run.sh
-    generate_proof_of_run, Bun runner/proof.ts); a set but empty value is not
+    generate_proof_of_run); a set but empty value is not
     fresh.
     ponytail: ITERATION_COUNT absent altogether means a hand run outside any
     loop, with no iteration to compare against, so the pre-82 reading applies

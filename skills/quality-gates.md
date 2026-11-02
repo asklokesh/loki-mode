@@ -313,18 +313,6 @@ LOKI_REVIEW_ADVISORY=1            # default 1. architecture-strategist,
                                   # findings but cannot veto. Set 0 to make
                                   # them blocking again.
 
-LOKI_REVIEW_UNAVAILABLE_BLOCK=1   # default 1 (blocks under LOKI_HARD_GATES).
-                                  # When NO reviewer can run at all (no claude
-                                  # binary on PATH AND no reachable SDK judge),
-                                  # code_review would otherwise pass with ZERO
-                                  # review -- a fake-PASS that makes the blind
-                                  # 3-reviewer gate a no-op. Blocks instead. Set
-                                  # 0 for an honest degraded pass (a run that
-                                  # deliberately has no reviewer). The raw-SDK
-                                  # reviewer path (LOKI_SDK_CODE_REVIEW=1 + a key)
-                                  # counts as available, so this only fires with
-                                  # no reviewer at all.
-
 LOKI_GATE_TEST_COVERAGE_BLOCK=0   # default 0 (advisory, bash-parity). By default
                                   # a failing test suite is surfaced and the
                                   # completion-council evidence gate is the

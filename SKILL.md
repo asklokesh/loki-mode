@@ -395,15 +395,12 @@ Two completion-trust features extend the verification gates. Full details in `sk
 
 ## Harness intelligence (v8.0.0)
 
-Four measured-harness disciplines layered onto the existing trust core. None of
+Three measured-harness disciplines layered onto the existing trust core. None of
 them can weaken a gate: each either adds verification or saves budget on work
 that cannot succeed.
 
 | Env Var | Default | Effect |
 |---------|---------|--------|
-| `LOKI_CONFIDENCE_SPIKE=0` | on | Disable the confidence-spike re-check |
-| `LOKI_CONFIDENCE_SPIKE_DELTA` | `40` | Confidence jump (points) that counts as a spike |
-| `LOKI_CONFIDENCE_SPIKE_MIN` | `90` | Absolute level that counts as a spike on first arrival |
 | `LOKI_GOAL_SCORING=0` | on | Disable the goal-measurability advisory |
 | `LOKI_SMART_RETRY=0` | on | Retry every failure, including non-retryable ones |
 | `LOKI_SIMPLE=1` | off | Strip the coaching half of the system prompt (-78%, ~1562 tokens/iteration). Experimental ablation arm. |
@@ -413,18 +410,12 @@ that cannot succeed.
   `[CACHE_BREAKPOINT]`; the SDK judge path applies `cache_control` on that split.
   Any new always-on instruction belongs in the prefix, or it busts the cache
   every iteration.
-- **Confidence-spike re-check.** A jump to near-maximal self-reported confidence
-  forces ONE extra verification before the done-signal valve force-stops a run.
-  Strictly additive: a spike can only ADD a verification pass, never skip,
-  shorten, or satisfy a gate. It cannot delay the stagnation valve, and the
-  delay is one-shot, so a repeatedly-spiking run cannot postpone the valve
-  indefinitely.
 - **Hill-climbable goal scoring.** A `COMPLETION_PROMISE` with no measurable
   target (no number, comparator, named metric, or verifiable artifact) gets a
   prompt advisory asking for a checkable success condition. Advisory only: it
   never blocks a build and never rewrites the goal. Suppressed for an absent
   goal and in perpetual mode, where open-endedness is the chosen configuration.
-  Byte-mirrored across the bash and TypeScript routes.
+  Implemented in the bash loop (`autonomy/run.sh`).
 - **Smart retry.** A positively-identified permanent failure (bad credentials,
   unknown model, exhausted quota) stops early instead of burning the retry
   budget on guaranteed-identical failures. Fail-safe: an unrecognized error
