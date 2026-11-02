@@ -3,68 +3,69 @@
 Loki against raw Claude Code (`claude -p`) on the same coding tasks, scored only by hidden tests.
 This page states the protocol and the latest numbers, including where Loki loses.
 
-Latest runs: `results/2026-11-02-honest-and-lean-after.json` (synthetic suite) and
-`results/2026-11-02-honest-and-lean-replay-after.json` (replay suite), see the next section. Older
-runs further down name their own engine.
+Latest runs: `results/2026-11-02-5063feb95.json` (synthetic suite) and
+`results/2026-11-02-5063feb95-replay.json` (replay suite), both from the clean commit 5063feb95,
+which holds the engine change below (`citable: true`). Older runs further down name their own engine.
 
-## Honest VERIFIED and fewer sessions (v11.116.0 to this change)
+## Honest VERIFIED and fewer sessions (commit 5063feb95)
 
-Synthetic suite, 24 tasks, 2 reps, raw-haiku and loki-haiku in one invocation:
+Both runs: 2 reps, `--jobs 4`, the raw config and loki-haiku in one invocation, from clean commit
+5063feb95. The "before" rows are the v11.116.0 runs in the sections below; they are **not citable**
+under the provenance rule (see Citability), so they are context, not a measured baseline.
+
+Synthetic suite, 24 tasks:
 
 | run | config | pass | 95% CI | $ per passed task | median s | p90 s | sessions | verdict agrees | false VERIFIED |
 |---|---|---|---|---|---|---|---|---|---|
-| before (v11.116.0, `2026-11-01-win-bench-v2-review-fixes.json`) | loki-haiku | 47/48 | 89.1-99.6% | 0.0131 | 29.0 | 174.3 | 1.90 | 29/48 | 1 |
-| after | raw-haiku | 48/48 | 92.6-100% | 0.0186 | 27.5 | 169.9 | 1.00 | - | - |
-| after | loki-haiku | 48/48 | 92.6-100% | 0.0108 | 23.5 | 165.5 | 1.58 | 22/48 | 0 |
+| before (v11.116.0, not citable) | loki-haiku | 47/48 | 89.1-99.6% | 0.0131 | 29.0 | 174.3 | 1.90 | 29/48 | 1 |
+| 5063feb95 | raw-haiku | 48/48 | 92.6-100% | 0.0201 | 27.2 | 167.6 | 1.00 | - | - |
+| 5063feb95 | loki-haiku | 48/48 | 92.6-100% | 0.0108 | 24.4 | 155.7 | 1.58 | 33/48 | 0 |
 
-Replay suite (8 real closed issues), 2 reps, raw-haiku-verify and loki-haiku in one invocation each:
+Replay suite, 8 real closed issues:
 
 | run | config | pass | $ per passed task | median s | sessions | false VERIFIED |
 |---|---|---|---|---|---|---|
-| before (v11.116.0, `2026-11-02-a020485b4-replay-before.json`) | raw-haiku-verify | 12/16 | 0.0176 | 36.5 | 1.00 | - |
-| before | loki-haiku | 10/16 | 0.0107 | 44.4 | 1.19 | 2 |
-| after | raw-haiku-verify | 12/16 | 0.0195 | 42.8 | 1.00 | - |
-| after | loki-haiku | 12/16 | 0.0087 | 51.8 | 1.19 | 1 |
+| 5063feb95 | raw-haiku-verify | 13/16 | 0.0169 | 41.5 | 1.00 | - |
+| 5063feb95 | loki-haiku | 12/16 | 0.0092 | 45.6 | 1.25 | 1 |
+
+On the synthetic suite no run read VERIFIED while its hidden tests failed. On the replay suite one
+did: go-semver-four-part (semver #185), rep 2. The issue does not state the hidden case
+`12.3.34~ 1.2.3`, and the change modifies functions the repo's own passing tests already call, so
+the added-function cap cannot see it. Raw Haiku with the verify sentence passed that task once in two
+runs, Loki on Haiku in neither, so on the replay suite Loki trails it by one task.
 
 What changed:
 
 - **An added public function no agent-independent test calls caps the run at PARTIAL**, named on the
-  receipt. A passing Wall file or a test file the run did not touch counts; tests the implementer
-  wrote or edited do not. This is what made py-semver-range read VERIFIED while its hidden
-  `intersects` tests failed. Python top-level defs and class methods, exported Go funcs and methods
-  (minus standard interface methods), Rust `pub fn` and TS exports are tracked. False VERIFIED on
-  the synthetic suite: 1 before, 0 after. The cost is verdict agreement (29 to 22 of 48): passing
-  feature tasks proven only by the implementer's own tests now read PARTIAL, which is what they are.
-- **Go tests in a black-box `tests/` package are corroborated and mapped.** Go corroboration used to
-  refuse any package with no non-test files, so every check in `tests/` read not_run ("no tests
-  executed"). It now proves such a package through the coverage of the module packages it imports.
-  A changed Go file now maps to its own package's tests and to every test importing its package.
-  Go runs reading VERIFIED: 0 of 12 before, 4 of 12 after.
-- **Fewer Wall sessions.** With Go visible tests mapped, Go tasks with a relevant visible test take
-  the lean path. Wall sessions: 30 in 48 runs before, 19 after; sessions per run 1.90 to 1.58.
-- **An already-done claim gets one challenge before it is believed** (boltons #393). The issue's
-  example asserted today's output with the expected lines commented out; the implementer ran it,
-  saw it pass and finished LOKI_ALREADY_DONE with no change (ALREADY_SATISFIED or PARTIAL "no tests
-  executed"). The challenge asks it to reproduce the defect the prose describes first. Boltons:
-  0 of 2 before, 2 of 2 after (and 3 of 3 in a separate check).
+  receipt. Each changed file is read at HEAD against the base, so a method added to an existing
+  class, a def under a module-level `if`, TS methods of exported classes and `export { f }` lists,
+  Go `var X = func` and Rust `pub fn` count. A private class, a nested def, a signature-only edit, a
+  TS constructor, `.d.ts`, generated files (`*.pb.go` and similar) and test helpers outside test
+  files do not. Names inside strings are no reference. A function whose caller an independent test
+  calls is covered (indirect coverage). Independent means a Wall file that passed, or a test the run
+  did not touch that counted tests (n > 0). Tests the implementer wrote or edited never clear it.
+- **Go tests in a black-box `tests/` package count.** Go corroboration refused any package with no
+  non-test files, so every check there read not_run ("no tests executed"); each such package is now
+  proven by the coverage of the module packages it imports, and one that imports none never passes
+  beside one that does. A changed Go file maps to its own package's tests and to every test that
+  imports it by its module import path. Go runs reading VERIFIED: 0 of 12 before, 4 of 12 now.
+- **Fewer Wall sessions.** With Go tests mapped, Go tasks with a relevant visible test take the lean
+  path. Wall sessions: 30 in 48 runs before, 16 now; sessions per task 1.90 to 1.58.
+- **An already-done claim gets one challenge** (boltons #393, where the issue's example asserted
+  today's output with the expected lines commented out): before it is believed, the session must
+  reproduce the defect the prose describes. A claim made in reply to the empty-done correction is
+  challenged too, no empty-done correction follows a challenge, and a session that edits and then
+  claims already-done keeps its edit (it is verified as a change, never ALREADY_SATISFIED).
+  Boltons: 2 of 2.
 
-Measured alternatives (loki-haiku only, 2 reps):
+Measured alternatives, not citable (they ran from uncommitted code, so their files are not kept):
+a Wall also on lean tasks whose text names a new `name(` callable gave 48/48 at 45% more cost per
+passed task than the cap alone; no Wall at all gave 48/48 at $0.0068 per passed task and 1.00
+session, but only 8 of 48 runs VERIFIED. The Wall stays; dropping it is a product decision.
 
-| variant | pass | $ per passed task | median s | sessions | verdict agrees | false VERIFIED |
-|---|---|---|---|---|---|---|
-| Wall also on lean tasks whose text names a new `name(` callable | 48/48 | 0.0157 | 29.7 | 2.08 | 28/48 | 0 |
-| no Wall at all (`2026-11-02-no-wall-probe.json`) | 48/48 | 0.0068 | 21.8 | 1.00 | 8/48 | 0 |
+Still failing: go-semver-four-part as above, and py-toolz-partition-len for every config.
 
-The first buys back 6 VERIFIED verdicts for 45% more cost per passed task; it was not kept. With no
-Wall, Loki costs 0.37 times raw Haiku per passed task at one session, but only 8 of 48 runs can be
-VERIFIED. That is a product decision, so the Wall stays.
-
-What still fails: go-semver-four-part (semver #185) still reads VERIFIED in 1 of 2 runs while the
-hidden case `12.3.34~ 1.2.3` fails. The cap does not catch it: the change modifies functions the
-repo's own passing tests already call, and the missing case is not in the issue. Raw Haiku misses
-it too. py-toolz-partition-len fails for every config, as before.
-
-Spend for these runs: $4.18 on their own ledger.
+Spend for the two citable runs: $3.47 on their own ledger (earlier uncitable runs: $4.18).
 
 ## Loki on Haiku against raw Haiku, before and after the Wall and session fixes
 
