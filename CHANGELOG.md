@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.120.0 (2026-11-01)
+
+Cheaper fix rounds, and loki backlog runs large issues and Jira or Linear projects.
+
+### Changed
+
+- Fix rounds: the fix brief names the real failing tests and first failing line (bun, vitest, Maven Surefire, go, xunit), so two different failing sets are no longer read as one stall. A jest config "Validation Error" costs no fix round; it is recorded as NOT PROVEN.
+- Verify after a fix round reruns what can have changed first (failed checks, the Wall, task-named and impacted tests), then the rest of the selection and the full suite in the same verify once that part is green. A run never ends VERIFIED on a partial verify. `LOKI_E10_QUICK_VERIFY=0` restores the old behavior.
+- The implement brief no longer asks the model to run the full suite; the harness runs it after the session on medium and high risk.
+- `loki backlog`: a large issue now runs as slices (the same path `loki start owner/repo#N` takes) instead of getting a drafted spec. "Large" has one definition, shared by backlog triage, sizing and the epic split.
+- `loki backlog jira:PROJ` and `loki backlog linear:TEAM` list a project's open items, triage them, and run each one. A large Jira or Linear item still runs as one run.
+- `benchmarks/h2h`: `H2H_LOKI_ENV` sets variables on Loki contestants only, for on/off comparisons.
+
 ## v11.119.0 (2026-11-01)
 
 One start decision: the separate Bun run loop is gone, and every start path uses the default engine or says why not.

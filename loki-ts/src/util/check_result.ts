@@ -14,7 +14,7 @@ import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep 
 import { siteFor } from "../project_model/resolve.ts";
 import type { ProjectApi } from "../project_model/api.ts";
 import { CARGO_TEST_FILE_RE, isTestFile } from "../engine10/testmap.ts";
-import type { RunnerName, TestRef } from "../engine10/types.ts";
+import type { RunnerName, TestRef } from "../engine10/types.ts"; import type { FailureGroup } from "../engine10/failures.ts";
 import { declaresPythonDep } from "./lock_ecosystems.ts";
 import { UNITTEST_DISCOVER_ARGS } from "./python_build_check.ts";
 import { safeGit, safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
@@ -1159,6 +1159,20 @@ export function changedFiles(repoDir: string, baseSha: string, skip?: (f: string
   return [...new Set([...tracked, ...untracked])].filter((f) => !f.startsWith(".loki/") && !skip?.(f)); // skip: install-owned paths (FC-DEPS-NOT-INSTALLED)
 }
 
+/** One file digest: a symlink by its target, a file over 4 MB by its size, else the sha256 of its bytes; throws when unreadable. */
+export function sha256File(abs: string): string {
+  const st = lstatSync(abs);
+  return st.isSymbolicLink() ? `link:${readlinkSync(abs)}` : st.size > 4_000_000 ? `big:${st.size}` : createHash("sha256").update(readFileSync(abs)).digest("hex");
+}
+/** L025: a digest per changed path ("-" when the path is gone), recorded by each verify so the next one knows which files a fix round touched. */
+export function fileHashes(repoDir: string, files: string[]): Record<string, string> {
+  return Object.fromEntries(files.map((f) => { try { return [f, sha256File(join(repoDir, f))]; } catch { return [f, "-"]; } }));
+}
+/** L025: the paths whose content differs between two fileHashes records, including paths that left or joined the diff. */
+export function changedSince(prev: Record<string, string>, now: Record<string, string>): string[] {
+  return [...new Set([...Object.keys(prev), ...Object.keys(now)])].filter((f) => prev[f] !== now[f]).sort();
+}
+
 /** The skip-worktree paths that the effective sparse-checkout patterns genuinely exclude. core.sparseCheckout alone proves nothing (the
  *  implementer sets repo config), so the pattern file is evaluated by git itself: its lines are gitignore-syntax with last-match-wins, so a
  *  scratch repo takes them as info/exclude and `check-ignore --no-index` names the INCLUDED paths. Config off, file unreadable or any error
@@ -1239,7 +1253,7 @@ function execFiles(repoDir: string): Record<string, string> | null {
   for (const f of all) {
     if (!(EXEC_NAMES.has(basename(f)) || (VENV_TOOL.test(basename(f)) && inVenvBin(f)))) continue;
     const abs = join(repoDir, f);
-    try { const st = lstatSync(abs); out[f] = st.isSymbolicLink() ? `link:${readlinkSync(abs)}` : st.size > 4_000_000 ? `big:${st.size}` : createHash("sha256").update(readFileSync(abs)).digest("hex"); } catch { out[f] = "unreadable"; }
+    try { out[f] = sha256File(abs); } catch { out[f] = "unreadable"; }
   }
   return out;
 }
@@ -1394,7 +1408,8 @@ export function failureExcerpt(out: string, repoDir = "", cap = EXCERPT_GROUP_CA
   const take = (i: number, n = 1): void => { for (let k = 0; k < n && i + k < lines.length; k++) if (lines[i + k]!.trim()) pick.add(i + k); };
   lines.forEach((l, i) => {
     if (/^E\s/.test(l)) take(i);
-    else if (/^\s*(Expected|Received)\b/.test(l) || /^\s*expect\(.*\)\.\w+/.test(l)) take(i);
+    else if (/^\s*(Expected|Received|Actual)\b/.test(l) || /^\s*expect\(.*\)\.\w+/.test(l)) take(i);
+    else if (/^\s+[\w./-]+_test\.go:\d+: /.test(l) || /^\s*[-+] (?:Expected|Received)$/.test(l) || /\bAssert\.\w+\(\) Failure\b/.test(l)) take(i, /^\s*[-+] /.test(l) ? 1 : 2); // L005: go t.Errorf lines, vitest diff headers, xunit assertion messages
     else if (/^[\w./@-]+\.py:\d+: /.test(l)) take(i);
     else if (/AssertionError|^\s*(expected|actual)\b.*[:=]|^\s*(not ok|FAILED)\b/.test(l)) take(i, 3);
     else if (/^\s*--- FAIL/.test(l)) take(i, 4);
@@ -1691,10 +1706,36 @@ function goModDir(base: string, rel: string): string {
 }
 export function firstError(out: string): string { // the line naming the failing test, minus what varies between identical failures (A-113 stall signature)
   const goOut = (l: string): string => { try { const e = JSON.parse(l) as { Action?: string; Output?: string }; return typeof e.Action === "string" ? (e.Action === "output" || e.Action === "build-output" ? (e.Output ?? "") : "") : l; } catch { return l; } }; // Go json event stream: the failing line is inside the event's Output
-  const lines = out.slice(-65536).split("\n").map((l) => (l.startsWith("{") ? goOut(l) : l).trim()).filter(Boolean), l =lines.find((x) => /^(FAILED\s|\u25cf\s.*\u203a|not ok\s|_{3,}\s.+\s_{3,}$)/.test(x)) ?? lines.find((x) => /^[\w./-]+\.go:\d+:\d+: \S/.test(x)) /* go compiler line, before "FAIL pkg [build failed]" */ ?? lines.find((x) => /fail|error/i.test(x) && !/^(=|\u2713|ok\b|PASS)/.test(x)) ?? "";
-  return l.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
+  const lines = stripAnsi(out.slice(-65536)).split("\n").map((l) => (l.startsWith("{") ? goOut(l) : l).trim()).filter(Boolean), l =lines.find((x) => /^(FAILED\s|\u25cf\s.*\u203a|not ok\s|_{3,}\s.+\s_{3,}$|FAIL\s+\S.*\s>\s|\[ERROR\] (?!Tests run)\S+ .*<<< (?:FAILURE|ERROR)!)/.test(x)) /* L005: vitest "FAIL file > test" and surefire per-test lines are test-level */ ?? lines.find((x) => /^[\w./-]+\.go:\d+:\d+: \S/.test(x)) /* go compiler line, before "FAIL pkg [build failed]" */ ?? lines.find((x) => /fail|error/i.test(x) && !/^(=|\u2713|ok\b|PASS)/.test(x)) ?? "";
+  return l.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\b\d+(?:\.\d+)? ?(?:ms|s)\b\]?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
 }
 
+/** L005: the stall and brief signature of one failing check: its name, its first failing line, and for a suite check (one name, many tests) the failing ids,
+ *  so two different failing sets inside one suite never read as the same stall. Ids are sorted; a long list keeps 3 plus a digest of the whole set. */
+export function failureSignature(c: { name: string; first_error?: string; ids?: string[] }, suite = false): string {
+  const ids = suite ? [...new Set(c.ids ?? [])].sort() : [];
+  const set = ids.length > 3 ? `${ids.slice(0, 3).join(", ")} (+${ids.length - 3} more, set ${createHash("sha256").update(ids.join("\n")).digest("hex").slice(0, 8)})` : ids.join(", ");
+  return [c.name, c.first_error, set ? `[${set}]` : ""].filter(Boolean).join(" ");
+}
+/** L005: one fix-brief group: the signature, and a sample that starts with the command that reruns the check, then its redacted excerpt. */
+export function failureGroup(c: { name: string; cmd: string; first_error?: string; ids?: string[] }, excerpt: string, suite = false): FailureGroup {
+  return { signature: failureSignature(c, suite), count: 1, sample: excerpt ? `${c.cmd}\n${excerpt}` : c.cmd };
+}
+/** L005/L025: verify's fix-brief groups and blocking check names. An excerpt already shown (a suite repeating a per-file failure) is referenced, not
+ *  repeated; excerpts share `cap` bytes. `quick` (set when this verify stopped quick: the previous output and every check name this one ran) carries the previous
+ *  blocking checks this one did not rerun (the full suite), so the brief still shows them; marked carried, they never enter the stall comparison. */
+export function briefGroups<C extends { name: string; cmd: string; first_error?: string; ids?: string[] }>(blocking: C[], excerptOf: (c: C) => string, isSuite: (c: C) => boolean, cap: number, quick?: { prev?: Record<string, unknown>; ran: ReadonlySet<string> }): { groups: FailureGroup[]; names: string[] } {
+  const seen = new Map<string, number>(), names = blocking.map((c) => c.name);
+  const groups = blocking.map((c, i) => {
+    const e = excerptOf(c), dup = e ? seen.get(e) : undefined; if (e && dup === undefined) seen.set(e, i + 1);
+    const x = dup !== undefined ? `(same output as failure ${dup})` : truncateBytes(e, Math.max(0, cap));
+    cap -= dup !== undefined ? 0 : Buffer.byteLength(x);
+    return failureGroup(c, x, isSuite(c));
+  });
+  const prevNames = (quick?.prev?.blocking_checks as string[] | undefined) ?? [], prevGroups = (quick?.prev?.failures_grouped as FailureGroup[] | undefined) ?? [];
+  prevNames.forEach((n, i) => { const g = prevGroups[i]; if (g && quick && !quick.ran.has(n)) { names.push(n); groups.push({ ...g, carried: true, sample: `${g.sample.split("\n")[0]}\n(not rerun since the fix; it runs again once the checks above pass)` }); } });
+  return { groups, names };
+}
 /** FC-PR-BODY-PUBLIC-HYGIENE: the one wording for a check that also fails on the base tree (verify's pre_red_checks). */
 export const ALREADY_FAILING_ON_BASE = "already failing on base, not caused by this change";
 /** "fail" stays "fail" unless the check is base-red, then it carries the one shared label; every other result is unchanged. */

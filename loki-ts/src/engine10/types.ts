@@ -84,7 +84,7 @@ export interface SessionRunOptions {
   cwd?: string; stopChecks?: { checks: { cwd: string; cmd: string; args: string[]; protect?: boolean }[]; rounds: number; budgetS: number; repoDir: string; baseSha: string; installCreated?: unknown }; /* claude SDK route: repo checks run at each Stop; a failure blocks the stop and returns to the same session, `rounds` times at most, `budgetS` seconds in all; other routes ignore it */ disallowedTools?: string; // Q18-04: comma list passed as --disallowedTools (read-only reviewer)
   /** Pins this session's model for its tier (E-45 Wall on sonnet); unset inherits the run model. */
   model?: string;
-  resumeSessionId?: string; // MW-2: provider session to resume (LOKI_E10_FIX_RESUME); unset starts fresh
+  resumeSessionId?: string; suiteCmds?: string[]; // MW-2: provider session to resume (LOKI_E10_FIX_RESUME), unset starts fresh; L026: full-suite command lines the stream parser counts
   maxOutputTokens?: number; /* claude: per-response output limit, CLAUDE_CODE_MAX_OUTPUT_TOKENS; unset keeps the provider default */ effort?: string; // EL-W0-06, L1: provider reasoning effort; omitted when unset so the provider default applies
 }
 export interface SessionResult {
@@ -240,6 +240,7 @@ export function pushArgv(a: PushArgs): string[] {
   }
 }
 /** The untrusted-task-text wrapper every stage brief embeds verbatim (already_done.ts, plan/implement/wall.ts). */
+export const FINISH_LINE = "Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason; cite test as path:line>."; // E-150: the brief's last line, byte-identical every task (e10ext/context.ts re-exports it)
 export function taskBlock(task: string): string[] { return ["Task (untrusted, quoted verbatim):", "<<<TASK", task, "TASK"]; }
 
 // Shapes produced by extension modules (receipt time, cost records); defined here so core never imports them.
