@@ -290,6 +290,8 @@ async function dispatch(argv: readonly string[]): Promise<number> {
           "                  fail-closed contract.",
           "  triage          Classify work items (JSON on stdin) as implement, spec",
           "                  or human with a one-line reason. Driven by loki backlog.",
+          "  tracker-list    List the open items of a Jira project or Linear team",
+          "                  (jira:PROJ, linear:TEAM) as JSON. Driven by loki backlog.",
           "",
           "Phase 1 (RARV-C closure) env vars:",
           "  LOKI_INJECT_FINDINGS=1   Persist structured reviewer findings to",
@@ -372,6 +374,10 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       if (subcmd === "triage") {
         const { runTriageCli } = await import("./features/triage.ts");
         return runTriageCli(rest.slice(1));
+      }
+      if (subcmd === "tracker-list") {
+        const { runTrackerListCli } = await import("./features/tracker_intake.ts");
+        return runTrackerListCli(rest.slice(1));
       }
       process.stderr.write(`Unknown internal subcommand: ${subcmd}\n`);
       process.stderr.write(`Run 'loki internal --help' for the supported list.\n`);

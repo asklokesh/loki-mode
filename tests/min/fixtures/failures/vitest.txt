@@ -1,0 +1,19 @@
+ [31m❯[0m src/calc.test.ts [2m(3 tests | 1 failed)[0m
+   [31m×[0m calc > multiplies [2m4ms[0m
+
+[31m⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯[0m
+
+[31m[1m FAIL [0m src/calc.test.ts > calc > multiplies
+[31mAssertionError[0m: expected 7 to be 12 // Object.is equality
+
+[32m- Expected[0m
+[31m+ Received[0m
+
+[32m- 12[0m
+[31m+ 7[0m
+
+ [2m❯[0m src/calc.test.ts[2m:8:30[0m
+
+[2m Test Files [0m [31m[1m1 failed[0m [2m(1)[0m
+[2m      Tests [0m [31m[1m1 failed[0m [2m|[0m [32m[1m2 passed[0m [2m(3)[0m
+[2m   Duration [0m 312ms
