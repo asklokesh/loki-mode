@@ -1,0 +1,27 @@
+{
+  "lang": "ts",
+  "convention": "every exported formatter is listed in src/catalog.ts FORMATTERS with a passing example and throws TypeError on a non-number (test/conventions.test.ts); no task text mentions it",
+  "protected": ["test", "bunfig.toml"],
+  "steps": [
+    {
+      "id": "s1",
+      "hidden": { "duration.hidden.test.ts": "test/h2h_hidden_s1.test.ts" },
+      "hidden_cmd": ["bun", "test", "./test/h2h_hidden_s1.test.ts"]
+    },
+    {
+      "id": "s2",
+      "hidden": { "ordinal.hidden.test.ts": "test/h2h_hidden_s2.test.ts" },
+      "hidden_cmd": ["bun", "test", "./test/h2h_hidden_s2.test.ts"]
+    },
+    {
+      "id": "s3",
+      "hidden": { "compact.hidden.test.ts": "test/h2h_hidden_s3.test.ts" },
+      "hidden_cmd": ["bun", "test", "./test/h2h_hidden_s3.test.ts"]
+    },
+    {
+      "id": "s4",
+      "hidden": { "currency.hidden.test.ts": "test/h2h_hidden_s4.test.ts" },
+      "hidden_cmd": ["bun", "test", "./test/h2h_hidden_s4.test.ts"]
+    }
+  ]
+}

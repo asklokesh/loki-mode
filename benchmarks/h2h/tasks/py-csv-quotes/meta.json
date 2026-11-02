@@ -1,4 +1,6 @@
 {
+  "difficulty": "normal",
+  "shape": "single-file",
   "lang": "py",
   "kind": "bugfix",
   "hidden": { "test_parser_hidden.py": "tests/test_h2h_hidden.py" },

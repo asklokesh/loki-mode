@@ -1,0 +1,10 @@
+{
+  "lang": "go",
+  "kind": "multifile",
+  "difficulty": "normal",
+  "shape": "cross-file-bug",
+  "hidden": { "h2h_hidden_test.go": "tests/h2h_hidden_test.go" },
+  "hidden_cmd": ["go", "test", "-count=1", "-run", "^TestHidden", "./tests/"],
+  "visible_cmd": ["go", "test", "-count=1", "./..."],
+  "protected": ["tests"]
+}

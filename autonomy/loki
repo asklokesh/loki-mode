@@ -5610,9 +5610,10 @@ print('\t'.join([
     # The spec path is what makes the command RESUME this run rather than start a
     # different one, so only interpolate it when it still exists on disk. A stale
     # path would produce a command that fails on paste.
-    local resume_cmd="loki start"
+    # This state belongs to the previous loop, so the command names it (a plain `loki start` runs engine10).
+    local resume_cmd="loki start --engine legacy"
     if [ -n "$prd_path" ] && [ -f "$prd_path" ]; then
-        resume_cmd="loki start \"$prd_path\""
+        resume_cmd="loki start --engine legacy \"$prd_path\""
     fi
 
     # A capped run needs DIFFERENT advice than an interrupted one: re-running it
@@ -17057,77 +17058,6 @@ cmd_sandbox() {
     exec "$SANDBOX_SH" "$subcommand" "$@"
 }
 
-# v7.29.0 (feature #4): print the SIMPLE-tier cost/time/iteration estimate for
-# the demo PRD, parsed from the single estimator source (show_prd_plan JSON).
-# Because `loki demo` always runs `loki start --simple` (which exports
-# LOKI_COMPLEXITY=simple), the estimate is computed with LOKI_COMPLEXITY=simple
-# so the quoted figures are the ones the demo will actually incur -- honest by
-# construction (the keystone fix makes show_prd_plan honor LOKI_COMPLEXITY).
-# Returns 0 when a real estimate was printed, 1 when the estimator failed (the
-# caller then falls back to a no-number confirm). Never fabricates a number.
-emit_demo_estimate() {
-    local prd_path="$1"
-    # v7.30.0 (item 5): the demo estimate always prints before spending, incl.
-    # non-TTY (--dry-run / --yes piped), so gate color on a TTY here too (the
-    # global vars are only blanked on NO_COLOR). Mirrors provider-offer.sh and
-    # quickstart.sh. Local overrides only.
-    local BOLD="$BOLD" YELLOW="$YELLOW" DIM="$DIM" NC="$NC"
-    if [ ! -t 1 ]; then
-        BOLD=''; YELLOW=''; DIM=''; NC=''
-    fi
-    local plan_json=""
-    plan_json=$(LOKI_COMPLEXITY=simple show_prd_plan "$prd_path" "true" "false" 2>/dev/null) || plan_json=""
-
-    if [ -z "$plan_json" ]; then
-        echo -e "${YELLOW}Could not compute a cost estimate (the estimator did not return a result).${NC}"
-        return 1
-    fi
-
-    local parsed
-    parsed=$(printf '%s' "$plan_json" | python3 -c "
-import json, sys
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    sys.exit(1)
-cost = d.get('cost', {}).get('total_usd')
-time_est = d.get('time', {}).get('estimated')
-iters = d.get('iterations', {}).get('estimated')
-rng = d.get('iterations', {}).get('range', [])
-tier = d.get('complexity', {}).get('tier', 'simple')
-if cost is None or time_est is None or iters is None:
-    sys.exit(1)
-rng_str = ''
-if isinstance(rng, list) and len(rng) == 2:
-    rng_str = ' (range {}-{})'.format(rng[0], rng[1])
-print(tier.upper())
-print('{:.2f}'.format(float(cost)))
-print(time_est)
-print('{}{}'.format(iters, rng_str))
-" 2>/dev/null) || parsed=""
-
-    if [ -z "$parsed" ]; then
-        echo -e "${YELLOW}Could not compute a cost estimate (the estimator did not return a result).${NC}"
-        return 1
-    fi
-
-    local tier_u cost_u time_u iter_u
-    tier_u=$(printf '%s' "$parsed" | sed -n '1p')
-    cost_u=$(printf '%s' "$parsed" | sed -n '2p')
-    time_u=$(printf '%s' "$parsed" | sed -n '3p')
-    iter_u=$(printf '%s' "$parsed" | sed -n '4p')
-
-    echo -e "${BOLD}Estimate (${tier_u} tier, the path this demo actually runs):${NC}"
-    printf '  Cost:        ~$%s\n' "$cost_u"
-    echo "  Time:        ~$time_u"
-    echo "  Iterations:  $iter_u"
-    echo ""
-    echo -e "${DIM}This is an estimate. Actual usage depends on PRD complexity,"
-    echo -e "code review cycles, and test failures.${NC}"
-    echo ""
-    return 0
-}
-
 # loki wow: a tiny real Loki 10 task in a temp repo, or the offline tour when no provider is ready.
 wow_offline_finish() {
     echo "No live provider for this run. Showing the offline sample (no key, no spend)."
@@ -17447,7 +17377,6 @@ cmd_demo() {
     local provider=""
     local dry_run=false
     local offline=false
-    local start_args=()
     # v7.29.0 (feature #4): demo now shows the FORCED-simple cost estimate
     # before spending and asks for confirmation. --yes / LOKI_ASSUME_YES skip
     # the prompt but still print the estimate (the spend is never hidden).
@@ -17630,6 +17559,14 @@ cmd_demo() {
     else
         # Expand ~ if present
         demo_dir="${demo_dir/#\~/$HOME}"
+        # Refuse a folder inside someone else's repository: the engine would run on that repository's checkout.
+        local demo_probe="$demo_dir" demo_top=""
+        while [ ! -d "$demo_probe" ] && [ "$demo_probe" != "/" ] && [ "$demo_probe" != "." ]; do demo_probe="$(dirname "$demo_probe")"; done
+        demo_top="$(git -C "$demo_probe" rev-parse --show-toplevel 2>/dev/null || true)"
+        if [ -n "$demo_top" ] && { [ ! -d "$demo_dir" ] || [ "$demo_top" != "$(cd "$demo_dir" && pwd -P)" ]; }; then
+            echo "loki demo: $demo_dir is inside the git repository $demo_top; pass a --dir outside it, or omit --dir for a temp folder." >&2
+            return 2
+        fi
         mkdir -p "$demo_dir"
     fi
 
@@ -17647,84 +17584,48 @@ cmd_demo() {
     # Copy PRD into demo directory
     cp "$demo_prd" "$demo_dir/prd.md"
 
-    # Initialize git repo if not already one
-    if [ ! -d "$demo_dir/.git" ]; then
-        git -C "$demo_dir" init -q 2>/dev/null || true
+    # L009: the demo runs on the default engine (loki start prd.md -> engine10), never the legacy loop.
+    # The engine's first-run init (loki-ts/src/util/first_run_repo.ts) makes the folder a repo, committing the
+    # PRD named in LOKI_FIRST_RUN_FILES, with a repo-local identity when git has none.
+    local run_args=(start prd.md)
+    if [ -n "$provider" ]; then
+        run_args+=(--provider "$provider")
     fi
 
     if [ "$dry_run" = true ]; then
-        # v7.29.0: dry-run is now a genuine cost preview -- show the estimate,
-        # no prompt, no spend.
-        emit_demo_estimate "$demo_dir/prd.md" || true
         echo -e "${YELLOW}[dry-run] Would run:${NC}"
         echo "  cd $demo_dir"
-        echo -n "  loki start prd.md --simple --yes"
-        [ -n "$provider" ] && echo -n " --provider $provider"
-        echo ""
+        echo "  loki ${run_args[*]}"
         echo ""
         echo -e "${DIM}PRD copied to: $demo_dir/prd.md${NC}"
         return 0
     fi
 
-    # v7.29.0 (feature #4): cost confirm before any spend. The estimate ALWAYS
-    # prints (even with --yes), so the spend is never hidden. The prompt is
-    # shown only on a TTY without --yes; non-TTY without --yes refuses (exit 2)
-    # rather than hanging on read -- the project's "never hang in CI" idiom.
-    local estimate_ok=true
-    emit_demo_estimate "$demo_dir/prd.md" || estimate_ok=false
-
-    # Interactive only when stdin is a real TTY and CI is not forcing
-    # non-interactive (matches the project's first-run gate semantics).
-    local demo_interactive=true
-    if [ ! -t 0 ] || [ -n "${CI:-}" ]; then
-        demo_interactive=false
-    fi
-
+    # Confirm before any spend: the run prints its own cost estimate on its first line. The prompt is
+    # shown only on a TTY without --yes; non-TTY without --yes refuses (exit 2) rather than hang.
     if [ "$assume_yes" != true ]; then
-        if [ "$demo_interactive" = true ]; then
+        if [ -t 0 ] && [ -z "${CI:-}" ]; then
             local demo_answer=""
-            if [ "$estimate_ok" = true ]; then
-                # Default YES: Enter proceeds.
-                echo -n "Build the Todo app now? [Y/n] "
-                read -r demo_answer </dev/tty 2>/dev/null || demo_answer=""
-                if [[ -n "$demo_answer" && ! "$demo_answer" =~ ^[Yy] ]]; then
-                    echo ""
-                    echo -e "Cancelled. Nothing was spent. The demo PRD is at:"
-                    echo -e "  ${CYAN}$demo_dir/prd.md${NC}"
-                    echo -e "Run 'loki plan ${demo_dir}/prd.md' for the full breakdown."
-                    return 0
-                fi
-            else
-                # No honest number available: default NO (the safe direction).
-                echo -n "Proceed with the demo build anyway? [y/N] "
-                read -r demo_answer </dev/tty 2>/dev/null || demo_answer=""
-                if [[ ! "$demo_answer" =~ ^[Yy] ]]; then
-                    echo ""
-                    echo -e "Cancelled. Nothing was spent. The demo PRD is at:"
-                    echo -e "  ${CYAN}$demo_dir/prd.md${NC}"
-                    return 0
-                fi
+            echo -n "Build the Todo app now? [Y/n] "
+            read -r demo_answer </dev/tty 2>/dev/null || demo_answer=""
+            if [[ -n "$demo_answer" && ! "$demo_answer" =~ ^[Yy] ]]; then
+                echo ""
+                echo -e "Cancelled. Nothing was spent. The demo PRD is at:"
+                echo -e "  ${CYAN}$demo_dir/prd.md${NC}"
+                return 0
             fi
         else
-            # Non-TTY without --yes: never hang; refuse with an honest message.
             echo "demo needs confirmation; re-run with --yes to proceed non-interactively" >&2
             return 2
         fi
     fi
 
-    echo -e "${DIM}Starting autonomous build...${NC}"
+    echo -e "${DIM}Starting the build...${NC}"
     echo -e "${DIM}(Press Ctrl+C to stop at any time)${NC}"
     echo ""
 
-    # Build start args
-    start_args+=("prd.md" "--simple" "--yes")
-    if [ -n "$provider" ]; then
-        start_args+=("--provider" "$provider")
-    fi
-
-    # Run loki start from the demo directory
     local start_exit=0
-    (cd "$demo_dir" && cmd_start "${start_args[@]}") || start_exit=$?
+    (cd "$demo_dir" && LOKI_FIRST_RUN_FILES=prd.md "$SKILL_DIR/bin/loki" "${run_args[@]}") || start_exit=$?
 
     echo ""
     echo -e "${DIM}---------------------------------------${NC}"
