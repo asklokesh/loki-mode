@@ -20,6 +20,7 @@
 #   overlay: a plain `-p <task>` call copies E2E_STUB_OVERLAY over the cwd (h2h benchmark harness)
 # E2E_STUB_SLEEP=<s>: the implement session sleeps after its edit, so a test can signal the run mid-session (tests/min/run-safety.sh).
 # E2E_STUB_SPLIT (JSON text): the MASS-2 split planning session writes it to the file its brief names.
+# E2E_STUB_IMPL_CONFLICT=<text>: an implement session not on sonnet answers LOKI_SPEC_CONFLICT: <text>; on sonnet it implements.
 # E2E_STUB_ROUTE_LOG gets "<LOKI_E10_STAGE> <iteration> model=<--model> advisor=<advisorModel> wall=<0|1>" per call.
 # Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo); E2E_STUB_BUDGET_LOG gets its LOKI_BUDGET_LIMIT and LEDGER.
 set -u
@@ -115,6 +116,9 @@ if [ "$stage" = "other" ] && [ "${E2E_STUB_MODE:-}" = "overlay" ]; then # tests/
   cp -R "$E2E_STUB_OVERLAY"/. .
   echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0123,"modelUsage":{"stub-model":{}}}'
   exit 0
+fi
+if [ "$stage" = "implement" ] && [ "${LOKI_E10_STAGE:-}" = "implement" ] && [ -n "${E2E_STUB_IMPL_CONFLICT:-}" ]; then # every implement session off sonnet answers a spec conflict (tests/min/auto-route.sh)
+  case "$flags" in *"--model claude-sonnet"*|*"--model sonnet"*) ;; *) echo "LOKI_SPEC_CONFLICT: $E2E_STUB_IMPL_CONFLICT"; exit 0 ;; esac
 fi
 if [ "$stage" = "implement" ]; then
   sid="$(printf '%s\n' "$prompt" | sed -n 's/^Slice \([A-Za-z0-9_-]*\) of [0-9]* for .*/\1/p' | head -1)"

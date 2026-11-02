@@ -12,6 +12,8 @@
 #   fix:       a wrong first attempt: fix 1 runs on haiku with the opus advisor attached, no Opus session runs, VERIFIED.
 #   climb:     a stalled Haiku fix round climbs once to sonnet (no advisor on it); then STALLED. No session ever carries
 #              the advisor more than the cap (2 per run), never implement or the Wall.
+#   conflict:  Haiku answers a spec conflict on implement and again after its one correction: one Sonnet implement session
+#              runs and delivers (VERIFIED), instead of a BLOCKED run.
 #   big repo:  a normal task in a 1600-file repo: the plan session runs on haiku with the advisor attached.
 #   pin:       LOKI_SESSION_MODEL=sonnet: every session on sonnet, no advisor, no auto route event, no receipt.routing.
 #
@@ -21,6 +23,7 @@
 #   3. model_rank.ts capToSessionPin: ignore the grant (climb leg: fix 2 is capped to haiku).
 #   4. session.ts childEnv: drop autoChildEnv (fix leg: no advisor on fix 1).
 #   5. auto_route.ts autoPlanDecision: never fire for a big repo (big repo leg and unit fail).
+#   6. implement.ts: drop the autoConflictClimb call (conflict leg ends BLOCKED).
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
 need git
@@ -111,6 +114,11 @@ grep -q '^fix .*-fix2 model=[^ ]*sonnet[^ ]* advisor=none' "$ROUTES" && ok "clim
 [ "$(outcome)" = "STALLED" ] && ok "climb: run ends STALLED after the Sonnet round" || bad "climb: outcome '$(outcome)'"
 n="$(awk '$4 != "advisor=none"' "$ROUTES" | wc -l | tr -d ' ')"
 [ "$n" -le 2 ] && ! grep -q '^implement .*advisor=opus\|wall=1.*' <(awk '$4 != "advisor=none"' "$ROUTES") && ok "climb: the advisor stays within its cap ($n of at most 2 sessions, never implement or the Wall)" || bad "climb: advisor on $n sessions: $(advised)"
+
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_IMPL_CONFLICT="the 2 s limit cannot be met"
+grep -q '^implement .*-climb model=[^ ]*sonnet' "$ROUTES" && ok "conflict: a spec conflict Haiku repeated gets one Sonnet implement session" || { bad "conflict: no Sonnet implement climb"; dump; }
+[ "$(grep -c '^implement ' "$ROUTES")" = "3" ] && ok "conflict: Haiku, its one correction, then Sonnet (3 implement sessions)" || { bad "conflict: $(grep -c '^implement ' "$ROUTES") implement sessions"; dump; }
+[ "$(outcome)" = "VERIFIED" ] && ok "conflict: the Sonnet session delivered (VERIFIED, not BLOCKED)" || { bad "conflict: outcome '$(outcome)'"; dump; }
 
 LONG="$TASK. Background: the calculator module is used by the billing service and the reporting service, both of which need integer multiplication with the same semantics as add(): plain numbers in, a plain number out, no rounding, no overflow checks, no currency handling. Keep the existing add() untouched, export the new function next to it, keep the module free of new imports, and do not rename or move calc.ts, because both services import it by path. The new function must accept negative numbers and zero, and its behaviour must be covered by the existing test file conventions used for add()."
 BIG_REPO=1 run_engine "$LONG" E2E_STUB_MODE=done LOKI_E10_WALL=0

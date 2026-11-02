@@ -4,7 +4,9 @@
 // planRouterSession), never a separate Loki session: the Haiku executor consults it inside its own session.
 //   (a) plan time: a task sized large, or a normal task in a big repo, gets a plan session whose Haiku executor carries the advisor.
 //   (b) the first failed verify on a code-owned failure: Haiku's fix round carries the advisor.
-//   (c) two failed Haiku rounds (implement, fix 1) on a code-owned failure: the executor itself climbs to Sonnet.
+//   (c) two failed Haiku rounds (implement, fix 1) on a code-owned failure: the executor itself climbs to Sonnet. The same holds
+//       when Haiku ends implement on a spec conflict it repeated after its one correction (and the Wall referee did not clear it):
+//       one Sonnet implement session decides whether the conflict is real before the run is BLOCKED.
 // At most two sessions per run carry the advisor (plan, fix 1). A user pin (--model / LOKI_SESSION_MODEL, LOKI_MODEL_OVERRIDE, a
 // development-tier model, a model route), LOKI_ROUTER=1, LOKI_E10_CASCADE=1, a non-claude provider or LOKI_AUTO_ROUTE=0 turns auto
 // off and the run model rules as before.
@@ -14,7 +16,7 @@ import { resolveClaudeModel } from "../../util/claude_model.ts";
 import { modelRouteModel } from "../../providers/model_routes.ts";
 import { routerEnabled } from "./flag.ts";
 import { ROUTER_ADVISOR_MODEL } from "./advisor_probe.ts";
-import type { RunContext, StageName } from "../../engine10/types.ts";
+import type { RunContext, SessionResult, SessionRunOptions, StageName } from "../../engine10/types.ts";
 
 type Env = Record<string, string | undefined>;
 const on = (v: string | undefined): boolean => ["1", "on", "true"].includes((v ?? "").trim().toLowerCase());
@@ -93,6 +95,15 @@ export function autoStallClimb(out: Partial<Record<string, Record<string, unknow
   const cur = String(out["fix"]?.["model"] ?? out["implement"]?.["model"] ?? autoExecutor());
   if (codeOwned(groups) === 0 || !cur.toLowerCase().includes("haiku")) return null;
   return { unit: "run", from: cur, to: autoClimbModel(), trigger: "stall", evidence: reason.slice(0, 300) };
+}
+
+/** (c) at implement: a spec conflict Haiku repeated after its correction gets one Sonnet implement session. Returns the session to use. */
+export async function autoConflictClimb(ctx: RunContext, opts: SessionRunOptions, session: SessionResult & { stderrTail?: string }, ids: string[]): Promise<SessionResult & { stderrTail?: string }> {
+  if (!autoRouteActive(process.env, ctx.provider) || !session.markers.specConflict || session.killed || !String(opts.model ?? ctx.model).toLowerCase().includes("haiku")) return session;
+  const d: AutoDecision = { decision: "implement-climb", model: autoClimbModel(), reason: "Haiku ended implement on a spec conflict twice: one Sonnet session decides whether it is real" };
+  recordAuto(ctx, "implement", d, { conflict: session.markers.specConflict.slice(0, 200) });
+  const iterationId = `${ids[ids.length - 1]}-climb`; ids.push(iterationId);
+  return ctx.sessions.run({ ...opts, iterationId, model: d.model, routeGrant: d.decision });
 }
 
 /** Event plus one line in <runDir>/auto-route.jsonl, the record the receipt reads. Best effort on the file. */

@@ -13,7 +13,7 @@ import { classifyExitCause } from "../session.ts"; import { MAX_TURNS_EXIT } fro
 import { adjudicateWallConflict, resumeAfterConflict, resumeAfterEmptyDone } from "../../util/conflict_resume.ts";
 import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
-import { routerActive } from "../../runner/router/unit_model.ts"; import { recordAutoImplement } from "../../runner/router/auto_route.ts";
+import { routerActive } from "../../runner/router/unit_model.ts"; import { autoConflictClimb, recordAutoImplement } from "../../runner/router/auto_route.ts";
 import { type ImplementExit, type RunContext, type SessionRunOptions, type Stage, type StageResult, type TestMap, taskBlock } from "../types.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { sha256 } from "./seal.ts"; import { restoreBaseTests } from "../../util/test_guard.ts";
 import { assumptionsBlock } from "../../features/spec_ambiguity.ts";
@@ -140,6 +140,7 @@ export const implementStage: Stage = {
     if (rt && !signal.aborted) session = await routeEscalate(ctx, first, session, rt, ids); // triggers b/c: one redo on the next rung
     if (session.markers.specConflict && !session.killed) { const r = await resumeAfterConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; if (r.iterationId !== ids[ids.length - 1]) ids.push(r.iterationId); } // FC-19: one correction, then the conflict is believed
     if (session.markers.specConflict && !session.killed && !signal.aborted) { const w = await adjudicateWallConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, readOnly); if (w) { session = w.session; ids.push(...w.ids); } } // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT: a Wall-anchored conflict goes to the referee (record: outputs.wall.arbitrated)
+    if (!rt && !signal.aborted) session = await autoConflictClimb(ctx, unchained(), session, ids); // auto routing (c): a conflict Haiku repeated gets one Sonnet session
     if (!signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && treeIsEmpty(ctx)) { const r = await resumeAfterEmptyDone(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; ids.push(r.iterationId); } // FC-43: one correction for a done exit with no change
 
     if (process.env.LOKI_E10_REPRO === "1" && !plan && !signal.aborted && !session.killed && session.exit === 0) { let bad: { name: string; why: string }[] = []; try { bad = outOfRepoTests(ctx.repoDir, changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); } catch { /* unreadable tree: no re-ask */ } if (bad.length) { const redo = `${first.iterationId}-oor`; ids.push(redo); session = await ctx.sessions.run({ ...unchained(), brief: withStagePrefix(outOfRepoReask("Rewrite these new test files in place, keeping the same names and what they reproduce.", bad)), iterationId: redo }); } } // TEN-QUALITY-44: the repro test gets the Wall's out-of-repo check and one re-ask
