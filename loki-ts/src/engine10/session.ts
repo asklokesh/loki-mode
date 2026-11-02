@@ -37,7 +37,7 @@ export interface SessionRunnerConfig {
 }
 /** Recorded when a claude run has no configured model: the provider CLI runs its own default, exactly like raw `claude -p` (L1). */
 export { PROVIDER_DEFAULT_MODEL }; // label lives in util/claude_model.ts (a leaf the runner can import without a cycle)
-/** The model a session really runs: the override, else the session pin, else a configured pin, else the auto executor (Haiku, runner/router/auto_route.ts), else with LOKI_AUTO_ROUTE=0 the provider's own default (no --model flag). */
+/** The model a session really runs: the override, else the session pin, else a configured pin, else with LOKI_AUTO_ROUTE=1 the auto executor (Haiku, runner/router/auto_route.ts), else the provider's own default (no --model flag, L1). */
 export function resolveModel(provider: string): string {
   const e = process.env;
   if (e.LOKI_MODEL_OVERRIDE) return e.LOKI_MODEL_OVERRIDE;
@@ -47,7 +47,7 @@ export function resolveModel(provider: string): string {
   if (pinned) return pinned;
   if (provider === "opencode") return (e.LOKI_OPENCODE_MODEL ?? "").trim() || "opencode default (unreported)"; // opencode takes -m from LOKI_OPENCODE_MODEL only
   if (provider !== "claude") return `${provider} (model not recorded)`;
-  return e.LOKI_CLAUDE_MODEL_DEVELOPMENT || e.LOKI_MODEL_DEVELOPMENT || (autoRouteActive(e) ? autoExecutor() : PROVIDER_DEFAULT_MODEL); // auto routing (no pin): Haiku executes; LOKI_AUTO_ROUTE=0 keeps the provider default
+  return e.LOKI_CLAUDE_MODEL_DEVELOPMENT || e.LOKI_MODEL_DEVELOPMENT || (autoRouteActive(e) ? autoExecutor() : PROVIDER_DEFAULT_MODEL); // LOKI_AUTO_ROUTE=1 (no pin): Haiku executes
 }
 // ER-05 / g09-47: effort is part of the cached prefix key, so a resumed session keeps the effort it was created with unless the stage
 // escalates. Per-message effort (mid-conversation output_config) is not exposed by the SDK; revisit when it is, instead of adding a new path.

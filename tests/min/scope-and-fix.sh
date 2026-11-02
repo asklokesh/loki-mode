@@ -13,7 +13,7 @@
 #   conflict:    implement writes a wrong multiply(); the fix session answers LOKI_SPEC_CONFLICT without editing;
 #                no retry session starts (one fix session, no "-r" iteration) and the run ends BLOCKED. The code the
 #                run wrote stays on its loki/<id> branch (not only in a bundle), where the user looks.
-#   no progress: (LOKI_AUTO_ROUTE=0) the fix session edits calc.ts but the same test still fails; fixing stops after that one round
+#   no progress: the fix session edits calc.ts but the same test still fails; fixing stops after that one round
 #                (one fix session, one fix.round event, two verify runs) and the run ends STALLED.
 #   wall defect: a LOKI_SESSION_MODEL=haiku run whose (slow) Wall author calls multiplyAll(), a name the task never
 #                asks for. Implement starts before the Wall finishes (the Wall never gates implement), the correct
@@ -166,7 +166,7 @@ git -C "$REPO" rev-parse -q --verify "refs/heads/loki/$rid" >/dev/null && ok "co
 grep -q 'export function multiply' "$REPO/calc.ts" && ok "conflict: the code the blocked run wrote is on that branch" || { bad "conflict: the blocked run's multiply() is not on a visible branch"; dump; }
 [ "$(git -C "$REPO" rev-parse --abbrev-ref HEAD)" = "loki/$rid" ] && [ "$(git -C "$REPO" log -1 --format=%s main)" = "base" ] && ok "conflict: main is untouched; the work sits only on the run branch" || bad "conflict: main moved or the run branch was not checked out"
 
-run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress LOKI_AUTO_ROUTE=0 # the one-round stop of the run model; auto routing climbs a stall once to Sonnet (tests/min/auto-route.sh)
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress
 n="$(fix_sessions)"
 [ "$n" = "1" ] && ok "no progress: one fix round, then fixing stops" || { bad "no progress: $n fix sessions (want 1)"; dump; }
 [ "$(ev 'sum(1 for e in E if e["type"]=="fix.round")')" = "1" ] && ok "no progress: one fix.round event" || bad "no progress: fix.round events: $(ev 'sum(1 for e in E if e["type"]=="fix.round")')"

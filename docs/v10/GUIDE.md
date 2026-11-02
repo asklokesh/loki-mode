@@ -91,8 +91,8 @@ without opening a pull request (the legacy quick never opened one), and the
 engine's own sizing picks the lean path for a small task: Plan and Wall are
 skipped and implement runs on your run's model.
 
-With no model pinned, every run uses auto routing (Engine Law L1, as amended
-2026-11-01): Haiku plans, implements and fixes; the platform advisor tool
+`LOKI_AUTO_ROUTE=1` (with no model pinned) turns on auto routing (Engine Law
+L1, as amended 2026-11-01): Haiku plans, implements and fixes; the platform advisor tool
 (Opus) is attached to the plan session of a large task, or of a normal task in
 a repo with more than 1500 files, and to the first fix round after a failed
 verify on a code-owned failure; after two failed Haiku rounds the executor
@@ -100,8 +100,8 @@ climbs to Sonnet. Escalation only ever goes up. The start line says
 `route: auto`, every decision and its reason is a `route` event, and the
 receipt's `routing` block lists the decisions and the model of every session.
 `--model <m>` (LOKI_SESSION_MODEL) pins one model for the whole run instead;
-`LOKI_AUTO_ROUTE=0` restores the provider's default model; `LOKI_AUTO_ADVISOR`
-is `off`, `sonnet` or `opus`. `LOKI_E10_CASCADE=1` (the sonnet start) and
+`LOKI_AUTO_ADVISOR` is `off`, `sonnet` or `opus`. It is opt-in because on the
+hard benchmark suite it passed fewer tasks than the provider's default model. `LOKI_E10_CASCADE=1` (the sonnet start) and
 `LOKI_ROUTER=1` (the per-unit Opus router) turn auto routing off.
 `loki quick --help` prints the help; `loki quick -v "<task>"` runs on Loki 10 with
 `--verbose`.

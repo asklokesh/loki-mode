@@ -33,9 +33,12 @@ TASKS_DIR = HERE / "tasks"
 CONFIGS = ["raw-haiku", "raw-opus", "loki-haiku", "loki-default"]
 # Offline configs for checking the task set itself: oracle applies tasks/<id>/solution, noop changes nothing.
 CHECK_CONFIGS = ["oracle", "noop"]
-# Learning protocol (--sequences): Loki on Haiku with what it learns from earlier runs in the same repo
-# (run lessons and the worked example from a VERIFIED receipt) on, versus both switched off.
-SEQUENCE_CONFIGS = ["loki-haiku-learn", "loki-haiku-nolearn"]
+# Learning protocol (--sequences): Loki on Haiku with what it learns from earlier runs in the same repo.
+# learn: run lessons and the worked example both on; lessons: run lessons only; example: the worked example
+# only; nolearn: both off. Each arm sets every knob explicitly, so an engine default never decides an arm.
+SEQUENCE_CONFIGS = ["loki-haiku-learn", "loki-haiku-lessons", "loki-haiku-example", "loki-haiku-nolearn"]
+# util/pr_lessons.ts RECURRING: the run-lesson classes a brief line can prevent on the same file.
+RECURRING = ("check-failed", "edited-existing-test", "spec-conflict")
 SEQUENCES_DIR = HERE / "sequences"
 SCORE_TIMEOUT_S = 180
 NOISE = (".loki/", "node_modules/", "__pycache__/", ".pytest_cache/", ".bun/", "target/")
@@ -148,13 +151,18 @@ def config_env(config, env):
         env["LOKI_SESSION_MODEL"] = "haiku"
     if config in SEQUENCE_CONFIGS:
         env["LOKI_SESSION_MODEL"] = "haiku"
+    # util/pr_lessons.ts lessonsInjected (LOKI_PR_LESSONS, "0" off) and workedExampleInjected (LOKI_WORKED_EXAMPLE, "1" on).
     if config == "loki-haiku-learn":
-        # util/pr_lessons.ts: lessons and the worked example reach the brief only on opt-in (lessonsInjected,
-        # workedExampleInjected); this arm turns both on.
         env["LOKI_PR_LESSONS"] = "1"
         env["LOKI_WORKED_EXAMPLE"] = "1"
+    if config == "loki-haiku-lessons":
+        env["LOKI_PR_LESSONS"] = "1"
+        env["LOKI_WORKED_EXAMPLE"] = "0"
+    if config == "loki-haiku-example":
+        env["LOKI_PR_LESSONS"] = "0"
+        env["LOKI_WORKED_EXAMPLE"] = "1"
     if config == "loki-haiku-nolearn":
-        # LOKI_NO_PR_LESSONS=1 turns both off whatever else is set (also the default since lessons became opt-in).
+        # LOKI_NO_PR_LESSONS=1 turns both off whatever else is set.
         env["LOKI_NO_PR_LESSONS"] = "1"
     return env
 
@@ -466,6 +474,33 @@ def lesson_counts(repo):
     }
 
 
+def run_lessons(repo):
+    p = repo / ".loki" / "memory" / "semantic" / "pr-lessons.json"
+    try:
+        data = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return []
+    items = data.get("lessons", []) if isinstance(data, dict) else data if isinstance(data, list) else []
+    return [x for x in items if isinstance(x, dict) and x.get("kind") == "run"]
+
+
+def step_learning(repo, before_ids, run_id):
+    """What one step taught and what it was told. `mistakes`: the recurring-class lessons this run added a
+    sub-lesson to (its own mistakes, recorded in every arm); `repeats`: those whose class an earlier step in
+    this repo had already made; `injected_*`: the run's lessons-injected.json (util/pr_lessons.ts lessonsForBrief)."""
+    mine = [l for l in run_lessons(repo) if l.get("category") in RECURRING
+            and any((s or {}).get("run_id") == run_id for s in l.get("subs") or [])] if run_id else []
+    inj = {}
+    if run_id:
+        try:
+            inj = json.loads((repo / ".loki" / "runs" / run_id / "lessons-injected.json").read_text())
+        except (OSError, ValueError):
+            inj = {}
+    return {"mistakes": sorted(l["id"] for l in mine), "repeats": sorted(l["id"] for l in mine if l["id"] in before_ids),
+            "injected_ids": inj.get("ids", []), "injected_bytes": inj.get("bytes", 0), "injected_run_bytes": inj.get("run_bytes", 0),
+            "worked_example": inj.get("worked")}
+
+
 def commit_step_state(repo, step):
     """Commit the scored tree so the next step starts clean. Loki's own .loki state stays out of
     the commit but stays on disk. A pathspec exclude is not used: once Loki has gitignored .loki,
@@ -495,6 +530,7 @@ def run_sequence(config, seq, rep, work, timeout_s, keep_dir):
                # Any step's hidden test file already in the repo when this step starts (must stay empty).
                "stale_hidden": sorted(dest for other in seq["steps"] for dest in other["hidden"].values() if (repo / dest).exists())}
         before = loki_branches(repo)
+        before_ids = {l["id"] for l in run_lessons(repo) if l.get("category") in RECURRING and (l.get("seen") or 0) > 0}
         if config == "oracle":
             apply_oracle(st, repo)
             rc, secs, timed_out = 0, 0.0, False
@@ -510,6 +546,7 @@ def run_sequence(config, seq, rep, work, timeout_s, keep_dir):
             m = loki_metrics(repo)
             m["loki_outcome"] = LOKI_EXIT.get(rc, "OTHER")
             m["loki_tail"] = tail_text(d / f"step{i}.out", 800)
+            m.update(step_learning(repo, before_ids, m.get("run_id")))
         else:
             m = {"cost_usd": 0.0, "sessions": 0}
         restore_protected(st, repo, base)
@@ -544,6 +581,12 @@ def summarize_sequences(results, configs):
                 "mean_fix_rounds": round(statistics.mean(r.get("fix_rounds") or 0 for r in rs), 2),
                 "steps_with_worked_example_available": sum(1 for r in rs if r["lessons_before"]["worked_example"]),
                 "steps_with_run_lessons_available": sum(1 for r in rs if r["lessons_before"]["run"]),
+                "steps_with_lessons_injected": sum(1 for r in rs if r.get("injected_run_bytes")),
+                "steps_with_worked_example_injected": sum(1 for r in rs if r.get("worked_example")),
+                "mean_injected_bytes": round(statistics.mean(r.get("injected_bytes") or 0 for r in rs), 1),
+                "steps_with_a_mistake": sum(1 for r in rs if r.get("mistakes")),
+                "steps_repeating_a_mistake": sum(1 for r in rs if r.get("repeats")),
+                "repeat_ci95": wilson(sum(1 for r in rs if r.get("repeats")), len(rs)),
                 **({k: v for k, v in verdict_stats(rs).items() if k in ("verdict_agree_n", "false_verified")} if c.startswith("loki") else {}),
             })
     return rows
@@ -623,14 +666,14 @@ def main_sequences(a, ap):
             shutil.rmtree(work, ignore_errors=True)
     results.sort(key=lambda r: (configs.index(r["config"]) if r["config"] in configs else 99, r["sequence"], r["rep"], r["step"]))
     save()
-    print("| config | steps | pass | 95% CI | $ / pass | median s | sessions | fix rounds | worked example available | run lessons available |")
-    print("|---|---|---|---|---|---|---|---|---|---|")
+    print("| config | steps | pass | 95% CI | $ / pass | median s | sessions | fix rounds | lessons injected | example injected | mean bytes | repeat mistakes |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in summarize_sequences(results, configs):
         ci = r["pass_ci95"]
         cpp = f"{r['cost_per_pass_usd']:.4f}" if r["cost_per_pass_usd"] is not None else "-"
         print(f"| {r['config']} | {r['steps']} | {r['passed']}/{r['n']} | {ci[0] * 100:.0f}-{ci[1] * 100:.0f}% | {cpp} | {r['median_s']} "
-              f"| {r['mean_sessions']} | {r['mean_fix_rounds']} | {r['steps_with_worked_example_available']}/{r['n']} "
-              f"| {r['steps_with_run_lessons_available']}/{r['n']} |")
+              f"| {r['mean_sessions']} | {r['mean_fix_rounds']} | {r['steps_with_lessons_injected']}/{r['n']} "
+              f"| {r['steps_with_worked_example_injected']}/{r['n']} | {r['mean_injected_bytes']} | {r['steps_repeating_a_mistake']}/{r['n']} |")
     print(f"\nresults: {out}")
     if any(r["hidden_leaked_before_scoring"] or r.get("stale_hidden") for r in results):
         log("h2h: hidden test files were visible to a contestant before scoring")

@@ -1,4 +1,4 @@
-// Auto routing, the default when no model is pinned: Haiku executes (implement and fix), a stronger model advises only where it
+// Auto routing, opt-in with LOKI_AUTO_ROUTE=1 when no model is pinned: Haiku executes (implement and fix), a stronger model advises only where it
 // pays, and every decision is recorded with its reason. Kept beside the ROUTER-1 ladder (unit_model.ts), outside the engine10 line
 // budget. The advisor is the platform's own server-side advisor tool (Settings.advisorModel, attached in providers.ts
 // planRouterSession), never a separate Loki session: the Haiku executor consults it inside its own session.
@@ -7,9 +7,10 @@
 //   (c) two failed Haiku rounds (implement, fix 1) on a code-owned failure: the executor itself climbs to Sonnet. The same holds
 //       when Haiku ends implement on a spec conflict it repeated after its one correction (and the Wall referee did not clear it):
 //       one Sonnet implement session decides whether the conflict is real before the run is BLOCKED.
+// Opt-in, not the default: on the hard suite (benchmarks/h2h --suite hard, 8 tasks x 2 reps) it passed 0/16 where the
+// provider-default run passed 4/16, because most hard failures pass Loki's own verify, so neither the advisor nor the climb fires.
 // At most two sessions per run carry the advisor (plan, fix 1). A user pin (--model / LOKI_SESSION_MODEL, LOKI_MODEL_OVERRIDE, a
-// development-tier model, a model route), LOKI_ROUTER=1, LOKI_E10_CASCADE=1, a non-claude provider or LOKI_AUTO_ROUTE=0 turns auto
-// off and the run model rules as before.
+// development-tier model, a model route), LOKI_ROUTER=1, LOKI_E10_CASCADE=1 or a non-claude provider keeps it off even when opted in.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveClaudeModel } from "../../util/claude_model.ts";
@@ -37,7 +38,7 @@ export const AUTO_START_LINE = "route: auto (Haiku executes; an advisor is attac
 /** Why auto routing is off for this run, or null when it is on. Order: the most explicit user choice first. */
 export function autoRouteOffReason(env: Env = process.env, provider = "claude"): string | null {
   if (provider !== "claude") return `provider ${provider}`;
-  if (off(env["LOKI_AUTO_ROUTE"])) return "LOKI_AUTO_ROUTE=0";
+  if (!on(env["LOKI_AUTO_ROUTE"])) return "LOKI_AUTO_ROUTE is not 1 (opt-in)";
   for (const k of ["LOKI_SESSION_MODEL", "LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_DEVELOPMENT", "LOKI_MODEL_DEVELOPMENT"]) if ((env[k] ?? "").trim()) return `${k} pin`;
   if (modelRouteModel(env)) return "model route";
   if (routerEnabled(env)) return "LOKI_ROUTER=1";
