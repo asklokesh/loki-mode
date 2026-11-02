@@ -20,8 +20,8 @@ export function modelDowngrades(provider: string, env: NodeJS.ProcessEnv = proce
   if (leanEnabled(env) && routerActive(env)) out.push({ stage: "implement", model: resolveModelAlias("sonnet"), reason: "LOKI_LEAN opt-in (small and normal units; one rung up after a failed verify)" }); // LEAN-5: named, never silent
   const fast = env.LOKI_MODEL_OVERRIDE ? undefined : env.LOKI_CLAUDE_MODEL_FAST || env.LOKI_MODEL_FAST || (env.LOKI_ALLOW_HAIKU === "true" ? "haiku" : "sonnet");
   if (planMode(env) !== "never" && weak(fast) && !(routerEnabled(env) && envOverride(env) === null)) out.push({ stage: "plan", model: fast, reason: "fast tier" });
-  const wall = wallModel(env);
-  if (wallEnabled(env) && weak(wall)) out.push({ stage: "wall", model: wall, reason: "Wall pin" });
-  if (weak(wall)) out.push({ stage: "already_done", model: wall, reason: "already-done check pin" });
+  const wall = wallModel(env), preset = !env.LOKI_E10_WALL_TIER && routerPreset(env) && envOverride(env) === null ? " (LOKI_ROUTER=auto preset executor)" : ""; // sizing.ts wallModel
+  if (wallEnabled(env) && weak(wall)) out.push({ stage: "wall", model: wall, reason: `Wall pin${preset}` });
+  if (weak(wall)) out.push({ stage: "already_done", model: wall, reason: `already-done check pin${preset}` });
   return out;
 }

@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { readRepoMapCache, repoCacheDir, repoKey } from "./cache.ts";
 import { speedLikelyFiles } from "../features/speed/lean_select.ts"; import { deliverables } from "../features/decompose.ts";
-import { resolveClaudeModel } from "../util/claude_model.ts"; import { isTestFile } from "../util/test_file_text.ts"; import { wallConcurrent } from "../util/wall_knobs.ts";
+import { resolveClaudeModel } from "../util/claude_model.ts"; import { presetExecutor, routerPreset } from "../runner/router/flag.ts"; import { envOverride } from "../runner/router/decision.ts"; import { isTestFile } from "../util/test_file_text.ts"; import { wallConcurrent } from "../util/wall_knobs.ts";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap, TestRef } from "./types.ts";
 
@@ -90,8 +90,9 @@ export const wallLimitS = (size: TaskSize, env = process.env): number => {
 export const cascadeEnabled = (env = process.env): boolean => knob(env.LOKI_E10_CASCADE, ["1", "on", "true"]);
 /** Resolves a cli_alias (e.g. "sonnet") to its catalog model id; an id already, or an unknown alias, passes through unchanged. */
 export const resolveModelAlias = resolveClaudeModel;
-/** LOKI_E10_WALL_TIER (alias or id, default sonnet) resolved via providers/model_catalog.json cli_aliases. */
-export const wallModel = (env = process.env): string => resolveModelAlias(env.LOKI_E10_WALL_TIER || "sonnet");
+/** LOKI_E10_WALL_TIER (alias or id) resolved via providers/model_catalog.json cli_aliases; else the LOKI_ROUTER=auto executor (Haiku under --haiku) when no model pin is set; else sonnet.
+ *  The preset Wall on the executor tier is measured: benchmarks/h2h/results (bench v2, Wall on Haiku: same pass rate, no false VERIFIED, about a tenth of the Sonnet Wall's cost). */
+export const wallModel = (env = process.env): string => resolveModelAlias(env.LOKI_E10_WALL_TIER || (routerPreset(env) && envOverride(env) === null ? presetExecutor(env).model : "sonnet"));
 /** COST-11: first Wall author rung. Haiku for small/normal tasks, re-authored once on wallModel() when the result is unusable (wall.ts runWall).
  *  Fail-safe: any pin (LOKI_E10_WALL_TIER, LOKI_MODEL_OVERRIDE), concurrent Wall (its base run is not validated at author time), an unknown/large size or LOKI_E10_WALL_FIRST=0 uses wallModel() directly, so no escalation applies. */
 export const wallFirstModel = (size: TaskSize, env = process.env): string => {
