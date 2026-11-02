@@ -1,7 +1,7 @@
 // E-17: Fix rounds (ENGINE.md 4, 16). One fix round is one provider session: the fixed rules, the task, the failing tests with their first error lines and the diff of the files the run changed (no plan, repo map or file list, so the session does not reread the repo). The machine loops [Fix -> Fast verify], calling this stage
 // again after each failure; MAX_FIX_ROUNDS caps rounds itself (a 3rd call is a no-op stage.skipped, moving to Seal/PARTIAL). Depends on session.ts/verify.ts only through types.ts shapes.
 import { withStagePrefix } from "../../features/lean_prefix.ts"; import { FINISH_LINE, FIXED_RULES } from "../../e10ext/context.ts";
-import { routedFix, routerActive } from "../../runner/router/unit_model.ts";
+import { finalPassBlock, routedFix, routerActive } from "../../runner/router/unit_model.ts";
 import { cascadeDowngrade, escalationModel } from "../sizing.ts";
 import { MAX_FIX_ROUNDS, type RunContext, type Stage, type StageResult, taskBlock } from "../types.ts";
 import type { FailureGroup } from "../failures.ts";
@@ -35,6 +35,13 @@ export const fixStage: Stage = {
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     const prior = ctx.outputs();
     const priorRound = (prior.fix?.round as number | undefined) ?? 0;
+    const fpModel = prior.fix?.final_pass_pending === true ? String(prior.fix?.final_pass_model ?? "") : ""; // LOKI_ROUTER_FINAL: the one final pass machine.ts armed (unit_model.ts armFinalPass)
+    if (fpModel) {
+      const id = `${ctx.runId}-final`, { final_pass_pending: _p, ...keep } = prior.fix ?? {};
+      const s = await ctx.sessions.run({ stage: "fix", tier: "development", limitS: fixStage.limitS, signal, cwd: ctx.repoDir, iterationId: id, model: fpModel, brief: withStagePrefix([FIXED_RULES, ...taskBlock(String(prior.intake?.task ?? "")), ...finalPassBlock(currentDiff(ctx.repoDir, ctx.baseSha, 6000, true, installOwned(ctx.repoDir, prior.intake?.install_created))), FINISH_LINE].join("\n\n")) });
+      const testsReverted = [...restoreReadOnly((prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? []), ...restoreBaseTests(ctx.repoDir, ctx.baseSha, prior.intake)]; // existing tests stay read-only
+      return { status: "completed", data: { ...keep, final_pass_done: true, model: fpModel, killed: s.killed, tests_reverted: testsReverted, iteration_ids: [...((keep.iteration_ids as string[] | undefined) ?? []), id] } };
+    }
     const routed = routerActive(), stallEsc = routed && prior.fix?.stall_escalated === true; // R1-13: a stall escalation grants one extra round on the next rung
     if (priorRound >= MAX_FIX_ROUNDS + (stallEsc ? 1 : 0)) {
       return { status: "skipped", data: { round: priorRound }, reason: "fix rounds exhausted" };

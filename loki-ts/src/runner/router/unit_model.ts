@@ -1,7 +1,8 @@
 // ROUTER-1: every model decision the engine10 stages make under LOKI_ROUTER=1 lives here, outside the engine10 line budget.
 // Invariant (L1, tested semantically in tests/engine10/route_matrix.test.ts): a session is never started below the run's model
 // unless a VALID Opus route record (plan.units: every unit executor "haiku" with a reason, nothing NOT PROVEN) names haiku.
-import { resolveModelAlias } from "../../engine10/sizing.ts";
+import { hardReason, loadRepoMap, resolveModelAlias, sizeTask } from "../../engine10/sizing.ts";
+import type { TestMap } from "../../engine10/types.ts";
 import { PROVIDER_DEFAULT_MODEL, resolveModel, sessionPinModel } from "../../engine10/session.ts";
 import { envOverride, unitRedo } from "./decision.ts";
 import { presetExecutor, routerEnabled, routerPreset } from "./flag.ts";
@@ -87,3 +88,33 @@ export function stallClimb(runModel: string, out: StageOutputs, reason: string):
 
 /** R1-09 floor for a per-call pin: with the advisor unavailable a haiku pin is raised to sonnet (section 4.4). */
 export const floorNoAdvisor = (model: string | undefined, advisor: { available: boolean } | undefined): string | undefined => (model && advisor?.available === false && isHaiku(model) ? resolveModelAlias("sonnet") : model);
+
+/**
+ * LOKI_ROUTER=auto with LOKI_ROUTER_FINAL=1 (experiment, off by default): one final pass by Opus on a hard task whose verify is green
+ * but no Wall or task-named test proved the change (the dominant hard-suite outcome). It may edit: it writes a test from the task,
+ * fixes what it exposes, and verify runs again. At most one per run. Null when not due.
+ */
+export function finalPassDue(out: StageOutputs, hard: string | null, targetProof: boolean, env: Record<string, string | undefined> = process.env): { model: string; reason: string } | null {
+  if (!routerPreset(env) || !routerActive(env) || !["1", "on", "true"].includes((env["LOKI_ROUTER_FINAL"] ?? "").trim().toLowerCase()) || !hard || out["fix"]?.["final_pass_done"] === true) return null;
+  const v = out["verify"], groups = (v?.["failures_grouped"] as unknown[] | undefined) ?? [];
+  if (!v || groups.length > 0 || Number(v["holdout_failed"] ?? 0) > 0 || out["implement"]?.["exit"] !== "done" || targetProof) return null;
+  return { model: resolveModelAlias("opus"), reason: `${hard}; verify green but no Wall or task-named test proved the change` };
+}
+/** machine.ts: arm the final pass when due; marks outputs.fix so the fix stage runs it, and emits route.escalated. True when armed. */
+export async function armFinalPass(ctx: { emit: (t: "route.escalated", s: "fix", d: Record<string, unknown>) => void }, outputs: Record<string, Record<string, unknown> | undefined>): Promise<boolean> {
+  if (!routerPreset()) return false;
+  const i = outputs["intake"], map = loadRepoMap(i?.["repomap_ref"] as string | undefined);
+  const hard = hardReason(sizeTask(String(i?.["task"] ?? ""), map, (i?.["testmap"] as TestMap | undefined) ?? null).size, map);
+  const { targetProofOf } = await import("../../engine10/stages/seal.ts"); // at call time: a static import would close a module cycle
+  const d = finalPassDue(outputs, hard, targetProofOf(outputs["verify"]));
+  if (!d) return false;
+  ctx.emit("route.escalated", "fix", { unit: "run", from: String(outputs["fix"]?.["model"] ?? outputs["implement"]?.["route_model"] ?? "run model"), to: d.model, trigger: "weak_proof", evidence: d.reason });
+  outputs["fix"] = { ...outputs["fix"], final_pass_pending: true, final_pass_model: d.model };
+  return true;
+}
+/** The final pass brief body; fix.ts wraps it in the fixed rules, the task and the finish line. */
+export const finalPassBlock = (diff: string | null): string[] => [
+  "FINAL PASS: a smaller model made the change below for this task. Loki's checks pass, but no test exercises the change, so it is not proven.",
+  "1. Read the task, the diff and the code around it. 2. Add a new test, in the repo's existing test style and location, that reproduces the task's example or reported bug, and run it. 3. If it fails, or the change misses a case the task states, fix the code. 4. Run the related existing tests and make sure they still pass. Do not edit or delete an existing test.",
+  `Diff of the files this run changed:\n${diff ?? "(the diff is not available)"}`,
+];

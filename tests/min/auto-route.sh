@@ -127,6 +127,14 @@ HARD_REPO=1 run_engine "$TASK" E2E_STUB_MODE=done
 has "hard: the plan brief asks for files, pitfalls and the proving test" "$(cat "$(dirname "$ROUTES")"/prompt.plan* 2>/dev/null)" "the pitfalls"
 [ "$(model_of implement)" = "haiku" ] && ok "hard: haiku implemented the plan" || bad "hard: implement on '$(model_of implement)'"
 
+WEAK="add a multiply(a, b) function next to add"
+HARD_REPO=1 run_engine "$WEAK" E2E_STUB_MODE=done LOKI_ROUTER_FINAL=1
+[ "$(grep -c -- '-final model=[^ ]*opus' "$ROUTES")" = "1" ] && ok "final: LOKI_ROUTER_FINAL=1, weak proof on a hard task: exactly one opus final pass" || { bad "final: final passes: $(grep -c -- '-final model=' "$ROUTES")"; dump; }
+HARD_REPO=1 run_engine "$WEAK" E2E_STUB_MODE=done
+[ "$(grep -c -- '-final model=' "$ROUTES")" = "0" ] && ok "final: off by default" || bad "final: a final pass ran without LOKI_ROUTER_FINAL"
+run_engine "$WEAK" E2E_STUB_MODE=done LOKI_ROUTER_FINAL=1
+[ "$(grep -c -- '-final model=' "$ROUTES")" = "0" ] && ok "final: an easy repo gets no final pass" || bad "final: a final pass ran on an easy repo"
+
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit LOKI_ROUTER= LOKI_ROUTER_EXECUTOR=haiku
 grep -q 'model=[^ ]*haiku' "$ROUTES" && bad "default: a session ran on haiku without the preset" || ok "default: without LOKI_ROUTER=auto no session runs on haiku"
 grep -q 'advisor=opus' "$ROUTES" && bad "default: an advisor was attached without the router" || ok "default: no advisor without the router"
