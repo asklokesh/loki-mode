@@ -126,10 +126,10 @@ same state, which is what makes runs resumable and independently verifiable.
 
 A representative end-to-end flow:
 
-1. **Entry.** `loki start ./prd.md` (CLI dispatch in `autonomy/loki`) resolves
-   the provider and execs the orchestration engine. The TS runner
-   (`loki-ts/src/runner/autonomous.ts`) is default; `LOKI_LEGACY_BASH=1` selects
-   `autonomy/run.sh`.
+1. **Entry.** `loki start ./prd.md` (`bin/loki`, which asks `autonomy/route.sh`
+   for the engine) runs the Loki 10 engine (`loki-ts/src/engine10`). The previous
+   bash loop (`autonomy/run.sh`) runs only on `--engine legacy` or
+   `LOKI_LEGACY_BASH=1`.
 2. **Complexity and tier.** The engine detects complexity and maps the iteration
    to a model tier (`rarv.ts` / `run.sh:get_rarv_tier`).
 3. **Prompt construction.** `build_prompt.ts` (`run.sh:build_prompt`) assembles
