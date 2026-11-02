@@ -43,9 +43,14 @@ change that fixed it.
   raw `claude -p` with the same task text plus one sentence: "Before you finish, run the
   repository's tests and check that your change works." That is the fair baseline: what a careful
   user gets from Claude Code alone.
-- **Accepted without edit.** The hidden tests pass on the tree as the run left it, and the run left
-  no test edits in it (a changed file under a protected path, in a test directory, or named like a
-  test). Test edits are reverted before scoring in every case, so they never affect pass or fail.
+- **Accepted without edit (old definition, used for this run only).** The hidden tests pass on the
+  tree as the run left it, and the run left no test edits in it (a changed file under a protected
+  path, in a test directory, or named like a test). Test edits are reverted before scoring in every
+  case, so they never affect pass or fail. The harness now uses a narrower definition (see the hard
+  suite): only a weakened pre-existing test or a test config change counts, so new test files and
+  appended cases are fine. These runs did not keep their diffs, so they cannot be rescored; under
+  the new definition Loki's 10 passes would all count as accepted (it only added new test files),
+  and the raw configs' cannot be determined.
 - **Run.** `--suite replay --reps 2 --jobs 4`, timeout 600 s, on its own ledger with a $15 budget.
 
 ### Results
