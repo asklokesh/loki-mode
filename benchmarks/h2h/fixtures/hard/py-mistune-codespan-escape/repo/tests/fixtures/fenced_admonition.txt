@@ -1,0 +1,129 @@
+# Admonition
+
+```````````````````````````````` example
+```{unknown} Hi
+
+this is **strong** world
+```
+.
+<div class="error"><pre>{unknown} Hi
+
+this is **strong** world
+</pre></div>
+````````````````````````````````
+
+```````````````````````````````` example
+```
+this is code
+```
+.
+<pre><code>this is code
+</code></pre>
+````````````````````````````````
+
+
+```````````````````````````````` example
+~~~{note} Warning
+
+message
+~~~
+.
+<section class="admonition note">
+<p class="admonition-title">Warning</p>
+<p>message</p>
+</section>
+````````````````````````````````
+
+```````````````````````````````` example
+~~~{note} A **strong** title
+
+_message_
+~~~
+.
+<section class="admonition note">
+<p class="admonition-title">A <strong>strong</strong> title</p>
+<p><em>message</em></p>
+</section>
+````````````````````````````````
+
+Test with code block.
+
+```````````````````````````````` example
+```{note}
+
+    print()
+```
+.
+<section class="admonition note">
+<p class="admonition-title">Note</p>
+<pre><code>print()</code></pre>
+</section>
+````````````````````````````````
+
+Test with no message.
+
+```````````````````````````````` example
+~~~{note} Warning
+~~~
+.
+<section class="admonition note">
+<p class="admonition-title">Warning</p>
+</section>
+````````````````````````````````
+
+Test with no ending fence
+
+```````````````````````````````` example
+~~~{note} Warning
+.
+<section class="admonition note">
+<p class="admonition-title">Warning</p>
+</section>
+````````````````````````````````
+
+Test with nested admonition
+
+```````````````````````````````` example
+~~~~~~~{note}
+~~~~~~{warning}
+~~~~~{tip}
+~~~~{caution}
+~~~{hint}
+``````{danger}
+`````{attention}
+````{important}
+```{error}
+```
+````
+`````
+``````
+~~~
+~~~~
+~~~~~
+~~~~~~
+~~~~~~~
+.
+<section class="admonition note">
+<p class="admonition-title">Note</p>
+<section class="admonition warning">
+<p class="admonition-title">Warning</p>
+<section class="admonition tip">
+<p class="admonition-title">Tip</p>
+<section class="admonition caution">
+<p class="admonition-title">Caution</p>
+<section class="admonition hint">
+<p class="admonition-title">Hint</p>
+<section class="admonition danger">
+<p class="admonition-title">Danger</p>
+<pre><code class="language-{attention}">````{important}
+```{error}
+```
+````
+</code></pre>
+</section>
+</section>
+</section>
+</section>
+</section>
+</section>
+````````````````````````````````

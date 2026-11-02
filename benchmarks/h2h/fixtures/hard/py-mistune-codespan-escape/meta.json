@@ -1,0 +1,64 @@
+{
+  "difficulty": "hard",
+  "shape": "multi-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_misc.py": "tests/test_misc.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "conftest.py"
+  ],
+  "source": {
+    "upstream": "https://github.com/lepture/mistune",
+    "license": "BSD-3-Clause",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/lepture/mistune/issues/372",
+    "fix_pr": "https://github.com/lepture/mistune/pull/393",
+    "fix_commit": "77f925e1de25e453a4d8c190fc8099ad1bd2386b",
+    "parent_commit": "4f91db8d211a01374df50dc786e8fb452fe83f4a",
+    "vendored_paths": [
+      "LICENSE",
+      "README.md",
+      "pyproject.toml",
+      "src",
+      "tests"
+    ],
+    "solution_files": [
+      "src/mistune/inline_parser.py",
+      "src/mistune/renderers/html.py"
+    ],
+    "added_files": [
+      "conftest.py"
+    ],
+    "note": "conftest.py added so tests import src/mistune without installing the package."
+  },
+  "pilot": {
+    "config": "raw-haiku-verify",
+    "passed": 2,
+    "runs": 2,
+    "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
+  },
+  "qualified": false,
+  "excluded_because": "raw-haiku-verify passed 2 of 2 pilot runs (the rule needs under 50%)"
+}

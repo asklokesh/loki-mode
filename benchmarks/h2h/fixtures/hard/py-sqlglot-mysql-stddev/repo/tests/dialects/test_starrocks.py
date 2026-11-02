@@ -1,0 +1,589 @@
+from sqlglot import exp
+from sqlglot.errors import ErrorLevel, ParseError, UnsupportedError
+from tests.dialects.test_dialect import Validator
+
+
+class TestStarrocks(Validator):
+    dialect = "starrocks"
+
+    def test_starrocks(self):
+        self.assertEqual(self.validate_identity("arr[1]").expressions[0], exp.Literal.number(0))
+
+        self.validate_identity("SELECT ARRAY_JOIN([1, 3, 5, NULL], '_', 'NULL')")
+        self.validate_identity("SELECT ARRAY_JOIN([1, 3, 5, NULL], '_')")
+        self.validate_identity("ALTER TABLE a SWAP WITH b")
+        self.validate_identity(
+            "ALTER TABLE t PARTITION BY DATE_TRUNC('MONTH', dt) DISTRIBUTED BY HASH (a) BUCKETS 4"
+        )
+        self.validate_identity("SELECT ARRAY_AGG(a) FROM x")
+        self.validate_identity("SELECT ST_POINT(10, 20)")
+        self.validate_identity("SELECT ST_DISTANCE_SPHERE(10.1, 20.2, 30.3, 40.4)")
+        self.validate_identity("ARRAY_FLATTEN(arr)").assert_is(exp.Flatten)
+
+        self.validate_all(
+            "SELECT * FROM t WHERE cond",
+            read={
+                "": "SELECT * FROM t WHERE cond IS TRUE",
+                "starrocks": "SELECT * FROM t WHERE cond",
+            },
+        )
+
+        self.validate_identity("CURRENT_VERSION()")
+
+        self.validate_identity("SELECT t1.id FROM t1 LEFT ANTI JOIN t2 ON t1.id = t2.id")
+        self.validate_identity("SELECT t1.id FROM t1 LEFT SEMI JOIN t2 ON t1.id = t2.id")
+
+    def test_min_max_by(self):
+        # StarRocks has MIN_BY/MAX_BY, but no ARG_MIN/ARG_MAX
+        # https://docs.starrocks.io/docs/sql-reference/sql-functions/aggregate-functions/min_by/
+        self.validate_identity("SELECT MIN_BY(name, ts) FROM t")
+        self.validate_identity("SELECT MAX_BY(name, ts) FROM t")
+        self.validate_identity("SELECT MIN_BY(x, y) OVER (PARTITION BY z) FROM t")
+
+        self.validate_all(
+            "SELECT MAX_BY(a, b), MIN_BY(a, b) FROM t",
+            read={
+                "clickhouse": "SELECT argMax(a, b), argMin(a, b) FROM t",
+                "presto": "SELECT MAX_BY(a, b), MIN_BY(a, b) FROM t",
+                "spark": "SELECT MAX_BY(a, b), MIN_BY(a, b) FROM t",
+            },
+            write={"starrocks": "SELECT MAX_BY(a, b), MIN_BY(a, b) FROM t"},
+        )
+
+    def test_map(self):
+        # StarRocks' MAP() is a variadic constructor: MAP(k1, v1, k2, v2, ...)
+        # https://docs.starrocks.io/docs/sql-reference/sql-functions/map-functions/map/
+        self.validate_identity("SELECT MAP('a', 1, 'b', 2)")
+        self.validate_identity("SELECT MAP('a', 1, 'b', 2)['a']")
+
+        self.validate_all(
+            "SELECT MAP('a', 1, 'b', 2)",
+            read={
+                "hive": "SELECT MAP('a', 1, 'b', 2)",
+                "spark": "SELECT MAP('a', 1, 'b', 2)",
+            },
+            write={
+                "starrocks": "SELECT MAP('a', 1, 'b', 2)",
+                "duckdb": "SELECT MAP(['a', 'b'], [1, 2])",
+            },
+        )
+
+        # The two-array MAP([keys], [values]) form must also produce StarRocks' variadic MAP
+        self.validate_all(
+            "SELECT MAP('a', 1, 'b', 2)",
+            read={
+                "duckdb": "SELECT MAP(['a', 'b'], [1, 2])",
+                "presto": "SELECT MAP(ARRAY['a', 'b'], ARRAY[1, 2])",
+            },
+            write={"starrocks": "SELECT MAP('a', 1, 'b', 2)"},
+        )
+
+    def test_array_contains_all(self):
+        # StarRocks uses ARRAY_CONTAINS_ALL, not the Postgres `@>` operator
+        # https://docs.starrocks.io/docs/sql-reference/sql-functions/array-functions/array_contains_all/
+        self.validate_identity("SELECT ARRAY_CONTAINS_ALL([1, 2, 3], [1, 2])")
+
+        self.validate_all(
+            "SELECT ARRAY_CONTAINS_ALL([1, 2, 3], [1, 2])",
+            read={
+                "duckdb": "SELECT [1, 2, 3] @> [1, 2]",
+                "postgres": "SELECT ARRAY[1, 2, 3] @> ARRAY[1, 2]",
+            },
+            write={"starrocks": "SELECT ARRAY_CONTAINS_ALL([1, 2, 3], [1, 2])"},
+        )
+
+        # The inverse `a <@ b` (ArrayContainedBy) is ARRAY_CONTAINS_ALL(b, a)
+        self.validate_all(
+            "SELECT ARRAY_CONTAINS_ALL([1, 2, 3], [1, 2])",
+            read={
+                "duckdb": "SELECT [1, 2] <@ [1, 2, 3]",
+                "postgres": "SELECT ARRAY[1, 2] <@ ARRAY[1, 2, 3]",
+            },
+            write={"starrocks": "SELECT ARRAY_CONTAINS_ALL([1, 2, 3], [1, 2])"},
+        )
+
+    def test_trim(self):
+        # StarRocks uses the function form TRIM(str, chars)/LTRIM/RTRIM,
+        # not MySQL's TRIM(chars FROM str) syntax
+        # https://docs.starrocks.io/docs/sql-reference/sql-functions/string-functions/trim/
+        self.validate_identity("SELECT TRIM('  hi  ')")
+        self.validate_identity("SELECT TRIM('--hi--', '-')")
+        self.validate_identity("SELECT LTRIM('xxhi', 'x')")
+        self.validate_identity("SELECT RTRIM('hixx', 'x')")
+
+        self.validate_all(
+            "SELECT TRIM('--hi--', '-')",
+            read={"": "SELECT TRIM('-' FROM '--hi--')"},
+            write={"starrocks": "SELECT TRIM('--hi--', '-')"},
+        )
+        self.validate_all(
+            "SELECT LTRIM('xxhi', 'x')",
+            read={"": "SELECT TRIM(LEADING 'x' FROM 'xxhi')"},
+            write={"starrocks": "SELECT LTRIM('xxhi', 'x')"},
+        )
+        self.validate_all(
+            "SELECT RTRIM('hixx', 'x')",
+            read={"": "SELECT TRIM(TRAILING 'x' FROM 'hixx')"},
+            write={"starrocks": "SELECT RTRIM('hixx', 'x')"},
+        )
+
+    def test_distinct_on(self):
+        self.validate_identity(
+            "SELECT DISTINCT ON (a) a, b FROM x ORDER BY c DESC",
+            "SELECT a, b FROM (SELECT a AS a, b AS b, ROW_NUMBER() OVER (PARTITION BY a ORDER BY c DESC) AS _row_number FROM x) AS _t WHERE _row_number = 1",
+        )
+
+    def test_generate_date_array(self):
+        self.validate_identity(
+            "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK)) AS _q(date_week)",
+            "WITH RECURSIVE _generated_dates(date_week) AS (SELECT CAST('2020-01-01' AS DATE) AS date_week UNION ALL SELECT CAST(DATE_ADD(date_week, INTERVAL 1 WEEK) AS DATE) FROM _generated_dates WHERE CAST(DATE_ADD(date_week, INTERVAL 1 WEEK) AS DATE) <= CAST('2020-02-01' AS DATE)) SELECT * FROM (SELECT date_week FROM _generated_dates) AS _generated_dates",
+        )
+
+    def test_table_function(self):
+        # https://docs.starrocks.io/docs/sql-reference/sql-functions/table-functions/generate_series/
+        self.validate_identity("SELECT * FROM TABLE(GENERATE_SERIES(0, 10))").args[
+            "from_"
+        ].this.assert_is(exp.TableFromRows).this.assert_is(exp.GenerateSeries)
+        self.validate_identity("SELECT generate_series FROM TABLE(GENERATE_SERIES(0, 10, 2)) AS t")
+        self.validate_identity("SELECT x FROM TABLE(GENERATE_SERIES(0, 10)) AS t(x)")
+
+        self.validate_identity("SELECT * FROM t, GENERATE_SERIES(t.s, t.e)")
+
+    def test_refresh_invalid_mode(self):
+        for clause in ("WITH", "MODE", "WITH SYNC", "WITH ASYNC"):
+            with self.subTest(clause=clause), self.assertRaises(ParseError):
+                self.parse_one(f"REFRESH MATERIALIZED VIEW mv {clause}")
+
+    def test_refresh_unsupported_options(self):
+        partition = "PARTITION START ('2020-02-01') END ('2020-03-01')"
+        for clause in (
+            "",
+            partition,
+            "FORCE",
+            "WITH SYNC MODE",
+            "WITH ASYNC MODE",
+            f"{partition} FORCE WITH SYNC MODE",
+        ):
+            sql = f"REFRESH MATERIALIZED VIEW mv {clause}".rstrip()
+            with self.subTest(clause=clause):
+                self.validate_all(
+                    sql,
+                    write={
+                        "": UnsupportedError if clause else sql,
+                        "postgres": UnsupportedError if clause else sql,
+                    },
+                )
+                self.assertEqual(
+                    self.parse_one(sql).sql("starrocks", unsupported_level=ErrorLevel.RAISE), sql
+                )
+
+    def test_ddl(self):
+        self.validate_identity("INSERT OVERWRITE my_table SELECT * FROM other_table")
+        self.validate_identity("CREATE TABLE t (c INT) COMMENT 'c'")
+
+        self.validate_identity("DROP TABLE my_table")
+        self.validate_identity("DROP TABLE IF EXISTS example_db.my_table")
+        self.validate_identity("DROP TABLE my_table FORCE")
+        self.validate_identity("DROP TEMPORARY TABLE my_table FORCE")
+
+        self.validate_identity("REFRESH EXTERNAL TABLE hive1")
+        self.validate_identity("REFRESH EXTERNAL TABLE hive_catalog.hive_db.hive_table")
+        self.validate_identity(
+            "REFRESH EXTERNAL TABLE hudi1 PARTITION('date=2022-12-20', 'date=2022-12-21')"
+        )
+
+        # https://docs.starrocks.io/docs/sql-reference/sql-statements/materialized_view/REFRESH_MATERIALIZED_VIEW/
+        self.validate_identity("REFRESH MATERIALIZED VIEW lo_mv1")
+        self.validate_identity("REFRESH MATERIALIZED VIEW lo_mv1 FORCE")
+        self.validate_identity("REFRESH MATERIALIZED VIEW lo_mv1 WITH SYNC MODE")
+        self.validate_identity("REFRESH MATERIALIZED VIEW lo_mv1 WITH ASYNC MODE")
+        self.validate_identity(
+            'REFRESH MATERIALIZED VIEW lo_mv1 PARTITION START ("2020-02-01") END ("2020-03-01")',
+            "REFRESH MATERIALIZED VIEW lo_mv1 PARTITION START ('2020-02-01') END ('2020-03-01')",
+        )
+        self.validate_identity(
+            "REFRESH MATERIALIZED VIEW db.lo_mv1 PARTITION START ('2020-02-01') END ('2020-03-01') FORCE WITH SYNC MODE"
+        ).assert_is(exp.Refresh)
+
+        self.validate_identity("REFRESH DICTIONARY dict_obj", check_command_warning=True)
+        self.validate_identity("REFRESH CONNECTIONS", check_command_warning=True)
+        self.validate_identity("REFRESH CONNECTIONS FORCE", check_command_warning=True)
+
+        ddl_sqls = [
+            "PARTITION BY (col1, col2)",
+            "PARTITION BY DATE_TRUNC('DAY', col2), col1",
+            "PARTITION BY FROM_UNIXTIME(col2)",
+            "DISTRIBUTED BY HASH (col1) BUCKETS 1",
+            "DISTRIBUTED BY HASH (col1)",
+            "DISTRIBUTED BY RANDOM BUCKETS 1",
+            "DISTRIBUTED BY RANDOM",
+            "DISTRIBUTED BY HASH (col1) ORDER BY (col1)",
+            "DISTRIBUTED BY HASH (col1) PROPERTIES ('replication_num'='1')",
+            "PRIMARY KEY (col1) DISTRIBUTED BY HASH (col1)",
+            "DUPLICATE KEY (col1, col2) DISTRIBUTED BY HASH (col1)",
+            "UNIQUE KEY (col1, col2) PARTITION BY RANGE (col1) (START ('2024-01-01') END ('2024-01-31') EVERY (INTERVAL 1 DAY)) DISTRIBUTED BY HASH (col1)",
+            "UNIQUE KEY (col1, col2) PARTITION BY RANGE (col1, col2) (START ('1') END ('10') EVERY (1), START ('10') END ('100') EVERY (10)) DISTRIBUTED BY HASH (col1)",
+            "ORDER BY (col1, col2)",
+            "DISTRIBUTED BY HASH (col1) ROLLUP (r1(event_day, siteid), r2(event_day, citycode), r3(event_day))",
+            "DISTRIBUTED BY HASH (col1) ROLLUP (r1(col2))",
+            "DISTRIBUTED BY HASH (col1) ROLLUP (`r1`(`col2`))",
+            "DISTRIBUTED BY HASH (col1) ROLLUP (r1(col2) FROM base_index)",
+            "DISTRIBUTED BY HASH (col1) ROLLUP (r1(col2) PROPERTIES ('storage_type'='column'))",
+            "DISTRIBUTED BY HASH (col1) ROLLUP (r1(col2) FROM base_index PROPERTIES ('k'='v'))",
+            "DISTRIBUTED BY HASH (col1) ROLLUP (r1(col2) PROPERTIES ('k1'='v1', 'k2'='v2'))",
+        ]
+
+        for properties in ddl_sqls:
+            with self.subTest(f"Testing create scheme: {properties}"):
+                self.validate_identity(f"CREATE TABLE foo (col1 BIGINT, col2 BIGINT) {properties}")
+                self.validate_identity(
+                    f"CREATE TABLE foo (col1 BIGINT, col2 BIGINT) ENGINE=OLAP {properties}"
+                )
+
+        # Test the different wider DECIMAL types
+        self.validate_identity(
+            "CREATE TABLE foo (col0 DECIMAL(9, 1), col1 DECIMAL32(9, 1), col2 DECIMAL64(18, 10), col3 DECIMAL128(38, 10)) DISTRIBUTED BY HASH (col1) BUCKETS 1"
+        )
+        self.validate_identity(
+            "CREATE TABLE foo (col1 LARGEINT) DISTRIBUTED BY HASH (col1) BUCKETS 1"
+        )
+        self.validate_identity(
+            "CREATE VIEW foo (foo_col1) SECURITY NONE AS SELECT bar_col1 FROM bar"
+        )
+
+        # Test ROLLUP property
+        self.validate_all(
+            "CREATE TABLE foo (col1 BIGINT, col2 BIGINT) ROLLUP (r1(col1, col2), r2(col1))",
+            write={
+                "starrocks": "CREATE TABLE foo (col1 BIGINT, col2 BIGINT) ROLLUP (r1(col1, col2), r2(col1))",
+                "spark": "CREATE TABLE foo (col1 BIGINT, col2 BIGINT)",
+                "duckdb": "CREATE TABLE foo (col1 BIGINT, col2 BIGINT)",
+                "postgres": "CREATE TABLE foo (col1 BIGINT, col2 BIGINT)",
+            },
+        )
+
+        multi_column_cluster = exp.ClusterProperty(
+            expressions=[
+                exp.column("c"),
+                exp.column("d"),
+            ]
+        )
+        self.assertEqual(multi_column_cluster.sql(dialect="starrocks"), "ORDER BY (c, d)")
+
+        single_column_cluster = exp.ClusterProperty(expressions=[exp.column("c")])
+        self.assertEqual(single_column_cluster.sql(dialect="starrocks"), "ORDER BY (c)")
+
+        mv_properties = [
+            # partitioning in MV
+            "PARTITION BY (DATE_FUNC(ts), region) REFRESH ASYNC",
+            "PARTITION BY (DATE_TRUNC('DAY', ts)) REFRESH ASYNC",
+            "PARTITION BY (col1, col2) REFRESH ASYNC",
+            # MV: Refresh trigger property
+            "REFRESH ASYNC",
+            "REFRESH IMMEDIATE",
+            "REFRESH DEFERRED",
+            "REFRESH DEFERRED ASYNC",
+            "REFRESH IMMEDIATE ASYNC",
+            "REFRESH DEFERRED MANUAL",
+            "REFRESH IMMEDIATE MANUAL",
+            "REFRESH IMMEDIATE START ('2025-01-01 00:00:00') EVERY (INTERVAL 5 MINUTE)",
+            "REFRESH IMMEDIATE ASYNC EVERY (INTERVAL 5 MINUTE)",
+            "REFRESH DEFERRED START ('2025-01-01 00:00:00') EVERY (INTERVAL 5 MINUTE)",
+            "REFRESH DEFERRED ASYNC EVERY (INTERVAL 5 MINUTE)",
+            "REFRESH ASYNC START ('2025-01-01 00:00:00') EVERY (INTERVAL 5 MINUTE)",
+            "REFRESH ASYNC EVERY (INTERVAL 5 MINUTE)",
+        ]
+        for properties in mv_properties:
+            with self.subTest(f"Testing refresh clause: {properties}"):
+                self.validate_identity(f"CREATE MATERIALIZED VIEW mv {properties} AS SELECT 1")
+
+        # RENAME table without TO keyword
+        self.validate_identity("ALTER TABLE t1 RENAME t2")
+        self.validate_identity(
+            "ALTER TABLE t ADD COLUMN c INT TO r1, ADD COLUMN d INT", check_command_warning=True
+        )
+
+    def test_identity(self):
+        self.validate_identity("SELECT CAST(`a`.`b` AS INT) FROM foo")
+        self.validate_identity("SELECT APPROX_COUNT_DISTINCT(a) FROM x")
+        self.validate_identity("SELECT [1, 2, 3]")
+        self.validate_identity(
+            """SELECT CAST(PARSE_JSON(fieldvalue) -> '00000000-0000-0000-0000-00000000' AS VARCHAR) AS `code` FROM (SELECT '{"00000000-0000-0000-0000-00000000":"code01"}') AS t(fieldvalue)"""
+        )
+        self.validate_identity(
+            "SELECT text FROM example_table", write_sql="SELECT `text` FROM example_table"
+        )
+
+    def test_time(self):
+        self.validate_identity("TIMESTAMP('2022-01-01')")
+        self.validate_identity(
+            "SELECT DATE_DIFF('SECOND', '2010-11-30 23:59:59', '2010-11-30 20:58:59')"
+        )
+        self.validate_identity(
+            "SELECT DATE_DIFF('MINUTE', '2010-11-30 23:59:59', '2010-11-30 20:58:59')"
+        )
+
+    def test_date_add_sub(self):
+        # Standard INTERVAL form
+        self.validate_identity("SELECT DATE_ADD(x, INTERVAL '3' DAY)")
+        self.validate_identity("SELECT DATE_SUB(x, INTERVAL '3' MONTH)")
+
+        # Two-argument shorthand - default unit DAY
+        self.validate_identity("SELECT DATE_SUB(x, 3)", "SELECT DATE_SUB(x, INTERVAL 3 DAY)")
+        self.validate_identity("SELECT DATE_ADD(x, 7)", "SELECT DATE_ADD(x, INTERVAL 7 DAY)")
+
+        # ADDDATE / SUBDATE aliases
+        self.validate_identity("SELECT ADDDATE(x, 7)", "SELECT DATE_ADD(x, INTERVAL 7 DAY)")
+        self.validate_identity("SELECT SUBDATE(x, 7)", "SELECT DATE_SUB(x, INTERVAL 7 DAY)")
+
+    def test_regex(self):
+        self.validate_all(
+            "SELECT REGEXP(abc, '%foo%')",
+            read={
+                "mysql": "SELECT REGEXP_LIKE(abc, '%foo%')",
+                "starrocks": "SELECT REGEXP(abc, '%foo%')",
+            },
+            write={
+                "mysql": "SELECT REGEXP_LIKE(abc, '%foo%')",
+            },
+        )
+
+    def test_unnest(self):
+        self.validate_identity(
+            "SELECT student, score, t.unnest FROM tests CROSS JOIN LATERAL UNNEST(scores) AS t",
+            "SELECT student, score, t.unnest FROM tests CROSS JOIN LATERAL UNNEST(scores) AS t(unnest)",
+        )
+        self.validate_all(
+            "SELECT student, score, unnest FROM tests CROSS JOIN LATERAL UNNEST(scores)",
+            write={
+                "spark": "SELECT student, score, unnest FROM tests LATERAL VIEW EXPLODE(scores) unnest AS unnest",
+                "starrocks": "SELECT student, score, unnest FROM tests CROSS JOIN LATERAL UNNEST(scores) AS unnest(unnest)",
+            },
+        )
+        self.validate_all(
+            r"""SELECT * FROM UNNEST(array['John','Jane','Jim','Jamie'], array[24,25,26,27]) AS t(name, age)""",
+            write={
+                "postgres": "SELECT * FROM UNNEST(ARRAY['John', 'Jane', 'Jim', 'Jamie'], ARRAY[24, 25, 26, 27]) AS t(name, age)",
+                "spark": "SELECT * FROM INLINE(ARRAYS_ZIP(ARRAY('John', 'Jane', 'Jim', 'Jamie'), ARRAY(24, 25, 26, 27))) AS t(name, age)",
+                "starrocks": "SELECT * FROM UNNEST(['John', 'Jane', 'Jim', 'Jamie'], [24, 25, 26, 27]) AS t(name, age)",
+            },
+        )
+
+        # Use UNNEST to convert into multiple columns
+        # see: https://docs.starrocks.io/docs/sql-reference/sql-functions/array-functions/unnest/
+        self.validate_all(
+            r"""SELECT id, t.type, t.scores FROM example_table, unnest(split(type, ";"), scores) AS t(type,scores)""",
+            write={
+                "postgres": "SELECT id, t.type, t.scores FROM example_table, UNNEST(SPLIT(type, ';'), scores) AS t(type, scores)",
+                "spark": r"""SELECT id, t.type, t.scores FROM example_table LATERAL VIEW INLINE(ARRAYS_ZIP(SPLIT(type, CONCAT('\\Q', ';', '\\E')), scores)) t AS type, scores""",
+                "databricks": r"""SELECT id, t.type, t.scores FROM example_table LATERAL VIEW INLINE(ARRAYS_ZIP(SPLIT(type, CONCAT('\\Q', ';', '\\E')), scores)) t AS type, scores""",
+                "starrocks": r"""SELECT id, t.type, t.scores FROM example_table, UNNEST(SPLIT(type, ';'), scores) AS t(type, scores)""",
+                "hive": UnsupportedError,
+            },
+        )
+
+        self.validate_all(
+            r"""SELECT id, t.type, t.scores FROM example_table_2 CROSS JOIN LATERAL unnest(split(type, ";"), scores) AS t(type,scores)""",
+            write={
+                "spark": r"""SELECT id, t.type, t.scores FROM example_table_2 LATERAL VIEW INLINE(ARRAYS_ZIP(SPLIT(type, CONCAT('\\Q', ';', '\\E')), scores)) t AS type, scores""",
+                "starrocks": r"""SELECT id, t.type, t.scores FROM example_table_2 CROSS JOIN LATERAL UNNEST(SPLIT(type, ';'), scores) AS t(type, scores)""",
+                "hive": UnsupportedError,
+            },
+        )
+
+        lateral_explode_sqls = [
+            "SELECT id, t.col FROM tbl, UNNEST(scores) AS t(col)",
+            "SELECT id, t.col FROM tbl CROSS JOIN LATERAL UNNEST(scores) AS t(col)",
+        ]
+
+        for sql in lateral_explode_sqls:
+            with self.subTest(f"Testing Starrocks roundtrip & transpilation of: {sql}"):
+                self.validate_all(
+                    sql,
+                    write={
+                        "starrocks": sql,
+                        "spark": "SELECT id, t.col FROM tbl LATERAL VIEW EXPLODE(scores) t AS col",
+                    },
+                )
+
+    def test_ignore_respect_nulls(self):
+        for func in ("FIRST_VALUE", "LAST_VALUE", "LAG", "LEAD"):
+            with self.subTest(func=func):
+                self.validate_identity(f"SELECT {func}(x IGNORE NULLS) OVER (ORDER BY t)")
+
+        for func in ("LAG", "LEAD"):
+            with self.subTest(func=func):
+                self.validate_identity(f"SELECT {func}(x IGNORE NULLS, 2) OVER (ORDER BY t)")
+                self.validate_identity(f"SELECT {func}(x IGNORE NULLS, 2, 0) OVER (ORDER BY t)")
+
+        # IGNORE NULLS follows the first argument, wherever the source puts it
+        self.validate_identity(
+            "SELECT LAG(x, 1, 0) IGNORE NULLS OVER (ORDER BY t)",
+            "SELECT LAG(x IGNORE NULLS, 1, 0) OVER (ORDER BY t)",
+        )
+        self.validate_all(
+            "SELECT LEAD(x IGNORE NULLS, 1, 0) OVER (ORDER BY t)",
+            read={"duckdb": "SELECT LEAD(x, 1, 0 IGNORE NULLS) OVER (ORDER BY t NULLS FIRST)"},
+        )
+        self.validate_all(
+            "SELECT LAST_VALUE(x IGNORE NULLS) OVER (ORDER BY t)",
+            read={"bigquery": "SELECT LAST_VALUE(x IGNORE NULLS) OVER (ORDER BY t)"},
+        )
+
+        # RESPECT NULLS is the default behavior, and StarRocks rejects the keyword
+        self.validate_all(
+            "SELECT LAST_VALUE(x) OVER (ORDER BY t)",
+            read={"bigquery": "SELECT LAST_VALUE(x RESPECT NULLS) OVER (ORDER BY t)"},
+        )
+
+    def test_analyze(self):
+        self.validate_identity("ANALYZE TABLE TBL(c1, c2) PROPERTIES ('prop1'=val1)")
+        self.validate_identity("ANALYZE FULL TABLE TBL(c1, c2) PROPERTIES ('prop1'=val1)")
+        self.validate_identity("ANALYZE SAMPLE TABLE TBL(c1, c2) PROPERTIES ('prop1'=val1)")
+        self.validate_identity("ANALYZE TABLE TBL(c1, c2) WITH SYNC MODE PROPERTIES ('prop1'=val1)")
+        self.validate_identity(
+            "ANALYZE TABLE TBL(c1, c2) WITH ASYNC MODE PROPERTIES ('prop1'=val1)"
+        )
+        self.validate_identity(
+            "ANALYZE TABLE TBL UPDATE HISTOGRAM ON c1, c2 PROPERTIES ('prop1'=val1)"
+        )
+        self.validate_identity(
+            "ANALYZE TABLE TBL UPDATE HISTOGRAM ON c1, c2 WITH 5 BUCKETS PROPERTIES ('prop1'=val1)"
+        )
+        self.validate_identity(
+            "ANALYZE TABLE TBL UPDATE HISTOGRAM ON c1, c2 WITH SYNC MODE WITH 5 BUCKETS PROPERTIES ('prop1'=val1)"
+        )
+        self.validate_identity(
+            "ANALYZE TABLE TBL UPDATE HISTOGRAM ON c1, c2 WITH ASYNC MODE WITH 5 BUCKETS PROPERTIES ('prop1'=val1)"
+        )
+
+    def test_between(self):
+        self.validate_all(
+            "SELECT * FROM t WHERE a BETWEEN 1 AND 5",
+            write={
+                "starrocks": "SELECT * FROM t WHERE a BETWEEN 1 AND 5",
+                "mysql": "SELECT * FROM t WHERE a BETWEEN 1 AND 5",
+            },
+        )
+        self.validate_identity("SELECT a BETWEEN 1 AND 5 FROM t")
+        self.validate_identity(
+            "DELETE FROM t WHERE a BETWEEN b AND c",
+            "DELETE FROM t WHERE a >= b AND a <= c",
+        )
+        self.validate_identity(
+            "DELETE FROM t WHERE a BETWEEN 1 AND 10 AND b BETWEEN 20 AND 30 OR c BETWEEN 'x' AND 'z'",
+            "DELETE FROM t WHERE a >= 1 AND a <= 10 AND b >= 20 AND b <= 30 OR c >= 'x' AND c <= 'z'",
+        )
+
+    def test_partition(self):
+        # Column-based partitioning
+        for cols in "col1", "col1, col2":
+            with self.subTest(f"Testing PARTITION BY with {cols}"):
+                self.validate_identity(
+                    f"CREATE TABLE test_table (col1 INT, col2 DATE) PARTITION BY ({cols})"
+                )
+                self.validate_identity(
+                    f"CREATE TABLE test_table (col1 INT, col2 DATE) PARTITION BY {cols}",
+                    f"CREATE TABLE test_table (col1 INT, col2 DATE) PARTITION BY ({cols})",
+                )
+
+        # Expr-based partitioning
+        self.validate_identity(
+            "CREATE TABLE test_table (col2 DATE) PARTITION BY DATE_TRUNC('DAY', col2)"
+        )
+        self.validate_identity(
+            "CREATE TABLE test_table (col2 BIGINT) PARTITION BY FROM_UNIXTIME(col2, '%Y%m%d')"
+        )
+        self.validate_identity(
+            "CREATE TABLE test_table (col1 STRING, col2 BIGINT) PARTITION BY FROM_UNIXTIME(col2, '%Y%m%d'), col1"
+        )
+        self.validate_identity(
+            "CREATE TABLE test_table (col1 BIGINT, col2 DATE) PARTITION BY FROM_UNIXTIME(col2, '%Y%m%d'), DATE_TRUNC('DAY', col1)"
+        )
+
+        # LIST partitioning
+        self.validate_identity(
+            "CREATE TABLE test_table (col1 STRING) PARTITION BY LIST (col1) (PARTITION pLos_Angeles VALUES IN ('Los Angeles'), PARTITION pSan_Francisco VALUES IN ('San Francisco'))"
+        )
+
+        # Multi-column LIST partitioning
+        self.validate_identity(
+            "CREATE TABLE test_table (col1 DATE, col2 STRING) PARTITION BY LIST (col1, col2) (PARTITION p1 VALUES IN (('2022-04-01', 'LA'), ('2022-04-01', 'SF')))"
+        )
+
+        # RANGE partitioning with explicit values
+        self.validate_identity(
+            "CREATE TABLE test_table (col1 DATE) PARTITION BY RANGE (col1) (PARTITION p1 VALUES LESS THAN ('2020-01-31'), PARTITION p2 VALUES LESS THAN ('2020-02-29'), PARTITION p3 VALUES LESS THAN ('2020-03-31'))"
+        )
+        self.validate_identity(
+            "CREATE TABLE test_table (col1 STRING) PARTITION BY RANGE (STR2DATE(col1, '%Y-%m-%d')) (PARTITION p1 VALUES LESS THAN ('2021-01-01'), PARTITION p2 VALUES LESS THAN ('2021-01-02'), PARTITION p3 VALUES LESS THAN ('2021-01-03'))"
+        )
+        self.validate_identity(
+            "CREATE TABLE test_table (col1 DATE) PARTITION BY RANGE (col1) (PARTITION p1 VALUES LESS THAN ('2020-01-31'), PARTITION p_max VALUES LESS THAN (MAXVALUE))"
+        )
+
+        # RANGE partitioning with START/END/EVERY
+        self.validate_identity(
+            "CREATE TABLE test_table (col1 BIGINT) PARTITION BY RANGE (col1) (START ('1') END ('10') EVERY (1), START ('10') END ('100') EVERY (10))"
+        )
+        self.validate_identity(
+            "CREATE TABLE test_table (col1 DATE) PARTITION BY RANGE (col1) (START ('2019-01-01') END ('2021-01-01') EVERY (INTERVAL 1 YEAR), START ('2021-01-01') END ('2021-05-01') EVERY (INTERVAL 1 MONTH), START ('2021-05-01') END ('2021-05-04') EVERY (INTERVAL 1 DAY))"
+        )
+
+    def test_time_slice(self):
+        # https://docs.starrocks.io/docs/sql-reference/sql-functions/date-time-functions/time_slice/
+        self.validate_identity(
+            "SELECT TIME_SLICE(dt, 5, 'minute', 'floor')",
+            "SELECT TIME_SLICE(dt, INTERVAL 5 MINUTE, FLOOR)",
+        )
+        self.validate_identity(
+            "SELECT TIME_SLICE(dt, 5, 'minute', 'ceil')",
+            "SELECT TIME_SLICE(dt, INTERVAL 5 MINUTE, CEIL)",
+        )
+        self.validate_identity("SELECT TIME_SLICE(dt, INTERVAL 5 MINUTE)")
+        self.validate_identity(
+            "SELECT TIME_SLICE(dt, INTERVAL 5 MINUTE, floor)",
+            "SELECT TIME_SLICE(dt, INTERVAL 5 MINUTE, FLOOR)",
+        )
+        self.validate_identity(
+            "CREATE TABLE t (dt DATETIME) PARTITION BY TIME_SLICE(dt, INTERVAL 7 DAY) DISTRIBUTED BY HASH (dt)"
+        )
+
+        self.validate_all(
+            "SELECT TIME_SLICE(dt, INTERVAL 5 MINUTE, CEIL)",
+            read={
+                "snowflake": "SELECT TIME_SLICE(dt, 5, 'MINUTE', 'END')",
+            },
+            write={
+                "starrocks": "SELECT TIME_SLICE(dt, INTERVAL 5 MINUTE, CEIL)",
+                "snowflake": "SELECT TIME_SLICE(dt, 5, 'MINUTE', 'END')",
+                "duckdb": "SELECT TIME_BUCKET(INTERVAL 5 MINUTE, dt) + INTERVAL 5 MINUTE",
+            },
+        )
+        self.validate_all(
+            "SELECT TIME_SLICE(dt, INTERVAL 1 DAY, FLOOR)",
+            read={
+                "snowflake": "SELECT TIME_SLICE(dt, 1, 'DAY', 'START')",
+            },
+            write={
+                "starrocks": "SELECT TIME_SLICE(dt, INTERVAL 1 DAY, FLOOR)",
+                "snowflake": "SELECT TIME_SLICE(dt, 1, 'DAY', 'START')",
+                "duckdb": "SELECT TIME_BUCKET(INTERVAL 1 DAY, dt)",
+            },
+        )
+
+    def test_aggregate_key(self):
+        # https://docs.starrocks.io/docs/table_design/table_types/aggregate_table/
+        self.validate_identity(
+            "CREATE TABLE aggregate_tbl (site_id LARGEINT NOT NULL COMMENT 'id of site', date DATE NOT NULL COMMENT 'time of event', city_code VARCHAR(20) COMMENT 'city_code of user', pv BIGINT SUM DEFAULT '0' COMMENT 'total page views') AGGREGATE KEY (site_id, date, city_code) DISTRIBUTED BY HASH (site_id)"
+        ).find(exp.AggregateKeyProperty).assert_is(exp.AggregateKeyProperty)
+
+        for agg in ("SUM", "MAX", "MIN", "REPLACE", "REPLACE_IF_NOT_NULL"):
+            with self.subTest(agg):
+                self.validate_identity(
+                    f"CREATE TABLE t (k1 INT, v1 INT {agg} NULL) AGGREGATE KEY (k1) DISTRIBUTED BY HASH (k1)"
+                ).assert_is(exp.Create)
+
+        self.validate_identity(
+            "CREATE TABLE t (k1 INT, v1 HLL HLL_UNION) AGGREGATE KEY (k1) DISTRIBUTED BY HASH (k1)"
+        ).assert_is(exp.Create)

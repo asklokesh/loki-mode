@@ -1,0 +1,56 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_more.py": "tests/test_more.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "setup.cfg",
+    "tox.ini"
+  ],
+  "source": {
+    "upstream": "https://github.com/more-itertools/more-itertools",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/more-itertools/more-itertools/issues/1250",
+    "fix_pr": "https://github.com/more-itertools/more-itertools/pull/1251",
+    "fix_commit": "d92f081a089714e0aa92434c797fdd1a06da1290",
+    "parent_commit": "a826a4e09e3f2782822c71da6670e9275735ad3e",
+    "vendored_paths": [
+      "LICENSE",
+      "README.rst",
+      "pyproject.toml",
+      "setup.cfg",
+      "tox.ini",
+      "more_itertools",
+      "tests"
+    ],
+    "solution_files": [
+      "more_itertools/more.py"
+    ],
+    "added_files": [],
+    "note": "En and em dashes (U+2013, U+2014) in the issue text and vendored files are replaced by '-' to meet this repository's text rule; the 2026-11-01 run sent the issue text with the original characters. Emoji codepoints are rewritten to meet this repository's text rule, without changing behaviour: in string literals as escapes (Go \\u2603, Python \\U0001F34E and similar), in comments and prose as text or removed."
+  }
+}

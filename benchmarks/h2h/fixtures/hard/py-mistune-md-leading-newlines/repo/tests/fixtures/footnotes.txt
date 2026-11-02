@@ -1,0 +1,154 @@
+# Footnotes
+
+```````````````````````````````` example
+none [^1]
+.
+<p>none [^1]</p>
+````````````````````````````````
+
+```````````````````````````````` example
+oneline [^1]
+
+[^1]: foo
+.
+<p>oneline <sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup></p>
+<section class="footnotes">
+<ol>
+<li id="fn-1"><p>foo<a href="#fnref-1" class="footnote">&#8617;</a></p></li>
+</ol>
+</section>
+````````````````````````````````
+
+```````````````````````````````` example
+multiple lines [^1]
+
+[^1]: foo
+
+ one
+
+  two
+
+   three
+
+    four
+
+     five
+.
+<p>multiple lines <sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup></p>
+<pre><code> five</code></pre>
+<section class="footnotes">
+<ol>
+<li id="fn-1"><p>foo</p>
+<p>one</p>
+<p>two</p>
+<p>three</p>
+<p>four<a href="#fnref-1" class="footnote">&#8617;</a></p></li>
+</ol>
+</section>
+````````````````````````````````
+
+```````````````````````````````` example
+multi-line footnote[^1]
+
+[^1]:
+    Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod
+    tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam,
+    quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo
+    consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse
+    cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat
+    non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+.
+<p>multi-line footnote<sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup></p>
+<section class="footnotes">
+<ol>
+<li id="fn-1"><p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod
+tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam,
+quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo
+consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse
+cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat
+non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.<a href="#fnref-1" class="footnote">&#8617;</a></p></li>
+</ol>
+</section>
+````````````````````````````````
+
+```````````````````````````````` example
+fenced code block in footnote[^1]
+
+[^1]:
+    first
+
+    ```sh
+    second
+    third
+    ```
+
+    fourth
+.
+<p>fenced code block in footnote<sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup></p>
+<section class="footnotes">
+<ol>
+<li id="fn-1"><p>first</p>
+<pre><code class="language-sh">second
+third
+</code></pre>
+<p>fourth<a href="#fnref-1" class="footnote">&#8617;</a></p></li>
+</ol>
+</section>
+````````````````````````````````
+
+https://github.com/lepture/mistune/issues/378
+
+```````````````````````````````` example
+This is a foo [^foo].
+
+This is a bar [^bar].
+
+[^foo]: A foo is beautiful. This is in contrast to a bar [^bar].
+
+[^bar]: A bar is very common.
+.
+<p>This is a foo <sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup>.</p>
+<p>This is a bar <sup class="footnote-ref" id="fnref-2"><a href="#fn-2">2</a></sup>.</p>
+<section class="footnotes">
+<ol>
+<li id="fn-1"><p>A foo is beautiful. This is in contrast to a bar <sup class="footnote-ref" id="fnref-2"><a href="#fn-2">2</a></sup>.<a href="#fnref-1" class="footnote">&#8617;</a></p></li>
+<li id="fn-2"><p>A bar is very common.<a href="#fnref-2" class="footnote">&#8617;</a></p></li>
+</ol>
+</section>
+````````````````````````````````
+
+https://github.com/lepture/mistune/issues/378
+
+```````````````````````````````` example
+This is body text, and a footnote.[^f]
+
+[^f]: The footnote includes [a link][1].
+
+[1]: https://example.com
+.
+<p>This is body text, and a footnote.<sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup></p>
+<section class="footnotes">
+<ol>
+<li id="fn-1"><p>The footnote includes <a href="https://example.com">a link</a>.<a href="#fnref-1" class="footnote">&#8617;</a></p></li>
+</ol>
+</section>
+````````````````````````````````
+
+https://github.com/lepture/mistune/issues/428
+
+```````````````````````````````` example
+paragraph [^fn]
+[^fn]: *emph*
+  > aaa
+.
+<p>paragraph <sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup></p>
+<section class="footnotes">
+<ol>
+<li id="fn-1"><p><em>emph</em></p>
+<blockquote>
+<p>aaa</p>
+</blockquote>
+<a href="#fnref-1" class="footnote">&#8617;</a></li>
+</ol>
+</section>
+````````````````````````````````

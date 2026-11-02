@@ -1,0 +1,28 @@
+parse -> render to markdown misses leading newlines, appends extra newline
+
+MWE:
+
+```python
+import mistune
+from mistune.core import BlockState
+from mistune.renderers.markdown import MarkdownRenderer
+
+# format_markdown = mistune.create_markdown(renderer=MarkdownRenderer())
+markdown = mistune.create_markdown(renderer="ast")
+
+md = "\n\n\n\nabc"
+tokens = markdown(md)
+
+renderer = MarkdownRenderer()
+print(repr(renderer(tokens, state=BlockState())))
+```
+
+Output:
+```python
+'abc\n'
+```
+
+Expected output:
+```python
+"\n\n\n\nabc"
+```

@@ -1,0 +1,47 @@
+Bug: `research` fails to traverse identical small tuples.
+
+Test case shows the issue:
+
+```python
+import boltons.iterutils
+
+def test_research_tuples():
+
+
+    literal_tree = {
+            "maybe" : ("hello",),
+            "another" : ("hello",),
+        }
+
+    assert id(literal_tree["maybe"]) == id(literal_tree["another"])
+
+    dynamic_tree = {
+            "maybe" : tuple(["hello"]),
+            "another" : tuple(["hello",]),    
+    }
+
+    assert id(dynamic_tree["maybe"]) != id(dynamic_tree["another"])
+    
+
+    assert boltons.iterutils.research(
+        root=literal_tree,
+    ) == [
+        ((None,), literal_tree),
+        (("maybe",), ("hello",)),
+        (("maybe", 0,), "hello"),
+        # (("another",), ("hello",)),
+        # (("another", 0,), "hello"),
+    ]
+
+    assert boltons.iterutils.research(
+        root=dynamic_tree,
+    ) == [
+        ((None,), dynamic_tree),
+        (("maybe",), ("hello",)),
+        (("maybe", 0,), "hello"),
+        (("another",), ("hello",)),
+        (("another", 0,), "hello"),
+    ]
+```
+
+The problem is that in remap transformations on identical objects are cached in the registry and thus never `enter`-ed and `research` only returns objects that are traversed.

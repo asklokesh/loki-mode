@@ -1,0 +1,54 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "go",
+  "kind": "replay",
+  "hidden": {
+    "constraints_test.go": "constraints_test.go"
+  },
+  "hidden_cmd": [
+    "go",
+    "test",
+    "-count=1",
+    "."
+  ],
+  "visible_cmd": [
+    "go",
+    "test",
+    "-count=1",
+    "."
+  ],
+  "protected": [
+    "collection_test.go",
+    "constraints_test.go",
+    "version_test.go",
+    "benchmark_test.go"
+  ],
+  "source": {
+    "upstream": "https://github.com/Masterminds/semver",
+    "license": "MIT",
+    "license_file": "LICENSE.txt",
+    "issue": "https://github.com/Masterminds/semver/issues/141",
+    "fix_pr": "https://github.com/Masterminds/semver/pull/142",
+    "fix_commit": "fb17a028a745c1286cb50adf19f8a2c11687b45a",
+    "parent_commit": "fa798760a0f6fea2b75487106bf42a919134d049",
+    "vendored_paths": [
+      "LICENSE.txt",
+      "README.md",
+      "go.mod",
+      "collection.go",
+      "collection_test.go",
+      "constraints.go",
+      "constraints_test.go",
+      "doc.go",
+      "version.go",
+      "version_test.go",
+      "benchmark_test.go"
+    ],
+    "solution_files": [
+      "constraints.go"
+    ],
+    "added_files": [],
+    "note": "Emoji codepoints are rewritten to meet this repository's text rule, without changing behaviour: in string literals as escapes (Go \\u2603, Python \\U0001F34E and similar), in comments and prose as text or removed."
+  }
+}

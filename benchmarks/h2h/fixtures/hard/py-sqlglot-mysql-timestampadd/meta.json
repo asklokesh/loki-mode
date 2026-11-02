@@ -1,0 +1,81 @@
+{
+  "difficulty": "hard",
+  "shape": "multi-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/dialects/test_mysql.py": "tests/dialects/test_mysql.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests/dialects",
+    "--ignore=tests/dialects/test_bigquery.py",
+    "--deselect",
+    "tests/dialects/test_dialect.py::TestDialect::test_lazy_load"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests/dialects",
+    "--ignore=tests/dialects/test_bigquery.py",
+    "--deselect",
+    "tests/dialects/test_dialect.py::TestDialect::test_lazy_load"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "setup.cfg"
+  ],
+  "source": {
+    "upstream": "https://github.com/tobymao/sqlglot",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/tobymao/sqlglot/issues/8808",
+    "fix_pr": "https://github.com/tobymao/sqlglot/pull/8809",
+    "fix_commit": "2d4b5a5b0aea46e7f5a4fbe09c1d60fcafad76b3",
+    "parent_commit": "86abcde38e32ddb04ab721ab0654473d51e0a783",
+    "vendored_paths": [
+      "LICENSE",
+      "README.md",
+      "pyproject.toml",
+      "setup.cfg",
+      "setup.py",
+      "sqlglot",
+      "tests/__init__.py",
+      "tests/helpers.py",
+      "tests/dialects",
+      "tests/test_expressions.py",
+      "tests/test_parser.py",
+      "tests/test_transpile.py",
+      "tests/test_generator.py",
+      "tests/fixtures/identity.sql",
+      "tests/fixtures/partial.sql",
+      "tests/fixtures/pretty.sql"
+    ],
+    "solution_files": [
+      "sqlglot/dialects/dialect.py",
+      "sqlglot/generators/postgres.py",
+      "sqlglot/parsers/mysql.py"
+    ],
+    "added_files": [
+      "sqlglot/_version.py"
+    ],
+    "note": "sqlglot/_version.py added (setuptools_scm writes it on install). AGENTS.md and CLAUDE.md are not vendored. tests/dialects/test_bigquery.py is ignored: it imports pytz, which is not in the benchmark toolchain. tests/dialects/test_dialect.py::TestDialect::test_lazy_load is deselected: it runs a python executable named python, which the benchmark toolchain does not provide. Only part of tests/ is vendored (the dialect tests, the expression, parser, generator and transpile tests and their fixtures) to keep the snapshot small."
+  },
+  "pilot": {
+    "config": "raw-haiku-verify",
+    "passed": 0,
+    "runs": 2,
+    "engine_sha": "2499d6aeeec2ee36f1465ed3ee860ac08e9c0c9a"
+  },
+  "qualified": true
+}

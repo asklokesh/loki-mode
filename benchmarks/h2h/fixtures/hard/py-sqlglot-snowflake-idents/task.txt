@@ -1,0 +1,33 @@
+Snowflake parser rejects identifiers Snowflake accepts (RETURNING, GLOB, USING, LATERAL, EXCLUDE, ...)
+
+**Fully reproducible code snippet**
+
+The Snowflake parser rejects or misreads identifiers that Snowflake accepts unquoted. Checked on `main` (feb0e08); each statement below runs on Snowflake (checked on a live account, 10.38):
+
+```python
+import sqlglot
+
+for sql in [
+    "SELECT returning FROM t",            # ParseError: Invalid expression / Unexpected token
+    "SELECT glob FROM t",                 # ParseError: Required keyword: 'expression' missing
+    "SELECT using FROM t",                # ParseError: Invalid expression / Unexpected token
+    "CREATE TABLE returning (x INT)",     # ParseError: Expected table name but got RETURNING
+    "CREATE TABLE concurrently (x INT)",  # ParseError: Expected table name but got L_PAREN
+    "CREATE TABLE t (exclude INT)",       # ParseError: Expecting )
+    "DESCRIBE TABLE pivot",               # ParseError: Expected table name
+]:
+    sqlglot.parse_one(sql, read="snowflake")
+```
+
+And one is parsed into something else:
+
+```python
+sqlglot.parse_one("SELECT lateral FROM t", read="snowflake").sql("snowflake")
+# 'SELECTLATERAL SELECT * FROM t'
+```
+
+Expected each to parse with the word as an identifier and round-trip unchanged. On Snowflake, `returning`, `glob` and `exclude` work as table and column names, `concurrently` as a table name, `using` and `lateral` as column names, and `describe table pivot` describes a table named `PIVOT`.
+
+**Official Documentation**
+
+Snowflake reserved keywords (none of these words are listed): https://docs.snowflake.com/en/sql-reference/reserved-keywords

@@ -1,0 +1,54 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_parse.py": "tests/test_parse.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--ignore=tests/check_typing.py",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--ignore=tests/check_typing.py",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml"
+  ],
+  "source": {
+    "upstream": "https://github.com/r1chardj0n3s/parse",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/r1chardj0n3s/parse/issues/262",
+    "fix_pr": "https://github.com/r1chardj0n3s/parse/pull/263",
+    "fix_commit": "4f76a3e2982a7b5c5491651283e718029a2cd6a1",
+    "parent_commit": "0d2d28fbccf023d0485be21aaccc95de88e92eaa",
+    "vendored_paths": [
+      "LICENSE",
+      "README.rst",
+      "pyproject.toml",
+      "parse",
+      "tests"
+    ],
+    "solution_files": [
+      "parse/__init__.py"
+    ],
+    "added_files": [],
+    "note": "pyproject.toml addopts: the --cov options were removed (pytest-cov is not in the benchmark toolchain). tests/check_typing.py is ignored: it needs typing_extensions."
+  }
+}

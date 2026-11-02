@@ -1,0 +1,60 @@
+[build-system]
+requires = ["flit_core >=4,<5"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "more-itertools"
+authors = [{name = "Erik Rose", email = "erikrose@grinchcentral.com"}]
+readme = "README.rst"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = [
+    "itertools",
+    "iterator",
+    "iteration",
+    "filter",
+    "peek",
+    "peekable",
+    "chunk",
+    "chunked",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Topic :: Software Development :: Libraries",
+]
+dynamic = ["version", "description"]
+
+[project.urls]
+Homepage = "https://github.com/more-itertools/more-itertools"
+Documentation = "https://more-itertools.readthedocs.io/en/stable/"
+
+[tool.flit.module]
+name = "more_itertools"
+
+[tool.ruff]
+indent-width = 4
+line-length = 79
+target-version = "py310"
+
+[tool.ruff.format]
+quote-style = "preserve"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E731", "E741"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F403"]
+"__init__.pyi" = ["F403"]
