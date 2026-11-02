@@ -1,0 +1,27 @@
+{
+  "lang": "py",
+  "convention": "every public transform is listed in __all__ (the package re-exports it) and has a passing >>> doctest example (tests/test_conventions.py); no task text mentions it",
+  "protected": ["tests", "pytest.ini", "conftest.py"],
+  "steps": [
+    {
+      "id": "s1",
+      "hidden": { "test_truncate_hidden.py": "tests/test_h2h_hidden_s1.py" },
+      "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_h2h_hidden_s1.py"]
+    },
+    {
+      "id": "s2",
+      "hidden": { "test_snake_hidden.py": "tests/test_h2h_hidden_s2.py" },
+      "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_h2h_hidden_s2.py"]
+    },
+    {
+      "id": "s3",
+      "hidden": { "test_accents_hidden.py": "tests/test_h2h_hidden_s3.py" },
+      "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_h2h_hidden_s3.py"]
+    },
+    {
+      "id": "s4",
+      "hidden": { "test_wrap_hidden.py": "tests/test_h2h_hidden_s4.py" },
+      "hidden_cmd": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_h2h_hidden_s4.py"]
+    }
+  ]
+}

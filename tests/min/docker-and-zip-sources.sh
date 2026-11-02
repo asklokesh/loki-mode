@@ -7,6 +7,9 @@
 # already burned; this catches it before the push. Also checks that .dockerignore
 # does not exclude a top-level directory a COPY needs.
 #
+# Also: a Docker build stage that copies loki-ts/src must copy every loki-ts file src/ imports from
+# outside src/ (v11.118.0's image build broke on ../../data/model-pricing.json).
+#
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. docker/Dockerfile: add `COPY --chown=loki:loki plantdir/ ./plantdir/`
 #      (a directory that does not exist).
@@ -82,6 +85,25 @@ missing = [s for s in dict.fromkeys(srcs) if not exists(s) and s != "LICENSE"]
 res("release.yml zip step: %d copied sources exist in git" % len(set(srcs)), missing)
 if len(set(srcs)) < 10:
     res("release.yml zip step: parsed too few sources (%d)" % len(set(srcs)), ["parse"])
+
+# --- Build stages that copy loki-ts/src must also copy every loki-ts file it imports from outside src/ ---
+import os, glob
+IMPORT_RE = re.compile(r"""from\s+["'](\.\.[^"']+)["']""")
+outside = set()
+for f in glob.glob("loki-ts/src/**/*.ts", recursive=True):
+    for m in IMPORT_RE.finditer(open(f, encoding="utf-8").read()):
+        tgt = os.path.normpath(os.path.join(os.path.dirname(f), m.group(1)))
+        if tgt.startswith("loki-ts/") and not tgt.startswith("loki-ts/src/"):
+            outside.add(tgt)
+for df in ("docker/Dockerfile", "docker/Dockerfile.control-plane"):
+    # per build stage: a stage that copies loki-ts/src and builds from it must copy what src/ imports
+    for i, stage in enumerate(re.split(r"(?m)^FROM\s", open(df).read())[1:], 1):
+        lines = [l for l in stage.split("\n") if re.match(r"\s*COPY\s", l) and "--from" not in l]
+        copied = [a.rstrip("/") for l in lines for a in shlex.split(l)[1:-1] if not a.startswith("--")]
+        if "loki-ts/src" not in copied:
+            continue
+        gaps = sorted(t for t in outside if not any(t == c or t.startswith(c + "/") for c in copied))
+        res("%s stage %d: loki-ts files imported from outside src/ are copied (%d)" % (df, i, len(outside)), gaps)
 PY
 )"
 printf '%s\n' "$out" > "$T/res.txt"

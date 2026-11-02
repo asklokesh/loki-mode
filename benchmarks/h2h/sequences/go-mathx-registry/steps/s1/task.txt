@@ -1,0 +1,1 @@
+Add Gcd(a, b int) int to mathx/mathx.go, next to Abs and Clamp. It returns the greatest common divisor of a and b, always non-negative: Gcd(12, 18) is 6, Gcd(-12, 18) is 6, Gcd(7, 0) is 7 and Gcd(0, 0) is 0.

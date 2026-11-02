@@ -7,9 +7,9 @@
 // Plain Claude ids (opus, sonnet, claude-*) resolve to null: behavior unchanged.
 
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
-import { fileURLToPath } from "node:url";
+import pricingJson from "../../data/model-pricing.json" with { type: "json" };
 
 export interface ModelRoute {
   kind: string;
@@ -101,20 +101,12 @@ export function applyAliasPin(model: string, env: Env = process.env): string {
 /**
  * LOKI_INFERENCE_GEO picks a price multiplier from "inference_geo_multipliers" in loki-ts/data/model-pricing.json
  * (us is 1.1x), the one source the TS gate, the bash gate and the Python surfaces all read. Unset, global and
- * unknown values are 1x. If the file is unreadable, us falls back to 1.1 so a budget never silently under-counts.
+ * unknown values are 1x. The JSON is imported, so the bundle carries it (the runtime read this replaces looked
+ * for ../../data next to dist/loki.js, which does not exist, and always used a hardcoded fallback).
  */
-const INFERENCE_GEO_US_FALLBACK = 1.1;
-function inferenceGeoTable(): Record<string, number> {
-  try {
-    const p = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "data", "model-pricing.json");
-    const t = (JSON.parse(readFileSync(p, "utf8")) as { inference_geo_multipliers?: unknown }).inference_geo_multipliers;
-    if (t && typeof t === "object") return t as Record<string, number>;
-  } catch { /* fall through */ }
-  return { us: INFERENCE_GEO_US_FALLBACK };
-}
 export function inferenceGeoMultiplier(env: Env = process.env): number {
   const geo = (env["LOKI_INFERENCE_GEO"] ?? "").trim().toLowerCase();
-  const m = geo ? inferenceGeoTable()[geo] : undefined;
+  const m = geo ? (pricingJson.inference_geo_multipliers as Record<string, unknown>)[geo] : undefined;
   return typeof m === "number" && Number.isFinite(m) && m > 0 ? m : 1;
 }
 
