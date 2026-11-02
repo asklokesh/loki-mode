@@ -326,8 +326,8 @@ fi
 unset _cf_has _cf_out _cf_a
 
 # LOKI_IMPLEMENT_HAIKU_FIRST was removed: a set value maps to LOKI_ROUTER=auto
-# when LOKI_ROUTER is unset, then is cleared so neither engine notes it twice
-# (the TS twin is legacyHaikuFirst in loki-ts/src/util/cost_profile.ts).
+# when LOKI_ROUTER is unset, then is cleared. bin/loki is the only entry that
+# reads it; neither engine looks at it.
 case "${LOKI_IMPLEMENT_HAIKU_FIRST:-}" in
     ""|0|false|FALSE) ;;
     *)

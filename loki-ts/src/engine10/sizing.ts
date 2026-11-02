@@ -32,14 +32,18 @@ export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | nul
   return why.length ? { size: "normal", reasons: why } : { size: "small", reasons: [`task ${task.length} chars, names ${named} files`] };
 }
 
-/** A task that names more non-test repo files than this is hard (between the "normal" bar of 2 and the "large" bar of LARGE_NAMED_FILES). */
+/** A task that names more distinct non-test files than this is hard (between the "normal" bar of 2 and the "large" bar of LARGE_NAMED_FILES). */
 export const HARD_NAMED_FILES = 4;
-/** Why a task is hard, from task evidence only, never repo size: sized large (deliverables() or more than LARGE_NAMED_FILES named files), a truncated repo map, or the task naming more than HARD_NAMED_FILES non-test files. Null otherwise. */
+/** Distinct non-test files the task names, as written: a path the task spells out counts once per path, a bare basename counts once however many repo files share it ("fix index.ts" in a monorepo is 1). */
+export function namedDistinct(task: string, map: RepoMap | null): number {
+  const text = task.toLowerCase();
+  return new Set(namedFiles(task, map).filter((f) => !isTestFile(f)).map((f) => (text.includes(f.toLowerCase()) ? f.toLowerCase() : basename(f).toLowerCase()))).size;
+}
+/** Why a task is hard, from task evidence only, never repo size (a truncated repo map is repo size, so it never counts): sized large (deliverables() or more than LARGE_NAMED_FILES named files), or the task naming more than HARD_NAMED_FILES distinct non-test files. Null otherwise. */
 export function hardReason(size: TaskSize, map: RepoMap | null, task: string): string | null {
   if (size === "large") return "task sized large";
-  if (map?.truncated) return "repo map truncated at the file cap";
-  const n = namedFiles(task, map).filter((f) => !isTestFile(f)).length;
-  return n > HARD_NAMED_FILES ? `task names ${n} non-test files > ${HARD_NAMED_FILES}` : null;
+  const n = namedDistinct(task, map);
+  return n > HARD_NAMED_FILES ? `task names ${n} distinct non-test files > ${HARD_NAMED_FILES}` : null;
 }
 
 /** Best-effort RepoMap load from intake's repomap_ref; missing/unreadable is null, never a crash. */

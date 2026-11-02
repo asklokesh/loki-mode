@@ -102,8 +102,11 @@ down (Engine Law L1).
 `LOKI_ROUTER=auto` (also set by `--haiku` and `--cost lean`) is the router's
 auto preset (Engine Law L1, as amended 2026-11-01, allows Haiku as the
 executor when asked for): Haiku runs implement and fix, Opus writes the plan
-of a hard task (judged from the task, never the repo size: sized large, a
-truncated repo map, or a task naming more than 4 non-test files), the Opus advisor tool is attached to plan and fix, and a code-owned
+of a hard task (judged from the task, never the repo size: sized large, or
+a task naming more than 4 distinct non-test files), the Opus advisor tool is
+attached to a fix round on Haiku or Sonnet (never to an Opus session), a
+Haiku implement that claims the work is already done with no diff climbs one
+rung, and a code-owned
 failure, a stall or a spec conflict climbs the router's ladder (Sonnet, then
 Opus). The start line names the downgrade and the route; the receipt's route
 block records the executor and every climb. `LOKI_ROUTER_EXECUTOR` picks

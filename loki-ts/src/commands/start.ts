@@ -15,7 +15,7 @@ import type { ProviderName, SessionTier } from "../runner/types.ts";
 import { tokenFreeEnv, safeGitRun } from "../util/safe_git.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { GENERIC_TIERS, VALID_TIERS } from "../util/claude_model.ts";
-import { applyCostProfile, COST_PROFILES, legacyHaikuFirst, routerKeptNote } from "../util/cost_profile.ts";
+import { applyCostProfile, COST_PROFILES, routerKeptNote } from "../util/cost_profile.ts";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 import { suggestWord } from "../cli/registry.ts";
 import { VALID_PROVIDERS, unsupportedProviderMessage } from "../runner/types.ts";
@@ -183,7 +183,6 @@ export function parseStartArgs(
     return 0;
   }
 
-  const legacy = legacyHaikuFirst(process.env, applyEnv); if (legacy) err(legacy + "\n"); // removed LOKI_IMPLEMENT_HAIKU_FIRST maps to LOKI_ROUTER=auto
   const attemptsMode = hasAttemptsFlag(args);
   const specMode = hasSpecFlag(args);
   if (attemptsMode && specMode) {

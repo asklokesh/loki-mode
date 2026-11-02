@@ -54,13 +54,3 @@ export function routerKeptNote(flag: string, env: NodeJS.ProcessEnv): string {
   const r = (env.LOKI_ROUTER ?? "").trim();
   return r && r.toLowerCase() !== "auto" ? `${flag}: LOKI_ROUTER=${r} is already set and wins; the auto preset is not applied` : "";
 }
-
-/** LOKI_IMPLEMENT_HAIKU_FIRST was removed: a set value (not 0/false) maps to LOKI_ROUTER=auto when LOKI_ROUTER is unset, then is cleared so a child prints nothing twice. Returns the deprecation note in the autonomy/loki config wording, '' when unset. */
-export function legacyHaikuFirst(env: NodeJS.ProcessEnv, applyEnv: (k: string, v: string) => void): string {
-  const v = (env.LOKI_IMPLEMENT_HAIKU_FIRST ?? "").trim().toLowerCase();
-  if (!v || v === "0" || v === "false") return "";
-  const r = (env.LOKI_ROUTER ?? "").trim();
-  if (!r) applyEnv("LOKI_ROUTER", "auto");
-  delete env.LOKI_IMPLEMENT_HAIKU_FIRST;
-  return `Note: 'LOKI_IMPLEMENT_HAIKU_FIRST' is deprecated and has no effect of its own since the router auto preset. ${r ? `LOKI_ROUTER=${r} is already set and wins.` : "Mapped to LOKI_ROUTER=auto (Haiku executes implement and fix)."} Accepted for back-compat only.`;
-}
