@@ -13,7 +13,8 @@
     "-q",
     "-p",
     "no:cacheprovider",
-    "tests"
+    "tests",
+    "--ignore=tests/test_toml_spec_tests.py"
   ],
   "visible_cmd": [
     "python3",
@@ -22,7 +23,8 @@
     "-q",
     "-p",
     "no:cacheprovider",
-    "tests"
+    "tests",
+    "--ignore=tests/test_toml_spec_tests.py"
   ],
   "protected": [
     "tests",
@@ -50,7 +52,7 @@
       "tomlkit/parser.py"
     ],
     "added_files": [],
-    "note": "The tests/toml-test submodule is vendored at its pinned commit (toml-lang/toml-test, MIT).",
+    "note": "The tests/toml-test submodule is vendored at its pinned commit (toml-lang/toml-test, MIT). tests/test_toml_spec_tests.py is ignored: it imports PyYAML, which is not in the benchmark toolchain.",
     "submodules": {
       "tests/toml-test": {
         "upstream": "https://github.com/toml-lang/toml-test",

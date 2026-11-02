@@ -19,7 +19,9 @@
     "--deselect",
     "tests/test_utils.py::test_echo_via_pager",
     "--deselect",
-    "tests/test_utils.py::test_expand_args"
+    "tests/test_utils.py::test_expand_args",
+    "-W",
+    "ignore::pytest.PytestRemovedIn10Warning"
   ],
   "visible_cmd": [
     "python3",
@@ -34,7 +36,9 @@
     "--deselect",
     "tests/test_utils.py::test_echo_via_pager",
     "--deselect",
-    "tests/test_utils.py::test_expand_args"
+    "tests/test_utils.py::test_expand_args",
+    "-W",
+    "ignore::pytest.PytestRemovedIn10Warning"
   ],
   "protected": [
     "tests",
@@ -67,7 +71,7 @@
     "added_files": [
       "conftest.py"
     ],
-    "note": "conftest.py added so tests import src/click without installing the package. Deselected because they fail in the benchmark environment on the parent and on the fix alike: tests/test_imports.py::test_light_imports, tests/test_utils.py::test_echo_via_pager, tests/test_utils.py::test_expand_args."
+    "note": "conftest.py added so tests import src/click without installing the package. Deselected because they fail in the benchmark environment on the parent and on the fix alike: tests/test_imports.py::test_light_imports, tests/test_utils.py::test_echo_via_pager, tests/test_utils.py::test_expand_args. -W ignore::pytest.PytestRemovedIn10Warning: newer pytest releases warn on a pattern in tests/test_basic.py, and click's filterwarnings=error would turn that into a collection error."
   },
   "pilot": {
     "config": "raw-haiku-verify",

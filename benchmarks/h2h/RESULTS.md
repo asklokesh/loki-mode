@@ -28,20 +28,24 @@ Results file: `results/2026-11-01-e13f3dd72-hard.json`, **citable**: every invoc
 ran from a clean commit (e13f3dd72, then 0d2071933, which changes only a test comment), on the
 v11.116.0 engine merged from main. Tool versions are in the file (bun 1.3.13, Claude CLI 2.1.316).
 
-- **Candidates.** 19 closed issues in `fixtures/hard/` from sqlglot, tomlkit, click, sqlparse,
-  mistune, expr and chi (MIT or BSD-3-Clause; each `meta.json` records license, issue, fix PR and
+- **Candidates.** 18 closed issues in `fixtures/hard/` from sqlglot, tomlkit, click, sqlparse,
+  mistune and expr (MIT or BSD-3-Clause; each `meta.json` records license, issue, fix PR and
   commits). Each is vendored at the fix's parent commit and scored by the fix's own test files at
-  their own paths, together with the rest of the project's suite. The merged fix passes all 19 and
+  their own paths, together with the rest of the project's suite. The merged fix passes all 18 and
   the parent commit passes none (checked on every PR by `tests/min/h2h-harness.sh`). The snapshots
   live under `fixtures/` because their own tests need characters (emoji, dashes) this repository's
   text rule otherwise bans.
 - **Selection rule.** A task qualifies only if the fix touches 2 or more files and raw Haiku with
-  the verify sentence passed under half of its pilot runs (2 runs per task, $0.78). 11 met it. 3 of
-  those are excluded because the fix's tests need something the issue cannot tell anyone: a class
-  the fix adds (sqlparse `TypedLiteral`), a method the fix adds (`Function.get_window`), and one of
-  two valid HTTP header shapes (chi's `Allow`). **8 qualify**: expr #836 and #823, click #2836,
-  sqlglot #8598, #8808 and #8805, tomlkit #408 and #165. A paid run without `--tasks` takes only
-  those. The target was 20 or more; the candidates gave 8.
+  the verify sentence passed under half of its pilot runs (2 runs per task over the 19 candidates of
+  the time, $0.78). 11 met it. 3 of those were excluded because the fix's tests need something the
+  issue cannot tell anyone: a class the fix adds (sqlparse `TypedLiteral`), a method the fix adds
+  (`Function.get_window`), and one of two valid HTTP header shapes (chi #446's `Allow`). The chi
+  candidate was then removed altogether: its merged fix fills the `Allow` header by iterating a Go
+  map, so the fix's own test (which expects `GET, HEAD` in that order) fails about one run in six
+  (4 of 24 runs of the fix under 8-way parallel load), which made the self-check flaky.
+  **8 qualify**: expr #836 and #823, click #2836, sqlglot #8598, #8808 and #8805, tomlkit #408 and
+  #165. A paid run without `--tasks` takes only those. The target was 20 or more; the candidates
+  gave 8.
 - **Configs.** Raw `claude -p` on Haiku, Sonnet and Opus, each also with the verify sentence; Loki
   pinned to Haiku, Sonnet or Opus (`LOKI_SESSION_MODEL`); and `loki-default`, Loki with no model pin
   so its own routing picks. 3 reps, `--jobs 4`, timeout 900 s.
@@ -468,7 +472,7 @@ bash benchmarks/h2h/run.sh --reps 3 --jobs 4 --budget 38.5 --ledger spend.jsonl
 bash benchmarks/h2h/run.sh --suite replay --configs oracle,noop     # replay self-check, no model
 bash benchmarks/h2h/run.sh --suite replay --configs raw-haiku,raw-haiku-verify,raw-opus-verify,loki-haiku \
     --reps 2 --jobs 4 --budget 15 --ledger replay.jsonl
-bash benchmarks/h2h/run.sh --suite hard --configs oracle,noop       # all 19 hard candidates, no model
+bash benchmarks/h2h/run.sh --suite hard --configs oracle,noop       # all 18 hard candidates, no model
 bash benchmarks/h2h/run.sh --suite hard --reps 3 --jobs 4 --timeout 900 --budget 73 --ledger hard.jsonl \
     --configs raw-haiku,raw-haiku-verify,raw-sonnet,raw-sonnet-verify,raw-opus,raw-opus-verify,loki-haiku,loki-sonnet,loki-opus,loki-default
 bash benchmarks/h2h/run.sh --sequences all --configs loki-haiku-learn,loki-haiku-nolearn \
