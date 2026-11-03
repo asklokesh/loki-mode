@@ -58,7 +58,11 @@ What changed:
   Go `var X = func` and Rust `pub fn` count. A private class, a nested def, a signature-only edit, a
   TS constructor, `.d.ts`, generated files (`*.pb.go` and similar) and test helpers outside test
   files do not. Names inside strings are no reference. A function whose caller an independent test
-  calls is covered (indirect coverage). Independent means a Wall file that passed, or a test the run
+  calls is covered (indirect coverage), also when that caller sits in a file the run did not edit
+  (py-invoice-rounding: the added `line_tax_cents` is reached from the tested `Invoice.tax_cents`
+  through `invoice_tax_cents`). Matching is by name, so a common name can be cleared by an unrelated
+  call (an added `get` by any `d.get(`), and CommonJS exports (`module.exports`, `exports.f`) are not
+  read, so an added CommonJS function is never capped. Independent means a Wall file that passed, or a test the run
   did not touch that counted tests (n > 0). Tests the implementer wrote or edited never clear it.
 - **Go tests in a black-box `tests/` package count.** Go corroboration refused any package with no
   non-test files, so every check there read not_run ("no tests executed"); each such package is now
