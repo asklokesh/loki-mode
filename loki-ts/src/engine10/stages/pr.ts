@@ -111,7 +111,7 @@ export function prTitle(verdict: Verdict, runDir: string, task: string): string 
   }
   const head = verdict === "PARTIAL" ? "[PARTIAL] " : "", room = TITLE_MAX - head.length - ref.length;
   if (!what) return `${head}Loki change${ref}`;
-  const cut = what.length <= room ? what : `${what.slice(0, room - 3).replace(/\s+\S*$/, "") || what.slice(0, room - 3)}...`;
+  const cps = Array.from(what), cut = cps.length <= room ? what : ((short) => `${short.replace(/\s+\S*$/, "") || short}...`)(cps.slice(0, room - 3).join("")); // code points: a surrogate pair is never split
   return `${head}${cut}${ref}`;
 }
 /** PR-FIRST-1: a PARTIAL PR leads with what is unproven (first 10 reasons plus the total), above the reviewer body. Empty for every other verdict. */

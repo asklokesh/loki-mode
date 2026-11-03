@@ -3,7 +3,7 @@
 // installer (npm postinstall + first interactive run after an upgrade).
 // Nothing here is hand-maintained: add a command to registry.ts and every shell
 // picks it up. Legacy (DROP-LEGACY), DELETE and hidden entries are never offered.
-import { spawn } from "node:child_process";
+import { spawnDetached } from "../runner/worker_proc.ts";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync, accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -327,8 +327,7 @@ function refreshIssuesInBackground(file: string, cwd: string): void {
   try {
     mkdirSync(join(file, ".."), { recursive: true });
     const script = `gh issue list --limit 50 --json number,title --jq '.[] | "#\\(.number)"' > ${JSON.stringify(file + ".tmp")} 2>/dev/null && mv ${JSON.stringify(file + ".tmp")} ${JSON.stringify(file)}`;
-    const child = spawn("sh", ["-c", script], { cwd, env: process.env, detached: true, stdio: "ignore" });
-    child.unref();
+    spawnDetached("sh", ["-c", script], { cwd, env: process.env });
   } catch { /* cache refresh is best effort */ }
 }
 

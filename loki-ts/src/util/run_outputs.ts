@@ -723,15 +723,17 @@ export function stackSection(env: NodeJS.ProcessEnv, base: string | undefined, h
 }
 /** FireLater#21: the .github/workflows files that have a pull_request trigger and whose branch filter excludes `base` (branches without a match, or a
  *  branches-ignore match). Only when EVERY pull_request workflow skips it is the list returned; any workflow that runs, or a file that does not parse, gives []
- *  (no claim). Globs: ** matches anything, * anything but "/". */
+ *  (no claim). A scalar `branches:` is a one-item list; a pull_request_target workflow counts as one that runs. Globs: ** matches anything, * anything but "/". */
 export function prWorkflowsSkipping(repoDir: string, base: string): string[] {
   const glob = (g: string): RegExp => new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*")}$`);
-  const hit = (list: unknown): boolean => Array.isArray(list) && list.some((g) => typeof g === "string" && glob(g).test(base));
+  const hit = (v: unknown): boolean => (typeof v === "string" ? [v] : Array.isArray(v) ? v : []).some((g) => typeof g === "string" && glob(g).test(base));
   const dir = join(repoDir, ".github", "workflows"), skips: string[] = []; let runs = false;
   let files: string[] = []; try { files = readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).sort(); } catch { return []; }
   for (const f of files) {
     let doc: unknown; try { doc = Bun.YAML.parse(readFileSync(join(dir, f), "utf8")); } catch { return []; }
     const on = (doc as Record<string, unknown> | null)?.["on"] ?? (doc as Record<string | number, unknown> | null)?.[true as unknown as string];
+    const target = on === "pull_request_target" || (Array.isArray(on) && on.includes("pull_request_target")) || (typeof on === "object" && on !== null && !Array.isArray(on) && "pull_request_target" in on);
+    if (target) { runs = true; continue; } // pull_request_target workflows also start on pull requests; counted as running, never claimed as skipped
     const has = on === "pull_request" || (Array.isArray(on) && on.includes("pull_request")) || (typeof on === "object" && on !== null && !Array.isArray(on) && "pull_request" in on);
     if (!has) continue;
     const pr = typeof on === "object" && on !== null && !Array.isArray(on) ? (on as Record<string, unknown>)["pull_request"] as Record<string, unknown> | null : null;

@@ -27,7 +27,8 @@
 #   pr face: unit-level, a slice PR is titled by its slice title plus "(#21 s2)", an issue run by the issue title plus "(#24)",
 #            "[PARTIAL]" once and never the run id; the body lists a slice's inline criteria and its own title as Why; a stacked
 #            PR into a branch every pull_request workflow filters out says CI will not run yet; a slice worktree whose deep
-#            verify is alive is removed only after it ends (FireLater#21: loki/deep-verify stayed pending on every PR).
+#            verify is alive is handed to a detached reaper that waits for it, keeps the addendum and removes worktree,
+#            branch and temp root (FireLater#21: loki/deep-verify stayed pending on every PR).
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/engine10/sizing.ts: drop `if (st.large) return { size: "large", ... }` (rebuild dist); the
@@ -54,6 +55,10 @@
 #  12. loki-ts/src/commands/issues_run.ts makeWorktrees remove: remove at once whatever deep verify does; the pr face check fails.
 #  13. loki-ts/src/e10ext/reviewer_body.ts criteria: skip inlineCriteria; the pr face check fails (1 criterion listed).
 #  14. loki-ts/src/util/run_outputs.ts stackSection: never call prWorkflowsSkipping; the pr face check fails (no CI note).
+#  15. issues_run.ts REAPER_SH: skip the run-dir re-copy; the pr face check fails (addendum lost).
+#  16. pr.ts prTitle: clip by UTF-16 units (what.split("")); the pr face check fails (split pair).
+#  17. run_outputs.ts prWorkflowsSkipping: read a scalar branches: as no list; the pr face check fails (main reads skipped).
+#  18. prWorkflowsSkipping: ignore pull_request_target; the pr face check fails (a running workflow claimed skipped).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -377,33 +382,41 @@ console.log(r.join(" "));
 # --- pr face: what a split's PRs look like (FireLater#21: six PRs titled "[PARTIAL] Loki 10: PARTIAL (e10-<run id>)", stacked ones with no CI) --
 # Title: the slice title plus "(#21 s2)", the issue title plus "(#24)", else the task's first line; "[PARTIAL]" once, never the run id, clipped at a
 # word. Body: a slice's inline "(1) ...; (2) ..." criteria are listed, Why is the slice title. A stacked PR into a branch the repo's pull_request
-# workflows filter out says so. A slice worktree whose detached deep verify is alive is removed only after it ends (drain).
+# workflows filter out says so (a scalar branches: counts, a pull_request_target workflow runs). A slice worktree whose detached deep verify is
+# alive is left to a detached reaper: remove() returns at once, the reaper waits for the deep pid, copies the run dir into the kept receipt again
+# (the addendum lands last), then removes the worktree, its loki/<name> branch and the empty temp root.
 PF="$T/prface"; mkdir -p "$PF/run" "$PF/wf/.github/workflows" "$PF/wf2/.github/workflows"
 printf 'on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main, develop]\njobs: {}\n' > "$PF/wf/.github/workflows/ci.yml"
 printf 'on:\n  push:\n    tags: ["v*"]\njobs: {}\n' > "$PF/wf/.github/workflows/release.yml"
 cp "$PF/wf/.github/workflows/ci.yml" "$PF/wf2/.github/workflows/ci.yml"; printf 'on: [pull_request]\njobs: {}\n' > "$PF/wf2/.github/workflows/lint.yml"
+mkdir -p "$PF/wf3/.github/workflows" "$PF/wf4/.github/workflows"; printf 'on:\n  pull_request:\n    branches: main\njobs: {}\n' > "$PF/wf3/.github/workflows/ci.yml"
+cp "$PF/wf/.github/workflows/ci.yml" "$PF/wf4/.github/workflows/ci.yml"; printf 'on:\n  pull_request_target:\n    branches: [main]\njobs: {}\n' > "$PF/wf4/.github/workflows/label.yml"
 G="$PF/repo"; mkdir -p "$G" && git -C "$G" init -q -b main && git -C "$G" config user.name rs && git -C "$G" config user.email rs@example.invalid && printf 'x\n' > "$G/a" && git -C "$G" add a && git -C "$G" commit -q -m base
 PFO="$(PF="$PF" G="$G" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const pr = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/pr.ts"), ro = await import(process.env.ROOT + "/loki-ts/src/util/run_outputs.ts"), rb = await import(process.env.ROOT + "/loki-ts/src/e10ext/reviewer_body.ts"), ep = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts"), ir = await import(process.env.ROOT + "/loki-ts/src/commands/issues_run.ts");
-const { writeFileSync, mkdirSync, existsSync } = await import("node:fs"), { spawn } = await import("node:child_process"), pf = process.env.PF, run = pf + "/run", out = [];
+const { writeFileSync, mkdirSync, existsSync } = await import("node:fs"), { spawn, execFileSync } = await import("node:child_process"), pf = process.env.PF, run = pf + "/run", out = [];
 const slice = ep.sliceTask("asklokesh/FireLater", { number: 21, title: "Errors", body: "", labels: [] }, { id: "s2", title: "Retry utility and recovery handlers", acceptance: ["withRetry(op, opts) retries; never a write", "isTransientError(e) is false for 4xx", "npm test passes"], depends_on: ["s1"], files: [] }, 1, 4, "s1");
 out.push(pr.prTitle("PARTIAL", run, slice), pr.prTitle("VERIFIED", run, slice));
 writeFileSync(run + "/issue.json", JSON.stringify({ provider: "github", repo: "acme/search", number: 24, title: "Implement Advanced Search and Filtering with Full-Text Search Support", body: "" }));
 out.push(pr.prTitle("PARTIAL", run, "## Problem\nsearch is slow"));
 writeFileSync(run + "/issue.json", "{}"); out.push(pr.prTitle("VERIFIED", run, "fix the off-by-one in paginate()\nmore"), pr.prTitle("PARTIAL", run, "word ".repeat(40)).length <= 100 ? "clipped" : "long", pr.prTitle("PARTIAL", run, ""));
+const emo = pr.prTitle("VERIFIED", run, "x".repeat(96) + "\u{1F600}".repeat(6)); out.push(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(emo) ? "split pair" : "whole code points");
 const body = rb.renderReviewerBody({ verdict: "PARTIAL", draftReason: null, notProven: [], receiptPath: null, receiptSha256: null, signed: null, runId: "e10-x", outputs: { intake: { task: slice, title: slice.slice(0, 72) } } }, { LOKI_PR_FOOTER: "0" }, "0");
 const asked = body.split("## What changed")[0].split("\n").filter((l) => l.startsWith("- ")).length, why = (body.split("\n").find((l) => l.startsWith("- Why: ")) ?? "").slice(7);
 out.push(`asked ${asked}`, `why ${why}`);
-out.push(ro.prWorkflowsSkipping(pf + "/wf", "loki/e10-a").join(",") || "none", ro.prWorkflowsSkipping(pf + "/wf", "main").join(",") || "none", ro.prWorkflowsSkipping(pf + "/wf2", "loki/e10-a").join(",") || "none");
+out.push(ro.prWorkflowsSkipping(pf + "/wf", "loki/e10-a").join(",") || "none", ro.prWorkflowsSkipping(pf + "/wf", "main").join(",") || "none", ro.prWorkflowsSkipping(pf + "/wf2", "loki/e10-a").join(",") || "none", ro.prWorkflowsSkipping(pf + "/wf3", "loki/e10-a").join(",") || "none", ro.prWorkflowsSkipping(pf + "/wf3", "main").join(",") || "none", ro.prWorkflowsSkipping(pf + "/wf4", "loki/e10-a").join(",") || "none");
 out.push(ro.stackSection({ LOKI_PR_REFS: "acme/search#21" }, "loki/e10-a", false, pf + "/wf").includes("(ci.yml) do not run for a pull request into `loki/e10-a`") ? "ci note" : "no ci note");
-// drain: a worktree whose run recorded a live deep.started pid is kept until that process ends, then removed
-const g = process.env.G, wt = ir.makeWorktrees(g, 20), p = wt.create("epic-9-s1", "HEAD"), rd = p + "/.loki/runs/e10-z"; mkdirSync(rd, { recursive: true });
+// reaper: a worktree whose run recorded a live deep.started pid is handed to a detached reaper; remove() does not wait
+const g = process.env.G, keep = pf + "/keep", wt = ir.makeWorktrees(g), p = wt.create("epic-9-s1", "HEAD"), rd = p + "/.loki/runs/e10-z"; mkdirSync(rd, { recursive: true });
 const child = spawn("sleep", ["2"], { stdio: "ignore" }); writeFileSync(rd + "/events.jsonl", JSON.stringify({ type: "deep.started", data: { pid: child.pid } }) + "\n");
-wt.remove("epic-9-s1", p); out.push(existsSync(p) ? "kept while deep runs" : "removed under deep");
-const said = []; await wt.drain(async (ms) => new Promise((r) => setTimeout(r, ms)), (s) => said.push(s)); out.push(existsSync(p) ? "still there" : "removed after deep", said.length ? "said wait" : "silent");
+const t0 = Date.now(); wt.remove("epic-9-s1", p, keep); out.push(Date.now() - t0 < 1000 && existsSync(p) ? "returned at once, kept" : "waited or removed under deep");
+writeFileSync(rd + "/receipt-addendum-1.json", "{}\n"); // the deep worker writes its addendum last
+const root = p.slice(0, p.lastIndexOf("/")), branch = () => { try { execFileSync("git", ["-C", g, "rev-parse", "--verify", "-q", "refs/heads/loki/epic-9-s1"], { stdio: "ignore" }); return true; } catch { return false; } };
+for (let i = 0; i < 40 && existsSync(p); i++) await new Promise((r) => setTimeout(r, 250));
+out.push(existsSync(p) ? "still there" : "removed after deep", branch() ? "branch left" : "branch gone", existsSync(root) ? "root left" : "root gone", existsSync(keep + "/receipts/e10-z/receipt-addendum-1.json") ? "addendum kept" : "addendum lost");
 console.log(out.join(" | "));
 ' 2>&1)"
-WPF="[PARTIAL] Retry utility and recovery handlers (#21 s2) | Retry utility and recovery handlers (#21 s2) | [PARTIAL] Implement Advanced Search and Filtering with Full-Text Search Support (#24) | fix the off-by-one in paginate() | clipped | [PARTIAL] Loki change | asked 3 | why Retry utility and recovery handlers | ci.yml | none | none | ci note | kept while deep runs | removed after deep | said wait"
-[ "$PFO" = "$WPF" ] && ok "pr face: titles say the slice or issue and its ref, the outcome once, never the run id; inline criteria listed; a filtered-out stacked base is named; a live deep verify keeps its worktree until it ends" \
+WPF="[PARTIAL] Retry utility and recovery handlers (#21 s2) | Retry utility and recovery handlers (#21 s2) | [PARTIAL] Implement Advanced Search and Filtering with Full-Text Search Support (#24) | fix the off-by-one in paginate() | clipped | [PARTIAL] Loki change | whole code points | asked 3 | why Retry utility and recovery handlers | ci.yml | none | none | ci.yml | none | none | ci note | returned at once, kept | removed after deep | branch gone | root gone | addendum kept"
+[ "$PFO" = "$WPF" ] && ok "pr face: titles say the slice or issue and its ref, the outcome once, never the run id; inline criteria listed; a filtered-out stacked base is named; a live deep verify hands its worktree to a reaper that keeps the addendum and removes worktree, branch and root" \
     || bad "pr face gave: $PFO (want: $WPF)"
 finish

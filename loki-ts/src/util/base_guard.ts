@@ -342,14 +342,16 @@ function removeRunWorktrees(repoDir: string, baseSha: string | null | undefined)
   }
 }
 
-/** True while the detached post-PR deep verify recorded in this run's deep.started event is alive (it posts the loki/deep-verify status when it ends). */
-export const deepAlive = (runDir: string): boolean => {
+/** The pid of this run's detached post-PR deep verify (its deep.started event) while it is alive, else null; it posts the loki/deep-verify status when it ends. */
+export const deepPid = (runDir: string): number | null => {
+  let pid: number | undefined;
   try {
-    const pid = readFileSync(join(runDir, "events.jsonl"), "utf8").split("\n").filter((l) => l.includes('"deep.started"')).map((l) => Number((JSON.parse(l) as { data?: { pid?: unknown } }).data?.pid)).pop();
-    if (!pid || !Number.isInteger(pid) || pid <= 1) return false;
-    process.kill(pid, 0); return true;
-  } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
+    pid = readFileSync(join(runDir, "events.jsonl"), "utf8").split("\n").filter((l) => l.includes('"deep.started"')).map((l) => Number((JSON.parse(l) as { data?: { pid?: unknown } }).data?.pid)).pop();
+    if (!pid || !Number.isInteger(pid) || pid <= 1) return null;
+    process.kill(pid, 0); return pid;
+  } catch (e) { return pid && (e as NodeJS.ErrnoException).code === "EPERM" ? pid : null; }
 };
+export const deepAlive = (runDir: string): boolean => deepPid(runDir) !== null;
 const runLive = (runDir: string): boolean => runOwnerAlive(runDir) || deepAlive(runDir);
 const readRecord = (file: string): Partial<BranchRecord> | null => { try { return JSON.parse(readFileSync(file, "utf8")) as Partial<BranchRecord>; } catch { return null; } };
 
