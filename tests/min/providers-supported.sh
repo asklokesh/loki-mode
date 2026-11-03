@@ -6,6 +6,10 @@
 #             --provider X, --provider=X, LOKI_PROVIDER=X, `loki provider show|info|models X`
 #             and `loki estimate --provider X`; api/ and web-app/ restate the same lists and message; the bash and Bun messages are
 #             byte-identical; an unknown name still gets the supported list.
+#   saved:    a removed name saved in .loki/state/provider gets the same line plus how to clear it
+#             (`loki provider set claude`) from `loki start`, `loki quick`, `--engine engine10`, `loki route`
+#             and `loki provider [show]` (Bun and bash), exit 2; the hint is byte-identical on both sides; after
+#             `loki provider set claude` the project shows claude, exit 0.
 #   claude:   an engine10 run on the stub claude CLI ends VERIFIED.
 #   opencode: an engine10 run with --provider opencode --model
 #             openrouter/deepseek/deepseek-v3.2 and OPENROUTER_API_KEY reaches the
@@ -26,6 +30,13 @@
 #   4. loki-ts/src/commands/doctor.ts: drop the openrouter credential check (the
 #      no-key run starts a session).
 #   5. add `case "codex":` back to loki-ts/src/runner/providers.ts (the grep leg fails).
+#   6. autonomy/route.sh: drop the removed-provider check after _route_provider (the saved start legs read the
+#      generic "is not supported" refusal).
+#   7. loki-ts/src/commands/provider.ts: drop the saved removed-provider check in runProviderShow (saved show leg
+#      prints "Provider: codex", exit 0).
+#   8. providers/loader.sh: change one word of loki_removed_saved_provider_hint (the byte-identical hint leg fails).
+#   9. tests/min/providers-supported.sh run_engine: keep XDG_CONFIG_HOME from the caller and give the no-key leg an
+#      opencode.json with provider.openrouter there (the no-key leg starts a session; proves the isolation matters).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -59,6 +70,34 @@ for p in codex cline aider gemini; do
         else bad "$p ($form): rc=$rc out=$(printf '%s' "$out" | head -3)"; fi
     done
 done
+# A removed name saved in the project: the same line plus how to clear it, on every start route and `provider show`.
+hint() { printf "loki: this project saved provider '%s' in .loki/state/provider; switch it with: loki provider set claude" "$1"; }
+for p in codex gemini; do
+    SD="$T/saved-$p"; mkdir -p "$SD/.loki/state"; printf '%s\n' "$p" > "$SD/.loki/state/provider"
+    want="$(expect_msg "$p")
+$(hint "$p")"
+    for form in start quick engine10 route show bare bunshow bashshow; do
+        case "$form" in
+            start) out="$(cd "$SD" && bash "$ROOT/bin/loki" start "add a function" </dev/null 2>&1)"; rc=$? ;;
+            quick) out="$(cd "$SD" && bash "$ROOT/bin/loki" quick "add a function" </dev/null 2>&1)"; rc=$? ;;
+            engine10) out="$(cd "$SD" && bash "$ROOT/bin/loki" start --engine engine10 "add a function" </dev/null 2>&1)"; rc=$? ;;
+            route) out="$(cd "$SD" && bash "$ROOT/bin/loki" route start "add a function" </dev/null 2>&1)"; rc=$? ;;
+            show) out="$(cd "$SD" && bash "$ROOT/bin/loki" provider show </dev/null 2>&1)"; rc=$? ;;
+            bare) out="$(cd "$SD" && bash "$ROOT/bin/loki" provider </dev/null 2>&1)"; rc=$? ;;
+            bunshow) out="$(cd "$SD" && bun "$LOKI_TS_ENTRY" provider show </dev/null 2>&1)"; rc=$? ;;
+            bashshow) out="$(cd "$SD" && bash "$ROOT/autonomy/loki" provider show </dev/null 2>&1)"; rc=$? ;;
+        esac
+        if [ "$rc" -eq 2 ] && [ "$out" = "$want" ]; then ok "saved $p ($form): exit 2, migration line and the provider set hint"
+        else bad "saved $p ($form): rc=$rc out=$(printf '%s' "$out" | head -3)"; fi
+    done
+done
+ts="$(cd "$ROOT/loki-ts" && bun -e 'const t = await import("./src/runner/types.ts"); process.stdout.write(t.removedSavedProviderHint("codex"))' 2>&1)"
+sh="$(bash -c '. "$1/providers/loader.sh"; loki_removed_saved_provider_hint codex' _ "$ROOT")"
+[ "$ts" = "$sh" ] && [ "$sh" = "$(hint codex)" ] && ok "Bun and bash saved-provider hints are byte-identical" || bad "hints differ: ts=[$ts] sh=[$sh]"
+SD="$T/saved-codex"
+out="$(cd "$SD" && bash "$ROOT/bin/loki" provider set claude </dev/null 2>&1 && bash "$ROOT/bin/loki" provider show </dev/null 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(cat "$SD/.loki/state/provider")" = "claude" ] && printf '%s' "$out" | grep -q 'Provider:.* claude' \
+    && ok "loki provider set claude clears the saved removed provider (show exits 0, claude)" || bad "provider set claude: rc=$rc out=$(printf '%s' "$out" | head -3)"
 # The Bun entry on its own (no bin/loki guard in front) refuses with the same line.
 out="$(cd "$T/empty" && bun "$LOKI_TS_ENTRY" start --provider codex "add a function" </dev/null 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && [ "$out" = "$(expect_msg codex)" ] && ok "Bun start --provider codex (no wrapper): exit 2, migration line" || bad "Bun start --provider codex: rc=$rc out=$out"
@@ -117,7 +156,11 @@ run_engine() {
     local envs=()
     while [ $# -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
     shift
+    # The opencode credential sources are cleared too (OPENCODE_CONFIG*, and XDG dirs pointed at empty paths so the
+    # ~/.config and ~/.local/share fallbacks are not read either): a dev machine's own opencode setup cannot make the
+    # no-key leg start a session. A leg that needs a source passes it in envs, which come later (cfgkey).
     OUT="$(cd "$REPO" && env -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_PROVIDER -u OPENROUTER_API_KEY -u LOKI_OPENCODE_MODEL \
+        -u OPENCODE_CONFIG -u OPENCODE_CONFIG_CONTENT XDG_CONFIG_HOME="$D/xdg-config" XDG_DATA_HOME="$D/xdg-data" \
         LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" E2E_STUB_MODE=done E2E_STUB_LOG="$D/stub.log" \
         LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$D/k.pem" ${envs[@]+"${envs[@]}"} \
         ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start "add a multiply(a, b) function to calc.ts" --no-pr "$@" </dev/null 2>&1)"
