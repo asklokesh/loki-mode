@@ -862,7 +862,16 @@ export function changedSymbols(diffU0: string): string[] {
   flush();
   return [...out];
 }
-const GO_INTERFACE_METHODS = new Set(["Error", "String", "GoString", "Format", "Unwrap", "Is", "As", "Len", "Less", "Swap", "Push", "Pop"]); // methods that satisfy a standard interface (error, fmt.Stringer, sort/heap.Interface): called by the library, rarely by name in a test
+/** Go methods that satisfy a standard interface and are called by the library, rarely by name in a test: Error/String/GoString/Format always; Unwrap/Is/As only
+ *  on a type that also has Error (an error type); Len/Less/Swap only on a type that has all three (sort.Interface); Push/Pop only on a sort.Interface type
+ *  (heap.Interface). An exported Push or Is on any other type is ordinary API and is owed a test. `methods` is the receiver type's method names in the file. */
+const GO_SORT = ["Len", "Less", "Swap"];
+function goInterfaceMethod(name: string, methods: ReadonlySet<string>): boolean {
+  if (["Error", "String", "GoString", "Format"].includes(name)) return true;
+  if (["Unwrap", "Is", "As"].includes(name)) return methods.has("Error");
+  const sorts = GO_SORT.every((m) => methods.has(m));
+  return (GO_SORT.includes(name) || name === "Push" || name === "Pop") && sorts && (GO_SORT.includes(name) || (methods.has("Push") && methods.has("Pop")));
+}
 /** HONEST-VERIFIED-2: languages whose added public functions are tracked (the cap and its claim cover exactly these). */
 export const API_FILE_EXT = /\.(?:[cm]?[jt]sx?|py|go|rs)$/;
 // Not API: generated code, type declarations, and test support code that lives outside *_test/test_* files.
@@ -883,9 +892,10 @@ export function addedPublicFunctions(path: string, head: string, base: string): 
     if (sp.container || had.has(sp.name)) continue;
     const parts = sp.name.split("."), name = parts[parts.length - 1]!, parent = parts.length > 1 ? byName.get(parts.slice(0, -1).join(".")) : undefined, decl = declOf(sp.start);
     if (lang === "py") { if (/^\s*(?:async\s+)?def\s/.test(decl) && parts.every((x) => !x.startsWith("_"))) out.add(name); continue; }
-    if (lang === "go") { const recv = /^func\s*\(\s*\w*\s*\*?\s*([A-Za-z_]\w*)/.exec(decl)?.[1]; if (/^func\b/.test(decl) && /^[A-Z]/.test(name) && (recv === undefined ? true : /^[A-Z]/.test(recv) && !GO_INTERFACE_METHODS.has(name))) out.add(name); continue; }
+    if (lang === "go") { const recv = parent?.name ?? (parts.length > 1 ? parts[parts.length - 2] : undefined); /* the span names a method Type.Method, so an unnamed receiver `func (Version) Major()` reads Version too */ if (/^func\b/.test(decl) && /^[A-Z]/.test(name) && (recv === undefined ? true : /^[A-Z]/.test(recv) && !goInterfaceMethod(name, new Set(spans.filter((x) => x.name.startsWith(`${recv}.`)).map((x) => x.name.slice(recv.length + 1)))))) out.add(name); continue; }
     if (lang === "rs") { if (/\bpub(?:\([^)]*\))?\s+(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+"[^"]*"\s+)?fn\s/.test(decl)) out.add(name); continue; }
-    const fnLike = /\bfunction\b|=>|^\s*(?:(?:public|static|async|override|readonly|get|set)\s+)*[A-Za-z_$][\w$]*\s*(?:<[^>]*>)?\s*\(/.test(decl);
+    const arrowHead = /=\s*(?:async\s*)?(?:<[^>]*>\s*)?\(\s*$/.test(decl) ? lines.slice(sp.start - 1, Math.min(sp.end, sp.start + 30)).join("\n") : ""; // a Prettier multi-line arrow `export const f = (\n  items,\n): number => {`
+    const fnLike = /\bfunction\b|=>|^\s*(?:(?:public|static|async|override|readonly|get|set)\s+)*[A-Za-z_$][\w$]*\s*(?:<[^>]*>)?\s*\(/.test(decl) || /^[^]*?\)\s*(?::[^=]*?)?=>/.test(arrowHead);
     if (!fnLike || name === "constructor") continue; // a constructor is called as `new Class`, so the class name is the reference (seal checks classes through their methods)
     if (parent) { const cls = declOf(parent.start); if ((/^\s*export\s/.test(cls) || exported.has(parent.name)) && !/^\s*(?:private|protected)\b|#/.test(decl)) out.add(name); }
     else if (/^\s*export\s/.test(decl) || exported.has(name)) out.add(name);
@@ -906,7 +916,15 @@ export function symbolGap(symbols: readonly string[], testSources: readonly stri
   if (symbols.length === 0) return ["(no declared symbol)"];
   return unreferenced(symbols, testSources).length === symbols.length ? [...symbols] : [];
 }
-/** Indirect coverage: starting from the functions a test references, every function a covered function calls (in the changed files, at HEAD) is covered too, so a helper split out of an API a test calls is not reported. Returns the names of `unexercised` that stay uncovered. */
+/** The files among `candidates` (untouched sources, at HEAD) that call a function `changed` defines: the callers that link a test to a changed file through code the run did not edit
+ *  (a test calls Invoice.tax_cents in invoice.py, which calls the changed tax.py's invoice_tax_cents, which calls the added line_tax_cents). */
+export function callerFiles(changed: readonly { path: string; src: string }[], candidates: readonly { path: string; src: string }[]): { path: string; src: string }[] {
+  const names = [...new Set(changed.flatMap((f) => symbolSpans(f.path, f.src).filter((x) => !x.container).map((x) => x.name.split(".").pop()!)))];
+  if (names.length === 0) return [];
+  const call = new RegExp(`(?<![\\w$])(?:${names.map((n) => n.replace(/[$]/g, "\\$")).join("|")})\\s*\\(`);
+  return candidates.filter((f) => call.test(codeOnly(f.src)));
+}
+/** Indirect coverage: starting from the functions a test references, every function a covered function calls (in `files`: the changed files and their untouched callers from callerFiles, at HEAD) is covered too, so a helper split out of an API a test calls is not reported. Returns the names of `unexercised` that stay uncovered. */
 export function exercisedViaCallers(unexercised: readonly string[], referenced: (name: string) => boolean, files: readonly { path: string; src: string }[]): string[] {
   const bodies = files.flatMap((f) => { const lines = codeOnly(f.src).split("\n"); return symbolSpans(f.path, f.src).filter((x) => !x.container).map((x) => ({ name: x.name.split(".").pop()!, body: lines.slice(x.start, x.end).join("\n") })); });
   const calls = (body: string, f: string): boolean => new RegExp(`(?<![\\w$.])${f.replace(/[$]/g, "\\$")}\\s*\\(|\\.${f.replace(/[$]/g, "\\$")}\\s*\\(`).test(body);

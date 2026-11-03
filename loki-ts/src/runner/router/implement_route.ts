@@ -5,6 +5,7 @@ import { climb, type UnitEscalation } from "../model_rank.ts";
 import { routeRecord } from "./unit_model.ts";
 import { routerPreset } from "./flag.ts";
 import { repoHistoryFloor } from "./history.ts";
+import { REDO_CHALLENGE } from "../../util/conflict_resume.ts";
 
 export interface UnitRoute { current: string; escalations: UnitEscalation[] }
 const UNIT = "run";
@@ -18,7 +19,8 @@ export function routeStart(ctx: RunContext, first: SessionRunOptions, plan: Reco
 }
 
 /** Triggers b (LOKI_ESCALATE marker) and c (SPEC_CONFLICT, implement limit kill): redo the unit once on the next rung. Harness-owned errors never reach here.
- *  LOKI_ROUTER=auto also climbs one rung on an already-done claim that left no diff (`noDiff`): a cheap executor's "nothing to do" is weak evidence. */
+ *  LOKI_ROUTER=auto also climbs one rung on an already-done claim that left no diff (`noDiff`): a cheap executor's "nothing to do" is weak evidence.
+ *  That redo's brief carries REDO_CHALLENGE (reproduce the described defect first), so it is the claim's challenge at no extra session. */
 export async function routeEscalate(ctx: RunContext, first: SessionRunOptions, session: SessionResult, rt: UnitRoute, ids: string[], noDiff: () => boolean = () => false): Promise<SessionResult> {
   const claim = !session.killed && session.markers.alreadyDone !== null && routerPreset() && noDiff();
   const trig = session.killed ? ("limit_kill" as const) : session.markers.escalate ? ("escalate_marker" as const) : session.markers.specConflict ? ("spec_conflict" as const) : claim ? ("already_done_claim" as const) : null;
@@ -27,5 +29,5 @@ export async function routeEscalate(ctx: RunContext, first: SessionRunOptions, s
   rt.escalations.push(esc); rt.current = esc.to;
   ctx.emit("route.escalated", "implement", { ...esc });
   first.model = rt.current; first.iterationId = `${first.iterationId}-esc`; ids.push(first.iterationId);
-  return ctx.sessions.run(first);
+  return ctx.sessions.run(trig === "already_done_claim" ? { ...first, brief: `${first.brief}\n\n${REDO_CHALLENGE}` } : first); // HONEST-ALREADY-DONE: the claim redo is also its challenge
 }

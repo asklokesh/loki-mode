@@ -5,9 +5,11 @@
 #   alreadyfirst: the first implement session claims already-done; the already-done challenge resume makes the multiply() change
 #   emptythenalready: LOKI_DONE with no change, LOKI_ALREADY_DONE in reply to the empty-done correction, the change on the challenge
 #   editalready: adds multiply() and answers LOKI_ALREADY_DONE every time
+#   redothenempty: claims already-done; on the router's redo (REDO_CHALLENGE) LOKI_DONE with no change; already-done again on the empty-done correction
 #   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
 #   agentonly: multiply() plus an exported square() that only the session's own square.test.ts calls (tests/min/scope-and-fix.sh)
+#   viacaller: multiply() plus an exported scale() that only the untouched ops.ts calls (tests/min/scope-and-fix.sh seeds ops.ts and its test)
 #   wallphantom: the Wall author writes loki_wall_multiply.test.ts calling multiplyAll(), a name the task never asks for
 #     (red on base, still red after the correct multiply() lands); E2E_STUB_WALL_SLEEP=<s> makes that author session slow
 # E2E_STUB_WALL (Wall author, any mode): gopkg writes loki_wall_calc_test.go as "package calc" (the tests/ directory is
@@ -166,6 +168,8 @@ if [ "$stage" = "implement" ]; then
     echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"
   elif [ "${E2E_STUB_MODE:-done}" = "emptythenalready" ] && ! printf '%s' "$prompt" | grep -q "You finished with LOKI_ALREADY_DONE"; then # LOKI_DONE with no change, then already-done in reply to the empty-done correction; the challenge makes the change
     if printf '%s' "$prompt" | grep -q "working tree has no change against the base"; then echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"; else echo "LOKI_DONE"; fi
+  elif [ "${E2E_STUB_MODE:-done}" = "redothenempty" ]; then # tests/min/auto-route.sh: the empty-done correction after a router redo carries the challenge
+    if printf '%s' "$prompt" | grep -q "An earlier session claimed LOKI_ALREADY_DONE" && ! printf '%s' "$prompt" | grep -q "working tree has no change against the base"; then echo "LOKI_DONE"; else echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"; fi
   elif [ "${E2E_STUB_MODE:-done}" = "editalready" ]; then # adds multiply() and still claims already-done, also after the challenge
     grep -q 'export function multiply' calc.ts || printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts
     echo "LOKI_ALREADY_DONE: calc.ts:1 multiply exists"
@@ -186,6 +190,8 @@ if [ "$stage" = "implement" ]; then
     elif [ "${E2E_STUB_MODE:-}" = "agentonly" ]; then # multiply() (the visible test exercises it) plus square(), which only a test this session writes calls
       printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function square(a: number): number {\n  return a * a;\n}\n' >> calc.ts
       printf 'import { expect, test } from "bun:test";\nimport { square } from "./calc";\n\ntest("square", () => {\n  expect(square(3)).toBe(9);\n});\n' > square.test.ts
+    elif [ "${E2E_STUB_MODE:-}" = "viacaller" ]; then # multiply() plus scale(), which no test names but the untouched ops.ts twice() calls (a seeded test calls twice)
+      printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function scale(a: number, k: number): number {\n  return a * k;\n}\n' >> calc.ts
     elif [ "${E2E_STUB_MODE:-}" = "localvar" ]; then # FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: multiply() with a local variable and a comment word a test could echo
       printf '\n// let users multiply two numbers\nexport function multiply(a: number, b: number): number {\n  const result = a * b;\n  return result;\n}\n' >> calc.ts
     else

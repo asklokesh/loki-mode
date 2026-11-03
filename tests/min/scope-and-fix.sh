@@ -24,10 +24,14 @@
 #   agent-only:  the same lean task, but the session also adds an exported square() that only its own new test calls:
 #                the run is PARTIAL and the receipt names square as unexercised by an agent-independent test.
 #   public unit: addedPublicFunctions reads the file at HEAD against the base: a method added to an existing class, a def
-#                under a module-level if, Go `var X = func`, TS exported-class methods and `export { f }`, Rust pub fn count;
+#                under a module-level if, Go `var X = func`, TS exported-class methods and `export { f }`, Rust pub fn, a
+#                Prettier multi-line exported arrow, a Go method on an unnamed receiver, and Push or Is on an ordinary type count;
 #                a private class, a nested def, a signature-only edit, a .d.ts, a .pb.go, test helpers outside test files,
-#                interface methods and non-function consts do not. Names inside strings are no reference; a helper whose
-#                caller a test calls is covered.
+#                Error/String, sort/heap methods on a sort.Interface type, Is/As/Unwrap on an error type, and non-function consts
+#                do not. Names inside strings are no reference; a helper whose caller a test calls is covered, also through a
+#                caller in a file the run did not touch.
+#   via caller:  the session adds scale(), which no test names; the untouched ops.ts twice() calls it and the visible test calls
+#                twice(), so the run is VERIFIED (py-invoice-rounding: line_tax_cents through Invoice.tax_cents).
 #   go map:      a changed Go file maps to the tests of its own package and to any test importing that package by its
 #                module import path (internal/json never maps to a test importing encoding/json).
 #   go cover:    (go installed) a tests-only package that imports no module package is never corroborated beside one that does.
@@ -115,6 +119,12 @@
 #  36. loki-ts/src/engine10/stages/implement.ts: already_done exit regardless of edits (the editalready run loses multiply).
 #  37. loki-ts/src/util/check_result.ts codeOnly: stop stripping strings (public unit reads strings=-).
 #  38. loki-ts/src/util/check_result.ts addedPublicFunctions: count a TS constructor (public unit reads tsclass=constructor+allow).
+#  39. check_result.ts addedPublicFunctions: drop the multi-line arrow window (public unit reads tsarrow=-).
+#  40. check_result.ts addedPublicFunctions: read the Go receiver with the old regex again (public unit reads gounnamed=-).
+#  41. check_result.ts goInterfaceMethod: exclude Push/Pop/Is on any type again (public unit reads gostack=-).
+#  42. check_result.ts goInterfaceMethod: never exclude Len/Less/Swap/Push/Pop/Is (public unit reads goheap=Len+Less+Swap+Push+Pop+Is).
+#  43. check_result.ts callerFiles: return [] (public unit reads untouched=line_tax_cents).
+#  44. seal.ts symbolGaps: pass only the changed files to exercisedViaCallers (the via-caller run is PARTIAL naming scale).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -390,6 +400,14 @@ notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(ope
 [ "$(outcome)" = "PARTIAL" ] && ok "agent-only: an added public function only the session's own test calls caps the run at PARTIAL" || { bad "agent-only: outcome is '$(outcome)'"; dump; }
 has "agent-only: the receipt names the unexercised function" "$notes" "no agent-independent passing test calls these added public functions: square"
 case "$notes" in *"functions: multiply"*|*"functions: square, multiply"*) bad "agent-only: multiply (called by the visible test) was named too: $notes" ;; *) ok "agent-only: multiply, which the visible test calls, is not named" ;; esac
+# via caller: scale() is added and no test names it, but the untouched ops.ts twice() calls it and the visible test calls twice (py-invoice-rounding's shape).
+mkdir -p "$T/seed-caller"
+printf 'import * as calc from "./calc";\n\nexport function twice(a: number): number {\n  const c = calc as unknown as { scale?: (a: number, k: number) => number };\n  return c.scale ? c.scale(a, 2) : a + a;\n}\n' > "$T/seed-caller/ops.ts"
+{ cat "$FIX/repo/calc.test.ts"; printf '\nimport { twice } from "./ops";\ntest("twice", () => {\n  expect(twice(3)).toBe(6);\n});\n'; } > "$T/seed-caller/calc.test.ts"
+SEED="$T/seed-caller" run_engine "$TASK" E2E_STUB_MODE=viacaller LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+case "$notes" in *"added public functions"*) bad "via caller: an added function an untouched caller of a tested function calls was capped: $notes" ;; *) ok "via caller: an added function reached through an untouched, tested caller is covered" ;; esac
+[ "$(outcome)" = "VERIFIED" ] && ok "via caller: the run is VERIFIED" || { bad "via caller: outcome is '$(outcome)'"; dump; }
 
 P="$(cd "$ROOT/loki-ts" && bun -e '
 const cr = await import("./src/util/check_result.ts");
@@ -410,12 +428,17 @@ const o = [
   "pbgo=" + f("api.pb.go", "package x\n\nfunc (x *Req) GetName() string {\n  return \"\"\n}\n"),
   "testutil=" + f("internal/testutil/h.go", "package t\n\nfunc MustOpen() {\n}\n"),
   "helpers=" + f("tests/helpers.py", "def make():\n    pass\n"),
+  "tsarrow=" + f("a.ts", "export const total = (\n  items: number[],\n): number => {\n  return 0;\n};\nexport const cfg = (\n  1 + 2\n);\n"),
+  "gounnamed=" + f("x.go", "package x\n\nfunc (Version) Major() int {\n  return 0\n}\n"),
+  "gostack=" + f("x.go", "package x\n\nfunc (s *Stack) Push(x any) {\n}\nfunc (k Kind) Is(o Kind) bool {\n  return true\n}\n"),
+  "goheap=" + f("x.go", "package x\n\nfunc (h H) Len() int {\n  return 0\n}\nfunc (h H) Less(i, j int) bool {\n  return false\n}\nfunc (h H) Swap(i, j int) {\n}\nfunc (h *H) Push(x any) {\n}\nfunc (h *H) Pop() any {\n  return nil\n}\nfunc (e *E) Error() string {\n  return \"\"\n}\nfunc (e *E) Is(t error) bool {\n  return false\n}\n"),
   "rs=" + f("src/lib.rs", "pub struct A;\nimpl A {\n    pub fn new() -> Self { A }\n    fn hid(&self) {}\n}\npub fn free() {}\n"),
   "strings=" + cr.unreferenced(["intersects", "run"], ["assert \"intersects\" in doc\nrunner.run()"]).join("+"),
+  "untouched=" + (cr.exercisedViaCallers(["line_tax_cents"], (n) => n === "tax_cents", [{ path: "b/tax.py", src: "def line_tax_cents(a, r):\n    return a\n\ndef invoice_tax_cents(ls, r):\n    return sum(line_tax_cents(l, r) for l in ls)\n" }, ...cr.callerFiles([{ path: "b/tax.py", src: "def line_tax_cents(a, r):\n    return a\n\ndef invoice_tax_cents(ls, r):\n    return sum(line_tax_cents(l, r) for l in ls)\n" }], [{ path: "b/invoice.py", src: "class Invoice:\n    def tax_cents(self):\n        return invoice_tax_cents(self.lines, 1)\n" }, { path: "b/other.py", src: "def other():\n    return 1\n" }])]).join("+") || "-"),
   "indirect=" + cr.exercisedViaCallers(["validateEmail", "orphan"], (n) => n === "signup", [{ path: "s.ts", src: "export function signup(e: string) {\n  return validateEmail(e);\n}\nexport function validateEmail(e: string) {\n  return e.includes(\"@\");\n}\nexport function orphan() {\n  return 1;\n}\n" }]).join("+"),
 ];
 console.log(o.join(" "));' 2>&1)"
-[ "$P" = "pyclass=intersects pyif=compat pyprivcls=- pynested=retry pysig=- tsclass=allow tsprivcls=- tslist=foo dts=- tsconst=g govar=Parse goiface=New pbgo=- testutil=- helpers=- rs=new+free strings=intersects indirect=orphan" ] && ok "public unit: added public functions are read from the file at HEAD against the base, not from diff hunks" || bad "public unit gave: $P"
+[ "$P" = "pyclass=intersects pyif=compat pyprivcls=- pynested=retry pysig=- tsclass=allow tsprivcls=- tslist=foo dts=- tsconst=g govar=Parse goiface=New pbgo=- testutil=- helpers=- tsarrow=total gounnamed=Major gostack=Push+Is goheap=- rs=new+free strings=intersects untouched=- indirect=orphan" ] && ok "public unit: added public functions are read from the file at HEAD against the base, not from diff hunks" || bad "public unit gave: $P"
 run_engine "$TASK" E2E_STUB_MODE=alreadyfirst LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
 grep -q -- '-a ' "$ITERS" && ok "already: the already-done claim got one challenge session" || { bad "already: no challenge session ran"; dump; }
 [ "$(outcome)" = "VERIFIED" ] && grep -q 'export function multiply' "$REPO/calc.ts" && ok "already: after the challenge the change was made and VERIFIED" || { bad "already: outcome '$(outcome)', multiply present: $(grep -c 'export function multiply' "$REPO/calc.ts")"; dump; }

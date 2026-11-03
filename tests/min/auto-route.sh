@@ -46,6 +46,8 @@
 #  17. sizing.ts namedDistinct: add every matched basename even when a spelled-out path has it (unit: spelled3; hard leg:
 #      three spelled-out paths in a two-package monorepo plan).
 #  18. implement.ts: drop `routerRedid ||` from challenge() (already leg: implement models read 'haiku sonnet sonnet').
+#  19. implement_route.ts routeEscalate: run the claim redo with `first` unchanged (already leg: the redo brief has no challenge).
+#  20. implement.ts: pass `false` for resumeAfterEmptyDone's challenge (already leg: the empty-done correction after the redo has no challenge).
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
 need git
@@ -175,6 +177,12 @@ has "hard: the plan brief asks for files, pitfalls and the proving test" "$(cat 
 run_engine "$TASK" E2E_STUB_MODE=already
 [ "$(model_of implement)" = "haiku sonnet" ] && ok "already: Haiku's no-diff already-done claim got one sonnet redo" || { bad "already: implement models '$(model_of implement)'"; dump; }
 grep -q '"already_done_claim"' "$RUNDIR/events.jsonl" 2>/dev/null && ok "already: the climb is recorded as already_done_claim" || bad "already: no already_done_claim climb in events.jsonl"
+prompts="$(cat "$(dirname "$ROUTES")"/prompt.* 2>/dev/null)"
+[ "$(printf '%s\n' "$prompts" | grep -c 'An earlier session claimed LOKI_ALREADY_DONE')" = 1 ] && ok "already: the sonnet redo's brief carries the already-done challenge (no extra session)" || { bad "already: the redo brief has no challenge"; dump; }
+run_engine "$TASK" E2E_STUB_MODE=redothenempty
+prompts="$(cat "$(dirname "$ROUTES")"/prompt.* 2>/dev/null)"
+has "already: an empty-done correction after the redo carries the challenge" "$prompts" "Before you claim LOKI_ALREADY_DONE: A task's example code"
+case "$prompts" in *"You finished with LOKI_ALREADY_DONE"*) bad "already: a separate challenge session ran after the redo" ;; *) ok "already: no separate challenge session after the redo" ;; esac
 
 run_engine "$TASK" E2E_STUB_MODE=done LOKI_ROUTER= LOKI_IMPLEMENT_HAIKU_FIRST=1
 has "notice: LOKI_IMPLEMENT_HAIKU_FIRST prints the deprecation note" "$OUT" "Note: 'LOKI_IMPLEMENT_HAIKU_FIRST' is deprecated"
