@@ -14,15 +14,15 @@ export function namedFiles(task: string, map: RepoMap | null): string[] {
   return (map?.files ?? []).filter((f) => new RegExp(`(?<![\\w.-])${escRe(basename(f).toLowerCase())}(?![\\w-]|\\.\\w)`).test(text));
 }
 
-/** P12-46: "large" = names more than LARGE_NAMED_FILES repo files, or several independent deliverables by structure (features/decompose.ts deliverables); never lean, and an issue ref goes to the MASS-2 split (commands/issues_run.ts startIssueEpic). A large unit never runs in parallel. */
+/** P12-46: "large" = names more than LARGE_NAMED_FILES distinct non-test files (namedDistinct: "fix index.ts" in a monorepo of nine index.ts is one), or several independent deliverables by structure (features/decompose.ts deliverables); never lean, and an issue ref goes to the MASS-2 split (commands/issues_run.ts startIssueEpic). A large unit never runs in parallel. */
 export type TaskSize = "small" | "normal" | "large"; export const LARGE_NAMED_FILES = 8;
 /** C-F1 run4 knobs: LOKI_E10_SMALL_MAX_CHARS (positive number, default 600); a missing runner no longer forces normal (default); LOKI_E10_SMALL_NO_RUNNER=0 restores that disqualifier. */
 const noted = new Set<string>(); // one stderr note per name=value; a setting that was not honored must be visible, the returned number never changes
 const noteOnce = (name: string, raw: string | undefined, why: string): void => { if (raw === undefined || !raw.trim() || noted.has(name + raw)) return; noted.add(name + raw); process.stderr.write(`loki: ${name}="${raw}" ${why}\n`); };
 export const smallMaxChars = (env = process.env): number => { const n = Number(env.LOKI_E10_SMALL_MAX_CHARS); if (n > 0) return n; noteOnce("LOKI_E10_SMALL_MAX_CHARS", env.LOKI_E10_SMALL_MAX_CHARS, "is not a positive number; using 600"); return 600; };
 export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | null): { size: TaskSize; reasons: string[] } {
-  const named = namedFiles(task, map).length;
-  if (named > LARGE_NAMED_FILES) return { size: "large", reasons: [`task names ${named} files > ${LARGE_NAMED_FILES}: decompose`] }; const st = deliverables(task); if (st.large) return { size: "large", reasons: [`${st.reason}: decompose`] };
+  const named = namedFiles(task, map).length, distinct = namedDistinct(task, map);
+  if (distinct > LARGE_NAMED_FILES) return { size: "large", reasons: [`task names ${distinct} distinct files > ${LARGE_NAMED_FILES}: decompose`] }; const st = deliverables(task); if (st.large) return { size: "large", reasons: [`${st.reason}: decompose`] };
   const why = [
     !task.trim() && "no task text", task.length > smallMaxChars() && `task ${task.length} chars > ${smallMaxChars()}`,
     !map && "no repo map", (map?.files.length ?? 0) > 3000 && `repo ${map?.files.length} files > 3000`,
@@ -36,14 +36,15 @@ export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | nul
 export const HARD_NAMED_FILES = 4;
 /** Distinct non-test files the task names, as written: each path the task spells out (as a whole token, so "src/index.ts" inside
  *  "packages/web/src/index.ts" is not a second one) counts once; a bare basename counts once however many repo files share it, and not
- *  at all when a spelled-out path already has that basename ("fix index.ts" in a monorepo is 1; three spelled-out paths are 3). A root file has no path to spell out, so its name is a bare basename. */
+ *  at all when a spelled-out path already has that basename ("fix index.ts" in a monorepo is 1; three spelled-out paths are 3). A leading "./" on a spelled-out path is
+ *  allowed ("./src/a.ts" is src/a.ts; "../src/a.ts" is not). A root file has no path to spell out, so its name is a bare basename. */
 export function namedDistinct(task: string, map: RepoMap | null): number {
   const text = task.toLowerCase(), named = namedFiles(task, map).filter((f) => !isTestFile(f)).map((f) => f.toLowerCase());
-  const spelled = new Set(named.filter((f) => f.includes("/") && new RegExp(`(?<![\\w./-])${escRe(f)}(?![\\w-]|\\.\\w)`).test(text)));
+  const spelled = new Set(named.filter((f) => f.includes("/") && new RegExp(`(?<![\\w./-])(?:\\./)?${escRe(f)}(?![\\w-]|\\.\\w)`).test(text)));
   const spelledBase = new Set([...spelled].map((f) => basename(f)));
   return spelled.size + new Set(named.map((f) => basename(f)).filter((b) => !spelledBase.has(b))).size;
 }
-/** Why a task is hard, from task evidence only, never repo size (a truncated repo map is repo size, so it never counts): sized large (deliverables() or more than LARGE_NAMED_FILES named files), or the task naming more than HARD_NAMED_FILES distinct non-test files. Null otherwise. */
+/** Why a task is hard, from task evidence only, never repo size (a truncated repo map is repo size, so it never counts): sized large (deliverables() or more than LARGE_NAMED_FILES distinct named files), or the task naming more than HARD_NAMED_FILES distinct non-test files. Null otherwise. */
 export function hardReason(size: TaskSize, map: RepoMap | null, task: string): string | null {
   if (size === "large") return "task sized large";
   const n = namedDistinct(task, map);

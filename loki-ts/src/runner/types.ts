@@ -11,6 +11,9 @@ export const REMOVED_PROVIDERS: ReadonlySet<string> = new Set(["codex", "cline",
 /** Byte-identical to loki_removed_provider_message in providers/loader.sh (tests/min/providers-supported.sh compares them). */
 export const removedProviderMessage = (name: string): string =>
   `loki: provider '${name}' is no longer supported. Supported providers: claude (Claude Code CLI, or an Anthropic API key through the Agent SDK) and opencode (any model, including OpenRouter via OPENROUTER_API_KEY). Switch with --provider claude or --provider opencode, or unset LOKI_PROVIDER.\n`;
+/** Byte-identical to loki_removed_saved_provider_hint in providers/loader.sh: the second line when the removed name came from .loki/state/provider. */
+export const removedSavedProviderHint = (name: string): string =>
+  `loki: this project saved provider '${name}' in .loki/state/provider; switch it with: loki provider set claude\n`;
 /** The one refusal for a provider name `loki start`/`loki estimate` cannot run: the migration line for a removed one, the supported list otherwise. */
 export const unsupportedProviderMessage = (cmd: string, flag: string, name: string): string =>
   REMOVED_PROVIDERS.has(name) ? removedProviderMessage(name) : `${cmd}: unknown ${flag} '${name}' (use one of: ${[...VALID_PROVIDERS].join(", ")})\n`;

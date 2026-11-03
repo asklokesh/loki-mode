@@ -312,6 +312,16 @@ loki_route_resolve() {
 
     # Provider and model (display only; engine10 resolves its own at run time).
     R_PROVIDER="$(_route_provider "$provider_flag")"
+    # A removed provider gets the one migration line on every engine. bin/loki already refused one from
+    # --provider or LOKI_PROVIDER, so a removed name here is the project's saved choice: add how to clear it.
+    if loki_is_removed_provider "$R_PROVIDER"; then
+        R_ERR="$(loki_removed_provider_message "$R_PROVIDER")"
+        if [ -z "$provider_flag" ] && [ -z "${LOKI_PROVIDER:-}" ]; then
+            R_ERR="$R_ERR
+$(loki_removed_saved_provider_hint "$R_PROVIDER")"
+        fi
+        return 0
+    fi
     if [ -n "$session_model" ]; then
         R_MODEL="$session_model"
     elif [ -n "${LOKI_SESSION_MODEL:-}" ]; then
@@ -377,12 +387,10 @@ loki_route_resolve() {
         fi
     fi
     if [ -n "$provider_flag" ] && [ "$engine_req" != "legacy" ]; then
-        case "$provider_flag" in
-            claude|opencode) ;;
-            *)
-                R_ERR="loki: --provider $provider_flag has no Loki 10 engine invoker (use claude or opencode, or pass --engine legacy)"
-                return 0 ;;
-        esac
+        if ! validate_provider "$provider_flag"; then
+            R_ERR="loki: --provider $provider_flag has no Loki 10 engine invoker (use $(loki_supported_providers_joined " or "), or pass --engine legacy)"
+            return 0
+        fi
     fi
     # --dry-run (engine10 has no preview of its own for these inputs): print the route, then exit 0 without a run.
     if [ "$dry" = "1" ] && [ "$engine_req" != "legacy" ]; then R_DRY=1; fi
@@ -395,10 +403,9 @@ loki_route_resolve() {
         R_ENGINE=engine10; R_E10=1; R_HARD=1; R_REASON="explicit: --engine engine10"
     else
         # L009: a provider with no engine10 invoker is refused, never sent to the legacy loop.
-        case "$R_PROVIDER" in
-            claude|opencode) ;;
-            *) R_ERR="loki: provider $R_PROVIDER is not supported; use one of: claude, opencode"; return 0 ;;
-        esac
+        if ! validate_provider "$R_PROVIDER"; then
+            R_ERR="loki: provider $R_PROVIDER is not supported; use one of: $(loki_supported_providers_joined)"; return 0
+        fi
         if [ "${sz:-0}" -gt "$_ROUTE_PRD_MAX" ] && _route_sdk_claude "$R_PROVIDER"; then
             R_ERR="loki: this PRD is ${sz} bytes, over the ${_ROUTE_PRD_MAX}-byte limit of the Loki 10 engine, and the legacy engine has no Agent SDK path; trim the PRD below 100 KB, or unset LOKI_SDK_MODE, LOKI_SDK and LOKI_SDK_LOOP to run the legacy engine on a provider CLI"
             return 0
