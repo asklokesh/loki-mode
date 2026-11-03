@@ -41,7 +41,7 @@
 #   8. providers/loader.sh: change one word of loki_removed_saved_provider_hint (the byte-identical hint leg fails).
 #  10. loki-ts/src/engine10/supervisor.ts: drop the runProvider saved check (the saved-opencode runs go to claude,
 #      and the bare saved-codex leg runs instead of refusing).
-#  11. autonomy/route.sh _route_provider: drop the CR strip (the CRLF codex leg prints 'codex\r').
+#  11. autonomy/route.sh _route_provider: drop the trailing-whitespace strip (the CRLF codex leg prints 'codex\r').
 #  12. providers/loader.sh validate_provider: drop `p` from the local list (the failover leg names opencode).
 #   9. tests/min/providers-supported.sh run_engine: keep XDG_CONFIG_HOME from the caller and give the no-key leg an
 #      opencode.json with provider.openrouter there (the no-key leg starts a session; proves the isolation matters).
