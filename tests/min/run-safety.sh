@@ -23,6 +23,11 @@
 #      is delivered PARTIAL; the checkout returns with the same porcelain (no Wall
 #      file left untracked); unit-level, run end removes only its own untracked Wall
 #      files whose bytes match the receipt.
+#   6. a FireLater#21-shaped lean run (the task names frontend/src/lib/api.ts, 2 page tests that import it are red
+#      on base, the root runs no tests): those page tests are pre-existing by the frontend suite's baseline, never
+#      blocking or fix-round input, and the run is delivered PARTIAL naming them as capped; unit-level, a test of a
+#      named file's stem stays the task's own, an ignored .next/package.json is not test configuration, and a FAILED
+#      split's Reason names its PRs and the stopped slice's branch.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/engine10/supervisor.ts: drop the refuseCommandGoal line, so a
@@ -61,6 +66,11 @@
 #  17. conflict_resume.ts wallFailures: excuse every known_red_checks entry again; the delivery check fails.
 #  18. verify.ts errorsById: keep one error line per id (last wins) instead of the sorted multiset; or let a FAIL line take the
 #      next FAIL line as its error; the delivery check fails (the test.each regression reads as the same error).
+#  19. verify.ts attribute call: eligible = !targetNames.has(name) again (collateral never attributable); the mono3 run
+#      takes a fix round on base-red page tests and ends STALLED (3 mono3 checks fail).
+#  20. repo_profile.ts attribute: ignore `suite` (root baseline only); the mono3 run is FAILED with p1,p2 blocking.
+#  21. runner_config.ts hiddenConfigChanged: count every added ignored config again; the unit check fails on .next/package.json.
+#  22. issues_epic.ts epicOutcome: drop the delivered-PR suffix of the Reason line; the unit check fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -274,6 +284,70 @@ EV2="$(ls "$M2"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
 R2="$( [ -n "$EV2" ] && python3 -I -c 'import json,sys; ev=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]; print(sum(1 for e in ev if e["type"]=="fix.round"))' "$EV2")"
 [ "$R2" = 2 ] && printf '%s\n' "$OUT2" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' && ok "mono: a fix round that moves the Wall earns the next round; delivered PARTIAL after the round that does not (rc $RC2)" \
     || { bad "mono: Wall moved by round 1: fix rounds ${R2:-?}, outcome $(printf '%s\n' "$OUT2" | sed -n 's/^Outcome:[[:space:]]*//p') (rc $RC2)"; printf '%s\n' "$OUT2" | tail -8 | sed 's/^/    | /'; }
+
+# FireLater#21-shaped: a lean task names frontend/src/lib/api.ts (its own test lib/__tests__/api.test.ts is green); 4 page tests import that
+# client and 2 are red on base, in a repo whose root runs no tests (only the per-package suites have a baseline). Those red page tests are
+# relevant only because they import a named file: they are pre-existing (every id in the frontend suite's baseline), never fix-round input,
+# never blocking, and listed once as capped. Before this they blocked: a fix round on base-red failures, then SPEC_CONFLICT and no PR.
+M3="$T/mono3"
+mkdir -p "$M3/backend/tests" "$M3/frontend/src/lib/__tests__"
+printf 'node_modules\n.next/\n' > "$M3/.gitignore"
+printf '{ "name": "mono-api", "private": true, "scripts": { "test": "vitest run" } }\n' > "$M3/backend/package.json"
+printf '{ "name": "mono-web", "private": true, "scripts": { "test": "vitest run" } }\n' > "$M3/frontend/package.json"
+printf 'import { test, expect } from "vitest";\ntest("ok", () => { expect(1).toBe(1); });\n' > "$M3/backend/tests/ok.test.ts"
+printf 'export const api = { get: (p: string): string => `GET ${p}` };\n// LOKI_STUB_INSERT\n' > "$M3/frontend/src/lib/api.ts"
+printf 'import { test, expect } from "vitest";\nimport { api } from "../api";\ntest("get", () => { expect(api.get("/x")).toBe("GET /x"); });\n' > "$M3/frontend/src/lib/__tests__/api.test.ts"
+for i in 1 2 3 4; do
+    mkdir -p "$M3/frontend/src/app/p$i/__tests__"; red=""; [ "$i" -le 2 ] && red=" /*red*/"
+    printf 'import { test, expect, describe } from "vitest";\nimport { api } from "../../../lib/api";\ndescribe("page %s", () => {\n  test("renders", () => { expect(1).toBe(1); });\n  test("has gray background", () => { expect(api.get("/p")).toBe("GET /p");%s });\n});\n' "$i" "$red" > "$M3/frontend/src/app/p$i/__tests__/page.test.ts"
+done
+git -C "$M3" init -q -b main && git -C "$M3" config user.name rs && git -C "$M3" config user.email rs@example.invalid
+git -C "$M3" add -A . && git -C "$M3" commit -q -m base
+OUT3="$(cd "$M3" && PATH="$FIX/vitest-bin:$PATH" E2E_STUB_MODE=stack E2E_STUB_TARGET=frontend/src/lib/api.ts \
+    E2E_STUB_SNIPPET='export const del = (p: string): string => `DELETE ${p}`;' E2E_STUB_PROJECT="$PROJ" \
+    LOKI_E10_NO_FETCH=1 ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "add a del(p) helper next to the api client in frontend/src/lib/api.ts" --no-pr </dev/null 2>&1)"; RC3=$?
+EV3="$(ls "$M3"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
+S3="$( [ -n "$EV3" ] && python3 -I - "$EV3" <<'PY'
+import json, sys
+ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+v = next((e["data"] for e in ev if e["type"] == "stage.completed" and e["stage"] == "verify"), {})
+done = next((e["data"] for e in ev if e["type"] == "run.completed"), {})
+pages = lambda xs: sorted(n.split("/app/")[1].split("/")[0] for n in xs if "/app/p" in n and not n.startswith("full suite"))
+print("wall %s" % any(e["type"] == "session.started" and e["stage"] == "wall" for e in ev))
+print("fix_rounds %d" % sum(1 for e in ev if e["type"] == "fix.round"))
+print("pre_red %s" % ",".join(pages(v.get("pre_red_checks", []))))
+print("blocking %s" % ",".join(pages(v.get("blocking_checks", [])) + [n for n in v.get("blocking_checks", []) if n.startswith("full suite")]))
+print("capped %s" % ",".join(pages(n.split(": ", 1)[1] for n in done.get("not_proven", []) if n.startswith("relevant test already failing on base"))))
+print("verdict %s" % done.get("verdict"))
+PY
+)"
+printf '%s\n' "$S3" | sed 's/^/    mono3: /'
+printf '%s\n' "$S3" | grep -qx 'wall False' && ok "mono3: the task naming lib/api.ts takes the lean path (no Wall session)" || bad "mono3: a Wall session ran: $(printf '%s\n' "$S3" | grep '^wall')"
+printf '%s\n' "$S3" | grep -qx 'pre_red p1,p2' && ok "mono3: the 2 base-red page tests that import the named api.ts are pre-existing (frontend suite baseline)" || bad "mono3: pre_red $(printf '%s\n' "$S3" | grep '^pre_red')"
+printf '%s\n' "$S3" | grep -qx 'blocking ' && printf '%s\n' "$S3" | grep -qx 'fix_rounds 0' && ok "mono3: nothing blocks and no fix round runs on pre-existing failures" || bad "mono3: $(printf '%s\n' "$S3" | grep -E '^(blocking|fix_rounds)' | tr '\n' ' ')"
+printf '%s\n' "$S3" | grep -qx 'capped p1,p2' && printf '%s\n' "$S3" | grep -qx 'verdict PARTIAL' && printf '%s\n' "$OUT3" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' \
+    && ok "mono3: delivered PARTIAL, each still-red relevant test named once as capped (rc $RC3)" || { bad "mono3: $(printf '%s\n' "$S3" | grep -E '^(capped|verdict)' | tr '\n' ' ') (rc $RC3)"; printf '%s\n' "$OUT3" | tail -12 | sed 's/^/    | /'; }
+
+# The same rules, unit-level: a relevant test is the task's own when the task names it or a file of its covered stem (a named register/page.tsx keeps
+# every page.test.tsx a proof target, fail closed); an ignored file added since intake counts as test configuration only when it sets a runner key
+# (`next build`'s .next/package.json does not, a conftest.py or a package.json with a jest key does); a FAILED split names what it delivered.
+H3="$T/hidden"; mkdir -p "$H3/.next/build" "$H3/web" && git -C "$H3" init -q -b main && printf '.next/\nweb/\n' > "$H3/.gitignore"
+U3="$(H="$H3" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const v = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/verify.ts"), rc = await import(process.env.ROOT + "/loki-ts/src/features/runner_config.ts"), ep = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts"), { writeFileSync } = await import("node:fs");
+const t = (path) => ({ runner: "vitest", path }), rel = [t("f/src/app/p1/__tests__/page.test.tsx"), t("f/src/lib/__tests__/api.test.ts"), t("f/src/app/(auth)/register/__tests__/page.test.tsx")], col = (named) => v.collateralTests(rel, named).map((x) => x.path.split("/").slice(-3, -2)[0]).join(",");
+const r = [col(["f/src/lib/api.ts"]), col(["f/src/lib/api.ts", "f/src/app/(auth)/register/page.tsx"]), col(["f/src/lib/api.ts", "f/src/app/p1/__tests__/page.test.tsx"]), col(["f/src/lib/index.ts"])];
+const h = process.env.H, snap = rc.hiddenRunnerConfigs(h);
+writeFileSync(h + "/.next/package.json", "{\"type\":\"commonjs\"}\n"); writeFileSync(h + "/.next/build/package.json", "{\"type\":\"commonjs\"}\n"); r.push(rc.hiddenConfigChanged(h, snap).join(",") || "none");
+writeFileSync(h + "/web/package.json", "{\"jest\":{\"setupFiles\":[\"x.js\"]}}\n"); writeFileSync(h + "/web/conftest.py", "import os\n"); r.push(rc.hiddenConfigChanged(h, snap).join(","));
+const snap2 = rc.hiddenRunnerConfigs(h); writeFileSync(h + "/.next/package.json", "{\"type\":\"module\"}\n"); r.push(rc.hiddenConfigChanged(h, snap2).join(","));
+const row = (id, outcome, pr, branch) => ({ id, title: id, parent: null, outcome, pr, cost: "$1.00", usd: 1, rc: 0, branch });
+r.push(ep.epicOutcome([row("s1", "PARTIAL", "https://github.com/o/r/pull/31", "loki/a"), row("s2", "PARTIAL", "https://github.com/o/r/pull/32", "loki/b"), row("s4", "SPEC_CONFLICT", null, "loki/e10-x")], [], {}).lines.split("\n")[1].replace(/^Reason: +/, ""));
+r.push(ep.epicOutcome([row("s1", "FAILED", null, "loki/a")], [], {}).lines.split("\n")[1].replace(/^Reason: +/, ""));
+console.log(r.join(" | "));
+' 2>&1)"
+W3="p1,register |  | register | p1,lib,register | none | web/conftest.py,web/package.json | .next/package.json | slice s4: SPEC_CONFLICT (2 of 3 slices opened a PR; s4's change is on branch loki/e10-x) | slice s1: FAILED"
+[ "$U3" = "$W3" ] && ok "unit: collateral vs own relevant tests by covered stem; a build tool's ignored package.json is not test configuration, a runner key or conftest.py is; a FAILED split names its PRs and the stopped slice's branch" \
+    || bad "unit gave: $U3 (want: $W3)"
 
 # Wall-only delivery rules, unit-level: a failing full suite that is not known red blocks it; a delivery whose re-verify fails puts the Wall back
 # and records no discard; only known-red checks failing the same way on base are excused at delivery; errors are compared per failing id.

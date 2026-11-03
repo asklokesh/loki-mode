@@ -10,7 +10,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path"; impor
 import { hiddenConfigChanged, testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst, QUICK_ONLY_NOTE, quickScope, quickSplit } from "../../e10ext/select.ts"; import { dependentNotes, dependentTests } from "../../features/dependents.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
-import { guessRunner, isTestFile } from "../testmap.ts";
+import { guessRunner, isTestFile } from "../testmap.ts"; import { coveredStem } from "../../util/test_file_text.ts";
 import { withoutStaleWall, failureExcerpt, EXCERPT_TOTAL_CAP, changedFiles, hiddenEdits, ignoreRuleChanges, classifyCheck, corroboratePass, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount, SECURITY_SCAN, fileHashes, briefGroups, failureSignature } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
@@ -60,6 +60,14 @@ const isHold = (c: { name: string }): boolean => isHoldoutCheck(c.name); // C-C4
 const pubHold = (c: VerifyCheck): VerifyCheck => ({ name: "holdout", cmd: "holdout", result: c.result, duration_s: c.duration_s, ...(c.n !== undefined ? { n: c.n } : {}), ...(c.sk !== undefined ? { sk: c.sk } : {}), ...(c.owner ? { owner: c.owner, reason: "holdout infrastructure failure" } : {}) });
 /** The one check name a test run gets: runner:path. Provenance (check_result.ts) parses this shape. */
 export const testCheckName = (t: { runner: string; path: string }): string => `${t.runner}:${t.path}`;
+/** FireLater#21: the relevant tests (impacted by a task-named file) that are not the task's own: neither a named test file nor one whose covered stem is a named
+ *  file's stem (register/page.test.tsx for a named register/page.tsx). A page test that only imports or mocks a named lib/api.ts is collateral; when it is untouched
+ *  and every failing id was already red in its package's baseline it is pre-existing, never fix-round input, and listed with COLLATERAL_RED, which caps VERIFIED. */
+export const COLLATERAL_RED = "relevant test already failing on base, still failing the same tests (it imports a file the task names; capped, not blocking)";
+export function collateralTests(relevant: TestRef[], named: string[]): TestRef[] {
+  const stems = new Set(named.flatMap((f) => { const s = basename(f).replace(/\.[^.]+$/, ""); return /^(index|__init__|mod)$/.test(s) && f.includes("/") ? [s, basename(f.slice(0, f.lastIndexOf("/")))] : [s]; }));
+  return relevant.filter((t) => !named.includes(t.path) && !stems.has(coveredStem(t.path)));
+}
 const dedupeTests = (tests: TestRef[]): TestRef[] => [...new Map(tests.map((t) => [`${t.runner}:${t.path}`, t] as const)).values()];
 export { changedFiles } from "../../util/check_result.ts"; // one owner: check_result.ts (diffFiles builds on it)
 interface RunOpts {
@@ -387,7 +395,7 @@ export const verifyStage: Stage = {
     // E-56: wall.ts seals files under an absolute targetDir; normalize to repo-relative so an absolute Wall path still matches and runs in fast verify.
     const wallPaths = new Set((wall.files ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)));
     // A-114: the relevant tests of the task-named files are always selected, whatever the diff touches.
-    const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string; deps_not_proven?: string[] } | undefined, repoMap = loadRepoMap(intake?.repomap_ref), relevant = ctx.tests.impacted(map, namedFiles(intake?.task ?? "", repoMap));
+    const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string; deps_not_proven?: string[] } | undefined, repoMap = loadRepoMap(intake?.repomap_ref), named = namedFiles(intake?.task ?? "", repoMap), relevant = ctx.tests.impacted(map, named);
     const recorded = new Map((wall.files ?? []).flatMap((f) => (f.runner ? [[isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path, f.runner] as const] : []))); // D122: the runner the Wall recorded for each sealed file; verify never re-detects it after implement
     // FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER: run every sealed Wall path, never only those the runner's discovery lists (loki_wall_x.py is not a pytest-discovered name). No project runner: a Wall-sealed file runs with Loki's bun (harness), as before.
     const wallTests = [...wallPaths].flatMap((p): TestRef[] => { const rec = recorded.get(p), found = map.tests.find((t) => t.path === p && (!rec || t.runner === rec)); if (found) return [found]; const runner = rec ?? guessRunner(basename(p), map.runners, p); return runner && (runner !== "bun" || map.runners.includes("bun") || /[._](?:test|spec)\.[cm]?[jt]sx?$/.test(p)) ? [{ runner, path: p }] : []; }); // harness: `bun test <name>` skips any name bun does not discover as a test (*.test, *_test, *.spec, *_spec)
@@ -433,8 +441,11 @@ export const verifyStage: Stage = {
     const cfgChanged = [...new Set([...testConfigChanged(ctx.repoDir, ctx.baseSha, changed), ...hiddenConfigChanged(ctx.repoDir, ctx.outputs().intake?.hidden_cfg)])]; // FC-21b: also feeds uncovered_changed; SEAL-CONFTEST-01: ignored configs added or changed since intake count too
     const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map(testCheckName)), new Set(relevant.map(testCheckName)), signal, cfgChanged.length === 0, zeroGate((ctx.outputs().intake as { zero_baseline?: unknown } | undefined)?.zero_baseline), depNames);
     // REPOMEM: a failing, untouched, non-target test whose every id was already red in the intake baseline (same base commit) is pre-existing: never blocks. Anything else that fails is introduced and always blocks.
-    const attr = attribute(ctx.repoDir, ctx.baseSha, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, ids: c.ids, eligible: !targetNames.has(c.name) && !changed.includes(c.name.slice(c.name.indexOf(":") + 1)) })));
+    // FireLater#21: a relevant test that is not the task's own test (collateral: it only imports or mocks a named file) is attributable like any untouched test, against its own package's baseline.
+    const collateral = new Set(collateralTests(relevant, named).map(testCheckName)), suiteOf = (name: string): string | undefined => { const t = tests.find((x) => testCheckName(x) === name), pkg = t ? api?.packageOf(t.path) : null; return pkg?.commands.test ? `full suite: ${pkg.name}` : undefined; };
+    const attr = attribute(ctx.repoDir, ctx.baseSha, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, ids: c.ids, eligible: (!targetNames.has(c.name) || collateral.has(c.name)) && !changed.includes(c.name.slice(c.name.indexOf(":") + 1)), ...(suiteOf(c.name) ? { suite: suiteOf(c.name)! } : {}) })));
     attr.introducedChecks = [...new Set(attr.introducedChecks.map((n) => (isHoldoutCheck(n) ? "holdout" : n)))]; preRed.names.push(...attr.preExistingChecks); preRed.ids.push(...attr.preExistingIds);
+    const collateralRed = attr.preExistingChecks.filter((n) => collateral.has(n)); // never fix-round input and never blocking, but a relevant test that stays red caps VERIFIED: it could be the bug the task describes
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
       const lintPre = await runLintChecks(ctx, complete || [...(qs?.blocking ?? [])].some((n) => n.startsWith("lint:")) ? changed : changed.filter((f) => qs?.since.includes(f)), signal, checks, { api, wall: wallPaths }); // L025: a quick verify lints only what changed since, unless a lint check blocked last time
@@ -477,7 +488,7 @@ export const verifyStage: Stage = {
     // E-98a/E-115: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter/ruff. A-115: test configuration edits and relevant checks with more skips than base are listed, which makes the verdict PARTIAL at seal.
     const inBase = (f: string): boolean => { try { safeGit(ctx.repoDir, ["cat-file", "-e", `${ctx.baseSha}:${f}`], { stdio: "ignore" }); return true; } catch { return false; } };
     const testCounts: Record<string, unknown> = {}; const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).flatMap((t) => { const k = preRed.cnt[testCheckName(t)]; if (k) testCounts[t.path] = k; return [`weakened test: ${t.path}`, ...(assertDeltaNotes(ctx.repoDir, ctx.baseSha, null, t.path, intake?.task ?? "", k?.b, k?.h) ?? [])]; }); // a relevant test file edited: NOT VERIFIED (seal lists the same line)
-    const weakened = [...modifiedRel, ...cfgChanged.map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`)];
+    const weakened = [...modifiedRel, ...cfgChanged.map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`), ...collateralRed.map((n) => `${COLLATERAL_RED}: ${n}`)];
     const notProven = [...(complete ? [] : [QUICK_ONLY_NOTE]), ...weakened, ...hiddenEdits(ctx.repoDir), ...ignoreRuleChanges(ctx.repoDir, (intake as { ignore_snapshot?: unknown } | undefined)?.ignore_snapshot, ctx.baseSha), ...dependentNotes(dep), ...(intake?.deps_not_proven ?? []), ...pub.filter((c) => c.name === "holdout" && c.result !== "pass").map((c) => (c.result === "not_run" ? "holdout not executed" : "holdout check failed")), ...[...fullNotProven].filter((n) => !naNote(n)), ...pub.filter((c) => c.owner === "harness" && c.name !== "holdout").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
     const wallDropped = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p)); // FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: sealed, but no runner of this repo can run it
     notProven.push(...wallDropped.map((p) => `Wall test not executed: ${p}: ${NO_RUNNER_REASON}`));

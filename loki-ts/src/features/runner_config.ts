@@ -67,15 +67,17 @@ const headText = (dir: string, f: string): string => { try { return readFileSync
 /** An added or deleted file is an empty document. Changed files that steer the test runner (working tree vs base). A hit caps the verdict (NOT PROVEN), never decides one. Unparseable and
  *  changed means capped (fail closed). Files with no shared section (runner-only configs) count whenever they are listed as changed. */
 export function testConfigChanged(repoDir: string, baseSha: string, changed: string[]): string[] {
-  return changed.filter((f) => {
-    const spec = RUNNER_CONFIGS.find((s) => s.re.test(f));
-    if (!spec) return false;
-    if (!spec.shared) return true;
-    const b = baseText(repoDir, baseSha, f), h = headText(repoDir, f);
-    if (b === h) return false;
-    const e = typeof spec.shared === "string" && spec.shared !== "tsconfig" ? "" : "{}";
-    try { return relevant(spec.shared, b || e) !== relevant(spec.shared, h || e); } catch { return true; }
-  });
+  return changed.filter((f) => steersRunner(f, baseText(repoDir, baseSha, f), headText(repoDir, f)));
+}
+/** The one before/after rule for a runner config: no spec is no config, a section-less config counts on any change, a shared file counts when its
+ *  runner-relevant section differs (an absent side is an empty document). Unparseable means changed (fail closed). */
+function steersRunner(f: string, before: string, after: string): boolean {
+  const spec = RUNNER_CONFIGS.find((s) => s.re.test(f));
+  if (!spec) return false;
+  if (!spec.shared) return true;
+  if (before === after) return false;
+  const e = typeof spec.shared === "string" && spec.shared !== "tsconfig" ? "" : "{}";
+  try { return relevant(spec.shared, before || e) !== relevant(spec.shared, after || e); } catch { return true; }
 }
 const REFS = /["']?\b(?:preload|setupFiles|setupFilesAfterEnv|setupFilesAfterFramework|globalSetup|globalTeardown)\b["']?\s*[:=]\s*(\[[^\]]*\]|"[^"\n]*"|'[^'\n]*')/g, MAPPER = /moduleNameMapper["']?\s*[:=]\s*\{([^}]*)\}/g, ROOT_DIR = /\brootDir["']?\s*[:=]\s*(?:["']([^"'\n]*)["'])?/, QUOTED = /["']([^"'\n]+)["']/g;
 const EXT = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json", ".py", "/index.ts", "/index.js"];
@@ -169,6 +171,8 @@ export function hiddenConfigChanged(repoDir: string, snap: unknown): string[] {
   let now: Record<string, string>; try { now = hiddenRunnerConfigs(repoDir); } catch { return ["untracked runner configs (listing failed)"]; }
   if (!snap || typeof snap !== "object") return Object.keys(now).length ? ["untracked runner configs (no intake snapshot to compare)"] : [];
   const was = snap as Record<string, unknown>;
-  const d = [...new Set([...Object.keys(now), ...Object.keys(was)])].filter((f) => now[f] !== was[f]).sort();
+  // FireLater#21: an ignored file added since intake is judged like an added tracked one (empty document before): `next build` writes .next/package.json
+  // ({"type":"commonjs"}), which sets no runner key, so it is no test configuration change. A changed or removed one still counts (its old text is not kept).
+  const d = [...new Set([...Object.keys(now), ...Object.keys(was)])].filter((f) => now[f] !== was[f] && (was[f] !== undefined || now[f] === "!unreadable" || steersRunner(f, "", headText(repoDir, f)))).sort();
   return d.length > 5 ? [...d.slice(0, 5), `(+${d.length - 5} more)`] : d;
 }

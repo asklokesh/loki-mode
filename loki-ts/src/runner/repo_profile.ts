@@ -475,13 +475,17 @@ export function ensureProfile(repoDir: string, opts: BuildOpts = {}): { profile:
 
 /** Failing checks split by the baseline. A check is pre-existing only when the profile ran on exactly this base commit, the baseline was attributable,
  *  `eligible` (the caller: untouched, non-target test) and EVERY failing id of the check is in the baseline (one new id makes it introduced).
- *  A check without parsed ids is introduced: unknown never excuses a failure. */
+ *  A check without parsed ids is introduced: unknown never excuses a failure. FireLater#21: `suite` names the full-suite check of the package that
+ *  owns the test (the caller's FC-BASELINE-PER-PACKAGE `suites` entry); its ids are that package's baseline, so a frontend page test in a repo whose
+ *  root command runs nothing is compared with the frontend suite's base failures. No suite, or one that did not run attributably: the root baseline. */
 export interface Attribution { preExistingChecks: string[]; preExistingIds: string[]; introducedChecks: string[]; line: string | null }
-export function attribute(repoDir: string, baseSha: string, failing: { name: string; ids?: string[]; eligible: boolean }[]): Attribution {
+export function attribute(repoDir: string, baseSha: string, failing: { name: string; ids?: string[]; eligible: boolean; suite?: string }[]): Attribution {
   const p = loadProfile(repoDir), none: Attribution = { preExistingChecks: [], preExistingIds: [], introducedChecks: failing.map((f) => f.name), line: null };
-  if (!p || p.revision !== baseSha || !p.baseline.attributable || p.baseline.failing_ids.length === 0 || failing.length === 0) return none;
-  const base = new Set(p.baseline.failing_ids);
-  return split(failing.map((f) => ({ ...f, base })), base.size);
+  if (!p || p.revision !== baseSha || failing.length === 0) return none;
+  const root = p.baseline.attributable ? p.baseline.failing_ids : [], own = (name?: string): string[] => { const s = name ? p.suites?.find((x) => x.name === name && x.ran && x.attributable) : undefined; return s ? s.failing_ids : root; };
+  const rows = failing.map((f) => ({ ...f, base: new Set(own(f.suite)) })), known = new Set(rows.flatMap((r) => [...r.base]));
+  if (known.size === 0) return none;
+  return split(rows, known.size);
 }
 /** Each failing check against its own baseline id set; `known` is the number of baseline failures the line reports. */
 function split(failing: { name: string; ids?: string[]; eligible: boolean; base: Set<string> }[], known: number): Attribution {
