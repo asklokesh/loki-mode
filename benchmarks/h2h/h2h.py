@@ -42,10 +42,16 @@ TASKS_DIR = HERE / "tasks"
 SUITES = {"tasks": TASKS_DIR, "replay": HERE / "replay", "hard": HERE / "fixtures" / "hard"}
 CONFIGS = ["raw-haiku", "raw-sonnet", "raw-opus", "raw-haiku-verify", "raw-sonnet-verify", "raw-opus-verify",
            "loki-haiku", "loki-sonnet", "loki-opus", "loki-default", "loki-haiku-flag"]
+# Low-effort Opus arms: every session runs at effort low (raw: `claude --effort low`; Loki: LOKI_E10_EFFORT=low, the
+# user effort that wins over the per-stage and fix-round policy, contrib/effort_policy.ts resolveEffort), so a Loki
+# multiple can be cited against what a user gets from raw Opus at low effort. Named with --configs only: they are not
+# in the default list, so a default run's cost does not change.
+LOW_EFFORT_CONFIGS = ["raw-opus-low", "loki-opus-low"]
+LOW_EFFORT = "low"
 # loki-haiku-flag is `loki start --haiku` as a user types it (no env pin): the cheap-model opt-in route.
 # Loki pinned to one model for the whole run (every stage, escalation and Wall re-author); loki-default has
 # no pin, so Loki's own routing picks the model per stage.
-LOKI_PINS = {"loki-haiku": "haiku", "loki-sonnet": "sonnet", "loki-opus": "opus"}
+LOKI_PINS = {"loki-haiku": "haiku", "loki-sonnet": "sonnet", "loki-opus": "opus", "loki-opus-low": "opus"}
 # The -verify configs are raw Claude Code with the same task text plus this one sentence: what a careful user
 # types when driving Claude Code alone.
 VERIFY_SENTENCE = "Before you finish, run the repository's tests and check that your change works."
@@ -303,13 +309,14 @@ def prepare_repo(task, dest):
 
 def contestant_cmd(config, task):
     text = task["text"]
-    if config.startswith("raw-") and config in CONFIGS:
+    if config.startswith("raw-") and config in CONFIGS + LOW_EFFORT_CONFIGS:
         model = config.split("-")[1]
         if config.endswith("-verify"):
             text = f"{text}\n\n{VERIFY_SENTENCE}"
         # `command claude` skips any shell function named claude in an interactive profile.
         return ["bash", "-c", 'command claude "$@"', "claude", "-p", text, "--model", model,
-                "--output-format", "json", "--dangerously-skip-permissions"]
+                "--output-format", "json", "--dangerously-skip-permissions"] + (
+                    ["--effort", LOW_EFFORT] if config in LOW_EFFORT_CONFIGS else [])
     if config in LOKI_PINS or config == "loki-default" or config in SEQUENCE_CONFIGS:
         return ["bash", str(ROOT / "bin" / "loki"), text, "--no-pr"]
     if config == "loki-haiku-flag":
@@ -342,6 +349,10 @@ def config_env(config, env):
         env["LOKI_NO_PR_LESSONS"] = "1"
     if config.startswith("loki-"):
         env.update(loki_env_overrides())  # validated at startup; Loki contestants only (raw configs never see them)
+    if config in LOW_EFFORT_CONFIGS and config.startswith("loki-"):
+        if env.get("LOKI_E10_EFFORT", LOW_EFFORT) != LOW_EFFORT:
+            raise SystemExit(f"h2h: {config} runs at effort {LOW_EFFORT}; H2H_LOKI_ENV may not set LOKI_E10_EFFORT={env['LOKI_E10_EFFORT']}")
+        env["LOKI_E10_EFFORT"] = LOW_EFFORT
     return env
 
 
@@ -1109,7 +1120,8 @@ def select_tasks(tasks, configs, named):
 def main(argv=None):
     loki_env_overrides()  # refuse a bad H2H_LOKI_ENV before any run starts
     ap = argparse.ArgumentParser(prog="benchmarks/h2h/run.sh", description=__doc__.splitlines()[0])
-    ap.add_argument("--configs", default=",".join(CONFIGS), help=f"comma list from {CONFIGS + CHECK_CONFIGS}")
+    ap.add_argument("--configs", default=",".join(CONFIGS), help=f"comma list from {CONFIGS + LOW_EFFORT_CONFIGS + CHECK_CONFIGS} "
+                    f"(default: {','.join(CONFIGS)})")
     ap.add_argument("--suite", default="tasks", choices=sorted(SUITES), help="task suite: tasks (synthetic, default) "
                     "or replay (real closed issues replayed at the fix's parent commit)")
     ap.add_argument("--tasks", default="", help="comma list of task ids from the suite (default: all)")
@@ -1135,8 +1147,10 @@ def main(argv=None):
 
     configs = [c for c in a.configs.split(",") if c]
     for c in configs:
-        if c not in CONFIGS + CHECK_CONFIGS:
+        if c not in CONFIGS + LOW_EFFORT_CONFIGS + CHECK_CONFIGS:
             ap.error(f"unknown config {c}")
+        if c in LOW_EFFORT_CONFIGS and c.startswith("loki-"):
+            config_env(c, {})  # refuse an H2H_LOKI_ENV effort that contradicts the arm before any paid run starts
     tasks_dir = SUITES[a.suite]
     all_tasks = sorted(p.name for p in tasks_dir.iterdir() if (p / "meta.json").is_file())
     task_ids = [t for t in a.tasks.split(",") if t] or all_tasks

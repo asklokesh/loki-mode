@@ -24,6 +24,9 @@
 #     $ per accepted task are exact on fixed records; provenance, model pins, per-session models,
 #     VERIFIED recall and the hard suite's selection rule are checked on fixed inputs;
 #   raw-haiku-verify sends the task text plus the verify sentence on Haiku (raw-haiku does not);
+#   raw-opus-low runs `claude --model opus --effort low`; loki-opus-low pins opus and sets LOKI_E10_EFFORT=low, which
+#     every engine session (plan, implement, Wall, fix rounds 1 and 2, a resumed fix) then runs at; an H2H_LOKI_ENV
+#     effort that contradicts the arm is refused before any run; neither arm is in the default config list;
 #   replay and hard tasks are pinned specs (meta.json and task.txt only): a tiny local upstream proves the
 #     snapshot is rebuilt at the pinned commits, matched against snapshot_sha256, cached, and refused on a
 #     digest mismatch, a wrong patch count or an unfetchable commit; the fix passes and the parent fails; the
@@ -76,6 +79,9 @@
 #  37. provenance(): drop the gitignored entries; the gitignored-input check must fail.
 #  38. inside(): accept any path; the escape check must fail (a file lands outside the build dir).
 #  39. materialize(): trust a cached snapshot without re-hashing it; the cache-tamper check must fail.
+#  40. contestant_cmd(): drop the --effort low suffix; the raw-opus-low argv check must fail.
+#  41. config_env(): leave LOKI_E10_EFFORT unset for loki-opus-low; the low-arm env and every-session checks must fail.
+#  42. config_env(): let H2H_LOKI_ENV override the low arm's effort; the refusal check must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -178,6 +184,36 @@ import sys; sys.path.insert(0, "."); import h2h
 c = h2h.contestant_cmd("raw-opus-verify", {"text": "do X"})
 print("opus", c[c.index("--model") + 1], c[c.index("-p") + 1].endswith(h2h.VERIFY_SENTENCE))')"
 has "raw-opus-verify: Opus with the verify sentence" "$cmd_out" "opus opus True"
+# Low-effort Opus arms. raw-opus-low through the runner on the stub: Opus at --effort low, and the patch scores.
+E2E_STUB_OVERLAY="$TDIR/solution" E2E_STUB_ARGV_LOG="$T/low.argv" TMPDIR="$T" \
+    bash benchmarks/h2h/run.sh --configs raw-opus-low --tasks "$TASK" --out "$T/low.json" >"$T/low.log" 2>&1
+check "raw-opus-low: runner exits 0" test "$?" = 0
+check "raw-opus-low: correct patch passes" test "$(field "$T/low.json" 'r["pass"]')" = 1
+has "raw-opus-low: runs claude --model opus --effort low" "$(cat "$T/low.argv")" "--model opus --output-format json --dangerously-skip-permissions --effort low"
+low_out="$(cd benchmarks/h2h && python3 -I -c '
+import os, sys; sys.path.insert(0, "."); import h2h
+print("env", sorted(h2h.config_env("loki-opus-low", {}).items()), "raw", "--effort" in h2h.contestant_cmd("raw-opus", {"text": "x"}),
+      "default", [c for c in h2h.LOW_EFFORT_CONFIGS if c in h2h.CONFIGS])
+os.environ["H2H_LOKI_ENV"] = "LOKI_E10_EFFORT=high"
+try: h2h.config_env("loki-opus-low", {}); print("refused no")
+except SystemExit as e: print("refused", "LOKI_E10_EFFORT=high" in str(e))
+print("other", h2h.config_env("loki-opus", {}).get("LOKI_E10_EFFORT"))')"
+has "loki-opus-low: pins opus at LOKI_E10_EFFORT=low; raw-opus has no --effort; neither low arm is a default config" "$low_out" "env [('LOKI_E10_EFFORT', 'low'), ('LOKI_SESSION_MODEL', 'opus')] raw False default []"
+has "loki-opus-low: an H2H_LOKI_ENV effort that contradicts the arm is refused; other arms still take it" "$low_out" "refused True"
+has "loki-opus: H2H_LOKI_ENV LOKI_E10_EFFORT still applies to a non-low arm" "$low_out" "other high"
+out="$(H2H_LOKI_ENV=LOKI_E10_EFFORT=high python3 -I benchmarks/h2h/h2h.py --configs loki-opus-low --tasks none 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'may not set LOKI_E10_EFFORT=high' && ok "loki-opus-low: contradicting effort refused at startup, before any run" || bad "startup refusal: rc=$rc out=$out"
+# The env the arm sets is the effort every engine session runs at (contrib/effort_policy.ts resolveEffort, session.ts sessionEffortFor).
+every="$(cd loki-ts && env $(cd ../benchmarks/h2h && python3 -I -c 'import sys; sys.path.insert(0, "."); import h2h; print(" ".join(f"{k}={v}" for k, v in h2h.config_env("loki-opus-low", {}).items()))') bun -e '
+(await import("./src/contrib/index.ts")).registerContrib();
+const { sessionEffortFor, rememberSessionEffort } = await import("./src/engine10/session.ts");
+const { hooks } = await import("./src/engine10/hooks.ts");
+rememberSessionEffort("s1", "high");
+const r = [["plan", undefined], ["implement", undefined], ["wall", undefined], ["fix", hooks.effort!.fix(1, true)], ["fix", hooks.effort!.fix(2, true)]].map(([stage, effort]) => sessionEffortFor({ stage, effort } as never).effort);
+r.push(sessionEffortFor({ stage: "fix", effort: hooks.effort!.fix(1, true), resumeSessionId: "s1" } as never).effort);
+console.log(r.join(","));' 2>&1)"
+[ "$every" = "low,low,low,low,low,low" ] && ok "loki-opus-low: plan, implement, Wall, fix rounds 1 and 2 and a resumed fix all run at low" || bad "loki-opus-low per-session effort: $every"
+
 # Loki model pins and the per-session model record: loki-haiku/-sonnet/-opus pin the whole run, loki-default
 # pins nothing; every cost event's model is kept in order with its stage.
 pin_out="$(cd benchmarks/h2h && python3 -I -c '
