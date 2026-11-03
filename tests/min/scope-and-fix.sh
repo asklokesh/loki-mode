@@ -25,7 +25,7 @@
 #                the run is PARTIAL and the receipt names square as unexercised by an agent-independent test.
 #   public unit: addedPublicFunctions reads the file at HEAD against the base: a method added to an existing class, a def
 #                under a module-level if, Go `var X = func`, TS exported-class methods and `export { f }`, Rust pub fn, a
-#                Prettier multi-line exported arrow (not a multi-line function type alias), a Go method on an unnamed receiver, and Push or Is on an ordinary type count;
+#                Prettier multi-line exported arrow (not a function type alias or a `declare`), a Go method on an unnamed receiver, and Push or Is on an ordinary type count;
 #                a private class, a nested def, a signature-only edit, a .d.ts, a .pb.go, test helpers outside test files,
 #                Error/String, sort/heap methods on a sort.Interface type, Is/As/Unwrap on an error type, and non-function consts
 #                do not. Names inside strings are no reference; a helper whose caller a test calls is covered, also through a
@@ -126,6 +126,7 @@
 #  43. check_result.ts callerFiles: return [] (public unit reads untouched=line_tax_cents).
 #  44. seal.ts symbolGaps: pass only the changed files to exercisedViaCallers (the via-caller run is PARTIAL naming scale).
 #  45. check_result.ts addedPublicFunctions: open the multi-line arrow window on any `= (` line, not only const/let/var (public unit reads tsarrow=total+Rule).
+#  46. check_result.ts addedPublicFunctions: drop the type/declare skip (public unit reads tsalias=Rule+amb).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -430,6 +431,7 @@ const o = [
   "testutil=" + f("internal/testutil/h.go", "package t\n\nfunc MustOpen() {\n}\n"),
   "helpers=" + f("tests/helpers.py", "def make():\n    pass\n"),
   "tsarrow=" + f("a.ts", "export const total = (\n  items: number[],\n): number => {\n  return 0;\n};\nexport const cfg = (\n  1 + 2\n);\nexport type Rule = (\n  n: number,\n) => number;\n"),
+  "tsalias=" + f("a.ts", "export type Rule = (cents: number) => number;\nexport declare function amb(): void;\n"),
   "gounnamed=" + f("x.go", "package x\n\nfunc (Version) Major() int {\n  return 0\n}\n"),
   "gostack=" + f("x.go", "package x\n\nfunc (s *Stack) Push(x any) {\n}\nfunc (k Kind) Is(o Kind) bool {\n  return true\n}\n"),
   "goheap=" + f("x.go", "package x\n\nfunc (h H) Len() int {\n  return 0\n}\nfunc (h H) Less(i, j int) bool {\n  return false\n}\nfunc (h H) Swap(i, j int) {\n}\nfunc (h *H) Push(x any) {\n}\nfunc (h *H) Pop() any {\n  return nil\n}\nfunc (e *E) Error() string {\n  return \"\"\n}\nfunc (e *E) Is(t error) bool {\n  return false\n}\n"),
@@ -439,7 +441,7 @@ const o = [
   "indirect=" + cr.exercisedViaCallers(["validateEmail", "orphan"], (n) => n === "signup", [{ path: "s.ts", src: "export function signup(e: string) {\n  return validateEmail(e);\n}\nexport function validateEmail(e: string) {\n  return e.includes(\"@\");\n}\nexport function orphan() {\n  return 1;\n}\n" }]).join("+"),
 ];
 console.log(o.join(" "));' 2>&1)"
-[ "$P" = "pyclass=intersects pyif=compat pyprivcls=- pynested=retry pysig=- tsclass=allow tsprivcls=- tslist=foo dts=- tsconst=g govar=Parse goiface=New pbgo=- testutil=- helpers=- tsarrow=total gounnamed=Major gostack=Push+Is goheap=- rs=new+free strings=intersects untouched=- indirect=orphan" ] && ok "public unit: added public functions are read from the file at HEAD against the base, not from diff hunks" || bad "public unit gave: $P"
+[ "$P" = "pyclass=intersects pyif=compat pyprivcls=- pynested=retry pysig=- tsclass=allow tsprivcls=- tslist=foo dts=- tsconst=g govar=Parse goiface=New pbgo=- testutil=- helpers=- tsarrow=total tsalias=- gounnamed=Major gostack=Push+Is goheap=- rs=new+free strings=intersects untouched=- indirect=orphan" ] && ok "public unit: added public functions are read from the file at HEAD against the base, not from diff hunks" || bad "public unit gave: $P"
 run_engine "$TASK" E2E_STUB_MODE=alreadyfirst LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
 grep -q -- '-a ' "$ITERS" && ok "already: the already-done claim got one challenge session" || { bad "already: no challenge session ran"; dump; }
 [ "$(outcome)" = "VERIFIED" ] && grep -q 'export function multiply' "$REPO/calc.ts" && ok "already: after the challenge the change was made and VERIFIED" || { bad "already: outcome '$(outcome)', multiply present: $(grep -c 'export function multiply' "$REPO/calc.ts")"; dump; }

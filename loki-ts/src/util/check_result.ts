@@ -896,7 +896,7 @@ export function addedPublicFunctions(path: string, head: string, base: string): 
     if (lang === "rs") { if (/\bpub(?:\([^)]*\))?\s+(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+"[^"]*"\s+)?fn\s/.test(decl)) out.add(name); continue; }
     const arrowHead = /^\s*(?:export\s+)?(?:const|let|var)\s[^=]*=\s*(?:async\s*)?(?:<[^>]*>\s*)?\(\s*$/.test(decl) ? lines.slice(sp.start - 1, Math.min(sp.end, sp.start + 30)).join("\n") : ""; // a Prettier multi-line arrow `export const f = (\n  items,\n): number => {`
     const fnLike = /\bfunction\b|=>|^\s*(?:(?:public|static|async|override|readonly|get|set)\s+)*[A-Za-z_$][\w$]*\s*(?:<[^>]*>)?\s*\(/.test(decl) || /^[^]*?\)\s*(?::[^=]*?)?=>/.test(arrowHead);
-    if (!fnLike || name === "constructor") continue; // a constructor is called as `new Class`, so the class name is the reference (seal checks classes through their methods)
+    if (!fnLike || name === "constructor" || /^\s*(?:export\s+)?(?:declare\s|type\s)/.test(decl)) continue; // a type alias of a function type and an ambient `declare` have no body to test // a constructor is called as `new Class`, so the class name is the reference (seal checks classes through their methods)
     if (parent) { const cls = declOf(parent.start); if ((/^\s*export\s/.test(cls) || exported.has(parent.name)) && !/^\s*(?:private|protected)\b|#/.test(decl)) out.add(name); }
     else if (/^\s*export\s/.test(decl) || exported.has(name)) out.add(name);
   }
