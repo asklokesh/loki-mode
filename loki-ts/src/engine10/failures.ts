@@ -65,3 +65,37 @@ export function failIds(raw: string): string[] {
   const c = failCount(output);
   return c && ids.length >= c ? ids : [];
 }
+/** Every error line each failing id reports, sorted (a multiset: test.each and duplicate titles give one id several failures): vitest/jest print it
+ *  on the first non-blank line after "FAIL  <id>" (consecutive FAIL lines vitest groups under one error share it), pytest after "FAILED <id> - ".
+ *  Only what differs between two runs of the same failure is normalized: timestamps, durations and absolute paths (with any :line:col), so a base
+ *  worktree path never makes two equal errors differ. Every other number is kept: "expected 5 to be 6" and "expected 999 to be 6" differ. */
+export function errorsById(out: string): Map<string, string[]> {
+  const norm = (l: string): string => l
+    .replace(/\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/g, "<ts>").replace(/\b\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\b/g, "<ts>")
+    .replace(/(^|[\s(])\/(?:[\w.@-]+\/)*[\w.@-]+(?::\d+){0,2}/g, "$1<path>").replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|us|µs|ns|min)\b/g, "<dur>").replace(/\s+/g, " ").trim();
+  const lines = stripAnsi(out).split("\n").map((l) => l.trim()), m = new Map<string, string[]>(), add = (id: string, e: string): void => { m.set(id, [...(m.get(id) ?? []), e]); };
+  for (const [i, l] of lines.entries()) {
+    const py = /^FAILED (\S+::\S*) - (.+)$/.exec(l); if (py) { add(py[1]!, norm(py[2]!)); continue; }
+    const v = /^FAIL\s+(.+)$/.exec(l); if (!v) continue;
+    const next = lines.slice(i + 1).find((x) => x !== "" && !/^FAIL\s/.test(x)); if (next !== undefined) add(v[1]!.trim(), norm(next));
+  }
+  for (const [k, e] of m) m.set(k, e.sort());
+  return m;
+}
+/** True when every failing id has error lines on head and fails on base with the same normalized lines, the same number of times (equal sorted
+ *  multisets: a test.each case newly failing with another error under the same id is a different error). An id with no head error line (its FAIL
+ *  line was never printed or was cut) or none on base is not the same error. failIds also lists a test's bare title (vitest's "× title" line): it
+ *  stands for the full ids that end in " > title". `head` and `base` are outputs or their errorsById maps (a baseline stores the map as a record). */
+export function sameErrors(head: string | Map<string, string[]>, base: string | Map<string, string[]> | Record<string, string[]>, ids: string[] | undefined): boolean {
+  const asMap = (x: string | Map<string, string[]> | Record<string, string[]>): Map<string, string[]> => typeof x === "string" ? errorsById(x) : x instanceof Map ? x : new Map(Object.entries(x));
+  const h = asMap(head), b = asMap(base), all = ids ?? [], eq = (x: string[] = [], y: string[] = []): boolean => x.length === y.length && x.every((e, n) => e === y[n]);
+  const keys = (i: string): string[] => (h.has(i) ? [i] : [...h.keys()].filter((k) => k.endsWith(` > ${i}`)));
+  return all.length > 0 && all.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => eq(b.get(k), h.get(k))); });
+}
+/** FireLater#21: the ids two runs are compared by. vitest prints a test's bare title on its "x" line in one version ("x bg", 5.x) and the describe path in
+ *  another ("x page 1 > bg", 2.1.9), and Loki's batched per-file text prints the bare title; only the full "file > describe > title" ids from FAIL
+ *  lines agree across them. When a list has full ids, only those are compared; otherwise (pytest, go, cargo) every id is. */
+export function comparableIds(ids: readonly string[]): string[] {
+  const full = ids.filter((i) => /^[^>]*\.[cm]?[jt]sx? > /.test(i));
+  return full.length ? full : [...ids];
+}

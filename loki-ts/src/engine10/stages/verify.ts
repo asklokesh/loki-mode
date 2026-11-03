@@ -10,7 +10,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path"; impor
 import { hiddenConfigChanged, testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst, QUICK_ONLY_NOTE, quickScope, quickSplit } from "../../e10ext/select.ts"; import { dependentNotes, dependentTests } from "../../features/dependents.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
-import { guessRunner, isTestFile } from "../testmap.ts"; import { coveredStem } from "../../util/test_file_text.ts";
+import { guessRunner, isTestFile } from "../testmap.ts"; import { coveredStem } from "../../util/test_file_text.ts"; import { comparableIds, errorsById, sameErrors } from "../failures.ts"; export { errorsById, sameErrors } from "../failures.ts";
 import { withoutStaleWall, failureExcerpt, EXCERPT_TOTAL_CAP, changedFiles, hiddenEdits, ignoreRuleChanges, classifyCheck, corroboratePass, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount, SECURITY_SCAN, fileHashes, briefGroups, failureSignature } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
@@ -227,32 +227,6 @@ function changedSymbolsFirst(ctx: RunContext, tests: TestRef[], changed: string[
   const hits = tests.filter((t) => { try { return re.test(readFileSync(join(ctx.repoDir, t.path), "utf8")); } catch { return false; } });
   return [...hits, ...tests.filter((t) => !hits.includes(t))];
 }
-/** Every error line each failing id reports, sorted (a multiset: test.each and duplicate titles give one id several failures): vitest/jest print it
- *  on the first non-blank line after "FAIL  <id>" (consecutive FAIL lines vitest groups under one error share it), pytest after "FAILED <id> - ".
- *  Only what differs between two runs of the same failure is normalized: timestamps, durations and absolute paths (with any :line:col), so a base
- *  worktree path never makes two equal errors differ. Every other number is kept: "expected 5 to be 6" and "expected 999 to be 6" differ. */
-export function errorsById(out: string): Map<string, string[]> {
-  const norm = (l: string): string => l
-    .replace(/\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/g, "<ts>").replace(/\b\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\b/g, "<ts>")
-    .replace(/(^|[\s(])\/(?:[\w.@-]+\/)*[\w.@-]+(?::\d+){0,2}/g, "$1<path>").replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|us|µs|ns|min)\b/g, "<dur>").replace(/\s+/g, " ").trim();
-  const lines = stripAnsi(out).split("\n").map((l) => l.trim()), m = new Map<string, string[]>(), add = (id: string, e: string): void => { m.set(id, [...(m.get(id) ?? []), e]); };
-  for (const [i, l] of lines.entries()) {
-    const py = /^FAILED (\S+::\S*) - (.+)$/.exec(l); if (py) { add(py[1]!, norm(py[2]!)); continue; }
-    const v = /^FAIL\s+(.+)$/.exec(l); if (!v) continue;
-    const next = lines.slice(i + 1).find((x) => x !== "" && !/^FAIL\s/.test(x)); if (next !== undefined) add(v[1]!.trim(), norm(next));
-  }
-  for (const [k, e] of m) m.set(k, e.sort());
-  return m;
-}
-/** True when every failing id has error lines on head and fails on base with the same normalized lines, the same number of times (equal sorted
- *  multisets: a test.each case newly failing with another error under the same id is a different error). An id with no head error line (its FAIL
- *  line was never printed or was cut) or none on base is not the same error. failIds also lists a test's bare title (vitest's "× title" line): it
- *  stands for the full ids that end in " > title". `head` is the output or its errorsById map. */
-export function sameErrors(head: string | Map<string, string[]>, base: string, ids: string[] | undefined): boolean {
-  const h = typeof head === "string" ? errorsById(head) : head, b = errorsById(base), all = ids ?? [], eq = (x: string[] = [], y: string[] = []): boolean => x.length === y.length && x.every((e, n) => e === y[n]);
-  const keys = (i: string): string[] => (h.has(i) ? [i] : [...h.keys()].filter((k) => k.endsWith(` > ${i}`)));
-  return all.length > 0 && all.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => eq(b.get(k), h.get(k))); });
-}
 /** A failing check the next fix round is given: not pre-existing, not held out, and not known red failing the same way as on base (a known-red check
  *  failing with a different error on head is something the change did, so it is fix-round input). */
 export const feedsFixRound = (c: { name: string; result: string }, pre: { names: string[]; knownRed: string[]; sameError: string[] }): boolean => c.result === "fail" && !pre.names.includes(c.name) && !pre.sameError.includes(c.name) && !isHoldoutCheck(c.name);
@@ -314,7 +288,7 @@ async function subtractBase(
       || sus.some(({ c }) => !out.weak.includes(c.name) && base.get(c)!.red.length > 0 && (c.n ?? 0) >= base.get(c)!.n);
     {
       for (const { c } of un) {
-        if (own.has(c.name) || c.result !== "fail" || !c.ids?.length || !c.ids.every((i) => base.get(c)?.red.includes(i))) continue;
+        if (own.has(c.name) || c.result !== "fail" || !c.ids?.length || !comparableIds(c.ids).every((i) => base.get(c)?.red.includes(i))) continue;
         out.knownRed.push(c.name); // red on base by every failing id
         if (sameErrors(headErrors.get(c) ?? "", base.get(c)!.out, c.ids)) out.sameError.push(c.name); // and failing the same way: never fix-round input, and a delivery may excuse it as pre-existing; a different error feeds the fix round
         if (progress || dep.has(c.name)) { // RX-3: a dependent-only check needs no progress proof
@@ -477,7 +451,7 @@ export const verifyStage: Stage = {
       if (full.some((c) => c.result === "pass" || c.result === "fail")) { ranDeeper.push("full test command", "full suite"); risk = markExecuted(risk, ranDeeper); recordRisk(ctx.repoDir, risk); }
       // A full-suite failure whose every failing id is one a same-error base-red check or a Wall check already reports adds nothing a fix round could act on.
       const known = new Set(checks.filter((c) => c.result === "fail" && (preRed.sameError.includes(c.name) || wallNames0.has(c.name))).flatMap((c) => c.ids ?? []));
-      for (const c of full) if (c.result === "fail" && c.ids?.length && c.ids.every((i) => known.has(i)) && !preRed.names.includes(c.name)) { preRed.knownRed.push(c.name); preRed.sameError.push(c.name); }
+      for (const c of full) if (c.result === "fail" && c.ids?.length && comparableIds(c.ids).every((i) => known.has(i)) && !preRed.names.includes(c.name)) { preRed.knownRed.push(c.name); preRed.sameError.push(c.name); }
     }
     if (risk && risk.tier === "high" && !signal.aborted && complete) { // PR-FIRST-4: the high tier's security scan runs here, before seal, so a receipt never leaves it to the post-PR deep stage (spawned only after VERIFIED). A fail blocks VERIFIED, a not_run (scanner missing or broken) caps at PARTIAL; only a pass or fail is credited
       const { runSecretScan } = await import("./deep.ts");

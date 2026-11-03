@@ -195,7 +195,7 @@ export function zeroGate(rec: unknown): ZeroGate {
   return { has: (n) => names.has(n) };
 }
 // Test runners write their own caches inside node_modules and .venv on every run (Loki's verify included); they hold no dependency code.
-const RUNNER_CACHE_DIRS = [".vite", ".vitest", ".cache", "__pycache__", ".pytest_cache"];
+const RUNNER_CACHE_DIRS = [".vite", ".vitest", ".vitest-cache", ".cache", "__pycache__", ".pytest_cache"]; // FireLater#21: vitest 5.1 writes node_modules/.vitest-cache on every run
 /** True (withhold) unless the environment is as intake left it at `sinceMs`: every ignored entry intake listed still exists, and no entry under
  *  `pkgDir`'s node_modules or .venv, and no ignored file intake listed, had its status changed since (ctime, which a process cannot set back;
  *  one `find` walk that never follows symlinks; runner cache dirs pruned). Additions count as changes: an added nested package or .pth file can
@@ -217,7 +217,7 @@ export function envChangedSince(repoDir: string, pkgDir: string, sinceMs: number
     writeFileSync(stamp, "");
     utimesSync(stamp, sinceMs / 1000, sinceMs / 1000);
     const prune = RUNNER_CACHE_DIRS.flatMap((n, i) => [...(i ? ["-o"] : []), "-name", n]);
-    const out = execFileSync("find", ["-P", ...new Set(roots), "(", ...prune, ")", "-prune", "-o", "-cnewer", stamp, "-print", "-quit"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120000 });
+    const out = execFileSync("find", ["-P", ...new Set(roots), "(", ...prune, ")", "-prune", "-o", "(", "-type", "f", "-o", "-type", "l", ")", "-cnewer", stamp, "-print", "-quit"] /* files and links only: a runner adding a cache entry changes its parent directory's ctime, which is not a dependency change */, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120000 });
     return out.trim() !== "";
   } catch { return true; } finally { if (stampDir) rmSync(stampDir, { recursive: true, force: true }); }
 }

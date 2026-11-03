@@ -29,6 +29,9 @@
 #      never excused, from a task naming api.ts or naming no file (never VERIFIED); real vitest 5.0.5 output of that
 #      case is a different error to sameErrors; unit-level, a test of a named file's stem stays the task's own, an
 #      ignored .next/package.json is not test configuration, and a FAILED split's Reason names its PRs.
+#   7. the FireLater#21 shapes on real vitest 2.1.9 and 5.1.0 (npm-installed in the temp dir; SKIP when offline): same-error
+#      page tests delivered PARTIAL; a backend-only change with the frontend suite red on base excused by its recorded errors;
+#      a TypeError under a base-red id never excused; a full-suite-only test whose error changed blocks (ids alone never excuse).
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/engine10/supervisor.ts: drop the refuseCommandGoal line, so a
@@ -71,6 +74,9 @@
 #  20. verify.ts: excuse collateral same-error checks at once (no fix round first); mono3 same runs 0 fix rounds.
 #  20b. machine.ts: drop the onlyCollateralRed re-verify; mono3 conflict ends SPEC_CONFLICT.
 #  20c. verify.ts collateralSame: take preRed.knownRed (ids only) instead of sameError; mono3 changed is delivered with p1 excused.
+#  20d. repo_profile.ts attributeFullSuite: drop sameAsBase (ids only); real vitest p8 is delivered (both versions).
+#  20e. base_guard.ts: drop .vitest-cache and the files-only find; real vitest 5.1.0 same is not delivered (base runs lose their deps).
+#  20f. verify.ts subtractBase: compare raw ids (no comparableIds); real vitest 2.1.9 same is not delivered.
 #  21. runner_config.ts hiddenConfigChanged: count every added ignored config again; the unit check fails on .next/package.json.
 #  22. issues_epic.ts epicOutcome: drop the delivered-PR suffix of the Reason line; the unit check fails.
 
@@ -434,4 +440,83 @@ console.log(removeOwnWallFiles(w, "e10-x").join(","), ["a", "b", "tracked"].map(
 ' 2>&1)"
 [ "$GONE" = "src/loki_wall_a.test.ts false,true,true true" ] && ok "run end removes only its own untracked, unedited Wall file" || bad "Wall cleanup gave: $GONE (want: src/loki_wall_a.test.ts false,true,true true)"
 
+# ---- 7: the same FireLater#21 shapes on real vitest 2.1.9 and 5.1.0 (installed into a temp dir; skipped when npm cannot fetch them) ----------------
+# The stand-in vitest above cannot show what real vitest does: 5.1 writes node_modules/.vitest-cache on every run, and 2.1.9 prints "x page 1 > title"
+# where 5.x prints "x title". Per version, with LOKI_RISK_TIER=medium so the full suites run:
+#   same:    p1 and p2 red on base fail the same way: pre-existing after one fix round; PARTIAL.
+#   backend: a backend-only change (FireLater#21 s1-s3) with p1 and p2 red on base: the frontend full suite fails with exactly the base errors, so it is
+#            excused by its recorded errors and the run is delivered.
+#   changed: the change makes p1 throw a TypeError (same id): p1 is never excused and the run is not delivered.
+#   p8 only: p8 reaches lib/api only through a dynamic import, so only the full suite runs it; it is red on base with an AssertionError and the change makes
+#            it a TypeError. Ids alone would excuse the full suite (and seal VERIFIED); its errors differ, so it blocks.
+rv_fixture() { # rv_fixture <dir> <p8red 0|1> <vitest dir>
+    local d="$1" p8="$2" nm="$3/node_modules" i
+    mkdir -p "$d/backend/tests" "$d/backend/src" "$d/frontend/src/lib/__tests__" "$d/frontend/src/app/p8/__tests__"
+    printf 'export const add = (a: number, b: number): number => a + b;\n// LOKI_STUB_INSERT\n' > "$d/backend/src/util.ts"
+    printf 'import { test, expect } from "vitest";\nimport { add } from "../src/util";\ntest("add", () => { expect(add(1, 2)).toBe(3); });\n' > "$d/backend/tests/util.test.ts"
+    printf 'node_modules\n' > "$d/.gitignore"
+    printf '{ "name": "mono-api", "private": true, "type": "module", "scripts": { "test": "vitest run" } }\n' > "$d/backend/package.json"
+    printf '{ "name": "mono-web", "private": true, "type": "module", "scripts": { "test": "vitest run" } }\n' > "$d/frontend/package.json"
+    printf 'import { test, expect } from "vitest";\ntest("ok", () => { expect(1).toBe(1); });\n' > "$d/backend/tests/ok.test.ts"
+    printf 'export const api = {\n  get: (p: string): string => `GET ${p}`,\n  label: (p: string): string => `GET ${p}`,\n  extra: (p: string): string => `GET ${p}`,\n};\n// LOKI_STUB_INSERT\n' > "$d/frontend/src/lib/api.ts"
+    printf 'import { test, expect } from "vitest";\nimport { api } from "../api";\ntest("get", () => { expect(api.get("/x")).toBe("GET /x"); });\n' > "$d/frontend/src/lib/__tests__/api.test.ts"
+    for i in 1 2 3 4; do
+        mkdir -p "$d/frontend/src/app/p$i/__tests__"
+        case "$i" in 1) call='api.label("/p")' want='"GET /q"' ;; 2) call='api.get("/p")' want='"GET /q"' ;; *) call='api.get("/p")' want='"GET /p"' ;; esac
+        [ "$p8" = 1 ] && want='"GET /p"'
+        printf 'import { test, expect, describe } from "vitest";\nimport { api } from "../../../lib/api";\ndescribe("page %s", () => {\n  test("renders", () => { expect(1).toBe(1); });\n  test("has gray background", () => { expect(%s).toBe(%s); });\n});\n' "$i" "$call" "$want" > "$d/frontend/src/app/p$i/__tests__/page.test.ts"
+    done
+    want='"GET /p"'; [ "$p8" = 1 ] && want='"GET /q"'
+    printf 'import { test, expect, describe } from "vitest";\nconst { api } = await import("../../../lib/" + ["a", "p", "i"].join(""));\ndescribe("page 8", () => {\n  test("loads extras", () => { expect(api.extra("/p")).toBe(%s); });\n});\n' "$want" > "$d/frontend/src/app/p8/__tests__/page.test.ts"
+    git -C "$d" init -q -b main && git -C "$d" config user.name rs && git -C "$d" config user.email rs@example.invalid
+    git -C "$d" add -A . && git -C "$d" commit -q -m base
+    cp -R "$nm" "$d/frontend/node_modules" && cp -R "$nm" "$d/backend/node_modules"
+}
+rv_run() { # rv_run <dir> <replace text or ""> <snippet> [target task]
+    local d="$1" rep="$2" snip="$3" tgt="${4:-frontend/src/lib/api.ts}" task="${5:-$NAMED}" ev
+    RVOUT="$(cd "$d" && env E2E_STUB_MODE=stack E2E_STUB_TARGET="$tgt" E2E_STUB_SNIPPET="$snip" ${rep:+E2E_STUB_REPLACE="$rep"} E2E_STUB_PROJECT="$PROJ" \
+        LOKI_RISK_TIER=medium LOKI_E10_NO_FETCH=1 ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "$task" --no-pr </dev/null 2>&1)"; RVRC=$?
+    ev="$(ls "$d"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
+    RVS="$( [ -n "$ev" ] && python3 -I - "$ev" <<'PY'
+import json, sys
+ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+vs = [e["data"] for e in ev if e["type"] == "stage.completed" and e["stage"] == "verify"]
+v = vs[-1] if vs else {}
+done = next((e["data"] for e in ev if e["type"] == "run.completed"), {})
+pages = lambda xs: sorted(n.split("/app/")[1].split("/")[0] for n in xs if "/app/p" in n and not n.startswith("full suite"))
+print("fix_rounds %d" % sum(1 for e in ev if e["type"] == "fix.round"))
+print("pre_red %s" % ",".join(pages(v.get("pre_red_checks", []))))
+print("suite_excused %s" % ("full suite: mono-web" in v.get("pre_red_checks", [])))
+print("verdict %s" % done.get("verdict"))
+PY
+)"
+}
+RVROOT="$T/realvitest"
+for ver in 2.1.9 5.1.0; do
+    mkdir -p "$RVROOT/$ver" && printf '{"private":true}\n' > "$RVROOT/$ver/package.json"
+    if ! (cd "$RVROOT/$ver" && ${TO[@]+"${TO[@]}"} npm install "vitest@$ver" --no-audit --no-fund --silent >/dev/null 2>&1) || [ ! -x "$RVROOT/$ver/node_modules/.bin/vitest" ]; then
+        printf '  SKIP: real vitest %s: npm could not install it (offline?)\n' "$ver"; continue
+    fi
+    REP_LABEL='  label: (p: string): string => `GET ${p}`,'; REP_EXTRA='  extra: (p: string): string => `GET ${p}`,'
+    rv_fixture "$T/rv-$ver-same" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-same" "" 'export const del = (p: string): string => `DELETE ${p}`;'
+    printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver same: /"
+    printf '%s\n' "$RVS" | grep -qx 'pre_red p1,p2' && printf '%s\n' "$RVS" | grep -qx 'verdict PARTIAL' \
+        && ok "real vitest $ver same: base-red page tests failing the same way are pre-existing after one round; PARTIAL (rc $RVRC)" \
+        || { bad "real vitest $ver same: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    rv_fixture "$T/rv-$ver-backend" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-backend" "" 'export const sub = (a: number, b: number): number => a - b;' backend/src/util.ts "add a sub(a, b) helper next to add in backend/src/util.ts"
+    printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver backend: /"
+    printf '%s\n' "$RVS" | grep -qx 'suite_excused True' && printf '%s\n' "$RVS" | grep -qx 'fix_rounds 0' && printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' \
+        && ok "real vitest $ver backend: the untouched frontend suite failing with exactly its base errors is excused by them; delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
+        || { bad "real vitest $ver backend: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    rv_fixture "$T/rv-$ver-changed" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-changed" "$REP_LABEL" '  label: undefined as unknown as (p: string) => string,'
+    printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver changed: /"
+    ! printf '%s\n' "$RVS" | grep -q '^pre_red .*p1' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
+        && ok "real vitest $ver changed: a base-red test the change breaks with a TypeError is never excused; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
+        || { bad "real vitest $ver changed: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    rv_fixture "$T/rv-$ver-p8" 1 "$RVROOT/$ver"; rv_run "$T/rv-$ver-p8" "$REP_EXTRA" '  extra: undefined as unknown as (p: string) => string,'
+    printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver p8: /"
+    printf '%s\n' "$RVS" | grep -qx 'suite_excused False' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
+        && ok "real vitest $ver p8: a full-suite-only test red on base, now failing with a new error, is not excused by its id; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
+        || { bad "real vitest $ver p8: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+done
 finish
