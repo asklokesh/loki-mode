@@ -48,7 +48,7 @@ _route_has() { case "$1" in *" $2 "*) return 0 ;; esac; return 1; }
 _route_provider() {
     local p="$1"
     if [ -z "$p" ]; then p="${LOKI_PROVIDER:-}"; fi
-    if [ -z "$p" ] && [ -f "${PWD}/.loki/state/provider" ]; then p="$(sed -n '1p' "${PWD}/.loki/state/provider" 2>/dev/null || true)"; fi
+    if [ -z "$p" ] && [ -f "${PWD}/.loki/state/provider" ]; then p="$(sed -n '1p' "${PWD}/.loki/state/provider" 2>/dev/null | tr -d '\r' || true)"; p="${p%"${p##*[![:space:]]}"}"; fi
     printf '%s' "${p:-claude}"
 }
 

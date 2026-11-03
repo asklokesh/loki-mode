@@ -47,6 +47,7 @@
 #      three spelled-out paths in a two-package monorepo plan).
 #  18. sizing.ts namedDistinct: drop the optional leading "./" (unit: dot5 is null).
 #  19. sizing.ts sizeTask: size "large" on namedFiles again instead of namedDistinct (unit: mono9 is large).
+#  20. sizing.ts sizeTask: name the matched-path count as the named-file count again (unit: reason:mono9).
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
 need git
@@ -82,6 +83,7 @@ out.push(`hard:spelled3=${hardReason("normal", pk, "Fix the date bug in packages
 out.push(`hard:mono1=${hardReason("normal", mono, "fix the export in index.ts")}`, `hard:mono5=${hardReason("normal", mono, "fix pkg0/index.ts, pkg1/index.ts, pkg2/index.ts, pkg3/index.ts and pkg4/index.ts") !== null}`);
 out.push(`hard:dot5=${hardReason("normal", mono, "fix ./pkg0/index.ts, ./pkg1/index.ts, ./pkg2/index.ts, ./pkg3/index.ts and ./pkg4/index.ts") !== null}`, `hard:updir5=${hardReason("normal", mono, "fix ../pkg0/index.ts, ../pkg1/index.ts, ../pkg2/index.ts, ../pkg3/index.ts and ../pkg4/index.ts")}`);
 const mono9 = { files: Array.from({ length: 9 }, (_, i) => `pkg${i}/index.ts`), entries: [], truncated: false }, bunTests = { runners: ["bun"], tests: [] };
+out.push(`reason:mono9=${sizeTask("fix the export in index.ts", mono9, bunTests).reasons.join("|").replace(/ /g, "_")}`);
 out.push(`size:mono9=${sizeTask("fix the export in index.ts", mono9, bunTests).size}`, `size:spelled9=${sizeTask("fix " + mono9.files.map((f) => "./" + f).join(", "), mono9, bunTests).size}`);
 const lint = [{ signature: "lint:eslint" }];
 const f = routedFix("claude (provider default)", { implement: { route_model: "claude-sonnet-5-5" }, fix: { model: "claude-haiku-5-5" } }, { repeated: false, stall: false, groups: lint, reason: "lint" });
@@ -102,7 +104,7 @@ parseStartArgs(["--haiku", "--cost", "lean", "task"], (x) => errs.push(x), () =>
 out.push(`tsnote=${errs.filter((e) => e.includes("is already set and wins")).length}:${pe.LOKI_ROUTER ?? "unset"}`);
 console.log(out.join(" "));
 ' 2>&1)"
-want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=null hard:spelled3=null hard:suffix=null hard:mono1=null hard:mono5=true hard:dot5=true hard:updir5=null size:mono9=normal size:spelled9=large nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 kept=true:: tsnote=1:unset"
+want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=null hard:spelled3=null hard:suffix=null hard:mono1=null hard:mono5=true hard:dot5=true hard:updir5=null reason:mono9=task_names_1_file(s)_matching_9_repo_files_>_2 size:mono9=normal size:spelled9=large nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 kept=true:: tsnote=1:unset"
 [ "$U" = "$want" ] && ok "unit: preset executor and record, hardReason on task evidence only, never descend, redacted climb evidence, scoped advisor keeps the executor, --model and LOKI_MODEL_DEVELOPMENT pin, no opus advisor on an opus executor, an already-done claim climbs, the kept-router note" || bad "unit gave: $U"
 
 # --- e2e on the stub provider ---------------------------------------------------------------------------------------

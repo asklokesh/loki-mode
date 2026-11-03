@@ -27,7 +27,7 @@ export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | nul
     !task.trim() && "no task text", task.length > smallMaxChars() && `task ${task.length} chars > ${smallMaxChars()}`,
     !map && "no repo map", (map?.files.length ?? 0) > 3000 && `repo ${map?.files.length} files > 3000`,
     map?.truncated && "repo map truncated at the file cap", // buildRepoMap caps files at 2000, so the >3000 rule alone never fires
-    (!tests || (!tests.runners.length && process.env.LOKI_E10_SMALL_NO_RUNNER === "0")) && "no test runner detected", named > 2 && `task names ${named} files > 2`,
+    (!tests || (!tests.runners.length && process.env.LOKI_E10_SMALL_NO_RUNNER === "0")) && "no test runner detected", named > 2 && `task names ${distinct} file(s) matching ${named} repo files > 2`,
   ].filter((w): w is string => typeof w === "string");
   return why.length ? { size: "normal", reasons: why } : { size: "small", reasons: [`task ${task.length} chars, names ${named} files`] };
 }
