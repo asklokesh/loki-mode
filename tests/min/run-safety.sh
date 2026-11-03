@@ -76,7 +76,7 @@
 #  20c. verify.ts collateralSame: take preRed.knownRed (ids only) instead of sameError; mono3 changed is delivered with p1 excused.
 #  20d. repo_profile.ts attributeFullSuite: drop sameAsBase (ids only); real vitest p8 is delivered (both versions).
 #  20e. base_guard.ts: drop .vitest-cache and the files-only find; real vitest 5.1.0 same is not delivered (base runs lose their deps).
-#  20f. verify.ts subtractBase: compare raw ids (no comparableIds); real vitest 2.1.9 same is not delivered.
+#  20f. verify.ts subtractBase: compare raw ids (no comparableIds); real vitest 2.1.9 one is not delivered.
 #  21. runner_config.ts hiddenConfigChanged: count every added ignored config again; the unit check fails on .next/package.json.
 #  22. issues_epic.ts epicOutcome: drop the delivered-PR suffix of the Reason line; the unit check fails.
 
@@ -444,12 +444,14 @@ console.log(removeOwnWallFiles(w, "e10-x").join(","), ["a", "b", "tracked"].map(
 # The stand-in vitest above cannot show what real vitest does: 5.1 writes node_modules/.vitest-cache on every run, and 2.1.9 prints "x page 1 > title"
 # where 5.x prints "x title". Per version, with LOKI_RISK_TIER=medium so the full suites run:
 #   same:    p1 and p2 red on base fail the same way: pre-existing after one fix round; PARTIAL.
+#   one:     only p1 red on base: its base rerun runs alone (real vitest output) while head ran batched (Loki's per-file text), so only the full
+#            "file > describe > title" ids are compared (2.1.9 prints the describe path on its x line, the batch text does not); PARTIAL.
 #   backend: a backend-only change (FireLater#21 s1-s3) with p1 and p2 red on base: the frontend full suite fails with exactly the base errors, so it is
 #            excused by its recorded errors and the run is delivered.
 #   changed: the change makes p1 throw a TypeError (same id): p1 is never excused and the run is not delivered.
 #   p8 only: p8 reaches lib/api only through a dynamic import, so only the full suite runs it; it is red on base with an AssertionError and the change makes
 #            it a TypeError. Ids alone would excuse the full suite (and seal VERIFIED); its errors differ, so it blocks.
-rv_fixture() { # rv_fixture <dir> <p8red 0|1> <vitest dir>
+rv_fixture() { # rv_fixture <dir> <0: p1 and p2 red | 1: only p8 red | 2: only p1 red> <vitest dir>
     local d="$1" p8="$2" nm="$3/node_modules" i
     mkdir -p "$d/backend/tests" "$d/backend/src" "$d/frontend/src/lib/__tests__" "$d/frontend/src/app/p8/__tests__"
     printf 'export const add = (a: number, b: number): number => a + b;\n// LOKI_STUB_INSERT\n' > "$d/backend/src/util.ts"
@@ -463,7 +465,7 @@ rv_fixture() { # rv_fixture <dir> <p8red 0|1> <vitest dir>
     for i in 1 2 3 4; do
         mkdir -p "$d/frontend/src/app/p$i/__tests__"
         case "$i" in 1) call='api.label("/p")' want='"GET /q"' ;; 2) call='api.get("/p")' want='"GET /q"' ;; *) call='api.get("/p")' want='"GET /p"' ;; esac
-        [ "$p8" = 1 ] && want='"GET /p"'
+        [ "$p8" = 1 ] && want='"GET /p"'; [ "$p8" = 2 ] && [ "$i" = 2 ] && want='"GET /p"'
         printf 'import { test, expect, describe } from "vitest";\nimport { api } from "../../../lib/api";\ndescribe("page %s", () => {\n  test("renders", () => { expect(1).toBe(1); });\n  test("has gray background", () => { expect(%s).toBe(%s); });\n});\n' "$i" "$call" "$want" > "$d/frontend/src/app/p$i/__tests__/page.test.ts"
     done
     want='"GET /p"'; [ "$p8" = 1 ] && want='"GET /q"'
@@ -503,6 +505,11 @@ for ver in 2.1.9 5.1.0; do
     printf '%s\n' "$RVS" | grep -qx 'pre_red p1,p2' && printf '%s\n' "$RVS" | grep -qx 'verdict PARTIAL' \
         && ok "real vitest $ver same: base-red page tests failing the same way are pre-existing after one round; PARTIAL (rc $RVRC)" \
         || { bad "real vitest $ver same: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    rv_fixture "$T/rv-$ver-one" 2 "$RVROOT/$ver"; rv_run "$T/rv-$ver-one" "" 'export const del = (p: string): string => `DELETE ${p}`;'
+    printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver one: /"
+    printf '%s\n' "$RVS" | grep -qx 'pre_red p1' && printf '%s\n' "$RVS" | grep -qx 'verdict PARTIAL' \
+        && ok "real vitest $ver one: a lone base-red page test (base run alone, head batched) is known red by its full id; PARTIAL (rc $RVRC)" \
+        || { bad "real vitest $ver one: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
     rv_fixture "$T/rv-$ver-backend" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-backend" "" 'export const sub = (a: number, b: number): number => a - b;' backend/src/util.ts "add a sub(a, b) helper next to add in backend/src/util.ts"
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver backend: /"
     printf '%s\n' "$RVS" | grep -qx 'suite_excused True' && printf '%s\n' "$RVS" | grep -qx 'fix_rounds 0' && printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' \
