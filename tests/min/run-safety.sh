@@ -23,11 +23,12 @@
 #      is delivered PARTIAL; the checkout returns with the same porcelain (no Wall
 #      file left untracked); unit-level, run end removes only its own untracked Wall
 #      files whose bytes match the receipt.
-#   6. a FireLater#21-shaped lean run (the task names frontend/src/lib/api.ts, 2 page tests that import it are red
-#      on base, the root runs no tests): those page tests are pre-existing by the frontend suite's baseline, never
-#      blocking or fix-round input, and the run is delivered PARTIAL naming them as capped; unit-level, a test of a
-#      named file's stem stays the task's own, an ignored .next/package.json is not test configuration, and a FAILED
-#      split's Reason names its PRs and the stopped slice's branch.
+#   6. FireLater#21-shaped runs (the root runs no tests, a task naming frontend/src/lib/api.ts, 2 page tests that import it
+#      red on base): failing the same way they feed one fix round, then are pre-existing and the run is PARTIAL naming
+#      them, also when the fix session answers LOKI_SPEC_CONFLICT; a change that makes one throw a new error (same id) is
+#      never excused, from a task naming api.ts or naming no file (never VERIFIED); real vitest 5.0.5 output of that
+#      case is a different error to sameErrors; unit-level, a test of a named file's stem stays the task's own, an
+#      ignored .next/package.json is not test configuration, and a FAILED split's Reason names its PRs.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/engine10/supervisor.ts: drop the refuseCommandGoal line, so a
@@ -66,9 +67,10 @@
 #  17. conflict_resume.ts wallFailures: excuse every known_red_checks entry again; the delivery check fails.
 #  18. verify.ts errorsById: keep one error line per id (last wins) instead of the sorted multiset; or let a FAIL line take the
 #      next FAIL line as its error; the delivery check fails (the test.each regression reads as the same error).
-#  19. verify.ts attribute call: eligible = !targetNames.has(name) again (collateral never attributable); the mono3 run
-#      takes a fix round on base-red page tests and ends STALLED (3 mono3 checks fail).
-#  20. repo_profile.ts attribute: ignore `suite` (root baseline only); the mono3 run is FAILED with p1,p2 blocking.
+#  19. verify.ts attribute call: pass `suite` without the preRed.sameError gate (ids only); mono3 unnamed is delivered with p1 excused.
+#  20. verify.ts: excuse collateral same-error checks at once (no fix round first); mono3 same runs 0 fix rounds.
+#  20b. machine.ts: drop the onlyCollateralRed re-verify; mono3 conflict ends SPEC_CONFLICT.
+#  20c. verify.ts collateralSame: take preRed.knownRed (ids only) instead of sameError; mono3 changed is delivered with p1 excused.
 #  21. runner_config.ts hiddenConfigChanged: count every added ignored config again; the unit check fails on .next/package.json.
 #  22. issues_epic.ts epicOutcome: drop the delivered-PR suffix of the Reason line; the unit check fails.
 
@@ -285,10 +287,13 @@ R2="$( [ -n "$EV2" ] && python3 -I -c 'import json,sys; ev=[json.loads(l) for l 
 [ "$R2" = 2 ] && printf '%s\n' "$OUT2" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' && ok "mono: a fix round that moves the Wall earns the next round; delivered PARTIAL after the round that does not (rc $RC2)" \
     || { bad "mono: Wall moved by round 1: fix rounds ${R2:-?}, outcome $(printf '%s\n' "$OUT2" | sed -n 's/^Outcome:[[:space:]]*//p') (rc $RC2)"; printf '%s\n' "$OUT2" | tail -8 | sed 's/^/    | /'; }
 
-# FireLater#21-shaped: a lean task names frontend/src/lib/api.ts (its own test lib/__tests__/api.test.ts is green); 4 page tests import that
-# client and 2 are red on base, in a repo whose root runs no tests (only the per-package suites have a baseline). Those red page tests are
-# relevant only because they import a named file: they are pre-existing (every id in the frontend suite's baseline), never fix-round input,
-# never blocking, and listed once as capped. Before this they blocked: a fix round on base-red failures, then SPEC_CONFLICT and no PR.
+# FireLater#21-shaped: backend/ and frontend/ vitest packages, the root runs no tests; frontend/src/lib/api.ts has its own green test, and 4 page tests
+# import the client, 2 red on base (p1 also fails with real vitest's TypeError wording when api.ts contains BROKEN). Each run below starts from a copy.
+#   same:     a lean task naming api.ts, the page tests failing the same way: they feed one fix round (they could be the task's bug), then the same-error
+#             remainder is pre-existing; delivered PARTIAL naming p1 and p2 as capped. Before this the run ended with no PR (SPEC_CONFLICT on FireLater).
+#   conflict: the same, but the fix session answers LOKI_SPEC_CONFLICT: one re-verify (no session) excuses them and the run is still PARTIAL.
+#   changed:  the task's change makes p1 throw a TypeError (same failing id, new error): p1 is never excused, and the run is not delivered.
+#   unnamed:  the same broken change from a task that names no file: p1 is still never excused, and the run is never VERIFIED.
 M3="$T/mono3"
 mkdir -p "$M3/backend/tests" "$M3/frontend/src/lib/__tests__"
 printf 'node_modules\n.next/\n' > "$M3/.gitignore"
@@ -298,35 +303,59 @@ printf 'import { test, expect } from "vitest";\ntest("ok", () => { expect(1).toB
 printf 'export const api = { get: (p: string): string => `GET ${p}` };\n// LOKI_STUB_INSERT\n' > "$M3/frontend/src/lib/api.ts"
 printf 'import { test, expect } from "vitest";\nimport { api } from "../api";\ntest("get", () => { expect(api.get("/x")).toBe("GET /x"); });\n' > "$M3/frontend/src/lib/__tests__/api.test.ts"
 for i in 1 2 3 4; do
-    mkdir -p "$M3/frontend/src/app/p$i/__tests__"; red=""; [ "$i" -le 2 ] && red=" /*red*/"
-    printf 'import { test, expect, describe } from "vitest";\nimport { api } from "../../../lib/api";\ndescribe("page %s", () => {\n  test("renders", () => { expect(1).toBe(1); });\n  test("has gray background", () => { expect(api.get("/p")).toBe("GET /p");%s });\n});\n' "$i" "$red" > "$M3/frontend/src/app/p$i/__tests__/page.test.ts"
+    mkdir -p "$M3/frontend/src/app/p$i/__tests__"; red=""; [ "$i" -le 2 ] && red=" /*red*/"; [ "$i" = 1 ] && red="$red /*throws:BROKEN*/"
+    printf 'import { test, expect, describe } from "vitest";\nimport { api } from "../../../lib/api";\n// reads readFileSync(join(root, "frontend/src/lib/api.ts")) through the client\ndescribe("page %s", () => {\n  test("renders", () => { expect(1).toBe(1); });\n  test("has gray background", () => { expect(api.get("/p")).toBe("GET /p");%s });\n});\n' "$i" "$red" > "$M3/frontend/src/app/p$i/__tests__/page.test.ts"
 done
 git -C "$M3" init -q -b main && git -C "$M3" config user.name rs && git -C "$M3" config user.email rs@example.invalid
 git -C "$M3" add -A . && git -C "$M3" commit -q -m base
-OUT3="$(cd "$M3" && PATH="$FIX/vitest-bin:$PATH" E2E_STUB_MODE=stack E2E_STUB_TARGET=frontend/src/lib/api.ts \
-    E2E_STUB_SNIPPET='export const del = (p: string): string => `DELETE ${p}`;' E2E_STUB_PROJECT="$PROJ" \
-    LOKI_E10_NO_FETCH=1 ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "add a del(p) helper next to the api client in frontend/src/lib/api.ts" --no-pr </dev/null 2>&1)"; RC3=$?
-EV3="$(ls "$M3"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
-S3="$( [ -n "$EV3" ] && python3 -I - "$EV3" <<'PY'
+for leg in same conflict changed unnamed; do cp -R "$M3" "$T/mono3-$leg"; done
+NAMED="add a del(p) helper next to the api client in frontend/src/lib/api.ts"
+m3() { # m3 <leg> <task> <snippet> [VAR=value...]: one run, then one summary line per fact
+    local leg="$1" task="$2" snip="$3"; shift 3
+    local d="$T/mono3-$leg"
+    M3OUT="$(cd "$d" && env PATH="$FIX/vitest-bin:$PATH" E2E_STUB_MODE=stack E2E_STUB_TARGET=frontend/src/lib/api.ts E2E_STUB_SNIPPET="$snip" E2E_STUB_PROJECT="$PROJ" \
+        LOKI_E10_NO_FETCH=1 "$@" ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "$task" --no-pr </dev/null 2>&1)"; M3RC=$?
+    local ev; ev="$(ls "$d"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
+    M3S="$( [ -n "$ev" ] && python3 -I - "$ev" <<'PY'
 import json, sys
 ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
-v = next((e["data"] for e in ev if e["type"] == "stage.completed" and e["stage"] == "verify"), {})
+vs = [e["data"] for e in ev if e["type"] == "stage.completed" and e["stage"] == "verify"]
+v = vs[-1] if vs else {}
 done = next((e["data"] for e in ev if e["type"] == "run.completed"), {})
 pages = lambda xs: sorted(n.split("/app/")[1].split("/")[0] for n in xs if "/app/p" in n and not n.startswith("full suite"))
-print("wall %s" % any(e["type"] == "session.started" and e["stage"] == "wall" for e in ev))
 print("fix_rounds %d" % sum(1 for e in ev if e["type"] == "fix.round"))
 print("pre_red %s" % ",".join(pages(v.get("pre_red_checks", []))))
-print("blocking %s" % ",".join(pages(v.get("blocking_checks", [])) + [n for n in v.get("blocking_checks", []) if n.startswith("full suite")]))
 print("capped %s" % ",".join(pages(n.split(": ", 1)[1] for n in done.get("not_proven", []) if n.startswith("relevant test already failing on base"))))
 print("verdict %s" % done.get("verdict"))
 PY
 )"
-printf '%s\n' "$S3" | sed 's/^/    mono3: /'
-printf '%s\n' "$S3" | grep -qx 'wall False' && ok "mono3: the task naming lib/api.ts takes the lean path (no Wall session)" || bad "mono3: a Wall session ran: $(printf '%s\n' "$S3" | grep '^wall')"
-printf '%s\n' "$S3" | grep -qx 'pre_red p1,p2' && ok "mono3: the 2 base-red page tests that import the named api.ts are pre-existing (frontend suite baseline)" || bad "mono3: pre_red $(printf '%s\n' "$S3" | grep '^pre_red')"
-printf '%s\n' "$S3" | grep -qx 'blocking ' && printf '%s\n' "$S3" | grep -qx 'fix_rounds 0' && ok "mono3: nothing blocks and no fix round runs on pre-existing failures" || bad "mono3: $(printf '%s\n' "$S3" | grep -E '^(blocking|fix_rounds)' | tr '\n' ' ')"
-printf '%s\n' "$S3" | grep -qx 'capped p1,p2' && printf '%s\n' "$S3" | grep -qx 'verdict PARTIAL' && printf '%s\n' "$OUT3" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' \
-    && ok "mono3: delivered PARTIAL, each still-red relevant test named once as capped (rc $RC3)" || { bad "mono3: $(printf '%s\n' "$S3" | grep -E '^(capped|verdict)' | tr '\n' ' ') (rc $RC3)"; printf '%s\n' "$OUT3" | tail -12 | sed 's/^/    | /'; }
+    printf '%s\n' "$M3S" | sed "s/^/    mono3 $leg: /"
+}
+got() { printf '%s\n' "$M3S" | grep -qx "$1"; }
+m3 same "$NAMED" 'export const del = (p: string): string => `DELETE ${p}`;'
+got 'fix_rounds 1' && got 'pre_red p1,p2' && got 'capped p1,p2' && got 'verdict PARTIAL' && printf '%s\n' "$M3OUT" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' \
+    && ok "mono3 same: base-red page tests that import the named api.ts feed one fix round, then are pre-existing; delivered PARTIAL naming them (rc $M3RC)" \
+    || { bad "mono3 same: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
+m3 conflict "$NAMED" 'export const del = (p: string): string => `DELETE ${p}`;' E2E_STUB_FIX=conflict
+got 'pre_red p1,p2' && got 'verdict PARTIAL' && ok "mono3 conflict: a fix-round conflict over those same failures is re-verified and delivered PARTIAL, not SPEC_CONFLICT (rc $M3RC)" \
+    || { bad "mono3 conflict: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
+m3 changed "$NAMED" 'export const del = (p: string): string => `DELETE ${p}`; // BROKEN'
+! printf '%s\n' "$M3S" | grep -q '^pre_red .*p1' && ! got 'verdict PARTIAL' && ! got 'verdict VERIFIED' && ! printf '%s\n' "$M3S" | grep -qx 'fix_rounds 0' \
+    && ok "mono3 changed: a base-red test the change breaks with a new error is never pre-existing; fix round, no delivery ($(printf '%s\n' "$M3S" | grep verdict))" \
+    || { bad "mono3 changed: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
+m3 unnamed "add a del(p) helper to the frontend client" 'export const del = (p: string): string => `DELETE ${p}`; // BROKEN'
+! printf '%s\n' "$M3S" | grep -q '^pre_red .*p1' && ! got 'verdict VERIFIED' \
+    && ok "mono3 unnamed: the same broken change from a task naming no file is never VERIFIED and p1 is never excused ($(printf '%s\n' "$M3S" | grep verdict))" \
+    || { bad "mono3 unnamed: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
+
+# Real vitest 5.0.5 output for the changed case (tests/min/fixtures/failures/vitest-same-id-*.txt): the same failing id with an AssertionError on base and
+# a TypeError on head is a different error to sameErrors (the matcher every base comparison above uses), and base against itself is the same.
+RV="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const v = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/verify.ts"), { failIds } = await import(process.env.ROOT + "/loki-ts/src/engine10/failures.ts"), { readFileSync } = await import("node:fs");
+const f = (n) => readFileSync(process.env.ROOT + "/tests/min/fixtures/failures/vitest-same-id-" + n + ".txt", "utf8"), b = f("base"), h = f("head");
+console.log([JSON.stringify(failIds(h).sort()) === JSON.stringify(failIds(b).sort()), v.sameErrors(h, b, failIds(h)), v.sameErrors(b, b, failIds(b))].join(" "));
+' 2>&1)"
+[ "$RV" = "true false true" ] && ok "real vitest: a base-red test failing with a new error under the same id is not the same error" || bad "real vitest same-id check gave: $RV (want: true false true)"
 
 # The same rules, unit-level: a relevant test is the task's own when the task names it or a file of its covered stem (a named register/page.tsx keeps
 # every page.test.tsx a proof target, fail closed); an ignored file added since intake counts as test configuration only when it sets a runner key
