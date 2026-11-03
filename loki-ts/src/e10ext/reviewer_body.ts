@@ -1,7 +1,7 @@
 // INTEL-3: reviewer-first PR body, pure rendering from data the engine already holds. Order: what was asked, what changed, how it was tested, NOT PROVEN, receipt. Absent data
 // prints "not recorded", never a number. Task text is untrusted: truncated, never executed.
 import { noteOf } from "../util/base_guard.ts";
-import { getVersion } from "../version.ts"; import { SEAL_ACCURACY_NOT_MEASURED } from "../util/run_outputs.ts";
+import { getVersion } from "../version.ts"; import { parseSliceHead, SEAL_ACCURACY_NOT_MEASURED } from "../util/run_outputs.ts";
 import { ALREADY_FAILING_ON_BASE, checkResultLabel } from "../util/check_result.ts"; import { intentLine, stripTemplate } from "../util/intent_card.ts"; import { WALL_FILE } from "./commit_filter.ts";
 export interface ReviewerBodyInput {
   verdict: string; draftReason: string | null; notProven: string[];
@@ -20,8 +20,16 @@ function acceptance(all: string[]): string[] {
 }
 function criteria(task: string): string[] {
   const kept = stripTemplate(task.split("\n").map((l) => l.trim()).filter(Boolean)), lines = acceptance(kept); if (kept.every((l) => /^#+\s/.test(l))) return []; // nothing but template text was left
-  const items = lines.filter((l) => /^([-*+]|\d+[.)])\s+/.test(l)).map((l) => l.replace(/^([-*+]|\d+[.)])\s+(\[[ xX]\]\s*)?/, ""));
-  return more((items.length > 0 ? items : lines.slice(0, 1)).map(clip), MAX_CRITERIA);
+  const items = lines.filter((l) => /^([-*+]|\d+[.)])\s+/.test(l)).map((l) => l.replace(/^([-*+]|\d+[.)])\s+(\[[ xX]\]\s*)?/, "")), numbered = items.length > 0 ? [] : inlineCriteria(kept);
+  return more((items.length > 0 ? items : numbered.length > 0 ? numbered : lines.slice(0, 1)).map(clip), MAX_CRITERIA);
+}
+/** FireLater#21: a slice task carries its criteria on one line, "Acceptance criteria: (1) a; (2) b" (issues_epic.ts sliceTask keeps a slice one paragraph per
+ *  field); split at each "; (k+1) " in sequence so a ";" inside a criterion stays. [] when the task has no such line. */
+function inlineCriteria(lines: string[]): string[] {
+  const l = lines.find((x) => /^acceptance criteria:\s*\(1\)\s/i.test(x)); if (!l) return [];
+  const out: string[] = []; let rest = l.replace(/^acceptance criteria:\s*\(1\)\s*/i, "");
+  for (let k = 2; ; k++) { const i = rest.indexOf(`; (${k}) `); if (i < 0) { out.push(rest.trim()); break; } out.push(rest.slice(0, i).trim()); rest = rest.slice(i + `; (${k}) `.length); }
+  return out.filter(Boolean);
 }
 function tested(o: ReviewerBodyInput["outputs"]): string[] {
   if (!o.verify) return ["- Tests: not recorded"];
@@ -43,7 +51,7 @@ export function renderReviewerBody(i: ReviewerBodyInput, env: NodeJS.ProcessEnv 
   const task = typeof i.outputs.intake?.["task"] === "string" ? (i.outputs.intake["task"] as string) : "", title = typeof i.outputs.intake?.["title"] === "string" ? (i.outputs.intake["title"] as string) : "";
   const changed = arr<string>(i.outputs.verify?.["changed_files"]).filter((f) => !WALL_FILE.test(f)), /* the commit stage drops Wall files, so they are not in the diff */ planned = arr<string>(i.outputs.plan?.["relevant_files"]);
   const files = changed.length > 0 ? changed.map((f) => `- ${f}`) : planned.length > 0 ? [`- Files in scope (planned, no diff recorded): ${planned.slice(0, MAX_FILES).join(", ")}${planned.length > MAX_FILES ? ` (+${planned.length - MAX_FILES} more)` : ""}`] : [], planText = i.outputs.plan?.["plan"];
-  const why = title || (task.split("\n")[0] ?? "") || (typeof planText === "string" ? (planText.split("\n").find((l) => l.trim()) ?? "") : "");
+  const line1 = (task.split("\n")[0] ?? "").trim(), why = parseSliceHead(line1)?.title || line1 || title || (typeof planText === "string" ? (planText.split("\n").find((l) => l.trim()) ?? "") : ""); // the whole first line (intake's title is a 72-character cut); a slice's own title without its "Slice s2 of 4 for" header
   const il = intentLine(i.outputs.plan?.["intent_card"]), cr = task ? criteria(task).map((c) => `- ${c}`) : [], asked = cr.length > 0 ? cr : il ? [`- ${clip(il)}`] : []; // the intent line stands in only when the issue left nothing but template text
   const L = ["## What the issue asked", ...(asked.length > 0 ? asked : ["- not recorded"]), "", "## What changed and why", `- Why: ${why ? clip(why) : "not recorded"}`, ...(files.length > 0 ? more(files, MAX_FILES) : ["- Files in scope: not recorded"]), ""];
   L.push("## How it was tested", `- Verdict: ${i.verdict}${i.draftReason ? ` (DRAFT: ${i.draftReason})` : ""}`, ...(noteOf(i.outputs.intake) ? [`- Note: ${noteOf(i.outputs.intake)}`] : []), ...tested(i.outputs), ""); // FC-15: unclipped, the evidence paths are the point

@@ -342,7 +342,8 @@ function removeRunWorktrees(repoDir: string, baseSha: string | null | undefined)
   }
 }
 
-const deepAlive = (runDir: string): boolean => {
+/** True while the detached post-PR deep verify recorded in this run's deep.started event is alive (it posts the loki/deep-verify status when it ends). */
+export const deepAlive = (runDir: string): boolean => {
   try {
     const pid = readFileSync(join(runDir, "events.jsonl"), "utf8").split("\n").filter((l) => l.includes('"deep.started"')).map((l) => Number((JSON.parse(l) as { data?: { pid?: unknown } }).data?.pid)).pop();
     if (!pid || !Number.isInteger(pid) || pid <= 1) return false;

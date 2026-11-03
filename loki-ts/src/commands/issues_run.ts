@@ -10,7 +10,7 @@
 // Every external effect (gh, triage, runner, worktrees, prompt) is injectable so tests never call a provider.
 import { groupEnv } from "../e10ext/budget_cap.ts";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -18,7 +18,7 @@ import { MAX_PARALLEL, makeDefaultRunner, queueAdd, queueRun, type ItemResult, t
 import { estimateFor, startText, type EstimateResult } from "../runner/router/cost_preview.ts";
 import { epicOutcome, invalidSplitNote, makeSessionDecompose, splitCost, splitCostText, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
-import { safeGit } from "../util/safe_git.ts";
+import { safeGit } from "../util/safe_git.ts"; import { deepAlive } from "../util/base_guard.ts";
 import { resolveModel } from "../engine10/session.ts";
 import { deliverables } from "../features/decompose.ts";
 
@@ -51,7 +51,7 @@ export interface IssuesRunDeps {
   estimate: () => EstimateResult;
   confirm: (question: string) => Promise<boolean>;
   isTTY: boolean;
-  worktree: { create: (name: string, base: string) => string; remove: (name: string, path: string) => void };
+  worktree: { create: (name: string, base: string) => string; remove: (name: string, path: string) => void; /** waits for deferred removals (a live deep verify), then removes them */ drain?: (sleep: (ms: number) => Promise<void>, out: (s: string) => void) => Promise<void> };
   sleep: (ms: number) => Promise<void>;
   now: () => Date;
   out: (s: string) => void;
@@ -358,6 +358,7 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
     };
     for (const i of actionable) d.out(`#${i.number} running\n`);
     await queueRun([], { lokiDir: runDir, runner: runOne, governor: noGovernor, now: d.now, out: sink, err: d.err, parallel: par, draft: a.draft, onResult });
+    await d.worktree.drain?.(d.sleep, d.out); // FireLater#21: deep verify in a parallel issue worktree posts its status before the worktree goes
     // One split per issue, only after its whole-issue run failed or hit a cap
     const late: typeof epics = [];
     for (const i of wholeFailed) {
@@ -458,6 +459,7 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
     return r;
   };
   const results = await runEpicSlices(e.plan, runSlice, (r) => d.out(`#${n} ${r.id} ${r.title}: ${r.outcome}\n`), parallel, (p) => d.out(`${progressLine(n, p)}\n`), pr);
+  await d.worktree.drain?.(d.sleep, d.out); // FireLater#21: a slice's deep verify finishes (and posts loki/deep-verify) before its worktree goes
   const prs = results.filter((r) => r.pr).length;
   const failed = results.filter((r) => /^(FAILED|BLOCKED)/.test(r.outcome)).length;
   const skipped = results.filter((r) => r.outcome.startsWith("SKIPPED")).length;
@@ -595,9 +597,29 @@ export function makeSessionTriage(repoDir: string, lokiDir: string, provider: st
   };
 }
 
-export function makeWorktrees(repoDir: string): IssuesRunDeps["worktree"] {
+/** FireLater#21: how long the end of a split or batch waits for the slices' detached deep verify before giving up on removing their worktrees. */
+export const DEEP_DRAIN_S = 600;
+/** True when a run in this worktree still has its detached deep verify alive: removing the worktree under it kills the post that ends loki/deep-verify "pending". */
+const deepRunning = (wt: string): boolean => { try { return readdirSync(join(wt, ".loki", "runs")).some((id) => deepAlive(join(wt, ".loki", "runs", id))); } catch { return false; } };
+export function makeWorktrees(repoDir: string, drainS = DEEP_DRAIN_S): IssuesRunDeps["worktree"] {
   let root: string | null = null;
+  const deferred: { name: string; p: string }[] = [];
+  const removeNow = (name: string, p: string): void => {
+    try {
+      safeGit(repoDir, ["worktree", "remove", "--force", p]);
+      safeGit(repoDir, ["branch", "-D", `loki/${name}`]);
+    } catch {
+      rmSync(p, { recursive: true, force: true }); // best effort; `git worktree prune` clears the record
+    }
+  };
   return {
+    // A slice's deep verify runs detached in its worktree after the PR opens; its removal waits for drain(), so later slices run meanwhile.
+    drain: async (sleep, out) => {
+      const until = Date.now() + drainS * 1000;
+      if (deferred.some((x) => deepRunning(x.p))) out(`loki: waiting up to ${drainS}s for deep verify to post its PR status\n`);
+      while (deferred.some((x) => deepRunning(x.p)) && Date.now() < until) await sleep(2000);
+      for (const x of deferred.splice(0)) { if (deepRunning(x.p)) out(`loki: kept ${x.p} while its deep verify still runs; remove it later with: git worktree remove --force ${x.p}\n`); else removeNow(x.name, x.p); }
+    },
     create: (name, base) => {
       root ??= mkdtempSync(join(tmpdir(), "loki-issues-"));
       const p = join(root, name);
@@ -606,14 +628,7 @@ export function makeWorktrees(repoDir: string): IssuesRunDeps["worktree"] {
       safeGit(repoDir, ["worktree", "add", "-B", `loki/${name}`, p, base]);
       return p;
     },
-    remove: (name, p) => {
-      try {
-        safeGit(repoDir, ["worktree", "remove", "--force", p]);
-        safeGit(repoDir, ["branch", "-D", `loki/${name}`]);
-      } catch {
-        rmSync(p, { recursive: true, force: true }); // best effort; `git worktree prune` clears the record
-      }
-    },
+    remove: (name, p) => { if (deepRunning(p)) deferred.push({ name, p }); else removeNow(name, p); },
   };
 }
 
