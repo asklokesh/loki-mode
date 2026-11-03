@@ -1312,14 +1312,15 @@ export function claudeAuthStatusLoggedIn(cli = "claude", env: NodeJS.ProcessEnv 
 // R100-001: one answer to "can the first `loki start` run with no setup?". A provider counts when its CLI is installed
 // and its login is confirmed by the probe the preflight already uses: claude via `claude auth status` (or an API key),
 // opencode via its auth file, and either via a provider API key.
-// providerLoginIssue returns null only when a login or key was found, so a warn-only result is not a login.
-export function providerAutodetected(checks: { command: string; found: boolean; path: string | null }[], env: NodeJS.ProcessEnv = process.env): boolean {
+// providerLoginIssue returns null only when a login or key was found, so a warn-only result is not a login. repoDir is the
+// project whose opencode.json the preflight also reads (the doctor runs in it).
+export function providerAutodetected(checks: { command: string; found: boolean; path: string | null }[], env: NodeJS.ProcessEnv = process.env, repoDir: string = process.cwd()): boolean {
   return PROVIDERS.some((p) => {
     const c = checks.find((x) => x.command === p);
     if (!c?.found) return false;
     const cli = c.path ?? p;
     if (p === "claude") return !providerAuthPath(p, env).startsWith("cli_login") || claudeAuthStatusLoggedIn(cli, env) === "yes"; // the preflight condition: only claude's own key or token counts, else a confirmed login
-    return providerLoginIssue(p, cli, env) === null;
+    return providerLoginIssue(p, cli, env, repoDir) === null;
   });
 }
 

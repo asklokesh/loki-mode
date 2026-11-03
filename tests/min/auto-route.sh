@@ -45,6 +45,8 @@
 #  16. sizing.ts namedDistinct: count matched repo paths, not names as written (unit: mono1; hard leg: monorepo index.ts plans).
 #  17. sizing.ts namedDistinct: add every matched basename even when a spelled-out path has it (unit: spelled3; hard leg:
 #      three spelled-out paths in a two-package monorepo plan).
+#  18. sizing.ts namedDistinct: drop the optional leading "./" (unit: dot5 is null).
+#  19. sizing.ts sizeTask: size "large" on namedFiles again instead of namedDistinct (unit: mono9 is large).
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
 need git
@@ -63,7 +65,7 @@ U="$(cd "$ROOT/loki-ts" && env -u LOKI_SESSION_MODEL -u LOKI_MODEL_OVERRIDE -u L
   LOKI_DIR="$T/unit-loki" TOKEN="$TOKEN" bun -e '
 import { routerMode, presetExecutor } from "./src/runner/router/flag.ts";
 import { routeRecord, routedFix, routerActive } from "./src/runner/router/unit_model.ts";
-import { hardReason } from "./src/engine10/sizing.ts";
+import { hardReason, sizeTask } from "./src/engine10/sizing.ts";
 import { climb } from "./src/runner/model_rank.ts";
 import { planRouterSession } from "./src/runner/providers.ts";
 import { routerKeptNote } from "./src/util/cost_profile.ts";
@@ -78,6 +80,9 @@ const mono = { files: Array.from({ length: 6 }, (_, i) => `pkg${i}/index.ts`), e
 const pk = { files: ["web", "api"].flatMap((p) => ["index", "utils", "types"].map((n) => `packages/${p}/src/${n}.ts`)), entries: [], truncated: false };
 out.push(`hard:spelled3=${hardReason("normal", pk, "Fix the date bug in packages/web/src/index.ts, packages/web/src/utils.ts and packages/web/src/types.ts")}`, `hard:suffix=${hardReason("normal", { files: ["src/index.ts", "packages/a/src/index.ts", "a/x.ts", "b/x.ts", "c/x.ts", "d/x.ts"], entries: [], truncated: false }, "Fix src/index.ts")}`);
 out.push(`hard:mono1=${hardReason("normal", mono, "fix the export in index.ts")}`, `hard:mono5=${hardReason("normal", mono, "fix pkg0/index.ts, pkg1/index.ts, pkg2/index.ts, pkg3/index.ts and pkg4/index.ts") !== null}`);
+out.push(`hard:dot5=${hardReason("normal", mono, "fix ./pkg0/index.ts, ./pkg1/index.ts, ./pkg2/index.ts, ./pkg3/index.ts and ./pkg4/index.ts") !== null}`, `hard:updir5=${hardReason("normal", mono, "fix ../pkg0/index.ts, ../pkg1/index.ts, ../pkg2/index.ts, ../pkg3/index.ts and ../pkg4/index.ts")}`);
+const mono9 = { files: Array.from({ length: 9 }, (_, i) => `pkg${i}/index.ts`), entries: [], truncated: false }, bunTests = { runners: ["bun"], tests: [] };
+out.push(`size:mono9=${sizeTask("fix the export in index.ts", mono9, bunTests).size}`, `size:spelled9=${sizeTask("fix " + mono9.files.map((f) => "./" + f).join(", "), mono9, bunTests).size}`);
 const lint = [{ signature: "lint:eslint" }];
 const f = routedFix("claude (provider default)", { implement: { route_model: "claude-sonnet-5-5" }, fix: { model: "claude-haiku-5-5" } }, { repeated: false, stall: false, groups: lint, reason: "lint" });
 out.push(`nodescend=${f.pin}`);
@@ -97,7 +102,7 @@ parseStartArgs(["--haiku", "--cost", "lean", "task"], (x) => errs.push(x), () =>
 out.push(`tsnote=${errs.filter((e) => e.includes("is already set and wins")).length}:${pe.LOKI_ROUTER ?? "unset"}`);
 console.log(out.join(" "));
 ' 2>&1)"
-want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=null hard:spelled3=null hard:suffix=null hard:mono1=null hard:mono5=true nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 kept=true:: tsnote=1:unset"
+want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=null hard:spelled3=null hard:suffix=null hard:mono1=null hard:mono5=true hard:dot5=true hard:updir5=null size:mono9=normal size:spelled9=large nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 kept=true:: tsnote=1:unset"
 [ "$U" = "$want" ] && ok "unit: preset executor and record, hardReason on task evidence only, never descend, redacted climb evidence, scoped advisor keeps the executor, --model and LOKI_MODEL_DEVELOPMENT pin, no opus advisor on an opus executor, an already-done claim climbs, the kept-router note" || bad "unit gave: $U"
 
 # --- e2e on the stub provider ---------------------------------------------------------------------------------------

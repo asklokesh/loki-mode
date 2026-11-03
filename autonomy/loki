@@ -3644,8 +3644,7 @@ cmd_start() {
         local _pf_p
         # Single source: SUPPORTED_PROVIDERS in providers/loader.sh.
         local _pf_known
-        _pf_known="$(sed -n 's/^SUPPORTED_PROVIDERS=(\(.*\))$/\1/p' "$_LOKI_SCRIPT_DIR/../providers/loader.sh" 2>/dev/null | tr -d '"' | head -1)"
-        [ -n "$_pf_known" ] || _pf_known="claude opencode"
+        _pf_known="$(loki_supported_providers_joined " ")"
         case " $_pf_known " in
             *" $_pf_explicit "*) ;;
             *)
@@ -3673,7 +3672,7 @@ cmd_start() {
             echo "Re-run with one of those, e.g. loki start --provider ${_pf_installed%% *}" >&2
         else
             echo "No supported provider CLI is installed on this machine." >&2
-            echo "Supported providers: claude, opencode" >&2
+            echo "Supported providers: $(loki_supported_providers_joined)" >&2
         fi
         echo "" >&2
         echo "Loki will not silently run a different provider than the one you asked for." >&2
@@ -4344,17 +4343,17 @@ cmd_start() {
     # with bogus state for 24h. Also write current PID alongside so the reader
     # can drop the marker when the originating process is no longer alive
     # (SIGKILL / crash paths that skip our cleanup hooks).
-    case "$provider" in
-        claude|opencode)
-            mkdir -p "$LOKI_DIR/state" 2>/dev/null || true
-            printf '%s:%s:%s\n' "$provider" "$(date +%s)" "$$" \
-                > "$LOKI_DIR/state/.cli-provider.tmp" 2>/dev/null \
-                && mv "$LOKI_DIR/state/.cli-provider.tmp" \
-                      "$LOKI_DIR/state/cli-provider" 2>/dev/null || true
-            ;;
-        '') : ;;  # no --provider passed
-        *)  log_warn "UT2-13: skipped cli-provider marker (unknown provider '$provider')" ;;
-    esac
+    if [ -z "$provider" ]; then
+        :  # no --provider passed
+    elif validate_provider "$provider"; then
+        mkdir -p "$LOKI_DIR/state" 2>/dev/null || true
+        printf '%s:%s:%s\n' "$provider" "$(date +%s)" "$$" \
+            > "$LOKI_DIR/state/.cli-provider.tmp" 2>/dev/null \
+            && mv "$LOKI_DIR/state/.cli-provider.tmp" \
+                  "$LOKI_DIR/state/cli-provider" 2>/dev/null || true
+    else
+        log_warn "UT2-13: skipped cli-provider marker (unknown provider '$provider')"
+    fi
 
     # Emit learning signal: user preference for provider selection (SYN-018)
     if [ -n "$provider" ]; then
@@ -6906,7 +6905,7 @@ cmd_status() {
             ;;
     esac
     echo -e "${CYAN}Provider:${NC} $current_provider ($capability)"
-    echo -e "${DIM}  Switch with: loki provider set <claude|opencode>${NC}"
+    echo -e "${DIM}  Switch with: loki provider set <$(loki_supported_providers_joined "|")>${NC}"
     echo ""
 
     # Show running sessions (v6.4.0 - concurrent session support)
@@ -7807,6 +7806,12 @@ cmd_provider_show() {
     fi
 
     local current="${positional_arg:-${saved_provider:-${LOKI_PROVIDER:-claude}}}"
+    # A removed provider saved in .loki/state/provider: the migration line and how to clear it, as `loki start` says.
+    if [ -z "$positional_arg" ] && [ "$current" = "$saved_provider" ] && loki_is_removed_provider "$saved_provider"; then
+        loki_removed_provider_message "$saved_provider" >&2
+        loki_removed_saved_provider_hint "$saved_provider" >&2
+        exit 2
+    fi
 
     echo -e "${BOLD}Current Provider${NC}"
     echo ""
@@ -7838,7 +7843,7 @@ cmd_provider_set() {
 
     if [ -z "$new_provider" ]; then
         echo -e "${RED}Error: Provider name required${NC}"
-        echo "Usage: loki provider set <claude|opencode>"
+        echo "Usage: loki provider set <$(loki_supported_providers_joined "|")>"
         exit 2
     fi
 
@@ -7848,15 +7853,11 @@ cmd_provider_set() {
         loki_removed_provider_message "$new_provider" >&2
         exit 2
     fi
-    case "$new_provider" in
-        claude|opencode)
-            ;;
-        *)
-            echo -e "${RED}Error: Invalid provider '$new_provider'${NC}"
-            echo "Valid providers: claude, opencode"
-            exit 1
-            ;;
-    esac
+    if ! validate_provider "$new_provider"; then
+        echo -e "${RED}Error: Invalid provider '$new_provider'${NC}"
+        echo "Valid providers: $(loki_supported_providers_joined)"
+        exit 1
+    fi
 
     # Check if CLI is installed
     if ! command -v "$new_provider" &> /dev/null; then
@@ -12382,15 +12383,13 @@ cmd_run() {
                     # UT2-13: Record CLI provider at parse time (atomic write).
                     # v7.7.11 (council fix): validate against canonical set; include
                     # PID so reader can drop the marker when originating process is gone.
-                    case "$2" in
-                        claude|opencode)
-                            mkdir -p "${LOKI_DIR:-.loki}/state" 2>/dev/null || true
-                            printf '%s:%s:%s\n' "$2" "$(date +%s)" "$$" \
-                                > "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" 2>/dev/null \
-                                && mv "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" \
-                                      "${LOKI_DIR:-.loki}/state/cli-provider" 2>/dev/null || true
-                            ;;
-                    esac
+                    if validate_provider "$2"; then
+                        mkdir -p "${LOKI_DIR:-.loki}/state" 2>/dev/null || true
+                        printf '%s:%s:%s\n' "$2" "$(date +%s)" "$$" \
+                            > "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" 2>/dev/null \
+                            && mv "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" \
+                                  "${LOKI_DIR:-.loki}/state/cli-provider" 2>/dev/null || true
+                    fi
                     shift 2
                 else
                     echo -e "${RED}--provider requires a value${NC}"
@@ -12402,15 +12401,13 @@ cmd_run() {
                 start_args+=("--provider" "$provider_override")
                 # UT2-13: Record CLI provider at parse time (atomic write).
                 # v7.7.11 (council fix): validate + include PID.
-                case "$provider_override" in
-                    claude|opencode)
-                        mkdir -p "${LOKI_DIR:-.loki}/state" 2>/dev/null || true
-                        printf '%s:%s:%s\n' "$provider_override" "$(date +%s)" "$$" \
-                            > "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" 2>/dev/null \
-                            && mv "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" \
-                                  "${LOKI_DIR:-.loki}/state/cli-provider" 2>/dev/null || true
-                        ;;
-                esac
+                if validate_provider "$provider_override"; then
+                    mkdir -p "${LOKI_DIR:-.loki}/state" 2>/dev/null || true
+                    printf '%s:%s:%s\n' "$provider_override" "$(date +%s)" "$$" \
+                        > "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" 2>/dev/null \
+                        && mv "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" \
+                              "${LOKI_DIR:-.loki}/state/cli-provider" 2>/dev/null || true
+                fi
                 shift
                 ;;
             --parallel|--bg|--background|--simple|--complex|--no-dashboard|--sandbox|--no-plan)
@@ -14494,7 +14491,7 @@ cmd_config() {
             echo "  model.planning       Model for planning tier"
             echo "  model.development    Model for development tier"
             echo "  model.fast           Model for fast tier"
-            echo "  provider             Default AI provider: claude, opencode"
+            echo "  provider             Default AI provider: $(loki_supported_providers_joined)"
             echo "  issue.provider       Default issue provider: github, gitlab, jira, azure_devops"
             echo "  blind_validation     Blind validation mode: true, false (default: true)"
             echo "  adversarial_testing  Adversarial testing: true, false (default: true)"
@@ -14558,10 +14555,9 @@ cmd_config_set() {
             ;;
         provider)
             if loki_is_removed_provider "$value"; then loki_removed_provider_message "$value" >&2; return 2; fi
-            case "$value" in
-                claude|opencode) ;;
-                *) echo -e "${RED}Invalid provider: $value (expected: claude, opencode)${NC}"; return 1 ;;
-            esac
+            if ! validate_provider "$value"; then
+                echo -e "${RED}Invalid provider: $value (expected: $(loki_supported_providers_joined))${NC}"; return 1
+            fi
             ;;
         issue.provider)
             case "$value" in
@@ -17046,10 +17042,9 @@ cmd_wow() {
     fi
 
     local use_provider="${provider:-${LOKI_PROVIDER:-claude}}"
-    case "$use_provider" in
-        claude|opencode) ;;
-        *) echo "loki wow: unknown provider '$use_provider' (use claude or opencode)" >&2; return 2 ;;
-    esac
+    if ! validate_provider "$use_provider"; then
+        echo "loki wow: unknown provider '$use_provider' (use $(loki_supported_providers_joined " or "))" >&2; return 2
+    fi
     if ! wow_provider_ready "$use_provider"; then
         if [ "$dry_run" = true ]; then
             echo "loki wow: no provider ready for '$use_provider'. A real run would show the offline sample."
@@ -18627,7 +18622,7 @@ ENDGITIGNORE
     # opencode here made `loki provider list` under-report a provider the
     # runner will happily select -- the same drift that blocked
     # opencode-only machines entirely until v8.76.0.
-    for _pcli in claude opencode; do
+    for _pcli in "${SUPPORTED_PROVIDERS[@]}"; do
         if command -v "$_pcli" &>/dev/null; then
             _has_provider=true
             break
@@ -19629,7 +19624,7 @@ except Exception: pass
                     (cd "$codebase_path" && source "$_LOKI_SCRIPT_DIR/../providers/opencode.sh" && provider_invoke "$phase_prompt" 2>&1) || phase_exit=$?
                     ;;
                 *)
-                    echo -e "${RED}Error: Unknown provider '${provider_name}'. Supported: claude, opencode${NC}"
+                    echo -e "${RED}Error: Unknown provider '${provider_name}'. Supported: $(loki_supported_providers_joined)${NC}"
                     phase_exit=1
                     ;;
             esac
@@ -20854,7 +20849,7 @@ except Exception: pass
         # BUG-HEAL-003: Unknown provider should error, not silently succeed
         *)
             echo -e "${RED}Error: Unknown provider: $provider${NC}"
-            echo "Supported providers: claude, opencode"
+            echo "Supported providers: $(loki_supported_providers_joined)"
             return 1
             ;;
     esac
@@ -21691,10 +21686,9 @@ with open(failover_file, 'w') as f: json.dump(d, f, indent=2)
                 # Validate each provider in chain
                 local IFS=','
                 for p in $new_chain; do
-                    case "$p" in
-                        claude|opencode) ;;
-                        *) echo -e "${RED}Error: invalid provider '$p' in chain${NC}"; return 1 ;;
-                    esac
+                    if ! validate_provider "$p"; then
+                        echo -e "${RED}Error: invalid provider '$p' in chain${NC}"; return 1
+                    fi
                 done
                 unset IFS
 
@@ -22990,10 +22984,9 @@ cmd_try() {
         return 2
     fi
     local use_provider="${provider:-${LOKI_PROVIDER:-claude}}"
-    case "$use_provider" in
-        claude|opencode) ;;
-        *) echo "loki try: unknown provider '$use_provider' (use claude or opencode)" >&2; return 2 ;;
-    esac
+    if ! validate_provider "$use_provider"; then
+        echo "loki try: unknown provider '$use_provider' (use $(loki_supported_providers_joined " or "))" >&2; return 2
+    fi
     if [ "$dry_run" != true ] && ! wow_provider_ready "$use_provider"; then
         try_print_provider_setup "$use_provider" >&2
         return 2
