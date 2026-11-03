@@ -12,7 +12,7 @@ import { intentSection } from "../../util/intent_card.ts";
 import { specPrLine } from "../../util/spec_file.ts"; import { triagePrLine } from "../../features/triage.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { collapseNotProven, pushErrLine } from "../../util/term_width.ts";
-import { sealAccuracyOfFile, stackBase, stackSection, tierSealFor } from "../../util/run_outputs.ts"; import { publishFallback } from "../../util/engine_origin.ts";
+import { parseSliceHead, sealAccuracyOfFile, stackBase, stackSection, tierSealFor } from "../../util/run_outputs.ts"; import { publishFallback } from "../../util/engine_origin.ts";
 import { postReceiptComment, renderReceiptComment } from "../../util/receipt_surface.ts";
 import { lokiYamlTexts, yamlKey } from "../../util/yaml_key.ts"; import { idempotencyKey, runOnce } from "../../util/outbox.ts";
 /** B7: who opens the PR. LOKI_PR_AUTHOR beats loki.yaml pr.author; anything but "bot" is "me". */
@@ -97,6 +97,23 @@ export function issueLink(runDir: string, verdict: Verdict): string {
     return ok ? `\n${verdict === "VERIFIED" ? "Closes" : "Refs"} ${i.repo as string}#${i.number as number}\n` : "";
   } catch { return ""; }
 }
+/** FireLater#21: the PR title says what changed: the slice title with its epic reference "(#21 s2)", else the issue title "(#24)", else the task's
+ *  first line; the outcome once, as a "[PARTIAL]" prefix (a VERIFIED PR carries none); never the run id (it is in the body and the branch). Clipped
+ *  at a word boundary to TITLE_MAX characters. Task and issue text are untrusted: one line, control characters dropped. */
+const TITLE_MAX = 100;
+export function prTitle(verdict: Verdict, runDir: string, task: string): string {
+  const one = (t: string): string => t.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  const first = one(task.split("\n").find((l) => l.trim() !== "") ?? "").replace(/^#+\s*/, ""), slice = parseSliceHead(first);
+  let what = slice?.title ?? "", ref = slice ? ` (#${slice.n} ${slice.id})` : "";
+  if (!slice) {
+    try { const i = JSON.parse(readFileSync(join(runDir, "issue.json"), "utf8")) as { title?: unknown; number?: unknown }; if (typeof i.title === "string" && one(i.title)) { what = one(i.title); ref = Number.isInteger(i.number) && (i.number as number) > 0 ? ` (#${i.number as number})` : ""; } } catch { /* a text task has no issue.json */ }
+    if (!what) what = first;
+  }
+  const head = verdict === "PARTIAL" ? "[PARTIAL] " : "", room = TITLE_MAX - head.length - ref.length;
+  if (!what) return `${head}Loki change${ref}`;
+  const cps = Array.from(what), cut = cps.length <= room ? what : ((short) => `${short.replace(/\s+\S*$/, "") || short}...`)(cps.slice(0, room - 3).join("")); // code points: a surrogate pair is never split
+  return `${head}${cut}${ref}`;
+}
 /** PR-FIRST-1: a PARTIAL PR leads with what is unproven (first 10 reasons plus the total), above the reviewer body. Empty for every other verdict. */
 export function partialHead(verdict: Verdict, notProven: string[]): string {
   const np = verdict === "PARTIAL" ? notProven.filter((r) => r.trim() !== "") : [];
@@ -121,8 +138,8 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const beforeAfter = await beforeAfterBlock(ctx.repoDir, ctx.runDir, ((ctx.outputs().verify?.["changed_files"] ?? []) as unknown[]).map(String), ctx.baseSha, { signal });
   const reviewerBody = partialHead(verdict, notProven) + renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs(), sealAccuracy: sealAccuracyOfFile(seal.receipt_path ?? null) });
   const tpl = readPrTemplate(ctx.repoDir), shaped = tpl === null ? reviewerBody : applyPrTemplate(reviewerBody, tpl, receiptProof(verdict, ctx.outputs(), seal.receipt_sha256 ?? null)); // no template: today's body, byte-identical
-  writeFileSync(bodyFile, withAiMarker(withSealRoute(shaped, process.env, seal), aiMarkerLine({ runId: ctx.runId, provider: ctx.provider, model: ctx.model })) + (verdict === "VERIFIED" ? `\n${tierBodyLine(tierSealFor(ctx.repoDir, ctx.runId))}\n` : "") + intentSection(ctx.outputs().plan) + specPrLine(process.env) + triagePrLine(ctx.outputs().intake) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + link + stackSection(process.env, base, link !== "") + (ctx.handoffMd ?? ""), "utf8");
-  const title = `${verdict === "PARTIAL" ? "[PARTIAL] " : ""}Loki 10: ${verdict} (${ctx.runId})`; // PR-FIRST-1
+  writeFileSync(bodyFile, withAiMarker(withSealRoute(shaped, process.env, seal), aiMarkerLine({ runId: ctx.runId, provider: ctx.provider, model: ctx.model })) + (verdict === "VERIFIED" ? `\n${tierBodyLine(tierSealFor(ctx.repoDir, ctx.runId))}\n` : "") + intentSection(ctx.outputs().plan) + specPrLine(process.env) + triagePrLine(ctx.outputs().intake) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + link + stackSection(process.env, base, link !== "", ctx.repoDir) + (ctx.handoffMd ?? ""), "utf8");
+  const title = prTitle(verdict, ctx.runDir, String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? "")); // PR-FIRST-1 prefix, FireLater#21 wording
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
   const env = pushEnv(ctx.repoDir, pinnedOrigin); opts.onSpawnEnv?.(env);
   const pr = runOnce({ dir: ctx.runDir, key: idempotencyKey("pr", ctx.runId, ctx.branch), keep: (r) => r.ok, post: () => runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath, gitlabScriptPath: opts.gitlabPushScriptPath, env }) }); // P12-36: push-pr reuses an existing PR, so a pending replay is duplicate-safe
