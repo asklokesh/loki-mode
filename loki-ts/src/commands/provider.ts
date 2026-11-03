@@ -8,7 +8,7 @@ import { commandExists, commandVersion } from "../util/shell.ts";
 import { BOLD, CYAN, GREEN, YELLOW, RED, DIM, NC } from "../util/colors.ts";
 import { lokiDir } from "../util/paths.ts";
 import { suggestWord } from "../cli/registry.ts";
-import { PROVIDERS, REMOVED_PROVIDERS, removedProviderMessage, type ProviderName } from "../runner/types.ts";
+import { PROVIDERS, REMOVED_PROVIDERS, removedProviderMessage, removedSavedProviderHint, type ProviderName } from "../runner/types.ts";
 
 type Provider = ProviderName;
 
@@ -46,6 +46,11 @@ export function runProviderShow(positional?: string): number {
   }
   const saved = readSavedProvider();
   const current = defaultProvider(positional, saved);
+  // A removed provider saved in .loki/state/provider: the migration line and how to clear it, as `loki start` says.
+  if (!positional && current === saved && REMOVED_PROVIDERS.has(saved)) {
+    process.stderr.write(removedProviderMessage(saved) + removedSavedProviderHint(saved));
+    return 2;
+  }
 
   process.stdout.write(`${BOLD}Current Provider${NC}\n`);
   process.stdout.write(`\n`);
