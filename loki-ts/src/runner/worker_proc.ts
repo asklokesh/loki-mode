@@ -146,3 +146,8 @@ export function classifyExitCause(exit: number | null, killed: boolean, killCaus
   if (exit !== 0) { const c = providerCause(tail, provider); if (c) return c; } // a known provider auth or credit line outranks the bare exit code
   return EXIT_CAUSES[exit] ?? `exit ${exit} (unrecognized code)`;
 }
+
+/** A fire-and-forget child that outlives this process: its own process group, no stdio, unref'd. The pid, or null when it did not start. */
+export function spawnDetached(cmd: string, args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): number | null {
+  try { const c = spawn(cmd, args, { ...opts, stdio: "ignore", detached: true }); c.on("error", () => {}); if (!c.pid) return null; c.unref(); return c.pid; } catch { return null; }
+}
