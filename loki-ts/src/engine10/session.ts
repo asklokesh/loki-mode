@@ -54,8 +54,10 @@ export function resolveModel(provider: string): string {
 const EFFORT_RANK = ["low", "medium", "high", "xhigh", "max"];
 const sessionEffort = new Map<string, string>(); export const rememberSessionEffort = (sessionId: string, effort: string): void => { sessionEffort.set(sessionId, effort); }; // provider session id -> effort it ran with, filled when a session closes
 /** Effort a call really runs at. A resumed session never drops below its recorded effort; a user LOKI_E10_EFFORT is explicit and always wins. */
-export function sessionEffortFor(opts: SessionRunOptions): { effort: string | undefined; escalated?: { from: string; to: string } } {
-  const resolved = (hooks.effort?.resolve(opts.stage, opts.effort) ?? opts.effort);
+/** The model a session is recorded under: opts.model (E-45/E-64 pin) wins, then the runner's model, then resolveModel. Effort is chosen for it. */
+export const sessionModelOf = (opts: SessionRunOptions, cfg: { model?: string | undefined; provider: string }): string => opts.model ?? cfg.model ?? resolveModel(cfg.provider);
+export function sessionEffortFor(opts: SessionRunOptions, model = ""): { effort: string | undefined; escalated?: { from: string; to: string } } {
+  const resolved = (hooks.effort?.resolve(opts.stage, opts.effort, model) ?? opts.effort);
   const prior = opts.resumeSessionId ? sessionEffort.get(opts.resumeSessionId) : undefined;
   if (!prior || process.env["LOKI_E10_EFFORT"]) return { effort: resolved };
   const pr = EFFORT_RANK.indexOf(prior), rr = resolved ? EFFORT_RANK.indexOf(resolved) : -1;
@@ -88,7 +90,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
     if (forced) for (const t of ["PLANNING", "DEVELOPMENT", "FAST"]) env[`LOKI_CLAUDE_MODEL_${t}`] = forced;
   }
   if (cfg.provider === "claude" && (!opts.model || opts.model === PROVIDER_DEFAULT_MODEL) && resolveModel("claude") === PROVIDER_DEFAULT_MODEL) env["LOKI_E10_MODEL_DEFAULT"] = "1"; // providers.ts then omits --model
-  const { effort, escalated } = sessionEffortFor(opts); // ER-01: a user LOKI_E10_EFFORT (already in env) wins over opts and the policy; ER-05: a resumed session keeps its effort
+  const { effort, escalated } = sessionEffortFor(opts, sessionModelOf(opts, cfg)); // ER-01: a user LOKI_E10_EFFORT (already in env) wins over opts and the policy; ER-05: a resumed session keeps its effort
   if (escalated) cfg.emit?.("effort_escalation_cache_reset", opts.stage, { session_id: opts.iterationId, resume_session_id: opts.resumeSessionId, ...escalated });
   const lim = childBudgetLimit(cfg.remaining?.() ?? null); if (lim !== null) env["LOKI_BUDGET_LIMIT"] = lim; if (effort) env["LOKI_E10_EFFORT"] = effort; // lim: the SDK maxBudgetUsd (claude_flags.ts) then caps this one call at what is left
   if (routerEnabled() && !ADVISOR_MARKED_STAGES.has(opts.stage)) env["LOKI_ADVISOR_SCOPE"] = "off"; else delete env["LOKI_ADVISOR_SCOPE"]; // CH-02: only with the router on, so router-off envs stay byte-identical
@@ -115,13 +117,13 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   if (own !== dest && existsSync(own)) { mkdirSync(dirname(dest), { recursive: true }); copyFileSync(own, dest); }
   const ownPartial = partialUsagePath(ownRoot, opts.iterationId), destPartial = partialUsagePath(cfg.lokiRoot, opts.iterationId); // E-98e: killed session's partial-usage snapshot, same copy
   if (ownPartial !== destPartial && existsSync(ownPartial)) { mkdirSync(dirname(destPartial), { recursive: true }); copyFileSync(ownPartial, destPartial); }
-  const model = opts.model ?? cfg.model ?? resolveModel(cfg.provider); // opts.model (E-45/E-64 pin) wins, matching session.started's precedence
+  const model = sessionModelOf(opts, cfg); // opts.model (E-45/E-64 pin) wins, matching session.started's precedence
   if (process.env["LOKI_E10_INVOKER"] === "cli" && cfg.provider === "claude" && status !== "killed" && !existsSync(dest)) { // D48: the CLI invoker (stub) reports no cost; record 0 with a marker, never null
     mkdirSync(dirname(dest), { recursive: true });
     writeFileSync(dest, JSON.stringify({ total_cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, model, source: UNMETERED }));
   }
   const pcost = existsSync(dest) ? null : writeProviderCost(dest, cfg.provider, model, opts.brief, outText); // PARITY-COST: opencode priced from prompt/response sizes, estimated=true; feeds the same cap path
-  const effort = sessionEffortFor(opts).effort;
+  const effort = sessionEffortFor(opts, model).effort;
   // #306: hash the whole cached prefix (system text, tool list incl. per-session denials, thinking, effort, brief), from the function providers.ts builds it with.
   const penv = { ...process.env, ...(cfg.provider === "claude" && process.env["LOKI_E10_PREFIX"] === undefined ? { LOKI_E10_PREFIX: "lean" } : {}) }, sp = engine10StaticPrefix(penv);
   const pparts = opts.brief ? prefixParts({ system: `${sp.systemPrompt ?? "preset"}|dyn=${sp.excludeDynamic}`, tools: [...sp.tools, ...(opts.disallowedTools ? [`-${opts.disallowedTools}`] : [])], thinking: process.env["MAX_THINKING_TOKENS"], effort, brief: opts.brief }) : undefined;
@@ -204,7 +206,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
           cfg.emit?.("session.ended", opts.stage, {
             session_id: sessionId, exit: exitKind(guard.ok ? code : 1, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), ...(authCause !== null ? { provider_error: authCause } : {}), duration_s: durationS, ...(killCause === "stalled" ? { reason: "stalled" } : {}),
           });
-          const psid = readSessionId(opts.cwd ?? process.cwd(), opts.iterationId), ran = sessionEffortFor(opts).effort; if (psid && ran) rememberSessionEffort(psid, ran); // ER-05: what the next resume of this session must keep
+          const psid = readSessionId(opts.cwd ?? process.cwd(), opts.iterationId), ran = sessionEffortFor(opts, sessionModelOf(opts, cfg)).effort; if (psid && ran) rememberSessionEffort(psid, ran); // ER-05: what the next resume of this session must keep
           recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS, stdout + logText);
           untrack();
           resolve({ exit: guard.ok ? code : 1, markers, durationS, killed, summary: (stdout + logText).trim().slice(-4096), stderrTail: (guard.ok ? "" : `guard violation: ${guard.violations.map((v) => v.detail).join("; ")}\n`) + stderrTail.toString("utf8") + (logText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n") }); // only provider-written text is classified: child stderr and the SDK error line, never the agent transcript (A-113). The child echoes the provider's in-memory stderr (A-113b); only the claude CLI invoker returns one, since opencode may print session activity on stderr (unmeasured)

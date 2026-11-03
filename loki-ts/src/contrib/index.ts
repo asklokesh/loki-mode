@@ -15,7 +15,7 @@ import { changedSinceBase, MANIFESTS, snapshotTree } from "./wall_snapshot.ts";
 export function registerContrib(): void {
   hooks.time = { build: buildTime, firstEventMs, reconciled: reconciledTotalS };
   hooks.costRecords = { resumeVerdicts, build: buildRecords };
-  hooks.effort = { resolve: (stage, eff) => resolveEffort(stage, eff), fix: (round, codeOwned) => fixEffort(round, codeOwned) };
+  hooks.effort = { resolve: (stage, eff, model) => resolveEffort(stage, eff, process.env, model), fix: (round, codeOwned) => fixEffort(round, codeOwned) };
   hooks.wall = { snapshotTree: (d, s) => snapshotTree(d, s), changedSinceBase, manifests: MANIFESTS };
   hooks.briefFacts = briefFacts;
   hooks.stageCapability = (stage, env, argv) => stageCapability(stage, env, argv);

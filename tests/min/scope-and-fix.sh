@@ -44,6 +44,10 @@
 #     L006: a fix round is fresh by default; with LOKI_E10_FIX_RESUME=1 a claude SDK round resumes the implement session
 #           at the fix effort policy (high over implement's medium: an accepted cache reset), and its brief names the
 #           test files the harness restored.
+#     T087: implement and Wall effort follows the session model (Sonnet high, Haiku/Opus/provider default medium); a resumed
+#           Sonnet fix round 1 keeps high with no cache reset; the fix ladder is unchanged; LOKI_E10_EFFORT and the policy opt-out win.
+#           Planted: stageEffort back to a fixed medium (T087 model line and keep line fail); sessionEffortFor not passing the
+#           model to the hook (model line fails).
 #     L025: the quick selection; a verify NOT PROVEN (a quick-only last verify) never seals VERIFIED.
 #     L026: the brief no longer invites the full suite; the stream parser records full_suite_runs per session.
 #   jest:        a stand-in npx prints the jest Validation Error for a committed jest test: 0 fix sessions.
@@ -239,6 +243,7 @@ import { failIds, failureGroup } from "$ROOT/loki-ts/src/engine10/failures.ts";
 import { classifyRunnerOutput } from "$ROOT/loki-ts/src/runner/runner_errors.ts";
 import { buildFixResumeBrief, runFixSession } from "$ROOT/loki-ts/src/runner/session_resume.ts";
 import { rememberSessionEffort, sessionEffortFor } from "$ROOT/loki-ts/src/engine10/session.ts";
+import { fixEffort, stageEffort } from "$ROOT/loki-ts/src/contrib/effort_policy.ts"; import { registerContrib } from "$ROOT/loki-ts/src/contrib/index.ts";
 import { quickSplit } from "$ROOT/loki-ts/src/e10ext/select.ts";
 import { verdictOf } from "$ROOT/loki-ts/src/engine10/stages/seal.ts";
 import { buildImplementBrief } from "$ROOT/loki-ts/src/engine10/stages/implement.ts";
@@ -275,6 +280,16 @@ res("L006 LOKI_E10_FIX_RESUME=1: the resumed call keeps the fix effort policy (h
 rememberSessionEffort("S1", "medium");
 const up = sessionEffortFor(calls[1] as never);
 res("L006 a resumed round 1 escalates medium to high (cache reset accepted for the policy effort)", up.effort === "high" && up.escalated?.from === "medium");
+registerContrib(); // the CLI wiring (contrib/index.ts) the engine runs with
+const impl = (model: string) => sessionEffortFor({ stage: "implement" } as never, model).effort, wl = (model: string) => sessionEffortFor({ stage: "wall" } as never, model).effort;
+res("T087 implement and Wall effort follows the model: Sonnet high, Haiku and Opus medium, provider default medium", impl("claude-sonnet-5-5") === "high" && impl("sonnet") === "high" && wl("claude-sonnet-5-5") === "high" && impl("claude-haiku-5-5") === "medium" && wl("haiku") === "medium" && impl("claude-opus-5-5") === "medium" && impl("claude (provider default)") === "medium");
+rememberSessionEffort("S2", impl("claude-sonnet-5-5")!);
+const keep = sessionEffortFor({ ...(calls[1] as object), resumeSessionId: "S2" } as never, "claude-sonnet-5-5");
+res("T087 a resumed fix round 1 on a Sonnet implement keeps the cached effort (high, no cache reset)", keep.effort === "high" && keep.escalated === undefined);
+res("T087 the fix ladder is unchanged (round 1 high, round 2 code-owned xhigh, round 2 lint high)", fixEffort(1, true) === "high" && fixEffort(2, true) === "xhigh" && fixEffort(2, false) === "high");
+process.env.LOKI_E10_EFFORT = "low"; const userWins = impl("claude-sonnet-5-5"); delete process.env.LOKI_E10_EFFORT;
+process.env.LOKI_E10_EFFORT_POLICY = "off"; const off = impl("claude-sonnet-5-5"); delete process.env.LOKI_E10_EFFORT_POLICY;
+res("T087 LOKI_E10_EFFORT wins and LOKI_E10_EFFORT_POLICY=off sends no effort", userWins === "low" && off === undefined && stageEffort("plan", process.env, "claude-sonnet-5-5") === undefined);
 const rb = buildFixResumeBrief([{ signature: "bun:calc.test.ts", count: 1, sample: "bun test calc.test.ts" }], "calc.ts | 1 +", null, 0, ["calc.test.ts"]);
 res("L006 the resumed brief names the test files the harness restored", rb.includes("restored your edits") && rb.includes("calc.test.ts"));
 delete process.env.LOKI_E10_FIX_RESUME;
@@ -438,5 +453,13 @@ for tool in go cargo; do
     grep -q -- '-project-model' "$ITERS" && bad "$label: a Project Model discovery session ran on a one-runner repo" || ok "$label: no Project Model discovery session (one runner at the root resolves it)"
     find "$REPO" -name "$wf" -not -path '*/.loki/*' | grep -q . && bad "$label: the rejected Wall file reached the tree" || ok "$label: the rejected Wall file never reached the tree"
 done
+
+# T087 e2e: the effort a session really ran at, from its cost event (stage effort follows the session model)
+run_engine "$TASK" E2E_STUB_MODE=done LOKI_SESSION_MODEL=sonnet
+eff="$(ev 'sorted({e["stage"]+":"+str(e["data"].get("effort")) for e in E if e["type"]=="cost" and e["stage"] in ("implement","wall")})')"
+[ "$eff" = "['implement:high', 'wall:high']" ] && ok "effort: a Sonnet run's implement and Wall ran at high ($eff)" || { bad "effort: Sonnet run efforts $eff"; dump; }
+run_engine "$TASK" E2E_STUB_MODE=done LOKI_SESSION_MODEL=haiku
+eff="$(ev 'sorted({e["stage"]+":"+str(e["data"].get("effort")) for e in E if e["type"]=="cost" and e["stage"] in ("implement","wall")})')"
+[ "$eff" = "['implement:medium', 'wall:medium']" ] && ok "effort: a Haiku run's implement and Wall ran at medium ($eff)" || { bad "effort: Haiku run efforts $eff"; dump; }
 
 finish
