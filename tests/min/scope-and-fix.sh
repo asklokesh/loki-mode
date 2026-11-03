@@ -7,8 +7,10 @@
 #                test file is kept, and the run is VERIFIED.
 #   scope:       in the same run the session edits util.ts, which plan-scope.json (seeded with the task's calc.ts) does
 #                not name; the edit is kept and the receipt lists "outside stated scope: util.ts" without blocking.
-#   update:      an edit that keeps every assertion and only adds a test case is kept (not restored), and the
-#                verdict stays below VERIFIED with the edited test named on the receipt.
+#   update:      an edit that keeps every assertion and only adds a test case is kept (not restored); with no line deleted,
+#                no fewer tests run and no more skipped it is disclosed as an extended test and does not cap (FireLater#21),
+#                and its base content still counts as an independent test of multiply(). The same edit that also deletes
+#                one line stays below VERIFIED with the edited test named on the receipt. pureAdditionTestEdit unit: counts required.
 #   named:       the same edit is kept when the task names calc.test.ts.
 #   conflict:    implement writes a wrong multiply(); the fix session answers LOKI_SPEC_CONFLICT without editing;
 #                no retry session starts (one fix session, no "-r" iteration) and the run ends BLOCKED. The code the
@@ -127,6 +129,11 @@
 #  44. seal.ts symbolGaps: pass only the changed files to exercisedViaCallers (the via-caller run is PARTIAL naming scale).
 #  45. check_result.ts addedPublicFunctions: open the multi-line arrow window on any `= (` line, not only const/let/var (public unit reads tsarrow=total+Rule).
 #  46. check_result.ts addedPublicFunctions: drop the type/declare skip (public unit reads tsalias=Rule+amb).
+#  47. assert_delta.ts pureAdditionTestEdit: ignore the deleted-line count (the updatedel run reads VERIFIED; pure addition unit reads deleted=true).
+#  48. assert_delta.ts pureAdditionTestEdit: ignore the skip count (pure addition unit reads skips=true).
+#  49. seal.ts: drop the pureAdditionTestEdit branch (the update run reads PARTIAL, weakened test: calc.test.ts).
+#  50. verify.ts: always emit "weakened test" for an edited relevant test (the update run reads PARTIAL).
+#  51. seal.ts symbolGaps: drop the base content of extended tests (the update run reads PARTIAL naming multiply).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -222,9 +229,29 @@ run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=update LOKI_EXOGENOUS_P
 grep -q 'add again' "$REPO/calc.test.ts" && ok "update: an edit that keeps every assertion and adds a case is kept" || { bad "update: an assertion-preserving edit to calc.test.ts was restored"; dump; }
 reverted="$(ev '[e["data"].get("tests_reverted") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"]')"
 case "$reverted" in *calc.test.ts*) bad "update: tests_reverted names calc.test.ts: $reverted" ;; *) ok "update: tests_reverted does not name calc.test.ts" ;; esac
-[ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "update: an edited existing test still caps the verdict ($(outcome))" || { bad "update: outcome is '$(outcome)' with an edited existing test"; dump; }
+# FC-PURE-ADDITION (FireLater#21): an added case, no line deleted, no fewer tests run, no more skipped: disclosed, never capped.
+[ "$(outcome)" = "VERIFIED" ] && ok "update: a pure-addition edit of an existing test does not cap the verdict" || { bad "update: outcome is '$(outcome)' for a pure-addition test edit"; dump; }
+notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+has "update: the receipt discloses the extended test" "$notes" "extended existing test (no line deleted, no fewer tests run, no more skipped; does not cap): calc.test.ts"
+case "$notes" in *"weakened test: calc.test.ts"*) bad "update: a pure addition is named as a weakened test: $notes" ;; *) ok "update: a pure addition is not named as a weakened test" ;; esac
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=updatedel LOKI_EXOGENOUS_PROOF=0
+[ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "update: an edit that also deletes a line still caps the verdict ($(outcome))" || { bad "update: outcome is '$(outcome)' with a deleting test edit"; dump; }
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
 has "update: the receipt names the edited test" "$notes" "weakened test: calc.test.ts"
+PA="$(cd "$ROOT/loki-ts" && bun -e '
+const { pureAdditionTestEdit } = await import("./src/e10ext/assert_delta.ts");
+const { execFileSync } = await import("node:child_process"); const { mkdtempSync, writeFileSync } = await import("node:fs"); const { join } = await import("node:path");
+const d = mkdtempSync(join(process.argv[1], "pa-")), g = (...a) => execFileSync("git", ["-C", d, ...a]).toString().trim();
+g("init", "-q"); g("config", "user.email", "t@example.invalid"); g("config", "user.name", "t");
+writeFileSync(join(d, "a.test.ts"), `test("a", () => {});\n`); g("add", "."); g("commit", "-qm", "b"); const base = g("rev-parse", "HEAD");
+writeFileSync(join(d, "a.test.ts"), `test("a", () => {});\ntest("b", () => {});\n`);
+const c = (run, skipped) => ({ run, skipped });
+const o = ["add=" + pureAdditionTestEdit(d, base, null, "a.test.ts", c(1, 0), c(2, 0)), "fewer=" + pureAdditionTestEdit(d, base, null, "a.test.ts", c(2, 0), c(1, 0)), "skips=" + pureAdditionTestEdit(d, base, null, "a.test.ts", c(1, 0), c(2, 1)), "nocounts=" + pureAdditionTestEdit(d, base, null, "a.test.ts")];
+writeFileSync(join(d, "a.test.ts"), `test("b", () => {});\n`);
+o.push("deleted=" + pureAdditionTestEdit(d, base, null, "a.test.ts", c(1, 0), c(1, 0)));
+g("commit", "-qam", "h"); o.push("committed=" + pureAdditionTestEdit(d, base, "HEAD", "a.test.ts", c(1, 0), c(1, 0)));
+console.log(o.join(" "));' "$T" 2>&1)"
+[ "$PA" = "add=true fewer=false skips=false nocounts=false deleted=false committed=false" ] && ok "pure addition unit: no deleted line and no fewer runs or more skips, counts required" || bad "pure addition unit gave: $PA"
 
 run_engine "add a multiply(a, b) function to calc.ts and extend calc.test.ts" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=1
 grep -q 'add again' "$REPO/calc.test.ts" && ok "named: the task names calc.test.ts, so the edit is kept" || bad "named: the edit to a test the task names was restored"
