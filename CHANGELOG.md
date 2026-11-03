@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.124.1 (2026-11-02)
+
+A project that still has a removed provider saved gets one clear fix command, and one-file monorepo tasks are no longer split.
+
+### Fixed
+
+- A project with codex, cline, aider or gemini saved in `.loki/state/provider` now gets the removed-provider line plus `switch it with: loki provider set claude` and exits 2 from `loki start`, `loki quick`, `loki start --engine engine10`, `loki route start` and `loki provider show`. Before, `loki provider show` printed the removed provider and exited 0.
+- A task that names one file such as `index.ts` in a monorepo where many packages have a file of that name is no longer sized large and split into slices; a task that spells out many paths (including `./`-prefixed ones) still is.
+- `loki failover --chain` with an unknown provider now names the right provider in its error.
+- `loki doctor` reads the project's opencode config when reporting the detected provider.
+
 ## v11.124.0 (2026-11-02)
 
 --haiku costs 25% less per passed task, and Opus plans only when the task itself is big.

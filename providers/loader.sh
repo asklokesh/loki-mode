@@ -18,6 +18,12 @@ loki_removed_provider_message() {
     printf "loki: provider '%s' is no longer supported. Supported providers: claude (Claude Code CLI, or an Anthropic API key through the Agent SDK) and opencode (any model, including OpenRouter via OPENROUTER_API_KEY). Switch with --provider claude or --provider opencode, or unset LOKI_PROVIDER.\n" "$1"
 }
 
+# loki_removed_saved_provider_hint NAME -- the second line when NAME came from the
+# project's saved choice (.loki/state/provider), which the flag and env advice cannot clear.
+loki_removed_saved_provider_hint() {
+    printf "loki: this project saved provider '%s' in .loki/state/provider; switch it with: loki provider set claude\n" "$1"
+}
+
 # loki_is_removed_provider NAME -- 0 when NAME is a removed provider.
 loki_is_removed_provider() {
     local p
@@ -57,13 +63,21 @@ loki_otel_passthrough_export() {
 
 # Validate provider name
 validate_provider() {
-    local provider="$1"
+    local provider="$1" p
     for p in "${SUPPORTED_PROVIDERS[@]}"; do
         if [[ "$p" == "$provider" ]]; then
             return 0
         fi
     done
     return 1
+}
+
+# loki_supported_providers_joined [SEP] -- SUPPORTED_PROVIDERS joined by SEP (default ", "),
+# independent of the caller's IFS.
+loki_supported_providers_joined() {
+    local sep="${1-, }" out="" p
+    for p in "${SUPPORTED_PROVIDERS[@]}"; do out="${out:+$out$sep}$p"; done
+    printf '%s' "$out"
 }
 
 # Load provider configuration
@@ -236,9 +250,10 @@ print_capability_matrix() {
 }
 
 # Auto-detect best available provider
-# Priority: Claude (Tier 1, full) > opencode (model-agnostic)
+# Priority: SUPPORTED_PROVIDERS order, Claude (Tier 1, full) > opencode (model-agnostic)
 auto_detect_provider() {
-    for p in claude opencode; do
+    local p
+    for p in "${SUPPORTED_PROVIDERS[@]}"; do
         if check_provider_installed "$p"; then
             echo "$p"
             return 0
