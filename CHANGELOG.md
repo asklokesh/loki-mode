@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.125.0 (2026-11-02)
+
+Loki pull requests are titled after the work, and split issues no longer leave a check pending forever.
+
+### Fixed
+
+- A Loki PR title now names the work, for example "[PARTIAL] Retry utility and recovery handlers (#21 s2)", instead of "[PARTIAL] Loki 10: PARTIAL (e10-<run id>)". The outcome appears once and the run id never does. The body lists the slice's acceptance criteria and gives the full reason line.
+- On a split issue (`loki start owner/repo#N` or `loki issues run`), a slice's working copy is no longer deleted while Loki's background deep verify is still running in it, which left the `loki/deep-verify` status pending forever. Your terminal returns as soon as the last slice finishes; a background step removes the working copy and its branch once deep verify ends, and keeps the late result in the saved receipt.
+- A stacked slice PR says when the repository's pull-request workflows skip its base branch, and that GitHub retargets it to the default branch once the PR it is stacked on merges.
+
 ## v11.124.2 (2026-11-02)
 
 Benchmark arms for Opus at low effort, so cost claims against raw Opus can be checked fairly.
