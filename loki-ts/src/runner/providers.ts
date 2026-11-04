@@ -353,10 +353,20 @@ export function hostGuardSettingsJson(): string {
 // not top-level Options. Flag off (the default until R1-19) adds nothing, so the
 // options and argv stay byte-identical to the pre-router build.
 // ---------------------------------------------------------------------------
-const ROUTER_AUTO_COMPACT_WINDOW = 100000; // SDK minimum; keeps requests under the 100K price cliff
+// T036: the 100K window keeps Haiku requests under the 100K price cliff with headroom. 100000 is the settings minimum
+// (sdk.d.ts: "100000 to 1000000"); Claude Code 2.1.316 reads a smaller value as the minimum, so 90K is not settable. The
+// window is not the trigger: the CLI compacts at window - min(maxOutputTokens, 20000) - 13000, which is 67K for Haiku 5.5
+// (max output 128K) and at most 87K under a lower CLAUDE_CODE_MAX_OUTPUT_TOKENS, so more than one turn of headroom
+// (Anthropic measured up to 7,269 tokens of overshoot) is always left before 100K.
+const ROUTER_AUTO_COMPACT_WINDOW = 100000;
 // Only Haiku 5.5 has the cliff. Sonnet/Opus 5.5 have a 1M window at flat price, so compacting them at 100K only
-// loses context. Unknown models fail safe to the ceiling.
+// loses context. Unknown models fail safe to the ceiling on a routed session.
 const hasNoPriceCliff = (m: string): boolean => /sonnet|opus/i.test(m) && !/haiku/i.test(m);
+/** T036: the compact window a session carries. Every Haiku session gets it (router on or off, advisor or not); a routed
+ *  session also gets it for an unknown model. Sonnet/Opus never do. The one definition both invokers and planRouterSession use. */
+export function compactWindowSettings(model: string, routed = false): { autoCompactWindow: number } | undefined {
+  return isHaikuModel(model) || (routed && !hasNoPriceCliff(model)) ? { autoCompactWindow: ROUTER_AUTO_COMPACT_WINDOW } : undefined;
+}
 
 // Claude Code version bundled in the pinned Agent SDK. A test (providers.test.ts, "providers advisor" block) asserts this equals the
 // installed SDK's claudeCodeVersion, so an SDK bump that forgets it fails CI instead of silently mis-probing.
@@ -419,7 +429,7 @@ export function planRouterSession(args: {
       ...(/sonnet/i.test(args.model) ? { effort: ROUTER_SONNET_ADVISOR_EFFORT } : {}),
       settings: {
         advisorModel: ROUTER_ADVISOR_MODEL,
-        ...(hasNoPriceCliff(args.model) ? {} : { autoCompactWindow: ROUTER_AUTO_COMPACT_WINDOW }),
+        ...compactWindowSettings(args.model, true),
       },
     };
   }
@@ -429,7 +439,7 @@ export function planRouterSession(args: {
 
 // One --settings JSON for the CLI route: the host guard hooks (when required) merged with the router's
 // advisor settings (when the router is on and the advisor is available).
-function cliSettingsJson(hostGuard: boolean, router: RouterSessionPlan["settings"], fence?: WriteFence): string {
+function cliSettingsJson(hostGuard: boolean, router: Partial<NonNullable<RouterSessionPlan["settings"]>> | undefined, fence?: WriteFence): string {
   if (!router && !fence) return hostGuardSettingsJson();
   const guard = hostGuard ? (JSON.parse(hostGuardSettingsJson()) as Record<string, unknown>) : {};
   return JSON.stringify({ ...guard, ...router, ...fence });
@@ -497,6 +507,8 @@ export function claudeProvider(): ProviderInvoker {
           })
         : null;
       const model = routed ? routed.model : baseModel;
+      const window = compactWindowSettings(model); // T036: every Haiku session, routed or not
+      const sessionSettings = routed?.settings || window ? { ...window, ...routed?.settings } : undefined;
       const modelArgv = useProviderDefaultModel(call) ? [] : ["--model", model];
 
       // v7.5.19 Phase B: prime the claude --help cache once, then compose
@@ -549,8 +561,8 @@ export function claudeProvider(): ProviderInvoker {
         ...modelArgv,
         ...autoFlags,
         ...sessionArgv,
-        ...(hostGuard || routed?.settings || fence
-          ? ["--settings", cliSettingsJson(hostGuard, routed?.settings, fence)]
+        ...(hostGuard || sessionSettings || fence
+          ? ["--settings", cliSettingsJson(hostGuard, sessionSettings, fence)]
           : []),
         // claude.sh:32 PROVIDER_PROMPT_FLAG
         "-p",
@@ -713,6 +725,8 @@ export function buildSdkLoopOptions(args: {
     out.model = router.model;
     if (router.settings) out.settings = router.settings;
   }
+  const window = compactWindowSettings(out.model ?? args.model); // T036: every Haiku session, routed or not
+  if (window) out.settings = { ...window, ...out.settings };
   const fence = implementWriteFence();
   if (fence) out.settings = { ...out.settings, ...fence };
   const engine10 = Boolean(process.env["LOKI_E10_STAGE"]);
