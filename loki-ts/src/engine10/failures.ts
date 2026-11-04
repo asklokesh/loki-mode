@@ -66,7 +66,9 @@ export function failIds(raw: string): string[] {
   return c && ids.length >= c ? ids : [];
 }
 /** Every error line each failing id reports, sorted (a multiset: test.each and duplicate titles give one id several failures): vitest/jest print it
- *  on the first non-blank line after "FAIL  <id>" (consecutive FAIL lines vitest groups under one error share it), pytest after "FAILED <id> - ".
+ *  on the first non-blank line after "FAIL  <id>" (consecutive FAIL lines vitest groups under one error share it), pytest after "FAILED <id> - ",
+ *  bun above its "(fail) <name>" line (the "error:" line with its Expected/Received lines), jest/TAP/node spec on the line after the result line.
+ *  go and cargo output yields no error lines, so their failures are never the same error (fail closed).
  *  Only what differs between two runs of the same failure is normalized: timestamps, durations and absolute paths (with any :line:col), so a base
  *  worktree path never makes two equal errors differ. Every other number is kept: "expected 5 to be 6" and "expected 999 to be 6" differ. */
 export function errorsById(out: string): Map<string, string[]> {
@@ -74,8 +76,24 @@ export function errorsById(out: string): Map<string, string[]> {
     .replace(/\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/g, "<ts>").replace(/\b\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\b/g, "<ts>")
     .replace(/(^|[\s(])\/(?:[\w.@-]+\/)*[\w.@-]+(?::\d+){0,2}/g, "$1<path>").replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|us|µs|ns|min)\b/g, "<dur>").replace(/\s+/g, " ").trim();
   const lines = stripAnsi(out).split("\n").map((l) => l.trim()), m = new Map<string, string[]>(), add = (id: string, e: string): void => { m.set(id, [...(m.get(id) ?? []), e]); };
+  // bun test prints a failure's error above its "(fail) name" line, under a "file:" header (bunIds' ids): the "error:" line plus its Expected/Received lines.
+  const bun = lines.some((l) => /^Ran \d+ tests? across \d+ files?\./.test(l)); let file = "", err: string[] = [];
   for (const [i, l] of lines.entries()) {
+    if (bun) {
+      const f = /^([\w./@-]+\.[cm]?[jt]sx?):$/.exec(l), m = /^(?:\(fail\)|✗)\s+(.+?)(?:\s+\[[\d.]+m?s\])?$/.exec(l);
+      if (f) { file = f[1]!; err = []; } else if (/^error:/.test(l)) err = [l]; else if (err.length && /^(?:Expected|Received)\b/.test(l)) err.push(l);
+      else if (m) { if (err.length) add(`${file}::${m[1]!.trim()}`, norm(err.join(" | "))); err = []; } else if (/^\((?:pass|skip|todo)\)|^✓/.test(l)) err = [];
+      continue;
+    }
     const py = /^FAILED (\S+::\S*) - (.+)$/.exec(l); if (py) { add(py[1]!, norm(py[2]!)); continue; }
+    // jest "bullet Suite > name", node TAP "not ok N - name", node spec "cross name" (failIds' ids): the next line that is not another result line, a TAP
+    // diagnostic's "message:" value; a TAP failure with no diagnostic at all is recorded as such, so base and head compare on the same footing.
+    const g = /^(?:\u25cf\s+(?!Console|Test suite failed)(.+)|not ok \d+ - (.+?)(?:\s+#.*)?|\u2716\s+(?!failing tests:)(.+?)(?:\s+\([\d.]+ms\))?)$/.exec(l);
+    if (g) {
+      let e = "(no diagnostics)";
+      for (const x of lines.slice(i + 1)) { if (x === "" || x === "---") continue; if (/^(?:not ok|ok) \d+|^\u25cf|^\u2716|^\u2714|^1\.\.\d+|^#/.test(x)) break; e = x.replace(/^message:\s*/, ""); break; }
+      add((g[1] ?? g[2] ?? g[3]!).trim(), norm(e)); continue;
+    }
     const v = /^FAIL\s+(.+)$/.exec(l); if (!v) continue;
     const next = lines.slice(i + 1).find((x) => x !== "" && !/^FAIL\s/.test(x)); if (next !== undefined) add(v[1]!.trim(), norm(next));
   }
