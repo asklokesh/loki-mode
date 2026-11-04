@@ -35,6 +35,10 @@ Synthetic suite, 24 tasks:
 | adf20d7ff | loki-haiku | 47/48 | 89.1-99.6% | 0.0119 | 26.8 | 191.0 | 1.69 | 32/48 | 0 |
 | 0aed07b0f | raw-haiku | 48/48 | 92.6-100% | 0.0167 | 29.0 | 170.1 | 1.00 | - | - |
 | 0aed07b0f | loki-haiku | 48/48 | 92.6-100% | 0.0113 | 26.5 | 197.2 | 1.54 | 33/48 | 0 |
+| 0972a4f97 (1 rep) | raw-haiku | 24/24 | 86-100% | 0.0226 | 26.6 | 187.8 | 1.00 | - | - |
+| 0972a4f97 (1 rep) | loki-haiku | 24/24 | 86-100% | 0.0116 | 25.7 | 190.5 | 1.62 | 17/24 | 0 |
+
+The 0972a4f97 rows are one rep of the final head after the review fixes (`results/2026-11-04-0972a4f97.json`, citable, clean tree, loki_sha 0972a4f97): same pass count as raw Haiku, 0 false VERIFIED, about half the cost per passed task in that one run (raw Haiku's cost per pass varies a lot between runs: one py-semver-range run cost $0.204).
 
 Replay suite, 8 real closed issues:
 
