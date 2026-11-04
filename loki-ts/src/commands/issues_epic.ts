@@ -7,6 +7,7 @@
 //   4. renderEpicTree prints the epic as a tree of slice, outcome, PR and cost.
 import type { GhIssue } from "./issues_run.ts";
 import { exitCodeOf, labelCol } from "../engine10/output.ts";
+import { sliceHeadLine } from "../util/run_outputs.ts";
 
 export interface Slice {
   id: string;
@@ -164,7 +165,7 @@ export function decomposeBrief(slug: string, i: GhIssue, triageReason: string, o
 /** The text of one slice's engine10 run: one paragraph per field, no list or heading lines, so it stays one run. */
 export function sliceTask(slug: string, epic: GhIssue, s: Slice, index: number, total: number, parent: string | null): string {
   return [
-    `Slice ${s.id} of ${total} for ${slug}#${epic.number}: ${s.title}`,
+    sliceHeadLine(s.id, total, slug, epic.number, s.title),
     `This is slice ${index + 1} of a larger issue that was split into ${total} pull requests. Implement only this slice.` +
       (parent ? ` The branch already contains slice ${parent} and everything it depends on.` : ""),
     `Acceptance criteria: ${s.acceptance.map((a, k) => `(${k + 1}) ${a}`).join("; ")}`,

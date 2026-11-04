@@ -10,7 +10,7 @@
 // Every external effect (gh, triage, runner, worktrees, prompt) is injectable so tests never call a provider.
 import { groupEnv } from "../e10ext/budget_cap.ts";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -18,7 +18,7 @@ import { MAX_PARALLEL, makeDefaultRunner, queueAdd, queueRun, type ItemResult, t
 import { estimateFor, startText, type EstimateResult } from "../runner/router/cost_preview.ts";
 import { epicOutcome, invalidSplitNote, makeSessionDecompose, splitCost, splitCostText, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
-import { safeGit } from "../util/safe_git.ts";
+import { safeGit } from "../util/safe_git.ts"; import { deepPid } from "../util/base_guard.ts"; import { spawnDetached } from "../runner/worker_proc.ts";
 import { resolveModel } from "../engine10/session.ts";
 import { deliverables } from "../features/decompose.ts";
 
@@ -51,7 +51,7 @@ export interface IssuesRunDeps {
   estimate: () => EstimateResult;
   confirm: (question: string) => Promise<boolean>;
   isTTY: boolean;
-  worktree: { create: (name: string, base: string) => string; remove: (name: string, path: string) => void };
+  worktree: { create: (name: string, base: string) => string; remove: (name: string, path: string, keep?: string) => void /* keep: the dir whose receipts/<id> gets this worktree's runs again after a live deep verify ends */ };
   sleep: (ms: number) => Promise<void>;
   now: () => Date;
   out: (s: string) => void;
@@ -345,7 +345,7 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
       try {
         return await runWithRetry(d, runDir, `#${n}`, ref, opts, wt);
       } finally {
-        if (wt) d.worktree.remove(`issue-${n}`, wt);
+        if (wt) d.worktree.remove(`issue-${n}`, wt, runDir);
       }
     };
     const wholeFailed: GhIssue[] = [];
@@ -448,7 +448,7 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
     } catch (err) {
       res = { rc: 1, output: `runner threw: ${err instanceof Error ? err.message : String(err)}` };
     } finally {
-      d.worktree.remove(name, wt);
+      d.worktree.remove(name, wt, receiptsDir);
     }
     const prUrl = PR_URL_RE.exec(res.output)?.[0] ?? null;
     const budget = res.rc === 3 || /^Outcome:\s+BUDGET_STOP\b/m.test(res.output);
@@ -595,24 +595,39 @@ export function makeSessionTriage(repoDir: string, lokiDir: string, provider: st
   };
 }
 
+/** FireLater#21: the live deep-verify pids of the runs in this worktree. Removing the worktree under one kills the post that ends loki/deep-verify "pending". */
+const deepPids = (wt: string): number[] => { try { return readdirSync(join(wt, ".loki", "runs")).flatMap((id) => { const pid = deepPid(join(wt, ".loki", "runs", id)); return pid ? [pid] : []; }); } catch { return []; } };
+/** The detached reaper for a worktree whose deep verify still runs: waits for every pid, copies each run dir again into `<keep>/receipts/<id>` (the deep
+ *  addendum is written last), removes the worktree and its loki/<name> branch, then the temp root when empty. Arguments are positional, never interpolated. */
+export const REAPER_SH = 'repo="$1"; wt="$2"; br="$3"; keep="$4"; root="$5"; shift 5; for pid in "$@"; do while kill -0 "$pid" 2>/dev/null; do sleep 2; done; done; ' +
+  'if [ -n "$keep" ] && [ -d "$wt/.loki/runs" ]; then for r in "$wt"/.loki/runs/*/; do [ -d "$r" ] || continue; id="$(basename "$r")"; mkdir -p "$keep/receipts/$id" && cp -R "$r". "$keep/receipts/$id/"; done; fi; ' +
+  'git -C "$repo" worktree remove --force "$wt" 2>/dev/null || { case "$wt" in "$root"/*) rm -rf -- "$wt"; git -C "$repo" worktree prune;; esac; }; git -C "$repo" branch -D "$br" >/dev/null 2>&1; rmdir "$root" 2>/dev/null; exit 0';
 export function makeWorktrees(repoDir: string): IssuesRunDeps["worktree"] {
   let root: string | null = null;
+  const removeNow = (name: string, p: string): void => {
+    try {
+      safeGit(repoDir, ["worktree", "remove", "--force", p]);
+      safeGit(repoDir, ["branch", "-D", `loki/${name}`]);
+    } catch {
+      rmSync(p, { recursive: true, force: true }); // best effort; `git worktree prune` clears the record
+    }
+    if (root) try { rmdirSync(root); } catch { /* other worktrees are still in it */ }
+  };
   return {
     create: (name, base) => {
       root ??= mkdtempSync(join(tmpdir(), "loki-issues-"));
+      mkdirSync(root, { recursive: true }); // a reaper may have removed the empty root
       const p = join(root, name);
       // engine10 refuses a detached HEAD; loki/<name> is the throwaway base, engine10 moves onto loki/<runId> for the PR.
       // MASS-2: a stacked slice starts on its parent slice's run branch, which stays after the parent's worktree is gone.
       safeGit(repoDir, ["worktree", "add", "-B", `loki/${name}`, p, base]);
       return p;
     },
-    remove: (name, p) => {
-      try {
-        safeGit(repoDir, ["worktree", "remove", "--force", p]);
-        safeGit(repoDir, ["branch", "-D", `loki/${name}`]);
-      } catch {
-        rmSync(p, { recursive: true, force: true }); // best effort; `git worktree prune` clears the record
-      }
+    // A slice's deep verify runs detached in its worktree after the PR opens: a detached reaper removes the worktree once it ends, so nothing waits for it.
+    remove: (name, p, keep) => {
+      const pids = deepPids(p);
+      if (pids.length && root && spawnDetached("sh", ["-c", REAPER_SH, "loki-reaper", repoDir, p, `loki/${name}`, keep ?? "", root, ...pids.map(String)], { cwd: tmpdir(), env: process.env })) return;
+      removeNow(name, p);
     },
   };
 }
