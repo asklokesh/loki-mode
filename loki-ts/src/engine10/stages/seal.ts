@@ -43,7 +43,7 @@ export const LEAN_NO_SYMBOL = "no passing check references a changed symbol and 
 export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these added public functions";
 /** The two symbol rules, from one read of the diff and the passing checks.
  *  lean (FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL): with no Wall file that ran, the changed code is exercised only if a passing test source names a symbol the diff declares or modifies; the unreferenced symbols, or [].
- *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file), Tests the implementer wrote or edited never clear it. LOKI_E10_PUBLIC_GAP=0 turns it off.
+ *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file), Tests the implementer wrote or edited never clear it. Off by default; LOKI_E10_PUBLIC_GAP=1 turns it on.
  *  Both are [] for an external run (its own rule) and an already-satisfied claim. */
 const CALLER_SCAN = 3000, CALLER_MAX_BYTES = 200_000;
 async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[]): Promise<{ lean: string[]; pub: string[] }> {
@@ -58,7 +58,7 @@ async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, r
   const ranWall = Array.isArray(o.wall?.files) && o.wall.files.length > 0, leanFiles = code.filter((f) => CODE_FILE_EXT.test(f));
   let lean: string[] = [];
   if (!ranWall && leanFiles.length) { const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...leanFiles], { timeoutMs: 20000 }); if (d.exitCode === 0) lean = symbolGap(changedSymbols(d.stdout), allSources); }
-  if (process.env["LOKI_E10_PUBLIC_GAP"] === "0") return { lean, pub: [] };
+  if (process.env["LOKI_E10_PUBLIC_GAP"] !== "1") return { lean, pub: [] }; // off by default: the span lines of a file with multi-line docstrings or template literals shift against the stripped text (follow-up task)
   const files = code.filter((f) => API_FILE_EXT.test(f)).map((path) => ({ path, src: read(path) }));
   const fns: string[] = [];
   for (const f of files) { const base = added.includes(f.path) ? "" : (await safeGitRun(ctx.repoDir, ["show", `${ctx.baseSha}:${f.path}`], { timeoutMs: 20000 })); const b = typeof base === "string" ? base : base.exitCode === 0 ? base.stdout : null; if (b !== null) fns.push(...addedPublicFunctions(f.path, f.src, b)); }

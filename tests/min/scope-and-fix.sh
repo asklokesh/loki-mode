@@ -417,16 +417,19 @@ suites="$(ev 'sum(1 for e in E if e["type"]=="test.result" and str(e["data"].get
 [ "$suites" = "3" ] && ok "lint twice: the full suite ran in each complete verify (3)" || bad "lint twice: full suite ran $suites times (want 3)"
 [ "$(outcome)" = "VERIFIED" ] && ok "lint twice: run is VERIFIED" || { bad "lint twice: outcome is '$(outcome)', not VERIFIED"; dump; }
 
-run_engine "$TASK" E2E_STUB_MODE=agentonly LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+run_engine "$TASK" E2E_STUB_MODE=agentonly LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=1
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
 [ "$(outcome)" = "PARTIAL" ] && ok "agent-only: an added public function only the session's own test calls caps the run at PARTIAL" || { bad "agent-only: outcome is '$(outcome)'"; dump; }
 has "agent-only: the receipt names the unexercised function" "$notes" "no agent-independent passing test calls these added public functions: square"
 case "$notes" in *"functions: multiply"*|*"functions: square, multiply"*) bad "agent-only: multiply (called by the visible test) was named too: $notes" ;; *) ok "agent-only: multiply, which the visible test calls, is not named" ;; esac
+run_engine "$TASK" E2E_STUB_MODE=agentonly LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+[ "$(outcome)" = "VERIFIED" ] && ok "agent-only: the public-function cap is off by default (the same run without LOKI_E10_PUBLIC_GAP=1 reads VERIFIED)" || { bad "agent-only: default-off run reads '$(outcome)'"; dump; }
+# Known gap (follow-up task): exercisedViaCallers takes span lines from the raw source but reads stripped text, so a multi-line docstring, JSDoc or template literal shifts them; with the cap on that can clear or cap wrongly. No leg here until the newline-preserving fix.
 # via caller: scale() is added and no test names it, but the untouched ops.ts twice() calls it and the visible test calls twice (py-invoice-rounding's shape).
 mkdir -p "$T/seed-caller"
 printf 'import * as calc from "./calc";\n\nexport function twice(a: number): number {\n  const c = calc as unknown as { scale?: (a: number, k: number) => number };\n  return c.scale ? c.scale(a, 2) : a + a;\n}\n' > "$T/seed-caller/ops.ts"
 { cat "$FIX/repo/calc.test.ts"; printf '\nimport { twice } from "./ops";\ntest("twice", () => {\n  expect(twice(3)).toBe(6);\n});\n'; } > "$T/seed-caller/calc.test.ts"
-SEED="$T/seed-caller" run_engine "$TASK" E2E_STUB_MODE=viacaller LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+SEED="$T/seed-caller" run_engine "$TASK" E2E_STUB_MODE=viacaller LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=1
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
 case "$notes" in *"added public functions"*) bad "via caller: an added function an untouched caller of a tested function calls was capped: $notes" ;; *) ok "via caller: an added function reached through an untouched, tested caller is covered" ;; esac
 [ "$(outcome)" = "VERIFIED" ] && ok "via caller: the run is VERIFIED" || { bad "via caller: outcome is '$(outcome)'"; dump; }
@@ -435,7 +438,7 @@ case "$notes" in *"added public functions"*) bad "via caller: an added function 
 mkdir -p "$T/seed-collide"
 cp "$T/seed-caller/ops.ts" "$T/seed-collide/ops.ts"
 { cat "$FIX/repo/calc.test.ts"; printf '\nconst twice = (a: number): number => a + a;\ntest("twice", () => {\n  expect(twice(3)).toBe(6);\n});\n'; } > "$T/seed-collide/calc.test.ts"
-SEED="$T/seed-collide" run_engine "$TASK" E2E_STUB_MODE=viacaller LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+SEED="$T/seed-collide" run_engine "$TASK" E2E_STUB_MODE=viacaller LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=1
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
 [ "$(outcome)" = "PARTIAL" ] && ok "collision: a test calling an unrelated same-named function does not clear an unexercised one" || { bad "collision: outcome is '$(outcome)'"; dump; }
 has "collision: the receipt names the unexercised function" "$notes" "added public functions: scale"
@@ -603,7 +606,7 @@ done
 # pub cap on the REAL pytest (rule 22): an added public Python function no passing test names caps the run; the tested one does not.
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     MAKE_REPO=make_py_repo run_engine "add multiply(a, b) and square(a) functions to calc.py" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py \
-        E2E_STUB_SNIPPET=$'def multiply(a, b):\n    return a * b\n\n\ndef square(a):\n    return a * a\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+        E2E_STUB_SNIPPET=$'def multiply(a, b):\n    return a * b\n\n\ndef square(a):\n    return a * a\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=1
     notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
     pc="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(" ".join(c["name"]+"="+c["result"] for c in json.load(open(sys.argv[1]))["checks"]))' "$RUNDIR/receipt.json" 2>/dev/null)"
     case "$pc" in *pytest*=pass*|*test_calc.py=pass*) ok "pytest pub cap: the real pytest ran and passed ($pc)" ;; *) bad "pytest pub cap: no passing pytest check: '$pc'" ;; esac
@@ -611,7 +614,7 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     has "pytest pub cap: the receipt names the untested function" "$notes" "added public functions: square"
     case "$notes" in *"functions: multiply"*|*"square, multiply"*|*"multiply, square"*) bad "pytest pub cap: the tested multiply was named: $notes" ;; *) ok "pytest pub cap: the tested multiply is not named" ;; esac
     MAKE_REPO=make_py_repo run_engine "add a multiply(a, b) function to calc.py" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py \
-        E2E_STUB_SNIPPET=$'def multiply(a, b):\n    return a * b\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+        E2E_STUB_SNIPPET=$'def multiply(a, b):\n    return a * b\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=1
     [ "$(outcome)" = "VERIFIED" ] && ok "pytest pub cap: only the tested function added, the run is VERIFIED" || { bad "pytest pub cap: control outcome is '$(outcome)'"; dump; }
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest pub cap: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest pub cap: pytest is not installed"; fi
@@ -627,7 +630,7 @@ for vt in 2 latest; do
     fi
     export VT_NM
     MAKE_REPO=make_vt_repo run_engine "add multiply(a, b) and square(a) functions to calc.ts" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts \
-        E2E_STUB_SNIPPET=$'export function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function square(a: number): number {\n  return a * a;\n}\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+        E2E_STUB_SNIPPET=$'export function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function square(a: number): number {\n  return a * a;\n}\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=1
     notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
     pc="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(" ".join(c["name"]+"="+c["result"] for c in json.load(open(sys.argv[1]))["checks"]))' "$RUNDIR/receipt.json" 2>/dev/null)"
     case "$pc" in *=pass*) ok "vitest $vt pub cap: the real vitest ran and passed ($pc)" ;; *) bad "vitest $vt pub cap: no passing check: '$pc'" ;; esac
@@ -635,7 +638,7 @@ for vt in 2 latest; do
     has "vitest $vt pub cap: the receipt names the untested function" "$notes" "added public functions: square"
     case "$notes" in *"functions: multiply"*|*"square, multiply"*|*"multiply, square"*) bad "vitest $vt pub cap: the tested multiply was named: $notes" ;; *) ok "vitest $vt pub cap: the tested multiply is not named" ;; esac
     MAKE_REPO=make_vt_repo run_engine "add a multiply(a, b) function to calc.ts" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts \
-        E2E_STUB_SNIPPET=$'export function multiply(a: number, b: number): number {\n  return a * b;\n}\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+        E2E_STUB_SNIPPET=$'export function multiply(a: number, b: number): number {\n  return a * b;\n}\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=1
     [ "$(outcome)" = "VERIFIED" ] && ok "vitest $vt pub cap: only the tested function added, the run is VERIFIED" || { bad "vitest $vt pub cap: control outcome is '$(outcome)'"; dump; }
 done
 
