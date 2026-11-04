@@ -81,6 +81,7 @@
 #  20h. failures.ts normError: normalize any quoted /token as a path; real vitest pathnorm is delivered PARTIAL.
 #  20i. repo_profile.ts sameAsBase and verify.ts known-full-suite: ignore the Unhandled Errors block; real vitest unhandled is excused.
 #  20j. base_guard.ts envChangedSince: skip the dependency listing; real vitest delpkg is delivered PARTIAL and the 6b unit check fails.
+#  20k. base_guard.ts depsListing: drop the existsSync(Lib/site-packages) guard; on macOS the 6b .venv leg reads null (always withheld).
 #  21. runner_config.ts hiddenConfigChanged: count every added ignored config again; the unit check fails on .next/package.json.
 #  22. issues_epic.ts epicOutcome: drop the delivered-PR suffix of the Reason line; the unit check fails.
 
@@ -458,10 +459,18 @@ const probe = async (label: string, mutate: () => void): Promise<void> => {
 await probe("cache", () => { mkdirSync(nm + "/.vitest-cache", { recursive: true }); writeFileSync(nm + "/.vitest-cache/r.json", "{}"); mkdirSync(nm + "/dep-a/__pycache__", { recursive: true }); });
 await probe("delete", () => rmSync(nm + "/@sc/dep-b", { recursive: true }));
 await probe("rename", () => renameSync(nm + "/dep-a", nm + "/dep-z"));
+if (process.env.VENV) {
+  const vp = process.env.VENV + "/pkg"; process.chdir(vp);
+  const vz = await (async () => { await Bun.sleep(1100); const z = lazyZeroBaseline(process.env.VENV!); await Bun.sleep(1100); return z; })();
+  out.push("venvlist " + (vz.deps?.[".venv"] ?? vz.deps?.["pkg/.venv"] ? "recorded" : "null"));
+  out.push("venvclean " + envChangedSince(process.env.VENV!, vp, vz.since_ms, vz.ignored, vz.deps));
+}
 console.log(out.join(" "));
 TS
-ENVOUT="$(ROOT="$ROOT" E="$ENVR" bun --no-env-file --config=/dev/null "$T/envchg.ts" 2>&1)"
-[ "$ENVOUT" = "cache false delete true rename true" ] && ok "envChangedSince: a runner cache entry is no change; a deleted scoped package and a renamed package are" || bad "envChangedSince gave: $ENVOUT (want: cache false delete true rename true)"
+VENVR="$T/venvchg"; mkdir -p "$VENVR/pkg"; printf '.venv\n' > "$VENVR/.gitignore"; git -C "$VENVR" init -q -b main
+VENVWANT=""; if (cd "$VENVR/pkg" && python3 -m venv .venv >/dev/null 2>&1) && [ -d "$VENVR/pkg/.venv" ]; then VENVWANT=" venvlist recorded venvclean false"; else printf '  SKIP: .venv leg: python3 -m venv failed\n'; fi
+ENVOUT="$(ROOT="$ROOT" E="$ENVR" ${VENVWANT:+VENV="$VENVR"} bun --no-env-file --config=/dev/null "$T/envchg.ts" 2>&1)"
+[ "$ENVOUT" = "cache false delete true rename true$VENVWANT" ] && ok "envChangedSince: a runner cache entry is no change; a deleted scoped package and a renamed package are${VENVWANT:+; a real python3 -m venv is listed (no Lib/site-packages ENOENT on a case-insensitive volume) and unchanged is false}" || bad "envChangedSince gave: $ENVOUT (want: cache false delete true rename true$VENVWANT)"
 
 # ---- 7: the same FireLater#21 shapes on real vitest 2.1.9 and 5.1.0 (installed into a temp dir; skipped when npm cannot fetch them) ----------------
 # The stand-in vitest above cannot show what real vitest does: 5.1 writes node_modules/.vitest-cache on every run, and 2.1.9 prints "x page 1 > title"

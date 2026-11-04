@@ -197,7 +197,7 @@ export function zeroGate(rec: unknown): ZeroGate {
   return { has: (n) => names.has(n) };
 }
 // Test runners write their own caches inside node_modules and .venv on every run (Loki's verify included); they hold no dependency code.
-const RUNNER_CACHE_DIRS = [".vite", ".vitest", ".vitest-cache", ".cache", "__pycache__", ".pytest_cache"]; // FireLater#21: vitest 5.1 writes node_modules/.vitest-cache on every run
+const RUNNER_CACHE_DIRS = [".vite", ".vite-temp", ".vitest", ".vitest-cache", ".cache", "__pycache__", ".pytest_cache"]; // FireLater#21: vitest 5.1 writes node_modules/.vitest-cache on every run
 /** The packages a dependency dir holds (names, "@scope/name" for scoped ones; a venv's site-packages entries as "py/<name>"), runner caches left out; null
  *  past the bound. A deleted or renamed package changes this list and nothing a files-only walk can see (the parent directory's ctime also moves when a
  *  runner adds its cache entry, so directories alone cannot tell the two apart). */
@@ -216,7 +216,7 @@ export function depsListing(root: string): string[] | null {
     for (const lib of ["lib", "lib64", "Lib"]) {
       const l = join(root, lib);
       if (!existsSync(l)) continue;
-      if (lib === "Lib") { list(join(l, "site-packages"), "py/"); continue; }
+      if (lib === "Lib") { if (existsSync(join(l, "site-packages"))) list(join(l, "site-packages"), "py/"); continue; } // case-insensitive volumes (macOS) answer existsSync("Lib") for "lib"
       for (const py of readdirSync(l)) if (/^python/.test(py) && existsSync(join(l, py, "site-packages"))) list(join(l, py, "site-packages"), "py/");
     }
   } catch { return null; }
