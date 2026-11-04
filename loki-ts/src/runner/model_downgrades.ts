@@ -1,6 +1,6 @@
 // EL-W0-06 (D86, FC-04, L1/L7): every model pin weaker than the run's default is a downgrade. They are printed on the
 // engine10 start line and recorded on run.started (key only when non-empty, so receipt hashes stay stable).
-import { cascadeEnabled, cascadeImplementModel, planMode, resolveModelAlias, wallEnabled, wallModel } from "../engine10/sizing.ts";
+import { cascadeEnabled, cascadeImplementModel, planMode, resolveModelAlias, wallEnabled, wallModel, wallPinModel } from "../engine10/sizing.ts";
 import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
 import { presetExecutor, routerEnabled, routerPreset } from "./router/flag.ts"; import { leanEnabled, routerActive } from "./router/unit_model.ts"; import { envOverride } from "./router/decision.ts"; // FC-35: with the router on the plan session is pinned to Opus, so "plan sonnet (fast tier)" is not a downgrade
 export interface ModelDowngrade { stage: string; model: string; reason: string }
@@ -20,8 +20,8 @@ export function modelDowngrades(provider: string, env: NodeJS.ProcessEnv = proce
   if (leanEnabled(env) && routerActive(env)) out.push({ stage: "implement", model: resolveModelAlias("sonnet"), reason: "LOKI_LEAN opt-in (small and normal units; one rung up after a failed verify)" }); // LEAN-5: named, never silent
   const fast = env.LOKI_MODEL_OVERRIDE ? undefined : env.LOKI_CLAUDE_MODEL_FAST || env.LOKI_MODEL_FAST || (env.LOKI_ALLOW_HAIKU === "true" ? "haiku" : "sonnet");
   if (planMode(env) !== "never" && weak(fast) && !(routerEnabled(env) && envOverride(env) === null)) out.push({ stage: "plan", model: fast, reason: "fast tier" });
-  const wall = wallModel(env);
-  if (wallEnabled(env) && weak(wall)) out.push({ stage: "wall", model: wall, reason: "Wall pin" });
-  if (weak(wall)) out.push({ stage: "already_done", model: wall, reason: "already-done check pin" });
+  const wall = wallModel(env), preset = !env.LOKI_E10_WALL_TIER && routerPreset(env) && envOverride(env) === null ? " (LOKI_ROUTER=auto preset executor)" : ""; // sizing.ts wallModel
+  if (wallEnabled(env) && weak(wall)) out.push({ stage: "wall", model: wall, reason: `Wall pin${preset}` });
+  if (weak(wallPinModel(env))) out.push({ stage: "already_done", model: wallPinModel(env), reason: "already-done check pin" });
   return out;
 }
