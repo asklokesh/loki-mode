@@ -129,8 +129,8 @@
 #  45. check_result.ts addedPublicFunctions: open the multi-line arrow window on any `= (` line, not only const/let/var (public unit reads tsarrow=total+Rule).
 #  46. check_result.ts addedPublicFunctions: drop the type/declare skip (public unit reads tsalias=Rule+amb).
 #  47. seal.ts symbolGaps: seed an untouched caller's function by the bare name again (the collision run reads VERIFIED).
-#  48. check_result.ts exercisedViaCallers: rebuild a RegExp per name pair, and unreferenced per name over every source (seal perf reads over 5000 ms).
-#  49. verify.ts / seal.ts: exempt a no-deleted-line edit of an existing test from "weakened test" again (the update run reads VERIFIED).
+#  48. check_result.ts callerFiles: recompute codeOnly over every candidate per candidate (seal perf reads over 5000 ms).
+#  49. verify.ts AND seal.ts: stop naming an edited existing test as "weakened test" (the update run no longer names calc.test.ts).
 #  50. pub cap real runner (pytest): drop pubGap from verdictOf (the real-pytest leg reads VERIFIED).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one

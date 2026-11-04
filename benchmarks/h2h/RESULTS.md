@@ -15,9 +15,10 @@ The hard suite (`results/2026-11-01-e13f3dd72-hard.json`, 10 configs on 8 real m
 
 Each run: 2 reps, `--jobs 4`, the raw config and loki-haiku in one invocation, from a clean commit
 (5063feb95; 52904268a after merging v11.122.0; adf20d7ff and 0aed07b0f after the review fixes and
-merging v11.124.0). The main row is main's own committed result for the v11.122.0 engine
-(`results/2026-11-02-pr471-old-haiku-4c51599fb.json`, 4c51599fb) and the replay main row is
-`results/2026-11-01-2100eda48-replay.json`. The "before" rows are the v11.116.0 runs in the sections below; they are **not citable**
+merging v11.124.0). The synthetic "main" row is the committed result on origin/bench/main-haiku-flag
+(`results/2026-11-02-pr471-old-haiku-4c51599fb.json`, 4c51599fb): the v11.120.1 engine plus one bench config commit, not a commit on
+main and not v11.122.0. The replay "main" row is `results/2026-11-01-2100eda48-replay.json` (2100eda48, the v11.114.0 engine). Neither row
+is a run of this branch's base, so a difference against them mixes this PR's changes with main's own v11.121 to v11.124 changes. The "before" rows are the v11.116.0 runs in the sections below; they are **not citable**
 under the provenance rule (see Citability), so they are context, not a measured baseline.
 
 Synthetic suite, 24 tasks:
@@ -29,7 +30,7 @@ Synthetic suite, 24 tasks:
 | 5063feb95 | loki-haiku | 48/48 | 92.6-100% | 0.0108 | 24.4 | 155.7 | 1.58 | 33/48 | 0 |
 | 52904268a | raw-haiku | 48/48 | 92.6-100% | 0.0202 | 27.3 | 201.3 | 1.00 | - | - |
 | 52904268a | loki-haiku | 48/48 | 92.6-100% | 0.0112 | 27.7 | 183.1 | 1.56 | 31/48 | 0 |
-| main (4c51599fb) | loki-haiku | 48/48 | 92.6-100% | 0.0118 | 26.8 | - | 1.88 | 32/48 | 0 |
+| bench/main-haiku-flag (4c51599fb, v11.120.1) | loki-haiku | 48/48 | 92.6-100% | 0.0118 | 26.8 | - | 1.88 | 32/48 | 0 |
 | adf20d7ff | raw-haiku | 48/48 | 92.6-100% | 0.0216 | 26.5 | 185.7 | 1.00 | - | - |
 | adf20d7ff | loki-haiku | 47/48 | 89.1-99.6% | 0.0119 | 26.8 | 191.0 | 1.69 | 32/48 | 0 |
 | 0aed07b0f | raw-haiku | 48/48 | 92.6-100% | 0.0167 | 29.0 | 170.1 | 1.00 | - | - |
@@ -43,13 +44,14 @@ Replay suite, 8 real closed issues:
 | 5063feb95 | loki-haiku | 12/16 | 0.0092 | 45.6 | 1.25 | 1 |
 | 52904268a | raw-haiku-verify | 12/16 | 0.0181 | 40.5 | 1.00 | - |
 | 52904268a | loki-haiku | 12/16 | 0.0097 | 40.6 | 1.25 | 2 |
-| main (2100eda48) | loki-haiku | 10/16 | 0.0135 | 40.6 | 1.75 | 2 |
+| bench v2 (2100eda48, v11.114.0) | loki-haiku | 10/16 | 0.0135 | 40.6 | 1.75 | 2 |
 
-Against main there is **no measured false-VERIFIED improvement yet**: main also had 0 false
+Against those main rows there is **no measured false-VERIFIED improvement yet**: they also had 0 false
 VERIFIED on the synthetic suite (4c51599fb) and 2 on the replay suite (2100eda48, the same task).
-What is measured against main: about 18% fewer sessions per task on the synthetic suite (1.54 vs
-1.88) at about 4% lower cost per passed task ($0.0113 vs $0.0118), the same pass count; on the
-replay suite 12/16 vs 10/16; boltons #393 0/2 to 2/2; and Go tests counting (below).
+Replay verdict agreement is lower here: main 6/16, this PR 4/16 (loki-haiku, from each result's `verdict_agreement`).
+The pass and cost differences below (about 18% fewer sessions per task on the synthetic suite, 1.54 vs 1.88, at $0.0113 vs $0.0118 per
+passed task; replay 12/16 vs 10/16; boltons #393 0/2 to 2/2; Go tests counting) are against older engines and include main's own
+v11.121 to v11.124 changes, so none of them is attributed to this PR alone.
 
 On the synthetic suite no run read VERIFIED while its hidden tests failed, in any of these runs.
 On the replay suite it did happen: go-semver-four-part (semver #185), rep 2 at 5063feb95 and both
