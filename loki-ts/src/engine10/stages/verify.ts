@@ -451,7 +451,7 @@ export const verifyStage: Stage = {
       if (full.some((c) => c.result === "pass" || c.result === "fail")) { ranDeeper.push("full test command", "full suite"); risk = markExecuted(risk, ranDeeper); recordRisk(ctx.repoDir, risk); }
       // A full-suite failure whose every failing id is one a same-error base-red check or a Wall check already reports adds nothing a fix round could act on.
       const known = new Set(checks.filter((c) => c.result === "fail" && (preRed.sameError.includes(c.name) || wallNames0.has(c.name))).flatMap((c) => c.ids ?? []));
-      for (const c of full) if (c.result === "fail" && c.ids?.length && comparableIds(c.ids).every((i) => known.has(i)) && !preRed.names.includes(c.name)) { preRed.knownRed.push(c.name); preRed.sameError.push(c.name); }
+      for (const c of full) if (c.result === "fail" && c.ids?.length && !c.unhandled?.length /* an Unhandled Errors block names no id, so ids alone never cover it */ && comparableIds(c.ids).every((i) => known.has(i)) && !preRed.names.includes(c.name)) { preRed.knownRed.push(c.name); preRed.sameError.push(c.name); }
     }
     if (risk && risk.tier === "high" && !signal.aborted && complete) { // PR-FIRST-4: the high tier's security scan runs here, before seal, so a receipt never leaves it to the post-PR deep stage (spawned only after VERIFIED). A fail blocks VERIFIED, a not_run (scanner missing or broken) caps at PARTIAL; only a pass or fail is credited
       const { runSecretScan } = await import("./deep.ts");

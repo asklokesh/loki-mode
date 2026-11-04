@@ -65,6 +65,16 @@ export function failIds(raw: string): string[] {
   const c = failCount(output);
   return c && ids.length >= c ? ids : [];
 }
+/** FireLater#21 (review): what differs between two runs of the same failure and nothing else. Only absolute filesystem paths (under a home, tmp, var, opt,
+ *  mount or workspace root, or ending in a source or config file extension with any :line:col) become <path>, only ISO timestamps become <ts>, and a
+ *  duration only when it ends the line; text inside quotes is an assertion value ("expected 'GET /p' to be ..."), so it is kept as printed except a
+ *  quoted absolute path under one of those roots. "GET /p" and "GET /admin/p", "90 min" and "45 min", "timed out in 5000ms" and "100ms" stay different. */
+export function normError(line: string): string {
+  const root = "(?:Users|private|var|tmp|home|opt|Volumes|mnt|root|workspace)", file = "[\\w.@-]+\\.(?:[cm]?[jt]sx?|json|py|go|rs|java|kt|cs|rb|php|vue|svelte|mdx?|ya?ml|toml|css|scss|html)(?![\\w])";
+  const absPath = new RegExp(`(?<![\\w.@/-])/(?:${root}/(?:[\\w.@+-]+/)*[\\w.@+-]+|(?:[\\w.@+-]+/)*${file})(?::\\d+){0,2}`, "g"), rootPath = new RegExp(`(?<![\\w.@/-])/${root}/(?:[\\w.@+-]+/)*[\\w.@+-]+(?::\\d+){0,2}`, "g");
+  const outside = (t: string): string => t.replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/g, "<ts>").replace(absPath, "<path>").replace(/\s\d+(?:\.\d+)?\s?ms\)?$/, " <dur>");
+  return line.split(/('[^']*'|"[^"]*"|`[^`]*`)/).map((part, n) => (n % 2 === 0 ? outside(part) : part.replace(rootPath, "<path>"))).join("").replace(/\s+/g, " ").trim();
+}
 /** Every error line each failing id reports, sorted (a multiset: test.each and duplicate titles give one id several failures): vitest/jest print it
  *  on the first non-blank line after "FAIL  <id>" (consecutive FAIL lines vitest groups under one error share it), pytest after "FAILED <id> - ",
  *  bun above its "(fail) <name>" line (the "error:" line with its Expected/Received lines), jest/TAP/node spec on the line after the result line.
@@ -72,9 +82,7 @@ export function failIds(raw: string): string[] {
  *  Only what differs between two runs of the same failure is normalized: timestamps, durations and absolute paths (with any :line:col), so a base
  *  worktree path never makes two equal errors differ. Every other number is kept: "expected 5 to be 6" and "expected 999 to be 6" differ. */
 export function errorsById(out: string): Map<string, string[]> {
-  const norm = (l: string): string => l
-    .replace(/\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/g, "<ts>").replace(/\b\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\b/g, "<ts>")
-    .replace(/(^|[\s(])\/(?:[\w.@-]+\/)*[\w.@-]+(?::\d+){0,2}/g, "$1<path>").replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|us|µs|ns|min)\b/g, "<dur>").replace(/\s+/g, " ").trim();
+  const norm = (l: string): string => normError(l);
   const lines = stripAnsi(out).split("\n").map((l) => l.trim()), m = new Map<string, string[]>(), add = (id: string, e: string): void => { m.set(id, [...(m.get(id) ?? []), e]); };
   // bun test prints a failure's error above its "(fail) name" line, under a "file:" header (bunIds' ids): the "error:" line plus its Expected/Received lines.
   const bun = lines.some((l) => /^Ran \d+ tests? across \d+ files?\./.test(l)); let file = "", err: string[] = [];
@@ -99,6 +107,19 @@ export function errorsById(out: string): Map<string, string[]> {
   }
   for (const [k, e] of m) m.set(k, e.sort());
   return m;
+}
+/** FireLater#21 (review): vitest's "Unhandled Errors" block (and its "Errors  N error" summary line), jest's and node's unhandled rejection reports. They name
+ *  no failing id, so errorsById cannot see them; a run that has one is the same as base only when base printed the same block. The marker lines plus the
+ *  error lines under each header, normalized and sorted; [] when the output has no such block. */
+export function unhandledBlock(out: string): string[] {
+  const lines = stripAnsi(out).split("\n").map((l) => l.trim()), res: string[] = [];
+  for (const [i, l] of lines.entries()) {
+    if (/^[\u23af\-=\s]*Unhandled (?:Errors?|Rejections?|Exceptions?)\b/i.test(l) || /\bunhandled (?:promise )?(?:errors?|rejections?)\b/i.test(l) || /^Errors\s+\d+ errors?\b/.test(l)) {
+      res.push(normError(l.replace(/^[\u23af\-=\s]+|[\u23af\-=\s]+$/g, "")));
+      if (/Unhandled (?:Rejection|Exception|Error)\b/i.test(l) || /Unhandled (?:Errors?|Rejections?)\b/.test(l)) for (const x of lines.slice(i + 1, i + 6)) { if (x === "" || /^[\u23af\-=]{3,}/.test(x)) break; res.push(normError(x)); }
+    }
+  }
+  return [...new Set(res)].sort();
 }
 /** True when every failing id has error lines on head and fails on base with the same normalized lines, the same number of times (equal sorted
  *  multisets: a test.each case newly failing with another error under the same id is a different error). An id with no head error line (its FAIL

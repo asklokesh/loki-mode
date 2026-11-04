@@ -453,8 +453,8 @@ console.log(removeOwnWallFiles(w, "e10-x").join(","), ["a", "b", "tracked"].map(
 #   p8new:   p8 passes on base and the change breaks it with a new error; only the full suite runs it, and base-red p1 (excused after one round) stays red.
 #   p8 only: p8 reaches lib/api only through a dynamic import, so only the full suite runs it; it is red on base with an AssertionError and the change makes
 #            it a TypeError. Ids alone would excuse the full suite (and seal VERIFIED); its errors differ, so it blocks.
-rv_fixture() { # rv_fixture <dir> <0: p1 and p2 red | 1: only p8 red | 2: only p1 red> <vitest dir>
-    local d="$1" p8="$2" nm="$3/node_modules" i
+rv_fixture() { # rv_fixture <dir> <0: p1 and p2 red | 1: only p8 red | 2: only p1 red> <vitest dir> [dep: p9 imports an installed package | side: p10 reaches lib/side only by dynamic import]
+    local d="$1" p8="$2" nm="$3/node_modules" extra="${4:-}" i
     mkdir -p "$d/backend/tests" "$d/backend/src" "$d/frontend/src/lib/__tests__" "$d/frontend/src/app/p8/__tests__"
     printf 'export const add = (a: number, b: number): number => a + b;\n// LOKI_STUB_INSERT\n' > "$d/backend/src/util.ts"
     printf 'import { test, expect } from "vitest";\nimport { add } from "../src/util";\ntest("add", () => { expect(add(1, 2)).toBe(3); });\n' > "$d/backend/tests/util.test.ts"
@@ -472,13 +472,19 @@ rv_fixture() { # rv_fixture <dir> <0: p1 and p2 red | 1: only p8 red | 2: only p
     done
     want='"GET /p"'; [ "$p8" = 1 ] && want='"GET /q"'
     printf 'import { test, expect, describe } from "vitest";\nconst { api } = await import("../../../lib/" + ["a", "p", "i"].join(""));\ndescribe("page 8", () => {\n  test("loads extras", () => { expect(api.extra("/p")).toBe(%s); });\n});\n' "$want" > "$d/frontend/src/app/p8/__tests__/page.test.ts"
+    if [ "$extra" = dep ]; then mkdir -p "$d/frontend/src/app/p9/__tests__"
+        printf 'import { test, expect } from "vitest";\nimport { dep } from "dep-x";\ntest("uses dep", () => { expect(dep).toBe(1); });\n' > "$d/frontend/src/app/p9/__tests__/page.test.ts"; fi
+    if [ "$extra" = side ]; then mkdir -p "$d/frontend/src/app/p10/__tests__"
+        printf 'export const side = 1;\n// LOKI_STUB_INSERT\n' > "$d/frontend/src/lib/side.ts"
+        printf 'import { test, expect } from "vitest";\nconst { side } = await import("../../../lib/" + ["s", "i", "d", "e"].join(""));\ntest("uses side", () => { expect(side).toBe(1); });\n' > "$d/frontend/src/app/p10/__tests__/page.test.ts"; fi
     git -C "$d" init -q -b main && git -C "$d" config user.name rs && git -C "$d" config user.email rs@example.invalid
     git -C "$d" add -A . && git -C "$d" commit -q -m base
     cp -R "$nm" "$d/frontend/node_modules" && cp -R "$nm" "$d/backend/node_modules"
+    if [ "$extra" = dep ]; then mkdir -p "$d/frontend/node_modules/dep-x" && printf '{"name":"dep-x","version":"1.0.0","main":"index.js"}\n' > "$d/frontend/node_modules/dep-x/package.json" && printf 'exports.dep = 1;\n' > "$d/frontend/node_modules/dep-x/index.js"; fi
 }
 rv_run() { # rv_run <dir> <replace text or ""> <snippet> [target task]
     local d="$1" rep="$2" snip="$3" tgt="${4:-frontend/src/lib/api.ts}" task="${5:-$NAMED}" ev
-    RVOUT="$(cd "$d" && env E2E_STUB_MODE=stack E2E_STUB_TARGET="$tgt" E2E_STUB_SNIPPET="$snip" ${rep:+E2E_STUB_REPLACE="$rep"} E2E_STUB_PROJECT="$PROJ" \
+    RVOUT="$(cd "$d" && env E2E_STUB_MODE=stack E2E_STUB_TARGET="$tgt" E2E_STUB_SNIPPET="$snip" ${rep:+E2E_STUB_REPLACE="$rep"} E2E_STUB_PROJECT="$PROJ" E2E_STUB_RM="${RVRM:-}" \
         LOKI_RISK_TIER=medium LOKI_E10_NO_FETCH=1 ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "$task" --no-pr </dev/null 2>&1)"; RVRC=$?
     ev="$(ls "$d"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
     RVS="$( [ -n "$ev" ] && python3 -I - "$ev" <<'PY'
@@ -532,5 +538,20 @@ for ver in ${RV_VERSIONS:-2.1.9 5.1.0}; do
     printf '%s\n' "$RVS" | grep -qx 'suite_excused False' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
         && ok "real vitest $ver p8new: a test passing on base that the change breaks with a new error, reached only by dynamic import, is never excused; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver p8new: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    rv_fixture "$T/rv-$ver-pathnorm" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-pathnorm" "$REP_LABEL" '  label: (p: string): string => `GET /admin${p}`,'
+    printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver pathnorm: /"
+    ! printf '%s\n' "$RVS" | grep -q '^pre_red .*p1' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
+        && ok "real vitest $ver pathnorm: a base-red test whose asserted URL changed from GET /p to GET /admin/p is not the same error; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
+        || { bad "real vitest $ver pathnorm: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    rv_fixture "$T/rv-$ver-unhandled" 2 "$RVROOT/$ver" side; rv_run "$T/rv-$ver-unhandled" "" 'Promise.reject(new Error("boom"));' frontend/src/lib/side.ts "add a side effect to frontend/src/lib/side.ts"
+    printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver unhandled: /"
+    printf '%s\n' "$RVS" | grep -qx 'suite_excused False' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
+        && ok "real vitest $ver unhandled: a full suite with a new Unhandled Errors block (all tests pass, the base-red p1 same error) is not excused; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
+        || { bad "real vitest $ver unhandled: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    rv_fixture "$T/rv-$ver-delpkg" 0 "$RVROOT/$ver" dep; RVRM=frontend/node_modules/dep-x rv_run "$T/rv-$ver-delpkg" "" 'export const del = (p: string): string => `DELETE ${p}`;'
+    printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver delpkg: /"
+    ! printf '%s\n' "$RVS" | grep -q '^pre_red .*p9' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
+        && ok "real vitest $ver delpkg: a test that fails because the change deleted an installed package is not excused by a base run that sees the same deleted package; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
+        || { bad "real vitest $ver delpkg: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
 done
 finish

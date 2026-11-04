@@ -155,6 +155,7 @@ if [ "$stage" = "implement" ]; then
     echo "LOKI_DONE"
   elif [ "${E2E_STUB_MODE:-done}" = "stack" ]; then # tests/min/stacks.sh: replace the LOKI_STUB_INSERT marker (// or # comment) in E2E_STUB_TARGET with E2E_STUB_SNIPPET; E2E_STUB_REPLACE, when set, names the exact text to replace instead
     python3 -I -c 'import os,sys; p=os.environ["E2E_STUB_TARGET"]; n=os.environ["E2E_STUB_SNIPPET"]; o=os.environ.get("E2E_STUB_REPLACE"); s=open(p).read(); open(p,"w").write(s.replace(o, n) if o else s.replace("// LOKI_STUB_INSERT", n).replace("# LOKI_STUB_INSERT", n))'
+    [ -n "${E2E_STUB_RM:-}" ] && rm -rf -- "$E2E_STUB_RM" # E2E_STUB_RM: a path (relative to the repo) the change deletes, e.g. an installed package
     echo "LOKI_DONE"
   elif [ "${E2E_STUB_MODE:-done}" = "already" ]; then
     echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"

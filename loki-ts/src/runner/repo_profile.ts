@@ -27,7 +27,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
-import { comparableIds, errorsById, failIds, sameErrors } from "../engine10/failures.ts";
+import { comparableIds, errorsById, failIds, sameErrors, unhandledBlock } from "../engine10/failures.ts";
 import { classifyCheck, emptyDiscovery, exitCodedId, goRunner, isExitCodedScript, plainTestEnv, stripAnsi, type Classified } from "../util/check_result.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
@@ -280,7 +280,7 @@ export interface CommandProfile {
   manifest_hash: string;
   created_at: string;
   commands: ProfileCommand[];
-  baseline: { ran: boolean; command: string | null; exit_code: number | null; duration_s: number | null; timed_out: boolean; failing_ids: string[]; attributable: boolean; reason?: string; zero_tests?: boolean; failing_errors?: Record<string, string[]> /* FireLater#21: errorsById of the run, so a full suite is excused only for the same errors */ };
+  baseline: { ran: boolean; command: string | null; exit_code: number | null; duration_s: number | null; timed_out: boolean; failing_ids: string[]; attributable: boolean; reason?: string; zero_tests?: boolean; failing_unhandled?: string[]; failing_errors?: Record<string, string[]> /* FireLater#21: errorsById of the run, so a full suite is excused only for the same errors */ };
   suites?: (CommandProfile["baseline"] & { name: string })[]; // FC-BASELINE-PER-PACKAGE: one per full-suite command verify runs; `command` is the check's cmd
 }
 export interface BaselineRun { code: number | null; timedOut: boolean; out: string; missing?: boolean }
@@ -405,7 +405,7 @@ function runOnce(repoDir: string, cmd: string, cwd: string, tmo: number, opts: B
   const ids = r.code !== 0 && !r.timedOut ? (failIds(r.out).length ? failIds(r.out) : isExitCodedScript(cmd) && r.code !== null ? [exitCodedId(cmd, r.out, repoDir) ?? []].flat() as string[] : []) : [], missing = r.missing === true;
   const attributable = !r.timedOut && !missing && r.code !== null && (r.code === 0 || ids.length > 0);
   const reason = attributable ? undefined : r.timedOut ? "timed out" : missing ? "command not found" : "failing test ids not parseable, failures cannot be attributed";
-  return { b: { ran: true, command: cmd, exit_code: r.code, duration_s: dur, timed_out: r.timedOut, failing_ids: ids, attributable, ...(reason ? { reason } : {}), ...(ids.length ? { failing_errors: Object.fromEntries(errorsById(r.out)) } : {}), zero_tests: r.code === 0 && emptyDiscovery(classifyCheck({ kind: "test", ok: true, out: r.out, ...goRunner(cmd) }), r.out) }, missing };
+  return { b: { ran: true, command: cmd, exit_code: r.code, duration_s: dur, timed_out: r.timedOut, failing_ids: ids, attributable, ...(reason ? { reason } : {}), ...(ids.length ? { failing_errors: Object.fromEntries(errorsById(r.out)) } : {}), ...(unhandledBlock(r.out).length ? { failing_unhandled: unhandledBlock(r.out) } : {}), zero_tests: r.code === 0 && emptyDiscovery(classifyCheck({ kind: "test", ok: true, out: r.out, ...goRunner(cmd) }), r.out) }, missing };
 }
 /** Runs the first test command once and records it on the command. */
 export function runBaseline(repoDir: string, commands: ProfileCommand[], opts: BuildOpts = {}): CommandProfile["baseline"] {
@@ -548,13 +548,13 @@ function cargoTouched(changed: string[]): boolean {
  *  already failed (`blocked`) or one naming a changed file is never excused. */
 /** FireLater#21 (review): ids alone never excuse a full suite. Each failing id must fail on base with the same error lines (sameErrors against the baseline's
  *  failing_errors); a suite whose output or baseline has no error lines for an id (a baseline recorded before failing_errors, go, cargo) is not excused. */
-export function attributeFullSuite(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]> }[], blocked: string[], changed: string[]): Attribution {
+export function attributeFullSuite(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], blocked: string[], changed: string[]): Attribution {
   const bad = full.filter((c) => c.result === "fail"), none: Attribution = { preExistingChecks: [], preExistingIds: [], introducedChecks: bad.map((c) => c.name), line: null }, p = loadProfile(repoDir);
   if (!bad.length || !p || p.revision !== baseSha) return none;
   const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran), of = (cmd: string) => runs.find((b) => normCmd(b.command ?? "") === normCmd(cmd));
   const ids = (cmd: string): string[] => { const b = of(cmd); return b?.attributable ? b.failing_ids : []; }, miss = bad.find((c) => !of(c.cmd));
   if (miss) return { ...none, line: `baseline: ran ${runs.map((b) => `"${b.command}"`).join(", ") || "nothing"}, not the full suite command "${miss.cmd}", ids not comparable, full suite failures not excused` };
-  const known = new Set(bad.flatMap((c) => ids(c.cmd))), block = new Set(blocked), sameAsBase = (c: (typeof bad)[number]): boolean => { const be = of(c.cmd)?.failing_errors; return !!be && !!c.errors && sameErrors(new Map(Object.entries(c.errors)), be, comparableIds(c.ids ?? [])); };
+  const known = new Set(bad.flatMap((c) => ids(c.cmd))), block = new Set(blocked), sameAsBase = (c: (typeof bad)[number]): boolean => { const b = of(c.cmd), be = b?.failing_errors, hu = c.unhandled ?? [], bu = b?.failing_unhandled ?? []; return !!be && !!c.errors && hu.length === bu.length && hu.every((x, n) => x === bu[n]) /* an unhandled-errors block names no id: it must repeat on base */ && sameErrors(new Map(Object.entries(c.errors)), be, comparableIds(c.ids ?? [])); };
   if (known.size === 0) return none;
   const unproven = [...new Set(bad.flatMap((c) => c.ids ?? []).filter((i) => !i.includes("::") && goIdTouched(repoDir, i, changed)))];
   const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && sameAsBase(c) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => i.includes(f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
