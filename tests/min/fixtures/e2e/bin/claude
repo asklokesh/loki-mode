@@ -71,7 +71,8 @@ if [ -n "${E2E_STUB_LOG:-}" ]; then echo "$stage" >> "$E2E_STUB_LOG"; fi
 if [ -n "${E2E_STUB_ROUTE_LOG:-}" ]; then # one line per session: engine stage, iteration, --model value, advisorModel from --settings (tests/min/auto-route.sh)
   r_model="$(printf '%s' "$flags" | grep -o -- '--model [^ ]*' | head -1 | cut -d' ' -f2)"
   r_adv="$(printf '%s' "$flags" | grep -o '"advisorModel":"[^"]*"' | head -1 | cut -d'"' -f4)"
-  echo "${LOKI_E10_STAGE:-none} ${LOKI_ITERATION:-none} model=${r_model:-none} advisor=${r_adv:-none} wall=$is_wall" >> "$E2E_STUB_ROUTE_LOG"
+  r_win="$(printf '%s' "$flags" | grep -o '"autoCompactWindow":[0-9]*' | head -1 | cut -d: -f2)"
+  echo "${LOKI_E10_STAGE:-none} ${LOKI_ITERATION:-none} model=${r_model:-none} advisor=${r_adv:-none} wall=$is_wall window=${r_win:-none}" >> "$E2E_STUB_ROUTE_LOG"
 fi
 if [ -n "${E2E_STUB_BUDGET_LOG:-}" ]; then echo "$stage limit=${LOKI_BUDGET_LIMIT:-} ledger=${LOKI_BUDGET_LEDGER:-}" >> "$E2E_STUB_BUDGET_LOG"; fi
 if [ -n "${E2E_STUB_PROMPT_LOG:-}" ]; then printf '%s\n' "$prompt" >> "$E2E_STUB_PROMPT_LOG.$stage$is_wall"; fi # CW-12: the full prompt of every call, one file per stage (wall prompts land in .other1)

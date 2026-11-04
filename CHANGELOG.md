@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.126.1 (2026-11-04)
+
+Every Haiku session now compacts before it can cross Haiku's 100K-token price threshold.
+
+### Fixed
+
+- `loki start --haiku`, the auto preset and every Haiku-pinned session now carry Claude Code's compact window (100,000 tokens, the smallest Claude Code accepts). Before, only routed advisor sessions had it, so a long Haiku implement or acceptance-test session could drift past 100K tokens and pay the higher long-context rate on every request. Claude Code compacts well before the window is full. Sonnet and Opus sessions are unchanged.
+- A user's or project's own `autoCompactWindow` setting is overridden on Haiku sessions; `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the environment still wins.
+
 ## v11.126.0 (2026-11-04)
 
 --haiku writes Loki's acceptance tests on Haiku, so it costs less per passed task than raw Claude Code on Haiku.

@@ -48,17 +48,20 @@
 #  14. start.ts: drop the kept-LOKI_ROUTER line for --haiku (unit: tsnote).
 #  15. sizing.ts hardReason: a truncated repo map counts as hard (unit: trunc; hard leg: truncated map plans).
 #  16. sizing.ts namedDistinct: count matched repo paths, not names as written (unit: mono1; hard leg: monorepo index.ts plans).
-#  18. sizing.ts wallModel: drop the preset branch (unit: wall:*; wall leg: the Wall author runs on sonnet).
-#  19. sizing.ts wallModel: drop the envOverride check (unit: wall:sesspin, wall:override give haiku).
-#  21. conflict_resume.ts refereeModel: wallModel() instead of wallPinModel() (wall leg: the referee runs on haiku).
+#  17. sizing.ts wallModel: drop the preset branch (unit: wall:*; wall leg: the Wall author runs on sonnet).
+#  18. sizing.ts wallModel: drop the envOverride check (unit: wall:sesspin, wall:override give haiku).
+#  19. conflict_resume.ts refereeModel: wallModel() instead of wallPinModel() (wall leg: the referee runs on haiku).
 #  20. already_done.ts: confirm on wallModel() instead of wallPinModel() (unit: ad:preset gives haiku).
-#  17. sizing.ts namedDistinct: add every matched basename even when a spelled-out path has it (unit: spelled3; hard leg:
+#  21. sizing.ts namedDistinct: add every matched basename even when a spelled-out path has it (unit: spelled3; hard leg:
 #      three spelled-out paths in a two-package monorepo plan).
-#  18. sizing.ts namedDistinct: drop the optional leading "./" (unit: dot5 is null).
-#  19. sizing.ts sizeTask: size "large" on namedFiles again instead of namedDistinct (unit: mono9 is large).
-#  20. implement.ts: drop `routerRedid ||` from challenge() (already leg: implement models read 'haiku sonnet sonnet').
-#  21. implement_route.ts routeEscalate: run the claim redo with `first` unchanged (already leg: the redo brief has no challenge).
-#  22. implement.ts: pass `false` for resumeAfterEmptyDone's challenge (already leg: the empty-done correction after the redo has no challenge).
+#  22. sizing.ts namedDistinct: drop the optional leading "./" (unit: dot5 is null).
+#  23. sizing.ts sizeTask: size "large" on namedFiles again instead of namedDistinct (unit: mono9 is large).
+#  24. providers.ts claudeProvider: drop the compactWindowSettings merge (small leg: the haiku implement with no
+#      advisor carries no window). 25. buildSdkLoopOptions: drop it (unit: sdkwin). 26. compactWindowSettings:
+#      give Sonnet the window (unit: win, and the fix leg's sonnet round).
+#  27. implement.ts: drop `routerRedid ||` from challenge() (already leg: implement models read 'haiku sonnet sonnet').
+#  28. implement_route.ts routeEscalate: run the claim redo with `first` unchanged (already leg: the redo brief has no challenge).
+#  29. implement.ts: pass `false` for resumeAfterEmptyDone's challenge (already leg: the empty-done correction after the redo has no challenge).
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
 need git
@@ -78,6 +81,7 @@ U="$(cd "$ROOT/loki-ts" && env -u LOKI_SESSION_MODEL -u LOKI_MODEL_OVERRIDE -u L
 import { routerMode, presetExecutor } from "./src/runner/router/flag.ts";
 import { routeRecord, routedFix, routerActive } from "./src/runner/router/unit_model.ts";
 import { hardReason, sizeTask } from "./src/engine10/sizing.ts";
+import { buildSdkLoopOptions, compactWindowSettings } from "./src/runner/providers.ts";
 import { climb } from "./src/runner/model_rank.ts";
 import { planRouterSession } from "./src/runner/providers.ts";
 import { routerKeptNote } from "./src/util/cost_profile.ts";
@@ -108,6 +112,10 @@ out.push(`scopeoff=${JSON.stringify(keep)}`, `fixadv=${fix?.settings?.advisorMod
 out.push(`pin=${routerActive({ LOKI_ROUTER: "auto", LOKI_SESSION_MODEL: "sonnet" })}`, `devpin=${routerActive({ LOKI_ROUTER: "auto", LOKI_MODEL_DEVELOPMENT: "sonnet" })}`);
 out.push(`opusadv=${JSON.stringify(planRouterSession({ model: "claude-opus-5-5", runDir: "/nonexistent", claudeCodeVersion: "2.1.316", env: { LOKI_ROUTER: "auto" } }))}`, `opusadv1=${planRouterSession({ model: "claude-opus-5-5", runDir: "/nonexistent", claudeCodeVersion: "2.1.316", env: { LOKI_ROUTER: "1" } })?.settings?.advisorModel}`);
 out.push(`adc=${climb("run", "claude-haiku-5-5", "already_done_claim", "x")?.to}`);
+{ const saved = process.env.LOKI_ROUTER; delete process.env.LOKI_ROUTER; // router off: the window does not depend on the router
+  out.push(`sdkwin=${["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"].map((m) => buildSdkLoopOptions({ tier: "development", model: m, cwd: "/nonexistent" }).settings?.autoCompactWindow ?? "none").join(",")}`);
+  out.push(`win=${["haiku", "sonnet", "opus", "openrouter/x/y"].map((m) => (compactWindowSettings(m)?.autoCompactWindow ?? "none") + "/" + (compactWindowSettings(m, true)?.autoCompactWindow ?? "none")).join(",")}`);
+  process.env.LOKI_ROUTER = saved; }
 out.push(`kept=${routerKeptNote("--haiku", { LOKI_ROUTER: "1" }) !== ""}:${routerKeptNote("--haiku", { LOKI_ROUTER: "auto" })}:${routerKeptNote("--haiku", {})}`);
 const errs = []; const pe = {}; const saved = process.env.LOKI_ROUTER; process.env.LOKI_ROUTER = "1";
 parseStartArgs(["--haiku", "--cost", "lean", "task"], (x) => errs.push(x), () => {}, (k, v) => { pe[k] = v; }); process.env.LOKI_ROUTER = saved;
@@ -123,7 +131,7 @@ const adModel = async (env) => { const saved = { ...process.env }; Object.assign
 out.push(`ad:preset=${await adModel({})}`, `ad:tier=${await adModel({ LOKI_E10_WALL_TIER: "haiku" })}`, `ad:why=${modelDowngrades("claude", A).find((d) => d.stage === "already_done")?.reason}`, `cascade=${fam(cascadeImplementModel(A))}`);
 console.log(out.join(" "));
 ' 2>&1)"
-want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=null hard:spelled3=null hard:suffix=null hard:mono1=null hard:mono5=true hard:dot5=true hard:updir5=null size:mono9=normal size:spelled9=large nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 kept=true:: tsnote=1:unset wall:preset=haiku:haiku:haiku wall:off=sonnet wall:nohaiku=sonnet wall:tier=sonnet wall:override=sonnet wall:sesspin=sonnet wall:why=Wall pin (LOKI_ROUTER=auto preset executor) ad:preset=sonnet ad:tier=haiku ad:why=already-done check pin cascade=sonnet"
+want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=null hard:spelled3=null hard:suffix=null hard:mono1=null hard:mono5=true hard:dot5=true hard:updir5=null size:mono9=normal size:spelled9=large nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 sdkwin=100000,none,none win=100000/100000,none/none,none/none,none/100000 kept=true:: tsnote=1:unset wall:preset=haiku:haiku:haiku wall:off=sonnet wall:nohaiku=sonnet wall:tier=sonnet wall:override=sonnet wall:sesspin=sonnet wall:why=Wall pin (LOKI_ROUTER=auto preset executor) ad:preset=sonnet ad:tier=haiku ad:why=already-done check pin cascade=sonnet"
 [ "$U" = "$want" ] && ok "unit: preset executor and record, hardReason on task evidence only, never descend, redacted climb evidence, scoped advisor keeps the executor, --model and LOKI_MODEL_DEVELOPMENT pin, no opus advisor on an opus executor, an already-done claim climbs, the kept-router note, the Wall on the preset executor unless pinned" || bad "unit gave: $U"
 
 # --- e2e on the stub provider ---------------------------------------------------------------------------------------
@@ -155,6 +163,7 @@ outcome() { printf '%s\n' "$OUT" | sed -n 's/^Outcome:[[:space:]]*\([A-Z_]*\).*/
 dump() { printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; sed 's/^/    route | /' "$ROUTES"; }
 fam() { sed 's/^claude-\([a-z]*\)-.*/\1/'; }
 model_of() { awk -v s="$1" '$1 == s { sub(/^model=/, "", $3); print $3 }' "$ROUTES" | fam | tr '\n' ' ' | sed 's/ $//'; } # models of one engine stage, in order
+win_of() { awk -v s="$1" '$1 == s { sub(/^window=/, "", $6); print $6 }' "$ROUTES" | tr '\n' ' ' | sed 's/ $//'; } # T036: autoCompactWindow per session
 adv_of() { awk -v s="$1" '$1 == s { sub(/^advisor=/, "", $4); print $4 }' "$ROUTES" | tr '\n' ' ' | sed 's/ $//'; }
 route_block() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys
 r=json.load(open(sys.argv[1])).get("route")
@@ -165,6 +174,7 @@ run_engine "$TASK" E2E_STUB_MODE=done
 [ "$(model_of implement)" = "haiku" ] && ok "small: implement ran on haiku" || { bad "small: implement on '$(model_of implement)'"; dump; }
 [ -z "$(model_of plan)" ] && ok "small: no plan session (the task is not hard)" || { bad "small: a plan session ran"; dump; }
 [ "$(adv_of implement)" = "none" ] && ok "small: implement carried no advisor" || bad "small: implement advisor '$(adv_of implement)'"
+[ "$(win_of implement)" = "100000" ] && ok "small: the haiku implement with no advisor still carries the 100K compact window (T036)" || { bad "small: implement window '$(win_of implement)'"; dump; }
 [ "$(outcome)" = "VERIFIED" ] && ok "small: run is VERIFIED" || { bad "small: outcome '$(outcome)'"; dump; }
 has "small: the start line names the auto preset" "$OUT" "route: auto preset"
 has "small: the start line names the haiku downgrade" "$OUT" "implement,fix claude-haiku-5-5 (LOKI_ROUTER=auto preset"
@@ -173,6 +183,7 @@ case "$(route_block)" in *haiku*"|preset") ok "small: the receipt route block re
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit
 [ "$(model_of fix)" = "sonnet" ] && ok "fix: the code-owned failure climbed the fix round to sonnet" || { bad "fix: fix on '$(model_of fix)'"; dump; }
 [ "$(adv_of fix)" = "opus" ] && ok "fix: the fix round carried the opus advisor" || bad "fix: fix advisor '$(adv_of fix)'"
+[ "$(win_of fix)" = "none" ] && [ "$(win_of implement)" = "100000" ] && ok "fix: the sonnet fix round has no compact window, the haiku implement has it" || { bad "fix: windows implement='$(win_of implement)' fix='$(win_of fix)'"; dump; }
 grep -q 'model=[^ ]*opus' "$ROUTES" && bad "fix: an opus executor ran on a small task" || ok "fix: no opus executor on a small task"
 [ "$(outcome)" = "VERIFIED" ] && ok "fix: run is VERIFIED" || { bad "fix: outcome '$(outcome)'"; dump; }
 
