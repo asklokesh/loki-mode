@@ -706,12 +706,41 @@ export function stackBase(env: NodeJS.ProcessEnv): string | null | undefined {
   if (b === undefined || b === "") return undefined;
   return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$/.test(b) && !b.includes("..") && !b.includes("//") && !b.endsWith("/") && !b.endsWith(".lock") ? b : null;
 }
+/** MASS-2: the first line of a slice's task (issues_epic.ts sliceTask writes it, the PR title reads it back): one format, one parser. */
+export const sliceHeadLine = (id: string, total: number, slug: string, n: number, title: string): string => `Slice ${id} of ${total} for ${slug}#${n}: ${title}`;
+export function parseSliceHead(line: string): { id: string; slug: string; n: number; title: string } | null {
+  const m = /^Slice (\S+) of \d+ for ([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+): (.+)$/.exec(line.trim());
+  return m ? { id: m[1]!, slug: m[2]!, n: Number(m[3]), title: m[4]!.trim() } : null;
+}
 /** MASS-2: a slice run has no issue.json, so `loki issues run` names the epic it belongs to (LOKI_PR_REFS=owner/repo#N).
  *  A slice never closes its epic, so this is always "Refs"; a strict ref or nothing reaches the body. */
-export function stackSection(env: NodeJS.ProcessEnv, base: string | undefined, hasIssueLink: boolean): string {
+export function stackSection(env: NodeJS.ProcessEnv, base: string | undefined, hasIssueLink: boolean, repoDir?: string): string {
   const r = env.LOKI_PR_REFS ?? "";
   const refs = !hasIssueLink && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+$/.test(r) ? `\nRefs ${r}\n` : "";
-  return refs + (base ? `\nStacked on \`${base}\`: review and merge that pull request first.\n` : "");
+  const skip = base && repoDir ? prWorkflowsSkipping(repoDir, base) : [];
+  const ci = skip.length ? `\nCI: this repository's pull request workflows (${skip.join(", ")}) do not run for a pull request into \`${base}\`, so this one shows no CI checks yet. They run once it targets the default branch: GitHub retargets it when the pull request above merges and its branch is deleted.\n` : "";
+  return refs + (base ? `\nStacked on \`${base}\`: review and merge that pull request first.\n` : "") + ci;
+}
+/** FireLater#21: the .github/workflows files that have a pull_request trigger and whose branch filter excludes `base` (branches without a match, or a
+ *  branches-ignore match). Only when EVERY pull_request workflow skips it is the list returned; any workflow that runs, or a file that does not parse, gives []
+ *  (no claim). A scalar `branches:` is a one-item list; a pull_request_target workflow counts as one that runs. Globs: ** matches anything, * anything but "/". */
+export function prWorkflowsSkipping(repoDir: string, base: string): string[] {
+  const glob = (g: string): RegExp => new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*")}$`);
+  const hit = (v: unknown): boolean => (typeof v === "string" ? [v] : Array.isArray(v) ? v : []).some((g) => typeof g === "string" && glob(g).test(base));
+  const dir = join(repoDir, ".github", "workflows"), skips: string[] = []; let runs = false;
+  let files: string[] = []; try { files = readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).sort(); } catch { return []; }
+  for (const f of files) {
+    let doc: unknown; try { doc = Bun.YAML.parse(readFileSync(join(dir, f), "utf8")); } catch { return []; }
+    const on = (doc as Record<string, unknown> | null)?.["on"] ?? (doc as Record<string | number, unknown> | null)?.[true as unknown as string];
+    const target = on === "pull_request_target" || (Array.isArray(on) && on.includes("pull_request_target")) || (typeof on === "object" && on !== null && !Array.isArray(on) && "pull_request_target" in on);
+    if (target) { runs = true; continue; } // pull_request_target workflows also start on pull requests; counted as running, never claimed as skipped
+    const has = on === "pull_request" || (Array.isArray(on) && on.includes("pull_request")) || (typeof on === "object" && on !== null && !Array.isArray(on) && "pull_request" in on);
+    if (!has) continue;
+    const pr = typeof on === "object" && on !== null && !Array.isArray(on) ? (on as Record<string, unknown>)["pull_request"] as Record<string, unknown> | null : null;
+    const branches = pr?.["branches"], ignore = pr?.["branches-ignore"];
+    if ((branches !== undefined && !hit(branches)) || (branches === undefined && hit(ignore))) skips.push(f); else runs = true;
+  }
+  return runs ? [] : skips;
 }
 
 /** Tier that sealed this run plus this repo shape's sealed record, read from the receipts under .loki/runs. Top-tier cost avoided has no recorded source yet, so it stays null and prints "not measured". Display only. */
