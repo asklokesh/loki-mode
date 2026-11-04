@@ -151,6 +151,21 @@ make_ts_repo() {
     printf 'export const VERSION = 1;\n' > "$1/util.ts"
 }
 # A Go module: package calc in calc/, black-box tests in tests/ as "package tests" importing it.
+# A Python package checked by the real pytest: the visible test names multiply() (when present) but never square().
+make_py_repo() {
+    mkdir -p "$1"
+    printf 'def add(a, b):\n    return a + b\n\n\n# LOKI_STUB_INSERT\n' > "$1/calc.py"
+    printf 'import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n\n\ndef test_multiply():\n    assert not hasattr(calc, "multiply") or calc.multiply(2, 5) == 10\n' > "$1/test_calc.py"
+}
+# A TypeScript package checked by the real vitest (VT_NM: a node_modules with vitest installed): the visible test names multiply() (when present), never square().
+make_vt_repo() {
+    mkdir -p "$1"
+    printf '{"name":"calc","private":true,"type":"module","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"*"}}\n' > "$1/package.json"
+    printf 'node_modules\n' > "$1/.gitignore"
+    ln -s "$VT_NM" "$1/node_modules"
+    printf 'export function add(a: number, b: number): number {\n  return a + b;\n}\n\n// LOKI_STUB_INSERT\n' > "$1/calc.ts"
+    printf 'import { expect, test } from "vitest";\nimport * as calc from "./calc";\n\ntest("add", () => {\n  expect(calc.add(2, 3)).toBe(5);\n});\n\ntest("multiply", () => {\n  const m = (calc as unknown as { multiply?: (a: number, b: number) => number }).multiply;\n  expect(m === undefined || m(2, 5) === 10).toBe(true);\n});\n' > "$1/calc.test.ts"
+}
 make_go_repo() {
     mkdir -p "$1/calc" "$1/tests"
     printf 'module example.com/calc\n\ngo 1.21\n' > "$1/go.mod"
@@ -583,6 +598,45 @@ console.log(out.join(" "));' "$REPO" 2>&1; rm -rf "$REPO/tests2")"
     fi
     grep -q -- '-project-model' "$ITERS" && bad "$label: a Project Model discovery session ran on a one-runner repo" || ok "$label: no Project Model discovery session (one runner at the root resolves it)"
     find "$REPO" -name "$wf" -not -path '*/.loki/*' | grep -q . && bad "$label: the rejected Wall file reached the tree" || ok "$label: the rejected Wall file never reached the tree"
+done
+
+# pub cap on the REAL pytest (rule 22): an added public Python function no passing test names caps the run; the tested one does not.
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    MAKE_REPO=make_py_repo run_engine "add multiply(a, b) and square(a) functions to calc.py" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py \
+        E2E_STUB_SNIPPET=$'def multiply(a, b):\n    return a * b\n\n\ndef square(a):\n    return a * a\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+    pc="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(" ".join(c["name"]+"="+c["result"] for c in json.load(open(sys.argv[1]))["checks"]))' "$RUNDIR/receipt.json" 2>/dev/null)"
+    case "$pc" in *pytest*=pass*|*test_calc.py=pass*) ok "pytest pub cap: the real pytest ran and passed ($pc)" ;; *) bad "pytest pub cap: no passing pytest check: '$pc'" ;; esac
+    [ "$(outcome)" = "PARTIAL" ] && ok "pytest pub cap: an added public function no test names caps the run at PARTIAL" || { bad "pytest pub cap: outcome is '$(outcome)'"; dump; }
+    has "pytest pub cap: the receipt names the untested function" "$notes" "added public functions: square"
+    case "$notes" in *"functions: multiply"*|*"square, multiply"*|*"multiply, square"*) bad "pytest pub cap: the tested multiply was named: $notes" ;; *) ok "pytest pub cap: the tested multiply is not named" ;; esac
+    MAKE_REPO=make_py_repo run_engine "add a multiply(a, b) function to calc.py" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py \
+        E2E_STUB_SNIPPET=$'def multiply(a, b):\n    return a * b\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    [ "$(outcome)" = "VERIFIED" ] && ok "pytest pub cap: only the tested function added, the run is VERIFIED" || { bad "pytest pub cap: control outcome is '$(outcome)'"; dump; }
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest pub cap: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest pub cap: pytest is not installed"; fi
+fi
+
+# pub cap on the REAL vitest, 2.x and latest (rule 22): installed into a throwaway dir; skipped cleanly when npm or the network is not there.
+for vt in 2 latest; do
+    VT_NM="$T/vt-$vt/node_modules"
+    if [ ! -d "$VT_NM/vitest" ]; then mkdir -p "$T/vt-$vt"; printf '{"name":"c","private":true,"type":"module"}\n' > "$T/vt-$vt/package.json"; (cd "$T/vt-$vt" && npm install --no-audit --no-fund --silent "vitest@$vt" >/dev/null 2>&1); fi
+    if [ ! -x "$VT_NM/.bin/vitest" ]; then
+        if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "vitest $vt pub cap: vitest@$vt could not be installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: vitest $vt pub cap: vitest@$vt could not be installed (offline?)"; fi
+        continue
+    fi
+    export VT_NM
+    MAKE_REPO=make_vt_repo run_engine "add multiply(a, b) and square(a) functions to calc.ts" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts \
+        E2E_STUB_SNIPPET=$'export function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function square(a: number): number {\n  return a * a;\n}\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+    pc="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(" ".join(c["name"]+"="+c["result"] for c in json.load(open(sys.argv[1]))["checks"]))' "$RUNDIR/receipt.json" 2>/dev/null)"
+    case "$pc" in *=pass*) ok "vitest $vt pub cap: the real vitest ran and passed ($pc)" ;; *) bad "vitest $vt pub cap: no passing check: '$pc'" ;; esac
+    [ "$(outcome)" = "PARTIAL" ] && ok "vitest $vt pub cap: an added exported function no test names caps the run at PARTIAL" || { bad "vitest $vt pub cap: outcome is '$(outcome)'"; dump; }
+    has "vitest $vt pub cap: the receipt names the untested function" "$notes" "added public functions: square"
+    case "$notes" in *"functions: multiply"*|*"square, multiply"*|*"multiply, square"*) bad "vitest $vt pub cap: the tested multiply was named: $notes" ;; *) ok "vitest $vt pub cap: the tested multiply is not named" ;; esac
+    MAKE_REPO=make_vt_repo run_engine "add a multiply(a, b) function to calc.ts" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts \
+        E2E_STUB_SNIPPET=$'export function multiply(a: number, b: number): number {\n  return a * b;\n}\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    [ "$(outcome)" = "VERIFIED" ] && ok "vitest $vt pub cap: only the tested function added, the run is VERIFIED" || { bad "vitest $vt pub cap: control outcome is '$(outcome)'"; dump; }
 done
 
 finish
