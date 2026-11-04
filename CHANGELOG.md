@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.126.0 (2026-11-04)
+
+--haiku writes Loki's acceptance tests on Haiku, so it costs less per passed task than raw Claude Code on Haiku.
+
+### Changed
+
+- Under `--haiku` and `--cost lean` (`LOKI_ROUTER=auto`), the acceptance-test (Wall) author now runs on Haiku instead of always on Sonnet. The intake already-done confirmation and the Wall referee stay on Sonnet. `LOKI_E10_WALL_TIER`, `LOKI_MODEL_OVERRIDE`, `LOKI_SESSION_MODEL` and the development model pins still win; without `LOKI_ROUTER` nothing changes.
+- On bench v2 (24 tasks x 2 reps, `benchmarks/h2h/results/2026-11-03-haiku-wall-ae30e6efb.json`, run on ae30e6efb): `--haiku` passed 48/48 at $0.0176 per passed task against raw Haiku 48/48 at $0.0187, with 0 false VERIFIED (31 VERIFIED, 15 PARTIAL, 2 BLOCKED). Before this change `--haiku` cost $0.0433 per passed task.
+
 ## v11.125.0 (2026-11-02)
 
 Loki pull requests are titled after the work, and split issues no longer leave a check pending forever.

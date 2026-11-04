@@ -25,6 +25,11 @@
 #             LOKI_ROUTER=1 prints one line and keeps LOKI_ROUTER=1.
 #   default:  without LOKI_ROUTER=auto (stray LOKI_ROUTER_EXECUTOR=haiku set) nothing is routed: no haiku, no advisor.
 #   pins:     LOKI_SESSION_MODEL=sonnet wins over the preset; LOKI_ALLOW_HAIKU=false makes the executor sonnet.
+#   wall:     the Wall author runs on the preset executor (sizing.ts wallModel): haiku under the preset (also for a large task and
+#             for the sequential Wall's re-author rung); the already-done confirmation stays on the judge tier (wallPinModel: sonnet
+#             under the preset, LOKI_E10_WALL_TIER wins) and the cascade model stays sonnet; sonnet without the preset, with LOKI_ALLOW_HAIKU=false, with an explicit
+#             LOKI_E10_WALL_TIER and with a model pin (LOKI_MODEL_OVERRIDE, LOKI_SESSION_MODEL); the start line names the reason;
+#             e2e: a forced Wall session runs on haiku, its Wall conflict is refereed on sonnet, and on sonnet under LOKI_E10_WALL_TIER=sonnet.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. flag.ts routerMode: drop the "auto" value (every preset leg fails).
@@ -43,12 +48,16 @@
 #  14. start.ts: drop the kept-LOKI_ROUTER line for --haiku (unit: tsnote).
 #  15. sizing.ts hardReason: a truncated repo map counts as hard (unit: trunc; hard leg: truncated map plans).
 #  16. sizing.ts namedDistinct: count matched repo paths, not names as written (unit: mono1; hard leg: monorepo index.ts plans).
-#  17. sizing.ts namedDistinct: add every matched basename even when a spelled-out path has it (unit: spelled3; hard leg:
+#  17. sizing.ts wallModel: drop the preset branch (unit: wall:*; wall leg: the Wall author runs on sonnet).
+#  18. sizing.ts wallModel: drop the envOverride check (unit: wall:sesspin, wall:override give haiku).
+#  19. conflict_resume.ts refereeModel: wallModel() instead of wallPinModel() (wall leg: the referee runs on haiku).
+#  20. already_done.ts: confirm on wallModel() instead of wallPinModel() (unit: ad:preset gives haiku).
+#  21. sizing.ts namedDistinct: add every matched basename even when a spelled-out path has it (unit: spelled3; hard leg:
 #      three spelled-out paths in a two-package monorepo plan).
-#  18. sizing.ts namedDistinct: drop the optional leading "./" (unit: dot5 is null).
-#  19. sizing.ts sizeTask: size "large" on namedFiles again instead of namedDistinct (unit: mono9 is large).
-#  20. providers.ts claudeProvider: drop the compactWindowSettings merge (small leg: the haiku implement with no
-#      advisor carries no window). 21. buildSdkLoopOptions: drop it (unit: sdkwin). 22. compactWindowSettings:
+#  22. sizing.ts namedDistinct: drop the optional leading "./" (unit: dot5 is null).
+#  23. sizing.ts sizeTask: size "large" on namedFiles again instead of namedDistinct (unit: mono9 is large).
+#  24. providers.ts claudeProvider: drop the compactWindowSettings merge (small leg: the haiku implement with no
+#      advisor carries no window). 25. buildSdkLoopOptions: drop it (unit: sdkwin). 26. compactWindowSettings:
 #      give Sonnet the window (unit: win, and the fix leg's sonnet round).
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -108,10 +117,19 @@ out.push(`kept=${routerKeptNote("--haiku", { LOKI_ROUTER: "1" }) !== ""}:${route
 const errs = []; const pe = {}; const saved = process.env.LOKI_ROUTER; process.env.LOKI_ROUTER = "1";
 parseStartArgs(["--haiku", "--cost", "lean", "task"], (x) => errs.push(x), () => {}, (k, v) => { pe[k] = v; }); process.env.LOKI_ROUTER = saved;
 out.push(`tsnote=${errs.filter((e) => e.includes("is already set and wins")).length}:${pe.LOKI_ROUTER ?? "unset"}`);
+const { wallModel, wallFirstModel } = await import("./src/engine10/sizing.ts"); const { modelDowngrades } = await import("./src/runner/model_downgrades.ts");
+const fam = (m) => (m.match(/haiku|sonnet|opus/) ?? [m])[0], A = { LOKI_ROUTER: "auto" };
+out.push(`wall:preset=${fam(wallModel(A))}:${fam(wallFirstModel("large", A))}:${fam(wallFirstModel("small", { ...A, LOKI_E10_WALL_CONCURRENT: "0" }))}`, `wall:off=${fam(wallModel({}))}`, `wall:nohaiku=${fam(wallModel({ ...A, LOKI_ALLOW_HAIKU: "false" }))}`, `wall:tier=${fam(wallModel({ ...A, LOKI_E10_WALL_TIER: "sonnet" }))}`, `wall:override=${fam(wallModel({ ...A, LOKI_MODEL_OVERRIDE: "sonnet" }))}`, `wall:sesspin=${fam(wallModel({ ...A, LOKI_SESSION_MODEL: "sonnet" }))}`);
+out.push(`wall:why=${modelDowngrades("claude", A).find((d) => d.stage === "wall")?.reason}`);
+const { checkAlreadyDone } = await import("./src/engine10/already_done.ts"); const { cascadeImplementModel } = await import("./src/engine10/sizing.ts");
+const adModel = async (env) => { const saved = { ...process.env }; Object.assign(process.env, env); const seen = []; const ctx = { model: "claude (provider default)", runId: "r", repoDir: "/nonexistent", sessions: { run: async (o) => { seen.push(o.model); return { markers: { alreadyDone: null } }; } } };
+  await checkAlreadyDone(ctx, new AbortController().signal, "add frobnicate", { files: ["src/f.ts"], entries: [{ path: "src/f.ts", symbols: ["frobnicate"] }], truncated: false }, { runners: ["bun"], tests: [{ runner: "bun", path: "tests/frobnicate.test.ts" }] });
+  for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); return seen.map(fam).join(",") || "none"; };
+out.push(`ad:preset=${await adModel({})}`, `ad:tier=${await adModel({ LOKI_E10_WALL_TIER: "haiku" })}`, `ad:why=${modelDowngrades("claude", A).find((d) => d.stage === "already_done")?.reason}`, `cascade=${fam(cascadeImplementModel(A))}`);
 console.log(out.join(" "));
 ' 2>&1)"
-want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=null hard:spelled3=null hard:suffix=null hard:mono1=null hard:mono5=true hard:dot5=true hard:updir5=null size:mono9=normal size:spelled9=large nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 sdkwin=100000,none,none win=100000/100000,none/none,none/none,none/100000 kept=true:: tsnote=1:unset"
-[ "$U" = "$want" ] && ok "unit: preset executor and record, hardReason on task evidence only, never descend, redacted climb evidence, scoped advisor keeps the executor, --model and LOKI_MODEL_DEVELOPMENT pin, no opus advisor on an opus executor, an already-done claim climbs, the kept-router note" || bad "unit gave: $U"
+want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=null hard:spelled3=null hard:suffix=null hard:mono1=null hard:mono5=true hard:dot5=true hard:updir5=null size:mono9=normal size:spelled9=large nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 sdkwin=100000,none,none win=100000/100000,none/none,none/none,none/100000 kept=true:: tsnote=1:unset wall:preset=haiku:haiku:haiku wall:off=sonnet wall:nohaiku=sonnet wall:tier=sonnet wall:override=sonnet wall:sesspin=sonnet wall:why=Wall pin (LOKI_ROUTER=auto preset executor) ad:preset=sonnet ad:tier=haiku ad:why=already-done check pin cascade=sonnet"
+[ "$U" = "$want" ] && ok "unit: preset executor and record, hardReason on task evidence only, never descend, redacted climb evidence, scoped advisor keeps the executor, --model and LOKI_MODEL_DEVELOPMENT pin, no opus advisor on an opus executor, an already-done claim climbs, the kept-router note, the Wall on the preset executor unless pinned" || bad "unit gave: $U"
 
 # --- e2e on the stub provider ---------------------------------------------------------------------------------------
 # run_engine <task> <env...> -> REPO, OUT, RUNDIR, ROUTES ("<stage> <iteration> model=<m> advisor=<a> wall=<0|1>" per session)
@@ -208,5 +226,17 @@ run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit LOKI_SESSION_MODEL=son
 [ "$(model_of implement)" = "sonnet" ] && [ "$(model_of fix)" = "sonnet" ] && ok "pins: --model sonnet wins over the preset" || { bad "pins: implement '$(model_of implement)', fix '$(model_of fix)'"; dump; }
 run_engine "$TASK" E2E_STUB_MODE=done LOKI_ALLOW_HAIKU=false
 [ "$(model_of implement)" = "sonnet" ] && ok "pins: LOKI_ALLOW_HAIKU=false makes the preset executor sonnet" || { bad "pins: implement '$(model_of implement)'"; dump; }
+
+run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=1
+[ "$(model_of wall)" = "haiku" ] && ok "wall: the Wall author ran on the preset executor (haiku)" || { bad "wall: Wall author on '$(model_of wall)'"; dump; }
+[ "$(outcome)" = "VERIFIED" ] && ok "wall: run is VERIFIED" || { bad "wall: outcome '$(outcome)'"; dump; }
+has "wall: the start line names the Wall downgrade and its reason" "$OUT" "LOKI_ROUTER=auto preset executor"
+run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=1 LOKI_E10_WALL_TIER=sonnet
+[ "$(model_of wall)" = "sonnet" ] && ok "wall: LOKI_E10_WALL_TIER=sonnet still pins the Wall author" || { bad "wall: pinned Wall author on '$(model_of wall)'"; dump; }
+
+run_engine "$TASK" E2E_STUB_MODE=wallphantom E2E_STUB_FIX=wallconflict E2E_STUB_WALL_SLEEP=3 LOKI_E10_PLAN=1
+ref="$(awk '$2 ~ /-wa$/ { sub(/^model=/, "", $3); print $3 }' "$ROUTES" | fam | tr '\n' ' ' | sed 's/ $//')"
+auth="$(awk '$1 == "wall" && $2 !~ /-wa$/ { sub(/^model=/, "", $3); print $3 }' "$ROUTES" | fam | tr '\n' ' ' | sed 's/ $//')"
+[ "$auth" = "haiku" ] && [ "$ref" = "sonnet" ] && ok "wall: a Haiku Wall's conflict is refereed on sonnet (the judge tier)" || { bad "wall: Wall author '$auth', referee '$ref'"; dump; }
 
 finish

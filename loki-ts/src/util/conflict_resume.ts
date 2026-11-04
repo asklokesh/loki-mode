@@ -6,9 +6,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { readSessionId } from "../runner/session_resume.ts";
-import { capToRunTier, wallModel } from "../engine10/sizing.ts";
+import { capToRunTier, wallPinModel } from "../engine10/sizing.ts";
 /** The referee and the legacy re-author never run above the run's own model (a haiku run keeps them on haiku), like every other auxiliary Wall pin. */
-const refereeModel = (ctx: RunContext): string => capToRunTier(wallModel(), ctx.model, ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE"]);
+const refereeModel = (ctx: RunContext): string => capToRunTier(wallPinModel(), ctx.model, ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE"]);
 import { assertionCount, changedAssertion, changedRegion, editScopeViolation, quoteInSpec, testSpans, wallAnchor, type WallDefect } from "./wall_owned.ts";
 import { safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
 import { sealedWallCopy, sealedWallDir, WALL_FAILURE_TAIL_FILE } from "./check_result.ts";
