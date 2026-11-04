@@ -7,10 +7,9 @@
 #                test file is kept, and the run is VERIFIED.
 #   scope:       in the same run the session edits util.ts, which plan-scope.json (seeded with the task's calc.ts) does
 #                not name; the edit is kept and the receipt lists "outside stated scope: util.ts" without blocking.
-#   update:      an edit that keeps every assertion and only adds a test case is kept (not restored); with no line deleted,
-#                no fewer tests run and no more skipped it is disclosed as an extended test and does not cap (FireLater#21),
-#                and its base content still counts as an independent test of multiply(). The same edit that also deletes
-#                one line stays below VERIFIED with the edited test named on the receipt. pureAdditionTestEdit unit: counts required.
+#   update:      an edit that keeps every assertion and only adds a test case is kept (not restored), and the
+#                verdict stays below VERIFIED with the edited test named on the receipt (a zero-deletion edit can still
+#                weaken a test, so no pure-addition exemption exists).
 #   named:       the same edit is kept when the task names calc.test.ts.
 #   conflict:    implement writes a wrong multiply(); the fix session answers LOKI_SPEC_CONFLICT without editing;
 #                no retry session starts (one fix session, no "-r" iteration) and the run ends BLOCKED. The code the
@@ -129,11 +128,10 @@
 #  44. seal.ts symbolGaps: pass only the changed files to exercisedViaCallers (the via-caller run is PARTIAL naming scale).
 #  45. check_result.ts addedPublicFunctions: open the multi-line arrow window on any `= (` line, not only const/let/var (public unit reads tsarrow=total+Rule).
 #  46. check_result.ts addedPublicFunctions: drop the type/declare skip (public unit reads tsalias=Rule+amb).
-#  47. assert_delta.ts pureAdditionTestEdit: ignore the deleted-line count (the updatedel run reads VERIFIED; pure addition unit reads deleted=true).
-#  48. assert_delta.ts pureAdditionTestEdit: ignore the skip count (pure addition unit reads skips=true).
-#  49. seal.ts: drop the pureAdditionTestEdit branch (the update run reads PARTIAL, weakened test: calc.test.ts).
-#  50. verify.ts: always emit "weakened test" for an edited relevant test (the update run reads PARTIAL).
-#  51. seal.ts symbolGaps: drop the base content of extended tests (the update run reads PARTIAL naming multiply).
+#  47. seal.ts symbolGaps: seed an untouched caller's function by the bare name again (the collision run reads VERIFIED).
+#  48. check_result.ts exercisedViaCallers: rebuild a RegExp per name pair, and unreferenced per name over every source (seal perf reads over 5000 ms).
+#  49. verify.ts / seal.ts: exempt a no-deleted-line edit of an existing test from "weakened test" again (the update run reads VERIFIED).
+#  50. pub cap real runner (pytest): drop pubGap from verdictOf (the real-pytest leg reads VERIFIED).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -229,29 +227,9 @@ run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=update LOKI_EXOGENOUS_P
 grep -q 'add again' "$REPO/calc.test.ts" && ok "update: an edit that keeps every assertion and adds a case is kept" || { bad "update: an assertion-preserving edit to calc.test.ts was restored"; dump; }
 reverted="$(ev '[e["data"].get("tests_reverted") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"]')"
 case "$reverted" in *calc.test.ts*) bad "update: tests_reverted names calc.test.ts: $reverted" ;; *) ok "update: tests_reverted does not name calc.test.ts" ;; esac
-# FC-PURE-ADDITION (FireLater#21): an added case, no line deleted, no fewer tests run, no more skipped: disclosed, never capped.
-[ "$(outcome)" = "VERIFIED" ] && ok "update: a pure-addition edit of an existing test does not cap the verdict" || { bad "update: outcome is '$(outcome)' for a pure-addition test edit"; dump; }
-notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
-has "update: the receipt discloses the extended test" "$notes" "extended existing test (no line deleted, no fewer tests run, no more skipped; does not cap): calc.test.ts"
-case "$notes" in *"weakened test: calc.test.ts"*) bad "update: a pure addition is named as a weakened test: $notes" ;; *) ok "update: a pure addition is not named as a weakened test" ;; esac
-run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=updatedel LOKI_EXOGENOUS_PROOF=0
-[ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "update: an edit that also deletes a line still caps the verdict ($(outcome))" || { bad "update: outcome is '$(outcome)' with a deleting test edit"; dump; }
+[ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "update: an edited existing test still caps the verdict ($(outcome))" || { bad "update: outcome is '$(outcome)' with an edited existing test"; dump; }
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
 has "update: the receipt names the edited test" "$notes" "weakened test: calc.test.ts"
-PA="$(cd "$ROOT/loki-ts" && bun -e '
-const { pureAdditionTestEdit } = await import("./src/e10ext/assert_delta.ts");
-const { execFileSync } = await import("node:child_process"); const { mkdtempSync, writeFileSync } = await import("node:fs"); const { join } = await import("node:path");
-const d = mkdtempSync(join(process.argv[1], "pa-")), g = (...a) => execFileSync("git", ["-C", d, ...a]).toString().trim();
-g("init", "-q"); g("config", "user.email", "t@example.invalid"); g("config", "user.name", "t");
-writeFileSync(join(d, "a.test.ts"), `test("a", () => {});\n`); g("add", "."); g("commit", "-qm", "b"); const base = g("rev-parse", "HEAD");
-writeFileSync(join(d, "a.test.ts"), `test("a", () => {});\ntest("b", () => {});\n`);
-const c = (run, skipped) => ({ run, skipped });
-const o = ["add=" + pureAdditionTestEdit(d, base, null, "a.test.ts", c(1, 0), c(2, 0)), "fewer=" + pureAdditionTestEdit(d, base, null, "a.test.ts", c(2, 0), c(1, 0)), "skips=" + pureAdditionTestEdit(d, base, null, "a.test.ts", c(1, 0), c(2, 1)), "nocounts=" + pureAdditionTestEdit(d, base, null, "a.test.ts")];
-writeFileSync(join(d, "a.test.ts"), `test("b", () => {});\n`);
-o.push("deleted=" + pureAdditionTestEdit(d, base, null, "a.test.ts", c(1, 0), c(1, 0)));
-g("commit", "-qam", "h"); o.push("committed=" + pureAdditionTestEdit(d, base, "HEAD", "a.test.ts", c(1, 0), c(1, 0)));
-console.log(o.join(" "));' "$T" 2>&1)"
-[ "$PA" = "add=true fewer=false skips=false nocounts=false deleted=false committed=false" ] && ok "pure addition unit: no deleted line and no fewer runs or more skips, counts required" || bad "pure addition unit gave: $PA"
 
 run_engine "add a multiply(a, b) function to calc.ts and extend calc.test.ts" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=1
 grep -q 'add again' "$REPO/calc.test.ts" && ok "named: the task names calc.test.ts, so the edit is kept" || bad "named: the edit to a test the task names was restored"
@@ -437,6 +415,28 @@ SEED="$T/seed-caller" run_engine "$TASK" E2E_STUB_MODE=viacaller LOKI_E10_PLAN=a
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
 case "$notes" in *"added public functions"*) bad "via caller: an added function an untouched caller of a tested function calls was capped: $notes" ;; *) ok "via caller: an added function reached through an untouched, tested caller is covered" ;; esac
 [ "$(outcome)" = "VERIFIED" ] && ok "via caller: the run is VERIFIED" || { bad "via caller: outcome is '$(outcome)'"; dump; }
+
+# name collision: the same untouched ops.ts calls scale(), but the visible test only has its own local twice() and never names ops, so nothing exercises scale().
+mkdir -p "$T/seed-collide"
+cp "$T/seed-caller/ops.ts" "$T/seed-collide/ops.ts"
+{ cat "$FIX/repo/calc.test.ts"; printf '\nconst twice = (a: number): number => a + a;\ntest("twice", () => {\n  expect(twice(3)).toBe(6);\n});\n'; } > "$T/seed-collide/calc.test.ts"
+SEED="$T/seed-collide" run_engine "$TASK" E2E_STUB_MODE=viacaller LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+[ "$(outcome)" = "PARTIAL" ] && ok "collision: a test calling an unrelated same-named function does not clear an unexercised one" || { bad "collision: outcome is '$(outcome)'"; dump; }
+has "collision: the receipt names the unexercised function" "$notes" "added public functions: scale"
+# seal perf: ~600 test files and ~300 callers must be read in a few seconds (one identifier set per source, one pass per caller).
+PERF="$(cd "$ROOT/loki-ts" && bun -e '
+const cr = await import("./src/util/check_result.ts");
+const fns = Array.from({ length: 40 }, (_, i) => "added_fn_" + i), changed = [{ path: "pkg/changed.py", src: fns.map((f, i) => `def ${f}(x):\n    return ${i === 0 ? "x" : "added_fn_" + (i - 1) + "(x)"}\n`).join("\n") }];
+const tests = Array.from({ length: 600 }, (_, t) => Array.from({ length: 60 }, (_, k) => `def test_${t}_${k}():\n    assert helper_${(t * 7 + k) % 90}(${k}) == "value ${k}"\n`).join("\n"));
+const callers = Array.from({ length: 300 }, (_, c) => ({ path: `pkg/caller${c}.py`, src: Array.from({ length: 10 }, (_, k) => `def helper_${(c + k) % 90}(x):\n    return ${k === 0 && c === 0 ? "added_fn_39(x)" : "len(x)"}\n`).join("\n") }));
+const t0 = Date.now();
+const sets = tests.map((x) => cr.identifierSet(x)), seeded = (n) => sets.some((s) => s.has(n));
+const files = [...changed, ...cr.callerFiles(changed, [...callers, ...tests.map((src, i) => ({ path: `tests/t${i}.py`, src }))])];
+const left = cr.exercisedViaCallers(fns, (n) => seeded(n), files);
+console.log("ms=" + (Date.now() - t0) + " left=" + left.length + " files=" + files.length);' 2>&1)"
+ms="${PERF#ms=}"; ms="${ms%% *}"
+case "$ms" in ''|*[!0-9]*) bad "seal perf: unparsable: $PERF" ;; *) [ "$ms" -lt 5000 ] && ok "seal perf: 600 test files and 300 callers read in ${ms} ms (< 5000)" || bad "seal perf: ${ms} ms (want < 5000)" ;; esac
 
 P="$(cd "$ROOT/loki-ts" && bun -e '
 const cr = await import("./src/util/check_result.ts");

@@ -7,7 +7,7 @@ import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, 
 import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
 import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutation_proof.ts";
 import { RealBaseTestRunner, loadTaskText } from "./wall.ts";
-import { assertDeltaNotes, EXTENDED_TEST, pureAdditionTestEdit } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
+import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
 import { discardIfSatisfied } from "../../e10ext/discard.ts";
 import { dropSet, formatChanged, parseStaged } from "../../e10ext/commit_filter.ts";
 import { flagOutsideScope } from "../../e10ext/scope.ts";
@@ -22,7 +22,7 @@ import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
-import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, unreferenced, isExecutedProof, CODE_FILE_EXT, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
+import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, identifierSet, moduleToken, isExecutedProof, CODE_FILE_EXT, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
@@ -43,10 +43,10 @@ export const LEAN_NO_SYMBOL = "no passing check references a changed symbol and 
 export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these added public functions";
 /** The two symbol rules, from one read of the diff and the passing checks.
  *  lean (FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL): with no Wall file that ran, the changed code is exercised only if a passing test source names a symbol the diff declares or modifies; the unreferenced symbols, or [].
- *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file), or the base content of a test the run only extended. Tests the implementer wrote or edited never clear it. LOKI_E10_PUBLIC_GAP=0 turns it off.
+ *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file), Tests the implementer wrote or edited never clear it. LOKI_E10_PUBLIC_GAP=0 turns it off.
  *  Both are [] for an external run (its own rule) and an already-satisfied claim. */
 const CALLER_SCAN = 3000, CALLER_MAX_BYTES = 200_000;
-async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[], extended: readonly string[] = []): Promise<{ lean: string[]; pub: string[] }> {
+async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[]): Promise<{ lean: string[]; pub: string[] }> {
   const none = { lean: [], pub: [] };
   if (externalRun(o) || o.intake?.already_satisfied === true || o.implement?.exit === "already_done") return none;
   const touched = new Set<string>(), code: string[] = [], added: string[] = [];
@@ -67,16 +67,14 @@ async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, r
   const paths = new Set(executed.map(testOf).filter((p): p is string => p !== null && (wall.has(p) || !touched.has(p))));
   const ls = await safeGitRun(ctx.repoDir, ["ls-files", "-z"], { timeoutMs: 20000 }), tracked = ls.exitCode === 0 ? ls.stdout.split("\0").filter((t) => t && !touched.has(t)) : [];
   if (executed.some((c) => String(c.name ?? "").startsWith("full suite:"))) for (const t of tracked) if (isTestFile(t)) paths.add(t);
-  // FC-PURE-ADDITION: an extended test that ran keeps its base content as an agent-independent source (only the lines the run added are the agent's).
-  const ranTests = new Set(executed.map(testOf)), fullRan = executed.some((c) => String(c.name ?? "").startsWith("full suite:")), baseOf: string[] = [];
-  for (const t of extended) if (fullRan || ranTests.has(t)) { const b = await safeGitRun(ctx.repoDir, ["show", `${ctx.baseSha}:${t}`], { timeoutMs: 20000 }); if (b.exitCode === 0) baseOf.push(b.stdout); }
-  const sources = [...[...paths].map(read), ...baseOf], named = new Set(fns.filter((f) => unreferenced([f], sources).length === 0));
-  const refd = (name: string): boolean => named.has(name) || unreferenced([name], sources).length === 0;
+  const texts = [...paths].map(read), idents = texts.map((t) => identifierSet(t)), imports = texts.map((t) => identifierSet(t, true)), named = new Set(fns.filter((f) => idents.some((st) => st.has(f))));
   const pending = [...new Set(fns)].filter((f) => !named.has(f));
   if (pending.length === 0) return { lean, pub: [] };
   // Untouched callers of the changed files (bounded: CALLER_SCAN files of at most CALLER_MAX_BYTES each), so coverage through code the run did not edit counts.
   const candidates = tracked.filter((t) => !notApiFile(t)).slice(0, CALLER_SCAN).map((path) => ({ path, src: read(path) })).filter((f) => f.src.length <= CALLER_MAX_BYTES && !notApiFile(f.path, f.src));
-  return { lean, pub: exercisedViaCallers(pending, refd, [...files, ...callerFiles(files, candidates)]) };
+  // A function of a changed file is seeded by a test naming it; a function of an untouched caller only by a test that also names its module (a test calling subprocess.run( does not exercise an unrelated run() elsewhere).
+  const changedPaths = new Set(files.map((f) => f.path)), seed = (name: string, path: string): boolean => idents.some((st, i) => st.has(name) && (changedPaths.has(path) || imports[i]!.has(moduleToken(path))));
+  return { lean, pub: exercisedViaCallers(pending, seed, [...files, ...callerFiles(files, candidates)]) };
 }
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
 
@@ -212,10 +210,8 @@ export const sealStage: Stage = {
     const wallRel = (Array.isArray(o.wall?.files) ? (o.wall.files as Obj[]) : []).map((f) => String(f.path)), repoSkipped = strs(o.verify?.skipped_on_base).filter((n) => !wallRel.some((w) => w === n.slice(n.indexOf(":") + 1) || w.endsWith(`/${n.slice(n.indexOf(":") + 1)}`))); // FC-REPO-SKIPPED-TEST-DOWNGRADES: verify measured zero tests on base and head for an untouched file; a Wall file is never excused, even if listed
     // A-119: any edit, delete or rename (--no-renames shows D plus A) of a pre-existing test file is NOT VERIFIED, same as verify's own notes.
     const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [], pctx: ProvenanceCtx = { addedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() === "A" && rawDiff[i + 1] ? [rawDiff[i + 1]!] : [])), wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as Obj[]).map((f) => String(f.path)) : [], modifiedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() !== "A" && rawDiff[i + 1] && isTestFile(rawDiff[i + 1]!) ? [rawDiff[i + 1]!] : [])) }, checks = checksOf(o.verify?.checks, pctx, preRedChecks, repoSkipped); // TEN-GATES-02: A = added in this run
-    const tcs = (o.verify as Obj | undefined)?.["test_counts"] as Obj | undefined;
-    const cnt = (x: unknown): { run: number; skipped: number } | undefined => { const c = x as Obj | undefined; return c && typeof c.run === "number" && typeof c.skipped === "number" ? { run: c.run, skipped: c.skipped } : undefined; };
-    const weakTests: string[] = [], extendedTests: string[] = []; // FC-PURE-ADDITION: a modified (M) test file with no deleted line and no fewer runs or more skips than base is disclosed, not capped
-    for (let i = 0; i + 1 < rawDiff.length; i += 2) { const st = rawDiff[i]!.trim().split(" ").pop() ?? "", f = rawDiff[i + 1]!; if (st === "A" || !isTestFile(f)) continue; const tc = tcs?.[f] as Obj | undefined; (st === "M" && pureAdditionTestEdit(ctx.repoDir, ctx.baseSha, head, f, cnt(tc?.b), cnt(tc?.h)) ? extendedTests : weakTests).push(f); }
+    const weakTests: string[] = [];
+    for (let i = 0; i + 1 < rawDiff.length; i += 2) if ((rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A" && isTestFile(rawDiff[i + 1]!)) weakTests.push(rawDiff[i + 1]!);
     const rcNotes = diffOk ? [...runnerConfigNotes(ctx.repoDir, ctx.baseSha, head, rawDiff.filter((_, i) => i % 2 === 1), signal), ...addedSymlinkNotes(rawDiff, str(o.plan?.plan)), ...misplacedNamedNotes(str(o.intake?.task) ?? "", rawDiff, ctx.repoDir, head)] : []; // D86 FC-09: runner config or a file it loads changed
     // Class C: an advisory for a change the plan declared, or a link a passing Wall requires, is disclosed (suffix below), never a cap; any undeclared change keeps capping.
     const vraw = Array.isArray(o.verify?.checks) ? (o.verify.checks as Obj[]) : []; const decl = splitDeclaredAdvisories([...rcNotes, ...verifyNotProven], { repoDir: ctx.repoDir, runDir: ctx.runDir, baseSha: ctx.baseSha, rawDiff, planFiles: readPlanScope(ctx.runDir), wallPaths: wallRel, task: str(o.intake?.task) ?? "", head, wallPassedN: o.verify?.wall_passed === true && vraw.some((c) => c.result === "pass" && typeof c.n === "number" && c.n > 0 && wallRel.some((w) => String(c.name).endsWith(`:${w}`) || String(c.name).includes(w))) });
@@ -224,7 +220,7 @@ export const sealStage: Stage = {
     const grp = sealGroup(ctx.runDir, receiptSha256 as never); // D61-13: inert without group/manifest.json
     const executed = hasExecutedProof(vraw), proof = process.env["LOKI_EXOGENOUS_PROOF"] === "0" ? executed : hasExogenousProof(vraw, pctx); // FC-16: executed n>0 pass from verify's raw checks (a Wall green on base proves only a claim, inside verdictOf); TEN-GATES-02 (D104): that pass must be agent-independent (LOKI_EXOGENOUS_PROOF=0 opts out)
     const uncoveredAfterLimit = o.implement?.exit === "killed" ? strs(o.verify?.uncovered_changed) : []; // FC-21b: changed code no passing impacted check covered; limit path only
-    const { lean: leanGap, pub: pubGap } = diffOk ? await symbolGaps(ctx, o, rawDiff, head, vraw, extendedTests) : { lean: [], pub: [] }; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL; HONEST-VERIFIED-2
+    const { lean: leanGap, pub: pubGap } = diffOk ? await symbolGaps(ctx, o, rawDiff, head, vraw) : { lean: [], pub: [] }; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL; HONEST-VERIFIED-2
     const wpAll = publishableWall(ctx.repoDir, ctx.runDir, o, process.env, loadTaskText(ctx, str(o.intake?.task) ?? undefined)); // pure read of the sealed copies; publishing still happens only on VERIFIED
     const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name)) && c.repo_skipped !== true), !diffOk || diff.stdout === "", capVerify.length > 0 || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap], wpAll.notes, wpAll.clauseGap), grp);
 
@@ -259,7 +255,8 @@ export const sealStage: Stage = {
     if (!diffOk) notProven.add("diff not computed (git diff-tree failed)");
     // E-55: any status other than A means the path existed at base_sha (M, D, or T typechange, e.g. a symlink).
     // D50-F2r3: re-run the classifier on the COMMITTED blob (clean filters run at commit) with verify's counts; any mismatch drops verify's labels, "weakened test" stays.
-    const dropped = new Set<string>(); for (const t of extendedTests) notProven.add(`${EXTENDED_TEST}: ${t}`);
+    const dropped = new Set<string>(); const tcs = (o.verify as Obj | undefined)?.["test_counts"] as Obj | undefined;
+    const cnt = (x: unknown): { run: number; skipped: number } | undefined => { const c = x as Obj | undefined; return c && typeof c.run === "number" && typeof c.skipped === "number" ? { run: c.run, skipped: c.skipped } : undefined; };
     for (const t of weakTests) {
       notProven.add(`weakened test: ${t}`);
       const vl = verifyNotProven.filter((v) => v.startsWith(`assertion value changed (not shown to be required by the task): ${t}:`)); if (!vl.length) continue;

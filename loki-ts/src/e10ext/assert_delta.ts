@@ -214,18 +214,6 @@ export function assertDeltaNotes(repoDir: string, baseSha: string, headRef: stri
     return null;
   }
 }
-/** FC-PURE-ADDITION (FireLater#21): an edit to a pre-existing test file that deletes no line, adds at least one, and leaves the file's measured run count no lower and its skip
- *  count no higher than on base extends the test, it does not weaken it. `headRef` null reads the working tree. Counts are required (no counts, no exemption); any git error is no exemption. */
-export function pureAdditionTestEdit(repoDir: string, baseSha: string, headRef: string | null, path: string, baseCounts?: Counts, headCounts?: Counts): boolean {
-  if (!baseCounts || !headCounts || headCounts.run <= 0 || headCounts.run < baseCounts.run || headCounts.skipped > baseCounts.skipped) return false;
-  try {
-    const m = /^(\d+)\t(\d+)\t/.exec(safeGit(repoDir, ["diff", "--numstat", "--no-renames", "--no-ext-diff", "--no-textconv", baseSha, ...(headRef ? [headRef] : []), "--", path]).trim());
-    return m !== null && Number(m[1]) > 0 && Number(m[2]) === 0;
-  } catch {
-    return false;
-  }
-}
-export const EXTENDED_TEST = "extended existing test (no line deleted, no fewer tests run, no more skipped; does not cap)";
 export interface TestEdit { kind: "literal-only" | "weakened"; file: string; line: number; old: string; new: string; inTask: boolean }
 /** D53 gate: pure. One "literal-only" entry per changed expected-value literal (each appears verbatim in the task), else a single "weakened" entry. Any doubt is "weakened". old and new are Python reprs; counts are required. */
 export function classifyTestEdit(file: string, oldText: string, newText: string, taskText: string, baseCounts: Counts, headCounts: Counts): TestEdit[] {

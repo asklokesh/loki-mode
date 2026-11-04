@@ -906,10 +906,13 @@ export function addedPublicFunctions(path: string, head: string, base: string): 
 /** Source text with comments AND string literals blanked, so a name inside a string ("intersects" in a message) is never a reference. */
 const codeOnly = (src: string): string => stripComments(src.replace(/"""[\s\S]*?"""|'''[\s\S]*?'''|`(?:\\[\s\S]|[^`\\])*`|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, '""'));
 const refRe = (sym: string): RegExp => new RegExp(`(?<![\\w$])${sym.replace(/[$]/g, "\\$")}(?![\\w$])`);
-/** Every symbol that no source references as a whole word in code (comments and strings stripped). */
+const IDENT = /[\w$]+/g, PLAIN_IDENT = /^[\w$]+$/;
+/** Every whole-word identifier in one source (comments and strings stripped; `keepStrings` keeps the strings, so an import path like "./ops" names its module): a symbol is referenced exactly when it is in this set. Built once per source, never per symbol. */
+export const identifierSet = (src: string, keepStrings = false): Set<string> => new Set((keepStrings ? stripComments(src) : codeOnly(src)).match(IDENT) ?? []);
+/** Every symbol that no source references as a whole word in code (comments and strings stripped). One pass over each source, then set lookups. */
 export function unreferenced(symbols: readonly string[], sources: readonly string[]): string[] {
-  const code = sources.map(codeOnly);
-  return symbols.filter((sym) => !code.some((src) => refRe(sym).test(src)));
+  const sets = sources.map((x) => identifierSet(x)), plain = symbols.filter((x) => !PLAIN_IDENT.test(x)), code = plain.length ? sources.map(codeOnly) : [];
+  return symbols.filter((sym) => (PLAIN_IDENT.test(sym) ? !sets.some((st) => st.has(sym)) : !code.some((src) => refRe(sym).test(src))));
 }
 /** Symbols that no test source references as a whole word; every symbol when none is referenced, or when the diff declared none (then "(no declared symbol)"). Empty means some passing test source mentions a changed symbol. */
 export function symbolGap(symbols: readonly string[], testSources: readonly string[]): string[] {
@@ -919,17 +922,30 @@ export function symbolGap(symbols: readonly string[], testSources: readonly stri
 /** The files among `candidates` (untouched sources, at HEAD) that call a function `changed` defines: the callers that link a test to a changed file through code the run did not edit
  *  (a test calls Invoice.tax_cents in invoice.py, which calls the changed tax.py's invoice_tax_cents, which calls the added line_tax_cents). */
 export function callerFiles(changed: readonly { path: string; src: string }[], candidates: readonly { path: string; src: string }[]): { path: string; src: string }[] {
-  const names = [...new Set(changed.flatMap((f) => symbolSpans(f.path, f.src).filter((x) => !x.container).map((x) => x.name.split(".").pop()!)))];
-  if (names.length === 0) return [];
-  const call = new RegExp(`(?<![\\w$])(?:${names.map((n) => n.replace(/[$]/g, "\\$")).join("|")})\\s*\\(`);
-  return candidates.filter((f) => call.test(codeOnly(f.src)));
+  const names = new Set(changed.flatMap((f) => symbolSpans(f.path, f.src).filter((x) => !x.container).map((x) => x.name.split(".").pop()!)));
+  if (names.size === 0) return [];
+  return candidates.filter((f) => { for (const n of calledNames(codeOnly(f.src))) if (names.has(n)) return true; return false; });
 }
-/** Indirect coverage: starting from the functions a test references, every function a covered function calls (in `files`: the changed files and their untouched callers from callerFiles, at HEAD) is covered too, so a helper split out of an API a test calls is not reported. Returns the names of `unexercised` that stay uncovered. */
-export function exercisedViaCallers(unexercised: readonly string[], referenced: (name: string) => boolean, files: readonly { path: string; src: string }[]): string[] {
-  const bodies = files.flatMap((f) => { const lines = codeOnly(f.src).split("\n"); return symbolSpans(f.path, f.src).filter((x) => !x.container).map((x) => ({ name: x.name.split(".").pop()!, body: lines.slice(x.start, x.end).join("\n") })); });
-  const calls = (body: string, f: string): boolean => new RegExp(`(?<![\\w$.])${f.replace(/[$]/g, "\\$")}\\s*\\(|\\.${f.replace(/[$]/g, "\\$")}\\s*\\(`).test(body);
-  const covered = new Set(bodies.map((b) => b.name).filter(referenced));
-  for (let grew = true; grew;) { grew = false; for (const b of bodies) if (covered.has(b.name)) for (const c of bodies) if (!covered.has(c.name) && calls(b.body, c.name)) { covered.add(c.name); grew = true; } }
+/** Names invoked in already-stripped code: `f(` or `.f(` (whole word before the parenthesis). */
+const CALL = /(?<![\w$])([\w$]+)\s*\(/g;
+const calledNames = (code: string): Set<string> => new Set([...code.matchAll(CALL)].map((m) => m[1]!));
+/** The module a source file is imported as: its basename, or its directory for an index/__init__/mod/lib file (Go: its directory, the package). */
+export const moduleToken = (path: string): string => { const parts = path.split("/"), base = (parts.pop() ?? "").replace(/\.[^.]+$/, ""); return path.endsWith(".go") || /^(?:index|__init__|mod|lib|main)$/.test(base) ? (parts.pop() ?? base) : base; };
+/** Indirect coverage: starting from the functions a test references, every function a covered function calls (in `files`: the changed files and their untouched callers from callerFiles, at HEAD) is covered too, so a helper split out of an API a test calls is not reported. Returns the names of `unexercised` that stay uncovered.
+ *  `seed(name, path)` says whether a test references that function of that file; one pass over each file, then a worklist over name-to-callee sets (linear in the code, no per-pair regex). */
+export function exercisedViaCallers(unexercised: readonly string[], seed: (name: string, path: string) => boolean, files: readonly { path: string; src: string }[]): string[] {
+  const byName = new Map<string, Set<string>[]>(), seeds: string[] = [];
+  for (const f of files) {
+    const code = codeOnly(f.src), lines = code.split("\n");
+    for (const x of symbolSpans(f.path, f.src)) {
+      if (x.container) continue;
+      const name = x.name.split(".").pop()!, called = calledNames(lines.slice(x.start, x.end).join("\n"));
+      (byName.get(name) ?? byName.set(name, []).get(name)!).push(called);
+      if (seed(name, f.path)) seeds.push(name);
+    }
+  }
+  const covered = new Set<string>(seeds), work = [...covered];
+  for (let n = work.pop(); n !== undefined; n = work.pop()) for (const called of byName.get(n) ?? []) for (const c of called) if (byName.has(c) && !covered.has(c)) { covered.add(c); work.push(c); }
   return unexercised.filter((f) => !covered.has(f));
 }
 /** TEN-GATES-14: per-gate legibility for `loki verify --explain`. exogenous/independent evidence is exogenous; agent_authored and llm_judge are agent-influenced; absent or unknown provenance is unrecorded, never exogenous. */
