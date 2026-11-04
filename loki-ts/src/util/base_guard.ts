@@ -179,28 +179,54 @@ export function depsSeeHead(pkgDir: string, repoDir: string): boolean {
  *  as the pre-change measurement only while envChangedSince finds the environment as intake left it. Ignored entries are listed collapsed (one line
  *  per wholly ignored directory); over IGNORED_CAP entries the list is null and every lazy candidate is withheld. Never throws. */
 const IGNORED_CAP = 5000;
-export function lazyZeroBaseline(repoDir: string): { lazy: true; since_ms: number; ignored: string[] | null } {
+export function lazyZeroBaseline(repoDir: string): { lazy: true; since_ms: number; ignored: string[] | null; deps?: Record<string, string[] | null> } {
   const raw = git(repoDir, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]);
   const ignored = raw === null ? null : raw.split("\0").map((p) => p.replace(/\/$/, "")).filter((p) => p !== "" && p !== ".loki" && !p.startsWith(".loki/"));
-  return { lazy: true, since_ms: Date.now(), ignored: ignored && ignored.length <= IGNORED_CAP ? ignored : null };
+  const deps: Record<string, string[] | null> = {};
+  for (const rel of ignored ?? []) if (/(?:^|\/)(?:node_modules|\.venv)$/.test(rel)) deps[rel] = depsListing(join(repoDir, rel));
+  return { lazy: true, since_ms: Date.now(), ignored: ignored && ignored.length <= IGNORED_CAP ? ignored : null, deps };
 }
 /** The intake record as verify's candidate filter: an eager `zero` list (runs from before the lazy form) admits only its names; the lazy record
  *  admits every candidate and hands zeroOnBase the guard inputs. A missing or malformed record admits nothing. */
-export interface ZeroGate { has: (name: string) => boolean; sinceMs?: number; ignored?: string[] | null }
+export interface ZeroGate { has: (name: string) => boolean; sinceMs?: number; ignored?: string[] | null; deps?: Record<string, string[] | null> }
 export function zeroGate(rec: unknown): ZeroGate {
-  const z = (rec && typeof rec === "object" ? rec : {}) as { zero?: unknown; lazy?: unknown; since_ms?: unknown; ignored?: unknown };
+  const z = (rec && typeof rec === "object" ? rec : {}) as { zero?: unknown; lazy?: unknown; since_ms?: unknown; ignored?: unknown; deps?: unknown };
   const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : []);
-  if (z.lazy === true && typeof z.since_ms === "number") return { has: () => true, sinceMs: z.since_ms, ignored: Array.isArray(z.ignored) ? strs(z.ignored) : null };
+  if (z.lazy === true && typeof z.since_ms === "number") return { has: () => true, sinceMs: z.since_ms, ignored: Array.isArray(z.ignored) ? strs(z.ignored) : null, ...(z.deps && typeof z.deps === "object" ? { deps: z.deps as Record<string, string[] | null> } : {}) };
   const names = new Set(strs(z.zero));
   return { has: (n) => names.has(n) };
 }
 // Test runners write their own caches inside node_modules and .venv on every run (Loki's verify included); they hold no dependency code.
-const RUNNER_CACHE_DIRS = [".vite", ".vitest", ".cache", "__pycache__", ".pytest_cache"];
+const RUNNER_CACHE_DIRS = [".vite", ".vite-temp", ".vitest", ".vitest-cache", ".cache", "__pycache__", ".pytest_cache"]; // FireLater#21: vitest 5.1 writes node_modules/.vitest-cache on every run
+/** The packages a dependency dir holds (names, "@scope/name" for scoped ones; a venv's site-packages entries as "py/<name>"), runner caches left out; null
+ *  past the bound. A deleted or renamed package changes this list and nothing a files-only walk can see (the parent directory's ctime also moves when a
+ *  runner adds its cache entry, so directories alone cannot tell the two apart). */
+export function depsListing(root: string): string[] | null {
+  const out: string[] = [], skip = (n: string): boolean => RUNNER_CACHE_DIRS.includes(n) || n === "__pycache__";
+  const list = (dir: string, prefix: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (skip(e.name)) continue;
+      if (e.name.startsWith("@") && (e.isDirectory() || e.isSymbolicLink())) { try { list(join(dir, e.name), `${prefix}${e.name}/`); continue; } catch { /* a link to nowhere is listed as itself */ } }
+      out.push(prefix + e.name);
+      if (out.length > 50000) throw new RangeError("bound");
+    }
+  };
+  try {
+    list(root, "");
+    for (const lib of ["lib", "lib64", "Lib"]) {
+      const l = join(root, lib);
+      if (!existsSync(l)) continue;
+      if (lib === "Lib") { if (existsSync(join(l, "site-packages"))) list(join(l, "site-packages"), "py/"); continue; } // case-insensitive volumes (macOS) answer existsSync("Lib") for "lib"
+      for (const py of readdirSync(l)) if (/^python/.test(py) && existsSync(join(l, py, "site-packages"))) list(join(l, py, "site-packages"), "py/");
+    }
+  } catch { return null; }
+  return out.sort();
+}
 /** True (withhold) unless the environment is as intake left it at `sinceMs`: every ignored entry intake listed still exists, and no entry under
  *  `pkgDir`'s node_modules or .venv, and no ignored file intake listed, had its status changed since (ctime, which a process cannot set back;
  *  one `find` walk that never follows symlinks; runner cache dirs pruned). Additions count as changes: an added nested package or .pth file can
  *  change what runs. Ignored directories other than dependency dirs are checked for existence only. Any error withholds. */
-export function envChangedSince(repoDir: string, pkgDir: string, sinceMs: number, ignored: string[] | null): boolean {
+export function envChangedSince(repoDir: string, pkgDir: string, sinceMs: number, ignored: string[] | null, deps?: Record<string, string[] | null>): boolean {
   if (ignored === null) return true;
   let stampDir = "";
   try {
@@ -210,15 +236,23 @@ export function envChangedSince(repoDir: string, pkgDir: string, sinceMs: number
       if (!st) return true;
       if (!st.isDirectory()) roots.push(join(repoDir, rel));
     }
-    for (const d of ["node_modules", ".venv"]) if (existsSync(join(pkgDir, d))) roots.push(join(pkgDir, d));
+    const depRoots: string[] = [];
+    for (const d of ["node_modules", ".venv"]) if (existsSync(join(pkgDir, d))) { roots.push(join(pkgDir, d)); depRoots.push(join(pkgDir, d)); }
+    if (deps) for (const r of depRoots) { // a package deleted or renamed since intake (a record from before this field skips the check)
+      const was = deps[relative(repoDir, r)], now = depsListing(r);
+      if (!was || !now || was.length !== now.length || was.some((n, i) => n !== now[i])) return true;
+    }
     if (roots.length === 0) return false;
     stampDir = mkdtempSync(join(tmpdir(), "loki-zero-stamp-"));
     const stamp = join(stampDir, "since");
     writeFileSync(stamp, "");
     utimesSync(stamp, sinceMs / 1000, sinceMs / 1000);
     const prune = RUNNER_CACHE_DIRS.flatMap((n, i) => [...(i ? ["-o"] : []), "-name", n]);
-    const out = execFileSync("find", ["-P", ...new Set(roots), "(", ...prune, ")", "-prune", "-o", "-cnewer", stamp, "-print", "-quit"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120000 });
-    return out.trim() !== "";
+    const out = execFileSync("find", ["-P", ...new Set(roots), "(", ...prune, ")", "-prune", "-o", "(", "-type", "f", "-o", "-type", "l", ")", "-cnewer", stamp, "-print", "-quit"] /* files and links only: a runner adding a cache entry changes its parent directory's ctime, which is not a dependency change */, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120000 });
+    if (out.trim() !== "") return true;
+    // directories: a changed directory is a dependency change unless it is a dependency root or site-packages (the listing above covers them) or holds a runner cache
+    const dirs = execFileSync("find", ["-P", ...new Set(roots), "(", ...prune, ")", "-prune", "-o", "-type", "d", "-cnewer", stamp, "-print"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120000, maxBuffer: 64 * 1024 * 1024 }).split("\n").filter(Boolean);
+    return dirs.some((d) => !(roots.includes(d) || /(?:^|\/)site-packages$/.test(d) || RUNNER_CACHE_DIRS.concat("__pycache__").some((c) => existsSync(join(d, c)))));
   } catch { return true; } finally { if (stampDir) rmSync(stampDir, { recursive: true, force: true }); }
 }
 
@@ -229,7 +263,7 @@ export function envChangedSince(repoDir: string, pkgDir: string, sinceMs: number
 export async function zeroOnBase(
   cands: { name: string; cmd: string; args: string[]; cwd: string }[], baseDir: string, repoDir: string,
   run: (c: { cmd: string; args: string[]; cwd: string }) => Promise<{ ok: boolean; cut: boolean; missing: boolean; out: string }>, note: (name: string) => void,
-  gate: Pick<ZeroGate, "sinceMs" | "ignored"> = {},
+  gate: Pick<ZeroGate, "sinceMs" | "ignored" | "deps"> = {},
 ): Promise<string[]> {
   const zero: string[] = [], link = baseDepsLinker(baseDir, repoDir, gate);
   for (const c of cands) {
@@ -243,11 +277,11 @@ export async function zeroOnBase(
  *  of a suite that needs its dependencies can run at all. The returned function answers false (nothing linked, the base run stays without
  *  dependencies: fail closed) when the head's deps can see head sources (depsSeeHead) or, with a lazy `gate`, when envChangedSince finds the
  *  environment changed since intake. One guard walk per package dir. Shared by zeroOnBase and verify's base-red subtraction. */
-export function baseDepsLinker(baseDir: string, repoDir: string, gate: Pick<ZeroGate, "sinceMs" | "ignored"> = {}): (cwd: string) => boolean {
+export function baseDepsLinker(baseDir: string, repoDir: string, gate: Pick<ZeroGate, "sinceMs" | "ignored" | "deps"> = {}): (cwd: string) => boolean {
   const seen = new Map<string, boolean>();
   return (cwd) => {
     const src = join(repoDir, relative(baseDir, cwd));
-    if (!seen.has(src)) seen.set(src, !(depsSeeHead(src, repoDir) || (gate.sinceMs !== undefined && envChangedSince(repoDir, src, gate.sinceMs, gate.ignored ?? null))));
+    if (!seen.has(src)) seen.set(src, !(depsSeeHead(src, repoDir) || (gate.sinceMs !== undefined && envChangedSince(repoDir, src, gate.sinceMs, gate.ignored ?? null, gate.deps))));
     if (!seen.get(src)) return false;
     for (const d of ["node_modules", ".venv"]) { try { if (existsSync(join(src, d)) && !existsSync(join(cwd, d))) symlinkSync(join(src, d), join(cwd, d)); } catch { /* no deps on base: stays fail-closed */ } }
     return true;

@@ -1,0 +1,27 @@
+
+ RUN  v5.0.5 /x/head
+
+ ❯ src/app/p1/__tests__/page.test.js (2 tests | 1 failed) 2ms
+   ❯ page 1 (2)
+     × has gray background 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/app/p1/__tests__/page.test.js > page 1 > has gray background
+TypeError: Cannot read properties of undefined (reading 'get')
+ ❯ src/app/p1/__tests__/page.test.js:5:50
+      3| describe("page 1", () => {
+      4|   test("renders", () => { expect(1).toBe(1); });
+      5|   test("has gray background", () => { expect(api.get("/p")).toBe("GET …
+       |                                                  ^
+      6| });
+      7|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  00:00:00
+   Duration  91ms (transform 51%, import 27%, tests 13%, worker 8%)
+

@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.127.0 (2026-11-04)
+
+Large multi-package issues no longer stop on tests that were already failing, and a test the change broke is never excused as pre-existing.
+
+### Fixed
+
+- A test that was already failing before the change, with the same error, no longer blocks delivery: it gets one fix round, and if it still fails the same way the run is delivered as PARTIAL with that test named (FireLater#21's frontend slice ended SPEC_CONFLICT with no PR). Each package's own baseline is used, not only the repository root's.
+- A failure is treated as pre-existing only when its errors match the base run exactly: a changed value inside an assertion (for example a different URL path), a new unhandled-error report, a failing test reached only through a dynamic import, or an extra failing case under a repeated `test.each` title now counts as a new failure. Before, a test the change broke could be excused, and in some cases the run was sealed VERIFIED.
+- Deleting or renaming an installed package now counts as a dependency change, so a resulting "Cannot find package" failure is never passed off as pre-existing. Test-runner cache folders (`.vitest-cache`, `.vite-temp`) do not count.
+- Checked against real vitest 2.1.9 and 5.1.0.
+
 ## v11.126.1 (2026-11-04)
 
 Every Haiku session now compacts before it can cross Haiku's 100K-token price threshold.

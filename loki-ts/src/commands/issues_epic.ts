@@ -294,7 +294,9 @@ export function epicOutcome(rows: readonly SliceResult[], planUsd: readonly (num
   const failed = rows.find((r) => !isBudget(r) && !/^(VERIFIED|PARTIAL|SKIPPED)/.test(r.outcome)), budget = rows.find(isBudget);
   const outcome = failed ? "FAILED" : budget ? "BUDGET_STOP" : rows.some((r) => /^PARTIAL/.test(r.outcome)) ? "PARTIAL" : "VERIFIED";
   const why = failed ?? budget ?? rows.find((r) => /^PARTIAL/.test(r.outcome));
-  const lines = [`${labelCol("Outcome")}${outcome}`, ...(why && outcome !== "VERIFIED" ? [`${labelCol("Reason")}slice ${why.id}: ${oneLine(why.outcome)}`] : []),
+  // FireLater#21: a FAILED or budget-stopped split still says what it delivered, and where the stopped slice's change is, so 3 open PRs never read as nothing done.
+  const prs = rows.filter((r) => r.pr).length, kept = why && !why.pr && why.branch ? `; ${why.id}'s change is on branch ${why.branch}` : "", got = (outcome === "FAILED" || outcome === "BUDGET_STOP") && prs > 0 ? ` (${prs} of ${rows.length} slices opened a PR${kept})` : "";
+  const lines = [`${labelCol("Outcome")}${outcome}`, ...(why && outcome !== "VERIFIED" ? [`${labelCol("Reason")}slice ${why.id}: ${oneLine(why.outcome)}${got}`] : []),
     ...rows.filter((r) => r.pr).map((r) => `${labelCol("PR")}${r.pr}`), `${labelCol("Cost")}${splitCostText(splitCost(rows, planUsd))}`];
   return { outcome, rc: exitCodeOf(outcome, env), lines: `${lines.join("\n")}\n` };
 }
