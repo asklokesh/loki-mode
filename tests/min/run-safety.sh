@@ -78,6 +78,9 @@
 #  20e. base_guard.ts: drop .vitest-cache and the files-only find; real vitest 5.1.0 same is not delivered (base runs lose their deps).
 #  20f. verify.ts subtractBase: compare raw ids (no comparableIds); real vitest 2.1.9 one is not delivered.
 #  20g. verify.ts: compare only the checks the last verify fed to the fix round when deciding to rerun the full suite; real vitest p8new ends PARTIAL, not FAILED.
+#  20h. failures.ts normError: normalize any quoted /token as a path; real vitest pathnorm is delivered PARTIAL.
+#  20i. repo_profile.ts sameAsBase and verify.ts known-full-suite: ignore the Unhandled Errors block; real vitest unhandled is excused.
+#  20j. base_guard.ts envChangedSince: skip the dependency listing; real vitest delpkg is delivered PARTIAL and the 6b unit check fails.
 #  21. runner_config.ts hiddenConfigChanged: count every added ignored config again; the unit check fails on .next/package.json.
 #  22. issues_epic.ts epicOutcome: drop the delivered-PR suffix of the Reason line; the unit check fails.
 
@@ -440,6 +443,25 @@ const { removeOwnWallFiles } = await import(process.env.ROOT + "/loki-ts/src/uti
 console.log(removeOwnWallFiles(w, "e10-x").join(","), ["a", "b", "tracked"].map((n) => existsSync(w + "/src/loki_wall_" + n + ".test.ts")).join(","), existsSync(w + "/src/other.test.ts"));
 ' 2>&1)"
 [ "$GONE" = "src/loki_wall_a.test.ts false,true,true true" ] && ok "run end removes only its own untracked, unedited Wall file" || bad "Wall cleanup gave: $GONE (want: src/loki_wall_a.test.ts false,true,true true)"
+
+# ---- 6b: envChangedSince on a real directory tree: a runner adding its cache is no change, a deleted or renamed package is -------------------------
+ENVR="$T/envchg"; mkdir -p "$ENVR/pkg/node_modules/dep-a" "$ENVR/pkg/node_modules/@sc/dep-b"; printf 'node_modules\n' > "$ENVR/.gitignore"; git -C "$ENVR" init -q -b main
+printf 'x\n' > "$ENVR/pkg/node_modules/dep-a/index.js"; printf 'y\n' > "$ENVR/pkg/node_modules/@sc/dep-b/index.js"
+cat > "$T/envchg.ts" <<'TS'
+import { mkdirSync, writeFileSync, renameSync, rmSync } from "node:fs";
+const { envChangedSince, lazyZeroBaseline } = await import(`${process.env.ROOT}/loki-ts/src/util/base_guard.ts`);
+const e = process.env.E!, pk = e + "/pkg", nm = pk + "/node_modules", out: string[] = [];
+const probe = async (label: string, mutate: () => void): Promise<void> => {
+  await Bun.sleep(1100); const z = lazyZeroBaseline(e); await Bun.sleep(1100); mutate();
+  out.push(`${label} ${envChangedSince(e, pk, z.since_ms, z.ignored, z.deps)}`);
+};
+await probe("cache", () => { mkdirSync(nm + "/.vitest-cache", { recursive: true }); writeFileSync(nm + "/.vitest-cache/r.json", "{}"); mkdirSync(nm + "/dep-a/__pycache__", { recursive: true }); });
+await probe("delete", () => rmSync(nm + "/@sc/dep-b", { recursive: true }));
+await probe("rename", () => renameSync(nm + "/dep-a", nm + "/dep-z"));
+console.log(out.join(" "));
+TS
+ENVOUT="$(ROOT="$ROOT" E="$ENVR" bun --no-env-file --config=/dev/null "$T/envchg.ts" 2>&1)"
+[ "$ENVOUT" = "cache false delete true rename true" ] && ok "envChangedSince: a runner cache entry is no change; a deleted scoped package and a renamed package are" || bad "envChangedSince gave: $ENVOUT (want: cache false delete true rename true)"
 
 # ---- 7: the same FireLater#21 shapes on real vitest 2.1.9 and 5.1.0 (installed into a temp dir; skipped when npm cannot fetch them) ----------------
 # The stand-in vitest above cannot show what real vitest does: 5.1 writes node_modules/.vitest-cache on every run, and 2.1.9 prints "x page 1 > title"
