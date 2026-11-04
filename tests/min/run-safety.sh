@@ -77,6 +77,7 @@
 #  20d. repo_profile.ts attributeFullSuite: drop sameAsBase (ids only); real vitest p8 is delivered (both versions).
 #  20e. base_guard.ts: drop .vitest-cache and the files-only find; real vitest 5.1.0 same is not delivered (base runs lose their deps).
 #  20f. verify.ts subtractBase: compare raw ids (no comparableIds); real vitest 2.1.9 one is not delivered.
+#  20g. verify.ts: compare only the checks the last verify fed to the fix round when deciding to rerun the full suite; real vitest p8new ends PARTIAL, not FAILED.
 #  21. runner_config.ts hiddenConfigChanged: count every added ignored config again; the unit check fails on .next/package.json.
 #  22. issues_epic.ts epicOutcome: drop the delivered-PR suffix of the Reason line; the unit check fails.
 
@@ -449,6 +450,7 @@ console.log(removeOwnWallFiles(w, "e10-x").join(","), ["a", "b", "tracked"].map(
 #   backend: a backend-only change (FireLater#21 s1-s3) with p1 and p2 red on base: the frontend full suite fails with exactly the base errors, so it is
 #            excused by its recorded errors and the run is delivered.
 #   changed: the change makes p1 throw a TypeError (same id): p1 is never excused and the run is not delivered.
+#   p8new:   p8 passes on base and the change breaks it with a new error; only the full suite runs it, and base-red p1 (excused after one round) stays red.
 #   p8 only: p8 reaches lib/api only through a dynamic import, so only the full suite runs it; it is red on base with an AssertionError and the change makes
 #            it a TypeError. Ids alone would excuse the full suite (and seal VERIFIED); its errors differ, so it blocks.
 rv_fixture() { # rv_fixture <dir> <0: p1 and p2 red | 1: only p8 red | 2: only p1 red> <vitest dir>
@@ -494,7 +496,7 @@ PY
 )"
 }
 RVROOT="$T/realvitest"
-for ver in 2.1.9 5.1.0; do
+for ver in ${RV_VERSIONS:-2.1.9 5.1.0}; do
     mkdir -p "$RVROOT/$ver" && printf '{"private":true}\n' > "$RVROOT/$ver/package.json"
     if ! (cd "$RVROOT/$ver" && ${TO[@]+"${TO[@]}"} npm install "vitest@$ver" --no-audit --no-fund --silent >/dev/null 2>&1) || [ ! -x "$RVROOT/$ver/node_modules/.bin/vitest" ]; then
         printf '  SKIP: real vitest %s: npm could not install it (offline?)\n' "$ver"; continue
