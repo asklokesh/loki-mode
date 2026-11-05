@@ -1,57 +1,45 @@
 #!/usr/bin/env bash
 # Core help screen and help topics for `loki help`. Source this file; it
-# defines functions only. The full command table stays in show_help_all
-# (autonomy/loki) and is reached with `loki help all`.
+# defines functions only. The front page lists exactly the 11 KEEP commands of
+# loki-ts/src/cli/registry.ts (tests/min/cli-entrypoints.sh compares them). The
+# hidden and renamed commands stay in show_help_all (autonomy/loki), reached
+# with `loki help all`.
 
 # Topics reachable as `loki help <topic>`. Keep in sync with help_topic_text.
 LOKI_HELP_TOPICS="providers exit-codes"
+
+# The 11 core commands, grouped. Shared by the front page and `loki help all`.
+help_core_commands() {
+    echo "Build:"
+    echo "  loki \"<goal>\"              Build it: a goal, a PRD file, or an issue (owner/repo#N)"
+    echo "  start [input] [options]    Same, with options (--no-pr, --max-cost USD, --model, --provider, --dry-run, --deploy)"
+    echo "  chat [--attach]            Talk it through instead; --attach joins the running build"
+    echo ""
+    echo "Check:"
+    echo "  status [--json]            What is running, how it ended, what to do next"
+    echo "  verify [base] [--fast]     Deterministic verification with CI exit codes (--json)"
+    echo "  receipt [run]              The signed proof of a run (share, badge, bundle)"
+    echo ""
+    echo "Control:"
+    echo "  stop                       Stop the running build"
+    echo "  undo <run>                 Plan (--plan) or apply an undo of a run"
+    echo "  deploy                     Deploy a VERIFIED run"
+    echo ""
+    echo "Setup:"
+    echo "  doctor [--fix]             Check and repair your setup (first run: loki doctor --fix)"
+    echo "  config list|get|set        Show or change settings (config list --json)"
+    echo "  control serve              The local UI"
+}
 
 help_core_screen() {
     local version="$1"
     echo "Loki Mode v${version}"
     echo ""
-    echo "Usage: loki <command> [options]"
+    help_core_commands
     echo ""
-    echo "Start:"
-    echo "  start [SPEC]     PRIMARY: build from a PRD file, brief, or issue (owner/repo#N, PROJ-1) (alias: run)"
-    echo "  chat [--attach]  Interactive alternative; --attach joins the current 'loki start' run"
-    echo "  edit \"<change>\"  Make one targeted change to the current repo"
-    echo "  quick \"<task>\"   One small task, no PR"
-    echo ""
-    echo "Check:"
-    echo "  status [--json|--badge|--probe]  What is running and where it stands"
-    echo "  verify [--json|--fast]  Deterministic verification (CI-gate exit codes; --fast: no model, no network)"
-    echo "  receipt          Inspect the proof-of-run receipt (alias of: proof)"
-    echo "  diff / undo      See what a run changed; undo <run> to plan or apply a rollback"
-    echo ""
-    echo "Configure:"
-    echo "  setup            First-run setup (provider, keys, defaults)"
-    echo "  config           Show or change settings (config list --json)"
-    echo "  models           Model tiers and routes (models --local for local models)"
-    echo "  agents           Agent roles and routing (route shows where a task would go)"
-    echo "  doctor [--json]  Check your setup is ready"
-    echo ""
-    echo "Options for 'start': --provider NAME, --model ID, --budget USD (default cap $(loki_budget_default_usd 2>/dev/null)), --isolation LVL (isolation dial: none | worktree | docker)"
-    echo "Also: cost / estimate (spend before you build), resume (continue a paused or interrupted run)"
-    echo "Exit codes: docs/exit-codes.md"
-    echo ""
-    echo "Examples:"
-    echo "  loki start ./prd.md                 Build from a spec file"
-    echo "  loki start owner/repo#123           Build from a GitHub issue"
-    echo "  loki start ./prd.md --budget 20     Cap spend at 20 USD"
-    echo "  loki plan ./prd.md                  Dry run: complexity, cost, plan"
-    echo "  loki verify --json                  Machine-readable verification for CI"
-    echo "  loki resume                         Continue a paused or interrupted run"
-    echo "  loki status --json                  What is running, as JSON"
-    echo "  loki cost ./prd.md                  Estimate spend before you build"
-    echo "  loki doctor --fix                   Check setup and repair what it can"
-    echo ""
-    echo "More:"
-    echo "  loki help all            Every command"
-    echo "  loki help <topic>        Topics: ${LOKI_HELP_TOPICS// /, }"
-    echo "  loki <command> --help    Help for one command"
-    echo ""
-    echo "New here? Run: loki doctor, then loki quickstart"
+    echo "Default spend cap per run: $(loki_budget_default_usd 2>/dev/null) USD (--max-cost USD). Exit codes: docs/exit-codes.md"
+    echo "loki <command> --help   |   loki help all   |   loki help <topic> (${LOKI_HELP_TOPICS// /, })"
+    echo "docs: https://www.autonomi.dev/docs"
 }
 
 help_topic_text() {
