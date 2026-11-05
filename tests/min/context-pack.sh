@@ -20,6 +20,11 @@
 #                   context_pack, and the seal stage.completed event and receipt carry context_recall 1; the same
 #                   run on the default model sends no pack but still records brief_files and the coverage.
 #   loki stats --outcomes --json reports the median context recall of those runs.
+#   L3/L5 rules:    release-note fragment line (changeset, towncrier, changelog.d, newsfragments, changie, none) and the
+#                   byte-stable FIXED_RULES prefix (extra planted defects 5 and 6 below).
+#
+#   E6 diet:        LOKI_E10_PACK_DIET (default off): one named definition keeps its span and loses the fill, the
+#                   solution coverage holds, no test spans.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/util/context_pack.ts: drop the callee hop (the `for (let hop` loop); the haiku brief loses
@@ -27,7 +32,11 @@
 #   2. loki-ts/src/util/context_pack.ts: `if (used + c > budgetBytes) return false;` deleted; the budget legs fail.
 #   3. loki-ts/src/engine10/stages/implement.ts: drop `brief_files: bc.files` from the stage data (rebuild dist);
 #      the end-to-end brief_files and context_recall assertions fail.
+#   5. loki-ts/src/util/context_pack.ts: delete the `if (diet) {` filter block; diet_no_fill fails. Drop the
+#      `hop < (diet ? 1 : 2)` bound or the callee hop under diet; diet_keeps_solution fails.
 #   4. loki-ts/src/engine10/repomap.ts: SOURCE_EXT back to ts|tsx|js|jsx|mjs|cjs|py; the L020 ranking legs fail.
+#   5. loki-ts/src/project_model/conventions.ts releaseNoteConvention: drop the .changeset/config.json branch; the changeset legs fail.
+#   6. loki-ts/src/e10ext/context.ts: interpolate the convention line into FIXED_RULES; prefix_stable fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need() { command -v "$1" >/dev/null 2>&1 || { echo "context-pack: needs $1" >&2; exit 2; }; }
@@ -128,6 +137,21 @@ for (const budget of [6000, 800]) {
   out[`big_${budget}`] = p && p.tokens <= budget && p.tokens === cp.estTokens(p.text) && p.spans.length > 0 ? "within" : `over ${p?.tokens} spans ${p?.spans.length}`;
 }
 
+// E6 diet: named spans plus direct callers and callees only, no fill. Off unless LOKI_E10_PACK_DIET=1 (the mean cut on the
+// 20 corpus briefs, 2.8k estimated tokens, is under the 3.5k default-on bar).
+{
+  const big = join(T, "big"), bmap = buildRepoMap(big).entries, files = ["src/ledger0.ts", "src/ledger1.ts", "src/ledger2.ts"], bt = "fix ledgerEntry0x3 so the ledger entry balance stays a number";
+  const gt = "fix the ledger entry balance", gen = cp.contextPack(big, gt, files, bmap, 6000, {}), genOff = cp.contextPack(big, gt, files, bmap, 6000, { LOKI_E10_PACK_DIET: "0" }), genDiet = cp.contextPack(big, gt, files, bmap, 6000, { LOKI_E10_PACK_DIET: "1" });
+  const base = cp.contextPack(big, bt, files, bmap, 6000, {}), diet = cp.contextPack(big, bt, files, bmap, 6000, { LOKI_E10_PACK_DIET: "1" });
+  out.diet_default_off = cp.packDietEnabled({}) === false && cp.packDietEnabled({ LOKI_E10_PACK_DIET: "1" }) === true && cp.packDietEnabled({ LOKI_E10_PACK_DIET: "0" }) === false && JSON.stringify(gen) === JSON.stringify(genOff) ? "yes" : "no";
+  out.diet_no_fill = gen && genDiet && gen.spans.length > 3 && genDiet.spans.length === 1 && genDiet.tokens < gen.tokens / 2 ? "yes" : `no fill ${gen?.spans.length}/${gen?.tokens} diet ${genDiet?.spans.length}/${genDiet?.tokens}`;
+  out.diet_named_only = base && diet && diet.spans.length === 1 && diet.spans[0].symbol === "ledgerEntry0x3" && diet.spans[0].via === "named" ? "yes" : `no ${JSON.stringify(diet?.spans)}`;
+  const dctx = ctxFor(join(T, "inv"), task);
+  const d0 = briefRecord(dctx, deps, "haiku"); process.env.LOKI_E10_PACK_DIET = "1"; const d1 = briefRecord(dctx, deps, "haiku"); delete process.env.LOKI_E10_PACK_DIET;
+  out.diet_keeps_solution = d1.pack && d1.pack.tokens < d0.pack.tokens && coverage(d1.text, d1.files) === "3/3 2/3" ? "yes" : `no ${d1.pack?.tokens}/${d0.pack?.tokens} ${coverage(d1.text, d1.files)}`;
+  const tmap = buildRepoMap(join(T, "inv")).entries;
+  out.diet_no_tests = (cp.contextPack(join(T, "inv"), task, ["src/invoice.ts", "src/invoice.test.ts"], tmap, 6000, { LOKI_E10_PACK_DIET: "1" })?.spans ?? []).every((x: { path: string }) => !/test/.test(x.path)) ? "yes" : "no";
+}
 out.tiny_null = cp.contextPack(join(T, "big"), "fix ledgerEntry0x3", ["src/ledger0.ts"], [], 50) === null ? "yes" : "no";
 
 // L022: known brief, known diff (name-status pairs), known result-cost record.
@@ -147,6 +171,26 @@ const runs = join(T, "medruns");
 mkdirSync(join(runs, "r9"), { recursive: true }); writeFileSync(join(runs, "r9", "receipt.json"), JSON.stringify({ verdict: "PARTIAL" }));
 const m = cp.contextRecallMedian(runs);
 out.median = `${m.median} ${m.n} ${m.runs_considered}`;
+// L3/L5: release-note fragment convention line and the byte-stable rule prefix.
+const { releaseNoteBrief } = await import(join(SRC, "project_model/conventions.ts"));
+const { buildImplementBrief } = await import(join(SRC, "engine10/stages/implement.ts"));
+const { FIXED_RULES } = await import(join(SRC, "e10ext/context.ts"));
+const { utimesSync } = await import("node:fs");
+const mk = (name: string, files: Record<string, string>) => { const d = join(T, "rn", name); for (const [f, c] of Object.entries(files)) { mkdirSync(join(d, f, ".."), { recursive: true }); writeFileSync(join(d, f), c); } return d; };
+const csRepo = mk("cs", { ".changeset/config.json": "{}", ".changeset/old-fix.md": "x", ".changeset/new-fix.md": "y", ".changeset/README.md": "r", "package.json": '{"name":"rootpkg"}', "packages/core/package.json": '{"name":"@acme/core"}', "packages/core/src/a.ts": "export const a = 1;\n" });
+utimesSync(join(csRepo, ".changeset/old-fix.md"), 1000, 1000); utimesSync(join(csRepo, ".changeset/new-fix.md"), 2000, 2000);
+out.rn_changeset = releaseNoteBrief(csRepo, ["packages/core/src/a.ts"]);
+out.rn_changeset_root = releaseNoteBrief(csRepo, []);
+out.rn_towncrier = releaseNoteBrief(mk("tc", { "pyproject.toml": '[tool.towncrier]\ndirectory = "docs/news"\n', "docs/news/12.bugfix.md": "z" }), []);
+out.rn_changelogd = releaseNoteBrief(mk("cd", { "changelog.d/20240101_fix.md": "z" }), []);
+out.rn_newsfrag = releaseNoteBrief(mk("nf", { "newsfragments/7.feature.rst": "z" }), []);
+out.rn_changie = releaseNoteBrief(mk("ch", { ".changes/unreleased/Fixed-1.yaml": "z" }), []);
+out.rn_none = releaseNoteBrief(mk("no", { "package.json": '{"name":"p"}', "CHANGELOG.md": "# c" }), []) === "" ? "empty" : "present";
+const bp = (rm: string, task: string) => buildImplementBrief(task, null, [], rm);
+const b1 = bp(out.rn_changeset as string, "task one"), b2 = bp("", "a different task entirely");
+const cut = (b: string) => b.slice(0, b.indexOf(FIXED_RULES) + FIXED_RULES.length);
+out.prefix_stable = b1.includes(FIXED_RULES) && b2.includes(FIXED_RULES) && cut(b1) === cut(b2) && !FIXED_RULES.includes("Release-note convention") && b1.indexOf("Release-note convention") > FIXED_RULES.length ? "yes" : "no";
+out.rules = ["read the whole function", "sibling branches", "fix the issue prefers", "never npm test", "release-note fragment a repository convention"].map((k) => FIXED_RULES.includes(k) ? "y" : "n").join("");
 console.log(JSON.stringify(out));
 TS
 
@@ -172,10 +216,28 @@ eqv pack_tokens_exact ok "L021 pack tokens recorded and within the 6000 budget"
 echo "    pack spans: $(get pack_spans)"
 eqv big_6000 within "L021 budget holds on large files (6000)"
 eqv big_800 within "L021 budget holds on large files (800)"
+eqv diet_default_off yes "E6 the pack diet is off by default and LOKI_E10_PACK_DIET=1/0 switch it"
+eqv diet_no_fill yes "E6 diet: a task naming nothing keeps its single best definition, not the fill of matching ones (under half the tokens)"
+eqv diet_named_only yes "E6 diet: a task naming one definition keeps that span only"
+eqv diet_keeps_solution yes "E6 diet: ts-invoice keeps invoiceTotal and roundCents (callee) but drops RATES, a second-hop constant: the known cost, 3/3 files 2/3 bodies, fewer tokens"
+eqv diet_no_tests yes "E6 diet: no test file spans in the pack"
 eqv tiny_null yes "L021 a budget too small for any body sends no pack (not an empty header)"
 eqv cov_record "0.667 0.5 3 3" "L022 contextCoverage: recall 2/3, precision 2/4, reads 3 (test and added files excluded, a deleted file counted)"
 eqv stream_reads 3 "L022 stream parser: 3 reads before the first edit (a repeated snapshot counts once, a later read not at all)"
 eqv median "0.5 3 4" "L022 median context recall over sealed runs (an unmeasured run counted as considered only)"
+
+rn() { local v; v="$(get "$1")"; case "$v" in *"$2"*) ok "$3";; *) bad "$3 ($1: got '$v', want it to contain '$2')";; esac; }
+rn rn_changeset '"@acme/core": patch' "L3 changeset: names the package of the relevant file, not the root"
+rn rn_changeset 'newest example: .changeset/new-fix.md' "L3 changeset: newest example by mtime, README excluded"
+rn rn_changeset_root '"rootpkg": patch' "L3 changeset: no relevant file falls back to the root package name"
+rn rn_towncrier 'towncrier, docs/news/' "L3 towncrier: directory key read from [tool.towncrier]"
+rn rn_towncrier 'docs/news/12.bugfix.md' "L3 towncrier: example fragment named"
+rn rn_changelogd 'changelog.d/20240101_fix.md' "L3 changelog.d detected"
+rn rn_newsfrag 'newsfragments/7.feature.rst' "L3 newsfragments detected"
+rn rn_changie '.changes/unreleased/Fixed-1.yaml' "L3 changie .changes/unreleased detected"
+eqv rn_none empty "L3 a repo with only CHANGELOG.md gets no fragment line"
+eqv prefix_stable yes "L3/L5 the rule prefix is byte-identical across two runs; the convention line sits after it, never inside it"
+eqv rules yyyyy "L5 FIXED_RULES carries the read-whole-function, preferred-fix, targeted-tests and release-note rules"
 
 # ---- end to end on the stub provider ----
 export LOKI_TS_ENTRY="$ROOT/loki-ts/dist/loki.js"
