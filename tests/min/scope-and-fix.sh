@@ -826,6 +826,36 @@ wo_legs() {
 }
 WD="$(cd "$ROOT/loki-ts" && bun -e 'const { wallEnabled } = await import("./src/engine10/sizing.ts"); console.log([wallEnabled({}), wallEnabled({ LOKI_E10_WALL: "" }), wallEnabled({ LOKI_E10_WALL: "0" }), wallEnabled({ LOKI_E10_WALL: "1" }), wallEnabled({ LOKI_E10_WALL: "on" })].join(","))' 2>&1)"
 [ "$WD" = "false,false,false,true,true" ] && ok "wall default: the Wall session is off unless LOKI_E10_WALL=1/on ($WD)" || bad "wall default: wallEnabled gave '$WD'"
+# Go output cap (rule 22, real go test -json through the real runOnce and corroboratePass): a test file whose -json stream is larger than the 64 KB tail (and a whole-package run larger than 1 MiB) is judged whole and counts;
+# a failing test in the same shape stays a fail, and a small file is unchanged. Before the fix the big shapes read not_run (go output "cannot confirm execution").
+if command -v go >/dev/null 2>&1; then
+    GC="$T/go-cap"; rm -rf "$GC"; mkdir -p "$GC" && cd "$GC"
+    printf 'module example.com/big\n\ngo 1.20\n' > go.mod
+    printf 'package big\n\nfunc One() int { return 1 }\n' > big.go
+    printf 'package big\n\nimport (\n\t"strings"\n\t"testing"\n)\n\nfunc TestChatty(t *testing.T) {\n\tfor i := 0; i < 300; i++ { t.Log(strings.Repeat("x", 400)) }\n\tif One() != 1 { t.Fatal("one") }\n}\n' > big_test.go
+    printf 'package big\n\nimport "testing"\n\nfunc TestSmall(t *testing.T) { if One() != 1 { t.Fatal("one") } }\n' > small_test.go
+    printf 'package big\n\nimport (\n\t"strings"\n\t"testing"\n)\n\nfunc TestHuge(t *testing.T) {\n\tfor i := 0; i < 4000; i++ { t.Log(strings.Repeat("y", 400)) }\n}\n' > huge_test.go
+    printf 'package big\n\nimport (\n\t"strings"\n\t"testing"\n)\n\nfunc TestChattyRed(t *testing.T) {\n\tfor i := 0; i < 300; i++ { t.Log(strings.Repeat("z", 400)) }\n\tt.Fatal("red")\n}\n' > red_test.go.txt
+    cd "$ROOT"
+    cat > "$GC.ts" <<'TS'
+import { runOnce } from "./src/engine10/stages/verify.ts";
+import { classifyCheck, corroboratePass, goRunner, plainTestEnv } from "./src/util/check_result.ts";
+const [dir] = process.argv.slice(2);
+const one = async (args: string[]): Promise<string> => {
+  const a = await runOnce("go", args, dir!, new AbortController().signal, {});
+  const c = await corroboratePass(classifyCheck({ kind: "test", ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, ...goRunner("go", args) }), a.out, "go", args, { cwd: dir!, env: plainTestEnv() });
+  return `${c.result}:${a.out.length > 65536 ? "big" : "small"}`;
+};
+const out = [await one(["test", "-json", "-run", "^(TestChatty)$", "./."]), await one(["test", "-json", "-run", "^(TestSmall)$", "./."]), await one(["test", "-json", "./."])];
+await Bun.write(`${dir}/red_test.go`, await Bun.file(`${dir}/red_test.go.txt`).text());
+out.push(await one(["test", "-json", "-run", "^(TestChattyRed)$", "./."]));
+console.log(out.join(" "));
+TS
+    gc="$(cd "$ROOT/loki-ts" && cp "$GC.ts" ./.gocap-probe.ts && bun ./.gocap-probe.ts "$GC" 2>&1 | tail -1; rm -f ./.gocap-probe.ts)"
+    [ "$gc" = "pass:big pass:small pass:big fail:big" ] && ok "go output cap: a big -json stream (one file, a whole package over 1 MiB) is judged whole and passes, a big failing run still fails, a small one is unchanged ($gc)" || bad "go output cap: got '$gc'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go output cap: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go output cap: go is not installed"; fi
+fi
 # Wall off (the default): no tree snapshot is taken, so a snapshot that cannot be made (here a 1 ms copy budget, as on a huge pnpm tree) never reads as a failed Wall.
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     MAKE_REPO=make_wo_py_repo run_engine "fix double(a) in calc.py so it returns twice a" E2E_WALL= LOKI_E10_WALL=0 E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a + 1' E2E_STUB_SNIPPET=$'    return a * 2' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_WALL_SNAPSHOT_TIMEOUT_S=0.001
@@ -946,5 +976,28 @@ const { tscUntouchedLocal: u } = await import("./src/engine10/stages/verify.ts")
 const o = "src/v3/tests/a.test.ts:56:8 - error TS6196: \x27_Cat\x27 is declared but never used.\nsrc/v3/tests/b.test.ts(9,1): error TS6133: \x27x\x27 is declared but its value is never read.\n";
 console.log([u(o, "packages/zod", new Set(["packages/zod/src/v4/x.ts"]), ["packages/zod/src/v4/x.ts"], o), u(o, "packages/zod", new Set(["packages/zod/src/v3/tests/a.test.ts"]), [], o), u(o + "src/c.ts:1:1 - error TS2322: no\n", "packages/zod", new Set(), [], o), u(o, "packages/zod", new Set(), ["packages/zod/tsconfig.json"], o), u("", ".", new Set(), [], ""), u("error TS6133 unparsed\n", ".", new Set(), [], "error TS6133 unparsed\n")].join(","));' 2>&1)"
 [ "$TU" = "true,false,false,false,false,false" ] && ok "tsc untouched unit: only unused-declaration errors in untouched, unnamed files with no tsconfig edit are excused ($TU)" || bad "tsc untouched unit: '$TU'"
+
+# pytest base proof when a narrow terminal ends the summary reason in "..." (rule 22, real pytest): "FAILED tests/test_more.py::IchunkedTests::test_negative_message - AssertionEr..."
+# is an assertion failure (the traceback's E line says AssertionError), not an unknown kind; it was read as "not an assertion" so a real fail-then-pass proof was dropped. A base run that
+# fails by TypeError (the base lacks the new keyword) beside it stays no proof. Plant: drop the "..." test in assertionFailure and the first leg reads "yes|" with no file named.
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    for kind in assert typeerr; do
+        TR="$T/mp-trunc-$kind"; rm -rf "$TR"; mkdir -p "$TR/tests" && cd "$TR" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
+        printf 'def chunk(n):\n    return n\n' > mod.py
+        printf 'import unittest\n\nimport mod\n\n\nclass IchunkedTests(unittest.TestCase):\n    def test_ok(self):\n        self.assertEqual(mod.chunk(1), 1)\n' > tests/test_more.py
+        git add -- . && git commit -q -m base && BASE="$(git rev-parse HEAD)"
+        if [ "$kind" = assert ]; then printf 'def chunk(n):\n    if n < 0:\n        raise ValueError("n must be at least 0")\n    return n\n' > mod.py; printf '\n    def test_negative_message(self):\n        with self.assertRaisesRegex(ValueError, "n must be at least 0"):\n            mod.chunk(-1)\n' >> tests/test_more.py
+        else printf 'def chunk(n, strict=False):\n    return n\n' > mod.py; printf '\n    def test_negative_message(self):\n        self.assertEqual(mod.chunk(1, strict=True), 1)\n' >> tests/test_more.py; fi
+        git add -- . && git commit -q -m head && HEADSHA="$(git rev-parse HEAD)"; cd "$ROOT"
+        mpt="$(cd "$ROOT/loki-ts" && env -u CI -u GITHUB_ACTIONS COLUMNS=80 bun -e 'const { mutationProof } = await import("./src/util/mutation_proof.ts"); const { baseProofRunner } = await import("./src/engine10/stages/seal.ts"); const [repo, base, head] = process.argv.slice(1); const f = "tests/test_more.py"; const r = await mutationProof({ repoDir: repo, baseSha: base, runDir: repo + "/.loki", wallFiles: [{ path: f }], checks: [{ name: "pytest:" + f }], runner: baseProofRunner, headSha: head, requireAssertion: true, baseMustPass: [f] }); console.log(r.outcome + "|" + (r.failed ?? []).join(","));' "$TR" "$BASE" "$HEADSHA" 2>&1 | tail -1)"
+        if [ "$kind" = assert ]; then
+            [ "$mpt" = "yes|tests/test_more.py" ] && ok "pytest truncated reason: an assertion failure whose summary reason ends in '...' still counts as the fail-then-pass proof ($mpt)" || bad "pytest truncated reason: got '$mpt'"
+        else
+            [ "$mpt" = "yes|" ] && ok "pytest truncated reason: a TypeError (new keyword the base lacks) is still no proof ($mpt)" || bad "pytest truncated reason (TypeError): got '$mpt'"
+        fi
+    done
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest truncated reason: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest truncated reason: pytest is not installed"; fi
+fi
 
 finish

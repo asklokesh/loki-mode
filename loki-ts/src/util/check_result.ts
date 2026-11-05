@@ -318,6 +318,9 @@ function mentionsTool(tool: string, cmd: string, args?: readonly string[]): bool
 export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" } | Record<string, never> {
   return mentionsTool("go", cmd, args) ? { runner: "go" } : {};
 }
+/** A `go test -json` stream is judged whole (goJson: a head-truncated or buffer-cut stream reads as torn, so the check reads not_run), so every runner that captures one keeps up to this much instead of the 64 KB tail or the 1 MiB spawn buffer. */
+export const GO_JSON_KEEP = 16 * 1024 * 1024;
+export const goJsonStream = (cmd: string, args?: readonly string[]): boolean => goRunner(cmd, args).runner === "go" && commandWords(cmd, args).includes("-json");
 const CARGO_GLOBAL_FLAGS = new Set(["-v", "-vv", "--verbose", "-q", "--quiet", "--frozen", "--locked", "--offline"]), CARGO_OTHER_SUBS = new Set(["build", "check", "clippy", "fmt", "doc", "clean", "fetch", "tree", "run", "bench", "metadata", "update", "install", "publish", "package", "login", "search", "vendor"]);
 /** A cargo invocation parsed strictly: `cargo [known global flags, their values consumed] <sub> [args]`, nothing before cargo (no wrapper, no shell, no +toolchain shim). null = not a plain invocation. */
 function parseCargo(toks: readonly string[]): { global: string[]; sub: string; rest: string[] } | null {
@@ -563,12 +566,12 @@ export function corroborateGoPassSync(c: Classified, out: string, cmdOrLine: str
   if (c.result !== "pass" || goRunner(cmdOrLine, args).runner !== "go") return c;
   const g = corroborateGoSteps(c, out, cmdOrLine, args, args ? [cmdOrLine, ...args] : cmdOrLine.trim().split(/\s+/), o); let step = g.next();
   while (!step.done) {
-    const [cmd, a, to] = step.value, r = spawnSync(cmd, a, { cwd: to.cwd, env: to.env, timeout: to.timeoutMs, encoding: "utf8", maxBuffer: 1024 * 1024 }), res: SpawnRes = { status: r.error || r.signal ? null : r.status, output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` };
+    const [cmd, a, to] = step.value, r = spawnSync(cmd, a, { cwd: to.cwd, env: to.env, timeout: to.timeoutMs, encoding: "utf8", maxBuffer: to.maxBytes ?? 1024 * 1024 }), res: SpawnRes = { status: r.error || r.signal ? null : r.status, output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` };
     step = g.next(res);
   }
   return step.value;
 }
-function* corroborateGoSteps(c: Classified, out: string, cmdOrLine: string, args: readonly string[] | undefined, toks: string[], o: { cwd: string; env: NodeJS.ProcessEnv }): Generator<[string, string[], { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number }], Classified, SpawnRes> {
+function* corroborateGoSteps(c: Classified, out: string, cmdOrLine: string, args: readonly string[] | undefined, toks: string[], o: { cwd: string; env: NodeJS.ProcessEnv }): Generator<[string, string[], { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number; maxBytes?: number }], Classified, SpawnRes> {
   const refuse: Classified = { result: "not_run", reason: GO_EXIT0_REASON };
   const first = goJson(stripAnsi(out));
   const names = first?.passedNames ?? [];
@@ -584,7 +587,7 @@ function* corroborateGoSteps(c: Classified, out: string, cmdOrLine: string, args
     pkgs.push(t);
   }
   const dir = mkdtempSync(join(tmpdir(), "loki-gocov-")), prof = join(dir, "cover.out"), where = pkgs.length ? pkgs : ["."];
-  const spawnOpts = { cwd: o.cwd, env: o.env, timeoutMs: 600_000 };
+  const spawnOpts = { cwd: o.cwd, env: o.env, timeoutMs: 600_000, maxBytes: GO_JSON_KEEP }; // the -json re-run is parsed whole, so it must not be cut at the 1 MiB default
   const profBlocks = (): Set<string> => { // the profile's blocks with counts dropped
     const set = new Set<string>();
     for (const l of (existsSync(prof) ? readFileSync(prof, "utf8") : "").split("\n")) { const m = /^(.+:\d+\.\d+,\d+\.\d+ \d+) \d+$/.exec(l); if (m) set.add(m[1]!); }
@@ -1715,7 +1718,7 @@ export function assertionFailure(runner: string, output: string): boolean {
     if (/^ERROR\s|errors? during collection/m.test(out)) return false;
     const f = [...out.matchAll(/^FAILED\s+\S+(?:\s+-\s+(.*))?$/gm)].map((m) => (m[1] ?? "").trim());
     if (f.length === 0) return false;
-    const kinds = f.every((r) => r !== "") ? f : [...out.matchAll(/^E\s+((?:assert\b|[A-Za-z_.]*(?:Error|Exception))\S*)/gm)].map((m) => m[1]!); // a narrow terminal cuts the " - reason" from the summary line: read the traceback's E lines instead
+    const kinds = f.every((r) => r !== "" && !r.endsWith("...")) ? f : [...out.matchAll(/^E\s+((?:assert\b|[A-Za-z_.]*(?:Error|Exception))\S*)/gm)].map((m) => m[1]!); // a narrow terminal cuts the " - reason" from the summary line, or ends it in "..." ("AssertionEr..."): read the traceback's E lines instead
     return kinds.some((k) => /^(?:assert\b|AssertionError\b)/.test(k)) && !kinds.some((k) => /^(?:Import|ModuleNotFound|Attribute|Name|UnboundLocal|Type|Syntax|Indentation)Error\b/.test(k));
   }
   if (runner === "vitest") { const e = [...out.matchAll(/^\s*((?:[A-Za-z]*Error))(?:\s*\[[^\]]*\])?:/gm)].map((m) => m[1]!); return e.length > 0 && e.every((k) => k === "AssertionError"); }
@@ -1755,9 +1758,9 @@ export function spawnGroupSync(cmd: string, args: string[], o: { cwd?: string; e
   try { return JSON.parse(r.stdout) as { status: number | null; output: string }; } catch { return { status: null, output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` }; }
 }
 /** TEN-SPEED-19: async twin of the sync spawn used by RealBaseTestRunner: status is null on spawn error, signal or timeout; output is stdout and stderr merged by arrival. The child leads its own process group: SIGTERM at the timeout, then SIGKILL to the group 1s later, and the result resolves on exit plus a short drain grace, never waiting on a grandchild that holds the pipes. */
-export function spawnCollect(cmd: string, args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal }): Promise<{ status: number | null; output: string }> {
+export function spawnCollect(cmd: string, args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal; maxBytes?: number }): Promise<{ status: number | null; output: string }> {
   return new Promise((resolve) => {
-    let out = "", err = "", error = false, done = false; const MAX = 1024 * 1024; // spawnSync parity: stdin EOF, default maxBuffer, "stdout\nstderr" join
+    let out = "", err = "", error = false, done = false; const MAX = o.maxBytes ?? 1024 * 1024; // spawnSync parity: stdin EOF, default maxBuffer, "stdout\nstderr" join
     const timers: NodeJS.Timeout[] = [];
     const fin = (status: number | null) => { if (!done) { done = true; timers.forEach(clearTimeout); o.signal?.removeEventListener("abort", abort); killGroup(c.pid, "SIGKILL"); wd?.kill("SIGKILL"); resolve({ status: error ? null : status, output: `${out}\n${err}` }); } };
     const c = spawn(cmd, args, { cwd: o.cwd, env: o.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
