@@ -408,7 +408,7 @@ cat > "$T/spec-choice.ts" <<'TS'
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 const src = `${process.env.ROOT}/loki-ts/src/`;
-const { ambiguityGate, assumptionsBlock, choiceLine, resolveChoices } = await import(src + "features/spec_ambiguity.ts");
+const { ambiguityGate, assumptionsBlock, choiceLine, emitChoiceLines, resolveChoices } = await import(src + "features/spec_ambiguity.ts");
 const { buildImplementBrief } = await import(src + "engine10/stages/implement.ts");
 const { FIXED_RULES } = await import(src + "e10ext/context.ts");
 const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
@@ -454,6 +454,19 @@ const z = one(A, { repoDir: R })!;
 res("choice 3: the option whose literal an existing test already asserts is picked, basis existing_tests", z.picked === 1 && z.basis === "existing_tests" && z.evidence.includes("schema.test.ts"));
 const z0 = one(A.replace("^-?\\\\d+$", "^zz$"), { repoDir: R })!;
 res("choice 3: with no pinned literal the choice stays undecided and says to keep tests true and satisfy both", z0.basis === "none" && choiceLine(z0).includes("satisfy both") && choiceLine(z0).includes("existing test"));
+// reviewer fixture: an existing test pins the reported bug; the issue says what is expected
+const BR = `${process.env.T}/bug-repo`; mkdirSync(`${BR}/src`, { recursive: true });
+writeFileSync(`${BR}/src/page.ts`, "export const getLimit = (pageSize: number) => pageSize + 1;\n"); writeFileSync(`${BR}/src/other.test.ts`, "expect(getLimit(5)).toBe(5 + 1); // pageSize + 1\n");
+execFileSync("git", ["-C", BR, "init", "-q"]); execFileSync("git", ["-C", BR, "add", "."]); execFileSync("git", ["-C", BR, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "s"]);
+const bugA = "Bug: `getLimit(10)` returns 11. Should it return `pageSize + 1` or `Math.min(pageSize, 10)`? The expected result is 10 rows, not 11.";
+const bg = one(bugA, { repoDir: BR })!;
+res("existing tests: a test pinning the bug is not evidence when the issue states a different expected result", bg.basis === "none" && bg.picked === null);
+const bg2 = one("`getLimit(10)` currently returns `pageSize + 1`. Should it return `pageSize + 1` or `Math.min(pageSize, 10)`?", { repoDir: BR })!;
+res("existing tests: a test pinning a value the issue calls current behavior is not evidence", bg2.basis === "none");
+const bg3 = one("Which limit should getLimit use? Should it return `pageSize + 1` or `Math.min(pageSize, 10)`?", { repoDir: BR })!;
+res("existing tests: with no bug or expectation stated, the pinned option still wins", bg3.basis === "existing_tests" && bg3.picked === 0);
+res("no line for a plain question nothing could inform (faster or cheaper)", ambiguityGate("Should the import be faster or cheaper to run?", `${process.env.T}/run`, {}).data.assumptions === undefined && emitChoiceLines(resolveChoices("Should the import be faster or cheaper to run?")).length === 0);
+res("a none-basis acceptable-outputs list still emits its coexist line", emitChoiceLines([z0]).length === 1);
 const zl = one("Is `parseKey` right?\n\nShould `parseKey` return a string or should `parseKey` return a number?", { repoDir: R, issueNumber: 77 } as never)!;
 res("evidence: nothing is searched by issue number (a commit naming the issue is never read), history is the base commit's only", zl.basis === "none" && !zl.evidence.includes("#77") && !zl.evidence.includes("mentioning the issue"));
 // precedent: sibling implementations of the same contract, snapshot only

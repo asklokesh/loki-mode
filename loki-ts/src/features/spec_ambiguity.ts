@@ -105,12 +105,20 @@ function corpus(repoDir: string): { path: string; text: string }[] {
   }
   return out;
 }
-function byExistingTests(c: OpenChoice, repoDir: string): { k: number; evidence: string } | null {
+const CURRENT_CUE = /\b(?:returns?|returned|currently|today|actually|emits?|outputs?|gives?|produces?|bug|buggy|wrong|instead of|panics?)\b/i, EXPECT_CUE = /\b(?:expected|should (?:be|return|give|produce|output|yield)|must (?:be|return))\b/i;
+/** True when the issue itself says the pinned option's literal is today's (buggy) behavior, or states an expected result that does not contain it: a test pinning that literal then proves nothing about what is wanted. */
+function issueContradictsPin(c: OpenChoice, issue: string, pinned: string[]): boolean {
+  const norm = (x: string): string => x.replace(/\s+/g, ""), has = (sent: string): boolean => pinned.some((p) => norm(sent).includes(norm(p)));
+  const rest = sentencesOf(issue).filter((x) => x !== c.sentence && !c.options.some((o) => x.includes(o)) && !/\?$/.test(x));
+  return rest.some((x) => (has(x) && CURRENT_CUE.test(x)) || (EXPECT_CUE.test(x) && !has(x)));
+}
+function byExistingTests(c: OpenChoice, repoDir: string, issue: string): { k: number; evidence: string } | null {
   const per = c.options.map(snippetsOf), uniq = per.map((s, i) => s.filter((x) => per.every((o, j) => j === i || !o.includes(x)))), files = corpus(repoDir);
   const hit = uniq.map((s) => s.flatMap((x) => { const f = files.find((y) => y.text.includes(x.replace(/\s+/g, ""))); return f ? [{ x, path: f.path }] : []; }));
   const n = hit.map((h) => h.length), best = Math.max(...n);
   if (best < 1 || n.filter((v) => v === best).length !== 1) return null;
   const k = n.indexOf(best);
+  if (issueContradictsPin(c, issue, hit[k]!.map((h) => h.x))) return null; // the issue's own account of the bug or the expected result outranks a test that may pin the bug
   return { k, evidence: `existing tests or docs already pin it (${hit[k]!.slice(0, 2).map((h) => `\`${trunc(h.x, 40)}\` in ${h.path}`).join("; ")}); the other option has ${Math.min(...n.filter((_, i) => i !== k))} pinned` };
 }
 /** One line of recent history for the symbols the options name: the newest commits touching their defining files, local history at the checked-out commit only (never a network fetch, never a linked PR or issue-number search). "" when unavailable. */
@@ -150,16 +158,16 @@ export function resolveChoices(task: string, ctx: ChoiceCtx = {}): ChoiceResolut
   try {
     const comments = (ctx.comments ?? []).filter((c) => typeof c?.author === "string" && typeof c.association === "string" && typeof c.body === "string"), at = comments.length ? task.lastIndexOf(ISSUE_CONTEXT_HEAD) : -1, issue = at < 0 ? task : task.slice(0, at); // the appended comment section is not the issue's own question
     return detectOpenChoices(issue).map((c): ChoiceResolution => {
-      const prec = ctx.repoDir && process.env.LOKI_E10_PRECEDENT === "1" ? precedentFor(c, ctx.repoDir) : "", r = settle(c, comments, ctx); // precedent is default off (LOKI_E10_PRECEDENT=1) until the scored L-Haiku arm measures it
+      const prec = ctx.repoDir && process.env.LOKI_E10_PRECEDENT === "1" ? precedentFor(c, ctx.repoDir) : "", r = settle(c, comments, ctx, issue); // precedent is default off (LOKI_E10_PRECEDENT=1) until the scored L-Haiku arm measures it
       return prec ? { ...r, precedent: prec } : r;
     });
   } catch { return []; }
 }
-function settle(c: OpenChoice, comments: Cmt[], ctx: ChoiceCtx): ChoiceResolution {
+function settle(c: OpenChoice, comments: Cmt[], ctx: ChoiceCtx, issue: string): ChoiceResolution {
   const m = byMaintainer(c, comments);
   if (m) return { ...c, basis: "maintainer", picked: m.k, evidence: m.evidence };
   if (c.preferred !== null) return { ...c, basis: "task_preferred", picked: c.preferred, evidence: `the task text names it as preferred${c.fallback ? " and offers the other only as a fallback" : ""}` };
-  const t = ctx.repoDir ? byExistingTests(c, ctx.repoDir) : null, h = historyLine(c, ctx);
+  const t = ctx.repoDir ? byExistingTests(c, ctx.repoDir, issue) : null, h = historyLine(c, ctx);
   if (t) return { ...c, basis: "existing_tests", picked: t.k, evidence: [t.evidence, h].filter(Boolean).join(". ") };
   return { ...c, basis: "none", picked: null, evidence: ["no maintainer reply, stated preference or pinned test or doc decides it", h].filter(Boolean).join(". ") };
 }
@@ -171,12 +179,14 @@ export const choiceLine = (c: ChoiceResolution): string => {
     ? `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> no evidence picks one (${c.evidence}).${prec}${both} Keep every existing test and documented behavior true, satisfy both options where they do not conflict, and name the one you chose.`
     : `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> implement option ${c.picked + 1}: "${trunc(c.options[c.picked]!, 130)}". Evidence (${c.basis}): ${c.evidence}.${c.fallback ? " A fallback may be added only on top of it." : ""}${prec}${both}`;
 };
+/** The lines worth sending: a choice nothing decided and nothing could inform (no precedent, not an acceptable-outputs list) is just a question ("faster or cheaper?"), not a spec choice, so it emits nothing. */
+export const emitChoiceLines = (cs: ChoiceResolution[]): string[] => cs.filter((c) => c.basis !== "none" || c.precedent || c.any).map(choiceLine);
 /** Ambiguity gate: one batched question set, never a silent stall or a guessing loop. Interactive: `stop` carries the checkpoint file and resume offer. Headless: `data` carries the assumptions (copied into the receipt) and intake goes on. A clear spec yields `data: {}`.
  *  An explicit open choice (resolveChoices) is answered from evidence first: its line joins the assumptions, and a choice that evidence settled is not asked of a person. */
 export function ambiguityGate(task: string, runDir: string, ctx: ChoiceCtx = {}): { stop?: { failData: Record<string, unknown>; reason: string }; data: Record<string, unknown> } {
-  const choices = resolveChoices(task, ctx), settled = choices.filter((c) => c.basis !== "none").map((c) => c.sentence);
+  const choices = resolveChoices(task, ctx), choiceLines = emitChoiceLines(choices), settled = choices.filter((c) => c.basis !== "none").map((c) => c.sentence);
   const amb = scoreAmbiguity(task), hits = amb.hits.filter((h) => !settled.some((s) => s === h.excerpt || (h.excerpt.endsWith("...") && s.startsWith(h.excerpt.slice(0, -3)))));
-  const score = hits.reduce((n, h) => n + h.weight, 0), choiceLines = choices.map(choiceLine);
+  const score = hits.reduce((n, h) => n + h.weight, 0);
   if (score < ambiguityThreshold()) return { data: choiceLines.length ? { assumptions: choiceLines } : {} };
   const qs = [...new Set(hits.map(questionFor))].slice(0, 8), assumptions = [...new Set(hits.map(assumptionFor))].slice(0, 8);
   if (!intakeInteractive()) return { data: { ambiguity_score: score, assumptions: [...assumptions, ...choiceLines] } };
