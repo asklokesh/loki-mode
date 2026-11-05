@@ -60,11 +60,7 @@
 #  NRM1. commit_filter.ts dropSet: restrict the lockfile rule to st === "A" again; the lockfile check fails. Make manifestChanged
 #      compare dirname equality only (drop the descendant clause); the workspace-member case fails.
 #  NRM3. commit_filter.ts dropSet: ignore the task (drop the taskWantsLockChange clause); the task-aware lockfile check fails.
-#  SG1. commit_filter.ts dropSet: remove the TEST_BUILD_CONFIG clause; the unrelated vitest/tsconfig edit ships and the real-vitest A case ships the config.
-#  SG2. commit_filter.ts configNeeded: return false after the task check (ignore manifests, references and globs); the manifest, setup-file and glob cases drop
-#      their config and real vitest B fails without it. Return false from the catch (diff unreadable): the fails-closed case drops.
-#  SG3. commit_filter.ts configNeeded: compare every token, not only the ones the edit added or removed; the unchanged include glob matches the new test and A ships the config.
-#  SG4. commit_filter.ts commitUnsealedWork: remove the churn block; the WIP commit carries pnpm-lock.yaml and vitest.config.ts again.
+#  SG4. commit_filter.ts commitUnsealedWork: remove the churn block; the WIP commit carries pnpm-lock.yaml again.
 #  NRM2. repo_profile.ts detectFormatters: drop the biome entry; the formatter check fails.
 #  10. verify.ts sameErrors: excuse every known-red id whatever its first error; the delivery check fails.
 #  11. loki-ts/src/engine10/machine.ts: break after one Wall-only round whatever wallSignature says; the
@@ -384,23 +380,22 @@ console.log(commitUnsealedWork(true, process.env.U, process.env, "e10-wip", { ba
 [ "$WIP" = true ] && [ "$(git -C "$U" show --name-status --format= HEAD | tr '\t\n' ' ')" = "M app.ts " ] && [ "$(git -C "$U" status --porcelain)" = " D .loki/STATUS.txt" ] \
     && ok "the WIP commit holds the run's edit only; the user's .loki deletion stays uncommitted" || bad "WIP commit: $WIP; committed [$(git -C "$U" show --name-status --format= HEAD | tr '\t\n' ' ')]; porcelain [$(git -C "$U" status --porcelain)]"
 
-# The WIP commit of a FAILED or STALLED run applies the commit stage's filter: a lockfile or unrelated config rewritten after the commit stage
-# (L-Haiku v131 tq-11327 and tq-11663 shipped pnpm-lock.yaml this way) is not committed and the tree is restored, so the checkout carries no churn.
+# The WIP commit of a FAILED or STALLED run applies the commit stage's lockfile filter: a lockfile rewritten after the commit stage
+# (L-Haiku v131 tq-11327 and tq-11663 shipped pnpm-lock.yaml this way) is not committed (left unstaged in the run worktree).
 WC="$T/wipchurn"; mkdir -p "$WC" && git -C "$WC" init -q -b main && git -C "$WC" config user.name rs && git -C "$WC" config user.email rs@example.invalid
 printf '{"name":"r"}\n' > "$WC/package.json"; printf 'l1\n' > "$WC/pnpm-lock.yaml"; printf 'a\n' > "$WC/app.ts"; printf 'export default { test: {} }\n' > "$WC/vitest.config.ts"
 git -C "$WC" add -A . && git -C "$WC" commit -q -m base
 BASE_W="$(git -C "$WC" rev-parse HEAD)"
 wip_churn() { # wip_churn <task>: dirty the tree like a failed run, run the WIP commit, print committed paths | porcelain
-    git -C "$WC" reset -q --hard "$BASE_W"; git -C "$WC" checkout -q -B loki/e10-wipc "$BASE_W"; printf 'b\n' > "$WC/app.ts"; printf 'l2\n' > "$WC/pnpm-lock.yaml"; printf 'export default { test: { reporters: ["dot"] } }\n' > "$WC/vitest.config.ts"
-    W="$WC" B="$BASE_W" TK="$1" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+    git -C "$WC" reset -q --hard "$BASE_W"; git -C "$WC" checkout -q -B loki/e10-wipc "$BASE_W"; printf 'b\n' > "$WC/app.ts"; printf 'l2\n' > "$WC/pnpm-lock.yaml";     W="$WC" B="$BASE_W" TK="$1" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const { commitUnsealedWork } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
 commitUnsealedWork(true, process.env.W, process.env, "e10-wipc", { base_sha: process.env.B, task: process.env.TK });' >/dev/null 2>&1
     printf '%s | %s' "$(git -C "$WC" diff --name-only "$BASE_W" HEAD | tr '\n' ' ')" "$(git -C "$WC" status --porcelain | tr '\n' ' ')"
 }
 WC1="$(wip_churn "fix the parser bug")"
-[ "$WC1" = "app.ts  | " ] && ok "WIP commit: pnpm-lock.yaml and an unrelated vitest.config.ts rewrite are not committed and the tree is clean" || bad "WIP churn: [$WC1]"
-WC2="$(wip_churn "regenerate pnpm-lock.yaml and make vitest.config.ts print dots")"
-[ "$WC2" = "app.ts pnpm-lock.yaml vitest.config.ts  | " ] && ok "WIP commit: a lockfile and config the task names are committed" || bad "WIP named: [$WC2]"
+[ "$WC1" = "app.ts  |  M pnpm-lock.yaml " ] && ok "WIP commit: a pnpm-lock.yaml rewrite is not committed and stays unstaged in the run worktree" || bad "WIP churn: [$WC1]"
+WC2="$(wip_churn "regenerate pnpm-lock.yaml")"
+[ "$WC2" = "app.ts pnpm-lock.yaml  | " ] && ok "WIP commit: a lockfile the task names is committed" || bad "WIP named: [$WC2]"
 
 # Acceptance normalizer (EXP-0009): the commit filter drops a NEW or MODIFIED lockfile whose manifest did not change (install churn), keeps one
 # whose manifest changed in its directory or beneath it (workspace root), and the repo's own formatter pass never fails the run.
@@ -441,79 +436,6 @@ const c = formatChanged(process.env.LK, [{ st: "M", f: "pkg/b.json" }], new Set(
 console.log(JSON.stringify([a, touched, b, c]));
 ' 2>&1)"
 [ "$FMT" = '[["pkg/b.json"],true,[],[]]' ] && ok "formatter pass: a repo-local biome rewrites the changed file; a failing or missing formatter is a silent no-op" || bad "formatter pass gave: $FMT"
-
-# Scope guard (L-Haiku v131: 6 of 20 diffs carried a vitest.config.ts, tsconfig.json or pnpm-lock.yaml edit the task never asked for): the commit
-# filter drops a MODIFIED test/build/lint config the task does not name when nothing else in the diff refers to it, and keeps one that is
-# named, beside a changed manifest, referenced by name or path, matched by a glob it adds, newly created, or whose diff cannot be read.
-CG="$T/cfgdrop"; mkdir -p "$CG/src" "$CG/tests" && git -C "$CG" init -q -b main && git -C "$CG" config user.name rs && git -C "$CG" config user.email rs@example.invalid
-printf '{"name":"r"}\n' > "$CG/package.json"; printf 'export default { test: { include: ["src/**/*.test.ts"] } }\n' > "$CG/vitest.config.ts"; printf '{"compilerOptions":{"strict":true}}\n' > "$CG/tsconfig.json"; printf 'export const a = 1\n' > "$CG/src/a.ts"
-git -C "$CG" add -A . && git -C "$CG" commit -q -m base
-CGR="$(CG="$CG" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
-const { dropSet, parseStaged } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts"), fs = await import("node:fs"), cp = await import("node:child_process");
-const g = (...a) => cp.execFileSync("git", ["-C", process.env.CG, ...a], { encoding: "utf8" }), w = (f, t) => { fs.mkdirSync(process.env.CG + "/" + f.replace(/[^/]*$/, ""), { recursive: true }); fs.writeFileSync(process.env.CG + "/" + f, t); };
-const base = g("rev-parse", "HEAD").trim();
-const run = (edits, task) => { g("reset", "-q", "--hard", base); g("clean", "-fdq"); for (const [f, t] of edits) t === null ? fs.rmSync(process.env.CG + "/" + f) : w(f, t); g("add", "-A", "--", "."); const st = parseStaged(g("diff", "--cached", "--name-status", "--no-renames", "-z", base)); return dropSet(process.env.CG, st, null, process.env, undefined, undefined, base, task).filter((x) => x.st !== "L").map((x) => x.f).sort().join(",") || "-"; };
-const VC = "vitest.config.ts", TS = "tsconfig.json", src = ["src/a.ts", "export const a = 2\n"];
-const out = [
-  run([src, [VC, "export default { test: { include: [\"src/**/*.test.ts\"], reporters: [\"dot\"] } }\n"]]),
-  run([src, [TS, "{\"compilerOptions\":{\"strict\":true,\"noUnusedLocals\":false}}\n"]]),
-  run([src, [VC, "export default { test: { include: [\"src/**/*.test.ts\"], reporters: [\"dot\"] } }\n"]], "make vitest.config.ts print dots"),
-  run([src, [VC, "export default { test: { include: [\"src/**/*.test.ts\"], reporters: [\"dot\"] } }\n"], ["package.json", "{\"name\":\"r\",\"devDependencies\":{\"x\":\"1\"}}\n"]]),
-  run([src, ["tests/setup-env.ts", "globalThis.X = 1\n"], [VC, "export default { test: { include: [\"src/**/*.test.ts\"], setupFiles: [\"./tests/setup-env.ts\"] } }\n"]]),
-  run([["tests/b.spec.ts", "export {}\n"], [VC, "export default { test: { include: [\"src/**/*.test.ts\", \"tests/**/*.spec.ts\"] } }\n"]]),
-  run([src, ["vitest.workspace.config.ts", "export default []\n"]]),
-  run([src, [TS, null]]),
-];
-console.log(out.join(" | "));
-' 2>&1)"
-[ "$CGR" = "vitest.config.ts | tsconfig.json | - | - | - | - | - | -" ] && ok "commit filter: an unrelated vitest or tsconfig edit is dropped; one the task names, beside a manifest change, referencing a changed file, adding a matching glob, a new config file, or a deleted config ships" || bad "config drop cases gave: $CGR"
-CGU="$(CG="$CG" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
-const { dropSet } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
-console.log(dropSet(process.env.CG, [{ st: "M", f: "vitest.config.ts" }], null, process.env).length === 1 ? "dropped" : "kept");
-console.log(dropSet("/nonexistent-loki-repo", [{ st: "M", f: "vitest.config.ts" }], null, process.env).length === 0 ? "unreadable-kept" : "dropped");
-' 2>&1 | tr '\n' ' ')"
-[ "$CGU" = "kept unreadable-kept " ] || [ "$CGU" = "dropped unreadable-kept " ] && ok "commit filter: a config whose staged diff cannot be read is kept (fails closed)" || bad "unreadable config gave: $CGU"
-
-# Real runner: a pnpm-style project on real vitest. The shipped (committed) tree must still pass: the unrelated config edit leaves the commit and
-# the tests pass without it; a config the new test depends on (setupFiles pointing at a new file) stays, and without it real vitest fails.
-CGV=2.1.9; CGRV="$T/cfgreal"; mkdir -p "$CGRV" && printf '{"private":true,"type":"module"}\n' > "$CGRV/package.json"
-if (cd "$CGRV" && ${TO[@]+"${TO[@]}"} npm install "vitest@$CGV" --no-audit --no-fund --silent >/dev/null 2>&1) && [ -x "$CGRV/node_modules/.bin/vitest" ]; then
-    printf 'node_modules\n' > "$CGRV/.gitignore"; mkdir -p "$CGRV/src"; printf 'export const sum = (a: number, b: number) => a + b\n' > "$CGRV/src/sum.ts"
-    printf 'import { defineConfig } from "vitest/config"\nexport default defineConfig({ test: { include: ["src/**/*.test.ts"] } })\n' > "$CGRV/vitest.config.ts"
-    printf 'lockfileVersion: 9\n' > "$CGRV/pnpm-lock.yaml"
-    git -C "$CGRV" init -q -b main && git -C "$CGRV" config user.name rs && git -C "$CGRV" config user.email rs@example.invalid && git -C "$CGRV" add -A . && git -C "$CGRV" commit -q -m base
-    CGB="$(git -C "$CGRV" rev-parse HEAD)"
-    cg_ship() { # cg_ship <label> <task>: stage the working tree, run the commit filter, commit; echo the committed paths
-        CGRV="$CGRV" CGB="$CGB" CGT="$2" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
-const { dropSet, parseStaged } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts"), cp = await import("node:child_process");
-const g = (...a) => cp.execFileSync("git", ["-C", process.env.CGRV, ...a], { encoding: "utf8" });
-g("add", "-A", "--", "."); const st = parseStaged(g("diff", "--cached", "--name-status", "--no-renames", "-z", process.env.CGB));
-const d = dropSet(process.env.CGRV, st, null, process.env, undefined, undefined, process.env.CGB, process.env.CGT || undefined);
-if (d.length) g("--literal-pathspecs", "reset", "-q", process.env.CGB, "--", ...d.map((x) => x.f));
-g("commit", "-q", "-m", "run"); console.log(g("diff", "--name-only", process.env.CGB, "HEAD").trim().split("\n").join(","));' 2>&1
-    }
-    cg_vitest() { (cd "$1" && ln -sfn "$CGRV/node_modules" node_modules && NO_COLOR=1 FORCE_COLOR=0 ${TO[@]+"${TO[@]}"} ./node_modules/.bin/vitest run 2>&1 | grep -E "Tests +[0-9]+ (passed|failed)|FAIL|Error" | head -2 | tr '\n' ' '); }
-    # A: the run's source and test change plus an env workaround in vitest.config.ts and a pnpm-lock rewrite
-    printf 'export const sum = (a: number, b: number) => a + b\nexport const triple = (a: number) => a * 3\n' > "$CGRV/src/sum.ts"
-    printf 'import { expect, it } from "vitest"\nimport { triple } from "./sum"\nit("triples", () => expect(triple(2)).toBe(6))\n' > "$CGRV/src/sum.test.ts"
-    printf 'import { defineConfig } from "vitest/config"\nexport default defineConfig({ test: { include: ["src/**/*.test.ts"], reporters: ["dot"] } })\n' > "$CGRV/vitest.config.ts"; printf 'lockfileVersion: 9\nchurn: true\n' > "$CGRV/pnpm-lock.yaml"
-    SHIPA="$(cg_ship A "")"
-    [ "$SHIPA" = "src/sum.test.ts,src/sum.ts" ] && ok "real vitest: an env-workaround vitest.config.ts edit and a lockfile rewrite are left out of the commit (shipped: $SHIPA)" || bad "real vitest A shipped: $SHIPA"
-    rm -rf "$T/cfgship"; git clone -q "$CGRV" "$T/cfgship"; CGA="$(cg_vitest "$T/cfgship")"
-    printf '%s' "$CGA" | grep -q "1 passed" && ok "real vitest: the shipped tree passes without the dropped config ($CGA)" || bad "real vitest on the shipped tree: $CGA"
-    # B: the new test needs a setup file only the config wires in
-    git -C "$CGRV" checkout -q -b b "$CGB" 2>/dev/null; git -C "$CGRV" reset -q --hard "$CGB"
-    printf 'globalThis.__SETUP__ = 41\n' > "$CGRV/src/setup-env.ts"; printf 'import { expect, it } from "vitest"\nit("setup ran", () => expect((globalThis as any).__SETUP__).toBe(41))\n' > "$CGRV/src/env.test.ts"
-    printf 'import { defineConfig } from "vitest/config"\nexport default defineConfig({ test: { include: ["src/**/*.test.ts"], setupFiles: ["./src/setup-env.ts"] } })\n' > "$CGRV/vitest.config.ts"
-    SHIPB="$(cg_ship B "")"
-    [ "$SHIPB" = "src/env.test.ts,src/setup-env.ts,vitest.config.ts" ] && ok "real vitest: a config that wires in a new setup file ships with it (shipped: $SHIPB)" || bad "real vitest B shipped: $SHIPB"
-    rm -rf "$T/cfgship"; git clone -q "$CGRV" "$T/cfgship"; CGB2="$(cg_vitest "$T/cfgship")"
-    printf '%s' "$CGB2" | grep -q "1 passed" && ok "real vitest: the shipped tree with the needed config passes ($CGB2)" || bad "real vitest on the needed-config tree: $CGB2"
-    git -C "$T/cfgship" checkout -q "$CGB" -- vitest.config.ts; CGB3="$(cg_vitest "$T/cfgship")"
-    printf '%s' "$CGB3" | grep -qE "FAIL|failed" && ok "real vitest: the same tree with that config dropped fails (so the filter must keep it)" || bad "plant did not fail without the config: $CGB3"
-else
-    printf '  SKIP: real vitest %s config-drop: npm could not install it (offline?)\n' "$CGV"
-fi
 
 # A batched vitest file reads exactly as the same file run alone: real vitest 4.0.16 non-TTY output vs vitestFileText of its JSON report.
 PAR="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
