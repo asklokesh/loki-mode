@@ -93,10 +93,24 @@ export function editedSymbols(path: string, baseSrc: string, patchedSrc: string)
 const mentions = (text: string, name: string): boolean => new RegExp(`(?<![\\w])${name.split(".").pop()!.replace(/[$]/g, "\\$")}(?![\\w])`).test(text);
 
 // ---------------- the keep list: one required probe case per output site ----------------
-/** Case kinds: a keep case (the report does NOT ask to change it) has an id starting k or a ledger tag "[sN]" in its description; every other probe case is a change case the report asks for. */
-export const isKeepCase = (id: string, desc: string): boolean => /^k\d/.test(id) || /^\[s\d+\]/.test(desc);
-/** Fixed text (cache-stable) after the probe rules: the model tags each case's kind in its id, so only keep cases need the judge. */
-export const NRD_KIND_RULES = 'Name each case id by its kind: p1, p2, ... for inputs the report says must behave differently (its own examples and variants of them), and k1, k2, ... for inputs the report does NOT ask to change (other functions and branches that share code with what it names, other options, default, empty and boundary inputs, the messages and strings the code builds). Aim for about half of the cases to be k cases.';
+const STD_PKG = new Set(["strings", "fmt", "strconv", "math", "reflect", "errors", "sort", "time", "os", "bytes", "filepath", "json", "regexp", "unicode", "utf8", "io", "bufio", "path", "slices", "maps"]);
+const NOT_CALLS = new Set(["lokiProbe", "func", "any", "return", "len", "append", "make", "string", "int", "int64", "float64", "bool", "byte", "error", "interface", "new", "cap", "copy", "delete"]);
+/** Functions and methods a probe case calls (standard library qualifiers and builtins left out). */
+export function calledNames(snippet: string): string[] {
+  const out = new Set<string>();
+  for (const m of snippet.matchAll(/(?:\b(\w+)\.)?\b([A-Za-z_]\w*)\s*\(/g)) if (!NOT_CALLS.has(m[2]!) && !(m[1] && STD_PKG.has(m[1]))) out.add(m[2]!);
+  return [...out];
+}
+const unq = (s: string): string => s.trim().replace(/^"(.*)"$/s, "$1");
+/** Decided in code, never by the model's naming: a case is a "change" case only when it calls a function the issue names AND the issue states its new output, or states
+ *  its input while NOT stating the old output as staying ("flags without a short alias keep printing ..."). Every other case is a keep case, whatever its id. */
+export function isChangeCase(issue: string, snippet: string, before: string, after: string): boolean {
+  if (!calledNames(snippet).some((n) => mentions(issue, n))) return false;
+  const stated = (v: string): boolean => { const t = unq(v); return t.length >= 2 && issue.includes(t); };
+  if (stated(after)) return true;
+  const lits = [...snippet.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]!).filter((l) => l.length >= 2 && !/^k?p?\d+$/.test(l));
+  return lits.some((l) => issue.includes(l)) && !stated(before);
+}
 /** Per-run text appended after the fixed probe rules in the exec-spec call (never in the cache-stable prefix). Empty when there is no site. */
 export function ledgerText(sites: OutputSite[]): string {
   if (!sites.length) return "";
@@ -116,7 +130,6 @@ const goSources = (repoDir: string, dirRel: string): Record<string, string> => {
 /** Passed to execSpecAuthor in place of probeIntake: the same fixed rules (cache-stable) plus the keep list for the code the issue names and its same-package callers. */
 export const nrdProbeIntake = {
   ...probeIntake,
-  rules: `${probeIntake.rules}\n${NRD_KIND_RULES}`,
   ledger(sites: ResolvedSite[], repoDir: string): string {
     const go = sites.filter((s) => s.file.endsWith(".go")); if (!go.length) return "";
     const dir = dirname(go[0]!.file).replace(/^\.$/, ""), files = goSources(repoDir, dir), names = go.filter((s) => dirname(s.file).replace(/^\.$/, "") === dir).map((s) => s.symbol.split(".").pop()!);
@@ -165,7 +178,7 @@ export function probeContext(pkgFiles: Record<string, string>, testFiles: Record
 
 // ---------------- the code-blind judge and the deterministic corrections ----------------
 export type Verdict = "requested" | "unrequested" | "unknown";
-export interface Finding { id: string; desc: string; before: string; after: string; source: "replay" | "probe"; testEdit?: string }
+export interface Finding { id: string; desc: string; before: string; after: string; source: "replay" | "probe"; testEdit?: string; /** the case calls a function the issue names: its change follows from the requested one */ named?: boolean }
 const clip = (s: string, max = 400): string => (s.length > max ? `${s.slice(0, max)}...(${s.length - max} more chars)` : s);
 export const SYS_NRD_JUDGE = "You decide whether an issue asks for an observed behavior change. You never see code. Answer only in the requested format.";
 export function nrdJudgePrompt(issue: string, cases: (Finding & { label: string })[]): string {
@@ -198,20 +211,22 @@ export function issueMentionsChange(issue: string, before: string, after: string
   if ([...a].some((t) => !b.has(t) && it.has(t))) return true;
   const removed = [...b].filter((t) => !a.has(t));
   if (removed.length === 0 && [...a].every((t) => b.has(t))) return true;
-  const asks = issue.split("\n").slice(1).join("\n").split(/(?<=[.!?])\s+|\n+/).filter((x) => /\b(?:should|expected|expect|prefer(?:red)?|fix|please|must|want|instead)\b/i.test(x));
+  const asks = askSentences(issue);
   for (const s of asks) { const w = s.split(/\s+/); for (let i = 0; i < w.length; i++) if (REMOVAL.test(w[i]!) && w.slice(i + 1, i + 7).some((x) => removed.some((r) => toks(x).includes(r)))) return true; }
   return false;
 }
+/** Sentences of the issue body (the title never counts) that ask for something. */
+const askSentences = (issue: string): string[] => issue.split("\n").slice(1).join("\n").split(/(?<=[.!?])\s+|\n+/).filter((x) => /\b(?:should|expected|expect|prefer(?:red)?|fix|please|must|want|instead)\b/i.test(x));
 const issueQuoted = (issue: string): string[] => [...issue.matchAll(/`([^`\n]+)`|"([^"\n]{1,200})"/g)].map((m) => (m[1] ?? m[2])!);
-/** A replayed test whose rewritten (+) lines assert a value the issue states was rewritten toward what the issue asks: requested. */
+/** A replayed test whose rewritten (+) lines assert a value that the issue states, quoted, inside a sentence that asks for it, was rewritten toward what the issue asks: requested. A string that merely occurs somewhere in the issue is not enough. */
 export function rewriteAssertsIssueValue(issue: string, testEdit: string | undefined): boolean {
   if (!testEdit) return false;
-  const q = new Set(issueQuoted(issue).map((x) => x.trim()));
-  return testEdit.split("\n").filter((l) => l.startsWith("+ ")).some((l) => [...l.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]!).some((v) => q.has(v) || (v.length >= 3 && issue.includes(v))));
+  const q = new Set(issueQuoted(issue).map((x) => x.trim())), asks = askSentences(issue);
+  return testEdit.split("\n").filter((l) => l.startsWith("+ ")).some((l) => [...l.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]!).some((v) => v.length >= 2 && q.has(v) && asks.some((x) => x.includes(v))));
 }
-/** Probe findings: "requested" needs the issue to mention the change. Replay findings: a test rewritten to assert a value the issue states is requested, whatever the judge said. */
+/** Probe findings: a judge "requested" on a function the issue names stands (the change follows from the requested one); on a function the issue never names it needs the issue to mention the change. Replay findings: a test rewritten to assert a value the issue states is requested, whatever the judge said. */
 export const overrideVerdict = (issue: string, f: Finding, v: Verdict): Verdict =>
-  f.source === "probe" ? (v === "requested" && !issueMentionsChange(issue, f.before, f.after) ? "unrequested" : v) : rewriteAssertsIssueValue(issue, f.testEdit) ? "requested" : v;
+  f.source === "probe" ? (v === "requested" && !f.named && !issueMentionsChange(issue, f.before, f.after) ? "unrequested" : v) : rewriteAssertsIssueValue(issue, f.testEdit) ? "requested" : v;
 
 // ---------------- the differential ----------------
 export type CaseStatus = "same" | "changed" | "flaky" | "missing_base" | "missing_patched";
@@ -267,8 +282,15 @@ export function replayFindings(base: GoTestRun, now: GoTestRun, tests: { base: s
   return out;
 }
 
+/** The probe case's source line(s). */
+export function caseSnippet(program: string, id: string, max = 600): string {
+  const lines = program.split("\n"), at = lines.findIndex((l) => new RegExp(`^\\s*lokiProbe\\(\\s*"${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`).test(l));
+  if (at < 0) return "";
+  let end = at + 1; while (end < lines.length && !/^\s*lokiProbe\(/.test(lines[end]!) && !/^\}\s*$/.test(lines[end]!)) end++;
+  return lines.slice(at, end).map((l) => l.trim()).join(" ").slice(0, max);
+}
 export interface NrdFinding extends Finding { verdict: Verdict }
-export interface NrdResult { cases: CaseDiff[]; findings: NrdFinding[]; blocking: NrdFinding[]; groups: FailureGroup[]; notes: string[]; calls: number; usd: number }
+export interface NrdResult { incomplete?: string; cases: CaseDiff[]; findings: NrdFinding[]; blocking: NrdFinding[]; groups: FailureGroup[]; notes: string[]; calls: number; usd: number }
 /** The fix-round input: ONE FailureGroup holding every blocking finding with its before and after output. */
 export function nrdFailureGroups(blocking: NrdFinding[]): FailureGroup[] {
   if (!blocking.length) return [];
@@ -276,19 +298,27 @@ export function nrdFailureGroups(blocking: NrdFinding[]): FailureGroup[] {
   return [{ signature: "no-regression: behavior the issue does not ask to change", count: blocking.length, sample: `${lines.join("\n   ")}${blocking.length > 4 ? `\n   (${blocking.length - 4} more)` : ""}\n   Keep the change the issue asks for and make each case above behave as it did before.` }];
 }
 
-export interface NrdInput { issue: string; programs: string[]; run: (program: string, state: "base" | "patched") => ProbeRunResult; replay?: () => Finding[]; llm: LlmCall }
-/** Cases, judge, corrections, group. Pure over its inputs: the trees live behind `run` and `replay`. Only changed keep cases (and replay findings) are judged: the change cases are the ones the issue asks for, so a correct fix costs no judge call. */
+export interface NrdProgram { src: string; /** written after the diff existed (the post-implement call): every case is a keep case */ post?: boolean }
+export interface NrdInput { issue: string; programs: NrdProgram[]; run: (program: string, state: "base" | "patched") => ProbeRunResult; replay?: () => Finding[]; llm: LlmCall }
+/** Cases, judge, corrections, group. Pure over its inputs: the trees live behind `run` and `replay`. Only changed keep cases (and replay findings) are judged; which case is a change case is decided in code by isChangeCase, and post-implement cases are always keep cases. An empty or unreadable judge reply is "incomplete", never a pass and never a block. */
 export async function runNoRegression(i: NrdInput): Promise<NrdResult> {
   const notes: string[] = []; let calls = 0, usd = 0;
-  const cases = i.programs.flatMap((p) => differential((s) => i.run(p, s), notes));
+  const tagged = i.programs.flatMap((p) => differential((s) => i.run(p.src, s), notes).map((x) => ({ ...x, post: !!p.post, src: p.src }))), cases: CaseDiff[] = tagged.map(({ post: _p, src: _s, ...x }) => x);
   for (const x of cases) if (x.status === "missing_patched") notes.push(`case ${x.id} ran on base but not on the patched tree (an API it calls changed)`);
   const flaky = cases.filter((x) => x.status === "flaky").length;
   if (flaky) notes.push(`${flaky} case(s) printed different output on two runs of the same tree and were ignored`);
-  const all: (Finding & { label: string })[] = [...cases.filter((x) => x.status === "changed" && isKeepCase(x.id, x.desc)).map((x) => ({ id: x.id, desc: x.desc, before: x.before, after: x.after, source: "probe" as const })), ...(i.replay?.() ?? []).slice(0, 6)].map((f, n, a) => ({ ...f, label: a.slice(0, n).some((y) => y.id === f.id) ? `${f.id}#${n}` : f.id }));
+  const probe = tagged.filter((x) => x.status === "changed").map((x): Finding | null => {
+    const snippet = caseSnippet(x.src, x.id);
+    if (!x.post && isChangeCase(i.issue, snippet, x.before, x.after)) return null; // the issue asks for exactly this change
+    return { id: x.id, desc: x.desc, before: x.before, after: x.after, source: "probe", named: calledNames(snippet).some((n) => mentions(i.issue, n)) };
+  }).filter((f): f is Finding => f !== null);
+  const all: (Finding & { label: string })[] = [...probe, ...(i.replay?.() ?? []).slice(0, 6)].map((f, n, a) => ({ ...f, label: a.slice(0, n).some((y) => y.id === f.id) ? `${f.id}#${n}` : f.id }));
   if (!all.length) return { cases, findings: [], blocking: [], groups: [], notes, calls, usd };
   const j = await i.llm(SYS_NRD_JUDGE, nrdJudgePrompt(i.issue, all), "judge");
   calls++; usd += j.usage.costUsd;
   const v = parseNrdVerdicts(j.text);
+  const incomplete = v.size === 0 ? "the judge reply was empty or unreadable, so the changed cases were not judged" : undefined;
+  if (incomplete) notes.push(incomplete);
   const findings = all.map(({ label, ...f }): NrdFinding => {
     const raw = v.get(label) ?? "unknown", verdict = overrideVerdict(i.issue, f, raw);
     if (verdict !== raw) notes.push(`case ${f.id}: judged ${raw}, corrected to ${verdict} by the issue text`);
@@ -296,7 +326,7 @@ export async function runNoRegression(i: NrdInput): Promise<NrdResult> {
     return { ...f, verdict };
   });
   const blocking = findings.filter((f) => f.verdict === "unrequested");
-  return { cases, findings, blocking, groups: nrdFailureGroups(blocking), notes, calls, usd };
+  return { ...(incomplete ? { incomplete } : {}), cases, findings, blocking, groups: nrdFailureGroups(blocking), notes, calls, usd };
 }
 
 // ---------------- scratch trees: the user's tree is only read ----------------
@@ -328,6 +358,8 @@ export function makeScratch(repoDir: string, baseSha: string, skip: Set<string>)
 // ---------------- the implement-stage gate ----------------
 export interface NrdSummary { status: "skipped" | "clean" | "fired" | "error"; reason: string; calls: number; usd: number; groups?: FailureGroup[]; receipt?: string[] }
 const skip = (reason: string, extra: Partial<NrdSummary> = {}): NrdSummary => ({ status: "skipped", reason, calls: 0, usd: 0, ...extra });
+/** Receipt line for a differential that could not complete: NOT PROVEN, never a block. */
+const notProven = (why: string): string => `NOT PROVEN: regression check incomplete: ${why}`;
 const pkgOf = (src: string): string | null => /^package\s+(\w+)/m.exec(src)?.[1] ?? null;
 const oneLine = (s: string): string => s.replace(/[\u0000-\u001f\u007f]+/g, " ");
 
@@ -353,8 +385,8 @@ export async function runNrdGate(ctx: RunContext, signal: AbortSignal, session: 
     if (!pkg) return skip("the package of the edited functions is not readable");
     const baseFiles = Object.fromEntries(Object.keys(files).map((p) => [p, baseText(ctx, p)]));
     const callers = callersOf(names, baseFiles), unnamed = postProbeNeeded(issue, names, baseFiles);
-    const pre = readTournamentInput(ctx.runDir), programs: string[] = []; let calls = 0, usd = 0;
-    if (pre && pre.pkg === pkg && pre.pkgRel === dir&& /\blokiProbe\(\s*"/.test(pre.program)) programs.push(pre.program);
+    const pre = readTournamentInput(ctx.runDir), programs: NrdProgram[] = []; let calls = 0, usd = 0, incompleteNote: string | undefined;
+    if (pre && pre.pkg === pkg && pre.pkgRel === dir&& /\blokiProbe\(\s*"/.test(pre.program)) programs.push({ src: pre.program });
     if (unnamed.length > 0) { // the post-implement probe call: written from the issue and the BASE code only
       const tests: Record<string, string> = {};
       for (const f of safeGit(ctx.repoDir, ["ls-files", "-z", "--", dir === "" ? "." : dir]).split("\0")) if (f.endsWith("_test.go") && dirname(f).replace(/^\.$/, "") === dir) { const s = baseText(ctx, f); if (s) tests[f] = s; }
@@ -362,9 +394,9 @@ export async function runNrdGate(ctx: RunContext, signal: AbortSignal, session: 
       const r = await llm(SYS_NRD_PROBE, nrdProbePrompt({ issue, pkg, files: ctxPack.files, tests: ctxPack.tests, edited: names, callers, unnamed, sites: outputSites(baseFiles, [...names, ...callers]) }), "nrd-probe");
       calls++; usd += r.usage.costUsd;
       const p = parseGoProbeCases(splitProbeBlock(r.text).probe, pkg);
-      if ("file" in p) programs.push(p.file);
+      if ("file" in p) programs.push({ src: p.file, post: true }); else incompleteNote = `the post-implement probe call wrote no usable cases (${p.refused}) for the callers ${unnamed.join(", ")}`;
     }
-    if (programs.length === 0) return skip(`no probe program: ${pre ? "the pre-implement program is for another package" : "the exec-spec call left none"}, and every caller of the edited functions is named by the issue`, { calls, usd });
+    if (programs.length === 0) return skip(`no probe program: ${pre ? "the pre-implement program is for another package" : "the exec-spec call left none"}, and every caller of the edited functions is named by the issue`, { calls, usd, ...(incompleteNote ? { receipt: [oneLine(notProven(incompleteNote))] } : {}) });
     scratch = makeScratch(ctx.repoDir, ctx.baseSha, sealed);
     const tree = scratch, editedTests = diff.filter((e) => e.path.endsWith("_test.go") && dirname(e.path).replace(/^\.$/, "") === dir && baseText(ctx, e.path) !== "").map((e) => e.path);
     const r = await runNoRegression({
@@ -375,13 +407,15 @@ export async function runNrdGate(ctx: RunContext, signal: AbortSignal, session: 
     calls += r.calls; usd += r.usd;
     const ran = r.cases.filter((x) => x.status !== "missing_base").length;
     const receipt = [
+      ...(incompleteNote ? [notProven(incompleteNote)] : []), ...(r.incomplete ? [notProven(r.incomplete)] : []),
       `no-regression: ${ran} probe case(s) compared on the base and the patched tree, ${r.cases.filter((x) => x.status === "changed").length} changed, ${r.blocking.length} unrequested${r.blocking.length ? " (one fix round was asked to restore them)" : ""}`,
       ...r.findings.filter((f) => f.verdict === "unknown").map((f) => `advisory: ${f.desc} changed and the issue does not decide it (printed ${clip(f.before, 80)}, now ${clip(f.after, 80)})`),
       ...r.blocking.map((f) => `unrequested change: ${f.desc}: printed ${clip(f.before, 80)}, now ${clip(f.after, 80)}`),
     ].map(oneLine);
     return { status: r.blocking.length ? "fired" : "clean", reason: r.notes.join("; ") || "no unrequested change", calls, usd: Number(usd.toFixed(6)), ...(r.groups.length ? { groups: r.groups } : {}), receipt };
   } catch (e) {
-    return { status: "error", reason: `no-regression skipped: ${oneLine(e instanceof Error ? e.message.split("\n")[0]! : String(e))}`.slice(0, 300), calls: 0, usd: 0 };
+    const why = oneLine(e instanceof Error ? e.message.split("\n")[0]! : String(e));
+    return { status: "error", reason: `no-regression skipped: ${why}`.slice(0, 300), calls: 0, usd: 0, receipt: [oneLine(notProven(why)).slice(0, 300)] };
   } finally { scratch?.dispose(); }
 }
 
