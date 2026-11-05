@@ -75,6 +75,8 @@
 #  26. manifestModel: drop the SKIP_PKG_DIR filter on other manifests; the diet check fails (test/fixtures/app and docs listed).
 #  27. project_model/discover.ts: drop effort "low" from the discovery session; the diet check fails (effort=undefined).
 #  28. project_model/gather.ts: maxTotalBytes back to 96 KiB; the diet check fails (inlined over 24 KiB).
+#  29. manifestModel: drop the fansOut check; the diet check fails (fan false: an nx root test answered without a session).
+#  30. manifestModel: members only from tracked package.json files; the diet check fails (packages/gen missing).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -471,8 +473,9 @@ console.log([pre.includes("Tracked files (depth-limited):\nsrc/a.ts"), pre.inclu
 
 # --- diet: the manifests answer the Project Model, so a declared repo costs no discovery session -------------------------------------------
 # 3-day ledger: discovery was 46-48% of Loki's spend. A pnpm workspace, a Python package and a Go module whose manifests declare a test command
-# get a validated model with zero sessions (cached on the next call); a fixture package.json is never a package; a repo whose manifests name no
-# test command, and LOKI_E10_PM_MANIFESTS=0, still reach the session, at low effort with a 4096-token output cap and at most 24 KiB of inlined files.
+# get a validated model with zero sessions (cached on the next call); a gitignored member package.json still counts; a fixture package.json is
+# never a package; a repo whose manifests name no test command, a test script that fans out over the workspace (nx via `pnpm run test:ci`), and
+# LOKI_E10_PM_MANIFESTS=0 still reach the session, at low effort with a 4096-token output cap and at most 24 KiB of inlined files.
 D="$T/diet"; mkdir -p "$D"
 mkrepo() { git -C "$1" init -q -b main && git -C "$1" config user.name d && git -C "$1" config user.email d@example.invalid && git -C "$1" add -A && git -C "$1" commit -q -m base; }
 W="$D/ws"; mkdir -p "$W/packages/core" "$W/packages/utils" "$W/packages/web" "$W/test/fixtures/app"
@@ -481,7 +484,10 @@ printf '{"name":"@w/core","scripts":{"test":"vitest run"},"dependencies":{"@w/ut
 printf '{"name":"@w/utils","scripts":{"test":"vitest run"}}\n' > "$W/packages/utils/package.json"
 printf '{"name":"@w/web","scripts":{"dev":"vite"},"dependencies":{"react-dom":"18.3.1","@w/core":"workspace:*"}}\n' > "$W/packages/web/package.json"
 printf '{"name":"fixture-app","scripts":{"test":"jest"}}\n' > "$W/test/fixtures/app/package.json"
-for i in $(seq 1 80); do head -c 3000 /dev/zero | tr '\0' 'x' > "$W/packages/core/big$i.txt"; done; mkrepo "$W"
+mkdir -p "$W/packages/gen"; echo 'package.json' > "$W/packages/gen/.gitignore"; echo 'export {}' > "$W/packages/gen/index.ts" # zod ships a member whose package.json is gitignored
+for i in $(seq 1 80); do head -c 3000 /dev/zero | tr '\0' 'x' > "$W/packages/core/big$i.txt"; done; mkrepo "$W"; printf '{"name":"@w/gen","scripts":{"test":"vitest run"}}\n' > "$W/packages/gen/package.json"
+F="$D/fan"; mkdir -p "$F/packages/a"; printf '{"name":"f","scripts":{"test":"pnpm run test:ci","test:ci":"nx run-many -t test"}}\n' > "$F/package.json"; printf "packages:\n  - 'packages/*'\n" > "$F/pnpm-workspace.yaml"
+printf '{"name":"a","scripts":{"test":"vitest run"}}\n' > "$F/packages/a/package.json"; echo 'lockfileVersion: 9' > "$F/pnpm-lock.yaml"; mkrepo "$F"
 P="$D/py"; mkdir -p "$P/src/pkg" "$P/tests" "$P/docs"; printf '[project]\nname = "pkg"\n\n[project.optional-dependencies]\ntest = ["pytest>=7"]\n' > "$P/pyproject.toml"
 echo 'sphinx' > "$P/docs/requirements.txt"; echo 'def test_x(): assert True' > "$P/tests/test_x.py"; touch "$P/src/pkg/__init__.py"; mkrepo "$P"
 G="$D/go"; mkdir -p "$G/cmd" "$G/docs"; printf 'module example.com/g\n\ngo 1.22\n' > "$G/go.mod"; printf 'module example.com/g/docs\n' > "$G/docs/go.mod"; printf 'package main\nfunc main() {}\n' > "$G/cmd/main.go"; mkrepo "$G"
@@ -502,16 +508,18 @@ out.push(`ws ${calls.length} ${r.model.status} ${r.source} ${pk(r)} deps=${core?
 ({ r, calls } = await go("py")); out.push(`py ${calls.length} ${r.source} ${pk(r)}`);
 ({ r, calls } = await go("go")); out.push(`go ${calls.length} ${r.source} ${pk(r)}`);
 ({ r, calls } = await go("none")); out.push(`none ${calls.length > 0} effort=${calls[0]?.effort} max=${calls[0]?.maxOutputTokens}`);
+({ r, calls } = await go("fan")); out.push(`fan ${calls.length > 0}`);
 (await import("node:fs")).rmSync(d + "/ws/.loki", { recursive: true, force: true }); ({ r, calls } = await go("ws", { LOKI_E10_PM_MANIFESTS: "0" }));
 const inl = (calls[0]?.brief ?? "").split("<file path=").slice(1).join("").length;
 out.push(`off ${calls.length > 0} inlined<=24KiB=${inl > 0 && inl <= 24 * 1024 + 4096}`);
 console.log(out.join("\n"));
 ' 2>&1)"
-WDIET="ws 0 ok manifests .=pnpm test/pnpm install@.,packages/core=pnpm test/pnpm install@.,packages/utils=pnpm test/pnpm install@.,packages/web=-/pnpm install@. deps=packages/utils ui=pnpm run dev
+WDIET="ws 0 ok manifests .=pnpm test/pnpm install@.,packages/core=pnpm test/pnpm install@.,packages/gen=pnpm test/pnpm install@.,packages/utils=pnpm test/pnpm install@.,packages/web=-/pnpm install@. deps=packages/utils ui=pnpm run dev
 again 0 cached=true
 py 0 manifests .=python3 -m pytest -q/python3 -m pip install -e '.[test]'@.
 go 0 manifests .=go test ./.../go mod download@.
 none true effort=low max=4096
+fan true
 off true inlined<=24KiB=true"
 [ "$DIET" = "$WDIET" ] && ok "intake diet: pnpm workspace, Python package and Go module answered from their manifests with no session (cached after); fixture package skipped; no test command or LOKI_E10_PM_MANIFESTS=0 reaches a low-effort, capped session with at most 24 KiB inlined" \
     || { bad "intake diet gave:"; printf '%s\n' "$DIET" | sed 's/^/    | /'; }

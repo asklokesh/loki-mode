@@ -370,15 +370,29 @@ const PKG_MANIFESTS = ["package.json", "go.mod", "Cargo.toml", "pyproject.toml",
 const LOCK_INSTALLS: [string, string][] = [["pnpm-lock.yaml", "pnpm install"], ["yarn.lock", "yarn install"], ["bun.lock", "bun install"], ["bun.lockb", "bun install"], ["package-lock.json", "npm install"], ["uv.lock", "uv sync"], ["poetry.lock", "poetry install"], ["Cargo.lock", "cargo fetch"], ["go.mod", "go mod download"]];
 const UI_DEPS = ["react-dom", "vue", "svelte", "@angular/core", "next", "nuxt", "solid-js", "preact", "astro"];
 const MAX_MODEL_PACKAGES = 200;
+const ORCHESTRATOR = /\b(nx|turbo|lerna|run-many|wsrun|ultra)\b|\bpnpm\b[^&|;]*\s(-r|--recursive|--filter|-F)\b|\byarn workspaces\b|\bnpm\b[^&|;]*\s(--workspaces|-ws)\b/;
 type RawCmd = { cmd: string; cwd: string; cite: string[] } | null;
+/** The test script, followed through up to 3 `<pm> run <script>` hops, fans out over the workspace. */
+function fansOut(scripts: Record<string, unknown>): boolean {
+  let body = scripts["test"];
+  for (let hop = 0; hop < 4 && typeof body === "string"; hop++) {
+    if (ORCHESTRATOR.test(body)) return true;
+    const next = /^\s*(?:pnpm|npm|yarn|bun)(?:\s+run)?\s+([\w:.-]+)\s*$/.exec(body)?.[1];
+    body = next && next !== "test" ? scripts[next] : undefined;
+  }
+  return false;
+}
 export function manifestModel(repoDir: string): Record<string, unknown> | null {
   let tracked: string[];
   try { tracked = safeGit(repoDir, ["ls-files", "-z"], { maxBuffer: 256 * 1024 * 1024 }).split("\0").filter(Boolean); } catch { return null; }
   const trackedSet = new Set(tracked), at = (dir: string, f: string): string => (dir === "." ? f : `${dir}/${f}`);
   const json = (dir: string): Record<string, unknown> | null => { try { const j = JSON.parse(read(join(repoDir, dir, "package.json"))) as unknown; return j && typeof j === "object" && !Array.isArray(j) ? (j as Record<string, unknown>) : null; } catch { return null; } };
+  const isFile = (rel: string): boolean => trackedSet.has(rel) || (() => { try { return lstatSync(join(repoDir, rel)).isFile(); } catch { return false; } })();
   const wsPats = [...pkgWorkspaces(repoDir), ...pnpmWorkspaces(repoDir)];
   const manifestDirs = [...new Set(tracked.filter((p) => PKG_MANIFESTS.includes(basename(p))).map((p) => dirname(p)))];
-  const members = manifestDirs.filter((d) => d !== "." && trackedSet.has(at(d, "package.json")) && wsPats.length > 0 && inWorkspace(wsPats, d));
+  // A member's package.json may be untracked (a generated or ignored manifest that pnpm still reads): any directory holding tracked files qualifies.
+  const trackedDirs = new Set<string>(); for (const p of tracked) for (let d = dirname(p); d !== "." && !trackedDirs.has(d); d = dirname(d)) trackedDirs.add(d);
+  const members = wsPats.length === 0 ? [] : [...trackedDirs].filter((d) => inWorkspace(wsPats, d) && isFile(at(d, "package.json"))).sort();
   const others = manifestDirs.filter((d) => d !== "." && !members.includes(d) && !d.split("/").some((seg) => SKIP_PKG_DIR.test(seg)));
   const rootHas = MANIFESTS.some((f) => trackedSet.has(f)) || trackedSet.has("setup.py");
   const dirs = [...(rootHas ? ["."] : []), ...members, ...others.sort()];
@@ -389,7 +403,7 @@ export function manifestModel(repoDir: string): Record<string, unknown> | null {
   const fingerprint = new Set<string>(["pnpm-workspace.yaml"].filter((f) => trackedSet.has(f)));
   const packages = dirs.map((d) => {
     const isMember = members.includes(d), cmds = discoverCommands(join(repoDir, d), isMember ? repoDir : join(repoDir, d));
-    const own = [...new Set([...PKG_MANIFESTS, ...MANIFESTS])].map((f) => at(d, f)).filter((f) => trackedSet.has(f));
+    const own = [...new Set([...PKG_MANIFESTS, ...MANIFESTS])].map((f) => at(d, f)).filter((f) => trackedSet.has(f) || (isMember && f.endsWith("/package.json") && isFile(f)));
     own.forEach((f) => fingerprint.add(f));
     const cmdOf = (kind: CmdKind): RawCmd => { const c = cmds.find((e) => e.kind === kind); return c ? { cmd: c.cmd, cwd: d, cite: [at(d, c.source)] } : null; };
     const lock = LOCK_INSTALLS.find(([f]) => trackedSet.has(at(d, f)));
@@ -402,7 +416,8 @@ export function manifestModel(repoDir: string): Record<string, unknown> | null {
     return { name: typeof pj?.["name"] === "string" && pj["name"] ? pj["name"] : d === "." ? basename(resolve(repoDir)) : d, root: d, runner: null, cite: own.length ? own : [cmds[0] ? at(d, cmds[0].source) : at(d, "package.json")],
       commands: { test: cmdOf("test"), lint: cmdOf("lint"), build: cmdOf("build"), start: null }, ui: { present: boot !== null, boot, cite: boot ? boot.cite : [] }, install, ...js };
   });
-  if (!packages.some((p) => p.commands.test)) return null;
+  // A test script that fans out over the workspace (nx, turbo, lerna, recursive pnpm or yarn) names no one package's suite: the session decides.
+  if (!packages.some((p) => p.commands.test) || dirs.some((d) => fansOut((json(d)?.["scripts"] ?? {}) as Record<string, unknown>))) return null;
   const wsCite = trackedSet.has("pnpm-workspace.yaml") ? "pnpm-workspace.yaml" : packages[0]!.cite[0]!;
   return { workspaceKind: members.length ? "workspaces" : packages.length > 1 ? "multi-root" : "single", workspaceCite: [wsCite], fingerprintFiles: [...fingerprint].sort(), packages };
 }
