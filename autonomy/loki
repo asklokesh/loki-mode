@@ -26952,6 +26952,8 @@ except Exception as e:
             echo "  loki memory crossproject --for 'build api'"
             echo "  loki memory graph --export graph.json"
             echo "  loki memory graph rebuild"
+            echo "  loki memory graph ingest [<path>...]"
+            echo "  loki memory graph ask \"who owns billing\" [--repo <dir>]"
             echo "  loki memory enable-hook"
             echo "  loki memory disable-hook"
             echo ""
@@ -27111,6 +27113,14 @@ except Exception as e:
             # semantic/*.json across discovered projects and persists them
             # to the org knowledge graph -- the population path that makes
             # crossproject + load_memory_context augmentation non-inert.
+            # FR06: `ingest [<path>...]` reads services, CODEOWNERS and decision docs from repos into the
+            # org graph (~/.loki/knowledge/graph.json); `ask "<question>"` prints the cited facts.
+            if [ "${1:-}" = "ingest" ] || [ "${1:-}" = "ask" ]; then
+                local _kg_args=("$@")
+                if [ "${_kg_args[0]}" = "ingest" ] && [ "${#_kg_args[@]}" -eq 1 ]; then _kg_args+=("."); fi
+                PYTHONPATH="${SKILL_DIR:-$(pwd)}" python3 "${SKILL_DIR:-$(pwd)}/memory/knowledge_graph.py" "${_kg_args[@]}"
+                return $?
+            fi
             if [ "${1:-}" = "rebuild" ]; then
                 shift
                 PYTHONPATH="${SKILL_DIR:-$(pwd)}" python3 -c "
@@ -27151,7 +27161,7 @@ except Exception as e:
             while [ $# -gt 0 ]; do
                 case "$1" in
                     --export) _graph_export="${2:-}"; if [ $# -ge 2 ]; then shift 2; else shift; fi ;;
-                    -h|--help) echo "Usage: loki memory graph [--export <path>] | loki memory graph rebuild"; return 0 ;;
+                    -h|--help) echo "Usage: loki memory graph [--export <path>] | loki memory graph rebuild | loki memory graph ingest [<path>...] | loki memory graph ask \"<question>\" [--repo <dir>]"; return 0 ;;
                     *) shift ;;
                 esac
             done
