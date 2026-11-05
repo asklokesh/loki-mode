@@ -110,7 +110,7 @@ file loader exports the variable, so it reports as `env`.
 engine10 checks the cap before each stage starts (`machine.ts`, `capReached`), using
 the cost events recorded so far, and each session is handed what is left of the cap
 (`engine10/session.ts`, `childBudgetLimit`, exported as `LOKI_BUDGET_LIMIT` and passed to
-Claude Code as `--max-budget-usd` by `providers/claude_flags.ts`). So a session that is
+Claude Code as `--max-budget-usd` by `loki-ts/src/providers/claude_flags.ts`). So a session that is
 already running is bounded by the remaining cap, with a floor of $0.01, and the overshoot is
 bounded per session. The plan and wall stages can run together, so up to two sessions can
 be in flight when the cap is crossed. Time caps and the per-session time limit still apply
