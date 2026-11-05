@@ -7,9 +7,9 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 ## Counts
 
 - KEEP: 12
-- HIDE: 41
+- HIDE: 42
 - FOLD: 61
-- REMOVED: 30
+- REMOVED: 29
 - Total rows: 144
 - Registry paths (commands and nested subcommands): 215
 
@@ -150,7 +150,7 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 | migrate | autonomy/loki | FOLD | Superseded by modernize | loki "modernize <what> to <target>" |
 | dogfood | autonomy/loki | REMOVED | Legacy engine | It drove the removed legacy loop; use: loki start "<goal>" |
 | steer | autonomy/loki | FOLD | Session control | loki chat --attach |
-| outcomes | autonomy/loki | REMOVED | Legacy outcome store | It drove the removed legacy loop; use: loki start "<goal>" |
+| outcomes | autonomy/loki | HIDE | Live: lib/outcome_ledger.py via cmd_outcomes; documented for self-hosted operators |  |
 | worktree | autonomy/loki | REMOVED | Legacy parallel mode | It drove the removed legacy loop; use: loki start "<goal>" |
 | wt | autonomy/loki | REMOVED | Alias of worktree |  |
 | checkpoint | autonomy/loki | FOLD | Legacy engine | loki undo |

@@ -26,6 +26,7 @@
 #   11. bin/loki: print the removal line without the replacement: every removed-command message check fails.
 #   12. bin/loki: move the removed-command arm below the bun lookup (PATH without bun): the no-engine exit-2 checks fail.
 #   13. registry.ts: flip one FOLD entry to REMOVED without a table row in bin/loki: the table check fails.
+#   14. bin/loki: re-add `outcomes` to the removed table (and registry REMOVED): the outcomes live-command checks fail.
 #   9. bin/loki: make `plan` exit 2 (hidden command removed early): the hidden-commands-still-run check fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -112,6 +113,12 @@ $rm_reg
 EOF_RM
 [ -z "$rm_bad" ] && ok "each removed command exits 2 with one stderr line naming its replacement, with no bun and a bogus provider" || bad "removed commands with a wrong exit, stdout or message:$rm_bad"
 [ ! -e "$T/rm-empty/.loki" ] && ok "removed commands create no .loki state" || bad "a removed command created .loki"
+
+# outcomes is a live HIDE command (lib/outcome_ledger.py, canary workflow), not a removed one.
+oc_help="$(run bin/loki outcomes --help)"; oc_rc=$?
+[ "$oc_rc" = "0" ] && ok "loki outcomes --help exits 0" || bad "loki outcomes --help exit $oc_rc: $oc_help"
+run bin/loki outcomes canary --help >/dev/null; oc_rc=$?
+[ "$oc_rc" != "2" ] && [ "$oc_rc" = "0" ] && ok "loki outcomes canary --help is not a removed command (exit 0)" || bad "loki outcomes canary --help exit $oc_rc"
 
 check "completions/loki.bash loads" bash -c "source '$ROOT/completions/loki.bash'"
 

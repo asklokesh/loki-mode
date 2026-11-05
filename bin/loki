@@ -638,7 +638,6 @@ _loki_removed_suffix() {
         cleanup) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
         reset) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
         dogfood) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
-        outcomes) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
         worktree) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
         wt) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
         trust-metrics) printf '%s' 'Use: loki status --json' ;;

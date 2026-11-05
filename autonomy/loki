@@ -1852,7 +1852,7 @@ show_help_all() {
     echo "Integration and maintenance (hidden from the front page; they keep working):"
     echo "  stats memory backup restore kpis report crash contract slack engine10 review mcp acp github"
     echo "  ci modernize self-update secrets sandbox docker web syslog test bench compliance enterprise"
-    echo "  audit metrics magic workspace agents trigger merge heal"
+    echo "  audit metrics magic workspace agents trigger merge heal outcomes"
     echo ""
     echo "Renamed (the old name keeps working unchanged; some targets arrive in later releases,"
     echo "and until each one lands the old name is the way to do it):"
